@@ -54,6 +54,8 @@ import {
   type RuleRunSessionResolution,
   type RuleRunSourceMetadata,
 } from "./routes/governanceProxy.js";
+// R8＋加性慣例（手冊 §1.13）：devMeta 為 routes/*.ts 模組，app.ts 僅此 import＋單行 mount。
+import { registerDevMetaRoutes } from "./routes/devMeta.js";
 import { ViewerLeaseStore, publicLease, type PublicViewerLease } from "./services/viewerLeaseStore.js";
 import {
   StreamingConversionClient,
@@ -3140,6 +3142,8 @@ export function createCoordinatorApp(
       return resolveDownloadedJobForRuleRun(job, session.model_version_id, session);
     },
   });
+
+  registerDevMetaRoutes(app, config); // R8：唯讀 test-data-projects meta（routes/devMeta.ts，加性慣例單行 mount）
 
   app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
     if (error instanceof z.ZodError) {

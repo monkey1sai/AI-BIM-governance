@@ -103,6 +103,10 @@ export interface CoordinatorConfig {
   // 測試 seam：watcher 自打 loopback 的 base url。default 空＝執行期用 http://127.0.0.1:${port}。
   // 整合測試以 listen(0) 取得實際 port 後注入完整 base，避免依賴固定 8004。
   minioWatchSelfBaseUrl: string;
+  // R8（2026-07-10）：local_fs 測試 fixtures 專案清單（如 270,889,990,271），由部署區 .env 注入；
+  // default 空＝不標。前端據 GET /api/dev/test-data-projects 渲染「測試資料」badge——
+  // 編號不進程式碼（D-05），誠實標記由後端 config 驅動（鐵律 #3）。
+  testDataProjectIds: string[];
 }
 
 function numberFromEnv(name: string, fallback: number): number {
@@ -432,6 +436,7 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     minioWatchKeySuffix: process.env.MINIO_WATCH_KEY_SUFFIX || "/model.ifc",
     minioWatchTenantId: process.env.MINIO_WATCH_TENANT_ID || "tenant_demo_001",
     minioWatchSelfBaseUrl: process.env.MINIO_WATCH_SELF_BASE_URL || "",
+    testDataProjectIds: csvFromEnv("TEST_DATA_PROJECT_IDS", []),
     ...overrides,
   };
   // 下限是安全保護（防忙迴圈連打 MinIO），必須在 overrides 合併後夾值，

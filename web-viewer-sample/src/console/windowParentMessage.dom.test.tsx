@@ -674,7 +674,7 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
     reviewEnv.viewerLeaseToken = "";
     reviewEnv.sourceClientId = "dev_user_001";
     const app = operableApp();
-    const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/viewer-leases/claim")) {
         return new Response(JSON.stringify({ lease_id: "viewer_lease_primary", lease_token: "lease_token_primary", role: "primary" }), {

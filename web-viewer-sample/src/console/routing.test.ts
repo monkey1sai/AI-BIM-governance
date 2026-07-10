@@ -54,4 +54,12 @@ describe("operator console 路由判定（保留既有 viewer）", () => {
   it("未知短 hash（#/nope）→ 非 operator", () => {
     expect(isOperatorConsolePath("/", "#/nope")).toBe(false);
   });
+  it("[F8-route] app/ 前綴願景詳頁 deep-link（EdgeConsole 動態 case）→ operator console", () => {
+    expect(isOperatorConsolePath("/", "#app/ai-search")).toBe(true);
+    expect(isOperatorConsolePath("/", "#/app/4d-5d")).toBe(true);
+    expect(isOperatorConsolePath("/", "#app/ai-search?x=1")).toBe(true);
+    // 前綴匹配不得過寬：空 slug 與相似字首不放行。
+    expect(isOperatorConsolePath("/", "#app/")).toBe(false);
+    expect(isOperatorConsolePath("/", "#apple")).toBe(false);
+  });
 });

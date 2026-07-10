@@ -5,6 +5,10 @@
 > ① IX-A1-01 由「上傳/檔案庫下拉」改為**選檔雙來源**（local_fs `GET /api/governance/files/tree` + 真 MinIO `GET /api/minio/objects`）；
 > ② 新增 **IX-A1-07 BCF 審查面板**（topic 列表／狀態流轉／指派-待建，對選定檔）與 **IX-A1-08 A1 連動橋**（3D 連動留在 A1，證據 rail 呈現，不沿用 viewer 視窗風格）；
 > ③ 新增 **IX-SS-05**：`#sessions` 為 A1 連動橋證據的**供應端（單一來源）**；④ 勘誤表新增 E7/E8。舊 v1（2026-06-11）其餘內容逐字保留。
+> **v2.1 變更紀錄（2026-07-10，裁決紀錄：`docs/superpowers/specs/2026-07-10-plans-code-remediation-design.md`）**：
+> ⑤ IX-3D-01 修訂——承認 A1 evidence-gated、手動啟動的 inline viewer（PR #319 追認，R1）；
+> ⑥ A.1.1 第 16 列 `#conv` 改 alias→`#minio`（MD 三頁合一 #303/#304 落地），PART A 對照表與差距段同步；
+> ⑦ PART D 前提 1 同步（PAGES 導覽項自 MD 合一起少於 22 條）；⑧ RT `#runtime` 現況描述更新。
 > 本檔解決三個問題：
 > **(1)** AI 看 HTML 原型學不會「互動怎麼做」→ PART B 把每個互動寫成可照做的「行為合約」
 > **(2)** 實作與 demo 差距 → PART A 是 2026-06-11 對 `http://localhost:8004/ui` 的逐頁實測比對
@@ -59,7 +63,7 @@
 | 今天要做什麼 | `/ui` | `#home` | 🟢 已實作（Smart Todo + Recent Risk） |
 | A1 治理檢核 | `#/a1` | **`#a1`** | 🟢 五步版型＋真規則引擎（詳 A.2） |
 | 3D Viewer 呈現 | `#/viewer` | `#viewer` | 🟢 證據面板版（不內嵌 3D，正確設計） |
-| 轉檔排程 | `#/conv` | `#conv` | 🟡 讀真 ifc-ready jobs；控制動作待建 |
+| 轉檔排程 | `#/conv` | `#conv`（alias→`#minio`） | ✅ 併入 ModelDataPage（MD 三頁合一 #303/#304）；控制動作見 M 列 |
 | Session 管理 | `#/sessions` | `#sessions` | 🟡 Phase 1 read-only；occupied 證據鏈待建 |
 | Kit/GPU 機隊 | `#/instances` | `#instances` | 🟡 fleet 模型正確；節點遙測為示範資料 |
 | MinIO 資料 | `#/minio` | `#minio` | 🟢 真檔案樹（local_fs；詳 A.2） |
@@ -90,11 +94,11 @@
 | A8 | `#a8` | Synthetic Data | 核心治理 | Replicator + Cosmos Transfer | 🟡 示範頁；取景台 |
 | A9 | `#a9` | 設計 / 審查 Copilot | 核心治理 | usd-code-mcp :9903 | 🟡 示範頁；AI 動作預覽 |
 | A10 | `#a10` | 機器人 / 巡檢模擬 | 核心治理 | Isaac Sim + Cosmos | 🟡 示範頁；核心舞台需 GPU |
-| CV | `#conv` | IFC→USD 轉檔排程（P1） | OMNIVERSE RUNTIME | coordinator `/api/conversions` + streaming-server 轉檔 | 🟡 讀真 ifc-ready jobs；插隊/重試/coverage P1 |
+| CV | `#conv` | （alias→`#minio`；MD 三頁合一 #303/#304 後轉檔排程併入 ModelDataPage） | OMNIVERSE RUNTIME | `AliasRedirect`；功能後端同 M 列 | ✅ alias 保留；獨立頁已除役（2026-07-06） |
 | SS | `#sessions` | Session 管理 | OMNIVERSE RUNTIME | coordinator `/api/sessions` | 🟡 Phase1 read-only；結束 session IX-SS-04 已設計(#224)；occupied 證據鏈 P1；**A1 連動橋供應端 IX-SS-05（v2）** |
 | KG | `#instances` | Kit / GPU 機隊 | OMNIVERSE RUNTIME | kit-manager-api `/instances` | 🟡 fleet 模型正確；真遙測接 kit-manager-api；restart/release intent 待建 |
 | M | `#minio` | MinIO 資料 | OMNIVERSE RUNTIME | coordinator `GET /api/minio/objects` + local_fs `GET /api/governance/files/tree` | 🟢 真 MinIO raw-folder 逐層瀏覽（唯讀）；三層語意只屬 watcher 解析，不宣稱 bucket 結構 |
-| RT | `#runtime` | Runtime 監控 | 落地端控制台 / SYSTEM | kit-manager-api `/runtime` + `/health` | 🟡 端點真有；UI 監控面板待建 |
+| RT | `#runtime` | Runtime 監控 | 落地端控制台 / SYSTEM | 經 coordinator proxy：`/api/runtime/status`、`/api/kit/instances/current`（權威仍 kit-manager-api） | 🟡 已有 4 治理分頁＋sessions/kit 真遙測；GPU/VRAM 遙測仍未取得 |
 | SY | `#admin` | 系統管理 | SYSTEM | coordinator（auth/config） | ⚪ **待建**（本期僅佔位） |
 | ▦ | `#spec` | 設計規格說明 | SYSTEM | 靜態 | 🟢 文件入口 |
 | — | `#kit` / `#demo-control` | operator 工具（保留） | — | `#kit`：kit-manager-web（apps/kit-manager-web）；`#demo-control`：coordinator `/api/dev/*` + `/api/external/ifc-ready`（RealIfcConsolePage；2026-07-02 修正原 stale 後端欄） | operator-only，不砍 |
@@ -109,7 +113,7 @@
 
 **#viewer**：做成「證據矩陣」頁——openStage / focusPrim / selectPrims / clearHighlight 已實作（走既有 viewer 的 DataChannel），highlightPrimsRequest P1.5、first_frame_at P1、stage truth P1。這頁設計**比原型更成熟**（viewport 留在既有 viewer，不在 console 重渲染 WebRTC），應回寫進文件成為正式架構。
 
-**#conv**：讀真 `/api/external/ifc-ready`（實測看到 project 271 的 job、`model.usdc` artifact URL、review_session）。差距：mapping coverage 報告 P1；插隊/重試/並行數控制 P1（原型的拖曳排序在實作改為 controlled action endpoint——正確，但 endpoint 未建）。
+**#conv**（2026-07-10 更新：alias→`#minio`，功能併入 ModelDataPage）：讀真 `/api/external/ifc-ready`。原差距已陸續收口：插隊/重試（`POST /api/conversion/jobs/:id/prioritize|retry`）與手動觸發（`POST /api/conversion/trigger`）已建（IP allowlist＋確認對話框）；coverage 回填由 INFRA 切片（PR #315）落地。殘餘：>50 筆歷史分頁未排程。
 
 **#sessions**：ATC 隱喻正確、「port listening ≠ has frame」已內化。差距：occupied 證據鏈（first_frame_at + heartbeat + stage match）P1；Open primary/spectator 是 Phase 1 read-only。
 
@@ -249,7 +253,7 @@ states: idle → picked → running → scored → issued → delivered
 
 > 本卡「完成後長相」以 `ai-bim-geo-viewer-prototype.html` 為驗收示意（七區塊資訊架構＋GUID⇔USD 對應表）。**誠實驗收規則**：該檔為 canvas 示意，正式 3D 一律來自落地端 Kit 的 WebRTC 串流；示意畫面須帶可見浮水印「CANVAS 示意 · 非真 WebRTC 串流」，避免驗收場合誤認。
 
-**IX-3D-01 開啟 viewer**：輸入或選 `review_session_id` → 開 `coordinator /ui/open?session=`（server redirect；不在 console 內嵌 WebRTC）。
+**IX-3D-01 開啟 viewer**：預設路徑——輸入或選 `review_session_id` → 開 `coordinator /ui/open?session=`（server redirect）。**2026-07-10 修訂（R1，PR #319 追認）**：A1 治理工作台允許 **evidence-gated、手動啟動**的 inline viewer（`mode="a1-inline"`，`ReviewSessionViewerPane`→`EmbeddedViewer` iframe）；證據未齊一律 disabled、不自動啟動；**其他 console 頁仍禁內嵌 WebRTC**。
 **IX-3D-02 DataChannel 指令（as-built）**：openStage（成功證據=loaded stage URL 回報）/ focusPrim / selectPrims / clearHighlight。每次指令在 UI 留一行 trace（時間、指令、參數摘要、ack/timeout）——對齊「AI 透明可追」原則。 **傳輸機制（官方）**：瀏覽器端 `AppStreamer.sendMessage(JSON.stringify({event_type, payload}))` 經 WebRTC DataChannel 送出；Kit 端由 `omni.kit.livestream.messaging`(v1.2.1) 收下→解析 JSON→重發到內部 message bus 交給對應 handler；Kit→瀏覽器回 ack 用 `messaging.register_event_type_to_send(event_type)`。命名對齊 NVIDIA `web-viewer-sample` 的 `openStageRequest`→`openedStageResult` 往返——本案 openStage / highlightPrimsRequest / isolatePrimsRequest 一律沿用同一 `*Request`/`*Result` ack 慣例。
 **IX-3D-03 mapping table ↔ 3D 連動**：點 mapping 列 → 若 viewer 開著 → 發 focusPrim；無 usd_prim_path（mapping 缺）→ 該列標 ⚠ name_fallback 並 disabled 連動，tooltip「此構件未對應，無法定位」。
 **IX-3D-04 first frame / stage truth 證據（P1）**：viewer 端回報 `first_frame_at`；console 只顯示，不推定。
@@ -374,7 +378,7 @@ v4（差異化）：markup/waypoint ↔ BCF 雙向橋接；A2 三色 onion-skin�
 
 ## D.0 增補層前提（三條，動筆前先讀）
 
-1. **不動 A.1.1、不新增 hash 路由**：本 PART 不修改 A.1.1 正典路由表任何一列，不新增任何 hash 路由；22 條 hash（無斜線）與 `data.ts` PAGES 的同步關係維持不變。以下 4 張新卡皆不掛任何新 route，只描述在**既有頁**上疊加的租戶維度呈現。
+1. **不動 A.1.1、不新增 hash 路由**：本 PART 不修改 A.1.1 正典路由表任何一列，不新增任何 hash 路由；22 條 hash（無斜線）與 `EdgeConsole.tsx` switch 的對應維持不變（PAGES 導覽項自 2026-07-06 MD 三頁合一起少於 22 條——`#conv`/`#intake` 為 alias 不入導覽）。以下 4 張新卡皆不掛任何新 route，只描述在**既有頁**上疊加的租戶維度呈現。
 2. **租戶維度一律在 22 條 hash 之外**：租戶隔離主承載＝token `tenant_id` claim（由 coordinator 中介層集中解析），輔助＝子網域；path 前綴 `/t/:tenantId` 僅可作為 hash 之外的選配。**引入 tenant-scoped hash 屬待人類簽核的新決策**（觸發條件見 open question #1 裁決），不得在本 PART 或實作中偷渡。
 3. **各卡實作前置＝對應 SaaS-M 階段啟動**：卡上標記的 `SaaS-Mx` 為前置里程碑，詳規以 `ai-bim-governance-saas-遷移路線與里程碑.md` 為準；未到對應階段一律 `PLANNED·未建`。現況能力邊界一句話＝**已建成僅單站點單租戶閉環（tenant zero）**。
 

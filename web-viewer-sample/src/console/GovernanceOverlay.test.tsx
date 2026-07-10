@@ -16,22 +16,30 @@ const baseProps = {
   onCreateIssues: () => {},
 };
 
-describe("GovernanceOverlay A1–A10 overlay（MVP 接 A2/A3/A4/A8）", () => {
-  it("含 A2/A3/A4/A8 已有引擎區塊，且標 provenance", () => {
+describe("GovernanceOverlay 治理 overlay（R9：條目對齊權威 A1–A10）", () => {
+  it("已接能力歸 A1 管線／M4 連動基建，且標 provenance", () => {
     const html = renderToString(<GovernanceOverlay {...baseProps} />);
-    expect(html).toContain("A2"); // 轉檔 / 語意映射
-    expect(html).toContain("A3"); // 規則庫 / IDS
-    expect(html).toContain("A4"); // 完整性 / 治理分
-    expect(html).toContain("A8"); // Issue / BCF
+    expect(html).toContain("A1"); // 規則/IDS · 治理分 · Issue/BCF（A1 管線）
+    expect(html).toContain("M4"); // 語意映射（GUID⇔prim 連動基建，不掛 App 編號）
     expect(html).toContain("ec-prov"); // provenance 標記存在
   });
 
-  it("A5/A6/A9/A10 標願景且 disabled（不假裝 ready）", () => {
+  it("R9 衝突守門：不得以 asbuilt 呈現與權威 NOT BUILT 撞名的舊編號條目", () => {
     const html = renderToString(<GovernanceOverlay {...baseProps} />);
-    expect(html).toContain("A5");
-    expect(html).toContain("A9");
-    // 願景 phase 標記（PROV_LABEL.p3 / p4）。
-    expect(html).toMatch(/願景 · Phase [34]（後端未建）/);
+    // 舊 overlay 方案把「完整性/治理分」掛 A4、「Issue/BCF」掛 A8 且標 asbuilt——
+    // 與權威 A4（語意搜尋·p4）/A8（Synthetic Data·p4）正面衝突，R9 除役。
+    expect(html).not.toContain("A4</span><span class=\"gov-engine-title\">完整性");
+    expect(html).not.toContain("A8</span><span class=\"gov-engine-title\">Issue / BCF");
+    // 權威 A4 出現時只能是願景語意（語意搜尋，p4 願景標籤）。
+    expect(html).toContain("語意搜尋與模型問答");
+  });
+
+  it("願景/待建：碰撞歸 A3 clash（未開工·ifcclash 已選型），其餘標願景 disabled（不假裝 ready）", () => {
+    const html = renderToString(<GovernanceOverlay {...baseProps} />);
+    expect(html).toContain("ifcclash");
+    expect(html).toContain("後端待建 · P1"); // clash＝p1（已核可 plan 待執行）
+    // 願景 phase 標記（PROV_LABEL.p4）。
+    expect(html).toMatch(/願景 · Phase 4（後端未建）/);
   });
 
   it("無願景假數字", () => {
@@ -55,8 +63,8 @@ describe("GovernanceOverlay spectator 唯讀 / 等待 viewer（誠實 disabled�
     );
     expect(html).toContain(GOV_PANEL_REASON_TEXT.spectator_read_only); // 誠實表態
     expect(html).toContain("gov-readonly"); // 容器標唯讀（CSS 禁用操作）
-    // 面板內容仍渲染（不隱藏）：A2/A3/A4/A8 仍在。
-    expect(html).toContain("A2");
+    // 面板內容仍渲染（不隱藏）：已接能力（A1 管線／M4 連動）仍在。
+    expect(html).toContain("M4");
     // 清除標示鈕對 spectator 仍可見（不隱藏，誠實唯讀），且 disabled。
     expect(html).toContain("清除 3D 標示");
   });

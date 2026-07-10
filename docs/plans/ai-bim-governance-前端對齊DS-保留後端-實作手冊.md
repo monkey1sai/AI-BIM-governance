@@ -44,10 +44,11 @@
 6. **誠實資料契約不動**：A1 `RuleResult` / A2 `DiffItem` 的 `usd_prim_path` 未映射時為 `null`（**禁捏造**）；semantics endpoint 的 `classification` / `geometry` 維持 `null` + `roadmap[]`；`coverage_ratio==1` 在 `usd_stage_enumeration` 下是**結構性自我參照**——前端**可重新標註說明**，但**不得改後端數值**；`source_kind`（`local_fs` vs `s3`）是 UI 用來判斷檔案來源的誠實標記。
 7. **穩定 enum（逐字 echo，禁自創）**：`change_type`（added/removed/moved/geometry_changed/property_changed）；issue `status`（open/assigned/in_progress/resolved/rejected/reopened）；`severity`（low/medium/high/critical）；conversion `status`（queued/running/succeeded/succeeded_with_warnings/failed/cancelled）；session `status`（queued/active/closing/closed）；ifc-ready job status；`KitInstance.status`。`ifc_guid` 是 BCF/governance 永遠存在的主鍵。
 8. **rule-run export 只支援 `?fmt=excel`**（`fmt=bcf` → 400）。**BCF 匯出是獨立 endpoint**（`/api/governance/bcf/export` → `.bcfzip`），且**只有在用 `from-rule-run`/`from-diff` 建立 issues 之後**才可用。BCF gating UI 必須誠實呈現這個兩步流程。
-9. **control-plane 授權不動**：`prioritize`/`retry`/`watch` 是 IP-allowlist gated 且 audited；`/close` **故意不 gate**（cooperative/operator 雙語意，IX-SS-04）；Kit `open`/`close` 需 `x-dev-token`。前端**不得**假設這些是公開/匿名，也**不得**移除目前送出的 auth header。
+9. **control-plane 授權不動**：`prioritize`/`retry`/`watch`/`trigger`（`POST /api/conversion/trigger`，2026-07-10 認列既有實作）是 IP-allowlist gated 且 audited（trigger 另有 IntentDialog 確認＋idempotency）；`/close` **故意不 gate**（cooperative/operator 雙語意，IX-SS-04）；Kit `open`/`close` 需 `x-dev-token`。前端**不得**假設這些是公開/匿名，也**不得**移除目前送出的 auth header。
 10. **權威歸屬凍結**：coordinator 對 project/artifact metadata **只是 reference，非資料權威**。轉檔 artifact / `quality_metrics` / lineage 仍從 streaming-server（經 proxy）讀；rule/diff/issue 權威仍在 governance-service（經 proxy）。**不得**把權威搬進前端或 coordinator。
 11. **回應 envelope key 是載重結構（不得 flatten/改名）**：list 用 `{items,count}`（conversions、ifc-ready）或 `{issues}`/`{projects}`/`{results}`/`{items}`；failures 用 `{items,total,limit,offset}`。
 12. **DO-NOT-RE-ADD（2026-05-21 已退役）**：socket 協作 server-push（`highlightRequest`/`selectionUpdate`/`annotationCreate`、`getReviewIssues`、`createAnnotation`、`/api/model-versions/:id/review-bootstrap`）。只剩 `/events` 與 `/lifecycle-events`。**禁改的後端檔**：governance-service（`app.py`、`diff_engine/api.py`、`federation/api.py`、`issues/api.py`、`bcf/api.py`、`file_library/api.py`）、coordinator（`src/app.ts`、`src/routes/governanceProxy.ts`）、streaming `conversion_authority.py`。
+13. **加性慣例（2026-07-10，R6 止血線）**：新增 coordinator 端點一律進 `src/routes/*.ts`（沿 `governanceProxy.ts` 先例，`app.ts` 僅允許一行 mount）；新增 governance 端點一律進所屬 domain 的 `api.py`（rule-run 面進 `rule_engine/api.py`）。**禁止再向 `app.ts`／`app.py` 巨石 append**；既有巨石拆分屬待人類簽核的獨立決策，不在本條範圍。
 
 ### 1.1 Approved Backend-Freeze Exceptions
 
@@ -56,6 +57,9 @@
 | 日期 | 例外 | Requirement source | 邊界 |
 |---|---|---|---|
 | 2026-07-08 | 新增 A1 for-ifc-ready rule-run proxy：`/api/governance/rule-runs/for-ifc-ready/:jobId` | `docs/superpowers/specs/2026-07-08-a1-minio-downloaded-rule-run-design.md` | 僅服務 A1 v2 從 ifc-ready job 對應已下載 IFC 執行 rule-run；不允許改名既有 proxy、不允許新增租戶/host/path 語意、不允許把 A1 選檔改成轉檔觸發器。 |
+| 2026-07-09（2026-07-10 追認） | `GET /api/governance/rule-runs`（history 清單）＋ `source_metadata` 持久化（commit `4949b9b`，動 `governanceProxy.ts`／`app.py`／`db.py`） | `docs/superpowers/plans/2026-07-09-a1-minio-worktree-conflict-resolution.md`＋`docs/superpowers/specs/2026-07-10-plans-code-remediation-design.md` R3 | 唯讀 history proxy＋additive metadata 欄；不改名既有 proxy、不洩漏 host path/secret、不改變 rule-run 建立語意。 |
+| 2026-07-09（2026-07-10 追認） | `POST /api/external/ifc-ready/:jobId/review-session`＋A1 inline viewer（`mode="a1-inline"`，PR #319） | PR #319＋`docs/superpowers/specs/2026-07-10-plans-code-remediation-design.md` R1（IX-3D-01 v2.1 修訂） | 僅 A1 工作台、evidence-gated＋手動啟動；其他 console 頁仍禁內嵌 WebRTC；不改 `/ui/open` 凍結 handoff。 |
+| 2026-07-10（預簽） | `governance-service/app.py` `export_rule_run` cache-miss 改由 DB 重建（`_RUN_CACHE` miss → `store.get_run`＋`get_results`） | `docs/superpowers/specs/2026-07-10-plans-code-remediation-design.md` R6（bug fix，行為僅「409→成功匯出」） | 僅此函式；不動其他 app.py 端點；匯出格式與 `?fmt=excel` 契約不變。 |
 
 ---
 
@@ -155,7 +159,7 @@ repo `Prov` 型別（`data.ts:6`）**恰好 7 值、無 `todo`**：`asbuilt` / `
 ### 5.A Hero Built（A1 + A2 + A3-federation；最高優先，先對齊這三條）
 
 #### `#a1`（A1GovernanceWorkbenchPage）— HERO BUILT（**v2 改版 2026-07-02 · D10**）
-- **DS 視覺**：頁首「① 選檔 · 偵測到的 IFC」Panel：來源切換 pills（local_fs 檔案庫／MinIO bucket 偵測）+ 選檔元件（三樣式擇一：下拉 optgroup／級聯 pills／樹狀；原型供挑）+ 選定檔列（key·大小·mtime·「測試資料」Badge）；5-step Stepper（**選檔→檢核→結果→審查(Issue·BCF)→交付**）；記分板 MetricCard（來自真實 run）；可點 rule 清單；**BCF 審查面板**（topic 列：ID·標題·規則碼·severity·狀態 chip 可流轉·指派 dashed 待建標；footer 匯出 BCF 2.1/Excel）；**A1 連動橋**：四格證據 rail + GUID 佇列 + 高亮鍵（**不用 hatched phase Panel 視窗佔位，不內嵌 3D**）。
+- **DS 視覺**：頁首「① 選檔 · 偵測到的 IFC」Panel：來源切換 pills（local_fs 檔案庫／MinIO bucket 偵測）+ 選檔元件（三樣式擇一：下拉 optgroup／級聯 pills／樹狀；原型供挑）+ 選定檔列（key·大小·mtime·「測試資料」Badge）；5-step Stepper（**選檔→檢核→結果→審查(Issue·BCF)→交付**）；記分板 MetricCard（來自真實 run）；可點 rule 清單；**BCF 審查面板**（topic 列：ID·標題·規則碼·severity·狀態 chip 可流轉·指派 dashed 待建標；footer 匯出 BCF 2.1/Excel）；**A1 連動橋**：四格證據 rail + GUID 佇列 + 高亮鍵（**不用 hatched phase Panel 視窗佔位**；inline 3D 僅限 evidence-gated、手動啟動的 `a1-inline` 路徑——IX-3D-01 v2.1（2026-07-10 R1）修訂版，其他頁不內嵌）。
 - **保留後端 API**：`governanceClient` → `GET /api/governance/files/tree`、`POST /api/governance/rule-runs`、`GET .../rule-runs/:id`、`/results`、`/failures`、`/export?fmt=excel`、`GET /api/governance/issues?rule_run=`、`POST /api/governance/issues/:id/transition`、`POST /api/governance/issues/from-rule-run/:runId`、`GET /api/governance/bcf/export`；`coordinatorClient` → `GET /api/minio/objects?prefix=&delimiter=/`、`runtimeStatus` + `POST /api/review-sessions/:id/first-frame`；EmbeddedViewer postMessage highlight（P1.5）。**全部既存，零後端改動；assignee 欄不存在（O7）——前端不得自建。**
 - **任務**：1) 新增 SourcePicker：雙來源切換 + 選檔元件（切來源回 idle、下游清空；任一邊 list 失敗只降該邊，D-31）。2) FlowBar→DS Stepper 綁 `a1Machine.ts`（新增 picked 前置；非 timer）。3) 記分板 Metric→MetricCard，值來自真實 `RuleRunResult.summary`，**禁 hardcode**。4) 新增 BcfReviewPanel：issues list + transition（IntentDialog 模式 3）；指派 dashed 待建標（D-32）。5) 新增 A1BridgeRail：證據單一來源＝`#sessions`／runtime 同輪詢值（IX-SS-05，D-33）；IX-A1-06 四條件 gating 不變。6) tokenize inline layout。
 - **改檔**：`pages.tsx`、`a1Machine.ts`、`components.tsx`（SourcePicker/BcfReviewPanel/A1BridgeRail）、`EmbeddedViewer.tsx`、`governanceClient.ts`、`coordinatorClient.ts`。
@@ -188,12 +192,12 @@ repo `Prov` 型別（`data.ts:6`）**恰好 7 值、無 `todo`**：`asbuilt` / `
 
 ### 5.B 其他 Built 頁（既有功能，套 DS 視覺 + 凍結 API）
 
-#### `#conv`（ConversionSchedulingPage）— BUILT
+#### `#conv`（alias→`#minio`）— 已併入 ModelDataPage（2026-07-06 MD 三頁合一 #303/#304；`ConversionSchedulingPage` 已除役）
 - **DS 視覺**：Panel + 表 + coverage MetricCard；MinIO watch toggle（StatusLED observable 狀態）；prioritize/retry Button；失敗診斷 disclosure。
 - **保留後端 API**：`coordinatorClient` → `GET /api/external/ifc-ready`、`GET /api/external/minio-watch/status`、`GET /api/conversions/:jobId/quality-metrics`、`POST /api/conversion/jobs/:id/prioritize`、`POST .../retry`、`PUT /api/conversion/watch`；轉檔結果經 `/api/dev/conversions*` proxy。
 - **任務**：1) job 清單→DS 表 + status Badge（conversion status enum 逐字）。2) `coverage_ratio` 顯示但**誠實重標**（==1 在 `usd_stage_enumeration` 下是自我參照、非 lossless）——後端值不動、UI 加 note。3) MinIO toggle→StatusLED + IntentDialog（**保留 IP-allowlist auth header**）。4) prioritize/retry 維持 allowlist gating；422 誠實顯示。
-- **改檔**：`ConversionSchedulingPage.tsx`、`coordinatorClient.ts`、`components.tsx`。
-- **驗收**：載 `#conv`，截圖 job 表 + coverage note；toggle watch 斷言 `PUT /api/conversion/watch` payload 回 status；無直連 `:49101`。
+- **改檔**：`modelData/ModelDataPage.tsx`、`modelData/GlobalConversionPane.tsx`、`coordinatorClient.ts`、`components.tsx`。
+- **驗收**：載 `#minio`（`#conv` 為 alias 轉址），截圖 GlobalConversionPane job 表 + coverage note；toggle watch 斷言 `PUT /api/conversion/watch` payload 回 status；無直連 `:49101`。
 - **Prov 誠實**：coverage 反映來源（artifact）；coverage_ratio 重標（值不變）；watch 狀態 observable，**不預設為開**。
 
 #### `#sessions`（SessionManagementPage）— BUILT（**v2：新增 A1 連動橋供應端**）
@@ -362,7 +366,7 @@ repo `Prov` 型別（`data.ts:6`）**恰好 7 值、無 `todo`**：`asbuilt` / `
 
 - **F0 — token tier 抽取（低風險、加性）**：在 `edge-console.css .ec-root` 補命名 token（`--ec-fs-*` type scale、`--ec-sp-*` 4px spacing、`--ec-r-*` radius、`--ec-shadow-*`、`--ec-glow-grn`、`--ec-ease/-dur*`、`--ec-track-label/-tag`、`--ec-on-grn`、`--ec-surface-2`、`--ec-sans`）。**只新增、先不取代 inline 值**——零視覺改動。
 - **F1 — 共用元件 refactor（一次改、全站受惠）**：Panel/Card、Btn、Stepper(FlowBar)、StatusLED(.ec-status-dot)、MetricCard(Metric)、NavItem、HealthChip、ProvTag(只換視覺)；**新建** Badge、Pill。保留所有領域契約（caption/prov/testid/enum）。
-- **F2 — 逐頁套用**（順序）：① hero `#a1`/`#a2`/`#a3`/`#issues` → ② 其他 built 頁（`#conv`/`#sessions`/`#minio`/`#overview`/`#apps`/`#coordinator`/`#intake`/`#runtime`/`#kit`/`#demo-control`/`#semantic`/`#spec`/`#home`）→ ③ partial 頁（`#viewer`/`#gpu`/`#review`/`#instances`）→ ④ NOT BUILT 頁（`#a4`–`#a10`/`#reports`/`#admin`）維持 phase Panel。每頁把 inline font-size/padding/gap 換成 F0 token。
+- **F2 — 逐頁套用**（順序）：① hero `#a1`/`#a2`/`#a3`/`#issues` → ② 其他 built 頁（`#sessions`/`#minio`（含原 `#conv`/`#intake` alias）/`#overview`/`#apps`/`#coordinator`/`#runtime`/`#kit`/`#demo-control`/`#semantic`/`#spec`/`#home`）→ ③ partial 頁（`#viewer`/`#gpu`/`#review`/`#instances`）→ ④ NOT BUILT 頁（`#a4`–`#a10`/`#reports`/`#admin`）維持 phase Panel。每頁把 inline font-size/padding/gap 換成 F0 token。
 - **F3 — 全頁 Playwright evidence**：每頁依 §5 驗收條 + §7 規約取證。
 
 每個 milestone 完成 = 對應頁 §5 驗收通過 + 後端契約（§1）零違反 + screenshot 比對不退步。

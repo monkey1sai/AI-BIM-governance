@@ -6,7 +6,7 @@
 //  (c) 新增衍生值 recordsIncomplete = recordsTruncated || 載入失敗旗標（M 頁 loadRecordsErr 語意併入）。
 //  (d) loadRecords 的 catch 同時設 recErr（CV 語意）與 loadRecordsErr 旗標（M 語意）。
 // 誠實鐵律語意保留：截斷 → truncated 旗標；成功或失敗都 settle 過才算 loaded；兩端點錯誤互不污染。
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { t } from "../i18n";
 import {
   coordinatorClient,
@@ -60,42 +60,66 @@ export function useConversionData(): ConversionData {
   // 回傳兩端點各自抓取成功與否（jobsOk / mwOk）：呼叫端（Task 4 runAction）用它判斷控制動作後的證據型
   // 刷新是否真取得新狀態。load() 自身對兩端點 allSettled 不 throw（避免 mount/Refresh 未捕捉），故以
   // 回傳值（非 throw）讓呼叫端可辨「POST 成功但重抓失敗」這條分支。
+  // F13（2026-07-10）：同步防重入——setBusy 是非同步 state，同一事件循環連呼兩次攔不住
+  //（sibling useConversionActions.ts:41 同一 race 的既解法）。這裡用「共享 in-flight promise」
+  // 去重而非 boolean ref 直接丟棄：重入呼叫者拿到同一份證據結果（runAction 依回傳值判斷
+  // 證據型刷新是否真取得新狀態，回假 {false,false} 會造成假錯誤）。
+  const loadInFlightRef = useRef<Promise<{ jobsOk: boolean; mwOk: boolean }> | null>(null);
   const load = useCallback(async (): Promise<{ jobsOk: boolean; mwOk: boolean }> => {
-    setBusy(true); setErr(null); setMwErr(null);
-    // 兩個端點獨立 settle：minio-watch/status 失敗不污染 ifc-ready；各自有獨立錯誤 state。
-    const [jobsRes, mwRes] = await Promise.allSettled([
-      coordinatorClient.listIfcReady(50),
-      coordinatorClient.minioWatchStatus(),
-    ]);
-    const jobsOk = jobsRes.status === "fulfilled";
-    const mwOk = mwRes.status === "fulfilled";
-    if (jobsRes.status === "fulfilled") {
-      setJobs(jobsRes.value.items);
-      // count（slice 前總數）> items.length 即被回傳窗上限截斷 → 供接收端重驗誠實退 indeterminate。
-      setJobsTruncated(jobsRes.value.count > jobsRes.value.items.length);
-    } else setErr(`${t("未連線 coordinator /api/external/ifc-ready：", "Not connected to coordinator /api/external/ifc-ready: ")}${String(jobsRes.reason)}`);
-    setJobsLoaded(true); // 成功或失敗都算 settle 過一次；接收端重驗不再誤把「還沒抓完」當「查無」
-    if (mwRes.status === "fulfilled") setMw(mwRes.value);
-    else setMwErr(`${t("未連線 coordinator /api/external/minio-watch/status：", "Not connected to coordinator /api/external/minio-watch/status: ")}${String(mwRes.reason)}`);
-    setBusy(false);
-    return { jobsOk, mwOk };
+    if (loadInFlightRef.current) return loadInFlightRef.current;
+    const inFlight = (async () => {
+      setBusy(true); setErr(null); setMwErr(null);
+      // 兩個端點獨立 settle：minio-watch/status 失敗不污染 ifc-ready；各自有獨立錯誤 state。
+      const [jobsRes, mwRes] = await Promise.allSettled([
+        coordinatorClient.listIfcReady(50),
+        coordinatorClient.minioWatchStatus(),
+      ]);
+      const jobsOk = jobsRes.status === "fulfilled";
+      const mwOk = mwRes.status === "fulfilled";
+      if (jobsRes.status === "fulfilled") {
+        setJobs(jobsRes.value.items);
+        // count（slice 前總數）> items.length 即被回傳窗上限截斷 → 供接收端重驗誠實退 indeterminate。
+        setJobsTruncated(jobsRes.value.count > jobsRes.value.items.length);
+      } else setErr(`${t("未連線 coordinator /api/external/ifc-ready：", "Not connected to coordinator /api/external/ifc-ready: ")}${String(jobsRes.reason)}`);
+      setJobsLoaded(true); // 成功或失敗都算 settle 過一次；接收端重驗不再誤把「還沒抓完」當「查無」
+      if (mwRes.status === "fulfilled") setMw(mwRes.value);
+      else setMwErr(`${t("未連線 coordinator /api/external/minio-watch/status：", "Not connected to coordinator /api/external/minio-watch/status: ")}${String(mwRes.reason)}`);
+      setBusy(false);
+      return { jobsOk, mwOk };
+    })();
+    loadInFlightRef.current = inFlight;
+    try {
+      return await inFlight;
+    } finally {
+      loadInFlightRef.current = null;
+    }
   }, []);
   // 獨立抓取 ConversionLedger，不阻塞 load() 流程。setRecErr(null) 在本 callback 開頭清；不與 setErr
   //（ifc-ready 錯誤）共用，誤差各自獨立。
+  const recordsInFlightRef = useRef<Promise<void> | null>(null);
   const loadRecords = useCallback(async (): Promise<void> => {
-    setRecErr(null);
+    if (recordsInFlightRef.current) return recordsInFlightRef.current; // F13：同步防重入（共享 in-flight）
+    const inFlight = (async () => {
+      setRecErr(null);
+      try {
+        const res = await coordinatorClient.getConversionRecords(100); // 變更點 (b)：50 → 100，對齊 M 頁上限
+        setRecords(res.items);
+        // records 被回傳窗上限截斷（count > items.length）→ 查無 key 時退 indeterminate 而非 not_found。
+        setRecordsTruncated(res.count > res.items.length);
+        setLoadRecordsErr(false); // 成功載入 → 清除前次失敗旗標
+      } catch (e) {
+        // 變更點 (d)：同時設 recErr（CV 誠實錯誤訊息）與 loadRecordsErr 旗標（M chip 退 indeterminate）。
+        setRecErr(`未連線 coordinator /api/conversion/records：${String(e)}`);
+        setLoadRecordsErr(true);
+      } finally {
+        setRecordsLoaded(true); // 成功或失敗都算 settle 過一次，接收端重驗才有依據判斷「真的查無」
+      }
+    })();
+    recordsInFlightRef.current = inFlight;
     try {
-      const res = await coordinatorClient.getConversionRecords(100); // 變更點 (b)：50 → 100，對齊 M 頁上限
-      setRecords(res.items);
-      // records 被回傳窗上限截斷（count > items.length）→ 查無 key 時退 indeterminate 而非 not_found。
-      setRecordsTruncated(res.count > res.items.length);
-      setLoadRecordsErr(false); // 成功載入 → 清除前次失敗旗標
-    } catch (e) {
-      // 變更點 (d)：同時設 recErr（CV 誠實錯誤訊息）與 loadRecordsErr 旗標（M chip 退 indeterminate）。
-      setRecErr(`未連線 coordinator /api/conversion/records：${String(e)}`);
-      setLoadRecordsErr(true);
+      return await inFlight;
     } finally {
-      setRecordsLoaded(true); // 成功或失敗都算 settle 過一次，接收端重驗才有依據判斷「真的查無」
+      recordsInFlightRef.current = null;
     }
   }, []);
   // mount 時同時觸發 load()（ifc-ready + watcher）與 loadRecords()（ledger），獨立並行。

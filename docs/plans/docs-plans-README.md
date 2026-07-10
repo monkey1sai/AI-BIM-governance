@@ -32,11 +32,11 @@
 | 主題 | 現行裁決 | Superseded / 禁用說法 |
 |---|---|---|
 | MinIO `#minio` | `#minio` 已接 coordinator `GET /api/minio/objects?prefix=&delimiter=/`，是真 MinIO raw-folder 逐層唯讀瀏覽；`GET /api/governance/files/tree` local_fs 仍是 A1 v2 另一選檔來源。 | 禁寫「只剩 local_fs 兩層樹」、「真 MinIO 三層待接」。三層「專案/種類/版本」只是 watcher 解析語意，不是 bucket 結構宣稱。 |
-| IFC→USD 轉檔紀錄 | streaming-server `GET /api/conversions` 與 coordinator `/api/dev/conversions` proxy 皆在；缺的是前端 console 歷史頁呈現。 | 禁寫「完全無持久化」、「完全沒接線」。 |
+| IFC→USD 轉檔紀錄 | streaming-server `GET /api/conversions` 與 coordinator `/api/dev/conversions` proxy 皆在；前端歷史呈現已於 2026-07-06 落地（ModelDataPage GlobalConversionPane「轉檔歷史」折疊區，#303）。殘餘：獨立第一入口頁與 >50 筆分頁未排程。 | 禁寫「完全無持久化」、「完全沒接線」、「缺前端歷史頁」。 |
 | A1 v2 選檔 | 選檔雙來源：local_fs + MinIO；A1 選檔只跑 governance rule-run，不觸發 IFC→USD 轉檔、不寫 bucket。 | 禁把 A1 檔案下拉當 conversion trigger。 |
 | A1 for-ifc-ready rule-run | 2026-07-08 Superpowers spec 標示 `/api/governance/rule-runs/for-ifc-ready/:jobId` 已實作；此屬凍結契約 approved exception，不能外推成任意 proxy 可改。 | 禁把該例外當成 §1 後端凍結全面放寬。 |
 | A1 built 粒度 | A1 core closure built；v2 新增前端面（雙來源接線、BCF 審查面板、A1BridgeRail）仍依矩陣 §4.4 標示，不得未驗收即宣稱完整交付。 | 禁把「A1 built」解讀成所有 v2 user-facing surface 均已 E2E complete。 |
-| A3 clash | A3 federation built；clash NOT BUILT · blocked-on-OCC。舊 A3 clash implementation plan 若無新決策，不得重啟。 | 禁顯示真實 clash 數字；禁依 2026-06-23 plan 直接重開 clash backend。 |
+| A3 clash | A3 federation built；clash NOT BUILT · **未開工**。O6 已裁定官方 `ifcclash` 路線（2026-07-07 spec），依 `docs/superpowers/plans/2026-07-07-a3-clash-ifcclash.md` 執行。 | 禁顯示真實 clash 數字；禁再引用「blocked-on-OCC」與 2026-06-23 舊 clash plan。 |
 | SaaS | SaaS docs 全為 PLANNED 增補層；現況是 tenant zero，IFC/USD payload 不出站。 | 禁把 `/v1`、tenant ACL、計量計費、SaaS services 寫成已支援。 |
 | Full-system E2E | 必須同時具備 governance CPU semantic E2E 與 Kit WebRTC visual/runtime evidence。 | 舊 `docs/verification` / `docs/evidence` 不能單獨作 current full-system pass；黑畫面或缺 screenshot 只能標 runtime/stage-load partial。 |
 
@@ -112,13 +112,13 @@ A1/A2/A3/A5 共用同一 Issue/BCF schema（見 v3 §2.0.3），不要各做各�
 
 **1 — watcher 已實作**：`bim-review-coordinator/src/services/minioWatcher.ts` `deriveIntakeFromKey` 解析 ≥3 段 key；種類=倒數第二段、版本=末段；中文資料夾→`mv_<hash8>`。env opt-in 預設關；真實 MinIO endpoint（`192.168.20.234:9000` / bucket `bim-control`）由部署區 .env 注入，不硬編碼。live 多層觸發 not observed。
 
-**2 — 轉檔紀錄**：轉檔權威 `bim-streaming-server`（`GET /api/conversions` list / `/{id}` / `/{id}/result`）已存在；coordinator 已有 `/api/dev/conversions` proxy 轉發 streaming list。**但前端 console 未渲染成「轉檔歷史紀錄頁」**——精確說法：後端 list + proxy 皆在，缺的是 UI 呈現層。禁寫「完全無持久化」或「完全沒接線」。
+**2 — 轉檔紀錄**：轉檔權威 `bim-streaming-server`（`GET /api/conversions` list / `/{id}` / `/{id}/result`）已存在；coordinator 已有 `/api/dev/conversions` proxy 轉發 streaming list。**前端歷史呈現已落地（2026-07-06，#303）**：`ModelDataPage` 的 GlobalConversionPane「轉檔歷史（conversion service pass-through）」折疊區渲染前 50 筆，含誠實空/錯誤狀態。殘餘缺口：獨立第一入口頁與 >50 筆分頁未排程。禁寫「完全無持久化」、「完全沒接線」或「缺前端歷史頁」。
 
 **3 — `#minio` 頁現況（2026-07-02 更新）**：頁面已升級為**真 MinIO raw-folder 逐層瀏覽**（coordinator `GET /api/minio/objects?prefix=&delimiter=/`，唯讀；folders[]=CommonPrefixes、objects[]=當層直屬檔），中文資料夾原樣顯示；舊版「local_fs 兩層樹、真 MinIO 待接」已過時。「專案/種類/版本」三層語意仍只是 watcher 解析語意（釘子 #1），不得當成 bucket 實際結構宣稱；bucket layout panel 仍標 `prov="demo"`（語意參照）。`GET /api/governance/files/tree`（local_fs）繼續存在，是 **A1 v2 選檔的另一來源**：雙來源切換（local_fs / MinIO），兩條路徑不得互冒。
 
-**4 — 觸發**：自動觸發**僅靠 watcher 偵測到新/變更的 key**。**無已接線的手動佇列/插隊 UI 觸發新轉檔**——`#conv` 的 prioritize/retry 只對既有 ifc-ready job 排序/重試；`PUT /api/conversion/watch` 只開關 watcher 生命週期。**A1 v2 選檔不是觸發器**：從下拉選到 MinIO 檔只對該檔跑 rule-run（CPU，governance-service），不觸發 IFC→USD 轉檔、不寫 bucket。
+**4 — 觸發**：自動觸發靠 watcher 偵測新/變更的 key；**手動觸發已接線（2026-06-30 起）**：`POST /api/conversion/trigger`（IP allowlist＋IntentDialog 確認＋idempotency；GlobalConversionPane／ObjectDetailPane「觸發轉檔」按鈕），僅對**未被 watcher 偵測**或**終局失敗**（`force_retrigger=true`）的 MinIO 物件建新請求。prioritize/retry 仍只對既有 ifc-ready job 排序/重試；`PUT /api/conversion/watch` 只開關 watcher 生命週期。**A1 v2 選檔不是觸發器**：從下拉選到 MinIO 檔只對該檔跑 rule-run（CPU，governance-service），不觸發 IFC→USD 轉檔、不寫 bucket。
 
-短期真相源 = local_fs storage（三層規約已落地 270/機電|水電|消防/000001~000003+竣工.ifc）。**270/889/990+271 皆為 MinIO 暫時測試 IFC 檔，須在 UI 標示測試資料。** 轉檔輸出 `model.usdc` 寫回對應位置 + coverage 報告（不承諾 100% 無損；conv-coverage=1 在 usd_stage_enumeration 下為結構性自我參照，須加 `conv-coverage-selfref-note`）。
+短期真相源 = local_fs storage（三層規約已落地 270/機電|水電|消防/000001~000003+竣工.ifc）。**測試資料歸屬（2026-07-10 R8 修正）：MinIO bucket 為真實資料監控來源（不標測試資料）；local_fs storage 270/889/990/271 為本地測試 fixtures，A1 選檔 local_fs 來源須標「測試資料」（清單由 coordinator config 驅動，不得裸寫編號）。** 轉檔輸出 `model.usdc` 寫回對應位置 + coverage 報告（不承諾 100% 無損；conv-coverage=1 在 usd_stage_enumeration 下為結構性自我參照，須加 `conv-coverage-selfref-note`）。
 
 ### 8. 服務邊界（6 服務，埠以《互動規格》§8 / 《開發軌跡》§2.0.2 為準）
 
@@ -126,13 +126,14 @@ A1/A2/A3/A5 共用同一 Issue/BCF schema（見 v3 §2.0.3），不要各做各�
 |---|---|---|---|
 | coordinator | `127.0.0.1:8004` | session/instance、`/ui`、`/api/governance/*` proxy、ifc-ready intake、`/ui/open?session=` redirect | 不渲染 / 不開 USD stage / 不奪 Kit 控制權威 |
 | governance-service | `127.0.0.1:49102` | A1 rule-run / A2 diff / A3 federation / Issue / BCF / `/api/files/tree`（CPU） | **永遠 host-native、browser 不直連，一律經 coordinator proxy** |
-| bim-streaming-server | 信令 49100 / 串流 47998 / 轉檔 API 49101 / spectator 49110 起（KIT_SPECTATOR_COUNT 決定範圍） | IFC→USDC 轉檔 / Kit runtime / viewport / WebRTC + DataChannel | 不處理登入 / 不當 project 資料權威 / 不當長期 Issue DB |
+| bim-streaming-server | 信令 49100 / 串流 47998 / 轉檔 API 49101 / spectator 兩條序列（signaling 49110 起、media 48008 起、stride 10；KIT_SPECTATOR_COUNT 決定範圍） | IFC→USDC 轉檔 / Kit runtime / viewport / WebRTC + DataChannel | 不處理登入 / 不當 project 資料權威 / 不當長期 Issue DB |
 | web-viewer-sample（viewer） | `127.0.0.1:5173` | 顯示串流 / DataChannel 互動 / 前端 spectator gate | 不啟 Kit / 不分配 GPU / 前端 `disabled` 不是授權邊界 |
 | kit-manager-api | `127.0.0.1:8010` | `#instances`/`#runtime` 真遙測、Kit 啟停 / GPU pool 控制權威 | — |
-| MCP sidecars | `9901/9902/9903` | kit-mcp / usd-code-mcp / omni-ui-mcp 官方驗證 | — |
+| kit-manager-web | `127.0.0.1:5174` | kit-manager-api 的 operator 前端（Mode B compose 部署） | 不作產品入口；收斂觸發條件＝console Kit 頁功能對等 |
+| MCP sidecars | `9901/9902/9903` | kit-mcp / usd-code-mcp / omni-ui-mcp 官方驗證（**dev-time 驗證工具，非 golden-path runtime、不由 deploy.ps1 編排**） | — |
 
-### 9. BCF / IFC diff 對齊 IfcOpenShell 官方
-版本比對一律用 `ifcdiff`（JSON、GlobalId 鍵），不自寫 diff；BCF 用官方 bcf 庫語意（現行 2.1 保留，3.0 為升級目標）。
+### 9. IFC diff / BCF 對齊 IfcOpenShell 官方語意
+版本比對現行採**自製多級鍵引擎**（`governance-service/diff_engine`：GlobalId→(is_a,Tag)→type+Name+loc；moved 用 placement Δ、property 用 pset hash；語意對齊 ifcdiff——GlobalId 主鍵、JSON 輸出）。**2026-07-10 簽核（R2）**：選型理由＝三級配對抗 GUID churn＋moved 責任語意＋直接對接 Issue/3D schema；已知限制＝跨 IFC schema 比對不保證正確，碰到跨 schema 需求時再評估官方 `ifcdiff`。BCF 用官方 bcf 庫語意（現行 2.1 保留，3.0 為升級目標）。
 
 ### 10. IFC→USD 對齊 IfcConvert 官方能力邊界
 IfcConvert 無 USD 輸出；自製 IFC→USD 必須：(a) 以 GlobalId 命名 prim（`G_<sanitized_guid>`）、(b) 出 mapping coverage 報告（不承諾 100% 無損）；備援路線 `IfcConvert --use-element-guids` → glb。
@@ -148,9 +149,9 @@ IfcConvert 無 USD 輸出；自製 IFC→USD 必須：(a) 以 GlobalId 命名 pr
 
 | App | 狀態 | 真相要點 |
 |---|---|---|
-| A1 治理檢核 | **built** | **v2 流程：選檔（雙來源）→ 檢核 → 結果 → 審查（Issue·BCF）→ 交付**。rule_engine + ifctester(IDS) + issues + BCF 2.1；選檔=`GET /api/governance/files/tree`（local_fs·built）+`GET /api/minio/objects`（真 MinIO 逐層·built，唯讀），檔案一律標「測試資料」；BCF 審查面板=issues API（列表/狀態流轉 built；**指派欄待建 P1**）；3D 高亮 P1.5——A1 連動橋只讀 `#sessions` 證據，證據未齊鍵保持 disabled |
+| A1 治理檢核 | **built** | **v2 流程：選檔（雙來源）→ 檢核 → 結果 → 審查（Issue·BCF）→ 交付**。rule_engine + ifctester(IDS) + issues + BCF 2.1；選檔=`GET /api/governance/files/tree`（local_fs·built）+`GET /api/minio/objects`（真 MinIO 逐層·built，唯讀），local_fs 測試 fixtures 標「測試資料」（MinIO＝真實資料監控，不標；R8）；BCF 審查面板=issues API（列表/狀態流轉 built；**指派欄待建 P1**）；3D 高亮 P1.5——A1 連動橋只讀 `#sessions` 證據，證據未齊鍵保持 disabled |
 | A2 版本差異 | **built** | diff_engine（GlobalId 多級）；ifc_type/ifc_name 落庫 bug 已修（PR #242）；**無成本影響塊（成本屬 A6/A9，非 A2）** |
-| A3 跨專業疊合 | **拆分** | **federation built**（USD sublayer + review-room handoff）；**clash NOT BUILT**（卡 ifcopenshell 缺 OpenCASCADE，`has_occ=False`，spike 未 push）；clash 頁標 `spec·blocked-on-OCC` |
+| A3 跨專業疊合 | **拆分** | **federation built**（USD sublayer + review-room handoff）；**clash NOT BUILT · 未開工**——O6 已裁定官方 `ifcclash` 路線（2026-07-07 spec/plan 已核可待執行）；`#a3` 頁 clash 佔位標示依該 plan 落地 |
 | A4 語意搜尋 | **NOT BUILT · p4** | 願景 Phase 4；無任何後端程式碼；**禁寫成 hero built**；裁決見對齊矩陣 §4.4 |
 | A5 IoT/FM | **NOT BUILT · p3** | 願景 Phase 3；須等 MQTT+TimescaleDB |
 | A6 4D/5D | **NOT BUILT · p4** | 願景 Phase 4；GPU-bound；RM_APPS phase=2 但 prov=p4，狀態以 prov 為準 |
