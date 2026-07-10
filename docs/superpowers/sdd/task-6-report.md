@@ -5,3 +5,5 @@ Implemented `Maintenance.Health.ps1` and the Audit/Apply/Recover/Verify orchestr
 Validation: PowerShell parser check, Audit smoke run, and `scripts/tests/test-codex-maintenance-health.ps1`.
 
 Known gap: legacy updater migration is intentionally left to the installation/migration task; no live CODEX_HOME or scheduled task was modified.
+
+Follow-up: startup now wires ToolPath/allowlist/SID, Audit/Apply validate trusted inventory, Apply snapshots before journaling, Recover handles absent journal.
