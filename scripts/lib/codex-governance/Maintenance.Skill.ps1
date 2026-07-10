@@ -51,6 +51,18 @@ function Apply-SkillSourceCohort {
  param([Parameter(Mandatory)][string]$StagedPath,[Parameter(Mandatory)][string]$TargetPath,[Parameter(Mandatory)]$Baseline,[Parameter(Mandatory)]$Actual,[switch]$SignedCapabilityManifest)
  $StagedPath=[IO.Path]::GetFullPath($StagedPath); $TargetPath=[IO.Path]::GetFullPath($TargetPath); Assert-SkillPath $StagedPath $StagedPath|Out-Null; Assert-SkillPath ([IO.Path]::GetFullPath((Split-Path $TargetPath -Parent))) $TargetPath|Out-Null
  $cap=Get-SkillCapabilitySnapshot $StagedPath; $changed=(@($cap.scriptInventory)-join '|') -ne (@($Baseline.scriptInventory)-join '|'); if($changed){if(-not $SignedCapabilityManifest -or -not $Actual -or -not $Actual.scriptInventory){throw 'Executable/code changes require signed capability manifest'}; if((@($Actual.scriptInventory)-join '|') -ne (@($cap.scriptInventory)-join '|')){throw 'Capability manifest does not match actual'}}
- $backup=$TargetPath+'.backup-'+[DateTime]::UtcNow.ToString('yyyyMMddHHmmssfff'); $sibling=$TargetPath+'.staged-'+[guid]::NewGuid().ToString('N'); try { if(Test-Path $TargetPath){Copy-Item $TargetPath $backup -Recurse -Force}; Copy-Item $StagedPath $sibling -Recurse -Force; if(Test-Path $TargetPath){Remove-Item $TargetPath -Recurse -Force}; Move-Item $sibling $TargetPath; return [pscustomobject]@{Status='applied';Backup=$backup;Capability=$cap} } catch { Remove-Item $sibling -Recurse -Force -ErrorAction SilentlyContinue; if(Test-Path $backup){Remove-Item $backup -Recurse -Force -ErrorAction SilentlyContinue}; throw }
+ $backup=$TargetPath+'.backup-'+[DateTime]::UtcNow.ToString('yyyyMMddHHmmssfff'); $sibling=$TargetPath+'.staged-'+[guid]::NewGuid().ToString('N'); try { if(Test-Path $TargetPath){Copy-Item $TargetPath $backup -Recurse -Force}; Copy-Item $StagedPath $sibling -Recurse -Force; if(Test-Path $TargetPath){Remove-Item $TargetPath -Recurse -Force}; Move-Item $sibling $TargetPath; return [pscustomobject]@{Status='applied';Backup=$backup;Capability=$cap} } catch {
+  $failure=$_.Exception
+  Remove-Item $sibling -Recurse -Force -ErrorAction SilentlyContinue
+  if(Test-Path $backup){
+   try {
+    if(Test-Path $TargetPath){Remove-Item $TargetPath -Recurse -Force}
+    Move-Item $backup $TargetPath
+   } catch {
+    throw "Skill apply failed and backup restore failed: $($_.Exception.Message). Original error: $($failure.Message)"
+   }
+  }
+  throw $failure
+ }
 }
 function Restore-SkillSourceCohort { param([Parameter(Mandatory)][string]$TargetPath,[Parameter(Mandatory)][string]$BackupPath) $TargetPath=[IO.Path]::GetFullPath($TargetPath); $BackupPath=[IO.Path]::GetFullPath($BackupPath); Assert-SkillPath (Split-Path $TargetPath -Parent) $TargetPath|Out-Null; Assert-SkillPath (Split-Path $BackupPath -Parent) $BackupPath|Out-Null; if(-not (Test-Path $BackupPath)){throw 'Backup missing'}; if(Test-Path $TargetPath){Remove-Item $TargetPath -Recurse -Force}; Move-Item $BackupPath $TargetPath; return [pscustomobject]@{Status='restored'} }
