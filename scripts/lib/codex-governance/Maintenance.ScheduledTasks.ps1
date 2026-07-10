@@ -27,7 +27,16 @@ function Register-CodexGovernanceTask {
     $trigger = if ($Definition.Mode -eq 'Audit') { New-ScheduledTaskTrigger -Daily -At $Definition.Trigger.StartBoundary } else { New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At $Definition.Trigger.StartBoundary }
     $principal = New-ScheduledTaskPrincipal -UserId $Definition.Principal.UserId -LogonType Interactive -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 1)
-    Register-ScheduledTask -TaskName $Definition.TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force
+    Register-ScheduledTask -TaskName $Definition.TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+    # ScheduledTasks cmdlets omit timezone; enforce it through the native scheduler API.
+    try {
+        $service = New-Object -ComObject 'Schedule.Service'; $service.Connect()
+        $task = $service.GetFolder('\').GetTask($Definition.TaskName)
+        $nativeTrigger = $task.Definition.Triggers.Item(1)
+        $nativeTrigger.TimeZone = $Definition.Trigger.TimeZone
+        $task.RegisterTaskDefinition($Definition.TaskName, $task.Definition, 6, $null, $null, 3) | Out-Null
+        if ($task.Definition.Triggers.Item(1).TimeZone -ne $Definition.Trigger.TimeZone) { throw 'Task Scheduler timezone read-back mismatch' }
+    } catch { throw "Scheduled task timezone enforcement failed: $($_.Exception.Message)" }
 }
 
 function Test-CodexGovernanceTask {
