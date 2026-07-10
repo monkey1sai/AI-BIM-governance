@@ -49,7 +49,9 @@ $ExpectedServices = @(
     @{ Name = "governance-service"; Ports = @(49102) },
     @{ Name = "bim-streaming-conversion-service"; Ports = @(49101) },
     @{ Name = "web-viewer-sample"; Ports = @(5173) },
-    @{ Name = "bim-streaming-server"; Ports = $ResolvedStreamingPorts }
+    @{ Name = "bim-streaming-server"; Ports = $ResolvedStreamingPorts },
+    # R5（2026-07-10 C3）：kit-manager-api 納入 golden path（deploy.ps1 Phase 4c-2 啟動）
+    @{ Name = "kit-manager-api"; Ports = @(8010) }
 )
 
 $ExpectedPorts = $ExpectedServices | ForEach-Object { $_.Ports } | ForEach-Object { $_ }

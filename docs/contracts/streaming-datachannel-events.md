@@ -225,3 +225,25 @@ Demo `highlightPrimsRequest` payload:
 ```
 
 Demo panel incoming/outgoing logs are UI diagnostics only. `/World` fallback proves only that the stream/DataChannel path is alive; it is not evidence that `element_mapping.json` is correct. Mapping correctness requires a real `element_mapping.json.items[*].usd_prim_path` response with `missing_paths=[]` and `fallback_paths=[]`; `usd_prim_path` is the current viewer-compatible alias for `primary_usd_prim_path` when streaming conversion emits one-to-many mapping data. Persistent review data is coordinated through `bim-review-coordinator` shadow metadata / external control-plane callbacks, while collaboration broadcast belongs to `bim-review-coordinator`.
+
+## `stage_composition`（單一真相 · single source，2026-07-10 R5/C4 升權威）
+
+`openStageRequest.payload.stage_composition` 描述 Kit 開 stage 時的多 USDC 組合交易：
+
+| 欄位 | 型別 / 語意 |
+|---|---|
+| `primary` | 主模型（`{url, role: "primary_model"}`；恰好一個） |
+| `secondary` | 次要疊層清單（`[{url, role: "secondary_model"}]`，可空） |
+| `load_order` | 載入順序（URI 陣列；由呼叫端排序後送出） |
+
+**鏡像站點（手工同步，無 codegen）**——變更本語意時，六處鏡像與本文件必須同一 PR 內同步，
+由 root contracts `tests/test_stage_composition_contract.py` 守門：
+
+| 站點 | 鏡像深度 |
+|---|---|
+| `services/kit-manager-api/app/kit_service.py`（建構端） | 完整欄位 |
+| `bim-streaming-server/.../messaging/stage_loading.py`（消費端） | 完整欄位 |
+| `bim-review-coordinator/src/types.ts` | 完整欄位（型別） |
+| `web-viewer-sample/src/console/GovernanceOverlay.tsx`（`StageArtifactBinding`） | 完整欄位（型別） |
+| `apps/kit-manager-web/src/models.ts`（`stage_composition_payload` pass-through） | token 級 |
+| `governance-service/federation/api.py`（Review Room handoff descriptor） | token 級 |

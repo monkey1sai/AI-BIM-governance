@@ -296,6 +296,45 @@ function Start-HostNativeGovernance {
         -RunDir $runDir)
 }
 
+# R5（2026-07-10 衛生輪 C3）：kit-manager-api 納入 golden path——hybrid 模式下 coordinator
+# 容器經 host.docker.internal:8010 依賴 host-native kit-manager-api（RK1 Kit 控制權威），
+# 先前 Mode A/C 完全未編排（只有 Mode B compose 有）。樣式克隆 Start-HostNativeGovernance。
+function Start-HostNativeKitManager {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [int] $Port = 8010
+    )
+    $runDir = Join-Path $RepoRoot 'scripts\.run'
+    if (-not (Test-Path -LiteralPath $runDir)) {
+        New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    }
+
+    $serviceRoot = Join-Path $RepoRoot 'services\kit-manager-api'
+    $python312 = 'C:\Program Files\Python312\python.exe'
+    $repoVenvPython = Join-Path $RepoRoot '.venv\Scripts\python.exe'
+    $pythonExe = if (Test-Path -LiteralPath $python312 -PathType Leaf) {
+        $python312
+    } elseif (Test-Path -LiteralPath $repoVenvPython -PathType Leaf) {
+        $repoVenvPython
+    } else {
+        'python'
+    }
+
+    Remove-Item Env:PYTHONNOUSERSITE -ErrorAction SilentlyContinue
+    & $pythonExe -c "import fastapi, uvicorn" *> $null
+    if ($LASTEXITCODE -ne 0) {
+        throw "kit-manager-api Python cannot import fastapi and uvicorn: $pythonExe"
+    }
+
+    return (Start-HostNativeService `
+        -Name 'kit-manager-api' `
+        -WorkingDirectory $serviceRoot `
+        -FilePath $pythonExe `
+        -ArgumentList @('-m','uvicorn','app.main:app','--host','127.0.0.1','--port',"$Port") `
+        -RunDir $runDir)
+}
+
 function Start-HostNativeKit {
     [CmdletBinding()]
     param(

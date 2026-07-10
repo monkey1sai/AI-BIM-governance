@@ -24,6 +24,7 @@ param(
     [switch] $SkipKit,
     [switch] $SkipConversion,
     [switch] $SkipGovernance,
+    [switch] $SkipKitManager,
     [switch] $SkipDocker,
     [string] $PublicHost = '',
     [string] $ConversionBindHost = '',
@@ -1289,6 +1290,37 @@ if ($SkipKit) {
         }
         Set-KitRuntimeSignature -Path $script:kitRuntimeSignaturePath -Value $kitRuntimeSignature
         Write-DeployTag -Tag 'ok' -Message "Phase 4c Kit ready (:$resolvedKitSignalPort LISTEN + '$($kitRes.matchedKeyword)')" -LogPath $LogPath | Out-Null
+    }
+}
+
+# 4c-2: host-native kit-manager-api（R5 2026-07-10：coordinator 容器經 host.docker.internal:8010
+# 依賴它做 /api/kit/* forward（RK1），故排在 4c（Kit）之後、4d（docker compose）之前；
+# 先前 Mode A/C 未編排本服務，只有 Mode B compose 有。）
+if ($SkipKitManager) {
+    Write-DeployTag -Tag 'skip' -Message 'Phase 4c-2 host-native kit-manager-api (--SkipKitManager)' -LogPath $LogPath | Out-Null
+} else {
+    $kitManagerHealthUrl = 'http://127.0.0.1:8010/health'
+    $kitManagerAlreadyRunning = Test-AlreadyRunning -Name 'kit-manager-api' -RunDir $RunDir
+    if ($kitManagerAlreadyRunning) {
+        if (Wait-HostNativeHealth -Name 'kit-manager-api' -Url $kitManagerHealthUrl -TimeoutSec 5) {
+            Write-DeployTag -Tag 'skip' -Message "Phase 4c-2 kit-manager-api already running ($kitManagerHealthUrl 200)" -LogPath $LogPath | Out-Null
+        } else {
+            Write-DeployTag -Tag 'fix' -Message "Phase 4c-2 restarting kit-manager-api because wrapper is alive but $kitManagerHealthUrl is unhealthy" -LogPath $LogPath | Out-Null
+            Stop-HostNativeService -Name 'kit-manager-api' -RunDir $RunDir | Out-Null
+            $kitManagerAlreadyRunning = $false
+        }
+    }
+    if (-not $kitManagerAlreadyRunning) {
+        Write-DeployTag -Tag 'ok' -Message 'Phase 4c-2 starting host-native kit-manager-api' -LogPath $LogPath | Out-Null
+        $kmStartInfo = Start-HostNativeKitManager -RepoRoot $RepoRoot -Port 8010
+        Write-DeployTag -Tag 'ok' -Message "kit-manager-api PID=$($kmStartInfo.Pid) log=$($kmStartInfo.LogPath)" -LogPath $LogPath | Out-Null
+        $ok = Wait-HostNativeHealth -Name 'kit-manager-api' -Url $kitManagerHealthUrl -TimeoutSec 30
+        if (-not $ok) {
+            Write-DeployTag -Tag 'fail' -Message "stage=4c-2 Phase 4c-2 kit-manager-api $kitManagerHealthUrl did not return 200 within 30s" -LogPath $LogPath | Out-Null
+            Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4c-2 (kit-manager-api)'
+            exit 4
+        }
+        Write-DeployTag -Tag 'ok' -Message "Phase 4c-2 kit-manager-api ready ($kitManagerHealthUrl 200)" -LogPath $LogPath | Out-Null
     }
 }
 
