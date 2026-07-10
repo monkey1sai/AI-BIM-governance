@@ -89,6 +89,35 @@ describe("useConversionData（MD 三頁合一 Task 2 資料層 hook）", () => {
     });
   });
 
+  it("[4][F13] load/loadRecords 同步防重入：同一事件循環連呼兩次只打一次端點，且共享同一結果", async () => {
+    const jobsSpy = vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [okJob] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    const recSpy = vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ items: [] });
+
+    await act(async () => { root.render(createElement(Harness)); });
+    await waitFor(() => { expect(latest!.jobsLoaded).toBe(true); expect(latest!.recordsLoaded).toBe(true); });
+
+    const jobsBefore = jobsSpy.mock.calls.length;
+    const recBefore = recSpy.mock.calls.length;
+    // 同一事件循環連呼兩次（React state busy 尚未更新，boolean state 攔不住——sibling
+    // useConversionActions.ts:41 已解過同一 race）。斷言底層端點各只多打一次。
+    let r1: { jobsOk: boolean; mwOk: boolean } | undefined;
+    let r2: { jobsOk: boolean; mwOk: boolean } | undefined;
+    await act(async () => {
+      const p1 = latest!.load();
+      const p2 = latest!.load();
+      void latest!.loadRecords();
+      void latest!.loadRecords();
+      [r1, r2] = await Promise.all([p1, p2]);
+    });
+    expect(jobsSpy.mock.calls.length).toBe(jobsBefore + 1);
+    expect(recSpy.mock.calls.length).toBe(recBefore + 1);
+    // 重入呼叫者共享同一份 in-flight 證據結果（不是拿到假 {false,false}）。
+    expect(r1).toEqual({ jobsOk: true, mwOk: true });
+    expect(r2).toEqual({ jobsOk: true, mwOk: true });
+  });
+
   it("[3] minioWatchStatus reject 不污染 jobs：jobs 有值、mwErr 非 null、load() 回 { jobsOk:true, mwOk:false }", async () => {
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [okJob] });
     vi.spyOn(coordinatorClient, "minioWatchStatus").mockRejectedValue(new Error("coordinator /api/external/minio-watch/status -> 404"));
