@@ -318,6 +318,13 @@ function Invoke-KitConversion {
         "--enable", "omni.kit.converter.hoops_core",
         "--exec", $execScript,
         "--/app/fastShutdown=1",
+        # F7（2026-07-10 R7）：headless --exec 轉檔用不到 services HTTP listener，
+        # 但 omni.services.convert.cad 會拉起 omni.services.transport.server.http 預設綁 :8011
+        # （官方設定 /exts/omni.services.transport.server.http/port default=8011，Kit MCP 驗證）——
+        # 多筆轉檔幾乎同時起時 TOCTOU 搶埠、輸家 crash（conversion_authority.py:238 既有紀錄）。
+        # 直接停用該 HTTP server（http/enabled=false），根除搶埠；conversion_authority 的
+        # 轉檔序列化鎖保留為第二道保險。
+        "--/exts/omni.services.transport.server.http/http/enabled=false",
         "--info"
     )
 

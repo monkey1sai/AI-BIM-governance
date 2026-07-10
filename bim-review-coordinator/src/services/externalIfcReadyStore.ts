@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { sanitizeArtifactIdPart } from "./streamingConversionClient.js";
 import { maskPresignedRef } from "./presignedRef.js";
 import type { ExternalIfcReadyEvent, IfcReadyIntakeJob, ShadowMetadata } from "../types.js";
@@ -18,12 +20,71 @@ export class ExternalIfcReadyStore {
   private readonly idempotencyIndex = new Map<string, string>();
   private readonly correlationIndex = new Map<string, string>();
   /**
+   * S2（2026-07-10）：JSON 持久化（**env opt-in**，比照 conversionLedger 的 atomic tmp+rename）。
+   * 未設 EXTERNAL_IFC_READY_STORE_PATH 且未傳 persistencePath ＝維持原 volatile 行為
+   * （既有測試與 app.ts 呼叫點零變更；.env.example 受工作區保護未登 key，部署區自行加 env 啟用）。
+   * 修的 split-brain：coordinator 重啟後 ConversionLedger（已持久化）有紀錄、來源 job 消失。
+   * 載入時誠實調和 in-flight 狀態：queued_for_conversion → dropped_on_restart（dispatch queue
+   * 本身仍 volatile）；downloading → download failed（下載已中斷）。dispatched 保留原樣
+   * （轉檔權威在 streaming-server，coordinator 重啟不否定其進行中結果；殘留 stale 由
+   * ledger/輪詢面處理，不在本 store 擅自改寫）。
+   */
+  private readonly persistencePath: string | null;
+  /**
    * conversion-artifact-id-sanitize（PR #206 review 修補）：sanitize 後 correlation 鍵
    * 與原始鍵分桶。只供 conversion 結果回拋（getByCorrelation fallback）查詢，
    * SHALL NOT 參與 intake 去重（findExisting）— 否則另一請求若以 sanitize 字串
    * 為真實 X-Correlation-Id，會被誤判成既有 job 的 idempotent replay（aliasing）。
    */
   private readonly sanitizedCorrelationIndex = new Map<string, string>();
+
+  constructor(persistencePath?: string) {
+    this.persistencePath = persistencePath ?? process.env.EXTERNAL_IFC_READY_STORE_PATH ?? null;
+    this.loadFromDisk();
+  }
+
+  private loadFromDisk(): void {
+    if (!this.persistencePath || !fs.existsSync(this.persistencePath)) return;
+    let parsed: { jobs?: IfcReadyIntakeJob[] };
+    try {
+      parsed = JSON.parse(fs.readFileSync(this.persistencePath, "utf-8")) as { jobs?: IfcReadyIntakeJob[] };
+    } catch {
+      // 壞檔不 crash：誠實空啟動（比照 conversionLedger），舊檔會在下次 persist 被覆寫。
+      return;
+    }
+    for (const job of parsed.jobs ?? []) {
+      if (!job?.ifc_ready_job_id) continue;
+      // 重啟調和（誠實）：in-flight 狀態不可能跨行程存活。
+      if (job.status === "queued_for_conversion") {
+        job.status = "dropped_on_restart";
+        job.queue_position = null;
+        job.dispatch_error = "coordinator restart dropped in-memory queue; operator must re-POST";
+        job.updated_at = new Date().toISOString();
+      }
+      if (job.download_status === "downloading") {
+        job.download_status = "failed";
+        job.download_failure = "coordinator restart interrupted download; operator must re-POST";
+        job.updated_at = new Date().toISOString();
+      }
+      this.jobsById.set(job.ifc_ready_job_id, job);
+      this.idempotencyIndex.set(job.idempotency_key, job.ifc_ready_job_id);
+      this.registerCorrelationKeys(job.correlation_id, job.ifc_ready_job_id);
+    }
+  }
+
+  /** atomic tmp+rename（比照 conversionLedger.persist）；持久化失敗不拋出（不阻斷 intake 主流程）。 */
+  private persist(): void {
+    if (!this.persistencePath) return;
+    try {
+      const dir = path.dirname(this.persistencePath);
+      fs.mkdirSync(dir, { recursive: true });
+      const tmp = `${this.persistencePath}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify({ jobs: Array.from(this.jobsById.values()) }, null, 2), "utf-8");
+      fs.renameSync(tmp, this.persistencePath);
+    } catch {
+      // 磁碟寫入失敗不 crash intake；下次 mutation 再試。
+    }
+  }
 
   /** 依 idempotency_key（或 correlation_id）回傳既有 job（idempotent replay）。 */
   findExisting(idempotencyKey: string, correlationId: string): IfcReadyIntakeJob | undefined {
@@ -82,6 +143,7 @@ export class ExternalIfcReadyStore {
     this.jobsById.set(jobId, job);
     this.idempotencyIndex.set(binding.idempotencyKey, jobId);
     this.registerCorrelationKeys(binding.correlationId, jobId);
+    this.persist();
     return job;
   }
 
@@ -113,6 +175,7 @@ export class ExternalIfcReadyStore {
     if (!job) return undefined;
     job.idempotent_replay = true;
     job.updated_at = new Date().toISOString();
+    this.persist();
     return job;
   }
 
@@ -127,6 +190,7 @@ export class ExternalIfcReadyStore {
     // coordinator-serial-conversion-dispatch-queue:離開 queue,清 1-based 位置。
     job.queue_position = null;
     job.updated_at = new Date().toISOString();
+    this.persist();
     return job;
   }
 
@@ -138,6 +202,7 @@ export class ExternalIfcReadyStore {
     job.queue_position = queuePosition;
     job.dispatch_error = null;
     job.updated_at = new Date().toISOString();
+    this.persist();
     return job;
   }
 
@@ -152,6 +217,7 @@ export class ExternalIfcReadyStore {
     job.queue_position = null;
     job.dispatch_error = "coordinator restart dropped in-memory queue; operator must re-POST";
     job.updated_at = new Date().toISOString();
+    this.persist();
     return job;
   }
 
@@ -162,6 +228,7 @@ export class ExternalIfcReadyStore {
     job.download_status = "downloading";
     job.download_failure = null;
     job.updated_at = new Date().toISOString();
+    this.persist();
     return job;
   }
 
@@ -174,6 +241,7 @@ export class ExternalIfcReadyStore {
     job.local_path = localPath;
     job.host_local_path = hostLocalPath;
     job.updated_at = new Date().toISOString();
+    this.persist();
     return job;
   }
 
@@ -184,6 +252,7 @@ export class ExternalIfcReadyStore {
     job.download_status = "failed";
     job.download_failure = failure;
     job.updated_at = new Date().toISOString();
+    this.persist();
     return job;
   }
 
@@ -194,6 +263,7 @@ export class ExternalIfcReadyStore {
     job.web_view_session_id = webViewSessionId;
     job.viewer_url = viewerUrl;
     job.updated_at = new Date().toISOString();
+    this.persist();
     return job;
   }
 
@@ -206,6 +276,7 @@ export class ExternalIfcReadyStore {
     job.conversion_status = "dispatch_failed";
     job.dispatch_error = error;
     job.updated_at = new Date().toISOString();
+    this.persist();
     return job;
   }
 
@@ -241,6 +312,7 @@ export class ExternalIfcReadyStore {
     if (!job) return undefined;
     job.review_session_id = reviewSessionId;
     job.updated_at = new Date().toISOString();
+    this.persist();
     return job;
   }
 
@@ -267,6 +339,7 @@ export class ExternalIfcReadyStore {
     //（供 deriveFailure 投影 failure_stage="conversion"）；ready 時清空,誠實不留舊失敗殘留。
     job.conversion_failure = conversionStatus === "failed" ? (conversionFailure ?? "conversion_failed") : null;
     job.updated_at = new Date().toISOString();
+    this.persist();
     return job;
   }
 

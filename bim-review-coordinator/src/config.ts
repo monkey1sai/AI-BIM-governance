@@ -452,6 +452,20 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
   if (merged.minioWatchPrefix && !merged.minioWatchPrefix.endsWith("/")) {
     merged.minioWatchPrefix = `${merged.minioWatchPrefix}/`;
   }
+  // F2（2026-07-10）：production fail-fast——預設機密是原始碼常數（已知字串），
+  // 部署漏設 env 時不得靜默沿用。與 integerFromEnv 的 fail-fast 風格一致；
+  // dev（NODE_ENV 非 production）維持原預設行為，測試 overrides 注入自訂值即可通過。
+  if (process.env.NODE_ENV === "production") {
+    const defaultedSecrets: string[] = [];
+    if (merged.devAuthToken === "dev-token") defaultedSecrets.push("DEV_AUTH_TOKEN");
+    if (merged.internalApiAuthToken === "dev-internal-token") defaultedSecrets.push("INTERNAL_API_AUTH_TOKEN");
+    if (merged.externalIntakeWebhookSecret === "dev-webhook-secret") defaultedSecrets.push("EXTERNAL_INTAKE_WEBHOOK_SECRET");
+    if (defaultedSecrets.length > 0) {
+      throw new Error(
+        `NODE_ENV=production 下偵測到預設機密（原始碼常數），拒絕啟動。請設定：${defaultedSecrets.join(", ")}`,
+      );
+    }
+  }
   if (!process.env.ARTIFACT_HEALTH_LEDGER_STORE_PATH && overrides.artifactHealthLedgerStorePath === undefined) {
     const finalEdgeRoot = merged.edgeRuntimeDataRoot;
     merged.artifactHealthLedgerStorePath =

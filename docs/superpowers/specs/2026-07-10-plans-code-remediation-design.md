@@ -45,6 +45,7 @@
 
 - **Wave A**：PR #321 merged（2026-07-10）——spec+plan＋R1/R2/R3/R6/R8 文件落地＋docs stale 同步。
 - **Wave B**：本 spec 隨 PR-B 更新——B1–B10 全數落地；發現修正：F4（db.py busy_timeout）實測為**誤報**（Python `sqlite3.connect` 預設 `timeout=5.0` 即 5000ms，與 IssueStore 對稱），改留回歸守門測試；W4 改以 `coordinatorUrl()` 統一 base（保留狀態碼原樣顯示語意，較原 plan 的 typed-client 改寫更小）。
+- **Wave D**：D1 fetch timeout 下沉（15s，AbortSignal.timeout）；D2 production 預設機密 fail-fast；D3 enum parity 守門（root contracts）；D4 externalIfcReadyStore 持久化（**env opt-in**——未設 `EXTERNAL_IFC_READY_STORE_PATH` 維持 volatile，app.ts 零變更；載入時 in-flight 誠實調和）；D5 轉檔 Kit 停用 :8011 HTTP listener（Kit MCP 驗證鍵名；實跑回歸留待部署區重建）；D6 實驗完成——**兩組真實版本零 GUID churn、兩引擎輸出同構、自製 47s vs 官方 183s（條件不對等）**，三級配對屬防禦性設計尚無自家資料實證（詳 `artifacts/2026-07-10-a2-diff-vs-ifcdiff-experiment.md`），已回寫鐵律 #9。
 - **Wave C**：C1 tracked 殘留 ×5 git rm（`artifacts/git-cleanup-*`/`audit-wip` 實為 untracked→歸 C2）；C2 使用者裁決三組全刪，已執行（殘餘：`.tmp/pending-delete-*` 內 4 個 pytest 快取目錄 ACL 鎖需 admin，指令見 `artifacts/2026-07-10-untracked-cleanup-list.md`）；C3 kit-manager-api 入 golden path＝deploy.ps1 **Phase 4c-2**（原 4d 已是 docker compose，插序修正）＋`Start-HostNativeKitManager`＋stop-all 服務表，Parser 驗證 OK、deploy 實跑留待下次重建口令；C4 契約檔實名 `streaming-datachannel-events.md`，鏡像站點實為六處（完整 ×4＋token 級 ×2）。
 
 ## 5. 驗收總則
