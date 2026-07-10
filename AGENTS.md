@@ -9,7 +9,6 @@
 ---
 
 ## 0.1 Agent 工作方式
-
 ### Karpathy-style 工作守則
 
 - 非平凡任務先列出假設、成功標準、最小改動面；若需求或 repo 邊界不清楚，先釐清再實作。
@@ -36,45 +35,24 @@
 完整 A1–A10 對應、frontend operability rule、真實 IFC E2E evidence contract 與 script contract 見 `docs/agents/product-operability-and-script-contract.md`。
 
 ### Secrets / `.env` 存取
-
 - 允許：讀取 `.env`、讀寫 `.env.example`、由 `.env.example` 複製出 `.env`。
 - 不允許：修改既有 `.env` 的實際機密值。
 - Evidence 規則：agent 可為本機驗證載入 `.env`，但不得在回覆、log 摘要或 PR body echo 任何值；`.env` / `.env.example` 差異檢查預設只列 key 名稱與缺漏，不列值。
 - 此 carve-out 僅覆蓋全域「不得修改環境檔」規則中關於本 repo `.env.example` 讀寫、`.env` 讀取與複製的部分；其餘 secrets / credentials / private keys 規則不變。
 
-### 開發管線（四套工具：主流程 + 輔助，不平權混用）
-
-四套工具各有單一職責，組成一條固定管線；**不得平權混用、不得互相取代**：
-
-```txt
-設計規格 / prototype
-  → Superpowers 拆 plan
-  → GitNexus 影響分析（impact）
-  → 實作
-  → gstack UI / E2E / screenshot 驗收
-  → GitNexus detect_changes
-  → branch → PR → Actions → merge
-```
-
-四工具職責表與 anti-patterns 的完整定義見 `docs/agents/github-workflow.md`（單一權威版，避免雙表漂移）；一句話分工：**Superpowers**＝plan / execution 主線、**GitNexus**＝impact / detect_changes、**gstack**＝user-facing 驗收唯一證據、**Matt Pocock skills**＝僅 issue / triage 輔助不得當主線。
-
-CI 本機先行鐵律：GitHub Actions 只作遠端確認，不可當第一輪錯誤發現工具；凡 repo 已提供本機等效檢查（例如 PR body evidence、viewer build/test、deploy/script preflight），agent 必須先在本機跑到綠再 push / watch CI。PR 上不得無差別重跑本機可重現的 heavy service checks；`ci.yml` 先用 changed-path classifier 判斷受影響範圍，未受影響的 service-level required checks 用 job-level condition skip，受影響的 job 才跑遠端確認，完整遠端驗證仍可在 `push main` / `workflow_dispatch` 執行。跳過本機 preflight 造成 PR 等待或重跑，視為嚴重開發時間浪費；PR body 改動須先跑 `.\scripts\dev\check-pr-local-preflight.ps1 -PrNumber <n>`，再用新 commit（必要時 empty commit）觸發 `pull_request.synchronize`，不得只 rerun 舊 event 的 GitHub workflow。
-
-誠實鐵律（repo contract：前端要真的能操作，不能只接 mock）：某部分還沒 backend 時，UI 須誠實標 `DEMO DATA`／`NOT BUILT`／`not observed`，不得假裝 ready。完成標準與 frontend-operable rule 見上方「產品定位與完成標準」。
-
-### 本機 agent 產物
-
-- 不在 `main` 上開發；plan / 設計文件預設繁體中文，API 路徑 / schema 欄位 / CLI flags / status enum / log / error / 外部產品名稱保留原文。
-- 開發 / 修 PR / 建 feature 或 fix branch 時，不得在主 repo checkout 直接 `git switch` / `git switch -c` 切工作分支；MUST 先 `git worktree list`，再建立或使用 dedicated worktree 進行該 branch 的開發，避免主工作區既有 dirty files 被跨 branch 帶走或污染 PR。主 repo checkout 預設只作穩定入口、狀態檢查與使用者明確要求的文件/清理操作。
-- `.claude/`、`.codex/`、`.agents/`、`.gitnexus/` 是本機 agent/tooling 產物，預設維持 ignored（含以 `skills` CLI 裝進 `.claude/skills/` 的技能）。
-- Repo-local `.codex/skills` SHALL 對齊 `.claude/skills` 作為本機 skill inventory（本機同步，非版控同步）；OpenSpec / opsx closed-loop skills 已退役，需求拆解與執行治理改由 Superpowers skills 負責。
-- `.claude/` 版控白名單以 root `.gitignore` 的 `!.claude/...` 例外清單為準（2026-07-02 治理審計起含 `skills/gitnexus/`、`skills/repo-health/`——CLAUDE.md MUST 規則引用的檔案必須入版控）；`.claude/skills/generated/` 與其餘未白名單技能不提交。`.codex/skills` 除既有 tracked 檔（`spec-to-done` adapter 等）外維持本機鏡像不入版控：新增路徑或 unknown-base 修改仍是 high blocker；已 tracked 的 adapter 修改降為 warning + AI Coding Governance table + owner review（見 `docs/superpowers/specs/2026-07-02-pr-review-agent-tracked-tooling-mirror-modify.md`）。
-
-完整 GitHub PR workflow 見 `docs/agents/github-workflow.md`。
-
 ---
 
 ## 1. Workspace 範圍（一句話）
+```mermaid
+flowchart LR
+EDGE["[外部] 客戶落地端 IFC Worker"] -->|POST /api/external/ifc-ready| CO[bim-review-coordinator]
+CO -->|internal conversion request| KIT[bim-streaming-server]
+CO -->|/api/governance/* proxy| GOV["governance-service (:49102 loopback)"]
+CO -->|metadata-only callback outbox| CLOUD["[外部] 公司雲端 bim-control"]
+WV[web-viewer-sample] -->|REST + Socket.IO| CO
+WV -->|WebRTC + DataChannel| KIT
+KM["kit-manager web + api (:8010)"] -->|Kit fleet ops / telemetry| KIT
+```
 
 ```txt
 AI-BIM-governance/
@@ -86,25 +64,6 @@ AI-BIM-governance/
 ├── services/kit-manager-api/ # Kit Manager API（:8010）
 ├── scripts/                  # deploy / verify / script contract
 └── tests/{contracts,fakes}/  # 外部平台 contract + test-only fakes
-```
-
-```mermaid
-flowchart LR
-    EDGE["[外部] 客戶落地端 IFC Worker"]
-    CLOUD["[外部] 公司雲端 bim-control"]
-    CO[bim-review-coordinator]
-    KIT[bim-streaming-server]
-    GOV["governance-service（:49102 loopback）"]
-    WV[web-viewer-sample]
-    KM["kit-manager web + api（:8010）"]
-
-    EDGE -->|POST /api/external/ifc-ready| CO
-    CO -->|internal conversion request| KIT
-    CO -->|/api/governance/* proxy| GOV
-    CO -->|metadata-only callback outbox| CLOUD
-    WV -->|REST + Socket.IO| CO
-    WV -->|WebRTC + DataChannel| KIT
-    KM -->|Kit fleet ops / telemetry| KIT
 ```
 
 一句話定位：
@@ -128,7 +87,6 @@ _worker / _bim-control = 已自 repo 刪除（2026-05-18 B 方案落地），僅
 ---
 
 ## 2. Sub-files（lazy-load，何時讀哪份）
-
 | 何時需要 | 讀這份 |
 |---|---|
 | 跨 sub-repo 決策、workspace 總覽、B 方案架構決策、最重要閉環 | `docs/agents/repo-boundary-detail.md` |
@@ -170,6 +128,12 @@ Runtime/product 行為真相優先順序：
 
 ## 4. GitNexus 入口
 
+### 驗證與回報
+
+先跑受影響範圍的 typecheck、lint、unit/integration checks，再依 `docs/agents/sub-repo-verify-commands.md` 擴大驗證。回報必須分開列出 verified facts、inferences、unverified risks 與 next actions；未跑的測試與原因不得省略。
+
+前端驗收紀錄至少包含 route、button、fixture、API、runtime ID、visible state、E2E command、screenshot/trace 與 known gaps。
+
 本 repo 由 GitNexus 索引。修改 code symbol 前 MUST 跑 `impact`；commit 前 MUST 跑 `detect_changes`；HIGH / CRITICAL risk 先回報再繼續。若 GitNexus stale / unavailable / linked-worktree staged diff 失真，照 `docs/agents/gitnexus-usage.md` 的 unavailable gate 處理，不得自行發明 bypass。
 
 規範本文（Always Do / Never Do / Resources / CLI 表）以下方 `<!-- gitnexus:start -->` 自動維護區塊為準（`analyze` 時自動更新）；stale 重建與 LadybugDB crash 復原程序見 `docs/agents/gitnexus-usage.md`。
@@ -198,16 +162,13 @@ This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 285
 - NEVER commit changes without running `detect_changes()` to check affected scope.
 
 ## Resources
-
 | Resource | Use for |
 |----------|---------|
 | `gitnexus://repo/AI-BIM-governance/context` | Codebase overview, check index freshness |
 | `gitnexus://repo/AI-BIM-governance/clusters` | All functional areas |
 | `gitnexus://repo/AI-BIM-governance/processes` | All execution flows |
 | `gitnexus://repo/AI-BIM-governance/process/{name}` | Step-by-step execution trace |
-
 ## CLI
-
 | Task | Read this skill file |
 |------|---------------------|
 | Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
@@ -216,5 +177,4 @@ This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 285
 | Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
 | Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-
 <!-- gitnexus:end -->

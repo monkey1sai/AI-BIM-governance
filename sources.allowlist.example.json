@@ -1,0 +1,1 @@
+{"sources":[{"id":"example-source","kind":"git","uri":"https://example.invalid/repository","refPolicy":"pinned","subpaths":["scripts"],"validatorIds":["sha256","signature"],"cohort":"stable","cliRange":">=1.0.0 <2.0.0","independent":true,"nativePaths":["C:\\Program Files\\Codex\\codex.exe"],"capabilityBaseline":{"audit":true,"apply":true}}]}
