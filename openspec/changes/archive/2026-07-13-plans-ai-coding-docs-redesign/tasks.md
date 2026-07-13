@@ -7,4 +7,4 @@
 - [x] 5. 修改 `documentation-source-of-truth` capability，承認七檔 ownership 與兩份 tracked prototypes。
 - [x] 6. 跑計數、active-reference、TARGET purity、line-budget、tracked evidence、JavaScript syntax 與 repo governance gates。
 - [x] 7. 跑 `npx openspec validate plans-ai-coding-docs-redesign --strict` 與 `npx openspec validate --all --strict`。
-- [ ] 8. 完成 PR review／CI；merge 後另走 OpenSpec archive closeout。
+- [x] 8. 完成 PR review／CI；merge 後另走 OpenSpec archive closeout。
