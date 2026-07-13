@@ -220,8 +220,8 @@ try {
     Assert-True ($agentsBody -match [regex]::Escape('docs/agents/superpowers-invocation-policy.md')) 'AGENTS.md indexes the Superpowers invocation policy'
     Assert-True ($claudeBody -match [regex]::Escape('docs/agents/superpowers-invocation-policy.md')) 'CLAUDE.md indexes the Superpowers invocation policy'
 
-    $codexSpecToDone = Get-Content -LiteralPath '.codex/skills/spec-to-done/SKILL.md' -Raw
-    $claudeSpecToDone = Get-Content -LiteralPath '.claude/skills/spec-to-done/SKILL.md' -Raw
+    $codexSpecToDone = Get-Content -LiteralPath '.codex/skills/spec-to-done/SKILL.md' -Raw -Encoding UTF8
+    $claudeSpecToDone = Get-Content -LiteralPath '.claude/skills/spec-to-done/SKILL.md' -Raw -Encoding UTF8
     $implicitTriggers = @(
         ([string][char]0x5BE6 + [char]0x4F5C + ' spec'),
         ([string][char]0x5B8C + [char]0x6210 + [char]0x9700 + [char]0x6C42),
