@@ -37,6 +37,91 @@ function Normalize-TestDeployPath {
     return $fullPath.TrimEnd([char[]]@('\', '/'))
 }
 
+function Assert-TestDeployPathSafety {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $Path
+    )
+
+    $fullPath = Normalize-TestDeployPath -Path $Path
+    $pathRoot = [System.IO.Path]::GetPathRoot($fullPath)
+    if ([string]::IsNullOrWhiteSpace($pathRoot)) {
+        throw "deployment path has no filesystem root: '$fullPath'"
+    }
+
+    $currentPath = $pathRoot
+    $relativePath = $fullPath.Substring($pathRoot.Length)
+    foreach ($segment in @($relativePath.Split(
+        [char[]]@([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar),
+        [System.StringSplitOptions]::RemoveEmptyEntries
+    ))) {
+        $currentPath = Join-Path $currentPath $segment
+        $item = Get-Item -LiteralPath $currentPath -Force -ErrorAction SilentlyContinue
+        if ($null -eq $item) {
+            break
+        }
+        if ([bool]($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+            throw "deployment path contains reparse point: '$($item.FullName)'"
+        }
+    }
+
+    if (-not (Test-Path -LiteralPath $fullPath -PathType Container)) {
+        return $fullPath
+    }
+
+    $pendingDirectories = New-Object 'System.Collections.Generic.Queue[string]'
+    $pendingDirectories.Enqueue($fullPath)
+    while ($pendingDirectories.Count -gt 0) {
+        $directory = $pendingDirectories.Dequeue()
+        foreach ($item in @(Get-ChildItem -LiteralPath $directory -Force -ErrorAction Stop)) {
+            if ([bool]($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+                throw "deployment path contains reparse point: '$($item.FullName)'"
+            }
+            if ($item.PSIsContainer) {
+                $pendingDirectories.Enqueue($item.FullName)
+            }
+        }
+    }
+
+    return $fullPath
+}
+
+function Enter-TestDeployRebuildLock {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $DeploymentPath
+    )
+
+    $deployRoot = Normalize-TestDeployPath -Path $DeploymentPath
+    $deployParent = Split-Path -Parent $deployRoot
+    if ([string]::IsNullOrWhiteSpace($deployParent) -or -not (Test-Path -LiteralPath $deployParent -PathType Container)) {
+        throw "deployment parent does not exist: '$deployParent'"
+    }
+
+    $deployLeaf = Split-Path -Leaf $deployRoot
+    $lockPath = Normalize-TestDeployPath -Path (Join-Path $deployParent ".$deployLeaf.rebuild.lock")
+    $handle = $null
+    try {
+        $handle = [System.IO.File]::Open(
+            $lockPath,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+    } catch [System.IO.IOException] {
+        $lowCode = [int]$_.Exception.HResult -band 0xFFFF
+        if ($lowCode -in @(32, 33)) {
+            throw "test deploy rebuild already in progress for '$deployRoot'"
+        }
+        throw "failed to acquire test deploy rebuild lock '$lockPath': $($_.Exception.Message)"
+    }
+
+    return [pscustomobject]@{
+        Handle = $handle
+        LockPath = $lockPath
+    }
+}
+
 function Test-TestDeployBrokenGitFile {
     [CmdletBinding()]
     param(
@@ -397,6 +482,10 @@ function Invoke-TestDeployRebuild {
         Assert-TestDeployPath -Path $DeploymentPath
     }
 
+    Assert-TestDeployPathSafety -Path $deployRoot | Out-Null
+
+    $rebuildLock = Enter-TestDeployRebuildLock -DeploymentPath $deployRoot
+    try {
     $origin = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('remote', 'get-url', 'origin') -WorkingDirectory $repoRootPath -CommandRunner $CommandRunner
     $originUrl = $origin.Output.Trim()
     if ([string]::IsNullOrWhiteSpace($originUrl)) {
@@ -650,5 +739,10 @@ function Invoke-TestDeployRebuild {
         RemovedAgentToolingCount = @($removed).Count
         RestoredEnvFileCount = @($restoredEnvFiles).Count
         DeployExitCode = [int]$deployResult.ExitCode
+    }
+    } finally {
+        if ($null -ne $rebuildLock -and $null -ne $rebuildLock.Handle) {
+            $rebuildLock.Handle.Dispose()
+        }
     }
 }

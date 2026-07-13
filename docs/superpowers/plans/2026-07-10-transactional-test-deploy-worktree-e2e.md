@@ -46,9 +46,11 @@ Expected baseline: all existing tests pass. Use a temp `EDGE_RUNTIME_DATA_ROOT`;
 
 Observed: re-index completed, but PowerShell functions/files return `Target not found`, risk `UNKNOWN`. Remove only GitNexus auto-generated unrelated file diffs via exact reverse patch.
 
-- [ ] **Step 4: Record explicit user acceptance**
+- [x] **Step 4: Record explicit user acceptance**
 
 Before modifying PowerShell or shared flows, record user acceptance of `GitNexus unavailable (PowerShell unsupported)` risk. Without it, stop after docs-only work.
+
+2026-07-13：使用者明確要求保留現有成果並繼續補齊至合併；接受 fresh re-index 後 PowerShell target 仍為 `Target not found / UNKNOWN`，以 raw source review、focused tests、PR preflight 與 CI 作補償證據。
 
 ### Task 1: RED tests for transaction and source modes
 
@@ -57,7 +59,7 @@ Before modifying PowerShell or shared flows, record user acceptance of `GitNexus
 - Create: `scripts/tests/fixtures/` files only when a tiny binary/text fixture cannot be generated in temp
 - Test only: `scripts/lib/rebuild-test-deploy.ps1`
 
-- [ ] **Step 1: Add non-git and broken-gitfile failure tests**
+- [x] **Step 1: Add non-git and broken-gitfile failure tests**
 
 Cases:
 
@@ -68,7 +70,7 @@ Cases:
 
 Run and require RED for the new assertions, with legacy tests still passing up to the intended failures.
 
-- [ ] **Step 2: Add path/reparse/lock tests**
+- [x] **Step 2: Add path/reparse/lock tests**
 
 Cases:
 
