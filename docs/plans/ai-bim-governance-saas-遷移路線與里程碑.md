@@ -222,7 +222,7 @@
 
 ## §9 跨階段紀律
 
-- **開發流程**：superpowers `writing-plans` → `subagent-driven-development` → `verification-before-completion`。
+- **開發流程**：預設採 repo-native lean mode；Superpowers `writing-plans`、`subagent-driven-development`、`verification-before-completion` 僅在使用者明確啟用時使用，且不得自動串接。詳見 `docs/agents/superpowers-invocation-policy.md`。
 - **不在 main 開發**：走 branch → PR → Actions → merge。
 - **GitNexus**：改任何 code symbol 前 MUST 跑 `impact`（前掃），commit 前 MUST 跑 `detect_changes`（後驗）；HIGH／CRITICAL risk 先回報。
 - **每階段 browser E2E evidence**：gstack／Playwright，落 `artifacts/e2e/*.png` ＋ trace；backend-only done 不接受。

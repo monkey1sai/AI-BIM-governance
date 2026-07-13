@@ -42,6 +42,7 @@ try {
         '.codex/skills/ai-bim-fast-fix/SKILL.md',
         '.codex/skills/ai-bim-bounded-change/SKILL.md',
         '.codex/skills/spec-to-done/agents/openai.yaml',
+        'docs/agents/superpowers-invocation-policy.md',
         'docs/PR_REVIEW_AGENT.md',
         'docs/superpowers/plans/2026-06-18-ai-coding-maturity-governance.md'
     )) {
@@ -193,7 +194,7 @@ try {
         Assert-True ($codexConfig -match [regex]::Escape('"' + $domain + '"')) ".codex/config.toml allows $domain"
     }
     Assert-True ($codexConfig -match '\[plugins\."cloudflare@openai-curated"\][\s\S]*?enabled\s*=\s*false') '.codex/config.toml disables the Cloudflare plugin'
-    Assert-True ($codexConfig -match '\[plugins\."superpowers@claude-plugins-official"\][\s\S]*?enabled\s*=\s*false') '.codex/config.toml declares the repo Superpowers disable intent; live CLI effectiveness is reported separately'
+    Assert-True ($codexConfig -match '\[plugins\."superpowers@claude-plugins-official"\][\s\S]*?enabled\s*=\s*false') '.codex/config.toml disables the Superpowers plugin'
     foreach ($forbiddenConfigKey in @('sandbox_workspace_write', 'sandbox_mode', 'model\s*=', 'model_reasoning_effort\s*=')) {
         Assert-True (-not ($codexConfig -match $forbiddenConfigKey)) ".codex/config.toml does not define forbidden selector $forbiddenConfigKey"
     }
@@ -201,9 +202,42 @@ try {
     $specMetadata = Get-Content -LiteralPath '.codex/skills/spec-to-done/agents/openai.yaml' -Raw
     Assert-True ($specMetadata -match 'allow_implicit_invocation:\s*false') 'spec-to-done implicit invocation is mechanically disabled'
 
+    $superpowersPolicy = Get-Content -LiteralPath 'docs/agents/superpowers-invocation-policy.md' -Raw
+    foreach ($policyTerm in @(
+        'repo-native lean mode',
+        'explicit-only',
+        'Task complexity itself is never a substitute for explicit invocation',
+        'No automatic chaining',
+        'spec-to-done',
+        'brainstorming',
+        'writing-plans',
+        'subagent-driven-development',
+        'brainstorm | plan — prohibited',
+        'plan | implementation — prohibited'
+    )) {
+        Assert-True ($superpowersPolicy -match [regex]::Escape($policyTerm)) "Superpowers invocation policy contains: $policyTerm"
+    }
+    Assert-True ($agentsBody -match [regex]::Escape('docs/agents/superpowers-invocation-policy.md')) 'AGENTS.md indexes the Superpowers invocation policy'
+    Assert-True ($claudeBody -match [regex]::Escape('docs/agents/superpowers-invocation-policy.md')) 'CLAUDE.md indexes the Superpowers invocation policy'
+
+    $codexSpecToDone = Get-Content -LiteralPath '.codex/skills/spec-to-done/SKILL.md' -Raw -Encoding UTF8
+    $claudeSpecToDone = Get-Content -LiteralPath '.claude/skills/spec-to-done/SKILL.md' -Raw -Encoding UTF8
+    $implicitTriggers = @(
+        ([string][char]0x5BE6 + [char]0x4F5C + ' spec'),
+        ([string][char]0x5B8C + [char]0x6210 + [char]0x9700 + [char]0x6C42),
+        ([string][char]0x4F7F + [char]0x7528 + ' agents')
+    )
+    foreach ($implicitTrigger in $implicitTriggers) {
+        Assert-True ($codexSpecToDone -match [regex]::Escape($implicitTrigger)) "Codex spec-to-done excludes implicit trigger: $implicitTrigger"
+    }
+    foreach ($hardGate in @('P0', 'P1', 'P3', 'P4', 'P5', 'P6', 'P7', 'HELD', 'browser evidence', 'ship-item', 'GitNexus')) {
+        Assert-True ($codexSpecToDone -match [regex]::Escape($hardGate)) "Codex spec-to-done preserves hard-gate marker: $hardGate"
+        Assert-True ($claudeSpecToDone -match [regex]::Escape($hardGate)) "Claude spec-to-done preserves hard-gate marker: $hardGate"
+    }
+
     $claudeSettingsRaw = Get-Content -LiteralPath '.claude/settings.json' -Raw
     $claudeSettings = $claudeSettingsRaw | ConvertFrom-Json
-    Assert-True ($claudeSettings.enabledPlugins.'superpowers@claude-plugins-official' -eq $false) 'Claude project disables Superpowers'
+    Assert-True ($claudeSettings.enabledPlugins.'superpowers@claude-plugins-official' -eq $false) 'Claude project-specific configuration disables the Superpowers plugin'
     Assert-True (-not ($claudeSettingsRaw -match 'Write\|Edit\|MultiEdit|verify-reminder')) 'Claude no longer runs verify reminder after every edit'
     Assert-True ($claudeSettingsRaw -match 'Bash\(git commit\*\)') 'Claude commit guard runs only for git commit'
     Assert-True ($claudeSettingsRaw -match 'Bash\(gh pr merge\*\)') 'Claude keeps the merge evidence gate'
