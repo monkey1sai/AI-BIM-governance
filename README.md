@@ -130,10 +130,10 @@ README 只是入口，不是最高權威。遇到衝突時依下表往下查。
 | 想知道 | 入口 |
 |---|---|
 | Repo 邊界、agent 規則、source of truth | [AGENTS.md](AGENTS.md) |
-| A1-A10 功能需求、UI 驗收語意、原型效力順序 | [docs/plans/docs-plans-README.md](docs/plans/docs-plans-README.md) |
-| 產品殼層需求規格 | [docs/plans/ai-bim-governance-設計規格.md](docs/plans/ai-bim-governance-設計規格.md) |
-| 互動行為合約與官方標準對齊 | [docs/plans/ai-bim-governance-互動實作規格與標準對齊.md](docs/plans/ai-bim-governance-互動實作規格與標準對齊.md) |
-| 工程執行順序與 DoD | [docs/plans/ai-bim-governance-開發軌跡與執行計畫.md](docs/plans/ai-bim-governance-開發軌跡與執行計畫.md) |
+| Plans 唯一入口與閱讀順序 | [docs/plans/docs-plans-README.md](docs/plans/docs-plans-README.md) |
+| Repo 現況與 A1-A10 建成狀態 | [docs/plans/TRUTH.md](docs/plans/TRUTH.md) |
+| 產品契約、殼層與 viewer 目標 | [TARGET-contracts.md](docs/plans/TARGET-contracts.md)、[TARGET-shell.md](docs/plans/TARGET-shell.md)、[TARGET-viewer.md](docs/plans/TARGET-viewer.md) |
+| 缺口排序、OPEN 決策與 DoD | [BACKLOG.md](docs/plans/BACKLOG.md)、[PROCESS.md](docs/plans/PROCESS.md) |
 | 可點擊產品原型 | [docs/plans/ai-bim-governance-prototype.html](docs/plans/ai-bim-governance-prototype.html) |
 | 3D viewer 驗收示意原型 | [docs/plans/ai-bim-geo-viewer-prototype.html](docs/plans/ai-bim-geo-viewer-prototype.html) |
 | API / event contracts | [docs/contracts/](docs/contracts/) |

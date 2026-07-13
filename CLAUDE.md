@@ -32,7 +32,7 @@ Lane G/S 不得弱化 secrets、repo boundaries、GitNexus HIGH/CRITICAL、front
 | advanced reasoning overlay | `docs/agents/advanced-agent-reasoning-contract.md` |
 | Superpowers invocation / no-auto-chain / subagent budget | `docs/agents/superpowers-invocation-policy.md` |
 | archive / retired services | `docs/agents/history-and-archive.md` |
-| 查需求效力序、正典路由 A.1.1、A1–A10 建成裁決（§4.4）、後端凍結契約（§1） | `docs/plans/docs-plans-README.md`（跳板）→ 各 plans 檔 |
+| 查產品需求／現況（TRUTH）、正典路由（TARGET-contracts §4）、後端凍結契約（TARGET-contracts §1）、缺口佇列（BACKLOG） | `docs/plans/docs-plans-README.md`（入口）→ TRUTH / TARGET-* / BACKLOG / PROCESS |
 | 需要依任務種類／難度選擇 Codex workflow、subagents、模型 lane，或使用 `use agents` / `subagents` / `swarm` 開發 `docs/plans` 需求 | `docs/agents/codex-loop-workflows.md` |
 
 ## 4. GitNexus 入口

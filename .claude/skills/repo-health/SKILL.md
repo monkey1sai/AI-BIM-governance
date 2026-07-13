@@ -31,7 +31,7 @@ argument-hint: "（選填）只想看某面向：version / cleanup / assets / do
 
 | 面向 | 抓什麼 | 性質 |
 |---|---|---|
-| **進度差異** | `docs/plans/開發軌跡與執行計畫.md` 的 A1–A10／M0–M8「計畫自報 vs 獨立查證」並列，標出計畫高估/低報 | 唯讀評估，**不納入「要修哪幾項」** |
+| **進度差異** | `docs/plans/TRUTH.md` 的 route／A1–A10 現況與 `docs/plans/BACKLOG.md` gap 佇列「帳本自報 vs 獨立查證」並列，標出帳本高估/低報 | 唯讀評估，**不納入「要修哪幾項」** |
 
 ## 流程
 

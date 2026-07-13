@@ -1,17 +1,17 @@
 # AI-BIM-governance 專案開發流程 v3
 
-> **歷史說明**：本文件仍保留 2026-05 開發流程、Phase 與候選編號脈絡。2026-06 起，repo 功能需求主來源改為 [`docs/plans/ai-bim-governance-設計規格.md`](plans/ai-bim-governance-設計規格.md) 與 [`docs/plans/ai-bim-governance-prototype.html`](plans/ai-bim-governance-prototype.html)；舊 `AI-BIM-governance-saas-roadmap-2026-05.md` 已移除。下文凡標記 `saas-roadmap（已移除）§X / PX 候選 #N` 者，該來源檔已隨之移除；其候選編號、NVIDIA 採用決策（§13）、Multi-Kit Instance 官方定義（§11.4）、硬體配置（§9）、MCP 查詢結果（§11）等內容可於 git 歷史 commit `d0fbdad` 溯源。
+> **歷史說明**：本文件仍保留 2026-05 開發流程、Phase 與候選編號脈絡；除 §1.3、§3、§10–§11 外，下文出現的 `_worker`／`_bim-control` 都是退役前歷史快照，**不是現在 product runtime**。2026-07-13 起，repo plans 唯一入口改為 [`docs/plans/docs-plans-README.md`](plans/docs-plans-README.md)：現況查 `TRUTH.md`，需求查 `TARGET-contracts.md`／`TARGET-shell.md`／`TARGET-viewer.md`，排序與紀律查 `BACKLOG.md`／`PROCESS.md`，產品樣貌以兩份 prototype 為錨。舊 `AI-BIM-governance-saas-roadmap-2026-05.md` 已移除；roadmap-era 資料可於 git 歷史 commit `d0fbdad` 溯源。
 >
-> 本次調整核心：**把 Omniverse 能力發揮到最大**（擬真建築、真實物理、環境感測、模擬驅動 AI 分析），並在 B 方案下把 `_worker` 收斂為 RVT→IFC bridge、把 `bim-streaming-server` 定義為 IFC→USDC conversion authority，同時讓 review session request、session lifecycle、多 artifact / 多 instance 收進正式控制面。
+> 現行 B 方案：外部公司雲端 `bim-control` 是 control-plane；外部客戶落地端 IFC Worker 是 IFC producer；本 repo 的 coordinator 是唯一 IFC-ready intake，streaming-server 是 internal IFC→USDC authority。`_worker`／`_bim-control` 已自 repo product runtime 移除，只可由 `tests/fakes` 模擬。
 >
-> **本文件 = 開發流程入口**；A1–A10 功能需求、UI 操作語意、可信度標記與雲端 / 落地端分離架構以設計規格與 prototype 為準；行為正確性仍以 `openspec/specs/`、contracts 與程式碼為準。
+> **本文件 = 開發流程入口**；A1–A10 功能需求、UI 操作語意、可信度標記與雲端 / 落地端分離架構以 `docs/plans/docs-plans-README.md` 入口的 TRUTH/TARGET 體系與 prototype 為準（2026-07-13 起，舊《設計規格》已由 TARGET-shell/TARGET-viewer 取代）；行為正確性仍以 `openspec/specs/`、contracts 與程式碼為準。
 >
 > **本文件不取代 source of truth**：
 > - Repo 邊界 → [`AGENTS.md`](../AGENTS.md)
-> - Capability requirements → [`openspec/specs/`](../openspec/specs/) 10 份 spec
+> - Capability requirements → [`openspec/specs/`](../openspec/specs/)
 > - API 規格 → [`docs/contracts/`](contracts/) 7 份合約
 > - 驗證證據 → [`docs/verification/`](verification/)
-> - **功能需求 / UI 原型** → [`docs/plans/ai-bim-governance-設計規格.md`](plans/ai-bim-governance-設計規格.md), [`docs/plans/ai-bim-governance-prototype.html`](plans/ai-bim-governance-prototype.html)
+> - **功能需求 / UI 原型** → [`docs-plans-README`](plans/docs-plans-README.md)（入口）→ [`TRUTH`](plans/TRUTH.md) / [`TARGET-contracts`](plans/TARGET-contracts.md) / [`TARGET-shell`](plans/TARGET-shell.md) / [`TARGET-viewer`](plans/TARGET-viewer.md) / [`BACKLOG`](plans/BACKLOG.md) / [`PROCESS`](plans/PROCESS.md)；[殼層 prototype](plans/ai-bim-governance-prototype.html) / [viewer prototype](plans/ai-bim-geo-viewer-prototype.html)
 >
 > 本文件是把它們組合成可執行的開發路線。
 
@@ -21,7 +21,7 @@
 
 1. [專案目標與架構視野](#1-專案目標與架構視野)
 2. [7 層目標架構（v2 圖）](#2-7-層目標架構v2-圖)
-3. [當前 Runtime 架構（worker-only）](#3-當前-runtime-架構worker-only)
+3. [當前 B-scheme Runtime 架構](#3-當前-b-scheme-runtime-架構)
 4. [當前進度檢視 + 驗證證據分層](#4-當前進度檢視--驗證證據分層)
 5. [主要風險 / 缺口](#5-主要風險--缺口)
 6. [IFC → USD 品質保證管線](#6-ifc--usd-品質保證管線)
@@ -52,20 +52,20 @@
 > 完整定義以 [`AGENTS.md`](../AGENTS.md) 為準。
 
 ```txt
-資料權威            → _bim-control（metadata-only）
-RVT intake metadata   → _bim-control（fake Revit / RVT intake facade）
-RVT→IFC handoff       → _worker（bridge / fixture mode / lineage）
-IFC→USDC conversion  → bim-streaming-server（B 方案 conversion authority）
-Session / 協作      → bim-review-coordinator
-3D runtime          → bim-streaming-server（Kit + WebRTC + USD stage）
-使用者操作          → web-viewer-sample（browser）
+[外部] 公司雲端 control-plane → bim-control（metadata / policy；本 repo 不啟動）
+[外部] 客戶落地端 IFC producer → IFC Worker（本 repo 不啟動）
+IFC-ready intake / Session      → bim-review-coordinator
+IFC→USDC / 3D runtime           → bim-streaming-server（Kit + WebRTC）
+A1/A2/A3 governance             → governance-service（:49102 loopback）
+使用者操作                       → web-viewer-sample
+Kit fleet ops                    → kit-manager web + API
 ```
 
 ---
 
 ## 2. 7 層目標架構（v2 圖）
 
-> 對應架構圖 v2 的層次劃分。從上到下：使用者 → Portal → 業務服務 → Omniverse runtime → 平台能力 → DevOps。
+> **歷史目標圖（2026-05，非現在 runtime）**：本章保留 roadmap-era 七層分解以供追溯；圖表中的 `_worker`／`_bim-control` 已退役，不得作為啟動、部署或新需求邊界。現行架構只看 §1.3、§3 與 `AGENTS.md`。
 
 ### 2.1 七層概覽
 
@@ -188,21 +188,23 @@ flowchart TB
 
 ---
 
-## 3. 當前 Runtime 架構（worker-only）
+## 3. 當前 B-scheme Runtime 架構
 
 > 所有 commit 已 merge 進 `main`。完整邊界以 [`AGENTS.md`](../AGENTS.md) 為準。
 
 ### 3.1 服務清單
 
-| 服務 | 角色 | Port | Demo 步驟 |
+| 服務 / 邊界 | 角色 | Port | 執行歸屬 |
 |---|---|---|---|
-| `_bim-control/` | Fake BIM Data Authority + fake RVT intake facade | 8001 | ① 上傳建模 + ⑤ 紀錄回寫 |
-| `_worker/` | RVT→IFC Bridge（worker handoff 邊界） | 8005 | ② RVT→IFC handoff |
-| `bim-review-coordinator/` | Session / Collaboration Control Plane | 8004 | ③ 建立會議 |
-| `bim-streaming-server/` | IFC→USDC Conversion Authority + Omniverse Kit Runtime / WebRTC | 49100 (signaling) / 47998 (stream) | ② 自動轉換 + ④ 標記問題（背景） |
-| `web-viewer-sample/` | Browser Client / WebRTC Viewer | 5173 | ④ 標記問題（前景） |
+| `[外部] bim-control` | 公司雲端 control-plane；只收 metadata / control-plane 投影 | 外部管理 | 本 repo 不啟動、不 mirror |
+| `[外部] 客戶 IFC Worker` | 客戶落地端 IFC producer；完成後呼叫 coordinator IFC-ready intake | 外部管理 | 本 repo 不啟動，測試只用 `tests/fakes` |
+| `bim-review-coordinator/` | 唯一對外 IFC-ready intake + Session / collaboration control | 8004 | customer-edge data-plane |
+| `bim-streaming-server/` | internal IFC→USDC authority + Omniverse Kit / WebRTC runtime | 49100 / 49101 | customer-edge data-plane |
+| `governance-service/` | A1/A2/A3、Issue / BCF authority；只由 coordinator proxy 存取 | 49102 loopback | customer-edge data-plane |
+| `web-viewer-sample/` | Browser client；REST / Socket.IO 走 coordinator，WebRTC / DataChannel 走 Kit | 5173 | browser |
+| `apps/kit-manager-web/` + `services/kit-manager-api/` | Kit fleet ops / telemetry | 8010（API） | operator tooling |
 
-> **退役服務**：`_s3_storage`（8002）、`_conversion-service`（8003）、`_conversion-server`。詳見 [`legacy-storage-conversion-retirement` spec](../openspec/specs/legacy-storage-conversion-retirement/spec.md)。
+> **退役 product runtime**：`_worker`、`_bim-control`、`_s3_storage`、`_conversion-service`、`_conversion-server`。`_worker`／`_bim-control` 只可由 `tests/fakes` 模擬外部平台；詳見 [`legacy-storage-conversion-retirement` spec](../openspec/specs/legacy-storage-conversion-retirement/spec.md) 與 `AGENTS.md`。
 
 ### 3.2 Current Runtime Flow
 
@@ -211,35 +213,33 @@ flowchart LR
     subgraph "Browser"
         WV[web-viewer-sample<br/>:5173]
     end
-    subgraph "Control Plane"
+    subgraph "Customer-edge control"
         CO[bim-review-coordinator<br/>:8004]
+        GOV[governance-service<br/>:49102 loopback]
     end
-    subgraph "Worker / Data"
-        WK[_worker<br/>RVT→IFC bridge<br/>:8005]
-        BC[_bim-control<br/>metadata authority<br/>:8001]
+    subgraph "External boundaries"
+        EDGE[Customer IFC Worker<br/>IFC producer]
+        CLOUD[Company cloud bim-control<br/>metadata control-plane]
     end
     subgraph "Runtime"
-        KIT[bim-streaming-server<br/>IFC→USDC + signaling :49100<br/>stream :47998]
+        KIT[bim-streaming-server<br/>IFC→USDC + Kit/WebRTC<br/>:49100 / :49101]
+        KM[kit-manager web + api<br/>:8010]
     end
 
-    WV -->|REST: review-bootstrap / session| CO
+    EDGE -->|POST /api/external/ifc-ready| CO
+    CO -->|internal conversion request| KIT
+    CO -->|/api/governance/* proxy| GOV
+    CO -->|metadata-only callback outbox| CLOUD
+    WV -->|REST + Socket.IO| CO
     WV -->|WebRTC video + DataChannel JSON| KIT
-    WV -->|Socket.IO collaboration| CO
-
-    CO -->|REST: project / model / artifact / issue| BC
-    CO -->|REST: streaming-owned readiness metadata| BC
-    CO -->|REST: review-session-request patch| BC
-
-    BC -->|webhook: rvt_uploaded| WK
-    WK -->|webhook: ifc_ready| KIT
-    KIT -->|callback: conversion_result_ready / failed| BC
+    KM -->|Kit fleet ops / telemetry| KIT
 ```
 
 ---
 
 ## 4. 當前進度檢視 + 驗證證據分層
 
-> 進度依據：`git log` 已 merge 的 PR、現行 `openspec/specs/` capability specs、active OpenSpec change `architecture-rework-2026-05-14`、`docs/verification/` runtime evidence。
+> **歷史進度快照（2026-05）**：本章用來追溯當時 Phase / evidence，不是現在建成裁決；現況唯一入口為 [`docs/plans/TRUTH.md`](plans/TRUTH.md)。下列 `_worker`／`_bim-control` 全是退役前歷史名稱。
 
 ### 4.1 Phase 完成度
 
@@ -815,23 +815,26 @@ sequenceDiagram
 | 你想知道 | 看哪個檔 |
 |---|---|
 | Repo 邊界、資料權威、禁止跨界規則 | [`AGENTS.md`](../AGENTS.md) |
-| `_worker` API 規格 | [`docs/contracts/worker-api.md`](contracts/worker-api.md) |
-| `_bim-control` API 規格 | [`docs/contracts/bim-control-fake-api.md`](contracts/bim-control-fake-api.md) |
+| 歷史 `_worker` API（退役；只供 migration 追溯） | [`docs/contracts/worker-api.md`](contracts/worker-api.md) |
+| 歷史 fake `_bim-control` API（退役；只供 test/migration 追溯） | [`docs/contracts/bim-control-fake-api.md`](contracts/bim-control-fake-api.md) |
 | Coordinator REST API | [`docs/contracts/review-session-api.md`](contracts/review-session-api.md) |
 | Coordinator Socket.IO 事件 | [`docs/contracts/coordinator-socket-events.md`](contracts/coordinator-socket-events.md) |
 | Streaming DataChannel 事件 | [`docs/contracts/streaming-datachannel-events.md`](contracts/streaming-datachannel-events.md) |
 | 退役服務 | [`docs/contracts/conversion-api.md`](contracts/conversion-api.md), [`legacy-storage-conversion-retirement` spec](../openspec/specs/legacy-storage-conversion-retirement/spec.md) |
 | 本地開發步驟 | [`docs/contracts/local-dev-runbook.md`](contracts/local-dev-runbook.md), [`README.md`](../README.md) |
 | Demo UI 設計守則 | [`docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md`](plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md) |
-| 11 份 Capability spec | [`openspec/specs/`](../openspec/specs/) |
+| Capability specs | [`openspec/specs/`](../openspec/specs/) |
 | 已 archive 的 OpenSpec change | [`openspec/changes/archive/`](../openspec/changes/archive/) |
 | **2026-05-08 端到端驗證證據** | [`docs/verification/2026-05-08-spec-end-to-end-verification.md`](verification/2026-05-08-spec-end-to-end-verification.md) |
-| **功能需求與 UI 驗收語意**（A1–A10、操作流程、可信度標記、雲端 / 落地端架構對齊） | [`docs/plans/ai-bim-governance-設計規格.md`](plans/ai-bim-governance-設計規格.md) |
-| **可點擊產品原型** | [`docs/plans/ai-bim-governance-prototype.html`](plans/ai-bim-governance-prototype.html) |
+| **Plans 唯一入口** | [`docs-plans-README`](plans/docs-plans-README.md) |
+| **Runtime 現況與 evidence** | [`TRUTH`](plans/TRUTH.md) |
+| **跨頁／route／viewer 需求** | [`TARGET-contracts`](plans/TARGET-contracts.md)／[`TARGET-shell`](plans/TARGET-shell.md)／[`TARGET-viewer`](plans/TARGET-viewer.md) |
+| **Gap 排序與驗收紀律** | [`BACKLOG`](plans/BACKLOG.md)／[`PROCESS`](plans/PROCESS.md) |
+| **可點擊產品原型** | [殼層 prototype](plans/ai-bim-governance-prototype.html)／[viewer prototype](plans/ai-bim-geo-viewer-prototype.html) |
 
 ### 10.1 11 份 Capability Spec 對應 Phase
 
-> 本表保留 2026-05 roadmap-era Phase 對照；新功能需求請先讀設計規格與 prototype，再回到 OpenSpec specs 判斷可實作行為。
+> 本表保留 2026-05 roadmap-era Phase 對照；新功能需求請先讀 `docs-plans-README.md` 導向的 TARGET 與兩份 prototype，再回到 OpenSpec specs 判斷可實作行為。
 
 | Capability | Phase | 狀態 |
 |---|---|---|
@@ -845,7 +848,7 @@ sequenceDiagram
 | `streaming-multi-layer-payload-loading` | 3 | 🔄 |
 | `runtime-verification-evidence` | 3 | ✅（spec 完成、blocked 條件已記錄） |
 | `runtime-verification-task-status` | 3 | ✅（checklist 語意：GPU / concurrent runtime 不得因 blocker 視為完成；PR #20 same-Kit primary／spectator evidence 已 land） |
-| `documentation-source-of-truth` | cross-cutting | ✅（workflow v3 / 設計規格 + prototype / README / OpenSpec specs 分工權威） |
+| `documentation-source-of-truth` | cross-cutting | ✅（workflow v3 / TRUTH-TARGET-PROCESS plans / 兩份 prototype / README / OpenSpec specs 分工權威） |
 
 > **衝突解決順序**（同 [`AGENTS.md §0.1`](../AGENTS.md)）：使用者最新明確指令 > `AGENTS.md` > `CLAUDE.md` > OpenSpec > installed skills / wiki。本文件屬 **OpenSpec 補充 planning artifact**（分工見頂部 metadata），不得覆蓋 `openspec/specs/`、contracts 或程式碼權威。
 
@@ -858,14 +861,14 @@ sequenceDiagram
 > 完整定義以 [`AGENTS.md §0.1`](../AGENTS.md) 為準。
 
 ```txt
-Design spec    = 需求 / 規格 / 驗收條件
+Requirement source = 已核准需求 / 規格 / 驗收條件（plans 結構性分工另走 OpenSpec change）
 Superpowers    = explicit-only skill library；明確呼叫的 workflow 才可使用其既定 chain
 Git Branch     = 實作隔離（codex/superpowers/<work-id> 或 task-specific branch）
 Pull Request   = 審查與討論
 GitHub Actions = 自動驗證
 PR Review Agent = 自動整理風險 / 驗證命令 / blocker / warning
 Merge          = 正式接受變更
-Closeout       = 更新設計規格 / docs / evidence，並收斂本地 worktree
+Closeout       = 更新 TARGET / TRUTH / docs / evidence，並收斂本地 worktree
 ```
 
 **預設流程**（細節以 `AGENTS.md` 與 `docs/agents/superpowers-invocation-policy.md` 為準）：
@@ -877,11 +880,11 @@ Closeout       = 更新設計規格 / docs / evidence，並收斂本地 worktree
 4. 完成前對照需求、diff 與最小必要驗證證據，不得只用主觀判斷宣告完成。
 5. 只有 ship / PR 在工作範圍內時才開 PR；user-facing change 必須附 gstack / browser evidence。
 6. PR review、GitHub Actions 與 `pr-review-agent` 僅在 PR 流程中適用。
-7. 若 change 影響 A1–A10 功能需求、操作介面或雲端 / 落地端分離架構，更新 `docs/plans/ai-bim-governance-設計規格.md`，必要時同步更新 `docs/plans/ai-bim-governance-prototype.html`
-   - 不得只改 prototype 而不更新設計規格
+7. 若 change 影響 A1–A10 功能需求、操作介面或雲端 / 落地端分離架構，更新 `docs/plans/TARGET-contracts.md`／`TARGET-shell.md`／`TARGET-viewer.md` 的 owning 節（bump 凍結點），並同 PR 更新 `docs/plans/TRUTH.md` 對應列
+   - 不得只改 prototype 而不更新 TARGET 對應節
    - 不得把 prototype 的 demo data 宣告成 runtime evidence
    - 若沒有新的 runtime evidence，不更新任何 passed / ready 宣稱
-8. 生成型 HTML 檢視不得提交；`docs/plans/ai-bim-governance-prototype.html` 例外，因它是可點擊需求原型本體，不是由 Markdown 生成的衍生檔
+8. 生成型 HTML 檢視不得提交；`docs/plans/ai-bim-governance-prototype.html` 與 `docs/plans/ai-bim-geo-viewer-prototype.html` 例外，因它們是可點擊需求原型本體，不是由 Markdown 生成的衍生檔
 9. PR merge 後收斂本地工作樹
    - 執行 `git fetch origin --prune`
    - 切回 `main` 並確認工作區乾淨
@@ -893,7 +896,7 @@ Closeout       = 更新設計規格 / docs / evidence，並收斂本地 worktree
 
 - [ ] 對應的 Superpowers plan / checklist 存在；若本 PR 為純 docs/refactor 不需要，已在 PR 說明中記錄原因
 - [ ] `pr-review-agent` 已產生 report；若狀態為 `blocked` / `failed`，需修正或明確記錄人工 override 理由
-- [ ] 若本 PR 影響 A1–A10、操作介面或雲端 / 落地端分離架構，已同步更新設計規格；必要時更新 prototype
+- [ ] 若本 PR 影響 A1–A10、操作介面或雲端 / 落地端分離架構，已同步更新 TARGET 對應節與 TRUTH；必要時更新 prototype
 - [ ] 若本 PR 更新 prototype，已確認它不是把 demo data 當成 runtime evidence
 - [ ] PR merge 後已 fetch/prune，且本地 `main` 乾淨對齊 `origin/main`，沒有殘留本地-only commit
 - [ ] 修改不違反 `AGENTS.md` repo 邊界
@@ -939,27 +942,44 @@ git status --short --branch
 
 ### 11.4 服務測試命令速查
 
-```bash
-# Python services（必須在各自服務目錄下）
-cd _bim-control && python3 -m pytest tests
-cd _worker      && python3 -m pytest tests
+```powershell
+# Root contracts / external-platform fakes
+.\.venv\Scripts\python.exe -m pytest tests -p no:cacheprovider
 
-# Node services
-cd bim-review-coordinator && npm test && npm run build
-cd web-viewer-sample      && npm run test:session-first && npm run build
+# Coordinator
+Push-Location bim-review-coordinator
+npm test
+npm run build
+npm run verify
+Pop-Location
 
-# Smoke tests（root，PowerShell on Windows）
-./scripts/dev-health-check.ps1
-./scripts/smoke-worker-review-request.ps1     # API-only 端到端（推薦每次 PR 前跑）
-./scripts/smoke-review-session.ps1
-./scripts/smoke-review-socket.ps1
+# Governance（host-native Python 3.12 + ifcopenshell）
+Push-Location governance-service
+& "C:\Program Files\Python312\python.exe" -m pytest tests/ -v
+Pop-Location
 
-# Streaming（須 GPU + Kit）
-./bim-streaming-server/scripts/tests/test-stage-loading-contract.ps1   # non-GPU contract
-./scripts/start-all.ps1                                                # 啟動所有服務（含 streaming）
+# Streaming conversion authority（Kit render 另需 Windows host-native GPU）
+Push-Location bim-streaming-server
+python -m pytest tests/test_conversion_authority_api.py -q
+Pop-Location
 
-# 文件 / 規範正向檢查（確認新 workflow 入口仍指向 Superpowers）
-rg -n "Superpowers.*workflow|verification-before-completion|codex/superpowers" AGENTS.md docs openspec
+# Viewer / Kit Manager
+Push-Location web-viewer-sample
+npm run test:session-first
+npm run build
+Pop-Location
+Push-Location services/kit-manager-api
+python -m pytest tests -q
+Pop-Location
+Push-Location apps/kit-manager-web
+npm run build
+Pop-Location
+
+# 現行 root smoke / governance gates
+.\scripts\demo-health-check.ps1
+.\scripts\smoke-bscheme-intake.ps1
+pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
+npx openspec validate --all --strict
 ```
 
 ---

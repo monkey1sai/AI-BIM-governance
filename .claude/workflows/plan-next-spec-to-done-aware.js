@@ -83,20 +83,20 @@ const REPO = 'C:/Repos/active/iot/AI-BIM-governance'
 const PLANS = REPO + '/docs/plans'
 
 phase('Understand')
-log('6 路平行：3 規格抽取 + 前端/後端現狀 + git merged/in-flight 狀態')
+log('6 路平行：3 組 TRUTH/TARGET/PROCESS 抽取 + 前端/後端現狀 + git merged/in-flight 狀態')
 
 const reads = await parallel([
   () => agent(
-    `Read ${PLANS}/ai-bim-governance-開發軌跡與執行計畫.md IN FULL — the v3 trajectory, the AUTHORITATIVE implementation-order doc. Extract: every milestone M0..M8 (id, kind='milestone', title, scope, dod, dependencies); App API drafts (kind='a-item' if mapping to A1..A10 else 'milestone'); decisions D1..D9 (kind='decision'); open items O1..O6 (kind='open-item'). Be precise about the FIXED SEQUENCE M0->M1(A1 pure CPU)->M2 轉檔->M3 串流->M4 3D->M5+ and which milestone gates which. measured_status='unknown'. Analysis only; do NOT modify any file.`,
-    { label: 'spec:v3-trajectory', phase: 'Understand', schema: SPEC_SCHEMA, model: 'sonnet', effort: 'medium' }
+    `Read ${PLANS}/docs-plans-README.md, ${PLANS}/BACKLOG.md, and ${PLANS}/PROCESS.md IN FULL. Extract: every ordered active gap from BACKLOG §1 (kind='gap', preserve id/route/title/DONE/blocker/dependencies in scope+dod+dependencies); every unresolved decision from BACKLOG §2 (kind='open-item', preserve trigger and default); and the built/acceptance/document anti-corruption gates from PROCESS (kind='standard'). BACKLOG order is the implementation priority; historical M0..M8 wording is not an active task queue. measured_status='unknown'. Analysis only; do NOT modify any file.`,
+    { label: 'plans:backlog-process', phase: 'Understand', schema: SPEC_SCHEMA, model: 'sonnet', effort: 'medium' }
   ),
   () => agent(
-    `Read ${PLANS}/ai-bim-governance-互動實作規格與標準對齊.md IN FULL — the HIGHEST-AUTHORITY behavior contract. Extract: PART A 實測差距 (each kind='gap', measured_status working|partial|broken|not-built, dod=what 'fixed' looks like — be exhaustive, these are the most concrete candidates); PART B interaction cards IX-xx (kind='interaction-card', dod=acceptance) — EXPLICITLY capture EVERY IX-CV-0x AND IX-SS-0x AND IX-KG-0x card with whether it is marked 待建/已建; PART C three-domain standard alignment (kind='standard'). Analysis only; do NOT modify any file.`,
-    { label: 'spec:interaction-gaps', phase: 'Understand', schema: SPEC_SCHEMA, model: 'sonnet', effort: 'medium' }
+    `Read ${PLANS}/TRUTH.md and ${PLANS}/TARGET-contracts.md IN FULL. From TRUTH extract every route/A1..A10/viewer status and evidence gap (kind='gap', measured_status working|partial|broken|not-built; never upgrade PARTIAL/not observed). From TARGET-contracts extract the 13 backend-freeze items + 4 approved exceptions, 22 canonical routes + 9 aliases + #review retained page, official standards, and EVERY IX-TN-01..04 card (kind='standard' or 'interaction-card', dod=acceptance). Analysis only; do NOT modify any file.`,
+    { label: 'plans:truth-contracts', phase: 'Understand', schema: SPEC_SCHEMA, model: 'sonnet', effort: 'medium' }
   ),
   () => agent(
-    `Read ${PLANS}/ai-bim-governance-設計規格.md IN FULL (v2 design). Extract A1..A10 interface analysis: each id (A1..A10), kind='a-item', title, scope, dod (interface acceptance), dependencies. Also MinIO three-tier storage + Issue/BCF schema as kind='design'. Analysis only; do NOT modify any file.`,
-    { label: 'spec:design-a-items', phase: 'Understand', schema: SPEC_SCHEMA, model: 'sonnet', effort: 'medium' }
+    `Read ${PLANS}/TARGET-shell.md and ${PLANS}/TARGET-viewer.md IN FULL. Extract A1..A10 and all 22 route target slices (kind='a-item' for A1..A10, otherwise kind='design'; preserve API, UI, acceptance and dependencies), EVERY route-owned IX card (IX-A1×8, IX-CV×4, IX-SS×5, IX-KG×4), EVERY IX-3D-01..05 card, viewer AC-1..21, and M0..M8 milestone vocabulary. These are target requirements only; measured_status='unknown' and actual build state must come from TRUTH. Analysis only; do NOT modify any file.`,
+    { label: 'plans:target-slices', phase: 'Understand', schema: SPEC_SCHEMA, model: 'sonnet', effort: 'medium' }
   ),
   () => agent(
     `Audit the CURRENT BUILD STATE of the AI-BIM-governance FRONTEND in repo ${REPO}. Shell = React 18 + TS "EdgeConsole" served by coordinator at /ui (build:ui, hash router). Routes (hash, NO slash): #home #a1 #a2 #viewer #conv #sessions #instances #minio #review + operator #kit #demo-control. For EACH route decide REALLY built+wired-to-real-backend vs PARTIAL/DEMO (mock/DEMO-DATA/placeholder) vs NOT built. CRITICAL FOCUS: for #conv report the state of each controlled action (coverage expand, prioritize, retry, watch toggle); for #sessions / #instances report whether they show REAL runtime/session data or DEMO DATA, and whether any session controlled action (force-release stale endpoint, terminate session) exists or is disabled/mock. Report built[] (feature, evidence=file:line or route, status=real|demo|stub|partial) and notBuilt[]. BE HONEST about mock/DEMO-DATA. Read-only.`,
