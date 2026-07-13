@@ -149,6 +149,38 @@ function Get-PrReviewAddedLinesForPath {
     return @($added.ToArray())
 }
 
+function Get-PrReviewContractDiffLinesForPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $Path,
+        [string] $BaseSha = '',
+        [string] $HeadSha = ''
+    )
+
+    if ([string]::IsNullOrWhiteSpace($BaseSha) -or [string]::IsNullOrWhiteSpace($HeadSha)) {
+        return @()
+    }
+
+    $safeRoot = $RepoRoot -replace '\\', '/'
+    $mergeBase = (git -C $RepoRoot -c "safe.directory=$safeRoot" merge-base $BaseSha $HeadSha 2>$null | Select-Object -First 1)
+    if ([string]::IsNullOrWhiteSpace($mergeBase)) { return @() }
+
+    $diffLines = @(git -C $RepoRoot -c "safe.directory=$safeRoot" diff --unified=0 --no-ext-diff $mergeBase $HeadSha -- $Path 2>$null)
+    if ($LASTEXITCODE -ne 0) { return @() }
+
+    $contractLines = New-Object System.Collections.Generic.List[object]
+    foreach ($line in $diffLines) {
+        if ($line.StartsWith('+++') -or $line.StartsWith('---')) { continue }
+        if ($line.StartsWith('+')) {
+            [void]$contractLines.Add([pscustomobject]@{ operation = 'added'; text = $line.Substring(1) })
+        } elseif ($line.StartsWith('-')) {
+            [void]$contractLines.Add([pscustomobject]@{ operation = 'deleted'; text = $line.Substring(1) })
+        }
+    }
+    return @($contractLines.ToArray())
+}
+
 function Test-PrReviewDeletedPath {
     [CmdletBinding()]
     param(
@@ -276,7 +308,7 @@ function Test-PrReviewHasFormalOpenSpecEvidence {
             return $true
         }
         # repo 自 #189 退役 OpenSpec,改用 superpowers spec(docs/superpowers/specs/*.md)作為
-        # behavior/code/repo-boundary 變更的正式設計依據;視為等同 formal spec evidence(消 missing_openspec blocker)。
+        # behavior contract 變更的正式設計依據；視為 formal requirement evidence。
         # 注意:superpowers spec 非 OpenSpec 格式,不觸發 openspec validate
         # (Get-PrReviewValidationPlan 僅對 openspec/specs|changes/archive 路徑排 validate)。
         if ($normalized -match '^docs/superpowers/specs/.+\.md$') {
@@ -284,6 +316,49 @@ function Test-PrReviewHasFormalOpenSpecEvidence {
         }
     }
     return $false
+}
+
+function Get-PrReviewMarkdownTableValue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $Body,
+        [Parameter(Mandatory = $true)][string] $Label
+    )
+
+    $pattern = "(?im)^\|\s*$([regex]::Escape($Label))\s*\|\s*(.*?)\s*\|"
+    $match = [regex]::Match($Body, $pattern)
+    if (-not $match.Success) { return '' }
+    return ($match.Groups[1].Value.Trim() -replace '^`|`$', '')
+}
+
+function Get-PrReviewChangeDeclaration {
+    [CmdletBinding()]
+    param([string] $BodyPath = '')
+
+    $record = [ordered]@{
+        change_lane               = ''
+        behavior_contract_changed = ''
+        requirement_source        = ''
+    }
+    if ([string]::IsNullOrWhiteSpace($BodyPath) -or -not (Test-Path -LiteralPath $BodyPath -PathType Leaf)) {
+        return [pscustomobject]$record
+    }
+
+    $body = Get-Content -LiteralPath $BodyPath -Raw
+    $record.change_lane = (Get-PrReviewMarkdownTableValue -Body $body -Label 'Change lane').Trim().ToUpperInvariant()
+    $record.behavior_contract_changed = (Get-PrReviewMarkdownTableValue -Body $body -Label 'Behavior contract changed').Trim().ToLowerInvariant()
+    $record.requirement_source = (Get-PrReviewMarkdownTableValue -Body $body -Label 'Requirement source').Trim()
+    return [pscustomobject]$record
+}
+
+function Test-PrReviewRequirementSourceIsFormal {
+    [CmdletBinding()]
+    param([string] $RequirementSource = '')
+
+    if ([string]::IsNullOrWhiteSpace($RequirementSource)) { return $false }
+    $normalized = ($RequirementSource -replace '`', '').Trim().ToLowerInvariant()
+    if ($normalized -eq 'not applicable') { return $false }
+    return $normalized -match '^(issue|docs/plans|superpowers spec|existing contract)(\b|\s*:|/)'
 }
 
 function Test-PrReviewPathIsDocsOnly {
@@ -297,21 +372,95 @@ function Test-PrReviewPathIsDocsOnly {
     return $false
 }
 
-function Test-PrReviewNeedsOpenSpec {
+function Get-PrReviewBehaviorContractSignals {
     [CmdletBinding()]
-    param([Parameter(Mandatory = $true)][string[]] $ChangedPaths)
+    param(
+        [Parameter(Mandatory = $true)][string[]] $ChangedPaths,
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [string] $BaseSha = '',
+        [string] $HeadSha = ''
+    )
 
+    $signals = New-Object System.Collections.Generic.List[object]
+    $seen = New-Object System.Collections.Generic.HashSet[string]
     foreach ($path in $ChangedPaths) {
         $p = ConvertTo-PrReviewPath $path
-        if ($p -match '^openspec/changes/') { continue }
-        if ($p -match '^(\.github/workflows|scripts|bim-review-coordinator|web-viewer-sample|bim-streaming-server|tests)/') {
-            return $true
-        }
-        if ($p -in @('README.md', 'AGENTS.md') -or $p -eq 'docs/PROJECT_DEVELOPMENT_WORKFLOW.md') {
-            return $true
+        if ($p -match '^(tests?|docs|openspec)/' -or $p -match '\.(md|txt|png|jpg|jpeg|svg)$') { continue }
+        $diffLines = @(Get-PrReviewContractDiffLinesForPath -RepoRoot $RepoRoot -Path $p -BaseSha $BaseSha -HeadSha $HeadSha)
+        foreach ($operation in @('added', 'deleted')) {
+            $changedLines = @($diffLines | Where-Object { $_.operation -eq $operation } | ForEach-Object { $_.text })
+            if ($changedLines.Count -eq 0) { continue }
+            $changed = $changedLines -join "`n"
+
+            $signalKinds = @()
+            if ($changed -match '(?im)(@(?:app|router)\.(?:get|post|put|patch|delete)\s*\(|@(?:Get|Post|Put|Patch|Delete)\s*\(|\b(?:app|router|server)\.(?:get|post|put|patch|delete)\s*\(|\bMap(?:Get|Post|Put|Patch|Delete)\s*\()') {
+                $signalKinds += 'public_api'
+            }
+            if ($changed -match '(?im)(<Route\b[^>]*\bpath=|createBrowserRouter\s*\(|\b(?:path|route|hash)\s*:\s*[''"](?:/|#))') {
+                $signalKinds += 'user_facing_route'
+            }
+            if ($changed -match '(?im)(\bopenapi\s*:|"\$schema"\s*:|\b(?:request|response|event)[A-Za-z0-9_]*Schema\b|\b(?:CREATE|ALTER|DROP)\s+TABLE\b|\b(?:ADD|DROP|ALTER)\s+COLUMN\b)') {
+                $signalKinds += 'schema_or_migration'
+            }
+            if ($p -match '(^|/)(?:schemas?|contracts?|events?)(/|$|\.)' -and
+                $changed -match '(?im)^\s*(?:export\s+)?(?:interface|type|enum)\s+[A-Za-z0-9_]+|^\s*(?:required|properties)\s*:') {
+                $signalKinds += 'schema_or_event_contract'
+            }
+            if ($p -match '(^|/)(?:compose[^/]*\.ya?ml|scripts/deploy\.ps1|migrations?|auth|security)(/|$|\.)' -and
+                $changed -match '(?im)^\s*(?:services|ports|permissions|roles?|scopes?|authentication|authorization)\s*:|\b(?:CREATE|ALTER|DROP)\s+TABLE\b') {
+                $signalKinds += 'runtime_deploy_security_boundary'
+            }
+
+            foreach ($kind in $signalKinds) {
+                $key = "$kind|$operation|$p"
+                if ($seen.Add($key)) {
+                    [void]$signals.Add([pscustomobject]@{
+                        kind = $kind
+                        operation = $operation
+                        path = $p
+                        evidence = "High-confidence $operation-line contract signal."
+                    })
+                }
+            }
         }
     }
-    return $false
+    return @($signals.ToArray())
+}
+
+function Get-PrReviewGovernedLaneReasons {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string[]] $ChangedPaths,
+        [object[]] $BehaviorSignals = @()
+    )
+
+    $reasons = New-Object System.Collections.Generic.HashSet[string]
+    if (@($BehaviorSignals).Count -gt 0) { [void]$reasons.Add('behavior_contract_signal') }
+
+    $serviceRoots = New-Object System.Collections.Generic.HashSet[string]
+    foreach ($path in $ChangedPaths) {
+        $p = ConvertTo-PrReviewPath $path
+        if ($p -match '^(bim-review-coordinator|bim-streaming-server|governance-service|web-viewer-sample)/') {
+            [void]$serviceRoots.Add($Matches[1])
+        } elseif ($p -match '^(apps/kit-manager-web|services/kit-manager-api)/') {
+            [void]$serviceRoots.Add($Matches[1])
+        }
+
+        if ($p -match '^bim-streaming-server/') {
+            [void]$reasons.Add('kit_webrtc_gpu_runtime')
+        }
+        if ($p -match '^(scripts/deploy\.ps1|scripts/dev/rebuild-test-deploy\.ps1|scripts/lib/(?:preflight|deploy|host-native|rebuild)|infra/docker/|compose[^/]*\.ya?ml)') {
+            [void]$reasons.Add('deploy_runtime_boundary')
+        }
+        if ($p -match '(^|/)(?:migrations?|auth|security|permissions?)(/|$|\.)') {
+            [void]$reasons.Add('migration_auth_security')
+        }
+        if ($p -match '^scripts/.*(?:delete|destroy|drop|purge|reset|remove).*\.ps1$') {
+            [void]$reasons.Add('destructive_script')
+        }
+    }
+    if ($serviceRoots.Count -ge 2) { [void]$reasons.Add('cross_service') }
+    return @($reasons | Sort-Object)
 }
 
 function Test-PrReviewNeedsGitNexus {
@@ -367,6 +516,12 @@ function Get-PrReviewPathGuardFindings {
         if ($p -match '^(\.codex/skills|\.claude/skills/generated|\.gitnexus)(/|$)') {
             if ($isDeletedPath) {
                 [void]$warnings.Add((New-PrReviewIssue -Kind 'generated_tooling_path_deleted' -Severity 'medium' -Path $p -Message 'PR deletes generated local tooling state; verify cleanup scope.'))
+            } elseif ($p -in @(
+                '.codex/skills/ai-bim-fast-fix/SKILL.md',
+                '.codex/skills/ai-bim-bounded-change/SKILL.md',
+                '.codex/skills/spec-to-done/agents/openai.yaml'
+            )) {
+                [void]$warnings.Add((New-PrReviewIssue -Kind 'repo_governance_skill' -Severity 'medium' -Path $p -Message 'PR adds or updates an explicitly allowlisted repo governance skill artifact; verify routing scope and rollback.'))
             } elseif (Test-PrReviewPathExistsAtBase -RepoRoot $RepoRoot -Path $p -BaseSha $BaseSha -HeadSha $HeadSha) {
                 # merge-base 已追蹤＝#212 授權納管的鏡像檔（如 .codex/skills adapter）：修改降為
                 # 人工複核 warning。新增路徑（或無 base 可判定）仍走 blocker，防塞入新生成物。
@@ -571,6 +726,8 @@ function Invoke-PrReviewGitNexus {
         $output = & gitnexus detect-changes --repo $RepoName 2>&1 | Out-String
         $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } else { 0 }
         $record.summary = ($output -split "`r?`n" | Where-Object { $_ } | Select-Object -First 20) -join "`n"
+        $riskMatch = [regex]::Match($output, '(?im)\brisk(?:_level)?\s*[:=]\s*(low|medium|high|critical)\b')
+        if ($riskMatch.Success) { $record.risk_level = $riskMatch.Groups[1].Value.ToLowerInvariant() }
         if ($exitCode -eq 0) {
             $record.status = 'passed'
         } elseif (Test-PrReviewGitNexusUnavailableMessage -Summary $record.summary) {
@@ -685,7 +842,11 @@ function Invoke-PrReviewAgent {
         [switch] $AllowGitNexusUnavailable,
         [switch] $AllowUnavailableCommands,
         [switch] $SimulateGitNexusUnavailable,
-        [switch] $SimulateGitNexusFailure
+        [switch] $SimulateGitNexusFailure,
+        [string] $PrBodyPath = '',
+        [string] $ChangeLane = '',
+        [string] $BehaviorContractChanged = '',
+        [string] $RequirementSource = ''
     )
 
     if ([string]::IsNullOrWhiteSpace($RunId)) { $RunId = [Guid]::NewGuid().ToString('N') }
@@ -695,6 +856,13 @@ function Invoke-PrReviewAgent {
         $ChangedPaths = @($ChangedPaths | ForEach-Object { ConvertTo-PrReviewPath $_ } | Sort-Object -Unique)
     }
 
+    $declaration = Get-PrReviewChangeDeclaration -BodyPath $PrBodyPath
+    if ([string]::IsNullOrWhiteSpace($ChangeLane)) { $ChangeLane = $declaration.change_lane }
+    if ([string]::IsNullOrWhiteSpace($BehaviorContractChanged)) { $BehaviorContractChanged = $declaration.behavior_contract_changed }
+    if ([string]::IsNullOrWhiteSpace($RequirementSource)) { $RequirementSource = $declaration.requirement_source }
+    $ChangeLane = $ChangeLane.Trim().ToUpperInvariant()
+    $BehaviorContractChanged = $BehaviorContractChanged.Trim().ToLowerInvariant()
+
     $openSpecChangeIds = @(Get-PrReviewOpenSpecChangeIds -ChangedPaths $ChangedPaths)
     $guards = Get-PrReviewPathGuardFindings -ChangedPaths $ChangedPaths -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
     $blockers = New-Object System.Collections.Generic.List[object]
@@ -703,8 +871,22 @@ function Invoke-PrReviewAgent {
     foreach ($w in @($guards.warnings)) { [void]$warnings.Add($w) }
 
     $hasFormalOpenSpecEvidence = Test-PrReviewHasFormalOpenSpecEvidence -ChangedPaths $ChangedPaths
-    if ((Test-PrReviewNeedsOpenSpec -ChangedPaths $ChangedPaths) -and $openSpecChangeIds.Count -eq 0 -and -not $hasFormalOpenSpecEvidence) {
-        [void]$blockers.Add((New-PrReviewIssue -Kind 'missing_openspec' -Severity 'high' -Message 'Behavior, workflow, code, or repo-boundary changes require an OpenSpec change id or documented exception.'))
+    $hasFormalRequirement = $openSpecChangeIds.Count -gt 0 -or $hasFormalOpenSpecEvidence -or (Test-PrReviewRequirementSourceIsFormal -RequirementSource $RequirementSource)
+    $behaviorSignals = @(Get-PrReviewBehaviorContractSignals -ChangedPaths $ChangedPaths -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha)
+    $governedLaneReasons = @(Get-PrReviewGovernedLaneReasons -ChangedPaths $ChangedPaths -BehaviorSignals $behaviorSignals)
+    if (($BehaviorContractChanged -eq 'yes' -or $ChangeLane -in @('G', 'S')) -and -not $hasFormalRequirement) {
+        [void]$blockers.Add((New-PrReviewIssue -Kind 'missing_formal_requirement' -Severity 'high' -Message 'Behavior-changing or Governed/Spec-to-Done work requires Requirement source: issue, docs/plans, superpowers spec, or existing contract.'))
+    }
+    if ([string]::IsNullOrWhiteSpace($BehaviorContractChanged) -and $behaviorSignals.Count -gt 0) {
+        [void]$blockers.Add((New-PrReviewIssue -Kind 'behavior_declaration_missing' -Severity 'high' -Message 'Diff-line analysis found behavior-contract signals, but Behavior contract changed was not declared. Pass PR body metadata or explicit review parameters.'))
+    }
+    if ($BehaviorContractChanged -eq 'no' -and $behaviorSignals.Count -gt 0) {
+        $signalSummary = @($behaviorSignals | ForEach-Object { "$($_.operation):$($_.kind):$($_.path)" }) -join ', '
+        [void]$blockers.Add((New-PrReviewIssue -Kind 'behavior_contract_mismatch' -Severity 'high' -Message "PR declares no behavior contract change, but diff-line analysis found: $signalSummary"))
+    }
+    if ($ChangeLane -in @('F', 'B') -and ($BehaviorContractChanged -eq 'yes' -or $governedLaneReasons.Count -gt 0)) {
+        $reasonSummary = if ($governedLaneReasons.Count -gt 0) { $governedLaneReasons -join ', ' } else { 'behavior_contract_declared_changed' }
+        [void]$blockers.Add((New-PrReviewIssue -Kind 'governed_lane_mismatch' -Severity 'high' -Message "Lane $ChangeLane is below the required Lane G minimum: $reasonSummary."))
     }
 
     $plans = @(Get-PrReviewValidationPlan -ChangedPaths $ChangedPaths -RepoRoot $RepoRoot -OpenSpecChangeIds $openSpecChangeIds)
@@ -735,6 +917,9 @@ function Invoke-PrReviewAgent {
     } elseif ($needsGitNexus -and $gitnexus.status -ne 'passed') {
         [void]$warnings.Add((New-PrReviewIssue -Kind 'gitnexus_warning' -Severity 'medium' -Message "GitNexus detect changes did not pass: $($gitnexus.status)."))
     }
+    if ($ChangeLane -in @('F', 'B') -and $gitnexus.risk_level -in @('high', 'critical')) {
+        [void]$blockers.Add((New-PrReviewIssue -Kind 'gitnexus_lane_mismatch' -Severity 'high' -Message "GitNexus risk is $($gitnexus.risk_level); Lane G is required."))
+    }
 
     $optionalAiSkipped = [string]::IsNullOrWhiteSpace($env:PR_REVIEW_AGENT_REQUIRE_AI)
     if (-not $optionalAiSkipped -and [string]::IsNullOrWhiteSpace($env:OPENAI_API_KEY)) {
@@ -760,6 +945,7 @@ function Invoke-PrReviewAgent {
     if ($ReportOnly) { [void]$humanNotes.Add('Report-only mode is enabled; this run should not be treated as merge approval.') }
     if ($openSpecChangeIds.Count -gt 0) { [void]$humanNotes.Add("OpenSpec changes detected: $($openSpecChangeIds -join ', ')") }
     if ($hasFormalOpenSpecEvidence -and $openSpecChangeIds.Count -eq 0) { [void]$humanNotes.Add('OpenSpec archive or formal spec evidence detected; active change-id validation was skipped.') }
+    if ($BehaviorContractChanged -eq 'no' -and $behaviorSignals.Count -eq 0) { [void]$humanNotes.Add('Behavior contract declared unchanged; changed paths alone did not trigger a formal-spec blocker.') }
     if ($ChangedPaths.Count -eq 0) { [void]$humanNotes.Add('No changed paths were detected; verify base/head configuration.') }
     if ($optionalAiSkipped) { [void]$humanNotes.Add('Optional AI adapter is not required by policy and was skipped.') }
 
@@ -776,6 +962,11 @@ function Invoke-PrReviewAgent {
         run_id              = $RunId
         generated_at        = (Get-Date).ToUniversalTime().ToString('o')
         changed_paths       = @($ChangedPaths)
+        change_lane         = $ChangeLane
+        behavior_contract_changed = $BehaviorContractChanged
+        requirement_source  = $RequirementSource
+        behavior_contract_signals = @($behaviorSignals)
+        governed_lane_reasons = @($governedLaneReasons)
         openspec_changes    = @($openSpecChangeIds)
         validation_commands = @($plans | ForEach-Object { $_.command })
         checks              = $checkArray

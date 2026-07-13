@@ -60,7 +60,7 @@ UI route
 → worker/runtime result
 → frontend status/result
 → viewer/console visible evidence
-→ Playwright/Chrome screenshot or trace
+→ Playwright / gstack / supported browser engine screenshot or trace
 ```
 
 ### MUST
@@ -83,13 +83,15 @@ UI route
 
 ## 4. PR Frontend Verification Table
 
-PR 描述中 user-facing change 必須包含下列 machine-required labels（由 `scripts/tests/check-pr-body-evidence.ps1` **逐字比對**，錯字即 CI fail）。可加列 `Backend API called`、`Runtime action`、`Manual test steps`，但不得取代 machine-required labels：
+PR 描述中 user-facing change 必須包含下列 machine-required labels（由 `scripts/tests/check-pr-body-evidence.ps1` **逐字比對**，錯字即 CI fail）。`Manual test steps` 可加列，但不得取代 machine-required evidence：
 
 | Item | Result |
 |---|---|
 | Frontend route |  |
 | Main button(s) tested |  |
 | Fixture used |  |
+| Backend API called |  |
+| Runtime action | observed runtime ID |
 | Visible success state |  |
 | E2E command |  |
 | Screenshot / trace |  |

@@ -97,8 +97,8 @@ $result1c = Invoke-PrReviewAgent -RepoRoot $repoRoot `
     -SkipGitNexus `
     -AllowGitNexusUnavailable
 $loaded1c = Get-Content -LiteralPath $result1c.json_path -Raw | ConvertFrom-Json
-$missingSpec1c = $loaded1c.blockers | Where-Object { $_.kind -eq 'missing_openspec' } | Select-Object -First 1
-Assert-True ($null -eq $missingSpec1c) 'formal spec evidence covers archive closeout script changes'
+$missingRequirement1c = $loaded1c.blockers | Where-Object { $_.kind -eq 'missing_formal_requirement' } | Select-Object -First 1
+Assert-True ($null -eq $missingRequirement1c) 'formal spec evidence covers archive closeout script changes'
 Assert-True ($loaded1c.validation_commands -contains 'openspec validate --specs --strict') 'archive closeout script changes still validate strict specs'
 Remove-Item -LiteralPath $out1c -Recurse -Force
 
@@ -115,24 +115,124 @@ $result1d = Invoke-PrReviewAgent -RepoRoot $repoRoot `
     -SkipGitNexus `
     -AllowGitNexusUnavailable
 $loaded1d = Get-Content -LiteralPath $result1d.json_path -Raw | ConvertFrom-Json
-$missingSpec1d = $loaded1d.blockers | Where-Object { $_.kind -eq 'missing_openspec' } | Select-Object -First 1
-Assert-True ($null -eq $missingSpec1d) 'superpowers spec (docs/superpowers/specs) covers behavior/code changes'
+$missingRequirement1d = $loaded1d.blockers | Where-Object { $_.kind -eq 'missing_formal_requirement' } | Select-Object -First 1
+Assert-True ($null -eq $missingRequirement1d) 'superpowers spec (docs/superpowers/specs) covers behavior/code changes'
 Assert-True (-not ($loaded1d.validation_commands -contains 'openspec validate --specs --strict')) 'superpowers spec does not trigger openspec validate'
 Remove-Item -LiteralPath $out1d -Recurse -Force
 
-# Test 2: Service code change without OpenSpec blocks.
+# Test 2: Changed path alone does not require formal spec when behavior is declared unchanged.
 $out2 = New-TestOutputDir
 $result2 = Invoke-PrReviewAgent -RepoRoot $repoRoot `
     -ChangedPaths @('bim-review-coordinator/src/index.ts') `
+    -ChangeLane 'B' `
+    -BehaviorContractChanged 'no' `
+    -RequirementSource 'not applicable' `
     -OutputDir $out2 `
     -SkipCommandExecution `
     -SkipGitNexus `
     -AllowGitNexusUnavailable
 $loaded2 = Get-Content -LiteralPath $result2.json_path -Raw | ConvertFrom-Json
-Assert-True ($loaded2.status -in @('blocked', 'warning')) 'service code without OpenSpec does not silently pass'
-$missingSpec = $loaded2.blockers | Where-Object { $_.kind -eq 'missing_openspec' } | Select-Object -First 1
-Assert-True ($null -ne $missingSpec) 'missing OpenSpec blocker recorded'
+Assert-True ($loaded2.behavior_contract_changed -eq 'no') 'behavior declaration is recorded'
+$missingSpec = $loaded2.blockers | Where-Object { $_.kind -eq 'missing_formal_requirement' } | Select-Object -First 1
+Assert-True ($null -eq $missingSpec) 'service path alone does not create a formal-spec blocker'
 Remove-Item -LiteralPath $out2 -Recurse -Force
+
+# Test 2b: Behavior=yes requires a formal requirement source.
+$out2b = New-TestOutputDir
+$result2b = Invoke-PrReviewAgent -RepoRoot $repoRoot `
+    -ChangedPaths @('bim-review-coordinator/src/index.ts') `
+    -ChangeLane 'G' `
+    -BehaviorContractChanged 'yes' `
+    -RequirementSource 'not applicable' `
+    -OutputDir $out2b `
+    -SkipCommandExecution `
+    -SkipGitNexus `
+    -AllowGitNexusUnavailable
+$loaded2b = Get-Content -LiteralPath $result2b.json_path -Raw | ConvertFrom-Json
+$missingRequirement = $loaded2b.blockers | Where-Object { $_.kind -eq 'missing_formal_requirement' } | Select-Object -First 1
+Assert-True ($null -ne $missingRequirement) 'behavior=yes without formal source blocks'
+Remove-Item -LiteralPath $out2b -Recurse -Force
+
+# Test 2c: tests/ does not imply a formal requirement when behavior is unchanged.
+$out2c = New-TestOutputDir
+$result2c = Invoke-PrReviewAgent -RepoRoot $repoRoot `
+    -ChangedPaths @('tests/contracts/test_existing_behavior.py') `
+    -ChangeLane 'F' `
+    -BehaviorContractChanged 'no' `
+    -RequirementSource 'not applicable' `
+    -OutputDir $out2c `
+    -SkipCommandExecution `
+    -SkipGitNexus `
+    -AllowGitNexusUnavailable
+$loaded2c = Get-Content -LiteralPath $result2c.json_path -Raw | ConvertFrom-Json
+Assert-True ($null -eq ($loaded2c.blockers | Where-Object { $_.kind -eq 'missing_formal_requirement' } | Select-Object -First 1)) 'tests path does not imply formal spec'
+Remove-Item -LiteralPath $out2c -Recurse -Force
+
+# Test 2d: Declaring behavior=no while adding a public route is blocked.
+$tempBehaviorGit = Join-Path ([System.IO.Path]::GetTempPath()) "pr-review-agent-behavior-$([Guid]::NewGuid().ToString('N'))"
+New-Item -ItemType Directory -Path $tempBehaviorGit -Force | Out-Null
+Push-Location $tempBehaviorGit
+try {
+    git init -q
+    git config user.email 'pr-review-agent@example.invalid'
+    git config user.name 'PR Review Agent Test'
+    New-Item -ItemType Directory -Path 'bim-review-coordinator/src' -Force | Out-Null
+    Set-Content -LiteralPath 'bim-review-coordinator/src/index.ts' -Value 'const app = createApp();' -Encoding UTF8
+    git add .
+    git commit -q -m 'base'
+    $behaviorBaseSha = (git rev-parse HEAD).Trim()
+    Add-Content -LiteralPath 'bim-review-coordinator/src/index.ts' -Value "app.post('/api/new-capability', handler);"
+    git add .
+    git commit -q -m 'add public route'
+    $behaviorHeadSha = (git rev-parse HEAD).Trim()
+    $out2d = New-TestOutputDir
+    $result2d = Invoke-PrReviewAgent -RepoRoot $tempBehaviorGit `
+        -ChangedPaths @('bim-review-coordinator/src/index.ts') `
+        -BaseSha $behaviorBaseSha `
+        -HeadSha $behaviorHeadSha `
+        -ChangeLane 'B' `
+        -BehaviorContractChanged 'no' `
+        -RequirementSource 'not applicable' `
+        -OutputDir $out2d `
+        -SkipCommandExecution `
+        -SkipGitNexus `
+        -AllowGitNexusUnavailable
+    $loaded2d = Get-Content -LiteralPath $result2d.json_path -Raw | ConvertFrom-Json
+    Assert-True ($null -ne ($loaded2d.blockers | Where-Object { $_.kind -eq 'behavior_contract_mismatch' } | Select-Object -First 1)) 'public route contradicts behavior=no declaration'
+    Assert-True ($null -ne ($loaded2d.blockers | Where-Object { $_.kind -eq 'governed_lane_mismatch' } | Select-Object -First 1)) 'public route cannot be self-declared as Lane B'
+    Remove-Item -LiteralPath $out2d -Recurse -Force
+
+    $out2e = New-TestOutputDir
+    $result2e = Invoke-PrReviewAgent -RepoRoot $tempBehaviorGit `
+        -ChangedPaths @('bim-review-coordinator/src/index.ts') `
+        -BaseSha $behaviorBaseSha `
+        -HeadSha $behaviorHeadSha `
+        -OutputDir $out2e `
+        -SkipCommandExecution `
+        -SkipGitNexus `
+        -AllowGitNexusUnavailable
+    $loaded2e = Get-Content -LiteralPath $result2e.json_path -Raw | ConvertFrom-Json
+    Assert-True ($null -ne ($loaded2e.blockers | Where-Object { $_.kind -eq 'behavior_declaration_missing' } | Select-Object -First 1)) 'direct review fails closed when obvious behavior signal has no declaration'
+    Remove-Item -LiteralPath $out2e -Recurse -Force
+
+    Set-Content 'bim-review-coordinator/src/index.ts' 'const app = createApp();'
+    git add .; git commit -q -m 'remove public route'
+    $deleteHead = (git rev-parse HEAD).Trim(); $out2f = New-TestOutputDir
+    $result2f = Invoke-PrReviewAgent -RepoRoot $tempBehaviorGit -ChangedPaths @('bim-review-coordinator/src/index.ts') -BaseSha $behaviorHeadSha -HeadSha $deleteHead -ChangeLane B -BehaviorContractChanged no -RequirementSource 'not applicable' -OutputDir $out2f -SkipCommandExecution -SkipGitNexus -AllowGitNexusUnavailable
+    $loaded2f = Get-Content $result2f.json_path -Raw | ConvertFrom-Json
+    Assert-True ($null -ne ($loaded2f.behavior_contract_signals | Where-Object { $_.operation -eq 'deleted' -and $_.kind -eq 'public_api' } | Select-Object -First 1)) 'deleting a public route is a behavior-contract signal'
+    Assert-True ($null -ne ($loaded2f.blockers | Where-Object kind -eq 'behavior_contract_mismatch' | Select-Object -First 1)) 'deleted public route contradicts behavior=no declaration'
+    Remove-Item $out2f -Recurse -Force
+} finally {
+    Pop-Location
+    Remove-Item -LiteralPath $tempBehaviorGit -Recurse -Force
+}
+
+$out2g = New-TestOutputDir
+$result2g = Invoke-PrReviewAgent -RepoRoot $repoRoot -ChangedPaths @('scripts/deploy.ps1') -ChangeLane B -BehaviorContractChanged no -RequirementSource 'not applicable' -OutputDir $out2g -SkipCommandExecution -SkipGitNexus -AllowGitNexusUnavailable
+$loaded2g = Get-Content $result2g.json_path -Raw | ConvertFrom-Json
+Assert-True ($null -ne ($loaded2g.blockers | Where-Object kind -eq 'governed_lane_mismatch' | Select-Object -First 1)) 'deploy path requires Lane G'
+Remove-Item $out2g -Recurse -Force
 
 # Test 3: Secret-like paths are blocked without printing values.
 $out3 = New-TestOutputDir
@@ -196,20 +296,24 @@ try {
     $mirrorBaseSha = (git rev-parse HEAD).Trim()
     Set-Content -LiteralPath '.codex/skills/spec-to-done/SKILL.md' -Value 'adapter v2' -Encoding UTF8
     New-Item -ItemType Directory -Path '.codex/skills/brand-new' -Force | Out-Null
+    New-Item -ItemType Directory -Path '.codex/skills/ai-bim-fast-fix' -Force | Out-Null
     Set-Content -LiteralPath '.codex/skills/brand-new/SKILL.md' -Value 'new generated dump' -Encoding UTF8
+    Set-Content -LiteralPath '.codex/skills/ai-bim-fast-fix/SKILL.md' -Value 'repo fast fix contract' -Encoding UTF8
     git add -f -A
     git commit -q -m 'modify tracked adapter + add new skill'
     $mirrorHeadSha = (git rev-parse HEAD).Trim()
-    $mirrorPaths = @('.codex/skills/spec-to-done/SKILL.md', '.codex/skills/brand-new/SKILL.md')
+    $mirrorPaths = @('.codex/skills/spec-to-done/SKILL.md', '.codex/skills/brand-new/SKILL.md', '.codex/skills/ai-bim-fast-fix/SKILL.md')
     $mirrorGuards = Get-PrReviewPathGuardFindings -ChangedPaths $mirrorPaths -RepoRoot $tempMirrorGit -BaseSha $mirrorBaseSha -HeadSha $mirrorHeadSha
     $mirrorModified = @($mirrorGuards.warnings | Where-Object { $_.kind -eq 'generated_tooling_path_modified' })
     $mirrorBlocked = @($mirrorGuards.blockers | Where-Object { $_.kind -eq 'generated_tooling_path' })
+    $repoSkillWarning = @($mirrorGuards.warnings | Where-Object { $_.kind -eq 'repo_governance_skill' })
     Assert-True ($mirrorModified.Count -eq 1 -and $mirrorModified[0].path -eq '.codex/skills/spec-to-done/SKILL.md') 'tracked mirror modification downgrades to warning'
     Assert-True ($mirrorBlocked.Count -eq 1 -and $mirrorBlocked[0].path -eq '.codex/skills/brand-new/SKILL.md') 'newly added tooling path still blocks'
+    Assert-True ($repoSkillWarning.Count -eq 1 -and $repoSkillWarning[0].path -eq '.codex/skills/ai-bim-fast-fix/SKILL.md') 'explicit repo governance skill is allowlisted with warning'
     # 無 Base/Head（本機模式）→ 無法判定 tracked 與否，兩條路徑都須保守維持 blocker。
     $mirrorNoBase = Get-PrReviewPathGuardFindings -ChangedPaths $mirrorPaths -RepoRoot $tempMirrorGit
     $mirrorNoBaseBlocked = @($mirrorNoBase.blockers | Where-Object { $_.kind -eq 'generated_tooling_path' })
-    Assert-True ($mirrorNoBaseBlocked.Count -eq 2) 'without base/head shas tooling paths fail closed as blockers'
+    Assert-True ($mirrorNoBaseBlocked.Count -eq 2) 'without base/head shas unknown tooling paths fail closed while explicit governance skill stays allowlisted'
 } finally {
     Pop-Location
     Remove-Item -LiteralPath $tempMirrorGit -Recurse -Force
@@ -424,7 +528,7 @@ $wrapperPath = Join-Path $repoRoot 'scripts\pr-review-agent.ps1'
 Assert-True ($LASTEXITCODE -eq 1) 'wrapper exits nonzero on invalid base/head'
 $failedReport = Get-Content -LiteralPath (Join-Path $out12 'pr-review-agent.json') -Raw | ConvertFrom-Json
 $failedFields = @($failedReport.PSObject.Properties.Name)
-foreach ($field in @('changed_paths', 'openspec_changes', 'validation_commands', 'human_review_notes', 'gitnexus')) {
+foreach ($field in @('changed_paths', 'change_lane', 'behavior_contract_changed', 'requirement_source', 'behavior_contract_signals', 'openspec_changes', 'validation_commands', 'human_review_notes', 'gitnexus')) {
     Assert-True ($failedFields -contains $field) "fallback report contains $field"
 }
 Remove-Item -LiteralPath $out12 -Recurse -Force

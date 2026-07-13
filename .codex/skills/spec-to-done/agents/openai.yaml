@@ -1,0 +1,6 @@
+interface:
+  display_name: "AI-BIM Spec to Done"
+  short_description: "將已核准 spec 推進到完整 PR 與合併"
+
+policy:
+  allow_implicit_invocation: false

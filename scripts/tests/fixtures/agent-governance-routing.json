@@ -1,0 +1,29 @@
+{
+  "schema_version": "agent-governance-routing/v1",
+  "tasks": [
+    {"id":"f-doc-typo","prompt":"修正文檔 typo","lane":"F","superpowers":false,"worktree_required":false,"spec_required":false,"max_subagents":0,"validation":"targeted"},
+    {"id":"f-timeout","prompt":"修正單一 timeout","lane":"F","superpowers":false,"worktree_required":false,"spec_required":false,"max_subagents":0,"validation":"targeted"},
+    {"id":"f-test-assertion","prompt":"修正單一測試 assertion","lane":"F","superpowers":false,"worktree_required":false,"spec_required":false,"max_subagents":0,"validation":"targeted"},
+    {"id":"f-log-message","prompt":"修正 log message","lane":"F","superpowers":false,"worktree_required":false,"spec_required":false,"max_subagents":0,"validation":"targeted"},
+    {"id":"b-internal-helper","prompt":"單一 service 新增 internal helper","lane":"B","superpowers":false,"worktree_required":false,"spec_required":false,"max_subagents":1,"validation":"affected"},
+    {"id":"b-api-error","prompt":"單一 API 內部錯誤處理，不改 contract","lane":"B","superpowers":false,"worktree_required":false,"spec_required":false,"max_subagents":1,"validation":"affected"},
+    {"id":"b-component-state","prompt":"單一 frontend component 內部 state fix，不改 route","lane":"B","superpowers":false,"worktree_required":false,"spec_required":false,"max_subagents":1,"validation":"affected"},
+    {"id":"b-worker-retry","prompt":"單一 worker retry logic，不改外部 contract","lane":"B","superpowers":false,"worktree_required":false,"spec_required":false,"max_subagents":1,"validation":"affected"},
+    {"id":"g-public-endpoint","prompt":"新增 public coordinator endpoint","lane":"G","superpowers":false,"worktree_required":true,"spec_required":true,"max_subagents":2,"validation":"integration"},
+    {"id":"g-webrtc-lifecycle","prompt":"修改 WebRTC session lifecycle","lane":"G","superpowers":false,"worktree_required":true,"spec_required":true,"max_subagents":2,"validation":"integration_e2e"},
+    {"id":"s-explicit-spec-to-done","prompt":"用 spec-to-done 跑 docs/superpowers/specs/example.md","lane":"S","superpowers":true,"worktree_required":true,"spec_required":true,"max_subagents":2,"validation":"p0_p7"},
+    {"id":"s-explicit-superpowers","prompt":"使用完整 Superpowers 自主做到 merged PR","lane":"S","superpowers":true,"worktree_required":true,"spec_required":true,"max_subagents":2,"validation":"p0_p7"}
+  ],
+  "negative_cases": [
+    {"id":"complete-word","prompt":"完成這個普通 bug fix","must_not_lane":"S"},
+    {"id":"docs-superpowers","prompt":"更新普通 docs","must_not_use_superpowers":true},
+    {"id":"tests-formal-spec","prompt":"只修改 tests/ assertion","must_not_require_formal_spec":true},
+    {"id":"implicit-skill","policy":"allow_implicit_invocation","expected":false},
+    {"id":"model-pin","scope":"active repo governance","must_not_match":"gpt-[0-9]"},
+    {"id":"delete-public-contract","prompt":"刪除既有 public endpoint","minimum_lane":"G","behavior_contract_changed":true},
+    {"id":"deploy-false-fast","prompt":"以 Lane F 修改 deploy port policy","minimum_lane":"G","must_reject_declared_lane":"F"},
+    {"id":"security-false-bounded","prompt":"以 Lane B 修改 auth permission","minimum_lane":"G","must_reject_declared_lane":"B"},
+    {"id":"kit-browser-evidence","prompt":"修改 Kit Manager user workflow","minimum_lane":"G","requires_browser_evidence":true},
+    {"id":"ifc-fixture-contract","prompt":"驗證 user-facing IFC workflow","minimum_lane":"G","requires_real_ifc_fixture":true}
+  ]
+}

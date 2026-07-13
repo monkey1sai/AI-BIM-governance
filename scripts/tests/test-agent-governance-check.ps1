@@ -38,6 +38,10 @@ try {
         '.github/PULL_REQUEST_TEMPLATE.md',
         'scripts/tests/check-pr-body-evidence.ps1',
         'scripts/tests/test-pr-body-evidence.ps1',
+        'scripts/tests/fixtures/agent-governance-routing.json',
+        '.codex/skills/ai-bim-fast-fix/SKILL.md',
+        '.codex/skills/ai-bim-bounded-change/SKILL.md',
+        '.codex/skills/spec-to-done/agents/openai.yaml',
         'docs/PR_REVIEW_AGENT.md',
         'docs/superpowers/plans/2026-06-18-ai-coding-maturity-governance.md'
     )) {
@@ -119,12 +123,12 @@ try {
     }
 
     $prBodyEvidenceChecker = Get-Content -LiteralPath 'scripts/tests/check-pr-body-evidence.ps1' -Raw
-    foreach ($marker in @('GitNexus evidence', 'gstack evidence', 'Agent workflow changed?')) {
+    foreach ($marker in @('Change lane', 'Behavior contract changed', 'Requirement source', 'GitNexus evidence', 'Browser E2E evidence', 'Agent workflow changed?')) {
         Assert-True ($prBodyEvidenceChecker -match [regex]::Escape($marker)) "PR body evidence checker requires $marker"
     }
 
     $prTemplate = Get-Content -LiteralPath '.github/PULL_REQUEST_TEMPLATE.md' -Raw
-    foreach ($marker in @('AI Coding Governance', 'Linked issue', 'Requirement source', 'CODEOWNERS', 'GitNexus', 'gstack')) {
+    foreach ($marker in @('AI Coding Governance', 'Change lane', 'Behavior contract changed', 'Linked issue', 'Requirement source', 'CODEOWNERS', 'GitNexus', 'Browser E2E evidence')) {
         Assert-True ($prTemplate -match [regex]::Escape($marker)) "PR template contains $marker"
     }
 
@@ -145,8 +149,8 @@ try {
     $agentsLineCount = @(Get-Content -LiteralPath 'AGENTS.md').Count
     $claudeLineCount = @(Get-Content -LiteralPath 'CLAUDE.md').Count
     foreach ($budget in @(
-        @{ Path = 'AGENTS.md'; Min = 150; Max = 180 },
-        @{ Path = 'CLAUDE.md'; Min = 40; Max = 70 },
+        @{ Path = 'AGENTS.md'; Min = 150; Max = 200 },
+        @{ Path = 'CLAUDE.md'; Min = 40; Max = 100 },
         @{ Path = 'docs/agents/advanced-agent-reasoning-contract.md'; Min = 40; Max = 70 },
         @{ Path = 'docs/agents/codex-loop-workflows.md'; Min = 50; Max = 90 }
     )) {
@@ -173,6 +177,8 @@ try {
         'CLAUDE.md'
         'docs/agents/advanced-agent-reasoning-contract.md'
         'docs/agents/codex-loop-workflows.md'
+        '.codex/skills/ai-bim-fast-fix/SKILL.md'
+        '.codex/skills/ai-bim-bounded-change/SKILL.md'
         '.codex/skills/spec-to-done/SKILL.md'
     )
     foreach ($activePath in $activeGovernancePaths) {
@@ -185,8 +191,60 @@ try {
         Assert-True ($codexConfig -match [regex]::Escape('"' + $domain + '"')) ".codex/config.toml allows $domain"
     }
     Assert-True ($codexConfig -match '\[plugins\."cloudflare@openai-curated"\][\s\S]*?enabled\s*=\s*false') '.codex/config.toml disables the Cloudflare plugin'
+    Assert-True ($codexConfig -match '\[plugins\."superpowers@claude-plugins-official"\][\s\S]*?enabled\s*=\s*false') '.codex/config.toml declares the repo Superpowers disable intent; live CLI effectiveness is reported separately'
     foreach ($forbiddenConfigKey in @('sandbox_workspace_write', 'sandbox_mode', 'model\s*=', 'model_reasoning_effort\s*=')) {
         Assert-True (-not ($codexConfig -match $forbiddenConfigKey)) ".codex/config.toml does not define forbidden selector $forbiddenConfigKey"
+    }
+
+    $specMetadata = Get-Content -LiteralPath '.codex/skills/spec-to-done/agents/openai.yaml' -Raw
+    Assert-True ($specMetadata -match 'allow_implicit_invocation:\s*false') 'spec-to-done implicit invocation is mechanically disabled'
+
+    $claudeSettingsRaw = Get-Content -LiteralPath '.claude/settings.json' -Raw
+    $claudeSettings = $claudeSettingsRaw | ConvertFrom-Json
+    Assert-True ($claudeSettings.enabledPlugins.'superpowers@claude-plugins-official' -eq $false) 'Claude project disables Superpowers'
+    Assert-True (-not ($claudeSettingsRaw -match 'Write\|Edit\|MultiEdit|verify-reminder')) 'Claude no longer runs verify reminder after every edit'
+    Assert-True ($claudeSettingsRaw -match 'Bash\(git commit\*\)') 'Claude commit guard runs only for git commit'
+    Assert-True ($claudeSettingsRaw -match 'Bash\(gh pr merge\*\)') 'Claude keeps the merge evidence gate'
+    $browserGate = Get-Content -LiteralPath 'scripts/hooks/require-gstack-evidence.ps1' -Raw
+    Assert-True ($browserGate -match 'Playwright / gstack / supported browser engine') 'merge evidence gate is browser-engine neutral'
+    Assert-True ($browserGate -match 'trace\.\*\\\.zip|trace.*\\\.zip') 'merge evidence gate accepts browser trace artifacts'
+    Assert-True ($browserGate -match 'apps/kit-manager-web') 'merge evidence gate covers Kit Manager frontend changes'
+
+    $fastFixSkill = Get-Content -LiteralPath '.codex/skills/ai-bim-fast-fix/SKILL.md' -Raw
+    Assert-True ($fastFixSkill -match 'Escalate directly to Lane G') 'Fast Fix governed triggers escalate directly to Lane G'
+    foreach ($frontendLabel in @('Backend API called', 'Runtime action', 'loading, success, failure, and retry')) {
+        Assert-True ($prBodyEvidenceChecker -match [regex]::Escape($frontendLabel)) "frontend evidence gate requires $frontendLabel"
+    }
+
+    $routingFixtures = Get-Content -LiteralPath 'scripts/tests/fixtures/agent-governance-routing.json' -Raw | ConvertFrom-Json
+    Assert-True ($routingFixtures.tasks.Count -ge 12) 'routing fixture suite has at least 12 tasks'
+    foreach ($lane in @('F', 'B')) {
+        Assert-True (@($routingFixtures.tasks | Where-Object { $_.lane -eq $lane }).Count -ge 4) "routing fixtures include four Lane $lane tasks"
+    }
+    foreach ($lane in @('G', 'S')) {
+        Assert-True (@($routingFixtures.tasks | Where-Object { $_.lane -eq $lane }).Count -ge 2) "routing fixtures include two Lane $lane tasks"
+    }
+    foreach ($fixture in @($routingFixtures.tasks | Where-Object { $_.lane -eq 'F' })) {
+        Assert-True (-not $fixture.superpowers -and -not $fixture.worktree_required -and -not $fixture.spec_required -and $fixture.max_subagents -eq 0 -and $fixture.validation -eq 'targeted') "Lane F fixture contract: $($fixture.id)"
+    }
+    foreach ($fixture in @($routingFixtures.tasks | Where-Object { $_.lane -eq 'B' })) {
+        Assert-True (-not $fixture.superpowers -and -not $fixture.spec_required -and $fixture.max_subagents -le 1 -and $fixture.validation -eq 'affected') "Lane B fixture contract: $($fixture.id)"
+    }
+    foreach ($fixture in @($routingFixtures.tasks | Where-Object { $_.lane -eq 'G' })) {
+        Assert-True ($fixture.worktree_required -and $fixture.spec_required -and $fixture.validation -match 'integration') "Lane G fixture contract: $($fixture.id)"
+    }
+    foreach ($fixture in @($routingFixtures.tasks | Where-Object { $_.lane -eq 'S' })) {
+        Assert-True ($fixture.superpowers -and $fixture.worktree_required -and $fixture.spec_required -and $fixture.validation -eq 'p0_p7') "Lane S fixture contract: $($fixture.id)"
+    }
+    Assert-True ($routingFixtures.negative_cases.Count -ge 10) 'routing fixture suite includes high-risk negative cases'
+    foreach ($fixtureId in @('delete-public-contract', 'deploy-false-fast', 'security-false-bounded', 'kit-browser-evidence', 'ifc-fixture-contract')) {
+        Assert-True ($null -ne ($routingFixtures.negative_cases | Where-Object id -eq $fixtureId | Select-Object -First 1)) "routing negative fixture exists: $fixtureId"
+    }
+
+    foreach ($stalePattern in @(('所有實作' + '走'), ('Codex CLI ' + '無 hook'), ('必須使用 ' + 'Superpowers'))) {
+        foreach ($activePath in @('AGENTS.md', 'CLAUDE.md', 'docs/agents/github-workflow.md', '.codex/skills/spec-to-done/SKILL.md')) {
+            Assert-True (-not ((Get-Content -LiteralPath $activePath -Raw) -match [regex]::Escape($stalePattern))) "$activePath excludes stale rule: $stalePattern"
+        }
     }
     # GitNexus generated blocks are required in both root entrypoints and must
     # advertise the same current index metadata and multiline marker structure.

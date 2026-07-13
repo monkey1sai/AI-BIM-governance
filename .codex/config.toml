@@ -8,3 +8,6 @@ mode = "limited"
 
 [plugins."cloudflare@openai-curated"]
 enabled = false
+
+[plugins."superpowers@claude-plugins-official"]
+enabled = false

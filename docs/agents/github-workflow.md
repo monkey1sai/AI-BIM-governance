@@ -1,47 +1,36 @@
-> Loaded lazily by AGENTS.md / CLAUDE.md。Source-of-truth: AGENTS.md（§0.1 開發管線）。
+> Loaded lazily by AGENTS.md / CLAUDE.md。Source-of-truth: AGENTS.md（§0.1 AI Coding Governance Lanes）。
 >
 > 何時讀本檔：開 PR、處理 GitHub Actions failure、PR merge 後本地分支收斂時。
 
-# GitHub Workflow（四套工具管線的 git 段）
+# GitHub Workflow（Lane-aware git 段）
 
-所有實作走四套工具開發管線（完整定義見 `AGENTS.md` §0.1「開發管線」）；git 段固定 `branch → PR → Actions → merge`，**不得直接在 `main` 分支上開發**。
+Lane F/B 不使用 Superpowers，也不自動 push、開 PR 或 merge。當使用者明確要求 ship，或工作進入 Lane G/S 時，git 段固定 `branch → PR → Actions → merge`；不得直接在 `main` 開發。
 
-```txt
-Superpowers plan = 需求 / 規格 / 分期 task（plan / execution governance，主線）
-GitNexus impact  = 改 symbol 前的影響分析
-Git Branch       = 實作隔離
-gstack evidence  = UI / E2E / screenshot 驗收（user-facing done 的唯一證據）
-Pull Request     = 審查與討論
-GitHub Actions   = 自動驗證
-Merge            = 正式接受變更
-```
-
-四工具職責表（單一權威版；`AGENTS.md` §0.1 指向本表）：
-
-| 工具 | 唯一職責（單線，不可越界） |
+| 工具 | 正確定位 |
 |---|---|
-| **Superpowers** | 主線 plan / execution governance：`writing-plans` 拆分期 plan → `subagent-driven-development` 執行 → `verification-before-completion` done-gate |
-| **GitNexus** | code intelligence：改 symbol 前 `impact`（HIGH / CRITICAL 先回報）、commit 前 `detect_changes` 驗 scope |
-| **gstack** | browser QA / screenshot / E2E evidence：user-facing 完成的**唯一驗收證據來源** |
-| **Matt Pocock skills** | 僅 optional 輔助：issue / triage / domain-doc；**不得當主線** |
+| **Superpowers** | Lane S 的完整 spec-to-done；Lane G 可按需使用單一 planning/verification skill，但不是預設 |
+| **GitNexus** | Lane B/G/S 的 code impact 與 scope intelligence；F 不強制 |
+| **Browser E2E** | user-facing 變更的可見行為證據，可用 Playwright / gstack / supported browser engine |
+| **PR local preflight** | PR 前 affected-only machine gate，不是每次 local edit 的循環 |
+| **Matt Pocock skills** | optional issue / triage 輔助 |
 
 禁止（anti-patterns）：
 
-- ❌ 用 Matt Pocock skills 取代 Superpowers plan。
-- ❌ 用 Superpowers 宣告 UI 完成而不跑 gstack。
+- ❌ 因任務「非平凡」就把 F/B 升級成完整 Superpowers lifecycle。
+- ❌ 用任何 planning/review skill 宣告 UI 完成而不跑 browser E2E。
 - ❌ 用 GitNexus 當產品設計依據（設計來自 spec / prototype，非 call graph）。
-- ❌ 用 gstack 改 backend symbol 而跳過 GitNexus impact。
+- ❌ 用 browser tool 改 backend symbol 而跳過 Lane G/S 的 GitNexus gate。
 
 ## 開分支前
 
-- 從最新 `main` 建立並切換到功能 branch（例：`feat/<slug>`、`fix/<slug>`、`chore/<slug>`）。
-- 非平凡功能先用 Superpowers `writing-plans` 產出分期 plan（存 `docs/superpowers/plans/`），再用 `subagent-driven-development` 逐 task 實作。
-- 改任何 function / class / method 前先跑 GitNexus `impact`（HIGH / CRITICAL 先回報）；細節見 `gitnexus-usage.md`。
-- Matt Pocock skills 僅作 issue / triage / domain-doc 輔助，不得取代 Superpowers plan。
+- 從最新 `main` 建立功能 branch（例：`feat/<slug>`、`fix/<slug>`、`chore/<slug>`）；Lane G/S 或 checkout 不乾淨時用 dedicated worktree。
+- Lane F：無 plan/spec/subagent，targeted test；checkout 乾淨時不強制 worktree。
+- Lane B：只列 3–5 項 inline checklist，不建立 detailed plan；對 task/主要 entry symbol 跑一次 GitNexus impact。
+- Lane G：簡潔 implementation plan + risk-scoped reviewer；Lane S 才使用完整 `writing-plans` / `subagent-driven-development` / spec-to-done。
 
 ## PR 與 merge
 
-- 開 PR 前跑最小驗證並回報結果；commit 前跑 GitNexus `detect_changes` 驗 scope；PR 由 GitHub Actions 做遠端確認與審查討論，但不得把 GitHub Actions 當成第一輪錯誤發現工具。
+- 開 PR 前跑 affected validation 並回報結果；Lane B 只在 code symbol/flow 變更時跑 detect_changes，Lane G/S commit 前必跑。PR 由 GitHub Actions 做遠端確認，但不得把 Actions 當第一輪錯誤發現工具。
 - **Local PR preflight 是硬 gate**：凡 GitHub workflow 可在本機等效檢查，必須先本機跑到綠再 push / watch CI；跳過本機 preflight 導致 PR 等待或重跑，視為嚴重開發時間浪費。最低要求：
 
   ```powershell
@@ -50,9 +39,10 @@ Merge            = 正式接受變更
 
   此 wrapper 會抓目前 PR body，預設用本機 `origin/main...HEAD` changed paths 執行 `scripts/tests/check-pr-body-evidence.ps1`，接著在 repo-local `.tmp` 下跑 `scripts/pr-review-agent.ps1`（含 affected sub-repo verify，例如 viewer/coordinator/streaming/scripts）。若只是在診斷 GitHub 上既有 PR body gate，可暫用 `-ChangedPathsSource remote -SkipReviewAgent -SkipViewerVerify`；正式 push / CI watch 前不得跳過受影響的本機等效測試。
 - **PR CI local-first policy**：PR 事件不得無差別重跑本機可重現的 heavy service checks。`.github/workflows/ci.yml` 先跑 `changed path classifier`，只有受影響的 service-level jobs（coordinator / viewer / governance-service / kit-manager / root contracts / compose / static / secret scan）才跑遠端確認；未受影響的 required job 以 job-level `if` skip，保留 check 名稱且避免 workflow-level path skip pending。`.github/workflows/pr-review-agent.yml` 在 GitHub 端只驗 PR body machine evidence，不安裝 sub-repo deps、不重跑 local review agent；本機 `check-pr-local-preflight.ps1` 才是 PR review agent 與 affected sub-repo verification 的權威 gate。
-- User-facing change 的 PR 描述必須包含 Frontend Verification table；machine-required labels 以 `scripts/tests/check-pr-body-evidence.ps1` 為準：`Frontend route`、`Main button(s) tested`、`Fixture used`、`Visible success state`、`E2E command`、`Screenshot / trace`、`Known gaps`。無前端 route / button / fixture / **gstack browser evidence** 時不得標為完整完成。
+- 每個 PR body 必填 `Change lane: F | B | G | S`、`Behavior contract changed: yes | no`、`Requirement source: issue | docs/plans | superpowers spec | existing contract | not applicable`。behavior=yes 或 Lane G/S 時不得填 not applicable；behavior=no 不得只因 changed path 缺 spec 而 blocker。新增或刪除 route/API/schema 等 contract signal，或 deploy/security/Kit runtime/cross-service 等 Governed trigger，不得自報 F/B 規避 Lane G。
+- User-facing change 的 PR 描述必須包含 Frontend Verification table；machine-required labels 以 `scripts/tests/check-pr-body-evidence.ps1` 為準。無 route/button/fixture/真實 backend/runtime ID/visible state/Playwright、gstack 或 supported browser evidence 時不得標為完整完成。
 - Runtime / Docker / Kit / viewer / env / port 相關 PR 描述必須包含 Deploy Path Verification table；若未更新 `scripts/deploy.ps1`，必須明確說明已驗證或不適用。
-- 改動治理面檔案（`AGENTS.md` / `CLAUDE.md` / `README.md` / `docs/agents|plans/` / `.github/` / `.claude/workflows/` / `.codex/skills/` / pr-review-agent scripts）的 PR 描述必須包含 **AI Coding Governance** table，7 個必填 label：`Linked issue`、`Requirement source`、`CODEOWNERS / owner review`、`GitNexus evidence`、`gstack evidence`、`Agent workflow changed?`、`Required checks expected`。所有三張表的 label 都由 `scripts/tests/check-pr-body-evidence.ps1` 逐字比對（值不得為 `-`/`tbd`/`todo` 等占位）；改 body 後需 push empty commit 重跑 check。
+- 改動治理面檔案的 PR 描述必須包含 **AI Coding Governance** table，7 個必填 label：`Linked issue`、`Requirement source`、`CODEOWNERS / owner review`、`GitNexus evidence`、`Browser E2E evidence`、`Agent workflow changed?`、`Required checks expected`。machine labels 由 `check-pr-body-evidence.ps1` 逐字比對，值不得為占位。
 - `pr-review-agent` 的 PR body check 使用 `pull_request` event payload；單純 `gh run rerun` 會重放舊 payload，通常仍看不到剛改好的 body。PR body-only 修正流程固定為：先更新 PR body → 本機 `check-pr-local-preflight.ps1` 跑綠 → push 一個新 commit（必要時 `--allow-empty`）觸發新的 `pull_request.synchronize`。
 - 完成標準、frontend-operable rule 與誠實鐵律（無 backend 處 UI 標 `DEMO DATA` / `NOT BUILT` / `not observed`，不得只接 mock）見 `AGENTS.md` §0.1 與 `product-operability-and-script-contract.md`。
 
@@ -104,7 +94,7 @@ git fetch origin --prune
 
 ## Worktree 生命週期
 
-開發 / 修 PR / 建 feature 或 fix branch 時，預設使用 dedicated worktree，不在主 repo checkout 直接切工作分支；主 checkout 只作穩定入口、狀態檢查與使用者明確要求的文件/清理操作。若任務需要本機 gitignored fixtures（例如 `storage/` 下真實 IFC），優先在 dedicated worktree 建 junction / symlink 指向主工作區 artifact，而不是把 dirty files 帶進主 checkout branch switch。
+Lane G/S、修 PR、checkout 不乾淨或並行工作時必須使用 dedicated worktree。Lane F/B 在已確認 checkout 乾淨且使用者未要求隔離時可直接使用 task branch。需要 gitignored fixtures（例如 `storage/` 真實 IFC）時，優先在 worktree 建 junction / symlink。
 
 ### 位置與命名
 
@@ -114,8 +104,8 @@ git fetch origin --prune
 
 ### 何時可直接切 branch
 
-- **用 worktree**：修 PR、建立 feature/fix branch、目前工作必須保持存活並行、或需要跑隔離 branch E2E stack（alt ports，如 coordinator `:8005`、governance `:49103`）時一律使用。
-- **可直接切 branch 的例外**：只限已確認工作區乾淨、使用者明確要求在目前 checkout 操作，或 closeout 要把主 checkout 對齊 `origin/main`。若需要本機 gitignored fixtures，先用 worktree + junction / symlink；不可為了方便把主 checkout 切到 feature branch 並混入既有 dirty files。
+- **用 worktree**：Lane G/S、修 PR、checkout 不乾淨、並行工作、或隔離 E2E stack。
+- **可直接切 branch**：Lane F/B 且工作區乾淨，或使用者明確要求在目前 checkout 操作；不得混入既有 dirty files。
 
 ### Closeout
 
@@ -146,4 +136,4 @@ main checkout 或 sibling worktree 開發 → branch → PR → CI 綠 → merge
 
 ## Per-item ship-cycle 自動化（ship-item workflow）
 
-每完成一個可驗證的 work item，agent SHALL 自動走 repo 級 ship-cycle（commit→push→PR→本機 preflight→CI watch→buffered auto-merge→closeout），不應要求使用者靠記憶逐步手動執行。**權威程序與完整閘門以 `.claude/workflows/ship-item.md` 為準**（可執行版 `.claude/workflows/ship-item.js`，`Workflow({name:'ship-item', args:{branch, prNumber, userFacing}})`）；本節僅為指標，避免雙重規範漂移。摘要：本機 `check-pr-local-preflight.ps1` 綠 + 官方 gate（main branch protection 的 **required checks 全綠或未受影響 PR job-level skipped-success**，以 GitHub 設定為準；CodeRabbit / Codex / Copilot 非 required check）+ ~90–120s reviewer buffer + 只偵測 P0/P1/P2 等級 reviewer 關鍵字（`P0` 視同 P1-equivalent hold；含 Blocker / Critical / CHANGES_REQUESTED）+ AI 交叉對抗驗證決定是否 autofix + 同一 finding key 只允許一次 autofix 嘗試 + 當前 head 無新 substantive P0/P1/P2（含非 required reviewer 的發現）→ `gh pr merge --squash --delete-branch` + 上節 closeout 盤點。詳細誠實鐵律、production vs non-production 判斷層次、與既有 consent gate 的調和，見 `ship-item.md`。
+Lane F/B 不自動啟動 ship-cycle。只有使用者明確要求 ship，或 Lane S 的已核准 spec 授權自主推進時，才使用 `.claude/workflows/ship-item.md`（commit→push→PR→local preflight→CI watch→buffered merge→closeout）。Lane G 預設停在 PR ready；是否 merge 仍依使用者授權與 branch protection。完整 gate、reviewer buffer、finding fix 與 consent carve-out 以 `ship-item.md` 為準。

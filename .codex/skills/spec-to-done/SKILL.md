@@ -1,12 +1,14 @@
 ---
 name: spec-to-done
-description: Use when a brainstormed spec already exists under docs/superpowers/specs/ and the user asks to autonomously drive it to a merged PR (e.g. 「跑 spec-to-done」「用 spec-to-done 跑 <spec 路徑>」), or when resuming a previously held spec-to-done run.
+description: Use only when the user explicitly says spec-to-done, explicitly requests the full Superpowers lifecycle, or supplies an approved spec and asks for autonomous progress to a merged PR; also use when explicitly resuming a held spec-to-done run.
 ---
 
 # spec-to-done — 指揮官手冊(主對話 SOP)
 
 把一份**已經使用者核准的 spec**(brainstorming 產物)自主推進到 **merged PR + browser evidence + 四項回報**。
 主對話 = 指揮官:只做 (a) phase 之間讀 StructuredOutput 比 gate 規則、(b) 配 args、(c) 命中強制停下點就輸出 hold block。苦工全在 named workflows 的 subagent(獨立 context)。
+
+本技能是 Lane S 的明確 opt-in 流程；`agents/openai.yaml` 已禁止 implicit invocation。不得因任務非平凡、文字含「完成」、changed path 位於 code/tests，或模型主觀判斷而自行啟動。
 
 **Source of truth 聲明**:本檔是 spec-to-done 的 Codex copy;phase / gate / HELD / resume / evidence / ship 語義必須精準對齊 `.claude/skills/spec-to-done/SKILL.md`。`std-*.js` 與 `ship-item` 的 canonical runtime 仍在 `.claude/workflows/`(compose,不重造);Codex 只能做 executor / model / path 配接,不得改寫成較弱的 parent-only 流程。
 
@@ -17,7 +19,7 @@ description: Use when a brainstormed spec already exists under docs/superpowers/
 - 在 Codex host 中,`Workflow(...)` 的 host-side 等價操作是 `ultracode`-style workflow discipline:主 agent 編排、必要時 native subagents、artifact、StructuredOutput、gate、驗證與 HELD。這不是 Claude Code dynamic workflow runtime、不是 `/workflows` UI、也不代表 `.claude/workflows/*.js` 可在 Codex 直接執行。
 - P0→P1→P3→P4→P5→P6→P7 的跳號排序不可整理成 P0-P7 連號;文中的 production P1/P2 / 真 P1/P2 是 quality / production blocker 等級,不是主對話新增 phase。
 - spec-to-done 的請求本身即授權本流程推進到 merged PR;不要加入「commit / push / PR / merge 必須另行明確要求」的 Codex-only 限制。只有本檔列出的 consent carve-out / destructive / production-data / credentials / billing / user-account 類 gate 需要再停下。
-- **commit-guard / gstack gate 是 Claude-only hook,Codex 不自動觸發**:`.claude/settings.json` 的 PreToolUse hook(`scripts/claude-commit-guard.ps1` = commit 前提醒、`scripts/hooks/require-gstack-evidence.ps1` = merge 前 gstack 證據閘)只在 Claude Code session 生效;Codex CLI 無 hook 機制。P6 必須由指揮官**手動**履行等價把關:(a) `git commit` 前確認已跑 verify、檢查 diff 範圍、commit message scope 對應改動 repo;(b) `gh pr merge` 前,若 diff(vs `origin/main`)動到 `web-viewer-sample/**` 的 `.tsx/.ts/.jsx/.css`,MUST 先有近 24h 的 `artifacts/e2e/*.png` gstack 證據才可 merge,否則 HELD。
+- **Claude hook 不會自動帶入 Codex session**:目前 Codex CLI 支援 repo/global hooks，但本 repo 未配置與 Claude commit/browser hooks 完全等價的 Codex hook。P6 仍由指揮官顯式把關：(a) commit 前確認 verify、diff scope 與 message；(b) user-facing merge 前確認近 24h browser screenshot/trace，否則 HELD。
 - **知識圖譜雙源(見下節)在 Codex 與 Claude 同義**:GitNexus = 合規主源、codebase-memory = advisory 第二意見。若當前 Codex host 未掛載某套 MCP server → 缺的那套降為「第二意見不可用」並在 note 註明,**不得因第二圖譜缺席或分歧翻轉任何 gate**;GitNexus 仍為唯一 risk/scope 判定來源。
 
 ## Claude/Codex 對齊契約(防 drift)
@@ -139,12 +141,12 @@ P5 = Workflow({name:'fu-adversarial-verify-generic', args:{
                  fixFindings:[...P5.not_closed, ...P5.new_issues, ...P5.critic.issues 轉成 {id,q}]}})
        → 重跑 P5(同樣檢查);≥2 輪仍不閉合 → HELD
 P6 前置(指揮官親自做,解決 PR body 資料通道):
-     a. openspec gate:diff 觸及 scripts/ bim-review-coordinator/ web-viewer-sample/
-        bim-streaming-server/ tests/ .github/workflows 時,pr-review-agent 會因無 active
-        openspec change 掛 missing_openspec blocker → 在 worktree 建最小 openspec/changes/<slug>/
-        (proposal.md + tasks.md,對應本 spec)並 commit
+     a. behavior gate:PR body 填 Change lane=S、Behavior contract changed=yes、
+        Requirement source=superpowers spec,並連到本次已核准 specPath。不得只因 changed path
+        建立 OpenSpec；只有 repo 需求明確要求 OpenSpec artifact 時才建立。
      b. push:git push -u origin <branch>
      c. gh pr create --base main(繁中):body 含 ──
+        - Change lane / Behavior contract changed / Requirement source 三個 machine fields
         - user-facing:product-operability §4 的 10 列 Frontend 驗收表(資料來自 P4.evidence 的
           screenshots/runtimeIds/engine + **Read 其 summaryJson 檔**補齊 route/buttons/fixture/
           backend API/E2E command/manual steps)
@@ -247,11 +249,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .codex\skills\spec-to-done\e
 
 ## 已知限制與衝突(誠實註記)
 
-1. AGENTS.md 寫 gstack 是「唯一驗收證據來源」,現實是 Playwright(歷史 evidence 全為 Playwright/Chrome 產)。本流程採「綁產物不綁品牌」;改字面需另開 docs PR。github-workflow.md 7 欄表的「gstack E2E command」欄同理 — 填實際引擎指令並括註引擎名。
+1. Browser evidence 綁可見結果與 artifact，不綁工具品牌；Playwright / gstack / supported browser engine 都必須誠實記錄實際 engine、command、screenshot/trace。
 2. PR body 用 product-operability §4 的 10 列表;P7 回報用 AGENTS.md 7 欄表 — 兩版並存是權威檔既有張力,本流程兩處各用各的。
 3. commit trailer:std-*.js 與 ship-item 內的 `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>` 是 **harness attribution 文字、非 Codex 模型調用**。Codex agent 實際模型分配以本檔「模型預算」表為準;trailer 已於 2026-07-02 與 Claude 側 harness commit 規則同步為單一 trailer,Codex 側 commit 沿用同一字面。
 4. GitNexus detect-changes 在 linked worktree 看不到 staged(已知坑)→ implementer fallback `git diff --name-only --cached` 並記 `detectVerdict='fallback'`,PR body 揭露;完全失敗記 `fail`,同 run 3 次 → held。
-5. pr-review-agent 兩種非內容故障:`missing_openspec`(P6 前置 a 預防)與`report generation failed`(工具整體故障,非 required check,由 ship-item 判斷層次處置)。
+5. pr-review-agent 會阻擋 behavior=yes 卻缺 formal requirement source，或 behavior=no 但 diff 明顯新增 route/API/schema/外部行為；`report generation failed` 仍是工具整體故障。
 6. 本組檔案已 whitelist tracked(`.gitignore:37` `!.claude/skills/spec-to-done/`、`:42` `!.claude/workflows/`、`:55` `!.codex/skills/spec-to-done/`;含 SKILL.md、std-*.js、ship-item、本目錄 `ensure-host-native-ports-free.ps1`),隨 PR 進 git/CI。pr-review-agent 對所有 PR 都會跑(#202 的 paths-ignore 已移除,`pr-review-agent.yml` 現無 paths 過濾),且是 main branch protection 的 required check(11 項之一;2026-07-02 以 gh api 親查)——`.claude/**` / `.codex/**` 變更同樣受 review 與 AI Coding Governance body-evidence 表約束。
 7. P1 四軸 review 第二輪起只重審上輪未過的軸(fixer 改 plan 可能影響已過軸)— 由 P3 per-task spec review 與 P5 critic 兜底,屬已知取捨。
 

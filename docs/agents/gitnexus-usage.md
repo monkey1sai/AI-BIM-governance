@@ -8,11 +8,11 @@
 
 GitNexus 規則本文（Always Do / Never Do / Resources / CLI skill 對應表）以根目錄 `AGENTS.md` / `CLAUDE.md` 內 `<!-- gitnexus:start -->` … `<!-- gitnexus:end -->` 區塊為準——該區塊由 `analyze` **自動維護**（含最新 symbol 統計與工具名）。本檔**不再鏡像副本**，避免第三份拷貝分岔（2026-07-02 前本檔曾殘留 4953-symbol 舊版與 `gitnexus_impact` 舊工具名，已移除）。
 
-核心鐵律（與自動區塊一致）：修改 code symbol 前 MUST 跑 `impact`；commit 前 MUST 跑 `detect_changes`；HIGH / CRITICAL 先回報再繼續。
+Lane-aware 核心規則：F 不強制 impact；B 對 task/主要 entry symbol 跑一次 batch impact，且只在實際改到 code symbol/flow 時跑 detect_changes；G/S 對 shared/exported symbol 改前跑 impact、commit 前跑 detect_changes。HIGH 明確回報補強策略後可繼續；CRITICAL 需 reviewer/user sign-off。
 
 ## GitNexus unavailable gate
 
-GitNexus 是 code-symbol impact / detect_changes 的權威 gate；不可因為工具慢或不方便就跳過。只有以下情境可進 unavailable gate：
+GitNexus 是 Lane B/G/S code-symbol impact / detect_changes 的權威 gate；不可因為工具慢或不方便就把 required 結果寫成 pass。只有以下情境可進 unavailable gate：
 
 1. GitNexus MCP / CLI 明確 unavailable、index stale 且重建失敗、registry 找不到 repo、或 linked worktree staged diff 已知失真。
 2. 已從 repo root 嘗試一次最小修復或確認：`node .gitnexus/run.cjs status` / `analyze`（無 run.cjs 時用 `npx gitnexus analyze`），並記錄失敗摘要。
@@ -20,7 +20,8 @@ GitNexus 是 code-symbol impact / detect_changes 的權威 gate；不可因為�
 
 Unavailable gate 的決策：
 
-- code-symbol 或 shared-flow 修改：停止並請使用者或 CI pr-review-agent 提供 GitNexus evidence，除非使用者明確接受「GitNexus unavailable」風險。
+- Lane B code-symbol 修改：揭露 unavailable，改用 raw source/tests/diff，若影響擴大則升 Lane G 並停止。
+- Lane G/S shared-flow 修改：停止並請使用者或 reviewer 提供 sign-off，除非使用者明確接受「GitNexus unavailable」風險。
 - docs-only / comments-only / non-code governance 修改：可繼續，但最終回報必須列 `GitNexus unavailable / not applicable` 與原因。
 - GitNexus 回傳 HIGH / CRITICAL 或實際執行失敗（不是 unavailable）：不得 downgrade；先回報再繼續。
 

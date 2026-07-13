@@ -40,11 +40,13 @@ try {
 
 | Item | Result |
 |---|---|
+| Change lane | G |
+| Behavior contract changed | yes |
 | Linked issue | #123 |
-| Requirement source | docs/plans/docs-plans-README.md |
+| Requirement source | docs/plans |
 | CODEOWNERS / owner review | requested |
 | GitNexus evidence | detect_changes |
-| gstack evidence | screenshot |
+| Browser E2E evidence | Playwright screenshot |
 | Agent workflow changed? | yes, rollback by reverting workflow |
 | Required checks expected | CI / Agent Governance / PR Review Agent |
 
@@ -56,8 +58,8 @@ try {
 | Main button(s) tested | Run governance |
 | Fixture used | storage fixture |
 | Backend API called | /api/governance/runs |
-| Runtime action | none |
-| Visible success state | Success toast and issue row |
+| Runtime action | sessionId=session-123 |
+| Visible success state | loading indicator; success toast; failure alert; retry button |
 | E2E command | npm run test:e2e |
 | Screenshot / trace | artifacts/e2e/sample/trace.zip |
 | Manual test steps | Open route and click button |
@@ -94,6 +96,13 @@ try {
     & powershell -NoProfile -ExecutionPolicy Bypass -File $checker -BodyPath $bodyPath -ChangedPathsPath $pathsPath *> $null
     Assert-True ($LASTEXITCODE -eq 0) 'complete body passes'
 
+    $completeBody = Get-Content -LiteralPath $bodyPath -Raw
+    ($completeBody -replace 'sessionId=session-123', 'none') | Set-Content -LiteralPath $bodyPath -Encoding UTF8
+    Assert-Throws {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $checker -BodyPath $bodyPath -ChangedPathsPath $pathsPath *> $null
+        if ($LASTEXITCODE -ne 0) { throw 'checker failed as expected' }
+    } 'frontend Runtime action cannot use none instead of a runtime ID'
+
     @'
 ## Summary
 
@@ -103,11 +112,13 @@ try {
 
 | Item | Result |
 |---|---|
+| Change lane | G |
+| Behavior contract changed | yes |
 | Linked issue |  |
 | Requirement source |  |
 | CODEOWNERS / owner review |  |
 | GitNexus evidence |  |
-| gstack evidence |  |
+| Browser E2E evidence |  |
 | Agent workflow changed? |  |
 | Required checks expected |  |
 '@ | Set-Content -LiteralPath $bodyPath -Encoding UTF8
@@ -117,6 +128,48 @@ try {
         & powershell -NoProfile -ExecutionPolicy Bypass -File $checker -BodyPath $bodyPath -ChangedPathsPath $pathsPath *> $null
         if ($LASTEXITCODE -ne 0) { throw "checker failed as expected" }
     } 'empty governance fields fail'
+
+    @'
+## Summary
+
+- Test-only assertion correction.
+
+## AI Coding Governance
+
+| Item | Result |
+|---|---|
+| Change lane | F |
+| Behavior contract changed | no |
+| Requirement source | not applicable |
+'@ | Set-Content -LiteralPath $bodyPath -Encoding UTF8
+    'tests/unit/test_existing_behavior.py' | Set-Content -LiteralPath $pathsPath -Encoding UTF8
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $checker -BodyPath $bodyPath -ChangedPathsPath $pathsPath *> $null
+    Assert-True ($LASTEXITCODE -eq 0) 'test-only path with behavior=no does not require formal spec'
+
+    $signalRepo = Join-Path $tempRoot 'signal-repo'
+    New-Item -ItemType Directory -Path $signalRepo -Force | Out-Null
+    Push-Location $signalRepo
+    try {
+        git init -q
+        git config user.email 'pr-body-evidence@example.invalid'
+        git config user.name 'PR Body Evidence Test'
+        New-Item -ItemType Directory -Path 'bim-review-coordinator/src' -Force | Out-Null
+        Set-Content -LiteralPath 'bim-review-coordinator/src/index.ts' -Value 'const app = createApp();' -Encoding UTF8
+        git add .
+        git commit -q -m 'base'
+        $signalBase = (git rev-parse HEAD).Trim()
+        Add-Content -LiteralPath 'bim-review-coordinator/src/index.ts' -Value "app.post('/api/new-capability', handler);"
+        git add .
+        git commit -q -m 'route'
+        $signalHead = (git rev-parse HEAD).Trim()
+    } finally {
+        Pop-Location
+    }
+    'bim-review-coordinator/src/index.ts' | Set-Content -LiteralPath $pathsPath -Encoding UTF8
+    Assert-Throws {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $checker -BodyPath $bodyPath -ChangedPathsPath $pathsPath -RepoRoot $signalRepo -BaseSha $signalBase -HeadSha $signalHead *> $null
+        if ($LASTEXITCODE -ne 0) { throw "checker failed as expected" }
+    } 'public route contradicts behavior=no PR body'
 } finally {
     Remove-Item -LiteralPath $tempRoot -Recurse -Force
 }
