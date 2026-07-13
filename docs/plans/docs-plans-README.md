@@ -37,7 +37,7 @@
 ## §3 效力（全文三條，不再有第四條）
 
 1. **使用者最新明確指令 > 本目錄一切文件。**
-2. **三類正交、各唯一**：現況問 TRUTH；需求問 TARGET-*（視覺細節以兩份 prototype HTML 為錨；原型內部不一致以 TARGET-shell §0 裁決為準）；紀律問 PROCESS。同類主題只有一檔，跨檔效力序不存在，「哪份為準」問不出來。發現矛盾＝bug：直接改正本、同 PR 刪被取代文字；**禁止**增補層/禁寫清單/勘誤表/裁決帳四種寫法再現（出現＝review 直接退回）。
+2. **三類正交、各唯一**：現況問 TRUTH；需求問 TARGET-*（視覺細節以兩份 prototype HTML 為錨；原型內部不一致以 TARGET-shell §0 裁決為準）；紀律問 PROCESS。同類主題只有一檔，跨檔效力序不存在，「哪份為準」問不出來。發現矛盾＝bug：直接改正本、同 PR 刪被取代文字；**禁止**在 7 核心檔或新平行需求源重建增補層／禁寫清單／勘誤表／裁決帳（適用邊界見 PROCESS §3）。
 3. **repo code＋tests＝現況行為權威**（TRUTH 與 code 不符＝TRUTH 的 bug，改 TRUTH）；TARGET＝目標權威（code 未達 TARGET＝缺口，登 BACKLOG）；saas-*、審批報告-*、已刪舊檔的 git 歷史一律無效力。
 
 ## §4 prototype 地位
@@ -96,4 +96,4 @@
 
 1. 核心 7 檔行數預算（§5 表）**待接進** CI（沿用 agent-doc-context-budget 機制；接線為 `BACKLOG.md` OPEN 待授權項）；接線後任何 PR 使核心檔超限＝紅燈。
 2. 新增第 8 個核心檔＝需使用者明確授權的邊界事件。
-3. 增補層／禁寫清單／勘誤表／裁決帳四種寫法在 docs/plans 出現＝review 直接退回。
+3. 7 核心檔或新平行需求源新增／延長增補層、禁寫清單、勘誤表、裁決帳＝review 直接退回；§6 明列的 retained supporting/history、規則說明與移轉引用不因字詞命中誤判。
