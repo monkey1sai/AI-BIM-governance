@@ -222,7 +222,12 @@ try {
 
     $codexSpecToDone = Get-Content -LiteralPath '.codex/skills/spec-to-done/SKILL.md' -Raw
     $claudeSpecToDone = Get-Content -LiteralPath '.claude/skills/spec-to-done/SKILL.md' -Raw
-    foreach ($implicitTrigger in @('實作 spec', '完成需求', '使用 agents')) {
+    $implicitTriggers = @(
+        ([string][char]0x5BE6 + [char]0x4F5C + ' spec'),
+        ([string][char]0x5B8C + [char]0x6210 + [char]0x9700 + [char]0x6C42),
+        ([string][char]0x4F7F + [char]0x7528 + ' agents')
+    )
+    foreach ($implicitTrigger in $implicitTriggers) {
         Assert-True ($codexSpecToDone -match [regex]::Escape($implicitTrigger)) "Codex spec-to-done excludes implicit trigger: $implicitTrigger"
     }
     foreach ($hardGate in @('P0', 'P1', 'P3', 'P4', 'P5', 'P6', 'P7', 'HELD', 'browser evidence', 'ship-item', 'GitNexus')) {
