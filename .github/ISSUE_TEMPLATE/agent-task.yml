@@ -1,5 +1,5 @@
 name: Agent-ready implementation task
-description: Structured task for Codex or another coding agent.
+description: Structured vertical slice for Codex or another coding agent.
 title: "[Agent Task] "
 labels:
   - agent-ready
@@ -8,21 +8,31 @@ body:
   - type: markdown
     attributes:
       value: |
-        Use this template when a coding agent should read a requirement, change code or docs, run validation, and prepare a PR.
+        Use this template only after material design fog is resolved. One ticket should be a vertically verifiable slice that fits one fresh agent context.
         Requirement truth starts at repo-local `AGENTS.md` and `docs/plans/docs-plans-README.md`.
   - type: textarea
     id: requirement_source
     attributes:
       label: Requirement source
-      description: Link the exact spec, plan, issue, or route contract. Prefer `docs/plans/...` and `docs/superpowers/...`.
+      description: Link the single owning spec, plan, issue, route contract, or work-shaping decision ticket. Do not duplicate the requirement here.
       placeholder: "docs/plans/TARGET-shell.md #a1 節 IX-A1-02"
+    validations:
+      required: true
+  - type: textarea
+    id: parent_and_blockers
+    attributes:
+      label: Parent and blockers
+      description: Link the parent capability and every blocking ticket. Write "none" only when this slice is on the frontier.
+      placeholder: |
+        Parent: #123
+        Blocked by: #124, #125
     validations:
       required: true
   - type: textarea
     id: scope
     attributes:
       label: Scope and boundaries
-      description: Name the repo areas that may change and anything that must not change.
+      description: Name the repo areas that may change and anything that must not change. Keep the slice small enough for one fresh context.
       placeholder: "May change web-viewer-sample/src/...; do not change deploy.ps1 or runtime ports."
     validations:
       required: true
@@ -40,10 +50,22 @@ body:
     validations:
       required: true
   - type: textarea
+    id: context_packet
+    attributes:
+      label: Fresh-context packet
+      description: Carry only the facts needed to start this ticket: resolved decisions, blocker outcomes, affected boundaries, and known risks. Do not paste the full discovery conversation.
+      placeholder: |
+        Resolved decisions:
+        Blocker outcomes:
+        Entry symbols/routes:
+        Known risks:
+    validations:
+      required: true
+  - type: textarea
     id: validation_commands
     attributes:
       label: Validation commands
-      description: Exact commands the agent should run before opening or updating a PR.
+      description: Exact smallest-first commands the agent should run before opening or updating a PR.
       placeholder: |
         .\scripts\deploy.ps1 -DryRun
         .\scripts\verify-all.ps1
@@ -53,7 +75,7 @@ body:
     id: evidence_contract
     attributes:
       label: Evidence contract
-      description: Required artifacts, screenshots, traces, reports, or runtime IDs.
+      description: Required artifacts, screenshots, traces, reports, runtime IDs, or explicit non-applicability reason.
       placeholder: "artifacts/e2e/<slug>/trace.zip and screenshot path, or explain why not applicable."
     validations:
       required: true
