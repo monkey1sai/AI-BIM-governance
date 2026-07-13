@@ -10,7 +10,7 @@ body:
       value: |
         Use this only when material product, architecture, runtime, or delivery decisions remain unresolved across more than one effective session.
         This issue indexes decisions; it does not authorize production implementation.
-        Create every frontier item with the `Work-shaping decision` issue form.
+        For a new map, enter `none — create after map exists` in Frontier tickets. After this map has an issue number, create every frontier item with the `Work-shaping decision` issue form and update the map with those links.
   - type: textarea
     id: destination
     attributes:
@@ -33,8 +33,9 @@ body:
     id: frontier
     attributes:
       label: Frontier tickets
-      description: List ready child tickets created with the Work-shaping decision issue form. Each must declare type, HITL/AFK, blockers, expected evidence, and exit decision.
+      description: At initial creation, enter "none — create after map exists". Then list ready child tickets created with the Work-shaping decision issue form; each declares type, HITL/AFK, blockers, expected evidence, and exit decision.
       placeholder: |
+        none — create after map exists
         - #123 research / AFK / blocked by none
         - #124 prototype / HITL / blocked by #123
     validations:
