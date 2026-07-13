@@ -10,6 +10,7 @@ body:
       value: |
         Use this only when material product, architecture, runtime, or delivery decisions remain unresolved across more than one effective session.
         This issue indexes decisions; it does not authorize production implementation.
+        Create every frontier item with the `Work-shaping decision` issue form.
   - type: textarea
     id: destination
     attributes:
@@ -32,7 +33,7 @@ body:
     id: frontier
     attributes:
       label: Frontier tickets
-      description: List child decision tickets that are ready now. Each must declare type, HITL/AFK, blockers, expected evidence, and exit decision.
+      description: List ready child tickets created with the Work-shaping decision issue form. Each must declare type, HITL/AFK, blockers, expected evidence, and exit decision.
       placeholder: |
         - #123 research / AFK / blocked by none
         - #124 prototype / HITL / blocked by #123

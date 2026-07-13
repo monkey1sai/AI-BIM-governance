@@ -53,7 +53,7 @@ body:
     id: context_packet
     attributes:
       label: Fresh-context packet
-      description: Carry only the facts needed to start this ticket: resolved decisions, blocker outcomes, affected boundaries, and known risks. Do not paste the full discovery conversation.
+      description: "Carry only the facts needed to start this ticket: resolved decisions, blocker outcomes, affected boundaries, and known risks. Do not paste the full discovery conversation."
       placeholder: |
         Resolved decisions:
         Blocker outcomes:
