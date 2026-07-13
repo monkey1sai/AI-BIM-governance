@@ -1,0 +1,69 @@
+name: Large work-shaping map
+description: Decision map for a huge or foggy destination that cannot fit one agent session.
+title: "[Work Shaping] "
+labels:
+  - governance
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this only when material product, architecture, runtime, or delivery decisions remain unresolved across more than one effective session.
+        This issue indexes decisions; it does not authorize production implementation.
+  - type: textarea
+    id: destination
+    attributes:
+      label: Destination
+      description: Describe the observable end state and the boundary of the journey.
+      placeholder: "Operators can complete ... without ..."
+    validations:
+      required: true
+  - type: textarea
+    id: decisions
+    attributes:
+      label: Decisions already made
+      description: Link the owning source for each settled decision. Do not restate full specifications.
+      placeholder: |
+        - Decision: ...
+          Owner/source: docs/plans/... or #issue
+    validations:
+      required: true
+  - type: textarea
+    id: frontier
+    attributes:
+      label: Frontier tickets
+      description: List child decision tickets that are ready now. Each must declare type, HITL/AFK, blockers, expected evidence, and exit decision.
+      placeholder: |
+        - #123 research / AFK / blocked by none
+        - #124 prototype / HITL / blocked by #123
+    validations:
+      required: true
+  - type: textarea
+    id: fog
+    attributes:
+      label: Not yet specified
+      description: In-scope uncertainty that is not clear enough to become a ticket yet.
+      placeholder: |
+        - Unknown decision area and why it cannot yet be ticketed
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: Explicitly excluded work that must not silently graduate into the frontier.
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Shaping boundaries
+      options:
+        - label: No production implementation will be performed from this map.
+          required: true
+        - label: Existing OpenSpec/docs/plans/spec sources were checked to avoid duplicate requirements.
+          required: true
+        - label: If inspection finds no material fog, this map will be closed via the no-fog early exit.
+          required: true
+        - label: Graduation will produce vertically verifiable tickets sized for fresh agent contexts.
+          required: true
