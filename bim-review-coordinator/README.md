@@ -9,7 +9,7 @@ Local review-session control plane for the AI-BIM governance workspace.
 | **步驟** | ③ 建立會議 (Meeting) |
 | **Demo URL** | <http://127.0.0.1:8004/ui> （Demo console） |
 | **客戶看到的內容** | 「建立示範審查會議」按鈕、本場會議資訊（會議識別碼 / 模型狀態 / 視訊連線位置）、即時審查事件 feed（中文白話） |
-| **設計守則** | [`docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md`](../docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md) |
+| **Console 設計／互動契約** | [`TARGET-shell`](../docs/plans/TARGET-shell.md)／[`TARGET-contracts` §5／§9](../docs/plans/TARGET-contracts.md) |
 
 ## Responsibilities
 

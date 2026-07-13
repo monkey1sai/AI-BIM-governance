@@ -378,7 +378,7 @@ flowchart TB
 
 - [x] `AGENTS.md` 收斂 repo 邊界與資料權威
 - [x] `docs/contracts/` 7 份 API 合約
-- [x] `docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md` UI 設計守則
+- [x] UI 設計／互動守則已收斂至 [`TARGET-contracts` §5／§9](plans/TARGET-contracts.md)、[`TARGET-shell`](plans/TARGET-shell.md) 與 [`TARGET-viewer`](plans/TARGET-viewer.md)
 - [x] 一鍵啟動腳本 + 健康檢查
 - [x] 4 個 smoke tests
 - [x] 各服務 `/health` endpoint
@@ -822,7 +822,7 @@ sequenceDiagram
 | Streaming DataChannel 事件 | [`docs/contracts/streaming-datachannel-events.md`](contracts/streaming-datachannel-events.md) |
 | 退役服務 | [`docs/contracts/conversion-api.md`](contracts/conversion-api.md), [`legacy-storage-conversion-retirement` spec](../openspec/specs/legacy-storage-conversion-retirement/spec.md) |
 | 本地開發步驟 | [`docs/contracts/local-dev-runbook.md`](contracts/local-dev-runbook.md), [`README.md`](../README.md) |
-| Demo UI 設計守則 | [`docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md`](plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md) |
+| UI 設計／互動契約 | [`TARGET-contracts` §5／§9](plans/TARGET-contracts.md)／[`TARGET-shell`](plans/TARGET-shell.md)／[`TARGET-viewer`](plans/TARGET-viewer.md) |
 | Capability specs | [`openspec/specs/`](../openspec/specs/) |
 | 已 archive 的 OpenSpec change | [`openspec/changes/archive/`](../openspec/changes/archive/) |
 | **2026-05-08 端到端驗證證據** | [`docs/verification/2026-05-08-spec-end-to-end-verification.md`](verification/2026-05-08-spec-end-to-end-verification.md) |
@@ -903,7 +903,7 @@ Closeout       = 更新 TARGET / TRUTH / docs / evidence，並收斂本地 workt
 - [ ] Python tests 從各服務目錄下執行：`cd <svc> && python3 -m pytest tests`
 - [ ] Node tests / build 從各服務目錄執行：`cd <svc> && npm test && npm run build`
 - [ ] 涉及 API 變更時，同步更新 `docs/contracts/`
-- [ ] 涉及 UI 變更時，符合 `BIM_REVIEW_DEMO_UI_GUIDELINES.md`
+- [ ] 涉及 UI 變更時，符合 [`TARGET-contracts` §5／§9](plans/TARGET-contracts.md) 與 owning [`TARGET-shell`](plans/TARGET-shell.md)／[`TARGET-viewer`](plans/TARGET-viewer.md) 驗收條件
 - [ ] 涉及驗證時，依 `runtime-verification-evidence` 分層記錄（不混用單一 pass/fail）
 - [ ] 使用 GitNexus：`gitnexus_impact` 評估影響、`gitnexus_detect_changes` 確認 scope
 

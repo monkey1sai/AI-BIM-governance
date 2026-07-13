@@ -34,7 +34,7 @@
 |---|---|
 | (a) 計數核對 | 凍結契約 13 條＋approved exceptions 4 筆（唯一刻意差異＝session enum 更正誤植，見 contracts §2）；正典路由 22＋別名 9＋獨立保留頁 1；IX 卡 30 張（殼層 21＋IX-3D 5＋IX-TN 4）逐張落點；NOT BUILT 硬清單 12；viewer AC 21 |
 | (b) NOT BUILT 反向 grep | 新 7 檔零「已交付/已實作」誤寫 |
-| (c) TARGET 純潔性 gate | 中文正向建成詞排除 contracts §1.1 approved-exception 的 `PR #319` 逐字列後 0 命中；英文 `as-built|built|implemented|delivered` 命中逐筆只允許 NOT BUILT UI literal、Prov 詞彙映射、狀態機 token 或明確否定句，零正向 repo 建成宣稱 |
+| (c) TARGET 純潔性 gate | 中文正向建成詞排除 contracts §1.1 approved-exception 的 `PR #319` 逐字列後 0 命中；英文 `as-built\|built\|implemented\|delivered` 命中逐筆只允許 NOT BUILT UI literal、Prov 詞彙映射、狀態機 token 或明確否定句，零正向 repo 建成宣稱 |
 | (d) 行數預算 | 7 檔全數低於上限（README 99／TRUTH 104／contracts 372／shell 478／viewer 285／BACKLOG 67／PROCESS 154） |
 | (e) evidence tracked | TRUTH 引用之 `artifacts/e2e/*` 16 個精確檔案逐一 `git ls-files` 確認 tracked；目錄／wildcard aggregate 另列、不冒充單檔證據 |
 

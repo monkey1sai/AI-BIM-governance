@@ -101,7 +101,7 @@ prototype 錨：ai-bim-governance-prototype.html#a1（v2 2026-07-02）
 IX 卡（B.1 全文）：
 
 **狀態機（整頁一個 reducer）**
-```
+```text
 states: idle → picked → running → scored → issued → delivered
 事件: PICK_FILE / RUN / RUN_PROGRESS(p) / RUN_DONE(result) / RUN_FAIL(err)
       CREATE_ISSUES_OK(n) / EXPORT_OK(kind)

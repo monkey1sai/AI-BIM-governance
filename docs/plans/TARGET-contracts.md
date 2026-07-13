@@ -215,7 +215,7 @@ repo `Prov` 型別（機器真相＝`web-viewer-sample/src/console/data.ts:6`）
 ### 9.1 六通用互動模式（80% 互動是這六型的組合）
 
 **模式 1 · 證據型更新（Evidence-based update）——本案唯一允許的更新方式**
-```
+```text
 使用者按下動作 → 按鈕進入 busy（disabled + spinner 字樣）
 → 呼叫 API → 等回應
 → 成功：以「回應裡的事實」重繪（不是以「我以為會發生的事」重繪）
@@ -224,14 +224,14 @@ repo `Prov` 型別（機器真相＝`web-viewer-sample/src/console/data.ts:6`）
 ```
 
 **模式 2 · 輪詢（Polling）**
-```
+```text
 頁面進入時 fetch 一次 → setInterval 輪詢 → 頁面離開時 clearInterval
 節奏：佇列/Session/機隊類 5000ms；執行中的進度（rule-run、conversion running）1500ms
 規則：輪詢中新資料「就地更新列」，不整頁閃爍；fetch 失敗顯示「上次更新 HH:MM:SS · 連線異常」徽章，不清空舊資料
 ```
 
 **模式 3 · 危險動作三段式（Intent → Confirm → Audited result）**
-```
+```text
 適用：插隊/重試/強制釋放/結束 session/drain/move/批次建 issue/匯出交付
 ① intent：點按鈕 → 開 confirm 對話框，內容必須含「成本與後果」白話
    （例 move：「這是重啟搬移：先終止再於新節點重建，約 30–40 秒、重載 stage、短暫斷線」）
@@ -240,14 +240,14 @@ repo `Prov` 型別（機器真相＝`web-viewer-sample/src/console/data.ts:6`）
 ```
 
 **模式 4 · Provenance 徽章（誠實標記渲染）**
-```
+```text
 資料源：GET /api/provenance（或頁面資料內嵌 provenance 欄位），前端絕不硬編碼
 狀態 → 樣式：AS-BUILT(綠) / 實測 artifact(青) / 示範資料(琥珀) / 後端待建·P1(灰虛線)
 規則：每個區塊右上角一枚；待建功能的按鈕 render 成 disabled + title 說明，「不提供假按鈕」
 ```
 
 **模式 5 · 拖放（Drag & Drop）→ 一律轉譯成 intent API**
-```
+```text
 HTML5 DnD：draggable 元素 dragstart 寫 payload(JSON: {kind, id}) 進 dataTransfer
 目標 dragover：用「規則函式」判斷可否放（不可放 → dropEffect='none' + 目標紅框提示原因）
 drop：不直接改狀態 → 走模式 3（彈 confirm → POST intent）
@@ -255,7 +255,7 @@ drop：不直接改狀態 → 走模式 3（彈 confirm → POST intent）
 ```
 
 **模式 6 · 空狀態與錯誤狀態**
-```
+```text
 空資料：顯示「目前沒有 X」+ 下一步建議（例：storage 無 IFC → 顯示放檔路徑與 Refresh 鈕）——不補假列
 API 錯誤：保留舊資料 + 錯誤條；404/501 視為「後端待建」→ 顯示待建徽章而非錯誤
 ```
@@ -338,11 +338,11 @@ API 錯誤：保留舊資料 + 錯誤條；404/501 視為「後端待建」→ �
 **IX-TN-01 租戶脈絡注入（PLANNED · SaaS-M2）**
 - **目的**：把「這個請求屬於哪個租戶」從隱含變成可稽核的顯式脈絡，且對 tenant zero 完全向後相容。
 - **前置**：SaaS-M2 身分階段啟動（org-per-tenant OIDC、`tenant_id` claim 簽發）。
-- **互動流程**：登入後 token 帶 `tenant_id` claim；coordinator 租戶 context 中介層在 `/api/*` proxy 前集中解析 claim 並做範圍過濾（不讓各 service 自兜隔離）；前端 console 於頁首以**模式 4** provenance 徽章顯示目前租戶（後端驅動，非前端推定），缺 claim 時徽章顯示「單租戶（tenant zero）」。
-- **API 面**：不新增、不改名任何凍結 proxy 路徑；`X-Tenant-Id` 為 **additive optional header**，缺省 fallback tenant-zero 路徑；`/v1` gateway（SaaS-M6）驗 tenant-scoped token 後 byte-identical 轉發。**§1 proxy 路徑字串 byte-identical 不動。**
-- **狀態機**：`no-claim（tenant zero）→ claim-resolved（顯式租戶）`；解析失敗＝維持 tenant-zero 路徑，不硬失敗。
+- **互動流程**：登入後 token 帶 `tenant_id` claim；coordinator 租戶 context 中介層在 `/api/*` proxy 前集中驗證、解析 claim 並做範圍過濾（不讓各 service 自兜隔離）。只有**明確無 claim 且命中允許的 tenant-zero 相容路徑**時，前端 console 才顯示「單租戶（tenant zero）」；claim／header 一旦存在但 malformed、簽章無效、租戶未知或彼此不一致，不得降級成 tenant zero。
+- **API 面**：不新增、不改名任何凍結 proxy 路徑；`X-Tenant-Id` 為 **additive optional header**，只有明確缺省且 request 屬允許的 tenant-zero 相容 flow 時才 fallback；`/v1` gateway（SaaS-M6）一律驗 tenant-scoped token 後 byte-identical 轉發。invalid／malformed claim 回 `401`，unknown tenant／scope 或 claim-header mismatch 回 `403`，兩者都必須在 proxy 前終止且不得觸達 downstream。**§1 proxy 路徑字串 byte-identical 不動。**
+- **狀態機**：`no-claim + allowed-tenant-zero-flow → tenant-zero`；`valid-claim → claim-resolved`；`malformed/invalid-signature → rejected-401`；`unknown/scope-mismatch/header-mismatch → rejected-403`。任何 rejected 狀態均不得進入 proxy／downstream。
 - **誠實標記**：`PLANNED`；凡在 governance API 加 user/org/project 參數或改 §1 禁改後端檔（app.py/governanceProxy.ts/conversion_authority.py）＝**待人類簽核的新決策**，禁在本卡預設通過。
-- **驗收**：`X-Tenant-Id` header 缺省時，行為與 tenant-zero baseline **逐位元組相同**；claim 存在時範圍過濾生效且徽章值＝後端回報值。
+- **驗收**：明確無 claim／header 且命中 allowed tenant-zero flow 時，行為與 tenant-zero baseline **逐位元組相同**；valid claim 存在時範圍過濾生效且徽章值＝後端回報值；malformed／invalid／unknown／mismatch case 各有 401/403 contract test，並斷言 downstream 收到 0 request。
 
 **IX-TN-02 GPU 配額 429 呈現（PLANNED · SaaS-M3）**
 - **目的**：把 GPU 資源耗盡從「輸家 process crash」改成使用者看得懂的「容量滿」狀態，而非紅色錯誤。
