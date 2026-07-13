@@ -1,0 +1,79 @@
+name: Work-shaping decision
+description: Bounded research, prototype, human-decision, or manual-unblocker ticket. No production implementation.
+title: "[Decision] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form only for one unresolved decision linked from a Large work-shaping map.
+        The ticket may gather evidence or unblock a decision; it must not implement production behavior.
+  - type: textarea
+    id: shaping_map
+    attributes:
+      label: Owning work-shaping map
+      description: Link the single parent map that owns this decision.
+      placeholder: "#123"
+    validations:
+      required: true
+  - type: dropdown
+    id: ticket_type
+    attributes:
+      label: Ticket type
+      description: Choose the one bounded activity this ticket authorizes.
+      options:
+        - research
+        - throwaway prototype
+        - human decision / grilling
+        - manual unblocker
+    validations:
+      required: true
+  - type: dropdown
+    id: execution_mode
+    attributes:
+      label: Execution mode
+      options:
+        - HITL
+        - AFK
+    validations:
+      required: true
+  - type: textarea
+    id: decision_contract
+    attributes:
+      label: Decision question and exit
+      description: Name one uncertainty, the stop condition, and the decision this ticket must produce.
+      placeholder: |
+        Decision question:
+        Stop condition:
+        Exit decision:
+    validations:
+      required: true
+  - type: textarea
+    id: blockers
+    attributes:
+      label: Blockers
+      description: Link every blocker, or write "none" when this ticket is on the frontier.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and forbidden changes
+      description: State the allowed inspection or disposable prototype boundary and anything that must not change.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Expected evidence
+      description: Name the report, experiment result, prototype artifact, or human decision record required to close this ticket.
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Decision-ticket boundaries
+      options:
+        - label: This ticket will not edit production code or claim implementation delivery.
+          required: true
+        - label: Findings will be linked back to the owning map and one durable decision source.
+          required: true
