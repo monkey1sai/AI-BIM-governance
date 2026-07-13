@@ -102,6 +102,8 @@ try {
     Assert-True ($prReviewWorkflow -match '(?m)^\s+runs-on:\s+ubuntu-latest\s*$') 'PR review workflow uses lightweight ubuntu runner'
     Assert-True ($prReviewWorkflow -match 'check-pr-body-evidence\.ps1') 'PR review workflow enforces PR body evidence'
     Assert-True ($prReviewWorkflow -match 'changed-paths\.txt') 'PR review workflow records changed paths for body evidence checks'
+    $prDiffRange = '${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}'
+    Assert-True ($prReviewWorkflow -match [regex]::Escape($prDiffRange)) 'PR review workflow diffs from the merge base so newer main commits are not classified as PR changes'
     Assert-True ($prReviewWorkflow -match 'check-pr-local-preflight\.ps1 -PrNumber <n>') 'PR review workflow points reviewers to the local preflight gate'
     Assert-True ($prReviewWorkflow -match 'Full service CI remains available on `push` to `main` and `workflow_dispatch`') 'PR review workflow documents full remote CI trigger points'
     Assert-True (-not ($prReviewWorkflow -match 'scripts/pr-review-agent\.ps1')) 'PR review workflow does not rerun the local review agent in CI'
