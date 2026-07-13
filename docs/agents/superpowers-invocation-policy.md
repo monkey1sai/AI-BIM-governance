@@ -13,16 +13,19 @@ Default to **repo-native lean mode**: one coordinator, minimum necessary source 
 | **0 — Trivial** | Explain a term, inspect one file, one command, small doc correction, clear one-line setting. | No Superpowers, subagent, or plan file. Execute directly and run one needed check. |
 | **1 — Bounded implementation** | Clear bug, one service, small cross-file change, explicit acceptance, existing design/contract. | Repo-native workflow with 3–7 inline steps; no Superpowers spec/plan, brainstorming, or writing-plans. One focused skill (debugging, TDD, verification) may serve this work only and must not form a chain. One coordinator; at most one truly parallel read-heavy subagent. |
 | **2 — Complex but defined** | Cross-service change, contract migration, multiple runtime components, user-facing slice with clear source and acceptance. | Use existing `docs/plans`, OpenSpec, contract, or approved design. Do not brainstorm a defined requirement or duplicate it in `docs/superpowers/specs`. A short checklist is allowed without writing-plans. One coordinator plus necessary bounded read-only explorer/reviewer; no parallel writers or whole-repo reviewer scan. Verify by the repository evidence contract. |
-| **3 — Ambiguous or high-risk** | Undecided architecture, material trade-offs, auth/permissions/deploy/destructive or irreversible action, large public API/data change, missing acceptance. | Explain why design work is necessary, then only suggest brainstorming or writing-plans. Each needs explicit authorization. Existing OpenSpec or approved `docs/plans` must not be duplicated. Brainstorming produces decisions only; writing-plans produces a plan only. Full `spec-to-done` also needs explicit invocation and an approved spec path. |
+| **3 — Ambiguous or high-risk** | Undecided architecture, material trade-offs, auth/permissions/deploy/destructive or irreversible action, large public API/data change, missing acceptance. | Explain why design work is necessary, then only suggest a single shaping skill. Each needs explicit authorization. Existing OpenSpec or approved `docs/plans` must not be duplicated. Shaping produces decisions only; planning produces a plan only. Full `spec-to-done` also needs explicit invocation and an approved spec path. |
 
 ## 3. Explicit-only skills
 
-`spec-to-done`, brainstorming, writing-plans, subagent-driven-development, any workflow that creates a branch/worktree/commit/PR/merge automatically, and any forced multi-stage reviewer loop are explicit-only. **Task complexity itself is never a substitute for explicit invocation.**
+`spec-to-done`, brainstorming, writing-plans, wayfinding/work-shaping, subagent-driven-development, any workflow that creates a branch/worktree/commit/PR/merge automatically, and any forced multi-stage reviewer loop are explicit-only. **Task complexity itself is never a substitute for explicit invocation.**
+
+Research or a throwaway prototype may be selected as one bounded Lane G aid when it answers a named uncertainty. It must have a fixed question, evidence path, and stop condition; it must not silently activate a full lifecycle.
 
 ## 4. No automatic chaining
 
 | From | Automatic next step |
 |---|---|
+| work-shaping map | spec or implementation — prohibited |
 | brainstorm | plan — prohibited |
 | plan | implementation — prohibited |
 | implementation | review swarm — prohibited |
@@ -32,10 +35,22 @@ Default to **repo-native lean mode**: one coordinator, minimum necessary source 
 
 Only an explicitly invoked workflow may authorize its own documented chain, such as `spec-to-done`; otherwise each next stage needs user authorization.
 
-## 5. Spec source-of-truth rule
+## 5. Work-shaping boundary
 
-When an OpenSpec change, approved `docs/plans` requirement, contract, or user-provided complete spec exists, do not brainstorm it again. Do not create parallel OpenSpec, `docs/plans`, and `docs/superpowers/specs` specifications for one need; use the existing source and label mismatches as implementation gaps. `docs/superpowers/` may retain history or explicitly requested artifacts, never a default task entrypoint.
+Use a work-shaping map only for a destination whose unresolved decisions cannot fit one effective session. The map stores links and short status only; each decision lives in one ticket. Allowed ticket outcomes are research evidence, a throwaway prototype, a human decision, or completion of a manual unblocker.
 
-## 6. Subagent budget
+Apply a no-fog early exit: when the requirement and acceptance criteria are already clear, skip the map. Route to the existing requirement source and implement the smallest vertical slice.
+
+Work shaping must not edit production code, create an implementation PR, or claim the destination is delivered. Graduation occurs when material fog is resolved and implementation can be represented as agent-ready vertical tickets with blockers, validation, and evidence.
+
+## 6. Spec source-of-truth rule
+
+When an OpenSpec change, approved `docs/plans` requirement, contract, or user-provided complete spec exists, do not brainstorm it again. Do not create parallel OpenSpec, `docs/plans`, work-shaping maps, and `docs/superpowers/specs` specifications for one need; use the existing source and label mismatches as implementation gaps. `docs/superpowers/` may retain history or explicitly requested artifacts, never a default task entrypoint.
+
+## 7. Ticket context rule
+
+Each implementation ticket must be independently verifiable and sized for one fresh agent context. Carry forward only the requirement source, blocker outcomes, affected boundaries, acceptance criteria, validation commands, and evidence contract. Do not replay the entire discovery or specification conversation in every implementation session.
+
+## 8. Subagent budget
 
 Default to zero subagents. Dispatch only independent, read-heavy work that can genuinely run in parallel. Never use one agent per small task, recursively create child agents, or ask a reviewer to rescan the whole repo. Small docs lookup stays with the coordinator. A final report must state each dispatched agent's reason and bounded scope.
