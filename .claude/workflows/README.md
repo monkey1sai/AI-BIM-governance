@@ -17,10 +17,11 @@
 | `plan-next-spec-to-done-aware.js` | 推薦下一個 spec-to-done（考慮 merged ＋ in-flight branch） | 獨立 slash workflow（刻意無 skill 編排） |
 | `plan-test-deploy-and-tidy.js` | 勘查測試區一鍵部署＋參數整理＋散落檔清理計畫 | 獨立 slash workflow（刻意無 skill 編排） |
 | `fable5-repo-advisory.js` | 告別盤點：6 視角唯讀掃描＋合併去重＋懷疑者驗證 | 獨立 slash workflow（一次性盤點工具，保留可重跑） |
-| `saas-blueprint-tournament.js` | 4 視角 SaaS 藍圖提案 → 3 評審 → 仲裁合成最終藍圖與逐檔 brief | 獨立 slash workflow；產出 docs/plans saas-* 語料（PR #301） |
+| `saas-blueprint-tournament.js` | **已退役**：PR #301 一次性 SaaS 文件產生器；舊 input packet／11-file contract 已不存在 | 保留同名入口並 fail-closed；current source 讀 `docs/plans/docs-plans-README.md` → TRUTH / TARGET-* / BACKLOG / PROCESS |
 | `routing.json` | spec-to-done 模型 routing 資料（tiers/fallback 鏈） | `scripts/gen_routing.py` codegen 至 std-*.js 的 `// <routing:gen>` 區塊 |
 
 ## 命名備註
 
 - `std-` ＝ spec-to-done 三引擎前綴；`fu-` ＝ 修復對抗複驗（fix-up verify）家族前綴。`fu-` 名稱被 SKILL.md 與兩個 pytest 契約測試硬編，改名成本高於效益，維持現名並在此登錄定義（repo-health 2026-07-07 裁決）。
 - 「獨立 slash workflow」＝僅靠 `export const meta.name` 被 harness 自動發現、無 skill/command 編排，屬刻意設計，非死碼。
+- `saas-blueprint-tournament` 是歷史例外：保留 `meta.name` 讓舊呼叫得到明確 `retired_workflow`，但不再執行或生成文件；新需求須走 current core docs 與 OpenSpec change。

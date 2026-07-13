@@ -27,7 +27,7 @@ UI 呈現規範：一律依 contracts §9 的六條誠實元件規範與六通�
 
 `built` 宣告須**同時滿足全部五條**，缺一即降級（PARTIAL 或 NOT BUILT，依 TRUTH enum 記錄）：
 
-1. **route 可達**：hash route 已登記於 contracts §4 正典路由表，且 console 確實渲染該頁（hash 無斜線：`#a1` 非 `#/a1`）。
+1. **route 可達**：hash route 已登記於 contracts §4 正典路由表，或由同節「保留 deep link」表明確標為獨立保留頁（如 `#review`；一般別名不算），且 console 確實渲染該頁（hash 無斜線：`#a1` 非 `#/a1`）。
 2. **後端真接線（非 mock）**：Network 面板見真實 API response；無 `mock=true` / `allow_fake_mapping=true` / `fake_mapping_count>0`。
 3. **provenance 成立**：`prov="asbuilt"` 或 `prov="artifact"`；非 `demo/p1/p15/p3/p4`。
 4. **browser E2E evidence**：`artifacts/e2e/` 的 screenshot＋trace 存在、tracked、拍攝時間戳可追溯。
@@ -97,7 +97,7 @@ UI 呈現規範：一律依 contracts §9 的六條誠實元件規範與六通�
 
 > 本表為每輪交付的核對模板；核對結果寫進 PR body，不回寫本檔。未過項須修復，或明確記為「刻意待建（附理由）」。
 
-- [ ] 1. hash route 無斜線；本輪 route 全數登記於 contracts §4 正典表，無未登記 route。
+- [ ] 1. hash route 無斜線；本輪 route 全數登記於 contracts §4 正典表，或由同節「保留 deep link」表明確標為獨立保留頁；一般別名不算、無未登記 route。
 - [ ] 2. 待建控制一律 `disabled + title`＋prov 標記；無「可點但沒反應」的假按鈕。
 - [ ] 3. 無樂觀更新：busy → 等 API → 以事實重繪；失敗時業務資料不變、只顯示錯誤（含 status code）。
 - [ ] 4. 輪詢離頁有 cleanup；輪詢失敗顯「上次更新時間·連線異常」、不清空舊資料。
@@ -122,7 +122,7 @@ UI 呈現規範：一律依 contracts §9 的六條誠實元件規範與六通�
 TARGET-* 三檔（contracts／shell／viewer）內**禁止出現對 repo 現況的建成宣稱**：
 
 - 中文硬 gate：`rg -n -g 'TARGET-*.md' '已實作|已建成|已交付|已在|已落地|已於|已成立|repo 現況|PR #' docs/plans | rg -v '2026-07-09.*PR #319'` 必須 0 命中；唯一 allowlist 是 `TARGET-contracts.md` §1.1 逐字搬運的 approved-exception row。
-- 英文補充 gate：`rg -ni -g 'TARGET-*.md' '\b(as-built|built|implemented|delivered)\b' docs/plans` 的每個命中都必須是 `NOT BUILT` UI literal、Prov 詞彙映射，或明確否定句；任何正向 repo 建成宣稱（例如 `唯一 built 景`、`hero built`、互動卡標題 `as-built`）一律阻擋。
+- 英文補充 gate：`rg -ni -g 'TARGET-*.md' '\b(as-built|built|implemented|delivered)\b' docs/plans` 的每個命中都必須是 `NOT BUILT` UI literal、Prov 詞彙映射、明確否定句，或 fenced code／table 內不承載 repo 現況宣稱的 protocol／state-machine enum token（例如 reducer state `delivered`）；任何正向 repo 建成宣稱（例如 `唯一 built 景`、`hero built`、互動卡標題 `as-built`）一律阻擋。
 
 現況一律改為引 TRUTH 對應錨。兩條 gate 的 CI 化待列入 BACKLOG §3；上線前由 reviewer 於 docs PR 手動執行。
 
