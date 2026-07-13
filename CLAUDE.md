@@ -19,6 +19,8 @@
 
 Lane G/S 不得弱化 secrets、repo boundaries、GitNexus HIGH/CRITICAL、frontend/browser evidence、真實 IFC、Kit/WebRTC 或 deploy ownership gates。Superpowers project plugin 的實際啟停以 `.claude/settings.json` 與 `claude plugin list` 為 machine truth。
 
+`AGENTS.md` 的 Superpowers invocation policy 同樣適用 Claude：重流程 skill 為 explicit-only，單一 skill 不得自動串接下一階段。
+
 ## 2. Sub-files（lazy-load，與 AGENTS.md 同一組）
 | workspace / boundary | `docs/agents/repo-boundary-detail.md` |
 | service boundaries | `docs/agents/repo-boundaries-per-service.md` |
@@ -28,6 +30,7 @@ Lane G/S 不得弱化 secrets、repo boundaries、GitNexus HIGH/CRITICAL、front
 | GitNexus stale / unavailable gate | `docs/agents/gitnexus-usage.md` |
 | sub-repo verification | `docs/agents/sub-repo-verify-commands.md` |
 | advanced reasoning overlay | `docs/agents/advanced-agent-reasoning-contract.md` |
+| Superpowers invocation / no-auto-chain / subagent budget | `docs/agents/superpowers-invocation-policy.md` |
 | archive / retired services | `docs/agents/history-and-archive.md` |
 | 查需求效力序、正典路由 A.1.1、A1–A10 建成裁決（§4.4）、後端凍結契約（§1） | `docs/plans/docs-plans-README.md`（跳板）→ 各 plans 檔 |
 | 需要依任務種類／難度選擇 Codex workflow、subagents、模型 lane，或使用 `use agents` / `subagents` / `swarm` 開發 `docs/plans` 需求 | `docs/agents/codex-loop-workflows.md` |

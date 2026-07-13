@@ -130,7 +130,7 @@ Repo root `AGENTS.md` 與 `CLAUDE.md` 是 agent session 啟動時自動載入的
 
 `AI-BIM-governance/` 的 repo-local skill inventory SHALL 以 `.claude/skills/` 為本機對齊來源，並同步到 `.codex/skills/` 供 Codex session 使用。兩者都是本機 agent/tooling 產物，SHALL 維持 ignored；PR 不應提交 `.claude/skills/`、`.codex/skills/` 或 generated skill 檔本體，除非使用者明確要求改變 repo policy。
 
-OpenSpec / opsx closed-loop skills 已退役；需求拆解、分期執行與完成驗證 SHALL 使用 Superpowers skills（`writing-plans`、`subagent-driven-development`、`verification-before-completion`）作為主線治理。`.agent/`、`.cursor/`、`.windsurf/` 不再是 opsx skill source-of-truth。
+OpenSpec / opsx closed-loop skills 已退役；Superpowers skills（`writing-plans`、`subagent-driven-development`、`verification-before-completion`）保留為 explicit-only skill library，不是一般任務的主線治理。預設 routing 以 `docs/agents/superpowers-invocation-policy.md` 為準；只有使用者明確授權的 skill 或 workflow 才可使用。`.agent/`、`.cursor/`、`.windsurf/` 不再是 opsx skill source-of-truth。
 
 #### Scenario: `.codex/skills` 與 `.claude/skills` 不一致
 

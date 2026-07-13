@@ -1,6 +1,6 @@
 ---
 name: spec-to-done
-description: Use only when the user explicitly says spec-to-done, explicitly requests the full Superpowers lifecycle, or supplies an approved spec and asks for autonomous progress to a merged PR; also use when explicitly resuming a held spec-to-done run.
+description: Use only when the user explicitly invokes spec-to-done or $spec-to-done (or explicitly requests the full Superpowers lifecycle) and supplies or identifies an approved spec; also use when explicitly resuming a held spec-to-done run. Do not trigger from "實作 spec", "完成需求", or "使用 agents" alone.
 ---
 
 # spec-to-done — 指揮官手冊(主對話 SOP)

@@ -853,13 +853,13 @@ sequenceDiagram
 
 ## 11. 開發協作流程
 
-### 11.1 Superpowers + GitHub PR Workflow
+### 11.1 Skill invocation + GitHub PR Workflow
 
 > 完整定義以 [`AGENTS.md §0.1`](../AGENTS.md) 為準。
 
 ```txt
 Design spec    = 需求 / 規格 / 驗收條件
-Superpowers    = plan / execution governance（writing-plans → subagent-driven-development → verification-before-completion）
+Superpowers    = explicit-only skill library；明確呼叫的 workflow 才可使用其既定 chain
 Git Branch     = 實作隔離（codex/superpowers/<work-id> 或 task-specific branch）
 Pull Request   = 審查與討論
 GitHub Actions = 自動驗證
@@ -868,15 +868,15 @@ Merge          = 正式接受變更
 Closeout       = 更新設計規格 / docs / evidence，並收斂本地 worktree
 ```
 
-**標準流程**：
+**預設流程**（細節以 `AGENTS.md` 與 `docs/agents/superpowers-invocation-policy.md` 為準）：
 
 1. 從最新 `main` 建立 `codex/superpowers/<work-id>` 或 task-specific branch；不得在 `main` 上開發
-2. 非平凡功能先用 Superpowers `writing-plans` 產出分期 plan；若只是純 docs/refactor，PR 需明確記錄不需要 plan 的原因
+2. 依既有 requirement / contract 直接採 repo-native workflow；不得因功能非平凡自動啟動 Superpowers 或建立 plan。只有使用者明確授權時，才使用對應 skill。
    - Plan / 設計文件預設使用繁體中文；API、schema、CLI、status enum、log/error 與外部產品名稱保留原文
-3. 用 Superpowers `subagent-driven-development` 或等價小步驟執行；逐 task 更新 checklist / plan 狀態
-4. 完成前用 Superpowers `verification-before-completion` 對照需求、diff 與驗證證據，不得只用主觀判斷宣告完成
-5. 開 PR 前跑最小驗證並回報結果；user-facing change 必須附 gstack / browser evidence
-6. PR review + GitHub Actions 自動驗證 + `pr-review-agent` 自動審查報告
+3. 單獨啟用 brainstorming、writing-plans、subagent-driven-development 或 verification 不得自動串接下一階段；只有明確呼叫的完整 workflow（例如 `spec-to-done`）可依其既定 contract 串接。
+4. 完成前對照需求、diff 與最小必要驗證證據，不得只用主觀判斷宣告完成。
+5. 只有 ship / PR 在工作範圍內時才開 PR；user-facing change 必須附 gstack / browser evidence。
+6. PR review、GitHub Actions 與 `pr-review-agent` 僅在 PR 流程中適用。
 7. 若 change 影響 A1–A10 功能需求、操作介面或雲端 / 落地端分離架構，更新 `docs/plans/ai-bim-governance-設計規格.md`，必要時同步更新 `docs/plans/ai-bim-governance-prototype.html`
    - 不得只改 prototype 而不更新設計規格
    - 不得把 prototype 的 demo data 宣告成 runtime evidence
