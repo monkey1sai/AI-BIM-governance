@@ -8,7 +8,7 @@
 
 Repo-local 產品功能需求主來源：
 
-- `docs/plans/ai-bim-governance-設計規格.md`：A1–A10 功能需求、介面呈現、互動流程、可信度標記與工程實作建議。
+- `docs/plans/docs-plans-README.md`：docs/plans 唯一入口（TRUTH/TARGET/PROCESS 三分體系）；A1–A10 需求與介面語意問 `TARGET-shell.md`／`TARGET-viewer.md`，現況問 `TRUTH.md`。
 - `docs/plans/ai-bim-governance-prototype.html`：可點擊操作原型；此 HTML 是原型 source artifact，不是由 Markdown 生成的衍生檢視。
 
 外部設計站 `https://bim-docs.jackshappybot.com/` 是產品定位與架構參考：
@@ -18,15 +18,15 @@ Repo-local 產品功能需求主來源：
 - 分頁「06 操作介面總覽」：使用者操作介面、按鈕功能、進度與可驗收流程參考。
 - 設計站原始碼可依個人環境 clone / 定位；本 PR 使用使用者提供的本機 clone 作為一次性查證來源，該本機路徑不納入 repo contract。
 
-程式碼與 contracts 仍是行為 source of truth；repo-local plans 依 `docs/plans/docs-plans-README.md` §1 效力順序取用（互動實作規格 > 開發軌跡 > 設計規格 > prototype）；外部設計站負責主系統架構、產品定位與驗收期待。
+程式碼與 contracts 仍是行為 source of truth；repo-local plans 依 `docs/plans/docs-plans-README.md` §3 三條正交規則取用（現況問 TRUTH、需求問 TARGET-*、紀律問 PROCESS；視覺錨＝兩份 prototype HTML）；外部設計站負責主系統架構、產品定位與驗收期待。
 
-- 前端相關改動（web-viewer-sample / console）動工前必讀 `docs/plans/ai-bim-governance-前端對齊DS-保留後端-實作手冊.md` §1 後端凍結面契約（前端只打 coordinator `:8004`、proxy 路徑 byte-identical、禁改 governance `app.py`、coordinator `governanceProxy.ts`、streaming `conversion_authority.py` 等清單）。
-- A1–A10 建成狀態以 `docs/plans/ai-bim-governance-design-system-對齊矩陣.md` §4.4 為唯一裁決源，其他文件只引用、不各自展開論證。
+- 前端相關改動（web-viewer-sample / console）動工前必讀 `docs/plans/TARGET-contracts.md` §1 後端凍結面契約（前端只打 coordinator `:8004`、proxy 路徑 byte-identical、禁改 governance `app.py`、coordinator `governanceProxy.ts`、streaming `conversion_authority.py` 等清單）。
+- A1–A10 建成狀態唯一落點＝`docs/plans/TRUTH.md`（§4 一覽），其他文件只引用、不各自展開論證。
 
 EdgeConsole product shell contract（對齊 `feat/edge-console-product-shell`）：
 
 - 正式產品殼層入口是 coordinator `/ui`；home 必須顯示「今天要做什麼」與 Smart Todo。
-- 完整 22 條正典路由（hash 一律**無斜線**，如 `#a1`、`#viewer`、`#conv`；2026-06-11 勘誤後 `#/a1` 寫法已廢棄）以 `docs/plans/ai-bim-governance-互動實作規格與標準對齊.md` PART A §A.1.1 為唯一來源，本檔不另行維護清單。
+- 完整 22 條正典路由（hash 一律**無斜線**，如 `#a1`、`#viewer`、`#conv`；2026-06-11 勘誤後 `#/a1` 寫法已廢棄）以 `docs/plans/TARGET-contracts.md` §4 為唯一來源，本檔不另行維護清單。
 - Operator-tool route `#kit`、`#demo-control` 必須保留，不得 silently 移除。
 - A1 rule-run / Issue / BCF 可由 API / 表格完成；3D highlight、first frame、stage truth 必須有 GPU-backed review session，不得宣稱零 GPU 完成 3D。
 

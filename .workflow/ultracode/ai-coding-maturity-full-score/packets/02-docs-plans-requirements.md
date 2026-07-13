@@ -2,7 +2,7 @@
 
 ## Objective
 
-Treat every file under `docs/plans/` as repo requirements/spec input and extract the governance implications for AI coding maturity.
+Treat the seven `docs/plans/` core files as the AI-coding requirement system, use the two prototype HTML files only as visual anchors, and extract the governance implications for AI coding maturity.
 
 ## Context
 
@@ -10,14 +10,17 @@ Read-only packet. The parent will decide what to implement.
 
 ## Sources
 
-- `docs/plans/審批報告-md與html一致性交叉驗證-2026-06-16.md`
 - `docs/plans/docs-plans-README.md`
-- `docs/plans/ai-bim-governance-開發軌跡與執行計畫.md`
-- `docs/plans/ai-bim-governance-設計規格.md`
-- `docs/plans/ai-bim-governance-實作紀律與技術債防線.md`
-- `docs/plans/ai-bim-governance-互動實作規格與標準對齊.md`
+- `docs/plans/TRUTH.md`
+- `docs/plans/TARGET-contracts.md`
+- `docs/plans/TARGET-shell.md`
+- `docs/plans/TARGET-viewer.md`
+- `docs/plans/BACKLOG.md`
+- `docs/plans/PROCESS.md`
 - `docs/plans/ai-bim-governance-prototype.html`
 - `docs/plans/ai-bim-geo-viewer-prototype.html`
+
+Retained SaaS documents, approval reports, and historical assets are supporting/history only. Read one only when a core file links it for the current question; never use it to override TRUTH/TARGET/BACKLOG/PROCESS.
 
 ## Ownership
 
@@ -25,9 +28,10 @@ Read-only. Do not edit files.
 
 ## Do
 
-- Summarize core requirements from each file.
+- Read the seven core files in full and summarize requirements by their ownership axis.
+- Use prototype HTML only for visual detail anchored by TARGET; do not infer runtime state from it.
 - Extract requirements that affect CI, PR governance, test evidence, agent workflow, and user-facing done criteria.
-- Identify conflicts or obsolete-looking items, but defer final judgment to parent.
+- Identify same-axis conflicts or obsolete-looking supporting material, but defer final judgment to parent.
 
 ## Do not
 

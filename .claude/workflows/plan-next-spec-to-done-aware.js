@@ -56,7 +56,7 @@ const SYNTH_SCHEMA = {
   type: 'object', additionalProperties: false,
   properties: {
     currentState: { type: 'string' },
-    inFlightVerdict: { type: 'string', description: 'the immediate-next obligation: finish the in-flight item, or it is already mergeable' },
+    inFlightVerdict: { type: 'string', description: 'evidence-based disposition of mapped in-flight product work, or an explicit statement that none exists' },
     candidates: { type: 'array', items: { type: 'object', additionalProperties: false,
       properties: {
         rank: { type: 'number' }, id: { type: 'string' }, title: { type: 'string' },
@@ -83,20 +83,20 @@ const REPO = 'C:/Repos/active/iot/AI-BIM-governance'
 const PLANS = REPO + '/docs/plans'
 
 phase('Understand')
-log('6 路平行：3 規格抽取 + 前端/後端現狀 + git merged/in-flight 狀態')
+log('6 路平行：3 組 TRUTH/TARGET/PROCESS 抽取 + 前端/後端現狀 + git merged/in-flight 狀態')
 
 const reads = await parallel([
   () => agent(
-    `Read ${PLANS}/ai-bim-governance-開發軌跡與執行計畫.md IN FULL — the v3 trajectory, the AUTHORITATIVE implementation-order doc. Extract: every milestone M0..M8 (id, kind='milestone', title, scope, dod, dependencies); App API drafts (kind='a-item' if mapping to A1..A10 else 'milestone'); decisions D1..D9 (kind='decision'); open items O1..O6 (kind='open-item'). Be precise about the FIXED SEQUENCE M0->M1(A1 pure CPU)->M2 轉檔->M3 串流->M4 3D->M5+ and which milestone gates which. measured_status='unknown'. Analysis only; do NOT modify any file.`,
-    { label: 'spec:v3-trajectory', phase: 'Understand', schema: SPEC_SCHEMA, model: 'sonnet', effort: 'medium' }
+    `Read ${PLANS}/docs-plans-README.md, ${PLANS}/BACKLOG.md, and ${PLANS}/PROCESS.md IN FULL. Extract: every ordered active gap from BACKLOG §1 (kind='gap', preserve id/route/title/DONE/blocker/dependencies in scope+dod+dependencies); every unresolved decision from BACKLOG §2 (kind='open-item', preserve trigger and default); and the built/acceptance/document anti-corruption gates from PROCESS (kind='standard'). BACKLOG order is the implementation priority; historical M0..M8 wording is not an active task queue. measured_status='unknown'. Analysis only; do NOT modify any file.`,
+    { label: 'plans:backlog-process', phase: 'Understand', schema: SPEC_SCHEMA, model: 'sonnet', effort: 'medium' }
   ),
   () => agent(
-    `Read ${PLANS}/ai-bim-governance-互動實作規格與標準對齊.md IN FULL — the HIGHEST-AUTHORITY behavior contract. Extract: PART A 實測差距 (each kind='gap', measured_status working|partial|broken|not-built, dod=what 'fixed' looks like — be exhaustive, these are the most concrete candidates); PART B interaction cards IX-xx (kind='interaction-card', dod=acceptance) — EXPLICITLY capture EVERY IX-CV-0x AND IX-SS-0x AND IX-KG-0x card with whether it is marked 待建/已建; PART C three-domain standard alignment (kind='standard'). Analysis only; do NOT modify any file.`,
-    { label: 'spec:interaction-gaps', phase: 'Understand', schema: SPEC_SCHEMA, model: 'sonnet', effort: 'medium' }
+    `Read ${PLANS}/TRUTH.md and ${PLANS}/TARGET-contracts.md IN FULL. From TRUTH extract every route/A1..A10/viewer status and evidence gap (kind='gap', measured_status working|partial|broken|not-built; never upgrade PARTIAL/not observed). From TARGET-contracts extract the 13 backend-freeze items + 4 approved exceptions, 22 canonical routes + 9 aliases + #review retained page, official standards, and EVERY IX-TN-01..04 card (kind='standard' or 'interaction-card', dod=acceptance). Analysis only; do NOT modify any file.`,
+    { label: 'plans:truth-contracts', phase: 'Understand', schema: SPEC_SCHEMA, model: 'sonnet', effort: 'medium' }
   ),
   () => agent(
-    `Read ${PLANS}/ai-bim-governance-設計規格.md IN FULL (v2 design). Extract A1..A10 interface analysis: each id (A1..A10), kind='a-item', title, scope, dod (interface acceptance), dependencies. Also MinIO three-tier storage + Issue/BCF schema as kind='design'. Analysis only; do NOT modify any file.`,
-    { label: 'spec:design-a-items', phase: 'Understand', schema: SPEC_SCHEMA, model: 'sonnet', effort: 'medium' }
+    `Read ${PLANS}/TARGET-shell.md and ${PLANS}/TARGET-viewer.md IN FULL. Extract A1..A10 and all 22 route target slices (kind='a-item' for A1..A10, otherwise kind='design'; preserve API, UI, acceptance and dependencies), EVERY route-owned IX card (IX-A1×8, IX-CV×4, IX-SS×5, IX-KG×4), EVERY IX-3D-01..05 card, viewer AC-1..21, and M0..M8 milestone vocabulary. These are target requirements only; measured_status='unknown' and actual build state must come from TRUTH. Analysis only; do NOT modify any file.`,
+    { label: 'plans:target-slices', phase: 'Understand', schema: SPEC_SCHEMA, model: 'sonnet', effort: 'medium' }
   ),
   () => agent(
     `Audit the CURRENT BUILD STATE of the AI-BIM-governance FRONTEND in repo ${REPO}. Shell = React 18 + TS "EdgeConsole" served by coordinator at /ui (build:ui, hash router). Routes (hash, NO slash): #home #a1 #a2 #viewer #conv #sessions #instances #minio #review + operator #kit #demo-control. For EACH route decide REALLY built+wired-to-real-backend vs PARTIAL/DEMO (mock/DEMO-DATA/placeholder) vs NOT built. CRITICAL FOCUS: for #conv report the state of each controlled action (coverage expand, prioritize, retry, watch toggle); for #sessions / #instances report whether they show REAL runtime/session data or DEMO DATA, and whether any session controlled action (force-release stale endpoint, terminate session) exists or is disabled/mock. Report built[] (feature, evidence=file:line or route, status=real|demo|stub|partial) and notBuilt[]. BE HONEST about mock/DEMO-DATA. Read-only.`,
@@ -107,9 +107,9 @@ const reads = await parallel([
     { label: 'repo:backend-capabilities', phase: 'Understand', schema: PROBE_SCHEMA, agentType: 'Explore', model: 'sonnet', effort: 'medium' }
   ),
   () => agent(
-    `Establish the MERGED-vs-IN-FLIGHT spec-to-done state for repo ${REPO}. Use git + the state files under ${REPO}/artifacts/spec-to-done/*.md.\n` +
-    `1) MERGED: read 'git -C ${REPO} log --oneline -40 origin/main'. Identify recently merged spec-to-done features and their IX-xx id where stated (e.g. M2-a coverage report #218 = IX-CV-02, M2-b prioritize/retry #221 = IX-CV-03). Return merged[] {id, title, pr, mergedCommit}.\n` +
-    `2) IN-FLIGHT: list worktrees ('git -C ${REPO} worktree list') and for each non-main branch inspect 'git -C <worktree> log --oneline -15' and 'git -C <worktree> status -s'. The branch claude/peaceful-payne-6785a9 (worktree .claude/worktrees/peaceful-payne-6785a9) is the conv-watch-toggle / IX-CV-04 / M2-c work. Read its state file ${REPO}/artifacts/spec-to-done/conv-watch-toggle-state.md. Determine: branch, how many plan tasks are committed vs remaining, whether a PR is open ('gh pr list --state open'), merged=false if not on origin/main, and what remains to finish. Return inFlight[] {id, title, branch, progress, merged, prOpen, remaining}.\n` +
+    `Establish the MERGED-vs-IN-FLIGHT spec-to-done state for repo ${REPO}. Use git, open PRs, BACKLOG ids, and matching state files under ${REPO}/artifacts/spec-to-done/*.md.\n` +
+    `1) MERGED: read 'git -C ${REPO} log --oneline -40 origin/main'. Map only evidence-backed product items to their BACKLOG/TARGET/IX id; do not infer completion from milestone prose. Return merged[] {id, title, pr, mergedCommit}.\n` +
+    `2) IN-FLIGHT: list every non-main worktree ('git -C ${REPO} worktree list'); inspect each branch with 'git -C <worktree> log --oneline -15' and 'git -C <worktree> status -s'; cross-check 'gh pr list --state open' and any matching state file. Do not assume a named branch or hard-code an item. Return active product work that maps to a BACKLOG/TARGET id as inFlight[] {id, title, branch, progress, merged, prOpen, remaining}. Put unrelated docs/governance/infra branches, dirty safety copies, and uncertain mappings in notes rather than treating them as the next product obligation.\n` +
     `Be precise and evidence-based (commit hashes). Read-only; do NOT modify, commit, or push anything.`,
     { label: 'repo:merged-and-inflight', phase: 'Understand', schema: FLIGHT_SCHEMA, model: 'sonnet', effort: 'medium' }
   ),
@@ -123,20 +123,20 @@ log(`規格 ${specReads.length}/3、現狀 ${repoReads.length}/2、git狀態 ${f
 phase('Synthesize')
 const synthesis = await agent(
   `You are the lead architect selecting the NEXT single "spec-to-done" work item for AI-BIM-governance.\n\n` +
-  `AUTHORITY ORDER (higher wins): 互動實作規格(behavior/standards) > v3 計畫(order/DoD) > v2 規格(interface).\n` +
-  `FIXED IMPLEMENTATION ORDER: M0 -> M1 (A1 核心閉環, pure CPU) -> M2 轉檔 -> M3 串流 -> M4 3D 連動 -> M5+.\n\n` +
-  `=== STRUCTURED SPEC EXTRACTION (3 docs) ===\n${JSON.stringify(specReads)}\n\n` +
+  `AUTHORITY MODEL: executable code/tests are runtime truth. In docs, TRUTH owns measured state/evidence; TARGET-* owns desired contracts; BACKLOG owns ordered active gaps and unresolved decisions; PROCESS owns delivery gates. Same-axis conflict is a documentation bug, not a reason to revive deleted-doc precedence.\n` +
+  `IMPLEMENTATION PRIORITY: preserve BACKLOG §1 order after filtering by its declared blockers/dependencies and current evidence. M0..M8 is target vocabulary only, never a fixed task queue.\n\n` +
+  `=== STRUCTURED SPEC EXTRACTION (3 source groups) ===\n${JSON.stringify(specReads)}\n\n` +
   `=== CURRENT REPO BUILD-STATE AUDIT (frontend + backend, from main) ===\n${JSON.stringify(repoReads)}\n\n` +
   `=== MERGED + IN-FLIGHT spec-to-done STATE ===\n${JSON.stringify(flight)}\n\n` +
   `HARD CONSTRAINTS:\n` +
   `- EXCLUDE any item already in 'merged' — it is done.\n` +
-  `- The item(s) in 'inFlight' are NOT valid "next new" candidates — they are already being built on a branch. Instead, summarize them in inFlightVerdict as the IMMEDIATE obligation (finish-then-merge) the human must clear first.\n` +
+  `- Items in 'inFlight' are NOT valid "next new" candidates. Summarize their evidence and disposition in inFlightVerdict; only call one an immediate finish-then-merge obligation when it maps to active BACKLOG product work and is actually ready to converge.\n` +
   `- A candidate must be a UI-facing controlled action / feature whose backend + read-side dependencies are ALREADY met on main (per the audit), so it can be a clean single spec-to-done. If the read-side (real data feed) for an area is still DEMO, a write/controlled-action there is BLOCKED — say so and prefer something buildable now.\n\n` +
   `TASK:\n` +
-  `1) currentState: one tight paragraph — where the project sits on M0-M8 / A1-A10, and the frontier (#conv controlled-action series IX-CV-02/03 merged, IX-CV-04 in flight).\n` +
-  `2) inFlightVerdict: state plainly that the immediate next action is to finish + merge the in-flight conv-watch-toggle (IX-CV-04 / M2-c), with what remains.\n` +
-  `3) candidates: 2-4 ranked options for the NEXT NEW spec-to-done to start AFTER the in-flight one merges. Respect milestone order; dependencies must be met (set dependenciesMet); each a coherent SINGLE spec-to-done scope. Consider: remaining #conv polish, the IX-SS-03/04 runtime-session controlled actions (force-release / terminate) IF #sessions shows real data, A2 version-diff continuation, or any PART A measured gap. Each: rank, id, title, why, scope, dod, dependencies, dependenciesMet, risk, estimatedSize (S|M|L).\n` +
-  `4) recommendation: which candidate and why (2-3 sentences), explicitly noting it comes AFTER conv-watch-toggle merges.\n` +
+  `1) currentState: one tight paragraph grounded in TRUTH plus the current code audit; use A1..A10 or M0..M8 only as descriptive vocabulary, never as inferred completion or priority.\n` +
+  `2) inFlightVerdict: disposition every evidence-backed in-flight product item and say explicitly when none exists; do not promote unrelated/stale/safety-copy branches into product obligations.\n` +
+  `3) candidates: 2-4 options for the NEXT NEW single spec-to-done, ranked by BACKLOG §1 after excluding merged/in-flight work and enforcing declared blockers/dependencies (set dependenciesMet). Each: rank, id, title, why, scope, dod, dependencies, dependenciesMet, risk, estimatedSize (S|M|L).\n` +
+  `4) recommendation: select the highest buildable BACKLOG candidate in 2-3 sentences and name any real prerequisite or in-flight convergence gate; do not inject a historical fixed sequence.\n` +
   `Ground every claim in the provided data; flag audit-vs-spec disagreements. Analysis only; do not modify any file.`,
   { label: 'synthesize:gap-analysis', phase: 'Synthesize', schema: SYNTH_SCHEMA, model: 'opus', effort: 'high' }
 )
@@ -151,8 +151,8 @@ const verdicts = await parallel(top.map((c) => () => agent(
   `MERGED + IN-FLIGHT context (do not re-recommend these):\n${JSON.stringify(flight)}\n\n` +
   `Check against ACTUAL repo code + git (search for real evidence):\n` +
   `1) ALREADY built or merged? Find file:line / commit evidence.\n` +
-  `2) ALREADY in-flight on a branch (e.g. conv-watch-toggle)? If so verdict=in-flight-already.\n` +
-  `3) BLOCKED by an unbuilt earlier-milestone dependency, OR by its own read-side data still being DEMO (a controlled action on mock data violates the 誠實鐵律)? List blockingDependencies.\n` +
+  `2) ALREADY in-flight on any evidence-backed branch? If so verdict=in-flight-already.\n` +
+  `3) BLOCKED by an unmet dependency/blocker declared in BACKLOG/TARGET, OR by its own read-side data still being DEMO (a controlled action on mock data violates the 誠實鐵律)? List blockingDependencies.\n` +
   `4) Scope right for ONE spec-to-done (not a whole milestone)?\n` +
   `Verdict ∈ {confirmed-next, blocked-by-dependency, already-built, in-flight-already, wrong-scope}. Reasoning with file:line/commit evidence. Read-only; do not modify anything.`,
   { label: `verify:${c.id}`, phase: 'Verify', schema: VERIFY_SCHEMA, model: 'opus', effort: 'high' }

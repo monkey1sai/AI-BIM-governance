@@ -15,7 +15,7 @@ body:
     attributes:
       label: Requirement source
       description: Link the exact spec, plan, issue, or route contract. Prefer `docs/plans/...` and `docs/superpowers/...`.
-      placeholder: "docs/plans/ai-bim-governance-互動實作規格與標準對齊.md PART B IX-A1-02"
+      placeholder: "docs/plans/TARGET-shell.md #a1 節 IX-A1-02"
     validations:
       required: true
   - type: textarea

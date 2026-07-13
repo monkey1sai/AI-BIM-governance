@@ -2,7 +2,7 @@
 
 > **Source of truth**：本 runbook 服從 [`AGENTS.md`](../../AGENTS.md) 與 [`CLAUDE.md`](../../CLAUDE.md)。若任何指令字串或邊界宣告與這兩份文件衝突，以那兩份為準。
 >
-> **與產品規格的關係**：[`docs/plans/ai-bim-governance-設計規格.md`](../plans/ai-bim-governance-設計規格.md) 與 [`docs/plans/ai-bim-governance-prototype.html`](../plans/ai-bim-governance-prototype.html) 是 A1–A10 功能需求與操作原型；本 runbook 只覆蓋「用 repo 既有資產 + 既有 GPU 主機，30 分鐘到 demo」這條短路徑，是 demo 編排與驗收手冊，**不是產品需求規格的替代**。
+> **與產品規格的關係**：[`docs/plans/docs-plans-README.md`](../plans/docs-plans-README.md) 導向的 TARGET/TRUTH/PROCESS 與兩份可點擊 prototype 是 A1–A10 功能需求、現況與操作樣貌入口；本 runbook 只覆蓋「用 repo 既有資產 + 既有 GPU 主機，30 分鐘到 demo」這條短路徑，是 demo 編排與驗收手冊，**不是產品需求規格的替代**。
 
 ## 1. 為什麼有這份 runbook
 

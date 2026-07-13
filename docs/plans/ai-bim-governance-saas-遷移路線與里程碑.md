@@ -4,14 +4,14 @@
 
 **狀態聲明（增補層三行）**
 
-- 本檔為增補層，效力低於 `docs-plans-README` §1 所列全部既有文件；衝突一律以既有凍結契約與對齊矩陣 §4.4 裁決為準。
-- 全文能力除明確引用已建成項（A1、A2、A3-federation，見對齊矩陣 §4.4）外，一律 **PLANNED·未建**。
-- 現況＝單站點閉環＝tenant zero；本平台目前已建成僅單站點單租戶閉環。
+- 本檔為 SaaS PLANNED 詳規；跨頁凍結契約以 `TARGET-contracts.md` 為準，現況只查 `TRUTH.md`，本檔不複製建成裁決。
+- SaaS-M1～M8 全文是目標要求；未具 PROCESS §2 evidence 的能力在 UI 一律使用 **PLANNED** 姿態，不因本檔文字升級 runtime 狀態。
+- tenant-zero 是未導入多租戶時的 fallback 要求；實際 runtime 狀態以 `TRUTH.md` 為準。
 
 **本檔定位**
 
 - 本檔為 **SaaS-M1~M8 詳規的唯一源**：每個 SaaS 里程碑的 scope／DoD／回退以本檔為準。
-- `ai-bim-governance-開發軌跡與執行計畫.md` 僅放 SaaS-M 摘要對照表，避免雙權威；摘要與本檔衝突時以本檔為準。
+- `BACKLOG.md` 只在有 active SaaS gap 時引用本檔，不重抄 SaaS-M 詳規；本檔不承載 repo 建成狀態。
 - 雲端控制面服務規格見 `ai-bim-governance-saas-架構總覽.md`；租戶模型／隔離／身分見 `ai-bim-governance-saas-租戶與身分.md`；GPU 物理與計費見 `ai-bim-governance-saas-GPU經濟與計量計費.md`；對外 API 與標準見 `ai-bim-governance-saas-公開API與標準對齊.md`；合規與生命週期見 `ai-bim-governance-saas-合規資料主權與生命週期.md`。本檔只寫里程碑序列，互相引用不重複展開。
 
 **增量原則（無 big-bang）**

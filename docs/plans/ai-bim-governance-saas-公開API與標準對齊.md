@@ -171,7 +171,7 @@
 
 - **標準無租戶語意**：buildingSMART 三大 API（Foundation / BCF / Documents）**皆無 multi-tenancy 語意**——租戶是本平台自建的**外層**概念，不寄望標準提供。
 - **映射方式**：`project_id`（BCF 允許任意字串）作前綴 / 映射 `tenant_id`；在 `/auth` 之上疊 **tenant-aware JWT**（帶 `tenant_id` claim）。
-- **一致性**：租戶維度一律加在標準端點的**更外層**（token claim 為主），不侵入 BCF/Foundation 既有 path 語意；此與前端 22 條正典路由「租戶維度在 hash 之外」的裁決一致（見 `ai-bim-governance-互動實作規格與標準對齊.md` PART D）。
+- **一致性**：租戶維度一律加在標準端點的**更外層**（token claim 為主），不侵入 BCF/Foundation 既有 path 語意；此與前端 22 條正典路由「租戶維度在 hash 之外」的裁決一致（見 `TARGET-contracts.md` §12）。
 
 ---
 
@@ -191,4 +191,4 @@
 2. **BCF 3.0 規格確認流程未啟動**：向 buildingSMART 的 3.0 規格確認尚未發起；`/bcf/{version}/`、per-entity authorization 相容面均為依二手資料推論的設計，未經官方一手確認（見 §6.3）。
 3. **byte-identical 轉發的完整破壞面未窮舉**：§3 列舉了路徑/enum/envelope 三類已知破壞樣態，但 gateway 引入的 header 正規化、字元編碼、壓縮、chunked transfer 等是否會造成位元組差異，未經完整枚舉測試。
 4. **webhook 投遞保證等級未定**：`§5` 的 at-least-once / 重試 / 死信策略、per-tenant secret 輪替機制均為設計方向，未實作驗證。
-5. **標準對齊界線引用自既有文件**：BCF 2.1 / ifcdiff / IDS / Kit extension 的官方對齊鐵律引用自 `ai-bim-governance-互動實作規格與標準對齊.md` PART C（一手來源 docs.ifcopenshell.org），本檔僅承接不重新查證。
+5. **標準對齊界線引用自既有文件**：BCF 2.1 / ifcdiff / IDS / Kit extension 的官方對齊鐵律引用自 `TARGET-contracts.md` §7（各項官方來源：IfcOpenShell／BCF／ifcdiff／IDS＝docs.ifcopenshell.org；Kit extensions＝docs.omniverse.nvidia.com），本檔僅承接不重新查證。
