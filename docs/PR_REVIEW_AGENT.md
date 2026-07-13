@@ -8,7 +8,7 @@
 |---|---|---|
 | `passed` | 必要 deterministic checks 通過，沒有 blocker | 可進入既有人工審查與 branch protection 流程 |
 | `warning` | 必要 checks 通過，但有非阻擋提醒，例如 optional GitNexus tooling unavailable exception 或 GPU E2E 不適用 | 可進入人工審查，但 reviewer 必須看 warning |
-| `blocked` | PR 缺少 OpenSpec、GitNexus evidence、repo boundary 說明，或觸發 secrets / runtime guard | 不應 merge，需補證據或修正 |
+| `blocked` | behavior=yes 卻缺 formal requirement source、behavior=no 與明顯 contract diff 矛盾、缺必要 GitNexus evidence，或觸發 secrets/runtime guard | 不應 merge，需補證據或修正 |
 | `failed` | 必要命令失敗，或 report 無法產生 | 不應 merge，需修正失敗命令或工具本身 |
 
 ## 風險分級
@@ -41,6 +41,10 @@ JSON 必須包含：
   "head_sha": "...",
   "run_id": "...",
   "changed_paths": [],
+  "change_lane": "B",
+  "behavior_contract_changed": "no",
+  "requirement_source": "existing contract",
+  "behavior_contract_signals": [],
   "openspec_changes": [],
   "validation_commands": [],
   "checks": [],
@@ -58,7 +62,9 @@ Markdown summary 只保留人要先看的內容：verdict、blockers、warnings�
 - 不印出 secret 值，只回報檔案路徑與風險類型。
 - 修改既有 `.env`、private key、token / credential 檔案時一律 blocked；若 PR 只刪除這類檔案，允許進入人工審查但必須以 warning 要求確認 rotation / remediation；`.env.example` 或 `.env.*.example` 可作為 contract 變更進入人工審查。
 - 不允許把 retired `_worker`、`_bim-control`、`_s3_storage`、`_conversion-service`、`_conversion-server` 重新寫成 current product runtime dependency。
-- Code 或 script 變更仍需要 PR body / agent 回報中的 GitNexus detect changes evidence；GitHub Actions 的 `pr-review-agent` job 為節省 CI 時間預設 `-SkipGitNexus -AllowGitNexusUnavailable`，只記錄 warning，不在 CI 安裝 GitNexus 或重建 index。若本機或專用 runner 實際執行 GitNexus 但回報 failed，不可降級成 warning。
+- Lane F 不強制 GitNexus；Lane B 對 task/entry symbol 跑一次 impact，只有 code symbol/flow 變更才需要 detect_changes；Lane G/S 保留完整 impact/detect_changes。CI 不安裝 GitNexus；本機實際執行失敗不可寫成 passed。
+- Formal requirement gate 依 behavior 判定，不依 service/tests/scripts changed path：behavior=yes 或 Lane G/S 必須填 issue、docs/plans、superpowers spec 或 existing contract；behavior=no 不會只因路徑缺 OpenSpec 而 blocker。
+- behavior=no 但 diff-line analysis 明顯新增或刪除 public API、frontend route、schema/migration 或 runtime/deploy/security boundary 時，回報 `behavior_contract_mismatch` blocker；F/B 對 Governed trigger 自報降級時回報 `governed_lane_mismatch`。
 - OpenSpec archive / formal spec closeout 會跑 `openspec validate --specs --strict`；`openspec/changes/archive/` 不會被當成 active change id。
 - Optional AI adapter 不可把 deterministic failure 改成 passed；預設未要求 AI verdict 時只記錄 human note，不把 gate 降成 warning。
 
@@ -103,7 +109,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pr-review-agent.ps1 
 
 | Check | Purpose |
 |---|---|
-| `pr-review-agent` | PR risk, OpenSpec/GitNexus/path guard, validation plan, report artifact |
+| `pr-review-agent` | PR lane/behavior/source、GitNexus/path guard、validation plan、report artifact |
 | `agent-governance` | Agent-readable issue template, CODEOWNERS, workflow, PR template, and governance-doc drift check |
 | `root contracts and fakes` | External platform contracts plus test-only fakes |
 | `coordinator build and tests` | TypeScript build and Vitest for coordinator control plane |
@@ -115,7 +121,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pr-review-agent.ps1 
 | `powershell static analysis` | PSScriptAnalyzer `Error` severity gate for scripts |
 | `secret pattern scan` | High-signal private key/token pattern smoke |
 
-PR body evidence is enforced inside the `pr-review-agent` workflow before the review agent runs. The checker reads changed paths and requires the relevant PR template table to be filled:
+PR body evidence is enforced inside the `pr-review-agent` workflow. Every PR requires `Change lane`、`Behavior contract changed`、`Requirement source`; the checker reads added/deleted diff lines to catch obvious declaration mismatches and rejects F/B metadata for Governed triggers。其他表格依範圍條件觸發：
 
 - governance paths require the `AI Coding Governance` rows;
 - user-facing/frontend paths require the `Frontend Verification` rows;

@@ -12,7 +12,11 @@ param(
     [switch] $SkipCommandExecution,
     [switch] $SkipGitNexus,
     [switch] $AllowGitNexusUnavailable,
-    [switch] $AllowUnavailableCommands
+    [switch] $AllowUnavailableCommands,
+    [string] $PrBodyPath = '',
+    [string] $ChangeLane = '',
+    [string] $BehaviorContractChanged = '',
+    [string] $RequirementSource = ''
 )
 
 Set-StrictMode -Version Latest
@@ -40,7 +44,11 @@ try {
         -SkipCommandExecution:$SkipCommandExecution `
         -SkipGitNexus:$SkipGitNexus `
         -AllowGitNexusUnavailable:$AllowGitNexusUnavailable `
-        -AllowUnavailableCommands:$AllowUnavailableCommands
+        -AllowUnavailableCommands:$AllowUnavailableCommands `
+        -PrBodyPath $PrBodyPath `
+        -ChangeLane $ChangeLane `
+        -BehaviorContractChanged $BehaviorContractChanged `
+        -RequirementSource $RequirementSource
 } catch {
     if (-not (Test-Path -LiteralPath $OutputDir)) {
         New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
@@ -59,6 +67,10 @@ try {
         run_id              = $RunId
         generated_at        = (Get-Date).ToUniversalTime().ToString('o')
         changed_paths       = @($ChangedPath)
+        change_lane         = $ChangeLane
+        behavior_contract_changed = $BehaviorContractChanged
+        requirement_source  = $RequirementSource
+        behavior_contract_signals = @()
         openspec_changes    = @()
         validation_commands = @()
         checks              = @()

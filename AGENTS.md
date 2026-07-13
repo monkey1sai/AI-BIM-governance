@@ -9,10 +9,24 @@
 ---
 
 ## 0.1 Agent 工作方式
+
+### AI Coding Governance Lanes
+
+日常任務預設走 Lane F 或 Lane B；Superpowers 與 `spec-to-done` 是 opt-in，不是一般實作主線。不得只因任務「非平凡」、文字含「完成」、或 changed path 位於 code/tests 就升級 Lane S。
+
+| Lane | 適用範圍 | 執行與驗證 |
+|---|---|---|
+| **F — Fast Fix** | 單一 service、約 1–3 檔、小 bug/docs/tests/timeout/logging/error handling；不改 contract、user workflow、security/deploy/migration/Kit/WebRTC | single coordinator；無 Superpowers/spec/plan/subagent；checkout 乾淨時不強制 worktree；targeted tests；不自動 push/PR/merge；不強制 GitNexus impact |
+| **B — Bounded Change** | 單一 service 內清楚且有限的功能；不改 architecture/public API/schema/security/deploy | single coordinator + 3–5 項 inline checklist；最多一個 debugger 或完成後一個 read-only reviewer；禁止 parallel writers；affected tests；對 task/主要 entry symbol 跑一次 GitNexus impact |
+| **G — Governed Change** | 跨 ≥2 services、public API/event/DB schema、user-facing route/workflow、Kit/WebRTC/GPU、deploy/auth/permission/migration/destructive script、architecture boundary、GitNexus HIGH/CRITICAL | dedicated branch/worktree；簡潔 plan；GitNexus impact + detect_changes；按風險 reviewer/debugger/security_auditor；integration tests；user-facing browser E2E；PR local preflight |
+| **S — Spec-to-Done** | 使用者明確輸入 `spec-to-done`、明確要求完整 Superpowers，或指定已核准 spec 並要求自主推進至 merged PR | 保留完整 P0/P1/P3/P4/P5/P6/P7；只能明確啟動，不得由模型自行升級 |
+
+只有工作可安全平行、需要獨立風險檢查，或符合 Lane G/S 條件時才派 worker。coordinator 擁有所有寫入與最終決策；F 不派 subagent，B 禁止多個 writer 並行。
+
 ### Karpathy-style 工作守則
 
-- 非平凡任務先列出假設、成功標準、最小改動面；若需求或 repo 邊界不清楚，先釐清再實作。
-- 非平凡 / 高風險任務必須先做 task tier 判斷、worker dispatch 或明確說明不派 worker 的理由，並在最終回覆區分 verified facts / inferences / unverified risks。
+- Lane B/G/S 先列出假設、成功標準、最小改動面；若需求或 repo 邊界不清楚，先查 local source of truth，仍有重大分歧才釐清。
+- 先判定 F/B/G/S；只有 G/S 或獨立風險檢查有實質價值時才 dispatch worker。最終回覆區分 verified facts / inferences / unverified risks。
 - 優先採用能解決當前問題的最簡單方案；不要新增未要求的抽象、設定層、擴充點或 production dependency。
 - 只修改與任務直接相關的檔案與程式碼；不要順手重構、格式化、刪除註解或清理不理解的既有內容。
 - 每個實作切片都要能被驗證；完成時回報改動檔案、驗證指令、未跑測試原因與已知風險。
@@ -25,8 +39,8 @@
 - 前端相關改動動工前必讀 `docs/plans/ai-bim-governance-前端對齊DS-保留後端-實作手冊.md` §1 後端凍結面契約（前端只打 coordinator `:8004`、proxy 路徑 byte-identical、禁改 governance `app.py`、coordinator `governanceProxy.ts`、streaming `conversion_authority.py` 等清單）。
 - 主系統架構以 `https://bim-docs.jackshappybot.com/` 分頁「01 系統架構」的「BIM 模型管理平台 — 系統架構」為準：採雲端與客戶落地端分離，外部公司雲端是 control-plane，客戶落地端是 IFC / Kit / MCP runtime data-plane。
 - `https://bim-docs.jackshappybot.com/` 分頁「05 BIM治理與模型檢核」中的 A1–A10 是本 repo 的 10 大主要開發項目；分頁「06 操作介面總覽」是使用者操作介面、按鈕、進度與可驗收流程的 UX 參考。
-- 凡是 user-facing capability，不得以「後端 / API / 測試完成」宣告 done。完成標準必須是：使用者可從前端 route 操作，點明確按鈕，使用預設 fixture，看到 loading / success / failure / retry 與關鍵 runtime ID，並有 Playwright / Chrome E2E 截圖或 trace 證據。
-- 最終回報 user-facing work 時必須列出並對齊 PR machine truth：Frontend route、Main button(s) tested、Fixture used、Visible success state、E2E command、Screenshot / trace、Known gaps；Frontend URL、Backend API called、Runtime action 可加列但不得取代前述 labels。
+- 凡是 user-facing capability，不得以「後端 / API / 測試完成」宣告 done。完成標準必須是：使用者可從前端 route 操作，點明確按鈕，使用預設 fixture，看到 loading / success / failure / retry 與關鍵 runtime ID，並有 Playwright / gstack / supported browser engine 的截圖或 trace 證據。
+- 最終回報 user-facing work 時必須列出並對齊 PR machine truth：Frontend route、Main button(s) tested、Fixture used、Backend API called、Runtime action（含 observed runtime ID）、Visible success state（loading / success / failure / retry）、E2E command、Screenshot / trace、Known gaps；Frontend URL 可加列但不得取代前述 labels。
 - 真實 IFC semantic viewer E2E 的核心輸入為主工作區 local `storage/` 內 IFC；new worktree 不會自動帶這些 ignored/local artifact，測試應讀主工作區絕對路徑或用 gitignored junction/symlink，不得把 IFC 或大型 `model.usdc` commit 進 repo。
 - 不得宣告 full-system E2E complete，除非同時具備 governance CPU semantic E2E 與 Kit WebRTC visual/runtime E2E 證據。
 - 當使用者要求「請測試部署區重建」或同義口令時，agent MUST 執行 `.\scripts\dev\rebuild-test-deploy.ps1 -Build`；該 helper 會用 freshly fetched `origin/main` 重建 deployment checkout `D:\Users\deploy\AI-bim-geo`、排除 agent/tooling 檔案與 root `docs/`、`openspec/`、`patches/`，並從部署區執行 `.\scripts\deploy.ps1 -Build`。禁止使用 `-DryRun`、禁止使用 stale `origin/main`、禁止改用當前 worktree 或 sub-repo 啟動命令。
@@ -122,7 +136,7 @@ Runtime/product 行為真相優先順序：
 5. generated wiki / generated skills / old evidence（若存在）
 ```
 
-目前 checkout **沒有** generated wiki 產物（`docs/wiki/` 不存在；graphify corpus 已於 2026-06-10 移除）。分析 code / 陌生模組探索預設先用 GitNexus MCP（`query` / `context`，永遠查活圖譜）；`codebase-memory-mcp`（`search_graph` / `get_code_snippet` / `trace_path`）只能作為並列第二意見、加速定位後的 GitNexus 交叉確認，或 GitNexus UNKNOWN / crash / unavailable 時的 advisory fallback，不得取代 GitNexus-first discovery。兩者查無結果或有疑義時仍以 GitNexus 為準——**修改 code symbol 前的 `impact` 與 commit 前的 `detect_changes` 仍只由 GitNexus 判定**（見下方 §4）。**此「衝突時以 GitNexus 為準」不限 spec-to-done 內部流程，任何 session（含一般互動對話）都適用**：兩圖譜對同一 symbol 給出不同答案時，MUST 用 grep/Read 核對原始碼再下結論，不得逕自採信單邊「exact」標籤（2026-07-03 實測：GitNexus 曾對 `deriveIntakeFromKey` 假陰漏報全部 caller，已修；codebase-memory 對 `tick`/`run`/`init` 這類常見命名，曾把不同檔案的區域閉包誤併成同一節點、生出不存在的 CALLS 邊——兩者皆非 100% 準）。不得在 README、PR 或驗收報告把不存在的 wiki 寫成現有入口。任何導覽產物與實作不一致時，一律以實作為準。
+目前 checkout **沒有** generated wiki 產物（`docs/wiki/` 不存在；graphify corpus 已於 2026-06-10 移除）。Lane F 可直接 Read/grep；Lane B/G/S 的陌生 code discovery 優先用 GitNexus `query` / `context`。`codebase-memory-mcp` 只能作並列第二意見、加速定位後的交叉確認，或 GitNexus UNKNOWN/crash/unavailable 時的 advisory fallback，不得取代 GitNexus risk 判定。兩圖譜衝突時 MUST 用原始碼裁決；不得逕信單邊 exact 標籤，也不得把不存在的 wiki 寫成現有入口。
 
 ---
 
@@ -134,7 +148,7 @@ Runtime/product 行為真相優先順序：
 
 前端驗收紀錄至少包含 route、button、fixture、API、runtime ID、visible state、E2E command、screenshot/trace 與 known gaps。
 
-本 repo 由 GitNexus 索引。修改 code symbol 前 MUST 跑 `impact`；commit 前 MUST 跑 `detect_changes`；HIGH / CRITICAL risk 先回報再繼續。若 GitNexus stale / unavailable / linked-worktree staged diff 失真，照 `docs/agents/gitnexus-usage.md` 的 unavailable gate 處理，不得自行發明 bypass。
+本 repo 由 GitNexus 索引。Lane F 不強制 impact；Lane B 對 task/主要 entry symbol 跑一次 batch impact，只有實際改 code symbol/flow 時才在完成前跑 detect_changes；Lane G/S 對 shared/exported symbol 改前跑 impact、commit 前跑 detect_changes。HIGH 必須明確回報補強策略；CRITICAL 必須取得 sign-off。若 stale/unavailable/linked-worktree diff 失真，依 `docs/agents/gitnexus-usage.md` 揭露，不得自行發明 pass。
 
 規範本文（Always Do / Never Do / Resources / CLI 表）以下方 `<!-- gitnexus:start -->` 自動維護區塊為準（`analyze` 時自動更新）；stale 重建與 LadybugDB crash 復原程序見 `docs/agents/gitnexus-usage.md`。
 
@@ -147,8 +161,9 @@ This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 285
 
 ## Always Do
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "main"})`.
+- **Lane F:** impact is optional; use direct source search, targeted tests, and `git diff`.
+- **Lane B:** run one task/entry-symbol impact; run `detect_changes()` only when code symbols or execution flows changed.
+- **Lane G/S:** run impact before shared/exported symbol edits and `detect_changes({scope: "compare", base_ref: "main"})` before commit.
 - **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
 - When exploring unfamiliar code, use `query({search_query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
 - When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
@@ -156,10 +171,10 @@ This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 285
 
 ## Never Do
 
-- NEVER edit a function, class, or method without first running `impact` on it.
+- NEVER use Lane F/B to bypass impact after scope expands into Lane G/S.
 - NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
 - NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
-- NEVER commit changes without running `detect_changes()` to check affected scope.
+- NEVER commit Lane G/S code changes without running `detect_changes()` to check affected scope.
 
 ## Resources
 | Resource | Use for |

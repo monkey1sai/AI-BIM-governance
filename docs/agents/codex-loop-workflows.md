@@ -5,15 +5,14 @@
 
 ## Local routing
 
-Default to one coordinator. Use these local mappings only:
+Default to one coordinator and Lane F/B. Use these local mappings only:
 
-| Situation | Role composition |
+| Lane / situation | Role composition |
 |---|---|
-| Cross-service/source discovery | `explorer` |
-| Kit/WebRTC/runtime incident | `debugger` + `reviewer` |
-| Auth/deploy/permissions/destructive scripts | `security_auditor` + `reviewer` |
-| PR/E2E/user-facing done | `reviewer` |
-| Small docs lookup | single coordinator |
+| F: small bug/docs/tests/timeout/logging | single coordinator; no worker or Superpowers |
+| B: bounded single-service change | single coordinator; optional one debugger; maximum one read-only reviewer |
+| G: cross-service/user-facing/runtime/security/deploy | risk-scoped `explorer`, `debugger`, `reviewer`, or `security_auditor` |
+| S: explicit spec-to-done/full Superpowers | full P0–P7 composition |
 
 The coordinator owns scope, source-of-truth loading, write-conflict control, evidence synthesis, and final verification. Workers are read-only unless a bounded, non-conflicting scope is explicitly granted. Do not pin model names or duplicate global tiers, effort lanes, output schemas, or generic workflow modes here.
 
@@ -26,7 +25,7 @@ UI route -> main button -> default fixture -> coordinator API
 -> runtime/backend result -> visible status/result -> E2E evidence
 ```
 
-User-facing completion requires a real route, button, fixture, loading/success/failure/retry state, runtime ID, and Playwright/Chrome screenshot or trace. Backend-only completion is insufficient; absent services must be marked `DEMO DATA`, `NOT BUILT`, or `not observed`.
+User-facing completion requires a real route, button, fixture, loading/success/failure/retry state, runtime ID, and Playwright / gstack / supported browser engine screenshot or trace. Backend-only completion is insufficient; absent services must be marked `DEMO DATA`, `NOT BUILT`, or `not observed`.
 
 ## Evidence record
 
@@ -42,7 +41,7 @@ Screenshot / trace:
 Known gaps:
 ```
 
-Run targeted tests first. For Kit/WebRTC or deploy work, include runtime logs and ownership evidence. Run GitNexus `detect_changes` before commit when code symbols or flows changed. Final reports state mode, agents used/skipped, files, verification, evidence, risks, and next step.
+Run targeted tests first. For Kit/WebRTC or deploy work, include runtime logs and ownership evidence. Lane F does not require GitNexus. Lane B runs one task-level impact and detect_changes only when code symbols/flows changed. Lane G/S retain full shared-symbol impact and pre-commit detect_changes. Final reports state lane, agents used/skipped, files, verification, evidence, risks, and next step.
 
 ## Scope guard
 

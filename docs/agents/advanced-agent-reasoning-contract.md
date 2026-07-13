@@ -6,15 +6,14 @@ This overlay adds only local composition rules. The global task-routing contract
 
 ## When this overlay applies
 
-Use the global routing contract for non-trivial work. Apply the local role map below whenever work crosses service boundaries, touches Kit/WebRTC runtime, changes auth/deploy/permissions, or makes a user-facing done claim.
+Use the global routing contract to select Lane F/B/G/S. Default daily work to F or B; apply the local role map below when work crosses service boundaries, touches Kit/WebRTC runtime, changes auth/deploy/permissions, or makes a user-facing done claim.
 
 ## Local composition
 
-- Cross-service or source-of-truth discovery: `explorer`.
-- Kit/WebRTC/runtime incident: `debugger` plus `reviewer`.
-- Auth, deploy, permissions, or destructive scripts: `security_auditor` plus `reviewer`.
-- PR, E2E, or user-facing done review: `reviewer`.
-- Small docs lookup: single coordinator; no worker.
+- Lane F: single coordinator; no worker, plan document, spec, or mandatory GitNexus impact.
+- Lane B: single coordinator; at most one debugger when root cause is unknown and one read-only reviewer at completion.
+- Lane G: use `explorer`, `debugger`, `reviewer`, or `security_auditor` only for the independent risk surface that triggered governance.
+- Lane S: full spec-to-done P0–P7 role composition after explicit invocation only.
 
 Workers are read-only unless the coordinator grants a bounded, non-conflicting file scope. The coordinator owns source-of-truth loading, scope, writes, evidence synthesis, and final verification.
 
@@ -38,4 +37,4 @@ Backend-only tests do not establish frontend completion. Full-system E2E require
 
 ## Verification and reporting
 
-Use the smallest affected-area checks first, then the repo contract commands. Report verified facts, inferences, unverified risks, and next actions separately. For runtime/deploy work, preserve ownership evidence for ports and PIDs before any stop/restart action. Before commit, run the repository's GitNexus `detect_changes` gate when code symbols or flows are involved.
+Use the smallest affected-area checks first, then the repo contract commands. Report verified facts, inferences, unverified risks, and next actions separately. For runtime/deploy work, preserve ownership evidence for ports and PIDs before any stop/restart action. Lane B runs one task/entry impact and detect_changes only for code-symbol/flow changes. Lane G/S retain shared-symbol impact and pre-commit detect_changes; Lane F relies on direct source, targeted tests, and diff unless scope expands.

@@ -4,19 +4,23 @@
 
 ## AI Coding Governance
 
+Machine values: `Change lane` = `F` / `B` / `G` / `S`; `Behavior contract changed` = `yes` / `no`; `Requirement source` = `issue` / `docs/plans` / `superpowers spec` / `existing contract` / `not applicable`.
+
 | Item | Result |
 |---|---|
+| Change lane |  |
+| Behavior contract changed |  |
 | Linked issue |  |
-| Requirement source | `docs/plans/...` / `docs/superpowers/...` / not needed |
+| Requirement source |  |
 | CODEOWNERS / owner review | requested / not needed |
 | GitNexus evidence | impact / detect_changes / not needed |
-| gstack evidence | screenshot / trace / not user-facing |
+| Browser E2E evidence | Playwright / gstack / supported engine / not user-facing |
 | Agent workflow changed? | no / yes, describe rollback |
 | Required checks expected | CI / Agent Governance / PR Review Agent |
 
 ## Frontend Verification
 
-User-facing changes must be operable from the frontend. Backend/API-only completion is not accepted.
+User-facing changes must be operable from the frontend. Backend/API-only completion is not accepted; record the real backend API, observed runtime ID, visible loading/success/failure/retry states, and screenshot or trace.
 
 | Item | Result |
 |---|---|

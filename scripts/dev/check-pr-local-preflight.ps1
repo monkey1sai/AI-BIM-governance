@@ -70,7 +70,13 @@ try {
         '-BodyPath',
         $bodyPath,
         '-ChangedPathsPath',
-        $changedPathsPath
+        $changedPathsPath,
+        '-RepoRoot',
+        $repoRootPath,
+        '-BaseSha',
+        'origin/main',
+        '-HeadSha',
+        'HEAD'
     ) -FailureMessage 'PR body evidence preflight failed.'
 
     $tempDir = Join-Path $repoRootPath '.tmp'
@@ -106,6 +112,8 @@ try {
             'local-preflight',
             '-OutputDir',
             (Join-Path $outDir 'pr-review-agent'),
+            '-PrBodyPath',
+            $bodyPath,
             '-SkipGitNexus',
             '-AllowGitNexusUnavailable'
         ) -FailureMessage 'Local PR review agent failed.'

@@ -8,6 +8,16 @@
 
 ## 1. Claude 行為對齊
 
+日常任務預設使用 Lane F 或 Lane B。不得因任務非平凡、文字含「完成」、或 touched path 位於 code/tests 就自動呼叫 Superpowers；只有使用者明確要求完整 Superpowers / `spec-to-done`，或明確符合 Lane S 觸發句型時，才啟動完整 lifecycle。
+
+| Lane | Claude routing |
+|---|---|
+| F | single coordinator；無 Superpowers/spec/plan/subagent；targeted tests；不自動 ship |
+| B | single coordinator + inline checklist；必要時一個 debugger，完成後最多一個 read-only reviewer；禁止 parallel writers |
+| G | dedicated branch/worktree + concise plan；可按需使用單一 planning/verification skill，但不得自動串起完整 Superpowers lifecycle |
+| S | 明確 opt-in 的完整 Superpowers / spec-to-done P0–P7 |
+
+Lane G/S 不得弱化 secrets、repo boundaries、GitNexus HIGH/CRITICAL、frontend/browser evidence、真實 IFC、Kit/WebRTC 或 deploy ownership gates。Superpowers project plugin 的實際啟停以 `.claude/settings.json` 與 `claude plugin list` 為 machine truth。
 
 ## 2. Sub-files（lazy-load，與 AGENTS.md 同一組）
 | workspace / boundary | `docs/agents/repo-boundary-detail.md` |
@@ -33,8 +43,9 @@ This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 285
 
 ## Always Do
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "main"})`.
+- **Lane F:** impact is optional; use direct source search, targeted tests, and `git diff`.
+- **Lane B:** run one task/entry-symbol impact; run `detect_changes()` only when code symbols or execution flows changed.
+- **Lane G/S:** run impact before shared/exported symbol edits and `detect_changes({scope: "compare", base_ref: "main"})` before commit.
 - **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
 - When exploring unfamiliar code, use `query({search_query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
 - When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
@@ -42,10 +53,10 @@ This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 285
 
 ## Never Do
 
-- NEVER edit a function, class, or method without first running `impact` on it.
+- NEVER use Lane F/B to bypass impact after scope expands into Lane G/S.
 - NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
 - NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
-- NEVER commit changes without running `detect_changes()` to check affected scope.
+- NEVER commit Lane G/S code changes without running `detect_changes()` to check affected scope.
 
 ## Resources
 
