@@ -194,7 +194,7 @@ try {
         Assert-True ($codexConfig -match [regex]::Escape('"' + $domain + '"')) ".codex/config.toml allows $domain"
     }
     Assert-True ($codexConfig -match '\[plugins\."cloudflare@openai-curated"\][\s\S]*?enabled\s*=\s*false') '.codex/config.toml disables the Cloudflare plugin'
-    Assert-True ($codexConfig -match '\[plugins\."superpowers@claude-plugins-official"\][\s\S]*?enabled\s*=\s*false') '.codex/config.toml disables the Superpowers plugin for Codex'
+    Assert-True ($codexConfig -match '\[plugins\."superpowers@claude-plugins-official"\][\s\S]*?enabled\s*=\s*false') '.codex/config.toml disables the Superpowers plugin'
     foreach ($forbiddenConfigKey in @('sandbox_workspace_write', 'sandbox_mode', 'model\s*=', 'model_reasoning_effort\s*=')) {
         Assert-True (-not ($codexConfig -match $forbiddenConfigKey)) ".codex/config.toml does not define forbidden selector $forbiddenConfigKey"
     }
@@ -232,7 +232,7 @@ try {
 
     $claudeSettingsRaw = Get-Content -LiteralPath '.claude/settings.json' -Raw
     $claudeSettings = $claudeSettingsRaw | ConvertFrom-Json
-    Assert-True ($claudeSettings.enabledPlugins.'superpowers@claude-plugins-official' -eq $false) 'Claude project disables Superpowers'
+    Assert-True ($claudeSettings.enabledPlugins.'superpowers@claude-plugins-official' -eq $false) 'Claude project-specific configuration disables the Superpowers plugin'
     Assert-True (-not ($claudeSettingsRaw -match 'Write\|Edit\|MultiEdit|verify-reminder')) 'Claude no longer runs verify reminder after every edit'
     Assert-True ($claudeSettingsRaw -match 'Bash\(git commit\*\)') 'Claude commit guard runs only for git commit'
     Assert-True ($claudeSettingsRaw -match 'Bash\(gh pr merge\*\)') 'Claude keeps the merge evidence gate'
