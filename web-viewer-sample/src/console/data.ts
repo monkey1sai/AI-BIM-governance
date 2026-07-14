@@ -1,8 +1,8 @@
 // Edge Console 單一真相源（移植自設計原型，誠實 provenance 系統）。
 // 不放任何願景假數字；每個區塊 / 應用都標真實 provenance 與 phase。
 
-// p3 / p4：A4–A10 roadmap vision phase（對齊 RM_APPS phase）。p3 = RM phase 3（A5）；
-// p4 = RM phase 4（A4/A6-A10）。標 vision 願景，後端不存在（不可當真實實測）。
+// p3 / p4：僅用於 A5–A10 roadmap vision。A1–A4 live 用 asbuilt/artifact（A4＝PARTIAL 仍標 asbuilt 能力面，缺口見 TRUTH）。
+// p3 = RM phase 3（A5）；p4 = RM phase 4（A6–A10）。標 vision 願景，後端不存在（不可當真實實測）。
 export type Prov = "asbuilt" | "artifact" | "demo" | "p1" | "p15" | "p3" | "p4";
 
 export const PROV_LABEL: Record<Prov, string> = {
@@ -65,8 +65,9 @@ export const PAGES: PageDef[] = [
   { key: "a6", no: "A6", label: "4D / 5D 施工模擬", plane: "omniverse", group: "core", badge: "P4", badgeTone: "ai" },
   { key: "a7", no: "A7", label: "Reality Capture 比對", plane: "omniverse", group: "core", badge: "P4", badgeTone: "ai" },
   { key: "a8", no: "A8", label: "Synthetic Data", plane: "omniverse", group: "core", badge: "P4", badgeTone: "ai" },
-  { key: "a9", no: "A9", label: "設計 / 審查 Copilot", plane: "omniverse", group: "core", badge: "P4", badgeTone: "ai" },
-  { key: "a10", no: "A10", label: "機器人 / 巡檢模擬", plane: "omniverse", group: "core", badge: "P4", badgeTone: "ai" },
+  // 2026-07-13 TARGET 身分：A9＝機器人／自主巡檢；A10＝其他應用／AI 決策（舊 HTML Copilot/Robotics 文案作廢）。
+  { key: "a9", no: "A9", label: "機器人 / 自主巡檢", plane: "omniverse", group: "core", badge: "P4", badgeTone: "ai" },
+  { key: "a10", no: "A10", label: "其他應用 / AI 決策", plane: "omniverse", group: "core", badge: "P4", badgeTone: "ai" },
   // MD 三頁合一（Task 7）：原 conv（轉檔排程）/ minio（MinIO 資料）/ intake（Model Intake）三個 nav 項
   // 合併為單一 MD 項；#conv / #intake 由 EdgeConsole 以 alias 重導至 #minio。舊三頁本體待 Task 9 移除。
   { key: "sessions", no: "SS", label: "Session 管理", plane: "governance", group: "omniverse" },
@@ -93,22 +94,19 @@ export interface AppCardDef {
   route?: string; // 內部 console route（有 = 可點）
 }
 
-// A1–A10 權威清單（轉述自設計原型 roadmap-data.jsx RM_APPS）。
-// 本 repo 落地狀態：A1 backend AS-BUILT（rule-run + IDS 匯入 + BCF 2.1 匯出）；
-// A2 backend AS-BUILT（GlobalId 多級 diff + geometry_changed opt-in + issue-impact）；
-// A3 backend AS-BUILT（USD sublayer federation + per-member transform + review-room handoff）；A4–A10 roadmap。
+// A1–A10 權威清單。落地：A1–A3 AS-BUILT 能力面；A4 AS-BUILT PARTIAL（deterministic search，非 LLM／非完整 IA）；
+// A5–A10 roadmap vision（後端未建）。A9/A10 身分對齊 TARGET-shell 2026-07-13（A9 機器人、A10 AI 決策）。
 export const A1A10: AppCardDef[] = [
   { code: "A1", slug: "governance", title: "BIM 治理與模型檢核", en: "Governance & Rule Checker", phase: 1, tier: "focus", dep: "core+omni", prov: "asbuilt", route: "issues" },
   { code: "A2", slug: "version-diff", title: "模型版本差異與責任追蹤", en: "Model Version Diff", phase: 2, tier: "focus", dep: "core", prov: "asbuilt", route: "version-diff" },
   { code: "A3", slug: "federation", title: "跨專業模型 Federation", en: "Cross-discipline Federation", phase: 2, tier: "focus", dep: "omni", prov: "asbuilt", route: "federation" },
-  // A4 live partial（deterministic search in B-loop）；A5–A10 roadmap vision pages.
-  { code: "A4", slug: "ai-search", title: "語意搜尋與模型問答", en: "USD Search & NL Query", phase: 1, tier: "focus", dep: "core+omni", prov: "asbuilt", route: "a4" },
+  { code: "A4", slug: "ai-search", title: "語意查詢與證據", en: "Semantic query & evidence", phase: 1, tier: "focus", dep: "core+omni", prov: "asbuilt", route: "a4" },
   { code: "A5", slug: "iot-fm", title: "IoT / BMS / FM 數位分身", en: "IoT / FM Digital Twin", phase: 3, tier: "roadmap", dep: "core+omni", prov: "p3", route: "app/iot-fm" },
   { code: "A6", slug: "4d-5d", title: "4D / 5D 施工模擬", en: "4D / 5D Construction", phase: 2, tier: "roadmap", dep: "omni", prov: "p4", route: "app/4d-5d" },
   { code: "A7", slug: "reality-capture", title: "Reality Capture 比對", en: "Scan-to-BIM Deviation", phase: 4, tier: "roadmap", dep: "omni", prov: "p4", route: "app/reality-capture" },
   { code: "A8", slug: "synthetic-data", title: "Synthetic Data Studio", en: "Synthetic Data Studio", phase: 4, tier: "roadmap", dep: "omni", prov: "p4", route: "app/synthetic-data" },
-  { code: "A9", slug: "usd-copilot", title: "USD Code / ChatUSD", en: "USD Code Copilot", phase: 4, tier: "roadmap", dep: "omni", prov: "p4", route: "app/usd-copilot" },
-  { code: "A10", slug: "robot-sim", title: "機器人 / 無人機巡檢", en: "Robot / Drone Sim", phase: 4, tier: "roadmap", dep: "omni", prov: "p4", route: "app/robot-sim" },
+  { code: "A9", slug: "robot-sim", title: "機器人 / 自主巡檢", en: "Robot / autonomous inspection", phase: 4, tier: "roadmap", dep: "omni", prov: "p4", route: "app/robot-sim" },
+  { code: "A10", slug: "ai-decision", title: "其他應用 / AI 決策工作台", en: "Other apps / AI decision workbench", phase: 4, tier: "roadmap", dep: "omni", prov: "p4", route: "app/ai-decision" },
 ];
 
 // ── 服務邊界拓樸（BoundaryDiagram 用，移植自設計原型 data.jsx SERVICES）─────────
@@ -183,10 +181,8 @@ export const DEPENDENCIES: DependencyDef[] = [
   { name: "本地 issue / shadow metadata DB", license: "—", use: "本地 issue 表 / shadow metadata", risk: "tbd" },
 ];
 
-// ── A4–A10 vision 詳頁資料（P3-1，轉述自設計原型 roadmap-data.jsx RM_APPS）────────
-// 誠實鐵律：A4–A10 後端**不存在**，整段標 vision。scenario 為**原型情境敘事（範例情境）**，
-// 非本系統真實 run，具體數字（如「312 扇門」「17,000 frames」）一律當願景敘事，禁當實測。
-// api 欄為 RM_APPS 的「願景 API 設計」（非已實作 route）。schema/ui/mvp/risks 同為願景規格。
+// ── A5–A10 vision 詳頁（A4 live 在 #a4，不在本表）────────
+// scenario＝範例情境（非真實 run）；api＝願景 API 設計。A9/A10 身分＝TARGET 2026-07-13。
 export interface AppApiDef { m: string; u: string; d: string }
 export interface AppSchemaDef { t: string; f: string }
 export interface AppSprintStep { sp: string; t: string; d: string }
@@ -211,28 +207,6 @@ export interface AppVisionDetail {
 }
 
 export const A1A10_DETAIL: Record<string, AppVisionDetail> = {
-  "ai-search": {
-    code: "A4", slug: "ai-search", title: "語意搜尋與模型問答", en: "USD Search & NL Query", phase: 4, prov: "p4",
-    pitch: "用自然語言查模型：「找出所有沒有防火等級的門」「哪些 AHU 沒有維保週期」。",
-    goal: "讓不懂 IFC schema 的人用自然語言問模型，並把結果寫回 highlight / issue / BCF。",
-    scenarioHead: "範例情境（願景敘事）：「找出 12 樓所有沒有 AssetCode 的機電設備，只顯示高價設備」",
-    scenarioResult: "範例輸出：解譯 floor=L12 · discipline=MEP · AssetCode IS NULL · cost_category=high（具體數字為原型敘事，非真實 run）",
-    schema: [{ t: "element_search_index", f: "model_version_id · ifc_guid · usd_prim_path · ifc_type · level · system · properties_json · text_embedding(vector)" }],
-    api: [
-      { m: "POST", u: "/api/search/model", d: "{query} → interpreted_filters + results" },
-      { m: "POST", u: "/api/search/spatial", d: "近某 prim N 公尺內物件" },
-      { m: "POST", u: "/api/search/by-image", d: "USD Search image input" },
-    ],
-    ui: ["Search bar 顯示 interpreted filters（絕不黑箱）", "Result table + [Highlight in 3D] + [Create Issue Batch]", "Saved Queries 可變排程 / 規則"],
-    mvp: ["建立 element_search_index", "支援 10 個固定 query pattern", "查詢結果回傳 ifc_guid + usd_prim_path", "能在 3D highlight 結果", "AI 必須顯示 interpreted filters，不能黑箱"],
-    steps: [
-      { sp: "S1·W1", t: "Index schema", d: "PG + pgvector · 文字 embedding" },
-      { sp: "S1·W2", t: "Indexer worker", d: "model version 完成後自動 ingest" },
-      { sp: "S2·W1", t: "10 固定查詢樣板", d: "missing property · by-floor · by-system · by-issue" },
-      { sp: "S2·W2", t: "LLM intent parser", d: "LLM → JSON filters（顯示 interpreted query）" },
-    ],
-    risks: ["黑箱 LLM 結果會被質疑 — 必須顯示 interpreted_filters。", "中文設計術語 recall 偏低 — 需中英對照 alias table。", "USD Search microservice 是 cloud 端 — 私密專案需 fallback 自建索引。"],
-  },
   "iot-fm": {
     code: "A5", slug: "iot-fm", title: "IoT / BMS / FM 數位分身", en: "IoT / FM Digital Twin", phase: 3, prov: "p3",
     pitch: "把溫濕度、CO₂、電表、設備狀態綁到 BIM 元件，並把 FM 工單 / 維保紀錄連回。",
@@ -333,50 +307,68 @@ export const A1A10_DETAIL: Record<string, AppVisionDetail> = {
     ],
     risks: ["BIM 場景幾何細節不足 → 訓練資料寫實感差。", "GPU 時間是錢 — 須 budget cap。", "Domain gap 一直存在 — 須用真實資料 fine-tune。"],
   },
-  "usd-copilot": {
-    code: "A9", slug: "usd-copilot", title: "設計 / 審查 Copilot", en: "USD Code / ChatUSD Copilot", phase: 4, prov: "p4",
-    pitch: "用自然語言產生 Python-USD code、修改 scene、查 OpenUSD API。",
-    goal: "用自然語言操作 USD stage — 但所有寫入限制在 review / session / overlay layer，絕不寫回 source model；所有操作 preview + undo + audit。",
-    scenarioHead: "範例情境（願景敘事）：「把所有 high severity issue 構件標紅並建立 collection」",
-    scenarioResult: "範例輸出：Preview 顯示 will modify review_session_layer · source model unchanged · [Apply / Reject / Undo]（為原型敘事，非真實 run）",
-    schema: [{ t: "usd_operations", f: "id · review_session_id · prompt · operation_plan_json · status · target_layer · created_by" }],
-    api: [
-      { m: "POST", u: "/api/copilot/generate", d: "prompt → operation_plan（preview only）" },
-      { m: "POST", u: "/api/copilot/apply/:id", d: "apply 到 session layer（auditable）" },
-      { m: "POST", u: "/api/copilot/revert/:id", d: "撤回" },
-    ],
-    ui: ["Prompt → Preview → Apply / Reject / Undo", "顯示 will modify 哪個 layer · source model 不變", "Saved Recipes"],
-    mvp: ["只支援 read-only query + visual overlay operation", "所有 operation 先 preview", "寫 session layer，不改 source model", "每次 operation 可 undo", "code / plan 存 audit log"],
-    steps: [
-      { sp: "S1·W1", t: "Allowed operation 白名單", d: "select / highlight / collection · 禁止寫 source" },
-      { sp: "S1·W2", t: "LLM prompt + USD Code API", d: "prompt → operation_plan_json" },
-      { sp: "S2·W1", t: "Preview + Apply UI", d: "讀寫保護 · diff 顯示 · undo stack" },
-    ],
-    risks: ["LLM 寫任意 Python 是高風險 — 限制為 operation plan JSON 白名單。", "Apply 後 session layer 被亂改 → layer-level undo。", "須教育：這是受控 USD operation generator，不是聊天。"],
-  },
+  // A9＝機器人／自主巡檢（TARGET 2026-07-13；舊 A10 robot 內容歸此）。
   "robot-sim": {
-    code: "A10", slug: "robot-sim", title: "機器人 / 自動巡檢模擬", en: "Robot / Drone Inspection Simulation", phase: 4, prov: "p4",
-    pitch: "模擬 AMR、機器狗、無人機在建築物或工地中巡檢、避障、拍照、讀表。",
-    goal: "在 digital twin 中放 simulated robot，設定 inspection targets，產生路線並模擬感測器覆蓋，回報 blind spot / unreachable / collision。",
-    scenarioHead: "範例情境（願景敘事）：資料中心 AMR 每晚巡檢 UPS / Battery / Cooling",
-    scenarioResult: "範例輸出：產生路線 + blind spots + collision risks + inspection plan（具體數字為原型敘事，非真實 run）",
+    code: "A9", slug: "robot-sim", title: "機器人 / 自主巡檢", en: "Robot / autonomous inspection", phase: 4, prov: "p4",
+    pitch: "在 digital twin 驗證巡檢路線、waypoints、禁行區與 camera/LiDAR coverage，再追蹤任務與異常。",
+    goal: "預設模擬；實機需 edge/ROS 證據。事件連回 BIM 空間/資產與 Issue。",
+    scenarioHead: "範例情境（願景敘事）：以單層 USD＋simulated robot 建含不可達點的任務",
+    scenarioResult: "範例輸出：reachable/unreachable、mission progress、注入 anomaly→Issue（非真實 run）",
     schema: [
       { t: "inspection_routes", f: "id · name · robot_type · start_location · route_json" },
       { t: "inspection_targets", f: "id · route_id · ifc_guid · usd_prim_path · target_type" },
       { t: "simulation_runs", f: "id · route_id · status · result_json · output_uri" },
     ],
     api: [
-      { m: "POST", u: "/api/routes", d: "建立 inspection route" },
-      { m: "POST", u: "/api/routes/:id/simulate", d: "提交 Isaac Sim job" },
+      { m: "POST", u: "/api/routes", d: "建立 inspection route（願景）" },
+      { m: "POST", u: "/api/routes/:id/simulate", d: "提交 Isaac Sim job（願景）" },
       { m: "GET", u: "/api/simulation-runs/:id", d: "結果（blind spot / unreachable / collision）" },
     ],
-    ui: ["Robot Type / Sensor Package / Route 選擇", "Targets table · reachable / blind / collision 統計", "[Generate Route] [Run Simulation] [Show Blind Spots]"],
-    mvp: ["在一層樓放一台 simulated robot", "指定 10 個 inspection targets", "產生路線", "模擬 camera / LiDAR coverage", "回報 unreachable / blind spot"],
+    ui: ["Robot Type / Sensor Package / Route", "Targets · reachable / blind / collision", "[Generate Route] [Run Simulation]"],
+    mvp: ["一層樓一台 simulated robot", "10 inspection targets", "路線＋coverage", "unreachable / blind spot 報告"],
     steps: [
-      { sp: "S1·W1-2", t: "USD robot fixture", d: "簡單 AMR / quadruped / drone USD asset" },
-      { sp: "S2·W1", t: "Path planning", d: "navmesh from USD geometry · A* 路徑" },
-      { sp: "S2·W2", t: "Sensor coverage 分析", d: "RTX camera / LiDAR frustum cast · blind detection" },
+      { sp: "S1·W1-2", t: "USD robot fixture", d: "AMR / quadruped / drone asset" },
+      { sp: "S2·W1", t: "Path planning", d: "navmesh · A*" },
+      { sp: "S2·W2", t: "Sensor coverage", d: "frustum cast · blind detection" },
     ],
-    risks: ["Isaac Sim 是重量級組件 — 部署 / GPU 成本顯著。", "BIM navmesh 通常不存在 — 需從 IfcSpace + IfcWall 自動生成。", "須明確：這是模擬，真實機器人需另外 ROS 整合。"],
+    risks: ["Isaac Sim 重量級／GPU 成本。", "BIM navmesh 常不存在。", "模擬≠實機 ROS。"],
+  },
+  // A10＝其他應用／AI 決策工作台（TARGET 2026-07-13；舊 A9 Copilot 能力收斂為 session-layer 決策輔助）。
+  "ai-decision": {
+    code: "A10", slug: "ai-decision", title: "其他應用 / AI 決策工作台", en: "Other apps / AI decision workbench", phase: 4, prov: "p4",
+    pitch: "把 BIM、能耗、IFC/IDS、IoT 與氣象證據放到同一 scenario，比較 baseline／替代方案並輸出可審計建議。",
+    goal: "組合層工作台；不得複製 A1–A9 資料權威。USD 寫入只到 session layer（preview→confirm→audit）。",
+    scenarioHead: "範例情境（願景敘事）：baseline＋低碳 alternative 比較",
+    scenarioResult: "範例輸出：KPI delta＋evidence refs＋report job id（非真實 run）",
+    schema: [{ t: "decision_scenarios", f: "id · baseline_ref · alternative_ref · module_runs_json · report_uri" }],
+    api: [
+      { m: "POST", u: "/api/scenarios", d: "建立 scenario（願景）" },
+      { m: "POST", u: "/api/scenarios/:id/compare", d: "比較 KPI（願景）" },
+      { m: "POST", u: "/api/copilot/generate", d: "prompt → operation_plan preview only（session layer）" },
+    ],
+    ui: ["應用總覽 tabs", "Source ledger", "Evidence-linked AI 建議", "Scenario matrix / report jobs"],
+    mvp: ["至少一個真 module run", "來源 drilldown", "AI 建議必帶 evidence refs", "BCF 無 bridge 時 unavailable"],
+    steps: [
+      { sp: "S1·W1", t: "Scenario model", d: "ownership / 例外凍結" },
+      { sp: "S2·W1", t: "Module adapter", d: "接 A1/A2 證據，不第二份 DB" },
+    ],
+    risks: ["Catch-all 變成第二資料庫。", "跨時間源硬比較。", "AI 無證據。"],
+  },
+  // 舊 deep link 別名：#app/usd-copilot → 同 A10 願景（Copilot 不再佔 A9 身分）。
+  "usd-copilot": {
+    code: "A10", slug: "usd-copilot", title: "其他應用 / AI 決策工作台（舊別名）", en: "AI decision workbench (legacy alias)", phase: 4, prov: "p4",
+    pitch: "舊 A9 Copilot deep link；正式身分已改為 A10 AI 決策工作台。",
+    goal: "請改開 #a10 或 #app/ai-decision。本頁僅保留 deep-link 相容，內容同願景 A10。",
+    scenarioHead: "範例情境（願景敘事）：舊 Copilot prompt → session-layer operation plan",
+    scenarioResult: "範例輸出：Preview only · source model unchanged（非真實 run）",
+    schema: [{ t: "usd_operations", f: "id · review_session_id · prompt · operation_plan_json · status · target_layer" }],
+    api: [
+      { m: "POST", u: "/api/copilot/generate", d: "prompt → operation_plan（preview only）" },
+      { m: "POST", u: "/api/copilot/apply/:id", d: "apply 到 session layer（auditable）" },
+    ],
+    ui: ["Prompt → Preview → Apply / Reject / Undo", "Redirect note to #a10"],
+    mvp: ["別名不新增能力", "正式入口 #a10"],
+    steps: [{ sp: "—", t: "別名保留", d: "gap-route-convergence 收斂時可退役" }],
+    risks: ["雙入口混淆 — 以 A10 為準。"],
   },
 };

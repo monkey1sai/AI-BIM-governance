@@ -166,12 +166,12 @@ export function A4SemanticSearchPage() {
     <div className="ec-page" data-testid="a4-semantic-search-page">
       <h1 className="ec-h1">
         {t("A4 語意查詢與證據", "A4 Semantic query & evidence")}
-        <span className="ec-prov ec-asbuilt" style={{ marginLeft: 8 }}>PARTIAL</span>
+        <span className="ec-prov ec-asbuilt" style={{ marginLeft: 8 }}>asbuilt · PARTIAL</span>
       </h1>
       <p className="ec-lead">
         {t(
-          "可解釋過濾查詢（非聊天）。接 B 閉環：session / ifc-ready 由 coordinator 解析 host IFC，經 :8004 proxy → governance search。",
-          "Explainable filter search (not chat). B-loop: session / ifc-ready resolve host IFC on coordinator, proxy :8004 → governance search.",
+          "可解釋過濾查詢（非 LLM 聊天）。B 閉環：session / ifc-ready → coordinator 解析 host IFC → :8004 /api/governance/search/* → governance POST /api/search/model。結果表為真實 API 回傳，非示意假數。",
+          "Explainable filter search (not LLM chat). B-loop: session / ifc-ready → coordinator resolves host IFC → :8004 /api/governance/search/* → governance POST /api/search/model. Result table shows real API payload, not demo numbers.",
         )}
       </p>
 
@@ -307,8 +307,12 @@ export function A4SemanticSearchPage() {
       </div>
 
       <Panel
-        title={t("結果表", "Results")}
-        sub={t("無 mapping 的列 highlight_eligible=false（不發 3D 定位）", "Rows without mapping: highlight_eligible=false")}
+        title={t("真實查詢結果", "Real search results")}
+        sub={
+          result
+            ? `status=${result.status} · matched=${matchedCount} · scanned=${result.stats?.scanned ?? 0}`
+            : t("執行後顯示 governance 真實 JSON 結果", "Shows real governance JSON after run")
+        }
         prov="asbuilt"
       >
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>

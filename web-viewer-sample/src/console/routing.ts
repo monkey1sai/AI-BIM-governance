@@ -17,7 +17,7 @@ const PRODUCT_CONSOLE_ROUTES = [
   "version-diff", "federation", "apps",
   "kit", "demo-control",
 ];
-// F8-route（2026-07-10）：EdgeConsole 另有 `app/<slug>` 動態 case（A4–A10 願景詳頁，
+// F8-route（2026-07-10）：EdgeConsole 另有 `app/<slug>` 動態 case（A5–A10 願景詳頁；A4 已 live #a4，
 // data.ts A1A10[].route="app/..."）——固定字串清單涵蓋不到，補前綴匹配（slug 限 [a-z0-9-]+，
 // 空 slug 與相似字首不放行）。影響面：僅裸 viewer 來源（dev :5173 根路徑）的深連結判定；
 // 正式入口 :8004/ui 由 pathname 分支先命中，不經此 regex。

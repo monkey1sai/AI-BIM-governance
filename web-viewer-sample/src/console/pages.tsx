@@ -209,7 +209,7 @@ export function OverviewPage() {
         </table>
       </Panel>
 
-      <Panel title="Phase Backlog" sub={t("近期重點 A1–A3；A4–A10 為 ROADMAP", "Near-term focus A1–A3; A4–A10 are ROADMAP")}>
+      <Panel title="Phase Backlog" sub={t("近期重點 A1–A4；A5–A10 為 ROADMAP", "Near-term focus A1–A4; A5–A10 are ROADMAP")}>
         <Field k={t("A1 治理與模型檢核（rule-run authority）", "A1 Governance & model validation (rule-run authority)")} v={t("backend 已實作", "backend implemented")} prov="asbuilt" />
         <Field k={t("A2 版本差異 · A3 Federation", "A2 Version diff · A3 Federation")} v={t("已實作（GlobalId diff + USD sublayer federation）", "Implemented (GlobalId diff + USD sublayer federation)")} prov="asbuilt" />
         <Field k={t("Issue 資料庫（lifecycle + audit + 來源綁定）· IDS 匯入", "Issue database (lifecycle + audit + source binding) · IDS import")} v={t("已實作", "Implemented")} prov="asbuilt" />
@@ -904,19 +904,19 @@ export function AppsPage({ onOpen }: { onOpen: (route: string) => void }) {
     <>
       <h1>{t("應用導引 · Applications A1–A10", "Application guide · Applications A1–A10")}</h1>
       <p className="ec-lead">
-        {t("十個應用模組入口。近期重點 A1–A3 為聚焦項（後端已實作、可真實驗證）；A4–A10 為 ROADMAP，標真實 Phase，點卡片開「願景詳頁」（schema/api/ui/mvp/risks），**後端未建、整段標願景**。", "Entry points to ten application modules. Near-term focus A1–A3 are focus items (backend implemented and really verifiable); A4–A10 are ROADMAP, marked with their real Phase; click a card to open the \"vision detail page\" (schema/api/ui/mvp/risks) — **backend not built, the whole section is marked vision**.")}
+        {t("十個應用模組入口。Focus＝A1–A4（A4＝deterministic 語意查詢 live／PARTIAL）；A5–A10 為 ROADMAP 願景詳頁（**後端未建**）。", "Ten application modules. Focus = A1–A4 (A4 = deterministic semantic search live / PARTIAL); A5–A10 are ROADMAP vision pages (**backend not built**).")}
       </p>
-      <Panel title={t("近期重點 · Focus", "Near-term focus · Focus")} sub={t("A1–A3（後端已實作）", "A1–A3 (backend implemented)")}>
+      <Panel title={t("近期重點 · Focus", "Near-term focus · Focus")} sub={t("A1–A4（A4 live partial · #a4）", "A1–A4 (A4 live partial · #a4)")}>
         <div className="ec-grid">{focus.map(Card)}</div>
       </Panel>
-      <Panel title={t("後期願景 · Roadmap", "Later vision · Roadmap")} sub={t("A4–A10 · Phase 3–4（後端未建，點卡看願景詳頁）", "A4–A10 · Phase 3–4 (backend not built; click a card to see the vision detail page)")}>
+      <Panel title={t("後期願景 · Roadmap", "Later vision · Roadmap")} sub={t("A5–A10 · Phase 3–4（後端未建，點卡看願景詳頁）", "A5–A10 · Phase 3–4 (backend not built; click a card to see the vision detail page)")}>
         <div className="ec-grid">{roadmap.map(Card)}</div>
       </Panel>
     </>
   );
 }
 
-// ── P3-1 A4–A10 vision 詳頁（泛用，吃 A1A10_DETAIL）──
+// ── P3-1 A5–A10 vision 詳頁（A4 live #a4；本元件只服務 A1A10_DETAIL）──
 // 誠實鐵律：整頁標願景（p3/p4）；明確標「後端未建」；scenario 為範例情境（願景敘事），
 // api 為願景 API 設計（非已實作 route）。禁當真實實測 / 禁捏造數字。
 export function AppVisionPage({ slug, onOpen }: { slug: string; onOpen: (route: string) => void }) {

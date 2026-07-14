@@ -64,7 +64,8 @@ function AliasRedirect({ to }: { to: string }) {
 }
 
 function renderBody(page: string, go: (k: string) => void) {
-  // app/<slug> → A4–A10 vision 詳頁（P3-1）。
+  // app/<slug> → vision 詳頁；#app/ai-search 舊 deep link 轉到 live #a4。
+  if (page === "app/ai-search") return <AliasRedirect to="a4" />;
   if (page.startsWith("app/")) return <AppVisionPage slug={page.slice(4)} onOpen={go} />;
   switch (page) {
     case "home": return <HomePage onOpen={go} />;
@@ -76,8 +77,8 @@ function renderBody(page: string, go: (k: string) => void) {
     case "a6": return <AppVisionPage slug="4d-5d" onOpen={go} />;
     case "a7": return <AppVisionPage slug="reality-capture" onOpen={go} />;
     case "a8": return <AppVisionPage slug="synthetic-data" onOpen={go} />;
-    case "a9": return <AppVisionPage slug="usd-copilot" onOpen={go} />;
-    case "a10": return <AppVisionPage slug="robot-sim" onOpen={go} />;
+    case "a9": return <AppVisionPage slug="robot-sim" onOpen={go} />;
+    case "a10": return <AppVisionPage slug="ai-decision" onOpen={go} />;
     case "viewer": return <ViewerPresentationPage />;
     case "gpu": return <GpuReviewRoomPage />;
     // MD 合一（Task 7）：舊 #conv（轉檔排程）/ #intake（進件）deep link 重導到 #minio；#minio 掛 ModelDataPage。
@@ -109,13 +110,13 @@ const NAV_LABEL: Record<string, { tech: string; biz: string }> = {
   a1: { tech: "A1 Governance", biz: "治理與模型檢核" },
   a2: { tech: "A2 Version Diff", biz: "版本差異與責任" },
   a3: { tech: "A3 Federation", biz: "跨專業疊合" },
-  a4: { tech: "A4 Semantic Search", biz: "語意搜尋問答" },
+  a4: { tech: "A4 Semantic Search", biz: "語意查詢與證據" },
   a5: { tech: "A5 IoT/FM", biz: "IoT / FM 數位分身" },
   a6: { tech: "A6 4D/5D", biz: "4D / 5D 施工模擬" },
   a7: { tech: "A7 Reality Capture", biz: "Reality Capture 比對" },
   a8: { tech: "A8 Synthetic Data", biz: "Synthetic Data" },
-  a9: { tech: "A9 ChatUSD", biz: "設計 / 審查 Copilot" },
-  a10: { tech: "A10 Robot Sim", biz: "機器人 / 巡檢模擬" },
+  a9: { tech: "A9 Robot Inspection", biz: "機器人 / 自主巡檢" },
+  a10: { tech: "A10 AI Decision", biz: "其他應用 / AI 決策" },
   viewer: { tech: "3D Viewer", biz: "3D Viewer 呈現" },
   gpu: { tech: "GPU Review Room", biz: "GPU 審查室" },
   conv: { tech: "Conversion Queue", biz: "IFC→USD 轉檔排程" },

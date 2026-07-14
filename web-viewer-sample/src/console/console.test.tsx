@@ -330,22 +330,17 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("真的能用");
   });
 
-  // ── P3-1 A4–A10 vision 詳頁：整段標願景 + 「後端未建」+ scenario 標範例情境（非實測）──
-  it("P3-1 每個 A4–A10 vision 詳頁含「後端未建」且 scenario 標範例情境（非真實 run）", () => {
+  // ── P3-1 A5–A10 vision 詳頁（A4 已 live #a4，不在 A1A10_DETAIL）──
+  it("P3-1 每個 A5–A10 vision 詳頁含「後端未建」且 scenario 標範例情境（非真實 run）", () => {
+    expect(Object.keys(A1A10_DETAIL)).not.toContain("ai-search");
     for (const slug of Object.keys(A1A10_DETAIL)) {
       const html = renderToString(<AppVisionPage slug={slug} onOpen={() => {}} />);
-      // 明確標後端未建（願景）。
       expect(html, slug).toContain("後端未建");
-      // scenario 必須標「範例情境 / 願景敘事」，不可呈現為真實 run。
       expect(html, slug).toContain("範例情境");
       expect(html, slug).toContain("非真實 run");
-      // 願景 API 設計明確標非已實作 route（不可當真實端點）。
       expect(html, slug).toContain("非已實作 route");
-      // 無 A1/A2 願景假數字（呼應原型「No fabricated marketing numbers」）。
       expect(html, slug).not.toContain("99.1%");
       expect(html, slug).not.toContain("92.4%");
-      // 原型 scenario 內具體數字（如 312 / 17,000）若出現，必伴隨「範例情境/願景敘事」框定，
-      // 不得單獨作為實測——這裡以「不出現裸寫的 312 扇門 / 17,000 frames 實測語」近似驗證。
       expect(html, slug).not.toContain("實測 312");
       expect(html, slug).not.toContain("實測 17,000");
     }

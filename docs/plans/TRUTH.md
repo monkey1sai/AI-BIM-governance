@@ -74,9 +74,10 @@ route＝EdgeConsole hash route（無斜線，`#a1` 非 `#/a1`）；prototype 錨
 7. Admin RBAC/ruleset/runtime policy（stub p1）。
 8. mapping coverage 報表與 review package（p1）。
 9. A3 clash detection（未開工；O6 已裁決 ifcclash，核准 spec/plan 從 runtime probe 起步；2026-06-23 `has_occ=False` spike 不是 repo runtime 現況）。
-10. session store 持久化（in-memory，重啟即清）。
+10. session store 跨部署 volume 保證（`SessionStore` 已寫 `data/sessions/*.json` 磁碟；程序重啟檔案仍在，但 Docker volume／checkout 清除仍會丟）。
 11. A1 rollback（p1）。
 12. MinIO usdc/coverage/ready 回填（p1）。
+13. conversion dispatch queue 持久化（in-memory FIFO；coordinator 重啟即 `dropped_on_restart`）。
 
 ## §4 A1–A10 一覽
 
@@ -95,7 +96,7 @@ MinIO watch／手選 IFC → coordinator intake（ifc-ready job＋ConversionLedg
 
 - conv `coverage_ratio=1` 為自我參照（usd_stage_enumeration 同源分母），非 IFC lossless 覆蓋率，不得當品質宣稱。
 - 轉檔併發搶 Kit vendor port 8011 的 race 已修（#325：`convert-ifc-to-usdc.ps1` 停用轉檔用不到的 HTTP listener）；部署區重建後的真轉檔回歸 not observed。
-- session store 為 in-memory，coordinator 重啟即清。
+- **易失 vs 持久（勿混）**：`SessionStore`＝磁碟 JSON（`SESSION_STORE_DIR`／預設 `data/sessions`）；`ConversionDispatchQueue`／預設 ifc-ready 記憶體 map＝程序重啟即失；callback outbox 可掛 path，deliver 需顯式 `deliverPending`（非自動保證雲端收到）。
 
 ## §7 機器真相宣告
 

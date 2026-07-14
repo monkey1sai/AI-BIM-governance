@@ -1,8 +1,7 @@
 // web-viewer-sample/src/console/GovernanceOverlay.tsx
-// 治理 overlay：疊在 primary viewer live 3D 右側。條目編號對齊權威 A1–A10（data.ts A1A10／README §4，
-// R9 2026-07-10）：已接能力歸 A1 管線／M4 連動基建；碰撞＝A3 clash（未開工）；語意搜尋＝A4（p4）；
-// 其餘願景項不掛權威編號、disabled（誠實，不假裝 ready）。所有治理動作在 live 3D 上；點 failed 構件
-// 經 onHighlight（HighlightBridge）在 3D 標紅。本元件不自管 WebRTC（props 注入），守 console 邊界。
+// 治理 overlay：疊在 primary viewer live 3D 右側。條目編號對齊權威 A1–A10（data.ts A1A10）。
+// 已接：A1 管線／M4 映射／A4 語意查詢（#a4 live partial）；碰撞＝A3 clash（未開工）。
+// 其餘願景項 disabled。3D 標示走 client highlight（非 server-push）。
 import { useState } from "react";
 import { t } from "./i18n";
 import "./governance/overlay.css";
@@ -74,24 +73,26 @@ export interface GovernanceOverlayProps {
   onApplyBinding?: (selection: StageArtifactBinding[], revisionId: string) => void;
 }
 
-// R9（2026-07-10 裁決）：overlay 條目對齊權威 A1–A10（data.ts A1A10／README §4），
-// 舊 overlay 自有編號（A2/A3/A4/A8＝design §5 早期方案）除役——避免與權威 App 編號撞名
-//（權威 A4/A8＝NOT BUILT·p4，舊 overlay 卻標 asbuilt，會被誤讀成建成宣稱）。
-// 已接能力：治理分／Issue·BCF 為 A1 rule-run 管線產物；語意映射為 M4 GUID⇔prim 連動基建，不掛 App 編號。
+// 已接能力：A1 rule-run 產物、M4 映射、A4 語意查詢（console #a4；overlay 只列入口語意）。
+const A4_APP = A1A10.find((a) => a.code === "A4");
 const MVP_ENGINES: { id: string; code: string; title: string; prov: Prov }[] = [
   { id: "mapping", code: "M4", title: t("轉檔 / 語意映射（GUID⇔prim 連動基建）", "Conversion / semantic mapping (GUID⇔prim bridge)"), prov: "asbuilt" },
   { id: "rules", code: "A1", title: t("規則庫 / IDS 檢核", "Rule library / IDS check"), prov: "asbuilt" },
   { id: "score", code: "A1", title: t("完整性 / 治理分（rule-run 產物）", "Completeness / governance score (rule-run output)"), prov: "asbuilt" },
   { id: "issues", code: "A1", title: t("Issue / BCF（共同出海口）", "Issue / BCF (shared outlet)"), prov: "asbuilt" },
+  {
+    id: "search",
+    code: "A4",
+    title: A4_APP
+      ? t(`${A4_APP.title}（#a4 live partial）`, `${A4_APP.en} (#a4 live partial)`)
+      : t("語意查詢與證據（#a4）", "Semantic query & evidence (#a4)"),
+    prov: "asbuilt",
+  },
 ];
-// 願景/待建（對齊權威）：碰撞＝A3 clash（未開工；O6 已裁定官方 ifcclash，p1）；
-// 語意搜尋＝權威 A4（p4，title/prov 直接引 data.ts 單一來源）；其餘為 overlay 願景項，
-// 未列權威 A1–A10 → 不掛 App 編號（誠實，不佔用權威碼）。
-const A4_APP = A1A10.find((a) => a.code === "A4");
+// 願景/待建：碰撞＝A3 clash 未開工；A4 已移出本表（避免 asbuilt 能力被 disabled 願景鈕誤導）。
 const ROADMAP_ENGINES: { id: string; code: string; title: string; prov: Prov }[] = [
   { id: "clash", code: "A3", title: t("碰撞 / 空間干涉（clash·未開工，ifcclash 已選型）", "Clash / spatial interference (not started; ifcclash selected)"), prov: "p1" },
   { id: "dwg", code: "—", title: t("圖模一致（願景，未列權威 A1–A10）", "Drawing-model consistency (vision, not in authoritative A1–A10)"), prov: "p4" },
-  { id: "search", code: "A4", title: A4_APP ? t(A4_APP.title, A4_APP.en) : t("語意搜尋與模型問答", "USD Search & NL Query"), prov: A4_APP?.prov ?? "p4" },
   { id: "audit", code: "—", title: t("報表 / 稽核 / 封存（願景，未列權威 A1–A10）", "Reporting / audit / archival (vision, not in authoritative A1–A10)"), prov: "p4" },
 ];
 
@@ -308,7 +309,7 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
         <Field k={t("開 issue 前置", "issue prerequisite")} v={t("須先成功跑完 A3 規則檢核（succeeded），否則按鈕 disabled", "A3 rule check must complete successfully (succeeded) first, otherwise the button is disabled")} prov="asbuilt" />
       </Panel>
 
-      <Panel title={t("願景 / 待建", "Vision / to build")} sub={t("碰撞屬 A3 clash（ifcclash 已選型、未開工）；語意搜尋屬權威 A4（#a4 live partial）；其餘願景項後端未建 → 一律 disabled，不假裝 ready", "Clash belongs to A3 (ifcclash selected, not started); semantic search is authoritative A4 (#a4 live partial); other vision items have no backend → all disabled, not pretending ready")} prov="asbuilt">
+      <Panel title={t("願景 / 待建", "Vision / to build")} sub={t("碰撞屬 A3 clash（未開工）；A4 語意查詢已 live 於 #a4（上表 asbuilt）；其餘願景項 disabled", "Clash = A3 not started; A4 search is live at #a4 (asbuilt above); other vision items disabled")} prov="asbuilt">
         {ROADMAP_ENGINES.map((e) => (
           <div className="gov-engine roadmap" key={e.id}>
             <span className="gov-engine-code">{e.code}</span>

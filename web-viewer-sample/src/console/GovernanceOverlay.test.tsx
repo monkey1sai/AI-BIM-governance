@@ -26,12 +26,11 @@ describe("GovernanceOverlay 治理 overlay（R9：條目對齊權威 A1–A10）
 
   it("R9 衝突守門：不得以 asbuilt 呈現與權威 NOT BUILT 撞名的舊編號條目", () => {
     const html = renderToString(<GovernanceOverlay {...baseProps} />);
-    // 舊 overlay 方案把「完整性/治理分」掛 A4、「Issue/BCF」掛 A8 且標 asbuilt——
-    // 與權威 A4（語意搜尋·p4）/A8（Synthetic Data·p4）正面衝突，R9 除役。
+    // 舊 overlay 方案把「完整性/治理分」掛 A4、「Issue/BCF」掛 A8 且標 asbuilt——R9 除役。
     expect(html).not.toContain("A4</span><span class=\"gov-engine-title\">完整性");
     expect(html).not.toContain("A8</span><span class=\"gov-engine-title\">Issue / BCF");
-    // 權威 A4 出現時只能是願景語意（語意搜尋，p4 願景標籤）。
-    expect(html).toContain("語意搜尋與模型問答");
+    // A4 語意查詢 live partial（#a4），列在 MVP asbuilt，不在願景 disabled 列。
+    expect(html).toContain("#a4 live partial");
   });
 
   it("願景/待建：碰撞歸 A3 clash（未開工·ifcclash 已選型），其餘標願景 disabled（不假裝 ready）", () => {
