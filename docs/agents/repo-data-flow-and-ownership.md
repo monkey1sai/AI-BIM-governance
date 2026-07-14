@@ -20,7 +20,7 @@
 | element_mapping.json / entity_index.json | `bim-streaming-server` + 本地 shadow | 檔案由 streaming conversion result 產出；雲端只接 metadata-only callback |
 | Callback delivery state | `bim-review-coordinator` | metadata-only outbox / retry / dead-letter |
 | Review issue / BCF runtime data | `governance-service` + 外部公司雲端 `bim-control` | 落地端 issue lifecycle / BCF 屬 governance-service；長期 control-plane 權威在外部雲端 |
-| Annotation metadata | 外部公司雲端 `bim-control` | coordinator 已無 live annotation handler；generic event log 不構成 annotation authority |
+| Annotation metadata | `governance-service` + 外部公司雲端 `bim-control` | 落地端 annotation lifecycle 屬 governance-service；coordinator 已無 live annotation handler，generic event log 不構成 annotation authority；長期 control-plane 權威在外部雲端 |
 | Review session state | `bim-review-coordinator` | 當前 session 狀態 |
 | Session presence state | `bim-review-coordinator` | `joinSession` / `leaveSession` / `heartbeat` / `presenceUpdated` |
 | Generic session event log | `bim-review-coordinator` | append-only compatibility archive；可含 legacy type，但不代表 live broadcast 或正式資料權威 |

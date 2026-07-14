@@ -185,6 +185,11 @@ try {
     $commandFiles = @(Get-ChildItem -File -LiteralPath '.claude/commands' | Select-Object -ExpandProperty Name)
     Assert-True ($commandFiles.Count -eq 1 -and $commandFiles[0] -eq 'repo-health.md') '.claude/commands contains only the repo-native repo-health entrypoint'
     Assert-True (-not ((Get-Content -Raw -LiteralPath '.claude/commands/repo-health.md') -match 'agent-skills:')) 'tracked Claude command does not reference the retired agent-skills plugin'
+    $personaDocs = @(Get-ChildItem -File -Filter '*.md' -LiteralPath '.claude/agents' | ForEach-Object { Get-Content -Raw -LiteralPath $_.FullName }) -join "`n"
+    Assert-True (-not ($personaDocs -match '`/(ship|review|test|build|plan|spec|code-simplify)`')) 'Claude persona docs do not reference retired slash-command entrypoints'
+    Assert-FileContains 'bim-streaming-server/AGENTS.md' '`governance-service`.*外部公司雲端.*coordinator collaboration handlers' 'streaming formal review-data boundary points to current governance authorities'
+    Assert-FileContains 'docs/agents/repo-data-flow-and-ownership.md' '\| Annotation metadata \| `governance-service` \+ 外部公司雲端 `bim-control` \|' 'annotation ownership includes local governance-service and external cloud authority'
+    Assert-True (-not ((Get-Content -Raw -LiteralPath 'scripts/tests/test-agent-skills-sync.ps1') -match '\bWrite-Host\b')) 'agent skill sync test uses structured logging instead of bare Write-Host'
 
     foreach ($overlayPath in @('docs/agents/advanced-agent-reasoning-contract.md', 'docs/agents/codex-loop-workflows.md')) {
         Assert-FileContains $overlayPath ([regex]::Escape('C:\Users\IOT\.codex\docs\agents\task-routing.md')) "$overlayPath points to global task-routing source of truth"

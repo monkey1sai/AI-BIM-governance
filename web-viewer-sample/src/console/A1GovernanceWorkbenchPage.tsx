@@ -396,15 +396,18 @@ export function A1GovernanceWorkbenchPage() {
               setA1Issues(ruleIssues);
             } else {
               setActionErr(t("未找到此模型版本既有 rule-run Issue；請重新建立或檢查後端 issue store。", "No existing rule-run issues were found for this model version; recreate them or check the backend issue store."));
+              return;
             }
           } else {
             if (!isCurrentIssueRequest()) return;
             setActionErr(t("後端未回傳 issue_ids，且本次 rule-run 未綁定 model_version_id，無法安全重載既有 Issue。", "The backend returned no issue_ids and this rule-run has no model_version_id, so existing Issues cannot be safely reloaded."));
+            return;
           }
         }
       } catch (e) {
         if (!isCurrentIssueRequest()) return;
         setActionErr(`${t("載入 Issue 詳情失敗：", "Failed to load Issue details: ")}${String(e)}`);
+        return;
       }
       if (!isCurrentIssueRequest()) return;
       dispatch({ type: "CREATE_ISSUES_OK", issueCount: created });
@@ -585,7 +588,11 @@ export function A1GovernanceWorkbenchPage() {
     setReviewOpenErr(null);
     try {
       await coordinatorClient.conversionRetry(selectedMinioJobId, "A1 inline 3D session recovery");
-      await refreshIfcReadyJobs();
+      try {
+        await refreshIfcReadyJobs();
+      } catch (e) {
+        setReviewOpenErr(`${t("重派成功，但重新載入 ifc-ready job 失敗：", "Retry succeeded, but refreshing the IFC-ready job failed: ")}${String(e)}`);
+      }
     } catch (e) {
       setConversionRetryErr(String(e));
     } finally {

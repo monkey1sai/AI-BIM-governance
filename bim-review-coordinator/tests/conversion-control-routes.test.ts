@@ -305,6 +305,7 @@ describe("conversion control routes — retry", () => {
     await app.dispose();
     const bAfter = await request(app.app).get(`/api/external/ifc-ready/${jobB}`);
     expect(bAfter.body.status).toBe("dropped_on_restart");
+    expect(bAfter.body.recovery_action).toBe("dispatch_retry");
     const retry = await request(app.app).post(`/api/conversion/jobs/${jobB}/retry`).send({ reason: "after restart" });
     expect(retry.status).toBe(200);
     expect(retry.body.status).toBe("queued_for_conversion");

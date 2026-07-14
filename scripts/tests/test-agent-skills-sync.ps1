@@ -12,6 +12,7 @@ function Assert-True {
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $scriptUnderTest = Join-Path $repoRoot 'scripts\dev\sync-agent-skills.ps1'
 $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ("agent-skills-sync-" + [guid]::NewGuid().ToString('N'))
+Import-Module -Force (Join-Path $repoRoot 'scripts\lib\StructLog.psm1')
 
 try {
     $source = Join-Path $fixtureRoot '.claude\skills\demo'
@@ -77,4 +78,5 @@ Assert-True ($repoHealth[0].sync.mode -eq 'independent') 'repo-health declares C
 $codexRepoHealth = Get-Content -Raw -LiteralPath (Join-Path $repoRoot '.codex\skills\repo-health\SKILL.md')
 Assert-True ($codexRepoHealth -notmatch 'repo-health-scan|output-style') 'Codex repo-health does not invoke Claude-only workflow or output-style features'
 
-Write-Host '[test-agent-skills-sync] all assertions passed'
+$testLogger = New-StructLogger -Service 'scripts' -Component 'test-agent-skills-sync' -SkipEnvSnapshot -InMemoryOnly
+$testLogger | Write-StructInfo -Msg '[test-agent-skills-sync] all assertions passed' -Data @{ result = 'passed' }
