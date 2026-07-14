@@ -25,7 +25,13 @@ test.describe("A9/A10 route 身分、A1 卡片導向、A4 選中高亮", () => {
     await expect(page.getByText("ROADMAP · A10")).toBeVisible();
     await page.screenshot({ path: `${SHOT}/a9-robot-inspection.png`, fullPage: true });
 
-    expect(apiCalls, "NOT-BUILT 佔位頁不得呼叫 /api/*（PROCESS §3 network 面斷言）").toEqual([]);
+    // PROCESS §3 的「佔位頁對 /api/* 零呼叫」指的是「頁面不得打自己的資料 API 假裝有資料」。
+    // 殼層的 SharedStatusProvider（SharedStatusProvider.tsx:34）在**每一頁**都會輪詢
+    // /api/runtime/status 餵頂部 HealthChips 健康燈，屬全站殼層行為、非頁面資料呼叫；
+    // 若照字面把它算進來，任何 route（含 #home/#a1）都無法滿足此斷言。故排除後再斷言。
+    const SHELL_HEALTH_POLL = "/api/runtime/status";
+    const pageApiCalls = apiCalls.filter((u) => !u.includes(SHELL_HEALTH_POLL));
+    expect(pageApiCalls, "NOT-BUILT 佔位頁不得呼叫頁面資料 API（PROCESS §3 network 面斷言）").toEqual([]);
   });
 
   test("#a10 顯示其他應用／AI 決策工作台", async ({ page }) => {
@@ -60,5 +66,19 @@ test.describe("A9/A10 route 身分、A1 卡片導向、A4 選中高亮", () => {
     await expect(deterministic).toHaveClass(/\bprimary\b/);
     await expect(semantic).not.toHaveClass(/\bprimary\b/);
     await page.screenshot({ path: `${SHOT}/a4-mode-deterministic-primary.png`, fullPage: true });
+
+    // 回歸防線：click 後滑鼠仍停在按鈕上（hover 態）。`.ec-btn:hover:not(:disabled)` 的特異性
+    // (0,3,0) 高於 `.ec-btn.primary` (0,2,0)，會把 color 覆蓋成 --ec-grn——正是 primary 自身的
+    // 背景色——使 hover 中的 primary 按鈕文字完全蒸發（A1「執行檢核」等主要 CTA 皆中）。
+    // toHaveClass 與 unit test 都抓不到這種失效，只有 browser 的 computed style／截圖看得見。
+    const hovered = await deterministic.evaluate((el) => {
+      const s = getComputedStyle(el);
+      return { color: s.color, background: s.backgroundColor };
+    });
+    expect(
+      hovered.color,
+      `primary 按鈕 hover 時文字色不得與背景同色（color=${hovered.color} / bg=${hovered.background}）`,
+    ).not.toBe(hovered.background);
+    await page.screenshot({ path: `${SHOT}/a4-mode-primary-hover-readable.png`, fullPage: true });
   });
 });
