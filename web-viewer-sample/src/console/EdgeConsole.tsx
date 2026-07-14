@@ -264,9 +264,9 @@ export default function EdgeConsole() {
       <aside className={`ec-agent ${agentOpen ? "" : "hidden"}`}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <strong>Chat USD Agent</strong>
-          <span className="ec-prov ec-p4">ROADMAP · A9</span>
+          <span className="ec-prov ec-p4">ROADMAP · A10</span>
         </div>
-        <p className="ec-note">{t("A9 USD Code / ChatUSD Copilot 為 Phase 4 願景；本欄先顯示 page-aware prompts 與 tool trace 版型，狀態改動需人工確認與 audit。", "A9 USD Code / ChatUSD Copilot is a Phase 4 vision; this rail previews page-aware prompts and tool-trace layout. State changes require human confirmation and audit.")}</p>
+        <p className="ec-note">{t("A10 USD Code / ChatUSD Copilot 為 Phase 4 願景；本欄先顯示 page-aware prompts 與 tool trace 版型，狀態改動需人工確認與 audit。", "A10 USD Code / ChatUSD Copilot is a Phase 4 vision; this rail previews page-aware prompts and tool-trace layout. State changes require human confirmation and audit.")}</p>
         <div className="ec-prompts">
           <b>{t("SUGGESTED · USD-AWARE（PREVIEW · 後端未建）", "SUGGESTED · USD-AWARE (PREVIEW · backend not built)")}</b>
           {prompts.map((prompt) => <div className="ec-prompt" key={prompt}>{prompt}</div>)}
@@ -278,7 +278,7 @@ export default function EdgeConsole() {
         <p className="ec-warn-note">{t("寫入限制（規格）：AI 僅能改 review / session layer，不寫回 source model。", "Write constraint (spec): AI may only modify the review / session layer, never the source model.")}</p>
         <div className="ec-agent-input">
           <span>›</span>
-          <input placeholder={t("ChatUSD 助理 · 後端待建（A9 · Phase 4）", "ChatUSD assistant · backend not built (A9 · Phase 4)")} disabled />
+          <input placeholder={t("ChatUSD 助理 · 後端待建（A10 · Phase 4）", "ChatUSD assistant · backend not built (A10 · Phase 4)")} disabled />
         </div>
       </aside>
 

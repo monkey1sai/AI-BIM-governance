@@ -1,7 +1,7 @@
 ---
 as_of: 2026-07-14
-as_of_commit: 94e817b
-generated_from: 人工核對（2026-07-10 repo 盤點 + code 逐檔讀；2026-07-13 對 #323–#329 增量複核；2026-07-14 BCF provenance 路徑複核）；未來可換腳本重生
+as_of_commit: 9a49d96
+generated_from: 人工核對（2026-07-10 repo 盤點 + code 逐檔讀；2026-07-13 對 #323–#329 增量複核；2026-07-14 BCF provenance 路徑複核；2026-07-14 A9/A10 route 身分與 viewer 七區塊 code 對帳）；未來可換腳本重生
 ---
 
 # TRUTH — 現況帳本
@@ -35,8 +35,8 @@ route＝EdgeConsole hash route（無斜線，`#a1` 非 `#/a1`）；prototype 錨
 | `#a6` | `#a6` | NOT-BUILT | p4 | AppVisionPage 佔位頁，後端不存在 | not observed |
 | `#a7` | `#a7` | NOT-BUILT | p4 | AppVisionPage 佔位頁，後端不存在 | not observed |
 | `#a8` | `#a8` | NOT-BUILT | p4 | AppVisionPage 佔位頁，後端不存在 | not observed |
-| `#a9` | `#a9` | NOT-BUILT | p4 | AppVisionPage 佔位頁（ChatUSD 欄純版型、input disabled），後端不存在 | not observed |
-| `#a10` | `#a10` | NOT-BUILT | p4 | AppVisionPage 佔位頁，後端不存在 | not observed |
+| `#a9` | `#a9` | NOT-BUILT | p4 | 機器人／自主巡檢 AppVisionPage 佔位頁（`slug="robot-sim"`，身分對齊 TARGET-shell §a9），後端不存在 | not observed |
+| `#a10` | `#a10` | NOT-BUILT | p4 | 其他應用／AI 決策工作台 AppVisionPage 佔位頁（`slug="ai-decision"`，身分對齊 TARGET-shell §a10；ChatUSD 併入本 route，舊 `usd-copilot` 存為 legacy alias）；後端不存在。殼層全域 ChatUSD 右欄（`EdgeConsole.tsx` `ec-agent`，標 ROADMAP·A10、input disabled）是**全站元件，非本頁特徵** | not observed |
 | `#conv` | `#conv` | PARTIAL | asbuilt | repo 為 AliasRedirect→`#minio`；轉檔歷史 UI 專頁未建；後端 list（`/api/conversion/records`）＋proxy 已在 | `artifacts/e2e/md-merge-trace/01-alias-redirect-queue-highlight.png`、`artifacts/e2e/real-ifc-conversion-lineage.png` |
 | `#sessions` | `#sessions` | PARTIAL | asbuilt | 真 runtime status＋per-row 結束 session（IX-SS-04）已落地；Force release／Reclaim=p1 disabled；terminate E2E 與 tracked trace 未觀測 | `artifacts/e2e/infra-slice/sessions-evidence-bridge.png`；terminate E2E / trace not observed |
 | `#instances` | `#instances` | PARTIAL | asbuilt | Kit instance 真遙測已在；GPU busy/VRAM=未取得（標 demo）、drain/move=p1 | `artifacts/e2e/infra-slice/instances-live-kit.png` |
@@ -57,15 +57,15 @@ route＝EdgeConsole hash route（無斜線，`#a1` 非 `#/a1`）；prototype 錨
 |---|---|---|
 | 1 點選高亮 | PARTIAL | Review Room attach＋focus/select/clearHighlight=asbuilt；highlightPrimsRequest=p15 client-pull；`artifacts/e2e/primary-spectator-authority.png` |
 | 2 IFC 語意 | PARTIAL | IfcSemanticPanel／SemanticViewerPage 需手貼 mapping URL；`artifacts/e2e/element-semantics.png` |
-| 3 結構樹 dim/iso | not observed | governance 有 spatial-tree API；viewer UI 未見（BACKLOG gap-status-calibration 首輪校正） |
+| 3 結構樹 dim/iso | PARTIAL | 空間巢狀樹已建：`console/viewer/StructureStats.tsx` 經 coordinator spatial-tree for-session proxy 真 fetch（loading/error/no_url/ok 四態；無 session 時退回 element_mapping 類別計數，fake mapping 帶警示）；**dim／iso 篩選模式與一鍵取消未建**；tracked browser trace 未觀測 |
 | 4 GUID⇔USD 對應表 | PARTIAL | MappingTable 元件＋同置測試在；c-m4 mapping row click 截圖 not observed（本機 evidence 未入 git） |
-| 5 幾何條 | not observed | viewer UI 未見（同 gap-status-calibration） |
-| 6 Pset/Qto | not observed | governance 有 `/api/elements/semantics`；viewer UI 未見（同上） |
-| 7 Spatial | not observed | governance 有 `/api/spatial-tree`；viewer UI 未見（同上） |
+| 5 幾何條 | PARTIAL | UI 已建：`console/viewer/IfcSemanticPanel.tsx` ⑤幾何／分類碼卡誠實標 roadmap N/A（BBox／體積／材質、MasterFormat/OmniClass/Uniformat 分類碼 pipeline 無來源、端點回 null，不捏造）；**缺口在後端資料源，不在前端 UI**；tracked browser trace 未觀測 |
+| 6 Pset/Qto | PARTIAL | UI 已建且真 fetch：`console/viewer/IfcSemanticPanel.tsx` 經 coordinator `/api/governance/elements/for-session/:sessionId/:guid` 逐 Pset 逐 property 渲染（null 顯「—」）；五態齊（no_sel/loading/ok/error/not_found）；tracked browser trace 未觀測 |
+| 7 Spatial | PARTIAL | UI 已建且真 fetch：`console/viewer/IfcSemanticPanel.tsx` ⑥空間關係渲染 IFC 空間包含鏈（同一 elements for-session 端點），無容納關係時誠實表態；tracked browser trace 未觀測 |
 
-## §3 NOT BUILT 硬清單（12 項；任何文件不得寫成已交付）
+## §3 NOT BUILT 硬清單（13 項；任何文件不得寫成已交付）
 
-1. A5–A10 全部後端（IoT-FM/4D5D/reality capture/synthetic data/copilot/robot sim）。A4 已有 deterministic search 後端（PARTIAL；非 LLM／非完整 TARGET IA）。
+1. A5–A10 全部後端（IoT-FM/4D5D/reality capture/synthetic data/robot sim/AI 決策工作台）。A4 後端已建（PARTIAL；deterministic＋Ornith vLLM semantic 兩模式，見 §1 `a4` 列；仍非完整 TARGET IA，BCF bridge 未建）。
 2. ChatUSD agent 欄真實對話/MCP 執行（純版型，input disabled）。
 3. server→viewer push highlight（2026-05-21 已退役；現行 client-pull p15）。
 4. viewer section/snapshot（p15）。
@@ -85,7 +85,7 @@ route＝EdgeConsole hash route（無斜線，`#a1` 非 `#/a1`）；prototype 錨
 |---|---|---|---|---|---|---|---|---|---|
 | PARTIAL | PARTIAL | split（federation implementation exists／clash NOT BUILT·未開工） | PARTIAL | p3 | p4 | p4 | p4 | p4 | p4 |
 
-Hero runtime slices＝A1＋A2＋A3 federation＋A4 deterministic search；依 PROCESS §2 的新硬 gate，缺 tracked browser trace 時仍記 PARTIAL。
+Hero runtime slices＝A1＋A2＋A3 federation＋A4 語意查詢（deterministic＋Ornith vLLM semantic）；依 PROCESS §2 的新硬 gate，缺 tracked browser trace 時仍記 PARTIAL。
 
 ## §5 已建閉環
 
