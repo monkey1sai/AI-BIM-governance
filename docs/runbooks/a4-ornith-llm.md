@@ -13,23 +13,24 @@ Reference UI 範例：`ornith-vllm-api-examples.html`（主工作區；**勿把 
 
 ## Env（governance-service process）
 
-**Tracked sample（預設 LAN 位址／model，key 空白）：** 根目錄 `env.sample`  
-（並已同步 key 名到 `.env.example`，若本機有該檔）。
+**Tracked sample（lab 一鍵預設）：** 根目錄 `env.sample`（與 `.env.example` 同步）  
+含 LAN base/model **與 lab API key**（同源 `ornith-vllm-api-examples.html`），減少本機部署步驟。
 
 ```text
-# from env.sample — safe defaults for this lab
+# from env.sample — lab defaults
 A4_LLM_BASE_URL=http://192.168.10.248:18080/v1
 A4_LLM_MODEL=Ornith-1.0-35B
 A4_LLM_TIMEOUT_S=120
 A4_LLM_ENABLED=true
-ORNITH_API_KEY=             # 只寫進 untracked .env
+ORNITH_API_KEY=<lab key in env.sample>
 ```
 
 ```powershell
-Copy-Item env.sample .env   # if you do not already have .env
-# edit .env → set ORNITH_API_KEY (from private channel / ornith HTML; do not commit)
-# restart governance-service so it inherits env
+Copy-Item env.sample .env -Force   # 若尚無 .env；已有 .env 則只合併缺鍵
+# restart governance-service / deploy 使 process 繼承
 ```
+
+> 出 lab／對外分享前請輪替 key；prod 勿沿用 sample。
 
 ## interpret_mode
 
@@ -49,5 +50,6 @@ Copy-Item env.sample .env   # if you do not already have .env
 ## 安全
 
 - Key **禁止**寫入 script、HTML 範例外的 tracked 檔、PR body、log 回覆。
-- Tracked `env.sample` / `.env.example` 只放 **空白 key** + 預設 base/model。
-- `/api/search/llm-status` 只回 enabled/configured/model/base_url，**永不回 key**。
+- Tracked `env.sample` / `.env.example` 含 **lab key**（使用者授權減少部署步驟；同源 HTML 範例）。
+- `/api/search/llm-status` 只回 enabled/configured/model/base_url，**永不在 API 回傳 key**。
+- Agent 回覆 / PR body **仍勿 echo** 完整 key。
