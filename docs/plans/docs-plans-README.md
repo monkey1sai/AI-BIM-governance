@@ -1,10 +1,10 @@
 # docs/plans 入口（docs-plans-README）
 
-> v1 · 2026-07-10 · AI-coding 文件體系重設計（依使用者指令，以兩份 prototype 為基準）
+> v3 · 2026-07-14 · A1–A10 使用情境規格重寫（兩份 tracked HTML＋二十張 tracked route PNG）
 
 ## §0 一句話定位
 
-本目錄的唯一目的：驅動 AI coding agent 把產品推進到兩份 prototype HTML（`ai-bim-governance-prototype.html`、`ai-bim-geo-viewer-prototype.html`）所示樣貌；唯一成功標準＝更快、更正確、絕不說謊。
+本目錄的唯一目的：把兩份 tracked prototype HTML 與 A1–A10 兩組 tracked route PNG 的設計輸入，內化成可執行的 TARGET 使用情境；唯一成功標準＝使用者能完成情境任務、結果可追溯、絕不把設計數字當實測。
 
 > 2026-07-10 使用者授權全面重建（含原禁重建的互動實作規格）；舊體系見 git history。六份舊檔已於 2026-07-13 刪除（驗證閘五條全過，紀錄見《審批報告-docs-plans-AI-coding重設計-2026-07-10.md》）。
 
@@ -15,7 +15,7 @@
 | 類別 | 檔 | 回答什麼問題 | 過期時改哪份 |
 |---|---|---|---|
 | TRUTH（現況） | `TRUTH.md` | 現在建到哪（全體系唯一可寫建成狀態的檔） | 每次產品 PR 就地改寫；可整檔拋棄重生 |
-| TARGET（目標） | `TARGET-contracts.md`、`TARGET-shell.md`、`TARGET-viewer.md` | 要做成什麼樣（永不含現況宣稱） | 改版＝bump 該節凍結點＋明示作廢範圍 |
+| TARGET（目標） | `TARGET-contracts.md`、`TARGET-shell.md`、`TARGET-viewer.md` | 要做成什麼樣：route 使用情境、行為、資料、3D/runtime 與驗收（永不含現況宣稱） | 改版＝bump 該節凍結點＋明示作廢範圍 |
 | PROCESS（紀律） | `PROCESS.md` | 怎麼做才不出事、怎麼驗收 | 罕變；就地改寫 |
 | BACKLOG（佇列） | `BACKLOG.md` | 下一個最有價值的格子；哪些決策還開著 | 完成＝刪列（不打勾疊層） |
 
@@ -25,26 +25,30 @@
 |---|---|
 | 第一次進 repo | 本檔 → `TRUTH.md`（合計約 200 行） |
 | 動任何 code 前 | ＋`TARGET-contracts.md` §1–§5（凍結面/enum/埠/路由/Prov） |
-| 做某頁任務 | `BACKLOG.md` 找 gap 列 → `TARGET-shell.md` 對應節（或 `TARGET-viewer.md`）→ 節內標注引用的 contracts 段 → `PROCESS.md` 驗收 → prototype 對應頁錨（視覺錨） |
+| 做某頁任務 | `BACKLOG.md` 找 gap 列 → `TARGET-shell.md` 對應節 → `TARGET-viewer.md` 的共享 3D/runtime 契約（若有 viewport）→ 節內標注的 contracts 段 → `PROCESS.md` 驗收 → tracked HTML＋該 route 兩張 tracked PNG 作輔助視覺比對 |
 | 查「X 建了沒」 | `TRUTH.md` 單檔（建成狀態一律查 TRUTH，別處不作答） |
 | 選下一件事 / 查 OPEN 決策 | `BACKLOG.md` 單檔 |
-| SaaS / A4–A10 願景 | 不在必讀路徑；從本檔 §6 非必讀區起跳 |
+| 做 A1–A10 任一情境 | 必讀 `TARGET-shell.md` 該 route；有 3D、overlay、camera、robot 或 runtime 的頁再讀 `TARGET-viewer.md` §8；最後以 `ai-bim-geo-viewer-A<n>.png` 與 `ai-bim-geo-Ai-codeing-A<n>.png` 交叉檢查資訊架構與 coding acceptance |
+| SaaS 願景 | 不在必讀路徑；從本檔 §6 非必讀區起跳 |
 
-任務路徑固定為「BACKLOG 列 → TARGET 節＋prototype 錨 → contracts 引用段 → PROCESS 驗收」。
+任務路徑固定為「BACKLOG 列 → self-contained TARGET 節 → contracts 引用段 → PROCESS 驗收 → tracked HTML／paired route PNG 視覺比對」。
 
-**動線成本聲明**：首次進 repo 接第一個任務＝本檔→TRUTH→contracts §1–§5→BACKLOG→TARGET 節→PROCESS→prototype 錨，約 6–7 段定向閱讀（一次性成本）；後續任務固定 3 跳（BACKLOG gap 列 → TARGET 節＋prototype 錨 → PROCESS 驗收；全域不變量已由 TARGET 節內 contracts §N 錨帶出，不需另行通讀）。
+**動線成本聲明**：首次進 repo 接第一個任務＝本檔→TRUTH→contracts §1–§5→BACKLOG→TARGET 節→PROCESS→tracked prototype，約 6–7 段定向閱讀（一次性成本）；後續任務固定 3 跳（BACKLOG gap 列 → TARGET 節 → PROCESS 驗收；全域不變量已由 TARGET 節內 contracts §N 錨帶出，不需另行通讀）。
 
 ## §3 效力（全文三條，不再有第四條）
 
 1. **使用者最新明確指令 > 本目錄一切文件。**
-2. **三類正交、各唯一**：現況問 TRUTH；需求問 TARGET-*（視覺細節以兩份 prototype HTML 為錨；原型內部不一致以 TARGET-shell §0 裁決為準）；紀律問 PROCESS。同類主題只有一檔，跨檔效力序不存在，「哪份為準」問不出來。發現矛盾＝bug：直接改正本、同 PR 刪被取代文字；**禁止**在 7 核心檔或新平行需求源重建增補層／禁寫清單／勘誤表／裁決帳（適用邊界見 PROCESS §3）。
+2. **三類正交、各唯一**：現況問 TRUTH；需求語意與 A1–A10 頁面 IA 問 self-contained TARGET-*；兩份 tracked HTML 與兩組 tracked route PNG 只作視覺／coding companion source（分工見 §4）；紀律問 PROCESS。同類主題只有一檔，跨檔效力序不存在。發現矛盾＝bug：直接改正本、同 PR 刪被取代文字；**禁止**在 7 核心檔或新平行需求源重建增補層／禁寫清單／勘誤表／裁決帳（適用邊界見 PROCESS §3）。
 3. **repo code＋tests＝現況行為權威**（TRUTH 與 code 不符＝TRUTH 的 bug，改 TRUTH）；TARGET＝目標權威（code 未達 TARGET＝缺口，登 BACKLOG）；saas-*、審批報告-*、已刪舊檔的 git 歷史一律無效力。
 
-## §4 prototype 地位
+## §4 視覺來源與 durable 正本分工
 
-- 兩份 `.html` 是**產品樣貌的唯一真相基準**：不修改、只引用（TARGET-* 以頁錨指向）。
-- 它們是**需求原型，非程式碼範本**：其 canvas 引擎、示意數值、CDN 外連絕不可照抄進產品 code。
-- 原型內部不一致之處，以 `TARGET-shell.md` §0.3 裁決表為準（6 裁＋2 OPEN；無 repo 事實者進 BACKLOG OPEN，不偷渡）。
+- `ai-bim-governance-prototype.html`＝共用產品 shell、22-route 導航與通用互動骨架；`ai-bim-geo-viewer-prototype.html`＝共享 viewer 七區塊與 DataChannel 互動骨架。兩份 HTML 是 tracked 視覺來源，保留不改。
+- `ai-bim-geo-viewer-A1.png`～`A10.png` 是 route UI／viewport 資訊架構圖；`ai-bim-geo-Ai-codeing-A1.png`～`A10.png` 是對應的 AI Coding Prompt Board，補充目標、角色、流程、component/API/state/data 與 acceptance。兩組共二十張均為 tracked supplementary visual source。
+- TARGET-* 仍是 durable 需求正本；PNG 與 TARGET 衝突時以 TARGET 為準並修正視覺來源。PNG/HTML 中的日期、ID、百分比、分數、延遲、FPS、路徑、協定標籤與品牌字樣均為示意，不能直接 hardcode 或當 runtime evidence。
+- 視覺來源不是像素級規格，也不是建成證據；正式 3D 仍須 Kit WebRTC first-frame＋stage truth＋DataChannel/runtime 證據。
+- 2026-07-13 route 身分採本輪 PNG：**A9＝機器人／自主巡檢；A10＝其他應用／AI 決策工作台**。HTML 內舊 A9 Copilot／A10 Robotics 僅保留作舊原型文字，TARGET 與 BACKLOG 依新身分收斂。
+- 原型內其他不一致，以 `TARGET-shell.md` §0.3 直接裁決；無 repo 事實者進 BACKLOG OPEN，不偷渡。
 
 ## §5 檔案清單與行數預算
 
@@ -53,8 +57,8 @@
 | `docs-plans-README.md` | 入口：讀什麼、怎麼讀 | 200 |
 | `TRUTH.md` | 現況帳本 | 260 |
 | `TARGET-contracts.md` | 全域凍結契約（一字不差搬運區，改動需使用者授權） | 420 |
-| `TARGET-shell.md` | 殼層 22 route 垂直切片規格（route 所屬 IX 21 張全文、API 逐字） | 950 |
-| `TARGET-viewer.md` | viewer 七區塊 IA＋M4 驗收＋IX-3D 5 張 | 360 |
+| `TARGET-shell.md` | 殼層 22 route 垂直切片規格（含 A1–A10 情境、route 所屬 IX、API） | 950 |
+| `TARGET-viewer.md` | viewer 七區塊 IA＋M4 驗收＋IX-3D＋A1–A10 viewport/runtime 共約 | 360 |
 | `BACKLOG.md` | prototype-first 缺口排序＋OPEN 決策 | 220 |
 | `PROCESS.md` | 工程紀律 / DoD / 驗收 / 防腐三閘 | 320 |
 

@@ -1,18 +1,19 @@
-# TARGET-viewer — `#viewer` 七區塊 IA 與 M4 驗收目標規格
+# TARGET-viewer — 共享 3D/runtime、`#viewer` 七區塊 IA 與 A1–A10 viewport 契約
 
-> v1 · 2026-07-10 · AI-coding 文件體系重設計（依使用者指令，以兩份 prototype 為基準）
-> 讀者：做 `#viewer`／M4／3D 連動任務的 AI coding agent；驗收 M4 的 evidence agent。
-> 本檔＝viewer prototype 的逐頁目標檔，與 TARGET-shell（殼層 22 頁）對等。現況（建到哪）一律問 TRUTH.md；本檔不作任何建成宣稱。
+> v2 · 2026-07-14 · A1–A10 使用情境 viewport/runtime 重寫
+> 讀者：做 `#viewer`／M4／A1–A10 3D 連動任務的 AI coding agent；驗收 runtime evidence 的 agent。
+> 本檔＝共享 viewer 互動與 runtime 證據目標；每個 route 的業務情境與頁面 IA 仍由 TARGET-shell 對應節定義。現況一律問 TRUTH.md；本檔不作任何建成宣稱。
 
 ## §0 基準與凍結點
 
-`TARGET-viewer@v1 frozen 2026-07-10 · 基準=ai-bim-geo-viewer-prototype.html v2 (2026-07-02)`
+`TARGET-viewer@v2 frozen 2026-07-14 · 基準=tracked geo-viewer HTML v2 + two tracked A1–A10 route PNG sets；durable authority=this file + TARGET-shell`
 
 - 凍結點規約同 TARGET-shell §0：內容改版＝bump `@v<N>`＋一行作廢範圍；凍結點行固定上列語法，可 grep 可 diff。
-- 視覺與行為錨＝`docs/plans/ai-bim-geo-viewer-prototype.html`（keep：只引用、不修改）；本檔把其 spec-bearing 部分升格為 `#viewer` route 與 M4 里程碑的正式需求。
+- 作廢範圍（v1→v2）：舊 scene 對應 A9 Copilot／A10 Robotics、以及「所有 console route 都不得 inline viewer」的無例外敘述；依 route PNG 改為 A9 Robotics、A10 AI 決策，並承認 contracts §1.1 的 A1 inline 限定例外。
+- 共享 viewer 視覺與行為來源＝tracked `docs/plans/ai-bim-geo-viewer-prototype.html`；各 route 的 tracked `ai-bim-geo-viewer-A<n>.png` 與 `ai-bim-geo-Ai-codeing-A<n>.png` 是 supplementary UI／coding companion source。durable viewport/runtime 正本是本檔 §8＋TARGET-shell 對應節；視覺來源不定義數字、協定、runtime 狀態或建成證據。
 - 純潔性聲明：本檔為目標規格（TARGET），禁止出現對 repo 的建成宣稱（grep 樣式見 PROCESS §6 閘 1）；「待建」為需求屬性，「NOT BUILT」僅作為佔位頁 UI 呈現需求字樣。
 - 全域不變量引 TARGET-contracts：官方 extensions（§7）、USD 命名與 fidelity（§8）、誠實元件（§9）、雲地邊界（§11）；本檔不重複其正文。
-- 本檔被 TARGET-shell 的 `#viewer`／`#gpu`／`#review` 節與 BACKLOG viewer 系列 gap 引用。反向查找：`#viewer` route 定義、服務落點與實作接點以 TARGET-shell `#viewer` 節為準（console 本頁不內嵌 3D，CTA 走 `/ui/open?session=` 凍結 handoff）；驗收流程與 evidence 規約走 PROCESS §2／§3。
+- 本檔被 TARGET-shell 的 `#viewer`／`#gpu`／`#review`／A1–A10 節與 BACKLOG viewer 系列 gap 引用。反向查找：route 定義、業務欄位與實作接點以 TARGET-shell 對應節為準；A1 可用 contracts §1.1 限定的 `mode=a1-inline`，其他 route 要 inline WebRTC 必先取得同節加性例外，否則 CTA 走 `/ui/open?session=` 凍結 handoff；驗收走 PROCESS §2／§3。
 - prov 語彙澄清：本檔的「NOT BUILT／DEMO DATA／範例值／示意統計」皆為 UI 顯示 label 文案，**不是 repo `Prov` 型別值**（僅 7 值 asbuilt/artifact/demo/p1/p15/p3/p4，映射正本＝contracts §5）；若在 console 內以 ProvTag 實作：NOT BUILT／待建佔位 → `p1`/`p15`/`p3`/`p4`（依 phase）、DEMO DATA／範例值／示意統計 → `demo`。
 
 ---
@@ -68,13 +69,13 @@
 |---|---|---|---|
 | `viewer` | ◳ GPU 審查室 · 語意驗證 | 主驗收景 | `#viewer / M4：IFC→USD 語意驗證驗收示意（目標組合＝A1＋A2＋A3 federation）` |
 | `clash` | ◈ A3 跨專業疊合 · Clash | 佔位景 | `NOT BUILT · 未開工`：O6 已裁決 ifcclash；實作前不顯任何碰撞計數，引擎不可用時顯 runtime probe 原因 |
-| `4d` | ▤ A6 4D/5D 施工模擬 | 佔位景 | NOT BUILT · 願景 Phase 4；雲端僅收 metadata（PLANNED）、GPU-bound |
-| `reality` | ◫ A7 Reality Capture 比對 | 佔位景 | NOT BUILT · 願景 Phase 4；mesh 比對須先以 usd-code-mcp 驗證再宣稱 |
-| `synthetic` | ⊞ A8 Synthetic Data | 佔位景 | NOT BUILT · 願景 Phase 4；須對齊官方 Omniverse Replicator（先驗再寫） |
-| `copilot` | ✦ A9 設計/審查 Copilot | 佔位景 | NOT BUILT · 願景 Phase 4；AI 只寫 session layer、source .usdc 雜湊前後不變 |
-| `robotics` | ⊿ A10 機器人/巡檢模擬 | 佔位景 | NOT BUILT · 願景 Phase 4；Isaac-sim adjacent，能力宣稱前須對齊官方 |
+| `4d` | ▤ A6 4D/5D 進度成本 | route viewport mode | activity/time overlay；資料缺席時顯明確 unavailable，不填 demo EVM |
+| `reality` | ◫ A7 掃描比對 | route viewport mode | model/point cloud/deviation；alignment 未成立前禁止畫 deviation |
+| `synthetic` | ⊞ A8 Synthetic Data | route viewport mode | camera path/preview/annotator outputs；所有 frame 標 synthetic |
+| `robotics` | ⊿ A9 機器人/自主巡檢 | route viewport mode | route/waypoint/sensor coverage；預設且顯眼標 `SIMULATION` |
+| `copilot` | ✦ A10 AI 決策 context | route viewport mode | 只提供 scenario/evidence 的 3D context；AI 寫入僅 session layer，source hash 不變 |
 
-未建場景的佔位姿態（一體適用）：畫布只畫暗 stage＋決定性斜線 hatch（不偽造 matched 影像）、`scene-todo` overlay 顯示 glyph／標題／`NOT BUILT` 佔位標（顯示文案；Prov 值映射見 §0／contracts §5）／說明、右欄語意面板改「此場景待建，無語意資料」、viewer 互動（drag/wheel/pick）全部停用。場景切換走 URL `?scene=` 整頁跳轉。
+能力缺席時的共用 fallback：畫布只畫暗 stage＋決定性 hatch（不偽造 matched 影像）、`scene-todo` overlay 顯示 glyph／能力名稱／原因／下一步，右欄改「尚無 runtime/語意資料」，drag/wheel/pick 全停用；若只缺 GPU，CPU/表格能力可繼續但 3D control disabled。場景切換走 URL `?scene=` 整頁跳轉。
 
 ### §1.6 狀態持久化
 
@@ -266,7 +267,7 @@
 > 本卡「完成後長相」以 `ai-bim-geo-viewer-prototype.html` 為驗收示意（七區塊資訊架構＋GUID⇔USD 對應表）。**誠實驗收規則**：該檔為 canvas 示意，正式 3D 一律來自落地端 Kit 的 WebRTC 串流；示意畫面須帶可見浮水印「CANVAS 示意 · 非真 WebRTC 串流」，避免驗收場合誤認。
 > TARGET-shell 的 `#review`／`#gpu`／A1 連動橋相關節以卡號引用本節。
 
-**IX-3D-01 開啟 viewer**：輸入或選 `review_session_id` → 開 `coordinator /ui/open?session=`（server redirect；不在 console 內嵌 WebRTC）。
+**IX-3D-01 開啟 viewer**：一般 route 輸入或選 `review_session_id` → 開 `coordinator /ui/open?session=` server redirect；A1 可依 contracts §1.1 用 `POST /api/external/ifc-ready/:jobId/review-session`＋`mode=a1-inline`。其他 route 要內嵌 WebRTC 必先新增 approved exception，不得只因 PNG 有 viewport 就繞過凍結面。
 
 **IX-3D-02 DataChannel 指令契約**：openStage（成功證據=loaded stage URL 回報）/ focusPrim / selectPrims / clearHighlight。每次指令在 UI 留一行 trace（時間、指令、參數摘要、ack/timeout）——對齊「AI 透明可追」原則。**傳輸機制（官方）**：瀏覽器端 `AppStreamer.sendMessage(JSON.stringify({event_type, payload}))` 經 WebRTC DataChannel 送出；Kit 端由 `omni.kit.livestream.messaging`(v1.2.1) 收下→解析 JSON→重發到內部 message bus 交給對應 handler；Kit→瀏覽器回 ack 用 `messaging.register_event_type_to_send(event_type)`。命名對齊 NVIDIA `web-viewer-sample` 的 `openStageRequest`→`openedStageResult` 往返——本案 openStage / highlightPrimsRequest / isolatePrimsRequest 一律沿用同一 `*Request`/`*Result` ack 慣例。
 
@@ -274,7 +275,7 @@
 
 **IX-3D-04 first frame / stage truth 證據（P1）**：viewer 端回報 `first_frame_at`；console 只顯示，不推定。
 
-**IX-3D-05 高亮（P1.5）**：見 IX-A1-06；A2 diff 三色與 A4 搜尋 isolate 共用同一指令族（highlight/isolate payload 帶 source: a1|a2|a4）。payload 欄位契約：`highlightPrimsRequest`／`isolatePrimsRequest` 帶 `{prim_paths[]（目標 prim 清單）, color（如 'red'）, source: a1|a2|a4}`；ack＝同名 `*Result` 事件（`*Request`/`*Result` 慣例見 IX-3D-02）；啟用條件與 API 逐字見 TARGET-shell IX-A1-06／IX-A1-08。
+**IX-3D-05 高亮／隔離**：A1 rule failure、A2 diff、A4 query、A5 alert、A7 deviation、A9 anomaly、A10 evidence focus 共用 highlight/isolate family；payload `{prim_paths[], color, source}` 的 `source` 目標值為 `a1|a2|a4|a5|a7|a9|a10`，ack＝同名 `*Result`。A3 用 sublayer/openStage、A6 用 time/status overlay、A8 用 camera/annotator 指令，不硬塞進 highlight。任何新 event type 仍走 IX-3D-02 `*Request/*Result`、trace、timeout 與 approved backend/runtime contract。
 
 ---
 
@@ -283,3 +284,20 @@
 - **整個 canvas 3D 引擎**：`mulberry32` 亂數、`buildModel` 示意建築（seed 20260610、4×3 柱網、兩層樓）、`camBasis/project/rayFromScreen/rayAABB/pickElement`、軟體光照/背面剔除/painter's sort——原型檔頭明言「自寫 canvas 純示意，非程式碼範本」。**正式版沒有前端 3D 引擎**（§3）。
 - **示意模型的所有數值**：GUID、BBox、Pset 值、Qto、fidelity 統計、3 條規則與失敗件——全是 DEMO DATA，僅定義**欄位形狀與呈現規則**（§2 各欄位表）。
 - **localStorage 示意持久化**：可參考互動語意（§1.6），但「cache 非 source of truth」是硬規則；禁止把 localStorage 當業務狀態或資料權威。
+
+---
+
+## §8 A1–A10 viewport / runtime 角色矩陣
+
+| route | 3D 在情境中的用途 | 必要輸入與 runtime action | 必留 evidence / 缺席姿態 |
+|---|---|---|---|
+| A1 | 規則失敗定位與交付視點 | rule-run failures＋mapping；inline session；highlight ack | `rule_run_id/review_session_id/first_frame/stage matched/ack`；GPU 缺席仍可 CPU 檢核 |
+| A2 | Base/Target split/overlay 與 change focus | `diff_id`＋兩版 stage/mapping；client highlight | 兩 stage hash、session、selected item/ack；禁止呼叫 501 apply-overlay 當成功 |
+| A3 | sublayer federation、visibility、transform | `federated_set_id`＋member hashes/transforms；open built stage | build artifact/hash、coordinate report、loaded stage；clash unavailable 不回 0 |
+| A4 | 查詢結果 isolate 與 evidence focus | interpreted filters＋result prim paths；isolate/highlight | query/result/evidence refs＋ack；無 mapping 保留 table、不定位 |
+| A5 | room/asset heatmap 與 alert focus | timestamped telemetry＋asset mapping；throttled overlay | point freshness/quality＋ack；stale/fixture 不顯 live |
+| A6 | activity/time/status overlay 與 4D playback | baseline＋data date＋activity-element bindings；time/status overlay | baseline/source hash、activity id、as-of time、overlay ack；無 mapping 不著色，無 cost 不填 5D |
+| A7 | model/point-cloud/deviation 對照 | aligned `capture_job_id`＋transform/RMS/tolerance；slice/deviation overlay | capture hash、transform、tool version、RMS/tolerance、selected deviation/ack；alignment 未成立不畫 deviation |
+| A8 | camera path、preview 與 annotator output 檢查 | stage hash＋camera/seed/randomization/annotators；Replicator preview/run | `dataset_job_id`、runtime/tool version、per-frame manifest、failed frames；所有輸出標 synthetic |
+| A9 | mission route、waypoint、sensor coverage 與 anomaly focus | `RobotMission`＋navmesh/sensor pack；Isaac Sim run/route/feeds | mission/runtime id、`mode`、telemetry freshness、event refs；預設顯 `SIMULATION`，physical 無 edge contract 時不可啟動 |
+| A10 | scenario/evidence 的 3D context 與 evidence focus | scenario＋source refs＋mapped evidence；highlight/isolate 或 session-layer preview | scenario/module/report ids、source hashes、selected evidence/ack、source hash 前後一致；GPU 缺席仍保留表格分析 |
