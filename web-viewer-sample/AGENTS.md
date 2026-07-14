@@ -4,7 +4,7 @@
 
 ## Role
 
-`web-viewer-sample` 是 Browser Client / WebRTC Viewer / User Interaction Layer，也是分頁「06 操作介面總覽」對應到本 repo 的主要前端驗收面。它負責顯示串流畫面、送出 DataChannel JSON command、與 coordinator 交換 session / collaboration state，並呈現 A1–A10 的可操作 Edge Console / Review Room / project / issue / annotation / stage tree 等 UI 狀態。
+`web-viewer-sample` 是 Browser Client / WebRTC Viewer / User Interaction Layer，也是分頁「06 操作介面總覽」對應到本 repo 的主要前端驗收面。它負責顯示串流畫面、送出 DataChannel JSON command、與 coordinator 交換 session / presence / stream config，並透過 coordinator governance proxy 呈現 A1–A10 的可操作 Edge Console / Review Room / project / issue / BCF / stage tree 等 UI 狀態。
 
 開發埠口：`127.0.0.1:5173`
 

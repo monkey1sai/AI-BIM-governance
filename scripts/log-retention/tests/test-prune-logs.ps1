@@ -75,6 +75,27 @@ Run-Test 'dry-run lists deletions for >30d (31/45/60) and keeps 5/15/30' {
     } finally { Remove-Item -LiteralPath $root -Recurse -Force }
 }
 
+Run-Test 'Apply and DryRun are mutually exclusive and never delete' {
+    $root = New-Fixture -Today $frozenToday
+    try {
+        $threw = $false
+        try {
+            & $pruneScript -LogRoot $root -RetentionDays 30 -TodayUtc $frozenToday -Apply -DryRun -Quiet | Out-Null
+        } catch {
+            $threw = $true
+            Assert-True -Condition ($_.Exception.Message -match 'mutually exclusive') -Message 'conflict error explains mutually exclusive modes'
+        }
+        Assert-True -Condition $threw -Message 'conflicting Apply and DryRun switches throw'
+        foreach ($service in 'coordinator', 'streaming-server', 'viewer', 'scripts') {
+            foreach ($age in 31, 45, 60) {
+                $date = $frozenToday.AddDays(-1 * $age).ToString('yyyy-MM-dd')
+                Assert-True -Condition (Test-Path -LiteralPath (Join-Path $root (Join-Path $service $date))) `
+                    -Message "conflicting switches preserved $service/$date"
+            }
+        }
+    } finally { Remove-Item -LiteralPath $root -Recurse -Force }
+}
+
 Run-Test 'apply deletes >30d (31/45/60), keeps 5/15/30, never touches recovery or non-date' {
     $root = New-Fixture -Today $frozenToday
     try {
@@ -120,6 +141,24 @@ Run-Test 'missing log root returns zero counts without throwing' {
     $result = & $pruneScript -LogRoot $bogus -RetentionDays 30 -TodayUtc $frozenToday -Apply -Quiet
     Assert-Equal -Expected 0 -Actual $result.candidate_count -Message "no candidates"
     Assert-Equal -Expected 0 -Actual $result.deleted_count -Message "no deletes"
+}
+
+Run-Test 'missing default log root returns zero counts without Resolve-Path failure' {
+    $fixtureRepo = Join-Path ([IO.Path]::GetTempPath()) ("prune-default-root-" + [Guid]::NewGuid().ToString('N'))
+    $fixtureScriptDir = Join-Path $fixtureRepo 'scripts\log-retention'
+    New-Item -ItemType Directory -Force -Path $fixtureScriptDir | Out-Null
+    Copy-Item -LiteralPath $pruneScript -Destination (Join-Path $fixtureScriptDir 'prune-logs.ps1')
+    $previousLogRoot = $env:LOG_ROOT
+    try {
+        Remove-Item Env:\LOG_ROOT -ErrorAction SilentlyContinue
+        $result = & (Join-Path $fixtureScriptDir 'prune-logs.ps1') -RetentionDays 30 -TodayUtc $frozenToday -Quiet
+        Assert-Equal -Expected 0 -Actual $result.candidate_count -Message 'missing default root has no candidates'
+        Assert-Equal -Expected 0 -Actual $result.deleted_count -Message 'missing default root has no deletes'
+        Assert-Equal -Expected $false -Actual $result.applied -Message 'missing default root reports no apply'
+    } finally {
+        if ($null -ne $previousLogRoot) { $env:LOG_ROOT = $previousLogRoot } else { Remove-Item Env:\LOG_ROOT -ErrorAction SilentlyContinue }
+        Remove-Item -LiteralPath $fixtureRepo -Recurse -Force
+    }
 }
 
 Run-Test 'LOG_RETENTION_DAYS env supplies the default' {

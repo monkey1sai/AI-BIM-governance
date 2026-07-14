@@ -20,7 +20,7 @@ IFC intake、IFC -> USDC 轉檔、Omniverse Kit/WebRTC 串流、治理檢核操�
 
 - `[外部] 公司雲端 bim-control` 是 control-plane 權威，本 repo 不 mirror。
 - `[外部] 客戶落地端 IFC Worker` 是 IFC 產出者，本 repo 不啟動。
-- `bim-review-coordinator/` 是唯一對外 IFC-ready intake、session、collaboration 與 callback outbox 中心。
+- `bim-review-coordinator/` 是唯一對外 IFC-ready intake、review session / presence control 與 callback outbox 中心；selection / annotation collaboration handlers 已退役。
 - `bim-streaming-server/` 是 internal-only IFC->USDC conversion authority 與 Omniverse Kit/WebRTC runtime。
 - `governance-service/` 是 A1/A2/A3 governance loopback authority。
 - `web-viewer-sample/` 是 browser client 與 user interaction layer。
@@ -146,17 +146,12 @@ Generated wiki / Graphify / GitNexus 內容只能當探索輔助。若目前 che
 
 ## 開發流程
 
-本 repo 的標準管線：
+本 repo 不採單一固定管線；先依 [AGENTS.md](AGENTS.md) 判定 Lane F / B / G / S：
 
-```txt
-設計規格 / prototype
-  → Superpowers plan
-  → GitNexus impact（改 symbol 前）
-  → 實作
-  → gstack UI / E2E / screenshot evidence（user-facing done）
-  → GitNexus detect_changes（commit 前）
-  → branch → PR → Actions → merge
-```
+- Lane F：最小修正 + targeted tests，不強制 plan、worktree 或 GitNexus impact。
+- Lane B：3–5 項 inline checklist + affected tests；改主要 code symbol 時跑一次 GitNexus impact。
+- Lane G：dedicated branch/worktree + 簡潔 plan + GitNexus impact / `detect_changes` + integration evidence；user-facing 變更另需 browser E2E。
+- Lane S：只有使用者明確啟動 `spec-to-done` / 完整 Superpowers 時才使用，不得由任務複雜度自動升級。
 
 基本規則：
 

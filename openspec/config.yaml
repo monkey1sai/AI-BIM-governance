@@ -8,8 +8,9 @@ context: |
   Core repo boundaries:
   - External company cloud bim-control owns control-plane metadata and callback acknowledgment; it is not a repo runtime.
   - External customer-edge IFC Worker owns IFC production and calls coordinator IFC-ready intake; it is not a repo runtime.
-  - bim-review-coordinator owns IFC-ready intake, idempotency, minimal shadow metadata, callback outbox, review session, and collaboration control plane.
+  - bim-review-coordinator owns IFC-ready intake, idempotency, minimal shadow metadata, callback outbox, review session, and session/presence control plane.
   - bim-streaming-server owns IFC→USDC conversion authority, Omniverse Kit runtime, USD scene runtime, WebRTC, and DataChannel commands.
+  - governance-service owns governance issues, annotations, and BCF persistence behind the coordinator proxy.
   - web-viewer-sample owns browser UI and user interaction.
 
   Working rules:

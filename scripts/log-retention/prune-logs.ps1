@@ -28,6 +28,10 @@ Calendar days (UTC) to keep. Default 30 unless LOG_RETENTION_DAYS env is set.
 Actually delete candidate directories. Without this switch the script lists
 deletions only.
 
+.PARAMETER DryRun
+Explicitly select report-only mode. This switch is mutually exclusive with
+-Apply so a contradictory invocation cannot delete data.
+
 .PARAMETER Quiet
 Suppress per-directory log output. Summary line still emitted.
 
@@ -55,12 +59,17 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+if ($Apply -and $DryRun) {
+    throw '-Apply and -DryRun are mutually exclusive.'
+}
+
 if (-not $LogRoot) {
     if ($env:LOG_ROOT) {
         $LogRoot = $env:LOG_ROOT
     } else {
         # Default: <repo-root>/logs (script lives at scripts/log-retention/).
-        $LogRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\logs')).Path
+        $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+        $LogRoot = Join-Path $repoRoot 'logs'
     }
 }
 if ($RetentionDays -le 0) {

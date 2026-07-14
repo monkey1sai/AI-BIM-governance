@@ -33,7 +33,7 @@ AI-BIM-governance/
 
 ```mermaid
 flowchart TD
-  CO[bim-review-coordinator<br/>Control Plane]
+  CO[bim-review-coordinator<br/>Session / Presence Control Plane]
   KIT[bim-streaming-server<br/>IFC→USDC Authority + Kit Runtime]
   GOV[governance-service<br/>A1/A2/A3 Governance Authority :49102]
   CLOUD[[external company-cloud bim-control<br/>Control Plane]]
@@ -45,7 +45,7 @@ flowchart TD
   CO -->|start / check / reference process| KIT
   CO -->|/api/governance/* proxy| GOV
   CO -->|metadata-only callback outbox| CLOUD
-  WV -->|REST: create/join session| CO
+  WV -->|REST + Socket.IO: session / presence / governance proxy| CO
   WV -->|WebRTC + DataChannel| KIT
   KM -->|Kit fleet ops / telemetry| KIT
 ```
@@ -104,7 +104,7 @@ tests/fakes/
 flowchart LR
     EDGE["[外部] 客戶落地端 IFC Worker"]
     CLOUD["[外部] 公司雲端 bim-control"]
-    CO["bim-review-coordinator\nExternal IFC-ready intake + Session / Control Plane"]
+    CO["bim-review-coordinator\nExternal IFC-ready intake + Session / Presence Control Plane"]
     KIT["bim-streaming-server\nIFC→USDC Authority\n+ Omniverse Kit Runtime"]
     GOV["governance-service\nA1/A2/A3 Governance Authority\n127.0.0.1:49102 loopback"]
     WV["web-viewer-sample\nBrowser Client"]
@@ -114,11 +114,10 @@ flowchart LR
     CO -->|internal conversion request| KIT
     CO -->|/api/governance/* proxy| GOV
     CO -->|metadata-only callback outbox| CLOUD
-    WV -->|REST: create / join session| CO
+    WV -->|REST: session / stream config / governance proxy| CO
     WV -->|WebRTC video + DataChannel JSON| KIT
-    WV -->|Socket.IO / WebSocket state events| CO
-    CO -->|optional collaboration state| KIT
-    WV -->|annotation / issue interaction| CO
+    WV -->|Socket.IO: join / leave / heartbeat| CO
+    CO -->|presenceUpdated| WV
     KM -->|Kit fleet ops / telemetry| KIT
 ```
 
@@ -127,7 +126,7 @@ flowchart LR
 ```txt
 [外部] company cloud  = control-plane 權威（本 repo 不 mirror）
 [外部] IFC Worker     = 客戶落地端 IFC 產出者（本 repo 不啟動）
-bim-review-coordinator = 唯一對外 IFC-ready intake + Session / 協作控制中心
+bim-review-coordinator = 唯一對外 IFC-ready intake + Session / Presence Control Plane
 bim-streaming-server   = IFC→USDC conversion authority + Omniverse GPU / USD / WebRTC Runtime
 governance-service     = A1 rule-run / A2 diff / A3 federation / issue / BCF loopback authority（僅 coordinator proxy 可達）
 web-viewer-sample      = Browser 操作端與串流觀看端
@@ -139,19 +138,19 @@ tests/fakes/contracts  = 外部平台 test-only doubles，非 runtime profile
 
 ## 3. Repo 邊界
 
-各核心 repo（`bim-review-coordinator` §3.4、`bim-streaming-server` §3.5、`web-viewer-sample` §3.6、`governance-service` §3.7、`kit-manager-web` / `kit-manager-api` §3.8）的角色、負責與不負責清單、控制邊界，已逐字搬至 `docs/agents/repo-boundaries-per-service.md`（延用原章節編號，不改寫）。
+各核心 repo（`bim-review-coordinator` §3.4、`bim-streaming-server` §3.5、`web-viewer-sample` §3.6、`governance-service` §3.7、`kit-manager-web` / `kit-manager-api` §3.8）的角色、負責與不負責清單、控制邊界，已拆分至 `docs/agents/repo-boundaries-per-service.md` 並持續維護（延用原章節編號）。
 
 ---
 
 ## 4. 資料類型與歸屬、核心資料流、通訊方式邊界、Source of Truth 原則（§4–§7）
 
-資料類型與歸屬表（§4）、核心資料流 mermaid（§5：Streaming Flow、Scene Interaction Flow 等）、通訊方式邊界表（§6）、Source of Truth 原則（§7：BIM 原始資料、Omniverse Runtime 資料、Mapping 資料、Review 資料）已逐字搬至 `docs/agents/repo-data-flow-and-ownership.md`（延用原章節編號，不改寫）。
+資料類型與歸屬表（§4）、核心資料流 mermaid（§5：Streaming Flow、Scene Interaction Flow 等）、通訊方式邊界表（§6）、Source of Truth 原則（§7：BIM 原始資料、Omniverse Runtime 資料、Mapping 資料、Review 資料）已拆分至 `docs/agents/repo-data-flow-and-ownership.md` 並持續維護（延用原章節編號）。
 
 ---
 
 ## 8. 禁止跨界規則
 
-各 repo 的禁止跨界規則（§8.1–§8.5：web-viewer-sample / bim-streaming-server / bim-review-coordinator / `_bim-control` / `_worker`）與 §3 一併逐字搬至 `docs/agents/repo-boundaries-per-service.md`（延用原章節編號，不改寫）。
+各 repo 的禁止跨界規則（§8.1–§8.5：web-viewer-sample / bim-streaming-server / bim-review-coordinator / `_bim-control` / `_worker`）與 §3 一併拆分至 `docs/agents/repo-boundaries-per-service.md` 並持續維護（延用原章節編號）。
 
 ---
 
@@ -173,7 +172,7 @@ _mock-sensor-service/
 - 它們只提供假資料、假結果或本地測試用資料處理。
 - 它們不應越過外部公司雲端 control-plane（歷史上為 `_bim-control`）成為正式資料權威。
 - 它們不應越過 bim-streaming-server 直接控制 Omniverse viewport。
-- 它們不應越過 bim-review-coordinator 管理 session / collaboration。
+- 它們不應越過 bim-review-coordinator 管理 session / presence。
 - 它們不應越過 web-viewer-sample 成為 browser UI。
 ```
 
@@ -201,9 +200,11 @@ _mock-sensor-service/
 → web-viewer-sample 顯示 stream 畫面
 → 使用者點選 issue / prim → web-viewer-sample 送 DataChannel command
 → bim-streaming-server 執行 3D highlight / selection
-→ web-viewer-sample 送 annotation / collaboration event
-→ bim-review-coordinator 廣播 / 回寫；最小 shadow metadata 留本地
-   （control-plane 權威屬公司雲端，不 mirror）
+→ web-viewer-sample 透過 coordinator `/api/governance/*` proxy 存取 issue / annotation / BCF
+→ governance-service 管理落地端 issue lifecycle / BCF runtime data
+→ coordinator Socket.IO 只處理 join / leave / heartbeat 並廣播 `presenceUpdated`
+→ generic session event log 只作 compatibility archive，不構成 annotation authority
+   （長期 control-plane 權威屬公司雲端，不 mirror）
 ```
 
 任何修改都不應破壞這條閉環。歷史的 `_bim-control 接收 fake RVT → _worker RVT→IFC → _bim-control 保存 metadata` 閉環已隨兩服務刪除而退役，僅作 archive context，不得作為 startup / health / smoke / review-session 依賴。
@@ -217,8 +218,8 @@ _mock-sensor-service/
 ```txt
 bim-review-coordinator
 = 唯一對外 IFC-ready intake（Service auth / idempotency / external_model_version_id
-  binding）+ Session / collaboration control plane + 雲端 metadata-only callback
-  outbox + local web view session + 最小 shadow metadata（data-plane）
+  binding）+ Session / presence control plane + 雲端 metadata-only callback
+  outbox + local web view session + generic event compatibility archive（data-plane）
 
 bim-streaming-server
 = internal-only IFC→USDC conversion engine（由 coordinator internal request 觸發）
@@ -242,7 +243,8 @@ _worker / _bim-control
 IFC→USDC conversion 歸 streaming server（internal-only）
 雲端 callback（metadata-only / outbox）歸 coordinator
 control-plane 權威歸外部公司雲端（本地僅最小 shadow，不 mirror）
-session / collaboration 歸 coordinator
+session / presence 歸 coordinator；generic event log 只是 compatibility archive
+issue / annotation / BCF runtime data 歸 governance-service（browser 經 coordinator proxy）
 3D runtime 歸 streaming server
 使用者操作歸 web viewer
 外部平台模擬只在 tests/，不得進 runtime

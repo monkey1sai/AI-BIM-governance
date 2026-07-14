@@ -39,8 +39,14 @@ try {
         'scripts/tests/check-pr-body-evidence.ps1',
         'scripts/tests/test-pr-body-evidence.ps1',
         'scripts/tests/fixtures/agent-governance-routing.json',
+        '.ignore',
+        '.gitnexusignore',
+        'agent-skills-manifest.json',
+        'scripts/dev/sync-agent-skills.ps1',
+        'scripts/tests/test-agent-skills-sync.ps1',
         '.codex/skills/ai-bim-fast-fix/SKILL.md',
         '.codex/skills/ai-bim-bounded-change/SKILL.md',
+        '.codex/skills/repo-health/SKILL.md',
         '.codex/skills/spec-to-done/agents/openai.yaml',
         'docs/agents/superpowers-invocation-policy.md',
         'docs/PR_REVIEW_AGENT.md',
@@ -116,6 +122,12 @@ try {
     Assert-True (-not ($prReviewWorkflow -match 'gitnexus analyze --index-only')) 'PR review workflow does not build a GitNexus index in CI'
 
     $gitnexusIgnore = Get-Content -LiteralPath '.gitnexusignore' -Raw
+    $searchIgnore = Get-Content -LiteralPath '.ignore' -Raw
+    foreach ($historicalPath in @('/.workflow/', '/artifacts/', '/docs/superpowers/', '/openspec/changes/archive/')) {
+        Assert-True ($gitnexusIgnore -match [regex]::Escape($historicalPath)) ".gitnexusignore excludes historical path $historicalPath"
+        Assert-True ($searchIgnore -match [regex]::Escape($historicalPath)) ".ignore excludes historical path $historicalPath"
+    }
+    Assert-True (-not (Test-Path -LiteralPath '.workflow')) '.workflow scratch residue is absent from the checkout'
     foreach ($ignoredPath in @(
         '/bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/stage_loading.py',
         '/bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/ifc2usdc_powershell_adapter.py',
@@ -165,6 +177,12 @@ try {
 
     Assert-True ($claudeBody -match 'AGENTS\.md') 'CLAUDE.md references AGENTS.md'
     Assert-True ($claudeBody -match 'source of truth') 'CLAUDE.md declares AGENTS.md as source of truth'
+
+    & (Join-Path $repoRoot 'scripts/dev/sync-agent-skills.ps1') -Mode Check -RepoRoot $repoRoot
+    & (Join-Path $repoRoot 'scripts/tests/test-agent-skills-sync.ps1')
+    $commandFiles = @(Get-ChildItem -File -LiteralPath '.claude/commands' | Select-Object -ExpandProperty Name)
+    Assert-True ($commandFiles.Count -eq 1 -and $commandFiles[0] -eq 'repo-health.md') '.claude/commands contains only the repo-native repo-health entrypoint'
+    Assert-True (-not ((Get-Content -Raw -LiteralPath '.claude/commands/repo-health.md') -match 'agent-skills:')) 'tracked Claude command does not reference the retired agent-skills plugin'
 
     foreach ($overlayPath in @('docs/agents/advanced-agent-reasoning-contract.md', 'docs/agents/codex-loop-workflows.md')) {
         Assert-FileContains $overlayPath ([regex]::Escape('C:\Users\IOT\.codex\docs\agents\task-routing.md')) "$overlayPath points to global task-routing source of truth"
