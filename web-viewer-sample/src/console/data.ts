@@ -53,7 +53,7 @@ export const PAGES: PageDef[] = [
   { key: "a1", no: "A1", label: "治理與模型檢核", plane: "governance", group: "core", badge: "P0", badgeTone: "warn" },
   { key: "a2", no: "A2", label: "版本差異與責任", plane: "governance", group: "core" },
   { key: "a3", no: "A3", label: "跨專業疊合", plane: "governance", group: "core" },
-  { key: "a4", no: "A4", label: "語意搜尋問答", plane: "governance", group: "core", badge: "P0", badgeTone: "warn" },
+  { key: "a4", no: "A4", label: "語意查詢與證據", plane: "governance", group: "core", badge: "P0", badgeTone: "warn" },
   { key: "a5", no: "A5", label: "IoT / FM 數位分身", plane: "governance", group: "core", badge: "P3", badgeTone: "ai" },
   { key: "issues", no: "BC", label: "Issue / BCF", plane: "governance", group: "core", badge: "A1", badgeTone: "info" },
   { key: "reports", no: "RP", label: "報表中心", plane: "governance", group: "core" },

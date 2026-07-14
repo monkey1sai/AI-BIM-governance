@@ -376,14 +376,15 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         },
         {
             num: "7",
-            title: "建立審查標註並回寫",
+            title: "建立審查標註並回寫（已退役）",
             route: "web-viewer-sample -> coordinator -> callback outbox",
-            protocol: "Socket.IO / REST",
-            status: sessionId ? "可操作" : "需先建立 session",
-            statusKind: sessionId ? "warn" : "idle",
-            actionLabel: "建立標註",
-            action: onCreateAnnotation,
-            disabled: !sessionId,
+            protocol: "Socket.IO retired",
+            status: "RETIRED",
+            statusKind: "idle",
+            actionLabel: "已退役 · 改走 #issues / A1 / A4",
+            action: () => undefined,
+            disabled: true,
+            gap: "annotationCreate Socket path retired; use governance Issue APIs.",
         },
         {
             num: "8",
@@ -654,10 +655,10 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
                         </button>
                         <span style={captionStyle}>↳ 在 3D 模型上把問題位置高亮給審查人員看</span>
 
-                        <button type="button" style={primaryBtn} onClick={onCreateAnnotation}>
-                            建立審查標註
+                        <button type="button" style={primaryBtn} disabled title="annotationCreate Socket path retired">
+                            建立審查標註（已退役）
                         </button>
-                        <span style={captionStyle}>↳ 把審查意見寫回主資料庫 (Step ⑤)</span>
+                        <span style={captionStyle}>↳ 改走 Edge Console #issues / A1 / A4 Issue API（非 Socket collab）</span>
 
                         <button type="button" style={secondaryBtn} onClick={onClearHighlight}>
                             清除高亮
@@ -797,8 +798,8 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
                                 <button type="button" style={secondaryBtn} onClick={onFocusWorld}>
                                     DataChannel: focusPrimRequest /World
                                 </button>
-                                <button type="button" style={secondaryBtn} onClick={onEmitCoordinatorHighlight}>
-                                    Socket.IO: highlightRequest 廣播
+                                <button type="button" style={secondaryBtn} disabled title="Socket collab handlers retired 2026-05-21">
+                                    Socket.IO: highlightRequest（已退役）
                                 </button>
 
                                 <LogBlock title="stream-config" entries={streamConfig ? [{ at: "", label: "stream-config", payload: streamConfig }] : []} />
