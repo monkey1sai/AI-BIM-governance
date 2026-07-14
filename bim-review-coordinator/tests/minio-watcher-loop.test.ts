@@ -266,7 +266,7 @@ describe("minioWatcher loop", () => {
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
     // 新增物件 → 下一輪應觸發
     state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
-    await waitFor(() => received.length === 1);
+    await waitFor(() => received.length === 1 && watcher!.getStatus().triggered_total === 1);
 
     const { body, headers } = received[0];
     expect(body.event).toBe("ifc_ready");
