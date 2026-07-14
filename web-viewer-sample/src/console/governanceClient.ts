@@ -251,18 +251,26 @@ export const governanceClient = {
   reviewRoom: (setId: string) =>
     jsonFetch<ReviewRoomDescriptor>(`/api/governance/federated-sets/${setId}/review-room`),
 
-  // A4 deterministic semantic search（非 LLM）。for-session / for-ifc-ready 由 coordinator 解析 host IFC。
+  // A4 search：deterministic grammar 和/或 Ornith vLLM structured filters。
+  // for-session / for-ifc-ready 由 coordinator 解析 host IFC；LLM key 只在 governance env。
+  searchLlmStatus: () => jsonFetch<ModelSearchLlmStatus>("/api/governance/search/llm-status"),
   searchModel: (req: ModelSearchRequest) =>
     jsonFetch<ModelSearchResponse>("/api/governance/search/model", {
       method: "POST",
       body: JSON.stringify(req),
     }),
-  searchModelForSession: (sessionId: string, body: { query: string; limit?: number }) =>
+  searchModelForSession: (
+    sessionId: string,
+    body: { query: string; limit?: number; interpret_mode?: ModelSearchInterpretMode },
+  ) =>
     jsonFetch<ModelSearchResponse>(
       `/api/governance/search/model/for-session/${encodeURIComponent(sessionId)}`,
       { method: "POST", body: JSON.stringify(body) },
     ),
-  searchModelForIfcReady: (ifcReadyJobId: string, body: { query: string; limit?: number }) =>
+  searchModelForIfcReady: (
+    ifcReadyJobId: string,
+    body: { query: string; limit?: number; interpret_mode?: ModelSearchInterpretMode },
+  ) =>
     jsonFetch<ModelSearchResponse>(
       `/api/governance/search/model/for-ifc-ready/${encodeURIComponent(ifcReadyJobId)}`,
       { method: "POST", body: JSON.stringify(body) },
@@ -327,12 +335,27 @@ export interface IssueCreateRequest {
   assignee?: string | null;
 }
 
+export type ModelSearchInterpretMode = "deterministic" | "semantic" | "auto";
+
 export interface ModelSearchRequest {
   ifc_source_path: string;
   query: string;
   model_version_id?: string | null;
   element_mapping_path?: string | null;
   limit?: number;
+  interpret_mode?: ModelSearchInterpretMode;
+}
+
+export interface ModelSearchLlmStatus {
+  service: string;
+  enabled: boolean;
+  configured: boolean;
+  base_url: string | null;
+  model: string | null;
+  timeout_s: number;
+  auth: string;
+  reference?: string;
+  env_keys?: string[];
 }
 
 export interface ModelSearchPropertyFilter {
@@ -350,6 +373,7 @@ export interface ModelSearchInterpretedFilters {
   unmatched_fragments: string[];
   interpretable: boolean;
   notes: string[];
+  interpret_source?: string;
   confidence: number | null;
   confidence_basis: string | null;
 }
@@ -371,6 +395,7 @@ export interface ModelSearchResultRow {
 export interface ModelSearchResponse {
   status: "ok" | "uninterpreted" | string;
   model_version_id?: string | null;
+  interpret_mode?: ModelSearchInterpretMode | string;
   interpreted_filters: ModelSearchInterpretedFilters;
   results: ModelSearchResultRow[];
   stats: {

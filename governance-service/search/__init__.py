@@ -7,10 +7,12 @@ from __future__ import annotations
 
 from .engine import SearchRequest, run_model_search
 from .interpreter import InterpretedFilters, interpret_query
+from .llm_client import load_llm_config
 
 __all__ = [
     "InterpretedFilters",
     "SearchRequest",
     "interpret_query",
+    "load_llm_config",
     "run_model_search",
 ]

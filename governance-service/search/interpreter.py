@@ -11,6 +11,8 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
+# re used by filters_from_structured_dict
+
 
 CLASS_ALIASES: dict[str, str] = {
     "防火門": "IfcDoor",
@@ -87,8 +89,21 @@ class InterpretedFilters:
     unmatched_fragments: list[str] = field(default_factory=list)
     interpretable: bool = False
     notes: list[str] = field(default_factory=list)
+    interpret_source: str = "deterministic"  # deterministic | llm | hybrid
+    confidence: Optional[float] = None
+    confidence_basis: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
+        conf = self.confidence
+        basis = self.confidence_basis
+        if conf is None and self.interpretable:
+            conf = 1.0 if self.interpret_source == "deterministic" else 0.75
+        if basis is None and self.interpretable:
+            basis = (
+                "deterministic_grammar"
+                if self.interpret_source == "deterministic"
+                else "llm_structured_json"
+            )
         return {
             "raw_query": self.raw_query,
             "ifc_classes": list(self.ifc_classes),
@@ -98,9 +113,78 @@ class InterpretedFilters:
             "unmatched_fragments": list(self.unmatched_fragments),
             "interpretable": self.interpretable,
             "notes": list(self.notes),
-            "confidence": 1.0 if self.interpretable else None,
-            "confidence_basis": "deterministic_grammar" if self.interpretable else None,
+            "interpret_source": self.interpret_source,
+            "confidence": conf,
+            "confidence_basis": basis,
         }
+
+
+_ALLOWED_OPS = {"<", "<=", ">", ">=", "=="}
+_ALLOWED_IFC_PREFIX = "Ifc"
+
+
+def filters_from_structured_dict(raw_query: str, data: dict[str, Any], *, source: str = "llm") -> InterpretedFilters:
+    """Sanitize LLM / external structured filter JSON into InterpretedFilters."""
+    out = InterpretedFilters(raw_query=raw_query, interpret_source=source)
+    classes: list[str] = []
+    for item in data.get("ifc_classes") or []:
+        if not isinstance(item, str):
+            continue
+        name = item.strip()
+        if name.startswith(_ALLOWED_IFC_PREFIX) and name.isalnum() and len(name) < 64:
+            if name not in classes:
+                classes.append(name)
+    out.ifc_classes = classes
+
+    storeys: list[str] = []
+    for item in data.get("storey_tokens") or []:
+        if not isinstance(item, str):
+            continue
+        tok = item.strip()
+        if tok and len(tok) <= 32 and tok not in storeys:
+            storeys.append(tok)
+    out.storey_tokens = storeys
+
+    props: list[PropertyFilter] = []
+    for item in data.get("property_filters") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        op = str(item.get("op") or "").strip()
+        if op == "=":
+            op = "=="
+        if not name or op not in _ALLOWED_OPS:
+            continue
+        try:
+            value = float(item.get("value"))
+        except (TypeError, ValueError):
+            continue
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$", name):
+            continue
+        props.append(PropertyFilter(name=name, op=op, value=value))
+    out.property_filters = props
+
+    names: list[str] = []
+    for item in data.get("name_contains") or []:
+        if not isinstance(item, str):
+            continue
+        frag = item.strip()
+        if frag and len(frag) <= 64 and frag not in names:
+            names.append(frag)
+    out.name_contains = names
+
+    for note in data.get("notes") or []:
+        if isinstance(note, str) and note.strip():
+            out.notes.append(note.strip()[:200])
+
+    out.interpretable = bool(out.ifc_classes or out.storey_tokens or out.property_filters or out.name_contains)
+    if out.interpretable:
+        out.notes.append(f"mode:{source}_filter_v1")
+        out.confidence = 0.75 if source == "llm" else 1.0
+        out.confidence_basis = "llm_structured_json" if source == "llm" else "deterministic_grammar"
+    else:
+        out.notes.append("uninterpreted_structured_filters")
+    return out
 
 
 def interpret_query(query: str) -> InterpretedFilters:
@@ -173,6 +257,7 @@ def interpret_query(query: str) -> InterpretedFilters:
         else:
             out.unmatched_fragments.append(residual)
 
+    out.interpret_source = "deterministic"
     out.interpretable = bool(
         out.ifc_classes or out.storey_tokens or out.property_filters or out.name_contains
     )
@@ -181,6 +266,10 @@ def interpret_query(query: str) -> InterpretedFilters:
         out.notes.append(
             "next_step: use examples like 「找 4F 防火門且 FireRating < 60」 or 「IfcDoor」"
         )
+        out.confidence = None
+        out.confidence_basis = None
     else:
         out.notes.append("mode:deterministic_filter_v1")
+        out.confidence = 1.0
+        out.confidence_basis = "deterministic_grammar"
     return out

@@ -5,6 +5,8 @@ import { t } from "./i18n";
 import { Btn, Field, Metric, Panel } from "./components";
 import {
   governanceClient,
+  type ModelSearchInterpretMode,
+  type ModelSearchLlmStatus,
   type ModelSearchResponse,
   type ModelSearchResultRow,
 } from "./governanceClient";
@@ -16,6 +18,7 @@ import {
 
 const EXAMPLE_QUERIES = [
   "找 4F 防火門且 FireRating < 60",
+  "哪些四樓的門防火時效不到一小時？",
   "IfcDoor",
   "1F 門",
   "FireRating >= 60",
@@ -26,6 +29,8 @@ type SourceMode = "session" | "ifc_ready" | "path";
 export function A4SemanticSearchPage() {
   const [query, setQuery] = useState(EXAMPLE_QUERIES[0]);
   const [sourceMode, setSourceMode] = useState<SourceMode>("ifc_ready");
+  const [interpretMode, setInterpretMode] = useState<ModelSearchInterpretMode>("auto");
+  const [llmStatus, setLlmStatus] = useState<ModelSearchLlmStatus | null>(null);
   const [sessions, setSessions] = useState<RuntimeSessionSummary[]>([]);
   const [jobs, setJobs] = useState<IfcReadyListItem[]>([]);
   const [sessionId, setSessionId] = useState("");
@@ -42,10 +47,12 @@ export function A4SemanticSearchPage() {
   const refreshSources = useCallback(async () => {
     setLoadErr(null);
     try {
-      const [rt, ready] = await Promise.all([
+      const [rt, ready, llm] = await Promise.all([
         coordinatorClient.runtimeStatus().catch(() => null),
         coordinatorClient.listIfcReady().catch(() => null),
+        governanceClient.searchLlmStatus().catch(() => null),
       ]);
+      setLlmStatus(llm);
       const sessionList = rt?.sessions?.items ?? [];
       setSessions(sessionList);
       if (!sessionId && sessionList[0]?.session_id) {
@@ -87,13 +94,20 @@ export function A4SemanticSearchPage() {
     try {
       let res: ModelSearchResponse;
       if (sourceMode === "session") {
-        res = await governanceClient.searchModelForSession(sessionId, { query: query.trim() });
+        res = await governanceClient.searchModelForSession(sessionId, {
+          query: query.trim(),
+          interpret_mode: interpretMode,
+        });
       } else if (sourceMode === "ifc_ready") {
-        res = await governanceClient.searchModelForIfcReady(jobId, { query: query.trim() });
+        res = await governanceClient.searchModelForIfcReady(jobId, {
+          query: query.trim(),
+          interpret_mode: interpretMode,
+        });
       } else {
         res = await governanceClient.searchModel({
           ifc_source_path: path.trim(),
           query: query.trim(),
+          interpret_mode: interpretMode,
         });
       }
       setResult(res);
@@ -170,10 +184,28 @@ export function A4SemanticSearchPage() {
       </h1>
       <p className="ec-lead">
         {t(
-          "可解釋過濾查詢（非 LLM 聊天）。B 閉環：session / ifc-ready → coordinator 解析 host IFC → :8004 /api/governance/search/* → governance POST /api/search/model。結果表為真實 API 回傳，非示意假數。",
-          "Explainable filter search (not LLM chat). B-loop: session / ifc-ready → coordinator resolves host IFC → :8004 /api/governance/search/* → governance POST /api/search/model. Result table shows real API payload, not demo numbers.",
+          "可解釋查詢：deterministic 文法 或 Ornith vLLM（OpenAI-compatible）→ JSON filters → IFC 掃描。Key 只在 governance env（ORNITH_API_KEY），永不進 git。結果表為真實 API 回傳。",
+          "Explainable search: deterministic grammar or Ornith vLLM (OpenAI-compatible) → JSON filters → IFC scan. API key only in governance env (ORNITH_API_KEY), never in git. Results are real API payloads.",
         )}
       </p>
+      <Panel title={t("語意模型（Ornith）", "Semantic model (Ornith)")} sub="GET /api/governance/search/llm-status" prov="asbuilt">
+        <Field
+          k="enabled"
+          v={llmStatus ? String(llmStatus.enabled) : t("未取得", "not observed")}
+          prov="asbuilt"
+        />
+        <Field k="model" v={llmStatus?.model ?? "—"} prov="asbuilt" />
+        <Field k="base_url" v={llmStatus?.base_url ?? "—"} prov="asbuilt" />
+        <Field k="auth" v={llmStatus?.auth ?? "—"} prov="asbuilt" />
+        {!llmStatus?.configured && (
+          <p className="ec-warn" data-testid="a4-llm-missing">
+            {t(
+              "未設定 ORNITH_API_KEY / A4_LLM_API_KEY → semantic 模式會失敗；可用 deterministic 或 auto（僅文法）。",
+              "ORNITH_API_KEY / A4_LLM_API_KEY not set → semantic mode fails; use deterministic or auto (grammar only).",
+            )}
+          </p>
+        )}
+      </Panel>
 
       <div className="ec-grid-2" style={{ gap: 12 }}>
         <Panel title={t("查詢編排", "Query composer")} sub="POST /api/governance/search/model/*" prov="asbuilt">
@@ -209,6 +241,22 @@ export function A4SemanticSearchPage() {
               {t("重新整理來源", "Refresh sources")}
             </Btn>
           </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }} data-testid="a4-interpret-mode">
+            <span className="ec-muted">{t("解譯模式", "Interpret mode")}:</span>
+            {(["auto", "semantic", "deterministic"] as ModelSearchInterpretMode[]).map((m) => (
+              <Btn
+                key={m}
+                data-testid={`a4-mode-${m}`}
+                onClick={() => setInterpretMode(m)}
+                className={interpretMode === m ? "ec-btn-primary" : undefined}
+              >
+                {m}
+              </Btn>
+            ))}
+          </div>
+          <p className="ec-muted" style={{ marginTop: 6 }}>
+            auto＝文法先、失敗再 Ornith；semantic＝強制 LLM；deterministic＝純文法。
+          </p>
           {sourceMode === "session" && (
             <label className="ec-field" style={{ display: "block", marginTop: 8 }}>
               <span>session_id</span>
@@ -259,6 +307,8 @@ export function A4SemanticSearchPage() {
           {result && (
             <>
               <Field k="status" v={result.status} prov="asbuilt" />
+              <Field k="interpret_mode" v={String(result.interpret_mode ?? interpretMode)} prov="asbuilt" />
+              <Field k="interpret_source" v={interpreted?.interpret_source ?? "—"} prov="asbuilt" />
               <Field k="model_version_id" v={result.model_version_id ?? "—"} prov="asbuilt" />
               <Field
                 k="interpretable"

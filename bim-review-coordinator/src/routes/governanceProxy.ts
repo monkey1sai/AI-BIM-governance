@@ -371,7 +371,12 @@ export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps 
   });
 
   // A4 semantic search — browser holds session / ifc-ready id only; coordinator
-  // resolves host IFC path and forwards POST /api/search/model (deterministic filters).
+  // resolves host IFC path and forwards POST /api/search/model
+  // (deterministic grammar and/or Ornith vLLM structured filters).
+  app.get("/api/governance/search/llm-status", (_request, response) => {
+    void forward(response, "GET", "/api/search/llm-status");
+  });
+
   app.post("/api/governance/search/model", (request, response) => {
     void forward(response, "POST", "/api/search/model", request.body);
   });
@@ -396,6 +401,7 @@ export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps 
       query?: unknown;
       limit?: unknown;
       element_mapping_path?: unknown;
+      interpret_mode?: unknown;
     };
     if (typeof override.query !== "string" || !override.query.trim()) {
       response.status(400).json({ detail: "query is required." });
@@ -409,6 +415,13 @@ export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps 
     if (typeof override.limit === "number") body.limit = override.limit;
     if (typeof override.element_mapping_path === "string" && override.element_mapping_path) {
       body.element_mapping_path = override.element_mapping_path;
+    }
+    if (
+      override.interpret_mode === "deterministic"
+      || override.interpret_mode === "semantic"
+      || override.interpret_mode === "auto"
+    ) {
+      body.interpret_mode = override.interpret_mode;
     }
     void forward(response, "POST", "/api/search/model", body);
   });
@@ -433,6 +446,7 @@ export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps 
       query?: unknown;
       limit?: unknown;
       element_mapping_path?: unknown;
+      interpret_mode?: unknown;
     };
     if (typeof override.query !== "string" || !override.query.trim()) {
       response.status(400).json({ detail: "query is required." });
@@ -446,6 +460,13 @@ export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps 
     if (typeof override.limit === "number") body.limit = override.limit;
     if (typeof override.element_mapping_path === "string" && override.element_mapping_path) {
       body.element_mapping_path = override.element_mapping_path;
+    }
+    if (
+      override.interpret_mode === "deterministic"
+      || override.interpret_mode === "semantic"
+      || override.interpret_mode === "auto"
+    ) {
+      body.interpret_mode = override.interpret_mode;
     }
     void forward(response, "POST", "/api/search/model", body);
   });

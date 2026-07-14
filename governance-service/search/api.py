@@ -1,14 +1,17 @@
 """A4 search REST — hung under governance-service; browser reaches via coordinator proxy."""
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from .engine import SearchRequest, run_model_search
+from .llm_client import load_llm_config
 
 router = APIRouter()
+
+InterpretMode = Literal["deterministic", "semantic", "auto"]
 
 
 class ModelSearchBody(BaseModel):
@@ -17,6 +20,20 @@ class ModelSearchBody(BaseModel):
     model_version_id: Optional[str] = None
     element_mapping_path: Optional[str] = None
     limit: int = Field(default=200, ge=1, le=1000)
+    # deterministic = grammar only; semantic = Ornith LLM JSON filters; auto = det then LLM.
+    interpret_mode: InterpretMode = "auto"
+
+
+@router.get("/api/search/llm-status")
+def search_llm_status() -> dict[str, Any]:
+    """Public status for Edge Console (never returns API key)."""
+    cfg = load_llm_config()
+    return {
+        "service": "a4-search-llm",
+        **cfg.public_status(),
+        "reference": "Ornith vLLM OpenAI-compatible /v1/chat/completions",
+        "env_keys": ["ORNITH_API_KEY or A4_LLM_API_KEY", "A4_LLM_BASE_URL", "A4_LLM_MODEL", "A4_LLM_ENABLED"],
+    }
 
 
 @router.post("/api/search/model")
@@ -29,6 +46,7 @@ def search_model(body: ModelSearchBody) -> dict[str, Any]:
                 model_version_id=body.model_version_id,
                 element_mapping_path=body.element_mapping_path,
                 limit=body.limit,
+                interpret_mode=body.interpret_mode,
             )
         )
     except FileNotFoundError as exc:

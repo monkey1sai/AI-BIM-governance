@@ -8,7 +8,8 @@ from typing import Any, Optional
 import ifcopenshell.util.element as ifc_el
 
 from rule_engine import is_fake_mapping, load_element_mapping, open_model
-from .interpreter import InterpretedFilters, PropertyFilter, interpret_query
+from .interpreter import InterpretedFilters, PropertyFilter, filters_from_structured_dict, interpret_query
+from .llm_client import LlmError, chat_completion, extract_json_object, load_llm_config
 
 
 @dataclass
@@ -18,6 +19,8 @@ class SearchRequest:
     model_version_id: Optional[str] = None
     element_mapping_path: Optional[str] = None
     limit: int = 200
+    # deterministic | semantic (Ornith LLM) | auto (det first, then LLM if uninterpreted)
+    interpret_mode: str = "auto"
 
 
 def _storey_name(el: Any) -> Optional[str]:
@@ -106,27 +109,88 @@ def _storey_match(storey: Optional[str], tokens: list[str]) -> bool:
     return False
 
 
+def _resolve_filters(req: SearchRequest) -> tuple[InterpretedFilters, list[dict[str, Any]]]:
+    mode = (req.interpret_mode or "auto").strip().lower()
+    if mode not in ("deterministic", "semantic", "auto"):
+        mode = "auto"
+
+    evidence: list[dict[str, Any]] = []
+    det = interpret_query(req.query)
+    llm_cfg = load_llm_config()
+
+    if mode == "deterministic":
+        evidence.append({"kind": "interpreter", "version": "deterministic_filter_v1", "mode": mode})
+        return det, evidence
+
+    need_llm = mode == "semantic" or (mode == "auto" and not det.interpretable)
+    if not need_llm:
+        evidence.append({"kind": "interpreter", "version": "deterministic_filter_v1", "mode": mode})
+        return det, evidence
+
+    evidence.append(
+        {
+            "kind": "llm",
+            "provider": "ornith_vllm_openai_compat",
+            "model": llm_cfg.model if llm_cfg.enabled else None,
+            "base_url": llm_cfg.base_url if llm_cfg.enabled else None,
+            "mode": mode,
+        }
+    )
+    try:
+        raw_text = chat_completion(
+            user_content=f"使用者問句：{req.query}\n請輸出 JSON 過濾條件。",
+            config=llm_cfg,
+        )
+        structured = extract_json_object(raw_text)
+        llm_filters = filters_from_structured_dict(req.query, structured, source="llm")
+        evidence.append({"kind": "llm_raw_ok", "chars": len(raw_text)})
+        if mode == "auto" and det.interpretable and not llm_filters.interpretable:
+            # Prefer deterministic if LLM failed to interpret.
+            evidence.append({"kind": "interpreter", "version": "deterministic_filter_v1", "fallback": "llm_empty"})
+            return det, evidence
+        if mode == "auto" and det.interpretable and llm_filters.interpretable:
+            # Merge: prefer LLM classes/props when present; keep det as notes baseline.
+            llm_filters.notes.append("hybrid:auto_llm_over_det")
+            llm_filters.interpret_source = "hybrid"
+            return llm_filters, evidence
+        return llm_filters, evidence
+    except LlmError as exc:
+        evidence.append({"kind": "llm_error", "code": exc.code, "detail": exc.message[:300]})
+        if mode == "semantic":
+            # Hard semantic mode: do not silently fall back without telling caller.
+            det_fail = InterpretedFilters(raw_query=req.query, interpret_source="llm")
+            det_fail.notes.append(f"llm_failed:{exc.code}")
+            det_fail.notes.append(exc.message[:200])
+            return det_fail, evidence
+        # auto: fall back to deterministic result (may still be uninterpreted)
+        evidence.append({"kind": "interpreter", "version": "deterministic_filter_v1", "fallback": "after_llm_error"})
+        return det, evidence
+
+
 def run_model_search(req: SearchRequest) -> dict[str, Any]:
     if not req.ifc_source_path or not os.path.exists(req.ifc_source_path):
         raise FileNotFoundError(f"ifc_source_path not found: {req.ifc_source_path}")
 
-    filters: InterpretedFilters = interpret_query(req.query)
-    evidence_refs: list[dict[str, Any]] = [
-        {"kind": "interpreter", "version": "deterministic_filter_v1"},
+    filters, llm_evidence = _resolve_filters(req)
+    evidence_refs: list[dict[str, Any]] = list(llm_evidence) + [
         {"kind": "ifc_source", "path_basename": os.path.basename(req.ifc_source_path)},
     ]
     if req.model_version_id:
         evidence_refs.append({"kind": "model_version_id", "value": req.model_version_id})
 
     if not filters.interpretable:
+        next_step = "rewrite_query_using_supported_grammar"
+        if any(e.get("kind") == "llm_error" for e in evidence_refs):
+            next_step = "check_ornith_llm_env_or_use_deterministic_mode"
         return {
             "status": "uninterpreted",
             "model_version_id": req.model_version_id,
+            "interpret_mode": req.interpret_mode,
             "interpreted_filters": filters.to_dict(),
             "results": [],
             "stats": {"total": 0, "matched": 0, "unmapped": 0, "scanned": 0},
             "evidence_refs": evidence_refs,
-            "next_step": "rewrite_query_using_supported_grammar",
+            "next_step": next_step,
         }
 
     mapping: dict[str, str] = {}
@@ -240,8 +304,8 @@ def run_model_search(req: SearchRequest) -> dict[str, Any]:
                 if filters.property_filters
                 else {},
                 "match_status": "match",
-                "confidence": 1.0,
-                "confidence_basis": "deterministic_grammar",
+                "confidence": filters.confidence if filters.confidence is not None else 1.0,
+                "confidence_basis": filters.confidence_basis or "deterministic_grammar",
                 "evidence_refs": traces,
                 "highlight_eligible": bool(prim),
             }
@@ -252,6 +316,7 @@ def run_model_search(req: SearchRequest) -> dict[str, Any]:
     return {
         "status": "ok",
         "model_version_id": req.model_version_id,
+        "interpret_mode": req.interpret_mode,
         "interpreted_filters": filters.to_dict(),
         "results": results,
         "stats": {
