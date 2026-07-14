@@ -232,7 +232,7 @@ export function A4SemanticSearchPage() {
                 key={m}
                 data-testid={`a4-source-${m}`}
                 onClick={() => setSourceMode(m)}
-                className={sourceMode === m ? "ec-btn-primary" : undefined}
+                primary={sourceMode === m}
               >
                 {m}
               </Btn>
@@ -248,7 +248,7 @@ export function A4SemanticSearchPage() {
                 key={m}
                 data-testid={`a4-mode-${m}`}
                 onClick={() => setInterpretMode(m)}
-                className={interpretMode === m ? "ec-btn-primary" : undefined}
+                primary={interpretMode === m}
               >
                 {m}
               </Btn>

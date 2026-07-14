@@ -97,7 +97,7 @@ export interface AppCardDef {
 // A1–A10 權威清單。落地：A1–A3 AS-BUILT 能力面；A4 AS-BUILT PARTIAL（deterministic search，非 LLM／非完整 IA）；
 // A5–A10 roadmap vision（後端未建）。A9/A10 身分對齊 TARGET-shell 2026-07-13（A9 機器人、A10 AI 決策）。
 export const A1A10: AppCardDef[] = [
-  { code: "A1", slug: "governance", title: "BIM 治理與模型檢核", en: "Governance & Rule Checker", phase: 1, tier: "focus", dep: "core+omni", prov: "asbuilt", route: "issues" },
+  { code: "A1", slug: "governance", title: "BIM 治理與模型檢核", en: "Governance & Rule Checker", phase: 1, tier: "focus", dep: "core+omni", prov: "asbuilt", route: "a1" },
   { code: "A2", slug: "version-diff", title: "模型版本差異與責任追蹤", en: "Model Version Diff", phase: 2, tier: "focus", dep: "core", prov: "asbuilt", route: "version-diff" },
   { code: "A3", slug: "federation", title: "跨專業模型 Federation", en: "Cross-discipline Federation", phase: 2, tier: "focus", dep: "omni", prov: "asbuilt", route: "federation" },
   { code: "A4", slug: "ai-search", title: "語意查詢與證據", en: "Semantic query & evidence", phase: 1, tier: "focus", dep: "core+omni", prov: "asbuilt", route: "a4" },

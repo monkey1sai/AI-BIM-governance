@@ -112,6 +112,10 @@
   cursor:pointer; font:inherit; }
 .ec-btn:hover:not(:disabled) { border-color:var(--ec-grn); color:var(--ec-grn); }
 .ec-btn.primary { background:var(--ec-grn); color:var(--ec-on-grn); border-color:var(--ec-grn); font-weight:600; }
+/* .ec-btn:hover:not(:disabled) 的特異性 (0,3,0) 高於 .ec-btn.primary (0,2,0)，會把 color 覆蓋成
+   --ec-grn——與 primary 自身背景 (--ec-grn) 同色，hover 時文字完全消失（A1「執行檢核」等主要
+   CTA 皆中）。以 (0,4,0) 覆寫回 --ec-on-grn；border-color 本就同色，無須重申。 */
+.ec-btn.primary:hover:not(:disabled) { color:var(--ec-on-grn); }
 .ec-btn:disabled { opacity:.45; cursor:not-allowed; }
 .ec-btn .ec-cap { color:var(--ec-fg-4); font-size:10px; }
 

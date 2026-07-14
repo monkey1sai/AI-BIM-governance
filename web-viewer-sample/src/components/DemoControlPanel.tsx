@@ -36,8 +36,6 @@ interface DemoControlPanelProps {
     onHighlightWorld?: () => void;
     onFocusWorld: () => void;
     onClearHighlight: () => void;
-    onEmitCoordinatorHighlight?: () => void;
-    onCreateAnnotation?: () => void;
     onLoadMapping: () => void;
     onSelectMappingIndex: (index: number) => void;
     onHighlightSelectedMapping: () => void;
@@ -228,8 +226,6 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         onHighlightWorld = () => undefined,
         onFocusWorld,
         onClearHighlight,
-        onEmitCoordinatorHighlight = () => undefined,
-        onCreateAnnotation = () => undefined,
         onLoadMapping,
         onSelectMappingIndex,
         onHighlightSelectedMapping,
