@@ -308,7 +308,7 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
         <Field k={t("開 issue 前置", "issue prerequisite")} v={t("須先成功跑完 A3 規則檢核（succeeded），否則按鈕 disabled", "A3 rule check must complete successfully (succeeded) first, otherwise the button is disabled")} prov="asbuilt" />
       </Panel>
 
-      <Panel title={t("願景 / 待建", "Vision / to build")} sub={t("碰撞屬 A3 clash（ifcclash 已選型、未開工）；語意搜尋屬權威 A4（p4）；其餘願景項後端未建 → 一律 disabled，不假裝 ready", "Clash belongs to A3 (ifcclash selected, not started); semantic search is authoritative A4 (p4); other vision items have no backend → all disabled, not pretending ready")} prov="asbuilt">
+      <Panel title={t("願景 / 待建", "Vision / to build")} sub={t("碰撞屬 A3 clash（ifcclash 已選型、未開工）；語意搜尋屬權威 A4（#a4 live partial）；其餘願景項後端未建 → 一律 disabled，不假裝 ready", "Clash belongs to A3 (ifcclash selected, not started); semantic search is authoritative A4 (#a4 live partial); other vision items have no backend → all disabled, not pretending ready")} prov="asbuilt">
         {ROADMAP_ENGINES.map((e) => (
           <div className="gov-engine roadmap" key={e.id}>
             <span className="gov-engine-code">{e.code}</span>

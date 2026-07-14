@@ -26,7 +26,7 @@ route＝EdgeConsole hash route（無斜線，`#a1` 非 `#/a1`）；prototype 錨
 | `#a1` | `#a1` | PARTIAL | asbuilt | 五步狀態機＋雙來源檢核＋記分板＋3D 高亮 session＋Issue/Excel/BCF 齊；rollback=p1；tracked browser trace 未觀測 | `artifacts/e2e/edge-console-primary-ui-deploy/edge-console-a1-desktop.png`、`artifacts/e2e/real-ifc-storage-intake.png`；governance pytest（rule_engine/ids/bcf）；trace not observed |
 | `#a2` | `#a2` | PARTIAL | asbuilt | diffs＋issue-impact 齊；apply-overlay 後端誠實回 501、3D 著色走 client highlight（p15）；selector E2E 與 tracked trace 未觀測 | governance pytest（diff）；selector E2E / trace not observed |
 | `#a3` | `#a3` | PARTIAL | asbuilt | federation（建 set/validate-coords/build usda/handoff）已建；clash 為 NOT BUILT／未開工，O6 已裁決 ifcclash | governance pytest（federation）；clash 端點 grep=0（not observed） |
-| `#a4` | `#a4` | NOT-BUILT | p4 | AppVisionPage 佔位頁，後端不存在 | not observed（vision 頁自標 p4） |
+| `#a4` | `#a4` | PARTIAL | asbuilt | B 閉環語意查詢：deterministic `POST /api/search/model`（governance）＋ coordinator for-session/for-ifc-ready proxy＋ EdgeConsole live 頁；預設 fixture「4F 防火門且 FireRating 小於 60」pytest 綠；3D highlight 仍 client-pull／無 first-frame 內嵌；BCF provenance bridge 未建（Issue 走 manual） | governance `tests/test_search_model.py`；coordinator `governance-search-for-session.test.ts`；viewer `A4SemanticSearchPage.test.tsx`；tracked browser trace not observed |
 | `#a5` | `#a5` | NOT-BUILT | p3 | AppVisionPage 佔位頁，後端不存在 | not observed（vision 頁自標 p3） |
 | `#issues` | `#issues` | PARTIAL | asbuilt | 3 內建規則＋IDS-XML 匯入＋BCF 匯出＋Issue 生命週期齊；BCF export path 目前匯出全部 formal issues，generic create 帶 `ifc_guid` 時預設 `source_type=manual` 仍會進匯出，未執行 TARGET 的 rule-run/diff provenance gate；「在 3D 標示」p1 disabled；assignee 後端齊（schema `assignee` 欄＋create API＋BCF `AssignedTo` 映射：`issues/store.py`·`issues/api.py`·`bcf/bcf_writer.py`）、前端寫入 UI 未建（顯「指派 pending」）；tracked browser trace 未觀測 | `issues/store.py`＋`issues/api.py`＋`bcf/api.py` source inspection；`artifacts/e2e/issues-tab.png`；governance pytest（issues/ids/bcf）；trace not observed |
 | `#reports` | `#reports` | PARTIAL | p1 | StubPage 狀態清單；A1 Excel 匯出已在（指向既有匯出）；coverage 報表／review package=p1 未建 | `npm run verify`；報表產生器 UI not observed |
@@ -65,7 +65,7 @@ route＝EdgeConsole hash route（無斜線，`#a1` 非 `#/a1`）；prototype 錨
 
 ## §3 NOT BUILT 硬清單（12 項；任何文件不得寫成已交付）
 
-1. A4–A10 全部後端（語意搜尋/IoT-FM/4D5D/reality capture/synthetic data/copilot/robot sim）。
+1. A5–A10 全部後端（IoT-FM/4D5D/reality capture/synthetic data/copilot/robot sim）。A4 已有 deterministic search 後端（PARTIAL；非 LLM／非完整 TARGET IA）。
 2. ChatUSD agent 欄真實對話/MCP 執行（純版型，input disabled）。
 3. server→viewer push highlight（2026-05-21 已退役；現行 client-pull p15）。
 4. viewer section/snapshot（p15）。
@@ -82,13 +82,13 @@ route＝EdgeConsole hash route（無斜線，`#a1` 非 `#/a1`）；prototype 錨
 
 | A1 | A2 | A3 | A4 | A5 | A6 | A7 | A8 | A9 | A10 |
 |---|---|---|---|---|---|---|---|---|---|
-| PARTIAL | PARTIAL | split（federation implementation exists／clash NOT BUILT·未開工） | p4 | p3 | p4 | p4 | p4 | p4 | p4 |
+| PARTIAL | PARTIAL | split（federation implementation exists／clash NOT BUILT·未開工） | PARTIAL | p3 | p4 | p4 | p4 | p4 | p4 |
 
-Hero runtime slices＝A1＋A2＋A3 federation；依 PROCESS §2 的新硬 gate，缺 tracked browser trace 時仍記 PARTIAL。
+Hero runtime slices＝A1＋A2＋A3 federation＋A4 deterministic search；依 PROCESS §2 的新硬 gate，缺 tracked browser trace 時仍記 PARTIAL。
 
 ## §5 已建閉環
 
-MinIO watch／手選 IFC → coordinator intake（ifc-ready job＋ConversionLedger）→ streaming :49101 IFC→USDC＋element_mapping.json → review session＋Kit 綁 stage → :8004/ui EdgeConsole（A1 檢核→Issue→Excel/BCF；A2 diff；A3 federation；MD 頁全生命週期；sessions/instances/runtime 觀測；Review Room attach 3D＋focus/select/highlight client-pull）→ `/ui/open` 302 → :5173 WebRTC viewer（primary＋spectator）。
+MinIO watch／手選 IFC → coordinator intake（ifc-ready job＋ConversionLedger）→ streaming :49101 IFC→USDC＋element_mapping.json → review session＋Kit 綁 stage → :8004/ui EdgeConsole（A1 檢核→Issue→Excel/BCF；A2 diff；A3 federation；A4 semantic search for-session/for-ifc-ready→governance filter results→manual Issue；MD 頁全生命週期；sessions/instances/runtime 觀測；Review Room attach 3D＋focus/select/highlight client-pull）→ `/ui/open` 302 → :5173 WebRTC viewer（primary＋spectator）。
 已入 git 的最強證據＝`artifacts/e2e/real-ifc-*` 三張＋`stage-artifact-binding.png`＋`primary-spectator-authority.png`＋`md-merge-trace/`、`infra-slice/` 系列；c-m4／seven-axis 系列截圖 not observed（本機 evidence 未入 git）。
 
 ## §6 已知系統性缺陷（現況事實，不是紀律）

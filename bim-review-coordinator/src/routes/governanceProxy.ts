@@ -370,6 +370,86 @@ export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps 
     );
   });
 
+  // A4 semantic search — browser holds session / ifc-ready id only; coordinator
+  // resolves host IFC path and forwards POST /api/search/model (deterministic filters).
+  app.post("/api/governance/search/model", (request, response) => {
+    void forward(response, "POST", "/api/search/model", request.body);
+  });
+
+  app.post("/api/governance/search/model/for-session/:sessionId", (request, response) => {
+    const sessionId = request.params.sessionId;
+    const isSafe = deps.isSafeSessionId ?? (() => true);
+    if (!isSafe(sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
+    }
+    if (!deps.resolveRuleRunSessionContext) {
+      response.status(501).json({ detail: "session→IFC resolution is not configured." });
+      return;
+    }
+    const resolution = deps.resolveRuleRunSessionContext(sessionId);
+    if (!resolution.ok) {
+      sendSessionResolutionFailure(response, resolution);
+      return;
+    }
+    const override = (request.body ?? {}) as {
+      query?: unknown;
+      limit?: unknown;
+      element_mapping_path?: unknown;
+    };
+    if (typeof override.query !== "string" || !override.query.trim()) {
+      response.status(400).json({ detail: "query is required." });
+      return;
+    }
+    const body: Record<string, unknown> = {
+      ifc_source_path: resolution.context.ifc_source_path,
+      query: override.query.trim(),
+      model_version_id: resolution.context.model_version_id ?? null,
+    };
+    if (typeof override.limit === "number") body.limit = override.limit;
+    if (typeof override.element_mapping_path === "string" && override.element_mapping_path) {
+      body.element_mapping_path = override.element_mapping_path;
+    }
+    void forward(response, "POST", "/api/search/model", body);
+  });
+
+  app.post("/api/governance/search/model/for-ifc-ready/:jobId", (request, response) => {
+    const jobId = request.params.jobId;
+    const isSafe = deps.isSafeIfcReadyJobId ?? (() => true);
+    if (!isSafe(jobId)) {
+      response.status(400).json({ detail: "Invalid ifc-ready job id." });
+      return;
+    }
+    if (!deps.resolveRuleRunIfcReadyContext) {
+      response.status(501).json({ detail: "ifc-ready IFC resolution is not configured." });
+      return;
+    }
+    const resolution = deps.resolveRuleRunIfcReadyContext(jobId);
+    if (!resolution.ok) {
+      sendSessionResolutionFailure(response, resolution);
+      return;
+    }
+    const override = (request.body ?? {}) as {
+      query?: unknown;
+      limit?: unknown;
+      element_mapping_path?: unknown;
+    };
+    if (typeof override.query !== "string" || !override.query.trim()) {
+      response.status(400).json({ detail: "query is required." });
+      return;
+    }
+    const body: Record<string, unknown> = {
+      ifc_source_path: resolution.context.ifc_source_path,
+      query: override.query.trim(),
+      model_version_id: resolution.context.model_version_id ?? null,
+    };
+    if (typeof override.limit === "number") body.limit = override.limit;
+    if (typeof override.element_mapping_path === "string" && override.element_mapping_path) {
+      body.element_mapping_path = override.element_mapping_path;
+    }
+    void forward(response, "POST", "/api/search/model", body);
+  });
+
   // A2 model-version diff proxy（透傳 governance-service /api/diffs*）。
   app.post("/api/governance/diffs", (request, response) => {
     void forward(response, "POST", "/api/diffs", request.body);

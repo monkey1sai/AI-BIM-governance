@@ -37,7 +37,7 @@ EdgeConsole product shell contract（對齊 `feat/edge-console-product-shell`）
 | A1 | BIM 治理與模型檢核 | `governance-service` + `bim-review-coordinator` proxy + `web-viewer-sample` Edge Console |
 | A2 | 模型版本差異與責任追蹤 | `governance-service/diff_engine` + Edge Console |
 | A3 | 跨專業模型 Federation | `governance-service/federation` + Review Room handoff |
-| A4 | 語意搜尋與模型問答 | Edge Console / future search service / controlled highlight |
+| A4 | 語意搜尋與模型問答 | `governance-service/search` + coordinator `/api/governance/search/*` proxy + Edge Console `#a4`（deterministic filters；PARTIAL） |
 | A5 | IoT / BMS / FM 數位分身 | future core service + optional 3D overlay |
 | A6 | 4D / 5D 施工模擬 | future schedule service + optional Kit overlay |
 | A7 | Reality Capture 比對 | future capture service + optional 3D deviation overlay |

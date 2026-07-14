@@ -25,6 +25,7 @@ import {
   ViewerPresentationPage,
   VersionDiffPage,
 } from "./pages";
+import { A4SemanticSearchPage } from "./A4SemanticSearchPage";
 // MD 三頁合一（Task 6/7/9）：#minio 改由單一 ModelDataPage 承接（原 ConversionSchedulingPage / IntakePage /
 // MinioDataPage 三頁合併）。舊三頁本體已於 Task 9 自 pages.tsx 移除。
 import { ModelDataPage } from "./modelData/ModelDataPage";
@@ -70,7 +71,7 @@ function renderBody(page: string, go: (k: string) => void) {
     case "a1": return <A1GovernanceWorkbenchPage />;
     case "a2": return <VersionDiffPage />;
     case "a3": return <FederationPage />;
-    case "a4": return <AppVisionPage slug="ai-search" onOpen={go} />;
+    case "a4": return <A4SemanticSearchPage />;
     case "a5": return <AppVisionPage slug="iot-fm" onOpen={go} />;
     case "a6": return <AppVisionPage slug="4d-5d" onOpen={go} />;
     case "a7": return <AppVisionPage slug="reality-capture" onOpen={go} />;

@@ -351,13 +351,18 @@ describe("edge console honesty smoke", () => {
     }
   });
 
-  it("P3-1 A4–A10 roadmap 卡片皆可點（route 指向 vision 詳頁）且標 p3/p4", () => {
+  it("P3-1 A5–A10 roadmap 卡片皆可點（route 指向 vision 詳頁）且標 p3/p4；A4 已進 focus live route", () => {
     const roadmap = A1A10.filter((a) => a.tier === "roadmap");
-    expect(roadmap.length).toBe(7);
+    expect(roadmap.length).toBe(6);
     expect(roadmap.every((a) => a.route?.startsWith("app/"))).toBe(true);
-    // A5 = p3（RM phase 3），其餘 = p4。
+    // A5 = p3（RM phase 3），其餘 roadmap = p4。A4 為 focus / asbuilt live page。
     expect(A1A10.find((a) => a.code === "A5")?.prov).toBe("p3");
     expect(roadmap.filter((a) => a.code !== "A5").every((a) => a.prov === "p4")).toBe(true);
+    expect(A1A10.find((a) => a.code === "A4")).toMatchObject({
+      tier: "focus",
+      prov: "asbuilt",
+      route: "a4",
+    });
   });
 
   // ── P3-2 / P3-3 殼層：Agent suggested prompts（disabled 輸入）+ FlowBar + Tweaks ──

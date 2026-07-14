@@ -35,7 +35,7 @@
 | `gap-status-calibration`（一次性） | 全站 | —（校正工項，不新增規格） | TRUTH §1/§2 全部 `not observed` 項 | 校正型×中 | runtime 逐頁截圖比對 prototype 錨，TRUTH `not observed` 項全數改為實測狀態或確認 NOT-BUILT；截圖入 `artifacts/e2e/`（`.gitignore` 擋 `*.png`，須 `git add -f`） | 校正寧可保守；無證據一律維持 `not observed` | 無 |
 | `gap-route-convergence`（一次性） | 全站 | TARGET-contracts §4＋TARGET-shell §0 | TRUTH §7 機器真相宣告 | 校正型×中 | repo 全部 route case（約 30+，含保留別名）逐條裁決：併入 22 正典／保留別名／排程退役；結論寫入 TARGET-contracts §4 與 TARGET-shell §0，TRUTH §7 同步——**做完即終結雙詞彙，不再永久對照** | 收斂完成前，雙詞彙並存屬現況事實（記於 TRUTH §7），不得假裝已統一 | 無 |
 
-**尚未排入 gap 聲明**：A4–A10 的完整目標已在 TARGET-shell 對應節；現行 NOT BUILT／disabled 佔位是誠實的 runtime 現況，不是最終需求。這七頁在 §2 #7 決定第一個 vertical slice、服務／資料 ownership 與 contract 例外前不列入 §1；一旦裁決，只新增被選 route 的一個 gap，其他 route 仍維持誠實佔位。`#admin`、ChatUSD agent 真對話／MCP 執行（TRUTH §3 #2）與 kit-manager-api GPU/心跳遙測（TRUTH §3 #6，IX-SS-02 前置）同樣尚未排入 gap，UI 維持 disabled／「未取得」；遙測一旦立項即同時解鎖 `gap-ss-03-force-release` 的 blocker。
+**尚未排入 gap 聲明**：A5–A10 的完整目標已在 TARGET-shell 對應節；現行 NOT BUILT／disabled 佔位是誠實的 runtime 現況，不是最終需求。A4 已於 2026-07-14 以 deterministic search vertical slice 接入 B 閉環（ownership＝governance-service + coordinator proxy；見 §2 #7 裁決）。其餘頁在選定 vertical slice 前不列入 §1。`#admin`、ChatUSD agent 真對話／MCP 執行（TRUTH §3 #2）與 kit-manager-api GPU/心跳遙測（TRUTH §3 #6，IX-SS-02 前置）同樣尚未排入 gap，UI 維持 disabled／「未取得」；遙測一旦立項即同時解鎖 `gap-ss-03-force-release` 的 blocker。
 
 **viewer gap 實作接點註**：六個 `gap-viewer-m4-*` 的深規在 `TARGET-viewer.md`（該檔與 TARGET-shell `#viewer` 節均無「實作接點」欄）；viewer 前端真身＝`web-viewer-sample` viewer 端（經 `/ui/open` 302 進入的 :5173 baked viewer，非 `src/console/` 殼層），改動須重建 viewer docker image 才會生效。改檔位置以本註為錨，實際落點以 repo 現行結構為機器真相。
 
@@ -57,7 +57,7 @@
 4. **O3 版本命名規約**：MinIO「版本層」落地方式（資料夾命名規則、舊資料是否搬遷）——A2 真雙版本比對的前置。觸發：需要 v06/v07 級真差異比對前。預設：不動儲存層、不自創命名規約。
 5. **O5 GPU 台數規劃**：落地端實際 GPU 台數與型號——session 容量與排程的前置。觸發：容量規劃或多卡排程設計前。預設：以單卡假設規劃（1 GPU＝1 Kit＝1 stream，無 live migration），不預先實作多卡排程。
 6. **BCF 3.0 升級時點**：前置＝向 buildingSMART 確認 3.0 規格與官方支援。預設：固定 BCF 2.1（純 stdlib 匯出），UI 與文件標「3.0 為升級目標」。
-7. **A4–A10 第一個 vertical slice 與 ownership**：從 A4 search/index、A5 IoT/FM、A6 schedule/cost、A7 capture/deviation、A8 dataset/Replicator、A9 robot mission、A10 scenario/orchestration 選一頁，逐一確認 authoritative service、coordinator proxy、資料保存位置、auth/audit 與需要的 §1.1 approved exception。觸發：任一 A4–A10 實作 gap 建立前。預設：不新增 route/API，不接 mock；維持現行 NOT BUILT／disabled 誠實佔位。
+7. **A4–A10 第一個 vertical slice 與 ownership**：**已裁決（2026-07-14）**＝選 **A4**。authoritative service＝`governance-service`（`POST /api/search/model`，deterministic ifcopenshell filters，非 LLM）；browser 經 coordinator `:8004` `/api/governance/search/model` 與 `for-session` / `for-ifc-ready`；資料不另建 index DB（當次開啟 IFC 掃描）；Issue 批次走既有 `POST /api/issues`（`source_type=manual`，BCF provenance bridge 未批）。A5–A10 仍待各自 ownership 裁決。預設（A5–A10）：不新增 route/API，維持 NOT BUILT／disabled。
 
 **已裁決不留帳**：O6＝ifcclash、O7＝自由文字 assignee、A1v2 三裁決、SaaS 10 裁決等結論已內化進 TARGET 正文；出處＝審批報告三檔（keep 原地）與 git history。本節只收未決事項。
 

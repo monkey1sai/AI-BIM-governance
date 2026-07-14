@@ -72,6 +72,11 @@ from file_library.api import router as file_library_router  # noqa: E402
 
 app.include_router(file_library_router)
 
+# A4 deterministic semantic search（CPU ifcopenshell filter；非 LLM）。
+from search.api import router as search_router  # noqa: E402
+
+app.include_router(search_router)
+
 
 def _rule_set_path(name: Optional[str]) -> str:
     name = name or "default-governance"

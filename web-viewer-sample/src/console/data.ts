@@ -53,7 +53,7 @@ export const PAGES: PageDef[] = [
   { key: "a1", no: "A1", label: "治理與模型檢核", plane: "governance", group: "core", badge: "P0", badgeTone: "warn" },
   { key: "a2", no: "A2", label: "版本差異與責任", plane: "governance", group: "core" },
   { key: "a3", no: "A3", label: "跨專業疊合", plane: "governance", group: "core" },
-  { key: "a4", no: "A4", label: "語意搜尋問答", plane: "governance", group: "core", badge: "P4", badgeTone: "ai" },
+  { key: "a4", no: "A4", label: "語意搜尋問答", plane: "governance", group: "core", badge: "P0", badgeTone: "warn" },
   { key: "a5", no: "A5", label: "IoT / FM 數位分身", plane: "governance", group: "core", badge: "P3", badgeTone: "ai" },
   { key: "issues", no: "BC", label: "Issue / BCF", plane: "governance", group: "core", badge: "A1", badgeTone: "info" },
   { key: "reports", no: "RP", label: "報表中心", plane: "governance", group: "core" },
@@ -101,8 +101,8 @@ export const A1A10: AppCardDef[] = [
   { code: "A1", slug: "governance", title: "BIM 治理與模型檢核", en: "Governance & Rule Checker", phase: 1, tier: "focus", dep: "core+omni", prov: "asbuilt", route: "issues" },
   { code: "A2", slug: "version-diff", title: "模型版本差異與責任追蹤", en: "Model Version Diff", phase: 2, tier: "focus", dep: "core", prov: "asbuilt", route: "version-diff" },
   { code: "A3", slug: "federation", title: "跨專業模型 Federation", en: "Cross-discipline Federation", phase: 2, tier: "focus", dep: "omni", prov: "asbuilt", route: "federation" },
-  // A4–A10 roadmap：prov 由原 p15 細分為 RM phase（A5=p3，其餘 p4）；route 指向 vision 詳頁（可點）。
-  { code: "A4", slug: "ai-search", title: "語意搜尋與模型問答", en: "USD Search & NL Query", phase: 4, tier: "roadmap", dep: "omni", prov: "p4", route: "app/ai-search" },
+  // A4 live partial（deterministic search in B-loop）；A5–A10 roadmap vision pages.
+  { code: "A4", slug: "ai-search", title: "語意搜尋與模型問答", en: "USD Search & NL Query", phase: 1, tier: "focus", dep: "core+omni", prov: "asbuilt", route: "a4" },
   { code: "A5", slug: "iot-fm", title: "IoT / BMS / FM 數位分身", en: "IoT / FM Digital Twin", phase: 3, tier: "roadmap", dep: "core+omni", prov: "p3", route: "app/iot-fm" },
   { code: "A6", slug: "4d-5d", title: "4D / 5D 施工模擬", en: "4D / 5D Construction", phase: 2, tier: "roadmap", dep: "omni", prov: "p4", route: "app/4d-5d" },
   { code: "A7", slug: "reality-capture", title: "Reality Capture 比對", en: "Scan-to-BIM Deviation", phase: 4, tier: "roadmap", dep: "omni", prov: "p4", route: "app/reality-capture" },
@@ -128,7 +128,7 @@ export const SERVICES: BoundaryNode[] = [
   { id: "viewer", name: "Review Room (web-viewer-sample)", sub: "USD over WebRTC", port: "127.0.0.1:5173", plane: "web", prov: "asbuilt" },
   { id: "coordinator", name: "Review Coordinator", sub: "control plane（唯一對外）", port: "127.0.0.1:8004", plane: "boundary", prov: "asbuilt" },
   { id: "streaming", name: "Streaming / Conversion authority", sub: "bim-streaming-server · 轉檔權威 + Kit 控制", port: "127.0.0.1:49101 · Kit 49100/47998", plane: "internal", prov: "asbuilt" },
-  { id: "governance", name: "Governance service", sub: "A1 rule-run / A2 diff / A3 federation", port: "127.0.0.1:49102", plane: "internal", prov: "asbuilt" },
+  { id: "governance", name: "Governance service", sub: "A1 rule-run / A2 diff / A3 federation / A4 search", port: "127.0.0.1:49102", plane: "internal", prov: "asbuilt" },
   { id: "cloud", name: "公司雲端 control-plane", sub: "bim-control · MySQL（metadata 權威）", port: "external", plane: "external", prov: "asbuilt" },
 ];
 

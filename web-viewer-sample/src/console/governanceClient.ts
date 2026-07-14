@@ -251,7 +251,29 @@ export const governanceClient = {
   reviewRoom: (setId: string) =>
     jsonFetch<ReviewRoomDescriptor>(`/api/governance/federated-sets/${setId}/review-room`),
 
+  // A4 deterministic semantic search（非 LLM）。for-session / for-ifc-ready 由 coordinator 解析 host IFC。
+  searchModel: (req: ModelSearchRequest) =>
+    jsonFetch<ModelSearchResponse>("/api/governance/search/model", {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
+  searchModelForSession: (sessionId: string, body: { query: string; limit?: number }) =>
+    jsonFetch<ModelSearchResponse>(
+      `/api/governance/search/model/for-session/${encodeURIComponent(sessionId)}`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  searchModelForIfcReady: (ifcReadyJobId: string, body: { query: string; limit?: number }) =>
+    jsonFetch<ModelSearchResponse>(
+      `/api/governance/search/model/for-ifc-ready/${encodeURIComponent(ifcReadyJobId)}`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
   // Issue tracking
+  createIssue: (req: IssueCreateRequest) =>
+    jsonFetch<IssueRow>("/api/governance/issues", {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
   listIssues: (status?: string, filters?: { model_version_id?: string; kind?: "issue" | "annotation" }) => {
     const qs = new URLSearchParams();
     if (status) qs.set("status", status);
@@ -293,6 +315,73 @@ export interface IssueRow {
   rule_code?: string | null;
   model_version_id?: string | null;
   source_type: string;
+}
+
+export interface IssueCreateRequest {
+  title: string;
+  description?: string;
+  severity?: string;
+  ifc_guid?: string | null;
+  usd_prim_path?: string | null;
+  model_version_id?: string | null;
+  assignee?: string | null;
+}
+
+export interface ModelSearchRequest {
+  ifc_source_path: string;
+  query: string;
+  model_version_id?: string | null;
+  element_mapping_path?: string | null;
+  limit?: number;
+}
+
+export interface ModelSearchPropertyFilter {
+  name: string;
+  op: string;
+  value: number;
+}
+
+export interface ModelSearchInterpretedFilters {
+  raw_query: string;
+  ifc_classes: string[];
+  storey_tokens: string[];
+  property_filters: ModelSearchPropertyFilter[];
+  name_contains: string[];
+  unmatched_fragments: string[];
+  interpretable: boolean;
+  notes: string[];
+  confidence: number | null;
+  confidence_basis: string | null;
+}
+
+export interface ModelSearchResultRow {
+  ifc_guid: string | null;
+  usd_prim_path: string | null;
+  ifc_class: string;
+  name: string | null;
+  storey: string | null;
+  properties: Record<string, unknown>;
+  match_status: string;
+  confidence: number | null;
+  confidence_basis?: string | null;
+  evidence_refs: string[];
+  highlight_eligible: boolean;
+}
+
+export interface ModelSearchResponse {
+  status: "ok" | "uninterpreted" | string;
+  model_version_id?: string | null;
+  interpreted_filters: ModelSearchInterpretedFilters;
+  results: ModelSearchResultRow[];
+  stats: {
+    total: number;
+    matched: number;
+    unmapped: number;
+    scanned: number;
+    truncated?: boolean;
+  };
+  evidence_refs: unknown[];
+  next_step?: string | null;
 }
 
 export interface DiffRequest {
