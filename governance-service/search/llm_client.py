@@ -53,14 +53,20 @@ class LlmConfig:
         return self.base_url.rstrip("/") + "/chat/completions"
 
     def public_status(self) -> dict[str, Any]:
+        # Always surface configured/default base_url + model (from env.sample LAN defaults)
+        # so operators can see where Ornith should be even before key is set.
+        # Never echo api_key.
         return {
             "enabled": self.enabled,
             "configured": bool(self.api_key),
-            "base_url": self.base_url if self.enabled else None,
-            "model": self.model if self.enabled else None,
+            "base_url": self.base_url,
+            "model": self.model,
             "timeout_s": self.timeout_s,
-            # Never echo api_key.
             "auth": "bearer_env" if self.api_key else "missing",
+            "defaults": {
+                "base_url": DEFAULT_BASE_URL,
+                "model": DEFAULT_MODEL,
+            },
         }
 
 
