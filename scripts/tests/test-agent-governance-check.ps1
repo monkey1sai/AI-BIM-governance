@@ -103,8 +103,15 @@ try {
     Assert-True (-not ($governanceWorkflow -match '(?m)^\s+paths:\s*$')) 'agent-governance workflow does not use path filters because it is a required-check candidate'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-agent-governance-check\.ps1') 'agent-governance workflow runs static check'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-pr-body-evidence\.ps1') 'agent-governance workflow runs PR body evidence tests'
+    Assert-True ($governanceWorkflow -match 'scripts/tests/test-require-gstack-evidence\.ps1') 'agent-governance workflow runs browser-evidence hook tests'
     Assert-True (-not ($governanceWorkflow -match '(?m)^\s*run:\s*powershell\b')) 'agent-governance workflow does not re-enter legacy Windows PowerShell from pwsh'
-    Assert-True (@([regex]::Matches($governanceWorkflow, '(?m)^\s*run:\s*pwsh\b')).Count -eq 2) 'agent-governance workflow runs both checks with PowerShell 7'
+    # 原本硬編 `-eq 2`（"both checks"），使得「新增一個治理檢查」必定讓本斷言失敗——數量只是
+    # 當時的巧合，真正的意圖是「每個 step 都用 PowerShell 7，不得回退 legacy Windows PowerShell」。
+    # 改以「pwsh run 數 == 全部 run 數」表達該意圖，workflow 從此可擴充而不失去保護。
+    $pwshRunCount = @([regex]::Matches($governanceWorkflow, '(?m)^\s*run:\s*pwsh\b')).Count
+    $totalRunCount = @([regex]::Matches($governanceWorkflow, '(?m)^\s*run:\s*\S')).Count
+    Assert-True ($pwshRunCount -ge 3) 'agent-governance workflow runs the governance checks with PowerShell 7'
+    Assert-True ($pwshRunCount -eq $totalRunCount) 'agent-governance workflow runs every step with PowerShell 7 (no legacy or non-pwsh shell)'
 
     $prReviewWorkflow = Get-Content -LiteralPath '.github/workflows/pr-review-agent.yml' -Raw
     Assert-True (-not ($prReviewWorkflow -match '(?m)^\s+paths-ignore:\s*$')) 'PR review workflow does not use paths-ignore because it is a required-check candidate'
