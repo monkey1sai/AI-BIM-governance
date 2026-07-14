@@ -1,4 +1,8 @@
 # GitNexus ignored outputs for local analysis stability
+/.workflow/
+/artifacts/
+/docs/superpowers/
+/openspec/changes/archive/
 /_bim-control/.pytest_cache/
 /_bim-control/.gitnexus/
 **/.pytest_cache/

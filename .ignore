@@ -1,0 +1,6 @@
+# Historical evidence and local workflow residue are excluded from default text search.
+# Use `rg --no-ignore` when an audit explicitly needs these retained records.
+/.workflow/
+/artifacts/
+/docs/superpowers/
+/openspec/changes/archive/

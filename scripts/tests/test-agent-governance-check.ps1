@@ -39,8 +39,14 @@ try {
         'scripts/tests/check-pr-body-evidence.ps1',
         'scripts/tests/test-pr-body-evidence.ps1',
         'scripts/tests/fixtures/agent-governance-routing.json',
+        '.ignore',
+        '.gitnexusignore',
+        'agent-skills-manifest.json',
+        'scripts/dev/sync-agent-skills.ps1',
+        'scripts/tests/test-agent-skills-sync.ps1',
         '.codex/skills/ai-bim-fast-fix/SKILL.md',
         '.codex/skills/ai-bim-bounded-change/SKILL.md',
+        '.codex/skills/repo-health/SKILL.md',
         '.codex/skills/spec-to-done/agents/openai.yaml',
         'docs/agents/superpowers-invocation-policy.md',
         'docs/PR_REVIEW_AGENT.md',
@@ -97,6 +103,8 @@ try {
     Assert-True (-not ($governanceWorkflow -match '(?m)^\s+paths:\s*$')) 'agent-governance workflow does not use path filters because it is a required-check candidate'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-agent-governance-check\.ps1') 'agent-governance workflow runs static check'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-pr-body-evidence\.ps1') 'agent-governance workflow runs PR body evidence tests'
+    Assert-True (-not ($governanceWorkflow -match '(?m)^\s*run:\s*powershell\b')) 'agent-governance workflow does not re-enter legacy Windows PowerShell from pwsh'
+    Assert-True (@([regex]::Matches($governanceWorkflow, '(?m)^\s*run:\s*pwsh\b')).Count -eq 2) 'agent-governance workflow runs both checks with PowerShell 7'
 
     $prReviewWorkflow = Get-Content -LiteralPath '.github/workflows/pr-review-agent.yml' -Raw
     Assert-True (-not ($prReviewWorkflow -match '(?m)^\s+paths-ignore:\s*$')) 'PR review workflow does not use paths-ignore because it is a required-check candidate'
@@ -116,6 +124,12 @@ try {
     Assert-True (-not ($prReviewWorkflow -match 'gitnexus analyze --index-only')) 'PR review workflow does not build a GitNexus index in CI'
 
     $gitnexusIgnore = Get-Content -LiteralPath '.gitnexusignore' -Raw
+    $searchIgnore = Get-Content -LiteralPath '.ignore' -Raw
+    foreach ($historicalPath in @('/.workflow/', '/artifacts/', '/docs/superpowers/', '/openspec/changes/archive/')) {
+        Assert-True ($gitnexusIgnore -match [regex]::Escape($historicalPath)) ".gitnexusignore excludes historical path $historicalPath"
+        Assert-True ($searchIgnore -match [regex]::Escape($historicalPath)) ".ignore excludes historical path $historicalPath"
+    }
+    Assert-True (-not (Test-Path -LiteralPath '.workflow')) '.workflow scratch residue is absent from the checkout'
     foreach ($ignoredPath in @(
         '/bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/stage_loading.py',
         '/bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/ifc2usdc_powershell_adapter.py',
@@ -165,6 +179,17 @@ try {
 
     Assert-True ($claudeBody -match 'AGENTS\.md') 'CLAUDE.md references AGENTS.md'
     Assert-True ($claudeBody -match 'source of truth') 'CLAUDE.md declares AGENTS.md as source of truth'
+
+    & (Join-Path $repoRoot 'scripts/dev/sync-agent-skills.ps1') -Mode Check -RepoRoot $repoRoot
+    & (Join-Path $repoRoot 'scripts/tests/test-agent-skills-sync.ps1')
+    $commandFiles = @(Get-ChildItem -File -LiteralPath '.claude/commands' | Select-Object -ExpandProperty Name)
+    Assert-True ($commandFiles.Count -eq 1 -and $commandFiles[0] -eq 'repo-health.md') '.claude/commands contains only the repo-native repo-health entrypoint'
+    Assert-True (-not ((Get-Content -Raw -LiteralPath '.claude/commands/repo-health.md') -match 'agent-skills:')) 'tracked Claude command does not reference the retired agent-skills plugin'
+    $personaDocs = @(Get-ChildItem -File -Filter '*.md' -LiteralPath '.claude/agents' | ForEach-Object { Get-Content -Raw -LiteralPath $_.FullName }) -join "`n"
+    Assert-True (-not ($personaDocs -match '`/(ship|review|test|build|plan|spec|code-simplify)`')) 'Claude persona docs do not reference retired slash-command entrypoints'
+    Assert-FileContains 'bim-streaming-server/AGENTS.md' '`governance-service`.*外部公司雲端.*coordinator collaboration handlers' 'streaming formal review-data boundary points to current governance authorities'
+    Assert-FileContains 'docs/agents/repo-data-flow-and-ownership.md' '\| Annotation metadata \| `governance-service` \+ 外部公司雲端 `bim-control` \|' 'annotation ownership includes local governance-service and external cloud authority'
+    Assert-True (-not ((Get-Content -Raw -LiteralPath 'scripts/tests/test-agent-skills-sync.ps1') -match '\bWrite-Host\b')) 'agent skill sync test uses structured logging instead of bare Write-Host'
 
     foreach ($overlayPath in @('docs/agents/advanced-agent-reasoning-contract.md', 'docs/agents/codex-loop-workflows.md')) {
         Assert-FileContains $overlayPath ([regex]::Escape('C:\Users\IOT\.codex\docs\agents\task-routing.md')) "$overlayPath points to global task-routing source of truth"

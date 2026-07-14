@@ -519,6 +519,7 @@ function Get-PrReviewPathGuardFindings {
             } elseif ($p -in @(
                 '.codex/skills/ai-bim-fast-fix/SKILL.md',
                 '.codex/skills/ai-bim-bounded-change/SKILL.md',
+                '.codex/skills/repo-health/SKILL.md',
                 '.codex/skills/spec-to-done/agents/openai.yaml'
             )) {
                 [void]$warnings.Add((New-PrReviewIssue -Kind 'repo_governance_skill' -Severity 'medium' -Path $p -Message 'PR adds or updates an explicitly allowlisted repo governance skill artifact; verify routing scope and rollback.'))

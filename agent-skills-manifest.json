@@ -1,0 +1,224 @@
+{
+  "schema_version": "agent-skills-manifest/v1",
+  "policy": {
+    "canonical": "This file is the tracked inventory and provenance source of truth for repo-local Claude and Codex skills.",
+    "materialization": "Tracked copies only. Symlinks and junctions are forbidden.",
+    "sync": "Mirror entries copy files from their declared source platform to declared target platforms. Sync may remove stale files only inside a declared target skill directory and never deletes a whole skill tree."
+  },
+  "roots": {
+    "claude": ".claude/skills",
+    "codex": ".codex/skills"
+  },
+  "skills": [
+    {
+      "name": "ai-bim-bounded-change",
+      "locations": {
+        "codex": ".codex/skills/ai-bim-bounded-change"
+      },
+      "sync": {
+        "mode": "single"
+      },
+      "provenance": {
+        "kind": "repo-authored",
+        "source": "AI-BIM-governance",
+        "import_commit": "34fc67f254a7034555e434b2a1d418832d80215d"
+      }
+    },
+    {
+      "name": "ai-bim-fast-fix",
+      "locations": {
+        "codex": ".codex/skills/ai-bim-fast-fix"
+      },
+      "sync": {
+        "mode": "single"
+      },
+      "provenance": {
+        "kind": "repo-authored",
+        "source": "AI-BIM-governance",
+        "import_commit": "34fc67f254a7034555e434b2a1d418832d80215d"
+      }
+    },
+    {
+      "name": "figma",
+      "locations": {
+        "claude": ".claude/skills/figma",
+        "codex": ".codex/skills/figma"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "OpenAI official Figma UI/UX skill bundle",
+        "import_commit": "feea64212e6917d107d2b6a9db83743224f43aa8"
+      }
+    },
+    {
+      "name": "figma-generate-design",
+      "locations": {
+        "claude": ".claude/skills/figma-generate-design",
+        "codex": ".codex/skills/figma-generate-design"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "OpenAI official Figma UI/UX skill bundle",
+        "import_commit": "feea64212e6917d107d2b6a9db83743224f43aa8"
+      }
+    },
+    {
+      "name": "figma-implement-design",
+      "locations": {
+        "claude": ".claude/skills/figma-implement-design",
+        "codex": ".codex/skills/figma-implement-design"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "OpenAI official Figma UI/UX skill bundle",
+        "import_commit": "feea64212e6917d107d2b6a9db83743224f43aa8"
+      }
+    },
+    {
+      "name": "figma-use",
+      "locations": {
+        "claude": ".claude/skills/figma-use",
+        "codex": ".codex/skills/figma-use"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "OpenAI official Figma UI/UX skill bundle",
+        "import_commit": "feea64212e6917d107d2b6a9db83743224f43aa8"
+      }
+    },
+    {
+      "name": "gitnexus",
+      "locations": {
+        "claude": ".claude/skills/gitnexus"
+      },
+      "sync": {
+        "mode": "single"
+      },
+      "provenance": {
+        "kind": "generated",
+        "source": "GitNexus CLI analyze",
+        "import_commit": "6f07f969fd17ae568b4c39876ce743a5cd06e82a"
+      }
+    },
+    {
+      "name": "gitnexus-blast-radius",
+      "locations": {
+        "claude": ".claude/skills/gitnexus-blast-radius",
+        "codex": ".codex/skills/gitnexus-blast-radius"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "repo-authored",
+        "source": "AI-BIM-governance",
+        "import_commit": "fa96c55becde19acd96e456b7957302a05f9b93a"
+      }
+    },
+    {
+      "name": "omniverse-cad-to-simready",
+      "locations": {
+        "claude": ".claude/skills/omniverse-cad-to-simready",
+        "codex": ".codex/skills/omniverse-cad-to-simready"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "NVIDIA Omniverse skill bundle",
+        "import_commit": "c414e1cd4ca46ae3443db76a1a43a5334695db01"
+      }
+    },
+    {
+      "name": "omniverse-realtime-viewer",
+      "locations": {
+        "claude": ".claude/skills/omniverse-realtime-viewer",
+        "codex": ".codex/skills/omniverse-realtime-viewer"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "NVIDIA Omniverse skill bundle",
+        "import_commit": "c414e1cd4ca46ae3443db76a1a43a5334695db01"
+      }
+    },
+    {
+      "name": "omniverse-usd-performance-tuning",
+      "locations": {
+        "claude": ".claude/skills/omniverse-usd-performance-tuning",
+        "codex": ".codex/skills/omniverse-usd-performance-tuning"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "NVIDIA Omniverse skill bundle",
+        "import_commit": "c414e1cd4ca46ae3443db76a1a43a5334695db01"
+      }
+    },
+    {
+      "name": "repo-health",
+      "locations": {
+        "claude": ".claude/skills/repo-health",
+        "codex": ".codex/skills/repo-health"
+      },
+      "sync": {
+        "mode": "independent"
+      },
+      "provenance": {
+        "kind": "repo-authored-platform-variants",
+        "source": "AI-BIM-governance",
+        "import_commit": "6f07f969fd17ae568b4c39876ce743a5cd06e82a",
+        "notes": "Claude uses the repo-health-scan workflow; Codex performs the same dimensions directly with local read-only discovery and reporting."
+      }
+    },
+    {
+      "name": "spec-to-done",
+      "locations": {
+        "claude": ".claude/skills/spec-to-done",
+        "codex": ".codex/skills/spec-to-done"
+      },
+      "sync": {
+        "mode": "independent"
+      },
+      "provenance": {
+        "kind": "repo-authored-platform-variants",
+        "source": "AI-BIM-governance",
+        "import_commit": "c414e1cd4ca46ae3443db76a1a43a5334695db01",
+        "notes": "Claude and Codex entrypoints intentionally differ; shared P0-P7 gates are checked by agent-governance tests instead of byte mirroring."
+      }
+    }
+  ]
+}

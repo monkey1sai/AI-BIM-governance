@@ -31,8 +31,8 @@
 
 - 載入 USD / USDC 應透過 streaming-owned conversion result、coordinator artifact binding，或本機測試 file path，不把大型檔案納入 source。
 - heavy IFC→USDC conversion 必須走 headless converter app、subprocess 或 worker lane，不得阻塞 live WebRTC viewport runtime。
-- runtime state 只代表目前 stream session；若要成為正式審查資料，必須透過 `bim-review-coordinator` 或外部公司雲端 control-plane 形成 metadata / issue / artifact record。
-- DataChannel payload schema 變更必須同步檢查 `web-viewer-sample` 與 `docs/contracts/streaming-datachannel.md`。
+- runtime state 只代表目前 stream session；若要成為正式審查資料，必須透過現行 `governance-service` 或外部公司雲端 control-plane 形成 metadata / issue / artifact record；已退役的 coordinator collaboration handlers 不是回寫路徑。
+- DataChannel payload schema 變更必須同步檢查 `web-viewer-sample` 與 `docs/contracts/streaming-datachannel-events.md`。
 - 不得管理 user auth、project metadata、review session lifecycle、annotation persistence。
 - Conversion / highlight / stage-load 類 user-facing runtime capability 不得只以 server-side/API 測試宣告完成；必須有前端 Review Room / Edge Console 操作與 browser evidence，或明確標為 runtime-only partial。
 

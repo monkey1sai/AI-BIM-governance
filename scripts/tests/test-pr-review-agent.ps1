@@ -297,19 +297,22 @@ try {
     Set-Content -LiteralPath '.codex/skills/spec-to-done/SKILL.md' -Value 'adapter v2' -Encoding UTF8
     New-Item -ItemType Directory -Path '.codex/skills/brand-new' -Force | Out-Null
     New-Item -ItemType Directory -Path '.codex/skills/ai-bim-fast-fix' -Force | Out-Null
+    New-Item -ItemType Directory -Path '.codex/skills/repo-health' -Force | Out-Null
     Set-Content -LiteralPath '.codex/skills/brand-new/SKILL.md' -Value 'new generated dump' -Encoding UTF8
     Set-Content -LiteralPath '.codex/skills/ai-bim-fast-fix/SKILL.md' -Value 'repo fast fix contract' -Encoding UTF8
+    Set-Content -LiteralPath '.codex/skills/repo-health/SKILL.md' -Value 'repo health contract' -Encoding UTF8
     git add -f -A
     git commit -q -m 'modify tracked adapter + add new skill'
     $mirrorHeadSha = (git rev-parse HEAD).Trim()
-    $mirrorPaths = @('.codex/skills/spec-to-done/SKILL.md', '.codex/skills/brand-new/SKILL.md', '.codex/skills/ai-bim-fast-fix/SKILL.md')
+    $mirrorPaths = @('.codex/skills/spec-to-done/SKILL.md', '.codex/skills/brand-new/SKILL.md', '.codex/skills/ai-bim-fast-fix/SKILL.md', '.codex/skills/repo-health/SKILL.md')
     $mirrorGuards = Get-PrReviewPathGuardFindings -ChangedPaths $mirrorPaths -RepoRoot $tempMirrorGit -BaseSha $mirrorBaseSha -HeadSha $mirrorHeadSha
     $mirrorModified = @($mirrorGuards.warnings | Where-Object { $_.kind -eq 'generated_tooling_path_modified' })
     $mirrorBlocked = @($mirrorGuards.blockers | Where-Object { $_.kind -eq 'generated_tooling_path' })
     $repoSkillWarning = @($mirrorGuards.warnings | Where-Object { $_.kind -eq 'repo_governance_skill' })
     Assert-True ($mirrorModified.Count -eq 1 -and $mirrorModified[0].path -eq '.codex/skills/spec-to-done/SKILL.md') 'tracked mirror modification downgrades to warning'
     Assert-True ($mirrorBlocked.Count -eq 1 -and $mirrorBlocked[0].path -eq '.codex/skills/brand-new/SKILL.md') 'newly added tooling path still blocks'
-    Assert-True ($repoSkillWarning.Count -eq 1 -and $repoSkillWarning[0].path -eq '.codex/skills/ai-bim-fast-fix/SKILL.md') 'explicit repo governance skill is allowlisted with warning'
+    Assert-True ($repoSkillWarning.Count -eq 2) 'explicit repo governance skills are allowlisted with warnings'
+    Assert-True (@($repoSkillWarning.path | Sort-Object) -join ',' -eq @('.codex/skills/ai-bim-fast-fix/SKILL.md', '.codex/skills/repo-health/SKILL.md') -join ',') 'repo governance skill warning paths match the allowlist'
     # 無 Base/Head（本機模式）→ 無法判定 tracked 與否，兩條路徑都須保守維持 blocker。
     $mirrorNoBase = Get-PrReviewPathGuardFindings -ChangedPaths $mirrorPaths -RepoRoot $tempMirrorGit
     $mirrorNoBaseBlocked = @($mirrorNoBase.blockers | Where-Object { $_.kind -eq 'generated_tooling_path' })

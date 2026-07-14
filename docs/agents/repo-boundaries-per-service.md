@@ -4,7 +4,7 @@
 
 # Repo Boundaries Per Service
 
-> 本檔內容自 `docs/agents/repo-boundary-detail.md` 原 §3、§8 逐字搬移，未改寫、未刪減；延用原章節編號（§3 / §3.4–§3.8 / §8 / §8.1–§8.5）。workspace 總覽、架構決策、資料流、資料歸屬、通訊方式與最重要閉環見 `docs/agents/repo-boundary-detail.md`；資料流與 Source of Truth 細節見 `docs/agents/repo-data-flow-and-ownership.md`。
+> 本檔自 `docs/agents/repo-boundary-detail.md` 原 §3、§8 拆分並持續維護；延用原章節編號（§3 / §3.4–§3.8 / §8 / §8.1–§8.5）。workspace 總覽、架構決策、資料流、資料歸屬、通訊方式與最重要閉環見 `docs/agents/repo-boundary-detail.md`；資料流與 Source of Truth 細節見 `docs/agents/repo-data-flow-and-ownership.md`。
 
 ---
 
@@ -17,20 +17,21 @@
 ### 角色
 
 ```txt
-Session Control Plane / Collaboration Coordinator
+Session / Presence Control Plane
 ```
 
 ### 邊界
 
-`bim-review-coordinator` 是 review session 的協調中心。
+`bim-review-coordinator` 是 review session 與 presence 的協調中心。
 
 它負責協調：
 
 ```txt
 - review session 狀態
 - browser client 與 Kit streaming server 的連線資訊
-- user presence / collaboration state
-- selection / annotation / issue focus 等協作事件
+- user presence（`joinSession` / `leaveSession` / `heartbeat` / `presenceUpdated`）
+- generic session event log（append-only compatibility archive，不代表 live broadcast 或資料權威）
+- browser-facing governance proxy（issue / annotation / BCF 寫入由 `governance-service` 處理）
 - fake BIM platform 與 fake storage 的資料查詢路由
 ```
 
@@ -42,6 +43,8 @@ Session Control Plane / Collaboration Coordinator
 - WebRTC video encoding
 - IFC / USD 檔案內容轉換
 - 直接保存大型檔案
+- 處理 selection / annotation / issue focus 的 live collaboration event
+- 成為 issue / annotation / BCF 資料權威
 - 取代外部公司雲端 control-plane 成為資料權威
 - 取代 web-viewer-sample 成為 UI
 ```
@@ -68,7 +71,7 @@ model_version_id
 kit_instance_id
 stream_config
 presence state
-collaboration event
+generic session event log（compatibility archive）
 ```
 
 但不應該知道或操作：
@@ -117,7 +120,7 @@ IFC→USDC Conversion Authority / Omniverse Kit Runtime / GPU Streaming Server
 - project / model version 的資料權威
 - 使用者登入與權限
 - review session lifecycle 的總控
-- 多人協作事件的中心廣播
+- session presence 的中心廣播
 - 長期 annotation / issue 儲存
 - 假 S3 檔案倉庫
 - 假 BIM API
@@ -137,7 +140,7 @@ IFC→USDC Conversion Authority / Omniverse Kit Runtime / GPU Streaming Server
 目前套用哪些 visual overlay
 ```
 
-但這些狀態若要成為正式審查資料，必須經 `bim-review-coordinator` 回寫至正式資料權威（外部公司雲端 control-plane）。
+但這些狀態若要成為正式審查資料，必須走現行 `governance-service` / 外部公司雲端 control-plane write path；已退役的 coordinator collaboration handlers 不是可用回寫路徑。
 
 ---
 
@@ -159,8 +162,8 @@ Browser Client / WebRTC Viewer / User Interaction Layer
 - 顯示 WebRTC 串流畫面
 - 送出 DataChannel JSON command 給 bim-streaming-server
 - 接收 bim-streaming-server 回傳的 scene state / command result
-- 與 bim-review-coordinator 交換 session / collaboration state
-- 顯示 project / issue / annotation / stage tree 等 UI 狀態
+- 與 bim-review-coordinator 交換 session / presence / stream config
+- 經 coordinator governance proxy 顯示 project / issue / annotation / BCF / stage tree 等 UI 狀態
 ```
 
 它不負責：
@@ -195,8 +198,9 @@ leave session
 
 ```txt
 3D runtime 操作 → bim-streaming-server
-session / collaboration → bim-review-coordinator
-metadata / review data → bim-review-coordinator（上游權威＝外部公司雲端 bim-control）
+session / presence → bim-review-coordinator
+issue / annotation / BCF → governance-service（browser 經 bim-review-coordinator proxy）
+project metadata reference → bim-review-coordinator（長期權威＝外部公司雲端 bim-control）
 file / conversion access → bim-review-coordinator（conversion 權威＝bim-streaming-server）
 ```
 
@@ -240,7 +244,7 @@ Operator-facing Kit 機隊管理：`kit-manager-api`（FastAPI `:8010`）掌 Kit
 - 不管理使用者登入
 - 不管理 project / model version
 - 不作為 annotation / issue 長期資料庫
-- 不作為多人協作事件中心
+- 不作為 session presence 事件中心
 - 不取代外部公司雲端 bim-control control-plane
 - 不取代外部客戶落地端 IFC Worker（不自產 IFC）
 ```

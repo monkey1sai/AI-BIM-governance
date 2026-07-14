@@ -4,7 +4,7 @@
 
 # Repo Data Flow And Ownership
 
-> 本檔內容自 `docs/agents/repo-boundary-detail.md` 原 §4–§7 逐字搬移，未改寫、未刪減；延用原章節編號（§4 / §5 / §5.1–§5.5 / §6 / §7 / §7.1–§7.4）。per-repo 角色與禁止跨界規則見 `docs/agents/repo-boundaries-per-service.md`；workspace 總覽、架構決策與最重要閉環見 `docs/agents/repo-boundary-detail.md`。
+> 本檔自 `docs/agents/repo-boundary-detail.md` 原 §4–§7 拆分並持續維護；延用原章節編號（§4 / §5 / §5.1–§5.5 / §6 / §7 / §7.1–§7.4）。per-repo 角色與禁止跨界規則見 `docs/agents/repo-boundaries-per-service.md`；workspace 總覽、架構決策與最重要閉環見 `docs/agents/repo-boundary-detail.md`。
 
 ---
 
@@ -19,10 +19,11 @@
 | USD / USDC file | `bim-streaming-server` | B 方案 IFC→USDC conversion authority 產出的衍生檔 |
 | element_mapping.json / entity_index.json | `bim-streaming-server` + 本地 shadow | 檔案由 streaming conversion result 產出；雲端只接 metadata-only callback |
 | Callback delivery state | `bim-review-coordinator` | metadata-only outbox / retry / dead-letter |
-| Review issue metadata | 外部公司雲端 `bim-control` / 本地最小 shadow | 真實權威在外部 control-plane |
-| Annotation metadata | `bim-review-coordinator` local event + 外部 control-plane callback | 本地保存協作事件；正式權威依外部平台決定 |
+| Review issue / BCF runtime data | `governance-service` + 外部公司雲端 `bim-control` | 落地端 issue lifecycle / BCF 屬 governance-service；長期 control-plane 權威在外部雲端 |
+| Annotation metadata | `governance-service` + 外部公司雲端 `bim-control` | 落地端 annotation lifecycle 屬 governance-service；coordinator 已無 live annotation handler，generic event log 不構成 annotation authority；長期 control-plane 權威在外部雲端 |
 | Review session state | `bim-review-coordinator` | 當前 session 狀態 |
-| Collaboration state | `bim-review-coordinator` | presence / selection / issue focus / annotation event |
+| Session presence state | `bim-review-coordinator` | `joinSession` / `leaveSession` / `heartbeat` / `presenceUpdated` |
+| Generic session event log | `bim-review-coordinator` | append-only compatibility archive；可含 legacy type，但不代表 live broadcast 或正式資料權威 |
 | USD stage runtime state | `bim-streaming-server` | 當前 Omniverse scene runtime 狀態 |
 | Browser UI state | `web-viewer-sample` | 當前前端 UI 狀態 |
 
@@ -80,7 +81,7 @@ sequenceDiagram
 ```txt
 Scene interaction 是 browser client 與 Kit runtime 之間的 DataChannel JSON 流程。
 這些 runtime interaction 不等於正式資料保存。
-若要保存成審查紀錄，必須經 coordinator 回寫（上游正式權威＝外部公司雲端 control-plane）。
+若要保存成審查紀錄，必須走現行 governance-service / 外部 control-plane write path；已退役的 coordinator collaboration handlers 不是可用回寫路徑。
 ```
 
 ---
@@ -117,11 +118,10 @@ Scene interaction 是 browser client 與 Kit runtime 之間的 DataChannel JSON 
 
 | 通訊方式 | 起點 | 終點 | 用途 |
 |---|---|---|---|
-| REST | `web-viewer-sample` | `bim-review-coordinator` | 建立 session、查詢 session、取得 stream config |
+| REST | `web-viewer-sample` | `bim-review-coordinator` | 建立 / 查詢 session、取得 stream config、存取 governance proxy |
 | WebRTC video | `bim-streaming-server` | `web-viewer-sample` | 串流 Omniverse viewport 畫面 |
 | WebRTC DataChannel JSON | `web-viewer-sample` | `bim-streaming-server` | open stage、selection、highlight、scene query |
-| WebSocket / Socket.IO | `web-viewer-sample` | `bim-review-coordinator` | presence、selection、annotation、issue focus 等多人事件 |
-| Optional WebSocket | `bim-streaming-server` | `bim-review-coordinator` | Kit runtime 接收多人狀態 overlay，不作為主要資料權威 |
+| WebSocket / Socket.IO | `web-viewer-sample` | `bim-review-coordinator` | session join / leave / heartbeat 與 `presenceUpdated`；selection / annotation / issue-focus handlers 已退役 |
 
 歷史內部通訊列（涉及已刪除 `_bim-control` / `_worker`）遷至 `docs/agents/history-and-archive.md` §3.5。
 

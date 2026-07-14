@@ -354,6 +354,31 @@ describe("A1 3D review decoupling", () => {
     expect(window.location.hash).toBe("#a1");
   });
 
+  it("reports a post-retry job refresh failure separately from a successful conversion retry", async () => {
+    vi.mocked(coordinatorClient.listIfcReady)
+      .mockResolvedValueOnce({
+        count: 1,
+        items: [fakeIfcReadyJob({ status: "dispatch_failed", conversion_status: "failed", review_session_id: null })],
+      })
+      .mockRejectedValueOnce(new Error("ifc-ready refresh unavailable"));
+    const retrySpy = vi.spyOn(coordinatorClient, "conversionRetry").mockResolvedValue({
+      ifc_ready_job_id: "ifcready_1",
+      status: "queued_for_conversion",
+      queue_position: 1,
+    });
+
+    await renderA1();
+    await selectMinioSource();
+    const retry = q<HTMLButtonElement>("a1-retry-conversion")!;
+    expect(retry.disabled).toBe(false);
+    await act(async () => { retry.click(); });
+    await flush();
+
+    expect(retrySpy).toHaveBeenCalledWith("ifcready_1", "A1 inline 3D session recovery");
+    expect(q("a1-conversion-retry-error")).toBeNull();
+    expect(q("a1-review-open-error")?.textContent).toContain("ifc-ready refresh unavailable");
+  });
+
   it("revalidates MinIO ifc-ready health before running and blocks newly stale source IFC", async () => {
     vi.mocked(coordinatorClient.listIfcReady)
       .mockResolvedValueOnce({ count: 1, items: [fakeIfcReadyJob()] })
@@ -782,6 +807,30 @@ describe("A1 3D review decoupling", () => {
 
     expect(governanceClient.listIssues).toHaveBeenCalledWith(undefined, { model_version_id: "270/建築/model.ifc", kind: "issue" });
     expect(q("a1-bcf-review-panel")?.textContent).toContain("EXISTING: Door");
+  });
+
+  it("does not advance the Issue workflow when idempotent lookup finds no formal Issues", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([
+      { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "high", status: "fail", message: "naming rule failed" },
+    ]);
+    vi.spyOn(governanceClient, "issuesFromRuleRun").mockResolvedValue({ created: 0, issue_ids: [] });
+    vi.spyOn(governanceClient, "listIssues").mockResolvedValue([]);
+
+    await renderA1();
+    await pickModel();
+    await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
+    await flush();
+    await act(async () => { q<HTMLButtonElement>("a1-step-issues")!.click(); });
+    await flush();
+
+    expect(q("a1-action-error")?.textContent).toContain("Issue");
+    const stepField = Array.from(container.querySelectorAll(".ec-field")).find((field) =>
+      field.querySelector(".ec-k")?.textContent === "step",
+    );
+    expect(stepField?.querySelector(".ec-v")?.textContent).toContain("scored");
+    expect(q<HTMLButtonElement>("a1-step-bcf")!.disabled).toBe(true);
   });
 
   it("stale issue detail fetches cannot repopulate BCF topics after reset", async () => {
