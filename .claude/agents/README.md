@@ -56,7 +56,7 @@ Is the work a single perspective on a single artifact?
 
 An explicit ship request is the canonical merge orchestrator in this repo:
 
-```
+```text
 ship request → coordinator follows ship-item.md
   ├── (as risk requires) code-reviewer    → review report
   ├── (as risk requires) security-auditor → audit report
