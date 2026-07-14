@@ -1,9 +1,9 @@
 # TARGET-shell — 殼層 22 route 逐頁目標規格
 
-> v1 · 2026-07-10 · AI-coding 文件體系重設計（依使用者指令，以兩份 prototype 為基準）
+> v3 · 2026-07-14 · A1–A10 使用情境規格重寫（兩份 tracked HTML＋二十張 tracked route PNG）
 > 本檔回答「22 頁各要做成什麼樣」（IA、IX 卡全文、API 逐字、實作接點、驗收句、凍結點）。
 > 現況（建到哪）一律查 `TRUTH.md`；跨頁不變量查 `TARGET-contracts.md`；viewer 七區塊深規查 `TARGET-viewer.md`；缺口排序與 OPEN 決策查 `BACKLOG.md`。
-> 視覺樣貌真相＝`ai-bim-governance-prototype.html`（只引用、不修改；原型是樣貌真相，非程式碼範本——不抄 canvas/CDN，示意數值一律寫「示意」不當規格值）。
+> 共用 shell 骨架＝tracked `ai-bim-governance-prototype.html`；A1–A10 route IA／persona／主任務流＝本檔各節的 self-contained 正文（由 paired tracked `ai-bim-geo-viewer-A<n>.png`＋`ai-bim-geo-Ai-codeing-A<n>.png` 內化）；共享 3D 互動＝tracked `ai-bim-geo-viewer-prototype.html`／`TARGET-viewer.md`。視覺來源只引用不修改，所有數字與協定字樣均須由真資料／契約取代。
 
 ---
 
@@ -11,7 +11,9 @@
 
 ### §0.1 基準與凍結點規約
 
-- 基準宣告：`TARGET-shell@v1 frozen 2026-07-10 · 基準=prototype v2 (2026-07-02)`。
+- 基準宣告：`TARGET-shell@v3 frozen 2026-07-14 · 基準=tracked HTML prototypes + paired tracked A1–A10 route PNG；durable authority=self-contained route sections`。
+- 作廢範圍（v1→v2）：A4–A10 只要求 disabled 佔位頁的舊目標、A1 禁內嵌 viewer 的舊 IA、A9 Copilot／A10 Robotics 舊身分；改為十頁情境導向 vertical slice，未完成時仍依 contracts §9 誠實降級。
+- 視覺分工：tracked HTML 管共用 shell／互動骨架；每 route 的兩張 tracked PNG 分別補充 UI／viewport IA 與 AI-coding component/API/state/acceptance；本檔把兩者內化後，連同行為、資料、API、fallback 與驗收成為 durable 正本。
 - 凍結點語法：每節末行 `<route>@v<N> frozen <date>`（可 grep）。改版＝bump 版本號＋同節加一行「作廢範圍」。
 - **節進入 BACKLOG IN-PROGRESS 後規格凍結；要改＝先 bump 再動工**，禁止邊做邊改規格。
 
@@ -52,7 +54,7 @@ prototype 錨：ai-bim-governance-prototype.html（全站 shell 骨架，非單�
 目標 IA：
 - **三欄 grid**：`50px 頂欄 / 主區 / 32px 底欄` × `240px nav / 1fr main / 380px agent rail`；`<1180px` 自動收合 agent rail；收合態（`data-agent="off"`）可由底欄重開鈕還原。
 - **頂欄**：品牌區（mark＋「AI · BIM Governance」＋mono 副標）→ tenant 徽章（虛線 pill「tenant zero · 單站點現況」＋`DEMO DATA` 小標；語意引 contracts §11.3）→ 麵包屑 Pills（專案／版本／階段＋caret；真資料來源未定，接真來源前一律標示意——與 BACKLOG OPEN #2 同組）→ LangToggle（雙語 i18n 做否＝BACKLOG OPEN #3.4）→ **HealthChips 四枚**（`COORD`／`GPU`／`QUEUE`／`MCP`；缺遙測顯「未取得」＋idle LED 不偽綠；數字真資料來源＝BACKLOG OPEN #2）→ 使用者頭像。
-- **Agent rail（右欄 Chat USD Agent）**：READY pill＋可關閉；紫色虛線註記「AI 只在 session layer 操作 · 不直接改 source model」（contracts §7 A9 同義）；「TOOL CALLS」軌跡列＋底部輸入框——真對話／MCP 執行建成前 input 一律 disabled、tool calls 一律標「示意，非實測」，不渲染假結果（現況查 TRUTH §3 #2）。
+- **Agent rail（右欄 AI 決策助理）**：READY pill＋可關閉；紫色虛線註記「建議必帶 evidence refs；任何 USD 寫入只到 session layer，不直接改 source model」（contracts §7 A10）；「TOOL CALLS」軌跡列＋底部輸入框——真對話／MCP 執行建成前 input 一律 disabled、tool calls 一律標「示意，非實測」，不渲染假結果（現況查 TRUTH §3 #2）。
 - **底欄 job bar**：`OMNI` 標籤＋轉檔進度列＋右側 mono 服務摘要（`coordinator :8004 · governance :49102 · MCP x/x`）；agent rail 關閉時出現「↗ Chat USD Agent」重開鈕；進度與 QUEUE 數字接真來源前一律標示意（BACKLOG OPEN #2）。
 - **持久化**：localStorage 鍵 `aibim:lang`／`aibim:ec:active`／`aibim:ec:agentOpen`，refresh 不丟狀態；**cache 非 source of truth**。
 - **nav 版位**：分組五組與 22 條目依 contracts §4；omni 分組綠色漸層底；nav 底部「雲地邊界」註記＋「雲端控制面：PLANNED · 未建」灰虛線 badge（contracts §11）。
@@ -65,7 +67,7 @@ shell-chrome@v1 frozen 2026-07-10
 
 ## §2 逐頁目標規格（22 條正典路由）
 
-> 每節六欄固定骨架：prototype 錨／目標 IA／IX 卡／API（逐字）／實作接點／驗收句，末行凍結點。
+> 每節固定骨架：視覺來源／使用情境（persona、trigger、outcome）／主任務流／目標 IA／資料與 API/runtime／誠實 fallback／實作接點／驗收句，末行凍結點。A1 既有 IX 卡保留；其他頁以可驗收 vertical slice 表達。
 > 六通用互動模式（模式 1 證據型更新～模式 6 空狀態）與誠實元件規範（disabled＋prov mini-tag、Panel phase 紅 hatch、DarkStage、「未取得」＋idle LED、confirm、空狀態不補假列）全文見 contracts §9，本檔以「模式 N」引用。
 
 ## #home 今天要做什麼（⌂ · 工作台 · plane=core · HostTag=CONTAINER）
@@ -89,183 +91,224 @@ home@v1 frozen 2026-07-10
 
 ## #a1 治理與模型檢核（A1 · 核心治理 · plane=core · HostTag=HOST-NATIVE · P0 hero）
 
-prototype 錨：ai-bim-governance-prototype.html#a1（v2 2026-07-02）
+視覺來源：tracked `ai-bim-governance-prototype.html#a1`（shell/interaction）＋paired tracked `ai-bim-geo-viewer-A1.png`／`ai-bim-geo-Ai-codeing-A1.png`（supplementary UI／coding cross-check）
 
-目標 IA（5 區＋Stepper）：
-- **① 選檔 · 偵測到的 IFC**（Panel，sub 直接印 API 字串）：右上雙來源切換鈕 `local_fs 檔案庫`／`MinIO bucket 偵測`；選檔樣式三式並陳（dd/cascade/tree）為原型示意，**擇一後 bump 本節**（§0.3 #2 OPEN）。選定檔案列＝LED＋完整路徑（前綴 `storage/` 或 `bim-control/`）＋大小/時間；只有 coordinator config 指定的 `local_fs` fixture 顯示 `測試資料` Badge，MinIO 來源不得僅因來源或編號被標成測試；未選時模式 6 空狀態「目前未選檔——從上方偵測結果選一個 .ifc」，不補假列。`執行規則檢核` primary 鈕（未選檔或 running 時 disabled）；running 顯進度條＋mono 註（1500ms 輪詢）。
-- **② 檢核流程 Stepper**：`選檔→檢核→結果→審查→交付` 五步；右上 `重跑 · 回到選檔` ghost 鈕（全 reset）。
-- **③ 記分板＋規則清單**（hint：`ifctester · IDS/YAML`）：4 MetricCards（PASSED／BLOCKED／PASS RATE／構件數；值一律來自真實 rule-run，原型數字為示意禁 hardcode）；規則清單對選定檔，列可點展開命中構件；`失敗構件轉 Issue（模式 3）` primary 鈕→confirm 條（冪等鍵 `rule_run_id+guid`，已建過會跳過）。未 scored＝模式 6 空狀態「目前沒有這個檔的 rule-run 結果…」。
-- **④ BCF 審查面板**（hint：`issues API · BCF 2.1 匯出`）：ProvTag 動態（有 topics＝`asbuilt` 顯示、無 topics＝`demo` 顯示）；topic 列（掛 rule 碼＋sev Badge）＋狀態鈕循環 `OPEN→IN-PROGRESS→RESOLVED`；**assignee＝自由文字欄（O7 裁決）；欄位建成前 UI 依 contracts §9 誠實呈現（dashed 待建標，不提供假控制）**；動作列＝`匯出 BCF 2.1（.bcfzip）` primary＋`匯出 Excel` ghost；mono 註「無 viewpoint 時 BCF 內誠實缺省；BCF 3.0 為升級目標（contracts §7）」。
-- **⑤ 3D 連動 · A1 連動橋**（hint：「證據由 #sessions 供應 · 只顯示不推定」）：四格證據 rail（session 派發／WebRTC 首幀／DataChannel／stage matched，唯讀）＋高亮佇列（失敗構件 GUID chips）＋`在 3D 高亮` 鍵。**高亮啟用四條件缺一不可：DataChannel ready ∧ first_frame_at ∧ stage matched ∧ usd_prim_path；viewer 回 ack 才標成功；證據單一來源＝#sessions**。此區**不內嵌 3D 視窗**。旁附 `開 Session 管理（證據來源）→` 連 `#sessions`。
+**使用情境**：送審前的 BIM QA lead 要在同一頁選 IFC 與 IDS、執行檢核、用真 3D stage 定位失敗構件，確認 runtime 證據後建立 Issue／BCF 並交付報表。成功結果不是一個分數，而是每筆規則可追到 `ifc_guid ↔ usd_prim_path ↔ review_session_id`。
 
-IX 卡（B.1 全文）：
+**主任務流**：`選 IFC → 選 IDS/ruleset → 執行檢核 → 啟動/附著 3D Session → 點規則或構件定位 → 建 Issue／匯出`。整頁 reducer：`idle → ifc_picked → rules_picked → running → results_ready → session_starting → reviewing`；重跑只清下游 UI state，不覆蓋歷史 artifact。
 
-**狀態機（整頁一個 reducer）**
-```text
-states: idle → picked → running → scored → issued → delivered
-事件: PICK_FILE / RUN / RUN_PROGRESS(p) / RUN_DONE(result) / RUN_FAIL(err)
-      CREATE_ISSUES_OK(n) / EXPORT_OK(kind)
-規則: 步驟圓點 i 的樣式 = (state 已過此步 ? 綠勾 : state 正在此步 ? 綠光圈 : 灰)
-      任何步可「重跑」：回到該步 state，下游步驟清空（資料保留在歷史，不覆蓋 artifact）
-```
+**目標 IA**：
+- 頂部四步 Stepper：`1 選 IFC`、`2 選 IDS`、`3 執行檢核`、`4 3D Session`；每步顯示真檔名／ruleset version／`rule_run_id`／`review_session_id`，loading、failure、retry 不可只靠顏色。
+- 左欄 `IFC / USD 結構`：可搜尋，IFC 與 USD tab 顯同一 model version 的空間樹與 stage tree；點樹節點走 select/highlight，不在 browser 自畫幾何。
+- 中央為 **A1 inline Kit WebRTC viewport**（contracts §1.1 限定例外）：工具列、view cube、FPS/latency、stage path 都由 runtime 回報；沒有 first frame 時顯可操作的啟動／重試狀態，不用假建築圖頂替。
+- 右欄 `Evidence Inspector`：session role、first_frame_at、expected/loaded stage、stage matched、endpoint/lease、DataChannel ready/latency、mapping coverage（帶分子／分母／method）、conversion status；下方列 endpoint pool 與 session lifecycle。PNG 的 `gRPC`、IP、時間與 98.6% 只是示意，不得照抄。
+- 底部 workspace tabs：`檢核結果／Issue／BCF／DH(A2 diff handoff)／Federation(A3 handoff)`；檢核 tab 顯治理分、passed/failed/warning、rule、GUID、prim path、severity、狀態與說明，並提供 `建立 Issue`、Excel、BCF 2.1、`高亮構件`。
+- 右下摘要卡只鏡射 A2 差異摘要與 A3 規則/IFC/USD mapping 狀態；資料缺席顯 `未取得`，不補圖片數字。
 
-**IX-A1-01 選檔（v2 · 雙來源）**：頁首「① 選檔 · 偵測到的 IFC」區，來源切換兩顆 pill：**local_fs 檔案庫**（`GET /api/governance/files/tree`，經 coordinator proxy，`source_kind=local_fs`）／**MinIO bucket 偵測**（coordinator `GET /api/minio/objects?prefix=&delimiter=/`，真 MinIO 唯讀逐層，只列 `.ifc`）。選檔元件三樣式（下拉 optgroup／級聯 pills／樹狀）原型供挑，**正式版擇一**；選定 → state=picked、顯示完整 key、大小、mtime；`source_kind=local_fs` 且 coordinator config 判定為 fixture 時標「**測試資料**」，MinIO 來源不自動標測試。切來源 = 回 idle（下游清空）。**選檔不觸發轉檔**：只對選定檔跑 rule-run（CPU）。前置：無。失敗：任一來源 list 失敗→模式 6（保留另一來源可用，MinIO 502 顯錯誤條不推定）。
+**IX 卡（A1-01～08 保留語意）**：01 雙來源選 IFC（local_fs/MinIO，一邊失敗不拖垮另一邊）；02 rule-run 1.5s 輪詢與離頁恢復；03 規則列懶載入 failures；04 failures→Issue 冪等鍵 `rule_run_id+guid`；05 Excel 與 BCF 2.1 兩步 gating；06 3D 高亮四條件 `DataChannel ready ∧ first_frame_at ∧ stage matched ∧ usd_prim_path`；07 BCF topic transition 與 assignee；08 inline viewer 的 Evidence Inspector 只讀 `#sessions`／runtime 權威值，viewer ack 前不標高亮成功。
 
-**IX-A1-02 執行檢核**：按「執行規則檢核」→ `POST /api/governance/rule-runs {source_path, ids_path?}` → 回 `rule_run_id` → 進度輪詢 `GET /api/governance/rule-runs/:id`（1500ms）→ status=running 顯示進度條+逐條 log（若 API 提供）；done → RUN_DONE。**驗收**：跑 fixture 真檔出真分數；中途離頁再回來，輪詢自動恢復（rule_run_id 存頁面 state）。
+**資料/API/runtime（逐字，全走 coordinator `:8004`）**：`GET /api/governance/files/tree`、`GET /api/minio/objects?prefix=&delimiter=/`、`POST /api/governance/rule-runs`、`GET /api/governance/rule-runs/:id`／`results`／`failures`、`POST /api/governance/issues/from-rule-run/:runId`、`GET /api/governance/issues?rule_run=:id`、`POST /api/governance/issues/:id/transition`、`GET /api/governance/rule-runs/:id/export?fmt=excel`、`GET /api/governance/bcf/export`、`POST /api/external/ifc-ready/:jobId/review-session`（`mode=a1-inline`）、`GET /api/runtime/status`；DataChannel `highlightPrimsRequest`／`highlightPrimsResult`。
 
-**IX-A1-03 記分板與規則清單**：渲染 evaluated/passed/failed/score 四格；規則列**點擊展開**命中構件（`GET /api/governance/rule-runs/:id/failures?rule=`，懶載入、分頁 50 筆）；每構件顯示 ifc_guid + name + storey；guid 可複製。**驗收**：展開 71 筆失敗不卡頓；空失敗規則顯示「全過」不可展開。
+**誠實 fallback**：尚未選檔／規則、rule-run 空結果、mapping 缺失、session 排隊、first frame timeout、stage mismatch、DataChannel 斷線、匯出失敗各有獨立空／錯誤／retry state；GPU 缺席不阻止 CPU rule-run，但 3D 操作保持 disabled 並標原因。
 
-**IX-A1-04 失敗轉 Issue**：勾選規則或構件 → 「失敗構件建 issue」→ 模式 3（confirm 顯示將建幾筆、指派誰）→ `POST /api/governance/issues/from-rule-run` → 成功後顯示 issue 連結。**驗收**：重複執行不產生重複 issue（後端冪等鍵 = rule_run_id+guid，前端顯示「已建過 n 筆，跳過」）。
+實作接點：`pages.tsx`、`a1Machine.ts`、`components.tsx`（SourcePicker／RuleResults／BcfReviewPanel／EvidenceInspector）、`EmbeddedViewer.tsx`、`governanceClient.ts`、`coordinatorClient.ts`。陷阱＝D-20/D-24/D-31/D-33、coverage 自我參照、圖片協定字樣誤抄。
 
-**IX-A1-05 匯出交付**：Excel `GET .../export?fmt=excel` 直接下載；BCF `GET /api/governance/bcf/export` 下載 .bcfzip（**BCF 2.1**，無 viewpoint 時 BCF 內誠實缺省）。**v2：匯出入口移至 BCF 審查面板（IX-A1-07）footer**，API 不變。**驗收**：BIMcollab/BCF 檢視器可開。
+驗收句：DONE＝以 default IFC＋IDS fixture 從四步 Stepper 跑到真 `rule_run_id` 與 `review_session_id`；WebRTC 首幀可見且 stage matched；點失敗列令同一 GUID 對應 prim 高亮並收到 ack；建立 Issue 後可匯 Excel/BCF 2.1；故意斷 DataChannel 後高亮 disabled＋可 retry；network 僅 coordinator；截圖逐項對齊本節 IA，並以 A1 paired tracked PNG 作補充比對、保存 trace/runtime IDs。
 
-**IX-A1-06 在 3D 高亮（P1.5——建成前 render disabled）**：啟用條件（缺一不可）：viewer DataChannel ready ∧ first_frame_at 存在 ∧ stage matched ∧ 構件有 usd_prim_path。滿足後：按下 → Review-Room 主動拉模式發 `highlightPrimsRequest {prim_paths[], color:'red'}` → viewer 回 ack 才標成功。**v2 呈現方式改為 IX-A1-08 的 A1 連動橋 rail**，啟用條件與 ack 語意不變。
-
-**IX-A1-07 BCF 審查面板（v2 新增，對選定檔）**：位於規則清單之下。資料源 = issues API（Issue 共同出海口，A1/A2/A3/A5 共用 schema，contracts §10）：`GET /api/governance/issues?rule_run=:id` 列 topic（規則×命中構件數、severity）；狀態流轉 open→in-progress→resolved = `POST /api/governance/issues/:id/transition`（模式 3 + 證據型更新）；**指派 assignee：自由文字欄（O7 裁決）；欄位建成前 render 為 dashed 待建標，不提供假控制（建成狀態查 TRUTH）**；無 viewpoint 時誠實缺省（不假截圖）。footer：匯出 BCF 2.1（IX-A1-05）+ Excel；BCF 3.0 升級目標只引用 contracts §7，不重述。**驗收**：topic 數=失敗規則數；狀態流轉後重整頁面狀態不回退（後端回讀）；空 topic 時顯示模式 6 空狀態（「由失敗構件轉 Issue 產生」）。
-
-**IX-A1-08 A1 連動橋（v2 新增；3D 連動留在 A1，禁用 viewer 視窗風格）**：A1 頁底部以**證據 rail** 呈現 3D 連動：四格證據（session 派發／WebRTC 首幀／DataChannel／stage matched）+ 高亮佇列（失敗構件 GUID chips）+ 高亮鍵。**不內嵌 3D 視窗、不畫斜線佔位圖**。四格證據以 `#sessions`／Runtime 監控為**單一來源**（IX-SS-05），A1 只讀鏡射、只顯示不推定；任一格未綠，高亮鍵保持 disabled（title 說明缺哪格），附「開 Session 管理 →」連結。**驗收**：證據未齊時按鍵 disabled + 原因可讀；證據全綠後才發 IX-A1-06 指令；ack 前不標成功。
-
-API（逐字，全走 coordinator `:8004` proxy，凍結面見 contracts §1）：
-- `GET /api/governance/files/tree`（local_fs 來源）
-- `GET /api/minio/objects?prefix=&delimiter=/`（MinIO 來源）
-- `POST /api/governance/rule-runs` → `GET /api/governance/rule-runs/:id`（1.5s 輪詢）→ `/results`、`/failures`
-- `POST /api/governance/issues/from-rule-run/:runId`、`GET /api/governance/issues?rule_run=:id`、`POST /api/governance/issues/:id/transition`
-- `GET /api/governance/rule-runs/:id/export?fmt=excel`（Excel；`fmt=bcf` → 400，contracts §1）
-- `GET /api/governance/bcf/export`（BCF 2.1 `.bcfzip`；兩步 gating 見 contracts §1）
-- `GET /api/runtime/status`（連動橋鏡射用）；viewer DataChannel `highlightPrimsRequest`（P1.5，待建）
-
-實作接點：改檔＝`pages.tsx`、`a1Machine.ts`、`components.tsx`（SourcePicker／BcfReviewPanel／A1BridgeRail）、`EmbeddedViewer.tsx`、`governanceClient.ts`、`coordinatorClient.ts`。陷阱＝D-31（雙來源一邊壞只降該邊，禁默默換來源）、D-32（BCF 面板禁假指派控制）、D-33（連動橋禁自行推定證據）、D-08（禁樂觀更新）、D-20（高亮四條件缺一即 disabled）。
-
-驗收句：DONE＝branch-isolated stack 下：① 雙來源各自列出真檔（MinIO 邊斷線時只該邊降破）；② 選檔→真 IFC rule-run 截圖 live 數、Stepper 隨狀態機推進；③ topic 狀態流轉後重整不回退；④ 連動橋四格與 `#sessions` 同輪詢一致、證據未齊高亮鍵 disabled；⑤ network 面只打 `/api/governance/*`＋`/api/minio/objects`＋`/api/runtime/status`；截圖與 prototype #a1 五區對齊。
-
-a1@v1 frozen 2026-07-10
+a1@v2 frozen 2026-07-13
 
 ## #a2 版本差異與責任（A2 · 核心治理 · plane=core · HostTag=HOST-NATIVE）
 
-prototype 錨：ai-bim-governance-prototype.html#a2
+視覺來源：tracked `ai-bim-governance-prototype.html#a2`＋paired tracked `ai-bim-geo-viewer-A2.png`／`ai-bim-geo-Ai-codeing-A2.png`（supplementary UI／coding cross-check）
 
-目標 IA：
-- ① 選擇版本 Panel（右上 `v06`→`v07` Badge；3 MetricCards `加/改/刪`，值來自真實 `DiffResult.summary.counts`，原型數字為示意）。
-- ② 變更清單（hint `diff_engine · GlobalId 多級鍵 ledger（語意對齊 ifcdiff）`）雙欄＝Diff 列表（每筆 ADD/MOD/DEL 三色碼＋作者＋日期，可點選）＋責任 Panel（選中項的改動者/時間/原因＋`飛到此構件 →` ghost 鈕）。
-- `轉變更為 Issue` primary（共用 Issue 出海口 schema，contracts §10）、`匯出變更報表` ghost。
-- **邊界：成本影響屬 A9 範疇，A2 頁禁出現成本塊**。geometry 比對＝opt-in。
-- 3D 著色（apply-overlay）：後端語意＝**by design 501**（contracts §1），前端維持 `p15` 誠實標記＋client `highlightPrimsRequest` 路線，不當缺功能補。
+**使用情境**：設計經理／BIM coordinator 比較 Base 與 Target 版本，分辨新增、移除、移動、屬性與幾何變更，定位受影響 Issue 與責任單位，並交付可審計的差異包。成本與 EVM 歸 A6，A2 不做成本估算。
 
-IX 卡：—（diff 高亮共用指令族見 TARGET-viewer IX-3D-05）
+**主任務流**：`選 Base/Target → 設比較條件 → 執行 diff → split/overlay 檢視 → 選變更 → 查看責任/Issue impact → 建 Issue／匯出`。
 
-API（逐字）：`GET /api/governance/files/tree`、`POST /api/governance/diffs`、`GET /api/governance/diffs/:id`、`GET .../items`、`GET .../issue-impact`、`POST /api/governance/issues/from-diff/:diffId`；`POST .../apply-overlay`（501 by design，維持 `p15`）。`change_type` enum（added/removed/moved/geometry_changed/property_changed）逐字 echo（contracts §2）。
+**目標 IA**：左欄 Base/Target 專案、模型、版本與角色；頂部比較模式（並排／疊加）與條件設定；中央摘要卡顯五種 `change_type`＋總數；3D viewport 支援可拖曳 split 與 overlay，圖例與 table 使用同一 enum；底部變更表顯 GUID、prim path、Issue、責任單位與說明；右欄依序是 Issue 影響矩陣、責任追蹤、關聯 Review Session 與 PDF/XLSX/BCF/3D 視點匯出。
 
-實作接點：改檔＝`pages.tsx`、`components.tsx`、`governanceClient.ts`。陷阱＝D-11（diff 引擎＝R2 簽核之自製多級鍵引擎、語意對齊 ifcdiff，禁選型漂移，見 contracts §7）、D-08；三色 `ec-diff-add/del/mod` 對 token 不硬編色值。
+**資料/API/runtime**：`GET /api/governance/files/tree`、`POST /api/governance/diffs`、`GET /api/governance/diffs/:id`、`GET .../items`、`GET .../issue-impact`、`POST /api/governance/issues/from-diff/:diffId`。`change_type` 逐字 echo contracts §2；`usd_prim_path=null` 留空。`POST .../apply-overlay` 保持 by-design 501；3D 著色只走 client `highlightPrimsRequest`，split/overlay 必須綁可證明的 stage/session。
 
-驗收句：DONE＝建一筆 diff，截圖三色清單＋MetricCard 來自真實 counts；斷言 apply-overlay 顯示 `p15` 誠實標記而非可用按鈕；`usd_prim_path` 為 null 時留空不捏造；頁內 grep 無成本塊；與 prototype #a2 版面對齊。
+**誠實 fallback**：跨 schema、無配對鍵、無 prim mapping、geometry compare 未啟用、session/stage 不可用要逐列顯原因；責任資料未知顯未指派，不從檔名推定人員；任何 count 都來自該 `diff_id`。
 
-作廢範圍（v1→v2）：v1 的 hint 與陷阱欄原載「ifcdiff · 禁自寫比對」抵觸 2026-07-10 R2 使用者簽核裁決（A2 現行採簽核之自製多級鍵引擎，語意對齊 ifcdiff）；v2 依 R2 更正。
+實作接點：`pages.tsx`、`components.tsx`（VersionPairPicker／DiffSummary／IssueImpact／ResponsibilityPanel）、`governanceClient.ts`、viewer highlight bridge。陷阱＝D-08/D-11/D-20；禁止把 A6 成本卡塞回 A2。
 
-a2@v2 frozen 2026-07-13
+驗收句：DONE＝以一對 deterministic IFC 版本建真 diff；五類摘要＝items 聚合；點 moved/changed 列同步選中 table 與 3D；null mapping 顯未對應且不送 highlight；建 Issue 後 impact/責任回讀不回退；匯出 artifact 可追到 `diff_id`；截圖逐項對齊本節 IA，並以 A2 paired tracked PNG 作補充比對＋保存 trace/session ID。
+
+a2@v3 frozen 2026-07-13
 
 ## #a3 跨專業疊合（A3 · 核心治理 · plane=core · HostTag=HOST-NATIVE）
 
-prototype 錨：ai-bim-governance-prototype.html#a3
+視覺來源：tracked `ai-bim-governance-prototype.html#a3`＋paired tracked `ai-bim-geo-viewer-A3.png`／`ai-bim-geo-Ai-codeing-A3.png`（supplementary UI／coding cross-check）
 
-目標 IA（雙欄）：
-- 左：**聯邦疊合視窗**：4 個 layer 開關 chips（建築 green／結構 cyan／機電 violet／水電 amber；預設 plumb 關）；DarkStage「USD sublayer 聯邦已掛載 · 需 GPU session 呈現」；`重建聯邦 stage` primary 鈕（federation build 流程：建 set→加 members→validate-coords→build）；`GPU 開 review-room 預覽 ↗` 連結 → `/ui/open?session=`（凍結 handoff，contracts §4）。
-- 右：**碰撞偵測 · Clash**（Panel phase 紅 hatch）：**此處不顯示任何碰撞數量**；`碰撞數 = 未取得（NOT BUILT）` idle LED 行；`重跑碰撞檢測（待建）` disabled＋DS `todo` 顯示標籤（repo Prov 值用 `p4`，禁 `prov="todo"`，contracts §5）。選型＝ifcclash（官方對齊，contracts §7）；實作時以 runtime probe 判定幾何能力，引擎不可用必走 `has_occ`／probe hard guard，禁靜默回 0。
-- 空 seeded `usd_path` 呈現為「需操作員填入」的誠實提示；build 409/400 錯誤用 IntentDialog 顯示；**不捏 `stage_url`**。
+**使用情境**：BIM coordinator 在協調會前把建築、結構、機電、土木／景觀等模型組成一個可重現的 federated stage，驗證座標系與每個 sublayer transform，再把同一 artifact 交給 Review Room。
 
-IX 卡：—（review-room handoff 行為見 TARGET-viewer IX-3D-01）
+**主任務流**：`建立 set → 新增/匯入 members → 排序/可見性/transform → Coordinate Check → Build Federated USD → Review Room handoff → 檢視 member matrix`。
 
-API（逐字）：`POST /api/governance/federated-sets`、`POST .../members`、`GET .../:setId`、`POST .../validate-coords`、`POST .../build`、`GET .../review-room`；`/ui/open?session=` handoff。clash 端點＝待建；O6 已裁決使用 ifcclash，完整 API 與 unavailable guard 依核准的 Spec-3/plan。
+**目標 IA**：左欄 member ledger（discipline、USD path、順序、visible、XYZ/rotation、version/hash）；中央真 WebRTC federation viewport；右欄 Coordinate Check（CRS、unit、檢查時間、結果）、Sublayer 順序、per-member transform、缺席成員、Review Room 交付與 stage composition；底部 matrix 顯每成員 readiness、座標檢查、幾何檢查、Issue/BCF 與操作；summary 顯 member/visible/missing、prim count、artifact size、build time、builder。
 
-實作接點：改檔＝`pages.tsx`、`components.tsx`、`IntentDialog.tsx`、`governanceClient.ts`。陷阱＝D-27（runtime probe 不可用時 clash 必加 hard guard，顯示機器可讀原因而非 0 碰撞）、D-14（AI/標記只寫 session layer）。
+**資料/API/runtime（逐字）**：`POST /api/governance/federated-sets`、`POST .../:setId/members`、`GET .../:setId`、`POST .../validate-coords`、`POST .../build`、`GET .../review-room`、`/ui/open?session=`。stage URL 只取 build/handoff 回應，不自行組。clash 仍是獨立能力：ifcclash runtime probe unavailable 時顯機器可讀原因，絕不畫 0 碰撞。
 
-驗收句：DONE＝建 set→加 2 members→validate-coords→build→開 review-room descriptor 截圖；<2 members 的 build 在 IntentDialog 顯誠實 400；clash 區零假數、disabled 鈕帶待建標；與 prototype #a3 雙欄對齊。
+**誠實 fallback**：少於 2 members、路徑空值、CRS/unit 不一致、build 409/400、missing member、GPU/session 缺席各自阻擋下一步並保留已輸入資料；transform edit 必須 Intent→Confirm→Audited。
 
-a3@v1 frozen 2026-07-10
+實作接點：`pages.tsx`、`components.tsx`（FederationMembers／CoordinateInspector／SublayerPanel／MemberMatrix）、`IntentDialog.tsx`、`governanceClient.ts`。陷阱＝D-10/D-14/D-27；不得把靜態建築背景當 federation frame。
 
-## #a4 語意搜尋問答（A4 · 核心治理 · plane=core · HostTag=HOST-NATIVE · NOT BUILT 佔位頁）
+驗收句：DONE＝以至少 2 個不同 discipline fixture 建 set、驗座標、build，回應的 stage path 與 Review Room loaded stage matched；切 member visibility/transform 後 matrix 與 viewport 同步；故意放入 unit mismatch 顯阻擋原因；clash 區無假數；截圖逐項對齊本節 IA，並以 A3 paired tracked PNG 作補充比對＋保存 build/session evidence。
 
-prototype 錨：ai-bim-governance-prototype.html#a4
+a3@v2 frozen 2026-07-13
 
-目標 IA：單一 Panel phase（紅 hatch）：搜尋框與按鈕一律 disabled（placeholder 示範問句），**不接任何 mock，不渲染假結果**；prov=`p4`。願景敘事不寫入本檔（機器真相＝`data.ts A1A10_DETAIL`）。
-IX 卡：—。API：`/api/search/model`＝待建（不存在前零 `/api/*` 呼叫）。
-實作接點：改檔＝`pages.tsx`、`components.tsx`、`data.ts`。陷阱＝D-07、D-28。
-驗收句：DONE＝載入 `#a4` 斷言 phase Panel＋全控制 disabled＋`p4` 標＋零 network 呼叫。
+## #a4 語意查詢與證據（A4 · 核心治理 · plane=core · HostTag=HOST-NATIVE）
 
-a4@v1 frozen 2026-07-10
+視覺來源：tracked `ai-bim-governance-prototype.html#a4`（舊佔位互動）＋paired tracked `ai-bim-geo-viewer-A4.png`／`ai-bim-geo-Ai-codeing-A4.png`（supplementary UI／coding cross-check）
 
-## #a5 IoT / FM 數位分身（A5 · 核心治理 · plane=core · HostTag=HOST-NATIVE · NOT BUILT 佔位頁）
+**使用情境**：不熟 IFC schema 的設計審查者用自然語言找出特定樓層／類別／Pset 條件的構件，先看系統如何解譯，再在 3D 驗證並批次建 Issue。目標是可解釋查詢，不是聊天答案。
 
-prototype 錨：ai-bim-governance-prototype.html#a5
+**主任務流**：`輸入問句或條件 → 顯示 interpreted filters → 確認/修正 → 執行 → table/3D 同步定位 → 展開 evidence trace → 建 Issue`；BCF 只有滿足 contracts §1 第 8 條或新增 approved provenance bridge 才可用。
 
-目標 IA：雙欄。左＝感測點示意 Panel phase，感測 demo 點一律標「**示範資料 · MQTT 待接**」浮水印；右＝選中感測器 detail（MetricCard note 標示範資料）＋`開維保工單（待 MQTT）` disabled；prov=`p3`。不接任何真資料流。
-IX 卡：—。API：MQTT broker／TimescaleDB＝待接（零 `/api/*` 呼叫）。
-實作接點：改檔＝`pages.tsx`、`components.tsx`、`data.ts`。陷阱＝D-07、D-28。
-驗收句：DONE＝載入 `#a5` 斷言感測點標「示範資料」、控制 disabled＋`p3` 標、零 network 呼叫。
+**目標 IA**：左上 query composer（範例問句、語意模式、執行）；中央 WebRTC viewport＋結果高亮；底部 tabs `IFC 語意/Pset·Qto/空間/構件/規範關聯` 與分頁結果；右欄顯意圖判斷、confidence（只有定義/校正來源時才顯）、樓層/IfcClass/Pset 條件、規範與模型屬性 Evidence Trace、可編輯條件 builder、符合/不符合統計與建立 Issue。
 
-a5@v1 frozen 2026-07-10
+**目標資料/API（新增 route 前須依 contracts §1.1 凍結 ownership/例外）**：`POST /api/search/model {model_version_id, query}` → `interpreted_filters + results + evidence_refs`；`POST /api/search/spatial`；結果至少帶 `ifc_guid/usd_prim_path/ifc_class/name/storey/properties/match_status/confidence/evidence_refs`。browser 一律打 coordinator；索引以 model version/hash 隔離。
 
-## #a6 4D / 5D 施工模擬（A6 · OMNIVERSE RUNTIME · plane=omni · HostTag=HOST-NATIVE · NOT BUILT 佔位頁）
+**誠實 fallback**：索引未就緒、問句無法解譯、條件矛盾、confidence 未定義、結果 0、prim mapping 缺失、GPU 缺席都要有明確下一步；AI 不得在使用者確認前擴大/刪除條件，也不得生成不存在的 property。
 
-prototype 錨：ai-bim-governance-prototype.html#a6
+實作接點：`pages.tsx`、`components.tsx`（QueryComposer／FilterBuilder／EvidenceTrace／SemanticResults）、`data.ts`、新增 coordinator route/client 與 search owner（先過 BACKLOG ownership gate）。陷阱＝D-06/D-08/D-20、LLM 黑箱與 prompt injection。
 
-目標 IA：紫色「願景情境 VISION」橫幅（所有控制 disabled、不接 mock、需 GPU · Omniverse runtime 串接後升級）＋DarkStage（glyph ▤，`Runtime = no`）＋`啟動模擬（待建）` disabled；狀態以 repo prov=`p4` 為準（§0.3 #4 裁決）。
-IX 卡：—。API：無（零呼叫）。實作接點：改檔＝`pages.tsx`、`components.tsx`、`data.ts`。陷阱＝D-07、D-28。
-驗收句：DONE＝載入 `#a6` 斷言 VISION 橫幅＋DarkStage＋disabled＋`p4`＋零 network。
+驗收句：DONE＝default fixture 中以「找 4F 防火門且 FireRating < 60」查到可預期集合；畫面顯 interpreted filters 與每筆 evidence；點列收到 3D ack；修改門檻後結果/統計一致；mapping 缺失列不發 highlight；批次建 Issue 經 confirm/audit；截圖逐項對齊本節 IA，並以 A4 paired tracked PNG 作補充比對＋保存 query/runtime trace。
 
-a6@v1 frozen 2026-07-10
+a4@v2 frozen 2026-07-13
 
-## #a7 Reality Capture 比對（A7 · OMNIVERSE RUNTIME · plane=omni · HostTag=HOST-NATIVE · NOT BUILT 佔位頁）
+## #a5 IoT / FM 數位分身（A5 · 核心治理 · plane=core · HostTag=HOST-NATIVE）
 
-prototype 錨：ai-bim-governance-prototype.html#a7
+視覺來源：tracked `ai-bim-governance-prototype.html#a5`（舊佔位互動）＋paired tracked `ai-bim-geo-viewer-A5.png`／`ai-bim-geo-Ai-codeing-A5.png`（supplementary UI／coding cross-check）
 
-目標 IA：同 #a6 共版（glyph ◫）；特註「需 usd-code-mcp 驗 mesh-compare＝先驗再寫」（contracts §7）。prov=`p4`。
-IX 卡：—。API：無。實作接點：同 #a6。陷阱＝D-07、D-28。
-驗收句：DONE＝同 #a6 斷言組（glyph 換 ◫）。
+**使用情境**：設施值班員看到即時漏水／溫度／AQI 告警，要從空間與資產定位設備、確認資料新鮮度與歷史趨勢，建立維保工單並追 SLA；管理者同時看能源與資產健康 KPI。
 
-a7@v1 frozen 2026-07-10
+**主任務流**：`選空間/資產 → 看最新 telemetry 與 freshness → 3D 定位/heatmap → 展開告警/設備詳情 → 建或指派工單 → 查看趨勢/KPI`。
 
-## #a8 Synthetic Data（A8 · OMNIVERSE RUNTIME · plane=omni · HostTag=HOST-NATIVE · NOT BUILT 佔位頁）
+**目標 IA**：左欄空間樹＋資產分類/狀態；頂部 KPI（溫度、濕度、AQI、能源、HVAC、漏水、工單）；中央 floor/room 3D overlay（正常/注意/告警/離線，卡片顯時間與品質）；右欄即時警報、設備基本資料、最新 readings、維保週期與 KPI；底部工單表、資產健康 donut、24h 趨勢。所有 telemetry 遵守 contracts §10.4 的 value/unit/time/quality/source。
 
-prototype 錨：ai-bim-governance-prototype.html#a8
+**目標資料/API（新增 route 前先凍結 ownership/例外）**：MQTT/BMS ingest 只在 server-side；`POST /api/sensors/bind`、`GET /api/sensors/:id/readings?range=24h`、`POST /api/alert-rules`、`POST /api/work-orders`、work-order list/transition。sensor/asset/room 必須對到 `ifc_guid` 或 `usd_prim_path`；工單可連共同 Issue schema。
 
-目標 IA：同 #a6 共版（glyph ⊞）；特註「需對齊 Omniverse Replicator（先驗再寫）」（contracts §7）。prov=`p4`。
-IX 卡：—。API：無。實作接點：同 #a6。陷阱＝D-07、D-28。
-驗收句：DONE＝同 #a6 斷言組（glyph 換 ⊞）。
+**誠實 fallback**：離線、stale、bad quality、單位未知、未綁 BIM、時區未知、GPU 缺席分開顯示；資料 replay/fixture 必須全頁 `DEMO DATA`，不能用綠色「線上」冒充 live MQTT。
 
-a8@v1 frozen 2026-07-10
+實作接點：`pages.tsx`、`components.tsx`（SpaceAssetTree／TelemetryCard／AlertFeed／WorkOrderTable／TrendChart）、IoT/FM client、coordinator route、Kit overlay adapter。陷阱＝高頻 redraw、BMS alias、離線資料被當 0、工單與 Issue 雙寫。
 
-## #a9 設計／審查 Copilot（A9 · OMNIVERSE RUNTIME · plane=omni · HostTag=HOST-NATIVE · NOT BUILT 佔位頁）
+驗收句：DONE＝以 deterministic telemetry replay（含一筆 leak alert、一個 stale point）完成空間定位→設備詳情→建工單；stale 不上綠燈、單位/時間可見；點 alert 對應同一 BIM element 且收到 3D ack；斷 broker 後保留最後值＋顯連線異常＋retry；截圖逐項對齊本節 IA，並以 A5 paired tracked PNG 作補充比對＋保存 work_order_id/runtime trace。
 
-prototype 錨：ai-bim-governance-prototype.html#a9
+a5@v2 frozen 2026-07-13
 
-目標 IA：同 #a6 共版（glyph ✦）；特註「復用 ChatToolCall，只在 session layer（非 3D 場景）」；ChatUSD rail 標 `ROADMAP · A9`、input disabled、無假 tool call。prov=`p4`。
-IX 卡：—。API：無。實作接點：同 #a6。陷阱＝D-07、D-14、D-28。
-驗收句：DONE＝同 #a6 斷言組＋ChatUSD rail input disabled。
+## #a6 4D / 5D 進度與成本整合（A6 · OMNIVERSE RUNTIME · plane=omni · HostTag=HOST-NATIVE）
 
-a9@v1 frozen 2026-07-10
+視覺來源：tracked `ai-bim-governance-prototype.html#a6`（舊佔位互動）＋paired tracked `ai-bim-geo-viewer-A6.png`／`ai-bim-geo-Ai-codeing-A6.png`（supplementary UI／coding cross-check）
 
-## #a10 機器人／巡檢模擬（A10 · OMNIVERSE RUNTIME · plane=omni · HostTag=HOST-NATIVE · NOT BUILT 佔位頁）
+**使用情境**：專案控制／工務主管在週會比較基準排程、實際進度與成本，找出關鍵路徑延誤、依賴與資源衝突，並用 3D＋Gantt 向施工團隊說明影響。
 
-prototype 錨：ai-bim-governance-prototype.html#a10
+**主任務流**：`匯入 schedule/cost baseline → 綁 WBS/activity 與 elements → 選資料日期/比較對象 → 播放或拖曳時間 → 選逾期工項 → 看依賴/EVM → 建 Issue/匯報`。
 
-目標 IA：同 #a6 共版（glyph ⊿）；特註「Isaac-sim adjacent，先驗再宣稱」（contracts §7）。prov=`p4`。
-IX 卡：—。API：無。實作接點：同 #a6。陷阱＝D-07、D-28。
-驗收句：DONE＝同 #a6 斷言組（glyph 換 ⊿）。
+**目標 IA**：上方 filters（date range/trade/WBS/contractor/baseline/view mode）與 KPI（進度達成率、CV、關鍵延誤、工項數、風險、EAC）；中央 WebRTC 依已完成/進行中/延誤/未開始著色；下方 Gantt/S-curve tabs；右欄逾期工項 planned vs actual、依賴、Issue/附件與風險預警；底部 EVM、S 曲線、成本分佈。公式固定：`CV=EV-AC`、`SV=EV-PV`、`CPI=EV/AC`、`SPI=EV/PV`，分母 0 顯 n/a。
 
-a10@v1 frozen 2026-07-10
+**目標資料/API（新增 route 前先凍結 ownership/例外）**：`POST /api/schedules/import`（先支援 CSV，再談 P6/MSP）、`POST /api/activities/:id/bind-elements`、`POST /api/schedule/overlay {as_of,mode}`、activity/detail/risk read APIs。資料必帶 baseline id、currency、timezone、data date、source hash；overlay 走 Kit/DataChannel，不在 web 重渲染。
+
+**誠實 fallback**：無 actual feed、成本未匯入、未綁 element、GPU 缺席、activity 粒度過細、EVM 分母 0 分別顯未取得；第一個 slice 可只做 4D，但 5D 卡不得填 demo 金額假裝可用。
+
+實作接點：`pages.tsx`、`components.tsx`（ScheduleFilters／Gantt／ActivityDetail／EvmCards）、schedule/cost owner、coordinator routes、Kit time overlay。陷阱＝時區、貨幣、baseline 漂移、WBS 批次綁定與 D-10。
+
+驗收句：DONE＝匯入含一個逾期活動的 schedule fixture、綁定 GUID、拖到 data date；Gantt row、3D 色彩、detail 與 KPI 同一 activity；CV/SV/CPI/SPI 可由 fixture 重算；取消一個 mapping 後顯未綁且不著色；建 Issue 經 confirm；截圖逐項對齊本節 IA，並以 A6 paired tracked PNG 作補充比對＋保存 overlay ack/trace。
+
+a6@v2 frozen 2026-07-13
+
+## #a7 掃描比對 / Reality Capture（A7 · OMNIVERSE RUNTIME · plane=omni · HostTag=HOST-NATIVE）
+
+視覺來源：tracked `ai-bim-governance-prototype.html#a7`（舊佔位互動）＋paired tracked `ai-bim-geo-viewer-A7.png`／`ai-bim-geo-Ai-codeing-A7.png`（supplementary UI／coding cross-check）
+
+**使用情境**：現場 QA／測量工程師把 LAS/E57/PLY 或 mesh 對齊設計 BIM，調整 tolerance，找出正／負偏差與漏建／多建，再把高風險偏差交成 Issue。
+
+**主任務流**：`新增 capture → 選模型/掃描 → coarse align/ICP refine → 檢查 transform/RMS → 設 tolerance/切片 → 看 deviation heatmap/list → 建 Issue／匯出`。
+
+**目標 IA**：左欄模型樹、掃描資料集與 selected zone；中央 model/point cloud/mixed/deviation 視圖、切片高度、密度與 tolerance 圖例；右欄 alignment method、transform、RMS/accuracy、tolerance、偏差統計與匯出；底部 deviation table（severity、element、storey/zone、deviation mm、type、status、建議）與分頁。
+
+**目標資料/API（新增 route 前先凍結 ownership/例外）**：`POST /api/capture-jobs`、`POST /api/capture-jobs/:id/align`、deviation list/detail、`POST /api/deviations/:id/to-issue`、`GET /api/capture-jobs/:id/export?fmt=pdf|excel|las`。每個 job 保存 source URI/hash、CRS/unit、4x4 transform、method/parameters、RMS、tolerance 與 runtime/tool version；PDF 報告帶 job/source/model hash、transform、RMS、tolerance、tool version 與產生時間，Excel 帶逐筆 GUID/zone/deviation/severity/status/source_ref，LAS 切片帶 clipping bounds、source hash、unit/CRS；三種 artifact 共用同一 `capture_job_id`，大點雲不進 git。
+
+**誠實 fallback**：未對齊前禁止顯 deviation；RMS 高於門檻顯 low-confidence，不把 scan density 當精度；座標系未知、unit mismatch、空區域、GPU/memory 不足顯機器可讀原因；匯出只含真計算結果。
+
+實作接點：`pages.tsx`、`components.tsx`（CaptureList／AlignmentInspector／TolerancePanel／DeviationTable）、capture service/coordinator route、Kit point-cloud/overlay adapter。陷阱＝CRS、mm/m、ICP local minimum、巨型 artifact 與 precision 誇大。
+
+驗收句：DONE＝以帶已知 transform/tolerance 的小型 scan fixture 對齊，RMS 與偏差列可重算；調 tolerance 後 heatmap/table/count 同步；點列定位同一 GUID/zone；高 RMS fixture 顯低可信且阻擋批次通過；一筆 deviation 轉 Issue；PDF/Excel/LAS 三種 artifact 可追同一 `capture_job_id` 且欄位／hash／CRS 可驗；截圖逐項對齊本節 IA，並以 A7 paired tracked PNG 作補充比對＋保存 alignment/runtime evidence。
+
+a7@v3 frozen 2026-07-14
+
+## #a8 Synthetic Data Studio（A8 · OMNIVERSE RUNTIME · plane=omni · HostTag=HOST-NATIVE）
+
+視覺來源：tracked `ai-bim-governance-prototype.html#a8`（舊佔位互動）＋paired tracked `ai-bim-geo-viewer-A8.png`／`ai-bim-geo-Ai-codeing-A8.png`（supplementary UI／coding cross-check）
+
+**使用情境**：ML／simulation engineer 從核准的 USD stage 定義範圍、相機路徑與 domain randomization，生成 RGB/depth/instance segmentation/bbox 與 metadata，先驗 preview 與品質，再匯出可回溯資料集。
+
+**主任務流**：`選 stage/scope → 放置 camera path → 設 randomization/lighting/material → 選 annotators/writer → preview → 設 budget/split → run → 品質檢查 → export/register`。
+
+**目標 IA**：六步 Stepper；左欄 scene/domain randomization/light/material controls；中央真 RTX viewport＋camera path；中下輸出 preview；右欄 job ID/status/progress、output stats、writer path/version、quality checks、export/manifest/registry；底部 writer throughput、distribution coverage 與 class balance。每 frame 可追 `stage_hash/camera/seed/annotator/writer/timestamp`。
+
+**目標資料/API（新增 route 前先凍結 ownership/例外）**：`POST /api/datasets`、`POST /api/datasets/:id/run`、`GET /api/datasets/:id`、`GET /api/datasets/:id/export?fmt=coco|yolo`。Replicator Annotator/Writer 是標註權威；Cosmos 只做擬真擴增，不得取代 ground truth（contracts §7）。job 必須有 frame/GPU-hour/storage budget 與 cancel。
+
+**誠實 fallback**：preview 與 full run 分開；失敗 frame 不計成功；品質百分比帶算法/分母；GPU 不足、writer path 不可寫、class 空洞、domain coverage 不足要阻擋 export 或顯 warning；生成影像永遠標 synthetic。
+
+實作接點：`pages.tsx`、`components.tsx`（SceneScope／CameraPath／Randomization／OutputPreview／DatasetJobPanel）、dataset owner/coordinator routes、Replicator runner。陷阱＝版本 API 漂移、GPU/storage 無上限、不可重現 seed、把生成影像當真實 evidence。
+
+驗收句：DONE＝用小型 deterministic USD fixture、固定 seed 與 3 個 camera 產出至少 RGB＋depth＋instance/bbox；manifest 可逐 frame 回溯且同 seed rerun metadata 一致；故意讓 writer 失敗顯 failed count/retry；COCO/YOLO artifact schema 可驗；截圖逐項對齊本節 IA，並以 A8 paired tracked PNG 作補充比對＋保存 dataset_job_id/runtime logs。
+
+a8@v2 frozen 2026-07-13
+
+## #a9 機器人 / 自主巡檢（A9 · OMNIVERSE RUNTIME · plane=omni · HostTag=HOST-NATIVE）
+
+視覺來源：paired tracked `ai-bim-geo-viewer-A9.png`／`ai-bim-geo-Ai-codeing-A9.png`（supplementary UI／coding cross-check）；共用 shell 仍引 tracked `ai-bim-governance-prototype.html`，其舊 A9 Copilot 文案不再定義 route 身分。
+
+**使用情境**：設施／機器人操作員先在 digital twin 驗證巡檢路線、waypoints、禁行區與 camera/LiDAR coverage，執行任務時追蹤電量、定位與異常，並把事件連回 BIM 空間/資產與 Issue。預設是模擬；實機模式另需 edge/ROS 證據。
+
+**主任務流**：`選 robot/sensor pack/mode → 建任務或套模板 → 選巡檢點/禁行區 → 產生/審核路線 → 執行 → 看影像/LiDAR/telemetry → 處理異常 → 完成/回充/匯出`。
+
+**目標 IA**：頂部 robot、battery、mode、mission/status/progress/mileage/ETA；左欄任務佇列與模板；中央 floor 3D route、waypoints、inspection/danger zones、即時 camera/LiDAR；底部 timeline、事件擷取、route history；右欄 mission/robot 狀態、next waypoint、環境告警、anomaly list 與 BIM linkage。
+
+**目標資料/API（新增 route 前先凍結 ownership/例外）**：`POST /api/routes`、`POST /api/routes/:id/simulate`、`GET /api/simulation-runs/:id`，以及 mission create/start/pause/abort/events/telemetry read APIs。`RobotMission.mode=simulation|physical` 必須由後端回傳並顯眼；simulation authority＝Isaac Sim。physical 需另案定義 ROS/edge auth、command ownership、E-stop、heartbeat 與安全責任，不能沿用模擬按鈕直接控制。
+
+**誠實 fallback**：沒有 navmesh、waypoint 不可達、sensor blind spot、collision、定位品質差、battery/telemetry stale、stream 斷線各有阻擋或 retry；即時影像與 LiDAR 只有收到真 frame/packet 才顯 live；simulated sensor 全程標 `SIMULATION`。
+
+實作接點：`pages.tsx`、`components.tsx`（MissionQueue／RobotStatus／RouteViewer／SensorFeeds／EventTimeline）、robot mission owner/coordinator routes、Isaac Sim runner。陷阱＝把模擬當實機、缺 E-stop、BIM 無 navmesh、telemetry freshness、危險動作未 confirm。
+
+驗收句：DONE＝以單層 USD＋simulated robot fixture 建含不可達點的任務；route planner 回 reachable/unreachable，修正後 run；3D、timeline、camera/LiDAR 與 mission progress 同一 runtime ID；注入 anomaly 建立 Issue；中斷 telemetry 顯 stale 且 pause/abort 可審計；截圖逐項對齊本節 IA，並以 A9 paired tracked PNG 作補充比對、保留 Isaac/runtime trace；不得宣稱實機。
+
+a9@v2 frozen 2026-07-13
+
+## #a10 其他應用 / AI 決策工作台（A10 · OMNIVERSE RUNTIME · plane=omni · HostTag=HOST-NATIVE）
+
+視覺來源：paired tracked `ai-bim-geo-viewer-A10.png`／`ai-bim-geo-Ai-codeing-A10.png`（supplementary UI／coding cross-check）；共用 shell 仍引 tracked `ai-bim-governance-prototype.html`，其舊 A10 Robotics 文案不再定義 route 身分。
+
+**使用情境**：資產業主、ESG／法遵與設計決策者把 BIM、能源、IFC/IDS、IoT 與氣象證據放到同一個 scenario，比較 baseline 與替代方案，閱讀有來源的 AI 建議，最後輸出決策報告或建立追蹤 Issue。
+
+**主任務流**：`選專案/模型/資料時間 → 檢查資料來源完整性 → 建 baseline/alternative scenario → 選模組分析 → 比較 KPI/風險 → 展開 AI evidence → 人工採納/拒絕 → 匯報/建立 Issue`；BCF 在 approved provenance bridge 前維持 unavailable。
+
+**目標 IA**：tabs `應用總覽／碳排·能耗／室內溫度與通風／法規審查 Copilot／文件問答／風險模擬／報告生成`；左欄模型/範圍/資料時間與 BIM/Energy/IFC-IDS/IoT/Climate source ledger；中央 3D context＋六個應用卡；右欄 evidence-linked AI 建議、證據來源、baseline vs alternative 表與匯出；底部 AI insight、scenario matrix、report jobs。A10 是組合層，不複製 A1–A9 權威資料。
+
+**目標資料/API（新增 route 前先凍結 ownership/例外）**：scenario create/read/compare、module run/status、evidence drilldown 與 report job APIs；所有 request/response 遵守 contracts §10.4。每個 KPI 帶 unit、baseline、delta、observed_at、source_ref；AI suggestion 帶 claim/confidence/interpreted_inputs/evidence_refs/limitations。若要寫 USD，只能走 preview→confirm→audit 的 session-layer operation；A10 可建立共同 Issue，但 BCF 在新增 approved provenance bridge 前依 contracts §1 第 8 條維持 unavailable。
+
+**誠實 fallback**：缺任一資料源只降級相關模組，不把整頁偽綠；模型衝突、時間窗不一致、低 confidence、無 evidence、報告失敗要可見；AI 不可自動採納方案、改 source model 或把建議說成法規結論。
+
+實作接點：`pages.tsx`、`components.tsx`（SourceLedger／ScenarioMatrix／ApplicationCards／EvidenceRecommendation／ReportJobs）、A10 orchestration client/coordinator route；各模組 owner 由 BACKLOG 決策。陷阱＝catch-all 變成第二份資料庫、跨時間源硬比較、AI 無證據、成本/碳排單位混用。
+
+驗收句：DONE＝以 baseline＋低碳 alternative fixture 執行至少一個真 module；來源 ledger 可逐項 drilldown，KPI delta 可重算；移除氣象來源只讓相關卡顯未取得；AI 建議展開到 evidence refs 且採納需 confirm/audit；PDF/Excel 可追 scenario/report ID；BCF 在無 approved bridge 時顯 unavailable，不偽成功；截圖逐項對齊本節 IA，並以 A10 paired tracked PNG 作補充比對＋保存 trace，source model hash 前後不變。
+
+a10@v3 frozen 2026-07-14
 
 ## #issues Issue / BCF（BC · 核心治理 · plane=core · HostTag=HOST-NATIVE）
 
 prototype 錨：ai-bim-governance-prototype.html#issues
 
 目標 IA：
-- **Issue 列表** Panel：Issue 由 A1/A2/A3 檢核轉入（共同出海口 schema，contracts §10；`source` 欄標來源）；列＝ID＋標題＋sev＋來源 Badge；status Badge 逐字 echo 生命週期 enum（open/assigned/in_progress/resolved/rejected/reopened，contracts §2）；transition 走 IntentDialog（模式 3）。
+- **Issue 列表** Panel：Issue 依 contracts §10.2 的共同 schema 接收 A1/A2/A3/A4/A5/A6/A7/A9/A10 與 manual 來源（A8 job failure 不自動轉 Issue；`source` 欄標來源）；列＝ID＋標題＋sev＋來源 Badge；status Badge 逐字 echo 生命週期 enum（open/assigned/in_progress/resolved/rejected/reopened，contracts §2）；transition 走 IntentDialog（模式 3）。
 - `匯出 BCF 2.1` primary 鈕；**BCF gating 誠實兩步**：先有 `from-rule-run`／`from-diff` issue 才可匯出（contracts §1）；rule-run export 只支援 `?fmt=excel`，BCF 為獨立 endpoint。
 - 「在 3D 標示」建成前 disabled＋`p1` 標。
 
 IX 卡：—（無歸屬 IX 卡；A1 的 BCF 面板行為見 IX-A1-07）
 
-API（逐字）：`GET /api/governance/issues`（list）、`POST /api/governance/issues/:id/transition`、`POST /api/governance/issues/from-rule-run/:runId`、`GET /api/governance/rule-runs/:id/export?fmt=excel`、`GET /api/governance/bcf/export`。
+API（逐字）：`GET /api/governance/issues`（list）、`POST /api/governance/issues`（create）、`POST /api/governance/issues/:id/transition`、`POST /api/governance/issues/from-rule-run/:runId`、`POST /api/governance/issues/from-diff/:diffId`、`GET /api/governance/rule-runs/:id/export?fmt=excel`、`GET /api/governance/bcf/export`。BCF 對非 rule-run/diff provenance 的 gate 見 contracts §10.2。
 
 實作接點：改檔＝`pages.tsx`、`components.tsx`、`IntentDialog.tsx`、`governanceClient.ts`。陷阱＝D-04（BCF 版本字串集中一處常數，UI 顯 `BCF 2.1`）、D-12（禁 A1Issue/A2Issue 獨立型別）、D-10。
 

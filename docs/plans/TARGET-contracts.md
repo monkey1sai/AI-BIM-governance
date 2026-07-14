@@ -1,7 +1,8 @@
 # TARGET-contracts — 全域凍結契約（跨頁不變量唯一正本）
 
-> v3 · 2026-07-13 · AI coding 文件體系重設計（依使用者指令，以兩份 prototype 為基準）
-> `TARGET-contracts@v3 frozen 2026-07-13`
+> v4 · 2026-07-14 · A1–A10 使用情境與 route 身分重寫
+> `TARGET-contracts@v4 frozen 2026-07-14`
+> 作廢範圍（v3→v4）：舊 A9「設計／審查 Copilot」與 A10「機器人／巡檢模擬」身分，以及僅以兩份 HTML 作視覺來源的基準；依 route PNG 設計輸入改為 A9 機器人／自主巡檢、A10 其他應用／AI 決策工作台，將 IA 內化到 self-contained TARGET，並加入跨應用量測與證據 envelope。
 > 作廢範圍（v2→v3）：§7 A2 版本差異列原載「ifcdiff · 禁自寫 diff」抵觸 2026-07-10 R2 使用者簽核裁決（A2 現行採簽核之自製多級鍵引擎，語意對齊 ifcdiff）；v3 依 R2 更正。
 > 作廢範圍（v1→v2）：§4 路由身分表「群組」欄 12 列誤植（`#viewer`/`#gpu`/`#a6`–`#a10` 誤標「核心治理」、`#conv`/`#sessions`/`#instances`/`#minio` 誤標「OMNIVERSE RUNTIME」、`#runtime` 誤標「落地端控制台 / SYSTEM」）；v2 依 prototype `EC_NAV` 導航五組（工作台／核心治理／OMNIVERSE RUNTIME／落地端控制台／SYSTEM）更正。
 
@@ -12,6 +13,7 @@
 3. 修訂本檔＝使用者明確授權＋bump 檔頭凍結點（`TARGET-contracts@v<N> frozen <date>`）＋一行作廢範圍。
 4. 本檔不記載 repo 的建成現況（建成狀態一律查 `TRUTH.md`）；文中「待建」是需求屬性（本規格要求新增），非建成宣稱。
 5. 引用單向：TARGET-shell / TARGET-viewer / PROCESS 以「contracts §N」錨引用本檔；本檔不引用 TRUTH / BACKLOG。
+6. 共用 shell／viewer 骨架以兩份 tracked HTML 為視覺來源；A1–A10 每 route 的 `ai-bim-geo-viewer-A<n>.png` 與 `ai-bim-geo-Ai-codeing-A<n>.png` 是 tracked supplementary visual source，durable 正本仍是 TARGET-shell 對應節。視覺來源中的數字、ID、日期、路徑、協定標籤與健康值不是資料契約。
 
 ---
 
@@ -98,17 +100,17 @@
 | A1 | `#a1` | 治理與模型檢核（P0） | 核心治理 | governance-service rule_engine（經 proxy） |
 | A2 | `#a2` | 版本差異與責任 | 核心治理 | governance-service diff_engine（GlobalId 鍵） |
 | A3 | `#a3` | 跨專業疊合 | 核心治理 | governance-service federation；clash＝Kit / ifcclash（GPU） |
-| A4 | `#a4` | 語意搜尋問答 | 核心治理 | search microservice（規劃） |
-| A5 | `#a5` | IoT / FM 數位分身 | 核心治理 | MQTT（規劃） |
+| A4 | `#a4` | 語意查詢與證據 | 核心治理 | search/index service（規劃；經 coordinator） |
+| A5 | `#a5` | IoT / FM 數位分身 | 核心治理 | MQTT/BMS/FM integration plane（規劃；經 coordinator） |
 | BC | `#issues` | Issue / BCF 中心 | 核心治理 | governance-service issues + bcf |
 | RP | `#reports` | 報表中心 | 核心治理 | governance-service excel_export |
 | 3D | `#viewer` | 3D Viewer 呈現 | OMNIVERSE RUNTIME | 證據面板（不內嵌 3D）；3D 來自 streaming-server WebRTC |
 | 01 | `#gpu` | GPU 審查室 / Review Room（MVP） | OMNIVERSE RUNTIME | coordinator `/ui/open` redirect → web-viewer + streaming-server |
-| A6 | `#a6` | 4D / 5D 施工模擬 | OMNIVERSE RUNTIME | USD timeSamples（GPU） |
-| A7 | `#a7` | Reality Capture 比對 | OMNIVERSE RUNTIME | point cloud（GPU） |
+| A6 | `#a6` | 4D / 5D 進度與成本整合 | OMNIVERSE RUNTIME | schedule/cost authority（規劃）＋USD timeSamples（GPU） |
+| A7 | `#a7` | 掃描比對 / Reality Capture | OMNIVERSE RUNTIME | capture alignment/deviation service（規劃）＋point cloud（GPU） |
 | A8 | `#a8` | Synthetic Data | OMNIVERSE RUNTIME | Replicator + Cosmos Transfer |
-| A9 | `#a9` | 設計 / 審查 Copilot | OMNIVERSE RUNTIME | usd-code-mcp :9903 |
-| A10 | `#a10` | 機器人 / 巡檢模擬 | OMNIVERSE RUNTIME | Isaac Sim + Cosmos |
+| A9 | `#a9` | 機器人 / 自主巡檢 | OMNIVERSE RUNTIME | Isaac Sim（模擬權威）＋可選 ROS/edge adapter（另案） |
+| A10 | `#a10` | 其他應用 / AI 決策工作台 | OMNIVERSE RUNTIME | coordinator 聚合 A1–A9 證據＋受控 AI/report services（規劃） |
 | CV | `#conv` | IFC→USD 轉檔排程（P1） | 落地端控制台 | coordinator `/api/dev/conversions` proxy + `/api/conversion/records`；轉檔權威＝streaming-server |
 | SS | `#sessions` | Session 管理 | 落地端控制台 | coordinator `/api/review-sessions` |
 | KG | `#instances` | Kit / GPU 機隊 | 落地端控制台 | kit-manager-api `/instances`（規格保留埠，見 §3） |
@@ -192,9 +194,9 @@ repo `Prov` 型別（機器真相＝`web-viewer-sample/src/console/data.ts:6`）
 | WebRTC 串流 | `omni.kit.livestream.webrtc` / `.app` | §6 物理鐵律全數適用 | https://docs.omniverse.nvidia.com/ovas/latest/deployments/infra/limitations_etc.html |
 | 瀏覽器↔Kit 指令通道 | 瀏覽器 `AppStreamer.sendMessage(JSON {event_type,payload})` ⇄ Kit `omni.kit.livestream.messaging` | 全指令統一 `{event_type,payload}` JSON；沿用 NVIDIA `web-viewer-sample` 的 `*Request`/`*Result` ack 慣例；web 端只發訊息、不重渲染 | https://docs.omniverse.nvidia.com/extensions |
 | 合成資料（A8） | **Omniverse Replicator**（Annotator/Writer） | ground-truth 標註；**先驗證官方 API 再寫規格**，禁自造資料管線 | https://developer.nvidia.com/blog/how-to-build-a-generative-ai-enabled-synthetic-data-pipeline-for-perception-ai/ |
-| 擬真擴增（A8/A10） | **NVIDIA Cosmos Transfer**（NIM `POST /v1/infer`） | 只擬真不標註；Cosmos 3（2026-06）已換架構/授權，**鎖版前先確認，先驗再寫** | https://developer.nvidia.com/blog/how-to-build-a-generative-ai-enabled-synthetic-data-pipeline-for-perception-ai/ |
-| 機器人模擬（A10） | **Isaac Sim**（PhysX；`isaacsim.sensors.physx`） | PhysX Lidar 只偵測有碰撞體物件、穿透透明物；擬真感測用 RTX Lidar；**先驗再寫** | https://docs.isaacsim.omniverse.nvidia.com/latest/replicator_tutorials/tutorial_replicator_cosmos.html |
-| AI 改場景（A9） | **usd-code-mcp :9903** | 只寫 **session layer**，不碰 source（檔雜湊不變） | — |
+| 擬真擴增（A8/A9） | **NVIDIA Cosmos Transfer**（NIM `POST /v1/infer`） | 只擬真不標註；版本／授權／部署形態鎖定前先驗證，不得把生成影像當真實感測證據 | https://developer.nvidia.com/blog/how-to-build-a-generative-ai-enabled-synthetic-data-pipeline-for-perception-ai/ |
+| 機器人模擬（A9） | **Isaac Sim**（PhysX；`isaacsim.sensors.physx`） | 預設只能標 `SIMULATION`；未有 ROS/edge ownership、auth 與真 telemetry evidence 時不得呈現為實機；感測器能力鎖版前先驗證 | https://docs.isaacsim.omniverse.nvidia.com/latest/replicator_tutorials/tutorial_replicator_cosmos.html |
+| AI 決策／Copilot（A10） | evidence-linked operation plan；需要 USD 操作時才用 **usd-code-mcp :9903** | 建議必帶 evidence refs、confidence/限制並經 human confirm；任何場景寫入只到 **session layer**，source 檔雜湊不變 | — |
 
 **自製唯一例外＝BCF 橋接層**：把官方 markup/waypoint 內容轉成 `bcf topic + viewpoint + snapshot`（用官方 bcf 庫）。這層是本產品的差異化價值，也是唯一值得自寫的 viewer 周邊。
 
@@ -284,12 +286,20 @@ API 錯誤：保留舊資料 + 錯誤條；404/501 視為「後端待建」→ �
 | Version | `versionId`(v01/v02…)、modelId、上傳者、時間、備註 | 同一模型的某一版 |
 | Element | `elementGuid`(IFC GlobalId)、ifcClass、名稱、樓層、屬性 bag、`usdPath` | 一個構件；`elementGuid ↔ usdPath` 對照表是 3D 連動的關鍵 |
 | RuleResult | `checkId`、ruleId、status(pass/fail)、severity、命中 elementGuids | A1 一條規則的檢核結果 |
-| Issue | `issueId`、來源(app)、severity、標題、描述、elementGuids、指派、狀態、BCF 欄位 | 共同出海口；A1/A2/A3/A5 都往這裡丟 |
+| Issue | `issueId`、來源(app)、severity、標題、描述、elementGuids、指派、狀態、BCF 欄位 | 共同治理出海口；A1/A2/A3/A4/A5/A6/A7/A9/A10 可產生，A8 job failure 留在 DatasetJob |
 | ConvJob | `jobId`、modelId、狀態、進度、coverage 報告 | 一筆 IFC→USD 轉檔任務 |
 | Session | `sessionId`、kitInstanceId、stage 路徑、endpoint pool(1 PRI + N SPC)、health | 一場 GPU 審查 |
 | KitInstance | `nodeId`、GPU 型號/util/VRAM、Kit PID/埠、載入 stage、drain 狀態 | 一台 GPU 節點上的 Kit |
+| EvidenceRef | `evidenceId`、sourceType、sourceId、uri、hash、observedAt、quality | 查詢解譯、AI 建議、報表與 Issue 都只能引用可追溯證據 |
+| Scenario | `scenarioId`、baselineId、name、assumptions、inputRefs、createdBy | A6/A10 的基準與替代方案；不得以畫面卡片值充當輸入 |
+| TelemetrySample | `sourceId`、pointCode、value、unit、observedAt、quality | A5/A9 的時序量測；值、單位、時間與品質不可拆開 |
+| WorkOrder | `workOrderId`、assetId、issueId、status、assignee、dueAt、sourceRef | A5 維保閉環，必要時連到共同 Issue |
+| ScheduleActivity | `activityId`、wbsCode、planned/actual dates、progress、costCode、elementGuids | A6 甘特、EVM 與 3D overlay 的共同鍵 |
+| CaptureJob / Deviation | `captureJobId`、sourceUri/hash、transform、rms、elementGuid、deviationMm、toleranceMm | A7 對齊與偏差；精度與 tolerance 必須可追溯 |
+| DatasetJob | `datasetJobId`、stageHash、camera/seed、outputs、status、artifactRefs | A8 每張輸出可回溯到場景、相機、seed、annotator/writer 版本 |
+| RobotMission | `missionId`、mode、robotId、route/waypoints、sensorPack、status、eventRefs | A9 任務；`mode=simulation|physical` 必須可見且不可由 UI 猜測 |
 
-### 10.2 Issue / BCF 共同出海口 schema（A1/A2/A3/A5 共用）
+### 10.2 Issue 共同出海口 schema（A1/A2/A3/A4/A5/A6/A7/A9/A10 共用）與 BCF gate
 
 ```json
 {
@@ -306,15 +316,23 @@ API 錯誤：保留舊資料 + 錯誤條；404/501 視為「後端待建」→ �
 }
 ```
 
-- `source` ∈ `A1|A2|A3|A5|manual`；`severity` 與 `status` 值域**以 §2 凍結 enum 為準**（後端逐字 echo，本 schema 不另立值域）。
+- `source` ∈ `A1|A2|A3|A4|A5|A6|A7|A9|A10|manual`；A8 job failure 留在 DatasetJob，不自動轉治理 Issue。`severity` 與 `status` 值域**以 §2 凍結 enum 為準**（後端逐字 echo，本 schema 不另立值域）。
 - 匯出 BCF＝把 Issue 打包成 `.bcfzip`（現行 **BCF 2.1**；每個 issue 一個資料夾：`markup.bcf` 描述＋`viewpoint.bcfv` 視角＋`snapshot.png` 截圖）；沒有 3D 時 viewpoint/snapshot 可缺省，**誠實標「無視角資訊」**，不假截圖。
-- BCF 兩步 gating（§1 第 8 條）：先以 `from-rule-run`/`from-diff` 建 issues，才可匯出 BCF。
+- BCF 兩步 gating 的目標契約以 §1 第 8 條為準：匯出資格必須限於由 `from-rule-run`／`from-diff` 建立的 issues。A3/A4/A5/A6/A7/A9/A10 雖共用 Issue schema，沒有新增 approved exception／provenance bridge 前不得宣稱可匯 BCF。
 
 ### 10.3 資料庫事實層宣告
 
 - governance-service 治理帳本（rule-run / issue / audit）＝ **SQLite（host-native）**。
 - 雲端控制面 metadata 權威 DB ＝ **MySQL（`bim-control`）**，非 Postgres。
 - coordinator 對 project/artifact metadata 只是 reference（§1 第 10 條）；轉檔狀態真相＝ledger。
+
+### 10.4 A1–A10 結果與量測共同 envelope
+
+- 每份結果至少帶 `project_id`、`model_version_id`、`generated_at`、`source_refs[]`、`provenance`、`status`；涉及方案或 runtime 時再帶 `scenario_id`／`runtime_id`，未知值為 `null`，不得補假 ID。
+- 每個 KPI/量測都是 `{value, unit, observed_at, quality, source_ref, baseline?, delta?}`；沒有 unit、時間或獨立分母的數字不得上綠燈，也不得把 PNG 示意數字 hardcode 成 fixture 真相。
+- AI／自然語言輸出至少帶 `{claim, confidence, interpreted_inputs, evidence_refs, limitations}`；UI 必須能從 claim 展開到證據，不接受只有流暢文字的黑箱結果。
+- 任何 3D 結果仍須能追到 `ifc_guid ↔ usd_prim_path`、stage truth、first frame 與 DataChannel/Kit ack；圖片或預錄 frame 不能代替 runtime evidence。
+- 會改狀態、建 Issue、建工單、啟動 job/mission 或匯出的動作必須回 `operation_id`／`audit_id` 並支援冪等鍵；UI 只在回讀成功後更新。
 
 ---
 

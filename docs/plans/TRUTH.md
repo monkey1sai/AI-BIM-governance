@@ -1,7 +1,7 @@
 ---
-as_of: 2026-07-13
+as_of: 2026-07-14
 as_of_commit: 94e817b
-generated_from: 人工核對（2026-07-10 repo 盤點 + code 逐檔讀；2026-07-13 對 #323–#329 增量複核）；未來可換腳本重生
+generated_from: 人工核對（2026-07-10 repo 盤點 + code 逐檔讀；2026-07-13 對 #323–#329 增量複核；2026-07-14 BCF provenance 路徑複核）；未來可換腳本重生
 ---
 
 # TRUTH — 現況帳本
@@ -28,7 +28,7 @@ route＝EdgeConsole hash route（無斜線，`#a1` 非 `#/a1`）；prototype 錨
 | `#a3` | `#a3` | PARTIAL | asbuilt | federation（建 set/validate-coords/build usda/handoff）已建；clash 為 NOT BUILT／未開工，O6 已裁決 ifcclash | governance pytest（federation）；clash 端點 grep=0（not observed） |
 | `#a4` | `#a4` | NOT-BUILT | p4 | AppVisionPage 佔位頁，後端不存在 | not observed（vision 頁自標 p4） |
 | `#a5` | `#a5` | NOT-BUILT | p3 | AppVisionPage 佔位頁，後端不存在 | not observed（vision 頁自標 p3） |
-| `#issues` | `#issues` | PARTIAL | asbuilt | 3 內建規則＋IDS-XML 匯入＋BCF 匯出＋Issue 生命週期齊；「在 3D 標示」p1 disabled；assignee 後端齊（schema `assignee` 欄＋create API＋BCF `AssignedTo` 映射：`issues/store.py`·`issues/api.py`·`bcf/bcf_writer.py`）、前端寫入 UI 未建（顯「指派 pending」）；tracked browser trace 未觀測 | `artifacts/e2e/issues-tab.png`；governance pytest（issues/ids/bcf）；trace not observed |
+| `#issues` | `#issues` | PARTIAL | asbuilt | 3 內建規則＋IDS-XML 匯入＋BCF 匯出＋Issue 生命週期齊；BCF export path 目前匯出全部 formal issues，generic create 帶 `ifc_guid` 時預設 `source_type=manual` 仍會進匯出，未執行 TARGET 的 rule-run/diff provenance gate；「在 3D 標示」p1 disabled；assignee 後端齊（schema `assignee` 欄＋create API＋BCF `AssignedTo` 映射：`issues/store.py`·`issues/api.py`·`bcf/bcf_writer.py`）、前端寫入 UI 未建（顯「指派 pending」）；tracked browser trace 未觀測 | `issues/store.py`＋`issues/api.py`＋`bcf/api.py` source inspection；`artifacts/e2e/issues-tab.png`；governance pytest（issues/ids/bcf）；trace not observed |
 | `#reports` | `#reports` | PARTIAL | p1 | StubPage 狀態清單；A1 Excel 匯出已在（指向既有匯出）；coverage 報表／review package=p1 未建 | `npm run verify`；報表產生器 UI not observed |
 | `#viewer` | `#viewer` | PARTIAL | asbuilt | ViewerPresentationPage 說明頁；對照 geo-viewer 原型七區塊差距大（見 §2） | `artifacts/e2e/viewer-tree-focus.png`、`artifacts/e2e/gov-viewer-layout.png` |
 | `#gpu` | `#gpu` | PARTIAL | asbuilt | Review Room 殼已建；MockViewport 無 first frame 時顯示 deterministic no-GPU（不偽稱 live 3D） | `artifacts/e2e/primary-spectator-authority.png`、`artifacts/e2e/stage-artifact-binding.png` |
