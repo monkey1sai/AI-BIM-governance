@@ -6,8 +6,5 @@ mode = "limited"
 "api.github.com" = "allow"
 "github.com" = "allow"
 
-[plugins."cloudflare@openai-curated"]
-enabled = false
-
-[plugins."superpowers@claude-plugins-official"]
-enabled = false
+# Plugin enablement is user-scoped in %USERPROFILE%\.codex\config.toml.
+# Repo-local invocation policy lives in AGENTS.md and docs/agents/.

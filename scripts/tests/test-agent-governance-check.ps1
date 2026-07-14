@@ -218,8 +218,9 @@ try {
     foreach ($domain in @('api.github.com', 'github.com')) {
         Assert-True ($codexConfig -match [regex]::Escape('"' + $domain + '"')) ".codex/config.toml allows $domain"
     }
-    Assert-True ($codexConfig -match '\[plugins\."cloudflare@openai-curated"\][\s\S]*?enabled\s*=\s*false') '.codex/config.toml disables the Cloudflare plugin'
-    Assert-True ($codexConfig -match '\[plugins\."superpowers@claude-plugins-official"\][\s\S]*?enabled\s*=\s*false') '.codex/config.toml disables the Superpowers plugin'
+    Assert-True ($codexConfig -match 'Plugin enablement is user-scoped') '.codex/config.toml points plugin enablement to the user-scoped config'
+    Assert-True (-not ($codexConfig -match '(?m)^\s*\[plugins\.')) '.codex/config.toml does not claim ineffective project-local plugin state'
+    Assert-FileContains 'docs/agents/superpowers-invocation-policy.md' 'user-scoped.*config\.toml' 'Superpowers policy records the Codex plugin configuration scope'
     foreach ($forbiddenConfigKey in @('sandbox_workspace_write', 'sandbox_mode', 'model\s*=', 'model_reasoning_effort\s*=')) {
         Assert-True (-not ($codexConfig -match $forbiddenConfigKey)) ".codex/config.toml does not define forbidden selector $forbiddenConfigKey"
     }

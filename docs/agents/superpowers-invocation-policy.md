@@ -6,6 +6,8 @@
 
 Default to **repo-native lean mode**: one coordinator, minimum necessary source of truth, targeted exploration, GitNexus impact before code-symbol changes, and affected-area verification first. Do not automatically create a spec, implementation-plan file, subagent, or Superpowers workflow. A heavy skill may be suggested but needs explicit user authorization.
 
+Codex plugin enablement is user-scoped in `%USERPROFILE%\.codex\config.toml`; repo-local `.codex/config.toml` does not mechanically disable a plugin. This policy governs invocation when a plugin is available.
+
 ## 2. Risk routing matrix
 
 | Tier | Examples | Route |
