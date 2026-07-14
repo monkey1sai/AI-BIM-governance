@@ -13,6 +13,8 @@ if (-not $RepoRoot) {
     $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 }
 $RepoRoot = [IO.Path]::GetFullPath($RepoRoot)
+$structLogModule = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\lib\StructLog.psm1'))
+Import-Module -Force $structLogModule
 
 function Resolve-RepoPath {
     param([Parameter(Mandatory = $true)][string] $RelativePath)
@@ -243,8 +245,21 @@ if ($issues.Count -gt 0) {
     throw ("Agent skill asset check failed:`n - " + ($issues -join "`n - "))
 }
 
+$logger = New-StructLogger `
+    -Service 'scripts' `
+    -Component 'agent-skills-sync' `
+    -LogRoot (Join-Path $RepoRoot 'logs') `
+    -SkipEnvSnapshot
+
 if ($Mode -eq 'Sync') {
-    Write-Host "[agent-skills-sync] sync complete; file operations=$syncOperations"
+    $logger | Write-StructInfo -Msg 'agent skill sync complete' -Data @{
+        mode = $Mode
+        file_operations = $syncOperations
+        skill_count = $manifest.skills.Count
+    }
 } else {
-    Write-Host "[agent-skills-sync] check passed; skills=$($manifest.skills.Count)"
+    $logger | Write-StructInfo -Msg 'agent skill check passed' -Data @{
+        mode = $Mode
+        skill_count = $manifest.skills.Count
+    }
 }

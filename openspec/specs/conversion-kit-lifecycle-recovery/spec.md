@@ -1,7 +1,7 @@
 # conversion-kit-lifecycle-recovery Specification
 
 ## Purpose
-TBD - created by archiving change conversion-kit-lifecycle-recovery. Update Purpose after archive.
+定義 conversion artifact readiness、terminal conversion failure recovery，以及 Kit stage-open 與 viewer first-frame 證據分離的跨服務契約，避免缺檔產物或 metadata binding 被誤報為可用 runtime。
 ## Requirements
 ### Requirement: Conversion ready status requires serveable artifacts
 

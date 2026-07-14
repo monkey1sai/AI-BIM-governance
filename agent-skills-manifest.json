@@ -195,14 +195,13 @@
         "codex": ".codex/skills/repo-health"
       },
       "sync": {
-        "mode": "mirror",
-        "source": "claude",
-        "targets": ["codex"]
+        "mode": "independent"
       },
       "provenance": {
-        "kind": "repo-authored",
+        "kind": "repo-authored-platform-variants",
         "source": "AI-BIM-governance",
-        "import_commit": "6f07f969fd17ae568b4c39876ce743a5cd06e82a"
+        "import_commit": "6f07f969fd17ae568b4c39876ce743a5cd06e82a",
+        "notes": "Claude uses the repo-health-scan workflow; Codex performs the same dimensions directly with local read-only discovery and reporting."
       }
     },
     {

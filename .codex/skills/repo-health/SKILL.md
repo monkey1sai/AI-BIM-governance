@@ -10,7 +10,7 @@ argument-hint: "（選填）只想看某面向：version / cleanup / assets / do
 
 ## 安全鐵則（不可違反）
 
-1. **掃描階段唯讀** — workflow 與本 skill 的掃描絕不修改任何檔案。
+1. **掃描階段唯讀** — 本 skill 的掃描絕不修改任何檔案。
 2. **報告 → 確認 → 才修** — 任何修復都要先把報告給使用者、等使用者勾選後才動手。
 3. **risky 項一律明確確認** — 改版本檔、`.claude` agent 設定、文件內容、`.env.example`（只補 key 名、留空值，永不寫入任何 .env 值）都屬 risky。
 4. **優先複用既有腳本** — 清理用 `scripts/git-prune-merged-branches.ps1`、`scripts/log-retention/`；不要另寫新腳本（遵守 `scripts/SCRIPT_CONTRACT.md`）。
@@ -35,9 +35,14 @@ argument-hint: "（選填）只想看某面向：version / cleanup / assets / do
 
 ## 流程
 
-1. **掃描** — 跑 workflow `repo-health-scan`（4 個 Explore agent 平行唯讀掃）。
+1. **掃描** — coordinator 在目前 session 直接執行以下 5 個唯讀檢查；不得呼叫 Claude workflow，也不得在此階段派 writer：
+   - `version`：讀各服務的 `requirements.txt` / `package.json`，比對同名 dependency 版本。
+   - `cleanup`：讀 `git status`、merged branches、`git worktree list` 與 `.tmp` / cache / logs；不刪除。
+   - `assets`：比對 `agent-skills-manifest.json`、`.claude/skills`、`.codex/skills`、workflow/command 引用與入口檔。
+   - `docs`：比對 `scripts/script-registry.json`、實際 scripts、`.env` 與 `.env.example` 的 key 名、文件連結目標；不得輸出 `.env` 值。
+   - `progress`：依 `docs/plans/docs-plans-README.md` 讀 `TRUTH.md` / `BACKLOG.md` / `PROCESS.md`，再以原始碼、測試與 git history 獨立查證。
    - 若使用者只要某一面向（arg = version/cleanup/assets/docs），仍跑全掃但報告時只聚焦該面向。
-2. **報告** — 套用 `repo-health` output-style，把回傳的 `dimensions` 畫成健康狀態表：
+2. **報告** — coordinator 直接把掃描結果整理成健康狀態表：
    - 開頭一張總表（4 個衛生面向，每面向 ✅ 無問題 / ⚠️ warn / ❌ fail + 問題數）。
    - 各面向逐項列：標題、證據、建議修法、`[safe]`/`[risky]` 標記。
    - **進度差異獨立區塊** — 衛生面向之後另起「📊 進度差異」，把回傳的 `progress.items` 畫成小表：`目標 / 計畫說 / 實際 / 對齊 / 差距`；對齊用圖示（✅相符 / 🔴計畫高估 / 🟡計畫低報 / ❔查不出）。此區塊**純資訊，不列入可修項**。
@@ -49,10 +54,10 @@ argument-hint: "（選填）只想看某面向：version / cleanup / assets / do
 
 ## 觸發
 
-- 指令：`/repo-health`（薄指令，叫起本 skill）。
+- skill：`$repo-health`。
 - 或使用者直接說「跑 repo 健檢 / 檢查 repo 健康 / 清一下 repo」。
 
 ## 注意
 
-- workflow 預設 `root` 為 `C:\Repos\active\iot\AI-BIM-governance`；在別處或 worktree 跑時用 args 帶入正確絕對路徑。
-- 掃描是 best-effort：某面向 agent 失敗（回 null）時如實標「該面向未完成」，不要假裝健康。
+- 以 `git rev-parse --show-toplevel` 決定 root；若在 linked worktree 執行，所有讀取與 git 指令都使用該 worktree 的絕對路徑。
+- 掃描是 best-effort：某面向無法完成時如實標「該面向未完成」，不要假裝健康。

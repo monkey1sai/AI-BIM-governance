@@ -58,10 +58,23 @@ try {
     Assert-True (Test-Path -LiteralPath (Join-Path $independent 'SKILL.md')) 'sync preserves independent skill directories'
 
     & $scriptUnderTest -Mode Check -RepoRoot $fixtureRoot -ManifestPath $manifestPath
+
+    $logRecords = @(Get-ChildItem -Recurse -File -Filter '*.jsonl' -LiteralPath (Join-Path $fixtureRoot 'logs') | ForEach-Object {
+        Get-Content -LiteralPath $_.FullName | ForEach-Object { $_ | ConvertFrom-Json }
+    })
+    Assert-True (@($logRecords | Where-Object { $_.msg -eq 'agent skill sync complete' }).Count -eq 1) 'sync emits one structured success record'
+    Assert-True (@($logRecords | Where-Object { $_.msg -eq 'agent skill check passed' }).Count -eq 1) 'successful check emits one structured success record'
 } finally {
     if (Test-Path -LiteralPath $fixtureRoot) {
         Remove-Item -Recurse -Force -LiteralPath $fixtureRoot
     }
 }
+
+$repoManifest = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'agent-skills-manifest.json') | ConvertFrom-Json
+$repoHealth = @($repoManifest.skills | Where-Object { $_.name -eq 'repo-health' })
+Assert-True ($repoHealth.Count -eq 1) 'repo-health has one manifest entry'
+Assert-True ($repoHealth[0].sync.mode -eq 'independent') 'repo-health declares Claude and Codex platform variants'
+$codexRepoHealth = Get-Content -Raw -LiteralPath (Join-Path $repoRoot '.codex\skills\repo-health\SKILL.md')
+Assert-True ($codexRepoHealth -notmatch 'repo-health-scan|output-style') 'Codex repo-health does not invoke Claude-only workflow or output-style features'
 
 Write-Host '[test-agent-skills-sync] all assertions passed'
