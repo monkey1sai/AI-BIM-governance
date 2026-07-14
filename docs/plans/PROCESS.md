@@ -87,6 +87,8 @@ UI 呈現規範：一律依 contracts §9 的六條誠實元件規範與六通�
 | D-31 | 雙來源選檔隔離：一邊失敗顯錯誤條、保留另一邊，禁默默換來源；來源切換後下游狀態清空回 idle；**選檔動作本身不觸發轉檔**。 |
 | D-32 | 假指派禁令：schema 無對應欄位時，指派類 UI 一律 dashed 待建標＋title，禁 render 寫入無處去的下拉；狀態流轉只走後端 transition API 的證據型更新。 |
 | D-33 | 連動證據只讀鏡射：跨頁證據以單一來源（`#sessions`／Runtime 遙測）只讀鏡射，消費端不自存、不推定；證據未齊控制 disabled；觸發類請求帶冪等鍵防重複；成功只認 viewer ack。 |
+| D-34 | main 的 branch protection 必須維持 `enforce_admins=true` ＋ require PR：`enforce_admins=false` 時，全部 required check 對 repo owner **一律失效**，任何 gate（含閘 2）都可被一行 `git push` 繞過——2026-07-14 即因此有 7 個 commit 直接進 main，導致 main 帶 typecheck 紅燈、TRUTH 就地腐化、BACKLOG 據 stale TRUTH 產生錯誤前提。**保護的存在不等於保護生效**：驗證要看 `enforce_admins`，不是看 required check 清單長度。 |
+| D-35 | 閘不得擋住自己要求的動作：任何「未取得 X 就拒絕 Y」的 gate，必須先放行「產生 X 的手段」——2026-07-14 browser-evidence gate 因對所有 Bash 指令把關，把取證用的 Playwright 指令也擋了，形成無法自解的 deadlock。PreToolUse hook 一律自 stdin 讀 `tool_input.command` 自我把關，不把正確性押在 settings 的宣告式條件上（回歸測試：`scripts/tests/test-require-gstack-evidence.ps1`）。 |
 | 通用-1 | 品質數字必須有獨立分母；自我參照計數（分子分母同源）不得當品質宣稱，UI 須標注其語意（具體現況數值查 TRUTH §6）。 |
 | 通用-2 | `fake_mapping`／mock 旗標（`mock=true`、`allow_fake_mapping=true`、`fake_mapping_count>0`、`mapping_method=fake_for_smoke_test`）一律當 fake 處理，嚴禁覆蓋真 `element_mapping.json`。 |
 | 通用-3 | 文件矛盾／缺漏一律停下標註 `// TODO [SPEC-GAP]:`（列明衝突兩處），不自行臆測補實作；SPEC-GAP 清單隨 PR 揭露。 |

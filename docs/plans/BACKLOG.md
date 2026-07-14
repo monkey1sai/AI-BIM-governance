@@ -20,6 +20,7 @@
 |---|---|---|---|---|---|---|---|
 | `gap-conv-history` | `#conv` | TARGET-shell `#conv` 節 | TRUTH §1 `conv` 列 | 整頁洞×最高；**指定為新體系第一個執行 gap＝體系 E2E 驗收** | `#conv` 成為獨立轉檔歷史頁（非轉址），渲染轉檔歷史清單與動作；screenshot/E2E 對齊 prototype `#conv` 錨 | live GPU 轉檔證據未觀測時標 `not observed`；coverage 自我參照數字不得當品質宣稱（TRUTH §6） | 無 |
 | `gap-review-room-alignment` | `#review` | TARGET-shell §4.1 `#review` 節 | TRUTH §1 非正典保留頁 `#review` 列 | PARTIAL×高 | `#review` 介面對齊 TARGET-shell §4.1 `#review` 節規格（route 獨立性與現況見 TRUTH §1 `#review` 列，本 gap 範圍＝介面對齊，不含 route 建立）；同 PR 更新 TRUTH §1 `#review` 列；E2E | Section/Snapshot 等 p15 工具維持 disabled＋待建標示 | 無 |
+| `gap-a4-closeout` | `#a4` | TARGET-shell `#a4` 節 | TRUTH §1 `a4` 列 | PARTIAL×高（**A8 動工前的收尾**——2026-07-14 裁決：先把已投入的 A4 推到可宣稱，再開下一片） | A4 語意查詢達 PROCESS §2 DoD 五條：補 tracked browser trace（`:8005` 隔離站，PROCESS §3）；BCF bridge 依 contracts §1 #8 裁決（新增 approved provenance bridge，或維持 unavailable 並於 UI 誠實標示）；E2E | BCF bridge 未核准前「建立 Issue (BCF)」維持 unavailable、不偽成功；confidence 僅在有定義／校正來源時顯示；Ornith vLLM 未連線時降級為 deterministic 且明示，不阻斷頁面、不偽稱 semantic | 無 |
 | `gap-viewer-m4-select-semantic` | `#viewer` | TARGET-viewer 區塊 1＋2（AC-1） | TRUTH §2 區塊 1／區塊 2 列 | PARTIAL×高（M4 核心迴路第一段） | 真串流畫面點選構件→高亮鎖定→右欄顯示 IFC Type／Name／GlobalId(22 碼)／PredefinedType／ObjectType／Tag／Fidelity；E2E | 串流遙測未取得標 n/a；無 GPU/harness 時 `KIT runtime=no`，不偽綠 | 無 |
 | `gap-viewer-m4-tree-filter` | `#viewer` | TARGET-viewer 區塊 3（AC-9） | TRUTH §2 區塊 3 列 | 小×中（**樹本身已建**——`console/viewer/StructureStats.tsx` 的空間巢狀樹經 coordinator spatial-tree for-session proxy 真 fetch、loading/error/no_url/ok 四態齊全；本 gap 只剩篩選模式） | 結構樹篩選支援 `dim`（其餘變暗）／`iso`（其餘隱藏）兩模式＋一鍵取消篩選；E2E | 樹資料未載入時走空狀態，不補假節點 | 無 |
 | `gap-viewer-m4-mapping-table` | `#viewer` | TARGET-viewer 區塊 4（AC-3） | TRUTH §2 區塊 4 列 | PARTIAL×高 | GUID⇔USD 對應表逐件顯示，prim 命名 `G_<sanitized_guid>`、路徑 `/World/Elements/<IfcClass>/…`；`name_fallback` 降級標警示並計入統計；E2E | fidelity 不得宣稱 100%；降級可視不隱藏 | 無 |
@@ -61,13 +62,22 @@
 4. **O3 版本命名規約**：MinIO「版本層」落地方式（資料夾命名規則、舊資料是否搬遷）——A2 真雙版本比對的前置。觸發：需要 v06/v07 級真差異比對前。預設：不動儲存層、不自創命名規約。
 5. **O5 GPU 台數規劃**：落地端實際 GPU 台數與型號——session 容量與排程的前置。觸發：容量規劃或多卡排程設計前。預設：以單卡假設規劃（1 GPU＝1 Kit＝1 stream，無 live migration），不預先實作多卡排程。
 6. **BCF 3.0 升級時點**：前置＝向 buildingSMART 確認 3.0 規格與官方支援。預設：固定 BCF 2.1（純 stdlib 匯出），UI 與文件標「3.0 為升級目標」。
-7. **A4–A10 第一個 vertical slice 與 ownership**：**已裁決（2026-07-14）**＝選 **A4**。authoritative service＝`governance-service`（`POST /api/search/model`，deterministic ifcopenshell filters，非 LLM）；browser 經 coordinator `:8004` `/api/governance/search/model` 與 `for-session` / `for-ifc-ready`；資料不另建 index DB（當次開啟 IFC 掃描）；Issue 批次走既有 `POST /api/issues`（`source_type=manual`，BCF provenance bridge 未批）。A5–A10 仍待各自 ownership 裁決。預設（A5–A10）：不新增 route/API，維持 NOT BUILT／disabled。
+7. **A4–A10 vertical slice 與 ownership**：**第一片已裁決（2026-07-14）＝A4**，且已落地。authoritative service＝`governance-service`（`POST /api/search/model`，支援 `interpret_mode=deterministic｜semantic｜auto`；semantic＝Ornith vLLM OpenAI-compatible，key 不進 git——**能力現況一律以 TRUTH §1 `a4` 列為準**）；browser 經 coordinator `:8004` `/api/governance/search/model` 與 `for-session`／`for-ifc-ready`；資料不另建 index DB（當次開啟 IFC 掃描）；Issue 批次走既有 `POST /api/issues`（`source_type=manual`，BCF provenance bridge 未批）。<br>**下一片已裁決（2026-07-14）＝A8 Synthetic Data Studio**：理由＝唯一能把現有 GPU／Kit／USD 資產直接變成產品的頁（零新硬體、零新外部資料源、Replicator 與 Kit 同棧，TARGET-shell §a8 驗收句已可執行）。但其 ownership（authoritative service、Replicator runner 落點、資料集儲存位置、GPU／storage budget、需要的 contracts §1.1 approved exception）**必須先做 Task 0 runtime probe 才有意義**——比照 A3 clash 的 `has_occ=False` 教訓，未 probe 前不談 ownership、不列入 §1。<br>A5–A7／A9／A10 仍待各自 ownership 裁決。預設：不新增 route/API，維持 NOT BUILT／disabled。
 
 **已裁決不留帳**：O6＝ifcclash、O7＝自由文字 assignee、A1v2 三裁決、SaaS 10 裁決等結論已內化進 TARGET 正文；出處＝審批報告三檔（keep 原地）與 git history。本節只收未決事項。
 
 ## §3 遷移待辦（邊界事件，逐項待使用者授權）
 
-1. **［待授權］閘 2 wiring**：把「產品 PR 觸碰四服務 route/API 面必須同 PR 更新 TRUTH.md」接進 `pr-review-agent.ps1` 的 body-evidence paths 機制。**不可裁減項**——這是防止 TRUTH 變 stale 副本的唯一結構性保險；改動在 docs/plans 之外，需另案授權。
+1. **［已授權 2026-07-14 · 未動工］閘 2 wiring**：把「產品 PR 觸碰四服務 route/API 面必須同 PR 更新 TRUTH.md」接進 `pr-review-agent.ps1` 的 body-evidence paths 機制。**不可裁減項**——這是防止 TRUTH 變 stale 副本的唯一結構性保險。
+   - **觸發面採「中等寬度」**（已裁決）：四服務的 route／API 目錄（`web-viewer-sample/src/console/**`、`bim-review-coordinator/src/routes/**`、`governance-service/**/api.py`、`bim-streaming-server/**`）。純 refactor／測試 PR 可於 body 聲明「本 PR 不改變任何 route/API 建成面」豁免——**太寬會逼每個 PR 亂填 TRUTH，gate 會自我腐化**。
+   - **前置已完成**：2026-07-14 開啟 main branch protection（`enforce_admins=true` ＋ require PR，見 PROCESS §4 D-34）。在此之前，11 道 required check 對 repo owner 全部失效，直接 push 可繞過所有 gate——**閘 2 至此才真正擋得住**。
+   - 動工注意：`pr-review-agent` 是 main 的 REQUIRED check（strict，fail=BLOCKED），改壞會擋住所有 PR。先以 `scripts/tests/test-pr-body-evidence.ps1` 本機模擬驗證再上。
 2. **［待授權］實體搬移**：saas 六檔（`ai-bim-governance-saas-*.md`）搬 `vision/`、審批報告三檔搬 `archive/`。本輪 keep 原地＝願景分離效果打八折。
 3. **［待授權］TRUTH 半自動重生腳本**：讀 `web-viewer-sample/src/console/data.ts` prov 標註＋`artifacts/e2e/` 清單，產出 TRUTH 主表草稿供人工核對。
 4. **［待授權］行數預算 CI**：把新體系 7 檔行數上限註冊進 agent-doc-context-budget CI gate。
+
+5. **［已授權 2026-07-14 · 未動工］前端渲染凍結 ＋ Ai-codeing PNG 降級 ＋ CI grep gate**：
+   - **問題**：`ai-bim-geo-Ai-codeing-A<n>.png` 十張的排版本身就是「給 AI Coding Agent 的實作指令」，但其 **技術建議／建議 API／成功指標 KPI** 三欄與本 repo 架構全面衝突——A3/A5 要 Vue 3＋Pinia＋Element Plus；A2/A6/A7/A9/A10 要 Three.js／Cesium 在瀏覽器本地渲染 IFC/GLTF；A5 明寫「可透過 mock server 模擬資料」；API 命名為 `/api/a{n}/*`、`/api/v1/*`、`/ws/robots/*`。實測全 repo `package.json` 零 vue／three／cesium／pinia／echarts／zustand／antd，3D 完全靠 Kit WebRTC 串流。而 `docs-plans-README.md` §2 的讀取路線**卻把這十張放在必讀路徑上**，要求 agent 拿它交叉檢查 coding acceptance。
+   - **處置**（已裁決）：(a) `docs-plans-README.md` §2 把 Ai-codeing 十張**移出必讀路徑**、降為歷史設計輸入，明列其三欄無效力；`ai-bim-geo-viewer-A<n>.png` 十張**留在必讀路徑**（route IA 比對有價值）。(b) `TARGET-contracts.md` §1 新增**正面條文**（**已授權 bump v5**）：3D 一律經 Kit WebRTC 串流呈現、前端不做本地幾何渲染；前端單一框架 React；新增 API 命名依 TARGET-shell 該節。**寫成正面條文而非禁用清單**，以免撞 README §8 守恆規則 #3。(c) `AGENTS.md` 同步工程側 repo 邊界。(d) CI 加 `package.json` dependency grep gate（vue／three／cesium／@react-three 出現即紅燈）。
+   - **只凍 3D**（已裁決）：2D charting 庫的選擇留給未來 A5／A6／A10 gap 動工時再決定——repo 現無任何 charting 庫，而那三頁都需要圖表；**但不由 PNG 決定**。
+   - **風險實證下修**：A4 實作採 TARGET-shell 規定的 `POST /api/search/model`（非 PNG 的 `/api/a4/semantic/query`），前端經 coordinator proxy——實作者照 TARGET 走、未照圖走，顯示 TARGET 的防線實際有效。本項的價值在於「擋住下一個沒讀 TARGET 就照圖寫 code 的 agent」，而非補救已發生的偏離。
