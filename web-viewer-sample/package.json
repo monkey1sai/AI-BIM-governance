@@ -12,8 +12,10 @@
         "npm": "^10.0.0"
     },
     "scripts": {
-        "dev": "vite",
+        "dev": "node scripts/sync-design-assets.mjs && vite",
+        "prebuild": "node scripts/sync-design-assets.mjs",
         "build": "vite build",
+        "prebuild:ui": "node scripts/sync-design-assets.mjs",
         "build:ui": "vite build --base=/ui/ --outDir dist-ui",
         "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
         "preview": "vite preview",
