@@ -1,58 +1,67 @@
 import { test, expect } from "@playwright/test";
 
-// 本 PR 的 user-facing 驗證（純前端；不需 coordinator / governance）：
-//   1. #a9  身分＝機器人／自主巡檢（TARGET-shell §a9；舊 ChatUSD 文案已不定義本 route）
-//   2. #a10 身分＝其他應用／AI 決策工作台（TARGET-shell §a10）；ChatUSD 全域右欄改掛 A10
-//   3. #apps 的 A1 卡片導向 #a1 五步治理工作台（原誤導向 #issues 規則中心）
-//   4. #a4  來源／解譯模式按鈕選中時套 Btn primary（原 className="ec-btn-primary" 會被 Btn
-//           丟棄，且該 class 在 edge-console.css 中不存在 → 選中狀態完全不可見）
+// IA v2（UnifiedConsole）後的 user-facing 驗證（純前端；不需 coordinator / governance）：
+//   1. #a9  → UnifiedConsole ConceptPage：標題＝conceptMeta.a9.titleZh「A9 · 機器人 / 自主巡檢」
+//   2. #a10 → ConceptPage：標題＝conceptMeta.a10.titleZh「A10 · 其他應用 / AI 決策」
+//   3. ChatUSD 全域右欄（ROADMAP · A10）只存在 legacy 殼 → 斷言移到 legacy 路由（#sessions）
+//   4. #apps 的 A1 卡片導向 #a1；hash 不變，落點改為 UnifiedShell workspace（dock A1）
+//   5. #a4 舊語意搜尋頁遷 #semantic-search：來源／解譯模式按鈕選中時套 Btn primary
 //
 // 服務者＝playwright.config.ts 的 webServer（vite dev :5180），本 branch 的碼。
-// a9/a10 在 TRUTH 為 NOT-BUILT 佔位頁，依 PROCESS §3 斷言其對 /api/* 零呼叫。
+// a9/a10 為 unified concept 佔位頁（fixture 語意，不打任何 /api）→ 零頁面級 /api 斷言保留並收緊。
 
 const SHOT = "../artifacts/e2e/a9-a10-identity-a4-primary";
 
-test.describe("A9/A10 route 身分、A1 卡片導向、A4 選中高亮", () => {
-  test("#a9 顯示機器人／自主巡檢；ChatUSD 欄改掛 A10；佔位頁零 /api 呼叫", async ({ page }) => {
+test.describe("A9/A10 route 身分、ChatUSD legacy 欄、A1 卡片導向、A4 選中高亮", () => {
+  test("#a9 顯示機器人／自主巡檢 ConceptPage；佔位頁零 /api 呼叫", async ({ page }) => {
     const apiCalls: string[] = [];
     page.on("request", (r) => {
       if (r.url().includes("/api/")) apiCalls.push(r.url());
     });
 
     await page.goto("/#a9");
-    await expect(page.getByRole("heading", { level: 1 })).toContainText("A9 · 機器人 / 自主巡檢");
-    // ChatUSD 是全站右欄元件，route 身分交給機器人後改掛 A10。
-    await expect(page.getByText("ROADMAP · A10")).toBeVisible();
+    // ConceptPage 標題為 span（非 h1），以 conceptMeta.a9.titleZh 全文斷言。
+    await expect(page.getByText("A9 · 機器人 / 自主巡檢", { exact: true })).toBeVisible();
+    await expect(page.getByText("Concept Preview / Roadmap")).toBeVisible();
     await page.screenshot({ path: `${SHOT}/a9-robot-inspection.png`, fullPage: true });
 
-    // PROCESS §3 的「佔位頁對 /api/* 零呼叫」指的是「頁面不得打自己的資料 API 假裝有資料」。
-    // 殼層的 SharedStatusProvider（SharedStatusProvider.tsx:34）在**每一頁**都會輪詢
-    // /api/runtime/status 餵頂部 HealthChips 健康燈，屬全站殼層行為、非頁面資料呼叫；
-    // 若照字面把它算進來，任何 route（含 #home/#a1）都無法滿足此斷言。故排除後再斷言。
-    const SHELL_HEALTH_POLL = "/api/runtime/status";
-    const pageApiCalls = apiCalls.filter((u) => !u.includes(SHELL_HEALTH_POLL));
-    expect(pageApiCalls, "NOT-BUILT 佔位頁不得呼叫頁面資料 API（PROCESS §3 network 面斷言）").toEqual([]);
+    // Unified concept 頁為 fixture 語意、不打任何 /api；且新殼不掛 SharedStatusProvider
+    //（舊殼的 /api/runtime/status 健康輪詢不存在於 unified route）→ 斷言收緊為完全零 /api。
+    expect(apiCalls, "unified concept 佔位頁不得呼叫任何 /api（含殼層輪詢——新殼無 SharedStatusProvider）").toEqual([]);
   });
 
-  test("#a10 顯示其他應用／AI 決策工作台", async ({ page }) => {
+  test("#a10 顯示其他應用／AI 決策 ConceptPage", async ({ page }) => {
     await page.goto("/#a10");
-    await expect(page.getByRole("heading", { level: 1 })).toContainText("A10 · 其他應用 / AI 決策工作台");
+    await expect(page.getByText("A10 · 其他應用 / AI 決策", { exact: true })).toBeVisible();
     await page.screenshot({ path: `${SHOT}/a10-ai-decision.png`, fullPage: true });
   });
 
-  test("#apps 的 A1 卡片導向 #a1（不再導向 #issues）", async ({ page }) => {
+  test("ChatUSD 全域右欄（ROADMAP · A10）保留在 legacy 殼（#sessions）", async ({ page }) => {
+    // 新殼依設計稿無 agent 欄；ChatUSD 欄＋ROADMAP · A10 掛牌斷言移到 legacy 路由驗證。
+    await page.goto("/#sessions");
+    await expect(page.getByText("Chat USD Agent")).toBeVisible();
+    await expect(page.getByText("ROADMAP · A10")).toBeVisible();
+    await page.screenshot({ path: `${SHOT}/chatusd-legacy-sessions.png`, fullPage: true });
+  });
+
+  test("#apps 的 A1 卡片導向 #a1（hash 不變；落點＝UnifiedShell workspace dock A1）", async ({ page }) => {
     await page.goto("/#apps");
     await page.screenshot({ path: `${SHOT}/apps-cards.png`, fullPage: true });
 
     await page.locator(".ec-appcard").filter({ hasText: "BIM 治理與模型檢核" }).first().click();
 
     await expect(page).toHaveURL(/#a1$/);
-    await expect(page.getByRole("heading", { level: 1 })).toContainText("A1");
-    await page.screenshot({ path: `${SHOT}/a1-workbench-after-card-click.png`, fullPage: true });
+    // 落點改驗 workspace：A1 dock（規則集清單 + 執行鈕，initialFlags.a1Ran=true → 重新執行）。
+    await expect(page.getByText("A1 治理檢核").first()).toBeVisible(); // dock tab（與 dock 標題同文案）
+    await expect(page.getByText("規則集", { exact: true })).toBeVisible();
+    await expect(page.getByText("重新執行", { exact: true })).toBeVisible();
+    await page.screenshot({ path: `${SHOT}/a1-workspace-after-card-click.png`, fullPage: true });
   });
 
-  test("#a4 解譯模式按鈕選中時套用 primary 高亮（修復前完全不可見）", async ({ page }) => {
-    await page.goto("/#a4");
+  test("#semantic-search（原 #a4）解譯模式按鈕選中時套用 primary 高亮（修復前完全不可見）", async ({ page }) => {
+    // IA v2：#a4 讓位給 UnifiedConsole workspace；舊 A4 語意搜尋頁（A4SemanticSearchPage，
+    // a4-mode-* testids 所在）遷 #semantic-search deep link。
+    await page.goto("/#semantic-search");
 
     const semantic = page.getByTestId("a4-mode-semantic");
     const deterministic = page.getByTestId("a4-mode-deterministic");

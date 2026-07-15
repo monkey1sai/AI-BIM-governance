@@ -14,6 +14,9 @@ export function PipelinePage() {
   const zh = lang === "zh";
   const L = getL(zh);
   const { intake, conv, sessions, outbox, patch, toast } = useUnifiedState();
+  /* 誠實停用：全部已送後 deliver 不再有事可做（design gate disabled case 依 aria-disabled 斷言）。
+     預設態（2 筆待送）aria-disabled="false"，不改任何預設像素。 */
+  const outboxPending = outbox.filter((o) => o.st === "待送").length;
 
   /* colHead（1:1 對應原型 colHead(title, right)）*/
   const colHead = (title: string, right: string) => (
@@ -47,6 +50,7 @@ export function PipelinePage() {
                 <span style={{ fontFamily: MONO, fontSize: 9, color: "#4d6076" }}>{c.src}</span>
               </div>
               <span
+                data-uc="trigger-conv"
                 onClick={() => {
                   const next: ConvItem[] = [{ file: c.file, st: "running" }, ...conv];
                   patch({ intake: intake.filter((x) => x.file !== c.file), conv: next });
@@ -144,7 +148,11 @@ export function PipelinePage() {
             </div>
           ))}
           <span
+            data-uc="deliver-outbox"
+            role="button"
+            aria-disabled={outboxPending === 0 ? "true" : "false"}
             onClick={() => {
+              if (outboxPending === 0) return;
               patch({ outbox: outbox.map((o): OutboxItem => ({ ...o, st: "已送" })) });
               toast("POST /api/internal/callback-outbox/deliver → ✓ metadata-only");
             }}

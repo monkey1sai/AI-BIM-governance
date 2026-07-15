@@ -24,87 +24,78 @@ test.describe("seven-axis cross-page harmony", () => {
     ).catch(() => {});
   });
 
-  test("shared status rail is present on every axis and GPU shows 未取得 (no fake green)", async ({ page }) => {
-    for (const route of ["#a1", "#conv", "#sessions", "#instances", "#minio", "#intake", "#runtime"]) {
+  test("shared status rail is on every LEGACY axis page (GPU 未取得, no fake green); unified pages have no rail", async ({ page }) => {
+    // IA v2（UnifiedConsole）：#a1/#conv/#runtime（含 #intake→#conv alias）改掛新殼，SharedStatusRail
+    // 只存在 legacy 殼（EdgeConsole.tsx LegacyEdgeConsole）→ rail 斷言收斂到仍為 legacy 的三軸頁。
+    for (const route of ["#sessions", "#instances", "#minio"]) {
       await page.goto(`${COORDINATOR}/ui${route}`);
       const rail = page.getByTestId("shared-status-rail");
       await expect(rail).toBeVisible({ timeout: 20_000 });
       await expect(page.getByTestId("rail-gpu-value")).toContainText("未取得");
     }
+    // 反向斷言：unified 新殼（#home / #conv）無 rail。先等新殼可辨識內容 paint 再斷言不存在，
+    // 避免對空 DOM 過早 toHaveCount(0) 的偽陰性。
+    await page.goto(`${COORDINATOR}/ui#home`);
+    await expect(page.getByText("總覽 · Mission Control")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("shared-status-rail")).toHaveCount(0);
+    await page.goto(`${COORDINATOR}/ui#conv`);
+    await expect(page.getByText("模型資料與轉檔生產線")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("shared-status-rail")).toHaveCount(0);
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-rail-runtime.png", fullPage: true });
   });
 
-  test("M → CV chip carries a real minio_key and lands on #conv (source=minio)", async ({ page }) => {
+  // IA v2 對映更新：舊「M → CV chip（minio-link-conv-*）→ #conv 接收端（conv-incoming-handoff）」已隨
+  // MD 三頁合一＋UnifiedConsole 移除——grep buildHandoff 呼叫點證實現無任何發射端指向 #conv（#conv 現為
+  // unified Pipeline fixture 頁、無接收端）。#minio 現行發射端＝GlobalConversionPane 的
+  // conv-job-session-*（→ #sessions）/ conv-job-review-*（→ #review）與 ObjectDetailPane 的
+  // md-detail-ss / md-detail-review / md-detail-a1。本測改走仍有「發射端＋接收端重驗」的
+  // M → SS 邊：chip 帶 review_session_id → #sessions 接收端（sessions-incoming-handoff）重驗。
+  test("M → SS chip carries a real session id and lands on #sessions (source=minio, receiver re-verifies)", async ({ page }) => {
     await page.goto(`${COORDINATOR}/ui#minio`);
-    // If real MinIO objects are listed, click the first source_ifc conv chip; else honestly skip.
-    const convChip = page.locator('[data-testid^="minio-link-conv-"]').first();
-    // Decide skip only AFTER the chip has had a chance to paint. page.goto (waitUntil:'load') does not await
-    // the on-mount getMinioFolder fetch + re-render, and locator.count() does not auto-retry — an immediate
-    // count() can read 0 before a real source_ifc chip renders and false-skip a runnable env. waitFor retries
-    // until visible (or times out), mirroring a1-minio-governance-3d.spec.ts:28, so we skip only when truly absent.
-    const hasObjects = await convChip.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false);
-    test.skip(!hasObjects, "no MinIO source_ifc objects in this environment (not observed)");
-    // Arm the CV ledger-fetch wait BEFORE the click so the response can't fire before we listen. CV
-    // re-verifies minio_key against `records`, which is [] until GET /api/conversion/records lands, so the
-    // banner paints a transient `not_found` first (records=[] & recordsTruncated=false → verify returns false
-    // → not_found; pages.tsx:865,904,908-922 + incomingHandoff.tsx:29-30). Unlike A1/SS/KG/M, CV keeps this
-    // load flash on purpose (parent 47f9975). Awaiting this response is a BEST-EFFORT nudge toward a stable
-    // screenshot frame — waitForResponse resolves on the HTTP response (headers received), NOT after the page
-    // reads the body + setRecords + React commits the re-render, so it does NOT guarantee the terminal verdict
-    // is in the DOM by screenshot time; the shot can still catch the transient not_found flash (quality
-    // Important #1 — do not oversell). HONEST SCOPE: awaiting also does NOT tighten the toHaveAttribute
-    // assertion — it accepts `not_found`, which is ALSO the transient value, so the assertion's pass/fail is
-    // identical with or without this wait. Match `?limit=50` specifically — that is CV's OWN loadRecords() (pages.tsx:952).
-    // The always-mounted SharedStatusProvider polls the SAME endpoint every 5s and the M page fetches it on
-    // mount, both with `?limit=100`; a bare `/api/conversion/records` predicate could resolve on one of those
-    // unrelated hits and race past CV's own load, so the screenshot could still catch the pre-load flash.
-    const recordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 }).catch(() => null);
-    await convChip.click();
-    await expect(page).toHaveURL(/#conv\?source=minio/, { timeout: 15_000 });
-    // quality Important #1: the title claims the chip "carries a real minio_key" — PROVE that, not just that
-    // source=minio survived. buildHandoff drops empty values (handoff.ts:39) and minio_key is optional in
-    // parseHandoff (handoff.ts:51-53), so a chip that forgot obj.key still yields a non-null handoff whose CV
-    // verify falls through to not_found (pages.tsx:917,921) — indistinguishable from a real key with no ledger
-    // record. Extract the id from the hash (mirrors the SS→Review leg below) and assert non-empty so a
-    // dropped-minio_key wiring regression fails here instead of passing silently.
-    const minioKey = new URLSearchParams(new URL(page.url()).hash.split("?")[1] ?? "").get("minio_key") ?? "";
-    expect(minioKey).not.toBe("");
-    // §12 receiver rule: CV must re-verify the incoming minio_key and show an honest verified/not-found banner
-    // (Task 14) — never silently ignore the id. WHAT THIS ASSERTS (quality Important #1 — do not oversell): a
-    // WIRING smoke test — the banner mounts and CV re-verifies the id into one of the honest non-none states,
-    // NOT that a given input maps to a specific state. The accepted set is all three honest terminal verdicts
-    // because a fixture-less env does not control whether the clicked object has a ledger record: `verified`
-    // needs records.some() to hit (pages.tsx:918), `not_found` is the honest miss, `indeterminate` is the
-    // honest truncation case (getConversionRecords(50); once the ledger holds >50 rows and the key falls
-    // outside that window, pages.tsx:908-922/recordsTruncated returns it — incomingHandoff.tsx:9,29-30).
-    // Narrowing to one value would flake or lie about live backend state. LIMIT: this assertion cannot catch a
-    // broken-predicate regression that collapses every input to not_found (not_found is a legitimate terminal
-    // state here); that per-input discrimination — incl. truncation→indeterminate — is owned by the unit tests
-    // in incomingHandoff.test.tsx (its CV truncation cases), not by this E2E.
-    const banner = page.getByTestId("conv-incoming-handoff");
+    // If a conversion job with a bound review_session_id is listed, click its SS chip; else honestly skip.
+    // Decide skip only AFTER the chip has had a chance to paint: goto (waitUntil:'load') does not await the
+    // on-mount jobs fetch + re-render, and locator.count() does not auto-retry — waitFor retries until visible
+    // (or times out), so we skip only when truly absent.
+    const ssChip = page.locator('[data-testid^="conv-job-session-"]').first();
+    const hasChip = await ssChip.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false);
+    test.skip(!hasChip, "no conversion job with a review_session_id in this environment (not observed)");
+    await ssChip.click();
+    await expect(page).toHaveURL(/#sessions\?source=minio/, { timeout: 15_000 });
+    // Prove the chip carried a REAL session id, not just that source=minio survived: buildHandoff drops empty
+    // values (handoff.ts:39), so a chip that forgot the id would still yield a non-null handoff whose SS verify
+    // reads not_applicable — indistinguishable from an intentionally id-less link. Assert non-empty here so a
+    // dropped-session wiring regression fails instead of passing silently.
+    const session = new URLSearchParams(new URL(page.url()).hash.split("?")[1] ?? "").get("session") ?? "";
+    expect(session).not.toBe("");
+    // Receiver rule (spec §4.2): SS must re-verify the incoming session against its own /api/runtime/status
+    // snapshot（pages.tsx SessionManagementPage useIncomingHandoff）— never silently ignore the id. WIRING smoke
+    // test（do not oversell）: the banner mounts and re-verifies into one of the honest non-none states —
+    // `verified`（rt.sessions 命中）/ `not_found`（誠實查無）/ `indeterminate`（rt 尚未載入）。Narrowing to one
+    // value would flake or lie about live backend state; per-input discrimination is owned by the unit tests.
+    const banner = page.getByTestId("sessions-incoming-handoff");
     await expect(banner).toBeVisible({ timeout: 15_000 });
-    // Receiver-side half of the id-carried proof (analogue of SS→Review asserting the evidence block echoes
-    // ssSession): handoffIdText renders minio_key into the banner text for a source=minio handoff regardless of
-    // verify status (incomingHandoff.tsx:35,44-47), so this catches a receiver that surfaced a blank / wrong id.
-    // Orthogonal to the verify-status discrimination noted above — a not_found banner still contains the id.
-    await expect(banner).toContainText(minioKey, { timeout: 15_000 });
-    await recordsSettled; // best-effort settle of CV's own ledger fetch → makes the screenshot below LIKELY (not guaranteed) to show the terminal banner rather than the pre-load not_found flash: waitForResponse resolves on the HTTP response, before setRecords + the React re-render (does NOT change the assertion — see the arm-site HONEST SCOPE note above)
+    // Receiver-side half of the id-carried proof: handoffIdText renders the session id into the banner text
+    // regardless of verify status (incomingHandoff.tsx), catching a receiver that surfaced a blank / wrong id.
+    await expect(banner).toContainText(session, { timeout: 15_000 });
     await expect(banner).toHaveAttribute("data-handoff-status", /verified|not_found|indeterminate/);
-    await page.screenshot({ path: "../artifacts/e2e/cross-axis-m-to-conv.png", fullPage: true });
+    await page.screenshot({ path: "../artifacts/e2e/cross-axis-m-to-sessions.png", fullPage: true });
   });
 
-  test("A1 has no inline WebRTC viewer; Review Room owns 3D and is not auto-claimed", async ({ page }) => {
-    await page.goto(`${COORDINATOR}/ui#a1`);
+  test("A1 workbench has no inline WebRTC viewer; Review Room owns 3D and is not auto-claimed", async ({ page }) => {
+    // IA v2：舊 A1 工作台（A1GovernanceWorkbenchPage）遷 #a1-workbench；#a1 現為 unified workspace
+    //（fixture 語意）。N3 邊界的受測者是 legacy 工作台，故本測打 #a1-workbench。
+    await page.goto(`${COORDINATOR}/ui#a1-workbench`);
+    // A1 → sessions chip is evidence-typed: disabled until a session is selected. 先等它 paint（證明頁面
+    // 已渲染），review-room-viewer-host 的 toHaveCount(0) 才不是對空 DOM 的 vacuous pass。
+    const a1LinkSessions = page.getByTestId("a1-link-sessions");
+    await expect(a1LinkSessions).toBeVisible({ timeout: 20_000 });
+    await expect(a1LinkSessions).toBeDisabled();
     // N3 gate WITH TEETH. `review-room-viewer-host` is the live-3D viewer host that ONLY Review Room
-    // renders (ReviewSessionViewerPane.tsx:329) — it must be absent on #a1, and it IS asserted present-in-
-    // context on #review below, so this is a real differential, not a tautology. (The previous assertion
-    // keyed on `a1-embedded-viewer`, a testid that exists nowhere in the repo, so toHaveCount(0) passed
-    // vacuously and guarded nothing.) The exhaustive "A1 never mounts EmbeddedViewer" guard is the existing
-    // unit test A1ViewerEmbed.test.tsx (mocks EmbeddedViewer, asserts renderCount === 0); this E2E is the
-    // browser-evidence complement (N7).
+    // renders (ReviewSessionViewerPane.tsx:329) — it must be absent on the A1 workbench, and it IS asserted
+    // present-in-context on #review below, so this is a real differential, not a tautology. The exhaustive
+    // "A1 never mounts EmbeddedViewer" guard is the existing unit test A1ViewerEmbed.test.tsx (mocks
+    // EmbeddedViewer, asserts renderCount === 0); this E2E is the browser-evidence complement (N7).
     await expect(page.getByTestId("review-room-viewer-host")).toHaveCount(0);
-    // A1 → sessions chip is evidence-typed: disabled until a session is selected.
-    await expect(page.getByTestId("a1-link-sessions")).toBeDisabled();
     await page.goto(`${COORDINATOR}/ui#review?source=a1`);
     // Review Room owns the flow: before manual start it shows kit-not-started (and would render
     // review-room-viewer-host after start) — the positive half of the differential above.
@@ -147,150 +138,97 @@ test.describe("seven-axis cross-page harmony", () => {
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-ss-to-review.png", fullPage: true });
   });
 
-  // §8 Representative Cross-Axis Lifecycle — ONE stitched walk-through (spec §12/§13, plan Task 15). This test
-  // traverses the full REACHABLE spine of the §8 lifecycle end-to-end — M→CV re-verify → IN→CV re-verify → A1
-  // Review-Room CTA → Review Room (kit-not-started) → back to A1 issue control — in a single journey. Infra-gated
-  // legs are honestly soft-gated (each leg's steps run only when its real fixture exists); we never fake a
-  // conversion, an A1 rule-run failure, or a live Kit session (誠實鐵律).
+  // §8 Representative Cross-Axis Lifecycle — ONE stitched walk-through (spec §12/§13). IA v2 對映更新：
+  //   • 舊 M→CV / IN→CV 邊（minio-link-conv-* / intake-link-conv-* → #conv 的 conv-incoming-handoff）已隨
+  //     MD 三頁合一＋UnifiedConsole 移除；#conv 現為 unified Pipeline fixture 頁、無接收端，且 grep
+  //     buildHandoff 呼叫點證實現無任何發射端指向 #conv。
+  //   • 現行 spine：M（#minio conv-job-session-* → #sessions 接收端重驗）→ IN（#intake alias → #conv
+  //     unified Pipeline）→ A1 工作台（#a1-workbench 的 a1-link-sessions 證據型 chip）→ Review Room
+  //     （#review?source=a1，kit-not-started 邊界）→ 回 A1 issue 控制（a1-step-issues）。
+  //   • 舊 a1-open-review-room CTA 已不存在於 A1GovernanceWorkbenchPage；A1→Review 的 fixture-less 目標
+  //     維持 #review?source=a1（Review Room 為獨立 fallback route）。
   //
   // §8 COVERAGE & HONESTY NOTE (誠實鐵律 — do not oversell):
-  //   • Reachable & asserted in ANY environment (this test runs them to completion, it does NOT test.skip them):
-  //       – A1 Review-Room CTA (a1-open-review-room): present; if enabled → clicked (REAL handoff) / if disabled →
-  //         asserted present-but-DISABLED, then the walk continues via the CTA's OWN fixture-less target
-  //         #review?source=a1 (pages.tsx:711), so the Review Room segment is genuinely traversed either way.
+  //   • Reachable & asserted in ANY environment (not test.skip-ed):
+  //       – A1 sessions chip (a1-link-sessions): present; if enabled → clicked (REAL handoff to #sessions) /
+  //         if disabled → asserted present-but-DISABLED; the Review Room segment is then traversed via the
+  //         fixture-less #review?source=a1 either way.
   //       – Review Room kit-not-started (review-room-kit-not-started): the no-auto-claim boundary (N3).
-  //       – A1 issue control (a1-step-issues): present in the always-mounted Deliverables panel (pages.tsx:651-653).
-  //   • Infra-gated (honest soft-`if`, N7 unexercised != verified): M→CV / IN→CV need a real MinIO source_ifc
-  //     object / ifc-ready job (+ a CV ledger record); absent → the leg's steps are gated out rather than faking a
-  //     conversion, and the A1→Review Room→A1-issue spine still runs.
-  //   • The DEEP Review-Room evidence chain (first_frame / stage_matched / datachannel_ready / highlight_ack) is
-  //     NOT part of this reachable spine — it needs a manual attach + a live Kit GPU session and lives in its own
-  //     honest test.skip test below (skip != pass, N7). This additive spec never fakes it and never re-implements
-  //     the Review-Room chain that owns it.
-  // Consequence (honest scope): what this walk-through EXECUTES against a real browser is the reachable spine (its
-  // cross-axis-s8-* screenshots). Two things stay `not observed` without a branch-isolated coordinator seeded with
-  // a MinIO source_ifc fixture + a live Kit session: (a) enabling the A1 CTA for a REAL rule-run handoff (this env
-  // only ever reaches the present-but-disabled branch), and (b) the four deep Kit evidence points — do NOT mark
-  // either "verified in browser" on the strength of this file alone.
-  test("§8 lifecycle walk-through: M → IN → CV → A1 → Review Room → back to A1 issue (reachable spine)", async ({ page }) => {
-    test.setTimeout(360_000); // fixture-full worst case = 14 sequential finite-timeout blocking waits (measured, not the ~10 an earlier draft guessed): M leg 70_000 (10_000 chip waitFor + 15_000 URL + 15_000 banner visible + 15_000 banner text + 15_000 untimed toHaveAttribute) + IN leg 70_000 (same shape) + A1/Review-Room/A1-issue 70_000 (20_000 CTA visible + 15_000 untimed toBeDisabled + 20_000 kit-not-started + 15_000 a1-step-issues) = 210_000ms. The untimed assertions (lines 212/247/276) inherit the config expect timeout 15_000 (playwright.config.ts:29), not a negligible value; the two waitForResponse (lines 196/231) are armed BEFORE their leg's later awaits so they are ~fully elapsed by their await site → ~0 added. On TOP of the 210_000 sum sit 5 page.goto navigations (no navigationTimeout in config use{} → bounded only by THIS test timeout, playwright.config.ts:37-43) + 3 full-page screenshots whose fetch/render time is uncapped, so the budget must sit well above 210_000. 360_000 ≈ 1.7× the summed caps = real headroom (the deep-Kit test below measures its own budget the same way; matches the viewer-embed-a1-highlight.spec.ts:46 test.setTimeout(360_000) precedent). The default 60s test timeout (playwright.config.ts:28) is far too tight, and retries:0 (playwright.config.ts:32) means one slow-but-passing run = a hard flake — exactly the failure this budget guards.
-    // [M] minio_object_detected → chip to #conv (source=minio); CV receiver re-verifies the minio_key (Task 14)
+  //       – A1 issue control (a1-step-issues): always-mounted, present-but-disabled until a rule-run scores.
+  //       – #intake → #conv alias（AliasRedirect）＋ unified Pipeline 標題。
+  //   • Infra-gated (honest soft-`if`, N7 unexercised != verified): the M leg needs a conversion job with a
+  //     bound review_session_id; absent → the leg's steps are gated out rather than faking a conversion, and
+  //     the rest of the spine still runs.
+  //   • The DEEP Review-Room evidence chain (first_frame / stage_matched / datachannel_ready / highlight_ack)
+  //     stays in its own honest test.skip test below (skip != pass, N7).
+  test("§8 lifecycle walk-through: M → IN(alias) → A1 workbench → Review Room → back to A1 issue (reachable spine)", async ({ page }) => {
+    test.setTimeout(360_000); // fixture-full worst case sums ~180_000ms of finite-timeout blocking waits (M leg 10k+15k+15k+15k+15k；IN leg 15k+15k；A1/RR/A1-issue 20k+15k+20k+15k) + 6 goto navigations (no navigationTimeout in config use{} → bounded only by THIS test timeout) + up to 4 full-page screenshots with uncapped render time. Keep ~2× headroom over the summed caps (matches the deep-Kit test below and viewer-embed-a1-highlight.spec.ts precedent); default 60s is far too tight and retries:0 makes one slow-but-passing run a hard flake.
+    // [M] conversion job with a bound review_session_id → SS chip to #sessions (source=minio); SS receiver
+    // re-verifies the session id (spec §4.2). SOFT leg, NOT test.skip: an in-body test.skip aborts the WHOLE
+    // test, which would also skip the A1 / Review-Room assertions below — gate only the M-dependent steps.
     await page.goto(`${COORDINATOR}/ui#minio`);
-    const mConv = page.locator('[data-testid^="minio-link-conv-"]').first();
-    // Retry-wait for the chip to paint before deciding (goto doesn't await the on-mount folder fetch; count()
-    // doesn't retry) — otherwise a fixture-backed env could false-negative, contradicting the §8 note above.
-    const mHasConv = await mConv.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false);
-    // SOFT leg (mirror the IN leg below), NOT test.skip: a test.skip(!mHasConv) in the body aborts the WHOLE test
-    // the instant MinIO fixtures are absent (Playwright's in-body test.skip throws to end the test), which would
-    // also skip the A1 Review-Room CTA assertions further down — directly contradicting the coverage note's
-    // "asserted present-but-DISABLED … holds in ANY environment". Gate only the MinIO-dependent M steps here so
-    // the IN and A1 legs still run in a fixture-less env.
-    if (mHasConv) {
-      // Same CV load-race guard as the isolated M→CV test above — match ?limit=50 (CV's own loadRecords), NOT the
-      // SharedStatusProvider 5s poll / M page ?limit=100: arm the ledger-fetch wait before the click so the s8-01
-      // screenshot below is a BEST-EFFORT terminal-banner frame. Honest scope (quality Important #1 — do not
-      // oversell): waitForResponse resolves on the HTTP response, before setRecords + the React re-render, so the
-      // shot can still catch the transient pre-load not_found flash; and this does NOT tighten the toHaveAttribute
-      // below — not_found is accepted and is also the transient value; the wait is a best-effort nudge for the
-      // screenshot frame, not a stricter check.
-      const convRecordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 }).catch(() => null);
-      await mConv.click();
-      await expect(page).toHaveURL(/#conv\?source=minio/, { timeout: 15_000 });
-      // Same id-carried proof as the isolated M→CV test above (quality Important #1): prove the chip carried a
-      // real minio_key, not just that source=minio survived — a dropped key still yields a non-null handoff that
-      // CV verifies to not_found, visually identical to a real miss.
-      const mMinioKey = new URLSearchParams(new URL(page.url()).hash.split("?")[1] ?? "").get("minio_key") ?? "";
-      expect(mMinioKey).not.toBe("");
-      const convBanner = page.getByTestId("conv-incoming-handoff");
-      await expect(convBanner).toBeVisible({ timeout: 15_000 });
-      // Receiver surfaced THAT id (handoffIdText → banner text, incomingHandoff.tsx:35,44-47), independent of verify status.
-      await expect(convBanner).toContainText(mMinioKey, { timeout: 15_000 });
-      await convRecordsSettled;
-      // Wiring smoke test (see the isolated M→CV note above): accept all three honest terminal states — verified
-      // (records.some hit), not_found (honest miss), indeterminate (recordsTruncated once the ledger exceeds the
-      // 50-record window, pages.tsx:908-922). Per-input discrimination is owned by incomingHandoff.test.tsx.
-      await expect(convBanner).toHaveAttribute("data-handoff-status", /verified|not_found|indeterminate/);
-      await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-01-m-to-conv.png", fullPage: true });
+    const mSs = page.locator('[data-testid^="conv-job-session-"]').first();
+    // Retry-wait for the chip to paint before deciding (goto doesn't await the on-mount jobs fetch; count()
+    // doesn't retry) — otherwise a fixture-backed env could false-negative the leg.
+    const mHasSs = await mSs.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false);
+    if (mHasSs) {
+      await mSs.click();
+      await expect(page).toHaveURL(/#sessions\?source=minio/, { timeout: 15_000 });
+      // Id-carried proof: prove the chip carried a real session id, not just that source=minio survived
+      // (buildHandoff drops empty values, handoff.ts:39).
+      const mSession = new URLSearchParams(new URL(page.url()).hash.split("?")[1] ?? "").get("session") ?? "";
+      expect(mSession).not.toBe("");
+      const ssBanner = page.getByTestId("sessions-incoming-handoff");
+      await expect(ssBanner).toBeVisible({ timeout: 15_000 });
+      // Receiver surfaced THAT id (handoffIdText → banner text), independent of verify status; accept all
+      // honest non-none terminal states (verified / not_found / indeterminate) — narrowing would flake or lie
+      // about live backend state; per-input discrimination is owned by the unit tests.
+      await expect(ssBanner).toContainText(mSession, { timeout: 15_000 });
+      await expect(ssBanner).toHaveAttribute("data-handoff-status", /verified|not_found|indeterminate/);
+      await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-01-m-to-sessions.png", fullPage: true });
     }
 
-    // [IN] ifc_ready_job_listed → #intake job row also chips into #conv (source=intake). Soft leg: exercise it
-    // when a job exists (so IN is genuinely traversed, not skipped like the reviewer flagged), else move on —
-    // the CV receiver was already covered via M above.
+    // [IN] intake 軸已併入 unified Pipeline：#intake 舊 deep link 由 AliasRedirect 重導 #conv
+    // (EdgeConsole.tsx renderBody case "intake")。斷言 alias 真的落在 unified Pipeline（此即 IN 段現行語意；
+    // 舊 intake-link-conv-* 發射端與 #conv 接收端皆已移除）。
     await page.goto(`${COORDINATOR}/ui#intake`);
-    const inConv = page.locator('[data-testid^="intake-link-conv-"]').first();
-    // Soft leg: retry-wait so a real ifc-ready job isn't missed by an early count() (goto doesn't await the
-    // on-mount jobs fetch; count() doesn't retry) — genuinely-absent jobs still fall through in ~10s.
-    const inHasConv = await inConv.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false);
-    if (inHasConv) {
-      // Same CV load-race guard (?limit=50 = CV's own fetch): await CV's ledger fetch as a best-effort settle,
-      // consistent with the M→CV leg (waitForResponse resolves on the HTTP response, before setRecords + the
-      // re-render, so it does not guarantee a settled banner). Honest scope (quality Important #1): this leg takes
-      // no screenshot right after and the assertion accepts not_found (transient AND terminal), so the wait
-      // changes neither a screenshot (none) nor the assertion's pass/fail — it stays a wiring smoke test (banner
-      // mounts + CV re-verifies into an honest non-none state); per-input discrimination is owned by incomingHandoff.test.tsx.
-      const inRecordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 }).catch(() => null);
-      await inConv.click();
-      await expect(page).toHaveURL(/#conv\?source=intake/, { timeout: 15_000 });
-      // Same id-carried proof (quality Important #1): the intake chip carries job_id (pages.tsx:3185) — prove it
-      // reached the URL rather than trusting source=intake survived; a dropped job_id still verifies to not_found
-      // (pages.tsx:909,921), indistinguishable from a real miss.
-      const inJobId = new URLSearchParams(new URL(page.url()).hash.split("?")[1] ?? "").get("job_id") ?? "";
-      expect(inJobId).not.toBe("");
-      const inBanner = page.getByTestId("conv-incoming-handoff");
-      await expect(inBanner).toBeVisible({ timeout: 15_000 });
-      // Receiver surfaced THAT id: for a source=intake handoff handoffIdText falls through session→minio_key→job_id
-      // (incomingHandoff.tsx:35), so the banner text carries job_id.
-      await expect(inBanner).toContainText(inJobId, { timeout: 15_000 });
-      await inRecordsSettled;
-      // Accept all three honest terminal states; indeterminate is the honest truncation case (ledger >50 →
-      // recordsTruncated, pages.tsx:908-922).
-      await expect(inBanner).toHaveAttribute("data-handoff-status", /verified|not_found|indeterminate/);
-    }
+    await expect(page).toHaveURL(/#\/?conv$/, { timeout: 15_000 });
+    await expect(page.getByText("模型資料與轉檔生產線")).toBeVisible({ timeout: 15_000 });
 
-    // [A1] source_selected → rule_run_ready → failures_ready → review_requested. The "開啟 Review Room（第一筆
-    // 失敗）" CTA (a1-open-review-room) is evidence-typed: disabled until BOTH a session is selected AND
-    // state.failed[0] exists (a1ReviewRoomHandoffReason, pages.tsx:256-262 → disabled={Boolean(reason)},
-    // pages.tsx:713-714). This walk-through never drives session-select nor a rule-run, and selectedSession
-    // (pages.tsx:306) + the useReducer state (pages.tsx:283) are pure frontend that never restore from the
-    // backend — so in a fixture-less env the CTA is structurally DISABLED. TOLERANT gate (same waitFor→branch
-    // shape as this file's other legs, NOT a brittle unconditional toBeDisabled that would FAIL the day a
-    // deployment seeds a rule-run fixture and enables the CTA): if enabled, click it and walk the REAL A1→Review
-    // handoff (buildA1ReviewRoomHandoffHash → #review?source=a1&session=…, pages.tsx:709-711,245); else assert the
-    // honest present-but-disabled truth and continue the stitch via the CTA's OWN fixture-less target
-    // (#review?source=a1, pages.tsx:711) — WITHOUT faking a rule-run (誠實鐵律).
-    await page.goto(`${COORDINATOR}/ui#a1`);
-    const openReview = page.getByTestId("a1-open-review-room");
-    await expect(openReview).toBeVisible({ timeout: 20_000 });
-    const canOpen = await openReview.isEnabled().catch(() => false);
+    // [A1] legacy A1 工作台遷 #a1-workbench（#a1 現為 unified workspace）。a1-link-sessions 是證據型
+    // chip：selectedSession 為純前端 state、永不從後端還原 → fixture-less env 下結構性 DISABLED。
+    // TOLERANT gate（同本檔其他 leg 的 waitFor→branch 形狀，非脆性 unconditional toBeDisabled）：enabled 就
+    // 點擊走真實 A1→SS handoff（buildHandoff("sessions", { source: "a1", session })）；disabled 則斷言誠實的
+    // present-but-disabled，再經 fixture-less 目標 #review?source=a1 續走 Review Room 段——不偽造 rule-run（誠實鐵律）。
+    await page.goto(`${COORDINATOR}/ui#a1-workbench`);
+    const a1Sessions = page.getByTestId("a1-link-sessions");
+    await expect(a1Sessions).toBeVisible({ timeout: 20_000 });
+    const canOpen = await a1Sessions.isEnabled().catch(() => false);
     if (canOpen) {
-      await openReview.click();
-      await expect(page).toHaveURL(/#review\?source=a1/, { timeout: 15_000 });
-      // Same id-carried proof (quality Important #1, sender half): buildA1ReviewRoomHandoffHash always carries
-      // session (pages.tsx:245), so prove it landed rather than trusting source=a1 survived. This branch is
-      // currently unreachable (selectedSession is pure frontend, never restored from backend — see the note in
-      // the else path), so the guard stays dormant until a deployment seeds a rule-run fixture and enables the
-      // CTA; the receiver-side re-verify of a Review-Room session id is owned by the SS→Review test's evidence assertion.
+      await a1Sessions.click();
+      await expect(page).toHaveURL(/#sessions\?source=a1/, { timeout: 15_000 });
+      // Sender-half id-carried proof: the chip always carries selectedSession when enabled
+      // (A1GovernanceWorkbenchPage.tsx:1086) — prove it landed rather than trusting source=a1 survived.
       const a1Session = new URLSearchParams(new URL(page.url()).hash.split("?")[1] ?? "").get("session") ?? "";
       expect(a1Session).not.toBe("");
     } else {
-      await expect(openReview).toBeDisabled();
-      await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-02-a1-cta-disabled.png", fullPage: true });
-      await page.goto(`${COORDINATOR}/ui#review?source=a1`);
+      await expect(a1Sessions).toBeDisabled();
+      await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-02-a1-chip-disabled.png", fullPage: true });
     }
+    await page.goto(`${COORDINATOR}/ui#review?source=a1`);
 
     // [RR] kit_not_started — Review Room does NOT auto-claim/auto-attach (N3). This boundary is REACHABLE in ANY
-    // environment via #review?source=a1 (the CTA's own fixture-less target), so the walk-through genuinely
-    // traverses the Review Room segment of the §8 lifecycle rather than skipping it. The deep four-evidence chain
-    // is out of this reachable spine and has its own honest test.skip test below.
+    // environment via #review?source=a1 (fixture-less target), so the walk-through genuinely traverses the
+    // Review Room segment of the §8 lifecycle rather than skipping it. The deep four-evidence chain is out of
+    // this reachable spine and has its own honest test.skip test below.
     await expect(page.getByTestId("review-room-kit-not-started")).toBeVisible({ timeout: 20_000 });
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-03-review-not-started.png", fullPage: true });
 
-    // [A1] issue_created — back on #a1 the failure→Issue control (a1-step-issues, POST /governance/issues/from-
-    // rule-run/:id) is present in the always-mounted Deliverables panel (pages.tsx:651-653), present-but-disabled
-    // until a rule-run scores (state.step ∈ {scored,issued,delivered}). Its presence is the honest, REACHABLE
-    // A1-issue terminus of the stitched lifecycle; actually enabling+POSTing it needs a real rule-run (infra-
-    // heavy, never faked here).
-    await page.goto(`${COORDINATOR}/ui#a1`);
+    // [A1] issue_created — back on #a1-workbench the failure→Issue control (a1-step-issues) is always-mounted,
+    // present-but-disabled until a rule-run scores (state.step ∈ {scored,issued,delivered},
+    // A1GovernanceWorkbenchPage.tsx:1017). Its presence is the honest, REACHABLE A1-issue terminus of the
+    // stitched lifecycle; actually enabling+POSTing it needs a real rule-run (infra-heavy, never faked here).
+    await page.goto(`${COORDINATOR}/ui#a1-workbench`);
     await expect(page.getByTestId("a1-step-issues")).toBeVisible({ timeout: 15_000 });
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-04-a1-issue.png", fullPage: true });
   });

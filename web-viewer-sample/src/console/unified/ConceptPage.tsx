@@ -34,14 +34,14 @@ export function ConceptPage({ slug }: ConceptPageProps) {
   const monoInline = { fontFamily: MONO, color: "#b9c9da" } as const;
 
   return (
-    <div data-prov="fixture" style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column" }}>
+    <div data-prov="fixture" data-uc="concept-root" style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 22px", borderBottom: "1px solid rgba(120,160,210,.10)", background: "#0a1018" }}>
         <span style={{ fontSize: 16, fontWeight: 700 }}>{title}</span>
         <span style={{ fontSize: 10, color: "#e6b23e", background: "rgba(230,178,62,.1)", border: "1px solid rgba(230,178,62,.3)", borderRadius: 5, padding: "2px 8px", fontFamily: MONO }}>Concept Preview / Roadmap</span>
         <span style={{ marginLeft: "auto", fontSize: 11, color: "#5a7089" }}>{L.concept_note}</span>
       </div>
       {imgFailed ? (
-        <div>
+        <div data-uc="concept-fallback">
           <div style={{ padding: "40px 48px", display: "flex", flexDirection: "column", gap: 22, maxWidth: 980 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
               <div style={{ width: 64, height: 64, borderRadius: 16, background: "radial-gradient(circle at 35% 35%,rgba(157,140,255,.55),rgba(47,123,246,.3) 60%,rgba(10,16,24,.2))", border: "1px solid rgba(157,140,255,.35)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: MONO, fontSize: 17, fontWeight: 600, color: "#c9befc" }}>{code}</div>
@@ -75,7 +75,7 @@ export function ConceptPage({ slug }: ConceptPageProps) {
           </div>
         </div>
       ) : (
-        <img src={imgSrc} alt="" style={{ width: "100%", display: "block" }} onError={() => setFailedSlug(slug)} />
+        <img data-uc="concept-img" src={imgSrc} alt="" style={{ width: "100%", display: "block" }} onError={() => setFailedSlug(slug)} />
       )}
     </div>
   );

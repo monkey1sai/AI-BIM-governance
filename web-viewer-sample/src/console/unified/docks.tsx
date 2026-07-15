@@ -77,7 +77,7 @@ export function A1Dock({ zh, L, ws, patch }: DockProps) {
           </div>
         ))}
       </div>
-      <div className="hv-bright" style={BTN} onClick={() => { patch({ a1Ran: true, dcLog: "highlightPrimsRequest → ack ✓ (18 prims)" }); u.toast("POST /api/rule-runs → 202 · run #88 " + (zh ? "完成:失敗 18" : "done: 18 failures")); }}>{ws.a1Ran ? L.rerun : L.run}</div>
+      <div className="hv-bright" data-uc="dock-cta" style={BTN} onClick={() => { patch({ a1Ran: true, dcLog: "highlightPrimsRequest → ack ✓ (18 prims)" }); u.toast("POST /api/rule-runs → 202 · run #88 " + (zh ? "完成:失敗 18" : "done: 18 failures")); }}>{ws.a1Ran ? L.rerun : L.run}</div>
       {ws.a1Ran ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -109,7 +109,8 @@ export function A1Dock({ zh, L, ws, patch }: DockProps) {
                   <span style={{ fontSize: "11.5px", color: "#dbe6f3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{el}</span>
                   <span style={{ fontFamily: MONO, fontSize: 9, color: "#5a7089" }}>{rule}</span>
                 </div>
-                <span className="hv-bright-more" onClick={open} style={{ flex: "none", fontSize: 10, padding: "3px 9px", borderRadius: 6, cursor: "pointer", ...(opened ? { color: "#4fd68a", border: "1px solid rgba(49,197,109,.3)" } : { color: "#04121a", background: ACCENT, fontWeight: 700 }) }}>{opened ? "✓" : (zh ? "開單" : "issue")}</span>
+                {/* role/aria-disabled：誠實停用語意（已開單後 open() 本就 no-op），design gate disabled case 斷言用，像素中性 */}
+                <span className="hv-bright-more" data-uc="fail-issue-btn" role="button" aria-disabled={opened ? "true" : "false"} onClick={open} style={{ flex: "none", fontSize: 10, padding: "3px 9px", borderRadius: 6, cursor: "pointer", ...(opened ? { color: "#4fd68a", border: "1px solid rgba(49,197,109,.3)" } : { color: "#04121a", background: ACCENT, fontWeight: 700 }) }}>{opened ? "✓" : (zh ? "開單" : "issue")}</span>
               </div>
             );
           })}
@@ -135,7 +136,7 @@ export function A2Dock({ zh, L, ws, patch }: DockProps) {
         <span style={{ fontFamily: MONO, color: "#5a7089", fontSize: 11 }}>vs</span>
         <div style={verBox}><span style={{ fontFamily: MONO, fontSize: 11 }}>v15</span><span style={{ fontSize: 10, color: "#5a7089" }}>2026-07-01</span><span style={{ marginLeft: "auto", color: "#5a7089", fontSize: 10 }}>▾</span></div>
       </div>
-      <div className="hv-bright" style={BTN} onClick={() => { patch({ a2Ran: true }); u.toast("POST /api/diffs → 202 · diff v12→v15 " + (zh ? "完成" : "done")); }}>{ws.a2Ran ? L.rerun : (zh ? "計算差異" : "Compute diff")}</div>
+      <div className="hv-bright" data-uc="dock-cta" style={BTN} onClick={() => { patch({ a2Ran: true }); u.toast("POST /api/diffs → 202 · diff v12→v15 " + (zh ? "完成" : "done")); }}>{ws.a2Ran ? L.rerun : (zh ? "計算差異" : "Compute diff")}</div>
       {ws.a2Ran ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
           <div style={{ display: "flex", gap: 6 }}>
@@ -190,7 +191,7 @@ export function A3Dock({ zh, L, ws, patch }: DockProps) {
         <span style={checkChip}>✓ Coordinate Check OK</span>
         <span style={checkChip}>✓ {L.unit} m · CRS 一致</span>
       </div>
-      <div className="hv-bright" style={BTN} onClick={() => { patch({ a3Built: true }); u.toast("POST /api/federated-sets/FS-01/build → Federated USD ✓"); }}>{ws.a3Built ? (zh ? "重新建置" : "Rebuild") : "Build Federated USD"}</div>
+      <div className="hv-bright" data-uc="dock-cta" style={BTN} onClick={() => { patch({ a3Built: true }); u.toast("POST /api/federated-sets/FS-01/build → Federated USD ✓"); }}>{ws.a3Built ? (zh ? "重新建置" : "Rebuild") : "Build Federated USD"}</div>
       {ws.a3Built ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, background: "#0a1220", border: "1px solid rgba(49,197,109,.25)", borderRadius: 10, padding: 12 }}>
           <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: ".1em", color: "#4fd68a", textTransform: "uppercase" }}>Federated Stage ✓</span>
@@ -213,7 +214,7 @@ export function A4Dock({ zh, L, ws, patch }: DockProps) {
         <span style={label9}>{L.nlq}</span>
         <div style={{ background: "#0a1220", border: "1px solid rgba(65,199,232,.3)", borderRadius: 9, padding: "10px 12px", fontSize: 12, color: "#dbe6f3", lineHeight: 1.5 }}>找出 4F 所有防火門並標示未符合規範者<span style={{ display: "inline-block", width: 1, height: 13, background: "#41c7e8", marginLeft: 2, animation: "pulse 1.2s infinite", verticalAlign: "-2px" }} /></div>
       </div>
-      <div className="hv-bright" style={BTN} onClick={() => { patch({ a4Ran: true }); u.toast("POST /api/search/model → 12 hits · " + (zh ? "信心度 0.86" : "confidence 0.86")); }}>{ws.a4Ran ? L.rerun : (zh ? "執行查詢" : "Run query")}</div>
+      <div className="hv-bright" data-uc="dock-cta" style={BTN} onClick={() => { patch({ a4Ran: true }); u.toast("POST /api/search/model → 12 hits · " + (zh ? "信心度 0.86" : "confidence 0.86")); }}>{ws.a4Ran ? L.rerun : (zh ? "執行查詢" : "Run query")}</div>
       {ws.a4Ran ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>

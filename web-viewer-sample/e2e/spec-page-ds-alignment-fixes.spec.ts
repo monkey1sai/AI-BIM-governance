@@ -29,7 +29,9 @@ test.describe("spec-page-ds-alignment-fixes #spec user-facing", () => {
     await page.screenshot({ path: `${EVID}/spec-lead.png`, fullPage: true });
   });
 
-  test("F3：nav overview 按鈕 tooltip 為「總覽」(zh)、非英文 fallback", async ({ page }) => {
+  test("F3：nav overview 按鈕 tooltip 為「總覽」(zh)、非英文 fallback（legacy 殼）", async ({ page }) => {
+    // IA v2（UnifiedConsole）：兩段式 .ec-nav 只存在 legacy 殼；#spec 非 approved 鍵、仍掛 legacy 殼
+    //（EdgeConsole.tsx renderUnified 回 null → LegacyEdgeConsole），故 nav tooltip 斷言留在 #spec 驗證。
     await page.goto(`/#spec`);
     // 介面預設 zh：overview nav 按鈕 title 走 navText → NAV_LABEL.overview.biz = 總覽。
     const overviewBtn = page.locator('.ec-nav button[title="總覽"]');

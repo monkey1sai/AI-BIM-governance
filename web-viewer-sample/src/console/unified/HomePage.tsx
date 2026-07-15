@@ -28,11 +28,12 @@ export function HomePage() {
     { step: "⑤ OUTBOX", n: String(outbox.filter((o) => o.st === "待送").length), label: zh ? "待送" : "pending", arrow: false },
   ];
 
-  /* ---- KPI 卡產生器（1:1 對應原型 kpi(actId,label,val,sub,valColor)）---- */
-  const kpi = (hash: string, label: string, val: string, sub: ReactNode, valColor?: string) => (
-    <div className="hv-accent-border" onClick={() => nav(hash)} style={{ ...chipBox, padding: 16, display: "flex", flexDirection: "column", gap: 6, cursor: "pointer" }}>
+  /* ---- KPI 卡產生器（1:1 對應原型 kpi(actId,label,val,sub,valColor)）----
+     uc 參數僅掛 data-uc 定位屬性（design gate semantic contract 用），像素中性。 */
+  const kpi = (hash: string, label: string, val: string, sub: ReactNode, valColor?: string, uc?: string) => (
+    <div className="hv-accent-border" data-uc={uc} onClick={() => nav(hash)} style={{ ...chipBox, padding: 16, display: "flex", flexDirection: "column", gap: 6, cursor: "pointer" }}>
       <span style={{ fontFamily: MONO, fontSize: "9.5px", letterSpacing: ".1em", color: "#5a7089", textTransform: "uppercase" }}>{label}</span>
-      <span style={valColor ? { fontSize: 26, fontWeight: 700, fontFamily: MONO, color: valColor } : { fontSize: 26, fontWeight: 700, fontFamily: MONO }}>{val}</span>
+      <span data-uc={uc ? uc + "-val" : undefined} style={valColor ? { fontSize: 26, fontWeight: 700, fontFamily: MONO, color: valColor } : { fontSize: 26, fontWeight: 700, fontFamily: MONO }}>{val}</span>
       <span style={{ fontSize: 11, color: "#8aa0b8" }}>{sub}</span>
     </div>
   );
@@ -48,17 +49,17 @@ export function HomePage() {
       </div>
       {/* ---- KPI 卡 ×4 ---- */}
       <div data-prov="fixture" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-        {kpi("#conv", L.kpi_conv, String(conv.filter((c) => c.st === "running").length), <>990_model.ifc 62% · <span style={{ color: "#e8615c" }}>1 失敗</span></>)}
-        {kpi("#conv", L.kpi_sess, String(sessions.length), "editor lease 1 · spectator 1")}
-        {kpi("#issues", L.kpi_issue, String(issues.length + 10), L.kpi_issue_sub, "#e8615c")}
-        {kpi("#runtime", L.kpi_outbox, String(outbox.filter((o) => o.st === "待送").length), "metadata-only callback", "#e6b23e")}
+        {kpi("#conv", L.kpi_conv, String(conv.filter((c) => c.st === "running").length), <>990_model.ifc 62% · <span style={{ color: "#e8615c" }}>1 失敗</span></>, undefined, "kpi-conv")}
+        {kpi("#conv", L.kpi_sess, String(sessions.length), "editor lease 1 · spectator 1", undefined, "kpi-sess")}
+        {kpi("#issues", L.kpi_issue, String(issues.length + 10), L.kpi_issue_sub, "#e8615c", "kpi-issue")}
+        {kpi("#runtime", L.kpi_outbox, String(outbox.filter((o) => o.st === "待送").length), "metadata-only callback", "#e6b23e", "kpi-outbox")}
       </div>
       {/* ---- 資料生產線快照 + 警示/事件 ---- */}
       <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr", gap: 12 }}>
         <div data-prov="fixture" style={{ ...chipBox, padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: "13.5px", fontWeight: 700 }}>{L.pipe_snap}</span>
-            <span onClick={() => nav("#conv")} style={{ marginLeft: "auto", fontSize: 11, color: "#41c7e8", cursor: "pointer" }}>{L.enter} →</span>
+            <span data-uc="enter-pipeline" onClick={() => nav("#conv")} style={{ marginLeft: "auto", fontSize: 11, color: "#41c7e8", cursor: "pointer" }}>{L.enter} →</span>
           </div>
           <div style={{ display: "flex", alignItems: "stretch", gap: 0 }}>
             {pipeSnap.map((p) => (

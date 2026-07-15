@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 
-// A1/M1 收尾端到端:#/a1 reducer stepper 走真 rule-run → 記分 → 展開失敗規則看 GUID/名稱/樓層 → 開 Issue → 匯出。
+// A1/M1 收尾端到端:#a1-workbench reducer stepper 走真 rule-run → 記分 → 展開失敗規則看 GUID/名稱/樓層 → 開 Issue → 匯出。
+//（IA v2 後 #a1 = UnifiedConsole workspace 新殼;舊 A1 治理工作台整頁遷至 #a1-workbench,元件本體零改動,流程斷言不變。）
 //
 // *** 服務這頁的是 COORDINATOR 已 build 的 dist-ui(npm run build:ui → dist-ui),
 //     不是 playwright.config.ts 的 fresh viewer(:5180)。前置(乾淨環境必做):
@@ -22,7 +23,7 @@ import { test, expect } from "@playwright/test";
 //        不存在即為「走了 skip 而非 PASS」的鐵證。真 PASS 須先完成上述 build:ui + 重啟。***
 const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8004";
 
-test.describe("A1/M1 收尾:#a1 五步 stepper + 失敗抽屜", () => {
+test.describe("A1/M1 收尾:#a1-workbench 五步 stepper + 失敗抽屜", () => {
   // 重跑 test 最壞路徑 ≈ 第一輪 rule-run 120s + issue/export ~45s + 第二輪 scoreboard 120s ≈ 285s,
   // 180s 會在第二輪前被 global-timeout kill(看不到具體斷言失敗)。拉到 360s 讓慢速第二輪能回報真正失敗點。
   test.setTimeout(360_000);
@@ -39,11 +40,11 @@ test.describe("A1/M1 收尾:#a1 五步 stepper + 失敗抽屜", () => {
 
     let uiOk = false;
     try {
-      await page.goto(`${COORDINATOR}/ui/#/a1`);
+      await page.goto(`${COORDINATOR}/ui/#/a1-workbench`);
       await page.getByTestId("a1-step-run").waitFor({ state: "visible", timeout: 15_000 });
       uiOk = true;
     } catch { uiOk = false; }
-    test.skip(!uiOk, "coordinator dist-ui 非本 branch(#/a1 缺 a1-step-run):需 npm run build:ui 後重啟 :8004。");
+    test.skip(!uiOk, "coordinator dist-ui 非本 branch(#/a1-workbench 缺 a1-step-run):需 npm run build:ui 後重啟 :8004。");
   });
 
   test("選模型 → 自動亮步驟2 → 檢核 succeeded → 展開失敗規則看 GUID/名稱/樓層 → 開 Issue → 匯出", async ({ page }) => {

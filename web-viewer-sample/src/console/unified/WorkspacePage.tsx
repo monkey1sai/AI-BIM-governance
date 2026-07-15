@@ -72,7 +72,7 @@ export function WorkspacePage({ initialDock }: WorkspacePageProps) {
       {/* ---- 頂條：dock tabs + session 膠囊 + Spectator + FPS ---- */}
       <div data-prov="fixture" style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderBottom: "1px solid rgba(120,160,210,.10)", background: "#0a1018", flex: "none" }}>
         {dockTabs.map((d) => (
-          <div key={d.id} className="hv-text" onClick={() => patch({ dock: d.id, sel: null })} style={{ padding: "6px 13px", borderRadius: 8, fontSize: 12, cursor: "pointer", fontWeight: ws.dock === d.id ? 700 : 400, color: ws.dock === d.id ? "#04121a" : "#8aa0b8", background: ws.dock === d.id ? `linear-gradient(135deg,${ACCENT},#2f7bf6)` : "transparent" }}>{d.label(L)}</div>
+          <div key={d.id} className="hv-text" data-uc={"dock-tab-" + d.id} data-active={ws.dock === d.id ? "true" : "false"} onClick={() => patch({ dock: d.id, sel: null })} style={{ padding: "6px 13px", borderRadius: 8, fontSize: 12, cursor: "pointer", fontWeight: ws.dock === d.id ? 700 : 400, color: ws.dock === d.id ? "#04121a" : "#8aa0b8", background: ws.dock === d.id ? `linear-gradient(135deg,${ACCENT},#2f7bf6)` : "transparent" }}>{d.label(L)}</div>
         ))}
         <div style={{ flex: 1 }} />
         <span style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: MONO, fontSize: "10.5px", color: "#6fd6ee", background: "rgba(65,199,232,.08)", border: "1px solid rgba(65,199,232,.22)", borderRadius: 999, padding: "4px 10px" }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "#41c7e8", animation: "pulse 2s infinite" }} />S-240601 · editor lease</span>
@@ -112,13 +112,13 @@ export function WorkspacePage({ initialDock }: WorkspacePageProps) {
             <span className="hv-text" style={vpBtn}>⟲</span>
           </div>
           {ws.sel !== null ? (
-            <div style={{ position: "absolute", left: "44%", top: "34%", display: "flex", flexDirection: "column", gap: 4, pointerEvents: "none" }}>
+            <div data-uc="sel-callout" style={{ position: "absolute", left: "44%", top: "34%", display: "flex", flexDirection: "column", gap: 4, pointerEvents: "none" }}>
               <div style={{ width: 64, height: 64, border: "1.5px solid #41c7e8", borderRadius: 4, boxShadow: "0 0 0 3px rgba(65,199,232,.18),0 0 24px rgba(65,199,232,.35)" }} />
               <span style={{ fontFamily: MONO, fontSize: 10, background: "rgba(10,16,24,.9)", border: "1px solid rgba(65,199,232,.4)", borderRadius: 6, padding: "3px 8px", color: "#7adcf2", whiteSpace: "nowrap" }}>{ws.sel.name}</span>
             </div>
           ) : null}
           <div style={{ position: "absolute", bottom: 10, left: 12, display: "flex", gap: 6 }}>
-            <span style={{ fontFamily: MONO, fontSize: 10, background: "rgba(10,16,24,.8)", border: "1px solid rgba(120,160,210,.18)", borderRadius: 6, padding: "3px 8px", color: "#4fd68a" }}>● Streaming · 28 ms</span>
+            <span data-uc="streaming-pill" style={{ fontFamily: MONO, fontSize: 10, background: "rgba(10,16,24,.8)", border: "1px solid rgba(120,160,210,.18)", borderRadius: 6, padding: "3px 8px", color: "#4fd68a" }}>● Streaming · 28 ms</span>
             <span style={{ fontFamily: MONO, fontSize: 10, background: "rgba(10,16,24,.8)", border: "1px solid rgba(120,160,210,.18)", borderRadius: 6, padding: "3px 8px", color: "#8aa0b8" }}>Omniverse RTX · 60 FPS</span>
           </div>
           <div style={{ position: "absolute", bottom: 10, right: 12, width: 44, height: 44, background: "rgba(10,16,24,.8)", border: "1px solid rgba(120,160,210,.2)", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: MONO, fontSize: 9, color: "#8aa0b8" }}>前│右</div>

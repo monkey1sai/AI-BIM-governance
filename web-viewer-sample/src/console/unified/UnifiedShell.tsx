@@ -3,6 +3,8 @@
 // 像素級移植正本：scratchpad/design-origin/app.js（topbar / sidebar / toast 區塊）
 // 所有 inline style / 文案 byte-identical；互動為 fixture 語意（local state +
 // toast 假 API 字串），不打任何 /api。導覽一律 window.location.hash 賦值。
+// data-uc / data-active 屬性為 design gate semantic contract 專用的像素中性
+// 附加（e2e/design-system-semantic-cases.ts 以其定位/斷言），不影響渲染輸出。
 // ═══════════════════════════════════════════════════════════════════════
 import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
@@ -141,8 +143,8 @@ function ShellFrame({ page, dock, concept, children }: UnifiedShellProps) {
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: "rgba(49,197,109,.10)", border: "1px solid rgba(49,197,109,.25)", fontFamily: MONO, fontSize: 11, color: "#4fd68a" }}>GPU/Stream 82%</div>
       </div>
       <div onClick={() => setLang(zh ? "en" : "zh")} style={{ display: "flex", alignItems: "center", gap: 0, border: "1px solid rgba(120,160,210,.16)", borderRadius: 8, overflow: "hidden", cursor: "pointer", fontFamily: MONO, fontSize: "10.5px" }}>
-        <span style={zh ? { padding: "4px 9px", background: "rgba(65,199,232,.16)", color: "#7adcf2" } : { padding: "4px 9px", color: "#5a7089" }}>中</span>
-        <span style={!zh ? { padding: "4px 9px", background: "rgba(65,199,232,.16)", color: "#7adcf2" } : { padding: "4px 9px", color: "#5a7089" }}>EN</span>
+        <span data-uc="lang-zh" data-active={zh ? "true" : "false"} style={zh ? { padding: "4px 9px", background: "rgba(65,199,232,.16)", color: "#7adcf2" } : { padding: "4px 9px", color: "#5a7089" }}>中</span>
+        <span data-uc="lang-en" data-active={!zh ? "true" : "false"} style={!zh ? { padding: "4px 9px", background: "rgba(65,199,232,.16)", color: "#7adcf2" } : { padding: "4px 9px", color: "#5a7089" }}>EN</span>
       </div>
       <span style={{ color: "#8aa0b8", fontSize: 15, cursor: "pointer" }}>◔</span>
       <div style={{ width: 32, height: 32, borderRadius: "50%", background: "linear-gradient(135deg,#2f7bf6,#41c7e8)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11.5px", fontWeight: 700, color: "#04121a" }}>AD</div>
@@ -156,10 +158,10 @@ function ShellFrame({ page, dock, concept, children }: UnifiedShellProps) {
       <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
         <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: ".12em", color: "#4d6076", textTransform: "uppercase", padding: "0 10px 6px" }}>{L.g_work}</span>
         {navMain.map((n) => (
-          <div key={n.id} className="hv-bg" style={navItem(page === n.id)} onClick={() => nav(n.hash)}>
+          <div key={n.id} className="hv-bg" data-uc={"nav-" + n.id} data-active={page === n.id ? "true" : "false"} style={navItem(page === n.id)} onClick={() => nav(n.hash)}>
             <span style={{ width: 16, textAlign: "center", fontSize: 12, opacity: 0.85 }}>{n.icon}</span>
             <span style={{ flex: 1, fontSize: "12.5px" }}>{L[n.labelKey]}</span>
-            {n.id === "pipe" ? <span style={badgeTone("warn")}>{convBadge}</span> : null}
+            {n.id === "pipe" ? <span data-uc="nav-pipe-badge" style={badgeTone("warn")}>{convBadge}</span> : null}
           </div>
         ))}
       </div>
@@ -168,7 +170,7 @@ function ShellFrame({ page, dock, concept, children }: UnifiedShellProps) {
         {apps.map((a) => {
           const active = (page === "ws" && dock === a.code.toLowerCase()) || (page === "concept" && concept === a.code.toLowerCase());
           return (
-            <div key={a.code} className="hv-bg" style={navItem(active)} onClick={() => nav(a.hash)}>
+            <div key={a.code} className="hv-bg" data-uc={"app-" + a.code.toLowerCase()} data-active={active ? "true" : "false"} style={navItem(active)} onClick={() => nav(a.hash)}>
               <span style={{ width: 26, fontFamily: MONO, fontSize: 10, color: "#5a8db0" }}>{a.code}</span>
               <span style={{ flex: 1, fontSize: 12 }}>{zh ? a.labelZh : a.labelEn}</span>
               <span style={badgeTone(a.tone)}>{a.badge}</span>
@@ -181,14 +183,14 @@ function ShellFrame({ page, dock, concept, children }: UnifiedShellProps) {
         <a href="#" target="_blank" rel="noreferrer" className="hv-doc" style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", border: "1px solid rgba(120,160,210,.14)", borderRadius: 9, fontSize: "11.5px", color: "#8aa0b8", textDecoration: "none" }}>
           <span>▦</span><span>{L.designdoc}</span><span style={{ marginLeft: "auto", fontSize: 10 }}>↗</span>
         </a>
-        <div style={{ fontFamily: MONO, fontSize: "8.5px", color: "#3d4f63", padding: "0 4px" }}>:8004/ui · UnifiedConsole</div>
+        <div data-uc="runtime-note" style={{ fontFamily: MONO, fontSize: "8.5px", color: "#3d4f63", padding: "0 4px" }}>:8004/ui · UnifiedConsole</div>
       </div>
     </div>
   );
 
   /* ---- toast host ---- */
   const toastHost = toastMsg ? (
-    <div style={{ position: "fixed", bottom: 26, left: "50%", transform: "translateX(-50%)", background: "#101d2c", border: "1px solid rgba(65,199,232,.4)", borderRadius: 10, padding: "10px 18px", fontSize: "12.5px", color: "#dbe6f3", boxShadow: "0 12px 40px rgba(0,0,0,.5)", animation: "tup .18s ease-out", display: "flex", alignItems: "center", gap: 9, zIndex: 99 }}>
+    <div data-uc="toast" style={{ position: "fixed", bottom: 26, left: "50%", transform: "translateX(-50%)", background: "#101d2c", border: "1px solid rgba(65,199,232,.4)", borderRadius: 10, padding: "10px 18px", fontSize: "12.5px", color: "#dbe6f3", boxShadow: "0 12px 40px rgba(0,0,0,.5)", animation: "tup .18s ease-out", display: "flex", alignItems: "center", gap: 9, zIndex: 99 }}>
       <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#41c7e8" }} />
       <span style={{ fontFamily: MONO, fontSize: "11.5px" }}>{toastMsg}</span>
     </div>

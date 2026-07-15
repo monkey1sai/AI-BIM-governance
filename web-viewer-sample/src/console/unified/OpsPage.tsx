@@ -50,6 +50,7 @@ export function OpsPage() {
           <div style={{ display: "flex", gap: 8 }}>
             <span
               className="hv-accent-bg"
+              data-uc="open-stage"
               style={{ flex: 1, textAlign: "center", fontSize: 11, color: "#6fd6ee", border: "1px solid rgba(65,199,232,.3)", borderRadius: 7, padding: 6, cursor: "pointer" }}
               onClick={() => toast("POST /api/kit/instances/current/open → stage loading")}
             >open stage</span>
@@ -75,7 +76,7 @@ export function OpsPage() {
           <span style={{ fontSize: 13, fontWeight: 700 }}>{L.svc_health}</span>
           {services.map((sv) => (
             <div key={sv.name} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ width: 7, height: 7, borderRadius: "50%", background: sv.ok ? "#31c56d" : "#e8615c", flex: "none" }} />
+              <span data-uc="svc-dot" data-ok={sv.ok ? "true" : "false"} style={{ width: 7, height: 7, borderRadius: "50%", background: sv.ok ? "#31c56d" : "#e8615c", flex: "none" }} />
               <span style={{ fontSize: "11.5px", color: "#b9c9da", flex: 1 }}>{sv.name}</span>
               <span style={{ fontFamily: MONO, fontSize: 10, color: "#5a7089" }}>{sv.port}</span>
             </div>

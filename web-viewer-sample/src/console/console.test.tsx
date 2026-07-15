@@ -53,12 +53,20 @@ describe("edge console honesty smoke", () => {
   });
 
   it("nav tooltip 走 i18n：zh 下 overview 的 title 為「總覽」而非 data.ts fallback「Overview」", () => {
-    // 預設 _lang=zh（i18n.ts；jsdom 無 localStorage → fallback zh），navText(overview) → NAV_LABEL.overview.biz = 總覽。
-    const html = renderToString(<EdgeConsole />);
-    // 修正後 nav 按鈕 title 取 navText（i18n）而非原始 data.ts label。
-    expect(html).toContain('title="總覽"');
-    // 誠實守門（not-contains）：overview 不應再以英文 fallback 當 tooltip。
-    expect(html).not.toContain('title="Overview"');
+    // IA v2 雙殼：預設 #home 已由 UnifiedConsole 承接（無 legacy nav）；本測試針對 legacy 殼的
+    // nav tooltip 契約，須先把 hash 釘在 legacy 路由（#overview）再渲染（比照下方 #runtime 測試 pattern）。
+    const prevHash = window.location.hash;
+    try {
+      window.location.hash = "#overview";
+      // 預設 _lang=zh（i18n.ts；jsdom 無 localStorage → fallback zh），navText(overview) → NAV_LABEL.overview.biz = 總覽。
+      const html = renderToString(<EdgeConsole />);
+      // 修正後 nav 按鈕 title 取 navText（i18n）而非原始 data.ts label。
+      expect(html).toContain('title="總覽"');
+      // 誠實守門（not-contains）：overview 不應再以英文 fallback 當 tooltip。
+      expect(html).not.toContain('title="Overview"');
+    } finally {
+      window.location.hash = prevHash;
+    }
   });
 
   it("Applications 啟動器列出 A1–A10 並帶 provenance", () => {
@@ -362,18 +370,26 @@ describe("edge console honesty smoke", () => {
 
   // ── P3-2 / P3-3 殼層：Agent suggested prompts（disabled 輸入）+ FlowBar + Tweaks ──
   it("P3-2/P3-3 EdgeConsole 殼層含 Agent prompts（disabled 輸入）+ FlowBar + Tweaks", () => {
-    const html = renderToString(<EdgeConsole />);
-    // P3-2：suggested prompts + 寫入限制 + disabled 輸入框（非可用的假輸入）。
-    expect(html).toContain("SUGGESTED");
-    expect(html).toContain("AI 僅能改 review / session layer");
-    expect(html).toMatch(/<input[^>]*disabled/);
-    // P3-3：FlowBar 5 步（預設語言=中 → 中文 biz 步驟標籤）+ 頂列 LangToggle（中/EN）+ Tweaks（scenario clean/warn）。
-    expect(html).toContain("①"); // FlowBar step 1 標號
-    expect(html).toContain("接收建模來源"); // 預設中文（biz）的步驟標籤（Intake）
-    expect(html).toContain("紀錄回寫雲端"); // FlowBar 末步（Record 中文）
-    expect(html).toContain("ec-langtoggle"); // 語言切換移至頂列（中/EN），取代舊「用語」操作員/技術鈕
-    expect(html).toContain("clean"); // Tweaks scenario 按鈕
-    expect(html).toContain("warn");
+    // IA v2 雙殼：Agent 欄 / FlowBar / Tweaks 是 legacy 殼專屬（approved 鍵走 UnifiedShell 無此三者）；
+    // 預設 #home 已讓位給 UnifiedConsole，故釘 legacy 路由（#overview）再斷言殼層契約。
+    const prevHash = window.location.hash;
+    try {
+      window.location.hash = "#overview";
+      const html = renderToString(<EdgeConsole />);
+      // P3-2：suggested prompts + 寫入限制 + disabled 輸入框（非可用的假輸入）。
+      expect(html).toContain("SUGGESTED");
+      expect(html).toContain("AI 僅能改 review / session layer");
+      expect(html).toMatch(/<input[^>]*disabled/);
+      // P3-3：FlowBar 5 步（預設語言=中 → 中文 biz 步驟標籤）+ 頂列 LangToggle（中/EN）+ Tweaks（scenario clean/warn）。
+      expect(html).toContain("①"); // FlowBar step 1 標號
+      expect(html).toContain("接收建模來源"); // 預設中文（biz）的步驟標籤（Intake）
+      expect(html).toContain("紀錄回寫雲端"); // FlowBar 末步（Record 中文）
+      expect(html).toContain("ec-langtoggle"); // 語言切換移至頂列（中/EN），取代舊「用語」操作員/技術鈕
+      expect(html).toContain("clean"); // Tweaks scenario 按鈕
+      expect(html).toContain("warn");
+    } finally {
+      window.location.hash = prevHash;
+    }
   });
 
   it("[R4] NAV 分組對齊 A.1.1 群組欄（路由表為準）", () => {
@@ -387,17 +403,28 @@ describe("edge console honesty smoke", () => {
   });
 
   it("完整產品操作台 shell 顯示 prototype 的四組資訊架構", () => {
-    const html = renderToString(<EdgeConsole />);
-    expect(html).toContain("工作台");
-    expect(html).toContain("核心治理");
-    expect(html).toContain("OMNIVERSE RUNTIME");
-    expect(html).toContain("落地端控制台");
-    expect(html).toContain("模型資料與轉檔");
-    expect(html).toContain("Kit / GPU 機隊");
-    expect(html).toContain('class="ec-key">MD<');
-    expect(html).toContain('class="ec-key">CV<');
-    expect(html).not.toContain('class="ec-key">IN<');
-    expect(html).toContain("Chat USD Agent");
+    // IA v2 雙殼：四組 IA 群組標題屬 legacy 殼左欄（UnifiedShell 側欄改為「工作台/AI 應用模組」兩群組）；
+    // 釘 legacy 路由（#overview）再斷言 legacy nav 契約。
+    const prevHash = window.location.hash;
+    try {
+      window.location.hash = "#overview";
+      const html = renderToString(<EdgeConsole />);
+      expect(html).toContain("工作台");
+      expect(html).toContain("核心治理");
+      expect(html).toContain("OMNIVERSE RUNTIME");
+      expect(html).toContain("落地端控制台");
+      // MD 合一（Task 7）：intake「建模接收」併入單一 MD 項；conv（IFC→USD 轉檔歷史）已恢復獨立 nav 項。
+      expect(html).toContain("模型資料與轉檔"); // MD nav 標籤（navText(minio) → NAV_LABEL.minio.biz）
+      expect(html).toContain("Kit / GPU 機隊");
+      expect(html).toContain('class="ec-key">MD<'); // no="MD"（原 minio no="M"）
+      // conv（no=CV）nav 項已恢復（legacy ConversionPage 雙路由分治）；intake（no=IN）仍除名。
+      // 以 nav 鍵 no 精確守門（比照 CO 守門），不用裸字串。
+      expect(html).toContain('class="ec-key">CV<');
+      expect(html).not.toContain('class="ec-key">IN<');
+      expect(html).toContain("Chat USD Agent");
+    } finally {
+      window.location.hash = prevHash;
+    }
   });
 
   // ── co-console-runtime-merge §5.1 守門一（負向，打資料模型）：CO 獨立導覽項已從 PAGES 移除 ──
@@ -408,19 +435,29 @@ describe("edge console honesty smoke", () => {
   it("co-console-merge：CO 獨立導覽項已從 PAGES 移除（負向守門 · 資料模型 + 渲染 nav）", () => {
     // 資料模型守門：PAGES 不得再含 coordinator 項（落地端控制台群組只剩 conv/sessions/instances/minio）。
     expect(PAGES.some((p) => p.key === "coordinator")).toBe(false);
-    // 渲染 nav 補強：預設 #home 渲染的左欄按鈕（`<span class="ec-key">{p.no}</span>` L211）不得出現
-    // CO 編號（被移除 page 的 no="CO"）。NAV_GROUPS 的 coordinator 群組仍在故群組標題照常存活。
-    const navHtml = renderToString(<EdgeConsole />);
-    expect(navHtml).not.toContain('class="ec-key">CO<');
-  });
-
-  it("co-console-merge：#runtime route 承接 Coordinator runtime console，且 nav label 改為 Runtime 觀測值班台", () => {
+    // 渲染 nav 補強：IA v2 後 #home 走 UnifiedShell（無 legacy 左欄），not-contains 會空泛通過；
+    // 釘 legacy 路由（#overview）確保真的渲染 legacy nav 後，才斷言不得出現 CO 編號
+    // （被移除 page 的 no="CO"）。NAV_GROUPS 的 coordinator 群組仍在故群組標題照常存活。
     const prevHash = window.location.hash;
     try {
-      window.location.hash = "#runtime";
+      window.location.hash = "#overview";
+      const navHtml = renderToString(<EdgeConsole />);
+      expect(navHtml).toContain('class="ec-key">'); // 先證明 legacy nav 真的渲染（守門非空泛）
+      expect(navHtml).not.toContain('class="ec-key">CO<');
+    } finally {
+      window.location.hash = prevHash;
+    }
+  });
+
+  // IA v2 alias 重排：#runtime 讓位給 UnifiedConsole OpsPage；舊 CoordinatorPage（C/Hybrid Runtime
+  // Orchestrator）改由 #coordinator 深連結承接（EdgeConsole.tsx renderBody case "coordinator"）。
+  it("co-console-merge（IA v2）：#coordinator 承接舊 CoordinatorPage，legacy nav label 仍為 Runtime 觀測值班台", () => {
+    const prevHash = window.location.hash;
+    try {
+      window.location.hash = "#coordinator";
       const html = renderToString(<EdgeConsole />);
 
-      expect(html).toContain("Runtime 觀測值班台");
+      expect(html).toContain("Runtime 觀測值班台"); // legacy nav 的 runtime 項 label（navText(runtime).biz）
       expect(html).not.toContain("串流執行狀態");
       expect(html).toContain("Coordinator Console · C / Hybrid Runtime Orchestrator");
       expect(html).toContain("/api/runtime/status");
@@ -429,6 +466,24 @@ describe("edge console honesty smoke", () => {
       expect(html).toContain("Classic Dashboard 是 operator 第一眼總覽");
       expect(html).toContain("Open primary URL 不等於 occupied");
       expect(html).not.toContain("Runtime Dashboard · 串流執行狀態");
+    } finally {
+      window.location.hash = prevHash;
+    }
+  });
+
+  it("IA v2：#runtime 渲染 UnifiedConsole OpsPage（Runtime / Kit · GPU 營運），不再掛舊 CoordinatorPage", () => {
+    const prevHash = window.location.hash;
+    try {
+      window.location.hash = "#runtime";
+      const html = renderToString(<EdgeConsole />);
+
+      // 新 OpsPage 標題（fixtures.getL(zh).ops_title）。
+      expect(html).toContain("Runtime / Kit · GPU 營運");
+      // 誠實標記：fixture 面板帶 data-prov="fixture"（不冒充 live 遙測）。
+      expect(html).toContain('data-prov="fixture"');
+      // 舊 CoordinatorPage 已不在 #runtime（改走 #coordinator，見上一測試）。
+      expect(html).not.toContain("Coordinator Console · C / Hybrid Runtime Orchestrator");
+      expect(html).not.toContain("A Classic Dashboard");
     } finally {
       window.location.hash = prevHash;
     }
