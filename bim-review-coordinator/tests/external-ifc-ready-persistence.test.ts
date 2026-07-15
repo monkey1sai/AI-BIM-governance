@@ -4,12 +4,13 @@
 // 重啟調和（誠實）：queued_for_conversion → dropped_on_restart（dispatch queue 本身 volatile）；
 // downloading → download failed（下載已中斷）。
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ExternalIfcReadyStore } from "../src/services/externalIfcReadyStore.js";
 import type { ExternalIfcReadyEvent } from "../src/types.js";
 
-const tmpRoot = fs.mkdtempSync(path.join(process.cwd(), "tmp-eirs-test-"));
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tmp-eirs-test-"));
 afterEach(() => { /* 檔案留在 tmpRoot，最後一次性清 */ });
 process.on("exit", () => { try { fs.rmSync(tmpRoot, { recursive: true, force: true }); } catch { /* noop */ } });
 
