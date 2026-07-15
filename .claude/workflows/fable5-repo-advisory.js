@@ -139,9 +139,9 @@ const LENSES = [
     key: 'product',
     title: '產品進度與路線',
     body: '你的視角：產品進度與下一步價值。\n' +
-      '範圍：docs/plans/（saas-* 六檔＋審批報告-docs-plans-SaaS改版-2026-07-06.md）、docs/superpowers/plans/、docs/superpowers/specs/、docs/agents/product-operability-and-script-contract.md、open issues。\n' +
+      '範圍：docs/plans/（入口 docs-plans-README.md v5＋設計與規格正本「AI-BIM 前後端設計文件.dc.html」§07 實作分期 CH-0～CH-G／§08 Task 0–12；舊 saas-* 六檔、審批報告與 TRUTH/TARGET/BACKLOG/PROCESS 七檔已於 2026-07-15 #342 整批移除，勿再找）、docs/superpowers/plans/、docs/superpowers/specs/、docs/agents/product-operability-and-script-contract.md、open issues。\n' +
       '檢查：\n' +
-      '1. SaaS 雲地混合 v2：審批報告 §5 的 11 項待簽核現況——這條線是活的還是停著？第一步該從哪份檔開始\n' +
+      '1. 設計文件 §07 CH-0～CH-G 與 §08 Task 0–12：哪些期已有 code＋tests 證據、當前前緣落在哪一期？（SaaS 雲地混合文件線視為 retired，原文只在 git history，不再追審批簽核）\n' +
       '2. docs/superpowers/plans/2026-07-02-a1-3d-review-decouple.md 是 untracked 新檔——讀內容，判斷：進行中／被放棄／該收尾？與 worktree feat/c-m4-runtime-command-bridge（ahead 13, behind 20, 停在 task#4 Kit runtime mutator 授權閘門）什麼關係\n' +
       '3. A1–A10 落地現況鳥瞰（done/partial/not built），特別 A3（issue #270：clash 卡 OCC 依賴、clash_*_many 靜默回 0、need_commander 決策）\n' +
       '4. 已知假設驗證：M2-b conversion coverage_ratio=1 自我參照（缺獨立 IFC 分母）；MD 三頁合一的部署區 build:ui 未做\n' +
