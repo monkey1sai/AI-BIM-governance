@@ -131,12 +131,10 @@ README 只是入口，不是最高權威。遇到衝突時依下表往下查。
 |---|---|
 | Repo 邊界、agent 規則、source of truth | [AGENTS.md](AGENTS.md) |
 | Plans 唯一入口與閱讀順序 | [docs/plans/docs-plans-README.md](docs/plans/docs-plans-README.md) |
-| Repo 現況與 A1-A10 建成狀態 | [docs/plans/TRUTH.md](docs/plans/TRUTH.md) |
-| 產品契約、殼層與 viewer 目標 | [TARGET-contracts.md](docs/plans/TARGET-contracts.md)、[TARGET-shell.md](docs/plans/TARGET-shell.md)、[TARGET-viewer.md](docs/plans/TARGET-viewer.md) |
-| 缺口排序、OPEN 決策與 DoD | [BACKLOG.md](docs/plans/BACKLOG.md)、[PROCESS.md](docs/plans/PROCESS.md) |
+| 設計與規格正本（服務邊界·部署·前端 IA·API 契約·時序·資料模型·實作分期·AI Coding 交付守則） | [AI-BIM 前後端設計文件.dc.html](docs/plans/AI-BIM%20前後端設計文件.dc.html)（§01–§08；開啟需連網載 React CDN） |
+| Console 高保真互動原型設計稿 | [AI-BIM Console Hi-Fi.dc.html](docs/plans/AI-BIM%20Console%20Hi-Fi.dc.html)（6 screens；真 3D 仍驗 Kit WebRTC/stage/DataChannel） |
+| Repo 現況與 A1-A10 建成狀態 | repo code＋tests 直接查證（不再維護建成帳本） |
 | Production 2D design gate | 唯讀 authoring origin `C:\Repos\design\desigin-system`；CI 使用 [manifest](docs/plans/design-system-reference.manifest.json) 與 [golden baselines](docs/plans/design-system-baseline/) |
-| Legacy shell / IA companion | [docs/plans/ai-bim-governance-prototype.html](docs/plans/ai-bim-governance-prototype.html)（不作 2D pass/fail 權威） |
-| Legacy 3D runtime companion | [docs/plans/ai-bim-geo-viewer-prototype.html](docs/plans/ai-bim-geo-viewer-prototype.html)（真 3D 仍驗 Kit WebRTC/stage/DataChannel） |
 | API / event contracts | [docs/contracts/](docs/contracts/) |
 | Capability specs | [openspec/specs/](openspec/specs/) |
 | Runtime / E2E evidence | [docs/verification/](docs/verification/) 與 [docs/evidence/](docs/evidence/) |

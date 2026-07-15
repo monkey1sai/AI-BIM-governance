@@ -8,10 +8,10 @@
 
 Repo-local 產品功能需求主來源：
 
-- `docs/plans/docs-plans-README.md`：docs/plans 唯一入口（TRUTH/TARGET/PROCESS 三分體系）；A1–A10 需求與介面語意問 `TARGET-shell.md`／`TARGET-viewer.md`，現況問 `TRUTH.md`。
+- `docs/plans/docs-plans-README.md`：docs/plans 唯一入口；設計與規格正本＝`AI-BIM 前後端設計文件.dc.html`（§01–§08）；A1–A10 需求與介面語意問 §03 前端架構／§06 資料模型，現況以 repo code＋tests 直接查證。
 - `C:\Repos\design\desigin-system`：唯讀的 production 2D authoring standard；本 repo 不回寫。
-- `docs/plans/design-system-reference.manifest.json`＋`docs/plans/design-system-baseline/`：CI/PR/merge 可攜的 approved design snapshot；machine supporting artifacts，不是第八份需求正本。
-- `docs/plans/ai-bim-governance-prototype.html`／`ai-bim-geo-viewer-prototype.html`：legacy IA／OpenUSD runtime companions，不再作 production 2D pass/fail authority。
+- `docs/plans/design-system-reference.manifest.json`＋`docs/plans/design-system-baseline/`：CI/PR/merge 可攜的 approved design snapshot；machine supporting artifacts，不是第二份需求正本。
+- `docs/plans/AI-BIM Console Hi-Fi.dc.html`：Console 高保真互動原型設計稿（6 screens），production 2D pass/fail 仍以 pinned manifest/baselines 為 machine gate。
 
 外部設計站 `https://bim-docs.jackshappybot.com/` 是產品定位與架構參考：
 
@@ -19,15 +19,15 @@ Repo-local 產品功能需求主來源：
 - 分頁「05 BIM治理與模型檢核」：A1–A10 是本 repo 的 10 大主要開發項目。
 - 分頁「06 操作介面總覽」：歷史 UX 參考；與 current pinned design screen 衝突時，不作 visual pass/fail 權威。
 
-程式碼與 contracts 仍是行為 source of truth；repo-local plans 依 `docs/plans/docs-plans-README.md` §3 取用（現況問 TRUTH、行為需求問 TARGET-*、紀律問 PROCESS、2D fidelity 問 pinned design reference）。Design source 不得覆寫 API、enum、安全、權限、runtime lifecycle 或 service ownership。
+程式碼與 contracts 仍是行為 source of truth；repo-local plans 依 `docs/plans/docs-plans-README.md` §2/§3 取用（行為需求問設計文件 §01–§08、現況問 code＋tests、2D fidelity 問 pinned design reference）。Design source 不得覆寫 API、enum、安全、權限、runtime lifecycle 或 service ownership。
 
-- 前端相關改動（web-viewer-sample / console）動工前必讀 `docs/plans/TARGET-contracts.md` §1 後端凍結面契約（前端只打 coordinator `:8004`、proxy 路徑 byte-identical、禁改 governance `app.py`、coordinator `governanceProxy.ts`、streaming `conversion_authority.py` 等清單）。
-- A1–A10 建成狀態唯一落點＝`docs/plans/TRUTH.md`（§4 一覽），其他文件只引用、不各自展開論證。
+- 前端相關改動（web-viewer-sample / console）動工前必讀設計文件 §04 API 契約與 §08 R1–R4（後端凍結面：前端只打 coordinator `:8004`、proxy 路徑 byte-identical、禁改 governance `app.py`、coordinator `governanceProxy.ts`、streaming `conversion_authority.py`；瀏覽器禁直連 `:49101`／`:49102`／`:8010`）。
+- A1–A10 建成狀態以 repo code＋tests 直接查證，文件只引用、不各自展開論證。
 
 EdgeConsole product shell contract（對齊 `feat/edge-console-product-shell`）：
 
-- 正式產品殼層入口是 coordinator `/ui`；home 必須顯示「今天要做什麼」與 Smart Todo。
-- 完整 22 條正典路由（hash 一律**無斜線**，如 `#a1`、`#viewer`、`#conv`；2026-06-11 勘誤後 `#/a1` 寫法已廢棄）以 `docs/plans/TARGET-contracts.md` §4 為唯一來源，本檔不另行維護清單。
+- 正式產品殼層入口是 coordinator `/ui`；目標 IA 見設計文件 §03（home＝總覽 Mission Control：KPI·生產線快照·警示·A1–A10 啟動器）。
+- Route map 以設計文件 §03（`#/home`、`#/workspace?dock=a1..a4|issues`、`#/pipeline`、`#/ops`、`#/app/:slug`）＋舊路由收斂表（CH-G：`#coordinator`→`#/home`、`#intake`·`#conv`·`#minio`→`#/pipeline` 等）為唯一來源，本檔不另行維護清單。
 - Operator-tool route `#kit`、`#demo-control` 必須保留，不得 silently 移除。
 - A1 rule-run / Issue / BCF 可由 API / 表格完成；3D highlight、first frame、stage truth 必須有 GPU-backed review session，不得宣稱零 GPU 完成 3D。
 

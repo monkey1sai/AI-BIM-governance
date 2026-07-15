@@ -31,7 +31,7 @@ argument-hint: "（選填）只想看某面向：version / cleanup / assets / do
 
 | 面向 | 抓什麼 | 性質 |
 |---|---|---|
-| **進度差異** | `docs/plans/TRUTH.md` 的 route／A1–A10 現況與 `docs/plans/BACKLOG.md` gap 佇列「帳本自報 vs 獨立查證」並列，標出帳本高估/低報 | 唯讀評估，**不納入「要修哪幾項」** |
+| **進度差異** | `docs/plans/AI-BIM 前後端設計文件.dc.html` §07 實作分期（CH-0～CH-G）與 §08 Task 0–12 的目標，對照原始碼／測試／git history 獨立查證，標出落差 | 唯讀評估，**不納入「要修哪幾項」** |
 
 ## 流程
 
@@ -40,7 +40,7 @@ argument-hint: "（選填）只想看某面向：version / cleanup / assets / do
    - `cleanup`：讀 `git status`、merged branches、`git worktree list` 與 `.tmp` / cache / logs；不刪除。
    - `assets`：比對 `agent-skills-manifest.json`、`.claude/skills`、`.codex/skills`、workflow/command 引用與入口檔。
    - `docs`：比對 `scripts/script-registry.json`、實際 scripts、`.env` 與 `.env.example` 的 key 名、文件連結目標；不得輸出 `.env` 值。
-   - `progress`：依 `docs/plans/docs-plans-README.md` 讀 `TRUTH.md` / `BACKLOG.md` / `PROCESS.md`，再以原始碼、測試與 git history 獨立查證。
+   - `progress`：依 `docs/plans/docs-plans-README.md` 讀設計文件 §07 實作分期與 §08 Task 0–12，再以原始碼、測試與 git history 獨立查證。
    - 若使用者只要某一面向（arg = version/cleanup/assets/docs），仍跑全掃但報告時只聚焦該面向。
 2. **報告** — coordinator 直接把掃描結果整理成健康狀態表：
    - 開頭一張總表（4 個衛生面向，每面向 ✅ 無問題 / ⚠️ warn / ❌ fail + 問題數）。

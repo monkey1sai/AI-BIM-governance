@@ -17,7 +17,7 @@
 | `plan-next-spec-to-done-aware.js` | 推薦下一個 spec-to-done（考慮 merged ＋ in-flight branch） | 獨立 slash workflow（刻意無 skill 編排） |
 | `plan-test-deploy-and-tidy.js` | 勘查測試區一鍵部署＋參數整理＋散落檔清理計畫 | 獨立 slash workflow（刻意無 skill 編排） |
 | `fable5-repo-advisory.js` | 告別盤點：6 視角唯讀掃描＋合併去重＋懷疑者驗證 | 獨立 slash workflow（一次性盤點工具，保留可重跑） |
-| `saas-blueprint-tournament.js` | **已退役**：PR #301 一次性 SaaS 文件產生器；舊 input packet／11-file contract 已不存在 | 保留同名入口並 fail-closed；current source 讀 `docs/plans/docs-plans-README.md` → TRUTH / TARGET-* / BACKLOG / PROCESS |
+| `saas-blueprint-tournament.js` | **已退役**：PR #301 一次性 SaaS 文件產生器；舊 input packet／11-file contract 已不存在 | 保留同名入口並 fail-closed；current source 讀 `docs/plans/docs-plans-README.md` → `AI-BIM 前後端設計文件.dc.html` §01–§08 |
 | `routing.json` | spec-to-done 模型 routing 資料（tiers/fallback 鏈） | `scripts/gen_routing.py` codegen 至 std-*.js 的 `// <routing:gen>` 區塊 |
 
 ## 命名備註

@@ -39,8 +39,8 @@
 
 ### 產品定位與完成標準
 
-- Repo 功能需求以 `docs/plans/docs-plans-README.md` 為唯一入口：現況與 A1–A10 建成狀態唯一落點＝`TRUTH.md`；行為需求問 `TARGET-contracts.md`／`TARGET-shell.md`／`TARGET-viewer.md`；2D design authority＝唯讀 `C:\Repos\design\desigin-system`，CI/PR/merge 只讀 repo-pinned `design-system-reference.manifest.json`＋baselines；缺口問 `BACKLOG.md`；dual-gate 驗收紀律問 `PROCESS.md`。
-- 前端相關改動動工前必讀 `docs/plans/TARGET-contracts.md` §1 後端凍結面契約（前端只打 coordinator `:8004`、proxy 路徑 byte-identical、禁改 governance `app.py`、coordinator `governanceProxy.ts`、streaming `conversion_authority.py` 等清單）。
+- Repo 功能需求以 `docs/plans/docs-plans-README.md` 為唯一入口：設計與規格正本＝`docs/plans/AI-BIM 前後端設計文件.dc.html`（§01 服務邊界～§08 AI Coding 交付守則）；現況（建成狀態）以 repo code＋tests 直接查證；2D design authority＝唯讀 `C:\Repos\design\desigin-system`＋`AI-BIM Console Hi-Fi.dc.html` 原型，CI/PR/merge 只讀 repo-pinned `design-system-reference.manifest.json`＋baselines；工作排序問設計文件 §07 實作分期＋§08 Task 0–12。
+- 前端相關改動動工前必讀設計文件 §04 API 契約與 §08 R1–R4（後端凍結面：前端只打 coordinator `:8004`、proxy 路徑 byte-identical、禁改 governance `app.py`、coordinator `governanceProxy.ts`、streaming `conversion_authority.py`；R2 API 三態，絕不臆造後端）。
 - 主系統架構以 `https://bim-docs.jackshappybot.com/` 分頁「01 系統架構」的「BIM 模型管理平台 — 系統架構」為準：採雲端與客戶落地端分離，外部公司雲端是 control-plane，客戶落地端是 IFC / Kit / MCP runtime data-plane。
 - `https://bim-docs.jackshappybot.com/` 分頁「05 BIM治理與模型檢核」中的 A1–A10 是本 repo 的 10 大主要開發項目；產品架構／定位仍可參考該站，但 production 2D UX、資訊架構、視覺與互動狀態以前述 pinned design reference 為準。
 - 凡是 user-facing capability，不得以「後端 / API / 測試完成」或單張 screenshot 宣告 done。必須同時通過：(a) Windows runner 上的 Chromium DPR1、1440×900＋1920×1080、pixel diff≤1% 與 branch-protected Playwright semantic 100% 的 design fidelity gate；(b) route/button/fixture/真 API/runtime ID/loading/success/failure/retry/trace/network 的 operability gate。scope 由 base/head manifest＋changed paths 推導；`mixed`／`partial_reference_missing` 可做誠實局部修復，但不得宣稱 99% 或 full completion，unknown path fail closed。
@@ -117,7 +117,7 @@ _worker / _bim-control = 已自 repo 刪除（2026-05-18 B 方案落地），僅
 | 非平凡 / 高風險任務分級、worker dispatch、evidence labels、reviewer perspectives | `docs/agents/advanced-agent-reasoning-contract.md` |
 | 判定是否可啟動 Superpowers、skill explicit-only、禁止自動串接、subagent 預算 | `docs/agents/superpowers-invocation-policy.md` |
 | 看舊 PR、了解退役服務與歷史 spec 脈絡 | `docs/agents/history-and-archive.md` |
-| 查需求入口、22 條正典路由／9 個別名／獨立 `#review`、後端凍結契約、A1–A10 建成狀態、gap 排序與驗收紀律 | `docs/plans/docs-plans-README.md`（入口）→ `TARGET-contracts.md` / `TRUTH.md` / `BACKLOG.md` / `PROCESS.md` |
+| 查需求入口、服務邊界、route IA、API 契約、時序、資料模型、實作分期、AI Coding 交付守則 | `docs/plans/docs-plans-README.md`（入口）→ `AI-BIM 前後端設計文件.dc.html` §01–§08 |
 | 需要依任務種類／難度選擇 Codex workflow、subagents、模型 lane，或使用 `use agents` / `subagents` / `swarm` 開發 `docs/plans` 需求 | `docs/agents/codex-loop-workflows.md` |
 
 新增 sub-file 時：先在 `docs/agents/` 建檔，再同步更新本表與 `CLAUDE.md` index（兩份主檔的 sub-file 集合必須一致）。本文件行數預算 ≤ 250 行（目標 ≤ 200）；CLAUDE.md ≤ 130 行（目標 ≤ 100）。預算規範見 spec `agent-doc-context-budget`。
@@ -136,7 +136,7 @@ Runtime/product 行為真相優先順序：
 ```txt
 1. 程式碼實作
 2. 可執行 tests / contracts 文件
-3. docs/plans current decision ledger 與需求規格（目標行為 / 驗收語意）
+3. docs/plans 設計與規格文件（目標行為 / 驗收語意）
 4. AGENTS 邊界定義（本文件 + docs/agents/*.md sub-files）
 5. generated wiki / generated skills / old evidence（若存在）
 ```
