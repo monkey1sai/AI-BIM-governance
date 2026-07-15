@@ -12,6 +12,7 @@ function Assert-True {
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../..')).Path
 . (Join-Path $repoRoot 'scripts/lib/design-system-gate.ps1')
 Assert-True (-not (Test-DesignSystemPathPatterns -Path 'web-viewer-sample/src/App.tsx' -Patterns @($null, ''))) 'missing optional manifest patterns never match every path'
+$manifest = Get-Content -LiteralPath (Join-Path $repoRoot 'docs/plans/design-system-reference.manifest.json') -Raw | ConvertFrom-Json
 
 $partial = Get-DesignSystemChangeScope -RepoRoot $repoRoot -ChangedPaths @('apps/kit-manager-web/src/App.tsx')
 Assert-True ($partial.status -eq 'partial_reference_missing') 'Kit Manager is partial_reference_missing'
@@ -24,7 +25,8 @@ Assert-True $mixed.visual_required 'mixed EdgeConsole scope requires visual gate
 Assert-True ($mixed.required_screen_ids.Count -eq 13) 'mixed EdgeConsole scope requires all approved screens'
 Assert-True ($mixed.reference_missing_items -contains '#viewer') 'mixed EdgeConsole scope discloses missing routes'
 Assert-True (-not $mixed.full_completion_allowed) 'semantic state variants currently prevent full completion'
-Assert-True (-not $mixed.fidelity_deterministic) 'unlocked dependency tree and label-only runner/font environment prevent deterministic 99% completion claims'
+Assert-True ($manifest.fidelity_contract.dependency_tree_status -eq 'resolved_snapshot_pinned') 'resolved dependency snapshot is pinned'
+Assert-True (-not $mixed.fidelity_deterministic) 'label-only runner/font environment still prevents deterministic 99% completion claims'
 
 $refactoredViewer = Get-DesignSystemChangeScope -RepoRoot $repoRoot -ChangedPaths @('web-viewer-sample/ui/NewConsole.tsx')
 Assert-True ($refactoredViewer.status -eq 'mixed') 'viewer surface remains governed after an internal folder refactor'
@@ -57,7 +59,6 @@ $dotInfrastructure = Get-DesignSystemChangeScope -RepoRoot $repoRoot -ChangedPat
 Assert-True ($dotInfrastructure.status -eq 'gate_infrastructure_only') 'legal top-level dot-directory path remains intact during normalization'
 Assert-True ($dotInfrastructure.gate_infrastructure_paths -contains '.github/workflows/ci.yml') '.github workflow is tracked as gate infrastructure'
 
-$manifest = Get-Content -LiteralPath (Join-Path $repoRoot 'docs/plans/design-system-reference.manifest.json') -Raw | ConvertFrom-Json
 $unknown = Get-DesignSystemManifestScope -Manifest $manifest -ChangedPaths @('apps/future-ui/new-shell.tsx')
 Assert-True ($unknown.unknown_paths -contains 'apps/future-ui/new-shell.tsx') 'candidate frontend root without an owned surface fails closed'
 foreach ($unknownRefactorPath in @(

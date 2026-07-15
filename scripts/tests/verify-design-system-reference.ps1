@@ -109,7 +109,7 @@ $viewerPackage = Get-Content -LiteralPath (Join-Path $RepoRoot 'web-viewer-sampl
 Assert-Reference ($viewerPackage.devDependencies.'@playwright/test' -eq $fidelity.playwright_version) 'viewer @playwright/test must equal the manifest Playwright pin.'
 Assert-Reference ($viewerPackage.devDependencies.pixelmatch -eq '7.1.0') 'pixelmatch must remain exactly pinned.'
 Assert-Reference ($viewerPackage.devDependencies.pngjs -eq '7.0.0') 'pngjs must remain exactly pinned.'
-Assert-Reference ($fidelity.dependency_tree_status -eq 'locked_npm_ci') 'dependency tree must be installed from a tracked npm lock with npm ci.'
+Assert-Reference ($fidelity.dependency_tree_status -eq 'resolved_snapshot_pinned') 'dependency tree must pin the tracked lock hash and resolved visual dependency versions.'
 Assert-Reference ($fidelity.node_version -eq '20.20.2') 'Node.js version must remain exactly pinned.'
 Assert-Reference ($fidelity.npm_version -eq '10.9.4') 'npm version must remain exactly pinned.'
 Assert-Reference ($viewerPackage.packageManager -eq "npm@$($fidelity.npm_version)") 'viewer packageManager must equal the manifest npm pin.'

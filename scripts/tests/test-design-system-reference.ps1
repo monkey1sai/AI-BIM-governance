@@ -100,6 +100,10 @@ try {
             $candidate.fidelity_contract.dependency_lock_sha256 = ('0' * 64)
         }
     }
+    Assert-Rejected -ExpectedPattern 'resolved visual dependency versions' -Mutation {
+        param($candidate)
+        $candidate.fidelity_contract.dependency_tree_status = 'locked_npm_ci'
+    }
 
     $symlinkSource = Join-Path $script:tempRoot 'symlink-source'
     $outsideSource = Join-Path $script:tempRoot 'outside-source'

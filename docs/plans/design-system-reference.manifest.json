@@ -138,7 +138,7 @@
     "ci_runner_label": "windows-2025",
     "runner_image_fingerprint_status": "label_only",
     "font_fingerprint_status": "fonts_ready_only",
-    "dependency_tree_status": "locked_npm_ci",
+    "dependency_tree_status": "resolved_snapshot_pinned",
     "node_version": "20.20.2",
     "npm_version": "10.9.4",
     "dependency_lock_path": "web-viewer-sample/package-lock.json",
