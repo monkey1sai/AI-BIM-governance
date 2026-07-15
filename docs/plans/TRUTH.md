@@ -1,7 +1,7 @@
 ---
 as_of: 2026-07-15
 as_of_commit: c37b792
-generated_from: 人工核對（2026-07-10 repo 盤點 + code 逐檔讀；2026-07-13 對 #323–#329 增量複核；2026-07-14 BCF provenance 路徑複核；2026-07-14 A9/A10 route 身分與 viewer 七區塊 code 對帳；2026-07-15 design reference／branch-protection 回讀）；未來可換腳本重生
+generated_from: 人工核對（2026-07-10 repo 盤點 + code 逐檔讀；2026-07-13 對 #323–#329 增量複核；2026-07-14 BCF provenance 路徑複核；2026-07-14 A9/A10 route 身分與 viewer 七區塊 code 對帳；2026-07-15 design reference／branch-protection 回讀；2026-07-15 a4 隔離站 dual-gate 取證）；未來可換腳本重生
 ---
 
 # TRUTH — 現況帳本
@@ -28,7 +28,7 @@ route＝EdgeConsole hash route（無斜線，`#a1` 非 `#/a1`）；design screen
 | `#a1` | `workspace.a1.default` | PARTIAL | asbuilt | 五步狀態機＋雙來源檢核＋記分板＋3D 高亮 session＋Issue/Excel/BCF 齊；rollback=p1；visual result／tracked browser trace 均 not observed | `artifacts/e2e/edge-console-primary-ui-deploy/edge-console-a1-desktop.png`、`artifacts/e2e/real-ifc-storage-intake.png`；governance pytest（rule_engine/ids/bcf）；dual gate not observed |
 | `#a2` | `workspace.a2.default` | PARTIAL | asbuilt | diffs＋issue-impact 齊；apply-overlay 誠實回 501、3D 著色走 client highlight（p15）；visual result／selector E2E／trace not observed | governance pytest（diff）；dual gate not observed |
 | `#a3` | `workspace.a3.default` | PARTIAL | asbuilt | federation set/coords/build/handoff 已建；clash NOT BUILT；visual result not observed | governance pytest（federation）；clash 端點 grep=0；visual result not observed |
-| `#a4` | `workspace.a4.default` | PARTIAL | asbuilt | deterministic/semantic/auto 搜尋與 proxy 已建；3D highlight client-pull；BCF bridge 未建；visual result／browser trace not observed | governance search tests＋coordinator proxy tests＋viewer A4 tests；dual gate not observed |
+| `#a4` | `workspace.a4.default` | PARTIAL | asbuilt | deterministic/semantic/auto 搜尋與 proxy 已建；3D highlight client-pull；BCF bridge 未建（2026-07-15 裁決＝維持 unavailable＋UI 誠實標示，不建 bridge）；functional browser trace 已入 git；visual result 遭 semantic contract fail-closed（`state_variants_reference_missing`，全站阻擋，見本節 `design_reference.snapshot` 段） | governance search tests＋coordinator proxy tests＋viewer A4 tests；`artifacts/e2e/a4-trace/`（flow＋empty-honest png×2、trace.zip×2、summary.json；:8005 隔離站 2 passed，72 樘 IfcDoor→72 筆 manual Issue）；design visual result not observed（fail-closed） |
 | `#a5` | `concept.a5.default` | NOT-BUILT | p3 | AppVisionPage 佔位、後端不存在；concept golden 存在但 production visual result not observed | not observed（vision 頁自標 p3） |
 | `#issues` | `reference_missing` | PARTIAL | asbuilt | Issue/BCF 生命週期部分已建；provenance gate與 assignee 前端未齊；approved pixel reference／tracked browser trace not observed | governance pytest（issues/ids/bcf）；dual gate not observed |
 | `#reports` | `reference_missing` | PARTIAL | p1 | StubPage 狀態清單；A1 Excel 匯出已在；coverage/review package=p1；approved pixel reference missing | `npm run verify`；visual/browser evidence not observed |

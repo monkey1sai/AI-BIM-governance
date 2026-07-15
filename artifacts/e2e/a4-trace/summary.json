@@ -1,0 +1,51 @@
+{
+  "gap": "gap-a4-closeout",
+  "page": "#a4",
+  "captured_at": "2026-07-15T05:58:00+08:00",
+  "base_commit": "351ad96",
+  "workspace_note": "functional evidence 於 feat/gap-a4-closeout worktree 取得；spec 與 docs 變更同 PR 提交。design visual result 的 clean-commit 要求不適用於本 functional trace。",
+  "stack": {
+    "governance": "host-native python app.py · GOV_PORT=49103 · fresh GOV_DB_PATH=_e2e_a4.db · BIM_FILE_LIBRARY_ROOT=主工作區 storage",
+    "coordinator": "npx tsx src/index.ts · PORT=8005 · CONSOLE_DIST_DIR=本 branch dist-ui（VITE_COORDINATOR_API_BASE=http://127.0.0.1:8005 烙入）· GOVERNANCE_API_BASE=http://127.0.0.1:49103",
+    "deploy_area_untouched": true,
+    "llm_status": "enabled=false · configured=false · auth=missing（無 ORNITH_API_KEY → deterministic-only，UI 顯 a4-llm-missing 警示）"
+  },
+  "fixture": {
+    "path": "C:/Repos/active/iot/AI-BIM-governance/storage/fixture-bytes.ifc",
+    "note": "89 MB 真實 IFC（7126 構件）；非 mock"
+  },
+  "playwright": {
+    "spec": "web-viewer-sample/e2e/a4-closeout.spec.ts",
+    "command": "E2E_DISABLE_WEBSERVER=1 E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8005 A4_E2E_IFC_PATH=<fixture> npx playwright test e2e/a4-closeout.spec.ts",
+    "result": "2 passed（非 skip；skip 不會產生本目錄截圖）",
+    "tests": [
+      "path 來源 → deterministic 查詢 → interpreted filters/結果表 → 批次建 Issue（manual；BCF bridge 誠實 unavailable）",
+      "誠實 fallback：0 筆／不可解譯顯明確警示，不偽造結果列"
+    ]
+  },
+  "api_cross_check": {
+    "search_model": "POST /api/governance/search/model（IfcDoor · deterministic）→ status=ok · matched=72 · scanned=72 · unmapped=72 · 直打實測 7.4s",
+    "interpreted_filters": "interpretable=true · interpret_source=deterministic · confidence=1.0（basis=deterministic_grammar）",
+    "issues_after_batch": "GET /api/governance/issues → 72 筆，全部 description 含 source=A4 與 bcf_gate=unavailable_until_provenance_bridge"
+  },
+  "network_assertion": "頁面僅打 coordinator :8005 /api/*；零 :49102 直連、零部署區 :8004 呼叫（PROCESS §3）；頂欄 COORD:8004/GOV:49102 字樣為殼層靜態示意標籤（BACKLOG §2 #1 OPEN，非真連線）",
+  "design_gate_attempt": {
+    "command": "npm run test:visual:design-system",
+    "result": "fail-closed（未進 pixel 比對）：manifest semantic_contract.status=state_variants_reference_missing · implemented_case_ids=[]（11 required cases 未實作）",
+    "ownership": "全站阻擋，屬 gap-design-system-production-alignment；本 gap 不偷渡實作 semantic cases",
+    "pixel_result": "not observed"
+  },
+  "honest_boundaries": [
+    "BCF bridge NOT BUILT（2026-07-15 裁決＝維持 unavailable＋UI 誠實標示，不申請 contracts §1 #8 exception）",
+    "3D highlight 仍 client-pull p15；本隔離站無轉檔 → usd_prim_path=null，UI 誠實顯 unmapped、不發 highlight",
+    "批次建 Issue 尚無 intent→confirm→audited 三段式（TARGET #a4 IA 缺口之一，route 維持 PARTIAL）",
+    "semantic（Ornith vLLM）未設 key → 降級 deterministic 且 UI 明示，不偽稱 semantic"
+  ],
+  "files": [
+    "a4-closeout-flow.png",
+    "a4-closeout-empty-honest.png",
+    "a4-closeout-flow.trace.zip",
+    "a4-closeout-empty-honest.trace.zip",
+    "summary.json"
+  ]
+}
