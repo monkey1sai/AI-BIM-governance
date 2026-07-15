@@ -5,6 +5,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  realpath,
   stat,
   writeFile,
 } from "node:fs/promises";
@@ -82,6 +83,11 @@ async function listFiles(root, current = root) {
   const excludedDirectories = new Set([".git", ".cache", "node_modules"]);
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     const absolute = path.join(current, entry.name);
+    if (entry.isSymbolicLink()) {
+      throw new Error(
+        `Symbolic links are not allowed in the approved design source: ${toPosix(path.relative(root, absolute))}`,
+      );
+    }
     if (entry.isDirectory()) {
       if (excludedDirectories.has(entry.name)) continue;
       files.push(...(await listFiles(root, absolute)));
@@ -148,6 +154,7 @@ const mimeTypes = new Map([
 ]);
 
 async function startStaticServer(root) {
+  const canonicalRoot = await realpath(root);
   const server = http.createServer(async (request, response) => {
     try {
       const requestUrl = new URL(request.url || "/", "http://127.0.0.1");
@@ -159,17 +166,23 @@ async function startStaticServer(root) {
         response.writeHead(403).end("forbidden");
         return;
       }
-      const metadata = await stat(absolute);
+      const canonical = await realpath(absolute);
+      const canonicalRelative = path.relative(canonicalRoot, canonical);
+      if (canonicalRelative.startsWith("..") || path.isAbsolute(canonicalRelative)) {
+        response.writeHead(403).end("forbidden");
+        return;
+      }
+      const metadata = await stat(canonical);
       if (!metadata.isFile()) {
         response.writeHead(404).end("not found");
         return;
       }
       response.writeHead(200, {
         "Cache-Control": "no-store",
-        "Content-Type": mimeTypes.get(path.extname(absolute).toLowerCase()) ||
+        "Content-Type": mimeTypes.get(path.extname(canonical).toLowerCase()) ||
           "application/octet-stream",
       });
-      createReadStream(absolute).pipe(response);
+      createReadStream(canonical).pipe(response);
     } catch {
       response.writeHead(404).end("not found");
     }

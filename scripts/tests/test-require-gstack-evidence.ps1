@@ -11,12 +11,18 @@ if (-not (Test-Path -LiteralPath $hookPath -PathType Leaf) -or [string]::IsNullO
     throw '[test-require-gstack-evidence] hook or current PowerShell executable is unavailable.'
 }
 
+function Invoke-EvidenceHookRaw {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string] $Payload)
+
+    $stdout = $Payload | & $script:PsExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $hookPath 2>$null
+    return ($stdout | Out-String).Trim()
+}
+
 function Invoke-EvidenceHook {
     param([Parameter(Mandatory = $true)][string] $Command)
 
     $payload = @{ tool_name = 'Bash'; tool_input = @{ command = $Command } } | ConvertTo-Json -Compress
-    $stdout = $payload | & $script:PsExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $hookPath 2>$null
-    return ($stdout | Out-String).Trim()
+    return Invoke-EvidenceHookRaw -Payload $payload
 }
 
 function Assert-Denied {
@@ -41,6 +47,10 @@ $mustAllow = @(
 foreach ($command in $mustAllow) {
     Assert-Allowed -Output (Invoke-EvidenceHook -Command $command) -Message "non-merge command must not deadlock: $command"
 }
+Assert-Allowed -Output (Invoke-EvidenceHookRaw -Payload '') -Message 'manual invocation with no stdin remains a no-op'
+Assert-Denied -Output (Invoke-EvidenceHookRaw -Payload '{malformed-json') -Message 'malformed redirected hook payload must fail closed'
+Assert-Denied -Output (Invoke-EvidenceHookRaw -Payload '{"tool_name":"Bash","tool_input":{}}') -Message 'hook payload without tool_input.command must fail closed'
+
 
 $source = Get-Content -LiteralPath $hookPath -Raw
 foreach ($requiredMarker in @(

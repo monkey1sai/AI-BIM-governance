@@ -29,10 +29,10 @@ try {
     $payload = $raw | ConvertFrom-Json
     $command = [string]$payload.tool_input.command
 } catch {
-    exit 0
+    Deny-DesignMerge 'PreToolUse payload 不是有效 JSON；無法安全判定 merge command。'
 }
 if ([string]::IsNullOrWhiteSpace($command)) {
-    exit 0
+    Deny-DesignMerge 'PreToolUse payload 缺少 tool_input.command；無法安全判定 merge command。'
 }
 $ghMergePattern = '(?i)\bgh(?:\.exe)?["'']?\s+pr\s+merge\b'
 $mergeMatches = [regex]::Matches($command, $ghMergePattern)

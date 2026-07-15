@@ -1,6 +1,6 @@
 ---
 as_of: 2026-07-15
-as_of_commit: d78ceef
+as_of_commit: c37b792
 generated_from: 人工核對（2026-07-10 repo 盤點 + code 逐檔讀；2026-07-13 對 #323–#329 增量複核；2026-07-14 BCF provenance 路徑複核；2026-07-14 A9/A10 route 身分與 viewer 七區塊 code 對帳；2026-07-15 design reference／branch-protection 回讀）；未來可換腳本重生
 ---
 

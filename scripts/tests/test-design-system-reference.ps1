@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $validator = Join-Path $PSScriptRoot 'verify-design-system-reference.ps1'
 $manifestPath = Join-Path $repoRoot 'docs\plans\design-system-reference.manifest.json'
+$captureScript = Join-Path $repoRoot 'web-viewer-sample\scripts\capture-design-system-reference.mjs'
 
 function Invoke-Validator {
     param([Parameter(Mandatory = $true)][string] $CandidateManifest)
@@ -89,6 +90,36 @@ try {
     Assert-Rejected -ExpectedPattern 'external functional/runtime result input' -Mutation {
         param($candidate)
         $candidate.functional_runtime_contract.external_result_input_allowed = $true
+    }
+
+    $symlinkSource = Join-Path $script:tempRoot 'symlink-source'
+    $outsideSource = Join-Path $script:tempRoot 'outside-source'
+    New-Item -ItemType Directory -Force -Path $symlinkSource, $outsideSource | Out-Null
+    Set-Content -LiteralPath (Join-Path $symlinkSource 'design-doc.html') -Value '<!doctype html><title>fixture</title>' -Encoding utf8
+    Set-Content -LiteralPath (Join-Path $outsideSource 'outside.html') -Value '<!doctype html><title>outside</title>' -Encoding utf8
+    $linkPath = Join-Path $symlinkSource 'linked-outside'
+    if ($IsWindows) {
+        New-Item -ItemType Junction -Path $linkPath -Target $outsideSource | Out-Null
+    } else {
+        New-Item -ItemType SymbolicLink -Path $linkPath -Target $outsideSource | Out-Null
+    }
+
+    $nodeExe = (Get-Command node -ErrorAction Stop).Source
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $nodeExe
+    $startInfo.WorkingDirectory = $repoRoot
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    [void]$startInfo.ArgumentList.Add($captureScript)
+    $startInfo.Environment['DESIGN_SYSTEM_REFERENCE_ROOT'] = $symlinkSource
+    $process = [System.Diagnostics.Process]::Start($startInfo)
+    $stdout = $process.StandardOutput.ReadToEnd()
+    $stderr = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
+    $combinedOutput = "$stdout`n$stderr"
+    if ($process.ExitCode -eq 0 -or $combinedOutput -notmatch 'Symbolic links are not allowed') {
+        throw "Expected design source symlink rejection; exit=$($process.ExitCode); output=$combinedOutput"
     }
 } finally {
     Remove-Item -LiteralPath $script:tempRoot -Recurse -Force -ErrorAction SilentlyContinue

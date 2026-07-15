@@ -20,7 +20,7 @@ Machine values: `Change lane` = `F` / `B` / `G` / `S`; `Behavior contract change
 
 ## Frontend Verification
 
-User-facing changes must pass two independent gates: real frontend/runtime operability evidence and the pinned `docs/plans/design-system-reference.manifest.json` fidelity gate. Scope is derived from changed paths plus the base/head manifest union; the PR body cannot select an easier screen. `mixed` and `partial_reference_missing` permit honest partial work but require `Full completion claimed = no`. Semantic evidence is produced by the required CI Playwright job, never supplied as PR input.
+User-facing changes must pass two independent gates: real frontend/runtime operability evidence and the pinned `docs/plans/design-system-reference.manifest.json` fidelity gate. Scope is derived from changed paths plus the base/head manifest union; the PR body cannot select an easier screen. `mixed` and `partial_reference_missing` permit honest partial work but require `Full completion claimed = no`. Semantic evidence is produced only by the `design-semantic-visual` CI Playwright job, never supplied as PR input; that job has merge authority only when branch protection and TRUTH／manifest record its required context as configured.
 
 | Item | Result |
 |---|---|
