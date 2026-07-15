@@ -34,18 +34,21 @@ export function ConversionHistoryPanel({
     }
   }, []);
 
-  if (historyErr) {
-    return <p className="ec-warn-note" data-testid="conv-history-error">{t("轉檔歷史未取得；請重試頁面更新。", "Conversion history is unavailable; retry the page refresh.")}</p>;
-  }
   if (history == null) {
-    return <p className="ec-note" data-testid="conv-history-loading">{t("轉檔歷史載入中…", "Loading conversion history…")}</p>;
+    return historyErr
+      ? <p className="ec-warn-note" data-testid="conv-history-error">{t("轉檔歷史未取得；請重試頁面更新。", "Conversion history is unavailable; retry the page refresh.")}</p>
+      : <p className="ec-note" data-testid="conv-history-loading">{t("轉檔歷史載入中…", "Loading conversion history…")}</p>;
   }
   if (history.length === 0) {
-    return <p className="ec-note" data-testid="conv-history-empty">{t("目前沒有轉檔歷史（非錯誤）。", "No conversion history at the moment (not an error).")}</p>;
+    return <>
+      {historyErr && <p className="ec-warn-note" data-testid="conv-history-error">{t("轉檔歷史更新失敗；保留上一份結果。", "Conversion history refresh failed; keeping the previous result.")}</p>}
+      <p className="ec-note" data-testid="conv-history-empty">{t("目前沒有轉檔歷史（非錯誤）。", "No conversion history at the moment (not an error).")}</p>
+    </>;
   }
 
   return (
     <div data-testid="conv-history-panel" style={{ overflowX: "auto" }}>
+      {historyErr && <p className="ec-warn-note" data-testid="conv-history-error">{t("轉檔歷史更新失敗；保留上一份結果。", "Conversion history refresh failed; keeping the previous result.")}</p>}
       <table className="ec-table">
         <thead><tr><th>conversion_job_id</th><th>status</th><th>source</th><th>time</th><th>{t("結果", "Result")}</th></tr></thead>
         <tbody>

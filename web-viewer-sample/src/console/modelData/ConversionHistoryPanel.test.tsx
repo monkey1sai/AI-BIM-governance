@@ -83,4 +83,17 @@ describe("ConversionHistoryPanel", () => {
 
     for (const status of statuses) expect(container.textContent).toContain(status);
   });
+
+  it("history 更新失敗時保留上一份成功 snapshot", async () => {
+    await act(async () => {
+      root.render(<ConversionHistoryPanel history={[{
+        conversion_job_id: "stream_conv_snapshot",
+        status: "succeeded",
+      }]} historyErr={true} />);
+    });
+
+    expect(container.querySelector('[data-testid="conv-history-error"]')?.textContent).toContain("保留上一份結果");
+    expect(container.querySelector('[data-testid="conv-history-row-stream_conv_snapshot"]')).not.toBeNull();
+    expect(container.textContent).toContain("succeeded");
+  });
 });
