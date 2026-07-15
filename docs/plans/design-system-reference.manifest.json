@@ -138,7 +138,17 @@
     "ci_runner_label": "windows-2025",
     "runner_image_fingerprint_status": "label_only",
     "font_fingerprint_status": "fonts_ready_only",
-    "dependency_tree_status": "unlocked_npm_install",
+    "dependency_tree_status": "resolved_snapshot_pinned",
+    "node_version": "20.20.2",
+    "npm_version": "10.9.4",
+    "dependency_lock_path": "web-viewer-sample/package-lock.json",
+    "dependency_lock_sha256": "3d0722ebc85a15f20e564851b34e04c578283a7a141937372b44bc942381db62",
+    "resolved_dependency_versions": {
+      "@playwright/test": "1.61.1",
+      "playwright-core": "1.61.1",
+      "pixelmatch": "7.1.0",
+      "pngjs": "7.0.0"
+    },
     "playwright_version": "1.61.1",
     "chromium_revision": "1228",
     "chromium_version": "149.0.7827.55",
@@ -299,10 +309,15 @@
   },
   "functional_runtime_contract": {
     "schema_version": 1,
-    "status": "machine_gate_missing",
+    "status": "targeted_conv_producer_available",
     "authority": "branch_protected_machine_output_required",
     "enforcement_status": "required_check_not_configured",
-    "external_result_input_allowed": false
+    "external_result_input_allowed": false,
+    "producer": "web-viewer-sample/e2e/conv-history.spec.ts",
+    "validator": "scripts/tests/verify-functional-runtime-result.ps1",
+    "workflow_context": "functional-runtime-conv",
+    "covered_routes": ["#conv"],
+    "remaining_scope": "all other user-facing routes and Kit first-frame/stage/DataChannel evidence"
   },
   "screens": [
     {

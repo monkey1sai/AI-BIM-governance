@@ -91,6 +91,19 @@ try {
         param($candidate)
         $candidate.functional_runtime_contract.external_result_input_allowed = $true
     }
+    Assert-Rejected -ExpectedPattern 'dependency lock SHA-256' -Mutation {
+        param($candidate)
+        $property = $candidate.fidelity_contract.PSObject.Properties['dependency_lock_sha256']
+        if ($null -eq $property) {
+            $candidate.fidelity_contract | Add-Member -NotePropertyName dependency_lock_sha256 -NotePropertyValue ('0' * 64)
+        } else {
+            $candidate.fidelity_contract.dependency_lock_sha256 = ('0' * 64)
+        }
+    }
+    Assert-Rejected -ExpectedPattern 'resolved visual dependency versions' -Mutation {
+        param($candidate)
+        $candidate.fidelity_contract.dependency_tree_status = 'locked_npm_ci'
+    }
 
     $symlinkSource = Join-Path $script:tempRoot 'symlink-source'
     $outsideSource = Join-Path $script:tempRoot 'outside-source'
