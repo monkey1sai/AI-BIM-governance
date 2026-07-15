@@ -128,7 +128,7 @@ export const initialFlags = {
 };
 export const INITIAL_DC_LOG = "highlightPrimsResult ✓ (18 prims)";
 
-/* ── nav：工作台 4 項（route hash 對映 home→#home / ws→#a1 / pipe→#conv / ops→#runtime）── */
+/* ── nav：工作台 4 項（route hash 對映 home→#home / ws→#a1 / pipe→#pipeline / ops→#runtime）── */
 export interface NavMainItem {
   id: Exclude<PageKey, "concept">;
   icon: string;
@@ -138,7 +138,7 @@ export interface NavMainItem {
 export const navMain: NavMainItem[] = [
   { id: "home", icon: "◧", labelKey: "nav_home", hash: "#home" },
   { id: "ws", icon: "⬒", labelKey: "nav_ws", hash: "#a1" },
-  { id: "pipe", icon: "⇶", labelKey: "nav_pipe", hash: "#conv" },
+  { id: "pipe", icon: "⇶", labelKey: "nav_pipe", hash: "#pipeline" },
   { id: "ops", icon: "▣", labelKey: "nav_ops", hash: "#runtime" },
 ];
 

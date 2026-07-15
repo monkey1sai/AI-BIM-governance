@@ -25,28 +25,29 @@ test.describe("seven-axis cross-page harmony", () => {
   });
 
   test("shared status rail is on every LEGACY axis page (GPU 未取得, no fake green); unified pages have no rail", async ({ page }) => {
-    // IA v2（UnifiedConsole）：#a1/#conv/#runtime（含 #intake→#conv alias）改掛新殼，SharedStatusRail
-    // 只存在 legacy 殼（EdgeConsole.tsx LegacyEdgeConsole）→ rail 斷言收斂到仍為 legacy 的三軸頁。
-    for (const route of ["#sessions", "#instances", "#minio"]) {
+    // IA v2（UnifiedConsole）：#a1/#pipeline/#runtime 改掛新殼，SharedStatusRail 只存在 legacy 殼
+    //（EdgeConsole.tsx LegacyEdgeConsole）→ rail 斷言收斂到仍為 legacy 的四軸頁
+    //（#conv 已恢復 legacy ConversionPage——雙路由分治，unified 生產線改掛 #pipeline）。
+    for (const route of ["#conv", "#sessions", "#instances", "#minio"]) {
       await page.goto(`${COORDINATOR}/ui${route}`);
       const rail = page.getByTestId("shared-status-rail");
       await expect(rail).toBeVisible({ timeout: 20_000 });
       await expect(page.getByTestId("rail-gpu-value")).toContainText("未取得");
     }
-    // 反向斷言：unified 新殼（#home / #conv）無 rail。先等新殼可辨識內容 paint 再斷言不存在，
+    // 反向斷言：unified 新殼（#home / #pipeline）無 rail。先等新殼可辨識內容 paint 再斷言不存在，
     // 避免對空 DOM 過早 toHaveCount(0) 的偽陰性。
     await page.goto(`${COORDINATOR}/ui#home`);
     await expect(page.getByText("總覽 · Mission Control")).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId("shared-status-rail")).toHaveCount(0);
-    await page.goto(`${COORDINATOR}/ui#conv`);
+    await page.goto(`${COORDINATOR}/ui#pipeline`);
     await expect(page.getByText("模型資料與轉檔生產線")).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId("shared-status-rail")).toHaveCount(0);
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-rail-runtime.png", fullPage: true });
   });
 
   // IA v2 對映更新：舊「M → CV chip（minio-link-conv-*）→ #conv 接收端（conv-incoming-handoff）」已隨
-  // MD 三頁合一＋UnifiedConsole 移除——grep buildHandoff 呼叫點證實現無任何發射端指向 #conv（#conv 現為
-  // unified Pipeline fixture 頁、無接收端）。#minio 現行發射端＝GlobalConversionPane 的
+  // MD 三頁合一移除——grep buildHandoff 呼叫點證實現無任何發射端指向 #conv（#conv 為 legacy
+  // ConversionPage，接收端 conv-incoming-handoff 仍在但無發射端）。#minio 現行發射端＝GlobalConversionPane 的
   // conv-job-session-*（→ #sessions）/ conv-job-review-*（→ #review）與 ObjectDetailPane 的
   // md-detail-ss / md-detail-review / md-detail-a1。本測改走仍有「發射端＋接收端重驗」的
   // M → SS 邊：chip 帶 review_session_id → #sessions 接收端（sessions-incoming-handoff）重驗。
@@ -140,10 +141,10 @@ test.describe("seven-axis cross-page harmony", () => {
 
   // §8 Representative Cross-Axis Lifecycle — ONE stitched walk-through (spec §12/§13). IA v2 對映更新：
   //   • 舊 M→CV / IN→CV 邊（minio-link-conv-* / intake-link-conv-* → #conv 的 conv-incoming-handoff）已隨
-  //     MD 三頁合一＋UnifiedConsole 移除；#conv 現為 unified Pipeline fixture 頁、無接收端，且 grep
+  //     MD 三頁合一移除；#conv 為 legacy ConversionPage（接收端 conv-incoming-handoff 仍在），grep
   //     buildHandoff 呼叫點證實現無任何發射端指向 #conv。
-  //   • 現行 spine：M（#minio conv-job-session-* → #sessions 接收端重驗）→ IN（#intake alias → #conv
-  //     unified Pipeline）→ A1 工作台（#a1-workbench 的 a1-link-sessions 證據型 chip）→ Review Room
+  //   • 現行 spine：M（#minio conv-job-session-* → #sessions 接收端重驗）→ IN（#intake alias → #minio
+  //     合一 ModelDataPage）→ A1 工作台（#a1-workbench 的 a1-link-sessions 證據型 chip）→ Review Room
   //     （#review?source=a1，kit-not-started 邊界）→ 回 A1 issue 控制（a1-step-issues）。
   //   • 舊 a1-open-review-room CTA 已不存在於 A1GovernanceWorkbenchPage；A1→Review 的 fixture-less 目標
   //     維持 #review?source=a1（Review Room 為獨立 fallback route）。
@@ -155,7 +156,7 @@ test.describe("seven-axis cross-page harmony", () => {
   //         fixture-less #review?source=a1 either way.
   //       – Review Room kit-not-started (review-room-kit-not-started): the no-auto-claim boundary (N3).
   //       – A1 issue control (a1-step-issues): always-mounted, present-but-disabled until a rule-run scores.
-  //       – #intake → #conv alias（AliasRedirect）＋ unified Pipeline 標題。
+  //       – #intake → #minio alias（AliasRedirect）＋ 合一 ModelDataPage 標題。
   //   • Infra-gated (honest soft-`if`, N7 unexercised != verified): the M leg needs a conversion job with a
   //     bound review_session_id; absent → the leg's steps are gated out rather than faking a conversion, and
   //     the rest of the spine still runs.
@@ -188,12 +189,12 @@ test.describe("seven-axis cross-page harmony", () => {
       await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-01-m-to-sessions.png", fullPage: true });
     }
 
-    // [IN] intake 軸已併入 unified Pipeline：#intake 舊 deep link 由 AliasRedirect 重導 #conv
-    // (EdgeConsole.tsx renderBody case "intake")。斷言 alias 真的落在 unified Pipeline（此即 IN 段現行語意；
-    // 舊 intake-link-conv-* 發射端與 #conv 接收端皆已移除）。
+    // [IN] intake 軸已併入合一 ModelDataPage：#intake 舊 deep link 由 AliasRedirect 重導 #minio
+    // (EdgeConsole.tsx renderBody case "intake")。斷言 alias 真的落在合一頁（此即 IN 段現行語意；
+    // 舊 intake-link-conv-* 發射端已移除）。
     await page.goto(`${COORDINATOR}/ui#intake`);
-    await expect(page).toHaveURL(/#\/?conv$/, { timeout: 15_000 });
-    await expect(page.getByText("模型資料與轉檔生產線")).toBeVisible({ timeout: 15_000 });
+    await expect(page).toHaveURL(/#\/?minio$/, { timeout: 15_000 });
+    await expect(page.getByRole("heading", { name: /模型資料與轉檔/ })).toBeVisible({ timeout: 15_000 });
 
     // [A1] legacy A1 工作台遷 #a1-workbench（#a1 現為 unified workspace）。a1-link-sessions 是證據型
     // chip：selectedSession 為純前端 state、永不從後端還原 → fixture-less env 下結構性 DISABLED。

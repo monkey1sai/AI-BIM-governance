@@ -49,8 +49,8 @@ export function HomePage() {
       </div>
       {/* ---- KPI 卡 ×4 ---- */}
       <div data-prov="fixture" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-        {kpi("#conv", L.kpi_conv, String(conv.filter((c) => c.st === "running").length), <>990_model.ifc 62% · <span style={{ color: "#e8615c" }}>1 失敗</span></>, undefined, "kpi-conv")}
-        {kpi("#conv", L.kpi_sess, String(sessions.length), "editor lease 1 · spectator 1", undefined, "kpi-sess")}
+        {kpi("#pipeline", L.kpi_conv, String(conv.filter((c) => c.st === "running").length), <>990_model.ifc 62% · <span style={{ color: "#e8615c" }}>1 失敗</span></>, undefined, "kpi-conv")}
+        {kpi("#pipeline", L.kpi_sess, String(sessions.length), "editor lease 1 · spectator 1", undefined, "kpi-sess")}
         {kpi("#issues", L.kpi_issue, String(issues.length + 10), L.kpi_issue_sub, "#e8615c", "kpi-issue")}
         {kpi("#runtime", L.kpi_outbox, String(outbox.filter((o) => o.st === "待送").length), "metadata-only callback", "#e6b23e", "kpi-outbox")}
       </div>
@@ -59,12 +59,12 @@ export function HomePage() {
         <div data-prov="fixture" style={{ ...chipBox, padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: "13.5px", fontWeight: 700 }}>{L.pipe_snap}</span>
-            <span data-uc="enter-pipeline" onClick={() => nav("#conv")} style={{ marginLeft: "auto", fontSize: 11, color: "#41c7e8", cursor: "pointer" }}>{L.enter} →</span>
+            <span data-uc="enter-pipeline" onClick={() => nav("#pipeline")} style={{ marginLeft: "auto", fontSize: 11, color: "#41c7e8", cursor: "pointer" }}>{L.enter} →</span>
           </div>
           <div style={{ display: "flex", alignItems: "stretch", gap: 0 }}>
             {pipeSnap.map((p) => (
               <div key={p.step} style={{ flex: 1, display: "flex", alignItems: "center", gap: 0, minWidth: 0 }}>
-                <div className="hv-accent-border-strong" onClick={() => nav("#conv")} style={{ flex: 1, background: "#0a1220", border: "1px solid rgba(120,160,210,.14)", borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3, cursor: "pointer" }}>
+                <div className="hv-accent-border-strong" onClick={() => nav("#pipeline")} style={{ flex: 1, background: "#0a1220", border: "1px solid rgba(120,160,210,.14)", borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3, cursor: "pointer" }}>
                   <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: ".08em", color: "#5a8db0" }}>{p.step}</span>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}><span style={{ fontSize: 19, fontWeight: 700, fontFamily: MONO }}>{p.n}</span><span style={{ fontSize: 11, color: "#8aa0b8" }}>{p.label}</span></div>
                 </div>

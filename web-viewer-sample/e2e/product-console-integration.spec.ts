@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8004";
 
-// IA v2（UnifiedConsole）：/ui 預設頁與 #a1..#a10 / #conv / #runtime 改掛新殼（UnifiedShell），
+// IA v2（UnifiedConsole）：/ui 預設頁與 #a1..#a10 / #pipeline / #runtime 改掛新殼（UnifiedShell），
 // 新殼依設計稿無 ChatUSD agent 欄 / FlowBar / SharedStatusRail；legacy 鍵（#sessions / #instances /
 // #minio / #viewer …）保留舊殼，ChatUSD 欄斷言隨之移到 legacy 路由驗證。
 test.describe("Product AI-BIM Governance console integration", () => {
@@ -36,8 +36,13 @@ test.describe("Product AI-BIM Governance console integration", () => {
     await expect(page.locator("main").getByText("DataChannel", { exact: true }).first()).toBeVisible();
     await expect(page.locator("main").getByText("highlightPrimsRequest", { exact: true }).first()).toBeVisible();
 
-    // #/conv → UnifiedConsole Pipeline 頁（不再導 #minio；fixtures.ts getL().pipe_title）。
+    // #/conv → legacy ConversionPage（IFC→USD 轉檔歷史；雙路由分治，unified 生產線改掛 #/pipeline）。
     await page.goto(`${COORDINATOR}/ui#/conv`);
+    await expect(page.getByRole("heading", { name: /IFC→USD/ })).toBeVisible();
+    await expect(page.locator("main").getByText("mapping coverage", { exact: true }).first()).toBeVisible();
+
+    // #/pipeline → UnifiedConsole Pipeline 頁（fixtures.ts getL().pipe_title）。
+    await page.goto(`${COORDINATOR}/ui#/pipeline`);
     await expect(page.getByText("模型資料與轉檔生產線")).toBeVisible();
     await expect(page.getByText("⑤ Callback Outbox")).toBeVisible();
 

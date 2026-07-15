@@ -74,8 +74,8 @@ describe("UnifiedConsole smoke（approved 鍵 → UnifiedShell + 新頁）", () 
     expect(html).toContain("Concept Preview / Roadmap"); // 概念稿誠實 badge
   });
 
-  it("#conv 渲染 PipelinePage：標題 + 四欄（進件/轉檔/Review Sessions/Callback Outbox）", () => {
-    const html = renderAtHash("#conv");
+  it("#pipeline 渲染 PipelinePage：標題 + 四欄（進件/轉檔/Review Sessions/Callback Outbox）", () => {
+    const html = renderAtHash("#pipeline");
     expect(html).toContain("模型資料與轉檔生產線"); // pipe_title
     expect(html).toContain("① 進件"); // st_intake 欄
     expect(html).toContain("② 轉檔"); // st_conv 欄
@@ -99,7 +99,7 @@ describe("UnifiedConsole smoke（approved 鍵 → UnifiedShell + 新頁）", () 
   });
 
   it("誠實標記契約：每個 approved 路由的 fixture 面板帶 data-prov=\"fixture\"", () => {
-    for (const hash of ["#home", "#a1", "#a3", "#a5", "#conv", "#runtime"]) {
+    for (const hash of ["#home", "#a1", "#a3", "#a5", "#pipeline", "#runtime"]) {
       expect(renderAtHash(hash), hash).toContain('data-prov="fixture"');
     }
   });

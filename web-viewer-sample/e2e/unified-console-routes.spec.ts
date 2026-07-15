@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-// IA v2（UnifiedConsole）：coordinator :8004/ui 的 approved 鍵 {home,a1..a10,conv,runtime}
+// IA v2（UnifiedConsole）：coordinator :8004/ui 的 approved 鍵 {home,a1..a10,pipeline,runtime}
 // 改掛 UnifiedShell 新殼（EdgeConsole.tsx renderUnified），其餘 legacy 鍵保留舊殼。
 // 本 spec 專注「/ui 預設頁＝UnifiedConsole home ＋ 換台後仍保留的 operator-tool 路由
 // （#/kit、#/demo-control、#/review）＋ #/runtime＝新 Ops 頁 ＋ 新殼側欄導覽」。
