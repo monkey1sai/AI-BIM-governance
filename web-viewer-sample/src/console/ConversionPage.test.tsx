@@ -66,8 +66,9 @@ describe("ConversionPage", () => {
     expect(container.querySelector('[data-testid="conv-page"]')).not.toBeNull();
     expect(container.textContent).toContain("IFC→USD 轉檔歷史");
     expect(container.textContent).toContain("ifcready_1");
-    expect(container.textContent).toContain("未取得 · idle");
-    expect(container.textContent).toContain("adapter_from_env 未配 · idle");
+    expect(container.textContent).toContain("GPU runtime · 狀態未由 coordinator 提供；未觀測");
+    expect(container.textContent).not.toContain("adapter_from_env 未配");
+    expect(container.textContent).not.toContain("未取得 · idle");
     expect(container.textContent).toContain("自動偵測已關閉");
     expect(container.querySelector('[data-testid="conv-coverage-selfref-note"]')).not.toBeNull();
     expect(container.textContent).toContain("usd_stage_enumeration · 自我參照");
@@ -80,9 +81,11 @@ describe("ConversionPage", () => {
     expect(container.textContent).not.toContain("觸發轉檔");
     expect(container.textContent).not.toContain("POST /api/conversion/trigger");
     expect(list).toHaveBeenCalledTimes(1);
+    expect(coordinatorClient.getConversionsHistory).toHaveBeenCalledTimes(1);
 
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
     expect(list).toHaveBeenCalledTimes(2);
+    expect(coordinatorClient.getConversionsHistory).toHaveBeenCalledTimes(2);
   });
 
   it("輪詢失敗保留上一輪 queue，並顯示可重試錯誤", async () => {
@@ -98,5 +101,49 @@ describe("ConversionPage", () => {
     expect(container.textContent).toContain("ifcready_1");
     expect(container.textContent).toContain("offline");
     expect(container.querySelector('[data-testid="conv-refresh"]')).not.toBeNull();
+  });
+
+  it("watcher 狀態未取得時顯示錯誤並禁止送出切換 intent", async () => {
+    vi.mocked(coordinatorClient.minioWatchStatus).mockRejectedValueOnce(new Error("watch offline"));
+    vi.spyOn(coordinatorClient, "conversionWatchToggle").mockResolvedValue({ enabled: true });
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    await act(async () => {
+      root.render(<ConversionPage />);
+      await Promise.resolve();
+    });
+
+    const button = container.querySelector('[data-testid="conv-watch-unavailable"]') as HTMLButtonElement;
+    expect(container.querySelector('[data-testid="conv-watch-error"]')?.textContent).toContain("watch offline");
+    expect(button.disabled).toBe(true);
+    await act(async () => { button.click(); });
+    expect(coordinatorClient.conversionWatchToggle).not.toHaveBeenCalled();
+  });
+
+  it("手動與定時重新整理會更新 conversion history，失敗時保留上一份 snapshot", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    vi.mocked(coordinatorClient.getConversionsHistory)
+      .mockReset()
+      .mockResolvedValueOnce({
+        count: 1,
+        items: [{ conversion_job_id: "stream_conv_1", status: "queued", source_ifc_filename: "library.ifc" }],
+      })
+      .mockResolvedValueOnce({
+        count: 1,
+        items: [{ conversion_job_id: "stream_conv_1", status: "succeeded", source_ifc_filename: "library.ifc" }],
+      })
+      .mockRejectedValueOnce(new Error("history offline"));
+    await act(async () => {
+      root.render(<ConversionPage />);
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("queued");
+
+    const refreshButton = container.querySelector('[data-testid="conv-refresh"]') as HTMLButtonElement;
+    await act(async () => { refreshButton.click(); await Promise.resolve(); });
+    expect(container.textContent).toContain("succeeded");
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(container.textContent).toContain("succeeded");
+    expect(container.textContent).toContain("轉檔歷史更新失敗；保留上一份結果");
   });
 });

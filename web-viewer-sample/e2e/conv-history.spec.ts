@@ -274,7 +274,8 @@ test.describe("#conv functional gate (real coordinator + stub external conversio
       await expect(page.getByRole("heading", { name: "IFC→USD 轉檔歷史" })).toBeVisible();
       await expect(page.getByText(ifcReadyJobId)).toBeVisible();
       await expect(page.getByText("library.ifc")).toBeVisible();
-      await expect(page.getByText("未取得 · idle")).toBeVisible();
+      await expect(page.getByTestId("conv-metrics").getByText("未取得", { exact: true })).toBeVisible();
+      await expect(page.getByText("GPU runtime · 狀態未由 coordinator 提供；未觀測", { exact: true })).toBeVisible();
       await expect(page.getByTestId("conv-coverage-selfref-note")).toBeVisible();
       await expect(page.getByText("觸發轉檔")).toHaveCount(0);
 

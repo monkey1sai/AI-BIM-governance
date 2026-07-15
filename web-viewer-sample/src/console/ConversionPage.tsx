@@ -20,8 +20,8 @@ export function ConversionPage(): JSX.Element {
   const [coverage, setCoverage] = useState<Record<string, CoverageState>>({});
 
   const refresh = useCallback(async () => {
-    await Promise.all([data.load(), data.loadRecords()]);
-  }, [data.load, data.loadRecords]);
+    await Promise.all([data.load(), data.loadRecords(), data.loadHistory()]);
+  }, [data.load, data.loadHistory, data.loadRecords]);
 
   useEffect(() => {
     const timer = window.setInterval(() => { void refresh(); }, 5000);
@@ -64,8 +64,9 @@ export function ConversionPage(): JSX.Element {
     job.status === "queued_for_conversion" || job.conversion_lifecycle_status === "converting"
   ).length;
   const gpuLabel = shared.gpuNodesBusy == null || shared.gpuNodesTotal == null
-    ? t("未取得 · idle", "not available · idle")
+    ? t("未取得", "not available")
     : `${shared.gpuNodesBusy}/${shared.gpuNodesTotal}`;
+  const watchStatusKnown = data.mw != null && data.mwErr == null;
 
   return (
     <div data-testid="conv-page">
@@ -83,21 +84,24 @@ export function ConversionPage(): JSX.Element {
       >
         {data.jobsErr && <p className="ec-warn-note" data-testid="conv-queue-error">{data.jobsErr}</p>}
         {data.recErr && <p className="ec-warn-note">{data.recErr}</p>}
+        {data.mwErr && <p className="ec-warn-note" data-testid="conv-watch-error">{data.mwErr}</p>}
         <div className="ec-grid" data-testid="conv-metrics">
           <div><div className="ec-metric">{queueCount}</div><div className="ec-s">{t("佇列 / 轉換中", "Queued / converting")}</div></div>
           <div><div className="ec-metric">COVERAGE</div><div className="ec-s" data-testid="conv-coverage-selfref-note">usd_stage_enumeration · {t("自我參照；未觀測不宣稱通過", "self-reported; no pass claim when unobserved")}</div></div>
-          <div><div className="ec-metric">{gpuLabel}</div><div className="ec-s">GPU runtime · {t("adapter_from_env 未配 · idle", "adapter_from_env not configured · idle")}</div></div>
+          <div><div className="ec-metric">{gpuLabel}</div><div className="ec-s">GPU runtime · {t("狀態未由 coordinator 提供；未觀測", "status not provided by coordinator; not observed")}</div></div>
         </div>
         {data.mw?.enabled === false && <p className="ec-warn-note" data-testid="conv-watch-off-banner">{t("自動偵測已關閉", "Automatic detection is off")}</p>}
         <div data-testid="conv-watch-controls">
           <span className="ec-note">MinIO watch: {data.mw == null ? t("未取得", "not available") : data.mw.enabled ? "enabled" : "disabled"}</span>{" "}
           <Btn
-            data-testid={data.mw?.enabled ? "conv-watch-disable" : "conv-watch-enable"}
+            data-testid={data.mw == null ? "conv-watch-unavailable" : data.mw.enabled ? "conv-watch-disable" : "conv-watch-enable"}
+            disabled={!watchStatusKnown}
             onClick={() => {
+              if (!watchStatusKnown || data.mw == null) return;
               actions.setActionErr(null);
-              actions.setPendingAction({ kind: "watch-toggle", enabled: !(data.mw?.enabled ?? false) });
+              actions.setPendingAction({ kind: "watch-toggle", enabled: !data.mw.enabled });
             }}
-          >{data.mw?.enabled ? t("關閉自動偵測", "Disable automatic detection") : t("開啟自動偵測", "Enable automatic detection")}</Btn>
+          >{data.mw == null ? t("狀態未取得", "Status unavailable") : data.mw.enabled ? t("關閉自動偵測", "Disable automatic detection") : t("開啟自動偵測", "Enable automatic detection")}</Btn>
         </div>
       </Panel>
 
