@@ -1,6 +1,6 @@
 export const meta = {
   name: 'repo-health-scan',
-  description: 'AI-BIM repo 五面向健檢：版本漂移 / 清理 / .claude 資產 / 文件同步（4 個可修衛生面向）+ 進度差異（TRUTH/BACKLOG 記錄 vs 獨立查證，唯讀評估）。Explore agent 平行唯讀掃描 → 合併結構化發現。不修改任何檔案。',
+  description: 'AI-BIM repo 五面向健檢：版本漂移 / 清理 / .claude 資產 / 文件同步（4 個可修衛生面向）+ 進度差異（設計文件 §07/§08 分期 vs 獨立查證，唯讀評估）。Explore agent 平行唯讀掃描 → 合併結構化發現。不修改任何檔案。',
   phases: [{ title: 'Scan', detail: '5 面向平行唯讀掃描（4 衛生 + 1 進度評估）' }],
 }
 
@@ -38,13 +38,13 @@ const FINDINGS_SCHEMA = {
 const COMMON = `\n\n你是唯讀掃描者：只用 Read/Grep/Glob/Bash(僅 git/ls 等查詢指令) 觀察，**絕對不修改任何檔案**。
 精簡如實回報，prose 欄位用繁體中文台灣用語。沒有問題就回空 items 陣列並在 summary 說明健康。`
 
-// 進度差異面向（第 5 面向）：輸出形狀與前 4 個不同——不是「可修問題」，而是「TRUTH/BACKLOG 記錄 vs 獨立查證」的對照評估。
+// 進度差異面向（第 5 面向）：輸出形狀與前 4 個不同——不是「可修問題」，而是「設計文件 §07/§08 分期 vs 獨立查證」的對照評估。
 const PROGRESS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: ['scope', 'items', 'summary'],
   properties: {
-    scope: { type: 'string', description: '評估了哪些 route / A1–A10 / active gap（zh-TW）' },
+    scope: { type: 'string', description: '評估了哪些 CH 期 / Task / route（zh-TW）' },
     summary: { type: 'string', description: '一句話總結：進度大致落在哪、計畫與現實最大的落差是什麼（zh-TW）' },
     items: {
       type: 'array',
@@ -53,11 +53,11 @@ const PROGRESS_SCHEMA = {
         additionalProperties: false,
         required: ['target', 'planSays', 'actuallyIs', 'gap', 'alignment'],
         properties: {
-          target: { type: 'string', description: 'route、A-item 或 gap，如「#a1 治理與模型檢核」「gap-conv-history」' },
-          planSays: { type: 'string', description: 'TRUTH/BACKLOG 記錄：BUILT/PARTIAL/NOT-BUILT、evidence、DONE 定義與 blocker' },
-          actuallyIs: { type: 'string', description: '獨立查證的實際現況 + 證據（服務/code 是否存在、docs/superpowers/plans 完成項、git 軌跡）' },
+          target: { type: 'string', description: 'CH 期、Task 或 route，如「CH-B」「Task 3」「#a1 治理與模型檢核」' },
+          planSays: { type: 'string', description: '設計文件 §07/§08 記錄：該期/該 Task 的範圍、DoD（done＝契約測試綠＋Playwright E2E 證據）與依賴' },
+          actuallyIs: { type: 'string', description: '獨立查證的實際現況 + 證據（服務/code 是否存在、tests/contracts 與相關測試、docs/superpowers/plans 完成項、git 軌跡）' },
           gap: { type: 'string', description: '差距一句話描述' },
-          alignment: { type: 'string', enum: ['aligned', 'plan-ahead', 'plan-behind', 'unknown'], description: 'aligned=相符；plan-ahead=計畫高估(說做了實際沒有)；plan-behind=計畫低報(說待建實際做了)；unknown=查不出' },
+          alignment: { type: 'string', enum: ['aligned', 'plan-ahead', 'plan-behind', 'unknown'], description: 'aligned=相符；plan-ahead=文件高估(視為已具備/已完成但 code+tests 查無)；plan-behind=文件低報(列為待做但 code+tests 已落地)；unknown=查不出' },
         },
       },
     },
@@ -65,13 +65,14 @@ const PROGRESS_SCHEMA = {
 }
 
 const PROGRESS_PROMPT = `掃描 ${ROOT} 的「進度差異」（唯讀評估，不修改任何檔案）。
-先讀 docs/plans/docs-plans-README.md 的分工，再完整讀 TRUTH.md（22 route、A1–A10、viewer 七區塊、evidence）與 BACKLOG.md（排序後 active gaps、DONE、blocker）；PROCESS.md §2 是 BUILT 硬 gate。
-對每個 route／A1–A10 與每個 active gap 做「文件記錄 vs 獨立查證」並列：
-- planSays：直接抄 TRUTH 的狀態/evidence，或 BACKLOG 的 DONE/blocker；不得自行把 PARTIAL/not observed 升級。
-- actuallyIs：**獨立查證**，不盡信文件——查對應服務/code 是否真的存在（如 governance-service、coordinator、各 .ts/.py 模組）、docs/superpowers/plans/ 裡哪些功能已有完成計畫、git log 近期軌跡、有無 provenance.json。附具體證據。
-- alignment：相符 aligned / 文件高估 plan-ahead（說做了但 evidence/code 找不到）/ 文件低報 plan-behind（說待建但實際有 PROCESS §2 完整 evidence）/ 查不出 unknown。
+先讀 docs/plans/docs-plans-README.md 的讀取路線與舊檔去向（§2/§4），再讀設計與規格正本 docs/plans/AI-BIM 前後端設計文件.dc.html 的 §07 實作分期（CH-0～CH-G，每期一 PR；done＝契約測試綠＋Playwright browser E2E 證據）與 §08 AI Coding 交付守則（權威順序、R1–R4、Task 0–12 建議順序）。
+注意：舊 TRUTH.md/BACKLOG.md/PROCESS.md 已於 2026-07-15（#342）整批移除，不要再找；docs/plans 不再維護建成帳本，建成現況一律以 repo code＋tests 獨立查證為準。
+對每個 CH 期／Task 0–12（可對映到 route 或 A1–A10 時一併標注）做「文件分期 vs 獨立查證」並列：
+- planSays：直接抄設計文件 §07/§08 對該期／該 Task 的範圍、DoD 與依賴；不得自行升級或降級。
+- actuallyIs：**獨立查證**，不盡信文件——查對應服務/code 是否真的存在（如 governance-service、coordinator、各 .ts/.py 模組）、tests/contracts 與相關測試現況、docs/superpowers/plans/ 裡哪些功能已有完成計畫、git log 近期軌跡、artifacts/e2e 有無證據。附具體證據。
+- alignment：相符 aligned / 文件高估 plan-ahead（分期視為已具備或已完成但 code+tests 查無）/ 文件低報 plan-behind（分期列為待做但 code+tests 已落地）/ 查不出 unknown。
 - gap：一句話。
-重點放在「TRUTH/BACKLOG 與現實不符」之處（高估=過度承諾風險；低報=文件過期）。`
+重點放在「設計文件分期與 repo 現實不符」之處（高估=過度承諾風險；低報=文件過期）。`
 
 const SCANNERS = [
   {
