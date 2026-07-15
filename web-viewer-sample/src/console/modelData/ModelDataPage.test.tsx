@@ -73,6 +73,7 @@ function makeData(over: Partial<ConversionData> = {}): ConversionData {
     busy: false,
     load: vi.fn(async () => ({ jobsOk: true, mwOk: true })),
     loadRecords: vi.fn(async () => {}),
+    loadHistory: vi.fn(async () => {}),
     ...over,
   };
 }

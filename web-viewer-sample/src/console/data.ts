@@ -68,11 +68,11 @@ export const PAGES: PageDef[] = [
   // 2026-07-13 TARGET 身分：A9＝機器人／自主巡檢；A10＝其他應用／AI 決策（舊 HTML Copilot/Robotics 文案作廢）。
   { key: "a9", no: "A9", label: "機器人 / 自主巡檢", plane: "omniverse", group: "core", badge: "P4", badgeTone: "ai" },
   { key: "a10", no: "A10", label: "其他應用 / AI 決策", plane: "omniverse", group: "core", badge: "P4", badgeTone: "ai" },
-  // MD 三頁合一（Task 7）：原 conv（轉檔排程）/ minio（MinIO 資料）/ intake（Model Intake）三個 nav 項
-  // 合併為單一 MD 項；#conv / #intake 由 EdgeConsole 以 alias 重導至 #minio。舊三頁本體待 Task 9 移除。
+  // #minio 保留模型資料與單檔觸發；#conv 恢復為只處理既有 job 的轉檔歷史／佇列頁。
   { key: "sessions", no: "SS", label: "Session 管理", plane: "governance", group: "omniverse" },
   { key: "instances", no: "KG", label: "Kit / GPU 機隊", plane: "omniverse", group: "omniverse" },
   { key: "minio", no: "MD", label: "模型資料與轉檔", plane: "governance", group: "omniverse" },
+  { key: "conv", no: "CV", label: "IFC→USD 轉檔歷史", plane: "omniverse", group: "omniverse" },
   { key: "runtime", no: "RT", label: "Runtime 監控", plane: "omniverse", group: "coordinator" },
   { key: "admin", no: "SY", label: "系統管理", plane: "governance", group: "system", badge: "待建", badgeTone: "neutral" },
   { key: "spec", no: "▦", label: "設計規格說明", plane: "governance", group: "system" },

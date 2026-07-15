@@ -26,6 +26,7 @@ import {
   VersionDiffPage,
 } from "./pages";
 import { A4SemanticSearchPage } from "./A4SemanticSearchPage";
+import { ConversionPage } from "./ConversionPage";
 // MD 三頁合一（Task 6/7/9）：#minio 改由單一 ModelDataPage 承接（原 ConversionSchedulingPage / IntakePage /
 // MinioDataPage 三頁合併）。舊三頁本體已於 Task 9 自 pages.tsx 移除。
 import { ModelDataPage } from "./modelData/ModelDataPage";
@@ -51,7 +52,7 @@ function usePageHash(): [string, (k: string) => void] {
   return [page, go];
 }
 
-// URL 重寫式 alias（spec §5，repo 第一個）：舊 #conv / #intake deep link 一律重導到合一後的 #minio。
+// URL 重寫式 alias：舊 #intake deep link 重導到合一後的 #minio；#conv 是獨立既有-job 歷史頁。
 // 只能在 useEffect 內做（renderToString 純渲染不觸發 → SSR 不導航，避免 hydration 前搶跑）；
 // window.location.replace 不留 history 污染，並保留原 hash 的 query（如 job_id）供接收端重驗。
 function AliasRedirect({ to }: { to: string }) {
@@ -81,8 +82,8 @@ function renderBody(page: string, go: (k: string) => void) {
     case "a10": return <AppVisionPage slug="ai-decision" onOpen={go} />;
     case "viewer": return <ViewerPresentationPage />;
     case "gpu": return <GpuReviewRoomPage />;
-    // MD 合一（Task 7）：舊 #conv（轉檔排程）/ #intake（進件）deep link 重導到 #minio；#minio 掛 ModelDataPage。
-    case "conv": case "intake": return <AliasRedirect to="minio" />;
+    case "conv": return <ConversionPage />;
+    case "intake": return <AliasRedirect to="minio" />;
     case "sessions": return <SessionManagementPage />;
     case "instances": return <KitGpuFleetPage />;
     case "minio": return <ModelDataPage />;
@@ -142,9 +143,10 @@ const COPILOT_PROMPTS: Record<string, string[]> = {
   a2: ["v07 比 v06 改了什麼？", "哪些變更會影響成本？", "上一版的 issue 修掉了嗎？"],
   a4: ["三樓所有沒填防火時效的防火門", "體積最大的 10 個房間", "屬於 L2 但分類碼空白的構件"],
   a5: ["現在哪個區域溫度異常？", "列出逾期未處理的維保工單", "B1 機房本月用電趨勢"],
+  conv: ["哪些轉檔任務仍在排隊？", "列出失敗且可重試的 job", "查看最新完成 job 的 artifact"],
   sessions: ["哪個 session 有 viewer 收不到 frame？", "把閒置超過 15 分鐘的 session 回收", "S-270 現在幾個人在看？"],
   instances: ["哪台 GPU 還能接新 session？", "把新審查排到最閒的節點", "edge-gpu-02 的 VRAM 還夠嗎？"],
-  // MD 合一（Task 7）：原 conv（轉檔佇列）三條 prompts 併入 minio 陣列，刪 conv key（#conv 已 alias 至 #minio）。
+  // #minio 保留 intake／手動 trigger prompts；#conv 上方的 conv key 專責既有-job 佇列與歷史。
   minio: ["270 專案有幾個模型？", "哪些模型還沒轉成 USD？", "model.ifc 最大的是哪一個？", "哪些轉檔任務卡住或失敗了？", "把 988 的模型插隊優先轉", "列出 coverage < 95% 的任務"],
 };
 
@@ -199,9 +201,8 @@ export default function EdgeConsole() {
   // #gpu/#review（Review Room 兩個入口）沒有自己的 AxisKey，歸類到 runtime（RT 供應 ready 狀態）；
   // 其餘非七軸頁（home/a2/admin…）預設回 a1（治理優先頁），不新增第八個 axis。
   const AXIS_SET: readonly AxisKey[] = ["a1", "conv", "sessions", "instances", "minio", "intake", "runtime"];
-  // MD 合一（Task 7）：#conv / #intake 已 alias 至 #minio，其 axis 脈絡歸到 minio（合一後的模型資料與轉檔頁）。
-  // AXIS_SET 陣列與 AxisKey 七軸型別不變；僅以 effectivePage 決定高亮的軸。
-  const effectivePage = page === "conv" || page === "intake" ? "minio" : page;
+  // #conv 保留自己的轉檔軸；只有 legacy #intake alias 歸到 #minio。
+  const effectivePage = page === "intake" ? "minio" : page;
   const railAxis: AxisKey = (AXIS_SET as readonly string[]).includes(effectivePage) ? (effectivePage as AxisKey)
     : effectivePage === "gpu" || effectivePage === "review" ? "runtime" : "a1";
 

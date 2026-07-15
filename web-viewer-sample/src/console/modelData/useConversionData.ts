@@ -34,6 +34,7 @@ export interface ConversionData {
   busy: boolean;
   load(): Promise<{ jobsOk: boolean; mwOk: boolean }>; // ifc-ready + watcher（allSettled，錯誤獨立）
   loadRecords(): Promise<void>;                        // ledger（獨立錯誤）
+  loadHistory(): Promise<void>;                        // conversion service history（獨立錯誤）
 }
 
 export function useConversionData(): ConversionData {
@@ -129,13 +130,27 @@ export function useConversionData(): ConversionData {
   // panel 誠實顯示「未取得」，不污染其他 Panel。
   const [history, setHistory] = useState<DevConversionRecord[] | null>(null);
   const [historyErr, setHistoryErr] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    coordinatorClient.getConversionsHistory()
-      .then((r) => { if (alive) { setHistory(r.items); setHistoryErr(false); } })
-      .catch(() => { if (alive) { setHistory(null); setHistoryErr(true); } });
-    return () => { alive = false; };
+  const historyInFlightRef = useRef<Promise<void> | null>(null);
+  const loadHistory = useCallback(async (): Promise<void> => {
+    if (historyInFlightRef.current) return historyInFlightRef.current;
+    const inFlight = (async () => {
+      try {
+        const response = await coordinatorClient.getConversionsHistory();
+        setHistory(response.items);
+        setHistoryErr(false);
+      } catch {
+        // 保留上一份成功 snapshot；未知／暫時失敗不能把已看見的 history 擦成空資料。
+        setHistoryErr(true);
+      }
+    })();
+    historyInFlightRef.current = inFlight;
+    try {
+      return await inFlight;
+    } finally {
+      historyInFlightRef.current = null;
+    }
   }, []);
+  useEffect(() => { void loadHistory(); }, [loadHistory]);
 
   // 變更點 (c)：recordsIncomplete = recordsTruncated || 載入失敗（M 頁 L1855 recordsTruncated||loadRecordsErr）。
   const recordsIncomplete = recordsTruncated || loadRecordsErr;
@@ -146,6 +161,6 @@ export function useConversionData(): ConversionData {
     mw, mwErr,
     history, historyErr,
     busy,
-    load, loadRecords,
+    load, loadRecords, loadHistory,
   };
 }
