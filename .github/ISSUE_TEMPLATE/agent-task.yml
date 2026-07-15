@@ -15,7 +15,7 @@ body:
     attributes:
       label: Requirement source
       description: Link the single owning spec, plan, issue, route contract, or work-shaping decision ticket. Do not duplicate the requirement here.
-      placeholder: "docs/plans/TARGET-shell.md #a1 節 IX-A1-02"
+      placeholder: "docs/plans/AI-BIM 前後端設計文件.dc.html §07 CH-B"
     validations:
       required: true
   - type: textarea

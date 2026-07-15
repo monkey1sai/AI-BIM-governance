@@ -36,7 +36,7 @@
 
 ## Before Editing
 
-- 先讀 `README.md`、`src/`、`package.json`、`docs/plans/TARGET-contracts.md` §1/§5.1、`PROCESS.md` §2/§3 與 design reference manifest。
+- 先讀 `README.md`、`src/`、`package.json`、`docs/plans/AI-BIM 前後端設計文件.dc.html` §04（後端凍結面）/§08 R1–R4 與 design reference manifest。
 - UI/client 改動與 server protocol / deployment 改動分開處理。
 - Source 改動需檢查相關 public API、protocol、UI flow 與測試影響。
 - Docs-only 改動只需確認文件語意，除非文件改變 public API、protocol 或 operational runbook 行為。

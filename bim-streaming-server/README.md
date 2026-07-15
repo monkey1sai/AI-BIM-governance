@@ -7,7 +7,7 @@
 | **步驟** | ④ 標記問題 (Mark) — 背景 runtime |
 | **是否有面向 demo 觀眾的 UI** | 否。Streaming server 是 Omniverse Kit GPU runtime，存在感由 web-viewer-sample (5173) 的 WebRTC 串流畫面與「即時審查事件」呈現 |
 | **Demo 啟動指令** | `.\scripts\start-streaming-server.ps1 -SkipAutoLoad` |
-| **設計守則** | [`docs/plans` 入口](../docs/plans/docs-plans-README.md) → [`TARGET-viewer.md`](../docs/plans/TARGET-viewer.md) |
+| **設計守則** | [`docs/plans` 入口](../docs/plans/docs-plans-README.md) → `AI-BIM 前後端設計文件.dc.html` §01（internal plane）＋§05 時序 F1 |
 
 <p align="center">
   <img src="readme-assets/kit_app_template_banner.png" width="100%" />

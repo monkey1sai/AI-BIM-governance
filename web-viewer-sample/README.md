@@ -7,7 +7,7 @@
 | **步驟** | ④ 標記問題 (Mark) |
 | **Demo URL** | <http://127.0.0.1:5173> |
 | **客戶看到的內容** | 雲端 3D 模型即時串流畫面、本場會議資訊（號誌狀態）、5 個示範操作按鈕（建立會議 / 連線即時頻道 / 載入模型 / 標示問題 / 建立標註）、即時事件中文化 feed |
-| **設計守則** | [`TARGET-shell.md`](../docs/plans/TARGET-shell.md) + [`TARGET-viewer.md`](../docs/plans/TARGET-viewer.md)（入口：[`docs-plans-README.md`](../docs/plans/docs-plans-README.md)） |
+| **設計守則** | `docs/plans/AI-BIM 前後端設計文件.dc.html` §03 前端架構＋§04 API 契約＋§08 R1–R4（入口：[`docs-plans-README.md`](../docs/plans/docs-plans-README.md)） |
 | **共用 design tokens 權威** | `src/styles/demo-theme.css`（修改此檔需同步更新其他服務的 inline tokens） |
 
 <p align="center">

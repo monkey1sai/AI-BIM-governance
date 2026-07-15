@@ -7,35 +7,35 @@ Defines the repository source-of-truth relationship between workflow v3, the rep
 ## Requirements
 ### Requirement: Workflow v3 and product design artifacts have distinct, non-overlapping authority
 
-`docs/PROJECT_DEVELOPMENT_WORKFLOW.md`（workflow v3）與 `docs/plans/docs-plans-README.md` 導向的 TRUTH/TARGET/PROCESS/BACKLOG＋兩份 prototype SHALL 維持互補不替代的分工：workflow v3 是開發流程入口；`TRUTH.md` 記現況，`TARGET-contracts.md`／`TARGET-shell.md`／`TARGET-viewer.md` 定義需求，`BACKLOG.md` 排序 gap／OPEN 決策，`PROCESS.md` 定義 DoD；兩份 prototype 是可點擊產品樣貌錨。
+`docs/PROJECT_DEVELOPMENT_WORKFLOW.md`（workflow v3）與 `docs/plans/docs-plans-README.md` 導向的設計與規格正本 SHALL 維持互補不替代的分工：workflow v3 是開發流程入口；`docs/plans/AI-BIM 前後端設計文件.dc.html`（§01 服務邊界／§02 部署拓撲／§03 前端架構 IA／§04 API 契約／§05 時序圖／§06 資料模型／§07 實作分期／§08 AI Coding 交付守則）定義目標需求、工作分期與交付守則；`AI-BIM Console Hi-Fi.dc.html` 是可互動產品樣貌錨；建成現況以 repo code＋tests 直接查證，不再維護建成帳本。
 
 #### Scenario: 讀者尋找開發流程
 
 - **WHEN** 工程師想了解七層架構、Phase 脈絡、驗證證據分層、PR Checklist、服務測試命令或核心資料流
 - **THEN** 應從 `docs/PROJECT_DEVELOPMENT_WORKFLOW.md` 進入
-- **AND** plans TARGET 與 prototype SHALL NOT 重述完整開發流程
+- **AND** plans 設計文件與原型 SHALL NOT 重述完整開發流程
 
 #### Scenario: 讀者尋找需求、現況或操作原型
 
-- **WHEN** 工程師想確認 A1–A10 需求、頁面操作、建成狀態、缺口排序或 viewer 樣貌
-- **THEN** 應從 `docs/plans/docs-plans-README.md` 進入並依 ownership 讀 TRUTH/TARGET/BACKLOG/PROCESS
-- **AND** 殼層與 viewer 樣貌 SHALL 分別以兩份 tracked prototype 為錨
+- **WHEN** 工程師想確認 A1–A10 需求、頁面操作、建成狀態、工作排序或 console/viewer 樣貌
+- **THEN** 應從 `docs/plans/docs-plans-README.md` 進入並依 ownership 讀設計文件 §01–§08
+- **AND** console 樣貌 SHALL 以 `AI-BIM Console Hi-Fi.dc.html` 為錨；建成狀態 SHALL 以 code＋tests 查證
 - **AND** workflow v3 MUST 只 cross-reference，不得改寫需求或 runtime 現況
 
-#### Scenario: workflow 與 TARGET 或 runtime truth 不一致
+#### Scenario: workflow 與設計文件或 runtime truth 不一致
 
-- **WHEN** workflow v3 與 TARGET/prototype 描述同一 user-facing 需求且不一致
-- **THEN** TARGET/prototype 為目標需求權威
-- **AND** runtime 現況 SHALL 以 code＋tests/contracts 驗證，TRUTH 必須誠實同步而不得反向覆蓋 runtime
+- **WHEN** workflow v3 與設計文件/原型描述同一 user-facing 需求且不一致
+- **THEN** 設計文件/原型為目標需求權威
+- **AND** runtime 現況 SHALL 以 code＋tests/contracts 驗證，任何文件不得反向覆蓋 runtime
 
-### Requirement: 文件分工調整必須走 OpenSpec change
+### Requirement: 文件分工調整必須走 PR 治理流程
 
-任何對 workflow v3、TRUTH/TARGET/PROCESS/BACKLOG、prototype、README entrypoint 與 OpenSpec specs 之間分工的調整 SHALL 透過 OpenSpec change 流程處理，不直接在 `main` 上 commit。
+任何對 workflow v3、設計文件/原型、README entrypoint 與 OpenSpec specs 之間分工的調整 SHALL 透過 PR 流程處理（含 pr-review-agent governance evidence 與 formal requirement source：issue／docs/plans／superpowers spec／existing contract／使用者明確授權），不直接 push `main`。2026-07-15 起設計與規格正本＝`AI-BIM 前後端設計文件.dc.html`（使用者授權之整批替換；舊 TRUTH/TARGET/BACKLOG/PROCESS 分工見 git history）。
 
-#### Scenario: 把流程內容移到 TARGET 或把需求內容移到 workflow v3
+#### Scenario: 把流程內容移到設計文件或把需求內容移到 workflow v3
 
-- **WHEN** 有人提議把某段流程內容搬到 TARGET / prototype，或把 A1–A10 需求內容搬到 workflow v3
-- **THEN** 必須新建 OpenSpec change（branch `codex/openspec/<change-id>`），提出 proposal + tasks 並走 PR review + GitHub Actions 驗證，merge 後 archive
+- **WHEN** 有人提議把某段流程內容搬到設計文件/原型，或把 A1–A10 需求內容搬到 workflow v3
+- **THEN** 必須開 PR 走 review + GitHub Actions 驗證（governance evidence 表），並在 PR body 註明 formal requirement source；涉及 OpenSpec specs 的同步 MODIFIED delta 必須包含在同一 PR
 
 #### Scenario: 對 README.md 的「產品與需求文件」段做結構性修改
 
@@ -44,30 +44,30 @@ Defines the repository source-of-truth relationship between workflow v3, the rep
 
 ### Requirement: workflow v3 與 product design artifacts 互相 cross-reference 持續成立
 
-`docs/PROJECT_DEVELOPMENT_WORKFLOW.md` 頂部 metadata 與 source-of-truth 表 SHALL 連到 `docs/plans/docs-plans-README.md`、TRUTH/TARGET/PROCESS/BACKLOG 與兩份 prototypes；`README.md` 的產品文件入口 SHALL 列出相同 ownership，active agent workflows／OpenSpec deltas／demo docs SHALL NOT 讀取已刪除的六份舊正本。
+`docs/PROJECT_DEVELOPMENT_WORKFLOW.md` 頂部 metadata 與 source-of-truth 表 SHALL 連到 `docs/plans/docs-plans-README.md` 與設計文件/原型；`README.md` 的產品文件入口 SHALL 列出相同 ownership，active agent workflows／OpenSpec deltas／demo docs SHALL NOT 讀取已刪除的舊正本（含 2026-07-13 刪除的六份舊檔與 2026-07-15 刪除的七檔體系/saas/審批報告/舊 prototypes）。
 
 #### Scenario: active consumer 指向被刪舊正本
 
-- **WHEN** active README、workflow、skill、OpenSpec delta、demo 或 SaaS keep doc 引用六份舊正本任一檔名
+- **WHEN** active README、workflow、skill、OpenSpec delta 或 demo doc 引用任一已刪舊正本檔名
 - **THEN** change MUST 被阻擋直到引用改指新 owning source
-- **AND** 歷史 archive/evidence MAY 保留舊引用；archive-managed canonical spec 若已有本 change 的完整 MODIFIED delta，MAY 在 active change 期間保留 predecessor wording，但 merge 後 MUST 由 archive closeout 立即落地，期間由 `docs-plans-README.md` 救援表提供去向
+- **AND** 歷史 archive/evidence MAY 保留舊引用；`docs-plans-README.md` §4 救援表 SHALL 提供舊檔去向
 
-#### Scenario: 兩份 prototype 保持可發現
+#### Scenario: 設計文件與原型保持可發現
 
-- **WHEN** 讀者從 README、workflow v3 或 plans entry 尋找產品樣貌
-- **THEN** `ai-bim-governance-prototype.html` 與 `ai-bim-geo-viewer-prototype.html` SHALL 都可開啟
-- **AND** 不得只列其中一份或把 generated HTML 當第三份 requirement source
+- **WHEN** 讀者從 README、workflow v3 或 plans entry 尋找產品規格與樣貌
+- **THEN** `AI-BIM 前後端設計文件.dc.html` 與 `AI-BIM Console Hi-Fi.dc.html` SHALL 都可被發現並開啟（連網載入 React CDN）
+- **AND** 不得把 generated HTML 當第三份 requirement source
 
 ### Requirement: Source-of-truth documents reflect B-scheme architecture rework
 
-`AGENTS.md`、`README.md`、workflow v3、plans entry、TRUTH/TARGET、兩份 prototype 與 OpenSpec specs SHALL 一致描述 B-scheme：外部公司雲端是 control-plane；外部客戶落地端 IFC Worker 是 IFC producer；本 repo 是 customer-edge data-plane；coordinator owns IFC-ready intake；streaming-server owns internal IFC→USDC conversion。`_worker`／`_bim-control` 不得被描述為 product runtime。
+`AGENTS.md`、`README.md`、workflow v3、plans entry、設計文件/原型與 OpenSpec specs SHALL 一致描述 B-scheme：外部公司雲端是 control-plane；外部客戶落地端 IFC Worker 是 IFC producer；本 repo 是 customer-edge data-plane；coordinator owns IFC-ready intake；streaming-server owns internal IFC→USDC conversion。`_worker`／`_bim-control` 不得被描述為 product runtime。
 
-兩份 tracked prototypes 是唯一允許提交的 `docs/plans/*.html` source artifacts；其他由 Markdown 產生的 HTML SHALL on-demand 生成且 SHALL NOT tracked。
+兩份 `.dc.html` 設計稿是唯一允許提交的 `docs/plans/*.html` source artifacts；其他由 Markdown 產生的 HTML SHALL on-demand 生成且 SHALL NOT tracked。
 
 #### Scenario: tracked plans HTML 清單
 
 - **WHEN** reviewer 執行 `git ls-files docs/plans/*.html`
-- **THEN** 結果 SHALL 恰為 `docs/plans/ai-bim-governance-prototype.html` 與 `docs/plans/ai-bim-geo-viewer-prototype.html`
+- **THEN** 結果 SHALL 恰為 `docs/plans/AI-BIM 前後端設計文件.dc.html` 與 `docs/plans/AI-BIM Console Hi-Fi.dc.html`
 - **AND** 任何第三份 generated HTML MUST 在 merge 前移除
 
 #### Scenario: cloud-edge ownership 保持一致

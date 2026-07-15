@@ -36,7 +36,7 @@
 
 ## Before Editing
 
-- 先讀 `src/App.tsx`、`src/api/`、`docs/contracts/kit-manager-api.contract.md`、root `docs/plans/TARGET-contracts.md` §5.1 與 design manifest。
+- 先讀 `src/App.tsx`、`src/api/`、`docs/contracts/kit-manager-api.contract.md`、root `docs/plans/AI-BIM 前後端設計文件.dc.html` §04（kit-manager 契約）與 design manifest。
 - 改 API 互動 MUST 先確認 contract 是否同步；contract 改動需走 `tests/contracts/`。
 - 新增 component 沿用既有 component pattern；UI 改動避免引入新 production dependency 不解釋。
 

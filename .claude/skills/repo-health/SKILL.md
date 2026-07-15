@@ -31,7 +31,7 @@ argument-hint: "（選填）只想看某面向：version / cleanup / assets / do
 
 | 面向 | 抓什麼 | 性質 |
 |---|---|---|
-| **進度差異** | `docs/plans/TRUTH.md` 的 route／A1–A10 現況與 `docs/plans/BACKLOG.md` gap 佇列「帳本自報 vs 獨立查證」並列，標出帳本高估/低報 | 唯讀評估，**不納入「要修哪幾項」** |
+| **進度差異** | `docs/plans/AI-BIM 前後端設計文件.dc.html` §07 實作分期（CH-0～CH-G）與 §08 Task 0–12 的目標，對照原始碼／測試／git history 獨立查證，標出落差 | 唯讀評估，**不納入「要修哪幾項」** |
 
 ## 流程
 

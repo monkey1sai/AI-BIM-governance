@@ -1,17 +1,17 @@
 # AI-BIM-governance 專案開發流程 v4
 
-> **歷史說明**：本文件仍保留 2026-05 開發流程、Phase 與候選編號脈絡；除 §1.3、§3、§10–§11 外，下文出現的 `_worker`／`_bim-control` 都是退役前歷史快照，**不是現在 product runtime**。repo plans 唯一入口是 [`docs/plans/docs-plans-README.md`](plans/docs-plans-README.md)：現況查 `TRUTH.md`，行為需求查 TARGET-*，排序與紀律查 BACKLOG/PROCESS；production 2D 樣貌以唯讀 `C:\Repos\design\desigin-system` 的 repo-pinned manifest/baselines 為 gate，舊 prototypes 僅為 legacy companions。
+> **歷史說明**：本文件仍保留 2026-05 開發流程、Phase 與候選編號脈絡；除 §1.3、§3、§10–§11 外，下文出現的 `_worker`／`_bim-control` 都是退役前歷史快照，**不是現在 product runtime**。repo plans 唯一入口是 [`docs/plans/docs-plans-README.md`](plans/docs-plans-README.md)：設計與規格正本＝`docs/plans/AI-BIM 前後端設計文件.dc.html`（§01–§08），現況以 repo code＋tests 直接查證；production 2D 樣貌以唯讀 `C:\Repos\design\desigin-system` 的 repo-pinned manifest/baselines 為 gate，`AI-BIM Console Hi-Fi.dc.html` 為原型設計稿。
 >
 > 現行 B 方案：外部公司雲端 `bim-control` 是 control-plane；外部客戶落地端 IFC Worker 是 IFC producer；本 repo 的 coordinator 是唯一 IFC-ready intake，streaming-server 是 internal IFC→USDC authority。`_worker`／`_bim-control` 已自 repo product runtime 移除，只可由 `tests/fakes` 模擬。
 >
-> **本文件 = 開發流程入口**；A1–A10 功能需求、UI 操作語意、可信度標記與雲端 / 落地端分離架構以 docs/plans TRUTH/TARGET 體系為準；2D fidelity 依 pinned design reference，行為正確性仍以 OpenSpec、contracts 與程式碼為準。
+> **本文件 = 開發流程入口**；A1–A10 功能需求、UI 操作語意、可信度標記與雲端 / 落地端分離架構以 docs/plans 設計文件（§01–§08）為準；2D fidelity 依 pinned design reference，行為正確性仍以 OpenSpec、contracts 與程式碼為準。
 >
 > **本文件不取代 source of truth**：
 > - Repo 邊界 → [`AGENTS.md`](../AGENTS.md)
 > - Capability requirements → [`openspec/specs/`](../openspec/specs/)
 > - API 規格 → [`docs/contracts/`](contracts/) 7 份合約
 > - 驗證證據 → [`docs/verification/`](verification/)
-> - **功能需求 / UI gate** → [`docs-plans-README`](plans/docs-plans-README.md)（入口）→ TRUTH/TARGET/BACKLOG/PROCESS；2D machine reference＝[manifest](plans/design-system-reference.manifest.json)＋[goldens](plans/design-system-baseline/)；[殼層 prototype](plans/ai-bim-governance-prototype.html)／[viewer prototype](plans/ai-bim-geo-viewer-prototype.html) 僅為 legacy companions
+> - **功能需求 / UI gate** → [`docs-plans-README`](plans/docs-plans-README.md)（入口）→ `AI-BIM 前後端設計文件.dc.html` §01–§08；2D machine reference＝[manifest](plans/design-system-reference.manifest.json)＋[goldens](plans/design-system-baseline/)；`AI-BIM Console Hi-Fi.dc.html` 為原型設計稿
 >
 > 本文件是把它們組合成可執行的開發路線。
 
@@ -239,7 +239,7 @@ flowchart LR
 
 ## 4. 當前進度檢視 + 驗證證據分層
 
-> **歷史進度快照（2026-05）**：本章用來追溯當時 Phase / evidence，不是現在建成裁決；現況唯一入口為 [`docs/plans/TRUTH.md`](plans/TRUTH.md)。下列 `_worker`／`_bim-control` 全是退役前歷史名稱。
+> **歷史進度快照（2026-05）**：本章用來追溯當時 Phase / evidence，不是現在建成裁決；現況以 repo code＋tests 直接查證。下列 `_worker`／`_bim-control` 全是退役前歷史名稱。
 
 ### 4.1 Phase 完成度
 
@@ -378,7 +378,7 @@ flowchart TB
 
 - [x] `AGENTS.md` 收斂 repo 邊界與資料權威
 - [x] `docs/contracts/` 7 份 API 合約
-- [x] UI 設計／互動守則已收斂至 [`TARGET-contracts` §5／§9](plans/TARGET-contracts.md)、[`TARGET-shell`](plans/TARGET-shell.md) 與 [`TARGET-viewer`](plans/TARGET-viewer.md)
+- [x] UI 設計／互動守則已收斂至 docs/plans 設計文件 §03 前端架構＋§04 API 契約（現行正本；歷史 TARGET-* 見 git history）
 - [x] 一鍵啟動腳本 + 健康檢查
 - [x] 4 個 smoke tests
 - [x] 各服務 `/health` endpoint
@@ -822,16 +822,16 @@ sequenceDiagram
 | Streaming DataChannel 事件 | [`docs/contracts/streaming-datachannel-events.md`](contracts/streaming-datachannel-events.md) |
 | 退役服務 | [`docs/contracts/conversion-api.md`](contracts/conversion-api.md), [`legacy-storage-conversion-retirement` spec](../openspec/specs/legacy-storage-conversion-retirement/spec.md) |
 | 本地開發步驟 | [`docs/contracts/local-dev-runbook.md`](contracts/local-dev-runbook.md), [`README.md`](../README.md) |
-| UI 設計／互動契約 | [`TARGET-contracts` §5／§9](plans/TARGET-contracts.md)／[`TARGET-shell`](plans/TARGET-shell.md)／[`TARGET-viewer`](plans/TARGET-viewer.md) |
+| UI 設計／互動契約 | docs/plans 設計文件 §03 前端架構／§04 API 契約／§05 時序（[入口](plans/docs-plans-README.md)） |
 | Capability specs | [`openspec/specs/`](../openspec/specs/) |
 | 已 archive 的 OpenSpec change | [`openspec/changes/archive/`](../openspec/changes/archive/) |
 | **2026-05-08 端到端驗證證據** | [`docs/verification/2026-05-08-spec-end-to-end-verification.md`](verification/2026-05-08-spec-end-to-end-verification.md) |
 | **Plans 唯一入口** | [`docs-plans-README`](plans/docs-plans-README.md) |
-| **Runtime 現況與 evidence** | [`TRUTH`](plans/TRUTH.md) |
-| **跨頁／route／viewer 需求** | [`TARGET-contracts`](plans/TARGET-contracts.md)／[`TARGET-shell`](plans/TARGET-shell.md)／[`TARGET-viewer`](plans/TARGET-viewer.md) |
-| **Gap 排序與驗收紀律** | [`BACKLOG`](plans/BACKLOG.md)／[`PROCESS`](plans/PROCESS.md) |
+| **設計與規格正本** | `docs/plans/AI-BIM 前後端設計文件.dc.html`（§01–§08） |
+| **Runtime 現況與 evidence** | repo code＋tests 直接查證 |
+| **工作排序與 DoD** | 設計文件 §07 實作分期／§08 Task 0–12 |
 | **Production 2D design gate** | [design manifest](plans/design-system-reference.manifest.json)／[golden baselines](plans/design-system-baseline/)（authoring origin 唯讀 `C:\Repos\design\desigin-system`） |
-| **Legacy interaction/runtime companions** | [殼層 prototype](plans/ai-bim-governance-prototype.html)／[viewer prototype](plans/ai-bim-geo-viewer-prototype.html) |
+| **Console 原型設計稿** | `docs/plans/AI-BIM Console Hi-Fi.dc.html`（6 screens） |
 
 ### 10.1 11 份 Capability Spec 對應 Phase
 
@@ -881,11 +881,11 @@ Closeout       = 更新 TARGET / TRUTH / docs / evidence，並收斂本地 workt
 4. 完成前對照需求、diff 與最小必要驗證證據，不得只用主觀判斷宣告完成。
 5. 只有 ship / PR 在工作範圍內時才開 PR；user-facing change 必須同時附 design fidelity result 與 functional browser/runtime evidence。
 6. PR review、GitHub Actions 與 `pr-review-agent` 僅在 PR 流程中適用。
-7. 若 change 影響 A1–A10 功能需求、操作介面或雲端 / 落地端分離架構，更新 `docs/plans/TARGET-contracts.md`／`TARGET-shell.md`／`TARGET-viewer.md` 的 owning 節（bump 凍結點），並同 PR 更新 `docs/plans/TRUTH.md` 對應列
-   - 不得以修改 legacy prototype 取代 TARGET 或 approved design rebaseline
+7. 若 change 影響 A1–A10 功能需求、操作介面或雲端 / 落地端分離架構，需與 `docs/plans/AI-BIM 前後端設計文件.dc.html` 的 owning 節（§01–§08）對齊；設計文件改版須經使用者授權，由上游 `C:\Repos\design\desigin-system` 重新同步
+   - 不得以修改原型設計稿取代設計文件或 approved design rebaseline
    - 不得把 design/prototype demo data 宣告成 runtime evidence
    - 若沒有新的 runtime evidence，不更新任何 passed / ready 宣稱
-8. 生成型 HTML 檢視不得提交；兩份既有 prototype 只作 tracked legacy companion。Design baseline 只能透過 explicit `--rebaseline --confirm-rebaseline` 更新，CI 不讀本機 authoring origin。
+8. 生成型 HTML 檢視不得提交；tracked `docs/plans/*.html` 恰為兩份 .dc.html 設計稿。Design baseline 只能透過 explicit `--rebaseline --confirm-rebaseline` 更新，CI 不讀本機 authoring origin。
 9. PR merge 後收斂本地工作樹
    - 執行 `git fetch origin --prune`
    - 切回 `main` 並確認工作區乾淨
@@ -904,7 +904,7 @@ Closeout       = 更新 TARGET / TRUTH / docs / evidence，並收斂本地 workt
 - [ ] Python tests 從各服務目錄下執行：`cd <svc> && python3 -m pytest tests`
 - [ ] Node tests / build 從各服務目錄執行：`cd <svc> && npm test && npm run build`
 - [ ] 涉及 API 變更時，同步更新 `docs/contracts/`
-- [ ] 涉及 UI 變更時，符合 [`TARGET-contracts` §5／§9](plans/TARGET-contracts.md) 與 owning [`TARGET-shell`](plans/TARGET-shell.md)／[`TARGET-viewer`](plans/TARGET-viewer.md) 驗收條件
+- [ ] 涉及 UI 變更時，符合 docs/plans 設計文件 §03 前端架構／§07 對應 CH 期驗收條件與 §08 R1–R4
 - [ ] 涉及驗證時，依 `runtime-verification-evidence` 分層記錄（不混用單一 pass/fail）
 - [ ] 使用 GitNexus：`gitnexus_impact` 評估影響、`gitnexus_detect_changes` 確認 scope
 

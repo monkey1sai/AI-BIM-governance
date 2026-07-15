@@ -39,7 +39,7 @@ Graduation requires all material decisions to have one owning source and the imp
 
 ## Docs/plans vertical slice
 
-For a requirement from `docs/plans/`, read `docs/plans/docs-plans-README.md`, then the interaction spec, trajectory/DoD, design spec, and relevant plan. Respect repo boundaries and GitNexus impact before changing code symbols. Implement the smallest slice:
+For a requirement from `docs/plans/`, read `docs/plans/docs-plans-README.md`, then the design doc `AI-BIM 前後端設計文件.dc.html` owning sections (§03 route IA, §04 API contract, §07 phases/DoD, §08 delivery rules). Respect repo boundaries and GitNexus impact before changing code symbols. Implement the smallest slice:
 
 ```text
 UI route -> main button -> default fixture -> coordinator API
