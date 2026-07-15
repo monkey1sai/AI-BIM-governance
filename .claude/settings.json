@@ -14,7 +14,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:/Repos/active/iot/AI-BIM-governance/scripts/claude-commit-guard.ps1\"",
+            "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"scripts/claude-commit-guard.ps1\"",
             "if": "Bash(git commit*)"
           }
         ]
@@ -24,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:/Repos/active/iot/AI-BIM-governance/scripts/hooks/require-gstack-evidence.ps1\"",
+            "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"scripts/hooks/require-gstack-evidence.ps1\"",
             "if": "Bash(gh pr merge*)",
             "timeout": 30,
             "statusMessage": "browser 前端證據閘…"

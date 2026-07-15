@@ -11,7 +11,7 @@ metadata:
 - 本檔由 multi-agent 研究 workflow 收集 Anthropic / Claude Code 官方前端設計來源後彙整（zh-TW 原創整理），於 2026-06-05 落地。
 - **已驗證**：官方 `frontend-design` skill 確實存在於 `anthropics/skills`（WebFetch 確認 frontmatter 與內容）。其 frontmatter description 原文為：「Create distinctive, production-grade frontend interfaces with high design quality… Generates creative, polished code and UI design that avoids generic AI aesthetics.」該 skill 帶 `LICENSE.txt`，故本檔**不照抄其全文**，僅引用要點並連結原始來源。
 - **未逐一複驗**：本檔其餘引用來源（design.md、claude-cookbooks、accessibility-agents、Anthropic 部落格等）由研究 agent 收集並標註，尚未由本 repo 維護者逐條人工複驗；採用前如需作為正式合規依據，請點開 §核心參考資源 的連結自行確認。
-- 與本 repo 落地的關係：A1-BIM-governance 既有 `--ec-*` token（`web-viewer-sample/src/console/edge-console.css`）為**單一真相源**，本準則用於校準（OKLCH/狀態鐵律/a11y），**不引入第二套 token**。
+- 與本 repo 落地的關係：production 2D design authority 是唯讀 `C:\Repos\design\desigin-system` 與 `docs/plans/design-system-reference.manifest.json` 的 approved snapshot；`--ec-*` 是依 `primitive → semantic → component` 三層生成的 production projection，不是獨立上游真相。本準則只補充 a11y／工程品質；若與 pinned design reference 衝突，須在不降低 WCAG/security 的前提下走明確 rebaseline，不得自行建立第二套 token。
 
 ---
 

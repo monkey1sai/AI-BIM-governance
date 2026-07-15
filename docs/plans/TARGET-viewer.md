@@ -1,16 +1,18 @@
 # TARGET-viewer — 共享 3D/runtime、`#viewer` 七區塊 IA 與 A1–A10 viewport 契約
 
-> v2 · 2026-07-14 · A1–A10 使用情境 viewport/runtime 重寫
+> v3 · 2026-07-14 · 2D design authority 與 live runtime evidence 分離
 > 讀者：做 `#viewer`／M4／A1–A10 3D 連動任務的 AI coding agent；驗收 runtime evidence 的 agent。
 > 本檔＝共享 viewer 互動與 runtime 證據目標；每個 route 的業務情境與頁面 IA 仍由 TARGET-shell 對應節定義。現況一律問 TRUTH.md；本檔不作任何建成宣稱。
 
 ## §0 基準與凍結點
 
-`TARGET-viewer@v2 frozen 2026-07-14 · 基準=tracked geo-viewer HTML v2 + two tracked A1–A10 route PNG sets；durable authority=this file + TARGET-shell`
+`TARGET-viewer@v3 frozen 2026-07-14 · 2D基準=approved design-system snapshot；runtime authority=this file + TARGET-shell`
 
 - 凍結點規約同 TARGET-shell §0：內容改版＝bump `@v<N>`＋一行作廢範圍；凍結點行固定上列語法，可 grep 可 diff。
+- 作廢範圍（v2→v3）：legacy geo-viewer HTML／route PNG 作 production 2D 視覺 pass/fail 權威與 production CSS token 作獨立真相；2D 外框改依 contracts §5.1 的 approved design snapshot，live 3D 仍依本檔 runtime evidence。
 - 作廢範圍（v1→v2）：舊 scene 對應 A9 Copilot／A10 Robotics、以及「所有 console route 都不得 inline viewer」的無例外敘述；依 route PNG 改為 A9 Robotics、A10 AI 決策，並承認 contracts §1.1 的 A1 inline 限定例外。
-- 共享 viewer 視覺與行為來源＝tracked `docs/plans/ai-bim-geo-viewer-prototype.html`；各 route 的 tracked `ai-bim-geo-viewer-A<n>.png` 與 `ai-bim-geo-Ai-codeing-A<n>.png` 是 supplementary UI／coding companion source。durable viewport/runtime 正本是本檔 §8＋TARGET-shell 對應節；視覺來源不定義數字、協定、runtime 狀態或建成證據。
+- 共享 viewer 的 2D shell／toolbar／panel／狀態依上游 `desigin-system` 與 repo-pinned snapshot；coverage 唯一 machine mapping 是 manifest `route_inventory[]`。`#viewer` 為 `status=reference_missing` 時不得宣稱 99%；`routes_without_approved_pixel_reference[]` 只是 derived compatibility projection。tracked `docs/plans/ai-bim-geo-viewer-prototype.html` 與 route PNG 只保留作七區塊、GUID⇔Prim、DataChannel 與 OpenUSD/runtime companion。durable viewport/runtime 正本是本檔 §8＋TARGET-shell 對應節；設計圖不定義數字、協定、runtime 狀態或建成證據。
+- live WebRTC video／動態 GPU frame 不做 `≤1%` pixel 比對；未來若有 approved viewer baseline，只比 2D chrome 與 manifest 明列的非動態區域。first frame、loaded stage、mapping 與 Kit/DataChannel ack 永遠由 operability/runtime gate 驗證。
 - 純潔性聲明：本檔為目標規格（TARGET），禁止出現對 repo 的建成宣稱（grep 樣式見 PROCESS §6 閘 1）；「待建」為需求屬性，「NOT BUILT」僅作為佔位頁 UI 呈現需求字樣。
 - 全域不變量引 TARGET-contracts：官方 extensions（§7）、USD 命名與 fidelity（§8）、誠實元件（§9）、雲地邊界（§11）；本檔不重複其正文。
 - 本檔被 TARGET-shell 的 `#viewer`／`#gpu`／`#review`／A1–A10 節與 BACKLOG viewer 系列 gap 引用。反向查找：route 定義、業務欄位與實作接點以 TARGET-shell 對應節為準；A1 可用 contracts §1.1 限定的 `mode=a1-inline`，其他 route 要 inline WebRTC 必先取得同節加性例外，否則 CTA 走 `/ui/open?session=` 凍結 handoff；驗收走 PROCESS §2／§3。
@@ -205,7 +207,7 @@
 - 批註/測量/剖切/書籤＝官方 Kit extensions（markup/measure/section/waypoint.core），M5+ 交付，不自建（contracts §7）。
 - 串流遙測未取得＝`n/a` 斜體灰；禁止偽造 60 FPS（contracts §9）。
 - 雲地邊界：3D 審查在落地端 GPU plane；雲端控制面僅收 metadata（PLANNED）、模型 payload 不出站；未導入多租戶時使用 tenant-zero 單站點姿態（contracts §11）。
-- 視覺 token：design system review-room kit。「`styles.css` 為唯一真相」是原型檔頭對設計原型 repo（bim-desigin-arich）的宣告，本 repo 不存在該檔；本 repo 對應真相＝`web-viewer-sample/src/console/edge-console.css` 的 `--ec-*` token（視覺真相宣告正本＝contracts §5）。原型內嵌 fallback 只為單檔可雙擊開啟；品牌綠 `#84c714`。
+- 視覺 token：上游 design source 經 primitive→semantic→component 三層投影到 production `--ec-*`／viewer styles，權威與 99% gate 見 contracts §5.1。legacy prototype 內嵌 fallback 只供單檔 companion，不可反向覆寫 production token 或 hardcode 品牌值。
 
 ---
 
@@ -264,7 +266,7 @@
 
 ## §6 IX-3D 互動卡族全文（逐卡搬運，嚴禁濃縮）
 
-> 本卡「完成後長相」以 `ai-bim-geo-viewer-prototype.html` 為驗收示意（七區塊資訊架構＋GUID⇔USD 對應表）。**誠實驗收規則**：該檔為 canvas 示意，正式 3D 一律來自落地端 Kit 的 WebRTC 串流；示意畫面須帶可見浮水印「CANVAS 示意 · 非真 WebRTC 串流」，避免驗收場合誤認。
+> 本卡的七區塊資訊架構與 GUID⇔USD 互動可參考 legacy `ai-bim-geo-viewer-prototype.html`，但它不是 2D visual pass/fail baseline。**誠實驗收規則**：該檔為 canvas 示意，正式 3D 一律來自落地端 Kit 的 WebRTC 串流；示意畫面須帶可見浮水印「CANVAS 示意 · 非真 WebRTC 串流」，避免驗收場合誤認。
 > TARGET-shell 的 `#review`／`#gpu`／A1 連動橋相關節以卡號引用本節。
 
 **IX-3D-01 開啟 viewer**：一般 route 輸入或選 `review_session_id` → 開 `coordinator /ui/open?session=` server redirect；A1 可依 contracts §1.1 用 `POST /api/external/ifc-ready/:jobId/review-session`＋`mode=a1-inline`。其他 route 要內嵌 WebRTC 必先新增 approved exception，不得只因 PNG 有 viewport 就繞過凍結面。

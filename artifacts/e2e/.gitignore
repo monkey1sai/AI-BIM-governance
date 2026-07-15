@@ -2,6 +2,7 @@
 # E2E 截圖與 summary 預設本機保留、不入庫（已追蹤的既有截圖維持追蹤；
 # 確需新增入庫時用 git add -f）。
 _output/
+_playwright-output/
 report/
 vg01-branch-coordinator/
 *.png
@@ -13,4 +14,5 @@ vg01-branch-coordinator/
 *.network
 *.stacks
 *.jpeg
+*.webm
 _trace_extract/

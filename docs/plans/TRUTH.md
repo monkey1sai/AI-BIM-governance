@@ -1,12 +1,12 @@
 ---
-as_of: 2026-07-14
-as_of_commit: 9a49d96
-generated_from: 人工核對（2026-07-10 repo 盤點 + code 逐檔讀；2026-07-13 對 #323–#329 增量複核；2026-07-14 BCF provenance 路徑複核；2026-07-14 A9/A10 route 身分與 viewer 七區塊 code 對帳）；未來可換腳本重生
+as_of: 2026-07-15
+as_of_commit: d78ceef
+generated_from: 人工核對（2026-07-10 repo 盤點 + code 逐檔讀；2026-07-13 對 #323–#329 增量複核；2026-07-14 BCF provenance 路徑複核；2026-07-14 A9/A10 route 身分與 viewer 七區塊 code 對帳；2026-07-15 design reference／branch-protection 回讀）；未來可換腳本重生
 ---
 
 # TRUTH — 現況帳本
 
-> v1 · 2026-07-10 · AI-coding 文件體系重設計（依使用者指令，以兩份 prototype 為基準）
+> v2 · 2026-07-15 · design reference coverage 與 visual fidelity 實測欄
 > 本檔是全 docs/plans 體系**唯一**可寫 `BUILT / PARTIAL / NOT-BUILT` 的檔。現況問本檔；需求與驗收條件問 `TARGET-*`；排序與 OPEN 決策問 `BACKLOG.md`；紀律問 `PROCESS.md`。本檔不解釋「為什麼」、不留歷史敘事（git 即審計）。
 
 ## §0 維護規約
@@ -18,40 +18,42 @@ generated_from: 人工核對（2026-07-10 repo 盤點 + code 逐檔讀；2026-07
 
 ## §1 殼層 22 route 現況主表
 
-route＝EdgeConsole hash route（無斜線，`#a1` 非 `#/a1`）；prototype 錨＝`ai-bim-governance-prototype.html` 頁 id。狀態三值 enum；主 Prov 取自 `web-viewer-sample/src/console/data.ts`（7 值：asbuilt/artifact/demo/p1/p15/p3/p4）。
+route＝EdgeConsole hash route（無斜線，`#a1` 非 `#/a1`）；design screen/state 取自 tracked `design-system-reference.manifest.json`，缺少時寫 `reference_missing`。visual fidelity 只記本 commit 實測結果；未執行一律 `not observed`，不能把 99% 目標寫成現況。狀態三值 enum；主 Prov 取自 `web-viewer-sample/src/console/data.ts`（7 值：asbuilt/artifact/demo/p1/p15/p3/p4）。
 
-| route | prototype 錨 | 狀態 | 主 Prov | 與 prototype 差距一句 | 驗收指令 / evidence |
+目前 manifest 有 13 個 default screens／26 個 goldens，read-only authoring snapshot 已包含 `design-doc.html`。2026-07-15 branch-protection 回讀確認 `required_approving_review_count=1`、`require_code_owner_reviews=true`、`dismiss_stale_reviews=true`、`enforce_admins=true`；但 `.github/CODEOWNERS` 全域只列 `@monkey1sai`，direct collaborator 也只有同一帳號，且沒有 review bypass。由該帳號建立 PR 時沒有獨立 code owner 可核准，故人工 review gate 現況是 `blocked_self_approval_deadlock`，不能算 review trust 已建立；遠端設定尚未降低，解除方式必須是新增至少一位獨立合格 CODEOWNER／協作者，或經明確授權改採可滿足的 solo-maintainer／trusted base-branch gate。遠端 main 尚無 `design-semantic-visual` producer，因此該 context 未留在 required 清單，避免 expected-context deadlock；啟用授權已取得，待 workflow landed 且 machine gate 可執行後再啟用。現況 `semantic_contract.status=state_variants_reference_missing`、`implemented_case_ids=[]`，functional/runtime machine producer／validator亦未建；viewer lockfile 刻意未追蹤，runner 只有 `windows-2025` label、字型只驗 ready，resolved dependency tree／runner image／font fingerprints均未 pin。因此 frontend product design job仍 fail closed、`full_completion_allowed=false`，production 99% alignment全部仍為 `not observed`。golden／CI job定義都不等於 product pass。
+
+| route | design screen/state | 狀態 | 主 Prov | 現況／visual fidelity | 驗收指令 / evidence |
 |---|---|---|---|---|---|
-| `#home` | `#home` | PARTIAL | asbuilt | Smart Todo 導向頁齊；Recent Risk 列為 demo 資料；PROCESS §2 要求的 tracked browser trace 未觀測 | `artifacts/e2e/2026-07-10-wave-b/home.png`；trace not observed |
-| `#a1` | `#a1` | PARTIAL | asbuilt | 五步狀態機＋雙來源檢核＋記分板＋3D 高亮 session＋Issue/Excel/BCF 齊；rollback=p1；tracked browser trace 未觀測 | `artifacts/e2e/edge-console-primary-ui-deploy/edge-console-a1-desktop.png`、`artifacts/e2e/real-ifc-storage-intake.png`；governance pytest（rule_engine/ids/bcf）；trace not observed |
-| `#a2` | `#a2` | PARTIAL | asbuilt | diffs＋issue-impact 齊；apply-overlay 後端誠實回 501、3D 著色走 client highlight（p15）；selector E2E 與 tracked trace 未觀測 | governance pytest（diff）；selector E2E / trace not observed |
-| `#a3` | `#a3` | PARTIAL | asbuilt | federation（建 set/validate-coords/build usda/handoff）已建；clash 為 NOT BUILT／未開工，O6 已裁決 ifcclash | governance pytest（federation）；clash 端點 grep=0（not observed） |
-| `#a4` | `#a4` | PARTIAL | asbuilt | B 閉環語意查詢：`POST /api/search/model` 支援 `interpret_mode=deterministic\|semantic\|auto`；semantic＝Ornith vLLM OpenAI-compatible（env `ORNITH_API_KEY`／`A4_LLM_*`，key 不進 git）→ JSON filters → IFC 掃描；coordinator for-session/for-ifc-ready＋`/search/llm-status`；EdgeConsole `#a4` 可切模式；3D highlight 仍 client-pull；BCF bridge 未建 | governance `test_search_model.py`＋`test_search_llm.py`；coordinator search proxy tests；viewer A4 page tests；live Ornith 連線依 env；browser trace not observed |
-| `#a5` | `#a5` | NOT-BUILT | p3 | AppVisionPage 佔位頁，後端不存在 | not observed（vision 頁自標 p3） |
-| `#issues` | `#issues` | PARTIAL | asbuilt | 3 內建規則＋IDS-XML 匯入＋BCF 匯出＋Issue 生命週期齊；BCF export path 目前匯出全部 formal issues，generic create 帶 `ifc_guid` 時預設 `source_type=manual` 仍會進匯出，未執行 TARGET 的 rule-run/diff provenance gate；「在 3D 標示」p1 disabled；assignee 後端齊（schema `assignee` 欄＋create API＋BCF `AssignedTo` 映射：`issues/store.py`·`issues/api.py`·`bcf/bcf_writer.py`）、前端寫入 UI 未建（顯「指派 pending」）；tracked browser trace 未觀測 | `issues/store.py`＋`issues/api.py`＋`bcf/api.py` source inspection；`artifacts/e2e/issues-tab.png`；governance pytest（issues/ids/bcf）；trace not observed |
-| `#reports` | `#reports` | PARTIAL | p1 | StubPage 狀態清單；A1 Excel 匯出已在（指向既有匯出）；coverage 報表／review package=p1 未建 | `npm run verify`；報表產生器 UI not observed |
-| `#viewer` | `#viewer` | PARTIAL | asbuilt | ViewerPresentationPage 說明頁；對照 geo-viewer 原型七區塊差距大（見 §2） | `artifacts/e2e/viewer-tree-focus.png`、`artifacts/e2e/gov-viewer-layout.png` |
-| `#gpu` | `#gpu` | PARTIAL | asbuilt | Review Room 殼已建；MockViewport 無 first frame 時顯示 deterministic no-GPU（不偽稱 live 3D） | `artifacts/e2e/primary-spectator-authority.png`、`artifacts/e2e/stage-artifact-binding.png` |
-| `#a6` | `#a6` | NOT-BUILT | p4 | AppVisionPage 佔位頁，後端不存在 | not observed |
-| `#a7` | `#a7` | NOT-BUILT | p4 | AppVisionPage 佔位頁，後端不存在 | not observed |
-| `#a8` | `#a8` | NOT-BUILT | p4 | AppVisionPage 佔位頁，後端不存在 | not observed |
-| `#a9` | `#a9` | NOT-BUILT | p4 | 機器人／自主巡檢 AppVisionPage 佔位頁（`slug="robot-sim"`，身分對齊 TARGET-shell §a9），後端不存在 | not observed |
-| `#a10` | `#a10` | NOT-BUILT | p4 | 其他應用／AI 決策工作台 AppVisionPage 佔位頁（`slug="ai-decision"`，身分對齊 TARGET-shell §a10；ChatUSD 併入本 route，舊 `usd-copilot` 存為 legacy alias）；後端不存在。殼層全域 ChatUSD 右欄（`EdgeConsole.tsx` `ec-agent`，標 ROADMAP·A10、input disabled）是**全站元件，非本頁特徵** | not observed |
-| `#conv` | `#conv` | PARTIAL | asbuilt | repo 為 AliasRedirect→`#minio`；轉檔歷史 UI 專頁未建；後端 list（`/api/conversion/records`）＋proxy 已在 | `artifacts/e2e/md-merge-trace/01-alias-redirect-queue-highlight.png`、`artifacts/e2e/real-ifc-conversion-lineage.png` |
-| `#sessions` | `#sessions` | PARTIAL | asbuilt | 真 runtime status＋per-row 結束 session（IX-SS-04）已落地；Force release／Reclaim=p1 disabled；terminate E2E 與 tracked trace 未觀測 | `artifacts/e2e/infra-slice/sessions-evidence-bridge.png`；terminate E2E / trace not observed |
-| `#instances` | `#instances` | PARTIAL | asbuilt | Kit instance 真遙測已在；GPU busy/VRAM=未取得（標 demo）、drain/move=p1 | `artifacts/e2e/infra-slice/instances-live-kit.png` |
-| `#minio` | `#minio` | PARTIAL | asbuilt | ModelDataPage 三頁合一：真 S3 逐層＋SSE＋轉檔生命週期；usdc 回填 p1、bucket layout 示意標 demo；tracked browser trace 未觀測 | `artifacts/e2e/md-merge-trace/02-object-detail-real-ledger.png`、`artifacts/e2e/infra-slice/minio-ledger-coverage.png`；coordinator `npm test`（minio-objects/folder route）；trace not observed |
-| `#runtime` | `#runtime` | PARTIAL | asbuilt | 監控彙總齊；GPU 遙測=未取得（標 demo）；tracked browser trace 未觀測 | `artifacts/e2e/infra-slice/runtime-monitor-summary.png`；trace not observed |
-| `#admin` | `#admin` | NOT-BUILT | p1 | StubPage：RBAC／rulesets／runtime policy 全未建 | not observed（stub 自標 p1） |
-| `#spec` | `#spec` | PARTIAL | asbuilt | Repo boundary contract 對照說明頁（kit-manager-api 標 p1）；browser screenshot/trace 未觀測 | `npm run verify`；browser evidence not observed |
+| `#home` | `console.home.default` | PARTIAL | asbuilt | Smart Todo 導向頁齊；Recent Risk 列為 demo；visual result／tracked browser trace 均 not observed | `artifacts/e2e/2026-07-10-wave-b/home.png`；dual gate not observed |
+| `#a1` | `workspace.a1.default` | PARTIAL | asbuilt | 五步狀態機＋雙來源檢核＋記分板＋3D 高亮 session＋Issue/Excel/BCF 齊；rollback=p1；visual result／tracked browser trace 均 not observed | `artifacts/e2e/edge-console-primary-ui-deploy/edge-console-a1-desktop.png`、`artifacts/e2e/real-ifc-storage-intake.png`；governance pytest（rule_engine/ids/bcf）；dual gate not observed |
+| `#a2` | `workspace.a2.default` | PARTIAL | asbuilt | diffs＋issue-impact 齊；apply-overlay 誠實回 501、3D 著色走 client highlight（p15）；visual result／selector E2E／trace not observed | governance pytest（diff）；dual gate not observed |
+| `#a3` | `workspace.a3.default` | PARTIAL | asbuilt | federation set/coords/build/handoff 已建；clash NOT BUILT；visual result not observed | governance pytest（federation）；clash 端點 grep=0；visual result not observed |
+| `#a4` | `workspace.a4.default` | PARTIAL | asbuilt | deterministic/semantic/auto 搜尋與 proxy 已建；3D highlight client-pull；BCF bridge 未建；visual result／browser trace not observed | governance search tests＋coordinator proxy tests＋viewer A4 tests；dual gate not observed |
+| `#a5` | `concept.a5.default` | NOT-BUILT | p3 | AppVisionPage 佔位、後端不存在；concept golden 存在但 production visual result not observed | not observed（vision 頁自標 p3） |
+| `#issues` | `reference_missing` | PARTIAL | asbuilt | Issue/BCF 生命週期部分已建；provenance gate與 assignee 前端未齊；approved pixel reference／tracked browser trace not observed | governance pytest（issues/ids/bcf）；dual gate not observed |
+| `#reports` | `reference_missing` | PARTIAL | p1 | StubPage 狀態清單；A1 Excel 匯出已在；coverage/review package=p1；approved pixel reference missing | `npm run verify`；visual/browser evidence not observed |
+| `#viewer` | `reference_missing` | PARTIAL | asbuilt | ViewerPresentationPage 說明頁；2D pixel reference missing；七區塊 runtime 現況見 §2 | runtime screenshots 已有；2D visual gate/trace not observed |
+| `#gpu` | `reference_missing` | PARTIAL | asbuilt | Review Room 殼已建；no-GPU 誠實態；2D pixel reference missing | runtime screenshots 已有；2D visual gate not observed |
+| `#a6` | `concept.a6.default` | NOT-BUILT | p4 | AppVisionPage 佔位、後端不存在；concept golden 存在但 production visual result not observed | not observed |
+| `#a7` | `concept.a7.default` | NOT-BUILT | p4 | AppVisionPage 佔位、後端不存在；concept golden 存在但 production visual result not observed | not observed |
+| `#a8` | `concept.a8.default` | NOT-BUILT | p4 | AppVisionPage 佔位、後端不存在；concept golden 存在但 production visual result not observed | not observed |
+| `#a9` | `concept.a9.default` | NOT-BUILT | p4 | 機器人／自主巡檢佔位、後端不存在；concept golden 存在但 production visual result not observed | not observed |
+| `#a10` | `concept.a10.default` | NOT-BUILT | p4 | AI 決策工作台佔位、後端不存在；concept golden 存在但 production visual result not observed | not observed |
+| `#conv` | `pipeline.default` | PARTIAL | asbuilt | AliasRedirect→`#minio`；轉檔歷史專頁未建；後端 list＋proxy 已在；visual result not observed | runtime screenshots 已有；design gate not observed |
+| `#sessions` | `reference_missing` | PARTIAL | asbuilt | runtime status＋per-row close 已建；Force release/Reclaim=p1；pixel reference missing，terminate E2E/trace not observed | runtime screenshot 已有；dual gate not observed |
+| `#instances` | `reference_missing` | PARTIAL | asbuilt | Kit instance 遙測部分已在；GPU busy/VRAM未取得、drain/move=p1；pixel reference missing | runtime screenshot 已有；design gate not observed |
+| `#minio` | `reference_missing` | PARTIAL | asbuilt | 真 S3＋SSE＋轉檔生命週期；usdc 回填 p1；pixel reference missing／trace not observed | coordinator tests＋runtime screenshots；dual gate not observed |
+| `#runtime` | `runtime.ops.default` | PARTIAL | asbuilt | 監控彙總齊；GPU 遙測未取得；visual result／tracked browser trace not observed | runtime screenshot 已有；dual gate not observed |
+| `#admin` | `reference_missing` | NOT-BUILT | p1 | StubPage；approved pixel reference missing | not observed（stub 自標 p1） |
+| `#spec` | `reference_missing` | PARTIAL | asbuilt | Repo boundary 對照頁；approved pixel reference／browser evidence missing | `npm run verify`；dual gate not observed |
 
 **非正典保留頁**（不列入 22 條主表；身分見 contracts §4 別名表）：
 
 | route | 狀態 | 主 Prov | 現況一句 | 驗收指令 / evidence |
 |---|---|---|---|---|
-| `#review` | PARTIAL | asbuilt | 獨立 route 直渲染 ReviewRoomPage（非轉址；機器真相＝`EdgeConsole.tsx` `case "review"`）；與 TARGET-shell §4.1 規格的介面對齊差距未逐項校對（見 BACKLOG gap-review-room-alignment）；Section/Snapshot=p15 | `artifacts/e2e/primary-spectator-authority.png`（經 `#gpu` 殼取證，GpuReviewRoomPage 內嵌同一 ReviewRoomPage）；`#review` 直達截圖 not observed |
+| `#review` | PARTIAL | asbuilt | 獨立 route 直渲染 ReviewRoomPage；design screen=`reference_missing`，Section/Snapshot=p15；2D visual gate與直達 trace not observed | `artifacts/e2e/primary-spectator-authority.png`（runtime companion）；`#review` direct dual gate not observed |
 
-## §2 viewer 七區塊現況（對照 `ai-bim-geo-viewer-prototype.html`）
+## §2 viewer 七區塊 runtime 現況（legacy geo-viewer 只作互動 companion）
 
 | 區塊 | 狀態 | 現況一句 / evidence |
 |---|---|---|
@@ -85,7 +87,7 @@ route＝EdgeConsole hash route（無斜線，`#a1` 非 `#/a1`）；prototype 錨
 |---|---|---|---|---|---|---|---|---|---|
 | PARTIAL | PARTIAL | split（federation implementation exists／clash NOT BUILT·未開工） | PARTIAL | p3 | p4 | p4 | p4 | p4 | p4 |
 
-Hero runtime slices＝A1＋A2＋A3 federation＋A4 語意查詢（deterministic＋Ornith vLLM semantic）；依 PROCESS §2 的新硬 gate，缺 tracked browser trace 時仍記 PARTIAL。
+Hero runtime slices＝A1＋A2＋A3 federation＋A4 語意查詢（deterministic＋Ornith vLLM semantic）；依 PROCESS §2 dual gate，缺 visual result 或 tracked browser/runtime trace 時仍記 PARTIAL。
 
 ## §5 已建閉環
 
@@ -102,4 +104,5 @@ MinIO watch／手選 IFC → coordinator intake（ifc-ready job＋ConversionLedg
 
 - 路由 case 權威＝`web-viewer-sample/src/console/data.ts` `PAGES[]`＋`EdgeConsole.tsx`（repo 實有 ~30 case 含保留別名；收斂見 BACKLOG gap-route-convergence）。
 - Prov 權威＝`data.ts` 逐 Panel/Field 標註（7 值 enum，禁 `prov="todo"`，TS2322）。
+- Design reference coverage 權威＝`docs/plans/design-system-reference.manifest.json` 的 `route_inventory[]`；目前 semantic variants、design required-check enforcement與 functional/runtime machine gate均未完成，product job／full-completion claim必須 fail closed。production 是否達標只認 current-checkout CI Playwright output 經 validator 重算，且只有在對應 check 已納入 branch protection後才具 merge authority；目前尚未納入，不能由 golden、PR body或外部 JSON 推定。
 - 本表是快照非權威：與 code＋tests 不符時，改本表。

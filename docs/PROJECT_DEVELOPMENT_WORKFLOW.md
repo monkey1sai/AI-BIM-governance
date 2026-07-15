@@ -1,17 +1,17 @@
-# AI-BIM-governance 專案開發流程 v3
+# AI-BIM-governance 專案開發流程 v4
 
-> **歷史說明**：本文件仍保留 2026-05 開發流程、Phase 與候選編號脈絡；除 §1.3、§3、§10–§11 外，下文出現的 `_worker`／`_bim-control` 都是退役前歷史快照，**不是現在 product runtime**。2026-07-13 起，repo plans 唯一入口改為 [`docs/plans/docs-plans-README.md`](plans/docs-plans-README.md)：現況查 `TRUTH.md`，需求查 `TARGET-contracts.md`／`TARGET-shell.md`／`TARGET-viewer.md`，排序與紀律查 `BACKLOG.md`／`PROCESS.md`，產品樣貌以兩份 prototype 為錨。舊 `AI-BIM-governance-saas-roadmap-2026-05.md` 已移除；roadmap-era 資料可於 git 歷史 commit `d0fbdad` 溯源。
+> **歷史說明**：本文件仍保留 2026-05 開發流程、Phase 與候選編號脈絡；除 §1.3、§3、§10–§11 外，下文出現的 `_worker`／`_bim-control` 都是退役前歷史快照，**不是現在 product runtime**。repo plans 唯一入口是 [`docs/plans/docs-plans-README.md`](plans/docs-plans-README.md)：現況查 `TRUTH.md`，行為需求查 TARGET-*，排序與紀律查 BACKLOG/PROCESS；production 2D 樣貌以唯讀 `C:\Repos\design\desigin-system` 的 repo-pinned manifest/baselines 為 gate，舊 prototypes 僅為 legacy companions。
 >
 > 現行 B 方案：外部公司雲端 `bim-control` 是 control-plane；外部客戶落地端 IFC Worker 是 IFC producer；本 repo 的 coordinator 是唯一 IFC-ready intake，streaming-server 是 internal IFC→USDC authority。`_worker`／`_bim-control` 已自 repo product runtime 移除，只可由 `tests/fakes` 模擬。
 >
-> **本文件 = 開發流程入口**；A1–A10 功能需求、UI 操作語意、可信度標記與雲端 / 落地端分離架構以 `docs/plans/docs-plans-README.md` 入口的 TRUTH/TARGET 體系與 prototype 為準（2026-07-13 起，舊《設計規格》已由 TARGET-shell/TARGET-viewer 取代）；行為正確性仍以 `openspec/specs/`、contracts 與程式碼為準。
+> **本文件 = 開發流程入口**；A1–A10 功能需求、UI 操作語意、可信度標記與雲端 / 落地端分離架構以 docs/plans TRUTH/TARGET 體系為準；2D fidelity 依 pinned design reference，行為正確性仍以 OpenSpec、contracts 與程式碼為準。
 >
 > **本文件不取代 source of truth**：
 > - Repo 邊界 → [`AGENTS.md`](../AGENTS.md)
 > - Capability requirements → [`openspec/specs/`](../openspec/specs/)
 > - API 規格 → [`docs/contracts/`](contracts/) 7 份合約
 > - 驗證證據 → [`docs/verification/`](verification/)
-> - **功能需求 / UI 原型** → [`docs-plans-README`](plans/docs-plans-README.md)（入口）→ [`TRUTH`](plans/TRUTH.md) / [`TARGET-contracts`](plans/TARGET-contracts.md) / [`TARGET-shell`](plans/TARGET-shell.md) / [`TARGET-viewer`](plans/TARGET-viewer.md) / [`BACKLOG`](plans/BACKLOG.md) / [`PROCESS`](plans/PROCESS.md)；[殼層 prototype](plans/ai-bim-governance-prototype.html) / [viewer prototype](plans/ai-bim-geo-viewer-prototype.html)
+> - **功能需求 / UI gate** → [`docs-plans-README`](plans/docs-plans-README.md)（入口）→ TRUTH/TARGET/BACKLOG/PROCESS；2D machine reference＝[manifest](plans/design-system-reference.manifest.json)＋[goldens](plans/design-system-baseline/)；[殼層 prototype](plans/ai-bim-governance-prototype.html)／[viewer prototype](plans/ai-bim-geo-viewer-prototype.html) 僅為 legacy companions
 >
 > 本文件是把它們組合成可執行的開發路線。
 
@@ -830,11 +830,12 @@ sequenceDiagram
 | **Runtime 現況與 evidence** | [`TRUTH`](plans/TRUTH.md) |
 | **跨頁／route／viewer 需求** | [`TARGET-contracts`](plans/TARGET-contracts.md)／[`TARGET-shell`](plans/TARGET-shell.md)／[`TARGET-viewer`](plans/TARGET-viewer.md) |
 | **Gap 排序與驗收紀律** | [`BACKLOG`](plans/BACKLOG.md)／[`PROCESS`](plans/PROCESS.md) |
-| **可點擊產品原型** | [殼層 prototype](plans/ai-bim-governance-prototype.html)／[viewer prototype](plans/ai-bim-geo-viewer-prototype.html) |
+| **Production 2D design gate** | [design manifest](plans/design-system-reference.manifest.json)／[golden baselines](plans/design-system-baseline/)（authoring origin 唯讀 `C:\Repos\design\desigin-system`） |
+| **Legacy interaction/runtime companions** | [殼層 prototype](plans/ai-bim-governance-prototype.html)／[viewer prototype](plans/ai-bim-geo-viewer-prototype.html) |
 
 ### 10.1 11 份 Capability Spec 對應 Phase
 
-> 本表保留 2026-05 roadmap-era Phase 對照；新功能需求請先讀 `docs-plans-README.md` 導向的 TARGET 與兩份 prototype，再回到 OpenSpec specs 判斷可實作行為。
+> 本表保留 2026-05 roadmap-era Phase 對照；新功能需求先讀 `docs-plans-README.md` 導向的 TARGET 與 approved design manifest，再回到 OpenSpec specs 判斷可實作行為。
 
 | Capability | Phase | 狀態 |
 |---|---|---|
@@ -848,7 +849,7 @@ sequenceDiagram
 | `streaming-multi-layer-payload-loading` | 3 | 🔄 |
 | `runtime-verification-evidence` | 3 | ✅（spec 完成、blocked 條件已記錄） |
 | `runtime-verification-task-status` | 3 | ✅（checklist 語意：GPU / concurrent runtime 不得因 blocker 視為完成；PR #20 same-Kit primary／spectator evidence 已 land） |
-| `documentation-source-of-truth` | cross-cutting | ✅（workflow v3 / TRUTH-TARGET-PROCESS plans / 兩份 prototype / README / OpenSpec specs 分工權威） |
+| `documentation-source-of-truth` | cross-cutting | ✅（workflow v4 / TRUTH-TARGET-PROCESS / pinned design reference / legacy companions / OpenSpec 分工權威） |
 
 > **衝突解決順序**（同 [`AGENTS.md §0.1`](../AGENTS.md)）：使用者最新明確指令 > `AGENTS.md` > `CLAUDE.md` > OpenSpec > installed skills / wiki。本文件屬 **OpenSpec 補充 planning artifact**（分工見頂部 metadata），不得覆蓋 `openspec/specs/`、contracts 或程式碼權威。
 
@@ -878,13 +879,13 @@ Closeout       = 更新 TARGET / TRUTH / docs / evidence，並收斂本地 workt
    - Plan / 設計文件預設使用繁體中文；API、schema、CLI、status enum、log/error 與外部產品名稱保留原文
 3. 單獨啟用 brainstorming、writing-plans、subagent-driven-development 或 verification 不得自動串接下一階段；只有明確呼叫的完整 workflow（例如 `spec-to-done`）可依其既定 contract 串接。
 4. 完成前對照需求、diff 與最小必要驗證證據，不得只用主觀判斷宣告完成。
-5. 只有 ship / PR 在工作範圍內時才開 PR；user-facing change 必須附 gstack / browser evidence。
+5. 只有 ship / PR 在工作範圍內時才開 PR；user-facing change 必須同時附 design fidelity result 與 functional browser/runtime evidence。
 6. PR review、GitHub Actions 與 `pr-review-agent` 僅在 PR 流程中適用。
 7. 若 change 影響 A1–A10 功能需求、操作介面或雲端 / 落地端分離架構，更新 `docs/plans/TARGET-contracts.md`／`TARGET-shell.md`／`TARGET-viewer.md` 的 owning 節（bump 凍結點），並同 PR 更新 `docs/plans/TRUTH.md` 對應列
-   - 不得只改 prototype 而不更新 TARGET 對應節
-   - 不得把 prototype 的 demo data 宣告成 runtime evidence
+   - 不得以修改 legacy prototype 取代 TARGET 或 approved design rebaseline
+   - 不得把 design/prototype demo data 宣告成 runtime evidence
    - 若沒有新的 runtime evidence，不更新任何 passed / ready 宣稱
-8. 生成型 HTML 檢視不得提交；`docs/plans/ai-bim-governance-prototype.html` 與 `docs/plans/ai-bim-geo-viewer-prototype.html` 例外，因它們是可點擊需求原型本體，不是由 Markdown 生成的衍生檔
+8. 生成型 HTML 檢視不得提交；兩份既有 prototype 只作 tracked legacy companion。Design baseline 只能透過 explicit `--rebaseline --confirm-rebaseline` 更新，CI 不讀本機 authoring origin。
 9. PR merge 後收斂本地工作樹
    - 執行 `git fetch origin --prune`
    - 切回 `main` 並確認工作區乾淨
@@ -896,8 +897,8 @@ Closeout       = 更新 TARGET / TRUTH / docs / evidence，並收斂本地 workt
 
 - [ ] 對應的 Superpowers plan / checklist 存在；若本 PR 為純 docs/refactor 不需要，已在 PR 說明中記錄原因
 - [ ] `pr-review-agent` 已產生 report；若狀態為 `blocked` / `failed`，需修正或明確記錄人工 override 理由
-- [ ] 若本 PR 影響 A1–A10、操作介面或雲端 / 落地端分離架構，已同步更新 TARGET 對應節與 TRUTH；必要時更新 prototype
-- [ ] 若本 PR 更新 prototype，已確認它不是把 demo data 當成 runtime evidence
+- [ ] 若本 PR 影響 A1–A10、操作介面或雲端 / 落地端分離架構，已同步更新 TARGET/TRUTH，並附 manifest-bound visual result＋functional/runtime evidence
+- [ ] 若本 PR rebaseline，已確認 origin drift、explicit confirmation、source/golden hashes；design demo data 未被當成 runtime evidence
 - [ ] PR merge 後已 fetch/prune，且本地 `main` 乾淨對齊 `origin/main`，沒有殘留本地-only commit
 - [ ] 修改不違反 `AGENTS.md` repo 邊界
 - [ ] Python tests 從各服務目錄下執行：`cd <svc> && python3 -m pytest tests`

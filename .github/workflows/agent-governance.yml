@@ -21,6 +21,16 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Setup Node.js for PNG recomputation tests
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20'
+
+      - name: Install design-gate Node dependencies
+        shell: pwsh
+        working-directory: web-viewer-sample
+        run: pwsh -NoProfile -NonInteractive -Command "npm install --no-audit --no-fund"
+
       - name: Run governance static check
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
@@ -32,3 +42,15 @@ jobs:
       - name: Run browser-evidence hook tests
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-require-gstack-evidence.ps1
+
+      - name: Run design-system reference gate tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-design-system-reference.ps1
+
+      - name: Run design-system changed-path scope tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-design-system-change-scope.ps1
+
+      - name: Run design-system visual-result gate tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-design-system-visual-result.ps1

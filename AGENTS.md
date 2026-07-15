@@ -39,14 +39,14 @@
 
 ### 產品定位與完成標準
 
-- Repo 功能需求以 `docs/plans/docs-plans-README.md` 為唯一入口（TRUTH/TARGET/PROCESS 三分體系，2026-07-10 重設計）：現況與 A1–A10 建成狀態唯一落點＝`TRUTH.md`；需求問 `TARGET-contracts.md`（22 條正典路由＝§4）／`TARGET-shell.md`／`TARGET-viewer.md`（視覺錨＝兩份 prototype HTML）；缺口排序與 OPEN 決策問 `BACKLOG.md`；驗收紀律問 `PROCESS.md`。
+- Repo 功能需求以 `docs/plans/docs-plans-README.md` 為唯一入口：現況與 A1–A10 建成狀態唯一落點＝`TRUTH.md`；行為需求問 `TARGET-contracts.md`／`TARGET-shell.md`／`TARGET-viewer.md`；2D design authority＝唯讀 `C:\Repos\design\desigin-system`，CI/PR/merge 只讀 repo-pinned `design-system-reference.manifest.json`＋baselines；缺口問 `BACKLOG.md`；dual-gate 驗收紀律問 `PROCESS.md`。
 - 前端相關改動動工前必讀 `docs/plans/TARGET-contracts.md` §1 後端凍結面契約（前端只打 coordinator `:8004`、proxy 路徑 byte-identical、禁改 governance `app.py`、coordinator `governanceProxy.ts`、streaming `conversion_authority.py` 等清單）。
 - 主系統架構以 `https://bim-docs.jackshappybot.com/` 分頁「01 系統架構」的「BIM 模型管理平台 — 系統架構」為準：採雲端與客戶落地端分離，外部公司雲端是 control-plane，客戶落地端是 IFC / Kit / MCP runtime data-plane。
-- `https://bim-docs.jackshappybot.com/` 分頁「05 BIM治理與模型檢核」中的 A1–A10 是本 repo 的 10 大主要開發項目；分頁「06 操作介面總覽」是使用者操作介面、按鈕、進度與可驗收流程的 UX 參考。
-- 凡是 user-facing capability，不得以「後端 / API / 測試完成」宣告 done。完成標準必須是：使用者可從前端 route 操作，點明確按鈕，使用預設 fixture，看到 loading / success / failure / retry 與關鍵 runtime ID，並有 Playwright / gstack / supported browser engine 的截圖或 trace 證據。
-- 最終回報 user-facing work 時必須列出並對齊 PR machine truth：Frontend route、Main button(s) tested、Fixture used、Backend API called、Runtime action（含 observed runtime ID）、Visible success state（loading / success / failure / retry）、E2E command、Screenshot / trace、Known gaps；Frontend URL 可加列但不得取代前述 labels。
+- `https://bim-docs.jackshappybot.com/` 分頁「05 BIM治理與模型檢核」中的 A1–A10 是本 repo 的 10 大主要開發項目；產品架構／定位仍可參考該站，但 production 2D UX、資訊架構、視覺與互動狀態以前述 pinned design reference 為準。
+- 凡是 user-facing capability，不得以「後端 / API / 測試完成」或單張 screenshot 宣告 done。必須同時通過：(a) Windows runner 上的 Chromium DPR1、1440×900＋1920×1080、pixel diff≤1% 與 branch-protected Playwright semantic 100% 的 design fidelity gate；(b) route/button/fixture/真 API/runtime ID/loading/success/failure/retry/trace/network 的 operability gate。scope 由 base/head manifest＋changed paths 推導；`mixed`／`partial_reference_missing` 可做誠實局部修復，但不得宣稱 99% 或 full completion，unknown path fail closed。
+- 最終回報 user-facing work 時必須列出 PR machine truth：Frontend route、Main button(s) tested、Fixture used、Backend API called、Runtime action（含 observed runtime ID）、Visible success state、E2E command、Screenshot / trace、Design gate status、Design screen(s)、Reference-missing route(s) / surface(s)、Full completion claimed、Design reference manifest、Visual fidelity result、Visual comparison、Visual artifacts、Known gaps。Frontend URL 可加列但不得取代前述 labels。
 - 真實 IFC semantic viewer E2E 的核心輸入為主工作區 local `storage/` 內 IFC；new worktree 不會自動帶這些 ignored/local artifact，測試應讀主工作區絕對路徑或用 gitignored junction/symlink，不得把 IFC 或大型 `model.usdc` commit 進 repo。
-- 不得宣告 full-system E2E complete，除非同時具備 governance CPU semantic E2E 與 Kit WebRTC visual/runtime E2E 證據。
+- Design fidelity 與 runtime evidence 互不代替；不得宣告 full-system E2E complete，除非同時具備 governance CPU semantic E2E、Kit WebRTC first-frame/stage/DataChannel runtime evidence，以及適用 route 的 design fidelity result。live WebRTC frame 不作 design pixel golden。
 - 當使用者要求「請測試部署區重建」或同義口令時，agent MUST 執行 `.\scripts\dev\rebuild-test-deploy.ps1 -Build`；該 helper 會用 freshly fetched `origin/main` 重建 deployment checkout `D:\Users\deploy\AI-bim-geo`、排除 agent/tooling 檔案與 root `docs/`、`openspec/`、`patches/`，並從部署區執行 `.\scripts\deploy.ps1 -Build`。禁止使用 `-DryRun`、禁止使用 stale `origin/main`、禁止改用當前 worktree 或 sub-repo 啟動命令。
 - 已授權但限縮：若 `deploy.ps1 -Build` 的 Phase 3 被外部 host-native runtime blocker（如 `kit.exe` / conversion `python.exe` 佔用 49100/49101 或 spectator ports）阻擋，agent 只能停止可由部署區 pidfile 或 command line / executable path 證明屬於 `D:\Users\deploy\AI-bim-geo` 的 PID tree，並記錄 port / PID / process name / ownership evidence 後重跑同一條 `-Build`。若只有 port/process-name 證據，先向使用者確認；不得改用 `-Force` / `-DryRun` 或停止無關非 runtime process。
 
@@ -151,7 +151,7 @@ Runtime/product 行為真相優先順序：
 
 先跑受影響範圍的 typecheck、lint、unit/integration checks，再依 `docs/agents/sub-repo-verify-commands.md` 擴大驗證。回報必須分開列出 verified facts、inferences、unverified risks 與 next actions；未跑的測試與原因不得省略。
 
-前端驗收紀錄至少包含 route、button、fixture、API、runtime ID、visible state、E2E command、screenshot/trace 與 known gaps。
+前端驗收紀錄至少包含 route、button、fixture、API、runtime ID、visible state、E2E command、screenshot/trace、design gate status/screen/missing scope/full claim、manifest、CI visual result/comparison/artifacts 與 known gaps；Kit/OpenUSD runtime 另列 first-frame/stage/ack。
 
 本 repo 由 GitNexus 索引。Lane F 不強制 impact；Lane B 對 task/主要 entry symbol 跑一次 batch impact，只有實際改 code symbol/flow 時才在完成前跑 detect_changes；Lane G/S 對 shared/exported symbol 改前跑 impact、commit 前跑 detect_changes。HIGH 必須明確回報補強策略；CRITICAL 必須取得 sign-off。若 stale/unavailable/linked-worktree diff 失真，依 `docs/agents/gitnexus-usage.md` 揭露，不得自行發明 pass。
 

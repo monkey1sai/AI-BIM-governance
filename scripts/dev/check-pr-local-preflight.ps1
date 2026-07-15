@@ -36,24 +36,44 @@ try {
         }
         $PrNumber = [int]$resolvedPr.Trim()
     }
+    $prRefsRaw = @(& gh pr view $PrNumber --repo $Repo --json baseRefOid,headRefOid)
+    if ($LASTEXITCODE -ne 0 -or $prRefsRaw.Count -eq 0) {
+        throw "Unable to resolve PR #$PrNumber base/head commit IDs."
+    }
+    $prRefs = ($prRefsRaw -join "`n") | ConvertFrom-Json
+    $baseSha = [string]$prRefs.baseRefOid
+    $headSha = [string]$prRefs.headRefOid
+    if ($baseSha -notmatch '^[0-9a-f]{40}$' -or $headSha -notmatch '^[0-9a-f]{40}$') {
+        throw "PR #$PrNumber returned invalid base/head commit IDs."
+    }
+    $localHead = (& git -c "safe.directory=$repoRootPath" rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $localHead -ne $headSha) {
+        throw "Local HEAD '$localHead' does not match PR #$PrNumber head '$headSha'. Check out the exact PR head before preflight."
+    }
+    & git -c "safe.directory=$repoRootPath" cat-file -e "${baseSha}^{commit}" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "PR #$PrNumber base commit '$baseSha' is unavailable locally; fetch it before preflight."
+    }
 
-    $outDir = Join-Path $repoRootPath ".tmp-pr-local-preflight\pr-$PrNumber"
+    $outDir = Join-Path $repoRootPath ".tmp\pr-local-preflight\pr-$PrNumber"
     New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     $changedPathsPath = Join-Path $outDir 'changed-paths.txt'
     $bodyPath = Join-Path $outDir 'pr-body.md'
 
+    $localChangedPaths = @(& git -c "safe.directory=$repoRootPath" diff --no-renames --name-only "$baseSha...$headSha")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to compute rename-safe local changed paths for PR #$PrNumber."
+    }
     if ($ChangedPathsSource -eq 'local') {
-        Write-Host '[local-pr-preflight] changed paths source: local origin/main...HEAD'
-        $changedPaths = (& git -c "safe.directory=$repoRootPath" diff --name-only origin/main...HEAD)
-        if ($LASTEXITCODE -ne 0) {
-            throw 'Unable to compute local changed paths from origin/main...HEAD.'
-        }
+        Write-Host "[local-pr-preflight] changed paths source: local PR base...head ($baseSha...$headSha)"
+        $changedPaths = $localChangedPaths
     } else {
-        Write-Host "[local-pr-preflight] changed paths source: remote PR #$PrNumber"
-        $changedPaths = (& gh pr diff $PrNumber --repo $Repo --name-only)
+        Write-Host "[local-pr-preflight] changed paths source: remote PR #$PrNumber union rename-safe local base...head"
+        $remoteChangedPaths = @(& gh pr diff $PrNumber --repo $Repo --name-only)
         if ($LASTEXITCODE -ne 0) {
             throw "Unable to fetch PR #$PrNumber changed paths."
         }
+        $changedPaths = @($localChangedPaths + $remoteChangedPaths | Where-Object { $_ } | Sort-Object -Unique)
     }
     $changedPaths | Set-Content -LiteralPath $changedPathsPath -Encoding utf8
 
@@ -74,9 +94,9 @@ try {
         '-RepoRoot',
         $repoRootPath,
         '-BaseSha',
-        'origin/main',
+        $baseSha,
         '-HeadSha',
-        'HEAD'
+        $headSha
     ) -FailureMessage 'PR body evidence preflight failed.'
 
     $tempDir = Join-Path $repoRootPath '.tmp'
@@ -87,15 +107,7 @@ try {
     $env:TMP = $tempDir
 
     if (-not $SkipReviewAgent) {
-        Write-Host '[local-pr-preflight] running scripts/pr-review-agent.ps1 with local base/head'
-        $baseSha = (& git -c "safe.directory=$repoRootPath" rev-parse origin/main).Trim()
-        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($baseSha)) {
-            throw 'Unable to resolve origin/main for local PR review agent.'
-        }
-        $headSha = (& git -c "safe.directory=$repoRootPath" rev-parse HEAD).Trim()
-        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($headSha)) {
-            throw 'Unable to resolve HEAD for local PR review agent.'
-        }
+        Write-Host '[local-pr-preflight] running scripts/pr-review-agent.ps1 with PR-bound base/head'
         Invoke-External -FilePath 'pwsh' -Arguments @(
             '-NoProfile',
             '-ExecutionPolicy',
@@ -119,8 +131,53 @@ try {
         ) -FailureMessage 'Local PR review agent failed.'
     }
 
-    $frontendPattern = '^(web-viewer-sample/|apps/kit-manager-web/|bim-review-coordinator/(src|public)/|docs/plans/.*prototype\.html)'
-    $hasFrontendPaths = [bool](@($changedPaths | Where-Object { $_ -match $frontendPattern } | Select-Object -First 1).Count)
+    . (Join-Path $repoRootPath 'scripts\lib\design-system-gate.ps1')
+    $designScope = Get-DesignSystemChangeScope `
+        -RepoRoot $repoRootPath `
+        -ChangedPaths @($changedPaths) `
+        -BaseSha $baseSha `
+        -HeadSha $headSha
+    if ($designScope.status -like '*_fail_closed') {
+        throw "Design scope failed closed: status=$($designScope.status); unknown=$($designScope.unknown_paths -join ', '); reference-authority=$($designScope.reference_authority_paths -join ', ')"
+    }
+    $hasFrontendPaths = [bool]$designScope.frontend_product
+    $hasDesignGatePaths = @($designScope.gate_infrastructure_paths).Count -gt 0
+    $hasKitManagerPaths = @($designScope.reference_missing_surface_ids) -contains 'kit-manager-web'
+    if (($hasFrontendPaths -or $hasDesignGatePaths) -and -not $SkipViewerVerify) {
+        Write-Host '[local-pr-preflight] validating pinned desigin-system manifest and golden screenshots'
+        Invoke-External -FilePath 'pwsh' -Arguments @(
+            '-NoProfile',
+            '-NonInteractive',
+            '-File',
+            (Join-Path $repoRootPath 'scripts\tests\verify-design-system-reference.ps1'),
+            '-RepoRoot',
+            $repoRootPath
+        ) -FailureMessage 'desigin-system reference gate failed.'
+    }
+    if ($hasFrontendPaths -and [bool]$designScope.visual_required -and -not $SkipViewerVerify) {
+        Write-Host "[local-pr-preflight] running current-checkout semantic/pixel gate for scope=$($designScope.status)"
+        Push-Location (Join-Path $repoRootPath 'web-viewer-sample')
+        try {
+            Invoke-External -FilePath 'npm' -Arguments @('run', 'test:visual:design-system') -FailureMessage 'design-system Playwright producer failed.'
+        } finally {
+            Pop-Location
+        }
+        Invoke-External -FilePath 'pwsh' -Arguments @(
+            '-NoProfile',
+            '-NonInteractive',
+            '-File',
+            (Join-Path $repoRootPath 'scripts\tests\verify-design-system-visual-result.ps1'),
+            '-RepoRoot',
+            $repoRootPath,
+            '-ResultPath',
+            (Join-Path $repoRootPath 'artifacts\e2e\design-system-visual-result.json'),
+            '-RequiredScreenIds',
+            @($designScope.required_screen_ids),
+            '-TargetCommit',
+            $headSha,
+            '-AllowUntrackedArtifacts'
+        ) -FailureMessage 'design-system visual result validation failed.'
+    }
     if ($hasFrontendPaths -and -not $SkipViewerVerify -and $SkipReviewAgent) {
         Write-Host '[local-pr-preflight] frontend paths detected; running web-viewer-sample npm run verify'
         Push-Location (Join-Path $repoRootPath 'web-viewer-sample')
@@ -129,8 +186,20 @@ try {
         } finally {
             Pop-Location
         }
+        if ($hasKitManagerPaths) {
+            Write-Host '[local-pr-preflight] Kit Manager frontend changed; running npm run build'
+            Push-Location (Join-Path $repoRootPath 'apps\kit-manager-web')
+            try {
+                Invoke-External -FilePath 'npm' -Arguments @('run', 'build') -FailureMessage 'kit-manager-web npm run build failed.'
+            } finally {
+                Pop-Location
+            }
+        }
     } elseif ($hasFrontendPaths -and -not $SkipReviewAgent) {
         Write-Host '[local-pr-preflight] frontend paths detected; viewer verify is covered by local PR review agent'
+        if (-not [bool]$designScope.visual_required) {
+            Write-Host "[local-pr-preflight] scope=$($designScope.status); no pixel result is fabricated and full completion remains forbidden"
+        }
     } elseif ($hasFrontendPaths) {
         Write-Host '[local-pr-preflight] frontend paths detected; viewer verify skipped by -SkipViewerVerify'
     } else {

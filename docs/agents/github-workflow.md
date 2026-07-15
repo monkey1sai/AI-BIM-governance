@@ -11,6 +11,7 @@ Lane F/B 不使用 Superpowers，也不自動 push、開 PR 或 merge。當使�
 | **Superpowers** | Lane S 的完整 spec-to-done；Lane G 可按需使用單一 planning/verification skill，但不是預設 |
 | **GitNexus** | Lane B/G/S 的 code impact 與 scope intelligence；F 不強制 |
 | **Browser E2E** | user-facing 變更的可見行為證據，可用 Playwright / gstack / supported browser engine |
+| **Design fidelity** | 以 tracked design manifest/baselines 驗 screen/state；Windows runner 的 Chromium DPR1 兩 viewport pixel≤1%＋semantic 100% |
 | **PR local preflight** | PR 前 affected-only machine gate，不是每次 local edit 的循環 |
 | **Matt Pocock skills** | optional issue / triage 輔助 |
 
@@ -18,7 +19,8 @@ Lane F/B 不使用 Superpowers，也不自動 push、開 PR 或 merge。當使�
 
 - ❌ 因任務「非平凡」就把 F/B 升級成完整 Superpowers lifecycle。
 - ❌ 用任何 planning/review skill 宣告 UI 完成而不跑 browser E2E。
-- ❌ 用 GitNexus 當產品設計依據（設計來自 spec / prototype，非 call graph）。
+- ❌ 用 browser E2E 取代 design diff，或用 design screenshot pass 取代真 API/runtime E2E。
+- ❌ 用 GitNexus 當產品設計依據（2D 設計來自 approved pinned design reference，行為來自 TARGET/contracts，非 call graph）。
 - ❌ 用 browser tool 改 backend symbol 而跳過 Lane G/S 的 GitNexus gate。
 
 ## 開分支前
@@ -37,13 +39,13 @@ Lane F/B 不使用 Superpowers，也不自動 push、開 PR 或 merge。當使�
   .\scripts\dev\check-pr-local-preflight.ps1 -PrNumber <pr-number>
   ```
 
-  此 wrapper 會抓目前 PR body，預設用本機 `origin/main...HEAD` changed paths 執行 `scripts/tests/check-pr-body-evidence.ps1`，接著在 repo-local `.tmp` 下跑 `scripts/pr-review-agent.ps1`（含 affected sub-repo verify，例如 viewer/coordinator/streaming/scripts）。若只是在診斷 GitHub 上既有 PR body gate，可暫用 `-ChangedPathsSource remote -SkipReviewAgent -SkipViewerVerify`；正式 push / CI watch 前不得跳過受影響的本機等效測試。
+  此 wrapper 會讀指定 PR 的 `baseRefOid/headRefOid`、要求 local `HEAD` 精確等於 PR head，再用該組 SHA 的 merge-base changed paths 執行 `scripts/tests/check-pr-body-evidence.ps1`，接著在 repo-local `.tmp` 下跑 `scripts/pr-review-agent.ps1`（含 affected sub-repo verify，例如 viewer/coordinator/streaming/scripts）。若只是在診斷 GitHub 上既有 PR body gate，可暫用 `-ChangedPathsSource remote -SkipReviewAgent -SkipViewerVerify`；正式 push / CI watch 前不得跳過受影響的本機等效測試。
 - **PR CI local-first policy**：PR 事件不得無差別重跑本機可重現的 heavy service checks。`.github/workflows/ci.yml` 先跑 `changed path classifier`，只有受影響的 service-level jobs（coordinator / viewer / governance-service / kit-manager / root contracts / compose / static / secret scan）才跑遠端確認；未受影響的 required job 以 job-level `if` skip，保留 check 名稱且避免 workflow-level path skip pending。`.github/workflows/pr-review-agent.yml` 在 GitHub 端只驗 PR body machine evidence，不安裝 sub-repo deps、不重跑 local review agent；本機 `check-pr-local-preflight.ps1` 才是 PR review agent 與 affected sub-repo verification 的權威 gate。
 - 每個 PR body 必填 `Change lane: F | B | G | S`、`Behavior contract changed: yes | no`、`Requirement source: issue | docs/plans | superpowers spec | existing contract | not applicable`。behavior=yes 或 Lane G/S 時不得填 not applicable；behavior=no 不得只因 changed path 缺 spec 而 blocker。新增或刪除 route/API/schema 等 contract signal，或 deploy/security/Kit runtime/cross-service 等 Governed trigger，不得自報 F/B 規避 Lane G。
-- User-facing change 的 PR 描述必須包含 Frontend Verification table；machine-required labels 以 `scripts/tests/check-pr-body-evidence.ps1` 為準。無 route/button/fixture/真實 backend/runtime ID/visible state/Playwright、gstack 或 supported browser evidence 時不得標為完整完成。
+- User-facing change 的 PR 描述必須包含 Frontend Verification table；machine-required labels 以 `scripts/tests/check-pr-body-evidence.ps1` 為準。除 route/button/fixture/真 backend/runtime ID/visible state/browser evidence 外，還必須填 `Design gate status`、`Design screen(s)`、`Reference-missing route(s) / surface(s)`、`Full completion claimed`、manifest 與 visual result/comparison/artifacts。scope 由 base/head manifest 聯集推導，PR 不得自選 screen；`mixed`／`partial_reference_missing` 一律 full=no。semantic/pixel只接受 CI `design-semantic-visual` output；該 check 未列入 branch protection前不具 merge authority。functional/runtime machine gate尚缺時同樣不得 full=yes，現況見 TRUTH。
 - Runtime / Docker / Kit / viewer / env / port 相關 PR 描述必須包含 Deploy Path Verification table；若未更新 `scripts/deploy.ps1`，必須明確說明已驗證或不適用。
 - 改動治理面檔案的 PR 描述必須包含 **AI Coding Governance** table，7 個必填 label：`Linked issue`、`Requirement source`、`CODEOWNERS / owner review`、`GitNexus evidence`、`Browser E2E evidence`、`Agent workflow changed?`、`Required checks expected`。machine labels 由 `check-pr-body-evidence.ps1` 逐字比對，值不得為占位。
-- `pr-review-agent` 的 PR body check 使用 `pull_request` event payload；單純 `gh run rerun` 會重放舊 payload，通常仍看不到剛改好的 body。PR body-only 修正流程固定為：先更新 PR body → 本機 `check-pr-local-preflight.ps1` 跑綠 → push 一個新 commit（必要時 `--allow-empty`）觸發新的 `pull_request.synchronize`。
+- `pr-review-agent` 的 PR body check 使用 `pull_request` event payload；單純 `gh run rerun` 會重放舊 payload，通常仍看不到剛改好的 body。workflow 已監聽 `pull_request.edited`，所以 PR body-only 修正流程是：先更新 PR body → 等待新的 `edited` run → 本機 `check-pr-local-preflight.ps1` 跑綠；不得只為刷新 payload 製造 `--allow-empty` commit。若同時有 code 變更，正常 push 會另以 `synchronize` 觸發。
 - 完成標準、frontend-operable rule 與誠實鐵律（無 backend 處 UI 標 `DEMO DATA` / `NOT BUILT` / `not observed`，不得只接 mock）見 `AGENTS.md` §0.1 與 `product-operability-and-script-contract.md`。
 
 ## `main` 衛生

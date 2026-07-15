@@ -134,8 +134,9 @@ README 只是入口，不是最高權威。遇到衝突時依下表往下查。
 | Repo 現況與 A1-A10 建成狀態 | [docs/plans/TRUTH.md](docs/plans/TRUTH.md) |
 | 產品契約、殼層與 viewer 目標 | [TARGET-contracts.md](docs/plans/TARGET-contracts.md)、[TARGET-shell.md](docs/plans/TARGET-shell.md)、[TARGET-viewer.md](docs/plans/TARGET-viewer.md) |
 | 缺口排序、OPEN 決策與 DoD | [BACKLOG.md](docs/plans/BACKLOG.md)、[PROCESS.md](docs/plans/PROCESS.md) |
-| 可點擊產品原型 | [docs/plans/ai-bim-governance-prototype.html](docs/plans/ai-bim-governance-prototype.html) |
-| 3D viewer 驗收示意原型 | [docs/plans/ai-bim-geo-viewer-prototype.html](docs/plans/ai-bim-geo-viewer-prototype.html) |
+| Production 2D design gate | 唯讀 authoring origin `C:\Repos\design\desigin-system`；CI 使用 [manifest](docs/plans/design-system-reference.manifest.json) 與 [golden baselines](docs/plans/design-system-baseline/) |
+| Legacy shell / IA companion | [docs/plans/ai-bim-governance-prototype.html](docs/plans/ai-bim-governance-prototype.html)（不作 2D pass/fail 權威） |
+| Legacy 3D runtime companion | [docs/plans/ai-bim-geo-viewer-prototype.html](docs/plans/ai-bim-geo-viewer-prototype.html)（真 3D 仍驗 Kit WebRTC/stage/DataChannel） |
 | API / event contracts | [docs/contracts/](docs/contracts/) |
 | Capability specs | [openspec/specs/](openspec/specs/) |
 | Runtime / E2E evidence | [docs/verification/](docs/verification/) 與 [docs/evidence/](docs/evidence/) |
@@ -150,7 +151,7 @@ Generated wiki / Graphify / GitNexus 內容只能當探索輔助。若目前 che
 
 - Lane F：最小修正 + targeted tests，不強制 plan、worktree 或 GitNexus impact。
 - Lane B：3–5 項 inline checklist + affected tests；改主要 code symbol 時跑一次 GitNexus impact。
-- Lane G：dedicated branch/worktree + 簡潔 plan + GitNexus impact / `detect_changes` + integration evidence；user-facing 變更另需 browser E2E。
+- Lane G：dedicated branch/worktree + 簡潔 plan + GitNexus impact / `detect_changes` + integration evidence；user-facing 變更另需獨立的 design-semantic-visual 與 functional/runtime browser evidence。
 - Lane S：只有使用者明確啟動 `spec-to-done` / 完整 Superpowers 時才使用，不得由任務複雜度自動升級。
 
 基本規則：
@@ -158,7 +159,7 @@ Generated wiki / Graphify / GitNexus 內容只能當探索輔助。若目前 che
 - 不在 `main` 上開發，從最新 `main` 切 feature / docs branch。
 - 不修改 secrets、private keys、真實 token 或既有 `.env` 機密值。
 - 不把大型 BIM artifact commit 進 repo：`*.ifc`、`*.usdc`、`*.usd`、`*.rvt`、`*.dwg` 預設不進 git。
-- User-facing capability 不可只用 backend/API 測試宣告完成；必須有前端 route、button、fixture、loading/success/failure/retry、runtime ID 與 browser evidence。
+- User-facing capability 不可只用 backend/API 測試宣告完成；必須有前端 route、button、fixture、loading/success/failure/retry、runtime ID 與 browser evidence，並填 `Design gate status`、machine-derived screens/missing scopes 與 `Full completion claimed`。`mixed`／`partial_reference_missing` 允許誠實局部工作但不能宣稱 99%；semantic result 只由 CI Playwright 產出。
 - 3D / Kit / WebRTC 完成聲明必須有真實 runtime evidence；沒有 first frame / stage truth / WebRTC evidence 時只能標 `not observed` 或 `blocked`。
 
 GitHub / PR 詳細規則：
