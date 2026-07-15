@@ -3,9 +3,12 @@
 // the receiving page must re-verify each ID against its authoritative endpoint (spec §4.2). Never carry a
 // lease token, auth header, or any secret in this payload.
 
-export type AxisKey = "a1" | "conv" | "sessions" | "instances" | "minio" | "intake" | "runtime";
+// "a3" 為 A3-G1（federation→session 一鍵鏈）新增的發射端身分：#federation 頁建立 review session 後
+// 以 source="a3" 發 #sessions chip；接收端（SessionManagementPage useIncomingHandoff("sessions")）向
+// runtime/status 重驗 session id。純加性——不進 SharedStatusRail 七軸列，也不改任何既有 selfAxis。
+export type AxisKey = "a1" | "conv" | "sessions" | "instances" | "minio" | "intake" | "runtime" | "a3";
 
-const AXIS_KEYS: readonly AxisKey[] = ["a1", "conv", "sessions", "instances", "minio", "intake", "runtime"];
+const AXIS_KEYS: readonly AxisKey[] = ["a1", "conv", "sessions", "instances", "minio", "intake", "runtime", "a3"];
 
 export interface CrossAxisHandoff {
   source: AxisKey;

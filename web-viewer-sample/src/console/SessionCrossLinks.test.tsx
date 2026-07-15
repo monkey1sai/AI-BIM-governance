@@ -54,7 +54,10 @@ describe("SS per-row cross-link chips", () => {
     expect(window.location.hash).toContain("session=review_session_a");
   });
 
-  it("A1 chip navigates to #a1?source=sessions with the row's session id", async () => {
+  // IA v2：#a1 已讓位給 unified workspace（fixture 語意）；A1 chip 發射端改指真 A1 工作台
+  // #a1-workbench（EdgeConsole renderBody case "a1-workbench"）。接收端 useIncomingHandoff("a1")
+  // 以 startsWith("#a1") 判定，#a1-workbench 仍命中（等價改寫，語意=落在真頁而非 fixture）。
+  it("A1 chip navigates to #a1-workbench?source=sessions with the row's session id", async () => {
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(status([mk({ session_id: "review_session_b" })]));
     const root = createRoot(container);
     await act(async () => { root.render(<SessionManagementPage />); });
@@ -63,7 +66,7 @@ describe("SS per-row cross-link chips", () => {
     const a1 = container.querySelector('[data-testid="session-link-a1-review_session_b"]') as HTMLButtonElement;
     expect(a1).not.toBeNull();
     await act(async () => { a1.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(window.location.hash).toContain("#a1?source=sessions");
+    expect(window.location.hash).toContain("#a1-workbench?source=sessions");
     expect(window.location.hash).toContain("session=review_session_b");
   });
 

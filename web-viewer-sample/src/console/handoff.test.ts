@@ -34,4 +34,15 @@ describe("cross-axis handoff util", () => {
     expect(isAxisKey("bogus")).toBe(false);
     expect(isAxisKey("sessions")).toBe(true);
   });
+
+  // A3-G1：federation→session 一鍵鏈的發射端身分 "a3" 為合法 source（#federation 建立 session 後
+  // 發 #sessions chip；SS 接收端向 runtime/status 重驗 session id）。
+  it("accepts 'a3' as a source axis and round-trips a #sessions chip", () => {
+    expect(isAxisKey("a3")).toBe(true);
+    const hash = buildHandoff("sessions", { source: "a3", session: "review_session_fed" });
+    expect(hash.startsWith("#sessions?")).toBe(true);
+    const parsed = parseHandoff(hash);
+    expect(parsed?.source).toBe("a3");
+    expect(parsed?.session).toBe("review_session_fed");
+  });
 });

@@ -646,7 +646,8 @@ describe("A1 3D review decoupling", () => {
     await flush();
     expect(q("a1-run-lineage")).not.toBeNull();
 
-    window.location.hash = `#a1?source=minio&minio_key=${encodeURIComponent(MINIO_KEY_B)}`;
+    // 抵達 hash 改用真實發射端形（md-detail-a1 現發 #a1-workbench）；接收端 startsWith("#a1") 兩形皆命中。
+    window.location.hash = `#a1-workbench?source=minio&minio_key=${encodeURIComponent(MINIO_KEY_B)}`;
     await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
     await flush();
 
@@ -707,7 +708,8 @@ describe("A1 3D review decoupling", () => {
     await pickModel();
     expect(q<HTMLButtonElement>("a1-step-run")!.disabled).toBe(false);
 
-    window.location.hash = `#a1?source=minio&minio_key=${encodeURIComponent("松風庵/root/main/u1/model.ifc")}`;
+    // 抵達 hash 改用真實發射端形（md-detail-a1 現發 #a1-workbench）；接收端 startsWith("#a1") 兩形皆命中。
+    window.location.hash = `#a1-workbench?source=minio&minio_key=${encodeURIComponent("松風庵/root/main/u1/model.ifc")}`;
     await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
     await flush();
 

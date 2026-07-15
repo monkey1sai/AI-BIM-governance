@@ -523,6 +523,51 @@ describe("coordinatorClient callback outbox summary / issue snapshot（F2⑩）"
     );
     expect(String(spy.mock.calls[0][0])).toContain(`/api/review-sessions/${encodeURIComponent("review/../x")}/issue-snapshot`);
   });
+
+  // ── A3-G1：createReviewSession（POST /api/review-sessions）wire 契約 ──
+  // 後端 createSessionSchema（app.ts）必填 project_id / model_version_id；artifact_bindings 是
+  // request 欄位、stage_composition 不是（coordinator 由 derived+ready+url 的 binding 推導）。
+  it("createReviewSession POST /api/review-sessions，body 原樣帶 project/model 與 artifact_bindings（federated primary）", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      calls.push({ url: String(url), init: init as RequestInit });
+      return new Response(JSON.stringify({
+        session_id: "review_session_fed", status: "active", project_id: "federation-demo", model_version_id: "federated_fs_1",
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const res = await coordinatorClient.createReviewSession({
+      project_id: "federation-demo",
+      model_version_id: "federated_fs_1",
+      review_request_id: "federated_fs_1",
+      artifact_bindings: [{
+        artifact_group_id: "ag_federated_fs_1",
+        artifact_id: "federated_fs_1_primary",
+        artifact_role: "derived",
+        url: "C:/x/federated_review.usda",
+        load_order: 0,
+        ready_status: "ready",
+      }],
+    });
+    expect(res.session_id).toBe("review_session_fed");
+    expect(calls[0].url).toContain("/api/review-sessions");
+    expect(calls[0].init?.method).toBe("POST");
+    const body = JSON.parse(String(calls[0].init?.body)) as Record<string, unknown>;
+    expect(body.project_id).toBe("federation-demo");
+    expect(body.model_version_id).toBe("federated_fs_1");
+    const bindings = body.artifact_bindings as Array<Record<string, unknown>>;
+    expect(bindings).toHaveLength(1);
+    expect(bindings[0]).toMatchObject({ artifact_role: "derived", ready_status: "ready", url: "C:/x/federated_review.usda" });
+    expect(body).not.toHaveProperty("stage_composition"); // 不是 request 欄位（schema 查證）
+  });
+
+  it("createReviewSession 409（No Kit capacity）throw 帶後端 detail（誠實失敗）", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "No Kit capacity available.", status: "queued_for_instance" }), { status: 409, statusText: "Conflict" }),
+    );
+    await expect(coordinatorClient.createReviewSession({ project_id: "p", model_version_id: "m" })).rejects.toThrow(
+      /No Kit capacity available/,
+    );
+  });
 });
 
 // ── TriggerConversionResponse 型別契約斷言（compile-time only；由 `npx tsc --noEmit` 守門，

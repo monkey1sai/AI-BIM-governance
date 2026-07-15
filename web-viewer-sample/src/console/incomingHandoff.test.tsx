@@ -85,6 +85,20 @@ describe("useIncomingHandoff re-verifies the carried id (spec §4.2)", () => {
     expect(b?.className ?? "").not.toContain("ec-warn-note"); // neutral, not a warning
     expect(b?.textContent ?? "").not.toContain("查無"); // must NOT claim the id was absent from authoritative data
   });
+  // IA v2 發射端遷移回歸鎖：md-detail-a1 / session-link-a1 現發 #a1-workbench（真 A1 工作台），
+  // 接收端 selfAxis 仍是 "a1"（useIncomingHandoff 以 hash.startsWith("#a1") 判定）——兩形皆須命中，
+  // 否則發射端遷移會把接收端重驗靜默斷鏈。
+  it("selfAxis 'a1' still matches an #a1-workbench arrival hash (IA v2 emitter migration guard)", () => {
+    function WbProbe() {
+      const inc = useIncomingHandoff("a1", () => true, "#a1-workbench?source=minio&minio_key=270/x.ifc");
+      return <IncomingHandoffBanner testId="probe-banner" handoff={inc.handoff} status={inc.status} />;
+    }
+    const root = createRoot(container);
+    act(() => { root.render(<WbProbe />); });
+    const b = container.querySelector('[data-testid="probe-banner"]');
+    expect(b?.getAttribute("data-handoff-status")).toBe("verified");
+    expect(b?.getAttribute("data-handoff-source")).toBe("minio");
+  });
 });
 
 // ---- page wiring: each receiving page re-verifies against data it already fetched ----

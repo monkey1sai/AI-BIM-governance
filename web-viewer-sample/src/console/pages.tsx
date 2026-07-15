@@ -5,7 +5,12 @@ import { t } from "./i18n";
 import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, SERVICES } from "./data";
 import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FederatedBuildResult, FileProjectRow, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
-import { coordinatorClient, IfcReadyListItem, KitInstanceState, RuntimeSessionSummary, RuntimeStatus } from "./coordinatorClient";
+import { coordinatorClient, CreateReviewSessionResponse, IfcReadyListItem, KitInstanceState, RuntimeSessionSummary, RuntimeStatus } from "./coordinatorClient";
+// A2 F2⑥ 三組批次 3D 疊加：console 端以 session mapping（MappingCache）解 usd_prim、經
+// ReviewSessionViewerPane（mode="a2-overlay"）的批次 handle 送單一 highlightPrimsRequest。
+import { MappingCache } from "./governance/mappingCache";
+import type { HighlightItem as ViewerHighlightItem, HighlightResultMessage } from "./EmbeddedViewer";
+import type { ReviewSessionViewerPaneBatchGate, ReviewSessionViewerPaneHandle } from "./ReviewSessionViewerPane";
 // [Task 9 MD 三頁合一] CV/M/IN 三頁移除後，conversionShared 其餘符號（CoverageDrawer/chip/role…）改由
 // modelData/ 內的 pane 消費；本檔僅剩 LifecycleStrip（A1GovernanceWorkbenchPage stepper 仍用）。
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
@@ -412,8 +417,10 @@ export function SessionManagementPage() {
                       caption={live ? t("在 Review Room 開此 session", "Open this session in Review Room") : t("session 已結束", "session ended")}
                       onClick={() => { window.location.hash = buildHandoff("review", { source: "sessions", session: s.session_id }); }}>Review →</Btn>
                     {" "}
+                    {/* IA v2：#a1 已讓位給 unified workspace（fixture 語意）；真 A1 工作台在 #a1-workbench，
+                        target 改指之（接收端 useIncomingHandoff("a1") 以 startsWith("#a1") 判定，兩形皆命中）。 */}
                     <Btn data-testid={`session-link-a1-${s.session_id}`} caption={t("回 A1 治理檢核", "Back to A1 governance")}
-                      onClick={() => { window.location.hash = buildHandoff("a1", { source: "sessions", session: s.session_id }); }}>A1 →</Btn>
+                      onClick={() => { window.location.hash = buildHandoff("a1-workbench", { source: "sessions", session: s.session_id }); }}>A1 →</Btn>
                   </td>
                 </tr>
               );
@@ -982,6 +989,27 @@ export function AppVisionPage({ slug, onOpen }: { slug: string; onOpen: (route: 
   );
 }
 
+// A2 F2⑥ 疊加送出摘要（console 端誠實計數；viewer 端計數另由批次 ack 帶回）。
+interface A2OverlaySendSummary {
+  groups: { added: number; removed: number; modified: number }; // 已裝進批次的各組筆數（console 端 mapped）
+  unmappedGuids: string[]; // console 端 session mapping 解不出 usd_prim 的 GUID（誠實列數，不虛報）
+  noGuidCount: number;     // diff 列缺 ifc_guid（無從對映）
+  fake: boolean;           // mapping 為 fake（拒用，嚴守 fake-vs-real 隔離）
+  sent: number;            // 實際送出的批次筆數（0 = 未送）
+  error?: string;          // mapping 載入失敗 / viewer gate 回拒理由
+}
+// diff change_type → 三組疊加分組（與上表 CHANGE_TONE 同一語意：moved/property/geometry 皆屬「修改」）。
+const A2_CHANGE_GROUP: Record<string, "added" | "removed" | "modified"> = {
+  added: "added",
+  removed: "removed",
+  moved: "modified",
+  property_changed: "modified",
+  geometry_changed: "modified",
+};
+// 分組 → 協定 severity（severityToColor：error=紅 / warning=橘 / 其他=藍）。顏色只寫進
+// highlightPrimsRequest payload；Kit 端現況 applied_mode="selection" 不讀 color（p15，見圖例）。
+const A2_GROUP_SEVERITY = { added: "added", removed: "error", modified: "warning" } as const;
+
 export function VersionDiffPage() {
   const [base, setBase] = useState("C:\\Repos\\active\\iot\\AI-BIM-governance\\storage\\許良宇圖書館建築_2026.ifc");
   const [target, setTarget] = useState("C:\\Repos\\active\\iot\\AI-BIM-governance\\storage\\許良宇圖書館建築_2026 - 轉檔測試2.ifc");
@@ -993,6 +1021,18 @@ export function VersionDiffPage() {
   const [overlay, setOverlay] = useState<DiffOverlayResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // ── A2 F2⑥：diff succeeded 後的 client 端 3D 疊加（inline viewer）──
+  // 不動後端 501 apply-overlay 端點、不假成功：mapping 由 elementMappingForSession 取得、
+  // 高亮經 viewer DataChannel 批次 highlightPrimsRequest（單一 request＝Kit 聯集選取）。
+  const [ovSessions, setOvSessions] = useState<RuntimeSessionSummary[]>([]);
+  const [ovSessionsErr, setOvSessionsErr] = useState<string | null>(null);
+  const [ovSession, setOvSession] = useState("");
+  const [ovGate, setOvGate] = useState<ReviewSessionViewerPaneBatchGate>({ canSend: false, reason: "" });
+  const [ovBusy, setOvBusy] = useState(false);
+  const [ovSend, setOvSend] = useState<A2OverlaySendSummary | null>(null);
+  const [ovAck, setOvAck] = useState<HighlightResultMessage | null>(null);
+  const ovPaneRef = useRef<ReviewSessionViewerPaneHandle>(null);
 
   // A2 檔案庫選擇器（複用 A1 IssuesRuleCenterPage 模式）：base / target 各一組
   // project→model→version 三層；選定填入對應路徑 input + 帶出 model_version_id。
@@ -1081,6 +1121,74 @@ export function VersionDiffPage() {
       setBusy(false);
     }
   }, [base, target, includeGeo, baseVerId, targetVerId]);
+
+  // A2 疊加 session 候選（比照 ReviewSessionViewerPane 播種模式：runtimeStatus().sessions，
+  // 只列可 attach 的 active/created）。只在「diff succeeded 且有 diff 構件」時抓——疊加區塊
+  // 也以同條件渲染，無差異構件時不擺無意義的 session 選擇器。
+  const diffSucceeded = diff?.status === "succeeded";
+  const hasDiffItems = items.length > 0;
+  useEffect(() => {
+    if (!diffSucceeded || !hasDiffItems) return;
+    let alive = true;
+    coordinatorClient.runtimeStatus()
+      .then((rt) => {
+        if (!alive) return;
+        setOvSessions(rt.sessions.items.filter((s) => s.status === "active" || s.status === "created"));
+        setOvSessionsErr(null);
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setOvSessions([]);
+        setOvSessionsErr(String(e));
+      });
+    return () => { alive = false; };
+  }, [diffSucceeded, hasDiffItems]);
+
+  // 套用疊加：diff 三組 GUID → session mapping 解 usd_prim（unmapped 誠實計數）→ 單一批次
+  // highlightPrimsRequest。fake mapping 一律拒用（不冒充真實對映）；全數未對映不送空批次。
+  const applyInlineOverlay = useCallback(async () => {
+    if (!ovSession || items.length === 0) return;
+    setOvBusy(true); setOvAck(null); setOvSend(null);
+    try {
+      const raw = await governanceClient.elementMappingForSession(ovSession);
+      const cache = MappingCache.fromDocument(raw as ElementMappingDocument, null);
+      if (cache.isFake) {
+        setOvSend({ groups: { added: 0, removed: 0, modified: 0 }, unmappedGuids: [], noGuidCount: 0, fake: true, sent: 0 });
+        return;
+      }
+      const seen = new Set<string>();
+      const sendItems: ViewerHighlightItem[] = [];
+      const groups = { added: 0, removed: 0, modified: 0 };
+      const unmappedGuids: string[] = [];
+      let noGuidCount = 0;
+      for (const it of items) {
+        if (!it.ifc_guid) { noGuidCount += 1; continue; }
+        if (seen.has(it.ifc_guid)) continue; // 同 GUID 多列（moved+property_changed）只送一次
+        seen.add(it.ifc_guid);
+        if (!cache.primPathForGuid(it.ifc_guid)) { unmappedGuids.push(it.ifc_guid); continue; }
+        const group = A2_CHANGE_GROUP[it.change_type] ?? "modified";
+        groups[group] += 1;
+        sendItems.push({ ifc_guid: it.ifc_guid, severity: A2_GROUP_SEVERITY[group], label: `${it.change_type}:${it.ifc_guid}` });
+      }
+      if (sendItems.length === 0) {
+        setOvSend({ groups, unmappedGuids, noGuidCount, fake: false, sent: 0 });
+        return; // 誠實：無可對映構件 → 不送、不虛報
+      }
+      const res = ovPaneRef.current?.sendHighlightBatch(sendItems);
+      if (!res || !res.sent) {
+        setOvSend({
+          groups: { added: 0, removed: 0, modified: 0 }, unmappedGuids, noGuidCount, fake: false, sent: 0,
+          error: res ? res.reason : t("viewer pane 未掛載", "viewer pane not mounted"),
+        });
+        return;
+      }
+      setOvSend({ groups, unmappedGuids, noGuidCount, fake: false, sent: sendItems.length });
+    } catch (e) {
+      setOvSend({ groups: { added: 0, removed: 0, modified: 0 }, unmappedGuids: [], noGuidCount: 0, fake: false, sent: 0, error: String(e) });
+    } finally {
+      setOvBusy(false);
+    }
+  }, [ovSession, items]);
 
   const counts = diff?.summary?.counts ?? {};
   return (
@@ -1186,19 +1294,21 @@ export function VersionDiffPage() {
         })()}
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
           <Btn caption={t("POST from-diff（綁 ifc_guid）", "POST from-diff (bound to ifc_guid)")} disabled={!diffId || items.length === 0} onClick={async () => { if (!diffId) return; try { await governanceClient.issuesFromDiff(diffId); } catch (e) { setErr(String(e)); } }}>{t("變更構件建 issue", "Create issue from changed elements")}</Btn>
-          {/* [套用 3D Overlay]：呼叫真實端點 POST …/apply-overlay。後端誠實回 501（p15）——
-              3D 著色走 client highlightPrimsRequest（需 viewer DataChannel），非後端 server-push。
-              此處顯示後端誠實訊息（含 501），SHALL NOT 假裝成功。
+          {/* [套用 3D Overlay（後端 p15）]：呼叫真實端點 POST …/apply-overlay。後端誠實回 501（p15）——
+              3D 著色的可用路徑是下方「3D 疊加（inline viewer）」區塊（client highlightPrimsRequest，
+              需 viewer DataChannel）。保留本鈕（改名標明後端 p15）而非移除的理由：它做真實動作
+              （探測端點並誠實顯示後端回應碼），且 e2e a2-version-diff-selector.spec.ts 以本鈕的
+              enable 態作為 status==="succeeded" 的唯一直接 UI gate。
               真實 gating：須 diff 真的成功（status==="succeeded"）才 enable；失敗 / 無結果保持 disabled，
               不做點了無意義的假按鈕。applyDiffOverlay 對 HTTP 錯誤回 {ok,status,detail}，但 coordinator
               不可達時 fetch 會 reject → 此處 catch 後設 err（誠實顯示無法連線），不靜默無反應。 */}
-          <Btn prov="p15" disabled={busy || diff?.status !== "succeeded"} caption={t("POST /api/governance/diffs/:id/apply-overlay（後端誠實回 501）", "POST /api/governance/diffs/:id/apply-overlay (backend honestly returns 501)")} onClick={async () => {
+          <Btn prov="p15" disabled={busy || diff?.status !== "succeeded"} caption={t("POST /api/governance/diffs/:id/apply-overlay（後端誠實回 501；可用路徑見下方 inline viewer 疊加）", "POST /api/governance/diffs/:id/apply-overlay (backend honestly returns 501; use the inline viewer overlay below)")} onClick={async () => {
             if (!diffId) return;
             setBusy(true); setErr(null);
             try { setOverlay(await governanceClient.applyDiffOverlay(diffId)); }
             catch (e) { setOverlay(null); setErr(`${t("無法套用 3D Overlay（無法連線 coordinator / 套用失敗）", "Cannot apply 3D Overlay (cannot reach coordinator / apply failed)")}：${String(e)}`); }
             finally { setBusy(false); }
-          }}>{t("套用 3D Overlay", "Apply 3D Overlay")}</Btn>
+          }}>{t("套用 3D Overlay（後端 p15）", "Apply 3D Overlay (backend p15)")}</Btn>
         </div>
         {overlay && (
           <p className={overlay.ok ? "ec-note" : "ec-warn-note"} style={{ marginTop: 8 }}>
@@ -1215,9 +1325,98 @@ export function VersionDiffPage() {
         )}
         {impact && <p className="ec-note">{impact.note}</p>}
       </Panel>
+      {/* A2 F2⑥：diff succeeded 後的 client 端 3D 疊加（inline viewer）。掛 ReviewSessionViewerPane
+          （mode="a2-overlay"，複用 A1/Review Room 同一 lease/first-frame/DataChannel/stage 證據鏈），
+          「套用疊加」把三組 diff 構件裝進單一 highlightPrimsRequest（Kit 聯集選取）。 */}
+      {diffSucceeded && hasDiffItems && (
+        <Panel
+          title={t("3D 疊加（inline viewer）", "3D overlay (inline viewer)")}
+          sub={t("client 端閉環：diff 構件 → element-mapping（for-session）解 usd_prim → viewer 橋單一批次 highlightPrimsRequest", "client-side loop: diff elements → element-mapping (for-session) → single batched highlightPrimsRequest over the viewer bridge")}
+          prov="asbuilt"
+        >
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+            <span className="ec-k">review session</span>
+            <select
+              data-testid="a2-overlay-session-select"
+              className="ec-btn"
+              value={ovSession}
+              onChange={(e) => { setOvSession(e.target.value); setOvAck(null); setOvSend(null); setOvGate({ canSend: false, reason: "" }); }}
+            >
+              <option value="">{t("— 選擇 active review session —", "— select an active review session —")}</option>
+              {ovSessions.map((s) => <option key={s.session_id} value={s.session_id}>{s.session_id}（{s.status}）</option>)}
+            </select>
+            {ovSessionsErr && <span className="ec-warn-note">{t("無法取得 runtime session 清單", "cannot fetch the runtime session list")}：{ovSessionsErr}</span>}
+            {!ovSessionsErr && ovSessions.length === 0 && (
+              <span className="ec-note">{t("runtime/status 目前無可 attach 的 active/created session（可先於 #minio 建立 3D session）", "runtime/status has no attachable active/created session (create a 3D session from #minio first)")}</span>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+            <Btn
+              primary
+              data-testid="a2-overlay-apply"
+              disabled={ovBusy || !ovSession || !ovGate.canSend}
+              caption={!ovSession
+                ? t("先選擇 active review session", "select an active review session first")
+                : !ovGate.canSend
+                  ? (ovGate.reason || t("等待 viewer pane 掛載（啟動 A2 3D Session）", "waiting for the viewer pane (start the A2 3D session)"))
+                  : t("elementMappingForSession 解 usd_prim → 單一批次 highlightPrimsRequest（Kit 聯集選取）", "elementMappingForSession → single batched highlightPrimsRequest (Kit union selection)")}
+              onClick={() => { void applyInlineOverlay(); }}
+            >
+              {ovBusy ? t("套用中…", "Applying…") : t("套用疊加", "Apply overlay")}
+            </Btn>
+            <span className="ec-note" data-testid="a2-overlay-ack">
+              {!ovSend
+                ? t("not_sent", "not_sent")
+                : ovSend.sent === 0
+                  ? (ovSend.error
+                    ? `${t("未送出", "not sent")}：${ovSend.error}`
+                    : ovSend.fake
+                      ? t("未送出：mapping 為 fake（拒用，不冒充真實對映）", "not sent: mapping is fake (rejected; never impersonates a real mapping)")
+                      : t("未送出：無可對映構件（全數 unmapped / 缺 GUID）", "not sent: no mappable elements (all unmapped / missing GUID)"))
+                  : ovAck
+                    ? (ovAck.ok
+                      ? `${t("viewer 回報已送 Kit", "viewer acked; sent to Kit")}：sent=${ovAck.sent_count ?? "?"}${typeof ovAck.unmapped_count === "number" ? ` / viewer-unmapped=${ovAck.unmapped_count}` : ""}`
+                      : `${t("viewer 回拒", "viewer rejected")}：${ovAck.reason ?? "unknown"}`)
+                    : t("pending viewer ack", "pending viewer ack")}
+            </span>
+          </div>
+          {ovSend && ovSend.sent > 0 && (
+            <div className="ec-grid" style={{ marginBottom: 8 }}>
+              <Metric value={ovSend.groups.added} label={t("新增（藍）已送", "added (blue) sent")} />
+              <Metric value={ovSend.groups.removed} label={t("移除（紅）已送", "removed (red) sent")} tone="bad" />
+              <Metric value={ovSend.groups.modified} label={t("修改（橘）已送", "modified (orange) sent")} tone="warn" />
+            </div>
+          )}
+          <p className="ec-note" data-testid="a2-overlay-unmapped">
+            {ovSend
+              ? `${t("unmapped（console 端 mapping 解不出 usd_prim）", "unmapped (console-side mapping)")}：${ovSend.unmappedGuids.length}`
+                + (ovSend.noGuidCount > 0 ? `｜${t("diff 列缺 ifc_guid", "diff rows without ifc_guid")}：${ovSend.noGuidCount}` : "")
+                + (ovAck && typeof ovAck.unmapped_count === "number" ? `｜${t("viewer 端 unmapped", "viewer-side unmapped")}：${ovAck.unmapped_count}` : "")
+              : t("尚未套用；unmapped 會在套用後誠實計數（不虛報）", "not applied yet; unmapped is counted honestly after apply (never inflated)")}
+          </p>
+          <p className="ec-note">
+            {t("圖例：新增=藍 / 移除=紅 / 修改=橘 —— 顏色已按組寫入協定 payload（severityToColor），但 Kit 端 highlight 現況為 USD selection（單色、不讀 per-item color）→ 色彩分組於 Kit 端呈現為 p15；「聯集同顯」（多構件一次選取）是單一批次 request 的真實行為。移除構件通常不存在於目前 session stage 的 mapping → 誠實計入 unmapped。", "Legend: added=blue / removed=red / modified=orange — colors are written per group into the protocol payload (severityToColor), but the current Kit highlight is USD selection (single style, ignores per-item color) → per-group coloring on the Kit side is p15; union display (all elements selected at once) is the real behavior of the single batched request. Removed elements usually do not exist in the current session stage's mapping → honestly counted as unmapped.")}
+            {" "}<ProvTag prov="p15" />
+          </p>
+          {ovSession && (
+            <ReviewSessionViewerPane
+              key={ovSession}
+              ref={ovPaneRef}
+              mode="a2-overlay"
+              handoff={{
+                source: "a2", sessionId: ovSession, ruleRunId: null, ifcGuid: null, usdPrimPath: null,
+                ruleCode: null, severity: null, label: null, expectedStageUrl: null,
+                mappingInformationStatus: null, mappingIssueCode: null, mappingIssueCount: null,
+              }}
+              onBatchGateChange={setOvGate}
+              onBatchAck={setOvAck}
+            />
+          )}
+        </Panel>
+      )}
       <Panel title={t("範圍與誠實標示", "Scope and honest labeling")} prov="asbuilt">
         <Field k="geometry_changed" v={t("opt-in 已實作（include_geometry：ifcopenshell.geom bbox/vertex/volume hash，較重）", "opt-in implemented (include_geometry: ifcopenshell.geom bbox/vertex/volume hash, heavier)")} prov="asbuilt" />
-        <Field k={t("3D overlay 顏色（綠/紅/橘/藍）", "3D overlay colors (green/red/orange/blue)")} v={t("apply-overlay 端點誠實回 501；著色走 client highlightPrimsRequest（需 viewer DataChannel），非 server-push", "the apply-overlay endpoint honestly returns 501; coloring uses client highlightPrimsRequest (requires a viewer DataChannel), not server-push")} prov="p15" />
+        <Field k={t("3D overlay 顏色（綠/紅/橘/藍）", "3D overlay colors (green/red/orange/blue)")} v={t("apply-overlay 端點誠實回 501；client 端閉環已落地於上方「3D 疊加（inline viewer）」（單一批次 highlightPrimsRequest 聯集選取，需 viewer DataChannel）；per-item 顏色寫入 payload 但 Kit 端 selection 呈現不讀 color（色彩分組 p15），非 server-push", "the apply-overlay endpoint honestly returns 501; the client-side loop lives in the 3D overlay (inline viewer) block above (single batched highlightPrimsRequest union selection over the viewer DataChannel); per-item colors are in the payload but Kit's selection rendering ignores color (per-group coloring is p15); no server-push")} prov="p15" />
         <Field k="Issue impact" v={t("已實作（possibly_addressed 啟發式 / still_open / new，連動 Issue DB）", "implemented (possibly_addressed heuristic / still_open / new, linked to the Issue DB)")} prov="asbuilt" />
       </Panel>
     </>
@@ -1237,12 +1436,23 @@ export function FederationPage() {
   const [err, setErr] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false); // 成員在 prepare 後被改動 → 已建 set 失效，須重新準備
 
+  // A3-G1：federation review-room descriptor → coordinator review session 一鍵鏈。
+  // createSessionSchema 必填 project_id / model_version_id（session metadata，descriptor 不帶）→
+  // 提供可編輯欄位；model_version_id 空白時以 federated_<set_id>（真實對應後端 set）為預設。
+  const [sessProject, setSessProject] = useState("federation-demo");
+  const [sessModelVersion, setSessModelVersion] = useState("");
+  const [sessBusy, setSessBusy] = useState(false);
+  const [sessErr, setSessErr] = useState<string | null>(null);
+  const [sessRes, setSessRes] = useState<CreateReviewSessionResponse | null>(null);
+  const [spectatorCopied, setSpectatorCopied] = useState(false);
+  const resetSessionChain = () => { setSessRes(null); setSessErr(null); setSpectatorCopied(false); };
+
   // prepare 會把每個 member 的 visibility_default / transform_json 烘進後端 set；之後任一欄位（含 visible）
   // 變動，build 仍會沿用烘進去的舊值 → UI 勾選與實際 build 結果分歧。誠實作法：作廢 set_id（Build 自動 disable）
   // 並標記 dirty，提示須重新「準備 + 驗證坐標系」，不捏造「改了就立即生效」的假象。
   const setMember = (i: number, k: string, v: string | number | boolean) => {
     setMembers((ms) => ms.map((m, j) => (j === i ? { ...m, [k]: v } : m)));
-    if (setId) { setSetId(null); setCoord(null); setBuild(null); setRoom(null); setDirty(true); }
+    if (setId) { setSetId(null); setCoord(null); setBuild(null); setRoom(null); setDirty(true); resetSessionChain(); }
   };
 
   const prepare = useCallback(async () => {
@@ -1282,6 +1492,7 @@ export function FederationPage() {
   const openRoom = useCallback(async () => {
     if (!setId) return;
     setBusy(true); setErr(null);
+    setSessRes(null); setSessErr(null); setSpectatorCopied(false); // 換 descriptor → 舊 session 結果不再對應
     try {
       setRoom(await governanceClient.reviewRoom(setId));
     } catch (e) {
@@ -1290,6 +1501,51 @@ export function FederationPage() {
       setBusy(false);
     }
   }, [setId]);
+
+  // A3-G1 建立 Review Session：把 review-room 的 stage_composition.primary.url 轉成一個
+  // derived+ready 的 artifact_binding（coordinator 由此推導 stream-config 的 stage_composition.primary；
+  // stage_composition 本身不是 POST /api/review-sessions 的 request 欄位——見 createSessionSchema／
+  // streamConfig.buildStreamConfig）。secondary_layers 由 governance 端恆回 []（federated_review.usda
+  // 已 sublayer 疊合所有 member），故單一 binding 即完整表達 federated stage。
+  const primaryUrl = room?.ready ? room.stage_composition?.primary?.url ?? "" : "";
+  const effectiveModelVersion = sessModelVersion.trim() || (setId ? `federated_${setId}` : "");
+  const createSessionDisabledReason = !setId || !build
+    ? t("先完成「準備 + 驗證坐標系」與 Build", "run Prepare + validate and Build first")
+    : !room
+      ? t("先 Open in Review Room 取得 stage_composition descriptor", "open the Review Room descriptor first")
+      : !room.ready || !primaryUrl
+        ? t("review-room descriptor 未 ready（缺 stage_composition.primary.url）", "review-room descriptor is not ready (missing stage_composition.primary.url)")
+        : !sessProject.trim()
+          ? t("缺 project_id（coordinator createSessionSchema 必填）", "project_id is required by the coordinator createSessionSchema")
+          : !effectiveModelVersion
+            ? t("缺 model_version_id（coordinator createSessionSchema 必填）", "model_version_id is required by the coordinator createSessionSchema")
+            : "";
+  const createFederatedSession = useCallback(async () => {
+    if (!setId || !primaryUrl || !sessProject.trim() || !effectiveModelVersion) return;
+    setSessBusy(true); setSessErr(null); setSessRes(null); setSpectatorCopied(false);
+    try {
+      const res = await coordinatorClient.createReviewSession({
+        project_id: sessProject.trim(),
+        model_version_id: effectiveModelVersion,
+        review_request_id: `federated_${setId}`,
+        artifact_bindings: [{
+          artifact_group_id: `ag_federated_${setId}`,
+          artifact_id: `federated_${setId}_primary`,
+          artifact_role: "derived",
+          url: primaryUrl,
+          display_name: room?.stage_composition?.primary?.name || `federated_${setId}`,
+          load_order: 0,
+          ready_status: "ready",
+        }],
+      });
+      setSessRes(res);
+    } catch (e) {
+      setSessErr(String(e)); // 400（schema）/ 409（No Kit capacity）detail 已由 client 萃取，誠實顯示
+    } finally {
+      setSessBusy(false);
+    }
+  }, [setId, primaryUrl, sessProject, effectiveModelVersion, room]);
+  const spectatorUrl = sessRes ? `${coordinatorClient.openInViewerUrl(sessRes.session_id)}&streamRole=spectator` : "";
 
   return (
     <>
@@ -1353,6 +1609,62 @@ export function FederationPage() {
             ) : (
               <p className="ec-warn-note">{room.note}</p>
             )}
+            {/* A3-G1：review-room descriptor → 一鍵建立 coordinator review session（federated stage）。
+                descriptor 未 ready 時按鈕誠實 disabled + 理由（不藏區塊、不留死按鈕）。 */}
+            <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid rgba(128,128,128,.25)" }}>
+                  <div className="ec-s" style={{ marginBottom: 6 }}>
+                    {t("建立 Review Session（federated stage）", "Create review session (federated stage)")}
+                    ｜{t("POST /api/review-sessions：必填 project_id / model_version_id；federated primary 以 artifact_binding（derived+ready+url）帶入，coordinator 據此推導 stream-config 的 stage_composition.primary", "POST /api/review-sessions: project_id / model_version_id required; the federated primary is carried as an artifact_binding (derived+ready+url), from which the coordinator derives stream-config stage_composition.primary")}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
+                    <span className="ec-k">project_id</span>
+                    <input className="ec-btn" style={{ width: 160 }} value={sessProject} onChange={(e) => { setSessProject(e.target.value); resetSessionChain(); }} />
+                    <span className="ec-k">model_version_id</span>
+                    <input className="ec-btn" style={{ width: 220 }} placeholder={setId ? `federated_${setId}` : t("（先 Build）", "(build first)")} value={sessModelVersion} onChange={(e) => { setSessModelVersion(e.target.value); resetSessionChain(); }} />
+                    <Btn
+                      primary
+                      data-testid="a3-create-session"
+                      disabled={busy || sessBusy || createSessionDisabledReason !== ""}
+                      caption={createSessionDisabledReason || t("POST /api/review-sessions（artifact_bindings 帶 federated primary；成功回 session JSON，409=無 Kit 容量誠實顯示）", "POST /api/review-sessions (artifact_bindings carry the federated primary; success returns the session JSON, 409 = no Kit capacity shown honestly)")}
+                      onClick={() => { void createFederatedSession(); }}
+                    >
+                      {sessBusy ? t("建立中…", "Creating…") : t("建立 Review Session", "Create review session")}
+                    </Btn>
+                  </div>
+                  <div data-testid="a3-session-result">
+                    {sessErr && <p className="ec-warn-note">{t("建立失敗（後端誠實回應）", "creation failed (honest backend response)")}：{sessErr}</p>}
+                    {sessRes && (
+                      <>
+                        <Field k="session_id" v={sessRes.session_id} prov="asbuilt" />
+                        <Field k="status" v={sessRes.status} prov="asbuilt" />
+                        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
+                          <a data-testid="a3-open-viewer" className="ec-btn" href={coordinatorClient.openInViewerUrl(sessRes.session_id)} target="_blank" rel="noreferrer">
+                            {t("開啟 viewer（/ui/open）", "Open viewer (/ui/open)")}
+                          </a>
+                          <Btn
+                            data-testid="a3-invite-spectator"
+                            caption={spectatorUrl}
+                            onClick={() => {
+                              try {
+                                void navigator.clipboard?.writeText(spectatorUrl)
+                                  .then(() => setSpectatorCopied(true))
+                                  .catch(() => setSpectatorCopied(false));
+                              } catch { setSpectatorCopied(false); }
+                            }}
+                          >
+                            {spectatorCopied ? t("已複製 ✓", "Copied ✓") : t("複製 Spectator 連結", "Copy spectator link")}
+                          </Btn>
+                          <Btn
+                            caption={t("到 Session 管理檢視（接收端會向 runtime/status 重驗）", "View in Session Management (receiver re-verifies against runtime/status)")}
+                            onClick={() => { window.location.hash = buildHandoff("sessions", { source: "a3", session: sessRes.session_id }); }}
+                          >SS →</Btn>
+                        </div>
+                        {/* clipboard 可能不可用（權限 / 非 secure context）→ URL 同步以文字顯示，永不變死按鈕。 */}
+                        <p className="ec-note" style={{ wordBreak: "break-all" }}>spectator：<code>{spectatorUrl}</code></p>
+                      </>
+                    )}
+                  </div>
+            </div>
           </div>
         )}
       </Panel>

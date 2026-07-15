@@ -211,9 +211,10 @@ describe("ObjectDetailPane：三源串接（spec §3.3）", () => {
     await act(async () => { reviewBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(window.location.hash.startsWith("#review?")).toBe(true);
     expect(window.location.hash).toContain("source=minio");
-    // A1 檢核 → target=a1、source=minio、帶 minio_key（= object.key）
+    // A1 檢核 → target=a1-workbench（IA v2：#a1 為 unified fixture workspace，真 A1 工作台在
+    // #a1-workbench）、source=minio、帶 minio_key（= object.key）
     await act(async () => { a1Btn!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(window.location.hash.startsWith("#a1?")).toBe(true);
+    expect(window.location.hash.startsWith("#a1-workbench?")).toBe(true);
     expect(window.location.hash).toContain("source=minio");
     expect(decodeURIComponent(window.location.hash)).toContain("minio_key=a/b/model.ifc");
   });
@@ -229,7 +230,7 @@ describe("ObjectDetailPane：三源串接（spec §3.3）", () => {
     const parsed = parseHandoff(window.location.hash);
     expect(parsed?.source).toBe("minio");
     expect(parsed?.minio_key).toBe(CN_KEY);                          // encode → hash → decode 精準往返（含中文）
-    expect(window.location.hash.startsWith("#a1?")).toBe(true);      // 目的地路由前綴（防 target 打錯字）
+    expect(window.location.hash.startsWith("#a1-workbench?")).toBe(true); // 目的地路由前綴（防 target 打錯字；IA v2 真 A1 工作台）
   });
 
   // 6) 顯示「顯示最新一次嘗試」註記文字（同檔多次轉檔，spec §3.3）

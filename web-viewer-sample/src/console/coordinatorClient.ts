@@ -390,6 +390,48 @@ export interface SessionCloseResponse {
   status: string;
 }
 
+// A3-G1（federation→session 一鍵鏈）：POST /api/review-sessions 的請求形狀，逐欄查證自
+// bim-review-coordinator/src/app.ts createSessionSchema（zod）——必填只有 project_id 與
+// model_version_id；tenant_id/created_by/mode/routing_policy 皆有後端 default。
+// ⚠ stage_composition「不是」request 欄位：coordinator 由 artifact_bindings（artifact_role="derived"
+// 且 ready_status="ready" 且有 url，按 load_order 排序取第一個）推導 stream-config 的
+// stage_composition.primary（streamConfig.ts buildStreamConfig）。要讓 federated stage 成為
+// primary，就帶一個 derived+ready+url 的 binding。binding 必填 artifact_group_id / artifact_id。
+export interface CreateReviewSessionBindingInput {
+  artifact_group_id: string;
+  artifact_id: string;
+  model_version_id?: string;
+  display_name?: string | null;
+  artifact_role?: "source" | "derived" | "overlay" | "mapping"; // 後端 default "derived"
+  url?: string | null;
+  mapping_url?: string | null;
+  load_order?: number; // 後端 default 0
+  ready_status?: "ready" | "missing_model" | "missing_mapping" | "blocked_conversion" | "converting" | "failed"; // 後端 default "ready"
+}
+export interface CreateReviewSessionRequest {
+  project_id: string;
+  model_version_id: string;
+  review_request_id?: string;
+  tenant_id?: string;
+  created_by?: string;
+  mode?: string;
+  routing_policy?: "same_instance" | "dedicated_instance" | "shared_state";
+  artifact_bindings?: CreateReviewSessionBindingInput[];
+  options?: { auto_allocate_kit?: boolean };
+}
+// 成功回傳 = 後端 ReviewSession（app.ts:1000 response.json(session)，HTTP 200——非 201）。
+// 只型別化消費端會用的欄位，其餘 passthrough。409（No Kit capacity）/ 400（zod）由 jsonPost
+// errorDetail 萃取後 throw，呼叫端誠實顯示。
+export interface CreateReviewSessionResponse {
+  session_id: string;
+  status: string;
+  project_id: string;
+  model_version_id: string;
+  artifact_bindings?: unknown[];
+  kit_instance_bindings?: unknown[];
+  [k: string]: unknown;
+}
+
 // F2⑩：GET /api/callback-outbox/summary 的 redacted entry 投影（app.ts:2693）。
 // 後端明確排除 payload 與 target_url（完整 entry 僅 internal token gate 後可見）——
 // 此型別 MUST NOT 加回這兩欄。status 鏡像後端 CallbackOutboxStatus
@@ -576,6 +618,11 @@ export const coordinatorClient = {
   // 不帶 final_events（operator 強制結束無協作終結事件，spec §4.2）。
   sessionClose: (sessionId: string, reason?: string) =>
     jsonPost<SessionCloseResponse>(`/api/review-sessions/${encodeURIComponent(sessionId)}/close`, { reason }),
+  // A3-G1：由 federation review-room descriptor 建 review session（POST /api/review-sessions）。
+  // 形狀見 CreateReviewSessionRequest 註；成功 HTTP 200 回 session JSON，失敗（409 無 Kit 容量 /
+  // 400 schema）由 jsonPost 萃取 detail 後 throw。
+  createReviewSession: (body: CreateReviewSessionRequest) =>
+    jsonPost<CreateReviewSessionResponse>("/api/review-sessions", body),
   claimViewerLease: (sessionId: string, body: {
     viewer_id: string;
     user_id: string;

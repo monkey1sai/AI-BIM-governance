@@ -221,6 +221,29 @@ describe("EmbeddedViewer postMessage 橋", () => {
     expect(targetOrigin).toBe(VIEWER_ORIGIN); // 非 "*"
   });
 
+  // A2 F2⑥ 批次疊加：sendHighlightBatch 走獨立 type=highlight_batch（viewer 端組單一
+  // highlightPrimsRequest 聯集選取），不與逐筆 type=highlight 混用；targetOrigin 同樣非 "*"。
+  it("sendHighlightBatch 經 ref handle 送 type=highlight_batch（單一 postMessage 帶全部 items，targetOrigin 非 \"*\"）", async () => {
+    const ref = createRef<EmbeddedViewerHandle>();
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<EmbeddedViewer ref={ref} sessionId="review_session_abc" viewerOrigin={VIEWER_ORIGIN} />);
+    });
+    const iframeWin = container.querySelector("iframe")!.contentWindow!;
+    const postSpy = vi.spyOn(iframeWin, "postMessage");
+    const items = [
+      { ifc_guid: "guid-add", severity: "added" },
+      { ifc_guid: "guid-del", severity: "error" },
+      { ifc_guid: "guid-mod", severity: "warning" },
+    ];
+    await act(async () => { ref.current!.sendHighlightBatch(items); });
+
+    expect(postSpy).toHaveBeenCalledTimes(1); // 單一 postMessage，非逐筆
+    const [payload, targetOrigin] = postSpy.mock.calls[0];
+    expect(payload).toEqual({ protocol: "vg01", type: "highlight_batch", items });
+    expect(targetOrigin).toBe(VIEWER_ORIGIN);
+  });
+
   it("sendFocus / sendClear 送出帶 viewerOrigin 的 targetOrigin（非 \"*\"）", async () => {
     const ref = createRef<EmbeddedViewerHandle>();
     root = createRoot(container);

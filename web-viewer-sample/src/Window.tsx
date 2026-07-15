@@ -40,7 +40,7 @@ import type { HighlightItem, StreamMessage } from "./types/streamMessages";
 // 統一治理控制台 MVP：A1–A10 治理 overlay 疊在 primary viewer live 3D 上（client 主動拉，不 server-push）。
 import { GovernanceOverlay, type RuleCheckState, type IssueCreateState, type StageArtifactBinding, type BindingApplyState } from "./console/GovernanceOverlay";
 import { deriveOverlayInputs } from "./console/governance/windowOverlayGlue";
-import { HighlightBridge, type FailedElement, type HighlightResult } from "./console/governance/highlightBridge";
+import { HighlightBridge, type FailedElement, type HighlightManyResult, type HighlightResult } from "./console/governance/highlightBridge";
 import { MappingCache } from "./console/governance/mappingCache";
 import { MockViewport } from "./console/viewer/MockViewport";
 import "./console/viewer/viewer.css";
@@ -726,6 +726,22 @@ export default class App extends React.Component<AppProps, AppState> {
         return res;
     }
 
+    // A2 F2⑥ 批次疊加：多構件裝進「一個」highlightPrimsRequest → Kit 端一次 set_selected_prim_paths
+    // 聯集選取（逐筆各發 replace request 會互相清除，見 highlightBridge.highlightMany 註）。
+    // 不掛 _pendingGovHighlights per-row 確認（W2 機制是 GovernanceOverlay 逐列確認用；批次 ack 為
+    // 送達層級，selected/missing 細節仍由 highlightPrimsResult 流入既有 handler 誠實記錄事件）。
+    private _overlayHighlightMany(failedList: FailedElement[]): HighlightManyResult {
+        if (!this._mappingCache) {
+            return { ok: false, reason: "unmapped" };
+        }
+        const bridge = new HighlightBridge({
+            cache: this._mappingCache,
+            sendMessage: (m) => this._sendStreamMessage(m),
+            dataChannelReady: () => this.state.showStream && this._hasRemoteVideoFrame(),
+        });
+        return bridge.highlightMany(failedList);
+    }
+
     // VG-01（M5）：parent origin 由 document.referrer parse（交叉驗），須在 VITE_ALLOWED_COORDINATOR_ORIGINS 白名單內。
     private _consoleParentOrigin(): string | null {
         try { return document.referrer ? new URL(document.referrer).origin : null; } catch { return null; }
@@ -798,6 +814,29 @@ export default class App extends React.Component<AppProps, AppState> {
                         ...(res.ok ? {} : { reason: res.reason }),
                     }, allowedOrigins); // Important #3：複用本 call stack 已建白名單，免迴圈內重 parse
                 }
+                break;
+            }
+            case "highlight_batch": {
+                if (!canOperate) return; // spectator / 未就緒靜默丟棄（與 highlight 同一守衛）
+                // 與 highlight 同一 payload 執行期守衛：items 非陣列丟棄；非法 item（缺字串 ifc_guid）跳過。
+                if (!Array.isArray(m.items)) return;
+                const validItems = m.items.filter(isHighlightItem);
+                if (validItems.length === 0) return;
+                // 批次 = 單一 highlightPrimsRequest（Kit 聯集選取）；回「一個」批次層級 highlight_result，
+                // 帶 sent_count / unmapped_count / unmapped_guids 誠實計數（console 端據以顯示，不虛報）。
+                const batchRes = this._overlayHighlightMany(validItems);
+                this._postToParent({
+                    type: "highlight_result",
+                    requestId: batchRes.ok ? batchRes.requestId : "",
+                    ok: batchRes.ok,
+                    ...(batchRes.ok
+                        ? {
+                            sent_count: batchRes.sent.length,
+                            unmapped_count: batchRes.unmapped.length,
+                            unmapped_guids: batchRes.unmapped,
+                        }
+                        : { reason: batchRes.reason }),
+                }, allowedOrigins);
                 break;
             }
             case "focus":
