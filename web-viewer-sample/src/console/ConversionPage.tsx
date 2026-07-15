@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { Btn, Panel } from "./components";
-import { coordinatorClient, type ConversionQualityMetricsResponse, type IfcReadyListItem } from "./coordinatorClient";
+import { coordinatorClient, type CallbackOutboxSummary, type ConversionQualityMetricsResponse, type IfcReadyListItem } from "./coordinatorClient";
 import { IncomingHandoffBanner, useIncomingHandoff } from "./incomingHandoff";
 import { IntentDialog } from "./IntentDialog";
 import { t } from "./i18n";
@@ -12,12 +12,33 @@ import { useSharedStatus } from "./useSharedStatus";
 
 type CoverageState = ConversionQualityMetricsResponse | { error: string } | "loading";
 
+// F2⑩ 觀測面：callback outbox 摘要三態（載入中 / 誠實失敗 / 成功快照）。
+type OutboxSummaryState = "loading" | { error: string } | CallbackOutboxSummary;
+
+// F2⑩ status 色碼（設計：pending=琥珀 / delivered=綠 / dead_letter=紅）→ 既有 ec-status-dot
+// data-status 三值（warn/ok/bad；edge-console.css:305-322）。未知 wire 值誠實不上色（灰底）。
+const OUTBOX_STATUS_TONE: Record<string, "ok" | "warn" | "bad"> = {
+  pending: "warn",
+  delivered: "ok",
+  dead_letter: "bad",
+};
+
 export function ConversionPage(): JSX.Element {
   const data = useConversionData();
   const shared = useSharedStatus();
   const actions = useConversionActions(data.load, data.loadRecords);
   const [openCoverageJob, setOpenCoverageJob] = useState<string | null>(null);
   const [coverage, setCoverage] = useState<Record<string, CoverageState>>({});
+  // F2⑩：mount 時抓一次 redacted outbox 摘要（GET /api/callback-outbox/summary?limit=50）。
+  // 失敗誠實顯「未取得」，不併入 5 秒輪詢（唯讀觀測面，避免加重既有輪詢負載）。
+  const [outbox, setOutbox] = useState<OutboxSummaryState>("loading");
+  useEffect(() => {
+    let alive = true;
+    coordinatorClient.getCallbackOutboxSummary(50)
+      .then((res) => { if (alive) setOutbox(res); })
+      .catch((e) => { if (alive) setOutbox({ error: String(e) }); });
+    return () => { alive = false; };
+  }, []);
 
   const refresh = useCallback(async () => {
     await Promise.all([data.load(), data.loadRecords(), data.loadHistory()]);
@@ -137,6 +158,48 @@ export function ConversionPage(): JSX.Element {
 
       <Panel title={t("轉檔歷史與產物", "Conversion history and artifacts")} sub="GET /api/dev/conversions · GET /api/dev/conversions/:jobId/result" prov="asbuilt">
         <ConversionHistoryPanel history={data.history} historyErr={data.historyErr} />
+      </Panel>
+
+      {/* F2⑩：Callback Outbox 摘要（純加性面板）。redacted 投影——後端明確排除 payload/target_url，
+          完整 entry 僅 internal token gate 後可達；此處只列遞送觀測欄位。 */}
+      <Panel
+        title={t("Callback Outbox 摘要", "Callback Outbox Summary")}
+        sub={t("GET /api/callback-outbox/summary · redacted（不含 payload/target_url）· mount 時抓取一次", "GET /api/callback-outbox/summary · redacted (no payload/target_url) · fetched once on mount")}
+        prov="asbuilt"
+      >
+        <div data-testid="conv-outbox-summary">
+          {outbox === "loading" ? (
+            <p className="ec-note">{t("載入 outbox 摘要…", "Loading outbox summary…")}</p>
+          ) : "error" in outbox ? (
+            <p className="ec-warn-note">{t("未取得（coordinator outbox API 不可達）：", "not available (coordinator outbox API unreachable): ")}{outbox.error}</p>
+          ) : outbox.entries.length === 0 ? (
+            <p className="ec-note">{t("目前沒有 outbox 紀錄（total=0）。", "No outbox entries yet (total=0).")}</p>
+          ) : (
+            <>
+              <p className="ec-note">{t("最新優先；顯示 ", "Newest first; showing ")}{outbox.entries.length} / {outbox.total}</p>
+              <div style={{ overflowX: "auto" }}>
+                <table className="ec-table">
+                  <thead><tr><th>outbox_id</th><th>event</th><th>status</th><th>attempts</th><th>last_error</th><th>delivered_at</th></tr></thead>
+                  <tbody>{outbox.entries.map((entry) => (
+                    <tr key={entry.outbox_id}>
+                      <td><code>{entry.outbox_id}</code></td>
+                      <td>{entry.event}</td>
+                      <td>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <span className="ec-status-dot" data-status={OUTBOX_STATUS_TONE[entry.status]} />
+                          {entry.status}
+                        </span>
+                      </td>
+                      <td>{entry.attempts}/{entry.max_attempts}</td>
+                      <td>{entry.last_error ?? "—"}</td>
+                      <td>{entry.delivered_at ?? "—"}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
       </Panel>
 
       <IntentDialog

@@ -117,6 +117,12 @@ export function A1GovernanceWorkbenchPage() {
   // F4：fetch 期間 disable 兩鈕（Excel 與 BCF 同等 loading 保護，防重送）。
   const [excelBusy, setExcelBusy] = useState(false);
   const [bcfBusy, setBcfBusy] = useState(false);
+  // F2⑩：issue/檢核統計 metadata-only 回拋雲端（POST /api/review-sessions/:sessionId/issue-snapshot）。
+  // 202 只代表已入列 coordinator callback outbox（顯 outbox_id）；遞送成敗到 #conv 頁 outbox 摘要觀察，
+  // 不在此偽造「已送達雲端」。
+  const [issueSnapshotBusy, setIssueSnapshotBusy] = useState(false);
+  const [issueSnapshotOutboxId, setIssueSnapshotOutboxId] = useState<string | null>(null);
+  const [issueSnapshotErr, setIssueSnapshotErr] = useState<string | null>(null);
   // Review session 是 A1 inline 3D viewer lease / mapping enrichment 的 target；
   // Review Room 仍可作為獨立 fallback route，但不再是 A1 的唯一 3D 入口。
   // A1 v2 的治理 rule-run 直接對已選 IFC 檔案執行；A1 mount 不得自動選第一個 session 或 claim viewer lease。
@@ -151,6 +157,12 @@ export function A1GovernanceWorkbenchPage() {
     issueGuardRef.current = { runId, modelVersionId: state.modelVersionId };
     issueGenRef.current += 1;
   }, [runId, state.modelVersionId, state.ifcPath]);
+  // F2⑩：run 或 session 變更即清掉上次回拋結果/錯誤——舊 run 的 outbox_id 對新 run 無意義，
+  // 殘留會誤導操作員以為新 run 已回拋（RESET 走 runId→null 同樣命中此 effect）。
+  useEffect(() => {
+    setIssueSnapshotOutboxId(null);
+    setIssueSnapshotErr(null);
+  }, [runId, selectedSession]);
 
   const clearReviewOpenState = useCallback(() => {
     setReviewOpen(null);
@@ -451,6 +463,38 @@ export function A1GovernanceWorkbenchPage() {
       setActionErr(`${t("Issue 狀態更新失敗：", "Issue transition failed: ")}${String(e)}`);
     }
   }, []);
+
+  // F2⑩ gating：rule-run 成功（step 進 scored/issued/delivered）且來源含 session 脈絡
+  //（for-session 模式 ifcPath=session://… 且已選 session）才可回拋。local_fs / for-ifc-ready
+  // 無 session → 誠實 disabled：coordinator route 以 review session 為錨（correlation_id=session_id），
+  // 無 session 無從綁定，不做假成功。
+  const issueSnapshotSessionId = state.ifcPath.startsWith("session://") ? selectedSession : "";
+  const issueSnapshotRunSucceeded = Boolean(runId) && ["scored", "issued", "delivered"].includes(state.step);
+  const canIssueSnapshot = issueSnapshotRunSucceeded && Boolean(issueSnapshotSessionId);
+  const issueSnapshotReason = !issueSnapshotRunSucceeded
+    ? t("需先成功完成 rule-run 檢核", "Run a successful rule-run first")
+    : t("需 review session 脈絡（F2⑩ 綁 session）", "Requires review session context (F2⑩ binds the session)");
+  const doIssueSnapshot = useCallback(async () => {
+    if (!runId || !issueSnapshotSessionId) return;
+    setIssueSnapshotBusy(true);
+    setIssueSnapshotErr(null);
+    setIssueSnapshotOutboxId(null);
+    try {
+      const res = await coordinatorClient.postIssueSnapshot(issueSnapshotSessionId, {
+        rule_run_id: runId,
+        ...(state.modelVersionId ? { model_version_id: state.modelVersionId } : {}),
+      });
+      setIssueSnapshotOutboxId(res.outbox_id);
+    } catch (e) {
+      // 502＝coordinator 查 governance 統計失敗、未入列（後端誠實不偽造統計）；其餘照實顯示。
+      const message = String(e);
+      setIssueSnapshotErr(message.includes("governance_unreachable")
+        ? `${t("governance 不可達，摘要未入列：", "governance unreachable; the snapshot was not enqueued: ")}${message}`
+        : `${t("回拋失敗：", "Snapshot failed: ")}${message}`);
+    } finally {
+      setIssueSnapshotBusy(false);
+    }
+  }, [runId, issueSnapshotSessionId, state.modelVersionId]);
 
   // A1（B2）下拉項 label：專案·種類·版本·檔名（缺值以「?」誠實標示，不臆造）。
   const minioLabel = (o: import("./coordinatorClient").MinioObject) =>
@@ -1065,6 +1109,26 @@ export function A1GovernanceWorkbenchPage() {
             </>
           );
         })()}{" "}
+        {/* F2⑩：回拋摘要至雲端（issue/檢核統計 metadata-only → coordinator callback outbox）。
+            證據型：202 只代表已入列 outbox（顯 outbox_id）；遞送成敗到 #conv 轉檔歷史頁的
+            Callback Outbox 摘要面板觀察，不在此偽造「已送達雲端」。 */}
+        <Btn
+          data-testid="a1-issue-snapshot"
+          prov="asbuilt"
+          disabled={!canIssueSnapshot || issueSnapshotBusy}
+          title={canIssueSnapshot ? undefined : issueSnapshotReason}
+          caption={canIssueSnapshot ? "POST /api/review-sessions/:sessionId/issue-snapshot" : issueSnapshotReason}
+          onClick={() => { void doIssueSnapshot(); }}
+        >
+          {issueSnapshotBusy ? t("回拋中…", "Sending snapshot…") : t("回拋摘要至雲端", "Send Summary Snapshot to Cloud")}
+        </Btn>{" "}
+        {issueSnapshotOutboxId && (
+          <span className="ec-note" data-testid="a1-issue-snapshot-result">
+            {t("已入列 outbox：", "Enqueued to outbox: ")}<code>{issueSnapshotOutboxId}</code>{" "}
+            <a href="#conv">{t("→ 到 IFC→USD 轉檔歷史頁看 outbox 遞送狀態", "→ see outbox delivery status on the IFC→USD conversion history page")}</a>
+          </span>
+        )}
+        {issueSnapshotErr && <span className="ec-warn-note" data-testid="a1-issue-snapshot-error">{issueSnapshotErr}</span>}{" "}
         {/* 七軸 cross-link chips（§4.3）：回看 MinIO 來源物件、跳 Session 管理檢視此 session。
             證據型——目標 id 不存在時誠實 disabled，不製造無效跳轉。 */}
         <span className="ec-crosslinks" data-testid="a1-crosslinks" style={{ display: "inline-flex", gap: 8, flexWrap: "wrap", marginLeft: 8 }}>

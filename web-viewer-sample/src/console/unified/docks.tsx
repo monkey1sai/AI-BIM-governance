@@ -33,6 +33,9 @@ export interface DockProps {
   L: Dict;
   ws: WsLocal;
   patch: (p: Partial<WsLocal>) => void;
+  /** WorkspacePage /health probe 成功（liveBackend）→ 標題列尾端渲染「完整工具 ↗」導流
+      chip；false/缺省（含離線/超時/例外）→ 完全不渲染新 DOM（像素零變化鐵則）。 */
+  live?: boolean;
 }
 
 /* ── 共用 style（逐字翻譯原型 template inline style）── */
@@ -40,6 +43,27 @@ const dockRoot: CSSProperties = { padding: 14, display: "flex", flexDirection: "
 const dockHead: CSSProperties = { display: "flex", alignItems: "center", gap: 8 };
 const dockTitle: CSSProperties = { fontSize: "13.5px", fontWeight: 700 };
 const liveChip: CSSProperties = { fontFamily: MONO, fontSize: 9, color: "#4fd68a", background: "rgba(49,197,109,.1)", border: "1px solid rgba(49,197,109,.25)", borderRadius: 4, padding: "1px 6px" };
+
+/* ── live 導流 chip（liveBackend=true 才渲染；設計殼 → legacy 真實功能頁）── */
+/** dock → legacy 真實工具 hash 對映（A1→a1-workbench、A2→version-diff、A3→federation、
+    A4→semantic-search、Issues→issues）。 */
+const LIVE_LINK_HREF: Record<DockKey, string> = {
+  a1: "#a1-workbench",
+  a2: "#version-diff",
+  a3: "#federation",
+  a4: "#semantic-search",
+  issues: "#issues",
+};
+/* 風格對齊殼層既有 cyan chip（WorkspacePage session 膠囊 #6fd6ee / rgba(65,199,232)）；
+   mono 10px + cyan 邊框，marginLeft:auto 靠標題列尾端。 */
+const liveLinkChip: CSSProperties = { marginLeft: "auto", fontFamily: MONO, fontSize: 10, color: "#6fd6ee", background: "rgba(65,199,232,.08)", border: "1px solid rgba(65,199,232,.25)", borderRadius: 4, padding: "1px 6px", textDecoration: "none", whiteSpace: "nowrap", cursor: "pointer" };
+
+/** liveBackend=true 時 dock 標題列尾端的「完整工具 ↗」連結（導流到 legacy 完整工具頁）。 */
+function DockLiveLink({ dock }: { dock: DockKey }) {
+  return (
+    <a className="hv-text" data-testid="dock-live-link" data-prov="live" href={LIVE_LINK_HREF[dock]} style={liveLinkChip}>完整工具 ↗</a>
+  );
+}
 
 /** [color, "rgba(r,g,b" 前綴] → sev/kind chip（原型 `${t[1]},.1)` / `${t[1]},.3)`） */
 function toneChip(t: readonly [string, string]): CSSProperties {
@@ -55,11 +79,11 @@ const accentGhostBtn: CSSProperties = { flex: 1, textAlign: "center", fontSize: 
 const plainGhostBtn: CSSProperties = { flex: 1, textAlign: "center", fontSize: "11.5px", color: "#8aa0b8", border: "1px solid rgba(120,160,210,.16)", borderRadius: 8, padding: 7, cursor: "pointer" };
 
 /* ═══ A1 治理檢核 ═══ */
-export function A1Dock({ zh, L, ws, patch }: DockProps) {
+export function A1Dock({ zh, L, ws, patch, live }: DockProps) {
   const u = useUnifiedState();
   return (
     <div data-prov="fixture" style={dockRoot}>
-      <div style={dockHead}><span style={dockTitle}>A1 {L.a1}</span><span style={liveChip}>LIVE</span></div>
+      <div style={dockHead}><span style={dockTitle}>A1 {L.a1}</span><span style={liveChip}>LIVE</span>{live === true ? <DockLiveLink dock="a1" /> : null}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <span style={label9}>{L.file}</span>
         <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#0a1220", border: "1px solid rgba(120,160,210,.14)", borderRadius: 8, padding: "8px 10px" }}>
@@ -125,12 +149,12 @@ export function A1Dock({ zh, L, ws, patch }: DockProps) {
 }
 
 /* ═══ A2 版本 Diff ═══ */
-export function A2Dock({ zh, L, ws, patch }: DockProps) {
+export function A2Dock({ zh, L, ws, patch, live }: DockProps) {
   const u = useUnifiedState();
   const verBox: CSSProperties = { flex: 1, background: "#0a1220", border: "1px solid rgba(120,160,210,.14)", borderRadius: 8, padding: "8px 10px", display: "flex", alignItems: "center", gap: 6 };
   return (
     <div data-prov="fixture" style={dockRoot}>
-      <div style={dockHead}><span style={dockTitle}>A2 {L.a2}</span><span style={liveChip}>LIVE</span></div>
+      <div style={dockHead}><span style={dockTitle}>A2 {L.a2}</span><span style={liveChip}>LIVE</span>{live === true ? <DockLiveLink dock="a2" /> : null}</div>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <div style={verBox}><span style={{ fontFamily: MONO, fontSize: 11 }}>v12</span><span style={{ fontSize: 10, color: "#5a7089" }}>2026-06-01</span><span style={{ marginLeft: "auto", color: "#5a7089", fontSize: 10 }}>▾</span></div>
         <span style={{ fontFamily: MONO, color: "#5a7089", fontSize: 11 }}>vs</span>
@@ -169,12 +193,12 @@ export function A2Dock({ zh, L, ws, patch }: DockProps) {
 }
 
 /* ═══ A3 Federation ═══ */
-export function A3Dock({ zh, L, ws, patch }: DockProps) {
+export function A3Dock({ zh, L, ws, patch, live }: DockProps) {
   const u = useUnifiedState();
   const checkChip: CSSProperties = { flex: 1, display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#4fd68a", background: "rgba(49,197,109,.08)", border: "1px solid rgba(49,197,109,.22)", borderRadius: 7, padding: "6px 9px" };
   return (
     <div data-prov="fixture" style={dockRoot}>
-      <div style={dockHead}><span style={dockTitle}>A3 Federation</span><span style={liveChip}>LIVE</span></div>
+      <div style={dockHead}><span style={dockTitle}>A3 Federation</span><span style={liveChip}>LIVE</span>{live === true ? <DockLiveLink dock="a3" /> : null}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <span style={label9}>SubLayer {L.order}</span>
         {fedMembers.map((m) => (
@@ -205,11 +229,11 @@ export function A3Dock({ zh, L, ws, patch }: DockProps) {
 }
 
 /* ═══ A4 語意查詢 ═══ */
-export function A4Dock({ zh, L, ws, patch }: DockProps) {
+export function A4Dock({ zh, L, ws, patch, live }: DockProps) {
   const u = useUnifiedState();
   return (
     <div data-prov="fixture" style={dockRoot}>
-      <div style={dockHead}><span style={dockTitle}>A4 {L.a4}</span><span style={liveChip}>LIVE</span></div>
+      <div style={dockHead}><span style={dockTitle}>A4 {L.a4}</span><span style={liveChip}>LIVE</span>{live === true ? <DockLiveLink dock="a4" /> : null}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <span style={label9}>{L.nlq}</span>
         <div style={{ background: "#0a1220", border: "1px solid rgba(65,199,232,.3)", borderRadius: 9, padding: "10px 12px", fontSize: 12, color: "#dbe6f3", lineHeight: 1.5 }}>找出 4F 所有防火門並標示未符合規範者<span style={{ display: "inline-block", width: 1, height: 13, background: "#41c7e8", marginLeft: 2, animation: "pulse 1.2s infinite", verticalAlign: "-2px" }} /></div>
@@ -243,12 +267,12 @@ export function A4Dock({ zh, L, ws, patch }: DockProps) {
 }
 
 /* ═══ Issues / BCF ═══ */
-export function IssuesDock({ L }: DockProps) {
+export function IssuesDock({ L, live }: DockProps) {
   const u = useUnifiedState();
   const stTone: Record<string, readonly [string, string]> = { open: ["#e8615c", "rgba(232,97,92"], "in-review": ["#e6b23e", "rgba(230,178,62"] };
   return (
     <div data-prov="fixture" style={dockRoot}>
-      <div style={dockHead}><span style={dockTitle}>Issues / BCF</span><span style={{ fontFamily: MONO, fontSize: 10, color: "#8aa0b8" }}>{u.issues.length + 10} open</span></div>
+      <div style={dockHead}><span style={dockTitle}>Issues / BCF</span><span style={{ fontFamily: MONO, fontSize: 10, color: "#8aa0b8" }}>{u.issues.length + 10} open</span>{live === true ? <DockLiveLink dock="issues" /> : null}</div>
       {u.issues.map((i: IssueItem) => {
         const t = stTone[i.st] ?? stTone.open;
         return (

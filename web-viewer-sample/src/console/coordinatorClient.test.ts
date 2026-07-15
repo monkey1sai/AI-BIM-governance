@@ -431,6 +431,100 @@ describe("coordinatorClient triggerConversion / getIfcReadyJob（PR#259，方向
   });
 });
 
+// F2⑩（880f20d）：callback outbox 摘要 + issue-snapshot 回拋 wire 契約。
+describe("coordinatorClient callback outbox summary / issue snapshot（F2⑩）", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("getCallbackOutboxSummary 打 GET /api/callback-outbox/summary?limit=50（預設 limit），回 {total,limit,entries}", async () => {
+    const entry = {
+      outbox_id: "outbox_1",
+      event: "issue_snapshot",
+      status: "pending",
+      attempts: 1,
+      max_attempts: 5,
+      last_error: null,
+      created_at: "2026-07-15T00:00:00.000Z",
+      delivered_at: null,
+      correlation_id: "review_session_x",
+      conversion_job_id: null,
+    };
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ total: 1, limit: 50, entries: [entry] }), {
+        status: 200, headers: { "content-type": "application/json" },
+      }),
+    );
+    const r = await coordinatorClient.getCallbackOutboxSummary();
+    expect(r.total).toBe(1);
+    expect(r.entries[0].outbox_id).toBe("outbox_1");
+    expect(r.entries[0].status).toBe("pending");
+    // redacted 投影契約：後端明確排除 payload / target_url，前端型別也不得撿回。
+    expect("payload" in r.entries[0]).toBe(false);
+    expect("target_url" in r.entries[0]).toBe(false);
+    const call = spy.mock.calls[0];
+    expect(String(call[0])).toContain("/api/callback-outbox/summary?limit=50");
+    expect((call[1] as RequestInit).method).toBeUndefined(); // GET 不帶 method（fetch 預設 GET）
+  });
+
+  it("getCallbackOutboxSummary 帶自訂 limit 時 URL 含 limit=N", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ total: 0, limit: 10, entries: [] }), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    await coordinatorClient.getCallbackOutboxSummary(10);
+    expect(String(vi.mocked(globalThis.fetch).mock.calls[0][0])).toContain("/api/callback-outbox/summary?limit=10");
+  });
+
+  it("getCallbackOutboxSummary 400（limit 非法）throw 帶後端 detail（jsonGet errorDetail）", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "limit must be an integer between 1 and 200." }), { status: 400, statusText: "Bad Request" }),
+    );
+    await expect(coordinatorClient.getCallbackOutboxSummary(0)).rejects.toThrow(/limit must be an integer/);
+  });
+
+  it("postIssueSnapshot 打 POST /api/review-sessions/:id/issue-snapshot 帶 rule_run_id/model_version_id，202 回 outbox_id", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ outbox_id: "outbox_snap_1" }), { status: 202, headers: { "content-type": "application/json" } }),
+    );
+    const r = await coordinatorClient.postIssueSnapshot("review_session_x", { rule_run_id: "rr_a1", model_version_id: "v1" });
+    expect(r.outbox_id).toBe("outbox_snap_1");
+    const call = spy.mock.calls[0];
+    expect(String(call[0])).toContain("/api/review-sessions/review_session_x/issue-snapshot");
+    expect((call[1] as RequestInit).method).toBe("POST");
+    expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({ rule_run_id: "rr_a1", model_version_id: "v1" });
+  });
+
+  it("postIssueSnapshot 省略 model_version_id 時 wire body 不含該欄（JSON.stringify 丟棄 undefined）", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ outbox_id: "outbox_snap_2" }), { status: 202, headers: { "content-type": "application/json" } }),
+    );
+    await coordinatorClient.postIssueSnapshot("review_session_x", { rule_run_id: "rr_a1" });
+    const body = JSON.parse(String((spy.mock.calls[0][1] as RequestInit).body));
+    expect(body).toEqual({ rule_run_id: "rr_a1" });
+    expect("model_version_id" in body).toBe(false);
+  });
+
+  it("postIssueSnapshot 502（governance_unreachable）throw 帶後端 body（誠實：不偽造入列成功）", async () => {
+    // 後端 502 body 是 { error: "governance_unreachable" }（無 detail 欄）→ errorDetail 退回原始 text。
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "governance_unreachable" }), { status: 502, statusText: "Bad Gateway" }),
+    );
+    await expect(coordinatorClient.postIssueSnapshot("review_session_x", { rule_run_id: "rr_a1" })).rejects.toThrow(
+      /governance_unreachable/,
+    );
+  });
+
+  it("postIssueSnapshot 404（session 不存在）throw 帶後端 detail，且 sessionId 會 encode", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "Review session not found." }), { status: 404, statusText: "Not Found" }),
+    );
+    await expect(coordinatorClient.postIssueSnapshot("review/../x", { rule_run_id: "rr_a1" })).rejects.toThrow(
+      /Review session not found/,
+    );
+    expect(String(spy.mock.calls[0][0])).toContain(`/api/review-sessions/${encodeURIComponent("review/../x")}/issue-snapshot`);
+  });
+});
+
 // ── TriggerConversionResponse 型別契約斷言（compile-time only；由 `npx tsc --noEmit` 守門，
 //    vitest 執行期為無副作用 no-op）。鎖住兩條契約避免日後被悄悄放寬（quality finding #1 / #2）──
 //   #1 ifc_ready_job_id 必為 string（非 optional）：B1 後端（PR #259）202 永遠帶此欄；optional 會逼

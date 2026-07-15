@@ -7,10 +7,15 @@
 // dock 初值：props（route #a1..#a4 → a1..a4）；hash query ?dock=issues 覆寫；
 // dock tab 點擊只切 local state、不改 hash。
 // viewport 背景：/design-assets/vp-<VP_BASE[dock]>.png（cover 置中）。
+// 例外（純加性導流）：mount 時唯讀 probe coordinatorClient.health()（GET /health，
+// 3s timeout、任何失敗靜默吞掉）。成功 → liveBackend=true → 右欄 dock 標題列尾端
+// 顯示「完整工具 ↗」導流 chip（docks.tsx DockLiveLink，data-prov="live"）；
+// 離線/超時/例外 → 完全不渲染新 DOM（design gate 離線預設像素零變化鐵則）。
 // ═══════════════════════════════════════════════════════════════════════
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { useLang } from "../i18n";
+import { coordinatorClient } from "../coordinatorClient";
 import { useUnifiedState } from "./UnifiedShell";
 import { A1Dock, A2Dock, A3Dock, A4Dock, IssuesDock } from "./docks";
 import type { WsLocal } from "./docks";
@@ -55,6 +60,28 @@ export function WorkspacePage({ initialDock }: WorkspacePageProps) {
     opened: {},
   }));
   const patch = useCallback((p: Partial<WsLocal>) => { setWs((w) => ({ ...w, ...p })); }, []);
+
+  /* live 導流 probe：GET /health（3s timeout）。成功才亮 liveBackend；離線/超時/例外
+     一律靜默吞掉，不渲染任何新 DOM（像素零變化鐵則）。 */
+  const [liveBackend, setLiveBackend] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const probe = coordinatorClient.health();
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => { reject(new Error("health probe timeout")); }, 3000);
+      });
+      void Promise.race([probe, timeout])
+        .then(() => { if (!cancelled) setLiveBackend(true); })
+        .catch(() => { /* 離線/超時/失敗：靜默（fixture 殼維持原樣） */ })
+        .finally(() => { if (timer !== undefined) clearTimeout(timer); });
+    } catch {
+      /* health() 同步例外亦靜默：probe 絕不可炸頁 */
+      if (timer !== undefined) clearTimeout(timer);
+    }
+    return () => { cancelled = true; };
+  }, []);
 
   /* legend：每 dock 文案 / 色（[text, "rgba(r,g,b" 前綴]） */
   const legends: Record<DockKey, readonly [string, string]> = {
@@ -124,11 +151,11 @@ export function WorkspacePage({ initialDock }: WorkspacePageProps) {
           <div style={{ position: "absolute", bottom: 10, right: 12, width: 44, height: 44, background: "rgba(10,16,24,.8)", border: "1px solid rgba(120,160,210,.2)", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: MONO, fontSize: 9, color: "#8aa0b8" }}>前│右</div>
         </div>
         <div style={{ borderLeft: "1px solid rgba(120,160,210,.10)", background: "#0c1219", display: "flex", flexDirection: "column", minHeight: 0, overflow: "auto" }}>
-          {ws.dock === "a1" ? <A1Dock zh={zh} L={L} ws={ws} patch={patch} /> : null}
-          {ws.dock === "a2" ? <A2Dock zh={zh} L={L} ws={ws} patch={patch} /> : null}
-          {ws.dock === "a3" ? <A3Dock zh={zh} L={L} ws={ws} patch={patch} /> : null}
-          {ws.dock === "a4" ? <A4Dock zh={zh} L={L} ws={ws} patch={patch} /> : null}
-          {ws.dock === "issues" ? <IssuesDock zh={zh} L={L} ws={ws} patch={patch} /> : null}
+          {ws.dock === "a1" ? <A1Dock zh={zh} L={L} ws={ws} patch={patch} live={liveBackend} /> : null}
+          {ws.dock === "a2" ? <A2Dock zh={zh} L={L} ws={ws} patch={patch} live={liveBackend} /> : null}
+          {ws.dock === "a3" ? <A3Dock zh={zh} L={L} ws={ws} patch={patch} live={liveBackend} /> : null}
+          {ws.dock === "a4" ? <A4Dock zh={zh} L={L} ws={ws} patch={patch} live={liveBackend} /> : null}
+          {ws.dock === "issues" ? <IssuesDock zh={zh} L={L} ws={ws} patch={patch} live={liveBackend} /> : null}
         </div>
       </div>
       {/* ---- DATACHANNEL 字條 ---- */}
