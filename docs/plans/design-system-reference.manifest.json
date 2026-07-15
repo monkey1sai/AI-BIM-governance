@@ -1,0 +1,694 @@
+{
+  "schema_version": 1,
+  "kind": "ai-bim-frontend-design-reference",
+  "status": "approved",
+  "authority": {
+    "authoring_origin": "C:\\Repos\\design\\desigin-system",
+    "origin_mode": "read_only",
+    "local_gate_mode": "verify_origin_then_capture",
+    "ci_gate_mode": "tracked_snapshot_only",
+    "rebaseline_policy": "explicit_confirmation_required",
+    "approved_at_utc": "2026-07-14T11:56:41.8961515Z"
+  },
+  "source": {
+    "entrypoint": "index.html",
+    "files": [
+      {
+        "path": ".gitignore",
+        "bytes": 43,
+        "sha256": "933c52618fd673c398f2ddbcfae18cf22d177e251ed5fb12b78225b37349a2ff"
+      },
+      {
+        "path": "AI-BIM 前後端設計文件.dc.html",
+        "bytes": 89472,
+        "sha256": "96ebc4e99cc18bdaaa8a913f4f28b001048ba5ef7adbef839d01347c5af629ea"
+      },
+      {
+        "path": "AI-BIM Console Hi-Fi.dc.html",
+        "bytes": 87937,
+        "sha256": "1b88443f1a52442fc283b83127269228539ce740660a5ee6335b55c3e18bc727"
+      },
+      {
+        "path": "app.js",
+        "bytes": 75654,
+        "sha256": "b2022fcac804bef301152bb5803399b60c8126d1ae5109f4883515fea6d1c2f4"
+      },
+      {
+        "path": "assets/vp-federation.png",
+        "bytes": 829633,
+        "sha256": "cda95021616cf44cb7bf7a85b474c45aaa80b0b85ab329dd881c7afbbc79e5d4"
+      },
+      {
+        "path": "assets/vp-federation.svg",
+        "bytes": 4014,
+        "sha256": "798cca9b209664ca3b7ac8686b27e4e50f4fb348522633afd34a3a945248dcef"
+      },
+      {
+        "path": "assets/vp-scan.png",
+        "bytes": 739800,
+        "sha256": "5644ac8afb1547714ad7fa0aefcb53e90b30e22d208cd9b882612e23694a70e1"
+      },
+      {
+        "path": "assets/vp-scan.svg",
+        "bytes": 4477,
+        "sha256": "045af57bddcf26afb042a96ceacb1ca10a664a38a16a725a6e47f90f8b854952"
+      },
+      {
+        "path": "assets/vp-semantic.png",
+        "bytes": 425563,
+        "sha256": "1847c224817fc5eac400673305ed0b6e4fd5f655e1629991bcd9686c1cfa5258"
+      },
+      {
+        "path": "assets/vp-semantic.svg",
+        "bytes": 3937,
+        "sha256": "5557b5e1824363b6ee316ba238863a09edb551659f3e94a038d5047bc9aaf3f9"
+      },
+      {
+        "path": "assets/vp-tower.png",
+        "bytes": 470582,
+        "sha256": "1a674d5fcb757129359c3a77867be3a646708f589bf7e540095b2bd8e35ced2f"
+      },
+      {
+        "path": "assets/vp-tower.svg",
+        "bytes": 3389,
+        "sha256": "21f368aa5f82277e0aa569deffcce1784293f0d796a92fe2f222ffce07abcc7b"
+      },
+      {
+        "path": "design-doc.html",
+        "bytes": 89794,
+        "sha256": "fec28f96e5d17258db61622e62ba89132d4c8273fdf0cd07d571a1a379b62d88"
+      },
+      {
+        "path": "index.html",
+        "bytes": 598,
+        "sha256": "b332746e148d686da832469e9c5b9699cb7d75d46ee9bdae89f4faf9c3d95fee"
+      },
+      {
+        "path": "README.md",
+        "bytes": 3496,
+        "sha256": "5d0b421216f353b62601605e58ae9c5b69ea4a6291dd01ea41b378e2d3c5ea2d"
+      },
+      {
+        "path": "styles.css",
+        "bytes": 1994,
+        "sha256": "c285237dd67f7ae7ce6993a1dd6e10fe70da39ce6ecc30159a76fdfb1bb6a2c4"
+      },
+      {
+        "path": "support.js",
+        "bytes": 64222,
+        "sha256": "ae4f0ac8449655e17cca1e3b179effcb6817a3b0d8dc47f112a9c39c25c39fd7"
+      },
+      {
+        "path": "uploads/ai-bim-geo-viewer-A10.png",
+        "bytes": 1812694,
+        "sha256": "5c90d4aa4443bc4bee36935a8e8691e1af6c9d441eb83964e2de8ed7bd6c9515"
+      },
+      {
+        "path": "uploads/ai-bim-geo-viewer-A5.png",
+        "bytes": 1804143,
+        "sha256": "f94bfbd1310fac32f61631e40fd0b3f2391dcf186a937d846342b468c7571d06"
+      },
+      {
+        "path": "uploads/ai-bim-geo-viewer-A6.png",
+        "bytes": 1740536,
+        "sha256": "b04a4f684ee6b8ef5710ce0b4a8b10b53188b63e86b5213e7d30d15af361c44f"
+      },
+      {
+        "path": "uploads/ai-bim-geo-viewer-A7.png",
+        "bytes": 1892651,
+        "sha256": "262de23f635b99e1ab970b60434eefeb39caa6fe470ea875863ff7ef5ef7529b"
+      },
+      {
+        "path": "uploads/ai-bim-geo-viewer-A8.png",
+        "bytes": 1818614,
+        "sha256": "2a8ee6b615f6aded3b0f9e8ad09be3bd80add2deefea555a522c21c607e60e6c"
+      },
+      {
+        "path": "uploads/ai-bim-geo-viewer-A9.png",
+        "bytes": 1967855,
+        "sha256": "8dd3f4f5e31845b8d94fcf4c14ee3932c9bde39887d17c760c749bb4e13f547e"
+      }
+    ],
+    "snapshot_sha256": "0f50f6ad2ad720cce9ede255a677d4d8d53b8774b3ab2aa23a339c76ebffe7c2",
+    "captured_at_utc": "2026-07-14T15:31:29.089Z"
+  },
+  "fidelity_contract": {
+    "browser": "chromium",
+    "platform": "windows",
+    "ci_runner_label": "windows-2025",
+    "runner_image_fingerprint_status": "label_only",
+    "font_fingerprint_status": "fonts_ready_only",
+    "dependency_tree_status": "unlocked_npm_install",
+    "playwright_version": "1.61.1",
+    "chromium_revision": "1228",
+    "chromium_version": "149.0.7827.55",
+    "device_scale_factor": 1,
+    "locale": "zh-TW",
+    "timezone": "Asia/Taipei",
+    "color_scheme": "dark",
+    "fonts_ready_required": true,
+    "animations_disabled": true,
+    "viewports": [
+      {
+        "id": "1440x900",
+        "width": 1440,
+        "height": 900
+      },
+      {
+        "id": "1920x1080",
+        "width": 1920,
+        "height": 1080
+      }
+    ],
+    "pixelmatch_color_threshold": 0.1,
+    "include_antialiasing": false,
+    "max_diff_pixel_ratio": 0.01,
+    "semantic_parity_required": 1,
+    "dynamic_mask_policy": "only_manifest_declared_regions",
+    "live_surface_policy": "capture_fails_if_present",
+    "live_surface_selectors": [
+      "video",
+      "iframe[src*='/ui/open']"
+    ],
+    "accessibility_and_security_may_not_be_removed_for_pixel_parity": true
+  },
+  "token_projection": {
+    "order": [
+      "primitive",
+      "semantic",
+      "component"
+    ],
+    "upstream_authority": "source/app.js + source/styles.css",
+    "production_projection": "web-viewer-sample/src/console/edge-console.css",
+    "production_tokens_are_not_upstream_authority": true
+  },
+  "change_scope_contract": {
+    "policy": "manifest_driven_and_refactorable",
+    "approved_product_path_patterns": [
+      "^web-viewer-sample/"
+    ],
+    "reference_missing_product_path_patterns": [
+      "^apps/kit-manager-web/",
+      "^bim-review-coordinator/(?:(?:src/)?(?:public|ui|client|web|frontend)(?:/|$)|.*\\.(?:html|css|scss|sass|less|tsx|jsx|vue|svelte)$)"
+    ],
+    "frontend_candidate_path_patterns": [
+      "^web-viewer-sample/",
+      "^apps/kit-manager-web/",
+      "^bim-review-coordinator/(?:(?:src/)?(?:public|ui|client|web|frontend)(?:/|$)|.*\\.(?:html|css|scss|sass|less|tsx|jsx|vue|svelte)$)",
+      "^(?:apps|packages)/[^/]+/",
+      "^(?:[^/]+/)*(?:(?:frontend|ui|web|client|console|shell|public)(?:[-_.][^/]*)?|[^/]*[-_.](?:frontend|ui|web|client|console|shell|public)(?:[-_.][^/]*)?)/"
+    ],
+    "non_product_path_patterns": [
+      "^web-viewer-sample/(?:\\.gitignore$|AGENTS\\.md$|README\\.md$|LICENSE(?:\\.[^/]+)?$)",
+      "^web-viewer-sample/(?:e2e/(?!design-system-)|scripts/(?!capture-design-system-reference\\.mjs$|verify-design-system-pixels\\.mjs$|test-fixtures/)|playwright\\.(?!design-system\\.config\\.ts$))",
+      "^apps/kit-manager-web/(?:\\.gitignore$|AGENTS\\.md$|README\\.md$|LICENSE(?:\\.[^/]+)?$|e2e/|scripts/)",
+      "^(?:docs|openspec|artifacts|tests|scripts|README-assets|\\.github|\\.claude|\\.codex)/",
+      "^bim-streaming-server/(?:readme-assets/|templates/extensions/python_ui/)"
+    ],
+    "approved_product_surfaces": [
+      {
+        "id": "edge-console",
+        "path_pattern": "^web-viewer-sample/",
+        "screen_policy": "all_manifest_screens",
+        "also_affects_reference_missing_routes": true
+      }
+    ],
+    "reference_missing_product_surfaces": [
+      {
+        "id": "kit-manager-web",
+        "path_pattern": "^apps/kit-manager-web/",
+        "reference": "surface:kit-manager-web"
+      },
+      {
+        "id": "coordinator-dev-console",
+        "path_pattern": "^bim-review-coordinator/(?:(?:src/)?(?:public|ui|client|web|frontend)(?:/|$)|.*\\.(?:html|css|scss|sass|less|tsx|jsx|vue|svelte)$)",
+        "reference": "surface:coordinator-dev-console"
+      }
+    ],
+    "gate_infrastructure_path_patterns": [
+      "^docs/plans/design-system-",
+      "^web-viewer-sample/(?:e2e/design-system-|playwright\\.design-system\\.config\\.ts$|scripts/(?:capture|verify)-design-system-|scripts/test-fixtures/)",
+      "^scripts/(?:hooks/require-gstack-evidence|lib/design-system-gate|tests/(?:verify|test)-design-system-[^/]+|tests/check-pr-body-evidence)\\.ps1$",
+      "^\\.github/workflows/(?:agent-governance|ci|pr-review-agent)\\.yml$"
+    ],
+    "reference_authority_path_patterns": [
+      "^docs/plans/design-system-reference\\.manifest\\.json$",
+      "^docs/plans/design-system-baseline/"
+    ],
+    "bootstrap_gate_infrastructure_json_rules": [
+      {
+        "path": "web-viewer-sample/package.json",
+        "only_when_base_manifest_absent": true,
+        "sections": [
+          {
+            "name": "scripts",
+            "entries": {
+              "test:visual:design-system": "playwright test --config=playwright.design-system.config.ts"
+            }
+          },
+          {
+            "name": "devDependencies",
+            "entries": {
+              "@playwright/test": "1.61.1",
+              "@types/pngjs": "6.0.5",
+              "pixelmatch": "7.1.0",
+              "pngjs": "7.0.0"
+            }
+          }
+        ]
+      }
+    ],
+    "approved_product_screen_policy": "all_manifest_screens",
+    "unknown_product_path_policy": "fail_closed_until_manifest_update"
+  },
+  "required_semantic_states": [
+    "navigation",
+    "primary_actions",
+    "loading",
+    "empty",
+    "success",
+    "warning",
+    "failure",
+    "disabled",
+    "confirmation",
+    "i18n_zh_tw",
+    "runtime_truth"
+  ],
+  "semantic_contract": {
+    "schema_version": 2,
+    "status": "state_variants_reference_missing",
+    "authority": "branch_protected_playwright_output_only",
+    "enforcement_status": "required_check_not_configured",
+    "external_result_input_allowed": false,
+    "required_case_ids": [
+      "navigation",
+      "primary_actions",
+      "loading",
+      "empty",
+      "success",
+      "warning",
+      "failure",
+      "disabled",
+      "confirmation",
+      "i18n_zh_tw",
+      "runtime_truth"
+    ],
+    "implemented_case_ids": [],
+    "producer": "web-viewer-sample/e2e/design-system-semantic-cases.ts",
+    "result_role": "ci_output_not_gate_input"
+  },
+  "functional_runtime_contract": {
+    "schema_version": 1,
+    "status": "machine_gate_missing",
+    "authority": "branch_protected_machine_output_required",
+    "enforcement_status": "required_check_not_configured",
+    "external_result_input_allowed": false
+  },
+  "screens": [
+    {
+      "id": "console.home.default",
+      "production_routes": [
+        "#home"
+      ],
+      "reference_action": {
+        "type": "initial"
+      },
+      "baselines": {
+        "1440x900": {
+          "path": "docs/plans/design-system-baseline/console.home.default/1440x900.png",
+          "sha256": "3e02c01be08c5f4ec445c59c71ea2238e8aa3942579df460ef80f1c314e39c07"
+        },
+        "1920x1080": {
+          "path": "docs/plans/design-system-baseline/console.home.default/1920x1080.png",
+          "sha256": "bf76abd1742afea145eb16854bc268c82023afe52b1661206b29a32c746efa8c"
+        }
+      }
+    },
+    {
+      "id": "workspace.a1.default",
+      "production_routes": [
+        "#a1"
+      ],
+      "reference_action": {
+        "type": "click_exact_text",
+        "value": "A1"
+      },
+      "baselines": {
+        "1440x900": {
+          "path": "docs/plans/design-system-baseline/workspace.a1.default/1440x900.png",
+          "sha256": "66a68e493ba47868051c7f3d713ea566ea6c21fdc62869fa2bbc7d2278d8acc4"
+        },
+        "1920x1080": {
+          "path": "docs/plans/design-system-baseline/workspace.a1.default/1920x1080.png",
+          "sha256": "dfe5830f9ca06ffc430b5445e87cd87393a3dd9dc0c6d146457fbc96f5c6ecc6"
+        }
+      }
+    },
+    {
+      "id": "workspace.a2.default",
+      "production_routes": [
+        "#a2"
+      ],
+      "reference_action": {
+        "type": "click_exact_text",
+        "value": "A2"
+      },
+      "baselines": {
+        "1440x900": {
+          "path": "docs/plans/design-system-baseline/workspace.a2.default/1440x900.png",
+          "sha256": "ed3862395f73e59b8a282d1dc634ad9b7656dd4edb8ea00838be130962cf6999"
+        },
+        "1920x1080": {
+          "path": "docs/plans/design-system-baseline/workspace.a2.default/1920x1080.png",
+          "sha256": "e8af88ba845c218739027a0f6fc4fce4a1dce3f8bfc0a6be315fa589c0b40813"
+        }
+      }
+    },
+    {
+      "id": "workspace.a3.default",
+      "production_routes": [
+        "#a3"
+      ],
+      "reference_action": {
+        "type": "click_exact_text",
+        "value": "A3"
+      },
+      "baselines": {
+        "1440x900": {
+          "path": "docs/plans/design-system-baseline/workspace.a3.default/1440x900.png",
+          "sha256": "fc054c8b2f7c343abf4adab7ff5ca2b2319884761536517034b3cf0fd27e711a"
+        },
+        "1920x1080": {
+          "path": "docs/plans/design-system-baseline/workspace.a3.default/1920x1080.png",
+          "sha256": "fc1a640fb5d7b1a1e201a6d3170b80658e11c492b5e0887c20741b0c3ffcbba3"
+        }
+      }
+    },
+    {
+      "id": "workspace.a4.default",
+      "production_routes": [
+        "#a4"
+      ],
+      "reference_action": {
+        "type": "click_exact_text",
+        "value": "A4"
+      },
+      "baselines": {
+        "1440x900": {
+          "path": "docs/plans/design-system-baseline/workspace.a4.default/1440x900.png",
+          "sha256": "a67240fdc556419907a98c18ce71c27a30a0f94fe934e99013be82fa11ac81a6"
+        },
+        "1920x1080": {
+          "path": "docs/plans/design-system-baseline/workspace.a4.default/1920x1080.png",
+          "sha256": "51f333465e63c19b45df86945af5d25a015d6e3c05f2e6ea569f5cdd40987176"
+        }
+      }
+    },
+    {
+      "id": "pipeline.default",
+      "production_routes": [
+        "#conv"
+      ],
+      "reference_action": {
+        "type": "click_exact_text",
+        "value": "模型資料與轉檔"
+      },
+      "baselines": {
+        "1440x900": {
+          "path": "docs/plans/design-system-baseline/pipeline.default/1440x900.png",
+          "sha256": "fababe3785ae60230d3e5256a44649a7d635de993dab7f6cf37813d8418abee7"
+        },
+        "1920x1080": {
+          "path": "docs/plans/design-system-baseline/pipeline.default/1920x1080.png",
+          "sha256": "5af1292d8362b20eadfb71ccc076dbac5fe22645e713b2f40c0126886f8dfaf3"
+        }
+      }
+    },
+    {
+      "id": "runtime.ops.default",
+      "production_routes": [
+        "#runtime"
+      ],
+      "reference_action": {
+        "type": "click_exact_text",
+        "value": "Runtime / Kit·GPU"
+      },
+      "baselines": {
+        "1440x900": {
+          "path": "docs/plans/design-system-baseline/runtime.ops.default/1440x900.png",
+          "sha256": "561c4157970271a1f5d03a3e4c7860e59f5967e3e3e56aa10f58865075cb07b8"
+        },
+        "1920x1080": {
+          "path": "docs/plans/design-system-baseline/runtime.ops.default/1920x1080.png",
+          "sha256": "80bf8f6d1282bd2b7edda5183fafab2b294e0a2fd84d589b37a951628d9ca4be"
+        }
+      }
+    },
+    {
+      "id": "concept.a5.default",
+      "production_routes": [
+        "#a5"
+      ],
+      "reference_action": {
+        "type": "click_exact_text",
+        "value": "A5"
+      },
+      "baselines": {
+        "1440x900": {
+          "path": "docs/plans/design-system-baseline/concept.a5.default/1440x900.png",
+          "sha256": "835046b5465fa5cefdcc0a6857a9f0040fe8d5330dc5a10af98c6c83e73f69d3"
+        },
+        "1920x1080": {
+          "path": "docs/plans/design-system-baseline/concept.a5.default/1920x1080.png",
+          "sha256": "423341d7098493a0fb9da4df9be4f065226ebcecf2f826b5cf678a64d37ca8da"
+        }
+      }
+    },
+    {
+      "id": "concept.a6.default",
+      "production_routes": [
+        "#a6"
+      ],
+      "reference_action": {
+        "type": "click_exact_text",
+        "value": "A6"
+      },
+      "baselines": {
+        "1440x900": {
+          "path": "docs/plans/design-system-baseline/concept.a6.default/1440x900.png",
+          "sha256": "44482f8a95f080bfe817fe7f6b870726fe954c0a13a43fa2569caf10111275b9"
+        },
+        "1920x1080": {
+          "path": "docs/plans/design-system-baseline/concept.a6.default/1920x1080.png",
+          "sha256": "2329ddc46dcd9ed0bff6dc6b28dd0649692f43b2cb2516ae9e0c82a93cd1ee5b"
+        }
+      }
+    },
+    {
+      "id": "concept.a7.default",
+      "production_routes": [
+        "#a7"
+      ],
+      "reference_action": {
+        "type": "click_exact_text",
+        "value": "A7"
+      },
+      "baselines": {
+        "1440x900": {
+          "path": "docs/plans/design-system-baseline/concept.a7.default/1440x900.png",
+          "sha256": "e990ae01e9c40b1501ca377215f2392ffe33d52ea5c8101936406d93de4eb68e"
+        },
+        "1920x1080": {
+          "path": "docs/plans/design-system-baseline/concept.a7.default/1920x1080.png",
+          "sha256": "84bae4a61c6553a06b3f809d47076c631f96822a30849ef8e734c06dda1387ea"
+        }
+      }
+    },
+    {
+      "id": "concept.a8.default",
+      "production_routes": [
+        "#a8"
+      ],
+      "reference_action": {
+        "type": "click_exact_text",
+        "value": "A8"
+      },
+      "baselines": {
+        "1440x900": {
+          "path": "docs/plans/design-system-baseline/concept.a8.default/1440x900.png",
+          "sha256": "c865b5f7d52af1e5a01cf55b769bb52176a145c61be3a7c0057d04c9e69bd027"
+        },
+        "1920x1080": {
+          "path": "docs/plans/design-system-baseline/concept.a8.default/1920x1080.png",
+          "sha256": "3b7802a22323eed673a658c8d2d0b8c723e81f11c9dae1d65d106ab37f0bae3b"
+        }
+      }
+    },
+    {
+      "id": "concept.a9.default",
+      "production_routes": [
+        "#a9"
+      ],
+      "reference_action": {
+        "type": "click_exact_text",
+        "value": "A9"
+      },
+      "baselines": {
+        "1440x900": {
+          "path": "docs/plans/design-system-baseline/concept.a9.default/1440x900.png",
+          "sha256": "7f58525fa0a7abf0c4f8ea1f0501855da6706656b09de45dc16a658e263d4986"
+        },
+        "1920x1080": {
+          "path": "docs/plans/design-system-baseline/concept.a9.default/1920x1080.png",
+          "sha256": "42de2b9d1e210972e6b1cdb336162294176336a3bbada394d81f9260534076a4"
+        }
+      }
+    },
+    {
+      "id": "concept.a10.default",
+      "production_routes": [
+        "#a10"
+      ],
+      "reference_action": {
+        "type": "click_exact_text",
+        "value": "A10"
+      },
+      "baselines": {
+        "1440x900": {
+          "path": "docs/plans/design-system-baseline/concept.a10.default/1440x900.png",
+          "sha256": "c13f32dd73ef53524ecb0bad030b0430e5fa373c30b2a5171b3be7576899595a"
+        },
+        "1920x1080": {
+          "path": "docs/plans/design-system-baseline/concept.a10.default/1920x1080.png",
+          "sha256": "79bbc60e1034e41df35e46de690129540071a4132fce1ff5389b97c1074ccb42"
+        }
+      }
+    }
+  ],
+  "route_inventory": [
+    {
+      "route": "#home",
+      "status": "approved",
+      "screen_id": "console.home.default"
+    },
+    {
+      "route": "#a1",
+      "status": "approved",
+      "screen_id": "workspace.a1.default"
+    },
+    {
+      "route": "#a2",
+      "status": "approved",
+      "screen_id": "workspace.a2.default"
+    },
+    {
+      "route": "#a3",
+      "status": "approved",
+      "screen_id": "workspace.a3.default"
+    },
+    {
+      "route": "#a4",
+      "status": "approved",
+      "screen_id": "workspace.a4.default"
+    },
+    {
+      "route": "#a5",
+      "status": "approved",
+      "screen_id": "concept.a5.default"
+    },
+    {
+      "route": "#a6",
+      "status": "approved",
+      "screen_id": "concept.a6.default"
+    },
+    {
+      "route": "#a7",
+      "status": "approved",
+      "screen_id": "concept.a7.default"
+    },
+    {
+      "route": "#a8",
+      "status": "approved",
+      "screen_id": "concept.a8.default"
+    },
+    {
+      "route": "#a9",
+      "status": "approved",
+      "screen_id": "concept.a9.default"
+    },
+    {
+      "route": "#a10",
+      "status": "approved",
+      "screen_id": "concept.a10.default"
+    },
+    {
+      "route": "#conv",
+      "status": "approved",
+      "screen_id": "pipeline.default"
+    },
+    {
+      "route": "#runtime",
+      "status": "approved",
+      "screen_id": "runtime.ops.default"
+    },
+    {
+      "route": "#issues",
+      "status": "reference_missing"
+    },
+    {
+      "route": "#reports",
+      "status": "reference_missing"
+    },
+    {
+      "route": "#viewer",
+      "status": "reference_missing"
+    },
+    {
+      "route": "#gpu",
+      "status": "reference_missing"
+    },
+    {
+      "route": "#sessions",
+      "status": "reference_missing"
+    },
+    {
+      "route": "#instances",
+      "status": "reference_missing"
+    },
+    {
+      "route": "#minio",
+      "status": "reference_missing"
+    },
+    {
+      "route": "#admin",
+      "status": "reference_missing"
+    },
+    {
+      "route": "#spec",
+      "status": "reference_missing"
+    },
+    {
+      "route": "#review",
+      "status": "reference_missing"
+    }
+  ],
+  "routes_without_approved_pixel_reference": [
+    "#issues",
+    "#reports",
+    "#viewer",
+    "#gpu",
+    "#sessions",
+    "#instances",
+    "#minio",
+    "#admin",
+    "#spec",
+    "#review"
+  ],
+  "legacy_companions": [
+    "docs/plans/ai-bim-governance-prototype.html",
+    "docs/plans/ai-bim-geo-viewer-prototype.html",
+    "docs/plans/ai-bim-geo-viewer-A1.png..A10.png",
+    "docs/plans/ai-bim-geo-Ai-codeing-A1.png..A10.png"
+  ],
+  "baseline_snapshot_sha256": "bc767176013f3033cadbf2393add8162984c5333562f75077a6843386de0f698"
+}

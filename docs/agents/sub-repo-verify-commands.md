@@ -14,13 +14,20 @@ User-facing capability 不得只用 backend/API 測試宣告完成。最終驗�
 Frontend route
 Main button(s) tested
 Fixture used
+Backend API called
+Runtime action
 Visible success state
 E2E command
 Screenshot / trace
+Design screen(s)
+Design reference manifest
+Visual fidelity result
+Visual comparison
+Visual artifacts
 Known gaps
 ```
 
-以上 labels 與 `scripts/tests/check-pr-body-evidence.ps1` machine truth 對齊；可額外補 Frontend URL / Backend API called / Runtime action，但不得取代這 7 項。
+以上 labels 與 `scripts/tests/check-pr-body-evidence.ps1` machine truth 對齊；Frontend URL 可額外補充但不得取代任一 machine-required 項。
 
 PR 本機 preflight 入口：
 
@@ -28,7 +35,7 @@ PR 本機 preflight 入口：
 .\scripts\dev\check-pr-local-preflight.ps1 -PrNumber <pr-number>
 ```
 
-此命令會以目前 PR body + 本機 `origin/main...HEAD` changed paths 重跑 machine evidence gate，並在 repo-local `.tmp` 下執行 `scripts/pr-review-agent.ps1`（含 affected sub-repo verify，例如 viewer/coordinator/streaming/scripts）。它是 push / 等待 GitHub CI 前的本機硬 gate；只有診斷 GitHub 上既有 PR body gate 時才可暫用 `-ChangedPathsSource remote -SkipReviewAgent -SkipViewerVerify`。
+此命令會讀取目前 PR body 與 GitHub PR 的 exact base/head SHA，先確認本機 `HEAD` 等於 PR head，再以該組 SHA 的 three-dot changed paths 重跑 machine evidence gate；並在 repo-local `.tmp` 下執行 `scripts/pr-review-agent.ps1`（含 affected sub-repo verify，例如 viewer/coordinator/streaming/scripts）。它是 push / 等待 GitHub CI 前的本機硬 gate；只有診斷 GitHub 上既有 PR body gate 時才可暫用 `-ChangedPathsSource remote -SkipReviewAgent -SkipViewerVerify`。
 
 GitHub PR checks 不再無差別重跑這些本機可重現的 sub-repo verify。PR 上先用 changed-path classifier 判斷受影響範圍；未受影響的 service-level required checks 由 job-level condition skip，受影響的 job 才跑遠端確認。若本機 preflight 未跑綠，不得用 GitHub CI 補跑或等待。
 
@@ -39,7 +46,18 @@ cd web-viewer-sample
 npm run build
 ```
 
-若已有對應 browser E2E，必須跑 Playwright / Chrome E2E 並保留 screenshot / trace / console / network evidence。若無法跑瀏覽器，必須標為 blocked / not observed，不能宣稱 frontend-complete。
+Design reference 與 visual lane：
+
+```powershell
+pwsh -NoProfile -File .\scripts\tests\verify-design-system-reference.ps1
+cd web-viewer-sample
+Remove-Item Env:DESIGN_SYSTEM_SCREEN_IDS -ErrorAction SilentlyContinue
+npm run test:visual:design-system
+cd ..
+pwsh -NoProfile -File .\scripts\tests\verify-design-system-visual-result.ps1 -TargetCommit HEAD -AllowUntrackedArtifacts
+```
+
+Visual lane 固定 Windows runner、Chromium DPR1、1440×900＋1920×1080、pixel diff≤1%＋branch-protected Playwright semantic 100%；scope 由 base/head manifest 聯集判定。`mixed` 跑全部 approved screens並列 missing；`partial_reference_missing` 不偽造 result且 full=no。functional browser/runtime E2E 仍須另跑並保留 screenshot/trace/console/network/runtime ID；涉及 Kit 再保留 first-frame/stage/DataChannel ack。任一 lane 無法執行都標 blocked/not observed，不能宣稱 frontend-complete。
 
 ## Deploy path verification
 

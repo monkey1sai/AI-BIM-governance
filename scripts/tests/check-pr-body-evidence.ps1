@@ -12,7 +12,9 @@ $ErrorActionPreference = 'Stop'
 
 $scriptRepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = $scriptRepoRoot }
+$RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 . (Join-Path $scriptRepoRoot 'scripts\lib\pr-review-agent.ps1')
+. (Join-Path $scriptRepoRoot 'scripts\lib\design-system-gate.ps1')
 
 function Get-MarkdownTableValue {
     param(
@@ -52,13 +54,46 @@ function Assert-BodyFields {
 }
 
 function Assert-FrontendEvidence {
-    param([Parameter(Mandatory = $true)][string] $Body)
+    param(
+        [Parameter(Mandatory = $true)][string] $Body,
+        [Parameter(Mandatory = $true)][string] $EvidenceRepoRoot,
+        [Parameter(Mandatory = $true)] $DesignScope,
+        [string] $EvidenceHeadSha = ''
+    )
 
-    $labels = @('Frontend route', 'Main button(s) tested', 'Fixture used', 'Backend API called', 'Runtime action', 'Visible success state', 'E2E command', 'Screenshot / trace', 'Known gaps')
+    $labels = @(
+        'Frontend route',
+        'Main button(s) tested',
+        'Fixture used',
+        'Backend API called',
+        'Runtime action',
+        'Visible success state',
+        'E2E command',
+        'Screenshot / trace',
+        'Design gate status',
+        'Design screen(s)',
+        'Reference-missing route(s) / surface(s)',
+        'Full completion claimed',
+        'Design reference manifest',
+        'Visual fidelity result',
+        'Visual comparison',
+        'Visual artifacts',
+        'Known gaps'
+    )
     Assert-BodyFields -Body $Body -Context 'Frontend Verification' -Labels $labels
 
     $prohibited = @('none', 'n/a', 'not applicable', 'not needed', 'unavailable', 'not tested')
-    foreach ($label in @($labels | Where-Object { $_ -ne 'Known gaps' })) {
+    $alwaysObservedLabels = @(
+        'Frontend route',
+        'Main button(s) tested',
+        'Fixture used',
+        'Backend API called',
+        'Runtime action',
+        'Visible success state',
+        'E2E command',
+        'Screenshot / trace'
+    )
+    foreach ($label in $alwaysObservedLabels) {
         $value = (Get-MarkdownTableValue -Body $Body -Label $label).Trim().ToLowerInvariant()
         if ($value -in $prohibited) { throw "Frontend Verification '$label' must contain real evidence, not '$value'." }
     }
@@ -76,6 +111,80 @@ function Assert-FrontendEvidence {
     $artifact = Get-MarkdownTableValue -Body $Body -Label 'Screenshot / trace'
     if ($artifact -notmatch '(?i)(?:\.png\b|trace.*\.zip\b|screenshot|trace)') {
         throw 'Frontend Verification Screenshot / trace must identify a screenshot or trace artifact.'
+    }
+
+    $designReference = Get-MarkdownTableValue -Body $Body -Label 'Design reference manifest'
+    if ($designReference -notmatch '(?i)docs/plans/design-system-reference\.manifest\.json') {
+        throw 'Frontend Verification Design reference manifest must name docs/plans/design-system-reference.manifest.json.'
+    }
+
+    if ($DesignScope.status -eq 'unknown_fail_closed') {
+        throw "Frontend design scope contains paths unknown to the base/head manifest union: $($DesignScope.unknown_paths -join ', ')."
+    }
+    $declaredStatus = (Get-MarkdownTableValue -Body $Body -Label 'Design gate status').Trim().ToLowerInvariant()
+    if ($declaredStatus -ne [string]$DesignScope.status) {
+        throw "Frontend Verification Design gate status must be '$($DesignScope.status)' for the machine-derived changed-path scope; actual='$declaredStatus'."
+    }
+    $fullCompletion = (Get-MarkdownTableValue -Body $Body -Label 'Full completion claimed').Trim().ToLowerInvariant()
+    if ($fullCompletion -notin @('yes', 'no')) {
+        throw "Frontend Verification Full completion claimed must be yes or no; actual='$fullCompletion'."
+    }
+    if ($fullCompletion -eq 'yes' -and -not [bool]$DesignScope.full_completion_allowed) {
+        throw "Frontend Verification cannot claim full completion while design scope is '$($DesignScope.status)' or semantic state variants are not executable."
+    }
+
+    $declaredMissing = @((Get-MarkdownTableValue -Body $Body -Label 'Reference-missing route(s) / surface(s)').Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $expectedMissing = @($DesignScope.reference_missing_items | ForEach-Object { [string]$_ })
+    if ($expectedMissing.Count -eq 0) {
+        if ($declaredMissing.Count -ne 1 -or $declaredMissing[0].ToLowerInvariant() -ne 'none') {
+            throw 'Frontend Verification Reference-missing route(s) / surface(s) must be none for an approved-only scope.'
+        }
+    } elseif ((@($declaredMissing | Sort-Object) -join '|') -ne (@($expectedMissing | Sort-Object) -join '|')) {
+        throw "Frontend Verification Reference-missing route(s) / surface(s) must exactly match the machine-derived set: $($expectedMissing -join ', ')."
+    }
+
+    $screenIds = @((Get-MarkdownTableValue -Body $Body -Label 'Design screen(s)').Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $expectedScreenIds = @($DesignScope.required_screen_ids | ForEach-Object { [string]$_ })
+    if ([bool]$DesignScope.visual_required) {
+        if ((@($screenIds | Sort-Object) -join '|') -ne (@($expectedScreenIds | Sort-Object) -join '|')) {
+            throw "Frontend Verification Design screen(s) must exactly match all machine-required manifest screens: $($expectedScreenIds -join ', ')."
+        }
+    } elseif ($screenIds.Count -ne 1 -or $screenIds[0].ToLowerInvariant() -ne 'reference_missing') {
+        throw 'Frontend Verification Design screen(s) must be reference_missing when the affected product surface has no approved screen.'
+    }
+
+    $comparison = Get-MarkdownTableValue -Body $Body -Label 'Visual comparison'
+    $visualArtifacts = Get-MarkdownTableValue -Body $Body -Label 'Visual artifacts'
+    $resultRelative = Get-MarkdownTableValue -Body $Body -Label 'Visual fidelity result'
+    if ([bool]$DesignScope.visual_required) {
+        if ($comparison -notmatch '(?i)(?:<=|≤)\s*1\s*%' -or $comparison -notmatch '(?i)(?:semantic|語意).*(?:100\s*%|1(?:\.0+)?)') {
+            throw 'Frontend Verification Visual comparison must record the required pixel diff <=1% and semantic parity 100%.'
+        }
+        if ($visualArtifacts -notmatch '(?i)actual.*\.png' -or $visualArtifacts -notmatch '(?i)diff.*\.png') {
+            throw 'Frontend Verification Visual artifacts must identify actual and diff PNG artifacts produced by the required CI check.'
+        }
+        if ($resultRelative -notmatch '(?i)artifacts/e2e/design-system-visual-result\.json') {
+            throw 'Frontend Verification Visual fidelity result must identify artifacts/e2e/design-system-visual-result.json from the required CI check.'
+        }
+    } else {
+        foreach ($entry in @(
+            @{ Label = 'Visual fidelity result'; Value = $resultRelative },
+            @{ Label = 'Visual comparison'; Value = $comparison },
+            @{ Label = 'Visual artifacts'; Value = $visualArtifacts }
+        )) {
+            if ($entry.Value.Trim().ToLowerInvariant() -ne 'reference_missing') {
+                throw "Frontend Verification '$($entry.Label)' must be reference_missing for a pure reference-missing product scope."
+            }
+        }
+    }
+
+    if ($expectedMissing.Count -gt 0) {
+        $knownGaps = Get-MarkdownTableValue -Body $Body -Label 'Known gaps'
+        foreach ($missingItem in $expectedMissing) {
+            if ($knownGaps -notmatch [regex]::Escape($missingItem)) {
+                throw "Frontend Verification Known gaps must disclose reference-missing item '$missingItem'."
+            }
+        }
     }
 }
 
@@ -96,6 +205,10 @@ if (-not (Test-Path -LiteralPath $ChangedPathsPath -PathType Leaf)) {
 
 $body = Get-Content -LiteralPath $BodyPath -Raw
 $changedPaths = @(Get-Content -LiteralPath $ChangedPathsPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+$designScope = Get-DesignSystemChangeScope -RepoRoot $RepoRoot -ChangedPaths $changedPaths -BaseSha $BaseSha -HeadSha $HeadSha
+if ($designScope.status -like '*_fail_closed') {
+    throw "Frontend design scope failed closed with status '$($designScope.status)'; unknown=$($designScope.unknown_paths -join ', '); reference-authority=$($designScope.reference_authority_paths -join ', ')."
+}
 
 if ([string]::IsNullOrWhiteSpace($body)) {
     throw 'PR body is empty. Use the repository PR template and fill validation evidence.'
@@ -130,16 +243,18 @@ if ($changeLane -in @('F', 'B') -and ($behaviorChanged -eq 'yes' -or $governedLa
     $reasonSummary = if ($governedLaneReasons.Count -gt 0) { $governedLaneReasons -join ', ' } else { 'behavior_contract_declared_changed' }
     throw "PR body Change lane '$changeLane' is below the required Lane G minimum: $reasonSummary."
 }
+if ($changeLane -in @('F', 'B') -and @($designScope.gate_infrastructure_paths).Count -gt 0) {
+    throw "PR body Change lane '$changeLane' is below the required Lane G minimum for design gate infrastructure: $($designScope.gate_infrastructure_paths -join ', ')."
+}
 $gitNexusEvidence = Get-MarkdownTableValue -Body $body -Label 'GitNexus evidence'
 if ($changeLane -in @('F', 'B') -and $gitNexusEvidence -match '(?i)\brisk(?:_level)?\s*[:=]\s*(?:high|critical)\b') {
     throw 'PR body GitNexus evidence reports HIGH/CRITICAL risk; Lane G is required.'
 }
 
-$governancePattern = '^(AGENTS\.md|CLAUDE\.md|README\.md|\.gitignore|docs/(agents|plans)/|docs/PR_REVIEW_AGENT\.md|\.github/|\.claude/workflows/|\.claude/settings\.json|\.codex/config\.toml|\.codex/skills/|scripts/(pr-review-agent\.ps1|lib/pr-review-agent\.ps1|dev/check-pr-local-preflight\.ps1|tests/(check-pr-body-evidence|test-agent-governance-check|test-pr-body-evidence|test-pr-review-agent)\.ps1|tests/fixtures/agent-governance-routing\.json))'
-$frontendPattern = '^(web-viewer-sample/|apps/kit-manager-web/|bim-review-coordinator/(src|public)/|docs/plans/.*prototype\.html)'
+$governancePattern = '^(AGENTS\.md|CLAUDE\.md|README\.md|\.gitignore|docs/(agents|plans)/|docs/PR_REVIEW_AGENT\.md|\.github/|\.claude/workflows/|\.claude/settings\.json|\.codex/config\.toml|\.codex/skills/|scripts/(pr-review-agent\.ps1|lib/(pr-review-agent|design-system-gate)\.ps1|dev/check-pr-local-preflight\.ps1|tests/(check-pr-body-evidence|test-agent-governance-check|test-pr-body-evidence|test-pr-review-agent|test-design-system-change-scope)\.ps1|tests/fixtures/agent-governance-routing\.json))'
 $deployPattern = '^(scripts/deploy\.ps1|scripts/lib/(preflight|deploy|host-native|rebuild)|scripts/dev/rebuild-test-deploy\.ps1|compose\..*\.yml|infra/docker/|bim-streaming-server/|governance-service/|services/kit-manager-api/|\.env.*\.example)'
 
-if (Test-AnyPathMatches -Paths $changedPaths -Pattern $governancePattern) {
+if ((Test-AnyPathMatches -Paths $changedPaths -Pattern $governancePattern) -or @($designScope.gate_infrastructure_paths).Count -gt 0) {
     Assert-BodyFields -Body $body -Context 'AI Coding Governance' -Labels @(
         'Linked issue',
         'Requirement source',
@@ -151,8 +266,8 @@ if (Test-AnyPathMatches -Paths $changedPaths -Pattern $governancePattern) {
     )
 }
 
-if (Test-AnyPathMatches -Paths $changedPaths -Pattern $frontendPattern) {
-    Assert-FrontendEvidence -Body $body
+if ([bool]$designScope.frontend_product) {
+    Assert-FrontendEvidence -Body $body -EvidenceRepoRoot $RepoRoot -DesignScope $designScope -EvidenceHeadSha $HeadSha
 }
 
 if (Test-AnyPathMatches -Paths $changedPaths -Pattern $deployPattern) {

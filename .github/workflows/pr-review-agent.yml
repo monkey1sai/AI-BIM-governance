@@ -2,7 +2,7 @@ name: PR Review Agent
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, edited, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
@@ -29,7 +29,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path artifacts/pr-review-agent -Force | Out-Null
           $env:PR_BODY | Set-Content -LiteralPath artifacts/pr-review-agent/pr-body.md -Encoding utf8
-          git -c core.quotepath=false diff --name-only '${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}' | Set-Content -LiteralPath artifacts/pr-review-agent/changed-paths.txt -Encoding utf8
+          git -c core.quotepath=false diff --no-renames --name-only '${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}' | Set-Content -LiteralPath artifacts/pr-review-agent/changed-paths.txt -Encoding utf8
           pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/tests/check-pr-body-evidence.ps1 `
             -BodyPath artifacts/pr-review-agent/pr-body.md `
             -ChangedPathsPath artifacts/pr-review-agent/changed-paths.txt `
@@ -43,12 +43,13 @@ jobs:
           $summary = @'
           # PR Review Agent
 
-          CI does not rerun local-reproducible review or service verification on pull requests.
-          Required PR validation is:
+          Required PR validation is split by authority:
 
           - PR body machine evidence is present and non-placeholder.
+          - Changed-path scope is derived from the base/head design manifests; the PR body cannot self-select an easier screen.
+          - The `design-semantic-visual` CI job is the only semantic/pixel producer and validator for approved or mixed frontend product changes. PR-provided JSON is never gate input. It becomes merge authority only after repository branch protection marks the check required; current enforcement truth is recorded in TRUTH.
           - `scripts/dev/check-pr-local-preflight.ps1 -PrNumber <n>` is the authoritative local gate for PR review agent and affected sub-repo verification before push.
-          - Full service CI remains available on `push` to `main` and `workflow_dispatch`.
+          - Functional/runtime operability evidence remains an independent requirement and cannot be replaced by the design job. Until its machine producer/validator and required check exist, full-completion claims remain forbidden.
           '@
           $summary | Set-Content -LiteralPath artifacts/pr-review-agent/pr-review-agent.md -Encoding utf8
           $summary >> $env:GITHUB_STEP_SUMMARY

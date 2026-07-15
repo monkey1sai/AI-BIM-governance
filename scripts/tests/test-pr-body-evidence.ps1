@@ -9,33 +9,39 @@ function Assert-True {
     if (-not $Condition) { throw "ASSERT FAILED: $Message" }
 }
 
-function Assert-Throws {
-    param([Parameter(Mandatory = $true)][scriptblock] $ScriptBlock, [Parameter(Mandatory = $true)][string] $Message)
-    $thrown = $false
-    try {
-        & $ScriptBlock
-    } catch {
-        $thrown = $true
-    }
-    Assert-True $thrown $Message
+function Assert-CheckerFails {
+    param(
+        [Parameter(Mandatory = $true)][string] $BodyPath,
+        [Parameter(Mandatory = $true)][string] $PathsPath,
+        [Parameter(Mandatory = $true)][string] $Message,
+        [string] $RepoRoot = '',
+        [string] $BaseSha = '',
+        [string] $HeadSha = ''
+    )
+
+    $arguments = @('-NoProfile', '-NonInteractive', '-File', $script:checker, '-BodyPath', $BodyPath, '-ChangedPathsPath', $PathsPath)
+    if (-not [string]::IsNullOrWhiteSpace($RepoRoot)) { $arguments += @('-RepoRoot', $RepoRoot) }
+    if (-not [string]::IsNullOrWhiteSpace($BaseSha)) { $arguments += @('-BaseSha', $BaseSha) }
+    if (-not [string]::IsNullOrWhiteSpace($HeadSha)) { $arguments += @('-HeadSha', $HeadSha) }
+    & pwsh @arguments *> $null
+    Assert-True ($LASTEXITCODE -ne 0) $Message
 }
 
-$repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
-$checker = Join-Path $repoRoot 'scripts\tests\check-pr-body-evidence.ps1'
-$tempParent = Join-Path $repoRoot 'artifacts\tmp'
+$repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../..')).Path
+$script:checker = Join-Path $repoRoot 'scripts/tests/check-pr-body-evidence.ps1'
+$tempParent = Join-Path $repoRoot 'artifacts/tmp'
 $tempRoot = Join-Path $tempParent "pr-body-evidence-$([Guid]::NewGuid().ToString('N'))"
-New-Item -ItemType Directory -Path $tempParent -Force | Out-Null
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+
+$manifest = Get-Content -LiteralPath (Join-Path $repoRoot 'docs/plans/design-system-reference.manifest.json') -Raw | ConvertFrom-Json
+$allScreens = @($manifest.screens | ForEach-Object { [string]$_.id }) -join ', '
+$missingRoutes = @($manifest.route_inventory | Where-Object status -eq 'reference_missing' | ForEach-Object { [string]$_.route }) -join ', '
 
 try {
     $bodyPath = Join-Path $tempRoot 'body.md'
     $pathsPath = Join-Path $tempRoot 'paths.txt'
 
-    @'
-## Summary
-
-- Governance and frontend change.
-
+    $partialBody = @'
 ## AI Coding Governance
 
 | Item | Result |
@@ -47,93 +53,89 @@ try {
 | CODEOWNERS / owner review | requested |
 | GitNexus evidence | detect_changes |
 | Browser E2E evidence | Playwright screenshot |
-| Agent workflow changed? | yes, rollback by reverting workflow |
+| Agent workflow changed? | no |
 | Required checks expected | CI / Agent Governance / PR Review Agent |
 
 ## Frontend Verification
 
 | Item | Result |
 |---|---|
-| Frontend route | /ui#a1 |
-| Main button(s) tested | Run governance |
-| Fixture used | storage fixture |
-| Backend API called | /api/governance/runs |
-| Runtime action | sessionId=session-123 |
+| Frontend route | /kit-manager |
+| Main button(s) tested | Release Kit instance |
+| Fixture used | deterministic operator fixture |
+| Backend API called | /api/kit/instances/release |
+| Runtime action | runtimeId=runtime-123 |
 | Visible success state | loading indicator; success toast; failure alert; retry button |
 | E2E command | npm run test:e2e |
-| Screenshot / trace | artifacts/e2e/sample/trace.zip |
-| Manual test steps | Open route and click button |
-| Known gaps | none |
+| Screenshot / trace | artifacts/e2e/kit-manager/trace.zip |
+| Design gate status | partial_reference_missing |
+| Design screen(s) | reference_missing |
+| Reference-missing route(s) / surface(s) | surface:kit-manager-web |
+| Full completion claimed | no |
+| Design reference manifest | docs/plans/design-system-reference.manifest.json |
+| Visual fidelity result | reference_missing |
+| Visual comparison | reference_missing |
+| Visual artifacts | reference_missing |
+| Known gaps | surface:kit-manager-web has no approved upstream screen; no 99% claim |
+'@
+    $partialBody | Set-Content -LiteralPath $bodyPath -Encoding utf8
+    @('AGENTS.md', 'apps/kit-manager-web/src/App.tsx') | Set-Content -LiteralPath $pathsPath -Encoding utf8
+    $partialOutput = @(& pwsh -NoProfile -NonInteractive -File $script:checker -BodyPath $bodyPath -ChangedPathsPath $pathsPath 2>&1)
+    Assert-True ($LASTEXITCODE -eq 0) "partial_reference_missing body passes: $($partialOutput -join ' | ')"
 
-## Deploy Path Verification
+    ($partialBody -replace 'runtimeId=runtime-123', 'none') | Set-Content -LiteralPath $bodyPath -Encoding utf8
+    Assert-CheckerFails -BodyPath $bodyPath -PathsPath $pathsPath -Message 'partial frontend still requires observed runtime evidence'
 
-| Item | Result |
-|---|---|
-| Affects runtime / docker / Kit / viewer / ports / env? | no |
-| Canonical deploy path updated? | not needed |
-| New root script added? | no |
-| Deploy dry-run command | not needed |
-| Full deploy tested | not available |
-| Verify command | .\scripts\verify-all.ps1 |
-| Frontend URL verified | http://127.0.0.1:8004/ui |
-| Evidence path | artifacts/e2e/sample |
+    ($partialBody -replace 'Full completion claimed \| no', 'Full completion claimed | yes') | Set-Content -LiteralPath $bodyPath -Encoding utf8
+    Assert-CheckerFails -BodyPath $bodyPath -PathsPath $pathsPath -Message 'reference-missing scope cannot claim full completion'
 
-## Validation
+    ($partialBody -replace 'surface:kit-manager-web \|', 'none |') | Set-Content -LiteralPath $bodyPath -Encoding utf8
+    Assert-CheckerFails -BodyPath $bodyPath -PathsPath $pathsPath -Message 'reference-missing surface disclosure must match machine scope'
 
-- tests passed.
+    $mixedBody = $partialBody.
+        Replace('/kit-manager', '/ui#home').
+        Replace('Release Kit instance', 'Open governance workspace').
+        Replace('/api/kit/instances/release', '/api/governance/models').
+        Replace('artifacts/e2e/kit-manager/trace.zip', 'artifacts/e2e/edge-console/trace.zip').
+        Replace('partial_reference_missing', 'mixed').
+        Replace('reference_missing', $allScreens).
+        Replace('surface:kit-manager-web', $missingRoutes).
+        Replace('| Visual fidelity result | ' + $allScreens + ' |', '| Visual fidelity result | artifacts/e2e/design-system-visual-result.json (generated by design-system-gate CI) |').
+        Replace('| Visual comparison | ' + $allScreens + ' |', '| Visual comparison | required Chromium DPR1; 1440x900 + 1920x1080; pixel diff <=1%; semantic parity 100% |').
+        Replace('| Visual artifacts | ' + $allScreens + ' |', '| Visual artifacts | artifacts/e2e/design-system-visual/*-actual.png + *-diff.png |')
+    $mixedBody | Set-Content -LiteralPath $bodyPath -Encoding utf8
+    @('web-viewer-sample/src/App.tsx') | Set-Content -LiteralPath $pathsPath -Encoding utf8
+    $mixedOutput = @(& pwsh -NoProfile -NonInteractive -File $script:checker -BodyPath $bodyPath -ChangedPathsPath $pathsPath 2>&1)
+    Assert-True ($LASTEXITCODE -eq 0) "mixed scope body passes structural gate; semantic/visual producer remains CI authority: $($mixedOutput -join ' | ')"
 
-## Known Risks
+    ($mixedBody -replace [regex]::Escape($allScreens), 'console.home.default') | Set-Content -LiteralPath $bodyPath -Encoding utf8
+    Assert-CheckerFails -BodyPath $bodyPath -PathsPath $pathsPath -Message 'mixed shared shell cannot self-select one easy screen'
 
-- none.
-'@ | Set-Content -LiteralPath $bodyPath -Encoding UTF8
-
-    @(
-        'AGENTS.md',
-        'web-viewer-sample/src/App.tsx',
-        'compose.runtime-manager.yml'
-    ) | Set-Content -LiteralPath $pathsPath -Encoding UTF8
-
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $checker -BodyPath $bodyPath -ChangedPathsPath $pathsPath *> $null
-    Assert-True ($LASTEXITCODE -eq 0) 'complete body passes'
-
-    $completeBody = Get-Content -LiteralPath $bodyPath -Raw
-    ($completeBody -replace 'sessionId=session-123', 'none') | Set-Content -LiteralPath $bodyPath -Encoding UTF8
-    Assert-Throws {
-        & powershell -NoProfile -ExecutionPolicy Bypass -File $checker -BodyPath $bodyPath -ChangedPathsPath $pathsPath *> $null
-        if ($LASTEXITCODE -ne 0) { throw 'checker failed as expected' }
-    } 'frontend Runtime action cannot use none instead of a runtime ID'
-
-    @'
-## Summary
-
-- Missing evidence.
-
+    $gateInfrastructureBody = @'
 ## AI Coding Governance
 
 | Item | Result |
 |---|---|
 | Change lane | G |
 | Behavior contract changed | yes |
-| Linked issue |  |
-| Requirement source |  |
-| CODEOWNERS / owner review |  |
-| GitNexus evidence |  |
-| Browser E2E evidence |  |
-| Agent workflow changed? |  |
-| Required checks expected |  |
-'@ | Set-Content -LiteralPath $bodyPath -Encoding UTF8
+| Linked issue | #123 |
+| Requirement source | docs/plans |
+| CODEOWNERS / owner review | requested |
+| GitNexus evidence | detect_changes |
+| Browser E2E evidence | gate infrastructure only; product result not claimed |
+| Agent workflow changed? | yes, rollback by reverting workflow |
+| Required checks expected | CI / Agent Governance / PR Review Agent |
+'@
+    $gateInfrastructureBody | Set-Content -LiteralPath $bodyPath -Encoding utf8
+    'docs/plans/design-system-reference.manifest.json' | Set-Content -LiteralPath $pathsPath -Encoding utf8
+    & pwsh -NoProfile -NonInteractive -File $script:checker -BodyPath $bodyPath -ChangedPathsPath $pathsPath *> $null
+    Assert-True ($LASTEXITCODE -eq 0) 'gate-infrastructure-only change does not require a fabricated production visual result'
 
-    'AGENTS.md' | Set-Content -LiteralPath $pathsPath -Encoding UTF8
-    Assert-Throws {
-        & powershell -NoProfile -ExecutionPolicy Bypass -File $checker -BodyPath $bodyPath -ChangedPathsPath $pathsPath *> $null
-        if ($LASTEXITCODE -ne 0) { throw "checker failed as expected" }
-    } 'empty governance fields fail'
+    'web-viewer-sample/e2e/design-system-semantic-cases.ts' | Set-Content -LiteralPath $pathsPath -Encoding utf8
+    & pwsh -NoProfile -NonInteractive -File $script:checker -BodyPath $bodyPath -ChangedPathsPath $pathsPath *> $null
+    Assert-True ($LASTEXITCODE -eq 0) 'semantic producer self-modification is accepted only with Lane G governance evidence'
 
-    @'
-## Summary
-
-- Test-only assertion correction.
-
+    $fastFixBody = @'
 ## AI Coding Governance
 
 | Item | Result |
@@ -141,9 +143,14 @@ try {
 | Change lane | F |
 | Behavior contract changed | no |
 | Requirement source | not applicable |
-'@ | Set-Content -LiteralPath $bodyPath -Encoding UTF8
-    'tests/unit/test_existing_behavior.py' | Set-Content -LiteralPath $pathsPath -Encoding UTF8
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $checker -BodyPath $bodyPath -ChangedPathsPath $pathsPath *> $null
+'@
+    $fastFixBody | Set-Content -LiteralPath $bodyPath -Encoding utf8
+    'web-viewer-sample/e2e/design-system-semantic-cases.ts' | Set-Content -LiteralPath $pathsPath -Encoding utf8
+    Assert-CheckerFails -BodyPath $bodyPath -PathsPath $pathsPath -Message 'design gate producer cannot self-report Lane F/B without AI Governance evidence'
+
+    $fastFixBody | Set-Content -LiteralPath $bodyPath -Encoding utf8
+    'tests/unit/test_existing_behavior.py' | Set-Content -LiteralPath $pathsPath -Encoding utf8
+    & pwsh -NoProfile -NonInteractive -File $script:checker -BodyPath $bodyPath -ChangedPathsPath $pathsPath *> $null
     Assert-True ($LASTEXITCODE -eq 0) 'test-only path with behavior=no does not require formal spec'
 
     $signalRepo = Join-Path $tempRoot 'signal-repo'
@@ -154,7 +161,7 @@ try {
         git config user.email 'pr-body-evidence@example.invalid'
         git config user.name 'PR Body Evidence Test'
         New-Item -ItemType Directory -Path 'bim-review-coordinator/src' -Force | Out-Null
-        Set-Content -LiteralPath 'bim-review-coordinator/src/index.ts' -Value 'const app = createApp();' -Encoding UTF8
+        Set-Content -LiteralPath 'bim-review-coordinator/src/index.ts' -Value 'const app = createApp();' -Encoding utf8
         git add .
         git commit -q -m 'base'
         $signalBase = (git rev-parse HEAD).Trim()
@@ -165,13 +172,10 @@ try {
     } finally {
         Pop-Location
     }
-    'bim-review-coordinator/src/index.ts' | Set-Content -LiteralPath $pathsPath -Encoding UTF8
-    Assert-Throws {
-        & powershell -NoProfile -ExecutionPolicy Bypass -File $checker -BodyPath $bodyPath -ChangedPathsPath $pathsPath -RepoRoot $signalRepo -BaseSha $signalBase -HeadSha $signalHead *> $null
-        if ($LASTEXITCODE -ne 0) { throw "checker failed as expected" }
-    } 'public route contradicts behavior=no PR body'
+    'bim-review-coordinator/src/index.ts' | Set-Content -LiteralPath $pathsPath -Encoding utf8
+    Assert-CheckerFails -BodyPath $bodyPath -PathsPath $pathsPath -Message 'public route contradicts behavior=no PR body' -RepoRoot $signalRepo -BaseSha $signalBase -HeadSha $signalHead
 } finally {
-    Remove-Item -LiteralPath $tempRoot -Recurse -Force
+    Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host '[test-pr-body-evidence] all assertions passed'

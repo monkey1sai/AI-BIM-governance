@@ -1,19 +1,20 @@
 # TARGET-shell — 殼層 22 route 逐頁目標規格
 
-> v3 · 2026-07-14 · A1–A10 使用情境規格重寫（兩份 tracked HTML＋二十張 tracked route PNG）
+> v4 · 2026-07-14 · desigin-system screen/state 對齊與 dual-gate
 > 本檔回答「22 頁各要做成什麼樣」（IA、IX 卡全文、API 逐字、實作接點、驗收句、凍結點）。
 > 現況（建到哪）一律查 `TRUTH.md`；跨頁不變量查 `TARGET-contracts.md`；viewer 七區塊深規查 `TARGET-viewer.md`；缺口排序與 OPEN 決策查 `BACKLOG.md`。
-> 共用 shell 骨架＝tracked `ai-bim-governance-prototype.html`；A1–A10 route IA／persona／主任務流＝本檔各節的 self-contained 正文（由 paired tracked `ai-bim-geo-viewer-A<n>.png`＋`ai-bim-geo-Ai-codeing-A<n>.png` 內化）；共享 3D 互動＝tracked `ai-bim-geo-viewer-prototype.html`／`TARGET-viewer.md`。視覺來源只引用不修改，所有數字與協定字樣均須由真資料／契約取代。
+> 共用 2D shell／A1–A10 screen/state 以上游唯讀 `C:\Repos\design\desigin-system` 與 repo-pinned manifest/baselines 為 design authority；route IA／persona／資料/API/runtime 由本檔 self-contained 正文定義；共享 3D 互動由 `TARGET-viewer.md` 定義，legacy geo-viewer prototype 只作 runtime companion。所有設計數字與協定字樣均須由真資料／契約取代。
 
 ---
 
-## §0 基準、凍結點規約、原型不一致裁決
+## §0 基準、凍結點規約、legacy 輸入不一致裁決
 
 ### §0.1 基準與凍結點規約
 
-- 基準宣告：`TARGET-shell@v3 frozen 2026-07-14 · 基準=tracked HTML prototypes + paired tracked A1–A10 route PNG；durable authority=self-contained route sections`。
+- 基準宣告：`TARGET-shell@v4 frozen 2026-07-14 · 2D基準=approved design-system snapshot；durable behavior authority=self-contained route sections`。
+- 作廢範圍（v3→v4）：legacy HTML／paired route PNG 作 production 2D pass/fail 或 coding authority；改以 manifest `screen.id`＋state fixture 對映各 route，未有 reference 者標 `reference_missing`。
 - 作廢範圍（v1→v2）：A4–A10 只要求 disabled 佔位頁的舊目標、A1 禁內嵌 viewer 的舊 IA、A9 Copilot／A10 Robotics 舊身分；改為十頁情境導向 vertical slice，未完成時仍依 contracts §9 誠實降級。
-- 視覺分工：tracked HTML 管共用 shell／互動骨架；每 route 的兩張 tracked PNG 分別補充 UI／viewport IA 與 AI-coding component/API/state/acceptance；本檔把兩者內化後，連同行為、資料、API、fallback 與驗收成為 durable 正本。
+- 權威分工：manifest/baselines 管 2D fidelity；本檔管行為、資料、API、fallback 與驗收語意；TARGET-viewer 管 3D/runtime。legacy HTML／route PNG 只補充歷史 IA，不得覆寫三者。
 - 凍結點語法：每節末行 `<route>@v<N> frozen <date>`（可 grep）。改版＝bump 版本號＋同節加一行「作廢範圍」。
 - **節進入 BACKLOG IN-PROGRESS 後規格凍結；要改＝先 bump 再動工**，禁止邊做邊改規格。
 
@@ -21,17 +22,17 @@
 
 本檔不含任何 repo 建成宣稱（禁用樣式清單與 CI grep 見 PROCESS §6 閘 1；本檔命中數必須＝0）；「待建」是需求屬性（本規格要求新增），不受此限。建成狀態唯一落點＝`TRUTH.md`。實作接點欄的改檔清單為撰寫時點的對映；檔案實際位置以 repo 現行結構為機器真相。
 
-### §0.3 原型內部 8 項不一致裁決（有 repo 事實直接裁；無事實進 OPEN，不偷渡）
+### §0.3 legacy 輸入 8 項不一致裁決（有 repo 事實直接裁；無事實進 OPEN，不偷渡）
 
 | # | 不一致 | 裁決 |
 |---|---|---|
-| 1 | coordinator HostTag：`#minio` 頁標 host、其餘頁標 container | 裁＝**container**（`#minio` 頁標 host 為原型筆誤；埠表見 contracts §3） |
-| 2 | A1 選檔樣式三選一（下拉 dd／級聯 cascade／樹狀 tree） | **OPEN** → BACKLOG 待人類決策；本檔 #a1 節暫錨「三式並陳為原型示意，擇一後 bump」 |
-| 3 | 原型 `review→gpu` alias 僅 demo 權宜 | 裁＝正式版 `#review`＝獨立 ReviewRoomPage、`#gpu`＝GpuReviewRoomPage，**永不合併或重定向**（引 contracts §4） |
-| 4 | A6 phase 矛盾（data.ts RM phase=2 vs NOT BUILT） | 裁＝以 repo prov=`p4` 為準（原型自我裁決採納） |
+| 1 | coordinator HostTag：legacy `#minio` 頁標 host、其餘頁標 container | 裁＝**container**（舊標示為筆誤；埠表見 contracts §3） |
+| 2 | A1 選檔樣式三選一（下拉 dd／級聯 cascade／樹狀 tree） | 由 approved design screen `workspace.a1.default` 的元件與狀態決定；production 不再提供 legacy PROTO 切換列 |
+| 3 | legacy `review→gpu` alias 僅 demo 權宜 | 裁＝正式版 `#review`＝獨立 ReviewRoomPage、`#gpu`＝GpuReviewRoomPage，**永不合併或重定向**（引 contracts §4） |
+| 4 | A6 phase 矛盾（data.ts RM phase=2 vs legacy NOT BUILT） | 裁＝以 repo prov=`p4` 與 TARGET 情境為準 |
 | 5 | governance 埠 | 全檔一致 `:49102`，無需裁；引 contracts §3 |
 | 6 | conv 觸發敘事（#conv 寫「僅靠 watcher」vs #minio 有手動觸發鈕） | 裁＝**雙軌並列**：watcher 自動偵測（opt-in，預設關）＋ `#minio` 手動 `POST /api/conversion/trigger`（x-dev-token）；`#conv` 的 prioritize/retry 只對既有 job 排序／重試、不觸發新轉檔 |
-| 7 | Google Fonts／unpkg CDN 外連 | 裁＝僅原型單檔便利；正式殼層無此依賴 |
+| 7 | Google Fonts／unpkg CDN 外連 | 裁＝僅 legacy 單檔便利；production 依 manifest 的 font-ready 條件與本地 build dependency |
 | 8 | 底欄 job bar 轉檔進度與 QUEUE 數字的真資料來源 | **OPEN** → BACKLOG（與 #home 待辦真來源同組） |
 
 ### §0.4 來源計數核對（一次性宣告）
@@ -49,17 +50,17 @@
 
 ## §1.5 殼層 chrome（全站共用；22 頁之外的殼層需求）
 
-prototype 錨：ai-bim-governance-prototype.html（全站 shell 骨架，非單頁錨）
+design screen/state：`console.home.default`（共用 shell chrome）；其餘 screen 仍須保持相同 nav/topbar/chrome token 投影
 
 目標 IA：
 - **三欄 grid**：`50px 頂欄 / 主區 / 32px 底欄` × `240px nav / 1fr main / 380px agent rail`；`<1180px` 自動收合 agent rail；收合態（`data-agent="off"`）可由底欄重開鈕還原。
-- **頂欄**：品牌區（mark＋「AI · BIM Governance」＋mono 副標）→ tenant 徽章（虛線 pill「tenant zero · 單站點現況」＋`DEMO DATA` 小標；語意引 contracts §11.3）→ 麵包屑 Pills（專案／版本／階段＋caret；真資料來源未定，接真來源前一律標示意——與 BACKLOG OPEN #2 同組）→ LangToggle（雙語 i18n 做否＝BACKLOG OPEN #3.4）→ **HealthChips 四枚**（`COORD`／`GPU`／`QUEUE`／`MCP`；缺遙測顯「未取得」＋idle LED 不偽綠；數字真資料來源＝BACKLOG OPEN #2）→ 使用者頭像。
+- **頂欄**：品牌區（mark＋產品名稱／副標）→ tenant 徽章（虛線 pill「tenant zero · 單站點現況」＋`DEMO DATA` 小標；語意引 contracts §11.3）→ 麵包屑 Pills（專案／版本／階段＋caret；真資料來源未定，接真來源前一律標示意——與 BACKLOG OPEN #2 同組）→ approved design 中存在的 locale 控制（current baseline=`zh-TW`；新增 locale 須有對應 state evidence，不提供無功能 toggle）→ **HealthChips 四枚**（`COORD`／`GPU`／`QUEUE`／`MCP`；缺遙測顯「未取得」＋idle LED 不偽綠；數字真資料來源＝BACKLOG OPEN #2）→ 使用者頭像。
 - **Agent rail（右欄 AI 決策助理）**：READY pill＋可關閉；紫色虛線註記「建議必帶 evidence refs；任何 USD 寫入只到 session layer，不直接改 source model」（contracts §7 A10）；「TOOL CALLS」軌跡列＋底部輸入框——真對話／MCP 執行建成前 input 一律 disabled、tool calls 一律標「示意，非實測」，不渲染假結果（現況查 TRUTH §3 #2）。
 - **底欄 job bar**：`OMNI` 標籤＋轉檔進度列＋右側 mono 服務摘要（`coordinator :8004 · governance :49102 · MCP x/x`）；agent rail 關閉時出現「↗ Chat USD Agent」重開鈕；進度與 QUEUE 數字接真來源前一律標示意（BACKLOG OPEN #2）。
 - **持久化**：localStorage 鍵 `aibim:lang`／`aibim:ec:active`／`aibim:ec:agentOpen`，refresh 不丟狀態；**cache 非 source of truth**。
 - **nav 版位**：分組五組與 22 條目依 contracts §4；omni 分組綠色漸層底；nav 底部「雲地邊界」註記＋「雲端控制面：PLANNED · 未建」灰虛線 badge（contracts §11）。
 
-驗收句：DONE＝殼層截圖含頂欄四枚 HealthChips（GPU 缺遙測顯「未取得」＋idle）、tenant 徽章虛線 PLANNED 樣式、agent rail input disabled＋tool calls「示意」標示、底欄 job bar 示意標示；切頁後 refresh 還原 `aibim:ec:active` 與 agent 開合；`<1180px` agent rail 自動收合。
+驗收句：DONE＝`console.home.default` 在兩 viewport 通過 contracts §5.1 design gate；殼層 functional E2E 另斷言 HealthChips 缺值不偽綠、tenant/agent/job bar 誠實標示，切頁後 refresh 還原 active route 與 agent 開合；responsive 行為不以縮放 golden 取代實測。
 
 shell-chrome@v1 frozen 2026-07-10
 
@@ -67,12 +68,12 @@ shell-chrome@v1 frozen 2026-07-10
 
 ## §2 逐頁目標規格（22 條正典路由）
 
-> 每節固定骨架：視覺來源／使用情境（persona、trigger、outcome）／主任務流／目標 IA／資料與 API/runtime／誠實 fallback／實作接點／驗收句，末行凍結點。A1 既有 IX 卡保留；其他頁以可驗收 vertical slice 表達。
+> 每節固定骨架：design screen/state（或 `reference_missing`）／使用情境（persona、trigger、outcome）／主任務流／目標 IA／資料與 API/runtime／誠實 fallback／實作接點／驗收句，末行凍結點。A1 既有 IX 卡保留；其他頁以可驗收 vertical slice 表達。
 > 六通用互動模式（模式 1 證據型更新～模式 6 空狀態）與誠實元件規範（disabled＋prov mini-tag、Panel phase 紅 hatch、DarkStage、「未取得」＋idle LED、confirm、空狀態不補假列）全文見 contracts §9，本檔以「模式 N」引用。
 
 ## #home 今天要做什麼（⌂ · 工作台 · plane=core · HostTag=CONTAINER）
 
-prototype 錨：ai-bim-governance-prototype.html#home
+design screen/state：`console.home.default`
 
 目標 IA：
 - ① SaaS 重定位導讀卡（NOT BUILT 樣式：虛線框＋DS `todo` 顯示標籤＋`PLANNED` 小標），三點文案：(1) 定位＝「雲端控制面＋落地端 data/GPU plane」雲地混合多租戶 SaaS（SaaS ≠ 全上雲）；(2) SaaS 能力未具 evidence 時一律 PLANNED，使用 tenant-zero 單站點 fallback；(3) 模型檔不出站：IFC/USD payload 永不上雲，雲端只收 metadata 白名單投影；拔網時落地端完全自主。尾註指向 `ai-bim-governance-saas-架構總覽.md`（PLANNED 增補層，效力低於 contracts）。
@@ -85,13 +86,13 @@ API（逐字）：無 live API（純導覽＋demo 列）；待辦聚合端點＝
 
 實作接點：改檔＝`pages.tsx`、`components.tsx`、`edge-console.css`。陷阱＝D-07（禁假按鈕）；demo 風險列必標 `prov="demo"`，無捏造計數。
 
-驗收句：DONE＝載入 `#home` 截圖與 prototype #home 三卡對齊；SaaS 導讀卡為虛線 PLANNED 樣式；demo 區帶「示範資料」ProvTag；無資料處無綠燈；斷言零 `/api/*` 呼叫（接真來源前）。
+驗收句：DONE＝`#home` 在 `console.home.default` 的兩 viewport 通過 pixel≤1%＋semantic 100%；functional E2E 另斷言 SaaS 導讀卡為虛線 PLANNED、demo 區帶「示範資料」ProvTag、無資料處無綠燈、接真來源前零 `/api/*` 呼叫。
 
 home@v1 frozen 2026-07-10
 
 ## #a1 治理與模型檢核（A1 · 核心治理 · plane=core · HostTag=HOST-NATIVE · P0 hero）
 
-視覺來源：tracked `ai-bim-governance-prototype.html#a1`（shell/interaction）＋paired tracked `ai-bim-geo-viewer-A1.png`／`ai-bim-geo-Ai-codeing-A1.png`（supplementary UI／coding cross-check）
+design screen/state：`workspace.a1.default`；legacy A1 PNG 只補充 viewer/runtime 情境，不參與 2D pass/fail
 
 **使用情境**：送審前的 BIM QA lead 要在同一頁選 IFC 與 IDS、執行檢核、用真 3D stage 定位失敗構件，確認 runtime 證據後建立 Issue／BCF 並交付報表。成功結果不是一個分數，而是每筆規則可追到 `ifc_guid ↔ usd_prim_path ↔ review_session_id`。
 
@@ -113,13 +114,13 @@ home@v1 frozen 2026-07-10
 
 實作接點：`pages.tsx`、`a1Machine.ts`、`components.tsx`（SourcePicker／RuleResults／BcfReviewPanel／EvidenceInspector）、`EmbeddedViewer.tsx`、`governanceClient.ts`、`coordinatorClient.ts`。陷阱＝D-20/D-24/D-31/D-33、coverage 自我參照、圖片協定字樣誤抄。
 
-驗收句：DONE＝以 default IFC＋IDS fixture 從四步 Stepper 跑到真 `rule_run_id` 與 `review_session_id`；WebRTC 首幀可見且 stage matched；點失敗列令同一 GUID 對應 prim 高亮並收到 ack；建立 Issue 後可匯 Excel/BCF 2.1；故意斷 DataChannel 後高亮 disabled＋可 retry；network 僅 coordinator；截圖逐項對齊本節 IA，並以 A1 paired tracked PNG 作補充比對、保存 trace/runtime IDs。
+驗收句：DONE＝`workspace.a1.default` 兩 viewport 通過 design gate；functional/runtime E2E 另以 default IFC＋IDS fixture 從 Stepper 跑到真 `rule_run_id`／`review_session_id`，驗 WebRTC 首幀、stage matched、同 GUID prim 高亮 ack、Issue＋Excel/BCF 2.1、DataChannel failure/disabled/retry、network 僅 coordinator，並保存 trace/runtime IDs。
 
 a1@v2 frozen 2026-07-13
 
 ## #a2 版本差異與責任（A2 · 核心治理 · plane=core · HostTag=HOST-NATIVE）
 
-視覺來源：tracked `ai-bim-governance-prototype.html#a2`＋paired tracked `ai-bim-geo-viewer-A2.png`／`ai-bim-geo-Ai-codeing-A2.png`（supplementary UI／coding cross-check）
+design screen/state：`workspace.a2.default`；legacy A2 PNG 只補充 diff/viewer 情境，不參與 2D pass/fail
 
 **使用情境**：設計經理／BIM coordinator 比較 Base 與 Target 版本，分辨新增、移除、移動、屬性與幾何變更，定位受影響 Issue 與責任單位，並交付可審計的差異包。成本與 EVM 歸 A6，A2 不做成本估算。
 
@@ -133,13 +134,13 @@ a1@v2 frozen 2026-07-13
 
 實作接點：`pages.tsx`、`components.tsx`（VersionPairPicker／DiffSummary／IssueImpact／ResponsibilityPanel）、`governanceClient.ts`、viewer highlight bridge。陷阱＝D-08/D-11/D-20；禁止把 A6 成本卡塞回 A2。
 
-驗收句：DONE＝以一對 deterministic IFC 版本建真 diff；五類摘要＝items 聚合；點 moved/changed 列同步選中 table 與 3D；null mapping 顯未對應且不送 highlight；建 Issue 後 impact/責任回讀不回退；匯出 artifact 可追到 `diff_id`；截圖逐項對齊本節 IA，並以 A2 paired tracked PNG 作補充比對＋保存 trace/session ID。
+驗收句：DONE＝`workspace.a2.default` 兩 viewport 通過 design gate；functional/runtime E2E 另以 deterministic IFC 版本建真 diff，驗五類摘要、table↔3D 選取、null mapping 不發 highlight、Issue impact/責任回讀與 `diff_id` artifact，保存 trace/session ID。
 
 a2@v3 frozen 2026-07-13
 
 ## #a3 跨專業疊合（A3 · 核心治理 · plane=core · HostTag=HOST-NATIVE）
 
-視覺來源：tracked `ai-bim-governance-prototype.html#a3`＋paired tracked `ai-bim-geo-viewer-A3.png`／`ai-bim-geo-Ai-codeing-A3.png`（supplementary UI／coding cross-check）
+design screen/state：`workspace.a3.default`；legacy A3 PNG 只補充 federation/viewer 情境，不參與 2D pass/fail
 
 **使用情境**：BIM coordinator 在協調會前把建築、結構、機電、土木／景觀等模型組成一個可重現的 federated stage，驗證座標系與每個 sublayer transform，再把同一 artifact 交給 Review Room。
 
@@ -153,13 +154,13 @@ a2@v3 frozen 2026-07-13
 
 實作接點：`pages.tsx`、`components.tsx`（FederationMembers／CoordinateInspector／SublayerPanel／MemberMatrix）、`IntentDialog.tsx`、`governanceClient.ts`。陷阱＝D-10/D-14/D-27；不得把靜態建築背景當 federation frame。
 
-驗收句：DONE＝以至少 2 個不同 discipline fixture 建 set、驗座標、build，回應的 stage path 與 Review Room loaded stage matched；切 member visibility/transform 後 matrix 與 viewport 同步；故意放入 unit mismatch 顯阻擋原因；clash 區無假數；截圖逐項對齊本節 IA，並以 A3 paired tracked PNG 作補充比對＋保存 build/session evidence。
+驗收句：DONE＝`workspace.a3.default` 兩 viewport 通過 design gate；functional/runtime E2E 另以至少 2 個 discipline fixture 建 set／驗座標／build，驗 stage path 與 loaded stage matched、member visibility/transform、unit mismatch 阻擋、clash 無假數，保存 build/session evidence。
 
 a3@v2 frozen 2026-07-13
 
 ## #a4 語意查詢與證據（A4 · 核心治理 · plane=core · HostTag=HOST-NATIVE）
 
-視覺來源：tracked `ai-bim-governance-prototype.html#a4`（舊佔位互動）＋paired tracked `ai-bim-geo-viewer-A4.png`／`ai-bim-geo-Ai-codeing-A4.png`（supplementary UI／coding cross-check）
+design screen/state：`workspace.a4.default`；legacy A4 PNG 只補充 semantic/viewer 情境，不參與 2D pass/fail
 
 **使用情境**：不熟 IFC schema 的設計審查者用自然語言找出特定樓層／類別／Pset 條件的構件，先看系統如何解譯，再在 3D 驗證並批次建 Issue。目標是可解釋查詢，不是聊天答案。
 
@@ -173,13 +174,13 @@ a3@v2 frozen 2026-07-13
 
 實作接點：`pages.tsx`、`components.tsx`（QueryComposer／FilterBuilder／EvidenceTrace／SemanticResults）、`data.ts`、新增 coordinator route/client 與 search owner（先過 BACKLOG ownership gate）。陷阱＝D-06/D-08/D-20、LLM 黑箱與 prompt injection。
 
-驗收句：DONE＝default fixture 中以「找 4F 防火門且 FireRating < 60」查到可預期集合；畫面顯 interpreted filters 與每筆 evidence；點列收到 3D ack；修改門檻後結果/統計一致；mapping 缺失列不發 highlight；批次建 Issue 經 confirm/audit；截圖逐項對齊本節 IA，並以 A4 paired tracked PNG 作補充比對＋保存 query/runtime trace。
+驗收句：DONE＝`workspace.a4.default` 兩 viewport 通過 design gate；functional/runtime E2E 另以 default fixture 驗自然語言解譯、evidence、3D ack、門檻重算、mapping 缺失不 highlight、批次 Issue confirm/audit，保存 query/runtime trace。
 
 a4@v2 frozen 2026-07-13
 
 ## #a5 IoT / FM 數位分身（A5 · 核心治理 · plane=core · HostTag=HOST-NATIVE）
 
-視覺來源：tracked `ai-bim-governance-prototype.html#a5`（舊佔位互動）＋paired tracked `ai-bim-geo-viewer-A5.png`／`ai-bim-geo-Ai-codeing-A5.png`（supplementary UI／coding cross-check）
+design screen/state：`concept.a5.default`；concept golden 定義 2D 方向，不能替代未來 IoT/FM 真 API/runtime evidence
 
 **使用情境**：設施值班員看到即時漏水／溫度／AQI 告警，要從空間與資產定位設備、確認資料新鮮度與歷史趨勢，建立維保工單並追 SLA；管理者同時看能源與資產健康 KPI。
 
@@ -193,13 +194,13 @@ a4@v2 frozen 2026-07-13
 
 實作接點：`pages.tsx`、`components.tsx`（SpaceAssetTree／TelemetryCard／AlertFeed／WorkOrderTable／TrendChart）、IoT/FM client、coordinator route、Kit overlay adapter。陷阱＝高頻 redraw、BMS alias、離線資料被當 0、工單與 Issue 雙寫。
 
-驗收句：DONE＝以 deterministic telemetry replay（含一筆 leak alert、一個 stale point）完成空間定位→設備詳情→建工單；stale 不上綠燈、單位/時間可見；點 alert 對應同一 BIM element 且收到 3D ack；斷 broker 後保留最後值＋顯連線異常＋retry；截圖逐項對齊本節 IA，並以 A5 paired tracked PNG 作補充比對＋保存 work_order_id/runtime trace。
+驗收句：DONE＝`concept.a5.default` 兩 viewport 通過 design gate；functional/runtime E2E 另以 deterministic telemetry replay 驗空間定位→設備→工單、stale/單位/時間、同 BIM element 3D ack、broker failure/保留值/retry，保存 `work_order_id`/runtime trace。
 
 a5@v2 frozen 2026-07-13
 
 ## #a6 4D / 5D 進度與成本整合（A6 · OMNIVERSE RUNTIME · plane=omni · HostTag=HOST-NATIVE）
 
-視覺來源：tracked `ai-bim-governance-prototype.html#a6`（舊佔位互動）＋paired tracked `ai-bim-geo-viewer-A6.png`／`ai-bim-geo-Ai-codeing-A6.png`（supplementary UI／coding cross-check）
+design screen/state：`concept.a6.default`；concept golden 定義 2D 方向，不能替代 schedule/cost/runtime evidence
 
 **使用情境**：專案控制／工務主管在週會比較基準排程、實際進度與成本，找出關鍵路徑延誤、依賴與資源衝突，並用 3D＋Gantt 向施工團隊說明影響。
 
@@ -213,13 +214,13 @@ a5@v2 frozen 2026-07-13
 
 實作接點：`pages.tsx`、`components.tsx`（ScheduleFilters／Gantt／ActivityDetail／EvmCards）、schedule/cost owner、coordinator routes、Kit time overlay。陷阱＝時區、貨幣、baseline 漂移、WBS 批次綁定與 D-10。
 
-驗收句：DONE＝匯入含一個逾期活動的 schedule fixture、綁定 GUID、拖到 data date；Gantt row、3D 色彩、detail 與 KPI 同一 activity；CV/SV/CPI/SPI 可由 fixture 重算；取消一個 mapping 後顯未綁且不著色；建 Issue 經 confirm；截圖逐項對齊本節 IA，並以 A6 paired tracked PNG 作補充比對＋保存 overlay ack/trace。
+驗收句：DONE＝`concept.a6.default` 兩 viewport 通過 design gate；functional/runtime E2E 另匯入 schedule fixture、綁 GUID、驗 Gantt/3D/detail/KPI 同一 activity、EVM 可重算、缺 mapping 不著色、Issue confirm，保存 overlay ack/trace。
 
 a6@v2 frozen 2026-07-13
 
 ## #a7 掃描比對 / Reality Capture（A7 · OMNIVERSE RUNTIME · plane=omni · HostTag=HOST-NATIVE）
 
-視覺來源：tracked `ai-bim-governance-prototype.html#a7`（舊佔位互動）＋paired tracked `ai-bim-geo-viewer-A7.png`／`ai-bim-geo-Ai-codeing-A7.png`（supplementary UI／coding cross-check）
+design screen/state：`concept.a7.default`；concept golden 定義 2D 方向，不能替代 capture/alignment/runtime evidence
 
 **使用情境**：現場 QA／測量工程師把 LAS/E57/PLY 或 mesh 對齊設計 BIM，調整 tolerance，找出正／負偏差與漏建／多建，再把高風險偏差交成 Issue。
 
@@ -233,13 +234,13 @@ a6@v2 frozen 2026-07-13
 
 實作接點：`pages.tsx`、`components.tsx`（CaptureList／AlignmentInspector／TolerancePanel／DeviationTable）、capture service/coordinator route、Kit point-cloud/overlay adapter。陷阱＝CRS、mm/m、ICP local minimum、巨型 artifact 與 precision 誇大。
 
-驗收句：DONE＝以帶已知 transform/tolerance 的小型 scan fixture 對齊，RMS 與偏差列可重算；調 tolerance 後 heatmap/table/count 同步；點列定位同一 GUID/zone；高 RMS fixture 顯低可信且阻擋批次通過；一筆 deviation 轉 Issue；PDF/Excel/LAS 三種 artifact 可追同一 `capture_job_id` 且欄位／hash／CRS 可驗；截圖逐項對齊本節 IA，並以 A7 paired tracked PNG 作補充比對＋保存 alignment/runtime evidence。
+驗收句：DONE＝`concept.a7.default` 兩 viewport 通過 design gate；functional/runtime E2E 另以 scan fixture 驗 transform/tolerance/RMS、heatmap/table/count、GUID/zone、高 RMS 阻擋、Issue 與三種可追溯 artifact，保存 alignment/runtime evidence。
 
 a7@v3 frozen 2026-07-14
 
 ## #a8 Synthetic Data Studio（A8 · OMNIVERSE RUNTIME · plane=omni · HostTag=HOST-NATIVE）
 
-視覺來源：tracked `ai-bim-governance-prototype.html#a8`（舊佔位互動）＋paired tracked `ai-bim-geo-viewer-A8.png`／`ai-bim-geo-Ai-codeing-A8.png`（supplementary UI／coding cross-check）
+design screen/state：`concept.a8.default`；concept golden 定義 2D 方向，不能替代 Replicator/runtime evidence
 
 **使用情境**：ML／simulation engineer 從核准的 USD stage 定義範圍、相機路徑與 domain randomization，生成 RGB/depth/instance segmentation/bbox 與 metadata，先驗 preview 與品質，再匯出可回溯資料集。
 
@@ -253,13 +254,13 @@ a7@v3 frozen 2026-07-14
 
 實作接點：`pages.tsx`、`components.tsx`（SceneScope／CameraPath／Randomization／OutputPreview／DatasetJobPanel）、dataset owner/coordinator routes、Replicator runner。陷阱＝版本 API 漂移、GPU/storage 無上限、不可重現 seed、把生成影像當真實 evidence。
 
-驗收句：DONE＝用小型 deterministic USD fixture、固定 seed 與 3 個 camera 產出至少 RGB＋depth＋instance/bbox；manifest 可逐 frame 回溯且同 seed rerun metadata 一致；故意讓 writer 失敗顯 failed count/retry；COCO/YOLO artifact schema 可驗；截圖逐項對齊本節 IA，並以 A8 paired tracked PNG 作補充比對＋保存 dataset_job_id/runtime logs。
+驗收句：DONE＝`concept.a8.default` 兩 viewport 通過 design gate；functional/runtime E2E 另以 deterministic USD fixture 驗固定 seed/camera/output、per-frame manifest、writer failure/retry、COCO/YOLO schema，保存 `dataset_job_id`/runtime logs。
 
 a8@v2 frozen 2026-07-13
 
 ## #a9 機器人 / 自主巡檢（A9 · OMNIVERSE RUNTIME · plane=omni · HostTag=HOST-NATIVE）
 
-視覺來源：paired tracked `ai-bim-geo-viewer-A9.png`／`ai-bim-geo-Ai-codeing-A9.png`（supplementary UI／coding cross-check）；共用 shell 仍引 tracked `ai-bim-governance-prototype.html`，其舊 A9 Copilot 文案不再定義 route 身分。
+design screen/state：`concept.a9.default`；legacy A9 PNG/Copilot 文案只作歷史 companion，不定義 route、API 或 2D pass/fail
 
 **使用情境**：設施／機器人操作員先在 digital twin 驗證巡檢路線、waypoints、禁行區與 camera/LiDAR coverage，執行任務時追蹤電量、定位與異常，並把事件連回 BIM 空間/資產與 Issue。預設是模擬；實機模式另需 edge/ROS 證據。
 
@@ -273,13 +274,13 @@ a8@v2 frozen 2026-07-13
 
 實作接點：`pages.tsx`、`components.tsx`（MissionQueue／RobotStatus／RouteViewer／SensorFeeds／EventTimeline）、robot mission owner/coordinator routes、Isaac Sim runner。陷阱＝把模擬當實機、缺 E-stop、BIM 無 navmesh、telemetry freshness、危險動作未 confirm。
 
-驗收句：DONE＝以單層 USD＋simulated robot fixture 建含不可達點的任務；route planner 回 reachable/unreachable，修正後 run；3D、timeline、camera/LiDAR 與 mission progress 同一 runtime ID；注入 anomaly 建立 Issue；中斷 telemetry 顯 stale 且 pause/abort 可審計；截圖逐項對齊本節 IA，並以 A9 paired tracked PNG 作補充比對、保留 Isaac/runtime trace；不得宣稱實機。
+驗收句：DONE＝`concept.a9.default` 兩 viewport 通過 design gate；functional/runtime E2E 另以 simulated robot fixture 驗不可達點、route run、同一 runtime ID 的 3D/timeline/sensors/progress、anomaly Issue、telemetry stale 與 audited pause/abort，保留 Isaac/runtime trace且不得宣稱實機。
 
 a9@v2 frozen 2026-07-13
 
 ## #a10 其他應用 / AI 決策工作台（A10 · OMNIVERSE RUNTIME · plane=omni · HostTag=HOST-NATIVE）
 
-視覺來源：paired tracked `ai-bim-geo-viewer-A10.png`／`ai-bim-geo-Ai-codeing-A10.png`（supplementary UI／coding cross-check）；共用 shell 仍引 tracked `ai-bim-governance-prototype.html`，其舊 A10 Robotics 文案不再定義 route 身分。
+design screen/state：`concept.a10.default`；legacy A10 PNG/Robotics 文案只作歷史 companion，不定義 route、API 或 2D pass/fail
 
 **使用情境**：資產業主、ESG／法遵與設計決策者把 BIM、能源、IFC/IDS、IoT 與氣象證據放到同一個 scenario，比較 baseline 與替代方案，閱讀有來源的 AI 建議，最後輸出決策報告或建立追蹤 Issue。
 
@@ -293,13 +294,13 @@ a9@v2 frozen 2026-07-13
 
 實作接點：`pages.tsx`、`components.tsx`（SourceLedger／ScenarioMatrix／ApplicationCards／EvidenceRecommendation／ReportJobs）、A10 orchestration client/coordinator route；各模組 owner 由 BACKLOG 決策。陷阱＝catch-all 變成第二份資料庫、跨時間源硬比較、AI 無證據、成本/碳排單位混用。
 
-驗收句：DONE＝以 baseline＋低碳 alternative fixture 執行至少一個真 module；來源 ledger 可逐項 drilldown，KPI delta 可重算；移除氣象來源只讓相關卡顯未取得；AI 建議展開到 evidence refs 且採納需 confirm/audit；PDF/Excel 可追 scenario/report ID；BCF 在無 approved bridge 時顯 unavailable，不偽成功；截圖逐項對齊本節 IA，並以 A10 paired tracked PNG 作補充比對＋保存 trace，source model hash 前後不變。
+驗收句：DONE＝`concept.a10.default` 兩 viewport 通過 design gate；functional/runtime E2E 另以 baseline＋alternative fixture 驗 module、source ledger、可重算 KPI、缺來源誠實態、evidence-linked AI confirm/audit、report IDs 與 BCF unavailable，保存 trace且 source model hash 不變。
 
 a10@v3 frozen 2026-07-14
 
 ## #issues Issue / BCF（BC · 核心治理 · plane=core · HostTag=HOST-NATIVE）
 
-prototype 錨：ai-bim-governance-prototype.html#issues
+design screen/state：`reference_missing`（`#issues` 尚未有 approved pixel baseline；legacy anchor 只補充 IA）
 
 目標 IA：
 - **Issue 列表** Panel：Issue 依 contracts §10.2 的共同 schema 接收 A1/A2/A3/A4/A5/A6/A7/A9/A10 與 manual 來源（A8 job failure 不自動轉 Issue；`source` 欄標來源）；列＝ID＋標題＋sev＋來源 Badge；status Badge 逐字 echo 生命週期 enum（open/assigned/in_progress/resolved/rejected/reopened，contracts §2）；transition 走 IntentDialog（模式 3）。
@@ -312,24 +313,24 @@ API（逐字）：`GET /api/governance/issues`（list）、`POST /api/governance
 
 實作接點：改檔＝`pages.tsx`、`components.tsx`、`IntentDialog.tsx`、`governanceClient.ts`。陷阱＝D-04（BCF 版本字串集中一處常數，UI 顯 `BCF 2.1`）、D-12（禁 A1Issue/A2Issue 獨立型別）、D-10。
 
-驗收句：DONE＝rule-run→from failures 建 issues→transition 一張→匯 BCF；斷言 BCF 按鈕在無 issue 前 gated、status Badge 對 enum 逐字、network 只打 `/api/governance/*`；與 prototype #issues 對齊。
+驗收句：DONE＝先取得 `#issues` approved design screen/state 並通過兩 viewport design gate；functional E2E 另驗 rule-run→from failures→transition→BCF、無 issue gated、status enum 逐字與 network 只打 `/api/governance/*`。
 
 issues@v1 frozen 2026-07-10
 
 ## #reports 報表中心（RP · 核心治理 · plane=core · HostTag=HOST-NATIVE）
 
-prototype 錨：ai-bim-governance-prototype.html#reports
+design screen/state：`reference_missing`（`#reports` 尚未有 approved pixel baseline；legacy anchor 只補充 IA）
 
 目標 IA：**可用報表** Panel 兩列呈現規格——列 1＝`A1 檢核結果 Excel 匯出`（ok LED＋`匯出` ghost 鈕，指向 IX-A1-05 同一 API）；列 2＝`中心化報表彙整（待建）`（idle LED、opacity 降、`待建` disabled＋待建標）。中心化彙整（mapping coverage 報表、review package）建成前一律 disabled 待建列，禁暗示功能性報表。
 IX 卡：—。API（逐字）：`GET /api/governance/rule-runs/:id/export?fmt=excel`；中心化彙整端點＝待建。
 實作接點：改檔＝`pages.tsx`。陷阱＝D-07、D-25（coverage 數字不可當品質宣稱）。
-驗收句：DONE＝載入 `#reports` 斷言兩列（可用列可匯出、待建列 disabled＋prov 標）；與 prototype #reports 對齊。
+驗收句：DONE＝先取得 `#reports` approved design screen/state 並通過兩 viewport design gate；functional E2E 另斷言可用列可匯出、待建列 disabled＋prov 標。
 
 reports@v1 frozen 2026-07-10
 
 ## #viewer 3D Viewer 呈現（3D · OMNIVERSE RUNTIME · plane=omni · HostTag=HOST-NATIVE）
 
-prototype 錨：ai-bim-governance-prototype.html#viewer
+design screen/state：`reference_missing`（`#viewer` 2D chrome 尚未有 approved pixel baseline；live WebRTC frame 永不作設計 golden）
 
 定位句：把 GPU 算好的模型 WebRTC 串到瀏覽器（M4 目標）；console 本頁不內嵌 3D，首幀前＝暗 stage＋斜線佔位，不偽造 matched 影像。
 目標 IA：`Card_DarkCTA` 雙欄——左＝DarkStage（glyph ◳）＋全寬 `GPU 開啟主畫面預覽 · Primary + Spectator ↗` CTA → `/ui/open?session=`（凍結 handoff）；右＝需求規格 Panel 四條 bullets：
@@ -338,26 +339,26 @@ prototype 錨：ai-bim-governance-prototype.html#viewer
 3. 標記、剖切只寫 USD session layer，永不改 source model；
 4. **首幀指標由 WebRTC track 事件驅動，未取得不可標綠**。
 API（逐字）：`GET /api/runtime/status`（first_frame 讀值）；`/ui/open?session=`。
-驗收句：DONE＝無 active session 時 first-frame 列顯 idle「未取得」（無假綠）；CTA 導向 `/ui/open?session=<id>`。
+驗收句：DONE＝先取得只涵蓋 2D chrome/非動態區域的 approved design screen/state 並通過 design gate；runtime E2E 另驗無 active session 時 first-frame 列顯 idle「未取得」、CTA 導向 `/ui/open?session=<id>`，真 session 再驗 first-frame/stage/DataChannel。
 深規（七區塊 IA、AC-1~21、IX-3D 卡族）一律見 **TARGET-viewer.md**。
 
 viewer@v1 frozen 2026-07-10
 
 ## #gpu GPU 審查室（01 · OMNIVERSE RUNTIME · plane=omni · HostTag=HOST-NATIVE · MVP）
 
-prototype 錨：ai-bim-governance-prototype.html#gpu
+design screen/state：`reference_missing`（`#gpu` 2D chrome 尚未有 approved pixel baseline；live runtime 另驗）
 
 目標 IA：`Card_DarkCTA` 語意同 #viewer（多人同看同一視角：主控驅動、旁觀跟隨；首幀前不偽造 matched 影像）；bridge 步驟（建立 session→派發 endpoint→首幀→DataChannel）以 Stepper 呈現；CTA 走 `openInViewerUrl` → `/ui/open?session=`（不得改 redirect target／session-id regex，contracts §1）；console 內無 WebRTC 影片（僅 link-out）。
 **`#review` 獨立頁裁決見 §0.3 #3：`#gpu` 與 `#review` 為兩個獨立元件/route，永不合併或重定向。**
 IX 卡：—。API（逐字）：`/ui/open?session=`（經 `coordinatorClient.openInViewerUrl`）。
 實作接點：改檔＝`pages.tsx`、`coordinatorClient.ts`、`components.tsx`。陷阱＝D-01（禁 canvas 示意當 3D 交付）、D-17（禁宣稱無縫遷移，contracts §6）。
-驗收句：DONE＝點「開啟主畫面預覽」斷言導向 `/ui/open?session=<id>`、console 內無影片；Stepper 渲染 bridge 步驟；highlight/section/snapshot 建成前 `p15` disabled。
+驗收句：DONE＝先取得 `#gpu` approved design screen/state 並通過 design gate；functional/runtime E2E 另驗 CTA 導向 `/ui/open?session=<id>`、console 內無影片、bridge Stepper 與未建工具 `p15` disabled。
 
 gpu@v1 frozen 2026-07-10
 
 ## #conv IFC→USD 轉檔排程（CV · 落地端控制台 · plane=core · HostTag=CONTAINER · P1）
 
-prototype 錨：ai-bim-governance-prototype.html#conv
+design screen/state：`pipeline.default`
 
 目標 IA：
 - ① 3 MetricCards 呈現規則：`IFC-READY 佇列 N`（真值）；`COVERAGE`（**必附「usd_stage_enumeration · 自我參照」note**——coverage_ratio=1 為結構性恆真非 IFC lossless；後端值不動、UI 加註）；`GPU 轉檔`（adapter 未配時顯「未取得」＋idle，note `adapter_from_env 未配 · idle`，不偽綠）。
@@ -375,7 +376,7 @@ API（逐字）：`GET /api/external/ifc-ready`、`GET /api/external/minio-watch
 
 實作接點：改檔＝轉檔 UI 現行落點（`modelData/ModelDataPage.tsx`＋`modelData/GlobalConversionPane.tsx`＋`modelData/useConversionData.ts` 等；實際位置以 repo 現行結構為機器真相）、`coordinatorClient.ts`、`components.tsx`。**`#conv` 的 alias／獨立頁現況查 TRUTH §1 `conv` 列**；本節規格要求 `#conv` 為獨立正典頁——若現況仍為 alias，解除 alias 屬 route 收斂決策，查 BACKLOG gap-route-convergence／gap-conv-history。陷阱＝D-25（coverage=1 自我參照必加 `conv-coverage-selfref-note`）、D-15（禁宣稱 100% 無損）、D-09（離頁 clearInterval、失敗不清空舊資料）、D-26（MinIO watch runtime env 走 compose 透傳的部署區頂層 `.env`）。
 
-驗收句：DONE＝載入 `#conv` 截圖 job 表＋coverage note＋GPU 卡「未取得」；toggle watch 斷言 `PUT /api/conversion/watch` payload 回 status；轉檔歷史清單渲染自 `/api/dev/conversions` 且逐列 status enum 逐字；無直連 `:49101`；與 prototype #conv 三區對齊。
+驗收句：DONE＝`pipeline.default` 兩 viewport 通過 design gate；functional E2E 另驗 job 表、coverage note、GPU「未取得」、watch payload/status、`/api/dev/conversions` 歷史 enum 逐字且無直連 `:49101`。
 
 作廢範圍（v1→v2）：v1 節首 HostTag=HOST-NATIVE 抵觸 §0.3 #1 裁決（coordinator HostTag 裁＝container）；v1 實作接點頁名 `ConversionSchedulingPage` 為 stale 對映、且把 alias 現況寫在本檔而非引 TRUTH。v2 改標 CONTAINER、落點改依 repo 現行 `modelData/` 結構、現況一律引 TRUTH §1 `conv` 列。
 
@@ -383,7 +384,7 @@ conv@v2 frozen 2026-07-10
 
 ## #sessions Session 管理（SS · 落地端控制台 · plane=core · HostTag=CONTAINER · hero）
 
-prototype 錨：ai-bim-governance-prototype.html#sessions（v2 2026-07-02）
+design screen/state：`reference_missing`（`#sessions` 尚未有 approved pixel baseline；legacy v2 anchor 只補充 IA）
 
 目標 IA：
 - ① **站點連線狀態條（SaaS 前瞻，示意）**：虛線框＋`connected`/`offline-grace · 本地自主運作中` 兩態 pill（idle LED）＋`DEMO DATA · PLANNED · SaaS-M1` 標；徽章不偽綠也不偽紅。行為合約＝**IX-TN-03（PLANNED · SaaS-M1；本行即自足合約，無外部引用）**：徽章三態狀態機 `connected →（逾心跳窗）offline-grace →（逾寬限期）expired →（重連刷新憑證）connected`，值一律後端驅動（模式 4，前端不推定）；上報僅 metadata（計數/狀態/hash/摘要/時戳/版本號，IFC/USD payload 不出站，contracts §11）；`offline-grace` 文案固定標「本地自主運作中」——離線僅犧牲雲端可視性與遠端控制，落地端轉檔／檢核／GPU 渲染／WebRTC 不受影響；`expired` 提示重連刷新憑證；心跳窗與寬限期均為規劃值·非實測。
@@ -402,7 +403,7 @@ API（逐字）：`GET /api/runtime/status`（5s 輪詢）、`POST /api/review-s
 
 實作接點：改檔＝`SessionManagementPage.tsx`、`IntentDialog.tsx`、`coordinatorClient.ts`、`components.tsx`（A1BridgeSupplyPanel）。陷阱＝D-24（`stage matched` 必等 viewer 端真實回報 `first_frame_at`，coordinator 不得推定）、D-10（terminate 走三段式）、D-33（供應端與 A1 同輪詢值）。
 
-驗收句：DONE＝載入 `#sessions` 經 IntentDialog 結束一筆 active session，斷言 `POST .../:id/close` 帶 reason、列轉灰 60s；`強制釋放` 維持 disabled＋待建標；證據三欄缺值顯「未取得」＋idle；連動橋證據與 `#a1` rail 同輪詢一致、關 session 後 A1 rail 同步回 idle；站點連線條為虛線 PLANNED 樣式；與 prototype #sessions 三區對齊。
+驗收句：DONE＝先取得 `#sessions` approved design screen/state 並通過 design gate；functional E2E 另驗 IntentDialog close/reason、列轉灰、`強制釋放` disabled、證據缺值 idle、A1 bridge 同源同步與 PLANNED 站點狀態。
 
 作廢範圍（v1→v2）：v1 的 status Badge enum「queued/active/closing/closed」誤植——repo 無 session status=`queued`，且漏列 `created`/`failed`；v2 起以 coordinator `types.ts` `SessionStatus`（created/active/closing/closed/failed）逐字為準。
 
@@ -410,7 +411,7 @@ sessions@v2 frozen 2026-07-10
 
 ## #instances Kit / GPU 機隊（KG · 落地端控制台 · plane=omni · HostTag=HOST-NATIVE）
 
-prototype 錨：ai-bim-governance-prototype.html#instances
+design screen/state：`reference_missing`（`#instances` 尚未有 approved pixel baseline；Kit Manager 2D UI 同樣須另有 approved screen）
 
 目標 IA：**Kit 實例** Panel（監看）：列＝instance id＋用途（串流·審查室／待命）＋LED＋GPU 型號＋`util=未取得`（真遙測未接一律「未取得」＋idle，絕不偽綠）；`KitInstance.status` enum 逐字 echo（contracts §2）。**GPU 鐵律引 contracts §6**：1 GPU＝1 Kit instance＝1 stream；換 GPU＝terminate＋recreate（約 30–40 秒）；無 live migration；spectator 共看不另吃 GPU。真遙測未接前節點快照一律標 `demo`（DEMO DATA），與 Fleet-model 設計區分開呈現。
 
@@ -426,13 +427,13 @@ API（逐字）：`GET /api/runtime/status`、`GET /api/kit/instances/current`�
 
 實作接點：改檔＝`pages.tsx`、`components.tsx`。陷阱＝D-17（confirm 文案含重啟搬移＋約 30–40 秒；UI/API 不出現 live migration）、D-22（drop 後彈 IntentDialog，禁直接改前端狀態）、D-07。
 
-驗收句：DONE＝載入 `#instances` 斷言 util 欄顯「未取得」＋idle（無假綠 metric）、demo 快照帶 `demo` ProvTag 且無 network 取它、fleet intent 鈕 disabled＋待建標；拖放規則函式單測綠；與 prototype #instances 對齊。
+驗收句：DONE＝先取得 `#instances` approved design screen/state 並通過 design gate；functional E2E 另驗 util「未取得」＋idle、demo ProvTag、fleet intent disabled 與拖放規則單測。
 
 instances@v1 frozen 2026-07-10
 
 ## #minio MinIO 資料（M · 落地端控制台 · plane=core · HostTag=CONTAINER）
 
-prototype 錨：ai-bim-governance-prototype.html#minio
+design screen/state：`reference_missing`（`#minio` 尚未有 approved pixel baseline）
 
 目標 IA：
 - ① **真 MinIO 逐層瀏覽** Panel（唯讀 raw-folder，S3 `Delimiter='/'` 語意，像 MinIO 網頁一樣逐層點開）：mono 註 `GET /api/minio/objects?prefix=&delimiter=/ · folders[]=CommonPrefixes · objects[]=當層直屬檔`；點資料夾以該 prefix 重打 list 進下一層（**lazy drill-down**）；**導到含 model.ifc 的葉層**時掛「專案(中文)/種類/版本」語意 badge（`deriveIntakeFromKey`，≥3 段）＋**ledger 衍生狀態 chip**（ready/detected/queued/converting/failed/未轉）；**無 ledger 紀錄誠實標「未轉（含 baseline）」＋提供一鍵觸發轉檔鈕**；資料夾節點**不顯示寫死物件數**（CommonPrefix 不含其下數量）；末層（如 geometries_chunks）摺成單一資料夾不攤開；排序 `localeCompare('zh-TW')`。
@@ -445,7 +446,7 @@ API（逐字）：`GET /api/minio/objects?prefix=&delimiter=/`、`GET /api/conve
 
 實作接點：改檔＝`pages.tsx`、`governanceClient.ts`、`components.tsx`（實際落點以 repo 現行 `modelData/` 結構為機器真相）。陷阱＝D-26（runtime env 走 compose 透傳）、D-21（空層顯「目前沒有 X＋下一步」，404/501 顯待建徽章非錯誤）。
 
-驗收句：DONE＝載入 `#minio` 逐層點入真 bucket 至含 model.ifc 葉層，截圖語意 badge＋ledger chip；無紀錄檔標「未轉」且一鍵觸發鈕可見；資料夾無寫死物件數；bucket 規約 Panel 帶 demo 標；network 只打 `/api/minio/*`＋`/api/conversion/*`；與 prototype #minio 兩區對齊。
+驗收句：DONE＝先取得 `#minio` approved design screen/state 並通過 design gate；functional E2E 另逐層點入真 bucket 至 `model.ifc` 葉層，驗語意 badge/ledger、未轉＋觸發、無寫死物件數、demo 規約與 coordinator-only network。
 
 作廢範圍（v1→v2）：v1 節首 HostTag=HOST-NATIVE 為原型筆誤原樣凍入，抵觸本檔 §0.3 #1 裁決（coordinator HostTag 裁＝container；本頁資料面全走 coordinator :8004 proxy）。v2 改標 CONTAINER。
 
@@ -453,32 +454,32 @@ minio@v2 frozen 2026-07-10
 
 ## #runtime Runtime 監控（RT · SYSTEM · plane=core · HostTag=HOST-NATIVE）
 
-prototype 錨：ai-bim-governance-prototype.html#runtime
+design screen/state：`runtime.ops.default`
 
 目標 IA：4 MetricCards：`KIT 實例`（真值）、`活躍 SESSION`（真值）、`GPU 使用率`（**遙測未接＝「未取得」＋note「遙測待接 · idle」，不畫假綠燈、不捏 GPU 數字**）、`控制面`（health 真值）。無操作鈕（純監看）。streamConfig 欄當 session 回報（CAM/CODEC/LATENCY 有值才顯，FPS 缺值顯「未取得」）。
 IX 卡：—。API（逐字）：`GET /api/runtime/status`、`GET /api/review-sessions/:id/stream-config`。
 實作接點：改檔＝`pages.tsx`、`coordinatorClient.ts`、`components.tsx`。陷阱＝D-06（provenance 不硬編前端）、D-09。
-驗收句：DONE＝載入 `#runtime` 斷言 GPU/VRAM/FPS 顯「未取得」（無假綠）；network 只打 runtimeStatus＋streamConfig；與 prototype #runtime 四卡對齊。
+驗收句：DONE＝`runtime.ops.default` 兩 viewport 通過 design gate；functional E2E 另斷言 GPU/VRAM/FPS「未取得」不偽綠、network 只打 runtimeStatus＋streamConfig，且釋放 Kit 等危險操作遵守 intent→confirm→audited。
 
 runtime@v1 frozen 2026-07-10
 
 ## #admin 系統管理（SY · SYSTEM · plane=core · HostTag=CONTAINER · NOT BUILT stub）
 
-prototype 錨：ai-bim-governance-prototype.html#admin
+design screen/state：`reference_missing`（`#admin` 尚未有 approved pixel baseline）
 
 目標 IA：**系統設定** Panel phase（紅 hatch）：說明「此頁為 stub，介面先佔位。所有設定控制 disabled，不接任何 mock」；`使用者管理（待建）`、`部署設定（待建）` 兩枚 disabled＋待建標（repo prov=`p1`）。
 IX 卡：—。API：無（零 `/api/*` 呼叫）。實作接點：改檔＝`pages.tsx`。陷阱＝D-07。
-驗收句：DONE＝載入 `#admin` 斷言全控制 disabled＋`p1`、零 network。
+驗收句：DONE＝先取得 `#admin` approved design screen/state 並通過 design gate；functional E2E 另斷言全控制 disabled＋`p1`、零 network。
 
 admin@v1 frozen 2026-07-10
 
 ## #spec 設計規格說明（▦ · SYSTEM · plane=core · HostTag=CONTAINER · 文件頁）
 
-prototype 錨：ai-bim-governance-prototype.html#spec
+design screen/state：`reference_missing`（`#spec` 尚未有 approved pixel baseline）
 
 目標 IA：**A1–A10 狀態總表** Panel（2 欄 grid，每格名稱＋ProvTag）——**狀態值動態取自 TRUTH 語意（不在本檔或頁面硬編建成狀態）**；repo boundary contract 對照列（Panel＋Field 靜態呈現）。尾註（mono）：「scenario 數字（『312 扇門』『17000 frames』）一律願景敘事，**禁當實測**。」
 IX 卡：—。API：無（靜態）。實作接點：改檔＝`pages.tsx`、`components.tsx`。陷阱＝D-06、D-28。
-驗收句：DONE＝載入 `#spec` 截圖狀態總表與尾註；狀態格 ProvTag 與 TRUTH 對應列一致；無 network。
+驗收句：DONE＝先取得 `#spec` approved design screen/state 並通過 design gate；functional E2E 另驗狀態總表/尾註、ProvTag 與 TRUTH 一致、零 network。
 
 spec@v1 frozen 2026-07-10
 
@@ -494,13 +495,13 @@ spec@v1 frozen 2026-07-10
 
 ### §4.1 `#review` GPU Review Room（獨立保留頁 · plane=omni · HostTag=HOST-NATIVE）
 
-prototype 錨：無獨立原型頁（原型 `review→gpu` alias 僅 demo；裁決見 §0.3 #3）
+design screen/state：`reference_missing`（`#review` 無 approved pixel baseline；legacy `review→gpu` alias 不可補位）
 
 目標 IA：獨立 ReviewRoomPage（與 `#gpu` 永不合併）：**ReviewSessionViewerPane 以真 session attach 3D**（EmbeddedViewer postMessage bridge，不接 mock）＋**Tool Rail**（`Load / Focus / Select / Clear` 四指令；`Highlight`＝client-pull `highlightPrimsRequest`；`Section`／`Snapshot`＝待建，disabled＋`p15` 標）；每次指令留一行 trace（時間、指令、參數摘要、ack/timeout）；server-push highlight 屬 DO-NOT-RE-ADD（contracts §1）。
 IX 卡：IX-3D-01~05 全文見 TARGET-viewer §6（本頁為其宿主）。
 API（逐字）：review-sessions＋viewer lease（`claim/heartbeat/release/status`）＋`/ui/open?session=`；DataChannel `openStage/focusPrim/selectPrims/clearHighlight`＋`highlightPrimsRequest`（P1.5）。
 實作接點：改檔＝`pages.tsx`、`coordinatorClient.ts`、`components.tsx`。陷阱＝D-01（禁 canvas 示意當 3D 交付）、D-16（browser 禁直連 governance `:49102`，一律走 `/api/governance/*` proxy；同 PROCESS §3 network 面斷言）、勿破 `/ui/open` regex（RK6，contracts §1）。
-驗收句：DONE＝attach 一筆真 session 後 Load/Focus/Select/Clear 有 ack trace；Highlight 依四條件 gating；Section/Snapshot disabled＋`p15`。
+驗收句：DONE＝先取得只涵蓋 2D chrome/非動態區域的 `#review` approved screen 並通過 design gate；runtime E2E 另 attach 真 session，驗 Load/Focus/Select/Clear ack trace、Highlight 四條件 gating、Section/Snapshot disabled＋`p15`。
 
 review@v1 frozen 2026-07-10
 

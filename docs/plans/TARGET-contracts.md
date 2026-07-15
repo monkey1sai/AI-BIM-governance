@@ -1,7 +1,8 @@
 # TARGET-contracts — 全域凍結契約（跨頁不變量唯一正本）
 
-> v4 · 2026-07-14 · A1–A10 使用情境與 route 身分重寫
-> `TARGET-contracts@v4 frozen 2026-07-14`
+> v5 · 2026-07-14 · desigin-system 前端權威與 99% dual-gate
+> `TARGET-contracts@v5 frozen 2026-07-14`
+> 作廢範圍（v4→v5）：兩份 legacy HTML／二十張 route PNG 作 production 2D 視覺權威、production CSS token 作獨立真相，以及非像素級驗收；改以上游唯讀 `desigin-system`＋repo-pinned manifest/baselines 為 design authority，與 operability/runtime gate 分立。
 > 作廢範圍（v3→v4）：舊 A9「設計／審查 Copilot」與 A10「機器人／巡檢模擬」身分，以及僅以兩份 HTML 作視覺來源的基準；依 route PNG 設計輸入改為 A9 機器人／自主巡檢、A10 其他應用／AI 決策工作台，將 IA 內化到 self-contained TARGET，並加入跨應用量測與證據 envelope。
 > 作廢範圍（v2→v3）：§7 A2 版本差異列原載「ifcdiff · 禁自寫 diff」抵觸 2026-07-10 R2 使用者簽核裁決（A2 現行採簽核之自製多級鍵引擎，語意對齊 ifcdiff）；v3 依 R2 更正。
 > 作廢範圍（v1→v2）：§4 路由身分表「群組」欄 12 列誤植（`#viewer`/`#gpu`/`#a6`–`#a10` 誤標「核心治理」、`#conv`/`#sessions`/`#instances`/`#minio` 誤標「OMNIVERSE RUNTIME」、`#runtime` 誤標「落地端控制台 / SYSTEM」）；v2 依 prototype `EC_NAV` 導航五組（工作台／核心治理／OMNIVERSE RUNTIME／落地端控制台／SYSTEM）更正。
@@ -13,7 +14,8 @@
 3. 修訂本檔＝使用者明確授權＋bump 檔頭凍結點（`TARGET-contracts@v<N> frozen <date>`）＋一行作廢範圍。
 4. 本檔不記載 repo 的建成現況（建成狀態一律查 `TRUTH.md`）；文中「待建」是需求屬性（本規格要求新增），非建成宣稱。
 5. 引用單向：TARGET-shell / TARGET-viewer / PROCESS 以「contracts §N」錨引用本檔；本檔不引用 TRUTH / BACKLOG。
-6. 共用 shell／viewer 骨架以兩份 tracked HTML 為視覺來源；A1–A10 每 route 的 `ai-bim-geo-viewer-A<n>.png` 與 `ai-bim-geo-Ai-codeing-A<n>.png` 是 tracked supplementary visual source，durable 正本仍是 TARGET-shell 對應節。視覺來源中的數字、ID、日期、路徑、協定標籤與健康值不是資料契約。
+6. 2D UX／資訊架構／視覺 token／元件位置與互動狀態以上游唯讀 `C:\Repos\design\desigin-system` 為 authoring authority；CI/PR/merge 只讀 `docs/plans/design-system-reference.manifest.json`＋`design-system-baseline/` 的 approved tracked snapshot。TARGET-shell/TARGET-viewer 仍是行為、資料、API 與 runtime durable 正本；設計示意數字、ID、日期、路徑、協定標籤與健康值不是資料契約。
+7. design fidelity 與 operability/runtime 是兩個獨立且均需通過的 gate；完整契約見 §5，驗收紀律見 PROCESS §2／§3。legacy HTML／route PNG 只保留作歷史 IA 與 OpenUSD/runtime companion，不得作 production 2D pass/fail 或 API/coding 權威。
 
 ---
 
@@ -91,7 +93,7 @@
 
 ## §4 路由契約（正典 22 條身分表＋9 個別名＋1 個獨立保留頁）
 
-> 本表是路由**身分**（route × 頁名 × 群組 × 後端歸屬）；「群組」欄以 prototype `EC_NAV` 導航五組為樣貌真相。各 route 的建成狀態**唯一落點＝`TRUTH.md`**，本表不載狀態。
+> 本表是路由**身分**（route × 頁名 × 群組 × 後端歸屬）；「群組」欄以 approved design reference 的導覽 IA 為樣貌目標，且不得改寫既有 route identity。各 route 的建成狀態**唯一落點＝`TRUTH.md`**，本表不載狀態。
 > 路由機器真相＝`web-viewer-sample/src/console/data.ts` `PAGES[]`＋`EdgeConsole.tsx` switch case；本表不手工鏡像 repo 全部 case。
 
 | 碼 | route | UI 頁名 | 群組 | 後端 / 服務歸屬 |
@@ -161,7 +163,19 @@ repo `Prov` 型別（機器真相＝`web-viewer-sample/src/console/data.ts:6`）
 
 - **`prov="todo"` 會 TS2322，禁用**——`todo` 僅是 DS 顯示級標籤，**不是 Prov 值**；待建一律用 `p1`/`p15`/`p3`/`p4`。
 - 缺遙測 → 「未取得」＋ idle LED（無 glow，不偽綠）；demo 數據 → `prov="demo"`＋標「示範資料」；願景數字 → 標「願景敘事 · 示意」。
-- **視覺真相宣告**：token 唯一真相＝`web-viewer-sample/src/console/edge-console.css` 的 `--ec-*` 與 review-room `styles.css`；文件不抄數值、不另定 px。
+- **token 投影宣告**：上游 design source 是 token authority；production 依 `primitive → semantic → component` 三層投影到 `web-viewer-sample/src/console/edge-console.css` 的 `--ec-*` 與相關 app styles。production CSS 是受控輸出，不是可自行漂移的平行設計真相；文件不另抄 token 數值。
+
+### §5.1 Frontend design authority 與 99% fidelity contract
+
+1. **來源與可攜 snapshot**：authoring origin 固定為唯讀 `C:\Repos\design\desigin-system`；repo 以 `docs/plans/design-system-reference.manifest.json` 鎖定來源檔 SHA-256、screen/state、viewport、golden path/hash 與 aggregate snapshot。CI 不讀本機絕對路徑，也不自動 rebaseline。
+2. **固定量測條件**：Windows runner、Chromium、DPR 1、locale `zh-TW`、timezone `Asia/Taipei`、dark scheme、字型 ready、動畫關閉；`1440×900` 與 `1920×1080` 均需驗證。只有 manifest 明列的 dynamic region 可 mask；沒有宣告即不遮罩。
+3. **99% 的機器定義**：每個 viewport 的 pixel diff ratio `≤0.01`；navigation、primary actions、loading、empty、success、warning、failure、disabled、confirmation、manifest locale 與 runtime-truth 語意全部通過。像素 99% 不能補償語意缺項，語意通過也不能補償像素超標。
+4. **coverage 誠實性**：唯一 machine mapping 是 manifest `route_inventory[]` 的 `route/status/screen_id`；只有 `status=approved` 且對應 `screens[]` 的 state 能宣告 visual pass。`status=reference_missing` 不得補位；`routes_without_approved_pixel_reference[]` 僅為由 inventory 衍生的 compatibility projection。不得拿 legacy prototype 或任意近期 screenshot 補位。
+5. **scope 與聲明**：changed paths 必須由 base/head manifest 聯集推導為 `passed`、`mixed` 或 `partial_reference_missing`。`mixed` 跑全部 affected approved screens並列 missing routes/surfaces；pure missing scope 不偽造 visual result。後兩者一律 `Full completion claimed=no`，但不得因此禁止誠實的局部 bug/security/功能修復；unknown candidate path fail closed。gate-infrastructure-only 不要求 production result。
+6. **semantic authority**：semantic parity 只能由 branch-protected Playwright 對 current checkout 執行 manifest exact cases並直接產出；PR body、外部 JSON、手填 boolean、skip/blocked case 或不完整 implemented set均不得作 gate input，且必須 fail closed。
+7. **不覆寫產品契約**：design source 決定「看起來與操作起來如何」，但不覆寫 §1 backend preservation、§2 enum、§3 service ownership、§4 route identity、§6 GPU 物理、§7 官方 runtime、§9 honest states 或 §10 data schema。source 中的 demo API、數值與靜態成功畫面不能成為 runtime truth。
+8. **production 技術邊界**：production 2D frontend 沿用本 repo React 架構；正式 3D 只顯示 Kit WebRTC frame、指令走 DataChannel，browser 不引入本地幾何 renderer。上游 HTML/JS 是設計輸入，不是 framework、API 或 runtime implementation 指令；新增 API 仍依 TARGET-shell 對應節與 §1。
+9. **雙閘完成條件**：visual-result 必須綁 manifest hash、subject commit、screen/state、兩 viewport與 reference/current/diff hashes；operability evidence 另綁 route/button/fixture/API/runtime ID/visible states/network。涉及 Kit/3D 時，再綁 first-frame、loaded stage 與 DataChannel/Kit ack。任一閘失敗都不得宣告 user-facing built。
 
 ---
 

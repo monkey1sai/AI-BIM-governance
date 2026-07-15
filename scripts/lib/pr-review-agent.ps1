@@ -111,6 +111,7 @@ function ConvertFrom-PrReviewPorcelainStatus {
         $pathText = $record.Substring(3)
         if ($statusCode -match '[RC]' -and ($i + 1) -lt $Records.Count) {
             [void]$paths.Add($pathText)
+            [void]$paths.Add($Records[$i + 1])
             $i++
             continue
         }
@@ -242,12 +243,12 @@ function Get-PrReviewChangedPathsFromGit {
     if (-not [string]::IsNullOrWhiteSpace($BaseSha) -and -not [string]::IsNullOrWhiteSpace($HeadSha)) {
         $mergeBase = (git -C $RepoRoot -c "safe.directory=$safeRoot" merge-base $BaseSha $HeadSha 2>$null | Select-Object -First 1)
         if (-not [string]::IsNullOrWhiteSpace($mergeBase)) {
-            $paths = @(git -C $RepoRoot -c "safe.directory=$safeRoot" diff --name-only $mergeBase $HeadSha 2>$null)
+            $paths = @(git -C $RepoRoot -c "safe.directory=$safeRoot" diff --no-renames --name-only $mergeBase $HeadSha 2>$null)
             if ($LASTEXITCODE -ne 0) {
                 throw "Unable to resolve PR diff from merge base '$mergeBase' to head '$HeadSha'."
             }
         } else {
-            $paths = @(git -C $RepoRoot -c "safe.directory=$safeRoot" diff --name-only "$BaseSha...$HeadSha" 2>$null)
+            $paths = @(git -C $RepoRoot -c "safe.directory=$safeRoot" diff --no-renames --name-only "$BaseSha...$HeadSha" 2>$null)
             if ($LASTEXITCODE -ne 0) {
                 throw "Unable to resolve PR diff range '$BaseSha...$HeadSha'."
             }

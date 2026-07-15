@@ -9,16 +9,17 @@
 Repo-local 產品功能需求主來源：
 
 - `docs/plans/docs-plans-README.md`：docs/plans 唯一入口（TRUTH/TARGET/PROCESS 三分體系）；A1–A10 需求與介面語意問 `TARGET-shell.md`／`TARGET-viewer.md`，現況問 `TRUTH.md`。
-- `docs/plans/ai-bim-governance-prototype.html`：可點擊操作原型；此 HTML 是原型 source artifact，不是由 Markdown 生成的衍生檢視。
+- `C:\Repos\design\desigin-system`：唯讀的 production 2D authoring standard；本 repo 不回寫。
+- `docs/plans/design-system-reference.manifest.json`＋`docs/plans/design-system-baseline/`：CI/PR/merge 可攜的 approved design snapshot；machine supporting artifacts，不是第八份需求正本。
+- `docs/plans/ai-bim-governance-prototype.html`／`ai-bim-geo-viewer-prototype.html`：legacy IA／OpenUSD runtime companions，不再作 production 2D pass/fail authority。
 
 外部設計站 `https://bim-docs.jackshappybot.com/` 是產品定位與架構參考：
 
 - 分頁「01 系統架構」的「BIM 模型管理平台 — 系統架構」：主系統採雲端與客戶落地端分離架構；外部公司雲端是 control-plane，客戶落地端是 IFC / Kit / MCP runtime data-plane。
 - 分頁「05 BIM治理與模型檢核」：A1–A10 是本 repo 的 10 大主要開發項目。
-- 分頁「06 操作介面總覽」：使用者操作介面、按鈕功能、進度與可驗收流程參考。
-- 設計站原始碼可依個人環境 clone / 定位；本 PR 使用使用者提供的本機 clone 作為一次性查證來源，該本機路徑不納入 repo contract。
+- 分頁「06 操作介面總覽」：歷史 UX 參考；與 current pinned design screen 衝突時，不作 visual pass/fail 權威。
 
-程式碼與 contracts 仍是行為 source of truth；repo-local plans 依 `docs/plans/docs-plans-README.md` §3 三條正交規則取用（現況問 TRUTH、需求問 TARGET-*、紀律問 PROCESS；視覺錨＝兩份 prototype HTML）；外部設計站負責主系統架構、產品定位與驗收期待。
+程式碼與 contracts 仍是行為 source of truth；repo-local plans 依 `docs/plans/docs-plans-README.md` §3 取用（現況問 TRUTH、行為需求問 TARGET-*、紀律問 PROCESS、2D fidelity 問 pinned design reference）。Design source 不得覆寫 API、enum、安全、權限、runtime lifecycle 或 service ownership。
 
 - 前端相關改動（web-viewer-sample / console）動工前必讀 `docs/plans/TARGET-contracts.md` §1 後端凍結面契約（前端只打 coordinator `:8004`、proxy 路徑 byte-identical、禁改 governance `app.py`、coordinator `governanceProxy.ts`、streaming `conversion_authority.py` 等清單）。
 - A1–A10 建成狀態唯一落點＝`docs/plans/TRUTH.md`（§4 一覽），其他文件只引用、不各自展開論證。
@@ -42,17 +43,20 @@ EdgeConsole product shell contract（對齊 `feat/edge-console-product-shell`）
 | A6 | 4D / 5D 施工模擬 | future schedule service + optional Kit overlay |
 | A7 | Reality Capture 比對 | future capture service + optional 3D deviation overlay |
 | A8 | AI 訓練資料與 Synthetic Data | future GPU job lane / Replicator |
-| A9 | 設計 / 審查 Copilot | future controlled operation-plan layer, session-layer only |
-| A10 | 機器人 / 自動巡檢模擬 | future Isaac / robot simulation lane |
+| A9 | 機器人 / 自主巡檢 | future Isaac / robot simulation lane |
+| A10 | 其他應用 / AI 決策工作台 | future controlled evidence/operation-plan layer, session-layer only |
 
 Repo 定位：先做可賣、可驗收的 CORE governance flow；Omniverse / Kit / Isaac 類能力是 3D / GPU runtime lane，必須用真實 review session、first frame、DataChannel 或 runtime evidence 才能宣稱 passed。
 
-## 3. Frontend Operability Requirement
+## 3. Frontend Dual-Gate Requirement
 
-凡是 user-facing capability，完成標準不是 API 完成，而是一條可在瀏覽器驗收的 vertical slice：
+凡是 user-facing capability，完成標準不是 API 完成，也不是像素或 runtime 單閘完成；必須同時具備 design fidelity 與可在瀏覽器驗收的 operability/runtime vertical slice：
 
 ```txt
 UI route
+→ approved design screen/state
+→ Windows runner / Chromium DPR1 1440x900 + 1920x1080
+→ pixel diff <= 1% + semantic states 100%
 → visible button
 → default fixture
 → frontend request
@@ -72,11 +76,16 @@ UI route
 - UI 必須顯示 loading、success、failure、retry state。
 - UI 必須顯示相關 ID：`job_id`、`model_version_id`、`artifact_url`、`review_session_id`、`usd_stage_url`、`prim_path` / `ifc_guid`。
 - 必須提供 browser E2E command、截圖/trace/console/network evidence。
+- 必須以 `scripts/tests/verify-design-system-reference.ps1` 驗 pinned manifest/baselines；production visual result 必須通過 `scripts/tests/verify-design-system-visual-result.ps1`。
+- Frontend scope 必須由 changed paths 與 base/head manifest 聯集推導；semantic result 只能由 branch-protected Playwright inline cases 對 current checkout 產出，PR body／外部 JSON／手填 boolean 不得作輸入。
+- Design gate 固定 Chromium、DPR 1、字型 ready、動畫關閉、兩 viewport；navigation/actions/loading/empty/success/warning/failure/disabled/confirmation/current locale/runtime truth 語意必須全過。
+- 沒有 approved screen/state 時標 `partial_reference_missing`；混合 bundle 標 `mixed` 並跑全部 approved screens。兩者都必須列 missing scope、`Full completion claimed=no`，不得宣稱 99%，但不阻止誠實的局部修復。
 - README / docs / PR 必須列手動驗收步驟。
 
 ### MUST NOT
 
 - 不得以 backend tests only 宣告 user-facing feature 完成。
+- 不得以 visual diff pass 取代 route/API/runtime evidence，或以 browser/runtime E2E 取代 design diff。
 - 不得要求使用者只靠 curl / Postman 驗收。
 - 不得把無遙測資料畫成 fail；應標 `未取得` / `not observed`。
 - 不得用 fake mapping / fake fixture 當真實 conversion correctness。
@@ -95,7 +104,17 @@ PR 描述中 user-facing change 必須包含下列 machine-required labels（由
 | Visible success state |  |
 | E2E command |  |
 | Screenshot / trace |  |
+| Design gate status | `passed` / `mixed` / `partial_reference_missing` |
+| Design screen(s) |  |
+| Reference-missing route(s) / surface(s) |  |
+| Full completion claimed | `yes` / `no` |
+| Design reference manifest |  |
+| Visual fidelity result |  |
+| Visual comparison |  |
+| Visual artifacts |  |
 | Known gaps |  |
+
+Visual comparison 必須列兩 viewport 的 diff ratio（各自 `<=1%`）與 semantic result；Visual artifacts 必須指向 CI output 的 reference/current/diff。pure `partial_reference_missing` 三個 visual 欄位填 `reference_missing`，不得偽造 result。live WebRTC/GPU frame 不作 design golden；functional/runtime evidence 在所有 status 下仍獨立必要。
 
 ## 5. Real IFC Semantic Viewer E2E
 
@@ -117,6 +136,7 @@ C:\Repos\active\iot\AI-BIM-governance\storage\許良宇圖書館建築_2026.ifc
 - Evidence 預設放在 `docs/evidence/viewer-validate-ifc-semantics-real-ifc/`，或對應該批變更的 `docs/evidence/<slug>/`（PR / feature slug）。
 - 大型輸出只保留 summary JSON、抽樣 mapping、測試結果與截圖；mapping / pset / spatial / bbox 太大時只保留 sample（例如前 20 筆）。
 - Full-system E2E complete 必須同時有 governance CPU semantic E2E 與 Kit WebRTC visual/runtime E2E。
+- 適用 route 若有 approved design screen，還必須有 commit-bound design fidelity result；Kit OpenUSD Web Viewer／OpenUSD extensions 的新增或重構保留但不在本輪，既有 runtime evidence 契約不因此失效。
 
 ### MUST NOT
 

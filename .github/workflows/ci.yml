@@ -27,6 +27,13 @@ jobs:
       compose_config: ${{ steps.paths.outputs.compose_config }}
       powershell_static: ${{ steps.paths.outputs.powershell_static }}
       secret_pattern_scan: ${{ steps.paths.outputs.secret_pattern_scan }}
+      frontend_product: ${{ steps.design_scope.outputs.frontend_product }}
+      frontend_visual_required: ${{ steps.design_scope.outputs.frontend_visual_required }}
+      frontend_design_status: ${{ steps.design_scope.outputs.frontend_design_status }}
+      frontend_reference_missing: ${{ steps.design_scope.outputs.frontend_reference_missing }}
+      frontend_required_screen_ids: ${{ steps.design_scope.outputs.frontend_required_screen_ids }}
+      base_sha: ${{ steps.paths.outputs.base_sha }}
+      head_sha: ${{ steps.paths.outputs.head_sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -39,10 +46,20 @@ jobs:
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git -c core.quotepath=false diff --name-only '${{ github.event.pull_request.base.sha }}' '${{ github.event.pull_request.head.sha }}' > changed-paths.txt
+            base_sha='${{ github.event.pull_request.base.sha }}'
+            head_sha='${{ github.event.pull_request.head.sha }}'
+            git -c core.quotepath=false diff --no-renames --name-only "$base_sha...$head_sha" > changed-paths.txt
+          elif [ "${{ github.event_name }}" = "push" ] && [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            base_sha='${{ github.event.before }}'
+            head_sha='${{ github.sha }}'
+            git -c core.quotepath=false diff --no-renames --name-only "$base_sha" "$head_sha" > changed-paths.txt
           else
             printf "__full__\n" > changed-paths.txt
+            base_sha=''
+            head_sha='${{ github.sha }}'
           fi
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
 
           emit() {
             local name="$1"
@@ -57,19 +74,57 @@ jobs:
           emit root_contracts '^(tests/|scripts/tests/)'
           emit coordinator '^bim-review-coordinator/'
           emit governance_service '^(governance-service/|rules/)'
-          emit viewer '^(web-viewer-sample/|bim-review-coordinator/(src|public)/|docs/plans/.*prototype\.html)'
+          emit viewer '^(web-viewer-sample/|bim-review-coordinator/(src|public)/|docs/plans/(.*prototype\.html|design-system-reference\.manifest\.json|design-system-baseline/))'
           emit kit_manager_api '^services/kit-manager-api/'
           emit kit_manager_web '^apps/kit-manager-web/'
           emit compose_config '^(compose\..*\.yml|\.env.*\.example|infra/docker/)'
           emit powershell_static '^(\.github/workflows/|\.claude/workflows/|scripts/.*\.ps1$|AGENTS\.md|docs/agents/)'
           echo "secret_pattern_scan=true" >> "$GITHUB_OUTPUT"
 
+      - name: Classify frontend design scope from base and head manifests
+        id: design_scope
+        shell: pwsh
+        run: |
+          $paths = @(Get-Content -LiteralPath changed-paths.txt | Where-Object { $_ })
+          if ($paths -contains '__full__') {
+            $frontendProduct = 'true'
+            $visualRequired = 'true'
+            $status = 'mixed'
+            $referenceMissing = 'full-dispatch'
+            $requiredScreenIds = @((Get-Content -LiteralPath 'docs/plans/design-system-reference.manifest.json' -Raw | ConvertFrom-Json).screens | ForEach-Object { [string]$_.id }) -join ','
+          } else {
+            . ./scripts/lib/design-system-gate.ps1
+            $scope = Get-DesignSystemChangeScope `
+              -RepoRoot '${{ github.workspace }}' `
+              -ChangedPaths $paths `
+              -BaseSha '${{ steps.paths.outputs.base_sha }}' `
+              -HeadSha '${{ steps.paths.outputs.head_sha }}'
+            if ($scope.status -like '*_fail_closed') {
+              throw "Design scope failed closed: status=$($scope.status); unknown=$($scope.unknown_paths -join ', '); reference-authority=$($scope.reference_authority_paths -join ', ')"
+            }
+            $frontendProduct = $scope.frontend_product.ToString().ToLowerInvariant()
+            $visualRequired = $scope.visual_required.ToString().ToLowerInvariant()
+            $status = [string]$scope.status
+            $referenceMissing = @($scope.reference_missing_items) -join ','
+            $requiredScreenIds = @($scope.required_screen_ids) -join ','
+          }
+          "frontend_product=$frontendProduct" >> $env:GITHUB_OUTPUT
+          "frontend_visual_required=$visualRequired" >> $env:GITHUB_OUTPUT
+          "frontend_design_status=$status" >> $env:GITHUB_OUTPUT
+          "frontend_reference_missing=$referenceMissing" >> $env:GITHUB_OUTPUT
+          "frontend_required_screen_ids=$requiredScreenIds" >> $env:GITHUB_OUTPUT
+
   root-contracts:
     name: root contracts and fakes
     needs: changes
-    if: needs.changes.outputs.root_contracts == 'true'
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.root_contracts == 'true')
     runs-on: windows-latest
     steps:
+      - name: Require changed-path classifier success
+        if: needs.changes.result != 'success'
+        shell: pwsh
+        run: throw 'changed path classifier did not succeed; refusing a skipped-success required check.'
+
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -93,9 +148,14 @@ jobs:
   coordinator:
     name: coordinator build and tests
     needs: changes
-    if: needs.changes.outputs.coordinator == 'true'
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.coordinator == 'true')
     runs-on: windows-latest
     steps:
+      - name: Require changed-path classifier success
+        if: needs.changes.result != 'success'
+        shell: pwsh
+        run: throw 'changed path classifier did not succeed; refusing a skipped-success required check.'
+
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -121,9 +181,14 @@ jobs:
   governance-service:
     name: governance-service tests
     needs: changes
-    if: needs.changes.outputs.governance_service == 'true'
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.governance_service == 'true')
     runs-on: windows-latest
     steps:
+      - name: Require changed-path classifier success
+        if: needs.changes.result != 'success'
+        shell: pwsh
+        run: throw 'changed path classifier did not succeed; refusing a skipped-success required check.'
+
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -147,9 +212,14 @@ jobs:
   viewer:
     name: viewer build and tests
     needs: changes
-    if: needs.changes.outputs.viewer == 'true'
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.viewer == 'true')
     runs-on: windows-latest
     steps:
+      - name: Require changed-path classifier success
+        if: needs.changes.result != 'success'
+        shell: pwsh
+        run: throw 'changed path classifier did not succeed; refusing a skipped-success required check.'
+
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -175,12 +245,99 @@ jobs:
         working-directory: web-viewer-sample
         run: npm run test:session-first
 
+  design-semantic-visual:
+    name: design-semantic-visual
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.frontend_product == 'true')
+    runs-on: windows-2025
+    steps:
+      - name: Require changed-path classifier success
+        if: needs.changes.result != 'success'
+        shell: pwsh
+        run: throw 'changed path classifier did not succeed; refusing a skipped-success required check.'
+
+      - name: Checkout exact subject commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.changes.outputs.head_sha }}
+
+      - name: Validate pinned desigin-system manifest and baselines
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -NonInteractive -File scripts/tests/verify-design-system-reference.ps1 -RepoRoot '${{ github.workspace }}'
+          $requiredScreenIds = @('${{ needs.changes.outputs.frontend_required_screen_ids }}'.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() })
+          $headScreenIds = @((Get-Content -LiteralPath 'docs/plans/design-system-reference.manifest.json' -Raw | ConvertFrom-Json).screens | ForEach-Object { [string]$_.id })
+          $missingScreenIds = @($requiredScreenIds | Where-Object { $_ -notin $headScreenIds })
+          if ($missingScreenIds.Count -gt 0) { throw "Head manifest removed base-approved screen IDs: $($missingScreenIds -join ', ')" }
+
+      - name: Record honest reference-missing partial scope
+        if: needs.changes.outputs.frontend_visual_required != 'true'
+        shell: pwsh
+        run: |
+          "Design gate status: ${{ needs.changes.outputs.frontend_design_status }}" >> $env:GITHUB_STEP_SUMMARY
+          "Reference missing: ${{ needs.changes.outputs.frontend_reference_missing }}" >> $env:GITHUB_STEP_SUMMARY
+          'No pixel result is fabricated. Functional/runtime evidence remains an independent required gate and full completion is forbidden.' >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Setup Node.js
+        if: needs.changes.outputs.frontend_visual_required == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20'
+
+      - name: Install viewer dependencies
+        if: needs.changes.outputs.frontend_visual_required == 'true'
+        shell: pwsh
+        working-directory: web-viewer-sample
+        run: npm install --no-audit --no-fund
+
+      - name: Install pinned Playwright Chromium
+        if: needs.changes.outputs.frontend_visual_required == 'true'
+        shell: pwsh
+        working-directory: web-viewer-sample
+        run: npx playwright install chromium
+
+      - name: Produce semantic and pixel evidence from current checkout
+        if: needs.changes.outputs.frontend_visual_required == 'true'
+        shell: pwsh
+        working-directory: web-viewer-sample
+        run: npm run test:visual:design-system
+
+      - name: Recompute and validate design result
+        if: needs.changes.outputs.frontend_visual_required == 'true'
+        shell: pwsh
+        run: |
+          $requiredScreenIds = @('${{ needs.changes.outputs.frontend_required_screen_ids }}'.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() })
+          pwsh -NoProfile -NonInteractive -File scripts/tests/verify-design-system-visual-result.ps1 `
+            -RepoRoot '${{ github.workspace }}' `
+            -ResultPath '${{ github.workspace }}/artifacts/e2e/design-system-visual-result.json' `
+            -RequiredScreenIds $requiredScreenIds `
+            -TargetCommit '${{ needs.changes.outputs.head_sha }}' `
+            -AllowUntrackedArtifacts
+
+      - name: Upload design evidence
+        if: always() && needs.changes.outputs.frontend_visual_required == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: design-semantic-visual-${{ needs.changes.outputs.head_sha }}
+          path: |
+            artifacts/e2e/design-system-visual-result.json
+            artifacts/e2e/design-system-visual/
+            artifacts/e2e/design-system-playwright/
+          if-no-files-found: warn
+
   kit-manager-api:
     name: kit-manager-api tests
     needs: changes
-    if: needs.changes.outputs.kit_manager_api == 'true'
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.kit_manager_api == 'true')
     runs-on: windows-latest
     steps:
+      - name: Require changed-path classifier success
+        if: needs.changes.result != 'success'
+        shell: pwsh
+        run: throw 'changed path classifier did not succeed; refusing a skipped-success required check.'
+
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -204,9 +361,14 @@ jobs:
   kit-manager-web:
     name: kit-manager-web build
     needs: changes
-    if: needs.changes.outputs.kit_manager_web == 'true'
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.kit_manager_web == 'true')
     runs-on: windows-latest
     steps:
+      - name: Require changed-path classifier success
+        if: needs.changes.result != 'success'
+        shell: pwsh
+        run: throw 'changed path classifier did not succeed; refusing a skipped-success required check.'
+
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -230,9 +392,14 @@ jobs:
   compose-config:
     name: docker compose config
     needs: changes
-    if: needs.changes.outputs.compose_config == 'true'
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.compose_config == 'true')
     runs-on: ubuntu-latest
     steps:
+      - name: Require changed-path classifier success
+        if: needs.changes.result != 'success'
+        shell: pwsh
+        run: throw 'changed path classifier did not succeed; refusing a skipped-success required check.'
+
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -246,9 +413,14 @@ jobs:
   powershell-static:
     name: powershell static analysis
     needs: changes
-    if: needs.changes.outputs.powershell_static == 'true'
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.powershell_static == 'true')
     runs-on: windows-latest
     steps:
+      - name: Require changed-path classifier success
+        if: needs.changes.result != 'success'
+        shell: pwsh
+        run: throw 'changed path classifier did not succeed; refusing a skipped-success required check.'
+
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -269,9 +441,14 @@ jobs:
   secret-pattern-scan:
     name: secret pattern scan
     needs: changes
-    if: needs.changes.outputs.secret_pattern_scan == 'true'
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.secret_pattern_scan == 'true')
     runs-on: windows-latest
     steps:
+      - name: Require changed-path classifier success
+        if: needs.changes.result != 'success'
+        shell: pwsh
+        run: throw 'changed path classifier did not succeed; refusing a skipped-success required check.'
+
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:

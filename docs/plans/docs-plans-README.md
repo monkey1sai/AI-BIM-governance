@@ -1,10 +1,10 @@
 # docs/plans 入口（docs-plans-README）
 
-> v3 · 2026-07-14 · A1–A10 使用情境規格重寫（兩份 tracked HTML＋二十張 tracked route PNG）
+> v4 · 2026-07-14 · 前端設計權威與 99% dual-gate 對齊
 
 ## §0 一句話定位
 
-本目錄的唯一目的：把兩份 tracked prototype HTML 與 A1–A10 兩組 tracked route PNG 的設計輸入，內化成可執行的 TARGET 使用情境；唯一成功標準＝使用者能完成情境任務、結果可追溯、絕不把設計數字當實測。
+本目錄的唯一目的：把 `C:\Repos\design\desigin-system` 的前端設計輸入內化成可執行 TARGET 使用情境，並以 repo 內已鎖定的 manifest／golden screenshots 執行 99% design fidelity gate；成功仍必須同時滿足使用者可完成情境任務、runtime 結果可追溯，且絕不把設計示意數字當實測。
 
 > 2026-07-10 使用者授權全面重建（含原禁重建的互動實作規格）；舊體系見 git history。六份舊檔已於 2026-07-13 刪除（驗證閘五條全過，紀錄見《審批報告-docs-plans-AI-coding重設計-2026-07-10.md》）。
 
@@ -25,30 +25,30 @@
 |---|---|
 | 第一次進 repo | 本檔 → `TRUTH.md`（合計約 200 行） |
 | 動任何 code 前 | ＋`TARGET-contracts.md` §1–§5（凍結面/enum/埠/路由/Prov） |
-| 做某頁任務 | `BACKLOG.md` 找 gap 列 → `TARGET-shell.md` 對應節 → `TARGET-viewer.md` 的共享 3D/runtime 契約（若有 viewport）→ 節內標注的 contracts 段 → `PROCESS.md` 驗收 → tracked HTML＋該 route 兩張 tracked PNG 作輔助視覺比對 |
+| 做某頁任務 | `BACKLOG.md` 找 gap 列 → `TARGET-shell.md` 對應節 → `TARGET-viewer.md` 的共享 3D/runtime 契約（若有 viewport）→ 節內標注的 contracts 段 → `PROCESS.md` dual-gate 驗收 → `design-system-reference.manifest.json` 的 screen/state golden 比對 |
 | 查「X 建了沒」 | `TRUTH.md` 單檔（建成狀態一律查 TRUTH，別處不作答） |
 | 選下一件事 / 查 OPEN 決策 | `BACKLOG.md` 單檔 |
-| 做 A1–A10 任一情境 | 必讀 `TARGET-shell.md` 該 route；有 3D、overlay、camera、robot 或 runtime 的頁再讀 `TARGET-viewer.md` §8；最後以 `ai-bim-geo-viewer-A<n>.png` 與 `ai-bim-geo-Ai-codeing-A<n>.png` 交叉檢查資訊架構與 coding acceptance |
+| 做 A1–A10 任一情境 | 必讀 `TARGET-shell.md` 該 route；有 3D、overlay、camera、robot 或 runtime 的頁再讀 `TARGET-viewer.md` §8；最後依 manifest 的 `workspace.a<n>.default`／`concept.a<n>.default` screen 驗證 2D fidelity；舊 route PNG 只可補充理解歷史 IA，不是 coding 或 pass/fail 權威 |
 | SaaS 願景 | 不在必讀路徑；從本檔 §6 非必讀區起跳 |
 
-任務路徑固定為「BACKLOG 列 → self-contained TARGET 節 → contracts 引用段 → PROCESS 驗收 → tracked HTML／paired route PNG 視覺比對」。
+任務路徑固定為「BACKLOG 列 → self-contained TARGET 節 → contracts 引用段 → PROCESS 驗收 → tracked design reference visual gate＋獨立 operability/runtime gate」。
 
-**動線成本聲明**：首次進 repo 接第一個任務＝本檔→TRUTH→contracts §1–§5→BACKLOG→TARGET 節→PROCESS→tracked prototype，約 6–7 段定向閱讀（一次性成本）；後續任務固定 3 跳（BACKLOG gap 列 → TARGET 節 → PROCESS 驗收；全域不變量已由 TARGET 節內 contracts §N 錨帶出，不需另行通讀）。
+**動線成本聲明**：首次進 repo 接第一個任務＝本檔→TRUTH→contracts §1–§5→BACKLOG→TARGET 節→PROCESS→manifest 對應 screen，約 6–7 段定向閱讀（一次性成本）；後續任務固定 3 跳（BACKLOG gap 列 → TARGET 節 → PROCESS 驗收；全域不變量已由 TARGET 節內 contracts §N 錨帶出，不需另行通讀）。
 
 ## §3 效力（全文三條，不再有第四條）
 
 1. **使用者最新明確指令 > 本目錄一切文件。**
-2. **三類正交、各唯一**：現況問 TRUTH；需求語意與 A1–A10 頁面 IA 問 self-contained TARGET-*；兩份 tracked HTML 與兩組 tracked route PNG 只作視覺／coding companion source（分工見 §4）；紀律問 PROCESS。同類主題只有一檔，跨檔效力序不存在。發現矛盾＝bug：直接改正本、同 PR 刪被取代文字；**禁止**在 7 核心檔或新平行需求源重建增補層／禁寫清單／勘誤表／裁決帳（適用邊界見 PROCESS §3）。
+2. **三類正交、各唯一**：現況問 TRUTH；需求語意與 A1–A10 頁面 IA 問 self-contained TARGET-*；2D UX／視覺／互動位置以上游 `desigin-system` 與其 repo-pinned snapshot 為準（分工見 §4）；紀律問 PROCESS。同類主題只有一檔，跨檔效力序不存在。發現矛盾＝bug：直接改正本、同 PR 刪被取代文字；**禁止**在 7 核心檔或新平行需求源重建增補層／禁寫清單／勘誤表／裁決帳（適用邊界見 PROCESS §3）。
 3. **repo code＋tests＝現況行為權威**（TRUTH 與 code 不符＝TRUTH 的 bug，改 TRUTH）；TARGET＝目標權威（code 未達 TARGET＝缺口，登 BACKLOG）；saas-*、審批報告-*、已刪舊檔的 git 歷史一律無效力。
 
-## §4 視覺來源與 durable 正本分工
+## §4 設計權威、machine snapshot 與 durable 正本分工
 
-- `ai-bim-governance-prototype.html`＝共用產品 shell、22-route 導航與通用互動骨架；`ai-bim-geo-viewer-prototype.html`＝共享 viewer 七區塊與 DataChannel 互動骨架。兩份 HTML 是 tracked 視覺來源，保留不改。
-- `ai-bim-geo-viewer-A1.png`～`A10.png` 是 route UI／viewport 資訊架構圖；`ai-bim-geo-Ai-codeing-A1.png`～`A10.png` 是對應的 AI Coding Prompt Board，補充目標、角色、流程、component/API/state/data 與 acceptance。兩組共二十張均為 tracked supplementary visual source。
-- TARGET-* 仍是 durable 需求正本；PNG 與 TARGET 衝突時以 TARGET 為準並修正視覺來源。PNG/HTML 中的日期、ID、百分比、分數、延遲、FPS、路徑、協定標籤與品牌字樣均為示意，不能直接 hardcode 或當 runtime evidence。
-- 視覺來源不是像素級規格，也不是建成證據；正式 3D 仍須 Kit WebRTC first-frame＋stage truth＋DataChannel/runtime 證據。
-- 2026-07-13 route 身分採本輪 PNG：**A9＝機器人／自主巡檢；A10＝其他應用／AI 決策工作台**。HTML 內舊 A9 Copilot／A10 Robotics 僅保留作舊原型文字，TARGET 與 BACKLOG 依新身分收斂。
-- 原型內其他不一致，以 `TARGET-shell.md` §0.3 直接裁決；無 repo 事實者進 BACKLOG OPEN，不偷渡。
+- **Authoring authority**：`C:\Repos\design\desigin-system` 是唯讀的上游 2D UX、資訊架構、視覺 token、元件位置與互動狀態標準；不得由本 repo 回寫，也不得讓 CI 或 production runtime 依賴該絕對路徑。
+- **Portable gate authority**：`design-system-reference.manifest.json`＋`design-system-baseline/` 是經明確 rebaseline 核准後的 tracked machine snapshot。manifest 綁定來源檔 SHA-256、screen/state、兩個 viewport、golden hash 與 fidelity contract；它們是支援 artifacts，**不是第八份人類需求正本**。
+- **Durable behavior authority**：TARGET-* 定義 route、資料、API、enum、安全、權限、fallback 與 runtime lifecycle；上游設計不得覆寫 backend preservation contract。production `--ec-*` token 是上游 primitive→semantic→component 的受控投影，不是平行設計權威。
+- **99% 定義**：Windows runner、Chromium、DPR 1、字型載入完成、動畫關閉、`1440×900`＋`1920×1080`；manifest 未宣告遮罩的像素差異率各自 `≤ 1%`，並且 navigation、primary actions、loading／empty／success／warning／failure／disabled／confirmation、i18n 與 runtime-truth 語意為 100%。沒有 approved screen/state 的 route 標 `reference_missing`，不得宣稱 99%。
+- **雙閘獨立**：design fidelity pass 不等於功能完成；route/button/fixture/API/runtime ID/trace/network 仍須通過 operability gate。涉及 3D 時，live WebRTC frame 不作設計像素基準，仍須 Kit first-frame＋stage truth＋DataChannel/Kit ack 證據。
+- **Legacy companions**：`ai-bim-governance-prototype.html`、`ai-bim-geo-viewer-prototype.html` 與二十張 route PNG 保留作歷史 IA、viewer 七區塊與 OpenUSD/runtime 互動 companion；不再作 production 2D pass/fail 或 coding API 權威。當中的日期、ID、百分比、分數、延遲、FPS、路徑與協定標籤皆為示意。
 
 ## §5 檔案清單與行數預算
 
@@ -59,7 +59,7 @@
 | `TARGET-contracts.md` | 全域凍結契約（一字不差搬運區，改動需使用者授權） | 420 |
 | `TARGET-shell.md` | 殼層 22 route 垂直切片規格（含 A1–A10 情境、route 所屬 IX、API） | 950 |
 | `TARGET-viewer.md` | viewer 七區塊 IA＋M4 驗收＋IX-3D＋A1–A10 viewport/runtime 共約 | 360 |
-| `BACKLOG.md` | prototype-first 缺口排序＋OPEN 決策 | 220 |
+| `BACKLOG.md` | design-system-first 缺口排序＋OPEN 決策 | 220 |
 | `PROCESS.md` | 工程紀律 / DoD / 驗收 / 防腐三閘 | 320 |
 
 本表為 CI 行數 gate 的**目標依據**（agent-doc-context-budget）；現行 CI 尚未對 docs/plans 7 檔設行數斷言（`test-agent-governance-check.ps1` 僅涵蓋 AGENTS.md/CLAUDE.md），接線為 `BACKLOG.md` OPEN 待授權項。
@@ -91,7 +91,7 @@
 |---|---|
 | `ai-bim-governance-互動實作規格與標準對齊.md` | `TARGET-contracts.md` §4/§7/§9；route 所屬 IX 21 張 → `TARGET-shell.md`；IX-3D 5 張 → `TARGET-viewer.md` §6；IX-TN 4 張 → `TARGET-contracts.md` §12 |
 | `ai-bim-governance-開發軌跡與執行計畫.md` | `TARGET-contracts.md` §6/§7/§10；A1–A3 規格 → `TARGET-shell.md` 對應節；M0–M8 語彙 → `TARGET-viewer.md` §1.3；仍有效的執行缺口排序 → `BACKLOG.md`（舊逐輪軌跡見 git history） |
-| `ai-bim-governance-設計規格.md` | `TARGET-contracts.md` §5/§6/§9；per-page 視覺 → `TARGET-shell.md` 各節＋prototype 錨；資料存放事實 → `TRUTH.md` |
+| `ai-bim-governance-設計規格.md` | `TARGET-contracts.md` §5/§6/§9；per-page 2D 視覺 → manifest `route_inventory[]`／`screens[]`；TARGET-shell 保存行為與 IA；prototype 僅為 legacy companion；資料存放事實 → `TRUTH.md` |
 | `ai-bim-governance-實作紀律與技術債防線.md` | DoD／長壽紀律／檢查表 → `PROCESS.md` §2/§4/§5；現況事實類防線 → `TRUTH.md` |
 | `ai-bim-governance-design-system-對齊矩陣.md` | 現況裁決 → `TRUTH.md`；別名／保留頁 → `TARGET-contracts.md` §4；缺口 → `BACKLOG.md` |
 | `ai-bim-governance-前端對齊DS-保留後端-實作手冊.md` | 凍結契約＋enum → `TARGET-contracts.md` §1/§2；per-route API → `TARGET-shell.md` 各節；驗收規約 → `PROCESS.md` §3；OPEN 項 → `BACKLOG.md` |
@@ -100,4 +100,4 @@
 
 1. 核心 7 檔行數預算（§5 表）**待接進** CI（沿用 agent-doc-context-budget 機制；接線為 `BACKLOG.md` OPEN 待授權項）；接線後任何 PR 使核心檔超限＝紅燈。
 2. 新增第 8 個核心檔＝需使用者明確授權的邊界事件。
-3. 7 核心檔或新平行需求源新增／延長增補層、禁寫清單、勘誤表、裁決帳＝review 直接退回；§6 明列的 retained supporting/history、規則說明與移轉引用不因字詞命中誤判。
+3. 7 核心檔或新平行需求源新增／延長增補層、禁寫清單、勘誤表、裁決帳＝review 直接退回；§4 的 manifest/baselines 是 machine supporting artifacts，§6 明列的 retained supporting/history、規則說明與移轉引用不因字詞命中誤判。

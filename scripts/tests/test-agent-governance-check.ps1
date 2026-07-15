@@ -38,6 +38,13 @@ try {
         '.github/PULL_REQUEST_TEMPLATE.md',
         'scripts/tests/check-pr-body-evidence.ps1',
         'scripts/tests/test-pr-body-evidence.ps1',
+        'scripts/lib/design-system-gate.ps1',
+        'scripts/tests/verify-design-system-reference.ps1',
+        'scripts/tests/test-design-system-reference.ps1',
+        'scripts/tests/test-design-system-change-scope.ps1',
+        'scripts/tests/verify-design-system-visual-result.ps1',
+        'scripts/tests/test-design-system-visual-result.ps1',
+        'docs/plans/design-system-reference.manifest.json',
         'scripts/tests/fixtures/agent-governance-routing.json',
         '.ignore',
         '.gitnexusignore',
@@ -69,7 +76,7 @@ try {
     }
 
     $ci = Get-Content -LiteralPath '.github/workflows/ci.yml' -Raw
-    foreach ($job in @('changes', 'root-contracts', 'coordinator', 'governance-service', 'viewer', 'kit-manager-api', 'kit-manager-web', 'compose-config', 'powershell-static', 'secret-pattern-scan')) {
+    foreach ($job in @('changes', 'root-contracts', 'coordinator', 'governance-service', 'viewer', 'design-semantic-visual', 'kit-manager-api', 'kit-manager-web', 'compose-config', 'powershell-static', 'secret-pattern-scan')) {
         Assert-True ($ci -match "(?m)^\s{2}$([regex]::Escape($job)):\s*$") "ci.yml contains job $job"
     }
     Assert-True ($ci -match 'changed path classifier') 'ci.yml contains changed path classifier'
@@ -77,11 +84,27 @@ try {
         $expectedOutput = $output + ': ${{ steps.paths.outputs.' + $output + ' }}'
         Assert-True ($ci -match [regex]::Escape($expectedOutput)) "changes job exposes $output output"
     }
+    foreach ($output in @('frontend_product', 'frontend_visual_required', 'frontend_design_status', 'frontend_reference_missing', 'frontend_required_screen_ids')) {
+        $expectedOutput = $output + ': ${{ steps.design_scope.outputs.' + $output + ' }}'
+        Assert-True ($ci -match [regex]::Escape($expectedOutput)) "changes job exposes manifest-derived $output output"
+    }
     foreach ($gate in @('root_contracts', 'coordinator', 'governance_service', 'viewer', 'kit_manager_api', 'kit_manager_web', 'compose_config', 'powershell_static', 'secret_pattern_scan')) {
         Assert-True ($ci -match [regex]::Escape("needs.changes.outputs.$gate == 'true'")) "ci.yml gates affected job on $gate"
     }
+    Assert-True (([regex]::Matches($ci, 'name: Require changed-path classifier success')).Count -eq 10) 'every downstream required job explicitly fails when the classifier dependency fails'
+    Assert-True (([regex]::Matches($ci, "if: always\(\) && \(needs\.changes\.result != 'success' \|\|")).Count -eq 10) 'downstream required jobs run on classifier failure instead of reporting skipped-success'
     Assert-True ($ci -match 'if \[ "\$\{\{ github\.event_name \}\}" = "pull_request" \]') 'changed path classifier diffs PR base/head on pull_request'
+    Assert-True ($ci -match 'git -c core\.quotepath=false diff --no-renames --name-only "\$base_sha\.\.\.\$head_sha"') 'pull-request path classification uses rename-safe merge-base three-dot semantics'
     Assert-True ($ci -match 'printf "__full__\\n" > changed-paths\.txt') 'changed path classifier runs full service CI on push/workflow_dispatch'
+    Assert-True ($ci -match 'Get-DesignSystemChangeScope') 'CI frontend scope comes from the shared base/head manifest resolver'
+    Assert-True ($ci -match [regex]::Escape("needs.changes.outputs.frontend_product == 'true'")) 'design-system job is stable for every frontend product scope'
+    Assert-True ($ci -match 'npm run test:visual:design-system') 'approved/mixed CI runs the semantic and pixel Playwright producer'
+    Assert-True ($ci -match 'verify-design-system-visual-result\.ps1') 'approved/mixed CI recomputes and validates the visual result'
+    Assert-True ($ci -match '-RequiredScreenIds \$requiredScreenIds') 'CI validator receives the base/head union of approved screen IDs'
+    Assert-True ($ci -match 'Head manifest removed base-approved screen IDs') 'CI fails before capture when the head manifest narrows base-approved screens'
+    Assert-True ($ci -match 'AllowUntrackedArtifacts') 'CI uploads reproducible visual artifacts without committing ignored output'
+    Assert-True ($ci -match '(?s)design-semantic-visual:.*?runs-on: windows-2025') 'design-system CI uses the manifest-pinned Windows runner label'
+    Assert-True ($ci -match '(?s)design-semantic-visual:.*?working-directory: web-viewer-sample\s+run: npm install --no-audit --no-fund') 'design-system CI uses the repo-supported install path because the viewer lockfile is intentionally untracked'
     foreach ($command in @(
         'python -m pytest tests -q -p no:cacheprovider',
         'python -m pytest governance-service/tests -q',
@@ -104,13 +127,18 @@ try {
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-agent-governance-check\.ps1') 'agent-governance workflow runs static check'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-pr-body-evidence\.ps1') 'agent-governance workflow runs PR body evidence tests'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-require-gstack-evidence\.ps1') 'agent-governance workflow runs browser-evidence hook tests'
+    Assert-True ($governanceWorkflow -match 'scripts/tests/test-design-system-reference\.ps1') 'agent-governance workflow runs design-system reference tests'
+    Assert-True ($governanceWorkflow -match 'scripts/tests/test-design-system-change-scope\.ps1') 'agent-governance workflow runs design-system scope tests'
+    Assert-True ($governanceWorkflow -match 'scripts/tests/test-design-system-visual-result\.ps1') 'agent-governance workflow runs visual-result tests'
+    Assert-True ($governanceWorkflow -match 'npm install --no-audit --no-fund') 'agent-governance installs design-gate dependencies without requiring the intentionally untracked viewer lockfile'
+    Assert-True (-not ($governanceWorkflow -match 'npm ci')) 'agent-governance does not invoke npm ci without a tracked viewer lockfile'
     Assert-True (-not ($governanceWorkflow -match '(?m)^\s*run:\s*powershell\b')) 'agent-governance workflow does not re-enter legacy Windows PowerShell from pwsh'
     # 原本硬編 `-eq 2`（"both checks"），使得「新增一個治理檢查」必定讓本斷言失敗——數量只是
     # 當時的巧合，真正的意圖是「每個 step 都用 PowerShell 7，不得回退 legacy Windows PowerShell」。
     # 改以「pwsh run 數 == 全部 run 數」表達該意圖，workflow 從此可擴充而不失去保護。
     $pwshRunCount = @([regex]::Matches($governanceWorkflow, '(?m)^\s*run:\s*pwsh\b')).Count
     $totalRunCount = @([regex]::Matches($governanceWorkflow, '(?m)^\s*run:\s*\S')).Count
-    Assert-True ($pwshRunCount -ge 3) 'agent-governance workflow runs the governance checks with PowerShell 7'
+    Assert-True ($pwshRunCount -ge 5) 'agent-governance workflow runs the governance checks with PowerShell 7'
     Assert-True ($pwshRunCount -eq $totalRunCount) 'agent-governance workflow runs every step with PowerShell 7 (no legacy or non-pwsh shell)'
 
     $prReviewWorkflow = Get-Content -LiteralPath '.github/workflows/pr-review-agent.yml' -Raw
@@ -121,12 +149,18 @@ try {
     $prDiffRange = '${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}'
     Assert-True ($prReviewWorkflow -match [regex]::Escape($prDiffRange)) 'PR review workflow diffs from the merge base so newer main commits are not classified as PR changes'
     Assert-True ($prReviewWorkflow -match 'check-pr-local-preflight\.ps1 -PrNumber <n>') 'PR review workflow points reviewers to the local preflight gate'
-    Assert-True ($prReviewWorkflow -match 'Full service CI remains available on `push` to `main` and `workflow_dispatch`') 'PR review workflow documents full remote CI trigger points'
+    Assert-True ($prReviewWorkflow -match 'design-semantic-visual') 'PR review workflow identifies the semantic/pixel CI authority'
+    Assert-True ($prReviewWorkflow -match 'types:\s*\[opened, edited, synchronize') 'editing a PR body retriggers the evidence check'
     Assert-True (-not ($prReviewWorkflow -match 'scripts/pr-review-agent\.ps1')) 'PR review workflow does not rerun the local review agent in CI'
     Assert-True (-not ($prReviewWorkflow -match "'-SkipGitNexus'|'-AllowGitNexusUnavailable'|'-ReportOnly'")) 'PR review workflow no longer carries local review-agent flags'
     Assert-True (-not ($prReviewWorkflow -match '(?m)^\s+pull-requests:\s+write\s*$')) 'PR review workflow does not request pull-requests write permission'
     Assert-True (-not ($prReviewWorkflow -match '(?m)^\s+checks:\s+write\s*$')) 'PR review workflow does not request checks write permission'
     Assert-True (-not ($prReviewWorkflow -match 'npm ci|npm install --no-audit --no-fund|python -m pip install')) 'PR review workflow does not install local service dependencies in CI'
+    $localPreflight = Get-Content -LiteralPath 'scripts/dev/check-pr-local-preflight.ps1' -Raw
+    Assert-True ($localPreflight -match 'baseRefOid,headRefOid') 'local preflight resolves the selected PR base/head commits'
+    Assert-True ($localPreflight -match 'localHead -ne \$headSha') 'local preflight rejects a checkout that is not the selected PR head'
+    Assert-True (-not ($localPreflight -match "-BaseSha',\s*'origin/main'|-HeadSha',\s*'HEAD'")) 'local preflight does not mix selected PR evidence with ambient origin/main or HEAD'
+    Assert-True ($localPreflight -match 'if \(\$hasFrontendPaths -and -not \$SkipViewerVerify -and \$hasKitManagerPaths\)') 'local preflight builds Kit Manager on both default and SkipReviewAgent paths'
     Assert-True (-not ($prReviewWorkflow -match 'gitnexus@1\.6\.5')) 'PR review workflow does not install GitNexus in CI'
     Assert-True (-not ($prReviewWorkflow -match 'gitnexus analyze --index-only')) 'PR review workflow does not build a GitNexus index in CI'
 
@@ -147,12 +181,12 @@ try {
     }
 
     $prBodyEvidenceChecker = Get-Content -LiteralPath 'scripts/tests/check-pr-body-evidence.ps1' -Raw
-    foreach ($marker in @('Change lane', 'Behavior contract changed', 'Requirement source', 'GitNexus evidence', 'Browser E2E evidence', 'Agent workflow changed?')) {
+    foreach ($marker in @('Change lane', 'Behavior contract changed', 'Requirement source', 'GitNexus evidence', 'Browser E2E evidence', 'Design gate status', 'Design screen(s)', 'Reference-missing route(s) / surface(s)', 'Full completion claimed', 'Design reference manifest', 'Visual fidelity result', 'Visual comparison', 'Visual artifacts', 'Agent workflow changed?')) {
         Assert-True ($prBodyEvidenceChecker -match [regex]::Escape($marker)) "PR body evidence checker requires $marker"
     }
 
     $prTemplate = Get-Content -LiteralPath '.github/PULL_REQUEST_TEMPLATE.md' -Raw
-    foreach ($marker in @('AI Coding Governance', 'Change lane', 'Behavior contract changed', 'Linked issue', 'Requirement source', 'CODEOWNERS', 'GitNexus', 'Browser E2E evidence')) {
+    foreach ($marker in @('AI Coding Governance', 'Change lane', 'Behavior contract changed', 'Linked issue', 'Requirement source', 'CODEOWNERS', 'GitNexus', 'Browser E2E evidence', 'Design gate status', 'Design screen(s)', 'Reference-missing route(s) / surface(s)', 'Full completion claimed', 'Design reference manifest', 'Visual fidelity result', 'Visual comparison', 'Visual artifacts')) {
         Assert-True ($prTemplate -match [regex]::Escape($marker)) "PR template contains $marker"
     }
 
@@ -274,15 +308,39 @@ try {
     Assert-True (-not ($claudeSettingsRaw -match 'Write\|Edit\|MultiEdit|verify-reminder')) 'Claude no longer runs verify reminder after every edit'
     Assert-True ($claudeSettingsRaw -match 'Bash\(git commit\*\)') 'Claude commit guard runs only for git commit'
     Assert-True ($claudeSettingsRaw -match 'Bash\(gh pr merge\*\)') 'Claude keeps the merge evidence gate'
+    Assert-True (-not ($claudeSettingsRaw -match 'powershell\.exe|C:/Repos/active/iot/AI-BIM-governance/scripts')) 'Claude hooks use PowerShell 7 and resolve within the active worktree'
+    $claudeHookCommands = @($claudeSettings.hooks.PreToolUse | ForEach-Object { @($_.hooks) | ForEach-Object { [string]$_.command } })
+    $anchoredHookCommands = @($claudeHookCommands | Where-Object { $_ -match [regex]::Escape('${CLAUDE_PROJECT_DIR}/scripts/') })
+    Assert-True ($claudeHookCommands.Count -eq 2 -and $anchoredHookCommands.Count -eq 2) 'every Claude hook command anchors its script beneath CLAUDE_PROJECT_DIR'
+    Assert-True (@($claudeHookCommands | Where-Object { $_ -match '-File\s+"scripts/' }).Count -eq 0) 'Claude hooks reject cwd-relative script paths'
     $browserGate = Get-Content -LiteralPath 'scripts/hooks/require-gstack-evidence.ps1' -Raw
-    Assert-True ($browserGate -match 'Playwright / gstack / supported browser engine') 'merge evidence gate is browser-engine neutral'
-    Assert-True ($browserGate -match 'trace\.\*\\\.zip|trace.*\\\.zip') 'merge evidence gate accepts browser trace artifacts'
-    Assert-True ($browserGate -match 'apps/kit-manager-web') 'merge evidence gate covers Kit Manager frontend changes'
+    Assert-True ($browserGate -match 'verify-design-system-visual-result\.ps1') 'merge evidence gate validates the design-system visual result'
+    Assert-True ($browserGate -match 'baseRefOid,headRefOid') 'merge evidence gate binds to the actual PR base/head'
+    Assert-True (-not ($browserGate -match 'DESIGN_SYSTEM_VISUAL_RESULT_PATH')) 'merge evidence gate has no arbitrary visual-result path override'
+    Assert-True ((Get-Content -LiteralPath 'scripts/lib/design-system-gate.ps1' -Raw) -match 'reference_missing_product_surfaces') 'shared scope resolver covers reference-missing products such as Kit Manager'
 
     $fastFixSkill = Get-Content -LiteralPath '.codex/skills/ai-bim-fast-fix/SKILL.md' -Raw
     Assert-True ($fastFixSkill -match 'Escalate directly to Lane G') 'Fast Fix governed triggers escalate directly to Lane G'
-    foreach ($frontendLabel in @('Backend API called', 'Runtime action', 'loading, success, failure, and retry')) {
+    foreach ($frontendLabel in @('Backend API called', 'Runtime action', 'loading, success, failure, and retry', 'Design reference manifest', 'Visual fidelity result')) {
         Assert-True ($prBodyEvidenceChecker -match [regex]::Escape($frontendLabel)) "frontend evidence gate requires $frontendLabel"
+    }
+    $visualResultGate = Get-Content -LiteralPath 'scripts/tests/verify-design-system-visual-result.ps1' -Raw
+    foreach ($visualMarker in @('max_diff_pixel_ratio', 'semantic_parity', 'required_semantic_states', 'subject_commit', 'fidelity_contract.platform', 'workspace_clean', 'ls-files --others --exclude-standard')) {
+        Assert-True ($visualResultGate -match [regex]::Escape($visualMarker)) "visual result gate requires $visualMarker"
+    }
+    Assert-True ($visualResultGate -match '\$subjectCommit -eq \$TargetCommit') 'visual evidence must be produced from the exact target commit'
+    Assert-True ($visualResultGate -match 'rev-parse --verify') 'symbolic target refs such as HEAD are canonicalized before exact commit comparison'
+    foreach ($renameSafeSource in @($ci, (Get-Content -LiteralPath '.github/workflows/pr-review-agent.yml' -Raw), $browserGate, (Get-Content -LiteralPath 'scripts/dev/check-pr-local-preflight.ps1' -Raw), (Get-Content -LiteralPath 'scripts/lib/pr-review-agent.ps1' -Raw), $visualResultGate)) {
+        Assert-True ($renameSafeSource -match 'diff --no-renames --name-only') 'changed-path classifier preserves both sides of renames'
+    }
+    $localPreflight = Get-Content -LiteralPath 'scripts/dev/check-pr-local-preflight.ps1' -Raw
+    Assert-True ($localPreflight -match '\.tmp\\pr-local-preflight' -and $localPreflight -notmatch '\.tmp-pr-local-preflight') 'local preflight writes its own evidence only beneath the ignored .tmp directory'
+    $e2eIgnore = Get-Content -LiteralPath 'artifacts/e2e/.gitignore' -Raw
+    $e2eIgnoreLf = $e2eIgnore.Replace("`r`n", "`n")
+    $e2eIgnoreCrLf = $e2eIgnoreLf.Replace("`n", "`r`n")
+    foreach ($e2eIgnoreVariant in @($e2eIgnoreLf, $e2eIgnoreCrLf)) {
+        Assert-True ($e2eIgnoreVariant -match '(?m)^_playwright-output/\r?$') 'Playwright raw output remains ignored under LF/CRLF'
+        Assert-True ($e2eIgnoreVariant -match '(?m)^\*\.webm\r?$') 'Playwright videos remain ignored under LF/CRLF'
     }
 
     $routingFixtures = Get-Content -LiteralPath 'scripts/tests/fixtures/agent-governance-routing.json' -Raw | ConvertFrom-Json
