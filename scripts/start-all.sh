@@ -3,7 +3,7 @@
 # 注意：bim-streaming-server (Omniverse Kit GPU runtime) 主要在 Windows 開發，
 # 本 script 不啟動它；若需要請另行 ./repo.sh launch。
 # 對應的關閉指令：scripts/stop-all.sh
-# 守則參考：docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md
+# 守則參考：docs/plans/docs-plans-README.md
 
 set -euo pipefail
 
