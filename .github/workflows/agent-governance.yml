@@ -24,12 +24,18 @@ jobs:
       - name: Setup Node.js for PNG recomputation tests
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '20'
+          node-version: '20.20.2'
+          cache: 'npm'
+          cache-dependency-path: web-viewer-sample/package-lock.json
+
+      - name: Pin npm version
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -Command "npm install --global npm@10.9.4 --no-audit --no-fund"
 
       - name: Install design-gate Node dependencies
         shell: pwsh
         working-directory: web-viewer-sample
-        run: pwsh -NoProfile -NonInteractive -Command "npm install --no-audit --no-fund"
+        run: pwsh -NoProfile -NonInteractive -Command "npm ci --no-audit --no-fund"
 
       - name: Run governance static check
         shell: pwsh
@@ -50,6 +56,10 @@ jobs:
       - name: Run design-system changed-path scope tests
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-design-system-change-scope.ps1
+
+      - name: Run functional-runtime result gate tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-functional-runtime-result.ps1
 
       - name: Run design-system visual-result gate tests
         shell: pwsh

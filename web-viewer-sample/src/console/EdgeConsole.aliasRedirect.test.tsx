@@ -1,11 +1,5 @@
 // web-viewer-sample/src/console/EdgeConsole.aliasRedirect.test.tsx
-// MD 三頁合一 Task 7（spec §5）：#conv / #intake → #minio 的 URL 重寫式 alias（repo 第一個）。
-// 三條驗收（brief Step 1，逐字對應）：
-//  (1) renderToString(<EdgeConsole/>) 於 hash="#conv?job_id=J"：純渲染不拋錯、輸出不含舊 CV 頁 h1
-//      （AliasRedirect 回 null、useEffect 不跑 → 不導航；hash 保持不變）。
-//  (2) DOM 掛載（createRoot + act）hash="#conv?job_id=J" → 重導 window.location.hash === "#minio?job_id=J"
-//      （replace 保 query）。
-//  (3) DOM 掛載 hash="#intake"（無 query）→ 重導 "#minio"。
+// #conv 已恢復為獨立既有-job 歷史頁；只有舊 #intake 維持 query-preserving alias → #minio。
 import { act } from "react";
 import { renderToString } from "react-dom/server";
 import { createRoot } from "react-dom/client";
@@ -13,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EdgeConsole from "./EdgeConsole";
 import { coordinatorClient } from "./coordinatorClient";
 
-describe("EdgeConsole alias 重導：#conv / #intake → #minio（MD 合一 Task 7）", () => {
+describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
   const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
   let container: HTMLDivElement;
   let prevActEnv: unknown;
@@ -35,6 +29,9 @@ describe("EdgeConsole alias 重導：#conv / #intake → #minio（MD 合一 Task
       count: 0,
     });
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ count: 0, items: [] });
   });
   afterEach(() => {
     document.body.removeChild(container);
@@ -57,26 +54,24 @@ describe("EdgeConsole alias 重導：#conv / #intake → #minio（MD 合一 Task
     expect(window.location.hash).toBe(expected);
   }
 
-  it("renderToString #conv?job_id=J：不拋錯、輸出不含舊 CV 頁 h1（純渲染不觸發 useEffect → 不導航）", () => {
+  it("renderToString #conv?job_id=J：渲染獨立 CV 頁且不改寫 hash", () => {
     window.location.hash = "#conv?job_id=J";
     let html = "";
     expect(() => {
       html = renderToString(<EdgeConsole />);
     }).not.toThrow();
-    // 舊 CV 頁 h1（pages.tsx ConversionSchedulingPage:1036 `<h1>IFC→USD 轉檔排程</h1>`）不得出現——
-    // alias 分支只回 null，不掛舊頁本體。
-    expect(html).not.toContain("<h1>IFC→USD 轉檔排程</h1>");
-    // 純渲染未導航：renderToString 不跑 useEffect，hash 仍停在 #conv（未被 replace）。
+    expect(html).toContain("<h1>IFC→USD 轉檔歷史</h1>");
     expect(window.location.hash).toBe("#conv?job_id=J");
   });
 
-  it("DOM 掛載 #conv?job_id=J → 重導 #minio?job_id=J（replace 保 query）", async () => {
+  it("DOM 掛載 #conv?job_id=J → 保持獨立頁與 query", async () => {
     window.location.hash = "#conv?job_id=J";
     const root = createRoot(container);
     await act(async () => {
       root.render(<EdgeConsole />);
     });
-    await waitForHash("#minio?job_id=J");
+    await waitForHash("#conv?job_id=J");
+    expect(container.querySelector('[data-testid="conv-page"]')).not.toBeNull();
     await act(async () => {
       root.unmount();
     });

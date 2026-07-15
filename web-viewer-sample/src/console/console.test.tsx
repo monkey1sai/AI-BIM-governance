@@ -392,13 +392,10 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("核心治理");
     expect(html).toContain("OMNIVERSE RUNTIME");
     expect(html).toContain("落地端控制台");
-    // MD 合一（Task 7）：conv「IFC→USD 轉檔排程」＋ minio「MinIO 資料」兩獨立 nav 項合併為單一 MD 項。
-    expect(html).toContain("模型資料與轉檔"); // MD nav 標籤（navText(minio) → NAV_LABEL.minio.biz）
+    expect(html).toContain("模型資料與轉檔");
     expect(html).toContain("Kit / GPU 機隊");
-    expect(html).toContain('class="ec-key">MD<'); // no="MD"（原 minio no="M"）
-    // conv（no=CV）/ intake（no=IN）獨立 nav 項已從 PAGES 移除，nav 不再渲染其鍵；HomePage 內文仍
-    // 可能提及「IFC→USD 轉檔排程」字樣，故以 nav 鍵 no 精確守門（比照 L392 CO 守門），不用裸字串。
-    expect(html).not.toContain('class="ec-key">CV<');
+    expect(html).toContain('class="ec-key">MD<');
+    expect(html).toContain('class="ec-key">CV<');
     expect(html).not.toContain('class="ec-key">IN<');
     expect(html).toContain("Chat USD Agent");
   });

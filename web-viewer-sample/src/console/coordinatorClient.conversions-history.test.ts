@@ -19,4 +19,19 @@ describe("coordinatorClient.getConversionsHistory", () => {
     expect(res.items[0].conversion_job_id).toBe("cj_1");
     expect(res.count).toBe(1);
   });
+
+  it("GETs the encoded coordinator result proxy for one conversion job", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        status: "succeeded",
+        artifacts: { model_usdc: { url: "/artifacts/job/model.usdc" } },
+      }), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+
+    const res = await coordinatorClient.getConversionResult("stream conv/一");
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0][0])).toContain("/api/dev/conversions/stream%20conv%2F%E4%B8%80/result");
+    expect(res.artifacts?.model_usdc?.url).toBe("/artifacts/job/model.usdc");
+  });
 });

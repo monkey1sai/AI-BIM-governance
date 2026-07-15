@@ -22,6 +22,7 @@ jobs:
       coordinator: ${{ steps.paths.outputs.coordinator }}
       governance_service: ${{ steps.paths.outputs.governance_service }}
       viewer: ${{ steps.paths.outputs.viewer }}
+      conv_functional: ${{ steps.paths.outputs.conv_functional }}
       kit_manager_api: ${{ steps.paths.outputs.kit_manager_api }}
       kit_manager_web: ${{ steps.paths.outputs.kit_manager_web }}
       compose_config: ${{ steps.paths.outputs.compose_config }}
@@ -75,6 +76,7 @@ jobs:
           emit coordinator '^bim-review-coordinator/'
           emit governance_service '^(governance-service/|rules/)'
           emit viewer '^(web-viewer-sample/|bim-review-coordinator/(src|public)/|docs/plans/(.*prototype\.html|design-system-reference\.manifest\.json|design-system-baseline/))'
+          emit conv_functional '^(\.github/workflows/ci\.yml|bim-review-coordinator/|docs/plans/design-system-reference\.manifest\.json|scripts/tests/(test|verify)-functional-runtime-result\.ps1|web-viewer-sample/)'
           emit kit_manager_api '^services/kit-manager-api/'
           emit kit_manager_web '^apps/kit-manager-web/'
           emit compose_config '^(compose\..*\.yml|\.env.*\.example|infra/docker/)'
@@ -228,12 +230,18 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '20'
+          node-version: '20.20.2'
+          cache: 'npm'
+          cache-dependency-path: web-viewer-sample/package-lock.json
+
+      - name: Pin npm version
+        shell: pwsh
+        run: npm install --global npm@10.9.4 --no-audit --no-fund
 
       - name: Install dependencies
         shell: pwsh
         working-directory: web-viewer-sample
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Run verify
         shell: pwsh
@@ -284,13 +292,20 @@ jobs:
         if: needs.changes.outputs.frontend_visual_required == 'true'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '20'
+          node-version: '20.20.2'
+          cache: 'npm'
+          cache-dependency-path: web-viewer-sample/package-lock.json
+
+      - name: Pin npm version
+        if: needs.changes.outputs.frontend_visual_required == 'true'
+        shell: pwsh
+        run: npm install --global npm@10.9.4 --no-audit --no-fund
 
       - name: Install viewer dependencies
         if: needs.changes.outputs.frontend_visual_required == 'true'
         shell: pwsh
         working-directory: web-viewer-sample
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Install pinned Playwright Chromium
         if: needs.changes.outputs.frontend_visual_required == 'true'
@@ -326,6 +341,84 @@ jobs:
             artifacts/e2e/design-system-visual/
             artifacts/e2e/design-system-playwright/
           if-no-files-found: warn
+
+  functional-runtime-conv:
+    name: functional-runtime-conv
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.conv_functional == 'true')
+    runs-on: windows-2025
+    steps:
+      - name: Require changed-path classifier success
+        if: needs.changes.result != 'success'
+        shell: pwsh
+        run: throw 'changed path classifier did not succeed; refusing a skipped-success functional/runtime check.'
+
+      - name: Checkout exact subject commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.changes.outputs.head_sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20.20.2'
+          cache: 'npm'
+          cache-dependency-path: |
+            bim-review-coordinator/package-lock.json
+            web-viewer-sample/package-lock.json
+
+      - name: Pin npm version
+        shell: pwsh
+        run: npm install --global npm@10.9.4 --no-audit --no-fund
+
+      - name: Install coordinator dependencies
+        shell: pwsh
+        working-directory: bim-review-coordinator
+        run: npm ci --no-audit --no-fund
+
+      - name: Install viewer dependencies
+        shell: pwsh
+        working-directory: web-viewer-sample
+        run: npm ci --no-audit --no-fund
+
+      - name: Install pinned Playwright Chromium
+        shell: pwsh
+        working-directory: web-viewer-sample
+        run: npx playwright install chromium
+
+      - name: Build coordinator-served viewer
+        shell: pwsh
+        working-directory: web-viewer-sample
+        run: npm run build:ui
+
+      - name: Produce current-subject functional/runtime evidence
+        shell: pwsh
+        working-directory: web-viewer-sample
+        env:
+          E2E_DISABLE_WEBSERVER: '1'
+        run: npx playwright test --config=playwright.functional-runtime.config.ts
+
+      - name: Validate functional/runtime evidence binding
+        shell: pwsh
+        run: >-
+          pwsh -NoProfile -NonInteractive -File scripts/tests/verify-functional-runtime-result.ps1
+          -RepoRoot '${{ github.workspace }}'
+          -ResultPath '${{ github.workspace }}\artifacts\e2e\functional-runtime\functional-runtime-result.json'
+          -TargetCommit '${{ needs.changes.outputs.head_sha }}'
+          -AllowUntrackedArtifacts
+
+      - name: Upload functional/runtime evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: functional-runtime-conv-${{ needs.changes.outputs.head_sha }}
+          path: |
+            artifacts/e2e/functional-runtime/functional-runtime-result.json
+            artifacts/e2e/functional-runtime/conv-history.png
+            artifacts/e2e/functional-runtime/conv-history-trace.zip
+          if-no-files-found: error
 
   kit-manager-api:
     name: kit-manager-api tests

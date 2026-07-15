@@ -42,6 +42,8 @@ try {
         'scripts/tests/verify-design-system-reference.ps1',
         'scripts/tests/test-design-system-reference.ps1',
         'scripts/tests/test-design-system-change-scope.ps1',
+        'scripts/tests/verify-functional-runtime-result.ps1',
+        'scripts/tests/test-functional-runtime-result.ps1',
         'scripts/tests/verify-design-system-visual-result.ps1',
         'scripts/tests/test-design-system-visual-result.ps1',
         'docs/plans/design-system-reference.manifest.json',
@@ -80,7 +82,7 @@ try {
         Assert-True ($ci -match "(?m)^\s{2}$([regex]::Escape($job)):\s*$") "ci.yml contains job $job"
     }
     Assert-True ($ci -match 'changed path classifier') 'ci.yml contains changed path classifier'
-    foreach ($output in @('root_contracts', 'coordinator', 'governance_service', 'viewer', 'kit_manager_api', 'kit_manager_web', 'compose_config', 'powershell_static', 'secret_pattern_scan')) {
+    foreach ($output in @('root_contracts', 'coordinator', 'governance_service', 'viewer', 'conv_functional', 'kit_manager_api', 'kit_manager_web', 'compose_config', 'powershell_static', 'secret_pattern_scan')) {
         $expectedOutput = $output + ': ${{ steps.paths.outputs.' + $output + ' }}'
         Assert-True ($ci -match [regex]::Escape($expectedOutput)) "changes job exposes $output output"
     }
@@ -88,11 +90,11 @@ try {
         $expectedOutput = $output + ': ${{ steps.design_scope.outputs.' + $output + ' }}'
         Assert-True ($ci -match [regex]::Escape($expectedOutput)) "changes job exposes manifest-derived $output output"
     }
-    foreach ($gate in @('root_contracts', 'coordinator', 'governance_service', 'viewer', 'kit_manager_api', 'kit_manager_web', 'compose_config', 'powershell_static', 'secret_pattern_scan')) {
+    foreach ($gate in @('root_contracts', 'coordinator', 'governance_service', 'viewer', 'conv_functional', 'kit_manager_api', 'kit_manager_web', 'compose_config', 'powershell_static', 'secret_pattern_scan')) {
         Assert-True ($ci -match [regex]::Escape("needs.changes.outputs.$gate == 'true'")) "ci.yml gates affected job on $gate"
     }
-    Assert-True (([regex]::Matches($ci, 'name: Require changed-path classifier success')).Count -eq 10) 'every downstream required job explicitly fails when the classifier dependency fails'
-    Assert-True (([regex]::Matches($ci, "if: always\(\) && \(needs\.changes\.result != 'success' \|\|")).Count -eq 10) 'downstream required jobs run on classifier failure instead of reporting skipped-success'
+    Assert-True (([regex]::Matches($ci, 'name: Require changed-path classifier success')).Count -eq 11) 'every downstream required job explicitly fails when the classifier dependency fails'
+    Assert-True (([regex]::Matches($ci, "if: always\(\) && \(needs\.changes\.result != 'success' \|\|")).Count -eq 11) 'downstream required jobs run on classifier failure instead of reporting skipped-success'
     Assert-True ($ci -match 'if \[ "\$\{\{ github\.event_name \}\}" = "pull_request" \]') 'changed path classifier diffs PR base/head on pull_request'
     Assert-True ($ci -match 'git -c core\.quotepath=false diff --no-renames --name-only "\$base_sha\.\.\.\$head_sha"') 'pull-request path classification uses rename-safe merge-base three-dot semantics'
     Assert-True ($ci -match 'printf "__full__\\n" > changed-paths\.txt') 'changed path classifier runs full service CI on push/workflow_dispatch'
@@ -104,7 +106,7 @@ try {
     Assert-True ($ci -match 'Head manifest removed base-approved screen IDs') 'CI fails before capture when the head manifest narrows base-approved screens'
     Assert-True ($ci -match 'AllowUntrackedArtifacts') 'CI uploads reproducible visual artifacts without committing ignored output'
     Assert-True ($ci -match '(?s)design-semantic-visual:.*?runs-on: windows-2025') 'design-system CI uses the manifest-pinned Windows runner label'
-    Assert-True ($ci -match '(?s)design-semantic-visual:.*?working-directory: web-viewer-sample\s+run: npm install --no-audit --no-fund') 'design-system CI uses the repo-supported install path because the viewer lockfile is intentionally untracked'
+    Assert-True ($ci -match '(?s)design-semantic-visual:.*?working-directory: web-viewer-sample\s+run: npm ci --no-audit --no-fund') 'design-system CI installs the tracked dependency snapshot with npm ci'
     foreach ($command in @(
         'python -m pytest tests -q -p no:cacheprovider',
         'python -m pytest governance-service/tests -q',
@@ -120,7 +122,7 @@ try {
     )) {
         Assert-True ($ci -match [regex]::Escape($command)) "ci.yml contains command $command"
     }
-    Assert-True (-not ($ci -match [regex]::Escape('web-viewer-sample/package-lock.json'))) 'ci.yml does not depend on ignored viewer package-lock'
+    Assert-True ($ci -match [regex]::Escape('web-viewer-sample/package-lock.json')) 'ci.yml caches and installs from the tracked viewer package-lock'
 
     $governanceWorkflow = Get-Content -LiteralPath '.github/workflows/agent-governance.yml' -Raw
     Assert-True (-not ($governanceWorkflow -match '(?m)^\s+paths:\s*$')) 'agent-governance workflow does not use path filters because it is a required-check candidate'
@@ -129,9 +131,11 @@ try {
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-require-gstack-evidence\.ps1') 'agent-governance workflow runs browser-evidence hook tests'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-design-system-reference\.ps1') 'agent-governance workflow runs design-system reference tests'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-design-system-change-scope\.ps1') 'agent-governance workflow runs design-system scope tests'
+    Assert-True ($governanceWorkflow -match 'scripts/tests/test-functional-runtime-result\.ps1') 'agent-governance workflow runs functional-runtime result gate tests'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-design-system-visual-result\.ps1') 'agent-governance workflow runs visual-result tests'
-    Assert-True ($governanceWorkflow -match 'npm install --no-audit --no-fund') 'agent-governance installs design-gate dependencies without requiring the intentionally untracked viewer lockfile'
-    Assert-True (-not ($governanceWorkflow -match 'npm ci')) 'agent-governance does not invoke npm ci without a tracked viewer lockfile'
+    Assert-True ($governanceWorkflow -match 'npm ci --no-audit --no-fund') 'agent-governance installs the tracked design-gate dependency snapshot with npm ci'
+    Assert-True ($governanceWorkflow -match "node-version: '20\.20\.2'") 'agent-governance uses the exact Node.js pin'
+    Assert-True ($governanceWorkflow -match 'npm@10\.9\.4') 'agent-governance uses the exact npm pin'
     Assert-True (-not ($governanceWorkflow -match '(?m)^\s*run:\s*powershell\b')) 'agent-governance workflow does not re-enter legacy Windows PowerShell from pwsh'
     # 原本硬編 `-eq 2`（"both checks"），使得「新增一個治理檢查」必定讓本斷言失敗——數量只是
     # 當時的巧合，真正的意圖是「每個 step 都用 PowerShell 7，不得回退 legacy Windows PowerShell」。
