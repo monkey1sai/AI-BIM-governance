@@ -214,6 +214,14 @@ const appendEventSchema = z
   })
   .passthrough();
 
+// F2 步驟⑩（AI-BIM 前後端設計文件）：Coordinator → 雲端 Outbox 摘要回拋
+// （issue/檢核統計，metadata-only）。瀏覽器只持 session_id + rule_run_id/
+// model_version_id 等識別碼，統計由 coordinator server-side 向 governance 查詢。
+const issueSnapshotSchema = z.object({
+  rule_run_id: z.string().trim().min(1).max(200),
+  model_version_id: z.string().trim().min(1).max(200).optional(),
+});
+
 // B-scheme（local-coordinator-ifc-ready-intake-boundary T3 §4.1）。
 // 契約權威：tests/contracts/ifc_ready_payload.json。correlation_id /
 // idempotency_key 的權威來源是 AuthProvider（X-Correlation-Id /
@@ -2673,6 +2681,135 @@ export function createCoordinatorApp(
     try {
       const touched = await callbackOutbox.deliverPending();
       response.json({ delivered_pass: true, entries: touched });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // F2 步驟⑩觀測面：瀏覽器可達（無 token）的 callback outbox 摘要。
+  // redacted 投影——明確排除 `payload` 與 `target_url`（完整 entry 僅在
+  // `/api/internal/callback-outbox/*` token gate 之後可見）。newest-first；
+  // limit 預設 50、上限 200、非法值 400。純加性唯讀 route，不動 outbox 狀態。
+  app.get("/api/callback-outbox/summary", (request, response) => {
+    const rawLimit = request.query.limit;
+    let limit = 50;
+    if (rawLimit !== undefined) {
+      const parsed = typeof rawLimit === "string" && /^\d+$/.test(rawLimit.trim())
+        ? Number.parseInt(rawLimit.trim(), 10)
+        : Number.NaN;
+      if (!Number.isFinite(parsed) || parsed < 1 || parsed > 200) {
+        response.status(400).json({ detail: "limit must be an integer between 1 and 200." });
+        return;
+      }
+      limit = parsed;
+    }
+    const all = callbackOutbox.list();
+    const entries = [...all]
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(0, limit)
+      .map((entry) => ({
+        outbox_id: entry.outbox_id,
+        event: entry.event,
+        status: entry.status,
+        attempts: entry.attempts,
+        max_attempts: entry.max_attempts,
+        last_error: entry.last_error,
+        created_at: entry.created_at,
+        delivered_at: entry.delivered_at,
+        correlation_id: entry.correlation_id,
+        conversion_job_id: entry.conversion_job_id,
+      }));
+    response.json({ total: all.length, limit, entries });
+  });
+
+  // F2 步驟⑩：issue-snapshot 查 governance 的 base 與 routes/governanceProxy.ts
+  // 同源（env `GOVERNANCE_API_BASE`，預設 governance-service loopback
+  // 127.0.0.1:49102；每請求讀取讓 deploy / 測試能覆寫指向 stub）。此處只讀同一
+  // 設定來源，不改 proxy 行為。
+  const governanceApiBaseForSnapshot = (): string =>
+    (process.env.GOVERNANCE_API_BASE ?? "http://127.0.0.1:49102").replace(/\/+$/, "");
+
+  // F2 步驟⑩：Coordinator → 雲端 Outbox 摘要回拋（issue/檢核統計，metadata-only）。
+  // 瀏覽器只持 session_id + rule_run_id（不知 governance 內部位址）；coordinator
+  // server-side 查 governance 取 rule-run 狀態/failed 統計 +（可選）issue open/總數，
+  // 成功才 enqueue `issue_snapshot`（assertMetadataOnly 鐵律照走；payload 零
+  // secret / URL / bytes）。查詢失敗回 502 不入列——誠實，不偽造統計。
+  app.post("/api/review-sessions/:sessionId/issue-snapshot", async (request, response, next) => {
+    try {
+      if (!isSafeSessionId(request.params.sessionId)) {
+        response.status(400).json({ detail: "Invalid review session id." });
+        return;
+      }
+      const session = store.get(request.params.sessionId);
+      if (!session) {
+        response.status(404).json({ detail: "Review session not found." });
+        return;
+      }
+      const input = issueSnapshotSchema.parse(request.body);
+      const govBase = governanceApiBaseForSnapshot();
+      let ruleRunStatus: string | null = null;
+      let failedCount: number | null = null;
+      let issueTotal: number | null = null;
+      let issueOpen: number | null = null;
+      try {
+        const runRes = await fetch(
+          `${govBase}/api/rule-runs/${encodeURIComponent(input.rule_run_id)}`,
+          { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(3000) },
+        );
+        if (!runRes.ok) throw new Error(`governance rule-run HTTP ${runRes.status}`);
+        const run = (await runRes.json()) as Record<string, unknown>;
+        ruleRunStatus = typeof run.status === "string" ? run.status : null;
+        const summary = run.summary && typeof run.summary === "object" && !Array.isArray(run.summary)
+          ? (run.summary as Record<string, unknown>)
+          : null;
+        failedCount = typeof summary?.failed === "number" && Number.isFinite(summary.failed)
+          ? summary.failed
+          : null;
+        if (input.model_version_id) {
+          const issuesRes = await fetch(
+            `${govBase}/api/issues?model_version_id=${encodeURIComponent(input.model_version_id)}`,
+            { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(3000) },
+          );
+          if (!issuesRes.ok) throw new Error(`governance issues HTTP ${issuesRes.status}`);
+          const issuesBody = (await issuesRes.json()) as { issues?: unknown };
+          const issues = Array.isArray(issuesBody.issues) ? issuesBody.issues : [];
+          issueTotal = issues.length;
+          // governance ISSUE_STATUSES=(open,assigned,in_progress,resolved,rejected,
+          // reopened)：非終局（resolved/rejected 以外）一律計為 open（未結案）。
+          issueOpen = issues.filter((issue) => {
+            const status = issue && typeof issue === "object"
+              ? (issue as Record<string, unknown>).status
+              : undefined;
+            return typeof status === "string" && status !== "resolved" && status !== "rejected";
+          }).length;
+        }
+      } catch {
+        // 誠實：governance 查不到就不 enqueue 假統計（含 timeout / 非 2xx）。
+        response.status(502).json({ error: "governance_unreachable" });
+        return;
+      }
+      const entry = callbackOutbox.enqueue({
+        event: "issue_snapshot",
+        // 與 conversion callback 同源（app.ts ingest 路徑）：issue snapshot 無
+        // per-job callback_url，僅 config cloud base；未設定＝null → outbox 視為
+        // 不可達，保留重試至 dead-letter，不靜默丟棄（OQ1 pending 行為一致）。
+        targetUrl: config.cloudCallbackBaseUrl || null,
+        correlationId: session.session_id,
+        externalModelVersionId: session.model_version_id,
+        conversionJobId: null,
+        payload: {
+          event: "issue_snapshot",
+          session_id: session.session_id,
+          rule_run_id: input.rule_run_id,
+          model_version_id: input.model_version_id ?? session.model_version_id ?? null,
+          rule_run_status: ruleRunStatus,
+          failed_count: failedCount,
+          issue_total: issueTotal,
+          issue_open: issueOpen,
+          snapshot_at: new Date().toISOString(),
+        },
+      });
+      response.status(202).json({ outbox_id: entry.outbox_id });
     } catch (error) {
       next(error);
     }
