@@ -109,6 +109,28 @@ $viewerPackage = Get-Content -LiteralPath (Join-Path $RepoRoot 'web-viewer-sampl
 Assert-Reference ($viewerPackage.devDependencies.'@playwright/test' -eq $fidelity.playwright_version) 'viewer @playwright/test must equal the manifest Playwright pin.'
 Assert-Reference ($viewerPackage.devDependencies.pixelmatch -eq '7.1.0') 'pixelmatch must remain exactly pinned.'
 Assert-Reference ($viewerPackage.devDependencies.pngjs -eq '7.0.0') 'pngjs must remain exactly pinned.'
+Assert-Reference ($fidelity.dependency_tree_status -eq 'locked_npm_ci') 'dependency tree must be installed from a tracked npm lock with npm ci.'
+Assert-Reference ($fidelity.node_version -eq '20.20.2') 'Node.js version must remain exactly pinned.'
+Assert-Reference ($fidelity.npm_version -eq '10.9.4') 'npm version must remain exactly pinned.'
+Assert-Reference ($viewerPackage.packageManager -eq "npm@$($fidelity.npm_version)") 'viewer packageManager must equal the manifest npm pin.'
+Assert-Reference ($fidelity.dependency_lock_path -eq 'web-viewer-sample/package-lock.json') 'dependency lock path must identify the tracked viewer package-lock.json.'
+Assert-Reference ([string]$fidelity.dependency_lock_sha256 -match '^[0-9a-f]{64}$') 'dependency lock SHA-256 is invalid.'
+$dependencyLockPath = Join-Path $RepoRoot ([string]$fidelity.dependency_lock_path).Replace('/', '\')
+Assert-Reference (Test-Path -LiteralPath $dependencyLockPath -PathType Leaf) 'dependency lock file is missing.'
+Assert-Reference ((Get-Sha256 -LiteralPath $dependencyLockPath) -eq $fidelity.dependency_lock_sha256) 'dependency lock SHA-256 does not match the tracked package-lock.json.'
+$dependencyLock = Get-Content -LiteralPath $dependencyLockPath -Raw | ConvertFrom-Json -AsHashtable
+Assert-Reference ($dependencyLock.lockfileVersion -eq 3) 'dependency lock must use lockfileVersion 3.'
+$resolvedDependencies = $fidelity.resolved_dependency_versions
+foreach ($dependency in @('@playwright/test', 'playwright-core', 'pixelmatch', 'pngjs')) {
+    $lockEntry = $dependencyLock['packages']["node_modules/$dependency"]
+    Assert-Reference ($null -ne $lockEntry) "dependency lock is missing resolved package '$dependency'."
+    $manifestVersion = $resolvedDependencies.PSObject.Properties[$dependency].Value
+    Assert-Reference ([string]$lockEntry.version -eq [string]$manifestVersion) "resolved dependency '$dependency' drifted from the manifest pin."
+}
+$ciWorkflow = Get-Content -LiteralPath (Join-Path $RepoRoot '.github\workflows\ci.yml') -Raw
+Assert-Reference ([regex]::Matches($ciWorkflow, "node-version: '20\.20\.2'").Count -ge 2) 'viewer and design CI jobs must use the exact Node.js pin.'
+Assert-Reference ([regex]::Matches($ciWorkflow, 'npm install --global npm@10\.9\.4 --no-audit --no-fund').Count -ge 2) 'viewer and design CI jobs must install the exact npm pin.'
+Assert-Reference ([regex]::Matches($ciWorkflow, 'npm ci --no-audit --no-fund').Count -ge 2) 'viewer and design CI jobs must install from package-lock.json with npm ci.'
 Assert-Reference ($fidelity.locale -eq 'zh-TW') 'locale must be zh-TW.'
 Assert-Reference ($fidelity.timezone -eq 'Asia/Taipei') 'timezone must be Asia/Taipei.'
 Assert-Reference ([bool]$fidelity.fonts_ready_required) 'font readiness must be required.'
@@ -203,10 +225,18 @@ if ($semanticContract.status -eq 'executable') {
 }
 $runtimeContract = $manifest.functional_runtime_contract
 Assert-Reference ($runtimeContract.schema_version -eq 1) 'functional_runtime_contract.schema_version must be 1.'
-Assert-Reference ([string]$runtimeContract.status -in @('machine_gate_missing', 'executable')) 'functional/runtime machine-gate status is invalid.'
+Assert-Reference ([string]$runtimeContract.status -in @('machine_gate_missing', 'targeted_conv_producer_available', 'executable')) 'functional/runtime machine-gate status is invalid.'
 Assert-Reference ($runtimeContract.authority -eq 'branch_protected_machine_output_required') 'functional/runtime authority must require branch-protected machine output.'
 Assert-Reference ([string]$runtimeContract.enforcement_status -in @('required_check_not_configured', 'required_check_configured')) 'functional/runtime required-check enforcement status is invalid.'
 Assert-Reference (-not [bool]$runtimeContract.external_result_input_allowed) 'external functional/runtime result input must remain forbidden.'
+if ($runtimeContract.status -eq 'targeted_conv_producer_available') {
+    Assert-Reference ($runtimeContract.producer -eq 'web-viewer-sample/e2e/conv-history.spec.ts') 'targeted functional/runtime producer path is invalid.'
+    Assert-Reference ($runtimeContract.validator -eq 'scripts/tests/verify-functional-runtime-result.ps1') 'targeted functional/runtime validator path is invalid.'
+    Assert-Reference ($runtimeContract.workflow_context -eq 'functional-runtime-conv') 'targeted functional/runtime workflow context is invalid.'
+    Assert-Reference (@($runtimeContract.covered_routes).Count -eq 1 -and $runtimeContract.covered_routes[0] -eq '#conv') 'targeted functional/runtime covered route must be exactly #conv.'
+    Assert-Reference (Test-Path -LiteralPath (Join-Path $RepoRoot $runtimeContract.producer.Replace('/', '\')) -PathType Leaf) 'targeted functional/runtime producer is missing.'
+    Assert-Reference (Test-Path -LiteralPath (Join-Path $RepoRoot $runtimeContract.validator.Replace('/', '\')) -PathType Leaf) 'targeted functional/runtime validator is missing.'
+}
 
 $screens = @($manifest.screens)
 Assert-Reference ($screens.Count -gt 0) 'screens must not be empty.'
