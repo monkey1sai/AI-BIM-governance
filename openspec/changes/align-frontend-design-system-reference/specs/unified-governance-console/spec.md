@@ -11,18 +11,18 @@ primary 治理 viewer SHALL 以全幅多分區版面呈現（模型資訊、IFC 
 - **AND** 若已有 approved viewer screen，2D 非動態區域 SHALL 具兩 viewport visual result；若沒有 SHALL 標 `reference_missing`
 - **AND** SHALL 另具 functional/runtime E2E，證明 live frame、stage 與 DataChannel 行為
 
-### Requirement: A1-A10 Pages Preserve Prototype Intent
+### Requirement: A1–A10 頁面 SHALL 保留原型意圖
 
-The frontend SHALL provide an operator-facing page for A1 through A10, with each page aligned to its approved design screen/state while explaining the function purpose, backend dependencies, and honest provenance. Legacy prototypes MAY supplement historical IA but SHALL NOT define production pixel pass/fail, API, or runtime truth.
+前端 SHALL 為 A1 至 A10 各提供一個操作人員頁面；每個頁面 SHALL 對齊其 approved design screen/state，並說明功能目的、後端相依性與誠實 provenance。legacy prototypes MAY 補充歷史 IA，但 SHALL NOT 定義 production pixel pass/fail、API 或 runtime truth。
 
-#### Scenario: Operator opens A1
+#### Scenario: 操作人員開啟 A1
 
-- **WHEN** the operator navigates to A1 Governance & Rule Checker
-- **THEN** the page SHALL align with `workspace.a1.default` at both required viewports
-- **AND** functional evidence SHALL independently verify model selection, check flow, scoreboard, issue creation, and BCF/Excel delivery
+- **WHEN** 操作人員前往 A1 Governance & Rule Checker
+- **THEN** 頁面 SHALL 在兩個 required viewports 對齊 `workspace.a1.default`
+- **AND** functional evidence SHALL 獨立驗證模型選取、檢核流程、scoreboard、issue 建立與 BCF/Excel 交付
 
-#### Scenario: Operator opens roadmap apps
+#### Scenario: 操作人員開啟 roadmap apps
 
-- **WHEN** the operator navigates to A5, A6, A7, A8, A9, or A10
-- **THEN** the page SHALL align with its `concept.a<n>.default` design screen
-- **AND** backend capabilities SHALL remain roadmap/not built until runtime evidence exists; visual parity SHALL NOT make them live system evidence
+- **WHEN** 操作人員前往 A5、A6、A7、A8、A9 或 A10
+- **THEN** 頁面 SHALL 對齊其 `concept.a<n>.default` design screen
+- **AND** 在 runtime evidence 存在前，後端能力 SHALL 維持 roadmap/not built；visual parity SHALL NOT 使其成為 live system evidence

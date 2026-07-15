@@ -186,15 +186,6 @@ try {
         } finally {
             Pop-Location
         }
-        if ($hasKitManagerPaths) {
-            Write-Host '[local-pr-preflight] Kit Manager frontend changed; running npm run build'
-            Push-Location (Join-Path $repoRootPath 'apps\kit-manager-web')
-            try {
-                Invoke-External -FilePath 'npm' -Arguments @('run', 'build') -FailureMessage 'kit-manager-web npm run build failed.'
-            } finally {
-                Pop-Location
-            }
-        }
     } elseif ($hasFrontendPaths -and -not $SkipReviewAgent) {
         Write-Host '[local-pr-preflight] frontend paths detected; viewer verify is covered by local PR review agent'
         if (-not [bool]$designScope.visual_required) {
@@ -204,6 +195,16 @@ try {
         Write-Host '[local-pr-preflight] frontend paths detected; viewer verify skipped by -SkipViewerVerify'
     } else {
         Write-Host '[local-pr-preflight] no frontend paths detected; viewer verify skipped'
+    }
+
+    if ($hasFrontendPaths -and -not $SkipViewerVerify -and $hasKitManagerPaths) {
+        Write-Host '[local-pr-preflight] Kit Manager frontend changed; running npm run build'
+        Push-Location (Join-Path $repoRootPath 'apps\kit-manager-web')
+        try {
+            Invoke-External -FilePath 'npm' -Arguments @('run', 'build') -FailureMessage 'kit-manager-web npm run build failed.'
+        } finally {
+            Pop-Location
+        }
     }
 
     $env:TEMP = $oldTemp

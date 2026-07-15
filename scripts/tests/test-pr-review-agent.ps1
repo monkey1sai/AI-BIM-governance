@@ -504,7 +504,7 @@ try {
     Remove-Item -LiteralPath $tempGit -Recurse -Force
 }
 
-# Test 11: Working-tree rename parsing reports the new path only.
+# Test 11: Working-tree rename parsing preserves both old and new paths.
 $tempRenameGit = Join-Path ([System.IO.Path]::GetTempPath()) "pr-review-agent-rename-$([Guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $tempRenameGit -Force | Out-Null
 Push-Location $tempRenameGit
@@ -518,7 +518,7 @@ try {
     git mv 'old name.txt' 'new name.txt'
     $renamePaths = @(Get-PrReviewChangedPathsFromGit -RepoRoot $tempRenameGit)
     Assert-True ($renamePaths -contains 'new name.txt') 'working-tree rename includes new path'
-    Assert-True (-not ($renamePaths -contains 'old name.txt')) 'working-tree rename excludes old path'
+    Assert-True ($renamePaths -contains 'old name.txt') 'working-tree rename includes old path for deleted-path governance'
 } finally {
     Pop-Location
     Remove-Item -LiteralPath $tempRenameGit -Recurse -Force

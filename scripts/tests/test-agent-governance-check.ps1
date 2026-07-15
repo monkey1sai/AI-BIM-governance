@@ -160,6 +160,7 @@ try {
     Assert-True ($localPreflight -match 'baseRefOid,headRefOid') 'local preflight resolves the selected PR base/head commits'
     Assert-True ($localPreflight -match 'localHead -ne \$headSha') 'local preflight rejects a checkout that is not the selected PR head'
     Assert-True (-not ($localPreflight -match "-BaseSha',\s*'origin/main'|-HeadSha',\s*'HEAD'")) 'local preflight does not mix selected PR evidence with ambient origin/main or HEAD'
+    Assert-True ($localPreflight -match 'if \(\$hasFrontendPaths -and -not \$SkipViewerVerify -and \$hasKitManagerPaths\)') 'local preflight builds Kit Manager on both default and SkipReviewAgent paths'
     Assert-True (-not ($prReviewWorkflow -match 'gitnexus@1\.6\.5')) 'PR review workflow does not install GitNexus in CI'
     Assert-True (-not ($prReviewWorkflow -match 'gitnexus analyze --index-only')) 'PR review workflow does not build a GitNexus index in CI'
 
@@ -308,6 +309,10 @@ try {
     Assert-True ($claudeSettingsRaw -match 'Bash\(git commit\*\)') 'Claude commit guard runs only for git commit'
     Assert-True ($claudeSettingsRaw -match 'Bash\(gh pr merge\*\)') 'Claude keeps the merge evidence gate'
     Assert-True (-not ($claudeSettingsRaw -match 'powershell\.exe|C:/Repos/active/iot/AI-BIM-governance/scripts')) 'Claude hooks use PowerShell 7 and resolve within the active worktree'
+    $claudeHookCommands = @($claudeSettings.hooks.PreToolUse | ForEach-Object { @($_.hooks) | ForEach-Object { [string]$_.command } })
+    $anchoredHookCommands = @($claudeHookCommands | Where-Object { $_ -match [regex]::Escape('${CLAUDE_PROJECT_DIR}/scripts/') })
+    Assert-True ($claudeHookCommands.Count -eq 2 -and $anchoredHookCommands.Count -eq 2) 'every Claude hook command anchors its script beneath CLAUDE_PROJECT_DIR'
+    Assert-True (@($claudeHookCommands | Where-Object { $_ -match '-File\s+"scripts/' }).Count -eq 0) 'Claude hooks reject cwd-relative script paths'
     $browserGate = Get-Content -LiteralPath 'scripts/hooks/require-gstack-evidence.ps1' -Raw
     Assert-True ($browserGate -match 'verify-design-system-visual-result\.ps1') 'merge evidence gate validates the design-system visual result'
     Assert-True ($browserGate -match 'baseRefOid,headRefOid') 'merge evidence gate binds to the actual PR base/head'

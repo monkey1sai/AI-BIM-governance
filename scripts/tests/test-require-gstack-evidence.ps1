@@ -74,6 +74,7 @@ $oldBase = $env:FAKE_PR_BASE_SHA
 $oldHead = $env:FAKE_PR_HEAD_SHA
 $oldExpectedSelector = $env:FAKE_EXPECT_SELECTOR
 $oldExpectedRepo = $env:FAKE_EXPECT_REPO
+$oldValidatorThrow = $env:FAKE_VALIDATOR_THROW
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 try {
     Push-Location $tempRoot
@@ -140,12 +141,17 @@ param(
     [int] $MaxAgeHours,
     [switch] $AllowUntrackedArtifacts
 )
+if ($env:FAKE_VALIDATOR_THROW -eq '1') { throw 'synthetic validator failure' }
 if (-not $AllowUntrackedArtifacts -or $RequiredScreenIds.Count -ne 13 -or $TargetCommit -ne $env:FAKE_PR_HEAD_SHA) { exit 9 }
 exit 0
 '@ | Set-Content -LiteralPath 'scripts/tests/verify-design-system-visual-result.ps1' -Encoding utf8
         Set-Content -LiteralPath 'artifacts/e2e/design-system-visual-result.json' -Value '{}' -Encoding utf8
         $validResultProbe = Invoke-EvidenceHook -Command 'gh pr merge 336 --squash'
         Assert-Allowed -Output $validResultProbe -Message 'mixed frontend merge passes when canonical commit-bound validator succeeds'
+        $env:FAKE_VALIDATOR_THROW = '1'
+        $validatorThrowProbe = Invoke-EvidenceHook -Command 'gh pr merge 336 --squash'
+        Assert-Denied -Output $validatorThrowProbe -Message 'validator exception fails closed with structured deny JSON'
+        $env:FAKE_VALIDATOR_THROW = $null
 
         $env:FAKE_EXPECT_SELECTOR = '456'
         $env:FAKE_EXPECT_REPO = 'owner/example'
@@ -179,6 +185,7 @@ exit 0
     $env:FAKE_PR_HEAD_SHA = $oldHead
     $env:FAKE_EXPECT_SELECTOR = $oldExpectedSelector
     $env:FAKE_EXPECT_REPO = $oldExpectedRepo
+    $env:FAKE_VALIDATOR_THROW = $oldValidatorThrow
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 

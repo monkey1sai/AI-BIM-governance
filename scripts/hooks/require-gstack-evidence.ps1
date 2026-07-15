@@ -149,13 +149,17 @@ $resultPath = Join-Path $root 'artifacts/e2e/design-system-visual-result.json'
 if (-not (Test-Path -LiteralPath $validator -PathType Leaf) -or -not (Test-Path -LiteralPath $resultPath -PathType Leaf)) {
     Deny-DesignMerge "approved/mixed frontend scope '$($scope.status)' 缺 canonical local visual result：$resultPath。"
 }
-$validationOutput = @(& $validator `
-    -RepoRoot $root `
-    -ResultPath $resultPath `
-    -RequiredScreenIds @($scope.required_screen_ids) `
-    -TargetCommit $headSha `
-    -MaxAgeHours 24 `
-    -AllowUntrackedArtifacts 2>&1)
+try {
+    $validationOutput = @(& $validator `
+        -RepoRoot $root `
+        -ResultPath $resultPath `
+        -RequiredScreenIds @($scope.required_screen_ids) `
+        -TargetCommit $headSha `
+        -MaxAgeHours 24 `
+        -AllowUntrackedArtifacts 2>&1)
+} catch {
+    Deny-DesignMerge "desigin-system visual gate 執行失敗：$($_.Exception.Message)。functional/runtime gate 仍須另外通過。"
+}
 if ($LASTEXITCODE -ne 0) {
     $detail = (($validationOutput | Select-Object -Last 1) | Out-String).Trim()
     Deny-DesignMerge "desigin-system visual gate 未通過：$detail。functional/runtime gate 仍須另外通過。"

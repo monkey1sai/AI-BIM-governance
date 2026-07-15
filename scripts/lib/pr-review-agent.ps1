@@ -111,6 +111,7 @@ function ConvertFrom-PrReviewPorcelainStatus {
         $pathText = $record.Substring(3)
         if ($statusCode -match '[RC]' -and ($i + 1) -lt $Records.Count) {
             [void]$paths.Add($pathText)
+            [void]$paths.Add($Records[$i + 1])
             $i++
             continue
         }
