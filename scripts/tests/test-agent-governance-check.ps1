@@ -331,8 +331,12 @@ try {
     $localPreflight = Get-Content -LiteralPath 'scripts/dev/check-pr-local-preflight.ps1' -Raw
     Assert-True ($localPreflight -match '\.tmp\\pr-local-preflight' -and $localPreflight -notmatch '\.tmp-pr-local-preflight') 'local preflight writes its own evidence only beneath the ignored .tmp directory'
     $e2eIgnore = Get-Content -LiteralPath 'artifacts/e2e/.gitignore' -Raw
-    Assert-True ($e2eIgnore -match '(?m)^_playwright-output/$') 'Playwright raw output remains ignored'
-    Assert-True ($e2eIgnore -match '(?m)^\*\.webm$') 'Playwright videos remain ignored'
+    $e2eIgnoreLf = $e2eIgnore.Replace("`r`n", "`n")
+    $e2eIgnoreCrLf = $e2eIgnoreLf.Replace("`n", "`r`n")
+    foreach ($e2eIgnoreVariant in @($e2eIgnoreLf, $e2eIgnoreCrLf)) {
+        Assert-True ($e2eIgnoreVariant -match '(?m)^_playwright-output/\r?$') 'Playwright raw output remains ignored under LF/CRLF'
+        Assert-True ($e2eIgnoreVariant -match '(?m)^\*\.webm\r?$') 'Playwright videos remain ignored under LF/CRLF'
+    }
 
     $routingFixtures = Get-Content -LiteralPath 'scripts/tests/fixtures/agent-governance-routing.json' -Raw | ConvertFrom-Json
     Assert-True ($routingFixtures.tasks.Count -ge 12) 'routing fixture suite has at least 12 tasks'

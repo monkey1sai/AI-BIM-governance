@@ -12,7 +12,7 @@
 - [ ] 2.4 建立 branch-protected functional/runtime producer＋validator（Kit path 含 first-frame/stage/DataChannel ack）；目前只有 PR body結構檢查
 - [ ] 2.5 取得 approved state variants並實作 11 個 exact Playwright semantic cases；完成前 frontend product job維持 fail closed
 - [ ] 2.6 將 `design-semantic-visual` 加入 main branch-protection required contexts，並把 manifest `semantic_contract.enforcement_status` 更新為 configured（已取得使用者授權；待 workflow landed 且 machine gate 可執行後啟用，避免 expected-context deadlock）
-- [ ] 2.7 對 workflow／gate-infrastructure／reference-only rebaseline 建立可滿足的獨立 owner approval／CODEOWNERS review＋dismiss stale，或落地可信 base-branch gate（遠端已設定 approval=1／CODEOWNERS／dismiss stale／admin enforcement，但 sole CODEOWNER 與 PR 作者同帳號且無 bypass，目前 `blocked_self_approval_deadlock`）
+- [ ] 2.7 對 workflow／gate-infrastructure／reference-only rebaseline 建立可滿足的獨立 owner approval／CODEOWNERS review＋dismiss stale，或落地可信 base-branch gate（遠端 solo-maintainer machine path 已保留 Require PR／strict 11 checks／admin enforcement／無 bypass並設 approval=0／CODEOWNER review=false，merge deadlock 已解除；但獨立 review authority 尚缺）
 - [ ] 2.8 pin 並 machine-verify resolved npm dependency snapshot、Windows runner image與font fingerprints；完成前 `full_completion_allowed=false`
 
 ## 3. Source-of-truth convergence

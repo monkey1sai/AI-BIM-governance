@@ -129,14 +129,13 @@ PR body evidence is enforced inside the `pr-review-agent` workflow. Every PR req
 
 Workflows that are intended to become required checks must run on every PR and produce a check result. Do not add `paths` / `paths-ignore` filters to `pr-review-agent` or `agent-governance`; if cost control becomes necessary, perform path detection inside the job and emit an explicit no-op success.
 
-Remote-only step：本文件與 `.github/CODEOWNERS` 只能準備 enforcement；真正 required checks、CODEOWNERS review、dismiss stale approvals、禁止 bypass 等規則，仍必須在 GitHub repository settings / rulesets 中啟用並驗證。
+Remote-only step：本文件與 `.github/CODEOWNERS` 只能準備 enforcement；真正 required checks、review policy、dismiss stale approvals、禁止 bypass 等規則，仍必須在 GitHub repository settings / rulesets 中啟用並驗證。目前 solo-maintainer 例外保留 Require PR、strict 11 checks、admin enforcement 與無 bypass，但設定 approval=0／CODEOWNER review=false；CODEOWNERS 在此模式只作 ownership／routing，獨立 review trust 仍是公開缺口。
 
 ## 人工審查邊界
 
 `pr-review-agent` 的 `passed` 只代表自動 gate 通過。PR 仍必須遵守：
 
-- human review；
-- CODEOWNERS；
+- remote settings 實際要求的 human／CODEOWNERS review（solo-maintainer 例外目前不要求，且不算獨立 review trust）；
 - branch protection；
 - GitHub Actions 其他 required checks；
 - OpenSpec archive / roadmap sync closeout。
