@@ -39,3 +39,79 @@ describe("governanceClient.filesTree", () => {
     await expect(governanceClient.filesTree()).rejects.toThrow();
   });
 });
+
+// file-library 邏輯識別 wire 測試：瀏覽器只送 {project_id, model_id, version_name} 三段
+// （files/tree 的 version.path 已被 proxy 遮蔽成 "[server-path]"，不可回送），
+// 打 coordinator /api/governance-library/*。
+describe("governanceClient.createRuleRunForLibrary", () => {
+  it("POST /api/governance-library/rule-runs 帶邏輯三段 + ids_path/model_version_id", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ rule_run_id: "rr_lib", status: "queued" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const result = await governanceClient.createRuleRunForLibrary({
+      project_id: "270",
+      model_id: "機電",
+      version_name: "ver 竣工.ifc",
+      ids_path: "rules/sample-fire-rating.ids",
+      model_version_id: "270/機電/ver 竣工.ifc",
+    });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(String(spy.mock.calls[0][0])).toContain("/api/governance-library/rule-runs");
+    const init = spy.mock.calls[0][1]!;
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({
+      project_id: "270",
+      model_id: "機電",
+      version_name: "ver 竣工.ifc",
+      ids_path: "rules/sample-fire-rating.ids",
+      model_version_id: "270/機電/ver 竣工.ifc",
+    });
+    expect(result.rule_run_id).toBe("rr_lib");
+  });
+
+  it("404 library_version_not_found → 拋錯含後端 error（誠實，不吞）", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "library_version_not_found" }), { status: 404 }),
+    );
+    await expect(
+      governanceClient.createRuleRunForLibrary({ project_id: "270", model_id: "機電", version_name: "nope.ifc" }),
+    ).rejects.toThrow(/library_version_not_found/);
+  });
+});
+
+describe("governanceClient.createDiffForLibrary", () => {
+  it("POST /api/governance-library/diffs 帶 base/target 邏輯三段與版本綁定", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ diff_id: "d_lib", status: "queued" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const result = await governanceClient.createDiffForLibrary({
+      base: { project_id: "270", model_id: "機電", version_name: "ver 000001.ifc" },
+      target: { project_id: "270", model_id: "機電", version_name: "ver 竣工.ifc" },
+      include_geometry: false,
+      base_model_version_id: "270/機電/ver 000001.ifc",
+      target_model_version_id: "270/機電/ver 竣工.ifc",
+    });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(String(spy.mock.calls[0][0])).toContain("/api/governance-library/diffs");
+    const init = spy.mock.calls[0][1]!;
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({
+      base: { project_id: "270", model_id: "機電", version_name: "ver 000001.ifc" },
+      target: { project_id: "270", model_id: "機電", version_name: "ver 竣工.ifc" },
+      include_geometry: false,
+      base_model_version_id: "270/機電/ver 000001.ifc",
+      target_model_version_id: "270/機電/ver 竣工.ifc",
+    });
+    expect(result.diff_id).toBe("d_lib");
+  });
+});

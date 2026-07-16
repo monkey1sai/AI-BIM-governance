@@ -95,22 +95,16 @@ describe("A3 federation→session 一鍵鏈", () => {
     await act(async () => { create.click(); });
     await flush();
 
-    // POST body：必填 project_id / model_version_id（預設 federated_<set_id>）；binding = derived+ready+primary url；
-    // 不帶 stage_composition（不是 request 欄位——coordinator 由 binding 推導 stream-config 的 primary）。
+    // POST body：必填 project_id / model_version_id（預設 federated_<set_id>）＋ federated_set_id——
+    // 瀏覽器不再自組 binding（proxy 遮蔽使 primary.url 在前端是 "[server-path]" 字面），
+    // 真 stage 路徑由 coordinator server-side 向 governance 解析（createSessionSchema.federated_set_id）。
     expect(createSpy).toHaveBeenCalledTimes(1);
     const body = createSpy.mock.calls[0][0];
     expect(body.project_id).toBe("federation-demo");
     expect(body.model_version_id).toBe(`federated_${SET_ID}`);
     expect(body.review_request_id).toBe(`federated_${SET_ID}`);
-    expect(body.artifact_bindings).toEqual([{
-      artifact_group_id: `ag_federated_${SET_ID}`,
-      artifact_id: `federated_${SET_ID}_primary`,
-      artifact_role: "derived",
-      url: STAGE_URL,
-      display_name: "federated_review",
-      load_order: 0,
-      ready_status: "ready",
-    }]);
+    expect(body.federated_set_id).toBe(SET_ID);
+    expect(body).not.toHaveProperty("artifact_bindings");
     expect(body).not.toHaveProperty("stage_composition");
 
     // 結果面：session_id、viewer 連結、spectator 連結（&streamRole=spectator）、SS chip handoff。

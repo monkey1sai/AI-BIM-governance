@@ -155,35 +155,36 @@ test.describe("VG-01：#a1-workbench inline viewer + 3D 高亮閉環", () => {
     await expect(evidence.locator(".ec-field", { hasText: "first frame" })).toContainText(/\bobserved\b/, { timeout: 180_000 });
     await expect(evidence.locator(".ec-field", { hasText: "stage truth" })).toContainText("matched（expected == loaded）", { timeout: 30_000 });
 
-    // for-session rule-run 前置（A1 v2）：state machine 需先 PICK 一個 IFC 才 enable run 鈕（選 session 不再 auto-PICK）；
+    // rule-run 前置（A1 v2）：state machine 需先 PICK 一個 IFC 才 enable run 鈕（選 session 不再 auto-PICK）；
     // 手動 POST /api/review-sessions 建立的 session 不在 MinIO ifc-ready 對應內，故用 local_fs 檔案庫選第一個 IFC。
-    // selectedSession 已設 → doRun 走 POST /api/governance/rule-runs/for-session/:sessionId
-    //（coordinator 由 session 反解 server-local IFC path；瀏覽器不傳路徑）。
+    // library:// 修復後：local_fs 選檔即使已綁 selectedSession，doRun 也對「使用者選定的檔案」走
+    // POST /api/governance-library/rule-runs（coordinator server-side 由邏輯三段解析真路徑；
+    // 瀏覽器不傳路徑——files/tree 的 path 已被 proxy 遮蔽成 "[server-path]"，不可回送）。
+    // selectedSession 仍供 mapping enrichment 與 inline 3D 高亮 handoff（本測試後半的閉環）。
     const localSelect = page.getByTestId("a1-localfs-select");
     const firstLocal = localSelect.locator('option[value]:not([value=""])').first();
     const hasLocalIfc = await firstLocal.waitFor({ state: "attached", timeout: 15_000 }).then(() => true, () => false);
-    test.skip(!hasLocalIfc, "local_fs 檔案庫無 IFC（GET /api/governance/files/tree 空或不可用）：A1 v2 需先 PICK IFC 才能啟動 for-session rule-run");
-    const localPath = (await firstLocal.getAttribute("value")) ?? "";
-    await localSelect.selectOption(localPath);
+    test.skip(!hasLocalIfc, "local_fs 檔案庫無 IFC（GET /api/governance/files/tree 空或不可用）：A1 v2 需先 PICK IFC 才能啟動 rule-run");
+    const localKey = (await firstLocal.getAttribute("value")) ?? ""; // option value = 唯一邏輯鍵（非 server path）
+    await localSelect.selectOption(localKey);
     await page.getByTestId("a1-ids-path").fill(VG01_IDS_PATH);
     await page.getByTestId("a1-step-pick").click();
 
     const runBtn = page.getByTestId("a1-step-run");
     await expect(runBtn).toBeEnabled({ timeout: 5_000 });
-    // 證明本次確實走 for-session：selectedSession 已綁定時 run 鈕 caption 顯示 for-session proxy 端點。
-    await expect(runBtn).toContainText("for-session");
+    // 證明本次確實走 library 邏輯識別：local_fs 選檔後 run 鈕 caption 顯示 governance-library 端點。
+    await expect(runBtn).toContainText("governance-library");
     await runBtn.click();
 
-    // for-session rule-run 對「手動 POST /api/review-sessions 建立、非經 IFC-ready intake 自動建立」的 session 可能回 404
-    //（coordinator resolveRuleRunSessionContext 以 externalIfcReadyStore.review_session_id 反查不到 ifc-ready job），
+    // rule-run 仍可能誠實失敗（governance 離線 / library 樹變動 → 404 library_version_not_found），
     // doRun 因而 dispatch RUN_FAIL：step 停在 running+runError、記分板（state.run）永不出現。先 race 記分板（成功）
     // vs 檢核失敗註記（RUN_FAIL），避免對永不出現的記分板盲等 180s。
     const scoreboard = page.getByTestId("a1-rulerun-scoreboard");
     const runFailedNote = page.getByText("檢核失敗（可重試）");
     await expect(scoreboard.or(runFailedNote)).toBeVisible({ timeout: 180_000 });
     if (await runFailedNote.isVisible()) {
-      test.info().annotations.push({ type: "for-session-rulerun-failed", description: (await runFailedNote.textContent())?.trim() ?? "" });
-      test.skip(true, "for-session rule-run 失敗：此 review session 為手動建立、非 IFC-ready intake 自動建立，coordinator externalIfcReadyStore 無 review_session_id 反向參照而回 404；完整 for-session 檢核 + inline 高亮閉環需 coordinator-auto-conversion-ready session（A1-G3）。");
+      test.info().annotations.push({ type: "library-rulerun-failed", description: (await runFailedNote.textContent())?.trim() ?? "" });
+      test.skip(true, "library rule-run 失敗（RUN_FAIL 註記見 annotations）：governance 離線或 library version 解析不到；完整檢核 + inline 高亮閉環需 governance 在線與 files/tree 可解析的 IFC。");
     }
     await expect(scoreboard).toBeVisible({ timeout: 5_000 });
 

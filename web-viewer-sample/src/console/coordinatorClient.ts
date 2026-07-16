@@ -417,6 +417,9 @@ export interface CreateReviewSessionRequest {
   mode?: string;
   routing_policy?: "same_instance" | "dedicated_instance" | "shared_state";
   artifact_bindings?: CreateReviewSessionBindingInput[];
+  /** A3 一鍵鏈：只送 set id，coordinator server-side 向 governance 解析真 federated stage
+   *（governance proxy 對瀏覽器遮蔽絕對路徑，前端不再自組被遮蔽的 binding url）。 */
+  federated_set_id?: string;
   options?: { auto_allocate_kit?: boolean };
 }
 // 成功回傳 = 後端 ReviewSession（app.ts:1000 response.json(session)，HTTP 200——非 201）。

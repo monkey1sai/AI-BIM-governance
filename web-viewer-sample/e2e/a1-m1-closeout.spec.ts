@@ -23,6 +23,23 @@ import { test, expect } from "@playwright/test";
 //        不存在即為「走了 skip 而非 PASS」的鐵證。真 PASS 須先完成上述 build:ui + 重啟。***
 const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8004";
 
+// A1 v2：step-pick 在 local_fs 選擇器有選項且被選取前恆 disabled；等 files/tree 載完後選檔。
+// 優先挑 e2e-a1 專案（storage/e2e-a1/demo/tiny.ifc 專用小 fixture——其餘專案檔 300MB 級，
+// rule-run 分鐘級會吃爆 E2E 預算）；找不到才退回第一個真實選項。
+async function selectFirstLocalIfc(page: import("@playwright/test").Page): Promise<void> {
+  const select = page.getByTestId("a1-localfs-select");
+  await expect(select).toBeEnabled({ timeout: 15_000 });
+  await expect
+    .poll(async () => select.locator("option").count(), { timeout: 15_000 })
+    .toBeGreaterThan(1);
+  const value = await select.evaluate((el: HTMLSelectElement) => {
+    const options = Array.from(el.options).slice(1); // [0]=佔位
+    const preferred = options.find((o) => (o.textContent ?? "").includes("e2e-a1"));
+    return (preferred ?? options[0]).value;
+  });
+  await select.selectOption(value);
+}
+
 test.describe("A1/M1 收尾:#a1-workbench 五步 stepper + 失敗抽屜", () => {
   // 重跑 test 最壞路徑 ≈ 第一輪 rule-run 120s + issue/export ~45s + 第二輪 scoreboard 120s ≈ 285s,
   // 180s 會在第二輪前被 global-timeout kill(看不到具體斷言失敗)。拉到 360s 讓慢速第二輪能回報真正失敗點。
@@ -48,6 +65,8 @@ test.describe("A1/M1 收尾:#a1-workbench 五步 stepper + 失敗抽屜", () => 
   });
 
   test("選模型 → 自動亮步驟2 → 檢核 succeeded → 展開失敗規則看 GUID/名稱/樓層 → 開 Issue → 匯出", async ({ page }) => {
+    // A1 v2：先在 local_fs 選擇器挑檔（step-pick 於 selectedLocalOption 存在前恆 disabled）。
+    await selectFirstLocalIfc(page);
     await page.getByTestId("a1-step-pick").click();
     await expect(page.getByTestId("a1-step-run")).toBeEnabled({ timeout: 5_000 });
 
@@ -90,12 +109,20 @@ test.describe("A1/M1 收尾:#a1-workbench 五步 stepper + 失敗抽屜", () => 
     await expect(page.getByTestId("a1-action-error")).toBeHidden();
     await expect(page.getByTestId("a1-step-export")).toBeEnabled({ timeout: 10_000 });
 
+    // F2⑩ 回拋摘要：local_fs run 無 review session 脈絡 → 誠實 disabled + 理由（不做假成功）；
+    // 202 成功路徑由 coordinator vitest（issue-snapshot stub 全鏈）與 A1IssueSnapshot.test 覆蓋。
+    const snapshotBtn = page.getByTestId("a1-issue-snapshot");
+    await expect(snapshotBtn).toBeVisible();
+    await expect(snapshotBtn).toBeDisabled();
+    await expect(page.getByText(/需 review session 脈絡/)).toBeVisible();
+
     await page.screenshot({ path: "../artifacts/e2e/a1-m1-closeout-flow.png", fullPage: true });
   });
 
   test("重跑檢核 → 下游(Issue/匯出旗標)清空、已開 Issue artifact 仍在、記分板重建(證據型更新,可重跑不崩)", async ({ page }) => {
     // spec §6 重跑路徑 DoD:回檢核步重跑 → 斷言「下游 Issue/匯出旗標清空、rule-run/issue artifact 仍在」。
     // 先跑完一輪並「開 Issue」產出可保留的下游 artifact,重跑才有東西可驗「清旗標但留 artifact」。
+    await selectFirstLocalIfc(page);
     await page.getByTestId("a1-step-pick").click();
     // 第一次 RUN 前守門:reducer 在 picked 才接受 RUN;直接 click disabled 鈕會無聲無效 → 後面 120s 空等而非明確失敗。
     await expect(page.getByTestId("a1-step-run")).toBeEnabled({ timeout: 5_000 });

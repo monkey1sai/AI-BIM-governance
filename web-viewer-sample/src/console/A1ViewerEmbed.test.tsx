@@ -88,6 +88,10 @@ function fakeRunStatus(status: RuleRunStatus["status"], overrides: Partial<RuleR
 
 const LOCAL_IFC_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/建築/model.ifc";
 const LOCAL_IFC_PATH_B = "C:/Repos/active/iot/AI-BIM-governance/storage/270/建築/model-b.ifc";
+// local_fs 選項 value / state.ifcPath 改用唯一邏輯鍵（library:// 流）：files/tree 的 version.path
+// 對瀏覽器被 proxy 遮蔽成 "[server-path]"（全部選項同值），path 不能再當 select 鍵或回送後端。
+const LOCAL_IFC_KEY = "270/建築/model.ifc";
+const LOCAL_IFC_KEY_B = "270/建築/model-b.ifc";
 const MINIO_KEY = "松風庵/root/main/u1/model.ifc";
 const MINIO_KEY_B = "松風庵/root/main/u2/model-b.ifc";
 const MINIO_IDEMPOTENCY_KEY = "mw_0000000000000001";
@@ -199,10 +203,10 @@ describe("A1 3D review decoupling", () => {
     });
     await flush();
   };
-  const pickModel = async (path = LOCAL_IFC_PATH) => {
+  const pickModel = async (key = LOCAL_IFC_KEY) => {
     const model = q<HTMLSelectElement>("a1-localfs-select")!;
     await act(async () => {
-      model.value = path;
+      model.value = key; // option value = 唯一邏輯鍵 {project}/{model}/{version.name}
       model.dispatchEvent(new Event("change", { bubbles: true }));
     });
     await act(async () => { q<HTMLButtonElement>("a1-step-pick")!.click(); });
@@ -233,8 +237,13 @@ describe("A1 3D review decoupling", () => {
     expect(q<HTMLButtonElement>("a1-step-run")!.disabled).toBe(true);
   });
 
-  it("picked local_fs IFC enables governance run without review session and calls createRuleRun", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+  it("picked local_fs IFC enables governance run without review session and calls createRuleRunForLibrary", async () => {
+    // 等價改寫（library:// 邏輯識別修復）：files/tree 的 path 被 proxy 遮蔽成 "[server-path]"，
+    // 瀏覽器不可能回送真路徑當 ifc_source_path；local_fs run 改走 coordinator
+    // /api/governance-library/rule-runs（送邏輯三段，server-side 解析真路徑）。
+    // 原 createRuleRun(直送 path) 斷言改為「絕不被呼叫」守門。
+    const directRunSpy = vi.spyOn(governanceClient, "createRuleRun").mockRejectedValue(new Error("local_fs must not send raw/masked path as ifc_source_path"));
+    const forLibrarySpy = vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     const forSessionSpy = vi.spyOn(governanceClient, "createRuleRunForSession").mockRejectedValue(new Error("for-session must not be required"));
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
@@ -247,17 +256,20 @@ describe("A1 3D review decoupling", () => {
     await act(async () => { run.click(); });
     await flush();
 
-    expect(governanceClient.createRuleRun).toHaveBeenCalledWith({
-      ifc_source_path: LOCAL_IFC_PATH,
+    expect(forLibrarySpy).toHaveBeenCalledWith({
+      project_id: "270",
+      model_id: "建築",
+      version_name: "model.ifc",
       model_version_id: "270/建築/model.ifc",
       ids_path: expect.stringContaining("sample-fire-rating.ids"),
     });
+    expect(directRunSpy).not.toHaveBeenCalled();
     expect(forSessionSpy).not.toHaveBeenCalled();
     expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
   });
 
   it("selected MinIO object key is not sent as ifc_source_path", async () => {
-    const createSpy = vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    const createSpy = vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
 
     await renderA1();
     await selectMinioSource();
@@ -686,7 +698,7 @@ describe("A1 3D review decoupling", () => {
   });
 
   it("switching from picked local_fs to MinIO clears the stale runnable file", async () => {
-    const createSpy = vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    const createSpy = vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
 
     await renderA1();
     await pickModel();
@@ -702,7 +714,7 @@ describe("A1 3D review decoupling", () => {
   });
 
   it("verified MinIO handoff after picking local_fs clears the stale runnable file", async () => {
-    const createSpy = vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    const createSpy = vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
 
     await renderA1();
     await pickModel();
@@ -723,7 +735,7 @@ describe("A1 3D review decoupling", () => {
   });
 
   it("changing the local_fs dropdown after picking a model clears the stale locked path", async () => {
-    const createSpy = vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    const createSpy = vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
 
     await renderA1();
     await pickModel();
@@ -731,7 +743,7 @@ describe("A1 3D review decoupling", () => {
 
     const model = q<HTMLSelectElement>("a1-localfs-select")!;
     await act(async () => {
-      model.value = LOCAL_IFC_PATH_B;
+      model.value = LOCAL_IFC_KEY_B;
       model.dispatchEvent(new Event("change", { bubbles: true }));
     });
     await flush();
@@ -757,7 +769,7 @@ describe("A1 3D review decoupling", () => {
   });
 
   it("BCF review panel keeps existing topics on idempotent issue creation retry", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "high", status: "fail", message: "naming rule failed" },
@@ -789,7 +801,7 @@ describe("A1 3D review decoupling", () => {
   });
 
   it("idempotent issue creation reloads existing formal topics when issue_ids is empty", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "high", status: "fail", message: "naming rule failed" },
@@ -812,7 +824,7 @@ describe("A1 3D review decoupling", () => {
   });
 
   it("does not advance the Issue workflow when idempotent lookup finds no formal Issues", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "high", status: "fail", message: "naming rule failed" },
@@ -836,7 +848,7 @@ describe("A1 3D review decoupling", () => {
   });
 
   it("stale issue detail fetches cannot repopulate BCF topics after reset", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "high", status: "fail", message: "naming rule failed" },
@@ -864,7 +876,7 @@ describe("A1 3D review decoupling", () => {
   });
 
   it("BCF topic panel excludes annotations without IFC GUIDs", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: null, usd_prim_path: null, rule_code: "annotation", severity: "medium", status: "fail", message: "manual annotation" },
@@ -895,8 +907,13 @@ describe("A1 3D review decoupling", () => {
   });
 
   it("rule-run result renders an A1 inline handoff with non-secret context", async () => {
-    const directRunSpy = vi.spyOn(governanceClient, "createRuleRun").mockRejectedValue(new Error("selected session must use coordinator for-session proxy"));
-    const forSessionSpy = vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    // 等價改寫（library:// 邏輯識別修復）：local_fs 檔案庫選檔後即使手動選了 review session，
+    // 檢核仍對「使用者明確選定的檔案」跑（createRuleRunForLibrary 優先；session 只供 mapping
+    // enrichment 與 inline 3D handoff）。本測試核心（inline handoff 非機密內容）不變；
+    // 原 for-session 路由斷言改為 forLibrary，direct createRuleRun 仍不得被呼叫。
+    const directRunSpy = vi.spyOn(governanceClient, "createRuleRun").mockRejectedValue(new Error("local_fs must not send raw/masked path as ifc_source_path"));
+    const forSessionSpy = vi.spyOn(governanceClient, "createRuleRunForSession").mockRejectedValue(new Error("library pick must not be rerouted through session"));
+    const forLibrarySpy = vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "2O2Fr$t4X7Zf8NOew3FLOH", usd_prim_path: "/World/Door_001", rule_code: "FIRE-RATING", severity: "error", status: "fail", message: "Fire rating missing" },
@@ -908,9 +925,13 @@ describe("A1 3D review decoupling", () => {
     await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
     await flush();
 
-    expect(forSessionSpy).toHaveBeenCalledWith("review_session_x", {
+    expect(forLibrarySpy).toHaveBeenCalledWith(expect.objectContaining({
+      project_id: "270",
+      model_id: "建築",
+      version_name: "model.ifc",
       ids_path: expect.stringContaining("sample-fire-rating.ids"),
-    });
+    }));
+    expect(forSessionSpy).not.toHaveBeenCalled();
     expect(directRunSpy).not.toHaveBeenCalled();
     expect(q("a1-open-review-room")).toBeNull();
     expect(q("a1-inline-handoff-summary")?.textContent).toContain("2O2Fr$t4X7Zf8NOew3FLOH");
@@ -922,7 +943,7 @@ describe("A1 3D review decoupling", () => {
   });
 
   it("local A1 results without a review session do not expose a stale Review Room handoff button", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "guid_no_session_yet", usd_prim_path: "/World/Door_002", rule_code: "FIRE-RATING", severity: "error", status: "fail", message: "Fire rating missing" },
@@ -1071,8 +1092,12 @@ describe("A1 3D review decoupling", () => {
   });
 
   it("missing usd_prim_path shows an honest A1 inline mapping diagnostic", async () => {
-    const directRunSpy = vi.spyOn(governanceClient, "createRuleRun").mockRejectedValue(new Error("selected session must use coordinator for-session proxy"));
-    const forSessionSpy = vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    // 等價改寫（library:// 邏輯識別修復）：同上——local_fs 選檔 + 手動選 session 時，run 走
+    // createRuleRunForLibrary（對選定檔案跑）；mapping enrichment 仍靠 selectedSession 取得
+    //（elementMappingForSession），本測試核心（誠實 mapping 診斷）不變。
+    const directRunSpy = vi.spyOn(governanceClient, "createRuleRun").mockRejectedValue(new Error("local_fs must not send raw/masked path as ifc_source_path"));
+    const forSessionSpy = vi.spyOn(governanceClient, "createRuleRunForSession").mockRejectedValue(new Error("library pick must not be rerouted through session"));
+    const forLibrarySpy = vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "guid_without_mapping", usd_prim_path: null, rule_code: "MAPPING", severity: "error", status: "fail", message: "missing mapping" },
@@ -1095,9 +1120,13 @@ describe("A1 3D review decoupling", () => {
     await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
     await flush();
 
-    expect(forSessionSpy).toHaveBeenCalledWith("review_session_x", {
+    expect(forLibrarySpy).toHaveBeenCalledWith(expect.objectContaining({
+      project_id: "270",
+      model_id: "建築",
+      version_name: "model.ifc",
       ids_path: expect.stringContaining("sample-fire-rating.ids"),
-    });
+    }));
+    expect(forSessionSpy).not.toHaveBeenCalled();
     expect(directRunSpy).not.toHaveBeenCalled();
     expect(q("a1-open-review-room")).toBeNull();
     expect(q("a1-inline-handoff-summary")?.textContent).toContain("guid_without_mapping");

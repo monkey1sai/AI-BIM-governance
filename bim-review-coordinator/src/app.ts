@@ -117,6 +117,9 @@ const createSessionSchema = z.object({
   tenant_id: z.string().min(1).default("tenant_demo_001"),
   project_id: z.string().min(1),
   model_version_id: z.string().min(1),
+  // A3 federation → session 一鍵鏈：governance proxy 對瀏覽器遮蔽絕對路徑（"[server-path]"），
+  // 瀏覽器只送 set id，coordinator server-side 向 governance 解析真 federated_review.usda。
+  federated_set_id: z.string().min(1).max(200).optional(),
   source_artifact_id: z.string().min(1).optional(),
   usdc_artifact_id: z.string().min(1).optional(),
   created_by: z.string().min(1).default("dev_user_001"),
@@ -221,6 +224,83 @@ const issueSnapshotSchema = z.object({
   rule_run_id: z.string().trim().min(1).max(200),
   model_version_id: z.string().trim().min(1).max(200).optional(),
 });
+
+// A1/A2 governance file-library 邏輯識別（unified-console local_fs 修復）：
+// governance proxy 對瀏覽器遮蔽絕對路徑（governanceProxy.ts redactServerPaths →
+// "[server-path]"），瀏覽器不可能回送真 IFC path。瀏覽器改送 {project_id, model_id,
+// version_name} 邏輯三段，coordinator server-side 直打 governance /api/files/tree
+// 解析真路徑後轉發 rule-run / diff（與 issue-snapshot / federated_set_id 同構）。
+const libraryVersionRefSchema = z.object({
+  project_id: z.string().min(1).max(300),
+  model_id: z.string().min(1).max(300),
+  version_name: z.string().min(1).max(300),
+});
+
+const libraryRuleRunSchema = libraryVersionRefSchema.extend({
+  ids_path: z.string().max(300).optional(),
+  model_version_id: z.string().min(1).max(300).optional(),
+});
+
+const libraryDiffSchema = z.object({
+  base: libraryVersionRefSchema,
+  target: libraryVersionRefSchema,
+  include_geometry: z.boolean().optional(),
+  base_model_version_id: z.string().min(1).max(300).optional(),
+  target_model_version_id: z.string().min(1).max(300).optional(),
+});
+
+type LibraryVersionRef = z.infer<typeof libraryVersionRefSchema>;
+
+/** governance GET /api/files/tree 回應（只描述解析需要的欄位；其餘忽略）。 */
+interface LibraryTreeShape {
+  projects?: Array<{
+    project_id?: unknown;
+    models?: Array<{
+      model_id?: unknown;
+      versions?: Array<{ name?: unknown; path?: unknown }>;
+    }>;
+  }>;
+}
+
+/** 在 files/tree 內找對應 version 的 governance host 真實絕對路徑；找不到回 null。 */
+export function findLibraryVersionPath(tree: LibraryTreeShape, ref: LibraryVersionRef): string | null {
+  const projects = Array.isArray(tree.projects) ? tree.projects : [];
+  const project = projects.find((p) => p && p.project_id === ref.project_id);
+  const models = Array.isArray(project?.models) ? project.models : [];
+  const model = models.find((m) => m && m.model_id === ref.model_id);
+  const versions = Array.isArray(model?.versions) ? model.versions : [];
+  const version = versions.find((v) => v && v.name === ref.version_name);
+  return typeof version?.path === "string" && version.path.length > 0 ? version.path : null;
+}
+
+// 瀏覽器回應遮蔽：與 routes/governanceProxy.ts redactServerPaths 同兩條 regex。
+// 該函式為凍結檔私有（未 export），依加性慣例在 app.ts 內部複刻，不改凍結檔。
+function redactServerPathsForBrowser(text: string): string {
+  return text
+    .replace(/[A-Za-z]:(?:\\\\|\\|\/)[^"'\r\n<>]*/g, "[server-path]")
+    .replace(/\/(?:workspace|storage|data|mnt|home|tmp|var|Users)\/[^"'\s<>]*/g, "[server-path]");
+}
+
+// ids_path 白名單（與 governanceProxy.ts normalizeIdsPath 同語意；私有未 export 故複刻）：
+// 只收 rules/ 下的 .ids basename，擋絕對路徑 / drive / 上跳穿越。
+const libraryIdsBasenamePattern = /^[A-Za-z0-9_.-]+\.ids$/;
+function normalizeLibraryIdsPath(value: unknown): { ok: true; value?: string } | { ok: false; detail: string } {
+  if (value === undefined || value === null || value === "") return { ok: true };
+  if (typeof value !== "string") {
+    return { ok: false, detail: "ids_path must be a rule basename under rules/." };
+  }
+  const raw = value.trim().replace(/\\/g, "/");
+  if (!raw) return { ok: true };
+  if (raw.includes(":") || raw.startsWith("/") || raw.includes("..")) {
+    return { ok: false, detail: "ids_path must be a rule basename under rules/." };
+  }
+  const parts = raw.split("/").filter(Boolean);
+  const basename = parts.length === 1 ? parts[0] : parts.length === 2 && parts[0] === "rules" ? parts[1] : "";
+  if (!libraryIdsBasenamePattern.test(basename)) {
+    return { ok: false, detail: "ids_path must be a rule basename under rules/." };
+  }
+  return { ok: true, value: `rules/${basename}` };
+}
 
 // B-scheme（local-coordinator-ifc-ready-intake-boundary T3 §4.1）。
 // 契約權威：tests/contracts/ifc_ready_payload.json。correlation_id /
@@ -955,6 +1035,51 @@ export function createCoordinatorApp(
   app.post("/api/review-sessions", async (request, response, next) => {
     try {
       const input = createSessionSchema.parse(request.body);
+      // A3 一鍵鏈：federated_set_id → server-side 向 governance 解析 review-room 真 stage 路徑，
+      // 生成一筆 derived+ready binding（load_order 0 ⇒ stream-config stage_composition.primary）。
+      // 失敗語意：governance 不可達=502（不偽造）、set 未 build/未 ready=409。
+      if (input.federated_set_id) {
+        const setId = input.federated_set_id;
+        let room: { ready?: boolean; stage_url?: string | null } | null = null;
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 3000);
+          try {
+            const res = await fetch(
+              `${governanceApiBaseForSnapshot()}/api/federated-sets/${encodeURIComponent(setId)}/review-room`,
+              { signal: controller.signal },
+            );
+            if (!res.ok) {
+              response.status(409).json({ error: "federated_set_not_ready", detail: `governance review-room HTTP ${res.status}` });
+              return;
+            }
+            room = (await res.json()) as { ready?: boolean; stage_url?: string | null };
+          } finally {
+            clearTimeout(timer);
+          }
+        } catch {
+          response.status(502).json({ error: "governance_unreachable" });
+          return;
+        }
+        if (room?.ready !== true || !room.stage_url) {
+          response.status(409).json({ error: "federated_set_not_ready", detail: "review-room ready!=true（先 build federated set）" });
+          return;
+        }
+        // 與既有 conversion 流的 binding 同語意（url=server-local stage 路徑，Kit 端消費）；
+        // 放前端 bindings 之前，load_order 0 保證 primary 落在 federated stage。
+        input.artifact_bindings = [
+          {
+            artifact_group_id: `fedset_${setId}`,
+            artifact_id: `fed_${setId}_review`,
+            display_name: `federated:${setId}`,
+            artifact_role: "derived" as const,
+            url: room.stage_url,
+            load_order: 0,
+            ready_status: "ready" as const,
+          },
+          ...input.artifact_bindings,
+        ];
+      }
       const artifacts: Artifact[] = [];
       const readyUsdc = chooseReadyUsdc(artifacts);
       const artifactBindings = buildArtifactBindings(input.model_version_id, artifacts, input.artifact_bindings, input.routing_policy);
@@ -2810,6 +2935,114 @@ export function createCoordinatorApp(
         },
       });
       response.status(202).json({ outbox_id: entry.outbox_id });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // A1/A2 governance file-library 邏輯識別路由（純加性）。
+  // 根因：/api/governance/files/tree 對瀏覽器把每個 version.path 遮蔽成 "[server-path]"
+  // （routes/governanceProxy.ts redactServerPaths），A1 local_fs rule-run 與 A2 diff 把它
+  // 回送 → governance 400 "ifc_source_path not found: [server-path]"。修法與
+  // issue-snapshot / federated_set_id 同構：瀏覽器只送 {project_id, model_id, version_name}
+  // 邏輯三段，coordinator server-side 直打 governance（不經遮蔽）解析真路徑後轉發。
+  // 誠實語意：version 解析不到=404 library_version_not_found、governance 不可達=502、
+  // governance 回應原樣透傳 status/json（僅以與 proxy 同語意遮蔽絕對路徑）。
+  // ---------------------------------------------------------------------------
+
+  /** server-side 取 governance files/tree（3s timeout）。失敗（不可達 / 非 2xx / 壞 JSON）即 throw。 */
+  async function fetchGovernanceLibraryTree(): Promise<LibraryTreeShape> {
+    const res = await fetch(`${governanceApiBaseForSnapshot()}/api/files/tree`, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) throw new Error(`governance files/tree HTTP ${res.status}`);
+    return (await res.json()) as LibraryTreeShape;
+  }
+
+  /** 邏輯三段 → governance host 真實 IFC 絕對路徑；找不到回 null；governance 不可達 throw。 */
+  async function resolveLibraryVersionPath(ref: LibraryVersionRef): Promise<string | null> {
+    return findLibraryVersionPath(await fetchGovernanceLibraryTree(), ref);
+  }
+
+  /** POST 轉發 governance 並以 proxy 同語意遮蔽回應中的絕對路徑；不可達回 502。 */
+  async function forwardLibraryPostToGovernance(
+    response: express.Response,
+    path: string,
+    body: Record<string, unknown>,
+  ): Promise<void> {
+    const govBase = governanceApiBaseForSnapshot();
+    try {
+      const upstream = await fetch(`${govBase}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const text = await upstream.text();
+      response.status(upstream.status);
+      response.setHeader("Content-Type", upstream.headers.get("content-type") ?? "application/json");
+      response.send(redactServerPathsForBrowser(text));
+    } catch {
+      // 誠實：governance 離線不偽造成功（語意對齊 issue-snapshot 502）。
+      response.status(502).json({ error: "governance_unreachable" });
+    }
+  }
+
+  // A1 local_fs：邏輯三段 → server-side 解析真 IFC path → governance POST /api/rule-runs。
+  app.post("/api/governance-library/rule-runs", async (request, response, next) => {
+    try {
+      const input = libraryRuleRunSchema.parse(request.body);
+      const ids = normalizeLibraryIdsPath(input.ids_path);
+      if (!ids.ok) {
+        response.status(400).json({ error_code: "invalid_ids_path", detail: ids.detail });
+        return;
+      }
+      let ifcSourcePath: string | null;
+      try {
+        ifcSourcePath = await resolveLibraryVersionPath(input);
+      } catch {
+        response.status(502).json({ error: "governance_unreachable" });
+        return;
+      }
+      if (!ifcSourcePath) {
+        response.status(404).json({ error: "library_version_not_found" });
+        return;
+      }
+      const forwardBody: Record<string, unknown> = { ifc_source_path: ifcSourcePath };
+      if (ids.value) forwardBody.ids_path = ids.value;
+      if (input.model_version_id) forwardBody.model_version_id = input.model_version_id;
+      await forwardLibraryPostToGovernance(response, "/api/rule-runs", forwardBody);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // A2 diff：base/target 各自解析真路徑 → governance POST /api/diffs。
+  app.post("/api/governance-library/diffs", async (request, response, next) => {
+    try {
+      const input = libraryDiffSchema.parse(request.body);
+      let tree: LibraryTreeShape;
+      try {
+        tree = await fetchGovernanceLibraryTree();
+      } catch {
+        response.status(502).json({ error: "governance_unreachable" });
+        return;
+      }
+      const baseIfcPath = findLibraryVersionPath(tree, input.base);
+      const targetIfcPath = findLibraryVersionPath(tree, input.target);
+      if (!baseIfcPath || !targetIfcPath) {
+        response.status(404).json({ error: "library_version_not_found" });
+        return;
+      }
+      const forwardBody: Record<string, unknown> = {
+        base_ifc_path: baseIfcPath,
+        target_ifc_path: targetIfcPath,
+      };
+      if (typeof input.include_geometry === "boolean") forwardBody.include_geometry = input.include_geometry;
+      if (input.base_model_version_id) forwardBody.base_model_version_id = input.base_model_version_id;
+      if (input.target_model_version_id) forwardBody.target_model_version_id = input.target_model_version_id;
+      await forwardLibraryPostToGovernance(response, "/api/diffs", forwardBody);
     } catch (error) {
       next(error);
     }

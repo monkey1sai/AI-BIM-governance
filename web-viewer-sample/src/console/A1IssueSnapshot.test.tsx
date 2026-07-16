@@ -20,6 +20,8 @@ import { governanceClient, type FilesTreeResponse, type RuleRunStatus } from "./
 const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
 
 const LOCAL_IFC_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/建築/model.ifc";
+// local_fs select 的 option value = 唯一邏輯鍵（library:// 流）：version.path 被 proxy 遮蔽，不可當鍵。
+const LOCAL_IFC_KEY = "270/建築/model.ifc";
 const MINIO_KEY = "松風庵/root/main/u1/model.ifc";
 const MINIO_IDEMPOTENCY_KEY = "mw_0000000000000001";
 const REVIEW_SESSION_ID = "review_session_x";
@@ -172,13 +174,14 @@ describe("A1 issue snapshot（F2⑩ 回拋摘要至雲端）", () => {
     await flush();
   };
   const runLocalFsToScored = async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    // local_fs run 走 library:// 邏輯識別 → createRuleRunForLibrary（path 被遮蔽不可回送）。
+    vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
     await renderA1();
     const model = q<HTMLSelectElement>("a1-localfs-select")!;
     await act(async () => {
-      model.value = LOCAL_IFC_PATH;
+      model.value = LOCAL_IFC_KEY;
       model.dispatchEvent(new Event("change", { bubbles: true }));
     });
     await act(async () => { q<HTMLButtonElement>("a1-step-pick")!.click(); });
