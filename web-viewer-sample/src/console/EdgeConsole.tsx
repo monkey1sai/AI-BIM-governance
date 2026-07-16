@@ -5,6 +5,9 @@
 // 零依賴 hash 路由（不引入 react-router、不擾動既有 App ?session bootstrap）。
 import { useEffect, useState } from "react";
 import type { ReactElement } from "react";
+// Design token 權威（console-design-token-authority）：docs/plans/ai-bim-governance.css 正本
+// 真實 import（token 定義在 :root，全站 var(--ab-*) 可用）；SHALL NOT 手抄色碼副本。
+import "../../../docs/plans/ai-bim-governance.css";
 import "./edge-console.css";
 import { NAV_GROUPS, PAGES, Prov } from "./data";
 import { t, useLang, setLang } from "./i18n";

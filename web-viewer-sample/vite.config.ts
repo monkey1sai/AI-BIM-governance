@@ -20,5 +20,11 @@ export default defineConfig({
         viteExternalsPlugin({
             GFN: 'GFN'
         }),
-    ]
+    ],
+    server: {
+        fs: {
+            // design token 權威在 repo 根 docs/plans/（vite root 之外）；dev server 需顯式放行。
+            allow: [".", "../docs/plans"],
+        },
+    },
 });
