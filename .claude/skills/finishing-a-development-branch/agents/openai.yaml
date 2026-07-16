@@ -1,0 +1,6 @@
+interface:
+  display_name: "Superpowers: Finish Branch"
+  short_description: "Explicit-only branch closeout workflow"
+
+policy:
+  allow_implicit_invocation: false

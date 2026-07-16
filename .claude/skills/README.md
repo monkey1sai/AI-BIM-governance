@@ -6,6 +6,7 @@
 
 - `.claude/skills/` 與 `.codex/skills/` 都是 tracked physical copies；禁止 symlink / junction。
 - `mirror` skill 以 manifest 宣告的 source platform 為 canonical copy。
+- Superpowers 是固定於官方 `obra/superpowers` v6.1.1 的 skill-only bundle；`.claude/skills/` 為 canonical，mirror 至 `.codex/skills/`。不 vendor plugin hooks / commands，且可用性不覆蓋 repo 的 explicit-only invocation policy。
 - `spec-to-done` 是刻意的 Claude / Codex platform variants，不做 byte mirror；P0–P7 shared gates 由 agent-governance tests 檢查。
 - `gitnexus/` 是 GitNexus CLI 產生的 Claude family；`ai-bim-fast-fix` / `ai-bim-bounded-change` 是 Codex-only lane helpers。
 - `skills-lock.json` 是舊的個人 skill installer lock，不代表本 repo 目前 tracked skill inventory。

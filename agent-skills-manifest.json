@@ -219,6 +219,258 @@
         "import_commit": "c414e1cd4ca46ae3443db76a1a43a5334695db01",
         "notes": "Claude and Codex entrypoints intentionally differ; shared P0-P7 gates are checked by agent-governance tests instead of byte mirroring."
       }
+    },
+    {
+      "name": "brainstorming",
+      "locations": {
+        "claude": ".claude/skills/brainstorming",
+        "codex": ".codex/skills/brainstorming"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "obra/superpowers@v6.1.1",
+        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
+        "license": "MIT"
+      }
+    },
+    {
+      "name": "dispatching-parallel-agents",
+      "locations": {
+        "claude": ".claude/skills/dispatching-parallel-agents",
+        "codex": ".codex/skills/dispatching-parallel-agents"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "obra/superpowers@v6.1.1",
+        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
+        "license": "MIT"
+      }
+    },
+    {
+      "name": "executing-plans",
+      "locations": {
+        "claude": ".claude/skills/executing-plans",
+        "codex": ".codex/skills/executing-plans"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "obra/superpowers@v6.1.1",
+        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
+        "license": "MIT"
+      }
+    },
+    {
+      "name": "finishing-a-development-branch",
+      "locations": {
+        "claude": ".claude/skills/finishing-a-development-branch",
+        "codex": ".codex/skills/finishing-a-development-branch"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "obra/superpowers@v6.1.1",
+        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
+        "license": "MIT"
+      }
+    },
+    {
+      "name": "receiving-code-review",
+      "locations": {
+        "claude": ".claude/skills/receiving-code-review",
+        "codex": ".codex/skills/receiving-code-review"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "obra/superpowers@v6.1.1",
+        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
+        "license": "MIT"
+      }
+    },
+    {
+      "name": "requesting-code-review",
+      "locations": {
+        "claude": ".claude/skills/requesting-code-review",
+        "codex": ".codex/skills/requesting-code-review"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "obra/superpowers@v6.1.1",
+        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
+        "license": "MIT"
+      }
+    },
+    {
+      "name": "subagent-driven-development",
+      "locations": {
+        "claude": ".claude/skills/subagent-driven-development",
+        "codex": ".codex/skills/subagent-driven-development"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "obra/superpowers@v6.1.1",
+        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
+        "license": "MIT"
+      }
+    },
+    {
+      "name": "systematic-debugging",
+      "locations": {
+        "claude": ".claude/skills/systematic-debugging",
+        "codex": ".codex/skills/systematic-debugging"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "obra/superpowers@v6.1.1",
+        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
+        "license": "MIT"
+      }
+    },
+    {
+      "name": "test-driven-development",
+      "locations": {
+        "claude": ".claude/skills/test-driven-development",
+        "codex": ".codex/skills/test-driven-development"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "obra/superpowers@v6.1.1",
+        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
+        "license": "MIT"
+      }
+    },
+    {
+      "name": "using-git-worktrees",
+      "locations": {
+        "claude": ".claude/skills/using-git-worktrees",
+        "codex": ".codex/skills/using-git-worktrees"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "obra/superpowers@v6.1.1",
+        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
+        "license": "MIT"
+      }
+    },
+    {
+      "name": "using-superpowers",
+      "locations": {
+        "claude": ".claude/skills/using-superpowers",
+        "codex": ".codex/skills/using-superpowers"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "obra/superpowers@v6.1.1",
+        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
+        "license": "MIT"
+      }
+    },
+    {
+      "name": "verification-before-completion",
+      "locations": {
+        "claude": ".claude/skills/verification-before-completion",
+        "codex": ".codex/skills/verification-before-completion"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "obra/superpowers@v6.1.1",
+        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
+        "license": "MIT"
+      }
+    },
+    {
+      "name": "writing-plans",
+      "locations": {
+        "claude": ".claude/skills/writing-plans",
+        "codex": ".codex/skills/writing-plans"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "obra/superpowers@v6.1.1",
+        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
+        "license": "MIT"
+      }
+    },
+    {
+      "name": "writing-skills",
+      "locations": {
+        "claude": ".claude/skills/writing-skills",
+        "codex": ".codex/skills/writing-skills"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": ["codex"]
+      },
+      "provenance": {
+        "kind": "vendored-official",
+        "source": "obra/superpowers@v6.1.1",
+        "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
+        "license": "MIT"
+      }
     }
   ]
 }

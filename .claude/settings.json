@@ -1,10 +1,11 @@
 {
   "permissions": {
+    "defaultMode": "plan",
+    "disableBypassPermissionsMode": "disable",
     "allow": [
       "Bash(powershell -NoProfile -Command 'Get-Process kit -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '\\\\''C:\\\\Repos\\\\active\\\\iot\\\\AI-BIM-governance\\\\bim-streaming-server\\\\_build\\\\*kit.exe'\\\\'' } | Select-Object Id, Path, StartTime | Format-Table -AutoSize -Wrap')",
       "Bash(powershell -NoProfile -Command \"Write-Host 'pwsh ok'\")",
-      "Bash(powershell -NoProfile -Command \"Get-Process kit -ErrorAction SilentlyContinue | Select-Object Id, Path, StartTime\")",
-      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -File \"C:/Repos/active/iot/AI-BIM-governance/_tmp_inventory.ps1\")"
+      "Bash(powershell -NoProfile -Command \"Get-Process kit -ErrorAction SilentlyContinue | Select-Object Id, Path, StartTime\")"
     ]
   },
   "hooks": {

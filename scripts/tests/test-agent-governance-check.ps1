@@ -259,6 +259,7 @@ try {
     }
 
     $codexConfig = Get-Content -LiteralPath '.codex/config.toml' -Raw
+    Assert-True ($codexConfig -match '(?m)^default_permissions\s*=\s*":read-only"\s*$') '.codex/config.toml defaults Codex to the native read-only permission profile'
     Assert-True ($codexConfig -match '\[permissions\.safe-workspace\.network\]') '.codex/config.toml declares safe-workspace network permissions'
     foreach ($domain in @('api.github.com', 'github.com')) {
         Assert-True ($codexConfig -match [regex]::Escape('"' + $domain + '"')) ".codex/config.toml allows $domain"
@@ -308,6 +309,9 @@ try {
 
     $claudeSettingsRaw = Get-Content -LiteralPath '.claude/settings.json' -Raw
     $claudeSettings = $claudeSettingsRaw | ConvertFrom-Json
+    Assert-True ($claudeSettings.permissions.defaultMode -eq 'plan') 'Claude defaults this project to read-only plan mode'
+    Assert-True ($claudeSettings.permissions.disableBypassPermissionsMode -eq 'disable') 'Claude project settings disable bypass-permissions mode'
+    Assert-True (-not ($claudeSettingsRaw -match '_tmp_inventory\.ps1')) 'Claude read-only permissions do not pre-approve an external mutable inventory script'
     Assert-True ($claudeSettings.enabledPlugins.'superpowers@claude-plugins-official' -eq $false) 'Claude project-specific configuration disables the Superpowers plugin'
     Assert-True (-not ($claudeSettingsRaw -match 'Write\|Edit\|MultiEdit|verify-reminder')) 'Claude no longer runs verify reminder after every edit'
     Assert-True ($claudeSettingsRaw -match 'Bash\(git commit\*\)') 'Claude commit guard runs only for git commit'
