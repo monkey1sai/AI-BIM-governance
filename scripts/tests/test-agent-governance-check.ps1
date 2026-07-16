@@ -151,13 +151,14 @@ try {
     Assert-True (-not ($governanceWorkflow -match '(?m)^\s*run:\s*powershell\b')) 'agent-governance workflow does not re-enter legacy Windows PowerShell from pwsh'
     Assert-True ($governanceWorkflow -match 'test_ephemeral_validation\.py') 'agent-governance workflow runs trusted controller unit tests'
     Assert-True ($governanceWorkflow -match 'stress_ephemeral_validation\.py') 'agent-governance workflow runs bounded lifecycle stress tests'
-    # 原本硬編 `-eq 2`（"both checks"），使得「新增一個治理檢查」必定讓本斷言失敗——數量只是
-    # 當時的巧合，真正的意圖是「每個 step 都用 PowerShell 7，不得回退 legacy Windows PowerShell」。
-    # 改以「pwsh run 數 == 全部 run 數」表達該意圖，workflow 從此可擴充而不失去保護。
-    $pwshRunCount = @([regex]::Matches($governanceWorkflow, '(?m)^\s*run:\s*pwsh\b')).Count
+    # `run:` describes the command body, not the shell that GitHub Actions uses to execute it.
+    # Compare explicit shell declarations with run steps so multiline `run: |` blocks remain valid.
+    $pwshShellCount = @([regex]::Matches($governanceWorkflow, '(?m)^\s*shell:\s*pwsh\s*$')).Count
+    $declaredShellCount = @([regex]::Matches($governanceWorkflow, '(?m)^\s*shell:\s*\S')).Count
     $totalRunCount = @([regex]::Matches($governanceWorkflow, '(?m)^\s*run:\s*\S')).Count
-    Assert-True ($pwshRunCount -ge 5) 'agent-governance workflow runs the governance checks with PowerShell 7'
-    Assert-True ($pwshRunCount -eq $totalRunCount) 'agent-governance workflow runs every step with PowerShell 7 (no legacy or non-pwsh shell)'
+    Assert-True ($pwshShellCount -ge 5) 'agent-governance workflow declares PowerShell 7 for the governance checks'
+    Assert-True ($declaredShellCount -eq $totalRunCount) 'agent-governance workflow declares an explicit shell for every run step'
+    Assert-True ($pwshShellCount -eq $declaredShellCount) 'agent-governance workflow runs every command step with PowerShell 7'
 
     $localValidationWorkflow = Get-Content -LiteralPath '.github/workflows/local-agent-validate.yml' -Raw
     foreach ($marker in @(
