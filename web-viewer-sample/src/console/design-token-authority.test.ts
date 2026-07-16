@@ -55,5 +55,10 @@ describe("ai-bim-governance.css 是被真實 import 的唯一 token 權威", () 
     expect(authorityCss).toContain("--ab-bg:            #060a10");
     expect(authorityCss).toContain("--ab-accent:        #41c7e8");
     expect(authorityCss).toContain("--ab-accent-2:      #2f7bf6");
+    // --ab-violet-bright 是本輪 §6.2 唯一新增的色值，且僅被 ConceptPage 的 imgFailed
+    // fallback 分支消費；該分支落在 13 screens 視覺閘死角外（design-system-semantic-cases
+    // 每頁末 runtime_truth case 一律 gotoFreshRoute 且零互動，截圖恆為圖片正常載入態，
+    // 永遠照不到 fallback 卡）。以凍結斷言補上精確值把關，杜絕靜默漂移。
+    expect(authorityCss).toContain("--ab-violet-bright: #c9befc");
   });
 });
