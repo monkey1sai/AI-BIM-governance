@@ -2,27 +2,36 @@
 
 ### Requirement: primary 治理 viewer SHALL 採範本式全幅語意驗證版面，A1/A2/A3 operation 與 IFC 語意 metadata 清楚分區
 
-primary 治理 viewer SHALL 以全幅多分區版面呈現（模型資訊、IFC 語意、結構樹、GUID⇔Prim 對構表、幾何定位、Pset/空間關係），A1/A2/A3 operation SHALL 收進清楚的操作分頁/區段，既有 rule-run/highlight/issue/BCF/BindingComposer、spectator 權威與 MappingCache/HighlightBridge SHALL 全保留。2D chrome/panel/state SHALL 依 approved design manifest/baseline；coverage SHALL 讀 `route_inventory.status`。若 `#viewer` 為 `reference_missing`，SHALL 誠實列為 fidelity gap且 `Full completion claimed=no`。`docs/frontend/frontend-design-guidelines.md` 只補充 WCAG/security，SHALL NOT 成為平行 token authority。live Kit video frame SHALL 由 first-frame/stage/DataChannel evidence 驗證，不套用 design pixel threshold。
+Primary 治理 viewer SHALL 依 tracked `AI-BIM 前後端設計文件.dc.html` 的 canonical `#/workspace?dock=...` IA 與 tracked `AI-BIM Console Hi-Fi.dc.html` 的 Workspace screen/state 呈現；A1/A2/A3 operation、Stage tree、WebRTC viewport、IFC 語意與 issue區段 SHALL 清楚分區。既有 rule-run/highlight/issue/BCF/BindingComposer、spectator 權威與 MappingCache/HighlightBridge SHALL 保留。Manifest/baseline只能作 HTML-derived gate artifact。live Kit video frame SHALL 由 first-frame/stage/DataChannel evidence驗證，不套用 design pixel threshold。
 
-#### Scenario: 全幅 6 分區版面 + 治理操作分頁，既有能力保留
+#### Scenario: Workspace 版面與治理操作保留
 
-- **WHEN** 真人開 primary 治理 viewer
-- **THEN** SHALL 見全幅多分區版面與可操作的 A1/A2/A3 區段，spectator SHALL 維持唯讀權威
-- **AND** 若已有 approved viewer screen，2D 非動態區域 SHALL 具兩 viewport visual result；若沒有 SHALL 標 `reference_missing`
-- **AND** SHALL 另具 functional/runtime E2E，證明 live frame、stage 與 DataChannel 行為
+- **WHEN** 真人開啟 canonical `#/workspace?dock=a1`
+- **THEN** 2D chrome、Workspace layout 與 A1 dock SHALL 對齊 tracked Hi-Fi HTML 可回溯的 screen/state
+- **AND** spectator SHALL 維持唯讀權威
+- **AND** 兩個 required viewports SHALL 有 HTML-derived visual result
+- **AND** functional/runtime E2E SHALL 另行證明 real API、live frame、stage 與 DataChannel 行為
 
-### Requirement: A1–A10 頁面 SHALL 保留原型意圖
+#### Scenario: HTML 尚未定義新增 viewer surface
 
-前端 SHALL 為 A1 至 A10 各提供一個操作人員頁面；每個頁面 SHALL 對齊其 approved design screen/state，並說明功能目的、後端相依性與誠實 provenance。legacy prototypes MAY 補充歷史 IA，但 SHALL NOT 定義 production pixel pass/fail、API 或 runtime truth。
+- **GIVEN** lineage Alignment、Attempts、Audit 或其他 panel尚未出現在 tracked HTML
+- **WHEN** 該 surface 的 frontend change接受 design gate檢查
+- **THEN** surface SHALL 標為 `reference_missing` 或 `mixed`
+- **AND** manifest、local CSS、legacy screenshot 或外部 prototype SHALL NOT 自行批准該 screen
+- **AND** `Full completion claimed` SHALL 為 `no`，直到 tracked HTML 補齊並重建 derivatives
+
+### Requirement: A1-A10 Pages Preserve Prototype Intent
+
+前端 SHALL 依 tracked design HTML 為 A1 至 A10 提供對應操作 surface：A1–A4 在 `#/workspace?dock=...`，A5–A10 在 `#/app/:slug` Concept Preview。每個 surface SHALL 說明功能目的、後端相依性與誠實 provenance。任何 screen/state ID、manifest entry或golden都必須可回溯至 HTML；不得使用 repo 外 design source 定義 production pixel pass/fail、API 或 runtime truth。
 
 #### Scenario: 操作人員開啟 A1
 
 - **WHEN** 操作人員前往 A1 Governance & Rule Checker
-- **THEN** 頁面 SHALL 在兩個 required viewports 對齊 `workspace.a1.default`
+- **THEN** route SHALL 收斂至 `#/workspace?dock=a1`，並對齊 tracked Hi-Fi Workspace/A1 state
 - **AND** functional evidence SHALL 獨立驗證模型選取、檢核流程、scoreboard、issue 建立與 BCF/Excel 交付
 
 #### Scenario: 操作人員開啟 roadmap apps
 
 - **WHEN** 操作人員前往 A5、A6、A7、A8、A9 或 A10
-- **THEN** 頁面 SHALL 對齊其 `concept.a<n>.default` design screen
+- **THEN** route SHALL 使用 `#/app/:slug` 並對齊 tracked Hi-Fi Concept Preview 對應 state
 - **AND** 在 runtime evidence 存在前，後端能力 SHALL 維持 roadmap/not built；visual parity SHALL NOT 使其成為 live system evidence

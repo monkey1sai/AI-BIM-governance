@@ -97,12 +97,12 @@ a{color:#41c7e8;text-decoration:none}a:hover{color:#7adcf2;text-decoration:under
         </div>
         <div style="background:#0a1220;border:1px dashed rgba(120,160,210,.25);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:4px">
           <span style="font-size:12.5px;font-weight:700;color:#8aa0b8">[外部] 公司雲端 bim-control</span>
-          <span style="font-size:10.5px;color:#5a7089">control-plane 權威;只收 Outbox 回拋的 <span style="color:#e6b23e">metadata-only</span> callback,絕不收 .usdc bytes</span>
+          <span style="font-size:10.5px;color:#5a7089">control-plane / cloud MySQL writer;分開接收既有 workflow callback 與 <span style="color:#e6b23e">Cloud Ingest API</span> 的 result locators + 輕量摘要,絕不收 .usdc bytes 或逐 element lineage rows</span>
         </div>
       </div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">鐵律 1 — 大模型檔案(.ifc / .usdc)不出落地端;雲端 callback 僅 metadata + artifact ref</span>
+      <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">鐵律 1 — 大模型檔案(.ifc / .usdc)不出落地端;workflow callback與Cloud Ingest均只傳metadata/result ref</span>
       <span style="font-size:10.5px;color:#6fd6ee;background:rgba(65,199,232,.06);border:1px solid rgba(65,199,232,.2);border-radius:6px;padding:4px 10px">鐵律 2 — :8004 是瀏覽器唯一可達面;:49101/:49102/:8010 一律經 proxy</span>
       <span style="font-size:10.5px;color:#b7a9ff;background:rgba(157,140,255,.06);border:1px solid rgba(157,140,255,.2);border-radius:6px;padding:4px 10px">鐵律 3 — /ui/open?session= handoff 凍結,byte-for-byte + CI guard</span>
     </div>
@@ -299,6 +299,7 @@ optional: external_conversion_task_id · project_display_name
           requested_outputs ⊆ [usdc, element_mapping,
                                entity_index, metadata]</pre>
         <span style="font-size:10.5px;color:#5a7089">冪等以 idempotency_key;IP allowlist 限落地端內網;auth provider 可抽換(intranet-dev)。</span>
+        <span style="font-size:10.5px;color:#8aa0b8">Governed additive target: POST /api/external/source-bundles/ready只接producer ready claim,coordinator仍重驗manifest;既有/api/external/ifc-ready不變,source READY不寫cloud lineage tables。</span>
       </div>
       <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
         <div style="display:flex;align-items:center;gap:8px"><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#6fd6ee">contract</span><span style="font-size:12.5px;font-weight:700">conversion_result_callback · v1.0.0</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">tests/contracts/conversion_result_callback.json</span></div>
@@ -312,6 +313,17 @@ required: event · tenant_id · project_id
           artifact_summary { usdc_openable, mapped_count,
             unmapped_count, coverage_ratio, coverage_status }</pre>
         <span style="font-size:10.5px;color:#e6b23e">HARD RULE:METADATA-ONLY — 禁止攜帶 .usdc / 3D bytes;大檔留落地端,雲端只拿 ref 與摘要。</span>
+      </div>
+      <div style="grid-column:1 / -1;background:#0a1220;border:1px solid rgba(230,178,62,.3);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;align-items:center;gap:8px"><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#e6b23e">CLOUD API ONLY</span><span style="font-size:12.5px;font-weight:700">lineage-publication · cloud-lineage-publication/v1</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">openspec/changes/rvt-ifc-usdc-lineage/contracts/</span></div>
+        <pre style="margin:0;background:#070d15;border:1px solid rgba(120,160,210,.1);border-radius:8px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.7;color:#8aa0b8;overflow:auto">edge bim-review-coordinator → [external] company-cloud bim-control → cloud MySQL
+POST /api/v1/lineage-publications
+events: lineage_result_published | lineage_result_health_changed
+auth: HMAC-SHA256(secret, timestamp + "\n" + raw body)
+result refs: manifest · mapping · alignment JSON · alignment CSV
+summary: 3 ratios + fixed counts + bounded warning codes
+ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
+        <span style="font-size:10.5px;color:#e6b23e">給雲端API使用:receiver在外部bim-control;本repo只定義outbound contract。Cloud MySQL只存stable result位置＋摘要,不存mapping rows；既有callback、producer intake、browser API均不變。</span>
       </div>
     </div>
   </div>
@@ -371,7 +383,7 @@ required: event · tenant_id · project_id
           <span style="position:absolute;left:calc(35.71% - 2px);top:14.5px;color:#8aa0b8;font-size:8px">◀</span>
         </div>
         <div style="position:relative;height:36px">
-          <span style="position:absolute;left:35.71%;width:57.15%;top:2px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:9px;color:#8aa0b8">⑦ Outbox POST conversion_result_ready(metadata-only · retry/dead-letter)</span>
+          <span style="position:absolute;left:35.71%;width:57.15%;top:2px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:8.5px;color:#8aa0b8">⑦a workflow callback · ⑦b HMAC Cloud Ingest lineage_result_published(result locator + summary → cloud MySQL)</span>
           <div style="position:absolute;left:35.71%;width:57.15%;top:21px;border-top:1.5px solid #e6b23e"></div>
           <span style="position:absolute;left:calc(92.86% - 8px);top:14.5px;color:#e6b23e;font-size:8px">▶</span>
         </div>
@@ -522,8 +534,8 @@ required: event · tenant_id · project_id
         <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">ifc_guid ↔ usd_prim_path ↔ ifc_type/name — highlight/focus/選取回灌 的橋;由 /api/governance/element-mapping/for-session/:id 供 UI,前端 mappingCache 快取</span>
       </div>
       <div style="background:#0a1220;border:1px solid rgba(230,178,62,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
-        <span style="font-size:12px;font-weight:700;color:#e6b23e">CallbackOutbox</span>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">outbox_id · event(conversion_result_ready|conversion_failed|…)· payload(metadata-only)· attempts · next_retry_at · state: pending→sent|dead-letter</span>
+        <span style="font-size:12px;font-weight:700;color:#e6b23e">CallbackOutbox / LineagePublicationOutbox</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">workflow: conversion_result_ready|conversion_failed · metadata-only · pending→sent|dead-letter<br>lineage: lineage_result_published|lineage_result_health_changed · stable event/digest · DISABLED|PENDING|RETRYING|DELIVERED|DEAD_LETTER|CONFLICT<br>兩者contract/ACK分離;cloud delivery不阻擋edge READY/AVAILABLE</span>
       </div>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:6px;font-family:'JetBrains Mono',monospace;font-size:10px;color:#8aa0b8">
@@ -534,7 +546,8 @@ required: event · tenant_id · project_id
       <span style="border:1px solid rgba(120,160,210,.14);border-radius:5px;padding:3px 9px">RuleRun 1—n Failure —opens→ Issue</span>
       <span style="border:1px solid rgba(120,160,210,.14);border-radius:5px;padding:3px 9px">Diff 1—n Item —opens→ Issue</span>
       <span style="border:1px solid rgba(120,160,210,.14);border-radius:5px;padding:3px 9px">Issue —exports→ BCF Topic(2.1)</span>
-      <span style="border:1px solid rgba(120,160,210,.14);border-radius:5px;padding:3px 9px">ConversionJob / Issue —summary→ CallbackOutbox → 雲端</span>
+      <span style="border:1px solid rgba(120,160,210,.14);border-radius:5px;padding:3px 9px">ConversionJob / Issue —summary→ CallbackOutbox → cloud workflow</span>
+      <span style="border:1px solid rgba(230,178,62,.25);border-radius:5px;padding:3px 9px">ResultManifest —locator+summary→ LineagePublicationOutbox → external bim-control → cloud MySQL</span>
     </div>
   </div>
 

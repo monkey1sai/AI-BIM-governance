@@ -1,0 +1,498 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bim-docs.jackshappybot.com/contracts/cloud-lineage-publication-request-v1.schema.json",
+  "title": "Cloud Lineage Publication Request v1",
+  "description": "Contract-only outbound API: edge bim-review-coordinator -> external company-cloud bim-control -> cloud MySQL.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_type",
+    "event_id",
+    "occurred_at",
+    "correlation_id",
+    "edge_site_id",
+    "tenant_id",
+    "project_id",
+    "external_model_version_id",
+    "result_id",
+    "publication_identity",
+    "result_manifest_digest",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "cloud-lineage-publication/v1"
+    },
+    "event_type": {
+      "enum": [
+        "lineage_result_published",
+        "lineage_result_health_changed"
+      ]
+    },
+    "event_id": {
+      "$ref": "#/$defs/uuid"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "correlation_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "edge_site_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "external_model_version_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "result_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "publication_identity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "result_manifest_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "payload": {}
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "event_type": {
+          "const": "lineage_result_published"
+        },
+        "payload": {
+          "$ref": "#/$defs/publishedPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": {
+          "const": "lineage_result_health_changed"
+        },
+        "payload": {
+          "$ref": "#/$defs/healthPayload"
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "locator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "object_version_id",
+        "etag",
+        "sha256",
+        "size_bytes"
+      ],
+      "properties": {
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^minio://[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[^?#\\s]+\\?versionId=[A-Za-z0-9._~%-]+$",
+          "not": {
+            "pattern": "[?&][Xx]-[Aa][Mm][Zz]-"
+          }
+        },
+        "object_version_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "etag": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "numerator",
+        "denominator",
+        "ratio",
+        "status"
+      ],
+      "properties": {
+        "numerator": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "denominator": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ratio": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "partial",
+            "not_evaluable"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "denominator": {
+                "const": 0
+              }
+            },
+            "required": [
+              "denominator"
+            ]
+          },
+          "then": {
+            "properties": {
+              "numerator": {
+                "const": 0
+              },
+              "ratio": {
+                "type": "null"
+              },
+              "status": {
+                "const": "not_evaluable"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "ratio": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "status": {
+                "enum": [
+                  "complete",
+                  "partial"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "csv_total_count",
+        "csv_valid_count",
+        "eligible_ifc_product_count",
+        "duplicate_rvt_id_count",
+        "duplicate_ifc_guid_count",
+        "invalid_row_count",
+        "csv_only_count",
+        "ifc_only_count",
+        "ifc_usdc_unmapped_count",
+        "full_lineage_matched_count"
+      ],
+      "properties": {
+        "csv_total_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "csv_valid_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "eligible_ifc_product_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duplicate_rvt_id_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duplicate_ifc_guid_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "invalid_row_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "csv_only_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ifc_only_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ifc_usdc_unmapped_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "full_lineage_matched_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metrics",
+        "counts",
+        "warning_codes",
+        "warning_code_count"
+      ],
+      "properties": {
+        "metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ifc_usdc_coverage_ratio",
+            "rvt_ifc_alignment_ratio",
+            "rvt_ifc_usdc_lineage_ratio"
+          ],
+          "properties": {
+            "ifc_usdc_coverage_ratio": {
+              "$ref": "#/$defs/metric"
+            },
+            "rvt_ifc_alignment_ratio": {
+              "$ref": "#/$defs/metric"
+            },
+            "rvt_ifc_usdc_lineage_ratio": {
+              "$ref": "#/$defs/metric"
+            }
+          }
+        },
+        "counts": {
+          "$ref": "#/$defs/counts"
+        },
+        "warning_codes": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+          }
+        },
+        "warning_code_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64
+        }
+      }
+    },
+    "publishedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_bundle_id",
+        "pipeline_job_id",
+        "attempt_id",
+        "attempt_outcome",
+        "publication_state",
+        "published_at",
+        "result_refs",
+        "alignment_summary"
+      ],
+      "properties": {
+        "source_bundle_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "pipeline_job_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "attempt_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "attempt_outcome": {
+          "enum": [
+            "succeeded",
+            "succeeded_with_warnings",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "publication_state": {
+          "const": "AVAILABLE"
+        },
+        "published_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "result_refs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result_manifest_ref",
+            "lineage_mapping_ref",
+            "alignment_report_json_ref",
+            "alignment_report_csv_ref"
+          ],
+          "properties": {
+            "result_manifest_ref": {
+              "$ref": "#/$defs/locator"
+            },
+            "lineage_mapping_ref": {
+              "$ref": "#/$defs/locator"
+            },
+            "alignment_report_json_ref": {
+              "$ref": "#/$defs/locator"
+            },
+            "alignment_report_csv_ref": {
+              "$ref": "#/$defs/locator"
+            }
+          }
+        },
+        "alignment_summary": {
+          "$ref": "#/$defs/summary"
+        }
+      }
+    },
+    "healthPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "health_state",
+        "observed_at",
+        "confirmation_count",
+        "reason_code",
+        "result_manifest_ref"
+      ],
+      "properties": {
+        "health_state": {
+          "enum": [
+            "VERIFIED",
+            "MISSING",
+            "INTEGRITY_FAILED",
+            "TOMBSTONED"
+          ]
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "confirmation_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reason_code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+        },
+        "tombstone_record_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "result_manifest_ref": {
+          "$ref": "#/$defs/locator"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "health_state": {
+                "enum": [
+                  "MISSING",
+                  "INTEGRITY_FAILED"
+                ]
+              }
+            },
+            "required": [
+              "health_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "confirmation_count": {
+                "type": "integer",
+                "minimum": 2
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "health_state": {
+                "const": "TOMBSTONED"
+              }
+            },
+            "required": [
+              "health_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "tombstone_record_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "required": [
+              "tombstone_record_id"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}
