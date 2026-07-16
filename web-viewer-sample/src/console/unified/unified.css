@@ -2,7 +2,6 @@
    UnifiedConsole — global styles（1:1 移植自 design-origin/styles.css）
    差異：原型 html/body 級樣式改掛 body.uc-body（由 UnifiedShell effect 切換），
    scrollbar / ::placeholder / keyframes（tup/pulse/convbar）保留全域字義。
-   不得動既有 edge-console.css。
    ═══════════════════════════════════════════════════════════════════════ */
 body.uc-body {
   margin: 0;

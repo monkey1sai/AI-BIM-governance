@@ -16,7 +16,7 @@ type CoverageState = ConversionQualityMetricsResponse | { error: string } | "loa
 type OutboxSummaryState = "loading" | { error: string } | CallbackOutboxSummary;
 
 // F2⑩ status 色碼（設計：pending=琥珀 / delivered=綠 / dead_letter=紅）→ 既有 ec-status-dot
-// data-status 三值（warn/ok/bad；edge-console.css:305-322）。未知 wire 值誠實不上色（灰底）。
+// data-status 三值（warn/ok/bad；legacy-console.css 的 .ec-status-dot 規則）。未知 wire 值誠實不上色（灰底）。
 const OUTBOX_STATUS_TONE: Record<string, "ok" | "warn" | "bad"> = {
   pending: "warn",
   delivered: "ok",

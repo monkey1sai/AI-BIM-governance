@@ -234,7 +234,7 @@ test.describe("#/conv 三視圖對帳 vertical slice（STUB MINIO + STUB CONVERS
       expect(jobKey).toMatch(/^mw_/);
       expect(jobKey).toBe(ledgerKey); // 同一把 idempotency_key 同時出現在 jobs 表與 ledger 表 → 三視圖可 join（才是 Done 要的「對帳鍵一致」）
 
-      // 截圖證據交付物：fullPage 對本 app-shell 失效——.ec-root position:fixed（edge-console.css:26）
+      // 截圖證據交付物：fullPage 對本 app-shell 失效——.ec-root position:fixed（legacy-console.css）
       // 包住整個 app、真正內容在 .ec-main{overflow-y:auto}（css:67）內部獨立捲動，body/html scrollHeight
       // 不隨 .ec-main 內容增高，fullPage 只截到外層固定 viewport（頂 nav／Hero／Pipeline／MinIO 面板），
       // 抓不到捲動出去的下半頁（實測兩次不同資料的 fullPage 截圖位元組全同＝從未截到任何資料表）。

@@ -189,7 +189,7 @@
       "component"
     ],
     "upstream_authority": "source/app.js + source/styles.css",
-    "production_projection": "web-viewer-sample/src/console/edge-console.css",
+    "production_projection": "docs/plans/ai-bim-governance.css",
     "production_tokens_are_not_upstream_authority": true
   },
   "change_scope_contract": {

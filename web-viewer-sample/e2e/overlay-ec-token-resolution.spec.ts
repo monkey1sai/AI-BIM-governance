@@ -5,9 +5,10 @@ import { dirname, resolve } from "node:path";
 
 // 迴歸守門：.gov-overlay 掛在 .ec-root 之外（App.tsx → Window.tsx，而非 EdgeConsole.tsx），
 // 但 GovernanceOverlay.tsx 仍渲染 .ec-btn / .ec-warn-note / .ec-note / .ec-cap / .ec-table 這些
-// 由 edge-console.css 上色、引用 var(--ec-*) 的 legacy class。--ec-* token 只定義在 .ec-root 下，
-// 故 overlay 需要一份本地 --ec-* 值才能解析。migrate-console-to-hifi-design 把這份本地副本刪掉後，
-// 這些 token 在 .gov-overlay 內無處解析 → 按鈕背景/邊框失效、警示色坍縮成內文色。
+// class。migrate-console-to-hifi-design §6.5 已將 edge-console.css 移植為 legacy-console.css，
+// 全域 .ec-* 規則改消費 var(--ab-*)（:root 定義，非 .ec-root 局部）；Task 5 的 --ec-* → --ab-* 本地
+// shim 已隨之移除。本測試驗證：shim 拿掉後，.gov-overlay（.ec-root 之外）內的 .ec-* 規則仍能正確
+// 解析 --ab-* token → 按鈕背景/邊框可見、警示色不坍縮成內文色。
 //
 // renderToString 的 unit test（GovernanceOverlay.test.tsx）無 CSS engine，結構性抓不到；只有真實
 // 瀏覽器的 computed style 看得見（見 e2e/a9-a10-identity-a4-primary.spec.ts 檔頭同款盲點註記）。
@@ -19,12 +20,12 @@ const readCss = (rel: string) => readFileSync(resolve(specDir, rel), "utf-8");
 // @import（Google Fonts）剝除以維持 hermetic（不觸發網路字型抓取）；token 解析不依賴字型載入。
 // 注意：字型 URL 內含分號（wght@400;500;700），故以 url(...) 的右括號為界，不可用 [^;]。
 const dsCss = readCss("../../docs/plans/ai-bim-governance.css").replace(/@import\s+url\([^)]*\)\s*;/g, "");
-const edgeCss = readCss("../src/console/edge-console.css");
+const legacyCss = readCss("../src/console/legacy-console.css");
 const overlayCss = readCss("../src/console/governance/overlay.css");
 
 const PAGE = `<!doctype html><html><head><style>
 ${dsCss}
-${edgeCss}
+${legacyCss}
 ${overlayCss}
 </style></head><body>
   <!-- 刻意不套 .ec-root：真實 DOM 中 .gov-overlay 永遠不是 .ec-root 的後代 -->
