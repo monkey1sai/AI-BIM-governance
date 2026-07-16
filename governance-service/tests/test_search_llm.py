@@ -59,7 +59,7 @@ def test_llm_status_without_key(client):
     assert body["configured"] is False
     assert body["enabled"] is False
     assert "api_key" not in body
-    assert "fc1fb67" not in str(body).lower()
+    assert "authorization" not in str(body).lower()
 
 
 def test_semantic_mode_uses_mocked_llm(client, a4_ifc, monkeypatch):
