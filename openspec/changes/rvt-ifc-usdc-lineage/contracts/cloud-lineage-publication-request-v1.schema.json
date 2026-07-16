@@ -45,7 +45,8 @@
     "edge_site_id": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 120
+      "maxLength": 120,
+      "pattern": "^[^:]+$"
     },
     "tenant_id": {
       "type": "string",
@@ -60,17 +61,20 @@
     "external_model_version_id": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 200
+      "maxLength": 200,
+      "pattern": "^[^:]+$"
     },
     "result_id": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 200
+      "maxLength": 200,
+      "pattern": "^[^:]+$"
     },
     "publication_identity": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 512
+      "maxLength": 522,
+      "pattern": "^[^:]+:[^:]+:[^:]+$"
     },
     "result_manifest_digest": {
       "$ref": "#/$defs/sha256"
@@ -491,6 +495,13 @@
             "required": [
               "tombstone_record_id"
             ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "tombstone_record_id"
+              ]
+            }
           }
         }
       ]

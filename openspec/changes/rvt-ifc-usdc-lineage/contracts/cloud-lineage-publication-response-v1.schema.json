@@ -43,7 +43,8 @@
         "publication_identity": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 512
+          "maxLength": 522,
+          "pattern": "^[^:]+:[^:]+:[^:]+$"
         },
         "manifest_digest": {
           "$ref": "#/$defs/sha256"

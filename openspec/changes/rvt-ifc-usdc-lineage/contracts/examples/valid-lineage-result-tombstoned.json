@@ -1,0 +1,28 @@
+{
+  "schema_version": "cloud-lineage-publication/v1",
+  "event_type": "lineage_result_health_changed",
+  "event_id": "22222222-2222-4222-8222-222222222222",
+  "occurred_at": "2026-07-16T09:20:00.000Z",
+  "correlation_id": "corr-health-0007",
+  "edge_site_id": "edge-tpe-01",
+  "tenant_id": "tenant-a",
+  "project_id": "project-library",
+  "external_model_version_id": "model-version-20260715-001",
+  "result_id": "result-0007",
+  "publication_identity": "edge-tpe-01:model-version-20260715-001:result-0007",
+  "result_manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "payload": {
+    "health_state": "TOMBSTONED",
+    "observed_at": "2026-07-16T09:19:30.000Z",
+    "confirmation_count": 2,
+    "reason_code": "RESULT_RETENTION_TOMBSTONE",
+    "tombstone_record_id": "retention-record-0007",
+    "result_manifest_ref": {
+      "ref": "minio://edge-tpe-01/lineage-results/tenant-a/project-library/model-version-20260715-001/results/attempt-0007/result-manifest.json?versionId=v-0007-manifest",
+      "object_version_id": "v-0007-manifest",
+      "etag": "etag-result-manifest-0007",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size_bytes": 4096
+    }
+  }
+}

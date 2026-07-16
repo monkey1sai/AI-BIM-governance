@@ -11,17 +11,21 @@
 -- RVT/IFC/USDC lineage table; complete rows remain in customer-edge MinIO.
 
 CREATE TABLE lineage_publications (
-    publication_identity VARCHAR(512) NOT NULL,
+    publication_identity VARCHAR(522)
+        CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
     registration_id VARCHAR(200) NOT NULL,
     first_event_id CHAR(36) NOT NULL,
-    edge_site_id VARCHAR(120) NOT NULL,
+    edge_site_id VARCHAR(120)
+        CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
     tenant_id VARCHAR(200) NOT NULL,
     project_id VARCHAR(200) NOT NULL,
-    external_model_version_id VARCHAR(200) NOT NULL,
+    external_model_version_id VARCHAR(200)
+        CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
     source_bundle_id VARCHAR(200) NOT NULL,
     pipeline_job_id VARCHAR(200) NOT NULL,
     attempt_id VARCHAR(200) NOT NULL,
-    result_id VARCHAR(200) NOT NULL,
+    result_id VARCHAR(200)
+        CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
     attempt_outcome VARCHAR(32) NOT NULL,
     manifest_digest CHAR(64) NOT NULL,
     publication_content_sha256 CHAR(64) NOT NULL,
@@ -40,6 +44,21 @@ CREATE TABLE lineage_publications (
         external_model_version_id,
         result_id
     ),
+    CONSTRAINT ck_lineage_publications_identity_tuple
+        CHECK (
+            LOCATE(':', edge_site_id) = 0
+            AND LOCATE(':', external_model_version_id) = 0
+            AND LOCATE(':', result_id) = 0
+            AND CAST(publication_identity AS BINARY) = CAST(
+                CONCAT(
+                    edge_site_id,
+                    ':',
+                    external_model_version_id,
+                    ':',
+                    result_id
+                ) AS BINARY
+            )
+        ),
     CONSTRAINT ck_lineage_publications_manifest_digest
         CHECK (manifest_digest REGEXP '^[0-9a-f]{64}$'),
     CONSTRAINT ck_lineage_publications_content_digest
@@ -66,7 +85,8 @@ CREATE TABLE lineage_publications (
 CREATE TABLE lineage_publication_health_events (
     health_event_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     event_id CHAR(36) NOT NULL,
-    publication_identity VARCHAR(512) NOT NULL,
+    publication_identity VARCHAR(522)
+        CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
     manifest_digest CHAR(64) NOT NULL,
     health_state ENUM(
         'VERIFIED',
@@ -104,8 +124,15 @@ CREATE TABLE lineage_publication_health_events (
         ),
     CONSTRAINT ck_lineage_health_tombstone_record
         CHECK (
-            health_state <> 'TOMBSTONED'
-            OR tombstone_record_id IS NOT NULL
+            (
+                health_state = 'TOMBSTONED'
+                AND tombstone_record_id IS NOT NULL
+                AND CHAR_LENGTH(tombstone_record_id) > 0
+            )
+            OR (
+                health_state <> 'TOMBSTONED'
+                AND tombstone_record_id IS NULL
+            )
         ),
     CONSTRAINT ck_lineage_health_ref_is_object
         CHECK (JSON_TYPE(original_result_manifest_ref) = 'OBJECT')
@@ -126,7 +153,8 @@ CREATE TABLE lineage_event_identities (
         'lineage_result_published',
         'lineage_result_health_changed'
     ) NOT NULL,
-    publication_identity VARCHAR(512) NOT NULL,
+    publication_identity VARCHAR(522)
+        CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
     raw_body_sha256 CHAR(64) NOT NULL,
     first_received_at DATETIME(6) NOT NULL,
     PRIMARY KEY (event_id),
@@ -135,7 +163,9 @@ CREATE TABLE lineage_event_identities (
         first_received_at
     ),
     CONSTRAINT ck_lineage_event_identities_raw_body_digest
-        CHECK (raw_body_sha256 REGEXP '^[0-9a-f]{64}$')
+        CHECK (raw_body_sha256 REGEXP '^[0-9a-f]{64}$'),
+    CONSTRAINT ck_lineage_event_identities_publication_identity
+        CHECK (publication_identity REGEXP '^[^:]+:[^:]+:[^:]+$')
 ) ENGINE = InnoDB;
 
 CREATE TABLE lineage_event_receipts (
@@ -145,7 +175,8 @@ CREATE TABLE lineage_event_receipts (
         'lineage_result_published',
         'lineage_result_health_changed'
     ) NOT NULL,
-    publication_identity VARCHAR(512) NOT NULL,
+    publication_identity VARCHAR(522)
+        CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
     manifest_digest CHAR(64) NOT NULL,
     raw_body_sha256 CHAR(64) NOT NULL,
     registration_id VARCHAR(200) NOT NULL,

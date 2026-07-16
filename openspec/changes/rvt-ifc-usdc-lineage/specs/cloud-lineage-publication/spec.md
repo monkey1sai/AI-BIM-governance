@@ -42,7 +42,7 @@ Coordinator SHALL 只在正式ResultManifest與所有必要result references通�
 
 ### Requirement: Publication payload SHALL 只包含stable locators與bounded summary
 
-`lineage_result_published` SHALL 攜帶event、edge site、tenant、project、external model version、source bundle、pipeline job、attempt與result的穩定identity，以及`attempt_outcome`、`publication_identity`、`result_manifest_digest`、timestamps與correlation。`publication_identity` SHALL 對tuple `(edge_site_id, external_model_version_id, result_id)`維持穩定。
+`lineage_result_published` SHALL 攜帶event、edge site、tenant、project、external model version、source bundle、pipeline job、attempt與result的穩定identity，以及`attempt_outcome`、`publication_identity`、`result_manifest_digest`、timestamps與correlation。`edge_site_id`、`external_model_version_id`與`result_id` MUST NOT 含literal `:`；`publication_identity` SHALL 逐byte等於`edge_site_id + ":" + external_model_version_id + ":" + result_id`，最大長度為522 characters。Sender與receiver SHALL 重新計算此canonical tuple encoding，且 MUST 在event identity、publication或receipt mutation前拒絕任何component／identity mismatch。
 
 Payload SHALL 精確包含下列必要的正式references：
 
@@ -61,6 +61,11 @@ Payloads MUST NOT 包含RVT/IFC/USDC bytes、manifest/report bodies、element ma
 
 - **WHEN** 四個references全都使用versioned `minio://` locators，並包含相符的integrity metadata
 - **THEN** payload SHALL 可進行HMAC signing與delivery
+
+#### Scenario: Publication identity不具唯一canonical encoding
+
+- **WHEN** 任一identity component含literal `:`，或`publication_identity`不等於三個component的canonical colon-join
+- **THEN** schema／semantic validation SHALL 在event identity、publication或receipt mutation前拒絕request
 
 #### Scenario: Payload嘗試傳送element rows或presigned URL
 
@@ -224,7 +229,7 @@ Cloud delivery state SHALL 與source `READY`、result `AVAILABLE`、active-resul
 
 `lineage_result_health_changed` SHALL 只使用`VERIFIED | MISSING | INTEGRITY_FAILED | TOMBSTONED`。它 SHALL 攜帶已知的`publication_identity`，以及原始result ID、result-manifest reference與manifest digest，但 SHALL NOT 重複alignment summary。Receiver SHALL 以publication identity join `lineage_publications`，逐byte比對這些immutable bindings後才append health event；原始summary只留在publication row。Health events與accepted-delivery receipts SHALL 採append-only；health event MUST NOT 改寫原始publication。`observed_at` SHALL 使用uppercase `Z`的UTC date-time，年份 SHALL 為`1000–9999`、秒 SHALL 為`00–59`，小數秒可省略或為1–6位；receiver只可右補零至microsecond，offset、leap second、MySQL範圍外年份或超過6位精度 MUST 在event identity或domain mutation前拒絕，MUST NOT round／truncate。Current health SHALL 由該exact microsecond最大的accepted transition衍生；完全相同的observation time SHALL 以deterministic receiver-assigned append order tie-break，arrival order MUST NOT 超越不同的observation time。延遲送達的較舊transition SHALL 保留在history但 MUST NOT 覆寫較新current health；尚無health event時，通過integrity驗證的publication SHALL 衍生為`VERIFIED`。
 
-`MISSING`與`INTEGRITY_FAILED` SHALL 要求edge reconciler至少兩次獨立觀察後才能送出。已復原且通過integrity驗證的object set MAY 回到`VERIFIED`。`TOMBSTONED` SHALL 要求正式retention/revocation record，且 MUST NOT 從transient list miss推斷。
+`MISSING`與`INTEGRITY_FAILED` SHALL 要求edge reconciler至少兩次獨立觀察後才能送出。已復原且通過integrity驗證的object set MAY 回到`VERIFIED`。`TOMBSTONED` SHALL 要求正式retention/revocation record與非空`tombstone_record_id`，且 MUST NOT 從transient list miss推斷；`VERIFIED`、`MISSING`與`INTEGRITY_FAILED` MUST NOT 攜帶`tombstone_record_id`。
 
 #### Scenario: 重複觀察到缺失
 
@@ -254,6 +259,11 @@ Cloud delivery state SHALL 與source `READY`、result `AVAILABLE`、active-resul
 - **WHEN** authorized retention/revocation record將result標記為tombstone
 - **THEN** coordinator SHALL 送出`TOMBSTONED`
 - **AND** transient object-list miss MUST NOT 產生該state
+
+#### Scenario: 非tombstone health event攜帶tombstone record
+
+- **WHEN** `VERIFIED`、`MISSING`或`INTEGRITY_FAILED` event含`tombstone_record_id`
+- **THEN** schema validation SHALL 在event identity、health或receipt mutation前拒絕request
 
 ### Requirement: Cloud persistence SHALL 只包含normative logical metadata
 

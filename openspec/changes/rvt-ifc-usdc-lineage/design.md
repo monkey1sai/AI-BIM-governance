@@ -152,9 +152,11 @@ docs/plans/AI-BIM Console Hi-Fi.dc.html
 
 `design-system-reference.manifest.json`、goldens、screens、route inventory 與 semantic cases 只能是由這些 HTML 可重現的 derived evidence。外部 absolute path、capture script hard-code 或 production CSS 都不能成為平行 authority。Lineage surface 在 HTML 增加 approved screen/state 前一律 `reference_missing`，不得宣稱 full design completion。
 
-### 9. Active predecessor 採順序整合，不平行修改 capability／baseline
+### 9. Active predecessor以change boundary獨立擁有，採順序整合
 
-目前 active MinIO watcher/intake changes、`align-frontend-design-system-reference` 與 `migrate-console-to-hifi-design` 已擁有其 capability、HTML machine contract、token migration或baseline工作。本 change 先建立六個新 capabilities，不平行修改 predecessor-owned canonical deltas。此spec可對tracked HTML做 `design_source_update_only` 的既有Outbox文字契約，但不得同PR修改production frontend、manifest/goldens或宣稱design pass。Apply gate固定為：先 closeout `align`，再讓 `migrate` rebase並以 `docs/plans/*.html` 唯一權威撤銷／調和 repo 外 origin與 `VerifyOrigin` 假設，接著 closeout `migrate`，最後才讓 lineage rebase最新main。之後再為 `minio-watch-auto-intake`、`local-coordinator-ifc-ready-intake-boundary`、`streaming-ifc-usdc-conversion-authority`、`conversion-kit-lifecycle-recovery` 與 `local-artifact-shadow-metadata` 補必要MODIFIED deltas；`external-cloud-callback-lifecycle`保持不變，新lineage publisher由獨立capability擁有。
+目前 active MinIO watcher/intake changes、`align-frontend-design-system-reference` 與 `migrate-console-to-hifi-design` 已擁有其 capability、HTML machine contract、token migration或baseline工作。本 lineage change只建立六個新 capabilities，不宣告predecessor-owned canonical MODIFIED deltas。本PR另含`align-frontend-design-system-reference`本身的contract repair，涵蓋`agent-operability-governance`、`demo-fast-mvp-orchestration`、`documentation-source-of-truth`與`unified-governance-console`；這四組delta只由`align` change擁有、獨立strict validate並隨`align` archive，同一PR不代表lineage change接管ownership。Lineage rebase MUST NOT 重建`align`目錄或重複宣告這四組delta。
+
+此spec可對tracked HTML做 `design_source_update_only` 的既有Outbox文字契約，但不得同PR修改production frontend、manifest/goldens或宣稱design pass。Apply gate固定為：先 closeout `align`並確認上述四組canonical specs已落地，再讓 `migrate` rebase並以 `docs/plans/*.html` 唯一權威撤銷／調和 repo 外 origin與 `VerifyOrigin` 假設，接著 closeout `migrate`，最後才讓 lineage rebase最新main。之後再為 `minio-watch-auto-intake`、`local-coordinator-ifc-ready-intake-boundary`、`streaming-ifc-usdc-conversion-authority`、`conversion-kit-lifecycle-recovery` 與 `local-artifact-shadow-metadata` 補必要MODIFIED deltas；`external-cloud-callback-lifecycle`保持不變，新lineage publisher由獨立capability擁有。
 
 現行 `/model.ifc` watcher在過渡期仍可作 legacy intake，但不得標成 governed `READY`。現行 generic `coverage_ratio` 保留 IFC→USDC 意義，不得重命名成 RVT lineage。
 
@@ -174,7 +176,7 @@ lineage_result_health_changed
 
 #### 10.1 Cloud payload只保存結果位置與輕量摘要
 
-Publication identity由 `edge_site_id + external_model_version_id + result_id` 穩定決定。Payload至少包含 tenant/project/model-version、source bundle、pipeline job、attempt/result、attempt outcome、event/correlation/time、manifest digest，以及下列四個 formal locator：
+Publication identity由 `edge_site_id + ":" + external_model_version_id + ":" + result_id` 穩定決定；三個component均不得含literal `:`，sender與receiver必須逐byte重新計算，任何component或identity不符合此canonical encoding都在event ledger／domain mutation前fail closed。最大長度為522 characters，reference DDL對logical key與三個component使用MySQL 8 NO PAD binary collation。Payload至少包含 tenant/project/model-version、source bundle、pipeline job、attempt/result、attempt outcome、event/correlation/time、manifest digest，以及下列四個 formal locator：
 
 ```text
 result_manifest_ref
@@ -294,7 +296,7 @@ Coordinator必須先以atomic local outbox JSON保存stable event/body digest再
 
 `lineage_result_health_changed` 固定使用 `VERIFIED | MISSING | INTEGRITY_FAILED | TOMBSTONED`。每筆event攜帶既有 `publication_identity`、original result ID/ref/digest，但不重送summary；receiver必須以publication identity join既有 `lineage_publications`，逐字驗證result ID/ref/digest後才append health event。原始summary只保存在immutable publication row，health event絕不改寫它。`observed_at`必須是UTC uppercase `Z`、年份`1000–9999`、秒`00–59`且最多6位小數秒；receiver只可右補零，不得接受offset、leap second、MySQL範圍外年份或round/truncate超微秒值。Current health依此exact microsecond最新值衍生；完全相同時間才以receiver-assigned append order決定。Dead-letter/retry造成的較舊event可保留在history，但不得覆寫較新的observation。
 
-`MISSING` 與 `INTEGRITY_FAILED` 必須由edge reconciler至少兩次獨立觀察確認後才送；artifact恢復並驗證成功可回到 `VERIFIED`。`TOMBSTONED` 只能由正式retention/revocation record觸發，不能由transient list miss推測。Health change不刪cloud history，也不改 formal edge availability。
+`MISSING` 與 `INTEGRITY_FAILED` 必須由edge reconciler至少兩次獨立觀察確認後才送；artifact恢復並驗證成功可回到 `VERIFIED`。`TOMBSTONED` 只能由正式retention/revocation record觸發且必須攜帶`tombstone_record_id`；`VERIFIED`、`MISSING`與`INTEGRITY_FAILED`不得攜帶該欄位。Health change不刪cloud history，也不改 formal edge availability。
 
 #### 10.6 Cloud persistence只定義logical model
 
@@ -349,7 +351,7 @@ lineage_event_receipts
 
 ## 遷移計畫
 
-1. Merge/archive active MinIO predecessors；依序完成 `align-frontend-design-system-reference` closeout → `migrate-console-to-hifi-design` rebase/reconcile至 `docs/plans/*.html` 唯一權威（移除repo外origin／`VerifyOrigin`平行authority）→ `migrate` closeout → lineage rebase最新main。
+1. Merge/archive active MinIO predecessors；先以`npx --no-install openspec validate align-frontend-design-system-reference --strict`驗證並archive `align`，確認其四組delta已落入canonical specs；再完成`migrate-console-to-hifi-design` rebase/reconcile至 `docs/plans/*.html` 唯一權威（移除repo外origin／`VerifyOrigin`平行authority）→ `migrate` closeout → lineage rebase最新main。Lineage rebase不得重建`align`目錄或重複宣告其delta。
 2. 將reference schemas/examples提升為source manifest、result manifest、alignment report、pipeline job/attempt及Cloud Ingest request/ACK/error的executable contract fixtures；既有workflow callback保持不變。
 3. 在legacy watcher旁新增additive `POST /api/external/source-bundles/ready`，驗證MinIO refs/checksums並建立durable stable jobs；polling只作reconciliation。
 4. 新增streaming mapping enrichment、attempt-scoped result prefixes與result-manifest publication。

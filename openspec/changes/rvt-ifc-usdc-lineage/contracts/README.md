@@ -71,7 +71,7 @@ JSON Schema可拒絕形狀與enum錯誤；下列cross-field規則仍須由sender
 - `full_lineage_matched_count <= rvt_ifc_alignment_ratio.numerator`。
 - ratio 1對應`complete`；0≤ratio<1對應`partial`。
 - `warning_code_count == warning_codes.length`。
-- `publication_identity`對應`edge_site_id + external_model_version_id + result_id`。
+- `edge_site_id`、`external_model_version_id`與`result_id` MUST NOT 含literal `:`；`publication_identity`必須逐byte等於`edge_site_id + ":" + external_model_version_id + ":" + result_id`，sender與receiver都須重新計算並拒絕不一致值。
 
 ## HMAC
 
@@ -159,7 +159,7 @@ Default最多5次exponential backoff＋jitter；transient dead-letter在cooldown
 VERIFIED | MISSING | INTEGRITY_FAILED | TOMBSTONED
 ```
 
-`MISSING`／`INTEGRITY_FAILED`需至少兩次edge observation；restore可回`VERIFIED`；`TOMBSTONED`只接受formal retention/revocation record。Health payload不重送summary；receiver以`publication_identity` join原publication並逐字驗證original result ID/ref/digest。Health history與每次accepted delivery/replay receipt均append-only，receipt不得update成replay counter。
+`MISSING`／`INTEGRITY_FAILED`需至少兩次edge observation；restore可回`VERIFIED`；`TOMBSTONED`只接受formal retention/revocation record且必須攜帶`tombstone_record_id`，其他health states MUST NOT 攜帶該欄位。Health payload不重送summary；receiver以`publication_identity` join原publication並逐字驗證original result ID/ref/digest。Health history與每次accepted delivery/replay receipt均append-only，receipt不得update成replay counter。
 
 Current health不儲存在immutable publication row：尚無health event時衍生為`VERIFIED`；其後依`observed_at DESC`排序，完全相同的observation time再以receiver-assigned append order做deterministic tie-break。`observed_at`必須是uppercase `Z`的UTC timestamp，年份限`1000–9999`、秒限`00–59`，小數秒可省略或為1–6位；receiver只可右補零至microsecond，MUST NOT 接受offset、leap second、MySQL範圍外年份、超過6位精度、round或truncate。延遲送達的較舊observation只append history，不得覆寫較新current health；health event不得update `lineage_publications`。
 
@@ -175,6 +175,8 @@ Current health不儲存在immutable publication row：尚無health event時衍�
 | `invalid-presigned-health-locator.json` | 請求 | 無效 |
 | `invalid-lowercase-presigned-locator.json` | 請求schema | 無效 |
 | `invalid-cross-site-health-locator.json` | semantic validator | 無效（JSON shape有效） |
+| `invalid-colon-publication-identity-component.json` | 請求schema | 無效 |
+| `invalid-mismatched-publication-identity.json` | semantic validator | 無效（JSON shape有效） |
 | `invalid-inconsistent-ifc-usdc-counts.json` | semantic validator | 無效（JSON shape有效） |
 | `invalid-inconsistent-rvt-ifc-counts.json` | semantic validator | 無效（JSON shape有效） |
 | `invalid-inconsistent-alignment-counts.json` | semantic validator | 無效（JSON shape有效） |
@@ -183,6 +185,8 @@ Current health不儲存在immutable publication row：尚無health event時衍�
 | `invalid-submicrosecond-health-observed-at.json` | 請求schema | 無效 |
 | `invalid-leap-second-health-observed-at.json` | 請求schema | 無效 |
 | `invalid-out-of-range-health-observed-at.json` | 請求schema | 無效 |
+| `valid-lineage-result-tombstoned.json` | 請求 | 有效 |
+| `invalid-tombstone-id-on-non-tombstone.json` | 請求schema | 無效 |
 | `invalid-incomplete-ack.json` | 回應 | 無效 |
 | `invalid-error-event-id.json` | 回應 | 無效 |
 
