@@ -26,7 +26,7 @@ Lane G/S 不得弱化 secrets、repo boundaries、GitNexus HIGH/CRITICAL、front
 | service boundaries | `docs/agents/repo-boundaries-per-service.md` |
 | data flow / ownership | `docs/agents/repo-data-flow-and-ownership.md` |
 | product / frontend / deploy contract | `docs/agents/product-operability-and-script-contract.md` |
-| PR / Actions workflow | `docs/agents/github-workflow.md` |
+| PR / Actions；Cloud → ephemeral local validation → protected-main deploy | `docs/agents/github-workflow.md`；`docs/agents/codex-cloud-local-pipeline.md` |
 | GitNexus stale / unavailable gate | `docs/agents/gitnexus-usage.md` |
 | sub-repo verification | `docs/agents/sub-repo-verify-commands.md` |
 | advanced reasoning overlay | `docs/agents/advanced-agent-reasoning-contract.md` |

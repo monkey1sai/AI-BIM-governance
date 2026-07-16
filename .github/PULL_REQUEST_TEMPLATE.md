@@ -2,6 +2,22 @@
 
 - _Describe the PR scope._
 
+## Cloud → Local Handoff
+
+<!--
+Keep the seven field names unchanged and provide one single-line value after each colon; a trusted default-branch parser consumes them.
+Allowed local profiles are contracts | integration | browser-e2e | kit-runtime | full (`full-system` is invalid).
+Allowed deployment intent is none | required after merge from protected main. This is never candidate deployment authorization.
+-->
+
+Cloud task ID / URL:
+Issue:
+Cloud base SHA:
+Expected touch set:
+Local validation profile:
+Local-only checks outstanding:
+Deployment requirement:
+
 ## AI Coding Governance
 
 Machine values: `Change lane` = `F` / `B` / `G` / `S`; `Behavior contract changed` = `yes` / `no`; `Requirement source` = `issue` / `docs/plans` / `superpowers spec` / `existing contract` / `not applicable`.

@@ -4,7 +4,8 @@
 
 [CmdletBinding()]
 param(
-    [switch] $Build
+    [switch] $Build,
+    [string] $ExpectedMainSha = ''
 )
 
 Set-StrictMode -Version Latest
@@ -16,7 +17,7 @@ if (-not $Build) {
 
 . (Join-Path $PSScriptRoot '..\lib\rebuild-test-deploy.ps1')
 
-$result = Invoke-TestDeployRebuild -Build
+$result = Invoke-TestDeployRebuild -Build -ExpectedMainSha $ExpectedMainSha
 
 Write-Host "[rebuild-test-deploy] deployment_path=$($result.DeploymentPath)"
 Write-Host "[rebuild-test-deploy] origin_main_commit=$($result.OriginMainCommit)"

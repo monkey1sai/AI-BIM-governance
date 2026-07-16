@@ -370,6 +370,47 @@ try {
     Assert-True (-not (($rebuildCalls -join "`n") -match 'git clean -fdx')) 'rebuild stops before clean'
     Assert-True (-not $deployWasCalled) 'rebuild stops before deploy'
 
+    $approvedMainSha = ('a' * 40) -join ''
+    $advancedMainSha = ('b' * 40) -join ''
+    $shaGuardCalls = New-Object 'System.Collections.Generic.List[string]'
+    $shaGuardRunner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        $commandText = $Arguments -join ' '
+        $script:shaGuardCalls.Add("$Tool $commandText @ $WorkingDirectory") | Out-Null
+        if ($commandText -eq 'remote get-url origin') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'https://example.invalid/AI-BIM-governance.git' }
+        }
+        if ($commandText -eq 'rev-parse --short HEAD') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'abc1234' }
+        }
+        if ($commandText -eq 'status --short') {
+            return [pscustomobject]@{ ExitCode = 0; Output = '' }
+        }
+        if ($commandText -eq 'rev-parse origin/main') {
+            return [pscustomobject]@{ ExitCode = 0; Output = $advancedMainSha }
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }.GetNewClosure()
+    $script:shaGuardCalls = $shaGuardCalls
+    $shaGuardDeployCalled = $false
+    $shaGuardDeployRunner = {
+        param([string] $DeployRoot)
+        $script:shaGuardDeployCalled = $true
+        return [pscustomobject]@{ ExitCode = 0 }
+    }.GetNewClosure()
+    $shaGuardMessage = $null
+    try {
+        Invoke-TestDeployRebuild -Build -ExpectedMainSha $approvedMainSha `
+            -RepoRoot $rebuildRoot -DeploymentPath $rebuildDeployRoot `
+            -AllowNonFixedPathForTests -CommandRunner $shaGuardRunner `
+            -DeployRunner $shaGuardDeployRunner | Out-Null
+    } catch {
+        $shaGuardMessage = $_.Exception.Message
+    }
+    Assert-True ($shaGuardMessage -match 'fresh origin/main differs from approved ExpectedMainSha') 'main advancement after approval fails inside the rebuild lock'
+    Assert-True (-not (($shaGuardCalls -join "`n") -match 'git reset --hard origin/main')) 'SHA mismatch stops before reset or live mutation'
+    Assert-True (-not $shaGuardDeployCalled) 'SHA mismatch stops before deployment'
+
     $preserveRoot = Join-Path $sandbox 'preserve-root'
     New-Item -ItemType Directory -Path (Join-Path $preserveRoot '.git') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $preserveRoot 'scripts') -Force | Out-Null

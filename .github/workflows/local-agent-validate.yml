@@ -1,0 +1,629 @@
+name: Local Agent Validation
+
+on:
+  pull_request_target:
+    types: [labeled, unlabeled, edited, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Any edit, synchronize, or approval-label change cancels the older PR run so
+  # revocation is not queued behind candidate execution. Host teardown remains
+  # responsible for terminating daemon-owned/Docker descendants.
+  group: ai-bim-local-agent-validation-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  invalidate:
+    name: invalidate-stale-local-approval
+    if: >-
+      (
+        github.event.action == 'edited' ||
+        github.event.action == 'synchronize' ||
+        (
+          github.event.action == 'unlabeled' &&
+          github.event.label.name == 'local-verify:approved'
+        )
+      ) &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      checks: write
+      issues: write
+      pull-requests: read
+
+    steps:
+      - name: Remove stale approval and invalidate the current merge SHA
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            if (pr.labels.some(label => label.name === 'local-verify:approved')) {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                name: 'local-verify:approved'
+              });
+            }
+            const mergeSha = pr.merge_commit_sha;
+            if (/^[0-9a-f]{40}$/i.test(mergeSha || '')) {
+              const output = {
+                title: 'Local approval is stale',
+                summary: 'The PR code or handoff body changed. A maintainer must review and reapply `local-verify:approved`.'
+              };
+              const { data: checks } = await github.rest.checks.listForRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: mergeSha,
+                check_name: 'local-agent-validation',
+                filter: 'latest',
+                per_page: 10
+              });
+              const prior = checks.check_runs.sort((a, b) => b.id - a.id)[0];
+              if (prior) {
+                await github.rest.checks.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  check_run_id: prior.id,
+                  status: 'completed',
+                  conclusion: 'failure',
+                  completed_at: new Date().toISOString(),
+                  output
+                });
+              } else {
+                await github.rest.checks.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: 'local-agent-validation',
+                  head_sha: mergeSha,
+                  status: 'completed',
+                  conclusion: 'failure',
+                  completed_at: new Date().toISOString(),
+                  output
+                });
+              }
+            }
+
+  authorize:
+    name: authorize-local-validation
+    if: >-
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'local-verify:approved' &&
+      github.run_attempt == 1 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch &&
+      github.event.pull_request.merge_commit_sha != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: read
+    timeout-minutes: 5
+    outputs:
+      base_sha: ${{ steps.authorize.outputs.base_sha }}
+      merge_sha: ${{ steps.authorize.outputs.merge_sha }}
+      contract_body_sha256: ${{ steps.authorize.outputs.contract_body_sha256 }}
+      check_run_id: ${{ steps.check_start.outputs.check_run_id }}
+
+    steps:
+      - name: Bind maintainer approval to the current merge SHA
+        id: authorize
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const crypto = require('crypto');
+            const permissionResponse = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: context.actor
+            });
+            const role = permissionResponse.data.role_name || permissionResponse.data.permission;
+            if (!new Set(['admin', 'maintain']).has(role)) {
+              core.setFailed(`Actor ${context.actor} has role ${role}; maintain or admin is required.`);
+              return;
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            const eventMergeSha = context.payload.pull_request.merge_commit_sha;
+            const currentMergeSha = pr.merge_commit_sha;
+            const approvedLabelPresent = pr.labels.some(
+              label => label.name === 'local-verify:approved'
+            );
+            if (!approvedLabelPresent || pr.head.repo.full_name !== context.repo.owner + '/' + context.repo.repo) {
+              core.setFailed('The approval label or same-repository constraint is no longer satisfied.');
+              return;
+            }
+            if (pr.base.ref !== context.payload.repository.default_branch) {
+              core.setFailed('The pull request no longer targets the protected default branch.');
+              return;
+            }
+            if (!/^[0-9a-f]{40}$/i.test(currentMergeSha || '') || currentMergeSha !== eventMergeSha) {
+              core.setFailed('The PR merge SHA changed after approval; remove and reapply the label.');
+              return;
+            }
+            const eventBody = context.payload.pull_request.body || '';
+            const currentBody = pr.body || '';
+            if (currentBody !== eventBody) {
+              core.setFailed('The PR handoff body changed during approval; reapply the label.');
+              return;
+            }
+
+            core.setOutput('base_sha', pr.base.sha);
+            core.setOutput('merge_sha', currentMergeSha);
+            core.setOutput(
+              'contract_body_sha256',
+              crypto.createHash('sha256').update(currentBody, 'utf8').digest('hex')
+            );
+
+      - name: Start merge-SHA check run
+        id: check_start
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const mergeSha = '${{ steps.authorize.outputs.merge_sha }}';
+            if (!/^[0-9a-f]{40}$/i.test(mergeSha || '')) {
+              core.setFailed('The authorization job did not provide an immutable merge SHA.');
+              return;
+            }
+            const { data } = await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'local-agent-validation',
+              head_sha: mergeSha,
+              status: 'in_progress',
+              started_at: new Date().toISOString(),
+              output: {
+                title: 'Local validation is running',
+                summary: `PR #${context.issue.number} is being validated at merge SHA \`${mergeSha}\`.`
+              }
+            });
+            core.setOutput('check_run_id', String(data.id));
+
+  validate:
+    name: local-agent-validation-runner
+    needs: authorize
+    if: needs.authorize.result == 'success'
+    runs-on: [self-hosted, windows, ai-bim-local-validation-ephemeral]
+    permissions:
+      contents: read
+    environment: local-validation
+    timeout-minutes: 180
+    outputs:
+      checkout_outcome: ${{ steps.checkout.outcome }}
+      validation_outcome: ${{ steps.validate.outcome }}
+      validation_profile: ${{ steps.validate.outputs.validation_profile }}
+      upload_outcome: ${{ steps.upload.outcome }}
+
+    steps:
+      - name: Initialize evidence directory
+        id: evidence_init
+        shell: pwsh
+        env:
+          BASE_SHA: ${{ needs.authorize.outputs.base_sha }}
+          MERGE_SHA: ${{ needs.authorize.outputs.merge_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          CONTRACT_BODY_SHA256: ${{ needs.authorize.outputs.contract_body_sha256 }}
+        run: |
+          $evidenceRoot = Join-Path $env:GITHUB_WORKSPACE 'evidence'
+          $runEvidenceDir = Join-Path $evidenceRoot `
+            "pr-$($env:PR_NUMBER)\run-$($env:RUN_ID)-attempt-$($env:RUN_ATTEMPT)"
+          if (Test-Path -LiteralPath $runEvidenceDir) {
+            Remove-Item -LiteralPath $runEvidenceDir -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $runEvidenceDir -Force | Out-Null
+
+          $metadata = [ordered]@{
+            workflow = $env:GITHUB_WORKFLOW
+            run_id = $env:RUN_ID
+            run_attempt = $env:RUN_ATTEMPT
+            pull_request_number = $env:PR_NUMBER
+            base_sha = $env:BASE_SHA
+            merge_sha = $env:MERGE_SHA
+            contract_body_sha256 = $env:CONTRACT_BODY_SHA256
+            repository = $env:GITHUB_REPOSITORY
+            runner = $env:RUNNER_NAME
+            started_at_utc = [DateTime]::UtcNow.ToString('o')
+          }
+          $metadata | ConvertTo-Json -Depth 4 |
+            Set-Content -LiteralPath (Join-Path $runEvidenceDir 'workflow-metadata.json') -Encoding utf8
+
+      - name: Resolve sealed trusted controller and mutable candidate Git repo
+        id: checkout
+        shell: pwsh
+        env:
+          BASE_SHA: ${{ needs.authorize.outputs.base_sha }}
+          TRUSTED_CONTROLLER_ROOT: ${{ vars.AI_BIM_TRUSTED_CONTROLLER_ROOT }}
+          CANDIDATE_GIT_REPO: ${{ vars.AI_BIM_VALIDATION_GIT_REPO }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          if ($env:BASE_SHA -notmatch '^[0-9a-fA-F]{40}$') {
+            throw 'PR base SHA is missing or malformed.'
+          }
+          foreach ($value in @($env:TRUSTED_CONTROLLER_ROOT, $env:CANDIDATE_GIT_REPO)) {
+            if ([string]::IsNullOrWhiteSpace($value) -or -not [IO.Path]::IsPathFullyQualified($value)) {
+              throw 'AI_BIM_TRUSTED_CONTROLLER_ROOT and AI_BIM_VALIDATION_GIT_REPO must be absolute host paths.'
+            }
+          }
+
+          $controllerRoot = (Resolve-Path -LiteralPath $env:TRUSTED_CONTROLLER_ROOT).Path
+          $controllerCandidate = Join-Path $controllerRoot $env:BASE_SHA.ToLowerInvariant()
+          $controllerRepo = (Resolve-Path -LiteralPath $controllerCandidate).Path
+          $gitRepo = (Resolve-Path -LiteralPath $env:CANDIDATE_GIT_REPO).Path
+          $controllerParent = [IO.Path]::GetFullPath((Split-Path -Parent $controllerRepo))
+          $normalizedControllerRoot = [IO.Path]::GetFullPath($controllerRoot)
+          if (-not $controllerParent.Equals($normalizedControllerRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'The sealed controller snapshot must be a direct child of AI_BIM_TRUSTED_CONTROLLER_ROOT.'
+          }
+
+          function Test-PathOverlap {
+            param([string] $First, [string] $Second)
+            $a = [IO.Path]::GetFullPath($First).TrimEnd([char[]]@('\', '/'))
+            $b = [IO.Path]::GetFullPath($Second).TrimEnd([char[]]@('\', '/'))
+            $separator = [IO.Path]::DirectorySeparatorChar
+            return $a.Equals($b, [StringComparison]::OrdinalIgnoreCase) -or
+              $a.StartsWith("$b$separator", [StringComparison]::OrdinalIgnoreCase) -or
+              $b.StartsWith("$a$separator", [StringComparison]::OrdinalIgnoreCase)
+          }
+
+          function Assert-FileNotWritable {
+            param([Parameter(Mandatory)][string] $Path)
+            if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+              throw "Trusted controller file is missing: $Path"
+            }
+            $stream = $null
+            $writable = $false
+            try {
+              $stream = [IO.File]::Open(
+                $Path,
+                [IO.FileMode]::Open,
+                [IO.FileAccess]::Write,
+                [IO.FileShare]::Read
+              )
+              $writable = $true
+            } catch [System.UnauthorizedAccessException] {
+              # Expected: the validation identity has read/execute only.
+            } catch {
+              throw "Trusted controller file ACL could not be verified for '$Path': $PSItem"
+            } finally {
+              if ($null -ne $stream) { $stream.Dispose() }
+            }
+            if ($writable) {
+              throw "Trusted controller file is writable by the validation identity: $Path"
+            }
+          }
+
+          function Assert-DirectoryNotWritable {
+            param([Parameter(Mandatory)][string] $Path)
+            if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+              throw "Trusted controller directory is missing: $Path"
+            }
+            $probe = Join-Path $Path ".ai-bim-write-probe-$([Guid]::NewGuid().ToString('N'))"
+            $stream = $null
+            $writable = $false
+            try {
+              $stream = [IO.File]::Open(
+                $probe,
+                [IO.FileMode]::CreateNew,
+                [IO.FileAccess]::Write,
+                [IO.FileShare]::None
+              )
+              $writable = $true
+            } catch [System.UnauthorizedAccessException] {
+              # Expected: new entries cannot be created in a sealed snapshot.
+            } catch {
+              throw "Trusted controller directory ACL could not be verified for '$Path': $PSItem"
+            } finally {
+              if ($null -ne $stream) { $stream.Dispose() }
+              if (Test-Path -LiteralPath $probe) {
+                Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+              }
+            }
+            if ($writable) {
+              throw "Trusted controller directory is writable by the validation identity: $Path"
+            }
+          }
+
+          if (Test-PathOverlap -First $controllerRepo -Second $gitRepo) {
+            throw 'The sealed trusted controller and mutable candidate Git repo must not contain one another.'
+          }
+          foreach ($directory in @(
+            $controllerRoot,
+            $controllerRepo,
+            (Join-Path $controllerRepo '.git'),
+            (Join-Path $controllerRepo 'scripts'),
+            (Join-Path $controllerRepo 'scripts\agent'),
+            (Join-Path $controllerRepo 'scripts\lib')
+          )) {
+            Assert-DirectoryNotWritable -Path $directory
+          }
+          foreach ($file in @(
+            (Join-Path $controllerRepo '.git\HEAD'),
+            (Join-Path $controllerRepo '.git\index'),
+            (Join-Path $controllerRepo '.git\config'),
+            (Join-Path $controllerRepo 'scripts\agent\resolve_pr_contract.py'),
+            (Join-Path $controllerRepo 'scripts\agent\Invoke-EphemeralValidation.ps1'),
+            (Join-Path $controllerRepo 'scripts\agent\ephemeral_validation.py'),
+            (Join-Path $controllerRepo 'scripts\agent\validation-profiles.json'),
+            (Join-Path $controllerRepo 'scripts\verify-all.ps1'),
+            (Join-Path $controllerRepo 'scripts\verify-runtime-kit-launcher.ps1'),
+            (Join-Path $controllerRepo 'scripts\lib\smoke-evidence.ps1'),
+            (Join-Path $controllerRepo 'scripts\lib\StructLog.psm1')
+          )) {
+            Assert-FileNotWritable -Path $file
+          }
+
+          $env:GIT_OPTIONAL_LOCKS = '0'
+          $controllerHead = (& git -c "safe.directory=$controllerRepo" -C $controllerRepo rev-parse --verify 'HEAD^{commit}').Trim().ToLowerInvariant()
+          if ($LASTEXITCODE -ne 0 -or $controllerHead -ne $env:BASE_SHA.ToLowerInvariant()) {
+            throw 'The sealed trusted-controller snapshot does not equal the approved base SHA.'
+          }
+          $controllerStatus = (& git -c "safe.directory=$controllerRepo" --no-optional-locks -C $controllerRepo status --porcelain) -join "`n"
+          if ($LASTEXITCODE -ne 0 -or -not [string]::IsNullOrWhiteSpace($controllerStatus)) {
+            throw 'The sealed trusted-controller snapshot is not clean.'
+          }
+          & git -C $gitRepo rev-parse --git-dir *> $null
+          if ($LASTEXITCODE -ne 0) {
+            throw 'AI_BIM_VALIDATION_GIT_REPO is not a mutable Git repository.'
+          }
+          "controller_repo=$controllerRepo" >> $env:GITHUB_OUTPUT
+          "git_repo=$gitRepo" >> $env:GITHUB_OUTPUT
+
+      - name: Resolve contract and run ephemeral validation
+        id: validate
+        shell: pwsh
+        env:
+          BASE_SHA: ${{ needs.authorize.outputs.base_sha }}
+          MERGE_SHA: ${{ needs.authorize.outputs.merge_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          APPROVED_BODY_SHA256: ${{ needs.authorize.outputs.contract_body_sha256 }}
+          CONTROLLER_REPO: ${{ steps.checkout.outputs.controller_repo }}
+          CANDIDATE_GIT_REPO: ${{ steps.checkout.outputs.git_repo }}
+          HOST_WORKSPACE_ROOT: ${{ vars.AI_BIM_AGENT_WORKSPACE_ROOT }}
+          AI_BIM_VALIDATION_STORAGE_ROOT: ${{ vars.AI_BIM_VALIDATION_STORAGE_ROOT }}
+          AI_BIM_REAL_RUNTIME_HARNESS: ${{ vars.AI_BIM_REAL_RUNTIME_HARNESS }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+
+          if ($env:BASE_SHA -notmatch '^[0-9a-fA-F]{40}$') {
+            throw 'PR base SHA is missing or malformed.'
+          }
+          if ($env:MERGE_SHA -notmatch '^[0-9a-fA-F]{40}$') {
+            throw 'PR merge SHA is missing or malformed.'
+          }
+
+          $controllerRepo = (Resolve-Path -LiteralPath $env:CONTROLLER_REPO).Path
+          $candidateGitRepo = (Resolve-Path -LiteralPath $env:CANDIDATE_GIT_REPO).Path
+          $evidenceRoot = Join-Path $env:GITHUB_WORKSPACE 'evidence'
+          $runEvidenceDir = Join-Path $evidenceRoot `
+            "pr-$($env:PR_NUMBER)\run-$($env:RUN_ID)-attempt-$($env:RUN_ATTEMPT)"
+          if ([string]::IsNullOrWhiteSpace($env:HOST_WORKSPACE_ROOT) -or
+              -not [IO.Path]::IsPathFullyQualified($env:HOST_WORKSPACE_ROOT)) {
+            throw 'AI_BIM_AGENT_WORKSPACE_ROOT must be a host-global absolute repository variable.'
+          }
+          $workspaceRoot = [IO.Path]::GetFullPath($env:HOST_WORKSPACE_ROOT)
+          $invocationId = "pr-$($env:PR_NUMBER)-run-$($env:RUN_ID)-attempt-$($env:RUN_ATTEMPT)"
+          $bodyPath = Join-Path $runEvidenceDir 'pr-body.md'
+          $contractPath = Join-Path $runEvidenceDir 'task-contract.json'
+
+          $eventPayload = Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json
+          [IO.File]::WriteAllText(
+            $bodyPath,
+            [string]$eventPayload.pull_request.body,
+            [Text.UTF8Encoding]::new($false)
+          )
+          New-Item -ItemType Directory -Path $workspaceRoot -Force | Out-Null
+
+          & python (Join-Path $controllerRepo 'scripts/agent/resolve_pr_contract.py') `
+            --body-file $bodyPath `
+            --repository $env:GITHUB_REPOSITORY `
+            --pr-number $env:PR_NUMBER `
+            --base-sha $env:BASE_SHA `
+            --candidate-sha $env:MERGE_SHA `
+            --output $contractPath
+          if ($LASTEXITCODE -ne 0) {
+            throw "Task contract parsing failed with exit code $LASTEXITCODE."
+          }
+
+          $contract = Get-Content -LiteralPath $contractPath -Raw | ConvertFrom-Json
+          if ([string]$contract.pr_body_sha256 -ne $env:APPROVED_BODY_SHA256) {
+            throw 'Parsed PR handoff digest differs from the maintainer-approved body digest.'
+          }
+          $profile = [string]$contract.local_validation_profile
+          if ([string]::IsNullOrWhiteSpace($profile)) {
+            throw 'The trusted task contract did not contain local_validation_profile.'
+          }
+          "validation_profile=$profile" >> $env:GITHUB_OUTPUT
+          "invocation_id=$invocationId" >> $env:GITHUB_OUTPUT
+
+          $parameters = @{
+            ControllerRepo = $controllerRepo
+            GitRepo = $candidateGitRepo
+            BaseSha = $env:BASE_SHA
+            CommitSha = $env:MERGE_SHA
+            PullRequestNumber = [int]$env:PR_NUMBER
+            RunId = $env:RUN_ID
+            Attempt = [int]$env:RUN_ATTEMPT
+            InvocationId = $invocationId
+            TaskContractPath = $contractPath
+            WorkspaceRoot = $workspaceRoot
+            EvidenceRoot = $evidenceRoot
+            FetchRef = "refs/pull/$($env:PR_NUMBER)/merge"
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:AI_BIM_VALIDATION_STORAGE_ROOT)) {
+            $parameters.StorageRoot = $env:AI_BIM_VALIDATION_STORAGE_ROOT
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:AI_BIM_REAL_RUNTIME_HARNESS)) {
+            $parameters.RuntimeHarness = $env:AI_BIM_REAL_RUNTIME_HARNESS
+          }
+
+          & (Join-Path $controllerRepo 'scripts/agent/Invoke-EphemeralValidation.ps1') @parameters
+          if ($LASTEXITCODE -ne 0) {
+            throw "Ephemeral validation failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Upload local validation evidence
+        id: upload
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: local-agent-validation-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/pr-${{ github.event.pull_request.number }}/run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: publish-local-validation-result
+    needs: [authorize, validate]
+    if: always() && needs.authorize.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      checks: write
+      issues: write
+      pull-requests: read
+
+    steps:
+      - name: Complete merge-SHA check and publish failure finding
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        env:
+          VALIDATION_JOB_RESULT: ${{ needs.validate.result }}
+          CHECKOUT_OUTCOME: ${{ needs.validate.outputs.checkout_outcome }}
+          VALIDATION_OUTCOME: ${{ needs.validate.outputs.validation_outcome }}
+          UPLOAD_OUTCOME: ${{ needs.validate.outputs.upload_outcome }}
+          VALIDATION_PROFILE: ${{ needs.validate.outputs.validation_profile }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const crypto = require('crypto');
+            const mergeSha = '${{ needs.authorize.outputs.merge_sha }}';
+            const outcomes = {
+              job: process.env.VALIDATION_JOB_RESULT || 'not-run',
+              checkout: process.env.CHECKOUT_OUTCOME || 'not-run',
+              validation: process.env.VALIDATION_OUTCOME || 'not-run',
+              evidence_upload: process.env.UPLOAD_OUTCOME || 'not-run'
+            };
+            const { data: currentPr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            const currentBodyDigest = crypto
+              .createHash('sha256')
+              .update(currentPr.body || '', 'utf8')
+              .digest('hex');
+            const approvedBodyDigest = '${{ needs.authorize.outputs.contract_body_sha256 }}';
+            const approvalStillCurrent =
+              currentPr.merge_commit_sha === mergeSha &&
+              currentBodyDigest === approvedBodyDigest &&
+              currentPr.head.repo.full_name === `${context.repo.owner}/${context.repo.repo}` &&
+              currentPr.base.ref === context.payload.repository.default_branch &&
+              currentPr.labels.some(label => label.name === 'local-verify:approved');
+            outcomes.approval_binding = approvalStillCurrent ? 'success' : 'stale';
+            const passed = Object.values(outcomes).every(value => value === 'success');
+            const conclusion = passed ? 'success' : 'failure';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const profile = process.env.VALIDATION_PROFILE || 'unresolved';
+            const summary = [
+              `Merge SHA: \`${mergeSha}\``,
+              `Validation profile: \`${profile}\``,
+              `Validation job: \`${outcomes.job}\``,
+              `Controller checkout: \`${outcomes.checkout}\``,
+              `Validation: \`${outcomes.validation}\``,
+              `Evidence upload: \`${outcomes.evidence_upload}\``,
+              `[Workflow run and evidence](${runUrl})`
+            ].join('\n\n');
+
+            const checkRunId = Number('${{ needs.authorize.outputs.check_run_id }}');
+            if (!Number.isSafeInteger(checkRunId) || checkRunId <= 0) {
+              core.setFailed('The authorization job did not provide a valid check run ID.');
+              return;
+            }
+            await github.rest.checks.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              check_run_id: checkRunId,
+              status: 'completed',
+              conclusion,
+              completed_at: new Date().toISOString(),
+              output: {
+                title: passed ? 'Local validation passed' : 'Local validation failed',
+                summary
+              }
+            });
+
+            const marker = '<!-- local-agent-validation-finding -->';
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100
+            });
+            const prior = comments.find(comment =>
+              comment.user?.type === 'Bot' && comment.body?.includes(marker)
+            );
+
+            if (!passed) {
+              const body = [
+                marker,
+                '## Local validation finding',
+                '',
+                `Validation failed for merge SHA \`${mergeSha}\`.`,
+                '',
+                summary,
+                '',
+                'Resolve the finding, update the PR, and have a maintainer apply `local-verify:approved` again.'
+              ].join('\n');
+              if (prior) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: prior.id,
+                  body
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body
+                });
+              }
+              core.setFailed('Local agent validation failed; inspect the merge-SHA check and evidence.');
+            } else if (prior) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: prior.id,
+                body: [
+                  marker,
+                  '## Local validation finding resolved',
+                  '',
+                  `Local validation passed for merge SHA \`${mergeSha}\`.`,
+                  '',
+                  `[Workflow run and evidence](${runUrl})`
+                ].join('\n')
+              });
+            }

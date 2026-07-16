@@ -14,6 +14,7 @@
 - `start-all.{ps1,sh}` / `start-*-docker.ps1` / `stop-*-docker.ps1` / `check-*-docker.ps1` — internal adapters / legacy mode adapters；不得當新 golden path
 - `smoke-*.ps1` / `run-single-kit-demo.ps1` / `verify-runtime-*.ps1` — 現有 smoke / evidence scripts；新增同類腳本預設不得放 root scripts
 - `scripts/lib/` — preflight / launcher / structured log 共用 module
+- `scripts/agent/` — protected-main controller 的 ephemeral validation runner、PR contract parser 與 profile allowlist；候選 worktree 不得成為 controller
 - `scripts/log-retention/` — log 保存策略
 - `scripts/tests/` — script-level tests；本 repo 目前以自訂 assert + temp sandbox 為主，Pester 不是預設必需
 - `claude-commit-guard.ps1` — Claude PreToolUse hook target
@@ -36,6 +37,7 @@
 - MUST NOT 在 script 內 inline secrets；走 `.env*` 與環境變數（讀寫規則見根目錄 `AGENTS.md` §0.1）。
 - MUST NOT 修改其他 sub-repo 的 source；deploy / smoke 只能呼叫 sub-repo 對外的 build / test / start command。
 - MUST NOT 直接呼叫 Windows `.bat`；走 `.ps1` wrapper + `Start-Process` 完整路徑（避開 git-bash 對 `/c` 與 `$` 的破壞）。
+- MUST 讓 `scripts/agent/` controller 與 allowlist 來自 protected default branch；Issue / PR 只能選 profile，不得注入 command、environment 或 deployment path。
 
 ## Before Editing
 

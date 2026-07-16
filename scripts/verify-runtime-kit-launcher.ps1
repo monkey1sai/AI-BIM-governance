@@ -18,9 +18,12 @@
 param(
     [string] $Image = 'ai-bim-runtime-manager-streaming-server:latest',
     [string] $Dockerfile = 'infra/docker/bim-streaming-server-gpu.Dockerfile',
+    [ValidateRange(1, 86400)]
     [int] $ObserveSeconds = 210,
+    [ValidateRange(1, 65535)]
     [int] $SignalingPort = 49100,
-    [string] $EvidencePath = ''
+    [string] $EvidencePath = '',
+    [string] $RepoRoot = ''
 )
 
 Set-StrictMode -Version Latest
@@ -28,15 +31,76 @@ $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'lib\smoke-evidence.ps1')
 
-$RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
-$EvidenceDir = Join-Path $RepoRoot 'docs\verification\evidence\2026-05-18-t0-kit-launcher'
+$RepoRoot = if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
+} else {
+    (Resolve-Path -LiteralPath $RepoRoot).Path
+}
+$EvidenceDir = if ([string]::IsNullOrWhiteSpace($EvidencePath)) {
+    Join-Path $RepoRoot 'docs\verification\evidence\2026-05-18-t0-kit-launcher'
+} else {
+    Split-Path -Parent ([IO.Path]::GetFullPath($EvidencePath))
+}
 if ([string]::IsNullOrWhiteSpace($EvidencePath)) {
     $EvidencePath = Join-Path $EvidenceDir 'kit-launcher-readiness.json'
 }
 
 $LinuxLauncher = '/workspace/bim-streaming-server/_build/linux-x86_64/release/ezplus.bim_review_stream_streaming.kit.sh'
 $KitBinary = '/workspace/bim-streaming-server/_build/linux-x86_64/release/kit/kit'
-$container = "t0-kit-launcher-$(Get-Date -Format yyyyMMddHHmmss)"
+$container = "t0-kit-launcher-$(Get-Date -Format yyyyMMddHHmmss)-$PID-$([Guid]::NewGuid().ToString('N').Substring(0, 8))"
+
+function Remove-ProbeContainer {
+    try {
+        & docker rm -f $container 2>$null | Out-Null
+    } catch {
+        Write-Verbose "Failed to remove runtime Kit probe container '${container}': $PSItem"
+    }
+}
+
+function Test-LocalTcpListener {
+    param(
+        [Parameter(Mandatory)]
+        [ValidateRange(1, 65535)]
+        [int] $Port,
+        [ValidateRange(1, 30000)]
+        [int] $TimeoutMilliseconds = 1000
+    )
+
+    $client = [System.Net.Sockets.TcpClient]::new()
+    try {
+        $connect = $client.ConnectAsync('127.0.0.1', $Port)
+        if (-not $connect.Wait($TimeoutMilliseconds)) { return $false }
+        return [bool]$client.Connected
+    } catch {
+        return $false
+    } finally {
+        $client.Dispose()
+    }
+}
+
+function Test-PublishedContainerTcpListener {
+    param(
+        [Parameter(Mandatory)]
+        [ValidateRange(1, 65535)]
+        [int] $Port
+    )
+
+    # A Docker Desktop/userland proxy can own the published host port before
+    # the process in the container is ready. Require both the published host
+    # endpoint and the same loopback port inside this exact probe container.
+    if (-not (Test-LocalTcpListener -Port $Port)) { return $false }
+    try {
+        & docker exec $container bash -c "exec 3<>/dev/tcp/127.0.0.1/$Port" 2>$null | Out-Null
+        return ($LASTEXITCODE -eq 0)
+    } catch {
+        return $false
+    }
+}
+
+trap {
+    Remove-ProbeContainer
+    throw
+}
 
 $Record = New-SmokeEvidenceRecord -Command $MyInvocation.MyCommand.Path -Cwd (Get-Location).Path -Context @{
     image            = $Image
@@ -85,10 +149,11 @@ Write-Host "[t0] image=$Image id=$imageId created=$imageCreated"
 $logFile = Join-Path $EvidenceDir 'kit-launcher-startup.log'
 if (-not (Test-Path -LiteralPath $EvidenceDir)) { New-Item -ItemType Directory -Path $EvidenceDir -Force | Out-Null }
 
-& docker rm -f $container 2>$null | Out-Null
+Remove-ProbeContainer
 $runArgs = @(
     'run', '--name', $container, '--gpus', 'all',
     '-e', 'KIT_INSTANCE_ID=t0_kit_launcher',
+    '-e', "KIT_SIGNALING_PORT=$SignalingPort",
     '-p', "$SignalingPort`:$SignalingPort/tcp",
     '-d', $Image
 )
@@ -103,6 +168,7 @@ if ([string]::IsNullOrWhiteSpace($startedId) -or "$startedId" -match 'docker:|Er
         -Blocker "docker run with --gpus all failed: $startedId" `
         -NextCommand 'Verify NVIDIA Container Toolkit (nvidia runtime) is installed, then rerun this script' `
         -Ids @{ image = $Image; image_id = $imageId } | Out-Null
+    Remove-ProbeContainer
     Save-And-Summary
     exit 0
 }
@@ -119,13 +185,7 @@ while ((Get-Date) -lt $deadline) {
     $state = (& docker inspect $container --format '{{.State.Status}}|{{.State.ExitCode}}' 2>$null)
     $logs = (& docker logs $container 2>&1) -join "`n"
     if ($logs -match '\[runtime\] launching Linux Kit streaming app') { $reachedLaunch = $true }
-    try {
-        $tcp = Get-NetTCPConnection -LocalPort $SignalingPort -State Listen -ErrorAction SilentlyContinue
-        if ($tcp) { $portListening = $true }
-    } catch {
-        $portListening = $false
-        Write-Verbose "Get-NetTCPConnection failed for port ${SignalingPort}: $PSItem"
-    }
+    if (Test-PublishedContainerTcpListener -Port $SignalingPort) { $portListening = $true }
 
     $parts = "$state" -split '\|'
     $st = if ($parts.Count -ge 1) { $parts[0] } else { '' }
@@ -155,9 +215,9 @@ while ((Get-Date) -lt $deadline) {
         break
     }
 
-    if ($reachedLaunch -and ($portListening -or ((Get-Date).AddSeconds(30) -gt $deadline))) {
-        # Entrypoint passed all GPU/launcher gates and exec'd the launcher; Kit is
-        # booting/running as a long-lived streaming server. That is "launcher launches".
+    if ($reachedLaunch -and $portListening) {
+        # A launch marker alone is not readiness. The requested host port must
+        # accept a real TCP connection while the container is still running.
         $status = 'passed'
         $blocker = ''
         break
@@ -168,16 +228,23 @@ while ((Get-Date) -lt $deadline) {
 $finalLogs = (& docker logs $container 2>&1) -join "`n"
 [System.IO.File]::WriteAllText($logFile, $finalLogs, [System.Text.UTF8Encoding]::new($false))
 if ($status -eq 'not_observed') {
-    if ($reachedLaunch) {
+    if (Test-PublishedContainerTcpListener -Port $SignalingPort) { $portListening = $true }
+    if ($reachedLaunch -and $portListening) {
         $status = 'passed'
+    } elseif ($reachedLaunch) {
+        $status = 'deferred'
+        $blocker = "Linux Kit launcher started, but requested signaling port 127.0.0.1:$SignalingPort did not accept TCP connections within $ObserveSeconds s; inspect $logFile"
+    } elseif ($portListening) {
+        $status = 'deferred'
+        $blocker = "Requested signaling port 127.0.0.1:$SignalingPort accepted TCP connections, but the container did not emit the Linux Kit launcher marker within $ObserveSeconds s; inspect $logFile"
     } else {
         $status = 'deferred'
-        $blocker = "Runtime image entrypoint did not reach Linux Kit launcher within $ObserveSeconds s (no exit, no launch line); inspect $logFile"
+        $blocker = "Runtime image entrypoint did not reach a ready Linux Kit launcher within $ObserveSeconds s (no launch marker and no TCP listener on 127.0.0.1:$SignalingPort); inspect $logFile"
     }
 }
 
 # ---- 5. teardown (always) ----
-& docker rm -f $container 2>$null | Out-Null
+Remove-ProbeContainer
 
 # ---- 6. emit evidence ----
 $sampleUsdcNote = 'no sample USDC required for launcher-launch validation; full USDC streaming smoke is the T8 readiness tier (STORAGE_ROOT=/workspace/storage mounts ./storage)'
@@ -203,7 +270,7 @@ Add-SmokeTier -Record $Record -Tier 'runtime_image_kit_launcher' -Status $tierSt
         signaling_listen  = [bool]$portListening
         observe_seconds   = $ObserveSeconds
         sample_usdc_path  = $sampleUsdcNote
-        classification    = 'passed=launcher exec + Kit boot; deferred=GPU/driver/Kit license unavailable; failed=launcher/kit missing or Kit crash'
+        classification    = 'passed=launcher marker + requested signaling TCP listener; deferred=GPU/driver/Kit license/listener unavailable; failed=launcher/kit missing or Kit crash'
     } | Out-Null
 
 Save-And-Summary

@@ -41,6 +41,19 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
 
+      - name: Run ephemeral validation controller tests
+        shell: pwsh
+        run: |
+          python scripts/tests/test_ephemeral_validation.py
+          python scripts/tests/stress_ephemeral_validation.py `
+            --iterations 8 `
+            --workers 4 `
+            --runtime-iterations 2 `
+            --failure-iterations 1 `
+            --timeout-iterations 1 `
+            --hold-seconds 0.15 `
+            --output-root "$env:RUNNER_TEMP/ai-bim-ephemeral-validation-stress"
+
       - name: Run PR body evidence tests
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-pr-body-evidence.ps1

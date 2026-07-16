@@ -36,6 +36,8 @@
 - `tests/e2e/`
 - sub-repo 自己的 `scripts/`
 
+`scripts/agent/` 是例外的 trusted-controller tooling 區：只放受保護 default branch 使用的 PR contract parser、ephemeral worktree lifecycle 與 validation profile allowlist。它不是 operator deploy entrypoint；候選 PR 不得覆寫執行中的 controller，Issue / PR 內容也不得提供任意 command。
+
 root `scripts/` 只保留已登記且有明確 operator / adapter / verifier 角色的檔案。
 
 ## Registry Rule
@@ -63,6 +65,13 @@ Runtime / deploy 相關改動至少提供：
 ```
 
 若因 Docker / GPU / Kit license / network 不可用而無法跑完整 deploy，必須把 blocker 寫清楚，不得宣稱 deployment-complete。
+
+`scripts/verify-runtime-kit-launcher.ps1` 的 `passed` 另有 fail-closed 條件：probe container 必須收到
+`KIT_SIGNALING_PORT=<SignalingPort>`，且在 observation window 內同時出現 launcher marker、指定的
+`127.0.0.1:<SignalingPort>` 也實際接受 TCP 連線。listener probe 必須同時通過 published host endpoint
+與該 probe container 內部的 loopback endpoint，避免把 Docker port proxy 誤判成 Kit ready。只有 launch
+log、container 仍存活、或接近 observation deadline 都不得視為成功；無論結果為何，probe container
+都必須清除。
 
 ## Prohibited By Default
 

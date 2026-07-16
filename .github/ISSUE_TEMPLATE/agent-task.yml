@@ -10,6 +10,7 @@ body:
       value: |
         Use this template only after material design fog is resolved. One ticket should be a vertically verifiable slice that fits one fresh agent context.
         Requirement truth starts at repo-local `AGENTS.md` and `docs/plans/docs-plans-README.md`.
+        A/B/C are reusable Agent profiles, not pre-created slots or worktrees. This Issue may select a reviewed validation profile but must never provide commands for a self-hosted runner.
   - type: textarea
     id: requirement_source
     attributes:
@@ -28,12 +29,31 @@ body:
         Blocked by: #124, #125
     validations:
       required: true
-  - type: textarea
-    id: scope
+  - type: dropdown
+    id: agent_profile
     attributes:
-      label: Scope and boundaries
-      description: Name the repo areas that may change and anything that must not change. Keep the slice small enough for one fresh context.
-      placeholder: "May change web-viewer-sample/src/...; do not change deploy.ps1 or runtime ports."
+      label: Agent profile
+      description: Select the Cloud capability profile. Multiple tasks may use the same profile concurrently; this does not reserve a local slot.
+      options:
+        - A — Contract / Governance
+        - B — Runtime / Backend / Kit
+        - C — Viewer / Frontend
+    validations:
+      required: true
+  - type: input
+    id: cloud_base_sha
+    attributes:
+      label: Cloud base SHA
+      description: Full commit SHA the Cloud task must checkout. Do not use a branch name or mutable ref.
+      placeholder: "0123456789abcdef0123456789abcdef01234567"
+    validations:
+      required: true
+  - type: textarea
+    id: expected_touch_set
+    attributes:
+      label: Expected touch set
+      description: List comma-separated repo-relative paths or allowed globs. Negated globs and commands are not supported. Actual PR paths outside this set require maintainer review before local approval.
+      placeholder: "web-viewer-sample/src/**, web-viewer-sample/e2e/**"
     validations:
       required: true
   - type: textarea
@@ -61,14 +81,37 @@ body:
         Known risks:
     validations:
       required: true
-  - type: textarea
-    id: validation_commands
+  - type: dropdown
+    id: local_validation_profile
     attributes:
-      label: Validation commands
-      description: Exact smallest-first commands the agent should run before opening or updating a PR.
+      label: Local validation profile
+      description: Select only a protected-default-branch allowlist key. `full` is the normalized complete-system name; never use `full-system`.
+      options:
+        - contracts
+        - integration
+        - browser-e2e
+        - kit-runtime
+        - full
+    validations:
+      required: true
+  - type: textarea
+    id: local_only_checks_outstanding
+    attributes:
+      label: Local-only checks outstanding
+      description: Name checks Cloud cannot truthfully run because they require local IFC, GPU, Kit, WebRTC, browser runtime, or host services. Write `none` only when all selected-profile checks are Cloud-capable.
       placeholder: |
-        .\scripts\deploy.ps1 -DryRun
-        .\scripts\verify-all.ps1
+        - Kit WebRTC first-frame / stage / DataChannel evidence
+        - Real IFC fixture flow
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment_requirement
+    attributes:
+      label: Deployment requirement
+      description: This records post-merge intent only. A PR candidate can never deploy or receive deployment secrets.
+      options:
+        - none
+        - required after merge from protected main
     validations:
       required: true
   - type: textarea

@@ -1,0 +1,168 @@
+name: Local Test Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      verified_main_sha:
+        description: Full 40-character origin/main SHA approved for local test deployment
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-bim-local-test-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: local-test-deploy
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.ref_name == github.event.repository.default_branch
+    runs-on: [self-hosted, windows, ai-bim-local-deploy]
+    environment: local-test-deploy
+    timeout-minutes: 180
+
+    steps:
+      - name: Initialize deployment evidence
+        id: evidence_init
+        shell: pwsh
+        env:
+          VERIFIED_MAIN_SHA: ${{ inputs.verified_main_sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          $evidenceRoot = Join-Path $env:GITHUB_WORKSPACE `
+            "evidence/local-test-deploy/run-$($env:RUN_ID)-attempt-$($env:RUN_ATTEMPT)"
+          if (Test-Path -LiteralPath $evidenceRoot) {
+            Remove-Item -LiteralPath $evidenceRoot -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $evidenceRoot -Force | Out-Null
+          $metadata = [ordered]@{
+            workflow = $env:GITHUB_WORKFLOW
+            run_id = $env:RUN_ID
+            run_attempt = $env:RUN_ATTEMPT
+            requested_sha = $env:VERIFIED_MAIN_SHA
+            repository = $env:GITHUB_REPOSITORY
+            ref = $env:GITHUB_REF
+            actor = $env:GITHUB_ACTOR
+            runner = $env:RUNNER_NAME
+            started_at_utc = [DateTime]::UtcNow.ToString('o')
+          }
+          $metadata | ConvertTo-Json -Depth 4 |
+            Set-Content -LiteralPath (Join-Path $evidenceRoot 'workflow-metadata.json') -Encoding utf8
+
+      - name: Checkout trusted main controller
+        id: checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ${{ github.repository }}
+          ref: main
+          fetch-depth: 0
+          # The deployment runner is trusted and receives only contents:read.
+          # Keep checkout's scoped token for the explicit fresh fetch instead
+          # of relying on an ambient host credential if the repo becomes private.
+          persist-credentials: true
+          clean: true
+          path: controller
+
+      - name: Fetch and verify immutable origin/main
+        id: verify_main
+        shell: pwsh
+        env:
+          VERIFIED_MAIN_SHA: ${{ inputs.verified_main_sha }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+
+          $evidenceRoot = Join-Path $env:GITHUB_WORKSPACE `
+            "evidence/local-test-deploy/run-$($env:GITHUB_RUN_ID)-attempt-$($env:GITHUB_RUN_ATTEMPT)"
+          $controllerRepo = (Resolve-Path (Join-Path $env:GITHUB_WORKSPACE 'controller')).Path
+          if ($env:VERIFIED_MAIN_SHA -notmatch '^[0-9a-fA-F]{40}$') {
+            throw 'verified_main_sha must be a full 40-character Git commit SHA.'
+          }
+
+          & git -C $controllerRepo fetch --no-tags --force --prune origin '+refs/heads/main:refs/remotes/origin/main' `
+            *>&1 | Tee-Object -FilePath (Join-Path $evidenceRoot 'fetch-origin-main.log')
+          if ($LASTEXITCODE -ne 0) {
+            throw "Fresh origin/main fetch failed with exit code $LASTEXITCODE."
+          }
+
+          $originMain = (& git -C $controllerRepo rev-parse --verify 'refs/remotes/origin/main^{commit}').Trim()
+          if ($LASTEXITCODE -ne 0 -or $originMain -notmatch '^[0-9a-fA-F]{40}$') {
+            throw 'Freshly fetched origin/main did not resolve to a commit.'
+          }
+          if ($originMain -ne $env:VERIFIED_MAIN_SHA.ToLowerInvariant()) {
+            throw "verified_main_sha does not equal fresh origin/main (expected $originMain)."
+          }
+
+          & git -C $controllerRepo checkout --detach $originMain
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to detach the trusted controller at $originMain."
+          }
+
+          [ordered]@{
+            verified_main_sha = $originMain
+            fetched_at_utc = [DateTime]::UtcNow.ToString('o')
+            explicit_refspec = '+refs/heads/main:refs/remotes/origin/main'
+          } | ConvertTo-Json |
+            Set-Content -LiteralPath (Join-Path $evidenceRoot 'verified-main.json') -Encoding utf8
+          "origin_main_sha=$originMain" >> $env:GITHUB_OUTPUT
+
+      - name: Rebuild local test deployment from verified main
+        id: deploy
+        shell: pwsh
+        env:
+          VERIFIED_MAIN_SHA: ${{ steps.verify_main.outputs.origin_main_sha }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+
+          $evidenceRoot = Join-Path $env:GITHUB_WORKSPACE `
+            "evidence/local-test-deploy/run-$($env:GITHUB_RUN_ID)-attempt-$($env:GITHUB_RUN_ATTEMPT)"
+          $controllerRepo = (Resolve-Path (Join-Path $env:GITHUB_WORKSPACE 'controller')).Path
+          $startedAt = [DateTime]::UtcNow
+
+          & pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+            -File (Join-Path $controllerRepo 'scripts/dev/rebuild-test-deploy.ps1') `
+            -Build -ExpectedMainSha $env:VERIFIED_MAIN_SHA `
+            *>&1 | Tee-Object -FilePath (Join-Path $evidenceRoot 'rebuild-test-deploy.log')
+          $deployExitCode = $LASTEXITCODE
+
+          $deploymentRoot = 'D:\Users\deploy\AI-bim-geo'
+          $deployedSha = ''
+          if ($deployExitCode -eq 0) {
+            $deployedOutput = & git -C $deploymentRoot rev-parse --verify 'HEAD^{commit}' 2>$null
+            $deployedGitExitCode = $LASTEXITCODE
+            if ($null -ne $deployedOutput) {
+              $deployedSha = (($deployedOutput | Select-Object -Last 1) -as [string]).Trim().ToLowerInvariant()
+            }
+            if ($deployedGitExitCode -ne 0 -or $deployedSha -ne $env:VERIFIED_MAIN_SHA.ToLowerInvariant()) {
+              $deployExitCode = 1
+            }
+          }
+
+          [ordered]@{
+            verified_main_sha = $env:VERIFIED_MAIN_SHA
+            deployed_sha = $deployedSha
+            deploy_exit_code = $deployExitCode
+            started_at_utc = $startedAt.ToString('o')
+            completed_at_utc = [DateTime]::UtcNow.ToString('o')
+          } | ConvertTo-Json |
+            Set-Content -LiteralPath (Join-Path $evidenceRoot 'deployment-result.json') -Encoding utf8
+
+          if ($deployExitCode -ne 0) {
+            throw "Local test deployment rebuild failed with exit code $deployExitCode."
+          }
+
+      - name: Upload deployment evidence
+        id: upload
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: local-test-deploy-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/local-test-deploy/run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30

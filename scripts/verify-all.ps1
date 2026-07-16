@@ -3,7 +3,11 @@ param(
     [switch] $StreamingOnly,
     [switch] $TsOnly,
     [switch] $PyOnly,
-    [switch] $ContinueOnError
+    [switch] $ContinueOnError,
+    [string] $RepoRoot = '',
+    [string] $PythonPath = '',
+    [string] $NpmPath = '',
+    [string] $PowerShellPath = ''
 )
 
 # 跨 repo verify 入口。對 current demo repos 依序跑 verify：
@@ -17,11 +21,28 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
-if (-not (Test-Path $Python)) { $Python = "python" }
-$PowerShell = (Get-Process -Id $PID -ErrorAction SilentlyContinue).Path
-if ([string]::IsNullOrWhiteSpace($PowerShell) -or -not (Test-Path $PowerShell)) {
+$RepoRoot = if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+} else {
+    (Resolve-Path -LiteralPath $RepoRoot).Path
+}
+$Python = if ([string]::IsNullOrWhiteSpace($PythonPath)) {
+    $candidatePython = Join-Path $RepoRoot ".venv\Scripts\python.exe"
+    if (Test-Path -LiteralPath $candidatePython -PathType Leaf) { $candidatePython } else { "python" }
+} else {
+    (Resolve-Path -LiteralPath $PythonPath).Path
+}
+$Npm = if ([string]::IsNullOrWhiteSpace($NpmPath)) {
+    "npm"
+} else {
+    (Resolve-Path -LiteralPath $NpmPath).Path
+}
+$PowerShell = if ([string]::IsNullOrWhiteSpace($PowerShellPath)) {
+    (Get-Process -Id $PID -ErrorAction SilentlyContinue).Path
+} else {
+    (Resolve-Path -LiteralPath $PowerShellPath).Path
+}
+if ([string]::IsNullOrWhiteSpace($PowerShell) -or -not (Test-Path -LiteralPath $PowerShell -PathType Leaf)) {
     $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
     if ($pwsh) {
         $PowerShell = $pwsh.Source
@@ -49,8 +70,8 @@ else {
         $Targets += @{ Name = "tests (contracts+fakes)"; Cmd = $Python; Args = @("-m", "pytest", "tests", "-q", "-p", "no:cacheprovider"); Cwd = "." }
     }
     if (-not $PyOnly) {
-        $Targets += @{ Name = "bim-review-coordinator"; Cmd = "npm"; Args = @("run", "verify"); Cwd = "bim-review-coordinator" }
-        $Targets += @{ Name = "web-viewer-sample";      Cmd = "npm"; Args = @("run", "verify"); Cwd = "web-viewer-sample" }
+        $Targets += @{ Name = "bim-review-coordinator"; Cmd = $Npm; Args = @("run", "verify"); Cwd = "bim-review-coordinator" }
+        $Targets += @{ Name = "web-viewer-sample";      Cmd = $Npm; Args = @("run", "verify"); Cwd = "web-viewer-sample" }
     }
     if (-not $TsOnly -and -not $PyOnly) {
         $Targets += $StreamingTarget

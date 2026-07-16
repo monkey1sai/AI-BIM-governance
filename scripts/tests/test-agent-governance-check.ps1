@@ -34,6 +34,8 @@ try {
         '.github/CODEOWNERS',
         '.github/workflows/ci.yml',
         '.github/workflows/agent-governance.yml',
+        '.github/workflows/local-agent-validate.yml',
+        '.github/workflows/local-test-deploy.yml',
         '.github/workflows/pr-review-agent.yml',
         '.github/PULL_REQUEST_TEMPLATE.md',
         'scripts/tests/check-pr-body-evidence.ps1',
@@ -53,11 +55,18 @@ try {
         'agent-skills-manifest.json',
         'scripts/dev/sync-agent-skills.ps1',
         'scripts/tests/test-agent-skills-sync.ps1',
+        'scripts/tests/test_ephemeral_validation.py',
+        'scripts/tests/stress_ephemeral_validation.py',
+        'scripts/agent/Invoke-EphemeralValidation.ps1',
+        'scripts/agent/ephemeral_validation.py',
+        'scripts/agent/resolve_pr_contract.py',
+        'scripts/agent/validation-profiles.json',
         '.codex/skills/ai-bim-fast-fix/SKILL.md',
         '.codex/skills/ai-bim-bounded-change/SKILL.md',
         '.codex/skills/repo-health/SKILL.md',
         '.codex/skills/spec-to-done/agents/openai.yaml',
         'docs/agents/superpowers-invocation-policy.md',
+        'docs/agents/codex-cloud-local-pipeline.md',
         'docs/PR_REVIEW_AGENT.md',
         'docs/superpowers/plans/2026-06-18-ai-coding-maturity-governance.md'
     )) {
@@ -67,8 +76,11 @@ try {
     Assert-FileContains '.github/ISSUE_TEMPLATE/config.yml' 'blank_issues_enabled:\s*false' 'blank GitHub issues are disabled'
     Assert-FileContains '.github/ISSUE_TEMPLATE/agent-task.yml' 'docs/plans' 'agent task template points to docs/plans'
     Assert-FileContains '.github/ISSUE_TEMPLATE/agent-task.yml' 'acceptance_criteria' 'agent task template requires acceptance criteria'
-    Assert-FileContains '.github/ISSUE_TEMPLATE/agent-task.yml' 'validation_commands' 'agent task template requires validation commands'
+    Assert-True (-not ((Get-Content -LiteralPath '.github/ISSUE_TEMPLATE/agent-task.yml' -Raw) -match 'id:\s*validation_commands')) 'agent task cannot inject arbitrary commands into the self-hosted runner'
     Assert-FileContains '.github/ISSUE_TEMPLATE/agent-task.yml' 'evidence_contract' 'agent task template requires evidence contract'
+    foreach ($marker in @('agent_profile', 'cloud_base_sha', 'expected_touch_set', 'local_validation_profile', 'local_only_checks_outstanding', 'deployment_requirement')) {
+        Assert-FileContains '.github/ISSUE_TEMPLATE/agent-task.yml' ([regex]::Escape($marker)) "agent task template contains cloud/local handoff field $marker"
+    }
     Assert-FileContains '.github/ISSUE_TEMPLATE/runtime-bug.yml' 'regression_guard' 'runtime bug template requires regression guard'
     Assert-FileContains '.github/ISSUE_TEMPLATE/governance-change.yml' 'agent-workflow' 'governance change template carries agent workflow label'
 
@@ -137,6 +149,8 @@ try {
     Assert-True ($governanceWorkflow -match "node-version: '20\.20\.2'") 'agent-governance uses the exact Node.js pin'
     Assert-True ($governanceWorkflow -match 'npm@10\.9\.4') 'agent-governance uses the exact npm pin'
     Assert-True (-not ($governanceWorkflow -match '(?m)^\s*run:\s*powershell\b')) 'agent-governance workflow does not re-enter legacy Windows PowerShell from pwsh'
+    Assert-True ($governanceWorkflow -match 'test_ephemeral_validation\.py') 'agent-governance workflow runs trusted controller unit tests'
+    Assert-True ($governanceWorkflow -match 'stress_ephemeral_validation\.py') 'agent-governance workflow runs bounded lifecycle stress tests'
     # 原本硬編 `-eq 2`（"both checks"），使得「新增一個治理檢查」必定讓本斷言失敗——數量只是
     # 當時的巧合，真正的意圖是「每個 step 都用 PowerShell 7，不得回退 legacy Windows PowerShell」。
     # 改以「pwsh run 數 == 全部 run 數」表達該意圖，workflow 從此可擴充而不失去保護。
@@ -144,6 +158,102 @@ try {
     $totalRunCount = @([regex]::Matches($governanceWorkflow, '(?m)^\s*run:\s*\S')).Count
     Assert-True ($pwshRunCount -ge 5) 'agent-governance workflow runs the governance checks with PowerShell 7'
     Assert-True ($pwshRunCount -eq $totalRunCount) 'agent-governance workflow runs every step with PowerShell 7 (no legacy or non-pwsh shell)'
+
+    $localValidationWorkflow = Get-Content -LiteralPath '.github/workflows/local-agent-validate.yml' -Raw
+    foreach ($marker in @(
+        'pull_request_target',
+        "github.event.label.name == 'local-verify:approved'",
+        'github.event.pull_request.head.repo.full_name == github.repository',
+        'getCollaboratorPermissionLevel',
+        "new Set(['admin', 'maintain'])",
+        'contract_body_sha256',
+        'currentBodyDigest',
+        'approvalStillCurrent',
+        "types: [labeled, unlabeled, edited, synchronize]",
+        'invalidate-stale-local-approval',
+        'AI_BIM_AGENT_WORKSPACE_ROOT',
+        'AI_BIM_TRUSTED_CONTROLLER_ROOT',
+        'AI_BIM_VALIDATION_GIT_REPO',
+        'AI_BIM_REAL_RUNTIME_HARNESS',
+        'merge_commit_sha',
+        'needs.authorize.outputs.base_sha',
+        '$controllerCandidate = Join-Path',
+        'The sealed trusted-controller snapshot does not equal the approved base SHA.',
+        'AI_BIM_VALIDATION_GIT_REPO is not a mutable Git repository.',
+        'refs/pull/$($env:PR_NUMBER)/merge',
+        'Invoke-EphemeralValidation.ps1',
+        'publish-local-validation-result',
+        'if: always()',
+        'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02'
+    )) {
+        Assert-True ($localValidationWorkflow -match [regex]::Escape($marker)) "local validation workflow contains trusted boundary marker: $marker"
+    }
+    Assert-True ($localValidationWorkflow -match '(?m)^\s+runs-on:\s*\[self-hosted, windows, ai-bim-local-validation-ephemeral\]\s*$') 'local validation executes only on the disposable low-privilege Windows runner'
+    Assert-True ($localValidationWorkflow -match '(?m)^\s+environment:\s*local-validation\s*$') 'local validation uses its own protected environment without deployment secrets'
+    Assert-True ($localValidationWorkflow -match 'currentMergeSha !== eventMergeSha') 'maintainer approval is invalidated when the merge SHA changes'
+    Assert-True ($localValidationWorkflow -match 'github.run_attempt == 1') 'maintainer approval cannot be replayed by rerunning an old workflow attempt'
+    Assert-True ($localValidationWorkflow -match "github\.event\.action == 'unlabeled'") 'explicit approval removal invalidates the merge-SHA check'
+    Assert-True ($localValidationWorkflow -match 'group: ai-bim-local-agent-validation-pr-') 'all events for one PR share a workflow concurrency group'
+    Assert-True ($localValidationWorkflow -match 'cancel-in-progress: true') 'contract edits and approval revocation cancel older candidate runs'
+    Assert-True ($localValidationWorkflow -match 'outcomes\.approval_binding') 'publish rechecks the current merge SHA, PR body digest, and approval label before success'
+    Assert-True (-not ($localValidationWorkflow -match '(?m)^\s+ref:\s*\$\{\{\s*github\.event\.pull_request\.head\.sha')) 'self-hosted controller never checks out PR head code as its controller'
+    Assert-True (-not ($localValidationWorkflow -match 'actions/checkout@')) 'candidate validation resolves a host-provisioned sealed controller instead of actions/checkout into a mutable job workspace'
+    Assert-True ($localValidationWorkflow -match [regex]::Escape('$env:BASE_SHA.ToLowerInvariant()')) 'sealed controller snapshot is selected by the approved full base SHA'
+    Assert-True ($localValidationWorkflow -match [regex]::Escape('$env:CANDIDATE_GIT_REPO')) 'candidate Git mutations use the independent validation mirror'
+
+    $localDeployWorkflow = Get-Content -LiteralPath '.github/workflows/local-test-deploy.yml' -Raw
+    foreach ($marker in @(
+        'workflow_dispatch',
+        'verified_main_sha',
+        'group: ai-bim-local-test-deploy',
+        'cancel-in-progress: false',
+        'environment: local-test-deploy',
+        '+refs/heads/main:refs/remotes/origin/main',
+        'refs/remotes/origin/main^{commit}',
+        'scripts/dev/rebuild-test-deploy.ps1',
+        'ExpectedMainSha',
+        '-Build',
+        'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02'
+    )) {
+        Assert-True ($localDeployWorkflow -match [regex]::Escape($marker)) "local deployment workflow contains protected-main marker: $marker"
+    }
+    Assert-True ($localDeployWorkflow -match '(?m)^\s+runs-on:\s*\[self-hosted, windows, ai-bim-local-deploy\]\s*$') 'local deployment uses a runner identity separate from candidate validation'
+    Assert-True ($localDeployWorkflow -match 'originMain -ne \$env:VERIFIED_MAIN_SHA') 'deployment rejects any SHA other than freshly fetched origin/main'
+
+    $ephemeralController = Get-Content -LiteralPath 'scripts/agent/ephemeral_validation.py' -Raw
+    Assert-True (-not ($ephemeralController -match 'shell\s*=\s*True')) 'trusted controller never invokes a shell command string'
+    Assert-True (-not ($ephemeralController -match '(?m)^\s*eval\s*\(')) 'trusted controller does not evaluate task-controlled code'
+    Assert-True ($ephemeralController -match 'metadata_lock') 'trusted controller serializes Git metadata mutations'
+    Assert-True ($ephemeralController -match 'COMPOSE_PROJECT_NAME') 'compose namespace is isolated per PR/run/attempt'
+    foreach ($marker in @(
+        'require_read_only_controller',
+        'CANDIDATE_GIT_REPO_REQUIRED',
+        'CANDIDATE_GIT_REPO_NOT_SEPARATE',
+        'WRITABLE_TRUSTED_CONTROLLER',
+        'REAL_RUNTIME_HARNESS_REQUIRED',
+        'WRITABLE_REAL_RUNTIME_HARNESS'
+    )) {
+        Assert-True ($ephemeralController -match [regex]::Escape($marker)) "trusted controller contains sealed-host boundary marker: $marker"
+    }
+
+    $cloudLocalPipeline = Get-Content -LiteralPath 'docs/agents/codex-cloud-local-pipeline.md' -Raw
+    foreach ($marker in @(
+        'AI_BIM_TRUSTED_CONTROLLER_ROOT',
+        'AI_BIM_VALIDATION_GIT_REPO',
+        'AI_BIM_REAL_RUNTIME_HARNESS',
+        'WRITE_DAC',
+        'WRITE_OWNER',
+        'SeTakeOwnershipPrivilege',
+        'JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE',
+        'ai-bim-real-runtime-evidence/v1',
+        'ifc_to_usd_succeeded',
+        'first_frame_observed',
+        'datachannel_ack_observed',
+        'broker-sealed manifest',
+        '.\scripts\dev\rebuild-test-deploy.ps1 -Build'
+    )) {
+        Assert-True ($cloudLocalPipeline -match [regex]::Escape($marker)) "cloud/local pipeline documents trusted-host marker: $marker"
+    }
 
     $prReviewWorkflow = Get-Content -LiteralPath '.github/workflows/pr-review-agent.yml' -Raw
     Assert-True (-not ($prReviewWorkflow -match '(?m)^\s+paths-ignore:\s*$')) 'PR review workflow does not use paths-ignore because it is a required-check candidate'
@@ -190,7 +300,7 @@ try {
     }
 
     $prTemplate = Get-Content -LiteralPath '.github/PULL_REQUEST_TEMPLATE.md' -Raw
-    foreach ($marker in @('AI Coding Governance', 'Change lane', 'Behavior contract changed', 'Linked issue', 'Requirement source', 'CODEOWNERS', 'GitNexus', 'Browser E2E evidence', 'Design gate status', 'Design screen(s)', 'Reference-missing route(s) / surface(s)', 'Full completion claimed', 'Design reference manifest', 'Visual fidelity result', 'Visual comparison', 'Visual artifacts')) {
+    foreach ($marker in @('AI Coding Governance', 'Change lane', 'Behavior contract changed', 'Linked issue', 'Requirement source', 'CODEOWNERS', 'GitNexus', 'Browser E2E evidence', 'Design gate status', 'Design screen(s)', 'Reference-missing route(s) / surface(s)', 'Full completion claimed', 'Design reference manifest', 'Visual fidelity result', 'Visual comparison', 'Visual artifacts', 'Cloud task ID / URL', 'Cloud base SHA', 'Expected touch set', 'Local validation profile', 'Local-only checks outstanding', 'Deployment requirement')) {
         Assert-True ($prTemplate -match [regex]::Escape($marker)) "PR template contains $marker"
     }
 

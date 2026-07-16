@@ -1,0 +1,574 @@
+{
+  "schema_version": "ai-bim-local-validation-profiles/v1",
+  "protected_workspace_roots": [
+    "D:\\Users\\deploy\\AI-bim-geo"
+  ],
+  "metadata_lock": {
+    "group": "git-metadata",
+    "capacity": 1,
+    "wait_timeout_seconds": 60
+  },
+  "profiles": {
+    "contracts": {
+      "description": "Root Python contracts and test-only fakes.",
+      "locks": [
+        {
+          "group": "non-runtime",
+          "capacity": 2,
+          "wait_timeout_seconds": 1800
+        }
+      ],
+      "steps": [
+        {
+          "name": "root-contracts",
+          "cwd": ".",
+          "timeout_seconds": 1200,
+          "command": [
+            "{python}",
+            "-m",
+            "pytest",
+            "tests",
+            "-q",
+            "-p",
+            "no:cacheprovider"
+          ]
+        }
+      ]
+    },
+    "integration": {
+      "description": "Workspace aggregate verification without live Kit/WebRTC claims.",
+      "locks": [
+        {
+          "group": "non-runtime",
+          "capacity": 2,
+          "wait_timeout_seconds": 1800
+        }
+      ],
+      "steps": [
+        {
+          "name": "coordinator-dependencies",
+          "cwd": "bim-review-coordinator",
+          "timeout_seconds": 900,
+          "command": ["{npm}", "ci", "--no-audit", "--no-fund"]
+        },
+        {
+          "name": "viewer-dependencies",
+          "cwd": "web-viewer-sample",
+          "timeout_seconds": 900,
+          "command": ["{npm}", "ci", "--no-audit", "--no-fund"]
+        },
+        {
+          "name": "aggregate-verification",
+          "cwd": ".",
+          "timeout_seconds": 2400,
+          "command": [
+            "{pwsh}",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "{controller_repo}/scripts/verify-all.ps1",
+            "-RepoRoot",
+            "{worktree}",
+            "-PythonPath",
+            "{python}",
+            "-NpmPath",
+            "{npm}",
+            "-PowerShellPath",
+            "{pwsh}"
+          ]
+        }
+      ]
+    },
+    "browser-e2e": {
+      "description": "Isolated Playwright browser verification on the repo-owned E2E port.",
+      "collect": ["artifacts/e2e/**/*"],
+      "max_collect_bytes": 536870912,
+      "locks": [
+        {
+          "group": "non-runtime",
+          "capacity": 2,
+          "wait_timeout_seconds": 1800
+        },
+        {
+          "group": "browser-e2e",
+          "capacity": 1,
+          "wait_timeout_seconds": 1800
+        }
+      ],
+      "steps": [
+        {
+          "name": "viewer-dependencies",
+          "cwd": "web-viewer-sample",
+          "timeout_seconds": 900,
+          "command": ["{npm}", "ci", "--no-audit", "--no-fund"]
+        },
+        {
+          "name": "playwright-e2e",
+          "cwd": "web-viewer-sample",
+          "timeout_seconds": 1800,
+          "command": ["{npm}", "run", "test:e2e"]
+        }
+      ]
+    },
+    "kit-runtime": {
+      "description": "Windows real IFC-to-USD and Kit/WebRTC broker proof; deferred is not a pass.",
+      "required_platform": "windows",
+      "locks": [
+        {
+          "group": "runtime",
+          "capacity": 1,
+          "wait_timeout_seconds": 3600
+        }
+      ],
+      "steps": [
+        {
+          "name": "kit-runtime-image-build",
+          "cwd": ".",
+          "timeout_seconds": 3600,
+          "command": [
+            "{docker}",
+            "compose",
+            "--project-name",
+            "{compose_project}",
+            "-f",
+            "compose.runtime-manager.yml",
+            "--profile",
+            "gpu",
+            "build",
+            "streaming-server"
+          ]
+        },
+        {
+          "name": "kit-runtime-launcher",
+          "cwd": ".",
+          "timeout_seconds": 900,
+          "command": [
+            "{pwsh}",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "{controller_repo}/scripts/verify-runtime-kit-launcher.ps1",
+            "-RepoRoot",
+            "{worktree}",
+            "-Image",
+            "{compose_project}-streaming-server:latest",
+            "-SignalingPort",
+            "49190",
+            "-EvidencePath",
+            "{evidence_dir}/kit-launcher-readiness.json"
+          ],
+          "assertions": [
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/kit-launcher-readiness.json",
+              "selector": "tiers.0.status",
+              "expected": "passed"
+            }
+          ]
+        },
+        {
+          "name": "real-ifc-webrtc-runtime",
+          "cwd": ".",
+          "timeout_seconds": 7200,
+          "command": [
+            "{runtime_harness}",
+            "--broker-run-id", "{invocation_id}",
+            "--candidate-worktree", "{worktree}",
+            "--candidate-sha", "{candidate_sha}",
+            "--storage-root", "{storage_root}",
+            "--image", "{compose_project}-streaming-server:latest",
+            "--signaling-port", "49190",
+            "--evidence", "{evidence_dir}/broker-sealed/real-runtime-evidence.json"
+          ],
+          "assertions": [
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "schema_version",
+              "expected": "ai-bim-real-runtime-evidence/v1"
+            },
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "status",
+              "expected": "passed"
+            },
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "candidate_sha",
+              "expected": "{candidate_sha}"
+            },
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "broker_run_id",
+              "expected": "{invocation_id}"
+            },
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "fixture.kind",
+              "expected": "real-ifc"
+            },
+            {
+              "type": "json_matches",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "fixture.sha256",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "ifc_to_usd_succeeded",
+              "expected": true
+            },
+            {
+              "type": "json_matches",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "usd_artifact_sha256",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "json_matches",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "kit_runtime_id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$"
+            },
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "first_frame_observed",
+              "expected": true
+            },
+            {
+              "type": "json_matches",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "stage_id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$"
+            },
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "datachannel_ack_observed",
+              "expected": true
+            },
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "cleanup_succeeded",
+              "expected": true
+            },
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "artifacts.0.name",
+              "expected": "webrtc-first-frame.png"
+            },
+            {
+              "type": "json_matches",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "artifacts.0.sha256",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "artifacts.1.name",
+              "expected": "datachannel-transcript.json"
+            },
+            {
+              "type": "json_matches",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "artifacts.1.sha256",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "artifact_sha256",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "artifacts.0"
+            },
+            {
+              "type": "artifact_sha256",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "artifacts.1"
+            },
+            {
+              "type": "file_not_writable",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json"
+            }
+          ]
+        }
+      ],
+      "cleanup_steps": [
+        {
+          "name": "kit-runtime-image-cleanup",
+          "cwd": ".",
+          "timeout_seconds": 300,
+          "command": [
+            "{docker}",
+            "image",
+            "rm",
+            "--force",
+            "{compose_project}-streaming-server:latest"
+          ]
+        }
+      ]
+    },
+    "full": {
+      "description": "Integration, browser, and live Kit runtime gates under all applicable host locks.",
+      "required_platform": "windows",
+      "collect": ["artifacts/e2e/**/*"],
+      "max_collect_bytes": 536870912,
+      "locks": [
+        {
+          "group": "non-runtime",
+          "capacity": 2,
+          "wait_timeout_seconds": 3600
+        },
+        {
+          "group": "browser-e2e",
+          "capacity": 1,
+          "wait_timeout_seconds": 3600
+        },
+        {
+          "group": "runtime",
+          "capacity": 1,
+          "wait_timeout_seconds": 3600
+        }
+      ],
+      "steps": [
+        {
+          "name": "coordinator-dependencies",
+          "cwd": "bim-review-coordinator",
+          "timeout_seconds": 900,
+          "command": ["{npm}", "ci", "--no-audit", "--no-fund"]
+        },
+        {
+          "name": "viewer-dependencies",
+          "cwd": "web-viewer-sample",
+          "timeout_seconds": 900,
+          "command": ["{npm}", "ci", "--no-audit", "--no-fund"]
+        },
+        {
+          "name": "aggregate-verification",
+          "cwd": ".",
+          "timeout_seconds": 2400,
+          "command": [
+            "{pwsh}",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "{controller_repo}/scripts/verify-all.ps1",
+            "-RepoRoot",
+            "{worktree}",
+            "-PythonPath",
+            "{python}",
+            "-NpmPath",
+            "{npm}",
+            "-PowerShellPath",
+            "{pwsh}"
+          ]
+        },
+        {
+          "name": "playwright-e2e",
+          "cwd": "web-viewer-sample",
+          "timeout_seconds": 1800,
+          "command": ["{npm}", "run", "test:e2e"]
+        },
+        {
+          "name": "kit-runtime-image-build",
+          "cwd": ".",
+          "timeout_seconds": 3600,
+          "command": [
+            "{docker}",
+            "compose",
+            "--project-name",
+            "{compose_project}",
+            "-f",
+            "compose.runtime-manager.yml",
+            "--profile",
+            "gpu",
+            "build",
+            "streaming-server"
+          ]
+        },
+        {
+          "name": "kit-runtime-launcher",
+          "cwd": ".",
+          "timeout_seconds": 900,
+          "command": [
+            "{pwsh}",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "{controller_repo}/scripts/verify-runtime-kit-launcher.ps1",
+            "-RepoRoot",
+            "{worktree}",
+            "-Image",
+            "{compose_project}-streaming-server:latest",
+            "-SignalingPort",
+            "49190",
+            "-EvidencePath",
+            "{evidence_dir}/kit-launcher-readiness.json"
+          ],
+          "assertions": [
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/kit-launcher-readiness.json",
+              "selector": "tiers.0.status",
+              "expected": "passed"
+            }
+          ]
+        },
+        {
+          "name": "real-ifc-webrtc-runtime",
+          "cwd": ".",
+          "timeout_seconds": 7200,
+          "command": [
+            "{runtime_harness}",
+            "--broker-run-id", "{invocation_id}",
+            "--candidate-worktree", "{worktree}",
+            "--candidate-sha", "{candidate_sha}",
+            "--storage-root", "{storage_root}",
+            "--image", "{compose_project}-streaming-server:latest",
+            "--signaling-port", "49190",
+            "--evidence", "{evidence_dir}/broker-sealed/real-runtime-evidence.json"
+          ],
+          "assertions": [
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "schema_version",
+              "expected": "ai-bim-real-runtime-evidence/v1"
+            },
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "status",
+              "expected": "passed"
+            },
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "candidate_sha",
+              "expected": "{candidate_sha}"
+            },
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "broker_run_id",
+              "expected": "{invocation_id}"
+            },
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "fixture.kind",
+              "expected": "real-ifc"
+            },
+            {
+              "type": "json_matches",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "fixture.sha256",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "ifc_to_usd_succeeded",
+              "expected": true
+            },
+            {
+              "type": "json_matches",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "usd_artifact_sha256",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "json_matches",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "kit_runtime_id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$"
+            },
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "first_frame_observed",
+              "expected": true
+            },
+            {
+              "type": "json_matches",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "stage_id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$"
+            },
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "datachannel_ack_observed",
+              "expected": true
+            },
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "cleanup_succeeded",
+              "expected": true
+            },
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "artifacts.0.name",
+              "expected": "webrtc-first-frame.png"
+            },
+            {
+              "type": "json_matches",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "artifacts.0.sha256",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "json_equals",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "artifacts.1.name",
+              "expected": "datachannel-transcript.json"
+            },
+            {
+              "type": "json_matches",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "artifacts.1.sha256",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "artifact_sha256",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "artifacts.0"
+            },
+            {
+              "type": "artifact_sha256",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json",
+              "selector": "artifacts.1"
+            },
+            {
+              "type": "file_not_writable",
+              "path": "{evidence_dir}/broker-sealed/real-runtime-evidence.json"
+            }
+          ]
+        }
+      ],
+      "cleanup_steps": [
+        {
+          "name": "kit-runtime-image-cleanup",
+          "cwd": ".",
+          "timeout_seconds": 300,
+          "command": [
+            "{docker}",
+            "image",
+            "rm",
+            "--force",
+            "{compose_project}-streaming-server:latest"
+          ]
+        }
+      ]
+    }
+  }
+}

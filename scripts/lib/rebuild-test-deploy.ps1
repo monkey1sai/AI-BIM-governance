@@ -460,6 +460,7 @@ function Invoke-TestDeployRebuild {
     [CmdletBinding()]
     param(
         [switch] $Build,
+        [string] $ExpectedMainSha = '',
         [string] $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path,
         [string] $DeploymentPath = $script:TestDeployFixedPath,
         [scriptblock] $CommandRunner = $null,
@@ -471,6 +472,11 @@ function Invoke-TestDeployRebuild {
     if (-not $Build) {
         throw 'Invoke-TestDeployRebuild requires -Build.'
     }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedMainSha) -and
+        $ExpectedMainSha -notmatch '^[0-9a-fA-F]{40}$') {
+        throw 'ExpectedMainSha must be a full 40-character commit SHA.'
+    }
+    $expectedMainCommit = $ExpectedMainSha.ToLowerInvariant()
     if ($AllowNonFixedPathForTests -and $null -eq $CommandRunner) {
         throw 'AllowNonFixedPathForTests requires CommandRunner.'
     }
@@ -545,7 +551,15 @@ function Invoke-TestDeployRebuild {
             }
 
             Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('fetch', 'origin', $mainRefSpec) -WorkingDirectory $stageRoot -CommandRunner $CommandRunner | Out-Null
-            Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('reset', '--hard', 'origin/main') -WorkingDirectory $stageRoot -CommandRunner $CommandRunner | Out-Null
+            if (-not [string]::IsNullOrWhiteSpace($expectedMainCommit)) {
+                $fetchedMain = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('rev-parse', 'origin/main') -WorkingDirectory $stageRoot -CommandRunner $CommandRunner
+                $fetchedMainCommit = $fetchedMain.Output.Trim().ToLowerInvariant()
+                if ($fetchedMainCommit -ne $expectedMainCommit) {
+                    throw "fresh origin/main differs from approved ExpectedMainSha. expected='$expectedMainCommit' actual='$fetchedMainCommit'"
+                }
+            }
+            $resetTarget = if ([string]::IsNullOrWhiteSpace($expectedMainCommit)) { 'origin/main' } else { $expectedMainCommit }
+            Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('reset', '--hard', $resetTarget) -WorkingDirectory $stageRoot -CommandRunner $CommandRunner | Out-Null
 
             $cleanExcludePattern = 'bim-streaming-server/_build/**/logs/**'
             $cleanMaxAttempts = 3
@@ -574,7 +588,11 @@ function Invoke-TestDeployRebuild {
             if (-not (Test-Path -LiteralPath $stageDeployScript -PathType Leaf)) {
                 throw "deployment script missing after staged rebuild: $stageDeployScript"
             }
-            $commit = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('rev-parse', 'origin/main') -WorkingDirectory $stageRoot -CommandRunner $CommandRunner
+            $commit = if ([string]::IsNullOrWhiteSpace($expectedMainCommit)) {
+                Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('rev-parse', 'origin/main') -WorkingDirectory $stageRoot -CommandRunner $CommandRunner
+            } else {
+                [pscustomobject]@{ ExitCode = 0; Output = $expectedMainCommit }
+            }
 
             $effectiveServiceStopper = $ServiceStopper
             if ($null -eq $effectiveServiceStopper) {
@@ -646,7 +664,15 @@ function Invoke-TestDeployRebuild {
     $restoredEnvFiles = @()
     try {
         Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('fetch', 'origin', $mainRefSpec) -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
-        Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('reset', '--hard', 'origin/main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
+        if (-not [string]::IsNullOrWhiteSpace($expectedMainCommit)) {
+            $fetchedMain = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('rev-parse', 'origin/main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner
+            $fetchedMainCommit = $fetchedMain.Output.Trim().ToLowerInvariant()
+            if ($fetchedMainCommit -ne $expectedMainCommit) {
+                throw "fresh origin/main differs from approved ExpectedMainSha. expected='$expectedMainCommit' actual='$fetchedMainCommit'"
+            }
+        }
+        $resetTarget = if ([string]::IsNullOrWhiteSpace($expectedMainCommit)) { 'origin/main' } else { $expectedMainCommit }
+        Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('reset', '--hard', $resetTarget) -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
 
         # Pre-clean stop: kit.exe / conversion / governance from rebuild N still hold
         # locked handles under _build (gitignored, targeted by -x). Stop the deploy-zone
@@ -717,7 +743,11 @@ function Invoke-TestDeployRebuild {
         throw "deployment script missing after rebuild: $deployScript"
     }
 
-    $commit = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('rev-parse', 'origin/main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner
+    $commit = if ([string]::IsNullOrWhiteSpace($expectedMainCommit)) {
+        Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('rev-parse', 'origin/main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner
+    } else {
+        [pscustomobject]@{ ExitCode = 0; Output = $expectedMainCommit }
+    }
     }
 
     $edgeRuntimeContract = Resolve-TestDeployEdgeRuntimeContract
