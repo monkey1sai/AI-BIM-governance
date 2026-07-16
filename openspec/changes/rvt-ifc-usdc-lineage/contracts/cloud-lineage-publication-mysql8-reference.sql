@@ -27,8 +27,10 @@ CREATE TABLE lineage_publications (
     result_id VARCHAR(200)
         CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
     attempt_outcome VARCHAR(32) NOT NULL,
-    manifest_digest CHAR(64) NOT NULL,
-    publication_content_sha256 CHAR(64) NOT NULL,
+    manifest_digest CHAR(64)
+        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    publication_content_sha256 CHAR(64)
+        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     result_manifest_ref JSON NOT NULL,
     lineage_mapping_ref JSON NOT NULL,
     alignment_report_json_ref JSON NOT NULL,
@@ -39,6 +41,10 @@ CREATE TABLE lineage_publications (
     PRIMARY KEY (publication_identity),
     UNIQUE KEY uq_lineage_publications_registration (registration_id),
     UNIQUE KEY uq_lineage_publications_first_event (first_event_id),
+    UNIQUE KEY uq_lineage_publications_identity_manifest (
+        publication_identity,
+        manifest_digest
+    ),
     UNIQUE KEY uq_lineage_publications_result (
         edge_site_id,
         external_model_version_id,
@@ -87,7 +93,8 @@ CREATE TABLE lineage_publication_health_events (
     event_id CHAR(36) NOT NULL,
     publication_identity VARCHAR(522)
         CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
-    manifest_digest CHAR(64) NOT NULL,
+    manifest_digest CHAR(64)
+        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     health_state ENUM(
         'VERIFIED',
         'MISSING',
@@ -107,9 +114,16 @@ CREATE TABLE lineage_publication_health_events (
         observed_at,
         health_event_id
     ),
+    KEY ix_lineage_health_publication_digest (
+        publication_identity,
+        manifest_digest
+    ),
     CONSTRAINT fk_lineage_health_publication
-        FOREIGN KEY (publication_identity)
-        REFERENCES lineage_publications (publication_identity)
+        FOREIGN KEY (publication_identity, manifest_digest)
+        REFERENCES lineage_publications (
+            publication_identity,
+            manifest_digest
+        )
         ON UPDATE RESTRICT
         ON DELETE RESTRICT,
     CONSTRAINT ck_lineage_health_manifest_digest
@@ -155,7 +169,8 @@ CREATE TABLE lineage_event_identities (
     ) NOT NULL,
     publication_identity VARCHAR(522)
         CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
-    raw_body_sha256 CHAR(64) NOT NULL,
+    raw_body_sha256 CHAR(64)
+        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     first_received_at DATETIME(6) NOT NULL,
     PRIMARY KEY (event_id),
     KEY ix_lineage_event_identities_publication (
@@ -177,8 +192,10 @@ CREATE TABLE lineage_event_receipts (
     ) NOT NULL,
     publication_identity VARCHAR(522)
         CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
-    manifest_digest CHAR(64) NOT NULL,
-    raw_body_sha256 CHAR(64) NOT NULL,
+    manifest_digest CHAR(64)
+        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    raw_body_sha256 CHAR(64)
+        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     registration_id VARCHAR(200) NOT NULL,
     received_at DATETIME(6) NOT NULL,
     replay BOOLEAN NOT NULL,
@@ -191,14 +208,21 @@ CREATE TABLE lineage_event_receipts (
         publication_identity,
         received_at
     ),
+    KEY ix_lineage_receipts_publication_digest (
+        publication_identity,
+        manifest_digest
+    ),
     CONSTRAINT fk_lineage_receipts_event_identity
         FOREIGN KEY (event_id)
         REFERENCES lineage_event_identities (event_id)
         ON UPDATE RESTRICT
         ON DELETE RESTRICT,
     CONSTRAINT fk_lineage_receipts_publication
-        FOREIGN KEY (publication_identity)
-        REFERENCES lineage_publications (publication_identity)
+        FOREIGN KEY (publication_identity, manifest_digest)
+        REFERENCES lineage_publications (
+            publication_identity,
+            manifest_digest
+        )
         ON UPDATE RESTRICT
         ON DELETE RESTRICT,
     CONSTRAINT ck_lineage_receipts_manifest_digest

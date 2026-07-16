@@ -50,7 +50,7 @@ Lineage mapping item SHALL additive 包含 `rvt_element_id`、`ifc_uuid36`、既
 
 ### Requirement: Alignment metrics SHALL 使用明確且不同的分母
 
-系統 SHALL 分開輸出 `ifc_usdc_coverage_ratio`、`rvt_ifc_alignment_ratio` 與 `rvt_ifc_usdc_lineage_ratio`。前者分母為 eligible source `IfcProduct` count；若沿用 legacy `source_ifc_entity_count` field，schema MUST 明定它是同一 eligible集合的 alias。後兩者分母固定為 valid unique scheduled elements。報告 SHALL 同時輸出 CSV total/valid、eligible IFC product count、duplicate ID/GUID、invalid、CSV-only、IFC-only、IFC→USDC unmapped 與 full-lineage matched counts/sets。
+系統 SHALL 分開輸出 `ifc_usdc_coverage_ratio`、`rvt_ifc_alignment_ratio` 與 `rvt_ifc_usdc_lineage_ratio`。前者分母為 eligible source `IfcProduct` count；若沿用 legacy `source_ifc_entity_count` field，schema MUST 明定它是同一 eligible集合的 alias。後兩者分母固定為 valid unique scheduled elements。報告 SHALL 同時輸出 CSV total/valid、eligible IFC product count、duplicate ID/GUID、invalid、CSV-only、IFC-only、IFC→USDC unmapped 與 full-lineage matched counts/sets。`ifc_only_count` SHALL 精確等於 `eligible_ifc_product_count - rvt_ifc_alignment_ratio.numerator`；producer、result-manifest validator與cloud publication validator對此不變式 MUST 使用相同語意。
 
 #### Scenario: Metrics 計算
 
@@ -69,6 +69,13 @@ Lineage mapping item SHALL additive 包含 `rvt_element_id`、`ifc_uuid36`、既
 - **WHEN** source IFC 含有不在 valid schedule rows 的 products
 - **THEN**它們 SHALL 列入 IFC-only 集合
 - **AND** SHALL NOT 增加 `rvt_ifc_alignment_ratio` 或 `rvt_ifc_usdc_lineage_ratio` 的分母
+- **AND** `ifc_only_count` SHALL 等於`eligible_ifc_product_count`減`rvt_ifc_alignment_ratio.numerator`
+
+#### Scenario: IFC-only count與alignment numerator矛盾
+
+- **WHEN** report的`ifc_only_count`不等於`eligible_ifc_product_count - rvt_ifc_alignment_ratio.numerator`
+- **THEN** report與ResultManifest validation SHALL fail closed
+- **AND**該result MUST NOT enqueue cloud lineage publication
 
 ### Requirement: Partial alignment SHALL 可交付但必須誠實揭露
 

@@ -67,6 +67,7 @@ JSON Schema可拒絕形狀與enum錯誤；下列cross-field規則仍須由sender
 - nonzero denominator時，以decimal arithmetic計算`numerator / denominator`，再向零截斷至小數第10位作為`ratio`；trailing zeros可省略。
 - `ifc_usdc_coverage_ratio.denominator == eligible_ifc_product_count`，且其`numerator == eligible_ifc_product_count - ifc_usdc_unmapped_count`。
 - `rvt_ifc_alignment_ratio.denominator == csv_valid_count`，且其`numerator == csv_valid_count - csv_only_count`。
+- `ifc_only_count == eligible_ifc_product_count - rvt_ifc_alignment_ratio.numerator`。
 - `rvt_ifc_usdc_lineage_ratio.denominator == csv_valid_count`，且其`numerator == full_lineage_matched_count`。
 - `full_lineage_matched_count <= rvt_ifc_alignment_ratio.numerator`。
 - ratio 1對應`complete`；0≤ratio<1對應`partial`。
@@ -92,6 +93,8 @@ X-Lineage-Signature-Timestamp
 X-Lineage-Signature-Key-Id
 X-Lineage-Webhook-Signature: sha256=<lowercase-hex>
 ```
+
+`X-Lineage-Signature-Timestamp`固定為UTC Unix epoch seconds的canonical ASCII unsigned base-10字串，格式為`^(?:0|[1-9][0-9]*)$`。除單一`0`外不得有leading zero，也不得有正負號、小數、毫秒值或RFC 3339 timestamp。Sender以header中的exact string作為簽章輸入；receiver先按此格式驗證，再解析為epoch seconds並套用預設±300秒clock-skew window，任何格式、範圍或window錯誤都必須在event identity或domain mutation前拒絕。例如`1760000000`格式有效；`01760000000`、`+1760000000`、`1760000000.0`、`1760000000000`與`2026-07-16T08:15:30Z`格式或秒值語意無效。
 
 簽章標準輸入：
 
@@ -159,7 +162,7 @@ Default最多5次exponential backoff＋jitter；transient dead-letter在cooldown
 VERIFIED | MISSING | INTEGRITY_FAILED | TOMBSTONED
 ```
 
-`MISSING`／`INTEGRITY_FAILED`需至少兩次edge observation；restore可回`VERIFIED`；`TOMBSTONED`只接受formal retention/revocation record且必須攜帶`tombstone_record_id`，其他health states MUST NOT 攜帶該欄位。Health payload不重送summary；receiver以`publication_identity` join原publication並逐字驗證original result ID/ref/digest。Health history與每次accepted delivery/replay receipt均append-only，receipt不得update成replay counter。
+`MISSING`／`INTEGRITY_FAILED`需至少兩次edge observation；restore可回`VERIFIED`；`TOMBSTONED`只接受formal retention/revocation record且必須攜帶`tombstone_record_id`，其他health states MUST NOT 攜帶該欄位。Health payload不重送summary；receiver以`publication_identity + manifest_digest` join原publication並逐字驗證original result ID/ref/digest，reference DDL亦以相同composite key約束health與receipt rows。Health history與每次accepted delivery/replay receipt均append-only，receipt不得update成replay counter。
 
 Current health不儲存在immutable publication row：尚無health event時衍生為`VERIFIED`；其後依`observed_at DESC`排序，完全相同的observation time再以receiver-assigned append order做deterministic tie-break。`observed_at`必須是uppercase `Z`的UTC timestamp，年份限`1000–9999`、秒限`00–59`，小數秒可省略或為1–6位；receiver只可右補零至microsecond，MUST NOT 接受offset、leap second、MySQL範圍外年份、超過6位精度、round或truncate。延遲送達的較舊observation只append history，不得覆寫較新current health；health event不得update `lineage_publications`。
 
@@ -179,6 +182,7 @@ Current health不儲存在immutable publication row：尚無health event時衍�
 | `invalid-mismatched-publication-identity.json` | semantic validator | 無效（JSON shape有效） |
 | `invalid-inconsistent-ifc-usdc-counts.json` | semantic validator | 無效（JSON shape有效） |
 | `invalid-inconsistent-rvt-ifc-counts.json` | semantic validator | 無效（JSON shape有效） |
+| `invalid-inconsistent-ifc-only-count.json` | semantic validator | 無效（JSON shape有效） |
 | `invalid-inconsistent-alignment-counts.json` | semantic validator | 無效（JSON shape有效） |
 | `invalid-full-lineage-exceeds-rvt-ifc.json` | semantic validator | 無效（JSON shape有效） |
 | `invalid-offset-health-observed-at.json` | 請求schema | 無效 |

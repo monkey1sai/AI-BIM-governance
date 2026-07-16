@@ -90,7 +90,7 @@ Cloud summary SHALL 只包含：
 
 唯一允許的count fields SHALL 是`csv_total_count`、`csv_valid_count`、`eligible_ifc_product_count`、`duplicate_rvt_id_count`、`duplicate_ifc_guid_count`、`invalid_row_count`、`csv_only_count`、`ifc_only_count`、`ifc_usdc_unmapped_count`與`full_lineage_matched_count`。`warning_codes` SHALL 唯一、最多限制為64個versioned codes，並附帶`warning_code_count`。任何count field MUST NOT 以element identifiers list取代。
 
-Sender與receiver semantic validator SHALL 強制`ifc_usdc_coverage_ratio.denominator == eligible_ifc_product_count`、其numerator等於該count減`ifc_usdc_unmapped_count`；`rvt_ifc_alignment_ratio.denominator == csv_valid_count`、其numerator等於該count減`csv_only_count`；`rvt_ifc_usdc_lineage_ratio.denominator == csv_valid_count`、其numerator等於`full_lineage_matched_count`；`full_lineage_matched_count` MUST NOT 大於RVT→IFC numerator。任一cross-field矛盾 MUST 在enqueue或receiver mutation前fail closed。
+Sender與receiver semantic validator SHALL 強制`ifc_usdc_coverage_ratio.denominator == eligible_ifc_product_count`、其numerator等於該count減`ifc_usdc_unmapped_count`；`rvt_ifc_alignment_ratio.denominator == csv_valid_count`、其numerator等於該count減`csv_only_count`；`ifc_only_count == eligible_ifc_product_count - rvt_ifc_alignment_ratio.numerator`；`rvt_ifc_usdc_lineage_ratio.denominator == csv_valid_count`、其numerator等於`full_lineage_matched_count`；`full_lineage_matched_count` MUST NOT 大於RVT→IFC numerator。任一cross-field矛盾 MUST 在enqueue或receiver mutation前fail closed。
 
 #### Scenario: 分母為零時維持不可評估
 
@@ -123,7 +123,7 @@ CLOUD_LINEAGE_PUBLICATION_HMAC_SECRET
 
 Producer、browser、manifest與event payload fields MUST NOT 覆寫target URL或key material。`disabled` SHALL 是local/development預設，且 SHALL 不產生enqueue、send或假dead-letter side effect。Production SHALL 明確使用`required`；URL、key ID或secret缺失／無效、mode未知，或production URL不是HTTPS時，SHALL 在startup fail closed。Explicit test profiles MAY 只對loopback fake使用HTTP。
 
-每個request SHALL 攜帶`X-Lineage-Event-Id`、`X-Lineage-Signature-Timestamp`、`X-Lineage-Signature-Key-Id`與`X-Lineage-Webhook-Signature`。Signature SHALL 是`HMAC-SHA256(secret, signature_timestamp + "\n" + raw_request_body)`的`sha256=<lowercase-hex>`。Receiver SHALL 以constant-time comparison驗證raw bytes、要求header/body event IDs相符，並拒絕unknown key、signature mismatch、body tamper，或超出預設±300秒window的timestamp。
+每個request SHALL 攜帶`X-Lineage-Event-Id`、`X-Lineage-Signature-Timestamp`、`X-Lineage-Signature-Key-Id`與`X-Lineage-Webhook-Signature`。`X-Lineage-Signature-Timestamp` SHALL 是UTC Unix epoch seconds的canonical ASCII unsigned base-10字串，且 SHALL 符合`^(?:0|[1-9][0-9]*)$`；除單一`0`外不得有leading zero，也不得使用正負號、小數、milliseconds或RFC 3339。Signature SHALL 是`HMAC-SHA256(secret, exact_signature_timestamp_header + "\n" + raw_request_body)`的`sha256=<lowercase-hex>`。Receiver SHALL 先驗證timestamp格式與可解析範圍，再以epoch seconds套用預設±300秒window，並以constant-time comparison驗證raw bytes、要求header/body event IDs相符；unknown key、signature mismatch、body tamper、格式／範圍錯誤或超窗timestamp都 SHALL 在event identity或domain mutation前拒絕。Receiver MUST NOT normalize timestamp後再驗簽。
 
 Secrets MUST NOT 出現在payload、logs、UI、committed examples或evidence；未來的`.env.example` changes SHALL 只包含空白key names。
 
@@ -142,6 +142,12 @@ Secrets MUST NOT 出現在payload、logs、UI、committed examples或evidence；
 
 - **WHEN** receiver發現raw body、event ID或timestamp不符合signature contract
 - **THEN** receiver SHALL 拒絕request，且不異動receipt或publication
+
+#### Scenario: Signature timestamp不是canonical epoch seconds
+
+- **WHEN** `X-Lineage-Signature-Timestamp`含leading zero、sign、fraction，使用milliseconds／RFC 3339，無法解析，或落在允許window外
+- **THEN** receiver SHALL 在event identity、receipt、health或publication mutation前拒絕request
+- **AND** receiver MUST NOT normalize該header後重新計算signature
 
 ### Requirement: Receiver commit與ACK SHALL 同步且冪等
 
@@ -227,7 +233,7 @@ Cloud delivery state SHALL 與source `READY`、result `AVAILABLE`、active-resul
 
 ### Requirement: Health events SHALL 保留immutable publication history
 
-`lineage_result_health_changed` SHALL 只使用`VERIFIED | MISSING | INTEGRITY_FAILED | TOMBSTONED`。它 SHALL 攜帶已知的`publication_identity`，以及原始result ID、result-manifest reference與manifest digest，但 SHALL NOT 重複alignment summary。Receiver SHALL 以publication identity join `lineage_publications`，逐byte比對這些immutable bindings後才append health event；原始summary只留在publication row。Health events與accepted-delivery receipts SHALL 採append-only；health event MUST NOT 改寫原始publication。`observed_at` SHALL 使用uppercase `Z`的UTC date-time，年份 SHALL 為`1000–9999`、秒 SHALL 為`00–59`，小數秒可省略或為1–6位；receiver只可右補零至microsecond，offset、leap second、MySQL範圍外年份或超過6位精度 MUST 在event identity或domain mutation前拒絕，MUST NOT round／truncate。Current health SHALL 由該exact microsecond最大的accepted transition衍生；完全相同的observation time SHALL 以deterministic receiver-assigned append order tie-break，arrival order MUST NOT 超越不同的observation time。延遲送達的較舊transition SHALL 保留在history但 MUST NOT 覆寫較新current health；尚無health event時，通過integrity驗證的publication SHALL 衍生為`VERIFIED`。
+`lineage_result_health_changed` SHALL 只使用`VERIFIED | MISSING | INTEGRITY_FAILED | TOMBSTONED`。它 SHALL 攜帶已知的`publication_identity`，以及原始result ID、result-manifest reference與manifest digest，但 SHALL NOT 重複alignment summary。Receiver SHALL 以`publication_identity + manifest_digest` join `lineage_publications`，逐byte比對這些immutable bindings後才append health event；reference DDL SHALL 以相同composite key約束health與receipt rows，禁止同identity搭配另一digest。原始summary只留在publication row。Health events與accepted-delivery receipts SHALL 採append-only；health event MUST NOT 改寫原始publication。`observed_at` SHALL 使用uppercase `Z`的UTC date-time，年份 SHALL 為`1000–9999`、秒 SHALL 為`00–59`，小數秒可省略或為1–6位；receiver只可右補零至microsecond，offset、leap second、MySQL範圍外年份或超過6位精度 MUST 在event identity或domain mutation前拒絕，MUST NOT round／truncate。Current health SHALL 由該exact microsecond最大的accepted transition衍生；完全相同的observation time SHALL 以deterministic receiver-assigned append order tie-break，arrival order MUST NOT 超越不同的observation time。延遲送達的較舊transition SHALL 保留在history但 MUST NOT 覆寫較新current health；尚無health event時，通過integrity驗證的publication SHALL 衍生為`VERIFIED`。
 
 `MISSING`與`INTEGRITY_FAILED` SHALL 要求edge reconciler至少兩次獨立觀察後才能送出。已復原且通過integrity驗證的object set MAY 回到`VERIFIED`。`TOMBSTONED` SHALL 要求正式retention/revocation record與非空`tombstone_record_id`，且 MUST NOT 從transient list miss推斷；`VERIFIED`、`MISSING`與`INTEGRITY_FAILED` MUST NOT 攜帶`tombstone_record_id`。
 
@@ -267,7 +273,7 @@ Cloud delivery state SHALL 與source `READY`、result `AVAILABLE`、active-resul
 
 ### Requirement: Cloud persistence SHALL 只包含normative logical metadata
 
-External cloud logical model SHALL 包含`lineage_publications`、`lineage_publication_health_events`、`lineage_event_identities`與`lineage_event_receipts`。它 SHALL 保留publication identity／manifest／canonical content digest、全域event ID／first raw-body digest uniqueness、append-only health history、每次接受的首次delivery或replay所append的一筆receipt row，以及四個locators與bounded summary。Current health SHALL 依observation time衍生；immutable publication row不得包含mutable health field。Event identity rows與receipt rows MUST NOT 被更新為replay counters。它 MUST NOT 定義或要求per-element lineage tables。
+External cloud logical model SHALL 包含`lineage_publications`、`lineage_publication_health_events`、`lineage_event_identities`與`lineage_event_receipts`。它 SHALL 保留publication identity／manifest／canonical content digest、全域event ID／first raw-body digest uniqueness、append-only health history、每次接受的首次delivery或replay所append的一筆receipt row，以及四個locators與bounded summary。Reference DDL SHALL 對publication宣告case-sensitive的`publication_identity + manifest_digest` candidate key，並以composite foreign keys約束health與receipt；所有SHA-256 columns SHALL 使用case-sensitive ASCII collation，使lowercase-hex constraints不依賴database default collation。Current health SHALL 依observation time衍生；immutable publication row不得包含mutable health field。Event identity rows與receipt rows MUST NOT 被更新為replay counters。它 MUST NOT 定義或要求per-element lineage tables。
 
 本change SHALL 提供MySQL 8 `REFERENCE ONLY` DDL，作為不可執行的mapping輔助。DDL MUST 聲明external `bim-control`擁有physical migrations與credentials，且本repo MUST NOT 宣稱DDL已套用或真實MySQL已驗證。Test fake MAY 模擬transaction/idempotency行為，但 SHALL 維持test-only。
 

@@ -212,7 +212,7 @@ ifc_usdc_unmapped_count
 full_lineage_matched_count
 ```
 
-Semantic validator必須把metric與counts綁成同一份summary truth：IFC→USDC denominator等於`eligible_ifc_product_count`、numerator等於該count減`ifc_usdc_unmapped_count`；RVT→IFC denominator等於`csv_valid_count`、numerator等於該count減`csv_only_count`；三向lineage denominator等於`csv_valid_count`、numerator等於`full_lineage_matched_count`，且full-lineage count不得大於RVT→IFC numerator。任一矛盾在enqueue與cloud mutation前fail closed。
+Semantic validator必須把metric與counts綁成同一份summary truth：IFC→USDC denominator等於`eligible_ifc_product_count`、numerator等於該count減`ifc_usdc_unmapped_count`；RVT→IFC denominator等於`csv_valid_count`、numerator等於該count減`csv_only_count`；`ifc_only_count`等於`eligible_ifc_product_count`減RVT→IFC numerator；三向lineage denominator等於`csv_valid_count`、numerator等於`full_lineage_matched_count`，且full-lineage count不得大於RVT→IFC numerator。任一矛盾在enqueue與cloud mutation前fail closed。
 
 Cloud payload MUST NOT 包含 RVT/IFC/USDC bytes、manifest body、逐 element mapping rows、CSV/JSON report body、diff ID sets、diagnostics、presigned query、credentials或base64。完整 `element_mapping.json`、alignment JSON/CSV與差異集合只存在edge MinIO。
 
@@ -243,6 +243,8 @@ Signature值為 `sha256=<lowercase-hex>`，計算式固定為：
 ```text
 HMAC-SHA256(secret, signature_timestamp + "\n" + raw_request_body)
 ```
+
+`signature_timestamp`的wire value固定為UTC Unix epoch seconds的canonical ASCII unsigned base-10字串，regex為`^(?:0|[1-9][0-9]*)$`。除`0`外不得有leading zero；正負號、小數、毫秒值與RFC 3339形式均無效。簽章使用header的exact string，receiver須先驗格式與可解析範圍，再以epoch seconds檢查±300秒skew；不得先normalize再驗簽。
 
 Cloud receiver MUST 以raw bytes驗簽、constant-time compare、要求header/body `event_id`一致，並預設拒絕超出±300秒skew、unknown key、tampered body或signature mismatch。Retry可換timestamp/signature，但 `event_id`、raw body與digest不得改變。Secret不得出現在payload、log、UI、test evidence或committed example；`.env.example`未來只列blank key names。
 
@@ -294,7 +296,7 @@ Coordinator必須先以atomic local outbox JSON保存stable event/body digest再
 
 #### 10.5 Health event只投影formal result位置健康度
 
-`lineage_result_health_changed` 固定使用 `VERIFIED | MISSING | INTEGRITY_FAILED | TOMBSTONED`。每筆event攜帶既有 `publication_identity`、original result ID/ref/digest，但不重送summary；receiver必須以publication identity join既有 `lineage_publications`，逐字驗證result ID/ref/digest後才append health event。原始summary只保存在immutable publication row，health event絕不改寫它。`observed_at`必須是UTC uppercase `Z`、年份`1000–9999`、秒`00–59`且最多6位小數秒；receiver只可右補零，不得接受offset、leap second、MySQL範圍外年份或round/truncate超微秒值。Current health依此exact microsecond最新值衍生；完全相同時間才以receiver-assigned append order決定。Dead-letter/retry造成的較舊event可保留在history，但不得覆寫較新的observation。
+`lineage_result_health_changed` 固定使用 `VERIFIED | MISSING | INTEGRITY_FAILED | TOMBSTONED`。每筆event攜帶既有 `publication_identity`、original result ID/ref/digest，但不重送summary；receiver必須以`publication_identity + manifest_digest` join既有 `lineage_publications`，逐字驗證result ID/ref/digest後才append health event，reference DDL亦以該composite binding約束health與receipt。原始summary只保存在immutable publication row，health event絕不改寫它。`observed_at`必須是UTC uppercase `Z`、年份`1000–9999`、秒`00–59`且最多6位小數秒；receiver只可右補零，不得接受offset、leap second、MySQL範圍外年份或round/truncate超微秒值。Current health依此exact microsecond最新值衍生；完全相同時間才以receiver-assigned append order決定。Dead-letter/retry造成的較舊event可保留在history，但不得覆寫較新的observation。
 
 `MISSING` 與 `INTEGRITY_FAILED` 必須由edge reconciler至少兩次獨立觀察確認後才送；artifact恢復並驗證成功可回到 `VERIFIED`。`TOMBSTONED` 只能由正式retention/revocation record觸發且必須攜帶`tombstone_record_id`；`VERIFIED`、`MISSING`與`INTEGRITY_FAILED`不得攜帶該欄位。Health change不刪cloud history，也不改 formal edge availability。
 
@@ -309,7 +311,7 @@ lineage_event_identities
 lineage_event_receipts
 ```
 
-`lineage_publications`只保存identities、四個result locators、manifest digest、receiver計算的canonical `publication_content_sha256`與bounded summary；`lineage_event_identities`以全域`event_id`保存first accepted raw-body digest，阻擋同ID異body。Current health在尚無event時衍生為`VERIFIED`，其後依observation time衍生，不在immutable publication row保存mutable projection。Health events與receipts均append-only。Schema MUST NOT 定義逐 element lineage table。本 change附MySQL 8 `REFERENCE ONLY` DDL，僅表達logical constraints；不提供migration、DB connection、credentials或「已執行／已驗證真MySQL」宣稱。Test fake只模擬protocol transaction/idempotency，不是production cloud runtime。
+`lineage_publications`只保存identities、四個result locators、manifest digest、receiver計算的canonical `publication_content_sha256`與bounded summary；它以case-sensitive的`publication_identity + manifest_digest` composite candidate key供health與receipt foreign keys引用。所有SHA-256 columns都使用case-sensitive ASCII collation，使lowercase-hex CHECK不受database default collation影響。`lineage_event_identities`以全域`event_id`保存first accepted raw-body digest，阻擋同ID異body。Current health在尚無event時衍生為`VERIFIED`，其後依observation time衍生，不在immutable publication row保存mutable projection。Health events與receipts均append-only。Schema MUST NOT 定義逐 element lineage table。本 change附MySQL 8 `REFERENCE ONLY` DDL，僅表達logical constraints；不提供migration、DB connection、credentials或「已執行／已驗證真MySQL」宣稱。Test fake只模擬protocol transaction/idempotency，不是production cloud runtime。
 
 ## 資料與控制流程
 
