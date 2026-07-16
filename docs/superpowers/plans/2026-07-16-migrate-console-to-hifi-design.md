@@ -529,8 +529,8 @@ git commit -m "refactor(console): Pipeline/Ops/Concept hex → var(--ab-*) + 13 
 - Modify: `web-viewer-sample/src/console/EmbeddedViewer.tsx`（144 行）
 
 **Interfaces:**
-- Consumes: Task 1 token 全集（`:root` 定義 → overlay 掛在 `.ec-root` 之外也解析得到，**本地 `--ec-` 定義副本因此可整塊刪除**）。
-- Produces: `governance/overlay.css` 與 `viewer/viewer.css` 零 `--ec-`、零品牌綠；`grep -rc -- "--ec-" web-viewer-sample/src` 只剩 `edge-console.css` 與 `EdgeConsole.tsx`（import 行）。品牌色在 legacy 頁面**可見地**由綠轉青（本 change 的目的）。
+- Consumes: Task 1 token 全集（`--ab-*` 於 `:root` 定義 → overlay 掛在 `.ec-root` 之外也解析得到）。**Task 5 fix 追記（實作後校正）**：`viewer/viewer.css` 的本地 `--ec-` 可整塊刪除；但 `governance/overlay.css` **不可**——`GovernanceOverlay.tsx` 仍渲染 `.ec-btn`/`.ec-note`/`.ec-warn-note`/`.ec-cap`/`.ec-table` 等 legacy class，其規則（在 `edge-console.css`，全域 selector）消費 `var(--ec-*)`，而 `--ec-*` 只定義於 `.ec-root`；`.gov-overlay` 掛在 `.ec-root` 之外，整塊刪除會令這些 var 於 overlay 內無法解析（治理面板失色迴歸，已由 browser E2E `e2e/overlay-ec-token-resolution.spec.ts` 抓到並修）。故保留一份薄的 `--ec-* → var(--ab-*)` 相容 shim，待 Task 7 把 `.ec-*` 規則的 `var(--ec-*)` 機械移植成 `var(--ab-*)`（`:root` 全域解析）後即成 dead code，於 Task 7 一併移除。
+- Produces: `viewer/viewer.css` 零 `--ec-`、零品牌綠；`governance/overlay.css` 零品牌綠、零硬寫 hex，但**保留一份過渡 shim**（`--ec-*` 值全部轉接 `var(--ab-*)`，非硬寫色）。本 task 完成後 `grep -rln -- "--ec-" web-viewer-sample/src` 回傳 `edge-console.css` 與 `governance/overlay.css` 兩檔；`--ec-` 全域歸零由 Task 7 收尾（見 Task 7 Files／Step 3(d)／Step 6）。品牌色在 legacy 頁面**可見地**由綠轉青（本 change 的目的）。
 
 - [ ] **Step 1: 基準（既有行為測試綠）**
 
@@ -540,7 +540,7 @@ npx vitest run src/console/GovernanceOverlay.test.tsx src/console/viewer/ src/co
 ```
 Expected: 綠（這些測試斷言 testid/class 名/文字，不綁色值）。
 
-- [ ] **Step 2: `governance/overlay.css` — 刪除本地 token 副本、hex→var。** 檔案 1-20 行整段換成：
+- [ ] **Step 2: `governance/overlay.css` — hex→var、品牌綠轉青。**（⚠ **Task 5 fix**：以下「整塊刪除本地 `--ec-` 副本」原案會觸發 `.gov-overlay` 治理面板失色迴歸，**勿照抄**；實際交付保留一份 `--ec-* → var(--ab-*)` shim，見本 Step 末「Task 5 fix 追記」與現行檔案。）原案 1-20 行換成：
 
 ```css
 /* web-viewer-sample/src/console/governance/overlay.css
@@ -574,7 +574,9 @@ foreach ($k in $repl.Keys) { $text = $text.Replace($k, $repl[$k]) }
 Set-Content -LiteralPath $f -Value $text -NoNewline
 grep -n -- "--ec-\|#[0-9a-fA-F]\{6\}" src/console/governance/overlay.css
 ```
-Expected: grep 0 行（`rgba(11, 13, 16, 0.92)` 為中性深色半透明背景、非 hex、保留）。
+Expected（原案）: grep 0 行。**實際交付（Task 5 fix）**：hex 為 0，但 `--ec-` 仍有一份轉接 `var(--ab-*)` 的 shim（見下方追記）；`rgba(11, 13, 16, 0.92)` 為中性深色半透明背景、非 hex、保留。
+
+> **Task 5 fix 追記（實作歷程）**：上方「整塊刪除本地 `--ec-` 副本」原案在 browser 下觸發迴歸——`GovernanceOverlay.tsx` 渲染的 `.ec-btn`/`.ec-note`/`.ec-warn-note`/`.ec-cap`/`.ec-table` 規則（`edge-console.css`，全域 selector）消費 `var(--ec-*)`，而 `--ec-*` 只定義於 `.ec-root`；`.gov-overlay` 掛在 `.ec-root` 之外，刪掉本地副本後這些 var 於 overlay 內解析失敗、治理面板失色。修法：於 `.gov-overlay` 保留一份薄 shim，把 `--ec-bg`/`--ec-grn`/`--ec-amb`/… 全部轉接成對應 `var(--ab-*)`（非硬寫 hex）。此 shim 是**過渡態**：待 **Task 7** 把 `.ec-*` 規則的 `var(--ec-*)` 機械移植成 `var(--ab-*)`（`:root` 全域，overlay 內即可解析）後，shim 成 dead code，於 Task 7 Step 3(d) 一併刪除、由 Step 6 grep gate 驗 `--ec-` 全域歸零。迴歸守門測試：`web-viewer-sample/e2e/overlay-ec-token-resolution.spec.ts`。
 
 - [ ] **Step 3: `viewer/viewer.css` — 品牌綠/sky 青系轉向 + 中性色 token 化（該檔不用 `--ec-`，全是 hex）**
 
@@ -761,6 +763,7 @@ git commit -m "feat(console): 移除亮/暗主題切換，UnifiedConsole 收斂�
 - Create: `web-viewer-sample/src/console/legacy-console.css`（由 `edge-console.css` 機械移植）
 - Modify: `web-viewer-sample/src/console/EdgeConsole.tsx:9`（import 換檔）
 - Modify: `web-viewer-sample/src/console/IntentDialog.css.test.ts:10`（讀檔路徑換新檔）
+- Modify: `web-viewer-sample/src/console/governance/overlay.css`（移除 Task 5 保留的 `--ec-* → var(--ab-*)` 過渡 shim；前置條件由本 task Step 2 的 `.ec-*` 規則移植滿足，見 Step 3(d)）
 - Modify: `web-viewer-sample/src/console/ConversionPage.tsx:19`、`ConversionPage.test.tsx:190`、`web-viewer-sample/e2e/ifc-ready-field-redesign.spec.ts:237`、`web-viewer-sample/src/console/unified/unified.css:5`（註解提及 edge-console.css 之處）
 - Modify: `docs/plans/design-system-reference.manifest.json`（`token_projection.production_projection`）
 - Delete: `web-viewer-sample/src/console/edge-console.css`
@@ -854,6 +857,8 @@ Set-Content -LiteralPath 'src/console/legacy-console.css' -Value $text -NoNewlin
 
 (c) 修掉殘留品牌註解：原 57 行「綠維持 #76b900」與原 440 行淺色註解已不適用——(b) 已刪 440；57 行註解改為 `/* DS 對齊：active left-bar 依 plane 上色（CORE/governance=cyan、OMNIVERSE=accent）。 */`。
 
+(d) 移除 `governance/overlay.css` 的過渡 shim（Task 5 fix 保留者）：刪掉 `.gov-overlay` 內整塊 `--ec-* → var(--ab-*)` 定義（含其上方 shim 說明註解），並把檔頭註解回收成「純消費 `--ab-*`」。**前置條件已由本 Step 2 滿足**——`.ec-btn`/`.ec-note`/`.ec-warn-note`/`.ec-cap`/`table.ec-table` 等全域 `.ec-*` 規則的 `var(--ec-*)` 已移植成 `var(--ab-*)`（`:root` 定義），這些規則在 `.gov-overlay`（`.ec-root` 之外）內已能直接解析，shim 不再需要；刪除後 `.gov-overlay` 只餘結構屬性 + `var(--ab-*)`。守門測試 `e2e/overlay-ec-token-resolution.spec.ts`（Step 6 全套 E2E 內）須續綠——此時 token 由移植後的規則供給，非 shim。
+
 - [ ] **Step 4: 換 import、刪舊檔、清註解**
 
 `EdgeConsole.tsx:9`：`import "./edge-console.css";` → `import "./legacy-console.css";`
@@ -888,13 +893,13 @@ npx vitest run
 npm run test:visual:design-system
 pwsh ../scripts/tests/verify-design-system-reference.ps1
 ```
-Expected: 第一個 grep **無任何輸出**（全 repo src 歸零，舊檔已刪故無例外）；typecheck/build/vitest 全綠；visual gate 26 比對 PASS（unified 頁未動）；manifest 驗證 PASS。
+Expected: 第一個 grep **無任何輸出**（全 repo src 歸零——`edge-console.css` 已刪、`governance/overlay.css` 過渡 shim 已於 Step 3(d) 移除，無例外）；typecheck/build/vitest 全綠（含 `overlay-ec-token-resolution.spec.ts`）；visual gate 26 比對 PASS（unified 頁未動）；manifest 驗證 PASS。
 
 - [ ] **Step 7: Commit**
 
 ```powershell
 # cwd: <repo>
-git add web-viewer-sample/src/console/legacy-console.css web-viewer-sample/src/console/EdgeConsole.tsx web-viewer-sample/src/console/IntentDialog.css.test.ts web-viewer-sample/src/console/ConversionPage.tsx web-viewer-sample/src/console/ConversionPage.test.tsx web-viewer-sample/e2e/ifc-ready-field-redesign.spec.ts web-viewer-sample/src/console/unified/unified.css docs/plans/design-system-reference.manifest.json
+git add web-viewer-sample/src/console/legacy-console.css web-viewer-sample/src/console/EdgeConsole.tsx web-viewer-sample/src/console/IntentDialog.css.test.ts web-viewer-sample/src/console/ConversionPage.tsx web-viewer-sample/src/console/ConversionPage.test.tsx web-viewer-sample/e2e/ifc-ready-field-redesign.spec.ts web-viewer-sample/src/console/unified/unified.css web-viewer-sample/src/console/governance/overlay.css docs/plans/design-system-reference.manifest.json
 git commit -m "feat(console): retire edge-console.css，legacy-console.css 移植消費 --ab-*，--ec- 全域歸零（§6.5，BREAKING）"
 ```
 
