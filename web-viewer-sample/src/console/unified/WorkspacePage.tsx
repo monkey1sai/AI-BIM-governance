@@ -92,7 +92,9 @@ export function WorkspacePage({ initialDock }: WorkspacePageProps) {
     issues: [zh ? "◉ Issue 錨點 ×" + u.issues.length : "◉ Issue anchors ×" + u.issues.length, "rgba(65,199,232"],
   };
   const lg = legends[ws.dock];
-  const vpImage = `/design-assets/${VP_BASE[ws.dock]}.png`;
+  // BASE_URL 感知：dev/preview base='/'（design gate 像素跑）、build:ui base='/ui/'（:8004/ui 產品入口）。
+  // 根絕對 '/design-assets/…' 在 /ui/ base 下會 404（viewport 背景整個破圖）。
+  const vpImage = `${import.meta.env.BASE_URL}design-assets/${VP_BASE[ws.dock]}.png`;
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>

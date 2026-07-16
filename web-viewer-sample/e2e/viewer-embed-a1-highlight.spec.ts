@@ -196,6 +196,13 @@ test.describe("VG-01：#a1-workbench inline viewer + 3D 高亮閉環", () => {
     const highlightReason = page.getByTestId("a1-inline-highlight-reason");
     await expect(highlightBtn).toBeVisible({ timeout: 30_000 });
     const canHighlight = await expect(highlightBtn).toBeEnabled({ timeout: 30_000 }).then(() => true, () => false);
+    // E2E_REQUIRE_HIGHLIGHT_ACK=1（fixture 齊備的證據跑）強制 ack 腿：把「高亮永久 disabled」
+    // 的產品回歸（mapping 回填壞掉/DataChannel 判定壞掉）從軟腿 PASS 變硬 FAIL；
+    // 未設時保留異質環境的誠實 disabled 腿（skip != PASS、disabled != FAIL）。
+    if (process.env.E2E_REQUIRE_HIGHLIGHT_ACK === "1" && !canHighlight) {
+      const reason = (await highlightReason.textContent().catch(() => null)) ?? "(no reason)";
+      throw new Error(`E2E_REQUIRE_HIGHLIGHT_ACK=1 但高亮鈕 disabled：${reason}`);
+    }
     if (canHighlight) {
       await highlightBtn.click();
       await expect(highlightReason).toContainText("已送出並收到 viewer 回報", { timeout: 30_000 });

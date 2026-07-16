@@ -1108,7 +1108,10 @@ export function VersionDiffPage() {
   const targetVersions = targetModels.find((m) => m.model_id === targetSel.model)?.versions ?? [];
 
   const run = useCallback(async () => {
+    // 重算 diff 時同步清 inline overlay 的送出/ack 摘要——殘留上一輪的 sent/unmapped 計數
+    // 會誤導「新 diff 已疊加」（viewer pane 在重算期間 unmount，舊高亮早已失效）。
     setBusy(true); setErr(null); setDiff(null); setItems([]); setImpact(null); setOverlay(null);
+    setOvSend(null); setOvAck(null);
     try {
       // library://（檔案庫選定）→ coordinator /api/governance-library/diffs：瀏覽器送邏輯三段，
       // 真路徑由 coordinator server-side 解析（遮蔽字面 "[server-path]" 永不回送）。

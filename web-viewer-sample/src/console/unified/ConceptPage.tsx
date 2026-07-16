@@ -24,8 +24,9 @@ export function ConceptPage({ slug }: ConceptPageProps) {
   const feats = zh ? conceptFeat[slug].zh : conceptFeat[slug].en;
   const code = slug.toUpperCase() as Uppercase<ConceptKey>;
   const title = zh ? cm.titleZh : cm.titleEn;
-  /* 原型 img src = "uploads/ai-bim-geo-viewer-A<N>.png"；產品資產落點 /design-assets/ */
-  const imgSrc = cm.img.replace("uploads/", "/design-assets/");
+  /* 原型 img src = "uploads/ai-bim-geo-viewer-A<N>.png"；產品資產落點 design-assets/。
+     BASE_URL 感知：build:ui base='/ui/' 下根絕對路徑會 404（概念稿大圖破圖）。 */
+  const imgSrc = cm.img.replace("uploads/", `${import.meta.env.BASE_URL}design-assets/`);
 
   /* 原型 onerror="App.conceptFallback(this)"：換頁重建 DOM 會重試載圖 → 以 per-slug 記錄還原同語意 */
   const [failedSlug, setFailedSlug] = useState<ConceptKey | null>(null);

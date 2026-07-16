@@ -9,10 +9,15 @@ test.describe("Product AI-BIM Governance console integration", () => {
   test("operator can navigate unified + legacy product console pages", async ({ page }) => {
     const severeConsole: string[] = [];
     page.on("console", (msg) => {
-      // 網路層資源錯誤（404/502 的 "Failed to load resource"）＝後端部分缺席時的誠實輸入
-      // （例：:49101 conversion authority 未啟 → /api/dev/conversions 502；頁面另以降級 UI 呈現），
-      // 非 app 缺陷；app 層 console.error 與 pageerror 仍零容忍。
-      if (msg.type() === "error" && !/^Failed to load resource:/.test(msg.text())) severeConsole.push(msg.text());
+      if (msg.type() !== "error") return;
+      // 只豁免「/api/* 的網路層資源錯誤」＝後端部分缺席時的誠實輸入（例：:49101 未啟 →
+      // /api/dev/conversions 502，頁面以降級 UI 呈現）與 favicon 404。以 location.url 精準判定——
+      // 靜態資產（chunk/CSS/design-assets png）404 仍零容忍（sync-design-assets 漏拷要紅）；
+      // app 層 console.error 與 pageerror 一律零容忍。
+      const url = msg.location()?.url ?? "";
+      const honestNetworkDegradation =
+        /^Failed to load resource:/.test(msg.text()) && (/\/api\//.test(url) || /favicon\.ico$/.test(url));
+      if (!honestNetworkDegradation) severeConsole.push(`${msg.text()} [${url}]`);
     });
     page.on("pageerror", (err) => severeConsole.push(err.message));
 
