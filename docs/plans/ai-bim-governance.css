@@ -138,6 +138,9 @@
 
   /* Violet 延伸（fixtures.ts badgeToneColors.p4 承接：對照表外殘餘值缺口） */
   --ab-violet-dim: #8f81d8;
+
+  /* Violet 延伸（ConceptPage.tsx concept-fallback 圖示字承接：對照表外殘餘值缺口） */
+  --ab-violet-bright: #c9befc;
 }
 
 /* ─────────────────────────── BASE ─────────────────────────── */
