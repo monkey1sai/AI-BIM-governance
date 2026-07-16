@@ -50,7 +50,7 @@ Lineage mapping item SHALL additive 包含 `rvt_element_id`、`ifc_uuid36`、既
 
 ### Requirement: Alignment metrics SHALL 使用明確且不同的分母
 
-系統 SHALL 分開輸出 `ifc_usdc_coverage_ratio`、`rvt_ifc_alignment_ratio` 與 `rvt_ifc_usdc_lineage_ratio`。前者分母為 eligible source `IfcProduct` count；若沿用 legacy `source_ifc_entity_count` field，schema MUST 明定它是同一 eligible集合的 alias。後兩者分母固定為 valid unique scheduled elements。報告 SHALL 同時輸出 CSV total/valid、eligible IFC product count、duplicate ID/GUID、invalid、CSV-only、IFC-only、IFC→USDC unmapped 與 full-lineage matched counts/sets。`ifc_only_count` SHALL 精確等於 `eligible_ifc_product_count - rvt_ifc_alignment_ratio.numerator`；producer、result-manifest validator與cloud publication validator對此不變式 MUST 使用相同語意。
+系統 SHALL 分開輸出 `ifc_usdc_coverage_ratio`、`rvt_ifc_alignment_ratio` 與 `rvt_ifc_usdc_lineage_ratio`。前者分母為 eligible source `IfcProduct` count；若沿用 legacy `source_ifc_entity_count` field，schema MUST 明定它是同一 eligible集合的 alias。後兩者分母固定為 valid unique scheduled elements。報告 SHALL 同時輸出 CSV total/valid、eligible IFC product count、duplicate ID/GUID、invalid、CSV-only、IFC-only、IFC→USDC unmapped 與 full-lineage matched counts/sets。`csv_valid_count` MUST NOT 大於`csv_total_count`；duplicate RVT ID、duplicate IFC GUID與invalid-row count各自 MUST NOT 大於`csv_total_count - csv_valid_count`，但三類 MAY 重疊且不要求總和等式；`ifc_only_count` SHALL 精確等於 `eligible_ifc_product_count - rvt_ifc_alignment_ratio.numerator`。令A為eligible IFC count、S為RVT→IFC numerator、U為IFC→USDC numerator、F為full-lineage count，則 SHALL 滿足`max(0, S + U - A) <= F <= min(S, U)`。Producer、result-manifest validator與cloud publication validator對這些不變式 MUST 使用相同語意。
 
 #### Scenario: Metrics 計算
 
@@ -74,6 +74,12 @@ Lineage mapping item SHALL additive 包含 `rvt_element_id`、`ifc_uuid36`、既
 #### Scenario: IFC-only count與alignment numerator矛盾
 
 - **WHEN** report的`ifc_only_count`不等於`eligible_ifc_product_count - rvt_ifc_alignment_ratio.numerator`
+- **THEN** report與ResultManifest validation SHALL fail closed
+- **AND**該result MUST NOT enqueue cloud lineage publication
+
+#### Scenario: Alignment counts超出可行集合
+
+- **WHEN** `csv_valid_count > csv_total_count`、任一diagnostic count超過non-valid rows，或full-lineage count落在`max(0, S + U - A)`至`min(S, U)`範圍外
 - **THEN** report與ResultManifest validation SHALL fail closed
 - **AND**該result MUST NOT enqueue cloud lineage publication
 

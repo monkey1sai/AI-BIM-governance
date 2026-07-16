@@ -68,8 +68,12 @@ JSON Schema可拒絕形狀與enum錯誤；下列cross-field規則仍須由sender
 - `ifc_usdc_coverage_ratio.denominator == eligible_ifc_product_count`，且其`numerator == eligible_ifc_product_count - ifc_usdc_unmapped_count`。
 - `rvt_ifc_alignment_ratio.denominator == csv_valid_count`，且其`numerator == csv_valid_count - csv_only_count`。
 - `ifc_only_count == eligible_ifc_product_count - rvt_ifc_alignment_ratio.numerator`。
+- `csv_valid_count <= csv_total_count`。
+- `duplicate_rvt_id_count`、`duplicate_ifc_guid_count`與`invalid_row_count`各自`<= csv_total_count - csv_valid_count`；三類可重疊，不要求總和等式。
 - `rvt_ifc_usdc_lineage_ratio.denominator == csv_valid_count`，且其`numerator == full_lineage_matched_count`。
 - `full_lineage_matched_count <= rvt_ifc_alignment_ratio.numerator`。
+- `full_lineage_matched_count <= ifc_usdc_coverage_ratio.numerator`。
+- `full_lineage_matched_count >= max(0, rvt_ifc_alignment_ratio.numerator + ifc_usdc_coverage_ratio.numerator - eligible_ifc_product_count)`。
 - ratio 1對應`complete`；0≤ratio<1對應`partial`。
 - `warning_code_count == warning_codes.length`。
 - `edge_site_id`、`external_model_version_id`與`result_id` MUST NOT 含literal `:`；`publication_identity`必須逐byte等於`edge_site_id + ":" + external_model_version_id + ":" + result_id`，sender與receiver都須重新計算並拒絕不一致值。
@@ -114,12 +118,26 @@ Sender先serialize一次body，再以同一raw bytes簽名與傳送。Retry保�
 | 已發布相同identity、digest與immutable content | 200 | 回傳原始registration，`replay=true` |
 | 新health event ID且publication digest相同 | 201 | 附加transition，`replay=false` |
 | 相同health event ID與相同raw-body digest | 200 | 精確replay，`replay=true` |
-| 相同event ID但raw-body digest不同 | 409 | 不得變更，需人工修正 |
+| 相同event ID但event type／publication identity／raw-body digest任一不同 | 409 | 不得變更，需人工修正 |
 | 相同publication identity但manifest digest不同 | 409 | 不得變更，需人工修正 |
 | Tenant綁定不一致 | 403 | 不得變更；不得從MinIO path建立authority |
 | Parent model-version不存在 | 422 | 不得變更；需人工修正 |
 | 網路／逾時／408／429／5xx | 視情況而定 | 有限次retry |
 | 202、empty/malformed/mismatched 2xx | 2xx | protocol failure；不得標`DELIVERED` |
+
+Sanitized error的HTTP status、code與retryability固定如下；任何交叉不一致都屬protocol failure：
+
+| `error.code` | HTTP | `retryable` |
+|---|---:|---:|
+| `INVALID_REQUEST` | 400 | `false` |
+| `UNSUPPORTED_SCHEMA` | 422 | `false` |
+| `HMAC_AUTH_FAILED` | 401 | `false` |
+| `TENANT_BINDING_MISMATCH` | 403 | `false` |
+| `PARENT_BINDING_NOT_FOUND` | 422 | `false` |
+| `PUBLICATION_DIGEST_CONFLICT` | 409 | `false` |
+| `RATE_LIMITED` | 429 | `true` |
+| `TRANSIENT_UNAVAILABLE` | 503 | `true` |
+| `INTERNAL_ERROR` | 500 | `true` |
 
 成功ACK必須精確包含：
 
@@ -134,11 +152,13 @@ replay
 
 Sender只有在200/201且event/identity/digest逐字匹配時標`DELIVERED`。Delivery是at-least-once，不宣稱exactly-once。
 
-Receiver在任何publication、health或receipt mutation前，須於同一transaction建立／檢查以`event_id`為primary key的immutable event ledger，保存first accepted raw-body SHA-256。相同`event_id`搭配不同digest一律`409`且不異動；相同digest才可繼續event-type-specific replay判定。每次accepted first delivery／replay仍另append receipt row。
+Receiver在任何publication、health或receipt mutation前，須於同一transaction建立／檢查以`event_id`為primary key的immutable event ledger，保存first accepted `event_type + publication_identity + raw_body_sha256` tuple。相同`event_id`搭配任一不同tuple field一律`409`且不異動；完整tuple相同才可繼續event-type-specific replay判定。每次accepted first delivery／replay仍另append receipt row；reference DDL以composite FK強制receipt逐欄等於ledger tuple，並以`publication_identity + manifest_digest + registration_id`綁定原publication ACK identity。
 
 Published event另計算`publication_content_sha256`：對`schema_version`、`event_type`、`edge_site_id`、`tenant_id`、`project_id`、`external_model_version_id`、`result_id`、`publication_identity`、`result_manifest_digest`與完整published `payload`組成的projection做RFC 8785 JCS，再取lowercase SHA-256；明確排除transport-specific `event_id`、`occurred_at`與`correlation_id`。相同identity／manifest digest只有在此digest也相同時才是`200 replay`，否則`409`。
 
 Sanitized error body只必填`error`。當request ID缺失、malformed或尚未通過可採信的解析／驗證時，receiver MUST NOT 捏造`event_id`；若error body提供`event_id`，它仍必須是已解析request context中的有效UUID。Success ACK的`event_id`維持必填。
+
+`error.retryable`不是advisory：`INVALID_REQUEST | UNSUPPORTED_SCHEMA | HMAC_AUTH_FAILED | TENANT_BINDING_MISMATCH | PARENT_BINDING_NOT_FOUND | PUBLICATION_DIGEST_CONFLICT`固定為`false`；`RATE_LIMITED | TRANSIENT_UNAVAILABLE | INTERNAL_ERROR`固定為`true`。Response schema拒絕code/boolean矛盾，sender亦不得用矛盾body覆寫HTTP與domain分類。
 
 ## Outbox與健康狀態
 
@@ -183,8 +203,11 @@ Current health不儲存在immutable publication row：尚無health event時衍�
 | `invalid-inconsistent-ifc-usdc-counts.json` | semantic validator | 無效（JSON shape有效） |
 | `invalid-inconsistent-rvt-ifc-counts.json` | semantic validator | 無效（JSON shape有效） |
 | `invalid-inconsistent-ifc-only-count.json` | semantic validator | 無效（JSON shape有效） |
+| `invalid-csv-valid-exceeds-total.json` | semantic validator | 無效（JSON shape有效） |
 | `invalid-inconsistent-alignment-counts.json` | semantic validator | 無效（JSON shape有效） |
 | `invalid-full-lineage-exceeds-rvt-ifc.json` | semantic validator | 無效（JSON shape有效） |
+| `invalid-full-lineage-exceeds-ifc-usdc.json` | semantic validator | 無效（JSON shape有效） |
+| `invalid-full-lineage-below-set-intersection.json` | semantic validator | 無效（JSON shape有效） |
 | `invalid-offset-health-observed-at.json` | 請求schema | 無效 |
 | `invalid-submicrosecond-health-observed-at.json` | 請求schema | 無效 |
 | `invalid-leap-second-health-observed-at.json` | 請求schema | 無效 |
@@ -192,6 +215,9 @@ Current health不儲存在immutable publication row：尚無health event時衍�
 | `valid-lineage-result-tombstoned.json` | 請求 | 有效 |
 | `invalid-tombstone-id-on-non-tombstone.json` | 請求schema | 無效 |
 | `invalid-incomplete-ack.json` | 回應 | 無效 |
+| `valid-transient-error.json` | 回應 | 有效 |
 | `invalid-error-event-id.json` | 回應 | 無效 |
+| `invalid-retryable-deterministic-error.json` | 回應 | 無效 |
+| `invalid-nonretryable-transient-error.json` | 回應 | 無效 |
 
 Valid schema結果只證明contract artifact一致；不代表production publisher、external receiver或cloud MySQL已實作／執行。

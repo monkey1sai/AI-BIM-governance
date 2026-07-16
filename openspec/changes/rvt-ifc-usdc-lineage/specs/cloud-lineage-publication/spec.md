@@ -90,7 +90,7 @@ Cloud summary SHALL 只包含：
 
 唯一允許的count fields SHALL 是`csv_total_count`、`csv_valid_count`、`eligible_ifc_product_count`、`duplicate_rvt_id_count`、`duplicate_ifc_guid_count`、`invalid_row_count`、`csv_only_count`、`ifc_only_count`、`ifc_usdc_unmapped_count`與`full_lineage_matched_count`。`warning_codes` SHALL 唯一、最多限制為64個versioned codes，並附帶`warning_code_count`。任何count field MUST NOT 以element identifiers list取代。
 
-Sender與receiver semantic validator SHALL 強制`ifc_usdc_coverage_ratio.denominator == eligible_ifc_product_count`、其numerator等於該count減`ifc_usdc_unmapped_count`；`rvt_ifc_alignment_ratio.denominator == csv_valid_count`、其numerator等於該count減`csv_only_count`；`ifc_only_count == eligible_ifc_product_count - rvt_ifc_alignment_ratio.numerator`；`rvt_ifc_usdc_lineage_ratio.denominator == csv_valid_count`、其numerator等於`full_lineage_matched_count`；`full_lineage_matched_count` MUST NOT 大於RVT→IFC numerator。任一cross-field矛盾 MUST 在enqueue或receiver mutation前fail closed。
+Sender與receiver semantic validator SHALL 強制`ifc_usdc_coverage_ratio.denominator == eligible_ifc_product_count`、其numerator等於該count減`ifc_usdc_unmapped_count`；`rvt_ifc_alignment_ratio.denominator == csv_valid_count`、其numerator等於該count減`csv_only_count`；`ifc_only_count == eligible_ifc_product_count - rvt_ifc_alignment_ratio.numerator`；`csv_valid_count <= csv_total_count`，且`duplicate_rvt_id_count`、`duplicate_ifc_guid_count`與`invalid_row_count`各自 MUST NOT 大於`csv_total_count - csv_valid_count`（三類 MAY 重疊，不要求總和等式）；`rvt_ifc_usdc_lineage_ratio.denominator == csv_valid_count`、其numerator等於`full_lineage_matched_count`。令A為eligible IFC count、S為RVT→IFC numerator、U為IFC→USDC numerator、F為full-lineage count，則 SHALL 滿足`max(0, S + U - A) <= F <= min(S, U)`。任一cross-field矛盾 MUST 在enqueue或receiver mutation前fail closed。
 
 #### Scenario: 分母為零時維持不可評估
 
@@ -101,6 +101,24 @@ Sender與receiver semantic validator SHALL 強制`ifc_usdc_coverage_ratio.denomi
 #### Scenario: Metric與count矛盾
 
 - **WHEN** 任一metric numerator／denominator與其固定count fields不一致
+- **THEN** sender與receiver semantic validation SHALL 拒絕request
+- **AND** publication、event identity或receipt SHALL 均不得commit
+
+#### Scenario: Valid CSV rows超過total
+
+- **WHEN** `csv_valid_count > csv_total_count`
+- **THEN** sender與receiver semantic validation SHALL 拒絕request
+- **AND** publication、event identity或receipt SHALL 均不得commit
+
+#### Scenario: CSV diagnostic count超過non-valid row universe
+
+- **WHEN** duplicate RVT ID、duplicate IFC GUID或invalid-row count任一大於`csv_total_count - csv_valid_count`
+- **THEN** sender與receiver semantic validation SHALL 拒絕request
+- **AND** validator MUST NOT 假設三類彼此互斥或要求其總和等於non-valid rows
+
+#### Scenario: Full lineage落在集合交集可行範圍外
+
+- **WHEN** `full_lineage_matched_count`小於`max(0, S + U - A)`或大於`min(S, U)`
 - **THEN** sender與receiver semantic validation SHALL 拒絕request
 - **AND** publication、event identity或receipt SHALL 均不得commit
 
@@ -151,17 +169,17 @@ Secrets MUST NOT 出現在payload、logs、UI、committed examples或evidence；
 
 ### Requirement: Receiver commit與ACK SHALL 同步且冪等
 
-Delivery SHALL 採at-least-once，並依event type套用不同的idempotency。`lineage_result_published` SHALL 以publication identity加manifest digest作為logical key；首次commit SHALL 回傳`201`，相同identity、digest與immutable publication content則 SHALL 回傳`200`、`replay=true`與原registration identity。Sender transport retry MUST 重用穩定的event ID與raw body；相同identity/digest但immutable content改變，或相同event ID搭配另一個raw-body digest時，SHALL 回傳`409`且不進行mutation。
+Delivery SHALL 採at-least-once，並依event type套用不同的idempotency。`lineage_result_published` SHALL 以publication identity加manifest digest作為logical key；首次commit SHALL 回傳`201`，相同identity、digest與immutable publication content則 SHALL 回傳`200`、`replay=true`與原registration identity。Sender transport retry MUST 重用穩定的event ID與raw body；相同identity/digest但immutable content改變，或相同event ID搭配另一個event type、publication identity或raw-body digest時，SHALL 回傳`409`且不進行mutation。
 
-Receiver SHALL 在任何publication、health或receipt mutation前，於同一transaction建立／檢查以`event_id`為primary key的immutable event identity，保存first accepted raw-body lowercase SHA-256。相同event ID搭配不同raw-body digest MUST 回傳`409`且整個transaction不異動；只有相同digest才可繼續event-type-specific replay判定。
+Receiver SHALL 在任何publication、health或receipt mutation前，於同一transaction建立／檢查以`event_id`為primary key的immutable event identity，保存first accepted `event_type + publication_identity + raw-body lowercase SHA-256` tuple。相同event ID搭配不同tuple field MUST 回傳`409`且整個transaction不異動；只有完整tuple相同才可繼續event-type-specific replay判定。每筆receipt SHALL 以composite binding逐欄匹配該event tuple，並以`publication_identity + manifest_digest + registration_id`逐欄匹配原publication；direct import或reconciliation不得繞過。
 
 對`lineage_result_published`，receiver SHALL 對`schema_version`、`event_type`、`edge_site_id`、`tenant_id`、`project_id`、`external_model_version_id`、`result_id`、`publication_identity`、`result_manifest_digest`與完整published `payload`組成的projection做RFC 8785 JCS並計算lowercase SHA-256，保存為`publication_content_sha256`；projection MUST 排除transport-specific `event_id`、`occurred_at`與`correlation_id`。相同identity／manifest digest只有在此digest相同時才是replay；不同時 SHALL 回傳`409`且不異動。
 
-`lineage_result_health_changed` SHALL NOT 只使用publication identity/digest作為replay key。每個新的health transition SHALL 使用新event ID、append新health row，並回傳`201`；只有相同event ID加相同raw-body digest才 SHALL 回傳`200`與`replay=true`。相同health event ID搭配不同raw-body digest時 SHALL 回傳`409`且不進行mutation。兩種event type的success body SHALL 精確包含`registration_id`、`event_id`、`publication_identity`、`manifest_digest`、`stored_at`與`replay`。
+`lineage_result_health_changed` SHALL NOT 只使用publication identity/digest作為replay key。每個新的health transition SHALL 使用新event ID、append新health row，並回傳`201`；只有相同event ID加相同event type、publication identity與raw-body digest才 SHALL 回傳`200`與`replay=true`。相同health event ID搭配任一不同tuple field時 SHALL 回傳`409`且不進行mutation。兩種event type的success body SHALL 精確包含`registration_id`、`event_id`、`publication_identity`、`manifest_digest`、`stored_at`與`replay`。
 
 Sender SHALL 只在status為`200`或`201`、body符合response schema，且回傳的event/publication/digest values與送出的event完全一致時，將狀態標記為`DELIVERED`。HTTP `202`、empty/malformed body、unexpected 2xx或mismatched ACK SHALL 視為protocol failure。
 
-當published identity搭配另一個manifest digest、相同identity/digest但immutable publication content改變，或任一event ID被重用且搭配另一個raw-body digest時，receiver SHALL 回傳`409`且不進行mutation。Authoritative parent model-version不存在時適用`422`；tenant/project/model-version binding不符時適用`403`。它 MUST NOT 從MinIO path建立cloud authority。Network errors、timeouts、`408`、`429`與`5xx` SHALL 可retry；schema/auth/binding/conflict等deterministic `4xx` SHALL 要求manual correction/replay。
+當published identity搭配另一個manifest digest、相同identity/digest但immutable publication content改變，或任一event ID被重用且搭配另一個event tuple field時，receiver SHALL 回傳`409`且不進行mutation。Authoritative parent model-version不存在時適用`422`；tenant/project/model-version binding不符時適用`403`。它 MUST NOT 從MinIO path建立cloud authority。Canonical error三元組 SHALL 精確為：400/`INVALID_REQUEST`/false、422/`UNSUPPORTED_SCHEMA`/false、401/`HMAC_AUTH_FAILED`/false、403/`TENANT_BINDING_MISMATCH`/false、422/`PARENT_BINDING_NOT_FOUND`/false、409/`PUBLICATION_DIGEST_CONFLICT`/false、429/`RATE_LIMITED`/true、503/`TRANSIENT_UNAVAILABLE`/true、500/`INTERNAL_ERROR`/true。Response schema MUST 拒絕code/boolean矛盾，sender MUST 將HTTP/code mismatch視為protocol failure。Network errors、timeouts、`408`、`429`與`5xx` SHALL 可retry；schema/auth/binding/conflict等deterministic `4xx` SHALL 要求manual correction/replay。
 
 清理過的error response SHALL 只要求`error`；當request的`event_id`缺失、格式錯誤，或因解析／驗證失敗而尚不可採信時，MAY 省略`event_id`。Receiver MUST NOT 捏造ID；若有提供，`event_id` SHALL 是從已解析request context取得的有效UUID。Success ACK requirements保持不變。
 
@@ -198,6 +216,18 @@ Sender SHALL 只在status為`200`或`201`、body符合response schema，且回�
 - **WHEN** model-version parent無法解析，或tenant binding不符
 - **THEN** receiver SHALL 分別回傳`422`或`403`
 - **AND** MUST NOT 從object paths推斷或建立parent
+
+#### Scenario: Error code與retryable矛盾
+
+- **WHEN** deterministic code帶`retryable=true`，或transient code帶`retryable=false`
+- **THEN** response schema validation SHALL 拒絕body
+- **AND** sender MUST NOT 以該矛盾欄位啟動automatic retry或標記delivery成功
+
+#### Scenario: HTTP status與error code矛盾
+
+- **WHEN** error body code／retryable有效，但transport status不等於canonical三元組的HTTP status
+- **THEN** sender SHALL 將response視為protocol failure
+- **AND** body MUST NOT 覆寫transport分類或使outbox進入`DELIVERED`
 
 ### Requirement: Edge publication outbox SHALL 可持久化、可恢復，且不依賴availability
 
@@ -273,7 +303,7 @@ Cloud delivery state SHALL 與source `READY`、result `AVAILABLE`、active-resul
 
 ### Requirement: Cloud persistence SHALL 只包含normative logical metadata
 
-External cloud logical model SHALL 包含`lineage_publications`、`lineage_publication_health_events`、`lineage_event_identities`與`lineage_event_receipts`。它 SHALL 保留publication identity／manifest／canonical content digest、全域event ID／first raw-body digest uniqueness、append-only health history、每次接受的首次delivery或replay所append的一筆receipt row，以及四個locators與bounded summary。Reference DDL SHALL 對publication宣告case-sensitive的`publication_identity + manifest_digest` candidate key，並以composite foreign keys約束health與receipt；所有SHA-256 columns SHALL 使用case-sensitive ASCII collation，使lowercase-hex constraints不依賴database default collation。Current health SHALL 依observation time衍生；immutable publication row不得包含mutable health field。Event identity rows與receipt rows MUST NOT 被更新為replay counters。它 MUST NOT 定義或要求per-element lineage tables。
+External cloud logical model SHALL 包含`lineage_publications`、`lineage_publication_health_events`、`lineage_event_identities`與`lineage_event_receipts`。它 SHALL 保留publication identity／manifest／canonical content digest、全域event ID／first raw-body digest uniqueness、append-only health history、每次接受的首次delivery或replay所append的一筆receipt row，以及四個locators與bounded summary。Reference DDL SHALL 對publication宣告case-sensitive的`publication_identity + manifest_digest` health key與`publication_identity + manifest_digest + registration_id` receipt key；receipt另 SHALL 以`event_id + event_type + publication_identity + raw_body_sha256` composite FK綁定immutable event ledger。所有event IDs與SHA-256 columns SHALL 使用case-sensitive ASCII collation，registration/publication identities SHALL 使用`utf8mb4_0900_bin`，使exact ACK與lowercase-hex constraints不依賴database default collation。Current health SHALL 依observation time衍生；immutable publication row不得包含mutable health field。Event identity rows與receipt rows MUST NOT 被更新為replay counters。它 MUST NOT 定義或要求per-element lineage tables。
 
 本change SHALL 提供MySQL 8 `REFERENCE ONLY` DDL，作為不可執行的mapping輔助。DDL MUST 聲明external `bim-control`擁有physical migrations與credentials，且本repo MUST NOT 宣稱DDL已套用或真實MySQL已驗證。Test fake MAY 模擬transaction/idempotency行為，但 SHALL 維持test-only。
 

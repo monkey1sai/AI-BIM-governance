@@ -98,7 +98,58 @@
             "retryable": {
               "type": "boolean"
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "INVALID_REQUEST",
+                      "UNSUPPORTED_SCHEMA",
+                      "HMAC_AUTH_FAILED",
+                      "TENANT_BINDING_MISMATCH",
+                      "PARENT_BINDING_NOT_FOUND",
+                      "PUBLICATION_DIGEST_CONFLICT"
+                    ]
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "retryable": {
+                    "const": false
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "RATE_LIMITED",
+                      "TRANSIENT_UNAVAILABLE",
+                      "INTERNAL_ERROR"
+                    ]
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "retryable": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          ]
         }
       }
     }

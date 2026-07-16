@@ -13,8 +13,10 @@
 CREATE TABLE lineage_publications (
     publication_identity VARCHAR(522)
         CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
-    registration_id VARCHAR(200) NOT NULL,
-    first_event_id CHAR(36) NOT NULL,
+    registration_id VARCHAR(200)
+        CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
+    first_event_id CHAR(36)
+        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     edge_site_id VARCHAR(120)
         CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
     tenant_id VARCHAR(200) NOT NULL,
@@ -44,6 +46,11 @@ CREATE TABLE lineage_publications (
     UNIQUE KEY uq_lineage_publications_identity_manifest (
         publication_identity,
         manifest_digest
+    ),
+    UNIQUE KEY uq_lineage_publications_receipt_binding (
+        publication_identity,
+        manifest_digest,
+        registration_id
     ),
     UNIQUE KEY uq_lineage_publications_result (
         edge_site_id,
@@ -90,7 +97,8 @@ CREATE TABLE lineage_publications (
 
 CREATE TABLE lineage_publication_health_events (
     health_event_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    event_id CHAR(36) NOT NULL,
+    event_id CHAR(36)
+        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     publication_identity VARCHAR(522)
         CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
     manifest_digest CHAR(64)
@@ -162,7 +170,8 @@ CREATE TABLE lineage_publication_health_events (
 -- event_id before the first publication mutation inside one transaction; a
 -- later failure rolls the ledger row back with the rest of that transaction.
 CREATE TABLE lineage_event_identities (
-    event_id CHAR(36) NOT NULL,
+    event_id CHAR(36)
+        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     event_type ENUM(
         'lineage_result_published',
         'lineage_result_health_changed'
@@ -173,6 +182,12 @@ CREATE TABLE lineage_event_identities (
         CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     first_received_at DATETIME(6) NOT NULL,
     PRIMARY KEY (event_id),
+    UNIQUE KEY uq_lineage_event_identities_tuple (
+        event_id,
+        event_type,
+        publication_identity,
+        raw_body_sha256
+    ),
     KEY ix_lineage_event_identities_publication (
         publication_identity,
         first_received_at
@@ -185,7 +200,8 @@ CREATE TABLE lineage_event_identities (
 
 CREATE TABLE lineage_event_receipts (
     receipt_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    event_id CHAR(36) NOT NULL,
+    event_id CHAR(36)
+        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     event_type ENUM(
         'lineage_result_published',
         'lineage_result_health_changed'
@@ -196,7 +212,8 @@ CREATE TABLE lineage_event_receipts (
         CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     raw_body_sha256 CHAR(64)
         CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    registration_id VARCHAR(200) NOT NULL,
+    registration_id VARCHAR(200)
+        CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
     received_at DATETIME(6) NOT NULL,
     replay BOOLEAN NOT NULL,
     PRIMARY KEY (receipt_id),
@@ -204,24 +221,46 @@ CREATE TABLE lineage_event_receipts (
         event_id,
         received_at
     ),
+    KEY ix_lineage_receipts_event_tuple (
+        event_id,
+        event_type,
+        publication_identity,
+        raw_body_sha256
+    ),
     KEY ix_lineage_receipts_publication (
         publication_identity,
         received_at
     ),
-    KEY ix_lineage_receipts_publication_digest (
+    KEY ix_lineage_receipts_publication_ack (
         publication_identity,
-        manifest_digest
+        manifest_digest,
+        registration_id
     ),
     CONSTRAINT fk_lineage_receipts_event_identity
-        FOREIGN KEY (event_id)
-        REFERENCES lineage_event_identities (event_id)
+        FOREIGN KEY (
+            event_id,
+            event_type,
+            publication_identity,
+            raw_body_sha256
+        )
+        REFERENCES lineage_event_identities (
+            event_id,
+            event_type,
+            publication_identity,
+            raw_body_sha256
+        )
         ON UPDATE RESTRICT
         ON DELETE RESTRICT,
     CONSTRAINT fk_lineage_receipts_publication
-        FOREIGN KEY (publication_identity, manifest_digest)
+        FOREIGN KEY (
+            publication_identity,
+            manifest_digest,
+            registration_id
+        )
         REFERENCES lineage_publications (
             publication_identity,
-            manifest_digest
+            manifest_digest,
+            registration_id
         )
         ON UPDATE RESTRICT
         ON DELETE RESTRICT,
@@ -240,7 +279,10 @@ CREATE TABLE lineage_event_receipts (
 -- - published same identity + digest + publication_content_sha256 -> HTTP 200 replay
 -- - new health event_id -> append health event and receipt, HTTP 201
 -- - same health event_id + same raw_body_sha256 -> append replay receipt, HTTP 200
--- - same event_id + different raw_body_sha256 -> HTTP 409, no mutation
+-- - same event_id + different event_type, publication_identity or
+--   raw_body_sha256 -> HTTP 409, no mutation
+-- - every receipt matches the immutable four-column event tuple and the
+--   three-column publication ACK binding
 -- - every accepted first delivery/replay appends a receipt row; receipts are not updated
 -- - parent missing -> HTTP 422
 -- - tenant binding mismatch -> HTTP 403
