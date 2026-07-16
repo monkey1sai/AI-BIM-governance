@@ -130,6 +130,7 @@ foreach ($relativePath in $expectedExecutableSkillFiles) {
 
 $explicitOnlySuperpowersSkills = @(
     'brainstorming',
+    'dispatching-parallel-agents',
     'finishing-a-development-branch',
     'requesting-code-review',
     'subagent-driven-development',
@@ -171,6 +172,14 @@ foreach ($check in $skillPolicyChecks) {
         $skillPath = Join-Path $repoRoot ".$platform\skills\$($check.Skill)\SKILL.md"
         Assert-True ((Get-Content -Raw -LiteralPath $skillPath) -match $check.Pattern) "$platform $($check.Message)"
     }
+}
+
+foreach ($platform in @('claude', 'codex')) {
+    $visualCompanionPath = Join-Path $repoRoot ".$platform\skills\brainstorming\visual-companion.md"
+    $visualCompanion = Get-Content -Raw -LiteralPath $visualCompanionPath
+    Assert-True ($visualCompanion -match 'Run every shell command in this guide from the skill directory') "$platform visual companion declares its command working directory"
+    Assert-True ($visualCompanion -match '(?m)^\./scripts/start-server\.sh ') "$platform visual companion invokes the vendored start-server script"
+    Assert-True ($visualCompanion -match '(?m)^\./scripts/stop-server\.sh ') "$platform visual companion invokes the vendored stop-server script"
 }
 
 $ornithExamples = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'ornith-vllm-api-examples.html')
