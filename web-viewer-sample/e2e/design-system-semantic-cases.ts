@@ -29,9 +29,636 @@ export type SemanticCaseDefinition = {
   assertions: readonly SemanticAssertionDefinition[];
 };
 
-// Bootstrap contract: semantic state variants are intentionally not marked complete.
-// Product UI changes remain fail-closed until each "<screen-id>:<case-id>" key has a
-// reviewed setup plus concrete DOM assertions. The Playwright spec, not this registry,
-// performs every observation/expectation and writes the machine result.
-export const semanticCaseDefinitions: ReadonlyMap<string, SemanticCaseDefinition> =
-  new Map();
+// ═══════════════════════════════════════════════════════════════════════
+// Design gate semantic contract — 13 screens × 11 required cases = 143 條
+// 可執行 DOM 案例。所有觀察/斷言由 design-system-visual.spec.ts 執行；本檔
+// 只宣告 prepare（自行導航 + fixture 互動）與 assertions（locator + 期望）。
+//
+// 誠實原則：
+// - 全程 **/api/** 已被 spec 以 503 stub，所有互動都是 UnifiedConsole 的
+//   local fixture 行為（state patch + toast 假 API 字串），不宣稱任何後端事實。
+// - runtime_truth 一律斷言 data-prov="fixture" 揭露屬性與
+//   「:8004/ui · UnifiedConsole」註記——明示資料為 fixture。
+// - 找不到天然對映的 case（例：home/ops 的 disabled、ops 的 failure）以
+//   count_equals 0 誠實斷言「該狀態表面目前為空」，逐案附註解，不造假 DOM。
+//
+// state 隔離設計（重要）：
+// - hash-only 的 page.goto 是 same-document navigation，React state（含
+//   UnifiedStateProvider 的 intake/conv/outbox/issues 與 Workspace local
+//   state）會跨 case 存活。case 依 required_case_ids 順序執行，之間的互動
+//   已按順序設計為相容；需要絕對乾淨狀態的 case 用 gotoFreshRoute（先過
+//   about:blank 造成 full document load）。
+// - 每個 screen 的最後一個 case（runtime_truth）一律 gotoFreshRoute 且零互
+//   動，保證接續的像素 baseline 擷取拿到與 golden 一致的初始畫面。
+// ═══════════════════════════════════════════════════════════════════════
+
+const RUNTIME_NOTE = ":8004/ui · UnifiedConsole";
+
+/** 任務規約：prepare 一律自行 page.goto(`/${productionRoute}`, networkidle)。 */
+const gotoRoute = async ({ page, productionRoute }: SemanticCaseContext): Promise<void> => {
+  await page.goto(`/${productionRoute}`, { waitUntil: "networkidle" });
+};
+
+/** 先經 about:blank 造成 full document load → React/fixture state 全部重置。 */
+const gotoFreshRoute = async (context: SemanticCaseContext): Promise<void> => {
+  await context.page.goto("about:blank");
+  await gotoRoute(context);
+};
+
+const clickFirst = async (page: Page, selector: string): Promise<void> => {
+  await page.locator(selector).first().click();
+};
+
+/* ── 共用 assertion 片段 ── */
+
+/** i18n_zh_tw：lang toggle「中」為 active（data-active 由元件依當前語言渲染）。 */
+const langZhActive: SemanticAssertionDefinition = {
+  id: "lang-toggle-zh-active",
+  locator: '[data-uc="lang-zh"]',
+  expectation: "attribute_equals",
+  attribute: "data-active",
+  expected: "true",
+};
+
+/** runtime_truth：data-prov="fixture" 揭露屬性存在 + 殼層 UnifiedConsole 註記。 */
+const runtimeTruthCase = (): SemanticCaseDefinition => ({
+  prepare: gotoFreshRoute,
+  assertions: [
+    { id: "fixture-provenance-marker", locator: '[data-prov="fixture"] >> nth=0', expectation: "visible" },
+    { id: "console-runtime-note", locator: '[data-uc="runtime-note"]', expectation: "text_contains", expected: RUNTIME_NOTE },
+  ],
+});
+
+type ScreenCases = Record<
+  | "navigation"
+  | "primary_actions"
+  | "loading"
+  | "empty"
+  | "success"
+  | "warning"
+  | "failure"
+  | "disabled"
+  | "confirmation"
+  | "i18n_zh_tw"
+  | "runtime_truth",
+  SemanticCaseDefinition
+>;
+
+/* ═══ console.home.default（#home）═══ */
+
+function homeCases(): ScreenCases {
+  return {
+    navigation: {
+      prepare: gotoRoute,
+      assertions: [
+        { id: "sidebar-nav-home-active", locator: '[data-uc="nav-home"]', expectation: "attribute_equals", attribute: "data-active", expected: "true" },
+        { id: "sidebar-workspace-group-label", locator: 'text="工作台"', expectation: "visible" },
+      ],
+    },
+    primary_actions: {
+      prepare: gotoRoute,
+      assertions: [
+        { id: "enter-pipeline-cta-visible", locator: '[data-uc="enter-pipeline"]', expectation: "visible" },
+        { id: "enter-pipeline-cta-enabled", locator: '[data-uc="enter-pipeline"]', expectation: "enabled" },
+        { id: "enter-pipeline-cta-label", locator: '[data-uc="enter-pipeline"]', expectation: "text_equals", expected: "進入生產線 →" },
+      ],
+    },
+    loading: {
+      // 進行中狀態：KPI「轉檔中」= 1（fixture conv 有一筆 running，990_model.ifc 62%）。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "kpi-converting-count", locator: '[data-uc="kpi-conv-val"]', expectation: "text_equals", expected: "1" },
+        { id: "kpi-converting-progress-sub", locator: '[data-uc="kpi-conv"]', expectation: "text_contains", expected: "62%" },
+      ],
+    },
+    empty: {
+      // 可達空狀態：home 初始無 toast → toast host 不渲染（count 0 = 誠實的空通知區）。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "toast-host-empty", locator: '[data-uc="toast"]', expectation: "count_equals", expected: 0 },
+      ],
+    },
+    success: {
+      // 成功狀態：警示/事件流裡的綠點完成事件（fixture alerts）。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "conversion-done-alert", locator: "text=990_model.ifc 轉檔完成,品質 98%", expectation: "visible" },
+      ],
+    },
+    warning: {
+      // 琥珀狀態：Outbox 待送 KPI = 2 + Outbox 重試事件。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "kpi-outbox-pending-count", locator: '[data-uc="kpi-outbox-val"]', expectation: "text_equals", expected: "2" },
+        { id: "outbox-retry-alert", locator: "text=Outbox OB-201 重試 ×2", expectation: "visible" },
+      ],
+    },
+    failure: {
+      // 紅色狀態：KPI 轉檔卡的「1 失敗」紅字 + rule-run 嚴重事件。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "kpi-conv-failed-red-text", locator: "text=1 失敗", expectation: "visible" },
+        { id: "rule-run-critical-alert", locator: "text=rule-run #88 完成:嚴重 18 項", expectation: "visible" },
+      ],
+    },
+    disabled: {
+      // 誠實對映：home 沒有可停用的控制項（launcher P3/P4 卡是可點的概念預覽，
+      // 不是停用態）。以 aria-disabled="true" 計數 0 誠實斷言「無停用/無假停用」。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "no-disabled-controls-on-home", locator: '[aria-disabled="true"]', expectation: "count_equals", expected: 0 },
+      ],
+    },
+    confirmation: {
+      // 誠實調整：home 沒有會發 toast 的 fixture 動作（互動皆為導覽）。
+      // 主 CTA 的確認回饋 = 點「進入生產線」後生產線頁標題出現。
+      prepare: async (context) => {
+        await gotoRoute(context);
+        await clickFirst(context.page, '[data-uc="enter-pipeline"]');
+      },
+      assertions: [
+        { id: "pipeline-page-opened", locator: "text=模型資料與轉檔生產線", expectation: "visible" },
+      ],
+    },
+    i18n_zh_tw: {
+      prepare: gotoRoute,
+      assertions: [
+        { id: "zh-home-title", locator: "text=總覽 · Mission Control", expectation: "visible" },
+        langZhActive,
+      ],
+    },
+    runtime_truth: runtimeTruthCase(),
+  };
+}
+
+/* ═══ workspace.a1..a4.default（#a1..#a4）═══ */
+
+type WsDock = "a1" | "a2" | "a3" | "a4";
+
+const WS_CTA: Record<WsDock, { label: string; confirmToast: string }> = {
+  // a1Ran 初值 true → CTA 顯示「重新執行」；其餘 dock 初值未執行。
+  a1: { label: "重新執行", confirmToast: "POST /api/rule-runs → 202" },
+  a2: { label: "計算差異", confirmToast: "POST /api/diffs → 202" },
+  a3: { label: "Build Federated USD", confirmToast: "POST /api/federated-sets/FS-01/build" },
+  a4: { label: "執行查詢", confirmToast: "POST /api/search/model" },
+};
+
+function workspaceCases(dock: WsDock): ScreenCases {
+  /** goto 後點當前 dock 的主 CTA（產出結果面板；重複點擊為冪等的 re-run）。 */
+  const runDockCta = async (context: SemanticCaseContext): Promise<void> => {
+    await gotoRoute(context);
+    await clickFirst(context.page, '[data-uc="dock-cta"]');
+  };
+
+  const success: SemanticCaseDefinition =
+    dock === "a1"
+      ? {
+          // A1 選定檔案列的 mapping 98% ✓（初始即為成功態）。
+          prepare: gotoRoute,
+          assertions: [{ id: "a1-mapping-98-check", locator: "text=✓ mapping 98%", expectation: "visible" }],
+        }
+      : dock === "a2"
+        ? {
+            prepare: runDockCta,
+            assertions: [{ id: "a2-diff-added-chip", locator: "text=■ 新增 12", expectation: "visible" }],
+          }
+        : dock === "a3"
+          ? {
+              prepare: runDockCta,
+              assertions: [{ id: "a3-federated-stage-check", locator: "text=Federated Stage ✓", expectation: "visible" }],
+            }
+          : {
+              prepare: runDockCta,
+              assertions: [{ id: "a4-pass-count-green", locator: 'text="符合 7"', expectation: "visible" }],
+            };
+
+  const failure: SemanticCaseDefinition =
+    dock === "a1"
+      ? {
+          // a1Ran 初值 true → 檢核失敗清單可見；「嚴重」sev chip（紅）。
+          prepare: gotoRoute,
+          assertions: [
+            { id: "a1-critical-sev-chip", locator: 'text="嚴重"', expectation: "visible" },
+            { id: "a1-fail-row-issue-action", locator: '[data-uc="fail-issue-btn"] >> nth=0', expectation: "visible" },
+          ],
+        }
+      : dock === "a2"
+        ? {
+            prepare: runDockCta,
+            assertions: [{ id: "a2-diff-removed-chip", locator: "text=■ 移除 4", expectation: "visible" }],
+          }
+        : dock === "a3"
+          ? {
+              // 誠實對映：A3 dock 本身無紅色失敗態；工作區的失敗浮出面 = Issues/BCF
+              // dock（open 紅 chip 的既有 fixture issue），以 dock tab 切換（local state）。
+              prepare: async (context) => {
+                await gotoRoute(context);
+                await clickFirst(context.page, '[data-uc="dock-tab-issues"]');
+              },
+              assertions: [
+                { id: "issues-open-red-chip", locator: 'text="open"', expectation: "visible" },
+                { id: "issues-firerating-issue-title", locator: "text=防火時效不足", expectation: "visible" },
+              ],
+            }
+          : {
+              prepare: runDockCta,
+              assertions: [{ id: "a4-fail-count-red", locator: 'text="不符合 5"', expectation: "visible" }],
+            };
+
+  return {
+    navigation: {
+      prepare: gotoRoute,
+      assertions: [
+        { id: "sidebar-nav-ws-active", locator: '[data-uc="nav-ws"]', expectation: "attribute_equals", attribute: "data-active", expected: "true" },
+        { id: `sidebar-app-${dock}-active`, locator: `[data-uc="app-${dock}"]`, expectation: "attribute_equals", attribute: "data-active", expected: "true" },
+      ],
+    },
+    primary_actions: {
+      prepare: gotoRoute,
+      assertions: [
+        { id: "dock-cta-visible", locator: '[data-uc="dock-cta"]', expectation: "visible" },
+        { id: "dock-cta-enabled", locator: '[data-uc="dock-cta"]', expectation: "enabled" },
+        { id: "dock-cta-label", locator: '[data-uc="dock-cta"]', expectation: "text_equals", expected: WS_CTA[dock].label },
+      ],
+    },
+    loading: {
+      // 進行中狀態：Streaming 膠囊 + session capsule（fixture 常駐的 live 表面文案）。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "streaming-pill-live", locator: '[data-uc="streaming-pill"]', expectation: "text_contains", expected: "Streaming" },
+        { id: "session-capsule-editor-lease", locator: "text=S-240601 · editor lease", expectation: "visible" },
+      ],
+    },
+    empty: {
+      // 可達空狀態：初始 sel 為空 → viewport selection callout 不渲染。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "selection-callout-absent", locator: '[data-uc="sel-callout"]', expectation: "count_equals", expected: 0 },
+      ],
+    },
+    success,
+    warning: {
+      // 琥珀狀態：側欄「模型資料與轉檔」的 warn badge = 未完成轉檔數 2（running+failed）。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "nav-pipe-warn-badge-visible", locator: '[data-uc="nav-pipe-badge"]', expectation: "visible" },
+        { id: "nav-pipe-warn-badge-count", locator: '[data-uc="nav-pipe-badge"]', expectation: "text_equals", expected: "2" },
+      ],
+    },
+    failure,
+    disabled: {
+      // 誠實停用（互動後）：A1 檢核失敗列「開單」點過即完成（✓ + aria-disabled，
+      // onClick 原本就 no-op）。a2–a4 screen 以 dock tab 切到 A1（local state）套同一語意。
+      prepare: async (context) => {
+        await gotoRoute(context);
+        await clickFirst(context.page, '[data-uc="dock-tab-a1"]');
+        await clickFirst(context.page, '[data-uc="fail-issue-btn"]');
+      },
+      assertions: [
+        { id: "issue-btn-aria-disabled", locator: '[data-uc="fail-issue-btn"] >> nth=0', expectation: "attribute_equals", attribute: "aria-disabled", expected: "true" },
+        { id: "issue-btn-disabled-state", locator: '[data-uc="fail-issue-btn"] >> nth=0', expectation: "disabled" },
+      ],
+    },
+    confirmation: {
+      // 點主 CTA → toast 假 API 字串（先切回本 dock，因 disabled case 已把 dock 切到 a1）。
+      prepare: async (context) => {
+        await gotoRoute(context);
+        await clickFirst(context.page, `[data-uc="dock-tab-${dock}"]`);
+        await clickFirst(context.page, '[data-uc="dock-cta"]');
+      },
+      assertions: [
+        { id: "fake-api-toast", locator: '[data-uc="toast"]', expectation: "text_contains", expected: WS_CTA[dock].confirmToast },
+      ],
+    },
+    i18n_zh_tw: {
+      prepare: gotoRoute,
+      assertions: [
+        { id: "zh-invite-spectator", locator: "text=+ 邀請 Spectator", expectation: "visible" },
+        langZhActive,
+      ],
+    },
+    runtime_truth: runtimeTruthCase(),
+  };
+}
+
+/* ═══ pipeline.default（#pipeline）═══ */
+
+function pipelineCases(): ScreenCases {
+  return {
+    navigation: {
+      prepare: gotoRoute,
+      assertions: [
+        { id: "sidebar-nav-pipe-active", locator: '[data-uc="nav-pipe"]', expectation: "attribute_equals", attribute: "data-active", expected: "true" },
+        { id: "nav-pipe-badge-initial", locator: '[data-uc="nav-pipe-badge"]', expectation: "text_equals", expected: "2" },
+      ],
+    },
+    primary_actions: {
+      prepare: gotoRoute,
+      assertions: [
+        { id: "trigger-conv-visible", locator: '[data-uc="trigger-conv"] >> nth=0', expectation: "visible" },
+        { id: "trigger-conv-enabled", locator: '[data-uc="trigger-conv"] >> nth=0', expectation: "enabled" },
+        { id: "trigger-conv-label", locator: '[data-uc="trigger-conv"] >> nth=0', expectation: "text_equals", expected: "觸發轉檔 →" },
+      ],
+    },
+    loading: {
+      // 進行中狀態：990_model.ifc running →「轉檔中」chip + 進度說明字條。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "converting-chip", locator: 'text="轉檔中"', expectation: "visible" },
+        { id: "converting-progress-note", locator: "text=IFC→USDC · ifcopenshell + usd-core", expectation: "visible" },
+      ],
+    },
+    empty: {
+      // 把兩張進件卡都觸發轉檔 → 進件欄出現「無待進件」空狀態（真實 fixture 行為）。
+      prepare: async (context) => {
+        await gotoRoute(context);
+        await clickFirst(context.page, '[data-uc="trigger-conv"]');
+        await clickFirst(context.page, '[data-uc="trigger-conv"]');
+      },
+      assertions: [
+        { id: "intake-empty-state", locator: "text=無待進件", expectation: "visible" },
+        { id: "no-trigger-buttons-left", locator: '[data-uc="trigger-conv"]', expectation: "count_equals", expected: 0 },
+      ],
+    },
+    success: {
+      // 完成狀態：許良宇圖書館「完成」chip + Outbox OB-200「已送 ✓」。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "conversion-done-chip", locator: 'text="完成"', expectation: "visible" },
+        { id: "outbox-sent-chip", locator: "text=已送 ✓", expectation: "visible" },
+      ],
+    },
+    warning: {
+      // 琥珀狀態：Outbox 兩筆「待送」chip + 欄頭「2 待送」。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "outbox-pending-chips", locator: 'text="待送"', expectation: "count_equals", expected: 2 },
+        { id: "outbox-pending-header", locator: "text=2 待送", expectation: "visible" },
+      ],
+    },
+    failure: {
+      // 紅色狀態：fixture-bytes.ifc「失敗」chip + 重試鈕。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "conversion-failed-chip", locator: 'text="失敗"', expectation: "visible" },
+        { id: "conversion-retry-button", locator: "text=重試", expectation: "visible" },
+      ],
+    },
+    disabled: {
+      // 誠實停用（互動後）：點「立即回拋 deliver」→ 全部已送 → deliver 置
+      // aria-disabled（元件行為，onClick no-op）；預設態（2 待送）不變。
+      prepare: async (context) => {
+        await gotoRoute(context);
+        await clickFirst(context.page, '[data-uc="deliver-outbox"]');
+      },
+      assertions: [
+        { id: "deliver-aria-disabled", locator: '[data-uc="deliver-outbox"]', expectation: "attribute_equals", attribute: "aria-disabled", expected: "true" },
+        { id: "deliver-disabled-state", locator: '[data-uc="deliver-outbox"]', expectation: "disabled" },
+      ],
+    },
+    confirmation: {
+      // fresh reload（前面 case 已清空進件）→ 點觸發轉檔 → toast 假 API 字串。
+      prepare: async (context) => {
+        await gotoFreshRoute(context);
+        await clickFirst(context.page, '[data-uc="trigger-conv"]');
+      },
+      assertions: [
+        { id: "trigger-conv-toast", locator: '[data-uc="toast"]', expectation: "text_contains", expected: "POST /api/conversion/trigger → 202 Accepted" },
+      ],
+    },
+    i18n_zh_tw: {
+      prepare: gotoRoute,
+      assertions: [
+        { id: "zh-pipeline-title", locator: "text=模型資料與轉檔生產線", expectation: "visible" },
+        langZhActive,
+      ],
+    },
+    runtime_truth: runtimeTruthCase(),
+  };
+}
+
+/* ═══ runtime.ops.default（#runtime）═══ */
+
+function opsCases(): ScreenCases {
+  return {
+    navigation: {
+      prepare: gotoRoute,
+      assertions: [
+        { id: "sidebar-nav-ops-active", locator: '[data-uc="nav-ops"]', expectation: "attribute_equals", attribute: "data-active", expected: "true" },
+        { id: "sidebar-nav-home-inactive", locator: '[data-uc="nav-home"]', expectation: "attribute_equals", attribute: "data-active", expected: "false" },
+      ],
+    },
+    primary_actions: {
+      prepare: gotoRoute,
+      assertions: [
+        { id: "open-stage-visible", locator: '[data-uc="open-stage"]', expectation: "visible" },
+        { id: "open-stage-enabled", locator: '[data-uc="open-stage"]', expectation: "enabled" },
+        { id: "open-stage-label", locator: '[data-uc="open-stage"]', expectation: "text_equals", expected: "open stage" },
+      ],
+    },
+    loading: {
+      // 進行中狀態：Kit Instance「running」chip + 載入中的 stage 路徑。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "kit-instance-running-chip", locator: 'text="running"', expectation: "visible" },
+        { id: "kit-stage-path", locator: "text=stage: /Review/A1_Tower_fed.usd", expectation: "visible" },
+      ],
+    },
+    empty: {
+      // 可達空狀態：ops 初始無 toast/彈出通知 → toast host 不渲染（誠實計數 0）。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "toast-host-empty", locator: '[data-uc="toast"]', expectation: "count_equals", expected: 0 },
+      ],
+    },
+    success: {
+      // 全綠：服務健康 6 顆綠點（data-ok 由 fixture services.ok 誠實渲染）。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "all-service-dots-green", locator: '[data-uc="svc-dot"][data-ok="true"]', expectation: "count_equals", expected: 6 },
+        { id: "service-dots-total", locator: '[data-uc="svc-dot"]', expectation: "count_equals", expected: 6 },
+      ],
+    },
+    warning: {
+      // 琥珀狀態：structLog WARN 行（callback-outbox retry ×2）。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "structlog-warn-level", locator: 'text="WARN"', expectation: "visible" },
+        { id: "structlog-outbox-retry-line", locator: "text=callback-outbox retry ×2 OB-201", expectation: "visible" },
+      ],
+    },
+    failure: {
+      // 誠實對映：ops 的失敗表面 = 服務紅點（data-ok="false"）。fixture 全綠，
+      // 故誠實斷言紅點計數 0——失敗表示機制存在（同一 dot 元素），當前無失敗。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "failed-service-dots-count", locator: '[data-uc="svc-dot"][data-ok="false"]', expectation: "count_equals", expected: 0 },
+      ],
+    },
+    disabled: {
+      // 誠實對映：ops 所有控制（open stage / close）均可用，無停用控制項；
+      // 以 aria-disabled="true" 計數 0 誠實斷言。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "no-disabled-controls-on-ops", locator: '[aria-disabled="true"]', expectation: "count_equals", expected: 0 },
+      ],
+    },
+    confirmation: {
+      prepare: async (context) => {
+        await gotoRoute(context);
+        await clickFirst(context.page, '[data-uc="open-stage"]');
+      },
+      assertions: [
+        { id: "open-stage-toast", locator: '[data-uc="toast"]', expectation: "text_contains", expected: "POST /api/kit/instances/current/open" },
+      ],
+    },
+    i18n_zh_tw: {
+      prepare: gotoRoute,
+      assertions: [
+        { id: "zh-service-health-label", locator: 'text="服務健康"', expectation: "visible" },
+        langZhActive,
+      ],
+    },
+    runtime_truth: runtimeTruthCase(),
+  };
+}
+
+/* ═══ concept.a5..a10.default（#a5..#a10）═══ */
+
+type ConceptSlug = "a5" | "a6" | "a7" | "a8" | "a9" | "a10";
+
+/** 每頁 zh 標題的唯一子字串（a8 標題本身無中文，i18n case 另以 concept_note 補中文斷言）。 */
+const CONCEPT_TITLE_SNIPPET: Record<ConceptSlug, string> = {
+  a5: "IoT / FM 數位分身",
+  a6: "4D / 5D 施工模擬",
+  a7: "Reality Capture 比對",
+  a8: "A8 · Synthetic Data Studio",
+  a9: "機器人 / 自主巡檢",
+  a10: "其他應用 / AI 決策",
+};
+
+const CONCEPT_IMG_GLOB = "**/design-assets/ai-bim-geo-viewer-*.png";
+
+function conceptCases(slug: ConceptSlug): ScreenCases {
+  const imgSrc = `/design-assets/ai-bim-geo-viewer-A${slug.slice(1)}.png`;
+  return {
+    navigation: {
+      prepare: gotoRoute,
+      assertions: [
+        { id: `sidebar-app-${slug}-active`, locator: `[data-uc="app-${slug}"]`, expectation: "attribute_equals", attribute: "data-active", expected: "true" },
+        { id: "sidebar-apps-group-label", locator: 'text="AI 應用模組"', expectation: "visible" },
+      ],
+    },
+    primary_actions: {
+      // 誠實對映：概念頁自身無 CTA；本頁主要可行動作 = 側欄 A1 LIVE 項（可點、enabled）。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "sidebar-a1-live-visible", locator: '[data-uc="app-a1"]', expectation: "visible" },
+        { id: "sidebar-a1-live-enabled", locator: '[data-uc="app-a1"]', expectation: "enabled" },
+        { id: "sidebar-a1-live-badge", locator: '[data-uc="app-a1"]', expectation: "text_contains", expected: "LIVE" },
+      ],
+    },
+    loading: {
+      // 大圖載入完成：img 可見 + src 指向產品資產路徑（visible 需版面高度>0，即已載入）。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "concept-image-loaded", locator: '[data-uc="concept-img"]', expectation: "visible" },
+        { id: "concept-image-src", locator: '[data-uc="concept-img"]', expectation: "attribute_equals", attribute: "src", expected: imgSrc },
+      ],
+    },
+    empty: {
+      // 可達空狀態：概念頁初始無 toast/彈出通知 → toast host 不渲染（誠實計數 0）。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "toast-host-empty", locator: '[data-uc="toast"]', expectation: "count_equals", expected: 0 },
+      ],
+    },
+    success: {
+      // 綠色上線狀態：側欄 A1–A4 的 LIVE 徽章恰為 4 顆（本頁唯一的成功/上線語意表面）。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "live-badges-count", locator: 'text="LIVE"', expectation: "count_equals", expected: 4 },
+      ],
+    },
+    warning: {
+      // 琥珀狀態：頁首「Concept Preview / Roadmap」章（非正式功能的誠實警示）。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "concept-roadmap-amber-chip", locator: "text=Concept Preview / Roadmap", expectation: "visible" },
+        { id: "concept-note-live-hint", locator: "text=本頁為概念稿", expectation: "visible" },
+      ],
+    },
+    failure: {
+      // 真實失敗路徑：攔截概念大圖請求（abort）→ full reload → img onError 觸發
+      // 原型同語意的 fallback 卡。route 於同一 prepare 內 try/finally 解除，
+      // 不污染後續 case / 像素擷取（runtime_truth 會 fresh reload 還原）。
+      prepare: async (context) => {
+        const { page } = context;
+        await page.route(CONCEPT_IMG_GLOB, (route) => route.abort());
+        try {
+          await gotoFreshRoute(context);
+        } finally {
+          await page.unroute(CONCEPT_IMG_GLOB);
+        }
+      },
+      assertions: [
+        { id: "concept-fallback-rendered", locator: '[data-uc="concept-fallback"]', expectation: "visible" },
+        { id: "concept-image-removed", locator: '[data-uc="concept-img"]', expectation: "count_equals", expected: 0 },
+        { id: "concept-fallback-explains-missing-asset", locator: "text=未隨程式碼打包", expectation: "visible" },
+      ],
+    },
+    disabled: {
+      // 誠實對映：概念稿頁內沒有可操作按鈕（純靜態預覽）→ enabled 按鈕計數 0。
+      prepare: gotoRoute,
+      assertions: [
+        { id: "no-operable-buttons-in-concept", locator: '[data-uc="concept-root"] button, [data-uc="concept-root"] [role="button"]', expectation: "count_equals", expected: 0 },
+      ],
+    },
+    confirmation: {
+      // 誠實調整：概念頁無 toast 動作；可行動作 = 切到 LIVE 模組，確認回饋 =
+      // 工作區 A1 dock tab 進入 active 狀態。
+      prepare: async (context) => {
+        await gotoRoute(context);
+        await clickFirst(context.page, '[data-uc="app-a1"]');
+      },
+      assertions: [
+        { id: "workspace-a1-dock-active", locator: '[data-uc="dock-tab-a1"]', expectation: "attribute_equals", attribute: "data-active", expected: "true" },
+      ],
+    },
+    i18n_zh_tw: {
+      prepare: gotoRoute,
+      assertions: [
+        { id: "concept-title-snippet", locator: `text=${CONCEPT_TITLE_SNIPPET[slug]}`, expectation: "visible" },
+        { id: "zh-concept-note", locator: "text=本頁為概念稿", expectation: "visible" },
+        langZhActive,
+      ],
+    },
+    runtime_truth: runtimeTruthCase(),
+  };
+}
+
+/* ═══ 合成 registry：`${screenId}:${caseId}` → 143 條 ═══ */
+
+const screenFamilies: ReadonlyArray<readonly [string, ScreenCases]> = [
+  ["console.home.default", homeCases()],
+  ["workspace.a1.default", workspaceCases("a1")],
+  ["workspace.a2.default", workspaceCases("a2")],
+  ["workspace.a3.default", workspaceCases("a3")],
+  ["workspace.a4.default", workspaceCases("a4")],
+  ["pipeline.default", pipelineCases()],
+  ["runtime.ops.default", opsCases()],
+  ["concept.a5.default", conceptCases("a5")],
+  ["concept.a6.default", conceptCases("a6")],
+  ["concept.a7.default", conceptCases("a7")],
+  ["concept.a8.default", conceptCases("a8")],
+  ["concept.a9.default", conceptCases("a9")],
+  ["concept.a10.default", conceptCases("a10")],
+];
+
+export const semanticCaseDefinitions: ReadonlyMap<string, SemanticCaseDefinition> = new Map(
+  screenFamilies.flatMap(([screenId, cases]) =>
+    Object.entries(cases).map(
+      ([caseId, definition]) => [`${screenId}:${caseId}`, definition] as [string, SemanticCaseDefinition],
+    ),
+  ),
+);

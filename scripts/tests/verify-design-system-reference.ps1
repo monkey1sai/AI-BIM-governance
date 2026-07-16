@@ -277,11 +277,11 @@ Assert-Reference (@($missingRoutes | Where-Object { [string]$_ -notmatch '^#[a-z
 Assert-Reference (@($missingRoutes | Group-Object | Where-Object Count -gt 1).Count -eq 0) 'routes_without_approved_pixel_reference contains duplicates.'
 Assert-Reference (@($missingRoutes | Where-Object { $_ -in $mappedRoutes }).Count -eq 0) 'a route cannot be both mapped and reference_missing.'
 $routeInventory = @($manifest.route_inventory)
-$expectedRoutes = @('#home', '#a1', '#a2', '#a3', '#a4', '#a5', '#a6', '#a7', '#a8', '#a9', '#a10', '#issues', '#reports', '#viewer', '#gpu', '#conv', '#sessions', '#instances', '#minio', '#runtime', '#admin', '#spec', '#review')
-Assert-Reference ($routeInventory.Count -eq $expectedRoutes.Count) 'route_inventory must cover the 22 canonical routes plus independent #review.'
+$expectedRoutes = @('#home', '#a1', '#a2', '#a3', '#a4', '#a5', '#a6', '#a7', '#a8', '#a9', '#a10', '#issues', '#reports', '#viewer', '#gpu', '#conv', '#pipeline', '#sessions', '#instances', '#minio', '#runtime', '#admin', '#spec', '#review')
+Assert-Reference ($routeInventory.Count -eq $expectedRoutes.Count) 'route_inventory must cover the 22 canonical routes plus independent #review and unified #pipeline.'
 Assert-Reference (@($routeInventory | Group-Object route | Where-Object Count -gt 1).Count -eq 0) 'route_inventory contains duplicate routes.'
 $inventoryRoutes = @($routeInventory | ForEach-Object { [string]$_.route })
-Assert-Reference ((@($inventoryRoutes | Sort-Object) -join '|') -eq ((@($expectedRoutes | Sort-Object)) -join '|')) 'route_inventory does not exactly cover the 22 canonical routes plus #review.'
+Assert-Reference ((@($inventoryRoutes | Sort-Object) -join '|') -eq ((@($expectedRoutes | Sort-Object)) -join '|')) 'route_inventory does not exactly cover the 22 canonical routes plus #review and #pipeline.'
 foreach ($entry in $routeInventory) {
     Assert-Reference ([string]$entry.route -match '^#[a-z0-9-]+$') "route_inventory contains an invalid route '$($entry.route)'."
     Assert-Reference ([string]$entry.status -in @('approved', 'reference_missing')) "route_inventory route '$($entry.route)' has an invalid status."
