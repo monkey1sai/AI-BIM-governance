@@ -286,7 +286,7 @@
   ],
   "semantic_contract": {
     "schema_version": 2,
-    "status": "state_variants_reference_missing",
+    "status": "executable",
     "authority": "branch_protected_playwright_output_only",
     "enforcement_status": "required_check_not_configured",
     "external_result_input_allowed": false,
@@ -303,7 +303,19 @@
       "i18n_zh_tw",
       "runtime_truth"
     ],
-    "implemented_case_ids": [],
+    "implemented_case_ids": [
+      "navigation",
+      "primary_actions",
+      "loading",
+      "empty",
+      "success",
+      "warning",
+      "failure",
+      "disabled",
+      "confirmation",
+      "i18n_zh_tw",
+      "runtime_truth"
+    ],
     "producer": "web-viewer-sample/e2e/design-system-semantic-cases.ts",
     "result_role": "ci_output_not_gate_input"
   },
@@ -422,7 +434,7 @@
     {
       "id": "pipeline.default",
       "production_routes": [
-        "#conv"
+        "#pipeline"
       ],
       "reference_action": {
         "type": "click_exact_text",
@@ -637,7 +649,7 @@
       "screen_id": "concept.a10.default"
     },
     {
-      "route": "#conv",
+      "route": "#pipeline",
       "status": "approved",
       "screen_id": "pipeline.default"
     },
@@ -660,6 +672,10 @@
     },
     {
       "route": "#gpu",
+      "status": "reference_missing"
+    },
+    {
+      "route": "#conv",
       "status": "reference_missing"
     },
     {
@@ -692,6 +708,7 @@
     "#reports",
     "#viewer",
     "#gpu",
+    "#conv",
     "#sessions",
     "#instances",
     "#minio",
