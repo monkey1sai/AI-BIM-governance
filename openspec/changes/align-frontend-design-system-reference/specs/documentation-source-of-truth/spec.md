@@ -1,13 +1,13 @@
 ## RENAMED Requirements
 
 - FROM: `### Requirement: Workflow v3 and product design artifacts have distinct, non-overlapping authority`
-- TO: `### Requirement: Workflow v4 and product design artifacts have distinct, non-overlapping authority`
+- TO: `### Requirement: Workflow v4 與產品設計產物的權威範圍明確分離且不重疊`
 - FROM: `### Requirement: workflow v3 與 product design artifacts 互相 cross-reference 持續成立`
 - TO: `### Requirement: workflow v4 與 product design artifacts 互相 cross-reference 持續成立`
 
 ## MODIFIED Requirements
 
-### Requirement: Workflow v4 and product design artifacts have distinct, non-overlapping authority
+### Requirement: Workflow v4 與產品設計產物的權威範圍明確分離且不重疊
 
 `docs/PROJECT_DEVELOPMENT_WORKFLOW.md` 是開發流程入口；`docs/plans/docs-plans-README.md` 是設計與規格導覽；current checkout 中所有 Git-tracked `docs/plans/*.html` 是 design gate 唯一權威輸入；code＋tests/contracts 是現行 runtime behavior truth。Manifest、route inventory、semantic cases、goldens 與 CI results SHALL 只是 HTML-derived validation artifacts。Repo 外 design workspace、已刪七檔與 arbitrary screenshot SHALL NOT 成為 parallel authority。
 

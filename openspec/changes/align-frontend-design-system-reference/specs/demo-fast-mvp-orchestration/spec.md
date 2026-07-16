@@ -1,6 +1,11 @@
+## RENAMED Requirements
+
+- FROM: `### Requirement: Repository SHALL provide a single fast MVP demo runbook`
+- TO: `### Requirement: Repo SHALL 提供唯一的fast MVP demo runbook`
+
 ## MODIFIED Requirements
 
-### Requirement: Repository SHALL provide a single fast MVP demo runbook
+### Requirement: Repo SHALL 提供唯一的fast MVP demo runbook
 
 Repo SHALL 在 `docs/demo/fast-mvp-demo-recap.md` 提供唯一 canonical fast MVP demo runbook，整合啟動順序、port matrix、host 與 container 邊界、WSL Kit graphics 限制、sample fixture 選取規則，以及僅使用 repo 內服務與 `tests/fakes` doubles 執行 coordinator + streaming-server + viewer 單機閉環 demo 所需的驗收條件。
 

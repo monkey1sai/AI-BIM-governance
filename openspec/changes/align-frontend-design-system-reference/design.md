@@ -1,6 +1,6 @@
-# Design: HTML-rooted design contract 與雙閘驗收
+# 設計：以HTML為根的設計契約與雙閘驗收
 
-## 1. Authority model
+## 1. 權威模型
 
 | 層 | 權威範圍 | 不負責 |
 |---|---|---|
@@ -18,7 +18,7 @@ Source set MUST 以 `git ls-files -- 'docs/plans/*.html'` 的結果建立，不�
 
 若未來新增 tracked `docs/plans/*.html`，它會進入 source set；在其 source role、stable IDs 與衍生策略尚未可機器解析前，design gate MUST fail closed，而不是靜默忽略。
 
-## 2. HTML machine contract
+## 2. HTML 機器契約
 
 每份 HTML MUST 提供或可確定性抽取：
 
@@ -27,9 +27,9 @@ Source set MUST 以 `git ls-files -- 'docs/plans/*.html'` 的結果建立，不�
 - 對 visual source 而言，stable `screen_id`、`state_id`、viewport eligibility、dynamic-region mask 與 required semantic actions；
 - 對 behavior/IA source 而言，canonical route、legacy redirect、live／concept／not-built provenance 與 backend boundary。
 
-衍生 manifest MUST 記錄 extractor version 與 normalized contract digest。若同一 field 在兩份 HTML 互相衝突，或 manifest field 無法回溯到某個 tracked HTML node／metadata，validation MUST fail。route inventory 只能由 design 文件的 canonical route map 派生；舊 `#home`／`#a1` 類 route 不得覆寫 `#/home`、`#/workspace?dock=...`、`#/pipeline`、`#/ops`、`#/app/:slug`。
+衍生 manifest MUST 記錄 extractor version 與 normalized contract digest。若同一 HTML-derived field 在兩份 HTML 互相衝突、HTML-derived manifest field 無法回溯到某個 tracked HTML node／metadata，或 policy-derived manifest field 無法回溯到 versioned policy path 與 digest，validation MUST fail。route inventory 只能由 design 文件的 canonical route map 派生；舊 `#home`／`#a1` 類 route 不得覆寫 `#/home`、`#/workspace?dock=...`、`#/pipeline`、`#/ops`、`#/app/:slug`。
 
-## 3. Derived artifacts
+## 3. 衍生產物
 
 衍生 manifest 至少分開：
 
@@ -43,7 +43,7 @@ Route、screen、state與semantic design intent只能來自HTML；pixel threshol
 
 Golden MUST 由 repo checkout 中的 visual HTML 在固定環境 capture。Production capture 則在同一 subject commit 的實際 frontend route 執行。任一 HTML source hash、normalized contract、render dependency 或 extractor version 改變，而 manifest／golden 未同步重建時，gate MUST fail closed。
 
-## 4. Gate flow
+## 4. 閘門流程
 
 ```text
 tracked HTML source set + hashes
@@ -69,7 +69,7 @@ functional/runtime browser flow
 
 兩條 flow 均通過才可宣告 user-facing built。PR body、外部 semantic JSON、手填 boolean、既有 artifact 或非 current-checkout screenshot 不是 gate input。missing／skipped／blocked semantic case 一律失敗。
 
-## 5. Status and scope semantics
+## 5. 狀態與範圍語意
 
 - `passed`：所有 affected surfaces 都有可追溯至 HTML 的 approved reference，且 pixel、semantic 與衍生物完整性全過。
 - `mixed`：affected scope 同時含 approved 與 `reference_missing`；必須跑全部 approved screens、列出 missing scopes，且 `Full completion claimed=no`。
@@ -81,7 +81,7 @@ functional/runtime browser flow
 
 Shared bundle scope MUST 使用較嚴格的 base/head HTML-derived manifest 聯集，避免 head 端刪除 mapping 來縮小 gate。RVT↔IFC↔USDC lineage 的 Alignment、Attempts、Audit 與相關 detail panel，目前 HTML 沒有 reference，因此維持 `reference_missing`。
 
-## 6. Metrics and environment
+## 6. 量測與環境
 
 Visual gate 固定 Windows runner、Chromium、DPR1、locale `zh-TW`、timezone `Asia/Taipei`、dark color scheme、font-ready、animations disabled，viewports 為 `1440x900` 與 `1920x1080`。每個 required viewport：
 
@@ -92,15 +92,15 @@ pass iff pixel_diff_ratio <= 0.01
 
 Required semantic cases MUST 100% 執行且通過。Accessibility 與 security 不得為像素對齊而移除。live WebRTC frame、GPU render 與核准 dynamic regions不納入 pixel baseline；它們由 functional/runtime gate 裁決。
 
-## 7. Rebaseline
+## 7. 重新建立基準
 
 一般 CI 只驗 tracked derivatives。Rebaseline 必須在獨立source-update lane中顯式、可 review地從 current checkout HTML重新抽取contract與capture，原子更新source hashes、policy digest、manifest、goldens與aggregate digest。包含production UI變更的同一change不得rebaseline後宣稱product pass；production比較必須以已獨立落地主線的HTML snapshot為base。不存在「接受外部 origin drift」或「只換 PNG 不換 source contract」的路徑。
 
-## 8. Migration
+## 8. 遷移
 
 1. 先讓兩份 tracked HTML 提供／可抽取 stable machine metadata。
 2. 建立 manifest v2，將 design source、render dependency 與 derived contract 分離。
 3. 從 HTML 重建 canonical route inventory、screens、states、semantic cases 與 goldens。
-4. 將 scope classifier、validator、CI、branch protection 與 PR machine fields切到 manifest v2。
+4. 將 scope classifier、validator、CI、branch protection 與 PR machine fields切到 manifest v2；現行 `reference_authority_mixed_fail_closed` 必須在同一 implementation change 原子遷移為 canonical target `design_source_and_product_mixed_fail_closed`，新舊值不得同時被接受。
 5. 移除外部 path／legacy route／已刪文件 fallback。
 6. 完成 current subject 的 visual＋functional證據後，才可宣告 product fidelity；spec 或 infrastructure 完成本身不是通過。

@@ -1,12 +1,12 @@
-## Context
+## 背景
 
 現行 B 方案已具備外部 IFC Worker → `bim-review-coordinator` → `bim-streaming-server` → metadata-only callback outbox 的最小閉環，也已在 streaming capability 中定義 stable element root `/World/Elements/<IfcClass>/G_<encoded_guid>`。缺口位於 IFC-ready 前後：source RVT、`schedule.csv`、IFC、USDC、mapping 與多次 conversion result 沒有共同的 version bundle、identity chain、publication transaction 與 active-result governance。
 
 2026-07-14～07-15 的決策要求 MinIO 成為 edge artifact bytes 的唯一持久 authority，但不能奪走外部 company cloud 對 tenant、project/model-version、RBAC 與 enterprise workflow 的 authority。本階段採 contract-only：交付 domain contract、versioned schema/examples、reference-only MySQL DDL 與既有 Outbox 的 tracked HTML 文字契約；production publisher、external cloud/MySQL implementation、production frontend、lineage screens、goldens/rebaseline 與 live E2E 由 tasks 分階段完成。
 
-## Goals / Non-Goals
+## 目標／非目標
 
-**Goals:**
+**目標：**
 
 - 讓每個 governed model version 都能從 source manifest 證明 RVT、schedule 與 IFC 屬於同一 immutable bundle。
 - 以可逆 identity chain 串接 version-scoped RVT ID、UUID36、IFC GlobalId22 與既有 stable USD element root。
@@ -16,7 +16,7 @@
 - 以獨立、authenticated Cloud Ingest API 將 formal lineage result 的 stable MinIO 位置與輕量摘要送到 external company-cloud `bim-control`，由 cloud service 寫入自己的 MySQL。
 - 保持 edge `READY`／`AVAILABLE` 與 cloud delivery 狀態正交，讓 cloud outage 不阻斷 edge conversion/runtime。
 
-**Non-Goals:**
+**非目標：**
 
 - 不實作 Revit exporter，也不把已退役 `_worker`／`_bim-control` 加回 runtime。
 - 不讓 MinIO manifest 取代外部 cloud 的 project/model-version 或 RBAC authority。
@@ -26,20 +26,20 @@
 - 不改變既有 `conversion_result_ready|conversion_failed` workflow callback，不把 Cloud Ingest API 當成 browser API或 producer intake API。
 - 不在本 spec PR 產生 production code、新 page/route/visual design、golden、cloud migration或 runtime/live-MySQL E2E pass claim；只允許 reference contract artifacts 與既有 Outbox 的 source-only文字狀態。
 
-## Decisions
+## 決策
 
-### 1. Persistent ownership 按資料類型拆分
+### 1. 按資料類型拆分持久化權責
 
-| Persistent data | Authority |
+| 持久資料 | 權威 |
 |---|---|
-| Tenant、project/model-version、RBAC、enterprise workflow | external company cloud `bim-control` |
+| Tenant、project/model-version、RBAC、企業workflow | external company cloud `bim-control` |
 | RVT/CSV/IFC 與正式 derived artifact bytes | customer-edge MinIO |
 | Source/result manifest 與 edge bundle lineage | MinIO manifest；coordinator 只保存 minimal shadow/index |
-| Stable logical pipeline job、durable orchestration/admission state、active-result pointer、promotion/rollback audit、workflow callback outbox、lineage-publication outbox | `bim-review-coordinator` |
+| 穩定logical pipeline job、可持久化orchestration/admission state、active-result pointer、promotion/rollback audit、workflow callback outbox、lineage-publication outbox | `bim-review-coordinator` |
 | Immutable attempt、conversion execution、result content 與 result-manifest publication | `bim-streaming-server` conversion authority |
 | Formal result locator、bounded lineage summary、event receipt 與 health history | external company-cloud `bim-control` / cloud MySQL |
 | Runtime lease/readiness/stage state | streaming/Kit runtime；coordinator/Kit Manager 只持 observable coordination state |
-| Browser UI state | `web-viewer-sample` |
+| Browser UI狀態 | `web-viewer-sample` |
 
 本機 `storage/`、shared volume、`ifc-cache` 與 conversion artifact directory 都是 staging/cache。刪除 local cache 不得刪除 MinIO formal availability；反之，local file 存在也不能證明 formal result 已發布。
 
@@ -52,7 +52,7 @@ Formal source bundle 的邏輯內容：
   model.rvt
   schedule.csv
   model.ifc
-  manifest.json        # last write
+  manifest.json        # 最後寫入
 ```
 
 `manifest.json` 至少保存 `source_bundle_id`、`external_model_version_id`、display metadata、producer、每個 artifact 的 role/ref/etag/SHA-256/bytes，以及 schema/version timestamps。Object path 只是 locator；bundle identity 與 lineage 由 manifest 決定。
@@ -77,11 +77,11 @@ schedule.csv.ID
 
 ### 4. 三種 coverage/accuracy 不共用含糊分母
 
-| Metric | Numerator | Denominator |
+| 指標 | 分子 | 分母 |
 |---|---|---|
 | `ifc_usdc_coverage_ratio` | eligible IFC products mapped to stable USD roots | eligible source `IfcProduct` count（legacy `source_ifc_entity_count` 若保留，必須是此集合的明確 alias） |
-| `rvt_ifc_alignment_ratio` | valid scheduled rows resolved to IFC products | valid unique `schedule.csv` scheduled elements |
-| `rvt_ifc_usdc_lineage_ratio` | valid scheduled rows resolved through IFC to stable USD roots | valid unique `schedule.csv` scheduled elements |
+| `rvt_ifc_alignment_ratio` | 已解析至IFC products的valid scheduled rows | valid unique `schedule.csv` scheduled elements |
+| `rvt_ifc_usdc_lineage_ratio` | 經IFC解析至stable USD roots的valid scheduled rows | valid unique `schedule.csv` scheduled elements |
 
 報告同時列出 CSV total/valid、duplicate ID/GUID、invalid row、CSV-only、IFC-only、IFC→USDC unmapped 與 full-lineage matched。任何 denominator 為 0 時 ratio 必須為 `null`、status 為 `not_evaluable`，不得回報 0% 或 100%。部分 alignment 可產生 `succeeded_with_warnings`，但 lineage UI與獨立 Cloud Ingest summary必須揭露 numerator、denominator、status與 diff counts；既有workflow callback保持不變，且不得以單一 `coverage_ratio` 代表三向 lineage。
 
@@ -102,7 +102,7 @@ PipelineJob  1 ── 0..1 ActiveResultPointer
 - Attempt outcome（`succeeded | succeeded_with_warnings | failed | cancelled`）、publication state（`UNPUBLISHED | PUBLISHING | AVAILABLE | INVALID`）與 formal-result selection state（`candidate | active | historical`）是三個正交軸。Attempt沒有 formal result時不存在 `selection_state`；failed/cancelled的audit-only formal result即使為`AVAILABLE`也沒有selection state；`AVAILABLE` 不等於 active。Failed/cancelled attempt 若仍建立符合完整 ResultManifest contract、且 required lineage refs/integrity 全部有效的 formal result，可為稽核用途發布 Cloud Ingest locator/summary；diagnostic-only／temporary manifest 不可發布。
 - Result可被select/compare/promote/rollback的條件固定為 `publication_state == AVAILABLE` 且 `attempt_outcome in {succeeded, succeeded_with_warnings}`。Failed/cancelled attempt即使留下完整診斷manifest也不得成為active。第一個selectable result可自動成為active，但同樣必須建立append-only activation audit；後續result只能經capability-gated promote。Read-only compare不得改變pointer；rollback建立新audit且不刪除歷史result。
 
-### 6. Runtime admission 是 observable contract，不是 queue implementation
+### 6. Runtime admission是可觀測契約，而非queue實作
 
 Admission record 至少包含：
 
@@ -119,11 +119,11 @@ observed_at
 
 manual、automatic 與 retry 都走同一 admission。每個 profile都需要 readiness evidence；只有 `requires_exclusive_runtime=true` 的 Kit-backed profile必須取得有效 lease，CPU/non-Kit profile的 `lease_id` 為 null且不得建立假 lease。有 healthy live viewer/session 的 Kit不得被 force release；預設流程是 cooperative drain → close/release。Force release 的 eligible reason為 `stale_lease`、`runtime_failed` 或 `cooperative_release_failed` 任一，且仍需具 `runtime.force_release` 的 operator提供 reason、confirmation與 audit。
 
-### 7. Lineage console 只發意圖，不成為資料權威
+### 7. Lineage console只送出意圖，不成為資料權威
 
 UI 提供 Version Overview、Artifacts、Alignment、Attempts、Audit、KPI、diff filters、mapping details、CSV/JSON report 與 individual artifact download。大型 artifact 以短效 presigned URL 支援 Range/resume，不即時組裝 ZIP。
 
-External cloud 仍決定 capabilities；edge 只驗證授權結果。至少使用：
+External cloud 仍決定 capabilities；`bim-review-coordinator` 的 browser/action API只驗證 external control-plane authorization decision並執行對應意圖。`governance-service`維持A1/A2/A3 loopback domain authority，不成為lineage RBAC、active-result或Cloud Ingest authority。至少使用：
 
 ```text
 bundle.read
@@ -158,7 +158,7 @@ docs/plans/AI-BIM Console Hi-Fi.dc.html
 
 現行 `/model.ifc` watcher在過渡期仍可作 legacy intake，但不得標成 governed `READY`。現行 generic `coverage_ratio` 保留 IFC→USDC 意義，不得重命名成 RVT lineage。
 
-### 10. Cloud lineage publication 是獨立的 edge-to-cloud contract
+### 10. Cloud lineage publication是獨立的edge-to-cloud契約
 
 > **Cloud API 專用方向（不得誤接）：`edge bim-review-coordinator → external company-cloud bim-control → cloud MySQL`。**
 > `POST /api/v1/lineage-publications` 是本 repo 對外部公司雲端的 outbound Cloud Ingest API contract；不是 browser API、不是 external producer intake、不是既有 workflow callback，且 production receiver不由本 repo host。
@@ -240,7 +240,7 @@ Signature值為 `sha256=<lowercase-hex>`，計算式固定為：
 HMAC-SHA256(secret, signature_timestamp + "\n" + raw_request_body)
 ```
 
-Cloud receiver MUST以raw bytes驗簽、constant-time compare、要求header/body `event_id`一致，並預設拒絕超出±300秒skew、unknown key、tampered body或signature mismatch。Retry可換timestamp/signature，但 `event_id`、raw body與digest不得改變。Secret不得出現在payload、log、UI、test evidence或committed example；`.env.example`未來只列blank key names。
+Cloud receiver MUST 以raw bytes驗簽、constant-time compare、要求header/body `event_id`一致，並預設拒絕超出±300秒skew、unknown key、tampered body或signature mismatch。Retry可換timestamp/signature，但 `event_id`、raw body與digest不得改變。Secret不得出現在payload、log、UI、test evidence或committed example；`.env.example`未來只列blank key names。
 
 #### 10.3 Receiver commit ACK與idempotency是同步contract
 
@@ -304,60 +304,60 @@ lineage_publication_health_events
 lineage_event_receipts
 ```
 
-`lineage_publications`只保存identities、四個result locators、manifest digest、bounded summary與current health projection；health/events與receipts append-only。Schema MUST NOT 定義逐 element lineage table。本 change附MySQL 8 `REFERENCE ONLY` DDL，僅表達logical constraints；不提供migration、DB connection、credentials或「已執行／已驗證真MySQL」宣稱。Test fake只模擬protocol transaction/idempotency，不是production cloud runtime。
+`lineage_publications`只保存identities、四個result locators、manifest digest與bounded summary；current health在尚無event時衍生為`VERIFIED`，其後由最新accepted append-only health event衍生，不在immutable publication row保存mutable projection。Health events與receipts均append-only。Schema MUST NOT 定義逐 element lineage table。本 change附MySQL 8 `REFERENCE ONLY` DDL，僅表達logical constraints；不提供migration、DB connection、credentials或「已執行／已驗證真MySQL」宣稱。Test fake只模擬protocol transaction/idempotency，不是production cloud runtime。
 
-## Data and control flow
+## 資料與控制流程
 
 ```text
-[external customer-edge IFC Worker]
-  -> upload model.rvt / schedule.csv / model.ifc to MinIO
-  -> publish source manifest last
-  -> coordinator validates governed READY and creates stable pipeline job
+[外部customer-edge IFC Worker]
+  -> 將model.rvt／schedule.csv／model.ifc上傳至MinIO
+  -> 最後發布source manifest
+  -> coordinator驗證governed READY並建立stable pipeline job
   -> runtime admission / lease
-  -> streaming-server creates immutable attempt and converts
-  -> upload USDC + sidecars + reports
-  -> publish result manifest last
-  -> coordinator verifies AVAILABLE and manages active pointer/audit
-  -> existing workflow callback outbox
-  -> [external company cloud workflow]
-  -> separate HMAC lineage-publication outbox
+  -> streaming-server建立immutable attempt並執行轉換
+  -> 上傳USDC、sidecars與reports
+  -> 最後發布result manifest
+  -> coordinator驗證AVAILABLE並管理active pointer／audit
+  -> 既有workflow callback outbox
+  -> [外部company cloud workflow]
+  -> 獨立HMAC lineage-publication outbox
   -> POST /api/v1/lineage-publications
-  -> [external company-cloud bim-control]
-  -> cloud MySQL stores result locators + bounded summary only
+  -> [外部company-cloud bim-control]
+  -> cloud MySQL只儲存result locators與bounded summary
 
-browser
+瀏覽器
   -> coordinator-only APIs
-  -> lineage views / authorized intents / presigned downloads
+  -> lineage views／authorized intents／presigned downloads
 ```
 
-## Risks / Trade-offs
+## 風險／取捨
 
-- **[Existing watcher uses `/model.ifc` as trigger]** → keep it explicitly legacy until predecessor archive, then add manifest-ready integration without dual authority.
-- **[Current queue can drop pending work on restart]** → pipeline job/attempt contract requires durable logical identity；apply tasks add recovery tests before production cutover.
-- **[Current callback uses legacy workflow refs]** → keep the callback contract unchanged；send governed MinIO result locators and three-metric summary only through the dedicated Cloud Ingest channel，with no dual authority。
-- **[Existing goldens came from external source]** → design-gate apply must regenerate derived evidence from `docs/plans/*.html`；until then the gate is migration-incomplete，not passed.
-- **[HTML does not yet contain lineage screens]** → keep console capability `reference_missing`；domain/API implementation may proceed honestly，full UI claim may not.
+- **[既有watcher使用`/model.ifc`作為trigger]** → predecessor archive前明確維持legacy；之後再加入manifest-ready整合，且不得形成雙重權威。
+- **[現行queue可能在restart時遺失pending work]** → pipeline job/attempt契約要求durable logical identity；apply tasks在production cutover前加入recovery tests。
+- **[現行callback使用legacy workflow refs]** → callback契約保持不變；governed MinIO result locators與三組metrics摘要只能走專用Cloud Ingest channel，不形成雙重權威。
+- **[既有goldens來自外部來源]** → design-gate apply必須由`docs/plans/*.html`重建derived evidence；完成前gate是migration-incomplete，不是passed。
+- **[HTML尚未包含lineage screens]** → console capability維持`reference_missing`；domain/API可誠實實作，但不得宣稱完整UI。
 - **[Cloud ACK被任意2xx誤判]** → dedicated publisher只接受schema-valid 200/201 exact ACK；202、empty/mismatched ACK視為protocol failure。
 - **[At-least-once可能重複或lost-ACK]** → persist stable event/body digest before send；published依identity/digest/content冪等，health transition依event/body digest冪等，conflict fail closed，reconciler重放同event。
 - **[Edge直接連MySQL會破壞雲地邊界]** → target只能是external Cloud Ingest API；本repo不得持DB credentials或執行DDL/migration。
 - **[同時修改HTML與production/baseline形成moving target]** → 本spec只做source-only文字契約且標migration-incomplete；等`align`／`migrate` closeout後另走rebaseline/product lane。
-- **[Large IFC/USDC uploads and hash checks cost I/O]** → stream checksums，use object metadata/conditional writes，and never load large bodies into callback or browser control APIs.
-- **[Force release can disrupt users]** → require capability，reason，confirmation，session/lease evidence and append-only audit.
+- **[大型IFC/USDC上傳與hash檢查耗費I/O]** → 以streaming方式計算checksums、使用object metadata／conditional writes，且不得把大型body載入callback或browser control APIs。
+- **[Force release可能中斷使用者]** → 必須具備capability、reason、confirmation、session/lease evidence與append-only audit。
 
-## Migration Plan
+## 遷移計畫
 
 1. Merge/archive active MinIO predecessors；依序完成 `align-frontend-design-system-reference` closeout → `migrate-console-to-hifi-design` rebase/reconcile至 `docs/plans/*.html` 唯一權威（移除repo外origin／`VerifyOrigin`平行authority）→ `migrate` closeout → lineage rebase最新main。
-2. Promote the reference schemas/examples into executable contract fixtures for source manifest、result manifest、alignment report、pipeline job/attempt and Cloud Ingest request/ACK/error；keep existing workflow callback unchanged。
-3. Add additive `POST /api/external/source-bundles/ready` beside legacy watcher，validate MinIO refs/checksums，and create durable stable jobs；polling只作reconciliation。
-4. Add streaming mapping enrichment、attempt-scoped result prefixes 與 result-manifest publication。
-5. Add active pointer、promotion/rollback audit、cache reconstruction，以及dedicated lineage publication outbox/HMAC/strict ACK/retry/reconcile/health producer；update test-only cloud fake但不得宣稱真MySQL。
-6. Add runtime admission/release enforcement and negative tests。
+2. 將reference schemas/examples提升為source manifest、result manifest、alignment report、pipeline job/attempt及Cloud Ingest request/ACK/error的executable contract fixtures；既有workflow callback保持不變。
+3. 在legacy watcher旁新增additive `POST /api/external/source-bundles/ready`，驗證MinIO refs/checksums並建立durable stable jobs；polling只作reconciliation。
+4. 新增streaming mapping enrichment、attempt-scoped result prefixes與result-manifest publication。
+5. 新增active pointer、promotion/rollback audit、cache reconstruction，以及專用lineage publication outbox/HMAC/strict ACK/retry/reconcile/health producer；更新test-only cloud fake，但不得宣稱真MySQL。
+6. 新增runtime admission/release enforcement與negative tests。
 7. 先以source-only方式更新兩份`docs/plans/*.html`既有architecture/API/Outbox文字；lineage五個新screens仍維持`reference_missing`。Predecessor closeout後才由tracked HTML重建manifest/goldens。
-8. 在不再修改HTML的product lane實作existing Outbox文字狀態與broader lineage console，補browser/runtime/design evidence；remove legacy intake only after migration evidence is green。
+8. 在不再修改HTML的product lane實作既有Outbox文字狀態與broader lineage console，補browser/runtime/design evidence；只有migration evidence全綠後才能移除legacy intake。
 
-Rollback keeps immutable source/result objects and audit records. A deployment may disable governed auto-enqueue and fall back to legacy intake visibility，but MUST NOT relabel legacy data as governed READY or delete formal objects.
+Rollback時保留immutable source/result objects與audit records。Deployment可停用governed auto-enqueue並退回legacy intake visibility，但 MUST NOT 把legacy data重新標為governed READY，也不得刪除formal objects。
 
-## Open Questions
+## 待決問題
 
-- MinIO physical prefix naming may follow the external platform's existing hierarchy；the contract intentionally keys identity by manifest IDs rather than path depth.
-- Exact presigned URL TTL and failed-diagnostic retention duration remain deployment policy，but authorization、no-secret exposure and formal-artifact non-deletion are fixed.
+- MinIO physical prefix命名可沿用external platform既有hierarchy；契約刻意以manifest IDs而非path depth作為identity key。
+- Presigned URL的確切TTL與failed-diagnostic retention duration維持deployment policy；authorization、不得暴露secret及不得刪除formal artifact則固定不變。

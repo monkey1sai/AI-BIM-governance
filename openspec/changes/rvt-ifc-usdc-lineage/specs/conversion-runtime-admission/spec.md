@@ -1,22 +1,22 @@
 ## ADDED Requirements
 
-### Requirement: Every conversion execution SHALL 通過相同 runtime admission
+### Requirement: 每次conversion execution SHALL 通過相同runtime admission
 
 Automatic enqueue、manual trigger 與 retry SHALL 在 execution 前通過同一 runtime admission。Admission evidence SHALL 至少包含 `required_runtime_capabilities[]`、`admission_status`、`runtime_profile`、`requires_exclusive_runtime`、nullable `lease_id`、`readiness_evidence[]`、`blocker_codes[]` 與 `observed_at`，且 SHALL 不綁死 queue vendor、service topology 或 port。此欄位只描述runtime能力；user authorization另由external capability decision裁決。
 
-#### Scenario: Kit-backed runtime ready
+#### Scenario: Kit-backed runtime已就緒
 
 - **WHEN** required runtime capabilities 全部滿足、runtime health READY、exclusive profile lease有效且無 blocker
 - **THEN** admission SHALL 通過
 - **AND**系統 MAY 配置新的 attempt 並開始 conversion
 
-#### Scenario: Runtime blocker
+#### Scenario: Runtime admission發現阻擋項
 
 - **WHEN**任一 required runtime capability/readiness條件不滿足，或exclusive profile lease不滿足
 - **THEN** execution SHALL 不開始
 - **AND** admission response SHALL 回報具體 blocker codes/evidence
 
-#### Scenario: CPU/non-exclusive profile ready
+#### Scenario: CPU／non-exclusive profile已就緒
 
 - **WHEN** profile的 `requires_exclusive_runtime=false`、required runtime capabilities與readiness evidence全部滿足
 - **THEN** admission MAY 以 `lease_id=null` 通過
@@ -26,7 +26,7 @@ Automatic enqueue、manual trigger 與 retry SHALL 在 execution 前通過同一
 
 缺少可用 runtime capacity SHALL 表達為 `WAITING_CAPACITY`，保持 logical job 可恢復，且 MUST NOT 配置 attempt、增加 attempt counter 或用任意固定 timeout 轉為 semantic failure。
 
-#### Scenario: Queue waits for Kit capacity
+#### Scenario: 佇列等待Kit容量
 
 - **WHEN**所有 inputs 有效但沒有可租用的 Kit/runtime slot
 - **THEN** job SHALL 保持 `WAITING_CAPACITY`

@@ -31,15 +31,15 @@ Governed model version 的 source 與正式 derived artifact bytes SHALL 持久�
 - **WHEN** manifest 引用的 required artifact 缺失、尚未完成，或 etag/SHA-256/size 不符
 - **THEN** bundle SHALL 保持 non-ready
 - **AND** SHALL 回報具體 integrity diagnostics
-- **AND** SHALL NOT enqueue conversion
+- **AND** SHALL NOT 將conversion排入佇列
 
-#### Scenario: Manifest replay
+#### Scenario: Manifest重放
 
 - **WHEN**相同 `source_bundle_id` 與相同 manifest digest 被重放
 - **THEN** validation/enqueue SHALL 冪等
 - **AND** MUST NOT 建立第二個 logical pipeline job
 
-### Requirement: READY source version SHALL immutable
+### Requirement: READY source version SHALL 不可變
 
 一旦 source bundle 進入 `READY`，其 source artifacts 與 manifest SHALL NOT 原地覆寫。任何正式 source bytes、identity、schedule 或 lineage 改變 MUST 建立新的 `source_bundle_id`／model version；object-store versioning MAY 保留底層版本，但不得用同一 bundle identity 指向不同 bytes。
 
@@ -66,32 +66,32 @@ MinIO 中沒有 source manifest 的既有 IFC/RVT/CSV SHALL 標為 `LEGACY_UNMAN
 - **THEN** UI/API SHALL 顯示 `LEGACY_UNMANAGED` 與候選 metadata/differences
 - **AND** preview SHALL NOT 修改 MinIO
 
-#### Scenario: Concurrent enrollment
+#### Scenario: 並行升格登錄
 
 - **WHEN**兩位 operator 同時確認相同 legacy grouping
 - **THEN** conditional create SHALL 只允許一個 governed manifest 成功
 - **AND**另一個請求 SHALL 取得可重試/重新整理的 conflict，而非覆寫既有 manifest
 
-### Requirement: Governed ready claim SHALL use an additive intake and independent revalidation
+### Requirement: Governed ready claim SHALL 使用additive intake與獨立重驗
 
-Producer SHALL call additive `POST /api/external/source-bundles/ready` only after publishing `manifest.json` last。The claim SHALL identify the governed source bundle but MUST NOT be accepted as authority；coordinator SHALL read and revalidate required roles、refs、ETags、object versions、SHA-256 and sizes before declaring `READY`。Polling SHALL be limited to restart recovery/reconciliation。
+Producer SHALL 在最後發布`manifest.json`後才呼叫additive `POST /api/external/source-bundles/ready`。此claim SHALL 識別governed source bundle但 MUST NOT 被視為authority；coordinator SHALL 在宣告`READY`前讀取並重新驗證required roles、refs、ETags、object versions、SHA-256與sizes。Polling SHALL 僅限於restart recovery/reconciliation。
 
-Existing `POST /api/external/ifc-ready` SHALL remain unchanged for legacy compatibility。A `/model.ifc` object observation or source-ready claim alone MUST NOT become governed `READY`，and source-bundle READY MUST NOT create a cloud lineage publication record。
+既有`POST /api/external/ifc-ready` SHALL 保持不變以維持legacy相容性。單獨的`/model.ifc` object observation或source-ready claim MUST NOT 成為governed `READY`，且source-bundle READY MUST NOT 建立cloud lineage publication紀錄。
 
-#### Scenario: Producer sends a valid ready claim
+#### Scenario: Producer送出有效ready claim
 
-- **WHEN** producer publishes manifest last and calls `POST /api/external/source-bundles/ready`
-- **THEN** coordinator SHALL independently validate the manifest and referenced objects
-- **AND** SHALL emit the governed READY signal only after all checks pass
+- **WHEN** producer最後發布manifest並呼叫`POST /api/external/source-bundles/ready`
+- **THEN** coordinator SHALL 獨立驗證manifest與其引用objects
+- **AND** 只有所有checks通過後才 SHALL 送出governed READY signal
 
-#### Scenario: Ready claim arrives before complete manifest integrity
+#### Scenario: Ready claim在manifest integrity完成前到達
 
-- **WHEN** the endpoint is called but a required role、object version or digest does not validate
-- **THEN** coordinator SHALL keep the bundle non-ready and return integrity diagnostics
-- **AND** MUST NOT enqueue conversion or cloud lineage publication
+- **WHEN** endpoint被呼叫，但required role、object version或digest驗證失敗
+- **THEN** coordinator SHALL 維持bundle non-ready並回傳integrity diagnostics
+- **AND** MUST NOT 將conversion或cloud lineage publication排入佇列
 
-#### Scenario: Polling discovers an unprocessed valid manifest
+#### Scenario: Polling發現尚未處理的有效manifest
 
-- **WHEN** restart recovery or reconciliation finds a valid manifest whose ready claim was lost
-- **THEN** coordinator SHALL process it idempotently under the same source bundle identity
-- **AND** MUST NOT create a second logical job
+- **WHEN** restart recovery或reconciliation找到ready claim已遺失的有效manifest
+- **THEN** coordinator SHALL 在同一source bundle identity下冪等處理
+- **AND** MUST NOT 建立第二個logical job

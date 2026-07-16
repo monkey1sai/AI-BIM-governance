@@ -885,7 +885,7 @@ class Component extends DCLogic {
       st: o.st === "待送" ? (zh ? "待送" : "pending") : (zh ? "已送 ✓" : "sent ✓"),
       stStyle: o.st === "待送" ? "font-size:9.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.3);border-radius:4px;padding:2px 7px;font-family:'JetBrains Mono',monospace" : "font-size:9.5px;color:#4fd68a;background:rgba(49,197,109,.08);border:1px solid rgba(49,197,109,.25);border-radius:4px;padding:2px 7px;font-family:'JetBrains Mono',monospace",
       target: o.kind === "lineage-result"
-        ? (zh ? "Cloud Ingest API · edge → external bim-control → cloud MySQL" : "Cloud Ingest API · edge → external bim-control → cloud MySQL")
+        ? "Cloud Ingest API · edge → external bim-control → cloud MySQL"
         : (zh ? "既有 workflow callback → external bim-control" : "Existing workflow callback → external bim-control"),
       cloudSt: cloudPublicationLabels[o.cloudSt] || cloudPublicationLabels.DISABLED,
     }));

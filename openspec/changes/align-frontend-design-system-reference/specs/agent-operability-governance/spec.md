@@ -1,6 +1,13 @@
+## RENAMED Requirements
+
+- FROM: `### Requirement: Agent boundary SHALL align A1-A10 product positioning`
+- TO: `### Requirement: Agent 邊界 SHALL 對齊 A1–A10 產品定位`
+- FROM: `### Requirement: User-facing completion SHALL be frontend-operable`
+- TO: `### Requirement: 使用者介面功能的完成狀態 SHALL 可由前端操作驗證`
+
 ## MODIFIED Requirements
 
-### Requirement: Agent boundary SHALL align A1-A10 product positioning
+### Requirement: Agent 邊界 SHALL 對齊 A1–A10 產品定位
 
 Repo agent contract SHALL 將 A1–A10 識別為主要產品開發項目，並 SHALL 以 current checkout 中所有 Git-tracked `docs/plans/*.html` 作為 design gate 的唯一 UX／IA／visual／interaction reference。Manifest、route inventory、semantic cases 與 goldens SHALL 被視為 HTML-derived machine artifacts；code＋tests/contracts SHALL 裁決現行 behavior 與 runtime truth。Repo 外 design path、任意 screenshot 或衍生 artifact SHALL NOT 覆寫 HTML、API、enum、security、authority 或 runtime lifecycle。
 
@@ -15,9 +22,9 @@ Repo agent contract SHALL 將 A1–A10 識別為主要產品開發項目，並 S
 
 #### Scenario: HTML 與衍生 design artifact 漂移
 
-- **GIVEN** tracked HTML hash／normalized contract 已變更，或 manifest field 無法回溯到 tracked HTML
+- **GIVEN** tracked HTML hash／normalized contract 已變更、HTML-derived manifest field 無法回溯到 tracked HTML，或 policy-derived manifest field 無法回溯到 versioned policy path／digest
 - **WHEN** agent 或 CI 判定 design scope
-- **THEN** design gate SHALL fail closed
+- **THEN** design gate SHALL 採fail closed
 - **AND** agent SHALL 重建衍生 artifacts，不能以 repo 外來源或舊 golden 接受 drift
 
 #### Scenario: 同一 change 同時移動 design authority 與 product target
@@ -35,7 +42,7 @@ Repo agent contract SHALL 將 A1–A10 識別為主要產品開發項目，並 S
 - **THEN** status SHALL 為 `gate_infrastructure_only`
 - **AND** change SHALL 驗證schema與negative cases，但 MUST NOT 產生product visual pass
 
-### Requirement: User-facing completion SHALL be frontend-operable
+### Requirement: 使用者介面功能的完成狀態 SHALL 可由前端操作驗證
 
 每項 user-facing capability SHALL 通過兩個獨立 gates：(1) 從 tracked HTML 派生且可回溯的 design fidelity gate，在 Windows runner、Chromium DPR1、`1440x900` 與 `1920x1080` 下每個 viewport pixel diff ratio `<=0.01`，required semantic cases 100%；(2) functional browser flow，包含 canonical route、visible controls、default fixture、real backend API、loading/success/failure/retry states、domain／runtime identifiers、screenshot/trace/network evidence，以及適用時的 Kit first-frame/stage/DataChannel evidence。Design scope SHALL 從 changed paths 與較嚴格的 base/head HTML-derived manifest 聯集推導，不得由 PR prose 選取。
 
@@ -69,5 +76,5 @@ Repo agent contract SHALL 將 A1–A10 識別為主要產品開發項目，並 S
 
 - **GIVEN** HTML-derived semantic contract 不可執行，或 implemented cases 與 required cases 不同
 - **WHEN** approved 或 mixed frontend product job 執行
-- **THEN** design job SHALL fail closed
+- **THEN** design job SHALL 採fail closed
 - **AND** gate infrastructure、manifest entry 或 golden existence SHALL NOT 回報為 production design alignment

@@ -61,7 +61,6 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "event_id",
         "error"
       ],
       "properties": {

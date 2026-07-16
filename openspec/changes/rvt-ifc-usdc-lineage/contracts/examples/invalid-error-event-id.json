@@ -1,0 +1,8 @@
+{
+  "event_id": "not-a-uuid",
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "The request event identifier is malformed.",
+    "retryable": false
+  }
+}

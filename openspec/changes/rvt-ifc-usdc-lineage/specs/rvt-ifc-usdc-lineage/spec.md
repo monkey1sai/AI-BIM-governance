@@ -4,13 +4,13 @@
 
 Governed `schedule.csv` SHALL 至少包含 `ID` 與 `IfcGUID` 欄位。`ID` 與 source `IfcGUID` SHALL 以原始字串保存；`ID` 只宣告為該 `source_bundle_id` 內的 version-scoped RVT element ID，系統 MUST NOT 將其宣告為跨版本 global identity。有效 scheduled row SHALL 具非空唯一 `ID` 與可解析的唯一 UUID36 `IfcGUID`；UUID大小寫不影響 identity，系統 SHALL 另輸出 derived canonical `ifc_uuid36`。
 
-#### Scenario: Valid scheduled element
+#### Scenario: 有效的scheduled element
 
 - **WHEN** row 的 `ID` 非空且在 bundle 內唯一，`IfcGUID` 是可解析 UUID36且其 128-bit identity唯一
 - **THEN** row SHALL 納入 RVT↔IFC alignment denominator
 - **AND**原始 `ID` 字串 SHALL 不因 numeric coercion 或 leading zero 正規化而改變
 
-#### Scenario: Duplicate 或 invalid row
+#### Scenario: 重複或無效的資料列
 
 - **WHEN** row 缺 ID/GUID、ID 重複、GUID 重複或 GUID 格式無效
 - **THEN** row SHALL 進入具 reason code 的 invalid/duplicate 集合
@@ -36,7 +36,7 @@ Governed `schedule.csv` SHALL 至少包含 `ID` 與 `IfcGUID` 欄位。`ID` 與 
 
 Lineage mapping item SHALL additive 包含 `rvt_element_id`、`ifc_uuid36`、既有 `ifc_guid`、`usd_prim_path`、`mapping_status` 與 `diagnostics[]`。`usd_prim_path` SHALL 指向 streaming authority 已定義的 `/World/Elements/<IfcClass>/G_<encoded_guid>` stable element root，不得指向任意 tessellation child mesh。
 
-#### Scenario: Full lineage match
+#### Scenario: 完整lineage對齊
 
 - **WHEN** valid scheduled row 對應 IFC GlobalId，且 `element_mapping.json` 對應 stable root prim
 - **THEN** item SHALL 記為 full RVT↔IFC↔USDC match

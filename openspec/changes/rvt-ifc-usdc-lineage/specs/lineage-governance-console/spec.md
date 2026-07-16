@@ -20,20 +20,20 @@ Browser console SHALL 經 coordinator-only API 呈現 Version Overview、Artifac
 
 Edge SHALL 驗證 external control-plane 提供的 capability decision，至少區分 `bundle.read`、`bundle.publish`、`artifact.download`、`alignment.read`、`conversion.trigger`、`conversion.prioritize`、`conversion.cancel`、`conversion.retry`、`runtime.release`、`runtime.force_release`、`result.compare`、`result.promote`、`result.rollback`。Repo MUST NOT 建立平行 RBAC authority；所有 destructive/high-impact actions SHALL 具 intent/confirm/audit。任何protected read、download、compare或mutation decision缺失、過期、簽章/issuer驗證失敗或control-plane不可達時 MUST fail closed；audit只保存decision provenance、subject、expiry與correlation，不保存token secret。本 capability不提供retention mutation UI；若未來需要，MUST 另定具名 capability，不得以generic admin代替。
 
-#### Scenario: Unauthorized promotion
+#### Scenario: 未獲授權的promotion
 
 - **WHEN**使用者沒有 `result.promote` 卻要求切換 active result
 - **THEN** API SHALL 拒絕且 UI SHALL 不顯示成功
 - **AND** active pointer SHALL 不變
 
-#### Scenario: Protected action authorization decision unavailable
+#### Scenario: 受保護動作的授權判定無法取得
 
 - **WHEN** read、download、compare或mutation capability decision缺失、過期、驗證失敗或暫時無法取得
 - **THEN** API SHALL 拒絕protected action，UI SHALL 顯示 `authorization_unavailable`
 - **AND**系統 MUST NOT 樂觀執行或把cached stale decision當成功
 - **AND** audit/log SHALL 不保存credential或token secret
 
-#### Scenario: Authorized force release
+#### Scenario: 已授權的force release
 
 - **WHEN**使用者具 `runtime.force_release`，且 runtime contract 的 reason/confirmation/evidence 全部成立
 - **THEN** UI MAY 送出 force-release intent
@@ -43,7 +43,7 @@ Edge SHALL 驗證 external control-plane 提供的 capability decision，至少�
 
 具 `artifact.download` 的使用者 SHALL 可下載 individual artifact 與 CSV/JSON alignment reports。URL SHALL 短效、不可出現在 log/callback，且 artifact transport SHALL 支援 HTTP Range/resume。系統 MUST NOT 為大型 RVT/IFC/USDC bundle 即時建立 ZIP。
 
-#### Scenario: Download large USDC
+#### Scenario: 下載大型USDC
 
 - **WHEN**授權使用者要求下載 active USDC
 - **THEN** coordinator SHALL 回傳短效 presigned ref/redirect
@@ -63,5 +63,5 @@ Lineage console 的 UX、IA、visual/state authority SHALL 僅來自 Git-tracked
 #### Scenario: HTML 與 derived manifest drift
 
 - **WHEN** tracked HTML hash/contract 已改變但 manifest/goldens 尚未重建
-- **THEN** design gate SHALL fail closed
+- **THEN** design gate SHALL 採fail closed
 - **AND**不得以舊 golden 宣稱符合新 design authority

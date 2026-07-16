@@ -1,3 +1,8 @@
+## RENAMED Requirements
+
+- FROM: `### Requirement: A1-A10 Pages Preserve Prototype Intent`
+- TO: `### Requirement: A1–A10 頁面 SHALL 保留原型意圖`
+
 ## MODIFIED Requirements
 
 ### Requirement: primary 治理 viewer SHALL 採範本式全幅語意驗證版面，A1/A2/A3 operation 與 IFC 語意 metadata 清楚分區
@@ -20,7 +25,7 @@ Primary 治理 viewer SHALL 依 tracked `AI-BIM 前後端設計文件.dc.html` �
 - **AND** manifest、local CSS、legacy screenshot 或外部 prototype SHALL NOT 自行批准該 screen
 - **AND** `Full completion claimed` SHALL 為 `no`，直到 tracked HTML 補齊並重建 derivatives
 
-### Requirement: A1-A10 Pages Preserve Prototype Intent
+### Requirement: A1–A10 頁面 SHALL 保留原型意圖
 
 前端 SHALL 依 tracked design HTML 為 A1 至 A10 提供對應操作 surface：A1–A4 在 `#/workspace?dock=...`，A5–A10 在 `#/app/:slug` Concept Preview。每個 surface SHALL 說明功能目的、後端相依性與誠實 provenance。任何 screen/state ID、manifest entry或golden都必須可回溯至 HTML；不得使用 repo 外 design source 定義 production pixel pass/fail、API 或 runtime truth。
 

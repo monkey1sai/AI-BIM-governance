@@ -1,16 +1,16 @@
 ## ADDED Requirements
 
-### Requirement: Pipeline job SHALL stable 且 attempt SHALL immutable
+### Requirement: Pipeline job SHALL 保持穩定，且attempt SHALL 不可變
 
 每個 immutable `source_bundle_id` SHALL 對應一個由 coordinator擁有的 stable `pipeline_job_id` 與 durable orchestration state；ready-event replay、retry、backoff、runtime re-admission、streaming restart與 coordinator restart MUST NOT 建立第二個 logical job。Streaming conversion authority只在真正開始 execution時 SHALL 配置不可重用的 `attempt_id`。
 
-#### Scenario: Duplicate enqueue
+#### Scenario: 重複入列
 
 - **WHEN**相同 source manifest ready event 被重放
 - **THEN**系統 SHALL 回傳既有 `pipeline_job_id`
 - **AND** MUST NOT 建立平行 logical job
 
-#### Scenario: Capacity wait
+#### Scenario: 等待容量
 
 - **WHEN** runtime admission 回報 `WAITING_CAPACITY`
 - **THEN** job SHALL 保持等待
@@ -26,7 +26,7 @@ Transient MinIO/network/dispatch failure SHALL 可 backoff；publishing interrup
 - **THEN** retry SHALL 在同一 attempt 續傳
 - **AND** MUST NOT 因重複上傳建立第二個 formal result
 
-#### Scenario: Semantic-invalid source
+#### Scenario: 語意無效的來源
 
 - **WHEN** source bundle integrity 通過但內容無法滿足 conversion/alignment semantic contract
 - **THEN** job SHALL 顯示人工修正 blocker
@@ -37,7 +37,7 @@ Transient MinIO/network/dispatch failure SHALL 可 backoff；publishing interrup
 
 每個 attempt SHALL 使用 immutable result prefix，先發布 `model.usdc`、`element_mapping.json`、required indexes、quality/alignment reports，再 conditional-create `result-manifest.json`。只有 manifest 可讀、required roles 齊全且 refs/etags/SHA-256/sizes 全部驗證成功，result 才 SHALL 為 `AVAILABLE`；local file 存在或 converter exit 0 均不足以裁決 formal availability。
 
-#### Scenario: Complete result publication
+#### Scenario: 完整發布結果
 
 - **WHEN**所有 declared result artifacts integrity 通過，最後成功建立 result manifest
 - **THEN** attempt result SHALL 進入 `AVAILABLE`
@@ -86,12 +86,12 @@ Attempt SHALL 保存 `attempt_outcome = succeeded | succeeded_with_warnings | fa
 #### Scenario: Failed 或 cancelled attempt 發布audit-only formal result
 
 - **WHEN** attempt outcome為 `failed` 或 `cancelled`，但仍建立符合完整ResultManifest contract且required lineage refs/integrity有效的formal result
-- **THEN** publication state MAY 為`AVAILABLE`且MAY送出`lineage_result_published` locator/summary
-- **AND**該result SHALL沒有selection state，MUST NOT active、promote、rollback或送出`conversion_result_ready`
+- **THEN** publication state MAY 為`AVAILABLE`且 MAY 送出`lineage_result_published` locator/summary
+- **AND**該result SHALL 沒有selection state，MUST NOT active、promote、rollback或送出`conversion_result_ready`
 
 ### Requirement: Active result promotion 與 rollback SHALL 可稽核
 
-Pipeline job MAY 有一個 active-result pointer。Selectable result SHALL 同時滿足 `publication_state == AVAILABLE` 與 `attempt_outcome in {succeeded, succeeded_with_warnings}`。第一個selectable result MAY自動成為active，但自動assignment同樣 SHALL 建立包含actor/system、reason、from/to result、time與correlation的append-only audit；後續成功result MUST NOT自動取代active。Promote/rollback SHALL只接受selectable result、驗證對應capability並建立相同audit。
+Pipeline job MAY 有一個 active-result pointer。Selectable result SHALL 同時滿足 `publication_state == AVAILABLE` 與 `attempt_outcome in {succeeded, succeeded_with_warnings}`。第一個selectable result MAY 自動成為active，但自動assignment同樣 SHALL 建立包含actor/system、reason、from/to result、time與correlation的append-only audit；後續成功result MUST NOT 自動取代active。Promote/rollback SHALL 只接受selectable result、驗證對應capability並建立相同audit。
 
 #### Scenario: 第二個 attempt 成功
 
@@ -99,7 +99,7 @@ Pipeline job MAY 有一個 active-result pointer。Selectable result SHALL 同�
 - **THEN**新 result SHALL 保持 candidate
 - **AND** active pointer SHALL 不變，直到授權 promote
 
-#### Scenario: Rollback
+#### Scenario: 回滾
 
 - **WHEN**具 `result.rollback` 的 operator 切回歷史 `AVAILABLE` result
 - **THEN** pointer SHALL 更新且歷史 objects SHALL 保留
@@ -118,7 +118,7 @@ Pipeline job MAY 有一個 active-result pointer。Selectable result SHALL 同�
 #### Scenario: Compare non-AVAILABLE 或跨 job result
 
 - **WHEN**任一 result不是 AVAILABLE，或兩個 results不屬同一 pipeline job
-- **THEN** compare SHALL fail closed
+- **THEN** compare SHALL 採fail closed
 - **AND** MUST NOT 推測或組合不完整差異
 
 ### Requirement: Formal artifacts 與 audit SHALL 不自動刪除

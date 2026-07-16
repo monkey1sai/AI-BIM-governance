@@ -29,12 +29,6 @@ CREATE TABLE lineage_publications (
     alignment_report_json_ref JSON NOT NULL,
     alignment_report_csv_ref JSON NOT NULL,
     alignment_summary JSON NOT NULL,
-    current_health_state ENUM(
-        'VERIFIED',
-        'MISSING',
-        'INTEGRITY_FAILED',
-        'TOMBSTONED'
-    ) NOT NULL DEFAULT 'VERIFIED',
     published_at DATETIME(6) NOT NULL,
     stored_at DATETIME(6) NOT NULL,
     PRIMARY KEY (publication_identity),
@@ -112,6 +106,11 @@ CREATE TABLE lineage_publication_health_events (
     CONSTRAINT ck_lineage_health_ref_is_object
         CHECK (JSON_TYPE(original_result_manifest_ref) = 'OBJECT')
 ) ENGINE = InnoDB;
+
+-- Authoritative current health is derived per publication from the latest
+-- accepted health transition (highest health_event_id). With no health event,
+-- the initial derived state is VERIFIED. lineage_publications is never updated
+-- to project health state.
 
 CREATE TABLE lineage_event_receipts (
     receipt_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,

@@ -1,4 +1,4 @@
-# Cloud Lineage Publication v1
+# 雲端Lineage發布契約v1
 
 > **給外部公司雲端 API 的專用契約：`edge bim-review-coordinator → external company-cloud bim-control → cloud MySQL`。**
 >
@@ -16,16 +16,16 @@
 
 本目錄不包含publisher runtime、external `bim-control` receiver、MySQL migration、DB credentials或live database evidence。Implementation階段才會把schema/fixtures promotion到`tests/contracts/`並擴充test-only fake。
 
-## Request contract
+## 請求契約
 
-Endpoint：
+端點：
 
 ```text
 POST /api/v1/lineage-publications
 Content-Type: application/json
 ```
 
-Events：
+事件：
 
 ```text
 lineage_result_published
@@ -34,7 +34,7 @@ lineage_result_health_changed
 
 `source_bundle_ready` 不送cloud。只有integrity-valid formal ResultManifest可建立published event；failed/cancelled attempt若有contract-complete formal result可發布稽核位置，但維持non-selectable且不送ready callback。Diagnostic-only/temp/invalid output排除。
 
-### Result location only
+### 僅保存結果位置
 
 Cloud只保存下列四個formal locators及integrity metadata：
 
@@ -55,7 +55,7 @@ minio://{edge_site_id}/{bucket}/{object_key}?versionId={object_version_id}
 
 Cloud不收RVT/IFC/USDC bytes、manifest/report body、mapping rows、diff ID sets、diagnostics、credentials、local path或base64。完整`element_mapping.json`、alignment JSON/CSV與diff sets只留edge MinIO。
 
-### Lightweight summary
+### 輕量摘要
 
 Cloud summary固定三組metrics與十個counts；沒有逐element arrays。每組metric帶`numerator`、`denominator`、`ratio`、`status`。Denominator 0固定為`numerator=0`、`ratio=null`、`status=not_evaluable`。`warning_codes` unique且最多64個，`warning_code_count`須由semantic validator確認與array length一致。
 
@@ -80,7 +80,7 @@ CLOUD_LINEAGE_PUBLICATION_HMAC_KEY_ID
 CLOUD_LINEAGE_PUBLICATION_HMAC_SECRET
 ```
 
-Headers：
+標頭：
 
 ```text
 X-Lineage-Event-Id
@@ -89,7 +89,7 @@ X-Lineage-Signature-Key-Id
 X-Lineage-Webhook-Signature: sha256=<lowercase-hex>
 ```
 
-Canonical input：
+簽章標準輸入：
 
 ```text
 HMAC-SHA256(secret, signature_timestamp + "\n" + raw_request_body)
@@ -99,19 +99,19 @@ Sender先serialize一次body，再以同一raw bytes簽名與傳送。Retry保�
 
 禁止在payload、log、UI、examples或evidence放secret。Production `required`只准HTTPS；HTTP只可用於explicit test profile的loopback fake。
 
-## ACK與errors
+## ACK與錯誤
 
-| Condition | HTTP | Required behavior |
+| 條件 | HTTP | 必要行為 |
 |---|---:|---|
-| First transaction commit | 201 | exact ACK，`replay=false` |
-| Published same identity + digest + immutable content | 200 | original registration，`replay=true` |
-| New health event ID, same publication digest | 201 | append transition，`replay=false` |
-| Same health event ID + same raw-body digest | 200 | exact replay，`replay=true` |
-| Same event ID + different raw-body digest | 409 | no mutation，manual correction |
-| Same publication identity + different manifest digest | 409 | no mutation，manual correction |
-| Tenant binding mismatch | 403 | no mutation；不得從MinIO path建立authority |
-| Parent model-version missing | 422 | no mutation；manual correction |
-| Network/timeout/408/429/5xx | varies | bounded retry |
+| 首次transaction commit | 201 | 精確ACK，`replay=false` |
+| 已發布相同identity、digest與immutable content | 200 | 回傳原始registration，`replay=true` |
+| 新health event ID且publication digest相同 | 201 | 附加transition，`replay=false` |
+| 相同health event ID與相同raw-body digest | 200 | 精確replay，`replay=true` |
+| 相同event ID但raw-body digest不同 | 409 | 不得變更，需人工修正 |
+| 相同publication identity但manifest digest不同 | 409 | 不得變更，需人工修正 |
+| Tenant綁定不一致 | 403 | 不得變更；不得從MinIO path建立authority |
+| Parent model-version不存在 | 422 | 不得變更；需人工修正 |
+| 網路／逾時／408／429／5xx | 視情況而定 | 有限次retry |
 | 202、empty/malformed/mismatched 2xx | 2xx | protocol failure；不得標`DELIVERED` |
 
 成功ACK必須精確包含：
@@ -127,9 +127,11 @@ replay
 
 Sender只有在200/201且event/identity/digest逐字匹配時標`DELIVERED`。Delivery是at-least-once，不宣稱exactly-once。
 
-## Outbox與health
+Sanitized error body只必填`error`。當request ID缺失、malformed或尚未通過可採信的解析／驗證時，receiver MUST NOT 捏造`event_id`；若error body提供`event_id`，它仍必須是已解析request context中的有效UUID。Success ACK的`event_id`維持必填。
 
-Wire states：
+## Outbox與健康狀態
+
+Wire狀態：
 
 ```text
 DISABLED | PENDING | RETRYING | DELIVERED | DEAD_LETTER | CONFLICT
@@ -143,7 +145,7 @@ UI文字：
 
 Default最多5次exponential backoff＋jitter；transient dead-letter在cooldown後auto-reconcile，deterministic 4xx/conflict需人工修正／replay。Cloud delivery不阻擋edge `READY`／`AVAILABLE`。
 
-Health states：
+健康狀態：
 
 ```text
 VERIFIED | MISSING | INTEGRITY_FAILED | TOMBSTONED
@@ -151,17 +153,21 @@ VERIFIED | MISSING | INTEGRITY_FAILED | TOMBSTONED
 
 `MISSING`／`INTEGRITY_FAILED`需至少兩次edge observation；restore可回`VERIFIED`；`TOMBSTONED`只接受formal retention/revocation record。Health payload不重送summary；receiver以`publication_identity` join原publication並逐字驗證original result ID/ref/digest。Health history與每次accepted delivery/replay receipt均append-only，receipt不得update成replay counter。
 
-## Example expectations
+Current health不儲存在immutable publication row：尚無health event時衍生為`VERIFIED`；其後以最新accepted append-only health transition為準，health event不得update `lineage_publications`。
 
-| Example | Schema | Expected |
+## 範例預期結果
+
+| 範例 | Schema | 預期結果 |
 |---|---|---|
-| `valid-lineage-result-published.json` | request | valid |
-| `valid-lineage-result-health-changed.json` | request | valid |
-| `valid-created-ack.json` | response | valid |
-| `valid-conflict-error.json` | response | valid |
-| `invalid-presigned-health-locator.json` | request | invalid |
-| `invalid-lowercase-presigned-locator.json` | request schema | invalid |
-| `invalid-cross-site-health-locator.json` | semantic validator | invalid（JSON shape valid） |
-| `invalid-incomplete-ack.json` | response | invalid |
+| `valid-lineage-result-published.json` | 請求 | 有效 |
+| `valid-lineage-result-health-changed.json` | 請求 | 有效 |
+| `valid-created-ack.json` | 回應 | 有效 |
+| `valid-conflict-error.json` | 回應 | 有效 |
+| `valid-auth-error-without-event-id.json` | 回應 | 有效 |
+| `invalid-presigned-health-locator.json` | 請求 | 無效 |
+| `invalid-lowercase-presigned-locator.json` | 請求schema | 無效 |
+| `invalid-cross-site-health-locator.json` | semantic validator | 無效（JSON shape有效） |
+| `invalid-incomplete-ack.json` | 回應 | 無效 |
+| `invalid-error-event-id.json` | 回應 | 無效 |
 
 Valid schema結果只證明contract artifact一致；不代表production publisher、external receiver或cloud MySQL已實作／執行。
