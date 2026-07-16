@@ -632,7 +632,7 @@ class Component extends DCLogic {
       { id: "OB-201", kind: "conversion-result", st: "待送", cloudSt: "DISABLED" },
       { id: "OB-202", kind: "issue-snapshot", st: "待送", cloudSt: "DISABLED" },
       { id: "OB-200", kind: "conversion-result", st: "已送", cloudSt: "DISABLED" },
-      { id: "OB-203", kind: "lineage-result", st: "已送", cloudSt: "PENDING" },
+      { id: "OB-203", kind: "lineage-result", st: "待送", cloudSt: "PENDING" },
       { id: "OB-204", kind: "lineage-result", st: "已送", cloudSt: "DELIVERED" },
     ],
     issues: [
@@ -954,7 +954,7 @@ class Component extends DCLogic {
       inviteSpectator: () => this.t("已複製 Spectator 邀請連結 /ui/open?session=S-240601&streamRole=spectator(唯讀,resolveGovPanelState gate)"),
       issues, exportBcf: () => this.t("GET /api/bcf/export → bcf_2.1_export.zip (" + s.issues.length + " topics)"),
       clearSel: () => { this.setState({ sel: null, dcLog: "clearHighlightRequest → ✓" }); },
-      deliverOutbox: () => { this.setState({ outbox: s.outbox.map(o => ({ ...o, st: "已送" })) }); this.t("POST /api/internal/callback-outbox/deliver → ✓ metadata-only"); },
+      deliverOutbox: () => { this.setState({ outbox: s.outbox.map(o => ({ ...o, st: o.kind === "lineage-result" && o.cloudSt !== "DELIVERED" ? "待送" : "已送" })) }); this.t("POST /api/internal/callback-outbox/deliver → ✓ metadata-only"); },
       intakeCards, intakeEmpty: s.intake.length === 0, intakeCount: String(s.intake.length),
       convCards, convColCount: String(s.conv.length), sessionCards, outboxCards,
       cloudColumnLabel: zh ? "雲端登錄狀態" : "Cloud registration",

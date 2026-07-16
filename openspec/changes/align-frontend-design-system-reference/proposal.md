@@ -1,10 +1,10 @@
 # 變更：以docs/plans HTML重建前端設計權威與雙閘門
 
-## 為什麼
+## Why
 
 2026-07-14～2026-07-15 的設計文件整併後，repo 已由兩份 Git-tracked `docs/plans/*.html` 承接設計與規格；但現行 active change、manifest、route inventory 與 capture flow 仍引用外部 `C:\Repos\design\desigin-system`、已刪除文件或舊 hash routes。這會形成平行 design authority，也無法證明每個 screen、state、route 與 golden 都可從目前 checkout 的 HTML 重建。
 
-## 變更內容
+## What Changes
 
 - 將目前 checkout 中所有 Git-tracked `docs/plans/*.html` 定義為 design gate 的唯一權威輸入。現有集合為：
   - `AI-BIM 前後端設計文件.dc.html`：服務邊界、canonical route/IA、API 與交付語意。

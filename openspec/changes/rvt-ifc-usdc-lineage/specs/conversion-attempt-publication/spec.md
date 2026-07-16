@@ -41,7 +41,7 @@ Transient MinIO/network/dispatch failure SHALL 可 backoff；publishing interrup
 
 - **WHEN**所有 declared result artifacts integrity 通過，最後成功建立 result manifest
 - **THEN** attempt result SHALL 進入 `AVAILABLE`
-- **AND** coordinator MAY 建立或更新 active-result pointer
+- **AND** coordinator MAY 僅在該result同時符合selectable matrix且尚無active result時建立第一個active-result pointer；result不可選或已有active result時 MUST NOT 於此步驟建立／更新
 
 #### Scenario: Manifest 缺失或 checksum mismatch
 
