@@ -141,6 +141,6 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
     <iframe ref={iframeRef} src={src} title="live-3d-viewer"
       onLoad={sendViewerLeaseToken}
       sandbox="allow-scripts allow-same-origin" allow="autoplay"
-      style={{ width: "100%", height: "100%", minHeight: 480, border: "1px solid #2a2f3a", background: "#000" }} />
+      style={{ width: "100%", height: "100%", minHeight: 480, border: "1px solid var(--ab-border)", background: "var(--ab-black)" }} />
   );
 });
