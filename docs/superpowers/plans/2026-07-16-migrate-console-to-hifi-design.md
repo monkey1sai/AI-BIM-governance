@@ -890,10 +890,11 @@ grep -rn -- "--ec-" web-viewer-sample/src
 npm run typecheck
 npm run build
 npx vitest run
+npx playwright test e2e/overlay-ec-token-resolution.spec.ts
 npm run test:visual:design-system
 pwsh ../scripts/tests/verify-design-system-reference.ps1
 ```
-Expected: 第一個 grep **無任何輸出**（全 repo src 歸零——`edge-console.css` 已刪、`governance/overlay.css` 過渡 shim 已於 Step 3(d) 移除，無例外）；typecheck/build/vitest 全綠（含 `overlay-ec-token-resolution.spec.ts`）；visual gate 26 比對 PASS（unified 頁未動）；manifest 驗證 PASS。
+Expected: 第一個 grep **無任何輸出**（全 repo src 歸零——`edge-console.css` 已刪、`governance/overlay.css` 過渡 shim 已於 Step 3(d) 移除，無例外）；typecheck/build/vitest 全綠；`overlay-ec-token-resolution.spec.ts` 是 Playwright spec（非 vitest，`vitest.config.ts` 的 include 不會撿到 `e2e/` 下的檔案），須用上面獨立的 `npx playwright test` 指令驗證，PASS 代表 Step 3(d) 移除 shim 後 `.gov-overlay` 內的 `.ec-*` 規則仍能正確解析 `var(--ab-*)`；visual gate 26 比對 PASS（unified 頁未動）；manifest 驗證 PASS。
 
 - [ ] **Step 7: Commit**
 
