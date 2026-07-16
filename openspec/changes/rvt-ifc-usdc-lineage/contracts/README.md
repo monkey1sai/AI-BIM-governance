@@ -14,7 +14,7 @@
 - `examples/invalid-*.json`：應被對應 schema 或 semantic validator拒絕。
 - `cloud-lineage-publication-mysql8-reference.sql`：external cloud logical model的 **REFERENCE ONLY** mapping。
 
-本目錄不包含publisher runtime、external `bim-control` receiver、MySQL migration、DB credentials或live database evidence。Implementation階段才會把schema/fixtures promotion到`tests/contracts/`並擴充test-only fake。
+本目錄不包含publisher runtime、external `bim-control` receiver、MySQL migration、DB credentials或live database evidence。Reference DDL的utf8mb4 composite keys以MySQL 8 InnoDB 16 KiB page與`ROW_FORMAT=DYNAMIC`為physical adoption prerequisite；最大ACK binding為2,952／3,072 bytes。External owner必須在migration前驗證live settings／DDL；較小page size須fail preflight或採等價且collision-safe、不截斷logical identity的physical key設計。Implementation階段才會把schema/fixtures promotion到`tests/contracts/`並擴充test-only fake。
 
 ## 請求契約
 
@@ -62,7 +62,7 @@ Cloud summary固定三組metrics與十個counts；沒有逐element arrays。每�
 JSON Schema可拒絕形狀與enum錯誤；下列cross-field規則仍須由sender/receiver semantic validator驗證：
 
 - locator query `versionId`逐字等於`object_version_id`。
-- 每個locator authority逐字等於top-level `edge_site_id`，object key無raw `?`／`#`，且query只有唯一`?versionId=`。
+- `edge_site_id`固定為ASCII `[A-Za-z0-9._-]+`，與locator authority使用同一字元集合；每個locator authority逐字等於top-level `edge_site_id`，object key無raw `?`／`#`，且query只有唯一`?versionId=`。
 - top-level `result_manifest_digest`逐字等於`result_manifest_ref.sha256`。
 - nonzero denominator時，以decimal arithmetic計算`numerator / denominator`，再向零截斷至小數第10位作為`ratio`；trailing zeros可省略。
 - `ifc_usdc_coverage_ratio.denominator == eligible_ifc_product_count`，且其`numerator == eligible_ifc_product_count - ifc_usdc_unmapped_count`。
@@ -76,7 +76,7 @@ JSON Schema可拒絕形狀與enum錯誤；下列cross-field規則仍須由sender
 - `full_lineage_matched_count >= max(0, rvt_ifc_alignment_ratio.numerator + ifc_usdc_coverage_ratio.numerator - eligible_ifc_product_count)`。
 - ratio 1對應`complete`；0≤ratio<1對應`partial`。
 - `warning_code_count == warning_codes.length`。
-- `edge_site_id`、`external_model_version_id`與`result_id` MUST NOT 含literal `:`；`publication_identity`必須逐byte等於`edge_site_id + ":" + external_model_version_id + ":" + result_id`，sender與receiver都須重新計算並拒絕不一致值。
+- `edge_site_id` MUST 符合`^[A-Za-z0-9._-]+$`；`external_model_version_id`與`result_id` MUST NOT 含literal `:`。`publication_identity`必須逐byte等於`edge_site_id + ":" + external_model_version_id + ":" + result_id`，sender與receiver都須重新計算並拒絕不一致值。
 
 ## HMAC
 
@@ -152,7 +152,7 @@ replay
 
 Sender只有在200/201且event/identity/digest逐字匹配時標`DELIVERED`。Delivery是at-least-once，不宣稱exactly-once。
 
-Receiver在任何publication、health或receipt mutation前，須於同一transaction建立／檢查以`event_id`為primary key的immutable event ledger，保存first accepted `event_type + publication_identity + raw_body_sha256` tuple。相同`event_id`搭配任一不同tuple field一律`409`且不異動；完整tuple相同才可繼續event-type-specific replay判定。每次accepted first delivery／replay仍另append receipt row；reference DDL以composite FK強制receipt逐欄等於ledger tuple，並以`publication_identity + manifest_digest + registration_id`綁定原publication ACK identity。
+Receiver在任何publication、health或receipt mutation前，須於同一transaction建立／檢查以`event_id`為primary key的immutable event ledger，保存first accepted `event_type + publication_identity + raw_body_sha256` tuple。相同`event_id`搭配任一不同tuple field一律`409`且不異動；完整tuple相同才可繼續event-type-specific replay判定。Reference DDL以四欄composite FK強制publication的first-event tuple與每筆health row逐欄等於ledger tuple，防止direct import／reconciliation繞過reservation；每次accepted first delivery／replay仍另append receipt row，receipt也以相同四欄綁定ledger，並以`publication_identity + manifest_digest + registration_id`綁定原publication ACK identity。
 
 Published event另計算`publication_content_sha256`：對`schema_version`、`event_type`、`edge_site_id`、`tenant_id`、`project_id`、`external_model_version_id`、`result_id`、`publication_identity`、`result_manifest_digest`與完整published `payload`組成的projection做RFC 8785 JCS，再取lowercase SHA-256；明確排除transport-specific `event_id`、`occurred_at`與`correlation_id`。相同identity／manifest digest只有在此digest也相同時才是`200 replay`，否則`409`。
 
@@ -199,6 +199,7 @@ Current health不儲存在immutable publication row：尚無health event時衍�
 | `invalid-lowercase-presigned-locator.json` | 請求schema | 無效 |
 | `invalid-cross-site-health-locator.json` | semantic validator | 無效（JSON shape有效） |
 | `invalid-colon-publication-identity-component.json` | 請求schema | 無效 |
+| `invalid-edge-site-authority-character.json` | 請求schema | 無效（`edge_site_id`含locator authority字元集合外的`/`） |
 | `invalid-mismatched-publication-identity.json` | semantic validator | 無效（JSON shape有效） |
 | `invalid-inconsistent-ifc-usdc-counts.json` | semantic validator | 無效（JSON shape有效） |
 | `invalid-inconsistent-rvt-ifc-counts.json` | semantic validator | 無效（JSON shape有效） |

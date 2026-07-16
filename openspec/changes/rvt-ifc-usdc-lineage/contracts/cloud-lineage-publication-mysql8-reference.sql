@@ -9,6 +9,12 @@
 -- credentials, deployment and live-database validation. This reference maps the
 -- normative logical model only. It intentionally contains no per-element
 -- RVT/IFC/USDC lineage table; complete rows remain in customer-edge MinIO.
+-- Physical adoption of these declared utf8mb4 composite keys requires MySQL 8
+-- InnoDB with innodb_page_size = 16 KiB and ROW_FORMAT = DYNAMIC. The largest
+-- declared ACK binding is at most 2,952 bytes against the 3,072-byte key limit.
+-- The external owner MUST verify these settings and the live DDL before migration;
+-- a smaller page size MUST fail preflight or use an equivalent collision-safe
+-- physical key design without truncating the normative logical identity.
 
 CREATE TABLE lineage_publications (
     publication_identity VARCHAR(522)
@@ -16,6 +22,12 @@ CREATE TABLE lineage_publications (
     registration_id VARCHAR(200)
         CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
     first_event_id CHAR(36)
+        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    first_event_type ENUM(
+        'lineage_result_published',
+        'lineage_result_health_changed'
+    ) NOT NULL,
+    first_raw_body_sha256 CHAR(64)
         CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     edge_site_id VARCHAR(120)
         CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
@@ -43,6 +55,12 @@ CREATE TABLE lineage_publications (
     PRIMARY KEY (publication_identity),
     UNIQUE KEY uq_lineage_publications_registration (registration_id),
     UNIQUE KEY uq_lineage_publications_first_event (first_event_id),
+    KEY ix_lineage_publications_first_event_tuple (
+        first_event_id,
+        first_event_type,
+        publication_identity,
+        first_raw_body_sha256
+    ),
     UNIQUE KEY uq_lineage_publications_identity_manifest (
         publication_identity,
         manifest_digest
@@ -59,7 +77,7 @@ CREATE TABLE lineage_publications (
     ),
     CONSTRAINT ck_lineage_publications_identity_tuple
         CHECK (
-            LOCATE(':', edge_site_id) = 0
+            edge_site_id REGEXP '^[A-Za-z0-9._-]+$'
             AND LOCATE(':', external_model_version_id) = 0
             AND LOCATE(':', result_id) = 0
             AND CAST(publication_identity AS BINARY) = CAST(
@@ -72,6 +90,10 @@ CREATE TABLE lineage_publications (
                 ) AS BINARY
             )
         ),
+    CONSTRAINT ck_lineage_publications_first_event_type
+        CHECK (first_event_type = 'lineage_result_published'),
+    CONSTRAINT ck_lineage_publications_first_raw_body_digest
+        CHECK (first_raw_body_sha256 REGEXP '^[0-9a-f]{64}$'),
     CONSTRAINT ck_lineage_publications_manifest_digest
         CHECK (manifest_digest REGEXP '^[0-9a-f]{64}$'),
     CONSTRAINT ck_lineage_publications_content_digest
@@ -93,14 +115,20 @@ CREATE TABLE lineage_publications (
             AND JSON_TYPE(alignment_report_csv_ref) = 'OBJECT'
             AND JSON_TYPE(alignment_summary) = 'OBJECT'
         )
-) ENGINE = InnoDB;
+) ENGINE = InnoDB ROW_FORMAT = DYNAMIC;
 
 CREATE TABLE lineage_publication_health_events (
     health_event_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     event_id CHAR(36)
         CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    event_type ENUM(
+        'lineage_result_published',
+        'lineage_result_health_changed'
+    ) NOT NULL,
     publication_identity VARCHAR(522)
         CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
+    raw_body_sha256 CHAR(64)
+        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     manifest_digest CHAR(64)
         CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     health_state ENUM(
@@ -117,6 +145,12 @@ CREATE TABLE lineage_publication_health_events (
     stored_at DATETIME(6) NOT NULL,
     PRIMARY KEY (health_event_id),
     UNIQUE KEY uq_lineage_health_event (event_id),
+    KEY ix_lineage_health_event_tuple (
+        event_id,
+        event_type,
+        publication_identity,
+        raw_body_sha256
+    ),
     KEY ix_lineage_health_publication_time (
         publication_identity,
         observed_at,
@@ -136,6 +170,10 @@ CREATE TABLE lineage_publication_health_events (
         ON DELETE RESTRICT,
     CONSTRAINT ck_lineage_health_manifest_digest
         CHECK (manifest_digest REGEXP '^[0-9a-f]{64}$'),
+    CONSTRAINT ck_lineage_health_event_type
+        CHECK (event_type = 'lineage_result_health_changed'),
+    CONSTRAINT ck_lineage_health_raw_body_digest
+        CHECK (raw_body_sha256 REGEXP '^[0-9a-f]{64}$'),
     CONSTRAINT ck_lineage_health_confirmation
         CHECK (
             confirmation_count >= 1
@@ -158,7 +196,7 @@ CREATE TABLE lineage_publication_health_events (
         ),
     CONSTRAINT ck_lineage_health_ref_is_object
         CHECK (JSON_TYPE(original_result_manifest_ref) = 'OBJECT')
-) ENGINE = InnoDB;
+) ENGINE = InnoDB ROW_FORMAT = DYNAMIC;
 
 -- Authoritative current health is derived per publication by
 -- ORDER BY observed_at DESC, health_event_id DESC LIMIT 1. A delayed older
@@ -166,9 +204,10 @@ CREATE TABLE lineage_publication_health_events (
 -- observation. With no health event, the initial derived state is VERIFIED.
 -- lineage_publications is never updated to project health state.
 
--- Intentionally no FK to lineage_publications: the receiver reserves/checks
--- event_id before the first publication mutation inside one transaction; a
--- later failure rolls the ledger row back with the rest of that transaction.
+-- The receiver reserves/checks event_id before the first domain mutation
+-- inside one transaction; a later failure rolls the ledger and domain rows
+-- back together. Composite FKs below also prevent reconciliation/direct-import
+-- paths from bypassing that immutable tuple.
 CREATE TABLE lineage_event_identities (
     event_id CHAR(36)
         CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
@@ -195,8 +234,42 @@ CREATE TABLE lineage_event_identities (
     CONSTRAINT ck_lineage_event_identities_raw_body_digest
         CHECK (raw_body_sha256 REGEXP '^[0-9a-f]{64}$'),
     CONSTRAINT ck_lineage_event_identities_publication_identity
-        CHECK (publication_identity REGEXP '^[^:]+:[^:]+:[^:]+$')
-) ENGINE = InnoDB;
+        CHECK (publication_identity REGEXP '^[A-Za-z0-9._-]+:[^:]+:[^:]+$')
+) ENGINE = InnoDB ROW_FORMAT = DYNAMIC;
+
+ALTER TABLE lineage_publications
+    ADD CONSTRAINT fk_lineage_publications_first_event_identity
+        FOREIGN KEY (
+            first_event_id,
+            first_event_type,
+            publication_identity,
+            first_raw_body_sha256
+        )
+        REFERENCES lineage_event_identities (
+            event_id,
+            event_type,
+            publication_identity,
+            raw_body_sha256
+        )
+        ON UPDATE RESTRICT
+        ON DELETE RESTRICT;
+
+ALTER TABLE lineage_publication_health_events
+    ADD CONSTRAINT fk_lineage_health_event_identity
+        FOREIGN KEY (
+            event_id,
+            event_type,
+            publication_identity,
+            raw_body_sha256
+        )
+        REFERENCES lineage_event_identities (
+            event_id,
+            event_type,
+            publication_identity,
+            raw_body_sha256
+        )
+        ON UPDATE RESTRICT
+        ON DELETE RESTRICT;
 
 CREATE TABLE lineage_event_receipts (
     receipt_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -270,7 +343,7 @@ CREATE TABLE lineage_event_receipts (
         CHECK (raw_body_sha256 REGEXP '^[0-9a-f]{64}$'),
     CONSTRAINT ck_lineage_receipts_replay
         CHECK (replay IN (0, 1))
-) ENGINE = InnoDB;
+) ENGINE = InnoDB ROW_FORMAT = DYNAMIC;
 
 -- Normative transaction rules live in the OpenSpec capability:
 -- - create/check lineage_event_identities inside the same transaction before
@@ -281,8 +354,9 @@ CREATE TABLE lineage_event_receipts (
 -- - same health event_id + same raw_body_sha256 -> append replay receipt, HTTP 200
 -- - same event_id + different event_type, publication_identity or
 --   raw_body_sha256 -> HTTP 409, no mutation
--- - every receipt matches the immutable four-column event tuple and the
---   three-column publication ACK binding
+-- - publication first-event, every health row and every receipt match the
+--   immutable four-column event tuple; receipts also match the three-column
+--   publication ACK binding
 -- - every accepted first delivery/replay appends a receipt row; receipts are not updated
 -- - parent missing -> HTTP 422
 -- - tenant binding mismatch -> HTTP 403

@@ -176,7 +176,7 @@ lineage_result_health_changed
 
 #### 10.1 Cloud payload只保存結果位置與輕量摘要
 
-Publication identity由 `edge_site_id + ":" + external_model_version_id + ":" + result_id` 穩定決定；三個component均不得含literal `:`，sender與receiver必須逐byte重新計算，任何component或identity不符合此canonical encoding都在event ledger／domain mutation前fail closed。最大長度為522 characters，reference DDL對logical key與三個component使用MySQL 8 NO PAD binary collation。Payload至少包含 tenant/project/model-version、source bundle、pipeline job、attempt/result、attempt outcome、event/correlation/time、manifest digest，以及下列四個 formal locator：
+Publication identity由 `edge_site_id + ":" + external_model_version_id + ":" + result_id` 穩定決定；`edge_site_id`只接受與MinIO locator authority相同的ASCII `[A-Za-z0-9._-]+`，其餘兩個component不得含literal `:`。Sender與receiver必須逐byte重新計算，任何component或identity不符合此canonical encoding都在event ledger／domain mutation前fail closed。最大長度為522 characters，reference DDL對logical key與三個component使用MySQL 8 NO PAD binary collation。Payload至少包含 tenant/project/model-version、source bundle、pipeline job、attempt/result、attempt outcome、event/correlation/time、manifest digest，以及下列四個 formal locator：
 
 ```text
 result_manifest_ref
@@ -311,7 +311,7 @@ lineage_event_identities
 lineage_event_receipts
 ```
 
-`lineage_publications`只保存identities、四個result locators、manifest digest、receiver計算的canonical `publication_content_sha256`與bounded summary；它提供case-sensitive的`publication_identity + manifest_digest` health binding與`publication_identity + manifest_digest + registration_id` receipt binding。所有UUID/event IDs與SHA-256 columns使用case-sensitive ASCII collation，registration/publication identities使用`utf8mb4_0900_bin`，使exact ACK與lowercase-hex CHECK不受database default collation影響。`lineage_event_identities`以全域`event_id`保存first accepted `event_type + publication_identity + raw_body_sha256` tuple，receipt以四欄composite FK綁定該immutable tuple。Current health在尚無event時衍生為`VERIFIED`，其後依observation time衍生，不在immutable publication row保存mutable projection。Health events與receipts均append-only。Schema MUST NOT 定義逐 element lineage table。本 change附MySQL 8 `REFERENCE ONLY` DDL，僅表達logical constraints；不提供migration、DB connection、credentials或「已執行／已驗證真MySQL」宣稱。Test fake只模擬protocol transaction/idempotency，不是production cloud runtime。
+`lineage_publications`只保存identities、四個result locators、manifest digest、receiver計算的canonical `publication_content_sha256`與bounded summary；它提供case-sensitive的`publication_identity + manifest_digest` health binding與`publication_identity + manifest_digest + registration_id` receipt binding。所有UUID/event IDs與SHA-256 columns使用case-sensitive ASCII collation，registration/publication identities使用`utf8mb4_0900_bin`，使exact ACK與lowercase-hex CHECK不受database default collation影響。`lineage_event_identities`以全域`event_id`保存first accepted `event_type + publication_identity + raw_body_sha256` tuple；publication first event、每筆health event與receipt皆以四欄composite FK綁定該immutable tuple，direct import／reconciliation亦不可繞過。Current health在尚無event時衍生為`VERIFIED`，其後依observation time衍生，不在immutable publication row保存mutable projection。Health events與receipts均append-only。Schema MUST NOT 定義逐 element lineage table。本 change附MySQL 8 `REFERENCE ONLY` DDL，僅表達logical constraints；其2,952-byte最大ACK key要求16 KiB InnoDB page與`ROW_FORMAT=DYNAMIC`，external owner須在migration前live preflight，不相容環境不得截斷logical identity。此處不提供migration、DB connection、credentials或「已執行／已驗證真MySQL」宣稱。Test fake只模擬protocol transaction/idempotency，不是production cloud runtime。
 
 ## 資料與控制流程
 

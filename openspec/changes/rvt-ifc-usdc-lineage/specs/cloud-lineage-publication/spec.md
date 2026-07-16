@@ -42,7 +42,7 @@ Coordinator SHALL 只在正式ResultManifest與所有必要result references通�
 
 ### Requirement: Publication payload SHALL 只包含stable locators與bounded summary
 
-`lineage_result_published` SHALL 攜帶event、edge site、tenant、project、external model version、source bundle、pipeline job、attempt與result的穩定identity，以及`attempt_outcome`、`publication_identity`、`result_manifest_digest`、timestamps與correlation。`edge_site_id`、`external_model_version_id`與`result_id` MUST NOT 含literal `:`；`publication_identity` SHALL 逐byte等於`edge_site_id + ":" + external_model_version_id + ":" + result_id`，最大長度為522 characters。Sender與receiver SHALL 重新計算此canonical tuple encoding，且 MUST 在event identity、publication或receipt mutation前拒絕任何component／identity mismatch。
+`lineage_result_published` SHALL 攜帶event、edge site、tenant、project、external model version、source bundle、pipeline job、attempt與result的穩定identity，以及`attempt_outcome`、`publication_identity`、`result_manifest_digest`、timestamps與correlation。`edge_site_id` SHALL 只接受與locator authority相同的ASCII `[A-Za-z0-9._-]+`；`external_model_version_id`與`result_id` MUST NOT 含literal `:`。`publication_identity` SHALL 逐byte等於`edge_site_id + ":" + external_model_version_id + ":" + result_id`，最大長度為522 characters。Sender與receiver SHALL 重新計算此canonical tuple encoding，且 MUST 在event identity、publication或receipt mutation前拒絕任何component／identity mismatch。
 
 Payload SHALL 精確包含下列必要的正式references：
 
@@ -62,9 +62,9 @@ Payloads MUST NOT 包含RVT/IFC/USDC bytes、manifest/report bodies、element ma
 - **WHEN** 四個references全都使用versioned `minio://` locators，並包含相符的integrity metadata
 - **THEN** payload SHALL 可進行HMAC signing與delivery
 
-#### Scenario: Publication identity不具唯一canonical encoding
+#### Scenario: Publication identity或edge authority不具唯一canonical encoding
 
-- **WHEN** 任一identity component含literal `:`，或`publication_identity`不等於三個component的canonical colon-join
+- **WHEN** `edge_site_id`含ASCII `[A-Za-z0-9._-]`以外的字元、其餘identity component含literal `:`，或`publication_identity`不等於三個component的canonical colon-join
 - **THEN** schema／semantic validation SHALL 在event identity、publication或receipt mutation前拒絕request
 
 #### Scenario: Payload嘗試傳送element rows或presigned URL
@@ -171,7 +171,13 @@ Secrets MUST NOT 出現在payload、logs、UI、committed examples或evidence；
 
 Delivery SHALL 採at-least-once，並依event type套用不同的idempotency。`lineage_result_published` SHALL 以publication identity加manifest digest作為logical key；首次commit SHALL 回傳`201`，相同identity、digest與immutable publication content則 SHALL 回傳`200`、`replay=true`與原registration identity。Sender transport retry MUST 重用穩定的event ID與raw body；相同identity/digest但immutable content改變，或相同event ID搭配另一個event type、publication identity或raw-body digest時，SHALL 回傳`409`且不進行mutation。
 
-Receiver SHALL 在任何publication、health或receipt mutation前，於同一transaction建立／檢查以`event_id`為primary key的immutable event identity，保存first accepted `event_type + publication_identity + raw-body lowercase SHA-256` tuple。相同event ID搭配不同tuple field MUST 回傳`409`且整個transaction不異動；只有完整tuple相同才可繼續event-type-specific replay判定。每筆receipt SHALL 以composite binding逐欄匹配該event tuple，並以`publication_identity + manifest_digest + registration_id`逐欄匹配原publication；direct import或reconciliation不得繞過。
+Receiver SHALL 在任何publication、health或receipt mutation前，於同一transaction建立／檢查以`event_id`為primary key的immutable event identity，保存first accepted `event_type + publication_identity + raw-body lowercase SHA-256` tuple。相同event ID搭配不同tuple field MUST 回傳`409`且整個transaction不異動；只有完整tuple相同才可繼續event-type-specific replay判定。Publication first-event row與每筆health row SHALL 以`event_id + event_type + publication_identity + raw_body_sha256` composite binding逐欄匹配該event tuple；每筆receipt亦 SHALL 使用相同四欄binding，並以`publication_identity + manifest_digest + registration_id`逐欄匹配原publication。Direct import或reconciliation不得繞過任一binding。
+
+#### Scenario: Domain row嘗試繞過event ledger
+
+- **WHEN** publication first-event row或health row缺少對應的immutable event tuple，或任一tuple field與ledger不符
+- **THEN** receiver transaction與reference DDL composite FK SHALL 拒絕domain mutation
+- **AND** direct import或reconciliation MUST NOT 產生可見publication或current health
 
 對`lineage_result_published`，receiver SHALL 對`schema_version`、`event_type`、`edge_site_id`、`tenant_id`、`project_id`、`external_model_version_id`、`result_id`、`publication_identity`、`result_manifest_digest`與完整published `payload`組成的projection做RFC 8785 JCS並計算lowercase SHA-256，保存為`publication_content_sha256`；projection MUST 排除transport-specific `event_id`、`occurred_at`與`correlation_id`。相同identity／manifest digest只有在此digest相同時才是replay；不同時 SHALL 回傳`409`且不異動。
 
@@ -303,9 +309,9 @@ Cloud delivery state SHALL 與source `READY`、result `AVAILABLE`、active-resul
 
 ### Requirement: Cloud persistence SHALL 只包含normative logical metadata
 
-External cloud logical model SHALL 包含`lineage_publications`、`lineage_publication_health_events`、`lineage_event_identities`與`lineage_event_receipts`。它 SHALL 保留publication identity／manifest／canonical content digest、全域event ID／first raw-body digest uniqueness、append-only health history、每次接受的首次delivery或replay所append的一筆receipt row，以及四個locators與bounded summary。Reference DDL SHALL 對publication宣告case-sensitive的`publication_identity + manifest_digest` health key與`publication_identity + manifest_digest + registration_id` receipt key；receipt另 SHALL 以`event_id + event_type + publication_identity + raw_body_sha256` composite FK綁定immutable event ledger。所有event IDs與SHA-256 columns SHALL 使用case-sensitive ASCII collation，registration/publication identities SHALL 使用`utf8mb4_0900_bin`，使exact ACK與lowercase-hex constraints不依賴database default collation。Current health SHALL 依observation time衍生；immutable publication row不得包含mutable health field。Event identity rows與receipt rows MUST NOT 被更新為replay counters。它 MUST NOT 定義或要求per-element lineage tables。
+External cloud logical model SHALL 包含`lineage_publications`、`lineage_publication_health_events`、`lineage_event_identities`與`lineage_event_receipts`。它 SHALL 保留publication identity／manifest／canonical content digest、全域event ID／first raw-body digest uniqueness、append-only health history、每次接受的首次delivery或replay所append的一筆receipt row，以及四個locators與bounded summary。Reference DDL SHALL 對publication宣告case-sensitive的`publication_identity + manifest_digest` health key與`publication_identity + manifest_digest + registration_id` receipt key；publication first-event row、每筆health row與receipt另 SHALL 各自以`event_id + event_type + publication_identity + raw_body_sha256` composite FK綁定immutable event ledger。所有event IDs與SHA-256 columns SHALL 使用case-sensitive ASCII collation，registration/publication identities SHALL 使用`utf8mb4_0900_bin`，使exact ACK與lowercase-hex constraints不依賴database default collation。Current health SHALL 依observation time衍生；immutable publication row不得包含mutable health field。Event identity rows與receipt rows MUST NOT 被更新為replay counters。它 MUST NOT 定義或要求per-element lineage tables。
 
-本change SHALL 提供MySQL 8 `REFERENCE ONLY` DDL，作為不可執行的mapping輔助。DDL MUST 聲明external `bim-control`擁有physical migrations與credentials，且本repo MUST NOT 宣稱DDL已套用或真實MySQL已驗證。Test fake MAY 模擬transaction/idempotency行為，但 SHALL 維持test-only。
+本change SHALL 提供MySQL 8 `REFERENCE ONLY` DDL，作為不可執行的mapping輔助。DDL MUST 聲明最大2,952-byte ACK composite key的physical adoption prerequisite為16 KiB InnoDB page與`ROW_FORMAT=DYNAMIC`；external `bim-control` owner SHALL 在migration前驗證live settings、key limits與DDL，不相容環境 MUST fail preflight或採等價且collision-safe、不截斷normative logical identity的physical key。External `bim-control`仍擁有physical migrations與credentials，本repo MUST NOT 宣稱DDL已套用或真實MySQL已驗證。Test fake MAY 模擬transaction/idempotency行為，但 SHALL 維持test-only。
 
 #### Scenario: 審查contract-only交付
 

@@ -46,7 +46,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 120,
-      "pattern": "^[^:]+$"
+      "pattern": "^[A-Za-z0-9._-]+$"
     },
     "tenant_id": {
       "type": "string",
@@ -74,7 +74,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 522,
-      "pattern": "^[^:]+:[^:]+:[^:]+$"
+      "pattern": "^[A-Za-z0-9._-]+:[^:]+:[^:]+$"
     },
     "result_manifest_digest": {
       "$ref": "#/$defs/sha256"
