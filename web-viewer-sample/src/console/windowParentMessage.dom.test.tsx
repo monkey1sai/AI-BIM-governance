@@ -23,6 +23,7 @@ type AppInternals = {
   _handleParentMessage: (e: MessageEvent) => void;
   _handleCustomEvent: (event: { event_type?: string; messageRecipient?: string; data?: string; payload?: unknown } | null) => void;
   _overlayHighlight: (f: unknown) => unknown;
+  _overlayHighlightMany: (f: unknown[]) => unknown;
   _postToParent: (m: Record<string, unknown>, allowedOriginsCache?: ReadonlySet<string>) => void;
   _sendStreamMessage: (m: { event_type: string; payload?: unknown }) => void;
   _appendReviewEvent: (event: string) => void;
@@ -851,6 +852,103 @@ describe("Q-Important #2：highlight 分支須驗 payload 形狀（items 非陣�
     expect(overlaySpy.mock.calls[0][0]).toMatchObject({ ifc_guid: "GUID-OK" });
     const highlightResults = postedTypes(parent).filter((t) => t === "highlight_result");
     expect(highlightResults).toHaveLength(1);
+  });
+});
+
+// ── A2 F2⑥：highlight_batch（單一批次 request＝Kit 聯集選取）──
+// 與逐筆 type=highlight 分開的新 case：全部 items 經 _overlayHighlightMany 裝進「一個」
+// highlightPrimsRequest，並回「一個」帶 sent_count/unmapped_count 的 highlight_result。
+// 既有 type=highlight 的逐筆語意（Q-Important #2/#3 所鎖）完全不動。
+describe("A2 highlight_batch：單一批次 request + 單一 ack（誠實計數）", () => {
+  function batchMessage(items: unknown): MessageEvent {
+    return new MessageEvent("message", { data: { protocol: "vg01", type: "highlight_batch", items }, origin: PARENT_ORIGIN });
+  }
+
+  it("canOperate=false → 靜默丟棄（不呼 _overlayHighlightMany、不回 highlight_result）", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = new App({} as never); // 未就緒 → canOperate=false
+    const manySpy = vi.spyOn(internals(app), "_overlayHighlightMany");
+    internals(app)._handleParentMessage(batchMessage([{ ifc_guid: "GUID-AAA", severity: "error" }]));
+    expect(manySpy).not.toHaveBeenCalled();
+    expect(postedTypes(parent)).not.toContain("highlight_result");
+  });
+
+  it("items 非陣列 / 全非法 → 丟棄不崩潰；混入非法 item 只把合法者交給 _overlayHighlightMany", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = operableApp();
+    const manySpy = vi.spyOn(internals(app), "_overlayHighlightMany")
+      .mockReturnValue({ ok: true, requestId: "req_b", sent: [{ ifc_guid: "GUID-OK", primPath: "/World/OK" }], unmapped: [] });
+    expect(() => internals(app)._handleParentMessage(batchMessage(42))).not.toThrow();
+    expect(() => internals(app)._handleParentMessage(batchMessage([null, 7, { severity: "error" }]))).not.toThrow();
+    expect(manySpy).not.toHaveBeenCalled();
+    expect(postedTypes(parent)).not.toContain("highlight_result");
+
+    internals(app)._handleParentMessage(batchMessage([null, { ifc_guid: "GUID-OK", severity: "error" }]));
+    expect(manySpy).toHaveBeenCalledTimes(1);
+    expect(manySpy.mock.calls[0][0]).toEqual([{ ifc_guid: "GUID-OK", severity: "error" }]);
+  });
+
+  it("多 items → _overlayHighlightMany 收「整批一次」，並只回「一個」帶 sent_count/unmapped_count 的 highlight_result", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = operableApp();
+    const manySpy = vi.spyOn(internals(app), "_overlayHighlightMany").mockReturnValue({
+      ok: true,
+      requestId: "req_batch_1",
+      sent: [{ ifc_guid: "GUID-A", primPath: "/World/A" }, { ifc_guid: "GUID-B", primPath: "/World/B" }],
+      unmapped: ["GUID-C"],
+    });
+    const items = [
+      { ifc_guid: "GUID-A", severity: "added" },
+      { ifc_guid: "GUID-B", severity: "error" },
+      { ifc_guid: "GUID-C", severity: "warning" },
+    ];
+    internals(app)._handleParentMessage(batchMessage(items));
+    expect(manySpy).toHaveBeenCalledTimes(1); // 整批一次，非逐筆三次
+    expect(manySpy.mock.calls[0][0]).toEqual(items);
+    const results = parent.postMessage.mock.calls
+      .map((c) => c[0] as Record<string, unknown>)
+      .filter((p) => p.type === "highlight_result");
+    expect(results).toHaveLength(1); // 單一批次 ack
+    expect(results[0]).toMatchObject({ ok: true, requestId: "req_batch_1", sent_count: 2, unmapped_count: 1, unmapped_guids: ["GUID-C"] });
+  });
+
+  it("bridge 回拒（datachannel_not_ready）→ 單一 ok:false ack 帶 reason（誠實，不假裝已送）", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = operableApp();
+    vi.spyOn(internals(app), "_overlayHighlightMany").mockReturnValue({ ok: false, reason: "datachannel_not_ready" });
+    internals(app)._handleParentMessage(batchMessage([{ ifc_guid: "GUID-A", severity: "error" }]));
+    const results = parent.postMessage.mock.calls
+      .map((c) => c[0] as Record<string, unknown>)
+      .filter((p) => p.type === "highlight_result");
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ ok: false, reason: "datachannel_not_ready", requestId: "" });
+  });
+
+  it("真 _overlayHighlightMany（有 mappingCache + stub 串流）→ 恰送一個 highlightPrimsRequest（mode:replace 聯集，不逐筆互清）", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = operableApp();
+    internals(app).state = { ...internals(app).state, showStream: true };
+    vi.spyOn(internals(app), "_hasRemoteVideoFrame").mockReturnValue(true);
+    internals(app)._mappingCache = {
+      primPathForGuid: (g: string) => (g === "GUID-A" ? "/World/A" : g === "GUID-B" ? "/World/B" : null),
+    };
+    const sendSpy = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => {});
+    internals(app)._handleParentMessage(batchMessage([
+      { ifc_guid: "GUID-A", severity: "error" },
+      { ifc_guid: "GUID-B", severity: "warning" },
+      { ifc_guid: "GUID-NOPE", severity: "error" },
+    ]));
+    // 單一 DataChannel request 帶兩個 mapped prim（聯集）；unmapped 不進 items。
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    const msg = sendSpy.mock.calls[0][0] as { event_type: string; payload: { mode: string; items: Array<{ prim_path: string }> } };
+    expect(msg.event_type).toBe("highlightPrimsRequest");
+    expect(msg.payload.mode).toBe("replace");
+    expect(msg.payload.items.map((i) => i.prim_path)).toEqual(["/World/A", "/World/B"]);
   });
 });
 

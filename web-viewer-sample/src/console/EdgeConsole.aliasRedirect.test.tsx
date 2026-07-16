@@ -1,5 +1,7 @@
 // web-viewer-sample/src/console/EdgeConsole.aliasRedirect.test.tsx
 // #conv 已恢復為獨立既有-job 歷史頁；只有舊 #intake 維持 query-preserving alias → #minio。
+// 雙路由分治（IA v2）：UnifiedConsole 生產線頁改掛 #pipeline（UnifiedShell + PipelinePage），
+// 與 legacy #conv（ConversionPage）並存、互不重導。
 import { act } from "react";
 import { renderToString } from "react-dom/server";
 import { createRoot } from "react-dom/client";
@@ -84,6 +86,24 @@ describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
       root.render(<EdgeConsole />);
     });
     await waitForHash("#minio");
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("DOM 掛載 #pipeline → 渲染 UnifiedConsole PipelinePage（不重導、與 #conv 分治）", async () => {
+    window.location.hash = "#pipeline";
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<EdgeConsole />);
+    });
+    // flush 數個 tick：若存在任何重導邏輯，hash 會在此期間被改寫。
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    expect(window.location.hash).toBe("#pipeline");
+    // PipelinePage 標題來自 fixtures.getL(zh).pipe_title（fixture-first，不打 /api）。
+    expect(container.innerHTML).toContain("模型資料與轉檔生產線");
     await act(async () => {
       root.unmount();
     });

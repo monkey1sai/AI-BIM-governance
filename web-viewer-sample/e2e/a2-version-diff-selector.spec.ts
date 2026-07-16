@@ -1,8 +1,8 @@
 import { test, expect } from "@playwright/test";
 
-// A2 版本 diff 檔案庫選擇器端到端：#/a2 由 base/target 三層選擇器選 270/機電 兩版 →
+// A2 版本 diff 檔案庫選擇器端到端：#/version-diff（IA v2 後 VersionDiffPage 本尊路由；#/a2=unified workspace）由 base/target 三層選擇器選 270/機電 兩版 →
 // Run Diff → 真 backend 回 succeeded → counts 卡非全零；且 project 下拉含松風庵、
-// 松風庵/建築 版本下拉含三層 v1/japanese_villa.ifc（三層支援 user-facing 證明）。
+// 松風庵/建築 版本下拉含三層 v1/japanese_villa_mep.ifc（三層支援 user-facing 證明）。
 //
 // *** 服務這頁的是 COORDINATOR 已 build 的 dist-ui（npm run build:ui → dist-ui），
 //     不是 playwright.config.ts 的 fresh viewer。前置（乾淨環境必做）：
@@ -37,15 +37,15 @@ test.describe("A2 版本 diff 檔案庫選擇器端到端", () => {
     }
     test.skip(!apiOk, "檔案庫未備妥（需 governance-service + BIM_FILE_LIBRARY_ROOT 指主 worktree storage 含 270）");
 
-    // 守門 (2)：coordinator dist-ui 是本 branch（#/a2 有 a2-base-project，main 不存在）。
-    // 此導航同時是各 test 的唯一導航：成功後 page 已停在 #/a2、fsTree 已載入、a2-base-project 可見，
+    // 守門 (2)：coordinator dist-ui 是本 branch（#/version-diff 有 a2-base-project）。
+    // 此導航同時是各 test 的唯一導航：成功後 page 已停在 #/version-diff、fsTree 已載入、a2-base-project 可見，
     // test body 直接複用此狀態、不再 page.goto（重複導航會觸發 React unmount/remount + filesTree 重載，
     // 浪費 gate (2) 已建立的狀態並在後端慢時讓 selectOption 的隱含 waitFor 更易逾時）。
     // 註：files/tree API 在 main / 本 branch 相同，無法用純 API 判斷 dist-ui 是否為本 branch，
     //     故此 branch-gate 必須靠 UI 信號（a2-base-project 僅本 branch 有），導航無法省去。
     let uiOk = false;
     try {
-      await page.goto(`${COORDINATOR}/ui/#/a2`);
+      await page.goto(`${COORDINATOR}/ui/#/version-diff`);
       await page.getByTestId("a2-base-project").waitFor({ state: "visible", timeout: 15_000 });
       uiOk = true;
     } catch {
@@ -54,9 +54,10 @@ test.describe("A2 版本 diff 檔案庫選擇器端到端", () => {
     test.skip(!uiOk, "coordinator dist-ui 非本 branch（#/a2 缺 a2-base-project 選擇器）：需 `npm run build:ui` 後重啟 :8004 dist-ui 的 coordinator（見檔頭前置）。");
   });
 
-  test("#/a2 選 270/機電 base/target 兩版 → Run Diff → succeeded → counts 非全零", async ({ page }) => {
-    // beforeEach 已導航到 #/a2 且 a2-base-project 可見、fsTree 已載入；直接複用（不重複 goto）。
-    // base：270 / 機電 / ver 000001.ifc（option value=絕對 path，用 label 選）。
+  test("#/version-diff 選 270/機電 base/target 兩版 → Run Diff → succeeded → counts 非全零", async ({ page }) => {
+    // beforeEach 已導航到 #/version-diff 且 a2-base-project 可見、fsTree 已載入；直接複用（不重複 goto）。
+    // base：270 / 機電 / ver 000001.ifc（option value=唯一邏輯鍵 {project}/{model}/{version}；
+    // library:// 修復後絕對 path 不進瀏覽器，一律用 label 選）。
     await page.getByTestId("a2-base-project").selectOption("270");
     await page.getByTestId("a2-base-model").selectOption("機電");
     await page.getByTestId("a2-base-version").selectOption({ label: "ver 000001.ifc" });
@@ -127,7 +128,7 @@ test.describe("A2 版本 diff 檔案庫選擇器端到端", () => {
     await page.screenshot({ path: "../artifacts/e2e/a2-version-diff-selector-diff-counts.png", fullPage: true });
   });
 
-  test("base project 下拉含松風庵；選松風庵/建築 → 版本下拉含三層 v1/japanese_villa.ifc", async ({ request, page }) => {
+  test("base project 下拉含松風庵；選松風庵/建築 → 版本下拉含三層 v1/japanese_villa_mep.ifc", async ({ request, page }) => {
     // 守門：松風庵真 IFC 須已同步到部署區 storage（task #11 後續部署 checklist），否則 skip。
     // beforeEach 只守 270（A2 主 fixture），不保證 松風庵 已部署；乾淨環境 / CI runner /
     // 重建後未同步 松風庵 時，下方 hasText:"松風庵" toHaveCount(1) 會硬 FAIL（expected 0 to be 1），
@@ -145,18 +146,18 @@ test.describe("A2 版本 diff 檔案庫選擇器端到端", () => {
     }
     test.skip(!matsuOk, "需後端三層掃描已部署 + 部署區同步松風庵真 IFC（task #11）");
 
-    // beforeEach 已導航到 #/a2 且 fsTree 已載入；直接複用（不重複 goto）。matsuOk 的 API 查詢與
+    // beforeEach 已導航到 #/version-diff 且 fsTree 已載入；直接複用（不重複 goto）。matsuOk 的 API 查詢與
     // 頁面 fsTree 看到的是同一份後端狀態（松風庵 是部署期前置、非 runtime race），複用安全。
     // project 下拉含松風庵（三層 fixture 的 project；需 BIM_FILE_LIBRARY_ROOT 含 storage/松風庵/）。
     const baseProject = page.getByTestId("a2-base-project");
     await expect(baseProject).toBeVisible({ timeout: 30_000 });
     await expect(baseProject.locator("option", { hasText: "松風庵" })).toHaveCount(1);
 
-    // 選松風庵/建築 → 版本下拉含三層 name "v1/japanese_villa.ifc"（三層掃描 user-facing 證明）。
+    // 選松風庵/建築 → 版本下拉含三層 name "v1/japanese_villa_mep.ifc"（三層掃描 user-facing 證明）。
     await baseProject.selectOption("松風庵");
     await page.getByTestId("a2-base-model").selectOption("建築");
     await expect(
-      page.getByTestId("a2-base-version").locator("option", { hasText: "v1/japanese_villa.ifc" }),
+      page.getByTestId("a2-base-version").locator("option", { hasText: "v1/japanese_villa_mep.ifc" }),
     ).toHaveCount(1, { timeout: 10_000 });
 
     await page.screenshot({ path: "../artifacts/e2e/a2-version-diff-selector-matsu-three-level.png", fullPage: true });

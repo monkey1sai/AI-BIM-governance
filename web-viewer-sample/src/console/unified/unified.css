@@ -1,0 +1,58 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   UnifiedConsole — global styles（1:1 移植自 design-origin/styles.css）
+   差異：原型 html/body 級樣式改掛 body.uc-body（由 UnifiedShell effect 切換），
+   scrollbar / ::placeholder / keyframes（tup/pulse/convbar）保留全域字義。
+   不得動既有 edge-console.css。
+   ═══════════════════════════════════════════════════════════════════════ */
+body.uc-body {
+  margin: 0;
+  height: 100%;
+  background: #060a10;
+  overflow-x: auto;
+  overflow-y: hidden;
+  font-family: "Noto Sans TC", -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* 反制 index.css 的全域 body 規則（display:flex/place-items/min-width）與
+     :root line-height:1.5——原型頁面沒有這些，像素基準以 UA 預設為準。 */
+  display: block;
+  place-items: normal;
+  min-width: auto;
+  line-height: normal;
+}
+
+/* CSS 防火牆：viewer app 的全域樣式（bootstrap reboot 的 *{box-sizing:border-box}、
+   index.css/App.css 的元素規則）會漏進 console 路由；原型頁面完全沒有這些 reset。
+   all:revert 把 .uc-root 子樹每個屬性回復 UA 預設（inline style 與更高特異度的
+   .hv-* 規則仍然生效——cascade 上 inline 恆勝 class 的 revert）。 */
+.uc-root,
+.uc-root *,
+.uc-root *::before,
+.uc-root *::after {
+  all: revert;
+}
+body.uc-body a { color: #41c7e8; text-decoration: none; }
+body.uc-body a:hover { color: #7adcf2; text-decoration: underline; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #1c2a3c; border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: #28394f; }
+@keyframes tup { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes convbar { from { width: 56%; } to { width: 70%; } }
+input::placeholder { color: #4d6076; }
+
+/* hover utilities (replace dc `style-hover`).
+   刻意不加 !important：dc runtime 的 style-hover 產生 class 規則、永遠輸給 inline style，
+   因此凡與 inline 同屬性的 hover（邊框色、文字色）在原型中本來就無效；
+   只有 filter 與無 inline background 的元素會有 hover 效果。此處逐一比照。 */
+.hv-accent-border:hover { border-color: rgba(65, 199, 232, .35); }
+.hv-accent-border-strong:hover { border-color: rgba(65, 199, 232, .4); }
+.hv-card:hover { border-color: rgba(65, 199, 232, .45); transform: translateY(-1px); }
+.hv-bright:hover { filter: brightness(1.12); }
+.hv-bright-more:hover { filter: brightness(1.2); }
+.hv-text:hover { color: #dbe6f3; }
+.hv-bg:hover { background: rgba(65, 199, 232, .06); }
+.hv-bg-soft:hover { background: rgba(65, 199, 232, .05); }
+.hv-bg-row:hover { background: rgba(65, 199, 232, .07); }
+.hv-accent-bg:hover { background: rgba(65, 199, 232, .08); }
+.hv-danger-bg:hover { background: rgba(232, 97, 92, .08); }
+.hv-doc:hover { border-color: rgba(65, 199, 232, .4); color: #dbe6f3; }

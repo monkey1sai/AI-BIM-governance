@@ -53,12 +53,20 @@ describe("edge console honesty smoke", () => {
   });
 
   it("nav tooltip 走 i18n：zh 下 overview 的 title 為「總覽」而非 data.ts fallback「Overview」", () => {
-    // 預設 _lang=zh（i18n.ts；jsdom 無 localStorage → fallback zh），navText(overview) → NAV_LABEL.overview.biz = 總覽。
-    const html = renderToString(<EdgeConsole />);
-    // 修正後 nav 按鈕 title 取 navText（i18n）而非原始 data.ts label。
-    expect(html).toContain('title="總覽"');
-    // 誠實守門（not-contains）：overview 不應再以英文 fallback 當 tooltip。
-    expect(html).not.toContain('title="Overview"');
+    // IA v2 雙殼：預設 #home 已由 UnifiedConsole 承接（無 legacy nav）；本測試針對 legacy 殼的
+    // nav tooltip 契約，須先把 hash 釘在 legacy 路由（#overview）再渲染（比照下方 #runtime 測試 pattern）。
+    const prevHash = window.location.hash;
+    try {
+      window.location.hash = "#overview";
+      // 預設 _lang=zh（i18n.ts；jsdom 無 localStorage → fallback zh），navText(overview) → NAV_LABEL.overview.biz = 總覽。
+      const html = renderToString(<EdgeConsole />);
+      // 修正後 nav 按鈕 title 取 navText（i18n）而非原始 data.ts label。
+      expect(html).toContain('title="總覽"');
+      // 誠實守門（not-contains）：overview 不應再以英文 fallback 當 tooltip。
+      expect(html).not.toContain('title="Overview"');
+    } finally {
+      window.location.hash = prevHash;
+    }
   });
 
   it("Applications 啟動器列出 A1–A10 並帶 provenance", () => {
@@ -362,18 +370,26 @@ describe("edge console honesty smoke", () => {
 
   // ── P3-2 / P3-3 殼層：Agent suggested prompts（disabled 輸入）+ FlowBar + Tweaks ──
   it("P3-2/P3-3 EdgeConsole 殼層含 Agent prompts（disabled 輸入）+ FlowBar + Tweaks", () => {
-    const html = renderToString(<EdgeConsole />);
-    // P3-2：suggested prompts + 寫入限制 + disabled 輸入框（非可用的假輸入）。
-    expect(html).toContain("SUGGESTED");
-    expect(html).toContain("AI 僅能改 review / session layer");
-    expect(html).toMatch(/<input[^>]*disabled/);
-    // P3-3：FlowBar 5 步（預設語言=中 → 中文 biz 步驟標籤）+ 頂列 LangToggle（中/EN）+ Tweaks（scenario clean/warn）。
-    expect(html).toContain("①"); // FlowBar step 1 標號
-    expect(html).toContain("接收建模來源"); // 預設中文（biz）的步驟標籤（Intake）
-    expect(html).toContain("紀錄回寫雲端"); // FlowBar 末步（Record 中文）
-    expect(html).toContain("ec-langtoggle"); // 語言切換移至頂列（中/EN），取代舊「用語」操作員/技術鈕
-    expect(html).toContain("clean"); // Tweaks scenario 按鈕
-    expect(html).toContain("warn");
+    // IA v2 雙殼：Agent 欄 / FlowBar / Tweaks 是 legacy 殼專屬（approved 鍵走 UnifiedShell 無此三者）；
+    // 預設 #home 已讓位給 UnifiedConsole，故釘 legacy 路由（#overview）再斷言殼層契約。
+    const prevHash = window.location.hash;
+    try {
+      window.location.hash = "#overview";
+      const html = renderToString(<EdgeConsole />);
+      // P3-2：suggested prompts + 寫入限制 + disabled 輸入框（非可用的假輸入）。
+      expect(html).toContain("SUGGESTED");
+      expect(html).toContain("AI 僅能改 review / session layer");
+      expect(html).toMatch(/<input[^>]*disabled/);
+      // P3-3：FlowBar 5 步（預設語言=中 → 中文 biz 步驟標籤）+ 頂列 LangToggle（中/EN）+ Tweaks（scenario clean/warn）。
+      expect(html).toContain("①"); // FlowBar step 1 標號
+      expect(html).toContain("接收建模來源"); // 預設中文（biz）的步驟標籤（Intake）
+      expect(html).toContain("紀錄回寫雲端"); // FlowBar 末步（Record 中文）
+      expect(html).toContain("ec-langtoggle"); // 語言切換移至頂列（中/EN），取代舊「用語」操作員/技術鈕
+      expect(html).toContain("clean"); // Tweaks scenario 按鈕
+      expect(html).toContain("warn");
+    } finally {
+      window.location.hash = prevHash;
+    }
   });
 
   it("[R4] NAV 分組對齊 A.1.1 群組欄（路由表為準）", () => {
@@ -387,17 +403,28 @@ describe("edge console honesty smoke", () => {
   });
 
   it("完整產品操作台 shell 顯示 prototype 的四組資訊架構", () => {
-    const html = renderToString(<EdgeConsole />);
-    expect(html).toContain("工作台");
-    expect(html).toContain("核心治理");
-    expect(html).toContain("OMNIVERSE RUNTIME");
-    expect(html).toContain("落地端控制台");
-    expect(html).toContain("模型資料與轉檔");
-    expect(html).toContain("Kit / GPU 機隊");
-    expect(html).toContain('class="ec-key">MD<');
-    expect(html).toContain('class="ec-key">CV<');
-    expect(html).not.toContain('class="ec-key">IN<');
-    expect(html).toContain("Chat USD Agent");
+    // IA v2 雙殼：四組 IA 群組標題屬 legacy 殼左欄（UnifiedShell 側欄改為「工作台/AI 應用模組」兩群組）；
+    // 釘 legacy 路由（#overview）再斷言 legacy nav 契約。
+    const prevHash = window.location.hash;
+    try {
+      window.location.hash = "#overview";
+      const html = renderToString(<EdgeConsole />);
+      expect(html).toContain("工作台");
+      expect(html).toContain("核心治理");
+      expect(html).toContain("OMNIVERSE RUNTIME");
+      expect(html).toContain("落地端控制台");
+      // MD 合一（Task 7）：intake「建模接收」併入單一 MD 項；conv（IFC→USD 轉檔歷史）已恢復獨立 nav 項。
+      expect(html).toContain("模型資料與轉檔"); // MD nav 標籤（navText(minio) → NAV_LABEL.minio.biz）
+      expect(html).toContain("Kit / GPU 機隊");
+      expect(html).toContain('class="ec-key">MD<'); // no="MD"（原 minio no="M"）
+      // conv（no=CV）nav 項已恢復（legacy ConversionPage 雙路由分治）；intake（no=IN）仍除名。
+      // 以 nav 鍵 no 精確守門（比照 CO 守門），不用裸字串。
+      expect(html).toContain('class="ec-key">CV<');
+      expect(html).not.toContain('class="ec-key">IN<');
+      expect(html).toContain("Chat USD Agent");
+    } finally {
+      window.location.hash = prevHash;
+    }
   });
 
   // ── co-console-runtime-merge §5.1 守門一（負向，打資料模型）：CO 獨立導覽項已從 PAGES 移除 ──
@@ -408,19 +435,29 @@ describe("edge console honesty smoke", () => {
   it("co-console-merge：CO 獨立導覽項已從 PAGES 移除（負向守門 · 資料模型 + 渲染 nav）", () => {
     // 資料模型守門：PAGES 不得再含 coordinator 項（落地端控制台群組只剩 conv/sessions/instances/minio）。
     expect(PAGES.some((p) => p.key === "coordinator")).toBe(false);
-    // 渲染 nav 補強：預設 #home 渲染的左欄按鈕（`<span class="ec-key">{p.no}</span>` L211）不得出現
-    // CO 編號（被移除 page 的 no="CO"）。NAV_GROUPS 的 coordinator 群組仍在故群組標題照常存活。
-    const navHtml = renderToString(<EdgeConsole />);
-    expect(navHtml).not.toContain('class="ec-key">CO<');
-  });
-
-  it("co-console-merge：#runtime route 承接 Coordinator runtime console，且 nav label 改為 Runtime 觀測值班台", () => {
+    // 渲染 nav 補強：IA v2 後 #home 走 UnifiedShell（無 legacy 左欄），not-contains 會空泛通過；
+    // 釘 legacy 路由（#overview）確保真的渲染 legacy nav 後，才斷言不得出現 CO 編號
+    // （被移除 page 的 no="CO"）。NAV_GROUPS 的 coordinator 群組仍在故群組標題照常存活。
     const prevHash = window.location.hash;
     try {
-      window.location.hash = "#runtime";
+      window.location.hash = "#overview";
+      const navHtml = renderToString(<EdgeConsole />);
+      expect(navHtml).toContain('class="ec-key">'); // 先證明 legacy nav 真的渲染（守門非空泛）
+      expect(navHtml).not.toContain('class="ec-key">CO<');
+    } finally {
+      window.location.hash = prevHash;
+    }
+  });
+
+  // IA v2 alias 重排：#runtime 讓位給 UnifiedConsole OpsPage；舊 CoordinatorPage（C/Hybrid Runtime
+  // Orchestrator）改由 #coordinator 深連結承接（EdgeConsole.tsx renderBody case "coordinator"）。
+  it("co-console-merge（IA v2）：#coordinator 承接舊 CoordinatorPage，legacy nav label 仍為 Runtime 觀測值班台", () => {
+    const prevHash = window.location.hash;
+    try {
+      window.location.hash = "#coordinator";
       const html = renderToString(<EdgeConsole />);
 
-      expect(html).toContain("Runtime 觀測值班台");
+      expect(html).toContain("Runtime 觀測值班台"); // legacy nav 的 runtime 項 label（navText(runtime).biz）
       expect(html).not.toContain("串流執行狀態");
       expect(html).toContain("Coordinator Console · C / Hybrid Runtime Orchestrator");
       expect(html).toContain("/api/runtime/status");
@@ -429,6 +466,24 @@ describe("edge console honesty smoke", () => {
       expect(html).toContain("Classic Dashboard 是 operator 第一眼總覽");
       expect(html).toContain("Open primary URL 不等於 occupied");
       expect(html).not.toContain("Runtime Dashboard · 串流執行狀態");
+    } finally {
+      window.location.hash = prevHash;
+    }
+  });
+
+  it("IA v2：#runtime 渲染 UnifiedConsole OpsPage（Runtime / Kit · GPU 營運），不再掛舊 CoordinatorPage", () => {
+    const prevHash = window.location.hash;
+    try {
+      window.location.hash = "#runtime";
+      const html = renderToString(<EdgeConsole />);
+
+      // 新 OpsPage 標題（fixtures.getL(zh).ops_title）。
+      expect(html).toContain("Runtime / Kit · GPU 營運");
+      // 誠實標記：fixture 面板帶 data-prov="fixture"（不冒充 live 遙測）。
+      expect(html).toContain('data-prov="fixture"');
+      // 舊 CoordinatorPage 已不在 #runtime（改走 #coordinator，見上一測試）。
+      expect(html).not.toContain("Coordinator Console · C / Hybrid Runtime Orchestrator");
+      expect(html).not.toContain("A Classic Dashboard");
     } finally {
       window.location.hash = prevHash;
     }
@@ -705,6 +760,14 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
   // 第二版本：A2 base/target 各一組選擇器需可選到相異版本（base=v1、target=v2），
   // 才能驗證 base/target 真的獨立接線、各自帶出相異 model_version_id。
   const VER2_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/機電/ver 竣工 v2.ifc";
+  // A2 VersionDiffPage 選擇器改用唯一邏輯鍵（library:// 流）：version.path 對瀏覽器被 proxy
+  // 遮蔽成 "[server-path]"（全部選項同值），不能再當 option value / 回送後端；選定後 input 填
+  // library://{key}，提交走 createDiffForLibrary 由 coordinator server-side 解析真路徑。
+  //（A1 IssuesRuleCenterPage 的 a1-fs-* 選擇器未在本輪改造，仍用 path 值。）
+  const VER_KEY = "270/機電/ver 竣工.ifc";
+  const VER2_KEY = "270/機電/ver 竣工 v2.ifc";
+  const VER_LIB = `library://${VER_KEY}`;
+  const VER2_LIB = `library://${VER2_KEY}`;
   const tree: FilesTreeResponse = {
     root: "C:/Repos/active/iot/AI-BIM-governance/storage",
     source_kind: "local_fs",
@@ -958,13 +1021,19 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
   });
 
   // A2 VersionDiffPage 雙組三層選擇器（複用 A1 模式）：選定 base 版本 → 填 base input
-  // 並把 base_model_version_id（{project}/{model}/{version.name}）隨 createDiff 送出。
-  it("A2 VersionDiffPage 選 base 版本 → 填 base input 並送 base_model_version_id", async () => {
+  // library://{key} 邏輯識別（path 被 proxy 遮蔽不可回送）。
+  // 等價改寫（library:// 修復）：原斷言「單選 base 後 createDiff 帶 base 路徑+verId」——
+  // 單選 base 時 target 仍是手填預設路徑（混用），coordinator 無法解析手填側；提交必須
+  // 誠實擋下（不打 createDiff / createDiffForLibrary、顯示混用原因），防把過時/遮蔽值送 governance。
+  // 「兩側 verId 隨提交送出」的 API 面驗收由下一個測試（base+target 皆選）承接。
+  it("A2 VersionDiffPage 選 base 版本 → 填 base input（library://）；混用手填 target 提交被誠實擋下", async () => {
     vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
     const createSpy = vi
       .spyOn(governanceClient, "createDiff")
       .mockResolvedValue({ diff_id: "d-a2", status: "queued" });
-    // getDiff 立刻回 succeeded 結束輪詢，避免測試卡在 setTimeout 迴圈。
+    const createLibSpy = vi
+      .spyOn(governanceClient, "createDiffForLibrary")
+      .mockResolvedValue({ diff_id: "d-a2", status: "queued" });
     vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
       diff_id: "d-a2",
       status: "succeeded",
@@ -988,10 +1057,10 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
 
     await pick("a2-base-project", "270");
     await pick("a2-base-model", "機電");
-    await pick("a2-base-version", VER_PATH);
-    // 受控持值 + 填入 base input。
-    expect(sel("a2-base-version").value).toBe(VER_PATH);
-    expect(baseInput().value).toBe(VER_PATH);
+    await pick("a2-base-version", VER_KEY);
+    // 受控持值（唯一鍵）+ 填入 base input（library:// 邏輯識別，非遮蔽字面）。
+    expect(sel("a2-base-version").value).toBe(VER_KEY);
+    expect(baseInput().value).toBe(VER_LIB);
 
     const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
       (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
@@ -999,22 +1068,27 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     await act(async () => { runBtn.click(); });
     await act(async () => { await Promise.resolve(); });
 
-    expect(createSpy).toHaveBeenCalledTimes(1);
-    const arg = createSpy.mock.calls[0][0];
-    expect(arg.base_ifc_path).toBe(VER_PATH);
-    expect(arg.base_model_version_id).toBe("270/機電/ver 竣工.ifc");
+    // 混用（base=library、target=手填預設）→ 誠實擋下：兩條 API 皆不打、顯示原因。
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(createLibSpy).not.toHaveBeenCalled();
+    expect(container.innerHTML).toContain("混用無法解析");
 
     await act(async () => { root.unmount(); });
   });
 
   // 對稱補上 target 側（需求明文：base 與 target「各一組」三層選擇器，model_version_id 兩側
-  // 都「隨 createDiff 送出」）。選 base=v1、target=v2（fixture 第二版本），assert createDiff
-  // 同時收到 base_model_version_id 與『相異的』target_model_version_id——若 target 選擇器
-  // 沒接好 / 與 base 交叉接線 / 對 e.target.value 是 no-op，產不出這個相異的 target id，測試會紅。
-  it("A2 VersionDiffPage 選 base+target 版本 → 兩側 model_version_id 皆隨 createDiff 送出", async () => {
+  // 都「隨提交送出」）。選 base=v1、target=v2（fixture 第二版本），assert createDiffForLibrary
+  // 同時收到 base 與『相異的』target 邏輯三段＋兩側 model_version_id——若 target 選擇器
+  // 沒接好 / 與 base 交叉接線 / 對 e.target.value 是 no-op，產不出這個相異的 target ref，測試會紅。
+  // 等價改寫（library:// 修復）：提交路由由 createDiff(path) 改為 createDiffForLibrary(邏輯三段)，
+  // 真路徑由 coordinator server-side 解析；手填分支仍走 createDiff（另有測試覆蓋）。
+  it("A2 VersionDiffPage 選 base+target 版本 → 兩側邏輯三段與 model_version_id 皆隨 createDiffForLibrary 送出", async () => {
     vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
     const createSpy = vi
       .spyOn(governanceClient, "createDiff")
+      .mockRejectedValue(new Error("library picks must not fall back to raw-path createDiff"));
+    const createLibSpy = vi
+      .spyOn(governanceClient, "createDiffForLibrary")
       .mockResolvedValue({ diff_id: "d-a2bt", status: "queued" });
     vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
       diff_id: "d-a2bt",
@@ -1041,17 +1115,17 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     // base 選 v1（沿用第一個測試的 270/機電/ver 竣工.ifc）。
     await pick("a2-base-project", "270");
     await pick("a2-base-model", "機電");
-    await pick("a2-base-version", VER_PATH);
+    await pick("a2-base-version", VER_KEY);
     // target 選 v2（同 project/model 下的第二版本），驗證 target 三層選擇器獨立於 base。
     await pick("a2-target-project", "270");
     await pick("a2-target-model", "機電");
-    await pick("a2-target-version", VER2_PATH);
+    await pick("a2-target-version", VER2_KEY);
 
     // 兩側受控持值 + 各自填入對應 input（base/target 不互相覆蓋）。
-    expect(sel("a2-base-version").value).toBe(VER_PATH);
-    expect(sel("a2-target-version").value).toBe(VER2_PATH);
-    expect(baseInput().value).toBe(VER_PATH);
-    expect(targetInput().value).toBe(VER2_PATH);
+    expect(sel("a2-base-version").value).toBe(VER_KEY);
+    expect(sel("a2-target-version").value).toBe(VER2_KEY);
+    expect(baseInput().value).toBe(VER_LIB);
+    expect(targetInput().value).toBe(VER2_LIB);
 
     const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
       (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
@@ -1059,23 +1133,31 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     await act(async () => { runBtn.click(); });
     await act(async () => { await Promise.resolve(); });
 
-    expect(createSpy).toHaveBeenCalledTimes(1);
-    const arg = createSpy.mock.calls[0][0];
-    expect(arg.base_ifc_path).toBe(VER_PATH);
-    expect(arg.target_ifc_path).toBe(VER2_PATH);
+    expect(createLibSpy).toHaveBeenCalledTimes(1);
+    const arg = createLibSpy.mock.calls[0][0];
+    expect(arg.base).toEqual({ project_id: "270", model_id: "機電", version_name: "ver 竣工.ifc" });
+    expect(arg.target).toEqual({ project_id: "270", model_id: "機電", version_name: "ver 竣工 v2.ifc" });
     // 兩側 model_version_id 皆送出，且 target 相異於 base（證明 target 側真的接上、非沿用 base）。
     expect(arg.base_model_version_id).toBe("270/機電/ver 竣工.ifc");
     expect(arg.target_model_version_id).toBe("270/機電/ver 竣工 v2.ifc");
+    expect(createSpy).not.toHaveBeenCalled();
 
     await act(async () => { root.unmount(); });
   });
 
-  // target 側手動覆寫路徑 input → 清掉 target_model_version_id（誠實：手填路徑無版本綁定語意），
-  // 且不影響已選定的 base_model_version_id。對稱於 base 側既有行為。
-  it("A2 target input 手動覆寫 → 清 target_model_version_id，base 綁定不受影響", async () => {
+  // target 側手動覆寫路徑 input → 清掉 target 版本綁定（誠實：手填路徑無版本綁定語意），
+  // 且不影響已選定的 base 綁定。對稱於 base 側既有行為。
+  // 等價改寫（library:// 修復）：原斷言「createDiff 收到手填 target + 保留 base verId」——
+  // 現在 base=library、target=手填即混用，coordinator 無法解析手填側；等價回歸守門變成
+  // 「過時 target ref 絕不隨 createDiffForLibrary 送出、也不把 library:// 字面塞給 createDiff」，
+  // UI 誠實顯示混用原因；base 綁定不受影響（base input 仍持 library:// 選擇器填入值）。
+  it("A2 target input 手動覆寫 → 清 target 版本綁定；混用提交被誠實擋下且 base 綁定不受影響", async () => {
     vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
     const createSpy = vi
       .spyOn(governanceClient, "createDiff")
+      .mockResolvedValue({ diff_id: "d-a2ov", status: "queued" });
+    const createLibSpy = vi
+      .spyOn(governanceClient, "createDiffForLibrary")
       .mockResolvedValue({ diff_id: "d-a2ov", status: "queued" });
     vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
       diff_id: "d-a2ov",
@@ -1090,6 +1172,7 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     await act(async () => { await Promise.resolve(); });
 
     const sel = (tid: string) => container.querySelector<HTMLSelectElement>(`[data-testid="${tid}"]`)!;
+    const baseInput = () => container.querySelector<HTMLInputElement>('[data-testid="a2-base-input"]')!;
     const targetInput = () => container.querySelector<HTMLInputElement>('[data-testid="a2-target-input"]')!;
     const pick = async (tid: string, value: string) => {
       await act(async () => {
@@ -1101,11 +1184,11 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     // base 走選擇器（保留版本綁定），target 先選版本再手動覆寫路徑（清綁定）。
     await pick("a2-base-project", "270");
     await pick("a2-base-model", "機電");
-    await pick("a2-base-version", VER_PATH);
+    await pick("a2-base-version", VER_KEY);
     await pick("a2-target-project", "270");
     await pick("a2-target-model", "機電");
-    await pick("a2-target-version", VER2_PATH);
-    expect(targetInput().value).toBe(VER2_PATH);
+    await pick("a2-target-version", VER2_KEY);
+    expect(targetInput().value).toBe(VER2_LIB);
 
     // 手動覆寫 target 路徑 → onChange 清 targetVerId + targetSel.version。
     // 注意：受控 input 須經 native value setter 才會繞過 React value tracker 的 dedup、
@@ -1129,23 +1212,30 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     await act(async () => { runBtn.click(); });
     await act(async () => { await Promise.resolve(); });
 
-    const arg = createSpy.mock.calls[0][0];
-    expect(arg.target_ifc_path).toBe("C:/manual/typed-target.ifc");
-    // 手填路徑 → target_model_version_id 清空（undefined，維持現行為），但 base 綁定保留。
-    expect(arg.target_model_version_id).toBeUndefined();
-    expect(arg.base_model_version_id).toBe("270/機電/ver 竣工.ifc");
+    // 混用（base=library、target=手填）→ 誠實擋下：過時 target ref 不得隨 library 提交外送、
+    // library:// 字面也不得塞給 createDiff；顯示混用原因。
+    expect(createLibSpy).not.toHaveBeenCalled();
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(container.innerHTML).toContain("混用無法解析");
+    // base 綁定不受影響：base input 仍持選擇器填入的 library:// 值。
+    expect(baseInput().value).toBe(VER_LIB);
 
     await act(async () => { root.unmount(); });
   });
 
-  // 對稱補上 base 側（需求明文：「手動覆寫 input 時清空對應 model_version_id」適用 base/target
-  // 兩側）。base 先選版本再手動覆寫路徑（清 base 綁定）；target 走選擇器保留版本綁定 → assert
-  // createDiff 收到 base_model_version_id=undefined 但 target_model_version_id 仍在。若 base input
-  // onChange 沒清 baseVerId / baseSel.version，會殘留舊綁定隨 createDiff 送出，測試會紅。
-  it("A2 base input 手動覆寫 → 清 base_model_version_id，target 綁定不受影響", async () => {
+  // 對稱補上 base 側（需求明文：「手動覆寫 input 時清空對應版本綁定」適用 base/target 兩側）。
+  // base 先選版本再手動覆寫路徑（清 base 綁定）；target 走選擇器保留版本綁定。
+  // 等價改寫（library:// 修復）：原斷言「createDiff 收到手填 base + 保留 target verId」——
+  // 現在 target=library、base=手填即混用；等價回歸守門變成「過時 base ref 絕不隨
+  // createDiffForLibrary 送出、library:// 字面不塞給 createDiff」，UI 誠實顯示混用原因；
+  // target 綁定不受影響（target input 仍持 library:// 選擇器填入值）。
+  it("A2 base input 手動覆寫 → 清 base 版本綁定；混用提交被誠實擋下且 target 綁定不受影響", async () => {
     vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
     const createSpy = vi
       .spyOn(governanceClient, "createDiff")
+      .mockResolvedValue({ diff_id: "d-a2bov", status: "queued" });
+    const createLibSpy = vi
+      .spyOn(governanceClient, "createDiffForLibrary")
       .mockResolvedValue({ diff_id: "d-a2bov", status: "queued" });
     vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
       diff_id: "d-a2bov",
@@ -1161,6 +1251,7 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
 
     const sel = (tid: string) => container.querySelector<HTMLSelectElement>(`[data-testid="${tid}"]`)!;
     const baseInput = () => container.querySelector<HTMLInputElement>('[data-testid="a2-base-input"]')!;
+    const targetInput = () => container.querySelector<HTMLInputElement>('[data-testid="a2-target-input"]')!;
     const pick = async (tid: string, value: string) => {
       await act(async () => {
         sel(tid).value = value;
@@ -1171,11 +1262,11 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     // base 先選版本（建立綁定）再手動覆寫路徑（清綁定）；target 走選擇器保留版本綁定。
     await pick("a2-base-project", "270");
     await pick("a2-base-model", "機電");
-    await pick("a2-base-version", VER_PATH);
+    await pick("a2-base-version", VER_KEY);
     await pick("a2-target-project", "270");
     await pick("a2-target-model", "機電");
-    await pick("a2-target-version", VER2_PATH);
-    expect(baseInput().value).toBe(VER_PATH);
+    await pick("a2-target-version", VER2_KEY);
+    expect(baseInput().value).toBe(VER_LIB);
 
     // 手動覆寫 base 路徑 → onChange 清 baseVerId + baseSel.version。
     // 注意：受控 input 須經 native value setter 才會繞過 React value tracker 的 dedup、
@@ -1199,11 +1290,12 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     await act(async () => { runBtn.click(); });
     await act(async () => { await Promise.resolve(); });
 
-    const arg = createSpy.mock.calls[0][0];
-    expect(arg.base_ifc_path).toBe("C:/manual/typed-base.ifc");
-    // 手填路徑 → base_model_version_id 清空（undefined，維持現行為），但 target 綁定保留。
-    expect(arg.base_model_version_id).toBeUndefined();
-    expect(arg.target_model_version_id).toBe("270/機電/ver 竣工 v2.ifc");
+    // 混用（base=手填、target=library）→ 誠實擋下：過時 base ref 不外送、字面不塞 createDiff。
+    expect(createLibSpy).not.toHaveBeenCalled();
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(container.innerHTML).toContain("混用無法解析");
+    // target 綁定不受影響：target input 仍持選擇器填入的 library:// 值。
+    expect(targetInput().value).toBe(VER2_LIB);
 
     await act(async () => { root.unmount(); });
   });
@@ -1249,13 +1341,13 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
       });
     };
 
-    // 選定 base 版本（建立 selector 填入值 + 綁定）。
+    // 選定 base 版本（建立 selector 填入值 + 綁定；option value=唯一鍵、input 填 library://）。
     await pick("a2-base-project", "270");
     await pick("a2-base-model", "機電");
-    await pick("a2-base-version", VER_PATH);
-    expect(baseInput().value).toBe(VER_PATH);
+    await pick("a2-base-version", VER_KEY);
+    expect(baseInput().value).toBe(VER_LIB);
 
-    // 換 project（選回 placeholder）→ selector 填入的 base 路徑與 version select 一併清空。
+    // 換 project（選回 placeholder）→ selector 填入的 base 值與 version select 一併清空。
     await pick("a2-base-project", "");
     expect(sel("a2-base-version").value).toBe("");
     expect(baseInput().value).toBe("");
@@ -1263,15 +1355,15 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     // 換 model 同樣走 clearBaseSelection：重選版本後換 model → selector 填入值清空。
     await pick("a2-base-project", "270");
     await pick("a2-base-model", "機電");
-    await pick("a2-base-version", VER_PATH);
-    expect(baseInput().value).toBe(VER_PATH);
+    await pick("a2-base-version", VER_KEY);
+    expect(baseInput().value).toBe(VER_LIB);
     await pick("a2-base-model", "");
     expect(baseInput().value).toBe("");
 
     // 手動輸入的 base 路徑不被換層清理：重選版本後手動覆寫，再換 project → 保留手動值。
     await pick("a2-base-project", "270");
     await pick("a2-base-model", "機電");
-    await pick("a2-base-version", VER_PATH);
+    await pick("a2-base-version", VER_KEY);
     await act(async () => { setInputNative(baseInput(), "C:/manual/typed-base.ifc"); });
     expect(baseInput().value).toBe("C:/manual/typed-base.ifc"); // 手動值已真正入 state
     await pick("a2-base-project", "");
@@ -1328,11 +1420,11 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
       });
     };
 
-    // 選定 target 版本（v2）→ selector 填入 target 路徑 + 綁定。
+    // 選定 target 版本（v2）→ selector 填入 target 值（library://）+ 綁定。
     await pick("a2-target-project", "270");
     await pick("a2-target-model", "機電");
-    await pick("a2-target-version", VER2_PATH);
-    expect(targetInput().value).toBe(VER2_PATH);
+    await pick("a2-target-version", VER2_KEY);
+    expect(targetInput().value).toBe(VER2_LIB);
 
     // 換 project → selector 填入的 target 路徑與 version select 一併清空。
     await pick("a2-target-project", "");
@@ -1342,7 +1434,7 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     // 手動輸入的 target 路徑不被換層清理：重選版本後手動覆寫，再換 model → 保留手動值。
     await pick("a2-target-project", "270");
     await pick("a2-target-model", "機電");
-    await pick("a2-target-version", VER2_PATH);
+    await pick("a2-target-version", VER2_KEY);
     await act(async () => { setInputNative(targetInput(), "C:/manual/typed-target.ifc"); });
     expect(targetInput().value).toBe("C:/manual/typed-target.ifc");
     await pick("a2-target-model", "");
@@ -1479,6 +1571,11 @@ describe("A2 VersionDiff 檔案庫選擇器 client-render（spec §4.2/§6.2：b
   const BASE_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/機電/ver 000001.ifc";
   const TARGET_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/機電/ver 竣工.ifc";
   const VILLA_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/松風庵/建築/v1/japanese_villa.ifc";
+  // library:// 修復：option value = 唯一邏輯鍵；選定後 input 填 library://{key}，提交走
+  // createDiffForLibrary（version.path 對瀏覽器被遮蔽成 "[server-path]"，不可回送）。
+  const BASE_KEY = "270/機電/ver 000001.ifc";
+  const TARGET_KEY = "270/機電/ver 竣工.ifc";
+  const VILLA_KEY = "松風庵/建築/v1/japanese_villa.ifc";
   // VersionDiffPage target state 預設值（pages.tsx 初值）；target 未選版本時 createDiff 應沿用此值。
   const DEFAULT_TARGET_PATH = "C:\\Repos\\active\\iot\\AI-BIM-governance\\storage\\許良宇圖書館建築_2026 - 轉檔測試2.ifc";
   // 多專案 + 三層版本：270/機電（兩版）+ 松風庵/建築（一個三層 name 的版本）。
@@ -1547,13 +1644,18 @@ describe("A2 VersionDiff 檔案庫選擇器 client-render（spec §4.2/§6.2：b
   };
 
   // spec §4.2/§6.2 核心：base 走三層選定 270/機電/ver 000001.ifc、target 選 ver 竣工.ifc →
-  // 受控 input 值更新，且 createDiff 同時收到兩側 path 與兩側 model_version_id（{project}/{model}/{version.name}）。
+  // 受控 input 值更新（library:// 邏輯識別），且提交同時送出兩側邏輯三段與兩側 model_version_id。
+  // 等價改寫（library:// 修復）：createDiff(path) → createDiffForLibrary(邏輯三段)；真路徑由
+  // coordinator server-side 解析（version.path 對瀏覽器被遮蔽，不可回送）。
   // SSR 首幀 fsTree=null 到不了 populated 態，必走 client-render；getDiff 一次回 succeeded 結束輪詢。
-  it("base 選 270/機電/ver 000001.ifc + target 選 ver 竣工.ifc → input 值更新且 createDiff 收到 model_version_id", async () => {
+  it("base 選 270/機電/ver 000001.ifc + target 選 ver 竣工.ifc → input 值更新且 createDiffForLibrary 收到 model_version_id", async () => {
     vi.spyOn(governanceClient, "filesTree").mockResolvedValue(a2tree);
+    const createLibSpy = vi
+      .spyOn(governanceClient, "createDiffForLibrary")
+      .mockResolvedValue({ diff_id: "d1", status: "queued" });
     const createSpy = vi
       .spyOn(governanceClient, "createDiff")
-      .mockResolvedValue({ diff_id: "d1", status: "queued" });
+      .mockRejectedValue(new Error("library picks must not fall back to raw-path createDiff"));
     // getDiff 一次回 succeeded 結束輪詢（避免測試等 120 秒）。summary 形狀完整比照 DiffStatus.summary
     // （base_count/target_count/matched/counts/warnings 皆備），免 as never 斷言。
     vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
@@ -1571,31 +1673,32 @@ describe("A2 VersionDiff 檔案庫選擇器 client-render（spec §4.2/§6.2：b
     // base 三層
     await pick("a2-base-project", "270");
     await pick("a2-base-model", "機電");
-    await pick("a2-base-version", BASE_PATH);
+    await pick("a2-base-version", BASE_KEY);
     // target 三層
     await pick("a2-target-project", "270");
     await pick("a2-target-model", "機電");
-    await pick("a2-target-version", TARGET_PATH);
+    await pick("a2-target-version", TARGET_KEY);
 
-    // 受控 input 已被填入版本 path。
-    expect(inputByTestId("a2-base-input").value).toBe(BASE_PATH);
-    expect(inputByTestId("a2-target-input").value).toBe(TARGET_PATH);
+    // 受控 input 已被填入 library:// 邏輯識別（非遮蔽字面）。
+    expect(inputByTestId("a2-base-input").value).toBe(`library://${BASE_KEY}`);
+    expect(inputByTestId("a2-target-input").value).toBe(`library://${TARGET_KEY}`);
 
-    // Run Diff → createDiff 收到 base/target path + model_version_id（version 綁定 spec §4.2）。
+    // Run Diff → createDiffForLibrary 收到 base/target 邏輯三段 + model_version_id（version 綁定 spec §4.2）。
     const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
       (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
     )!;
     await act(async () => { runBtn.click(); });
     await act(async () => { await Promise.resolve(); });
 
-    expect(createSpy).toHaveBeenCalledWith(
+    expect(createLibSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        base_ifc_path: BASE_PATH,
-        target_ifc_path: TARGET_PATH,
+        base: { project_id: "270", model_id: "機電", version_name: "ver 000001.ifc" },
+        target: { project_id: "270", model_id: "機電", version_name: "ver 竣工.ifc" },
         base_model_version_id: "270/機電/ver 000001.ifc",
         target_model_version_id: "270/機電/ver 竣工.ifc",
       }),
     );
+    expect(createSpy).not.toHaveBeenCalled();
 
     await act(async () => { root.unmount(); });
   });
@@ -1624,13 +1727,16 @@ describe("A2 VersionDiff 檔案庫選擇器 client-render（spec §4.2/§6.2：b
     await act(async () => { root.unmount(); });
   });
 
-  // 選定三層版本 → createDiff 收到三層 model_version_id（{project}/{model}/{三層 name}）。
+  // 選定三層版本 → 提交帶三層 model_version_id（{project}/{model}/{三層 name}）。
   // 補強：上方既有 A2 測試只驗過「ver 竣工.ifc」這種 flat name 的 model_version_id；此處鎖定
   // 「v1/japanese_villa.ifc」這種帶子目錄的 name 也原樣帶入綁定，不被截斷 / 改寫。
-  it("選松風庵/建築/v1/japanese_villa.ifc → createDiff 帶三層 base_model_version_id", async () => {
+  // 等價改寫（library:// 修復）：原「target 沿用預設手填路徑」現屬混用（誠實擋下），改為
+  // target 也走三層選擇器；「只動 base 不污染 target」的交叉接線守門改在 target 選定前以
+  // input 值驗證（target input 仍為預設值），version_name 帶子目錄段的不截斷改驗 ref 本身。
+  it("選松風庵/建築/v1/japanese_villa.ifc → createDiffForLibrary 帶三層 base ref/verId", async () => {
     vi.spyOn(governanceClient, "filesTree").mockResolvedValue(a2tree);
-    const createSpy = vi
-      .spyOn(governanceClient, "createDiff")
+    const createLibSpy = vi
+      .spyOn(governanceClient, "createDiffForLibrary")
       .mockResolvedValue({ diff_id: "d-a2villa", status: "queued" });
     // getDiff 一次回 succeeded 結束輪詢（避免測試等 120 秒迴圈）。
     vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
@@ -1647,9 +1753,15 @@ describe("A2 VersionDiff 檔案庫選擇器 client-render（spec §4.2/§6.2：b
 
     await pick("a2-base-project", "松風庵");
     await pick("a2-base-model", "建築");
-    await pick("a2-base-version", VILLA_PATH);
-    // 受控 input 已被填入三層版本 path。
-    expect(container.querySelector<HTMLInputElement>('[data-testid="a2-base-input"]')!.value).toBe(VILLA_PATH);
+    await pick("a2-base-version", VILLA_KEY);
+    // 受控 input 已被填入三層版本邏輯識別；只動 base 不污染 target（target 仍為預設手填值）。
+    expect(container.querySelector<HTMLInputElement>('[data-testid="a2-base-input"]')!.value).toBe(`library://${VILLA_KEY}`);
+    expect(container.querySelector<HTMLInputElement>('[data-testid="a2-target-input"]')!.value).toBe(DEFAULT_TARGET_PATH);
+
+    // target 也走三層選擇器（兩側同為檔案庫才可送 coordinator library 解析）。
+    await pick("a2-target-project", "270");
+    await pick("a2-target-model", "機電");
+    await pick("a2-target-version", TARGET_KEY);
 
     const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
       (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
@@ -1657,17 +1769,14 @@ describe("A2 VersionDiff 檔案庫選擇器 client-render（spec §4.2/§6.2：b
     await act(async () => { runBtn.click(); });
     await act(async () => { await Promise.resolve(); });
 
-    expect(createSpy).toHaveBeenCalledTimes(1);
-    const arg = createSpy.mock.calls[0][0];
-    expect(arg.base_ifc_path).toBe(VILLA_PATH);
-    // 三層 name 原樣帶入 model_version_id（含子目錄段 v1/，不截斷）。
+    expect(createLibSpy).toHaveBeenCalledTimes(1);
+    const arg = createLibSpy.mock.calls[0][0];
+    // 三層 name 原樣帶入 ref.version_name 與 model_version_id（含子目錄段 v1/，不截斷）。
+    expect(arg.base).toEqual({ project_id: "松風庵", model_id: "建築", version_name: "v1/japanese_villa.ifc" });
     expect(arg.base_model_version_id).toBe("松風庵/建築/v1/japanese_villa.ifc");
-    // target 側未選版本 → 沿用元件預設 target state（pages.tsx VersionDiffPage 初值），
-    // 鎖定 base/target 未被交叉接線：只動 base 不會污染 target_ifc_path。
-    expect(arg.target_ifc_path).toBe(DEFAULT_TARGET_PATH);
-    // target 未經三層選擇器 → 無版本綁定語意，model_version_id 應為空（undefined，
-    // 對齊本檔其他同場景斷言；toBeFalsy 會放過 null/""/0，語意較弱故不用）。
-    expect(arg.target_model_version_id).toBeUndefined();
+    // base/target 未交叉接線：target ref 是 270/機電 選擇，非松風庵。
+    expect(arg.target).toEqual({ project_id: "270", model_id: "機電", version_name: "ver 竣工.ifc" });
+    expect(arg.target_model_version_id).toBe("270/機電/ver 竣工.ifc");
 
     await act(async () => { root.unmount(); });
   });
@@ -1718,8 +1827,8 @@ describe("A2 VersionDiff 檔案庫選擇器 client-render（spec §4.2/§6.2：b
 
     await pick("a2-base-project", "270");
     await pick("a2-base-model", "機電");
-    await pick("a2-base-version", BASE_PATH);
-    // 手動覆寫 base input → 版本綁定清空。
+    await pick("a2-base-version", BASE_KEY);
+    // 手動覆寫 base input → 版本綁定清空（覆寫後 base/target 皆手填 → 走原 createDiff 分支）。
     await act(async () => { setInputNative(inputByTestId("a2-base-input"), "C:/manual/override.ifc"); });
 
     const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
@@ -1750,6 +1859,9 @@ describe("A2 VersionDiff 檔案庫選擇器 client-render（spec §4.2/§6.2：b
 describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作失敗 UI 回饋）", () => {
   const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
   const A1_LOCAL_IFC_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/建築/model.ifc";
+  // local_fs select 的 option value = 唯一邏輯鍵（library:// 流）：version.path 對瀏覽器被
+  // proxy 遮蔽成 "[server-path]"（全部選項同值），不能再當 select 鍵；run 走 createRuleRunForLibrary。
+  const A1_LOCAL_IFC_KEY = "270/建築/model.ifc";
   const a1FilesTree: FilesTreeResponse = {
     root: "C:/Repos/active/iot/AI-BIM-governance/storage",
     source_kind: "local_fs",
@@ -1815,10 +1927,10 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // A1 v2 executable source is local_fs: pickModel selects the server-local path returned by filesTree(),
   // then locks it before running CPU rule-run. This is the regression guard against sending MinIO keys
   // as ifc_source_path.
-  const pickModel = async (path = A1_LOCAL_IFC_PATH) => {
+  const pickModel = async (key = A1_LOCAL_IFC_KEY) => {
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     const sel = container.querySelector<HTMLSelectElement>('[data-testid="a1-localfs-select"]')!;
-    await act(async () => { sel.value = path; sel.dispatchEvent(new Event("change", { bubbles: true })); });
+    await act(async () => { sel.value = key; sel.dispatchEvent(new Event("change", { bubbles: true })); });
     await clickByTestId("a1-step-pick");
   };
 
@@ -1861,7 +1973,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // 故 loop 卡在 setTimeout(1000)。unmount 後再推進假時鐘，loop 必須因 alive 守門中斷、
   // 不再發出任何 getRuleRun 請求（資源洩漏修復的可觀測證據）。
   it("[finding#1] doRun 輪詢中 unmount → 迴圈停止，不再發 getRuleRun（unmount 守門）", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     const getSpy = vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("running"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
 
@@ -1888,7 +2000,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // 輪詢中使用者按「選取模型」重置 step（running→picked）：reducer 守門已防髒資料寫入，
   // 但 loop 仍會繼續發 getRuleRun。step 離開 running 後 loop 必須中斷、不再發請求。
   it("[finding#1] doRun 輪詢中 PICK_FILE 重置 step → 迴圈停止，不再發 getRuleRun（step 守門）", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     const getSpy = vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("running"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
 
@@ -1913,7 +2025,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // makeIssues（建 Issue）失敗時誠實顯示錯誤：後端離線/丟例外 → 頁面出現 ec-warn-note 提示
   // （含錯誤原因），按鈕恢復可用。對齊 doRun 失敗的 runError 同款 UI 回饋（誠實鐵律）。
   it("[finding#2] makeIssues 失敗 → 顯示 ec-warn-note 錯誤提示（不再靜默）", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "error", status: "fail", message: "naming rule failed" },
@@ -1947,7 +2059,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // doExport（匯出 Excel）失敗時同樣誠實顯示錯誤：fetch 丟例外 → ec-warn-note 提示。
   // 補：成功的 makeIssues 之後動作須清掉上次的錯誤提示（不殘留陳舊紅錯）。
   it("[finding#2] doExport 失敗 → 顯示 ec-warn-note；下次成功動作清除舊錯誤", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "error", status: "fail", message: "naming rule failed" },
@@ -1997,7 +2109,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // 且 plain RUN 在 running 是 no-op，導致使用者點不到/點了沒反應。修法是 running-error 子態
   // 把 run 鈕 enable，點擊走 RUN_RETRY 真重試。此測試走完整路徑：失敗 → 鈕仍可點 → 重試成功 → scored。
   it("[Critical] doRun 失敗 → run 鈕在 running-error 子態仍可點 → 重試成功 → scored 記分板出現", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     // 第一輪輪詢回 failed（→ RUN_FAIL），重試後第二輪回 succeeded（→ RUN_DONE → scored）。
     const getSpy = vi
       .spyOn(governanceClient, "getRuleRun")
@@ -2049,10 +2161,11 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // 把已遞增的新 gen 抓進來，守門永遠通過、舊輪詢 getRuleRun 仍照打(資源洩漏)。
   // 此測試在 createRuleRun pending 時觸發 PICK_FILE，解析後 getRuleRun 不得被呼叫。
   it("[qr-t2-pollgen-race] createRuleRun await 期間 PICK_FILE → 取消生效，getRuleRun 不再發（不重捕 gen）", async () => {
-    // 受控 deferred：createRuleRun 在我們手動 resolve 前保持 pending，模擬「await 視窗」。
+    // 受控 deferred：createRuleRunForLibrary（local_fs 的 run 路由）在我們手動 resolve 前
+    // 保持 pending，模擬「await 視窗」。
     let resolveCreate!: (v: { rule_run_id: string; status: "queued" }) => void;
     const createPending = new Promise<{ rule_run_id: string; status: "queued" }>((res) => { resolveCreate = res; });
-    vi.spyOn(governanceClient, "createRuleRun").mockReturnValue(createPending);
+    vi.spyOn(governanceClient, "createRuleRunForLibrary").mockReturnValue(createPending);
     const getSpy = vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("running"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
 
@@ -2081,7 +2194,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // 修復前 break 條件只認 succeeded/failed，遇 errored 會空轉 60 次（60s 假時鐘）才結束。
   // 改成 in-progress 白名單（!queued && !running）後，任何 terminal status 即時中斷 → RUN_FAIL。
   it("[qr-t2-terminal-status-whitelist] getRuleRun 回 errored（union 外 terminal）→ 立即中斷一次即 RUN_FAIL，不空轉", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     // 強制回傳型別 union 外的 terminal status。cast 繞過 TS 因為這正是「後端回了型別沒涵蓋的值」情境。
     const erroredStatus = { ...fakeRunStatus("running"), status: "errored" } as unknown as RuleRunStatus;
     const getSpy = vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(erroredStatus);
@@ -2119,7 +2232,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // disabled，允許在 running 子態觸發匯出。此測試把元件凍結在該窗口（getResults 永不 resolve，
   // 卡在 RUN_PROGRESS-succeeded 與 RUN_DONE 之間），斷言 export 仍 disabled、issues 同步 disabled。
   it("[Important-2] 重跑 running 子態存在 succeeded 快照時，匯出鈕仍 disabled（與建 Issue 對齊 step 語意）", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     // 第一輪輪詢回 succeeded → 進 scored（export enable）。重跑後第二輪也回 succeeded，
     // 但 getResults 第二次永不 resolve → 元件凍結在 running 子態且 state.run.status=succeeded。
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
@@ -2166,7 +2279,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // UI 卡 scored 且無錯誤回饋（違誠實鐵律）。此測試攔截 HTMLAnchorElement.prototype.click，在點擊當下記錄
   // document.body.contains(該錨點)：修復前錨點 detached → contains=false（RED）；修復後 appendChild 已掛載 → true。
   it("[Important-1] doExport 下載錨點在 .click() 當下已掛載於 document（跨瀏覽器安全，避免 Gecko 靜默失敗）", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "error", status: "fail", message: "naming rule failed" },
@@ -2229,7 +2342,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // Fix-F1：未建 Issue 時 BCF 鈕應 disabled（issuesCreated=false）。
   // scored→EXPORT_OK→delivered 不走 CREATE_ISSUES_OK → issuesCreated 仍 false → BCF disabled。
   it("[F1] scored 未建 Issue 直接匯出 Excel → delivered 後 BCF 鈕仍 disabled（issuesCreated=false）", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
@@ -2267,7 +2380,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
   // Fix-F4：BCF click 成功路徑 dispatch BCF_EXPORT_OK → 顯示 a1-bcf-exported-artifact。
   it("[F4] BCF click 成功 → dispatch BCF_EXPORT_OK → 顯示 a1-bcf-exported-artifact", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForLibrary").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
     vi.spyOn(governanceClient, "issuesFromRuleRun").mockResolvedValue({ created: 2, issue_ids: ["i1", "i2"] });

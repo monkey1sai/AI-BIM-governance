@@ -19,7 +19,10 @@ import path from "node:path";
  * 排程屬服務 loop；測試可決定性驅動）。
  */
 
-export type CallbackEvent = "conversion_result_ready" | "conversion_failed";
+// F2 步驟⑩（AI-BIM 前後端設計文件）：`issue_snapshot` = Coordinator → 雲端 Outbox
+// 的 issue/檢核統計摘要回拋。與 conversion 事件同走 assertMetadataOnly 鐵律，
+// payload 僅 metadata 統計欄位（禁 secret / URL / bytes）。
+export type CallbackEvent = "conversion_result_ready" | "conversion_failed" | "issue_snapshot";
 export type CallbackOutboxStatus = "pending" | "delivered" | "dead_letter";
 
 export interface CallbackOutboxEntry {

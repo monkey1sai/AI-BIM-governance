@@ -165,6 +165,15 @@ export const governanceClient = {
       `/api/governance/rule-runs/for-ifc-ready/${encodeURIComponent(ifcReadyJobId)}`,
       { method: "POST", body: JSON.stringify(body ?? {}) }
     ),
+  // A1 local_fs（file-library）：files/tree 對瀏覽器把 version.path 遮蔽成 "[server-path]"，
+  // 瀏覽器不可能回送真路徑。改送 {project_id, model_id, version_name} 邏輯三段，coordinator
+  // server-side 解析真 IFC path 後轉發 governance rule-run（守邊界 B1，同 for-session 語意）。
+  // 後端誠實：404 library_version_not_found（version 解析不到）/ 502（governance 離線）。
+  createRuleRunForLibrary: (req: LibraryRuleRunRequest) =>
+    jsonFetch<{ rule_run_id: string; status: string }>("/api/governance-library/rule-runs", {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
   listRuleRuns: (filters: RuleRunHistoryFilters = {}) => {
     const qs = new URLSearchParams();
     for (const [key, value] of Object.entries(filters)) {
@@ -206,6 +215,13 @@ export const governanceClient = {
   // A2 model-version diff（GlobalId 多級對齊）
   createDiff: (req: DiffRequest) =>
     jsonFetch<{ diff_id: string; status: string }>("/api/governance/diffs", {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
+  // A2 diff（file-library）：同 createRuleRunForLibrary 語意——base/target 各送邏輯三段，
+  // coordinator server-side 解析雙真路徑後轉發 governance /api/diffs（手填真路徑仍走 createDiff）。
+  createDiffForLibrary: (req: LibraryDiffRequest) =>
+    jsonFetch<{ diff_id: string; status: string }>("/api/governance-library/diffs", {
       method: "POST",
       body: JSON.stringify(req),
     }),
@@ -415,6 +431,37 @@ export interface DiffRequest {
   base_model_version_id?: string;
   target_model_version_id?: string;
   include_geometry?: boolean;
+}
+// file-library 邏輯識別（coordinator /api/governance-library/*；型別對齊後端 zod schema）：
+// 瀏覽器只持 {project_id, model_id, version_name} 三段，真 IFC path 由 coordinator 解析。
+export interface LibraryVersionRef {
+  project_id: string;
+  model_id: string;
+  version_name: string;
+}
+// library://{project_id}/{model_id}/{version.name} 邏輯識別字串（A1 state.ifcPath / A2 diff input 共用）。
+// files/tree 對瀏覽器把 version.path 遮蔽成 "[server-path]"（全部選項同值），path 不能當識別；
+// UI 一律以此邏輯字串持有選擇，run/diff 時解回三段送 coordinator server-side 解析。
+export const LIBRARY_IFC_PREFIX = "library://";
+export function parseLibraryIfcPath(ifcPath: string): LibraryVersionRef | null {
+  if (!ifcPath.startsWith(LIBRARY_IFC_PREFIX)) return null;
+  // project_id / model_id 為單層目錄名（不含 "/"）；version name 可能帶子目錄段
+  //（三層形狀如 "v1/japanese_villa.ifc"）→ 前兩段之後全部歸 version_name。
+  const [projectId, modelId, ...rest] = ifcPath.slice(LIBRARY_IFC_PREFIX.length).split("/");
+  const versionName = rest.join("/");
+  if (!projectId || !modelId || !versionName) return null;
+  return { project_id: projectId, model_id: modelId, version_name: versionName };
+}
+export interface LibraryRuleRunRequest extends LibraryVersionRef {
+  ids_path?: string;
+  model_version_id?: string;
+}
+export interface LibraryDiffRequest {
+  base: LibraryVersionRef;
+  target: LibraryVersionRef;
+  include_geometry?: boolean;
+  base_model_version_id?: string;
+  target_model_version_id?: string;
 }
 export interface DiffIssueImpact {
   diff_id: string;

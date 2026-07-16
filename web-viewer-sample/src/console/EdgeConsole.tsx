@@ -1,7 +1,10 @@
-// AI-BIM Governance Edge Console 殼層：三欄 grid + 兩段式導覽 + ChatUSD 欄（可折疊）
-// + FlowBar（Intake→Convert→Meeting→Mark→Record）+ Tweaks（操作員/技術用語、scenario）。
+// AI-BIM Governance Edge Console 殼層：頂層依 route key 分流——
+// approved 鍵 {home,a1..a10,pipeline,runtime} 掛 UnifiedConsole（UnifiedShell + 新頁，
+// 不進舊三欄 grid/FlowBar/agent 欄/SharedStatusRail）；其餘 legacy 鍵完全保留
+// 現行三欄 grid + 兩段式導覽 + ChatUSD 欄（可折疊）+ FlowBar + Tweaks 殼與行為。
 // 零依賴 hash 路由（不引入 react-router、不擾動既有 App ?session bootstrap）。
 import { useEffect, useState } from "react";
+import type { ReactElement } from "react";
 import "./edge-console.css";
 import { NAV_GROUPS, PAGES, Prov } from "./data";
 import { t, useLang, setLang } from "./i18n";
@@ -36,6 +39,14 @@ import { RealIfcConsolePage } from "./RealIfcConsolePage";
 import { SharedStatusProvider } from "./SharedStatusProvider";
 import { SharedStatusRail } from "./SharedStatusRail";
 import type { AxisKey } from "./handoff";
+// UnifiedConsole（IA v2）：approved 鍵的新殼與新頁（fixture 語意，不打 /api）。
+import { UnifiedShell } from "./unified/UnifiedShell";
+import { HomePage as UnifiedHomePage } from "./unified/HomePage";
+import { WorkspacePage } from "./unified/WorkspacePage";
+import { ConceptPage } from "./unified/ConceptPage";
+import { PipelinePage } from "./unified/PipelinePage";
+import { OpsPage } from "./unified/OpsPage";
+import type { ConceptKey, DockKey } from "./unified/fixtures";
 
 function usePageHash(): [string, (k: string) => void] {
   const read = () => window.location.hash.replace(/^#\/?console\/?/, "").replace(/^#\/?/, "").split("?")[0] || "home";
@@ -64,22 +75,48 @@ function AliasRedirect({ to }: { to: string }) {
   return null;
 }
 
+// ── UnifiedConsole 分流表（IA v2）──
+// approved 鍵 {home,a1..a10,pipeline,runtime} 掛 UnifiedShell + 對應新頁；回 null 則走 legacy 殼。
+// a1..a4 → WorkspacePage（dock=aN；key=page 讓 #a1→#a2 換 dock 時重建 local state）；
+// a5..a10 → ConceptPage；pipeline → PipelinePage；runtime → OpsPage；home → UnifiedHomePage。
+// #conv 不進 unified（legacy ConversionPage=IFC→USD 轉檔歷史，雙路由分治）。
+const UNIFIED_WS_KEYS: readonly string[] = ["a1", "a2", "a3", "a4"];
+const UNIFIED_CONCEPT_KEYS: readonly string[] = ["a5", "a6", "a7", "a8", "a9", "a10"];
+
+function renderUnified(page: string): ReactElement | null {
+  if (UNIFIED_WS_KEYS.includes(page)) {
+    const dock = page as DockKey;
+    return (
+      <UnifiedShell page="ws" dock={dock}>
+        <WorkspacePage key={page} initialDock={dock} />
+      </UnifiedShell>
+    );
+  }
+  if (UNIFIED_CONCEPT_KEYS.includes(page)) {
+    const concept = page as ConceptKey;
+    return (
+      <UnifiedShell page="concept" concept={concept}>
+        <ConceptPage slug={concept} />
+      </UnifiedShell>
+    );
+  }
+  switch (page) {
+    case "home": return <UnifiedShell page="home"><UnifiedHomePage /></UnifiedShell>;
+    case "pipeline": return <UnifiedShell page="pipe"><PipelinePage /></UnifiedShell>;
+    case "runtime": return <UnifiedShell page="ops"><OpsPage /></UnifiedShell>;
+    default: return null;
+  }
+}
+
 function renderBody(page: string, go: (k: string) => void) {
   // app/<slug> → vision 詳頁；#app/ai-search 舊 deep link 轉到 live #a4。
   if (page === "app/ai-search") return <AliasRedirect to="a4" />;
   if (page.startsWith("app/")) return <AppVisionPage slug={page.slice(4)} onOpen={go} />;
   switch (page) {
-    case "home": return <HomePage onOpen={go} />;
-    case "a1": return <A1GovernanceWorkbenchPage />;
-    case "a2": return <VersionDiffPage />;
-    case "a3": return <FederationPage />;
-    case "a4": return <A4SemanticSearchPage />;
-    case "a5": return <AppVisionPage slug="iot-fm" onOpen={go} />;
-    case "a6": return <AppVisionPage slug="4d-5d" onOpen={go} />;
-    case "a7": return <AppVisionPage slug="reality-capture" onOpen={go} />;
-    case "a8": return <AppVisionPage slug="synthetic-data" onOpen={go} />;
-    case "a9": return <AppVisionPage slug="robot-sim" onOpen={go} />;
-    case "a10": return <AppVisionPage slug="ai-decision" onOpen={go} />;
+    // IA v2 alias 重排：原 #a1 / #a4 讓位給 UnifiedConsole workspace，
+    // legacy 單頁改掛 #a1-workbench / #semantic-search 深連結。
+    case "a1-workbench": return <A1GovernanceWorkbenchPage />;
+    case "semantic-search": return <A4SemanticSearchPage />;
     case "viewer": return <ViewerPresentationPage />;
     case "gpu": return <GpuReviewRoomPage />;
     case "conv": return <ConversionPage />;
@@ -96,7 +133,6 @@ function renderBody(page: string, go: (k: string) => void) {
     case "version-diff": return <VersionDiffPage />;
     case "federation": return <FederationPage />;
     case "coordinator": return <CoordinatorPage />;
-    case "runtime": return <CoordinatorPage />;
     case "review": return <ReviewRoomPage />;
     case "semantic": return <SemanticViewerPage />;
     case "kit": return <KitConsolePage />;
@@ -181,6 +217,15 @@ function FlowBar({ active, register, go }: { active: string; register: "tech" | 
 
 export default function EdgeConsole() {
   const [page, go] = usePageHash();
+  // 頂層依 route key 分流：approved 鍵 → UnifiedConsole；其餘 legacy 鍵 → 現行殼。
+  // legacy hooks 全部收在 LegacyEdgeConsole 子元件內——分流切換時 component type
+  // 改變、React 整棵重掛，不會踩 hooks 順序違規。
+  const unified = renderUnified(page);
+  if (unified !== null) return unified;
+  return <LegacyEdgeConsole page={page} go={go} />;
+}
+
+function LegacyEdgeConsole({ page, go }: { page: string; go: (k: string) => void }) {
   const [agentOpen, setAgentOpen] = useState(true);
   // Tweaks（P3-3）：scenario=clean/warn（UI 偏好；真實頁一律用 live API）。語言由頂列 LangToggle 控制（中=biz 中文 / EN=tech 英文）。
   const [scenario, setScenario] = useState<"clean" | "warn">("clean");

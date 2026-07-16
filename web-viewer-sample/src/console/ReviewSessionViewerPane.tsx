@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Btn, Field, Panel } from "./components";
 import { coordinatorClient, type RuntimeSessionSummary, type ViewerLeaseClaimResponse } from "./coordinatorClient";
-import { EmbeddedViewer, type EmbeddedViewerHandle, type HighlightItem } from "./EmbeddedViewer";
+import { EmbeddedViewer, type EmbeddedViewerHandle, type HighlightItem, type HighlightResultMessage } from "./EmbeddedViewer";
 import { t } from "./i18n";
 import { useSharedStatus } from "./useSharedStatus";
 
@@ -76,18 +76,37 @@ function sessionIdIsValid(sessionId: string): boolean {
   return /^(lwv_|review_session_)[A-Za-z0-9_]+$/.test(sessionId);
 }
 
-type ReviewSessionViewerPaneMode = "review-room" | "a1-inline";
+// "a2-overlay"（A2 F2⑥）：VersionDiffPage 內嵌的 diff 三組批次疊加宿主。複用本 pane 全部
+// session/lease/viewer 證據鏈（最小泛化，不複製元件）；差異只在 testid 前綴、文案與
+// 「批次疊加由外部（A2 頁）經 ref handle 觸發」。
+type ReviewSessionViewerPaneMode = "review-room" | "a1-inline" | "a2-overlay";
 
 function createReviewViewerIdentity(mode: ReviewSessionViewerPaneMode): { viewer_id: string; user_id: string; display_name: string } {
   const random = typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  const prefix = mode === "a1-inline" ? "a1_inline" : "review_room";
+  const prefix = mode === "a1-inline" ? "a1_inline" : mode === "a2-overlay" ? "a2_overlay" : "review_room";
   return {
     viewer_id: `${prefix}_viewer_${random}`,
     user_id: `${prefix}_operator_${random}`,
-    display_name: mode === "a1-inline" ? "A1 inline primary viewer" : "Review Room primary viewer",
+    display_name: mode === "a1-inline"
+      ? "A1 inline primary viewer"
+      : mode === "a2-overlay"
+        ? "A2 diff overlay primary viewer"
+        : "Review Room primary viewer",
   };
+}
+
+// A2 批次疊加對外 handle：外部（VersionDiffPage）備好 HighlightItem 群組後經此送出。
+// 送出前先過與單筆高亮相同的 viewer 證據 gate（session observed / lease / first frame /
+// DataChannel / stage match）；gate 未過誠實回 { sent:false, reason }，絕不佯裝已送。
+export interface ReviewSessionViewerPaneHandle {
+  sendHighlightBatch(items: HighlightItem[]): { sent: true } | { sent: false; reason: string };
+}
+
+export interface ReviewSessionViewerPaneBatchGate {
+  canSend: boolean;
+  reason: string; // canSend=false 時的誠實理由（"" 代表可送）
 }
 
 function highlightResultText(result: { ok: boolean; reason?: string }): string {
@@ -114,8 +133,22 @@ function healthValue(value: boolean | null | undefined): string {
   return "unknown";
 }
 
-export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mode = "review-room" }: { handoff?: ReviewRoomHandoff; mode?: ReviewSessionViewerPaneMode }) {
+export interface ReviewSessionViewerPaneProps {
+  handoff?: ReviewRoomHandoff;
+  mode?: ReviewSessionViewerPaneMode;
+  // A2 批次疊加 gate 通知：viewer 證據鏈（lease/first frame/DataChannel/stage match）任一變動時回報，
+  // 外部據以 enable/disable「套用疊加」鈕並顯示誠實理由。非 a2 用途可不傳（零行為變更）。
+  onBatchGateChange?: (gate: ReviewSessionViewerPaneBatchGate) => void;
+  // viewer highlight_result ack 透傳（含批次 ack 的 sent_count/unmapped_count 加性欄位）。
+  onBatchAck?: (message: HighlightResultMessage) => void;
+}
+
+export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle, ReviewSessionViewerPaneProps>(
+  function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mode = "review-room", onBatchGateChange, onBatchAck }, ref) {
   const isA1Inline = mode === "a1-inline";
+  const isA2Overlay = mode === "a2-overlay";
+  // testid 前綴 = mode（review-room / a1-inline / a2-overlay），既有兩模式的 testid 逐字不變。
+  const tidPrefix = mode;
   const [sessionId, setSessionId] = useState(handoff.sessionId);
   const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSessionSummary[]>([]);
   const [viewerOrigin, setViewerOrigin] = useState<string | null>(null);
@@ -131,18 +164,18 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mo
   const [commandTrace, setCommandTrace] = useState<string | null>(null);
   const identityRef = useRef<{ viewer_id: string; user_id: string; display_name: string } | null>(null);
   const viewerRef = useRef<EmbeddedViewerHandle>(null);
-  const sessionInputTestId = isA1Inline ? "a1-inline-session-input" : "review-room-session-input";
-  const sessionCandidatesTestId = isA1Inline ? "a1-inline-session-candidates" : "review-room-session-candidates";
+  const sessionInputTestId = `${tidPrefix}-session-input`;
+  const sessionCandidatesTestId = `${tidPrefix}-session-candidates`;
   const sessionCandidatesId = sessionCandidatesTestId;
-  const manualStartTestId = isA1Inline ? "a1-inline-manual-start" : "review-room-manual-start";
-  const runtimeEvidenceTestId = isA1Inline ? "a1-inline-runtime-evidence" : "review-room-runtime-evidence";
-  const viewerHostTestId = isA1Inline ? "a1-inline-viewer-host" : "review-room-viewer-host";
-  const kitNotStartedTestId = isA1Inline ? "a1-inline-kit-not-started" : "review-room-kit-not-started";
-  const viewerOriginMissingTestId = isA1Inline ? "a1-inline-viewer-origin-missing" : "review-room-viewer-origin-missing";
-  const handoffSummaryTestId = isA1Inline ? "a1-inline-handoff-summary" : "review-room-handoff-summary";
-  const highlightButtonTestId = isA1Inline ? "a1-inline-highlight" : "review-room-highlight";
-  const highlightReasonTestId = isA1Inline ? "a1-inline-highlight-reason" : "review-room-highlight-reason";
-  const commandTraceTestId = isA1Inline ? "a1-inline-command-trace" : "review-room-command-trace";
+  const manualStartTestId = `${tidPrefix}-manual-start`;
+  const runtimeEvidenceTestId = `${tidPrefix}-runtime-evidence`;
+  const viewerHostTestId = `${tidPrefix}-viewer-host`;
+  const kitNotStartedTestId = `${tidPrefix}-kit-not-started`;
+  const viewerOriginMissingTestId = `${tidPrefix}-viewer-origin-missing`;
+  const handoffSummaryTestId = `${tidPrefix}-handoff-summary`;
+  const highlightButtonTestId = `${tidPrefix}-highlight`;
+  const highlightReasonTestId = `${tidPrefix}-highlight-reason`;
+  const commandTraceTestId = `${tidPrefix}-command-trace`;
   // Task 13（七軸和諧整合）：只借 useSharedStatus() 餵 session input 的候選 <datalist>；不改變本 pane 既有的
   // runtimeStatus 判定 / lease 授權邏輯（N3：claimPrimary、lease/heartbeat effects、sendHighlight、
   // EmbeddedViewer 皆不動）。input 仍是自由輸入欄，datalist 只是額外的自動完成候選來源。
@@ -304,22 +337,78 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mo
     viewerRef.current?.sendHighlight([item]);
     setCommandTrace(JSON.stringify({
       command: "highlight",
-      source: isA1Inline ? "a1-inline" : "review-room",
+      source: mode,
       session_id: sid,
       rule_run_id: handoff.ruleRunId,
       ifc_guid: handoff.ifcGuid,
       usd_prim_path: handoff.usdPrimPath,
       item,
     }, null, 2));
-  }, [canHighlight, handoff, sid, isA1Inline]);
+  }, [canHighlight, handoff, sid, mode]);
+
+  // A2 批次疊加 gate：與單筆高亮共用同一組 viewer 證據條件，但不含 handoff 專屬欄位
+  //（ifc_guid / usd_prim_path 由外部批次項目自帶；mapping 解析在送端與 viewer 端各自誠實計數）。
+  const batchGateReason = mappingArtifactStale
+    ? `mapping_reachable=false: ${artifactHealth?.stale_reason ?? "derived_artifact_unreachable"}`
+    : !validSession
+      ? t("尚未輸入有效 review session", "enter a valid review session first")
+      : !sessionObserved
+        ? t("runtime/status 未列出此 session（可能 stale / 已關閉）", "runtime/status does not list this session (possibly stale / closed)")
+        : !activePrimaryLease
+          ? t("需先手動啟動 / attach Kit session", "manually start / attach the Kit session first")
+          : !firstFrame
+            ? t("等待 3D 第一幀", "waiting for first frame")
+            : !dataChannelReady
+              ? t("等待 viewer DataChannel", "waiting for viewer DataChannel")
+              : !stageMatched
+                ? t("stage 未對齊，禁止誤標", "stage mismatch; highlight is blocked")
+                : "";
+  // callback 經 ref 讀最新值：gate 通知只隨 gate 內容變動觸發，不因外部 callback identity 變動重跑。
+  const onBatchGateChangeRef = useRef(onBatchGateChange);
+  onBatchGateChangeRef.current = onBatchGateChange;
+  useEffect(() => {
+    onBatchGateChangeRef.current?.({ canSend: batchGateReason === "", reason: batchGateReason });
+  }, [batchGateReason]);
+  const onBatchAckRef = useRef(onBatchAck);
+  onBatchAckRef.current = onBatchAck;
+  const batchGateReasonRef = useRef(batchGateReason);
+  batchGateReasonRef.current = batchGateReason;
+  const sidRef = useRef(sid);
+  sidRef.current = sid;
+
+  useImperativeHandle(ref, () => ({
+    sendHighlightBatch(items: HighlightItem[]) {
+      const reason = batchGateReasonRef.current;
+      if (reason !== "") return { sent: false as const, reason };
+      if (items.length === 0) {
+        return { sent: false as const, reason: t("無可送出的構件（0 筆）", "no items to send (0 items)") };
+      }
+      setHighlightResult(null); // pending viewer ack（誠實：送出 ≠ 成功，等 viewer highlight_result）
+      viewerRef.current?.sendHighlightBatch(items);
+      setCommandTrace(JSON.stringify({
+        command: "highlight_batch",
+        source: mode,
+        session_id: sidRef.current,
+        item_count: items.length,
+        items,
+      }, null, 2));
+      return { sent: true as const };
+    },
+  }), [mode]);
 
   return (
     <>
       <Panel
-        title={isA1Inline ? t("A1 3D 高亮 session", "A1 3D highlight session") : t("Review Room 3D session attach", "Review Room 3D session attach")}
+        title={isA1Inline
+          ? t("A1 3D 高亮 session", "A1 3D highlight session")
+          : isA2Overlay
+            ? t("A2 3D 疊加 session", "A2 3D overlay session")
+            : t("Review Room 3D session attach", "Review Room 3D session attach")}
         sub={isA1Inline
           ? t("在 A1 本頁啟動 Kit viewer lease、等待 first frame / DataChannel / stage match，然後直接送出高亮。", "Start the Kit viewer lease on A1, wait for first frame / DataChannel / stage match, then send highlight directly.")
-          : t("Kit / WebRTC / viewer lease 必須由本畫面手動啟動；A1 不自動啟動", "Kit / WebRTC / viewer lease must be started manually here; A1 does not auto-start it")}
+          : isA2Overlay
+            ? t("在 A2 本頁啟動 Kit viewer lease、等待 first frame / DataChannel / stage match，再由上方「套用疊加」送出 diff 構件批次。", "Start the Kit viewer lease on A2, wait for first frame / DataChannel / stage match, then send the diff element batch via the Apply overlay control above.")
+            : t("Kit / WebRTC / viewer lease 必須由本畫面手動啟動；A1 不自動啟動", "Kit / WebRTC / viewer lease must be started manually here; A1 does not auto-start it")}
         prov="asbuilt"
       >
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
@@ -358,7 +447,11 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mo
           >
             {leaseBusy
               ? t("啟動中...", "Starting...")
-              : isA1Inline ? t("啟動 A1 3D Session", "Start A1 3D Session") : t("手動啟動 / attach Kit session", "Start / attach Kit session")}
+              : isA1Inline
+                ? t("啟動 A1 3D Session", "Start A1 3D Session")
+                : isA2Overlay
+                  ? t("啟動 A2 3D Session", "Start A2 3D Session")
+                  : t("手動啟動 / attach Kit session", "Start / attach Kit session")}
           </Btn>
           {!isA1Inline && (
             <a
@@ -392,7 +485,9 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mo
           <p className="ec-note" data-testid={kitNotStartedTestId}>
             {isA1Inline
               ? t("尚未啟動 A1 3D session。按上方按鈕後會在本頁掛載 viewer。", "A1 3D session is not started. Use the button above to mount the viewer on this page.")
-              : t("尚未啟動 3D session。這裡不做自動 claim；請按手動啟動後才會掛載 viewer。", "3D session is not started. This page does not auto-claim; the viewer mounts only after manual start.")}
+              : isA2Overlay
+                ? t("尚未啟動 A2 3D session。按上方按鈕掛載 viewer 後，「套用疊加」才會 enable。", "A2 3D session is not started. Mount the viewer with the button above; Apply overlay enables afterwards.")
+                : t("尚未啟動 3D session。這裡不做自動 claim；請按手動啟動後才會掛載 viewer。", "3D session is not started. This page does not auto-claim; the viewer mounts only after manual start.")}
           </p>
         ) : viewerOrigin ? (
           <div data-testid={viewerHostTestId} style={{ height: 480 }}>
@@ -428,7 +523,11 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mo
                   datachannel_ready: true,
                 }).catch(() => {});
               }}
-              onHighlightResult={(m) => setHighlightResult({ ok: m.ok, reason: m.reason })}
+              onHighlightResult={(m) => {
+                setHighlightResult({ ok: m.ok, reason: m.reason });
+                // 批次 ack 透傳（A2）：含 sent_count/unmapped_count 加性欄位；單筆 ack 也原樣透傳。
+                onBatchAckRef.current?.(m);
+              }}
             />
           </div>
         ) : (
@@ -436,7 +535,9 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mo
         )}
       </Panel>
 
-      {reviewRoomHandoffHasPayload(handoff) && (
+      {/* a2-overlay 模式抑制單筆 handoff 高亮面板：A2 疊加控制（apply/ack/unmapped）由 VersionDiffPage
+          自帶（a2-overlay-* testids）；此面板的單筆 ifc_guid 語意對 diff 批次不適用，顯示會誤導。 */}
+      {!isA2Overlay && reviewRoomHandoffHasPayload(handoff) && (
         <Panel
           title={isA1Inline ? t("A1 高亮目標", "A1 highlight target") : t("A1 handoff", "A1 handoff")}
           sub={isA1Inline
@@ -467,4 +568,4 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mo
       )}
     </>
   );
-}
+});

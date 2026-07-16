@@ -14,7 +14,8 @@
 //   /api/governance/uploads、/api/governance/runtime/{sessions|health|metrics}
 //   → 一律不呼叫、不 mock 假端點；改用上方真實 /api/runtime/status 取等價資訊。
 // callback-outbox 直查（/api/internal/callback-outbox/:id）需 internal token，瀏覽器不可達 →
-//   不在此 client 提供；outbox 摘要改由 ifc_ready job 的 callback_outbox_id 觀察（誠實標 demo/未取得）。
+//   不在此 client 提供。F2⑩（880f20d）起 coordinator 另開瀏覽器可達的 redacted 摘要
+//   GET /api/callback-outbox/summary（明確排除 payload/target_url）→ getCallbackOutboxSummary。
 
 import { defaultCoordinatorBase } from "./coordinatorBase";
 import type { ConversionQualityMetricsSummary } from "../types/review";
@@ -389,6 +390,81 @@ export interface SessionCloseResponse {
   status: string;
 }
 
+// A3-G1（federation→session 一鍵鏈）：POST /api/review-sessions 的請求形狀，逐欄查證自
+// bim-review-coordinator/src/app.ts createSessionSchema（zod）——必填只有 project_id 與
+// model_version_id；tenant_id/created_by/mode/routing_policy 皆有後端 default。
+// ⚠ stage_composition「不是」request 欄位：coordinator 由 artifact_bindings（artifact_role="derived"
+// 且 ready_status="ready" 且有 url，按 load_order 排序取第一個）推導 stream-config 的
+// stage_composition.primary（streamConfig.ts buildStreamConfig）。要讓 federated stage 成為
+// primary，就帶一個 derived+ready+url 的 binding。binding 必填 artifact_group_id / artifact_id。
+export interface CreateReviewSessionBindingInput {
+  artifact_group_id: string;
+  artifact_id: string;
+  model_version_id?: string;
+  display_name?: string | null;
+  artifact_role?: "source" | "derived" | "overlay" | "mapping"; // 後端 default "derived"
+  url?: string | null;
+  mapping_url?: string | null;
+  load_order?: number; // 後端 default 0
+  ready_status?: "ready" | "missing_model" | "missing_mapping" | "blocked_conversion" | "converting" | "failed"; // 後端 default "ready"
+}
+export interface CreateReviewSessionRequest {
+  project_id: string;
+  model_version_id: string;
+  review_request_id?: string;
+  tenant_id?: string;
+  created_by?: string;
+  mode?: string;
+  routing_policy?: "same_instance" | "dedicated_instance" | "shared_state";
+  artifact_bindings?: CreateReviewSessionBindingInput[];
+  /** A3 一鍵鏈：只送 set id，coordinator server-side 向 governance 解析真 federated stage
+   *（governance proxy 對瀏覽器遮蔽絕對路徑，前端不再自組被遮蔽的 binding url）。 */
+  federated_set_id?: string;
+  options?: { auto_allocate_kit?: boolean };
+}
+// 成功回傳 = 後端 ReviewSession（app.ts:1000 response.json(session)，HTTP 200——非 201）。
+// 只型別化消費端會用的欄位，其餘 passthrough。409（No Kit capacity）/ 400（zod）由 jsonPost
+// errorDetail 萃取後 throw，呼叫端誠實顯示。
+export interface CreateReviewSessionResponse {
+  session_id: string;
+  status: string;
+  project_id: string;
+  model_version_id: string;
+  artifact_bindings?: unknown[];
+  kit_instance_bindings?: unknown[];
+  [k: string]: unknown;
+}
+
+// F2⑩：GET /api/callback-outbox/summary 的 redacted entry 投影（app.ts:2693）。
+// 後端明確排除 payload 與 target_url（完整 entry 僅 internal token gate 後可見）——
+// 此型別 MUST NOT 加回這兩欄。status 鏡像後端 CallbackOutboxStatus
+// （services/callbackOutbox.ts:26；前後端無 shared schema，後端增值須人工同步）。
+export type CallbackOutboxEntryStatus = "pending" | "delivered" | "dead_letter";
+export interface CallbackOutboxSummaryEntry {
+  outbox_id: string;
+  event: string;
+  status: CallbackOutboxEntryStatus;
+  attempts: number;
+  max_attempts: number;
+  last_error: string | null;
+  created_at: string;
+  delivered_at: string | null;
+  correlation_id: string | null;
+  conversion_job_id: string | null;
+}
+export interface CallbackOutboxSummary {
+  total: number;
+  limit: number;
+  entries: CallbackOutboxSummaryEntry[];
+}
+
+// F2⑩：POST /api/review-sessions/:sessionId/issue-snapshot 成功（202）回傳。
+// 404（session 不存在）/ 502（governance_unreachable，統計查不到不 enqueue 假資料）
+// 皆由 jsonPost errorDetail 萃取後 throw，不會走到此形狀。
+export interface IssueSnapshotResponse {
+  outbox_id: string;
+}
+
 // Task 5 MinIO 閉環 Phase 1：ConversionLedger 的 status 值域（後端 ConversionLedgerRecord.status
 // 權威 enum）。單一來源供 ConversionRecord 與 ConversionTriggerResponse 共用，避免兩處各寫 union
 // 而漂移；UI chip-patch 對 wire 的寬型別 status 做 runtime narrow 時以此為合法集合。
@@ -545,6 +621,11 @@ export const coordinatorClient = {
   // 不帶 final_events（operator 強制結束無協作終結事件，spec §4.2）。
   sessionClose: (sessionId: string, reason?: string) =>
     jsonPost<SessionCloseResponse>(`/api/review-sessions/${encodeURIComponent(sessionId)}/close`, { reason }),
+  // A3-G1：由 federation review-room descriptor 建 review session（POST /api/review-sessions）。
+  // 形狀見 CreateReviewSessionRequest 註；成功 HTTP 200 回 session JSON，失敗（409 無 Kit 容量 /
+  // 400 schema）由 jsonPost 萃取 detail 後 throw。
+  createReviewSession: (body: CreateReviewSessionRequest) =>
+    jsonPost<CreateReviewSessionResponse>("/api/review-sessions", body),
   claimViewerLease: (sessionId: string, body: {
     viewer_id: string;
     user_id: string;
@@ -634,4 +715,16 @@ export const coordinatorClient = {
   // 前端只渲染「測試資料」badge，編號不進程式碼——D-05／鐵律 #3）。
   getTestDataProjects: () =>
     jsonGet<{ projects: string[] }>("/api/dev/test-data-projects"),
+  // F2⑩ 瀏覽器觀測面：redacted callback outbox 摘要（無 token；newest-first）。
+  // limit 預設 50 對齊後端預設；後端上限 200、非法值 400（帶 detail，jsonGet 萃取後 throw）。
+  getCallbackOutboxSummary: (limit = 50) =>
+    jsonGet<CallbackOutboxSummary>(`/api/callback-outbox/summary?limit=${limit}`),
+  // F2⑩：issue/檢核統計 metadata-only 回拋雲端。瀏覽器只送識別碼
+  // （rule_run_id / 可選 model_version_id）；統計由 coordinator server-side 向 governance 查詢，
+  // 查不到回 502 不入列（誠實，不偽造統計）。成功 202 帶 outbox_id。
+  postIssueSnapshot: (sessionId: string, body: { rule_run_id: string; model_version_id?: string }) =>
+    jsonPost<IssueSnapshotResponse>(
+      `/api/review-sessions/${encodeURIComponent(sessionId)}/issue-snapshot`,
+      body,
+    ),
 };

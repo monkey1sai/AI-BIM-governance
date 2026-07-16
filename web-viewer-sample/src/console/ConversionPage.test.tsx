@@ -43,6 +43,8 @@ describe("ConversionPage", () => {
       count: 1,
       items: [{ conversion_job_id: "stream_conv_1", status: "queued", source_ifc_filename: "library.ifc" }],
     });
+    // F2⑩：頁尾 outbox 摘要面板 mount 時抓一次；既有案例預設空摘要（不打真網路）。
+    vi.spyOn(coordinatorClient, "getCallbackOutboxSummary").mockResolvedValue({ total: 0, limit: 50, entries: [] });
   });
 
   afterEach(async () => {
@@ -145,5 +147,78 @@ describe("ConversionPage", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
     expect(container.textContent).toContain("succeeded");
     expect(container.textContent).toContain("轉檔歷史更新失敗；保留上一份結果");
+  });
+
+  // ── F2⑩：Callback Outbox 摘要面板三態（成功表格＋色碼 / 誠實失敗 / 空摘要） ──
+  const outboxEntry = (overrides: Partial<import("./coordinatorClient").CallbackOutboxSummaryEntry> = {}) => ({
+    outbox_id: "outbox_1",
+    event: "issue_snapshot",
+    status: "pending" as const,
+    attempts: 1,
+    max_attempts: 5,
+    last_error: null,
+    created_at: "2026-07-15T00:00:00.000Z",
+    delivered_at: null,
+    correlation_id: "review_session_x",
+    conversion_job_id: null,
+    ...overrides,
+  });
+
+  it("outbox 摘要成功時渲染表格（outbox_id/event/status/attempts/last_error/delivered_at）且 status 色碼 pending=琥珀/delivered=綠/dead_letter=紅", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    vi.mocked(coordinatorClient.getCallbackOutboxSummary).mockResolvedValue({
+      total: 3,
+      limit: 50,
+      entries: [
+        outboxEntry(),
+        outboxEntry({ outbox_id: "outbox_2", event: "conversion_completed", status: "delivered", attempts: 2, delivered_at: "2026-07-15T00:01:00.000Z", conversion_job_id: "stream_conv_1" }),
+        outboxEntry({ outbox_id: "outbox_3", status: "dead_letter", attempts: 5, last_error: "cloud callback base not configured" }),
+      ],
+    });
+    await act(async () => {
+      root.render(<ConversionPage />);
+      await Promise.resolve();
+    });
+
+    expect(coordinatorClient.getCallbackOutboxSummary).toHaveBeenCalledWith(50);
+    const panel = container.querySelector('[data-testid="conv-outbox-summary"]')!;
+    expect(panel).not.toBeNull();
+    expect(container.textContent).toContain("Callback Outbox 摘要");
+    for (const text of ["outbox_1", "outbox_2", "outbox_3", "issue_snapshot", "conversion_completed", "1/5", "2/5", "cloud callback base not configured", "2026-07-15T00:01:00.000Z"]) {
+      expect(panel.textContent).toContain(text);
+    }
+    // 色碼走既有 ec-status-dot data-status（edge-console.css）：warn=琥珀 / ok=綠 / bad=紅。
+    expect(panel.querySelectorAll('.ec-status-dot[data-status="warn"]').length).toBe(1);
+    expect(panel.querySelectorAll('.ec-status-dot[data-status="ok"]').length).toBe(1);
+    expect(panel.querySelectorAll('.ec-status-dot[data-status="bad"]').length).toBe(1);
+  });
+
+  it("outbox 摘要取用失敗時誠實顯「未取得（coordinator outbox API 不可達）」，不影響其餘面板", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [queuedJob] });
+    vi.mocked(coordinatorClient.getCallbackOutboxSummary).mockRejectedValue(new Error("coordinator /api/callback-outbox/summary -> 404 Not Found"));
+    await act(async () => {
+      root.render(<ConversionPage />);
+      await Promise.resolve();
+    });
+
+    const panel = container.querySelector('[data-testid="conv-outbox-summary"]')!;
+    expect(panel.textContent).toContain("未取得（coordinator outbox API 不可達）");
+    expect(panel.textContent).toContain("404");
+    expect(panel.querySelector(".ec-status-dot")).toBeNull(); // 失敗不渲染假色碼
+    // 既有面板不受影響（純加性）。
+    expect(container.textContent).toContain("ifcready_1");
+    expect(container.textContent).toContain("IFC→USD 轉檔歷史");
+  });
+
+  it("outbox 摘要為空時誠實顯示無紀錄（total=0），不渲染空表格", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    await act(async () => {
+      root.render(<ConversionPage />);
+      await Promise.resolve();
+    });
+
+    const panel = container.querySelector('[data-testid="conv-outbox-summary"]')!;
+    expect(panel.textContent).toContain("目前沒有 outbox 紀錄（total=0）");
+    expect(panel.querySelector("table")).toBeNull();
   });
 });

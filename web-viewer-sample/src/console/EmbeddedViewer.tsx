@@ -18,6 +18,11 @@ export interface StageLoadedMessage { protocol: "vg01"; type: "stage_loaded"; st
 export interface HighlightResultMessage {
   protocol: "vg01"; type: "highlight_result"; requestId: string;
   ok: boolean; reason?: "unmapped" | "datachannel_not_ready";
+  // 批次（highlight_batch）ack 專屬（加性欄位；單筆 highlight ack 不帶）：viewer 端誠實計數——
+  // 實際裝進單一 highlightPrimsRequest 的筆數與 viewer mapping 解不出 prim 的 GUID 清單。
+  sent_count?: number;
+  unmapped_count?: number;
+  unmapped_guids?: string[];
 }
 export interface SelectedGuidMessage { protocol: "vg01"; type: "selected_guid"; ifcGuid: string | null }
 
@@ -25,6 +30,10 @@ export interface HighlightItem { ifc_guid: string; severity?: string; label?: st
 
 export interface EmbeddedViewerHandle {
   sendHighlight(items: HighlightItem[]): void;
+  // 批次疊加（A2 diff overlay）：viewer 端把全部 items 裝進「一個」highlightPrimsRequest（聯集選取）
+  // 並回「一個」帶 sent_count/unmapped_count 的 highlight_result。sendHighlight 維持逐筆語意
+  //（每 item 一個 replace request + 一個 ack），兩者不可混用。
+  sendHighlightBatch(items: HighlightItem[]): void;
   sendFocus(ifcGuid: string): void;
   sendClear(): void;
 }
@@ -107,6 +116,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
   // handle 內 closure 不直接 close over render-scope props → useImperativeHandle dep 可為 []（zero re-create）。
   useImperativeHandle(ref, () => ({
     sendHighlight: (items) => post({ type: "highlight", items }),
+    sendHighlightBatch: (items) => post({ type: "highlight_batch", items }),
     sendFocus: (ifcGuid) => post({ type: "focus", ifc_guid: ifcGuid }),
     sendClear: () => post({ type: "clear" }),
   }), []);

@@ -256,10 +256,12 @@ export function ObjectDetailPane(props: {
               >Review →</Btn>
             </>
           ) : null}
+          {/* IA v2：#a1 已讓位給 unified workspace（fixture 語意）；真 A1 工作台在 #a1-workbench，
+              target 改指之（接收端 useIncomingHandoff("a1") 以 startsWith("#a1") 判定，兩形皆命中）。 */}
           <Btn
             data-testid="md-detail-a1"
             caption={t("到 A1 檢核（帶此 minio_key）", "Go to A1 governance (carries this minio_key)")}
-            onClick={() => { window.location.hash = buildHandoff("a1", { source: "minio", minio_key: object.key }); }}
+            onClick={() => { window.location.hash = buildHandoff("a1-workbench", { source: "minio", minio_key: object.key }); }}
           >{t("A1 檢核 →", "A1 governance →")}</Btn>
         </div>
       </Panel>

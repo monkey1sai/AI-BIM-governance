@@ -11,11 +11,13 @@ const PRODUCT_CONSOLE_ROUTES = [
   "home", "overview",
   "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9", "a10",
   "viewer", "gpu",
-  "conv", "sessions", "instances", "minio",
+  "conv", "pipeline", "sessions", "instances", "minio",
   "issues", "reports", "runtime", "admin", "spec",
   "coordinator", "intake", "review", "semantic",
   "version-diff", "federation", "apps",
   "kit", "demo-control",
+  // IA v2（UnifiedConsole）：原 #a1/#a4 讓位給 workspace，legacy 單頁深連結改掛以下兩鍵。
+  "a1-workbench", "semantic-search",
 ];
 // F8-route（2026-07-10）：EdgeConsole 另有 `app/<slug>` 動態 case（A5–A10 願景詳頁；A4 已 live #a4，
 // data.ts A1A10[].route="app/..."）——固定字串清單涵蓋不到，補前綴匹配（slug 限 [a-z0-9-]+，
