@@ -20,8 +20,8 @@
       },
       {
         "path": "AI-BIM 前後端設計文件.dc.html",
-        "bytes": 89472,
-        "sha256": "96ebc4e99cc18bdaaa8a913f4f28b001048ba5ef7adbef839d01347c5af629ea"
+        "bytes": 100741,
+        "sha256": "4209b2136887fcbddee3e82ff10915c6d5d7e19b9ae95af51413afede45b2338"
       },
       {
         "path": "AI-BIM Console Hi-Fi.dc.html",
@@ -129,8 +129,8 @@
         "sha256": "8dd3f4f5e31845b8d94fcf4c14ee3932c9bde39887d17c760c749bb4e13f547e"
       }
     ],
-    "snapshot_sha256": "0f50f6ad2ad720cce9ede255a677d4d8d53b8774b3ab2aa23a339c76ebffe7c2",
-    "captured_at_utc": "2026-07-14T15:31:29.089Z"
+    "snapshot_sha256": "1b058c02f5aa34f9afa8c7bc3cb1a4b5b38ba61564307e80d921532297b9a2f5",
+    "captured_at_utc": "2026-07-16T08:23:04.507Z"
   },
   "fidelity_contract": {
     "browser": "chromium",
@@ -328,7 +328,9 @@
     "producer": "web-viewer-sample/e2e/conv-history.spec.ts",
     "validator": "scripts/tests/verify-functional-runtime-result.ps1",
     "workflow_context": "functional-runtime-conv",
-    "covered_routes": ["#conv"],
+    "covered_routes": [
+      "#conv"
+    ],
     "remaining_scope": "all other user-facing routes and Kit first-frame/stage/DataChannel evidence"
   },
   "screens": [
