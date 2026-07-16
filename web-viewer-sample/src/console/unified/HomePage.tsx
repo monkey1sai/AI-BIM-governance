@@ -32,9 +32,9 @@ export function HomePage() {
      uc 參數僅掛 data-uc 定位屬性（design gate semantic contract 用），像素中性。 */
   const kpi = (hash: string, label: string, val: string, sub: ReactNode, valColor?: string, uc?: string) => (
     <div className="hv-accent-border" data-uc={uc} onClick={() => nav(hash)} style={{ ...chipBox, padding: 16, display: "flex", flexDirection: "column", gap: 6, cursor: "pointer" }}>
-      <span style={{ fontFamily: MONO, fontSize: "9.5px", letterSpacing: ".1em", color: "#5a7089", textTransform: "uppercase" }}>{label}</span>
+      <span style={{ fontFamily: MONO, fontSize: "9.5px", letterSpacing: ".1em", color: "var(--ab-text-dim)", textTransform: "uppercase" }}>{label}</span>
       <span data-uc={uc ? uc + "-val" : undefined} style={valColor ? { fontSize: 26, fontWeight: 700, fontFamily: MONO, color: valColor } : { fontSize: 26, fontWeight: 700, fontFamily: MONO }}>{val}</span>
-      <span style={{ fontSize: 11, color: "#8aa0b8" }}>{sub}</span>
+      <span style={{ fontSize: 11, color: "var(--ab-text-muted)" }}>{sub}</span>
     </div>
   );
 
@@ -45,34 +45,34 @@ export function HomePage() {
       {/* ---- 標題列 ---- */}
       <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
         <span style={{ fontSize: 20, fontWeight: 700 }}>{L.home_title}</span>
-        <span style={{ fontFamily: MONO, fontSize: "10.5px", color: "#5a7089" }}>2026-07-14 · Demo Project – A1 Tower</span>
+        <span style={{ fontFamily: MONO, fontSize: "10.5px", color: "var(--ab-text-dim)" }}>2026-07-14 · Demo Project – A1 Tower</span>
       </div>
       {/* ---- KPI 卡 ×4 ---- */}
       <div data-prov="fixture" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-        {kpi("#pipeline", L.kpi_conv, String(conv.filter((c) => c.st === "running").length), <>990_model.ifc 62% · <span style={{ color: "#e8615c" }}>1 失敗</span></>, undefined, "kpi-conv")}
+        {kpi("#pipeline", L.kpi_conv, String(conv.filter((c) => c.st === "running").length), <>990_model.ifc 62% · <span style={{ color: "var(--ab-danger)" }}>1 失敗</span></>, undefined, "kpi-conv")}
         {kpi("#pipeline", L.kpi_sess, String(sessions.length), "editor lease 1 · spectator 1", undefined, "kpi-sess")}
-        {kpi("#issues", L.kpi_issue, String(issues.length + 10), L.kpi_issue_sub, "#e8615c", "kpi-issue")}
-        {kpi("#runtime", L.kpi_outbox, String(outbox.filter((o) => o.st === "待送").length), "metadata-only callback", "#e6b23e", "kpi-outbox")}
+        {kpi("#issues", L.kpi_issue, String(issues.length + 10), L.kpi_issue_sub, "var(--ab-danger)", "kpi-issue")}
+        {kpi("#runtime", L.kpi_outbox, String(outbox.filter((o) => o.st === "待送").length), "metadata-only callback", "var(--ab-warn)", "kpi-outbox")}
       </div>
       {/* ---- 資料生產線快照 + 警示/事件 ---- */}
       <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr", gap: 12 }}>
         <div data-prov="fixture" style={{ ...chipBox, padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: "13.5px", fontWeight: 700 }}>{L.pipe_snap}</span>
-            <span data-uc="enter-pipeline" onClick={() => nav("#pipeline")} style={{ marginLeft: "auto", fontSize: 11, color: "#41c7e8", cursor: "pointer" }}>{L.enter} →</span>
+            <span data-uc="enter-pipeline" onClick={() => nav("#pipeline")} style={{ marginLeft: "auto", fontSize: 11, color: "var(--ab-accent)", cursor: "pointer" }}>{L.enter} →</span>
           </div>
           <div style={{ display: "flex", alignItems: "stretch", gap: 0 }}>
             {pipeSnap.map((p) => (
               <div key={p.step} style={{ flex: 1, display: "flex", alignItems: "center", gap: 0, minWidth: 0 }}>
-                <div className="hv-accent-border-strong" onClick={() => nav("#pipeline")} style={{ flex: 1, background: "#0a1220", border: "1px solid rgba(120,160,210,.14)", borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3, cursor: "pointer" }}>
-                  <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: ".08em", color: "#5a8db0" }}>{p.step}</span>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}><span style={{ fontSize: 19, fontWeight: 700, fontFamily: MONO }}>{p.n}</span><span style={{ fontSize: 11, color: "#8aa0b8" }}>{p.label}</span></div>
+                <div className="hv-accent-border-strong" onClick={() => nav("#pipeline")} style={{ flex: 1, background: "var(--ab-inset)", border: "1px solid rgba(120,160,210,.14)", borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3, cursor: "pointer" }}>
+                  <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: ".08em", color: "var(--ab-text-code)" }}>{p.step}</span>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}><span style={{ fontSize: 19, fontWeight: 700, fontFamily: MONO }}>{p.n}</span><span style={{ fontSize: 11, color: "var(--ab-text-muted)" }}>{p.label}</span></div>
                 </div>
-                {p.arrow ? <span style={{ color: "#3d5570", padding: "0 6px", fontFamily: MONO }}>→</span> : null}
+                {p.arrow ? <span style={{ color: "var(--ab-text-faint)", padding: "0 6px", fontFamily: MONO }}>→</span> : null}
               </div>
             ))}
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 11, color: "#5a7089" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 11, color: "var(--ab-text-dim)" }}>
             <span style={{ fontFamily: MONO, fontSize: "9.5px", letterSpacing: ".08em", textTransform: "uppercase" }}>F1</span>
             <span>{L.f1_desc}</span>
           </div>
@@ -82,8 +82,8 @@ export function HomePage() {
           {alerts.map((a, i) => (
             <div key={i} style={{ display: "flex", alignItems: "center", gap: 9 }}>
               <span style={{ width: 7, height: 7, borderRadius: "50%", background: a.c, flex: "none" }} />
-              <span style={{ flex: 1, fontSize: 12, color: "#b9c9da" }}>{zh ? a.msgZh : a.msgEn}</span>
-              <span style={{ fontFamily: MONO, fontSize: "9.5px", color: "#4d6076" }}>{a.t}</span>
+              <span style={{ flex: 1, fontSize: 12, color: "var(--ab-text-2)" }}>{zh ? a.msgZh : a.msgEn}</span>
+              <span style={{ fontFamily: MONO, fontSize: "9.5px", color: "var(--ab-text-dimmer)" }}>{a.t}</span>
             </div>
           ))}
         </div>
@@ -92,7 +92,7 @@ export function HomePage() {
       <div data-prov="fixture" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
           <span style={{ fontSize: "13.5px", fontWeight: 700 }}>{L.launcher}</span>
-          <span style={{ fontSize: 11, color: "#5a7089" }}>A1–A4 live · A5–A10 Concept Preview</span>
+          <span style={{ fontSize: 11, color: "var(--ab-text-dim)" }}>A1–A4 live · A5–A10 Concept Preview</span>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 10 }}>
           {launcherApps.map((a) => (
@@ -101,15 +101,15 @@ export function HomePage() {
               className="hv-card"
               onClick={() => nav(a.hash)}
               style={a.tone === "live"
-                ? { background: "#0e1621", border: "1px solid rgba(120,160,210,.16)", borderRadius: 12, padding: "13px 14px", display: "flex", flexDirection: "column", gap: 5, cursor: "pointer", transition: "all .15s" }
-                : { background: "#0e1621", border: "1px solid rgba(120,160,210,.09)", borderRadius: 12, padding: "13px 14px", display: "flex", flexDirection: "column", gap: 5, cursor: "pointer", transition: "all .15s", opacity: 0.75 }}
+                ? { background: "var(--ab-surface)", border: "1px solid rgba(120,160,210,.16)", borderRadius: 12, padding: "13px 14px", display: "flex", flexDirection: "column", gap: 5, cursor: "pointer", transition: "all .15s" }
+                : { background: "var(--ab-surface)", border: "1px solid rgba(120,160,210,.09)", borderRadius: 12, padding: "13px 14px", display: "flex", flexDirection: "column", gap: 5, cursor: "pointer", transition: "all .15s", opacity: 0.75 }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 600, color: "#5a8db0" }}>{a.code}</span>
+                <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 600, color: "var(--ab-text-code)" }}>{a.code}</span>
                 <span style={badgeTone(a.tone)}>{a.badge}</span>
               </div>
-              <span style={{ fontSize: "12.5px", fontWeight: 500, color: "#dbe6f3" }}>{zh ? a.labelZh : a.labelEn}</span>
-              <span style={{ fontSize: 10, color: "#5a7089" }}>{appEn[a.code]}</span>
+              <span style={{ fontSize: "12.5px", fontWeight: 500, color: "var(--ab-text)" }}>{zh ? a.labelZh : a.labelEn}</span>
+              <span style={{ fontSize: 10, color: "var(--ab-text-dim)" }}>{appEn[a.code]}</span>
             </div>
           ))}
         </div>

@@ -132,6 +132,9 @@
   /* Scrollbar（unified.css 全域 scrollbar 承接；.ab-app 內硬寫值的 token 化來源） */
   --ab-scroll-thumb: #1c2a3c;
   --ab-scroll-thumb-hover: #28394f;
+
+  /* Text 延伸（UnifiedShell.tsx runtime-note 承接：對照表外殘餘值缺口） */
+  --ab-text-ghost: #3d4f63;
 }
 
 /* ─────────────────────────── BASE ─────────────────────────── */

@@ -7,7 +7,7 @@
 body.uc-body {
   margin: 0;
   height: 100%;
-  background: #060a10;
+  background: var(--ab-bg);
   overflow-x: auto;
   overflow-y: hidden;
   font-family: "Noto Sans TC", -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
@@ -30,15 +30,15 @@ body.uc-body {
 .uc-root *::after {
   all: revert;
 }
-body.uc-body a { color: #41c7e8; text-decoration: none; }
-body.uc-body a:hover { color: #7adcf2; text-decoration: underline; }
+body.uc-body a { color: var(--ab-accent); text-decoration: none; }
+body.uc-body a:hover { color: var(--ab-accent-bright); text-decoration: underline; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: #1c2a3c; border-radius: 8px; }
-::-webkit-scrollbar-thumb:hover { background: #28394f; }
+::-webkit-scrollbar-thumb { background: var(--ab-scroll-thumb); border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: var(--ab-scroll-thumb-hover); }
 @keyframes tup { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 @keyframes convbar { from { width: 56%; } to { width: 70%; } }
-input::placeholder { color: #4d6076; }
+input::placeholder { color: var(--ab-text-dimmer); }
 
 /* hover utilities (replace dc `style-hover`).
    刻意不加 !important：dc runtime 的 style-hover 產生 class 規則、永遠輸給 inline style，
@@ -49,10 +49,10 @@ input::placeholder { color: #4d6076; }
 .hv-card:hover { border-color: rgba(65, 199, 232, .45); transform: translateY(-1px); }
 .hv-bright:hover { filter: brightness(1.12); }
 .hv-bright-more:hover { filter: brightness(1.2); }
-.hv-text:hover { color: #dbe6f3; }
+.hv-text:hover { color: var(--ab-text); }
 .hv-bg:hover { background: rgba(65, 199, 232, .06); }
 .hv-bg-soft:hover { background: rgba(65, 199, 232, .05); }
 .hv-bg-row:hover { background: rgba(65, 199, 232, .07); }
 .hv-accent-bg:hover { background: rgba(65, 199, 232, .08); }
 .hv-danger-bg:hover { background: rgba(232, 97, 92, .08); }
-.hv-doc:hover { border-color: rgba(65, 199, 232, .4); color: #dbe6f3; }
+.hv-doc:hover { border-color: rgba(65, 199, 232, .4); color: var(--ab-text); }

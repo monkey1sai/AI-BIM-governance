@@ -44,6 +44,7 @@ describe("ai-bim-governance.css 是被真實 import 的唯一 token 權威", () 
     "--ab-fs-mono",
     "--ab-scroll-thumb",
     "--ab-scroll-thumb-hover",
+    "--ab-text-ghost",
   ])("缺口 token %s 已定義於授權檔", (token) => {
     expect(authorityCss).toContain(`${token}:`);
   });
