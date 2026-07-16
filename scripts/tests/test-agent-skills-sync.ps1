@@ -131,7 +131,9 @@ foreach ($relativePath in $expectedExecutableSkillFiles) {
 $explicitOnlySuperpowersSkills = @(
     'brainstorming',
     'finishing-a-development-branch',
+    'requesting-code-review',
     'subagent-driven-development',
+    'test-driven-development',
     'using-git-worktrees',
     'using-superpowers',
     'writing-plans'
@@ -141,6 +143,39 @@ foreach ($skillName in $explicitOnlySuperpowersSkills) {
     Assert-True (Test-Path -LiteralPath $metadataPath) "$skillName has Codex invocation metadata"
     Assert-True ((Get-Content -Raw -LiteralPath $metadataPath) -match 'allow_implicit_invocation:\s*false') "$skillName cannot be invoked implicitly by Codex"
 }
+
+$skillPolicyChecks = @(
+    @{
+        Skill = 'brainstorming'
+        Pattern = 'terminal state is requesting separate authorization to plan'
+        Message = 'brainstorming stops for separate planning authorization'
+    },
+    @{
+        Skill = 'writing-plans'
+        Pattern = 'This plan does not authorize implementation'
+        Message = 'generated plans do not authorize implementation'
+    },
+    @{
+        Skill = 'using-git-worktrees'
+        Pattern = 'git check-ignore -q -- "\$LOCATION"'
+        Message = 'worktree safety checks the exact selected location'
+    },
+    @{
+        Skill = 'finishing-a-development-branch'
+        Pattern = 'gh pr create --base <base-branch> --head <feature-branch>'
+        Message = 'push-and-create-PR option actually creates the PR'
+    }
+)
+foreach ($check in $skillPolicyChecks) {
+    foreach ($platform in @('claude', 'codex')) {
+        $skillPath = Join-Path $repoRoot ".$platform\skills\$($check.Skill)\SKILL.md"
+        Assert-True ((Get-Content -Raw -LiteralPath $skillPath) -match $check.Pattern) "$platform $($check.Message)"
+    }
+}
+
+$ornithExamples = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'ornith-vllm-api-examples.html')
+Assert-True ($ornithExamples -match 'Read-Host "ORNITH_API_KEY" -AsSecureString') 'Ornith PowerShell example prompts securely for the API key'
+Assert-True ($ornithExamples -notmatch '\$env:ORNITH_API_KEY\s*=\s*"&lt;YOUR_ORNITH_API_KEY&gt;"') 'Ornith PowerShell example does not put a pasted API key assignment in shell history'
 
 $testLogger = New-StructLogger -Service 'scripts' -Component 'test-agent-skills-sync' -SkipEnvSnapshot -InMemoryOnly
 $testLogger | Write-StructInfo -Msg '[test-agent-skills-sync] all assertions passed' -Data @{ result = 'passed' }

@@ -77,13 +77,13 @@ Follow this priority order. Explicit user preference always beats observed files
 
 #### Safety Verification (project-local directories only)
 
-**MUST verify directory is ignored before creating worktree:**
+**MUST verify the exact selected directory is ignored before creating worktree.** Set `LOCATION` to the project-local directory selected above (for example `.worktrees` or `worktrees`), then check that value only:
 
 ```bash
-git check-ignore -q .worktrees 2>/dev/null || git check-ignore -q worktrees 2>/dev/null
+git check-ignore -q -- "$LOCATION" 2>/dev/null
 ```
 
-**If NOT ignored:** Add to .gitignore, commit the change, then proceed.
+**If the selected `LOCATION` is NOT ignored:** Add that exact directory to .gitignore, commit the change, then proceed. An ignore match for a different candidate directory does not satisfy this check.
 
 **Why critical:** Prevents accidentally committing worktree contents to repository.
 

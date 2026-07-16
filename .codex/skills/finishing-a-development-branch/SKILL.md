@@ -123,7 +123,12 @@ git branch -d <feature-branch>
 ```bash
 # Push branch
 git push -u origin <feature-branch>
+
+# Create the pull request and verify the command succeeds
+gh pr create --base <base-branch> --head <feature-branch> --title "<title>" --body "<summary and test plan>"
 ```
+
+If `gh` is unavailable or unauthenticated, stop and provide the compare URL plus the exact title/body for manual creation. Do not report that a PR was created until its URL is verified.
 
 **Do NOT clean up worktree** — user needs it alive to iterate on PR feedback.
 

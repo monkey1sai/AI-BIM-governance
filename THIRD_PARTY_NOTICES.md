@@ -2,7 +2,7 @@
 
 ## Superpowers
 
-- Local adaptations: six repo-policy agents/openai.yaml files set allow_implicit_invocation to false, one trailing space in writing-skills/SKILL.md is normalized, and upstream executable modes are preserved for bundled scripts.
+- Local adaptations: eight repo-policy agents/openai.yaml files set allow_implicit_invocation to false; brainstorming, writing-plans, using-git-worktrees, and finishing-a-development-branch enforce local consent and safety boundaries; one trailing space in writing-skills/SKILL.md is normalized; and upstream executable modes are preserved for bundled scripts.
 - Source: https://github.com/obra/superpowers
 - Version: `v6.1.1`
 - Commit: `d884ae04edebef577e82ff7c4e143debd0bbec99`
