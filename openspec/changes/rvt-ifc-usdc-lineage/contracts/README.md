@@ -64,7 +64,11 @@ JSON Schema可拒絕形狀與enum錯誤；下列cross-field規則仍須由sender
 - locator query `versionId`逐字等於`object_version_id`。
 - 每個locator authority逐字等於top-level `edge_site_id`，object key無raw `?`／`#`，且query只有唯一`?versionId=`。
 - top-level `result_manifest_digest`逐字等於`result_manifest_ref.sha256`。
-- nonzero denominator時`ratio == numerator / denominator`。
+- nonzero denominator時，以decimal arithmetic計算`numerator / denominator`，再向零截斷至小數第10位作為`ratio`；trailing zeros可省略。
+- `ifc_usdc_coverage_ratio.denominator == eligible_ifc_product_count`，且其`numerator == eligible_ifc_product_count - ifc_usdc_unmapped_count`。
+- `rvt_ifc_alignment_ratio.denominator == csv_valid_count`，且其`numerator == csv_valid_count - csv_only_count`。
+- `rvt_ifc_usdc_lineage_ratio.denominator == csv_valid_count`，且其`numerator == full_lineage_matched_count`。
+- `full_lineage_matched_count <= rvt_ifc_alignment_ratio.numerator`。
 - ratio 1對應`complete`；0≤ratio<1對應`partial`。
 - `warning_code_count == warning_codes.length`。
 - `publication_identity`對應`edge_site_id + external_model_version_id + result_id`。
@@ -127,6 +131,10 @@ replay
 
 Sender只有在200/201且event/identity/digest逐字匹配時標`DELIVERED`。Delivery是at-least-once，不宣稱exactly-once。
 
+Receiver在任何publication、health或receipt mutation前，須於同一transaction建立／檢查以`event_id`為primary key的immutable event ledger，保存first accepted raw-body SHA-256。相同`event_id`搭配不同digest一律`409`且不異動；相同digest才可繼續event-type-specific replay判定。每次accepted first delivery／replay仍另append receipt row。
+
+Published event另計算`publication_content_sha256`：對`schema_version`、`event_type`、`edge_site_id`、`tenant_id`、`project_id`、`external_model_version_id`、`result_id`、`publication_identity`、`result_manifest_digest`與完整published `payload`組成的projection做RFC 8785 JCS，再取lowercase SHA-256；明確排除transport-specific `event_id`、`occurred_at`與`correlation_id`。相同identity／manifest digest只有在此digest也相同時才是`200 replay`，否則`409`。
+
 Sanitized error body只必填`error`。當request ID缺失、malformed或尚未通過可採信的解析／驗證時，receiver MUST NOT 捏造`event_id`；若error body提供`event_id`，它仍必須是已解析request context中的有效UUID。Success ACK的`event_id`維持必填。
 
 ## Outbox與健康狀態
@@ -153,7 +161,7 @@ VERIFIED | MISSING | INTEGRITY_FAILED | TOMBSTONED
 
 `MISSING`／`INTEGRITY_FAILED`需至少兩次edge observation；restore可回`VERIFIED`；`TOMBSTONED`只接受formal retention/revocation record。Health payload不重送summary；receiver以`publication_identity` join原publication並逐字驗證original result ID/ref/digest。Health history與每次accepted delivery/replay receipt均append-only，receipt不得update成replay counter。
 
-Current health不儲存在immutable publication row：尚無health event時衍生為`VERIFIED`；其後以最新accepted append-only health transition為準，health event不得update `lineage_publications`。
+Current health不儲存在immutable publication row：尚無health event時衍生為`VERIFIED`；其後依`observed_at DESC`排序，完全相同的observation time再以receiver-assigned append order做deterministic tie-break。`observed_at`必須是uppercase `Z`的UTC timestamp，年份限`1000–9999`、秒限`00–59`，小數秒可省略或為1–6位；receiver只可右補零至microsecond，MUST NOT 接受offset、leap second、MySQL範圍外年份、超過6位精度、round或truncate。延遲送達的較舊observation只append history，不得覆寫較新current health；health event不得update `lineage_publications`。
 
 ## 範例預期結果
 
@@ -167,6 +175,14 @@ Current health不儲存在immutable publication row：尚無health event時衍�
 | `invalid-presigned-health-locator.json` | 請求 | 無效 |
 | `invalid-lowercase-presigned-locator.json` | 請求schema | 無效 |
 | `invalid-cross-site-health-locator.json` | semantic validator | 無效（JSON shape有效） |
+| `invalid-inconsistent-ifc-usdc-counts.json` | semantic validator | 無效（JSON shape有效） |
+| `invalid-inconsistent-rvt-ifc-counts.json` | semantic validator | 無效（JSON shape有效） |
+| `invalid-inconsistent-alignment-counts.json` | semantic validator | 無效（JSON shape有效） |
+| `invalid-full-lineage-exceeds-rvt-ifc.json` | semantic validator | 無效（JSON shape有效） |
+| `invalid-offset-health-observed-at.json` | 請求schema | 無效 |
+| `invalid-submicrosecond-health-observed-at.json` | 請求schema | 無效 |
+| `invalid-leap-second-health-observed-at.json` | 請求schema | 無效 |
+| `invalid-out-of-range-health-observed-at.json` | 請求schema | 無效 |
 | `invalid-incomplete-ack.json` | 回應 | 無效 |
 | `invalid-error-event-id.json` | 回應 | 無效 |
 

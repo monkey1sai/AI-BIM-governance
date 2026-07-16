@@ -195,7 +195,7 @@ size_bytes
 
 `ref` 必須 stable、non-expiring、credential-free；authority必須逐字等於envelope `edge_site_id`，object key不得含raw `?`／`#`，且唯一query只能是 `?versionId=`。不得是 presigned URL、HTTP bearer URL、local path或只靠 mutable object key。Cloud只保存 locator並可完全不具下載 edge MinIO的網路／credential權限。
 
-輕量摘要只包含 section 4 的三組 metric（各自的 `numerator`、`denominator`、`ratio`、`status`）、固定 count欄與最多64個 bounded warning codes。Evaluated ratio等於1時status為 `complete`，小於1時為 `partial`；denominator為0時numerator必須為0、ratio為 `null`、status為 `not_evaluable`。固定 counts為：
+輕量摘要只包含 section 4 的三組 metric（各自的 `numerator`、`denominator`、`ratio`、`status`）、固定 count欄與最多64個 bounded warning codes。Denominator非0時，ratio以decimal arithmetic計算後向零截斷至小數第10位；numerator等於denominator時status為 `complete`，小於denominator時為 `partial`。Denominator為0時numerator必須為0、ratio為 `null`、status為 `not_evaluable`。固定 counts為：
 
 ```text
 csv_total_count
@@ -209,6 +209,8 @@ ifc_only_count
 ifc_usdc_unmapped_count
 full_lineage_matched_count
 ```
+
+Semantic validator必須把metric與counts綁成同一份summary truth：IFC→USDC denominator等於`eligible_ifc_product_count`、numerator等於該count減`ifc_usdc_unmapped_count`；RVT→IFC denominator等於`csv_valid_count`、numerator等於該count減`csv_only_count`；三向lineage denominator等於`csv_valid_count`、numerator等於`full_lineage_matched_count`，且full-lineage count不得大於RVT→IFC numerator。任一矛盾在enqueue與cloud mutation前fail closed。
 
 Cloud payload MUST NOT 包含 RVT/IFC/USDC bytes、manifest body、逐 element mapping rows、CSV/JSON report body、diff ID sets、diagnostics、presigned query、credentials或base64。完整 `element_mapping.json`、alignment JSON/CSV與差異集合只存在edge MinIO。
 
@@ -290,7 +292,7 @@ Coordinator必須先以atomic local outbox JSON保存stable event/body digest再
 
 #### 10.5 Health event只投影formal result位置健康度
 
-`lineage_result_health_changed` 固定使用 `VERIFIED | MISSING | INTEGRITY_FAILED | TOMBSTONED`。每筆event攜帶既有 `publication_identity`、original result ID/ref/digest，但不重送summary；receiver必須以publication identity join既有 `lineage_publications`，逐字驗證result ID/ref/digest後才append health event。原始summary只保存在immutable publication row，health event絕不改寫它。
+`lineage_result_health_changed` 固定使用 `VERIFIED | MISSING | INTEGRITY_FAILED | TOMBSTONED`。每筆event攜帶既有 `publication_identity`、original result ID/ref/digest，但不重送summary；receiver必須以publication identity join既有 `lineage_publications`，逐字驗證result ID/ref/digest後才append health event。原始summary只保存在immutable publication row，health event絕不改寫它。`observed_at`必須是UTC uppercase `Z`、年份`1000–9999`、秒`00–59`且最多6位小數秒；receiver只可右補零，不得接受offset、leap second、MySQL範圍外年份或round/truncate超微秒值。Current health依此exact microsecond最新值衍生；完全相同時間才以receiver-assigned append order決定。Dead-letter/retry造成的較舊event可保留在history，但不得覆寫較新的observation。
 
 `MISSING` 與 `INTEGRITY_FAILED` 必須由edge reconciler至少兩次獨立觀察確認後才送；artifact恢復並驗證成功可回到 `VERIFIED`。`TOMBSTONED` 只能由正式retention/revocation record觸發，不能由transient list miss推測。Health change不刪cloud history，也不改 formal edge availability。
 
@@ -301,10 +303,11 @@ External `bim-control` 是唯一cloud MySQL writer，且應在receiver transacti
 ```text
 lineage_publications
 lineage_publication_health_events
+lineage_event_identities
 lineage_event_receipts
 ```
 
-`lineage_publications`只保存identities、四個result locators、manifest digest與bounded summary；current health在尚無event時衍生為`VERIFIED`，其後由最新accepted append-only health event衍生，不在immutable publication row保存mutable projection。Health events與receipts均append-only。Schema MUST NOT 定義逐 element lineage table。本 change附MySQL 8 `REFERENCE ONLY` DDL，僅表達logical constraints；不提供migration、DB connection、credentials或「已執行／已驗證真MySQL」宣稱。Test fake只模擬protocol transaction/idempotency，不是production cloud runtime。
+`lineage_publications`只保存identities、四個result locators、manifest digest、receiver計算的canonical `publication_content_sha256`與bounded summary；`lineage_event_identities`以全域`event_id`保存first accepted raw-body digest，阻擋同ID異body。Current health在尚無event時衍生為`VERIFIED`，其後依observation time衍生，不在immutable publication row保存mutable projection。Health events與receipts均append-only。Schema MUST NOT 定義逐 element lineage table。本 change附MySQL 8 `REFERENCE ONLY` DDL，僅表達logical constraints；不提供migration、DB connection、credentials或「已執行／已驗證真MySQL」宣稱。Test fake只模擬protocol transaction/idempotency，不是production cloud runtime。
 
 ## 資料與控制流程
 

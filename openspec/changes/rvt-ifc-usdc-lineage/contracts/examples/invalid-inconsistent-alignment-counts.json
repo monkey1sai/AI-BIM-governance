@@ -51,9 +51,9 @@
     "alignment_summary": {
       "metrics": {
         "ifc_usdc_coverage_ratio": {
-          "numerator": 1180,
+          "numerator": 1176,
           "denominator": 1200,
-          "ratio": 0.9833333333,
+          "ratio": 0.98,
           "status": "partial"
         },
         "rvt_ifc_alignment_ratio": {
@@ -78,8 +78,8 @@
         "invalid_row_count": 3,
         "csv_only_count": 10,
         "ifc_only_count": 210,
-        "ifc_usdc_unmapped_count": 20,
-        "full_lineage_matched_count": 975
+        "ifc_usdc_unmapped_count": 24,
+        "full_lineage_matched_count": 974
       },
       "warning_codes": [
         "PARTIAL_RVT_IFC_ALIGNMENT",

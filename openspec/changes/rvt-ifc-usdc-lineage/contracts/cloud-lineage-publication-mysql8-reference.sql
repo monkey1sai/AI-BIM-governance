@@ -24,6 +24,7 @@ CREATE TABLE lineage_publications (
     result_id VARCHAR(200) NOT NULL,
     attempt_outcome VARCHAR(32) NOT NULL,
     manifest_digest CHAR(64) NOT NULL,
+    publication_content_sha256 CHAR(64) NOT NULL,
     result_manifest_ref JSON NOT NULL,
     lineage_mapping_ref JSON NOT NULL,
     alignment_report_json_ref JSON NOT NULL,
@@ -41,6 +42,8 @@ CREATE TABLE lineage_publications (
     ),
     CONSTRAINT ck_lineage_publications_manifest_digest
         CHECK (manifest_digest REGEXP '^[0-9a-f]{64}$'),
+    CONSTRAINT ck_lineage_publications_content_digest
+        CHECK (publication_content_sha256 REGEXP '^[0-9a-f]{64}$'),
     CONSTRAINT ck_lineage_publications_attempt_outcome
         CHECK (
             attempt_outcome IN (
@@ -81,7 +84,8 @@ CREATE TABLE lineage_publication_health_events (
     UNIQUE KEY uq_lineage_health_event (event_id),
     KEY ix_lineage_health_publication_time (
         publication_identity,
-        observed_at
+        observed_at,
+        health_event_id
     ),
     CONSTRAINT fk_lineage_health_publication
         FOREIGN KEY (publication_identity)
@@ -107,10 +111,32 @@ CREATE TABLE lineage_publication_health_events (
         CHECK (JSON_TYPE(original_result_manifest_ref) = 'OBJECT')
 ) ENGINE = InnoDB;
 
--- Authoritative current health is derived per publication from the latest
--- accepted health transition (highest health_event_id). With no health event,
--- the initial derived state is VERIFIED. lineage_publications is never updated
--- to project health state.
+-- Authoritative current health is derived per publication by
+-- ORDER BY observed_at DESC, health_event_id DESC LIMIT 1. A delayed older
+-- observation remains in append-only history but cannot replace a newer
+-- observation. With no health event, the initial derived state is VERIFIED.
+-- lineage_publications is never updated to project health state.
+
+-- Intentionally no FK to lineage_publications: the receiver reserves/checks
+-- event_id before the first publication mutation inside one transaction; a
+-- later failure rolls the ledger row back with the rest of that transaction.
+CREATE TABLE lineage_event_identities (
+    event_id CHAR(36) NOT NULL,
+    event_type ENUM(
+        'lineage_result_published',
+        'lineage_result_health_changed'
+    ) NOT NULL,
+    publication_identity VARCHAR(512) NOT NULL,
+    raw_body_sha256 CHAR(64) NOT NULL,
+    first_received_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (event_id),
+    KEY ix_lineage_event_identities_publication (
+        publication_identity,
+        first_received_at
+    ),
+    CONSTRAINT ck_lineage_event_identities_raw_body_digest
+        CHECK (raw_body_sha256 REGEXP '^[0-9a-f]{64}$')
+) ENGINE = InnoDB;
 
 CREATE TABLE lineage_event_receipts (
     receipt_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -121,7 +147,7 @@ CREATE TABLE lineage_event_receipts (
     ) NOT NULL,
     publication_identity VARCHAR(512) NOT NULL,
     manifest_digest CHAR(64) NOT NULL,
-    payload_sha256 CHAR(64) NOT NULL,
+    raw_body_sha256 CHAR(64) NOT NULL,
     registration_id VARCHAR(200) NOT NULL,
     received_at DATETIME(6) NOT NULL,
     replay BOOLEAN NOT NULL,
@@ -134,6 +160,11 @@ CREATE TABLE lineage_event_receipts (
         publication_identity,
         received_at
     ),
+    CONSTRAINT fk_lineage_receipts_event_identity
+        FOREIGN KEY (event_id)
+        REFERENCES lineage_event_identities (event_id)
+        ON UPDATE RESTRICT
+        ON DELETE RESTRICT,
     CONSTRAINT fk_lineage_receipts_publication
         FOREIGN KEY (publication_identity)
         REFERENCES lineage_publications (publication_identity)
@@ -141,18 +172,20 @@ CREATE TABLE lineage_event_receipts (
         ON DELETE RESTRICT,
     CONSTRAINT ck_lineage_receipts_manifest_digest
         CHECK (manifest_digest REGEXP '^[0-9a-f]{64}$'),
-    CONSTRAINT ck_lineage_receipts_payload_digest
-        CHECK (payload_sha256 REGEXP '^[0-9a-f]{64}$'),
+    CONSTRAINT ck_lineage_receipts_raw_body_digest
+        CHECK (raw_body_sha256 REGEXP '^[0-9a-f]{64}$'),
     CONSTRAINT ck_lineage_receipts_replay
         CHECK (replay IN (0, 1))
 ) ENGINE = InnoDB;
 
 -- Normative transaction rules live in the OpenSpec capability:
+-- - create/check lineage_event_identities inside the same transaction before
+--   publication, health or receipt mutation
 -- - first valid event commit -> HTTP 201
--- - published same identity + digest + immutable content -> HTTP 200 replay
+-- - published same identity + digest + publication_content_sha256 -> HTTP 200 replay
 -- - new health event_id -> append health event and receipt, HTTP 201
--- - same health event_id + same payload_sha256 -> append replay receipt, HTTP 200
--- - same event_id + different payload_sha256 -> HTTP 409, no mutation
+-- - same health event_id + same raw_body_sha256 -> append replay receipt, HTTP 200
+-- - same event_id + different raw_body_sha256 -> HTTP 409, no mutation
 -- - every accepted first delivery/replay appends a receipt row; receipts are not updated
 -- - parent missing -> HTTP 422
 -- - tenant binding mismatch -> HTTP 403

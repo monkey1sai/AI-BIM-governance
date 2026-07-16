@@ -63,9 +63,9 @@
           "status": "partial"
         },
         "rvt_ifc_usdc_lineage_ratio": {
-          "numerator": 975,
+          "numerator": 991,
           "denominator": 1000,
-          "ratio": 0.975,
+          "ratio": 0.991,
           "status": "partial"
         }
       },
@@ -79,7 +79,7 @@
         "csv_only_count": 10,
         "ifc_only_count": 210,
         "ifc_usdc_unmapped_count": 20,
-        "full_lineage_matched_count": 975
+        "full_lineage_matched_count": 991
       },
       "warning_codes": [
         "PARTIAL_RVT_IFC_ALIGNMENT",

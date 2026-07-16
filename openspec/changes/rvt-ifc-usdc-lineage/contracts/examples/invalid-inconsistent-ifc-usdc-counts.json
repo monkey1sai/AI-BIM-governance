@@ -78,7 +78,7 @@
         "invalid_row_count": 3,
         "csv_only_count": 10,
         "ifc_only_count": 210,
-        "ifc_usdc_unmapped_count": 20,
+        "ifc_usdc_unmapped_count": 19,
         "full_lineage_matched_count": 975
       },
       "warning_codes": [

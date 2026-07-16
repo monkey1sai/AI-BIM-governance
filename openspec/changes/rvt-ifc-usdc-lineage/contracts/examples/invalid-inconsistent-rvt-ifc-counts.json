@@ -76,7 +76,7 @@
         "duplicate_rvt_id_count": 3,
         "duplicate_ifc_guid_count": 2,
         "invalid_row_count": 3,
-        "csv_only_count": 10,
+        "csv_only_count": 9,
         "ifc_only_count": 210,
         "ifc_usdc_unmapped_count": 20,
         "full_lineage_matched_count": 975
