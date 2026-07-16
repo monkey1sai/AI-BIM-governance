@@ -78,5 +78,51 @@ Assert-True ($repoHealth[0].sync.mode -eq 'independent') 'repo-health declares C
 $codexRepoHealth = Get-Content -Raw -LiteralPath (Join-Path $repoRoot '.codex\skills\repo-health\SKILL.md')
 Assert-True ($codexRepoHealth -notmatch 'repo-health-scan|output-style') 'Codex repo-health does not invoke Claude-only workflow or output-style features'
 
+$expectedSuperpowersSkills = @(
+    'brainstorming',
+    'dispatching-parallel-agents',
+    'executing-plans',
+    'finishing-a-development-branch',
+    'receiving-code-review',
+    'requesting-code-review',
+    'subagent-driven-development',
+    'systematic-debugging',
+    'test-driven-development',
+    'using-git-worktrees',
+    'using-superpowers',
+    'verification-before-completion',
+    'writing-plans',
+    'writing-skills'
+)
+$superpowersEntries = @($repoManifest.skills | Where-Object { $_.provenance.source -eq 'obra/superpowers@v6.1.1' })
+Assert-True ($superpowersEntries.Count -eq $expectedSuperpowersSkills.Count) 'manifest declares the complete pinned Superpowers v6.1.1 skill set'
+foreach ($skillName in $expectedSuperpowersSkills) {
+    $entry = @($superpowersEntries | Where-Object { $_.name -eq $skillName })
+    Assert-True ($entry.Count -eq 1) "Superpowers manifest has one entry for $skillName"
+    Assert-True ($entry[0].sync.mode -eq 'mirror' -and $entry[0].sync.source -eq 'claude' -and @($entry[0].sync.targets) -contains 'codex') "$skillName mirrors Claude to Codex"
+    Assert-True ($entry[0].provenance.import_commit -eq 'd884ae04edebef577e82ff7c4e143debd0bbec99') "$skillName pins the v6.1.1 release commit"
+    Assert-True ($entry[0].provenance.license -eq 'MIT') "$skillName records the upstream license"
+    foreach ($platform in @('claude', 'codex')) {
+        $skillPath = Join-Path $repoRoot ".$platform\skills\$skillName\SKILL.md"
+        Assert-True (Test-Path -LiteralPath $skillPath) "$skillName has a $platform entrypoint"
+        Assert-True ((Get-Content -Raw -LiteralPath $skillPath) -match "(?m)^name:\s*$([regex]::Escape($skillName))\s*$") "$skillName keeps the expected $platform frontmatter name"
+    }
+}
+Assert-True (Test-Path -LiteralPath (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md')) 'repo includes the Superpowers MIT license notice'
+
+$explicitOnlySuperpowersSkills = @(
+    'brainstorming',
+    'finishing-a-development-branch',
+    'subagent-driven-development',
+    'using-git-worktrees',
+    'using-superpowers',
+    'writing-plans'
+)
+foreach ($skillName in $explicitOnlySuperpowersSkills) {
+    $metadataPath = Join-Path $repoRoot ".codex\skills\$skillName\agents\openai.yaml"
+    Assert-True (Test-Path -LiteralPath $metadataPath) "$skillName has Codex invocation metadata"
+    Assert-True ((Get-Content -Raw -LiteralPath $metadataPath) -match 'allow_implicit_invocation:\s*false') "$skillName cannot be invoked implicitly by Codex"
+}
+
 $testLogger = New-StructLogger -Service 'scripts' -Component 'test-agent-skills-sync' -SkipEnvSnapshot -InMemoryOnly
 $testLogger | Write-StructInfo -Msg '[test-agent-skills-sync] all assertions passed' -Data @{ result = 'passed' }

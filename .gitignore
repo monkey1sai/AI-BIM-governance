@@ -43,6 +43,21 @@ Thumbs.db
 !.claude/skills/figma-use/
 !.claude/skills/figma-implement-design/
 !.claude/skills/figma-generate-design/
+# Tracked official Superpowers v6.1.1 skill-only bundle
+!.claude/skills/brainstorming/
+!.claude/skills/dispatching-parallel-agents/
+!.claude/skills/executing-plans/
+!.claude/skills/finishing-a-development-branch/
+!.claude/skills/receiving-code-review/
+!.claude/skills/requesting-code-review/
+!.claude/skills/subagent-driven-development/
+!.claude/skills/systematic-debugging/
+!.claude/skills/test-driven-development/
+!.claude/skills/using-git-worktrees/
+!.claude/skills/using-superpowers/
+!.claude/skills/verification-before-completion/
+!.claude/skills/writing-plans/
+!.claude/skills/writing-skills/
 # Tracked agent assets: workflows/commands/agents/settings (2026-06-10)
 !.claude/workflows/
 !.claude/commands/
@@ -69,6 +84,21 @@ Thumbs.db
 !/.codex/skills/figma-use/
 !/.codex/skills/figma-implement-design/
 !/.codex/skills/figma-generate-design/
+# Tracked official Superpowers v6.1.1 skill-only bundle
+!/.codex/skills/brainstorming/
+!/.codex/skills/dispatching-parallel-agents/
+!/.codex/skills/executing-plans/
+!/.codex/skills/finishing-a-development-branch/
+!/.codex/skills/receiving-code-review/
+!/.codex/skills/requesting-code-review/
+!/.codex/skills/subagent-driven-development/
+!/.codex/skills/systematic-debugging/
+!/.codex/skills/test-driven-development/
+!/.codex/skills/using-git-worktrees/
+!/.codex/skills/using-superpowers/
+!/.codex/skills/verification-before-completion/
+!/.codex/skills/writing-plans/
+!/.codex/skills/writing-skills/
 # generated/（cluster-* 等生成知識圖）為可重生生成物，不入庫
 /.codex/skills/generated/
 .superpowers/

@@ -17,7 +17,7 @@
 | G | dedicated branch/worktree + concise plan；可按需使用單一 planning/verification skill，但不得自動串起完整 Superpowers lifecycle |
 | S | 明確 opt-in 的完整 Superpowers / spec-to-done P0–P7 |
 
-Lane G/S 不得弱化 secrets、repo boundaries、GitNexus HIGH/CRITICAL、frontend/browser evidence、真實 IFC、Kit/WebRTC 或 deploy ownership gates。Superpowers project plugin 的實際啟停以 `.claude/settings.json` 與 `claude plugin list` 為 machine truth。
+Lane G/S 不得弱化 secrets、repo boundaries、GitNexus HIGH/CRITICAL、frontend/browser evidence、真實 IFC、Kit/WebRTC 或 deploy ownership gates。Superpowers repo-local skill inventory 以 `agent-skills-manifest.json` 為 machine truth；project plugin 的實際啟停則以 `.claude/settings.json` 與 `claude plugin list` 為準。
 
 `AGENTS.md` 的 Superpowers invocation policy 同樣適用 Claude：重流程 skill 為 explicit-only，單一 skill 不得自動串接下一階段。
 
