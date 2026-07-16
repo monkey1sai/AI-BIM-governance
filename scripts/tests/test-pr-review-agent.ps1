@@ -25,6 +25,33 @@ function Assert-Throws {
     Assert-True $thrown $Message
 }
 
+function New-TestAgentSkillManifestEntry {
+    param(
+        [Parameter(Mandatory = $true)][string] $Name,
+        [string] $Mode = 'mirror',
+        [string] $Source = 'claude',
+        [string[]] $Targets = @('codex')
+    )
+
+    return [ordered]@{
+        name = $Name
+        locations = [ordered]@{
+            claude = ".claude/skills/$Name"
+            codex = ".codex/skills/$Name"
+        }
+        sync = [ordered]@{
+            mode = $Mode
+            source = $Source
+            targets = $Targets
+        }
+        provenance = [ordered]@{
+            kind = 'vendored-official'
+            source = 'test fixture'
+            import_commit = '1111111111111111111111111111111111111111'
+        }
+    }
+}
+
 function New-TestOutputDir {
     $path = Join-Path ([System.IO.Path]::GetTempPath()) "pr-review-agent-test-$([Guid]::NewGuid().ToString('N'))"
     New-Item -ItemType Directory -Path $path -Force | Out-Null
@@ -298,25 +325,76 @@ try {
     New-Item -ItemType Directory -Path '.codex/skills/brand-new' -Force | Out-Null
     New-Item -ItemType Directory -Path '.codex/skills/ai-bim-fast-fix' -Force | Out-Null
     New-Item -ItemType Directory -Path '.codex/skills/repo-health' -Force | Out-Null
+    $manifestSkillNames = @('manifest-owned', 'manifest-mismatch', 'manifest-mode-mismatch', 'manifest-wrong-mode', 'manifest-wrong-source', 'manifest-wrong-target')
+    foreach ($name in $manifestSkillNames) {
+        New-Item -ItemType Directory -Path ".claude/skills/$name" -Force | Out-Null
+        New-Item -ItemType Directory -Path ".codex/skills/$name" -Force | Out-Null
+    }
     Set-Content -LiteralPath '.codex/skills/brand-new/SKILL.md' -Value 'new generated dump' -Encoding UTF8
     Set-Content -LiteralPath '.codex/skills/ai-bim-fast-fix/SKILL.md' -Value 'repo fast fix contract' -Encoding UTF8
     Set-Content -LiteralPath '.codex/skills/repo-health/SKILL.md' -Value 'repo health contract' -Encoding UTF8
+    Set-Content -LiteralPath '.claude/skills/manifest-owned/SKILL.md' -Value 'manifest-owned mirror' -Encoding UTF8
+    Copy-Item -LiteralPath '.claude/skills/manifest-owned/SKILL.md' -Destination '.codex/skills/manifest-owned/SKILL.md'
+    Set-Content -LiteralPath '.claude/skills/manifest-mismatch/SKILL.md' -Value 'canonical content' -Encoding UTF8
+    Set-Content -LiteralPath '.codex/skills/manifest-mismatch/SKILL.md' -Value 'tampered mirror content' -Encoding UTF8
+    foreach ($name in @('manifest-mode-mismatch', 'manifest-wrong-mode', 'manifest-wrong-source', 'manifest-wrong-target')) {
+        Set-Content -LiteralPath ".claude/skills/$name/SKILL.md" -Value "$name identical content" -Encoding UTF8
+        Copy-Item -LiteralPath ".claude/skills/$name/SKILL.md" -Destination ".codex/skills/$name/SKILL.md"
+    }
+    $mirrorManifest = [ordered]@{
+        schema_version = 'agent-skills-manifest/v1'
+        roots = [ordered]@{
+            claude = '.claude/skills'
+            codex = '.codex/skills'
+        }
+        skills = @(
+            (New-TestAgentSkillManifestEntry -Name 'manifest-owned')
+            (New-TestAgentSkillManifestEntry -Name 'manifest-mismatch')
+            (New-TestAgentSkillManifestEntry -Name 'manifest-mode-mismatch')
+            (New-TestAgentSkillManifestEntry -Name 'manifest-wrong-mode' -Mode 'single')
+            (New-TestAgentSkillManifestEntry -Name 'manifest-wrong-source' -Source 'codex')
+            (New-TestAgentSkillManifestEntry -Name 'manifest-wrong-target' -Targets @('claude'))
+        )
+    }
+    $mirrorManifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath 'agent-skills-manifest.json' -Encoding UTF8
     git add -f -A
+    git update-index --chmod=+x -- '.claude/skills/manifest-mode-mismatch/SKILL.md'
     git commit -q -m 'modify tracked adapter + add new skill'
     $mirrorHeadSha = (git rev-parse HEAD).Trim()
-    $mirrorPaths = @('.codex/skills/spec-to-done/SKILL.md', '.codex/skills/brand-new/SKILL.md', '.codex/skills/ai-bim-fast-fix/SKILL.md', '.codex/skills/repo-health/SKILL.md')
+    $mirrorPaths = @(
+        '.codex/skills/spec-to-done/SKILL.md',
+        '.codex/skills/brand-new/SKILL.md',
+        '.codex/skills/ai-bim-fast-fix/SKILL.md',
+        '.codex/skills/repo-health/SKILL.md',
+        '.codex/skills/manifest-owned/SKILL.md',
+        '.codex/skills/manifest-mismatch/SKILL.md',
+        '.codex/skills/manifest-mode-mismatch/SKILL.md',
+        '.codex/skills/manifest-wrong-mode/SKILL.md',
+        '.codex/skills/manifest-wrong-source/SKILL.md',
+        '.codex/skills/manifest-wrong-target/SKILL.md'
+    )
     $mirrorGuards = Get-PrReviewPathGuardFindings -ChangedPaths $mirrorPaths -RepoRoot $tempMirrorGit -BaseSha $mirrorBaseSha -HeadSha $mirrorHeadSha
     $mirrorModified = @($mirrorGuards.warnings | Where-Object { $_.kind -eq 'generated_tooling_path_modified' })
     $mirrorBlocked = @($mirrorGuards.blockers | Where-Object { $_.kind -eq 'generated_tooling_path' })
     $repoSkillWarning = @($mirrorGuards.warnings | Where-Object { $_.kind -eq 'repo_governance_skill' })
+    $manifestMirrorWarning = @($mirrorGuards.warnings | Where-Object { $_.kind -eq 'manifest_owned_skill_mirror' })
     Assert-True ($mirrorModified.Count -eq 1 -and $mirrorModified[0].path -eq '.codex/skills/spec-to-done/SKILL.md') 'tracked mirror modification downgrades to warning'
-    Assert-True ($mirrorBlocked.Count -eq 1 -and $mirrorBlocked[0].path -eq '.codex/skills/brand-new/SKILL.md') 'newly added tooling path still blocks'
+    $expectedBlockedMirrors = @(
+        '.codex/skills/brand-new/SKILL.md',
+        '.codex/skills/manifest-mismatch/SKILL.md',
+        '.codex/skills/manifest-mode-mismatch/SKILL.md',
+        '.codex/skills/manifest-wrong-mode/SKILL.md',
+        '.codex/skills/manifest-wrong-source/SKILL.md',
+        '.codex/skills/manifest-wrong-target/SKILL.md'
+    )
+    Assert-True (@($mirrorBlocked.path | Sort-Object) -join ',' -eq @($expectedBlockedMirrors | Sort-Object) -join ',') 'undeclared, mismatched, or wrong-direction tooling additions still block'
     Assert-True ($repoSkillWarning.Count -eq 2) 'explicit repo governance skills are allowlisted with warnings'
     Assert-True (@($repoSkillWarning.path | Sort-Object) -join ',' -eq @('.codex/skills/ai-bim-fast-fix/SKILL.md', '.codex/skills/repo-health/SKILL.md') -join ',') 'repo governance skill warning paths match the allowlist'
-    # 無 Base/Head（本機模式）→ 無法判定 tracked 與否，兩條路徑都須保守維持 blocker。
+    Assert-True ($manifestMirrorWarning.Count -eq 1 -and $manifestMirrorWarning[0].path -eq '.codex/skills/manifest-owned/SKILL.md') 'manifest-owned byte-identical mirror addition downgrades to warning'
+    # 無 Base/Head（本機模式）→ 無法判定 tracked 或 manifest-owned mirror，未知路徑維持 blocker。
     $mirrorNoBase = Get-PrReviewPathGuardFindings -ChangedPaths $mirrorPaths -RepoRoot $tempMirrorGit
     $mirrorNoBaseBlocked = @($mirrorNoBase.blockers | Where-Object { $_.kind -eq 'generated_tooling_path' })
-    Assert-True ($mirrorNoBaseBlocked.Count -eq 2) 'without base/head shas unknown tooling paths fail closed while explicit governance skill stays allowlisted'
+    Assert-True ($mirrorNoBaseBlocked.Count -eq 8) 'without base/head shas unknown tooling paths fail closed while explicit governance skill stays allowlisted'
 } finally {
     Pop-Location
     Remove-Item -LiteralPath $tempMirrorGit -Recurse -Force

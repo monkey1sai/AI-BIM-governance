@@ -230,6 +230,74 @@ function Test-PrReviewPathExistsAtBase {
     return (-not [string]::IsNullOrWhiteSpace($entry))
 }
 
+function Get-PrReviewManifestOwnedCodexMirrorPaths {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [string] $BaseSha = '',
+        [string] $HeadSha = ''
+    )
+
+    if ([string]::IsNullOrWhiteSpace($BaseSha) -or [string]::IsNullOrWhiteSpace($HeadSha)) {
+        return @()
+    }
+
+    $safeRoot = $RepoRoot.Replace([System.IO.Path]::DirectorySeparatorChar, [char]'/')
+    $mergeBase = (git -C $RepoRoot -c "safe.directory=$safeRoot" merge-base $BaseSha $HeadSha 2>$null | Select-Object -First 1)
+    if ([string]::IsNullOrWhiteSpace($mergeBase)) { return @() }
+
+    $manifestSpec = $HeadSha + ':agent-skills-manifest.json'
+    $manifestLines = @(git -C $RepoRoot -c "safe.directory=$safeRoot" show $manifestSpec 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $manifestLines.Count -eq 0) { return @() }
+    try {
+        $manifest = ($manifestLines -join [Environment]::NewLine) | ConvertFrom-Json
+        $claudeRoot = ConvertTo-PrReviewPath ([string]$manifest.roots.claude)
+        $codexRoot = ConvertTo-PrReviewPath ([string]$manifest.roots.codex)
+    } catch {
+        return @()
+    }
+    if ($claudeRoot -ne '.claude/skills' -or $codexRoot -ne '.codex/skills') {
+        return @()
+    }
+
+    $treeLines = @(git -C $RepoRoot -c "safe.directory=$safeRoot" ls-tree -r $HeadSha -- $claudeRoot $codexRoot 2>$null)
+    if ($LASTEXITCODE -ne 0) { return @() }
+    $treeEntries = @{}
+    $treePattern = '^(?<mode>[0-9]{6})[ ]+blob[ ]+(?<sha>[0-9a-f]{40})' + [char]9 + '(?<path>.+)$'
+    foreach ($line in $treeLines) {
+        if ($line -notmatch $treePattern) { continue }
+        $treePath = ConvertTo-PrReviewPath $Matches.path
+        $treeEntries[$treePath] = "$($Matches.mode):$($Matches.sha)"
+    }
+
+    $ownedPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($skill in @($manifest.skills)) {
+        try {
+            $sourceRoot = ConvertTo-PrReviewPath ([string]$skill.locations.claude)
+            $targetRoot = ConvertTo-PrReviewPath ([string]$skill.locations.codex)
+            $isMirror = ([string]$skill.sync.mode -eq 'mirror')
+            $sourceIsClaude = ([string]$skill.sync.source -eq 'claude')
+            $targetsCodex = (@($skill.sync.targets) -contains 'codex')
+        } catch {
+            continue
+        }
+        if (-not $isMirror -or -not $sourceIsClaude -or -not $targetsCodex) { continue }
+        if ($sourceRoot -notmatch '^[.]claude/skills/[A-Za-z0-9._-]+$') { continue }
+        if ($targetRoot -notmatch '^[.]codex/skills/[A-Za-z0-9._-]+$') { continue }
+
+        foreach ($targetPath in @($treeEntries.Keys)) {
+            if (-not $targetPath.StartsWith($targetRoot + '/', [System.StringComparison]::Ordinal)) { continue }
+            $suffix = $targetPath.Substring($targetRoot.Length)
+            $sourcePath = $sourceRoot + $suffix
+            if (-not $treeEntries.ContainsKey($sourcePath)) { continue }
+            if ($treeEntries[$sourcePath] -ne $treeEntries[$targetPath]) { continue }
+            [void]$ownedPaths.Add($targetPath)
+        }
+    }
+
+    return @($ownedPaths | Sort-Object)
+}
+
 function Get-PrReviewChangedPathsFromGit {
     [CmdletBinding()]
     param(
@@ -489,6 +557,7 @@ function Get-PrReviewPathGuardFindings {
 
     $blockers = New-Object System.Collections.Generic.List[object]
     $warnings = New-Object System.Collections.Generic.List[object]
+    $manifestOwnedCodexMirrorPaths = @(Get-PrReviewManifestOwnedCodexMirrorPaths -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha)
     foreach ($path in $ChangedPaths) {
         $p = ConvertTo-PrReviewPath $path
         $leaf = [System.IO.Path]::GetFileName($p)
@@ -526,8 +595,11 @@ function Get-PrReviewPathGuardFindings {
                 [void]$warnings.Add((New-PrReviewIssue -Kind 'repo_governance_skill' -Severity 'medium' -Path $p -Message 'PR adds or updates an explicitly allowlisted repo governance skill artifact; verify routing scope and rollback.'))
             } elseif (Test-PrReviewPathExistsAtBase -RepoRoot $RepoRoot -Path $p -BaseSha $BaseSha -HeadSha $HeadSha) {
                 # merge-base 已追蹤＝#212 授權納管的鏡像檔（如 .codex/skills adapter）：修改降為
-                # 人工複核 warning。新增路徑（或無 base 可判定）仍走 blocker，防塞入新生成物。
+                # 人工複核 warning。新增路徑只有在 head manifest 宣告且 source/target blob 與 mode
+                # 完全相同時才降為 warning；無 base/head、未宣告或 mismatch 仍 fail closed。
                 [void]$warnings.Add((New-PrReviewIssue -Kind 'generated_tooling_path_modified' -Severity 'medium' -Path $p -Message 'PR modifies already-tracked tooling mirror state; human reviewer should verify adapter-sync scope.'))
+            } elseif ($p -in $manifestOwnedCodexMirrorPaths) {
+                [void]$warnings.Add((New-PrReviewIssue -Kind 'manifest_owned_skill_mirror' -Severity 'medium' -Path $p -Message 'PR adds a manifest-owned Claude-to-Codex skill mirror with identical blob content and file mode; human reviewer should verify provenance and routing scope.'))
             } else {
                 [void]$blockers.Add((New-PrReviewIssue -Kind 'generated_tooling_path' -Severity 'high' -Path $p -Message 'Generated local tooling state must not be committed as product source.'))
             }

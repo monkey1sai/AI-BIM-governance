@@ -110,6 +110,24 @@ foreach ($skillName in $expectedSuperpowersSkills) {
 }
 Assert-True (Test-Path -LiteralPath (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md')) 'repo includes the Superpowers MIT license notice'
 
+$expectedExecutableSkillFiles = @(
+    'brainstorming/scripts/start-server.sh',
+    'brainstorming/scripts/stop-server.sh',
+    'subagent-driven-development/scripts/review-package',
+    'subagent-driven-development/scripts/sdd-workspace',
+    'subagent-driven-development/scripts/task-brief',
+    'systematic-debugging/find-polluter.sh',
+    'writing-skills/render-graphs.js'
+)
+foreach ($relativePath in $expectedExecutableSkillFiles) {
+    foreach ($platform in @('claude', 'codex')) {
+        $repoPath = ".$platform/skills/$relativePath"
+        $indexEntry = @(& git -C $repoRoot ls-files --stage -- $repoPath)
+        Assert-True ($indexEntry.Count -eq 1) "$platform executable skill file is tracked: $relativePath"
+        Assert-True ($indexEntry[0].Substring(0, 6) -eq '100755') "$platform preserves upstream executable mode for $relativePath"
+    }
+}
+
 $explicitOnlySuperpowersSkills = @(
     'brainstorming',
     'finishing-a-development-branch',
