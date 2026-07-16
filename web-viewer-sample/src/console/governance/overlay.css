@@ -1,8 +1,24 @@
 /* web-viewer-sample/src/console/governance/overlay.css
  * A1–A10 治理 overlay 容器：疊在 primary viewer live 3D 右側。
- * 消費 ai-bim-governance.css 的 --ab-* token（:root 全域定義，overlay 掛在 .ec-root 之外也解析得到；
- * 原本地 legacy 前綴定義副本已隨 migrate-console-to-hifi-design 移除）。 */
+ * 消費 ai-bim-governance.css 的 --ab-* token（:root 全域定義，overlay 掛在 .ec-root 之外也解析得到）。
+ * 原本地 legacy 前綴「硬寫 hex 副本」已移除；改保留一份薄的 --ec-* → --ab-* 相容 shim（見 .gov-overlay
+ * 內），供 GovernanceOverlay.tsx 尚未遷移、仍引用 var(--ec-*) 的 .ec-btn / .ec-note / .ec-warn-note /
+ * .ec-cap / .ec-table（規則在 edge-console.css，token 只定義於 .ec-root）於本 overlay 內正確上色。 */
 .gov-overlay {
+  /* Legacy --ec-* → Hi-Fi --ab-* 相容 shim（migrate-console-to-hifi-design §6.3）：品牌綠(--ec-grn)
+   * 轉 Hi-Fi 青(--ab-accent)、琥珀/紅/紫/灰階一律轉接全域 --ab-* token；-2/-3 半透明底色對應 §6.1
+   * 承接 token。GovernanceOverlay.tsx 完成 --ab-* 遷移後整組可移除。 */
+  --ec-bg: var(--ab-bg); --ec-bg-2: var(--ab-bar); --ec-bg-3: var(--ab-surface);
+  --ec-panel: var(--ab-panel); --ec-panel-hi: var(--ab-raised);
+  --ec-line: var(--ab-border); --ec-line-2: var(--ab-border-strong);
+  --ec-fg: var(--ab-text); --ec-fg-2: var(--ab-text-2); --ec-fg-3: var(--ab-text-muted); --ec-fg-4: var(--ab-text-dim);
+  --ec-grn: var(--ab-accent); --ec-grn-2: var(--ab-accent-soft); --ec-grn-3: var(--ab-accent-strong);
+  --ec-cyan: var(--ab-accent); --ec-cyan-2: var(--ab-info-soft);
+  --ec-amb: var(--ab-warn); --ec-amb-2: var(--ab-warn-soft);
+  --ec-red: var(--ab-danger); --ec-red-2: var(--ab-danger-soft);
+  --ec-vio: var(--ab-violet); --ec-vio-2: var(--ab-violet-soft);
+  --ec-mono: var(--ab-mono);
+
   position: absolute; top: 0; right: 0; width: 340px; height: 100%;
   background: rgba(11, 13, 16, 0.92); color: var(--ab-text);
   border-left: 1px solid var(--ab-border); overflow-y: auto; padding: 12px;
