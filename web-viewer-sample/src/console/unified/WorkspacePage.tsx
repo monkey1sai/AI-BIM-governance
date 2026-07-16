@@ -43,7 +43,7 @@ export interface WorkspacePageProps {
 }
 
 /* viewport 小工具鈕（原型 vpBtn） */
-const vpBtn: CSSProperties = { width: 26, height: 24, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(10,16,24,.8)", border: "1px solid rgba(120,160,210,.18)", borderRadius: 6, fontSize: 11, color: "#8aa0b8", cursor: "pointer" };
+const vpBtn: CSSProperties = { width: 26, height: 24, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(10,16,24,.8)", border: "1px solid rgba(120,160,210,.18)", borderRadius: 6, fontSize: 11, color: "var(--ab-text-muted)", cursor: "pointer" };
 
 export function WorkspacePage({ initialDock }: WorkspacePageProps) {
   const lang = useLang();
@@ -99,39 +99,39 @@ export function WorkspacePage({ initialDock }: WorkspacePageProps) {
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       {/* ---- 頂條：dock tabs + session 膠囊 + Spectator + FPS ---- */}
-      <div data-prov="fixture" style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderBottom: "1px solid rgba(120,160,210,.10)", background: "#0a1018", flex: "none" }}>
+      <div data-prov="fixture" style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderBottom: "1px solid rgba(120,160,210,.10)", background: "var(--ab-bar)", flex: "none" }}>
         {dockTabs.map((d) => (
-          <div key={d.id} className="hv-text" data-uc={"dock-tab-" + d.id} data-active={ws.dock === d.id ? "true" : "false"} onClick={() => patch({ dock: d.id, sel: null })} style={{ padding: "6px 13px", borderRadius: 8, fontSize: 12, cursor: "pointer", fontWeight: ws.dock === d.id ? 700 : 400, color: ws.dock === d.id ? "#04121a" : "#8aa0b8", background: ws.dock === d.id ? `linear-gradient(135deg,${ACCENT},#2f7bf6)` : "transparent" }}>{d.label(L)}</div>
+          <div key={d.id} className="hv-text" data-uc={"dock-tab-" + d.id} data-active={ws.dock === d.id ? "true" : "false"} onClick={() => patch({ dock: d.id, sel: null })} style={{ padding: "6px 13px", borderRadius: 8, fontSize: 12, cursor: "pointer", fontWeight: ws.dock === d.id ? 700 : 400, color: ws.dock === d.id ? "var(--ab-on-accent)" : "var(--ab-text-muted)", background: ws.dock === d.id ? `linear-gradient(135deg,${ACCENT},var(--ab-accent-2))` : "transparent" }}>{d.label(L)}</div>
         ))}
         <div style={{ flex: 1 }} />
-        <span style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: MONO, fontSize: "10.5px", color: "#6fd6ee", background: "rgba(65,199,232,.08)", border: "1px solid rgba(65,199,232,.22)", borderRadius: 999, padding: "4px 10px" }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "#41c7e8", animation: "pulse 2s infinite" }} />S-240601 · editor lease</span>
-        <span className="hv-bright" onClick={() => u.toast("已複製 Spectator 邀請連結 /ui/open?session=S-240601&streamRole=spectator(唯讀,resolveGovPanelState gate)")} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#04121a", fontWeight: 700, background: `linear-gradient(135deg,${ACCENT},#2f7bf6)`, borderRadius: 999, padding: "4px 12px", cursor: "pointer", whiteSpace: "nowrap" }}>+ 邀請 Spectator</span>
-        <span style={{ fontFamily: MONO, fontSize: "10.5px", color: "#5a7089" }}>60 FPS · 28 ms</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: MONO, fontSize: "10.5px", color: "var(--ab-accent-text)", background: "rgba(65,199,232,.08)", border: "1px solid rgba(65,199,232,.22)", borderRadius: 999, padding: "4px 10px" }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--ab-accent)", animation: "pulse 2s infinite" }} />S-240601 · editor lease</span>
+        <span className="hv-bright" onClick={() => u.toast("已複製 Spectator 邀請連結 /ui/open?session=S-240601&streamRole=spectator(唯讀,resolveGovPanelState gate)")} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--ab-on-accent)", fontWeight: 700, background: `linear-gradient(135deg,${ACCENT},var(--ab-accent-2))`, borderRadius: 999, padding: "4px 12px", cursor: "pointer", whiteSpace: "nowrap" }}>+ 邀請 Spectator</span>
+        <span style={{ fontFamily: MONO, fontSize: "10.5px", color: "var(--ab-text-dim)" }}>60 FPS · 28 ms</span>
       </div>
       {/* ---- 三欄：stage 樹 / viewport / dock 面板 ---- */}
       <div style={{ flex: 1, display: "grid", gridTemplateColumns: "230px 1fr 316px", minHeight: 0 }}>
-        <div data-prov="fixture" style={{ borderRight: "1px solid rgba(120,160,210,.10)", background: "#0c1219", padding: 12, display: "flex", flexDirection: "column", gap: 8, overflow: "auto" }}>
+        <div data-prov="fixture" style={{ borderRight: "1px solid rgba(120,160,210,.10)", background: "var(--ab-panel)", padding: 12, display: "flex", flexDirection: "column", gap: 8, overflow: "auto" }}>
           {/* 設計稿綁定 {{ L.stagetree }} 在字典中不存在 → dc runtime 渲染為空，保留空 span 以維持相同間距 */}
-          <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: ".12em", color: "#4d6076", textTransform: "uppercase" }} />
-          <div style={{ fontFamily: MONO, fontSize: 11, color: "#8aa0b8" }}>▾ /World</div>
+          <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: ".12em", color: "var(--ab-text-dimmer)", textTransform: "uppercase" }} />
+          <div style={{ fontFamily: MONO, fontSize: 11, color: "var(--ab-text-muted)" }}>▾ /World</div>
           {stageTree.map((m) => (
             <div key={m.name} className="hv-bg-row" onClick={() => patch({ sel: { name: m.name + " · member", path: "/World/" + m.name }, dcLog: `focusPrimResult ✓ /World/${m.name}` })} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", borderRadius: 7, cursor: "pointer", marginLeft: 10, ...(ws.sel !== null && ws.sel.path === "/World/" + m.name ? { background: "rgba(65,199,232,.1)" } : null) }}>
               <span style={{ width: 8, height: 8, borderRadius: 3, background: memColors[m.name], flex: "none" }} />
               <span style={{ flex: 1, fontSize: 12 }}>{m.name}</span>
-              <span style={{ fontFamily: MONO, fontSize: "9.5px", color: "#4d6076" }}>{m.ver}</span>
-              <span style={{ fontSize: 11, color: "#5a8db0" }}>◉</span>
+              <span style={{ fontFamily: MONO, fontSize: "9.5px", color: "var(--ab-text-dimmer)" }}>{m.ver}</span>
+              <span style={{ fontSize: 11, color: "var(--ab-text-code)" }}>◉</span>
             </div>
           ))}
           <div style={{ marginTop: 6, borderTop: "1px solid rgba(120,160,210,.10)", paddingTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-            <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: ".12em", color: "#4d6076", textTransform: "uppercase" }}>Stage</span>
-            <span style={{ fontFamily: MONO, fontSize: 10, color: "#8aa0b8", wordBreak: "break-all" }}>/Review/A1_Tower_fed.usd</span>
-            <span style={{ fontSize: "10.5px", color: "#5a7089" }}>12.48M tris · 1.17 GB</span>
+            <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: ".12em", color: "var(--ab-text-dimmer)", textTransform: "uppercase" }}>Stage</span>
+            <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-text-muted)", wordBreak: "break-all" }}>/Review/A1_Tower_fed.usd</span>
+            <span style={{ fontSize: "10.5px", color: "var(--ab-text-dim)" }}>12.48M tris · 1.17 GB</span>
           </div>
         </div>
-        <div data-prov="fixture" style={{ position: "relative", minWidth: 0, background: `#05080d url('${vpImage}') center/cover no-repeat` }}>
+        <div data-prov="fixture" style={{ position: "relative", minWidth: 0, background: `var(--ab-black) url('${vpImage}') center/cover no-repeat` }}>
           <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg,rgba(5,8,13,.55),rgba(5,8,13,0) 22%,rgba(5,8,13,0) 72%,rgba(5,8,13,.6))" }} />
           <div style={{ position: "absolute", top: 10, left: 12, display: "flex", gap: 6, alignItems: "center" }}>
-            <span style={{ fontFamily: MONO, fontSize: 10, background: "rgba(10,16,24,.8)", border: "1px solid rgba(120,160,210,.18)", borderRadius: 6, padding: "3px 8px", color: "#b9c9da", whiteSpace: "nowrap" }}>/Review/A1_Tower_fed.usd</span>
+            <span style={{ fontFamily: MONO, fontSize: 10, background: "rgba(10,16,24,.8)", border: "1px solid rgba(120,160,210,.18)", borderRadius: 6, padding: "3px 8px", color: "var(--ab-text-2)", whiteSpace: "nowrap" }}>/Review/A1_Tower_fed.usd</span>
             <span style={{ fontFamily: MONO, whiteSpace: "nowrap", fontSize: 10, background: "rgba(10,16,24,.8)", border: `1px solid ${lg[1]},.45)`, borderRadius: 6, padding: "3px 8px", color: `${lg[1]},1)` }}>{lg[0]}</span>
           </div>
           <div style={{ position: "absolute", top: 10, right: 12, display: "flex", gap: 4 }}>
@@ -142,17 +142,17 @@ export function WorkspacePage({ initialDock }: WorkspacePageProps) {
           </div>
           {ws.sel !== null ? (
             <div data-uc="sel-callout" style={{ position: "absolute", left: "44%", top: "34%", display: "flex", flexDirection: "column", gap: 4, pointerEvents: "none" }}>
-              <div style={{ width: 64, height: 64, border: "1.5px solid #41c7e8", borderRadius: 4, boxShadow: "0 0 0 3px rgba(65,199,232,.18),0 0 24px rgba(65,199,232,.35)" }} />
-              <span style={{ fontFamily: MONO, fontSize: 10, background: "rgba(10,16,24,.9)", border: "1px solid rgba(65,199,232,.4)", borderRadius: 6, padding: "3px 8px", color: "#7adcf2", whiteSpace: "nowrap" }}>{ws.sel.name}</span>
+              <div style={{ width: 64, height: 64, border: "1.5px solid var(--ab-accent)", borderRadius: 4, boxShadow: "0 0 0 3px rgba(65,199,232,.18),0 0 24px rgba(65,199,232,.35)" }} />
+              <span style={{ fontFamily: MONO, fontSize: 10, background: "rgba(10,16,24,.9)", border: "1px solid rgba(65,199,232,.4)", borderRadius: 6, padding: "3px 8px", color: "var(--ab-accent-bright)", whiteSpace: "nowrap" }}>{ws.sel.name}</span>
             </div>
           ) : null}
           <div style={{ position: "absolute", bottom: 10, left: 12, display: "flex", gap: 6 }}>
-            <span data-uc="streaming-pill" style={{ fontFamily: MONO, fontSize: 10, background: "rgba(10,16,24,.8)", border: "1px solid rgba(120,160,210,.18)", borderRadius: 6, padding: "3px 8px", color: "#4fd68a" }}>● Streaming · 28 ms</span>
-            <span style={{ fontFamily: MONO, fontSize: 10, background: "rgba(10,16,24,.8)", border: "1px solid rgba(120,160,210,.18)", borderRadius: 6, padding: "3px 8px", color: "#8aa0b8" }}>Omniverse RTX · 60 FPS</span>
+            <span data-uc="streaming-pill" style={{ fontFamily: MONO, fontSize: 10, background: "rgba(10,16,24,.8)", border: "1px solid rgba(120,160,210,.18)", borderRadius: 6, padding: "3px 8px", color: "var(--ab-ok-text)" }}>● Streaming · 28 ms</span>
+            <span style={{ fontFamily: MONO, fontSize: 10, background: "rgba(10,16,24,.8)", border: "1px solid rgba(120,160,210,.18)", borderRadius: 6, padding: "3px 8px", color: "var(--ab-text-muted)" }}>Omniverse RTX · 60 FPS</span>
           </div>
-          <div style={{ position: "absolute", bottom: 10, right: 12, width: 44, height: 44, background: "rgba(10,16,24,.8)", border: "1px solid rgba(120,160,210,.2)", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: MONO, fontSize: 9, color: "#8aa0b8" }}>前│右</div>
+          <div style={{ position: "absolute", bottom: 10, right: 12, width: 44, height: 44, background: "rgba(10,16,24,.8)", border: "1px solid rgba(120,160,210,.2)", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: MONO, fontSize: 9, color: "var(--ab-text-muted)" }}>前│右</div>
         </div>
-        <div style={{ borderLeft: "1px solid rgba(120,160,210,.10)", background: "#0c1219", display: "flex", flexDirection: "column", minHeight: 0, overflow: "auto" }}>
+        <div style={{ borderLeft: "1px solid rgba(120,160,210,.10)", background: "var(--ab-panel)", display: "flex", flexDirection: "column", minHeight: 0, overflow: "auto" }}>
           {ws.dock === "a1" ? <A1Dock zh={zh} L={L} ws={ws} patch={patch} live={liveBackend} /> : null}
           {ws.dock === "a2" ? <A2Dock zh={zh} L={L} ws={ws} patch={patch} live={liveBackend} /> : null}
           {ws.dock === "a3" ? <A3Dock zh={zh} L={L} ws={ws} patch={patch} live={liveBackend} /> : null}
@@ -161,12 +161,12 @@ export function WorkspacePage({ initialDock }: WorkspacePageProps) {
         </div>
       </div>
       {/* ---- DATACHANNEL 字條 ---- */}
-      <div data-prov="fixture" style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 14px", borderTop: "1px solid rgba(120,160,210,.10)", background: "#0a1018", flex: "none", fontFamily: MONO, fontSize: "9.5px", color: "#4d6076" }}>
-        <span style={{ letterSpacing: ".1em", textTransform: "uppercase", color: "#3d5570" }}>DataChannel</span>
-        <span>openedStageResult <span style={{ color: "#4fd68a" }}>✓</span></span>
+      <div data-prov="fixture" style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 14px", borderTop: "1px solid rgba(120,160,210,.10)", background: "var(--ab-bar)", flex: "none", fontFamily: MONO, fontSize: "9.5px", color: "var(--ab-text-dimmer)" }}>
+        <span style={{ letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ab-text-faint)" }}>DataChannel</span>
+        <span>openedStageResult <span style={{ color: "var(--ab-ok-text)" }}>✓</span></span>
         <span>{ws.dcLog}</span>
-        <span>loadingState <span style={{ color: "#8aa0b8" }}>idle</span></span>
-        <span style={{ marginLeft: "auto" }}>lease: <span style={{ color: "#6fd6ee" }}>editor</span> · spectator ×1</span>
+        <span>loadingState <span style={{ color: "var(--ab-text-muted)" }}>idle</span></span>
+        <span style={{ marginLeft: "auto" }}>lease: <span style={{ color: "var(--ab-accent-text)" }}>editor</span> · spectator ×1</span>
       </div>
     </div>
   );

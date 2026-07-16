@@ -135,6 +135,9 @@
 
   /* Text 延伸（UnifiedShell.tsx runtime-note 承接：對照表外殘餘值缺口） */
   --ab-text-ghost: #3d4f63;
+
+  /* Violet 延伸（fixtures.ts badgeToneColors.p4 承接：對照表外殘餘值缺口） */
+  --ab-violet-dim: #8f81d8;
 }
 
 /* ─────────────────────────── BASE ─────────────────────────── */
