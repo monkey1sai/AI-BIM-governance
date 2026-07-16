@@ -21,6 +21,14 @@
 - `manifest.token_projection.production_projection` 目前值 = `"web-viewer-sample/src/console/edge-console.css"`；`verify-design-system-reference.ps1` **只驗 order 與 boolean，不驗此字串值** → 可安全改指新權威。
 - 測試綁定：`IntentDialog.css.test.ts` 直讀 `src/console/edge-console.css` 斷言 5 個 modal selector 存在（`.ec-modal-backdrop`/`.ec-modal`/`.ec-modal-actions`/`.ec-field-k`/`.ec-input`）+ backdrop fixed/z-index；`ConversionPage.test.tsx:191-194` 斷言 `.ec-status-dot[data-status=…]` **class 名**（不綁色值）；unified 測試與 e2e **零 hex 斷言**（已 grep 驗證）。
 - GitNexus impact 預掃：FTS 索引降級（查詢回空），以 codebase-memory + 直接 grep 交叉完成。唯一被修改的共享 symbol 為 `LegacyEdgeConsole`（`EdgeConsole` default export 介面不變）；其餘全是 CSS 檔與元件內 inline style 值 → blast radius 為視覺層，無 API/事件面。
+- **前置安裝（Task 1 之前一次性執行；已實測為必要）**：本 linked worktree 的 `web-viewer-sample/` 與 `bim-review-coordinator/` **皆無** `node_modules`（git worktree 不共用 main checkout 的安裝；已驗證 `ls -d node_modules` 兩處皆失敗），但兩處 `package.json` 與 tracked `package-lock.json` 都在。**執行任何 task（含 Task 1 Step 2）之前**，於兩個目錄各安裝一次依賴：
+  ```powershell
+  # cwd: <repo>/bim-review-coordinator
+  npm ci
+  # cwd: <repo>/web-viewer-sample
+  npm ci
+  ```
+  優先用 `npm ci`——精確自 lockfile 安裝、**不改寫** `package-lock.json`，契合下方 Global Constraints「不動 `package-lock.json`」；若 `npm ci` 因 lockfile 與 `package.json` 不同步而報錯，改跑 `npm install --no-audit --no-fund`，其 lockfile 變更**不納入本 change 的任何 commit**。略過此步的後果不只是「多一步」：Task 1 Step 2 起、之後每個 task 的第一條指令（`npx vitest run …` / `npm run typecheck` / `npm run build` / `npx playwright test …`，以及 Task 9 harness 解析的 `bim-review-coordinator/node_modules/.bin/tsx.cmd`）會**先因缺依賴**以 `'vitest' 不是內部或外部命令 / Cannot find module` 失敗——這**不是**各步標註的「Expected: FAIL（特定斷言全紅）」的 TDD red，**不得**誤判為「TDD red 已達成」而繼續往下。
 
 ## Global Constraints（每個 task 隱含適用）
 
