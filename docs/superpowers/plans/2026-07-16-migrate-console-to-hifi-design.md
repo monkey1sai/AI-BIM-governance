@@ -37,7 +37,7 @@
 - SHALL NOT 新增/移除/改變任何 coordinator / governance-service API 呼叫；前端仍只打 coordinator `:8004`；provenance 誠實標記逐字不變。
 - `ai-bim-governance.css` SHALL 被真實 import；SHALL NOT 手抄色碼到 inline style 或另一份 CSS。缺口 token 一律**延伸授權檔本體**（`--ab-` 前綴、沿既有命名慣例），SHALL NOT 回頭消費 `--ec-`。
 - 置換規則：十六進位色碼一律換 `var(--ab-*)`；`rgba()` 字面值可保留（與授權檔內部寫法一致），**但品牌綠系 `rgba(118,185,0,α)` 必換青系**（同 α：`rgba(65,199,232,α)` 或對應 soft token）。
-- 完成定義（機器可驗）：`grep -rn -- "--ec-" web-viewer-sample/src` 無輸出（＝spec §6.5 的「`grep -rc` 全 0」，且 `edge-console.css` 已刪除故無例外）；`console/unified/` 內 `#[0-9a-fA-F]{6}` 色碼歸零。
+- 完成定義（機器可驗）：`grep -rn -- "--ec-" web-viewer-sample/src` 僅剩守門測試 `ec-token-retirement.test.ts` 自身命中（＝spec §6.5 的「`grep -rc` 全 0」，`edge-console.css` 已刪除；此 grep 掃整個 `src` 含 `*.ts`，測試碼要斷言 `/--ec-/` 必然寫出該字串——屬自我參照的唯一允許例外，非 production CSS 殘留）；production CSS（`console/**/*.css`）維持零 `--ec-`，`console/unified/` 內 `#[0-9a-fA-F]{6}` 色碼歸零。
 - 工具 pin（rebaseline/visual gate 環境）：Playwright 1.61.1 / Chromium 149.0.7827.55 / Node 20.20.2 / npm 10.9.4 / Windows；不動 `package-lock.json` 的 visual 依賴。
 - 所有指令 cwd 註明；`web-viewer-sample` 指 `<repo>/web-viewer-sample`，`<repo>` = 本 worktree 根（`.worktrees/migrate-console-to-hifi-design`）。
 - YAGNI：不新增 spec 未要求的功能、不動 A4–A10 後端、不重構無關程式。
