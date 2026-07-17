@@ -6,7 +6,7 @@
 
 - `deriveIntakeFromKey`：去 prefix/suffix 後規則由「恰兩層」改為「**≥3 段且皆非空、且無純點段（`.`/`..`）**」；第一段=專案、**倒數第二段=種類**、最後一段=版本，中間動態層（專案管理者動態管理）識別時忽略。純點段拒收防 `..` 原樣成為 project_id 的路徑穿越形狀。
 - 安全 project_id **重用** `sanitizeArtifactIdPart`（conversion-artifact-id-sanitize 既定契約，單一安全真相）：純英數原樣、含非安全 `${safe}_<hash8>`、全非安全（純中文）`mv_<hash8>`；dispatch 端對已安全值冪等 → watcher 與手動 intake 兩路徑對同一中文名得同一 project_id。
-- intake payload 新增 `model_category`（種類）與 `project_display_name`（中文原名，如實顯示）——**additive/optional、`.passthrough()` 相容、只隨 payload 傳遞、不入本地 shadow store**（YAGNI）；完整原始 key 仍由 `last_triggered[].key` 保留供 UI 完整顯示。
+- intake payload 新增 `model_category`（種類）與 `project_display_name`（中文原名，如實顯示）——**additive/optional、`.passthrough()` 相容**；欄位可依 `local-artifact-shadow-metadata` 的非權威 display-hint 契約落本地 store，本 change 不另立第二套 storage authority。完整原始 key 仍由 `last_triggered[].key` 保留供 UI 完整顯示。
 - 已知限制：對 raw bytes 直接 hash、不做 Unicode NFC/NFD 正規化（與下游同函式一致）；純漢字 NFC==NFD 穩定，帶重音拉丁/韓文等 NFC≠NFD 來源的同一視覺名稱可能分裂，列已知限制。
 
 ## Impact
@@ -15,5 +15,6 @@
 - 跨 spec 調和：`minio-fileserver-source` / `a2-version-diff-selector` 描述 bim-control 為兩層，那是 **governance-service 掃本機 `storage/`（dev fixture 270/889/990）** 的 surface；本 change 改的是 **watcher 讀的真實雲端 bim-control bucket（≥3 段、含動態中間層）** 的 surface——不同來源、不矛盾。
 - Affected code: `bim-review-coordinator`（`deriveIntakeFromKey`/`DeriveOk`/intake payload、`ifcReadyPayloadSchema`、`ExternalIfcReadyEvent`）；測試 fixture（`minio-watcher-derive`/`minio-watcher-loop`/`minio-watch-intake-integration`、`web-viewer-sample/e2e/minio-watch-auto-intake`）升級多層。
 - 不改 `bim-streaming-server` / MinIO server / viewer；不引入新 production dependency。安全 id 重用既有 `sanitizeArtifactIdPart`，不新增第二套 sanitize 規則。
-- userFacing：true（`#conv` MinIO 自動偵測對真實 bucket 觸發，須 P7 部署區 browser E2E 驗收）。
-- 風險：key 規約由「恰兩層」反轉為「≥3 段」屬契約變更（既有 2 段 fixture 全升級多層、4 段 malformed fixture 翻轉為真正 <3 段）；全 vitest 套件 431/431 為回歸鎖。
+- 明確 implementation gap：本 change 不實作 `docs/plans` 規定的 governed source-bundle intake、manifest revalidation 或獨立 `LineagePublicationOutbox`；`rvt-ifc-usdc-lineage` runtime 仍是另一項未完成工作，本 change 不得被解讀為 lineage 已完成。
+- userFacing：true（現行 IA 的 `#/pipeline` 模型資料與轉檔生產線須對真實 bucket 顯示 watcher 觸發、原始 key 與自動建立的 job，須 P7 部署區 browser E2E 驗收；舊 `#/minio` 只作 redirect）。
+- 風險：key 規約由「恰兩層」反轉為「≥3 段」屬契約變更（既有 2 段 fixture 全升級多層、4 段 malformed fixture 翻轉為真正 <3 段）；驗收以目前 affected coordinator/viewer suites 與 browser E2E 實際結果為準，不沿用舊測試數字。

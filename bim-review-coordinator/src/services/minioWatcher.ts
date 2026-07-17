@@ -342,7 +342,8 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
       event: "ifc_ready",
       tenant_id: opts.tenantId,
       project_id: derived.projectId,
-      // 種類(倒數二層)與專案原名(中文如實顯示)隨進件傳遞；種類/原名只傳遞、不入本地 store（R5）。
+      // 種類(倒數二層)與專案原名(中文如實顯示)隨進件傳遞；可保存為 coordinator-local
+      // display hints，但不構成外部 metadata authority（R5 / local-artifact-shadow-metadata）。
       project_display_name: derived.projectDisplayName,
       model_category: derived.category,
       external_model_version_id: derived.externalModelVersionId,
