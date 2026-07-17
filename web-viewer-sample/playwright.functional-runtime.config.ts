@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 import baseConfig from "./playwright.config";
 
 export default defineConfig(baseConfig, {
-  testMatch: "conv-history.spec.ts",
+  testMatch: ["conv-history.spec.ts", "hifi-token-authority.spec.ts"],
   outputDir: "../artifacts/e2e/functional-runtime/_output",
   reporter: [["list"]],
   use: {
