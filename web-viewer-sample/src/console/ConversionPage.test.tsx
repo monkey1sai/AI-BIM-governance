@@ -164,7 +164,7 @@ describe("ConversionPage", () => {
     ...overrides,
   });
 
-  it("outbox 摘要成功時渲染表格（outbox_id/event/status/attempts/last_error/delivered_at）且 status 色碼 pending=琥珀/delivered=綠/dead_letter=紅", async () => {
+  it("outbox 摘要成功時渲染表格（outbox_id/event/status/attempts/last_error/delivered_at）且 status 色碼 pending=琥珀/delivered=Hi-Fi 青/dead_letter=紅", async () => {
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
     vi.mocked(coordinatorClient.getCallbackOutboxSummary).mockResolvedValue({
       total: 3,
