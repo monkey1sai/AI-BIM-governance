@@ -32,6 +32,20 @@ async function listenOnRandomPort(server: http.Server): Promise<number> {
   return address.port;
 }
 
+// coordinator 埠前置守門（依 conv-history.spec.ts 既有慣例）：spawn 前先自己 bind 一次目標埠。
+// bind 失敗＝有未知程序占用 coordinatorPort（最常見：前一輪本機執行被 Ctrl+C／除錯器中止，afterAll
+// taskkill 未跑完，殘留舊 coordinator 仍佔埠）。此時 fail-fast，避免新 spawn 撞 EADDRINUSE 崩潰、而
+// waitForHealth 首輪輪詢卻先打中殘留舊程序回綠——導致整組測試悄悄對舊 build 跑出假綠燈。
+async function requireCoordinatorPortAvailable(): Promise<void> {
+  const probe = http.createServer();
+  await new Promise<void>((resolve, reject) => {
+    probe.once("error", reject);
+    probe.listen(coordinatorPort, "127.0.0.1", () => probe.close(() => resolve()));
+  }).catch((error) => {
+    throw new Error(`coordinator 埠 ${coordinatorPort} 已被占用；拒絕重用或停止未知程序：${String(error)}`);
+  });
+}
+
 async function waitForHealth(earlyExit: () => string | null, timeoutMs = 60_000): Promise<void> {
   const api = await pwRequest.newContext();
   const started = Date.now();
@@ -93,6 +107,7 @@ test.describe("hifi token authority：遷移契約垂直切片（真 coordinator
     if (!fs.existsSync(path.join(consoleDistDir, "index.html"))) {
       throw new Error("dist-ui is required; run `npm run build:ui` before this gate.");
     }
+    await requireCoordinatorPortAvailable(); // spawn 前守門：殘留舊 coordinator 佔埠即 fail-fast，杜絕頂替假綠
     ifcSourceStub = http.createServer((_request, response) => {
       response.writeHead(200, { "Content-Type": "application/octet-stream" });
       response.end("ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\nENDSEC;\nEND-ISO-10303-21;\n");
