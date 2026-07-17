@@ -124,7 +124,7 @@ export const initialIssues: IssueItem[] = [
 export const INITIAL_ISSUE_SEQ = 102;
 export const initialRuleOn: RuleOn = { r1: true, r2: true, r3: false };
 export const initialFlags = {
-  a1Ran: true, a2Ran: false, a3Built: false, a4Ran: false, overlayOn: false,
+  a1Ran: true, a2Ran: false, a3Built: false, overlayOn: false,
 };
 export const INITIAL_DC_LOG = "highlightPrimsResult ✓ (18 prims)";
 
@@ -256,15 +256,6 @@ export const fedMembers: FedMember[] = [
   { name: "MEP", ver: "v15", path: "/Models/MEP/A1_Tower.usd" },
   { name: "CIVIL", ver: "v04", path: "/Models/CIVIL/A1_Tower.usd" },
   { name: "LAND", ver: "v06", path: "/Models/LAND/A1_Tower.usd" },
-];
-
-/* ── A4 查詢結果 4 項 ── */
-export interface A4Def { el: string; ok: boolean; pset: string; conf: string; }
-export const a4Defs: A4Def[] = [
-  { el: "4F-FD-01", ok: false, pset: "FireRating 60min · IsExternal FALSE", conf: "0.32" },
-  { el: "4F-FD-02", ok: false, pset: "FireRating 30min", conf: "0.38" },
-  { el: "4F-FD-03", ok: true, pset: "FireRating 60min", conf: "0.95" },
-  { el: "4F-FD-04", ok: true, pset: "FireRating 60min", conf: "0.91" },
 ];
 
 /* ── ops 服務健康 6 項 ── */

@@ -5,7 +5,8 @@ import { test, expect } from "@playwright/test";
 //   2. #a10 → ConceptPage：標題＝conceptMeta.a10.titleZh「A10 · 其他應用 / AI 決策」
 //   3. ChatUSD 全域右欄（ROADMAP · A10）只存在 legacy 殼 → 斷言移到 legacy 路由（#sessions）
 //   4. #apps 的 A1 卡片導向 #a1；hash 不變，落點改為 UnifiedShell workspace（dock A1）
-//   5. #a4 舊語意搜尋頁遷 #semantic-search：來源／解譯模式按鈕選中時套 Btn primary
+//   5. #/workspace?dock=a4 是唯一 A4 surface；legacy alias 只做無資料 redirect，
+//      並保留 source／解譯模式按鈕的 primary styling coverage。
 //
 // 服務者＝playwright.config.ts 的 webServer（vite dev :5180），本 branch 的碼。
 // a9/a10 為 unified concept 佔位頁（fixture 語意，不打任何 /api）→ 零頁面級 /api 斷言保留並收緊。
@@ -58,10 +59,23 @@ test.describe("A9/A10 route 身分、ChatUSD legacy 欄、A1 卡片導向、A4 �
     await page.screenshot({ path: `${SHOT}/a1-workspace-after-card-click.png`, fullPage: true });
   });
 
-  test("#semantic-search（原 #a4）解譯模式按鈕選中時套用 primary 高亮（修復前完全不可見）", async ({ page }) => {
-    // IA v2：#a4 讓位給 UnifiedConsole workspace；舊 A4 語意搜尋頁（A4SemanticSearchPage，
-    // a4-mode-* testids 所在）遷 #semantic-search deep link。
-    await page.goto("/#semantic-search");
+  test("canonical A4 renders one table-only surface；legacy aliases scrub data；解譯模式 primary 高亮可見", async ({ page }) => {
+    await page.goto("/#workspace?dock=a4");
+    await expect(page).toHaveURL(/#workspace\?dock=a4$/);
+    await expect(page.getByTestId("a4-semantic-search-page")).toBeVisible();
+    await expect(page.getByTestId("a4-table-only")).toBeVisible();
+    await expect(page.getByTestId("a4-source-path")).toHaveCount(0);
+    await expect(page.getByTestId("a4-create-issues")).toHaveCount(0);
+
+    for (const legacyRoute of [
+      "/#a4?query=IfcDoor&usd_prim_path=%2FRoot",
+      "/#semantic-search?evidence_proof=opaque-proof",
+      "/#app/ai-search?ifc_guid=A4-DOOR-001",
+    ]) {
+      await page.goto(legacyRoute);
+      await expect(page).toHaveURL(/#workspace\?dock=a4$/);
+      await expect(page.getByTestId("a4-semantic-search-page")).toBeVisible();
+    }
 
     const semantic = page.getByTestId("a4-mode-semantic");
     const deterministic = page.getByTestId("a4-mode-deterministic");
@@ -69,12 +83,12 @@ test.describe("A9/A10 route 身分、ChatUSD legacy 欄、A1 卡片導向、A4 �
     await semantic.click();
     await expect(semantic).toHaveClass(/\bprimary\b/);
     await expect(deterministic).not.toHaveClass(/\bprimary\b/);
-    await page.screenshot({ path: `${SHOT}/a4-mode-semantic-primary.png`, fullPage: true });
+    await page.screenshot({ path: `${SHOT}/a4-canonical-mode-semantic-primary.png`, fullPage: true });
 
     await deterministic.click();
     await expect(deterministic).toHaveClass(/\bprimary\b/);
     await expect(semantic).not.toHaveClass(/\bprimary\b/);
-    await page.screenshot({ path: `${SHOT}/a4-mode-deterministic-primary.png`, fullPage: true });
+    await page.screenshot({ path: `${SHOT}/a4-canonical-mode-deterministic-primary.png`, fullPage: true });
 
     // 回歸防線：click 後滑鼠仍停在按鈕上（hover 態）。`.ec-btn:hover:not(:disabled)` 的特異性
     // (0,3,0) 高於 `.ec-btn.primary` (0,2,0)，會把 color 覆蓋成 --ec-grn——正是 primary 自身的
@@ -88,6 +102,6 @@ test.describe("A9/A10 route 身分、ChatUSD legacy 欄、A1 卡片導向、A4 �
       hovered.color,
       `primary 按鈕 hover 時文字色不得與背景同色（color=${hovered.color} / bg=${hovered.background}）`,
     ).not.toBe(hovered.background);
-    await page.screenshot({ path: `${SHOT}/a4-mode-primary-hover-readable.png`, fullPage: true });
+    await page.screenshot({ path: `${SHOT}/a4-canonical-mode-primary-hover-readable.png`, fullPage: true });
   });
 });

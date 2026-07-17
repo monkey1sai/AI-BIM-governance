@@ -51,6 +51,7 @@ import { maskPresignedRef } from "./services/presignedRef.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
 import {
   registerGovernanceProxy,
+  type A4SearchSessionResolution,
   type RuleRunSessionResolution,
   type RuleRunSourceMetadata,
 } from "./routes/governanceProxy.js";
@@ -3491,9 +3492,37 @@ export function createCoordinatorApp(
     };
   }
 
+  function resolveA4SearchSessionContext(
+    sessionId: string,
+    headers: Record<string, string | undefined>,
+  ): A4SearchSessionResolution {
+    try {
+      userAuthProvider.authenticate({ headers });
+    } catch (error) {
+      if (error instanceof AuthError) {
+        return { ok: false, status: error.statusCode, error_code: "a4_authentication_required", detail: "A4 authentication failed." };
+      }
+      return { ok: false, status: 503, error_code: "a4_authentication_unavailable", detail: "A4 authentication is unavailable." };
+    }
+
+    // The existing local-dev bearer and viewer-lease shape are not an authentic
+    // C-M4 capability.  Do not inspect session/source/lease state after auth:
+    // that would leak an existence oracle or mutate source health before a
+    // caller is actually authorized.  Focused proxy tests may inject a named
+    // trusted resolver; production remains fail-closed until the shared owner
+    // provides a verifiable browser auth + primary-lease contract.
+    return {
+      ok: false,
+      status: 503,
+      error_code: "a4_authentic_lease_unavailable",
+      detail: "Authentic viewer lease verification is unavailable.",
+    };
+  }
+
   registerGovernanceProxy(app, {
     isSafeSessionId,
     isSafeIfcReadyJobId,
+    resolveA4SearchSessionContext,
     resolveRuleRunIfcReadyContext: (jobId) => {
       const job = externalIfcReadyStore.get(jobId);
       return resolveDownloadedJobForRuleRun(job, job?.external_model_version_id ?? null);

@@ -37,6 +37,7 @@ describe("operator console 路由判定（保留既有 viewer）", () => {
     expect(isOperatorConsolePath("/", "#/kit")).toBe(true);
     expect(isOperatorConsolePath("/", "#/demo-control")).toBe(true);
     expect(isOperatorConsolePath("/", "#review")).toBe(true);
+    expect(isOperatorConsolePath("/", "#/workspace?dock=a4")).toBe(true);
   });
   it("短 hash 支援 Review Room handoff query（#review?source=a1 / #gpu?source=a1）→ operator", () => {
     expect(isOperatorConsolePath("/", "#review?source=a1&rule_run_id=rr_a1&session=review_session_x")).toBe(true);

@@ -1,6 +1,6 @@
 // governanceClient.filesTree()：驗證打 /api/governance/files/tree（coordinator proxy）並回傳樹。
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { governanceClient } from "./governanceClient";
+import { A4GovernanceError, governanceClient } from "./governanceClient";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -113,5 +113,107 @@ describe("governanceClient.createDiffForLibrary", () => {
       target_model_version_id: "270/機電/ver 竣工.ifc",
     });
     expect(result.diff_id).toBe("d_lib");
+  });
+});
+
+describe("governanceClient A4 bounded contract", () => {
+  it("sends session search controls only; browser has no generic host-path method", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        status: "ok",
+        interpreted_filters: { raw_query: "IfcDoor", interpretable: true },
+        results: [],
+        stats: { total: 0, matched: 0, unmapped: 0, scanned: 0 },
+        evidence_refs: [],
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+
+    await governanceClient.searchModelForSession("review_session_a4", {
+      query: "IfcDoor",
+      interpret_mode: "deterministic",
+      limit: 10,
+    });
+
+    expect(String(spy.mock.calls[0][0])).toContain("/api/governance/search/model/for-session/review_session_a4");
+    expect(JSON.parse(String(spy.mock.calls[0][1]?.body))).toEqual({
+      query: "IfcDoor",
+      interpret_mode: "deterministic",
+      limit: 10,
+    });
+    expect("searchModel" in governanceClient).toBe(false);
+  });
+
+  it("confirms a partial candidate through the session route with only its opaque id", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        status: "ok",
+        interpreted_filters: { raw_query: "IfcDoor", interpretable: true },
+        results: [],
+        stats: { total: 0, matched: 0, unmapped: 0, scanned: 0 },
+        evidence_refs: [],
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+
+    await governanceClient.confirmModelSearchPartialForSession(
+      "review_session_a4",
+      "a4pf_partial_confirmation_123",
+    );
+
+    expect(String(spy.mock.calls[0][0])).toContain(
+      "/api/governance/search/model/for-session/review_session_a4/partial-confirmation",
+    );
+    expect(JSON.parse(String(spy.mock.calls[0][1]?.body))).toEqual({
+      partial_fallback_id: "a4pf_partial_confirmation_123",
+    });
+  });
+
+  it("creates one A4 Issue through the session route with only opaque proof and editable draft", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ issue: { id: "iss_a4", source_type: "a4_search" }, replayed: false }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const proof = `a4p.a4_test_kid.proof_id_with_under_score_0001.${"a".repeat(64)}`;
+
+    await governanceClient.createA4IssueForSession("review_session_a4", {
+      evidence_proof: proof,
+      title: "A4 selected door needs review",
+      description: "Editable draft only.",
+      severity: "high",
+      assignee: "ops-a4",
+    });
+
+    expect(String(spy.mock.calls[0][0])).toContain(
+      "/api/governance/issues/from-a4-search/for-session/review_session_a4",
+    );
+    expect(JSON.parse(String(spy.mock.calls[0][1]?.body))).toEqual({
+      evidence_proof: proof,
+      title: "A4 selected door needs review",
+      description: "Editable draft only.",
+      severity: "high",
+      assignee: "ops-a4",
+    });
+  });
+
+  it("preserves only allowlisted A4 error code and never echoes upstream detail", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        error_code: "a4_authentication_required",
+        detail: "C:/internal/model.ifc http://internal.example/token",
+      }), { status: 401, headers: { "Content-Type": "application/json" } }),
+    );
+
+    try {
+      await governanceClient.searchModelForSession("review_session_a4", { query: "IfcDoor" });
+      throw new Error("expected A4 request to reject");
+    } catch (error) {
+      expect(error).toBeInstanceOf(A4GovernanceError);
+      const safe = error as A4GovernanceError;
+      expect(safe.status).toBe(401);
+      expect(safe.code).toBe("a4_authentication_required");
+      expect(safe.message).not.toContain("internal");
+      expect(safe.message).not.toContain("model.ifc");
+    }
   });
 });

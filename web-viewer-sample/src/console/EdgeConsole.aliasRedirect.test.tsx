@@ -8,17 +8,18 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EdgeConsole from "./EdgeConsole";
 import { coordinatorClient } from "./coordinatorClient";
+import { governanceClient } from "./governanceClient";
 
 describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
   const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
   let container: HTMLDivElement;
   let prevActEnv: unknown;
-  let prevHash: string;
+  let prevUrl: string;
 
   beforeEach(() => {
     prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
     (globalThis as Record<string, unknown>)[actEnvKey] = true;
-    prevHash = window.location.hash;
+    prevUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     container = document.createElement("div");
     document.body.appendChild(container);
     // 重導成功後 usePageHash 會切到 #minio → ModelDataPage 掛載並抓四源資料（getMinioFolder /
@@ -34,12 +35,26 @@ describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
     vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
     vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue({ sessions: { items: [] } } as never);
+    vi.spyOn(governanceClient, "searchLlmStatus").mockResolvedValue({
+      service: "a4-search-llm",
+      enabled: false,
+      configured: false,
+      state: "disabled",
+      model: null,
+      checked_at: null,
+      check_source: "config",
+      freshness: "unknown",
+      ttl_s: 0,
+      transport_class: "unconfigured",
+      error_code: "llm_disabled",
+    });
   });
   afterEach(() => {
     document.body.removeChild(container);
     vi.restoreAllMocks();
     (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
-    window.location.hash = prevHash;
+    window.history.replaceState(null, "", prevUrl);
   });
 
   // 輪詢 window.location.hash 直到等於預期（重導在 AliasRedirect useEffect 內同步 replace，通常
@@ -107,5 +122,47 @@ describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
     await act(async () => {
       root.unmount();
     });
+  });
+
+  it("A4 aliases 與帶資料的 canonical hash 都收斂為無資料的 canonical route", async () => {
+    window.history.replaceState(
+      null,
+      "",
+      "/console?session=review_session_a4&evidence_proof=opaque#a4?query=IfcDoor&usd_prim_path=%2FRoot",
+    );
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<EdgeConsole />);
+    });
+    await waitForHash("#workspace?dock=a4");
+    expect(window.location.pathname).toBe("/console");
+    expect(window.location.search).toBe("");
+    expect(container.querySelector('[data-testid="a4-semantic-search-page"]')).not.toBeNull();
+
+    await act(async () => {
+      window.location.hash = "#semantic-search?evidence_proof=opaque-proof&ifc_guid=G1";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await waitForHash("#workspace?dock=a4");
+    expect(window.location.search).toBe("");
+    expect(container.querySelector('[data-testid="a4-semantic-search-page"]')).not.toBeNull();
+
+    await act(async () => {
+      window.history.replaceState(null, "", "/console?a4_handoff=opaque&query=IfcDoor#/workspace?dock=a4");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await waitForHash("#workspace?dock=a4");
+    expect(window.location.search).toBe("");
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("canonical A4 route renders directly without a fixture redirect", () => {
+    window.location.hash = "#/workspace?dock=a4";
+    const html = renderToString(<EdgeConsole />);
+    expect(html).toContain("a4-semantic-search-page");
+    expect(html).not.toContain("不符合 5");
+    expect(html).not.toContain("符合 7");
   });
 });

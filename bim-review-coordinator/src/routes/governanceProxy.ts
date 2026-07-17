@@ -4,7 +4,7 @@
  * 維持邊界：瀏覽器只打 :8004；governance-service 為內部 loopback 服務，不對瀏覽器直接暴露。
  * coordinator 僅做透傳（JSON 與 Excel 二進位），不解讀 / 不保存治理權威資料。
  */
-import type { Express, Response } from "express";
+import type { Express, Request, Response } from "express";
 import type { ArtifactHealthSnapshot } from "../types.js";
 
 const DEFAULT_GOVERNANCE_API_BASE = "http://127.0.0.1:49102";
@@ -14,6 +14,16 @@ const allowedIdsBasenamePattern = /^[A-Za-z0-9_.-]+\.ids$/;
 // 覆寫指向 stub。預設仍是 governance-service loopback 127.0.0.1:49102。
 function governanceApiBase(): string {
   return process.env.GOVERNANCE_API_BASE ?? DEFAULT_GOVERNANCE_API_BASE;
+}
+
+function isLoopbackGovernanceBase(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname.toLowerCase().replace(/^\[(.*)\]$/, "$1");
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && (host === "127.0.0.1" || host === "::1");
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -62,6 +72,41 @@ export type RuleRunSessionResolution =
   // 永不偽造 path 或成功。
   | { ok: false; reason: string };
 
+/** A4 session search is authorized from server-owned identity and state only. */
+export interface A4SearchSessionContext extends RuleRunSourceContext {
+  review_session_id: string;
+  principal_ref: string;
+  auth_scope: "production" | "lab";
+  primary_lease_capability: "verified" | "lab_unverified";
+  primary_artifact_id: string | null;
+  mapping_provenance: "server_resolved" | "unavailable";
+  active_binding_revision: string | null;
+}
+
+export type A4SearchResolutionFailure = {
+  ok: false;
+  status: 401 | 403 | 404 | 409 | 503;
+  error_code: string;
+  detail: string;
+};
+
+export type A4SearchSessionResolution =
+  | { ok: true; context: A4SearchSessionContext }
+  | A4SearchResolutionFailure;
+
+/**
+ * This resolver is the only authorization boundary for an ifc-ready A4
+ * search.  A job id is an identifier, never a browser capability.
+ */
+export interface A4SearchIfcReadyContext {
+  ifc_source_path: string;
+  model_version_id: string | null | undefined;
+}
+
+export type A4SearchIfcReadyResolution =
+  | { ok: true; context: A4SearchIfcReadyContext }
+  | A4SearchResolutionFailure;
+
 export interface GovernanceProxyDeps {
   /**
    * 從 session_id 解析 server-side IFC 路徑。回傳 ok=false 時 route 回 404。
@@ -77,6 +122,18 @@ export interface GovernanceProxyDeps {
   isSafeSessionId?: (sessionId: string) => boolean;
   /** ifc_ready_job_id 格式驗證（reuse app.ts isSafeIfcReadyJobId），避免 path 注入。 */
   isSafeIfcReadyJobId?: (ifcReadyJobId: string) => boolean;
+  /** Coordinator-owned authentication + A4 session context resolver. */
+  resolveA4SearchSessionContext?: (
+    sessionId: string,
+    headers: Record<string, string | undefined>,
+  ) => A4SearchSessionResolution;
+  /** Authenticated, tenant-scoped server-side resolution for A4 ifc-ready search. */
+  resolveA4SearchIfcReadyContext?: (
+    ifcReadyJobId: string,
+    headers: Record<string, string | undefined>,
+  ) => A4SearchIfcReadyResolution;
+  /** Shared coordinator→governance token for the trusted A4 context endpoint. */
+  a4InternalContextToken?: string;
 }
 
 function redactServerPaths(text: string): string {
@@ -123,12 +180,20 @@ async function forward(
   path: string,
   body?: unknown,
   binary = false,
+  safeUnavailable = false,
+  extraHeaders?: Record<string, string>,
 ): Promise<void> {
   const GOVERNANCE_API_BASE = governanceApiBase();
   try {
     const upstream = await fetch(`${GOVERNANCE_API_BASE}${path}`, {
       method,
-      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      // The only calls with extra headers carry the coordinator-only A4
+      // context token.  A redirect must never be allowed to take that token
+      // to a second host or route.
+      redirect: extraHeaders ? "error" : "follow",
+      headers: body === undefined && !extraHeaders
+        ? undefined
+        : { ...(body === undefined ? {} : { "Content-Type": "application/json" }), ...(extraHeaders ?? {}) },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     response.status(upstream.status);
@@ -146,6 +211,10 @@ async function forward(
     }
   } catch (error) {
     // 誠實：後端未啟動時回 502，不假裝成功。
+    if (safeUnavailable) {
+      response.status(502).json({ error_code: "governance_service_unavailable", detail: "governance service unavailable" });
+      return;
+    }
     response.status(502).json({
       detail: `governance-service unreachable at ${GOVERNANCE_API_BASE}`,
       error: String(error),
@@ -153,9 +222,156 @@ async function forward(
   }
 }
 
+function requestHeaders(request: Request): Record<string, string | undefined> {
+  const normalized: Record<string, string | undefined> = {};
+  for (const [name, value] of Object.entries(request.headers)) {
+    normalized[name.toLowerCase()] = Array.isArray(value) ? value[0] : value;
+  }
+  return normalized;
+}
+
+function a4InternalContextToken(deps: GovernanceProxyDeps): string | undefined {
+  const candidate = deps.a4InternalContextToken ?? process.env.A4_INTERNAL_CONTEXT_TOKEN;
+  const normalized = candidate?.trim();
+  return normalized || undefined;
+}
+
 function queryString(originalUrl: string, fallback = ""): string {
   const idx = originalUrl.indexOf("?");
   return idx >= 0 ? originalUrl.slice(idx) : fallback;
+}
+
+type A4SearchControls = {
+  query: string;
+  limit?: number;
+  interpret_mode?: "deterministic" | "semantic" | "auto";
+  retry_of_query_id?: string;
+};
+
+type A4PartialConfirmationControls = {
+  partial_fallback_id: string;
+};
+
+type A4IssueDraftControls = {
+  evidence_proof: string;
+  title: string;
+  description?: string;
+  severity?: "low" | "medium" | "high" | "critical";
+  assignee?: string;
+};
+
+function sanitizeA4SearchControls(body: unknown): { ok: true; value: A4SearchControls } | { ok: false; detail: string } {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, detail: "A4 search body must be an object." };
+  }
+  const input = body as Record<string, unknown>;
+  const allowed = new Set(["query", "limit", "interpret_mode", "retry_of_query_id"]);
+  if (Object.keys(input).some((key) => !allowed.has(key))) {
+    return { ok: false, detail: "A4 search body contains unsupported controls." };
+  }
+  if (typeof input.query !== "string" || !input.query.trim() || input.query.trim().length > 4000) {
+    return { ok: false, detail: "query is required." };
+  }
+  const value: A4SearchControls = { query: input.query.trim() };
+  if (input.limit !== undefined) {
+    if (typeof input.limit !== "number" || !Number.isInteger(input.limit) || input.limit < 1 || input.limit > 1000) {
+      return { ok: false, detail: "limit must be an integer from 1 to 1000." };
+    }
+    value.limit = input.limit;
+  }
+  if (input.interpret_mode !== undefined) {
+    if (input.interpret_mode !== "deterministic" && input.interpret_mode !== "semantic" && input.interpret_mode !== "auto") {
+      return { ok: false, detail: "interpret_mode is invalid." };
+    }
+    value.interpret_mode = input.interpret_mode;
+  }
+  if (input.retry_of_query_id !== undefined) {
+    if (typeof input.retry_of_query_id !== "string" || !/^a4q_[A-Za-z0-9_-]{12,64}$/.test(input.retry_of_query_id)) {
+      return { ok: false, detail: "retry_of_query_id is invalid." };
+    }
+    value.retry_of_query_id = input.retry_of_query_id;
+  }
+  return { ok: true, value };
+}
+
+function sanitizeA4PartialConfirmationControls(
+  body: unknown,
+): { ok: true; value: A4PartialConfirmationControls } | { ok: false; detail: string } {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, detail: "A4 partial confirmation body must be an object." };
+  }
+  const input = body as Record<string, unknown>;
+  if (Object.keys(input).length !== 1 || !("partial_fallback_id" in input)) {
+    return { ok: false, detail: "A4 partial confirmation accepts only partial_fallback_id." };
+  }
+  if (typeof input.partial_fallback_id !== "string" || !/^a4pf_[A-Za-z0-9_-]{12,96}$/.test(input.partial_fallback_id)) {
+    return { ok: false, detail: "partial_fallback_id is invalid." };
+  }
+  return { ok: true, value: { partial_fallback_id: input.partial_fallback_id } };
+}
+
+function sanitizeA4IssueDraftControls(
+  body: unknown,
+): { ok: true; value: A4IssueDraftControls } | { ok: false; detail: string } {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, detail: "A4 Issue body must be an object." };
+  }
+  const input = body as Record<string, unknown>;
+  const allowed = new Set(["evidence_proof", "title", "description", "severity", "assignee"]);
+  if (Object.keys(input).some((key) => !allowed.has(key))) {
+    return { ok: false, detail: "A4 Issue body contains unsupported controls." };
+  }
+  if (
+    typeof input.evidence_proof !== "string"
+    || !/^a4p\.[A-Za-z0-9_-]{1,64}\.[A-Za-z0-9_-]{16,96}\.[0-9a-f]{64}$/.test(input.evidence_proof)
+  ) {
+    return { ok: false, detail: "evidence_proof is invalid." };
+  }
+  if (typeof input.title !== "string" || !input.title.trim() || input.title.trim().length > 240) {
+    return { ok: false, detail: "title is required." };
+  }
+  const value: A4IssueDraftControls = { evidence_proof: input.evidence_proof, title: input.title.trim() };
+  if (input.description !== undefined) {
+    if (typeof input.description !== "string" || input.description.length > 4000) {
+      return { ok: false, detail: "description is invalid." };
+    }
+    value.description = input.description;
+  }
+  if (input.severity !== undefined) {
+    if (!["low", "medium", "high", "critical"].includes(String(input.severity))) {
+      return { ok: false, detail: "severity is invalid." };
+    }
+    value.severity = input.severity as A4IssueDraftControls["severity"];
+  }
+  if (input.assignee !== undefined) {
+    if (typeof input.assignee !== "string" || input.assignee.length > 160) {
+      return { ok: false, detail: "assignee is invalid." };
+    }
+    value.assignee = input.assignee;
+  }
+  return { ok: true, value };
+}
+
+function isA4IssueContextEligible(context: A4SearchSessionContext): boolean {
+  return (
+    context.auth_scope === "production"
+    && context.primary_lease_capability === "verified"
+    && context.mapping_provenance === "server_resolved"
+    && typeof context.review_session_id === "string"
+    && Boolean(context.review_session_id)
+    && typeof context.principal_ref === "string"
+    && Boolean(context.principal_ref)
+    && typeof context.primary_artifact_id === "string"
+    && Boolean(context.primary_artifact_id)
+    && typeof context.active_binding_revision === "string"
+    && Boolean(context.active_binding_revision)
+    && typeof context.model_version_id === "string"
+    && Boolean(context.model_version_id)
+  );
+}
+
+function sendA4ResolutionFailure(response: Response, resolution: A4SearchResolutionFailure): void {
+  response.status(resolution.status).json({ error_code: resolution.error_code, detail: resolution.detail });
 }
 
 function sendSessionResolutionFailure(
@@ -374,11 +590,58 @@ export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps 
   // resolves host IFC path and forwards POST /api/search/model
   // (deterministic grammar and/or Ornith vLLM structured filters).
   app.get("/api/governance/search/llm-status", (_request, response) => {
-    void forward(response, "GET", "/api/search/llm-status");
+    void forward(response, "GET", "/api/search/llm-status", undefined, false, true);
   });
 
-  app.post("/api/governance/search/model", (request, response) => {
-    void forward(response, "POST", "/api/search/model", request.body);
+  app.post("/api/governance/search/model/for-session/:sessionId/partial-confirmation", (request, response) => {
+    const sessionId = request.params.sessionId;
+    const isSafe = deps.isSafeSessionId ?? (() => true);
+    if (!isSafe(sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
+    }
+    if (!deps.resolveA4SearchSessionContext) {
+      response.status(503).json({ error_code: "a4_trusted_context_unavailable", detail: "A4 session authorization is unavailable." });
+      return;
+    }
+    const resolution = deps.resolveA4SearchSessionContext(sessionId, requestHeaders(request));
+    if (!resolution.ok) {
+      sendA4ResolutionFailure(response, resolution);
+      return;
+    }
+    const controls = sanitizeA4PartialConfirmationControls(request.body);
+    if (!controls.ok) {
+      response.status(400).json({ error_code: "invalid_a4_partial_confirmation", detail: controls.detail });
+      return;
+    }
+    const internalToken = a4InternalContextToken(deps);
+    if (!internalToken || !isLoopbackGovernanceBase(governanceApiBase())) {
+      response.status(503).json({ error_code: "a4_trusted_context_unavailable", detail: "A4 trusted context transport is unavailable." });
+      return;
+    }
+    const body: Record<string, unknown> = {
+      partial_fallback_id: controls.value.partial_fallback_id,
+      a4_trusted_context: {
+        scope: "session_table_only",
+        review_session_id: resolution.context.review_session_id,
+        principal_ref: resolution.context.principal_ref,
+        primary_artifact_id: resolution.context.primary_artifact_id,
+        active_binding_revision: resolution.context.active_binding_revision,
+        model_version_id: resolution.context.model_version_id ?? null,
+        auth_scope: resolution.context.auth_scope,
+        mapping_provenance: resolution.context.mapping_provenance,
+        primary_lease_capability: resolution.context.primary_lease_capability,
+      },
+    };
+    void forward(
+      response,
+      "POST",
+      "/api/internal/a4/search/model/confirm-partial",
+      body,
+      false,
+      true,
+      { "X-A4-Internal-Token": internalToken },
+    );
   });
 
   app.post("/api/governance/search/model/for-session/:sessionId", (request, response) => {
@@ -388,42 +651,112 @@ export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps 
       response.status(400).json({ detail: "Invalid review session id." });
       return;
     }
-    if (!deps.resolveRuleRunSessionContext) {
-      response.status(501).json({ detail: "session→IFC resolution is not configured." });
+    if (!deps.resolveA4SearchSessionContext) {
+      response.status(503).json({ error_code: "a4_trusted_context_unavailable", detail: "A4 session authorization is unavailable." });
       return;
     }
-    const resolution = deps.resolveRuleRunSessionContext(sessionId);
+    const resolution = deps.resolveA4SearchSessionContext(sessionId, requestHeaders(request));
     if (!resolution.ok) {
-      sendSessionResolutionFailure(response, resolution);
+      sendA4ResolutionFailure(response, resolution);
       return;
     }
-    const override = (request.body ?? {}) as {
-      query?: unknown;
-      limit?: unknown;
-      element_mapping_path?: unknown;
-      interpret_mode?: unknown;
-    };
-    if (typeof override.query !== "string" || !override.query.trim()) {
-      response.status(400).json({ detail: "query is required." });
+    const controls = sanitizeA4SearchControls(request.body);
+    if (!controls.ok) {
+      response.status(400).json({ error_code: "invalid_a4_search_controls", detail: controls.detail });
+      return;
+    }
+    const internalToken = a4InternalContextToken(deps);
+    if (!internalToken) {
+      response.status(503).json({ error_code: "a4_trusted_context_unavailable", detail: "A4 trusted context transport is unavailable." });
+      return;
+    }
+    if (!isLoopbackGovernanceBase(governanceApiBase())) {
+      response.status(503).json({ error_code: "a4_trusted_context_unavailable", detail: "A4 internal governance transport is unavailable." });
       return;
     }
     const body: Record<string, unknown> = {
       ifc_source_path: resolution.context.ifc_source_path,
-      query: override.query.trim(),
       model_version_id: resolution.context.model_version_id ?? null,
+      a4_trusted_context: {
+        scope: "session_table_only",
+        review_session_id: resolution.context.review_session_id,
+        principal_ref: resolution.context.principal_ref,
+        primary_artifact_id: resolution.context.primary_artifact_id,
+        active_binding_revision: resolution.context.active_binding_revision,
+        model_version_id: resolution.context.model_version_id ?? null,
+        auth_scope: resolution.context.auth_scope,
+        mapping_provenance: resolution.context.mapping_provenance,
+        primary_lease_capability: resolution.context.primary_lease_capability,
+      },
+      ...controls.value,
     };
-    if (typeof override.limit === "number") body.limit = override.limit;
-    if (typeof override.element_mapping_path === "string" && override.element_mapping_path) {
-      body.element_mapping_path = override.element_mapping_path;
+    void forward(
+      response,
+      "POST",
+      "/api/internal/a4/search/model",
+      body,
+      false,
+      true,
+      { "X-A4-Internal-Token": internalToken },
+    );
+  });
+
+  // A4 Issue mutation stays session-scoped.  The browser sends only an opaque
+  // proof and editable draft; fresh principal/artifact/binding authority is
+  // resolved again by the coordinator immediately before forwarding.
+  app.post("/api/governance/issues/from-a4-search/for-session/:sessionId", (request, response) => {
+    const sessionId = request.params.sessionId;
+    const isSafe = deps.isSafeSessionId ?? (() => true);
+    if (!isSafe(sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
     }
-    if (
-      override.interpret_mode === "deterministic"
-      || override.interpret_mode === "semantic"
-      || override.interpret_mode === "auto"
-    ) {
-      body.interpret_mode = override.interpret_mode;
+    if (!deps.resolveA4SearchSessionContext) {
+      response.status(503).json({ error_code: "a4_trusted_context_unavailable", detail: "A4 session authorization is unavailable." });
+      return;
     }
-    void forward(response, "POST", "/api/search/model", body);
+    const resolution = deps.resolveA4SearchSessionContext(sessionId, requestHeaders(request));
+    if (!resolution.ok) {
+      sendA4ResolutionFailure(response, resolution);
+      return;
+    }
+    if (!isA4IssueContextEligible(resolution.context)) {
+      response.status(409).json({ error_code: "a4_issue_not_eligible", detail: "A4 Issue authority is unavailable for this session." });
+      return;
+    }
+    const controls = sanitizeA4IssueDraftControls(request.body);
+    if (!controls.ok) {
+      response.status(400).json({ error_code: "invalid_a4_issue_controls", detail: controls.detail });
+      return;
+    }
+    const internalToken = a4InternalContextToken(deps);
+    if (!internalToken || !isLoopbackGovernanceBase(governanceApiBase())) {
+      response.status(503).json({ error_code: "a4_trusted_context_unavailable", detail: "A4 trusted context transport is unavailable." });
+      return;
+    }
+    const body: Record<string, unknown> = {
+      ...controls.value,
+      a4_trusted_context: {
+        scope: "session_table_only",
+        review_session_id: resolution.context.review_session_id,
+        principal_ref: resolution.context.principal_ref,
+        primary_artifact_id: resolution.context.primary_artifact_id,
+        active_binding_revision: resolution.context.active_binding_revision,
+        model_version_id: resolution.context.model_version_id,
+        auth_scope: resolution.context.auth_scope,
+        mapping_provenance: resolution.context.mapping_provenance,
+        primary_lease_capability: resolution.context.primary_lease_capability,
+      },
+    };
+    void forward(
+      response,
+      "POST",
+      "/api/internal/a4/issues",
+      body,
+      false,
+      true,
+      { "X-A4-Internal-Token": internalToken },
+    );
   });
 
   app.post("/api/governance/search/model/for-ifc-ready/:jobId", (request, response) => {
@@ -433,42 +766,46 @@ export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps 
       response.status(400).json({ detail: "Invalid ifc-ready job id." });
       return;
     }
-    if (!deps.resolveRuleRunIfcReadyContext) {
-      response.status(501).json({ detail: "ifc-ready IFC resolution is not configured." });
+    if (!deps.resolveA4SearchIfcReadyContext) {
+      response.status(503).json({ error_code: "a4_trusted_context_unavailable", detail: "A4 ifc-ready authorization is unavailable." });
       return;
     }
-    const resolution = deps.resolveRuleRunIfcReadyContext(jobId);
+    const resolution = deps.resolveA4SearchIfcReadyContext(jobId, requestHeaders(request));
     if (!resolution.ok) {
-      sendSessionResolutionFailure(response, resolution);
+      sendA4ResolutionFailure(response, resolution);
       return;
     }
-    const override = (request.body ?? {}) as {
-      query?: unknown;
-      limit?: unknown;
-      element_mapping_path?: unknown;
-      interpret_mode?: unknown;
-    };
-    if (typeof override.query !== "string" || !override.query.trim()) {
-      response.status(400).json({ detail: "query is required." });
+    const controls = sanitizeA4SearchControls(request.body);
+    if (!controls.ok) {
+      response.status(400).json({ error_code: "invalid_a4_search_controls", detail: controls.detail });
+      return;
+    }
+    const internalToken = a4InternalContextToken(deps);
+    if (!internalToken) {
+      response.status(503).json({ error_code: "a4_trusted_context_unavailable", detail: "A4 trusted context transport is unavailable." });
+      return;
+    }
+    if (!isLoopbackGovernanceBase(governanceApiBase())) {
+      response.status(503).json({ error_code: "a4_trusted_context_unavailable", detail: "A4 internal governance transport is unavailable." });
       return;
     }
     const body: Record<string, unknown> = {
       ifc_source_path: resolution.context.ifc_source_path,
-      query: override.query.trim(),
       model_version_id: resolution.context.model_version_id ?? null,
+      a4_trusted_context: { scope: "ifc_ready_table_only" },
+      ...controls.value,
     };
-    if (typeof override.limit === "number") body.limit = override.limit;
-    if (typeof override.element_mapping_path === "string" && override.element_mapping_path) {
-      body.element_mapping_path = override.element_mapping_path;
-    }
-    if (
-      override.interpret_mode === "deterministic"
-      || override.interpret_mode === "semantic"
-      || override.interpret_mode === "auto"
-    ) {
-      body.interpret_mode = override.interpret_mode;
-    }
-    void forward(response, "POST", "/api/search/model", body);
+    // Ifc-ready has no active viewer authority.  It remains compatibility
+    // table-only because governance cannot mint proof/Issue/3D eligibility.
+    void forward(
+      response,
+      "POST",
+      "/api/internal/a4/search/model",
+      body,
+      false,
+      true,
+      { "X-A4-Internal-Token": internalToken },
+    );
   });
 
   // A2 model-version diff proxy（透傳 governance-service /api/diffs*）。

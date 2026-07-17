@@ -114,13 +114,74 @@ export function __setGovFetchTimeoutMsForTests(ms: number | null): void {
   GOV_FETCH_TIMEOUT_MS = ms ?? 15000;
 }
 
-async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
+// A4 public errors are intentionally restricted to a small safe taxonomy.
+export type A4SafeErrorCode =
+  | "a4_authentication_required"
+  | "a4_authentication_unavailable"
+  | "a4_session_not_found"
+  | "a4_session_not_active"
+  | "a4_session_source_unavailable"
+  | "a4_primary_authority_required"
+  | "a4_authentic_lease_unavailable"
+  | "a4_lab_scope_not_enabled"
+  | "a4_trusted_context_unavailable"
+  | "a4_issue_not_eligible"
+  | "invalid_a4_issue_controls"
+  | "a4_proof_expired"
+  | "a4_proof_unavailable"
+  | "stale_session_artifact"
+  | "invalid_a4_search_controls"
+  | "governance_service_unavailable";
+
+const A4_SAFE_ERROR_CODES = new Set<A4SafeErrorCode>([
+  "a4_authentication_required",
+  "a4_authentication_unavailable",
+  "a4_session_not_found",
+  "a4_session_not_active",
+  "a4_session_source_unavailable",
+  "a4_primary_authority_required",
+  "a4_authentic_lease_unavailable",
+  "a4_lab_scope_not_enabled",
+  "a4_trusted_context_unavailable",
+  "a4_issue_not_eligible",
+  "invalid_a4_issue_controls",
+  "a4_proof_expired",
+  "a4_proof_unavailable",
+  "stale_session_artifact",
+  "invalid_a4_search_controls",
+  "governance_service_unavailable",
+]);
+
+export class A4GovernanceError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly code?: A4SafeErrorCode,
+  ) {
+    super(`A4 governance request failed (${status})`);
+    this.name = "A4GovernanceError";
+  }
+}
+
+async function jsonFetch<T>(path: string, init?: RequestInit, options?: { safeError?: boolean }): Promise<T> {
   const res = await fetch(`${COORD_BASE}${path}`, {
     signal: AbortSignal.timeout(GOV_FETCH_TIMEOUT_MS),
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
   });
   if (!res.ok) {
+    if (options?.safeError) {
+      // A4 query/error surfaces must not acquire coordinator/upstream diagnostics.
+      let code: A4SafeErrorCode | undefined;
+      try {
+        const body = await res.clone().json() as { error_code?: unknown };
+        if (typeof body.error_code === "string" && A4_SAFE_ERROR_CODES.has(body.error_code as A4SafeErrorCode)) {
+          code = body.error_code as A4SafeErrorCode;
+        }
+      } catch {
+        // HTTP status remains safe when no allowlisted code is available.
+      }
+      throw new A4GovernanceError(res.status, code);
+    }
     let detail = res.statusText;
     try {
       const body = await res.clone().json() as { detail?: unknown; error?: unknown; reason?: unknown };
@@ -269,27 +330,42 @@ export const governanceClient = {
 
   // A4 search：deterministic grammar 和/或 Ornith vLLM structured filters。
   // for-session / for-ifc-ready 由 coordinator 解析 host IFC；LLM key 只在 governance env。
-  searchLlmStatus: () => jsonFetch<ModelSearchLlmStatus>("/api/governance/search/llm-status"),
-  searchModel: (req: ModelSearchRequest) =>
-    jsonFetch<ModelSearchResponse>("/api/governance/search/model", {
-      method: "POST",
-      body: JSON.stringify(req),
-    }),
+  searchLlmStatus: () => jsonFetch<ModelSearchLlmStatus>("/api/governance/search/llm-status", undefined, { safeError: true }),
   searchModelForSession: (
     sessionId: string,
-    body: { query: string; limit?: number; interpret_mode?: ModelSearchInterpretMode },
+    body: ModelSearchControls,
   ) =>
     jsonFetch<ModelSearchResponse>(
       `/api/governance/search/model/for-session/${encodeURIComponent(sessionId)}`,
       { method: "POST", body: JSON.stringify(body) },
+      { safeError: true },
+    ),
+  confirmModelSearchPartialForSession: (
+    sessionId: string,
+    partialFallbackId: string,
+  ) =>
+    jsonFetch<ModelSearchResponse>(
+      `/api/governance/search/model/for-session/${encodeURIComponent(sessionId)}/partial-confirmation`,
+      { method: "POST", body: JSON.stringify({ partial_fallback_id: partialFallbackId }) },
+      { safeError: true },
+    ),
+  createA4IssueForSession: (
+    sessionId: string,
+    body: A4IssueDraftControls,
+  ) =>
+    jsonFetch<A4IssueCreateResponse>(
+      `/api/governance/issues/from-a4-search/for-session/${encodeURIComponent(sessionId)}`,
+      { method: "POST", body: JSON.stringify(body) },
+      { safeError: true },
     ),
   searchModelForIfcReady: (
     ifcReadyJobId: string,
-    body: { query: string; limit?: number; interpret_mode?: ModelSearchInterpretMode },
+    body: ModelSearchControls,
   ) =>
     jsonFetch<ModelSearchResponse>(
       `/api/governance/search/model/for-ifc-ready/${encodeURIComponent(ifcReadyJobId)}`,
       { method: "POST", body: JSON.stringify(body) },
+      { safeError: true },
     ),
 
   // Issue tracking
@@ -353,25 +429,41 @@ export interface IssueCreateRequest {
 
 export type ModelSearchInterpretMode = "deterministic" | "semantic" | "auto";
 
-export interface ModelSearchRequest {
-  ifc_source_path: string;
+export interface ModelSearchControls {
   query: string;
-  model_version_id?: string | null;
-  element_mapping_path?: string | null;
   limit?: number;
   interpret_mode?: ModelSearchInterpretMode;
+  retry_of_query_id?: string;
+}
+
+/** Browser controls for one selected opaque A4 proof; no provenance fields. */
+export interface A4IssueDraftControls {
+  evidence_proof: string;
+  title: string;
+  description?: string;
+  severity?: "low" | "medium" | "high" | "critical";
+  assignee?: string;
+}
+
+export interface A4IssueCreateResponse {
+  issue: IssueRow;
+  replayed: boolean;
 }
 
 export interface ModelSearchLlmStatus {
   service: string;
   enabled: boolean;
   configured: boolean;
-  base_url: string | null;
+  state: "disabled" | "configured" | "invalid" | string;
   model: string | null;
-  timeout_s: number;
-  auth: string;
+  checked_at: string | null;
+  check_source: string;
+  freshness: string;
+  ttl_s: number;
+  transport_class: string;
+  error_code: string | null;
   reference?: string;
-  env_keys?: string[];
+  config_source_keys?: string[];
 }
 
 export interface ModelSearchPropertyFilter {
@@ -392,6 +484,12 @@ export interface ModelSearchInterpretedFilters {
   interpret_source?: string;
   confidence: number | null;
   confidence_basis: string | null;
+  schema_valid?: boolean;
+  usable?: boolean;
+  complete?: boolean;
+  unresolved_terms?: string[];
+  validation_errors?: string[];
+  consumed_spans?: { start: number; end: number; field: string; filter_index: number }[];
 }
 
 export interface ModelSearchResultRow {
@@ -405,11 +503,19 @@ export interface ModelSearchResultRow {
   confidence: number | null;
   confidence_basis?: string | null;
   evidence_refs: string[];
+  mapping_observed?: boolean;
+  action_eligible?: boolean;
+  proof_eligible?: boolean;
+  issue_eligible?: boolean;
+  evidence_proof?: string;
+  proof_expires_at?: string;
   highlight_eligible: boolean;
 }
 
 export interface ModelSearchResponse {
   status: "ok" | "uninterpreted" | string;
+  query_id?: string;
+  retry_of_query_id?: string | null;
   model_version_id?: string | null;
   interpret_mode?: ModelSearchInterpretMode | string;
   interpreted_filters: ModelSearchInterpretedFilters;
@@ -419,9 +525,41 @@ export interface ModelSearchResponse {
     matched: number;
     unmapped: number;
     scanned: number;
+    returned?: number;
+    mapped?: number;
+    not_matched?: number;
     truncated?: boolean;
+    total_is_lower_bound?: boolean;
+    scan_complete?: boolean;
   };
   evidence_refs: unknown[];
+  model_invocation?: {
+    attempted: boolean;
+    served_model: string | null;
+    finish_reason: string | null;
+    latency_ms: number | null;
+    error_code: string | null;
+  };
+  session_binding?: {
+    review_session_id: string | null;
+    principal_ref: string | null;
+    model_version_id: string | null;
+    primary_artifact_id: string | null;
+    active_binding_revision: string | null;
+    mapping_provenance: "server_resolved" | "unavailable" | null;
+    primary_lease_capability: "verified" | "lab_unverified" | null;
+  } | null;
+  search_scope?: "session_table_only" | "ifc_ready_table_only" | "table_only" | string;
+  completion_scope?: string;
+  error_code?: string | null;
+  retryable?: boolean;
+  proof_eligible?: boolean;
+  issue_eligible?: boolean;
+  highlight_eligible?: boolean;
+  partial_execution_confirmed?: boolean;
+  partial_confirmation_available?: boolean;
+  partial_fallback_id?: string | null;
+  partial_fallback_expires_at?: string | null;
   next_step?: string | null;
 }
 
