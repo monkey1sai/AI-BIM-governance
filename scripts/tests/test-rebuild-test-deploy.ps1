@@ -1647,9 +1647,12 @@ exit 7
             (Join-Path $Root 'live-sentinel.bin'),
             [byte[]](0, 1, 2, 13, 10, 127, 128, 254, 255)
         )
+        # Keep the script source ASCII-safe for Windows PowerShell 5.1 runners,
+        # while still exercising UTF-8 preservation in the fixture payload.
+        $unicodeFixtureValue = -join ([char[]]@(0x4EA4, 0x6613, 0x5F0F))
         [System.IO.File]::WriteAllBytes(
             (Join-Path $Root '.env'),
-            [System.Text.Encoding]::UTF8.GetBytes("ROOT_TOKEN=fixture-root`r`nUNICODE=交易式`r`n")
+            [System.Text.Encoding]::UTF8.GetBytes("ROOT_TOKEN=fixture-root`r`nUNICODE=$unicodeFixtureValue`r`n")
         )
         [System.IO.File]::WriteAllBytes(
             (Join-Path $Root 'bim-review-coordinator\.env'),
