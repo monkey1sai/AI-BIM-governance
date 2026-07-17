@@ -173,22 +173,34 @@ test.describe("hifi token authority：遷移契約垂直切片（真 coordinator
   test("legacy #conv 垂直切片：loading/success/failure/retry + 品牌青 + --ec- 絕跡 + 無主題鈕", async ({ page }) => {
     const jobId = await seedIfcReadyJob(); // 真實 runtime ID（coordinator 核發）
 
-    // failure：先攔斷佇列 API → 頁面誠實顯示錯誤狀態
+    // failure：先攔斷佇列 API（GET /api/external/ifc-ready）→ 頁面誠實顯示錯誤狀態
     await page.route("**/api/external/ifc-ready**", (route) => route.abort());
     await page.goto(`${coordinatorBase}/ui#conv`);
     await expect(page.getByTestId("conv-queue-error")).toBeVisible({ timeout: 20_000 });
 
-    // retry：解除攔截 → 重新載入（佇列層的使用者重試路徑；prioritize/retry 鈕屬 per-job 操作）
+    // retry：解除攔截，改掛「延遲放行」路由（仍打真實 coordinator，只延後回應以留出 loading 觀測窗），
+    // 再由使用者點「重新整理」鈕（conv-refresh，onClick → refresh() → data.load() → GET /api/external/ifc-ready）
+    // 觸發佇列層重試——此鈕與被測佇列同一條 fetch，語意相符，spec §9「UI route → 按鈕」要求由此鈕滿足。
+    // per-job conv-prioritize-*/conv-retry-* 屬單筆排序／重試（語意不同）故不採；conv-refresh 才是佇列層重試入口。
     await page.unroute("**/api/external/ifc-ready**");
+    await page.route("**/api/external/ifc-ready**", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      await route.continue();
+    });
     const responsePromise = page.waitForResponse((r) => r.url().includes("/api/external/ifc-ready") && r.ok());
-    await page.reload();
-    // loading（短暫態，非阻塞觀測；與 conv-history.spec 同法）
-    const loadingObserved = await page.getByTestId("conv-history-loading").isVisible().catch(() => false);
+    const refreshBtn = page.getByTestId("conv-refresh");
+    await expect(refreshBtn).toBeEnabled({ timeout: 20_000 }); // 前一輪失敗已 settle（data.busy=false），鈕可點
+    await refreshBtn.click();
+    // loading：與被測佇列同一條 /api/external/ifc-ready fetch 的載入態——鈕轉 disabled 且顯「載入中…」
+    //（data.busy=true）。綁對被測資料流，並以 expect 硬斷言（非僅 console.log 觀測）。
+    await expect(refreshBtn).toBeDisabled();
+    await expect(refreshBtn).toContainText("載入中");
     const listResponse = await responsePromise; // 真實 backend API 成功
     expect(listResponse.status()).toBe(200);
     await expect(page.getByRole("heading", { name: "IFC→USD 轉檔歷史" })).toBeVisible();
     await expect(page.getByText(jobId)).toBeVisible({ timeout: 20_000 }); // runtime ID 上桌（success）
-    console.log(`[hifi-token-authority] loadingObserved=${loadingObserved} jobId=${jobId}`);
+    await expect(refreshBtn).toBeEnabled({ timeout: 20_000 }); // loading 退場：載入結束鈕回到可點
+    await page.unroute("**/api/external/ifc-ready**"); // 清理延遲路由，避免污染後續 5s 輪詢的 token 觀測
 
     // 遷移契約：品牌青、--ec- 絕跡、主題鈕退場、淺色 class 絕跡
     const facts = await page.evaluate(() => {
@@ -212,8 +224,11 @@ test.describe("hifi token authority：遷移契約垂直切片（真 coordinator
   test("legacy #/demo-control 與 #/kit 仍可達（遷移未砍 operator-tool 路由）", async ({ page }) => {
     await page.goto(`${coordinatorBase}/ui#/demo-control`);
     await expect(page.getByTestId("real-ifc-demo-control")).toBeVisible({ timeout: 15_000 });
+    // demo-control 頁證據——拍在導往 #/kit 之前，確保檔名與畫面一致（證物誠信）。
+    await page.screenshot({ path: path.join(artifactDir, "legacy-demo-control.png"), fullPage: false });
     await page.goto(`${coordinatorBase}/ui#/kit`);
     await expect(page.getByTestId("kit-proxy-panel")).toBeVisible({ timeout: 15_000 });
-    await page.screenshot({ path: path.join(artifactDir, "legacy-demo-control.png"), fullPage: false });
+    // kit 頁證據——對應本 test 第二條可達性斷言的畫面。
+    await page.screenshot({ path: path.join(artifactDir, "legacy-kit.png"), fullPage: false });
   });
 });
