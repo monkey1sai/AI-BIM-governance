@@ -409,7 +409,9 @@ table.ec-table tr:hover td { background:var(--ab-inset); }
 .ec-flow-n { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px;
   border-radius:var(--ab-r-pill); background:var(--ab-bg); border:1px solid var(--ab-border-strong); font-size:10px; }
 .ec-flow-step.active .ec-flow-n { border-color:var(--ab-accent); color:var(--ab-accent); box-shadow:var(--ab-glow-accent); }
-.ec-flow-step.done .ec-flow-n { background:var(--ab-accent); color:var(--ab-on-accent); border-color:var(--ab-accent); }
+/* done = 實心綠（--ab-ok，呼應 line 202 基礎規則與 .ec-flow-step.done 綠外框），與 active 的青圈區隔；
+   勿隨 active 機械改青。DS 無 --ab-on-ok，故數字墨色沿用 --ab-on-accent 深墨（於綠底可讀）。 */
+.ec-flow-step.done .ec-flow-n { background:var(--ab-ok); color:var(--ab-on-accent); border-color:var(--ab-ok); }
 /* focus-visible ring（a11y；reduced-motion 關閉 hover transition）。 */
 .ec-root :focus-visible { outline:2px solid var(--ab-accent-strong); outline-offset:2px; }
 @media (prefers-reduced-motion: reduce) {
