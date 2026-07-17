@@ -13,6 +13,10 @@ node_modules/
 **/node_modules/
 dist/
 **/dist/
+web-viewer-sample/public/.design-assets-stage-*/
+web-viewer-sample/public/.design-assets-backup-*/
+web-viewer-sample/public/.design-assets-sync.lock
+web-viewer-sample/scripts/test-sync-design-assets-publication.mjs
 build/
 **/build/
 .runtime/

@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "HMAC_AUTH_FAILED",
+    "message": "Request authentication failed.",
+    "retryable": false
+  }
+}

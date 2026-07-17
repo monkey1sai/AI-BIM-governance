@@ -1,23 +1,37 @@
-## 1. Design reference
+## 1. HTML 來源契約
 
-- [x] 1.1 建立 source-hash manifest、13 個 screen/state 與兩 viewport golden baselines
-- [x] 1.2 建立 origin verify 與 explicit rebaseline capture tool
-- [x] 1.3 建立 primitive→semantic→component token projection 契約
+- [ ] 1.1 以 `git ls-files -- 'docs/plans/*.html'` 建立唯一 source set，為每份 HTML 定義 stable `source_id`、`source_role`、版本與 normalized contract；禁止 repo 外 fallback
+- [ ] 1.2 在 `AI-BIM 前後端設計文件.dc.html` 提供可確定性抽取的 canonical routes、legacy redirects、live／concept／not-built provenance 與 backend boundary
+- [ ] 1.3 在 `AI-BIM Console Hi-Fi.dc.html` 提供 stable screen/state IDs、semantic actions、viewport eligibility 與 dynamic-region metadata
+- [ ] 1.4 更新 `docs-plans-README.md`、AGENTS／workflow 入口，明定所有 tracked HTML 是 design gate 唯一權威，manifest／goldens 只是衍生物
 
-## 2. Machine gates
+## 2. 衍生 manifest 與基準
 
-- [x] 2.1 建立 visual result validator 與 regression tests
-- [x] 2.2 將 PR body、merge hook、local preflight 與 CI 接到 base/head manifest scope；semantic/pixel result 只由 CI producer 輸出
-- [x] 2.3 在契約與 PR machine fields 保留 functional/runtime E2E 為獨立 required evidence，不讓 visual gate取代
-- [ ] 2.4 建立 branch-protected functional/runtime producer＋validator（targeted `#conv` producer／validator／workflow context 已建；仍缺 required context、其餘 user-facing routes，以及 Kit first-frame/stage/DataChannel ack）
-- [ ] 2.5 取得 approved state variants並實作 11 個 exact Playwright semantic cases；完成前 frontend product job維持 fail closed
-- [ ] 2.6 將 `design-semantic-visual` 加入 main branch-protection required contexts，並把 manifest `semantic_contract.enforcement_status` 更新為 configured（workflow 已於 `origin/main@351ad96` landed；待 current subject commit 的 machine gate 可執行且綠燈後啟用，再回讀遠端設定，避免 expected-context deadlock）
-- [ ] 2.7 對 workflow／gate-infrastructure／reference-only rebaseline 建立可滿足的獨立 owner approval／CODEOWNERS review＋dismiss stale，或落地可信 base-branch gate（遠端 solo-maintainer machine path 已保留 Require PR／strict 11 checks／admin enforcement／無 bypass並設 approval=0／CODEOWNER review=false，merge deadlock 已解除；但獨立 review authority 尚缺）
-- [ ] 2.8 pin 並 machine-verify resolved npm dependency snapshot、Windows runner image與font fingerprints（viewer lock＋Node/npm＋resolved dependency tree 已完成；runner image與font fingerprints仍缺）；完成前 `full_completion_allowed=false`
+- [ ] 2.1 建立versioned `scripts/config/design-gate-policy.json`，由它裁決threshold、runner、viewports、status enum與full-completion rule；manifest v2分離 `design_sources[]`、`render_dependencies[]`、`route_inventory[]`、`screens[]`，並只複製policy fields與digest
+- [ ] 2.2 從 HTML 重建 canonical route inventory；移除以舊 `#home`／`#a1..a10` route 作 production authority 的 mapping
+- [ ] 2.3 從 Hi-Fi HTML 在固定 Windows／Chromium 環境重拍兩個 viewport goldens，並原子更新 source、contract、asset、font、runner 與 aggregate digests
+- [ ] 2.4 更新 capture／rebaseline tool，只能從 current checkout tracked HTML 產生 reference；source drift、untracked source 或無法追溯 field 一律 fail closed
+- [ ] 2.5 pin 並 machine-verify resolved npm dependency snapshot、Windows runner image、browser 與 font fingerprints；完成前 `full_completion_allowed=false`
 
-## 3. Source-of-truth convergence
+## 3. 機器閘門
 
-- [x] 3.1 就地更新 docs/plans 七核心檔與 agent/workflow 入口
-- [x] 3.2 建立 OpenSpec capability deltas，將 legacy prototype 降為 companion
-- [x] 3.3 執行 `npx openspec validate align-frontend-design-system-reference --strict` 與 targeted machine tests
-- [ ] 3.4 僅在 2.4–2.8 全數完成，或未完工作已拆到 successor change 後 archive，讓 canonical capability specs 落地
+- [ ] 3.1 更新 schema validator、negative tests 與 independent PNG recomputation，驗證 HTML-derived field 能回溯至 HTML source，policy-derived field 能回溯至 versioned policy path 與 digest
+- [ ] 3.2 將 changed-path classifier、PR body validator、local preflight 與 CI 接到較嚴格的 base/head HTML-derived manifest union
+- [ ] 3.3 由 HTML-derived semantic contract 實作 branch-protected Playwright cases；missing、skipped、blocked 或 case set drift均 fail closed
+- [ ] 3.4 維持 pixel threshold `<=0.01`、semantic 100%，並保留 functional/runtime E2E 為另一個 required gate
+- [ ] 3.5 對 `passed`／`mixed`／`partial_reference_missing`／`design_source_update_only`／`gate_infrastructure_only`／`design_source_and_product_mixed_fail_closed`／`unknown_fail_closed` 建立classifier／validator exact-equality fixtures與regression tests；在同一 implementation change 將現行 `reference_authority_mixed_fail_closed` 原子遷移至 canonical target `design_source_and_product_mixed_fail_closed`，新舊值不得同時被接受，並證明missing或non-product scope不能宣告full completion
+- [ ] 3.6 將 lineage Alignment／Attempts／Audit 等 HTML 未涵蓋 surface 列為 `reference_missing`；HTML 更新前不得由 manifest 自行核准
+- [ ] 3.7 在 current subject gate 可執行且綠燈後，才更新 branch-protection required contexts並回讀遠端設定，避免 expected-context deadlock
+- [ ] 3.8 建立獨立source-update/rebaseline lane；同一change觸及tracked HTML與production UI時fail closed並要求split，production gate只能比較已落地主線的HTML snapshot
+
+## 4. 功能與 runtime 證據
+
+- [ ] 4.1 建立 branch-protected functional/runtime producer＋validator，涵蓋 canonical route、主要 action、fixture、real API、loading/success/failure/retry 與 domain/runtime ID
+- [ ] 4.2 對適用 route 補 Kit first-frame、stage 與 DataChannel ack；live frame 不進 design pixel comparison
+- [ ] 4.3 更新 PR machine fields，分開呈現 HTML source、visual result、semantic result、functional/runtime result、missing scope 與 full-completion claim
+
+## 5. 來源收斂與結案
+
+- [ ] 5.1 移除 active docs、scripts、workflow 與 OpenSpec 對外部 `desigin-system`、已刪七檔、legacy prototype authority 或 arbitrary screenshot 的依賴
+- [ ] 5.2 以 strict OpenSpec、schema/negative tests、visual gate、functional browser E2E 與 `git diff --check` 驗證整體 change
+- [ ] 5.3 僅在 1.1–5.2 完成，或未完工作已拆到不重疊 successor change 後 archive，讓 canonical capability specs 落地
