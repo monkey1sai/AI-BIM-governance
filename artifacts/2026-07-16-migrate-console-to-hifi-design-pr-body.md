@@ -27,7 +27,7 @@ grep -rn -- "--ec-" web-viewer-sample/src
 輸出**非空**——僅命中 `web-viewer-sample/src/console/ec-token-retirement.test.ts`（7 行：3 行中文註解說明 + 1 行
 describe 標題 + 1 行 it.each 標題 + 1 行 `not.toMatch(/--ec-/)` 正規式字面量 + 1 行注意事項註解）。
 
-**誠實記錀**：這是 Task 6（commit `c75a832`，Important #1 review 發現後補的持久化回歸守門測試）刻意的自我參照——
+**誠實記錀**：這是 Task 7（commit `c75a832`，Important #1 review 發現後補的持久化回歸守門測試）刻意的自我參照——
 該測試存在的目的就是「斷言 `legacy-console.css` 與 `governance/overlay.css` 兩份**production CSS**不再含
 `--ec-`」，斷言本身必然要在原始碼裡寫出 `/--ec-/` 這個正規式字面量才能檢查它。spec §6.5 原文「`grep -rc --
 "--ec-" web-viewer-sample/src` 為 0，`edge-console.css` 本檔案除外」是在此守門測試存在**之前**寫成的措辭，
@@ -123,8 +123,8 @@ if ($designScope.status -like '*_fail_closed') {
 
 ## 5. 既有功能 E2E 證據
 
-- `hifi-token-authority.spec.ts`（Task 9，真 coordinator :8017、webhook 種 `ifc_ready_job_id`）：4 tests 全綠
-  （commit `e513d6c` 初版 4 綠；`8788f3d` 修正 retry/loading 綁定後 3 tests 8.9s 全綠；`ef7da16` 補埠前置守門）。
+- `hifi-token-authority.spec.ts`（Task 9，真 coordinator :8017、webhook 種 `ifc_ready_job_id`）：3 tests 全綠
+  （commit `e513d6c` 初版即 3 個 test()；`8788f3d` 修正 retry/loading 綁定——僅改既有 test 內部斷言、未增刪 test，3 tests 8.9s 全綠；`ef7da16` 補埠前置守門）。
   斷言涵蓋：#conv 頁 loading/failure/retry/success 四態、unified home 與 legacy 頁 computed style
   `--ab-accent` = `#41c7e8`（品牌青生效）、`--ec-grn` 絕跡、主題鍵/`.theme-light`/切換鈕全數退場、
   `#/demo-control` 與 `#/kit` 路由可達。
