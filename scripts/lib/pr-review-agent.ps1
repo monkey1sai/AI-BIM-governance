@@ -98,6 +98,27 @@ function Get-PrReviewPowerShell {
     return 'powershell.exe'
 }
 
+function Get-PrReviewPowerShellHosts {
+    [CmdletBinding()]
+    param()
+
+    $hosts = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($candidate in @('pwsh', 'powershell.exe')) {
+        $resolved = Get-Command $candidate -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -eq $resolved -or [string]::IsNullOrWhiteSpace([string]$resolved.Source)) {
+            continue
+        }
+        if ($hosts -notcontains [string]$resolved.Source) {
+            $hosts.Add([string]$resolved.Source) | Out-Null
+        }
+    }
+    if ($hosts.Count -eq 0) {
+        $hosts.Add((Get-PrReviewPowerShell)) | Out-Null
+    }
+
+    return @($hosts.ToArray())
+}
+
 function ConvertFrom-PrReviewPorcelainStatus {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string[]] $Records)
@@ -696,6 +717,15 @@ function Get-PrReviewValidationPlan {
         }
         if ($p -match '^tests/' -and $added.Add('tests')) {
             [void]$plans.Add((New-PrReviewCommandPlan -Name 'root contracts and fakes tests' -Owner 'tests' -Cwd $RepoRoot -FileName 'python' -Arguments @('-m', 'pytest', 'tests', '-q', '-p', 'no:cacheprovider')))
+        }
+        if (
+            $p -match '^scripts/(deploy\.ps1|dev/rebuild-test-deploy\.ps1|lib/(rebuild-test-deploy|design-assets|host-native-launcher)\.ps1|tests/(test-rebuild-test-deploy|test-helpers)\.ps1)$' -and
+            $added.Add('rebuild-test-deploy')
+        ) {
+            foreach ($powerShellHost in @(Get-PrReviewPowerShellHosts)) {
+                $hostName = Split-Path -Leaf $powerShellHost
+                [void]$plans.Add((New-PrReviewCommandPlan -Name "rebuild transaction safety tests ($hostName)" -Owner 'scripts' -Cwd $RepoRoot -FileName $powerShellHost -Arguments @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', 'scripts/tests/test-rebuild-test-deploy.ps1')))
+            }
         }
         if ($p -match '^scripts/' -and $added.Add('scripts')) {
             [void]$plans.Add((New-PrReviewCommandPlan -Name 'script-level PR review agent tests' -Owner 'scripts' -Cwd $RepoRoot -FileName $ps -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts/tests/test-pr-review-agent.ps1')))

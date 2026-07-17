@@ -27,6 +27,7 @@ jobs:
       kit_manager_web: ${{ steps.paths.outputs.kit_manager_web }}
       compose_config: ${{ steps.paths.outputs.compose_config }}
       powershell_static: ${{ steps.paths.outputs.powershell_static }}
+      rebuild_test_deploy: ${{ steps.paths.outputs.rebuild_test_deploy }}
       secret_pattern_scan: ${{ steps.paths.outputs.secret_pattern_scan }}
       frontend_product: ${{ steps.design_scope.outputs.frontend_product }}
       frontend_visual_required: ${{ steps.design_scope.outputs.frontend_visual_required }}
@@ -81,6 +82,7 @@ jobs:
           emit kit_manager_web '^apps/kit-manager-web/'
           emit compose_config '^(compose\..*\.yml|\.env.*\.example|infra/docker/)'
           emit powershell_static '^(\.github/workflows/|\.claude/workflows/|scripts/.*\.ps1$|AGENTS\.md|docs/agents/)'
+          emit rebuild_test_deploy '^scripts/(deploy\.ps1|dev/rebuild-test-deploy\.ps1|lib/(rebuild-test-deploy|design-assets|host-native-launcher)\.ps1|tests/(test-rebuild-test-deploy|test-helpers)\.ps1)$'
           echo "secret_pattern_scan=true" >> "$GITHUB_OUTPUT"
 
       - name: Classify frontend design scope from base and head manifests
@@ -534,6 +536,16 @@ jobs:
             exit 1
           }
           Write-Host 'No PSScriptAnalyzer Error severity findings.'
+
+      - name: Run rebuild transaction safety tests (PowerShell 7)
+        if: needs.changes.outputs.rebuild_test_deploy == 'true'
+        shell: pwsh
+        run: ./scripts/tests/test-rebuild-test-deploy.ps1
+
+      - name: Run rebuild transaction safety tests (Windows PowerShell 5.1)
+        if: needs.changes.outputs.rebuild_test_deploy == 'true'
+        shell: powershell
+        run: ./scripts/tests/test-rebuild-test-deploy.ps1
 
   secret-pattern-scan:
     name: secret pattern scan

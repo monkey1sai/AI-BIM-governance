@@ -545,6 +545,28 @@ Assert-True ($owners -contains 'bim-streaming-server') 'planner includes streami
 Assert-True ($owners -contains 'tests') 'planner includes tests owner'
 Assert-True ($owners -contains 'scripts') 'planner includes scripts owner'
 
+# Test 8b: Rebuild transaction changes schedule their dedicated safety suite.
+$rebuildPlan = Get-PrReviewValidationPlan -RepoRoot $repoRoot `
+    -ChangedPaths @('scripts/lib/rebuild-test-deploy.ps1')
+$rebuildChecks = @($rebuildPlan | Where-Object { $_.command -match 'scripts/tests/test-rebuild-test-deploy\.ps1' })
+$expectedRebuildHosts = @(
+    foreach ($candidate in @('pwsh', 'powershell.exe')) {
+        $resolved = Get-Command $candidate -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -ne $resolved) { $resolved.Source }
+    }
+)
+if ($expectedRebuildHosts.Count -eq 0) {
+    $expectedRebuildHosts = @(Get-PrReviewPowerShell)
+}
+Assert-True (
+    $rebuildChecks.Count -eq @($expectedRebuildHosts | Select-Object -Unique).Count
+) 'planner schedules the rebuild transaction suite once per available PowerShell host'
+foreach ($expectedHost in @($expectedRebuildHosts | Select-Object -Unique)) {
+    Assert-True (
+        @($rebuildChecks | Where-Object { $_.file_name -eq $expectedHost }).Count -eq 1
+    ) "planner includes rebuild transaction safety tests for host '$expectedHost'"
+}
+
 # Test 9: Missing commands are recorded as skipped/unavailable instead of crashing report generation.
 $missingPlan = New-PrReviewCommandPlan -Name 'missing command fixture' -Owner 'scripts' -Cwd $repoRoot -FileName 'definitely-missing-pr-review-agent-command' -Arguments @('--version')
 $missingCheck = Invoke-PrReviewCommand -Plan $missingPlan

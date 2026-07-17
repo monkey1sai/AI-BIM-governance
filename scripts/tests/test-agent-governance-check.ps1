@@ -82,7 +82,7 @@ try {
         Assert-True ($ci -match "(?m)^\s{2}$([regex]::Escape($job)):\s*$") "ci.yml contains job $job"
     }
     Assert-True ($ci -match 'changed path classifier') 'ci.yml contains changed path classifier'
-    foreach ($output in @('root_contracts', 'coordinator', 'governance_service', 'viewer', 'conv_functional', 'kit_manager_api', 'kit_manager_web', 'compose_config', 'powershell_static', 'secret_pattern_scan')) {
+    foreach ($output in @('root_contracts', 'coordinator', 'governance_service', 'viewer', 'conv_functional', 'kit_manager_api', 'kit_manager_web', 'compose_config', 'powershell_static', 'rebuild_test_deploy', 'secret_pattern_scan')) {
         $expectedOutput = $output + ': ${{ steps.paths.outputs.' + $output + ' }}'
         Assert-True ($ci -match [regex]::Escape($expectedOutput)) "changes job exposes $output output"
     }
@@ -90,11 +90,13 @@ try {
         $expectedOutput = $output + ': ${{ steps.design_scope.outputs.' + $output + ' }}'
         Assert-True ($ci -match [regex]::Escape($expectedOutput)) "changes job exposes manifest-derived $output output"
     }
-    foreach ($gate in @('root_contracts', 'coordinator', 'governance_service', 'viewer', 'conv_functional', 'kit_manager_api', 'kit_manager_web', 'compose_config', 'powershell_static', 'secret_pattern_scan')) {
+    foreach ($gate in @('root_contracts', 'coordinator', 'governance_service', 'viewer', 'conv_functional', 'kit_manager_api', 'kit_manager_web', 'compose_config', 'powershell_static', 'rebuild_test_deploy', 'secret_pattern_scan')) {
         Assert-True ($ci -match [regex]::Escape("needs.changes.outputs.$gate == 'true'")) "ci.yml gates affected job on $gate"
     }
     Assert-True (([regex]::Matches($ci, 'name: Require changed-path classifier success')).Count -eq 11) 'every downstream required job explicitly fails when the classifier dependency fails'
     Assert-True (([regex]::Matches($ci, "if: always\(\) && \(needs\.changes\.result != 'success' \|\|")).Count -eq 11) 'downstream required jobs run on classifier failure instead of reporting skipped-success'
+    Assert-True ($ci -match '(?s)name: Run rebuild transaction safety tests \(PowerShell 7\).*?shell: pwsh.*?scripts/tests/test-rebuild-test-deploy\.ps1') 'CI runs rebuild transaction safety tests under PowerShell 7'
+    Assert-True ($ci -match '(?s)name: Run rebuild transaction safety tests \(Windows PowerShell 5\.1\).*?shell: powershell.*?scripts/tests/test-rebuild-test-deploy\.ps1') 'CI runs rebuild transaction safety tests under Windows PowerShell 5.1'
     Assert-True ($ci -match 'if \[ "\$\{\{ github\.event_name \}\}" = "pull_request" \]') 'changed path classifier diffs PR base/head on pull_request'
     Assert-True ($ci -match 'git -c core\.quotepath=false diff --no-renames --name-only "\$base_sha\.\.\.\$head_sha"') 'pull-request path classification uses rename-safe merge-base three-dot semantics'
     Assert-True ($ci -match 'printf "__full__\\n" > changed-paths\.txt') 'changed path classifier runs full service CI on push/workflow_dispatch'
