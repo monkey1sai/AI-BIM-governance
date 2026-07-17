@@ -20,8 +20,8 @@
       },
       {
         "path": "AI-BIM 前後端設計文件.dc.html",
-        "bytes": 100741,
-        "sha256": "4209b2136887fcbddee3e82ff10915c6d5d7e19b9ae95af51413afede45b2338"
+        "bytes": 102244,
+        "sha256": "0f7023c6fabbf265806b02157d0ebe9f9a85b86332384eaecf6bf05b12f462bf"
       },
       {
         "path": "AI-BIM Console Hi-Fi.dc.html",
@@ -129,8 +129,8 @@
         "sha256": "8dd3f4f5e31845b8d94fcf4c14ee3932c9bde39887d17c760c749bb4e13f547e"
       }
     ],
-    "snapshot_sha256": "1b058c02f5aa34f9afa8c7bc3cb1a4b5b38ba61564307e80d921532297b9a2f5",
-    "captured_at_utc": "2026-07-16T08:23:04.507Z"
+    "snapshot_sha256": "2f414d9d4bd96adbd3102e417f2465eb4aa609b0c3a12d118f41c1ccff30c9c8",
+    "captured_at_utc": "2026-07-17T08:41:32.704Z"
   },
   "fidelity_contract": {
     "browser": "chromium",
@@ -189,7 +189,7 @@
       "component"
     ],
     "upstream_authority": "source/app.js + source/styles.css",
-    "production_projection": "web-viewer-sample/src/console/edge-console.css",
+    "production_projection": "docs/plans/ai-bim-governance.css",
     "production_tokens_are_not_upstream_authority": true
   },
   "change_scope_contract": {
