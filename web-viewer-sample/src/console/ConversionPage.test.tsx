@@ -187,7 +187,7 @@ describe("ConversionPage", () => {
     for (const text of ["outbox_1", "outbox_2", "outbox_3", "issue_snapshot", "conversion_completed", "1/5", "2/5", "cloud callback base not configured", "2026-07-15T00:01:00.000Z"]) {
       expect(panel.textContent).toContain(text);
     }
-    // 色碼走既有 ec-status-dot data-status（legacy-console.css）：warn=琥珀 / ok=綠 / bad=紅。
+    // 色碼走既有 ec-status-dot data-status（legacy-console.css）：warn=琥珀 / ok=Hi-Fi 青 / bad=紅。
     expect(panel.querySelectorAll('.ec-status-dot[data-status="warn"]').length).toBe(1);
     expect(panel.querySelectorAll('.ec-status-dot[data-status="ok"]').length).toBe(1);
     expect(panel.querySelectorAll('.ec-status-dot[data-status="bad"]').length).toBe(1);
