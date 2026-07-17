@@ -546,17 +546,10 @@ try {
     }
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $sourceGuardPublic '.design-assets-sync.lock'))) 'PowerShell lock uses delete-on-close without stale residue'
 
-    $sourceDeniedAncestor = Join-Path $sourceGuardRoot 'docs\plans'
     $sourceAccessDeniedReader = {
         param([string] $CandidatePath)
-        if ([System.IO.Path]::GetFullPath($CandidatePath).Equals(
-            [System.IO.Path]::GetFullPath($sourceDeniedAncestor),
-            [System.StringComparison]::OrdinalIgnoreCase
-        )) {
-            throw [System.UnauthorizedAccessException]::new('injected source ancestor access denied')
-        }
-        return Get-DeploymentDesignAssetItemIfPresent -Path $CandidatePath
-    }.GetNewClosure()
+        throw [System.UnauthorizedAccessException]::new('injected source ancestor access denied')
+    }
     $sourceAccessDeniedMessage = $null
     try {
         Sync-DeploymentDesignAssets -RepoRoot $sourceGuardRoot -SourceItemReader $sourceAccessDeniedReader | Out-Null
@@ -573,14 +566,8 @@ try {
 
     $sourceIoFailureReader = {
         param([string] $CandidatePath)
-        if ([System.IO.Path]::GetFullPath($CandidatePath).Equals(
-            [System.IO.Path]::GetFullPath($sourceDeniedAncestor),
-            [System.StringComparison]::OrdinalIgnoreCase
-        )) {
-            throw [System.IO.IOException]::new('injected source ancestor IO failure')
-        }
-        return Get-DeploymentDesignAssetItemIfPresent -Path $CandidatePath
-    }.GetNewClosure()
+        throw [System.IO.IOException]::new('injected source ancestor IO failure')
+    }
     $sourceIoFailureMessage = $null
     try {
         Sync-DeploymentDesignAssets -RepoRoot $sourceGuardRoot -SourceItemReader $sourceIoFailureReader | Out-Null

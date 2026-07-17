@@ -118,6 +118,10 @@ try {
     foreach ($requiredText in @('functional-runtime-conv:', 'playwright.functional-runtime.config.ts', 'verify-functional-runtime-result.ps1', 'needs.changes.outputs.head_sha', 'npm run build:ui', 'scripts/tests/(test|verify)-functional-runtime-result')) {
         if (-not $workflow.Contains($requiredText)) { throw "CI targeted functional/runtime producer is missing '$requiredText'." }
     }
+    $functionalConfig = Get-Content -LiteralPath (Join-Path $repoRoot 'web-viewer-sample/playwright.functional-runtime.config.ts') -Raw
+    if ($functionalConfig -notmatch 'testMatch:\s*\[\s*"conv-history\.spec\.ts"\s*\]') {
+        throw 'Functional/runtime config must run only the commit-bound conv-history producer; additional specs can mutate tracked evidence before binding validation.'
+    }
 
     Write-Host '[test-functional-runtime-result] passed — positive evidence plus skip/route/runtime/state/hash/Kit negative cases'
 } finally {
