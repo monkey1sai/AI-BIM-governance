@@ -79,9 +79,10 @@ Lineage mapping item SHALL additive 包含 `rvt_element_id`、`ifc_uuid36`、既
 
 #### Scenario: Alignment counts超出可行集合
 
-- **WHEN** `csv_valid_count > csv_total_count`、任一diagnostic count超過non-valid rows，或full-lineage count落在`max(0, S + U - A)`至`min(S, U)`範圍外
+- **WHEN** `csv_valid_count > csv_total_count`、`duplicate_rvt_id_count`／`duplicate_ifc_guid_count`／`invalid_row_count`任一超過`csv_total_count - csv_valid_count`，或full-lineage count落在`max(0, S + U - A)`至`min(S, U)`範圍外
 - **THEN** report與ResultManifest validation SHALL fail closed
 - **AND**該result MUST NOT enqueue cloud lineage publication
+- **AND** `csv_only_count`、`ifc_only_count`與`ifc_usdc_unmapped_count` SHALL 依各自集合／公式約束，不得套用non-valid-row上限
 
 ### Requirement: Partial alignment SHALL 可交付但必須誠實揭露
 
