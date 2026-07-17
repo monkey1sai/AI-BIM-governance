@@ -1,22 +1,14 @@
 /* web-viewer-sample/src/console/governance/overlay.css
- * A1–A10 治理 overlay 容器：疊在 primary viewer live 3D 右側。沿用 edge-console.css 的 --ec-* token。 */
+ * A1–A10 治理 overlay 容器：疊在 primary viewer live 3D 右側。
+ * 純消費 ai-bim-governance.css 的 --ab-* token（:root 全域定義，overlay 掛在 .ec-root 之外也解析得到）。
+ * Task 5 保留的本地 legacy token 過渡 shim 已於 legacy-console.css 移植完成後移除
+ * （migrate-console-to-hifi-design §6.5）：.gov-overlay 內的 .ec-btn / .ec-note / .ec-warn-note /
+ * .ec-cap / .ec-table 等規則現已在 legacy-console.css 直接消費 var(--ab-*)，不再需要本地 shim 供其解析。 */
 .gov-overlay {
-  /* W7：overlay 掛在 .ec-root 之外（.gov-overlay 疊在 viewer 上），巢狀的 .ec-panel / .ec-btn
-   * 需要 --ec-* token 才能正確上色。token 定義移植自 edge-console.css 的 .ec-root（保持同一組值）。 */
-  --ec-bg:#0b0d10; --ec-bg-2:#111418; --ec-bg-3:#15191e; --ec-panel:#181c21; --ec-panel-hi:#1d2329;
-  --ec-line:#262c33; --ec-line-2:#2f363f;
-  --ec-fg:#e7ebf0; --ec-fg-2:#b8c0c9; --ec-fg-3:#7d8794; --ec-fg-4:#545d68;
-  --ec-grn:#76b900; --ec-grn-2:rgba(118,185,0,.14); --ec-grn-3:rgba(118,185,0,.32);
-  --ec-cyan:#4dd0e1; --ec-cyan-2:rgba(77,208,225,.12);
-  --ec-amb:#f4b740; --ec-amb-2:rgba(244,183,64,.14);
-  --ec-red:#ef5350; --ec-red-2:rgba(239,83,80,.16);
-  --ec-vio:#b388ff; --ec-vio-2:rgba(179,136,255,.16);
-  --ec-mono:ui-monospace,"Cascadia Code","Consolas",monospace;
-
   position: absolute; top: 0; right: 0; width: 340px; height: 100%;
-  background: rgba(11, 13, 16, 0.92); color: #e7ebf0;
-  border-left: 1px solid #262c33; overflow-y: auto; padding: 12px;
-  font: 13px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace; z-index: 20;
+  background: rgba(11, 13, 16, 0.92); color: var(--ab-text);
+  border-left: 1px solid var(--ab-border); overflow-y: auto; padding: 12px;
+  font: 13px/1.5 var(--ab-mono); z-index: 20;
 }
 /* 完整問題分頁：variant=panel 時改全幅（覆蓋預設右側 340px 疊層），置於分頁列(40px)之下。 */
 .gov-overlay.gov-overlay--panel {
@@ -24,11 +16,11 @@
   border-left: 0; z-index: 19;
 }
 .gov-overlay-h { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.gov-overlay-t { color: #76b900; font-weight: 700; letter-spacing: .04em; }
+.gov-overlay-t { color: var(--ab-accent); font-weight: 700; letter-spacing: .04em; }
 .gov-overlay.gov-readonly { opacity: .98; }
 .gov-overlay.gov-readonly .ec-btn:not(.gov-readonly-allowed) { pointer-events: none; opacity: .45; }
-.gov-engine { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dashed #262c33; }
-.gov-engine-code { color: #545d68; width: 28px; }
+.gov-engine { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dashed var(--ab-border); }
+.gov-engine-code { color: var(--ab-text-dim); width: 28px; }
 .gov-engine-title { flex: 1; }
 .gov-overlay .gov-banner { padding: 8px 10px; border-radius: 4px; margin: 8px 0;
-  background: rgba(244, 183, 64, .14); color: #f4b740; border: 1px solid #2f363f; }
+  background: var(--ab-warn-soft); color: var(--ab-warn); border: 1px solid var(--ab-border-strong); }

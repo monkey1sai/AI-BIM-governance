@@ -7,7 +7,7 @@
 import type { CSSProperties } from "react";
 
 /* ── design props（對應 dc data-props 預設值）── */
-export const ACCENT = "#41c7e8";
+export const ACCENT = "var(--ab-accent)";
 export const SHOW_CONCEPT_APPS = true;
 
 /** 原型 MONO = "font-family:'JetBrains Mono',monospace"；React style object 取 font-family 值。 */
@@ -185,20 +185,20 @@ export const dockTabs: DockTab[] = [
 
 /* ── 色組 / tone 字典 ── */
 export const memColors: Record<Member, string> = {
-  ARCH: "#e8925c", STR: "#41c7e8", MEP: "#9d8cff", CIVIL: "#e6b23e", LAND: "#31c56d",
+  ARCH: "var(--ab-arch)", STR: "var(--ab-accent)", MEP: "var(--ab-violet)", CIVIL: "var(--ab-warn)", LAND: "var(--ab-ok)",
 };
 
 /** [color, "rgba(r,g,b" 前綴]；使用端補 ",.1)" / ",.3)" 等透明度。 */
 export const sevTone: Record<string, readonly [string, string]> = {
-  "嚴重": ["#e8615c", "rgba(232,97,92"], "高": ["#e6b23e", "rgba(230,178,62"], "中": ["#e8d35c", "rgba(232,211,92"],
-  critical: ["#e8615c", "rgba(232,97,92"], high: ["#e6b23e", "rgba(230,178,62"], med: ["#e8d35c", "rgba(232,211,92"],
+  "嚴重": ["var(--ab-danger)", "rgba(232,97,92"], "高": ["var(--ab-warn)", "rgba(230,178,62"], "中": ["var(--ab-caution)", "rgba(232,211,92"],
+  critical: ["var(--ab-danger)", "rgba(232,97,92"], high: ["var(--ab-warn)", "rgba(230,178,62"], med: ["var(--ab-caution)", "rgba(232,211,92"],
 };
 
 export type DiffKind = "added" | "removed" | "modified";
 export const kindTone: Record<DiffKind, readonly [string, string]> = {
-  added: ["#6fd6ee", "rgba(65,199,232"],
-  removed: ["#e8615c", "rgba(232,97,92"],
-  modified: ["#e6b23e", "rgba(230,178,62"],
+  added: ["var(--ab-accent-text)", "rgba(65,199,232"],
+  removed: ["var(--ab-danger)", "rgba(232,97,92"],
+  modified: ["var(--ab-warn)", "rgba(230,178,62"],
 };
 
 /* ── stage tree（ws 左欄 /World members + 版本）── */
@@ -281,10 +281,10 @@ export const services: ServiceDef[] = [
 /* ── home 警示 / 事件 4 項 ── */
 export interface AlertDef { msgZh: string; msgEn: string; t: string; c: string; }
 export const alerts: AlertDef[] = [
-  { msgZh: "rule-run #88 完成:嚴重 18 項", msgEn: "rule-run #88 done: 18 critical", t: "10:53", c: "#e8615c" },
-  { msgZh: "990_model.ifc 轉檔完成,品質 98%", msgEn: "990_model.ifc converted, quality 98%", t: "10:20", c: "#31c56d" },
-  { msgZh: "Outbox OB-201 重試 ×2", msgEn: "Outbox OB-201 retry ×2", t: "10:41", c: "#e6b23e" },
-  { msgZh: "S-240601 first-frame 1.84s", msgEn: "S-240601 first-frame 1.84s", t: "10:53", c: "#41c7e8" },
+  { msgZh: "rule-run #88 完成:嚴重 18 項", msgEn: "rule-run #88 done: 18 critical", t: "10:53", c: "var(--ab-danger)" },
+  { msgZh: "990_model.ifc 轉檔完成,品質 98%", msgEn: "990_model.ifc converted, quality 98%", t: "10:20", c: "var(--ab-ok)" },
+  { msgZh: "Outbox OB-201 重試 ×2", msgEn: "Outbox OB-201 retry ×2", t: "10:41", c: "var(--ab-warn)" },
+  { msgZh: "S-240601 first-frame 1.84s", msgEn: "S-240601 first-frame 1.84s", t: "10:53", c: "var(--ab-accent)" },
 ];
 
 /* ── concept（A5–A10）標題 + uploads 圖檔名 ── */
@@ -335,10 +335,10 @@ export const VP_BASE: Record<DockKey, string> = {
 
 /** badge tone 色組：[文字色, 背景色, 邊框色] */
 export const badgeToneColors: Record<AppTone | "warn", readonly [string, string, string]> = {
-  live: ["#4fd68a", "rgba(49,197,109,.1)", "rgba(49,197,109,.3)"],
-  p3: ["#b7a9ff", "rgba(157,140,255,.1)", "rgba(157,140,255,.3)"],
-  p4: ["#8f81d8", "rgba(157,140,255,.07)", "rgba(157,140,255,.2)"],
-  warn: ["#e6b23e", "rgba(230,178,62,.1)", "rgba(230,178,62,.3)"],
+  live: ["var(--ab-ok-text)", "rgba(49,197,109,.1)", "rgba(49,197,109,.3)"],
+  p3: ["var(--ab-violet-text)", "rgba(157,140,255,.1)", "rgba(157,140,255,.3)"],
+  p4: ["var(--ab-violet-dim)", "rgba(157,140,255,.07)", "rgba(157,140,255,.2)"],
+  warn: ["var(--ab-warn)", "rgba(230,178,62,.1)", "rgba(230,178,62,.3)"],
 };
 
 export function badgeTone(tone: AppTone | "warn"): CSSProperties {
@@ -353,34 +353,34 @@ export function navItem(active: boolean): CSSProperties {
   return {
     display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 8,
     cursor: "pointer",
-    color: active ? "#dbe6f3" : "#8aa0b8",
+    color: active ? "var(--ab-text)" : "var(--ab-text-muted)",
     background: active ? "rgba(65,199,232,.10)" : "transparent",
     borderLeft: `2px solid ${active ? ACCENT : "transparent"}`,
   };
 }
 
 export const BTN: CSSProperties = {
-  textAlign: "center", fontSize: 12, fontWeight: 700, color: "#04121a",
-  background: `linear-gradient(135deg,${ACCENT},#2f7bf6)`, borderRadius: 9, padding: 9, cursor: "pointer",
+  textAlign: "center", fontSize: 12, fontWeight: 700, color: "var(--ab-on-accent)",
+  background: `linear-gradient(135deg,${ACCENT},var(--ab-accent-2))`, borderRadius: 9, padding: 9, cursor: "pointer",
 };
 
 export function stChip(kind: ConvStatus): CSSProperties {
   const m: Record<ConvStatus, CSSProperties> = {
-    running: { fontSize: "9.5px", color: "#6fd6ee", background: "rgba(65,199,232,.08)", border: "1px solid rgba(65,199,232,.25)", borderRadius: 4, padding: "1px 6px", fontFamily: MONO },
-    failed: { fontSize: "9.5px", color: "#e8615c", background: "rgba(232,97,92,.08)", border: "1px solid rgba(232,97,92,.3)", borderRadius: 4, padding: "1px 6px", fontFamily: MONO },
-    done: { fontSize: "9.5px", color: "#4fd68a", background: "rgba(49,197,109,.08)", border: "1px solid rgba(49,197,109,.25)", borderRadius: 4, padding: "1px 6px", fontFamily: MONO },
+    running: { fontSize: "9.5px", color: "var(--ab-accent-text)", background: "rgba(65,199,232,.08)", border: "1px solid rgba(65,199,232,.25)", borderRadius: 4, padding: "1px 6px", fontFamily: MONO },
+    failed: { fontSize: "9.5px", color: "var(--ab-danger)", background: "rgba(232,97,92,.08)", border: "1px solid rgba(232,97,92,.3)", borderRadius: 4, padding: "1px 6px", fontFamily: MONO },
+    done: { fontSize: "9.5px", color: "var(--ab-ok-text)", background: "rgba(49,197,109,.08)", border: "1px solid rgba(49,197,109,.25)", borderRadius: 4, padding: "1px 6px", fontFamily: MONO },
   };
   return m[kind];
 }
 
 export const label9: CSSProperties = {
-  fontFamily: MONO, fontSize: 9, letterSpacing: ".1em", color: "#4d6076", textTransform: "uppercase",
+  fontFamily: MONO, fontSize: 9, letterSpacing: ".1em", color: "var(--ab-text-dimmer)", textTransform: "uppercase",
 };
 
 export const chipBox: CSSProperties = {
-  background: "#0e1621", border: "1px solid rgba(120,160,210,.12)", borderRadius: 12,
+  background: "var(--ab-surface)", border: "1px solid rgba(120,160,210,.12)", borderRadius: 12,
 };
 
 export const innerBox: CSSProperties = {
-  background: "#0a1220", border: "1px solid rgba(120,160,210,.12)", borderRadius: 10,
+  background: "var(--ab-inset)", border: "1px solid rgba(120,160,210,.12)", borderRadius: 10,
 };

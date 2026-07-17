@@ -33,7 +33,7 @@
 
 ## 5. Retire edge-console.css
 
-- [ ] 5.1 確認 `--ec-` 使用量歸零（`grep -rc -- "--ec-" web-viewer-sample/src` 為 0，`edge-console.css` 本檔案除外）
+- [ ] 5.1 確認 `--ec-` 使用量歸零（`grep -rc -- "--ec-" web-viewer-sample/src` 為 0，`edge-console.css` 本檔案除外；此 grep 掃整個 `src`（含 `*.ts`），唯一允許的非零命中是守門測試 `ec-token-retirement.test.ts` 自身——斷言 `/--ec-/` 需在測試碼寫出該字串，屬自我參照的必然例外，非 production CSS 殘留）
 - [ ] 5.2 依當時其他既有引用盤點結果（如測試 fixture 是否仍需要）決定 `edge-console.css` 是刪除還是移至歷史保存路徑，並執行
 - [ ] 5.3 更新任何仍提及 `edge-console.css` 為權威來源的程式碼註解或文件片段
 

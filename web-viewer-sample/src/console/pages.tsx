@@ -944,7 +944,7 @@ export function AppVisionPage({ slug, onOpen }: { slug: string; onOpen: (route: 
       <Btn caption={t("回 Applications", "Back to Applications")} onClick={() => onOpen("apps")}>{t("← 回應用導引", "← Back to application guide")}</Btn>
 
       <Panel title={t("目標 · Goal", "Goal · Goal")} sub={t("此應用後端未建；以下為願景規格（roadmap）", "This application's backend is not built; the following is a vision spec (roadmap)")} prov={d.prov}>
-        <p className="ec-note" style={{ color: "var(--ec-fg-2)" }}>{d.goal}</p>
+        <p className="ec-note" style={{ color: "var(--ab-text-2)" }}>{d.goal}</p>
         <p className="ec-warn-note">{t("後端未建（vision）：本頁所有 schema / api / 數字皆為願景設計，非本系統真實實測。", "Backend not built (vision): all schema / api / numbers on this page are vision designs, not real measurements of this system.")}</p>
       </Panel>
 
@@ -971,11 +971,11 @@ export function AppVisionPage({ slug, onOpen }: { slug: string; onOpen: (route: 
       </Panel>
 
       <Panel title={t("UI 面板（願景）", "UI panels (vision)")} prov={d.prov}>
-        <ul style={{ margin: 0, paddingLeft: 18, color: "var(--ec-fg-2)" }}>{d.ui.map((x) => <li key={x}>{x}</li>)}</ul>
+        <ul style={{ margin: 0, paddingLeft: 18, color: "var(--ab-text-2)" }}>{d.ui.map((x) => <li key={x}>{x}</li>)}</ul>
       </Panel>
 
       <Panel title={t("MVP 驗收條件（願景）", "MVP acceptance criteria (vision)")} prov={d.prov}>
-        <ul style={{ margin: 0, paddingLeft: 18, color: "var(--ec-fg-2)" }}>{d.mvp.map((x) => <li key={x}>{x}</li>)}</ul>
+        <ul style={{ margin: 0, paddingLeft: 18, color: "var(--ab-text-2)" }}>{d.mvp.map((x) => <li key={x}>{x}</li>)}</ul>
       </Panel>
 
       <Panel title={t("Sprint steps（願景）", "Sprint steps (vision)")} prov={d.prov}>
@@ -983,7 +983,7 @@ export function AppVisionPage({ slug, onOpen }: { slug: string; onOpen: (route: 
       </Panel>
 
       <Panel title={t("風險 · Risks（願景）", "Risks · Risks (vision)")} prov={d.prov}>
-        <ul style={{ margin: 0, paddingLeft: 18, color: "var(--ec-amb)" }}>{d.risks.map((x) => <li key={x}>{x}</li>)}</ul>
+        <ul style={{ margin: 0, paddingLeft: 18, color: "var(--ab-warn)" }}>{d.risks.map((x) => <li key={x}>{x}</li>)}</ul>
       </Panel>
     </>
   );
@@ -1316,7 +1316,7 @@ export function VersionDiffPage() {
           return (
             <>
               {items.length > 40 && (
-                <p className="ec-s" style={{ marginTop: 8, color: "var(--ec-fg-3)" }}>
+                <p className="ec-s" style={{ marginTop: 8, color: "var(--ab-text-muted)" }}>
                   {t("顯示前 40 筆，共", "Showing first 40 of")} {items.length} {t("筆", "rows")}
                 </p>
               )}

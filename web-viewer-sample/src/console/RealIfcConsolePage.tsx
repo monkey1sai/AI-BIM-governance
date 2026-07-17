@@ -132,7 +132,7 @@ export function RealIfcConsolePage() {
   return (
     <section data-testid="real-ifc-demo-control" style={{ padding: 12 }}>
       <h2 style={{ marginTop: 0 }}>{t("真實 IFC Fixture 垂直切片（demo-control）", "Real IFC Fixture Vertical Slice (demo-control)")}</h2>
-      <p style={{ color: "#94a3b8", fontSize: 13 }}>
+      <p style={{ color: "var(--ab-text-muted)", fontSize: 13 }}>
         {t("從", "From")} <code>./storage</code> {t("選真實 IFC → 真 coordinator", "select a real IFC → real coordinator")} <code>register</code>{t("（內部 loopback）→ 真轉檔 → 審查 session → viewer。誠實顯示 runtime 狀態。", " (internal loopback) → real conversion → review session → viewer. Runtime state shown honestly.")}
       </p>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "10px 0" }}>
@@ -155,14 +155,14 @@ export function RealIfcConsolePage() {
         <tbody>
           {rows.map(([label, tid]) => (
             <tr key={tid}>
-              <td style={{ padding: "3px 8px", color: "#94a3b8" }}>{label}</td>
+              <td style={{ padding: "3px 8px", color: "var(--ab-text-muted)" }}>{label}</td>
               <td data-testid={tid} style={{ fontFamily: "monospace", wordBreak: "break-all" }}>{lin[tid] ?? DASH}</td>
             </tr>
           ))}
         </tbody>
       </table>
       <div style={{ marginTop: 8 }}>
-        <span data-testid="ifc-runtime-state" style={{ fontWeight: 700, color: "#76b900" }}>{runtime}</span>
+        <span data-testid="ifc-runtime-state" style={{ fontWeight: 700, color: "var(--ab-accent)" }}>{runtime}</span>
         {viewerUrl && (
           <a data-testid="ifc-open-viewer" href={viewerUrl} target="_blank" rel="noreferrer" style={{ marginLeft: 12 }}>{t("開 viewer（/ui/open）→", "Open viewer (/ui/open) →")}</a>
         )}

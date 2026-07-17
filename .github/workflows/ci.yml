@@ -324,7 +324,11 @@ jobs:
         shell: pwsh
         run: |
           $requiredScreenIds = @('${{ needs.changes.outputs.frontend_required_screen_ids }}'.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() })
-          pwsh -NoProfile -NonInteractive -File scripts/tests/verify-design-system-visual-result.ps1 `
+          # dot-source in-process instead of spawning a nested `pwsh -File` process: passing a
+          # multi-element array across that process boundary flattens it into separate command-line
+          # tokens, which PowerShell then mis-binds onto later positional parameters (observed: a
+          # screen id landing on -MaxAgeHours). In-process invocation preserves the array natively.
+          . ./scripts/tests/verify-design-system-visual-result.ps1 `
             -RepoRoot '${{ github.workspace }}' `
             -ResultPath '${{ github.workspace }}/artifacts/e2e/design-system-visual-result.json' `
             -RequiredScreenIds $requiredScreenIds `

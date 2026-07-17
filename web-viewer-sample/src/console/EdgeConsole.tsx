@@ -5,7 +5,10 @@
 // 零依賴 hash 路由（不引入 react-router、不擾動既有 App ?session bootstrap）。
 import { useEffect, useState } from "react";
 import type { ReactElement } from "react";
-import "./edge-console.css";
+// Design token 權威（console-design-token-authority）：docs/plans/ai-bim-governance.css 正本
+// 真實 import（token 定義在 :root，全站 var(--ab-*) 可用）；SHALL NOT 手抄色碼副本。
+import "../../../docs/plans/ai-bim-governance.css";
+import "./legacy-console.css";
 import { NAV_GROUPS, PAGES, Prov } from "./data";
 import { t, useLang, setLang } from "./i18n";
 import {
@@ -229,11 +232,6 @@ function LegacyEdgeConsole({ page, go }: { page: string; go: (k: string) => void
   const [agentOpen, setAgentOpen] = useState(true);
   // Tweaks（P3-3）：scenario=clean/warn（UI 偏好；真實頁一律用 live API）。語言由頂列 LangToggle 控制（中=biz 中文 / EN=tech 英文）。
   const [scenario, setScenario] = useState<"clean" | "warn">("clean");
-  // 亮/暗主題（DS .theme-docs；persist localStorage，預設暗色——操作員 console 暗色為主）。
-  const [theme, setTheme] = useState<"dark" | "light">(() => {
-    try { return localStorage.getItem("aibim:ec-theme") === "light" ? "light" : "dark"; } catch { return "dark"; }
-  });
-  useEffect(() => { try { localStorage.setItem("aibim:ec-theme", theme); } catch { /* ignore */ } }, [theme]);
   const lang = useLang();
   // 語言完全決定 nav / FlowBar 標籤：中=biz 中文、EN=tech 英文（已移除與 register 的耦合）。
   const navText = (key: string, fallback: string) => {
@@ -253,7 +251,7 @@ function LegacyEdgeConsole({ page, go }: { page: string; go: (k: string) => void
 
   return (
     <SharedStatusProvider>
-    <div className={`ec-root ${agentOpen ? "" : "ec-agent-collapsed"} ${theme === "light" ? "theme-light" : ""}`}>
+    <div className={`ec-root ${agentOpen ? "" : "ec-agent-collapsed"}`}>
       <header className="ec-top">
         <span className="ec-brand"><span className="ec-brand-mark">BG</span>AI · BIM Governance</span>
         <span className="ec-sub">EDGE CONSOLE · COORDINATOR 8004</span>
@@ -267,7 +265,6 @@ function LegacyEdgeConsole({ page, go }: { page: string; go: (k: string) => void
           <button className={lang === "zh" ? "on" : ""} aria-pressed={lang === "zh"} onClick={() => setLang("zh")}>中</button>
           <button className={lang === "en" ? "on" : ""} aria-pressed={lang === "en"} onClick={() => setLang("en")}>EN</button>
         </span>
-        <button className="ec-btn" onClick={() => setTheme((th) => (th === "light" ? "dark" : "light"))} title="切換亮 / 暗主題 / Theme" aria-label="切換亮暗主題">{theme === "light" ? "☾ 暗" : "☀ 亮"}</button>
         <button className="ec-btn" onClick={() => setAgentOpen((v) => !v)}>{agentOpen ? "⟩ Agent" : "⟨ Agent"}</button>
       </header>
 

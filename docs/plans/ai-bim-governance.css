@@ -93,6 +93,54 @@
   --ab-shadow-pop:   0 12px 40px rgba(0,0,0,.5);
   --ab-shadow-modal: 0 24px 70px rgba(0,0,0,.55);
   --ab-glow-accent:  0 0 0 3px rgba(65,199,232,.18), 0 0 24px rgba(65,199,232,.35);
+
+  /* ── Legacy console 遷移缺口 token（migrate-console-to-hifi-design §6.1）──
+     soft = 半透明底色（承接 --ec-*-2 用途）；strong = 高透明強調（承接 --ec-grn-3）。 */
+  --ab-accent-soft:   rgba(65,199,232,.14);
+  --ab-accent-strong: rgba(65,199,232,.32);
+  --ab-info-soft:     rgba(65,199,232,.12);
+  --ab-warn-soft:     rgba(230,178,62,.14);
+  --ab-danger-soft:   rgba(232,97,92,.16);
+  --ab-violet-soft:   rgba(157,140,255,.16);
+  --ab-ok-soft:       rgba(49,197,109,.14);
+
+  /* Spacing 延伸（--ec-sp-8 承接） */
+  --ab-space-9: 32px;
+
+  /* Elevation 延伸（--ec-shadow-1 承接：卡片微陰影） */
+  --ab-shadow-card: 0 1px 2px rgba(0,0,0,.4), 0 0 0 1px rgba(255,255,255,.04);
+
+  /* Motion（--ec-ease / dur 承接） */
+  --ab-ease: cubic-bezier(.4,0,.2,1);
+  --ab-dur-fast: .13s;
+  --ab-dur: .2s;
+  --ab-dur-slow: .3s;
+
+  /* Tracking（--ec-track-* 承接） */
+  --ab-track-label: .12em;
+  --ab-track-tag: .06em;
+
+  /* Font-size 階（--ec-fs-* 承接） */
+  --ab-fs-page: 27px;
+  --ab-fs-h2: 21px;
+  --ab-fs-h3: 16px;
+  --ab-fs-body: 15px;
+  --ab-fs-sm: 13px;
+  --ab-fs-xs: 12px;
+  --ab-fs-mono: 11px;
+
+  /* Scrollbar（unified.css 全域 scrollbar 承接；.ab-app 內硬寫值的 token 化來源） */
+  --ab-scroll-thumb: #1c2a3c;
+  --ab-scroll-thumb-hover: #28394f;
+
+  /* Text 延伸（UnifiedShell.tsx runtime-note 承接：對照表外殘餘值缺口） */
+  --ab-text-ghost: #3d4f63;
+
+  /* Violet 延伸（fixtures.ts badgeToneColors.p4 承接：對照表外殘餘值缺口） */
+  --ab-violet-dim: #8f81d8;
+
+  /* Violet 延伸（ConceptPage.tsx concept-fallback 圖示字承接：對照表外殘餘值缺口） */
+  --ab-violet-bright: #c9befc;
 }
 
 /* ─────────────────────────── BASE ─────────────────────────── */

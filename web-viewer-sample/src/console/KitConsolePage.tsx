@@ -54,12 +54,12 @@ export function KitConsolePage() {
         <tbody>
           {rows.map(([label, tid, val]) => (
             <tr key={tid}>
-              <td style={{ color: "#94a3b8", padding: "3px 8px" }}>{label}</td>
+              <td style={{ color: "var(--ab-text-muted)", padding: "3px 8px" }}>{label}</td>
               <td data-testid={tid} style={{ fontFamily: "monospace", wordBreak: "break-all" }}>{val}</td>
             </tr>
           ))}
           <tr>
-            <td style={{ color: "#94a3b8", padding: "3px 8px" }}>proxy boundary</td>
+            <td style={{ color: "var(--ab-text-muted)", padding: "3px 8px" }}>proxy boundary</td>
             <td data-testid="kit-proxy-note">{t("瀏覽器 → :8004 /api/kit/*（forward → :8010，無直連）", "Browser → :8004 /api/kit/* (forward → :8010, no direct connection)")}</td>
           </tr>
         </tbody>
