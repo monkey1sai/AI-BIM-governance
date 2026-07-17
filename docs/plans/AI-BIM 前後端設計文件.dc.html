@@ -616,7 +616,11 @@ React + TypeScript + Vite
 Reuse existing EdgeConsole and clients
 Do not introduce Vue, Pinia, Element Plus,
 or a second SPA</pre>
-          <span style="font-size:10.5px;color:#8aa0b8">部分 Prompt Board 寫 Vue 3 / Pinia / Element Plus — 一律忽略。design token 沿用 <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">edge-console.css --ec-*</span> 單一真相源,不平行建第二套 theme。</span>
+          <span style="font-size:10.5px;color:#8aa0b8">部分 Prompt Board 寫 Vue 3 / Pinia / Element Plus — 一律忽略。design token 沿用 <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">docs/plans/ai-bim-governance.css --ab-*</span> 單一真相源(已於 OpenSpec change <span style="font-family:'JetBrains Mono',monospace;font-size:10px">console-design-token-authority</span> 取代 <span style="color:#5a7089;text-decoration:line-through">edge-console.css --ec-*</span>,--ec- 使用量歸零),不平行建第二套 theme。</span>
+        </div>
+        <div style="background:#0a1220;border:1px solid rgba(65,199,232,.22);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
+          <span style="font-size:12px;font-weight:700;color:#6fd6ee">R1a · 品牌色與主題移除(有意識決策,非疏忽覆蓋)</span>
+          <span style="font-size:10.5px;color:#8aa0b8">production 主色由 NVIDIA 綠 <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#5a7089;text-decoration:line-through">#76b900</span> 改為 Hi-Fi 青色系 <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#6fd6ee">#41c7e8</span> / <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#6fd6ee">#2f7bf6</span>;同步移除亮/暗雙主題切換(UI/state/localStorage 讀寫全刪),UnifiedConsole 收斂為純深色單一外觀。此為使用者在完整揭露既有品牌設計後明確拍板的方向調整,<span style="color:#e6b23e">不是開發疏忽覆蓋</span> —— 未來 AI coding agent 不應「修回」NVIDIA 綠或補回亮色主題切換。決策全文見 OpenSpec change <span style="font-family:'JetBrains Mono',monospace;font-size:10px">console-design-token-authority</span> D4。</span>
         </div>
         <div style="background:#0a1220;border:1px solid rgba(49,197,109,.22);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
           <span style="font-size:12px;font-weight:700;color:#4fd68a">R2 · API 三態,絕不臆造後端</span>
