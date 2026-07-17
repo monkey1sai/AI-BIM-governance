@@ -1,25 +1,31 @@
-"""Ornith / OpenAI-compatible chat client for A4 NL → structured filters.
+"""OpenAI-compatible, server-only LLM client for A4 filter interpretation.
 
-Secrets MUST come from environment only (never hardcode keys in repo):
-  A4_LLM_BASE_URL   default http://192.168.10.248:18080/v1
-  A4_LLM_API_KEY    or ORNITH_API_KEY
-  A4_LLM_MODEL      default Ornith-1.0-35B
-  A4_LLM_TIMEOUT_S  default 120
-  A4_LLM_ENABLED    default true when key present, else false
+The client deliberately treats configuration as untrusted input.  It never
+publishes a configured endpoint or credential and it performs no outbound call
+unless the complete transport policy has been validated first.
 """
 from __future__ import annotations
 
+import ipaddress
 import json
+import math
 import os
 import re
+import socket
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 
-DEFAULT_BASE_URL = "http://192.168.10.248:18080/v1"
+DEFAULT_BASE_URL = ""
 DEFAULT_MODEL = "Ornith-1.0-35B"
+MAX_TIMEOUT_S = 120.0
+MAX_RESPONSE_BYTES = 1_048_576
+RESPONSE_READ_CHUNK_BYTES = 64 * 1024
+SAFE_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
 
 SYSTEM_PROMPT = """你是 BIM/IFC 語意查詢解譯器。只把使用者問句轉成 JSON 過濾條件，禁止聊天。
 硬性規則：
@@ -30,14 +36,33 @@ SYSTEM_PROMPT = """你是 BIM/IFC 語意查詢解譯器。只把使用者問句�
   "storey_tokens": ["4F", "1", ...],
   "property_filters": [{"name":"FireRating","op":"<","value":60}],
   "name_contains": ["可選關鍵字"],
-  "notes": ["可選說明"]
+  "consumed_spans": [{"start":0,"end":2,"field":"ifc_classes","filter_index":0}]
 }
 3. op 只能是 <, <=, >, >=, ==。
 4. ifc_classes 必須是合法 Ifc* 型別名（如 IfcDoor/IfcWall/IfcColumn/IfcBeam/IfcSlab/IfcWindow/IfcSpace）。
-5. 不得捏造不存在的 IFC class 或亂填 property；不確定就留空陣列並在 notes 說明。
-6. 繁中樓層「四樓/4F/FL4」→ storey_tokens 含 "4" 與 "4F"。
-7. 「防火門」→ IfcDoor；「牆」→ IfcWall；「柱」→ IfcColumn。
+5. consumed_spans 必須精確指出每個 filter 消費的原問句字元範圍（end 為 exclusive）與該 field 的 filter_index；每一個 emitted filter 都必須剛好有一個 span，不可跳過或新增約束條件。
+6. 不得捏造不存在的 IFC class 或亂填 property；不確定就留空陣列，且不可聲稱任何 span 已被消費。
+7. 繁中樓層「四樓/4F/FL4」→ storey_tokens 含 "4" 與 "4F"；「防火門」→ IfcDoor；「牆」→ IfcWall；「柱」→ IfcColumn。
 """
+
+
+class LlmError(RuntimeError):
+    """A safe, public error class.  Its code never contains upstream content."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+@dataclass(frozen=True)
+class CompletionResult:
+    """Bounded metadata from a completed upstream call; no raw response body."""
+
+    content: str
+    served_model: Optional[str]
+    finish_reason: str
+    latency_ms: int
 
 
 @dataclass(frozen=True)
@@ -47,57 +72,262 @@ class LlmConfig:
     model: str
     timeout_s: float
     enabled: bool
+    config_error: Optional[str] = None
+    transport_class: str = "unconfigured"
+    profile: str = "production"
 
     @property
     def chat_url(self) -> str:
         return self.base_url.rstrip("/") + "/chat/completions"
 
     def public_status(self) -> dict[str, Any]:
-        # Always surface configured/default base_url + model (from env.sample LAN defaults)
-        # so operators can see where Ornith should be even before key is set.
-        # Never echo api_key.
+        # A configured model is not proof that it served a request.  The status
+        # deliberately exposes only an operational classification and safe keys.
+        if self.config_error:
+            state = "invalid"
+        elif self.enabled:
+            # Configuration alone is not a bounded probe or observed query.
+            state = "unknown"
+        else:
+            state = "disabled"
         return {
             "enabled": self.enabled,
-            "configured": bool(self.api_key),
-            "base_url": self.base_url,
-            "model": self.model,
-            "timeout_s": self.timeout_s,
-            "auth": "bearer_env" if self.api_key else "missing",
-            "defaults": {
-                "base_url": DEFAULT_BASE_URL,
-                "model": DEFAULT_MODEL,
-            },
+            "configured": bool(self.enabled and self.api_key and self.base_url),
+            "state": state,
+            "model": _safe_model_name(self.model),
+            "checked_at": None,
+            "check_source": "config",
+            "freshness": "unknown",
+            "ttl_s": 0,
+            "transport_class": self.transport_class,
+            "error_code": self.config_error or (None if self.enabled else "llm_disabled"),
         }
 
 
+def _nonempty_alias_value(*names: str) -> tuple[str, bool]:
+    """Return a canonical aliased value and whether nonempty aliases conflict."""
+    values = [os.environ[name].strip() for name in names if os.environ.get(name, "").strip()]
+    if not values:
+        return "", False
+    return values[0], len(set(values)) > 1
+
+
+def _safe_model_name(value: Any) -> Optional[str]:
+    """Keep diagnostics to a bounded identifier, never arbitrary upstream text."""
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    return candidate if SAFE_MODEL_RE.fullmatch(candidate) else None
+
+
+def _parse_bool(raw: str) -> Optional[bool]:
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _aliased_bool(*names: str) -> tuple[Optional[bool], bool]:
+    parsed: list[bool] = []
+    invalid = False
+    for name in names:
+        raw = os.environ.get(name)
+        if raw is None or not raw.strip():
+            continue
+        value = _parse_bool(raw)
+        if value is None:
+            invalid = True
+        else:
+            parsed.append(value)
+    if invalid or len(set(parsed)) > 1:
+        return None, True
+    return (parsed[0] if parsed else None), False
+
+
+def _loopback_host(host: Optional[str]) -> bool:
+    if not host:
+        return False
+    normalized = host.strip().lower()
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def _trusted_lab_http_host(host: Optional[str], http_allowlist: set[str]) -> bool:
+    """Allow insecure lab HTTP only to an explicitly allowlisted literal LAN IP.
+
+    A hostname allowlist alone is not a transport boundary: a later DNS answer
+    could route the bearer credential to another destination.  Literal private
+    or loopback IPs keep this non-production exception deterministic.
+    """
+    if not host:
+        return False
+    normalized = host.strip().lower()
+    if normalized not in http_allowlist:
+        return False
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_private
+
+
+def _classify_transport(
+    base_url: str,
+    *,
+    profile: str,
+    allow_insecure: bool,
+    http_allowlist: set[str],
+) -> tuple[str, bool]:
+    """Classify and authorize an endpoint without ever attempting DNS/I/O."""
+    if not base_url:
+        return "unconfigured", False
+    parsed = urlparse(base_url)
+    if parsed.username or parsed.password or parsed.query or parsed.fragment or not parsed.hostname:
+        return "invalid", False
+    scheme = parsed.scheme.lower()
+    if scheme == "https":
+        return "verified_https", True
+    if scheme == "http" and _loopback_host(parsed.hostname):
+        return "loopback_tunnel", True
+    if (
+        scheme == "http"
+        and profile == "trusted_lab_http"
+        and allow_insecure
+        and _trusted_lab_http_host(parsed.hostname, http_allowlist)
+    ):
+        return "trusted_lab_http", True
+    return "untrusted", False
+
+
 def load_llm_config() -> LlmConfig:
-    base = (
-        os.environ.get("A4_LLM_BASE_URL")
-        or os.environ.get("ORNITH_API_BASE")
-        or DEFAULT_BASE_URL
-    ).rstrip("/")
-    key = (
-        os.environ.get("A4_LLM_API_KEY")
-        or os.environ.get("ORNITH_API_KEY")
-        or ""
-    ).strip()
-    model = os.environ.get("A4_LLM_MODEL") or os.environ.get("ORNITH_MODEL") or DEFAULT_MODEL
-    timeout_s = float(os.environ.get("A4_LLM_TIMEOUT_S") or "120")
-    enabled_raw = (os.environ.get("A4_LLM_ENABLED") or "").strip().lower()
-    if enabled_raw in ("0", "false", "no", "off"):
-        enabled = False
-    elif enabled_raw in ("1", "true", "yes", "on"):
-        enabled = True
-    else:
-        enabled = bool(key)
-    return LlmConfig(base_url=base, api_key=key, model=model, timeout_s=timeout_s, enabled=enabled and bool(key))
+    """Load explicit configuration and fail closed on aliases or transport policy."""
+    base, base_conflict = _nonempty_alias_value("A4_LLM_BASE_URL", "ORNITH_API_BASE")
+    api_key, key_conflict = _nonempty_alias_value("A4_LLM_API_KEY", "ORNITH_API_KEY")
+    model, model_conflict = _nonempty_alias_value("A4_LLM_MODEL", "ORNITH_MODEL")
+    timeout_raw, timeout_conflict = _nonempty_alias_value("A4_LLM_TIMEOUT_S", "ORNITH_TIMEOUT_S")
+    profile_raw, profile_conflict = _nonempty_alias_value("A4_LLM_PROFILE", "ORNITH_PROFILE")
+    transport_mode, transport_conflict = _nonempty_alias_value("A4_LLM_TRANSPORT_MODE", "ORNITH_TRANSPORT_MODE")
+    enabled_value, enabled_conflict = _aliased_bool("A4_LLM_ENABLED", "ORNITH_ENABLED")
+    allow_insecure, insecure_invalid = _aliased_bool("A4_LLM_ALLOW_INSECURE")
+
+    profile = (profile_raw or "production").strip().lower()
+    allowed_profiles = {"production", "local-dev", "trusted_lab_http"}
+    profile_valid = profile in allowed_profiles
+    model_valid = _safe_model_name(model) is not None if model else False
+    allowed_transport_modes = {"verified_https", "loopback_tunnel", "trusted_lab_http"}
+    transport_mode_valid = transport_mode in allowed_transport_modes if transport_mode else True
+    requested_enabled = enabled_value is True
+
+    timeout_s = MAX_TIMEOUT_S
+    timeout_valid = True
+    if timeout_raw:
+        try:
+            timeout_s = float(timeout_raw)
+        except (TypeError, ValueError):
+            timeout_valid = False
+        else:
+            timeout_valid = math.isfinite(timeout_s) and 0 < timeout_s <= MAX_TIMEOUT_S
+
+    allowlist = {
+        value.strip().lower()
+        for value in (os.environ.get("A4_LLM_HTTP_ALLOWLIST") or "").split(",")
+        if value.strip()
+    }
+    transport_class, transport_valid = _classify_transport(
+        base.rstrip("/"),
+        profile=profile,
+        allow_insecure=allow_insecure is True,
+        http_allowlist=allowlist,
+    )
+
+    malformed = any(
+        (
+            base_conflict,
+            key_conflict,
+            model_conflict,
+            timeout_conflict,
+            profile_conflict,
+            transport_conflict,
+            enabled_conflict,
+            insecure_invalid,
+            not profile_valid,
+            bool(model and not model_valid),
+            not timeout_valid,
+            not transport_mode_valid,
+            bool(transport_mode and transport_mode != transport_class),
+        )
+    )
+    required_when_enabled = bool(
+        base
+        and api_key
+        and model_valid
+        and timeout_raw
+        and profile_raw
+        and transport_mode
+        and transport_valid
+        and transport_mode == transport_class
+    )
+    config_error = "llm_config_invalid" if malformed or (requested_enabled and not required_when_enabled) else None
+    enabled = requested_enabled and config_error is None and required_when_enabled
+
+    return LlmConfig(
+        base_url=base.rstrip("/"),
+        api_key=api_key,
+        model=model or DEFAULT_MODEL,
+        timeout_s=timeout_s if timeout_valid else MAX_TIMEOUT_S,
+        enabled=enabled,
+        config_error=config_error,
+        transport_class=transport_class,
+        profile=profile if profile_valid else "production",
+    )
 
 
-class LlmError(RuntimeError):
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-        self.message = message
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Do not let an approved endpoint redirect query/credential elsewhere."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        return None
+
+
+def _open_request(request: urllib.request.Request, timeout: float):
+    # Ignore ambient proxy configuration as well as redirects: both could route
+    # an otherwise allowed endpoint through an unapproved transport path.
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirectHandler()).open(request, timeout=timeout)
+
+
+def _read_bounded_response(response: Any, *, deadline: float) -> bytes:
+    """Read an upstream response with a finite byte budget and total deadline."""
+    headers = getattr(response, "headers", None)
+    raw_content_length = headers.get("Content-Length") if hasattr(headers, "get") else None
+    if raw_content_length is not None:
+        try:
+            content_length = int(str(raw_content_length).strip())
+        except (TypeError, ValueError) as exc:
+            raise LlmError("llm_response_invalid", "LLM response length is invalid") from exc
+        if content_length < 0:
+            raise LlmError("llm_response_invalid", "LLM response length is invalid")
+        if content_length > MAX_RESPONSE_BYTES:
+            raise LlmError("llm_response_too_large", "LLM response exceeds the A4 response limit")
+
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        if monotonic() >= deadline:
+            raise LlmError("llm_timeout", "LLM request timed out")
+        chunk = response.read(RESPONSE_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        if not isinstance(chunk, bytes):
+            raise LlmError("llm_response_invalid", "LLM response has invalid bytes")
+        total += len(chunk)
+        if total > MAX_RESPONSE_BYTES:
+            raise LlmError("llm_response_too_large", "LLM response exceeds the A4 response limit")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def chat_completion(
@@ -107,12 +337,15 @@ def chat_completion(
     config: Optional[LlmConfig] = None,
     temperature: float = 0.0,
     max_tokens: int = 512,
-) -> str:
+) -> CompletionResult:
+    """Call the model once after policy validation and return terminal metadata."""
     cfg = config or load_llm_config()
+    if cfg.config_error or cfg.transport_class not in {"verified_https", "loopback_tunnel", "trusted_lab_http"}:
+        raise LlmError("llm_config_invalid", "A4 LLM configuration is invalid")
     if not cfg.enabled:
-        raise LlmError("llm_disabled", "A4 LLM is not enabled or API key missing (set ORNITH_API_KEY / A4_LLM_API_KEY).")
+        raise LlmError("llm_disabled", "A4 LLM is disabled")
     if not cfg.api_key:
-        raise LlmError("llm_key_missing", "A4 LLM API key not configured.")
+        raise LlmError("llm_key_missing", "A4 LLM API key is not configured")
 
     payload = {
         "model": cfg.model,
@@ -135,50 +368,69 @@ def chat_completion(
             "Accept": "application/json",
         },
     )
+    started = monotonic()
     try:
-        with urllib.request.urlopen(req, timeout=cfg.timeout_s) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
+        with _open_request(req, timeout=cfg.timeout_s) as resp:
+            raw = _read_bounded_response(resp, deadline=started + cfg.timeout_s).decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")[:500]
-        raise LlmError("llm_http_error", f"LLM HTTP {exc.code}: {body}") from exc
-    except urllib.error.URLError as exc:
-        raise LlmError("llm_network_error", f"LLM network error: {exc.reason}") from exc
-    except TimeoutError as exc:
-        raise LlmError("llm_timeout", f"LLM timed out after {cfg.timeout_s}s") from exc
+        if 300 <= exc.code < 400:
+            raise LlmError("llm_redirect_rejected", "LLM redirect was rejected") from exc
+        raise LlmError("llm_http_error", "LLM HTTP request failed") from exc
+    except (TimeoutError, socket.timeout) as exc:
+        raise LlmError("llm_timeout", "LLM request timed out") from exc
+    except (urllib.error.URLError, OSError) as exc:
+        raise LlmError("llm_network_error", "LLM network request failed") from exc
+    latency_ms = max(0, min(120_000, int((monotonic() - started) * 1000)))
 
     try:
         doc = json.loads(raw)
-    except json.JSONDecodeError as exc:
+    except (TypeError, json.JSONDecodeError) as exc:
         raise LlmError("llm_bad_json", "LLM response is not JSON") from exc
+    if not isinstance(doc, dict):
+        raise LlmError("llm_bad_json", "LLM response has an invalid shape")
 
-    choices = doc.get("choices") or []
-    if not choices:
+    choices = doc.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
         raise LlmError("llm_empty", "LLM returned no choices")
-    message = (choices[0] or {}).get("message") or {}
+    choice = choices[0]
+    finish_reason = choice.get("finish_reason")
+    if finish_reason != "stop":
+        raise LlmError("llm_non_terminal", "LLM completion did not reach a terminal state")
+    message = choice.get("message")
+    if not isinstance(message, dict):
+        raise LlmError("llm_empty_content", "LLM message content is empty")
     content = message.get("content")
-    if not content or not str(content).strip():
-        # Some models put text in reasoning fields; still fail honestly.
-        raise LlmError("llm_empty_content", "LLM message content empty")
-    return str(content).strip()
+    if not isinstance(content, str) or not content.strip():
+        raise LlmError("llm_empty_content", "LLM message content is empty")
+    served_model = _safe_model_name(doc.get("model"))
+    return CompletionResult(
+        content=content.strip(),
+        served_model=served_model,
+        finish_reason="stop",
+        latency_ms=latency_ms,
+    )
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
-    """Parse model text into a JSON object; tolerate optional ``` fences."""
-    cleaned = text.strip()
+    """Parse model text into a JSON object and never leak parser internals."""
+    cleaned = (text or "").strip()
     fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", cleaned, re.IGNORECASE)
     if fence:
         cleaned = fence.group(1).strip()
     try:
-        val = json.loads(cleaned)
-        if isinstance(val, dict):
-            return val
-    except json.JSONDecodeError:
-        pass
-    # Find first {...} block.
+        value = json.loads(cleaned)
+    except (TypeError, json.JSONDecodeError):
+        value = None
+    if isinstance(value, dict):
+        return value
+
     start = cleaned.find("{")
     end = cleaned.rfind("}")
     if start >= 0 and end > start:
-        val = json.loads(cleaned[start : end + 1])
-        if isinstance(val, dict):
-            return val
+        try:
+            value = json.loads(cleaned[start : end + 1])
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise LlmError("llm_filter_parse", "Could not parse JSON filters from LLM output") from exc
+        if isinstance(value, dict):
+            return value
     raise LlmError("llm_filter_parse", "Could not parse JSON filters from LLM output")

@@ -10,8 +10,14 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import hashlib
+import hmac
+import unicodedata
 import uuid
 from datetime import datetime, timezone
+from typing import Any, Optional
+
+from search.proofs import VerifiedProof, canonical_json
 
 ISSUE_STATUSES = ("open", "assigned", "in_progress", "resolved", "rejected", "reopened")
 # 寬鬆但受控的狀態機：target 必為合法狀態；resolved/rejected 可 reopened。
@@ -52,6 +58,24 @@ CREATE TABLE IF NOT EXISTS issue_events(
 );
 CREATE INDEX IF NOT EXISTS idx_issue_events_issue ON issue_events(issue_id);
 CREATE INDEX IF NOT EXISTS idx_issues_mv ON issues(model_version_id);
+-- A4 has its own immutable provenance; legacy Issue sources are not backfilled.
+CREATE TABLE IF NOT EXISTS a4_issue_provenance(
+  issue_id TEXT PRIMARY KEY,
+  proof_id TEXT NOT NULL UNIQUE,
+  proof_kid TEXT NOT NULL,
+  proof_expires_at TEXT NOT NULL,
+  proof_digest TEXT NOT NULL,
+  snapshot_hash TEXT NOT NULL,
+  creation_request_hash TEXT NOT NULL,
+  a4_evidence_snapshot_json TEXT NOT NULL,
+  review_session_id TEXT NOT NULL,
+  principal_ref TEXT NOT NULL,
+  primary_artifact_id TEXT NOT NULL,
+  active_binding_revision TEXT NOT NULL,
+  model_version_id TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_a4_issue_provenance_proof ON a4_issue_provenance(proof_id);
 """
 
 
@@ -65,6 +89,133 @@ def _new_id(prefix: str) -> str:
 
 class TransitionError(ValueError):
     pass
+
+
+class A4IssueConflict(ValueError):
+    """An A4 proof replay is altered, stale, or otherwise not eligible."""
+
+
+_A4_BINDING_FIELDS = (
+    "review_session_id",
+    "principal_ref",
+    "primary_artifact_id",
+    "active_binding_revision",
+    "model_version_id",
+    "mapping_provenance",
+    "primary_lease_capability",
+    "auth_scope",
+)
+_A4_SEVERITIES = {"low", "medium", "high", "critical"}
+
+
+def _digest_json(value: Any) -> str:
+    return hashlib.sha256(canonical_json(value)).hexdigest()
+
+
+def _normalize_a4_text(value: Optional[str], *, max_length: int, required: bool = False) -> Optional[str]:
+    if value is None:
+        if required:
+            raise A4IssueConflict("invalid a4 draft")
+        return None
+    if not isinstance(value, str):
+        raise A4IssueConflict("invalid a4 draft")
+    normalized = unicodedata.normalize("NFC", value).strip()
+    if (required and not normalized) or len(normalized) > max_length:
+        raise A4IssueConflict("invalid a4 draft")
+    return normalized or None
+
+
+def normalize_a4_draft(
+    *, title: Optional[str], description: Optional[str], severity: Optional[str], assignee: Optional[str]
+) -> dict[str, Optional[str]]:
+    normalized_severity = (severity or "medium").strip().lower() if isinstance(severity, str) else ""
+    if normalized_severity not in _A4_SEVERITIES:
+        raise A4IssueConflict("invalid a4 draft")
+    return {
+        "title": _normalize_a4_text(title, max_length=240, required=True),
+        "description": _normalize_a4_text(description, max_length=4_000),
+        "severity": normalized_severity,
+        "assignee": _normalize_a4_text(assignee, max_length=160),
+    }
+
+
+def _validated_a4_snapshot(snapshot: Any) -> tuple[dict[str, Any], dict[str, str], dict[str, Any]]:
+    if not isinstance(snapshot, dict) or snapshot.get("schema_version") != "a4-proof-v1":
+        raise A4IssueConflict("a4 proof unavailable")
+    query_id = snapshot.get("query_id")
+    model_version_id = snapshot.get("model_version_id")
+    binding = snapshot.get("session_binding")
+    interpretation = snapshot.get("interpretation")
+    row = snapshot.get("row")
+    if (
+        not isinstance(query_id, str)
+        or not query_id
+        or not isinstance(model_version_id, str)
+        or not model_version_id
+        or not isinstance(binding, dict)
+        or not isinstance(interpretation, dict)
+        or not isinstance(row, dict)
+    ):
+        raise A4IssueConflict("a4 proof unavailable")
+    normalized_binding: dict[str, str] = {}
+    for field in _A4_BINDING_FIELDS:
+        value = binding.get(field)
+        if not isinstance(value, str) or not value:
+            raise A4IssueConflict("a4 proof unavailable")
+        normalized_binding[field] = value
+    if (
+        normalized_binding["model_version_id"] != model_version_id
+        or normalized_binding["mapping_provenance"] != "server_resolved"
+        or normalized_binding["primary_lease_capability"] != "verified"
+        or normalized_binding["auth_scope"] != "production"
+        or interpretation.get("complete") is not True
+        or interpretation.get("completion_scope") != "complete_table"
+        or interpretation.get("partial_execution") is not False
+        or interpretation.get("scan_complete") is not True
+        or interpretation.get("truncated") is not False
+    ):
+        raise A4IssueConflict("a4 proof unavailable")
+    ifc_guid = row.get("ifc_guid")
+    mapped = row.get("mapping_observed")
+    accepted_prim = row.get("accepted_usd_prim")
+    if not isinstance(ifc_guid, str) or not ifc_guid or not isinstance(mapped, bool):
+        raise A4IssueConflict("a4 proof unavailable")
+    if mapped and (not isinstance(accepted_prim, str) or not accepted_prim):
+        raise A4IssueConflict("a4 proof unavailable")
+    if not mapped and accepted_prim is not None:
+        raise A4IssueConflict("a4 proof unavailable")
+    return snapshot, normalized_binding, row
+
+
+def _binding_matches(binding: dict[str, str], current_context: dict[str, str]) -> bool:
+    for field in _A4_BINDING_FIELDS:
+        expected = binding.get(field)
+        actual = current_context.get(field)
+        if not isinstance(expected, str) or not isinstance(actual, str):
+            return False
+        if not hmac.compare_digest(expected, actual):
+            return False
+    return True
+
+
+def _a4_creation_request_hash(snapshot: dict[str, Any], proof_digest: str, draft: dict[str, Optional[str]]) -> str:
+    _snapshot, binding, row = _validated_a4_snapshot(snapshot)
+    return _digest_json(
+        {
+            "schema_version": "a4-issue-create-v1",
+            "snapshot_hash": _digest_json(snapshot),
+            "proof_digest": proof_digest,
+            "title": draft["title"],
+            "description": draft["description"],
+            "severity": draft["severity"],
+            "assignee": draft["assignee"],
+            "ifc_guid": row["ifc_guid"],
+            "usd_prim_path": row.get("accepted_usd_prim"),
+            "model_version_id": snapshot["model_version_id"],
+            "primary_artifact_id": binding["primary_artifact_id"],
+            "active_binding_revision": binding["active_binding_revision"],
+        }
+    )
 
 
 class IssueStore:
@@ -111,6 +262,191 @@ class IssueStore:
                 (_new_id("ev"), issue_id, "created", None, "open", f"source={source_type}", now),
             )
         return self.get_issue(issue_id)
+
+    @staticmethod
+    def _replay_a4_record(
+        record: sqlite3.Row,
+        *,
+        proof_digest: str,
+        current_context: dict[str, str],
+        draft: dict[str, Optional[str]],
+    ) -> str:
+        """Validate a durable proof consumption without requiring a live key."""
+        try:
+            snapshot = json.loads(record["a4_evidence_snapshot_json"])
+            snapshot, binding, _row = _validated_a4_snapshot(snapshot)
+        except (json.JSONDecodeError, A4IssueConflict, TypeError, ValueError) as exc:
+            raise A4IssueConflict("a4 proof unavailable") from exc
+        expected_snapshot_hash = _digest_json(snapshot)
+        expected_request_hash = _a4_creation_request_hash(snapshot, proof_digest, draft)
+        if (
+            current_context.get("scope") != "session_table_only"
+            or not _binding_matches(binding, current_context)
+            or not hmac.compare_digest(record["proof_digest"], proof_digest)
+            or not hmac.compare_digest(record["snapshot_hash"], expected_snapshot_hash)
+            or not hmac.compare_digest(record["creation_request_hash"], expected_request_hash)
+        ):
+            raise A4IssueConflict("a4 proof unavailable")
+        return record["issue_id"]
+
+    def replay_a4_issue_if_consumed(
+        self,
+        *,
+        proof_id: str,
+        proof_digest: str,
+        current_context: dict[str, str],
+        title: Optional[str],
+        description: Optional[str],
+        severity: Optional[str],
+        assignee: Optional[str],
+    ) -> Optional[dict]:
+        """Return an exact durable replay before live-proof expiry/key checks."""
+        draft = normalize_a4_draft(
+            title=title,
+            description=description,
+            severity=severity,
+            assignee=assignee,
+        )
+        with self._conn() as conn:
+            record = conn.execute(
+                "SELECT issue_id, proof_digest, snapshot_hash, creation_request_hash, a4_evidence_snapshot_json "
+                "FROM a4_issue_provenance WHERE proof_id=?",
+                (proof_id,),
+            ).fetchone()
+        if record is None:
+            return None
+        issue_id = self._replay_a4_record(
+            record,
+            proof_digest=proof_digest,
+            current_context=current_context,
+            draft=draft,
+        )
+        issue = self.get_issue(issue_id)
+        if issue is None:
+            raise A4IssueConflict("a4 proof unavailable")
+        return {"issue": issue, "replayed": True}
+
+    def create_a4_issue(
+        self,
+        *,
+        verified_proof: VerifiedProof,
+        current_context: dict[str, str],
+        title: Optional[str],
+        description: Optional[str],
+        severity: Optional[str],
+        assignee: Optional[str],
+    ) -> dict:
+        """Atomically consume one verified proof and persist its selected row."""
+        draft = normalize_a4_draft(
+            title=title,
+            description=description,
+            severity=severity,
+            assignee=assignee,
+        )
+        snapshot, binding, row = _validated_a4_snapshot(verified_proof.snapshot)
+        snapshot_hash = _digest_json(snapshot)
+        if (
+            current_context.get("scope") != "session_table_only"
+            or not _binding_matches(binding, current_context)
+            or not hmac.compare_digest(snapshot_hash, verified_proof.snapshot_hash)
+        ):
+            raise A4IssueConflict("a4 proof unavailable")
+        creation_request_hash = _a4_creation_request_hash(snapshot, verified_proof.proof_digest, draft)
+        snapshot_json = canonical_json(snapshot).decode("utf-8")
+        issue_id: Optional[str] = None
+        replayed = False
+        conn = self._conn()
+        conn.isolation_level = None
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                "SELECT issue_id, proof_digest, snapshot_hash, creation_request_hash, a4_evidence_snapshot_json "
+                "FROM a4_issue_provenance WHERE proof_id=?",
+                (verified_proof.proof_id,),
+            ).fetchone()
+            if existing is not None:
+                issue_id = self._replay_a4_record(
+                    existing,
+                    proof_digest=verified_proof.proof_digest,
+                    current_context=current_context,
+                    draft=draft,
+                )
+                replayed = True
+                conn.execute("COMMIT")
+            else:
+                issue_id = _new_id("iss")
+                now = _now()
+                conn.execute(
+                    "INSERT INTO issues(id, kind, title, description, status, severity, assignee, ifc_guid, usd_prim_path,"
+                    " model_version_id, source_type, source_ref, created_at, updated_at)"
+                    " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        issue_id,
+                        "issue",
+                        draft["title"],
+                        draft["description"],
+                        "open",
+                        draft["severity"],
+                        draft["assignee"],
+                        row["ifc_guid"],
+                        row.get("accepted_usd_prim"),
+                        snapshot["model_version_id"],
+                        "a4_search",
+                        snapshot["query_id"],
+                        now,
+                        now,
+                    ),
+                )
+                conn.execute(
+                    "INSERT INTO issue_events(id, issue_id, event_type, from_status, to_status, note, created_at)"
+                    " VALUES(?,?,?,?,?,?,?)",
+                    (_new_id("ev"), issue_id, "created", None, "open", "source=a4_search", now),
+                )
+                conn.execute(
+                    "INSERT INTO a4_issue_provenance("
+                    "issue_id, proof_id, proof_kid, proof_expires_at, proof_digest, snapshot_hash, creation_request_hash,"
+                    " a4_evidence_snapshot_json, review_session_id, principal_ref, primary_artifact_id,"
+                    " active_binding_revision, model_version_id, created_at)"
+                    " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        issue_id,
+                        verified_proof.proof_id,
+                        verified_proof.kid,
+                        verified_proof.expires_at,
+                        verified_proof.proof_digest,
+                        snapshot_hash,
+                        creation_request_hash,
+                        snapshot_json,
+                        binding["review_session_id"],
+                        binding["principal_ref"],
+                        binding["primary_artifact_id"],
+                        binding["active_binding_revision"],
+                        binding["model_version_id"],
+                        now,
+                    ),
+                )
+                conn.execute("COMMIT")
+        except Exception:
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            raise
+        finally:
+            conn.close()
+        issue = self.get_issue(issue_id) if issue_id else None
+        if issue is None:
+            raise A4IssueConflict("a4 proof unavailable")
+        return {"issue": issue, "replayed": replayed}
+
+    def get_a4_provenance(self, issue_id: str) -> Optional[dict]:
+        with self._conn() as conn:
+            record = conn.execute(
+                "SELECT * FROM a4_issue_provenance WHERE issue_id=?",
+                (issue_id,),
+            ).fetchone()
+            return dict(record) if record else None
 
     def create_issues_batch(self, items: list[dict]) -> dict:
         """批次建立 issue：單一交易（全有或全無，ISS-004）+ 來源冪等（同

@@ -5,12 +5,16 @@ issue 可手動建立，或由 A1 rule-run 失敗構件 / A2 diff 變更構件�
 from __future__ import annotations
 
 import os
-from typing import Optional
+import secrets
+from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Header, HTTPException, Query, Response
+from pydantic import BaseModel, Field, model_validator
 
-from .store import ISSUE_STATUSES, IssueStore, TransitionError
+from search.api import TrustedA4Context
+from search.proofs import ProofExpired, ProofUnavailable, parse_proof_token, proof_digest, proof_registry
+
+from .store import A4IssueConflict, ISSUE_STATUSES, IssueStore, TransitionError
 
 _SERVICE_ROOT = os.path.dirname(os.path.dirname(__file__))
 _DB_PATH = os.environ.get("GOV_DB_PATH", os.path.join(_SERVICE_ROOT, "storage", "governance.db"))
@@ -42,10 +46,78 @@ class IssueCreate(BaseModel):
     model_version_id: Optional[str] = None
     assignee: Optional[str] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def reject_a4_provenance_fields(cls, value):
+        # Preserve legacy handling of unrelated unknown fields, but never let a
+        # caller smuggle an A4 proof or its authority onto the manual endpoint.
+        forbidden = {
+            "evidence_proof",
+            "a4_trusted_context",
+            "snapshot",
+            "snapshot_hash",
+            "proof_digest",
+            "creation_request_hash",
+            "query_id",
+            "review_session_id",
+            "principal_ref",
+            "primary_artifact_id",
+            "active_binding_revision",
+            "mapping_provenance",
+            "primary_lease_capability",
+            "source_type",
+            "source_ref",
+        }
+        if isinstance(value, dict) and forbidden.intersection(value):
+            raise ValueError("A4 provenance must use the dedicated internal route")
+        return value
+
 
 class TransitionBody(BaseModel):
     to_status: str
     note: Optional[str] = None
+
+
+class InternalA4IssueCreate(BaseModel):
+    """Coordinator-only request; browser authority fields are deliberately absent."""
+
+    evidence_proof: str = Field(..., min_length=24, max_length=320)
+    title: str = Field(..., min_length=1, max_length=240)
+    description: Optional[str] = Field(default=None, max_length=4_000)
+    severity: Literal["low", "medium", "high", "critical"] = "medium"
+    assignee: Optional[str] = Field(default=None, max_length=160)
+    a4_trusted_context: TrustedA4Context
+
+    class Config:
+        extra = "forbid"
+
+
+def _a4_internal_context_token() -> Optional[str]:
+    token = os.getenv("A4_INTERNAL_CONTEXT_TOKEN", "").strip()
+    return token or None
+
+
+def _current_a4_issue_context(context: TrustedA4Context) -> dict[str, str]:
+    data = context.model_dump(exclude_none=True)
+    required = (
+        "review_session_id",
+        "principal_ref",
+        "primary_artifact_id",
+        "active_binding_revision",
+        "model_version_id",
+        "mapping_provenance",
+        "primary_lease_capability",
+        "auth_scope",
+    )
+    if (
+        data.get("scope") != "session_table_only"
+        or data.get("mapping_provenance") != "server_resolved"
+        or data.get("primary_lease_capability") != "verified"
+        or data.get("auth_scope") != "production"
+        or any(not isinstance(data.get(field), str) or not data[field] for field in required)
+    ):
+        raise HTTPException(status_code=409, detail={"code": "a4_issue_not_eligible"})
+    return {"scope": "session_table_only", **{field: data[field] for field in required}}
 
 
 @router.post("/api/issues", status_code=201)
@@ -54,6 +126,61 @@ def create_issue(req: IssueCreate):
         title=req.title, description=req.description, severity=req.severity, ifc_guid=req.ifc_guid,
         usd_prim_path=req.usd_prim_path, model_version_id=req.model_version_id, assignee=req.assignee,
     )
+
+
+@router.post("/api/internal/a4/issues", status_code=201)
+def create_a4_issue(
+    req: InternalA4IssueCreate,
+    response: Response,
+    internal_token: Optional[str] = Header(default=None, alias="X-A4-Internal-Token"),
+):
+    """Persist exactly one selected A4 row after fresh coordinator authorization."""
+    configured_token = _a4_internal_context_token()
+    if configured_token is None:
+        raise HTTPException(status_code=503, detail={"code": "a4_internal_context_unavailable"})
+    if not internal_token or not secrets.compare_digest(internal_token, configured_token):
+        raise HTTPException(status_code=401, detail={"code": "a4_internal_context_unauthorized"})
+    current_context = _current_a4_issue_context(req.a4_trusted_context)
+    reference = parse_proof_token(req.evidence_proof)
+    if reference is None:
+        raise HTTPException(status_code=409, detail={"code": "a4_proof_unavailable"})
+    digest = proof_digest(req.evidence_proof)
+    store = _get_store()
+    try:
+        replay = store.replay_a4_issue_if_consumed(
+            proof_id=reference.proof_id,
+            proof_digest=digest,
+            current_context=current_context,
+            title=req.title,
+            description=req.description,
+            severity=req.severity,
+            assignee=req.assignee,
+        )
+    except A4IssueConflict as exc:
+        raise HTTPException(status_code=409, detail={"code": "a4_proof_unavailable"}) from exc
+    if replay is not None:
+        response.status_code = 200
+        return replay
+    try:
+        verified = proof_registry.verify(req.evidence_proof)
+    except ProofExpired as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "a4_proof_expired", "retryable": True, "recovery": "rerun_query", "draft_preserved": True},
+        ) from exc
+    except ProofUnavailable as exc:
+        raise HTTPException(status_code=409, detail={"code": "a4_proof_unavailable"}) from exc
+    try:
+        return store.create_a4_issue(
+            verified_proof=verified,
+            current_context=current_context,
+            title=req.title,
+            description=req.description,
+            severity=req.severity,
+            assignee=req.assignee,
+        )
+    except A4IssueConflict as exc:
+        raise HTTPException(status_code=409, detail={"code": "a4_proof_unavailable"}) from exc
 
 
 @router.get("/api/issues")

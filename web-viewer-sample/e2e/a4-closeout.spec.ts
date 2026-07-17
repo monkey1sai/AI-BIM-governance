@@ -1,99 +1,272 @@
-import { test, expect } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 
-// gap-a4-closeout 取證 spec：#a4 語意查詢 B 閉環（deterministic）＋誠實邊界。
-//
-// *** 啟法＝PROCESS §3 branch-isolated stack（未 merge 分支不得碰部署區 :8004/:49102）：
-//       1. cd web-viewer-sample &&（帶 VITE_COORDINATOR_API_BASE=http://127.0.0.1:8005）npm run build:ui
-//          —— env.ts 的 build-time fallback 是 :8004，不帶 env 重 build 會讓 dist-ui 打部署區。
-//       2. branch governance :49103（GOV_PORT=49103＋fresh GOV_DB_PATH＋BIM_FILE_LIBRARY_ROOT）
-//       3. branch coordinator :8005（PORT=8005＋CONSOLE_DIST_DIR=本 branch dist-ui＋GOVERNANCE_API_BASE=:49103）
-//       4. E2E_DISABLE_WEBSERVER=1 E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8005 \
-//          A4_E2E_IFC_PATH=<host 真實 IFC 絕對路徑> npx playwright test e2e/a4-closeout.spec.ts
-//
-// *** skip-gate 效力限制（誠實揭露，比照 a1-m1-closeout.spec.ts）：前置缺失 → conditional skip
-//     → Playwright 計 pass。skip 不會 false-green 任何既有自動化 gate；真 PASS 的鐵證是
-//     artifacts/e2e/a4-trace/ 下的截圖與 trace 存在且 tracked。
-//
-// *** BCF 邊界（BACKLOG 2026-07-15 裁決＝不建 bridge）：批次建 Issue 走 source_type=manual，
-//     訊息必須明示「A4 尚無 BCF provenance bridge」——本 spec 把這句當硬斷言，不偽稱 BCF 可用。
+// Deterministic browser-contract coverage for the canonical A4 surface.  These
+// tests intentionally intercept the coordinator at its public API boundary: they
+// prove that the browser neither accepts host paths nor calls an internal service.
+// They are not a substitute for the separately required authenticated live-lab
+// session/lease/model evidence.
 const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005";
-const IFC_PATH = process.env.A4_E2E_IFC_PATH || "";
 
-test.describe("A4 closeout：#a4 deterministic 查詢＋誠實邊界", () => {
-  // 89MB 真 IFC 掃描實測 ~7.4s（本機 :49103），高負載給 120s；兩段查詢＋72 筆 issue POST，總預算 240s。
-  test.setTimeout(240_000);
+type StubResponse = {
+  status?: number;
+  body: Record<string, unknown>;
+};
 
-  test.beforeEach(async ({ request, page }) => {
-    test.skip(!IFC_PATH, "A4_E2E_IFC_PATH 未設（需 host 上真實 IFC fixture 絕對路徑；不得改用 mock）");
+const activeSession = {
+  session_id: "review-session-a4",
+  status: "active",
+  project_id: "project-a4",
+  model_version_id: "model-a4",
+  participant_count: 1,
+  expected_stage_url: null,
+  conversion_status: "ready",
+  kit_instance_ids: [],
+  created_at: "2026-07-16T00:00:00Z",
+  updated_at: "2026-07-16T00:00:00Z",
+};
 
-    let apiOk = false;
-    try {
-      const res = await request.get(`${COORDINATOR}/api/governance/search/llm-status`, { timeout: 10_000 });
-      apiOk = res.ok();
-    } catch {
-      apiOk = false;
-    }
-    test.skip(!apiOk, "governance search proxy 未備妥（需 :49103 governance＋:8005 coordinator）");
+const interpretedFilters = (rawQuery: string) => ({
+  raw_query: rawQuery,
+  ifc_classes: ["IfcDoor"],
+  storey_tokens: [],
+  property_filters: [],
+  name_contains: [],
+  unmatched_fragments: [],
+  unresolved_terms: [],
+  validation_errors: [],
+  consumed_spans: [],
+  interpretable: true,
+  schema_valid: true,
+  usable: true,
+  complete: true,
+  notes: [],
+  interpret_source: "deterministic",
+  confidence: 1,
+  confidence_basis: "deterministic_grammar",
+});
 
-    let uiOk = false;
-    try {
-      await page.goto(`${COORDINATOR}/ui/#a4`);
-      await page.getByTestId("a4-semantic-search-page").waitFor({ state: "visible", timeout: 15_000 });
-      uiOk = true;
-    } catch {
-      uiOk = false;
-    }
-    test.skip(!uiOk, "coordinator dist-ui 非本 branch 或未起（#a4 缺 a4-semantic-search-page）：需帶 :8005 env 重跑 build:ui 後重啟 :8005");
+function searchResponse(queryId: string, scope: "session_table_only" | "ifc_ready_table_only" = "session_table_only"): Record<string, unknown> {
+  const query = "IfcDoor";
+  return {
+    status: "ok",
+    query_id: queryId,
+    retry_of_query_id: null,
+    model_version_id: "model-a4",
+    interpret_mode: "deterministic",
+    interpreted_filters: interpretedFilters(query),
+    results: [{
+      ifc_guid: "A4-DOOR-001",
+      usd_prim_path: null,
+      ifc_class: "IfcDoor",
+      name: "4F 防火門",
+      storey: "4F",
+      properties: {},
+      match_status: "matched_query",
+      confidence: 1,
+      confidence_basis: "deterministic_grammar",
+      evidence_refs: ["class:IfcDoor"],
+      mapping_observed: false,
+      action_eligible: false,
+      highlight_eligible: false,
+    }],
+    stats: { total: 1, scanned: 1, matched: 1, not_matched: 0, returned: 1, mapped: 0, unmapped: 1, truncated: false },
+    evidence_refs: [{ kind: "interpreter", version: "deterministic_filter_v2" }],
+    model_invocation: { attempted: false, served_model: null, finish_reason: null, latency_ms: null, error_code: null },
+    session_binding: scope === "session_table_only" ? {
+      review_session_id: activeSession.session_id,
+      principal_ref: "a4p_test_opaque",
+      model_version_id: "model-a4",
+      primary_artifact_id: "artifact-a4",
+      active_binding_revision: null,
+      mapping_provenance: "unavailable",
+      primary_lease_capability: "lab_unverified",
+    } : null,
+    search_scope: scope,
+    completion_scope: "complete_table",
+    proof_eligible: false,
+    issue_eligible: false,
+    highlight_eligible: false,
+    next_step: null,
+  };
+}
+
+function semanticErrorResponse(queryId: string): Record<string, unknown> {
+  return {
+    ...searchResponse(queryId),
+    status: "semantic_error",
+    results: [],
+    stats: { total: 0, scanned: 0, matched: 0, not_matched: 0, returned: 0, mapped: 0, unmapped: 0, truncated: false },
+    error_code: "llm_timeout",
+    retryable: true,
+  };
+}
+
+async function fulfillJson(route: Route, response: StubResponse): Promise<void> {
+  await route.fulfill({
+    status: response.status ?? 200,
+    contentType: "application/json",
+    body: JSON.stringify(response.body),
+  });
+}
+
+async function installA4CoordinatorStubs(
+  page: Page,
+  options: {
+    sessionResponses?: StubResponse[];
+    ifcReadyResponses?: StubResponse[];
+  } = {},
+) {
+  const sessionRequests: Record<string, unknown>[] = [];
+  const ifcReadyRequests: Record<string, unknown>[] = [];
+  const sessionResponses = options.sessionResponses ?? [{ body: searchResponse("a4q_e2e_complete") }];
+  const ifcReadyResponses = options.ifcReadyResponses ?? [{ body: searchResponse("a4q_e2e_ifc_ready", "ifc_ready_table_only") }];
+  let sessionIndex = 0;
+  let ifcReadyIndex = 0;
+
+  await page.route("**/api/runtime/status", async (route) => {
+    await fulfillJson(route, {
+      body: { sessions: { count: 1, active_count: 1, participant_count: 1, items: [activeSession] } },
+    });
+  });
+  await page.route("**/api/external/ifc-ready**", async (route) => {
+    await fulfillJson(route, {
+      body: {
+        count: 1,
+        items: [{ ifc_ready_job_id: "ifc-ready-a4", status: "ready", conversion_status: "ready" }],
+      },
+    });
+  });
+  await page.route("**/api/governance/search/llm-status", async (route) => {
+    await fulfillJson(route, {
+      body: {
+        service: "a4-search-llm",
+        enabled: false,
+        configured: false,
+        state: "disabled",
+        model: null,
+        checked_at: null,
+        check_source: "config",
+        freshness: "unknown",
+        ttl_s: 0,
+        transport_class: "unconfigured",
+        error_code: "llm_disabled",
+      },
+    });
+  });
+  await page.route("**/api/governance/search/model/for-session/**", async (route) => {
+    sessionRequests.push(JSON.parse(route.request().postData() || "{}") as Record<string, unknown>);
+    const response = sessionResponses[Math.min(sessionIndex, sessionResponses.length - 1)];
+    sessionIndex += 1;
+    await fulfillJson(route, response);
+  });
+  await page.route("**/api/governance/search/model/for-ifc-ready/**", async (route) => {
+    ifcReadyRequests.push(JSON.parse(route.request().postData() || "{}") as Record<string, unknown>);
+    const response = ifcReadyResponses[Math.min(ifcReadyIndex, ifcReadyResponses.length - 1)];
+    ifcReadyIndex += 1;
+    await fulfillJson(route, response);
   });
 
-  test("path 來源 → deterministic 查詢 → interpreted filters/結果表 → 批次建 Issue（manual；BCF bridge 誠實 unavailable）", async ({ page }) => {
-    // PROCESS §3 network 面斷言：本頁只許打 coordinator（:8005）的 /api/* proxy；:49102 直連或部署區 :8004＝違規。
-    const badCalls: string[] = [];
-    page.on("request", (r) => {
-      const u = r.url();
-      if (u.includes(":49102") || u.includes(":8004")) badCalls.push(u);
+  return { sessionRequests, ifcReadyRequests };
+}
+
+test.describe("A4 canonical browser contract", () => {
+  test("legacy A4 routes scrub URL-carried data and render one session-first table-only surface", async ({ page }) => {
+    await installA4CoordinatorStubs(page);
+
+    for (const legacyRoute of [
+      "/#a4?query=IfcDoor&usd_prim_path=%2FRoot",
+      "/#semantic-search?evidence_proof=opaque-proof",
+      "/#app/ai-search?ifc_guid=A4-DOOR-001",
+      "/#workspace?dock=a4&a4_handoff=opaque",
+    ]) {
+      await page.goto(legacyRoute);
+      await expect(page).toHaveURL(/#workspace\?dock=a4$/);
+      await expect(page.getByTestId("a4-semantic-search-page")).toBeVisible();
+    }
+
+    await expect(page.getByTestId("a4-source-session")).toBeVisible();
+    await expect(page.getByTestId("a4-source-ifc_ready")).toBeVisible();
+    await expect(page.getByTestId("a4-table-only")).toBeVisible();
+    await expect(page.getByTestId("a4-results-table")).toContainText("無列");
+    await expect(page.getByTestId("a4-source-path")).toHaveCount(0);
+    await expect(page.getByTestId("a4-path-input")).toHaveCount(0);
+    await expect(page.getByTestId("a4-select-all")).toHaveCount(0);
+    await expect(page.getByTestId("a4-create-issues")).toHaveCount(0);
+    await expect(page.locator('[data-testid*="handoff"], [data-testid*="highlight"]')).toHaveCount(0);
+    await expect(page.getByText("符合 7", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("不符合 5", { exact: true })).toHaveCount(0);
+  });
+
+  test("session query sends only allowlisted controls to the coordinator and renders query-match rows", async ({ page }) => {
+    const apiCalls: string[] = [];
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname.startsWith("/api/")) apiCalls.push(request.url());
+    });
+    const probes = await installA4CoordinatorStubs(page);
+
+    await page.goto("/#workspace?dock=a4");
+    await expect(page.getByTestId("a4-run")).toBeEnabled();
+    await page.getByTestId("a4-mode-deterministic").click();
+    await page.getByTestId("a4-run").click();
+
+    await expect(page.locator("body")).toContainText("a4q_e2e_complete");
+    await expect(page.getByTestId("a4-results-table")).toContainText("符合查詢條件");
+    expect(probes.sessionRequests).toHaveLength(1);
+    expect(Object.keys(probes.sessionRequests[0]).sort()).toEqual(["interpret_mode", "query"]);
+    expect(probes.sessionRequests[0].interpret_mode).toBe("deterministic");
+    expect(JSON.stringify(probes.sessionRequests[0])).not.toMatch(/ifc_source_path|element_mapping_path|usd_prim_path|ifc_guid|lease|actor/i);
+
+    const coordinatorOrigin = new URL(COORDINATOR).origin;
+    expect(apiCalls.every((url) => new URL(url).origin === coordinatorOrigin)).toBe(true);
+    expect(apiCalls.some((url) => url.includes("/api/governance/search/model/for-session/review-session-a4"))).toBe(true);
+    expect(apiCalls.some((url) => /\/api\/governance\/search\/model(?:$|\?)/.test(new URL(url).pathname))).toBe(false);
+  });
+
+  test("retry keeps the explicit query/mode and correlates only a retryable semantic failure", async ({ page }) => {
+    const probes = await installA4CoordinatorStubs(page, {
+      sessionResponses: [
+        { body: semanticErrorResponse("a4q_e2e_retry_parent") },
+        { body: searchResponse("a4q_e2e_retry_child") },
+      ],
     });
 
-    // 誠實邊界：隔離站未設 ORNITH_API_KEY → llm-status configured=false，頁面必須顯示降級警示、
-    // 不阻斷頁面、不偽稱 semantic 可用（BACKLOG gap-a4-closeout 誠實邊界欄）。
-    await expect(page.getByTestId("a4-llm-missing")).toBeVisible({ timeout: 15_000 });
-
-    await page.getByTestId("a4-source-path").click();
-    await page.getByTestId("a4-path-input").fill(IFC_PATH);
-    await page.getByTestId("a4-mode-deterministic").click();
-    await page.getByTestId("a4-query-input").fill("IfcDoor");
-
-    await expect(page.getByTestId("a4-run")).toBeEnabled({ timeout: 5_000 });
+    await page.goto("/#workspace?dock=a4");
+    await page.getByTestId("a4-mode-semantic").click();
     await page.getByTestId("a4-run").click();
+    await expect(page.getByTestId("a4-run-err")).toContainText("llm_timeout");
+    await expect(page.getByTestId("a4-retry")).toBeEnabled();
+    await page.getByTestId("a4-retry").click();
 
-    // 結果表出現真列＝governance 真實 API 回傳（fixture-bytes.ifc 已知含 72 樘 IfcDoor）。
-    await expect(page.getByTestId("a4-results-table").locator("tbody tr")).not.toHaveCount(0, { timeout: 120_000 });
-    // 可解釋性：interpret_source 與 deterministic 文法 confidence basis 必須可見（confidence 有基礎才顯示）。
-    await expect(page.getByText("interpret_source").first()).toBeVisible();
-    await expect(page.getByText("deterministic_grammar").first()).toBeVisible();
-
-    // 批次建 Issue：manual source；BCF bridge 誠實 unavailable（不偽成功）。
-    await page.getByTestId("a4-select-all").click();
-    await expect(page.getByTestId("a4-create-issues")).toBeEnabled();
-    await page.getByTestId("a4-create-issues").click();
-    const issueMsg = page.getByTestId("a4-issue-msg");
-    await expect(issueMsg).toContainText("source_type=manual", { timeout: 90_000 });
-    await expect(issueMsg).toContainText("BCF provenance bridge");
-
-    expect(badCalls, "不得直連 :49102 或部署區 :8004（PROCESS §3 network 面斷言）").toEqual([]);
-    await page.screenshot({ path: "../artifacts/e2e/a4-trace/a4-closeout-flow.png", fullPage: true });
+    await expect(page.locator("body")).toContainText("a4q_e2e_retry_child");
+    expect(probes.sessionRequests).toHaveLength(2);
+    expect(probes.sessionRequests[0].interpret_mode).toBe("semantic");
+    expect(probes.sessionRequests[1]).toMatchObject({
+      query: probes.sessionRequests[0].query,
+      interpret_mode: "semantic",
+      retry_of_query_id: "a4q_e2e_retry_parent",
+    });
   });
 
-  test("誠實 fallback：0 筆／不可解譯顯明確警示，不偽造結果列", async ({ page }) => {
-    await page.getByTestId("a4-source-path").click();
-    await page.getByTestId("a4-path-input").fill(IFC_PATH);
-    await page.getByTestId("a4-mode-deterministic").click();
-    // fixture 無此類（或文法不可解譯）→ 兩種誠實路徑都必須以 a4-run-err 顯式表態，結果表維持「無列」。
-    await page.getByTestId("a4-query-input").fill("IfcSpaceHeater");
-    await expect(page.getByTestId("a4-run")).toBeEnabled({ timeout: 5_000 });
+  test("ifc-ready compatibility stays table-only and an unavailable session returns only a safe error", async ({ page }) => {
+    const probes = await installA4CoordinatorStubs(page, {
+      sessionResponses: [{
+        status: 401,
+        body: { error_code: "a4_authentication_required", detail: "must never be rendered" },
+      }],
+    });
+
+    await page.goto("/#workspace?dock=a4");
     await page.getByTestId("a4-run").click();
-    await expect(page.getByTestId("a4-run-err")).toBeVisible({ timeout: 120_000 });
+    await expect(page.getByTestId("a4-run-err")).toContainText("已登入");
+    await expect(page.getByText("must never be rendered", { exact: true })).toHaveCount(0);
     await expect(page.getByTestId("a4-results-table")).toContainText("無列");
-    await page.screenshot({ path: "../artifacts/e2e/a4-trace/a4-closeout-empty-honest.png", fullPage: true });
+
+    await page.getByTestId("a4-source-ifc_ready").click();
+    await page.getByTestId("a4-run").click();
+    await expect(page.locator("body")).toContainText("a4q_e2e_ifc_ready");
+    await expect(page.locator("body")).toContainText("ifc_ready_table_only");
+    await expect(page.getByTestId("a4-table-only")).toBeVisible();
+    expect(probes.ifcReadyRequests).toHaveLength(1);
+    expect(Object.keys(probes.ifcReadyRequests[0]).sort()).toEqual(["interpret_mode", "query"]);
   });
 });
