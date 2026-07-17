@@ -20,6 +20,7 @@ function New-DeployEdgeVolumeHarness {
     $scriptsRoot = Join-Path $DeployRoot 'scripts'
     $libRoot = Join-Path $scriptsRoot 'lib'
     New-Item -ItemType Directory -Path $libRoot -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $SourceRepoRoot 'scripts\lib\design-assets.ps1') -Destination (Join-Path $libRoot 'design-assets.ps1')
 
     $deploySourcePath = Join-Path $SourceRepoRoot 'scripts\deploy.ps1'
     $deployScript = Get-Content -LiteralPath $deploySourcePath -Raw
@@ -283,6 +284,653 @@ try {
     Assert-True (Test-Path -LiteralPath (Join-Path $cleanupRoot '.github\workflows\ci.yml')) '.github workflows kept'
     Assert-True (Test-Path -LiteralPath (Join-Path $cleanupRoot 'scripts\deploy.ps1')) 'deploy.ps1 kept'
 
+    $assetStageRoot = Join-Path $sandbox 'design-assets-stage'
+    New-Item -ItemType Directory -Path (Join-Path $assetStageRoot 'docs\plans\assets') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $assetStageRoot 'docs\plans\uploads') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $assetStageRoot 'web-viewer-sample\public\design-assets') -Force | Out-Null
+    'asset-a' | Set-Content -LiteralPath (Join-Path $assetStageRoot 'docs\plans\assets\vp-test.png') -Encoding ascii
+    'asset-b' | Set-Content -LiteralPath (Join-Path $assetStageRoot 'docs\plans\uploads\concept-test.png') -Encoding ascii
+    'stale' | Set-Content -LiteralPath (Join-Path $assetStageRoot 'web-viewer-sample\public\design-assets\stale.png') -Encoding ascii
+    $unexpectedAssetPath = Join-Path $assetStageRoot 'web-viewer-sample\public\design-assets\unexpected.txt'
+    'must survive fail-closed validation' | Set-Content -LiteralPath $unexpectedAssetPath -Encoding ascii
+    Assert-Throws { Sync-DeploymentDesignAssets -RepoRoot $assetStageRoot } 'unexpected non-PNG staging residue fails closed'
+    Assert-True (Test-Path -LiteralPath $unexpectedAssetPath -PathType Leaf) 'unexpected staging file is preserved after rejection'
+    Remove-Item -LiteralPath $unexpectedAssetPath -Force
+    $unexpectedAssetDirectory = Join-Path $assetStageRoot 'web-viewer-sample\public\design-assets\unexpected-directory'
+    New-Item -ItemType Directory -Path $unexpectedAssetDirectory | Out-Null
+    Assert-Throws { Sync-DeploymentDesignAssets -RepoRoot $assetStageRoot } 'unexpected staging directory fails closed'
+    Assert-True (Test-Path -LiteralPath $unexpectedAssetDirectory -PathType Container) 'unexpected staging directory is preserved after rejection'
+    [System.IO.Directory]::Delete($unexpectedAssetDirectory, $false)
+    $assetStage = Sync-DeploymentDesignAssets -RepoRoot $assetStageRoot
+    Assert-Equal 'synced' $assetStage.Mode 'design assets are refreshed from tracked docs sources'
+    Assert-Equal 2 $assetStage.Count 'design assets stage includes both source directories'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $assetStageRoot 'web-viewer-sample\public\design-assets\stale.png'))) 'stale generated PNG is removed'
+    $rollbackDestinationParent = Join-Path $assetStageRoot 'web-viewer-sample\public'
+    $rollbackDestination = Join-Path $rollbackDestinationParent 'design-assets'
+    $rollbackStagePath = Join-Path $rollbackDestinationParent ".design-assets-stage-rollback-$([Guid]::NewGuid().ToString('N'))"
+    Copy-Item -LiteralPath $rollbackDestination -Destination $rollbackStagePath -Recurse
+    $rollbackInventoryBefore = @(
+        Get-ChildItem -LiteralPath $rollbackDestination -Force -File |
+            Sort-Object Name |
+            ForEach-Object { "$($_.Name):$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" }
+    ) -join "`n"
+    $rollbackMoveCounter = [pscustomobject]@{ Value = 0 }
+    $rollbackMover = {
+        param([string] $Source, [string] $Target)
+        $rollbackMoveCounter.Value++
+        if ($rollbackMoveCounter.Value -eq 2) {
+            throw 'injected stage-to-destination rename failure'
+        }
+        [System.IO.Directory]::Move($Source, $Target)
+    }.GetNewClosure()
+    Assert-Throws {
+        Publish-DeploymentDesignAssetStage `
+            -StagePath $rollbackStagePath `
+            -Destination $rollbackDestination `
+            -DestinationParent $rollbackDestinationParent `
+            -BoundaryRoot $assetStageRoot `
+            -DirectoryMover $rollbackMover
+    } 'claim/swap publication restores the last-known-good directory when stage rename fails'
+    $rollbackInventoryAfter = @(
+        Get-ChildItem -LiteralPath $rollbackDestination -Force -File |
+            Sort-Object Name |
+            ForEach-Object { "$($_.Name):$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" }
+    ) -join "`n"
+    Assert-Equal $rollbackInventoryBefore $rollbackInventoryAfter 'rename failure rollback preserves canonical design-asset bytes and inventory'
+    Assert-True (Test-Path -LiteralPath $rollbackStagePath -PathType Container) 'rename failure leaves the validated stage available for diagnosis'
+    Assert-NoDeploymentDesignAssetBackupResidue -DestinationParent $rollbackDestinationParent -BoundaryRoot $assetStageRoot
+    Remove-ReplaceableDeploymentDesignAssetDirectory -Destination $rollbackStagePath -BoundaryRoot $assetStageRoot
+
+    $postPublishStagePath = Join-Path $rollbackDestinationParent ".design-assets-stage-post-publish-$([Guid]::NewGuid().ToString('N'))"
+    Copy-Item -LiteralPath $rollbackDestination -Destination $postPublishStagePath -Recurse
+    $postPublishValidator = {
+        param([string] $PublishedPath, [string] $RootBoundary)
+        throw 'injected post-publish validation failure'
+    }
+    Assert-Throws {
+        Publish-DeploymentDesignAssetStage `
+            -StagePath $postPublishStagePath `
+            -Destination $rollbackDestination `
+            -DestinationParent $rollbackDestinationParent `
+            -BoundaryRoot $assetStageRoot `
+            -PublicationValidator $postPublishValidator
+    } 'post-publish validation failure restores the last-known-good directory'
+    $postPublishInventoryAfter = @(
+        Get-ChildItem -LiteralPath $rollbackDestination -Force -File |
+            Sort-Object Name |
+            ForEach-Object { "$($_.Name):$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" }
+    ) -join "`n"
+    Assert-Equal $rollbackInventoryBefore $postPublishInventoryAfter 'post-publish rollback preserves canonical bytes and inventory'
+    Assert-True (Test-Path -LiteralPath $postPublishStagePath -PathType Container) 'rejected post-publish directory is moved back to staging'
+    Assert-NoDeploymentDesignAssetBackupResidue -DestinationParent $rollbackDestinationParent -BoundaryRoot $assetStageRoot
+    Remove-ReplaceableDeploymentDesignAssetDirectory -Destination $postPublishStagePath -BoundaryRoot $assetStageRoot
+
+    $moveBackFailureStagePath = Join-Path $rollbackDestinationParent ".design-assets-stage-move-back-failure-$([Guid]::NewGuid().ToString('N'))"
+    Copy-Item -LiteralPath $rollbackDestination -Destination $moveBackFailureStagePath -Recurse
+    'rejected-new-publication' | Set-Content -LiteralPath (Join-Path $moveBackFailureStagePath 'vp-test.png') -Encoding ascii
+    $moveBackFailureCounter = [pscustomobject]@{ Value = 0 }
+    $moveBackFailureMover = {
+        param([string] $Source, [string] $Target)
+        $moveBackFailureCounter.Value++
+        if ($moveBackFailureCounter.Value -eq 3) {
+            throw 'injected rejected-publication move-back failure'
+        }
+        [System.IO.Directory]::Move($Source, $Target)
+    }.GetNewClosure()
+    $moveBackFailureMessage = $null
+    try {
+        Publish-DeploymentDesignAssetStage `
+            -StagePath $moveBackFailureStagePath `
+            -Destination $rollbackDestination `
+            -DestinationParent $rollbackDestinationParent `
+            -BoundaryRoot $assetStageRoot `
+            -DirectoryMover $moveBackFailureMover `
+            -PublicationValidator $postPublishValidator
+    } catch {
+        $moveBackFailureMessage = $_.Exception.Message
+    }
+    Assert-True ($moveBackFailureMessage -match 'Additionally failed to move the rejected design-assets publication back to staging') 'rollback move-back failure preserves both primary and recovery errors'
+    $moveBackFailureBackups = @(
+        Get-ChildItem -LiteralPath $rollbackDestinationParent -Force -Directory |
+            Where-Object { $_.Name.StartsWith('.design-assets-backup-', [System.StringComparison]::Ordinal) }
+    )
+    Assert-Equal 1 $moveBackFailureBackups.Count 'rollback move-back failure retains exactly one last-known-good backup'
+    Assert-True (-not (Test-Path -LiteralPath $moveBackFailureStagePath)) 'rollback move-back failure leaves the rejected publication at canonical'
+    Assert-Equal 'rejected-new-publication' ((Get-Content -LiteralPath (Join-Path $rollbackDestination 'vp-test.png') -Raw).Trim()) 'rollback move-back failure never overwrites the retained backup'
+    Remove-ReplaceableDeploymentDesignAssetDirectory -Destination $rollbackDestination -BoundaryRoot $assetStageRoot
+    [System.IO.Directory]::Move($moveBackFailureBackups[0].FullName, $rollbackDestination)
+
+    $backupRestoreFailureStagePath = Join-Path $rollbackDestinationParent ".design-assets-stage-backup-restore-failure-$([Guid]::NewGuid().ToString('N'))"
+    Copy-Item -LiteralPath $rollbackDestination -Destination $backupRestoreFailureStagePath -Recurse
+    'rejected-before-restore' | Set-Content -LiteralPath (Join-Path $backupRestoreFailureStagePath 'vp-test.png') -Encoding ascii
+    $backupRestoreFailureCounter = [pscustomobject]@{ Value = 0 }
+    $backupRestoreFailureMover = {
+        param([string] $Source, [string] $Target)
+        $backupRestoreFailureCounter.Value++
+        if ($backupRestoreFailureCounter.Value -eq 4) {
+            throw 'injected backup restore failure'
+        }
+        [System.IO.Directory]::Move($Source, $Target)
+    }.GetNewClosure()
+    $backupRestoreFailureMessage = $null
+    try {
+        Publish-DeploymentDesignAssetStage `
+            -StagePath $backupRestoreFailureStagePath `
+            -Destination $rollbackDestination `
+            -DestinationParent $rollbackDestinationParent `
+            -BoundaryRoot $assetStageRoot `
+            -DirectoryMover $backupRestoreFailureMover `
+            -PublicationValidator $postPublishValidator
+    } catch {
+        $backupRestoreFailureMessage = $_.Exception.Message
+    }
+    Assert-True ($backupRestoreFailureMessage -match 'Additionally failed to restore the previous design-assets directory') 'backup restore failure preserves both primary and recovery errors'
+    $backupRestoreFailureBackups = @(
+        Get-ChildItem -LiteralPath $rollbackDestinationParent -Force -Directory |
+            Where-Object { $_.Name.StartsWith('.design-assets-backup-', [System.StringComparison]::Ordinal) }
+    )
+    Assert-Equal 1 $backupRestoreFailureBackups.Count 'backup restore failure retains exactly one last-known-good backup'
+    Assert-True (-not (Test-Path -LiteralPath $rollbackDestination)) 'backup restore failure leaves canonical absent rather than claiming success'
+    Assert-Equal 'rejected-before-restore' ((Get-Content -LiteralPath (Join-Path $backupRestoreFailureStagePath 'vp-test.png') -Raw).Trim()) 'backup restore failure retains the rejected publication in staging'
+    [System.IO.Directory]::Move($backupRestoreFailureBackups[0].FullName, $rollbackDestination)
+    Remove-ReplaceableDeploymentDesignAssetDirectory -Destination $backupRestoreFailureStagePath -BoundaryRoot $assetStageRoot
+
+    $backupCleanupFailureStagePath = Join-Path $rollbackDestinationParent ".design-assets-stage-backup-cleanup-failure-$([Guid]::NewGuid().ToString('N'))"
+    Copy-Item -LiteralPath $rollbackDestination -Destination $backupCleanupFailureStagePath -Recurse
+    $backupCleanupFailureRemover = {
+        param([string] $DirectoryPath, [string] $RootBoundary)
+        throw 'injected backup cleanup failure'
+    }
+    $backupCleanupFailureMessage = $null
+    try {
+        Publish-DeploymentDesignAssetStage `
+            -StagePath $backupCleanupFailureStagePath `
+            -Destination $rollbackDestination `
+            -DestinationParent $rollbackDestinationParent `
+            -BoundaryRoot $assetStageRoot `
+            -DirectoryRemover $backupCleanupFailureRemover
+    } catch {
+        $backupCleanupFailureMessage = $_.Exception.Message
+    }
+    Assert-True ($backupCleanupFailureMessage -match 'claimed backup was retained for manual inspection') 'backup cleanup failure is fail-closed and reports retained recovery data'
+    $backupCleanupFailureBackups = @(
+        Get-ChildItem -LiteralPath $rollbackDestinationParent -Force -Directory |
+            Where-Object { $_.Name.StartsWith('.design-assets-backup-', [System.StringComparison]::Ordinal) }
+    )
+    Assert-Equal 1 $backupCleanupFailureBackups.Count 'backup cleanup failure retains exactly one backup'
+    Assert-DeploymentDesignAssetsPrestaged -Destination $rollbackDestination -BoundaryRoot $assetStageRoot | Out-Null
+    Remove-ReplaceableDeploymentDesignAssetDirectory -Destination $backupCleanupFailureBackups[0].FullName -BoundaryRoot $assetStageRoot
+    Assert-NoDeploymentDesignAssetBackupResidue -DestinationParent $rollbackDestinationParent -BoundaryRoot $assetStageRoot
+
+    Remove-Item -LiteralPath (Join-Path $assetStageRoot 'docs') -Recurse -Force
+    $prestaged = Sync-DeploymentDesignAssets -RepoRoot $assetStageRoot
+    Assert-Equal 'prestaged' $prestaged.Mode 'deployment without root docs reuses verified prestaged assets'
+    'tampered' | Set-Content -LiteralPath (Join-Path $assetStageRoot 'web-viewer-sample\public\design-assets\vp-test.png') -Encoding ascii
+    Assert-Throws { Sync-DeploymentDesignAssets -RepoRoot $assetStageRoot } 'tampered prestaged asset is rejected by SHA-256 manifest'
+
+    $removeVerifiedAssetJunction = {
+        param(
+            [Parameter(Mandatory = $true)][string] $LinkPath,
+            [Parameter(Mandatory = $true)][string] $ExpectedTarget
+        )
+
+        $linkItem = Get-Item -LiteralPath $LinkPath -Force -ErrorAction Stop
+        if (-not [bool]($linkItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+            throw "design asset test cleanup refused non-reparse path: '$LinkPath'"
+        }
+        $resolvedTarget = $linkItem.ResolveLinkTarget($true)
+        if (
+            $null -eq $resolvedTarget -or
+            -not ([System.IO.Path]::GetFullPath($resolvedTarget.FullName)).Equals(
+                [System.IO.Path]::GetFullPath($ExpectedTarget),
+                [System.StringComparison]::OrdinalIgnoreCase
+            )
+        ) {
+            throw "design asset test cleanup refused junction target mismatch: '$LinkPath'"
+        }
+        [System.IO.Directory]::Delete([System.IO.Path]::GetFullPath($LinkPath), $false)
+        Assert-True (-not (Test-Path -LiteralPath $LinkPath)) 'design asset test junction is detached without traversing target'
+        Assert-True (Test-Path -LiteralPath $ExpectedTarget -PathType Container) 'design asset test junction target remains after detach'
+    }.GetNewClosure()
+
+    $sourceGuardRoot = Join-Path $sandbox 'design-assets-source-guard'
+    $sourceGuardAssets = Join-Path $sourceGuardRoot 'docs\plans\assets'
+    $sourceGuardUploads = Join-Path $sourceGuardRoot 'docs\plans\uploads'
+    $sourceGuardPublic = Join-Path $sourceGuardRoot 'web-viewer-sample\public'
+    $sourceGuardDestination = Join-Path $sourceGuardPublic 'design-assets'
+    New-Item -ItemType Directory -Path $sourceGuardAssets -Force | Out-Null
+    New-Item -ItemType Directory -Path $sourceGuardUploads -Force | Out-Null
+    New-Item -ItemType Directory -Path $sourceGuardPublic -Force | Out-Null
+    'source-a' | Set-Content -LiteralPath (Join-Path $sourceGuardAssets 'vp-source-guard.png') -Encoding ascii
+    'source-b' | Set-Content -LiteralPath (Join-Path $sourceGuardUploads 'concept-source-guard.png') -Encoding ascii
+    Sync-DeploymentDesignAssets -RepoRoot $sourceGuardRoot | Out-Null
+    $sourceGuardInventoryBefore = @(
+        Get-ChildItem -LiteralPath $sourceGuardDestination -Force -File |
+            Sort-Object Name |
+            ForEach-Object { "$($_.Name):$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" }
+    ) -join "`n"
+
+    $sourceGuardLock = Enter-DeploymentDesignAssetLock -DestinationParent $sourceGuardPublic -BoundaryRoot $sourceGuardRoot
+    try {
+        $callerOwnedLockResult = Sync-DeploymentDesignAssets -RepoRoot $sourceGuardRoot -LockHandle $sourceGuardLock
+        Assert-Equal 'synced' $callerOwnedLockResult.Mode 'PowerShell sync accepts the live caller-owned lock without reacquiring it'
+        Assert-True (Test-Path -LiteralPath (Join-Path $sourceGuardPublic '.design-assets-sync.lock') -PathType Leaf) 'caller-owned lock remains held after nested sync'
+        Assert-Throws { Sync-DeploymentDesignAssets -RepoRoot $sourceGuardRoot } 'PowerShell design-asset lock rejects a concurrent official adapter'
+    } finally {
+        $sourceGuardLock.Dispose()
+    }
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $sourceGuardPublic '.design-assets-sync.lock'))) 'PowerShell lock uses delete-on-close without stale residue'
+
+    $sourceDeniedAncestor = Join-Path $sourceGuardRoot 'docs\plans'
+    $sourceAccessDeniedReader = {
+        param([string] $CandidatePath)
+        if ([System.IO.Path]::GetFullPath($CandidatePath).Equals(
+            [System.IO.Path]::GetFullPath($sourceDeniedAncestor),
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw [System.UnauthorizedAccessException]::new('injected source ancestor access denied')
+        }
+        return Get-DeploymentDesignAssetItemIfPresent -Path $CandidatePath
+    }.GetNewClosure()
+    $sourceAccessDeniedMessage = $null
+    try {
+        Sync-DeploymentDesignAssets -RepoRoot $sourceGuardRoot -SourceItemReader $sourceAccessDeniedReader | Out-Null
+    } catch {
+        $sourceAccessDeniedMessage = $_.Exception.Message
+    }
+    Assert-True ($sourceAccessDeniedMessage -match 'injected source ancestor access denied') 'PowerShell source probe rethrows access denied instead of accepting stale prestaging'
+    $sourceGuardInventoryAfterAccessDenied = @(
+        Get-ChildItem -LiteralPath $sourceGuardDestination -Force -File |
+            Sort-Object Name |
+            ForEach-Object { "$($_.Name):$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" }
+    ) -join "`n"
+    Assert-Equal $sourceGuardInventoryBefore $sourceGuardInventoryAfterAccessDenied 'access-denied source probe preserves canonical bytes and inventory'
+
+    $sourceIoFailureReader = {
+        param([string] $CandidatePath)
+        if ([System.IO.Path]::GetFullPath($CandidatePath).Equals(
+            [System.IO.Path]::GetFullPath($sourceDeniedAncestor),
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw [System.IO.IOException]::new('injected source ancestor IO failure')
+        }
+        return Get-DeploymentDesignAssetItemIfPresent -Path $CandidatePath
+    }.GetNewClosure()
+    $sourceIoFailureMessage = $null
+    try {
+        Sync-DeploymentDesignAssets -RepoRoot $sourceGuardRoot -SourceItemReader $sourceIoFailureReader | Out-Null
+    } catch {
+        $sourceIoFailureMessage = $_.Exception.Message
+    }
+    Assert-True ($sourceIoFailureMessage -match 'injected source ancestor IO failure') 'PowerShell source probe rethrows IO failure instead of accepting stale prestaging'
+
+    $sourceDoubleFailureDisposer = {
+        param([System.IO.FileStream] $Handle)
+        $Handle.Dispose()
+        throw [System.IO.IOException]::new('injected lock cleanup failure')
+    }
+    $sourceDoubleFailureMessage = $null
+    try {
+        Sync-DeploymentDesignAssets `
+            -RepoRoot $sourceGuardRoot `
+            -SourceItemReader $sourceAccessDeniedReader `
+            -LockDisposer $sourceDoubleFailureDisposer `
+            -WarningAction Stop | Out-Null
+    } catch {
+        $sourceDoubleFailureMessage = $_.Exception.Message
+    }
+    Assert-True ($sourceDoubleFailureMessage -match 'injected source ancestor access denied') 'PowerShell lock cleanup failure does not overwrite the primary source error'
+    Assert-True ($sourceDoubleFailureMessage -notmatch '^injected lock cleanup failure$') 'PowerShell double failure never promotes cleanup above primary'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $sourceGuardPublic '.design-assets-sync.lock'))) 'double-failure test still releases the design-assets lock'
+
+    Remove-Item -LiteralPath $sourceGuardAssets -Recurse -Force
+    Remove-Item -LiteralPath $sourceGuardUploads -Recurse -Force
+    'not a directory' | Set-Content -LiteralPath $sourceGuardAssets -Encoding ascii
+    'not a directory' | Set-Content -LiteralPath $sourceGuardUploads -Encoding ascii
+    Assert-Throws { Sync-DeploymentDesignAssets -RepoRoot $sourceGuardRoot } 'PowerShell source probe rejects two regular files instead of falling back to prestaged assets'
+    Remove-Item -LiteralPath $sourceGuardAssets -Force
+    Remove-Item -LiteralPath $sourceGuardUploads -Force
+    [System.IO.Directory]::Delete((Join-Path $sourceGuardRoot 'docs\plans'), $false)
+    [System.IO.Directory]::Delete((Join-Path $sourceGuardRoot 'docs'), $false)
+    'not a directory ancestor' | Set-Content -LiteralPath (Join-Path $sourceGuardRoot 'docs') -Encoding ascii
+    Assert-Throws { Sync-DeploymentDesignAssets -RepoRoot $sourceGuardRoot } 'PowerShell source probe rejects a non-directory source ancestor'
+    Remove-Item -LiteralPath (Join-Path $sourceGuardRoot 'docs') -Force
+    New-Item -ItemType Directory -Path (Join-Path $sourceGuardRoot 'docs\plans') -Force | Out-Null
+
+    $sourceGuardAssetsTarget = Join-Path $sandbox 'design-assets-source-guard-assets-target'
+    $sourceGuardUploadsTarget = Join-Path $sandbox 'design-assets-source-guard-uploads-target'
+    New-Item -ItemType Directory -Path $sourceGuardAssetsTarget -Force | Out-Null
+    New-Item -ItemType Directory -Path $sourceGuardUploadsTarget -Force | Out-Null
+    New-Item -ItemType Junction -Path $sourceGuardAssets -Target $sourceGuardAssetsTarget -ErrorAction Stop | Out-Null
+    New-Item -ItemType Junction -Path $sourceGuardUploads -Target $sourceGuardUploadsTarget -ErrorAction Stop | Out-Null
+    [System.IO.Directory]::Delete($sourceGuardAssetsTarget, $false)
+    [System.IO.Directory]::Delete($sourceGuardUploadsTarget, $false)
+    try {
+        Assert-Throws { Sync-DeploymentDesignAssets -RepoRoot $sourceGuardRoot } 'PowerShell source probe rejects two dangling junctions'
+        $danglingAssetsItem = Get-Item -LiteralPath $sourceGuardAssets -Force -ErrorAction Stop
+        Assert-True ([bool]($danglingAssetsItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) 'PowerShell source fixture keeps a real dangling assets junction'
+        [System.IO.Directory]::Delete($sourceGuardAssets, $false)
+        Assert-Throws { Sync-DeploymentDesignAssets -RepoRoot $sourceGuardRoot } 'PowerShell source probe rejects missing plus dangling source entries'
+    } finally {
+        $remainingUploadsLink = Get-Item -LiteralPath $sourceGuardUploads -Force -ErrorAction SilentlyContinue
+        if ($null -ne $remainingUploadsLink) {
+            if (-not [bool]($remainingUploadsLink.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+                throw "source guard cleanup refused non-reparse path: '$sourceGuardUploads'"
+            }
+            [System.IO.Directory]::Delete($sourceGuardUploads, $false)
+        }
+        $remainingAssetsLink = Get-Item -LiteralPath $sourceGuardAssets -Force -ErrorAction SilentlyContinue
+        if ($null -ne $remainingAssetsLink) {
+            if (-not [bool]($remainingAssetsLink.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+                throw "source guard cleanup refused non-reparse path: '$sourceGuardAssets'"
+            }
+            [System.IO.Directory]::Delete($sourceGuardAssets, $false)
+        }
+    }
+    $sourceGuardInventoryAfter = @(
+        Get-ChildItem -LiteralPath $sourceGuardDestination -Force -File |
+            Sort-Object Name |
+            ForEach-Object { "$($_.Name):$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" }
+    ) -join "`n"
+    Assert-Equal $sourceGuardInventoryBefore $sourceGuardInventoryAfter 'rejected PowerShell source types preserve the prestaged canonical inventory'
+
+    $powerShellJunctionRepo = Join-Path $sandbox 'design-assets-powershell-junction-repo'
+    $powerShellJunctionOutside = Join-Path $sandbox 'design-assets-powershell-junction-outside'
+    $powerShellJunctionPublic = Join-Path $powerShellJunctionRepo 'web-viewer-sample\public'
+    $powerShellJunctionOutsideAssets = Join-Path $powerShellJunctionOutside 'design-assets'
+    New-Item -ItemType Directory -Path (Join-Path $powerShellJunctionRepo 'docs\plans\assets') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $powerShellJunctionRepo 'docs\plans\uploads') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $powerShellJunctionRepo 'web-viewer-sample') -Force | Out-Null
+    New-Item -ItemType Directory -Path $powerShellJunctionOutsideAssets -Force | Out-Null
+    'source-a' | Set-Content -LiteralPath (Join-Path $powerShellJunctionRepo 'docs\plans\assets\vp-junction.png') -Encoding ascii
+    'source-b' | Set-Content -LiteralPath (Join-Path $powerShellJunctionRepo 'docs\plans\uploads\concept-junction.png') -Encoding ascii
+    $powerShellJunctionSentinel = Join-Path $powerShellJunctionOutsideAssets 'sentinel.png'
+    'outside sentinel' | Set-Content -LiteralPath $powerShellJunctionSentinel -Encoding ascii
+    $powerShellJunctionHashBefore = (Get-FileHash -LiteralPath $powerShellJunctionSentinel -Algorithm SHA256).Hash
+    $powerShellJunctionInventoryBefore = @(
+        Get-ChildItem -LiteralPath $powerShellJunctionOutside -Force -Recurse |
+            ForEach-Object { $_.FullName.Substring($powerShellJunctionOutside.Length) }
+    ) -join "`n"
+    try {
+        New-Item -ItemType Junction -Path $powerShellJunctionPublic -Target $powerShellJunctionOutside -ErrorAction Stop | Out-Null
+        Assert-Throws { Sync-DeploymentDesignAssets -RepoRoot $powerShellJunctionRepo } 'PowerShell sync rejects an ancestor junction before destination traversal'
+        $powerShellJunctionHashAfter = (Get-FileHash -LiteralPath $powerShellJunctionSentinel -Algorithm SHA256).Hash
+        $powerShellJunctionInventoryAfter = @(
+            Get-ChildItem -LiteralPath $powerShellJunctionOutside -Force -Recurse |
+                ForEach-Object { $_.FullName.Substring($powerShellJunctionOutside.Length) }
+        ) -join "`n"
+        Assert-Equal $powerShellJunctionHashBefore $powerShellJunctionHashAfter 'PowerShell ancestor-junction rejection preserves outside bytes'
+        Assert-Equal $powerShellJunctionInventoryBefore $powerShellJunctionInventoryAfter 'PowerShell ancestor-junction rejection preserves outside inventory'
+    } finally {
+        if (Test-Path -LiteralPath $powerShellJunctionPublic) {
+            & $removeVerifiedAssetJunction -LinkPath $powerShellJunctionPublic -ExpectedTarget $powerShellJunctionOutside
+        }
+    }
+
+    $nodeJunctionRepo = Join-Path $sandbox 'design-assets-node-junction-repo'
+    $nodeJunctionOutside = Join-Path $sandbox 'design-assets-node-junction-outside'
+    $nodeJunctionPublic = Join-Path $nodeJunctionRepo 'web-viewer-sample\public'
+    $nodeJunctionOutsideAssets = Join-Path $nodeJunctionOutside 'design-assets'
+    $nodeJunctionScript = Join-Path $nodeJunctionRepo 'web-viewer-sample\scripts\sync-design-assets.mjs'
+    New-Item -ItemType Directory -Path (Join-Path $nodeJunctionRepo 'docs\plans\assets') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $nodeJunctionRepo 'docs\plans\uploads') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Split-Path -Parent $nodeJunctionScript) -Force | Out-Null
+    New-Item -ItemType Directory -Path $nodeJunctionOutsideAssets -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'web-viewer-sample\scripts\sync-design-assets.mjs') -Destination $nodeJunctionScript
+    'source-a' | Set-Content -LiteralPath (Join-Path $nodeJunctionRepo 'docs\plans\assets\vp-junction.png') -Encoding ascii
+    'source-b' | Set-Content -LiteralPath (Join-Path $nodeJunctionRepo 'docs\plans\uploads\concept-junction.png') -Encoding ascii
+    $nodeJunctionSentinel = Join-Path $nodeJunctionOutsideAssets 'sentinel.png'
+    'outside sentinel' | Set-Content -LiteralPath $nodeJunctionSentinel -Encoding ascii
+    $nodeJunctionHashBefore = (Get-FileHash -LiteralPath $nodeJunctionSentinel -Algorithm SHA256).Hash
+    $nodeJunctionInventoryBefore = @(
+        Get-ChildItem -LiteralPath $nodeJunctionOutside -Force -Recurse |
+            ForEach-Object { $_.FullName.Substring($nodeJunctionOutside.Length) }
+    ) -join "`n"
+    $nodeJunctionStdout = Join-Path $sandbox 'design-assets-node-junction.stdout.log'
+    $nodeJunctionStderr = Join-Path $sandbox 'design-assets-node-junction.stderr.log'
+    try {
+        New-Item -ItemType Junction -Path $nodeJunctionPublic -Target $nodeJunctionOutside -ErrorAction Stop | Out-Null
+        $nodeJunctionProcess = Start-Process -FilePath 'node' -ArgumentList @($nodeJunctionScript) -Wait -PassThru -NoNewWindow `
+            -RedirectStandardOutput $nodeJunctionStdout -RedirectStandardError $nodeJunctionStderr
+        Assert-True ($nodeJunctionProcess.ExitCode -ne 0) 'Node sync rejects an ancestor junction'
+        $nodeJunctionError = Get-Content -LiteralPath $nodeJunctionStderr -Raw
+        Assert-True ($nodeJunctionError -match 'symbolic link or junction') 'Node ancestor-junction rejection reports the guarded path condition'
+        $nodeJunctionHashAfter = (Get-FileHash -LiteralPath $nodeJunctionSentinel -Algorithm SHA256).Hash
+        $nodeJunctionInventoryAfter = @(
+            Get-ChildItem -LiteralPath $nodeJunctionOutside -Force -Recurse |
+                ForEach-Object { $_.FullName.Substring($nodeJunctionOutside.Length) }
+        ) -join "`n"
+        Assert-Equal $nodeJunctionHashBefore $nodeJunctionHashAfter 'Node ancestor-junction rejection preserves outside bytes'
+        Assert-Equal $nodeJunctionInventoryBefore $nodeJunctionInventoryAfter 'Node ancestor-junction rejection preserves outside inventory'
+    } finally {
+        if (Test-Path -LiteralPath $nodeJunctionPublic) {
+            & $removeVerifiedAssetJunction -LinkPath $nodeJunctionPublic -ExpectedTarget $nodeJunctionOutside
+        }
+    }
+
+    $invokeNodeDesignAssetSync = {
+        param(
+            [Parameter(Mandatory = $true)][string] $ScriptPath,
+            [Parameter(Mandatory = $true)][string] $EvidenceName
+        )
+
+        $stdoutPath = Join-Path $sandbox "$EvidenceName.stdout.log"
+        $stderrPath = Join-Path $sandbox "$EvidenceName.stderr.log"
+        $process = Start-Process -FilePath 'node' -ArgumentList @($ScriptPath) -Wait -PassThru -NoNewWindow `
+            -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            Stdout = if (Test-Path -LiteralPath $stdoutPath) { Get-Content -LiteralPath $stdoutPath -Raw } else { '' }
+            Stderr = if (Test-Path -LiteralPath $stderrPath) { Get-Content -LiteralPath $stderrPath -Raw } else { '' }
+        }
+    }.GetNewClosure()
+
+    $nodeSourceGuardRoot = Join-Path $sandbox 'design-assets-node-source-guard'
+    $nodeSourceGuardAssets = Join-Path $nodeSourceGuardRoot 'docs\plans\assets'
+    $nodeSourceGuardUploads = Join-Path $nodeSourceGuardRoot 'docs\plans\uploads'
+    $nodeSourceGuardPublic = Join-Path $nodeSourceGuardRoot 'web-viewer-sample\public'
+    $nodeSourceGuardDestination = Join-Path $nodeSourceGuardPublic 'design-assets'
+    $nodeSourceGuardScript = Join-Path $nodeSourceGuardRoot 'web-viewer-sample\scripts\sync-design-assets.mjs'
+    New-Item -ItemType Directory -Path $nodeSourceGuardAssets -Force | Out-Null
+    New-Item -ItemType Directory -Path $nodeSourceGuardUploads -Force | Out-Null
+    New-Item -ItemType Directory -Path $nodeSourceGuardPublic -Force | Out-Null
+    New-Item -ItemType Directory -Path (Split-Path -Parent $nodeSourceGuardScript) -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'web-viewer-sample\scripts\sync-design-assets.mjs') -Destination $nodeSourceGuardScript
+    'source-a' | Set-Content -LiteralPath (Join-Path $nodeSourceGuardAssets 'vp-source-guard.png') -Encoding ascii
+    'source-b' | Set-Content -LiteralPath (Join-Path $nodeSourceGuardUploads 'concept-source-guard.png') -Encoding ascii
+    $nodeSourceInitial = & $invokeNodeDesignAssetSync -ScriptPath $nodeSourceGuardScript -EvidenceName 'node-source-initial'
+    Assert-Equal 0 $nodeSourceInitial.ExitCode 'Node source guard fixture creates an initial sealed staging directory'
+    $nodeSourceInventoryBefore = @(
+        Get-ChildItem -LiteralPath $nodeSourceGuardDestination -Force -File |
+            Sort-Object Name |
+            ForEach-Object { "$($_.Name):$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" }
+    ) -join "`n"
+
+    $nodeCrossAdapterLock = Enter-DeploymentDesignAssetLock -DestinationParent $nodeSourceGuardPublic -BoundaryRoot $nodeSourceGuardRoot
+    try {
+        $nodeLockedRun = & $invokeNodeDesignAssetSync -ScriptPath $nodeSourceGuardScript -EvidenceName 'node-source-locked'
+        Assert-True ($nodeLockedRun.ExitCode -ne 0) 'Node adapter rejects the lock held by the PowerShell adapter'
+        Assert-True ($nodeLockedRun.Stderr -match 'already running or left a stale lock') 'cross-adapter lock rejection reports a stable condition'
+    } finally {
+        $nodeCrossAdapterLock.Dispose()
+    }
+
+    Remove-Item -LiteralPath $nodeSourceGuardAssets -Recurse -Force
+    Remove-Item -LiteralPath $nodeSourceGuardUploads -Recurse -Force
+    'not a directory' | Set-Content -LiteralPath $nodeSourceGuardAssets -Encoding ascii
+    'not a directory' | Set-Content -LiteralPath $nodeSourceGuardUploads -Encoding ascii
+    $nodeRegularFilesRun = & $invokeNodeDesignAssetSync -ScriptPath $nodeSourceGuardScript -EvidenceName 'node-source-regular-files'
+    Assert-True ($nodeRegularFilesRun.ExitCode -ne 0) 'Node source probe rejects two regular files'
+    Assert-True ($nodeRegularFilesRun.Stderr -match 'source exists but is not a directory') 'Node regular-file rejection reports the source type'
+    Remove-Item -LiteralPath $nodeSourceGuardAssets -Force
+    Remove-Item -LiteralPath $nodeSourceGuardUploads -Force
+    [System.IO.Directory]::Delete((Join-Path $nodeSourceGuardRoot 'docs\plans'), $false)
+    [System.IO.Directory]::Delete((Join-Path $nodeSourceGuardRoot 'docs'), $false)
+    'not a directory ancestor' | Set-Content -LiteralPath (Join-Path $nodeSourceGuardRoot 'docs') -Encoding ascii
+    $nodeAncestorFileRun = & $invokeNodeDesignAssetSync -ScriptPath $nodeSourceGuardScript -EvidenceName 'node-source-ancestor-file'
+    Assert-True ($nodeAncestorFileRun.ExitCode -ne 0) 'Node source probe rejects a non-directory source ancestor'
+    Assert-True ($nodeAncestorFileRun.Stderr -match 'path ancestor is not a directory') 'Node source ancestor rejection reports the guarded path condition'
+    Remove-Item -LiteralPath (Join-Path $nodeSourceGuardRoot 'docs') -Force
+    New-Item -ItemType Directory -Path (Join-Path $nodeSourceGuardRoot 'docs\plans') -Force | Out-Null
+
+    $nodeSourceAssetsTarget = Join-Path $sandbox 'design-assets-node-source-assets-target'
+    $nodeSourceUploadsTarget = Join-Path $sandbox 'design-assets-node-source-uploads-target'
+    New-Item -ItemType Directory -Path $nodeSourceAssetsTarget -Force | Out-Null
+    New-Item -ItemType Directory -Path $nodeSourceUploadsTarget -Force | Out-Null
+    New-Item -ItemType Junction -Path $nodeSourceGuardAssets -Target $nodeSourceAssetsTarget -ErrorAction Stop | Out-Null
+    New-Item -ItemType Junction -Path $nodeSourceGuardUploads -Target $nodeSourceUploadsTarget -ErrorAction Stop | Out-Null
+    [System.IO.Directory]::Delete($nodeSourceAssetsTarget, $false)
+    [System.IO.Directory]::Delete($nodeSourceUploadsTarget, $false)
+    try {
+        $nodeDanglingRun = & $invokeNodeDesignAssetSync -ScriptPath $nodeSourceGuardScript -EvidenceName 'node-source-dangling'
+        Assert-True ($nodeDanglingRun.ExitCode -ne 0) 'Node source probe rejects two dangling junctions'
+        Assert-True ($nodeDanglingRun.Stderr -match 'symbolic link or junction') 'Node dangling-junction rejection reports the guarded path condition'
+        [System.IO.Directory]::Delete($nodeSourceGuardAssets, $false)
+        $nodeMixedRun = & $invokeNodeDesignAssetSync -ScriptPath $nodeSourceGuardScript -EvidenceName 'node-source-missing-dangling'
+        Assert-True ($nodeMixedRun.ExitCode -ne 0) 'Node source probe rejects missing plus dangling source entries'
+        Assert-True ($nodeMixedRun.Stderr -match 'symbolic link or junction') 'Node mixed missing/dangling rejection does not fall back to prestaged assets'
+    } finally {
+        $nodeRemainingUploadsLink = Get-Item -LiteralPath $nodeSourceGuardUploads -Force -ErrorAction SilentlyContinue
+        if ($null -ne $nodeRemainingUploadsLink) {
+            if (-not [bool]($nodeRemainingUploadsLink.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+                throw "Node source guard cleanup refused non-reparse path: '$nodeSourceGuardUploads'"
+            }
+            [System.IO.Directory]::Delete($nodeSourceGuardUploads, $false)
+        }
+        $nodeRemainingAssetsLink = Get-Item -LiteralPath $nodeSourceGuardAssets -Force -ErrorAction SilentlyContinue
+        if ($null -ne $nodeRemainingAssetsLink) {
+            if (-not [bool]($nodeRemainingAssetsLink.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+                throw "Node source guard cleanup refused non-reparse path: '$nodeSourceGuardAssets'"
+            }
+            [System.IO.Directory]::Delete($nodeSourceGuardAssets, $false)
+        }
+    }
+    $nodeSourceInventoryAfter = @(
+        Get-ChildItem -LiteralPath $nodeSourceGuardDestination -Force -File |
+            Sort-Object Name |
+            ForEach-Object { "$($_.Name):$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" }
+    ) -join "`n"
+    Assert-Equal $nodeSourceInventoryBefore $nodeSourceInventoryAfter 'rejected Node source types and lock contention preserve canonical inventory'
+
+    $nodePublicationTestPath = Join-Path $repoRoot 'web-viewer-sample\scripts\test-sync-design-assets-publication.mjs'
+    $nodePublicationStdout = Join-Path $sandbox 'design-assets-node-publication.stdout.log'
+    $nodePublicationStderr = Join-Path $sandbox 'design-assets-node-publication.stderr.log'
+    $nodePublicationProcess = Start-Process -FilePath 'node' -ArgumentList @($nodePublicationTestPath) -Wait -PassThru -NoNewWindow `
+        -RedirectStandardOutput $nodePublicationStdout -RedirectStandardError $nodePublicationStderr
+    $nodePublicationError = if (Test-Path -LiteralPath $nodePublicationStderr) {
+        Get-Content -LiteralPath $nodePublicationStderr -Raw
+    } else {
+        ''
+    }
+    Assert-Equal 0 $nodePublicationProcess.ExitCode "Node publication rollback fault-injection suite passes. stderr=$nodePublicationError"
+    $nodePublicationOutput = Get-Content -LiteralPath $nodePublicationStdout -Raw
+    Assert-True ($nodePublicationOutput -match '\[test-sync-design-assets-publication\] passed') 'Node publication rollback suite emits deterministic evidence'
+
+    $realCleanRoot = Join-Path $sandbox 'design-assets-real-git-clean'
+    New-Item -ItemType Directory -Path $realCleanRoot -Force | Out-Null
+    Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('init', '--quiet') -WorkingDirectory $realCleanRoot | Out-Null
+    $realCleanPublic = Join-Path $realCleanRoot 'web-viewer-sample\public'
+    $realCleanCanonical = Join-Path $realCleanPublic 'design-assets'
+    $realCleanStage = Join-Path $realCleanPublic '.design-assets-stage-0123456789abcdef0123456789abcdef'
+    $realCleanBackup = Join-Path $realCleanPublic '.design-assets-backup-0123456789abcdef0123456789abcdef'
+    $realCleanLock = Join-Path $realCleanPublic '.design-assets-sync.lock'
+    New-Item -ItemType Directory -Path $realCleanCanonical -Force | Out-Null
+    New-Item -ItemType Directory -Path $realCleanStage -Force | Out-Null
+    New-Item -ItemType Directory -Path $realCleanBackup -Force | Out-Null
+    'canonical' | Set-Content -LiteralPath (Join-Path $realCleanCanonical 'canonical.png') -Encoding ascii
+    'stage' | Set-Content -LiteralPath (Join-Path $realCleanStage 'stage.png') -Encoding ascii
+    'backup' | Set-Content -LiteralPath (Join-Path $realCleanBackup 'backup.png') -Encoding ascii
+    'lock' | Set-Content -LiteralPath $realCleanLock -Encoding ascii
+    'remove' | Set-Content -LiteralPath (Join-Path $realCleanRoot 'remove-me.txt') -Encoding ascii
+    Invoke-TestDeployGitCommand -Tool 'git' -Arguments @(Get-TestDeployGitCleanArguments) -WorkingDirectory $realCleanRoot | Out-Null
+    Assert-True (Test-Path -LiteralPath (Join-Path $realCleanCanonical 'canonical.png') -PathType Leaf) 'real git clean preserves canonical design assets'
+    Assert-True (Test-Path -LiteralPath (Join-Path $realCleanStage 'stage.png') -PathType Leaf) 'real git clean preserves recovery staging'
+    Assert-True (Test-Path -LiteralPath (Join-Path $realCleanBackup 'backup.png') -PathType Leaf) 'real git clean preserves retained backup'
+    Assert-True (Test-Path -LiteralPath $realCleanLock -PathType Leaf) 'real git clean preserves the cross-adapter lock'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $realCleanRoot 'remove-me.txt'))) 'real git clean still removes unrelated untracked files'
+
+    $transactionOriginalFixedPath = $script:TestDeployFixedPath
+    $transactionLiveRoot = Join-Path $sandbox 'production-live'
+    $transactionStageLeaf = ".$(Split-Path -Leaf $transactionLiveRoot).rebuild-stage-$([Guid]::NewGuid().ToString('N'))"
+    $transactionStageRoot = Join-Path (Split-Path -Parent $transactionLiveRoot) $transactionStageLeaf
+    $transactionJunctionOutside = Join-Path $sandbox 'production-transaction-junction-outside'
+    $transactionJunctionRoot = Join-Path (Split-Path -Parent $transactionLiveRoot) ".$(Split-Path -Leaf $transactionLiveRoot).rebuild-stage-$([Guid]::NewGuid().ToString('N'))"
+    $script:TestDeployFixedPath = $transactionLiveRoot
+    try {
+        New-Item -ItemType Directory -Path (Join-Path $transactionStageRoot 'docs\plans\assets') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $transactionStageRoot 'docs\plans\uploads') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $transactionStageRoot 'web-viewer-sample\public') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $transactionStageRoot '.codex') -Force | Out-Null
+        'asset' | Set-Content -LiteralPath (Join-Path $transactionStageRoot 'docs\plans\assets\vp-transaction.png') -Encoding ascii
+        'upload' | Set-Content -LiteralPath (Join-Path $transactionStageRoot 'docs\plans\uploads\concept-transaction.png') -Encoding ascii
+        'agent instructions' | Set-Content -LiteralPath (Join-Path $transactionStageRoot 'AGENTS.md') -Encoding ascii
+
+        $transactionStage = Initialize-TestDeployDesignAssets `
+            -DeploymentPath $transactionStageRoot `
+            -TransactionForDeploymentPath $transactionLiveRoot
+        Assert-Equal 'synced' $transactionStage.Mode 'production transaction stage accepts the generated GUID sibling'
+        $transactionRemoved = @(
+            Remove-TestDeployAgentTooling `
+                -DeploymentPath $transactionStageRoot `
+                -TransactionForDeploymentPath $transactionLiveRoot
+        )
+        Assert-True ($transactionRemoved.Count -ge 2) 'production transaction stage uses the shared scope to remove tooling'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $transactionStageRoot 'docs'))) 'production transaction stage removes root docs after asset staging'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $transactionStageRoot 'AGENTS.md'))) 'production transaction stage removes agent instructions'
+        Assert-True (Test-Path -LiteralPath (Join-Path $transactionStageRoot 'web-viewer-sample\public\design-assets\.deployment-manifest.json') -PathType Leaf) 'production transaction stage retains the sealed asset manifest'
+
+        $transactionWrongSibling = Join-Path (Split-Path -Parent $transactionLiveRoot) '.unrelated.rebuild-stage-0123456789abcdef0123456789abcdef'
+        Assert-Throws {
+            Initialize-TestDeployDesignAssets `
+                -DeploymentPath $transactionWrongSibling `
+                -TransactionForDeploymentPath $transactionLiveRoot
+        } 'production transaction scope rejects an arbitrary sibling'
+        $transactionWrongName = Join-Path (Split-Path -Parent $transactionLiveRoot) ".$(Split-Path -Leaf $transactionLiveRoot).rebuild-stage-not-a-guid"
+        Assert-Throws {
+            Remove-TestDeployAgentTooling `
+                -DeploymentPath $transactionWrongName `
+                -TransactionForDeploymentPath $transactionLiveRoot
+        } 'production transaction scope rejects a malformed stage name'
+        Assert-Throws {
+            Resolve-TestDeployMutationRoot `
+                -Path $transactionStageRoot `
+                -AllowNonFixedPathForTests `
+                -TransactionForDeploymentPath $transactionLiveRoot
+        } 'test escape and production transaction authorization cannot be combined'
+
+        New-Item -ItemType Directory -Path (Join-Path $transactionJunctionOutside 'docs\plans\assets') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $transactionJunctionOutside 'docs\plans\uploads') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $transactionJunctionOutside 'web-viewer-sample\public') -Force | Out-Null
+        $transactionJunctionSentinel = Join-Path $transactionJunctionOutside 'sentinel.txt'
+        'outside transaction sentinel' | Set-Content -LiteralPath $transactionJunctionSentinel -Encoding ascii
+        $transactionJunctionHashBefore = (Get-FileHash -LiteralPath $transactionJunctionSentinel -Algorithm SHA256).Hash
+        $transactionJunctionInventoryBefore = @(
+            Get-ChildItem -LiteralPath $transactionJunctionOutside -Force -Recurse |
+                ForEach-Object { $_.FullName.Substring($transactionJunctionOutside.Length) }
+        ) -join "`n"
+        try {
+            New-Item -ItemType Junction -Path $transactionJunctionRoot -Target $transactionJunctionOutside -ErrorAction Stop | Out-Null
+            Assert-Throws {
+                Initialize-TestDeployDesignAssets `
+                    -DeploymentPath $transactionJunctionRoot `
+                    -TransactionForDeploymentPath $transactionLiveRoot
+            } 'production transaction scope rejects a correctly named junction'
+            $transactionJunctionHashAfter = (Get-FileHash -LiteralPath $transactionJunctionSentinel -Algorithm SHA256).Hash
+            $transactionJunctionInventoryAfter = @(
+                Get-ChildItem -LiteralPath $transactionJunctionOutside -Force -Recurse |
+                    ForEach-Object { $_.FullName.Substring($transactionJunctionOutside.Length) }
+            ) -join "`n"
+            Assert-Equal $transactionJunctionHashBefore $transactionJunctionHashAfter 'production transaction junction rejection preserves outside bytes'
+            Assert-Equal $transactionJunctionInventoryBefore $transactionJunctionInventoryAfter 'production transaction junction rejection preserves outside inventory'
+        } finally {
+            if (Test-Path -LiteralPath $transactionJunctionRoot) {
+                & $removeVerifiedAssetJunction -LinkPath $transactionJunctionRoot -ExpectedTarget $transactionJunctionOutside
+            }
+        }
+    } finally {
+        $script:TestDeployFixedPath = $transactionOriginalFixedPath
+    }
+
     $calls = New-Object 'System.Collections.Generic.List[string]'
     $runner = {
         param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
@@ -295,6 +943,8 @@ try {
 
     $script:calls = $calls
     $mainRefSpec = '+refs/heads/main:refs/remotes/origin/main'
+    $expectedCleanArguments = @(Get-TestDeployGitCleanArguments)
+    $expectedCleanCommandText = $expectedCleanArguments -join ' '
     $fetchFailureMessage = $null
     try {
         Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('fetch', 'origin', $mainRefSpec) -WorkingDirectory $cleanupRoot -CommandRunner $runner
@@ -326,6 +976,7 @@ try {
     New-Item -ItemType Directory -Path $rebuildRoot -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $rebuildDeployRoot '.git') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $rebuildDeployRoot 'scripts') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $rebuildDeployRoot 'web-viewer-sample\public') -Force | Out-Null
     'deploy' | Set-Content -LiteralPath (Join-Path $rebuildDeployRoot 'scripts\deploy.ps1') -Encoding ascii
 
     $rebuildCalls = New-Object 'System.Collections.Generic.List[string]'
@@ -356,6 +1007,60 @@ try {
         return [pscustomobject]@{ ExitCode = 0 }
     }.GetNewClosure()
 
+    $rebuildMutationSentinel = Join-Path $rebuildDeployRoot 'docs\mutation-sentinel.txt'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $rebuildMutationSentinel) -Force | Out-Null
+    'must remain byte-identical' | Set-Content -LiteralPath $rebuildMutationSentinel -Encoding ascii
+    $rebuildMutationSentinelHash = (Get-FileHash -LiteralPath $rebuildMutationSentinel -Algorithm SHA256).Hash
+    $rebuildDesignAssetPublic = Join-Path $rebuildDeployRoot 'web-viewer-sample\public'
+
+    $heldRebuildAssetLock = Enter-DeploymentDesignAssetLock -DestinationParent $rebuildDesignAssetPublic -BoundaryRoot $rebuildDeployRoot
+    $heldRebuildFailureMessage = $null
+    $rebuildCalls.Clear()
+    try {
+        try {
+            Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $rebuildDeployRoot -AllowNonFixedPathForTests -CommandRunner $rebuildRunner -DeployRunner $deployRunner | Out-Null
+        } catch {
+            $heldRebuildFailureMessage = $_.Exception.Message
+        }
+    } finally {
+        $heldRebuildAssetLock.Dispose()
+    }
+    Assert-True ($heldRebuildFailureMessage -match 'already running or left a stale lock') 'existing-checkout rebuild rejects a lock held by another official adapter'
+    Assert-True (-not (($rebuildCalls -join "`n") -match '\bgit fetch\b|\bgit reset\b|\bgit clean\b')) 'held design-assets lock stops rebuild before fetch/reset/clean'
+    Assert-Equal $rebuildMutationSentinelHash (Get-FileHash -LiteralPath $rebuildMutationSentinel -Algorithm SHA256).Hash 'held design-assets lock prevents docs mutation'
+
+    $rebuildBackupResidue = Join-Path $rebuildDesignAssetPublic ".design-assets-backup-$([Guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $rebuildBackupResidue -Force | Out-Null
+    'manual recovery data' | Set-Content -LiteralPath (Join-Path $rebuildBackupResidue 'sentinel.txt') -Encoding ascii
+    $backupResidueFailureMessage = $null
+    $rebuildCalls.Clear()
+    try {
+        Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $rebuildDeployRoot -AllowNonFixedPathForTests -CommandRunner $rebuildRunner -DeployRunner $deployRunner | Out-Null
+    } catch {
+        $backupResidueFailureMessage = $_.Exception.Message
+    }
+    Assert-True ($backupResidueFailureMessage -match 'backup residue requires manual inspection') 'existing-checkout rebuild fails closed on retained backup residue'
+    Assert-True (-not (($rebuildCalls -join "`n") -match '\bgit fetch\b|\bgit reset\b|\bgit clean\b')) 'backup residue stops rebuild before fetch/reset/clean'
+    Assert-True (Test-Path -LiteralPath (Join-Path $rebuildBackupResidue 'sentinel.txt') -PathType Leaf) 'backup residue is preserved for manual recovery'
+    Assert-Equal $rebuildMutationSentinelHash (Get-FileHash -LiteralPath $rebuildMutationSentinel -Algorithm SHA256).Hash 'backup residue rejection prevents docs mutation'
+    Remove-Item -LiteralPath $rebuildBackupResidue -Recurse -Force
+
+    $rebuildStaleAssetLockPath = Join-Path $rebuildDesignAssetPublic '.design-assets-sync.lock'
+    'stale lock sentinel' | Set-Content -LiteralPath $rebuildStaleAssetLockPath -Encoding ascii
+    $staleLockFailureMessage = $null
+    $rebuildCalls.Clear()
+    try {
+        Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $rebuildDeployRoot -AllowNonFixedPathForTests -CommandRunner $rebuildRunner -DeployRunner $deployRunner | Out-Null
+    } catch {
+        $staleLockFailureMessage = $_.Exception.Message
+    }
+    Assert-True ($staleLockFailureMessage -match 'already running or left a stale lock') 'existing-checkout rebuild fails closed on a stale design-assets lock'
+    Assert-True (-not (($rebuildCalls -join "`n") -match '\bgit fetch\b|\bgit reset\b|\bgit clean\b')) 'stale design-assets lock stops rebuild before fetch/reset/clean'
+    Assert-True (Test-Path -LiteralPath $rebuildStaleAssetLockPath -PathType Leaf) 'stale lock residue is not deleted by rebuild'
+    Assert-Equal $rebuildMutationSentinelHash (Get-FileHash -LiteralPath $rebuildMutationSentinel -Algorithm SHA256).Hash 'stale lock rejection prevents docs mutation'
+    Remove-Item -LiteralPath $rebuildStaleAssetLockPath -Force
+
+    $rebuildCalls.Clear()
     $rebuildFailureMessage = $null
     try {
         Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $rebuildDeployRoot -AllowNonFixedPathForTests -CommandRunner $rebuildRunner -DeployRunner $deployRunner | Out-Null
@@ -374,7 +1079,12 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $preserveRoot '.git') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $preserveRoot 'scripts') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $preserveRoot 'bim-review-coordinator') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $preserveRoot 'docs\plans\assets') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $preserveRoot 'docs\plans\uploads') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $preserveRoot 'web-viewer-sample\public') -Force | Out-Null
     'deploy' | Set-Content -LiteralPath (Join-Path $preserveRoot 'scripts\deploy.ps1') -Encoding ascii
+    'asset' | Set-Content -LiteralPath (Join-Path $preserveRoot 'docs\plans\assets\vp-test.png') -Encoding ascii
+    'upload' | Set-Content -LiteralPath (Join-Path $preserveRoot 'docs\plans\uploads\concept-test.png') -Encoding ascii
     'ROOT_REQUIRED=from-current-version' | Set-Content -LiteralPath (Join-Path $preserveRoot '.env.example') -Encoding ascii
     'COORD_REQUIRED=from-current-version' | Set-Content -LiteralPath (Join-Path $preserveRoot 'bim-review-coordinator\.env.example') -Encoding ascii
     'MINIO_WATCH_ENABLED=true' | Set-Content -LiteralPath (Join-Path $preserveRoot '.env.web-plane.host-kit.example') -Encoding ascii
@@ -409,7 +1119,8 @@ try {
         if ($commandText -eq 'status --short') {
             return [pscustomobject]@{ ExitCode = 0; Output = '' }
         }
-        if ($commandText -eq 'clean -fdx -e bim-streaming-server/_build/**/logs/**') {
+        if ($commandText -eq $expectedCleanCommandText) {
+            Assert-True (Test-Path -LiteralPath (Join-Path $WorkingDirectory 'web-viewer-sample\public\.design-assets-sync.lock') -PathType Leaf) 'existing-checkout clean runs while the design-assets lock is held'
             foreach ($relativePath in @('.env', 'bim-review-coordinator\.env', '.env.web-plane.host-kit')) {
                 Remove-Item -LiteralPath (Join-Path $WorkingDirectory $relativePath) -Force -ErrorAction Stop
             }
@@ -433,13 +1144,19 @@ try {
         Assert-True ($coordEnv -match 'INTERNAL_API_AUTH_TOKEN=keep-coordinator') 'coordinator .env value restored before deploy'
         Assert-True ($hostKitEnv -match 'MINIO_WATCH_ACCESS_KEY=keep-access-key') 'MinIO access key restored before deploy'
         Assert-True ($hostKitEnv -match 'MINIO_WATCH_SECRET_KEY=keep-secret-key') 'MinIO secret key restored before deploy'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $DeployRoot 'docs'))) 'root docs are removed before deploy'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $DeployRoot 'web-viewer-sample\public\.design-assets-sync.lock'))) 'design-assets lock is released only after staging and docs cleanup'
+        Assert-True (Test-Path -LiteralPath (Join-Path $DeployRoot 'web-viewer-sample\public\design-assets\vp-test.png')) 'design asset is prestaged before deploy'
+        Assert-True (Test-Path -LiteralPath (Join-Path $DeployRoot 'web-viewer-sample\public\design-assets\concept-test.png')) 'uploaded design asset is prestaged before deploy'
+        Assert-True (Test-Path -LiteralPath (Join-Path $DeployRoot 'web-viewer-sample\public\design-assets\.deployment-manifest.json')) 'design asset manifest is prestaged before deploy'
         return [pscustomobject]@{ ExitCode = 0 }
     }.GetNewClosure()
 
     $preserveResult = Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $preserveRoot -AllowNonFixedPathForTests -CommandRunner $preserveRunner -DeployRunner $preserveDeployRunner
     Assert-True ($script:cleanEvents.Count -eq 1) 'mock clean removed env files before restore'
     Assert-Equal 3 $preserveResult.RestoredEnvFileCount 'rebuild restores current-version env files before deploy'
-    Assert-True (@($preserveCalls | Where-Object { $_ -match [regex]::Escape('clean -fdx -e bim-streaming-server/_build/**/logs/**') }).Count -ge 1) 'git clean excludes chronic Kit runtime-log lock path'
+    Assert-True (@($preserveCalls | Where-Object { $_ -match [regex]::Escape($expectedCleanCommandText) }).Count -ge 1) 'git clean excludes Kit logs and all design-assets transaction paths'
+    Assert-True (Test-Path -LiteralPath (Join-Path $preserveRoot 'web-viewer-sample\public\design-assets\.deployment-manifest.json')) 'prestaged assets remain available for a direct rebuild'
 
     $dryRunEdgeRoot = Join-Path $sandbox 'dry-run-edge-runtime-data'
     $dryRunDeployRoot = Join-Path $sandbox 'dry-run-artifact-contract-root'
@@ -469,6 +1186,7 @@ try {
     'keep-me' | Set-Content -LiteralPath $artifactSentinel -Encoding ascii
     $artifactDeployRoot = Join-Path $sandbox 'artifact-contract-root'
     New-Item -ItemType Directory -Path (Join-Path $artifactDeployRoot '.git') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $artifactDeployRoot 'web-viewer-sample\public') -Force | Out-Null
     New-DeployEdgeVolumeHarness -DeployRoot $artifactDeployRoot -SourceRepoRoot $repoRoot
     @(
         'RUNTIME_STORAGE_ROOT=./storage',
@@ -545,6 +1263,7 @@ try {
     $cleanFailureRoot = Join-Path $sandbox 'clean-failure-root'
     New-Item -ItemType Directory -Path (Join-Path $cleanFailureRoot '.git') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $cleanFailureRoot 'scripts') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $cleanFailureRoot 'web-viewer-sample\public') -Force | Out-Null
     'deploy' | Set-Content -LiteralPath (Join-Path $cleanFailureRoot 'scripts\deploy.ps1') -Encoding ascii
     'MINIO_WATCH_ENABLED=true' | Set-Content -LiteralPath (Join-Path $cleanFailureRoot '.env.web-plane.host-kit.example') -Encoding ascii
     @(
@@ -567,7 +1286,7 @@ try {
         if ($commandText -eq 'status --short') {
             return [pscustomobject]@{ ExitCode = 0; Output = '' }
         }
-        if ($commandText -eq 'clean -fdx -e bim-streaming-server/_build/**/logs/**') {
+        if ($commandText -eq $expectedCleanCommandText) {
             Remove-Item -LiteralPath (Join-Path $WorkingDirectory '.env.web-plane.host-kit') -Force -ErrorAction SilentlyContinue
             return [pscustomobject]@{ ExitCode = 42; Output = 'locked governance log' }
         }
@@ -598,7 +1317,20 @@ try {
     $deployExitRoot = Join-Path $sandbox 'deploy-exit-root'
     New-Item -ItemType Directory -Path (Join-Path $deployExitRoot '.git') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $deployExitRoot 'scripts') -Force | Out-Null
-    "exit 7`r`n" | Set-Content -LiteralPath (Join-Path $deployExitRoot 'scripts\deploy.ps1') -Encoding ascii
+    New-Item -ItemType Directory -Path (Join-Path $deployExitRoot 'docs\plans\assets') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $deployExitRoot 'docs\plans\uploads') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $deployExitRoot 'web-viewer-sample\public') -Force | Out-Null
+    'asset' | Set-Content -LiteralPath (Join-Path $deployExitRoot 'docs\plans\assets\vp-test.png') -Encoding ascii
+    'upload' | Set-Content -LiteralPath (Join-Path $deployExitRoot 'docs\plans\uploads\concept-test.png') -Encoding ascii
+    @'
+if (Test-Path -LiteralPath 'docs') {
+    exit 8
+}
+if (-not (Test-Path -LiteralPath 'web-viewer-sample\public\design-assets\.deployment-manifest.json')) {
+    exit 9
+}
+exit 7
+'@ | Set-Content -LiteralPath (Join-Path $deployExitRoot 'scripts\deploy.ps1') -Encoding ascii
     $deployExitCalls = New-Object 'System.Collections.Generic.List[string]'
     $deployExitRunner = {
         param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
@@ -621,7 +1353,8 @@ try {
     $script:deployExitCalls = $deployExitCalls
 
     $deployExitResult = Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $deployExitRoot -AllowNonFixedPathForTests -CommandRunner $deployExitRunner
-    Assert-Equal 7 $deployExitResult.DeployExitCode 'deploy.ps1 exit code is returned without terminating caller'
+    Assert-Equal 7 $deployExitResult.DeployExitCode 'deploy.ps1 sees prestaged assets after docs cleanup and its exit code is returned without terminating caller'
+    Assert-True (Test-Path -LiteralPath (Join-Path $deployExitRoot 'web-viewer-sample\public\design-assets\.deployment-manifest.json')) 'prestaged assets survive a nonzero deploy exit for retry'
 
     # Batch 1 (a)+(b): pre-clean stop of all three deploy-zone services, each recorded
     # BEFORE the clean event in one shared ordered log (ServiceStopper + CommandRunner
@@ -629,6 +1362,7 @@ try {
     $stopOrderRoot = Join-Path $sandbox 'stop-order-root'
     New-Item -ItemType Directory -Path (Join-Path $stopOrderRoot '.git') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $stopOrderRoot 'scripts') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $stopOrderRoot 'web-viewer-sample\public') -Force | Out-Null
     'deploy' | Set-Content -LiteralPath (Join-Path $stopOrderRoot 'scripts\deploy.ps1') -Encoding ascii
 
     $stopOrderLog = New-Object 'System.Collections.Generic.List[string]'
@@ -636,7 +1370,7 @@ try {
     $stopOrderRunner = {
         param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
         $commandText = $Arguments -join ' '
-        if ($commandText -eq 'clean -fdx -e bim-streaming-server/_build/**/logs/**') { $script:stopOrderLog.Add('clean') | Out-Null }
+        if ($commandText -eq $expectedCleanCommandText) { $script:stopOrderLog.Add('clean') | Out-Null }
         if ($commandText -eq 'remote get-url origin') {
             return [pscustomobject]@{ ExitCode = 0; Output = 'https://example.invalid/AI-BIM-governance.git' }
         }
@@ -681,6 +1415,7 @@ try {
     $retryRoot = Join-Path $sandbox 'clean-retry-root'
     New-Item -ItemType Directory -Path (Join-Path $retryRoot '.git') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $retryRoot 'scripts') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $retryRoot 'web-viewer-sample\public') -Force | Out-Null
     'deploy' | Set-Content -LiteralPath (Join-Path $retryRoot 'scripts\deploy.ps1') -Encoding ascii
 
     $retryCleanCalls = New-Object 'System.Collections.Generic.List[string]'
@@ -697,7 +1432,7 @@ try {
         if ($commandText -eq 'status --short') {
             return [pscustomobject]@{ ExitCode = 0; Output = '' }
         }
-        if ($commandText -eq 'clean -fdx -e bim-streaming-server/_build/**/logs/**') {
+        if ($commandText -eq $expectedCleanCommandText) {
             $script:retryCleanCalls.Add('clean') | Out-Null
             if ($script:retryCleanCalls.Count -eq 1) {
                 return [pscustomobject]@{ ExitCode = 1; Output = "warning: failed to remove 'bim-streaming-server/_build/.../logs/Kit/kit.log': Invalid argument" }

@@ -1,6 +1,8 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+. (Join-Path $PSScriptRoot 'design-assets.ps1')
+
 $script:TestDeployFixedPath = 'D:\Users\deploy\AI-bim-geo'
 $script:TestDeployRootToolingDirNames = @(
     '.codex',
@@ -22,6 +24,26 @@ $script:TestDeployPreservedEnvFiles = @(
 )
 $script:TestDeployEdgeSiteId = 'site_local_deploy'
 $script:TestDeployEdgeRuntimeDataRoot = 'D:\Users\deploy\AI-bim-geo-data'
+
+function Get-TestDeployGitCleanArguments {
+    [CmdletBinding()]
+    param()
+
+    return @(
+        'clean',
+        '-fdx',
+        '-e',
+        'bim-streaming-server/_build/**/logs/**',
+        '-e',
+        'web-viewer-sample/public/design-assets/',
+        '-e',
+        'web-viewer-sample/public/.design-assets-stage-*',
+        '-e',
+        'web-viewer-sample/public/.design-assets-backup-*',
+        '-e',
+        'web-viewer-sample/public/.design-assets-sync.lock'
+    )
+}
 
 function Normalize-TestDeployPath {
     [CmdletBinding()]
@@ -175,6 +197,52 @@ function Assert-TestDeployPath {
     return $expected
 }
 
+function Assert-TestDeployTransactionStagePath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $Path,
+        [Parameter(Mandatory = $true)][string] $DeploymentPath
+    )
+
+    $deployRoot = Assert-TestDeployPath -Path $DeploymentPath
+    $stageRoot = Normalize-TestDeployPath -Path $Path
+    $deployParent = Normalize-TestDeployPath -Path (Split-Path -Parent $deployRoot)
+    $stageParent = Normalize-TestDeployPath -Path (Split-Path -Parent $stageRoot)
+    if (-not $stageParent.Equals($deployParent, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "deployment transaction stage must be a sibling of '$deployRoot', got '$stageRoot'"
+    }
+
+    $deployLeaf = Split-Path -Leaf $deployRoot
+    $stageLeaf = Split-Path -Leaf $stageRoot
+    $stageLeafPattern = "^\.$([regex]::Escape($deployLeaf))\.rebuild-stage-[0-9a-f]{32}$"
+    if ($stageLeaf -cnotmatch $stageLeafPattern) {
+        throw "deployment transaction stage name is invalid: '$stageLeaf'"
+    }
+
+    Assert-TestDeployPathSafety -Path $stageRoot | Out-Null
+    return $stageRoot
+}
+
+function Resolve-TestDeployMutationRoot {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $Path,
+        [switch] $AllowNonFixedPathForTests,
+        [string] $TransactionForDeploymentPath = ''
+    )
+
+    if ($AllowNonFixedPathForTests -and -not [string]::IsNullOrWhiteSpace($TransactionForDeploymentPath)) {
+        throw 'test path escape and production transaction scope are mutually exclusive'
+    }
+    if ($AllowNonFixedPathForTests) {
+        return Normalize-TestDeployPath -Path $Path
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TransactionForDeploymentPath)) {
+        return Assert-TestDeployTransactionStagePath -Path $Path -DeploymentPath $TransactionForDeploymentPath
+    }
+    return Assert-TestDeployPath -Path $Path
+}
+
 function Get-TestDeployRootToolingDirs {
     [CmdletBinding()]
     param(
@@ -193,14 +261,14 @@ function Remove-TestDeployAgentTooling {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string] $DeploymentPath,
-        [switch] $AllowNonFixedPathForTests
+        [switch] $AllowNonFixedPathForTests,
+        [string] $TransactionForDeploymentPath = ''
     )
 
-    $root = if ($AllowNonFixedPathForTests) {
-        Normalize-TestDeployPath -Path $DeploymentPath
-    } else {
-        Assert-TestDeployPath -Path $DeploymentPath
-    }
+    $root = Resolve-TestDeployMutationRoot `
+        -Path $DeploymentPath `
+        -AllowNonFixedPathForTests:$AllowNonFixedPathForTests `
+        -TransactionForDeploymentPath $TransactionForDeploymentPath
 
     if (-not (Test-Path -LiteralPath $root -PathType Container)) {
         throw "deployment path does not exist: $root"
@@ -223,6 +291,31 @@ function Remove-TestDeployAgentTooling {
     }
 
     return @($removed.ToArray())
+}
+
+function Initialize-TestDeployDesignAssets {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $DeploymentPath,
+        [switch] $AllowNonFixedPathForTests,
+        [string] $TransactionForDeploymentPath = '',
+        [AllowNull()][object] $DesignAssetLockHandle = $null
+    )
+
+    $root = Resolve-TestDeployMutationRoot `
+        -Path $DeploymentPath `
+        -AllowNonFixedPathForTests:$AllowNonFixedPathForTests `
+        -TransactionForDeploymentPath $TransactionForDeploymentPath
+
+    $sourceDirs = @(
+        (Join-Path $root 'docs\plans\assets'),
+        (Join-Path $root 'docs\plans\uploads')
+    )
+    $available = @($sourceDirs | Where-Object { Test-Path -LiteralPath $_ -PathType Container })
+    if ($AllowNonFixedPathForTests -and $available.Count -eq 0) {
+        return $null
+    }
+    return Sync-DeploymentDesignAssets -RepoRoot $root -LockHandle $DesignAssetLockHandle
 }
 
 function Save-TestDeployEnvSnapshot {
@@ -547,13 +640,13 @@ function Invoke-TestDeployRebuild {
             Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('fetch', 'origin', $mainRefSpec) -WorkingDirectory $stageRoot -CommandRunner $CommandRunner | Out-Null
             Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('reset', '--hard', 'origin/main') -WorkingDirectory $stageRoot -CommandRunner $CommandRunner | Out-Null
 
-            $cleanExcludePattern = 'bim-streaming-server/_build/**/logs/**'
+            $cleanArguments = @(Get-TestDeployGitCleanArguments)
             $cleanMaxAttempts = 3
             $cleanAttempt = 0
             while ($true) {
                 $cleanAttempt++
                 try {
-                    Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clean', '-fdx', '-e', $cleanExcludePattern) -WorkingDirectory $stageRoot -CommandRunner $CommandRunner | Out-Null
+                    Invoke-TestDeployGitCommand -Tool 'git' -Arguments $cleanArguments -WorkingDirectory $stageRoot -CommandRunner $CommandRunner | Out-Null
                     break
                 } catch {
                     if ($cleanAttempt -ge $cleanMaxAttempts) { throw }
@@ -563,10 +656,17 @@ function Invoke-TestDeployRebuild {
             }
 
             $restoredEnvFiles = @(Restore-TestDeployEnvSnapshot -DeploymentPath $stageRoot -Snapshot $envSnapshot)
-            $removed = @(Remove-TestDeployAgentTooling -DeploymentPath $stageRoot -AllowNonFixedPathForTests:$AllowNonFixedPathForTests)
+            if ($AllowNonFixedPathForTests) {
+                Initialize-TestDeployDesignAssets -DeploymentPath $stageRoot -AllowNonFixedPathForTests | Out-Null
+                $removed = @(Remove-TestDeployAgentTooling -DeploymentPath $stageRoot -AllowNonFixedPathForTests)
+            } else {
+                Initialize-TestDeployDesignAssets -DeploymentPath $stageRoot -TransactionForDeploymentPath $deployRoot | Out-Null
+                $removed = @(Remove-TestDeployAgentTooling -DeploymentPath $stageRoot -TransactionForDeploymentPath $deployRoot)
+            }
 
-            # Tooling is removed before the final stage gate. No service may be
-            # stopped and no live path may be renamed until all checks pass.
+            # Design PNGs are staged under the gitignored viewer public directory
+            # before all root docs/tooling are removed. No service may be stopped
+            # and no live path may be renamed until all checks pass.
             if (-not (Test-Path -LiteralPath $stageGitDir -PathType Container)) {
                 throw "staged deployment checkout is not standalone: $stageGitDir"
             }
@@ -634,90 +734,123 @@ function Invoke-TestDeployRebuild {
             Write-Host "[rebuild-test-deploy] restored deployment env files count=$($restoredEnvFiles.Count): $($restoredEnvFiles -join ', ')"
         }
     } else {
-    $headBefore = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('rev-parse', '--short', 'HEAD') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner
-    $statusBefore = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('status', '--short') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner
-    if (-not [string]::IsNullOrWhiteSpace($statusBefore.Output)) {
-        $statusLines = @($statusBefore.Output -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-        Write-Host "[rebuild-test-deploy] discarding deployment local changes count=$($statusLines.Count) head=$($headBefore.Output.Trim())"
-        Write-Host $statusBefore.Output
-    }
-
-    $mainRefSpec = '+refs/heads/main:refs/remotes/origin/main'
-    $restoredEnvFiles = @()
+    # Existing-checkout rebuilds share the same lock as deploy/start adapters.
+    # Acquire it before fetch/reset/clean and preserve every recovery path from
+    # git clean. Release only after staging and root-doc cleanup are complete,
+    # before deploy.ps1 reacquires the lock to validate the prestaged manifest.
+    $designAssetDestinationParent = Join-Path $deployRoot 'web-viewer-sample\public'
+    $designAssetLockHandle = Enter-DeploymentDesignAssetLock -DestinationParent $designAssetDestinationParent -BoundaryRoot $deployRoot
+    $existingCheckoutError = $null
+    $designAssetLockCleanupError = $null
     try {
-        Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('fetch', 'origin', $mainRefSpec) -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
-        Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('reset', '--hard', 'origin/main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
+        Assert-NoDeploymentDesignAssetBackupResidue -DestinationParent $designAssetDestinationParent -BoundaryRoot $deployRoot
 
-        # Pre-clean stop: kit.exe / conversion / governance from rebuild N still hold
-        # locked handles under _build (gitignored, targeted by -x). Stop the deploy-zone
-        # services (identified ONLY by this deploy zone's scripts\.run pidfiles) so their
-        # file handles release before `git clean -fdx`. BEST-EFFORT by design: a stop
-        # failure must not abort — the clean-retry below is the real safety net, and the
-        # guardrail (pidfile-scoped Stop-HostNativeService) never touches out-of-zone
-        # processes such as hub.exe under C:\Users\...\ov\pkg.
-        $effectiveServiceStopper = $ServiceStopper
-        if ($null -eq $effectiveServiceStopper) {
-            $launcherLibPath = Join-Path $PSScriptRoot 'host-native-launcher.ps1'
-            $effectiveServiceStopper = {
-                param([string] $ServiceName, [string] $ServiceRunDir)
-                . $launcherLibPath
-                Stop-HostNativeService -Name $ServiceName -RunDir $ServiceRunDir | Out-Null
-            }.GetNewClosure()
-        }
-        $deployZoneRunDir = Join-Path $deployRoot 'scripts\.run'
-        foreach ($serviceName in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service')) {
-            try {
-                & $effectiveServiceStopper $serviceName $deployZoneRunDir | Out-Null
-            } catch {
-                Write-Host "[rebuild-test-deploy] WARNING best-effort stop of '$serviceName' failed (continuing to clean-retry): $($_.Exception.Message)"
-            }
+        $headBefore = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('rev-parse', '--short', 'HEAD') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner
+        $statusBefore = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('status', '--short') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner
+        if (-not [string]::IsNullOrWhiteSpace($statusBefore.Output)) {
+            $statusLines = @($statusBefore.Output -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            Write-Host "[rebuild-test-deploy] discarding deployment local changes count=$($statusLines.Count) head=$($headBefore.Output.Trim())"
+            Write-Host $statusBefore.Output
         }
 
-        # Retry ONLY the clean: a just-released handle can still throw a transient EINVAL
-        # ("Invalid argument") on the first unlink. Re-throw after the final attempt so a
-        # genuine lock still surfaces AND still reaches the env-restore catch below.
-        # Kit's own runtime log files under _build/**/logs can be left with an orphaned
-        # OS-level handle (observed: no owning process, Defender idle, lock outlives the
-        # 3-attempt retry) that no amount of retrying releases. These logs are pure
-        # diagnostic output, not build state, so skip them instead of blocking the rebuild.
-        $cleanExcludePattern = 'bim-streaming-server/_build/**/logs/**'
-        $cleanMaxAttempts = 3
-        $cleanAttempt = 0
-        while ($true) {
-            $cleanAttempt++
-            try {
-                Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clean', '-fdx', '-e', $cleanExcludePattern) -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
-                break
-            } catch {
-                if ($cleanAttempt -ge $cleanMaxAttempts) { throw }
-                Write-Host "[rebuild-test-deploy] git clean -fdx attempt $cleanAttempt failed, retrying in 1s: $($_.Exception.Message)"
-                Start-Sleep -Seconds 1
-            }
-        }
-        $restoredEnvFiles = @(Restore-TestDeployEnvSnapshot -DeploymentPath $deployRoot -Snapshot $envSnapshot)
-    } catch {
-        $cleanupError = $_
+        $mainRefSpec = '+refs/heads/main:refs/remotes/origin/main'
+        $restoredEnvFiles = @()
         try {
-            $restoredAfterFailure = @(Restore-TestDeployEnvSnapshot -DeploymentPath $deployRoot -Snapshot $envSnapshot)
-            if ($restoredAfterFailure.Count -gt 0) {
-                Write-Host "[rebuild-test-deploy] restored deployment env files after failed cleanup count=$($restoredAfterFailure.Count): $($restoredAfterFailure -join ', ')"
+            Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('fetch', 'origin', $mainRefSpec) -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
+            Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('reset', '--hard', 'origin/main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
+
+            # Pre-clean stop: kit.exe / conversion / governance from rebuild N still hold
+            # locked handles under _build (gitignored, targeted by -x). Stop the deploy-zone
+            # services (identified ONLY by this deploy zone's scripts\.run pidfiles) so their
+            # file handles release before `git clean -fdx`. BEST-EFFORT by design: a stop
+            # failure must not abort — the clean-retry below is the real safety net, and the
+            # guardrail (pidfile-scoped Stop-HostNativeService) never touches out-of-zone
+            # processes such as hub.exe under C:\Users\...\ov\pkg.
+            $effectiveServiceStopper = $ServiceStopper
+            if ($null -eq $effectiveServiceStopper) {
+                $launcherLibPath = Join-Path $PSScriptRoot 'host-native-launcher.ps1'
+                $effectiveServiceStopper = {
+                    param([string] $ServiceName, [string] $ServiceRunDir)
+                    . $launcherLibPath
+                    Stop-HostNativeService -Name $ServiceName -RunDir $ServiceRunDir | Out-Null
+                }.GetNewClosure()
             }
+            $deployZoneRunDir = Join-Path $deployRoot 'scripts\.run'
+            foreach ($serviceName in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service')) {
+                try {
+                    & $effectiveServiceStopper $serviceName $deployZoneRunDir | Out-Null
+                } catch {
+                    Write-Host "[rebuild-test-deploy] WARNING best-effort stop of '$serviceName' failed (continuing to clean-retry): $($_.Exception.Message)"
+                }
+            }
+
+            # Retry ONLY the clean: a just-released handle can still throw a transient EINVAL
+            # ("Invalid argument") on the first unlink. Re-throw after the final attempt so a
+            # genuine lock still surfaces AND still reaches the env-restore catch below.
+            # Kit's own runtime log files under _build/**/logs can be left with an orphaned
+            # OS-level handle (observed: no owning process, Defender idle, lock outlives the
+            # 3-attempt retry) that no amount of retrying releases. These logs are pure
+            # diagnostic output, not build state, so skip them instead of blocking the rebuild.
+            $cleanArguments = @(Get-TestDeployGitCleanArguments)
+            $cleanMaxAttempts = 3
+            $cleanAttempt = 0
+            while ($true) {
+                $cleanAttempt++
+                try {
+                    Invoke-TestDeployGitCommand -Tool 'git' -Arguments $cleanArguments -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
+                    break
+                } catch {
+                    if ($cleanAttempt -ge $cleanMaxAttempts) { throw }
+                    Write-Host "[rebuild-test-deploy] git clean -fdx attempt $cleanAttempt failed, retrying in 1s: $($_.Exception.Message)"
+                    Start-Sleep -Seconds 1
+                }
+            }
+            $restoredEnvFiles = @(Restore-TestDeployEnvSnapshot -DeploymentPath $deployRoot -Snapshot $envSnapshot)
         } catch {
-            throw "$($cleanupError.Exception.Message)$([Environment]::NewLine)Additionally failed to restore preserved env files: $($_.Exception.Message)"
+            $cleanupError = $_
+            try {
+                $restoredAfterFailure = @(Restore-TestDeployEnvSnapshot -DeploymentPath $deployRoot -Snapshot $envSnapshot)
+                if ($restoredAfterFailure.Count -gt 0) {
+                    Write-Host "[rebuild-test-deploy] restored deployment env files after failed cleanup count=$($restoredAfterFailure.Count): $($restoredAfterFailure -join ', ')"
+                }
+            } catch {
+                throw "$($cleanupError.Exception.Message)$([Environment]::NewLine)Additionally failed to restore preserved env files: $($_.Exception.Message)"
+            }
+            throw
         }
-        throw
-    }
-    if ($restoredEnvFiles.Count -gt 0) {
-        Write-Host "[rebuild-test-deploy] restored deployment env files count=$($restoredEnvFiles.Count): $($restoredEnvFiles -join ', ')"
-    }
+        if ($restoredEnvFiles.Count -gt 0) {
+            Write-Host "[rebuild-test-deploy] restored deployment env files count=$($restoredEnvFiles.Count): $($restoredEnvFiles -join ', ')"
+        }
 
-    $removed = Remove-TestDeployAgentTooling -DeploymentPath $deployRoot -AllowNonFixedPathForTests:$AllowNonFixedPathForTests
-    $deployScript = Join-Path $deployRoot 'scripts\deploy.ps1'
-    if (-not (Test-Path -LiteralPath $deployScript -PathType Leaf)) {
-        throw "deployment script missing after rebuild: $deployScript"
-    }
+        Initialize-TestDeployDesignAssets `
+            -DeploymentPath $deployRoot `
+            -AllowNonFixedPathForTests:$AllowNonFixedPathForTests `
+            -DesignAssetLockHandle $designAssetLockHandle | Out-Null
+        $removed = Remove-TestDeployAgentTooling -DeploymentPath $deployRoot -AllowNonFixedPathForTests:$AllowNonFixedPathForTests
+        $deployScript = Join-Path $deployRoot 'scripts\deploy.ps1'
+        if (-not (Test-Path -LiteralPath $deployScript -PathType Leaf)) {
+            throw "deployment script missing after rebuild: $deployScript"
+        }
 
-    $commit = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('rev-parse', 'origin/main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner
+        $commit = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('rev-parse', 'origin/main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner
+    } catch {
+        $existingCheckoutError = $_
+    } finally {
+        try {
+            $designAssetLockHandle.Dispose()
+        } catch {
+            $designAssetLockCleanupError = $_
+            if ($null -ne $existingCheckoutError) {
+                Write-DeploymentDesignAssetCleanupDiagnostic -Message "deployment design assets lock cleanup failed after rebuild preparation error: $($_.Exception.Message)"
+            }
+        }
+    }
+    if ($null -ne $existingCheckoutError) {
+        throw $existingCheckoutError
+    }
+    if ($null -ne $designAssetLockCleanupError) {
+        throw $designAssetLockCleanupError
+    }
     }
 
     $edgeRuntimeContract = Resolve-TestDeployEdgeRuntimeContract

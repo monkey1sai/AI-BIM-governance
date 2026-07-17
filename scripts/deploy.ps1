@@ -66,6 +66,7 @@ $libDir = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $libDir 'preflight-volume-alignment.ps1')
 . (Join-Path $libDir 'host-native-launcher.ps1')
 . (Join-Path $libDir 'kit-log-probe.ps1')
+. (Join-Path $libDir 'design-assets.ps1')
 
 if (-not (Test-Path -LiteralPath $RunDir)) {
     New-Item -ItemType Directory -Path $RunDir -Force | Out-Null
@@ -1047,6 +1048,14 @@ if (-not $SkipDocker) {
 
         if ($Build -or -not $hasImages) {
             $why = if ($Build) { 'forced by -Build' } else { 'first time (no image found)' }
+            try {
+                $designAssetStage = Sync-DeploymentDesignAssets -RepoRoot $RepoRoot
+                Write-DeployTag -Tag 'ok' -Message "design assets $($designAssetStage.Mode) count=$($designAssetStage.Count)" -LogPath $LogPath | Out-Null
+            } catch {
+                Write-DeployTag -Tag 'fail' -Message "design assets staging failed: $($_.Exception.Message)" -LogPath $LogPath | Out-Null
+                Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (design assets)'
+                exit 2
+            }
             Write-DeployTag -Tag 'fix' -Message "docker compose build coordinator viewer ($why) — may take 3-5 min" -LogPath $LogPath | Out-Null
             $buildArgs = @('compose','-f','compose.runtime-manager.yml','-f','compose.host-kit.yml','--env-file',$resolvedEnvFile,'build','coordinator','viewer')
             Push-Location $RepoRoot
