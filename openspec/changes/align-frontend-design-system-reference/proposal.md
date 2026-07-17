@@ -1,34 +1,42 @@
-# Change: 對齊 desigin-system 前端設計權威與 dual gate
+# 變更：以docs/plans HTML重建前端設計權威與雙閘門
 
 ## Why
 
-現行正典文件與 PR gate 仍把兩份 legacy prototype／任意 screenshot 當成前端視覺依據，無法機器判定使用者要求的 99% 對齊，也會把 production CSS、browser E2E 與 design fidelity 混成同一權威。
+2026-07-14～2026-07-15 的設計文件整併後，repo 已由兩份 Git-tracked `docs/plans/*.html` 承接設計與規格；但現行 active change、manifest、route inventory 與 capture flow 仍引用外部 `C:\Repos\design\desigin-system`、已刪除文件或舊 hash routes。這會形成平行 design authority，也無法證明每個 screen、state、route 與 golden 都可從目前 checkout 的 HTML 重建。
 
 ## What Changes
 
-- 將唯讀 `C:\Repos\design\desigin-system` 定義為 2D authoring authority；CI/PR/merge 只讀 repo 內已 pin 的 manifest 與 golden baselines。
-- 將 99% 定義為 Windows runner 上的 Chromium DPR1、1440×900＋1920×1080、每 viewport pixel diff `<=1%`，且所需 semantic states 100%。
-- 由 changed paths 與 base/head manifest 聯集機器推導 `passed`／`mixed`／`partial_reference_missing`；後兩者允許誠實 partial work，但禁止 99%／full-completion claim，unknown path fail closed。
-- semantic evidence 只由 branch-protected Playwright 對 current checkout 產出；PR body、外部 JSON、手填 boolean 或既有 artifact 不得作 gate input。state variants/cases 不完整時 frontend product gate fail closed。
-- 將 design fidelity 與 functional/runtime E2E 分為兩個獨立、均必須通過的 gate。
-- 將 legacy shell/viewer prototypes 降為 IA／OpenUSD runtime companion，不再作 production 2D pass/fail 或 API/coding 權威。
-- 將 production token 定義為上游 primitive→semantic→component 的受控投影。
+- 將目前 checkout 中所有 Git-tracked `docs/plans/*.html` 定義為 design gate 的唯一權威輸入。現有集合為：
+  - `AI-BIM 前後端設計文件.dc.html`：服務邊界、canonical route/IA、API 與交付語意。
+  - `AI-BIM Console Hi-Fi.dc.html`：2D chrome、layout、screen、component 與互動 state 視覺。
+- 將 `design-system-reference.manifest.json`、route inventory、screen/state IDs、semantic cases、golden baselines 與 visual result 定義為可重建、可驗證的衍生 artifacts；它們不得新增、覆寫或凍結 HTML 未定義的設計需求。Threshold、runner、status enum等 engineering policy由versioned repo policy裁決，manifest只記錄policy digest。
+- 移除 design gate 對 repo 外絕對路徑、任意 screenshot、PR prose 或人工 boolean 的 authority／fallback。
+- 將 visual fidelity gate 固定為 Windows runner、Chromium、DPR1、`1440x900` 與 `1920x1080`、每 viewport pixel diff ratio `<=0.01`，且 required semantic cases 100%。
+- 由 changed paths 與 base/head 的 HTML-derived scope 聯集機器推導 product `passed`／`mixed`／`partial_reference_missing`，以及 non-product `design_source_update_only`／`gate_infrastructure_only`；同一 change 同時修改 authority HTML與production UI時為 `design_source_and_product_mixed_fail_closed`。Unknown、source drift、HTML-derived field 無法回溯至 HTML、policy-derived field 無法回溯至 versioned policy path/digest，或缺少衍生 artifacts 時 fail closed。
+- 將 design fidelity 與 functional/runtime E2E 維持兩個獨立且均必要的 gate；HTML 只描述目標，code＋tests／runtime evidence 描述建成現況。
+- RVT↔IFC↔USDC lineage 新增的 Alignment、Attempts、Audit 等 surface，在 HTML 尚未定義前必須是 `reference_missing`，不得由 manifest 自行升格為 approved。
 
-## Ownership
+## 權責歸屬
 
-- `docs/plans/`：設計 reference、TARGET/PROCESS/TRUTH/BACKLOG 正典語意。
-- `web-viewer-sample/`：visual comparison lane 與 production frontend evidence。
-- `scripts/tests/`、`.github/`：PR/merge/CI machine gate。
-- `openspec/`：文件分工與 user-facing completion capability delta。
+- `docs/plans/*.html`：design gate 唯一權威輸入。
+- `docs/plans/docs-plans-README.md`：人類導覽與權威分工入口，不是另一份設計稿。
+- `docs/plans/design-system-reference.manifest.json` 與 baselines：從 HTML 產生的 machine snapshot。
+- `web-viewer-sample/`：subject capture、semantic Playwright 與 frontend operability evidence。
+- `scripts/tests/`、`.github/`：衍生物驗證、PR／merge gate 與 fail-closed policy。
+- `openspec/`：capability delta 與待實作工作。
 
-## Boundary Impact
+## 邊界影響
 
-不變更 public API、event、DB schema、MinIO layout、session/conversion lifecycle、backend authority、Kit/WebRTC protocol 或 GPU ownership。前端仍只打 coordinator `:8004`。design source 中的 demo API、數值與狀態不得覆寫 runtime contracts。
+不變更 public API、event、DB schema、MinIO layout、session/conversion lifecycle、backend authority、Kit/WebRTC protocol 或 GPU ownership。前端仍只打 coordinator `:8004`。HTML 內的 demo API、fixture 數字與 roadmap state 不得覆寫 code、tests/contracts 或 runtime truth。
 
-## Non-goals
+## 本次重建範圍
 
-- 不回寫或初始化外部 `desigin-system`。
+本次交付只重建 proposal、design、delta specs與implementation tasks，不重拍 golden、不改 production frontend、不聲稱現行 gate已通過。整個 OpenSpec change的 eventual apply scope則包含tasks列出的HTML metadata、derived artifacts、machine gates與functional/runtime evidence。
+
+## 非目標
+
+- 本 change 不讀取、回寫或要求存在任何 repo 外 design workspace。
 - 不在本 change 擴充 Kit OpenUSD Web Viewer 或 OpenUSD extensions。
 - 不以 design screenshot 取代真 IFC、Kit first-frame、stage truth 或 DataChannel ack。
-- 不對 live WebRTC/GPU frame 做 `<=1%` pixel assertion。
-- 不在本 change 偽造缺少的 semantic state variants，也不把 gate infrastructure 完成寫成 production 99% 已通過。
+- 不對 live WebRTC/GPU frame做 `<=0.01` pixel assertion。
+- 不偽造 HTML 尚未提供的 semantic variants、lineage screen 或 route。

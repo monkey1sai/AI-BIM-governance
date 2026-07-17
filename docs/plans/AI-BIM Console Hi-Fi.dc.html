@@ -497,7 +497,11 @@ input::placeholder{color:#4d6076}
                 <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;padding:10px;display:flex;align-items:center;gap:8px">
                   <div style="flex:1;display:flex;flex-direction:column;gap:2px">
                     <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#dbe6f3">{{ o.id }} · {{ o.kind }}</span>
-                    <span style="font-size:9.5px;color:#5a7089">metadata-only → 雲端 bim-control</span>
+                    <span style="font-size:9.5px;color:#5a7089">{{ o.target }}</span>
+                  </div>
+                  <div style="width:96px;display:flex;flex-direction:column;gap:2px">
+                    <span style="font-size:8.5px;color:#4d6076">{{ cloudColumnLabel }}</span>
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#8aa0b8">{{ o.cloudSt }}</span>
                   </div>
                   <span style="{{ o.stStyle }}">{{ o.st }}</span>
                 </div>
@@ -625,9 +629,11 @@ class Component extends DCLogic {
     ],
     sessions: [{ id: "S-240601", lease: "editor lease", stage: "/Review/A1_Tower_fed.usd" }],
     outbox: [
-      { id: "OB-201", kind: "conversion-result", st: "待送" },
-      { id: "OB-202", kind: "issue-snapshot", st: "待送" },
-      { id: "OB-200", kind: "conversion-result", st: "已送" },
+      { id: "OB-201", kind: "conversion-result", st: "待送", cloudSt: "DISABLED" },
+      { id: "OB-202", kind: "issue-snapshot", st: "待送", cloudSt: "DISABLED" },
+      { id: "OB-200", kind: "conversion-result", st: "已送", cloudSt: "DISABLED" },
+      { id: "OB-203", kind: "lineage-result", st: "待送", cloudSt: "PENDING" },
+      { id: "OB-204", kind: "lineage-result", st: "已送", cloudSt: "DELIVERED" },
     ],
     issues: [
       { id: "ISS-101", title: "FD-4F-02 防火時效不足(30min < 60min)", st: "open", src: "rule-run #87" },
@@ -866,10 +872,22 @@ class Component extends DCLogic {
       copy: () => this.t("已複製 /ui/open?session=" + x.id),
       invite: () => this.t("已複製 Spectator 邀請連結 /ui/open?session=" + x.id + "&streamRole=spectator(唯讀)"),
     }));
+    const cloudPublicationLabels = {
+      DISABLED: zh ? "未啟用" : "disabled",
+      PENDING: zh ? "待送" : "pending",
+      RETRYING: zh ? "重試中" : "retrying",
+      DELIVERED: zh ? "已登錄" : "registered",
+      DEAD_LETTER: zh ? "待人工處理" : "manual action",
+      CONFLICT: zh ? "衝突" : "conflict",
+    };
     const outboxCards = s.outbox.map(o => ({
       ...o,
       st: o.st === "待送" ? (zh ? "待送" : "pending") : (zh ? "已送 ✓" : "sent ✓"),
       stStyle: o.st === "待送" ? "font-size:9.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.3);border-radius:4px;padding:2px 7px;font-family:'JetBrains Mono',monospace" : "font-size:9.5px;color:#4fd68a;background:rgba(49,197,109,.08);border:1px solid rgba(49,197,109,.25);border-radius:4px;padding:2px 7px;font-family:'JetBrains Mono',monospace",
+      target: o.kind === "lineage-result"
+        ? "Cloud Ingest API · edge → external bim-control → cloud MySQL"
+        : (zh ? "既有 workflow callback → external bim-control" : "Existing workflow callback → external bim-control"),
+      cloudSt: cloudPublicationLabels[o.cloudSt] || cloudPublicationLabels.DISABLED,
     }));
 
     const pipeSnap = [
@@ -936,9 +954,10 @@ class Component extends DCLogic {
       inviteSpectator: () => this.t("已複製 Spectator 邀請連結 /ui/open?session=S-240601&streamRole=spectator(唯讀,resolveGovPanelState gate)"),
       issues, exportBcf: () => this.t("GET /api/bcf/export → bcf_2.1_export.zip (" + s.issues.length + " topics)"),
       clearSel: () => { this.setState({ sel: null, dcLog: "clearHighlightRequest → ✓" }); },
-      deliverOutbox: () => { this.setState({ outbox: s.outbox.map(o => ({ ...o, st: "已送" })) }); this.t("POST /api/internal/callback-outbox/deliver → ✓ metadata-only"); },
+      deliverOutbox: () => { this.setState({ outbox: s.outbox.map(o => ({ ...o, st: o.kind === "lineage-result" && o.cloudSt !== "DELIVERED" ? "待送" : "已送" })) }); this.t("POST /api/internal/callback-outbox/deliver → ✓ metadata-only"); },
       intakeCards, intakeEmpty: s.intake.length === 0, intakeCount: String(s.intake.length),
       convCards, convColCount: String(s.conv.length), sessionCards, outboxCards,
+      cloudColumnLabel: zh ? "雲端登錄狀態" : "Cloud registration",
       services,
       kitOpen: () => this.t("POST /api/kit/instances/current/open → stage loading"),
       kitClose: () => this.t("POST /api/kit/instances/current/close → ✓"),
