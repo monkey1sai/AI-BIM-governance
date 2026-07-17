@@ -320,8 +320,10 @@ required: event · tenant_id · project_id
 POST /api/v1/lineage-publications
 events: lineage_result_published | lineage_result_health_changed
 auth: HMAC-SHA256(secret, timestamp + "\n" + raw body)
+time: occurred/published/observed/stored = canonical UTC Z · 0–6 fractional digits
 result refs: manifest · mapping · alignment JSON · alignment CSV
 summary: 3 ratios + fixed counts + bounded warning codes
+ledger: schema-valid UUID · health receipt → exact health history row
 ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
         <span style="font-size:10.5px;color:#e6b23e">給雲端API使用:receiver在外部bim-control;本repo只定義outbound contract。Cloud MySQL只存stable result位置＋摘要,不存mapping rows；既有callback、producer intake、browser API均不變。</span>
       </div>

@@ -9,12 +9,17 @@
 -- credentials, deployment and live-database validation. This reference maps the
 -- normative logical model only. It intentionally contains no per-element
 -- RVT/IFC/USDC lineage table; complete rows remain in customer-edge MinIO.
--- Physical adoption of these declared utf8mb4 composite keys requires MySQL 8
--- InnoDB with innodb_page_size = 16 KiB and ROW_FORMAT = DYNAMIC. The largest
+-- Physical adoption of these declared constraints requires MySQL 8.0.16+ for
+-- CHECK enforcement, plus InnoDB with innodb_page_size = 16 KiB and
+-- ROW_FORMAT = DYNAMIC. The largest
 -- declared ACK binding is at most 2,952 bytes against the 3,072-byte key limit.
 -- The external owner MUST verify these settings and the live DDL before migration;
 -- a smaller page size MUST fail preflight or use an equivalent collision-safe
 -- physical key design without truncating the normative logical identity.
+-- Canonical wire published_at/observed_at values are validated as uppercase
+-- UTC Z before their zone marker is removed for DATETIME(6) storage. stored_at,
+-- first_received_at and received_at come from the receiver UTC clock. DATETIME
+-- carries no zone, so the external receiver owns and tests this UTC invariant.
 
 CREATE TABLE lineage_publications (
     publication_identity VARCHAR(522)
@@ -145,6 +150,10 @@ CREATE TABLE lineage_publication_health_events (
     stored_at DATETIME(6) NOT NULL,
     PRIMARY KEY (health_event_id),
     UNIQUE KEY uq_lineage_health_event (event_id),
+    UNIQUE KEY uq_lineage_health_receipt_binding (
+        health_event_id,
+        event_id
+    ),
     KEY ix_lineage_health_event_tuple (
         event_id,
         event_type,
@@ -233,6 +242,10 @@ CREATE TABLE lineage_event_identities (
     ),
     CONSTRAINT ck_lineage_event_identities_raw_body_digest
         CHECK (raw_body_sha256 REGEXP '^[0-9a-f]{64}$'),
+    CONSTRAINT ck_lineage_event_identities_event_id_uuid
+        CHECK (
+            event_id REGEXP '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+        ),
     CONSTRAINT ck_lineage_event_identities_publication_identity
         CHECK (publication_identity REGEXP '^[A-Za-z0-9._-]+:[^:]+:[^:]+$')
 ) ENGINE = InnoDB ROW_FORMAT = DYNAMIC;
@@ -279,6 +292,7 @@ CREATE TABLE lineage_event_receipts (
         'lineage_result_published',
         'lineage_result_health_changed'
     ) NOT NULL,
+    health_event_id BIGINT UNSIGNED NULL,
     publication_identity VARCHAR(522)
         CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
     manifest_digest CHAR(64)
@@ -299,6 +313,10 @@ CREATE TABLE lineage_event_receipts (
         event_type,
         publication_identity,
         raw_body_sha256
+    ),
+    KEY ix_lineage_receipts_health_binding (
+        health_event_id,
+        event_id
     ),
     KEY ix_lineage_receipts_publication (
         publication_identity,
@@ -324,6 +342,17 @@ CREATE TABLE lineage_event_receipts (
         )
         ON UPDATE RESTRICT
         ON DELETE RESTRICT,
+    CONSTRAINT fk_lineage_receipts_health_event
+        FOREIGN KEY (
+            health_event_id,
+            event_id
+        )
+        REFERENCES lineage_publication_health_events (
+            health_event_id,
+            event_id
+        )
+        ON UPDATE RESTRICT
+        ON DELETE RESTRICT,
     CONSTRAINT fk_lineage_receipts_publication
         FOREIGN KEY (
             publication_identity,
@@ -341,6 +370,17 @@ CREATE TABLE lineage_event_receipts (
         CHECK (manifest_digest REGEXP '^[0-9a-f]{64}$'),
     CONSTRAINT ck_lineage_receipts_raw_body_digest
         CHECK (raw_body_sha256 REGEXP '^[0-9a-f]{64}$'),
+    CONSTRAINT ck_lineage_receipts_health_binding
+        CHECK (
+            (
+                event_type = 'lineage_result_health_changed'
+                AND health_event_id IS NOT NULL
+            )
+            OR (
+                event_type = 'lineage_result_published'
+                AND health_event_id IS NULL
+            )
+        ),
     CONSTRAINT ck_lineage_receipts_replay
         CHECK (replay IN (0, 1))
 ) ENGINE = InnoDB ROW_FORMAT = DYNAMIC;
@@ -352,6 +392,8 @@ CREATE TABLE lineage_event_receipts (
 -- - published same identity + digest + publication_content_sha256 -> HTTP 200 replay
 -- - new health event_id -> append health event and receipt, HTTP 201
 -- - same health event_id + same raw_body_sha256 -> append replay receipt, HTTP 200
+-- - every health receipt carries health_event_id and matches the exact immutable
+--   health row; published receipts carry NULL health_event_id
 -- - same event_id + different event_type, publication_identity or
 --   raw_body_sha256 -> HTTP 409, no mutation
 -- - publication first-event, every health row and every receipt match the

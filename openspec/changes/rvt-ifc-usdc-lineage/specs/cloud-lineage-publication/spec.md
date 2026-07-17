@@ -44,6 +44,8 @@ Coordinator SHALL 只在正式ResultManifest與所有必要result references通�
 
 `lineage_result_published` SHALL 攜帶event、edge site、tenant、project、external model version、source bundle、pipeline job、attempt與result的穩定identity，以及`attempt_outcome`、`publication_identity`、`result_manifest_digest`、timestamps與correlation。`edge_site_id` SHALL 只接受與locator authority相同的ASCII `[A-Za-z0-9._-]+`；`external_model_version_id`與`result_id` MUST NOT 含literal `:`。`publication_identity` SHALL 逐byte等於`edge_site_id + ":" + external_model_version_id + ":" + result_id`，最大長度為522 characters。Sender與receiver SHALL 重新計算此canonical tuple encoding，且 MUST 在event identity、publication或receipt mutation前拒絕任何component／identity mismatch。
 
+Request `occurred_at`、published payload `published_at`、health payload `observed_at`與success ACK `stored_at` SHALL 共用canonical UTC wire form `^[1-9][0-9]{3}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]{1,6})?Z$`。Request／response schemas SHALL 對四欄引用相同的`pattern`定義並保留`format: date-time`；即使validator將`format`視為annotation，`pattern`仍 MUST 拒絕offset、lowercase `z`、leap second、年份`1000–9999`外、hour/minute/second範圍外與超過6位小數秒。Sender／receiver semantic validation另 SHALL 使用calendar-valid parser拒絕不存在日期，且 MUST NOT round／truncate。
+
 Payload SHALL 精確包含下列必要的正式references：
 
 ```text
@@ -61,6 +63,12 @@ Payloads MUST NOT 包含RVT/IFC/USDC bytes、manifest/report bodies、element ma
 
 - **WHEN** 四個references全都使用versioned `minio://` locators，並包含相符的integrity metadata
 - **THEN** payload SHALL 可進行HMAC signing與delivery
+
+#### Scenario: Wire timestamp不是canonical UTC
+
+- **WHEN** `occurred_at`、`published_at`、`observed_at`或ACK `stored_at`含timezone offset、lowercase `z`、leap second、超出範圍欄位或超過6位小數秒
+- **THEN** schema pattern SHALL 對request在event identity／domain mutation前、對ACK在`DELIVERED`前拒絕該值
+- **AND** validator MUST NOT 只依賴可被當成annotation的`format`
 
 #### Scenario: Publication identity或edge authority不具唯一canonical encoding
 
@@ -171,7 +179,7 @@ Secrets MUST NOT 出現在payload、logs、UI、committed examples或evidence；
 
 Delivery SHALL 採at-least-once，並依event type套用不同的idempotency。`lineage_result_published` SHALL 以publication identity加manifest digest作為logical key；首次commit SHALL 回傳`201`，相同identity、digest與immutable publication content則 SHALL 回傳`200`、`replay=true`與原registration identity。Sender transport retry MUST 重用穩定的event ID與raw body；相同identity/digest但immutable content改變，或相同event ID搭配另一個event type、publication identity或raw-body digest時，SHALL 回傳`409`且不進行mutation。
 
-Receiver SHALL 在任何publication、health或receipt mutation前，於同一transaction建立／檢查以`event_id`為primary key的immutable event identity，保存first accepted `event_type + publication_identity + raw-body lowercase SHA-256` tuple。相同event ID搭配不同tuple field MUST 回傳`409`且整個transaction不異動；只有完整tuple相同才可繼續event-type-specific replay判定。Publication first-event row與每筆health row SHALL 以`event_id + event_type + publication_identity + raw_body_sha256` composite binding逐欄匹配該event tuple；每筆receipt亦 SHALL 使用相同四欄binding，並以`publication_identity + manifest_digest + registration_id`逐欄匹配原publication。Direct import或reconciliation不得繞過任一binding。
+Receiver SHALL 在任何publication、health或receipt mutation前，於同一transaction建立／檢查以schema-valid UUID `event_id`為primary key的immutable event identity，保存first accepted `event_type + publication_identity + raw-body lowercase SHA-256` tuple；reference DDL SHALL 以與request／response schemas相同的UUID regex CHECK該ledger key。相同event ID搭配不同tuple field MUST 回傳`409`且整個transaction不異動；只有完整tuple相同才可繼續event-type-specific replay判定。Publication first-event row與每筆health row SHALL 以`event_id + event_type + publication_identity + raw_body_sha256` composite binding逐欄匹配該event tuple；每筆receipt亦 SHALL 使用相同四欄binding，並以`publication_identity + manifest_digest + registration_id`逐欄匹配原publication。每筆health receipt SHALL 保存receiver-internal nullable `health_event_id`，並以`health_event_id + event_id` composite FK精確匹配該accepted health history row；published receipt的`health_event_id` SHALL 為`NULL`。New health delivery SHALL 先append health row再append receipt；health replay SHALL 查回既有health row ID再append receipt。`health_event_id` MUST NOT 新增至wire ACK。Direct import或reconciliation不得繞過任一binding。
 
 #### Scenario: Domain row嘗試繞過event ledger
 
@@ -179,9 +187,15 @@ Receiver SHALL 在任何publication、health或receipt mutation前，於同一tr
 - **THEN** receiver transaction與reference DDL composite FK SHALL 拒絕domain mutation
 - **AND** direct import或reconciliation MUST NOT 產生可見publication或current health
 
+#### Scenario: Health receipt沒有精確對應的health row
+
+- **WHEN** health receipt的`health_event_id`為`NULL`、沒有parent health row，或其`event_id`指向另一筆health event
+- **THEN** receiver transaction與reference DDL CHECK／composite FK SHALL 拒絕receipt
+- **AND** health history、receipt與ACK history SHALL 不得部分commit
+
 對`lineage_result_published`，receiver SHALL 對`schema_version`、`event_type`、`edge_site_id`、`tenant_id`、`project_id`、`external_model_version_id`、`result_id`、`publication_identity`、`result_manifest_digest`與完整published `payload`組成的projection做RFC 8785 JCS並計算lowercase SHA-256，保存為`publication_content_sha256`；projection MUST 排除transport-specific `event_id`、`occurred_at`與`correlation_id`。相同identity／manifest digest只有在此digest相同時才是replay；不同時 SHALL 回傳`409`且不異動。
 
-`lineage_result_health_changed` SHALL NOT 只使用publication identity/digest作為replay key。每個新的health transition SHALL 使用新event ID、append新health row，並回傳`201`；只有相同event ID加相同event type、publication identity與raw-body digest才 SHALL 回傳`200`與`replay=true`。相同health event ID搭配任一不同tuple field時 SHALL 回傳`409`且不進行mutation。兩種event type的success body SHALL 精確包含`registration_id`、`event_id`、`publication_identity`、`manifest_digest`、`stored_at`與`replay`。
+`lineage_result_health_changed` SHALL NOT 只使用publication identity/digest作為replay key。每個新的health transition SHALL 使用新event ID、append新health row，並回傳`201`；只有相同event ID加相同event type、publication identity與raw-body digest才 SHALL 回傳`200`與`replay=true`。相同health event ID搭配任一不同tuple field時 SHALL 回傳`409`且不進行mutation。兩種event type的success body SHALL 精確包含`registration_id`、`event_id`、`publication_identity`、`manifest_digest`、符合共用canonical UTC contract的`stored_at`與`replay`。
 
 Sender SHALL 只在status為`200`或`201`、body符合response schema，且回傳的event/publication/digest values與送出的event完全一致時，將狀態標記為`DELIVERED`。HTTP `202`、empty/malformed body、unexpected 2xx或mismatched ACK SHALL 視為protocol failure。
 
@@ -269,7 +283,7 @@ Cloud delivery state SHALL 與source `READY`、result `AVAILABLE`、active-resul
 
 ### Requirement: Health events SHALL 保留immutable publication history
 
-`lineage_result_health_changed` SHALL 只使用`VERIFIED | MISSING | INTEGRITY_FAILED | TOMBSTONED`。它 SHALL 攜帶已知的`publication_identity`，以及原始result ID、result-manifest reference與manifest digest，但 SHALL NOT 重複alignment summary。Receiver SHALL 以`publication_identity + manifest_digest` join `lineage_publications`，逐byte比對這些immutable bindings後才append health event；reference DDL SHALL 以相同composite key約束health與receipt rows，禁止同identity搭配另一digest。原始summary只留在publication row。Health events與accepted-delivery receipts SHALL 採append-only；health event MUST NOT 改寫原始publication。`observed_at` SHALL 使用uppercase `Z`的UTC date-time，年份 SHALL 為`1000–9999`、秒 SHALL 為`00–59`，小數秒可省略或為1–6位；receiver只可右補零至microsecond，offset、leap second、MySQL範圍外年份或超過6位精度 MUST 在event identity或domain mutation前拒絕，MUST NOT round／truncate。Current health SHALL 由該exact microsecond最大的accepted transition衍生；完全相同的observation time SHALL 以deterministic receiver-assigned append order tie-break，arrival order MUST NOT 超越不同的observation time。延遲送達的較舊transition SHALL 保留在history但 MUST NOT 覆寫較新current health；尚無health event時，通過integrity驗證的publication SHALL 衍生為`VERIFIED`。
+`lineage_result_health_changed` SHALL 只使用`VERIFIED | MISSING | INTEGRITY_FAILED | TOMBSTONED`。它 SHALL 攜帶已知的`publication_identity`，以及原始result ID、result-manifest reference與manifest digest，但 SHALL NOT 重複alignment summary。Receiver SHALL 以`publication_identity + manifest_digest` join `lineage_publications`，逐byte比對這些immutable bindings後才append health event；reference DDL SHALL 以相同composite key約束health與receipt rows，禁止同identity搭配另一digest，且每筆health receipt SHALL 以internal `health_event_id + event_id`精確綁定該health row。原始summary只留在publication row。Health events與accepted-delivery receipts SHALL 採append-only；health event MUST NOT 改寫原始publication。`observed_at` SHALL 符合共用canonical UTC wire timestamp，receiver只可右補零至microsecond；offset、leap second、MySQL範圍外年份、calendar-invalid日期或超過6位精度 MUST 在event identity或domain mutation前拒絕，MUST NOT round／truncate。Current health SHALL 由該exact microsecond最大的accepted transition衍生；完全相同的observation time SHALL 以deterministic receiver-assigned append order tie-break，arrival order MUST NOT 超越不同的observation time。延遲送達的較舊transition SHALL 保留在history但 MUST NOT 覆寫較新current health；尚無health event時，通過integrity驗證的publication SHALL 衍生為`VERIFIED`。
 
 `MISSING`與`INTEGRITY_FAILED` SHALL 要求edge reconciler至少兩次獨立觀察後才能送出。已復原且通過integrity驗證的object set MAY 回到`VERIFIED`。`TOMBSTONED` SHALL 要求正式retention/revocation record與非空`tombstone_record_id`，且 MUST NOT 從transient list miss推斷；`VERIFIED`、`MISSING`與`INTEGRITY_FAILED` MUST NOT 攜帶`tombstone_record_id`。
 
@@ -309,9 +323,9 @@ Cloud delivery state SHALL 與source `READY`、result `AVAILABLE`、active-resul
 
 ### Requirement: Cloud persistence SHALL 只包含normative logical metadata
 
-External cloud logical model SHALL 包含`lineage_publications`、`lineage_publication_health_events`、`lineage_event_identities`與`lineage_event_receipts`。它 SHALL 保留publication identity／manifest／canonical content digest、全域event ID／first raw-body digest uniqueness、append-only health history、每次接受的首次delivery或replay所append的一筆receipt row，以及四個locators與bounded summary。Reference DDL SHALL 對publication宣告case-sensitive的`publication_identity + manifest_digest` health key與`publication_identity + manifest_digest + registration_id` receipt key；publication first-event row、每筆health row與receipt另 SHALL 各自以`event_id + event_type + publication_identity + raw_body_sha256` composite FK綁定immutable event ledger。所有event IDs與SHA-256 columns SHALL 使用case-sensitive ASCII collation，registration/publication identities SHALL 使用`utf8mb4_0900_bin`，使exact ACK與lowercase-hex constraints不依賴database default collation。Current health SHALL 依observation time衍生；immutable publication row不得包含mutable health field。Event identity rows與receipt rows MUST NOT 被更新為replay counters。它 MUST NOT 定義或要求per-element lineage tables。
+External cloud logical model SHALL 包含`lineage_publications`、`lineage_publication_health_events`、`lineage_event_identities`與`lineage_event_receipts`。它 SHALL 保留publication identity／manifest／canonical content digest、全域event ID／first raw-body digest uniqueness、append-only health history、每次接受的首次delivery或replay所append的一筆receipt row，以及四個locators與bounded summary。Reference DDL SHALL 對event ledger的`event_id`施加與wire schemas相同的UUID CHECK，對publication宣告case-sensitive的`publication_identity + manifest_digest` health key與`publication_identity + manifest_digest + registration_id` receipt key；publication first-event row、每筆health row與receipt另 SHALL 各自以`event_id + event_type + publication_identity + raw_body_sha256` composite FK綁定immutable event ledger。Health receipt SHALL 以nullable internal `health_event_id + event_id` composite FK綁定exact health row並強制non-NULL，published receipt SHALL 強制`health_event_id IS NULL`。所有event IDs與SHA-256 columns SHALL 使用case-sensitive ASCII collation，registration/publication identities SHALL 使用`utf8mb4_0900_bin`，使exact ACK與lowercase-hex constraints不依賴database default collation。Current health SHALL 依observation time衍生；immutable publication row不得包含mutable health field。Event identity rows與receipt rows MUST NOT 被更新為replay counters。它 MUST NOT 定義或要求per-element lineage tables。
 
-本change SHALL 提供MySQL 8 `REFERENCE ONLY` DDL，作為不可執行的mapping輔助。DDL MUST 聲明最大2,952-byte ACK composite key的physical adoption prerequisite為16 KiB InnoDB page與`ROW_FORMAT=DYNAMIC`；external `bim-control` owner SHALL 在migration前驗證live settings、key limits與DDL，不相容環境 MUST fail preflight或採等價且collision-safe、不截斷normative logical identity的physical key。External `bim-control`仍擁有physical migrations與credentials，本repo MUST NOT 宣稱DDL已套用或真實MySQL已驗證。Test fake MAY 模擬transaction/idempotency行為，但 SHALL 維持test-only。
+本change SHALL 提供MySQL 8.0.16+ `REFERENCE ONLY` DDL，作為不可執行的mapping輔助；8.0.16+是CHECK enforcement prerequisite。DDL MUST 聲明最大2,952-byte ACK composite key的其餘physical adoption prerequisite為16 KiB InnoDB page與`ROW_FORMAT=DYNAMIC`；external `bim-control` owner SHALL 在migration前驗證live settings、key limits與DDL，不相容環境 MUST fail preflight或採等價且collision-safe、不截斷normative logical identity的physical key。Canonical wire `published_at`／`observed_at` SHALL 驗證後去除`Z`存為`DATETIME(6)`，receiver-assigned storage／receipt timestamps SHALL 使用UTC clock；因`DATETIME`無zone，external receiver SHALL 測試此UTC invariant。External `bim-control`仍擁有physical migrations與credentials，本repo MUST NOT 宣稱DDL已套用或真實MySQL已驗證。Test fake MAY 模擬transaction/idempotency行為，但 SHALL 維持test-only。
 
 #### Scenario: 審查contract-only交付
 

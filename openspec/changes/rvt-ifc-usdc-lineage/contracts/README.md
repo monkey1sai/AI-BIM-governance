@@ -14,7 +14,7 @@
 - `examples/invalid-*.json`：應被對應 schema 或 semantic validator拒絕。
 - `cloud-lineage-publication-mysql8-reference.sql`：external cloud logical model的 **REFERENCE ONLY** mapping。
 
-本目錄不包含publisher runtime、external `bim-control` receiver、MySQL migration、DB credentials或live database evidence。Reference DDL的utf8mb4 composite keys以MySQL 8 InnoDB 16 KiB page與`ROW_FORMAT=DYNAMIC`為physical adoption prerequisite；最大ACK binding為2,952／3,072 bytes。External owner必須在migration前驗證live settings／DDL；較小page size須fail preflight或採等價且collision-safe、不截斷logical identity的physical key設計。Implementation階段才會把schema/fixtures promotion到`tests/contracts/`並擴充test-only fake。
+本目錄不包含publisher runtime、external `bim-control` receiver、MySQL migration、DB credentials或live database evidence。Reference DDL的CHECK與utf8mb4 composite keys以MySQL 8.0.16+、InnoDB 16 KiB page與`ROW_FORMAT=DYNAMIC`為physical adoption prerequisite；最大ACK binding為2,952／3,072 bytes。External owner必須在migration前驗證live settings／DDL；較小page size須fail preflight或採等價且collision-safe、不截斷logical identity的physical key設計。Implementation階段才會把schema/fixtures promotion到`tests/contracts/`並擴充test-only fake。
 
 ## 請求契約
 
@@ -77,6 +77,12 @@ JSON Schema可拒絕形狀與enum錯誤；下列cross-field規則仍須由sender
 - ratio 1對應`complete`；0≤ratio<1對應`partial`。
 - `warning_code_count == warning_codes.length`。
 - `edge_site_id` MUST 符合`^[A-Za-z0-9._-]+$`；`external_model_version_id`與`result_id` MUST NOT 含literal `:`。`publication_identity`必須逐byte等於`edge_site_id + ":" + external_model_version_id + ":" + result_id`，sender與receiver都須重新計算並拒絕不一致值。
+
+### Wire timestamps
+
+Request的`occurred_at`、published payload的`published_at`、health payload的`observed_at`與成功ACK的`stored_at`共用同一個canonical wire form：uppercase UTC `Z`、年份`1000–9999`、有效的hour/minute/second範圍、秒`00–59`，以及可省略或1–6位的小數秒。共同regex為`^[1-9][0-9]{3}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]{1,6})?Z$`。
+
+Request／response schemas同時宣告上述`pattern`與`format: date-time`；不得只依賴可能被validator當成annotation的`format`來拒絕offset或任意字串。Regex只約束wire形狀與各欄範圍，sender／receiver semantic validation仍須以calendar-valid date-time parser拒絕不存在的日期。Timezone offset、lowercase `z`、leap second、MySQL範圍外年份與超過6位精度都必須在event identity或domain mutation前拒絕，不得round／truncate。
 
 ## HMAC
 
@@ -150,9 +156,11 @@ stored_at
 replay
 ```
 
+`stored_at`必須符合上述共用canonical UTC timestamp；schema-valid但event／identity／digest不匹配的ACK仍是protocol failure。
+
 Sender只有在200/201且event/identity/digest逐字匹配時標`DELIVERED`。Delivery是at-least-once，不宣稱exactly-once。
 
-Receiver在任何publication、health或receipt mutation前，須於同一transaction建立／檢查以`event_id`為primary key的immutable event ledger，保存first accepted `event_type + publication_identity + raw_body_sha256` tuple。相同`event_id`搭配任一不同tuple field一律`409`且不異動；完整tuple相同才可繼續event-type-specific replay判定。Reference DDL以四欄composite FK強制publication的first-event tuple與每筆health row逐欄等於ledger tuple，防止direct import／reconciliation繞過reservation；每次accepted first delivery／replay仍另append receipt row，receipt也以相同四欄綁定ledger，並以`publication_identity + manifest_digest + registration_id`綁定原publication ACK identity。
+Receiver在任何publication、health或receipt mutation前，須於同一transaction建立／檢查以schema-valid UUID `event_id`為primary key的immutable event ledger，保存first accepted `event_type + publication_identity + raw_body_sha256` tuple；reference DDL以與request／response schemas相同的UUID regex做CHECK。相同`event_id`搭配任一不同tuple field一律`409`且不異動；完整tuple相同才可繼續event-type-specific replay判定。Reference DDL以四欄composite FK強制publication的first-event tuple與每筆health row逐欄等於ledger tuple，防止direct import／reconciliation繞過reservation；每次accepted first delivery／replay仍另append receipt row，receipt也以相同四欄綁定ledger，並以`publication_identity + manifest_digest + registration_id`綁定原publication ACK identity。Health receipt另帶wire不可見的nullable internal `health_event_id`，並以`health_event_id + event_id` composite FK精確指向其health row；published receipt的`health_event_id`必須為`NULL`。
 
 Published event另計算`publication_content_sha256`：對`schema_version`、`event_type`、`edge_site_id`、`tenant_id`、`project_id`、`external_model_version_id`、`result_id`、`publication_identity`、`result_manifest_digest`與完整published `payload`組成的projection做RFC 8785 JCS，再取lowercase SHA-256；明確排除transport-specific `event_id`、`occurred_at`與`correlation_id`。相同identity／manifest digest只有在此digest也相同時才是`200 replay`，否則`409`。
 
@@ -182,7 +190,7 @@ Default最多5次exponential backoff＋jitter；transient dead-letter在cooldown
 VERIFIED | MISSING | INTEGRITY_FAILED | TOMBSTONED
 ```
 
-`MISSING`／`INTEGRITY_FAILED`需至少兩次edge observation；restore可回`VERIFIED`；`TOMBSTONED`只接受formal retention/revocation record且必須攜帶`tombstone_record_id`，其他health states MUST NOT 攜帶該欄位。Health payload不重送summary；receiver以`publication_identity + manifest_digest` join原publication並逐字驗證original result ID/ref/digest，reference DDL亦以相同composite key約束health與receipt rows。Health history與每次accepted delivery/replay receipt均append-only，receipt不得update成replay counter。
+`MISSING`／`INTEGRITY_FAILED`需至少兩次edge observation；restore可回`VERIFIED`；`TOMBSTONED`只接受formal retention/revocation record且必須攜帶`tombstone_record_id`，其他health states MUST NOT 攜帶該欄位。Health payload不重送summary；receiver以`publication_identity + manifest_digest` join原publication並逐字驗證original result ID/ref/digest，reference DDL亦以相同composite key約束health與receipt rows。每筆health receipt都必須以internal `health_event_id + event_id`綁定exact health row；缺少或不匹配時整個transaction拒絕，且不得留下ACK history。Health history與每次accepted delivery/replay receipt均append-only，receipt不得update成replay counter。
 
 Current health不儲存在immutable publication row：尚無health event時衍生為`VERIFIED`；其後依`observed_at DESC`排序，完全相同的observation time再以receiver-assigned append order做deterministic tie-break。`observed_at`必須是uppercase `Z`的UTC timestamp，年份限`1000–9999`、秒限`00–59`，小數秒可省略或為1–6位；receiver只可右補零至microsecond，MUST NOT 接受offset、leap second、MySQL範圍外年份、超過6位精度、round或truncate。延遲送達的較舊observation只append history，不得覆寫較新current health；health event不得update `lineage_publications`。
 
@@ -209,13 +217,16 @@ Current health不儲存在immutable publication row：尚無health event時衍�
 | `invalid-full-lineage-exceeds-rvt-ifc.json` | semantic validator | 無效（JSON shape有效） |
 | `invalid-full-lineage-exceeds-ifc-usdc.json` | semantic validator | 無效（JSON shape有效） |
 | `invalid-full-lineage-below-set-intersection.json` | semantic validator | 無效（JSON shape有效） |
+| `invalid-offset-occurred-at.json` | 請求schema | 無效 |
+| `invalid-offset-published-at.json` | 請求schema | 無效 |
 | `invalid-offset-health-observed-at.json` | 請求schema | 無效 |
 | `invalid-submicrosecond-health-observed-at.json` | 請求schema | 無效 |
 | `invalid-leap-second-health-observed-at.json` | 請求schema | 無效 |
 | `invalid-out-of-range-health-observed-at.json` | 請求schema | 無效 |
-| `valid-lineage-result-tombstoned.json` | 請求 | 有效 |
+| `valid-lineage-result-tombstoned.json` | 請求 | 有效；使用與一般health fixture不同的event ID |
 | `invalid-tombstone-id-on-non-tombstone.json` | 請求schema | 無效 |
 | `invalid-incomplete-ack.json` | 回應 | 無效 |
+| `invalid-offset-ack-stored-at.json` | 回應schema | 無效 |
 | `valid-transient-error.json` | 回應 | 有效 |
 | `invalid-error-event-id.json` | 回應 | 無效 |
 | `invalid-retryable-deterministic-error.json` | 回應 | 無效 |
