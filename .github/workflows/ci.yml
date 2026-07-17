@@ -540,12 +540,12 @@ jobs:
       - name: Run rebuild transaction safety tests (PowerShell 7)
         if: needs.changes.outputs.rebuild_test_deploy == 'true'
         shell: pwsh
-        run: ./scripts/tests/test-rebuild-test-deploy.ps1
+        run: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-rebuild-test-deploy.ps1
 
       - name: Run rebuild transaction safety tests (Windows PowerShell 5.1)
         if: needs.changes.outputs.rebuild_test_deploy == 'true'
-        shell: powershell
-        run: ./scripts/tests/test-rebuild-test-deploy.ps1
+        shell: pwsh
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-rebuild-test-deploy.ps1
 
   secret-pattern-scan:
     name: secret pattern scan
