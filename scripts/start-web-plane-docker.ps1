@@ -11,6 +11,7 @@ $ErrorActionPreference = "Stop"
 # 供下方注入 process env(避免相對 ./storage 讓 host-native streaming-server 轉檔
 # invalid_ifc_input;根因註解見該函式)。
 . (Join-Path $PSScriptRoot 'lib\preflight-volume-alignment.ps1')
+. (Join-Path $PSScriptRoot 'lib\design-assets.ps1')
 
 function Resolve-HybridEnvFile {
     param([string] $Requested)
@@ -101,6 +102,8 @@ $viewerBindHost = Value-OrDefault -Values $envValues -Name "VIEWER_BIND_HOST" -D
 # 被其 conversion adapter 對 storage_root 二次解析成 double-nest 找不到檔 → 轉檔
 # invalid_ifc_input(見 Resolve-AbsoluteStorageRoot 的根因註解)。
 $repoRootForStorage = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
+$designAssetStage = Sync-DeploymentDesignAssets -RepoRoot $repoRootForStorage
+Write-Host "[hybrid] design assets $($designAssetStage.Mode) count=$($designAssetStage.Count)" -ForegroundColor Cyan
 $runtimeStorageRootRaw = Value-OrDefault -Values $envValues -Name "RUNTIME_STORAGE_ROOT" -Default "./storage"
 $runtimeStorageRootAbs = Resolve-AbsoluteStorageRoot -RepoRoot $repoRootForStorage -Raw $runtimeStorageRootRaw
 [Environment]::SetEnvironmentVariable("RUNTIME_STORAGE_ROOT", $runtimeStorageRootAbs, "Process")

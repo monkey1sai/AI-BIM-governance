@@ -7,6 +7,11 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
+. (Join-Path $PSScriptRoot 'lib\design-assets.ps1')
+$designAssetStage = Sync-DeploymentDesignAssets -RepoRoot $repoRoot
+Write-Host "[runtime] design assets $($designAssetStage.Mode) count=$($designAssetStage.Count)" -ForegroundColor Cyan
+
 $ArgsList = @("compose", "-f", "compose.runtime-manager.yml", "--env-file", ".env.runtime-manager.docker")
 
 if ($WithGpu) {

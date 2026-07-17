@@ -10,5 +10,6 @@ USER node
 RUN npm install
 
 COPY --chown=node:node web-viewer-sample/ /workspace/web-viewer-sample/
+RUN node scripts/sync-design-assets.mjs
 
 EXPOSE 5173
