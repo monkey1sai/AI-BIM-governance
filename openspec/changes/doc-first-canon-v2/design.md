@@ -88,7 +88,7 @@
 |---|---|---|---|---|
 | 1 | §03 Route Map / CH-G | normative(doc) | 2 | 1,2 |
 | 7 | §06 IfcReadyRecord/ConversionJob | descriptive(tests-delegated) | 2 | 1 |
-| 9 | §08 R3 | normative(doc)＋non-normative Open Decision 塊 | 1 | 1,6,8 |
+| 9 | §08 R3 ＋ README §3.3 R3 | normative(doc)＋non-normative Open Decision 塊 | 1 | 1,6,8 |
 | 14 | §04 HTTP 語意 | normative(doc)（顯式化補列、非誤動 carve-out） | 2 | 1,2,6,9 |
 | 22 | §08 權威順序表 | normative(doc) 翻轉 | 1 | 1,2 |
 | 23 | README §3.2/§3.5 | normative(doc) 翻轉 | 1 | 1 |
