@@ -692,7 +692,7 @@ Never silently invent a production backend</pre>
           <div style="display:grid;grid-template-columns:34px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">12</span><span style="color:#b9c9da">Cross-page handoff + E2E + accessibility</span></div>
         </div>
         <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase;margin-top:6px">共用元件優先抽取(20 張圖重複 UI)</span>
-        <span style="font-size:10px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.22);border-radius:5px;padding:3px 8px">待抽取目標;現況 0/14 以此命名存在,功能近義物異名散落(ProvTag/Metric/FlowBar 等)——命名收斂於抽取時裁決</span>
+        <span style="font-size:10px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.22);border-radius:5px;padding:3px 8px">待抽取目標;現況 1/14 以此命名存在(僅 ProvTag,見 components.tsx),其餘 13 項功能近義物異名散落(Metric/FlowBar 等)——命名收斂於抽取時裁決</span>
         <div style="display:flex;flex-wrap:wrap;gap:5px;font-family:'JetBrains Mono',monospace;font-size:10px">
           <span style="color:#b7a9ff;border:1px solid rgba(157,140,255,.25);border-radius:5px;padding:2px 8px">MetricCard</span>
           <span style="color:#b7a9ff;border:1px solid rgba(157,140,255,.25);border-radius:5px;padding:2px 8px">StatusBadge</span>
@@ -731,7 +731,7 @@ Never silently invent a production backend</pre>
     </div>
 
     <div data-canon-id="c8-closing-badges" style="display:flex;gap:8px;flex-wrap:wrap">
-      <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">結構=modular monolith(單一 SPA)✔;<span style="color:#dbe6f3;font-weight:600">features/a1..a10 為目標佈局(現況=src/console/ 扁平+console/unified/ 子夾,遷移屬未來實作 PR,非現況)</span>— 不是 microfrontend,不是十套專案</span>
+      <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">結構=modular monolith(單一 SPA)✔;<span style="color:#dbe6f3;font-weight:600">features/a1..a10 為目標佈局(現況=src/console/ 以扁平檔為主,另有 coordinator/unified/governance/modelData/viewer 五個既有功能子夾、皆非 aN 對齊,遷移屬未來實作 PR,非現況)</span>— 不是 microfrontend,不是十套專案</span>
       <span style="font-size:10.5px;color:#6fd6ee;background:rgba(65,199,232,.06);border:1px solid rgba(65,199,232,.2);border-radius:6px;padding:4px 10px">每個 feature 附 e2e/aN-*.spec.ts;done = 契約測試綠 + Playwright 截圖證據</span>
       <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">本節鐵律與權威順序由 AGENTS.md / OpenSpec 參照(見 doc-first-canon-v2 提案),任務包只引用、不重抄</span>
     </div>
