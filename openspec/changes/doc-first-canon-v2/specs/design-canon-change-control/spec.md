@@ -15,6 +15,11 @@
 - **WHEN** 一個手寫正本提案 PR 順帶包含誤字或斷鏈（dead-link）修正
 - **THEN** PR 描述 MUST 以獨立段落逐項揭露該類順帶修正，不得與主改寫混列
 
+#### Scenario: 手寫正本提案 PR 在無使用者核准紀錄下被 merge
+
+- **WHEN** 一個觸及手寫正本面的提案 PR 在無使用者核准紀錄（human approval／PR approve）下被 merge（含 AI 自行 merge）
+- **THEN** 該 merge MUST 視為治理違規，並要求立即 revert 回改寫前狀態、升級（escalate）給使用者裁決後才可重新提案
+
 ### Requirement: R-A2 機器快照面寫入路徑限定（雙旗標）
 
 機器快照面（`docs/plans/design-system-reference.manifest.json` 與 `docs/plans/design-system-baseline/**`）SHALL 只由 `capture-design-system-reference.mjs` 帶 `--rebaseline --confirm-rebaseline` 雙旗標寫入。任何以其他方式（手改、單旗標、AI 直接編輯）觸及快照面的變更 SHALL 視為違規。
