@@ -12,7 +12,7 @@
 
 ## 1. 變更控制 capability（design-canon-change-control）
 
-- [x] 1.1 撰寫 `design-canon-change-control` spec delta（R-A1 手寫正本寫入邊界／R-A2 機器快照雙旗標／R-A3 support.js 禁改／R-A4 改版可回復）(2026-07-18 PASS:4 requirement/8 scenario,validate --strict 綠;3fc29a8 原「四項檢核零缺漏」結論已被兩次 enforcement scenario 補強推翻——7d2f7e7 補 R-A3 support.js 對稱缺口、本次補 R-A1「自行 merge」對稱缺口;最終態以此註記為準)。**DoD/draft-submitted**：spec delta 完成＋validate 通過。**DoD/user-adopted**：使用者核准新 capability。
+- [x] 1.1 撰寫 `design-canon-change-control` spec delta（R-A1 手寫正本寫入邊界／R-A2 機器快照雙旗標／R-A3 support.js 禁改／R-A4 改版可回復）(2026-07-18 PASS:4 requirement/9 scenario,validate --strict 綠;3fc29a8 原「四項檢核零缺漏」結論已被三次 enforcement scenario 補強推翻——7d2f7e7 補 R-A3 support.js 對稱缺口、858f16f 補 R-A1「自行 merge」對稱缺口、本次補 R-A1「直接觸及正本檔即違規退回」direct-edit 對稱缺口;本輪驗證結果記錄,後續輪次可再補強)。**DoD/draft-submitted**：spec delta 完成＋validate 通過。**DoD/user-adopted**：使用者核准新 capability。
 - [ ] 1.2 撰寫 `AGENTS.md` 參照鏈修正草稿：指回 doc-first 權威序與 design-canon-change-control 條文（提案供審，不逕改 main）。**DoD/draft-submitted**：AGENTS.md 改寫草稿以 PR diff 提交、標「待使用者核准」。
 
 ## 2. documentation-source-of-truth MODIFIED＋ADDED（權威翻轉＋保存性）

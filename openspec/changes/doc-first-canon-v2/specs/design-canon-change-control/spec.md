@@ -20,6 +20,11 @@
 - **WHEN** 一個觸及手寫正本面的提案 PR 在無使用者核准紀錄（human approval／PR approve）下被 merge（含 AI 自行 merge）
 - **THEN** 該 merge MUST 視為治理違規，並要求立即 revert 回改寫前狀態、升級（escalate）給使用者裁決後才可重新提案
 
+#### Scenario: PR diff 直接觸及手寫正本檔本身內容
+
+- **WHEN** 任一 PR 的 diff 直接觸及手寫正本面 4 檔任一者本身內容（而非以獨立提案／草稿檔形式提交改寫文字）
+- **THEN** 該 PR MUST 視為違規並退回（唯一合法路徑＝R-A1 提案流程）
+
 ### Requirement: R-A2 機器快照面寫入路徑限定（雙旗標）
 
 機器快照面（`docs/plans/design-system-reference.manifest.json` 與 `docs/plans/design-system-baseline/**`）SHALL 只由 `capture-design-system-reference.mjs` 帶 `--rebaseline --confirm-rebaseline` 雙旗標寫入。任何以其他方式（手改、單旗標、AI 直接編輯）觸及快照面的變更 SHALL 視為違規。
