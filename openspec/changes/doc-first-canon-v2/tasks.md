@@ -5,10 +5,10 @@
 
 ## 0. 前置 hard gate（critical-path，先於全部改寫 task）
 
-- [ ] 0.1 **Task 0 錨點可行性 spike（hard gate）**：以 repo 內實檔驗證 `.dc.html` 的錨點承載力。三段結論制入 design.md：(1) 章級穩定錨已證實存在（`.dc.html` 僅 `sec1..sec8`）、需求/區塊級錨不存在；(2) 首選＝v2 草稿自帶 `data-canon-id` 類細粒度穩定錨（屬提案文字一部分、隨使用者採納生效、與 R-A1 相容）；(3) sidecar anchor map 僅為使用者拒絕在正本植錨時的末位降級，design.md 明記其與 `file:line` 同屬易腐、不得作為 R-C1 主要載體。**DoD/draft-submitted**：植錨方案已入 v2 草稿或降級已記錄於 design.md，未完成即為早停 blocker。**DoD/user-adopted**：使用者接受植錨方案。
-- [ ] 0.2 **PF-1/PF-2 硬前置檢查**：實跑 `grep -n "Workflow v3 and product design artifacts have distinct, non-overlapping authority" openspec/specs/documentation-source-of-truth/spec.md` 確認 main 仍為 v3 header；若已變 v4 則本 change MODIFIED delta 先 rebase 對準 v4 再驗。**DoD/draft-submitted**：grep 輸出附於 PR body，header 狀態確認。
-- [ ] 0.3 **MODIFIED 範圍對齊檢查**：實跑 `openspec validate doc-first-canon-v2 --strict`＋diff，確認只 MODIFY `documentation-source-of-truth` 6 條中之 2 條（「Workflow v3…」「文件分工調整必須走 PR 治理流程」）、每條 header 逐字重現、其餘 4 條未觸碰；任何新增治理需求一律入 ADDED。**DoD/draft-submitted**：validate 通過＋範圍 diff 附 PR body。
-- [ ] 0.4 **R-A4 可回復基準建立＋dry-run restore**：改寫前對兩份 `.dc.html`＋`docs-plans-README.md`＋`ai-bim-governance.css` 建立 git tag 或文件樹外 `.bak-<timestamp>`、回報路徑；執行一次 dry-run restore 證明 restore 後 diff 為空。**DoD/draft-submitted**：backup path/tag 記錄＋dry-run restore 驗證輸出附 PR body。
+- [x] 0.1 **Task 0 錨點可行性 spike（hard gate）**（2026-07-18 PASS,證據見 prep-evidence.md;補充:Hi-Fi 檔零 id 錨,植錨方案涵蓋雙檔）：以 repo 內實檔驗證 `.dc.html` 的錨點承載力。三段結論制入 design.md：(1) 章級穩定錨已證實存在（`.dc.html` 僅 `sec1..sec8`）、需求/區塊級錨不存在；(2) 首選＝v2 草稿自帶 `data-canon-id` 類細粒度穩定錨（屬提案文字一部分、隨使用者採納生效、與 R-A1 相容）；(3) sidecar anchor map 僅為使用者拒絕在正本植錨時的末位降級，design.md 明記其與 `file:line` 同屬易腐、不得作為 R-C1 主要載體。**DoD/draft-submitted**：植錨方案已入 v2 草稿或降級已記錄於 design.md，未完成即為早停 blocker。**DoD/user-adopted**：使用者接受植錨方案。
+- [x] 0.2 **PF-1/PF-2 硬前置檢查**(2026-07-18 PASS:main 仍 v3 header @ spec.md:8,PF-2 未觸發;開 PR 前複跑)：實跑 `grep -n "Workflow v3 and product design artifacts have distinct, non-overlapping authority" openspec/specs/documentation-source-of-truth/spec.md` 確認 main 仍為 v3 header；若已變 v4 則本 change MODIFIED delta 先 rebase 對準 v4 再驗。**DoD/draft-submitted**：grep 輸出附於 PR body，header 狀態確認。
+- [x] 0.3 **MODIFIED 範圍對齊檢查**(2026-07-18 PASS:2 MODIFIED header 逐字=main:8/31,其餘 4 條未觸碰,validate --strict 綠)：實跑 `openspec validate doc-first-canon-v2 --strict`＋diff，確認只 MODIFY `documentation-source-of-truth` 6 條中之 2 條（「Workflow v3…」「文件分工調整必須走 PR 治理流程」）、每條 header 逐字重現、其餘 4 條未觸碰；任何新增治理需求一律入 ADDED。**DoD/draft-submitted**：validate 通過＋範圍 diff 附 PR body。
+- [x] 0.4 **R-A4 可回復基準建立＋dry-run restore**(2026-07-18 PASS:tag canon-v2-baseline-20260718 @ 0d24fb6,dry-run restore diff 空)：改寫前對兩份 `.dc.html`＋`docs-plans-README.md`＋`ai-bim-governance.css` 建立 git tag 或文件樹外 `.bak-<timestamp>`、回報路徑；執行一次 dry-run restore 證明 restore 後 diff 為空。**DoD/draft-submitted**：backup path/tag 記錄＋dry-run restore 驗證輸出附 PR body。
 
 ## 1. 變更控制 capability（design-canon-change-control）
 
