@@ -540,7 +540,7 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
       </div>
       <div data-canon-id="c6-callback-outbox-lineage-outbox" style="background:#0a1220;border:1px solid rgba(230,178,62,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#e6b23e">CallbackOutbox / LineagePublicationOutbox</span>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">workflow: conversion_result_ready|conversion_failed · metadata-only · pending→sent|dead-letter<br>lineage: lineage_result_published|lineage_result_health_changed · stable event/digest · DISABLED|PENDING|RETRYING|DELIVERED|DEAD_LETTER|CONFLICT<br>兩者contract/ACK分離;cloud delivery不阻擋edge READY/AVAILABLE</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">workflow: conversion_result_ready|conversion_failed · metadata-only · pending→sent|dead-letter <span style="color:#4fd68a">— 已實作</span><br>lineage: lineage_result_published|lineage_result_health_changed · stable event/digest · DISABLED|PENDING|RETRYING|DELIVERED|DEAD_LETTER|CONFLICT <span style="color:#e6b23e">— planned(class: repo 內可建/全棧)——coordinator 現況僅 3 態 outbox,六態契約在 openspec/changes/rvt-ifc-usdc-lineage(未實作);實作=follow-up lineage-outbox-impl</span><br>兩者contract/ACK分離;cloud delivery不阻擋edge READY/AVAILABLE</span>
       </div>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:6px;font-family:'JetBrains Mono',monospace;font-size:10px;color:#8aa0b8">
