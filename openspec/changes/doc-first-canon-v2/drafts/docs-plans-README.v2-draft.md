@@ -12,6 +12,7 @@
 |---|---|
 | `AI-BIM 前後端設計文件.dc.html` | **設計與規格正本**：§01 服務邊界（B 方案三鐵律）／§02 部署拓撲（Mode C Hybrid）／§03 前端架構 IA（route map·元件樹·共用 hooks）／§04 API 契約（coordinator·governance·conversion·kit·DataChannel）／§05 時序圖 F1·F2／§06 資料模型／§07 實作分期 CH-0～CH-G／§08 AI Coding 交付守則（權威順序·R1–R4·Task 0–12） |
 | `AI-BIM Console Hi-Fi.dc.html` | Console 高保真互動原型設計稿（6 screens：shell／總覽 Home／3D 工作區 Workspace／模型資料與轉檔 Pipeline／Runtime·Kit·GPU Ops／Concept Preview） |
+| `ai-bim-governance.css` | design token 權威（`--ab-*`）：上游 design 系統之 production 投影＋`EdgeConsole.tsx` 真實 import 的雙重身分；手寫正本面，變更控制見 `design-canon-change-control` |
 | `support.js` | 兩份 `.dc.html` 的 render runtime（generated；執行時自 unpkg 載入 React 18／Babel standalone） |
 | `assets/`、`uploads/` | Hi-Fi 原型的 viewport 背景圖與 A5–A10 概念稿原圖 |
 | `ai-bim-geo-viewer-A1..A10.png` | 10 張應用場景圖＝設計文件 §08 三層輸入之 Visual Requirement（只當視覺上下文） |
@@ -36,7 +37,7 @@
 
 1. **使用者最新明確指令 > 本目錄一切文件。** <!-- canon:r-user-instruction-supremacy -->
 2. **權威順序**（設計文件 §08，衝突由上而下裁決）：docs/plans 需求正本（設計文件 §01–§08；前端視覺／互動面＝Hi-Fi＋ai-bim-governance.css 最高，依領域分工） > tests/contracts/*.json（payload 委任，§04 保留） > AGENTS.md 與 OpenSpec（治理程序） > Prompt Board 文字（僅意圖參考） > 應用場景圖（僅視覺上下文） > 圖中示例數字（僅 fixture）。 <!-- canon:r-authority-order -->
-3. **四條鐵律**（§08）：R1 技術棧權威（React+TypeScript+Vite；沿用 EdgeConsole 與 `--ec-*` token 單一真相源；禁 Vue/Pinia/第二套 SPA/theme）；R2 API 三態（existing→直接整合、in-canon+repo 內可建→後端+前端一次建到位(預設不做 mock 過渡)、in-canon+依賴外接引擎→才准 mock(掛 ProvTag 誠實標示)、missing→NOT_BUILT，絕不臆造 production 後端）；R3 Provenance 誠實（示意數字一律 fixture 並以 `data-prov` 標示，面板掛 `ProvTag`(7 值 `Prov` 誠實分類)，未接通 action 誠實停用並標 Concept Preview / Roadmap，不做假成功）；R4 一個 outcome 一個 task（outcome＋constraints＋DoD）。 <!-- canon:r-four-iron-rules -->
+3. **四條鐵律**（§08）：R1 技術棧權威（React+TypeScript+Vite；沿用 EdgeConsole 入口殼；design token 單一真相源＝docs/plans/ai-bim-governance.css（`--ab-*`，production 真實 import）；`--ec-*` token 已退役（`.ec-*` class 命名空間保留於 legacy-console.css）；禁 Vue/Pinia/第二套 SPA/theme）；R2 API 三態（existing→直接整合、in-canon+repo 內可建→後端+前端一次建到位(預設不做 mock 過渡)、in-canon+依賴外接引擎→才准 mock(掛 ProvTag 誠實標示)、missing→NOT_BUILT，絕不臆造 production 後端）；R3 Provenance 誠實（示意數字一律 fixture 並以 `data-prov` 標示，面板掛 `ProvTag`(7 值 `Prov` 誠實分類)，未接通 action 誠實停用並標 Concept Preview / Roadmap，不做假成功）；R4 一個 outcome 一個 task（outcome＋constraints＋DoD）。 <!-- canon:r-four-iron-rules -->
 4. **後端凍結面**（自舊 TARGET-contracts §1 承繼，效力不變）：前端只打 coordinator `:8004`；proxy 路徑 byte-identical；禁改 governance `app.py`、coordinator `governanceProxy.ts`、streaming `conversion_authority.py`；瀏覽器禁直連 `:49101`／`:49102`／`:8010`。 <!-- canon:r-backend-freeze -->
 5. **需求權威＝本目錄設計正本（doc-first）**；code＋tests＝runtime 現況查證面；code 偏離正本＝implementation gap，列入 gap ledger 排修；不得以文件宣稱 runtime 已完成。 <!-- canon:r-runtime-authority -->
 
