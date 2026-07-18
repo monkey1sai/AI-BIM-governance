@@ -33,6 +33,11 @@
 - **WHEN** 有人需要改變 `support.js` 的行為
 - **THEN** 變更 MUST 走 dc-runtime 上游再生成，repo 內 MUST NOT 直接編輯 `support.js`
 
+#### Scenario: PR diff 觸及 support.js 但缺 dc-runtime 上游佐證
+
+- **WHEN** 任一 PR 的 diff 觸及 `support.js`，而 PR 描述未附 dc-runtime 上游再生成佐證
+- **THEN** 該 PR MUST 視為違規並退回
+
 ### Requirement: R-A4 改版可回復性（一步 restore + dry-run 驗證）
 
 正本改版 SHALL bump 版本號＋日期（版本語意借 SemVer 2.0.0 類比，非引入完整標準機器）；改寫前 SHALL 建立可回復基準（以 git tag 或文件樹外 `.bak-<timestamp>` 留存並回報路徑）；使用者裁決退回時 SHALL 可依記錄的 backup path/tag 一步 restore 到改寫前版本。本 change 交付前 SHALL 以一次 dry-run restore 坐實此回復契約。
