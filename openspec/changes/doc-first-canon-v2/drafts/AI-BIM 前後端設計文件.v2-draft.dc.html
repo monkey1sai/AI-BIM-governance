@@ -319,6 +319,7 @@ required: event · tenant_id · project_id
           artifact_summary { usdc_openable, mapped_count,
             unmapped_count, coverage_ratio, coverage_status }</pre>
         <span style="font-size:10.5px;color:#e6b23e">HARD RULE:METADATA-ONLY — 禁止攜帶 .usdc / 3D bytes;大檔留落地端,雲端只拿 ref 與摘要。</span>
+        <span style="font-size:10.5px;color:#e6b23e">現行防護=blocklist(FORBIDDEN_KEYS+USDC magic/長度啟發),可被非黑名單 key 繞過;強化為 allowlist=follow-up metadata-allowlist(planned);鐵律語意不變。</span>
       </div>
       <div data-canon-id="c4-contract-lineage-publication" style="grid-column:1 / -1;background:#0a1220;border:1px solid rgba(230,178,62,.3);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
         <div style="display:flex;align-items:center;gap:8px"><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#e6b23e">CLOUD API ONLY</span><span style="font-size:12.5px;font-weight:700">lineage-publication · cloud-lineage-publication/v1</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">openspec/changes/rvt-ifc-usdc-lineage/contracts/</span></div>
