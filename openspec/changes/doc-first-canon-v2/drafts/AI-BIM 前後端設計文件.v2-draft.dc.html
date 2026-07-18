@@ -201,7 +201,7 @@ a{color:#41c7e8;text-decoration:none}a:hover{color:#7adcf2;text-decoration:under
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <span data-canon-id="c3-badge-workspace-handoff" style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">Console 不長 WebRTC — 3D 一律 HandoffButton → /ui/open?session=;Workspace 是 viewer 殼的宿主</span>
       <span data-canon-id="c3-badge-spectator-gate" style="font-size:10.5px;color:#6fd6ee;background:rgba(65,199,232,.06);border:1px solid rgba(65,199,232,.2);border-radius:6px;padding:4px 10px">【目標】spectator 一律 readonly,resolveGovPanelState 統一 gate 全部 Dock 寫入。【現況】gate 僅接線 legacy viewer overlay 路徑(windowOverlayGlue→Window/GovernanceOverlay);unified docks 現為 fixture 殼、無真實寫入亦無 gate 接線——接真 API+gate=follow-up unified-docks-real-api</span>
-      <span data-canon-id="c3-badge-i18n" style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">i18n:zh-Hant 預設 · en 切換;字典置 console/i18n.ts</span>
+      <span data-canon-id="c3-badge-i18n" style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">i18n:zh-Hant 預設 · en 切換;runtime(t/getLang/setLang/useLang)在 console/i18n.ts,中央字典現置 console/unified/fixtures.ts(getL/Dict);搬遷至獨立字典檔屬 backlog、非本 change</span>
     </div>
 
     <div data-canon-id="c3-naming-check" style="border-top:1px solid rgba(120,160,210,.1);margin-top:2px;padding-top:16px;display:flex;flex-direction:column;gap:8px">
