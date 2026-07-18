@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;height:100%;background:#060a10;overflow-x:auto;overflow-y:hidden}
+body{font-family:"Noto Sans TC",-apple-system,"Segoe UI","PingFang TC","Microsoft JhengHei",sans-serif;-webkit-font-smoothing:antialiased}
+a{color:#41c7e8;text-decoration:none}a:hover{color:#7adcf2;text-decoration:underline}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:#1c2a3c;border-radius:8px}
+::-webkit-scrollbar-thumb:hover{background:#28394f}
+@keyframes tup{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes convbar{from{width:56%}to{width:70%}}
+input::placeholder{color:#4d6076}
+</style>
+</helmet>
+
+<div data-screen-label="AI-BIM Console" data-canon-id="hifi-shell" style="display:flex;flex-direction:column;height:100vh;min-width:1360px;color:#dbe6f3;font-size:14px;background:#060a10">
+
+  <!-- ═══════ TOP BAR ═══════ -->
+  <div style="display:flex;align-items:center;gap:14px;height:56px;padding:0 16px;background:#0a1018;border-bottom:1px solid rgba(120,160,210,.12);flex:none">
+    <div style="display:flex;align-items:center;gap:10px;cursor:pointer" onClick="{{ goHome }}">
+      <div style="width:30px;height:30px;border-radius:8px;background:radial-gradient(circle at 35% 35%,rgba(65,199,232,.9),rgba(47,123,246,.55) 60%,rgba(10,16,24,.2));display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;font-weight:600;font-size:13px;color:#04121a">⬡</div>
+      <div style="display:flex;flex-direction:column;gap:1px">
+        <span style="font-weight:700;font-size:15px;letter-spacing:.01em;white-space:nowrap">AI-BIM-governance</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;color:#5a7089;text-transform:uppercase">{{ L.sub }}</span>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:9px;padding:7px 12px;width:300px">
+      <span style="color:#5a7089;font-size:12px">⌕</span>
+      <input placeholder="{{ L.search }}" style="background:none;border:none;outline:none;color:#dbe6f3;font-size:12.5px;font-family:inherit;flex:1">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#4d6076;border:1px solid rgba(120,160,210,.14);border-radius:4px;padding:1px 5px">⌘K</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:9px;padding:7px 12px;cursor:pointer">
+      <span style="font-size:11px;color:#5a7089">{{ L.project }}</span>
+      <span style="font-size:12.5px;font-weight:500;white-space:nowrap">Demo Project – A1 Tower</span>
+      <span style="color:#5a7089;font-size:10px">▾</span>
+    </div>
+    <div style="flex:1"></div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <div style="display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;background:rgba(49,197,109,.10);border:1px solid rgba(49,197,109,.25);font-size:11px;color:#4fd68a"><span style="width:6px;height:6px;border-radius:50%;background:#31c56d"></span>Coordinator OK</div>
+      <div style="display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;background:rgba(49,197,109,.10);border:1px solid rgba(49,197,109,.25);font-size:11px;color:#4fd68a"><span style="width:6px;height:6px;border-radius:50%;background:#31c56d"></span>Governance OK</div>
+      <div style="display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;background:rgba(65,199,232,.10);border:1px solid rgba(65,199,232,.25);font-size:11px;color:#6fd6ee"><span style="width:6px;height:6px;border-radius:50%;background:#41c7e8"></span>Kit Runtime</div>
+      <div style="display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;background:rgba(49,197,109,.10);border:1px solid rgba(49,197,109,.25);font-family:'JetBrains Mono',monospace;font-size:11px;color:#4fd68a">GPU/Stream 82%</div>
+    </div>
+    <div onClick="{{ toggleLang }}" style="display:flex;align-items:center;gap:0;border:1px solid rgba(120,160,210,.16);border-radius:8px;overflow:hidden;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:10.5px">
+      <span style="{{ zhBtnStyle }}">中</span><span style="{{ enBtnStyle }}">EN</span>
+    </div>
+    <span style="color:#8aa0b8;font-size:15px;cursor:pointer">◔</span>
+    <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#2f7bf6,#41c7e8);display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:700;color:#04121a">AD</div>
+  </div>
+
+  <div style="display:flex;flex:1;min-height:0">
+
+    <!-- ═══════ SIDEBAR ═══════ -->
+    <div style="width:212px;flex:none;background:#0a1018;border-right:1px solid rgba(120,160,210,.10);padding:14px 10px 10px;display:flex;flex-direction:column;gap:16px;overflow:auto">
+      <div style="display:flex;flex-direction:column;gap:2px">
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.12em;color:#4d6076;text-transform:uppercase;padding:0 10px 6px">{{ L.g_work }}</span>
+        <sc-for list="{{ navMain }}" as="n" hint-placeholder-count="4">
+          <div onClick="{{ n.go }}" style="{{ n.style }}" style-hover="background:rgba(65,199,232,.06)">
+            <span style="width:16px;text-align:center;font-size:12px;opacity:.85">{{ n.icon }}</span>
+            <span style="flex:1;font-size:12.5px">{{ n.label }}</span>
+            <sc-if value="{{ n.badge }}" hint-placeholder-val="{{ false }}"><span style="{{ n.badgeStyle }}">{{ n.badge }}</span></sc-if>
+          </div>
+        </sc-for>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:2px">
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.12em;color:#4d6076;text-transform:uppercase;padding:0 10px 6px">{{ L.g_apps }}</span>
+        <sc-for list="{{ navApps }}" as="n" hint-placeholder-count="10">
+          <div onClick="{{ n.go }}" style="{{ n.style }}" style-hover="background:rgba(65,199,232,.06)">
+            <span style="width:26px;font-family:'JetBrains Mono',monospace;font-size:10px;color:#5a8db0">{{ n.code }}</span>
+            <span style="flex:1;font-size:12px">{{ n.label }}</span>
+            <span style="{{ n.badgeStyle }}">{{ n.badge }}</span>
+          </div>
+        </sc-for>
+      </div>
+      <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px">
+        <a href="AI-BIM 前後端設計文件.dc.html" style="display:flex;align-items:center;gap:8px;padding:9px 10px;border:1px solid rgba(120,160,210,.14);border-radius:9px;font-size:11.5px;color:#8aa0b8;text-decoration:none" style-hover="border-color:rgba(65,199,232,.4);color:#dbe6f3">
+          <span>▦</span><span>{{ L.designdoc }}</span><span style="margin-left:auto;font-size:10px">↗</span>
+        </a>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:8.5px;color:#3d4f63;padding:0 4px">:8004/ui · UnifiedConsole</div>
+      </div>
+    </div>
+
+    <!-- ═══════ MAIN ═══════ -->
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column;min-height:0">
+
+      <!-- ─────────── HOME (1d hub) ─────────── -->
+      <sc-if value="{{ isHome }}" hint-placeholder-val="{{ true }}">
+        <div data-screen-label="總覽 Home" data-canon-id="hifi-home" style="flex:1;overflow:auto;padding:22px 26px;display:flex;flex-direction:column;gap:18px">
+          <div style="display:flex;align-items:baseline;gap:12px">
+            <span style="font-size:20px;font-weight:700">{{ L.home_title }}</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5a7089">2026-07-14 · Demo Project – A1 Tower</span>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+            <div onClick="{{ goPipe }}" style="background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:6px;cursor:pointer" style-hover="border-color:rgba(65,199,232,.35)">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a7089;text-transform:uppercase">{{ L.kpi_conv }}</span>
+              <span style="font-size:26px;font-weight:700;font-family:'JetBrains Mono',monospace">{{ convCount }}</span>
+              <span style="font-size:11px;color:#8aa0b8">990_model.ifc 62% · <span style="color:#e8615c">1 失敗</span></span>
+            </div>
+            <div onClick="{{ goPipe }}" style="background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:6px;cursor:pointer" style-hover="border-color:rgba(65,199,232,.35)">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a7089;text-transform:uppercase">{{ L.kpi_sess }}</span>
+              <span style="font-size:26px;font-weight:700;font-family:'JetBrains Mono',monospace">{{ sessCount }}</span>
+              <span style="font-size:11px;color:#8aa0b8">editor lease 1 · spectator 1</span>
+            </div>
+            <div onClick="{{ goIssues }}" style="background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:6px;cursor:pointer" style-hover="border-color:rgba(65,199,232,.35)">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a7089;text-transform:uppercase">{{ L.kpi_issue }}</span>
+              <span style="font-size:26px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#e8615c">{{ issueCount }}</span>
+              <span style="font-size:11px;color:#8aa0b8">{{ L.kpi_issue_sub }}</span>
+            </div>
+            <div onClick="{{ goOps }}" style="background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:6px;cursor:pointer" style-hover="border-color:rgba(65,199,232,.35)">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a7089;text-transform:uppercase">{{ L.kpi_outbox }}</span>
+              <span style="font-size:26px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#e6b23e">{{ outboxCount }}</span>
+              <span style="font-size:11px;color:#8aa0b8">metadata-only callback</span>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1.7fr 1fr;gap:12px">
+            <div style="background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:12px">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:13.5px;font-weight:700">{{ L.pipe_snap }}</span>
+                <span onClick="{{ goPipe }}" style="margin-left:auto;font-size:11px;color:#41c7e8;cursor:pointer">{{ L.enter }} →</span>
+              </div>
+              <div style="display:flex;align-items:stretch;gap:0">
+                <sc-for list="{{ pipeSnap }}" as="s" hint-placeholder-count="4">
+                  <div style="flex:1;display:flex;align-items:center;gap:0;min-width:0">
+                    <div onClick="{{ goPipe }}" style="flex:1;background:#0a1220;border:1px solid rgba(120,160,210,.14);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:3px;cursor:pointer" style-hover="border-color:rgba(65,199,232,.4)">
+                      <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.08em;color:#5a8db0">{{ s.step }}</span>
+                      <div style="display:flex;align-items:baseline;gap:6px"><span style="font-size:19px;font-weight:700;font-family:'JetBrains Mono',monospace">{{ s.n }}</span><span style="font-size:11px;color:#8aa0b8">{{ s.label }}</span></div>
+                    </div>
+                    <sc-if value="{{ s.arrow }}" hint-placeholder-val="{{ true }}"><span style="color:#3d5570;padding:0 6px;font-family:'JetBrains Mono',monospace">→</span></sc-if>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;font-size:11px;color:#5a7089">
+                <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase">F1</span>
+                <span>{{ L.f1_desc }}</span>
+              </div>
+            </div>
+            <div style="background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px">
+              <span style="font-size:13.5px;font-weight:700">{{ L.alerts }}</span>
+              <sc-for list="{{ alerts }}" as="a" hint-placeholder-count="4">
+                <div style="display:flex;align-items:center;gap:9px">
+                  <span style="{{ a.dot }}"></span>
+                  <span style="flex:1;font-size:12px;color:#b9c9da">{{ a.msg }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#4d6076">{{ a.t }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;align-items:baseline;gap:10px">
+              <span style="font-size:13.5px;font-weight:700">{{ L.launcher }}</span>
+              <span style="font-size:11px;color:#5a7089">A1–A4 live · A5–A10 Concept Preview</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">
+              <sc-for list="{{ appCards }}" as="ap" hint-placeholder-count="10">
+                <div onClick="{{ ap.go }}" style="{{ ap.cardStyle }}" style-hover="border-color:rgba(65,199,232,.45);transform:translateY(-1px)">
+                  <div style="display:flex;align-items:center;gap:6px">
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:#5a8db0">{{ ap.code }}</span>
+                    <span style="{{ ap.badgeStyle }}">{{ ap.badge }}</span>
+                  </div>
+                  <span style="font-size:12.5px;font-weight:500;color:#dbe6f3">{{ ap.title }}</span>
+                  <span style="font-size:10px;color:#5a7089">{{ ap.en }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ─────────── WORKSPACE (1c dock shell) ─────────── -->
+      <sc-if value="{{ isWs }}" hint-placeholder-val="{{ false }}">
+        <div data-screen-label="3D 工作區 Workspace" data-canon-id="hifi-workspace" style="flex:1;display:flex;flex-direction:column;min-height:0">
+          <div style="display:flex;align-items:center;gap:6px;padding:8px 14px;border-bottom:1px solid rgba(120,160,210,.10);background:#0a1018;flex:none">
+            <sc-for list="{{ dockTabs }}" as="d" hint-placeholder-count="5">
+              <div onClick="{{ d.go }}" style="{{ d.style }}" style-hover="color:#dbe6f3">{{ d.label }}</div>
+            </sc-for>
+            <div style="flex:1"></div>
+            <span data-canon-id="hifi-workspace-lease-badge" style="display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#6fd6ee;background:rgba(65,199,232,.08);border:1px solid rgba(65,199,232,.22);border-radius:999px;padding:4px 10px"><span style="width:6px;height:6px;border-radius:50%;background:#41c7e8;animation:pulse 2s infinite"></span>S-240601 · editor lease</span>
+            <span onClick="{{ inviteSpectator }}" style="display:flex;align-items:center;gap:5px;font-size:11px;color:#04121a;font-weight:700;background:linear-gradient(135deg,#41c7e8,#2f7bf6);border-radius:999px;padding:4px 12px;cursor:pointer;white-space:nowrap" style-hover="filter:brightness(1.12)">+ 邀請 Spectator</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5a7089">60 FPS · 28 ms</span>
+          </div>
+
+          <div style="flex:1;display:grid;grid-template-columns:230px 1fr 316px;min-height:0">
+            <!-- stage tree -->
+            <div style="border-right:1px solid rgba(120,160,210,.10);background:#0c1219;padding:12px;display:flex;flex-direction:column;gap:8px;overflow:auto">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.12em;color:#4d6076;text-transform:uppercase">{{ L.stagetree }}</span>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#8aa0b8">▾ /World</div>
+              <sc-for list="{{ stageTree }}" as="m" hint-placeholder-count="5">
+                <div onClick="{{ m.pick }}" style="{{ m.style }}" style-hover="background:rgba(65,199,232,.07)">
+                  <span style="width:8px;height:8px;border-radius:3px;background:{{ m.color }};flex:none"></span>
+                  <span style="flex:1;font-size:12px">{{ m.label }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#4d6076">{{ m.ver }}</span>
+                  <span style="font-size:11px;color:#5a8db0">◉</span>
+                </div>
+              </sc-for>
+              <div style="margin-top:6px;border-top:1px solid rgba(120,160,210,.10);padding-top:10px;display:flex;flex-direction:column;gap:6px">
+                <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.12em;color:#4d6076;text-transform:uppercase">Stage</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#8aa0b8;word-break:break-all">/Review/A1_Tower_fed.usd</span>
+                <span style="font-size:10.5px;color:#5a7089">12.48M tris · 1.17 GB</span>
+              </div>
+            </div>
+
+            <!-- viewport -->
+            <div style="position:relative;min-width:0;background:#05080d url('{{ vpImage }}') center/cover no-repeat">
+              <div style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(5,8,13,.55),rgba(5,8,13,0) 22%,rgba(5,8,13,0) 72%,rgba(5,8,13,.6))"></div>
+              <div style="position:absolute;top:10px;left:12px;display:flex;gap:6px;align-items:center">
+                <span style="font-family:'JetBrains Mono',monospace;font-size:10px;background:rgba(10,16,24,.8);border:1px solid rgba(120,160,210,.18);border-radius:6px;padding:3px 8px;color:#b9c9da;white-space:nowrap">{{ vpStagePath }}</span>
+                <span style="{{ vpLegendStyle }}">{{ vpLegend }}</span>
+              </div>
+              <div style="position:absolute;top:10px;right:12px;display:flex;gap:4px">
+                <span style="width:26px;height:24px;display:flex;align-items:center;justify-content:center;background:rgba(10,16,24,.8);border:1px solid rgba(120,160,210,.18);border-radius:6px;font-size:11px;color:#8aa0b8;cursor:pointer" style-hover="color:#dbe6f3">⬒</span>
+                <span style="width:26px;height:24px;display:flex;align-items:center;justify-content:center;background:rgba(10,16,24,.8);border:1px solid rgba(120,160,210,.18);border-radius:6px;font-size:11px;color:#8aa0b8;cursor:pointer" style-hover="color:#dbe6f3">✥</span>
+                <span style="width:26px;height:24px;display:flex;align-items:center;justify-content:center;background:rgba(10,16,24,.8);border:1px solid rgba(120,160,210,.18);border-radius:6px;font-size:11px;color:#8aa0b8;cursor:pointer" style-hover="color:#dbe6f3">◫</span>
+                <span style="width:26px;height:24px;display:flex;align-items:center;justify-content:center;background:rgba(10,16,24,.8);border:1px solid rgba(120,160,210,.18);border-radius:6px;font-size:11px;color:#8aa0b8;cursor:pointer" style-hover="color:#dbe6f3">⟲</span>
+              </div>
+              <sc-if value="{{ selName }}" hint-placeholder-val="{{ false }}">
+                <div style="position:absolute;left:44%;top:34%;display:flex;flex-direction:column;gap:4px;pointer-events:none">
+                  <div style="width:64px;height:64px;border:1.5px solid #41c7e8;border-radius:4px;box-shadow:0 0 0 3px rgba(65,199,232,.18),0 0 24px rgba(65,199,232,.35)"></div>
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:10px;background:rgba(10,16,24,.9);border:1px solid rgba(65,199,232,.4);border-radius:6px;padding:3px 8px;color:#7adcf2;white-space:nowrap">{{ selName }}</span>
+                </div>
+              </sc-if>
+              <div style="position:absolute;bottom:10px;left:12px;display:flex;gap:6px">
+                <span style="font-family:'JetBrains Mono',monospace;font-size:10px;background:rgba(10,16,24,.8);border:1px solid rgba(120,160,210,.18);border-radius:6px;padding:3px 8px;color:#4fd68a">● Streaming · 28 ms</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:10px;background:rgba(10,16,24,.8);border:1px solid rgba(120,160,210,.18);border-radius:6px;padding:3px 8px;color:#8aa0b8">Omniverse RTX · 60 FPS</span>
+              </div>
+              <div style="position:absolute;bottom:10px;right:12px;width:44px;height:44px;background:rgba(10,16,24,.8);border:1px solid rgba(120,160,210,.2);border-radius:8px;display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;font-size:9px;color:#8aa0b8">前│右</div>
+            </div>
+
+            <!-- dock -->
+            <div style="border-left:1px solid rgba(120,160,210,.10);background:#0c1219;display:flex;flex-direction:column;min-height:0;overflow:auto">
+
+              <sc-if value="{{ dockA1 }}" hint-placeholder-val="{{ true }}">
+                <div style="padding:14px;display:flex;flex-direction:column;gap:12px">
+                  <div style="display:flex;align-items:center;gap:8px"><span style="font-size:13.5px;font-weight:700">A1 {{ L.a1 }}</span><span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#4fd68a;background:rgba(49,197,109,.1);border:1px solid rgba(49,197,109,.25);border-radius:4px;padding:1px 6px">LIVE</span></div>
+                  <div style="display:flex;flex-direction:column;gap:6px">
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;color:#4d6076;text-transform:uppercase">{{ L.file }}</span>
+                    <div style="display:flex;align-items:center;gap:8px;background:#0a1220;border:1px solid rgba(120,160,210,.14);border-radius:8px;padding:8px 10px">
+                      <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#b9c9da">A1_Tower_v12.ifc</span>
+                      <span style="margin-left:auto;font-size:10px;color:#4fd68a">✓ mapping 98%</span>
+                    </div>
+                  </div>
+                  <div style="display:flex;flex-direction:column;gap:6px">
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;color:#4d6076;text-transform:uppercase">{{ L.rules }}</span>
+                    <sc-for list="{{ a1Rules }}" as="r" hint-placeholder-count="3">
+                      <div onClick="{{ r.toggle }}" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;cursor:pointer" style-hover="background:rgba(65,199,232,.05)">
+                        <span style="{{ r.boxStyle }}">{{ r.mark }}</span>
+                        <span style="font-size:12px;color:#b9c9da;flex:1">{{ r.label }}</span>
+                        <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#4d6076">{{ r.code }}</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                  <div onClick="{{ runA1 }}" style="{{ runA1Style }}" style-hover="filter:brightness(1.12)">{{ runA1Label }}</div>
+                  <sc-if value="{{ a1Ran }}" hint-placeholder-val="{{ true }}">
+                    <div style="display:flex;flex-direction:column;gap:7px">
+                      <div style="display:flex;align-items:center;gap:6px">
+                        <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;color:#4d6076;text-transform:uppercase">rule-run #88 · {{ L.fails }} 18</span>
+                        <span style="margin-left:auto;font-size:10px;color:#e8615c;background:rgba(232,97,92,.1);border:1px solid rgba(232,97,92,.3);border-radius:4px;padding:1px 6px">嚴重 18</span>
+                        <span style="font-size:10px;color:#e6b23e;background:rgba(230,178,62,.1);border:1px solid rgba(230,178,62,.3);border-radius:4px;padding:1px 6px">高 32</span>
+                      </div>
+                      <sc-for list="{{ a1Results }}" as="f" hint-placeholder-count="4">
+                        <div onClick="{{ f.pick }}" style="{{ f.rowStyle }}" style-hover="border-color:rgba(65,199,232,.4)">
+                          <span style="{{ f.sevStyle }}">{{ f.sev }}</span>
+                          <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
+                            <span style="font-size:11.5px;color:#dbe6f3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ f.el }}</span>
+                            <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">{{ f.rule }}</span>
+                          </div>
+                          <span onClick="{{ f.open }}" style="{{ f.openStyle }}" style-hover="filter:brightness(1.2)">{{ f.openLabel }}</span>
+                        </div>
+                      </sc-for>
+                      <div style="display:flex;gap:8px;margin-top:2px">
+                        <span onClick="{{ exportBcf }}" style="flex:1;text-align:center;font-size:11.5px;color:#6fd6ee;border:1px solid rgba(65,199,232,.3);border-radius:8px;padding:7px;cursor:pointer" style-hover="background:rgba(65,199,232,.08)">{{ L.bcf }}</span>
+                        <span onClick="{{ clearSel }}" style="flex:1;text-align:center;font-size:11.5px;color:#8aa0b8;border:1px solid rgba(120,160,210,.16);border-radius:8px;padding:7px;cursor:pointer" style-hover="color:#dbe6f3">{{ L.clear }}</span>
+                      </div>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ dockA2 }}" hint-placeholder-val="{{ false }}">
+                <div style="padding:14px;display:flex;flex-direction:column;gap:12px">
+                  <div style="display:flex;align-items:center;gap:8px"><span style="font-size:13.5px;font-weight:700">A2 {{ L.a2 }}</span><span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#4fd68a;background:rgba(49,197,109,.1);border:1px solid rgba(49,197,109,.25);border-radius:4px;padding:1px 6px">LIVE</span></div>
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <div style="flex:1;background:#0a1220;border:1px solid rgba(120,160,210,.14);border-radius:8px;padding:8px 10px;display:flex;align-items:center;gap:6px"><span style="font-family:'JetBrains Mono',monospace;font-size:11px">v12</span><span style="font-size:10px;color:#5a7089">2026-06-01</span><span style="margin-left:auto;color:#5a7089;font-size:10px">▾</span></div>
+                    <span style="font-family:'JetBrains Mono',monospace;color:#5a7089;font-size:11px">vs</span>
+                    <div style="flex:1;background:#0a1220;border:1px solid rgba(120,160,210,.14);border-radius:8px;padding:8px 10px;display:flex;align-items:center;gap:6px"><span style="font-family:'JetBrains Mono',monospace;font-size:11px">v15</span><span style="font-size:10px;color:#5a7089">2026-07-01</span><span style="margin-left:auto;color:#5a7089;font-size:10px">▾</span></div>
+                  </div>
+                  <div onClick="{{ runA2 }}" style="{{ runA2Style }}" style-hover="filter:brightness(1.12)">{{ runA2Label }}</div>
+                  <sc-if value="{{ a2Ran }}" hint-placeholder-val="{{ false }}">
+                    <div style="display:flex;flex-direction:column;gap:7px">
+                      <div style="display:flex;gap:6px">
+                        <span style="flex:1;text-align:center;font-size:11px;color:#6fd6ee;background:rgba(65,199,232,.08);border:1px solid rgba(65,199,232,.25);border-radius:7px;padding:5px">■ {{ L.added }} 12</span>
+                        <span style="flex:1;text-align:center;font-size:11px;color:#e8615c;background:rgba(232,97,92,.08);border:1px solid rgba(232,97,92,.25);border-radius:7px;padding:5px">■ {{ L.removed }} 4</span>
+                        <span style="flex:1;text-align:center;font-size:11px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:7px;padding:5px">■ {{ L.modified }} 28</span>
+                      </div>
+                      <sc-for list="{{ diffItems }}" as="d" hint-placeholder-count="4">
+                        <div onClick="{{ d.pick }}" style="{{ d.rowStyle }}" style-hover="border-color:rgba(65,199,232,.4)">
+                          <span style="{{ d.kindStyle }}">{{ d.kind }}</span>
+                          <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
+                            <span style="font-size:11.5px;color:#dbe6f3">{{ d.el }}</span>
+                            <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">{{ d.detail }}</span>
+                          </div>
+                        </div>
+                      </sc-for>
+                      <div style="display:flex;gap:8px;margin-top:2px">
+                        <span onClick="{{ applyOverlay }}" style="flex:1;text-align:center;font-size:11.5px;color:#6fd6ee;border:1px solid rgba(65,199,232,.3);border-radius:8px;padding:7px;cursor:pointer" style-hover="background:rgba(65,199,232,.08)">{{ L.overlay }}</span>
+                        <span onClick="{{ issueFromDiff }}" style="flex:1;text-align:center;font-size:11.5px;color:#8aa0b8;border:1px solid rgba(120,160,210,.16);border-radius:8px;padding:7px;cursor:pointer" style-hover="color:#dbe6f3">{{ L.fromdiff }}</span>
+                      </div>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ dockA3 }}" hint-placeholder-val="{{ false }}">
+                <div style="padding:14px;display:flex;flex-direction:column;gap:12px">
+                  <div style="display:flex;align-items:center;gap:8px"><span style="font-size:13.5px;font-weight:700">A3 Federation</span><span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#4fd68a;background:rgba(49,197,109,.1);border:1px solid rgba(49,197,109,.25);border-radius:4px;padding:1px 6px">LIVE</span></div>
+                  <div style="display:flex;flex-direction:column;gap:6px">
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;color:#4d6076;text-transform:uppercase">SubLayer {{ L.order }}</span>
+                    <sc-for list="{{ fedMembers }}" as="m" hint-placeholder-count="5">
+                      <div style="display:flex;align-items:center;gap:8px;background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:8px;padding:7px 9px">
+                        <span style="color:#3d5570;cursor:grab;font-size:11px">⠿</span>
+                        <span style="width:8px;height:8px;border-radius:3px;background:{{ m.color }}"></span>
+                        <span style="font-size:11.5px;color:#dbe6f3;width:52px">{{ m.label }}</span>
+                        <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ m.path }}</span>
+                        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#4d6076">{{ m.ver }}</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                  <div style="display:flex;gap:6px">
+                    <span style="flex:1;display:flex;align-items:center;gap:6px;font-size:11px;color:#4fd68a;background:rgba(49,197,109,.08);border:1px solid rgba(49,197,109,.22);border-radius:7px;padding:6px 9px">✓ Coordinate Check OK</span>
+                    <span style="flex:1;display:flex;align-items:center;gap:6px;font-size:11px;color:#4fd68a;background:rgba(49,197,109,.08);border:1px solid rgba(49,197,109,.22);border-radius:7px;padding:6px 9px">✓ {{ L.unit }} m · CRS 一致</span>
+                  </div>
+                  <div onClick="{{ buildA3 }}" style="{{ buildA3Style }}" style-hover="filter:brightness(1.12)">{{ buildA3Label }}</div>
+                  <sc-if value="{{ a3Built }}" hint-placeholder-val="{{ false }}">
+                    <div style="display:flex;flex-direction:column;gap:8px;background:#0a1220;border:1px solid rgba(49,197,109,.25);border-radius:10px;padding:12px">
+                      <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;color:#4fd68a;text-transform:uppercase">Federated Stage ✓</span>
+                      <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#b9c9da">/Review/A1_Tower_fed.usd</span>
+                      <span style="font-size:10.5px;color:#5a7089">5 members · 12.48M tris · flatten off</span>
+                      <span onClick="{{ openRoom }}" style="text-align:center;font-size:11.5px;color:#04121a;background:linear-gradient(135deg,#41c7e8,#2f7bf6);border-radius:8px;padding:7px;cursor:pointer;font-weight:700" style-hover="filter:brightness(1.12)">Open in Review Room →</span>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ dockA4 }}" hint-placeholder-val="{{ false }}">
+                <div style="padding:14px;display:flex;flex-direction:column;gap:12px">
+                  <div style="display:flex;align-items:center;gap:8px"><span style="font-size:13.5px;font-weight:700">A4 {{ L.a4 }}</span><span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#4fd68a;background:rgba(49,197,109,.1);border:1px solid rgba(49,197,109,.25);border-radius:4px;padding:1px 6px">LIVE</span></div>
+                  <div style="display:flex;flex-direction:column;gap:6px">
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;color:#4d6076;text-transform:uppercase">{{ L.nlq }}</span>
+                    <div style="background:#0a1220;border:1px solid rgba(65,199,232,.3);border-radius:9px;padding:10px 12px;font-size:12px;color:#dbe6f3;line-height:1.5">找出 4F 所有防火門並標示未符合規範者<span style="display:inline-block;width:1px;height:13px;background:#41c7e8;margin-left:2px;animation:pulse 1.2s infinite;vertical-align:-2px"></span></div>
+                  </div>
+                  <div onClick="{{ runA4 }}" style="{{ runA4Style }}" style-hover="filter:brightness(1.12)">{{ runA4Label }}</div>
+                  <sc-if value="{{ a4Ran }}" hint-placeholder-val="{{ false }}">
+                    <div style="display:flex;flex-direction:column;gap:7px">
+                      <div style="display:flex;align-items:center;gap:6px">
+                        <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;color:#4d6076;text-transform:uppercase">{{ L.results }} · 12 IfcDoor</span>
+                        <span style="margin-left:auto;font-size:10px;color:#e8615c">不符合 5</span><span style="font-size:10px;color:#4fd68a">符合 7</span>
+                      </div>
+                      <sc-for list="{{ a4Rows }}" as="q" hint-placeholder-count="4">
+                        <div onClick="{{ q.pick }}" style="{{ q.rowStyle }}" style-hover="border-color:rgba(65,199,232,.4)">
+                          <span style="{{ q.okStyle }}">{{ q.ok }}</span>
+                          <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
+                            <span style="font-size:11.5px;color:#dbe6f3">{{ q.el }}</span>
+                            <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">{{ q.pset }}</span>
+                          </div>
+                          <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#8aa0b8">{{ q.conf }}</span>
+                        </div>
+                      </sc-for>
+                      <div style="display:flex;flex-direction:column;gap:5px;background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:9px;padding:10px">
+                        <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;color:#9d8cff;text-transform:uppercase">Evidence Trace</span>
+                        <div style="display:flex;justify-content:space-between;font-size:10.5px"><span style="color:#8aa0b8">規範條文 · 建築技術規則 76 條</span><span style="color:#4fd68a">Matched</span></div>
+                        <div style="display:flex;justify-content:space-between;font-size:10.5px"><span style="color:#8aa0b8">Pset_DoorCommon.FireRating</span><span style="color:#4fd68a">Matched</span></div>
+                      </div>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ dockIssues }}" hint-placeholder-val="{{ false }}">
+                <div style="padding:14px;display:flex;flex-direction:column;gap:12px">
+                  <div style="display:flex;align-items:center;gap:8px"><span style="font-size:13.5px;font-weight:700">Issues / BCF</span><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#8aa0b8">{{ issueCount }} open</span></div>
+                  <sc-for list="{{ issues }}" as="i" hint-placeholder-count="3">
+                    <div style="display:flex;flex-direction:column;gap:5px;background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:9px;padding:10px">
+                      <div style="display:flex;align-items:center;gap:7px">
+                        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#5a8db0">{{ i.id }}</span>
+                        <span style="{{ i.stStyle }}">{{ i.st }}</span>
+                        <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#4d6076">{{ i.src }}</span>
+                      </div>
+                      <span style="font-size:12px;color:#dbe6f3">{{ i.title }}</span>
+                    </div>
+                  </sc-for>
+                  <div style="display:flex;gap:8px">
+                    <span onClick="{{ exportBcf }}" style="flex:1;text-align:center;font-size:11.5px;color:#04121a;background:linear-gradient(135deg,#41c7e8,#2f7bf6);border-radius:8px;padding:8px;cursor:pointer;font-weight:700" style-hover="filter:brightness(1.12)">{{ L.bcf }}</span>
+                    <span onClick="{{ deliverOutbox }}" style="flex:1;text-align:center;font-size:11.5px;color:#8aa0b8;border:1px solid rgba(120,160,210,.16);border-radius:8px;padding:8px;cursor:pointer" style-hover="color:#dbe6f3">{{ L.outbox }}</span>
+                  </div>
+                </div>
+              </sc-if>
+
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:10px;padding:7px 14px;border-top:1px solid rgba(120,160,210,.10);background:#0a1018;flex:none;font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#4d6076">
+            <span style="letter-spacing:.1em;text-transform:uppercase;color:#3d5570">DataChannel</span>
+            <span>openedStageResult <span style="color:#4fd68a">✓</span></span>
+            <span>{{ dcLog }}</span>
+            <span>loadingState <span style="color:#8aa0b8">idle</span></span>
+            <span style="margin-left:auto">lease: <span style="color:#6fd6ee">editor</span> · spectator ×1</span>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ─────────── PIPELINE (1a for F1) ─────────── -->
+      <sc-if value="{{ isPipe }}" hint-placeholder-val="{{ false }}">
+        <div data-screen-label="模型資料與轉檔 Pipeline" data-canon-id="hifi-pipeline" style="flex:1;overflow:auto;padding:22px 26px;display:flex;flex-direction:column;gap:16px">
+          <div style="display:flex;align-items:center;gap:14px">
+            <span style="font-size:20px;font-weight:700">{{ L.pipe_title }}</span>
+            <div style="display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:10px;color:#5a8db0">
+              <span style="color:#6fd6ee">① {{ L.st_intake }}</span><span style="color:#3d5570">→</span>
+              <span style="color:#6fd6ee">② {{ L.st_conv }}</span><span style="color:#3d5570">→</span>
+              <span style="color:#6fd6ee">③ Session</span><span style="color:#3d5570">→</span>
+              <span style="color:#6fd6ee">④ 3D Handoff</span><span style="color:#3d5570">→</span>
+              <span style="color:#6fd6ee">⑤ {{ L.st_callback }}</span>
+            </div>
+            <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:#4d6076">MinIO watch ● · conversion API :49101 ●</span>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:start">
+            <!-- intake -->
+            <div style="background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;align-items:center;gap:8px"><span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">① {{ L.st_intake }}</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:#8aa0b8">{{ intakeCount }}</span></div>
+              <sc-for list="{{ intakeCards }}" as="c" hint-placeholder-count="2">
+                <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;padding:11px;display:flex;flex-direction:column;gap:7px">
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#dbe6f3;word-break:break-all">{{ c.file }}</span>
+                  <div style="display:flex;gap:5px;align-items:center">
+                    <span style="font-size:9.5px;color:#6fd6ee;background:rgba(65,199,232,.08);border:1px solid rgba(65,199,232,.2);border-radius:4px;padding:1px 6px">ifc-ready</span>
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#4d6076">{{ c.src }}</span>
+                  </div>
+                  <span onClick="{{ c.trigger }}" style="text-align:center;font-size:11px;color:#04121a;background:linear-gradient(135deg,#41c7e8,#2f7bf6);border-radius:7px;padding:6px;cursor:pointer;font-weight:700" style-hover="filter:brightness(1.12)">{{ L.trigger }} →</span>
+                </div>
+              </sc-for>
+              <sc-if value="{{ intakeEmpty }}" hint-placeholder-val="{{ false }}"><span style="font-size:11px;color:#4d6076;text-align:center;padding:8px 0">{{ L.empty }}</span></sc-if>
+            </div>
+            <!-- conversion -->
+            <div style="background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;align-items:center;gap:8px"><span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">② {{ L.st_conv }}</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:#8aa0b8">{{ convColCount }}</span></div>
+              <sc-for list="{{ convCards }}" as="c" hint-placeholder-count="3">
+                <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;padding:11px;display:flex;flex-direction:column;gap:7px">
+                  <div style="display:flex;align-items:center;gap:6px"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#dbe6f3;flex:1;word-break:break-all">{{ c.file }}</span><span style="{{ c.stStyle }}">{{ c.st }}</span></div>
+                  <sc-if value="{{ c.running }}" hint-placeholder-val="{{ false }}">
+                    <div style="height:5px;border-radius:3px;background:rgba(120,160,210,.12);overflow:hidden"><div style="height:100%;width:62%;background:linear-gradient(90deg,#2f7bf6,#41c7e8);border-radius:3px;animation:convbar 3s ease-in-out infinite alternate"></div></div>
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">IFC→USDC · ifcopenshell + usd-core</span>
+                  </sc-if>
+                  <sc-if value="{{ c.failed }}" hint-placeholder-val="{{ false }}">
+                    <span onClick="{{ c.retry }}" style="text-align:center;font-size:11px;color:#e8615c;border:1px solid rgba(232,97,92,.35);border-radius:7px;padding:5px;cursor:pointer" style-hover="background:rgba(232,97,92,.08)">{{ L.retry }}</span>
+                  </sc-if>
+                  <sc-if value="{{ c.done }}" hint-placeholder-val="{{ false }}">
+                    <div style="display:flex;gap:5px"><span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">model.usdc</span><span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">element_mapping.json</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#4fd68a">{{ c.metrics }}</span></div>
+                    <span onClick="{{ c.mkSession }}" style="text-align:center;font-size:11px;color:#04121a;background:linear-gradient(135deg,#41c7e8,#2f7bf6);border-radius:7px;padding:6px;cursor:pointer;font-weight:700" style-hover="filter:brightness(1.12)">{{ L.mksession }} →</span>
+                  </sc-if>
+                </div>
+              </sc-for>
+            </div>
+            <!-- sessions -->
+            <div style="background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;align-items:center;gap:8px"><span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">③ Review Sessions</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:#8aa0b8">{{ sessCount }}</span></div>
+              <sc-for list="{{ sessionCards }}" as="s" hint-placeholder-count="2">
+                <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;padding:11px;display:flex;flex-direction:column;gap:7px">
+                  <div style="display:flex;align-items:center;gap:6px">
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#6fd6ee">{{ s.id }}</span>
+                    <span style="margin-left:auto;font-size:9.5px;color:#4fd68a;background:rgba(49,197,109,.08);border:1px solid rgba(49,197,109,.22);border-radius:4px;padding:1px 6px">{{ s.lease }}</span>
+                  </div>
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#5a7089;word-break:break-all">{{ s.stage }}</span>
+                  <div style="display:flex;gap:6px">
+                    <span onClick="{{ s.openWs }}" style="flex:1;text-align:center;font-size:10.5px;color:#04121a;background:linear-gradient(135deg,#41c7e8,#2f7bf6);border-radius:7px;padding:5px;cursor:pointer;font-weight:700" style-hover="filter:brightness(1.12)">④ {{ L.enter3d }} →</span>
+                    <span onClick="{{ s.copy }}" style="text-align:center;font-size:10.5px;color:#8aa0b8;border:1px solid rgba(120,160,210,.16);border-radius:7px;padding:5px 8px;cursor:pointer" style-hover="color:#dbe6f3">⧉ /ui/open</span>
+                    <span onClick="{{ s.invite }}" style="text-align:center;font-size:10.5px;color:#6fd6ee;border:1px solid rgba(65,199,232,.3);border-radius:7px;padding:5px 8px;cursor:pointer;white-space:nowrap" style-hover="background:rgba(65,199,232,.08)">+ Spectator</span>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+            <!-- outbox -->
+            <div data-canon-id="hifi-pipeline-outbox" style="background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;align-items:center;gap:8px"><span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">⑤ Callback Outbox</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:#e6b23e">{{ outboxCount }} {{ L.pending }}</span></div>
+              <sc-for list="{{ outboxCards }}" as="o" hint-placeholder-count="3">
+                <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;padding:10px;display:flex;align-items:center;gap:8px">
+                  <div style="flex:1;display:flex;flex-direction:column;gap:2px">
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#dbe6f3">{{ o.id }} · {{ o.kind }}</span>
+                    <span style="font-size:9.5px;color:#5a7089">{{ o.target }}</span>
+                  </div>
+                  <div style="width:96px;display:flex;flex-direction:column;gap:2px">
+                    <span style="font-size:8.5px;color:#4d6076">{{ cloudColumnLabel }}</span>
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#8aa0b8">{{ o.cloudSt }}</span>
+                  </div>
+                  <span style="{{ o.stStyle }}">{{ o.st }}</span>
+                </div>
+              </sc-for>
+              <span onClick="{{ deliverOutbox }}" style="text-align:center;font-size:11px;color:#6fd6ee;border:1px solid rgba(65,199,232,.3);border-radius:8px;padding:7px;cursor:pointer" style-hover="background:rgba(65,199,232,.08)">{{ L.deliver }}</span>
+            </div>
+          </div>
+
+          <div style="background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;align-items:center"><span style="font-size:13.5px;font-weight:700">MinIO {{ L.browse }}</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#4d6076">GET /api/minio/objects?delimiter=/</span></div>
+            <div style="display:flex;gap:20px;font-family:'JetBrains Mono',monospace;font-size:11px">
+              <div style="display:flex;flex-direction:column;gap:5px;color:#8aa0b8">
+                <span>▾ bucket/incoming</span>
+                <span style="padding-left:16px;color:#dbe6f3">demo_lib_2026.ifc <span style="color:#4d6076">· 48 MB</span></span>
+                <span style="padding-left:16px;color:#dbe6f3">松風庵_v3.ifc <span style="color:#4d6076">· 132 MB</span></span>
+                <span>▸ bucket/processed</span>
+                <span>▸ bucket/artifacts</span>
+              </div>
+              <div style="flex:1;border-left:1px solid rgba(120,160,210,.10);padding-left:20px;display:flex;flex-direction:column;gap:5px;color:#5a7089;font-size:10.5px">
+                <span style="color:#8aa0b8">{{ L.recent }}</span>
+                <span>10:20 · 990_model.ifc → conversion job cj_0117 <span style="color:#4fd68a">202</span></span>
+                <span>10:05 · s3:ObjectCreated demo_lib_2026.ifc</span>
+                <span>09:41 · conversion cj_0116 failed <span style="color:#e8615c">ifcopenshell parse error</span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ─────────── OPS ─────────── -->
+      <sc-if value="{{ isOps }}" hint-placeholder-val="{{ false }}">
+        <div data-screen-label="Runtime / Kit·GPU Ops" data-canon-id="hifi-ops" style="flex:1;overflow:auto;padding:22px 26px;display:flex;flex-direction:column;gap:16px">
+          <span style="font-size:20px;font-weight:700">{{ L.ops_title }}</span>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+            <div style="background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;align-items:center;gap:8px"><span style="font-size:13px;font-weight:700">Kit Instance</span><span style="margin-left:auto;font-size:10px;color:#4fd68a;background:rgba(49,197,109,.08);border:1px solid rgba(49,197,109,.22);border-radius:4px;padding:1px 6px">running</span></div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#8aa0b8;display:flex;flex-direction:column;gap:4px">
+                <span>usd_viewer.kit · RTX renderer</span>
+                <span>stage: /Review/A1_Tower_fed.usd</span>
+                <span>signaling :49100 · media :47998</span>
+              </div>
+              <div style="display:flex;gap:8px">
+                <span onClick="{{ kitOpen }}" style="flex:1;text-align:center;font-size:11px;color:#6fd6ee;border:1px solid rgba(65,199,232,.3);border-radius:7px;padding:6px;cursor:pointer" style-hover="background:rgba(65,199,232,.08)">open stage</span>
+                <span onClick="{{ kitClose }}" style="flex:1;text-align:center;font-size:11px;color:#e8615c;border:1px solid rgba(232,97,92,.3);border-radius:7px;padding:6px;cursor:pointer" style-hover="background:rgba(232,97,92,.08)">close</span>
+              </div>
+            </div>
+            <div style="background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px">
+              <span style="font-size:13px;font-weight:700">GPU Fleet</span>
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <div style="display:flex;align-items:center;gap:8px"><span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#8aa0b8;width:70px">GPU 0</span><div style="flex:1;height:6px;border-radius:3px;background:rgba(120,160,210,.12);overflow:hidden"><div style="height:100%;width:82%;background:linear-gradient(90deg,#31c56d,#41c7e8)"></div></div><span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#dbe6f3">82%</span></div>
+                <div style="display:flex;align-items:center;gap:8px"><span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#8aa0b8;width:70px">GPU 1</span><div style="flex:1;height:6px;border-radius:3px;background:rgba(120,160,210,.12);overflow:hidden"><div style="height:100%;width:24%;background:linear-gradient(90deg,#31c56d,#41c7e8)"></div></div><span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#dbe6f3">24%</span></div>
+                <div style="display:flex;align-items:center;gap:8px"><span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#8aa0b8;width:70px">VRAM</span><div style="flex:1;height:6px;border-radius:3px;background:rgba(120,160,210,.12);overflow:hidden"><div style="height:100%;width:61%;background:linear-gradient(90deg,#e6b23e,#e8615c)"></div></div><span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#dbe6f3">14.6/24 GB</span></div>
+              </div>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#4d6076">kit-manager-api :8010 · /api/kit/* proxy</span>
+            </div>
+            <div style="background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:8px">
+              <span style="font-size:13px;font-weight:700">{{ L.svc_health }}</span>
+              <sc-for list="{{ services }}" as="sv" hint-placeholder-count="6">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span style="{{ sv.dot }}"></span>
+                  <span style="font-size:11.5px;color:#b9c9da;flex:1">{{ sv.name }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#5a7089">{{ sv.port }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          <div style="background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;align-items:center"><span style="font-size:13px;font-weight:700">structLog · {{ L.recent }}</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#4d6076">GET /api/internal/structLog/health ✓</span></div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5a7089;display:flex;flex-direction:column;gap:4px">
+              <span><span style="color:#4fd68a">INFO</span> 10:53:43 review-session S-240601 first-frame 1840ms</span>
+              <span><span style="color:#4fd68a">INFO</span> 10:53:12 viewer-lease claim lease_8812 role=editor</span>
+              <span><span style="color:#e6b23e">WARN</span> 10:41:02 callback-outbox retry ×2 OB-201</span>
+              <span><span style="color:#4fd68a">INFO</span> 10:20:19 conversion cj_0117 done → ingest quality-metrics</span>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ─────────── CONCEPT (A5–A10) ─────────── -->
+      <sc-if value="{{ isConcept }}" hint-placeholder-val="{{ false }}">
+        <div data-screen-label="Concept Preview" data-canon-id="hifi-concept" style="flex:1;overflow:auto;display:flex;flex-direction:column">
+          <div style="display:flex;align-items:center;gap:10px;padding:12px 22px;border-bottom:1px solid rgba(120,160,210,.10);background:#0a1018">
+            <span style="font-size:16px;font-weight:700">{{ conceptTitle }}</span>
+            <span style="font-size:10px;color:#e6b23e;background:rgba(230,178,62,.1);border:1px solid rgba(230,178,62,.3);border-radius:5px;padding:2px 8px;font-family:'JetBrains Mono',monospace">Concept Preview / Roadmap</span>
+            <span style="margin-left:auto;font-size:11px;color:#5a7089">{{ L.concept_note }}</span>
+          </div>
+          <sc-if value="{{ conceptA5 }}" hint-placeholder-val="{{ false }}"><img src="uploads/ai-bim-geo-viewer-A5.png" style="width:100%;display:block"></sc-if>
+          <sc-if value="{{ conceptA6 }}" hint-placeholder-val="{{ false }}"><img src="uploads/ai-bim-geo-viewer-A6.png" style="width:100%;display:block"></sc-if>
+          <sc-if value="{{ conceptA7 }}" hint-placeholder-val="{{ false }}"><img src="uploads/ai-bim-geo-viewer-A7.png" style="width:100%;display:block"></sc-if>
+          <sc-if value="{{ conceptA8 }}" hint-placeholder-val="{{ false }}"><img src="uploads/ai-bim-geo-viewer-A8.png" style="width:100%;display:block"></sc-if>
+          <sc-if value="{{ conceptA9 }}" hint-placeholder-val="{{ false }}"><img src="uploads/ai-bim-geo-viewer-A9.png" style="width:100%;display:block"></sc-if>
+          <sc-if value="{{ conceptA10 }}" hint-placeholder-val="{{ false }}"><img src="uploads/ai-bim-geo-viewer-A10.png" style="width:100%;display:block"></sc-if>
+        </div>
+      </sc-if>
+
+    </div>
+  </div>
+
+  <!-- toast -->
+  <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:#101d2c;border:1px solid rgba(65,199,232,.4);border-radius:10px;padding:10px 18px;font-size:12.5px;color:#dbe6f3;box-shadow:0 12px 40px rgba(0,0,0,.5);animation:tup .18s ease-out;display:flex;align-items:center;gap:9px;z-index:99">
+      <span style="width:7px;height:7px;border-radius:50%;background:#41c7e8"></span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px">{{ toast }}</span>
+    </div>
+  </sc-if>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;defaultLang&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;zh&quot;,&quot;en&quot;],&quot;default&quot;:&quot;zh&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Console&quot;},&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;options&quot;:[&quot;#41c7e8&quot;,&quot;#84c714&quot;,&quot;#2f7bf6&quot;,&quot;#9d8cff&quot;],&quot;default&quot;:&quot;#41c7e8&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Console&quot;},&quot;showConceptApps&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Console&quot;}}">
+class Component extends DCLogic {
+  state = {
+    page: "home", dock: "a1", lang: null, concept: "a5",
+    a1Ran: true, a2Ran: false, a3Built: false, a4Ran: false,
+    ruleOn: { r1: true, r2: true, r3: false },
+    sel: null, toast: "", dcLog: "highlightPrimsResult ✓ (18 prims)",
+    opened: {}, overlayOn: false,
+    intake: [
+      { file: "demo_lib_2026.ifc", src: "MinIO bucket/incoming" },
+      { file: "松風庵_v3.ifc", src: "MinIO bucket/incoming" },
+    ],
+    conv: [
+      { file: "990_model.ifc", st: "running" },
+      { file: "fixture-bytes.ifc", st: "failed" },
+      { file: "許良宇圖書館建築_2026.ifc", st: "done", metrics: "12.4M tris · 98%" },
+    ],
+    sessions: [{ id: "S-240601", lease: "editor lease", stage: "/Review/A1_Tower_fed.usd" }],
+    outbox: [
+      { id: "OB-201", kind: "conversion-result", st: "待送", cloudSt: "DISABLED" },
+      { id: "OB-202", kind: "issue-snapshot", st: "待送", cloudSt: "DISABLED" },
+      { id: "OB-200", kind: "conversion-result", st: "已送", cloudSt: "DISABLED" },
+      { id: "OB-203", kind: "lineage-result", st: "待送", cloudSt: "PENDING" },
+      { id: "OB-204", kind: "lineage-result", st: "已送", cloudSt: "DELIVERED" },
+    ],
+    issues: [
+      { id: "ISS-101", title: "FD-4F-02 防火時效不足(30min < 60min)", st: "open", src: "rule-run #87" },
+      { id: "ISS-098", title: "B-3F-12 樑位移 +42mm 超容差", st: "in-review", src: "diff v11→v12" },
+    ],
+    issueSeq: 102,
+  };
+
+  t(msg) {
+    clearTimeout(this._tt);
+    this.setState({ toast: msg });
+    this._tt = setTimeout(() => this.setState({ toast: "" }), 2600);
+  }
+
+  renderVals() {
+    const s = this.state;
+    const lang = s.lang ?? (this.props.defaultLang ?? "zh");
+    const zh = lang === "zh";
+    const accent = this.props.accent ?? "#41c7e8";
+    const showConcept = this.props.showConceptApps ?? true;
+
+    const L = zh ? {
+      sub: "BIM Governance Console", search: "搜尋專案、模型、Issue、BCF…", project: "專案",
+      g_work: "工作台", g_apps: "AI 應用模組", designdoc: "前後端設計文件",
+      home_title: "總覽 · Mission Control", kpi_conv: "轉檔中", kpi_sess: "活躍 Sessions",
+      kpi_issue: "未結 Issue", kpi_issue_sub: "嚴重 3 · 高 5 · 中 4", kpi_outbox: "Outbox 待送",
+      pipe_snap: "資料生產線快照", enter: "進入生產線", alerts: "警示 / 事件", launcher: "應用啟動器",
+      f1_desc: "進件 → 轉檔 → Session → 3D Handoff → 回拋,全程 metadata-only 出雲端",
+      nav_home: "總覽", nav_ws: "3D 工作區", nav_pipe: "模型資料與轉檔", nav_ops: "Runtime / Kit·GPU",
+      a1: "治理檢核", a2: "版本 Diff", a4: "語意查詢", file: "選定檔案", rules: "規則集",
+      run: "執行檢核", rerun: "重新執行", fails: "失敗", bcf: "匯出 BCF 2.1", clear: "清除疊加",
+      added: "新增", removed: "移除", modified: "修改", overlay: "套用疊加", fromdiff: "由差異開單",
+      order: "順序", unit: "單位", nlq: "自然語言查詢", results: "查詢結果",
+      pipe_title: "模型資料與轉檔生產線", st_intake: "進件", st_conv: "轉檔", st_callback: "回拋",
+      trigger: "觸發轉檔", retry: "重試", mksession: "建立 Review Session", enter3d: "進入 3D 工作區",
+      pending: "待送", deliver: "立即回拋 deliver", browse: "物件瀏覽", recent: "最近事件",
+      ops_title: "Runtime / Kit · GPU 營運", svc_health: "服務健康", empty: "無待進件",
+      concept_note: "點左欄 A1–A4 體驗 live 模組;本頁為概念稿",
+      dock_issues: "Issues", outbox: "回拋 Outbox",
+    } : {
+      sub: "BIM Governance Console", search: "Search projects, models, issues, BCF…", project: "Project",
+      g_work: "Workspace", g_apps: "AI App Modules", designdoc: "Design Doc (FE/BE)",
+      home_title: "Overview · Mission Control", kpi_conv: "Converting", kpi_sess: "Active Sessions",
+      kpi_issue: "Open Issues", kpi_issue_sub: "critical 3 · high 5 · med 4", kpi_outbox: "Outbox Pending",
+      pipe_snap: "Data Pipeline Snapshot", enter: "Open pipeline", alerts: "Alerts / Events", launcher: "App Launcher",
+      f1_desc: "Intake → Convert → Session → 3D Handoff → Callback, metadata-only to cloud",
+      nav_home: "Overview", nav_ws: "3D Workspace", nav_pipe: "Model Data & Conversion", nav_ops: "Runtime / Kit·GPU",
+      a1: "Rule Check", a2: "Version Diff", a4: "Semantic Query", file: "Selected file", rules: "Rule set",
+      run: "Run check", rerun: "Re-run", fails: "failures", bcf: "Export BCF 2.1", clear: "Clear overlay",
+      added: "Added", removed: "Removed", modified: "Modified", overlay: "Apply overlay", fromdiff: "Issue from diff",
+      order: "order", unit: "Unit", nlq: "Natural language query", results: "Results",
+      pipe_title: "Model Data & Conversion Pipeline", st_intake: "Intake", st_conv: "Convert", st_callback: "Callback",
+      trigger: "Trigger conversion", retry: "Retry", mksession: "Create Review Session", enter3d: "Enter 3D Workspace",
+      pending: "pending", deliver: "Deliver now", browse: "Object browser", recent: "Recent events",
+      ops_title: "Runtime / Kit · GPU Operations", svc_health: "Service health", empty: "No pending intake",
+      concept_note: "Click A1–A4 in sidebar for live modules; this page is a concept mock",
+      dock_issues: "Issues", outbox: "Deliver Outbox",
+    };
+
+    const go = (page) => () => this.setState({ page });
+    const goDock = (dock) => () => this.setState({ page: "ws", dock, sel: null });
+    const goConcept = (concept) => () => this.setState({ page: "concept", concept });
+
+    const navItem = (active) =>
+      `display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;cursor:pointer;color:${active ? "#dbe6f3" : "#8aa0b8"};background:${active ? "rgba(65,199,232,.10)" : "transparent"};border-left:2px solid ${active ? accent : "transparent"}`;
+    const badgeTone = (tone) => {
+      const m = { live: ["#4fd68a", "rgba(49,197,109,.1)", "rgba(49,197,109,.3)"], p3: ["#b7a9ff", "rgba(157,140,255,.1)", "rgba(157,140,255,.3)"], p4: ["#8f81d8", "rgba(157,140,255,.07)", "rgba(157,140,255,.2)"], warn: ["#e6b23e", "rgba(230,178,62,.1)", "rgba(230,178,62,.3)"] }[tone];
+      return `font-family:'JetBrains Mono',monospace;font-size:8.5px;padding:1px 5px;border-radius:4px;color:${m[0]};background:${m[1]};border:1px solid ${m[2]}`;
+    };
+
+    const navMain = [
+      { icon: "◧", label: L.nav_home, id: "home" },
+      { icon: "⬒", label: L.nav_ws, id: "ws" },
+      { icon: "⇶", label: L.nav_pipe, id: "pipe", badge: String(s.conv.filter(c => c.st !== "done").length), badgeTone: "warn" },
+      { icon: "▣", label: L.nav_ops, id: "ops" },
+    ].map(n => ({ ...n, go: go(n.id), style: navItem(s.page === n.id), badgeStyle: badgeTone(n.badgeTone ?? "warn") }));
+
+    const apps = [
+      { code: "A1", label: zh ? "治理檢核" : "Rule Check", badge: "LIVE", tone: "live", act: goDock("a1") },
+      { code: "A2", label: zh ? "版本 Diff" : "Version Diff", badge: "LIVE", tone: "live", act: goDock("a2") },
+      { code: "A3", label: "Federation", badge: "LIVE", tone: "live", act: goDock("a3") },
+      { code: "A4", label: zh ? "語意查詢" : "Semantic Query", badge: "LIVE", tone: "live", act: goDock("a4") },
+      { code: "A5", label: "IoT / FM", badge: "P3", tone: "p3", act: goConcept("a5") },
+      { code: "A6", label: "4D / 5D", badge: "P4", tone: "p4", act: goConcept("a6") },
+      { code: "A7", label: "Scan Compare", badge: "P4", tone: "p4", act: goConcept("a7") },
+      { code: "A8", label: "Synthetic Data", badge: "P4", tone: "p4", act: goConcept("a8") },
+      { code: "A9", label: zh ? "機器人巡檢" : "Robot Inspect", badge: "P4", tone: "p4", act: goConcept("a9") },
+      { code: "A10", label: zh ? "AI 決策" : "AI Decision", badge: "P4", tone: "p4", act: goConcept("a10") },
+    ].filter(a => showConcept || a.tone === "live");
+
+    const navApps = apps.map(a => ({
+      code: a.code, label: a.label, badge: a.badge, go: a.act,
+      style: navItem(s.page === "ws" && s.dock === a.code.toLowerCase() || s.page === "concept" && s.concept === a.code.toLowerCase()),
+      badgeStyle: badgeTone(a.tone),
+    }));
+
+    const appEn = { A1: "Governance & Rule Checker", A2: "Model Version Diff", A3: "Cross-discipline Federation", A4: "Semantic query & evidence", A5: "IoT / FM Digital Twin", A6: "4D/5D Construction", A7: "Scan-to-BIM Deviation", A8: "Synthetic Data Studio", A9: "Autonomous inspection", A10: "AI decision workbench" };
+    const appCards = apps.map(a => ({
+      code: a.code, title: a.label, en: appEn[a.code], badge: a.badge, go: a.act,
+      badgeStyle: badgeTone(a.tone),
+      cardStyle: `background:#0e1621;border:1px solid ${a.tone === "live" ? "rgba(120,160,210,.16)" : "rgba(120,160,210,.09)"};border-radius:12px;padding:13px 14px;display:flex;flex-direction:column;gap:5px;cursor:pointer;transition:all .15s;${a.tone === "live" ? "" : "opacity:.75"}`,
+    }));
+
+    // workspace
+    const dockTabs = [
+      { id: "a1", label: "A1 " + L.a1 }, { id: "a2", label: "A2 Diff" }, { id: "a3", label: "A3 Federation" },
+      { id: "a4", label: "A4 " + L.a4 }, { id: "issues", label: "Issues / BCF" },
+    ].map(d => ({ ...d, go: goDock(d.id), style: `padding:6px 13px;border-radius:8px;font-size:12px;cursor:pointer;font-weight:${s.dock === d.id ? 700 : 400};color:${s.dock === d.id ? "#04121a" : "#8aa0b8"};background:${s.dock === d.id ? `linear-gradient(135deg,${accent},#2f7bf6)` : "transparent"}` }));
+
+    const memColors = { ARCH: "#e8925c", STR: "#41c7e8", MEP: "#9d8cff", CIVIL: "#e6b23e", LAND: "#31c56d" };
+    const pickTree = (label) => () => this.setState({ sel: { name: label + " · member", path: "/World/" + label }, dcLog: `focusPrimResult ✓ /World/${label}` });
+    const stageTree = ["ARCH", "STR", "MEP", "CIVIL", "LAND"].map((m, i) => ({
+      label: m, color: memColors[m], ver: ["v12", "v08", "v15", "v04", "v06"][i], pick: pickTree(m),
+      style: `display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:7px;cursor:pointer;margin-left:10px;${s.sel && s.sel.path === "/World/" + m ? "background:rgba(65,199,232,.1)" : ""}`,
+    }));
+
+    const vpImages = { a1: "assets/vp-semantic.png", a2: "assets/vp-scan.png", a3: "assets/vp-federation.png", a4: "assets/vp-semantic.png", issues: "assets/vp-tower.png" };
+    const legends = {
+      a1: [zh ? "● 檢核失敗 ×18 疊加中" : "● 18 failures overlaid", "rgba(232,97,92"],
+      a2: [s.overlayOn ? (zh ? "■ 差異疊加:新增12 移除4 修改28" : "■ Diff overlay: +12 −4 ~28") : (zh ? "◌ 尚未套用差異疊加" : "◌ overlay not applied"), "rgba(230,178,62"],
+      a3: [zh ? "● 5 領域 SubLayer 合成" : "● 5-discipline composition", "rgba(49,197,109"],
+      a4: [zh ? "● 不符合 5 · 符合 7" : "● 5 fail · 7 pass", "rgba(232,97,92"],
+      issues: [zh ? "◉ Issue 錨點 ×" + s.issues.length : "◉ Issue anchors ×" + s.issues.length, "rgba(65,199,232"],
+    };
+    const lg = legends[s.dock];
+    const vpLegendStyle = `font-family:'JetBrains Mono',monospace;white-space:nowrap;font-size:10px;background:rgba(10,16,24,.8);border:1px solid ${lg[1]},.45);border-radius:6px;padding:3px 8px;color:${lg[1]},1)`.replace("rgba(", "rgba(");
+
+    // A1 dock
+    const ruleDefs = [
+      { k: "r1", label: zh ? "防火門 FireRating ≥ 60min" : "Fire door rating ≥ 60min", code: "CNS 11227-1" },
+      { k: "r2", label: zh ? "淨高 ≥ 2100mm" : "Clear height ≥ 2100mm", code: "TBC 76" },
+      { k: "r3", label: zh ? "管線間距 ≥ 50mm" : "Pipe clearance ≥ 50mm", code: "MEP-S12" },
+    ];
+    const a1Rules = ruleDefs.map(r => ({
+      ...r, mark: s.ruleOn[r.k] ? "✓" : "", toggle: () => this.setState({ ruleOn: { ...s.ruleOn, [r.k]: !s.ruleOn[r.k] } }),
+      boxStyle: `width:15px;height:15px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:10px;flex:none;${s.ruleOn[r.k] ? `background:${accent};color:#04121a;font-weight:700` : "border:1px solid rgba(120,160,210,.3)"}`,
+    }));
+
+    const sevTone = { "嚴重": ["#e8615c", "rgba(232,97,92"], "高": ["#e6b23e", "rgba(230,178,62"], "中": ["#e8d35c", "rgba(232,211,92"], "critical": ["#e8615c", "rgba(232,97,92"], "high": ["#e6b23e", "rgba(230,178,62"], "med": ["#e8d35c", "rgba(232,211,92"] };
+    const failDefs = [
+      { id: "SC-132", el: "FD-4F-02 " + (zh ? "防火門" : "fire door"), rule: "FireRating 30min < 60min", sev: zh ? "嚴重" : "critical", path: "/World/ARCH/4F/Doors/FD-02" },
+      { id: "SC-131", el: "W-2F-15 " + (zh ? "牆" : "wall"), rule: zh ? "淨高 2050mm" : "clear height 2050mm", sev: zh ? "高" : "high", path: "/World/ARCH/2F/Walls/W-15" },
+      { id: "SC-130", el: "P-2F-M32 " + (zh ? "管線" : "pipe"), rule: zh ? "間距 32mm" : "clearance 32mm", sev: zh ? "中" : "med", path: "/World/MEP/2F/Pipes/M32" },
+      { id: "SC-129", el: "D-2F-09 " + (zh ? "風管" : "duct"), rule: zh ? "支撐間距超限" : "support spacing", sev: zh ? "中" : "med", path: "/World/MEP/2F/Ducts/D09" },
+    ];
+    const a1Results = failDefs.map(f => {
+      const t = sevTone[f.sev];
+      const opened = s.opened[f.id];
+      return {
+        ...f,
+        pick: () => this.setState({ sel: { name: f.el, path: f.path }, dcLog: `highlightPrimsRequest → ack ✓ ${f.path}` }),
+        rowStyle: `display:flex;align-items:center;gap:9px;background:#0a1220;border:1px solid ${s.sel && s.sel.path === f.path ? "rgba(65,199,232,.5)" : "rgba(120,160,210,.12)"};border-radius:9px;padding:8px 10px;cursor:pointer`,
+        sevStyle: `flex:none;font-size:9.5px;padding:2px 7px;border-radius:4px;color:${t[0]};background:${t[1]},.1);border:1px solid ${t[1]},.3)`,
+        open: (e) => { if (e && e.stopPropagation) e.stopPropagation(); if (opened) return; this.setState({ opened: { ...s.opened, [f.id]: true }, issues: [{ id: "ISS-" + s.issueSeq, title: f.el + " · " + f.rule, st: "open", src: "rule-run #88" }, ...s.issues], issueSeq: s.issueSeq + 1 }); this.t(`POST /api/issues/from-rule-run/88 → 201 · ISS-${s.issueSeq}`); },
+        openLabel: opened ? "✓" : (zh ? "開單" : "issue"),
+        openStyle: `flex:none;font-size:10px;padding:3px 9px;border-radius:6px;cursor:pointer;${opened ? "color:#4fd68a;border:1px solid rgba(49,197,109,.3)" : `color:#04121a;background:${accent};font-weight:700`}`,
+      };
+    });
+
+    // A2 dock
+    const kindTone = { added: ["#6fd6ee", "rgba(65,199,232"], removed: ["#e8615c", "rgba(232,97,92"], modified: ["#e6b23e", "rgba(230,178,62"] };
+    const diffDefs = [
+      { el: "B-3F-12 " + (zh ? "樑" : "beam"), kind: zh ? "修改" : "mod", tone: "modified", detail: "position.z +42mm" },
+      { el: "FD-4F-02 " + (zh ? "防火門" : "door"), kind: zh ? "移除" : "del", tone: "removed", detail: "IfcDoor deleted in v15" },
+      { el: "W-5F-03…08 " + (zh ? "牆組" : "walls"), kind: zh ? "新增" : "add", tone: "added", detail: "6 new IfcWall" },
+      { el: "P-2F-M32 " + (zh ? "管線" : "pipe"), kind: zh ? "修改" : "mod", tone: "modified", detail: "diameter 80→100" },
+    ];
+    const diffItems = diffDefs.map((d, i) => {
+      const t = kindTone[d.tone];
+      return {
+        ...d,
+        pick: () => this.setState({ sel: { name: d.el, path: "/World/diff/" + i }, dcLog: `focusPrimResult ✓ (${d.el})` }),
+        rowStyle: `display:flex;align-items:center;gap:9px;background:#0a1220;border:1px solid ${s.sel && s.sel.path === "/World/diff/" + i ? "rgba(65,199,232,.5)" : "rgba(120,160,210,.12)"};border-radius:9px;padding:8px 10px;cursor:pointer`,
+        kindStyle: `flex:none;font-size:9.5px;padding:2px 7px;border-radius:4px;color:${t[0]};background:${t[1]},.1);border:1px solid ${t[1]},.3)`,
+      };
+    });
+
+    // A3 dock
+    const fedMembers = ["ARCH", "STR", "MEP", "CIVIL", "LAND"].map((m, i) => ({
+      label: m, color: memColors[m], ver: ["v12", "v08", "v15", "v04", "v06"][i],
+      path: `/Models/${m}/A1_Tower.usd`,
+    }));
+
+    // A4 dock
+    const a4Defs = [
+      { el: "4F-FD-01", ok: false, pset: "FireRating 60min · IsExternal FALSE", conf: "0.32" },
+      { el: "4F-FD-02", ok: false, pset: "FireRating 30min", conf: "0.38" },
+      { el: "4F-FD-03", ok: true, pset: "FireRating 60min", conf: "0.95" },
+      { el: "4F-FD-04", ok: true, pset: "FireRating 60min", conf: "0.91" },
+    ];
+    const a4Rows = a4Defs.map((q, i) => ({
+      ...q,
+      ok: q.ok ? (zh ? "符合" : "pass") : (zh ? "不符合" : "fail"),
+      okStyle: `flex:none;font-size:9.5px;padding:2px 7px;border-radius:4px;${q.ok ? "color:#4fd68a;background:rgba(49,197,109,.1);border:1px solid rgba(49,197,109,.3)" : "color:#e8615c;background:rgba(232,97,92,.1);border:1px solid rgba(232,97,92,.3)"}`,
+      pick: () => this.setState({ sel: { name: "IfcDoor " + q.el, path: "/World/A1_Tower/4F/Doors/" + q.el }, dcLog: `highlightPrimsRequest → ack ✓ (${q.el})` }),
+      rowStyle: `display:flex;align-items:center;gap:9px;background:#0a1220;border:1px solid ${s.sel && s.sel.name === "IfcDoor " + q.el ? "rgba(65,199,232,.5)" : "rgba(120,160,210,.12)"};border-radius:9px;padding:8px 10px;cursor:pointer`,
+    }));
+
+    const btn = `text-align:center;font-size:12px;font-weight:700;color:#04121a;background:linear-gradient(135deg,${accent},#2f7bf6);border-radius:9px;padding:9px;cursor:pointer`;
+
+    // issues
+    const stTone = { open: ["#e8615c", "rgba(232,97,92"], "in-review": ["#e6b23e", "rgba(230,178,62"] };
+    const issues = s.issues.map(i => {
+      const t = stTone[i.st] ?? stTone.open;
+      return { ...i, stStyle: `font-size:9px;font-family:'JetBrains Mono',monospace;padding:1px 6px;border-radius:4px;color:${t[0]};background:${t[1]},.1);border:1px solid ${t[1]},.3)` };
+    });
+
+    // pipeline
+    const stChip = (kind) => ({
+      running: "font-size:9.5px;color:#6fd6ee;background:rgba(65,199,232,.08);border:1px solid rgba(65,199,232,.25);border-radius:4px;padding:1px 6px;font-family:'JetBrains Mono',monospace",
+      failed: "font-size:9.5px;color:#e8615c;background:rgba(232,97,92,.08);border:1px solid rgba(232,97,92,.3);border-radius:4px;padding:1px 6px;font-family:'JetBrains Mono',monospace",
+      done: "font-size:9.5px;color:#4fd68a;background:rgba(49,197,109,.08);border:1px solid rgba(49,197,109,.25);border-radius:4px;padding:1px 6px;font-family:'JetBrains Mono',monospace",
+    }[kind]);
+
+    const intakeCards = s.intake.map(c => ({
+      ...c,
+      trigger: () => {
+        this.setState({ intake: s.intake.filter(x => x.file !== c.file), conv: [{ file: c.file, st: "running" }, ...s.conv] });
+        this.t("POST /api/conversion/trigger → 202 Accepted · " + c.file);
+      },
+    }));
+    const convCards = s.conv.map(c => ({
+      file: c.file, st: c.st === "running" ? (zh ? "轉檔中" : "running") : c.st === "failed" ? (zh ? "失敗" : "failed") : (zh ? "完成" : "done"),
+      stStyle: stChip(c.st), running: c.st === "running", failed: c.st === "failed", done: c.st === "done",
+      metrics: c.metrics ?? "",
+      retry: () => { this.setState({ conv: s.conv.map(x => x.file === c.file ? { ...x, st: "running" } : x) }); this.t("POST /api/conversion/jobs/cj_0116/retry → 202"); },
+      mkSession: () => {
+        const id = "S-2407" + String(14 + s.sessions.length);
+        this.setState({ sessions: [...s.sessions, { id, lease: "unclaimed", stage: "/artifacts/" + c.file.replace(".ifc", "") + "/model.usdc" }] });
+        this.t("POST /api/review-sessions → 201 · " + id);
+      },
+    }));
+    const sessionCards = s.sessions.map(x => ({
+      ...x,
+      openWs: () => { this.setState({ page: "ws", dock: "a1" }); this.t("GET /ui/open?session=" + x.id + " → 302 viewer"); },
+      copy: () => this.t("已複製 /ui/open?session=" + x.id),
+      invite: () => this.t("已複製 Spectator 邀請連結 /ui/open?session=" + x.id + "&streamRole=spectator(唯讀)"),
+    }));
+    const cloudPublicationLabels = {
+      DISABLED: zh ? "未啟用" : "disabled",
+      PENDING: zh ? "待送" : "pending",
+      RETRYING: zh ? "重試中" : "retrying",
+      DELIVERED: zh ? "已登錄" : "registered",
+      DEAD_LETTER: zh ? "待人工處理" : "manual action",
+      CONFLICT: zh ? "衝突" : "conflict",
+    };
+    const outboxCards = s.outbox.map(o => ({
+      ...o,
+      st: o.st === "待送" ? (zh ? "待送" : "pending") : (zh ? "已送 ✓" : "sent ✓"),
+      stStyle: o.st === "待送" ? "font-size:9.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.3);border-radius:4px;padding:2px 7px;font-family:'JetBrains Mono',monospace" : "font-size:9.5px;color:#4fd68a;background:rgba(49,197,109,.08);border:1px solid rgba(49,197,109,.25);border-radius:4px;padding:2px 7px;font-family:'JetBrains Mono',monospace",
+      target: o.kind === "lineage-result"
+        ? "Cloud Ingest API · edge → external bim-control → cloud MySQL"
+        : (zh ? "既有 workflow callback → external bim-control" : "Existing workflow callback → external bim-control"),
+      cloudSt: cloudPublicationLabels[o.cloudSt] || cloudPublicationLabels.DISABLED,
+    }));
+
+    const pipeSnap = [
+      { step: "① INTAKE", n: String(s.intake.length), label: zh ? "進件" : "intake", arrow: true },
+      { step: "② CONVERT", n: String(s.conv.filter(c => c.st === "running").length), label: zh ? "轉檔中" : "running", arrow: true },
+      { step: "③ SESSION", n: String(s.sessions.length), label: zh ? "活躍" : "active", arrow: true },
+      { step: "⑤ OUTBOX", n: String(s.outbox.filter(o => o.st === "待送").length), label: zh ? "待送" : "pending", arrow: false },
+    ];
+
+    const alerts = [
+      { msg: zh ? "rule-run #88 完成:嚴重 18 項" : "rule-run #88 done: 18 critical", t: "10:53", dot: "width:7px;height:7px;border-radius:50%;background:#e8615c;flex:none" },
+      { msg: zh ? "990_model.ifc 轉檔完成,品質 98%" : "990_model.ifc converted, quality 98%", t: "10:20", dot: "width:7px;height:7px;border-radius:50%;background:#31c56d;flex:none" },
+      { msg: zh ? "Outbox OB-201 重試 ×2" : "Outbox OB-201 retry ×2", t: "10:41", dot: "width:7px;height:7px;border-radius:50%;background:#e6b23e;flex:none" },
+      { msg: zh ? "S-240601 first-frame 1.84s" : "S-240601 first-frame 1.84s", t: "10:53", dot: "width:7px;height:7px;border-radius:50%;background:#41c7e8;flex:none" },
+    ];
+
+    const services = [
+      { name: "bim-review-coordinator", port: ":8004", ok: true },
+      { name: "governance-service", port: ":49102", ok: true },
+      { name: "conversion authority", port: ":49101", ok: true },
+      { name: "Kit signaling / WebRTC", port: ":49100 / :47998", ok: true },
+      { name: "kit-manager-api", port: ":8010", ok: true },
+      { name: "MinIO watch", port: "s3 events", ok: true },
+    ].map(sv => ({ ...sv, dot: `width:7px;height:7px;border-radius:50%;background:${sv.ok ? "#31c56d" : "#e8615c"};flex:none` }));
+
+    const conceptMeta = {
+      a5: ["A5 · IoT / FM " + (zh ? "數位分身" : "Digital Twin"), "uploads/ai-bim-geo-viewer-A5.png"],
+      a6: ["A6 · 4D / 5D " + (zh ? "施工模擬" : "Construction"), "uploads/ai-bim-geo-viewer-A6.png"],
+      a7: ["A7 · Reality Capture " + (zh ? "比對" : "Compare"), "uploads/ai-bim-geo-viewer-A7.png"],
+      a8: ["A8 · Synthetic Data Studio", "uploads/ai-bim-geo-viewer-A8.png"],
+      a9: ["A9 · " + (zh ? "機器人 / 自主巡檢" : "Robots / Inspection"), "uploads/ai-bim-geo-viewer-A9.png"],
+      a10: ["A10 · " + (zh ? "其他應用 / AI 決策" : "AI Decision Workbench"), "uploads/ai-bim-geo-viewer-A10.png"],
+    };
+
+    return {
+      L, lang,
+      zhBtnStyle: `padding:4px 9px;${zh ? "background:rgba(65,199,232,.16);color:#7adcf2" : "color:#5a7089"}`,
+      enBtnStyle: `padding:4px 9px;${!zh ? "background:rgba(65,199,232,.16);color:#7adcf2" : "color:#5a7089"}`,
+      toggleLang: () => this.setState({ lang: zh ? "en" : "zh" }),
+      isHome: s.page === "home", isWs: s.page === "ws", isPipe: s.page === "pipe", isOps: s.page === "ops", isConcept: s.page === "concept",
+      goHome: go("home"), goPipe: go("pipe"), goOps: go("ops"), goIssues: goDock("issues"),
+      navMain, navApps, appCards, alerts, pipeSnap,
+      convCount: String(s.conv.filter(c => c.st === "running").length), sessCount: String(s.sessions.length),
+      issueCount: String(s.issues.length + 10), outboxCount: String(s.outbox.filter(o => o.st === "待送").length),
+      dockTabs, dockA1: s.dock === "a1", dockA2: s.dock === "a2", dockA3: s.dock === "a3", dockA4: s.dock === "a4", dockIssues: s.dock === "issues",
+      stageTree, vpImage: vpImages[s.dock], vpStagePath: "/Review/A1_Tower_fed.usd",
+      vpLegend: lg[0], vpLegendStyle,
+      selName: s.sel ? s.sel.name : "", dcLog: s.dcLog,
+      a1Rules, a1Ran: s.a1Ran, a1Results,
+      runA1: () => { this.setState({ a1Ran: true, dcLog: "highlightPrimsRequest → ack ✓ (18 prims)" }); this.t("POST /api/rule-runs → 202 · run #88 " + (zh ? "完成:失敗 18" : "done: 18 failures")); },
+      runA1Label: s.a1Ran ? L.rerun : L.run, runA1Style: btn,
+      a2Ran: s.a2Ran, diffItems,
+      runA2: () => { this.setState({ a2Ran: true }); this.t("POST /api/diffs → 202 · diff v12→v15 " + (zh ? "完成" : "done")); },
+      runA2Label: s.a2Ran ? L.rerun : (zh ? "計算差異" : "Compute diff"), runA2Style: btn,
+      applyOverlay: () => { this.setState({ overlayOn: true, dcLog: "apply-overlay → highlightPrimsRequest ✓ (44 prims)" }); this.t("POST /api/diffs/d_031/apply-overlay → ✓"); },
+      issueFromDiff: () => { this.setState({ issues: [{ id: "ISS-" + s.issueSeq, title: "B-3F-12 樑位移 +42mm(v12→v15)", st: "open", src: "diff v12→v15" }, ...s.issues], issueSeq: s.issueSeq + 1 }); this.t("POST /api/issues/from-diff/d_031 → 201"); },
+      fedMembers, a3Built: s.a3Built,
+      buildA3: () => { this.setState({ a3Built: true }); this.t("POST /api/federated-sets/FS-01/build → Federated USD ✓"); },
+      buildA3Label: s.a3Built ? (zh ? "重新建置" : "Rebuild") : "Build Federated USD", buildA3Style: btn,
+      openRoom: () => { this.setState({ dock: "a1" }); this.t("GET /api/federated-sets/FS-01/review-room → S-240601"); },
+      a4Ran: s.a4Ran, a4Rows,
+      runA4: () => { this.setState({ a4Ran: true }); this.t("POST /api/search/model → 12 hits · " + (zh ? "信心度 0.86" : "confidence 0.86")); },
+      runA4Label: s.a4Ran ? L.rerun : (zh ? "執行查詢" : "Run query"), runA4Style: btn,
+      inviteSpectator: () => this.t("已複製 Spectator 邀請連結 /ui/open?session=S-240601&streamRole=spectator(唯讀,resolveGovPanelState gate)"),
+      issues, exportBcf: () => this.t("GET /api/bcf/export → bcf_2.1_export.zip (" + s.issues.length + " topics)"),
+      clearSel: () => { this.setState({ sel: null, dcLog: "clearHighlightRequest → ✓" }); },
+      deliverOutbox: () => { this.setState({ outbox: s.outbox.map(o => ({ ...o, st: o.kind === "lineage-result" && o.cloudSt !== "DELIVERED" ? "待送" : "已送" })) }); this.t("POST /api/internal/callback-outbox/deliver → ✓ metadata-only"); },
+      intakeCards, intakeEmpty: s.intake.length === 0, intakeCount: String(s.intake.length),
+      convCards, convColCount: String(s.conv.length), sessionCards, outboxCards,
+      cloudColumnLabel: zh ? "雲端登錄狀態" : "Cloud registration",
+      services,
+      kitOpen: () => this.t("POST /api/kit/instances/current/open → stage loading"),
+      kitClose: () => this.t("POST /api/kit/instances/current/close → ✓"),
+      conceptTitle: conceptMeta[s.concept][0], conceptImg: conceptMeta[s.concept][1],
+      conceptA5: s.concept === "a5", conceptA6: s.concept === "a6", conceptA7: s.concept === "a7",
+      conceptA8: s.concept === "a8", conceptA9: s.concept === "a9", conceptA10: s.concept === "a10",
+      toast: s.toast,
+    };
+  }
+}
+</script>
+</body>
+</html>
