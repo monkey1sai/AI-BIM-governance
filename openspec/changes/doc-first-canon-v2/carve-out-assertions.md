@@ -97,17 +97,20 @@ README_DRAFT="openspec/changes/doc-first-canon-v2/drafts/docs-plans-README.v2-dr
 # 全句 diff 前兩側先剝除 canon 錨點註解，否則錨點恆造成假性非空 diff、反而掩蓋真實改寫（見下方判準）。
 SED_STRIP_CANON='s/[[:space:]]*<!-- canon:[^>]*>//g'
 
-# 主檢核：錨點無關全句逐字相等（空 diff = PASS；涵蓋整行——連接詞、`coordinator :8004`、`byte-identical` 全在內，非僅抽驗子字串）
+# 主檢核：前綴錨定全句逐字相等（空 diff = PASS；涵蓋整行——連接詞、`coordinator :8004`、`byte-identical` 全在內，非僅抽驗子字串）。
+# grep pattern 必須錨定 §3 第 4 點列首前綴 `4. **後端凍結面**`（唯一命中 main line 39／draft line 40 的受保護 carve-out 原文）；
+# 不可退回裸子字串 `後端凍結面`——該四字亦命中 §4 舊檔去向表 TARGET-contracts 列（main line 49／draft line 50 的「後端凍結面見本檔 §3.4」交叉引用句，不在本 carve-out 保護範圍內）；
+# README 全檔於本 change 期間大量重寫，順手調整該交叉引用列用詞屬合理編輯，裸子字串會把它一併撈進比對、誤判為非空 diff 並機械導向誤動判定（false positive）。
 diff \
-  <(git show main:"docs/plans/docs-plans-README.md" | grep -F '後端凍結面' | sed "$SED_STRIP_CANON") \
-  <(grep -F '後端凍結面' "$README_DRAFT" | sed "$SED_STRIP_CANON")
+  <(git show main:"docs/plans/docs-plans-README.md" | grep -F '4. **後端凍結面**' | sed "$SED_STRIP_CANON") \
+  <(grep -F '4. **後端凍結面**' "$README_DRAFT" | sed "$SED_STRIP_CANON")
 
 # 子檢核（僅在主檢核非空、且差異已判定為允許新增時，作為「既有受保護內容未被刪減」之佐證；三條並列覆蓋 三檔名單／埠禁令／`:8004`＋byte-identical）
 grep -F '禁改 governance `app.py`、coordinator `governanceProxy.ts`、streaming `conversion_authority.py`' "$README_DRAFT"
 grep -F '瀏覽器禁直連 `:49101`／`:49102`／`:8010`' "$README_DRAFT"
 grep -F '前端只打 coordinator `:8004`；proxy 路徑 byte-identical' "$README_DRAFT"
 ```
-主檢核空 diff = PASS（錨點已剝除，基準態即乾淨空 diff，不再因錨點落入「需人工判讀」的決策樹分支）。若主檢核**非空**，先判定差異是否**僅**為允許新增（`:49100`／spectator 例外澄清句、或新增之 `<!-- canon:* -->` 錨點註解；二者皆為新增、不刪減既有內容）：若是，改跑上列**三條** grep 確認三檔名單、既有埠禁令、`coordinator :8004`＋`byte-identical` 皆逐字完整存在 → 三條皆有輸出即 PASS。若差異涉及刪除或改寫既有三檔名單／埠清單／`:8004`／`byte-identical` 任一項（哪怕只弱化一字，例如 `byte-identical`→`largely identical`），即判誤動。
+主檢核空 diff = PASS（錨點已剝除，基準態即乾淨空 diff，不再因錨點落入「需人工判讀」的決策樹分支）。主檢核 grep 已前綴錨定至 §3 第 4 點列（`4. **後端凍結面**`），非空 diff 只可能源自該受保護行本身之變動，不會被 §4 TARGET-contracts 交叉引用列（「後端凍結面見本檔 §3.4」，與本點共用「後端凍結面」四字但不在保護範圍）等無關列汙染——故下述決策樹只需涵蓋「允許新增」與「刪除/改寫既有」兩支即完備。若主檢核**非空**，先判定差異是否**僅**為允許新增（`:49100`／spectator 例外澄清句、或新增之 `<!-- canon:* -->` 錨點註解；二者皆為新增、不刪減既有內容）：若是，改跑上列**三條** grep 確認三檔名單、既有埠禁令、`coordinator :8004`＋`byte-identical` 皆逐字完整存在 → 三條皆有輸出即 PASS。若差異涉及刪除或改寫既有三檔名單／埠清單／`:8004`／`byte-identical` 任一項（哪怕只弱化一字，例如 `byte-identical`→`largely identical`），即判誤動。
 
 **備註**：同 item 1 pattern——item 14 的 `:49100` signaling 例外澄清、或 Task 0 於行尾內嵌之 `<!-- canon:* -->` 錨點註解若加入本點，皆屬允許新增、不算誤動（主檢核已先剝除錨點、子檢核三條 grep 佐證既有受保護子字串未被刪減）；但三禁改檔名單、既有埠禁令、或 `coordinator :8004`／`byte-identical` 凍結子句若被刪減/弱化（哪怕只弱化一項，例如把「禁改」改成「謹慎修改」、或把 `byte-identical` 改成 `largely identical`），即判誤動，需退回重做或走 R-A1 改 carve-out 本身。
 
@@ -171,7 +174,7 @@ echo "[2a] 鐵律1"; diff <(git show main:"$CANON" | grep -F '鐵律 1 — 大�
 echo "[2b] 鐵律2"; diff <(git show main:"$CANON" | grep -F '鐵律 2 — :8004 是瀏覽器唯一可達面') <(grep -F '鐵律 2 — :8004 是瀏覽器唯一可達面' "$DRAFT") && echo PASS || echo FAIL
 echo "[2c] 鐵律3 must-preserve"; grep -F '鐵律 3' "$DRAFT" | grep -F '/ui/open?session=' | grep -qF '凍結' && echo PASS || echo "MANUAL-CHECK(見本檔 §2 item 2 判準)"
 
-echo "[3] README §3.4 後端凍結面（錨點無關全句 diff，同 §2 item 3 主檢核，非子字串抽驗）"; diff <(git show main:"$README_MAIN" | grep -F '後端凍結面' | sed 's/[[:space:]]*<!-- canon:[^>]*>//g') <(grep -F '後端凍結面' "$README_DRAFT" | sed 's/[[:space:]]*<!-- canon:[^>]*>//g') && echo PASS || echo "MANUAL-CHECK(非空;見本檔 §2 item 3 判準:確認差異僅為 :49100/spectator 例外或新增錨點,且三檔名單/埠禁令/coordinator :8004/byte-identical 三條子 grep 皆有輸出未遭刪改)"
+echo "[3] README §3.4 後端凍結面（前綴錨定全句 diff，同 §2 item 3 主檢核，非子字串抽驗；pattern 錨定列首 `4. **後端凍結面**` 以排除 §4 交叉引用列）"; diff <(git show main:"$README_MAIN" | grep -F '4. **後端凍結面**' | sed 's/[[:space:]]*<!-- canon:[^>]*>//g') <(grep -F '4. **後端凍結面**' "$README_DRAFT" | sed 's/[[:space:]]*<!-- canon:[^>]*>//g') && echo PASS || echo "MANUAL-CHECK(非空;見本檔 §2 item 3 判準:確認差異僅為 :49100/spectator 例外或新增錨點,且三檔名單/埠禁令/coordinator :8004/byte-identical 三條子 grep 皆有輸出未遭刪改)"
 
 echo "[4] README §3.5 誠實子句"; grep -qF '不得以文件宣稱 runtime 已完成' "$README_DRAFT" && echo PASS || echo "MANUAL-CHECK(見本檔 §2 item 4 判準,找等價改述)"
 
