@@ -128,13 +128,16 @@ grep -F '前端只打 coordinator `:8004`；proxy 路徑 byte-identical' "$READM
 ```bash
 README_DRAFT="openspec/changes/doc-first-canon-v2/drafts/docs-plans-README.v2-draft.md"
 
-# 主檢核：誠實子句字面是否仍在（非逐字整句比對——整句預期被翻轉）
-grep -F '不得以文件宣稱 runtime 已完成' "$README_DRAFT"
+# 主檢核：誠實子句字面是否仍在 point 5 錨點行（非逐字整句比對——整句預期被翻轉）。
+# 錨定 <!-- canon:r-runtime-authority --> 行後再 grep 誠實子句（同 §2 item 2 鐵律 3 同行鏈式手法、item 3 列首錨定手法）——
+# 防「裸字串整檔 grep」破口：若未來 wave 稀釋/刪除 point 5 誠實半句、卻在檔案他處（§4 表、其他註解）留下字串殘影，
+# 裸 grep 會靜默 PASS（本 change 要根除的最關鍵失效模式）；錨定後殘影不在 point 5 錨點行 → 鏈式 grep 空輸出 → 走下方 MANUAL-CHECK 而非假 PASS。
+grep -F '<!-- canon:r-runtime-authority -->' "$README_DRAFT" | grep -F '不得以文件宣稱 runtime 已完成'
 
 # 等價改述比對基準：MODIFIED spec body 已定案的擴寫版本（供人工比對「等價改述」時的參照文字）
 grep -F '不得以文件宣稱 runtime 已完成' "openspec/changes/doc-first-canon-v2/specs/documentation-source-of-truth/spec.md"
 ```
-第一條若有輸出 → PASS（誠實子句逐字留存，即使整句其餘部分已改寫）。若第一條**無**輸出，**不得**逕判 fail：MUST 人工比對改寫後文字是否為明確等價改述（例如換成第二條列出之「亦不得以文件宣稱 runtime 已完成」或語意相同之表述），確認等價則 PASS 並在 PR 說明記錄改述形式；純字面消失且找不到任何等價改述 = 誤動。
+第一條（錨定 point 5 `<!-- canon:r-runtime-authority -->` 行後仍命中誠實子句）若有輸出 → PASS（誠實子句逐字留存於 point 5，即使整句其餘部分已改寫）。若第一條**無**輸出，**不得**逕判 fail：MUST 人工比對改寫後 point 5 文字是否為明確等價改述（例如換成第二條列出之「亦不得以文件宣稱 runtime 已完成」或語意相同之表述），確認等價則 PASS 並在 PR 說明記錄改述形式；純字面消失且找不到任何等價改述 = 誤動。**注意**：因主檢核已錨定 point 5，字串若只殘留在 point 5 以外的檔案他處（tamper／殘影情境），第一條空輸出 → 正確落入本 MANUAL-CHECK 由人工判讀，而非被殘影騙成假 PASS——此即本檢核相對裸字串整檔 grep 的補強。
 
 **備註**：item 23 對「現況行為權威＝code＋tests」與「設計文件＝目標權威」兩子句的權威語意翻轉，**不算**本 carve-out 的誤動對象——那兩句本非本 carve-out 保護範圍，doc-first 翻轉正是本 change 的核心目的；本 carve-out 只保護誠實子句本身。此為五條中唯一「預期整句改寫、只保護子句」的特例，判準與其餘四條（逐字不變）不同，勿混用。
 
@@ -174,9 +177,9 @@ echo "[2a] 鐵律1"; diff <(git show main:"$CANON" | grep -F '鐵律 1 — 大�
 echo "[2b] 鐵律2"; diff <(git show main:"$CANON" | grep -F '鐵律 2 — :8004 是瀏覽器唯一可達面') <(grep -F '鐵律 2 — :8004 是瀏覽器唯一可達面' "$DRAFT") && echo PASS || echo FAIL
 echo "[2c] 鐵律3 must-preserve"; grep -F '鐵律 3' "$DRAFT" | grep -F '/ui/open?session=' | grep -qF '凍結' && echo PASS || echo "MANUAL-CHECK(見本檔 §2 item 2 判準)"
 
-echo "[3] README §3.4 後端凍結面（前綴錨定全句 diff，同 §2 item 3 主檢核，非子字串抽驗；pattern 錨定列首 `4. **後端凍結面**` 以排除 §4 交叉引用列）"; diff <(git show main:"$README_MAIN" | grep -F '4. **後端凍結面**' | sed 's/[[:space:]]*<!-- canon:[^>]*>//g') <(grep -F '4. **後端凍結面**' "$README_DRAFT" | sed 's/[[:space:]]*<!-- canon:[^>]*>//g') && echo PASS || echo "MANUAL-CHECK(非空;見本檔 §2 item 3 判準:確認差異僅為 :49100/spectator 例外或新增錨點,且三檔名單/埠禁令/coordinator :8004/byte-identical 三條子 grep 皆有輸出未遭刪改)"
+echo '[3] README §3.4 後端凍結面（前綴錨定全句 diff，同 §2 item 3 主檢核，非子字串抽驗；pattern 錨定列首 `4. **後端凍結面**` 以排除 §4 交叉引用列）'; diff <(git show main:"$README_MAIN" | grep -F '4. **後端凍結面**' | sed 's/[[:space:]]*<!-- canon:[^>]*>//g') <(grep -F '4. **後端凍結面**' "$README_DRAFT" | sed 's/[[:space:]]*<!-- canon:[^>]*>//g') && echo PASS || echo "MANUAL-CHECK(非空;見本檔 §2 item 3 判準:確認差異僅為 :49100/spectator 例外或新增錨點,且三檔名單/埠禁令/coordinator :8004/byte-identical 三條子 grep 皆有輸出未遭刪改)"
 
-echo "[4] README §3.5 誠實子句"; grep -qF '不得以文件宣稱 runtime 已完成' "$README_DRAFT" && echo PASS || echo "MANUAL-CHECK(見本檔 §2 item 4 判準,找等價改述)"
+echo "[4] README §3.5 誠實子句（錨定 point 5 canon:r-runtime-authority 行，非裸全檔 grep——防字串殘影靜默 PASS，同 §2 item 4 主檢核）"; grep -F '<!-- canon:r-runtime-authority -->' "$README_DRAFT" | grep -qF '不得以文件宣稱 runtime 已完成' && echo PASS || echo "MANUAL-CHECK(見本檔 §2 item 4 判準,找等價改述;或誠實子句已脫離 point 5 錨點行)"
 
 echo "[5] §07:575 A5-A10 deferral"; diff <(git show main:"$CANON" | grep -F 'A5–A10:僅 Concept 路由 + 概念稿,不做假後端;每一模組落地前先補 governance-service 對應 API 與契約測試') <(grep -F 'A5–A10:僅 Concept 路由 + 概念稿,不做假後端;每一模組落地前先補 governance-service 對應 API 與契約測試' "$DRAFT") && echo PASS || echo FAIL
 ```
