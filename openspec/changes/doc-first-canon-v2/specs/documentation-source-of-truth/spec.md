@@ -78,7 +78,7 @@
 
 ### Requirement: R-B3 保存性 carve-out 清單與改寫前後 diff 斷言
 
-改寫 SHALL 明列必須維持不變的 carve-out 清單並附改寫前後語意等價斷言。carve-out 至少含：§04 tests/contracts payload 委任、§01 鐵律 1–3、README §3.4 後端凍結面（`app.py`／`governanceProxy.ts`／`conversion_authority.py` 禁改；`/ui/open` 凍結；HTTP 資料／治理 API 面瀏覽器只達 `:8004`；`:49100` 及 spectator 埠段 WebRTC signaling 為既有合法直連例外，正典列於 §04）、§07:575 A5–A10 deferral 節奏。payload 委任 carve-out 邊界 SHALL 精確劃為：委任面＝payload 欄位形狀／序列化／值域 echo（以 tests/contracts 為權威）；HTTP 語意（status code／路由目標埠／代理白名單策略／合法瀏覽器直連面）＝行為權威、正本 normative 記述，不在委任 carve-out 內。語意等價判準 SHALL 為行為面（實際網路路徑／凍結三檔／302 行為）不變；顯式化既有事實之補列不算誤動 carve-out。
+改寫 SHALL 明列必須維持不變的 carve-out 清單並附改寫前後語意等價斷言。carve-out 至少含：§04 tests/contracts payload 委任、§01 鐵律 1–3、README §3.4 後端凍結面（`app.py`／`governanceProxy.ts`／`conversion_authority.py` 禁改；`/ui/open` 凍結；HTTP 資料／治理 API 面瀏覽器只達 `:8004`；`:49100` 及 spectator 埠段 WebRTC signaling 為既有合法直連例外，正典列於 §04）、§07:575 A5–A10 deferral 節奏、誠實鐵律半句（規範文字與非矛盾證明唯一落實見 R-B2，此處僅 cross-ref 列入 carve-out 清單並受本 requirement 的改寫前後 diff 斷言約束，不重複改寫文字）。payload 委任 carve-out 邊界 SHALL 精確劃為：委任面＝payload 欄位形狀／序列化／值域 echo（以 tests/contracts 為權威）；HTTP 語意（status code／路由目標埠／代理白名單策略／合法瀏覽器直連面）＝行為權威、正本 normative 記述，不在委任 carve-out 內。語意等價判準 SHALL 為行為面（實際網路路徑／凍結三檔／302 行為）不變；顯式化既有事實之補列不算誤動 carve-out。
 
 #### Scenario: v2 草稿完成後執行 carve-out diff 斷言
 
