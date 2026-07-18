@@ -651,7 +651,11 @@ Never silently invent a production backend</pre>
         </div>
         <div data-canon-id="c8-r3-provenance" style="background:#0a1220;border:1px solid rgba(230,178,62,.25);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
           <span style="font-size:12px;font-weight:700;color:#e6b23e">R3 · 資料出處誠實(Provenance)</span>
-          <span style="font-size:10.5px;color:#8aa0b8">圖中 68% progress、312 MB/s、1,248 kWh、robot mission running… 一律是 <span style="color:#dbe6f3">fixture</span>,不可標成 live production data。每個數據面板掛 <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">ProvenanceTag(mock | live)</span>;未接通的 backend action 誠實停用並標 <span style="color:#e6b23e">Concept Preview / Roadmap</span>,不做假成功。</span>
+          <span style="font-size:10.5px;color:#8aa0b8">圖中 68% progress、312 MB/s、1,248 kWh、robot mission running… 等示意數字一律是 <span style="color:#dbe6f3">fixture</span>,並以 <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">data-prov</span> 標示,不可標成 live production data。每個數據面板掛實碼元件 <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">ProvTag</span>(對應 7 值 <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">Prov</span>:asbuilt/artifact/demo/p1/p15/p3/p4,見 <span style="font-family:'JetBrains Mono',monospace;font-size:10px">web-viewer-sample/src/console/data.ts:6</span>),依 7 值誠實分類;unified 層另以 <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">data-prov="fixture|live"</span> 標示。未接通的 backend action 誠實停用並標 <span style="color:#e6b23e">Concept Preview / Roadmap</span>,不做假成功。</span>
+          <div data-canon-id="c8-r3-oq1-open-decision" style="background:#070d15;border:1px dashed rgba(154,167,190,.4);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:5px">
+            <div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;font-weight:700;color:#9aa7be">OQ-1 · Open Decision(未裁決,預設不採用)</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089;text-transform:uppercase">non-normative</span></div>
+            <span style="font-size:10.5px;color:#8aa0b8">是否新增 <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#e6b23e">asbuilt-partial</span> 之類外接待決 <span style="font-family:'JetBrains Mono',monospace;font-size:10px">Prov</span> 值(失真項 9 遺留)——<span style="color:#dbe6f3">預設不採用、不併入 7 值集</span>;normative enum 維持 7 值 <span style="font-family:'JetBrains Mono',monospace;font-size:10px">Prov</span> 封閉。擴充唯一路徑 = <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">design-canon-change-control</span> R-A1 提案 + 使用者核准。</span>
+          </div>
         </div>
         <div data-canon-id="c8-r4-one-outcome-one-task" style="background:#0a1220;border:1px solid rgba(157,140,255,.25);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
           <span style="font-size:12px;font-weight:700;color:#b7a9ff">R4 · 一個 outcome 一個 task</span>
@@ -690,7 +694,7 @@ Never silently invent a production backend</pre>
         <div style="display:flex;flex-wrap:wrap;gap:5px;font-family:'JetBrains Mono',monospace;font-size:10px">
           <span style="color:#b7a9ff;border:1px solid rgba(157,140,255,.25);border-radius:5px;padding:2px 8px">MetricCard</span>
           <span style="color:#b7a9ff;border:1px solid rgba(157,140,255,.25);border-radius:5px;padding:2px 8px">StatusBadge</span>
-          <span style="color:#b7a9ff;border:1px solid rgba(157,140,255,.25);border-radius:5px;padding:2px 8px">ProvenanceTag</span>
+          <span style="color:#b7a9ff;border:1px solid rgba(157,140,255,.25);border-radius:5px;padding:2px 8px">ProvTag(既有)</span>
           <span style="color:#b7a9ff;border:1px solid rgba(157,140,255,.25);border-radius:5px;padding:2px 8px">EvidenceInspector</span>
           <span style="color:#b7a9ff;border:1px solid rgba(157,140,255,.25);border-radius:5px;padding:2px 8px">BimViewport</span>
           <span style="color:#b7a9ff;border:1px solid rgba(157,140,255,.25);border-radius:5px;padding:2px 8px">SplitCompareViewer</span>
