@@ -35,10 +35,10 @@
 ## §3 效力
 
 1. **使用者最新明確指令 > 本目錄一切文件。** <!-- canon:r-user-instruction-supremacy -->
-2. **權威順序**（設計文件 §08，衝突由上而下裁決）：既有 repo 程式碼與測試 > AGENTS.md 與 OpenSpec > 既有 API client 與後端契約（tests/contracts） > 書面 A1–A10 需求 > Prompt Board 文字 > 應用場景圖 > 圖中示例數字（僅 fixture）。 <!-- canon:r-authority-order -->
+2. **權威順序**（設計文件 §08，衝突由上而下裁決）：docs/plans 需求正本（設計文件 §01–§08；前端視覺／互動面＝Hi-Fi＋ai-bim-governance.css 最高，依領域分工） > tests/contracts/*.json（payload 委任，§04 保留） > AGENTS.md 與 OpenSpec（治理程序） > Prompt Board 文字（僅意圖參考） > 應用場景圖（僅視覺上下文） > 圖中示例數字（僅 fixture）。 <!-- canon:r-authority-order -->
 3. **四條鐵律**（§08）：R1 技術棧權威（React+TypeScript+Vite；沿用 EdgeConsole 與 `--ec-*` token 單一真相源；禁 Vue/Pinia/第二套 SPA/theme）；R2 API 三態（existing→直接整合、planned→typed adapter+mock、missing→NOT_BUILT，絕不臆造 production 後端）；R3 Provenance 誠實（示意數字一律 fixture，面板掛 ProvenanceTag(mock|live)，未接通 action 誠實停用，不做假成功）；R4 一個 outcome 一個 task（outcome＋constraints＋DoD）。 <!-- canon:r-four-iron-rules -->
 4. **後端凍結面**（自舊 TARGET-contracts §1 承繼，效力不變）：前端只打 coordinator `:8004`；proxy 路徑 byte-identical；禁改 governance `app.py`、coordinator `governanceProxy.ts`、streaming `conversion_authority.py`；瀏覽器禁直連 `:49101`／`:49102`／`:8010`。 <!-- canon:r-backend-freeze -->
-5. **現況行為權威＝code＋tests**；設計文件＝目標權威；兩者落差＝implementation gap，不得以文件宣稱 runtime 已完成。 <!-- canon:r-runtime-authority -->
+5. **需求權威＝本目錄設計正本（doc-first）**；code＋tests＝runtime 現況查證面；code 偏離正本＝implementation gap，列入 gap ledger 排修；不得以文件宣稱 runtime 已完成。 <!-- canon:r-runtime-authority -->
 
 ## §4 舊檔去向（斷鏈救援）
 
