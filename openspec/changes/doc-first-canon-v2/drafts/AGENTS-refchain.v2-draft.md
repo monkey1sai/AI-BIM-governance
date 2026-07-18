@@ -83,5 +83,7 @@ proposal.md F3 明文：「手寫正本（兩份 `.dc.html`、`docs-plans-README
 - **落地路徑**：使用者審閱本草稿並核准後，MUST 另開一個獨立 PR，diff 僅觸及 `AGENTS.md` 本體（依上述對照 1／對照 2／新增段落原樣套用），並依 `AGENTS.md` 現行「文件分工調整必須走 PR 治理流程」requirement 走一般 PR 審查（governance evidence 表、formal requirement source 指回本 change）；不得由本 change 的 PR 一併夾帶套用到 `AGENTS.md` 本體。
 - **已核對、確認不需要對應修改的相鄰檔案**：
   - `CLAUDE.md`（`AGENTS.md` 之 Claude 鏡像入口）：已讀全文，其 §0 僅聲明「若本檔與 `AGENTS.md` 衝突採用 `AGENTS.md`」，不重複本草稿對照 1／對照 2 所改的優先序清單本文，故 `CLAUDE.md` 不需要對應修改。
-  - `docs/AGENTS.md`：已核對（`docs/AGENTS.md:32`：「MUST 對齊根目錄 `AGENTS.md` §3 的兩條優先序」），僅 cross-ref 根目錄 `AGENTS.md` §3、不重複清單本文，隨根目錄 `AGENTS.md` 未來若採納本草稿會自動一致，不需要對應修改。
-- **明確不在本草稿範圍內**：`docs/agents/*.md` 其餘 sub-files（除已核對的 `docs/AGENTS.md`）是否含相同「code+tests 優先於 docs/plans」措辭，本草稿未逐檔核對；若存在需另案盤點與提案，不由本 task 代為涵蓋（YAGNI；避免未經核對就擴大聲稱涵蓋範圍）。
+  - `docs/AGENTS.md` 的 Required Boundaries 條 `docs/AGENTS.md:32`（「MUST 對齊根目錄 `AGENTS.md` §3 的兩條優先序」）：純 cross-ref 根目錄 §3、不重複清單本文，§3 翻轉後「兩條優先序」結構仍在，此行隨根目錄採納本草稿會自動一致，該行不需要對應修改。
+- **已核對、發現含實質重複、須另案對應修改的相鄰檔案（已知缺口，非本 task 範圍）**：
+  - `docs/AGENTS.md` 的 Role 段 `docs/AGENTS.md:7`（「…它不是 runtime 行為權威源。現行行為以程式碼、可執行 tests / contracts 為準；`docs/plans/` 定義目標需求與驗收語意…」）：此句幾乎逐字複述對照 1 現行條文（`AGENTS.md:132`）所欲翻轉的「code＋tests＝現況行為、docs/plans＝目標」舊框架本文，屬**實質重複**而非單純 cross-ref。故若根目錄採納對照 1／對照 2 的權威序翻轉，`docs/AGENTS.md:7` **不會**自動一致，反而會與翻新後的根目錄直接語意矛盾——即 proposal.md F1「權威序自相矛盾」被搬到 sub-file 而非消除。此為經查證確認（非「未核對」）的已知缺口，須於獨立 pass／task 另行盤點並提案改寫 `docs/AGENTS.md:7`（連帶檢視同檔 Required Boundaries `docs/AGENTS.md:33`「docs 與實作不一致時以實作為準」措辭在 doc-first 下是否需同步澄清）；本 task 範圍限根目錄 `AGENTS.md` 參照鏈（`tasks.md` 1.2），不由本 task 代為改寫（YAGNI）。
+- **明確不在本草稿範圍內**：`docs/agents/*.md` 其餘 sub-files（`docs/AGENTS.md` 已於上兩項單獨處理）是否含相同「code+tests 優先於 docs/plans」措辭，本草稿未逐檔核對；若存在需另案盤點與提案，不由本 task 代為涵蓋（YAGNI；避免未經核對就擴大聲稱涵蓋範圍）。
