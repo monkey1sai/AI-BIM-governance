@@ -606,16 +606,17 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
         </div>
       </div>
       <div style="display:flex;flex-direction:column;gap:8px">
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">權威優先順序 — 衝突時由上而下裁決(寫進 AGENTS.md)</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">權威優先順序 — 衝突時由上而下裁決(AGENTS.md 參照本節,見 doc-first-canon-v2 提案;不重抄)</span>
         <div data-canon-id="c8-authority-table" style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden;font-size:11.5px">
-          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">1</span><span style="color:#dbe6f3;font-weight:500">既有 repository 程式碼與測試</span></div>
-          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">2</span><span style="color:#b9c9da">AGENTS.md 與 OpenSpec</span></div>
-          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">3</span><span style="color:#b9c9da">既有 API client 與後端契約(tests/contracts)</span></div>
-          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">4</span><span style="color:#b9c9da">書面 A1–A10 需求</span></div>
-          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">5</span><span style="color:#b9c9da">Prompt Board 文字</span></div>
-          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">6</span><span style="color:#b9c9da">應用場景圖(長相)</span></div>
-          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">7</span><span style="color:#5a7089">圖中示例數字與樣本資料(僅 fixture)</span></div>
+          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">1</span><span style="color:#dbe6f3;font-weight:500">使用者最新明確指令</span></div>
+          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">2</span><span style="color:#dbe6f3;font-weight:500">docs/plans 需求正本(設計文件 §01–§08;前端視覺 / 互動面 = Hi-Fi + ai-bim-governance.css 最高) —— 依領域分工</span></div>
+          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">3</span><span style="color:#b9c9da">tests/contracts/*.json(payload 委任,§04 保留)</span></div>
+          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">4</span><span style="color:#b9c9da">AGENTS.md / OpenSpec(治理程序)</span></div>
+          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">5</span><span style="color:#b9c9da">Prompt Board 文字(僅意圖參考)</span></div>
+          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">6</span><span style="color:#b9c9da">應用場景圖(僅視覺上下文)</span></div>
+          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">7</span><span style="color:#5a7089">圖中示例數字(fixture)</span></div>
         </div>
+        <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">code + tests = runtime 現況的查證面;code 偏離本正本 = implementation gap 待修,不得以文件宣稱 runtime 已完成</span>
         <span style="font-size:10.5px;color:#5a7089">Codex 依 global → repository → nested directory 順序合併 AGENTS.md;技術棧、服務邊界、provenance 與驗收鐵律要寫進 repo,不能只放在圖片裡。</span>
       </div>
     </div>
@@ -726,7 +727,7 @@ Never silently invent a production backend</pre>
     <div data-canon-id="c8-closing-badges" style="display:flex;gap:8px;flex-wrap:wrap">
       <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">結構 = modular monolith frontend(單一 SPA + features/a1..a10)— 不是 microfrontend,不是十套專案</span>
       <span style="font-size:10.5px;color:#6fd6ee;background:rgba(65,199,232,.06);border:1px solid rgba(65,199,232,.2);border-radius:6px;padding:4px 10px">每個 feature 附 e2e/aN-*.spec.ts;done = 契約測試綠 + Playwright 截圖證據</span>
-      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">把本節鐵律與權威順序寫進 AGENTS.md / OpenSpec,任務包只引用、不重抄</span>
+      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">本節鐵律與權威順序由 AGENTS.md / OpenSpec 參照(見 doc-first-canon-v2 提案),任務包只引用、不重抄</span>
     </div>
   </div>
 
