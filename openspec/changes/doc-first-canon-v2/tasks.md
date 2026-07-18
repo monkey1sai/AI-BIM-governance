@@ -12,7 +12,7 @@
 
 ## 1. 變更控制 capability（design-canon-change-control）
 
-- [ ] 1.1 撰寫 `design-canon-change-control` spec delta（R-A1 手寫正本寫入邊界／R-A2 機器快照雙旗標／R-A3 support.js 禁改／R-A4 改版可回復）。**DoD/draft-submitted**：spec delta 完成＋validate 通過。**DoD/user-adopted**：使用者核准新 capability。
+- [x] 1.1 撰寫 `design-canon-change-control` spec delta（R-A1 手寫正本寫入邊界／R-A2 機器快照雙旗標／R-A3 support.js 禁改／R-A4 改版可回復）。**DoD/draft-submitted**：spec delta 完成＋validate 通過。**DoD/user-adopted**：使用者核准新 capability。
 - [ ] 1.2 撰寫 `AGENTS.md` 參照鏈修正草稿：指回 doc-first 權威序與 design-canon-change-control 條文（提案供審，不逕改 main）。**DoD/draft-submitted**：AGENTS.md 改寫草稿以 PR diff 提交、標「待使用者核准」。
 
 ## 2. documentation-source-of-truth MODIFIED＋ADDED（權威翻轉＋保存性）
