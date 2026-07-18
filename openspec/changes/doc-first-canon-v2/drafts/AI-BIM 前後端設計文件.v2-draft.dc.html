@@ -502,11 +502,11 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
       <div data-canon-id="c6-ifc-ready-record" style="background:#0a1220;border:1px solid rgba(65,199,232,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#6fd6ee">IfcReadyRecord</span>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">job_id · tenant_id · project_id<br>external_model_version_id<br>source_ifc {ref, etag}<br>idempotency_key · shadow<br>status: received→converting→ready</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">job_id · tenant_id · project_id<br>external_model_version_id<br>source_ifc {ref, etag}<br>idempotency_key · shadow<br>status: accepted|queued_for_conversion|dispatched|dispatch_failed|dropped_on_restart|failed <span style="color:#5a7089">(IfcReadyIntakeStatus,bim-review-coordinator/src/types.ts:195-206)</span></span>
       </div>
       <div data-canon-id="c6-conversion-job" style="background:#0a1220;border:1px solid rgba(65,199,232,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#6fd6ee">ConversionJob(ledger)</span>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">conversion_job_id · source_ref<br>status: queued|running|done|failed<br>artifacts {usdc_ref, mapping_ref, manifest_ref}<br>quality {mapped, unmapped, coverage_ratio}<br>retry_count · priority</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">conversion_job_id · source_ref<br>status: detected|queued|converting|ready|failed <span style="color:#5a7089">(ConversionLedgerStatus,bim-review-coordinator/src/services/conversionLedger.ts:11)</span><br>artifacts {usdc_ref, mapping_ref, manifest_ref}<br>quality {mapped, unmapped, coverage_ratio}<br>retry_count · priority</span>
       </div>
       <div data-canon-id="c6-review-session" style="background:#0a1220;border:1px solid rgba(65,199,232,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#6fd6ee">ReviewSession</span>
