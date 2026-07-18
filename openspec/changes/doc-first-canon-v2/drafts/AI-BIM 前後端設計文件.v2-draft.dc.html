@@ -104,7 +104,7 @@ a{color:#41c7e8;text-decoration:none}a:hover{color:#7adcf2;text-decoration:under
     <div data-canon-id="c1-badges" style="display:flex;gap:8px;flex-wrap:wrap">
       <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">鐵律 1 — 大模型檔案(.ifc / .usdc)不出落地端;workflow callback與Cloud Ingest均只傳metadata/result ref</span>
       <span style="font-size:10.5px;color:#6fd6ee;background:rgba(65,199,232,.06);border:1px solid rgba(65,199,232,.2);border-radius:6px;padding:4px 10px">鐵律 2 — :8004 是瀏覽器唯一可達面;:49101/:49102/:8010 一律經 proxy</span>
-      <span style="font-size:10.5px;color:#b7a9ff;background:rgba(157,140,255,.06);border:1px solid rgba(157,140,255,.2);border-radius:6px;padding:4px 10px">鐵律 3 — /ui/open?session= handoff 凍結,byte-for-byte + CI guard</span>
+      <span style="font-size:10.5px;color:#b7a9ff;background:rgba(157,140,255,.06);border:1px solid rgba(157,140,255,.2);border-radius:6px;padding:4px 10px">鐵律 3 — /ui/open?session= handoff 凍結(行為級:301/302 精確性、redirect target=viewer origin、參數白名單 streamRole/kitInstanceId 轉發+signaling* 剝除;CI guard=coordinator vitest dev-console.test.ts)。known gap(不是 pass):e2e/ui-open-regression.spec.ts 尚未接 CI——接 CI=follow-up(第一順位)</span>
     </div>
   </div>
 
