@@ -21,7 +21,7 @@
 | Behavior contract changed | no |
 | Requirement source | docs/plans: openspec/changes/doc-first-canon-v2 specs delta（`documentation-source-of-truth` MODIFIED 2＋ADDED、`design-canon-change-control` ADDED；`proposal.md`／`design.md`／`tasks.md` 為承載文件） |
 
-*（Change lane＝S：使用者 2026-07-18 明確 opt-in「使用 spec-to-done 技能執行」，見 `prep-evidence.md` 使用者裁決轉錄第 5 點；Behavior contract changed＝no：本 PR 僅新增 `openspec/changes/doc-first-canon-v2/**` 下之提案文件，不改任何 runtime 行為、不觸碰任何 code symbol，見下方 GitNexus evidence。）*
+*（Change lane＝S：使用者 2026-07-18 明確 opt-in「使用 spec-to-done 技能執行」，見 `prep-evidence.md`「使用者裁決轉錄」節開頭之使用者逐字原話（未編號引述，第 46–47 行，含「需使用spec-to-done技能執行」）——此引述非該節六點裁決表之第 5 點（第 5 點＝「PR 時機／不掛 auto-merge」，於本檔下方提案性質聲明另作引用）；Behavior contract changed＝no：本 PR 僅新增 `openspec/changes/doc-first-canon-v2/**` 下之提案文件，不改任何 runtime 行為、不觸碰任何 code symbol，見下方 GitNexus evidence。）*
 
 ## AI Coding Governance
 
@@ -30,7 +30,7 @@
 | Linked issue | 無（無對應 GitHub issue；需求承載於本 OpenSpec change 自身之 `proposal.md`／`design.md`／`specs/` delta，詳見 Requirement source 欄） |
 | Requirement source | docs/plans: openspec/changes/doc-first-canon-v2 specs delta（同上，與 Change Classification 表同值） |
 | CODEOWNERS / owner review | 已由 `.github/CODEOWNERS` 預設規則（`* @monkey1sai`）涵蓋；本 change 全數改動落於 `openspec/changes/doc-first-canon-v2/` 之下，未直接觸碰 `/docs/plans/`／`/AGENTS.md`／`/scripts/` 等具名 owner 路徑，故未觸發額外具名 review；owner＝使用者本人，review＝使用者對本 PR 之核准／退回裁決本身 |
-| GitNexus evidence | `detect_changes({scope:"compare", base_ref:"main", worktree:".worktrees/doc-first-canon-v2"})` → risk_level=low；changed_files=16；changed_symbols=0；affected_processes=0（16 個新增檔案全數為 `.md`／`.dc.html` 文件，無 code symbol；2026-07-19 實跑） |
+| GitNexus evidence | `detect_changes({scope:"compare", base_ref:"main", worktree:".worktrees/doc-first-canon-v2"})` → risk_level=low；changed_files=17；changed_symbols=0；affected_processes=0（17 個新增檔案全數為 `.md`／`.dc.html` 文件、無 code symbol，此檔數含本檔 `pr-body-draft.md` 自身；2026-07-19 實跑，與 `git diff origin/main --stat` 之 17 files 一致） |
 | Browser E2E evidence | Not run: no frontend product route or browser-facing implementation changed（doc-only；不觸碰 web-viewer-sample／governance-service 等 product code） |
 | Agent workflow changed? | no（未觸碰 `.claude/workflows/`／`.github/workflows/`／`scripts/pr-review-agent.ps1` 等 agent 編排資產；本 change 全數落於 `openspec/changes/doc-first-canon-v2/` 之下） |
 | Required checks expected | PR Review Agent（`pr-review-agent.yml` → `scripts/tests/check-pr-body-evidence.ps1`）；Agent Governance（`agent-governance.yml`）；CI（`ci.yml` changed-path classifier；服務層 job 因未觸及對應路徑預期 skip）；`openspec validate doc-first-canon-v2 --strict`（PR body 內附證據，非額外 CI job） |
@@ -99,7 +99,7 @@ Change 'doc-first-canon-v2' is valid
 - `proposal.md`（51 行）／`tasks.md`（73 行）——提案主文＋24 task 分解與逐項 PASS 證據
 - `pr-body-draft.md`（本檔）——tasks.md 6.3 交付物
 
-（全數 16 個既有變更檔 ＋ 本檔／`git diff main --stat` 統計：16 files changed, 3543 insertions(+), 純新增、無刪除、無修改既有檔案。）
+（全數 17 個變更檔＝16 份既有交付物 ＋ 本檔 `pr-body-draft.md` 自身／`git diff origin/main --stat` 統計：17 files changed, 3664 insertions(+), 純新增、無刪除、無修改既有檔案；insertion 數為本 evidence commit 之快照，後續 commit 會微調。）
 
 ## 提案性質聲明（draft-submitted vs user-adopted）
 
