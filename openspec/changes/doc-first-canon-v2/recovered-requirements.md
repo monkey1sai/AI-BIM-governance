@@ -27,7 +27,7 @@
 | R3 | **不作正本斷言**；`c6-issue-bcf-topic`（§06）卡改標「現行真實 gate＝kind=issue／有 ifc_guid、與 source 無關」＋撈回目標指回本檔 §1.1 | —（undecided，非採納） |
 | R4 | `c6-review-session`（§06，既有卡追加行內備註） | **否** |
 
-**用詞說明（為何 R1／R2／R4 不套 `planned`）**：R1／R2／R4 描述的是 A1–A4（已落地／真整合域，見 `c8-task-ch-crosswalk`「A1 / A2 / A3 真整合,已落地」與 `c8-domain-reality-table` A4 列「deterministic 檢索已全棧落地」）之既有系統行為，非「尚未建置」的目標。若套 `planned` 標籤等同宣稱已完成的行為尚未建置，違反誠實鐵律「不得以文件宣稱 runtime 已完成」之反向情形——不得把已完成說成未完成。任務原文摘要句「統一標 planned」之範圍，依任務內文細項分句解讀：僅 (b) A5–A10 domain 契約群組有「全列標 `planned`」之明文要求（見下），(a) 負向驗收句僅要求「注入 §04/§06 對應卡或 §08 R4 DoD 附錄區塊」，未附加標籤要求；本輪選擇前者（注入既有 §06 對應卡），並依誠實鐵律決定標籤策略。（R3 為此四句之例外：經實查與現行實作衝突，改列 undecided、不作正本斷言，理由與證據見 §1.1。）
+**用詞說明（為何 R1／R2／R4 不套 `planned`）**：R1／R2／R4 描述的是 A1–A4（已落地／真整合域，見 `c8-task-ch-crosswalk`「A1 / A2 / A3 真整合,已落地」與 `c8-domain-reality-table` A4 列「deterministic 檢索已全棧落地」）之既有系統行為，非「尚未建置」的目標。若套 `planned` 標籤等同宣稱已完成的行為尚未建置，違反誠實鐵律「不得以文件宣稱 runtime 已完成」之反向情形——不得把已完成說成未完成。任務原文摘要句「統一標 planned」之範圍，依任務內文細項分句解讀：僅 (b) A5–A10 domain 契約群組有「全列標 `planned`」之明文要求（見下），(a) 負向驗收句僅要求「注入 §04/§06 對應卡或 §08 R4 DoD 附錄區塊」，未附加標籤要求；本輪選擇前者（注入既有 §06 對應卡），並依誠實鐵律採「(a) 不套 `planned`／(b) 全套 `planned`」為候選標籤策略。**惟「`planned` 僅適用 (b) 群組」係對 spec.md R-C4（`spec.md:191`）SHALL 級「統一標 planned」之縮限解讀，屬 owner 單方認定；依 R-C4 本身「三值判定 SHALL 為 owner 提候選＋使用者終裁」之精神，該範圍認定不逕自定案，已改列本檔第三個「需使用者裁」項（見 §1.2）待使用者拍板。**（R3 為此四句之例外：經實查與現行實作衝突，改列 undecided、不作正本斷言，理由與證據見 §1.1。）
 
 ### 1.1 R3 更正——與現行實作衝突，改列「需使用者裁」（gap fix：2026-07-19，fixer）
 
@@ -45,6 +45,22 @@ R3 撈回句「BCF 匯出僅限 `rule-run｜diff` 建立之 issue、`manual` 不
 另註：原判引「呼應 README §3.4 後端凍結面」，實查現行 `README.md` 與 `docs/plans/docs-plans-README.md` §3.4 均無「BCF 匯出限 source」之凍結條款，該引用不成立。
 
 **三值判定改判**：R3 屬「撈回之舊要求與現行實作衝突」——是否把匯出資格收緊為 `source`-gated，屬產品／安全設計決策，doc-only 撈回任務不得逕自認定，故改列**與現行實作衝突 → 需使用者裁**。處置比照 D8：不作正本斷言，僅於 `c6-issue-bcf-topic` 卡明標現行真實 gate（`kind=issue`／`ifc_guid`）並將撈回之收緊目標指回本節。
+
+### 1.2 planned 標籤範圍認定——縮限 SHALL 條文，改列第三個「需使用者裁」項（gap fix：2026-07-19，fixer）
+
+**爭點**：spec.md R-C4（`openspec/changes/doc-first-canon-v2/specs/documentation-source-of-truth/spec.md:191`）SHALL 明列「…逐一對照現行 11 條裁決 re-審…、**統一標 planned**」，其三值判定並定義「相容→入 v2 **標 planned**」；字面上「相容即標 planned」涵蓋全部 11 項「相容→採納」候選（R1／R2／R4＋D1–D7／D9），未區分 (a)(b) 兩類。本輪實作只對 (b) A5–A10 domain 契約群 8 項（D1–D7、D9）套 `planned(class: in-repo-fullstack-pending)`；(a) 負向驗收句 3 項（R1／R2／R4）刻意不套，理由見上 §1 用詞說明（三者描述 A1–A4 **已落地**行為，套 `planned` 違反誠實鐵律「不得把已完成說成未完成」）。該「已落地」事實另經本 session 獨立實查覆核屬實：`web-viewer-sample/src/console/governance/highlightBridge.ts:52-55`（R1：`primPathForGuid` 回 null 時 `highlightFailed` 直接 return `{ok:false, reason:"unmapped"}`、不建 `highlightPrimsRequest`）、`governance-service/federation/api.py:161-181`（R2：`coord_report` 不一致時 `mark_build_stale` ＋刪 stale build ＋回 409「federate aborted」、set／members 資料保留）。
+
+**判定**：此縮限解讀**於事實面可信**（誠實鐵律為硬約束、非偏好），但屬 owner 對 SHALL 級條文的**單方面範圍縮限**。依 R-C4 本身「三值判定 SHALL 為 owner 提候選＋使用者終裁」之精神，owner 不得逕自認定此範圍；前一輪僅在 §1 用詞說明內以 owner 立場定案、未另立待裁項，且未回頭同步 spec.md:191 措辭，使 spec.md 現況文字（絕對「統一標 planned」）與 draft 已落地行為（R1／R2／R4 不套 `planned`）之間，出現本 change 自身要根除的「文件與現況不同步」落差。
+
+**改列第三個「需使用者裁」項**（與 R3〔§1.1〕、D8〔§2〕並列於本檔待裁登記）。本項屬**標籤範圍政策**認定、非某條撈回句之三值判定，故**不改動** 13 項候選之撈回計數（仍 11 相容／2 undecided）。owner 提候選＋待使用者終裁：
+
+| 選項 | 內容 | owner 傾向 |
+|---|---|---|
+| (i) | 確認「`planned` 僅適用 (b) 群組」；R1／R2／R4 維持行內備註、不套 `planned`，並由使用者授權**同步修正 spec.md:191 措辭**（把絕對「統一標 planned」改為「相容且尚未建置者標 `planned`；相容但描述 A1–A4 已落地行為者以行內備註落地、不套 `planned`」），消除 spec↔現況落差 | **傾向**（合誠實鐵律、且使 spec 內外一致） |
+| (ii) | 維持 spec.md:191 字面「統一標 planned」，改為 R1／R2／R4 亦套**非** `planned` 之落地標籤（如 `landed`／`in-repo-live`）以「有標籤」滿足 SHALL 形式 | 備選（需新增標籤詞彙，牽動 §08 domain-reality 表詞彙封閉性） |
+| (iii) | 其他處置 | 使用者另裁 |
+
+**單一權責註記（R-C2）**：spec.md 非本 task（5.6，Files＝recovered-requirements.md＋draft）之權責檔；上表選項 (i) 之 spec.md:191 措辭同步修正，須使用者裁定後由 spec.md 權責方執行，本檔不逕自改動 spec.md（比照 task 5.4 對 `gap-ledger.md`、task 5.5 對 `design.md` 之 single-ownership 處置：發現跨檔落差時記錄並指名，不越權編輯）。使用者未裁定前，draft 現況〔(b) 套 `planned`、(a) 不套〕為 owner 提之**暫定候選態**、非最終定案。
 
 ## 2.（b）A5–A10 domain 契約撈回（9 項，全數尋獲）
 
@@ -98,7 +114,7 @@ D1–D7、D9 全數套用 `planned(class: in-repo-fullstack-pending)`，依任�
 - [x] 三值判定結果：見 §1／§2 各列「三值判定」欄；13 項中 11 項相容已採納入 v2，2 項列 undecided、不入 v2（R3 經實查與現行實作衝突→需使用者裁，見 §1.1；D8 含糊／部分重疊）。
 - [x] 對照 11 條裁決 re-審：見 §1／§2「對照裁決」欄；§3 另做「防復活」專項查核（R2 三態／裁6／裁8 有無推翻本輪候選）。
 - [x] 撈不到的項標「來源不可考、不撈回」：本輪無此情形，見 §4 說明。
-- [x] 採納句已入 draft 且標 `planned`（僅 (b) 群組套用，見 §1 用詞說明）：
+- [x] 採納句已入 draft；`planned` 標籤範圍（僅 (b) 群組套用）為 owner 提之**暫定候選**，其「縮限 spec.md:191 SHALL『統一標 planned』」之範圍認定已改列第三個「需使用者裁」項（見 §1.2）待使用者終裁：
   - R1／R2／R4 → `c6-element-mapping`／`c6-federated-set`／`c6-review-session`（既有卡追加備註，未套 `planned`，理由見 §1）。
   - R3 → 未作正本斷言（與現行實作衝突→需使用者裁，見 §1.1）；`c6-issue-bcf-topic` 卡改標現行真實 gate（`kind=issue`／`ifc_guid`）＋撈回目標指回本檔。
   - D1–D7、D9 → 新卡群 `c6-scenario`／`c6-telemetry-sample`／`c6-work-order`／`c6-schedule-activity`／`c6-capture-job-deviation`／`c6-dataset-job`／`c6-robot-mission`（全標 `planned(class: in-repo-fullstack-pending)`）。
@@ -108,4 +124,4 @@ D1–D7、D9 全數套用 `planned(class: in-repo-fullstack-pending)`，依任�
 
 ---
 
-verified-as-of：2026-07-19（本 task 對 `a271e46^`（`1abeb91a6645c58eae4994ace6d9bccde6597d3b`）三份歷史檔逐項 Read／Grep 實查所得；`carve-out-assertions.md` §3 合併執行 7 項於本次 draft 編輯後複跑全數 PASS；draft HTML div/span 標籤配對 300/300·618/618；CRLF 全檔保留（806 行、0 bare LF）；`data-canon-id` 全域 55 個、較編輯前 48 個增加 7 個且零重複；**gap fix 2026-07-19（fixer）**：R3 經實查 `governance-service` 程式碼與測試判定與現行實作衝突（BCF 匯出真實 gate＝`kind=issue`／`ifc_guid`、與 `source` 無關），三值判定由「相容」改列「需使用者裁」、新增 §1.1 承載證據、draft `c6-issue-bcf-topic` 卡改標現行真實 gate＋撈回目標指回本檔，採納計數由 12/1 更正為 11/2；另補 D5／D7 額外來源行號 `TARGET-shell.md:233`／`:265`；carve-out §3 七項於本次編輯後複跑全數 PASS）。
+verified-as-of：2026-07-19（本 task 對 `a271e46^`（`1abeb91a6645c58eae4994ace6d9bccde6597d3b`）三份歷史檔逐項 Read／Grep 實查所得；`carve-out-assertions.md` §3 合併執行 7 項於本次 draft 編輯後複跑全數 PASS；draft HTML div/span 標籤配對 300/300·618/618；CRLF 全檔保留（806 行、0 bare LF）；`data-canon-id` 全域 55 個、較編輯前 48 個增加 7 個且零重複；**gap fix 2026-07-19（fixer）**：R3 經實查 `governance-service` 程式碼與測試判定與現行實作衝突（BCF 匯出真實 gate＝`kind=issue`／`ifc_guid`、與 `source` 無關），三值判定由「相容」改列「需使用者裁」、新增 §1.1 承載證據、draft `c6-issue-bcf-topic` 卡改標現行真實 gate＋撈回目標指回本檔，採納計數由 12/1 更正為 11/2；另補 D5／D7 額外來源行號 `TARGET-shell.md:233`／`:265`。**gap fix 2026-07-19（fixer，第二輪）**：將「`planned` 標籤僅適用 (b) 群組」此對 spec.md:191 SHALL「統一標 planned」之縮限解讀，依 R-C4「owner 提候選＋使用者終裁」精神改列本檔第三個「需使用者裁」項（新增 §1.2、re-frame §1 用詞說明、更新 §5 DoD 對照）；R1／R2 之 A1–A4 已落地行為另經 `web-viewer-sample/src/console/governance/highlightBridge.ts:52-55`／`governance-service/federation/api.py:161-181` 本 session 獨立實查覆核屬實；spec.md 非本 task 權責檔，其 §191 措辭同步修正列為 §1.2 選項 (i) 待使用者裁、本檔不逕自改動；`npx openspec validate --strict` 複跑綠、draft 未改動故 carve-out §3 七項與 draft 結構檢核不受影響、仍 PASS）。
