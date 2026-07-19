@@ -162,7 +162,7 @@ input::placeholder{color:#4d6076}
           <div style="display:flex;flex-direction:column;gap:10px">
             <div style="display:flex;align-items:baseline;gap:10px">
               <span style="font-size:13.5px;font-weight:700">{{ L.launcher }}</span>
-              <span style="font-size:11px;color:#5a7089">A1–A4 live · A5–A10 Concept Preview</span>
+              <span style="font-size:11px;color:#5a7089">A1–A3 live · A4 hybrid · A5–A10 Concept Preview</span>
             </div>
             <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">
               <sc-for list="{{ appCards }}" as="ap" hint-placeholder-count="10">
@@ -356,7 +356,7 @@ input::placeholder{color:#4d6076}
 
               <sc-if value="{{ dockA4 }}" hint-placeholder-val="{{ false }}">
                 <div style="padding:14px;display:flex;flex-direction:column;gap:12px">
-                  <div style="display:flex;align-items:center;gap:8px"><span style="font-size:13.5px;font-weight:700">A4 {{ L.a4 }}</span><span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#4fd68a;background:rgba(49,197,109,.1);border:1px solid rgba(49,197,109,.25);border-radius:4px;padding:1px 6px">LIVE</span></div>
+                  <div style="display:flex;align-items:center;gap:8px"><span style="font-size:13.5px;font-weight:700">A4 {{ L.a4 }}</span><span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#4fd68a;background:rgba(49,197,109,.1);border:1px solid rgba(49,197,109,.25);border-radius:4px;padding:1px 6px">HYBRID</span></div>
                   <div style="display:flex;flex-direction:column;gap:6px">
                     <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;color:#4d6076;text-transform:uppercase">{{ L.nlq }}</span>
                     <div style="background:#0a1220;border:1px solid rgba(65,199,232,.3);border-radius:9px;padding:10px 12px;font-size:12px;color:#dbe6f3;line-height:1.5">找出 4F 所有防火門並標示未符合規範者<span style="display:inline-block;width:1px;height:13px;background:#41c7e8;margin-left:2px;animation:pulse 1.2s infinite;vertical-align:-2px"></span></div>
@@ -671,7 +671,7 @@ class Component extends DCLogic {
       trigger: "觸發轉檔", retry: "重試", mksession: "建立 Review Session", enter3d: "進入 3D 工作區",
       pending: "待送", deliver: "立即回拋 deliver", browse: "物件瀏覽", recent: "最近事件",
       ops_title: "Runtime / Kit · GPU 營運", svc_health: "服務健康", empty: "無待進件",
-      concept_note: "點左欄 A1–A4 體驗 live 模組;本頁為概念稿",
+      concept_note: "點左欄 A1–A3 體驗 live 模組、A4 為 hybrid;本頁為概念稿",
       dock_issues: "Issues", outbox: "回拋 Outbox",
     } : {
       sub: "BIM Governance Console", search: "Search projects, models, issues, BCF…", project: "Project",
@@ -689,7 +689,7 @@ class Component extends DCLogic {
       trigger: "Trigger conversion", retry: "Retry", mksession: "Create Review Session", enter3d: "Enter 3D Workspace",
       pending: "pending", deliver: "Deliver now", browse: "Object browser", recent: "Recent events",
       ops_title: "Runtime / Kit · GPU Operations", svc_health: "Service health", empty: "No pending intake",
-      concept_note: "Click A1–A4 in sidebar for live modules; this page is a concept mock",
+      concept_note: "Click A1–A3 in sidebar for live modules, A4 is hybrid; this page is a concept mock",
       dock_issues: "Issues", outbox: "Deliver Outbox",
     };
 
@@ -715,7 +715,7 @@ class Component extends DCLogic {
       { code: "A1", label: zh ? "治理檢核" : "Rule Check", badge: "LIVE", tone: "live", act: goDock("a1") },
       { code: "A2", label: zh ? "版本 Diff" : "Version Diff", badge: "LIVE", tone: "live", act: goDock("a2") },
       { code: "A3", label: "Federation", badge: "LIVE", tone: "live", act: goDock("a3") },
-      { code: "A4", label: zh ? "語意查詢" : "Semantic Query", badge: "LIVE", tone: "live", act: goDock("a4") },
+      { code: "A4", label: zh ? "語意查詢" : "Semantic Query", badge: "HYBRID", tone: "live", act: goDock("a4") },
       { code: "A5", label: "IoT / FM", badge: "P3", tone: "p3", act: goConcept("a5") },
       { code: "A6", label: "4D / 5D", badge: "P4", tone: "p4", act: goConcept("a6") },
       { code: "A7", label: "Scan Compare", badge: "P4", tone: "p4", act: goConcept("a7") },
