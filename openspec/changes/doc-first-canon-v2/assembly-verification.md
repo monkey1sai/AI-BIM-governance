@@ -23,7 +23,7 @@ git diff --no-index "docs/plans/AI-BIM 前後端設計文件.dc.html" "openspec/
 
 净增 4 行。
 
-**Hunk 擷取**：對全檔跑 `git diff --no-index -U0`（零上下文，逐行精確定界）取得全部 hunk header，篩選 old-range 或 new-range 落於上表區間者。全檔共 62 個 hunk，其中 **8 個** 落於 §03 範圍（old line 154–215）；old line 220 之後（`@@ -225,0 +230 @@` 起）屬 §04，不收錄——此即 item 13 被 tasks.md 5.1 原文註記「(§04 不同章)」排除的機器證據。
+**Hunk 擷取**：對全檔跑 `git diff --no-index -U0`（零上下文，逐行精確定界）取得全部 hunk header，篩選 old-range 或 new-range 落於上表區間者。全檔共 69 個 hunk，其中 **8 個** 落於 §03 範圍（old line 154–215）；old line 220 之後（`@@ -225,0 +230 @@` 起）屬 §04，不收錄——此即 item 13 被 tasks.md 5.1 原文註記「(§04 不同章)」排除的機器證據。
 
 **完整性自證**：8 個 hunk 的行數增量總和 = 2+0+0+1+0+0+0+1 = **+4**，與上表淨增 4 行**精確相符** → 證明 8 個 hunk 已窮盡 §03 全部差異，無遺漏、無重複計算。
 
