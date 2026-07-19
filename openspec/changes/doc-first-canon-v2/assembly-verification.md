@@ -369,16 +369,19 @@ grep -n "Planned endpoint\|Existing endpoint\|Missing endpoint" 同檔     → 0
 
 ### 0. 範圍與方法
 
-**Grep 指令（實跑）**：對兩份 draft 全文搜尋 `planned` 字面出現處：
+**Grep 指令（實跑）**：對三份 v2 canon draft 全文搜尋 `planned` 字面出現處（審計 corpus 對齊 task 5.3/5.4 已確立之「三份 v2 草稿」）：
 
 ```bash
 grep -n "planned" "openspec/changes/doc-first-canon-v2/drafts/AI-BIM 前後端設計文件.v2-draft.dc.html"
 grep -n "planned" "openspec/changes/doc-first-canon-v2/drafts/docs-plans-README.v2-draft.md"
+grep -n "planned" "openspec/changes/doc-first-canon-v2/drafts/AI-BIM Console Hi-Fi.v2-draft.dc.html"
 ```
 
-`.dc.html` draft 命中 **11 行**（含同行重複字面）；`docs-plans-README.v2-draft.md` **0 命中**——README draft 本次無需任何編輯，逐一確認完畢。
+`.dc.html` draft 命中 **8 行**（draft:562 修前含同行重複 `planned` 2 處＝9 處字面，task 7 移除裸前綴後每行單一、現況 8 行 8 處，見 §1 #4）；`docs-plans-README.v2-draft.md` **0 命中**；`AI-BIM Console Hi-Fi.v2-draft.dc.html` **0 命中**——後兩份 draft 本次無需任何編輯，逐一確認完畢。
 
-依 task 指示「已知待統一點」，另對 `.dc.html` draft 追加搜尋 `external(` 括號樣式（task 4.8 遺留、非 `planned` 字面但屬同一 R-B5 token 統一範圍）：命中 **6 行**（A5–A10 真實程度表 draft:775–780）。
+依 task 指示「已知待統一點」，另對兩份 `.dc.html` draft（`AI-BIM 前後端設計文件` 與 `AI-BIM Console Hi-Fi`）追加搜尋 `external(` 括號樣式（task 4.8 遺留、非 `planned` 字面但屬同一 R-B5 token 統一範圍）：`AI-BIM 前後端設計文件` 命中 **6 行**（A5–A10 真實程度表 draft:775–780，修前掃描、本次已全數收斂為 `external-mock-legit`）、Hi-Fi **0 命中**。
+
+**Hi-Fi draft 零命中之結構性理由（非漏檢）**：Hi-Fi console draft 之建成狀態語彙採 LIVE／HYBRID／Concept Preview 徽章機制（task 4.17 落地，本檔 grep：LIVE 9／HYBRID 2／Concept Preview 3），非本正本 §04/§06/§08 所用之 R2 `planned`／`external` class-token 體系（Hi-Fi 全檔 `in-repo-fullstack-pending`／`external-mock-legit`／`unclassified` 三 token 皆 0 命中）；故 Hi-Fi 天然無裸 `planned`／`external(` 標記。三份 canon draft 已全數納入本次審計，Hi-Fi 以「不適用 R2 class-token、改用獨立徽章」查證後記錄（非靜默留白），與 task 5.3/5.4 三份草稿審計 corpus 一致，符合 R-C1 誠實鐵律。
 
 R-B5 封閉列舉 token（`specs/documentation-source-of-truth/spec.md:102`）：`{integrated-ready｜in-repo-fullstack-pending｜external-mock-legit｜not-built｜unclassified}`。
 
@@ -435,12 +438,13 @@ task 指示明列兩個 Wave 2 遺留待統一點，逐一驗證現況：
   七項全數 PASS，本次編輯未觸及任一 carve-out 錨點。
 - **`npx openspec validate doc-first-canon-v2 --strict`**：`Change 'doc-first-canon-v2' is valid`。
 - **`docs-plans-README.v2-draft.md`**：本 task 零編輯（`planned`／`external(` 皆 0 命中，逐一確認後免動）。
+- **`AI-BIM Console Hi-Fi.v2-draft.dc.html`**：本 task 零編輯（`planned`／`external(` 皆 0 命中；建成狀態採 LIVE／HYBRID／Concept 徽章、非 R2 class-token 體系，詳見 §0 結構性理由）。
 
 ### 4. 結論（tasks.md 6.1 DoD 對照）
 
 | DoD 項目 | 狀態 |
 |---|---|
-| grep 兩份 draft 全部 `planned` 出現處，逐一確認附 R2 三態 class | ✅ `.dc.html` 11 行／README 0 行；逐一列表見 §1，1 處排除（draft:581 欄位名非狀態標記） |
+| grep 三份 v2 draft 全部 `planned` 出現處，逐一確認附 R2 三態 class | ✅ `.dc.html` 8 行／README 0 行／Hi-Fi 0 命中；逐一列表見 §1，1 處排除（draft:581 欄位名非狀態標記） |
 | 裸標補 class，使用 R-B5 封閉列舉 token | ✅ 2 處裸 `planned` 補 class（draft:322 新增、draft:562 移除冗餘前綴）；token 皆取自 R-B5 五值封閉列舉 |
 | 無裁決背書者標 `unclassified` 綁 ledger triage | 不適用——本次覆核之全部項目皆可追溯至 R-B5 spec 明文例舉（IoT feed／P6 成本系統／點雲 ICP／Isaac／Replicator）或 design.md §6a／gap-ledger.md 具名 follow-up（metadata-allowlist／item 20），零孤兒項，故無需標記 `unclassified` |
 | task 4.2／4.8 已知待統一點統一改封閉 token | ✅ task 4.2 六態列、task 4.8 `planned(全棧)` 兩點覆核確認已先行合規（§2）；task 4.8 `external(mock 合法,掛 ProvTag)` 6 處本次統一改 `external-mock-legit(...)`，人讀語意括號保留、token 為機讀主體 |
