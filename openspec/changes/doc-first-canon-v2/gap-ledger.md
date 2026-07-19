@@ -13,7 +13,7 @@
 > - **錨(data-canon-id)**：Task 0 spike 結論之首選錨點機制（`prep-evidence.md` §0.1）；`.dc.html` 兩檔用 `data-canon-id="..."` 屬性，`docs-plans-README.v2-draft.md` 用 `<!-- canon:... -->` 行尾註解（markdown 無 HTML id，比照精神植入等效穩定錨）。
 > - **adopted-in**：`user-adopted` 訊號（正本 v2 version-bump commit SHA，design.md §1.4）；本 change 尚未被使用者採納，全欄留空（`—`）。
 
-## 24＋3 主表（零缺格；OQ-2 已於 2026-07-18 由使用者裁決關閉，不計入本表 27 列，另見文末「已結案 Open Question」）
+## 24＋4 主表（零缺格；24 項失真／核心翻轉〔item 1–21＋22/23/24〕＋4 項 Open Question〔OQ-1/OQ-2/OQ-3/OQ-4〕，共 28 列）
 
 | item_id | classification | status | file:line 證據 | verified-as-of | triage | 錨(data-canon-id) | adopted-in |
 |---|---|---|---|---|---|---|---|
@@ -32,7 +32,7 @@
 | 13 | canon-defect | immediate-gap | MAIN:224（「Payload 以 `tests/contracts/*.json` 為最高標準」未限定覆蓋範圍）；code：`tests/contracts/` 頂層僅 2 檔（`ifc_ready_payload.json` v1.1.0、`conversion_result_callback.json` v1.0.0）＋ 1 個非-A軸子目錄 `structured-log/`；全庫 grep A1–A10 命名之契約檔 0 命中 | 2026-07-17 | P2 | `#sec4`（標題鄰近新增獨立 badge，先於 `c4-coordinator-api`） | — |
 | 14 | canon-defect | immediate-gap（顯式化既有事實補列，依 design.md §4 R-B3 Q11 劃線判 normative(doc)，非誤動 carve-out） | MAIN:252（`/api/diffs`／`apply-overlay` 未標 501）；MAIN:254（`/api/federated-sets`（A3）未標 201 同步）；MAIN:458（`element-mapping/for-session/:id` 未標實轉打 `:49101`）；code：`governance-service/diff_engine/api.py:87-91`（apply-overlay 實回 501，`tests/test_diff_api.py:74` 斷言）；`governance-service/federation/api.py:63`（A3 create 實 201，對比 A1 `governance-service/app.py:294`／A2 `diff_engine/api.py:42` 皆 202）；`bim-review-coordinator/src/app.ts:3379,3375-3376`（element-mapping/for-session 直服、轉打 :49101）；`bim-review-coordinator/src/governanceProxy.ts`（PROXY /* 未標明為顯式白名單≈30 條＋kit 5 條）；`bim-streaming-server/SYSTEM_DESIGN.md:319-321,482-486`（:49100 WebRTC signaling 為合法瀏覽器直連，非經 coordinator relay） | 2026-07-17 | P3 | `c4-coordinator-api`／`c4-governance-api`／`c8-r2-api-tristate` | — |
 | 15 | canon-defect | immediate-gap（與 **OQ-4** 為同一鐵律 3 行為級化之兩面：本列＝canon 文字精確度；OQ-4＝隨之產生之測試護欄空窗，見主表 OQ-4 列） | MAIN:107（鐵律 3「/ui/open?session= handoff 凍結，byte-for-byte + CI guard」，「byte-for-byte」非實際保證——實際保證為行為級：301/302 精確性＋redirect target=viewer origin＋參數白名單）；code：`bim-review-coordinator/tests/dev-console.test.ts:101-259`（302/301 精確性、location 含 viewer origin 排除 evil.example/127.0.0.1、`streamRole`/`kitInstanceId` 轉發＋`signalingServer` 剝除，三組獨立 `it()` 覆蓋，非單一 RK6 case）；`web-viewer-sample/e2e/ui-open-regression.spec.ts` 存在但 `.github/workflows/` 全目錄 0 命中（未接 CI，見 OQ-4） | 2026-07-17 | P1 | `c1-badges` | — |
-| 16 | canon-defect | immediate-gap（技術面 token 真相源修正；`ai-bim-governance.css` 色票本身之品牌/授權定案見已結案 **OQ-2**） | README:38（R1 子句「沿用 EdgeConsole 與 `--ec-*` token 單一真相源」，`--ec-*` 已退役）；README §1 檔案清單未列 `ai-bim-governance.css`；code：`web-viewer-sample/src/console/EdgeConsole.tsx:10`（真實 `import "../../../docs/plans/ai-bim-governance.css"`）；`web-viewer-sample/src/console/legacy-console.css:2`（「前身 edge-console.css 已 retire；`.ec-*` class 名保留」）；`web-viewer-sample/src/console/ec-token-retirement.test.ts`（`--ec-*` 自訂屬性 token 全域歸零之回歸護欄，PR #357/#358 已合併於 main 0d24fb6） | 2026-07-17 | P2 | README `<!-- canon:r-authority-order -->` 鄰近段落（§1 檔案清單無獨立 canon 錨，隨 §1 表格一併植錨） | — |
+| 16 | canon-defect | immediate-gap（技術面 token 真相源修正；`ai-bim-governance.css` 色票本身之品牌/授權歸屬未裁決，見 **OQ-2**〔open-decision，主表末列〕） | README:38（R1 子句「沿用 EdgeConsole 與 `--ec-*` token 單一真相源」，`--ec-*` 已退役）；README §1 檔案清單未列 `ai-bim-governance.css`；code：`web-viewer-sample/src/console/EdgeConsole.tsx:10`（真實 `import "../../../docs/plans/ai-bim-governance.css"`）；`web-viewer-sample/src/console/legacy-console.css:2`（「前身 edge-console.css 已 retire；`.ec-*` class 名保留」）；`web-viewer-sample/src/console/ec-token-retirement.test.ts`（`--ec-*` 自訂屬性 token 全域歸零之回歸護欄，PR #357/#358 已合併於 main 0d24fb6） | 2026-07-17 | P2 | README `<!-- canon:r-authority-order -->` 鄰近段落（§1 檔案清單無獨立 canon 錨，隨 §1 表格一併植錨） | — |
 | 17 | canon-defect | immediate-gap | MAIN:202（§03「i18n:zh-Hant 預設 · en 切換；字典置 `console/i18n.ts`」）；code：`web-viewer-sample/src/console/i18n.ts:5,17,19,27,32`（檔首註解「不引入 i18n library，不維護中央字典 key」，僅匯出 runtime `getLang/setLang/t/useLang`，非字典）；`web-viewer-sample/src/console/unified/fixtures.ts:23-24,44`（中央字典實際所在，`export interface Dict`／`export function getL`） | 2026-07-17 | P3 | `c3-badge-i18n` | — |
 | 18 | code-defect | planned-not-built（follow-up `embedded-viewport`；CH-I 已於本 change 提案新增為 §07 官方分期列，取得排期保護。**複合項附註**：CH-H 家族〔H1/H2/H3〕code 已出貨但原canon 缺列，此部分屬 canon-defect 性質的補列，一併於本列修正，不另立子列） | MAIN §07 分期表 CH-G 列後（MAIN:572 為最後既有列，CH-H/CH-I 為新增）；MAIN §03（「Console 不長 WebRTC — 3D 一律 HandoffButton」判遺跡改寫）；code：`web-viewer-sample/src/console/viewer/viewer.css:1,18,22,245,256`（CH-H1/H2/H3 標籤已出貨）；`web-viewer-sample/e2e/gov-viewer-layout.spec.ts:6`（CH-H1 e2e）；`web-viewer-sample/e2e/element-semantics.spec.ts:8`（CH-H2 e2e）；spec 對應：`specs/documentation-source-of-truth/spec.md:116`（R-B6 內嵌 viewport 防護先行） | 2026-07-17 | P2 | `c7-ch-schedule-table`（新增列）／`c3-badge-workspace-handoff` | — |
 | 19 | code-defect | **immediate-gap**（design.md §5 附記：unified docks fixture 殼〔item 3/19〕雖判 immediate-gap，其修復**已具名排入 follow-up `unified-docks-real-api`，非靜默缺口**） | MAIN §03 現況未提及雙軌落差（缺列本身即證據）；code：`web-viewer-sample/src/console/unified/{HomePage,WorkspacePage,PipelinePage,OpsPage,ConceptPage,docks}.tsx`（六檔皆 `data-prov="fixture"`，`unified.test.tsx:5,101-103` 斷言 fixture-first 不打 `/api`）；`web-viewer-sample/src/console/EdgeConsole.tsx:121-122`（legacy `case "a1-workbench"`／`case "semantic-search"` 渲染真整合頁）；`web-viewer-sample/src/console/data.ts`（`PAGES` 陣列全文 grep `a1-workbench`／`semantic-search` 0 命中＝legacy nav 無導覽項，僅深連結可達） | 2026-07-17 | P1 | `c3-badge-dual-track` | — |
@@ -42,26 +42,13 @@
 | 23（核心翻轉） | canon-defect | immediate-gap | README:37（§3 條列 2「權威順序…既有 repo 程式碼與測試 > … > 書面 A1–A10 需求 > …」）；README:40（§3 條列 5「現況行為權威＝code＋tests；設計文件＝目標權威；兩者落差＝implementation gap」） | 2026-07-17 | P0 | README `<!-- canon:r-authority-order -->`／`<!-- canon:r-runtime-authority -->` | — |
 | 24（核心翻轉） | canon-defect | immediate-gap | MAIN:206（§03「與『元件樹(UnifiedConsole)』/『共用 hooks／契約層』的命名核對(code-truth,對照 console/unified/*)」）；MAIN:208（「先前的理想化命名…不符；以下以程式碼為準，不回頭改程式碼命名以遷就舊文件」carve-out 宣告句） | 2026-07-17 | P0 | `c3-naming-check` | — |
 | OQ-1 | undecided | open-decision（**預設不採用**，不併入 7 值 `Prov` 封閉集） | MAIN:653（§08 R3 現行 `ProvenanceTag(mock\|live)`，未含 `asbuilt-partial`）；v2 草稿處置：`data-canon-id="c8-r3-oq1-open-decision"` 巢狀 non-normative 註記塊承載；擴充唯一路徑＝`design-canon-change-control` R-A1 提案＋使用者核准 | 2026-07-17 | P3 | `c8-r3-oq1-open-decision` | — |
+| OQ-2 | undecided | open-decision（**不逕自定案、不逕自否決**；品牌／授權決策須使用者裁決——proposal.md OQ-2「不入正本、僅入 design.md 與 gap ledger」＋design.md §6b OQ 表同載；本 change 明文不代裁，無任何已知使用者裁決紀錄可查） | `docs/plans/ai-bim-governance.css:47-50`（現況色票 `--ab-accent:#41c7e8`／`--ab-accent-text:#6fd6ee`／`--ab-accent-bright:#7adcf2` 為青系值，全檔 grep NVIDIA 標誌色 `76b900` 系 0 命中——此為現行實作狀態佐證，**非**品牌／授權歸屬之裁決）；待決點＝青系色票／視覺語彙之品牌授權歸屬 | 2026-07-17 | P3 | design.md §6b（OQ 表，本 change 無獨立正本錨——品牌／授權決策不入正本文字） | — |
 | OQ-3 | undecided | open-decision（工具鏈可行性未證，follow-up `drift-gate-lightweight`） | 無專屬現行 canon 錯誤可指；待決點＝`.dc.html` 雙檔／`ai-bim-governance.css` 快照面能否承載 AST/符號級 drift CI（fiberplane/drift 類工具）；design.md §1.6／§6a `drift-gate-lightweight` 列 | 2026-07-17 | P3 | design.md §6b（OQ 表，本 change 無獨立正本錨——議題本身即工具鏈層級，非正本文字） | — |
 | OQ-4 | code-defect | planned-not-built（follow-up **第一順位**——四項 follow-up 中優先序最高，因屬鐵律 3 行為級化〔item 15〕之直接測試護欄空窗） | MAIN:107（鐵律 3，見 item 15）；code：`web-viewer-sample/e2e/ui-open-regression.spec.ts` 存在；`.github/workflows/` 全目錄 grep 0 命中（未接 CI）；v2 草稿已明文標「known gap（不是 pass）」 | 2026-07-17 | **P1（follow-up 第一順位）** | `c1-badges` | — |
 
 ## item 3／19 附註（design.md §5 已認列，非靜默缺口）
 
 `unified docks fixture 殼`（item 3：spectator gate 未接線；item 19：unified 為 fixture、真整合活在 legacy 深連結）雖依 R-C1 Scenario「canon v2 被採納後的偏離重分類」判為 `immediate-gap`（無 §07 CH 排期保護、非 v2 標 planned 之項），但其修復路徑**已具名排入 follow-up `unified-docks-real-api`**（design.md §6a 表既有列：`unified-docks-real-api（雙軌收斂）| —（本 change 新提）| item 3/19`），非發現後即被擱置的靜默缺口。
-
-## 已結案 Open Question（OQ-2；不計入上表 27 列）
-
-`ai-bim-governance.css` NVIDIA 綠品牌色票／視覺語彙授權盲區（proposal.md OQ-2、design.md §6b）已於 **2026-07-18 由使用者裁決關閉**：
-
-> **裁決**：青系（cyan／`--ab-accent` 系列）為唯一品牌方向；`ai-bim-governance.css` 色票視為自有 token，無外部授權依賴。
-
-- **裁決前狀態**：`undecided`／`open-decision`（品牌／授權決策，本 change 明文不逕自定案——proposal.md「不逕自定案；不入正本、僅入 design.md 與 gap ledger」）。
-- **裁決後狀態**：closed-by-user（本 status 值為本次結案新增之明確標籤，非 R-C1 schema 原定 4 值之一；因該 4 值皆不描述「已由使用者裁決關閉」此一事實狀態，強行套用既有值〔如 `open-decision`〕將違反本 change 誠實鐵律，故獨立於上表 27 列之外、以此節顯式記錄，不佔用主表列位——與「24＋3＝27」列計數一致）。
-- **現況佐證**：`docs/plans/ai-bim-governance.css:47-50`（`--ab-accent:#41c7e8`／`--ab-accent-text:#6fd6ee`／`--ab-accent-bright:#7adcf2` 等既為青系色值，全檔 grep NVIDIA 標誌色 `76b900` 系 0 命中）——裁決與現行已上線色票（PR #357/#358，`design-token-authority.test.ts` 護欄）一致，非需回頭改色。
-- **不入正本**：本裁決不寫入 v2 草稿 normative 內文（proposal.md OQ-2 原文「不入正本」），僅記錄於本檔與 `design.md` §6b。
-- **verified-as-of**：2026-07-18（裁決日）；本節於 2026-07-19 執行本 task 時複核 css 現況一致。
-- **triage**：已結案，不需進一步 triage。
-- **adopted-in**：—（裁決本身非 version-bump commit，不觸發 R-A4 採納訊號；如未來 canon v2 正式採納，本節內容併入 design.md §6b 既有記錄，不另建流程）。
 
 ## v2 草稿零裸 file:line 驗證（本 task 執行，DoD 要求）
 
@@ -77,7 +64,7 @@ grep -nE '第[0-9]+行|[Ll]ine[[:space:]]+[0-9]+|:[0-9]{2,4}行' <draft>
 - `drafts/AI-BIM Console Hi-Fi.v2-draft.dc.html` → 0 命中。
 - `drafts/docs-plans-README.v2-draft.md` → 0 命中。
 
-三份草稿內文皆僅用 `data-canon-id` / `<!-- canon:* -->` 穩定錨與埠號／API 路徑等非易腐技術座標，21＋3 項失真與 OQ-1/3/4 之全部 `file:line` 證據已如上表集中於本檔，符合 R-C1「正本 v2 內文 SHALL 只用穩定章節／需求 ID 錨」與 Scenario「task 改寫文字內嵌裸 file:line」之零缺口要求。
+三份草稿內文皆僅用 `data-canon-id` / `<!-- canon:* -->` 穩定錨與埠號／API 路徑等非易腐技術座標，21＋3 項失真與 OQ-1/2/3/4 之全部 `file:line` 證據已如上表集中於本檔，符合 R-C1「正本 v2 內文 SHALL 只用穩定章節／需求 ID 錨」與 Scenario「task 改寫文字內嵌裸 file:line」之零缺口要求。
 
 ## CI 驗證掛載點（R-C1；不新造工具）
 
