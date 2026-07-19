@@ -484,7 +484,7 @@ task 指示明列兩個 Wave 2 遺留待統一點，逐一驗證現況：
 
 - **可讀通**：§04 header「Payload 以 tests/contracts/\*.json 為最高標準」是 carve-out item 1 明文保護的委任語意，範圍限定在 payload 欄位形狀，非一般需求權威；§08 `c8-authority-table`（draft:659 起）翻轉後 row 1＝docs/plans 需求正本、row 2＝tests/contracts（payload 委任，§04 保留）——兩處合讀一致：一般需求權威＝doc-first，payload 細節＝委任 tests/contracts，非互斥。R1–R4 四條鐵律清楚可操作。
 - **發現並已修正的矛盾**：§08 章節標題正下方的三詞標語（改寫前原文）「圖片決定「長相」·文字契約決定「行為」·repo 決定「真相」」，在讀者尚未讀到下方 `c8-authority-table` 之前即先聲奪人宣稱「repo 決定真相」，與同一 §08 開頭區塊內、僅一欄之隔的 authority table row 1（docs/plans 需求正本最高）＋緊接的誠實半句（draft:667）「code + tests = runtime 現況的查證面;code 偏離本正本 = implementation gap 待修」直接衝突——若 repo「決定真相」，code 便不可能「偏離」一個由自己定義的真相，此為 proposal.md F1「權威序自相矛盾」病灶的殘留分身。此行文字本身不在 24 項失真清單／design.md 24×11 矩陣／crosswalk.md 任一項的改寫範圍內（既非任一 hunk 觸及，Wave 1／Wave 2 任何 task 皆未列為改寫目標），純靠端到端全文讀通才被發現。**已修正**：比照本文件其餘處對「repo/code」現況角色的既定用語——同段誠實半句「code+tests=runtime 現況的查證面」（draft:667）、README §2 末列「查『X 建了沒』（現況）｜repo code＋tests 直接查證」、`AGENTS-refchain.v2-draft.md` 對照 2 建議改寫同樣把 AGENTS.md 原文標題「Runtime/product 行為**真相**優先順序」改為「Runtime/product 需求權威與**現況查證**順序」（避開「真相」一詞）——三處既有先例一致指向同一改法，將標語「repo 決定「真相」」改為「repo 決定「現況」」（draft:637，1 行內 2 字置換，`git diff --stat`：1 file changed, 1 insertion(+), 1 deletion(-)）。改後：docs/plans 決定「應然」需求真相，repo 只決定「現況」查證結果，與 authority table／誠實半句／README 現況查證框架不再字面衝突。
-  - **修正後驗證**：`carve-out-assertions.md` §3 合併執行七項全 `PASS`（本次編輯落於 §08 header 標語，非任一 carve-out 錨點）；div/span 標籤配對 306/306·636/636（與編輯前基準相同，純文字置換未增減標籤）；CRLF 全檔保留（818 行、817 CRLF、0 bare LF，與編輯前基準相同）；`npx openspec validate doc-first-canon-v2 --strict` 綠（`Change 'doc-first-canon-v2' is valid`）。
+  - **修正後驗證**：`carve-out-assertions.md` §3 合併執行七項全 `PASS`（本次編輯落於 §08 header 標語，非任一 carve-out 錨點）；div/span 標籤配對 306/306·636/636（與編輯前基準相同，純文字置換未增減標籤）；行結尾一致性以 git blob 層（`git cat-file -p`，繞過 checkout smudge filter）核驗全檔保留純 LF（817 行 LF、0 CRLF，與編輯前基準相同；原述「818 行、817 CRLF、0 bare LF」測量方向相反、係量到本機 `core.autocrlf=true` 之 checkout 產物，已比照本檔 §3「行結尾一致性(LF)」（:425）與 88653cc 同款改用 blob 級量測法校正）；`npx openspec validate doc-first-canon-v2 --strict` 綠（`Change 'doc-first-canon-v2' is valid`）。
 - **次要觀察（措辭鬆散，未達矛盾門檻，不修正）**：同一標語「文字契約決定「行為」」以「契約」稱呼 Prompt Board，但緊接的 Prompt Board 卡片本文明說「其中 API 多為『建議』，不是現有契約」——用語鬆散，但同一視覺區塊內立即自我澄清，判定為可讀通、非跨 task 矛盾，依 YAGNI 不予修改（避免超出「矛盾」修正範圍）。
 
 ### J3 — 前端任務（§03 → §07 → Hi-Fi）
@@ -510,7 +510,7 @@ task 指示明列兩個 Wave 2 遺留待統一點，逐一驗證現況：
 | DoD 項目 | 狀態 |
 |---|---|
 | 五旅程記錄存在 | ✅ J1–J5 各自記錄可讀通／卡點／跨 task 矛盾，見上 |
-| 發現矛盾已修 | ✅ 發現 1 處（§08 header 標語「repo 決定「真相」」與其下 authority table／誠實半句字面衝突，屬 F1 病灶殘留分身），已修正為「repo 決定「現況」」（draft:637，1 insertion/1 deletion）；修正後 `carve-out-assertions.md` §3 七項全 PASS、div/span 306/306·636/636 平衡、CRLF 818 行/817 CRLF/0 bare LF 保留、`npx openspec validate doc-first-canon-v2 --strict` 綠 |
+| 發現矛盾已修 | ✅ 發現 1 處（§08 header 標語「repo 決定「真相」」與其下 authority table／誠實半句字面衝突，屬 F1 病灶殘留分身），已修正為「repo 決定「現況」」（draft:637，1 insertion/1 deletion）；修正後 `carve-out-assertions.md` §3 七項全 PASS、div/span 306/306·636/636 平衡、CRLF 以 git blob 層核驗保留純 LF（817 行 LF/0 CRLF；原述「818 行/817 CRLF/0 bare LF」測量方向相反、量到本機 core.autocrlf checkout 產物，已比照 §3「行結尾一致性(LF)」校正）、`npx openspec validate doc-first-canon-v2 --strict` 綠 |
 | 明標「軟性走查，非機器 gate」 | ✅ 本節標題與 §0 已明文標示，不影響 tasks.md 6.1–6.3／5.x 之機器可驗證 gate 結論 |
 | tasks.md 6.4 打勾 | 本檔提交後於同一 commit 內打勾 |
 
