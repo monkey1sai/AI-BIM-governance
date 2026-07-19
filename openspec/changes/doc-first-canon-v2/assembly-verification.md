@@ -422,7 +422,7 @@ task 指示明列兩個 Wave 2 遺留待統一點，逐一驗證現況：
 - **`external(` 覆核**：改後 grep `external(` 不含 `external-mock-legit(` 前綴者 → 0 命中（exit 1）；`external-mock-legit(` → 6 命中，與預期改動數一致。
 - **`git diff --stat`**：`1 file changed, 8 insertions(+), 8 deletions(-)`——恰為上表 8 處實質修正（#2/#4/#5/#6/#7/#8/#9/#10 之 external 段），純文字置換，無新增/刪除任何行、無新增/刪除任何 div/span 標籤。
 - **div/span 標籤配對**：python 腳本核驗全檔平衡，`<div>`/`</div>` 306/306、`<span>`/`</span>` 636/636，開閉相等。
-- **CRLF 行結尾**：byte-level 核驗，817 行 CRLF、0 條 bare LF，全檔保留。
+- **行結尾一致性（LF）**：以 `git cat-file -p` 讀 git 內部 blob（繞過 checkout smudge filter）核驗——git 實際儲存為 817 行 LF、0 條 CRLF；pre/post-edit 皆 817 行、行尾風格未被本次編輯破壞、全檔保留。註：本機 `core.autocrlf=true`，checkout 到 Windows 工作目錄時 LF→CRLF，直接讀本機檔案位元組會顯示 817 CRLF——此為 checkout 暫態、非入庫內容（實際 commit 及 CI/PR diff 所見均為 LF）；原述「817 行 CRLF」係量到本機 checkout 產物，已改用 blob 級量測法並校正措辭。
 - **carve-out-assertions.md §3 合併執行七項迴歸**（本次編輯範圍落於 §04/§06/§08 R2/R3 相關卡片，非任一 carve-out 錨點，實跑防護）：
 
   ```
