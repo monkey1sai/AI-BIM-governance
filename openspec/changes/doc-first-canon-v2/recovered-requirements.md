@@ -1,0 +1,93 @@
+# Recovered Requirements — doc-first-canon-v2（R-C4 裁決 7 撈回防腐）
+
+> **用途**：本檔是 R-C4「裁決 7 撈回防腐」的權威落地面——從 `a271e46^`（舊七檔體系刪除前之父版）實查撈回 TARGET-shell／TARGET-viewer／TARGET-contracts 的具體負向驗收句與 A5–A10 domain 契約，逐句標 source commit（file:line）、對照現行 11 條裁決 re-審、下三值判定。**本檔本身即為集中承載 file:line 證據之處**（比照 `gap-ledger.md` 之 R-C1 精神：v2 正本 SHALL NOT 內嵌裸 `file:line`；本檔屬 R-C4 之獨立追溯載體、非手寫正本本體，不受該條款限制，DoD 明文要求本檔含 source file:line）。
+
+## 0. 撈回方法與來源
+
+- **來源 commit**：`a271e46^` = `1abeb91a6645c58eae4994ace6d9bccde6597d3b`（"feat(a4): gap-a4-closeout runtime-gate evidence + BCF unavailable 裁決 + BACKLOG v4 重排 (#341)"，2026-07-15 14:17:11 +0800）——即 `a271e46`（"docs(plans): 以 AI-BIM 前後端設計文件.dc.html 取代 docs/plans 舊七檔體系 (#342)"）刪除舊七檔體系**前**的最後一個父版，本檔以下引註一律用此 SHA。
+- **檔名確認**：實跑 `git show a271e46 --stat` 確認三檔刪除路徑逐字為 `docs/plans/TARGET-contracts.md`（404 行）、`docs/plans/TARGET-shell.md`（522 行）、`docs/plans/TARGET-viewer.md`（305 行）。
+- **實查方式**：`git show a271e46^:docs/plans/TARGET-shell.md`／`TARGET-viewer.md`／`TARGET-contracts.md` 分別導出後逐行 Read／Grep；行號＝該歷史版本原始行號（未經改寫、未經 `cat -n` 之外的任何轉換）。
+- **範圍界定**：任務原文列 4 個負向驗收句代表例＋9 項 A5–A10 domain 契約子項（7 實體＋Issue source enum＋A8 例外）。本輪撈回聚焦此清單逐項實查；未做超出清單之全 22 route 驗收句地毯式重寫（YAGNI——見 §4 範圍說明）。
+
+## 1.（a）負向驗收句撈回（4 項，全數尋獲）
+
+| ID | 撈回內容（改寫為 doc 語態） | Source（`1abeb91a`:file:line） | 對照裁決 | 三值判定 |
+|---|---|---|---|---|
+| R1 | usd_prim_path 缺失／null（mapping 缺）時，該筆連動一律 disabled、不得觸發 `highlightPrimsRequest`（A1/A2/A4 共同鐵律） | `docs/plans/TARGET-shell.md:109`（A1 IX-06 四條件）、`:137`（A2 驗收句「null mapping 不發 highlight」）、`:177`（A4 驗收句「mapping 缺失不 highlight」）；`docs/plans/TARGET-viewer.md:276`（IX-3D-03）；`docs/plans/TARGET-contracts.md:32`（§1 item 6「usd_prim_path 未映射時為 null（禁捏造）」） | 裁1（doc-first 總綱）、裁2（前端行為契約分層） | 相容 |
+| R2 | A3 federation 之 `coord_check=mismatch` 阻擋下一步（build／Review Room 交付），並保留已輸入資料 | `docs/plans/TARGET-shell.md:149`（IA unit 欄）、`:153`（誠實 fallback「CRS/unit 不一致…各自阻擋下一步並保留已輸入資料」）、`:157`（驗收句「unit mismatch 阻擋」） | 裁1、裁2 | 相容 |
+| R3 | BCF 匯出僅限 `source=rule-run｜diff` 建立之 issue，`manual` 建立者不可匯出 | `docs/plans/TARGET-contracts.md:34`（§1 item 8 兩步流程）、`:307`（§10.2 issue schema 備註）、`:335`（§10.2 gating「匯出資格必須限於由 from-rule-run／from-diff 建立的 issues」）；`docs/plans/TARGET-shell.md:307`（`#issues` BCF gating 誠實兩步） | 裁1、裁2；呼應 README §3.4 後端凍結面（自舊 TARGET-contracts §1 承繼、效力不變） | 相容 |
+| R4 | A1 3D 高亮／session-ready 需四條件同時成立：`DataChannel ready ∧ first_frame_at ∧ stage matched ∧ 目標 usd_prim_path 存在`；viewer 回 ack 才算完成（非 timer 假進度） | `docs/plans/TARGET-shell.md:105`（Evidence Inspector 欄位）、`:109`（IX-A1-06「3D 高亮四條件」）、`:117`（驗收句「WebRTC 首幀、stage matched、同 GUID prim 高亮 ack」） | 裁1、裁2 | 相容 |
+
+**處置**（4 項皆相容 → 入 v2）：
+
+| ID | 注入位置（data-canon-id） | 是否套 `planned` 標籤 |
+|---|---|---|
+| R1 | `c6-element-mapping`（§06，既有卡追加行內備註） | **否** |
+| R2 | `c6-federated-set`（§06，既有卡追加行內備註） | **否** |
+| R3 | `c6-issue-bcf-topic`（§06，既有卡追加行內備註） | **否** |
+| R4 | `c6-review-session`（§06，既有卡追加行內備註） | **否** |
+
+**用詞說明（為何不套 `planned`）**：R1–R4 描述的是 A1–A4（已落地／真整合域，見 `c8-task-ch-crosswalk`「A1 / A2 / A3 真整合,已落地」與 `c8-domain-reality-table` A4 列「deterministic 檢索已全棧落地」）之既有系統行為，非「尚未建置」的目標。若套 `planned` 標籤等同宣稱已完成的行為尚未建置，違反誠實鐵律「不得以文件宣稱 runtime 已完成」之反向情形——不得把已完成說成未完成。任務原文摘要句「統一標 planned」之範圍，依任務內文細項分句解讀：僅 (b) A5–A10 domain 契約群組有「全列標 `planned`」之明文要求（見下），(a) 負向驗收句僅要求「注入 §04/§06 對應卡或 §08 R4 DoD 附錄區塊」，未附加標籤要求；本輪選擇前者（注入既有 §06 對應卡），並依誠實鐵律決定標籤策略。R3 另有旁證：現行 v2 draft §04（`c4-governance-api` 卡）已列出 `/from-rule-run/:runId`、`/from-diff/:diffId` 兩端點，本項僅是把既有端點背後的匯出資格規則明文化，非新增行為。
+
+## 2.（b）A5–A10 domain 契約撈回（9 項，全數尋獲）
+
+| ID | 撈回內容 | Source（`1abeb91a`:file:line） | 對照裁決 | 三值判定 |
+|---|---|---|---|---|
+| D1 | `Scenario{scenarioId,baselineId,name,assumptions,inputRefs,createdBy}`（A6/A10 基準與替代方案） | `docs/plans/TARGET-contracts.md:308` | 裁1、裁6（R2 三態）、裁8（A5/A6/A10 逐元件拆分） | 相容 |
+| D2 | `TelemetrySample{sourceId,pointCode,value,unit,observedAt,quality}`（A5/A9 時序量測） | `docs/plans/TARGET-contracts.md:309` | 裁1、裁6、裁8 | 相容 |
+| D3 | `WorkOrder{workOrderId,assetId,issueId,status,assignee,dueAt,sourceRef}`（A5 維保閉環） | `docs/plans/TARGET-contracts.md:310` | 裁1、裁6、裁8 | 相容 |
+| D4 | `ScheduleActivity{activityId,wbsCode,planned/actual dates,progress,costCode,elementGuids}`（A6 甘特／EVM／3D overlay 共同鍵） | `docs/plans/TARGET-contracts.md:311` | 裁1、裁6、裁8 | 相容 |
+| D5 | `CaptureJob／Deviation{captureJobId,sourceUri/hash,transform,rms,elementGuid,deviationMm,toleranceMm}`（A7 對齊與偏差） | `docs/plans/TARGET-contracts.md:312` | 裁1、裁6、裁8 | 相容 |
+| D6 | `DatasetJob{datasetJobId,stageHash,camera/seed,outputs,status,artifactRefs}`（A8 逐幀可回溯） | `docs/plans/TARGET-contracts.md:313` | 裁1、裁6、裁8 | 相容 |
+| D7 | `RobotMission{missionId,mode,robotId,route/waypoints,sensorPack,status,eventRefs}`；`mode=simulation｜physical` 須由後端回傳並顯眼、不可由 UI 猜測 | `docs/plans/TARGET-contracts.md:314`；`mode` 誠實鐵律另見 `docs/plans/TARGET-shell.md:271`（A9 節「RobotMission.mode=simulation|physical 必須由後端回傳並顯眼」） | 裁1、裁6、裁8；`mode` 誠實揭露呼應現行 R3 Provenance（`c8-r3-provenance`） | 相容 |
+| D8 | 共同 Issue 出海口 `source` 欄擴充為逐 app 歸屬列舉 `A1｜A2｜A3｜A4｜A5｜A6｜A7｜A9｜A10｜manual` | `docs/plans/TARGET-contracts.md:319-333`（JSON 範例 `"source":"A1"` ＋ 列舉定義） | 裁1；與現行 v2 draft `c6-issue-bcf-topic` 卡既有 `source: rule-run｜diff｜manual` 欄位**同名不同語意**（現行欄位＝issue 建立路徑／BCF 資格判準，撈回欄位＝app 歸屬） | **含糊／部分重疊** |
+| D9 | A8 job failure 留在 `DatasetJob` 自身、不自動轉共同治理 Issue（A8 為共同 Issue schema 之唯一排除例外） | `docs/plans/TARGET-contracts.md:303`（資料模型表 Issue 列註「A8 job failure 留在 DatasetJob」）、`:335`（§10.2 同句＋「不自動轉治理 Issue」）；`docs/plans/TARGET-shell.md:306`（`#issues` IA「A8 job failure 不自動轉 Issue」） | 裁1、裁8 | 相容 |
+
+**處置**：
+
+| ID | 判定結果 | 注入位置（data-canon-id） | 標籤 |
+|---|---|---|---|
+| D1 | 相容 → 入 v2 | `c6-scenario`（§06 新卡群） | `planned(class: in-repo-fullstack-pending)` |
+| D2 | 相容 → 入 v2 | `c6-telemetry-sample`（同上） | 同上 |
+| D3 | 相容 → 入 v2 | `c6-work-order`（同上） | 同上 |
+| D4 | 相容 → 入 v2 | `c6-schedule-activity`（同上） | 同上 |
+| D5 | 相容 → 入 v2 | `c6-capture-job-deviation`（同上） | 同上 |
+| D6 | 相容 → 入 v2 | `c6-dataset-job`（同上） | 同上 |
+| D7 | 相容 → 入 v2 | `c6-robot-mission`（同上） | 同上 |
+| D8 | **含糊／部分重疊 → undecided，不入 v2** | 未注入；僅於新卡群結尾加註提示句指回本檔 | — |
+| D9 | 相容 → 入 v2 | 隨 D6 併入 `c6-dataset-job` 卡內文（非獨立卡，因語意本屬 DatasetJob 之行為規則） | `planned(class: in-repo-fullstack-pending)`（承 D6） |
+
+D1–D7、D9 全數套用 `planned(class: in-repo-fullstack-pending)`，依任務原文明文「A5–A10 domain 契約→§06 新增「planned domain 實體(A5–A10)」卡群,全列標 `planned`」；卡群另加註記：外接引擎（Replicator／Cosmos／Isaac Sim／點雲 ICP 等）之 mock 合法性分類不變，仍以 `c8-domain-reality-table` 既有 `external(mock 合法,掛 ProvTag)` 為準，本卡群不改該表——`planned` 標籤僅描述**實體本身**（in-repo 資料形狀）尚待建置，非重新裁決外接引擎的 mock 政策。
+
+**D8 未採納理由**：撈回句原意（Issue.source 逐 app 歸屬）與現行 v2 draft 已落地卡片 `c6-issue-bcf-topic` 的 `source: rule-run｜diff｜manual`（issue 建立路徑，直接對應 BCF 兩步 gating 判準）為**同名欄位、不同語意**。若直接把 `A1..A10` 併入同一欄位列舉，會與現行已通過 carve-out／crosswalk 驗證的欄位定義衝突，且該欄位目前是 A1/A2 已真整合行為的忠實描述，不應被回填舊文件的不同語意覆寫。是否需要新增獨立欄位（如 `origin_app`）承載 app 歸屬語意，屬需要使用者裁決的新設計決策，非本 doc-only 撈回任務可逕自認定，故列 undecided、不入 v2，僅在 §06 新卡群結尾留提示句指回本檔（見 draft 內 `planned domain 實體(A5–A10)` 卡群結尾備註句）。
+
+## 3.「防復活」查核（R2 三態／裁決 6 是否推翻舊決策）
+
+逐項檢查 (a)(b) 共 13 項撈回候選是否觸及已被 R2 三態（裁6）或裁8 推翻之舊決策（例如：舊版曾要求「先 mock 過渡」之類語句）：
+
+- TARGET-shell.md／TARGET-contracts.md 中與 A5–A10 直接相關之段落（`#a5`–`#a10`、§10.1 資料模型）**未見**任何「先 mock 過渡」「暫以假資料上線」類語句；A8/A9 段落提及外接引擎（Replicator／Cosmos／Isaac Sim）之官方能力邊界，但未主張這些引擎本身要被 mock 掉，與現行 `c8-domain-reality-table` 之 `external(mock 合法,掛 ProvTag)` 分類（外接引擎層可 mock，非資料實體層）不衝突、亦非「舊決策復活」。
+- 撈回句 R1–R4、D1–D9 皆為**資料形狀／行為規則**陳述，不涉及「要不要 mock」之實作路徑決策，故不落入裁6／裁8 的推翻範圍。
+- 結論：13 項候選中**零項**觸發「已被 R2 三態／裁決 6 推翻」之淘汰情形；三值判定的「乾淨衝突 → 已淘汰、不入 v2」分支本輪**無**適用項目。
+
+## 4. 未撈回／來源不可考
+
+任務原文列出之 4 個負向驗收句代表例與 9 項 A5–A10 domain 契約子項，**全數於 `a271e46^` 尋獲對應來源**，無「來源不可考、不撈回」之項目。
+
+範圍說明（避免誤讀為窮盡撈回）：TARGET-shell.md 尚有 A5–A10 以外之其餘 15 個 route（A1–A4、`#issues`、`#reports`、`#viewer`、`#review` 等）之驗收句，以及 A5–A10 段落內未被任務原文點名之其餘細節（如 A6 的 CV/SV/CPI/SPI 公式、A9 的 navmesh／E-stop 細節、A7 的 PDF/Excel/LAS 三種 artifact 匯出規格）**未**逐句撈回——這些不在任務原文「撈回兩類」之明確清單內，屬本輪 YAGNI 範圍外；如後續需要，應另立 task 明確點名範圍。
+
+## 5. DoD 對照（draft-submitted）
+
+- [x] 撈回清單附 source file:line：見 §1／§2 各列 Source 欄。
+- [x] 三值判定結果：見 §1／§2 各列「三值判定」欄；13 項中 12 項相容已採納入 v2，1 項（D8）含糊／部分重疊列 undecided、不入 v2。
+- [x] 對照 11 條裁決 re-審：見 §1／§2「對照裁決」欄；§3 另做「防復活」專項查核（R2 三態／裁6／裁8 有無推翻本輪候選）。
+- [x] 撈不到的項標「來源不可考、不撈回」：本輪無此情形，見 §4 說明。
+- [x] 採納句已入 draft 且標 `planned`（僅 (b) 群組套用，見 §1 用詞說明）：
+  - R1–R4 → `c6-element-mapping`／`c6-federated-set`／`c6-issue-bcf-topic`／`c6-review-session`（既有卡追加備註，未套 `planned`，理由見 §1）。
+  - D1–D7、D9 → 新卡群 `c6-scenario`／`c6-telemetry-sample`／`c6-work-order`／`c6-schedule-activity`／`c6-capture-job-deviation`／`c6-dataset-job`／`c6-robot-mission`（全標 `planned(class: in-repo-fullstack-pending)`）。
+  - D8 → 未入 v2，undecided，留提示句指回本檔。
+- [x] 不改 §07:575 deferral 節奏：`carve-out-assertions.md` §3 合併執行 7 項於本次編輯後複跑全數 `PASS`（含 `[5] §07:575 A5-A10 deferral`）。
+- [x] tasks.md 5.6 打勾（隨本次 commit 一併完成）。
+
+---
+
+verified-as-of：2026-07-19（本 task 對 `a271e46^`（`1abeb91a6645c58eae4994ace6d9bccde6597d3b`）三份歷史檔逐項 Read／Grep 實查所得；`carve-out-assertions.md` §3 合併執行 7 項於本次 draft 編輯後複跑全數 PASS；draft HTML div/span 標籤配對 300/300·618/618；CRLF 全檔保留（806 行、0 bare LF）；`data-canon-id` 全域 55 個、較編輯前 48 個增加 7 個且零重複）。

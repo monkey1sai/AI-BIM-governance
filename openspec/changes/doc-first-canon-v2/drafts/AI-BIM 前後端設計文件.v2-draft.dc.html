@@ -514,7 +514,7 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
       </div>
       <div data-canon-id="c6-review-session" style="background:#0a1220;border:1px solid rgba(65,199,232,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#6fd6ee">ReviewSession</span>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">session_id(lwv_|review_session_)<br>stage_binding {primary_usdc, sublayers[], load_order}<br>participants[] · events[] · lifecycle<br>first_frame_ms · status: open→closed</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">session_id(lwv_|review_session_)<br>stage_binding {primary_usdc, sublayers[], load_order}<br>participants[] · events[] · lifecycle<br>first_frame_ms · status: open→closed <span style="color:#5a7089">(session ready = DataChannel ready ∧ first_frame_at ∧ stage matched ∧ 目標 usd_prim_path 存在,四條件同時成立才觸發高亮、viewer 回 ack 才算完成;R-C4 撈回)</span></span>
       </div>
       <div data-canon-id="c6-viewer-lease" style="background:#0a1220;border:1px solid rgba(65,199,232,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#6fd6ee">ViewerLease</span>
@@ -530,17 +530,17 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
       </div>
       <div data-canon-id="c6-federated-set" style="background:#0a1220;border:1px solid rgba(49,197,109,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#4fd68a">FederatedSet(A3)</span>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">set_id · members[] {domain, usd_path,<br>&nbsp;&nbsp;version, order, transform}<br>coord_check: ok|mismatch<br>built_stage_ref · review_room(session)</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">set_id · members[] {domain, usd_path,<br>&nbsp;&nbsp;version, order, transform}<br>coord_check: ok|mismatch <span style="color:#5a7089">(mismatch 阻擋 build/交付、保留已輸入資料,R-C4 撈回)</span><br>built_stage_ref · review_room(session)</span>
       </div>
       <div data-canon-id="c6-issue-bcf-topic" style="background:#0a1220;border:1px solid rgba(49,197,109,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#4fd68a">Issue / BCF Topic</span>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">issue_id · title · element_refs[guid]<br>source: rule-run|diff|manual<br>status transitions(open→in-review→resolved)<br>bcf: topic_guid · viewpoint · BCF 2.1 export</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">issue_id · title · element_refs[guid]<br>source: rule-run|diff|manual<br>status transitions(open→in-review→resolved)<br>bcf: topic_guid · viewpoint · BCF 2.1 export <span style="color:#5a7089">(僅 source=rule-run|diff 之 issue 可匯出,manual 不可;承 README §3.4 凍結面,R-C4 撈回)</span></span>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px">
       <div data-canon-id="c6-element-mapping" style="background:#0a1220;border:1px solid rgba(157,140,255,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#b7a9ff">ElementMapping(轉檔產物)</span>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">ifc_guid ↔ usd_prim_path ↔ ifc_type/name — highlight/focus/選取回灌 的橋;由 /api/governance/element-mapping/for-session/:id 供 UI,前端 mappingCache 快取</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">ifc_guid ↔ usd_prim_path ↔ ifc_type/name — highlight/focus/選取回灌 的橋;由 /api/governance/element-mapping/for-session/:id 供 UI,前端 mappingCache 快取 <span style="color:#5a7089">(usd_prim_path 缺失/null → 該列 disabled、不得發 highlightPrimsRequest;A1/A2/A4 共同鐵律,R-C4 撈回)</span></span>
       </div>
       <div data-canon-id="c6-callback-outbox-lineage-outbox" style="background:#0a1220;border:1px solid rgba(230,178,62,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#e6b23e">CallbackOutbox / LineagePublicationOutbox</span>
@@ -557,6 +557,47 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
       <span style="border:1px solid rgba(120,160,210,.14);border-radius:5px;padding:3px 9px">Issue —exports→ BCF Topic(2.1)</span>
       <span style="border:1px solid rgba(120,160,210,.14);border-radius:5px;padding:3px 9px">ConversionJob / Issue —summary→ CallbackOutbox → cloud workflow</span>
       <span style="border:1px solid rgba(230,178,62,.25);border-radius:5px;padding:3px 9px">ResultManifest —locator+summary→ LineagePublicationOutbox → external bim-control → cloud MySQL</span>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">planned domain 實體(A5–A10) — R-C4 撈回,全列 planned(class: in-repo-fullstack-pending);外接引擎分類仍以 §08 domain-reality 表為準,本表不改</span>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+        <div data-canon-id="c6-scenario" style="background:#0a1220;border:1px dashed rgba(230,178,62,.35);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+          <span style="font-size:12px;font-weight:700;color:#e6b23e">Scenario(A6/A10)</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">scenario_id · baseline_id · name<br>assumptions[] · input_refs[] · created_by</span>
+          <span style="font-size:9.5px;color:#5a7089">A6/A10 的基準與替代方案;不得以畫面卡片值充當輸入</span>
+        </div>
+        <div data-canon-id="c6-telemetry-sample" style="background:#0a1220;border:1px dashed rgba(230,178,62,.35);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+          <span style="font-size:12px;font-weight:700;color:#e6b23e">TelemetrySample(A5/A9)</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">source_id · point_code · value<br>unit · observed_at · quality</span>
+          <span style="font-size:9.5px;color:#5a7089">A5/A9 時序量測;value/unit/observed_at/quality 不可拆開單獨顯示</span>
+        </div>
+        <div data-canon-id="c6-work-order" style="background:#0a1220;border:1px dashed rgba(230,178,62,.35);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+          <span style="font-size:12px;font-weight:700;color:#e6b23e">WorkOrder(A5)</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">work_order_id · asset_id · issue_id<br>status · assignee · due_at · source_ref</span>
+          <span style="font-size:9.5px;color:#5a7089">A5 維保閉環;必要時連到上方共同 Issue / BCF Topic 卡</span>
+        </div>
+        <div data-canon-id="c6-schedule-activity" style="background:#0a1220;border:1px dashed rgba(230,178,62,.35);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+          <span style="font-size:12px;font-weight:700;color:#e6b23e">ScheduleActivity(A6)</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">activity_id · wbs_code<br>planned/actual dates · progress<br>cost_code · element_guids[]</span>
+          <span style="font-size:9.5px;color:#5a7089">A6 甘特、EVM 與 3D overlay 的共同鍵</span>
+        </div>
+        <div data-canon-id="c6-capture-job-deviation" style="background:#0a1220;border:1px dashed rgba(230,178,62,.35);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+          <span style="font-size:12px;font-weight:700;color:#e6b23e">CaptureJob / Deviation(A7)</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">capture_job_id · source_uri/hash<br>transform · rms · element_guid<br>deviation_mm · tolerance_mm</span>
+          <span style="font-size:9.5px;color:#5a7089">A7 對齊與偏差;精度與 tolerance 必須可追溯,未對齊前禁止顯 deviation</span>
+        </div>
+        <div data-canon-id="c6-dataset-job" style="background:#0a1220;border:1px dashed rgba(230,178,62,.35);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+          <span style="font-size:12px;font-weight:700;color:#e6b23e">DatasetJob(A8)</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">dataset_job_id · stage_hash<br>camera/seed · outputs[]<br>status · artifact_refs[]</span>
+          <span style="font-size:9.5px;color:#5a7089">A8 每筆輸出可回溯場景/相機/seed/annotator·writer 版本;job failure 留在本實體自身 status,不自動轉共同 Issue</span>
+        </div>
+        <div data-canon-id="c6-robot-mission" style="background:#0a1220;border:1px dashed rgba(230,178,62,.35);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+          <span style="font-size:12px;font-weight:700;color:#e6b23e">RobotMission(A9)</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">mission_id · mode · robot_id<br>route/waypoints · sensor_pack<br>status · event_refs[]</span>
+          <span style="font-size:9.5px;color:#5a7089"><span style="font-family:'JetBrains Mono',monospace;color:#dbe6f3">mode=simulation|physical</span> 須由後端回傳並顯眼,不可由 UI 猜測;預設僅 simulation</span>
+        </div>
+      </div>
+      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">共同 Issue 出海口(見上方 Issue / BCF Topic 卡)之 source 現況值＝rule-run|diff|manual(對映 A1/A2 建立路徑);是否擴充為逐 app 歸屬(A1–A10)須新增獨立欄位、不得覆寫本欄既有列舉語意——R-C4 撈回候選之未裁決項,見 recovered-requirements.md,不入本節。</span>
     </div>
   </div>
 
