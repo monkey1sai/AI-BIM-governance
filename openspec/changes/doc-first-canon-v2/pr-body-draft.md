@@ -119,3 +119,14 @@ Change 'doc-first-canon-v2' is valid
 - **OQ-4（`ui-open-regression.spec` 未接 CI 空窗）**：正本 v2 明文標 known gap（非 pass）；接 CI 為 canon v2 之後第一順位具名 follow-up。
 - **殘留 untracked**：`grill-round1-verify.js` 依使用者裁決暫留 untracked，不影響本 PR 之 tracked diff。
 - **tasks.md 6.4（J1–J5 旅程端到端走查）**：軟性、非機器 gate，不列入機器完成判準；惟本 PR 內已完成走查（記錄見 `assembly-verification.md`「J1–J5 旅程端到端走查」節），並於走查中發現並修正 §08 header 標語矛盾（draft §08 改為「repo 決定「現況」」，見 `tasks.md` 6.4 PASS note）——非留待本 PR 之外另行走查。
+
+## P5 對抗複驗結果(2026-07-19,fu-adversarial-verify-generic;開 PR 前最後一道 gate)
+
+- **6/6 findings truly_closed**(crosswalk DoD 漂移修正、PR body 誠實化、design.md:95 裁決欄、OQ-2 schema 合規化、R2 卡三態重寫、指揮官 P4 evidence 宣稱)——每項由獨立懷疑者 refute-by-default 親跑重驗;not_closed=0、new_issues=0、**critic overall_safe=true**。
+- critic 6 項非阻塞註記(誠實揭露,審查者須知):
+  1. 18 處歷史 PASS 註記含方向相反的「CRLF 保留」措辭——audit-trail append-only 政策刻意保留原文+更正註記;git blob 實儲=純 LF(cat-file 核驗),完整清單見 assembly-verification.md。
+  2. proposal.md/design.md §6b 對 OQ-2 仍呈「未裁決」框架——兩檔為裁決前歷史文件,刻意不回改;現態見 gap-ledger.md:45 採納鏈+prep-evidence.md 轉錄節。
+  3. OQ-2 關閉與 Lane S opt-in 的唯一證據=指揮官對 session 對話的第一手轉錄(已誠實聲明性質);**最終 auditable 確認=本 PR 的 review 裁決**。
+  4. tasks.md 5.6 敘述「7 張 domain 卡全標 planned」實際落地為群組級單一 banner(draft:562),語意等效、粒度描述略寬。
+  5. §03/§08 merge-assembly 窮盡性證明為 task 5.1/5.2 時點快照,其後 5.7/6.1/6.4 三度編輯未重跑聯集證明;HEAD 差異已由 P5 critic 親算覆核無未解釋 hunk。
+  6. GitNexus detect_changes 輸出為當時工具宣稱,P5 未重跑該工具,已以 `git diff origin/main --stat` 獨立覆核(17 檔全為 .md/.dc.html 純新增)。
