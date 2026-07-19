@@ -18,24 +18,24 @@
   ```
   （表內指令一律以 `$MAIN`／`$HIFI`／`$README` 代稱上列三檔；`\|` 為 markdown 表格內對字面 pipe 字元的轉義，執行時去除跳脫符號還原為 `|`。）
 - **所屬 Wave**：對齊 tasks.md `## 3. Wave 1`／`## 4. Wave 2` 兩節（本 change 24 項失真僅涉 Wave 1／Wave 2；Wave 3 概念不存在，tasks.md §5「彙整、載體與撈回」為 non-wave 收斂節）。
-- **對應裁決編號**：逐字取自 design.md §3「24×11 追溯矩陣」該列 X 標記（非轉抄各 task PASS note 內文——後者個別存在轉寫噪音，見 §2 附註）。
+- **對應裁決編號**：逐字取自 design.md §3「24×11 追溯矩陣」該列 X 標記（非轉抄 design.md §4 摘要表、亦非各 task PASS note 內文——§4 摘要與 §3 矩陣對 item 24 即互相牴觸、而 PASS note 又忠實引用 §4 摘要一併偏離，詳見 §2 附註；§3 為零缺格追溯正本、內部一致，取之最穩）。
 - **落實 commit**：`git log` 對 `task#N:` 前綴訊息逐一核對 tasks.md 對應子任務編號後取得；欄位填**該項落地的最後一個 commit sha**（含 gap-fix／review-fix，即目前 worktree 內的最終狀態）；完整 base＋fix commit chain 見 §3 附錄，供全鏈追溯。
 
 ## 1. 24 列主表
 
 | 失真項 ID | 章節穩定錨(secN+data-canon-id) | 區塊錨 | 處置手法 | 可驗 DoD(指令/grep) | 所屬 Wave | 對應裁決編號 | 落實 commit |
 |---|---|---|---|---|---|---|---|
-| 1 | sec3／`c3-route-map` | `c3-route-map`＋`c3-legacy-route-convergence` | normative(doc) | `grep -c "CH-G(URL 收斂)整體狀態:未做" $MAIN` → 1 | Wave 2 | 裁1,2 | `9b115e6` |
+| 1 | sec3／`c3-route-map` | `c3-route-map`＋`c3-legacy-route-convergence` | normative(doc) | `grep -c "CH-G(URL 收斂)整體狀態:未做" $MAIN` → 1 | Wave 2 | 裁1,2 | `fdf8479` |
 | 2 | sec6／`c6-callback-outbox-lineage-outbox` | `c6-callback-outbox-lineage-outbox` | normative(doc) | `grep -A2 'data-canon-id="c6-callback-outbox-lineage-outbox"' $MAIN \| grep -c "planned(class: in-repo-fullstack-pending)"` → 1 | Wave 2 | 裁1,7 | `d5f3ae5` |
 | 3 | sec3／`c3-badge-spectator-gate` | `c3-badge-spectator-gate` | normative(doc) | `grep -c "unified docks 現為 fixture 殼、無真實寫入亦無 gate 接線" $MAIN` → 1 | Wave 2 | 裁1,2,11 | `519ff0c` |
 | 4 | sec7／`c7-residual-badges` | `c7-residual-badges`（第 2 個 badge，main 舊行 577） | normative(doc) | `grep -c "ai_journal" $MAIN` → 0（歸零；改指 OpenSpec change 目錄＋PR body AI Coding Governance 表） | Wave 1 | 裁1 | `8635d32` |
 | 5 | sec7＋sec8／`c7-residual-badges`＋`c8-hifi-verification-chain` | `c7-residual-badges`（main 舊行 578/579）＋`c8-hifi-verification-chain`（main 舊行 673） | normative(doc) | `grep -cE "2\.4–2\.8\|已知不一致" $MAIN` → 0 | Wave 1 | 裁1,11 | `3cfc840` |
 | 6 | sec2／`c2-docker-web-plane` | `c2-docker-web-plane`（MinIO／UnifiedConsole 改標）＋`c2-host-native-gpu`（governance-service 移入） | normative(doc) | `grep -c "governance-service(host-native,不在任何 compose 內)" $MAIN` → 1 | Wave 2 | 裁1,3 | `7b9c3f4` |
-| 7 | sec6／`c6-ifc-ready-record` | `c6-ifc-ready-record`＋`c6-conversion-job` | descriptive(tests-delegated) | `grep -c "accepted\|queued_for_conversion\|dispatched\|dispatch_failed\|dropped_on_restart\|failed" $MAIN` → 1 | Wave 2 | 裁1 | `a6b3cea` |
+| 7 | sec6／`c6-ifc-ready-record` | `c6-ifc-ready-record`＋`c6-conversion-job` | descriptive(tests-delegated) | `grep -c "accepted\|queued_for_conversion\|dispatched\|dispatch_failed\|dropped_on_restart\|failed" $MAIN` → 1 | Wave 2 | 裁1 | `fdf8479` |
 | 8 | sec3／`c3-naming-check` | `c3-naming-check`（DataChannel 自糾 bullet，main 舊行 214） | normative(doc) | `grep -c "標「待補」與現況不符" $MAIN` → 0 | Wave 1 | 裁1 | `abd9000` |
-| 9 | sec8／`c8-r3-provenance`；README §3(3)／`<!-- canon:r-four-iron-rules -->` | `c8-r3-provenance`（＋巢狀 `c8-r3-oq1-open-decision`）；README「四條鐵律」R3 子句（R3 本身無獨立子錨，隨整條 R1–R4 bullet 共用 `r-four-iron-rules`） | normative(doc)＋non-normative Open Decision 塊 | `grep -c "ProvenanceTag" $MAIN; grep -c "ProvenanceTag" $README` → 各 0；`grep -A15 'data-canon-id="c8-r3-provenance"' $MAIN \| grep -c "ProvTag"` → 1 | Wave 1 | 裁1,6,8 | `bf062ff` |
+| 9 | sec8／`c8-r3-provenance`；README §3(3)／`<!-- canon:r-four-iron-rules -->` | `c8-r3-provenance`（＋巢狀 `c8-r3-oq1-open-decision`）；README「四條鐵律」R3 子句（R3 本身無獨立子錨，隨整條 R1–R4 bullet 共用 `r-four-iron-rules`） | normative(doc)＋non-normative Open Decision 塊 | `grep -c "ProvenanceTag" $MAIN; grep -c "ProvenanceTag" $README` → 各 0；`grep -A15 'data-canon-id="c8-r3-provenance"' $MAIN \| grep -c "ProvTag"` → 1 | Wave 1 | 裁1,6,8 | `fdf8479` |
 | 10 | sec8／`c8-closing-badges` | `c8-closing-badges`（結構 badge）＋共用元件清單標題鄰近新增 badge | normative(doc) | `grep -c "現況 1/14 以此命名存在" $MAIN` → 1 | Wave 2 | 裁1,11 | `36f4af3` |
-| 11 | sec8／`c8-task-sequence-table` | 新增子表 `c8-task-ch-crosswalk` | normative(doc) | `grep -c 'data-canon-id="c8-task-ch-crosswalk"' $MAIN` → 1 | Wave 2 | 裁1,7 | `d0c104e` |
+| 11 | sec8／`c8-task-sequence-table` | 新增子表 `c8-task-ch-crosswalk` | normative(doc) | `grep -c 'data-canon-id="c8-task-ch-crosswalk"' $MAIN` → 1 | Wave 2 | 裁1,7 | `6cecd0c` |
 | 12 | sec8／`c8-r2-api-tristate` | `c8-r2-api-tristate`＋`c8-domain-reality-table`＋`c8-task-sequence-table`（＋README §3(3) R2 子句，同錨 `r-four-iron-rules`） | normative(doc) | `grep -cE "Isaac\|Replicator\|P6[^0-9]" $MAIN` → 0；`grep -A20 'data-canon-id="c8-domain-reality-table"' $MAIN \| grep -c "planned(class: in-repo-fullstack-pending)"` → 3 | Wave 2 | 裁1,6,8 | `633b832` |
 | 13 | sec4／`id="sec4"`（標題列，無專屬 data-canon-id） | `#sec4` 標題後新增獨立 badge（main 行 230，先於 `c4-coordinator-api`） | normative(doc) | `grep -A6 'id="sec4"' $MAIN \| grep -c "A1–A10 各 API 的契約檔=planned"` → 1 | Wave 2 | 裁1,6,7 | `7b651d8` |
 | 14 | sec4／`c4-coordinator-api` | `c4-coordinator-api`（PROXY 白名單＋element-mapping 列）＋`c4-governance-api`（apply-overlay 501／federated-sets 201）＋`c8-r2-api-tristate`（:49100 例外句延伸） | normative(doc)（顯式化補列、非誤動 carve-out） | `grep -c "501(overlay 實走前端 DataChannel" $MAIN` → 1；`grep -c "→ 201(同步 create;A1/A2 為 202 async)" $MAIN` → 1；`grep -c ":49100(WebRTC signaling)與 spectator 埠段" $MAIN` → 1 | Wave 2 | 裁1,2,6,9 | `dcadd6f` |
@@ -52,26 +52,26 @@
 
 ## 2. 與既有 artifact 的一致性核對（本表撰寫期發現，記錄不逕改他檔）
 
-本表撰寫時逐列對照 `gap-ledger.md`（task 5.3，已 PASS＋commit）與 `design.md`，發現兩處既有 artifact 的引註瑕疵；依 R-C2 single-ownership，本檔不越權修改 `gap-ledger.md`／`design.md`，僅在此記錄供後續 task／PR 審查參考：
+本表撰寫時逐列對照 `gap-ledger.md`（task 5.3，已 PASS＋commit）與 `design.md`，發現兩處既有 artifact 的引註／內部一致性瑕疵；依 R-C2 single-ownership，本檔不越權修改 `gap-ledger.md`／`design.md`，僅在此記錄供後續 task／PR 審查參考：
 
 - **gap-ledger.md item 9／16 之「錨(data-canon-id)」欄**：兩列皆記 README 錨為 `<!-- canon:r-authority-order -->`；經本表直接複查 `docs-plans-README.v2-draft.md`，「四條鐵律」整條 bullet（含 item 9 之 R3 子句、item 16 之 R1 子句）實際尾隨 `<!-- canon:r-four-iron-rules -->`（第 40 行），`r-authority-order` 錨在前一條「權威順序」bullet（第 39 行），非四條鐵律所在行；item 16 另涉 §1 檔案清單新增列，鄰近錨實為 `<!-- canon:r-file-table -->`（第 21 行）。本表 §1 主表對 item 9/16 已採用直接複查後的正確錨點。
-- **design.md §4 摘要 crosswalk 未列 item 24 的「裁1,2,24」轉寫**：design.md §4 表格本體逐字為「24 \| §03 命名核對 carve-out \| normative(doc) 刪除 \| 1 \| 1,2 \|」（對應裁決僅 `1,2`）；tasks.md 3.3 PASS note 引用該列時誤植為「裁1,2,24」（本 change 僅 11 條裁決，無「裁 24」）。本表§1 對 item 24 之「對應裁決編號」欄採 design.md 原表逐字值 `裁1,2`。
+- **design.md 自身 §4 摘要與 §3 矩陣對 item 24「對應裁決」互相牴觸（真正缺陷；非 tasks.md 轉寫錯）**：design.md §4 摘要表（design.md:95）逐字為「24 \| §03 命名核對 carve-out \| normative(doc) 刪除 \| 1 \| 1,2,24 \|」，對應裁決欄自建檔起即寫 `1,2,24`（`git blame` 覆核該行溯及 design.md 首版 commit `378a9c1`、從未改動，`1,2,24` 非後續 typo）；但 design.md §3「24×11 追溯矩陣」item 24 列（design.md:81）僅於 裁1／裁2 兩格標 X——全案僅 11 條裁決（§3 表頭 design.md:56＝裁1..裁11）、根本無「裁24」。二者對同一失真項給出不同的裁決集，屬 design.md **內部 §4-vs-§3 不一致**（§4 摘要多出一個不可能的自我指涉「24」）。tasks.md 3.3 PASS note 之「裁1,2,24」係**忠實逐字轉抄** design.md §4 摘要現況、非 tasks.md 誤植。依 §0 欄位慣例（本檔 §1「對應裁決編號」逐字取自 §3 矩陣，非 §4 摘要亦非 PASS note），本表 §1 對 item 24 採 §3 矩陣值 `裁1,2`（內部一致、不含「裁24」）；design.md §4 該格與 §3 之對齊，依 R-C2 single-ownership 留 design.md 擁有者於後續 PR 修正，本檔不越權改 design.md。
 
 ## 3. commit chain 附錄（base＋fix 完整鏈，補充主表「落實 commit」單一終態值）
 
 | 失真項 ID | commit chain（時間序，最後一個＝主表落實 commit） |
 |---|---|
-| 1 | `8d39349`（base）→ `9b115e6`（fix：CH-G #intake 現況欄移除偽斷言） |
+| 1 | `8d39349`（base）→ `9b115e6`（fix：CH-G #intake 現況欄移除偽斷言）→ `fdf8479`（gap-fix：`c3-legacy-route-convergence` 內 draft 裸行號 `app.ts:3703-3704` 收斂為「gap ledger item 1」指標，task 5.3 R-C1 正本零裸行號 side-effect） |
 | 2 | `2480f1a`（base）→ `d5f3ae5`（fix：改用封閉列舉 token） |
 | 3 | `519ff0c` |
 | 4 | `8635d32` |
 | 5 | `3cfc840` |
 | 6 | `7b9c3f4` |
-| 7 | `a6b3cea` |
+| 7 | `a6b3cea`（base）→ `fdf8479`（gap-fix：`c6-ifc-ready-record`／`c6-conversion-job` 內 draft 裸行號 `types.ts:195-206`／`conversionLedger.ts:11` 收斂為「gap ledger item 7」指標，task 5.3 R-C1 正本零裸行號 side-effect） |
 | 8 | `abd9000` |
-| 9 | `973204b`（base）→ `bf062ff`（fix：README §3.3 R3 殘留收斂） |
+| 9 | `973204b`（base）→ `bf062ff`（fix：README §3.3 R3 殘留收斂）→ `fdf8479`（gap-fix：`c8-r3-provenance` 內 draft 裸行號 `data.ts:6` 收斂為「gap ledger item 9」指標，task 5.3 R-C1 正本零裸行號 side-effect） |
 | 10 | `afd80f5`（base）→ `36f4af3`（fix：0/14→1/14 計數矯正） |
-| 11 | `d0c104e` |
+| 11 | `d0c104e`（base）→ `6cecd0c`（review-fix：`c8-task-ch-crosswalk` 子表 Task 11–12 列 stale forward-ref「§07 CH-H 家族…現況本文件尚未列」收斂為「§07 CH-H/CH-I，對應 item 18，已列入本文件」，task 5.2 §08 merge-assembly Plan B final-review f1 side-effect） |
 | 12 | `6a6cfa1`（base）→ `68e1507`（review-fix：餵法表殘留對齊）→ `633b832`（fix：封閉 class token） |
 | 13 | `7b651d8` |
 | 14 | `dcadd6f` |
