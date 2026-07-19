@@ -537,3 +537,17 @@ commit 289b913 message 末段稱「out-of-scope 之其他 task 同款措辭（`t
 - **根因與 :425／:487／:513／`tasks.md:69`／`:72` 同一**：兩份 draft 之 git blob 皆純 LF——`git cat-file -p HEAD:"…v2-draft.dc.html" | tr -cd '\r' | wc -c` ＝ `0`（主 draft 817 行、Hi-Fi draft 973 行）；工作目錄 `tr -cd '\r'` 顯示 817／973 CR 係 checkout 暫態（`.gitattributes` 僅 `*.sh eol=lf`，`.dc.html` 走 `core.autocrlf` smudge），非入庫內容。
 - **完整 out-of-scope 集合（供後續 wave 一次清理、避免再度低估）**：上列 14 處 ＋ 289b913 已揭露之 `tasks.md:55`（Hi-Fi 973）／`tasks.md:65`（主 draft 818）／`assembly-verification.md:228`（task 5.2，766 行）＝ 共 **17 處**未回改之同款措辭。另 `tasks.md:49` 已附**計數**更正註記（762→761，方向未翻）；已就地翻正方向者＝`tasks.md:69`（88653cc 同款）／`:72`（289b913）／`assembly:425`（6.1）／`:487`、`:513`（本節 J2）；`tasks.md:20/21` 之「含 CRLF」係 delta/main header 逐字比對斷言、非行尾保留斷言，不屬同款、不計入。本清單以 `tasks.md` 全檔 grep 為據、核驗涵蓋上述兩份 draft blob（該 14 處斷言對象皆此二檔）。
 - **處置**：此 14 處為審計軌跡中的措辭方向錯誤，**不影響**各 task 實質編輯正確性（div/span 標籤配對、內容置換均有效、carve-out 迴歸皆 PASS）；比照 gap-fix 先例不回改原文 PASS 記錄，統一揭露於此，留待後續 wave 視需要一次清理。
+
+---
+
+### 附記（fixer gap-fix，2026-07-19）：c90ebd8「完整 out-of-scope 集合」方法論訂正——grep 範圍擴及整個 change 目錄（17→18）
+
+> 比照 6.1（:425）／task#7（88653cc）／J2（:487、:513）／task#10（c90ebd8，:521 起）gap-fix 先例：**新增更正記錄、不回改各原文 PASS／證據斷言**（append-only，存審計軌跡）。本附記僅訂正上一則附記（c90ebd8 於 :526／:538 所立「完整 out-of-scope 集合」）之**方法論範圍**與**計數**，未觸及 `recovered-requirements.md:127` 等任何原文行。
+
+c90ebd8 於 :538 宣稱之「完整 out-of-scope 集合＝共 **17 處**」係**僅對 `tasks.md` 全檔 grep** 導出（:526「經對 `tasks.md` 全檔 `grep "CRLF"` 逐行分類」、:538「本清單以 `tasks.md` 全檔 grep 為據」）——**方法論本身低估**：grep 範圍未涵蓋 change 目錄其餘檔案，因而漏掉一處同族方向性錯誤。
+
+- **訂正後方法論**：改對**整個 change 目錄** `grep -rn CRLF openspec/changes/doc-first-canon-v2/`——命中 **4 檔／29 處**：`tasks.md`（21）／`assembly-verification.md`（6）／`recovered-requirements.md`（1）／`crosswalk.md`（1），非僅 `tasks.md`。
+- **新增第 18 處（c90ebd8 漏列）**：`recovered-requirements.md:127`（task 5.6，`4041ce7` 撈回）證據註腳「CRLF 全檔保留（806 行、0 bare LF）」——與 :425／:487／:513／:538 同一方向性錯誤：該處量到本機 `core.autocrlf=true` 之 checkout smudge 產物，實則主 draft git blob 為**純 LF／0 CRLF**。獨立核驗：`git cat-file -p 4041ce7:"…前後端設計文件.v2-draft.dc.html" | tr -cd '\r' | wc -c` ＝ `0`（該 blob 806 行），工作目錄 checkout `tr -cd '\r'` ＝ `817`（smudge 暫態）；806 行落在主 draft 766（:228，task 5.2）→817（:513，最終）之行數時間序內合理，屬真陽性。**共 17 → 18 處**未回改之同款措辭。
+- **`crosswalk.md:78`（第 4 檔 CRLF 命中）分類＝不計入**：該行係 gap-ledger 變更歷史表列（item 15）之 **commit 描述**「`eaeff4b`（fix：citation 歸屬＋CRLF 計數矯正）」，屬對某修正 commit 的摘述、**非**「CRLF 全檔保留（N 行、0 bare LF）」型之行尾保留方向性斷言，不屬同款、不計入（比照 :538 對 `tasks.md:20/21`「含 CRLF」逐字比對句之同款排除理由）。
+- **`assembly-verification.md` 自身 6 處 CRLF 命中已全數涵蓋、無新漏**：`:228`（task 5.2，已計入上列 17→18 之基數）／`:425`（6.1）·`:487`·`:513`（J2）三處早已就地翻正方向／`:525`·`:538`（c90ebd8 前註本文）＋本附記——無新增未揭露之同款斷言。
+- **處置**：`recovered-requirements.md:127` 該處為審計軌跡中的措辭方向錯誤，**不影響** task 5.6 撈回實質正確性（三值判定、採納計數 11/2、carve-out §3 七項 PASS 均不受行尾量測方向影響）；比照 gap-fix 先例**不回改** :127 原文證據行，統一揭露於此，與前列 17 處併為 **18 處**留待後續 wave 一次清理。修正後 `npx openspec validate doc-first-canon-v2 --strict` 綠。
