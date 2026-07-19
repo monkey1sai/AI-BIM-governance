@@ -92,7 +92,7 @@
 | 14 | §04 HTTP 語意 | normative(doc)（顯式化補列、非誤動 carve-out） | 2 | 1,2,6,9 |
 | 22 | §08 權威順序表 | normative(doc) 翻轉 | 1 | 1,2 |
 | 23 | README §3.2/§3.5 | normative(doc) 翻轉 | 1 | 1 |
-| 24 | §03 命名核對 carve-out | normative(doc) 刪除 | 1 | 1,2,24 |
+| 24 | §03 命名核對 carve-out | normative(doc) 刪除 | 1 | 1,2 |
 
 > **R-B3 Q11 劃線**：item 14 各條（apply-overlay=501、A3 create=201、element-mapping→:49101、PROXY /*→白名單、:49100 signaling）全屬 HTTP 語意→normative(doc)；item 7（enum 對齊）屬修正正本對委任層錯述→descriptive(tests-delegated)、非 doc-first 反向遷就。顯式化既有事實補列不算誤動 carve-out，消除 §5.4/§5.5 對 item 14 的互相否決。
 

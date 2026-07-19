@@ -94,12 +94,12 @@ Change 'doc-first-canon-v2' is valid
 - `drafts/AGENTS-refchain.v2-draft.md`（89 行）——AGENTS.md 參照鏈修正草稿（tasks.md 1.2；提案供審，`AGENTS.md` 本體未改動，`git diff main -- AGENTS.md` 為空）
 - `design.md`（160 行）——關鍵技術決策與取捨、11 條裁決索引表、24×11 矩陣本體、gap ledger schema、follow-up changes、Open Decisions/Open Questions 專章（R-B5/OQ）、研究依據、本 change 自身失效模式風險表
 - `carve-out-assertions.md`（187 行，R-B3 補償閘）——5 條 carve-out 清單逐條 diff 斷言（改寫前後語意等價檢核）
-- `assembly-verification.md`（454 行）——§03／§08 merge-assembly 驗證＋24×11 矩陣逐格核對報告
+- `assembly-verification.md`（553 行，以 HEAD 為準）——§03／§08 merge-assembly 驗證＋24×11 矩陣逐格核對報告
 - `prep-evidence.md`（60 行）——本節摘錄之 §0 執行證據原始載體＋使用者裁決轉錄
 - `proposal.md`（51 行）／`tasks.md`（73 行）——提案主文＋24 task 分解與逐項 PASS 證據
 - `pr-body-draft.md`（本檔）——tasks.md 6.3 交付物
 
-（全數 17 個變更檔＝16 份既有交付物 ＋ 本檔 `pr-body-draft.md` 自身／`git diff origin/main --stat` 統計：17 files changed, 3664 insertions(+), 純新增、無刪除、無修改既有檔案；insertion 數為本 evidence commit 之快照，後續 commit 會微調。）
+（全數 17 個變更檔＝16 份既有交付物 ＋ 本檔 `pr-body-draft.md` 自身／`git diff origin/main --stat` 統計：17 files changed, 3763 insertions(+), 純新增、無刪除、無修改既有檔案；各交付物行數與此 insertion 數皆為 HEAD 快照，以開 PR 當下 `git diff origin/main --stat` 重算為準、後續 commit 會微調。）
 
 ## 提案性質聲明（draft-submitted vs user-adopted）
 
@@ -114,8 +114,8 @@ Change 'doc-first-canon-v2' is valid
 ## 已知缺口／殘留（non-blocking，供審閱者知悉）
 
 - **OQ-1（asbuilt-partial Prov 值）**：不採用、不併入 7 值封閉 enum；§08 R3 內以顯式 non-normative Open Decision 註記塊承載。
-- **OQ-2（`ai-bim-governance.css` NVIDIA 綠品牌授權盲區）**：使用者已於 2026-07-18 裁「已關閉」（青系為唯一品牌方向、css 色票視為自有 token、無外部授權依賴）；ledger 記關閉，未入正本 normative 條文。
+- **OQ-2（`ai-bim-governance.css` NVIDIA 綠品牌授權盲區）**：使用者以「全照建議」採納關閉建議（指揮官轉錄；青系為唯一品牌方向、css 色票視為自有 token、無外部授權依賴），最終確認=本 PR review；`gap-ledger.md` OQ-2 列因 R-C1 schema 無 `closed` enum，classification／status 維持 `undecided`／`open-decision`、採納鏈記於該列證據欄，未入正本 normative 條文。
 - **OQ-3（AST/symbol 級 drift CI 可行性）**：不採用；列名 follow-up `drift-gate-lightweight`，工具可行性未經證實。
 - **OQ-4（`ui-open-regression.spec` 未接 CI 空窗）**：正本 v2 明文標 known gap（非 pass）；接 CI 為 canon v2 之後第一順位具名 follow-up。
 - **殘留 untracked**：`grill-round1-verify.js` 依使用者裁決暫留 untracked，不影響本 PR 之 tracked diff。
-- **tasks.md 6.4（J1–J5 旅程端到端走查）**：軟性、非機器 gate，未列入本 PR 完成判準，可能於本 PR 之外另行走查。
+- **tasks.md 6.4（J1–J5 旅程端到端走查）**：軟性、非機器 gate，不列入機器完成判準；惟本 PR 內已完成走查（記錄見 `assembly-verification.md`「J1–J5 旅程端到端走查」節），並於走查中發現並修正 §08 header 標語矛盾（draft §08 改為「repo 決定「現況」」，見 `tasks.md` 6.4 PASS note）——非留待本 PR 之外另行走查。
