@@ -66,6 +66,6 @@ grep -nE '第[0-9]+行|[Ll]ine[[:space:]]+[0-9]+|:[0-9]{2,4}行' <draft>
 
 三份草稿內文皆僅用 `data-canon-id` / `<!-- canon:* -->` 穩定錨與埠號／API 路徑等非易腐技術座標，21＋3 項失真與 OQ-1/2/3/4 之全部 `file:line` 證據已如上表集中於本檔，符合 R-C1「正本 v2 內文 SHALL 只用穩定章節／需求 ID 錨」與 Scenario「task 改寫文字內嵌裸 file:line」之零缺口要求。
 
-## CI 驗證掛載點（R-C1；不新造工具）
+## CI 驗證掛載點（R-C1；目標＝延伸既有 gate、現況 known gap 非 pass）
 
-本檔的 drift 驗證複用既有 `test-agent-governance-check`（dead-link／行數檢核延伸），不新造工具；AST/符號級 drift 工具對 `.dc.html` 之可行性未經證實，不在本 change 採用，僅列名 follow-up `drift-gate-lightweight`（design.md §1.6／§6a，對應 **OQ-3**）。
+**目標掛載點（spec.md R-C1 SHALL；design.md §1.6／§6a 設計意圖）**：本檔 drift 驗證的目標是以既有 `test-agent-governance-check` 之 dead-link／行數檢核「延伸」承載、不新造 AST 工具；AST/符號級 drift 工具對 `.dc.html` 之可行性未經證實，不在本 change 採用，僅列名 follow-up `drift-gate-lightweight`（對應 **OQ-3**）。 **現況（誠實揭露，比照 OQ-4「known gap（不是 pass）」）**：上述延伸尚未接線——`.github/workflows/agent-governance.yml` 實跑的 `scripts/tests/test-agent-governance-check.ps1` 現行 dead-link 檢查僅掃 `AGENTS.md`／`CLAUDE.md` 內文之 `docs/**.md` 參照（約該檔 411-416），行數檢核硬編碼 `AGENTS.md`／`CLAUDE.md`／`docs/agents/advanced-agent-reasoning-contract.md`／`docs/agents/codex-loop-workflows.md` 四固定路徑（約該檔 211-223），皆不涵蓋 `openspec/changes/` 下任一檔（全檔對 `gap-ledger` 0 命中）；故本檔 28 列表格結構與其 file:line 證據現況無任何自動化 drift／格式護欄，屬 known gap（不是 pass）；本 task 執行期之 28 列／8 欄／9-pipe python 核驗係一次性人工檢核、非回歸護欄。接線該延伸（或落地 `drift-gate-lightweight`）屬上述 follow-up 範疇，非本 doc-only change 之交付項。
