@@ -60,7 +60,7 @@ grep -nE '§[0-9]+[:：][0-9]+' <draft>
 grep -nE '第[0-9]+行|[Ll]ine[[:space:]]+[0-9]+|:[0-9]{2,4}行' <draft>
 ```
 
-- `drafts/AI-BIM 前後端設計文件.v2-draft.dc.html` → 0 命中（唯一近似命中為 `governanceProxy.ts→:49102`，經人工核對為「檔案→轉發埠號」語意、非 file:line 座標引用，非違規）。
+- `drafts/AI-BIM 前後端設計文件.v2-draft.dc.html` → 0 命中（人工複查另行注意到 `governanceProxy.ts→:49102` 為檔案→埠轉發註記、非裸 file:line；三 pattern 對此字串皆不命中——中間的 U+2192 箭頭切斷 `\.ts[:：]` 相鄰條件，故非 grep 近似命中，係人工複查獨立注記）。
 - `drafts/AI-BIM Console Hi-Fi.v2-draft.dc.html` → 0 命中。
 - `drafts/docs-plans-README.v2-draft.md` → 0 命中。
 
