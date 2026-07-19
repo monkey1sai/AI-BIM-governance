@@ -362,3 +362,89 @@ grep -n "Planned endpoint\|Existing endpoint\|Missing endpoint" 同檔     → 0
 | tasks.md 5.5 打勾 | 本檔提交後於同一 commit 內打勾 |
 
 **核對結果：矩陣零缺格（依 R-C2b 定義驗證，見 §1）；design.md:83 說明句 1 處事實性精確度修正（非缺格修正，見 §1.2），為本 task 對 design.md 的唯一實質編輯。**
+
+---
+
+## planned 無裸標檢查＋class token 統一（tasks.md 6.1）
+
+### 0. 範圍與方法
+
+**Grep 指令（實跑）**：對兩份 draft 全文搜尋 `planned` 字面出現處：
+
+```bash
+grep -n "planned" "openspec/changes/doc-first-canon-v2/drafts/AI-BIM 前後端設計文件.v2-draft.dc.html"
+grep -n "planned" "openspec/changes/doc-first-canon-v2/drafts/docs-plans-README.v2-draft.md"
+```
+
+`.dc.html` draft 命中 **11 行**（含同行重複字面）；`docs-plans-README.v2-draft.md` **0 命中**——README draft 本次無需任何編輯，逐一確認完畢。
+
+依 task 指示「已知待統一點」，另對 `.dc.html` draft 追加搜尋 `external(` 括號樣式（task 4.8 遺留、非 `planned` 字面但屬同一 R-B5 token 統一範圍）：命中 **6 行**（A5–A10 真實程度表 draft:775–780）。
+
+R-B5 封閉列舉 token（`specs/documentation-source-of-truth/spec.md:102`）：`{integrated-ready｜in-repo-fullstack-pending｜external-mock-legit｜not-built｜unclassified}`。
+
+### 1. 逐處列表（位置／原標／改後）
+
+| # | 位置（draft，`.../AI-BIM 前後端設計文件.v2-draft.dc.html`） | 原標 | 改後 | 判定 |
+|---|---|---|---|---|
+| 1 | draft:230（§04 header badge） | `A1–A10 各 API 的契約檔=planned(class: in-repo-fullstack-pending)` | 未動——已合規 | 已附封閉 token，逐一核對通過，免動 |
+| 2 | draft:322（§04 `c4-contract-conversion-result-callback` 卡，HARD RULE 補註，item 20／task 4.16 落地） | `強化為 allowlist=follow-up metadata-allowlist(planned);鐵律語意不變。`（**裸標**——`(planned)` 無 class） | `強化為 allowlist=follow-up metadata-allowlist:planned(class: in-repo-fullstack-pending);鐵律語意不變。` | **本次修正**：design.md §6a 具名 follow-up「metadata-allowlist｜—（本 change 新提）｜item 20」；`gap-ledger.md`（task 5.3）item 20 classification=`code-defect`、status=`planned-not-built`——非孤兒裁決，屬 repo 內（coordinator 後端 blocklist→allowlist 驗證邏輯擴充）可建、無外接引擎依賴 → `in-repo-fullstack-pending`，非 `unclassified` |
+| 3 | draft:547（§06 `c6-callback-outbox-lineage-outbox` 卡，item 2／task 4.2 落地） | `lineage: ... — planned(class: in-repo-fullstack-pending)——coordinator 現況僅 3 態 outbox...` | 未動——已合規（task 4.2 自身 2026-07-18 gap-fix 已將原「`class: repo 內可建/全棧`」中文改述改為此封閉 token） | 本次覆核：grep `class: repo 內可建/全棧` 於 draft 全檔 0 命中（exit 1），確認 task 4.2 的「六態 planned 列」已無殘留非封閉措辭，免再動 |
+| 4 | draft:562（§06 R-C4 撈回 domain 實體區段標頭） | `planned domain 實體(A5–A10) — R-C4 撈回,全列 planned(class: in-repo-fullstack-pending);外接引擎分類仍以 §08 domain-reality 表為準,本表不改`（標頭前綴**裸「planned」**，與其後「全列 planned(class:…)」語意重複但只有後者帶 class） | `domain 實體(A5–A10) — R-C4 撈回,全列 planned(class: in-repo-fullstack-pending);外接引擎分類仍以 §08 domain-reality 表為準,本表不改` | **本次修正**：移除冗餘裸前綴「planned 」；語意不變（原句「全列 planned(class:…)」本已涵蓋整組 4 張卡片=同一 class），消除機讀規則下的假陽性裸標，不新增/不弱化任何分類宣告 |
+| 5 | draft:775（§08 `c8-domain-reality-table`，A5 IoT/FM 列） | `;感測 feed:external(mock 合法,掛 ProvTag)`（**裸標**——`external` 非封閉 token） | `;感測 feed:external-mock-legit(mock 合法,掛 ProvTag)` | **本次修正**：R-B5（spec.md:100）明列「IoT feed」為外接引擎依賴例 → `external-mock-legit`；人讀語意括號「(mock 合法,掛 ProvTag)」保留，token 為主體 |
+| 6 | draft:776（A6 4D/5D 列） | `;成本/排程外部系統:external(mock 合法,掛 ProvTag)` | `;成本/排程外部系統:external-mock-legit(mock 合法,掛 ProvTag)` | **本次修正**：R-B5 明列「P6 成本系統」為外接引擎依賴例 → `external-mock-legit` |
+| 7 | draft:777（A7 Scan 列） | ` — 點雲 ICP:external(mock 合法,掛 ProvTag)` | ` — 點雲 ICP:external-mock-legit(mock 合法,掛 ProvTag)` | **本次修正**：R-B5 明列「點雲 ICP」為外接引擎依賴例（逐字同名）→ `external-mock-legit` |
+| 8 | draft:778（A8 Synthetic 列） | ` — 合成資料引擎:external(mock 合法,掛 ProvTag)` | ` — 合成資料引擎:external-mock-legit(mock 合法,掛 ProvTag)` | **本次修正**：R-B5 明列「Isaac、Replicator」為外接引擎依賴例（task 4.8 已 genericize 移除具名廠商，改「合成資料引擎」）→ `external-mock-legit` |
+| 9 | draft:779（A9 機器人 列） | ` — 機器人 runtime:external(mock 合法,掛 ProvTag)` | ` — 機器人 runtime:external-mock-legit(mock 合法,掛 ProvTag)` | **本次修正**：R-B5「Isaac」類機器人 runtime 為外接引擎依賴例（task 4.8 已 genericize）→ `external-mock-legit` |
+| 10 | draft:780（A10 整合 列） | ` — 聚合儀表板:planned(class: in-repo-fullstack-pending)</span>...;各 domain service:external(mock 合法,掛 ProvTag)` | `planned` 段未動（已合規）；`;各 domain service:external-mock-legit(mock 合法,掛 ProvTag)` | **部分修正**：A10 儀表板自身 repo 內可建（聚合邏輯）維持 `in-repo-fullstack-pending` 不變；其匯總之各 domain service 外接依賴 → `external-mock-legit` |
+
+**排除項（非 R2 狀態標記，逐一確認後判定不計入裸標）**：
+
+| 位置 | 文字 | 排除理由 |
+|---|---|---|
+| draft:581（§06 `c6-schedule-activity` 卡，ScheduleActivity(A6) 欄位列） | `activity_id · wbs_code<br>planned/actual dates · progress<br>cost_code · element_guids[]` | `planned/actual dates` 為 ScheduleActivity 資料實體的**欄位名稱**（對應 EVM／schedule 領域慣用的「計畫日期／實際日期」欄位對，如 `planned_date`/`actual_date`），非 R2 三態建成狀態標記；與同卡其餘欄位（`activity_id`、`wbs_code`、`cost_code`）同屬 schema 描述，非「本功能建成狀態＝planned」的宣告，故不適用 R-B5 class 標籤，不計入裸標統計 |
+
+### 2. 「已知待統一點」逐項覆核
+
+task 指示明列兩個 Wave 2 遺留待統一點，逐一驗證現況：
+
+- **task 4.2 的六態 planned 列（人讀「repo 內可建/全棧」）**：grep 全檔 `class: repo 內可建/全棧` → **0 命中**（exit 1）。查 tasks.md task 4.2 自身 PASS 記錄（`2026-07-18,fixer` gap fix 段）：已先於本 task 將該中文改述換成封閉列舉值 `in-repo-fullstack-pending`（即上表 #3，draft:547）。本 task 覆核確認無殘留，免重工。
+- **task 4.8 的「planned(全棧)」**：grep 全檔 `planned(全棧)` → **0 命中**（exit 1）。查 assembly-verification.md §08 對號表 hunk 20（本檔前段既有記錄）：task 4.8 落地時已直接採用 `planned(class: in-repo-fullstack-pending)` 格式（即上表 #5/#6/#10 各列的 planned 段），非任務指示引述之過渡態裸格式。
+- **task 4.8 的「external(mock 合法,掛 ProvTag)」**：grep 命中 6 處（draft:775–780）——**此點確實遺留至本 task**，已依上表 #5–#10 全數改為 `external-mock-legit(mock 合法,掛 ProvTag)`（token 為機讀主體、人讀語意括號原樣保留，符合任務指示格式要求）。
+
+**明確排除（未在任務指示「已知待統一點」名單內，逐一評估後判定維持原狀不動）**：R2 legend 卡本體（draft:694–697，`In-canon + repo 內可建`／`In-canon + 依賴外接引擎`／`Missing(正本沒列) → NOT_BUILT`）、Task 表 5–10 列（draft:738）、Task↔CH Crosswalk 表 5–10 列備註（draft:748）、docs-plans-README.v2-draft.md §08 四鐵律回聲段（README draft:40）——以上四處皆為 R2 三態**分類法本身的定義／legend 敘述**（人讀散文，非對某一具體功能套用的 `planned` 狀態標記），且 R-B5 spec 本文（spec.md:100）自身即以同一人讀散文定義三態，非以封閉 token 表達；`NOT_BUILT`（全大寫底線）為 legend 沿用之既有第四態代稱，非 R-B5 五值封閉列舉之 `not-built`，非本次 class 標籤統一對象。四處皆未含字面 `planned` 或 `external(...)` 括號樣式，不落入本 task 兩道搜尋（§0）範圍，YAGNI 原則下不逕自擴大改寫。
+
+### 3. 迴歸驗證
+
+- **`planned` 全檔覆核**：改後 grep `planned` 仍 8 行命中（230/322/547/562/581/775/776/780），除 draft:581（已排除,非狀態標記）外，其餘 7 行**逐一目視確認**皆含 `(class: in-repo-fullstack-pending)`，零裸標。
+- **`external(` 覆核**：改後 grep `external(` 不含 `external-mock-legit(` 前綴者 → 0 命中（exit 1）；`external-mock-legit(` → 6 命中，與預期改動數一致。
+- **`git diff --stat`**：`1 file changed, 8 insertions(+), 8 deletions(-)`——恰為上表 8 處實質修正（#2/#4/#5/#6/#7/#8/#9/#10 之 external 段），純文字置換，無新增/刪除任何行、無新增/刪除任何 div/span 標籤。
+- **div/span 標籤配對**：python 腳本核驗全檔平衡，`<div>`/`</div>` 306/306、`<span>`/`</span>` 636/636，開閉相等。
+- **CRLF 行結尾**：byte-level 核驗，817 行 CRLF、0 條 bare LF，全檔保留。
+- **carve-out-assertions.md §3 合併執行七項迴歸**（本次編輯範圍落於 §04/§06/§08 R2/R3 相關卡片，非任一 carve-out 錨點，實跑防護）：
+
+  ```
+  [1] §04 payload 委任        → PASS
+  [2a] 鐵律1                  → PASS
+  [2b] 鐵律2                  → PASS
+  [2c] 鐵律3 must-preserve    → PASS
+  [3] README §3.4 後端凍結面  → PASS
+  [4] README §3.5 誠實子句    → PASS
+  [5] §07:575 A5-A10 deferral → PASS
+  ```
+
+  七項全數 PASS，本次編輯未觸及任一 carve-out 錨點。
+- **`npx openspec validate doc-first-canon-v2 --strict`**：`Change 'doc-first-canon-v2' is valid`。
+- **`docs-plans-README.v2-draft.md`**：本 task 零編輯（`planned`／`external(` 皆 0 命中，逐一確認後免動）。
+
+### 4. 結論（tasks.md 6.1 DoD 對照）
+
+| DoD 項目 | 狀態 |
+|---|---|
+| grep 兩份 draft 全部 `planned` 出現處，逐一確認附 R2 三態 class | ✅ `.dc.html` 11 行／README 0 行；逐一列表見 §1，1 處排除（draft:581 欄位名非狀態標記） |
+| 裸標補 class，使用 R-B5 封閉列舉 token | ✅ 2 處裸 `planned` 補 class（draft:322 新增、draft:562 移除冗餘前綴）；token 皆取自 R-B5 五值封閉列舉 |
+| 無裁決背書者標 `unclassified` 綁 ledger triage | 不適用——本次覆核之全部項目皆可追溯至 R-B5 spec 明文例舉（IoT feed／P6 成本系統／點雲 ICP／Isaac／Replicator）或 design.md §6a／gap-ledger.md 具名 follow-up（metadata-allowlist／item 20），零孤兒項，故無需標記 `unclassified` |
+| task 4.2／4.8 已知待統一點統一改封閉 token | ✅ task 4.2 六態列、task 4.8 `planned(全棧)` 兩點覆核確認已先行合規（§2）；task 4.8 `external(mock 合法,掛 ProvTag)` 6 處本次統一改 `external-mock-legit(...)`，人讀語意括號保留、token 為機讀主體 |
+| 零裸 `planned` 且全部 class=R-B5 封閉 token | ✅ 迴歸驗證見 §3 |
+| tasks.md 6.1 打勾 | 本檔提交後於同一 commit 內打勾 |
+
+本 task 對 `drafts/AI-BIM 前後端設計文件.v2-draft.dc.html` 實質編輯 **8 處**（純文字置換，見 §1／§3 diff stat）；對 `drafts/docs-plans-README.v2-draft.md` **零編輯**（逐一確認後確認免動）。
