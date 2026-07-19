@@ -15,19 +15,36 @@
 |---|---|---|---|---|
 | R1 | usd_prim_path 缺失／null（mapping 缺）時，該筆連動一律 disabled、不得觸發 `highlightPrimsRequest`（A1/A2/A4 共同鐵律） | `docs/plans/TARGET-shell.md:109`（A1 IX-06 四條件）、`:137`（A2 驗收句「null mapping 不發 highlight」）、`:177`（A4 驗收句「mapping 缺失不 highlight」）；`docs/plans/TARGET-viewer.md:276`（IX-3D-03）；`docs/plans/TARGET-contracts.md:32`（§1 item 6「usd_prim_path 未映射時為 null（禁捏造）」） | 裁1（doc-first 總綱）、裁2（前端行為契約分層） | 相容 |
 | R2 | A3 federation 之 `coord_check=mismatch` 阻擋下一步（build／Review Room 交付），並保留已輸入資料 | `docs/plans/TARGET-shell.md:149`（IA unit 欄）、`:153`（誠實 fallback「CRS/unit 不一致…各自阻擋下一步並保留已輸入資料」）、`:157`（驗收句「unit mismatch 阻擋」） | 裁1、裁2 | 相容 |
-| R3 | BCF 匯出僅限 `source=rule-run｜diff` 建立之 issue，`manual` 建立者不可匯出 | `docs/plans/TARGET-contracts.md:34`（§1 item 8 兩步流程）、`:307`（§10.2 issue schema 備註）、`:335`（§10.2 gating「匯出資格必須限於由 from-rule-run／from-diff 建立的 issues」）；`docs/plans/TARGET-shell.md:307`（`#issues` BCF gating 誠實兩步） | 裁1、裁2；呼應 README §3.4 後端凍結面（自舊 TARGET-contracts §1 承繼、效力不變） | 相容 |
+| R3 | BCF 匯出僅限 `source=rule-run｜diff` 建立之 issue，`manual` 建立者不可匯出（**此為舊 TARGET 文件之要求；經實查與現行實作不符，見 §1.1**） | `docs/plans/TARGET-contracts.md:34`（§1 item 8 兩步流程）、`:307`（§10.2 issue schema 備註）、`:335`（§10.2 gating「匯出資格必須限於由 from-rule-run／from-diff 建立的 issues」）；`docs/plans/TARGET-shell.md:307`（`#issues` BCF gating 誠實兩步） | 裁1、裁2（惟原「呼應 README §3.4／效力不變」之認定經查不成立，見 §1.1） | **與現行實作衝突 → 需使用者裁**（見 §1.1） |
 | R4 | A1 3D 高亮／session-ready 需四條件同時成立：`DataChannel ready ∧ first_frame_at ∧ stage matched ∧ 目標 usd_prim_path 存在`；viewer 回 ack 才算完成（非 timer 假進度） | `docs/plans/TARGET-shell.md:105`（Evidence Inspector 欄位）、`:109`（IX-A1-06「3D 高亮四條件」）、`:117`（驗收句「WebRTC 首幀、stage matched、同 GUID prim 高亮 ack」） | 裁1、裁2 | 相容 |
 
-**處置**（4 項皆相容 → 入 v2）：
+**處置**（R1／R2／R4 相容 → 入 v2；R3 經實查與現行實作衝突 → undecided，比照 D8 不作正本斷言）：
 
 | ID | 注入位置（data-canon-id） | 是否套 `planned` 標籤 |
 |---|---|---|
 | R1 | `c6-element-mapping`（§06，既有卡追加行內備註） | **否** |
 | R2 | `c6-federated-set`（§06，既有卡追加行內備註） | **否** |
-| R3 | `c6-issue-bcf-topic`（§06，既有卡追加行內備註） | **否** |
+| R3 | **不作正本斷言**；`c6-issue-bcf-topic`（§06）卡改標「現行真實 gate＝kind=issue／有 ifc_guid、與 source 無關」＋撈回目標指回本檔 §1.1 | —（undecided，非採納） |
 | R4 | `c6-review-session`（§06，既有卡追加行內備註） | **否** |
 
-**用詞說明（為何不套 `planned`）**：R1–R4 描述的是 A1–A4（已落地／真整合域，見 `c8-task-ch-crosswalk`「A1 / A2 / A3 真整合,已落地」與 `c8-domain-reality-table` A4 列「deterministic 檢索已全棧落地」）之既有系統行為，非「尚未建置」的目標。若套 `planned` 標籤等同宣稱已完成的行為尚未建置，違反誠實鐵律「不得以文件宣稱 runtime 已完成」之反向情形——不得把已完成說成未完成。任務原文摘要句「統一標 planned」之範圍，依任務內文細項分句解讀：僅 (b) A5–A10 domain 契約群組有「全列標 `planned`」之明文要求（見下），(a) 負向驗收句僅要求「注入 §04/§06 對應卡或 §08 R4 DoD 附錄區塊」，未附加標籤要求；本輪選擇前者（注入既有 §06 對應卡），並依誠實鐵律決定標籤策略。R3 另有旁證：現行 v2 draft §04（`c4-governance-api` 卡）已列出 `/from-rule-run/:runId`、`/from-diff/:diffId` 兩端點，本項僅是把既有端點背後的匯出資格規則明文化，非新增行為。
+**用詞說明（為何 R1／R2／R4 不套 `planned`）**：R1／R2／R4 描述的是 A1–A4（已落地／真整合域，見 `c8-task-ch-crosswalk`「A1 / A2 / A3 真整合,已落地」與 `c8-domain-reality-table` A4 列「deterministic 檢索已全棧落地」）之既有系統行為，非「尚未建置」的目標。若套 `planned` 標籤等同宣稱已完成的行為尚未建置，違反誠實鐵律「不得以文件宣稱 runtime 已完成」之反向情形——不得把已完成說成未完成。任務原文摘要句「統一標 planned」之範圍，依任務內文細項分句解讀：僅 (b) A5–A10 domain 契約群組有「全列標 `planned`」之明文要求（見下），(a) 負向驗收句僅要求「注入 §04/§06 對應卡或 §08 R4 DoD 附錄區塊」，未附加標籤要求；本輪選擇前者（注入既有 §06 對應卡），並依誠實鐵律決定標籤策略。（R3 為此四句之例外：經實查與現行實作衝突，改列 undecided、不作正本斷言，理由與證據見 §1.1。）
+
+### 1.1 R3 更正——與現行實作衝突，改列「需使用者裁」（gap fix：2026-07-19，fixer）
+
+R3 撈回句「BCF 匯出僅限 `rule-run｜diff` 建立之 issue、`manual` 不可匯出」**於現行系統不成立**。原判「相容／已落地、不套 `planned`」所依之旁證——現行 v2 draft §04 已列 `/from-rule-run/:runId`、`/from-diff/:diffId` 兩端點——僅證明「可由 rule-run／diff **建立** issue」，並未證明「BCF 匯出資格綁 `source`」；二者為不同斷言、驗證強度不足。實查現行 `governance-service` 程式碼與測試，BCF 匯出真實 gate 只看 `kind="issue"`（即有 `ifc_guid`），**與 `source_type` 無關**，`manual` 建立且帶 `ifc_guid` 之 issue 一樣可匯出：
+
+- `governance-service/issues/store.py:92`——`create_issue` 之 `source_type` 預設 `"manual"`。
+- `governance-service/issues/store.py:97`——`kind = "issue" if ifc_guid else "annotation"`，僅依 `ifc_guid` 有無、與 `source` 無關。
+- `governance-service/issues/store.py:178-187`——`list_issues` 僅濾 `status/severity/model_version_id/kind`，**無** `source_type` 篩選。
+- `governance-service/bcf/api.py:24`——`/api/bcf/export` 呼叫 `store.list_issues(..., kind="issue")`，未傳 `source_type`。
+- `governance-service/issues/api.py:36-44`——手動建立端點 `POST /api/issues` 之 `IssueCreate` 本就可帶 `ifc_guid`（帶 guid → `kind="issue"` → 可匯出）。
+- `governance-service/tests/test_bcf.py:141-165`——匯出測試中被排除者為「無 `ifc_guid` → annotation」（測試註解「annotation 不計」），排除理由是 `kind`、非 `source=manual`；**無**任何測試排除「`manual` 且帶 `ifc_guid`」之 issue。
+- `web-viewer-sample/src/console/A1GovernanceWorkbenchPage.tsx:124`——前端 `bcfIssues` 亦只濾 `kind==="issue" && Boolean(issue.ifc_guid)`，不分 `source`。
+- `bim-review-coordinator/src/routes/governanceProxy.ts:538-539`——`/api/governance/bcf/export` 為純二進位透傳、無篩選。
+
+另註：原判引「呼應 README §3.4 後端凍結面」，實查現行 `README.md` 與 `docs/plans/docs-plans-README.md` §3.4 均無「BCF 匯出限 source」之凍結條款，該引用不成立。
+
+**三值判定改判**：R3 屬「撈回之舊要求與現行實作衝突」——是否把匯出資格收緊為 `source`-gated，屬產品／安全設計決策，doc-only 撈回任務不得逕自認定，故改列**與現行實作衝突 → 需使用者裁**。處置比照 D8：不作正本斷言，僅於 `c6-issue-bcf-topic` 卡明標現行真實 gate（`kind=issue`／`ifc_guid`）並將撈回之收緊目標指回本節。
 
 ## 2.（b）A5–A10 domain 契約撈回（9 項，全數尋獲）
 
@@ -37,9 +54,9 @@
 | D2 | `TelemetrySample{sourceId,pointCode,value,unit,observedAt,quality}`（A5/A9 時序量測） | `docs/plans/TARGET-contracts.md:309` | 裁1、裁6、裁8 | 相容 |
 | D3 | `WorkOrder{workOrderId,assetId,issueId,status,assignee,dueAt,sourceRef}`（A5 維保閉環） | `docs/plans/TARGET-contracts.md:310` | 裁1、裁6、裁8 | 相容 |
 | D4 | `ScheduleActivity{activityId,wbsCode,planned/actual dates,progress,costCode,elementGuids}`（A6 甘特／EVM／3D overlay 共同鍵） | `docs/plans/TARGET-contracts.md:311` | 裁1、裁6、裁8 | 相容 |
-| D5 | `CaptureJob／Deviation{captureJobId,sourceUri/hash,transform,rms,elementGuid,deviationMm,toleranceMm}`（A7 對齊與偏差） | `docs/plans/TARGET-contracts.md:312` | 裁1、裁6、裁8 | 相容 |
+| D5 | `CaptureJob／Deviation{captureJobId,sourceUri/hash,transform,rms,elementGuid,deviationMm,toleranceMm}`（A7 對齊與偏差） | `docs/plans/TARGET-contracts.md:312`（資料模型列＋「精度與 tolerance 必須可追溯」）；`docs/plans/TARGET-shell.md:233`（`#a7` 誠實 fallback「未對齊前禁止顯 deviation」，即注入卡負向驗收句之來源） | 裁1、裁6、裁8 | 相容 |
 | D6 | `DatasetJob{datasetJobId,stageHash,camera/seed,outputs,status,artifactRefs}`（A8 逐幀可回溯） | `docs/plans/TARGET-contracts.md:313` | 裁1、裁6、裁8 | 相容 |
-| D7 | `RobotMission{missionId,mode,robotId,route/waypoints,sensorPack,status,eventRefs}`；`mode=simulation｜physical` 須由後端回傳並顯眼、不可由 UI 猜測 | `docs/plans/TARGET-contracts.md:314`；`mode` 誠實鐵律另見 `docs/plans/TARGET-shell.md:271`（A9 節「RobotMission.mode=simulation|physical 必須由後端回傳並顯眼」） | 裁1、裁6、裁8；`mode` 誠實揭露呼應現行 R3 Provenance（`c8-r3-provenance`） | 相容 |
+| D7 | `RobotMission{missionId,mode,robotId,route/waypoints,sensorPack,status,eventRefs}`；`mode=simulation｜physical` 須由後端回傳並顯眼、不可由 UI 猜測；預設僅 simulation | `docs/plans/TARGET-contracts.md:314`；`mode` 誠實鐵律另見 `docs/plans/TARGET-shell.md:271`（A9 節「RobotMission.mode=simulation|physical 必須由後端回傳並顯眼」）；「預設僅 simulation」注入句來源 `docs/plans/TARGET-shell.md:265`（`#a9` 使用情境「預設是模擬；實機模式另需 edge/ROS 證據」） | 裁1、裁6、裁8；`mode` 誠實揭露呼應現行 R3 Provenance（`c8-r3-provenance`） | 相容 |
 | D8 | 共同 Issue 出海口 `source` 欄擴充為逐 app 歸屬列舉 `A1｜A2｜A3｜A4｜A5｜A6｜A7｜A9｜A10｜manual` | `docs/plans/TARGET-contracts.md:319-333`（JSON 範例 `"source":"A1"` ＋ 列舉定義） | 裁1；與現行 v2 draft `c6-issue-bcf-topic` 卡既有 `source: rule-run｜diff｜manual` 欄位**同名不同語意**（現行欄位＝issue 建立路徑／BCF 資格判準，撈回欄位＝app 歸屬） | **含糊／部分重疊** |
 | D9 | A8 job failure 留在 `DatasetJob` 自身、不自動轉共同治理 Issue（A8 為共同 Issue schema 之唯一排除例外） | `docs/plans/TARGET-contracts.md:303`（資料模型表 Issue 列註「A8 job failure 留在 DatasetJob」）、`:335`（§10.2 同句＋「不自動轉治理 Issue」）；`docs/plans/TARGET-shell.md:306`（`#issues` IA「A8 job failure 不自動轉 Issue」） | 裁1、裁8 | 相容 |
 
@@ -78,11 +95,12 @@ D1–D7、D9 全數套用 `planned(class: in-repo-fullstack-pending)`，依任�
 ## 5. DoD 對照（draft-submitted）
 
 - [x] 撈回清單附 source file:line：見 §1／§2 各列 Source 欄。
-- [x] 三值判定結果：見 §1／§2 各列「三值判定」欄；13 項中 12 項相容已採納入 v2，1 項（D8）含糊／部分重疊列 undecided、不入 v2。
+- [x] 三值判定結果：見 §1／§2 各列「三值判定」欄；13 項中 11 項相容已採納入 v2，2 項列 undecided、不入 v2（R3 經實查與現行實作衝突→需使用者裁，見 §1.1；D8 含糊／部分重疊）。
 - [x] 對照 11 條裁決 re-審：見 §1／§2「對照裁決」欄；§3 另做「防復活」專項查核（R2 三態／裁6／裁8 有無推翻本輪候選）。
 - [x] 撈不到的項標「來源不可考、不撈回」：本輪無此情形，見 §4 說明。
 - [x] 採納句已入 draft 且標 `planned`（僅 (b) 群組套用，見 §1 用詞說明）：
-  - R1–R4 → `c6-element-mapping`／`c6-federated-set`／`c6-issue-bcf-topic`／`c6-review-session`（既有卡追加備註，未套 `planned`，理由見 §1）。
+  - R1／R2／R4 → `c6-element-mapping`／`c6-federated-set`／`c6-review-session`（既有卡追加備註，未套 `planned`，理由見 §1）。
+  - R3 → 未作正本斷言（與現行實作衝突→需使用者裁，見 §1.1）；`c6-issue-bcf-topic` 卡改標現行真實 gate（`kind=issue`／`ifc_guid`）＋撈回目標指回本檔。
   - D1–D7、D9 → 新卡群 `c6-scenario`／`c6-telemetry-sample`／`c6-work-order`／`c6-schedule-activity`／`c6-capture-job-deviation`／`c6-dataset-job`／`c6-robot-mission`（全標 `planned(class: in-repo-fullstack-pending)`）。
   - D8 → 未入 v2，undecided，留提示句指回本檔。
 - [x] 不改 §07:575 deferral 節奏：`carve-out-assertions.md` §3 合併執行 7 項於本次編輯後複跑全數 `PASS`（含 `[5] §07:575 A5-A10 deferral`）。
@@ -90,4 +108,4 @@ D1–D7、D9 全數套用 `planned(class: in-repo-fullstack-pending)`，依任�
 
 ---
 
-verified-as-of：2026-07-19（本 task 對 `a271e46^`（`1abeb91a6645c58eae4994ace6d9bccde6597d3b`）三份歷史檔逐項 Read／Grep 實查所得；`carve-out-assertions.md` §3 合併執行 7 項於本次 draft 編輯後複跑全數 PASS；draft HTML div/span 標籤配對 300/300·618/618；CRLF 全檔保留（806 行、0 bare LF）；`data-canon-id` 全域 55 個、較編輯前 48 個增加 7 個且零重複）。
+verified-as-of：2026-07-19（本 task 對 `a271e46^`（`1abeb91a6645c58eae4994ace6d9bccde6597d3b`）三份歷史檔逐項 Read／Grep 實查所得；`carve-out-assertions.md` §3 合併執行 7 項於本次 draft 編輯後複跑全數 PASS；draft HTML div/span 標籤配對 300/300·618/618；CRLF 全檔保留（806 行、0 bare LF）；`data-canon-id` 全域 55 個、較編輯前 48 個增加 7 個且零重複；**gap fix 2026-07-19（fixer）**：R3 經實查 `governance-service` 程式碼與測試判定與現行實作衝突（BCF 匯出真實 gate＝`kind=issue`／`ifc_guid`、與 `source` 無關），三值判定由「相容」改列「需使用者裁」、新增 §1.1 承載證據、draft `c6-issue-bcf-topic` 卡改標現行真實 gate＋撈回目標指回本檔，採納計數由 12/1 更正為 11/2；另補 D5／D7 額外來源行號 `TARGET-shell.md:233`／`:265`；carve-out §3 七項於本次編輯後複跑全數 PASS）。
