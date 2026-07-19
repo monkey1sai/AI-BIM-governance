@@ -297,3 +297,68 @@ grep -n "Planned endpoint\|Existing endpoint\|Missing endpoint" 同檔     → 0
 | tasks.md 5.2 打勾 | 本檔提交後於同一 commit 內打勾 |
 
 本 task 對草稿檔（`drafts/AI-BIM 前後端設計文件.v2-draft.dc.html`）僅有**一處**實質編輯：§3 所述 Task 11–12 crosswalk 列 stale forward-ref 修正（本 task 指示明文必修項）；其餘為純驗證與報告撰寫，未回改任何既有 hunk。
+
+---
+
+## 24×11 追溯矩陣驗證（tasks.md 5.5，R-C2b）
+
+### 0. 範圍與方法
+
+對象：`design.md` §3「24×11 追溯矩陣」（design.md:54-84，24 列失真項 × 11 欄裁決）＋其緊接的說明句（design.md:83）。逐格核對非人工目視（表格欄位多、易誤讀），改以 Python 腳本解析 markdown 表格逐格取值，並與 task 5.4 已完成（PASS＋commit）之 `crosswalk.md`「對應裁決編號」欄（獨立以 grep 對 design.md §3 重新取值，非轉抄）交叉核對，兩份獨立來源逐列比對結果**完全一致**（24 列、每列裁決集合逐字相同），排除單一腳本 parsing 誤判的風險。
+
+### 1. 逐格核對結果（三項检查，依 R-C2b 條文＋任務指示）
+
+#### 1.1 每項失真至少對到一條裁決來源
+
+腳本逐列統計：24 列（失真項 1–24）**全數**在裁1欄標 X，即全數滿足「至少對到一條裁決來源」。零缺格。
+
+#### 1.2 每條裁決至少覆蓋一項失真或明列條文化落實
+
+逐欄統計 X 數（腳本核驗，行加總=49＝欄加總=49，交叉自證無漏算/重複算）：
+
+| 裁決 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 覆蓋失真項數 | 24 | 6 | 2 | **0** | **0** | 5 | 3 | 2 | 1 | 1 | 5 |
+
+裁1/2/3/6/7/8/9/10/11（9 條）矩陣覆蓋 ≥1 項失真，滿足 R-C2b「覆蓋失真」分支。裁4／裁5（2 條）矩陣覆蓋為 0，須靠「明列條文化落實」分支——design.md:83 說明句原文列名裁4/5/7/11 四條為「不直接改任一失真項文字，而以獨立條文/follow-up 承載」。
+
+**發現（逐格核對而非僅核對「註記是否存在」才發現）**：說明句原文對裁 7、裁 11 的「零覆蓋」敘述與矩陣本體 X 標記不符——裁 7 實際覆蓋 3 項（item 2「§06 六態」、item 11「§08 crosswalk」、item 13「§04 契約」），裁 11 實際覆蓋 5 項（item 3「§03 gate 失真」、item 5「§07/§08 stale 編號」、item 10「§08 features 目錄」、item 16「README token」、item 19「§03 雙軌」）。已以 `crosswalk.md`「對應裁決編號」欄（task 5.4 獨立 grep 結果）逐項覆核，兩來源完全一致，非本次腳本誤判：
+
+| 失真項 | design.md §3 矩陣 | crosswalk.md 對應裁決編號 | 一致 |
+|---|---|---|---|
+| 2 | 裁1,裁7 | 裁1,7 | ✅ |
+| 3 | 裁1,裁2,裁11 | 裁1,2,11 | ✅ |
+| 5 | 裁1,裁11 | 裁1,11 | ✅ |
+| 10 | 裁1,裁11 | 裁1,11 | ✅ |
+| 11 | 裁1,裁7 | 裁1,7 | ✅ |
+| 13 | 裁1,裁6,裁7 | 裁1,6,7 | ✅ |
+| 16 | 裁1,裁11 | 裁1,11 | ✅ |
+| 19 | 裁1,裁10,裁11 | 裁1,10,11 | ✅ |
+
+**是否構成 R-C2b 定義的「缺格」**：不構成。spec.md:172 Scenario「追溯矩陣缺格」的觸發條件為「任一裁決既不覆蓋失真也未標明條文化落實」——裁 7／裁 11 兩者皆有矩陣覆蓋（見上表），已獨立滿足「覆蓋失真」分支，不落入「既不…也未…」的缺格條件；spec.md:168 本身把「覆蓋失真」與「條文化落實」以「或」連接（非互斥），一條裁決可同時符合兩者。`git log --follow` 核查 design.md 僅 2 個 commit（`378a9c1` 首版、`bf062ff` 僅動 §4 item 9 錨點欄，未動 §3），證實此說明句的敘述缺陷自首版即存在、非本分支後續編輯漂移所致。
+
+**處置**：雖非 R-C2b 定義之「缺格」，但屬本 task「Files: design.md」明確範圍內、可獨立驗證的事實性錯誤（矩陣本體與其緊鄰說明句自相矛盾），已於 design.md:83 更正說明句——裁4/5 維持「矩陣零覆蓋、純條文化承載」原意不變；裁7/11 改為準確敘述「矩陣仍覆蓋部分失真項（列出 items），非零覆蓋，主要落地位置同為獨立條文/follow-up」，並註記 `R-C2b「或」關係擇一即足`，避免讀者誤讀矩陣覆蓋與條文化落實為互斥。此為本 task 對 `design.md` 的唯一實質編輯（`git diff --stat`：1 file changed, 1 insertion(+), 1 deletion(-)，單行說明句置換，未動矩陣本體 24×11 X 標記、未動 §1/§2/§4–§8 任何其他章節）。
+
+#### 1.3 裁決 1 掛「1 MODIFIED＋1 ADDED」
+
+對照 `specs/documentation-source-of-truth/spec.md`（`grep -n "^## \(ADDED\|MODIFIED\|REMOVED\) Requirements\|^### Requirement:"`）：該檔僅 2 條 `## MODIFIED Requirements`（「Workflow v3 and product design artifacts have distinct, non-overlapping authority」＋「文件分工調整必須走 PR 治理流程」），其餘 12 條（R-B1–R-B6、R-C1、R-C2、R-C2a、R-C2b、R-C3、R-C4）皆為 `## ADDED Requirements`。裁決 1 之「落地位置」（design.md:42）明列 `MODIFIED「Workflow v3…」body ＋ ADDED R-B1`：
+
+- **MODIFIED**：對應 2 條 MODIFIED 之第一條「Workflow v3 and product design artifacts have distinct, non-overlapping authority」（header 逐字保留、body 改寫為 doc-first 權威序，task 2.1 已 PASS）——裁決 1 專屬 1 條，另一條 MODIFIED（「文件分工調整必須走 PR 治理流程」）為裁決 5（變更控制 cross-ref）落地，非裁決 1。
+- **ADDED**：對應 R-B1（doc-first 偏離處置序與三態分類，task 2.3 已 PASS）——裁決 1 專屬 1 條；其餘 11 條 ADDED（R-B2–R-B6、R-C1–R-C4）分屬其他裁決或本 change 自身彙整/驗收機制（tasks.md §5 彙整節），非裁決 1 之「MODIFIED/ADDED」計數範圍（R-C2b 本身即為此類彙整/驗收機制之一，非裁決 1 專屬）。
+- items 22/23/24（design.md §2 裁決 1 列另註記的「三處遺跡改寫」）為**草稿檔本文**（`.v2-draft.dc.html`/`.v2-draft.md`）之文字改寫，非 OpenSpec `spec.md` 之 MODIFIED/ADDED requirement delta，不計入本項數。
+
+驗證：`裁決 1 掛 1 MODIFIED＋1 ADDED` 逐字準確，且與 spec.md:168 R-C2b 條文「裁決 1 SHALL 掛為『1 條 MODIFIED…＋ 1 條 ADDED…』」一致。零缺格。
+
+### 2. 結論（tasks.md 5.5 DoD 對照）
+
+| DoD 項目 | 狀態 |
+|---|---|
+| 每項失真至少對到一條裁決來源 | ✅ 24/24 列皆掛裁1（§1.1） |
+| 每條裁決覆蓋失真或明列條文化落實 | ✅ 裁1/2/3/6/7/8/9/10/11 矩陣覆蓋 ≥1 項；裁4/5 矩陣零覆蓋、純以條文化落實承載（§1.2） |
+| 裁決 1 掛「1 MODIFIED＋1 ADDED」 | ✅ 對照 spec.md 逐條 grep 核實（§1.3） |
+| R-C2b 定義之「缺格」 | ✅ 零缺格（spec.md:172 Scenario 未觸發，§1.2） |
+| 發現缺格才修 | 未發現 R-C2b 定義之缺格，故矩陣本體（X 標記）零修改；**但**發現且修正 1 項說明句事實性錯誤（design.md:83 對裁7/11「零覆蓋」誤述，§1.2），此修正在本 task「Files: design.md」範圍內、單行置換、不影響矩陣本體或任何裁決/失真項對應關係 |
+| `npx openspec validate doc-first-canon-v2 --strict` | ✅ `Change 'doc-first-canon-v2' is valid` |
+| tasks.md 5.5 打勾 | 本檔提交後於同一 commit 內打勾 |
+
+**核對結果：矩陣零缺格（依 R-C2b 定義驗證，見 §1）；design.md:83 說明句 1 處事實性精確度修正（非缺格修正，見 §1.2），為本 task 對 design.md 的唯一實質編輯。**
