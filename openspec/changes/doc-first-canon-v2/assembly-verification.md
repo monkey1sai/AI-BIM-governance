@@ -452,3 +452,66 @@ task 指示明列兩個 Wave 2 遺留待統一點，逐一驗證現況：
 | tasks.md 6.1 打勾 | 本檔提交後於同一 commit 內打勾 |
 
 本 task 對 `drafts/AI-BIM 前後端設計文件.v2-draft.dc.html` 實質編輯 **8 處**（純文字置換，見 §1／§3 diff stat）；對 `drafts/docs-plans-README.v2-draft.md` **零編輯**（逐一確認後確認免動）。
+
+---
+
+## J1–J5 旅程端到端走查（tasks.md 6.4）
+
+> **本節性質：軟性人工走查記錄，非機器可驗證 gate。** tasks.md 6.4 原文明定「不列入完成 gate」——本節結論不影響、不覆蓋上方 5.1–5.7／6.1–6.3 各節之機器可驗證 PASS 結論；本節是在那些逐 hunk／逐條規則的機器檢核之外，額外做一次「像真人讀者一樣從頭到尾讀一遍」的人工複核，用來抓那些因為「文字本身沒被任何 task 的 hunk 觸及、因此不會出現在 diff 裡」而被機器檢核天然漏掉的問題。
+
+### 0. 範圍與方法
+
+- **走查對象**：`AI-BIM 前後端設計文件.v2-draft.dc.html`（§01–§08 全文逐行讀通，非抽樣）、`docs-plans-README.v2-draft.md`（全文讀通）、`AI-BIM Console Hi-Fi.v2-draft.dc.html`（依 J3 路徑抽樣讀通：header/nav、Home 畫面、Workspace 三欄+A1–A4 dock badge 區塊）。
+- **五旅程路徑**：逐字對齊 `docs-plans-README.v2-draft.md` §2「讀取路線」表前五列（該表第六列「查『X 建了沒』」非本 task 五旅程範圍，本次走查中一併核對、未見異常，不獨立成節）：
+
+  | 旅程 | 路徑（= README §2 對應列） |
+  |---|---|
+  | J1 | 本檔（README）→ 設計文件 §01（服務邊界＋鐵律 1–3） |
+  | J2 | §04 API 契約（Payload 以 tests/contracts/\*.json 為最高標準）＋ §08 權威順序與 R1–R4 |
+  | J3 | §03 前端架構 IA → §07 對應 CH 期 → Hi-Fi 原型比對 → design-system-reference.manifest.json visual gate |
+  | J4 | §04 Kit DataChannel 訊息協定 ＋ §05 時序 F1／F2 |
+  | J5 | §07 實作分期 ＋ §08 Task 0–12 |
+
+- **記錄準則**：每旅程記錄「可讀通」「卡點」「跨 task 矛盾」三類；卡點＝措辭鬆散但緊鄰上下文已自我澄清、不需動筆；矛盾＝兩段文字對同一事實給出無法同時成立的斷言，依任務指示「發現矛盾＝修 draft 再記」處理。
+
+### J1 — 新 agent 第一次進 repo（README → §01）
+
+- **可讀通**：README §0 一句話定位直接指向正本檔；§1 檔案清單先建立六份檔案的角色地圖；§2 讀取路線第一列導向 §01；§01「服務邊界」的 Web Plane／Control Plane Boundary／Internal 三欄圖＋鐵律 1–3 badge 自成一體，不需先讀 §02–§08 即可理解系統邊界與三條硬限制。
+- **卡點**：無。§01 鐵律 3 badge 提到 `e2e/ui-open-regression.spec.ts` 尚未接 CI 的 known gap，與 §08 OQ-4 呼應（此時新讀者尚未讀到 §08，屬合理的前向引用，不構成卡點）。
+- **跨 task 矛盾**：未發現。（README 版頭「v5 · 2026-07-15」與 `.dc.html` 內文標頭「v1 · 2026-07-14」版本號不同——兩者是各自獨立檔案的既有版本序，非本 change 引入的矛盾，不予處理。）
+
+### J2 — 動 code 前（§04 + §08 權威序）
+
+- **可讀通**：§04 header「Payload 以 tests/contracts/\*.json 為最高標準」是 carve-out item 1 明文保護的委任語意，範圍限定在 payload 欄位形狀，非一般需求權威；§08 `c8-authority-table`（draft:659 起）翻轉後 row 1＝docs/plans 需求正本、row 2＝tests/contracts（payload 委任，§04 保留）——兩處合讀一致：一般需求權威＝doc-first，payload 細節＝委任 tests/contracts，非互斥。R1–R4 四條鐵律清楚可操作。
+- **發現並已修正的矛盾**：§08 章節標題正下方的三詞標語（改寫前原文）「圖片決定「長相」·文字契約決定「行為」·repo 決定「真相」」，在讀者尚未讀到下方 `c8-authority-table` 之前即先聲奪人宣稱「repo 決定真相」，與同一 §08 開頭區塊內、僅一欄之隔的 authority table row 1（docs/plans 需求正本最高）＋緊接的誠實半句（draft:667）「code + tests = runtime 現況的查證面;code 偏離本正本 = implementation gap 待修」直接衝突——若 repo「決定真相」，code 便不可能「偏離」一個由自己定義的真相，此為 proposal.md F1「權威序自相矛盾」病灶的殘留分身。此行文字本身不在 24 項失真清單／design.md 24×11 矩陣／crosswalk.md 任一項的改寫範圍內（既非任一 hunk 觸及，Wave 1／Wave 2 任何 task 皆未列為改寫目標），純靠端到端全文讀通才被發現。**已修正**：比照本文件其餘處對「repo/code」現況角色的既定用語——同段誠實半句「code+tests=runtime 現況的查證面」（draft:667）、README §2 末列「查『X 建了沒』（現況）｜repo code＋tests 直接查證」、`AGENTS-refchain.v2-draft.md` 對照 2 建議改寫同樣把 AGENTS.md 原文標題「Runtime/product 行為**真相**優先順序」改為「Runtime/product 需求權威與**現況查證**順序」（避開「真相」一詞）——三處既有先例一致指向同一改法，將標語「repo 決定「真相」」改為「repo 決定「現況」」（draft:637，1 行內 2 字置換，`git diff --stat`：1 file changed, 1 insertion(+), 1 deletion(-)）。改後：docs/plans 決定「應然」需求真相，repo 只決定「現況」查證結果，與 authority table／誠實半句／README 現況查證框架不再字面衝突。
+  - **修正後驗證**：`carve-out-assertions.md` §3 合併執行七項全 `PASS`（本次編輯落於 §08 header 標語，非任一 carve-out 錨點）；div/span 標籤配對 306/306·636/636（與編輯前基準相同，純文字置換未增減標籤）；CRLF 全檔保留（818 行、817 CRLF、0 bare LF，與編輯前基準相同）；`npx openspec validate doc-first-canon-v2 --strict` 綠（`Change 'doc-first-canon-v2' is valid`）。
+- **次要觀察（措辭鬆散，未達矛盾門檻，不修正）**：同一標語「文字契約決定「行為」」以「契約」稱呼 Prompt Board，但緊接的 Prompt Board 卡片本文明說「其中 API 多為『建議』，不是現有契約」——用語鬆散，但同一視覺區塊內立即自我澄清，判定為可讀通、非跨 task 矛盾，依 YAGNI 不予修改（避免超出「矛盾」修正範圍）。
+
+### J3 — 前端任務（§03 → §07 → Hi-Fi）
+
+- **可讀通**：§03 Route Map／CH-G 表、元件樹／hooks 現況對照、四個 badge（workspace-handoff／spectator-gate／i18n／dual-track）建立「現況 vs 目標」的清楚圖像；§07 CH-0～CH-I 分期表延續同一框架（CH-G／CH-I 標橙色「未做」，其餘標青色「已出貨」）；Hi-Fi `hifi-workspace` 畫面視覺上呈現內嵌 viewport＋streaming 徽章，對映 §07 CH-I「Workspace 內嵌 viewport｜follow-up embedded-viewport」與 §03 badge「【現況】unified Workspace 為靜態示意」——三者合讀的正確理解是「Hi-Fi＝有意識的目標互動設計，不是『已建成』宣稱」；Hi-Fi 首頁/dock 徽章系統（LIVE／HYBRID／Concept Preview）標示 A1–A3 live、A4 hybrid，與 task 4.17 記錄一致。
+- **卡點（未達矛盾門檻，不修正）**：§07 CH-C 資料列本身（青色、無「未做」字樣）「本設計對映」欄文字含「commandRejected 回饋」，若只看這一列容易誤讀成 commandRejected 已隨 CH-C 出貨；但同一 §07 區塊緊接的 `c7-residual-badges` 明文澄清「CH-C 殘留：…commandRejected（spectator / 權威拒絕回饋）仍待補，詳見 §04」，且 §04 `c4-datachannel-protocol` 卡本身亦標記 commandRejected 為「待補」。三處合看無矛盾，但要求讀者讀完整個 §07 區塊（含表格下方的殘留 badge）才能得到準確狀態，只看表格列本身會暫時誤讀——記錄為排版可讀性建議（例如未來若重排版面可考慮把殘留說明併入同一列），本次不調整版面結構（超出本 task「文字矛盾」修正範圍）。
+- **跨 task 矛盾**：未發現（J2 記錄之「repo 決定真相」問題落在同一 §08，J3 路徑亦會途經，已於 J2 修正，此處不重複列為新發現）。
+
+### J4 — 查 3D／runtime 互動（§04 DataChannel + §05）
+
+- **可讀通**：§04 `c4-datachannel-protocol` OUT/IN 訊息列表與 §05 F1 步驟⑪⑫、F2 步驟⑥⑦逐一對應（`openStageRequest`/`openedStageResult`、`highlightPrimsRequest`/`highlightPrimsResult`+`stageSelectionChanged`），訊息名稱與方向箭頭一致；`commandRejected` 待補狀態在 §04 本卡與 §07 殘留 badge 雙重標註一致（見 J3 記錄），§05 時序圖未畫出 `commandRejected`（因其尚未實作、不出現在 happy-path 時序圖屬合理省略，非遺漏）。
+- **卡點**：無新增卡點（J3 已記錄的 CH-C 表格列易誤讀問題屬 §07，J4 路徑不經過 §07 CH 表，不重複列出）。
+- **跨 task 矛盾**：未發現。
+
+### J5 — 排工作（§07 + §08 Task 表）
+
+- **可讀通**：§08 `c8-task-sequence-table`（Task 0–12 建議順序）與 §07 CH-0～CH-I 分期表雙軸並存；`c8-task-ch-crosswalk` 表逐列對映兩軸；表格上下皆有明文但書「Task↔CH Crosswalk（近似對映，非嚴格一對一）」／「CH＝基礎建設軸…Task＝feature 軸…二軸非逐項嚴格對應…Task 5–10 無對應 CH 屬預期現象、非缺漏」，讀者被清楚告知不要把兩軸當成嚴格因果關係。
+- **卡點（未達矛盾門檻，不修正）**：Crosswalk 表「Task 11–12」列將「Task 11 A10 整合儀表板未有對應 CH」的括號說明指向「§07 CH-H/CH-I，對應 item 18，已列入本文件」——CH-H（semantic viewer 家族）／CH-I（Workspace 內嵌 viewport）兩期主題與「A10 整合儀表板（碳排/能耗/法規/風險決策）」字面上無直接關聯，快速讀者可能誤以為 CH-H/CH-I 就是「將實作 A10」的明確承諾。經查該括號句是 task 5.2 stale forward-ref 修正的既有產物——原文更早即以「未來新期」措辭將 Task 11 缺口與（當時尚未存在的）CH-H 家族/內嵌 viewport 期並列，task 5.2 僅將「現況本文件尚未列」更正為「已列入本文件」，未變更兩者關聯性本身；且緊鄰表格上下兩處但書已明文「近似對映」「Task 5–10 無對應 CH 屬預期現象」定調全表僅供粗略排程參考，非嚴格承諾。判定為可讀通的鬆散措辭、非矛盾，不修改——若要修改需重新界定「Task 11 缺口由誰承接」的措辭範圍，超出本 task「發現矛盾即修」的最小必要修正原則，且會與 task 5.2 的 R-C2 single-ownership 精神產生二次改動同一段落的疑慮，留供後續 wave 或 follow-up 視需要處理。
+- **跨 task 矛盾**：未發現（J2 記錄之「repo 決定真相」問題同樣落在 §08，此路徑會再次途經同一標語，但已於 J2 修正，不重複列出）。
+
+### 結論（tasks.md 6.4 DoD 對照）
+
+| DoD 項目 | 狀態 |
+|---|---|
+| 五旅程記錄存在 | ✅ J1–J5 各自記錄可讀通／卡點／跨 task 矛盾，見上 |
+| 發現矛盾已修 | ✅ 發現 1 處（§08 header 標語「repo 決定「真相」」與其下 authority table／誠實半句字面衝突，屬 F1 病灶殘留分身），已修正為「repo 決定「現況」」（draft:637，1 insertion/1 deletion）；修正後 `carve-out-assertions.md` §3 七項全 PASS、div/span 306/306·636/636 平衡、CRLF 818 行/817 CRLF/0 bare LF 保留、`npx openspec validate doc-first-canon-v2 --strict` 綠 |
+| 明標「軟性走查，非機器 gate」 | ✅ 本節標題與 §0 已明文標示，不影響 tasks.md 6.1–6.3／5.x 之機器可驗證 gate 結論 |
+| tasks.md 6.4 打勾 | 本檔提交後於同一 commit 內打勾 |
+
+本 task 對 `drafts/AI-BIM 前後端設計文件.v2-draft.dc.html` 實質編輯 **1 處**（§08 header 標語矛盾修正，draft:637）；對 `docs-plans-README.v2-draft.md`／`AI-BIM Console Hi-Fi.v2-draft.dc.html` 零編輯（走查後確認可讀通，無需修改）。
