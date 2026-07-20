@@ -14,6 +14,21 @@
 - **THEN** 應從 `docs/PROJECT_DEVELOPMENT_WORKFLOW.md` 進入
 - **AND** plans 設計文件與原型 SHALL NOT 重述完整開發流程
 
+#### Scenario: 讀者尋找需求、現況或操作原型
+
+- **WHEN** 工程師想確認 A1–A10 需求、頁面操作、建成狀態、工作排序或 console/viewer 樣貌
+- **THEN** 應從 `docs/plans/docs-plans-README.md` 進入並依 ownership 讀設計文件 §01–§08（doc-first：正本即唯一需求權威）
+- **AND** console 樣貌 SHALL 以 `AI-BIM Console Hi-Fi.dc.html` 為錨；建成**現況** SHALL 以 code＋tests 查證（現況證據，非需求權威）
+- **AND** workflow v3 MUST 只 cross-reference，不得改寫需求或 runtime 現況
+
+#### Scenario: workflow 與設計文件或 runtime truth 不一致
+
+- **WHEN** workflow v3 與設計文件/原型描述同一 user-facing 需求且不一致
+- **THEN** 設計文件/原型為**唯一需求權威**（doc-first；本 change 前之措辭為「目標需求權威」）
+- **AND** runtime 現況 SHALL 以 code＋tests/contracts 驗證，任何文件不得反向覆蓋 runtime，亦不得以文件宣稱 runtime 已完成
+- **AND** code 行為偏離正本時 SHALL 判為待修 implementation gap（見「code 行為與設計正本衝突（doc-first 判 gap）」scenario），MUST NOT 反向改寫正本
+
+
 #### Scenario: code 行為與設計正本衝突（doc-first 判 gap）
 
 - **WHEN** runtime code 行為與正本 §01–§08 描述的同一 user-facing 需求衝突，且該條未列入保存性 carve-out 清單
