@@ -24,7 +24,7 @@ input::placeholder{color:#4d6076}
 </style>
 </helmet>
 
-<div data-screen-label="AI-BIM Console" style="display:flex;flex-direction:column;height:100vh;min-width:1360px;color:#dbe6f3;font-size:14px;background:#060a10">
+<div data-screen-label="AI-BIM Console" data-canon-id="hifi-shell" style="display:flex;flex-direction:column;height:100vh;min-width:1360px;color:#dbe6f3;font-size:14px;background:#060a10">
 
   <!-- ═══════ TOP BAR ═══════ -->
   <div style="display:flex;align-items:center;gap:14px;height:56px;padding:0 16px;background:#0a1018;border-bottom:1px solid rgba(120,160,210,.12);flex:none">
@@ -96,7 +96,7 @@ input::placeholder{color:#4d6076}
 
       <!-- ─────────── HOME (1d hub) ─────────── -->
       <sc-if value="{{ isHome }}" hint-placeholder-val="{{ true }}">
-        <div data-screen-label="總覽 Home" style="flex:1;overflow:auto;padding:22px 26px;display:flex;flex-direction:column;gap:18px">
+        <div data-screen-label="總覽 Home" data-canon-id="hifi-home" style="flex:1;overflow:auto;padding:22px 26px;display:flex;flex-direction:column;gap:18px">
           <div style="display:flex;align-items:baseline;gap:12px">
             <span style="font-size:20px;font-weight:700">{{ L.home_title }}</span>
             <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5a7089">2026-07-14 · Demo Project – A1 Tower</span>
@@ -162,7 +162,7 @@ input::placeholder{color:#4d6076}
           <div style="display:flex;flex-direction:column;gap:10px">
             <div style="display:flex;align-items:baseline;gap:10px">
               <span style="font-size:13.5px;font-weight:700">{{ L.launcher }}</span>
-              <span style="font-size:11px;color:#5a7089">A1–A4 live · A5–A10 Concept Preview</span>
+              <span style="font-size:11px;color:#5a7089">A1–A3 live · A4 hybrid · A5–A10 Concept Preview</span>
             </div>
             <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">
               <sc-for list="{{ appCards }}" as="ap" hint-placeholder-count="10">
@@ -182,13 +182,13 @@ input::placeholder{color:#4d6076}
 
       <!-- ─────────── WORKSPACE (1c dock shell) ─────────── -->
       <sc-if value="{{ isWs }}" hint-placeholder-val="{{ false }}">
-        <div data-screen-label="3D 工作區 Workspace" style="flex:1;display:flex;flex-direction:column;min-height:0">
+        <div data-screen-label="3D 工作區 Workspace" data-canon-id="hifi-workspace" style="flex:1;display:flex;flex-direction:column;min-height:0">
           <div style="display:flex;align-items:center;gap:6px;padding:8px 14px;border-bottom:1px solid rgba(120,160,210,.10);background:#0a1018;flex:none">
             <sc-for list="{{ dockTabs }}" as="d" hint-placeholder-count="5">
               <div onClick="{{ d.go }}" style="{{ d.style }}" style-hover="color:#dbe6f3">{{ d.label }}</div>
             </sc-for>
             <div style="flex:1"></div>
-            <span style="display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#6fd6ee;background:rgba(65,199,232,.08);border:1px solid rgba(65,199,232,.22);border-radius:999px;padding:4px 10px"><span style="width:6px;height:6px;border-radius:50%;background:#41c7e8;animation:pulse 2s infinite"></span>S-240601 · editor lease</span>
+            <span data-canon-id="hifi-workspace-lease-badge" style="display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#6fd6ee;background:rgba(65,199,232,.08);border:1px solid rgba(65,199,232,.22);border-radius:999px;padding:4px 10px"><span style="width:6px;height:6px;border-radius:50%;background:#41c7e8;animation:pulse 2s infinite"></span>S-240601 · editor lease</span>
             <span onClick="{{ inviteSpectator }}" style="display:flex;align-items:center;gap:5px;font-size:11px;color:#04121a;font-weight:700;background:linear-gradient(135deg,#41c7e8,#2f7bf6);border-radius:999px;padding:4px 12px;cursor:pointer;white-space:nowrap" style-hover="filter:brightness(1.12)">+ 邀請 Spectator</span>
             <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5a7089">60 FPS · 28 ms</span>
           </div>
@@ -356,7 +356,7 @@ input::placeholder{color:#4d6076}
 
               <sc-if value="{{ dockA4 }}" hint-placeholder-val="{{ false }}">
                 <div style="padding:14px;display:flex;flex-direction:column;gap:12px">
-                  <div style="display:flex;align-items:center;gap:8px"><span style="font-size:13.5px;font-weight:700">A4 {{ L.a4 }}</span><span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#4fd68a;background:rgba(49,197,109,.1);border:1px solid rgba(49,197,109,.25);border-radius:4px;padding:1px 6px">LIVE</span></div>
+                  <div style="display:flex;align-items:center;gap:8px"><span style="font-size:13.5px;font-weight:700">A4 {{ L.a4 }}</span><span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#4fd68a;background:rgba(49,197,109,.1);border:1px solid rgba(49,197,109,.25);border-radius:4px;padding:1px 6px">HYBRID</span></div>
                   <div style="display:flex;flex-direction:column;gap:6px">
                     <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;color:#4d6076;text-transform:uppercase">{{ L.nlq }}</span>
                     <div style="background:#0a1220;border:1px solid rgba(65,199,232,.3);border-radius:9px;padding:10px 12px;font-size:12px;color:#dbe6f3;line-height:1.5">找出 4F 所有防火門並標示未符合規範者<span style="display:inline-block;width:1px;height:13px;background:#41c7e8;margin-left:2px;animation:pulse 1.2s infinite;vertical-align:-2px"></span></div>
@@ -423,7 +423,7 @@ input::placeholder{color:#4d6076}
 
       <!-- ─────────── PIPELINE (1a for F1) ─────────── -->
       <sc-if value="{{ isPipe }}" hint-placeholder-val="{{ false }}">
-        <div data-screen-label="模型資料與轉檔 Pipeline" style="flex:1;overflow:auto;padding:22px 26px;display:flex;flex-direction:column;gap:16px">
+        <div data-screen-label="模型資料與轉檔 Pipeline" data-canon-id="hifi-pipeline" style="flex:1;overflow:auto;padding:22px 26px;display:flex;flex-direction:column;gap:16px">
           <div style="display:flex;align-items:center;gap:14px">
             <span style="font-size:20px;font-weight:700">{{ L.pipe_title }}</span>
             <div style="display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:10px;color:#5a8db0">
@@ -491,7 +491,7 @@ input::placeholder{color:#4d6076}
               </sc-for>
             </div>
             <!-- outbox -->
-            <div style="background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px">
+            <div data-canon-id="hifi-pipeline-outbox" style="background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px">
               <div style="display:flex;align-items:center;gap:8px"><span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">⑤ Callback Outbox</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:#e6b23e">{{ outboxCount }} {{ L.pending }}</span></div>
               <sc-for list="{{ outboxCards }}" as="o" hint-placeholder-count="3">
                 <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;padding:10px;display:flex;align-items:center;gap:8px">
@@ -533,7 +533,7 @@ input::placeholder{color:#4d6076}
 
       <!-- ─────────── OPS ─────────── -->
       <sc-if value="{{ isOps }}" hint-placeholder-val="{{ false }}">
-        <div data-screen-label="Runtime / Kit·GPU Ops" style="flex:1;overflow:auto;padding:22px 26px;display:flex;flex-direction:column;gap:16px">
+        <div data-screen-label="Runtime / Kit·GPU Ops" data-canon-id="hifi-ops" style="flex:1;overflow:auto;padding:22px 26px;display:flex;flex-direction:column;gap:16px">
           <span style="font-size:20px;font-weight:700">{{ L.ops_title }}</span>
           <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
             <div style="background:#0e1621;border:1px solid rgba(120,160,210,.12);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px">
@@ -582,7 +582,7 @@ input::placeholder{color:#4d6076}
 
       <!-- ─────────── CONCEPT (A5–A10) ─────────── -->
       <sc-if value="{{ isConcept }}" hint-placeholder-val="{{ false }}">
-        <div data-screen-label="Concept Preview" style="flex:1;overflow:auto;display:flex;flex-direction:column">
+        <div data-screen-label="Concept Preview" data-canon-id="hifi-concept" style="flex:1;overflow:auto;display:flex;flex-direction:column">
           <div style="display:flex;align-items:center;gap:10px;padding:12px 22px;border-bottom:1px solid rgba(120,160,210,.10);background:#0a1018">
             <span style="font-size:16px;font-weight:700">{{ conceptTitle }}</span>
             <span style="font-size:10px;color:#e6b23e;background:rgba(230,178,62,.1);border:1px solid rgba(230,178,62,.3);border-radius:5px;padding:2px 8px;font-family:'JetBrains Mono',monospace">Concept Preview / Roadmap</span>
@@ -671,7 +671,7 @@ class Component extends DCLogic {
       trigger: "觸發轉檔", retry: "重試", mksession: "建立 Review Session", enter3d: "進入 3D 工作區",
       pending: "待送", deliver: "立即回拋 deliver", browse: "物件瀏覽", recent: "最近事件",
       ops_title: "Runtime / Kit · GPU 營運", svc_health: "服務健康", empty: "無待進件",
-      concept_note: "點左欄 A1–A4 體驗 live 模組;本頁為概念稿",
+      concept_note: "點左欄 A1–A3 體驗 live 模組、A4 為 hybrid;本頁為概念稿",
       dock_issues: "Issues", outbox: "回拋 Outbox",
     } : {
       sub: "BIM Governance Console", search: "Search projects, models, issues, BCF…", project: "Project",
@@ -689,7 +689,7 @@ class Component extends DCLogic {
       trigger: "Trigger conversion", retry: "Retry", mksession: "Create Review Session", enter3d: "Enter 3D Workspace",
       pending: "pending", deliver: "Deliver now", browse: "Object browser", recent: "Recent events",
       ops_title: "Runtime / Kit · GPU Operations", svc_health: "Service health", empty: "No pending intake",
-      concept_note: "Click A1–A4 in sidebar for live modules; this page is a concept mock",
+      concept_note: "Click A1–A3 in sidebar for live modules, A4 is hybrid; this page is a concept mock",
       dock_issues: "Issues", outbox: "Deliver Outbox",
     };
 
@@ -715,7 +715,7 @@ class Component extends DCLogic {
       { code: "A1", label: zh ? "治理檢核" : "Rule Check", badge: "LIVE", tone: "live", act: goDock("a1") },
       { code: "A2", label: zh ? "版本 Diff" : "Version Diff", badge: "LIVE", tone: "live", act: goDock("a2") },
       { code: "A3", label: "Federation", badge: "LIVE", tone: "live", act: goDock("a3") },
-      { code: "A4", label: zh ? "語意查詢" : "Semantic Query", badge: "LIVE", tone: "live", act: goDock("a4") },
+      { code: "A4", label: zh ? "語意查詢" : "Semantic Query", badge: "HYBRID", tone: "live", act: goDock("a4") },
       { code: "A5", label: "IoT / FM", badge: "P3", tone: "p3", act: goConcept("a5") },
       { code: "A6", label: "4D / 5D", badge: "P4", tone: "p4", act: goConcept("a6") },
       { code: "A7", label: "Scan Compare", badge: "P4", tone: "p4", act: goConcept("a7") },
