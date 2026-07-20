@@ -25,7 +25,7 @@ a{color:#41c7e8;text-decoration:none}a:hover{color:#7adcf2;text-decoration:under
       <div style="width:34px;height:34px;border-radius:9px;background:radial-gradient(circle at 35% 35%,rgba(65,199,232,.9),rgba(47,123,246,.55) 60%,rgba(10,16,24,.2));display:flex;align-items:center;justify-content:center;color:#04121a;font-weight:700">⬡</div>
       <div style="display:flex;flex-direction:column">
         <span style="font-size:22px;font-weight:700">AI-BIM-governance · 前後端整合設計文件</span>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.1em;color:#5a7089;text-transform:uppercase">FE / BE Integrated Design Spec · v1 · 2026-07-14 · 對齊 repo 實碼與 tests/contracts</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.1em;color:#5a7089;text-transform:uppercase">FE / BE Integrated Design Spec · v2 · 2026-07-19 · doc-first canon v2(PR #360 採納)</span>
       </div>
       <a href="AI-BIM Console Hi-Fi.dc.html" style="margin-left:auto;display:flex;align-items:center;gap:8px;padding:9px 14px;border:1px solid rgba(65,199,232,.35);border-radius:9px;font-size:12px" style-hover="background:rgba(65,199,232,.08)">⬒ 開啟 Hi-Fi 互動原型 ↗</a>
     </div>
@@ -101,10 +101,10 @@ a{color:#41c7e8;text-decoration:none}a:hover{color:#7adcf2;text-decoration:under
         </div>
       </div>
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <div data-canon-id="c1-badges" style="display:flex;gap:8px;flex-wrap:wrap">
       <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">鐵律 1 — 大模型檔案(.ifc / .usdc)不出落地端;workflow callback與Cloud Ingest均只傳metadata/result ref</span>
       <span style="font-size:10.5px;color:#6fd6ee;background:rgba(65,199,232,.06);border:1px solid rgba(65,199,232,.2);border-radius:6px;padding:4px 10px">鐵律 2 — :8004 是瀏覽器唯一可達面;:49101/:49102/:8010 一律經 proxy</span>
-      <span style="font-size:10.5px;color:#b7a9ff;background:rgba(157,140,255,.06);border:1px solid rgba(157,140,255,.2);border-radius:6px;padding:4px 10px">鐵律 3 — /ui/open?session= handoff 凍結,byte-for-byte + CI guard</span>
+      <span style="font-size:10.5px;color:#b7a9ff;background:rgba(157,140,255,.06);border:1px solid rgba(157,140,255,.2);border-radius:6px;padding:4px 10px">鐵律 3 — /ui/open?session= handoff 凍結(行為級:301/302 精確性、redirect target=viewer origin、參數白名單 streamRole/kitInstanceId 轉發+白名單外一律剝除(如 signalingServer);CI guard=coordinator vitest dev-console.test.ts)。known gap(不是 pass):e2e/ui-open-regression.spec.ts 尚未接 CI——接 CI=follow-up(第一順位)</span>
     </div>
   </div>
 
@@ -115,20 +115,20 @@ a{color:#41c7e8;text-decoration:none}a:hover{color:#7adcf2;text-decoration:under
       <span style="font-size:17px;font-weight:700">部署拓撲 — Mode C Hybrid(Docker web-plane + host-native GPU)</span>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
-      <div style="background:#0a1220;border:1px solid rgba(65,199,232,.22);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px">
+      <div data-canon-id="c2-docker-web-plane" style="background:#0a1220;border:1px solid rgba(65,199,232,.22);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px">
         <div style="display:flex;align-items:center;gap:8px"><span style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.1em;color:#6fd6ee;text-transform:uppercase">Docker Web-Plane</span><span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">compose.runtime-manager.yml</span></div>
         <div style="display:flex;flex-direction:column;gap:6px;font-size:12px;color:#b9c9da">
           <div style="display:flex;gap:8px;align-items:center"><span style="width:8px;height:8px;border-radius:3px;background:#41c7e8"></span>coordinator container <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:#5a7089">:8004</span></div>
-          <div style="display:flex;gap:8px;align-items:center"><span style="width:8px;height:8px;border-radius:3px;background:#41c7e8"></span>UnifiedConsole 靜態 bundle(由 coordinator 服務)<span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:#5a7089">/ui</span></div>
-          <div style="display:flex;gap:8px;align-items:center"><span style="width:8px;height:8px;border-radius:3px;background:#4fd68a"></span>governance-service container <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:#5a7089">:49102</span></div>
-          <div style="display:flex;gap:8px;align-items:center"><span style="width:8px;height:8px;border-radius:3px;background:#e6b23e"></span>MinIO(或既有物件儲存)<span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:#5a7089">s3</span></div>
+          <div style="display:flex;gap:8px;align-items:center"><span style="width:8px;height:8px;border-radius:3px;background:#41c7e8"></span>UnifiedConsole = coordinator image 內建 bundle(非獨立 service)<span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:#5a7089">/ui</span></div>
+          <div style="display:flex;gap:8px;align-items:center"><span style="width:8px;height:8px;border-radius:3px;background:#e6b23e"></span>外部既有物件儲存(非本 compose service;coordinator 以 MINIO_WATCH_* env 對接)<span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:#5a7089">s3</span></div>
           <div style="display:flex;gap:8px;align-items:center"><span style="width:8px;height:8px;border-radius:3px;background:#8aa0b8"></span>shared volume:storage/ifc-cache/ · artifacts</div>
         </div>
       </div>
-      <div style="background:#0a1220;border:1px solid rgba(157,140,255,.22);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px">
+      <div data-canon-id="c2-host-native-gpu" style="background:#0a1220;border:1px solid rgba(157,140,255,.22);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px">
         <div style="display:flex;align-items:center;gap:8px"><span style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.1em;color:#b7a9ff;text-transform:uppercase">Windows Host-Native GPU</span><span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">compose.host-kit.yml · .env.web-plane.host-kit</span></div>
         <div style="display:flex;flex-direction:column;gap:6px;font-size:12px;color:#b9c9da">
           <div style="display:flex;gap:8px;align-items:center"><span style="width:8px;height:8px;border-radius:3px;background:#9d8cff"></span>conversion authority(host-native python)<span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:#5a7089">:49101</span></div>
+          <div style="display:flex;gap:8px;align-items:center"><span style="width:8px;height:8px;border-radius:3px;background:#4fd68a"></span>governance-service(host-native,不在任何 compose 內)<span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:#5a7089">:49102</span></div>
           <div style="display:flex;gap:8px;align-items:center"><span style="width:8px;height:8px;border-radius:3px;background:#9d8cff"></span>Omniverse Kit + RTX renderer <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:#5a7089">:49100 sig · :47998 media</span></div>
           <div style="display:flex;gap:8px;align-items:center"><span style="width:8px;height:8px;border-radius:3px;background:#9d8cff"></span>kit-manager-api <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:#5a7089">:8010(loopback)</span></div>
           <div style="display:flex;gap:8px;align-items:center"><span style="width:8px;height:8px;border-radius:3px;background:#5a7089"></span>NVIDIA driver / GPU 0..n · VRAM 監控</div>
@@ -151,28 +151,30 @@ a{color:#41c7e8;text-decoration:none}a:hover{color:#7adcf2;text-decoration:under
     </div>
     <div style="display:grid;grid-template-columns:1.1fr 1fr;gap:14px">
       <div style="display:flex;flex-direction:column;gap:8px">
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">Route Map(:8004/ui hash routing)</span>
-        <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden;font-size:11.5px">
-          <div style="display:grid;grid-template-columns:170px 1fr;gap:10px;padding:7px 12px;color:#5a7089;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase"><span>Route</span><span>頁面 / 行為</span></div>
-          <div style="display:grid;grid-template-columns:170px 1fr;gap:10px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#6fd6ee">#/home</span><span style="color:#b9c9da">總覽 Mission Control(KPI · 生產線快照 · 警示 · 啟動器)</span></div>
-          <div style="display:grid;grid-template-columns:170px 1fr;gap:10px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#6fd6ee">#/workspace?dock=a1..a4|issues</span><span style="color:#b9c9da">3D 工作區:左 Stage 樹 · 中 WebRTC viewport · 右工具 Dock</span></div>
-          <div style="display:grid;grid-template-columns:170px 1fr;gap:10px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#6fd6ee">#/pipeline</span><span style="color:#b9c9da">模型資料與轉檔生產線(進件→轉檔→Session→Handoff→回拋)</span></div>
-          <div style="display:grid;grid-template-columns:170px 1fr;gap:10px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#6fd6ee">#/ops</span><span style="color:#b9c9da">Runtime / Kit · GPU 營運(instances · fleet · structLog · outbox)</span></div>
-          <div style="display:grid;grid-template-columns:170px 1fr;gap:10px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#6fd6ee">#/app/:slug</span><span style="color:#b9c9da">A5–A10 Concept Preview(iot-fm · 4d-5d · reality-capture · synthetic-data · robot-sim · ai-decision)</span></div>
-          <div style="display:grid;grid-template-columns:170px 1fr;gap:10px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#e6b23e">/ui/open?session=</span><span style="color:#b9c9da">凍結 302 handoff → viewer origin(不經 SPA;CI guard)</span></div>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">Route Map(:8004/ui hash routing) — 目標 / 現況對照</span>
+        <div data-canon-id="c3-route-map" style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden;font-size:11.5px">
+          <div style="display:grid;grid-template-columns:150px 1fr 1.5fr;gap:10px;padding:7px 12px;color:#5a7089;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase"><span>Route</span><span>目標</span><span>現況 2026-07-18</span></div>
+          <div style="display:grid;grid-template-columns:150px 1fr 1.5fr;gap:10px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#6fd6ee">#/home</span><span style="color:#b9c9da">總覽 Mission Control(KPI · 生產線快照 · 警示 · 啟動器)</span><span style="color:#4fd68a">已達成:hash key #home(前綴 / 可省略)渲染 UnifiedShell(page=home)+ UnifiedHomePage,與目標一致</span></div>
+          <div style="display:grid;grid-template-columns:150px 1fr 1.5fr;gap:10px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#6fd6ee">#/workspace?dock=a1..a4|issues</span><span style="color:#b9c9da">3D 工作區:左 Stage 樹 · 中 WebRTC viewport · 右工具 Dock</span><span style="color:#e6b23e">未做:#/workspace 路由 key 不存在;實掛 #a1..#a4 四個獨立 hash key(各自渲染 WorkspacePage,initialDock 隨 key),?dock= 為疊加覆寫查詢(如 #a1?dock=issues),非統一主鍵語法</span></div>
+          <div style="display:grid;grid-template-columns:150px 1fr 1.5fr;gap:10px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#6fd6ee">#/pipeline</span><span style="color:#b9c9da">模型資料與轉檔生產線(進件→轉檔→Session→Handoff→回拋)</span><span style="color:#4fd68a">已達成:hash key #pipeline 存在,渲染 UnifiedShell(page=pipe)+ PipelinePage,與目標一致</span></div>
+          <div style="display:grid;grid-template-columns:150px 1fr 1.5fr;gap:10px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#6fd6ee">#/ops</span><span style="color:#b9c9da">Runtime / Kit · GPU 營運(instances · fleet · structLog · outbox)</span><span style="color:#e6b23e">未做:#/ops 路由 key 不存在;現況實掛 #runtime(渲染 UnifiedShell(page=ops)+ OpsPage),語意對應但字面 key 不同</span></div>
+          <div style="display:grid;grid-template-columns:150px 1fr 1.5fr;gap:10px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#6fd6ee">#/app/:slug</span><span style="color:#b9c9da">A5–A10 Concept Preview(iot-fm · 4d-5d · reality-capture · synthetic-data · robot-sim · ai-decision)</span><span style="color:#e6b23e">未做:字面 key 不存在;A5–A10 現況實掛 #a5..#a10(渲染 ConceptPage);另有 #app/&lt;slug&gt; prefix 由 legacy AppVisionPage(文字願景頁)承接,與 ConceptPage 並存=雙 concept surface;收斂=follow-up ch-g-route-convergence</span></div>
+          <div style="display:grid;grid-template-columns:150px 1fr 1.5fr;gap:10px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#e6b23e">/ui/open?session=</span><span style="color:#b9c9da">凍結 302 handoff → viewer origin(不經 SPA;CI guard)</span><span style="color:#4fd68a">已達成且鐵律凍結(§01 鐵律 3);非 CH-G 收斂範疇</span></div>
         </div>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase;margin-top:6px">舊路由收斂(CH-G)</span>
-        <div style="display:flex;flex-wrap:wrap;gap:5px;font-family:'JetBrains Mono',monospace;font-size:10px">
-          <span style="color:#8aa0b8;border:1px solid rgba(120,160,210,.14);border-radius:5px;padding:2px 8px">#coordinator → #/home</span>
-          <span style="color:#8aa0b8;border:1px solid rgba(120,160,210,.14);border-radius:5px;padding:2px 8px">#intake · #conv · #minio → #/pipeline</span>
-          <span style="color:#8aa0b8;border:1px solid rgba(120,160,210,.14);border-radius:5px;padding:2px 8px">#runtime · #gpu · #kit → #/ops</span>
-          <span style="color:#8aa0b8;border:1px solid rgba(120,160,210,.14);border-radius:5px;padding:2px 8px">#review · #viewer · #a1..a4 → #/workspace?dock=…</span>
-          <span style="color:#8aa0b8;border:1px solid rgba(120,160,210,.14);border-radius:5px;padding:2px 8px">/ui/console → 301 /ui(顯式,禁萬用)</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase;margin-top:6px">舊路由收斂(CH-G) — 目標 / 現況對照</span>
+        <div data-canon-id="c3-legacy-route-convergence" style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden;font-size:11px">
+          <div style="display:grid;grid-template-columns:1.3fr 0.9fr 1.6fr;gap:10px;padding:7px 12px;color:#5a7089;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase"><span>舊路由 / 現況入口</span><span>目標(收斂去向)</span><span>現況 2026-07-18</span></div>
+          <div style="display:grid;grid-template-columns:1.3fr 0.9fr 1.6fr;gap:10px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="color:#8aa0b8">#coordinator · #conv · #minio · #gpu · #kit · #review · #viewer</span><span style="color:#8aa0b8">依序併入 #/home · #/pipeline · #/pipeline · #/ops · #/ops · #/workspace?dock=… · #/workspace?dock=…</span><span style="color:#e6b23e">未做:七條全數原地渲染各自 legacy 頁(CoordinatorPage / ConversionPage / ModelDataPage / GpuReviewRoomPage / KitConsolePage / ReviewRoomPage / ViewerPresentationPage),零 redirect</span></div>
+          <div style="display:grid;grid-template-columns:1.3fr 0.9fr 1.6fr;gap:10px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="color:#8aa0b8">#intake</span><span style="color:#8aa0b8">→ #/pipeline</span><span style="color:#e6b23e">已有 alias 但非收斂目標:AliasRedirect 導至 legacy #minio,非收斂去向 #/pipeline(該 unified route key 已存在、見上表,惟 alias 尚未改指)</span></div>
+          <div style="display:grid;grid-template-columns:1.3fr 0.9fr 1.6fr;gap:10px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="color:#8aa0b8">#runtime</span><span style="color:#8aa0b8">→ #/ops(原表歸類)</span><span style="color:#4fd68a">語意已達成、非經收斂重導:#runtime 本身即 unified Ops 現行 hash key(UnifiedShell(page=ops)+ OpsPage);不屬零 redirect legacy 頁,不與上列七條同歸類</span></div>
+          <div style="display:grid;grid-template-columns:1.3fr 0.9fr 1.6fr;gap:10px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="color:#8aa0b8">#a1 · #a2 · #a3 · #a4</span><span style="color:#8aa0b8">→ #/workspace?dock=…(原表歸類)</span><span style="color:#4fd68a">語意已達成、非經收斂重導:四鍵本身即 unified Workspace 現行 hash key(渲染 WorkspacePage,initialDock 隨 key;?dock= 可疊加覆寫);不屬零 redirect legacy 頁,不與上列七條同歸類</span></div>
+          <div style="display:grid;grid-template-columns:1.3fr 0.9fr 1.6fr;gap:10px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="color:#8aa0b8">/ui/console</span><span style="color:#8aa0b8">→ 301 /ui(顯式,禁萬用)</span><span style="color:#4fd68a">已落地(唯一機器化 redirect;實碼證據見 gap ledger item 1)</span></div>
         </div>
+        <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">CH-G(URL 收斂)整體狀態:未做(目標)——僅 /ui/console→301 與 #intake→#minio alias 落地;其餘收斂待實作;follow-up ch-g-route-convergence</span>
       </div>
       <div style="display:flex;flex-direction:column;gap:8px">
         <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">元件樹(UnifiedConsole)</span>
-        <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:1.9;color:#8aa0b8">
+        <div data-canon-id="c3-component-tree" style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:1.9;color:#8aa0b8">
           <span style="color:#dbe6f3">AppShell</span>(TopBar · SideNav · Router · ToastHost)<br>
           ├─ <span style="color:#6fd6ee">HomePage</span> KpiRow · PipelineSnapshot · AlertFeed · AppLauncher<br>
           ├─ <span style="color:#6fd6ee">WorkspacePage</span><br>
@@ -185,7 +187,7 @@ a{color:#41c7e8;text-decoration:none}a:hover{color:#7adcf2;text-decoration:under
           └─ <span style="color:#6fd6ee">ConceptPage</span>(A5–A10 稿)<br>
         </div>
         <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase;margin-top:6px">共用 hooks / 契約層(A1–A4 不各自複製)</span>
-        <div style="display:flex;flex-wrap:wrap;gap:5px;font-family:'JetBrains Mono',monospace;font-size:10px">
+        <div data-canon-id="c3-shared-hooks" style="display:flex;flex-wrap:wrap;gap:5px;font-family:'JetBrains Mono',monospace;font-size:10px">
           <span style="color:#b7a9ff;border:1px solid rgba(157,140,255,.25);border-radius:5px;padding:2px 8px">useViewerInteraction</span>
           <span style="color:#b7a9ff;border:1px solid rgba(157,140,255,.25);border-radius:5px;padding:2px 8px">useViewerRoleState(editor/spectator gate)</span>
           <span style="color:#b7a9ff;border:1px solid rgba(157,140,255,.25);border-radius:5px;padding:2px 8px">useUsdStageTree</span>
@@ -197,22 +199,24 @@ a{color:#41c7e8;text-decoration:none}a:hover{color:#7adcf2;text-decoration:under
       </div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">Console 不長 WebRTC — 3D 一律 HandoffButton → /ui/open?session=;Workspace 是 viewer 殼的宿主</span>
-      <span style="font-size:10.5px;color:#6fd6ee;background:rgba(65,199,232,.06);border:1px solid rgba(65,199,232,.2);border-radius:6px;padding:4px 10px">spectator 一律 readonly:resolveGovPanelState 統一 gate 所有 Dock 的寫入行為</span>
-      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">i18n:zh-Hant 預設 · en 切換;字典置 console/i18n.ts</span>
+      <span data-canon-id="c3-badge-workspace-handoff" style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">【目標】Workspace 內嵌 viewport(EmbeddedViewer 跨-origin iframe,video 留 viewer origin;/ui/open 凍結面照舊併存供獨立 viewer/spectator 邀請)。【現況】unified Workspace 為靜態示意,內嵌=CH-I</span>
+      <span data-canon-id="c3-badge-spectator-gate" style="font-size:10.5px;color:#6fd6ee;background:rgba(65,199,232,.06);border:1px solid rgba(65,199,232,.2);border-radius:6px;padding:4px 10px">【目標】spectator 一律 readonly,resolveGovPanelState 統一 gate 全部 Dock 寫入。【現況】gate 僅接線 legacy viewer overlay 路徑(windowOverlayGlue→Window/GovernanceOverlay);unified docks 現為 fixture 殼、無真實寫入亦無 gate 接線——接真 API+gate=follow-up unified-docks-real-api</span>
+      <span data-canon-id="c3-badge-i18n" style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">i18n:zh-Hant 預設 · en 切換;runtime(t/getLang/setLang/useLang)在 console/i18n.ts,中央字典現置 console/unified/fixtures.ts(getL/Dict);搬遷至獨立字典檔屬 backlog、非本 change</span>
+      <span data-canon-id="c3-badge-dual-track" style="font-size:10.5px;color:#6fd6ee;background:rgba(65,199,232,.06);border:1px solid rgba(65,199,232,.2);border-radius:6px;padding:4px 10px">雙軌現況(2026-07-18):unified 殼(#home/#a1..#a10/#pipeline/#runtime)=Hi-Fi 像素級移植 fixture(data-prov=fixture,不打 /api);真實整合頁活在 legacy 深連結 #a1-workbench(A1)/#semantic-search(A4)等,無 nav 入口。issues 權威入口【目標】=unified #a1?dock=issues;legacy #issues 列退役清單。收斂=follow-up unified-docks-real-api</span>
     </div>
 
-    <div style="border-top:1px solid rgba(120,160,210,.1);margin-top:2px;padding-top:16px;display:flex;flex-direction:column;gap:8px">
-      <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">與「元件樹(UnifiedConsole)」/「共用 hooks / 契約層」的命名核對(code-truth,對照 console/unified/*)</span>
+    <div data-canon-id="c3-naming-check" style="border-top:1px solid rgba(120,160,210,.1);margin-top:2px;padding-top:16px;display:flex;flex-direction:column;gap:8px">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">與「元件樹(UnifiedConsole)」/「共用 hooks / 契約層」的現況對照(doc-first,對照 console/unified/*)</span>
       <div style="background:#0a1220;border:1px solid rgba(230,178,62,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px;font-size:10.5px;color:#8aa0b8">
-        <span>左側「元件樹(UnifiedConsole)」與「共用 hooks / 契約層」是先前的理想化命名,與現行 <span style="font-family:'JetBrains Mono',monospace">web-viewer-sample/src/console/</span> 程式碼不符;以下以程式碼為準,不回頭改程式碼命名以遷就舊文件:</span>
+        <span>左側「元件樹(UnifiedConsole)」與「共用 hooks / 契約層」是先前的理想化命名,與現行 <span style="font-family:'JetBrains Mono',monospace">web-viewer-sample/src/console/</span> 程式碼不符;以下逐條列現況對照:</span>
         <span>• <span style="font-family:'JetBrains Mono',monospace;color:#e6b23e;text-decoration:line-through">AppShell</span> 不存在(console/ 下 0 命中)→ 現況是 <span style="font-family:'JetBrains Mono',monospace;color:#4fd68a">EdgeConsole.tsx</span>(hash router + 雙殼分流)+ <span style="font-family:'JetBrains Mono',monospace;color:#4fd68a">UnifiedShell.tsx</span>(unified 頁鍵的殼)。</span>
         <span>• <span style="font-family:'JetBrains Mono',monospace;color:#e6b23e;text-decoration:line-through">UsdStageTreePane(useUsdStageTree) / ViewportLayer = RemoteVideo(#remote-video)+ OverlayHud + SelectionCallout</span> 不存在於 <span style="font-family:'JetBrains Mono',monospace">console/unified/</span> → Workspace 的 Stage 樹與 Viewport 是 <span style="font-family:'JetBrains Mono',monospace;color:#4fd68a">WorkspacePage.tsx</span> 內聯 JSX,頁面內沒有真實 <span style="font-family:'JetBrains Mono',monospace">&lt;video&gt;</span> 元素(WebRTC 播放發生在 /ui/open?session= handoff 之後的獨立 viewer origin,不在此頁內)。</span>
         <span>• <span style="font-family:'JetBrains Mono',monospace;color:#e6b23e;text-decoration:line-through">DockPanel ⟨DockA1 · DockA2 · DockA3 · DockA4 · DockIssues⟩</span> 不存在 → 實名為 <span style="font-family:'JetBrains Mono',monospace;color:#4fd68a">docks.tsx</span> 匯出的 <span style="font-family:'JetBrains Mono',monospace;color:#4fd68a">A1Dock / A2Dock / A3Dock / A4Dock / IssuesDock</span>,由 <span style="font-family:'JetBrains Mono',monospace">WorkspacePage.tsx</span> 依 <span style="font-family:'JetBrains Mono',monospace">key={page}</span> 換頁時整頁重建掛載。</span>
         <span>• <span style="font-family:'JetBrains Mono',monospace;color:#e6b23e;text-decoration:line-through">useViewerInteraction / useViewerRoleState / useUsdStageTree / useStageArtifactBinding / viewerCommandClient / viewerObservationStore</span> 在 <span style="font-family:'JetBrains Mono',monospace">console/unified/</span> 下皆 0 命中 → 現況是各頁自帶 React <span style="font-family:'JetBrains Mono',monospace">useState/useCallback/useEffect</span>(已於 <span style="font-family:'JetBrains Mono',monospace">WorkspacePage.tsx</span> 驗證),共用狀態集中在 <span style="font-family:'JetBrains Mono',monospace;color:#4fd68a">UnifiedShell.tsx</span> 的 <span style="font-family:'JetBrains Mono',monospace;color:#4fd68a">UnifiedStateProvider / useUnifiedState</span>。</span>
         <span>• <span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">mappingCache</span> 確實存在,但落在 <span style="font-family:'JetBrains Mono',monospace">console/governance/mappingCache.ts</span>(舊 EdgeConsole 治理子系統),未被任何 <span style="font-family:'JetBrains Mono',monospace">console/unified/*.tsx</span> 匯入 — 不可假設 Workspace 已經接上它。</span>
-        <span>• §04 DataChannel 表把 <span style="font-family:'JetBrains Mono',monospace">selectPrimsRequest</span> / <span style="font-family:'JetBrains Mono',monospace">composeStageRequest</span> 標「待補」與現況不符,兩者已在 <span style="font-family:'JetBrains Mono',monospace">Window.tsx</span> + <span style="font-family:'JetBrains Mono',monospace">harness/fakeKit.ts</span> 實作並有測試覆蓋;真正待補、且 IN 方向查無實作的只有 <span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">commandRejected</span>(spectator / 權威拒絕回饋,見 §04)。</span>
+        <span>• DataChannel 唯一待補=<span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">commandRejected</span>(見 §04)。</span>
       </div>
+      <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">上列為 2026-07-18 現況;理想 IA(含元件/hook 命名)為應建目標,收斂路徑見 §07 分期與 follow-up changes;命名遷移屬實作 PR 範疇</span>
     </div>
   </div>
 
@@ -223,10 +227,11 @@ a{color:#41c7e8;text-decoration:none}a:hover{color:#7adcf2;text-decoration:under
       <span style="font-size:17px;font-weight:700">API 契約 — 對齊實碼與 tests/contracts</span>
       <span style="font-size:11px;color:#5a7089">Payload 以 tests/contracts/*.json 為最高標準</span>
     </div>
+    <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">現況覆蓋:僅 ifc_ready_payload v1.1.0 與 conversion_result_callback v1.0.0 兩檔+structured-log 子樹;A1–A10 各 API 的契約檔=planned(class: in-repo-fullstack-pending),落地前該 API 的 payload 權威=本節文字+實碼</span>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
       <!-- coordinator -->
-      <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden">
+      <div data-canon-id="c4-coordinator-api" style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden">
         <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:rgba(65,199,232,.05)"><span style="font-size:12.5px;font-weight:700">bim-review-coordinator</span><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#6fd6ee">:8004</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">Express / TS</span></div>
         <div style="display:flex;flex-direction:column;font-family:'JetBrains Mono',monospace;font-size:10.5px">
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#4fd68a">POST</span><span style="color:#b9c9da">/api/external/ifc-ready <span style="color:#5a7089">— 唯一對外 intake(驗簽+冪等)</span></span></div>
@@ -238,20 +243,21 @@ a{color:#41c7e8;text-decoration:none}a:hover{color:#7adcf2;text-decoration:under
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#6fd6ee">GET</span><span style="color:#b9c9da">/api/review-sessions/:id/stream-config · /events · /lifecycle-events</span></div>
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#4fd68a">POST</span><span style="color:#b9c9da">/:id/viewer-leases/claim · /:leaseId/heartbeat · /release <span style="color:#5a7089">— editor 單佔</span></span></div>
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#4fd68a">POST</span><span style="color:#b9c9da">/:id/stage-binding <span style="color:#5a7089">— BindingComposer 交易套用</span></span></div>
-          <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#e6b23e">PROXY</span><span style="color:#b9c9da">/api/governance/* → :49102 · /api/kit/* → :8010(loopback)</span></div>
+          <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#e6b23e">PROXY</span><span style="color:#b9c9da">/api/governance/* → :49102 · /api/kit/* → :8010(loopback) <span style="color:#5a7089">— 顯式白名單轉發(governanceProxy.ts ~30 條、kit 5 條),新後端端點須手動加入白名單,非萬用轉發</span></span></div>
+          <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#6fd6ee">GET</span><span style="color:#b9c9da">/api/governance/element-mapping/for-session/:id <span style="color:#5a7089">— coordinator 直服(不經 governanceProxy.ts),轉打 conversion authority :49101(非 :49102);同名 for-ifc-ready 變體現只見於 sibling 端點(rule-runs、search/model,經 governanceProxy.ts→:49102),element-mapping 本身尚無此變體</span></span></div>
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#4fd68a">POST</span><span style="color:#b9c9da">/api/internal/conversion-result · /callback-outbox/deliver</span></div>
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#6fd6ee">GET</span><span style="color:#b9c9da">/ui <span style="color:#5a7089">(React bundle)</span> · /ui/open?session= <span style="color:#e6b23e">302 凍結</span> · /health</span></div>
         </div>
       </div>
       <!-- governance -->
-      <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden">
+      <div data-canon-id="c4-governance-api" style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden">
         <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:rgba(49,197,109,.05)"><span style="font-size:12.5px;font-weight:700">governance-service</span><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#4fd68a">:49102</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">FastAPI · 經 proxy</span></div>
         <div style="display:flex;flex-direction:column;font-family:'JetBrains Mono',monospace;font-size:10.5px">
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#4fd68a">POST</span><span style="color:#b9c9da">/api/rule-runs <span style="color:#5a7089">→ 202(A1)</span></span></div>
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#6fd6ee">GET</span><span style="color:#b9c9da">/api/rule-runs/:id · /results · /failures · /export</span></div>
-          <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#4fd68a">POST</span><span style="color:#b9c9da">/api/diffs <span style="color:#5a7089">→ 202(A2)</span> · /:id/apply-overlay</span></div>
+          <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#4fd68a">POST</span><span style="color:#b9c9da">/api/diffs <span style="color:#5a7089">→ 202(A2)</span> · /:id/apply-overlay <span style="color:#5a7089">→ 501(overlay 實走前端 DataChannel highlightPrimsRequest,client-side)</span></span></div>
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#6fd6ee">GET</span><span style="color:#b9c9da">/api/diffs/:id · /items · /issue-impact</span></div>
-          <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#4fd68a">POST</span><span style="color:#b9c9da">/api/federated-sets <span style="color:#5a7089">(A3)</span> · /:id/members · /validate-coords · /build</span></div>
+          <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#4fd68a">POST</span><span style="color:#b9c9da">/api/federated-sets <span style="color:#5a7089">(A3) → 201(同步 create;A1/A2 為 202 async)</span> · /:id/members · /validate-coords · /build</span></div>
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#6fd6ee">GET</span><span style="color:#b9c9da">/api/federated-sets/:id · /review-room</span></div>
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#4fd68a">POST</span><span style="color:#b9c9da">/api/search/model <span style="color:#5a7089">(A4)</span> · GET /api/search/llm-status</span></div>
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#4fd68a">POST</span><span style="color:#b9c9da">/api/issues · /:id/transition · /from-rule-run/:runId · /from-diff/:diffId</span></div>
@@ -260,7 +266,7 @@ a{color:#41c7e8;text-decoration:none}a:hover{color:#7adcf2;text-decoration:under
         </div>
       </div>
       <!-- conversion + kit -->
-      <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden">
+      <div data-canon-id="c4-conversion-kit-api" style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden">
         <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:rgba(157,140,255,.05)"><span style="font-size:12.5px;font-weight:700">conversion authority + kit-manager</span><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">:49101 · :8010</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">internal-only</span></div>
         <div style="display:flex;flex-direction:column;font-family:'JetBrains Mono',monospace;font-size:10.5px">
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#4fd68a">POST</span><span style="color:#b9c9da">/api/conversions/ifc-to-usdc <span style="color:#5a7089">→ 202</span></span></div>
@@ -271,7 +277,7 @@ a{color:#41c7e8;text-decoration:none}a:hover{color:#7adcf2;text-decoration:under
         <div style="padding:10px 12px;border-top:1px solid rgba(120,160,210,.07);font-size:10.5px;color:#5a7089">Kit 控制權威留 kit-manager(RK1);coordinator 僅 reverse-proxy,不落地任何 Kit 決策。</div>
       </div>
       <!-- datachannel -->
-      <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden">
+      <div data-canon-id="c4-datachannel-protocol" style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden">
         <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:rgba(230,178,62,.05)"><span style="font-size:12.5px;font-weight:700">Kit DataChannel 訊息協定</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">streamMessages.ts · Window._handleCustomEvent</span></div>
         <div style="display:flex;flex-direction:column;font-family:'JetBrains Mono',monospace;font-size:10.5px">
           <div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#e6b23e">OUT</span><span style="color:#b9c9da">openStageRequest <span style="color:#5a7089">{url, stage_composition, artifact_bindings}</span></span></div>
@@ -287,7 +293,7 @@ a{color:#41c7e8;text-decoration:none}a:hover{color:#7adcf2;text-decoration:under
 
     <!-- payload contracts -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
-      <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
+      <div data-canon-id="c4-contract-ifc-ready-payload" style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
         <div style="display:flex;align-items:center;gap:8px"><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#6fd6ee">contract</span><span style="font-size:12.5px;font-weight:700">ifc_ready_payload · v1.1.0</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">tests/contracts/ifc_ready_payload.json</span></div>
         <pre style="margin:0;background:#070d15;border:1px solid rgba(120,160,210,.1);border-radius:8px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.7;color:#8aa0b8;overflow:auto">POST /api/external/ifc-ready
 headers: X-Correlation-Id · X-Idempotency-Key · X-Webhook-Secret
@@ -301,7 +307,7 @@ optional: external_conversion_task_id · project_display_name
         <span style="font-size:10.5px;color:#5a7089">冪等以 idempotency_key;IP allowlist 限落地端內網;auth provider 可抽換(intranet-dev)。</span>
         <span style="font-size:10.5px;color:#8aa0b8">Governed additive target: POST /api/external/source-bundles/ready只接producer ready claim,coordinator仍重驗manifest;既有/api/external/ifc-ready不變,source READY不寫cloud lineage tables。</span>
       </div>
-      <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
+      <div data-canon-id="c4-contract-conversion-result-callback" style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
         <div style="display:flex;align-items:center;gap:8px"><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#6fd6ee">contract</span><span style="font-size:12.5px;font-weight:700">conversion_result_callback · v1.0.0</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">tests/contracts/conversion_result_callback.json</span></div>
         <pre style="margin:0;background:#070d15;border:1px solid rgba(120,160,210,.1);border-radius:8px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.7;color:#8aa0b8;overflow:auto">coordinator → 雲端 bim-control(Outbox 送出)
 events: conversion_result_ready | conversion_failed
@@ -313,8 +319,9 @@ required: event · tenant_id · project_id
           artifact_summary { usdc_openable, mapped_count,
             unmapped_count, coverage_ratio, coverage_status }</pre>
         <span style="font-size:10.5px;color:#e6b23e">HARD RULE:METADATA-ONLY — 禁止攜帶 .usdc / 3D bytes;大檔留落地端,雲端只拿 ref 與摘要。</span>
+        <span style="font-size:10.5px;color:#e6b23e">現行防護=blocklist(FORBIDDEN_KEYS+USDC magic/長度啟發),可被非黑名單 key 繞過;強化為 allowlist=follow-up metadata-allowlist:planned(class: in-repo-fullstack-pending);鐵律語意不變。</span>
       </div>
-      <div style="grid-column:1 / -1;background:#0a1220;border:1px solid rgba(230,178,62,.3);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
+      <div data-canon-id="c4-contract-lineage-publication" style="grid-column:1 / -1;background:#0a1220;border:1px solid rgba(230,178,62,.3);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
         <div style="display:flex;align-items:center;gap:8px"><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#e6b23e">CLOUD API ONLY</span><span style="font-size:12.5px;font-weight:700">lineage-publication · cloud-lineage-publication/v1</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">openspec/changes/rvt-ifc-usdc-lineage/contracts/</span></div>
         <pre style="margin:0;background:#070d15;border:1px solid rgba(120,160,210,.1);border-radius:8px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.7;color:#8aa0b8;overflow:auto">edge bim-review-coordinator → [external] company-cloud bim-control → cloud MySQL
 POST /api/v1/lineage-publications
@@ -338,7 +345,7 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
     </div>
 
     <!-- F1 -->
-    <div style="display:flex;flex-direction:column;gap:0">
+    <div data-canon-id="c5-f1-flow" style="display:flex;flex-direction:column;gap:0">
       <span style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;color:#6fd6ee;text-transform:uppercase;margin-bottom:8px">F1 · IFC Intake → Conversion → Review Session → 3D Handoff</span>
       <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:0;margin-bottom:6px">
         <span style="text-align:center;font-size:10.5px;font-weight:700;color:#8aa0b8">落地端 IFC Worker</span>
@@ -418,7 +425,7 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
     </div>
 
     <!-- F2 -->
-    <div style="display:flex;flex-direction:column;gap:0">
+    <div data-canon-id="c5-f2-flow" style="display:flex;flex-direction:column;gap:0">
       <span style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;color:#6fd6ee;text-transform:uppercase;margin-bottom:8px">F2 · A1 Rule-run → Viewer 疊加 → Issue / BCF → 回拋</span>
       <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:0;margin-bottom:6px">
         <span style="text-align:center;font-size:10.5px;font-weight:700;color:#8aa0b8">使用者</span>
@@ -497,47 +504,47 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
       <span style="font-size:11px;color:#5a7089">coordinator ledger(檔案/SQLite)· governance-service db.py</span>
     </div>
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
-      <div style="background:#0a1220;border:1px solid rgba(65,199,232,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+      <div data-canon-id="c6-ifc-ready-record" style="background:#0a1220;border:1px solid rgba(65,199,232,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#6fd6ee">IfcReadyRecord</span>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">job_id · tenant_id · project_id<br>external_model_version_id<br>source_ifc {ref, etag}<br>idempotency_key · shadow<br>status: received→converting→ready</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">job_id · tenant_id · project_id<br>external_model_version_id<br>source_ifc {ref, etag}<br>idempotency_key · shadow<br>status: accepted|queued_for_conversion|dispatched|dispatch_failed|dropped_on_restart|failed <span style="color:#5a7089">(IfcReadyIntakeStatus;實碼證據見 gap ledger item 7)</span></span>
       </div>
-      <div style="background:#0a1220;border:1px solid rgba(65,199,232,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+      <div data-canon-id="c6-conversion-job" style="background:#0a1220;border:1px solid rgba(65,199,232,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#6fd6ee">ConversionJob(ledger)</span>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">conversion_job_id · source_ref<br>status: queued|running|done|failed<br>artifacts {usdc_ref, mapping_ref, manifest_ref}<br>quality {mapped, unmapped, coverage_ratio}<br>retry_count · priority</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">conversion_job_id · source_ref<br>status: detected|queued|converting|ready|failed <span style="color:#5a7089">(ConversionLedgerStatus;實碼證據見 gap ledger item 7)</span><br>artifacts {usdc_ref, mapping_ref, manifest_ref}<br>quality {mapped, unmapped, coverage_ratio}<br>retry_count · priority</span>
       </div>
-      <div style="background:#0a1220;border:1px solid rgba(65,199,232,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+      <div data-canon-id="c6-review-session" style="background:#0a1220;border:1px solid rgba(65,199,232,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#6fd6ee">ReviewSession</span>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">session_id(lwv_|review_session_)<br>stage_binding {primary_usdc, sublayers[], load_order}<br>participants[] · events[] · lifecycle<br>first_frame_ms · status: open→closed</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">session_id(lwv_|review_session_)<br>stage_binding {primary_usdc, sublayers[], load_order}<br>participants[] · events[] · lifecycle<br>first_frame_ms · status: open→closed <span style="color:#5a7089">(session ready = DataChannel ready ∧ first_frame_at ∧ stage matched ∧ 目標 usd_prim_path 存在,四條件同時成立才觸發高亮、viewer 回 ack 才算完成;R-C4 撈回)</span></span>
       </div>
-      <div style="background:#0a1220;border:1px solid rgba(65,199,232,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+      <div data-canon-id="c6-viewer-lease" style="background:#0a1220;border:1px solid rgba(65,199,232,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#6fd6ee">ViewerLease</span>
         <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">lease_id · session_id<br>role: editor(單佔)| spectator(n)<br>heartbeat_at · expires_at<br>claim → heartbeat → release</span>
       </div>
-      <div style="background:#0a1220;border:1px solid rgba(49,197,109,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+      <div data-canon-id="c6-rule-run" style="background:#0a1220;border:1px solid rgba(49,197,109,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#4fd68a">RuleRun(A1)</span>
         <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">run_id · model_ref · ruleset[]<br>status(202 async)· results[]<br>failures[] {guid, rule, severity, msg}<br>export(csv/json)</span>
       </div>
-      <div style="background:#0a1220;border:1px solid rgba(49,197,109,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+      <div data-canon-id="c6-diff" style="background:#0a1220;border:1px solid rgba(49,197,109,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#4fd68a">Diff(A2)</span>
         <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">diff_id · base_ref · target_ref<br>items[] {guid, kind: added|removed|modified, delta}<br>overlay_state · issue_impact</span>
       </div>
-      <div style="background:#0a1220;border:1px solid rgba(49,197,109,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+      <div data-canon-id="c6-federated-set" style="background:#0a1220;border:1px solid rgba(49,197,109,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#4fd68a">FederatedSet(A3)</span>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">set_id · members[] {domain, usd_path,<br>&nbsp;&nbsp;version, order, transform}<br>coord_check: ok|mismatch<br>built_stage_ref · review_room(session)</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">set_id · members[] {domain, usd_path,<br>&nbsp;&nbsp;version, order, transform}<br>coord_check: ok|mismatch <span style="color:#5a7089">(mismatch 阻擋 build/交付、保留已輸入資料,R-C4 撈回)</span><br>built_stage_ref · review_room(session)</span>
       </div>
-      <div style="background:#0a1220;border:1px solid rgba(49,197,109,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+      <div data-canon-id="c6-issue-bcf-topic" style="background:#0a1220;border:1px solid rgba(49,197,109,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#4fd68a">Issue / BCF Topic</span>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">issue_id · title · element_refs[guid]<br>source: rule-run|diff|manual<br>status transitions(open→in-review→resolved)<br>bcf: topic_guid · viewpoint · BCF 2.1 export</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">issue_id · title · element_refs[guid]<br>source: rule-run|diff|manual<br>status transitions(open→in-review→resolved)<br>bcf: topic_guid · viewpoint · BCF 2.1 export <span style="color:#5a7089">(現行 export gate=kind=issue/有 ifc_guid,與 source 無關;撈回之「限 rule-run|diff 匯出、manual 排除」為未採納收緊目標、待使用者裁,見 recovered-requirements.md R3(R-C4))</span></span>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px">
-      <div style="background:#0a1220;border:1px solid rgba(157,140,255,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+      <div data-canon-id="c6-element-mapping" style="background:#0a1220;border:1px solid rgba(157,140,255,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#b7a9ff">ElementMapping(轉檔產物)</span>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">ifc_guid ↔ usd_prim_path ↔ ifc_type/name — highlight/focus/選取回灌 的橋;由 /api/governance/element-mapping/for-session/:id 供 UI,前端 mappingCache 快取</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">ifc_guid ↔ usd_prim_path ↔ ifc_type/name — highlight/focus/選取回灌 的橋;由 /api/governance/element-mapping/for-session/:id 供 UI,前端 mappingCache 快取 <span style="color:#5a7089">(usd_prim_path 缺失/null → 該列 disabled、不得發 highlightPrimsRequest;A1/A2/A4 共同鐵律,R-C4 撈回)</span></span>
       </div>
-      <div style="background:#0a1220;border:1px solid rgba(230,178,62,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+      <div data-canon-id="c6-callback-outbox-lineage-outbox" style="background:#0a1220;border:1px solid rgba(230,178,62,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <span style="font-size:12px;font-weight:700;color:#e6b23e">CallbackOutbox / LineagePublicationOutbox</span>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">workflow: conversion_result_ready|conversion_failed · metadata-only · pending→sent|dead-letter<br>lineage: lineage_result_published|lineage_result_health_changed · stable event/digest · DISABLED|PENDING|RETRYING|DELIVERED|DEAD_LETTER|CONFLICT<br>兩者contract/ACK分離;cloud delivery不阻擋edge READY/AVAILABLE</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">workflow: conversion_result_ready|conversion_failed · metadata-only · pending→sent|dead-letter <span style="color:#4fd68a">— 已實作</span><br>lineage: lineage_result_published|lineage_result_health_changed · stable event/digest · DISABLED|PENDING|RETRYING|DELIVERED|DEAD_LETTER|CONFLICT <span style="color:#e6b23e">— planned(class: in-repo-fullstack-pending)——coordinator 現況僅 3 態 outbox,六態契約在 openspec/changes/rvt-ifc-usdc-lineage(未實作);實作=follow-up lineage-outbox-impl</span><br>兩者contract/ACK分離;cloud delivery不阻擋edge READY/AVAILABLE</span>
       </div>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:6px;font-family:'JetBrains Mono',monospace;font-size:10px;color:#8aa0b8">
@@ -551,6 +558,47 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
       <span style="border:1px solid rgba(120,160,210,.14);border-radius:5px;padding:3px 9px">ConversionJob / Issue —summary→ CallbackOutbox → cloud workflow</span>
       <span style="border:1px solid rgba(230,178,62,.25);border-radius:5px;padding:3px 9px">ResultManifest —locator+summary→ LineagePublicationOutbox → external bim-control → cloud MySQL</span>
     </div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">domain 實體(A5–A10) — R-C4 撈回,全列 planned(class: in-repo-fullstack-pending);外接引擎分類仍以 §08 domain-reality 表為準,本表不改</span>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+        <div data-canon-id="c6-scenario" style="background:#0a1220;border:1px dashed rgba(230,178,62,.35);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+          <span style="font-size:12px;font-weight:700;color:#e6b23e">Scenario(A6/A10)</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">scenario_id · baseline_id · name<br>assumptions[] · input_refs[] · created_by</span>
+          <span style="font-size:9.5px;color:#5a7089">A6/A10 的基準與替代方案;不得以畫面卡片值充當輸入</span>
+        </div>
+        <div data-canon-id="c6-telemetry-sample" style="background:#0a1220;border:1px dashed rgba(230,178,62,.35);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+          <span style="font-size:12px;font-weight:700;color:#e6b23e">TelemetrySample(A5/A9)</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">source_id · point_code · value<br>unit · observed_at · quality</span>
+          <span style="font-size:9.5px;color:#5a7089">A5/A9 時序量測;value/unit/observed_at/quality 不可拆開單獨顯示</span>
+        </div>
+        <div data-canon-id="c6-work-order" style="background:#0a1220;border:1px dashed rgba(230,178,62,.35);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+          <span style="font-size:12px;font-weight:700;color:#e6b23e">WorkOrder(A5)</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">work_order_id · asset_id · issue_id<br>status · assignee · due_at · source_ref</span>
+          <span style="font-size:9.5px;color:#5a7089">A5 維保閉環;必要時連到上方共同 Issue / BCF Topic 卡</span>
+        </div>
+        <div data-canon-id="c6-schedule-activity" style="background:#0a1220;border:1px dashed rgba(230,178,62,.35);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+          <span style="font-size:12px;font-weight:700;color:#e6b23e">ScheduleActivity(A6)</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">activity_id · wbs_code<br>planned/actual dates · progress<br>cost_code · element_guids[]</span>
+          <span style="font-size:9.5px;color:#5a7089">A6 甘特、EVM 與 3D overlay 的共同鍵</span>
+        </div>
+        <div data-canon-id="c6-capture-job-deviation" style="background:#0a1220;border:1px dashed rgba(230,178,62,.35);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+          <span style="font-size:12px;font-weight:700;color:#e6b23e">CaptureJob / Deviation(A7)</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">capture_job_id · source_uri/hash<br>transform · rms · element_guid<br>deviation_mm · tolerance_mm</span>
+          <span style="font-size:9.5px;color:#5a7089">A7 對齊與偏差;精度與 tolerance 必須可追溯,未對齊前禁止顯 deviation</span>
+        </div>
+        <div data-canon-id="c6-dataset-job" style="background:#0a1220;border:1px dashed rgba(230,178,62,.35);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+          <span style="font-size:12px;font-weight:700;color:#e6b23e">DatasetJob(A8)</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">dataset_job_id · stage_hash<br>camera/seed · outputs[]<br>status · artifact_refs[]</span>
+          <span style="font-size:9.5px;color:#5a7089">A8 每筆輸出可回溯場景/相機/seed/annotator·writer 版本;job failure 留在本實體自身 status,不自動轉共同 Issue</span>
+        </div>
+        <div data-canon-id="c6-robot-mission" style="background:#0a1220;border:1px dashed rgba(230,178,62,.35);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+          <span style="font-size:12px;font-weight:700;color:#e6b23e">RobotMission(A9)</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">mission_id · mode · robot_id<br>route/waypoints · sensor_pack<br>status · event_refs[]</span>
+          <span style="font-size:9.5px;color:#5a7089"><span style="font-family:'JetBrains Mono',monospace;color:#dbe6f3">mode=simulation|physical</span> 須由後端回傳並顯眼,不可由 UI 猜測;預設僅 simulation</span>
+        </div>
+      </div>
+      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">共同 Issue 出海口(見上方 Issue / BCF Topic 卡)之 source 現況值＝rule-run|diff|manual(對映 A1/A2 建立路徑);是否擴充為逐 app 歸屬(A1–A10)須新增獨立欄位、不得覆寫本欄既有列舉語意——R-C4 撈回候選之未裁決項,見 recovered-requirements.md,不入本節。</span>
+    </div>
   </div>
 
   <!-- ═══════ 07 實作分期 ═══════ -->
@@ -560,7 +608,7 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
       <span style="font-size:17px;font-weight:700">實作分期 — 每期一 PR,done = Playwright browser E2E 證據</span>
       <span style="font-size:11px;color:#5a7089">對齊 docs/frontend-redesign-implementation-notes.md 的 CH 分期</span>
     </div>
-    <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden;font-size:11.5px">
+    <div data-canon-id="c7-ch-schedule-table" style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden;font-size:11.5px">
       <div style="display:grid;grid-template-columns:64px 1.4fr 2fr 1.4fr;gap:10px;padding:8px 14px;color:#5a7089;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase"><span>期</span><span>範圍</span><span>本設計對映</span><span>E2E 證據</span></div>
       <div style="display:grid;grid-template-columns:64px 1.4fr 2fr 1.4fr;gap:10px;padding:8px 14px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">CH-0</span><span style="color:#b9c9da">FakeAppStreamer harness + Playwright</span><span style="color:#8aa0b8">?harness=1 回放 DataChannel 同形 payload;工作區可決定性截圖</span><span style="color:#5a7089">console smoke · viewer-harness-boot</span></div>
       <div style="display:grid;grid-template-columns:64px 1.4fr 2fr 1.4fr;gap:10px;padding:8px 14px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">CH-A</span><span style="color:#b9c9da">Token + 三欄殼</span><span style="color:#8aa0b8">本文件視覺 token(深藍 console)+ Workspace 殼(樹/視/Dock)</span><span style="color:#5a7089">shell 三欄 render</span></div>
@@ -570,13 +618,14 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
       <div style="display:grid;grid-template-columns:64px 1.4fr 2fr 1.4fr;gap:10px;padding:8px 14px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">CH-E</span><span style="color:#b9c9da">Console 合併到 :8004/ui</span><span style="color:#8aa0b8">本 IA 全部頁面(#/home · #/workspace · #/pipeline · #/ops)上線</span><span style="color:#5a7089">intake-session-created · /ui/open regression</span></div>
       <div style="display:grid;grid-template-columns:64px 1.4fr 2fr 1.4fr;gap:10px;padding:8px 14px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">CH-F</span><span style="color:#b9c9da">BindingComposer</span><span style="color:#8aa0b8">A3 Dock + stage-binding 交易套用(多 USDC / primary / load_order)</span><span style="color:#5a7089">binding-applied · 誠實降級</span></div>
       <div style="display:grid;grid-template-columns:64px 1.4fr 2fr 1.4fr;gap:10px;padding:8px 14px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">CH-G</span><span style="color:#b9c9da">URL 收斂</span><span style="color:#8aa0b8">§03 舊路由表;禁 /ui/* 萬用吃掉 /ui/open;CI guard</span><span style="color:#5a7089">ui-open-regression · redirect 精確性</span></div>
+      <div style="display:grid;grid-template-columns:64px 1.4fr 2fr 1.4fr;gap:10px;padding:8px 14px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">CH-H</span><span style="color:#b9c9da">semantic viewer 家族(H1/H2/H3)</span><span style="color:#8aa0b8">code 已出貨(viewer/viewer.css、Window.tsx 標籤)</span><span style="color:#5a7089">既有 e2e(gov-viewer-layout.spec · element-semantics.spec)</span></div>
+      <div style="display:grid;grid-template-columns:64px 1.4fr 2fr 1.4fr;gap:10px;padding:8px 14px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">CH-I</span><span style="color:#b9c9da">Workspace 內嵌 viewport</span><span style="color:#8aa0b8">理想元件樹 RemoteVideo 升格應建;EmbeddedViewer iframe 方案+lease 掛載+signaling 消毒等價防護+spectator 政策(KIT_SPECTATOR_COUNT 預設 0、邀請連結真複製)</span><span style="color:#5a7089">follow-up embedded-viewport</span></div>
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <div data-canon-id="c7-residual-badges" style="display:flex;gap:8px;flex-wrap:wrap">
       <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">A5–A10:僅 Concept 路由 + 概念稿,不做假後端;每一模組落地前先補 governance-service 對應 API 與契約測試</span>
-      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">變更守則:gitnexus_impact → 修改 → 契約測試綠 → AI journal 留痕(docs/ai_journal/changes.jsonl)</span>
+      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">變更守則:gitnexus_impact → 修改 → 契約測試綠 → 變更留痕(OpenSpec change 目錄 openspec/changes/&lt;id&gt;/ + PR body 的 AI Coding Governance 表)</span>
       <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">CH-C 殘留:selectPrimsRequest/composeStageRequest 已於 Window.tsx 實作(fakeKit.ts harness 佐證);commandRejected(spectator / 權威拒絕回饋)仍待補,詳見 §04</span>
-      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">OpenSpec change align-frontend-design-system-reference 尚有 task 2.4–2.8 未完成,阻塞 archive(見 openspec/changes/align-frontend-design-system-reference/tasks.md)</span>
-      <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">已知不一致:該 OpenSpec change 的 documentation-source-of-truth/spec.md 仍引用已刪除的 docs/plans/TRUTH·TARGET·PROCESS·BACKLOG(#342 後僅存 docs-plans-README.md 指向本文件);僅在此記錄,不代為修改 OpenSpec 檔案</span>
+      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">OpenSpec change align-frontend-design-system-reference 尚未 archive;剩餘工作與 archive 前提以其 tasks.md <span style="font-weight:700">現行版本</span>為準(歷史版本曾用不同任務編號,已重構),動前端視覺前先讀該檔(openspec/changes/align-frontend-design-system-reference/tasks.md)</span>
     </div>
   </div>
 
@@ -585,37 +634,37 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
     <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
       <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#e6b23e">08</span>
       <span style="font-size:17px;font-weight:700">AI Coding 交付守則 — 給 Codex / Claude Code 的任務包規範</span>
-      <span style="font-size:11px;color:#5a7089">圖片決定「長相」· 文字契約決定「行為」· repo 決定「真相」</span>
+      <span style="font-size:11px;color:#5a7089">圖片決定「長相」· 文字契約決定「行為」· repo 決定「現況」</span>
     </div>
 
     <!-- 三層輸入 + 權威順序 -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
       <div style="display:flex;flex-direction:column;gap:8px">
         <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">三層輸入 — 20 張圖 + repo 各管什麼</span>
-        <div style="background:#0a1220;border:1px solid rgba(65,199,232,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:4px">
+        <div data-canon-id="c8-input-scenario-images" style="background:#0a1220;border:1px solid rgba(65,199,232,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:4px">
           <div style="display:flex;align-items:center;gap:8px"><span style="font-size:12.5px;font-weight:700">10 張應用場景圖</span><span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#6fd6ee">Visual Requirement</span></div>
           <span style="font-size:10.5px;color:#8aa0b8">視覺方向 · 資訊架構 · 畫面密度 · KPI/表格/Viewer/Inspector 相對位置 · 第一眼焦點。<span style="color:#5a7089">只當視覺上下文,不能只靠圖片傳達任務。</span></span>
         </div>
-        <div style="background:#0a1220;border:1px solid rgba(49,197,109,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:4px">
+        <div data-canon-id="c8-input-prompt-board" style="background:#0a1220;border:1px solid rgba(49,197,109,.2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:4px">
           <div style="display:flex;align-items:center;gap:8px"><span style="font-size:12.5px;font-weight:700">10 張 AI Coding Prompt Board</span><span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#4fd68a">Implementation Intent</span></div>
           <span style="font-size:10.5px;color:#8aa0b8">元件拆分 · 狀態模型 · 建議 API · 互動事件 · 驗收條件 · mock data 結構。<span style="color:#e6b23e">其中 API 多為「建議」,不是現有契約。</span></span>
         </div>
-        <div style="background:#0a1220;border:1px solid rgba(157,140,255,.22);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:4px">
+        <div data-canon-id="c8-input-repo-authority" style="background:#0a1220;border:1px solid rgba(157,140,255,.22);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:4px">
           <div style="display:flex;align-items:center;gap:8px"><span style="font-size:12.5px;font-weight:700">現有 Repo</span><span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#b7a9ff">Authority · 真正權威</span></div>
           <span style="font-size:10.5px;color:#8aa0b8">技術棧 · 現有 API · 雲地邊界 · 已完成 vs roadmap · 既有 route/client/service/測試不可破壞。做法 = <span style="color:#dbe6f3">擴充現有 Console</span>,不是另建十個 app。</span>
         </div>
       </div>
       <div style="display:flex;flex-direction:column;gap:8px">
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">權威優先順序 — 衝突時由上而下裁決(寫進 AGENTS.md)</span>
-        <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden;font-size:11.5px">
-          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">1</span><span style="color:#dbe6f3;font-weight:500">既有 repository 程式碼與測試</span></div>
-          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">2</span><span style="color:#b9c9da">AGENTS.md 與 OpenSpec</span></div>
-          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">3</span><span style="color:#b9c9da">既有 API client 與後端契約(tests/contracts)</span></div>
-          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">4</span><span style="color:#b9c9da">書面 A1–A10 需求</span></div>
-          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">5</span><span style="color:#b9c9da">Prompt Board 文字</span></div>
-          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">6</span><span style="color:#b9c9da">應用場景圖(長相)</span></div>
-          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">7</span><span style="color:#5a7089">圖中示例數字與樣本資料(僅 fixture)</span></div>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">權威優先順序 — 衝突時由上而下裁決(AGENTS.md 參照本節,見 doc-first-canon-v2 提案;不重抄)</span>
+        <div data-canon-id="c8-authority-table" style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden;font-size:11.5px">
+          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">1</span><span style="color:#dbe6f3;font-weight:500">docs/plans 需求正本(設計文件 §01–§08;前端視覺 / 互動面 = Hi-Fi + ai-bim-governance.css 最高) —— 依領域分工</span></div>
+          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">2</span><span style="color:#b9c9da">tests/contracts/*.json(payload 委任,§04 保留)</span></div>
+          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">3</span><span style="color:#b9c9da">AGENTS.md / OpenSpec(治理程序)</span></div>
+          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">4</span><span style="color:#b9c9da">Prompt Board 文字(僅意圖參考)</span></div>
+          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">5</span><span style="color:#b9c9da">應用場景圖(僅視覺上下文)</span></div>
+          <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">6</span><span style="color:#5a7089">圖中示例數字(fixture)</span></div>
         </div>
+        <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">code + tests = runtime 現況的查證面;code 偏離本正本 = implementation gap 待修,不得以文件宣稱 runtime 已完成</span>
         <span style="font-size:10.5px;color:#5a7089">Codex 依 global → repository → nested directory 順序合併 AGENTS.md;技術棧、服務邊界、provenance 與驗收鐵律要寫進 repo,不能只放在圖片裡。</span>
       </div>
     </div>
@@ -624,7 +673,7 @@ ACK: 201 commit | 200 exact replay | 409 digest conflict</pre>
     <div style="display:flex;flex-direction:column;gap:8px">
       <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">四條鐵律 — 直接貼進任務 prompt</span>
       <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px">
-        <div style="background:#0a1220;border:1px solid rgba(65,199,232,.22);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
+        <div data-canon-id="c8-r1-stack-authority" style="background:#0a1220;border:1px solid rgba(65,199,232,.22);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
           <span style="font-size:12px;font-weight:700;color:#6fd6ee">R1 · 技術棧權威</span>
           <pre style="margin:0;background:#070d15;border:1px solid rgba(120,160,210,.1);border-radius:8px;padding:10px;font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.7;color:#8aa0b8;overflow:auto">Frontend stack authority:
 React + TypeScript + Vite
@@ -633,26 +682,31 @@ Do not introduce Vue, Pinia, Element Plus,
 or a second SPA</pre>
           <span style="font-size:10.5px;color:#8aa0b8">部分 Prompt Board 寫 Vue 3 / Pinia / Element Plus — 一律忽略。design token 沿用 <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">docs/plans/ai-bim-governance.css --ab-*</span> 單一真相源（production 真實 import，不手抄色碼、不平行建第二套 theme）；前身 edge-console.css --ec-* 已於 migrate-console-to-hifi-design 退役。</span>
         </div>
-        <div style="background:#0a1220;border:1px solid rgba(65,199,232,.22);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
+        <div data-canon-id="c8-r1a-brand-theme" style="background:#0a1220;border:1px solid rgba(65,199,232,.22);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
           <span style="font-size:12px;font-weight:700;color:#6fd6ee">R1a · 品牌色與主題（有意識決策，非疏忽覆蓋）</span>
           <pre style="margin:0;background:#070d15;border:1px solid rgba(120,160,210,.1);border-radius:8px;padding:10px;font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.7;color:#8aa0b8;overflow:auto">Primary brand: NVIDIA green #76b900 → Hi-Fi cyan #41c7e8 / #2f7bf6
 Light theme: REMOVED (localStorage aibim:ec-theme + .theme-light retired)
 UnifiedConsole = dark-only console</pre>
           <span style="font-size:10.5px;color:#8aa0b8">使用者在完整揭露現況（含原「NVIDIA 綠為核心品牌」設計註解與可用的亮/暗切換）後拍板：以 <span style="color:#dbe6f3">AI-BIM Console Hi-Fi.dc.html</span> 為前端唯一操作標準、ai-bim-governance.css 為唯一 design token 權威。深色青系是刻意的品牌方向調整——<span style="color:#e6b23e">請勿</span>視為 regression 而「修回」NVIDIA 綠或補回亮色主題。依據：OpenSpec change <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">migrate-console-to-hifi-design</span>。</span>
         </div>
-        <div style="background:#0a1220;border:1px solid rgba(49,197,109,.22);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
+        <div data-canon-id="c8-r2-api-tristate" style="background:#0a1220;border:1px solid rgba(49,197,109,.22);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
           <span style="font-size:12px;font-weight:700;color:#4fd68a">R2 · API 三態,絕不臆造後端</span>
-          <pre style="margin:0;background:#070d15;border:1px solid rgba(120,160,210,.1);border-radius:8px;padding:10px;font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.7;color:#8aa0b8;overflow:auto">Existing endpoint → directly integrate
-Planned endpoint  → typed adapter + mock impl
-Missing endpoint  → NOT_BUILT state
+          <pre style="margin:0;background:#070d15;border:1px solid rgba(120,160,210,.1);border-radius:8px;padding:10px;font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.7;color:#8aa0b8;overflow:auto">Existing               → directly integrate
+In-canon + repo 內可建   → 後端 + 前端一次建到位(預設,不做 mock 過渡)
+In-canon + 依賴外接引擎  → 不得已才 mock(掛 ProvTag 誠實標示)
+Missing(正本沒列)       → NOT_BUILT(想做先走 design-canon-change-control R-A1 提案)
 Never silently invent a production backend</pre>
-          <span style="font-size:10.5px;color:#8aa0b8">圖中 /api/a4/semantic/query、/api/a6/kpi、/api/a8/jobs 等皆屬「建議」;正式契約以 §04 + tests/contracts 為準。瀏覽器仍只連 :8004,禁直連 :49101/:49102/:8010。</span>
+          <span style="font-size:10.5px;color:#8aa0b8">圖中 /api/a4/semantic/query、/api/a6/kpi、/api/a8/jobs 等皆屬「建議」,依上方 R2 三態分類、非現有契約;正式契約以 §04 + tests/contracts 為準。瀏覽器仍只連 :8004,禁直連 :49101/:49102/:8010。例外::49100(WebRTC signaling)與 spectator 埠段、:47998(media)為合法瀏覽器直連面(串流本體)。</span>
         </div>
-        <div style="background:#0a1220;border:1px solid rgba(230,178,62,.25);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
+        <div data-canon-id="c8-r3-provenance" style="background:#0a1220;border:1px solid rgba(230,178,62,.25);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
           <span style="font-size:12px;font-weight:700;color:#e6b23e">R3 · 資料出處誠實(Provenance)</span>
-          <span style="font-size:10.5px;color:#8aa0b8">圖中 68% progress、312 MB/s、1,248 kWh、robot mission running… 一律是 <span style="color:#dbe6f3">fixture</span>,不可標成 live production data。每個數據面板掛 <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">ProvenanceTag(mock | live)</span>;未接通的 backend action 誠實停用並標 <span style="color:#e6b23e">Concept Preview / Roadmap</span>,不做假成功。</span>
+          <span style="font-size:10.5px;color:#8aa0b8">圖中 68% progress、312 MB/s、1,248 kWh、robot mission running… 等示意數字一律是 <span style="color:#dbe6f3">fixture</span>,並以 <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">data-prov</span> 標示,不可標成 live production data。每個數據面板掛實碼元件 <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">ProvTag</span>(對應 7 值 <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">Prov</span>:asbuilt/artifact/demo/p1/p15/p3/p4;實碼證據見 gap ledger item 9),依 7 值誠實分類;unified 層另以 <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">data-prov="fixture|live"</span> 標示。未接通的 backend action 誠實停用並標 <span style="color:#e6b23e">Concept Preview / Roadmap</span>,不做假成功。</span>
+          <div data-canon-id="c8-r3-oq1-open-decision" style="background:#070d15;border:1px dashed rgba(154,167,190,.4);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:5px">
+            <div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;font-weight:700;color:#9aa7be">OQ-1 · Open Decision(未裁決,預設不採用)</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089;text-transform:uppercase">non-normative</span></div>
+            <span style="font-size:10.5px;color:#8aa0b8">是否新增 <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#e6b23e">asbuilt-partial</span> 之類外接待決 <span style="font-family:'JetBrains Mono',monospace;font-size:10px">Prov</span> 值(失真項 9 遺留)——<span style="color:#dbe6f3">預設不採用、不併入 7 值集</span>;normative enum 維持 7 值 <span style="font-family:'JetBrains Mono',monospace;font-size:10px">Prov</span> 封閉。擴充唯一路徑 = <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">design-canon-change-control</span> R-A1 提案 + 使用者核准。</span>
+          </div>
         </div>
-        <div style="background:#0a1220;border:1px solid rgba(157,140,255,.25);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
+        <div data-canon-id="c8-r4-one-outcome-one-task" style="background:#0a1220;border:1px solid rgba(157,140,255,.25);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
           <span style="font-size:12px;font-weight:700;color:#b7a9ff">R4 · 一個 outcome 一個 task</span>
           <span style="font-size:10.5px;color:#8aa0b8">不要一次「完成 A1–A10」。每個 task 明確給 <span style="color:#dbe6f3">outcome + constraints + definition of done</span>(route 存在 · loading/empty/error/retry · 契約測試綠 · Playwright E2E 截圖證據),依下方 Task 0–12 順序執行,project 保留共同 repo 上下文。</span>
         </div>
@@ -660,7 +714,7 @@ Never silently invent a production backend</pre>
     </div>
 
     <!-- Hi-Fi 驗證鏈 -->
-    <div style="display:flex;flex-direction:column;gap:8px">
+    <div data-canon-id="c8-hifi-verification-chain" style="display:flex;flex-direction:column;gap:8px">
       <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">Hi-Fi 前端視覺驗證鏈 — 改前端視覺前的「verify」是這條,不是肉眼比對截圖</span>
       <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden">
         <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:rgba(230,178,62,.05)"><span style="font-size:12.5px;font-weight:700">design-system reference gate</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">pinned manifest → structural gate → Playwright visual/semantic evidence</span></div>
@@ -670,26 +724,37 @@ Never silently invent a production backend</pre>
         <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;padding:8px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">4</span><div style="display:flex;flex-direction:column;gap:2px"><span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#dbe6f3">web-viewer-sample/scripts/capture-design-system-reference.mjs</span><span style="font-size:10.5px;color:#8aa0b8"><span style="color:#e6b23e;font-weight:600">唯一</span>受認可的 rebaseline 手段——必須帶 <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">--rebaseline --confirm-rebaseline</span> 兩旗標(單一旗標會被腳本拒絕)。禁止手動覆寫 golden 圖或繞過此腳本「順手」更新基準。</span></div></div>
       </div>
       <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">Hi-Fi 驅動的前端改動,「verify」= 讓上面第 2–3 步綠燈,不是自己截圖比對覺得像;沒跑這條鏈就宣稱完成,不滿足 R4 definition of done 的「Playwright E2E 截圖證據」項</span>
-      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">此驗證鏈由 OpenSpec change <span style="font-family:'JetBrains Mono',monospace;font-size:10px">align-frontend-design-system-reference</span> 管理,尚未 archive;tasks.md 的 2.4–2.8(functional/runtime producer 補齊剩餘路由 · 11 個語意案例的 approved state variants · branch-protection 掛上 required check · 獨立 review authority · runner image/font fingerprint pin)仍未全部打勾,3.4 明確以此為 archive 前提——動前端視覺前,AI coding agent 應先讀該 change 目前的 tasks.md,不要預設這條 gate 已經全線接通。</span>
+      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">此驗證鏈由 OpenSpec change <span style="font-family:'JetBrains Mono',monospace;font-size:10px">align-frontend-design-system-reference</span> 管理,尚未 archive;剩餘工作與 archive 前提以其 tasks.md <span style="font-weight:700">現行版本</span>為準(歷史版本曾用不同任務編號,已重構)——動前端視覺前,AI coding agent 應先讀該 change 目前的 tasks.md,不要預設這條 gate 已經全線接通。</span>
     </div>
 
     <!-- Task 順序 + 模組真實程度 -->
     <div style="display:grid;grid-template-columns:1fr 1.15fr;gap:14px">
       <div style="display:flex;flex-direction:column;gap:8px">
         <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">Task 0–12 建議順序(對映 §07 CH 分期)</span>
-        <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden;font-size:11px">
+        <div data-canon-id="c8-task-sequence-table" style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden;font-size:11px">
           <div style="display:grid;grid-template-columns:34px 1fr;gap:8px;padding:5px 12px"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">0</span><span style="color:#b9c9da">Design system + shell + route + feature status</span></div>
           <div style="display:grid;grid-template-columns:34px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">1–3</span><span style="color:#b9c9da">A1 / A2 / A3 vertical slice(接真 API)</span></div>
           <div style="display:grid;grid-template-columns:34px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">4</span><span style="color:#b9c9da">Model Data + Runtime 共用元件(status rail · evidence)</span></div>
-          <div style="display:grid;grid-template-columns:34px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">5–10</span><span style="color:#b9c9da">A4–A9 contract-first prototype(typed adapter + fixture)</span></div>
+          <div style="display:grid;grid-template-columns:34px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">5–10</span><span style="color:#b9c9da">A5–A9:repo 內可建面全棧一次到位(預設,不做 mock 過渡);僅外接引擎面可 mock(掛 ProvTag);A4 已超前完成 deterministic 全棧</span></div>
           <div style="display:grid;grid-template-columns:34px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">11</span><span style="color:#b9c9da">A10 integrated dashboard</span></div>
           <div style="display:grid;grid-template-columns:34px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">12</span><span style="color:#b9c9da">Cross-page handoff + E2E + accessibility</span></div>
         </div>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase;margin-top:6px">Task↔CH Crosswalk(近似對映,非嚴格一對一)</span>
+        <div data-canon-id="c8-task-ch-crosswalk" style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden;font-size:11px">
+          <div style="display:grid;grid-template-columns:64px 150px 1fr;gap:8px;padding:5px 12px;color:#5a7089;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.06em;text-transform:uppercase"><span>Task</span><span>對應 CH</span><span>備註</span></div>
+          <div style="display:grid;grid-template-columns:64px 150px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">0</span><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">CH-0 / CH-A</span><span style="color:#8aa0b8">基建:FakeAppStreamer harness + Playwright(CH-0)、視覺 token + 三欄殼(CH-A)</span></div>
+          <div style="display:grid;grid-template-columns:64px 150px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">1–3</span><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">CH-B / CH-C / CH-E</span><span style="color:#8aa0b8">A1 / A2 / A3 真整合,已落地(樹↔聚焦與 hooks 抽取 · 串流角色權威 · console 合併到 :8004/ui)</span></div>
+          <div style="display:grid;grid-template-columns:64px 150px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">4</span><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">CH-E / CH-F</span><span style="color:#8aa0b8">Model Data + Runtime 共用元件(console 合併延伸;BindingComposer 交易套用)</span></div>
+          <div style="display:grid;grid-template-columns:64px 150px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">5–10</span><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">—(無對應 CH)</span><span style="color:#8aa0b8">feature 軸,§07 未設此區間對應 CH;依 R2 三態重詮釋(見左方 R2 卡)= repo 內可建面全棧一次到位,外接引擎面才 mock</span></div>
+          <div style="display:grid;grid-template-columns:64px 150px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">11–12</span><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">CH-G + 新期</span><span style="color:#8aa0b8">Task 12 跨頁/E2E 貼近 CH-G(URL 收斂,現況未做);Task 11 A10 整合儀表板未有對應 CH,擬由未來新期承接(§07 CH-H/CH-I,對應 item 18,已列入本文件)</span></div>
+        </div>
+        <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">CH=基礎建設軸(§07 分期;CH-0–CH-F 已出貨、CH-G 未做);Task=feature 軸(本節建議實作順序,尚未落地)。二軸非逐項嚴格對應,上表為近似區間對映;Task 5–10 無對應 CH 屬預期現象、非缺漏。</span>
         <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase;margin-top:6px">共用元件優先抽取(20 張圖重複 UI)</span>
+        <span style="font-size:10px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.22);border-radius:5px;padding:3px 8px">待抽取目標;現況 1/14 以此命名存在(僅 ProvTag,見 components.tsx),其餘 13 項功能近義物異名散落(Metric/FlowBar 等)——命名收斂於抽取時裁決</span>
         <div style="display:flex;flex-wrap:wrap;gap:5px;font-family:'JetBrains Mono',monospace;font-size:10px">
           <span style="color:#b7a9ff;border:1px solid rgba(157,140,255,.25);border-radius:5px;padding:2px 8px">MetricCard</span>
           <span style="color:#b7a9ff;border:1px solid rgba(157,140,255,.25);border-radius:5px;padding:2px 8px">StatusBadge</span>
-          <span style="color:#b7a9ff;border:1px solid rgba(157,140,255,.25);border-radius:5px;padding:2px 8px">ProvenanceTag</span>
+          <span style="color:#b7a9ff;border:1px solid rgba(157,140,255,.25);border-radius:5px;padding:2px 8px">ProvTag(既有)</span>
           <span style="color:#b7a9ff;border:1px solid rgba(157,140,255,.25);border-radius:5px;padding:2px 8px">EvidenceInspector</span>
           <span style="color:#b7a9ff;border:1px solid rgba(157,140,255,.25);border-radius:5px;padding:2px 8px">BimViewport</span>
           <span style="color:#b7a9ff;border:1px solid rgba(157,140,255,.25);border-radius:5px;padding:2px 8px">SplitCompareViewer</span>
@@ -704,34 +769,45 @@ Never silently invent a production backend</pre>
         </div>
       </div>
       <div style="display:flex;flex-direction:column;gap:8px">
-        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">A4–A10 初期真實程度(前端完整;domain engine 需另接)</span>
-        <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden;font-size:11px">
-          <div style="display:grid;grid-template-columns:96px 1fr;gap:8px;padding:5px 12px"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">A4 語意查詢</span><span style="color:#b9c9da">NL query · Evidence Trace · 3D 高亮<span style="color:#5a7089"> — 語意服務另接</span></span></div>
-          <div style="display:grid;grid-template-columns:96px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">A5 IoT / FM</span><span style="color:#b9c9da">空間樹 · KPI · 告警 · 工單<span style="color:#5a7089"> — IoT/WebSocket 先 mock</span></span></div>
-          <div style="display:grid;grid-template-columns:96px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">A6 4D / 5D</span><span style="color:#b9c9da">工期著色 · Gantt · EVM · S 曲線<span style="color:#5a7089"> — P6/成本後端另接</span></span></div>
-          <div style="display:grid;grid-template-columns:96px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">A7 Scan</span><span style="color:#b9c9da">BIM+點雲 · 偏差色帶 · RMS<span style="color:#5a7089"> — ICP/點雲引擎另接</span></span></div>
-          <div style="display:grid;grid-template-columns:96px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">A8 Synthetic</span><span style="color:#b9c9da">Stepper · DR 參數 · Job status<span style="color:#5a7089"> — Replicator 另接</span></span></div>
-          <div style="display:grid;grid-template-columns:96px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">A9 機器人</span><span style="color:#b9c9da">任務 · 3D 路徑 · telemetry<span style="color:#5a7089"> — Isaac/robot runtime 另接</span></span></div>
-          <div style="display:grid;grid-template-columns:96px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">A10 整合</span><span style="color:#b9c9da">碳排/能耗/法規/風險決策儀表板<span style="color:#5a7089"> — 各 domain service 另接</span></span></div>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">A4–A10 真實程度(A4=hybrid 已部分落地;A5–A10=Concept 稿,前端完整為目標)</span>
+        <div data-canon-id="c8-domain-reality-table" style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden;font-size:11px">
+          <div style="display:grid;grid-template-columns:96px 1fr;gap:8px;padding:5px 12px"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">A4 語意查詢</span><span style="color:#b9c9da">NL query · Evidence Trace · 3D 高亮<span style="color:#4fd68a"> — deterministic 檢索已全棧落地(governance-service/search,repo 內)</span><span style="color:#5a7089">;semantic 模式=外接 LLM(對應 a4-semantic-search-model-qa change),mock 邊界劃在 LLM 解讀層</span></span></div>
+          <div style="display:grid;grid-template-columns:96px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">A5 IoT / FM</span><span style="color:#b9c9da">空間樹 · KPI · 告警 · 工單<span style="color:#e6b23e"> — WS gateway + spatial-tree 掛接:planned(class: in-repo-fullstack-pending)</span><span style="color:#5a7089">;感測 feed:external-mock-legit(mock 合法,掛 ProvTag)</span></span></div>
+          <div style="display:grid;grid-template-columns:96px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">A6 4D / 5D</span><span style="color:#b9c9da">工期著色 · Gantt · EVM · S 曲線<span style="color:#e6b23e"> — 成本彙整:planned(class: in-repo-fullstack-pending)</span><span style="color:#5a7089">;成本/排程外部系統:external-mock-legit(mock 合法,掛 ProvTag)</span></span></div>
+          <div style="display:grid;grid-template-columns:96px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">A7 Scan</span><span style="color:#b9c9da">BIM+點雲 · 偏差色帶 · RMS<span style="color:#5a7089"> — 點雲 ICP:external-mock-legit(mock 合法,掛 ProvTag)</span></span></div>
+          <div style="display:grid;grid-template-columns:96px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">A8 Synthetic</span><span style="color:#b9c9da">Stepper · DR 參數 · Job status<span style="color:#5a7089"> — 合成資料引擎:external-mock-legit(mock 合法,掛 ProvTag)</span></span></div>
+          <div style="display:grid;grid-template-columns:96px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">A9 機器人</span><span style="color:#b9c9da">任務 · 3D 路徑 · telemetry<span style="color:#5a7089"> — 機器人 runtime:external-mock-legit(mock 合法,掛 ProvTag)</span></span></div>
+          <div style="display:grid;grid-template-columns:96px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">A10 整合</span><span style="color:#b9c9da">碳排/能耗/法規/風險決策儀表板<span style="color:#e6b23e"> — 聚合儀表板:planned(class: in-repo-fullstack-pending)</span><span style="color:#5a7089">;各 domain service:external-mock-legit(mock 合法,掛 ProvTag)</span></span></div>
         </div>
         <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase;margin-top:6px">餵法 → 成果對照</span>
         <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden;font-size:11px">
           <div style="display:grid;grid-template-columns:1fr 1.3fr;gap:8px;padding:5px 12px"><span style="color:#8aa0b8">只丟 20 張圖一個大 prompt</span><span style="color:#5a7089">漂亮 Demo;mock 多、元件重複、API 臆造</span></div>
-          <div style="display:grid;grid-template-columns:1fr 1.3fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#b9c9da">圖 + repo + 文字契約</span><span style="color:#8aa0b8">統一 shell;A1–A3 真整合;A4–A10 contract-first</span></div>
+          <div style="display:grid;grid-template-columns:1fr 1.3fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#b9c9da">圖 + repo + 文字契約</span><span style="color:#8aa0b8">統一 shell;A1–A3 真整合;A4 deterministic 已全棧;A5–A10 仍為概念稿(缺逐模組 task/E2E)</span></div>
           <div style="display:grid;grid-template-columns:1fr 1.3fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#dbe6f3;font-weight:500">模組獨立 task + contract + E2E DoD</span><span style="color:#4fd68a">可維護、可合併、可部署的產品級專案 ✓</span></div>
         </div>
       </div>
     </div>
 
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">結構 = modular monolith frontend(單一 SPA + features/a1..a10)— 不是 microfrontend,不是十套專案</span>
+    <div data-canon-id="c8-closing-badges" style="display:flex;gap:8px;flex-wrap:wrap">
+      <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">結構=modular monolith(單一 SPA)✔;<span style="color:#dbe6f3;font-weight:600">features/a1..a10 為目標佈局(現況=src/console/ 以扁平檔為主,另有 coordinator/unified/governance/modelData/viewer 五個既有功能子夾、皆非 aN 對齊,遷移屬未來實作 PR,非現況)</span>— 不是 microfrontend,不是十套專案</span>
       <span style="font-size:10.5px;color:#6fd6ee;background:rgba(65,199,232,.06);border:1px solid rgba(65,199,232,.2);border-radius:6px;padding:4px 10px">每個 feature 附 e2e/aN-*.spec.ts;done = 契約測試綠 + Playwright 截圖證據</span>
-      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">把本節鐵律與權威順序寫進 AGENTS.md / OpenSpec,任務包只引用、不重抄</span>
+      <span style="font-size:10.5px;color:#8aa0b8;background:rgba(120,160,210,.05);border:1px solid rgba(120,160,210,.16);border-radius:6px;padding:4px 10px">本節鐵律與權威順序由 AGENTS.md / OpenSpec 參照(見 doc-first-canon-v2 提案),任務包只引用、不重抄</span>
+    </div>
+
+    <!-- Open Decisions 專章 -->
+    <div data-canon-id="c8-open-decisions" style="border-top:1px solid rgba(120,160,210,.1);margin-top:2px;padding-top:16px;display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">Open Decisions — 未裁決事項索引</span><span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089;text-transform:uppercase">non-normative · 全部 file:line 證據見 gap-ledger.md</span></div>
+      <div style="background:#070d15;border:1px dashed rgba(154,167,190,.4);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:7px">
+        <div style="display:grid;grid-template-columns:40px 1fr;gap:8px"><span style="font-size:10.5px;font-weight:700;color:#9aa7be">OQ-1</span><span style="font-size:10.5px;color:#8aa0b8">未裁決 · <span style="color:#dbe6f3">預設不採用</span>;是否新增 <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#e6b23e">asbuilt-partial</span> 外接待決 Prov 值,不併入 7 值封閉集。全文見上方 R3 non-normative 註記塊(<span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">c8-r3-oq1-open-decision</span>)。</span></div>
+        <div style="display:grid;grid-template-columns:40px 1fr;gap:8px"><span style="font-size:10.5px;font-weight:700;color:#9aa7be">OQ-3</span><span style="font-size:10.5px;color:#8aa0b8">未裁決;<span style="font-family:'JetBrains Mono',monospace;font-size:10px">.dc.html</span> 雙檔／css 快照面能否承載 AST/符號級 drift CI 工具鏈,可行性未證,本 change 不採用;follow-up <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#b7a9ff">drift-gate-lightweight</span>。</span></div>
+        <div style="display:grid;grid-template-columns:40px 1fr;gap:8px"><span style="font-size:10.5px;font-weight:700;color:#9aa7be">OQ-4</span><span style="font-size:10.5px;color:#8aa0b8"><span style="color:#b7a9ff">known gap(不是 pass)</span>;鐵律 3 行為級化後 <span style="font-family:'JetBrains Mono',monospace;font-size:10px">e2e/ui-open-regression.spec.ts</span> 尚未接 CI(見上方 §01 鐵律 3 badge);接 CI 為四項 follow-up 中第一順位。</span></div>
+        <span style="font-size:10.5px;color:#5a7089;border-top:1px solid rgba(154,167,190,.15);padding-top:7px">OQ-2(<span style="font-family:'JetBrains Mono',monospace;font-size:10px">ai-bim-governance.css</span> 品牌／授權盲區)<span style="color:#dbe6f3">不入本正本文字</span>——不逕自定案、不逕自否決,屬品牌/授權決策須使用者裁決;僅記錄於 design.md §6b 與 gap-ledger.md(item OQ-2)。</span>
+      </div>
     </div>
   </div>
 
   <div style="width:100%;max-width:1240px;display:flex;justify-content:space-between;align-items:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:#3d5570">
-    <span>AI-BIM-governance · FE/BE Design Spec v1</span>
+    <span>AI-BIM-governance · FE/BE Design Spec v2</span>
     <a href="AI-BIM Console Hi-Fi.dc.html">⬒ Hi-Fi 互動原型 ↗</a>
   </div>
 </div>
