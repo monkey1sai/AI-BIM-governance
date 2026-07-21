@@ -1,0 +1,8 @@
+{
+  "event_type": "commandRejected",
+  "payload": {
+    "rejected_event_type": "highlightPrimsRequest",
+    "reason": "because_i_said_so",
+    "detail": "should fail schema validation: reason not in closed enum"
+  }
+}

@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "vg01-postmessage-v1.schema.json",
+  "title": "VG-01 EmbeddedViewer postMessage bridge v1",
+  "description": "console<->viewer origin 跨-origin iframe 橋契約草案(viewer-redesign 提案)。來源證據: web-viewer-sample/src/console/EmbeddedViewer.tsx。雙向一律帶 protocol:\"vg01\";未知 type 忽略(前向相容);接收端必驗 normalize 後 origin + source frame;targetOrigin 不得為 *。viewer_lease_token 為 bearer secret, 只走本橋、不得入 URL。",
+  "type": "object",
+  "required": ["protocol", "type"],
+  "properties": {
+    "protocol": { "const": "vg01" },
+    "type": { "type": "string" }
+  },
+  "oneOf": [
+    {
+      "title": "console→viewer: viewer_lease_token",
+      "type": "object",
+      "properties": {
+        "protocol": { "const": "vg01" },
+        "type": { "const": "viewer_lease_token" },
+        "token": { "type": "string" }
+      },
+      "required": ["protocol", "type", "token"]
+    },
+    {
+      "title": "console→viewer: highlight(逐筆 replace;每 item 一 request 一 ack)",
+      "type": "object",
+      "properties": {
+        "protocol": { "const": "vg01" },
+        "type": { "const": "highlight" },
+        "items": { "type": "array", "items": { "$ref": "#/$defs/bridgeHighlightItem" } }
+      },
+      "required": ["protocol", "type", "items"]
+    },
+    {
+      "title": "console→viewer: highlight_batch(聯集裝進單一 highlightPrimsRequest;回單一帶計數 ack)",
+      "type": "object",
+      "properties": {
+        "protocol": { "const": "vg01" },
+        "type": { "const": "highlight_batch" },
+        "items": { "type": "array", "items": { "$ref": "#/$defs/bridgeHighlightItem" } }
+      },
+      "required": ["protocol", "type", "items"]
+    },
+    {
+      "title": "console→viewer: focus",
+      "type": "object",
+      "properties": {
+        "protocol": { "const": "vg01" },
+        "type": { "const": "focus" },
+        "ifc_guid": { "type": "string" }
+      },
+      "required": ["protocol", "type", "ifc_guid"]
+    },
+    {
+      "title": "console→viewer: clear",
+      "type": "object",
+      "properties": { "protocol": { "const": "vg01" }, "type": { "const": "clear" } },
+      "required": ["protocol", "type"]
+    },
+    {
+      "title": "viewer→console: viewer_ready(觸發 lease token 交付)",
+      "type": "object",
+      "properties": { "protocol": { "const": "vg01" }, "type": { "const": "viewer_ready" } },
+      "required": ["protocol", "type"]
+    },
+    {
+      "title": "viewer→console: first_frame",
+      "type": "object",
+      "properties": {
+        "protocol": { "const": "vg01" },
+        "type": { "const": "first_frame" },
+        "stageUrl": { "type": ["string", "null"] }
+      },
+      "required": ["protocol", "type", "stageUrl"]
+    },
+    {
+      "title": "viewer→console: stage_loaded",
+      "type": "object",
+      "properties": {
+        "protocol": { "const": "vg01" },
+        "type": { "const": "stage_loaded" },
+        "stageUrl": { "type": ["string", "null"] }
+      },
+      "required": ["protocol", "type", "stageUrl"]
+    },
+    {
+      "title": "viewer→console: highlight_result(sent_count/unmapped_* 為 highlight_batch ack 專屬加性欄位)",
+      "type": "object",
+      "properties": {
+        "protocol": { "const": "vg01" },
+        "type": { "const": "highlight_result" },
+        "requestId": { "type": "string" },
+        "ok": { "type": "boolean" },
+        "reason": { "enum": ["unmapped", "datachannel_not_ready"] },
+        "sent_count": { "type": "integer", "minimum": 0 },
+        "unmapped_count": { "type": "integer", "minimum": 0 },
+        "unmapped_guids": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["protocol", "type", "requestId", "ok"]
+    },
+    {
+      "title": "viewer→console: selected_guid",
+      "type": "object",
+      "properties": {
+        "protocol": { "const": "vg01" },
+        "type": { "const": "selected_guid" },
+        "ifcGuid": { "type": ["string", "null"] }
+      },
+      "required": ["protocol", "type", "ifcGuid"]
+    }
+  ],
+  "$defs": {
+    "bridgeHighlightItem": {
+      "type": "object",
+      "required": ["ifc_guid"],
+      "properties": {
+        "ifc_guid": { "type": "string" },
+        "severity": { "type": "string" },
+        "label": { "type": "string" },
+        "rule_code": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

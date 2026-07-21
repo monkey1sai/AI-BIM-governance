@@ -1,0 +1,10 @@
+{
+  "event_type": "commandRejected",
+  "payload": {
+    "rejected_event_type": "highlightPrimsRequest",
+    "reason": "spectator_readonly",
+    "request_id": "hl-20260721-0001",
+    "session_id": "review_session_demo01",
+    "detail": "spectator role is view-only; mutating command refused by runtime authority"
+  }
+}

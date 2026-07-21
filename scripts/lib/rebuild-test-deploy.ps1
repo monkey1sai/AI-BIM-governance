@@ -50,6 +50,12 @@ $script:TestDeployPreservedEnvFiles = @(
     'bim-review-coordinator\.env',
     '.env.web-plane.host-kit'
 )
+# Production build dependencies that live under removed tooling dirs.
+# EdgeConsole.tsx imports docs/plans/ai-bim-governance.css (design token
+# authority); the coordinator/viewer docker builds COPY it from the checkout.
+$script:TestDeployPreservedProductionFiles = @(
+    'docs\plans\ai-bim-governance.css'
+)
 $script:TestDeployEdgeSiteId = 'site_local_deploy'
 $script:TestDeployEdgeRuntimeDataRoot = 'D:\Users\deploy\AI-bim-geo-data'
 
@@ -327,11 +333,31 @@ function Remove-TestDeployAgentTooling {
         }
     }
 
+    $preserved = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($relativePath in $script:TestDeployPreservedProductionFiles) {
+        $filePath = Join-Path $root $relativePath
+        if (Test-Path -LiteralPath $filePath -PathType Leaf) {
+            $preserved.Add([pscustomobject]@{
+                RelativePath = $relativePath
+                Bytes = [System.IO.File]::ReadAllBytes($filePath)
+            }) | Out-Null
+        }
+    }
+
     foreach ($dirPath in (Get-TestDeployRootToolingDirs -DeploymentPath $root)) {
         if (Test-Path -LiteralPath $dirPath -PathType Container) {
             Remove-Item -LiteralPath $dirPath -Recurse -Force -ErrorAction Stop
             $removed.Add($dirPath) | Out-Null
         }
+    }
+
+    foreach ($entry in $preserved) {
+        $filePath = Join-Path $root $entry.RelativePath
+        $parent = Split-Path -Parent $filePath
+        if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
+            New-Item -ItemType Directory -Path $parent -Force -ErrorAction Stop | Out-Null
+        }
+        [System.IO.File]::WriteAllBytes($filePath, $entry.Bytes)
     }
 
     return @($removed.ToArray())

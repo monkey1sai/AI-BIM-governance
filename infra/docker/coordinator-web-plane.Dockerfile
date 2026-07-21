@@ -8,6 +8,8 @@ RUN npm config --global set engine-strict true
 RUN npm install
 
 COPY web-viewer-sample/ /workspace/web-viewer-sample/
+# EdgeConsole.tsx imports ../../../docs/plans/ai-bim-governance.css (design token authority)
+COPY docs/plans/ai-bim-governance.css /workspace/docs/plans/ai-bim-governance.css
 RUN npm run build:ui
 
 FROM node:20-bookworm-slim

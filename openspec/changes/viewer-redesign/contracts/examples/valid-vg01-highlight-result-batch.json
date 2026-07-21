@@ -1,0 +1,9 @@
+{
+  "protocol": "vg01",
+  "type": "highlight_result",
+  "requestId": "batch-20260721-0003",
+  "ok": true,
+  "sent_count": 7,
+  "unmapped_count": 3,
+  "unmapped_guids": ["1AbCdEfGhIjKlMnOpQrStU", "2AbCdEfGhIjKlMnOpQrStU", "3AbCdEfGhIjKlMnOpQrStU"]
+}

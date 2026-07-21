@@ -1,0 +1,412 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "kit-datachannel-v1.schema.json",
+  "title": "Kit DataChannel message envelope v1",
+  "description": "console<->Kit DataChannel 訊息契約草案(viewer-redesign 提案)。來源證據: web-viewer-sample/src/clients/streamMessages.ts (OUT builders)、src/Window.tsx _handleCustomEvent (IN handlers)、runtimeMutatingEvents + _withRuntimeAuthority (authority envelope)。落地實作時遷入 tests/contracts/ 並接 CI。",
+  "type": "object",
+  "required": ["event_type", "payload"],
+  "properties": {
+    "event_type": { "type": "string" },
+    "payload": { "type": "object" }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/openStageRequest" },
+    { "$ref": "#/$defs/loadingStateQuery" },
+    { "$ref": "#/$defs/getChildrenRequest" },
+    { "$ref": "#/$defs/highlightPrimsRequest" },
+    { "$ref": "#/$defs/focusPrimRequest" },
+    { "$ref": "#/$defs/clearHighlightRequest" },
+    { "$ref": "#/$defs/selectPrimsRequest" },
+    { "$ref": "#/$defs/composeStageRequest" },
+    { "$ref": "#/$defs/loadArtifactGroupRequest" },
+    { "$ref": "#/$defs/makePrimsPickable" },
+    { "$ref": "#/$defs/resetStage" },
+    { "$ref": "#/$defs/openedStageResult" },
+    { "$ref": "#/$defs/loadingStateResponse" },
+    { "$ref": "#/$defs/getChildrenResponse" },
+    { "$ref": "#/$defs/highlightPrimsResult" },
+    { "$ref": "#/$defs/focusPrimResult" },
+    { "$ref": "#/$defs/stageSelectionChanged" },
+    { "$ref": "#/$defs/updateProgressAmount" },
+    { "$ref": "#/$defs/updateProgressActivity" },
+    { "$ref": "#/$defs/bindingApplied" },
+    { "$ref": "#/$defs/loadArtifactGroupResult" },
+    { "$ref": "#/$defs/commandRejected" }
+  ],
+  "$defs": {
+    "runtimeAuthorityEnvelope": {
+      "description": "runtime mutator 由送出端統一注入的授權欄位(_withRuntimeAuthority)。viewer_lease_token 為 bearer secret, 不得出現在 log/URL。",
+      "type": "object",
+      "properties": {
+        "role": { "enum": ["primary", "spectator"] },
+        "source_client_id": { "type": "string" },
+        "viewer_lease_token": { "type": "string" },
+        "session_id": { "type": "string" }
+      }
+    },
+    "highlightItem": {
+      "type": "object",
+      "required": ["prim_path"],
+      "properties": {
+        "prim_path": { "type": "string" },
+        "ifc_guid": { "type": ["string", "null"] },
+        "color": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 4 },
+        "label": { "type": "string" },
+        "source": { "type": "string" },
+        "issue_id": { "type": "string" },
+        "mapping_method": { "type": ["string", "null"] },
+        "mapping_confidence": { "type": ["number", "null"] }
+      }
+    },
+    "artifactBinding": {
+      "type": "object",
+      "properties": {
+        "artifact_id": { "type": "string" },
+        "url": { "type": "string" },
+        "role": { "type": "string" }
+      }
+    },
+    "usdPrim": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "path": { "type": "string" },
+        "children": { "type": ["array", "null"] }
+      }
+    },
+
+    "openStageRequest": {
+      "type": "object",
+      "properties": {
+        "event_type": { "const": "openStageRequest" },
+        "payload": {
+          "allOf": [{ "$ref": "#/$defs/runtimeAuthorityEnvelope" }],
+          "type": "object",
+          "required": ["url", "requested_stage_url"],
+          "properties": {
+            "url": { "type": "string" },
+            "requested_stage_url": { "type": "string" },
+            "stage_composition": {
+              "type": "object",
+              "required": ["primary", "secondary_layers"],
+              "properties": {
+                "primary": { "$ref": "#/$defs/artifactBinding" },
+                "secondary_layers": { "type": "array", "items": { "$ref": "#/$defs/artifactBinding" } }
+              }
+            },
+            "artifact_bindings": { "type": "array", "items": { "$ref": "#/$defs/artifactBinding" } }
+          }
+        }
+      },
+      "required": ["event_type", "payload"]
+    },
+    "loadingStateQuery": {
+      "type": "object",
+      "properties": { "event_type": { "const": "loadingStateQuery" }, "payload": { "type": "object" } },
+      "required": ["event_type", "payload"]
+    },
+    "getChildrenRequest": {
+      "type": "object",
+      "properties": {
+        "event_type": { "const": "getChildrenRequest" },
+        "payload": {
+          "type": "object",
+          "required": ["prim_path", "filters"],
+          "properties": {
+            "prim_path": { "type": "string", "default": "/World" },
+            "filters": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      },
+      "required": ["event_type", "payload"]
+    },
+    "highlightPrimsRequest": {
+      "type": "object",
+      "properties": {
+        "event_type": { "const": "highlightPrimsRequest" },
+        "payload": {
+          "allOf": [{ "$ref": "#/$defs/runtimeAuthorityEnvelope" }],
+          "type": "object",
+          "required": ["mode", "items", "focus_first"],
+          "properties": {
+            "request_id": { "type": "string" },
+            "mode": { "const": "replace" },
+            "items": { "type": "array", "items": { "$ref": "#/$defs/highlightItem" } },
+            "focus_first": { "type": "boolean" }
+          }
+        }
+      },
+      "required": ["event_type", "payload"]
+    },
+    "focusPrimRequest": {
+      "type": "object",
+      "properties": {
+        "event_type": { "const": "focusPrimRequest" },
+        "payload": {
+          "allOf": [{ "$ref": "#/$defs/runtimeAuthorityEnvelope" }],
+          "type": "object",
+          "required": ["prim_path"],
+          "properties": {
+            "request_id": { "type": "string" },
+            "prim_path": { "type": "string" }
+          }
+        }
+      },
+      "required": ["event_type", "payload"]
+    },
+    "clearHighlightRequest": {
+      "type": "object",
+      "properties": {
+        "event_type": { "const": "clearHighlightRequest" },
+        "payload": { "allOf": [{ "$ref": "#/$defs/runtimeAuthorityEnvelope" }], "type": "object" }
+      },
+      "required": ["event_type", "payload"]
+    },
+    "selectPrimsRequest": {
+      "type": "object",
+      "properties": {
+        "event_type": { "const": "selectPrimsRequest" },
+        "payload": {
+          "allOf": [{ "$ref": "#/$defs/runtimeAuthorityEnvelope" }],
+          "type": "object",
+          "required": ["paths"],
+          "properties": { "paths": { "type": "array", "items": { "type": "string" } } }
+        }
+      },
+      "required": ["event_type", "payload"]
+    },
+    "composeStageRequest": {
+      "type": "object",
+      "description": "harness 路徑(fakeKit);production 走 loadArtifactGroupRequest",
+      "properties": {
+        "event_type": { "const": "composeStageRequest" },
+        "payload": {
+          "allOf": [{ "$ref": "#/$defs/runtimeAuthorityEnvelope" }],
+          "type": "object",
+          "required": ["binding_revision_id"],
+          "properties": {
+            "binding_revision_id": { "type": "string" },
+            "artifacts": { "type": "array", "items": { "$ref": "#/$defs/artifactBinding" } }
+          }
+        }
+      },
+      "required": ["event_type", "payload"]
+    },
+    "loadArtifactGroupRequest": {
+      "type": "object",
+      "properties": {
+        "event_type": { "const": "loadArtifactGroupRequest" },
+        "payload": {
+          "allOf": [{ "$ref": "#/$defs/runtimeAuthorityEnvelope" }],
+          "type": "object",
+          "required": ["binding_revision_id", "stage_composition"],
+          "properties": {
+            "binding_revision_id": { "type": "string" },
+            "stage_composition": { "type": "object" }
+          }
+        }
+      },
+      "required": ["event_type", "payload"]
+    },
+    "makePrimsPickable": {
+      "type": "object",
+      "properties": {
+        "event_type": { "const": "makePrimsPickable" },
+        "payload": {
+          "allOf": [{ "$ref": "#/$defs/runtimeAuthorityEnvelope" }],
+          "type": "object",
+          "required": ["paths"],
+          "properties": { "paths": { "type": "array", "items": { "type": "string" } } }
+        }
+      },
+      "required": ["event_type", "payload"]
+    },
+    "resetStage": {
+      "type": "object",
+      "properties": {
+        "event_type": { "const": "resetStage" },
+        "payload": { "allOf": [{ "$ref": "#/$defs/runtimeAuthorityEnvelope" }], "type": "object" }
+      },
+      "required": ["event_type", "payload"]
+    },
+
+    "openedStageResult": {
+      "type": "object",
+      "properties": {
+        "event_type": { "const": "openedStageResult" },
+        "payload": {
+          "type": "object",
+          "required": ["result"],
+          "properties": {
+            "result": { "enum": ["success", "error"] },
+            "url": { "type": "string" },
+            "error": { "type": "string" },
+            "binding_revision_id": { "type": "string" }
+          }
+        }
+      },
+      "required": ["event_type", "payload"]
+    },
+    "loadingStateResponse": {
+      "type": "object",
+      "properties": {
+        "event_type": { "const": "loadingStateResponse" },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "url": { "type": "string" },
+            "loading_state": { "enum": ["idle", "busy"] }
+          }
+        }
+      },
+      "required": ["event_type", "payload"]
+    },
+    "getChildrenResponse": {
+      "type": "object",
+      "properties": {
+        "event_type": { "const": "getChildrenResponse" },
+        "payload": {
+          "type": "object",
+          "required": ["prim_path", "children"],
+          "properties": {
+            "prim_path": { "type": "string" },
+            "children": { "type": "array", "items": { "$ref": "#/$defs/usdPrim" } }
+          }
+        }
+      },
+      "required": ["event_type", "payload"]
+    },
+    "highlightPrimsResult": {
+      "type": "object",
+      "properties": {
+        "event_type": { "const": "highlightPrimsResult" },
+        "payload": {
+          "type": "object",
+          "required": ["result"],
+          "properties": {
+            "result": { "type": "string" },
+            "request_id": { "type": "string" },
+            "selected_paths": { "type": "array", "items": { "type": "string" } },
+            "missing_paths": { "type": "array", "items": { "type": "string" } },
+            "fallback_paths": { "type": "array", "items": { "type": "object" } }
+          }
+        }
+      },
+      "required": ["event_type", "payload"]
+    },
+    "focusPrimResult": {
+      "type": "object",
+      "properties": {
+        "event_type": { "const": "focusPrimResult" },
+        "payload": {
+          "type": "object",
+          "required": ["result"],
+          "properties": {
+            "result": { "type": "string" },
+            "request_id": { "type": "string" },
+            "prim_path": { "type": "string" },
+            "fallback_path": { "type": "string" }
+          }
+        }
+      },
+      "required": ["event_type", "payload"]
+    },
+    "stageSelectionChanged": {
+      "type": "object",
+      "properties": {
+        "event_type": { "const": "stageSelectionChanged" },
+        "payload": {
+          "type": "object",
+          "required": ["prims"],
+          "properties": { "prims": { "type": "array", "items": { "type": "string" } } }
+        }
+      },
+      "required": ["event_type", "payload"]
+    },
+    "updateProgressAmount": {
+      "type": "object",
+      "properties": { "event_type": { "const": "updateProgressAmount" }, "payload": { "type": "object" } },
+      "required": ["event_type", "payload"]
+    },
+    "updateProgressActivity": {
+      "type": "object",
+      "properties": {
+        "event_type": { "const": "updateProgressActivity" },
+        "payload": {
+          "type": "object",
+          "properties": { "text": { "type": "string", "description": "\"None\" = 載入活動結束" } }
+        }
+      },
+      "required": ["event_type", "payload"]
+    },
+    "bindingApplied": {
+      "type": "object",
+      "properties": {
+        "event_type": { "const": "bindingApplied" },
+        "payload": {
+          "type": "object",
+          "required": ["binding_revision_id"],
+          "properties": { "binding_revision_id": { "type": "string" } }
+        }
+      },
+      "required": ["event_type", "payload"]
+    },
+    "loadArtifactGroupResult": {
+      "type": "object",
+      "properties": {
+        "event_type": { "const": "loadArtifactGroupResult" },
+        "payload": {
+          "type": "object",
+          "required": ["result"],
+          "properties": {
+            "result": { "type": "string" },
+            "binding_revision_id": { "type": "string" },
+            "error": { "type": "string" }
+          }
+        }
+      },
+      "required": ["event_type", "payload"]
+    },
+    "commandRejected": {
+      "type": "object",
+      "description": "本 change 首次定義(§04 既有待補項)。Kit/streaming 端拒絕 runtime mutator 的唯一回饋訊息;payload 不得含 secret。",
+      "properties": {
+        "event_type": { "const": "commandRejected" },
+        "payload": {
+          "type": "object",
+          "required": ["rejected_event_type", "reason"],
+          "properties": {
+            "rejected_event_type": {
+              "enum": [
+                "openStageRequest",
+                "loadArtifactGroupRequest",
+                "composeStageRequest",
+                "highlightPrimsRequest",
+                "focusPrimRequest",
+                "clearHighlightRequest",
+                "selectPrimsRequest",
+                "makePrimsPickable",
+                "resetStage"
+              ]
+            },
+            "reason": {
+              "enum": [
+                "spectator_readonly",
+                "lease_invalid",
+                "session_lifecycle_blocked",
+                "unauthorized_source_client",
+                "unsupported_command",
+                "invalid_payload"
+              ]
+            },
+            "request_id": { "type": "string" },
+            "session_id": { "type": "string" },
+            "detail": { "type": "string" }
+          },
+          "not": { "required": ["viewer_lease_token"] }
+        }
+      },
+      "required": ["event_type", "payload"]
+    }
+  }
+}

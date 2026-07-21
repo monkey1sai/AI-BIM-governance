@@ -295,6 +295,8 @@ try {
     'nested agent' | Set-Content -LiteralPath (Join-Path $cleanupRoot 'apps\kit-manager-web\AGENTS.md') -Encoding ascii
     'workflow' | Set-Content -LiteralPath (Join-Path $cleanupRoot '.github\workflows\ci.yml') -Encoding ascii
     'deploy' | Set-Content -LiteralPath (Join-Path $cleanupRoot 'scripts\deploy.ps1') -Encoding ascii
+    New-Item -ItemType Directory -Path (Join-Path $cleanupRoot 'docs\plans') -Force | Out-Null
+    ':root { --ab-test: 1; }' | Set-Content -LiteralPath (Join-Path $cleanupRoot 'docs\plans\ai-bim-governance.css') -Encoding ascii
 
     Assert-Throws { Remove-TestDeployAgentTooling -DeploymentPath $cleanupRoot } 'temporary cleanup root requires explicit test escape'
 
@@ -303,9 +305,13 @@ try {
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $cleanupRoot 'AGENTS.md'))) 'root AGENTS.md removed'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $cleanupRoot 'CLAUDE.md'))) 'root CLAUDE.md removed'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $cleanupRoot 'apps\kit-manager-web\AGENTS.md'))) 'nested AGENTS.md removed'
-    foreach ($dirName in $toolingDirNames) {
+    foreach ($dirName in ($toolingDirNames | Where-Object { $_ -ne 'docs' })) {
         Assert-True (-not (Test-Path -LiteralPath (Join-Path $cleanupRoot $dirName))) "root $dirName removed"
     }
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $cleanupRoot 'docs\content'))) 'docs tooling content removed'
+    $preservedCss = Join-Path $cleanupRoot 'docs\plans\ai-bim-governance.css'
+    Assert-True (Test-Path -LiteralPath $preservedCss) 'design token css preserved through docs removal'
+    Assert-Equal ':root { --ab-test: 1; }' ((Get-Content -LiteralPath $preservedCss -Raw).Trim()) 'design token css content intact'
     Assert-True (Test-Path -LiteralPath (Join-Path $cleanupRoot '.github\workflows\ci.yml')) '.github workflows kept'
     Assert-True (Test-Path -LiteralPath (Join-Path $cleanupRoot 'scripts\deploy.ps1')) 'deploy.ps1 kept'
 
