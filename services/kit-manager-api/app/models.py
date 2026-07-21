@@ -18,6 +18,16 @@ class KitInstanceState(BaseModel):
     control_status: str = "not_sent"
 
 
+class UsdcListResponse(BaseModel):
+    """GET /api/usdc 回應包裝——items 為 UsdcArtifact 清單。
+
+    C1 契約生成切片：endpoint 宣告 response_model 後，UsdcArtifact 才會進
+    openapi.json components.schemas，供前端 openapi-typescript 生成型別。
+    """
+
+    items: list[UsdcArtifact]
+
+
 class OpenRequest(BaseModel):
     artifact_ids: list[str] = Field(min_length=1)
     replace_existing: bool = True

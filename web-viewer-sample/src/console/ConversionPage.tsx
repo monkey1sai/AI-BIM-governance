@@ -8,6 +8,7 @@ import { ConversionHistoryPanel } from "./modelData/ConversionHistoryPanel";
 import { CoverageDrawer, lifecycleLabel } from "./modelData/conversionShared";
 import { useConversionActions } from "./modelData/useConversionActions";
 import { useConversionData } from "./modelData/useConversionData";
+import { usePolledResource } from "./usePolledResource";
 import { useSharedStatus } from "./useSharedStatus";
 
 type CoverageState = ConversionQualityMetricsResponse | { error: string } | "loading";
@@ -44,10 +45,11 @@ export function ConversionPage(): JSX.Element {
     await Promise.all([data.load(), data.loadRecords(), data.loadHistory()]);
   }, [data.load, data.loadHistory, data.loadRecords]);
 
-  useEffect(() => {
-    const timer = window.setInterval(() => { void refresh(); }, 5000);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
+  // C2：手寫 setInterval → usePolledResource（統一輪詢生命週期：unmount 清理、逾時自癒、stale settle
+  // 丟棄由 hook 內建）。immediate:false 保留原節奏——mount 時的首抓由 useConversionData 自己的 effect
+  // 負責，輪詢只從 +5s 開始（等價原裸 setInterval）。資料仍住在 useConversionData 的 state（load 系列
+  // 各自 allSettled／誠實降級），hook 只當輪詢驅動器，故不取用回傳值。
+  usePolledResource(useCallback(async () => { await refresh(); }, [refresh]), { intervalMs: 5000, immediate: false });
 
   const incoming = useIncomingHandoff("conv", (handoff) => {
     if (handoff.job_id) {
