@@ -1,6 +1,6 @@
 # docs/plans 入口（docs-plans-README）
 
-> v6 · 2026-07-19 · 設計與規格正本＝`AI-BIM 前後端設計文件.dc.html`（使用者指示整批替換舊七檔體系）；doc-first canon v2 已採納（PR #360）
+> v5 · 2026-07-15 · 設計與規格正本＝`AI-BIM 前後端設計文件.dc.html`（使用者指示整批替換舊七檔體系）
 
 ## §0 一句話定位
 
