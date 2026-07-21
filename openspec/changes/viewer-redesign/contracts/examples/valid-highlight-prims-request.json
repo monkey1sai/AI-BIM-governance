@@ -1,0 +1,21 @@
+{
+  "event_type": "highlightPrimsRequest",
+  "payload": {
+    "request_id": "hl-20260721-0002",
+    "mode": "replace",
+    "items": [
+      {
+        "prim_path": "/World/Elements/IfcWall/G_2O2Fr9qT91xxAB4c5HcVwd",
+        "ifc_guid": "2O2Fr9qT91xxAB4c5HcVwd",
+        "color": [1, 0, 0, 1],
+        "label": "FireRating missing",
+        "source": "rule-run",
+        "issue_id": "issue-042"
+      }
+    ],
+    "focus_first": true,
+    "role": "primary",
+    "source_client_id": "console-7f3a",
+    "session_id": "review_session_demo01"
+  }
+}

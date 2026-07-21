@@ -1,0 +1,51 @@
+<!--
+  viewer-redesign 提案 draft #1 — 設計文件增補 fragment
+  目標檔:docs/plans/AI-BIM 前後端設計文件.dc.html(手寫正本;依 R-A1 由使用者審核後自行套用)
+  套用後請 bump 版頭版本+日期(R-A4),並確認 canon-id 無重複。
+  每個 block 前的註解標明插入點;全部為「加法」,不刪改既有內容,
+  唯一例外=既有 c4-datachannel-protocol 卡的 commandRejected 列(建議由「待補」改指本規格,見 block B)。
+-->
+
+<!-- ═══ Block A|插入點:§03,c3-naming-check 區塊之後 ═══ -->
+<div data-canon-id="c3-viewer-visible-states" style="border-top:1px solid rgba(120,160,210,.1);margin-top:2px;padding-top:16px;display:flex;flex-direction:column;gap:8px">
+  <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#5a8db0;text-transform:uppercase">Viewer 失敗態 visible-states 矩陣(console 內嵌 viewport 與 viewer origin 頁共用;規格=openspec/changes/viewer-redesign specs/viewer-viewport)</span>
+  <div style="background:#0a1220;border:1px solid rgba(120,160,210,.12);border-radius:10px;overflow:hidden;font-size:11px">
+    <div style="display:grid;grid-template-columns:150px 1.4fr 1.4fr 1fr;gap:10px;padding:7px 12px;color:#5a7089;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase"><span>態</span><span>觸發條件(可判定)</span><span>畫面/文案要點</span><span>可行動作</span></div>
+    <div style="display:grid;grid-template-columns:150px 1.4fr 1.4fr 1fr;gap:10px;padding:6px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">no-session</span><span style="color:#8aa0b8">未附掛 session</span><span style="color:#b9c9da">離線示意+「尚未附掛 review session」</span><span style="color:#8aa0b8">session 選擇器</span></div>
+    <div style="display:grid;grid-template-columns:150px 1.4fr 1.4fr 1fr;gap:10px;padding:6px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">session-preparing</span><span style="color:#8aa0b8">conversion 未 ready</span><span style="color:#b9c9da">顯示 detected/queued/converting</span><span style="color:#8aa0b8">前往 #pipeline</span></div>
+    <div style="display:grid;grid-template-columns:150px 1.4fr 1.4fr 1fr;gap:10px;padding:6px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">viewer-origin-missing</span><span style="color:#8aa0b8">runtime/status 無 viewer.browser_url_base</span><span style="color:#b9c9da">「viewer origin 未配置」(gated mount,不先空 render)</span><span style="color:#8aa0b8">重讀 runtime status</span></div>
+    <div style="display:grid;grid-template-columns:150px 1.4fr 1.4fr 1fr;gap:10px;padding:6px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">lease-occupied</span><span style="color:#8aa0b8">claim 回 409</span><span style="color:#b9c9da">顯佔用者 role/display_name;禁自動搶佔</span><span style="color:#8aa0b8">手動重試 claim</span></div>
+    <div style="display:grid;grid-template-columns:150px 1.4fr 1.4fr 1fr;gap:10px;padding:6px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">stream-disconnected</span><span style="color:#8aa0b8">WebRTC 連線中斷</span><span style="color:#b9c9da">5 秒內轉態「串流中斷」;不得續顯 ● Streaming</span><span style="color:#8aa0b8">重新連線(重掛 iframe)</span></div>
+    <div style="display:grid;grid-template-columns:150px 1.4fr 1.4fr 1fr;gap:10px;padding:6px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">lease-expired</span><span style="color:#8aa0b8">heartbeat 逾時後過期</span><span style="color:#b9c9da">「lease 已過期」;接管一律回手動 claim</span><span style="color:#8aa0b8">重新 claim</span></div>
+    <div style="display:grid;grid-template-columns:150px 1.4fr 1.4fr 1fr;gap:10px;padding:6px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">gpu-unavailable</span><span style="color:#8aa0b8">kit-manager instances 不可用</span><span style="color:#b9c9da">「Kit runtime 不可用」;啟動鈕誠實停用</span><span style="color:#8aa0b8">前往 #runtime</span></div>
+    <div style="display:grid;grid-template-columns:150px 1.4fr 1.4fr 1fr;gap:10px;padding:6px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">first-frame-timeout</span><span style="color:#8aa0b8">啟動後逾時未收 first_frame</span><span style="color:#b9c9da">「串流已建立但未收到首幀」;不偽宣告串流中</span><span style="color:#8aa0b8">重試/診斷指引</span></div>
+    <div style="display:grid;grid-template-columns:150px 1.4fr 1.4fr 1fr;gap:10px;padding:6px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">stage-load-timeout</span><span style="color:#8aa0b8">loadingState busy 輪詢達 90×1s(實碼現值)</span><span style="color:#b9c9da">「模型載入逾時」+ 目標 URL</span><span style="color:#8aa0b8">重試 openStage</span></div>
+    <div style="display:grid;grid-template-columns:150px 1.4fr 1.4fr 1fr;gap:10px;padding:6px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;color:#e6b23e">stage-mismatch</span><span style="color:#8aa0b8">openedStageResult URL 與 expected 不符</span><span style="color:#b9c9da">「stage 不符」(誠實鐵律:不偽宣告 applied)</span><span style="color:#8aa0b8">重新 openStage</span></div>
+  </div>
+  <span style="font-size:10.5px;color:#e6b23e;background:rgba(230,178,62,.08);border:1px solid rgba(230,178,62,.25);border-radius:6px;padding:4px 10px">每態須有穩定 data-uc 測試錨點與 i18n 文案鍵;任一態不得以空白畫面或假成功呈現。工具列語意:⬒=frame all · ✥=pan · ◫=比對/剖切(未接通=誠實 disabled 標 Roadmap)· ⟲=reset view(selectPrimsRequest([])+resetStage);另提供 fullscreen(僅 console 內嵌容器)。SLO(正式門檻,非 Hi-Fi fixture):first_frame p95≤10s · ≥24FPS@1080p · highlight 往返 p95≤300ms · stage 載入逾時 90s;超標=品質告警非硬失敗,斷言進 E2E 報告不進 CI gate。</span>
+</div>
+
+<!-- ═══ Block B|插入點:§04,c4-datachannel-protocol 卡「commandRejected 待補」列 → 建議改為下列文字(其餘列不動) ═══ -->
+<!--
+  原列:IN commandRejected(待補 — spectator / 權威拒絕回饋;Window.tsx 尚無對應 case,fakeKit.ts harness 亦未回放)
+  改為:
+-->
+<div style="display:grid;grid-template-columns:44px 1fr;gap:8px;padding:5px 12px;border-top:1px solid rgba(120,160,210,.07)"><span style="color:#6fd6ee">IN</span><span style="color:#b9c9da">commandRejected <span style="color:#5a7089">{rejected_event_type, reason: spectator_readonly|lease_invalid|session_lifecycle_blocked|unauthorized_source_client|unsupported_command, request_id?, session_id?, detail?}</span> <span style="color:#e6b23e">— 規格已定(openspec/changes/viewer-redesign,contracts/kit-datachannel-v1.schema.json);實作仍待補(Window.tsx 尚無 case、fakeKit 未回放)</span></span></div>
+
+<!-- ═══ Block C|插入點:§04,c4-datachannel-protocol 卡底部說明文字之後(卡內) ═══ -->
+<div style="padding:10px 12px;border-top:1px solid rgba(120,160,210,.07);font-size:10.5px;color:#5a7089">全訊息 JSON schema 草案=<span style="font-family:'JetBrains Mono',monospace;color:#b7a9ff">openspec/changes/viewer-redesign/contracts/kit-datachannel-v1.schema.json</span>(OUT×11/IN×11;runtime mutator 9 事件由 _withRuntimeAuthority 注入 role/source_client_id/viewer_lease_token?/session_id?);落地實作時遷入 tests/contracts/ 並接 CI,在那之前 payload 權威=本節文字+實碼。</div>
+
+<!-- ═══ Block D|插入點:§03,c3-badge-dual-track badge 之後(badges 列內) ═══ -->
+<span data-canon-id="c3-badge-embedded-viewer-contract" style="font-size:10.5px;color:#b7a9ff;background:rgba(157,140,255,.06);border:1px solid rgba(157,140,255,.2);border-radius:6px;padding:4px 10px">EmbeddedViewer 跨-origin iframe 契約(vg01)已規格化:URL 參數封閉集(session/coordinatorApiBase/coordinatorSocketUrl/streamRole/kitInstanceId/userId/displayName/sourceClientId;lease token 為 bearer secret 只走 postMessage 不入 URL)、雙向驗 normalize origin+source、gated mount、key={sessionId+leaseId} 乾淨 remount — openspec/changes/viewer-redesign specs/embedded-viewer-bridge + contracts/vg01-postmessage-v1.schema.json</span>
+
+<!-- ═══ Block E|插入點:§01,Viewer(WebRTC client)卡的說明文字之後(卡內加一行) ═══ -->
+<span style="font-size:10.5px;color:#8aa0b8">頁內 UI 已解凍規格化(進場 302/白名單/CI guard 照舊凍結):全幅 #remote-video+頂部狀態列+USD 樹抽屜+治理 overlay;spectator 顯著 readonly 徽章+mutating 全停用+commandRejected 回饋;embedded 模式(window.parent!==window 且 vg01 握手完成)隱藏 standalone chrome — openspec/changes/viewer-redesign specs/viewer-viewport</span>
+
+<!-- ═══ Block F|插入點:§03,c3-route-map 表 /ui/open 列之前(新增一列) ═══ -->
+<div style="display:grid;grid-template-columns:150px 1fr 1.5fr;gap:10px;padding:7px 12px;border-top:1px solid rgba(120,160,210,.08)"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#6fd6ee">#lineage</span><span style="color:#b9c9da">rvt↔ifc↔usdc 治理交叉比對(五 surfaces:Version Overview·Artifacts·Alignment·Attempts·Audit;A1 Dock 治理摘要卡為入口)</span><span style="color:#e6b23e">未做:規格=openspec/changes/viewer-redesign specs/a1-lineage-crosscheck-view;資料權威=rvt-ifc-usdc-lineage(deferred);RVT 軸後端零實作=NOT_BUILT,IFC↔USDC 軸可先接現成 ledger/quality-metrics</span></div>
+
+<!-- ═══ Block G|插入點:§06,c6-element-mapping 卡之後(2 欄 grid 內新增一卡) ═══ -->
+<div data-canon-id="c6-lineage-crosscheck-keys" style="background:#0a1220;border:1px dashed rgba(230,178,62,.35);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px">
+  <span style="font-size:12px;font-weight:700;color:#e6b23e">Lineage 交叉比對對帳鍵(planned)</span>
+  <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;line-height:1.9;color:#8aa0b8">MinIO 唯一來源:source_ifc(*/model.ifc)· parsed_usdc(usdc_key 回填)· planned model.rvt+schedule.csv<br>對帳鍵:idempotency_key(mw_&lt;hash16&gt;)+ external_model_version_id + project_id/category<br>三 ratio+10 fixed counts+六態 outbox=引用 openspec/changes/rvt-ifc-usdc-lineage(不重定義);denominator=0 → ratio=null · not_evaluable<br>usd_prim_path null → 該列 disabled 不得 highlight(沿用左卡鐵律)</span>
+</div>
