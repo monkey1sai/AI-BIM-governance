@@ -112,6 +112,44 @@ $archiveCommands = @($archivePlan | ForEach-Object { $_.command })
 Assert-True ($archiveCommands -contains 'openspec validate --specs --strict') 'archive/formal spec changes validate strict specs'
 Assert-True (-not ($archiveCommands -contains 'openspec validate archive')) 'archive validation command is not planned'
 
+# Test 1b2: Archiving an active change does not validate the deleted change id at PR head.
+$tempArchiveGit = Join-Path ([System.IO.Path]::GetTempPath()) "pr-review-agent-archive-$([Guid]::NewGuid().ToString('N'))"
+New-Item -ItemType Directory -Path $tempArchiveGit -Force | Out-Null
+Push-Location $tempArchiveGit
+try {
+    git init -q
+    git config user.email 'pr-review-agent@example.invalid'
+    git config user.name 'PR Review Agent Test'
+    New-Item -ItemType Directory -Path 'openspec/changes/archive-me' -Force | Out-Null
+    Set-Content -LiteralPath 'openspec/changes/archive-me/.openspec.yaml' -Value 'schema: spec-driven' -Encoding UTF8
+    Set-Content -LiteralPath 'openspec/changes/archive-me/tasks.md' -Value '- [x] complete' -Encoding UTF8
+    git add openspec
+    git commit -q -m 'active change'
+    $archiveBaseSha = (git rev-parse HEAD).Trim()
+    New-Item -ItemType Directory -Path 'openspec/changes/archive' -Force | Out-Null
+    git mv 'openspec/changes/archive-me' 'openspec/changes/archive/2026-07-21-archive-me'
+    git commit -q -m 'archive change'
+    $archiveHeadSha = (git rev-parse HEAD).Trim()
+    $archiveRenamePaths = @(Get-PrReviewChangedPathsFromGit -RepoRoot $tempArchiveGit -BaseSha $archiveBaseSha -HeadSha $archiveHeadSha)
+    $out1b2 = New-TestOutputDir
+    $result1b2 = Invoke-PrReviewAgent -RepoRoot $tempArchiveGit `
+        -ChangedPaths $archiveRenamePaths `
+        -BaseSha $archiveBaseSha `
+        -HeadSha $archiveHeadSha `
+        -OutputDir $out1b2 `
+        -SkipCommandExecution `
+        -SkipGitNexus `
+        -AllowGitNexusUnavailable
+    $loaded1b2 = Get-Content -LiteralPath $result1b2.json_path -Raw | ConvertFrom-Json
+    Assert-True (-not ($loaded1b2.openspec_changes -contains 'archive-me')) 'archive rename skips the deleted active change id'
+    Assert-True ($loaded1b2.validation_commands -contains 'openspec validate --specs --strict') 'archive rename keeps strict canonical spec validation'
+    Assert-True (-not ($loaded1b2.validation_commands -contains 'openspec validate archive-me')) 'archive rename does not validate a deleted active change'
+    Remove-Item -LiteralPath $out1b2 -Recurse -Force
+} finally {
+    Pop-Location
+    Remove-Item -LiteralPath $tempArchiveGit -Recurse -Force
+}
+
 $out1c = New-TestOutputDir
 $result1c = Invoke-PrReviewAgent -RepoRoot $repoRoot `
     -ChangedPaths @(

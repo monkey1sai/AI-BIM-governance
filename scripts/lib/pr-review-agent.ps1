@@ -257,6 +257,27 @@ function Test-PrReviewPathExistsAtBase {
     return (-not [string]::IsNullOrWhiteSpace($entry))
 }
 
+function Test-PrReviewPathExistsAtHead {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $Path,
+        [string] $HeadSha = ''
+    )
+
+    if ([string]::IsNullOrWhiteSpace($HeadSha)) {
+        return (Test-Path -LiteralPath (Join-Path $RepoRoot ($Path -replace '/', [System.IO.Path]::DirectorySeparatorChar)))
+    }
+
+    $safeRoot = $RepoRoot -replace '\\', '/'
+    $entry = (git -C $RepoRoot -c "safe.directory=$safeRoot" ls-tree --name-only $HeadSha -- $Path 2>$null | Select-Object -First 1)
+    if ($LASTEXITCODE -ne 0) {
+        # Head lookup failures must not silently suppress validation; retain the conservative active-change result.
+        return $true
+    }
+    return (-not [string]::IsNullOrWhiteSpace($entry))
+}
+
 function Get-PrReviewManifestOwnedCodexMirrorPaths {
     [CmdletBinding()]
     param(
@@ -381,14 +402,25 @@ function Test-PrReviewRetiredRuntimeWiringReference {
 
 function Get-PrReviewOpenSpecChangeIds {
     [CmdletBinding()]
-    param([Parameter(Mandatory = $true)][string[]] $ChangedPaths)
+    param(
+        [Parameter(Mandatory = $true)][string[]] $ChangedPaths,
+        [string] $RepoRoot = '',
+        [string] $HeadSha = ''
+    )
 
     $ids = New-Object System.Collections.Generic.HashSet[string]
     foreach ($path in $ChangedPaths) {
         $normalized = ConvertTo-PrReviewPath $path
         if ($normalized -match '^openspec/changes/archive/') { continue }
         if ($normalized -match '^openspec/changes/([^/]+)/') {
-            [void]$ids.Add($Matches[1])
+            $changeId = $Matches[1]
+            if (-not [string]::IsNullOrWhiteSpace($RepoRoot) -and -not [string]::IsNullOrWhiteSpace($HeadSha)) {
+                $changePath = "openspec/changes/$changeId"
+                if (-not (Test-PrReviewPathExistsAtHead -RepoRoot $RepoRoot -Path $changePath -HeadSha $HeadSha)) {
+                    continue
+                }
+            }
+            [void]$ids.Add($changeId)
         }
     }
     return @($ids | Sort-Object)
@@ -991,7 +1023,7 @@ function Invoke-PrReviewAgent {
     $ChangeLane = $ChangeLane.Trim().ToUpperInvariant()
     $BehaviorContractChanged = $BehaviorContractChanged.Trim().ToLowerInvariant()
 
-    $openSpecChangeIds = @(Get-PrReviewOpenSpecChangeIds -ChangedPaths $ChangedPaths)
+    $openSpecChangeIds = @(Get-PrReviewOpenSpecChangeIds -ChangedPaths $ChangedPaths -RepoRoot $RepoRoot -HeadSha $HeadSha)
     $guards = Get-PrReviewPathGuardFindings -ChangedPaths $ChangedPaths -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
     $blockers = New-Object System.Collections.Generic.List[object]
     $warnings = New-Object System.Collections.Generic.List[object]
