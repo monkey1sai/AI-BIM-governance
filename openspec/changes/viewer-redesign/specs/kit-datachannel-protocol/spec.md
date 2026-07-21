@@ -62,7 +62,7 @@ Kit/streaming 端拒絕 runtime mutator 時 SHALL 回傳：
   "event_type": "commandRejected",
   "payload": {
     "rejected_event_type": "<被拒的 OUT event_type>",
-    "reason": "spectator_readonly | lease_invalid | session_lifecycle_blocked | unauthorized_source_client | unsupported_command",
+    "reason": "spectator_readonly | lease_invalid | session_lifecycle_blocked | unauthorized_source_client | unsupported_command | invalid_payload",
     "request_id": "<原請求的 request_id（原請求有帶才回）>",
     "session_id": "<被拒請求所屬 session（可判定時）>",
     "detail": "<人可讀補充（選填，不含 secret）>"

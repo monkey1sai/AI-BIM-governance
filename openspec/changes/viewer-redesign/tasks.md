@@ -13,7 +13,7 @@
 
 ## 2. 使用者核准動線（AI 不得代行）
 
-- [ ] 2.1 使用者審 specs 四件（SLO 預設值、工具列語意、commandRejected reason 列舉、#lineage IA 為主要裁決點）
+- [x] 2.1 使用者審 specs 四件——**已裁決 2026-07-21**：① SLO 照案；② 工具列 `◫`=雙視窗檢視（dual-viewport，取代原「比對/剖切」提案）；③ commandRejected reason 加 `invalid_payload`（封閉列舉 5→6 值）；④ #lineage IA 照案（A1 Dock 摘要卡 + 獨立頁雙層）。裁決已回寫 specs/contracts/drafts
 - [ ] 2.2 使用者審 drafts 三件並自行套用至手寫正本（或裁決退回；正本 bump 版本+日期，R-A4）
 - [ ] 2.3 使用者核准後 merge 本 PR（AI 不自行 merge）
 

@@ -395,7 +395,8 @@
                 "lease_invalid",
                 "session_lifecycle_blocked",
                 "unauthorized_source_client",
-                "unsupported_command"
+                "unsupported_command",
+                "invalid_payload"
               ]
             },
             "request_id": { "type": "string" },

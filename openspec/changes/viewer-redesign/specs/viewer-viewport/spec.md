@@ -58,7 +58,7 @@ console 內嵌 viewport 與 viewer origin 頁 SHALL 各自實作下列失敗態�
 
 ### Requirement: 鏡頭控制與 viewport 工具列 SHALL 有固定語意
 
-viewport 鏡頭控制 SHALL 採 Omniverse Kit 預設繫結並在 UI 提供提示：左鍵拖曳=orbit、中鍵拖曳=pan、滾輪=zoom、雙擊 prim=focus（等效 `focusPrimRequest`）。工具列四鈕語意 SHALL 固定為：`⬒`=frame all（框取全景）、`✥`=pan 模式切換、`◫`=比對/剖切檢視（未接通前誠實 disabled 標 Roadmap）、`⟲`=reset view（等效 `selectPrimsRequest([])` + `resetStage`）。console 內嵌 viewport SHALL 另提供 fullscreen 切換（瀏覽器 Fullscreen API，作用於 viewport 容器，不影響 `/ui/open` 外開行為）。
+viewport 鏡頭控制 SHALL 採 Omniverse Kit 預設繫結並在 UI 提供提示：左鍵拖曳=orbit、中鍵拖曳=pan、滾輪=zoom、雙擊 prim=focus（等效 `focusPrimRequest`）。工具列四鈕語意 SHALL 固定為：`⬒`=frame all（框取全景）、`✥`=pan 模式切換、`◫`=雙視窗檢視（dual-viewport 並排比對；未接通前誠實 disabled 標 Roadmap）、`⟲`=reset view（等效 `selectPrimsRequest([])` + `resetStage`）。console 內嵌 viewport SHALL 另提供 fullscreen 切換（瀏覽器 Fullscreen API，作用於 viewport 容器，不影響 `/ui/open` 外開行為）。
 
 #### Scenario: reset view
 
