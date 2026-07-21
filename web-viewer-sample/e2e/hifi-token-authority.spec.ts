@@ -1,10 +1,12 @@
-import { expect, request as pwRequest, test } from "@playwright/test";
+import { expect, request as pwRequest, test, type Page } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import pixelmatch from "pixelmatch";
+import { PNG } from "pngjs";
 
 // migrate-console-to-hifi-design 遷移契約垂直切片（真 coordinator）：
 // route → 操作 → 真實 backend API → runtime ID（ifc_ready_job_id）→ loading/success/failure/retry，
@@ -23,13 +25,54 @@ const consoleDistDir = path.join(viewerDir, "dist-ui");
 const coordinatorPort = Number.parseInt(process.env.HIFI_E2E_COORDINATOR_PORT ?? "8017", 10);
 const coordinatorBase = `http://127.0.0.1:${coordinatorPort}`;
 const webhookSecret = "dev-webhook-secret";
-const artifactDir = path.join(repoRoot, "artifacts", "e2e", "hifi-token-authority");
+const baselineArtifactDir = path.join(repoRoot, "artifacts", "e2e", "hifi-token-authority");
+const outputArtifactDir = path.join(repoRoot, "artifacts", "e2e", "_output", "hifi-token-authority");
+const maxDiffPixelRatio = 0.01;
 
 let coordinatorProc: ChildProcess | null = null;
 let ifcSourceStub: http.Server | null = null;
 let conversionStub: http.Server | null = null;
 let tmpRoot = "";
 let sourcePort = 0;
+
+async function captureHifiVisualEvidence(page: Page, fileName: string): Promise<void> {
+  fs.mkdirSync(outputArtifactDir, { recursive: true });
+  const stem = path.basename(fileName, path.extname(fileName));
+  const baselinePath = path.join(baselineArtifactDir, fileName);
+  const actualPath = path.join(outputArtifactDir, `${stem}-actual.png`);
+  const diffPath = path.join(outputArtifactDir, `${stem}-diff.png`);
+
+  await page.screenshot({ path: actualPath, fullPage: false });
+  expect(fs.existsSync(baselinePath), `tracked Hi-Fi baseline is missing: ${fileName}`).toBe(true);
+
+  const baselinePng = PNG.sync.read(fs.readFileSync(baselinePath));
+  const actualPng = PNG.sync.read(fs.readFileSync(actualPath));
+  expect(
+    { width: actualPng.width, height: actualPng.height },
+    `${fileName} screenshot dimensions must match the tracked baseline`,
+  ).toEqual({ width: baselinePng.width, height: baselinePng.height });
+
+  const diffPng = new PNG({ width: baselinePng.width, height: baselinePng.height });
+  const diffPixels = pixelmatch(
+    baselinePng.data,
+    actualPng.data,
+    diffPng.data,
+    baselinePng.width,
+    baselinePng.height,
+    { threshold: 0.1, includeAA: false },
+  );
+  fs.writeFileSync(diffPath, PNG.sync.write(diffPng));
+
+  const diffPixelRatio = diffPixels / (baselinePng.width * baselinePng.height);
+  test.info().annotations.push({
+    type: "hifi-visual-diff",
+    description: `${fileName}: ${diffPixelRatio}`,
+  });
+  expect(
+    diffPixelRatio,
+    `${fileName} visual diff ratio ${diffPixelRatio} exceeds ${maxDiffPixelRatio}`,
+  ).toBeLessThanOrEqual(maxDiffPixelRatio);
+}
 
 function spawnCoordinatorProcess(env: NodeJS.ProcessEnv): ChildProcess {
   // 以 Node --import tsx 在同一 process 執行 coordinator，讓 ChildProcess.pid
@@ -175,7 +218,6 @@ test.describe("hifi token authority：遷移契約垂直切片（真 coordinator
   });
 
   test("unified home：--ab token 生效、主題鍵不寫入", async ({ page }) => {
-    fs.mkdirSync(artifactDir, { recursive: true });
     await page.goto(`${coordinatorBase}/ui`);
     await expect(page.getByText("總覽 · Mission Control")).toBeVisible({ timeout: 20_000 });
     const facts = await page.evaluate(() => ({
@@ -186,7 +228,7 @@ test.describe("hifi token authority：遷移契約垂直切片（真 coordinator
     expect(facts.bodyBg).toBe("rgb(6, 10, 16)"); // var(--ab-bg) #060a10
     expect(facts.abAccent).toBe("#41c7e8");
     expect(facts.themeKey).toBeNull(); // 主題持久化已退場
-    await page.screenshot({ path: path.join(artifactDir, "unified-home.png"), fullPage: false });
+    await captureHifiVisualEvidence(page, "unified-home.png");
   });
 
   test("legacy #conv 垂直切片：loading/success/failure/retry + 品牌青 + --ec- 絕跡 + 無主題鈕", async ({ page }) => {
@@ -237,18 +279,18 @@ test.describe("hifi token authority：遷移契約垂直切片（真 coordinator
     expect(facts.themeLight).toBe(false);
     expect(facts.themeKey).toBeNull();
     await expect(page.getByRole("button", { name: "切換亮暗主題" })).toHaveCount(0);
-    await page.screenshot({ path: path.join(artifactDir, "legacy-conv.png"), fullPage: false });
+    await captureHifiVisualEvidence(page, "legacy-conv.png");
   });
 
   test("legacy #/demo-control 與 #/kit 仍可達（遷移未砍 operator-tool 路由）", async ({ page }) => {
     await page.goto(`${coordinatorBase}/ui#/demo-control`);
     await expect(page.getByTestId("real-ifc-demo-control")).toBeVisible({ timeout: 15_000 });
     // demo-control 頁證據——拍在導往 #/kit 之前，確保檔名與畫面一致（證物誠信）。
-    await page.screenshot({ path: path.join(artifactDir, "legacy-demo-control.png"), fullPage: false });
+    await captureHifiVisualEvidence(page, "legacy-demo-control.png");
     await page.goto(`${coordinatorBase}/ui#/kit`);
     await expect(page.getByTestId("kit-proxy-panel")).toBeVisible({ timeout: 15_000 });
     // kit 頁證據——對應本 test 第二條可達性斷言的畫面。
-    await page.screenshot({ path: path.join(artifactDir, "legacy-kit.png"), fullPage: false });
+    await captureHifiVisualEvidence(page, "legacy-kit.png");
   });
 });
 
@@ -385,8 +427,6 @@ test.describe("hifi token authority：真後端故障（coordinator 進程死亡
   });
 
   test("coordinator 進程死亡後，佇列 refresh 命中真實 ECONNREFUSED → conv-queue-error 誠實浮現", async ({ page }) => {
-    fs.mkdirSync(artifactDir, { recursive: true });
-
     // 健康態（真後端）：先直查佇列端點確認真 200——證明故障前後端本來是活的（非一開始就壞）。
     const api = await pwRequest.newContext();
     try {
@@ -412,6 +452,6 @@ test.describe("hifi token authority：真後端故障（coordinator 進程死亡
     const queueError = page.getByTestId("conv-queue-error");
     await expect(queueError).toBeVisible({ timeout: 20_000 });
     await expect(queueError).toContainText("/api/external/ifc-ready"); // 誠實錯誤文案指出斷線端點
-    await page.screenshot({ path: path.join(artifactDir, "legacy-conv-real-econnrefused.png"), fullPage: false });
+    await captureHifiVisualEvidence(page, "legacy-conv-real-econnrefused.png");
   });
 });
