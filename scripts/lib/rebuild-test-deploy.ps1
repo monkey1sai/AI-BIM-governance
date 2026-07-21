@@ -2,6 +2,34 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'design-assets.ps1')
+Import-Module -Force (Join-Path $PSScriptRoot 'StructLog.psm1')
+
+$script:TestDeployStructLogger = $null
+
+function Get-TestDeployStructLogger {
+    [CmdletBinding()]
+    param()
+
+    if ($null -eq $script:TestDeployStructLogger) {
+        $script:TestDeployStructLogger = New-StructLogger `
+            -Service 'scripts' `
+            -Component 'rebuild-test-deploy' `
+            -SkipEnvSnapshot
+    }
+    return $script:TestDeployStructLogger
+}
+
+function Write-TestDeployLifecycleLog {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $Message,
+        [hashtable] $Data = @{},
+        [ValidateSet('debug', 'info', 'warn', 'error', 'fatal')][string] $Level = 'info'
+    )
+
+    Get-TestDeployStructLogger |
+        Write-StructLifecycle -Msg $Message -Data $Data -Level $Level
+}
 
 $script:TestDeployFixedPath = 'D:\Users\deploy\AI-bim-geo'
 $script:TestDeployRootToolingDirNames = @(
@@ -473,7 +501,12 @@ function Restore-TestDeployProcessEnv {
     )
 
     foreach ($name in $Backup.Keys) {
-        [Environment]::SetEnvironmentVariable($name, $Backup[$name], 'Process')
+        $value = $Backup[$name]
+        if ($null -eq $value) {
+            Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+        } else {
+            [Environment]::SetEnvironmentVariable($name, $value, 'Process')
+        }
     }
 }
 
@@ -532,6 +565,15 @@ function Assert-TestDeployOriginUrlSafe {
         throw 'current repo origin URL is invalid'
     }
     if (-not $looksLikeUri) {
+        if ($candidate.StartsWith('-', [System.StringComparison]::Ordinal)) {
+            throw 'current repo origin URL is invalid'
+        }
+        if ([System.IO.Path]::IsPathRooted($candidate)) {
+            if ($candidate.Contains('?') -or $candidate.Contains('#')) {
+                throw 'credential-bearing origin URL is not allowed; use a credential manager or SSH agent'
+            }
+            return $candidate
+        }
         if ($isAbsoluteUri) {
             throw 'current repo origin URL is invalid'
         }
@@ -560,6 +602,47 @@ function Assert-TestDeployOriginUrlSafe {
     return $candidate
 }
 
+function ConvertTo-TestDeployNativeArgument {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string] $Value
+    )
+
+    if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') {
+        return $Value
+    }
+
+    # Windows CreateProcess receives one command-line string. Quote according to
+    # CommandLineToArgvW rules so PS5/.NET Framework preserves spaces, quotes,
+    # and trailing backslashes exactly. PS7 uses ProcessStartInfo.ArgumentList.
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.Append('"')
+    $backslashes = 0
+    foreach ($character in $Value.ToCharArray()) {
+        if ($character -eq '\') {
+            $backslashes += 1
+            continue
+        }
+        if ($character -eq '"') {
+            if ($backslashes -gt 0) {
+                [void]$builder.Append(('\' * ($backslashes * 2)))
+            }
+            [void]$builder.Append('\"')
+        } else {
+            if ($backslashes -gt 0) {
+                [void]$builder.Append(('\' * $backslashes))
+            }
+            [void]$builder.Append($character)
+        }
+        $backslashes = 0
+    }
+    if ($backslashes -gt 0) {
+        [void]$builder.Append(('\' * ($backslashes * 2)))
+    }
+    [void]$builder.Append('"')
+    return $builder.ToString()
+}
+
 function Invoke-TestDeployGitCommand {
     [CmdletBinding()]
     param(
@@ -582,12 +665,34 @@ function Invoke-TestDeployGitCommand {
     if ($null -ne $CommandRunner) {
         $result = & $CommandRunner $Tool $Arguments $WorkingDirectory
     } else {
-        $stdoutPath = [System.IO.Path]::GetTempFileName()
-        $stderrPath = [System.IO.Path]::GetTempFileName()
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = $Tool
+        $startInfo.WorkingDirectory = $WorkingDirectory
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        if ($null -ne $startInfo.PSObject.Properties['ArgumentList']) {
+            foreach ($argument in $Arguments) {
+                $startInfo.ArgumentList.Add($argument)
+            }
+        } else {
+            $startInfo.Arguments = @(
+                $Arguments | ForEach-Object { ConvertTo-TestDeployNativeArgument -Value $_ }
+            ) -join ' '
+        }
+
+        $process = [System.Diagnostics.Process]::new()
+        $process.StartInfo = $startInfo
         try {
-            $process = Start-Process -FilePath $Tool -ArgumentList $Arguments -WorkingDirectory $WorkingDirectory -NoNewWindow -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -Wait -PassThru
-            $stdoutText = if (Test-Path -LiteralPath $stdoutPath) { Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction Stop } else { '' }
-            $stderrText = if (Test-Path -LiteralPath $stderrPath) { Get-Content -LiteralPath $stderrPath -Raw -ErrorAction Stop } else { '' }
+            if (-not $process.Start()) {
+                throw "$command failed to start"
+            }
+            $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+            $stderrTask = $process.StandardError.ReadToEndAsync()
+            $process.WaitForExit()
+            $stdoutText = $stdoutTask.GetAwaiter().GetResult()
+            $stderrText = $stderrTask.GetAwaiter().GetResult()
             $outputParts = @()
             if (-not [string]::IsNullOrEmpty($stdoutText)) {
                 $outputParts += $stdoutText.TrimEnd([char[]]@("`r", "`n"))
@@ -600,7 +705,7 @@ function Invoke-TestDeployGitCommand {
                 Output = ($outputParts -join [Environment]::NewLine)
             }
         } finally {
-            Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+            $process.Dispose()
         }
     }
 
@@ -742,7 +847,7 @@ function Invoke-TestDeployRebuild {
         try {
             # Canonical OriginMain preparation: Git creates one standalone,
             # same-parent sibling. Live remains byte-identical until validation.
-            Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clone', $originUrl, $stageRoot) -WorkingDirectory $repoRootPath -CommandRunner $CommandRunner | Out-Null
+            Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clone', '--', $originUrl, $stageRoot) -WorkingDirectory $repoRootPath -CommandRunner $CommandRunner | Out-Null
             Assert-TestDeployPathSafety -Path $stageRoot | Out-Null
 
             $stageGitDir = Join-Path $stageRoot '.git'
@@ -810,7 +915,7 @@ function Invoke-TestDeployRebuild {
             $deployZoneRunDir = Join-Path $deployRoot 'scripts\.run'
             Assert-TestDeployPathComponentsSafety -Path $deployZoneRunDir | Out-Null
             $serviceStopFailures = New-Object 'System.Collections.Generic.List[string]'
-            foreach ($serviceName in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service')) {
+            foreach ($serviceName in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service', 'kit-manager-api')) {
                 try {
                     & $effectiveServiceStopper $serviceName $deployZoneRunDir | Out-Null
                 } catch {
@@ -849,9 +954,13 @@ function Invoke-TestDeployRebuild {
                 throw $cutoverError
             }
 
-            Write-Host "[rebuild-test-deploy] activated validated staged checkout: $deployRoot"
+            Write-TestDeployLifecycleLog -Message 'activated validated staged checkout' -Data @{
+                deployment_path = $deployRoot
+            }
             if (-not [string]::IsNullOrWhiteSpace($previousPath)) {
-                Write-Host "[rebuild-test-deploy] retained previous checkout for recovery: $previousPath"
+                Write-TestDeployLifecycleLog -Message 'retained previous checkout for recovery' -Data @{
+                    previous_path = $previousPath
+                }
             }
             try {
                 $restoredEnvFiles = @(Restore-TestDeployEnvSnapshot -DeploymentPath $deployRoot -Snapshot $envSnapshot)
@@ -929,7 +1038,7 @@ function Invoke-TestDeployRebuild {
                 }.GetNewClosure()
             }
             $deployZoneRunDir = Join-Path $deployRoot 'scripts\.run'
-            foreach ($serviceName in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service')) {
+            foreach ($serviceName in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service', 'kit-manager-api')) {
                 try {
                     & $effectiveServiceStopper $serviceName $deployZoneRunDir | Out-Null
                 } catch {

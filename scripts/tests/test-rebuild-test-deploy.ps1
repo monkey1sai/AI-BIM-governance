@@ -1002,6 +1002,24 @@ try {
     Assert-Equal 0 $stderrResult.ExitCode 'native stderr command returns exit code zero'
     Assert-True ($stderrResult.Output -match 'native stderr ok') 'native stderr is captured without throwing'
 
+    $argvProbe = Join-Path $sandbox 'native-argv-probe.ps1'
+    @'
+param([string] $First, [string] $Second, [string] $Third)
+[Console]::Out.WriteLine(($First, $Second, $Third -join '|'))
+'@ | Set-Content -LiteralPath $argvProbe -Encoding ascii
+    $argvExpected = 'D:\Repo Mirrors\AI BIM.git|C:\Stage Root\|quote"inside'
+    $argvResult = Invoke-TestDeployGitCommand `
+        -Tool 'powershell.exe' `
+        -Arguments @('-NoProfile', '-NonInteractive', '-File', $argvProbe, 'D:\Repo Mirrors\AI BIM.git', 'C:\Stage Root\', 'quote"inside') `
+        -WorkingDirectory $cleanupRoot
+    Assert-Equal $argvExpected $argvResult.Output.Trim() 'native command preserves spaces, trailing backslashes, and embedded quotes as exact argv values'
+
+    $bareOrigin = Join-Path $sandbox 'origin mirror with spaces.git'
+    $bareClone = Join-Path $sandbox 'clone target with spaces'
+    Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('init', '--bare', $bareOrigin) -WorkingDirectory $cleanupRoot | Out-Null
+    Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clone', '--', $bareOrigin, $bareClone) -WorkingDirectory $cleanupRoot | Out-Null
+    Assert-True (Test-Path -LiteralPath (Join-Path $bareClone '.git') -PathType Container) 'native git clone preserves rooted local origin and target paths containing spaces'
+
     $rebuildRoot = Join-Path $sandbox 'rebuild-root'
     $rebuildDeployRoot = Join-Path $sandbox 'rebuild-deploy'
     New-Item -ItemType Directory -Path $rebuildRoot -Force | Out-Null
@@ -1431,12 +1449,12 @@ exit 7
 
     Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $stopOrderRoot -AllowNonFixedPathForTests -CommandRunner $stopOrderRunner -DeployRunner $stopOrderDeployRunner -ServiceStopper $stopOrderStopper | Out-Null
 
-    foreach ($svc in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service')) {
+    foreach ($svc in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service', 'kit-manager-api')) {
         Assert-True ($stoppedServices -contains $svc) "pre-clean stop invoked for $svc"
     }
     $cleanIndex = $stopOrderLog.IndexOf('clean')
     Assert-True ($cleanIndex -ge 0) 'clean event recorded in shared ordered log'
-    foreach ($svc in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service')) {
+    foreach ($svc in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service', 'kit-manager-api')) {
         $stopIndex = $stopOrderLog.IndexOf("stop:$svc")
         Assert-True (($stopIndex -ge 0) -and ($stopIndex -lt $cleanIndex)) "stop of $svc precedes clean in shared ordered log"
     }
@@ -1767,6 +1785,9 @@ exit 7
         if ($cloneIndex -lt 0) {
             throw "prepared-stage fake expected git clone, got '$($Arguments -join ' ')'"
         }
+        if ($cloneIndex + 1 -ge $Arguments.Count -or $Arguments[$cloneIndex + 1] -ne '--') {
+            throw "prepared-stage fake expected git clone option terminator before origin, got '$($Arguments -join ' ')'"
+        }
 
         $originIndex = -1
         for ($i = $cloneIndex + 1; $i -lt $Arguments.Count; $i++) {
@@ -1936,7 +1957,10 @@ exit 7
     foreach ($safeOriginUrl in @(
         'https://github.com/monkey1sai/AI-BIM-governance.git',
         'git@github.com:monkey1sai/AI-BIM-governance.git',
-        'ssh://git@github.com/monkey1sai/AI-BIM-governance.git'
+        'ssh://git@github.com/monkey1sai/AI-BIM-governance.git',
+        'file:///C:/Repos/AI-BIM-governance.git',
+        'D:\Repos\AI-BIM-governance.git',
+        '\\localhost\repo-mirror\AI-BIM-governance.git'
     )) {
         $safeOriginFailure = $null
         try {
@@ -1946,6 +1970,15 @@ exit 7
         }
         & $recordTransactionExpectation ([string]::IsNullOrWhiteSpace($safeOriginFailure)) 'Task 1A.0 credential guard accepts credential-manager and SSH-agent origins' "failure='$safeOriginFailure'"
     }
+    $optionShapedOriginFailure = $null
+    try {
+        Assert-TestDeployOriginUrlSafe -OriginUrl '--config=core.hooksPath=C:\unsafe-hooks' | Out-Null
+    } catch {
+        $optionShapedOriginFailure = $_.Exception.Message
+    }
+    & $recordTransactionExpectation (
+        $optionShapedOriginFailure -match 'origin URL is invalid'
+    ) 'Task 1A.0 origin guard rejects option-shaped relative origins before git clone' "failure='$optionShapedOriginFailure'"
     foreach ($unsafeOriginCase in @(
         [pscustomobject]@{
             Url = "https://oauth2:$credentialCanary@example.invalid/repo.git"
@@ -1977,6 +2010,14 @@ exit 7
         },
         [pscustomobject]@{
             Url = "file:///C:/repo.git#$credentialCanary"
+            Canary = $credentialCanary
+        },
+        [pscustomobject]@{
+            Url = "D:\Repos\repo.git?access_token=$credentialCanary"
+            Canary = $credentialCanary
+        },
+        [pscustomobject]@{
+            Url = "D:\Repos\repo.git#$credentialCanary"
             Canary = $credentialCanary
         }
     )) {
@@ -2014,6 +2055,14 @@ exit 7
         [pscustomobject]@{
             Name = 'file-fragment'
             Url = "file:///C:/repo.git#$credentialCanary"
+        },
+        [pscustomobject]@{
+            Name = 'local-path-query'
+            Url = "D:\Repos\repo.git?access_token=$credentialCanary"
+        },
+        [pscustomobject]@{
+            Name = 'local-path-fragment'
+            Url = "D:\Repos\repo.git#$credentialCanary"
         }
     )
     foreach ($credentialBypassCase in $credentialBypassCases) {
@@ -2507,7 +2556,7 @@ exit 7
     $serviceStopFailureStageResidue = @($serviceStopFailureResidue | Where-Object { $_.Name -like ".$serviceStopFailureLiveLeaf.rebuild-stage-*" })
     $serviceStopFailurePreviousResidue = @($serviceStopFailureResidue | Where-Object { $_.Name -like ".$serviceStopFailureLiveLeaf.rebuild-previous-*" })
     $serviceStopFailureResidueNames = @($serviceStopFailureResidue | ForEach-Object { $_.Name })
-    $expectedStoppedServices = @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service')
+    $expectedStoppedServices = @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service', 'kit-manager-api')
     $allStopAttemptsObserved = $serviceStopAttempts.Count -eq $expectedStoppedServices.Count
     foreach ($serviceName in $expectedStoppedServices) {
         $allStopAttemptsObserved = $allStopAttemptsObserved -and ($serviceStopAttempts -contains $serviceName)
@@ -2836,6 +2885,15 @@ exit 7
     # Task 1A.9: post-cutover deploy failures do not rename the filesystem back.
     # Both the structured nonzero result and thrown-error path expose the exact
     # retained previous checkout for explicit operator recovery.
+    $postCutoverProcessEnvNames = @(
+        'EDGE_SITE_ID',
+        'EDGE_RUNTIME_DATA_ROOT',
+        'RUNTIME_STORAGE_ROOT',
+        'STORAGE_HOST_ROOT',
+        'STREAMING_CONVERSION_ARTIFACTS_ROOT',
+        'CONVERSION_LEDGER_STORE_PATH',
+        'ARTIFACT_HEALTH_LEDGER_STORE_PATH'
+    )
     foreach ($postCutoverMode in @('nonzero', 'throw')) {
         $postCutoverScenarioRoot = Join-Path $sandbox "transaction-post-cutover-$postCutoverMode"
         $postCutoverLiveRoot = Join-Path $postCutoverScenarioRoot 'live'
@@ -2890,6 +2948,24 @@ exit 7
         $postCutoverOriginalFixedPath = $script:TestDeployFixedPath
         $postCutoverResult = $null
         $postCutoverFailureMessage = $null
+        $postCutoverOriginalProcessEnv = @{}
+        $postCutoverExpectedProcessEnv = @{}
+        for ($processEnvIndex = 0; $processEnvIndex -lt $postCutoverProcessEnvNames.Count; $processEnvIndex++) {
+            $processEnvName = $postCutoverProcessEnvNames[$processEnvIndex]
+            $postCutoverOriginalProcessEnv[$processEnvName] = [Environment]::GetEnvironmentVariable($processEnvName, 'Process')
+            $expectedProcessEnvValue = if (($processEnvIndex % 2) -eq 0) {
+                "pre-$postCutoverMode-$processEnvIndex"
+            } else {
+                $null
+            }
+            $postCutoverExpectedProcessEnv[$processEnvName] = $expectedProcessEnvValue
+            if ($null -eq $expectedProcessEnvValue) {
+                Remove-Item -LiteralPath "Env:$processEnvName" -ErrorAction SilentlyContinue
+            } else {
+                [Environment]::SetEnvironmentVariable($processEnvName, $expectedProcessEnvValue, 'Process')
+            }
+        }
+        $postCutoverProcessEnvRestoredExactly = $false
         try {
             $script:TestDeployFixedPath = $postCutoverLiveRoot
             try {
@@ -2905,6 +2981,23 @@ exit 7
             }
         } finally {
             $script:TestDeployFixedPath = $postCutoverOriginalFixedPath
+            $postCutoverProcessEnvRestoredExactly = $true
+            foreach ($processEnvName in $postCutoverProcessEnvNames) {
+                $actualProcessEnvValue = [Environment]::GetEnvironmentVariable($processEnvName, 'Process')
+                if ($actualProcessEnvValue -cne $postCutoverExpectedProcessEnv[$processEnvName]) {
+                    $postCutoverProcessEnvRestoredExactly = $false
+                }
+                $originalProcessEnvValue = $postCutoverOriginalProcessEnv[$processEnvName]
+                if ($null -eq $originalProcessEnvValue) {
+                    Remove-Item -LiteralPath "Env:$processEnvName" -ErrorAction SilentlyContinue
+                } else {
+                    [Environment]::SetEnvironmentVariable(
+                        $processEnvName,
+                        $originalProcessEnvValue,
+                        'Process'
+                    )
+                }
+            }
         }
 
         $postCutoverPreviousPath = if ($null -ne $postCutoverResult) {
@@ -2939,6 +3032,7 @@ exit 7
             ) 'Task 1A.9 nonzero deploy exit is returned without false success' "exit='$postCutoverExitCode'"
             & $recordTransactionExpectation ([string]::IsNullOrWhiteSpace($postCutoverFailureMessage)) 'Task 1A.9 nonzero deploy exit does not masquerade as a PowerShell exception' "actual='$postCutoverFailureMessage'"
         }
+        & $recordTransactionExpectation $postCutoverProcessEnvRestoredExactly 'Task 1A.9 post-cutover failure restores every process env value exactly, including unset values' "mode='$postCutoverMode'"
         & $recordTransactionExpectation (
             -not [string]::IsNullOrWhiteSpace($postCutoverPreviousPath) -and
             $null -ne $postCutoverPreviousManifest -and

@@ -100,7 +100,13 @@ function Get-PrReviewPowerShell {
 
 function Get-PrReviewPowerShellHosts {
     [CmdletBinding()]
-    param()
+    param(
+        [System.PlatformID] $Platform = [System.Environment]::OSVersion.Platform
+    )
+
+    if ($Platform -ne [System.PlatformID]::Win32NT) {
+        return @()
+    }
 
     $hosts = New-Object 'System.Collections.Generic.List[string]'
     foreach ($candidate in @('pwsh', 'powershell.exe')) {
@@ -666,7 +672,8 @@ function New-PrReviewCommandPlan {
         [Parameter(Mandatory = $true)][string] $Owner,
         [Parameter(Mandatory = $true)][string] $Cwd,
         [Parameter(Mandatory = $true)][string] $FileName,
-        [Parameter(Mandatory = $true)][string[]] $Arguments
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $Arguments,
+        [string] $UnavailableReason = ''
     )
 
     return [ordered]@{
@@ -676,6 +683,7 @@ function New-PrReviewCommandPlan {
         file_name = $FileName
         arguments = @($Arguments)
         command   = "$FileName $($Arguments -join ' ')"
+        unavailable_reason = $UnavailableReason
     }
 }
 
@@ -684,7 +692,8 @@ function Get-PrReviewValidationPlan {
     param(
         [Parameter(Mandatory = $true)][string[]] $ChangedPaths,
         [Parameter(Mandatory = $true)][string] $RepoRoot,
-        [string[]] $OpenSpecChangeIds = @()
+        [string[]] $OpenSpecChangeIds = @(),
+        [System.PlatformID] $Platform = [System.Environment]::OSVersion.Platform
     )
 
     $plans = New-Object System.Collections.Generic.List[object]
@@ -719,12 +728,22 @@ function Get-PrReviewValidationPlan {
             [void]$plans.Add((New-PrReviewCommandPlan -Name 'root contracts and fakes tests' -Owner 'tests' -Cwd $RepoRoot -FileName 'python' -Arguments @('-m', 'pytest', 'tests', '-q', '-p', 'no:cacheprovider')))
         }
         if (
-            $p -match '^scripts/(deploy\.ps1|dev/rebuild-test-deploy\.ps1|lib/(rebuild-test-deploy|design-assets|host-native-launcher)\.ps1|tests/(test-rebuild-test-deploy|test-helpers)\.ps1)$' -and
+            $p -match '^scripts/(deploy\.ps1|dev/rebuild-test-deploy\.ps1|lib/(rebuild-test-deploy|design-assets|host-native-launcher)\.ps1|lib/StructLog\.psm1|tests/(test-rebuild-test-deploy|test-helpers)\.ps1)$' -and
             $added.Add('rebuild-test-deploy')
         ) {
-            foreach ($powerShellHost in @(Get-PrReviewPowerShellHosts)) {
+            $powerShellHosts = @(Get-PrReviewPowerShellHosts -Platform $Platform)
+            foreach ($powerShellHost in $powerShellHosts) {
                 $hostName = Split-Path -Leaf $powerShellHost
                 [void]$plans.Add((New-PrReviewCommandPlan -Name "rebuild transaction safety tests ($hostName)" -Owner 'scripts' -Cwd $RepoRoot -FileName $powerShellHost -Arguments @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', 'scripts/tests/test-rebuild-test-deploy.ps1')))
+            }
+            if ($powerShellHosts.Count -eq 0) {
+                [void]$plans.Add((New-PrReviewCommandPlan `
+                    -Name 'rebuild transaction safety tests (Windows platform unavailable)' `
+                    -Owner 'scripts' `
+                    -Cwd $RepoRoot `
+                    -FileName 'windows-powershell-required' `
+                    -Arguments @() `
+                    -UnavailableReason 'Windows-only PowerShell 7 and Windows PowerShell 5.1 validation must be delegated to the Windows CI job.'))
             }
         }
         if ($p -match '^scripts/' -and $added.Add('scripts')) {
@@ -741,6 +760,10 @@ function Invoke-PrReviewCommand {
         [Parameter(Mandatory = $true)] $Plan,
         [switch] $SkipExecution
     )
+
+    if (-not [string]::IsNullOrWhiteSpace([string]$Plan.unavailable_reason)) {
+        return New-PrReviewCheck -Name $Plan.name -Owner $Plan.owner -Status 'skipped' -Command $Plan.command -Cwd $Plan.cwd -ExitCode 126 -Summary ([string]$Plan.unavailable_reason)
+    }
 
     if ($SkipExecution) {
         return New-PrReviewCheck -Name $Plan.name -Owner $Plan.owner -Status 'skipped' -Command $Plan.command -Cwd $Plan.cwd -Summary 'Command execution skipped by dry-run fixture.'
@@ -950,7 +973,8 @@ function Invoke-PrReviewAgent {
         [string] $PrBodyPath = '',
         [string] $ChangeLane = '',
         [string] $BehaviorContractChanged = '',
-        [string] $RequirementSource = ''
+        [string] $RequirementSource = '',
+        [System.PlatformID] $Platform = [System.Environment]::OSVersion.Platform
     )
 
     if ([string]::IsNullOrWhiteSpace($RunId)) { $RunId = [Guid]::NewGuid().ToString('N') }
@@ -993,13 +1017,15 @@ function Invoke-PrReviewAgent {
         [void]$blockers.Add((New-PrReviewIssue -Kind 'governed_lane_mismatch' -Severity 'high' -Message "Lane $ChangeLane is below the required Lane G minimum: $reasonSummary."))
     }
 
-    $plans = @(Get-PrReviewValidationPlan -ChangedPaths $ChangedPaths -RepoRoot $RepoRoot -OpenSpecChangeIds $openSpecChangeIds)
+    $plans = @(Get-PrReviewValidationPlan -ChangedPaths $ChangedPaths -RepoRoot $RepoRoot -OpenSpecChangeIds $openSpecChangeIds -Platform $Platform)
     $checks = New-Object System.Collections.Generic.List[object]
     foreach ($plan in $plans) {
         $check = Invoke-PrReviewCommand -Plan $plan -SkipExecution:$SkipCommandExecution
         [void]$checks.Add($check)
         if ($check.status -eq 'failed') {
             [void]$blockers.Add((New-PrReviewIssue -Kind 'validation_failed' -Severity 'high' -Path $check.cwd -Message "Required validation failed: $($check.name)."))
+        } elseif ($check.status -eq 'skipped' -and $check.exit_code -eq 126) {
+            [void]$warnings.Add((New-PrReviewIssue -Kind 'validation_platform_unavailable' -Severity 'medium' -Path $check.cwd -Message "Platform-specific validation unavailable locally: $($check.name). $($check.summary)"))
         } elseif ($check.status -eq 'skipped' -and $check.exit_code -eq 127) {
             if ($AllowUnavailableCommands) {
                 [void]$warnings.Add((New-PrReviewIssue -Kind 'validation_unavailable' -Severity 'medium' -Path $check.cwd -Message "Validation command unavailable: $($check.name). $($check.summary)"))

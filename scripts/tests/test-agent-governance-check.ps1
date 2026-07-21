@@ -97,6 +97,8 @@ try {
     Assert-True (([regex]::Matches($ci, "if: always\(\) && \(needs\.changes\.result != 'success' \|\|")).Count -eq 11) 'downstream required jobs run on classifier failure instead of reporting skipped-success'
     Assert-True ($ci -match '(?s)name: Run rebuild transaction safety tests \(PowerShell 7\).*?shell: pwsh.*?run: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-rebuild-test-deploy\.ps1') 'CI runs rebuild transaction safety tests in a PowerShell 7 file scope'
     Assert-True ($ci -match '(?s)name: Run rebuild transaction safety tests \(Windows PowerShell 5\.1\).*?shell: pwsh.*?run: powershell\.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-rebuild-test-deploy\.ps1') 'CI runs rebuild transaction safety tests in a Windows PowerShell 5.1 file scope'
+    Assert-True ($ci.Contains("scripts/.*\.(ps1|psm1)$")) 'PowerShell static classifier includes script modules'
+    Assert-True ($ci.Contains('StructLog\.psm1')) 'rebuild transaction classifier includes the shared structured logger module'
     Assert-True ($ci -match 'if \[ "\$\{\{ github\.event_name \}\}" = "pull_request" \]') 'changed path classifier diffs PR base/head on pull_request'
     Assert-True ($ci -match 'git -c core\.quotepath=false diff --no-renames --name-only "\$base_sha\.\.\.\$head_sha"') 'pull-request path classification uses rename-safe merge-base three-dot semantics'
     Assert-True ($ci -match 'printf "__full__\\n" > changed-paths\.txt') 'changed path classifier runs full service CI on push/workflow_dispatch'
@@ -237,6 +239,13 @@ try {
     Assert-FileContains 'bim-streaming-server/AGENTS.md' '`governance-service`.*外部公司雲端.*coordinator collaboration handlers' 'streaming formal review-data boundary points to current governance authorities'
     Assert-FileContains 'docs/agents/repo-data-flow-and-ownership.md' '\| Annotation metadata \| `governance-service` \+ 外部公司雲端 `bim-control` \|' 'annotation ownership includes local governance-service and external cloud authority'
     Assert-True (-not ((Get-Content -Raw -LiteralPath 'scripts/tests/test-agent-skills-sync.ps1') -match '\bWrite-Host\b')) 'agent skill sync test uses structured logging instead of bare Write-Host'
+    $rebuildLibraryBody = Get-Content -Raw -LiteralPath 'scripts/lib/rebuild-test-deploy.ps1'
+    $rebuildEntrypointBody = Get-Content -Raw -LiteralPath 'scripts/dev/rebuild-test-deploy.ps1'
+    Assert-True ($rebuildLibraryBody -match 'StructLog\.psm1') 'rebuild library imports the shared structured logger'
+    Assert-True ($rebuildLibraryBody -match 'Write-StructLifecycle') 'rebuild library emits cutover/recovery paths through structured lifecycle logging'
+    Assert-True (-not ($rebuildLibraryBody -match 'Write-Host[^\r\n]*retained previous checkout')) 'rebuild library does not emit the retained recovery path with bare Write-Host'
+    Assert-True (-not ($rebuildEntrypointBody -match '\bWrite-Host\b')) 'rebuild dev entrypoint emits its result through structured logging'
+    Assert-True ($rebuildEntrypointBody -match 'test deployment rebuild failed') 'rebuild dev entrypoint distinguishes nonzero deployment failure from completion'
 
     foreach ($overlayPath in @('docs/agents/advanced-agent-reasoning-contract.md', 'docs/agents/codex-loop-workflows.md')) {
         Assert-FileContains $overlayPath ([regex]::Escape('C:\Users\IOT\.codex\docs\agents\task-routing.md')) "$overlayPath points to global task-routing source of truth"

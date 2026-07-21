@@ -410,12 +410,23 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
       status.last_poll_at = new Date().toISOString();
       status.poll_count += 1; // 單調遞增：list 成功即計一輪（供 loop liveness 判斷，免時鐘解析度依賴）
       status.last_error = null;
-      // baseline_count（純診斷）：首輪 `*/model.ifc` 數，兩種模式皆照舊填。
+      // baseline_count（純診斷）：首輪符合 key 結構規約的 `*/model.ifc` 數。
       // ledger 模式下它**不再 gate 觸發**（不再代表「被吸收、不轉檔」），只供 #conv 顯示
       // 「首輪可解析 IFC 數」。
       const firstRound = isFirstRound;
       if (firstRound) {
-        status.baseline_count = objects.length;
+        status.baseline_count = objects.reduce(
+          (count, object) =>
+            count +
+            (deriveIntakeFromKey({
+              key: object.key,
+              prefix: opts.prefix,
+              keySuffix: opts.keySuffix,
+            }).ok
+              ? 1
+              : 0),
+          0,
+        );
         isFirstRound = false;
       }
       // §3.4：無首輪 baseline 特例。對每個 `*/model.ifc` 算 idkey 查持久 ledger 水印——無紀錄→觸發

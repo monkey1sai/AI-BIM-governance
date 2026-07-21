@@ -81,8 +81,8 @@ jobs:
           emit kit_manager_api '^services/kit-manager-api/'
           emit kit_manager_web '^apps/kit-manager-web/'
           emit compose_config '^(compose\..*\.yml|\.env.*\.example|infra/docker/)'
-          emit powershell_static '^(\.github/workflows/|\.claude/workflows/|scripts/.*\.ps1$|AGENTS\.md|docs/agents/)'
-          emit rebuild_test_deploy '^scripts/(deploy\.ps1|dev/rebuild-test-deploy\.ps1|lib/(rebuild-test-deploy|design-assets|host-native-launcher)\.ps1|tests/(test-rebuild-test-deploy|test-helpers)\.ps1)$'
+          emit powershell_static '^(\.github/workflows/|\.claude/workflows/|scripts/.*\.(ps1|psm1)$|AGENTS\.md|docs/agents/)'
+          emit rebuild_test_deploy '^scripts/(deploy\.ps1|dev/rebuild-test-deploy\.ps1|lib/(rebuild-test-deploy|design-assets|host-native-launcher)\.ps1|lib/StructLog\.psm1|tests/(test-rebuild-test-deploy|test-helpers)\.ps1)$'
           echo "secret_pattern_scan=true" >> "$GITHUB_OUTPUT"
 
       - name: Classify frontend design scope from base and head manifests
@@ -415,6 +415,13 @@ jobs:
           -TargetCommit '${{ needs.changes.outputs.head_sha }}'
           -AllowUntrackedArtifacts
 
+      - name: Verify hifi token and legacy route runtime slice
+        shell: pwsh
+        working-directory: web-viewer-sample
+        env:
+          E2E_DISABLE_WEBSERVER: '1'
+        run: npx playwright test e2e/hifi-token-authority.spec.ts --config=playwright.config.ts
+
       - name: Upload functional/runtime evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -424,6 +431,8 @@ jobs:
             artifacts/e2e/functional-runtime/functional-runtime-result.json
             artifacts/e2e/functional-runtime/conv-history.png
             artifacts/e2e/functional-runtime/conv-history-trace.zip
+            artifacts/e2e/hifi-token-authority/
+            artifacts/e2e/_output/
           if-no-files-found: error
 
   kit-manager-api:

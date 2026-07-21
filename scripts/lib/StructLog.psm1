@@ -360,7 +360,8 @@ function _Build-StructLogRecord {
     $traceId = if ($Extras.ContainsKey('TraceId')) { $Extras['TraceId'] } else { $State.TraceId }
     if (-not $traceId) { $traceId = "script_$($State.RunId)" }
     $seq = $State.GetSeq($traceId)
-    $safeData = ConvertTo-StructLogRedactedData -Data ($Data ?? @{}) -AllowList $State.AllowList
+    $dataForRedaction = if ($null -eq $Data) { @{} } else { $Data }
+    $safeData = ConvertTo-StructLogRedactedData -Data $dataForRedaction -AllowList $State.AllowList
     if ($null -eq $safeData) { $safeData = [ordered]@{} }
     $record = [ordered]@{
         ts = $ts

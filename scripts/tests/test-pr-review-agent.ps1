@@ -549,14 +549,17 @@ Assert-True ($owners -contains 'scripts') 'planner includes scripts owner'
 $rebuildPlan = Get-PrReviewValidationPlan -RepoRoot $repoRoot `
     -ChangedPaths @('scripts/lib/rebuild-test-deploy.ps1')
 $rebuildChecks = @($rebuildPlan | Where-Object { $_.command -match 'scripts/tests/test-rebuild-test-deploy\.ps1' })
-$expectedRebuildHosts = @(
-    foreach ($candidate in @('pwsh', 'powershell.exe')) {
-        $resolved = Get-Command $candidate -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($null -ne $resolved) { $resolved.Source }
+$expectedRebuildHosts = @()
+if ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT) {
+    $expectedRebuildHosts = @(
+        foreach ($candidate in @('pwsh', 'powershell.exe')) {
+            $resolved = Get-Command $candidate -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($null -ne $resolved) { $resolved.Source }
+        }
+    )
+    if ($expectedRebuildHosts.Count -eq 0) {
+        $expectedRebuildHosts = @(Get-PrReviewPowerShell)
     }
-)
-if ($expectedRebuildHosts.Count -eq 0) {
-    $expectedRebuildHosts = @(Get-PrReviewPowerShell)
 }
 Assert-True (
     $rebuildChecks.Count -eq @($expectedRebuildHosts | Select-Object -Unique).Count
@@ -566,6 +569,38 @@ foreach ($expectedHost in @($expectedRebuildHosts | Select-Object -Unique)) {
         @($rebuildChecks | Where-Object { $_.file_name -eq $expectedHost }).Count -eq 1
     ) "planner includes rebuild transaction safety tests for host '$expectedHost'"
 }
+$nonWindowsRebuildHosts = @(Get-PrReviewPowerShellHosts -Platform ([System.PlatformID]::Unix))
+Assert-True ($nonWindowsRebuildHosts.Count -eq 0) 'Windows-only rebuild transaction suite exposes no hosts on non-Windows platforms'
+$nonWindowsRebuildPlan = Get-PrReviewValidationPlan `
+    -RepoRoot $repoRoot `
+    -ChangedPaths @('scripts/lib/rebuild-test-deploy.ps1') `
+    -Platform ([System.PlatformID]::Unix)
+$nonWindowsRebuildChecks = @($nonWindowsRebuildPlan | Where-Object { $_.name -match 'rebuild transaction safety tests' })
+Assert-True ($nonWindowsRebuildChecks.Count -eq 1) 'non-Windows planner emits one explicit unavailable rebuild check'
+$nonWindowsRebuildCheck = Invoke-PrReviewCommand -Plan $nonWindowsRebuildChecks[0]
+Assert-True ($nonWindowsRebuildCheck.status -eq 'skipped' -and $nonWindowsRebuildCheck.exit_code -eq 126) 'non-Windows rebuild check is explicitly platform-unavailable'
+
+$out8b = New-TestOutputDir
+$result8b = Invoke-PrReviewAgent `
+    -RepoRoot $repoRoot `
+    -ChangedPaths @('scripts/lib/rebuild-test-deploy.ps1') `
+    -Platform ([System.PlatformID]::Unix) `
+    -ChangeLane 'G' `
+    -BehaviorContractChanged 'no' `
+    -RequirementSource 'docs/plans/AI-BIM 前後端設計文件.dc.html' `
+    -OutputDir $out8b `
+    -SkipCommandExecution `
+    -SkipGitNexus `
+    -AllowGitNexusUnavailable
+$platformUnavailable = @($result8b.report.warnings | Where-Object { $_.kind -eq 'validation_platform_unavailable' })
+Assert-True ($platformUnavailable.Count -eq 1) 'full non-Windows report discloses the unavailable Windows rebuild gate'
+Remove-Item -LiteralPath $out8b -Recurse -Force
+
+$structLogPlan = Get-PrReviewValidationPlan -RepoRoot $repoRoot -ChangedPaths @('scripts/lib/StructLog.psm1')
+$structLogRebuildChecks = @($structLogPlan | Where-Object { $_.command -match 'scripts/tests/test-rebuild-test-deploy\.ps1' })
+Assert-True (
+    $structLogRebuildChecks.Count -eq @($expectedRebuildHosts | Select-Object -Unique).Count
+) 'StructLog module changes schedule the rebuild transaction suite on every available Windows PowerShell host'
 
 # Test 9: Missing commands are recorded as skipped/unavailable instead of crashing report generation.
 $missingPlan = New-PrReviewCommandPlan -Name 'missing command fixture' -Owner 'scripts' -Cwd $repoRoot -FileName 'definitely-missing-pr-review-agent-command' -Arguments @('--version')

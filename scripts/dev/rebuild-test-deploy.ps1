@@ -18,11 +18,19 @@ if (-not $Build) {
 
 $result = Invoke-TestDeployRebuild -Build
 
-Write-Host "[rebuild-test-deploy] deployment_path=$($result.DeploymentPath)"
-Write-Host "[rebuild-test-deploy] previous_path=$($result.PreviousPath)"
-Write-Host "[rebuild-test-deploy] origin_main_commit=$($result.OriginMainCommit)"
-Write-Host "[rebuild-test-deploy] removed_agent_tooling_count=$($result.RemovedAgentToolingCount)"
-Write-Host "[rebuild-test-deploy] restored_env_file_count=$($result.RestoredEnvFileCount)"
-Write-Host "[rebuild-test-deploy] deploy_exit_code=$($result.DeployExitCode)"
+$lifecycleMessage = if ($result.DeployExitCode -eq 0) {
+    'test deployment rebuild completed'
+} else {
+    'test deployment rebuild failed'
+}
+$lifecycleLevel = if ($result.DeployExitCode -eq 0) { 'info' } else { 'error' }
+Write-TestDeployLifecycleLog -Message $lifecycleMessage -Level $lifecycleLevel -Data @{
+    deployment_path = $result.DeploymentPath
+    previous_path = $result.PreviousPath
+    origin_main_commit = $result.OriginMainCommit
+    removed_agent_tooling_count = $result.RemovedAgentToolingCount
+    restored_env_file_count = $result.RestoredEnvFileCount
+    deploy_exit_code = $result.DeployExitCode
+}
 
 exit $result.DeployExitCode

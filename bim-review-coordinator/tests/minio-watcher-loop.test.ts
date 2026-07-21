@@ -304,20 +304,22 @@ describe("minioWatcher loop", () => {
   });
 
   it("層級不符 key → skipped_malformed 計數，不觸發", async () => {
-    const state = { objs: [{ key: "899/main/seed/model.ifc", etag: "e1" }] };
+    const state = {
+      objs: [
+        { key: "899/main/seed/model.ifc", etag: "e1" },
+        { key: "also-bad/model.ifc", etag: "e2" },
+      ],
+    };
     const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
     const selfBase = await startIntakeStub(received);
     const s3Base = await startS3Stub(state);
     // seed 899/main/seed 是合法三段；視為已落帳避免 auto-enroll 觸發它，讓本測試聚焦
-    // 「新增 malformed key 被 skip、零 intake」。
+    // 「首輪 malformed key 被 skip、零 intake，且 baseline_count 只算可解析 key」。
     watcher = makeWatcher(s3Base, selfBase, state, {
       isLedgered: ledgeredFor("bim-control", [{ key: "899/main/seed/model.ifc", etag: "e1" }]),
     });
-    // 首輪即 baseline，但 malformed 不入 baseline 觸發域；改在新增 malformed 後驗 skip
-    await waitFor(() => (watcher!.getStatus().last_poll_at as string | null) !== null);
-    // 新規則：去 suffix 後僅 1 段 → 未湊齊三段 → malformed（不可再用 4 段，4 段在新規則為合法）。
-    state.objs.push({ key: "also-bad/model.ifc", etag: "e2" });
     await waitFor(() => (watcher!.getStatus().skipped_malformed_total as number) >= 1);
+    expect(watcher!.getStatus().baseline_count).toBe(1);
     expect(received.length).toBe(0);
   });
 
