@@ -12,6 +12,7 @@ Proof 簽章權威（ProofRegistry）由 §2.8/2.9 切片提供；本測試依�
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -60,6 +61,8 @@ def _binding(**overrides: str) -> dict[str, str]:
         "session_id": "sess_1",
         "principal": "user_a",
         "model_version_id": "mv_1",
+        "model_artifact": "artifact_1",
+        "active_binding_revision": "rev_1",
     }
     binding.update(overrides)
     return binding
@@ -73,9 +76,16 @@ def _snapshot(
     session_id: str = "sess_1",
     principal: str = "user_a",
     model_version_id: str = "mv_1",
+    model_artifact: str = "artifact_1",
+    active_binding_revision: str = "rev_1",
     session_binding_extra: Optional[dict[str, str]] = None,
 ) -> dict[str, Any]:
-    session_binding: dict[str, Any] = {"session_id": session_id, "principal": principal}
+    session_binding: dict[str, Any] = {
+        "session_id": session_id,
+        "principal": principal,
+        "model_artifact": model_artifact,
+        "active_binding_revision": active_binding_revision,
+    }
     if session_binding_extra:
         session_binding.update(session_binding_extra)
     return {
@@ -260,6 +270,18 @@ def test_malformed_token_rejected_before_verification(bad_token):
         {"session_id": "", "principal": "user_a", "model_version_id": "mv_1"},
         {"session_id": "sess_1", "principal": 7, "model_version_id": "mv_1"},
         "not-a-dict",
+        {  # 缺 model_artifact（不得因 caller 省略而放行寬鬆綁定）
+            "session_id": "sess_1",
+            "principal": "user_a",
+            "model_version_id": "mv_1",
+            "active_binding_revision": "rev_1",
+        },
+        {  # 缺 active_binding_revision
+            "session_id": "sess_1",
+            "principal": "user_a",
+            "model_version_id": "mv_1",
+            "model_artifact": "artifact_1",
+        },
     ],
 )
 def test_invalid_binding_rejects_before_any_verification(binding):
@@ -321,6 +343,26 @@ def test_defensively_rejects_verified_proof_already_past_expiry():
     assert result.code == "proof_expired"
 
 
+@pytest.mark.parametrize("bad_epoch", [math.nan, math.inf, -math.inf])
+def test_non_finite_proof_expiry_rejected(bad_epoch):
+    """proof 權威若回傳 NaN/Infinity expiry，SHALL 結構化拒絕而非讓後續 _iso_utc()
+    未捕捉拋錯（finding C）。"""
+    token = "a4p.k.r1.aa"
+    malformed = FakeVerifiedProof(
+        proof_id="p1",
+        expires_at="2027-01-15T08:00:00Z",
+        expires_at_epoch=bad_epoch,
+        snapshot=_snapshot(),
+    )
+    authority = _authority_for((token, malformed))
+    result = verify_handoff_evidence(
+        action="focus", proof_tokens=[token], binding=_binding(), authority=authority, now=NOW
+    )
+    assert result.accepted is False
+    assert result.code == "proof_invalid"
+    assert result.rows == ()
+
+
 def test_unexpected_authority_error_fails_closed():
     token = "a4p.k.r1.aa"
     authority = _authority_for((token, RuntimeError("boom")))
@@ -380,7 +422,8 @@ def test_session_binding_missing_in_snapshot_rejected():
     assert result.code == "binding_mismatch"
 
 
-def test_artifact_and_revision_compared_when_binding_requests_them():
+def test_artifact_and_revision_always_compared():
+    """model_artifact／active_binding_revision 為必填欄位，恆逐字比對（finding A）。"""
     token = "a4p.k.r1.aa"
     matching = _authority_for(
         (
@@ -441,7 +484,17 @@ def test_highlight_ineligible_row_rejected_even_with_prim():
 
 
 @pytest.mark.parametrize(
-    "prim", ["relative/path", "../escape", "/bad prim", "/", "", "/trailing/", "/a//b"]
+    "prim",
+    [
+        "relative/path",
+        "../escape",
+        "/bad prim",
+        "/",
+        "",
+        "/trailing/",
+        "/a//b",
+        "/World/123Bad",  # segment 首字元為數字：USD 不合法識別字（finding D）
+    ],
 )
 def test_malformed_prim_path_rejected(prim):
     token = "a4p.k.r1.aa"

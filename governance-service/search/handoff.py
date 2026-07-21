@@ -18,6 +18,7 @@ model/mapping 與 accepted prim，但 SHALL NOT 成為 current Kit stage authori
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -33,14 +34,23 @@ HANDOFF_ACTIONS = (HANDOFF_FOCUS, HANDOFF_HIGHLIGHT)
 # handoff 的列數上限；超出即整組拒絕，不得截斷後部分執行。
 MAX_HIGHLIGHT_ROWS = 64
 
-REQUIRED_BINDING_FIELDS = ("session_id", "principal", "model_version_id")
-# binding 若帶出這些欄位（coordinator resolve 的 current artifact/revision），
-# snapshot 的 session_binding 必須逐字相符。
-OPTIONAL_BINDING_FIELDS = ("model_artifact", "active_binding_revision")
+REQUIRED_BINDING_FIELDS = (
+    "session_id",
+    "principal",
+    "model_version_id",
+    "model_artifact",
+    "active_binding_revision",
+)
+# spec（a4-semantic-search）：coordinator SHALL resolve current primary artifact／
+# active_binding_revision，並要求每個 proof 都綁定同一 session/principal/model/
+# artifact/revision——五個欄位一律必填且逐字相符，不得因 caller 省略而略過比對
+# （fail closed：coordinator 尚未接線時，本模組直接拒絕而非放行寬鬆綁定）。
 
 MAX_PRIM_PATH_CHARS = 512
-# USD prim path：絕對路徑、僅識別字元的 segment，不允許空 segment 或尾端斜線。
-_PRIM_RE = re.compile(r"^/[A-Za-z0-9_]+(?:/[A-Za-z0-9_]+)*$")
+# USD prim path：絕對路徑、每個 segment 皆為 USD 合法識別字（首字元不可為數字，
+# 對齊 bim-streaming-server 轉檔端 sanitizer 的 `[A-Za-z_][A-Za-z0-9_]*`），
+# 不允許空 segment 或尾端斜線。
+_PRIM_RE = re.compile(r"^/[A-Za-z_][A-Za-z0-9_]*(?:/[A-Za-z_][A-Za-z0-9_]*)*$")
 
 
 class ProofRejected(Exception):
@@ -133,11 +143,6 @@ def _valid_binding(binding: Any) -> bool:
         value = binding.get(field_name)
         if not isinstance(value, str) or not value.strip():
             return False
-    for field_name in OPTIONAL_BINDING_FIELDS:
-        if field_name in binding:
-            value = binding.get(field_name)
-            if not isinstance(value, str) or not value.strip():
-                return False
     return True
 
 
@@ -160,9 +165,10 @@ def _binding_matches(snapshot: dict[str, Any], binding: dict[str, str]) -> bool:
         return False
     if session_binding.get("principal") != binding["principal"]:
         return False
-    for field_name in OPTIONAL_BINDING_FIELDS:
-        if field_name in binding and session_binding.get(field_name) != binding[field_name]:
-            return False
+    if session_binding.get("model_artifact") != binding["model_artifact"]:
+        return False
+    if session_binding.get("active_binding_revision") != binding["active_binding_revision"]:
+        return False
     return True
 
 
@@ -225,6 +231,7 @@ def verify_handoff_evidence(
             or not isinstance(proof_id, str)
             or not proof_id
             or not isinstance(expires_at_epoch, (int, float))
+            or not math.isfinite(expires_at_epoch)
         ):
             return _reject(action, "proof_invalid", failed_index=index)
         # 防衛性過期檢查：權威應已擋掉，仍不得放行（spec：任一 proof 已過期時拒絕建立）。
