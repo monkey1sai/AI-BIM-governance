@@ -57,6 +57,8 @@
 
 ## 6. Primary-only 3D Handoff、Focus 與 Highlight
 
+> **S1 done 2026-07-21（PR #365）**：governance 端 `verify_handoff_evidence` / proof-set 驗證權威已 merge main。下列 6.1 的 governance 半部視為已交付；coordinator create/consume store 仍屬 S2（未勾）。
+
 - [ ] 6.1 新增 session-scoped coordinator handoff create／consume routes；governance 驗 proof/snapshot/model/mapping/accepted prim，coordinator 重新授權 current principal/primary 並比較 current artifact/revision，invalid multi-row set atomic reject，`expires_at` 取 configured TTL 與全部 proof expiry 的最小值，只存 opaque transient intent。
 - [ ] 6.2 Mapped row click 只建立一個 `focus` handoff；明確 Highlight button 才建立 selected-set `highlight` handoff。只能導向 returned `/ui/open?session=...&a4_handoff=...`，URL 不得含 query/evidence/prim/proof，unmapped/spectator control 必須 disabled 並附原因。
 - [ ] 6.3 Session viewer 只消費 authorized trusted intent，比對 coordinator-bound model/artifact/revision 與 loaded stage，等待 DataChannel ready 後只送一個 `focusPrimRequest` 或 `highlightPrimsRequest`；不得假設 `console/unified/*` 已有 `mappingCache`，Console 不得送 WebRTC/DataChannel。

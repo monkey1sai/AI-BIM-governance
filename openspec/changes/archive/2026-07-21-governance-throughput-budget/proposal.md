@@ -1,5 +1,7 @@
 # 變更：governance-throughput-budget——WIP 上限＋治理稅預算＋canon 批次化＋收斂行動清單
 
+> **Status: adopted 2026-07-21**（使用者口令「採用建議 / A / 全做」；OQ-1 保留 A4+migrate-console、lineage deferred；OQ-2 首月 40%→次月 30%；OQ-3 本 change archive 出場）。原「供審非自動採納」語態自此升格為已採納政策來源。
+
 > **供審，非自動採納。** 本 change 為治理提案（仿 #360「供審;不掛 auto-merge」慣例）：全文一律為「提案」語態，PR 不掛 auto-merge，須使用者逐條裁決採納後規則才生效；未經採納前，本文件不構成任何已生效規則，亦不得被引用為既定政策。
 > **Owning folder：** `openspec/`（本 change 本體＋兩個未動工 change 的 deferred-proposed 註記）。不動任何程式碼、不動 AGENTS.md／CLAUDE.md 正文（canon 修訂依本提案 R3 批次化程序另走提案）、不動 `.env`、不動 `openspec/changes/archive/`。
 > **與分支收斂設計 spec（#352）的關係：** `docs/superpowers/specs/2026-07-16-branch-convergence-design.md` 已裁決「本地分支＋worktree 收斂」與防再發散 3 條規則（PR merge 後刪分支、`claude/<隨機名>` 存活期限、每週 prune 盤點）。本 change **不重複建制該層**，只補其未覆蓋的上游兩層：**openspec active change 的 WIP 流量**與**治理類 commit 的產能佔比**。兩者互補：#352 管 git 分支存量，本提案管 change 在飛數與治理稅。快照非免驗依據的原則（#352 §4）本提案照抄沿用。

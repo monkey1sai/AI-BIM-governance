@@ -1,4 +1,4 @@
-> **Status: deferred-proposed 2026-07-21**（併入 `governance-throughput-budget` 審批，非已生效裁決。理由：WIP 收斂——本 change tasks 0/7 未動工，暫緩以集中產能。重啟條件：active change ≤2 有額度且 `#minio` 逐層導覽需求回到當期優先；重啟時須先重驗 main 現況（#259 trigger 端點、watcher 持久 ledger 進展）再調和 tasks。本註記只加不改原內容；使用者否決 defer 即撤下本註記。）
+> **Status: deferred 2026-07-21**（**使用者已採納**／NOW 軌0；原 #364 deferred-proposed 升格）。不計入 active WIP；解凍前不做實作。重啟時須先重驗 main 現況（#259 trigger、watcher ledger）再調和 tasks。
 
 ## Why
 
