@@ -27,6 +27,7 @@ jobs:
       kit_manager_web: ${{ steps.paths.outputs.kit_manager_web }}
       compose_config: ${{ steps.paths.outputs.compose_config }}
       powershell_static: ${{ steps.paths.outputs.powershell_static }}
+      rebuild_test_deploy: ${{ steps.paths.outputs.rebuild_test_deploy }}
       secret_pattern_scan: ${{ steps.paths.outputs.secret_pattern_scan }}
       frontend_product: ${{ steps.design_scope.outputs.frontend_product }}
       frontend_visual_required: ${{ steps.design_scope.outputs.frontend_visual_required }}
@@ -80,7 +81,8 @@ jobs:
           emit kit_manager_api '^services/kit-manager-api/'
           emit kit_manager_web '^apps/kit-manager-web/'
           emit compose_config '^(compose\..*\.yml|\.env.*\.example|infra/docker/)'
-          emit powershell_static '^(\.github/workflows/|\.claude/workflows/|scripts/.*\.ps1$|AGENTS\.md|docs/agents/)'
+          emit powershell_static '^(\.github/workflows/|\.claude/workflows/|scripts/.*\.(ps1|psm1)$|AGENTS\.md|docs/agents/)'
+          emit rebuild_test_deploy '^scripts/(deploy\.ps1|dev/rebuild-test-deploy\.ps1|lib/(rebuild-test-deploy|design-assets|host-native-launcher)\.ps1|lib/StructLog\.psm1|tests/(test-rebuild-test-deploy|test-helpers)\.ps1)$'
           echo "secret_pattern_scan=true" >> "$GITHUB_OUTPUT"
 
       - name: Classify frontend design scope from base and head manifests
@@ -413,6 +415,13 @@ jobs:
           -TargetCommit '${{ needs.changes.outputs.head_sha }}'
           -AllowUntrackedArtifacts
 
+      - name: Verify hifi token and legacy route runtime slice
+        shell: pwsh
+        working-directory: web-viewer-sample
+        env:
+          E2E_DISABLE_WEBSERVER: '1'
+        run: npx playwright test e2e/hifi-token-authority.spec.ts --config=playwright.config.ts
+
       - name: Upload functional/runtime evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -422,6 +431,8 @@ jobs:
             artifacts/e2e/functional-runtime/functional-runtime-result.json
             artifacts/e2e/functional-runtime/conv-history.png
             artifacts/e2e/functional-runtime/conv-history-trace.zip
+            artifacts/e2e/hifi-token-authority/
+            artifacts/e2e/_output/
           if-no-files-found: error
 
   kit-manager-api:
@@ -534,6 +545,16 @@ jobs:
             exit 1
           }
           Write-Host 'No PSScriptAnalyzer Error severity findings.'
+
+      - name: Run rebuild transaction safety tests (PowerShell 7)
+        if: needs.changes.outputs.rebuild_test_deploy == 'true'
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-rebuild-test-deploy.ps1
+
+      - name: Run rebuild transaction safety tests (Windows PowerShell 5.1)
+        if: needs.changes.outputs.rebuild_test_deploy == 'true'
+        shell: pwsh
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-rebuild-test-deploy.ps1
 
   secret-pattern-scan:
     name: secret pattern scan

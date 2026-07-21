@@ -11,6 +11,26 @@ $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $testName = 'rebuild-test-deploy'
 $sandbox = New-TestSandbox -Prefix $testName
 
+function Resolve-TestReparseTargetPath {
+    param([Parameter(Mandatory = $true)] $LinkItem)
+
+    if ($null -ne $LinkItem.PSObject.Methods['ResolveLinkTarget']) {
+        $resolved = $LinkItem.ResolveLinkTarget($true)
+        if ($null -eq $resolved) { return $null }
+        return [System.IO.Path]::GetFullPath($resolved.FullName)
+    }
+
+    $targets = @($LinkItem.Target)
+    if ($targets.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$targets[0])) {
+        return $null
+    }
+    $targetPath = [string]$targets[0]
+    if (-not [System.IO.Path]::IsPathRooted($targetPath)) {
+        $targetPath = Join-Path $LinkItem.Parent.FullName $targetPath
+    }
+    return [System.IO.Path]::GetFullPath($targetPath)
+}
+
 function New-DeployEdgeVolumeHarness {
     param(
         [Parameter(Mandatory = $true)][string] $DeployRoot,
@@ -211,6 +231,11 @@ function Start-HostNativeGovernance {
 function Start-HostNativeKit {
     param([string] $RepoRoot, [int] $SignalPort, [int] $StreamPort, [string] $PublicIp, [int[]] $SpectatorSignalPorts, [int[]] $SpectatorStreamPorts)
     return [pscustomobject]@{ Pid = 4444; LogPath = (Join-Path $RepoRoot 'scripts\.run\mock-kit.log') }
+}
+
+function Start-HostNativeKitManager {
+    param([string] $RepoRoot, [int] $Port)
+    return [pscustomobject]@{ Pid = 4545; LogPath = (Join-Path $RepoRoot 'scripts\.run\mock-kit-manager.log') }
 }
 
 function Wait-HostNativeHealth {
@@ -478,10 +503,10 @@ try {
         if (-not [bool]($linkItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
             throw "design asset test cleanup refused non-reparse path: '$LinkPath'"
         }
-        $resolvedTarget = $linkItem.ResolveLinkTarget($true)
+        $resolvedTarget = Resolve-TestReparseTargetPath -LinkItem $linkItem
         if (
-            $null -eq $resolvedTarget -or
-            -not ([System.IO.Path]::GetFullPath($resolvedTarget.FullName)).Equals(
+            [string]::IsNullOrWhiteSpace($resolvedTarget) -or
+            -not $resolvedTarget.Equals(
                 [System.IO.Path]::GetFullPath($ExpectedTarget),
                 [System.StringComparison]::OrdinalIgnoreCase
             )
@@ -521,17 +546,10 @@ try {
     }
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $sourceGuardPublic '.design-assets-sync.lock'))) 'PowerShell lock uses delete-on-close without stale residue'
 
-    $sourceDeniedAncestor = Join-Path $sourceGuardRoot 'docs\plans'
     $sourceAccessDeniedReader = {
         param([string] $CandidatePath)
-        if ([System.IO.Path]::GetFullPath($CandidatePath).Equals(
-            [System.IO.Path]::GetFullPath($sourceDeniedAncestor),
-            [System.StringComparison]::OrdinalIgnoreCase
-        )) {
-            throw [System.UnauthorizedAccessException]::new('injected source ancestor access denied')
-        }
-        return Get-DeploymentDesignAssetItemIfPresent -Path $CandidatePath
-    }.GetNewClosure()
+        throw [System.UnauthorizedAccessException]::new('injected source ancestor access denied')
+    }
     $sourceAccessDeniedMessage = $null
     try {
         Sync-DeploymentDesignAssets -RepoRoot $sourceGuardRoot -SourceItemReader $sourceAccessDeniedReader | Out-Null
@@ -548,14 +566,8 @@ try {
 
     $sourceIoFailureReader = {
         param([string] $CandidatePath)
-        if ([System.IO.Path]::GetFullPath($CandidatePath).Equals(
-            [System.IO.Path]::GetFullPath($sourceDeniedAncestor),
-            [System.StringComparison]::OrdinalIgnoreCase
-        )) {
-            throw [System.IO.IOException]::new('injected source ancestor IO failure')
-        }
-        return Get-DeploymentDesignAssetItemIfPresent -Path $CandidatePath
-    }.GetNewClosure()
+        throw [System.IO.IOException]::new('injected source ancestor IO failure')
+    }
     $sourceIoFailureMessage = $null
     try {
         Sync-DeploymentDesignAssets -RepoRoot $sourceGuardRoot -SourceItemReader $sourceIoFailureReader | Out-Null
@@ -957,6 +969,25 @@ try {
     Assert-True ($calls.Count -gt 0) 'fetch command was attempted'
     Assert-True ($calls[0] -match [regex]::Escape("git fetch origin $mainRefSpec")) 'fetch command updates origin/main ref'
 
+    $commandDiagnosticCanary = 'REVIEW_COMMAND_DIAGNOSTIC_CANARY'
+    $commandDiagnosticFailure = $null
+    try {
+        Invoke-TestDeployGitCommand `
+            -Tool 'git' `
+            -Arguments @('clone', "file:///C:/repo.git?access_token=$commandDiagnosticCanary", 'C:\tmp\stage') `
+            -WorkingDirectory $cleanupRoot `
+            -CommandRunner {
+                param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+                return [pscustomobject]@{ ExitCode = 91; Output = 'injected command failure' }
+            } | Out-Null
+    } catch {
+        $commandDiagnosticFailure = $_.Exception.Message
+    }
+    Assert-True (-not [string]::IsNullOrWhiteSpace($commandDiagnosticFailure)) 'failing command surfaces a diagnostic'
+    Assert-True ($commandDiagnosticFailure -match 'git clone failed with exit code 91') 'failing command diagnostic keeps tool, operation, and exit code'
+    Assert-True ($commandDiagnosticFailure -match 'injected command failure') 'failing command diagnostic keeps command output'
+    Assert-True (-not $commandDiagnosticFailure.Contains($commandDiagnosticCanary)) 'failing command diagnostic redacts later command arguments'
+
     $okRunner = {
         param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
         return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
@@ -970,6 +1001,24 @@ try {
     $stderrResult = Invoke-TestDeployGitCommand -Tool 'cmd.exe' -Arguments @('/c', $stderrCmd) -WorkingDirectory $cleanupRoot
     Assert-Equal 0 $stderrResult.ExitCode 'native stderr command returns exit code zero'
     Assert-True ($stderrResult.Output -match 'native stderr ok') 'native stderr is captured without throwing'
+
+    $argvProbe = Join-Path $sandbox 'native-argv-probe.ps1'
+    @'
+param([string] $First, [string] $Second, [string] $Third)
+[Console]::Out.WriteLine(($First, $Second, $Third -join '|'))
+'@ | Set-Content -LiteralPath $argvProbe -Encoding ascii
+    $argvExpected = 'D:\Repo Mirrors\AI BIM.git|C:\Stage Root\|quote"inside'
+    $argvResult = Invoke-TestDeployGitCommand `
+        -Tool 'powershell.exe' `
+        -Arguments @('-NoProfile', '-NonInteractive', '-File', $argvProbe, 'D:\Repo Mirrors\AI BIM.git', 'C:\Stage Root\', 'quote"inside') `
+        -WorkingDirectory $cleanupRoot
+    Assert-Equal $argvExpected $argvResult.Output.Trim() 'native command preserves spaces, trailing backslashes, and embedded quotes as exact argv values'
+
+    $bareOrigin = Join-Path $sandbox 'origin mirror with spaces.git'
+    $bareClone = Join-Path $sandbox 'clone target with spaces'
+    Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('init', '--bare', $bareOrigin) -WorkingDirectory $cleanupRoot | Out-Null
+    Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clone', '--', $bareOrigin, $bareClone) -WorkingDirectory $cleanupRoot | Out-Null
+    Assert-True (Test-Path -LiteralPath (Join-Path $bareClone '.git') -PathType Container) 'native git clone preserves rooted local origin and target paths containing spaces'
 
     $rebuildRoot = Join-Path $sandbox 'rebuild-root'
     $rebuildDeployRoot = Join-Path $sandbox 'rebuild-deploy'
@@ -1400,12 +1449,12 @@ exit 7
 
     Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $stopOrderRoot -AllowNonFixedPathForTests -CommandRunner $stopOrderRunner -DeployRunner $stopOrderDeployRunner -ServiceStopper $stopOrderStopper | Out-Null
 
-    foreach ($svc in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service')) {
+    foreach ($svc in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service', 'kit-manager-api')) {
         Assert-True ($stoppedServices -contains $svc) "pre-clean stop invoked for $svc"
     }
     $cleanIndex = $stopOrderLog.IndexOf('clean')
     Assert-True ($cleanIndex -ge 0) 'clean event recorded in shared ordered log'
-    foreach ($svc in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service')) {
+    foreach ($svc in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service', 'kit-manager-api')) {
         $stopIndex = $stopOrderLog.IndexOf("stop:$svc")
         Assert-True (($stopIndex -ge 0) -and ($stopIndex -lt $cleanIndex)) "stop of $svc precedes clean in shared ordered log"
     }
@@ -1470,6 +1519,7 @@ exit 7
 
     $libText = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts\lib\rebuild-test-deploy.ps1') -Raw
     Assert-True ($libText -notmatch "Start-Process\s+-FilePath 'powershell\.exe'[^\r\n]*-Wait") 'rebuild deploy runner must not wait on deploy.ps1 process tree'
+    Assert-True ($libText -notmatch 'Remove-Item[^\r\n]*\$stageRoot[^\r\n]*-Recurse') 'production rebuild never recursively deletes a failed stage'
 
     $deployHelperRoot = Join-Path $sandbox 'deploy-helper'
     New-Item -ItemType Directory -Path $deployHelperRoot -Force | Out-Null
@@ -1540,6 +1590,55 @@ exit 7
         $lockedFile.Dispose()
     }
 
+    # Sensitive env paths remain fail-closed even though production treats
+    # unrelated Kit-generated reparse entries as opaque live state.
+    $envReparseRoot = Join-Path $sandbox 'env-reparse-snapshot'
+    $envReparseTarget = Join-Path $sandbox 'env-reparse-target'
+    $envReparseLink = Join-Path $envReparseRoot 'bim-review-coordinator'
+    $envReparseTargetFile = Join-Path $envReparseTarget '.env'
+    New-Item -ItemType Directory -Path $envReparseRoot -Force | Out-Null
+    New-Item -ItemType Directory -Path $envReparseTarget -Force | Out-Null
+    [System.IO.File]::WriteAllBytes($envReparseTargetFile, [byte[]](83, 69, 67, 82, 69, 84))
+    $envReparseHashBefore = (Get-FileHash -LiteralPath $envReparseTargetFile -Algorithm SHA256).Hash
+    $envReparseHandle = $null
+    try {
+        New-Item -ItemType Junction -Path $envReparseLink -Target $envReparseTarget -ErrorAction Stop | Out-Null
+        $envReparseHandle = [System.IO.File]::Open(
+            $envReparseTargetFile,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+        $envReparseFailureMessage = $null
+        try {
+            Save-TestDeployEnvSnapshot -DeploymentPath $envReparseRoot | Out-Null
+        } catch {
+            $envReparseFailureMessage = $_.Exception.Message
+        }
+        Assert-True ($envReparseFailureMessage -match 'deployment path contains reparse point') 'env snapshot rejects a reparse ancestor before reading the env file'
+
+        $envRestoreFailureMessage = $null
+        try {
+            Restore-TestDeployEnvSnapshot -DeploymentPath $envReparseRoot -Snapshot @(
+                [pscustomobject]@{
+                    RelativePath = 'bim-review-coordinator\.env'
+                    Bytes = [byte[]](67, 72, 65, 78, 71, 69, 68)
+                }
+            ) | Out-Null
+        } catch {
+            $envRestoreFailureMessage = $_.Exception.Message
+        }
+        Assert-True ($envRestoreFailureMessage -match 'deployment path contains reparse point') 'env restore rejects a reparse ancestor before writing the env file'
+    } finally {
+        if ($null -ne $envReparseHandle) {
+            $envReparseHandle.Dispose()
+        }
+        if (Test-Path -LiteralPath $envReparseLink) {
+            & $removeVerifiedAssetJunction -LinkPath $envReparseLink -ExpectedTarget $envReparseTarget
+        }
+    }
+    Assert-Equal $envReparseHashBefore (Get-FileHash -LiteralPath $envReparseTargetFile -Algorithm SHA256).Hash 'env snapshot reparse rejection preserves target bytes'
+
     # Task 1A RED: transactional checkout preparation must never mutate the live
     # deployment until a complete standalone stage has passed provenance and
     # deploy-script validation.  These fixtures use real bytes/hashes; only Git,
@@ -1566,9 +1665,12 @@ exit 7
             (Join-Path $Root 'live-sentinel.bin'),
             [byte[]](0, 1, 2, 13, 10, 127, 128, 254, 255)
         )
+        # Keep the script source ASCII-safe for Windows PowerShell 5.1 runners,
+        # while still exercising UTF-8 preservation in the fixture payload.
+        $unicodeFixtureValue = -join ([char[]]@(0x4EA4, 0x6613, 0x5F0F))
         [System.IO.File]::WriteAllBytes(
             (Join-Path $Root '.env'),
-            [System.Text.Encoding]::UTF8.GetBytes("ROOT_TOKEN=fixture-root`r`nUNICODE=交易式`r`n")
+            [System.Text.Encoding]::UTF8.GetBytes("ROOT_TOKEN=fixture-root`r`nUNICODE=$unicodeFixtureValue`r`n")
         )
         [System.IO.File]::WriteAllBytes(
             (Join-Path $Root 'bim-review-coordinator\.env'),
@@ -1683,6 +1785,9 @@ exit 7
         if ($cloneIndex -lt 0) {
             throw "prepared-stage fake expected git clone, got '$($Arguments -join ' ')'"
         }
+        if ($cloneIndex + 1 -ge $Arguments.Count -or $Arguments[$cloneIndex + 1] -ne '--') {
+            throw "prepared-stage fake expected git clone option terminator before origin, got '$($Arguments -join ' ')'"
+        }
 
         $originIndex = -1
         for ($i = $cloneIndex + 1; $i -lt $Arguments.Count; $i++) {
@@ -1778,6 +1883,248 @@ exit 7
         }
     }.GetNewClosure()
 
+    $recordRetainedStageWithoutEnv = {
+        param(
+            [Parameter(Mandatory = $true)][string] $StageRoot,
+            [Parameter(Mandatory = $true)][string] $Behavior
+        )
+
+        foreach ($relativePath in $script:TestDeployPreservedEnvFiles) {
+            $stageEnvPath = Join-Path $StageRoot $relativePath
+            & $recordTransactionExpectation (
+                -not (Test-Path -LiteralPath $stageEnvPath)
+            ) "$Behavior retains no preserved env files" "path='$relativePath'"
+        }
+    }.GetNewClosure()
+
+    # Task 1A.0: an origin URL carrying inline credentials must be rejected
+    # before stage allocation. The canary proves neither the thrown diagnostic
+    # nor a retained .git/config can persist the credential.
+    $credentialScenarioRoot = Join-Path $sandbox 'transaction-credential-origin'
+    $credentialLiveRoot = Join-Path $credentialScenarioRoot 'live'
+    & $newTransactionFixture $credentialLiveRoot
+    $credentialManifestBefore = & $getTransactionLiveManifest $credentialLiveRoot
+    $credentialCanary = 'DO_NOT_LOG_OR_PERSIST_CANARY_7f06d4a9'
+    $credentialOriginUrl = "https://oauth2:$credentialCanary@example.invalid/AI-BIM-governance.git"
+    $credentialCloneTargets = New-Object 'System.Collections.Generic.List[string]'
+    $script:credentialCloneTargets = $credentialCloneTargets
+    $credentialRunner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        $commandText = $Arguments -join ' '
+        if ($commandText -eq 'remote get-url origin') {
+            return [pscustomobject]@{ ExitCode = 0; Output = $credentialOriginUrl }
+        }
+        if ($Arguments -contains 'clone') {
+            $cloneInvocation = & $resolveTransactionCloneInvocation -Arguments $Arguments -ExpectedOrigin $credentialOriginUrl
+            $script:credentialCloneTargets.Add($cloneInvocation.Target) | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $cloneInvocation.Target '.git') -Force | Out-Null
+            [System.IO.File]::WriteAllText(
+                (Join-Path $cloneInvocation.Target '.git\config'),
+                "[remote `"origin`"]`nurl = $credentialOriginUrl`n",
+                [System.Text.Encoding]::UTF8
+            )
+            return [pscustomobject]@{ ExitCode = 94; Output = 'injected credential-bearing clone failure' }
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }.GetNewClosure()
+    $credentialFailureMessage = $null
+    try {
+        Invoke-TestDeployRebuild `
+            -Build `
+            -RepoRoot $rebuildRoot `
+            -DeploymentPath $credentialLiveRoot `
+            -AllowNonFixedPathForTests `
+            -CommandRunner $credentialRunner `
+            -DeployRunner { param([string] $DeployRoot); [pscustomobject]@{ ExitCode = 0 } } `
+            -ServiceStopper { param([string] $ServiceName, [string] $ServiceRunDir) } | Out-Null
+    } catch {
+        $credentialFailureMessage = $_.Exception.Message
+    }
+    $credentialManifestAfter = & $getTransactionLiveManifest $credentialLiveRoot
+    $credentialFailureHasCanary = -not [string]::IsNullOrWhiteSpace($credentialFailureMessage) -and
+        $credentialFailureMessage.Contains($credentialCanary)
+    $credentialResidue = @(
+        Get-ChildItem -LiteralPath $credentialScenarioRoot -Directory -Force |
+            Where-Object { $_.Name -like '.live.rebuild-stage-*' -or $_.Name -like '.live.rebuild-previous-*' }
+    )
+    & $recordTransactionExpectation (
+        -not [string]::IsNullOrWhiteSpace($credentialFailureMessage) -and
+        $credentialFailureMessage -match 'credential-bearing origin URL is not allowed'
+    ) 'Task 1A.0 credential-bearing origin is rejected before clone' "cloneCalls=$($credentialCloneTargets.Count)"
+    & $recordTransactionExpectation (-not $credentialFailureHasCanary) 'Task 1A.0 credential canary is absent from thrown diagnostics' "canaryExposed=$credentialFailureHasCanary"
+    & $recordTransactionExpectation ($credentialCloneTargets.Count -eq 0 -and $credentialResidue.Count -eq 0) 'Task 1A.0 credential-bearing origin creates no stage or previous checkout' "cloneCalls=$($credentialCloneTargets.Count) residue=$($credentialResidue.Count)"
+    & $recordTransactionExpectation ($credentialManifestAfter.Serialized -ceq $credentialManifestBefore.Serialized) 'Task 1A.0 credential rejection leaves live checkout byte-identical' "before='$($credentialManifestBefore.Sha256)' after='$($credentialManifestAfter.Sha256)'"
+    foreach ($safeOriginUrl in @(
+        'https://github.com/monkey1sai/AI-BIM-governance.git',
+        'git@github.com:monkey1sai/AI-BIM-governance.git',
+        'ssh://git@github.com/monkey1sai/AI-BIM-governance.git',
+        'file:///C:/Repos/AI-BIM-governance.git',
+        'D:\Repos\AI-BIM-governance.git',
+        '\\localhost\repo-mirror\AI-BIM-governance.git'
+    )) {
+        $safeOriginFailure = $null
+        try {
+            Assert-TestDeployOriginUrlSafe -OriginUrl $safeOriginUrl | Out-Null
+        } catch {
+            $safeOriginFailure = $_.Exception.Message
+        }
+        & $recordTransactionExpectation ([string]::IsNullOrWhiteSpace($safeOriginFailure)) 'Task 1A.0 credential guard accepts credential-manager and SSH-agent origins' "failure='$safeOriginFailure'"
+    }
+    $optionShapedOriginFailure = $null
+    try {
+        Assert-TestDeployOriginUrlSafe -OriginUrl '--config=core.hooksPath=C:\unsafe-hooks' | Out-Null
+    } catch {
+        $optionShapedOriginFailure = $_.Exception.Message
+    }
+    & $recordTransactionExpectation (
+        $optionShapedOriginFailure -match 'origin URL is invalid'
+    ) 'Task 1A.0 origin guard rejects option-shaped relative origins before git clone' "failure='$optionShapedOriginFailure'"
+    foreach ($unsafeOriginCase in @(
+        [pscustomobject]@{
+            Url = "https://oauth2:$credentialCanary@example.invalid/repo.git"
+            Canary = $credentialCanary
+        },
+        [pscustomobject]@{
+            Url = "https://example.invalid/repo.git?access_token=$credentialCanary"
+            Canary = $credentialCanary
+        },
+        [pscustomobject]@{
+            Url = "ssh://git:$credentialCanary@example.invalid/repo.git"
+            Canary = $credentialCanary
+        },
+        [pscustomobject]@{
+            Url = "ssh://git%3A$credentialCanary@example.invalid/repo.git"
+            Canary = $credentialCanary
+        },
+        [pscustomobject]@{
+            Url = "git@example.invalid:repo.git?access_token=$credentialCanary"
+            Canary = $credentialCanary
+        },
+        [pscustomobject]@{
+            Url = "git@example.invalid:repo.git#$credentialCanary"
+            Canary = $credentialCanary
+        },
+        [pscustomobject]@{
+            Url = "file:///C:/repo.git?access_token=$credentialCanary"
+            Canary = $credentialCanary
+        },
+        [pscustomobject]@{
+            Url = "file:///C:/repo.git#$credentialCanary"
+            Canary = $credentialCanary
+        },
+        [pscustomobject]@{
+            Url = "D:\Repos\repo.git?access_token=$credentialCanary"
+            Canary = $credentialCanary
+        },
+        [pscustomobject]@{
+            Url = "D:\Repos\repo.git#$credentialCanary"
+            Canary = $credentialCanary
+        }
+    )) {
+        $unsafeOriginFailure = $null
+        try {
+            Assert-TestDeployOriginUrlSafe -OriginUrl ([string]$unsafeOriginCase.Url) | Out-Null
+        } catch {
+            $unsafeOriginFailure = $_.Exception.Message
+        }
+        $unsafeOriginCanaryExposed = -not [string]::IsNullOrWhiteSpace($unsafeOriginFailure) -and
+            $unsafeOriginFailure.Contains([string]$unsafeOriginCase.Canary)
+        & $recordTransactionExpectation (
+            -not [string]::IsNullOrWhiteSpace($unsafeOriginFailure) -and
+            $unsafeOriginFailure -match 'credential-bearing origin URL is not allowed' -and
+            -not $unsafeOriginCanaryExposed
+        ) 'Task 1A.0 credential guard rejects inline and query credentials without echoing canaries' "canaryExposed=$unsafeOriginCanaryExposed"
+    }
+    $credentialBypassCases = @(
+        [pscustomobject]@{
+            Name = 'encoded-ssh-password'
+            Url = "ssh://git%3A$credentialCanary@example.invalid/repo.git"
+        },
+        [pscustomobject]@{
+            Name = 'scp-query'
+            Url = "git@example.invalid:repo.git?access_token=$credentialCanary"
+        },
+        [pscustomobject]@{
+            Name = 'scp-fragment'
+            Url = "git@example.invalid:repo.git#$credentialCanary"
+        },
+        [pscustomobject]@{
+            Name = 'file-query'
+            Url = "file:///C:/repo.git?access_token=$credentialCanary"
+        },
+        [pscustomobject]@{
+            Name = 'file-fragment'
+            Url = "file:///C:/repo.git#$credentialCanary"
+        },
+        [pscustomobject]@{
+            Name = 'local-path-query'
+            Url = "D:\Repos\repo.git?access_token=$credentialCanary"
+        },
+        [pscustomobject]@{
+            Name = 'local-path-fragment'
+            Url = "D:\Repos\repo.git#$credentialCanary"
+        }
+    )
+    foreach ($credentialBypassCase in $credentialBypassCases) {
+        $bypassScenarioRoot = Join-Path $sandbox "transaction-credential-$($credentialBypassCase.Name)"
+        $bypassLiveRoot = Join-Path $bypassScenarioRoot 'live'
+        & $newTransactionFixture $bypassLiveRoot
+        $bypassManifestBefore = & $getTransactionLiveManifest $bypassLiveRoot
+        $bypassOriginUrl = [string]$credentialBypassCase.Url
+        $bypassCloneTargets = New-Object 'System.Collections.Generic.List[string]'
+        $bypassRunner = {
+            param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+            $commandText = $Arguments -join ' '
+            if ($commandText -eq 'remote get-url origin') {
+                return [pscustomobject]@{ ExitCode = 0; Output = $bypassOriginUrl }
+            }
+            if ($Arguments -contains 'clone') {
+                $cloneTarget = [System.IO.Path]::GetFullPath([string]$Arguments[-1])
+                $bypassCloneTargets.Add($cloneTarget) | Out-Null
+                New-Item -ItemType Directory -Path (Join-Path $cloneTarget '.git') -Force | Out-Null
+                [System.IO.File]::WriteAllText(
+                    (Join-Path $cloneTarget '.git\config'),
+                    "[remote `"origin`"]`nurl = $bypassOriginUrl`n",
+                    [System.Text.Encoding]::UTF8
+                )
+                return [pscustomobject]@{ ExitCode = 95; Output = 'injected bypass clone failure' }
+            }
+            return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+        }.GetNewClosure()
+        $bypassFailureMessage = $null
+        try {
+            Invoke-TestDeployRebuild `
+                -Build `
+                -RepoRoot $rebuildRoot `
+                -DeploymentPath $bypassLiveRoot `
+                -AllowNonFixedPathForTests `
+                -CommandRunner $bypassRunner `
+                -DeployRunner { param([string] $DeployRoot); [pscustomobject]@{ ExitCode = 0 } } `
+                -ServiceStopper { param([string] $ServiceName, [string] $ServiceRunDir) } | Out-Null
+        } catch {
+            $bypassFailureMessage = $_.Exception.Message
+        }
+        $bypassManifestAfter = & $getTransactionLiveManifest $bypassLiveRoot
+        $bypassFailureHasCanary = -not [string]::IsNullOrWhiteSpace($bypassFailureMessage) -and
+            $bypassFailureMessage.Contains($credentialCanary)
+        $bypassResidue = @(
+            Get-ChildItem -LiteralPath $bypassScenarioRoot -Directory -Force |
+                Where-Object { $_.Name -like '.live.rebuild-stage-*' -or $_.Name -like '.live.rebuild-previous-*' }
+        )
+        & $recordTransactionExpectation (
+            -not [string]::IsNullOrWhiteSpace($bypassFailureMessage) -and
+            $bypassFailureMessage -match 'credential-bearing origin URL is not allowed' -and
+            -not $bypassFailureHasCanary
+        ) "Task 1A.0 $($credentialBypassCase.Name) is rejected without echoing its canary" "canaryExposed=$bypassFailureHasCanary"
+        & $recordTransactionExpectation (
+            $bypassCloneTargets.Count -eq 0 -and
+            $bypassResidue.Count -eq 0
+        ) "Task 1A.0 $($credentialBypassCase.Name) creates no clone or transaction residue" "cloneCalls=$($bypassCloneTargets.Count) residue=$($bypassResidue.Count)"
+        & $recordTransactionExpectation (
+            $bypassManifestAfter.Serialized -ceq $bypassManifestBefore.Serialized
+        ) "Task 1A.0 $($credentialBypassCase.Name) leaves live checkout byte-identical" "before='$($bypassManifestBefore.Sha256)' after='$($bypassManifestAfter.Sha256)'"
+    }
+
     # Task 1A.1: non-git live bytes survive a failed sibling-stage clone; no
     # service stop, live cutover, or deploy is allowed to begin.
     $nonGitScenarioRoot = Join-Path $sandbox 'transaction-non-git'
@@ -1801,6 +2148,11 @@ exit 7
         if ($Arguments -contains 'clone') {
             $cloneInvocation = & $resolveTransactionCloneInvocation -Arguments $Arguments -ExpectedOrigin $transactionOriginUrl
             $script:nonGitCloneTargets.Add($cloneInvocation.Target) | Out-Null
+            New-Item -ItemType Directory -Path $cloneInvocation.Target -Force | Out-Null
+            [System.IO.File]::WriteAllBytes(
+                (Join-Path $cloneInvocation.Target 'partial-clone-sentinel.bin'),
+                [byte[]](101, 102, 103, 104)
+            )
             return [pscustomobject]@{ ExitCode = 91; Output = 'injected sibling stage clone failure' }
         }
         return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
@@ -1822,7 +2174,14 @@ exit 7
     }
     $nonGitHashesAfter = & $getTransactionHashes $nonGitLiveRoot
     $nonGitManifestAfter = & $getTransactionLiveManifest $nonGitLiveRoot
+    $nonGitRetainedStage = if ($nonGitCloneTargets.Count -eq 1) { $nonGitCloneTargets[0] } else { '' }
     & $recordTransactionExpectation (-not [string]::IsNullOrWhiteSpace($nonGitFailureMessage) -and $nonGitFailureMessage -match 'injected sibling stage clone failure') 'Task 1A.1 non-git clone failure is surfaced' "actual='$nonGitFailureMessage'"
+    & $recordTransactionExpectation ($nonGitFailureMessage -match 'failed_stage_path=') 'Task 1A.1 partial clone failure reports the retained stage path' "actual='$nonGitFailureMessage'"
+    & $recordTransactionExpectation (
+        -not [string]::IsNullOrWhiteSpace($nonGitRetainedStage) -and
+        (Test-Path -LiteralPath (Join-Path $nonGitRetainedStage 'partial-clone-sentinel.bin') -PathType Leaf)
+    ) 'Task 1A.1 partial clone stage is retained without recursive cleanup' "stage='$nonGitRetainedStage'"
+    & $recordRetainedStageWithoutEnv -StageRoot $nonGitRetainedStage -Behavior 'Task 1A.1 partial clone stage'
     foreach ($relativePath in $transactionFixturePaths) {
         & $recordTransactionExpectation ($nonGitHashesAfter[$relativePath] -eq $nonGitHashesBefore[$relativePath]) 'Task 1A.1 non-git live bytes remain SHA256-identical' "path='$relativePath' before='$($nonGitHashesBefore[$relativePath])' after='$($nonGitHashesAfter[$relativePath])'"
     }
@@ -2048,6 +2407,14 @@ exit 7
     & $recordTransactionExpectation ($missingDeployStoppedServices.Count -eq 0) 'Task 1A.4 missing deploy script fails before service stop' "stopped='$($missingDeployStoppedServices -join ',')'"
     & $recordTransactionExpectation ($missingDeployDeployCalls.Count -eq 0) 'Task 1A.4 missing deploy script fails before deploy' "deployCalls=$($missingDeployDeployCalls.Count)"
     & $recordTransactionExpectation ($missingDeployManifestAfter.Serialized -ceq $missingDeployManifestBefore.Serialized) 'Task 1A.4 missing deploy script leaves complete live manifest identical' "beforeManifest='$($missingDeployManifestBefore.Sha256)' afterManifest='$($missingDeployManifestAfter.Sha256)'"
+    & $recordTransactionExpectation (
+        $missingDeployCloneTargets.Count -eq 1 -and
+        (Test-Path -LiteralPath $missingDeployCloneTargets[0] -PathType Container)
+    ) 'Task 1A.4 validated stage missing deploy script is retained' "stage='$($missingDeployCloneTargets -join ',')'"
+    & $recordTransactionExpectation ($missingDeployFailureMessage -match 'failed_stage_path=') 'Task 1A.4 missing deploy script reports the retained stage path' "actual='$missingDeployFailureMessage'"
+    if ($missingDeployCloneTargets.Count -eq 1) {
+        & $recordRetainedStageWithoutEnv -StageRoot $missingDeployCloneTargets[0] -Behavior 'Task 1A.4 missing-deploy stage'
+    }
 
     # Task 1A.5: a syntactically valid gitfile that cannot be inspected is an
     # indeterminate checkout, not proof of a broken checkout. Fail closed before
@@ -2186,8 +2553,10 @@ exit 7
         $_.Name -like ".$serviceStopFailureLiveLeaf.rebuild-stage-*" -or
         $_.Name -like ".$serviceStopFailureLiveLeaf.rebuild-previous-*"
     })
+    $serviceStopFailureStageResidue = @($serviceStopFailureResidue | Where-Object { $_.Name -like ".$serviceStopFailureLiveLeaf.rebuild-stage-*" })
+    $serviceStopFailurePreviousResidue = @($serviceStopFailureResidue | Where-Object { $_.Name -like ".$serviceStopFailureLiveLeaf.rebuild-previous-*" })
     $serviceStopFailureResidueNames = @($serviceStopFailureResidue | ForEach-Object { $_.Name })
-    $expectedStoppedServices = @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service')
+    $expectedStoppedServices = @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service', 'kit-manager-api')
     $allStopAttemptsObserved = $serviceStopAttempts.Count -eq $expectedStoppedServices.Count
     foreach ($serviceName in $expectedStoppedServices) {
         $allStopAttemptsObserved = $allStopAttemptsObserved -and ($serviceStopAttempts -contains $serviceName)
@@ -2196,7 +2565,485 @@ exit 7
     & $recordTransactionExpectation $allStopAttemptsObserved 'Task 1A.6 all deployment-owned service stops are attempted' "attempts='$($serviceStopAttempts -join ',')'"
     & $recordTransactionExpectation ($serviceStopFailureManifestAfter.Serialized -ceq $serviceStopFailureManifestBefore.Serialized) 'Task 1A.6 service-stop failure leaves complete live manifest identical' "beforeManifest='$($serviceStopFailureManifestBefore.Sha256)' afterManifest='$($serviceStopFailureManifestAfter.Sha256)'"
     & $recordTransactionExpectation ($serviceStopFailureDeployCalls.Count -eq 0) 'Task 1A.6 service-stop failure blocks deploy' "deployCalls=$($serviceStopFailureDeployCalls.Count)"
-    & $recordTransactionExpectation ($serviceStopFailureResidue.Count -eq 0) 'Task 1A.6 service-stop failure leaves no stage or previous residue' "residue='$($serviceStopFailureResidueNames -join ',')'"
+    & $recordTransactionExpectation (
+        $serviceStopFailureStageResidue.Count -eq 1 -and
+        $serviceStopFailurePreviousResidue.Count -eq 0
+    ) 'Task 1A.6 service-stop failure retains one validated stage and creates no previous checkout' "residue='$($serviceStopFailureResidueNames -join ',')'"
+    & $recordTransactionExpectation ($serviceStopFailureMessage -match 'failed_stage_path=') 'Task 1A.6 service-stop failure reports the retained stage path' "actual='$serviceStopFailureMessage'"
+    if ($serviceStopFailureStageResidue.Count -eq 1) {
+        & $recordRetainedStageWithoutEnv -StageRoot $serviceStopFailureStageResidue[0].FullName -Behavior 'Task 1A.6 service-stop failure stage'
+    }
+
+    # Task 1A.7: a valid fixed-path checkout after a real Kit build contains
+    # ignored reparse entries under _build/_compiler/_repo.  Production must
+    # treat live as an opaque rename source, prepare a clean sibling checkout,
+    # and never reset/clean the active tree or follow the external target.
+    $kitReparseScenarioRoot = Join-Path $sandbox 'transaction-valid-kit-reparse'
+    $kitReparseLiveRoot = Join-Path $kitReparseScenarioRoot 'live'
+    $kitReparseOutsideRoot = Join-Path $kitReparseScenarioRoot 'packman-target'
+    $kitReparseLinkRelative = 'bim-streaming-server\_repo\deps\repo_build'
+    $kitReparseLiveLink = Join-Path $kitReparseLiveRoot $kitReparseLinkRelative
+    $kitReparseOutsideSentinel = Join-Path $kitReparseOutsideRoot 'sentinel.bin'
+    & $newTransactionFixture $kitReparseLiveRoot
+    New-Item -ItemType Directory -Path (Join-Path $kitReparseLiveRoot '.git') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Split-Path -Parent $kitReparseLiveLink) -Force | Out-Null
+    New-Item -ItemType Directory -Path $kitReparseOutsideRoot -Force | Out-Null
+    [System.IO.File]::WriteAllBytes($kitReparseOutsideSentinel, [byte[]](73, 74, 75, 240, 241, 242))
+    $kitReparseOutsideHashBefore = (Get-FileHash -LiteralPath $kitReparseOutsideSentinel -Algorithm SHA256).Hash
+    $kitReparseOutsideInventoryBefore = @(
+        Get-ChildItem -LiteralPath $kitReparseOutsideRoot -Force -Recurse |
+            Sort-Object FullName |
+            ForEach-Object {
+                $relative = $_.FullName.Substring($kitReparseOutsideRoot.Length)
+                if ($_.PSIsContainer) {
+                    "$relative|directory|$($_.Attributes)|$($_.CreationTimeUtc.Ticks)|$($_.LastWriteTimeUtc.Ticks)"
+                } else {
+                    "$relative|file|$($_.Length)|$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)|$($_.CreationTimeUtc.Ticks)|$($_.LastWriteTimeUtc.Ticks)"
+                }
+            }
+    ) -join "`n"
+    $kitReparseEnvHashesBefore = & $getTransactionHashes $kitReparseLiveRoot
+    $kitReparseMarkerContent = "scenario=valid-kit-reparse`nmode=OriginMain`noriginUrlSha256=$transactionOriginUrlHash`ncommit=$transactionOriginCommit`n"
+    $kitReparseCloneTargets = New-Object 'System.Collections.Generic.List[string]'
+    $kitReparseGitCommands = New-Object 'System.Collections.Generic.List[object]'
+    $kitReparseStopAttempts = New-Object 'System.Collections.Generic.List[string]'
+    $kitReparseDeployCalls = New-Object 'System.Collections.Generic.List[string]'
+    $script:kitReparseCloneTargets = $kitReparseCloneTargets
+    $script:kitReparseGitCommands = $kitReparseGitCommands
+    $script:kitReparseStopAttempts = $kitReparseStopAttempts
+    $script:kitReparseDeployCalls = $kitReparseDeployCalls
+    $kitReparseRunner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        $commandText = $Arguments -join ' '
+        $script:kitReparseGitCommands.Add([pscustomobject]@{
+            Command = $commandText
+            WorkingDirectory = [System.IO.Path]::GetFullPath($WorkingDirectory)
+        }) | Out-Null
+        if ($commandText -eq 'remote get-url origin') {
+            return [pscustomobject]@{ ExitCode = 0; Output = $transactionOriginUrl }
+        }
+        if ($Arguments -contains 'clone') {
+            $cloneInvocation = & $resolveTransactionCloneInvocation -Arguments $Arguments -ExpectedOrigin $transactionOriginUrl
+            $script:kitReparseCloneTargets.Add($cloneInvocation.Target) | Out-Null
+            & $newPreparedTransactionStage `
+                -Target $cloneInvocation.Target `
+                -ScenarioRoot $kitReparseScenarioRoot `
+                -LiveRoot $kitReparseLiveRoot `
+                -MarkerContent $kitReparseMarkerContent `
+                -IncludeDeployScript $true | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $cloneInvocation.Target 'docs\plans\assets') -Force | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $cloneInvocation.Target 'docs\plans\uploads') -Force | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $cloneInvocation.Target 'web-viewer-sample\public') -Force | Out-Null
+            [System.IO.File]::WriteAllBytes(
+                (Join-Path $cloneInvocation.Target 'docs\plans\assets\vp-kit-reparse.png'),
+                [byte[]](1, 2, 3, 4)
+            )
+            [System.IO.File]::WriteAllBytes(
+                (Join-Path $cloneInvocation.Target 'docs\plans\uploads\concept-kit-reparse.png'),
+                [byte[]](5, 6, 7, 8)
+            )
+            return [pscustomobject]@{ ExitCode = 0; Output = 'prepared standalone Kit-reparse stage' }
+        }
+        if ($commandText -eq 'rev-parse --short HEAD') {
+            return [pscustomobject]@{ ExitCode = 0; Output = $transactionOriginCommit.Substring(0, 7) }
+        }
+        if ($commandText -eq 'status --short') {
+            return [pscustomobject]@{ ExitCode = 0; Output = '' }
+        }
+        if ($commandText -eq 'rev-parse origin/main') {
+            return [pscustomobject]@{ ExitCode = 0; Output = $transactionOriginCommit }
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }.GetNewClosure()
+    $kitReparseStopper = {
+        param([string] $ServiceName, [string] $ServiceRunDir)
+        $script:kitReparseStopAttempts.Add($ServiceName) | Out-Null
+    }.GetNewClosure()
+    $kitReparseDeployRunner = {
+        param([string] $DeployRoot)
+        $script:kitReparseDeployCalls.Add($DeployRoot) | Out-Null
+        return [pscustomobject]@{ ExitCode = 0 }
+    }.GetNewClosure()
+    $kitReparseOriginalFixedPath = $script:TestDeployFixedPath
+    $kitReparseResult = $null
+    $kitReparseFailureMessage = $null
+    $kitReparsePreviousPath = ''
+    $kitReparseLiveManifestBefore = $null
+    try {
+        New-Item -ItemType Junction -Path $kitReparseLiveLink -Target $kitReparseOutsideRoot -ErrorAction Stop | Out-Null
+        $kitReparseLiveManifestBefore = & $getTransactionLiveManifest $kitReparseLiveRoot
+        $script:TestDeployFixedPath = $kitReparseLiveRoot
+        try {
+            $kitReparseResult = Invoke-TestDeployRebuild `
+                -Build `
+                -RepoRoot $rebuildRoot `
+                -DeploymentPath $kitReparseLiveRoot `
+                -CommandRunner $kitReparseRunner `
+                -DeployRunner $kitReparseDeployRunner `
+                -ServiceStopper $kitReparseStopper
+        } catch {
+            $kitReparseFailureMessage = $_.Exception.Message
+        }
+        if ($null -ne $kitReparseResult -and $kitReparseResult.PSObject.Properties.Name -contains 'PreviousPath') {
+            $kitReparsePreviousPath = [string]$kitReparseResult.PreviousPath
+        }
+
+        $canonicalKitReparseLive = [System.IO.Path]::GetFullPath($kitReparseLiveRoot)
+        $kitReparseLiveGitCommands = @(
+            $kitReparseGitCommands |
+                Where-Object {
+                    $_.WorkingDirectory.Equals($canonicalKitReparseLive, [System.StringComparison]::OrdinalIgnoreCase)
+                }
+        )
+        $canonicalKitReparseStage = if ($kitReparseCloneTargets.Count -eq 1) {
+            [System.IO.Path]::GetFullPath($kitReparseCloneTargets[0])
+        } else {
+            ''
+        }
+        $kitReparseDestructiveGitCommands = @(
+            $kitReparseGitCommands |
+                Where-Object { $_.Command -match '^reset --hard\b' -or $_.Command -match '^clean -fdx\b' }
+        )
+        $kitReparseMisroutedDestructiveGitCommands = @(
+            $kitReparseDestructiveGitCommands |
+                Where-Object {
+                    [string]::IsNullOrWhiteSpace($canonicalKitReparseStage) -or
+                    -not $_.WorkingDirectory.Equals($canonicalKitReparseStage, [System.StringComparison]::OrdinalIgnoreCase)
+                }
+        )
+        $kitReparsePreviousLink = if ([string]::IsNullOrWhiteSpace($kitReparsePreviousPath)) {
+            ''
+        } else {
+            Join-Path $kitReparsePreviousPath $kitReparseLinkRelative
+        }
+        $kitReparsePreviousLinkItem = if ([string]::IsNullOrWhiteSpace($kitReparsePreviousLink)) {
+            $null
+        } else {
+            Get-Item -LiteralPath $kitReparsePreviousLink -Force -ErrorAction SilentlyContinue
+        }
+        $kitReparseOutsideHashAfter = (Get-FileHash -LiteralPath $kitReparseOutsideSentinel -Algorithm SHA256).Hash
+        $kitReparseOutsideInventoryAfter = @(
+            Get-ChildItem -LiteralPath $kitReparseOutsideRoot -Force -Recurse |
+                Sort-Object FullName |
+                ForEach-Object {
+                    $relative = $_.FullName.Substring($kitReparseOutsideRoot.Length)
+                    if ($_.PSIsContainer) {
+                        "$relative|directory|$($_.Attributes)|$($_.CreationTimeUtc.Ticks)|$($_.LastWriteTimeUtc.Ticks)"
+                    } else {
+                        "$relative|file|$($_.Length)|$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)|$($_.CreationTimeUtc.Ticks)|$($_.LastWriteTimeUtc.Ticks)"
+                    }
+                }
+        ) -join "`n"
+        $kitReparseEnvHashesAfter = & $getTransactionHashes $kitReparseLiveRoot
+        $kitReparsePreviousManifest = if (
+            -not [string]::IsNullOrWhiteSpace($kitReparsePreviousPath) -and
+            (Test-Path -LiteralPath $kitReparsePreviousPath -PathType Container)
+        ) {
+            & $getTransactionLiveManifest $kitReparsePreviousPath
+        } else {
+            $null
+        }
+
+        & $recordTransactionExpectation ([string]::IsNullOrWhiteSpace($kitReparseFailureMessage)) 'Task 1A.7 valid Kit-built checkout rebuild succeeds through sibling stage' "actual='$kitReparseFailureMessage'"
+        & $recordTransactionExpectation ($kitReparseCloneTargets.Count -eq 1) 'Task 1A.7 valid checkout prepares exactly one sibling stage' "targets='$($kitReparseCloneTargets -join ',')'"
+        & $recordTransactionExpectation ($kitReparseLiveGitCommands.Count -eq 0) 'Task 1A.7 production executes zero Git commands in the active checkout' "commands='$(@($kitReparseLiveGitCommands | ForEach-Object { $_.Command }) -join ';')'"
+        & $recordTransactionExpectation (
+            $kitReparseDestructiveGitCommands.Count -ge 2 -and
+            $kitReparseMisroutedDestructiveGitCommands.Count -eq 0
+        ) 'Task 1A.7 every destructive Git command is confined to the unique sibling stage' "misrouted='$(@($kitReparseMisroutedDestructiveGitCommands | ForEach-Object { "$($_.Command)@$($_.WorkingDirectory)" }) -join ';')'"
+        & $recordTransactionExpectation (
+            -not [string]::IsNullOrWhiteSpace($kitReparsePreviousPath) -and
+            (Test-Path -LiteralPath $kitReparsePreviousPath -PathType Container)
+        ) 'Task 1A.7 result exposes the opaque previous checkout recovery path' "previous='$kitReparsePreviousPath'"
+        & $recordTransactionExpectation (
+            $null -ne $kitReparsePreviousLinkItem -and
+            [bool]($kitReparsePreviousLinkItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+        ) 'Task 1A.7 old Kit reparse remains attached only under opaque previous' "previousLink='$kitReparsePreviousLink'"
+        & $recordTransactionExpectation (
+            $null -ne $kitReparsePreviousManifest -and
+            $kitReparsePreviousManifest.Serialized -ceq $kitReparseLiveManifestBefore.Serialized
+        ) 'Task 1A.7 opaque previous checkout exactly preserves the pre-cutover live manifest' "before='$($kitReparseLiveManifestBefore.Sha256)' previous='$($kitReparsePreviousManifest.Sha256)'"
+        & $recordTransactionExpectation (-not (Test-Path -LiteralPath $kitReparseLiveLink)) 'Task 1A.7 replacement live contains no inherited Kit reparse' "liveLink='$kitReparseLiveLink'"
+        & $recordTransactionExpectation ($kitReparseOutsideHashAfter -eq $kitReparseOutsideHashBefore) 'Task 1A.7 external Packman target remains SHA256-identical' "before='$kitReparseOutsideHashBefore' after='$kitReparseOutsideHashAfter'"
+        & $recordTransactionExpectation ($kitReparseOutsideInventoryAfter -ceq $kitReparseOutsideInventoryBefore) 'Task 1A.7 external Packman target inventory and metadata remain identical' "before='$kitReparseOutsideInventoryBefore' after='$kitReparseOutsideInventoryAfter'"
+        foreach ($relativePath in $transactionFixturePaths | Where-Object { $_ -ne 'live-sentinel.bin' }) {
+            & $recordTransactionExpectation ($kitReparseEnvHashesAfter[$relativePath] -eq $kitReparseEnvHashesBefore[$relativePath]) 'Task 1A.7 preserved env remains SHA256-identical after opaque cutover' "path='$relativePath' before='$($kitReparseEnvHashesBefore[$relativePath])' after='$($kitReparseEnvHashesAfter[$relativePath])'"
+        }
+        & $recordTransactionExpectation ($kitReparseDeployCalls.Count -eq 1 -and $kitReparseDeployCalls[0] -eq $kitReparseLiveRoot) 'Task 1A.7 deploy runs from replacement live checkout' "deployRoots='$($kitReparseDeployCalls -join ',')'"
+    } finally {
+        $script:TestDeployFixedPath = $kitReparseOriginalFixedPath
+        $candidateLinks = @($kitReparseLiveLink)
+        if (-not [string]::IsNullOrWhiteSpace($kitReparsePreviousPath)) {
+            $candidateLinks += (Join-Path $kitReparsePreviousPath $kitReparseLinkRelative)
+        }
+        foreach ($candidateLink in $candidateLinks | Select-Object -Unique) {
+            $candidateLinkItem = Get-Item -LiteralPath $candidateLink -Force -ErrorAction SilentlyContinue
+            if ($null -ne $candidateLinkItem) {
+                & $removeVerifiedAssetJunction -LinkPath $candidateLink -ExpectedTarget $kitReparseOutsideRoot
+            }
+        }
+    }
+
+    # Task 1A.8: if a clone produces a reparse entry, strict stage validation
+    # fails before service stop/cutover and the unsafe stage is retained rather
+    # than passed to recursive deletion.
+    $unsafeStageScenarioRoot = Join-Path $sandbox 'transaction-unsafe-stage-reparse'
+    $unsafeStageLiveRoot = Join-Path $unsafeStageScenarioRoot 'live'
+    $unsafeStageOutsideRoot = Join-Path $unsafeStageScenarioRoot 'outside-target'
+    $unsafeStageOutsideSentinel = Join-Path $unsafeStageOutsideRoot 'sentinel.bin'
+    $unsafeStageLinkRelative = 'bim-streaming-server\_repo\unsafe-stage-link'
+    & $newTransactionFixture $unsafeStageLiveRoot
+    New-Item -ItemType Directory -Path $unsafeStageOutsideRoot -Force | Out-Null
+    [System.IO.File]::WriteAllBytes($unsafeStageOutsideSentinel, [byte[]](91, 92, 93, 250, 251, 252))
+    $unsafeStageOutsideHashBefore = (Get-FileHash -LiteralPath $unsafeStageOutsideSentinel -Algorithm SHA256).Hash
+    $unsafeStageLiveManifestBefore = & $getTransactionLiveManifest $unsafeStageLiveRoot
+    $unsafeStageCloneTargets = New-Object 'System.Collections.Generic.List[string]'
+    $unsafeStageStopAttempts = New-Object 'System.Collections.Generic.List[string]'
+    $unsafeStageDeployCalls = New-Object 'System.Collections.Generic.List[string]'
+    $script:unsafeStageCloneTargets = $unsafeStageCloneTargets
+    $script:unsafeStageStopAttempts = $unsafeStageStopAttempts
+    $script:unsafeStageDeployCalls = $unsafeStageDeployCalls
+    $unsafeStageRunner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        $commandText = $Arguments -join ' '
+        if ($commandText -eq 'remote get-url origin') {
+            return [pscustomobject]@{ ExitCode = 0; Output = $transactionOriginUrl }
+        }
+        if ($Arguments -contains 'clone') {
+            $cloneInvocation = & $resolveTransactionCloneInvocation -Arguments $Arguments -ExpectedOrigin $transactionOriginUrl
+            $script:unsafeStageCloneTargets.Add($cloneInvocation.Target) | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $cloneInvocation.Target '.git') -Force | Out-Null
+            $unsafeLink = Join-Path $cloneInvocation.Target $unsafeStageLinkRelative
+            New-Item -ItemType Directory -Path (Split-Path -Parent $unsafeLink) -Force | Out-Null
+            New-Item -ItemType Junction -Path $unsafeLink -Target $unsafeStageOutsideRoot -ErrorAction Stop | Out-Null
+            return [pscustomobject]@{ ExitCode = 0; Output = 'prepared unsafe stage' }
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }.GetNewClosure()
+    $unsafeStageStopper = {
+        param([string] $ServiceName, [string] $ServiceRunDir)
+        $script:unsafeStageStopAttempts.Add($ServiceName) | Out-Null
+    }.GetNewClosure()
+    $unsafeStageDeployRunner = {
+        param([string] $DeployRoot)
+        $script:unsafeStageDeployCalls.Add($DeployRoot) | Out-Null
+        return [pscustomobject]@{ ExitCode = 0 }
+    }.GetNewClosure()
+    $unsafeStageOriginalFixedPath = $script:TestDeployFixedPath
+    $unsafeStageFailureMessage = $null
+    try {
+        $script:TestDeployFixedPath = $unsafeStageLiveRoot
+        try {
+            Invoke-TestDeployRebuild `
+                -Build `
+                -RepoRoot $rebuildRoot `
+                -DeploymentPath $unsafeStageLiveRoot `
+                -CommandRunner $unsafeStageRunner `
+                -DeployRunner $unsafeStageDeployRunner `
+                -ServiceStopper $unsafeStageStopper | Out-Null
+        } catch {
+            $unsafeStageFailureMessage = $_.Exception.Message
+        }
+
+        $unsafeStageRoot = if ($unsafeStageCloneTargets.Count -eq 1) { $unsafeStageCloneTargets[0] } else { '' }
+        $unsafeStageLink = if ([string]::IsNullOrWhiteSpace($unsafeStageRoot)) { '' } else { Join-Path $unsafeStageRoot $unsafeStageLinkRelative }
+        $unsafeStageLinkItem = if ([string]::IsNullOrWhiteSpace($unsafeStageLink)) {
+            $null
+        } else {
+            Get-Item -LiteralPath $unsafeStageLink -Force -ErrorAction SilentlyContinue
+        }
+        $unsafeStageLiveManifestAfter = & $getTransactionLiveManifest $unsafeStageLiveRoot
+        & $recordTransactionExpectation ($unsafeStageFailureMessage -match 'deployment path contains reparse point') 'Task 1A.8 unsafe stage is rejected by strict validation' "actual='$unsafeStageFailureMessage'"
+        & $recordTransactionExpectation (
+            -not [string]::IsNullOrWhiteSpace($unsafeStageRoot) -and
+            (Test-Path -LiteralPath $unsafeStageRoot -PathType Container)
+        ) 'Task 1A.8 unsafe stage is preserved for inspection' "stage='$unsafeStageRoot'"
+        & $recordTransactionExpectation (
+            $null -ne $unsafeStageLinkItem -and
+            [bool]($unsafeStageLinkItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+        ) 'Task 1A.8 preserved stage retains its reparse evidence' "link='$unsafeStageLink'"
+        if (-not [string]::IsNullOrWhiteSpace($unsafeStageRoot)) {
+            & $recordRetainedStageWithoutEnv -StageRoot $unsafeStageRoot -Behavior 'Task 1A.8 unsafe stage'
+        }
+        & $recordTransactionExpectation ($unsafeStageLiveManifestAfter.Serialized -ceq $unsafeStageLiveManifestBefore.Serialized) 'Task 1A.8 unsafe stage leaves live checkout byte-identical' "before='$($unsafeStageLiveManifestBefore.Sha256)' after='$($unsafeStageLiveManifestAfter.Sha256)'"
+        & $recordTransactionExpectation ($unsafeStageStopAttempts.Count -eq 0 -and $unsafeStageDeployCalls.Count -eq 0) 'Task 1A.8 unsafe stage fails before service stop or deploy' "stops=$($unsafeStageStopAttempts.Count) deploys=$($unsafeStageDeployCalls.Count)"
+        & $recordTransactionExpectation ((Get-FileHash -LiteralPath $unsafeStageOutsideSentinel -Algorithm SHA256).Hash -eq $unsafeStageOutsideHashBefore) 'Task 1A.8 unsafe stage rejection preserves external target bytes' "before='$unsafeStageOutsideHashBefore'"
+    } finally {
+        $script:TestDeployFixedPath = $unsafeStageOriginalFixedPath
+        if ($unsafeStageCloneTargets.Count -eq 1) {
+            $unsafeStageRoot = $unsafeStageCloneTargets[0]
+            $unsafeStageLink = Join-Path $unsafeStageRoot $unsafeStageLinkRelative
+            if (Test-Path -LiteralPath $unsafeStageLink) {
+                & $removeVerifiedAssetJunction -LinkPath $unsafeStageLink -ExpectedTarget $unsafeStageOutsideRoot
+            }
+            if (Test-Path -LiteralPath $unsafeStageRoot -PathType Container) {
+                Remove-Item -LiteralPath $unsafeStageRoot -Recurse -Force
+            }
+        }
+    }
+
+    # Task 1A.9: post-cutover deploy failures do not rename the filesystem back.
+    # Both the structured nonzero result and thrown-error path expose the exact
+    # retained previous checkout for explicit operator recovery.
+    $postCutoverProcessEnvNames = @(
+        'EDGE_SITE_ID',
+        'EDGE_RUNTIME_DATA_ROOT',
+        'RUNTIME_STORAGE_ROOT',
+        'STORAGE_HOST_ROOT',
+        'STREAMING_CONVERSION_ARTIFACTS_ROOT',
+        'CONVERSION_LEDGER_STORE_PATH',
+        'ARTIFACT_HEALTH_LEDGER_STORE_PATH'
+    )
+    foreach ($postCutoverMode in @('nonzero', 'throw')) {
+        $postCutoverScenarioRoot = Join-Path $sandbox "transaction-post-cutover-$postCutoverMode"
+        $postCutoverLiveRoot = Join-Path $postCutoverScenarioRoot 'live'
+        & $newTransactionFixture $postCutoverLiveRoot
+        $postCutoverLiveManifestBefore = & $getTransactionLiveManifest $postCutoverLiveRoot
+        $postCutoverMarkerContent = "scenario=post-cutover-$postCutoverMode`nmode=OriginMain`noriginUrlSha256=$transactionOriginUrlHash`ncommit=$transactionOriginCommit`n"
+        $postCutoverCloneTargets = New-Object 'System.Collections.Generic.List[string]'
+        $postCutoverDeployCalls = New-Object 'System.Collections.Generic.List[string]'
+        $script:postCutoverCloneTargets = $postCutoverCloneTargets
+        $script:postCutoverDeployCalls = $postCutoverDeployCalls
+        $postCutoverRunner = {
+            param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+            $commandText = $Arguments -join ' '
+            if ($commandText -eq 'remote get-url origin') {
+                return [pscustomobject]@{ ExitCode = 0; Output = $transactionOriginUrl }
+            }
+            if ($Arguments -contains 'clone') {
+                $cloneInvocation = & $resolveTransactionCloneInvocation -Arguments $Arguments -ExpectedOrigin $transactionOriginUrl
+                $script:postCutoverCloneTargets.Add($cloneInvocation.Target) | Out-Null
+                & $newPreparedTransactionStage `
+                    -Target $cloneInvocation.Target `
+                    -ScenarioRoot $postCutoverScenarioRoot `
+                    -LiveRoot $postCutoverLiveRoot `
+                    -MarkerContent $postCutoverMarkerContent `
+                    -IncludeDeployScript $true | Out-Null
+                New-Item -ItemType Directory -Path (Join-Path $cloneInvocation.Target 'docs\plans\assets') -Force | Out-Null
+                New-Item -ItemType Directory -Path (Join-Path $cloneInvocation.Target 'docs\plans\uploads') -Force | Out-Null
+                New-Item -ItemType Directory -Path (Join-Path $cloneInvocation.Target 'web-viewer-sample\public') -Force | Out-Null
+                [System.IO.File]::WriteAllBytes((Join-Path $cloneInvocation.Target 'docs\plans\assets\vp-post-cutover.png'), [byte[]](1, 3, 5, 7))
+                [System.IO.File]::WriteAllBytes((Join-Path $cloneInvocation.Target 'docs\plans\uploads\concept-post-cutover.png'), [byte[]](2, 4, 6, 8))
+                return [pscustomobject]@{ ExitCode = 0; Output = 'prepared post-cutover failure stage' }
+            }
+            if ($commandText -eq 'rev-parse --short HEAD') {
+                return [pscustomobject]@{ ExitCode = 0; Output = $transactionOriginCommit.Substring(0, 7) }
+            }
+            if ($commandText -eq 'status --short') {
+                return [pscustomobject]@{ ExitCode = 0; Output = '' }
+            }
+            if ($commandText -eq 'rev-parse origin/main') {
+                return [pscustomobject]@{ ExitCode = 0; Output = $transactionOriginCommit }
+            }
+            return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+        }.GetNewClosure()
+        $postCutoverDeployRunner = {
+            param([string] $DeployRoot)
+            $script:postCutoverDeployCalls.Add($DeployRoot) | Out-Null
+            if ($postCutoverMode -eq 'throw') {
+                throw 'injected post-cutover deploy exception'
+            }
+            return [pscustomobject]@{ ExitCode = 37 }
+        }.GetNewClosure()
+        $postCutoverOriginalFixedPath = $script:TestDeployFixedPath
+        $postCutoverResult = $null
+        $postCutoverFailureMessage = $null
+        $postCutoverOriginalProcessEnv = @{}
+        $postCutoverExpectedProcessEnv = @{}
+        for ($processEnvIndex = 0; $processEnvIndex -lt $postCutoverProcessEnvNames.Count; $processEnvIndex++) {
+            $processEnvName = $postCutoverProcessEnvNames[$processEnvIndex]
+            $postCutoverOriginalProcessEnv[$processEnvName] = [Environment]::GetEnvironmentVariable($processEnvName, 'Process')
+            $expectedProcessEnvValue = if (($processEnvIndex % 2) -eq 0) {
+                "pre-$postCutoverMode-$processEnvIndex"
+            } else {
+                $null
+            }
+            $postCutoverExpectedProcessEnv[$processEnvName] = $expectedProcessEnvValue
+            if ($null -eq $expectedProcessEnvValue) {
+                Remove-Item -LiteralPath "Env:$processEnvName" -ErrorAction SilentlyContinue
+            } else {
+                [Environment]::SetEnvironmentVariable($processEnvName, $expectedProcessEnvValue, 'Process')
+            }
+        }
+        $postCutoverProcessEnvRestoredExactly = $false
+        try {
+            $script:TestDeployFixedPath = $postCutoverLiveRoot
+            try {
+                $postCutoverResult = Invoke-TestDeployRebuild `
+                    -Build `
+                    -RepoRoot $rebuildRoot `
+                    -DeploymentPath $postCutoverLiveRoot `
+                    -CommandRunner $postCutoverRunner `
+                    -DeployRunner $postCutoverDeployRunner `
+                    -ServiceStopper $noopStopper
+            } catch {
+                $postCutoverFailureMessage = $_.Exception.Message
+            }
+        } finally {
+            $script:TestDeployFixedPath = $postCutoverOriginalFixedPath
+            $postCutoverProcessEnvRestoredExactly = $true
+            foreach ($processEnvName in $postCutoverProcessEnvNames) {
+                $actualProcessEnvValue = [Environment]::GetEnvironmentVariable($processEnvName, 'Process')
+                if ($actualProcessEnvValue -cne $postCutoverExpectedProcessEnv[$processEnvName]) {
+                    $postCutoverProcessEnvRestoredExactly = $false
+                }
+                $originalProcessEnvValue = $postCutoverOriginalProcessEnv[$processEnvName]
+                if ($null -eq $originalProcessEnvValue) {
+                    Remove-Item -LiteralPath "Env:$processEnvName" -ErrorAction SilentlyContinue
+                } else {
+                    [Environment]::SetEnvironmentVariable(
+                        $processEnvName,
+                        $originalProcessEnvValue,
+                        'Process'
+                    )
+                }
+            }
+        }
+
+        $postCutoverPreviousPath = if ($null -ne $postCutoverResult) {
+            [string]$postCutoverResult.PreviousPath
+        } elseif ($postCutoverFailureMessage -match "previous checkout retained at '([^']+)'") {
+            [string]$Matches[1]
+        } else {
+            ''
+        }
+        $postCutoverPreviousManifest = if (
+            -not [string]::IsNullOrWhiteSpace($postCutoverPreviousPath) -and
+            (Test-Path -LiteralPath $postCutoverPreviousPath -PathType Container)
+        ) {
+            & $getTransactionLiveManifest $postCutoverPreviousPath
+        } else {
+            $null
+        }
+        $postCutoverActiveMarker = Join-Path $postCutoverLiveRoot $transactionProvenanceMarker
+        $postCutoverPreviousSha = if ($null -eq $postCutoverPreviousManifest) { '<missing>' } else { [string]$postCutoverPreviousManifest.Sha256 }
+        $postCutoverExitCode = if ($null -eq $postCutoverResult) { '<none>' } else { [string]$postCutoverResult.DeployExitCode }
+
+        if ($postCutoverMode -eq 'throw') {
+            & $recordTransactionExpectation (
+                $postCutoverFailureMessage -match 'injected post-cutover deploy exception' -and
+                $postCutoverFailureMessage -match 'previous checkout retained at'
+            ) 'Task 1A.9 thrown deploy error includes failure and recovery path' "actual='$postCutoverFailureMessage'"
+            & $recordTransactionExpectation ($null -eq $postCutoverResult) 'Task 1A.9 thrown deploy error returns no false success result' "result='$postCutoverResult'"
+        } else {
+            & $recordTransactionExpectation (
+                $null -ne $postCutoverResult -and
+                $postCutoverResult.DeployExitCode -eq 37
+            ) 'Task 1A.9 nonzero deploy exit is returned without false success' "exit='$postCutoverExitCode'"
+            & $recordTransactionExpectation ([string]::IsNullOrWhiteSpace($postCutoverFailureMessage)) 'Task 1A.9 nonzero deploy exit does not masquerade as a PowerShell exception' "actual='$postCutoverFailureMessage'"
+        }
+        & $recordTransactionExpectation $postCutoverProcessEnvRestoredExactly 'Task 1A.9 post-cutover failure restores every process env value exactly, including unset values' "mode='$postCutoverMode'"
+        & $recordTransactionExpectation (
+            -not [string]::IsNullOrWhiteSpace($postCutoverPreviousPath) -and
+            $null -ne $postCutoverPreviousManifest -and
+            $postCutoverPreviousManifest.Serialized -ceq $postCutoverLiveManifestBefore.Serialized
+        ) 'Task 1A.9 previous checkout remains exact after post-cutover failure' "mode='$postCutoverMode' before='$($postCutoverLiveManifestBefore.Sha256)' previous='$postCutoverPreviousSha'"
+        & $recordTransactionExpectation (
+            (Test-Path -LiteralPath $postCutoverActiveMarker -PathType Leaf) -and
+            $postCutoverDeployCalls.Count -eq 1 -and
+            $postCutoverDeployCalls[0] -eq $postCutoverLiveRoot
+        ) 'Task 1A.9 failed deployment generation remains active without unsafe rename-back' "mode='$postCutoverMode' marker='$postCutoverActiveMarker' calls='$($postCutoverDeployCalls -join ',')'"
+    }
 
     if ($transactionRedFailures.Count -gt 0) {
         throw "Task 1A wished-for RED behaviors unmet:$([Environment]::NewLine) - $($transactionRedFailures -join "$([Environment]::NewLine) - ")"
@@ -2351,11 +3198,11 @@ public sealed class Task1B1CountingLockOwner : IDisposable
         if (-not [bool]($linkItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
             throw "Task 1B1 junction cleanup refused non-reparse path: '$canonicalLink'"
         }
-        $resolvedTargetItem = $linkItem.ResolveLinkTarget($true)
-        if ($null -eq $resolvedTargetItem) {
+        $resolvedTargetPath = Resolve-TestReparseTargetPath -LinkItem $linkItem
+        if ([string]::IsNullOrWhiteSpace($resolvedTargetPath)) {
             throw "Task 1B1 junction cleanup could not resolve target: '$canonicalLink'"
         }
-        $canonicalResolvedTarget = ([System.IO.Path]::GetFullPath($resolvedTargetItem.FullName)).TrimEnd($transactionPathTrimChars)
+        $canonicalResolvedTarget = $resolvedTargetPath.TrimEnd($transactionPathTrimChars)
         if (-not $canonicalResolvedTarget.Equals($canonicalExpectedTarget, [System.StringComparison]::OrdinalIgnoreCase)) {
             throw "Task 1B1 junction cleanup target mismatch. expected='$canonicalExpectedTarget' actual='$canonicalResolvedTarget'"
         }
@@ -2572,11 +3419,11 @@ public sealed class Task1B1CountingLockOwner : IDisposable
                 $relativePath = $canonicalItem.Substring($canonicalRoot.Length).TrimStart($transactionPathTrimChars)
                 $isReparse = [bool]($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
                 if ($isReparse) {
-                    $resolvedTarget = $item.ResolveLinkTarget($true)
-                    $resolvedMarker = if ($null -eq $resolvedTarget) {
+                    $resolvedTarget = Resolve-TestReparseTargetPath -LinkItem $item
+                    $resolvedMarker = if ([string]::IsNullOrWhiteSpace($resolvedTarget)) {
                         '<unresolved>'
                     } else {
-                        [System.IO.Path]::GetFullPath($resolvedTarget.FullName)
+                        $resolvedTarget
                     }
                     $entries.Add("$relativePath|reparse|$($item.Attributes)|$resolvedMarker") | Out-Null
                     continue
@@ -2762,7 +3609,7 @@ public sealed class Task1B1CountingLockOwner : IDisposable
     & $recordTask1B1Expectation (-not [string]::IsNullOrWhiteSpace($malformedValidationMessage) -and $malformedValidationMessage -match 'unsafe lock path') 'Task 1B1 malformed helper resource is rejected by shared scenario validation' "actual='$malformedValidationMessage'"
     & $recordTask1B1Expectation (-not $malformedOfficialAssigned -and $null -eq $malformedOfficialResource) 'Task 1B1 malformed helper never becomes an official lock resource' "officialAssigned=$malformedOfficialAssigned"
     & $recordTask1B1Expectation $malformedOwnerState.WasValid 'Task 1B1 malformed helper supplies a valid live owner before validation' "wasValid=$($malformedOwnerState.WasValid)"
-    & $recordTask1B1Expectation ($null -ne $malformedOwnerState.Owner -and $malformedOwnerState.Owner.DisposeCount -eq 1 -and $malformedOwnerState.Owner.IsHandleClosed) 'Task 1B1 malformed helper candidate owner is disposed exactly once on rejection' "disposeCount=$(if ($null -eq $malformedOwnerState.Owner) { '<none>' } else { $malformedOwnerState.Owner.DisposeCount }) closed=$(if ($null -eq $malformedOwnerState.Owner) { '<none>' } else { $malformedOwnerState.Owner.IsHandleClosed })"
+    & $recordTask1B1Expectation ($null -ne $malformedOwnerState.Owner -and $malformedOwnerState.Owner.DisposeCount -eq 1) 'Task 1B1 malformed helper candidate owner is disposed exactly once on rejection' "disposeCount=$(if ($null -eq $malformedOwnerState.Owner) { '<none>' } else { $malformedOwnerState.Owner.DisposeCount })"
     & $recordTask1B1Expectation ($malformedProbeCounters.FallbackCount -eq 0 -and $malformedFallbackState.Calls -eq 0) 'Task 1B1 malformed helper rejection performs zero fallback acquisitions' "counter=$($malformedProbeCounters.FallbackCount) factoryCalls=$($malformedFallbackState.Calls)"
     & $recordTask1B1Expectation ($malformedProbeCounters.MetadataProbeCount -eq 0) 'Task 1B1 malformed helper rejection performs zero candidate-path metadata probes' "metadataProbes=$($malformedProbeCounters.MetadataProbeCount)"
     & $recordTask1B1Expectation ($malformedProbeCounters.DeleteProbeCount -eq 0) 'Task 1B1 malformed helper rejection performs zero candidate-path delete probes' "deleteProbes=$($malformedProbeCounters.DeleteProbeCount)"
@@ -2786,7 +3633,7 @@ public sealed class Task1B1CountingLockOwner : IDisposable
             $malformedOutsideGuard.Dispose()
             $malformedOutsideGuard = $null
         }
-        if ($null -ne $malformedOwnerState.Owner -and -not $malformedOwnerState.Owner.IsHandleClosed) {
+        if ($null -ne $malformedOwnerState.Owner -and $malformedOwnerState.Owner.DisposeCount -eq 0) {
             $malformedOwnerState.Owner.Dispose()
         }
         $malformedOutsideSentinelItem = Get-Item -LiteralPath $malformedOutsideSentinel -Force -ErrorAction SilentlyContinue

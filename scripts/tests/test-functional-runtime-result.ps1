@@ -118,6 +118,20 @@ try {
     foreach ($requiredText in @('functional-runtime-conv:', 'playwright.functional-runtime.config.ts', 'verify-functional-runtime-result.ps1', 'needs.changes.outputs.head_sha', 'npm run build:ui', 'scripts/tests/(test|verify)-functional-runtime-result')) {
         if (-not $workflow.Contains($requiredText)) { throw "CI targeted functional/runtime producer is missing '$requiredText'." }
     }
+    $functionalConfig = Get-Content -LiteralPath (Join-Path $repoRoot 'web-viewer-sample/playwright.functional-runtime.config.ts') -Raw
+    if ($functionalConfig -notmatch 'testMatch:\s*\[\s*"conv-history\.spec\.ts"\s*\]') {
+        throw 'Functional/runtime config must run only the commit-bound conv-history producer; additional specs can mutate tracked evidence before binding validation.'
+    }
+    $bindingValidatorMarker = 'Validate functional/runtime evidence binding'
+    $hifiRuntimeCommand = 'npx playwright test e2e/hifi-token-authority.spec.ts --config=playwright.config.ts'
+    $bindingValidatorIndex = $workflow.IndexOf($bindingValidatorMarker, [StringComparison]::Ordinal)
+    $hifiRuntimeIndex = $workflow.IndexOf($hifiRuntimeCommand, [StringComparison]::Ordinal)
+    if ($bindingValidatorIndex -lt 0 -or $hifiRuntimeIndex -le $bindingValidatorIndex) {
+        throw 'CI must run the hifi token/legacy-route runtime slice after commit-bound conv-history evidence validation.'
+    }
+    if (-not $workflow.Contains('artifacts/e2e/hifi-token-authority/')) {
+        throw 'CI must upload the Hi-Fi runtime screenshots in the head-SHA-bound functional/runtime artifact.'
+    }
 
     Write-Host '[test-functional-runtime-result] passed — positive evidence plus skip/route/runtime/state/hash/Kit negative cases'
 } finally {

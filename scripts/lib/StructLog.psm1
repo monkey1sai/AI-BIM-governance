@@ -219,7 +219,7 @@ function ConvertTo-StructLogRedactedData {
 function ConvertTo-StructLogJson {
     [CmdletBinding()]
     param($Record)
-    # ConvertTo-Json -Compress -Depth 8 — one record per line.
+    # ConvertTo-Json -Compress -Depth 8 - one record per line.
     return ($Record | ConvertTo-Json -Compress -Depth 8)
 }
 
@@ -256,7 +256,7 @@ function New-StructLogger {
     if (-not $Now) { $Now = (Get-Date).ToUniversalTime() }
     if (-not $RunId) { $RunId = New-StructLogRunId -Now $Now }
     if ($RunId -notmatch $script:RunIdPattern) {
-        throw "Invalid run id: $RunId — must match $($script:RunIdPattern)"
+        throw "Invalid run id: $RunId - must match $($script:RunIdPattern)"
     }
     if (-not $LogRoot) { $LogRoot = Get-StructLogDefaultLogRoot }
     if (-not $InitialTraceId) {
@@ -360,7 +360,8 @@ function _Build-StructLogRecord {
     $traceId = if ($Extras.ContainsKey('TraceId')) { $Extras['TraceId'] } else { $State.TraceId }
     if (-not $traceId) { $traceId = "script_$($State.RunId)" }
     $seq = $State.GetSeq($traceId)
-    $safeData = ConvertTo-StructLogRedactedData -Data ($Data ?? @{}) -AllowList $State.AllowList
+    $dataForRedaction = if ($null -eq $Data) { @{} } else { $Data }
+    $safeData = ConvertTo-StructLogRedactedData -Data $dataForRedaction -AllowList $State.AllowList
     if ($null -eq $safeData) { $safeData = [ordered]@{} }
     $record = [ordered]@{
         ts = $ts
@@ -395,7 +396,7 @@ function _Write-StructLogRecord {
     if ($State.RecordSink) {
         & $State.RecordSink $Record
     }
-    # stdout is opt-in for PowerShell — we use Write-Host so it stays out of
+    # stdout is opt-in for PowerShell - we use Write-Host so it stays out of
     # the pipeline (Write-Output would contaminate downstream piping).
     try { [Console]::Out.WriteLine($line) } catch { }
     if ($State.InMemoryOnly) {

@@ -342,7 +342,8 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
       event: "ifc_ready",
       tenant_id: opts.tenantId,
       project_id: derived.projectId,
-      // 種類(倒數二層)與專案原名(中文如實顯示)隨進件傳遞；種類/原名只傳遞、不入本地 store（R5）。
+      // 種類(倒數二層)與專案原名(中文如實顯示)隨進件傳遞；可保存為 coordinator-local
+      // display hints，但不構成外部 metadata authority（R5 / local-artifact-shadow-metadata）。
       project_display_name: derived.projectDisplayName,
       model_category: derived.category,
       external_model_version_id: derived.externalModelVersionId,
@@ -409,12 +410,23 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
       status.last_poll_at = new Date().toISOString();
       status.poll_count += 1; // 單調遞增：list 成功即計一輪（供 loop liveness 判斷，免時鐘解析度依賴）
       status.last_error = null;
-      // baseline_count（純診斷）：首輪 `*/model.ifc` 數，兩種模式皆照舊填。
+      // baseline_count（純診斷）：首輪符合 key 結構規約的 `*/model.ifc` 數。
       // ledger 模式下它**不再 gate 觸發**（不再代表「被吸收、不轉檔」），只供 #conv 顯示
       // 「首輪可解析 IFC 數」。
       const firstRound = isFirstRound;
       if (firstRound) {
-        status.baseline_count = objects.length;
+        status.baseline_count = objects.reduce(
+          (count, object) =>
+            count +
+            (deriveIntakeFromKey({
+              key: object.key,
+              prefix: opts.prefix,
+              keySuffix: opts.keySuffix,
+            }).ok
+              ? 1
+              : 0),
+          0,
+        );
         isFirstRound = false;
       }
       // §3.4：無首輪 baseline 特例。對每個 `*/model.ifc` 算 idkey 查持久 ledger 水印——無紀錄→觸發

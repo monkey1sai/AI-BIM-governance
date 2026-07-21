@@ -31,6 +31,18 @@ let conversionStub: http.Server | null = null;
 let tmpRoot = "";
 let sourcePort = 0;
 
+function spawnCoordinatorProcess(env: NodeJS.ProcessEnv): ChildProcess {
+  // 以 Node --import tsx 在同一 process 執行 coordinator，讓 ChildProcess.pid
+  // 就是 listener owner。Windows 若透過 tsx.cmd/tsx CLI wrapper 啟動，wrapper
+  // 可能先退出或再生 child，後續 taskkill fallback 無法可靠證明 listener 已關閉。
+  return spawn(process.execPath, ["--import", "tsx", "src/index.ts"], {
+    cwd: coordinatorDir,
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+    shell: false,
+  });
+}
+
 async function listenOnRandomPort(server: http.Server): Promise<number> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -143,13 +155,7 @@ test.describe("hifi token authority：遷移契約垂直切片（真 coordinator
       STORAGE_ROOT: path.join(tmpRoot, "storage"),
       LOG_ROOT: path.join(tmpRoot, "logs"),
     };
-    const tsxBin = path.join(coordinatorDir, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
-    coordinatorProc = spawn(tsxBin, ["src/index.ts"], {
-      cwd: coordinatorDir,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-      shell: process.platform === "win32",
-    });
+    coordinatorProc = spawnCoordinatorProcess(env);
     coordinatorProc.on("exit", (code) => { coordinatorExited = code ?? -1; });
     coordinatorProc.stderr?.on("data", (data) => { stderrTail = `${stderrTail}${String(data)}`.slice(-4000); });
     await waitForHealth(() => (coordinatorExited == null
@@ -158,15 +164,7 @@ test.describe("hifi token authority：遷移契約垂直切片（真 coordinator
   });
 
   test.afterAll(async () => {
-    if (coordinatorProc?.pid && process.platform === "win32") {
-      await new Promise<void>((resolve) => {
-        const killer = spawn("taskkill", ["/F", "/T", "/PID", String(coordinatorProc!.pid)], { stdio: "ignore" });
-        killer.on("exit", () => resolve());
-        killer.on("error", () => { try { coordinatorProc?.kill("SIGKILL"); } catch { /* stopped */ } resolve(); });
-      });
-    } else if (coordinatorProc) {
-      coordinatorProc.kill("SIGTERM");
-    }
+    await killCoordinator(coordinatorProc, coordinatorPort);
     coordinatorProc = null;
     for (const server of [ifcSourceStub, conversionStub]) {
       if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -294,18 +292,24 @@ async function waitForHealthAt(base: string, earlyExit: () => string | null, tim
   }
 }
 
-async function killCoordinator(proc: ChildProcess | null): Promise<void> {
+async function killCoordinator(proc: ChildProcess | null, port: number): Promise<void> {
   const pid = proc?.pid;
   if (!proc || !pid) return;
   if (process.platform === "win32") {
     await new Promise<void>((resolve) => {
       const killer = spawn("taskkill", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore" });
-      killer.on("exit", () => resolve());
+      killer.on("exit", (code) => {
+        if (code !== 0) {
+          try { proc.kill("SIGKILL"); } catch { /* already stopped */ }
+        }
+        resolve();
+      });
       killer.on("error", () => { try { proc.kill("SIGKILL"); } catch { /* stopped */ } resolve(); });
     });
   } else {
     proc.kill("SIGTERM");
   }
+  await waitForPortRefused(port);
 }
 
 // 殺 coordinator 後輪詢目標埠，直到 TCP 連線被拒（ECONNREFUSED）才回；避免 OS 尚未拆掉 listener 時
@@ -364,13 +368,7 @@ test.describe("hifi token authority：真後端故障（coordinator 進程死亡
       STORAGE_ROOT: path.join(failureTmpRoot, "storage"),
       LOG_ROOT: path.join(failureTmpRoot, "logs"),
     };
-    const tsxBin = path.join(coordinatorDir, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
-    failureProc = spawn(tsxBin, ["src/index.ts"], {
-      cwd: coordinatorDir,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-      shell: process.platform === "win32",
-    });
+    failureProc = spawnCoordinatorProcess(env);
     failureProc.on("exit", (code) => { coordinatorExited = code ?? -1; });
     failureProc.stderr?.on("data", (data) => { stderrTail = `${stderrTail}${String(data)}`.slice(-4000); });
     await waitForHealthAt(failureBase, () => (coordinatorExited == null
@@ -379,7 +377,7 @@ test.describe("hifi token authority：真後端故障（coordinator 進程死亡
   });
 
   test.afterAll(async () => {
-    await killCoordinator(failureProc); // 測試多半已殺；此處為冪等收尾（若測試提早失敗仍確保清乾淨）
+    await killCoordinator(failureProc, failureCoordinatorPort); // 測試多半已殺；此處為冪等收尾（若測試提早失敗仍確保清乾淨）
     failureProc = null;
     if (failureConversionStub) await new Promise<void>((resolve) => failureConversionStub!.close(() => resolve()));
     failureConversionStub = null;
@@ -405,9 +403,8 @@ test.describe("hifi token authority：真後端故障（coordinator 進程死亡
     await expect(refreshBtn).toBeEnabled({ timeout: 20_000 });
 
     // 真實故障：殺掉本測試自起的 coordinator 進程（非 page.route、非 mock），等埠真正拒連。
-    await killCoordinator(failureProc);
+    await killCoordinator(failureProc, failureCoordinatorPort);
     failureProc = null;
-    await waitForPortRefused(failureCoordinatorPort);
 
     // 使用者點「重新整理」→ refresh() → data.load() → GET /api/external/ifc-ready → 打死埠得真實
     // ECONNREFUSED（fetch reject）→ useConversionData 設 jobsErr → conv-queue-error 誠實浮現。
