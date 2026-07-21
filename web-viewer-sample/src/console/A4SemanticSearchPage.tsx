@@ -157,6 +157,7 @@ export function A4SemanticSearchPage() {
   const [issueMessage, setIssueMessage] = useState<string | null>(null);
   const [issueOutcomes, setIssueOutcomes] = useState<A4IssueOutcome[]>([]);
   const llmStatusRequestId = useRef(0);
+  const sourceRequestId = useRef(0);
 
   const refreshLlmStatus = useCallback(async () => {
     const requestId = ++llmStatusRequestId.current;
@@ -176,12 +177,14 @@ export function A4SemanticSearchPage() {
   }, []);
 
   const refreshSources = useCallback(async () => {
+    const requestId = ++sourceRequestId.current;
     setLoadErr(null);
     const [runtime, ready] = await Promise.allSettled([
       coordinatorClient.runtimeStatus(),
       coordinatorClient.listIfcReady(),
       refreshLlmStatus(),
     ]);
+    if (requestId !== sourceRequestId.current) return;
     const sourceUnavailable = runtime.status === "rejected" || ready.status === "rejected";
     if (sourceUnavailable) {
       setLoadErr(t("部分來源狀態暫時無法取得。", "Some source status is temporarily unavailable."));
@@ -874,7 +877,12 @@ export function A4SemanticSearchPage() {
               )}
               {rows.map((row: ModelSearchResultRow) => {
                 const guid = row.ifc_guid ?? "";
-                const rowProofEnabled = sourceMode === "session" && result?.issue_eligible === true && row.issue_eligible === true && Boolean(row.evidence_proof);
+                const rowProofEnabled = sourceMode === "session"
+                  && resultContextMatchesCurrent
+                  && !selectedSessionUnavailable
+                  && result?.issue_eligible === true
+                  && row.issue_eligible === true
+                  && Boolean(row.evidence_proof);
                 return (
                   <tr key={guid || `${row.name}-${row.storey}`}>
                     <td>

@@ -250,6 +250,31 @@ describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
     });
   });
 
+  it("malformed A4 hash with a second question mark is scrubbed to the canonical route", async () => {
+    window.history.replaceState(
+      {
+        evidence_proof: "must-be-scrubbed",
+        usd_prim_path: "/must-be-scrubbed",
+      },
+      "",
+      "/console#/workspace?dock=a4?evidence_proof=opaque-proof&usd_prim_path=%2FRoot",
+    );
+
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<EdgeConsole />);
+    });
+
+    await waitForHash("#workspace?dock=a4");
+    expect(window.location.search).toBe("");
+    expect(window.history.state).toBeNull();
+    expect(container.querySelector('[data-testid="a4-semantic-search-page"]')).not.toBeNull();
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
   it("malformed higher-priority session values do not erase a valid stored session", async () => {
     vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue({
       sessions: {

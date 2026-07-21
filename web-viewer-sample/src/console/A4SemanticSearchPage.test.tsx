@@ -402,6 +402,7 @@ describe("A4SemanticSearchPage", () => {
     });
     await waitFor(() => expect(container.querySelector('[data-testid="a4-session-unavailable"]')).not.toBeNull());
     expect(container.querySelector('[data-testid="a4-select-row-GUID-A"]')).not.toBeNull();
+    expect((container.querySelector('[data-testid="a4-select-row-GUID-A"]') as HTMLInputElement).disabled).toBe(true);
     expect(title.value).toContain("Door A");
     expect(confirm.disabled).toBe(true);
     await act(async () => confirm.click());
@@ -582,6 +583,35 @@ describe("A4SemanticSearchPage", () => {
     });
 
     expect(fieldValue("state")).toMatch(/^unavailable\b/);
+  });
+
+  it("keeps the newest source snapshot when an older refresh resolves last", async () => {
+    let resolveOlder!: (value: unknown) => void;
+    const olderRequest = new Promise((resolve) => {
+      resolveOlder = resolve;
+    });
+    const runtimeStatus = vi.mocked(coordinatorClient.runtimeStatus)
+      .mockImplementationOnce(() => olderRequest as never)
+      .mockResolvedValueOnce({
+        sessions: { items: [{ session_id: "review_session_a", status: "active" }] },
+      } as never);
+
+    await mount();
+    await waitFor(() => expect(runtimeStatus).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      (container.querySelector('[data-testid="a4-refresh-sources"]') as HTMLButtonElement).click();
+    });
+    await waitFor(() => expect(runtimeStatus).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(container.querySelector('[data-testid="a4-session-unavailable"]')).not.toBeNull());
+
+    await act(async () => {
+      resolveOlder(ACTIVE_SESSIONS);
+      await olderRequest;
+    });
+
+    expect(container.querySelector('[data-testid="a4-session-unavailable"]')).not.toBeNull();
+    expect((container.querySelector('[data-testid="a4-session-select"]') as HTMLSelectElement).value)
+      .toBe("review_session_b");
   });
 
   it("treats ttl_s as remaining lifetime from response receipt and expires state plus freshness together", async () => {

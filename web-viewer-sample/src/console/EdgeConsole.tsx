@@ -84,8 +84,11 @@ function a4SessionContextFromLocation(): string | null {
 function usePageHash(): [string, (k: string) => void] {
   const read = () => {
     const raw = window.location.hash.replace(/^#\/?console\/?/, "").replace(/^#\/?/, "");
-    const [page, query = ""] = raw.split("?", 2);
-    if (page === "workspace" && new URLSearchParams(query).get("dock") === "a4") {
+    const queryIndex = raw.indexOf("?");
+    const page = queryIndex === -1 ? raw : raw.slice(0, queryIndex);
+    const query = queryIndex === -1 ? "" : raw.slice(queryIndex + 1);
+    const routeParams = new URLSearchParams(query.replace(/\?/g, "&"));
+    if (page === "workspace" && routeParams.get("dock") === "a4") {
       // The only URL-carried A4 context is a syntactically valid opaque
       // review-session selector. Query/proof/prim/handoff material is scrubbed.
       // The coordinator still authenticates and resolves the session; this

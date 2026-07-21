@@ -13,7 +13,7 @@ type StubResponse = {
 };
 
 const activeSession = {
-  session_id: "review-session-a4",
+  session_id: "review_session_a4",
   status: "active",
   project_id: "project-a4",
   model_version_id: "model-a4",
@@ -223,7 +223,7 @@ test.describe("A4 canonical browser contract", () => {
 
     const coordinatorOrigin = new URL(COORDINATOR).origin;
     expect(apiCalls.every((url) => new URL(url).origin === coordinatorOrigin)).toBe(true);
-    expect(apiCalls.some((url) => url.includes("/api/governance/search/model/for-session/review-session-a4"))).toBe(true);
+    expect(apiCalls.some((url) => url.includes("/api/governance/search/model/for-session/review_session_a4"))).toBe(true);
     expect(apiCalls.some((url) => /\/api\/governance\/search\/model(?:$|\?)/.test(new URL(url).pathname))).toBe(false);
   });
 
