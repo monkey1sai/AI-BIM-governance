@@ -241,6 +241,8 @@ try {
     Assert-True (-not ((Get-Content -Raw -LiteralPath 'scripts/tests/test-agent-skills-sync.ps1') -match '\bWrite-Host\b')) 'agent skill sync test uses structured logging instead of bare Write-Host'
     $rebuildLibraryBody = Get-Content -Raw -LiteralPath 'scripts/lib/rebuild-test-deploy.ps1'
     $rebuildEntrypointBody = Get-Content -Raw -LiteralPath 'scripts/dev/rebuild-test-deploy.ps1'
+    $structLogModuleBody = Get-Content -Raw -LiteralPath 'scripts/lib/StructLog.psm1'
+    Assert-True (-not ($structLogModuleBody -match '[^\x00-\x7F]')) 'StructLog module remains ASCII-safe for Windows PowerShell 5.1 no-BOM parsing'
     Assert-True ($rebuildLibraryBody -match 'StructLog\.psm1') 'rebuild library imports the shared structured logger'
     Assert-True ($rebuildLibraryBody -match 'Write-StructLifecycle') 'rebuild library emits cutover/recovery paths through structured lifecycle logging'
     Assert-True (-not ($rebuildLibraryBody -match 'Write-Host[^\r\n]*retained previous checkout')) 'rebuild library does not emit the retained recovery path with bare Write-Host'
