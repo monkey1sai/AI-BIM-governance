@@ -406,6 +406,13 @@ jobs:
           E2E_DISABLE_WEBSERVER: '1'
         run: npx playwright test --config=playwright.functional-runtime.config.ts
 
+      - name: Verify hifi token and legacy route runtime slice
+        shell: pwsh
+        working-directory: web-viewer-sample
+        env:
+          E2E_DISABLE_WEBSERVER: '1'
+        run: npx playwright test e2e/hifi-token-authority.spec.ts --config=playwright.config.ts
+
       - name: Validate functional/runtime evidence binding
         shell: pwsh
         run: >-
@@ -414,13 +421,6 @@ jobs:
           -ResultPath '${{ github.workspace }}\artifacts\e2e\functional-runtime\functional-runtime-result.json'
           -TargetCommit '${{ needs.changes.outputs.head_sha }}'
           -AllowUntrackedArtifacts
-
-      - name: Verify hifi token and legacy route runtime slice
-        shell: pwsh
-        working-directory: web-viewer-sample
-        env:
-          E2E_DISABLE_WEBSERVER: '1'
-        run: npx playwright test e2e/hifi-token-authority.spec.ts --config=playwright.config.ts
 
       - name: Upload functional/runtime evidence
         if: always()
