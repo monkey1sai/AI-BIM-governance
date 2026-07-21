@@ -13,12 +13,12 @@
 - 移除 design gate 對 repo 外絕對路徑、任意 screenshot、PR prose 或人工 boolean 的 authority／fallback。
 - 將 visual fidelity gate 固定為 Windows runner、Chromium、DPR1、`1440x900` 與 `1920x1080`、每 viewport pixel diff ratio `<=0.01`，且 required semantic cases 100%。
 - 由 changed paths 與 base/head 的 HTML-derived scope 聯集機器推導 product `passed`／`mixed`／`partial_reference_missing`，以及 non-product `design_source_update_only`／`gate_infrastructure_only`；同一 change 同時修改 authority HTML與production UI時為 `design_source_and_product_mixed_fail_closed`。Unknown、source drift、HTML-derived field 無法回溯至 HTML、policy-derived field 無法回溯至 versioned policy path/digest，或缺少衍生 artifacts 時 fail closed。
-- 將 design fidelity 與 functional/runtime E2E 維持兩個獨立且均必要的 gate；HTML 只描述目標，code＋tests／runtime evidence 描述建成現況。
+- 將 design fidelity 與 functional/runtime E2E 維持兩個獨立且均必要的 gate；HTML 正本為需求權威（doc-first），code＋tests／runtime evidence 為建成現況查證面（現況證據，非需求權威）。
 - RVT↔IFC↔USDC lineage 新增的 Alignment、Attempts、Audit 等 surface，在 HTML 尚未定義前必須是 `reference_missing`，不得由 manifest 自行升格為 approved。
 
 ## 權責歸屬
 
-- `docs/plans/*.html`：design gate 唯一權威輸入。
+- `docs/plans/*.html`：需求權威正本（doc-first），亦為 design gate 唯一權威輸入。
 - `docs/plans/docs-plans-README.md`：人類導覽與權威分工入口，不是另一份設計稿。
 - `docs/plans/design-system-reference.manifest.json` 與 baselines：從 HTML 產生的 machine snapshot。
 - `web-viewer-sample/`：subject capture、semantic Playwright 與 frontend operability evidence。

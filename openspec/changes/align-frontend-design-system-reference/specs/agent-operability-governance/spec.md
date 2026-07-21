@@ -9,7 +9,7 @@
 
 ### Requirement: Agent 邊界 SHALL 對齊 A1–A10 產品定位
 
-Repo agent contract SHALL 將 A1–A10 識別為主要產品開發項目，並 SHALL 以 current checkout 中所有 Git-tracked `docs/plans/*.html` 作為 design gate 的唯一 UX／IA／visual／interaction reference。Manifest、route inventory、semantic cases 與 goldens SHALL 被視為 HTML-derived machine artifacts；code＋tests/contracts SHALL 裁決現行 behavior 與 runtime truth。Repo 外 design path、任意 screenshot 或衍生 artifact SHALL NOT 覆寫 HTML、API、enum、security、authority 或 runtime lifecycle。
+Repo agent contract SHALL 將 A1–A10 識別為主要產品開發項目，並 SHALL 以 current checkout 中所有 Git-tracked `docs/plans/*.html` 作為 design gate 的唯一 UX／IA／visual／interaction reference。Manifest、route inventory、semantic cases 與 goldens SHALL 被視為 HTML-derived machine artifacts；code＋tests/contracts SHALL 作為現行 behavior 與 runtime 現況的查證面（現況證據，非需求權威；需求權威依 doc-first 為 `docs/plans` 正本）。Repo 外 design path、任意 screenshot 或衍生 artifact SHALL NOT 覆寫 HTML、API、enum、security、authority 或 runtime lifecycle。
 
 #### Scenario: Agent 開始 user-facing governance work
 
