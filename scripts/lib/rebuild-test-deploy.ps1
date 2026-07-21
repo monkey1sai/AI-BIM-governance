@@ -520,6 +520,12 @@ function Assert-TestDeployOriginUrlSafe {
     if ([string]::IsNullOrWhiteSpace($candidate)) {
         throw 'current repo origin URL is empty'
     }
+    if ($candidate.StartsWith('-', [System.StringComparison]::Ordinal)) {
+        throw 'current repo origin URL is invalid'
+    }
+    if ($candidate.Contains('?') -or $candidate.Contains('#')) {
+        throw 'credential-bearing origin URL is not allowed; use a credential manager or SSH agent'
+    }
 
     $decodeUserInfo = {
         param([Parameter(Mandatory = $true)][string] $Value)
@@ -551,9 +557,6 @@ function Assert-TestDeployOriginUrlSafe {
         '^(?<user>[^@/\\:\s]+)@(?<host>\[[^\]]+\]|[^:/\\\s]+):(?<path>.+)$'
     )
     if ($scpLikeMatch.Success) {
-        if ($candidate.Contains('?') -or $candidate.Contains('#')) {
-            throw 'credential-bearing origin URL is not allowed; use a credential manager or SSH agent'
-        }
         $decodedScpUser = & $decodeUserInfo $scpLikeMatch.Groups['user'].Value
         if ($decodedScpUser.Contains(':')) {
             throw 'credential-bearing origin URL is not allowed; use a credential manager or SSH agent'
@@ -565,13 +568,7 @@ function Assert-TestDeployOriginUrlSafe {
         throw 'current repo origin URL is invalid'
     }
     if (-not $looksLikeUri) {
-        if ($candidate.StartsWith('-', [System.StringComparison]::Ordinal)) {
-            throw 'current repo origin URL is invalid'
-        }
         if ([System.IO.Path]::IsPathRooted($candidate)) {
-            if ($candidate.Contains('?') -or $candidate.Contains('#')) {
-                throw 'credential-bearing origin URL is not allowed; use a credential manager or SSH agent'
-            }
             return $candidate
         }
         if ($isAbsoluteUri) {
@@ -591,8 +588,6 @@ function Assert-TestDeployOriginUrlSafe {
         ($hasUserInfo -and $scheme -ne 'ssh') -or
         ($hasUserInfo -and $decodedUserInfo.Contains(':'))
     $hasQueryOrFragment =
-        $candidate.Contains('?') -or
-        $candidate.Contains('#') -or
         -not [string]::IsNullOrWhiteSpace($uri.Query) -or
         -not [string]::IsNullOrWhiteSpace($uri.Fragment)
     if ($hasCredentialUserInfo -or $hasQueryOrFragment) {
