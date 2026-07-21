@@ -123,14 +123,30 @@ try {
         throw 'Functional/runtime config must run only the commit-bound conv-history producer; additional specs can mutate tracked evidence before binding validation.'
     }
     $bindingValidatorMarker = 'Validate functional/runtime evidence binding'
+    $functionalProducerCommand = 'npx playwright test --config=playwright.functional-runtime.config.ts'
     $hifiRuntimeCommand = 'npx playwright test e2e/hifi-token-authority.spec.ts --config=playwright.config.ts'
+    $functionalProducerIndex = $workflow.IndexOf($functionalProducerCommand, [StringComparison]::Ordinal)
     $bindingValidatorIndex = $workflow.IndexOf($bindingValidatorMarker, [StringComparison]::Ordinal)
     $hifiRuntimeIndex = $workflow.IndexOf($hifiRuntimeCommand, [StringComparison]::Ordinal)
-    if ($bindingValidatorIndex -lt 0 -or $hifiRuntimeIndex -le $bindingValidatorIndex) {
-        throw 'CI must run the hifi token/legacy-route runtime slice after commit-bound conv-history evidence validation.'
+    if (
+        $functionalProducerIndex -lt 0 -or
+        $hifiRuntimeIndex -le $functionalProducerIndex -or
+        $bindingValidatorIndex -le $hifiRuntimeIndex
+    ) {
+        throw 'CI must run functional producer, then the hifi runtime slice, then commit-bound drift validation.'
     }
     if (-not $workflow.Contains('artifacts/e2e/hifi-token-authority/')) {
         throw 'CI must upload the Hi-Fi runtime screenshots in the head-SHA-bound functional/runtime artifact.'
+    }
+    $hifiSpec = Get-Content -LiteralPath (Join-Path $repoRoot 'web-viewer-sample/e2e/hifi-token-authority.spec.ts') -Raw
+    if ($hifiSpec -notmatch 'path\.join\(repoRoot,\s*"artifacts",\s*"e2e",\s*"_output",\s*"hifi-token-authority"\)') {
+        throw 'Hi-Fi runtime actual screenshots must be written below artifacts/e2e/_output instead of overwriting tracked baselines.'
+    }
+    if ($hifiSpec -notmatch 'pixelmatch\(' -or $hifiSpec -notmatch 'maxDiffPixelRatio\s*=\s*0\.01') {
+        throw 'Hi-Fi runtime screenshots must enforce the 1% pixel-diff contract against tracked baselines.'
+    }
+    if ([regex]::Matches($hifiSpec, 'page\.screenshot\(').Count -ne 1) {
+        throw 'Hi-Fi runtime screenshots must use one comparison helper; direct per-test writes can mutate tracked baselines.'
     }
 
     Write-Host '[test-functional-runtime-result] passed — positive evidence plus skip/route/runtime/state/hash/Kit negative cases'

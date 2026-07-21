@@ -1960,7 +1960,8 @@ exit 7
         'ssh://git@github.com/monkey1sai/AI-BIM-governance.git',
         'file:///C:/Repos/AI-BIM-governance.git',
         'D:\Repos\AI-BIM-governance.git',
-        '\\localhost\repo-mirror\AI-BIM-governance.git'
+        '\\localhost\repo-mirror\AI-BIM-governance.git',
+        '.\repo-mirror\AI-BIM-governance.git'
     )) {
         $safeOriginFailure = $null
         try {
@@ -2019,6 +2020,14 @@ exit 7
         [pscustomobject]@{
             Url = "D:\Repos\repo.git#$credentialCanary"
             Canary = $credentialCanary
+        },
+        [pscustomobject]@{
+            Url = "repo.git?access_token=$credentialCanary"
+            Canary = $credentialCanary
+        },
+        [pscustomobject]@{
+            Url = "repo.git#$credentialCanary"
+            Canary = $credentialCanary
         }
     )) {
         $unsafeOriginFailure = $null
@@ -2063,6 +2072,14 @@ exit 7
         [pscustomobject]@{
             Name = 'local-path-fragment'
             Url = "D:\Repos\repo.git#$credentialCanary"
+        },
+        [pscustomobject]@{
+            Name = 'relative-path-query'
+            Url = "repo.git?access_token=$credentialCanary"
+        },
+        [pscustomobject]@{
+            Name = 'relative-path-fragment'
+            Url = "repo.git#$credentialCanary"
         }
     )
     foreach ($credentialBypassCase in $credentialBypassCases) {
