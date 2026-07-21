@@ -1,5 +1,7 @@
 # 變更：以docs/plans HTML重建前端設計權威與雙閘門
 
+> **Status: deferred-proposed 2026-07-21**（併入 `governance-throughput-budget` 審批，非已生效裁決。理由：WIP 收斂——本 change tasks 0/23 未動工；specs delta 已由 #363（PF-3 reconcile）調和至 doc-first，deferred 不損失該調和成果。重啟條件：active change ≤2 有額度；重啟時須重跑 `npx openspec validate align-frontend-design-system-reference --strict` 確認 delta 仍對準當時 main spec，漂移則先 rebase 再動工。本註記只加不改原內容；使用者否決 defer 即撤下本註記。）
+
 ## Why
 
 2026-07-14～2026-07-15 的設計文件整併後，repo 已由兩份 Git-tracked `docs/plans/*.html` 承接設計與規格；但現行 active change、manifest、route inventory 與 capture flow 仍引用外部 `C:\Repos\design\desigin-system`、已刪除文件或舊 hash routes。這會形成平行 design authority，也無法證明每個 screen、state、route 與 golden 都可從目前 checkout 的 HTML 重建。
