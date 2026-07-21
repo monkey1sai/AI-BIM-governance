@@ -203,7 +203,15 @@ def test_proof_registry_rejects_invalid_config_and_unsafe_snapshot(monkeypatch):
     assert registry.issue(unsafe) is None
 
     monkeypatch.setenv("A4_PROOF_TTL_SECONDS", "NaN")
-    assert _safe_ttl_seconds() == proofs_mod.DEFAULT_PROOF_TTL_SECONDS
+    assert _safe_ttl_seconds() is None
+    assert registry.issue(_proof_snapshot()) is None
+
+    monkeypatch.setenv(
+        "A4_PROOF_TTL_SECONDS",
+        str(proofs_mod.MAX_PROOF_TTL_SECONDS + 1),
+    )
+    assert _safe_ttl_seconds() is None
+    assert registry.issue(_proof_snapshot()) is None
 
 
 def test_session_bound_partial_confirmation_executes_only_the_minted_candidate(a4_ifc, monkeypatch):
@@ -392,6 +400,45 @@ def test_complete_trusted_row_mints_a_path_free_proof(a4_ifc, tmp_path, monkeypa
     assert verified.snapshot["row"]["accepted_usd_prim"] == "/World/Doors/Low"
     assert str(a4_ifc) not in str(verified.snapshot)
     assert str(mapping) not in str(verified.snapshot)
+
+
+@pytest.mark.parametrize("invalid_ttl", ["NaN", "Infinity", "0", "-1", "901"])
+def test_invalid_explicit_proof_ttl_keeps_search_table_only(
+    a4_ifc,
+    tmp_path,
+    monkeypatch,
+    invalid_ttl,
+):
+    import search.engine as engine_mod
+
+    mapping = tmp_path / "element_mapping.json"
+    mapping.write_text(
+        '{"items":[{"ifc_guid":"0A4DoorLow000000000001","usd_prim_path":"/World/Doors/Low"}]}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("A4_PROOF_ACTIVE_KID", "a4_test_kid")
+    monkeypatch.setenv("A4_PROOF_ACTIVE_KEY", "test-proof-signing-key-material-32bytes")
+    monkeypatch.setenv("A4_PROOF_TTL_SECONDS", invalid_ttl)
+    monkeypatch.setattr(engine_mod, "proof_registry", ProofRegistry())
+
+    body = run_model_search(
+        SearchRequest(
+            ifc_source_path=str(a4_ifc),
+            element_mapping_path=str(mapping),
+            query="找 4F 防火門且 FireRating < 60",
+            interpret_mode="deterministic",
+            model_version_id="a4_fixture_v1",
+            trusted_a4_context=_trusted_partial_context(),
+        )
+    )
+
+    assert body["status"] == "ok"
+    assert body["results"]
+    assert body["proof_eligible"] is False
+    assert body["issue_eligible"] is False
+    assert all(row["proof_eligible"] is False for row in body["results"])
+    assert all(row["issue_eligible"] is False for row in body["results"])
+    assert all("evidence_proof" not in row for row in body["results"])
 
 
 def test_session_model_binding_mismatch_never_mints_a_proof(a4_ifc, monkeypatch):

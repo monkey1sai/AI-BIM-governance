@@ -1,16 +1,23 @@
 /** A4 search proxy: browser controls stay bounded; context stays coordinator-owned. */
-import { afterEach, describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import type { AddressInfo } from "node:net";
 import http from "node:http";
 import express from "express";
+import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import {
   registerGovernanceProxy,
   type A4SearchSessionResolution,
   type GovernanceProxyDeps,
 } from "../src/routes/governanceProxy.js";
+import { ExternalIfcReadyStore } from "../src/services/externalIfcReadyStore.js";
+import { SessionStore } from "../src/services/sessionStore.js";
 
 const activeServers: http.Server[] = [];
+let activeCoordinator: CoordinatorApp | null = null;
 const originalNodeEnv = process.env.NODE_ENV;
 
 function makeProxyApp(deps: GovernanceProxyDeps) {
@@ -108,15 +115,66 @@ async function startDestinationStub() {
 }
 
 afterEach(async () => {
+  if (activeCoordinator) {
+    await activeCoordinator.dispose();
+    activeCoordinator.io.close();
+    await new Promise<void>((resolve) => activeCoordinator?.server.close(() => resolve()));
+    activeCoordinator = null;
+  }
   while (activeServers.length) {
     const server = activeServers.pop();
     await new Promise<void>((resolve) => server?.close(() => resolve()));
   }
   delete process.env.GOVERNANCE_API_BASE;
   process.env.NODE_ENV = originalNodeEnv;
+  vi.restoreAllMocks();
 });
 
 describe("A4 governance search proxy", () => {
+  it("keeps the production createCoordinatorApp resolver fail-closed before session, source, or upstream lookup", async () => {
+    const gov = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "a4-coordinator-resolver-test-"));
+    const sessionGet = vi.spyOn(SessionStore.prototype, "get");
+    const sourceGet = vi.spyOn(ExternalIfcReadyStore.prototype, "get");
+    const sourceList = vi.spyOn(ExternalIfcReadyStore.prototype, "list");
+    activeCoordinator = createCoordinatorApp({
+      sessionStoreDir: path.join(root, "sessions"),
+      eventLogDir: path.join(root, "events"),
+      callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
+      streamingConversionApiBase: "http://127.0.0.1:1",
+      corsOrigins: ["http://127.0.0.1:5173"],
+      minioWatchEnabled: false,
+      userAuthProvider: "local-dev",
+    });
+    const baseline = {
+      sessionGet: sessionGet.mock.calls.length,
+      sourceGet: sourceGet.mock.calls.length,
+      sourceList: sourceList.mock.calls.length,
+    };
+    const route = "/api/governance/search/model/for-session/review_session_deadbeef12";
+
+    const unauthenticated = await request(activeCoordinator.app)
+      .post(route)
+      .send({ query: "IfcDoor" });
+    const localDev = await request(activeCoordinator.app)
+      .post(route)
+      .set("Authorization", "Bearer test-user")
+      .send({ query: "IfcDoor" });
+
+    expect(unauthenticated.status).toBe(401);
+    expect(unauthenticated.body.error_code).toBe("a4_authentication_required");
+    expect(localDev.status).toBe(503);
+    expect(localDev.body.error_code).toBe("a4_authentic_lease_unavailable");
+    expect(sessionGet.mock.calls).toHaveLength(baseline.sessionGet);
+    expect(sourceGet.mock.calls).toHaveLength(baseline.sourceGet);
+    expect(sourceList.mock.calls).toHaveLength(baseline.sourceList);
+    expect(gov.bodies).toHaveLength(0);
+    expect(`${unauthenticated.text}${localDev.text}`).not.toContain("review_session_deadbeef12");
+    expect(`${unauthenticated.text}${localDev.text}`).not.toContain("ifc_source_path");
+    expect(`${unauthenticated.text}${localDev.text}`).not.toContain("trusted_context");
+  });
+
   it("forwards only coordinator-owned session context and bounded browser controls", async () => {
     const gov = await startGovernanceStub();
     process.env.GOVERNANCE_API_BASE = gov.baseUrl;

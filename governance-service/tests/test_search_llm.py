@@ -12,6 +12,15 @@ from search.llm_client import CompletionResult, LlmConfig, LlmError, chat_comple
 from tests.test_search_model import A4_FIRE_DOORS_IFC
 
 
+@pytest.fixture(autouse=True)
+def reset_llm_observation():
+    import search.llm_client as llm_mod
+
+    llm_mod._reset_observation_for_tests()
+    yield
+    llm_mod._reset_observation_for_tests()
+
+
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("GOV_DB_PATH", str(tmp_path / "gov.db"))
@@ -508,6 +517,11 @@ def test_llm_config_requires_explicit_profile_mode_and_rejects_localhost(monkeyp
     assert valid.enabled is True
     assert valid.public_status()["state"] == "unknown"
 
+    monkeypatch.setenv("A4_LLM_BASE_URL", "http://[::1]:9/v1")
+    ipv6_loopback = load_llm_config()
+    assert ipv6_loopback.enabled is True
+    assert ipv6_loopback.transport_class == "loopback_tunnel"
+
     monkeypatch.setenv("A4_LLM_MODEL", "https://model.internal/v1")
     endpoint_shaped_model = load_llm_config()
     assert endpoint_shaped_model.enabled is False
@@ -547,6 +561,39 @@ def test_trusted_lab_http_requires_literal_private_allowlisted_address(monkeypat
     public_ip = load_llm_config()
     assert public_ip.enabled is False
     assert public_ip.config_error == "llm_config_invalid"
+
+
+@pytest.mark.parametrize(
+    ("base_url", "profile", "transport_mode", "allowlist"),
+    [
+        ("http://127.0.0.2:18080/v1", "local-dev", "loopback_tunnel", ""),
+        ("http://169.254.169.254:18080/v1", "trusted_lab_http", "trusted_lab_http", "169.254.169.254"),
+    ],
+)
+def test_rejected_loopback_alias_and_link_local_are_zero_outbound(
+    monkeypatch, base_url, profile, transport_mode, allowlist
+):
+    import search.llm_client as llm_mod
+
+    monkeypatch.setenv("A4_LLM_ENABLED", "true")
+    monkeypatch.setenv("A4_LLM_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("A4_LLM_MODEL", "Ornith-1.0-35B")
+    monkeypatch.setenv("A4_LLM_TIMEOUT_S", "5")
+    monkeypatch.setenv("A4_LLM_BASE_URL", base_url)
+    monkeypatch.setenv("A4_LLM_PROFILE", profile)
+    monkeypatch.setenv("A4_LLM_TRANSPORT_MODE", transport_mode)
+    monkeypatch.setenv("A4_LLM_ALLOW_INSECURE", "true")
+    monkeypatch.setenv("A4_LLM_HTTP_ALLOWLIST", allowlist)
+    outbound = []
+    monkeypatch.setattr(llm_mod, "_open_request", lambda *_args, **_kwargs: outbound.append(True))
+
+    config = load_llm_config()
+    assert config.enabled is False
+    assert config.config_error == "llm_config_invalid"
+    with pytest.raises(LlmError) as exc:
+        chat_completion(user_content="test", config=config)
+    assert exc.value.code == "llm_config_invalid"
+    assert outbound == []
 
 
 @pytest.mark.parametrize("timeout", ["NaN", "Infinity", "0", "-1", "121"])
@@ -666,6 +713,74 @@ def test_llm_client_rejects_redirect_without_following_it(monkeypatch):
     with pytest.raises(LlmError) as exc:
         chat_completion(user_content="test", config=config)
     assert exc.value.code == "llm_redirect_rejected"
+
+
+def test_llm_query_observation_transitions_available_unavailable_and_stale(monkeypatch):
+    import search.llm_client as llm_mod
+
+    class Response:
+        def __init__(self, body):
+            self.body = body.encode("utf-8")
+            self.sent = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _size=-1):
+            if self.sent:
+                return b""
+            self.sent = True
+            return self.body
+
+    monotonic_clock = [100.0]
+    monkeypatch.setattr(llm_mod, "monotonic", lambda: monotonic_clock[0])
+    monkeypatch.setattr(llm_mod, "time", lambda: 1_784_259_600.0)
+    config = LlmConfig(
+        "http://127.0.0.1:9/v1",
+        "test-key-not-real",
+        "Ornith-1.0-35B",
+        5,
+        True,
+        transport_class="loopback_tunnel",
+        profile="local-dev",
+    )
+    valid_body = (
+        '{"model":"Ornith-1.0-35B","choices":'
+        '[{"finish_reason":"stop","message":{"content":"{\\"ifc_classes\\":[\\"IfcDoor\\"]}"}}]}'
+    )
+    monkeypatch.setattr(llm_mod, "_open_request", lambda *_args, **_kwargs: Response(valid_body))
+
+    completion = chat_completion(user_content="IfcDoor", config=config)
+    assert completion.served_model == "Ornith-1.0-35B"
+    fresh = config.public_status()
+    assert fresh["state"] == "available"
+    assert fresh["freshness"] == "fresh"
+    assert fresh["check_source"] == "query_observation"
+    assert fresh["checked_at"]
+    assert fresh["ttl_s"] > 0
+
+    monotonic_clock[0] += llm_mod.LLM_OBSERVATION_TTL_SECONDS + 1
+    stale = config.public_status()
+    assert stale["state"] == "unknown"
+    assert stale["freshness"] == "stale"
+    assert stale["ttl_s"] == 0
+
+    monotonic_clock[0] += 1
+    monkeypatch.setattr(
+        llm_mod,
+        "_open_request",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(llm_mod.urllib.error.URLError("offline")),
+    )
+    with pytest.raises(LlmError) as exc:
+        chat_completion(user_content="IfcDoor", config=config)
+    assert exc.value.code == "llm_network_error"
+    unavailable = config.public_status()
+    assert unavailable["state"] == "unavailable"
+    assert unavailable["freshness"] == "fresh"
+    assert unavailable["error_code"] == "llm_network_error"
 
 
 def test_completion_metadata_is_retained_without_raw_body(a4_ifc, monkeypatch):

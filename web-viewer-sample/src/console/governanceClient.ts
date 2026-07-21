@@ -129,6 +129,7 @@ export type A4SafeErrorCode =
   | "invalid_a4_issue_controls"
   | "a4_proof_expired"
   | "a4_proof_unavailable"
+  | "partial_fallback_unavailable"
   | "stale_session_artifact"
   | "invalid_a4_search_controls"
   | "governance_service_unavailable";
@@ -147,6 +148,7 @@ const A4_SAFE_ERROR_CODES = new Set<A4SafeErrorCode>([
   "invalid_a4_issue_controls",
   "a4_proof_expired",
   "a4_proof_unavailable",
+  "partial_fallback_unavailable",
   "stale_session_artifact",
   "invalid_a4_search_controls",
   "governance_service_unavailable",
@@ -173,9 +175,10 @@ async function jsonFetch<T>(path: string, init?: RequestInit, options?: { safeEr
       // A4 query/error surfaces must not acquire coordinator/upstream diagnostics.
       let code: A4SafeErrorCode | undefined;
       try {
-        const body = await res.clone().json() as { error_code?: unknown };
-        if (typeof body.error_code === "string" && A4_SAFE_ERROR_CODES.has(body.error_code as A4SafeErrorCode)) {
-          code = body.error_code as A4SafeErrorCode;
+        const body = await res.clone().json() as { error_code?: unknown; detail?: { code?: unknown } };
+        const candidate = body.error_code ?? body.detail?.code;
+        if (typeof candidate === "string" && A4_SAFE_ERROR_CODES.has(candidate as A4SafeErrorCode)) {
+          code = candidate as A4SafeErrorCode;
         }
       } catch {
         // HTTP status remains safe when no allowlisted code is available.

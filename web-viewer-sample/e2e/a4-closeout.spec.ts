@@ -186,6 +186,8 @@ test.describe("A4 canonical browser contract", () => {
 
     await expect(page.getByTestId("a4-source-session")).toBeVisible();
     await expect(page.getByTestId("a4-source-ifc_ready")).toBeVisible();
+    await expect(page.getByTestId("a4-source-ifc_ready")).toBeDisabled();
+    await expect(page.getByTestId("a4-ifc-ready-unavailable")).toContainText("ifc-ready");
     await expect(page.getByTestId("a4-table-only")).toBeVisible();
     await expect(page.getByTestId("a4-results-table")).toContainText("無列");
     await expect(page.getByTestId("a4-source-path")).toHaveCount(0);
@@ -247,7 +249,7 @@ test.describe("A4 canonical browser contract", () => {
     });
   });
 
-  test("ifc-ready compatibility stays table-only and an unavailable session returns only a safe error", async ({ page }) => {
+  test("unsupported ifc-ready compatibility remains disabled and an unavailable session returns only a safe error", async ({ page }) => {
     const probes = await installA4CoordinatorStubs(page, {
       sessionResponses: [{
         status: 401,
@@ -261,12 +263,8 @@ test.describe("A4 canonical browser contract", () => {
     await expect(page.getByText("must never be rendered", { exact: true })).toHaveCount(0);
     await expect(page.getByTestId("a4-results-table")).toContainText("無列");
 
-    await page.getByTestId("a4-source-ifc_ready").click();
-    await page.getByTestId("a4-run").click();
-    await expect(page.locator("body")).toContainText("a4q_e2e_ifc_ready");
-    await expect(page.locator("body")).toContainText("ifc_ready_table_only");
-    await expect(page.getByTestId("a4-table-only")).toBeVisible();
-    expect(probes.ifcReadyRequests).toHaveLength(1);
-    expect(Object.keys(probes.ifcReadyRequests[0]).sort()).toEqual(["interpret_mode", "query"]);
+    await expect(page.getByTestId("a4-source-ifc_ready")).toBeDisabled();
+    await expect(page.getByTestId("a4-ifc-ready-unavailable")).toContainText("ifc-ready");
+    expect(probes.ifcReadyRequests).toHaveLength(0);
   });
 });

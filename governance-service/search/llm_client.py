@@ -6,16 +6,20 @@ unless the complete transport policy has been validated first.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import ipaddress
 import json
 import math
 import os
 import re
 import socket
+import threading
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from time import monotonic
+from datetime import datetime, timezone
+from time import monotonic, time
 from typing import Any, Optional
 from urllib.parse import urlparse
 
@@ -25,6 +29,7 @@ DEFAULT_MODEL = "Ornith-1.0-35B"
 MAX_TIMEOUT_S = 120.0
 MAX_RESPONSE_BYTES = 1_048_576
 RESPONSE_READ_CHUNK_BYTES = 64 * 1024
+LLM_OBSERVATION_TTL_SECONDS = 60.0
 SAFE_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
 
 SYSTEM_PROMPT = """你是 BIM/IFC 語意查詢解譯器。只把使用者問句轉成 JSON 過濾條件，禁止聊天。
@@ -83,25 +88,112 @@ class LlmConfig:
     def public_status(self) -> dict[str, Any]:
         # A configured model is not proof that it served a request.  The status
         # deliberately exposes only an operational classification and safe keys.
+        observation = _public_observation(self) if self.enabled and not self.config_error else None
         if self.config_error:
             state = "invalid"
+            checked_at = None
+            check_source = "config"
+            freshness = "unknown"
+            ttl_s = 0
+            error_code = self.config_error
+        elif observation is not None:
+            state = observation["state"]
+            checked_at = observation["checked_at"]
+            check_source = "query_observation"
+            freshness = observation["freshness"]
+            ttl_s = observation["ttl_s"]
+            error_code = observation["error_code"]
         elif self.enabled:
             # Configuration alone is not a bounded probe or observed query.
             state = "unknown"
+            checked_at = None
+            check_source = "config"
+            freshness = "unknown"
+            ttl_s = 0
+            error_code = None
         else:
             state = "disabled"
+            checked_at = None
+            check_source = "config"
+            freshness = "unknown"
+            ttl_s = 0
+            error_code = "llm_disabled"
         return {
             "enabled": self.enabled,
             "configured": bool(self.enabled and self.api_key and self.base_url),
             "state": state,
             "model": _safe_model_name(self.model),
-            "checked_at": None,
-            "check_source": "config",
-            "freshness": "unknown",
-            "ttl_s": 0,
+            "checked_at": checked_at,
+            "check_source": check_source,
+            "freshness": freshness,
+            "ttl_s": ttl_s,
             "transport_class": self.transport_class,
-            "error_code": self.config_error or (None if self.enabled else "llm_disabled"),
+            "error_code": error_code,
         }
+
+
+@dataclass(frozen=True)
+class _LlmObservation:
+    config_key: str
+    state: str
+    checked_at: str
+    expires_at_monotonic: float
+    error_code: Optional[str]
+
+
+_OBSERVATION_LOCK = threading.Lock()
+_LATEST_OBSERVATION: Optional[_LlmObservation] = None
+
+
+def _observation_config_key(config: LlmConfig) -> str:
+    credential_digest = hashlib.sha256(config.api_key.encode("utf-8")).hexdigest()
+    material = "\0".join(
+        (config.base_url, config.model, config.transport_class, config.profile, credential_digest)
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def _record_observation(config: LlmConfig, *, state: str, error_code: Optional[str]) -> None:
+    global _LATEST_OBSERVATION
+    observed_at = time()
+    checked_at = datetime.fromtimestamp(observed_at, timezone.utc).isoformat().replace("+00:00", "Z")
+    observation = _LlmObservation(
+        config_key=_observation_config_key(config),
+        state=state,
+        checked_at=checked_at,
+        expires_at_monotonic=monotonic() + LLM_OBSERVATION_TTL_SECONDS,
+        error_code=error_code,
+    )
+    with _OBSERVATION_LOCK:
+        _LATEST_OBSERVATION = observation
+
+
+def _public_observation(config: LlmConfig) -> Optional[dict[str, Any]]:
+    with _OBSERVATION_LOCK:
+        observation = _LATEST_OBSERVATION
+    if observation is None or not hmac.compare_digest(observation.config_key, _observation_config_key(config)):
+        return None
+    remaining = observation.expires_at_monotonic - monotonic()
+    if remaining <= 0:
+        return {
+            "state": "unknown",
+            "checked_at": observation.checked_at,
+            "freshness": "stale",
+            "ttl_s": 0,
+            "error_code": observation.error_code,
+        }
+    return {
+        "state": observation.state,
+        "checked_at": observation.checked_at,
+        "freshness": "fresh",
+        "ttl_s": max(1, int(math.ceil(remaining))),
+        "error_code": observation.error_code,
+    }
+
+def _reset_observation_for_tests() -> None:
+    global _LATEST_OBSERVATION
+    with _OBSERVATION_LOCK:
+        _LATEST_OBSERVATION = None
 
 
 def _nonempty_alias_value(*names: str) -> tuple[str, bool]:
@@ -150,10 +242,7 @@ def _loopback_host(host: Optional[str]) -> bool:
     if not host:
         return False
     normalized = host.strip().lower()
-    try:
-        return ipaddress.ip_address(normalized).is_loopback
-    except ValueError:
-        return False
+    return normalized in {"127.0.0.1", "::1"}
 
 
 def _trusted_lab_http_host(host: Optional[str], http_allowlist: set[str]) -> bool:
@@ -172,7 +261,24 @@ def _trusted_lab_http_host(host: Optional[str], http_allowlist: set[str]) -> boo
         address = ipaddress.ip_address(normalized)
     except ValueError:
         return False
-    return address.is_loopback or address.is_private
+    if (
+        address.is_loopback
+        or address.is_link_local
+        or address.is_unspecified
+        or address.is_multicast
+        or address.is_reserved
+    ):
+        return False
+    # trusted_lab_http is intentionally narrower than ipaddress.is_private:
+    # only literal RFC1918 IPv4 addresses are accepted by this exception.
+    return isinstance(address, ipaddress.IPv4Address) and any(
+        address in network
+        for network in (
+            ipaddress.ip_network("10.0.0.0/8"),
+            ipaddress.ip_network("172.16.0.0/12"),
+            ipaddress.ip_network("192.168.0.0/16"),
+        )
+    )
 
 
 def _classify_transport(
@@ -372,37 +478,60 @@ def chat_completion(
     try:
         with _open_request(req, timeout=cfg.timeout_s) as resp:
             raw = _read_bounded_response(resp, deadline=started + cfg.timeout_s).decode("utf-8", errors="replace")
+    except LlmError as exc:
+        _record_observation(cfg, state="unavailable", error_code=exc.code)
+        raise
     except urllib.error.HTTPError as exc:
         if 300 <= exc.code < 400:
-            raise LlmError("llm_redirect_rejected", "LLM redirect was rejected") from exc
-        raise LlmError("llm_http_error", "LLM HTTP request failed") from exc
+            error = LlmError("llm_redirect_rejected", "LLM redirect was rejected")
+        else:
+            error = LlmError("llm_http_error", "LLM HTTP request failed")
+        _record_observation(cfg, state="unavailable", error_code=error.code)
+        raise error from exc
     except (TimeoutError, socket.timeout) as exc:
-        raise LlmError("llm_timeout", "LLM request timed out") from exc
+        error = LlmError("llm_timeout", "LLM request timed out")
+        _record_observation(cfg, state="unavailable", error_code=error.code)
+        raise error from exc
     except (urllib.error.URLError, OSError) as exc:
-        raise LlmError("llm_network_error", "LLM network request failed") from exc
+        error = LlmError("llm_network_error", "LLM network request failed")
+        _record_observation(cfg, state="unavailable", error_code=error.code)
+        raise error from exc
     latency_ms = max(0, min(120_000, int((monotonic() - started) * 1000)))
 
     try:
         doc = json.loads(raw)
     except (TypeError, json.JSONDecodeError) as exc:
-        raise LlmError("llm_bad_json", "LLM response is not JSON") from exc
+        error = LlmError("llm_bad_json", "LLM response is not JSON")
+        _record_observation(cfg, state="unavailable", error_code=error.code)
+        raise error from exc
     if not isinstance(doc, dict):
-        raise LlmError("llm_bad_json", "LLM response has an invalid shape")
+        error = LlmError("llm_bad_json", "LLM response has an invalid shape")
+        _record_observation(cfg, state="unavailable", error_code=error.code)
+        raise error
 
     choices = doc.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-        raise LlmError("llm_empty", "LLM returned no choices")
+        error = LlmError("llm_empty", "LLM returned no choices")
+        _record_observation(cfg, state="unavailable", error_code=error.code)
+        raise error
     choice = choices[0]
     finish_reason = choice.get("finish_reason")
     if finish_reason != "stop":
-        raise LlmError("llm_non_terminal", "LLM completion did not reach a terminal state")
+        error = LlmError("llm_non_terminal", "LLM completion did not reach a terminal state")
+        _record_observation(cfg, state="unavailable", error_code=error.code)
+        raise error
     message = choice.get("message")
     if not isinstance(message, dict):
-        raise LlmError("llm_empty_content", "LLM message content is empty")
+        error = LlmError("llm_empty_content", "LLM message content is empty")
+        _record_observation(cfg, state="unavailable", error_code=error.code)
+        raise error
     content = message.get("content")
     if not isinstance(content, str) or not content.strip():
-        raise LlmError("llm_empty_content", "LLM message content is empty")
+        error = LlmError("llm_empty_content", "LLM message content is empty")
+        _record_observation(cfg, state="unavailable", error_code=error.code)
+        raise error
     served_model = _safe_model_name(doc.get("model"))
+    _record_observation(cfg, state="available", error_code=None)
     return CompletionResult(
         content=content.strip(),
         served_model=served_model,

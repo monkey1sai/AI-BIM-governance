@@ -1,6 +1,6 @@
 // A4 semantic search workbench — deterministic filters via coordinator → governance.
 // B-loop binding: ifc-ready job / review session resolve host IFC path server-side.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { t } from "./i18n";
 import { Btn, Field, Metric, Panel } from "./components";
 import {
@@ -36,10 +36,29 @@ function a4RequestErrorCopy(error: unknown): string {
         return t("需要此 session 的 active primary viewer 權限。", "An active primary viewer authority is required for this session.");
       case "a4_session_not_active":
         return t("此 Review Session 目前不是 active。", "This Review Session is not active.");
+      case "a4_session_not_found":
+        return t("找不到指定的 Review Session；請重新整理來源後再選擇。", "The requested Review Session was not found; refresh sources and choose again.");
+      case "a4_session_source_unavailable":
+        return t("此 session 的 IFC 來源暫時不可用；請檢查轉檔狀態後重試。", "This session's IFC source is unavailable; check conversion status and retry.");
+      case "stale_session_artifact":
+        return t("此 session 的模型 binding 已變更；請重新整理來源並重跑查詢。", "This session's model binding changed; refresh sources and rerun the query.");
       case "a4_lab_scope_not_enabled":
         return t("本機 lab table-search capability 尚未啟用。", "Local lab table-search capability is not enabled.");
       case "a4_authentic_lease_unavailable":
         return t("認證 lease 能力尚未由 C-M4 提供。", "Authenticated lease capability is not yet available from C-M4.");
+      case "partial_fallback_unavailable":
+        return t(
+          "部分查詢確認已過期或 binding 已改變；原問句與模式已保留，請重新執行原查詢。",
+          "Partial confirmation expired or its binding changed. The original query and mode are preserved; rerun the query.",
+        );
+      case "a4_proof_expired":
+      case "a4_proof_unavailable":
+        return t("此列 proof 已失效；草稿已保留，請重跑原查詢並重新選列。", "This row proof is unavailable. The draft is preserved; rerun the original query and select the row again.");
+      case "a4_issue_not_eligible":
+        return t("此列目前不符合 Issue 建立條件；請確認完整查詢、lease 與最新 binding。", "This row is not eligible for Issue creation; verify a complete query, lease, and current binding.");
+      case "a4_authentication_unavailable":
+      case "a4_trusted_context_unavailable":
+        return t("A4 認證／可信 context 暫時不可用。", "A4 authentication or trusted context is unavailable.");
       case "governance_service_unavailable":
         return t("Governance 服務目前不可用，請稍後重試。", "The governance service is unavailable; retry shortly.");
       default:
@@ -53,48 +72,127 @@ function safeA4DiagnosticCode(value: unknown): string {
   return typeof value === "string" && /^[a-z0-9_]{1,96}$/i.test(value) ? value : "unknown";
 }
 
+const A4_SESSION_ID_RE = /^review_session_[A-Za-z0-9_-]+$/;
+const A4_SESSION_STORAGE_KEY = "aibim:a4-session-context";
+
+function firstValidA4SessionId(candidates: unknown[]): string {
+  const candidate = candidates.find(
+    (value): value is string => typeof value === "string" && A4_SESSION_ID_RE.test(value),
+  );
+  return candidate ?? "";
+}
+
+function initialA4SessionId(): string {
+  if (typeof window === "undefined") return "";
+  const historyCandidate = (window.history.state as { a4SessionId?: unknown } | null)?.a4SessionId;
+  let storedCandidate: string | null = null;
+  try {
+    storedCandidate = window.sessionStorage.getItem(A4_SESSION_STORAGE_KEY);
+  } catch {
+    // Storage is optional; history.state remains the first source.
+  }
+  return firstValidA4SessionId([historyCandidate, storedCandidate]);
+}
+
+export function normalizedLlmReadiness(
+  status: ModelSearchLlmStatus | null,
+  nowMs = Date.now(),
+  receivedAtMs: number | null = null,
+): string {
+  if (!status) return "—";
+  if (status.state !== "available" && status.state !== "unavailable") return status.state;
+  const checkedAtMs = typeof status.checked_at === "string"
+    ? Date.parse(status.checked_at)
+    : Number.NaN;
+  const observationIsFresh = (
+    status.freshness === "fresh"
+    && Number.isFinite(status.ttl_s)
+    && status.ttl_s > 0
+    && Number.isFinite(checkedAtMs)
+    && receivedAtMs !== null
+    && Number.isFinite(receivedAtMs)
+    && receivedAtMs + status.ttl_s * 1000 > nowMs
+    && status.check_source !== "config"
+  );
+  return observationIsFresh ? status.state : "unknown";
+}
+
+interface A4ResultContext {
+  sourceMode: SourceMode;
+  sessionId: string;
+  jobId: string;
+  query: string;
+  interpretMode: ModelSearchInterpretMode;
+}
+
+interface A4IssueOutcome {
+  rowKey: string;
+  status: "created" | "replayed" | "failed";
+  issueId?: string;
+  message?: string;
+}
+
 export function A4SemanticSearchPage() {
   const [query, setQuery] = useState(EXAMPLE_QUERIES[0]);
   const [sourceMode, setSourceMode] = useState<SourceMode>("session");
   const [interpretMode, setInterpretMode] = useState<ModelSearchInterpretMode>("auto");
   const [llmStatus, setLlmStatus] = useState<ModelSearchLlmStatus | null>(null);
+  const [llmStatusReceivedAtMs, setLlmStatusReceivedAtMs] = useState<number | null>(null);
+  const [llmClockMs, setLlmClockMs] = useState(() => Date.now());
   const [sessions, setSessions] = useState<RuntimeSessionSummary[]>([]);
   const [jobs, setJobs] = useState<IfcReadyListItem[]>([]);
-  const [sessionId, setSessionId] = useState("");
+  const [sessionId, setSessionId] = useState(initialA4SessionId);
   const [jobId, setJobId] = useState("");
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [runErr, setRunErr] = useState<string | null>(null);
   const [result, setResult] = useState<ModelSearchResponse | null>(null);
-  const [selectedProof, setSelectedProof] = useState<string | null>(null);
+  const [resultContext, setResultContext] = useState<A4ResultContext | null>(null);
+  const [selectedProofs, setSelectedProofs] = useState<string[]>([]);
   const [issueTitle, setIssueTitle] = useState("");
   const [issueDescription, setIssueDescription] = useState("");
   const [issueSeverity, setIssueSeverity] = useState<"low" | "medium" | "high" | "critical">("medium");
   const [issueAssignee, setIssueAssignee] = useState("");
   const [issueBusy, setIssueBusy] = useState(false);
   const [issueMessage, setIssueMessage] = useState<string | null>(null);
+  const [issueOutcomes, setIssueOutcomes] = useState<A4IssueOutcome[]>([]);
+  const llmStatusRequestId = useRef(0);
+
+  const refreshLlmStatus = useCallback(async () => {
+    const requestId = ++llmStatusRequestId.current;
+    try {
+      const status = await governanceClient.searchLlmStatus();
+      if (requestId !== llmStatusRequestId.current) return;
+      const receivedAtMs = Date.now();
+      setLlmStatus(status);
+      setLlmStatusReceivedAtMs(receivedAtMs);
+      setLlmClockMs(receivedAtMs);
+    } catch {
+      if (requestId !== llmStatusRequestId.current) return;
+      setLlmStatus(null);
+      setLlmStatusReceivedAtMs(null);
+      setLlmClockMs(Date.now());
+    }
+  }, []);
 
   const refreshSources = useCallback(async () => {
     setLoadErr(null);
-    const [runtime, ready, llm] = await Promise.allSettled([
+    const [runtime, ready] = await Promise.allSettled([
       coordinatorClient.runtimeStatus(),
       coordinatorClient.listIfcReady(),
-      governanceClient.searchLlmStatus(),
+      refreshLlmStatus(),
     ]);
     const sourceUnavailable = runtime.status === "rejected" || ready.status === "rejected";
     if (sourceUnavailable) {
       setLoadErr(t("部分來源狀態暫時無法取得。", "Some source status is temporarily unavailable."));
     }
-    setLlmStatus(llm.status === "fulfilled" ? llm.value : null);
 
     const activeSessions = runtime.status === "fulfilled"
       ? (runtime.value.sessions?.items ?? []).filter((session) => session.status === "active")
       : [];
     setSessions(activeSessions);
     setSessionId((current) => (
-      current && activeSessions.some((session) => session.session_id === current)
-        ? current
-        : activeSessions[0]?.session_id ?? ""
+      current || activeSessions[0]?.session_id || ""
     ));
 
     const items = ready.status === "fulfilled" ? ready.value.items ?? [] : [];
@@ -104,24 +202,98 @@ export function A4SemanticSearchPage() {
       const preferred = items.find((job) => job.conversion_status === "ready" || job.status === "ready") ?? items[0];
       return preferred?.ifc_ready_job_id ?? "";
     });
-  }, []);
+  }, [refreshLlmStatus]);
 
   useEffect(() => {
     void refreshSources();
   }, [refreshSources]);
 
+  useEffect(() => {
+    setLlmClockMs(Date.now());
+    if (
+      llmStatus?.freshness !== "fresh"
+      || !Number.isFinite(llmStatus.ttl_s)
+      || llmStatus.ttl_s <= 0
+      || typeof llmStatus.checked_at !== "string"
+      || !Number.isFinite(Date.parse(llmStatus.checked_at))
+      || llmStatus.check_source === "config"
+      || llmStatusReceivedAtMs === null
+    ) {
+      return undefined;
+    }
+    const expiresAtMs = llmStatusReceivedAtMs + llmStatus.ttl_s * 1000;
+    if (!Number.isFinite(expiresAtMs)) return undefined;
+    const timer = window.setTimeout(
+      () => setLlmClockMs(Date.now()),
+      Math.max(0, expiresAtMs - Date.now()) + 1,
+    );
+    return () => window.clearTimeout(timer);
+  }, [llmStatus, llmStatusReceivedAtMs]);
+
+  const resultContextMatchesCurrent = Boolean(
+    resultContext
+    && resultContext.sourceMode === sourceMode
+    && (
+      sourceMode === "session"
+        ? resultContext.sessionId === sessionId
+        : resultContext.jobId === jobId
+    )
+    && resultContext.query === query.trim()
+    && resultContext.interpretMode === interpretMode,
+  );
+
+  useEffect(() => {
+    if (!resultContext || resultContextMatchesCurrent) return;
+    setResult(null);
+    setResultContext(null);
+    setRunErr(null);
+    setSelectedProofs([]);
+    setIssueMessage(null);
+    setIssueOutcomes([]);
+    setIssueTitle("");
+    setIssueDescription("");
+    setIssueSeverity("medium");
+    setIssueAssignee("");
+  }, [resultContext, resultContextMatchesCurrent]);
+
   const interpreted = result?.interpreted_filters;
   const rows = result?.results ?? [];
   const matchedCount = result?.stats?.matched ?? 0;
-  const selectedIssueRow = useMemo(
-    () => rows.find((row) => row.evidence_proof === selectedProof && row.issue_eligible === true) ?? null,
-    [rows, selectedProof],
+  const selectedIssueRows = useMemo(
+    () => rows.filter(
+      (row) => row.issue_eligible === true
+        && typeof row.evidence_proof === "string"
+        && selectedProofs.includes(row.evidence_proof),
+    ),
+    [rows, selectedProofs],
+  );
+  const selectedSessionUnavailable = Boolean(
+    sessionId && !sessions.some((session) => session.session_id === sessionId && session.status === "active"),
   );
   const canCreateIssue = (
     sourceMode === "session"
     && result?.issue_eligible === true
+    && resultContextMatchesCurrent
+    && resultContext?.sourceMode === "session"
+    && result.session_binding?.review_session_id === resultContext.sessionId
     && Boolean(sessionId)
-    && Boolean(selectedIssueRow?.evidence_proof)
+    && !selectedSessionUnavailable
+    && selectedIssueRows.length > 0
+  );
+  const canConfirmPartial = Boolean(
+    resultContextMatchesCurrent
+    && resultContext?.sourceMode === "session"
+    && !selectedSessionUnavailable
+    && result?.status === "partial_fallback_confirmation_required"
+    && result.partial_confirmation_available === true
+    && result.partial_fallback_id,
+  );
+  const canRetryResult = Boolean(
+    resultContextMatchesCurrent
+    && !selectedSessionUnavailable
+    && result?.query_id
+    && result.retryable === true
+    && (result.status === "semantic_error" || result.status === "partial_fallback_unavailable"),
   );
 
   const canRun = useMemo(() => {
@@ -132,28 +304,38 @@ export function A4SemanticSearchPage() {
     return Boolean(jobId);
   }, [query, sourceMode, sessionId, jobId, sessions]);
 
-  async function onRun(retryOfQueryId?: string) {
+  async function onRun(retryOfQueryId?: string, retryContext?: A4ResultContext) {
+    const requestContext: A4ResultContext = retryContext ?? {
+      sourceMode,
+      sessionId,
+      jobId,
+      query: query.trim(),
+      interpretMode,
+    };
     setBusy(true);
     setRunErr(null);
     setResult(null);
-    setSelectedProof(null);
+    setResultContext(null);
+    setSelectedProofs([]);
     setIssueMessage(null);
+    setIssueOutcomes([]);
     try {
       let res: ModelSearchResponse;
-      if (sourceMode === "session") {
-        res = await governanceClient.searchModelForSession(sessionId, {
-          query: query.trim(),
-          interpret_mode: interpretMode,
+      if (requestContext.sourceMode === "session") {
+        res = await governanceClient.searchModelForSession(requestContext.sessionId, {
+          query: requestContext.query,
+          interpret_mode: requestContext.interpretMode,
           retry_of_query_id: retryOfQueryId,
         });
       } else {
-        res = await governanceClient.searchModelForIfcReady(jobId, {
-          query: query.trim(),
-          interpret_mode: interpretMode,
+        res = await governanceClient.searchModelForIfcReady(requestContext.jobId, {
+          query: requestContext.query,
+          interpret_mode: requestContext.interpretMode,
           retry_of_query_id: retryOfQueryId,
         });
       }
       setResult(res);
+      setResultContext(requestContext);
       if (res.status === "uninterpreted") {
         setRunErr(t("無法解譯問句 — 請用範例語法改寫", "Query not interpreted — rewrite using example grammar"));
       } else if (res.status === "semantic_error") {
@@ -178,6 +360,13 @@ export function A4SemanticSearchPage() {
             "This partial interpretation requires authenticated session confirmation; no IFC scan ran.",
           ),
         );
+      } else if (res.status === "partial_fallback_unavailable") {
+        setRunErr(
+          t(
+            "部分查詢確認容量暫時不可用；原問句與模式已保留，請稍後重試原查詢。",
+            "Partial confirmation capacity is temporarily unavailable. The original query and mode are preserved; retry the original query later.",
+          ),
+        );
       } else if (res.status === "search_resource_limit_exceeded") {
         setRunErr(
           t(
@@ -192,26 +381,29 @@ export function A4SemanticSearchPage() {
       setRunErr(a4RequestErrorCopy(error));
     } finally {
       setBusy(false);
+      void refreshLlmStatus();
     }
   }
 
   async function onConfirmPartial() {
     const partialFallbackId = result?.partial_fallback_id;
     if (
-      sourceMode !== "session" ||
-      !sessionId ||
-      result?.status !== "partial_fallback_confirmation_required" ||
-      result.partial_confirmation_available !== true ||
+      !canConfirmPartial ||
+      !resultContext ||
       !partialFallbackId
     ) {
       return;
     }
     setBusy(true);
     setRunErr(null);
-    setSelectedProof(null);
+    setSelectedProofs([]);
     setIssueMessage(null);
+    setIssueOutcomes([]);
     try {
-      const res = await governanceClient.confirmModelSearchPartialForSession(sessionId, partialFallbackId);
+      const res = await governanceClient.confirmModelSearchPartialForSession(
+        resultContext.sessionId,
+        partialFallbackId,
+      );
       setResult(res);
       if (res.status === "search_resource_limit_exceeded") {
         setRunErr(
@@ -222,40 +414,84 @@ export function A4SemanticSearchPage() {
         );
       }
     } catch (error) {
+      if (error instanceof A4GovernanceError && error.code === "partial_fallback_unavailable") {
+        setResult((current) => current ? {
+          ...current,
+          status: "partial_fallback_unavailable",
+          retryable: true,
+          partial_confirmation_available: false,
+          partial_fallback_id: null,
+          partial_fallback_expires_at: null,
+          next_step: "rerun_original_query",
+        } : current);
+      }
       setRunErr(a4RequestErrorCopy(error));
     } finally {
       setBusy(false);
+      void refreshLlmStatus();
     }
   }
 
   async function onCreateIssue() {
-    const evidenceProof = selectedIssueRow?.evidence_proof;
-    if (!canCreateIssue || !evidenceProof || !issueTitle.trim()) return;
+    if (!canCreateIssue || !issueTitle.trim()) return;
+    const selectedRows = selectedIssueRows.slice();
+    const draft = {
+      title: issueTitle.trim(),
+      description: issueDescription || undefined,
+      severity: issueSeverity,
+      assignee: issueAssignee || undefined,
+    };
     setIssueBusy(true);
     setIssueMessage(null);
-    try {
-      const created = await governanceClient.createA4IssueForSession(sessionId, {
-        evidence_proof: evidenceProof,
-        title: issueTitle.trim(),
-        description: issueDescription || undefined,
-        severity: issueSeverity,
-        assignee: issueAssignee || undefined,
-      });
-      setIssueMessage(
-        created.replayed
-          ? t(`已保留既有 A4 Issue：${created.issue.id}`, `Existing A4 Issue retained: ${created.issue.id}`)
-          : t(`A4 Issue 已建立：${created.issue.id}`, `A4 Issue created: ${created.issue.id}`),
-      );
-    } catch (error) {
-      if (error instanceof A4GovernanceError && error.code === "a4_proof_expired") {
-        setIssueMessage(t("此列 proof 已過期；草稿已保留，請重新執行查詢。", "This row proof expired; the draft is preserved. Rerun the query."));
-      } else {
-        setIssueMessage(a4RequestErrorCopy(error));
+    setIssueOutcomes([]);
+    const outcomes: A4IssueOutcome[] = [];
+    for (const row of selectedRows) {
+      const rowKey = row.ifc_guid || row.name || "unknown-row";
+      try {
+        const created = await governanceClient.createA4IssueForSession(resultContext!.sessionId, {
+          evidence_proof: row.evidence_proof as string,
+          ...draft,
+        });
+        outcomes.push({
+          rowKey,
+          status: created.replayed ? "replayed" : "created",
+          issueId: created.issue.id,
+        });
+      } catch (error) {
+        const message = error instanceof A4GovernanceError && error.code === "a4_proof_expired"
+          ? t(
+            "proof 已過期；此草稿已保留，請重新執行原查詢並重新核對。",
+            "The proof expired. This draft is preserved; rerun the original query and review the row again.",
+          )
+          : a4RequestErrorCopy(error);
+        outcomes.push({ rowKey, status: "failed", message });
       }
-    } finally {
-      setIssueBusy(false);
     }
+    setIssueOutcomes(outcomes);
+    const successful = outcomes.filter((outcome) => outcome.status !== "failed").length;
+    const failed = outcomes.length - successful;
+    setIssueMessage(
+      failed === 0
+        ? t(`已建立／保留 ${successful} 個 A4 Issue。`, `${successful} A4 Issue(s) created or retained.`)
+        : t(
+          `${successful} 列成功、${failed} 列失敗；失敗列草稿與復原指引已保留。`,
+          `${successful} row(s) succeeded and ${failed} failed; failed-row draft and recovery guidance are preserved.`,
+        ),
+    );
+    setIssueBusy(false);
   }
+
+  const llmReadiness = normalizedLlmReadiness(
+    llmStatus,
+    llmClockMs,
+    llmStatusReceivedAtMs,
+  );
+  const llmFreshness = (
+    llmReadiness === "unknown" && llmStatus?.freshness === "fresh"
+      ? "stale"
+      : llmStatus?.freshness ?? "—"
+  );
+  const contextControlsDisabled = busy || issueBusy;
 
   return (
     <div className="ec-page" data-testid="a4-semantic-search-page">
@@ -276,9 +512,9 @@ export function A4SemanticSearchPage() {
           prov="asbuilt"
         />
         <Field k="model" v={llmStatus?.model ?? "—"} prov="asbuilt" />
-        <Field k="state" v={llmStatus?.state ?? "—"} prov="asbuilt" />
+        <Field k="state" v={llmReadiness} prov="asbuilt" />
         <Field k="transport_class" v={llmStatus?.transport_class ?? "—"} prov="asbuilt" />
-        <Field k="freshness" v={llmStatus?.freshness ?? "—"} prov="asbuilt" />
+        <Field k="freshness" v={llmFreshness} prov="asbuilt" />
         {llmStatus?.error_code && <Field k="error_code" v={safeA4DiagnosticCode(llmStatus.error_code)} prov="asbuilt" />}
         {!llmStatus?.configured && (
           <p className="ec-warn" data-testid="a4-llm-missing">
@@ -294,7 +530,12 @@ export function A4SemanticSearchPage() {
         <Panel title={t("查詢編排", "Query composer")} sub="server-resolved session / ifc-ready table search" prov="asbuilt">
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
             {EXAMPLE_QUERIES.map((q) => (
-              <Btn key={q} data-testid={`a4-example-${q.slice(0, 12)}`} onClick={() => setQuery(q)}>
+              <Btn
+                key={q}
+                data-testid={`a4-example-${q.slice(0, 12)}`}
+                disabled={contextControlsDisabled}
+                onClick={() => setQuery(q)}
+              >
                 {q}
               </Btn>
             ))}
@@ -304,6 +545,7 @@ export function A4SemanticSearchPage() {
             <textarea
               data-testid="a4-query-input"
               value={query}
+              disabled={contextControlsDisabled}
               onChange={(e) => setQuery(e.target.value)}
               rows={3}
               style={{ width: "100%" }}
@@ -316,11 +558,22 @@ export function A4SemanticSearchPage() {
                 data-testid={`a4-source-${m}`}
                 onClick={() => setSourceMode(m)}
                 primary={sourceMode === m}
+                disabled={contextControlsDisabled || m === "ifc_ready"}
+                title={m === "ifc_ready"
+                  ? t(
+                    "此 build 未啟用可信的 ifc-ready table-only resolver。",
+                    "This build has no trusted ifc-ready table-only resolver enabled.",
+                  )
+                  : undefined}
               >
                 {m}
               </Btn>
             ))}
-            <Btn data-testid="a4-refresh-sources" onClick={() => void refreshSources()}>
+            <Btn
+              data-testid="a4-refresh-sources"
+              disabled={contextControlsDisabled}
+              onClick={() => void refreshSources()}
+            >
               {t("重新整理來源", "Refresh sources")}
             </Btn>
           </div>
@@ -330,6 +583,7 @@ export function A4SemanticSearchPage() {
               <Btn
                 key={m}
                 data-testid={`a4-mode-${m}`}
+                disabled={contextControlsDisabled}
                 onClick={() => setInterpretMode(m)}
                 primary={interpretMode === m}
               >
@@ -343,26 +597,49 @@ export function A4SemanticSearchPage() {
           {sourceMode === "session" && (
             <label className="ec-field" style={{ display: "block", marginTop: 8 }}>
               <span>session_id</span>
-              <select data-testid="a4-session-select" value={sessionId} onChange={(e) => setSessionId(e.target.value)}>
+              <select
+                data-testid="a4-session-select"
+                value={sessionId}
+                disabled={contextControlsDisabled}
+                onChange={(e) => setSessionId(e.target.value)}
+              >
                 <option value="">{t("— 選擇 session —", "— select session —")}</option>
+                {selectedSessionUnavailable && (
+                  <option value={sessionId}>{sessionId} · {t("不可用", "unavailable")}</option>
+                )}
                 {sessions.map((s) => (
                   <option key={s.session_id} value={s.session_id}>{s.session_id}</option>
                 ))}
               </select>
             </label>
           )}
-          {sourceMode === "session" && sessions.length === 0 && (
+          {sourceMode === "session" && (sessions.length === 0 || selectedSessionUnavailable) && (
             <p className="ec-warn" data-testid="a4-session-unavailable">
               {t(
-                "目前沒有可供 A4 使用的 active Review Session；請先建立並取得相符的 primary viewer authority。",
-                "No active Review Session is available for A4; create one and obtain matching primary viewer authority first.",
+                selectedSessionUnavailable
+                  ? "指定的 Review Session 不可用或已失效；不會自動改用另一個 session。"
+                  : "目前沒有可供 A4 使用的 active Review Session；請先建立並取得相符的 primary viewer authority。",
+                selectedSessionUnavailable
+                  ? "The requested Review Session is unavailable or inactive; A4 will not silently switch to another session."
+                  : "No active Review Session is available for A4; create one and obtain matching primary viewer authority first.",
               )}
             </p>
           )}
+          <p className="ec-muted" data-testid="a4-ifc-ready-unavailable">
+            {t(
+              "ifc-ready 相容查詢目前不可用；不會以攔截回應或本機 path fallback 取代可信 resolver。",
+              "The ifc-ready compatibility query is unavailable; intercepted responses and local-path fallbacks are not trusted resolver substitutes.",
+            )}
+          </p>
           {sourceMode === "ifc_ready" && (
             <label className="ec-field" style={{ display: "block", marginTop: 8 }}>
               <span>ifc_ready_job_id</span>
-              <select data-testid="a4-job-select" value={jobId} onChange={(e) => setJobId(e.target.value)}>
+              <select
+                data-testid="a4-job-select"
+                value={jobId}
+                disabled={contextControlsDisabled}
+                onChange={(e) => setJobId(e.target.value)}
+              >
                 <option value="">{t("— 選擇 ifc-ready job —", "— select ifc-ready job —")}</option>
                 {jobs.map((j) => (
                   <option key={j.ifc_ready_job_id} value={j.ifc_ready_job_id}>
@@ -373,7 +650,7 @@ export function A4SemanticSearchPage() {
             </label>
           )}
           <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-            <Btn data-testid="a4-run" disabled={!canRun || busy} onClick={() => void onRun()}>
+            <Btn data-testid="a4-run" disabled={!canRun || contextControlsDisabled} onClick={() => void onRun()}>
               {busy ? t("執行中…", "Running…") : t("執行查詢", "Run query")}
             </Btn>
           </div>
@@ -387,7 +664,7 @@ export function A4SemanticSearchPage() {
             <>
               <Field k="status" v={result.status} prov="asbuilt" />
               <Field k="query_id" v={result.query_id ?? "—"} prov="asbuilt" />
-              <Field k="search_scope" v={result.search_scope ?? "table_only"} prov="asbuilt" />
+              <Field k="search_scope" v={result.search_scope ?? "—"} prov="asbuilt" />
               <Field k="interpret_mode" v={String(result.interpret_mode ?? interpretMode)} prov="asbuilt" />
               <Field k="interpret_source" v={interpreted?.interpret_source ?? "—"} prov="asbuilt" />
               <Field k="model_version_id" v={result.model_version_id ?? "—"} prov="asbuilt" />
@@ -470,10 +747,10 @@ export function A4SemanticSearchPage() {
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
           <Btn
             data-testid="a4-retry"
-            disabled={!result?.query_id || result.status !== "semantic_error" || result.retryable !== true || busy}
+            disabled={!canRetryResult || contextControlsDisabled}
             onClick={() => {
-              if (result?.status === "semantic_error" && result.retryable === true && result.query_id) {
-                void onRun(result.query_id);
+              if (canRetryResult && result?.query_id && resultContext) {
+                void onRun(result.query_id, resultContext);
               }
             }}
           >
@@ -481,13 +758,7 @@ export function A4SemanticSearchPage() {
           </Btn>
           <Btn
             data-testid="a4-confirm-partial"
-            disabled={
-              busy ||
-              sourceMode !== "session" ||
-              result?.status !== "partial_fallback_confirmation_required" ||
-              result.partial_confirmation_available !== true ||
-              !result.partial_fallback_id
-            }
+            disabled={contextControlsDisabled || !canConfirmPartial}
             onClick={() => void onConfirmPartial()}
           >
             {t("確認部分查詢", "Confirm partial query")}
@@ -506,22 +777,38 @@ export function A4SemanticSearchPage() {
             <h3 className="ec-h3">{t("建立 A4 Issue", "Create A4 Issue")}</h3>
             <p className="ec-muted">
               {t(
-                "先選取一列，再以該列短效 proof 明確確認。3D 與 DataChannel 不會由此頁啟動。",
-                "Select one row, then explicitly confirm with its short-lived proof. This page never starts 3D or DataChannel actions.",
+                "可選取一列或多列；每列以自己的短效 proof 獨立建立並顯示結果。3D 與 DataChannel 不會由此頁啟動。",
+                "Select one or more rows. Each row is created independently with its own short-lived proof and outcome. This page never starts 3D or DataChannel actions.",
               )}
             </p>
             <label className="ec-field">
               <span>{t("標題", "Title")}</span>
-              <input data-testid="a4-issue-title" value={issueTitle} onChange={(event) => setIssueTitle(event.target.value)} />
+              <input
+                data-testid="a4-issue-title"
+                value={issueTitle}
+                disabled={issueBusy}
+                onChange={(event) => setIssueTitle(event.target.value)}
+              />
             </label>
             <label className="ec-field">
               <span>{t("說明", "Description")}</span>
-              <textarea data-testid="a4-issue-description" value={issueDescription} onChange={(event) => setIssueDescription(event.target.value)} rows={2} />
+              <textarea
+                data-testid="a4-issue-description"
+                value={issueDescription}
+                disabled={issueBusy}
+                onChange={(event) => setIssueDescription(event.target.value)}
+                rows={2}
+              />
             </label>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <label className="ec-field">
                 <span>{t("嚴重度", "Severity")}</span>
-                <select data-testid="a4-issue-severity" value={issueSeverity} onChange={(event) => setIssueSeverity(event.target.value as typeof issueSeverity)}>
+                <select
+                  data-testid="a4-issue-severity"
+                  value={issueSeverity}
+                  disabled={issueBusy}
+                  onChange={(event) => setIssueSeverity(event.target.value as typeof issueSeverity)}
+                >
                   <option value="low">low</option>
                   <option value="medium">medium</option>
                   <option value="high">high</option>
@@ -530,7 +817,12 @@ export function A4SemanticSearchPage() {
               </label>
               <label className="ec-field">
                 <span>{t("指派", "Assignee")}</span>
-                <input data-testid="a4-issue-assignee" value={issueAssignee} onChange={(event) => setIssueAssignee(event.target.value)} />
+                <input
+                  data-testid="a4-issue-assignee"
+                  value={issueAssignee}
+                  disabled={issueBusy}
+                  onChange={(event) => setIssueAssignee(event.target.value)}
+                />
               </label>
             </div>
             <Btn
@@ -538,10 +830,26 @@ export function A4SemanticSearchPage() {
               disabled={!canCreateIssue || !issueTitle.trim() || issueBusy}
               onClick={() => void onCreateIssue()}
             >
-              {issueBusy ? t("建立中…", "Creating…") : t("確認建立 A4 Issue", "Confirm A4 Issue")}
+              {issueBusy ? t("建立中…", "Creating…") : t("確認建立所選 A4 Issues", "Confirm selected A4 Issues")}
             </Btn>
-            {selectedIssueRow?.proof_expires_at && <p className="ec-muted">proof_expires_at: {selectedIssueRow.proof_expires_at}</p>}
+            {selectedIssueRows.map((row) => (
+              row.proof_expires_at
+                ? <p className="ec-muted" key={row.evidence_proof}>proof_expires_at ({row.ifc_guid ?? row.name ?? "row"}): {row.proof_expires_at}</p>
+                : null
+            ))}
             {issueMessage && <p className="ec-warn" data-testid="a4-issue-message">{issueMessage}</p>}
+            {issueOutcomes.length > 0 && (
+              <ul data-testid="a4-issue-outcomes">
+                {issueOutcomes.map((outcome) => (
+                  <li key={outcome.rowKey} data-status={outcome.status}>
+                    <span className="mono">{outcome.rowKey}</span>:{" "}
+                    {outcome.status === "failed"
+                      ? outcome.message
+                      : `${outcome.status} · ${outcome.issueId}`}
+                  </li>
+                ))}
+              </ul>
+            )}
           </section>
         )}
         <div className="ec-table-wrap">
@@ -571,17 +879,21 @@ export function A4SemanticSearchPage() {
                   <tr key={guid || `${row.name}-${row.storey}`}>
                     <td>
                       <input
-                        type="radio"
-                        name="a4-selected-row"
+                        type="checkbox"
                         aria-label={`select ${guid || row.name || "row"}`}
                         data-testid={`a4-select-row-${guid || "unknown"}`}
-                        checked={Boolean(row.evidence_proof && selectedProof === row.evidence_proof)}
-                        disabled={!rowProofEnabled}
+                        checked={Boolean(row.evidence_proof && selectedProofs.includes(row.evidence_proof))}
+                        disabled={!rowProofEnabled || issueBusy}
                         onChange={() => {
                           if (!row.evidence_proof) return;
-                          setSelectedProof(row.evidence_proof);
+                          setSelectedProofs((current) => (
+                            current.includes(row.evidence_proof as string)
+                              ? current.filter((proof) => proof !== row.evidence_proof)
+                              : [...current, row.evidence_proof as string]
+                          ));
                           setIssueTitle((current) => current || `${t("A4 查詢列", "A4 query row")}: ${row.name ?? guid}`);
                           setIssueMessage(null);
+                          setIssueOutcomes([]);
                         }}
                       />
                     </td>
