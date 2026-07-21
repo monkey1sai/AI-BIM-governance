@@ -1,19 +1,16 @@
-export interface UsdcArtifact {
-  artifact_id: string;
-  filename: string;
-  relative_path: string;
-  runtime_uri: string;
-  size_bytes: number;
-}
+import type { components } from "./generated/kit-manager-api";
 
-export interface KitInstanceState {
-  instance_id: string;
-  status: string;
-  selected_artifact_ids: string[];
-  opened_runtime_uris: string[];
-  last_command?: string;
-  control_status: string;
-}
+// C1 契約收斂（2026-07-21）：UsdcArtifact / KitInstanceState 改由 kit-manager-api openapi
+// 生成型別 alias（generated/kit-manager-api.ts，再生成：cd web-viewer-sample &&
+// npm run generate:api-types）。本 package 只用自己 src/generated/ 的檔，不跨 package import。
+export type UsdcArtifact = components["schemas"]["UsdcArtifact"];
+
+// Drift 註記：openapi 契約僅標 instance_id/status 為 required（pydantic 有 default 的欄位不入
+// required），但後端序列化恆帶全部欄位——wire 上實際必存在，且既有消費端（StatusPanel 的
+// control_status.startsWith / opened_runtime_uris.length）依賴必填語意。故以 Required<> 做最小
+// local 收緊，不改前端行為。原手寫 last_command?: string 與 wire 不符（實為 string | null 恆帶），
+// 收斂後修正為契約值。
+export type KitInstanceState = Required<components["schemas"]["KitInstanceState"]>;
 
 export interface HealthResponse {
   status: string;

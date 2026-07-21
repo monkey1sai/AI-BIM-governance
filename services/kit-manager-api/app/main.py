@@ -3,7 +3,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .kit_gateway import KitRuntimeGateway
 from .kit_service import KitInstanceService
-from .models import HealthResponse, OpenRequest
+from .models import (
+    CloseResponse,
+    HealthResponse,
+    KitInstanceState,
+    OpenRequest,
+    OpenResponse,
+    UsdcListResponse,
+)
 from .settings import Settings
 from .usdc_repository import UsdcRepository
 
@@ -34,22 +41,26 @@ def create_app() -> FastAPI:
             kit_control_url=settings.kit_control_url,
         )
 
-    @app.get("/api/kit/instances/current")
+    # C1 契約生成切片：以下端點補宣告 response_model，讓 KitInstanceState /
+    # UsdcArtifact / OpenResponse / CloseResponse 進 openapi.json components.schemas，
+    # 前端型別由 openapi-typescript 生成（web-viewer-sample/scripts/generate-api-types.mjs），
+    # 消滅手抄重複。回傳值原本就是同一批 pydantic model（kit_service.py），wire shape 不變。
+    @app.get("/api/kit/instances/current", response_model=KitInstanceState)
     def current_instance():
         return service.get_state()
 
-    @app.get("/api/usdc")
+    @app.get("/api/usdc", response_model=UsdcListResponse)
     def list_usdc():
         return {"items": service.list_usdc()}
 
-    @app.post("/api/kit/instances/current/open")
+    @app.post("/api/kit/instances/current/open", response_model=OpenResponse)
     def open_selected(request: OpenRequest):
         try:
             return service.open_artifacts(request.artifact_ids, request.replace_existing)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"Missing USDC artifact(s): {exc}") from exc
 
-    @app.post("/api/kit/instances/current/close")
+    @app.post("/api/kit/instances/current/close", response_model=CloseResponse)
     def close_instance():
         return service.close_instance()
 
