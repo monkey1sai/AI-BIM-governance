@@ -7,7 +7,7 @@
 
 | 序 | 軌 | 目標 | 狀態 |
 |---|---|---|---|
-| **0** | 治理 WIP（#364） | active ≤2；defer 其餘；採納 throughput 預算 | **OQ 已採納**；deferred 註記已上；#364 等 CI auto-merge |
+| **0** | 治理 WIP（#364） | active ≤2；defer 其餘；採納 throughput 預算 | ✅ #364 MERGED + `governance-throughput-budget` archived |
 | **1** | 收口 | 把「code 已 merge、tasks 假開著」的 change archive | **已 archive 4 案**（2026-07-21-*） |
 | **2** | A4 | 只走切片 PR（先 #365，再下一刀） | **#365 MERGED**；下一刀 = S2 coordinator handoff |
 
@@ -50,8 +50,9 @@
 
 - [x] 4 個 closeout change 進入 `openspec/changes/archive/2026-07-21-*`
 - [x] deferred：lineage / minio-folderview / align-frontend（不計 active WIP）
-- [ ] active 實作面只剩 **A4 + migrate-console**（#364 merge + throughput archive 後清帳）
-- [ ] 過期 worktree 刪到 ≤5
+- [x] #364 merge + `governance-throughput-budget` archive（OQ-3 出場）
+- [x] active 實作面只剩 **A4 + migrate-console**（其餘 deferred）
+- [ ] 過期 worktree 刪到 ≤5（人工／下一切可選）
 
 ---
 
@@ -132,3 +133,4 @@ Done: 通過 DoD 所列測試；回報 verified / inferences / risks
 |---|---|
 | 2026-07-21 | 初版：使用者選 1 收口 / 2 A4 / 3 #364+NOW |
 | 2026-07-21 | 採納建議/A/全做：#365 merge；4 change archive；deferred 三案；S2 成當前 outcome |
+| 2026-07-21 | #364 merge；archive governance-throughput-budget；OQ 全落地 |
