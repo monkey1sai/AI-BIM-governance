@@ -7,9 +7,9 @@
 
 | 序 | 軌 | 目標 | 狀態 |
 |---|---|---|---|
-| **0** | 治理 WIP（#364） | active ≤2；defer 其餘；採納 throughput 預算 | 待你拍板 OQ（下方建議） |
-| **1** | 收口 | 把「code 已 merge、tasks 假開著」的 change archive | 本檔開寫當日可做完 |
-| **2** | A4 | 只走切片 PR（先 #365，再下一刀） | #365 open / MERGEABLE |
+| **0** | 治理 WIP（#364） | active ≤2；defer 其餘；採納 throughput 預算 | **OQ 已採納**；deferred 註記已上；#364 等 CI auto-merge |
+| **1** | 收口 | 把「code 已 merge、tasks 假開著」的 change archive | **已 archive 4 案**（2026-07-21-*） |
+| **2** | A4 | 只走切片 PR（先 #365，再下一刀） | **#365 MERGED**；下一刀 = S2 coordinator handoff |
 
 **並行規則：** 0 可與 1 同天；**2 與新功能不得再開第 3 條 active product change**。  
 **本週不做：** A5–A10 全棧、`rvt-ifc-usdc-lineage` 實作、新 OpenSpec（除 archive/defer 註記）、整 repo 重掃。
@@ -20,9 +20,9 @@
 
 | OQ | 題目 | **建議裁決** |
 |---|---|---|
-| OQ-1 | 收斂後保留哪個 ≤2 大 active | **保留 `a4-semantic-search-model-qa` + `migrate-console-to-hifi-design`**；`rvt-ifc-usdc-lineage` → **deferred**（契約可留、不排本週 code） |
-| OQ-2 | docs+chore ≤30% | **首月 40% 漸進，次月 30%**（避免一次卡死必要 design-gate 文件） |
-| OQ-3 | #364 自身是第 10 個 active | **審過即 merge 並立刻 archive `governance-throughput-budget`**（提案生效＝自身出場） |
+| OQ-1 | 收斂後保留哪個 ≤2 大 active | ✅ **已採納**：保留 `a4-semantic-search-model-qa` + `migrate-console-to-hifi-design`；`rvt-ifc-usdc-lineage` deferred |
+| OQ-2 | docs+chore ≤30% | ✅ **已採納**：首月 40% → 次月 30% |
+| OQ-3 | #364 自身是第 10 個 active | ✅ **已採納**：#364 merge 後 archive `governance-throughput-budget` |
 
 已建議 deferred（與 #364 一致）：
 
@@ -37,23 +37,21 @@
 
 | Change | 真實狀態 | 本週動作 | 相關 merge 證據 |
 |---|---|---|---|
-| `viewer-embed-a1-highlight` | tasks 0–5 完成；#6 = **follow-up 範圍外** | **Archive**；follow-up 另開 issue（latch 注解 / A2–A3 / readiness） | #238 等 |
-| `minio-trigger-lifecycle-backend` | tasks 0–4 完成；#5 = **follow-up 範圍外** | **Archive**；follow-up 不進本週 | #259 |
-| `c-m4-runtime-command-bridge` | Task1–7 完成；剩 #307/#308 follow-up | **Archive**；security/robustness 另 issue | #309 |
-| `minio-watch-key-structure` | code 已合；剩 **P7 真 bucket browser E2E** | **二選一**（見下） | #237 |
+| `viewer-embed-a1-highlight` | ✅ archived `2026-07-21-viewer-embed-a1-highlight` | done | #238 等 |
+| `minio-trigger-lifecycle-backend` | ✅ archived `2026-07-21-minio-trigger-lifecycle-backend` | done | #259 |
+| `c-m4-runtime-command-bridge` | ✅ archived `2026-07-21-c-m4-runtime-command-bridge`（新建 capability spec） | done | #309 |
+| `minio-watch-key-structure` | ✅ archived `2026-07-21-minio-watch-key-structure`（`--skip-specs`；主線 scenario 已在 main） | 選 A deferred-evidence | #237 |
 
-### minio-watch task 5（唯一可能要人動手的收口）
+### minio-watch task 5
 
-- **選 A（推薦，配合 A4 優先）：** Archive change，task 5 改記 `deferred-evidence`：`docs/evidence/minio-watch-auto-intake/` 若已有部分證據則引用；缺的標 known gap，不擋 archive。  
-- **選 B：** 排半日跑 `rebuild-test-deploy` + 真 `bim-control` 多層 key + `#/pipeline` 截圖，再 archive。
-
-**本檔預設：選 A**（你要 B 就回「minio-watch 選 B」）。
+✅ **選 A 已執行**（2026-07-21）：task 5 標 deferred-evidence 後 archive；不擋 A4。
 
 ### 收口 DoD（軌 1）
 
-- [ ] 上表 3～4 個 change 進入 `openspec/changes/archive/…` 或 tasks 全勾且 proposal 標 archived  
-- [ ] active product change 數 ≤2（理想：只剩 A4 + migrate-console）  
-- [ ] 過期 worktree 刪到 ≤5（至少刪掉已 archive 對應路徑）
+- [x] 4 個 closeout change 進入 `openspec/changes/archive/2026-07-21-*`
+- [x] deferred：lineage / minio-folderview / align-frontend（不計 active WIP）
+- [ ] active 實作面只剩 **A4 + migrate-console**（#364 merge + throughput archive 後清帳）
+- [ ] 過期 worktree 刪到 ≤5
 
 ---
 
@@ -70,25 +68,28 @@
 
 | Slice | Outcome（一句話） | 對應 tasks（約） | PR / 狀態 |
 |---|---|---|---|
-| **S1** | governance 能 atomic 驗證 3D handoff proof-set（不碰 coordinator store） | §6 governance 半部 | **#365** `feat/a4-llm-hardening-slice1` — merge 優先 |
+| **S1** | governance 能 atomic 驗證 3D handoff proof-set（不碰 coordinator store） | §6 governance 半部 | ✅ **#365 MERGED** `a02f20d` |
 | **S2** | coordinator session-scoped handoff create/consume + 權限（principal/lease/binding） | §6.1–6.2 後端 | 待 S1 merge 後開 |
 | **S3** | viewer 消費 trusted handoff → 單一 focus/highlight + 狀態機 | §6.3–6.5 | 待 S2 |
 | **S4** | 收斂舊 A4 大 branch 的 §2–§5 可合部分（llm/proxy/issue/UI）成小 PR | §2–§5 子集 | 與 S2/S3 **串行**，禁止平行重寫 |
 | **S5+** | design/browser/runtime full gate | §7–§8 | 僅當 S1–S4 穩；允許長期 `Full completion claimed: no` |
 
-### 當前唯一可執行 outcome（S1）
+### 當前唯一可執行 outcome（S2）
 
 ```txt
-Outcome: merge PR #365 — governance-service handoff proof-set 驗證權威
-In scope: governance-service/search/handoff* + 其 tests（以 PR diff 為準）
-Out of scope: coordinator handoff store、A4 UI 重寫、design rebaseline、A5–A10
+Outcome: coordinator session-scoped A4 handoff create/consume（principal/lease/binding 重驗）
+In scope: bim-review-coordinator handoff routes + tests；接 #365 governance verify API
+Out of scope: A4 UI 全重寫、design rebaseline、Kit producer schema、A5–A10、其他 OpenSpec
 DoD:
-  1) CI governance-service tests 綠（已通過）
-  2) CodeRabbit rate-limit 失敗可忽略或重跑；不得為綠而改產品行為
-  3) merge 後在 a4 tasks.md 勾選對應 §6 governance 子項（或加「S1 done」註記）
-  4) Full completion claimed: no
+  1) coordinator unit/integration 綠
+  2) invalid multi-row atomic reject；cross-session/principal fail closed
+  3) Full completion claimed: no（無 browser dual-gate 不宣稱 full A4）
+  4) 更新 a4 tasks.md §6.1 coordinator 半部進度
 ```
 
+### S1 結案紀錄
+
+- PR #365 merged 2026-07-21；tasks.md 已註 S1 done。
 ### 給 AI 的固定 prompt（之後每刀都貼）
 
 ```txt
@@ -130,3 +131,4 @@ Done: 通過 DoD 所列測試；回報 verified / inferences / risks
 | 日期 | 變更 |
 |---|---|
 | 2026-07-21 | 初版：使用者選 1 收口 / 2 A4 / 3 #364+NOW |
+| 2026-07-21 | 採納建議/A/全做：#365 merge；4 change archive；deferred 三案；S2 成當前 outcome |

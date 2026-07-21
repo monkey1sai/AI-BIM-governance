@@ -7,4 +7,4 @@
 - [x] 2. OQ1：`IfcReadyIntakeJob` 加 `project_display_name`/`category`、`ExternalIfcReadyStore.create` 擷取 event 兩欄、summarize 曝光；補 OQ1 誠實 null 與 worker-compat fallback 回歸守衛。
 - [x] 3. `POST /api/conversion/trigger`：`presignMinioObject` + 端點（守門/503/400 key 驗證/`|`/長度上限/presign/self-POST + AbortSignal.timeout/冪等）+ 測試。指揮官補 fetch timeout + key 長度上限（commit 26d4a8c）。
 - [x] 4. P5 對抗複驗 critic 文件修正：`sanitizeJobForExternal` @security docstring 收斂為「瀏覽器可見/對外出口」+ internal-token carve-out；`types.ts` ExternalIfcReadyEvent 註解更新（OQ1 已落 store）。
-- [ ] 5. follow-up（不在本 change）：完整 ifc-ready 欄位重設計其餘欄位（PR #257）、A1 前端 B2、internal-token 路徑 presigned defense-in-depth（須先確認下游契約）。
+- [x] 5. follow-up（不在本 change）— **2026-07-21 archive 裁決**：本 change 以 task 0–4 為 done；下列另開 issue，不擋 archive：完整 ifc-ready 欄位重設計其餘欄位（PR #257）、A1 前端 B2、internal-token 路徑 presigned defense-in-depth（須先確認下游契約）。
