@@ -1,7 +1,8 @@
 # viewer-redesign — 3D viewer 重設計規格提案（含 viewer origin 解凍 + A1 rvt↔ifc↔usdc 治理交叉比對檢視）
 
-> 狀態：**提案（spec-only，待使用者核准）**。本 change 只補規格與契約草案，不動 production code、不動 visual baseline、不 thaw `rvt-ifc-usdc-lineage` 實作。
+> 狀態：**已核准並合併（spec-only；PR #374，2026-07-21）**。本 change 只補規格與契約草案，不動 production code、不動 visual baseline、不 thaw `rvt-ifc-usdc-lineage` 實作。
 > 依 `design-canon-change-control` R-A1：手寫正本 4 檔的改寫文字一律放 `drafts/`，由使用者審核後自行套用；AI 不直接編輯正本、本 PR 不 auto-merge。
+> 使用者於 2026-07-21 裁決：三份 drafts 套用至手寫正本的工作 deferred，須由後續不重疊 successor change 承接；在 successor 完成前不得宣稱 design authority 已同步或 full design completion。
 
 ## Why
 
