@@ -38,7 +38,10 @@ describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
     vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
     vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ count: 0, items: [] });
-    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue({ sessions: { items: [] } } as never);
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue({
+      service: { status: "ok" },
+      sessions: { active_count: 0, items: [] },
+    } as never);
     vi.spyOn(governanceClient, "searchLlmStatus").mockResolvedValue({
       service: "a4-search-llm",
       enabled: false,
@@ -150,7 +153,9 @@ describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
 
   it("A4 aliases 只保留合法 session context，清除 query/proof/prim 並對正確 session 查詢", async () => {
     vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue({
+      service: { status: "ok" },
       sessions: {
+        active_count: 2,
         items: [
           { session_id: "review_session_a", status: "active" },
           { session_id: "review_session_a4", status: "active" },
