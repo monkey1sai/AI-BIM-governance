@@ -30,7 +30,7 @@
 | 動任何 code 前 | §04 API 契約（Payload 以 `tests/contracts/*.json` 為最高標準）＋ §08 權威順序與 R1–R4 |
 | 做前端／console 任務 | §03 前端架構 IA → §07 對應 CH 期 → Hi-Fi 原型比對 → `design-system-reference.manifest.json` visual gate |
 | 查 3D／runtime 互動 | §04 Kit DataChannel 訊息協定 ＋ §05 時序 F1（intake→轉檔→session→串流）／F2（檢核→疊加→Issue→BCF→回拋） |
-| 排工作順序、找下一件事 | §07 實作分期（每期一 PR；done＝Playwright browser E2E 證據）＋ §08 Task 0–12 |
+| 排工作順序、找下一件事 | **先讀 `NOW.md`（本週唯一 outcome）**；中長期再對 §07 實作分期＋ §08 Task 0–12 |
 | 查「X 建了沒」（現況） | repo code＋tests 直接查證（本目錄不再維護建成帳本） |
 
 ## §3 效力

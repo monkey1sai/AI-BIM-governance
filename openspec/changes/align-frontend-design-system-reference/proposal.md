@@ -1,5 +1,7 @@
 # 變更：以docs/plans HTML重建前端設計權威與雙閘門
 
+> **Status: deferred 2026-07-21**（**使用者已採納**／NOW 軌0；原 #364 deferred-proposed 升格）。不計入 active WIP；動前端 visual full gate 前再 thaw。A4 切片允許 `Full completion claimed: no` 而不強制本 change 全線接通。重啟時須重跑 `npx openspec validate align-frontend-design-system-reference --strict`。
+
 ## Why
 
 2026-07-14～2026-07-15 的設計文件整併後，repo 已由兩份 Git-tracked `docs/plans/*.html` 承接設計與規格；但現行 active change、manifest、route inventory 與 capture flow 仍引用外部 `C:\Repos\design\desigin-system`、已刪除文件或舊 hash routes。這會形成平行 design authority，也無法證明每個 screen、state、route 與 golden 都可從目前 checkout 的 HTML 重建。

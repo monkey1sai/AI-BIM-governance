@@ -1,3 +1,5 @@
+> **Status: deferred 2026-07-21**（**使用者已採納**／NOW 軌0；原 #364 deferred-proposed 升格）。不計入 active WIP；解凍前不做實作。重啟時須先重驗 main 現況（#259 trigger、watcher ledger）再調和 tasks。
+
 ## Why
 
 部署中 console 對真實 `bim-control` bucket 暴露兩個與直覺不符、且使 NOT BUILT 文件背離現實的現象（live coordinator `:8004` 2026-06-24 實測）：

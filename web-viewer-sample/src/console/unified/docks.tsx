@@ -3,9 +3,13 @@
 // 像素級移植正本：scratchpad/design-origin/app.js（ws 區段 dock content）
 // A1/A2/A3/Issues 保留 fixture 語意；A4 只提供到 canonical live surface 的
 // 非操作性導流，避免假 API 或假 runtime acknowledgement。
+// 例外（純加性增強，C3 slice 1）：live=true（/health probe 成功）時 A1Dock 尾端
+// 掛 A1DockLive（真 API、data-prov="asbuilt"）；離線/超時/例外 → 完全不渲染新
+// DOM（design gate 離線預設像素零變化鐵則，同 DockLiveLink 判斷路徑）。
 // ═══════════════════════════════════════════════════════════════════════
 import type { CSSProperties, MouseEvent } from "react";
 import { useUnifiedState } from "./UnifiedShell";
+import { A1DockLive } from "./A1DockLive";
 import {
   ACCENT, MONO, BTN, label9, sevTone, kindTone, memColors,
   ruleDefs, failDefs, diffDefs, fedMembers,
@@ -142,6 +146,9 @@ export function A1Dock({ zh, L, ws, patch, live }: DockProps) {
           </div>
         </div>
       ) : null}
+      {/* live 增強（C3 slice 1）：/health OK 才掛真 API 區塊（data-prov="asbuilt"）；
+          離線維持 fixture 呈現不變（沿用 DockLiveLink 的 live 判斷路徑）。 */}
+      {live === true ? <A1DockLive zh={zh} /> : null}
     </div>
   );
 }

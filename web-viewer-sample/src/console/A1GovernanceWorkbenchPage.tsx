@@ -1,9 +1,11 @@
 // A1 governance workbench and its private helpers.
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { t } from "./i18n";
 import { Btn, Field, Metric, Panel } from "./components";
-import { a1Reducer, initialA1State, uiSteps } from "./a1Machine";
-import { FileProjectRow, FileVersionRow, governanceClient, IssueRow, LIBRARY_IFC_PREFIX, parseLibraryIfcPath, RuleResultRow, RuleRunHistoryFilters, RuleRunHistoryItem, RuleRunStatus } from "./governanceClient";
+import { uiSteps } from "./a1Machine";
+import { useRuleRun } from "./hooks/useRuleRun";
+import type { RuleRunSource } from "./hooks/useRuleRun";
+import { FileProjectRow, FileVersionRow, governanceClient, IssueRow, LIBRARY_IFC_PREFIX, parseLibraryIfcPath, RuleResultRow, RuleRunHistoryFilters, RuleRunHistoryItem } from "./governanceClient";
 import { coordinatorClient, IfcReadyListItem, IfcReadyReviewSessionResponse, RuntimeSessionSummary, RuntimeStatus } from "./coordinatorClient";
 import { LifecycleStrip } from "./modelData/conversionShared";
 import { ReviewSessionViewerPane, type ReviewRoomHandoff } from "./ReviewSessionViewerPane";
@@ -102,7 +104,9 @@ function enrichRuleResultsWithMapping(rows: RuleResultRow[], value: unknown): Ru
   });
 }
 export function A1GovernanceWorkbenchPage() {
-  const [state, dispatch] = useReducer(a1Reducer, initialA1State);
+  // C3 slice 1：rule-run 狀態機 + pollGen 輪詢抽至共用 hook useRuleRun（seam 的第二個 adapter
+  // 是 UnifiedConsole A1Dock）；本頁行為與 DOM 不變。
+  const { state, dispatch, runId, run: runRuleRun } = useRuleRun();
   const [idsPath, setIdsPath] = useState(defaultA1IdsPath);
   const [sourceKind, setSourceKind] = useState<A1SourceKind>("local_fs");
   const [fsTree, setFsTree] = useState<FileProjectRow[] | null>(null);
@@ -158,7 +162,6 @@ export function A1GovernanceWorkbenchPage() {
     return () => { alive = false; };
   }, []);
   const ui = uiSteps(state);
-  const runId = state.run?.rule_run_id ?? null;
   const issueGenRef = useRef(0);
   const issueGuardRef = useRef({ runId: null as string | null, modelVersionId: "" });
   useEffect(() => {
@@ -207,14 +210,9 @@ export function A1GovernanceWorkbenchPage() {
       setSourceKind("minio");
       setSelectedKey(key);
     }
-  }, [incoming.status, incoming.handoff?.minio_key, sourceKind, selectedKey]);
+  }, [incoming.status, incoming.handoff?.minio_key, sourceKind, selectedKey, dispatch]);
 
-  // doRun 輪詢守門：pollGen 在 (a) 元件 unmount、(b) step 離開 running（PICK_FILE/RESET 重置）
-  // 時遞增，讓 in-flight 輪詢迴圈以「自己的 generation 已失效」中斷，避免 unmount 後仍每秒
-  // 發 getRuleRun 的資源洩漏（最多 60 次）。reducer 守門已防髒資料寫入，此處再防無謂請求。
-  const pollGenRef = useRef(0);
-  useEffect(() => () => { pollGenRef.current += 1; }, []);
-  useEffect(() => { if (state.step !== "running") pollGenRef.current += 1; }, [state.step]);
+  // doRun 輪詢守門（pollGen：unmount / step 離開 running 時遞增）已抽入 useRuleRun。
 
   // Mount 時只列出可手動選取的 active/created session。不得自動選 act[0]；
   // 3D attach/lease 由 A1 inline viewer pane 的明確按鈕啟動。
@@ -286,19 +284,26 @@ export function A1GovernanceWorkbenchPage() {
     if (state.step === "idle" || !state.ifcPath || (state.ifcPath.startsWith("session://") && !selectedSession)) return;
     setActionErr(null);
     setA1Issues([]);
-    // running-error 子態（RUN_FAIL 後 step 仍 running、runError=true）的重試走 RUN_RETRY；
-    // 否則 plain RUN 在 running 是 no-op（防雙擊污染），「可重試」按鈕會點了沒反應（spec §5）。
-    dispatch({ type: state.step === "running" && state.runError ? "RUN_RETRY" : "RUN" });
-    // 開跑前捕捉 generation；不可在 await createRuleRun 之後重新捕捉，否則 await 視窗內
-    // dispatch PICK_FILE 遞增的新 gen 會被抓回來，守門永遠通過、舊輪詢繼續打（資源洩漏）。
-    const myGen = pollGenRef.current;
-    try {
-      if (state.ifcPath.startsWith("session://") || state.ifcPath.startsWith("ifc-ready://")) {
+    const ifcPath = state.ifcPath;
+    const modelVersionId = state.modelVersionId;
+    const expectedIfcReadyJobId = ifcPath.startsWith("ifc-ready://")
+      ? ifcPath.slice("ifc-ready://".length)
+      : "";
+    // library://（local_fs 檔案庫選檔）→ coordinator /api/governance-library/rule-runs：
+    // 瀏覽器送邏輯三段，真 IFC path 由 coordinator server-side 解析（遮蔽後的
+    // "[server-path]" 永不回送）。優先於 selectedSession——使用者明確選定「這個檔案」，
+    // 檢核就對這個檔案跑；session 只用於後續 mapping enrichment / 3D handoff。
+    const libraryRef = ifcPath.startsWith(LIBRARY_IFC_PREFIX) ? parseLibraryIfcPath(ifcPath) : null;
+    // preflight（run 前置檢查，於 RUN dispatch 之後、createRuleRun 之前執行）：
+    // (a) session:// / ifc-ready:// 來源重驗 watcher job 新鮮度——只有 downloaded 且
+    //     source_ifc_exists 才可進檢核；stale → 誠實 RUN_FAIL。
+    // (b) library:// 形狀不完整（理論上不會發生；PICK_FILE 只由合法選項組出）→ 誠實 RUN_FAIL。
+    const preflight = async (): Promise<string | null> => {
+      if (ifcPath.startsWith(LIBRARY_IFC_PREFIX) && !libraryRef) {
+        return `invalid library ifc path: ${ifcPath}`;
+      }
+      if (ifcPath.startsWith("session://") || ifcPath.startsWith("ifc-ready://")) {
         const refreshedJobs = await refreshIfcReadyJobs();
-        if (pollGenRef.current !== myGen) return;
-        const expectedIfcReadyJobId = state.ifcPath.startsWith("ifc-ready://")
-          ? state.ifcPath.slice("ifc-ready://".length)
-          : "";
         const refreshedJob = selectedMinioObject?.idempotency_key
           ? refreshedJobs.find((job) => job.idempotency_key === selectedMinioObject.idempotency_key) ?? null
           : expectedIfcReadyJobId
@@ -306,83 +311,51 @@ export function A1GovernanceWorkbenchPage() {
             : refreshedJobs.find((job) => job.review_session_id === selectedSession) ?? null;
         const refreshedSourceIfcReady =
           refreshedJob?.download_status === "downloaded"
-          && (!state.ifcPath.startsWith("session://") || refreshedJob.review_session_id === selectedSession)
+          && (!ifcPath.startsWith("session://") || refreshedJob.review_session_id === selectedSession)
           && (!expectedIfcReadyJobId || refreshedJob.ifc_ready_job_id === expectedIfcReadyJobId)
           && refreshedJob.artifact_health?.source_ifc_exists === true;
         if (!refreshedSourceIfcReady) {
           const staleReason = refreshedJob?.artifact_health?.stale_reason
             ?? (refreshedJob?.artifact_health?.source_ifc_exists === false ? "source_ifc_exists=false" : "source_ifc_exists=unknown");
-          dispatch({ type: "RUN_FAIL", error: `source IFC artifact stale before rule-run: ${staleReason}` });
-          return;
+          return `source IFC artifact stale before rule-run: ${staleReason}`;
         }
       }
-      const runRequest = {
-        ifc_source_path: state.ifcPath,
-        ids_path: idsPath || undefined,
-      } as { ifc_source_path: string; ids_path?: string; model_version_id?: string };
-      if (state.modelVersionId) runRequest.model_version_id = state.modelVersionId;
-      const ifcReadyJobId = state.ifcPath.startsWith("ifc-ready://")
-        ? state.ifcPath.slice("ifc-ready://".length)
-        : "";
-      // library://（local_fs 檔案庫選檔）→ coordinator /api/governance-library/rule-runs：
-      // 瀏覽器送邏輯三段，真 IFC path 由 coordinator server-side 解析（遮蔽後的
-      // "[server-path]" 永不回送）。優先於 selectedSession——使用者明確選定「這個檔案」，
-      // 檢核就對這個檔案跑；session 只用於後續 mapping enrichment / 3D handoff。
-      const libraryRef = state.ifcPath.startsWith(LIBRARY_IFC_PREFIX)
-        ? parseLibraryIfcPath(state.ifcPath)
-        : null;
-      if (state.ifcPath.startsWith(LIBRARY_IFC_PREFIX) && !libraryRef) {
-        // 誠實失敗：library:// 形狀不完整（理論上不會發生；PICK_FILE 只由合法選項組出）。
-        dispatch({ type: "RUN_FAIL", error: `invalid library ifc path: ${state.ifcPath}` });
-        return;
-      }
-      const { rule_run_id } = ifcReadyJobId
-        ? await governanceClient.createRuleRunForIfcReady(ifcReadyJobId, { ids_path: idsPath || undefined })
-        : libraryRef
-          ? await governanceClient.createRuleRunForLibrary({
+      return null;
+    };
+    const runRequest = {
+      ifc_source_path: ifcPath,
+      ids_path: idsPath || undefined,
+    } as { ifc_source_path: string; ids_path?: string; model_version_id?: string };
+    if (modelVersionId) runRequest.model_version_id = modelVersionId;
+    const source: RuleRunSource = expectedIfcReadyJobId
+      ? { kind: "for-ifc-ready", ifcReadyJobId: expectedIfcReadyJobId, body: { ids_path: idsPath || undefined } }
+      : libraryRef
+        ? {
+            kind: "for-library",
+            request: {
               ...libraryRef,
               ids_path: idsPath || undefined,
-              ...(state.modelVersionId ? { model_version_id: state.modelVersionId } : {}),
-            })
-          : selectedSession
-            ? await governanceClient.createRuleRunForSession(selectedSession, { ids_path: idsPath || undefined })
-            : await governanceClient.createRuleRun(runRequest);
-      if (pollGenRef.current !== myGen) return; // createRuleRun await 視窗內取消（PICK_FILE/unmount）→ 不啟動輪詢
-      let st: RuleRunStatus | null = null;
-      for (let i = 0; i < 60; i++) {
-        if (pollGenRef.current !== myGen) return; // unmount / step 重置 → 中斷輪詢，不再發請求
-        st = await governanceClient.getRuleRun(rule_run_id);
-        if (pollGenRef.current !== myGen) return; // await 期間失效 → 不再 dispatch
-        dispatch({ type: "RUN_PROGRESS", run: st });
-        // in-progress 白名單：只有 queued/running 才續輪詢；任何 terminal status（含後端
-        // 回的型別 union 外 errored/cancelled）即時中斷，不空轉 60 次。
-        if (st.status !== "queued" && st.status !== "running") break;
-        await new Promise((r) => setTimeout(r, 1000));
-      }
-      if (pollGenRef.current !== myGen) return;
-      if (st && st.status === "succeeded") {
-        let failed = await governanceClient.getResults(rule_run_id, "failed");
-        const mappingUrl = sessions.find((s) => s.session_id === selectedSession)?.expected_mapping_url ?? null;
-        if (selectedSession && mappingUrl && failed.some((row) => row.ifc_guid && !row.usd_prim_path)) {
-          try {
-            const mappingDoc = await governanceClient.elementMappingForSession(selectedSession, mappingUrl);
-            failed = enrichRuleResultsWithMapping(failed, mappingDoc);
-          } catch {
-            // Mapping enrichment is best-effort. The button remains honestly disabled if no usd_prim_path is observed.
+              ...(modelVersionId ? { model_version_id: modelVersionId } : {}),
+            },
           }
-        }
-        if (pollGenRef.current !== myGen) return;
-        dispatch({ type: "RUN_DONE", run: st, failed });
-        if (sourceKind === "minio") setRunHistoryRefreshTick((value) => value + 1);
-      } else {
-        dispatch({ type: "RUN_FAIL", error: st ? `rule-run ${st.status}` : "no status" });
-        if (sourceKind === "minio" && st) setRunHistoryRefreshTick((value) => value + 1);
-      }
-    } catch (e) {
-      if (pollGenRef.current !== myGen) return; // unmount / 重置後吞掉殘餘錯誤，不寫回已卸載 UI
-      dispatch({ type: "RUN_FAIL", error: String(e) });
+        : selectedSession
+          ? { kind: "for-session", sessionId: selectedSession, body: { ids_path: idsPath || undefined } }
+          : { kind: "direct", request: runRequest };
+    // Mapping enrichment is best-effort（hook 內 try/catch）：失敗時按鈕維持誠實 disabled
+    //（無 usd_prim_path 不假裝可高亮）。
+    const mappingUrl = sessions.find((s) => s.session_id === selectedSession)?.expected_mapping_url ?? null;
+    const enrichFailed = async (failed: RuleResultRow[]): Promise<RuleResultRow[]> => {
+      if (!(selectedSession && mappingUrl && failed.some((row) => row.ifc_guid && !row.usd_prim_path))) return failed;
+      const mappingDoc = await governanceClient.elementMappingForSession(selectedSession, mappingUrl);
+      return enrichRuleResultsWithMapping(failed, mappingDoc);
+    };
+    const outcome = await runRuleRun(source, { preflight, enrichFailed });
+    // MinIO 來源在 run 有終態證據（成功或帶 status 的失敗）時 refresh 檢核歷史；
+    // cancelled / preflight_failed / 例外（run=null）不 refresh（與抽 hook 前行為一致）。
+    if (sourceKind === "minio" && (outcome.kind === "succeeded" || (outcome.kind === "failed" && outcome.run !== null))) {
+      setRunHistoryRefreshTick((value) => value + 1);
     }
-  }, [state.step, state.runError, state.ifcPath, state.modelVersionId, idsPath, selectedSession, sessions, selectedMinioObject, sourceKind, refreshIfcReadyJobs]);
+  }, [state.step, state.ifcPath, state.modelVersionId, idsPath, selectedSession, sessions, selectedMinioObject, sourceKind, refreshIfcReadyJobs, runRuleRun]);
 
   const setIdsFileNameInCurrentDirectory = useCallback((fileName: string) => {
     setIdsPath((current) => fileInSameDirectory(current || defaultA1IdsPath(), fileName));
@@ -453,7 +426,7 @@ export function A1GovernanceWorkbenchPage() {
       // 後端離線：誠實不前進（不偽造 issued），但顯示失敗讓操作員知道（誠實鐵律）。
       setActionErr(`${t("建 Issue 失敗：", "Failed to create Issue: ")}${String(e)}`);
     }
-  }, [runId, state.modelVersionId]);
+  }, [runId, state.modelVersionId, dispatch]);
 
   const doExport = useCallback(async () => {
     if (!runId) return;
@@ -476,7 +449,7 @@ export function A1GovernanceWorkbenchPage() {
     } finally {
       setExcelBusy(false);
     }
-  }, [runId]);
+  }, [runId, dispatch]);
 
   const transitionA1Issue = useCallback(async (issue: IssueRow) => {
     const next = issue.status === "open" ? "in_progress" : issue.status === "in_progress" ? "resolved" : null;
