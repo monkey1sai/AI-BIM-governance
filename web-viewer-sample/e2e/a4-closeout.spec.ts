@@ -125,7 +125,10 @@ async function installA4CoordinatorStubs(
 
   await page.route("**/api/runtime/status", async (route) => {
     await fulfillJson(route, {
-      body: { sessions: { count: 1, active_count: 1, participant_count: 1, items: [activeSession] } },
+      body: {
+        service: { status: "ok" },
+        sessions: { count: 1, active_count: 1, participant_count: 1, items: [activeSession] },
+      },
     });
   });
   await page.route("**/api/external/ifc-ready**", async (route) => {
