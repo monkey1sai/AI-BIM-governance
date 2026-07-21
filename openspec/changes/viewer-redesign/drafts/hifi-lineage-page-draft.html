@@ -5,6 +5,7 @@
   插入點 B:hifi-workspace 的 dockA1 區塊尾端(A1 Dock 治理摘要卡)。
   資料語意=引用 openspec/changes/rvt-ifc-usdc-lineage(三 ratio/10 counts/六態);全部數字為 fixture(R3)。
   RVT 軸後端零實作 → 本 screen 以 NOT_BUILT 誠實標示該軸;IFC↔USDC 軸示意可接線資料。
+  套用時另須同步:正本 state 衍生區(約 :930)加 isLineage: s.page==="lineage",並補 lineageTabs/lineageFilters/lineageRows/openLineage fixture 定義(比照既有 isWs 慣例),否則 sc-if 不渲染。
   套用後 bump 版頭版本+日期(R-A4)。
 -->
 
@@ -26,7 +27,7 @@
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
         <div data-canon-id="hifi-lineage-kpi-ifc-usdc" style="background:#0e1621;border:1px solid rgba(65,199,232,.22);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:4px">
           <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.08em;color:#5a8db0;text-transform:uppercase">ifc_usdc_coverage_ratio</span>
-          <span style="font-size:22px;font-weight:700;color:#6fd6ee">0.9482</span>
+          <span style="font-size:22px;font-weight:700;color:#6fd6ee">0.9480</span>
           <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#8aa0b8">1,204 / 1,270 eligible IfcProduct · <span style="color:#e6b23e">partial</span></span>
           <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">source=quality-metrics(可接線)</span>
         </div>
@@ -91,7 +92,7 @@
 <div data-canon-id="hifi-dock-a1-lineage-summary" style="display:flex;flex-direction:column;gap:6px;border-top:1px solid rgba(120,160,210,.10);padding-top:12px">
   <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;color:#4d6076;text-transform:uppercase">治理交叉比對</span>
   <div style="display:flex;flex-direction:column;gap:5px;background:#0a1220;border:1px solid rgba(120,160,210,.14);border-radius:8px;padding:10px">
-    <div style="display:flex;align-items:center;gap:6px"><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#6fd6ee">ifc↔usdc</span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#dbe6f3">0.9482</span><span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#e6b23e">partial</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#8aa0b8">1,204/1,270</span></div>
+    <div style="display:flex;align-items:center;gap:6px"><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#6fd6ee">ifc↔usdc</span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#dbe6f3">0.9480</span><span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#e6b23e">partial</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#8aa0b8">1,204/1,270</span></div>
     <div style="display:flex;align-items:center;gap:6px"><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#5a7089">rvt↔ifc</span><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#e6b23e">NOT_BUILT</span></div>
     <div style="display:flex;align-items:center;gap:6px"><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#5a7089">三向 lineage</span><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#e6b23e">NOT_BUILT</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;color:#5a7089">outbox:未啟用</span></div>
     <span onClick="{{ openLineage }}" style="margin-top:4px;font-size:10.5px;color:#6fd6ee;cursor:pointer" style-hover="color:#7adcf2">開啟交叉比對(#lineage)→</span>

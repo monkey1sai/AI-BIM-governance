@@ -19,7 +19,7 @@
 
 - **新增 capability spec × 4**（`specs/`）：
   - `viewer-viewport`：viewer 重設計規格——內嵌持久 viewport、失敗態矩陣、鏡頭控制/工具列/fullscreen、效能 SLO、元件職責表、viewer origin 頁內 UI（解凍範圍聲明：`/ui/open` 302 進場與 CI guard 不動）。
-  - `kit-datachannel-protocol`：DataChannel 全訊息 schema 正本化（OUT×9 + IN×11，含 `commandRejected` 全新定義與 runtime authority envelope）。
+  - `kit-datachannel-protocol`：DataChannel 全訊息 schema 正本化（OUT×11 + IN×11，其中 runtime mutator ×9，含 `commandRejected` 全新定義與 runtime authority envelope）。
   - `embedded-viewer-bridge`：vg01 postMessage / iframe URL 契約（CH-I 前置）。
   - `a1-lineage-crosscheck-view`：A1 Dock 治理摘要卡 + `#lineage` 交叉比對頁（五 surfaces；資料規格權威=`rvt-ifc-usdc-lineage`，本 spec 只定 UI/IA 與誠實 provenance）。
 - **新增契約草案**（`contracts/`）：`kit-datachannel-v1.schema.json`、`vg01-postmessage-v1.schema.json` + examples。落地實作時遷入 `tests/contracts/` 並接 CI；在那之前依 §04 現行條款，payload 權威=本 change 文字+實碼。
