@@ -1,0 +1,53 @@
+<!--
+  viewer-redesign 提案 draft #2 — Hi-Fi 失敗態 screens fragment
+  目標檔:docs/plans/AI-BIM Console Hi-Fi.dc.html(手寫正本;依 R-A1 由使用者審核後自行套用)
+  插入點:hifi-workspace 的 viewport 區塊內(vpImage 背景 div 之內、SelectionCallout sc-if 之後),
+  以 sc-if 驅動三個失敗態 overlay(vpFailState 值:"lease" | "disconnect" | "gpu";null=正常串流)。
+  數字/名稱全為 fixture(R3);套用後 bump 版頭版本+日期(R-A4)。
+  注意:此 fragment 會改 #a1..#a4 的 workspace screen 外觀 → 落實作時必經 capture 雙旗標 rebaseline(R-A2),本 draft 僅正本層。
+-->
+
+<!-- ═══ 失敗態 1|lease-occupied(claim 409) ═══ -->
+<sc-if value="{{ vpFailLease }}" hint-placeholder-val="{{ false }}">
+  <div data-canon-id="hifi-vp-state-lease-occupied" style="position:absolute;inset:0;background:rgba(5,8,13,.82);display:flex;align-items:center;justify-content:center">
+    <div style="display:flex;flex-direction:column;gap:10px;background:#0e1621;border:1px solid rgba(230,178,62,.35);border-radius:12px;padding:22px 26px;max-width:380px">
+      <div style="display:flex;align-items:center;gap:8px"><span style="font-size:15px">🔒</span><span style="font-size:13.5px;font-weight:700;color:#e6b23e">Editor lease 被佔用</span></div>
+      <span style="font-size:11.5px;color:#b9c9da">此 session 的 editor lease 由 <span style="font-family:'JetBrains Mono',monospace;color:#6fd6ee">陳工程師 · console-7f3a</span> 持有(claim 回 409)。</span>
+      <span style="font-size:10.5px;color:#5a7089">不會自動搶佔;可等待對方釋放,或以 Spectator 唯讀加入。</span>
+      <div style="display:flex;gap:8px">
+        <span style="font-size:11px;color:#04121a;font-weight:700;background:linear-gradient(135deg,#41c7e8,#2f7bf6);border-radius:8px;padding:6px 14px;cursor:pointer" style-hover="filter:brightness(1.12)">重試 claim</span>
+        <span style="font-size:11px;color:#8aa0b8;border:1px solid rgba(120,160,210,.25);border-radius:8px;padding:6px 14px;cursor:pointer" style-hover="color:#dbe6f3">以 Spectator 加入</span>
+      </div>
+    </div>
+  </div>
+</sc-if>
+
+<!-- ═══ 失敗態 2|stream-disconnected(WebRTC 中斷) ═══ -->
+<sc-if value="{{ vpFailDisconnect }}" hint-placeholder-val="{{ false }}">
+  <div data-canon-id="hifi-vp-state-stream-disconnected" style="position:absolute;inset:0;background:rgba(5,8,13,.82);display:flex;align-items:center;justify-content:center">
+    <div style="display:flex;flex-direction:column;gap:10px;background:#0e1621;border:1px solid rgba(224,82,99,.4);border-radius:12px;padding:22px 26px;max-width:380px">
+      <div style="display:flex;align-items:center;gap:8px"><span style="width:8px;height:8px;border-radius:50%;background:#e05263"></span><span style="font-size:13.5px;font-weight:700;color:#e05263">串流中斷</span></div>
+      <span style="font-size:11.5px;color:#b9c9da">WebRTC 媒體連線已中斷(最後畫格已凍結顯示,不代表即時狀態)。</span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#5a7089">last frame 14:32:07 · ICE disconnected</span>
+      <div style="display:flex;gap:8px">
+        <span style="font-size:11px;color:#04121a;font-weight:700;background:linear-gradient(135deg,#41c7e8,#2f7bf6);border-radius:8px;padding:6px 14px;cursor:pointer" style-hover="filter:brightness(1.12)">重新連線</span>
+        <span style="font-size:11px;color:#8aa0b8;border:1px solid rgba(120,160,210,.25);border-radius:8px;padding:6px 14px;cursor:pointer" style-hover="color:#dbe6f3">診斷資訊</span>
+      </div>
+    </div>
+  </div>
+</sc-if>
+
+<!-- ═══ 失敗態 3|gpu-unavailable(Kit runtime 不可用) ═══ -->
+<sc-if value="{{ vpFailGpu }}" hint-placeholder-val="{{ false }}">
+  <div data-canon-id="hifi-vp-state-gpu-unavailable" style="position:absolute;inset:0;background:rgba(5,8,13,.9);display:flex;align-items:center;justify-content:center">
+    <div style="display:flex;flex-direction:column;gap:10px;background:#0e1621;border:1px solid rgba(120,160,210,.25);border-radius:12px;padding:22px 26px;max-width:380px">
+      <div style="display:flex;align-items:center;gap:8px"><span style="font-size:15px">⛔</span><span style="font-size:13.5px;font-weight:700;color:#8aa0b8">Kit runtime 不可用</span></div>
+      <span style="font-size:11.5px;color:#b9c9da">kit-manager 回報無可用 GPU instance;3D session 啟動已誠實停用(不做假成功)。</span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#5a7089">GET /api/kit/instances/current → unavailable</span>
+      <div style="display:flex;gap:8px">
+        <span style="font-size:11px;color:#8aa0b8;border:1px solid rgba(120,160,210,.25);border-radius:8px;padding:6px 14px;cursor:pointer" style-hover="color:#dbe6f3">前往 Runtime 檢視</span>
+        <span style="font-size:11px;color:#8aa0b8;border:1px solid rgba(120,160,210,.25);border-radius:8px;padding:6px 14px;cursor:pointer" style-hover="color:#dbe6f3">重新整理</span>
+      </div>
+    </div>
+  </div>
+</sc-if>
