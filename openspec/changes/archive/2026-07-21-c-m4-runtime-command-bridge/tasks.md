@@ -12,5 +12,4 @@
 
 ## Follow-up（本 change 範圍外，另立 issue）
 
-- [ ] #307 Kit 端 mutator 授權回 coordinator 驗 lease 真偽（security）
-- [ ] #308 embedded primary lease 晚到重試/等待（robustness）
+- [x] #307 / #308 — **2026-07-21 archive 裁決**：Task1–7 為本 change done；#307 Kit mutator lease 真偽、#308 embedded primary lease 晚到重試 維持獨立 issue，不擋 archive。

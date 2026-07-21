@@ -1,3 +1,5 @@
+> **Status: deferred 2026-07-21**（使用者裁決／NOW 軌0 OQ-1）：本 change 暫不計入 active product WIP 上限；契約草稿保留，本週不排實作 PR。解凍條件：A4 切片 S1–S3 穩定或使用者明確 thaw。
+
 ## Why
 
 目前 repo 已正式描述 IFC-ready intake、IFC→USDC conversion 與 `IFC GlobalId ↔ USD prim path`，但尚未把 2026-07-14～07-15 定案的 MinIO version bundle、`schedule.csv` RVT identity、三向 alignment、result publication、attempt/runtime admission 與治理操作收斂成可執行契約。缺少這層契約會讓同一版本的 RVT、IFC、USDC 與 mapping/report 各自成功，卻無法證明它們屬於同一條可稽核 lineage；現有legacy workflow callback也沒有versioned Cloud Ingest、HMAC、commit ACK、health history或「cloud只存result locator＋summary」的MySQL邊界。
