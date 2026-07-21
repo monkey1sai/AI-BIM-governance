@@ -2,6 +2,34 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'design-assets.ps1')
+Import-Module -Force (Join-Path $PSScriptRoot 'StructLog.psm1')
+
+$script:TestDeployStructLogger = $null
+
+function Get-TestDeployStructLogger {
+    [CmdletBinding()]
+    param()
+
+    if ($null -eq $script:TestDeployStructLogger) {
+        $script:TestDeployStructLogger = New-StructLogger `
+            -Service 'scripts' `
+            -Component 'rebuild-test-deploy' `
+            -SkipEnvSnapshot
+    }
+    return $script:TestDeployStructLogger
+}
+
+function Write-TestDeployLifecycleLog {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $Message,
+        [hashtable] $Data = @{},
+        [ValidateSet('debug', 'info', 'warn', 'error', 'fatal')][string] $Level = 'info'
+    )
+
+    Get-TestDeployStructLogger |
+        Write-StructLifecycle -Msg $Message -Data $Data -Level $Level
+}
 
 $script:TestDeployFixedPath = 'D:\Users\deploy\AI-bim-geo'
 $script:TestDeployRootToolingDirNames = @(
@@ -59,7 +87,7 @@ function Normalize-TestDeployPath {
     return $fullPath.TrimEnd([char[]]@('\', '/'))
 }
 
-function Assert-TestDeployPathSafety {
+function Assert-TestDeployPathComponentsSafety {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string] $Path
@@ -78,15 +106,30 @@ function Assert-TestDeployPathSafety {
         [System.StringSplitOptions]::RemoveEmptyEntries
     ))) {
         $currentPath = Join-Path $currentPath $segment
-        $item = Get-Item -LiteralPath $currentPath -Force -ErrorAction SilentlyContinue
-        if ($null -eq $item) {
+        try {
+            $item = Get-Item -LiteralPath $currentPath -Force -ErrorAction Stop
+        } catch [System.Management.Automation.ItemNotFoundException] {
             break
+        } catch [System.IO.DirectoryNotFoundException] {
+            break
+        } catch {
+            throw "deployment path component inspection failed for '$currentPath': $($_.Exception.Message)"
         }
         if ([bool]($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
             throw "deployment path contains reparse point: '$($item.FullName)'"
         }
     }
 
+    return $fullPath
+}
+
+function Assert-TestDeployPathSafety {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $Path
+    )
+
+    $fullPath = Assert-TestDeployPathComponentsSafety -Path $Path
     if (-not (Test-Path -LiteralPath $fullPath -PathType Container)) {
         return $fullPath
     }
@@ -114,7 +157,7 @@ function Enter-TestDeployRebuildLock {
         [Parameter(Mandatory = $true)][string] $DeploymentPath
     )
 
-    $deployRoot = Normalize-TestDeployPath -Path $DeploymentPath
+    $deployRoot = Assert-TestDeployPathComponentsSafety -Path $DeploymentPath
     $deployParent = Split-Path -Parent $deployRoot
     if ([string]::IsNullOrWhiteSpace($deployParent) -or -not (Test-Path -LiteralPath $deployParent -PathType Container)) {
         throw "deployment parent does not exist: '$deployParent'"
@@ -122,6 +165,7 @@ function Enter-TestDeployRebuildLock {
 
     $deployLeaf = Split-Path -Leaf $deployRoot
     $lockPath = Normalize-TestDeployPath -Path (Join-Path $deployParent ".$deployLeaf.rebuild.lock")
+    Assert-TestDeployPathComponentsSafety -Path $lockPath | Out-Null
     $handle = $null
     try {
         $handle = [System.IO.File]::Open(
@@ -324,10 +368,11 @@ function Save-TestDeployEnvSnapshot {
         [Parameter(Mandatory = $true)][string] $DeploymentPath
     )
 
-    $root = Normalize-TestDeployPath -Path $DeploymentPath
+    $root = Assert-TestDeployPathComponentsSafety -Path $DeploymentPath
     $snapshot = New-Object 'System.Collections.Generic.List[object]'
     foreach ($relativePath in $script:TestDeployPreservedEnvFiles) {
         $envPath = Join-Path $root $relativePath
+        Assert-TestDeployPathComponentsSafety -Path $envPath | Out-Null
         if (-not (Test-Path -LiteralPath $envPath -PathType Leaf)) { continue }
         $snapshot.Add([pscustomobject]@{
             RelativePath = $relativePath
@@ -345,7 +390,7 @@ function Restore-TestDeployEnvSnapshot {
         $Snapshot = @()
     )
 
-    $root = Normalize-TestDeployPath -Path $DeploymentPath
+    $root = Assert-TestDeployPathComponentsSafety -Path $DeploymentPath
     $restored = New-Object 'System.Collections.Generic.List[string]'
     $failures = New-Object 'System.Collections.Generic.List[string]'
     foreach ($entry in @($Snapshot)) {
@@ -354,10 +399,12 @@ function Restore-TestDeployEnvSnapshot {
         if ([string]::IsNullOrWhiteSpace($relativePath)) { continue }
 
         $envPath = Join-Path $root $relativePath
+        Assert-TestDeployPathComponentsSafety -Path $envPath | Out-Null
         $parent = Split-Path -Parent $envPath
         if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
             New-Item -ItemType Directory -Path $parent -Force | Out-Null
         }
+        Assert-TestDeployPathComponentsSafety -Path $envPath | Out-Null
 
         try {
             [System.IO.File]::WriteAllBytes($envPath, [byte[]]$entry.Bytes)
@@ -454,8 +501,146 @@ function Restore-TestDeployProcessEnv {
     )
 
     foreach ($name in $Backup.Keys) {
-        [Environment]::SetEnvironmentVariable($name, $Backup[$name], 'Process')
+        $value = $Backup[$name]
+        if ($null -eq $value) {
+            Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+        } else {
+            [Environment]::SetEnvironmentVariable($name, $value, 'Process')
+        }
     }
+}
+
+function Assert-TestDeployOriginUrlSafe {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $OriginUrl
+    )
+
+    $candidate = $OriginUrl.Trim()
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        throw 'current repo origin URL is empty'
+    }
+
+    $decodeUserInfo = {
+        param([Parameter(Mandatory = $true)][string] $Value)
+
+        $decoded = $Value
+        for ($decodeAttempt = 0; $decodeAttempt -lt 8; $decodeAttempt++) {
+            try {
+                $next = [System.Uri]::UnescapeDataString($decoded)
+            } catch {
+                throw 'current repo origin URL is invalid'
+            }
+            if ($next -ceq $decoded) {
+                return $decoded
+            }
+            $decoded = $next
+        }
+        throw 'current repo origin URL is invalid'
+    }
+
+    $uri = $null
+    $looksLikeUri = $candidate -match '^[A-Za-z][A-Za-z0-9+.-]*://'
+    $isAbsoluteUri = [System.Uri]::TryCreate(
+        $candidate,
+        [System.UriKind]::Absolute,
+        [ref]$uri
+    )
+    $scpLikeMatch = [regex]::Match(
+        $candidate,
+        '^(?<user>[^@/\\:\s]+)@(?<host>\[[^\]]+\]|[^:/\\\s]+):(?<path>.+)$'
+    )
+    if ($scpLikeMatch.Success) {
+        if ($candidate.Contains('?') -or $candidate.Contains('#')) {
+            throw 'credential-bearing origin URL is not allowed; use a credential manager or SSH agent'
+        }
+        $decodedScpUser = & $decodeUserInfo $scpLikeMatch.Groups['user'].Value
+        if ($decodedScpUser.Contains(':')) {
+            throw 'credential-bearing origin URL is not allowed; use a credential manager or SSH agent'
+        }
+        return $candidate
+    }
+
+    if ($looksLikeUri -and -not $isAbsoluteUri) {
+        throw 'current repo origin URL is invalid'
+    }
+    if (-not $looksLikeUri) {
+        if ($candidate.StartsWith('-', [System.StringComparison]::Ordinal)) {
+            throw 'current repo origin URL is invalid'
+        }
+        if ([System.IO.Path]::IsPathRooted($candidate)) {
+            if ($candidate.Contains('?') -or $candidate.Contains('#')) {
+                throw 'credential-bearing origin URL is not allowed; use a credential manager or SSH agent'
+            }
+            return $candidate
+        }
+        if ($isAbsoluteUri) {
+            throw 'current repo origin URL is invalid'
+        }
+        return $candidate
+    }
+
+    $scheme = $uri.Scheme.ToLowerInvariant()
+    $hasUserInfo = -not [string]::IsNullOrWhiteSpace($uri.UserInfo)
+    $decodedUserInfo = if ($hasUserInfo) {
+        & $decodeUserInfo $uri.UserInfo
+    } else {
+        ''
+    }
+    $hasCredentialUserInfo =
+        ($hasUserInfo -and $scheme -ne 'ssh') -or
+        ($hasUserInfo -and $decodedUserInfo.Contains(':'))
+    $hasQueryOrFragment =
+        $candidate.Contains('?') -or
+        $candidate.Contains('#') -or
+        -not [string]::IsNullOrWhiteSpace($uri.Query) -or
+        -not [string]::IsNullOrWhiteSpace($uri.Fragment)
+    if ($hasCredentialUserInfo -or $hasQueryOrFragment) {
+        throw 'credential-bearing origin URL is not allowed; use a credential manager or SSH agent'
+    }
+
+    return $candidate
+}
+
+function ConvertTo-TestDeployNativeArgument {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string] $Value
+    )
+
+    if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') {
+        return $Value
+    }
+
+    # Windows CreateProcess receives one command-line string. Quote according to
+    # CommandLineToArgvW rules so PS5/.NET Framework preserves spaces, quotes,
+    # and trailing backslashes exactly. PS7 uses ProcessStartInfo.ArgumentList.
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.Append('"')
+    $backslashes = 0
+    foreach ($character in $Value.ToCharArray()) {
+        if ($character -eq '\') {
+            $backslashes += 1
+            continue
+        }
+        if ($character -eq '"') {
+            if ($backslashes -gt 0) {
+                [void]$builder.Append(('\' * ($backslashes * 2)))
+            }
+            [void]$builder.Append('\"')
+        } else {
+            if ($backslashes -gt 0) {
+                [void]$builder.Append(('\' * $backslashes))
+            }
+            [void]$builder.Append($character)
+        }
+        $backslashes = 0
+    }
+    if ($backslashes -gt 0) {
+        [void]$builder.Append(('\' * ($backslashes * 2)))
+    }
+    [void]$builder.Append('"')
+    return $builder.ToString()
 }
 
 function Invoke-TestDeployGitCommand {
@@ -467,16 +652,47 @@ function Invoke-TestDeployGitCommand {
         [scriptblock] $CommandRunner = $null
     )
 
-    $command = "$Tool $($Arguments -join ' ')"
+    $toolLabel = [System.IO.Path]::GetFileName($Tool)
+    $operationLabel = if (
+        $Arguments.Count -gt 0 -and
+        $Arguments[0] -match '^[A-Za-z0-9._/-]+$'
+    ) {
+        $Arguments[0]
+    } else {
+        'command'
+    }
+    $command = "$toolLabel $operationLabel"
     if ($null -ne $CommandRunner) {
         $result = & $CommandRunner $Tool $Arguments $WorkingDirectory
     } else {
-        $stdoutPath = [System.IO.Path]::GetTempFileName()
-        $stderrPath = [System.IO.Path]::GetTempFileName()
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = $Tool
+        $startInfo.WorkingDirectory = $WorkingDirectory
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        if ($null -ne $startInfo.PSObject.Properties['ArgumentList']) {
+            foreach ($argument in $Arguments) {
+                $startInfo.ArgumentList.Add($argument)
+            }
+        } else {
+            $startInfo.Arguments = @(
+                $Arguments | ForEach-Object { ConvertTo-TestDeployNativeArgument -Value $_ }
+            ) -join ' '
+        }
+
+        $process = [System.Diagnostics.Process]::new()
+        $process.StartInfo = $startInfo
         try {
-            $process = Start-Process -FilePath $Tool -ArgumentList $Arguments -WorkingDirectory $WorkingDirectory -NoNewWindow -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -Wait -PassThru
-            $stdoutText = if (Test-Path -LiteralPath $stdoutPath) { Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction Stop } else { '' }
-            $stderrText = if (Test-Path -LiteralPath $stderrPath) { Get-Content -LiteralPath $stderrPath -Raw -ErrorAction Stop } else { '' }
+            if (-not $process.Start()) {
+                throw "$command failed to start"
+            }
+            $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+            $stderrTask = $process.StandardError.ReadToEndAsync()
+            $process.WaitForExit()
+            $stdoutText = $stdoutTask.GetAwaiter().GetResult()
+            $stderrText = $stderrTask.GetAwaiter().GetResult()
             $outputParts = @()
             if (-not [string]::IsNullOrEmpty($stdoutText)) {
                 $outputParts += $stdoutText.TrimEnd([char[]]@("`r", "`n"))
@@ -489,7 +705,7 @@ function Invoke-TestDeployGitCommand {
                 Output = ($outputParts -join [Environment]::NewLine)
             }
         } finally {
-            Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+            $process.Dispose()
         }
     }
 
@@ -575,33 +791,42 @@ function Invoke-TestDeployRebuild {
         Assert-TestDeployPath -Path $DeploymentPath
     }
 
-    Assert-TestDeployPathSafety -Path $deployRoot | Out-Null
+    if ($AllowNonFixedPathForTests) {
+        Assert-TestDeployPathSafety -Path $deployRoot | Out-Null
+    } else {
+        # The active deployment is opaque runtime state. Validate only the path
+        # components that lead to it; Kit-generated reparse points below the
+        # checkout are preserved by moving the whole directory aside.
+        Assert-TestDeployPathComponentsSafety -Path $deployRoot | Out-Null
+    }
 
     $rebuildLock = Enter-TestDeployRebuildLock -DeploymentPath $deployRoot
     try {
     $origin = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('remote', 'get-url', 'origin') -WorkingDirectory $repoRootPath -CommandRunner $CommandRunner
-    $originUrl = $origin.Output.Trim()
-    if ([string]::IsNullOrWhiteSpace($originUrl)) {
-        throw 'current repo origin URL is empty'
-    }
+    $originUrl = Assert-TestDeployOriginUrlSafe -OriginUrl $origin.Output
 
     $deployGitDir = Join-Path $deployRoot '.git'
-    $requiresStagedReplacement =
-        -not (Test-Path -LiteralPath $deployGitDir) -or
-        (Test-TestDeployBrokenGitFile -GitPath $deployGitDir)
+    Assert-TestDeployPathComponentsSafety -Path $deployGitDir | Out-Null
+    $requiresStagedReplacement = -not $AllowNonFixedPathForTests
+    if ($AllowNonFixedPathForTests) {
+        $requiresStagedReplacement =
+            -not (Test-Path -LiteralPath $deployGitDir) -or
+            (Test-TestDeployBrokenGitFile -GitPath $deployGitDir)
+    }
 
-    # A valid checkout with the wrong origin must fail before staging, service
-    # stop, or any filesystem mutation. Broken gitfiles are replacement inputs,
-    # so they deliberately skip commands that depend on their missing gitdir.
-    if (-not $requiresStagedReplacement) {
+    # Keep the injected non-fixed test seam's legacy in-place origin guard.
+    # Production never trusts or mutates live Git metadata; it always replaces
+    # the active checkout from the caller repo's canonical origin.
+    if ($AllowNonFixedPathForTests -and -not $requiresStagedReplacement) {
         $deployOrigin = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('remote', 'get-url', 'origin') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner
-        $deployOriginUrl = $deployOrigin.Output.Trim()
+        $deployOriginUrl = Assert-TestDeployOriginUrlSafe -OriginUrl $deployOrigin.Output
         if ($deployOriginUrl -ne $originUrl) {
             throw "deployment checkout origin mismatch. expected='$originUrl' actual='$deployOriginUrl'"
         }
     }
 
     $envSnapshot = Save-TestDeployEnvSnapshot -DeploymentPath $deployRoot
+    $previousPath = ''
 
     if ($requiresStagedReplacement) {
         $deployParent = Split-Path -Parent $deployRoot
@@ -622,7 +847,8 @@ function Invoke-TestDeployRebuild {
         try {
             # Canonical OriginMain preparation: Git creates one standalone,
             # same-parent sibling. Live remains byte-identical until validation.
-            Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clone', $originUrl, $stageRoot) -WorkingDirectory $repoRootPath -CommandRunner $CommandRunner | Out-Null
+            Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clone', '--', $originUrl, $stageRoot) -WorkingDirectory $repoRootPath -CommandRunner $CommandRunner | Out-Null
+            Assert-TestDeployPathSafety -Path $stageRoot | Out-Null
 
             $stageGitDir = Join-Path $stageRoot '.git'
             if (-not (Test-Path -LiteralPath $stageGitDir -PathType Container)) {
@@ -655,7 +881,7 @@ function Invoke-TestDeployRebuild {
                 }
             }
 
-            $restoredEnvFiles = @(Restore-TestDeployEnvSnapshot -DeploymentPath $stageRoot -Snapshot $envSnapshot)
+            Assert-TestDeployPathSafety -Path $stageRoot | Out-Null
             if ($AllowNonFixedPathForTests) {
                 Initialize-TestDeployDesignAssets -DeploymentPath $stageRoot -AllowNonFixedPathForTests | Out-Null
                 $removed = @(Remove-TestDeployAgentTooling -DeploymentPath $stageRoot -AllowNonFixedPathForTests)
@@ -663,6 +889,7 @@ function Invoke-TestDeployRebuild {
                 Initialize-TestDeployDesignAssets -DeploymentPath $stageRoot -TransactionForDeploymentPath $deployRoot | Out-Null
                 $removed = @(Remove-TestDeployAgentTooling -DeploymentPath $stageRoot -TransactionForDeploymentPath $deployRoot)
             }
+            Assert-TestDeployPathSafety -Path $stageRoot | Out-Null
 
             # Design PNGs are staged under the gitignored viewer public directory
             # before all root docs/tooling are removed. No service may be stopped
@@ -686,8 +913,9 @@ function Invoke-TestDeployRebuild {
                 }.GetNewClosure()
             }
             $deployZoneRunDir = Join-Path $deployRoot 'scripts\.run'
+            Assert-TestDeployPathComponentsSafety -Path $deployZoneRunDir | Out-Null
             $serviceStopFailures = New-Object 'System.Collections.Generic.List[string]'
-            foreach ($serviceName in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service')) {
+            foreach ($serviceName in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service', 'kit-manager-api')) {
                 try {
                     & $effectiveServiceStopper $serviceName $deployZoneRunDir | Out-Null
                 } catch {
@@ -700,9 +928,13 @@ function Invoke-TestDeployRebuild {
             }
 
             $liveMovedToPrevious = $false
+            Assert-TestDeployPathComponentsSafety -Path $deployRoot | Out-Null
+            Assert-TestDeployPathSafety -Path $stageRoot | Out-Null
+            Assert-TestDeployPathComponentsSafety -Path $previousRoot | Out-Null
             if (Test-Path -LiteralPath $deployRoot -PathType Container) {
                 [System.IO.Directory]::Move($deployRoot, $previousRoot)
                 $liveMovedToPrevious = $true
+                $previousPath = $previousRoot
             } elseif (Test-Path -LiteralPath $deployRoot) {
                 throw "deployment path is not a directory: $deployRoot"
             }
@@ -714,18 +946,46 @@ function Invoke-TestDeployRebuild {
                 if ($liveMovedToPrevious) {
                     try {
                         [System.IO.Directory]::Move($previousRoot, $deployRoot)
+                        $previousPath = ''
                     } catch {
-                        throw "$($cutoverError.Exception.Message)$([Environment]::NewLine)Additionally failed to restore previous live checkout: $($_.Exception.Message)"
+                        throw "$($cutoverError.Exception.Message)$([Environment]::NewLine)Additionally failed to restore previous live checkout from '$previousRoot' to '$deployRoot': $($_.Exception.Message)"
                     }
                 }
                 throw $cutoverError
             }
 
-            Write-Host "[rebuild-test-deploy] activated validated staged checkout: $deployRoot"
+            Write-TestDeployLifecycleLog -Message 'activated validated staged checkout' -Data @{
+                deployment_path = $deployRoot
+            }
+            if (-not [string]::IsNullOrWhiteSpace($previousPath)) {
+                Write-TestDeployLifecycleLog -Message 'retained previous checkout for recovery' -Data @{
+                    previous_path = $previousPath
+                }
+            }
+            try {
+                $restoredEnvFiles = @(Restore-TestDeployEnvSnapshot -DeploymentPath $deployRoot -Snapshot $envSnapshot)
+            } catch {
+                if (-not [string]::IsNullOrWhiteSpace($previousPath)) {
+                    throw "post-cutover environment restore failed; previous checkout retained at '$previousPath': $($_.Exception.Message)"
+                }
+                throw
+            }
         } catch {
             $stageError = $_
-            if (Test-Path -LiteralPath $stageRoot) {
-                Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
+            $stageMayExist = $false
+            try {
+                $stageMayExist = $null -ne (Get-Item -LiteralPath $stageRoot -Force -ErrorAction Stop)
+            } catch [System.Management.Automation.ItemNotFoundException] {
+                $stageMayExist = $false
+            } catch [System.IO.DirectoryNotFoundException] {
+                $stageMayExist = $false
+            } catch {
+                $stageMayExist = $true
+                Write-Warning "[rebuild-test-deploy] failed stage inspection was indeterminate; preserving allocated path: '$stageRoot' ($($_.Exception.Message))"
+            }
+            if ($stageMayExist) {
+                Write-Warning "[rebuild-test-deploy] failed_stage_path=$stageRoot; automatic recursive cleanup is disabled"
+                throw "$($stageError.Exception.Message)$([Environment]::NewLine)failed_stage_path=$stageRoot"
             }
             throw $stageError
         }
@@ -734,7 +994,9 @@ function Invoke-TestDeployRebuild {
             Write-Host "[rebuild-test-deploy] restored deployment env files count=$($restoredEnvFiles.Count): $($restoredEnvFiles -join ', ')"
         }
     } else {
-    # Existing-checkout rebuilds share the same lock as deploy/start adapters.
+    # Test-only in-place seam: production cannot reach this branch because it
+    # always requires staged replacement. Existing-checkout tests share the same
+    # lock as deploy/start adapters.
     # Acquire it before fetch/reset/clean and preserve every recovery path from
     # git clean. Release only after staging and root-doc cleanup are complete,
     # before deploy.ps1 reacquires the lock to validate the prestaged manifest.
@@ -776,7 +1038,7 @@ function Invoke-TestDeployRebuild {
                 }.GetNewClosure()
             }
             $deployZoneRunDir = Join-Path $deployRoot 'scripts\.run'
-            foreach ($serviceName in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service')) {
+            foreach ($serviceName in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service', 'kit-manager-api')) {
                 try {
                     & $effectiveServiceStopper $serviceName $deployZoneRunDir | Out-Null
                 } catch {
@@ -853,21 +1115,29 @@ function Invoke-TestDeployRebuild {
     }
     }
 
-    $edgeRuntimeContract = Resolve-TestDeployEdgeRuntimeContract
-    $processEnvBackup = Push-TestDeployProcessEnv -Contract $edgeRuntimeContract
-
     try {
-        if ($null -ne $DeployRunner) {
-            $deployResult = & $DeployRunner $deployRoot
-        } else {
-            $deployResult = Invoke-TestDeployScript -DeploymentRoot $deployRoot
+        $edgeRuntimeContract = Resolve-TestDeployEdgeRuntimeContract
+        $processEnvBackup = Push-TestDeployProcessEnv -Contract $edgeRuntimeContract
+
+        try {
+            if ($null -ne $DeployRunner) {
+                $deployResult = & $DeployRunner $deployRoot
+            } else {
+                $deployResult = Invoke-TestDeployScript -DeploymentRoot $deployRoot
+            }
+        } finally {
+            Restore-TestDeployProcessEnv -Backup $processEnvBackup
         }
-    } finally {
-        Restore-TestDeployProcessEnv -Backup $processEnvBackup
+    } catch {
+        if (-not [string]::IsNullOrWhiteSpace($previousPath)) {
+            throw "post-cutover deployment failed; previous checkout retained at '$previousPath': $($_.Exception.Message)"
+        }
+        throw
     }
 
     return [pscustomobject]@{
         DeploymentPath = $deployRoot
+        PreviousPath = $previousPath
         OriginMainCommit = $commit.Output.Trim()
         RemovedAgentToolingCount = @($removed).Count
         RestoredEnvFileCount = @($restoredEnvFiles).Count
