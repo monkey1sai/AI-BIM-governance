@@ -19,6 +19,7 @@
 
 import { defaultCoordinatorBase } from "./coordinatorBase";
 import type { ConversionQualityMetricsSummary } from "../types/review";
+import type { components as kitManagerComponents } from "../generated/kit-manager-api";
 
 const env = (import.meta as { env?: Record<string, string> }).env;
 
@@ -518,14 +519,13 @@ export interface ConversionRecord {
   updated_at: string;
 }
 
-export interface KitInstanceState {
-  instance_id: string;
-  status: string;
-  selected_artifact_ids: string[];
-  opened_runtime_uris: string[];
-  last_command: string | null;
-  control_status: string;
-}
+// C1 契約收斂（2026-07-21）：KitInstanceState 改由 kit-manager-api openapi 生成型別 alias
+// （generated/kit-manager-api.ts，再生成：cd web-viewer-sample && npm run generate:api-types）。
+// Drift 註記：openapi 契約僅標 instance_id/status 為 required（pydantic 有 default 的欄位不入
+// required），但後端序列化恆帶全部欄位——wire 上實際必存在，且既有消費端（pages.tsx 的
+// opened_runtime_uris.join 等）依賴必填語意。故以 Required<> 做最小 local 收緊，
+// 不改前端行為；欄位名稱與型別仍完全由生成契約供給。
+export type KitInstanceState = Required<kitManagerComponents["schemas"]["KitInstanceState"]>;
 
 // Task 5 MinIO 閉環 Phase 1：GET /api/minio/objects 回應中的物件形狀。
 // 對齊後端 MinioObjectView（key/etag/role/project_id/project_display_name/category/version）。
