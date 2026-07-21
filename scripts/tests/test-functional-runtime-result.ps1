@@ -138,6 +138,16 @@ try {
     if (-not $workflow.Contains('artifacts/e2e/hifi-token-authority/')) {
         throw 'CI must upload the Hi-Fi runtime screenshots in the head-SHA-bound functional/runtime artifact.'
     }
+    $hifiSpec = Get-Content -LiteralPath (Join-Path $repoRoot 'web-viewer-sample/e2e/hifi-token-authority.spec.ts') -Raw
+    if ($hifiSpec -notmatch 'path\.join\(repoRoot,\s*"artifacts",\s*"e2e",\s*"_output",\s*"hifi-token-authority"\)') {
+        throw 'Hi-Fi runtime actual screenshots must be written below artifacts/e2e/_output instead of overwriting tracked baselines.'
+    }
+    if ($hifiSpec -notmatch 'pixelmatch\(' -or $hifiSpec -notmatch 'maxDiffPixelRatio\s*=\s*0\.01') {
+        throw 'Hi-Fi runtime screenshots must enforce the 1% pixel-diff contract against tracked baselines.'
+    }
+    if ([regex]::Matches($hifiSpec, 'page\.screenshot\(').Count -ne 1) {
+        throw 'Hi-Fi runtime screenshots must use one comparison helper; direct per-test writes can mutate tracked baselines.'
+    }
 
     Write-Host '[test-functional-runtime-result] passed — positive evidence plus skip/route/runtime/state/hash/Kit negative cases'
 } finally {
