@@ -168,6 +168,7 @@ try {
     Assert-True ($localPreflight -match 'baseRefOid,headRefOid') 'local preflight resolves the selected PR base/head commits'
     Assert-True ($localPreflight -match 'localHead -ne \$headSha') 'local preflight rejects a checkout that is not the selected PR head'
     Assert-True (-not ($localPreflight -match "-BaseSha',\s*'origin/main'|-HeadSha',\s*'HEAD'")) 'local preflight does not mix selected PR evidence with ambient origin/main or HEAD'
+    Assert-True ($localPreflight -match "(?s)\`$visualResultArguments\s*=\s*@\(.*?'-RequiredScreenIds'.*?\)\s*\+\s*@\(\`$designScope\.required_screen_ids") 'local preflight flattens required screen IDs into distinct pwsh arguments'
     Assert-True ($localPreflight -match 'if \(\$hasFrontendPaths -and -not \$SkipViewerVerify -and \$hasKitManagerPaths\)') 'local preflight builds Kit Manager on both default and SkipReviewAgent paths'
     Assert-True (-not ($prReviewWorkflow -match 'gitnexus@1\.6\.5')) 'PR review workflow does not install GitNexus in CI'
     Assert-True (-not ($prReviewWorkflow -match 'gitnexus analyze --index-only')) 'PR review workflow does not build a GitNexus index in CI'

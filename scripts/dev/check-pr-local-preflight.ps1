@@ -162,7 +162,7 @@ try {
         } finally {
             Pop-Location
         }
-        Invoke-External -FilePath 'pwsh' -Arguments @(
+        $visualResultArguments = @(
             '-NoProfile',
             '-NonInteractive',
             '-File',
@@ -171,12 +171,13 @@ try {
             $repoRootPath,
             '-ResultPath',
             (Join-Path $repoRootPath 'artifacts\e2e\design-system-visual-result.json'),
-            '-RequiredScreenIds',
-            @($designScope.required_screen_ids),
+            '-RequiredScreenIds'
+        ) + @($designScope.required_screen_ids | ForEach-Object { [string]$_ }) + @(
             '-TargetCommit',
             $headSha,
             '-AllowUntrackedArtifacts'
-        ) -FailureMessage 'design-system visual result validation failed.'
+        )
+        Invoke-External -FilePath 'pwsh' -Arguments $visualResultArguments -FailureMessage 'design-system visual result validation failed.'
     }
     if ($hasFrontendPaths -and -not $SkipViewerVerify -and $SkipReviewAgent) {
         Write-Host '[local-pr-preflight] frontend paths detected; running web-viewer-sample npm run verify'
