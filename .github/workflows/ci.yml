@@ -413,6 +413,11 @@ jobs:
           E2E_DISABLE_WEBSERVER: '1'
         run: npx playwright test e2e/hifi-token-authority.spec.ts --config=playwright.config.ts
 
+      - name: Verify runtime command authority browser slice
+        shell: pwsh
+        working-directory: web-viewer-sample
+        run: npx playwright test e2e/runtime-command-authority.spec.ts --config=playwright.config.ts
+
       - name: Validate functional/runtime evidence binding
         shell: pwsh
         run: >-

@@ -29,7 +29,7 @@ import { buildAuthorizedOpenStageRequest, buildClearHighlightRequest, buildFocus
 import { demoPrimPath } from "./clients/demoDefaults";
 import { allowedCoordinatorOrigins, reviewEnv } from "./config/env";
 import { canHandleHighlight, failedElementsForEmbed, shouldAcceptParentMessage } from "./parentMessageGuard";
-import { harnessEnabled } from "./harness/harnessConfig";
+import { harnessAuthorityRequired, harnessEnabled } from "./harness/harnessConfig";
 import { HARNESS_STAGE_URL } from "./harness/fixtures/usdStageTree";
 import { computeFileReady, computeRuntimeReady, computeSemanticReady } from "./utils/triReady";
 import type { DemoLogEntry } from "./types/demo";
@@ -119,6 +119,7 @@ interface AppState {
     loadedStageUrl: string | null;
     stageLoadStatus: "unproven" | "pending" | "matched" | "mismatch" | "disconnected";
     runtimeCommandRejection: RuntimeCommandRejection | null;
+    runtimeCommandLifecycles: RuntimeCommandLifecycle[];
     webrtcLifecycleStatus: "initializing" | "started" | "stopped" | "terminated" | "failed";
     activeStreamEndpoint: StreamEndpoint;
     streamMountKey: number;
@@ -145,6 +146,25 @@ const runtimeMutatingEvents = new Set([
     "selectPrimsRequest",
     "makePrimsPickable",
     "resetStage",
+]);
+
+const runtimeResponseRequestTypes = new Map<string, ReadonlySet<string>>([
+    ["openedStageResult", new Set(["openStageRequest", "loadArtifactGroupRequest"])],
+    ["loadArtifactGroupResult", new Set(["loadArtifactGroupRequest", "composeStageRequest"])],
+    ["bindingApplied", new Set(["loadArtifactGroupRequest", "composeStageRequest"])],
+    ["highlightPrimsResult", new Set(["highlightPrimsRequest"])],
+    ["focusPrimResult", new Set(["focusPrimRequest"])],
+    ["clearHighlightResult", new Set(["clearHighlightRequest"])],
+    ["selectPrimsResult", new Set(["selectPrimsRequest"])],
+    ["makePrimsPickableResponse", new Set(["makePrimsPickable"])],
+    ["resetStageResponse", new Set(["resetStage"])],
+]);
+
+const simpleRuntimeTerminalEvents = new Set([
+    "clearHighlightResult",
+    "selectPrimsResult",
+    "makePrimsPickableResponse",
+    "resetStageResponse",
 ]);
 
 interface AppStreamEventType {
@@ -180,6 +200,28 @@ interface RuntimeCommandRejection {
     runtime_state: "unchanged" | "changed_unconfirmed";
     detail_code?: string;
     binding_revision_id?: string;
+}
+
+type RuntimeCommandPhase = "pending" | "executing" | "terminal";
+type RuntimeCommandOutcome = "success" | "rejected" | "error";
+
+interface RuntimeCommandLifecycle {
+    request_id: string;
+    event_type: string;
+    phases: RuntimeCommandPhase[];
+    outcome?: RuntimeCommandOutcome;
+}
+
+interface RuntimeCommandContext {
+    eventType: string;
+    bindingRevisionId?: string;
+    stageUrl?: string;
+}
+
+interface RuntimeCommandCorrelation {
+    requestId: string;
+    context?: RuntimeCommandContext;
+    disposition: "matched" | "untracked" | "uncorrelated" | "duplicate" | "mismatch";
 }
 
 interface StageBindingArtifact {
@@ -454,7 +496,8 @@ export default class App extends React.Component<AppProps, AppState> {
     private pendingMappingHighlightRequestId: string | null = null;
     private pendingMappingFocusRequestId: string | null = null;
     private pendingMappingPrimPath: string | null = null;
-    private runtimeCommandContexts = new Map<string, { eventType: string; bindingRevisionId?: string; stageUrl?: string }>();
+    private runtimeCommandContexts = new Map<string, RuntimeCommandContext>();
+    private runtimeCommandTerminalClaims = new Map<string, { eventType: string; outcome: RuntimeCommandOutcome }>();
     private stageProofBlockedRevision: string | null = null;
     private unprovenStageUrl: string | null = null;
     private stageProofBlockGeneration = 0;
@@ -509,6 +552,7 @@ export default class App extends React.Component<AppProps, AppState> {
             loadedStageUrl: null,
             stageLoadStatus: "unproven",
             runtimeCommandRejection: null,
+            runtimeCommandLifecycles: [],
             webrtcLifecycleStatus: "initializing",
             isLoading: true,
             activeStreamEndpoint,
@@ -566,6 +610,93 @@ export default class App extends React.Component<AppProps, AppState> {
         }));
     }
 
+    private _recordRuntimeCommandPhase(
+        requestId: string,
+        eventType: string,
+        phase: RuntimeCommandPhase,
+        outcome?: RuntimeCommandOutcome,
+    ): void {
+        if (!requestId || !eventType) return;
+        this.setState((state) => {
+            const current = state.runtimeCommandLifecycles.find((entry) => entry.request_id === requestId);
+            // A request has one terminal outcome. Late or duplicate protocol
+            // events remain observable elsewhere but cannot rewrite UI truth.
+            if (current?.phases.includes("terminal")) return null;
+            const phases = current ? [...current.phases] : [];
+            if (phases[phases.length - 1] !== phase) phases.push(phase);
+            const next: RuntimeCommandLifecycle = {
+                request_id: requestId,
+                event_type: current?.event_type || eventType,
+                phases,
+                ...(outcome ? { outcome } : current?.outcome ? { outcome: current.outcome } : {}),
+            };
+            return {
+                runtimeCommandLifecycles: [
+                    next,
+                    ...state.runtimeCommandLifecycles.filter((entry) => entry.request_id !== requestId),
+                ].slice(0, 12),
+            };
+        });
+    }
+
+    private _correlateRuntimeCommandEvent(
+        responseEventType: string,
+        payload: Record<string, unknown>,
+    ): RuntimeCommandCorrelation {
+        const requestId = getPayloadString(payload, "request_id");
+        if (!requestId) return { requestId, disposition: "uncorrelated" };
+        if (this.runtimeCommandTerminalClaims.has(requestId)) {
+            return { requestId, disposition: "duplicate" };
+        }
+        const context = requestId ? this.runtimeCommandContexts.get(requestId) : undefined;
+        if (!context) return { requestId, disposition: "untracked" };
+
+        const allowedRequests = runtimeResponseRequestTypes.get(responseEventType);
+        if (!allowedRequests?.has(context.eventType)) {
+            this._appendReviewEvent(`忽略 ${responseEventType}：terminal 與 ${context.eventType} 不相符`);
+            return { requestId, context, disposition: "mismatch" };
+        }
+        return { requestId, context, disposition: "matched" };
+    }
+
+    private _claimRuntimeCommandTerminal(
+        requestId: string,
+        eventType: string,
+        outcome: RuntimeCommandOutcome,
+    ): boolean {
+        if (!requestId || this.runtimeCommandTerminalClaims.has(requestId)) return false;
+        this.runtimeCommandTerminalClaims.set(requestId, { eventType, outcome });
+        while (this.runtimeCommandTerminalClaims.size > 128) {
+            const oldest = this.runtimeCommandTerminalClaims.keys().next().value as string | undefined;
+            if (!oldest) break;
+            this.runtimeCommandTerminalClaims.delete(oldest);
+        }
+        this._recordRuntimeCommandPhase(requestId, eventType, "terminal", outcome);
+        this.runtimeCommandContexts.delete(requestId);
+        return true;
+    }
+
+    private _completeRuntimeCommandEvent(
+        responseEventType: string,
+        payload: Record<string, unknown>,
+        outcome: RuntimeCommandOutcome,
+    ): RuntimeCommandCorrelation {
+        const correlation = this._correlateRuntimeCommandEvent(responseEventType, payload);
+        if (
+            correlation.disposition !== "duplicate"
+            && correlation.disposition !== "mismatch"
+            && correlation.requestId
+        ) {
+            const eventType = correlation.context?.eventType
+                || runtimeResponseRequestTypes.get(responseEventType)?.values().next().value
+                || responseEventType;
+            if (!this._claimRuntimeCommandTerminal(correlation.requestId, eventType, outcome)) {
+                return { ...correlation, disposition: "duplicate" };
+            }
+        }
+        return correlation;
+    }
+
     private _runtimeMutatorBlockReason(eventType: string): string | null {
         if (!isRuntimeMutator(eventType)) return null;
         if (this.stageProofBlockedRevision) return "stage binding proof resync required";
@@ -586,7 +717,7 @@ export default class App extends React.Component<AppProps, AppState> {
         // 「在 3D 高亮失敗構件」的核心路徑）——embedded 端無 lease 亦不送 mutating（與 standalone 一致，非漏網）；
         // 實務上 ReviewSessionViewerPane 先推 viewer_lease_token 再 enable 高亮鈕，故有 lease 才送。回歸證據見
         // windowParentMessage.dom.test.tsx「VG-01 postMessage 橋真穿越 lease 閘門至 AppStream.sendMessage」。
-        if (!harnessEnabled() && (!this.state.reviewSessionId || !reviewEnv.viewerLeaseToken)) {
+        if ((!harnessEnabled() || harnessAuthorityRequired()) && (!this.state.reviewSessionId || !reviewEnv.viewerLeaseToken)) {
             return "primary viewer lease token required";
         }
         return null;
@@ -618,10 +749,15 @@ export default class App extends React.Component<AppProps, AppState> {
             return;
         }
         const outgoing = this._withRuntimeAuthority(message);
+        let runtimeRequestId = "";
         if (isRuntimeMutator(outgoing.event_type) && isRecord(outgoing.payload)) {
-            this.setState({ runtimeCommandRejection: null });
             const requestId = getPayloadString(outgoing.payload, "request_id");
             if (requestId) {
+                if (this.runtimeCommandTerminalClaims.has(requestId) || this.runtimeCommandContexts.has(requestId)) {
+                    this._appendReviewEvent(`略過 ${outgoing.event_type}：request_id 已使用`);
+                    return;
+                }
+                runtimeRequestId = requestId;
                 const bindingRevisionId = getPayloadString(outgoing.payload, "binding_revision_id");
                 const stageUrl = getPayloadString(outgoing.payload, "url");
                 this.runtimeCommandContexts.set(requestId, {
@@ -634,7 +770,9 @@ export default class App extends React.Component<AppProps, AppState> {
                     if (!oldest) break;
                     this.runtimeCommandContexts.delete(oldest);
                 }
+                this._recordRuntimeCommandPhase(requestId, outgoing.event_type, "pending");
             }
+            this.setState({ runtimeCommandRejection: null });
         }
         void AppStream.sendMessage(outgoing)
             .then((result) => {
@@ -645,6 +783,9 @@ export default class App extends React.Component<AppProps, AppState> {
             })
             .catch(() => {
                 const diagnostic = "stream_transport_error";
+                if (runtimeRequestId) {
+                    if (!this._claimRuntimeCommandTerminal(runtimeRequestId, outgoing.event_type, "error")) return;
+                }
                 this._appendReviewEvent(`${outgoing.event_type} failed: ${diagnostic}`);
                 if (outgoing.event_type === "openStageRequest") {
                     this._failStageLoad("模型載入失敗", [`目標：${this.pendingStageUrl || "unknown"}`, `錯誤：${diagnostic}`].join("\n"));
@@ -2446,14 +2587,35 @@ export default class App extends React.Component<AppProps, AppState> {
                 this._appendReviewEvent("忽略 malformed commandRejected");
                 return;
             }
+            const context = parsed.request_id
+                ? this.runtimeCommandContexts.get(parsed.request_id)
+                : undefined;
+            if (parsed.request_id && this.runtimeCommandTerminalClaims.has(parsed.request_id)) {
+                this._appendReviewEvent("忽略 duplicate commandRejected terminal");
+                return;
+            }
+            if (context && context.eventType !== parsed.rejected_event_type) {
+                this._appendReviewEvent("忽略 commandRejected：rejected event 與 request context 不相符");
+                return;
+            }
+            if (parsed.request_id) {
+                if (!this._claimRuntimeCommandTerminal(
+                    parsed.request_id,
+                    context?.eventType || parsed.rejected_event_type,
+                    "rejected",
+                )) return;
+            } else {
+                this._recordRuntimeCommandPhase(
+                    parsed.rejection_id || "",
+                    parsed.rejected_event_type,
+                    "terminal",
+                    "rejected",
+                );
+            }
             this._appendDemoIncoming("commandRejected", {
                 event_type: "commandRejected",
                 payload: parsed,
             });
-            const context = parsed.request_id
-                ? this.runtimeCommandContexts.get(parsed.request_id)
-                : undefined;
-            if (parsed.request_id) this.runtimeCommandContexts.delete(parsed.request_id);
             const rejection: RuntimeCommandRejection = {
                 ...parsed,
                 ...(context?.bindingRevisionId
@@ -2512,11 +2674,15 @@ export default class App extends React.Component<AppProps, AppState> {
 
         // response received once a USD asset is fully loaded
         if (event.event_type === "openedStageResult") {
+            const correlation = this._completeRuntimeCommandEvent(
+                "openedStageResult",
+                payload,
+                payload.result === "success" ? "success" : "error",
+            );
+            if (correlation.disposition === "duplicate" || correlation.disposition === "mismatch") return;
             if (payload.result === "success") {
                 const loadedUrl = getPayloadString(payload, "url");
                 const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
-                const requestId = getPayloadString(payload, "request_id");
-                if (requestId) this.runtimeCommandContexts.delete(requestId);
                 if (this.stageProofBlockedRevision) {
                     if (
                         bindingRevisionId === this.stageProofBlockedRevision
@@ -2631,6 +2797,21 @@ export default class App extends React.Component<AppProps, AppState> {
         else if (event.event_type === "loadArtifactGroupResult") {
             const result = getPayloadString(payload, "result") || "unknown";
             const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
+            const requestId = getPayloadString(payload, "request_id");
+            const correlation = result === "error"
+                ? this._completeRuntimeCommandEvent("loadArtifactGroupResult", payload, "error")
+                : this._correlateRuntimeCommandEvent("loadArtifactGroupResult", payload);
+            if (correlation.disposition === "duplicate" || correlation.disposition === "mismatch") return;
+            const context = correlation.context;
+            if (requestId && context) {
+                if (result === "accepted") {
+                    this._recordRuntimeCommandPhase(
+                        requestId,
+                        context.eventType,
+                        "executing",
+                    );
+                }
+            }
             if (result === "error" && bindingRevisionId) {
                 this.setState({
                     govBindingApplyState: {
@@ -2758,6 +2939,12 @@ export default class App extends React.Component<AppProps, AppState> {
             const missingPaths = getPayloadStringArray(payload, "missing_paths");
             const fallbackPaths = getPayloadObjectArray(payload, "fallback_paths");
             const requestId = getPayloadString(payload, "request_id");
+            const correlation = this._completeRuntimeCommandEvent(
+                "highlightPrimsResult",
+                payload,
+                result === "success" ? "success" : "error",
+            );
+            if (correlation.disposition === "duplicate" || correlation.disposition === "mismatch") return;
             const nextState: Partial<AppState> = {
                 reviewEvents: [...this.state.reviewEvents, `高亮結果：${result}`],
             };
@@ -2798,6 +2985,12 @@ export default class App extends React.Component<AppProps, AppState> {
         else if (event.event_type === "focusPrimResult") {
             const result = getPayloadString(payload, "result") || "unknown";
             const requestId = getPayloadString(payload, "request_id");
+            const correlation = this._completeRuntimeCommandEvent(
+                "focusPrimResult",
+                payload,
+                result === "success" ? "success" : "error",
+            );
+            if (correlation.disposition === "duplicate" || correlation.disposition === "mismatch") return;
             const nextState: Partial<AppState> = {
                 reviewEvents: [...this.state.reviewEvents, `聚焦結果：${result}`],
             };
@@ -2817,6 +3010,17 @@ export default class App extends React.Component<AppProps, AppState> {
             }
 
             this.setState(nextState as Pick<AppState, keyof AppState>);
+        }
+
+        else if (event.event_type && simpleRuntimeTerminalEvents.has(event.event_type)) {
+            const result = getPayloadString(payload, "result") || "unknown";
+            const correlation = this._completeRuntimeCommandEvent(
+                event.event_type,
+                payload,
+                result === "success" ? "success" : "error",
+            );
+            if (correlation.disposition === "duplicate" || correlation.disposition === "mismatch") return;
+            this._appendReviewEvent(`${event.event_type}：${result}`);
         }
             
         // Notification from Kit about user changing the selection via the viewport.
@@ -2865,6 +3069,8 @@ export default class App extends React.Component<AppProps, AppState> {
         // CH-F：Kit 確認 binding 已套用 → 更新 active + last-good revision（交易完成；誠實：只有確認才宣告 applied）。
         else if (event.event_type === "bindingApplied") {
             const revision = getPayloadString(payload, "binding_revision_id");
+            const correlation = this._completeRuntimeCommandEvent("bindingApplied", payload, "success");
+            if (correlation.disposition === "duplicate" || correlation.disposition === "mismatch") return;
             if (revision) {
                 if (this.stageProofBlockedRevision) {
                     this._appendReviewEvent("忽略未經 authenticated status resync 的 late bindingApplied");
@@ -3180,6 +3386,28 @@ export default class App extends React.Component<AppProps, AppState> {
                             ? this.state.demoOutgoingMessages.map((m) => m.label).join(", ")
                             : "（尚無 DataChannel 送出紀錄）"}
                     </p>
+                )}
+
+                {(harnessEnabled() || Boolean(this.state.reviewSessionId))
+                    && this.state.runtimeCommandLifecycles.length > 0
+                    && (
+                    <ol
+                        className="ec-note"
+                        data-testid="runtime-command-lifecycle"
+                        aria-label="runtime command lifecycle"
+                        aria-live="polite"
+                    >
+                        {this.state.runtimeCommandLifecycles.map((entry) => (
+                            <li
+                                key={entry.request_id}
+                                data-testid="runtime-command-lifecycle-entry"
+                                data-request-id={entry.request_id}
+                            >
+                                {entry.event_type}: {entry.phases.join(" → ")}
+                                {entry.outcome ? ` (${entry.outcome})` : ""}
+                            </li>
+                        ))}
+                    </ol>
                 )}
 
                 {/* 統一治理控制台 MVP：A1–A10 治理面板只在「問題 · 治理」分頁渲染，

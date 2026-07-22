@@ -2,7 +2,7 @@
 // 兩條回應通道對齊 Window.tsx：
 //   1) sendMessage 的 Promise 結果 → appStreamResultToAppEvent 只認 openStageRequest /
 //      loadingStateQuery / getChildrenRequest 三型（其餘回 null）。
-//   2) 非同步 Kit 通知（focusPrimResult / highlightPrimsResult / stageSelectionChanged /
+//   2) 非同步 Kit 通知（各 mutator correlated terminal、stageSelectionChanged /
 //      updateProgressActivity 等）走 onCustomEvent。
 // 本檔為純函式，不碰 DOM / transport，便於單元測試鎖定保真度。
 import type { StreamMessage } from "../types/streamMessages";
@@ -166,10 +166,21 @@ export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState
       const requestId = str(payload, "request_id");
       return {
         result: null,
-        asyncEvents: [{
-          event_type: "stageSelectionChanged",
-          payload: { prims, ...(requestId ? { request_id: requestId } : {}) },
-        }],
+        asyncEvents: [
+          {
+            event_type: "selectPrimsResult",
+            payload: {
+              result: "success",
+              error: "",
+              selected_paths: prims,
+              ...(requestId ? { request_id: requestId } : {}),
+            },
+          },
+          {
+            event_type: "stageSelectionChanged",
+            payload: { prims },
+          },
+        ],
       };
     }
 
@@ -180,27 +191,95 @@ export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState
       if (revision) kit.bindingRevisionId = revision;
       return {
         result: { status: "success", ...(requestId ? { request_id: requestId } : {}) },
+        asyncEvents: [
+          {
+            event_type: "loadArtifactGroupResult",
+            payload: {
+              result: "accepted",
+              binding_revision_id: kit.bindingRevisionId ?? "",
+              ...(requestId ? { request_id: requestId } : {}),
+            },
+          },
+          {
+            event_type: "bindingApplied",
+            payload: {
+              binding_revision_id: kit.bindingRevisionId ?? "",
+              ...(requestId ? { request_id: requestId } : {}),
+            },
+          },
+        ],
+      };
+    }
+
+    case "clearHighlightRequest": {
+      const requestId = str(payload, "request_id");
+      return {
+        result: null,
         asyncEvents: [{
-          event_type: "bindingApplied",
+          event_type: "clearHighlightResult",
           payload: {
-            binding_revision_id: kit.bindingRevisionId ?? "",
+            result: "success",
+            applied_mode: "selection",
             ...(requestId ? { request_id: requestId } : {}),
           },
         }],
       };
     }
 
-    case "clearHighlightRequest":
-    case "makePrimsPickable":
-    case "loadArtifactGroupRequest":
-    case "resetStage":
+    case "makePrimsPickable": {
+      const requestId = str(payload, "request_id");
       return {
-        result: {
-          status: "success",
-          ...(str(payload, "request_id") ? { request_id: str(payload, "request_id") } : {}),
-        },
-        asyncEvents: [],
+        result: null,
+        asyncEvents: [{
+          event_type: "makePrimsPickableResponse",
+          payload: { result: "success", error: "", ...(requestId ? { request_id: requestId } : {}) },
+        }],
       };
+    }
+
+    case "resetStage": {
+      const requestId = str(payload, "request_id");
+      return {
+        result: null,
+        asyncEvents: [{
+          event_type: "resetStageResponse",
+          payload: { result: "success", error: "", ...(requestId ? { request_id: requestId } : {}) },
+        }],
+      };
+    }
+
+    case "loadArtifactGroupRequest": {
+      const requestId = str(payload, "request_id");
+      const bindingRevisionId = str(payload, "binding_revision_id");
+      const composition = asRecord(payload.stage_composition);
+      const primary = asRecord(composition.primary);
+      const url = str(primary, "usdc_url") || str(payload, "url") || HARNESS_STAGE_URL;
+      kit.currentStageUrl = url;
+      if (bindingRevisionId) kit.bindingRevisionId = bindingRevisionId;
+      return {
+        result: null,
+        asyncEvents: [
+          {
+            event_type: "loadArtifactGroupResult",
+            payload: {
+              result: "accepted",
+              ...(requestId ? { request_id: requestId } : {}),
+              ...(bindingRevisionId ? { binding_revision_id: bindingRevisionId } : {}),
+            },
+          },
+          {
+            event_type: "openedStageResult",
+            payload: {
+              result: "success",
+              url,
+              error: "",
+              ...(requestId ? { request_id: requestId } : {}),
+              ...(bindingRevisionId ? { binding_revision_id: bindingRevisionId } : {}),
+            },
+          },
+        ],
+      };
+    }
 
     default:
       return { result: null, asyncEvents: [] };

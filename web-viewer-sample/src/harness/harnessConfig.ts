@@ -17,8 +17,22 @@ function devQueryEnabled(): boolean {
   return value === "1" || value === "true";
 }
 
+function devAuthorityQueryEnabled(): boolean {
+  if (!import.meta.env.DEV) return false;
+  if (typeof window === "undefined" || !window.location) return false;
+  const value = new URLSearchParams(window.location.search).get("harnessAuthority");
+  return value === "1" || value === "true";
+}
+
 export function harnessEnabled(): boolean {
   return resolveHarnessEnabled(buildFlagEnabled(), import.meta.env.DEV, devQueryEnabled());
+}
+
+// Controlled browser evidence needs the embedded harness to exercise the
+// production-shaped late-authority gate. This seam is dev-query-only and is
+// inert unless the deterministic harness itself is already enabled.
+export function harnessAuthorityRequired(): boolean {
+  return resolveHarnessAuthorityRequired(harnessEnabled(), import.meta.env.DEV, devAuthorityQueryEnabled());
 }
 
 export function resolveHarnessEnabled(
@@ -27,4 +41,12 @@ export function resolveHarnessEnabled(
   queryFlag: boolean,
 ): boolean {
   return buildFlag || (devMode && queryFlag);
+}
+
+export function resolveHarnessAuthorityRequired(
+  enabled: boolean,
+  devMode: boolean,
+  queryFlag: boolean,
+): boolean {
+  return enabled && devMode && queryFlag;
 }

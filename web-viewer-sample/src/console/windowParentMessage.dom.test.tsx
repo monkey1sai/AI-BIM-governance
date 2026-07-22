@@ -447,12 +447,21 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       runtime_state: "unchanged",
       detail_code: "authority_unavailable",
     });
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual([
+      expect.objectContaining({
+        request_id: "req_outage_001",
+        event_type: "focusPrimRequest",
+        phases: ["terminal"],
+        outcome: "rejected",
+      }),
+    ]);
     const html = renderToString(internals(app).render());
     expect(html).toContain('data-testid="runtime-command-rejection"');
     expect(html).toContain('data-testid="runtime-authority-unavailable"');
     expect(html).toContain('aria-live="assertive"');
     expect(html).toContain("可重試");
     expect(html).toContain("操作授權服務暫時不可用");
+    expect(html).toContain('data-testid="runtime-command-lifecycle"');
     expect(JSON.stringify(internals(app).state)).not.toContain(secretSentinel);
     expect(JSON.stringify(logSpy.mock.calls)).not.toContain(secretSentinel);
     expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(secretSentinel);
@@ -481,6 +490,256 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       },
     });
     expect(internals(app).state.runtimeCommandRejection).toMatchObject({ request_id: "req_outage_001" });
+  });
+
+  it("accepted 是 executing 非 terminal；bindingApplied 才完成 lifecycle", () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+
+    internals(app)._sendStreamMessage({
+      event_type: "composeStageRequest",
+      payload: {
+        request_id: "req_lifecycle_001",
+        binding_revision_id: "rev_lifecycle_001",
+      },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "loadArtifactGroupResult",
+      payload: {
+        result: "accepted",
+        request_id: "req_lifecycle_001",
+        binding_revision_id: "rev_lifecycle_001",
+      },
+    });
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual([
+      expect.objectContaining({
+        request_id: "req_lifecycle_001",
+        phases: ["pending", "executing"],
+      }),
+    ]);
+
+    internals(app)._handleCustomEvent({
+      event_type: "bindingApplied",
+      payload: {
+        request_id: "req_lifecycle_001",
+        binding_revision_id: "rev_lifecycle_001",
+      },
+    });
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual([
+      expect.objectContaining({
+        request_id: "req_lifecycle_001",
+        event_type: "composeStageRequest",
+        phases: ["pending", "executing", "terminal"],
+        outcome: "success",
+      }),
+    ]);
+  });
+
+  it.each([
+    ["clearHighlightRequest", "clearHighlightResult"],
+    ["selectPrimsRequest", "selectPrimsResult"],
+    ["makePrimsPickable", "makePrimsPickableResponse"],
+    ["resetStage", "resetStageResponse"],
+  ])("%s 只由 correlated %s 收斂為 terminal", (requestEventType, terminalEventType) => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+    const requestId = `req_${requestEventType}`;
+
+    internals(app)._sendStreamMessage({ event_type: requestEventType, payload: { request_id: requestId } });
+    internals(app)._handleCustomEvent({
+      event_type: terminalEventType,
+      payload: { result: "success", request_id: requestId },
+    });
+
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual([
+      expect.objectContaining({
+        request_id: requestId,
+        event_type: requestEventType,
+        phases: ["pending", "terminal"],
+        outcome: "success",
+      }),
+    ]);
+  });
+
+  it("不相符的 terminal event 不得完成另一型 request", () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+
+    internals(app)._sendStreamMessage({
+      event_type: "clearHighlightRequest",
+      payload: { request_id: "req_wrong_terminal_001" },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "selectPrimsResult",
+      payload: { result: "success", request_id: "req_wrong_terminal_001" },
+    });
+
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual([
+      expect.objectContaining({
+        request_id: "req_wrong_terminal_001",
+        phases: ["pending"],
+      }),
+    ]);
+  });
+
+  it("changed_unconfirmed rejection 是 first terminal；late opened/binding success 不得覆寫", () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    reviewEnv.userToken = "local_user_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => new Promise(() => {})));
+
+    internals(app)._sendStreamMessage({
+      event_type: "composeStageRequest",
+      payload: {
+        request_id: "req_first_terminal_001",
+        binding_revision_id: "rev_first_terminal_001",
+      },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "composeStageRequest",
+        reason: "lease_invalid",
+        request_id: "req_first_terminal_001",
+        retryable: true,
+        runtime_state: "changed_unconfirmed",
+      },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "bindingApplied",
+      payload: {
+        request_id: "req_first_terminal_001",
+        binding_revision_id: "rev_first_terminal_001",
+      },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_first_terminal_001",
+        binding_revision_id: "rev_first_terminal_001",
+        url: "stage://late-success.usdc",
+      },
+    });
+
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual([
+      expect.objectContaining({
+        request_id: "req_first_terminal_001",
+        phases: ["pending", "terminal"],
+        outcome: "rejected",
+      }),
+    ]);
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+  });
+
+  it("unchanged rejection 後的同 request late open success 不得套用 stage side effects", () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: "stage://first-terminal.usdc",
+      loadedStageUrl: null,
+      stageLoadStatus: "pending",
+      selectedUSDAsset: { name: "first-terminal", url: "stage://first-terminal.usdc" },
+    };
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+
+    internals(app)._sendStreamMessage({
+      event_type: "openStageRequest",
+      payload: { request_id: "req_rejected_then_open_001", url: "stage://first-terminal.usdc" },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "openStageRequest",
+        reason: "lease_invalid",
+        request_id: "req_rejected_then_open_001",
+        retryable: false,
+        runtime_state: "unchanged",
+      },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_rejected_then_open_001",
+        url: "stage://first-terminal.usdc",
+      },
+    });
+
+    expect(internals(app).state.runtimeCommandRejection).toMatchObject({
+      request_id: "req_rejected_then_open_001",
+    });
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.stageLoadStatus).not.toBe("matched");
+  });
+
+  it("open success 後的同 request late changed_unconfirmed rejection 不得重新封鎖", () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: "stage://success-first.usdc",
+      loadedStageUrl: null,
+      stageLoadStatus: "pending",
+      selectedUSDAsset: { name: "success-first", url: "stage://success-first.usdc" },
+    };
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+
+    internals(app)._sendStreamMessage({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_open_then_reject_001",
+        binding_revision_id: "rev_success_first_001",
+        url: "stage://success-first.usdc",
+      },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_open_then_reject_001",
+        binding_revision_id: "rev_success_first_001",
+        url: "stage://success-first.usdc",
+      },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "openStageRequest",
+        reason: "lease_invalid",
+        request_id: "req_open_then_reject_001",
+        retryable: true,
+        runtime_state: "changed_unconfirmed",
+      },
+    });
+
+    expect(internals(app).state.runtimeCommandRejection).toBeNull();
+    expect(internals(app).state.loadedStageUrl).toBe("stage://success-first.usdc");
+    expect(internals(app).state.stageLoadStatus).toBe("matched");
+    internals(app)._sendStreamMessage({
+      event_type: "focusPrimRequest",
+      payload: { request_id: "req_after_terminal_001", prim_path: "/World/Allowed" },
+    });
+    expect(sendSpy.mock.calls.filter(
+      ([message]) => (message as { event_type?: string }).event_type === "focusPrimRequest",
+    )).toHaveLength(1);
   });
 
   it("changed_unconfirmed 先阻擋所有 mutator/handoff，只有同 revision authenticated status 才恢復", async () => {
@@ -543,6 +802,13 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     });
     await flushMicrotasks();
 
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual([
+      expect.objectContaining({
+        request_id: "req_changed_001",
+        phases: ["pending", "terminal"],
+        outcome: "rejected",
+      }),
+    ]);
     expect(internals(app).state.stageLoadStatus).toBe("unproven");
     expect(internals(app).state.loadedStageUrl).toBeNull();
     expect(parent.postMessage.mock.calls.map((call) => call[0])).toContainEqual(expect.objectContaining({

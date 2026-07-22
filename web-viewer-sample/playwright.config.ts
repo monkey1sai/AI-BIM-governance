@@ -1,26 +1,52 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const viewerPortInput = process.env.E2E_VIEWER_PORT || "5180";
+if (!/^\d+$/.test(viewerPortInput)) {
+  throw new Error("E2E_VIEWER_PORT must be an integer from 1 through 65535");
+}
+const viewerPortNumber = Number(viewerPortInput);
+if (!Number.isSafeInteger(viewerPortNumber) || viewerPortNumber < 1 || viewerPortNumber > 65_535) {
+  throw new Error("E2E_VIEWER_PORT must be an integer from 1 through 65535");
+}
+const viewerPort = String(viewerPortNumber);
+const viewerOrigin = `http://127.0.0.1:${viewerPort}`;
+const viewerBaseUrl =
+  process.env.E2E_VIEWER_BASE_URL || viewerOrigin;
+let viewerBaseOrigin: string;
+try {
+  viewerBaseOrigin = new URL(viewerBaseUrl).origin;
+} catch {
+  throw new Error("E2E_VIEWER_BASE_URL must be an absolute http(s) URL");
+}
+if (!/^https?:$/.test(new URL(viewerBaseUrl).protocol)) {
+  throw new Error("E2E_VIEWER_BASE_URL must be an absolute http(s) URL");
+}
+
 const webServer = process.env.E2E_DISABLE_WEBSERVER === "1"
   ? []
   : [
       {
-        command: "npm run dev -- --host 127.0.0.1 --port 5180 --strictPort",
-        url: "http://127.0.0.1:5180",
+        command: `npm run dev -- --host 127.0.0.1 --port ${viewerPort} --strictPort`,
+        url: viewerOrigin,
         reuseExistingServer: false,
         timeout: 120_000,
         env: {
           VITE_COORDINATOR_API_BASE:
             process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005",
           VITE_ALLOWED_COORDINATOR_ORIGINS:
-            process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005",
+            [...new Set([
+              process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005",
+              viewerOrigin,
+              viewerBaseOrigin,
+            ])].join(","),
         },
       },
     ];
 
 // 前端 E2E 設定。
-// - viewer dev server（:5173）由 webServer 自動啟動（reuse 既有）。
+// - viewer dev server（預設 :5180，可由 E2E_VIEWER_PORT 覆寫）由 webServer 啟動；不 reuse 既有服務。
 // - coordinator（:8004）視測試需要另行啟動（console / intake 類測試）；viewer harness 開機測試不需 coordinator。
-// - 截圖 / trace / video 落在 repo 根 artifacts/e2e（對齊任務指定路徑）。
+// - 截圖 / trace / video 落在 repo 根 artifacts/e2e/_output（對齊任務指定路徑）。
 // - harness 模式由各測試以 ?harness=1 query 開啟（dev build 下生效），不污染 prod。
 export default defineConfig({
   testDir: "./e2e",
@@ -35,14 +61,15 @@ export default defineConfig({
     ["html", { outputFolder: "../artifacts/e2e/report", open: "never" }],
   ],
   use: {
-    baseURL: process.env.E2E_VIEWER_BASE_URL || "http://127.0.0.1:5180",
+    baseURL: viewerBaseUrl,
     trace: "on",
     screenshot: "on",
     video: "retain-on-failure",
     viewport: { width: 1440, height: 900 },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
-  // 專用 E2E port 5180（strictPort + reuseExistingServer:false）：Playwright 每次起一台全新、確定是本 repo
+  // 專用 E2E port（預設 5180，可用 E2E_VIEWER_PORT 隔離 parallel session；strictPort +
+  // reuseExistingServer:false）：Playwright 每次起一台全新、確定是本 repo
   // 最新碼的 viewer dev server，避開被 docker 容器佔用的 5173/5174，杜絕「打到陳舊 server」的假象。
   // env：把 viewer 的 coordinator client base（build-time VITE_COORDINATOR_API_BASE，見
   // src/console/coordinatorClient.ts / src/config/env.ts）綁到 E2E_COORDINATOR_BASE_URL（缺省
