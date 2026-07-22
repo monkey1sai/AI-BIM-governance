@@ -23,7 +23,7 @@
 
 ### Requirement: SessionBroker SHALL 以 readyState=4 peer 存在性判定 idle 並支援顯式 terminate 回收
 
-idle SHALL 定義為該 session 連續 T 秒無任一 readyState=4 的已連線 viewer peer（primary 與 spectator 連線皆計入）；只要仍有任一健康連線，該 session SHALL NOT 被判 idle。SessionBroker SHALL NOT 以輸入/滑鼠/鍵盤活動作為 idle 判準。idle-timeout SHALL 可設定，其預設值 SHALL 由 Phase 0 基準決定。
+idle SHALL 定義為該 session 連續 T 秒無任一 readyState=4 的已連線 viewer peer（primary 與 spectator 連線皆計入）；只要仍有任一健康連線，該 session SHALL NOT 被判 idle。SessionBroker SHALL NOT 以輸入/滑鼠/鍵盤活動作為 idle 判準（第二回收路徑以無互動軟門檻觸發回收倒數，但 SHALL 經 10 秒可見倒數＋任一互動即取消保護防誤殺被動觀看中的會議，見「回收倒數與互動保活」Requirement）。idle-timeout SHALL 可設定，其預設值 SHALL 由 Phase 0 基準決定。
 
 #### Scenario: session idle 逾時自動回收
 
@@ -77,7 +77,7 @@ health SHALL 定義為 readyState=4 + 影像尺寸 + DataChannel 回應，SHALL 
 
 佇列項的 requester-TTL 逾時（請求者離開/放棄）時 SHALL 自動出列、釋放佔位、後方遞補。輪到某請求者且前一 primary 回收釋放 GPU 時 SHALL 發「輪到你」通知並開啟認領視窗；認領視窗 N 秒內未起流 SHALL 讓位給下一位（本人可重新排隊）。MVP SHALL NOT 做搶佔（preemption），SHALL NOT 設會議最長持有硬上限（max-hold hard cap）；餓死風險以可見等待資訊（佇列位置/預估）＋人際協調吸收。
 
-> Open Question OQ-4：認領視窗的「起流」判準（發出建立請求 vs 達到 readyState=4）與 N 的下限（是否須 ≥ Phase 0 TTFF p99）尚未定義，見 proposal.md。Open Question OQ-A：max-hold 是否改設 Phase 0 後可設定 knob，待使用者確認。
+> Open Question OQ-4：認領視窗的「起流」判準（發出建立請求 vs 達到 readyState=4）與 N 的下限（是否須 ≥ Phase 0 TTFF p99）尚未定義，見 proposal.md。OQ-A 已於 2026-07-22 裁決：維持無 max-hold，追加無互動軟門檻＋前端 10 秒回收倒數第二回收路徑（見「回收倒數與互動保活」Requirement），忘關分頁餓死洞（原 OQ-3）一併消解。
 
 #### Scenario: 佇列請求者中途離開
 
@@ -90,6 +90,29 @@ health SHALL 定義為 readyState=4 + 影像尺寸 + DataChannel 回應，SHALL 
 - **WHEN** 已通知某請求者「輪到你」，但認領視窗 N 秒內未起流
 - **THEN** SessionBroker SHALL 讓位給下一位
 - **AND** 原請求者 MAY 重新排隊
+
+### Requirement: session 回收倒數與互動保活 SHALL 作為第二回收路徑，前端顯示 10 秒倒數且互動即取消
+
+除 readyState=4 peer 存在性 idle（第一回收路徑）外，SessionBroker SHALL 支援「無互動軟門檻」第二回收路徑：session 連續 T_inactivity 秒無任何使用者互動（viewer 輸入事件／DataChannel 指令）但仍有 readyState=4 peer 連線時，session SHALL 進入回收倒數。進入回收倒數時，前端 SHALL 對該 session 所有已連線 viewer 顯示 10 秒倒數；倒數期間任一 peer 的任何互動 SHALL 取消本次回收並重置 inactivity 計時；倒數歸零 SHALL teardown 回收並以 reason=inactivity 寫入 session ledger，佇列中下一位獲派。MVP SHALL 維持無 max-hold hard cap：有持續互動的會議 SHALL NOT 因持有時長被強制回收。T_inactivity SHALL 可設定，預設值 SHALL 於 Phase 0 後訂定。
+
+> 使用者裁決（2026-07-22，消解 OQ-A 與 OQ-3）：原話「同意, 但是前端追加 session 進入倒數10秒顯示」——同意維持無 max-hold，追加 session 進入回收時前端 10 秒倒數顯示。忘關分頁（有 peer 無互動）由本路徑回收，「人已離場但 readyState 仍=4 → 永不回收」的餓死洞閉合。
+
+#### Scenario: 忘關分頁回收
+
+- **WHEN** session 仍有 readyState=4 peer 但連續 T_inactivity 秒無任何使用者互動，且 10 秒回收倒數內無任何互動
+- **THEN** SessionBroker SHALL teardown 回收並以 reason=inactivity 寫入 session ledger
+- **AND** 佇列中下一位 SHALL 獲派並收到「輪到你」
+
+#### Scenario: 倒數期間互動取消回收
+
+- **WHEN** session 進入回收倒數，倒數期間任一已連線 peer 發生互動
+- **THEN** SessionBroker SHALL 取消本次回收並重置 inactivity 計時
+- **AND** 前端倒數顯示 SHALL 消失
+
+#### Scenario: 活躍會議不因時長被回收
+
+- **WHEN** 會議持續有使用者互動
+- **THEN** session SHALL NOT 因持有時長觸發任何強制回收（無 max-hold hard cap）
 
 ### Requirement: SessionBroker 啟動 SHALL 比對環境指紋，不符即 fail-loud
 

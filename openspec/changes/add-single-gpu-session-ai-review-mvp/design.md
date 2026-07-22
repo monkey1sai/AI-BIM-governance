@@ -16,8 +16,8 @@ repo 現況已具備外部 IFC Worker → `bim-review-coordinator` → `bim-stre
 **非目標：**
 - 不上 K8s/MIG/多 GPU 水平擴充（消費級 RTX 不支援 MIG，僅 A100/H100 等資料中心卡支援），只記錄 SessionBroker driver 介面約束。
 - 不做 Kit 串流內 fly-to 自動導覽、不做 live WebRTC 視角→BCF viewpoint 即時擷取橋接（MVP 用離線 bounding box viewpoint 替代）。
-- 不建 LLM 分類/分流層（僅凍結「可整層關閉不中斷審查」的降級接縫）、不建 IDS 1.0 完整規則引擎。
-- 不做 auth/RBAC/project-tenant 隔離（維持 `:8004/ui` 現況）、不做 AI 繪圖寫回、不做 BCFzip serializer、不做完整 OpenCDE Foundation API server。
+- 不建 IDS 1.0 完整規則引擎；LLM 分流層依 2026-07-22 使用者裁決納入 MVP（本地小模型、advisory-only、可整層停用），但不引入外部雲端 LLM API。
+- 不做 auth/RBAC/project-tenant 隔離（維持 `:8004/ui` 現況）、不做 AI 繪圖寫回、不做完整 OpenCDE Foundation API server；BCFzip（BCF-XML 3.0）依 2026-07-22 使用者裁決納入本期。
 - 不含建築工作室 agent 的學習/訓練（使用者明示不屬本 repo 範疇）。
 
 ## 決策
@@ -46,7 +46,7 @@ repo 現況已具備外部 IFC Worker → `bim-review-coordinator` → `bim-stre
 
 **裁決**：自派發重定義＝自動產生 + 路由人審佇列 + 去重排序；建立/關閉/指派/reopen 一律人審 gate。AI 產出一律 draft 狀態（issues store 疊加 `source_type=ai_review`），draft 不出現在正式 issue 清單、不觸發派發。正式 issue 淨增＝人審 accept 數。
 
-**規則引擎先行、LLM 層可整層關閉**：deterministic IfcClash 承擔主審查量；LLM 分流/優化建議層設計成故障或超預算時可整層停用而不中斷核心審查閉環。MVP 不建 LLM 層，僅凍結此降級接縫（見 Open Question OQ-2：MVP 的「AI 審查」實為零模型推論的確定性 clash detector，須向使用者揭示 headline 落差）。
+**規則引擎先行、LLM 層可整層關閉**：deterministic IfcClash 承擔主審查量與正確性底線；LLM 分流層設計成故障或超預算時可整層停用而不中斷核心審查閉環。**裁決更新（2026-07-22，OQ-2 消解）**：使用者裁決 MVP 納入最小本地小模型 LLM 分流層（local inference、advisory-only、模型 id/版本標記、停用整層降級、不引入外部雲端 LLM API），取代原「僅凍結接縫不實作」方案；`source_type=ai_review` 的 AI 版本標記自此具真實模型語意。
 
 ### 4. 冪等價值＝收斂非產量，兩層 fingerprint 兜底 GUID churn
 
@@ -64,7 +64,7 @@ repo 現況已具備外部 IFC Worker → `bim-review-coordinator` → `bim-stre
 
 **依據（簡報 confirmed）**：IFC 4.3＝ISO 16739-1:2024（2024 正式通過）；buildingSMART BCF-API 3.0（RESTful topic/comment/viewpoint + JSON schema，屬 OpenCDE API family）為 issue 資料契約；IFC5（IFCX，alpha，schema 引用 USD）走 USD 化元件化，保留遷移路徑。WebRTC 須遵 RFC 8825/8826/8827 強制 DTLS-SRTP。
 
-**裁決**：匯出物以 BCF-API 3.0 官方 JSON schema 驗證通過為準，禁自造私有格式；MVP 只做匯出端點，不做完整 OpenCDE Foundation API server。驗證層 pin IFC 4.3，幾何存取走 adapter 不硬編 IFC4.3 entity，保留 IFC5/IFCX 遷移路徑。BCF-API JSON 與 BCFzip 共享同一 topic/comment/viewpoint 邏輯模型，MVP 交付 JSON 面，BCFzip 列 fast-follow（見 Open Question OQ-B）。
+**裁決**：匯出物以 BCF-API 3.0 官方 JSON schema 驗證通過為準，禁自造私有格式；MVP 只做匯出端點，不做完整 OpenCDE Foundation API server。驗證層 pin IFC 4.3，幾何存取走 adapter 不硬編 IFC4.3 entity，保留 IFC5/IFCX 遷移路徑。BCF-API JSON 與 BCFzip 共享同一 topic/comment/viewpoint 邏輯模型。**裁決更新（2026-07-22，OQ-B 消解）**：BCFzip（BCF-XML 3.0）serializer 納入本期，與 JSON 同源匯出並以官方 XSD 驗證，供桌面 BCF 工具直接開啟。
 
 ### 7. 成本基準＝Omniverse 現免費、企業支援選配 + 制度化查證 gate
 
@@ -78,6 +78,14 @@ repo 現況已具備外部 IFC Worker → `bim-review-coordinator` → `bim-stre
 
 - **SEAM-1 SessionBroker driver 介面**：對外 API 不含單 GPU 假設；一級 API 明列 `create(model_ref)`（起新會議/新 primary，需獨佔 GPU、走佇列競爭）與 `join(session_id, role)`（加入既有會議，`role ∈ {primary 接手, spectator}`，spectator 不佔新 GPU、不進佇列）兩動詞。Phase 1 提供 `SingleGpuDriver` 唯一實作 + `InMemoryFakeDriver`（供 contract test）。**YAGNI 防鍍金 gate**：此介面必須在 Phase 1 內有一條走完整介面的垂直切片 + 一份 contract test 證明「換 driver 不改 caller」，否則砍掉抽象退回直呼。多 GPU/K8s driver 列 future work，僅記錄介面約束不建實作。
 - **SEAM-2 Finding SPI（checker 介面）**：IfcClash 為 Phase 2 唯一 checker 實作；介面預留 IDS 1.0 規則引擎與 LLM 分流層可插拔位，並要求 LLM 層設計為「可整層關閉不中斷主審查」。MVP 只落地 IfcClash checker，同受 YAGNI gate 約束。
+
+### 9. 第二回收路徑＝無互動軟門檻＋前端 10 秒倒數（2026-07-22 使用者裁決）
+
+**依據（對抗詰問 OQ-3）**：R1.2（有任一 readyState=4 peer 即永不 idle）× R1.6（無 max-hold）交集產生「忘關分頁永久餓死」：presenter 離場但分頁未關，readyState 仍=4，session 永不回收、佇列永久餓死，「人際協調」對已離場持有者無法觸及。
+
+**裁決**：維持無 max-hold（有互動的會議不因時長被回收），追加第二回收路徑：session 連續 T_inactivity 無任何使用者互動（viewer 輸入事件／DataChannel 指令）且仍有 peer 連線時進入回收倒數；前端對該 session 所有已連線 viewer 顯示 10 秒倒數，倒數期間任一互動取消回收並重置計時，歸零則 teardown（reason=inactivity 入 session ledger）、佇列下一位獲派。
+
+**與 R1.2 的相容性**：R1.2「禁用輸入活動判 idle」的原意是防被動觀看中的會議被誤殺；第二回收路徑不改 idle 判準，而是把回收轉為使用者可攔截的顯式流程——被動觀看者看得到倒數、動一下即可保活；真正離場者無人取消、session 被回收。T_inactivity 預設值於 Phase 0 後訂定。殘留子題：「無主會議」（primary peer 斷線僅剩 spectator）語意列 0.2 收斂。
 
 ## 資料流與 source-of-truth 權責
 
@@ -111,6 +119,6 @@ repo 現況已具備外部 IFC Worker → `bim-review-coordinator` → `bim-stre
 | health 用 port-open 誤判存活 | R1.3 health＝readyState=4 + 影像尺寸 + DataChannel 回應 |
 | ingest 缺欄位仍進佇列 | R3.2 fail-closed：缺任一欄位進 abstain 桶不進佇列 |
 | admission 資源忙碌仍多開 | R1.1 fail-closed：忙碌預設拒絕/佇列 |
-| 以輸入事件判 idle 誤殺活會議 | R1.2 idle 綁 readyState=4 已連線 peer，禁用輸入/滑鼠活動判 idle |
+| 以輸入事件判 idle 誤殺活會議 | R1.2 idle 綁 readyState=4 已連線 peer，禁用輸入/滑鼠活動判 idle；第二回收路徑（無互動軟門檻）以 10 秒可見倒數＋互動取消防誤殺（2026-07-22 裁決，見決策 9） |
 | GUID churn 幾何 fallback 靜默 false-merge 隱藏新 finding | R4.1 `guid_churn_suspected` 命中強制人審，禁自動 dedup/suppress |
 | 舊機器基準管新環境 | R1.7/R2.3 啟動時環境指紋比對，不符 fail-loud，不靜默沿用舊門檻 |
