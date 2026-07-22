@@ -76,11 +76,13 @@ async function createSession(
 }
 
 async function claimPrimary(app: CoordinatorApp, sessionId: string, viewerId = "viewer_a") {
+  const userId = `user_${viewerId}`;
   const res = await request(app.app)
     .post(`/api/review-sessions/${sessionId}/viewer-leases/claim`)
+    .set("X-User-Token", userId)
     .send({
       viewer_id: viewerId,
-      user_id: `user_${viewerId}`,
+      user_id: userId,
       display_name: `Viewer ${viewerId}`,
       requested_role: "primary",
       client_nonce: `${viewerId}:${sessionId}:primary`,
@@ -152,6 +154,7 @@ describe("review session viewer leases", () => {
 
     const replay = await request(app.app)
       .post(`/api/review-sessions/${sessionId}/viewer-leases/claim`)
+      .set("X-User-Token", "user_viewer_a")
       .send({
         viewer_id: "viewer_a",
         user_id: "user_viewer_a",
@@ -164,6 +167,7 @@ describe("review session viewer leases", () => {
 
     const second = await request(app.app)
       .post(`/api/review-sessions/${sessionId}/viewer-leases/claim`)
+      .set("X-User-Token", "user_viewer_b")
       .send({
         viewer_id: "viewer_b",
         user_id: "user_viewer_b",
@@ -172,10 +176,11 @@ describe("review session viewer leases", () => {
       });
     expect(second.status).toBe(409);
     expect(second.body.detail).toBe("primary_already_claimed");
-    expect(second.body.primary_lease.lease_id).toBe(first.lease_id);
+    expect(second.body).not.toHaveProperty("primary_lease");
+    expect(JSON.stringify(second.body)).not.toContain(first.lease_id);
   });
 
-  it("records heartbeat first-frame, stage-match, and authorizes stage-binding with the lease token", async () => {
+  it("records heartbeat first-frame, stage-match, and creates a pending server-owned stage binding", async () => {
     const app = makeApp();
     const sessionId = await createSession(app);
     const lease = await claimPrimary(app, sessionId);
@@ -195,15 +200,26 @@ describe("review session viewer leases", () => {
 
     const binding = await request(app.app)
       .post(`/api/review-sessions/${sessionId}/stage-binding`)
+      .set("X-User-Token", "user_viewer_a")
       .set("X-Viewer-Lease-Token", lease.lease_token)
       .send({
         source_client_id: lease.lease_id,
         role: "primary",
-        binding_revision_id: "rev_a",
-        primary_artifact_id: "auto_usdc_stream_conv_status_001",
+        artifacts: [{
+          artifact_id: "auto_usdc_stream_conv_status_001",
+          role: "primary",
+          load_order: 0,
+        }],
       });
     expect(binding.status).toBe(200);
-    expect(binding.body.primary_client_id).toBe(lease.lease_id);
+    expect(binding.body.status).toBe("pending");
+    expect(binding.body.stage_binding_authorization_id).toMatch(/^stage_auth_/);
+    expect(binding.body.binding_revision_id).toMatch(/^binding_rev_/);
+    expect(binding.body.stage_composition.primary).toMatchObject({
+      artifact_id: "auto_usdc_stream_conv_status_001",
+      role: "primary",
+      load_order: 0,
+    });
   });
 
   it("keeps full loaded stage URLs up to the route schema limit for stage matching", async () => {
@@ -254,12 +270,16 @@ describe("review session viewer leases", () => {
 
     const binding = await request(app.app)
       .post(`/api/review-sessions/${sessionId}/stage-binding`)
+      .set("X-User-Token", "user_viewer_a")
       .set("X-Viewer-Lease-Token", "wrong-token")
       .send({
         source_client_id: lease.lease_id,
         role: "primary",
-        binding_revision_id: "rev_a",
-        primary_artifact_id: "auto_usdc_stream_conv_status_001",
+        artifacts: [{
+          artifact_id: "auto_usdc_stream_conv_status_001",
+          role: "primary",
+          load_order: 0,
+        }],
       });
     expect(binding.status).toBe(403);
     expect(binding.body.detail).toContain("primary viewer lease");
@@ -272,11 +292,15 @@ describe("review session viewer leases", () => {
 
     const binding = await request(app.app)
       .post(`/api/review-sessions/${sessionId}/stage-binding`)
+      .set("X-User-Token", "user_viewer_a")
       .send({
         source_client_id: lease.lease_id,
         role: "primary",
-        binding_revision_id: "rev_a",
-        primary_artifact_id: "auto_usdc_stream_conv_status_001",
+        artifacts: [{
+          artifact_id: "auto_usdc_stream_conv_status_001",
+          role: "primary",
+          load_order: 0,
+        }],
       });
     expect(binding.status).toBe(403);
     expect(binding.body.detail).toContain("primary viewer lease");
@@ -290,10 +314,13 @@ describe("review session viewer leases", () => {
     const close = await request(app.app).post(`/api/review-sessions/${sessionId}/close`).send({});
     expect(close.status).toBe(200);
 
-    const status = await request(app.app).get(`/api/review-sessions/${sessionId}/viewer-leases/status`);
+    const status = await request(app.app)
+      .get(`/api/review-sessions/${sessionId}/viewer-leases/status`)
+      .set("X-User-Token", "user_viewer_a");
     expect(status.status).toBe(200);
     const found = status.body.leases.find((item: any) => item.lease_id === lease.lease_id);
     expect(found.status).toBe("released");
-    expect(status.body.primary_lease_id).toBeNull();
+    expect(status.body.primary.available).toBe(true);
+    expect(status.body.primary.owned_by_caller).toBe(false);
   });
 });

@@ -212,6 +212,17 @@ npm run dev
 
 Primary browser 負責 DataChannel stage-load；spectator browser 以 explicit ports 連到 `49110`，作為同一 Kit stage 的 view-only stream 證據。若後續要驗證獨立 GPU runtime capacity，才需要啟動多個 Kit processes 並同步註冊到 `bim-review-coordinator` 的 `KIT_INSTANCE_ENDPOINTS`。
 
+Production runtime mutators（stage、selection、highlight、focus、pickability、reset）在任何state mutation前，都會用下列private process env即時呼叫coordinator；不做positive authorization cache：
+
+```powershell
+$env:COORDINATOR_INTERNAL_API_BASE='http://127.0.0.1:8004'
+$env:INTERNAL_API_AUTH_TOKEN='<same private value used by bim-review-coordinator>'
+```
+
+`COORDINATOR_INTERNAL_API_BASE` 只接受origin-only loopback HTTP(S)，不得使用LAN/public coordinator URL、path、query、fragment或userinfo。建議從root執行 `.\scripts\deploy.ps1`，由deploy依`COORDINATOR_PORT`注入loopback base與private token；tracked `.env.web-plane.host-kit.example`只保留空placeholder，任何log/audit/signature都不得包含raw token。
+
+Authority timeout、network、redirect、non-JSON、non-200或malformed response一律fail closed，回單一`commandRejected {reason:"lease_invalid", retryable:true, detail_code:"authority_unavailable", runtime_state:"unchanged"}`。若Kit已觀察stage改變但coordinator completion未證實，只可回`runtime_state:"changed_unconfirmed"`；viewer必須維持unproven並阻擋盲retry/handoff。Readonly query與video不因authority outage停止。
+
 當 browser 以 `openStageRequest` 指向本機 HTTP / HTTPS stage URL 時，streaming server 預設只允許 host-native conversion authority `127.0.0.1:49101` / `localhost:49101`，並限制單一 stage 下載大小為 `512 MiB`。已退役的 `_worker` host（`:8005`）已從 stage allowed-hosts 預設清單清除，不再內建放行。可用以下環境變數調整：
 
 ```powershell

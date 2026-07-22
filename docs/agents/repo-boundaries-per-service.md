@@ -22,7 +22,7 @@ Session / Presence Control Plane
 
 ### 邊界
 
-`bim-review-coordinator` 是 review session 與 presence 的協調中心。
+`bim-review-coordinator` 是 review session 與 presence 的協調中心，也是session-scoped runtime mutation的narrow policy authority；它不執行3D mutation。
 
 它負責協調：
 
@@ -30,6 +30,8 @@ Session / Presence Control Plane
 - review session 狀態
 - browser client 與 Kit streaming server 的連線資訊
 - user presence（`joinSession` / `leaveSession` / `heartbeat` / `presenceUpdated`）
+- authenticated viewer lease與每次runtime mutator的allow/deny decision
+- bounded stage-binding authorization / atomic consume / Kit-confirmed active與last-good shadow
 - generic session event log（append-only compatibility archive，不代表 live broadcast 或資料權威）
 - browser-facing governance proxy（issue / annotation / BCF 寫入由 `governance-service` 處理）
 - fake BIM platform 與 fake storage 的資料查詢路由
@@ -40,6 +42,7 @@ Session / Presence Control Plane
 ```txt
 - USD stage loading
 - Omniverse viewport rendering
+- USD / stage / selection / highlight / camera等runtime mutation execution
 - WebRTC video encoding
 - IFC / USD 檔案內容轉換
 - 直接保存大型檔案
@@ -72,6 +75,8 @@ kit_instance_id
 stream_config
 presence state
 generic session event log（compatibility archive）
+runtime mutation policy decision
+stage-binding pending/executing/confirmed shadow（非GPU truth）
 ```
 
 但不應該知道或操作：
@@ -112,6 +117,7 @@ IFC→USDC Conversion Authority / Omniverse Kit Runtime / GPU Streaming Server
 - WebRTC video stream
 - WebRTC DataChannel JSON command
 - stage tree / prim selection / camera / visual overlay 的 runtime 操作
+- 向coordinator取得每次mutator的fresh decision，執行mutation並回報observed stage terminal outcome
 ```
 
 它不負責：
@@ -130,6 +136,8 @@ IFC→USDC Conversion Authority / Omniverse Kit Runtime / GPU Streaming Server
 ### Runtime 邊界
 
 `bim-streaming-server` 只處理「目前這個 stream session 中的 3D runtime 狀態」。
+
+Runtime policy與actual state刻意分開：coordinator擁有lease/lifecycle-based allow/deny與binding confirmation shadow；streaming server擁有實際mutation、stage observation與GPU truth。Frontend gate不是安全邊界，Kit不得在authority outage時放行或使用positive cache。
 
 它可以處理：
 
@@ -198,6 +206,7 @@ leave session
 
 ```txt
 3D runtime 操作 → bim-streaming-server
+3D runtime操作是否允許／binding是否已確認 → bim-review-coordinator narrow policy與confirmation shadow
 session / presence → bim-review-coordinator
 issue / annotation / BCF → governance-service（browser 經 bim-review-coordinator proxy）
 project metadata reference → bim-review-coordinator（長期權威＝外部公司雲端 bim-control）
@@ -255,6 +264,7 @@ Operator-facing Kit 機隊管理：`kit-manager-api`（FastAPI `:8010`）掌 Kit
 - 不渲染 3D
 - 不開啟 USD stage
 - 不處理 Omniverse renderer internal state
+- 不執行 USD / stage / selection / highlight runtime mutation
 - 不保存大型模型檔案
 - 不取代外部公司雲端 control-plane 成為資料權威
 - 不取代 web-viewer-sample 成為 UI

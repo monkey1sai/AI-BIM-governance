@@ -100,7 +100,8 @@ describe("T7 local web view session / artifact resolution", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.web_view_session_id).toMatch(/^lwv_/);
-    expect(res.body.user_id).toBe("dev_user_001");
+    expect(res.body.user_id).toMatch(/^lab_[a-f0-9]{32}$/);
+    expect(JSON.stringify(res.body)).not.toContain("dev_user_001");
     expect(res.body.auth_provider).toBe("local-dev");
     expect(res.body.sso_binding).toBe("pending_oq5");
     expect(res.body.external_model_version_id).toBe(emv);
@@ -215,7 +216,8 @@ describe("T7 local web view session / artifact resolution", () => {
       .send({ external_model_version_id: emv });
 
     expect(res.status).toBe(201);
-    expect(res.body.user_id).toBe("dev_user_002");
+    expect(res.body.user_id).toMatch(/^lab_[a-f0-9]{32}$/);
+    expect(JSON.stringify(res.body)).not.toContain("dev_user_002");
     expect(res.body.artifact_resolution.conversion_status).toBe("ready");
     expect(res.body.artifact_resolution.conversion_artifact_ready).toBe(true);
     expect(res.body.artifact_resolution.viewer_open_state).toBe("not_observed");

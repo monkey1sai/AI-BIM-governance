@@ -25,11 +25,11 @@ import { isBlockedLifecycle, lifecycleStatusText, sameStreamEndpoint, sameStream
 import { BimControlClient } from "./clients/bimControlClient";
 import { CoordinatorClient, isQueuedForInstanceError } from "./clients/coordinatorClient";
 import { connectReviewSocket, type ReviewSocketClient } from "./clients/reviewSocket";
-import { buildClearHighlightRequest, buildFocusPrimRequest, buildGetChildrenRequest, buildHighlightPrimsRequest, buildLoadingStateQuery, buildOpenStageRequest } from "./clients/streamMessages";
+import { buildAuthorizedOpenStageRequest, buildClearHighlightRequest, buildFocusPrimRequest, buildGetChildrenRequest, buildHighlightPrimsRequest, buildLoadingStateQuery, buildOpenStageRequest } from "./clients/streamMessages";
 import { demoPrimPath } from "./clients/demoDefaults";
 import { allowedCoordinatorOrigins, reviewEnv } from "./config/env";
 import { canHandleHighlight, failedElementsForEmbed, shouldAcceptParentMessage } from "./parentMessageGuard";
-import { harnessEnabled } from "./harness/harnessConfig";
+import { harnessAuthorityRequired, harnessEnabled } from "./harness/harnessConfig";
 import { HARNESS_STAGE_URL } from "./harness/fixtures/usdStageTree";
 import { computeFileReady, computeRuntimeReady, computeSemanticReady } from "./utils/triReady";
 import type { DemoLogEntry } from "./types/demo";
@@ -118,6 +118,8 @@ interface AppState {
     expectedStageUrl: string | null;
     loadedStageUrl: string | null;
     stageLoadStatus: "unproven" | "pending" | "matched" | "mismatch" | "disconnected";
+    runtimeCommandRejection: RuntimeCommandRejection | null;
+    runtimeCommandLifecycles: RuntimeCommandLifecycle[];
     webrtcLifecycleStatus: "initializing" | "started" | "stopped" | "terminated" | "failed";
     activeStreamEndpoint: StreamEndpoint;
     streamMountKey: number;
@@ -127,6 +129,8 @@ interface StandaloneViewerLease {
     lease_id: string;
     lease_token: string;
     role: "primary" | "spectator";
+    expires_at: string;
+    heartbeat_after_ms: number;
 }
 
 interface AppStreamMessageType {
@@ -146,11 +150,99 @@ const runtimeMutatingEvents = new Set([
     "resetStage",
 ]);
 
+const runtimeResponseRequestTypes = new Map<string, ReadonlySet<string>>([
+    ["openedStageResult", new Set(["openStageRequest", "loadArtifactGroupRequest"])],
+    ["loadArtifactGroupResult", new Set(["loadArtifactGroupRequest", "composeStageRequest"])],
+    ["bindingApplied", new Set(["loadArtifactGroupRequest", "composeStageRequest"])],
+    ["highlightPrimsResult", new Set(["highlightPrimsRequest"])],
+    ["focusPrimResult", new Set(["focusPrimRequest"])],
+    ["clearHighlightResult", new Set(["clearHighlightRequest"])],
+    ["selectPrimsResult", new Set(["selectPrimsRequest"])],
+    ["makePrimsPickableResponse", new Set(["makePrimsPickable"])],
+    ["resetStageResponse", new Set(["resetStage"])],
+]);
+
+const simpleRuntimeTerminalEvents = new Set([
+    "clearHighlightResult",
+    "selectPrimsResult",
+    "makePrimsPickableResponse",
+    "resetStageResponse",
+]);
+
 interface AppStreamEventType {
     event_type?: string;
     messageRecipient?: string;
     data?: string;
     payload?: unknown;
+}
+
+const runtimeRejectionReasons = new Set([
+    "spectator_readonly",
+    "lease_invalid",
+    "session_lifecycle_blocked",
+    "unauthorized_source_client",
+    "unsupported_command",
+    "invalid_payload",
+] as const);
+
+type RuntimeRejectionReason =
+    | "spectator_readonly"
+    | "lease_invalid"
+    | "session_lifecycle_blocked"
+    | "unauthorized_source_client"
+    | "unsupported_command"
+    | "invalid_payload";
+
+interface RuntimeCommandRejection {
+    rejected_event_type: string;
+    reason: RuntimeRejectionReason;
+    request_id?: string;
+    rejection_id?: string;
+    retryable: boolean;
+    runtime_state: "unchanged" | "changed_unconfirmed";
+    detail_code?: string;
+    binding_revision_id?: string;
+}
+
+type RuntimeCommandPhase = "pending" | "executing" | "terminal";
+type RuntimeCommandOutcome = "success" | "rejected" | "error";
+
+interface RuntimeCommandLifecycle {
+    request_id: string;
+    event_type: string;
+    phases: RuntimeCommandPhase[];
+    outcome?: RuntimeCommandOutcome;
+}
+
+interface RuntimeCommandContext {
+    eventType: string;
+    bindingRevisionId?: string;
+    stageUrl?: string;
+}
+
+interface RuntimeCommandCorrelation {
+    requestId: string;
+    context?: RuntimeCommandContext;
+    disposition: "matched" | "untracked" | "uncorrelated" | "duplicate" | "mismatch";
+}
+
+interface StageBindingArtifact {
+    artifact_id: string;
+    role: "primary" | "secondary";
+    load_order: number;
+    usdc_url: string;
+}
+
+interface StageBindingPreauthorization {
+    status: "pending";
+    session_id: string;
+    stage_binding_authorization_id: string;
+    binding_revision_id: string;
+    stage_composition: {
+        primary: StageBindingArtifact & { role: "primary" };
+        secondary_layers: Array<StageBindingArtifact & { role: "secondary" }>;
+    };
+    pending_expires_at: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -161,16 +253,53 @@ function isRuntimeMutator(eventType: string): boolean {
     return runtimeMutatingEvents.has(eventType);
 }
 
-function redactStreamPayload(payload: unknown): unknown {
-    if (!isRecord(payload)) return payload;
-    const redacted = { ...payload };
-    if (typeof redacted.viewer_lease_token === "string" && redacted.viewer_lease_token) {
-        redacted.viewer_lease_token = "[redacted]";
+function isSensitiveDiagnosticKey(key: string): boolean {
+    const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+    return normalized.includes("token")
+        || normalized.includes("authorization")
+        || normalized.includes("credential")
+        || normalized.includes("secret")
+        || normalized === "cookie"
+        || normalized === "setcookie"
+        || normalized === "rawresponse"
+        || normalized === "responsebody"
+        || normalized === "upstreamresponse"
+        || normalized === "upstreambody"
+        || normalized === "rawbody"
+        || normalized === "data";
+}
+
+function redactDiagnosticValue(
+    value: unknown,
+    depth = 0,
+    seen: WeakSet<object> = new WeakSet<object>(),
+): unknown {
+    if (depth > 8) return "[truncated]";
+    if (Array.isArray(value)) {
+        if (seen.has(value)) return "[circular]";
+        seen.add(value);
+        return value.slice(0, 200).map((item) => redactDiagnosticValue(item, depth + 1, seen));
     }
-    if (typeof redacted.lease_token === "string" && redacted.lease_token) {
-        redacted.lease_token = "[redacted]";
+    if (!isRecord(value)) return value;
+    if (seen.has(value)) return "[circular]";
+    seen.add(value);
+    const redacted: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value).slice(0, 200)) {
+        redacted[key] = isSensitiveDiagnosticKey(key)
+            ? "[redacted]"
+            : redactDiagnosticValue(child, depth + 1, seen);
     }
     return redacted;
+}
+
+function redactStreamPayload(payload: unknown): unknown {
+    return redactDiagnosticValue(payload);
+}
+
+function isSafeMachineField(value: string, maxLength = 128): boolean {
+    return value.length > 0
+        && value.length <= maxLength
+        && /^[A-Za-z0-9_.:-]+$/.test(value);
 }
 
 // VG-01（Important #2）：parent postMessage 的 highlight item 執行期形狀守衛。
@@ -194,6 +323,45 @@ function getPayloadObjectArray(payload: Record<string, unknown>, key: string): R
     return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => isRecord(item)) : [];
 }
 
+let runtimeRequestSequence = 0;
+
+function createRuntimeRequestId(): string {
+    const uuid = globalThis.crypto?.randomUUID?.();
+    if (uuid) return `cmd_${uuid}`;
+    runtimeRequestSequence += 1;
+    return `cmd_${Date.now().toString(36)}_${runtimeRequestSequence.toString(36)}`;
+}
+
+function parseRuntimeCommandRejection(payload: Record<string, unknown>): RuntimeCommandRejection | null {
+    const reason = getPayloadString(payload, "reason");
+    const runtimeState = getPayloadString(payload, "runtime_state");
+    const rejectedEventType = getPayloadString(payload, "rejected_event_type");
+    const requestId = getPayloadString(payload, "request_id");
+    const rejectionId = getPayloadString(payload, "rejection_id");
+    if (
+        !runtimeRejectionReasons.has(reason as RuntimeRejectionReason)
+        || (runtimeState !== "unchanged" && runtimeState !== "changed_unconfirmed")
+        || !isRuntimeMutator(rejectedEventType)
+        || typeof payload.retryable !== "boolean"
+        || (Boolean(requestId) === Boolean(rejectionId))
+        || (requestId ? !isSafeMachineField(requestId) : false)
+        || (rejectionId ? !isSafeMachineField(rejectionId) : false)
+    ) {
+        return null;
+    }
+    const detailCode = getPayloadString(payload, "detail_code");
+    if (detailCode && !isSafeMachineField(detailCode, 64)) return null;
+    return {
+        rejected_event_type: rejectedEventType,
+        reason: reason as RuntimeRejectionReason,
+        ...(requestId ? { request_id: requestId } : {}),
+        ...(rejectionId ? { rejection_id: rejectionId } : {}),
+        retryable: payload.retryable,
+        runtime_state: runtimeState,
+        ...(detailCode ? { detail_code: detailCode } : {}),
+    };
+}
+
 function appStreamResultToAppEvent(requestEventType: string, result: unknown): AppStreamEventType | null {
     if (!isRecord(result)) return null;
     const status = getPayloadString(result, "status");
@@ -207,6 +375,12 @@ function appStreamResultToAppEvent(requestEventType: string, result: unknown): A
                 result: responseResult,
                 url: getPayloadString(result, "url"),
                 error: responseResult === "error" ? info || "openStageRequest failed" : "",
+                ...(getPayloadString(result, "request_id")
+                    ? { request_id: getPayloadString(result, "request_id") }
+                    : {}),
+                ...(getPayloadString(result, "binding_revision_id")
+                    ? { binding_revision_id: getPayloadString(result, "binding_revision_id") }
+                    : {}),
             },
         };
     }
@@ -324,6 +498,12 @@ export default class App extends React.Component<AppProps, AppState> {
     private pendingMappingHighlightRequestId: string | null = null;
     private pendingMappingFocusRequestId: string | null = null;
     private pendingMappingPrimPath: string | null = null;
+    private runtimeCommandContexts = new Map<string, RuntimeCommandContext>();
+    private runtimeCommandTerminalClaims = new Map<string, { eventType: string; outcome: RuntimeCommandOutcome }>();
+    private stageProofBlockedRevision: string | null = null;
+    private unprovenStageUrl: string | null = null;
+    private stageProofBlockGeneration = 0;
+    private confirmedStageBindingRevision: string | null = null;
     // 統一治理控制台 MVP：當前 model version 的 MappingCache（鎖單一版本，Task C3 餵入）；未載入前為 null。
     private _mappingCache: MappingCache | null = null;
     // W9：cache 建立時用的 mapping_url；換 url（即使同 model version）也需重建。
@@ -335,6 +515,9 @@ export default class App extends React.Component<AppProps, AppState> {
     private _pendingGovHighlights: Record<string, { ifc_guid: string; rowKey: string; primPath: string }> = {};
     private standaloneViewerLease: StandaloneViewerLease | null = null;
     private standaloneViewerLeaseClaim: Promise<StandaloneViewerLease | null> | null = null;
+    private standaloneViewerLeaseHeartbeatId: number | null = null;
+    private componentMounted = false;
+    private readonly standaloneViewerId = reviewEnv.sourceClientId;
     // private _streamConfig: StreamConfigType = getConfig();
     
     constructor(props: AppProps) {
@@ -373,6 +556,8 @@ export default class App extends React.Component<AppProps, AppState> {
             expectedStageUrl: null,
             loadedStageUrl: null,
             stageLoadStatus: "unproven",
+            runtimeCommandRejection: null,
+            runtimeCommandLifecycles: [],
             webrtcLifecycleStatus: "initializing",
             isLoading: true,
             activeStreamEndpoint,
@@ -380,11 +565,17 @@ export default class App extends React.Component<AppProps, AppState> {
         }
     }
 
+    private _notifyParentViewerReady = (): void => {
+        if (window.parent !== window) this._postToParent({ type: "viewer_ready" });
+    };
+
     componentDidMount(): void {
+        this.componentMounted = true;
         // VG-01：嵌入 console iframe 時掛上 parent postMessage 橋（unmount 對稱移除），並通知 parent listener 已就緒。
         // 嚴格 additive：非嵌入（window.parent === window）時 listener 永遠 reject、不送任何訊息，既有單機/直連行為零變更。
         window.addEventListener("message", this._onParentMessage);
-        if (window.parent !== window) this._postToParent({ type: "viewer_ready" });
+        window.addEventListener("load", this._notifyParentViewerReady);
+        this._notifyParentViewerReady();
 
         if (reviewEnv.hasExplicitEmptySessionId) {
             void this._bootstrapReview();
@@ -396,6 +587,8 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     componentWillUnmount(): void {
+        this.componentMounted = false;
+        window.removeEventListener("load", this._notifyParentViewerReady);
         this._releaseStandaloneViewerLease();
         this._clearStreamStartTimeout();
         this._clearLoadingStateRetry();
@@ -414,21 +607,113 @@ export default class App extends React.Component<AppProps, AppState> {
 
     private _appendDemoOutgoing(label: string, payload: unknown): void {
         this.setState((state) => ({
-            demoOutgoingMessages: [{ at: new Date().toISOString(), label, payload }, ...state.demoOutgoingMessages].slice(0, 20),
+            demoOutgoingMessages: [
+                { at: new Date().toISOString(), label, payload: redactDiagnosticValue(payload) },
+                ...state.demoOutgoingMessages,
+            ].slice(0, 20),
         }));
     }
 
     private _appendDemoIncoming(label: string, payload: unknown): void {
         this.setState((state) => ({
-            demoIncomingMessages: [{ at: new Date().toISOString(), label, payload }, ...state.demoIncomingMessages].slice(0, 20),
+            demoIncomingMessages: [
+                { at: new Date().toISOString(), label, payload: redactDiagnosticValue(payload) },
+                ...state.demoIncomingMessages,
+            ].slice(0, 20),
         }));
+    }
+
+    private _recordRuntimeCommandPhase(
+        requestId: string,
+        eventType: string,
+        phase: RuntimeCommandPhase,
+        outcome?: RuntimeCommandOutcome,
+    ): void {
+        if (!requestId || !eventType) return;
+        this.setState((state) => {
+            const current = state.runtimeCommandLifecycles.find((entry) => entry.request_id === requestId);
+            // A request has one terminal outcome. Late or duplicate protocol
+            // events remain observable elsewhere but cannot rewrite UI truth.
+            if (current?.phases.includes("terminal")) return null;
+            const phases = current ? [...current.phases] : [];
+            if (phases[phases.length - 1] !== phase) phases.push(phase);
+            const next: RuntimeCommandLifecycle = {
+                request_id: requestId,
+                event_type: current?.event_type || eventType,
+                phases,
+                ...(outcome ? { outcome } : current?.outcome ? { outcome: current.outcome } : {}),
+            };
+            return {
+                runtimeCommandLifecycles: [
+                    next,
+                    ...state.runtimeCommandLifecycles.filter((entry) => entry.request_id !== requestId),
+                ].slice(0, 12),
+            };
+        });
+    }
+
+    private _correlateRuntimeCommandEvent(
+        responseEventType: string,
+        payload: Record<string, unknown>,
+    ): RuntimeCommandCorrelation {
+        const requestId = getPayloadString(payload, "request_id");
+        if (!requestId) return { requestId, disposition: "uncorrelated" };
+        if (this.runtimeCommandTerminalClaims.has(requestId)) {
+            return { requestId, disposition: "duplicate" };
+        }
+        const context = requestId ? this.runtimeCommandContexts.get(requestId) : undefined;
+        if (!context) return { requestId, disposition: "untracked" };
+
+        const allowedRequests = runtimeResponseRequestTypes.get(responseEventType);
+        if (!allowedRequests?.has(context.eventType)) {
+            this._appendReviewEvent(`忽略 ${responseEventType}：terminal 與 ${context.eventType} 不相符`);
+            return { requestId, context, disposition: "mismatch" };
+        }
+        return { requestId, context, disposition: "matched" };
+    }
+
+    private _claimRuntimeCommandTerminal(
+        requestId: string,
+        eventType: string,
+        outcome: RuntimeCommandOutcome,
+    ): boolean {
+        if (!requestId || this.runtimeCommandTerminalClaims.has(requestId)) return false;
+        this.runtimeCommandTerminalClaims.set(requestId, { eventType, outcome });
+        while (this.runtimeCommandTerminalClaims.size > 128) {
+            const oldest = this.runtimeCommandTerminalClaims.keys().next().value as string | undefined;
+            if (!oldest) break;
+            this.runtimeCommandTerminalClaims.delete(oldest);
+        }
+        this._recordRuntimeCommandPhase(requestId, eventType, "terminal", outcome);
+        this.runtimeCommandContexts.delete(requestId);
+        return true;
+    }
+
+    private _completeRuntimeCommandEvent(
+        responseEventType: string,
+        payload: Record<string, unknown>,
+        outcome: RuntimeCommandOutcome,
+    ): RuntimeCommandCorrelation {
+        const correlation = this._correlateRuntimeCommandEvent(responseEventType, payload);
+        if (correlation.disposition === "matched" && correlation.requestId && correlation.context) {
+            const eventType = correlation.context.eventType;
+            if (!this._claimRuntimeCommandTerminal(correlation.requestId, eventType, outcome)) {
+                return { ...correlation, disposition: "duplicate" };
+            }
+        }
+        return correlation;
     }
 
     private _runtimeMutatorBlockReason(eventType: string): string | null {
         if (!isRuntimeMutator(eventType)) return null;
+        if (this.stageProofBlockedRevision) return "stage binding proof resync required";
         if (isSpectatorStreamMode()) return "spectator view-only";
         if (isBlockedLifecycle(this.state.reviewLifecycleStatus)) {
             return `session lifecycle=${this.state.reviewLifecycleStatus || "unknown"}`;
+        }
+        if (window.parent === window && this.standaloneViewerLease && !this._standaloneViewerLeaseIsFresh()) {
+            this._dropStandaloneViewerLease("primary viewer lease 已過期；請重新執行操作以取得新 lease");
+            return "primary viewer lease expired; reclaim required";
         }
         // NOTE(scope Task3->Task5)：以下第三條「primary 需 viewer lease token」與 _withRuntimeAuthority 的 payload
         // 注入，超出 Task3 Step2/3 字面範圍（Task3 只要求 spectator / lifecycle 兩道 gate）。此為 plan 同檔
@@ -443,7 +728,7 @@ export default class App extends React.Component<AppProps, AppState> {
         // 「在 3D 高亮失敗構件」的核心路徑）——embedded 端無 lease 亦不送 mutating（與 standalone 一致，非漏網）；
         // 實務上 ReviewSessionViewerPane 先推 viewer_lease_token 再 enable 高亮鈕，故有 lease 才送。回歸證據見
         // windowParentMessage.dom.test.tsx「VG-01 postMessage 橋真穿越 lease 閘門至 AppStream.sendMessage」。
-        if (!harnessEnabled() && (!this.state.reviewSessionId || !reviewEnv.viewerLeaseToken)) {
+        if ((!harnessEnabled() || harnessAuthorityRequired()) && (!this.state.reviewSessionId || !reviewEnv.viewerLeaseToken)) {
             return "primary viewer lease token required";
         }
         return null;
@@ -454,10 +739,12 @@ export default class App extends React.Component<AppProps, AppState> {
         // _is_authorized_mutator 消費的 role / source_client_id / viewer_lease_token / session_id 形狀（見上方 gate 註解）。
         if (!isRuntimeMutator(message.event_type)) return message;
         const payload = isRecord(message.payload) ? { ...message.payload } : {};
+        const requestId = getPayloadString(payload, "request_id") || createRuntimeRequestId();
         return {
             ...message,
             payload: {
                 ...payload,
+                request_id: requestId,
                 role: isSpectatorStreamMode() ? "spectator" : "primary",
                 source_client_id: reviewEnv.sourceClientId,
                 ...(reviewEnv.viewerLeaseToken ? { viewer_lease_token: reviewEnv.viewerLeaseToken } : {}),
@@ -473,6 +760,31 @@ export default class App extends React.Component<AppProps, AppState> {
             return;
         }
         const outgoing = this._withRuntimeAuthority(message);
+        let runtimeRequestId = "";
+        if (isRuntimeMutator(outgoing.event_type) && isRecord(outgoing.payload)) {
+            const requestId = getPayloadString(outgoing.payload, "request_id");
+            if (requestId) {
+                if (this.runtimeCommandTerminalClaims.has(requestId) || this.runtimeCommandContexts.has(requestId)) {
+                    this._appendReviewEvent(`略過 ${outgoing.event_type}：request_id 已使用`);
+                    return;
+                }
+                runtimeRequestId = requestId;
+                const bindingRevisionId = getPayloadString(outgoing.payload, "binding_revision_id");
+                const stageUrl = getPayloadString(outgoing.payload, "url");
+                this.runtimeCommandContexts.set(requestId, {
+                    eventType: outgoing.event_type,
+                    ...(bindingRevisionId ? { bindingRevisionId } : {}),
+                    ...(stageUrl ? { stageUrl } : {}),
+                });
+                while (this.runtimeCommandContexts.size > 128) {
+                    const oldest = this.runtimeCommandContexts.keys().next().value as string | undefined;
+                    if (!oldest) break;
+                    this.runtimeCommandContexts.delete(oldest);
+                }
+                this._recordRuntimeCommandPhase(requestId, outgoing.event_type, "pending");
+            }
+            this.setState({ runtimeCommandRejection: null });
+        }
         void AppStream.sendMessage(outgoing)
             .then((result) => {
                 const responseEvent = appStreamResultToAppEvent(outgoing.event_type, result);
@@ -480,8 +792,11 @@ export default class App extends React.Component<AppProps, AppState> {
                     this._handleCustomEvent(responseEvent);
                 }
             })
-            .catch((error: unknown) => {
-                const diagnostic = error instanceof Error ? error.message : String(error);
+            .catch(() => {
+                const diagnostic = "stream_transport_error";
+                if (runtimeRequestId) {
+                    if (!this._claimRuntimeCommandTerminal(runtimeRequestId, outgoing.event_type, "error")) return;
+                }
                 this._appendReviewEvent(`${outgoing.event_type} failed: ${diagnostic}`);
                 if (outgoing.event_type === "openStageRequest") {
                     this._failStageLoad("模型載入失敗", [`目標：${this.pendingStageUrl || "unknown"}`, `錯誤：${diagnostic}`].join("\n"));
@@ -594,9 +909,10 @@ export default class App extends React.Component<AppProps, AppState> {
     private _recordLoadedStageEvidence(loadedUrl: string, source: string, loadingState?: string): boolean {
         if (!loadedUrl) return false;
         const matched = this._isLoadedStageExpected(loadedUrl);
+        const stageProven = harnessEnabled() || Boolean(this.confirmedStageBindingRevision);
         this.setState((state) => ({
             loadedStageUrl: loadedUrl,
-            stageLoadStatus: matched ? "matched" : "mismatch",
+            stageLoadStatus: matched ? (stageProven ? "matched" : "unproven") : "mismatch",
             reviewEvents: [
                 ...state.reviewEvents,
                 matched
@@ -617,7 +933,7 @@ export default class App extends React.Component<AppProps, AppState> {
         return matched;
     }
 
-    private _completeStageLoad(loadedUrl?: string): void {
+    private _completeStageLoad(loadedUrl?: string, bindingRevisionId?: string): void {
         // ⚠️ 誠實鐵律：finalLoadedUrl 只取「Kit 真回報過的 loaded URL」（呼叫參數或既有 state.loadedStageUrl），
         // 不得 fallback 成 pendingStageUrl。pendingStageUrl 只是「我們請求載入的目標」，不是 Kit 證實已載入的事實。
         // 當 _completeStageLoadFromVisibleStream 因「畫面可見但 Kit 尚未回 loaded URL」觸發時 loadedUrl 為空，
@@ -626,16 +942,19 @@ export default class App extends React.Component<AppProps, AppState> {
         const finalLoadedUrl = loadedUrl || this.state.loadedStageUrl;
         const hasExpectedStage = Boolean(this.state.expectedStageUrl);
         const matched = finalLoadedUrl ? this._isLoadedStageExpected(finalLoadedUrl) : !hasExpectedStage;
+        const activeRevision = bindingRevisionId || this.confirmedStageBindingRevision;
+        const stageProven = harnessEnabled() || Boolean(activeRevision);
+        const active = matched && stageProven;
         this._finishStageLoad();
         this._getChildren();
         this.setState({
             showStream: true,
-            loadingText: matched ? "模型已載入" : "模型畫面可見，stage URL 尚未證明",
+            loadingText: active ? "模型已載入" : "模型畫面可見，stage authority 尚未證明",
             showUI: true,
             isLoading: false,
-            streamDiagnostic: matched ? null : `expected：${this.state.expectedStageUrl || "unknown"}\nloaded：${finalLoadedUrl || "not_observed"}`,
+            streamDiagnostic: active ? null : `expected：${this.state.expectedStageUrl || "unknown"}\nloaded：${finalLoadedUrl || "not_observed"}`,
             loadedStageUrl: finalLoadedUrl || null,
-            stageLoadStatus: matched ? "matched" : "unproven",
+            stageLoadStatus: active ? "matched" : "unproven",
         });
         // T3：stage 就緒後，非 debug 一般檢視也自動載入 element_mapping（否則 _mappingCache 恆 null，
         // overlay 標示永遠 unmapped）。僅在「有 mapping_url 且該 url 尚未載入」時觸發；無 mapping_url 不做事
@@ -647,7 +966,12 @@ export default class App extends React.Component<AppProps, AppState> {
         if (!this._firstFramePosted && window.parent !== window) {
             this._firstFramePosted = true;
             this._postToParent({ type: "first_frame", stageUrl: finalLoadedUrl ?? null });
-            this._postToParent({ type: "stage_loaded", stageUrl: finalLoadedUrl ?? null });
+            this._postToParent({
+                type: "stage_loaded",
+                stageUrl: active ? finalLoadedUrl ?? null : null,
+                status: active ? "active" : "unproven",
+                ...(activeRevision ? { binding_revision_id: activeRevision } : {}),
+            });
         }
     }
 
@@ -792,9 +1116,28 @@ export default class App extends React.Component<AppProps, AppState> {
             lifecycleActive,
         });
         const canOperate = canHandleHighlight(inputs.panelState.canOperate);
-        const m = e.data as { type?: string; items?: unknown; ifc_guid?: string; token?: unknown };
+        const m = e.data as { type?: string; items?: unknown; ifc_guid?: string; token?: unknown; user_token?: unknown };
         if (m.type === "viewer_lease_token") {
-            reviewEnv.viewerLeaseToken = typeof m.token === "string" ? m.token : "";
+            if (typeof m.token !== "string") return;
+            const previousToken = reviewEnv.viewerLeaseToken;
+            const previousUserToken = reviewEnv.userToken;
+            const nextToken = m.token;
+            const nextUserToken = typeof m.user_token === "string" ? m.user_token : previousUserToken;
+            reviewEnv.viewerLeaseToken = nextToken;
+            reviewEnv.userToken = nextUserToken;
+            const completeAuthorityAvailable = Boolean(nextToken && nextUserToken);
+            const authorityChanged = nextToken !== previousToken || nextUserToken !== previousUserToken;
+            if (
+                completeAuthorityAvailable
+                && authorityChanged
+                && isEmbedded
+                && this.state.stageLoadStatus !== "matched"
+                && this._canOpenSelectedAsset()
+            ) {
+                // Reuse the existing scheduler so a late trusted lease replaces
+                // any older timer and cannot create a parallel open path.
+                this._scheduleDeferredOpenStage(0);
+            }
             return;
         }
         switch (m.type) {
@@ -961,23 +1304,46 @@ export default class App extends React.Component<AppProps, AppState> {
         return !isBlockedLifecycle(this.state.reviewLifecycleStatus);
     }
 
+    private _ensureStandaloneLabUserToken(): string {
+        if (reviewEnv.userToken) return reviewEnv.userToken;
+        if (window.parent !== window) return "";
+        const random = typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        reviewEnv.userToken = `standalone_viewer_operator_${random}`;
+        return reviewEnv.userToken;
+    }
+
     private async _ensurePrimaryViewerLease(): Promise<string | null> {
+        if (this.standaloneViewerLease?.lease_token) {
+            if (this._standaloneViewerLeaseIsFresh()) return this.standaloneViewerLease.lease_token;
+            this._dropStandaloneViewerLease("primary viewer lease 已過期；正在重新取得");
+        }
         if (reviewEnv.viewerLeaseToken) return reviewEnv.viewerLeaseToken;
-        if (this.standaloneViewerLease?.lease_token) return this.standaloneViewerLease.lease_token;
 
         const sessionId = this.state.reviewSessionId;
         if (!sessionId || window.parent !== window) return null;
+        const userToken = this._ensureStandaloneLabUserToken();
+        if (!userToken) {
+            this._appendReviewEvent("primary viewer lease 取得失敗：未設定 local-dev user token");
+            return null;
+        }
 
         if (!this.standaloneViewerLeaseClaim) {
             this.standaloneViewerLeaseClaim = fetch(`${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(sessionId)}/viewer-leases/claim`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-User-Token": userToken,
+                },
                 body: JSON.stringify({
-                    viewer_id: reviewEnv.sourceClientId,
-                    user_id: reviewEnv.defaultUserId,
+                    viewer_id: this.standaloneViewerId,
+                    // Legacy body identity must match the authenticated lab
+                    // carrier; URL userId remains display/correlation only.
+                    user_id: userToken,
                     display_name: reviewEnv.defaultDisplayName,
                     requested_role: "primary",
-                    client_nonce: `standalone:${reviewEnv.sourceClientId}:${sessionId}`,
+                    client_nonce: `standalone:${this.standaloneViewerId}:${sessionId}`,
                     preferred_kit_instance_id: this.state.activeStreamEndpoint.kitInstanceId,
                 }),
             })
@@ -987,13 +1353,21 @@ export default class App extends React.Component<AppProps, AppState> {
                         return null;
                     }
                     const lease = await response.json() as StandaloneViewerLease;
-                    if (lease.role !== "primary" || !lease.lease_id || !lease.lease_token) {
+                    if (
+                        lease.role !== "primary"
+                        || !lease.lease_id
+                        || !lease.lease_token
+                        || !Number.isFinite(lease.heartbeat_after_ms)
+                        || Number.isNaN(Date.parse(lease.expires_at))
+                        || Date.parse(lease.expires_at) <= Date.now()
+                    ) {
                         this._appendReviewEvent(`primary viewer lease 不是 primary（role=${lease.role}）`);
                         return null;
                     }
                     this.standaloneViewerLease = lease;
                     reviewEnv.viewerLeaseToken = lease.lease_token;
                     reviewEnv.sourceClientId = lease.lease_id;
+                    this._scheduleStandaloneViewerLeaseHeartbeat(sessionId, lease);
                     this._appendReviewEvent(`已取得 primary viewer lease：${lease.lease_id}`);
                     return lease;
                 })
@@ -1010,15 +1384,153 @@ export default class App extends React.Component<AppProps, AppState> {
         return lease?.lease_token ?? null;
     }
 
+    private _standaloneViewerLeaseIsFresh(): boolean {
+        const expiresAt = this.standaloneViewerLease?.expires_at;
+        return Boolean(expiresAt && Date.parse(expiresAt) > Date.now());
+    }
+
+    private _clearStandaloneViewerLeaseHeartbeat(): void {
+        if (this.standaloneViewerLeaseHeartbeatId !== null) {
+            window.clearTimeout(this.standaloneViewerLeaseHeartbeatId);
+            this.standaloneViewerLeaseHeartbeatId = null;
+        }
+    }
+
+    private _dropStandaloneViewerLease(reason?: string): void {
+        const lease = this.standaloneViewerLease;
+        this._clearStandaloneViewerLeaseHeartbeat();
+        this.standaloneViewerLease = null;
+        if (lease && reviewEnv.viewerLeaseToken === lease.lease_token) {
+            reviewEnv.viewerLeaseToken = "";
+        }
+        if (lease && reviewEnv.sourceClientId === lease.lease_id) {
+            reviewEnv.sourceClientId = this.standaloneViewerId;
+        }
+        if (reason) this._appendReviewEvent(reason);
+    }
+
+    private _scheduleStandaloneViewerLeaseHeartbeat(sessionId: string, lease: StandaloneViewerLease): void {
+        this._clearStandaloneViewerLeaseHeartbeat();
+        if (!this.componentMounted) return;
+        const delayMs = Math.max(1_000, lease.heartbeat_after_ms);
+        this.standaloneViewerLeaseHeartbeatId = window.setTimeout(() => {
+            this.standaloneViewerLeaseHeartbeatId = null;
+            void this._heartbeatStandaloneViewerLease(sessionId, lease);
+        }, delayMs);
+    }
+
+    private async _heartbeatStandaloneViewerLease(sessionId: string, lease: StandaloneViewerLease): Promise<void> {
+        if (
+            !this.componentMounted
+            || this.state.reviewSessionId !== sessionId
+            || this.standaloneViewerLease?.lease_id !== lease.lease_id
+            || this.standaloneViewerLease.lease_token !== lease.lease_token
+        ) return;
+        try {
+            const response = await fetch(
+                `${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(sessionId)}/viewer-leases/${encodeURIComponent(lease.lease_id)}/heartbeat`,
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-Viewer-Lease-Token": lease.lease_token,
+                    },
+                    body: "{}",
+                },
+            );
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const refreshed = await response.json() as Partial<StandaloneViewerLease>;
+            if (
+                refreshed.lease_id !== lease.lease_id
+                || typeof refreshed.expires_at !== "string"
+                || Number.isNaN(Date.parse(refreshed.expires_at))
+                || !Number.isFinite(refreshed.heartbeat_after_ms)
+            ) throw new Error("malformed heartbeat response");
+            const nextLease = {
+                ...lease,
+                expires_at: refreshed.expires_at,
+                heartbeat_after_ms: refreshed.heartbeat_after_ms as number,
+            };
+            this.standaloneViewerLease = nextLease;
+            this._scheduleStandaloneViewerLeaseHeartbeat(sessionId, nextLease);
+        } catch (error) {
+            this._dropStandaloneViewerLease(
+                `primary viewer lease heartbeat 失敗：${error instanceof Error ? error.message : String(error)}`,
+            );
+        }
+    }
+
+    private async _preauthorizeStageBinding(
+        artifacts: Array<{ artifact_id: string; role: "primary" | "secondary"; load_order: number }>,
+    ): Promise<StageBindingPreauthorization> {
+        if (this.stageProofBlockedRevision) {
+            throw new Error("stage binding proof resync required");
+        }
+        const sessionId = this.state.reviewSessionId;
+        if (!sessionId) throw new Error("review session is required");
+        const userToken = this._ensureStandaloneLabUserToken();
+        if (!userToken) throw new Error("local-dev user token is required");
+        const leaseToken = await this._ensurePrimaryViewerLease();
+        if (!leaseToken) throw new Error("primary viewer lease is required");
+
+        const response = await fetch(
+            `${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(sessionId)}/stage-binding`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-User-Token": userToken,
+                    "X-Viewer-Lease-Token": leaseToken,
+                },
+                body: JSON.stringify({
+                    source_client_id: reviewEnv.sourceClientId,
+                    role: "primary",
+                    artifacts: artifacts.map((artifact) => ({
+                        artifact_id: artifact.artifact_id,
+                        role: artifact.role,
+                        load_order: artifact.load_order,
+                    })),
+                }),
+            },
+        );
+        if (!response.ok) {
+            throw new Error(`stage binding preauthorization failed (${response.status})`);
+        }
+        const raw = await response.json() as unknown;
+        if (!isRecord(raw) || !isRecord(raw.stage_composition)) {
+            throw new Error("stage binding preauthorization response is malformed");
+        }
+        const primary = raw.stage_composition.primary;
+        const secondaryLayers = raw.stage_composition.secondary_layers;
+        if (
+            raw.status !== "pending"
+            || raw.session_id !== sessionId
+            || !getPayloadString(raw, "stage_binding_authorization_id")
+            || !getPayloadString(raw, "binding_revision_id")
+            || !getPayloadString(raw, "pending_expires_at")
+            || !isRecord(primary)
+            || primary.role !== "primary"
+            || !getPayloadString(primary, "artifact_id")
+            || !getPayloadString(primary, "usdc_url")
+            || !Array.isArray(secondaryLayers)
+            || secondaryLayers.some((artifact) => (
+                !isRecord(artifact)
+                || artifact.role !== "secondary"
+                || !getPayloadString(artifact, "artifact_id")
+                || !getPayloadString(artifact, "usdc_url")
+            ))
+        ) {
+            throw new Error("stage binding preauthorization response is malformed");
+        }
+        return raw as unknown as StageBindingPreauthorization;
+    }
+
     private _releaseStandaloneViewerLease(): void {
         const lease = this.standaloneViewerLease;
         const sessionId = this.state.reviewSessionId;
         if (!lease || !sessionId) return;
 
-        this.standaloneViewerLease = null;
-        if (reviewEnv.viewerLeaseToken === lease.lease_token) {
-            reviewEnv.viewerLeaseToken = "";
-        }
+        this._dropStandaloneViewerLease();
         void fetch(`${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(sessionId)}/viewer-leases/${encodeURIComponent(lease.lease_id)}/release`, {
             method: "POST",
             headers: {
@@ -1151,65 +1663,56 @@ export default class App extends React.Component<AppProps, AppState> {
         }
         this.setState({ govBindingApplyState: { status: "applying" } });
         this._appendReviewEvent(`套用 binding revision=${revisionId}（primary=${primary.artifact_id}, layers=${selection.length}）`);
-        const sendStageComposition = () => {
-            if (harnessEnabled()) {
-                this._sendStreamMessage({
-                    event_type: "composeStageRequest",
-                    payload: { binding_revision_id: revisionId, artifacts: selection },
-                });
-                return;
-            }
+        if (harnessEnabled()) {
+            this._sendStreamMessage({
+                event_type: "composeStageRequest",
+                payload: { binding_revision_id: revisionId, artifacts: selection },
+            });
+            return;
+        }
+        if (this.stageProofBlockedRevision) {
+            this._appendReviewEvent("略過 binding 套用：stage binding proof resync required");
+            this.setState({
+                govBindingApplyState: {
+                    status: "failed",
+                    reason: "stage binding proof resync required",
+                },
+            });
+            return;
+        }
+        if (!this.state.reviewSessionId) {
+            this.setState({ govBindingApplyState: { status: "failed", reason: "缺少 review session" } });
+            return;
+        }
 
+        const applyThroughCoordinator = async () => {
+            const transaction = await this._preauthorizeStageBinding(
+                selection.map((artifact) => ({
+                    artifact_id: artifact.artifact_id,
+                    role: artifact.role,
+                    load_order: artifact.load_order,
+                })),
+            );
+            this._appendReviewEvent(`coordinator 已建立 pending binding：${transaction.binding_revision_id}`);
             this._sendStreamMessage({
                 event_type: "loadArtifactGroupRequest",
                 payload: {
-                    binding_revision_id: revisionId,
-                    stage_composition: {
-                        primary: {
-                            artifact_id: primary.artifact_id,
-                            usdc_url: primary.usdc_url,
-                            load_order: primary.load_order,
-                        },
-                        secondary_layers: selection
-                            .filter((artifact) => artifact.role !== "primary")
-                            .map((artifact) => ({
-                                artifact_id: artifact.artifact_id,
-                                usdc_url: artifact.usdc_url,
-                                load_order: artifact.load_order,
-                            })),
-                    },
+                    url: transaction.stage_composition.primary.usdc_url,
+                    requested_stage_url: transaction.stage_composition.primary.usdc_url,
+                    stage_binding_authorization_id: transaction.stage_binding_authorization_id,
+                    binding_revision_id: transaction.binding_revision_id,
+                    stage_composition: transaction.stage_composition,
                 },
             });
         };
-        // CH-C：真實模式先過 coordinator 後端角色權威（source_client_id / primary），通過才送 DataChannel 重組 stage；
-        // 後端拒絕（403）→ honest failed，不偽宣告。harness 模式無 coordinator → 直接走假 Kit（authority 由 coordinator 單元測試驗證）。
-        if (!harnessEnabled() && this.state.reviewSessionId) {
-            const applyThroughCoordinator = async () => {
-                const leaseToken = await this._ensurePrimaryViewerLease();
-                if (!leaseToken) {
-                    this.setState({ govBindingApplyState: { status: "failed", reason: "尚未取得 primary viewer lease" } });
-                    return;
-                }
-
-                const response = await fetch(`${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(this.state.reviewSessionId!)}/stage-binding`, {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "X-Viewer-Lease-Token": leaseToken,
-                    },
-                    body: JSON.stringify({ source_client_id: reviewEnv.sourceClientId, role: "primary", binding_revision_id: revisionId, primary_artifact_id: primary.artifact_id }),
-                });
-                if (!response.ok) {
-                    this.setState({ govBindingApplyState: { status: "failed", reason: `coordinator 後端權威拒絕（${response.status}）` } });
-                    return;
-                }
-                sendStageComposition();
-            };
-            void applyThroughCoordinator()
-                .catch((error) => this.setState({ govBindingApplyState: { status: "failed", reason: error instanceof Error ? error.message : String(error) } }));
-            return;
-        }
-        sendStageComposition();
+        void applyThroughCoordinator().catch(() => {
+            this.setState({
+                govBindingApplyState: {
+                    status: "failed",
+                    reason: "coordinator stage binding preauthorization 失敗",
+                },
+            });
+        });
     }
 
     private _bootstrapHarnessSession(): void {
@@ -1690,6 +2193,15 @@ export default class App extends React.Component<AppProps, AppState> {
             this.setState({ isLoading: false });
             return;
         }
+        if (this.stageProofBlockedRevision) {
+            this._appendReviewEvent("略過 openStageRequest：stage binding proof resync required");
+            this.setState({
+                loadingText: "stage binding proof 尚未重新同步",
+                isLoading: false,
+                stageLoadStatus: "unproven",
+            });
+            return;
+        }
         const targetAsset = this._expectedStageAsset() || this.state.selectedUSDAsset;
         if (!targetAsset) {
             console.warn("No USD asset is selected.");
@@ -1705,6 +2217,8 @@ export default class App extends React.Component<AppProps, AppState> {
         }
 
         this.pendingStageUrl = targetAsset.url;
+        this.confirmedStageBindingRevision = null;
+        this.unprovenStageUrl = null;
         this.loadingStatePollCount = 0;
         this._clearLoadingStateRetry();
         this._scheduleStageLoadTimeout();
@@ -1725,26 +2239,50 @@ export default class App extends React.Component<AppProps, AppState> {
         const composition = this.state.latestStreamConfig?.stage_composition;
         const selectedIsPrimary = composition?.primary?.url === targetAsset.url;
         const openStage = async () => {
-            if (!harnessEnabled()) {
-                const leaseToken = await this._ensurePrimaryViewerLease();
-                if (!leaseToken) {
-                    this._failStageLoad(
-                        "模型載入失敗",
-                        "尚未取得 primary viewer lease，已阻擋 openStageRequest",
-                    );
-                    return;
-                }
+            if (harnessEnabled()) {
+                this._sendStreamMessage(
+                    buildOpenStageRequest(
+                        targetAsset.url,
+                        artifactBindings,
+                        selectedIsPrimary ? { primary: composition.primary, secondary_layers: composition.secondary_layers || [] } : null,
+                    ),
+                );
+                this._scheduleLoadingStateQuery(1500);
+                return;
             }
-            this._sendStreamMessage(
-                buildOpenStageRequest(
-                    targetAsset.url,
-                    artifactBindings,
-                    selectedIsPrimary ? { primary: composition.primary, secondary_layers: composition.secondary_layers || [] } : null,
-                ),
-            );
+
+            const selectedBindings = selectedIsPrimary && composition?.primary
+                ? [
+                    {
+                        artifact_id: composition.primary.artifact_id,
+                        role: "primary" as const,
+                        load_order: composition.primary.load_order,
+                    },
+                    ...(composition.secondary_layers || []).map((binding) => ({
+                        artifact_id: binding.artifact_id,
+                        role: "secondary" as const,
+                        load_order: binding.load_order,
+                    })),
+                ]
+                : artifactBindings.slice(0, 1).map((binding) => ({
+                    artifact_id: binding.artifact_id,
+                    role: "primary" as const,
+                    load_order: 0,
+                }));
+            if (selectedBindings.length === 0) {
+                throw new Error("selected stage has no server-owned artifact binding");
+            }
+            const transaction = await this._preauthorizeStageBinding(selectedBindings);
+            this.pendingStageUrl = transaction.stage_composition.primary.usdc_url;
+            this._sendStreamMessage(buildAuthorizedOpenStageRequest(transaction));
             this._scheduleLoadingStateQuery(1500);
         };
-        void openStage();
+        void openStage().catch(() => {
+            this._failStageLoad(
+                "模型載入失敗",
+                "無法建立 stage binding authorization，已阻擋 openStageRequest",
+            );
+        });
     }
 
     /**
@@ -1799,6 +2337,7 @@ export default class App extends React.Component<AppProps, AppState> {
     */
     private _makePickable (usdPrims: USDPrimType[]): void {
         const paths: string[] = usdPrims.map(prim => prim.path);
+        if (paths.length === 0) return;
         console.log(`Sending request to make prims pickable: ${paths}.`);
         const message: AppStreamMessageType = {
             event_type: "makePrimsPickable",
@@ -2057,6 +2596,61 @@ export default class App extends React.Component<AppProps, AppState> {
         }
         return null;
     }
+
+    private async _resyncStageBindingProof(): Promise<boolean> {
+        const revision = this.stageProofBlockedRevision;
+        const generation = this.stageProofBlockGeneration;
+        const loadedUrl = this.unprovenStageUrl;
+        const sessionId = this.state.reviewSessionId;
+        if (!revision || revision === "unknown" || !sessionId || !reviewEnv.userToken) return false;
+        try {
+            const response = await fetch(
+                `${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(sessionId)}/viewer-leases/status`,
+                {
+                    headers: {
+                        Accept: "application/json",
+                        "X-User-Token": reviewEnv.userToken,
+                    },
+                },
+            );
+            if (!response.ok) return false;
+            const raw = await response.json() as unknown;
+            if (!isRecord(raw) || !isRecord(raw.stage_binding)) return false;
+            const stageBinding = raw.stage_binding;
+            const activeRevision = getPayloadString(stageBinding, "active_binding_revision");
+            if (activeRevision !== revision) return false;
+            if (
+                this.stageProofBlockGeneration !== generation
+                || this.stageProofBlockedRevision !== revision
+                || this.unprovenStageUrl !== loadedUrl
+            ) return false;
+
+            const matched = Boolean(loadedUrl && this._isLoadedStageExpected(loadedUrl));
+            this.stageProofBlockGeneration += 1;
+            this.stageProofBlockedRevision = null;
+            this.confirmedStageBindingRevision = revision;
+            this.unprovenStageUrl = null;
+            this.setState((state) => ({
+                loadedStageUrl: matched ? loadedUrl : null,
+                stageLoadStatus: matched ? "matched" : "unproven",
+                runtimeCommandRejection: null,
+                govBindingActiveRevision: revision,
+                govBindingLastGoodRevision: getPayloadString(stageBinding, "last_good_binding_revision") || revision,
+                reviewEvents: [...state.reviewEvents, `stage binding resync：${matched ? "active" : "URL mismatch"}`].slice(-80),
+            }));
+            if (window.parent !== window) {
+                this._postToParent({
+                    type: "stage_loaded",
+                    stageUrl: matched ? loadedUrl : null,
+                    status: matched ? "active" : "unproven",
+                    binding_revision_id: revision,
+                });
+            }
+            return matched;
+        } catch {
+            return false;
+        }
+    }
     
     /**
     * @function _handleCustomEvent
@@ -2081,15 +2675,133 @@ export default class App extends React.Component<AppProps, AppState> {
                 // Keep the original event shape so the fallback logger below can surface it.
             }
         }
-        this._appendDemoIncoming(event.event_type || event.messageRecipient || "streamEvent", event);
-
         const payload = isRecord(event.payload) ? event.payload : {};
+
+        if (event.event_type === "commandRejected") {
+            const parsed = parseRuntimeCommandRejection(payload);
+            if (!parsed) {
+                this._appendReviewEvent("忽略 malformed commandRejected");
+                return;
+            }
+            const context = parsed.request_id
+                ? this.runtimeCommandContexts.get(parsed.request_id)
+                : undefined;
+            if (parsed.request_id && this.runtimeCommandTerminalClaims.has(parsed.request_id)) {
+                this._appendReviewEvent("忽略 duplicate commandRejected terminal");
+                return;
+            }
+            if (context && context.eventType !== parsed.rejected_event_type) {
+                this._appendReviewEvent("忽略 commandRejected：rejected event 與 request context 不相符");
+                return;
+            }
+            if (parsed.request_id) {
+                if (!this._claimRuntimeCommandTerminal(
+                    parsed.request_id,
+                    context?.eventType || parsed.rejected_event_type,
+                    "rejected",
+                )) return;
+            } else {
+                this._recordRuntimeCommandPhase(
+                    parsed.rejection_id || "",
+                    parsed.rejected_event_type,
+                    "terminal",
+                    "rejected",
+                );
+            }
+            this._appendDemoIncoming("commandRejected", {
+                event_type: "commandRejected",
+                payload: parsed,
+            });
+            const rejection: RuntimeCommandRejection = {
+                ...parsed,
+                ...(context?.bindingRevisionId
+                    ? { binding_revision_id: context.bindingRevisionId }
+                    : {}),
+            };
+            if (rejection.runtime_state === "changed_unconfirmed") {
+                const revision = context?.bindingRevisionId || "unknown";
+                const unprovenUrl = context?.stageUrl || this.state.loadedStageUrl || this.pendingStageUrl;
+                this.stageProofBlockGeneration += 1;
+                this.stageProofBlockedRevision = revision;
+                this.confirmedStageBindingRevision = null;
+                this.unprovenStageUrl = unprovenUrl;
+                this._finishStageLoad();
+                this.setState((state) => ({
+                    runtimeCommandRejection: rejection,
+                    loadedStageUrl: null,
+                    stageLoadStatus: "unproven",
+                    govBindingApplyState: {
+                        status: "failed",
+                        reason: "runtime changed but coordinator confirmation is unproven",
+                    },
+                    reviewEvents: [...state.reviewEvents, "runtime changed_unconfirmed；已阻擋 retry/handoff"].slice(-80),
+                }));
+                if (window.parent !== window) {
+                    this._postToParent({
+                        type: "stage_loaded",
+                        stageUrl: null,
+                        status: "unproven",
+                        ...(context?.bindingRevisionId
+                            ? { binding_revision_id: context.bindingRevisionId }
+                            : {}),
+                    });
+                }
+                if (context?.bindingRevisionId) void this._resyncStageBindingProof();
+                return;
+            }
+
+            this.setState((state) => ({
+                runtimeCommandRejection: rejection,
+                reviewEvents: [
+                    ...state.reviewEvents,
+                    `${rejection.rejected_event_type} rejected：${rejection.reason}`,
+                ].slice(-80),
+            }));
+            if (
+                rejection.rejected_event_type === "openStageRequest"
+                || rejection.rejected_event_type === "loadArtifactGroupRequest"
+            ) {
+                this._failStageLoad("模型載入遭拒", rejection.detail_code || rejection.reason);
+            }
+            return;
+        }
+
+        this._appendDemoIncoming(event.event_type || event.messageRecipient || "streamEvent", event);
 
         // response received once a USD asset is fully loaded
         if (event.event_type === "openedStageResult") {
+            const correlation = this._completeRuntimeCommandEvent(
+                "openedStageResult",
+                payload,
+                payload.result === "success" ? "success" : "error",
+            );
+            if (correlation.disposition !== "matched") return;
             if (payload.result === "success") {
                 const loadedUrl = getPayloadString(payload, "url");
                 const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
+                if (this.stageProofBlockedRevision) {
+                    if (
+                        bindingRevisionId === this.stageProofBlockedRevision
+                        && loadedUrl
+                        && this._isLoadedStageExpected(loadedUrl)
+                    ) {
+                        this.unprovenStageUrl = loadedUrl;
+                        this.stageProofBlockGeneration += 1;
+                    }
+                    this.setState((state) => ({
+                        loadedStageUrl: null,
+                        stageLoadStatus: "unproven",
+                        reviewEvents: [
+                            ...state.reviewEvents,
+                            "忽略未經 authenticated status resync 的 late openedStageResult",
+                        ].slice(-80),
+                    }));
+                    void this._resyncStageBindingProof();
+                    return;
+                }
+                if (bindingRevisionId) {
+                    this.confirmedStageBindingRevision = bindingRevisionId;
+                }
                 // 誠實鐵律：只有「Kit 回報且與 expected 相符的 loaded URL」才算 stage-match 證據。
                 // 缺 loaded URL（loadedUrl 為空字串）時 stageEvidenceMatched=false，不得偽宣告 applied。
                 const stageEvidenceMatched = loadedUrl ? this._recordLoadedStageEvidence(loadedUrl, "openedStageResult") : false;
@@ -2123,12 +2835,54 @@ export default class App extends React.Component<AppProps, AppState> {
                         this._appendReviewEvent(`binding 已套用（Kit openedStageResult 確認）：${bindingRevisionId}`);
                     }
                 }
-                this._scheduleLoadingStateQuery(250)
+                if (loadedUrl && stageEvidenceMatched) {
+                    this._completeStageLoad(loadedUrl, bindingRevisionId || undefined);
+                } else {
+                    this._scheduleLoadingStateQuery(250);
+                }
             }
             else {
                 const url = getPayloadString(payload, "url");
                 const error = getPayloadString(payload, "error") || "unknown error";
+                const runtimeState = getPayloadString(payload, "runtime_state");
+                const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
+                const requestId = getPayloadString(payload, "request_id");
+                if (requestId) this.runtimeCommandContexts.delete(requestId);
                 console.error(`Kit App communicates there was an error loading: ${url} (${error})`);
+                if (runtimeState === "changed_failed") {
+                    this.stageProofBlockGeneration += 1;
+                    this.stageProofBlockedRevision = null;
+                    this.confirmedStageBindingRevision = null;
+                    this.unprovenStageUrl = null;
+                    this._finishStageLoad();
+                    this.setState((state) => ({
+                        loadingText: "模型組合僅部分套用",
+                        streamDiagnostic: [`目標：${url || "unknown"}`, `錯誤：${error}`].join("\n"),
+                        showStream: this._hasRemoteVideoFrame(),
+                        isLoading: false,
+                        loadedStageUrl: null,
+                        stageLoadStatus: "unproven",
+                        runtimeCommandRejection: null,
+                        govBindingActiveRevision: null,
+                        govBindingApplyState: {
+                            status: "failed",
+                            reason: "runtime_changed_transaction_failed",
+                        },
+                        reviewEvents: [
+                            ...state.reviewEvents,
+                            "runtime changed_failed；已清除active evidence並阻擋handoff",
+                        ].slice(-80),
+                    }));
+                    if (window.parent !== window) {
+                        this._postToParent({
+                            type: "stage_loaded",
+                            stageUrl: null,
+                            status: "unproven",
+                            ...(bindingRevisionId ? { binding_revision_id: bindingRevisionId } : {}),
+                        });
+                    }
+                    return;
+                }
                 this._failStageLoad(
                     "模型載入失敗",
                     [`目標：${url || this.pendingStageUrl || "unknown"}`, `錯誤：${error}`].join("\n"),
@@ -2139,6 +2893,21 @@ export default class App extends React.Component<AppProps, AppState> {
         else if (event.event_type === "loadArtifactGroupResult") {
             const result = getPayloadString(payload, "result") || "unknown";
             const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
+            const requestId = getPayloadString(payload, "request_id");
+            const correlation = result === "error"
+                ? this._completeRuntimeCommandEvent("loadArtifactGroupResult", payload, "error")
+                : this._correlateRuntimeCommandEvent("loadArtifactGroupResult", payload);
+            if (correlation.disposition !== "matched") return;
+            const context = correlation.context;
+            if (requestId && context) {
+                if (result === "accepted") {
+                    this._recordRuntimeCommandPhase(
+                        requestId,
+                        context.eventType,
+                        "executing",
+                    );
+                }
+            }
             if (result === "error" && bindingRevisionId) {
                 this.setState({
                     govBindingApplyState: {
@@ -2219,6 +2988,14 @@ export default class App extends React.Component<AppProps, AppState> {
                 // show stream and populate children if the stage is valid and it's done loading
                 if (isStageValid && loadingState === "idle")
                 {
+                    if (!harnessEnabled() && !this.confirmedStageBindingRevision) {
+                        this.setState({
+                            loadingText: "stage 已觀察，等待 coordinator confirmation",
+                            stageLoadStatus: "unproven",
+                        });
+                        this._scheduleLoadingStateQuery(500);
+                        return;
+                    }
                     this._completeStageLoad(payloadUrl)
                 }
             }
@@ -2238,6 +3015,13 @@ export default class App extends React.Component<AppProps, AppState> {
                 if (!this._recordLoadedStageEvidence(loadedUrl, "updateProgressActivity", activityText)) {
                     return;
                 }
+                if (!harnessEnabled() && !this.confirmedStageBindingRevision) {
+                    this.setState({
+                        loadingText: "stage 已觀察，等待 coordinator confirmation",
+                        stageLoadStatus: "unproven",
+                    });
+                    return;
+                }
                 this._completeStageLoad(loadedUrl);
                 return;
             }
@@ -2251,6 +3035,12 @@ export default class App extends React.Component<AppProps, AppState> {
             const missingPaths = getPayloadStringArray(payload, "missing_paths");
             const fallbackPaths = getPayloadObjectArray(payload, "fallback_paths");
             const requestId = getPayloadString(payload, "request_id");
+            const correlation = this._completeRuntimeCommandEvent(
+                "highlightPrimsResult",
+                payload,
+                result === "success" ? "success" : "error",
+            );
+            if (correlation.disposition !== "matched") return;
             const nextState: Partial<AppState> = {
                 reviewEvents: [...this.state.reviewEvents, `高亮結果：${result}`],
             };
@@ -2291,6 +3081,12 @@ export default class App extends React.Component<AppProps, AppState> {
         else if (event.event_type === "focusPrimResult") {
             const result = getPayloadString(payload, "result") || "unknown";
             const requestId = getPayloadString(payload, "request_id");
+            const correlation = this._completeRuntimeCommandEvent(
+                "focusPrimResult",
+                payload,
+                result === "success" ? "success" : "error",
+            );
+            if (correlation.disposition !== "matched") return;
             const nextState: Partial<AppState> = {
                 reviewEvents: [...this.state.reviewEvents, `聚焦結果：${result}`],
             };
@@ -2310,6 +3106,17 @@ export default class App extends React.Component<AppProps, AppState> {
             }
 
             this.setState(nextState as Pick<AppState, keyof AppState>);
+        }
+
+        else if (event.event_type && simpleRuntimeTerminalEvents.has(event.event_type)) {
+            const result = getPayloadString(payload, "result") || "unknown";
+            const correlation = this._completeRuntimeCommandEvent(
+                event.event_type,
+                payload,
+                result === "success" ? "success" : "error",
+            );
+            if (correlation.disposition !== "matched") return;
+            this._appendReviewEvent(`${event.event_type}：${result}`);
         }
             
         // Notification from Kit about user changing the selection via the viewport.
@@ -2358,7 +3165,14 @@ export default class App extends React.Component<AppProps, AppState> {
         // CH-F：Kit 確認 binding 已套用 → 更新 active + last-good revision（交易完成；誠實：只有確認才宣告 applied）。
         else if (event.event_type === "bindingApplied") {
             const revision = getPayloadString(payload, "binding_revision_id");
+            const correlation = this._completeRuntimeCommandEvent("bindingApplied", payload, "success");
+            if (correlation.disposition !== "matched") return;
             if (revision) {
+                if (this.stageProofBlockedRevision) {
+                    this._appendReviewEvent("忽略未經 authenticated status resync 的 late bindingApplied");
+                    void this._resyncStageBindingProof();
+                    return;
+                }
                 this.setState((state) => ({
                     govBindingActiveRevision: revision,
                     govBindingLastGoodRevision: revision,
@@ -2372,9 +3186,10 @@ export default class App extends React.Component<AppProps, AppState> {
             console.log("onCustomEvent");
             if (typeof event.data === "string") {
                 try {
-                    console.log(JSON.parse(event.data).event_type);
+                    const parsed = JSON.parse(event.data) as unknown;
+                    console.log(isRecord(parsed) ? getPayloadString(parsed, "event_type") || "kit event" : "kit event");
                 } catch {
-                    console.log(event.data);
+                    console.log("unparseable kit event data");
                 }
             }
         }
@@ -2454,6 +3269,47 @@ export default class App extends React.Component<AppProps, AppState> {
                                     title="需 live 3D 工具（DataChannel）— roadmap，未實作不假裝可用">{label}<span className="gv-nav__rm">⌛</span></button>
                         ))}
                     </nav>
+                )}
+
+                {this.state.runtimeCommandRejection && (
+                    <div
+                        role="alert"
+                        aria-live="assertive"
+                        data-testid="runtime-command-rejection"
+                        style={{
+                            position: "absolute",
+                            zIndex: 30,
+                            top: 52,
+                            left: 16,
+                            right: 16,
+                            padding: "10px 12px",
+                            border: "1px solid #f59e0b",
+                            background: "rgba(46, 27, 7, 0.96)",
+                            color: "#fff7ed",
+                        }}
+                    >
+                        <strong>Runtime command rejected</strong>
+                        {`：${this.state.runtimeCommandRejection.reason}`}
+                        {this.state.runtimeCommandRejection.retryable ? "（可重試）" : "（不可盲重試）"}
+                        {this.state.runtimeCommandRejection.detail_code === "authority_unavailable" && (
+                            <span data-testid="runtime-authority-unavailable">
+                                ；操作授權服務暫時不可用。請稍後重新執行原操作，系統不會重播舊 transaction。
+                            </span>
+                        )}
+                        {this.state.runtimeCommandRejection.runtime_state === "changed_unconfirmed" && (
+                            <>
+                                <span>；stage 已變更但尚未由 coordinator 證實，handoff 已阻擋。</span>
+                                <button
+                                    type="button"
+                                    data-testid="runtime-command-resync"
+                                    onClick={() => { void this._resyncStageBindingProof(); }}
+                                    style={{ marginLeft: 12 }}
+                                >
+                                    重新同步 stage proof
+                                </button>
+                            </>
+                        )}
+                    </div>
                 )}
 
                 {/* Loading text indicator */}
@@ -2626,6 +3482,28 @@ export default class App extends React.Component<AppProps, AppState> {
                             ? this.state.demoOutgoingMessages.map((m) => m.label).join(", ")
                             : "（尚無 DataChannel 送出紀錄）"}
                     </p>
+                )}
+
+                {(harnessEnabled() || Boolean(this.state.reviewSessionId))
+                    && this.state.runtimeCommandLifecycles.length > 0
+                    && (
+                    <ol
+                        className="ec-note"
+                        data-testid="runtime-command-lifecycle"
+                        aria-label="runtime command lifecycle"
+                        aria-live="polite"
+                    >
+                        {this.state.runtimeCommandLifecycles.map((entry) => (
+                            <li
+                                key={entry.request_id}
+                                data-testid="runtime-command-lifecycle-entry"
+                                data-request-id={entry.request_id}
+                            >
+                                {entry.event_type}: {entry.phases.join(" → ")}
+                                {entry.outcome ? ` (${entry.outcome})` : ""}
+                            </li>
+                        ))}
+                    </ol>
                 )}
 
                 {/* 統一治理控制台 MVP：A1–A10 治理面板只在「問題 · 治理」分頁渲染，

@@ -10,8 +10,10 @@
 
 import asyncio
 import hashlib
+import json
 import os
 import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 from urllib.request import urlopen
@@ -28,9 +30,21 @@ import omni.usd
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux
 
 try:
-    from .runtime_authority import is_authorized_mutator, unauthorized_result_payload
+    from .runtime_authority import (
+        RuntimeAuthorityClient,
+        command_rejected_payload,
+        correlated_result,
+        local_denial,
+        payload_dict,
+    )
 except ImportError:  # pragma: no cover - test modules import this file directly.
-    from runtime_authority import is_authorized_mutator, unauthorized_result_payload
+    from runtime_authority import (
+        RuntimeAuthorityClient,
+        command_rejected_payload,
+        correlated_result,
+        local_denial,
+        payload_dict,
+    )
 
 
 _FALLBACK_LIGHTS_ROOT = "/__BIMFallbackLights"
@@ -40,6 +54,49 @@ _DEFAULT_HTTP_STAGE_ALLOWED_HOSTS = (
     "localhost:49101",
 )
 _DEFAULT_MAX_HTTP_STAGE_BYTES = 512 * 1024 * 1024
+_PUBLIC_STAGE_CONTEXT_FIELDS = (
+    "applied_mode",
+    "artifact_id",
+    "artifact_group_id",
+    "load_order",
+    "primary_binding",
+    "applied_primary",
+    "loaded_bindings",
+    "failed_bindings",
+    "applied_secondary_layers",
+    "skipped_secondary_layers",
+    "partial_load",
+    "missing_paths",
+    "fallback_paths",
+    "error",
+    "binding_revision_id",
+    "request_id",
+)
+_PUBLIC_STAGE_BINDING_FIELDS = (
+    "artifact_id",
+    "artifact_group_id",
+    "role",
+    "load_order",
+    "url",
+    "usdc_url",
+    "composition_strategy",
+    "error",
+)
+_PUBLIC_STAGE_BINDING_KEYS = {
+    "primary_binding",
+    "applied_primary",
+}
+_PUBLIC_STAGE_BINDING_LIST_KEYS = {
+    "loaded_bindings",
+    "failed_bindings",
+    "applied_secondary_layers",
+    "skipped_secondary_layers",
+}
+_PUBLIC_STAGE_FALLBACK_FIELDS = (
+    "requested_path",
+    "selected_path",
+    "reason",
+)
 
 
 def _stage_has_lights(stage) -> bool:
@@ -144,10 +201,43 @@ def _ensure_allowed_http_stage_url(parsed, url: str) -> None:
         )
 
 
+@dataclass(frozen=True)
+class _AuthorizedStageAttempt:
+    event_type: str
+    request_id: str
+    session_id: str
+    source_client_id: str
+    viewer_lease_token: str = field(repr=False)
+    stage_binding_authorization_id: str
+    binding_revision_id: str
+    requested_stage_url: str
+    stage_context_json: str = field(repr=False)
+
+    def stage_context(self) -> dict:
+        return json.loads(self.stage_context_json)
+
+    def authority_payload(self) -> dict:
+        return {
+            "request_id": self.request_id,
+            "session_id": self.session_id,
+            "source_client_id": self.source_client_id,
+            "viewer_lease_token": self.viewer_lease_token,
+            "stage_binding_authorization_id": self.stage_binding_authorization_id,
+            "binding_revision_id": self.binding_revision_id,
+        }
+
+
 class LoadingManager:
     """Manages the loading of USD stages and sends messages to the client"""
-    def __init__(self):
+    def __init__(self, runtime_authority=None):
         self._subscriptions = []  # Holds subscription pointers
+        self._runtime_authority = runtime_authority or RuntimeAuthorityClient()
+        self._active_stage_attempt = None
+        self._active_terminal_started = False
+        self._active_stage_runtime_url = ""
+        self._managed_secondary_layer_ids = set()
+        self._managed_secondary_layer_owner = None
+        self._pending_tasks = set()
 
         # -- state variables
         # URL of stage load request. Can be used in messaging with client.
@@ -234,9 +324,7 @@ class LoadingManager:
         )
 
     def _payload_dict(self, value):
-        if isinstance(value, carb.dictionary.Item):
-            value = value.get_dict()
-        return value if isinstance(value, dict) else {}
+        return payload_dict(value)
 
     def _payload_list(self, value):
         if value is None:
@@ -249,12 +337,45 @@ class LoadingManager:
             return list(value)
         return []
 
-    def _public_stage_context(self, context):
+    def _public_stage_binding(self, value):
+        binding = self._payload_dict(value)
         return {
-            key: value
-            for key, value in context.items()
-            if key not in {"secondary_bindings"}
+            key: binding[key]
+            for key in _PUBLIC_STAGE_BINDING_FIELDS
+            if key in binding
         }
+
+    def _public_stage_fallback(self, value):
+        if isinstance(value, str):
+            return value
+        fallback = self._payload_dict(value)
+        return {
+            key: fallback[key]
+            for key in _PUBLIC_STAGE_FALLBACK_FIELDS
+            if key in fallback
+        }
+
+    def _public_stage_context(self, context):
+        public = {}
+        for key in _PUBLIC_STAGE_CONTEXT_FIELDS:
+            if key not in context:
+                continue
+            value = context[key]
+            if key in _PUBLIC_STAGE_BINDING_KEYS:
+                public[key] = None if value is None else self._public_stage_binding(value)
+            elif key in _PUBLIC_STAGE_BINDING_LIST_KEYS:
+                public[key] = [
+                    self._public_stage_binding(item)
+                    for item in self._payload_list(value)
+                ]
+            elif key == "fallback_paths":
+                public[key] = [
+                    self._public_stage_fallback(item)
+                    for item in self._payload_list(value)
+                ]
+            else:
+                public[key] = value
+        return public
 
     def _process_stage_url(self, url):
         if _is_http_stage_url(url):
@@ -302,13 +423,11 @@ class LoadingManager:
                 raise RuntimeError(
                     f"Cached HTTP stage exceeds max size: {cached_size} > {max_bytes}."
                 )
-            carb.log_info(
-                f"LoadingManager: using cached HTTP stage for '{url}': {cache_path}"
-            )
+            carb.log_info("LoadingManager: using an authorized cached HTTP stage.")
             return cache_path.as_posix()
 
         temp_path = cache_path.with_suffix(f"{suffix}.tmp")
-        carb.log_info(f"LoadingManager: downloading HTTP stage '{url}' to '{cache_path}'")
+        carb.log_info("LoadingManager: downloading an authorized HTTP stage.")
         try:
             with urlopen(url, timeout=30) as response:
                 status = getattr(response, "status", 200)
@@ -323,9 +442,7 @@ class LoadingManager:
                                 f"HTTP stage exceeds max size: {expected_size} > {max_bytes}."
                             )
                     except ValueError:
-                        carb.log_warn(
-                            f"Invalid HTTP stage Content-Length '{content_length}' for '{url}'."
-                        )
+                        carb.log_warn("Authorized HTTP stage returned an invalid Content-Length.")
                 bytes_written = 0
                 with open(temp_path, "wb") as output:
                     while True:
@@ -344,9 +461,7 @@ class LoadingManager:
                 temp_path.unlink()
             raise
 
-        carb.log_info(
-            f"LoadingManager: cached HTTP stage '{url}' as '{cache_path}'"
-        )
+        carb.log_info("LoadingManager: cached an authorized HTTP stage.")
         return cache_path.as_posix()
 
     def _resolve_stage_request(self, payload):
@@ -500,15 +615,27 @@ class LoadingManager:
             "fallback_paths": [],
         }
 
-    def _compose_secondary_artifact_bindings(self, stage) -> None:
-        secondary_bindings = self._requested_stage_context.get("secondary_bindings") or []
-        if not stage or not secondary_bindings:
+    def _compose_secondary_artifact_bindings(self, stage, stage_context) -> None:
+        secondary_bindings = stage_context.get("secondary_bindings") or []
+        if not stage:
+            return
+        if not secondary_bindings and not self._managed_secondary_layer_ids:
             return
 
         session_layer = stage.GetSessionLayer()
-        loaded_bindings = list(self._requested_stage_context.get("loaded_bindings") or [])
-        applied_secondary_layers = list(self._requested_stage_context.get("applied_secondary_layers") or [])
-        skipped_secondary_layers = list(self._requested_stage_context.get("skipped_secondary_layers") or [])
+        if self._managed_secondary_layer_owner is session_layer:
+            for identifier in tuple(self._managed_secondary_layer_ids):
+                while identifier in session_layer.subLayerPaths:
+                    session_layer.subLayerPaths.remove(identifier)
+        self._managed_secondary_layer_ids.clear()
+        self._managed_secondary_layer_owner = session_layer
+
+        if not secondary_bindings:
+            return
+
+        loaded_bindings = list(stage_context.get("loaded_bindings") or [])
+        applied_secondary_layers = list(stage_context.get("applied_secondary_layers") or [])
+        skipped_secondary_layers = list(stage_context.get("skipped_secondary_layers") or [])
         failed_bindings = []
 
         for binding in secondary_bindings:
@@ -530,6 +657,7 @@ class LoadingManager:
                     raise RuntimeError("Unable to open secondary layer.")
                 if layer.identifier not in session_layer.subLayerPaths:
                     session_layer.subLayerPaths.append(layer.identifier)
+                    self._managed_secondary_layer_ids.add(layer.identifier)
                 loaded_bindings.append({
                     **binding,
                     "composition_strategy": "session_sublayer",
@@ -546,43 +674,75 @@ class LoadingManager:
                 skipped = {
                     **binding,
                     "composition_strategy": "session_sublayer",
-                    "error": str(exc),
+                    "error": "Unable to load secondary layer.",
                 }
                 failed_bindings.append(skipped)
                 skipped_secondary_layers.append(skipped)
                 carb.log_warn(
                     f"LoadingManager: failed to compose secondary artifact binding "
-                    f"{binding.get('artifact_id')}: {exc}"
+                    f"{binding.get('artifact_id')} ({type(exc).__name__})."
                 )
 
-        self._requested_stage_context["loaded_bindings"] = loaded_bindings
-        self._requested_stage_context["failed_bindings"] = failed_bindings
-        self._requested_stage_context["applied_secondary_layers"] = applied_secondary_layers
-        self._requested_stage_context["skipped_secondary_layers"] = skipped_secondary_layers
-        self._requested_stage_context["partial_load"] = bool(failed_bindings or skipped_secondary_layers)
+        stage_context["loaded_bindings"] = loaded_bindings
+        stage_context["failed_bindings"] = failed_bindings
+        stage_context["applied_secondary_layers"] = applied_secondary_layers
+        stage_context["skipped_secondary_layers"] = skipped_secondary_layers
+        stage_context["partial_load"] = bool(failed_bindings or skipped_secondary_layers)
 
     def _on_load_artifact_group(self, event: carb.events.IEvent) -> None:
         request_payload = self._payload_dict(event.payload)
-        if not is_authorized_mutator(request_payload):
-            get_eventdispatcher().dispatch_event(
-                "loadArtifactGroupResult",
-                payload=unauthorized_result_payload(request_payload, url=""),
-            )
+        if self._reject_if_stage_attempt_active("loadArtifactGroupRequest", request_payload):
             return
+        decision = self._runtime_authority.authorize("loadArtifactGroupRequest", request_payload)
+        if not decision.authorized:
+            self._dispatch_rejection("loadArtifactGroupRequest", request_payload, decision)
+            return
+
         url, context = self._resolve_stage_request(request_payload)
         binding_revision_id = request_payload.get("binding_revision_id")
         if binding_revision_id:
             context["binding_revision_id"] = binding_revision_id
+        context["request_id"] = request_payload.get("request_id")
+        if not url:
+            confirmation = self._runtime_authority.confirm_stage(request_payload, "failed")
+            if not confirmation.authorized:
+                self._dispatch_rejection(
+                    "loadArtifactGroupRequest",
+                    request_payload,
+                    confirmation,
+                )
+                return
+            payload = {
+                "result": "error",
+                "url": "",
+                "error": context.get("error", "Missing url."),
+                **self._public_stage_context(context),
+            }
+            get_eventdispatcher().dispatch_event(
+                "loadArtifactGroupResult",
+                payload=correlated_result(request_payload, payload),
+            )
+            return
+
+        attempt = self._create_stage_attempt(
+            "loadArtifactGroupRequest",
+            request_payload,
+            url,
+            context,
+        )
+        if attempt is None:
+            return
+        active_context = self._reserve_stage_attempt(attempt)
         payload = {
-            "result": "accepted" if url else "error",
+            "result": "accepted",
             "url": url,
-            **self._public_stage_context(context),
+            **self._public_stage_context(active_context),
         }
-        get_eventdispatcher().dispatch_event("loadArtifactGroupResult", payload=payload)
-        if url:
-            request = self._payload_dict(request_payload)
-            request["url"] = url
-            self._on_open_stage(type("Event", (), {"payload": request})())
+        get_eventdispatcher().dispatch_event(
+            "loadArtifactGroupResult",
+            payload=correlated_result(request_payload, payload),
+        )
+        self._open_authorized_stage(attempt, active_context)
 
     def _on_load_state_query(self, event: carb.events.IEvent) -> None:
         public_url = self._public_opened_stage_url or self._opened_stage_url
@@ -604,99 +764,316 @@ class LoadingManager:
         """
 
         request_payload = self._payload_dict(event.payload)
-        if not is_authorized_mutator(request_payload):
-            payload = unauthorized_result_payload(request_payload, url="")
-            get_eventdispatcher().dispatch_event("openedStageResult", payload=payload)
+        if self._reject_if_stage_attempt_active("openStageRequest", request_payload):
+            return
+        decision = self._runtime_authority.authorize("openStageRequest", request_payload)
+        if not decision.authorized:
+            self._dispatch_rejection("openStageRequest", request_payload, decision)
             return
 
         requested_url, stage_context = self._resolve_stage_request(request_payload)
         binding_revision_id = request_payload.get("binding_revision_id")
         if binding_revision_id:
             stage_context["binding_revision_id"] = binding_revision_id
+        stage_context["request_id"] = request_payload.get("request_id")
         if not requested_url:
-            carb.log_error(
-                f"Unexpected message payload: missing loadable \"url\" key. Payload: '{event.payload}'")
+            carb.log_error("Authorized stage request did not resolve to a loadable URL.")
+            confirmation = self._runtime_authority.confirm_stage(request_payload, "failed")
+            if not confirmation.authorized:
+                self._dispatch_rejection(
+                    "openStageRequest",
+                    request_payload,
+                    confirmation,
+                )
+                return
             payload = {
                 "url": "",
                 "result": "error",
                 "error": stage_context.get("error", "Missing url."),
                 **self._public_stage_context(stage_context),
             }
-            get_eventdispatcher().dispatch_event("openedStageResult", payload=payload)
+            get_eventdispatcher().dispatch_event(
+                "openedStageResult",
+                payload=correlated_result(request_payload, payload),
+            )
             return
 
-        self._requested_stage_url = requested_url
-        self._requested_stage_context = stage_context
-        carb.log_info(
-            f"Received message to load '{self._requested_stage_url}'"
+        attempt = self._create_stage_attempt(
+            "openStageRequest",
+            request_payload,
+            requested_url,
+            stage_context,
+        )
+        if attempt is None:
+            return
+        active_context = self._reserve_stage_attempt(attempt)
+        self._open_authorized_stage(attempt, active_context)
+
+    def _reject_if_stage_attempt_active(self, event_type, request_payload):
+        if self._active_stage_attempt is None:
+            return False
+        decision = local_denial(
+            request_payload,
+            "session_lifecycle_blocked",
+            "stage_load_in_progress",
+        )
+        self._dispatch_rejection(event_type, request_payload, decision)
+        return True
+
+    def _dispatch_rejection(
+        self,
+        event_type,
+        request_payload,
+        decision,
+        *,
+        runtime_state="unchanged",
+    ):
+        get_eventdispatcher().dispatch_event(
+            "commandRejected",
+            payload=command_rejected_payload(
+                event_type,
+                request_payload,
+                decision,
+                runtime_state=runtime_state,
+            ),
         )
 
-        # Check to see if we've already loaded the current stage.
-        url = self._process_stage_url(self._requested_stage_url)
-
-        stage = omni.usd.get_context().get_stage()
-        current_stage = stage.GetRootLayer().identifier if stage else ''
-
-        # If we are, we don't need to reload the file, instead we'll just send the success message.
-        if omni.client.utils.equal_urls(url, current_stage):
-            carb.log_info(f'Client requested to open a stage that is already open: {url}')
-            self._public_opened_stage_url = self._requested_stage_url
-            payload = {
-                "url": self._requested_stage_url,
-                "result": "success",
-                "error": '',
-                **self._public_stage_context(self._requested_stage_context),
-            }
-            get_eventdispatcher().dispatch_event("openedStageResult", payload=payload)
-            self._reset_state()
-            return
-
-        # Asynchronously load the incoming stage
-        async def open_stage():
-            carb.log_info(f'Opening stage per client request: {url}')
-            usd_context = omni.usd.get_context()
-            if url:
-                result, error = await usd_context.open_stage_async(url, omni.usd.UsdContextInitialLoadSet.LOAD_ALL)
-            else:
-                result, error = await usd_context.new_stage_async()
-
-            if result is not True:
-                # Send message to client that loading failed.
-                carb.log_warn(f'The file that the client requested failed to load: {url} (error: {error})')
-                payload = {
-                    "url": url,
-                    "result": "error",
-                    "error": error,
-                    **self._public_stage_context(self._requested_stage_context),
-                }
-                get_eventdispatcher().dispatch_event("openedStageResult", payload=payload)
-                self._reset_state()
-                return
-
-            self._compose_secondary_artifact_bindings(usd_context.get_stage())
-            self._stage_is_opening = False
-            self._stage_has_opened = True
-            self._streaming_manager_is_busy = False
-
-            for _ in range(2):
-                await omni.kit.app.get_app().next_update_async()
-
-            _ensure_default_lighting(usd_context.get_stage())
-
-            public_url = self._requested_stage_url if self._requested_stage_url else "[obfuscated]"
-            self._public_opened_stage_url = public_url
-            carb.log_info(
-                f"Sending message to client that stage has loaded: {public_url}"
+    def _create_stage_attempt(self, event_type, request_payload, requested_url, stage_context):
+        required = {
+            "request_id": request_payload.get("request_id"),
+            "session_id": request_payload.get("session_id"),
+            "source_client_id": request_payload.get("source_client_id"),
+            "viewer_lease_token": request_payload.get("viewer_lease_token")
+            or request_payload.get("lease_token"),
+            "stage_binding_authorization_id": request_payload.get("stage_binding_authorization_id"),
+            "binding_revision_id": request_payload.get("binding_revision_id"),
+        }
+        if not all(isinstance(value, str) and value for value in required.values()):
+            decision = local_denial(
+                request_payload,
+                "invalid_payload",
+                "stage_attempt_context_invalid",
             )
+            self._dispatch_rejection(event_type, request_payload, decision)
+            return None
+        return _AuthorizedStageAttempt(
+            event_type=event_type,
+            requested_stage_url=requested_url,
+            stage_context_json=json.dumps(
+                stage_context,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                sort_keys=True,
+            ),
+            **required,
+        )
+
+    def _reserve_stage_attempt(self, attempt):
+        stage_context = attempt.stage_context()
+        self._active_stage_attempt = attempt
+        self._active_terminal_started = False
+        self._active_stage_runtime_url = ""
+        self._requested_stage_url = attempt.requested_stage_url
+        self._requested_stage_context = stage_context
+        carb.log_info("Received an authorized stage load request.")
+        return stage_context
+
+    def _claim_terminal(self, attempt):
+        if self._active_stage_attempt is not attempt or self._active_terminal_started:
+            return False
+        self._active_terminal_started = True
+        return True
+
+    def _finish_runtime_failure(
+        self,
+        attempt,
+        stage_context,
+        public_url,
+        error,
+        *,
+        runtime_state=None,
+    ):
+        if not self._claim_terminal(attempt):
+            return
+        confirmation = self._runtime_authority.confirm_stage(
+            attempt.authority_payload(),
+            "failed",
+        )
+        if not confirmation.authorized:
+            self._dispatch_rejection(
+                attempt.event_type,
+                attempt.authority_payload(),
+                confirmation,
+                runtime_state=(
+                    "changed_unconfirmed"
+                    if runtime_state == "changed_failed"
+                    else "unchanged"
+                ),
+            )
+            self._reset_state(attempt)
+            return
+        payload = {
+            "url": public_url,
+            "result": "error",
+            "error": "Stage open failed.",
+            **self._public_stage_context(stage_context),
+        }
+        if runtime_state:
+            payload["runtime_state"] = runtime_state
+        get_eventdispatcher().dispatch_event(
+            "openedStageResult",
+            payload=correlated_result(attempt.authority_payload(), payload),
+        )
+        self._reset_state(attempt)
+
+    def _finish_observed_stage_success(self, attempt, stage_context, public_url):
+        if self._active_stage_attempt is not attempt or self._active_terminal_started:
+            return
+        try:
+            self._compose_secondary_artifact_bindings(
+                omni.usd.get_context().get_stage(),
+                stage_context,
+            )
+        except Exception as exc:
+            carb.log_warn(
+                f"Authorized exact stage composition failed ({type(exc).__name__})."
+            )
+            self._finish_runtime_failure(
+                attempt,
+                stage_context,
+                public_url,
+                exc,
+                runtime_state="changed_failed",
+            )
+            return
+        if stage_context.get("partial_load"):
+            carb.log_warn(
+                "Authorized exact stage composition was only partially applied; "
+                "the binding remains non-active."
+            )
+            self._finish_runtime_failure(
+                attempt,
+                stage_context,
+                public_url,
+                RuntimeError("Exact stage composition was only partially applied."),
+                runtime_state="changed_failed",
+            )
+            return
+        if not self._claim_terminal(attempt):
+            return
+        decision = self._runtime_authority.confirm_stage(attempt.authority_payload(), "success")
+        if decision.authorized:
+            self._public_opened_stage_url = public_url
             payload = {
                 "url": public_url,
                 "result": "success",
                 "error": "",
-                **self._public_stage_context(self._requested_stage_context),
+                **self._public_stage_context(stage_context),
             }
-            get_eventdispatcher().dispatch_event("openedStageResult", payload=payload)
+            get_eventdispatcher().dispatch_event(
+                "openedStageResult",
+                payload=correlated_result(attempt.authority_payload(), payload),
+            )
+        else:
+            self._dispatch_rejection(
+                attempt.event_type,
+                attempt.authority_payload(),
+                decision,
+                runtime_state="changed_unconfirmed",
+            )
+        self._reset_state(attempt)
 
-        asyncio.ensure_future(open_stage())
+    def _open_authorized_stage(self, attempt, stage_context):
+        # Check to see if we've already loaded the current stage.
+        try:
+            url = self._process_stage_url(attempt.requested_stage_url)
+            self._active_stage_runtime_url = url
+            stage = omni.usd.get_context().get_stage()
+            current_stage = stage.GetRootLayer().identifier if stage else ""
+            already_open = omni.client.utils.equal_urls(url, current_stage)
+        except Exception as exc:
+            carb.log_warn(
+                f"Authorized stage request could not be prepared ({type(exc).__name__})."
+            )
+            self._finish_runtime_failure(
+                attempt,
+                stage_context,
+                attempt.requested_stage_url or "[obfuscated]",
+                exc,
+            )
+            return
+
+        if already_open:
+            carb.log_info("Authorized stage is already open; confirming binding.")
+            self._finish_observed_stage_success(
+                attempt,
+                stage_context,
+                attempt.requested_stage_url,
+            )
+            return
+
+        async def open_stage():
+            runtime_changed = False
+            try:
+                carb.log_info("Opening stage for an authorized request.")
+                usd_context = omni.usd.get_context()
+                if url:
+                    result, error = await usd_context.open_stage_async(
+                        url,
+                        omni.usd.UsdContextInitialLoadSet.LOAD_ALL,
+                    )
+                else:
+                    result, error = await usd_context.new_stage_async()
+
+                if result is not True:
+                    carb.log_warn("Authorized stage request failed to load.")
+                    self._finish_runtime_failure(
+                        attempt,
+                        stage_context,
+                        attempt.requested_stage_url or "[obfuscated]",
+                        error,
+                    )
+                    return
+
+                runtime_changed = True
+
+                if self._active_stage_attempt is not attempt:
+                    return
+                self._stage_is_opening = False
+                self._stage_has_opened = True
+                self._streaming_manager_is_busy = False
+
+                for _ in range(2):
+                    await omni.kit.app.get_app().next_update_async()
+
+                if self._active_stage_attempt is not attempt:
+                    return
+                _ensure_default_lighting(usd_context.get_stage())
+
+                public_url = attempt.requested_stage_url or "[obfuscated]"
+                carb.log_info("Observed authorized stage success; confirming binding.")
+                self._finish_observed_stage_success(attempt, stage_context, public_url)
+            except Exception as exc:
+                carb.log_warn(
+                    f"Authorized stage request failed during runtime mutation "
+                    f"({type(exc).__name__})."
+                )
+                self._finish_runtime_failure(
+                    attempt,
+                    stage_context,
+                    attempt.requested_stage_url or "[obfuscated]",
+                    exc,
+                    runtime_state="changed_failed" if runtime_changed else None,
+                )
+
+        self._schedule_background_task(open_stage())
+
+    def _schedule_background_task(self, coroutine):
+        task = asyncio.ensure_future(coroutine)
+        self._pending_tasks.add(task)
+        if hasattr(task, "add_done_callback"):
+            task.add_done_callback(self._pending_tasks.discard)
+        return task
 
     def _on_stage_event_opening(self, event) -> None:
         """Manage extension state via the stage event stream.
@@ -726,11 +1103,33 @@ class LoadingManager:
         # Check that a stage is opening. Assets can load after stage has opened.
         if not self._stage_is_opening:
             return
+        attempt = self._active_stage_attempt
+        if attempt is None:
+            return
+        observed_runtime_url = ""
+        try:
+            stage = omni.usd.get_context().get_stage()
+            observed_runtime_url = stage.GetRootLayer().identifier if stage else ""
+            expected_runtime_url = self._active_stage_runtime_url
+            matches_attempt = bool(
+                expected_runtime_url
+                and observed_runtime_url
+                and omni.client.utils.equal_urls(expected_runtime_url, observed_runtime_url)
+            )
+        except Exception:
+            matches_attempt = False
+        if not matches_attempt:
+            # A stale ASSETS_LOADED event from a prior attempt must not advance
+            # the current attempt. Keep the opening gate armed for its own event.
+            return
         self._stage_is_opening = False
         self._stage_has_opened = True
 
-        # Async call to evaluate opened state
-        asyncio.ensure_future(self._evaluate_load_status())
+        # Async call to evaluate opened state for the attempt captured by this
+        # callback. A later attempt can never inherit this terminal callback.
+        self._schedule_background_task(
+            self._evaluate_load_status(attempt, observed_runtime_url)
+        )
         return
 
     def _on_rxt_streaming_event(self, event) -> None:
@@ -743,11 +1142,15 @@ class LoadingManager:
         """
         self._streaming_manager_is_busy = event.payload['isBusy']
 
-    async def _evaluate_load_status(self):
+    async def _evaluate_load_status(self, attempt=None, observed_runtime_url=None):
         """
         If streaming manager is not busy and the stage is loaded from storage,
         notify the client.
         """
+        attempt = attempt or self._active_stage_attempt
+        if attempt is None or self._active_stage_attempt is not attempt:
+            return
+
         # Only evaluate for stage loaded from storage.
         if not self._persisted_stage:
             return
@@ -756,32 +1159,48 @@ class LoadingManager:
             return
         self._is_evaluating_loading_status = True
 
-        # Wait until all dependencies have loaded by streaming manager
-        while self._streaming_manager_is_busy or not self._stage_has_opened:
-            await omni.kit.app.get_app().next_update_async()
+        stage_context = self._requested_stage_context
+        try:
+            # Wait until all dependencies have loaded by streaming manager.
+            while self._streaming_manager_is_busy or not self._stage_has_opened:
+                if self._active_stage_attempt is not attempt:
+                    return
+                await omni.kit.app.get_app().next_update_async()
 
-        for _ in range(2):
-            await omni.kit.app.get_app().next_update_async()
+            for _ in range(2):
+                await omni.kit.app.get_app().next_update_async()
 
-        _ensure_default_lighting(omni.usd.get_context().get_stage())
+            if self._active_stage_attempt is not attempt:
+                return
+            stage = omni.usd.get_context().get_stage()
+            current_runtime_url = stage.GetRootLayer().identifier if stage else ""
+            expected_runtime_url = self._active_stage_runtime_url
+            observed_runtime_url = observed_runtime_url or current_runtime_url
+            if (
+                not expected_runtime_url
+                or not observed_runtime_url
+                or not current_runtime_url
+                or not omni.client.utils.equal_urls(expected_runtime_url, observed_runtime_url)
+                or not omni.client.utils.equal_urls(expected_runtime_url, current_runtime_url)
+            ):
+                return
+            _ensure_default_lighting(stage)
 
-        # Stage has loaded with all dependencies. Send message to client.
-        url = self._requested_stage_url if self._requested_stage_url  else '[obfuscated]'
-        self._public_opened_stage_url = url
-        carb.log_info(
-            f'Sending message to client that stage has loaded: {url}'
-        )
-        payload = {
-            "url": url,
-            "result": "success",
-            "error": '',
-            **self._public_stage_context(self._requested_stage_context),
-        }
-        get_eventdispatcher().dispatch_event("openedStageResult", payload=payload)
-
-        # reset
-        self._is_evaluating_loading_status = False
-        self._reset_state()
+            url = attempt.requested_stage_url or "[obfuscated]"
+            carb.log_info("Observed authorized stage load-status success; confirming binding.")
+            self._finish_observed_stage_success(attempt, stage_context, url)
+        except Exception as exc:
+            carb.log_warn(
+                f"Authorized stage load-status evaluation failed ({type(exc).__name__})."
+            )
+            self._finish_runtime_failure(
+                attempt,
+                stage_context,
+                attempt.requested_stage_url or "[obfuscated]",
+                exc,
+            )
+        finally:
+            self._is_evaluating_loading_status = False
 
     def _on_progress(self, event: carb.events.IEvent):
         """
@@ -816,15 +1235,31 @@ class LoadingManager:
         """
         if self._subscriptions:
             self._subscriptions.clear()
+        for task in list(self._pending_tasks):
+            if hasattr(task, "done") and hasattr(task, "cancel") and not task.done():
+                task.cancel()
+        self._pending_tasks.clear()
+        self._active_stage_attempt = None
+        self._active_terminal_started = False
+        self._active_stage_runtime_url = ""
 
-    def _reset_state(self):
+    def _reset_state(self, attempt=None):
         """
         Reset the internal state - ready for new stage to be loaded
         """
-        stage = omni.usd.get_context().get_stage()
+        if attempt is not None and self._active_stage_attempt is not attempt:
+            return
+        try:
+            stage = omni.usd.get_context().get_stage()
+            opened_stage_url = stage.GetRootLayer().identifier if stage else ""
+        except Exception:
+            opened_stage_url = ""
         self._requested_stage_url = ""
         self._requested_stage_context = {}
-        self._opened_stage_url = stage.GetRootLayer().identifier if stage else ""
+        self._opened_stage_url = opened_stage_url
         self._stage_has_opened = False
         self._streaming_manager_is_busy = False
         self._persisted_stage = False
+        self._active_stage_attempt = None
+        self._active_terminal_started = False
+        self._active_stage_runtime_url = ""

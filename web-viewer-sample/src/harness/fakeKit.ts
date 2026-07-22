@@ -2,7 +2,7 @@
 // 兩條回應通道對齊 Window.tsx：
 //   1) sendMessage 的 Promise 結果 → appStreamResultToAppEvent 只認 openStageRequest /
 //      loadingStateQuery / getChildrenRequest 三型（其餘回 null）。
-//   2) 非同步 Kit 通知（focusPrimResult / highlightPrimsResult / stageSelectionChanged /
+//   2) 非同步 Kit 通知（各 mutator correlated terminal、stageSelectionChanged /
 //      updateProgressActivity 等）走 onCustomEvent。
 // 本檔為純函式，不碰 DOM / transport，便於單元測試鎖定保真度。
 import type { StreamMessage } from "../types/streamMessages";
@@ -11,10 +11,29 @@ import { harnessChildrenFor, HARNESS_STAGE_URL } from "./fixtures/usdStageTree";
 export interface FakeKitState {
   currentStageUrl: string | null;
   bindingRevisionId: string | null;
+  nextRejection: FakeKitRejection | null;
 }
 
 export function createFakeKitState(): FakeKitState {
-  return { currentStageUrl: null, bindingRevisionId: null };
+  return { currentStageUrl: null, bindingRevisionId: null, nextRejection: null };
+}
+
+export interface FakeKitRejection {
+  rejected_event_type: string;
+  reason:
+    | "spectator_readonly"
+    | "lease_invalid"
+    | "session_lifecycle_blocked"
+    | "unauthorized_source_client"
+    | "unsupported_command"
+    | "invalid_payload";
+  retryable: boolean;
+  runtime_state: "unchanged" | "changed_unconfirmed";
+  detail_code?: string;
+}
+
+export function queueFakeKitRejection(kit: FakeKitState, rejection: FakeKitRejection): void {
+  kit.nextRejection = { ...rejection };
 }
 
 export interface FakeKitResponse {
@@ -33,8 +52,39 @@ function str(obj: Record<string, unknown>, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
+const runtimeMutators = new Set([
+  "openStageRequest",
+  "loadArtifactGroupRequest",
+  "composeStageRequest",
+  "highlightPrimsRequest",
+  "focusPrimRequest",
+  "clearHighlightRequest",
+  "selectPrimsRequest",
+  "makePrimsPickable",
+  "resetStage",
+]);
+
 export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState): FakeKitResponse {
   const payload = asRecord(message.payload);
+  const queuedRejection = kit.nextRejection;
+  if (
+    queuedRejection
+    && runtimeMutators.has(message.event_type)
+    && queuedRejection.rejected_event_type === message.event_type
+  ) {
+    kit.nextRejection = null;
+    const requestId = str(payload, "request_id");
+    return {
+      result: null,
+      asyncEvents: [{
+        event_type: "commandRejected",
+        payload: {
+          ...queuedRejection,
+          ...(requestId ? { request_id: requestId } : { rejection_id: "fake_rejection_001" }),
+        },
+      }],
+    };
+  }
 
   switch (message.event_type) {
     // proof-of-life / 載入狀態輪詢。harness 永遠回 idle + 目前 stage url。
@@ -48,9 +98,16 @@ export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState
     // 觸發 _completeStageLoad（不依賴前端 USD asset 清單比對，較穩）。
     case "openStageRequest": {
       const url = str(payload, "url") || str(payload, "requested_stage_url") || HARNESS_STAGE_URL;
+      const requestId = str(payload, "request_id");
+      const bindingRevisionId = str(payload, "binding_revision_id");
       kit.currentStageUrl = url;
       return {
-        result: { status: "success", url },
+        result: {
+          status: "success",
+          url,
+          ...(requestId ? { request_id: requestId } : {}),
+          ...(bindingRevisionId ? { binding_revision_id: bindingRevisionId } : {}),
+        },
         asyncEvents: [{ event_type: "updateProgressActivity", payload: { text: "None" } }],
       };
     }
@@ -106,24 +163,123 @@ export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState
           ? payload.paths
           : [];
       const prims = (raw as unknown[]).filter((value): value is string => typeof value === "string");
-      return { result: null, asyncEvents: [{ event_type: "stageSelectionChanged", payload: { prims } }] };
+      const requestId = str(payload, "request_id");
+      return {
+        result: null,
+        asyncEvents: [
+          {
+            event_type: "selectPrimsResult",
+            payload: {
+              result: "success",
+              error: "",
+              selected_paths: prims,
+              ...(requestId ? { request_id: requestId } : {}),
+            },
+          },
+          {
+            event_type: "stageSelectionChanged",
+            payload: { prims },
+          },
+        ],
+      };
     }
 
     // CH-F 會用到：compose stage 交易。harness 回 success + bindingApplied ack（含 revision）。
     case "composeStageRequest": {
       const revision = str(payload, "binding_revision_id");
+      const requestId = str(payload, "request_id");
       if (revision) kit.bindingRevisionId = revision;
       return {
-        result: { status: "success" },
-        asyncEvents: [{ event_type: "bindingApplied", payload: { binding_revision_id: kit.bindingRevisionId ?? "" } }],
+        result: { status: "success", ...(requestId ? { request_id: requestId } : {}) },
+        asyncEvents: [
+          {
+            event_type: "loadArtifactGroupResult",
+            payload: {
+              result: "accepted",
+              binding_revision_id: kit.bindingRevisionId ?? "",
+              ...(requestId ? { request_id: requestId } : {}),
+            },
+          },
+          {
+            event_type: "bindingApplied",
+            payload: {
+              binding_revision_id: kit.bindingRevisionId ?? "",
+              ...(requestId ? { request_id: requestId } : {}),
+            },
+          },
+        ],
       };
     }
 
-    case "clearHighlightRequest":
-    case "makePrimsPickable":
-    case "loadArtifactGroupRequest":
-    case "resetStage":
-      return { result: { status: "success" }, asyncEvents: [] };
+    case "clearHighlightRequest": {
+      const requestId = str(payload, "request_id");
+      return {
+        result: null,
+        asyncEvents: [{
+          event_type: "clearHighlightResult",
+          payload: {
+            result: "success",
+            applied_mode: "selection",
+            ...(requestId ? { request_id: requestId } : {}),
+          },
+        }],
+      };
+    }
+
+    case "makePrimsPickable": {
+      const requestId = str(payload, "request_id");
+      return {
+        result: null,
+        asyncEvents: [{
+          event_type: "makePrimsPickableResponse",
+          payload: { result: "success", error: "", ...(requestId ? { request_id: requestId } : {}) },
+        }],
+      };
+    }
+
+    case "resetStage": {
+      const requestId = str(payload, "request_id");
+      return {
+        result: null,
+        asyncEvents: [{
+          event_type: "resetStageResponse",
+          payload: { result: "success", error: "", ...(requestId ? { request_id: requestId } : {}) },
+        }],
+      };
+    }
+
+    case "loadArtifactGroupRequest": {
+      const requestId = str(payload, "request_id");
+      const bindingRevisionId = str(payload, "binding_revision_id");
+      const composition = asRecord(payload.stage_composition);
+      const primary = asRecord(composition.primary);
+      const url = str(primary, "usdc_url") || str(payload, "url") || HARNESS_STAGE_URL;
+      kit.currentStageUrl = url;
+      if (bindingRevisionId) kit.bindingRevisionId = bindingRevisionId;
+      return {
+        result: null,
+        asyncEvents: [
+          {
+            event_type: "loadArtifactGroupResult",
+            payload: {
+              result: "accepted",
+              ...(requestId ? { request_id: requestId } : {}),
+              ...(bindingRevisionId ? { binding_revision_id: bindingRevisionId } : {}),
+            },
+          },
+          {
+            event_type: "openedStageResult",
+            payload: {
+              result: "success",
+              url,
+              error: "",
+              ...(requestId ? { request_id: requestId } : {}),
+              ...(bindingRevisionId ? { binding_revision_id: bindingRevisionId } : {}),
+            },
+          },
+        ],
+      };
+    }
 
     default:
       return { result: null, asyncEvents: [] };

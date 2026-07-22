@@ -14,7 +14,13 @@ function normalizeOrigin(value: string): string {
 
 // VG-01 postMessage 協定（版本化）。viewer→console 與 console→viewer 皆帶 protocol:"vg01"。
 export interface FirstFrameMessage { protocol: "vg01"; type: "first_frame"; stageUrl: string | null }
-export interface StageLoadedMessage { protocol: "vg01"; type: "stage_loaded"; stageUrl: string | null }
+export interface StageLoadedMessage {
+  protocol: "vg01";
+  type: "stage_loaded";
+  stageUrl: string | null;
+  status: "active" | "unproven";
+  binding_revision_id?: string;
+}
 export interface HighlightResultMessage {
   protocol: "vg01"; type: "highlight_result"; requestId: string;
   ok: boolean; reason?: "unmapped" | "datachannel_not_ready";
@@ -61,15 +67,17 @@ export interface EmbeddedViewerProps {
   displayName?: string | null;
   sourceClientId?: string | null;
   viewerLeaseToken?: string | null;
+  userToken?: string | null;
   onViewerReady?: () => void;
   onFirstFrame?: (m: FirstFrameMessage) => void;
-  onStageLoaded?: (stageUrl: string | null) => void;
+  onStageLoaded?: (message: StageLoadedMessage) => void;
   onHighlightResult?: (m: HighlightResultMessage) => void;
   onSelectedGuid?: (ifcGuid: string | null) => void;
 }
 
 export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerProps>(function EmbeddedViewer(props, ref) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const viewerReadyRef = useRef(false);
 
   // stable ref：每 render 同步最新 props，listener 才不必每 render 重掛。
   // 原 dep=[props]（每 render 新 object reference）會在每個 render cycle removeEventListener + addEventListener，
@@ -84,8 +92,12 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
 
   const sendViewerLeaseToken = () => {
     const p = propsRef.current;
-    if (!p.viewerLeaseToken) return;
-    post({ type: "viewer_lease_token", token: p.viewerLeaseToken });
+    if (!viewerReadyRef.current || !p.viewerLeaseToken) return;
+    post({
+      type: "viewer_lease_token",
+      token: p.viewerLeaseToken,
+      ...(p.userToken ? { user_token: p.userToken } : {}),
+    });
   };
 
   useEffect(() => {
@@ -96,9 +108,33 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
       const m = e.data as { protocol?: string; type?: string } | null;
       if (!m || m.protocol !== "vg01") return;                     // 協定版本 / 前向相容（未知忽略）
       switch (m.type) {
-        case "viewer_ready":     sendViewerLeaseToken(); p.onViewerReady?.(); break; // 父元件以 onViewerReady callback 追蹤 ready（IX-A1-06）；元件不存內部死 state（避免無謂 re-render）
+        case "viewer_ready":
+          if (!viewerReadyRef.current) {
+            viewerReadyRef.current = true;
+            sendViewerLeaseToken();
+            p.onViewerReady?.();
+          }
+          break; // 每次 iframe document load 都必須重新 ready，且同一 document 的重複 ready 不重送 bearer
         case "first_frame":      p.onFirstFrame?.(m as unknown as FirstFrameMessage); break;
-        case "stage_loaded":     p.onStageLoaded?.((m as unknown as StageLoadedMessage).stageUrl); break;
+        case "stage_loaded": {
+          const stageMessage = m as unknown as StageLoadedMessage;
+          if (stageMessage.status === "active" || stageMessage.status === "unproven") {
+            p.onStageLoaded?.(stageMessage);
+            break;
+          }
+          // 缺 proof status 不是可忽略的 legacy success。正規化為
+          // unproven，讓 parent 清掉任何先前 active URL 並保持 handoff blocked。
+          p.onStageLoaded?.({
+            protocol: "vg01",
+            type: "stage_loaded",
+            stageUrl: null,
+            status: "unproven",
+            ...(typeof stageMessage.binding_revision_id === "string"
+              ? { binding_revision_id: stageMessage.binding_revision_id }
+              : {}),
+          });
+          break;
+        }
         case "highlight_result": p.onHighlightResult?.(m as unknown as HighlightResultMessage); break;
         case "selected_guid":    p.onSelectedGuid?.((m as unknown as SelectedGuidMessage).ifcGuid ?? null); break;
         default: break; // 未知 type 忽略
@@ -110,7 +146,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
 
   useEffect(() => {
     sendViewerLeaseToken();
-  }, [props.viewerLeaseToken, props.viewerOrigin]);
+  }, [props.viewerLeaseToken, props.userToken, props.viewerOrigin]);
 
   // 送出側比照接收側：經 propsRef.current 讀最新 viewerOrigin，與 listener 同模式（避免兩側不對稱）。
   // handle 內 closure 不直接 close over render-scope props → useImperativeHandle dep 可為 []（zero re-create）。
@@ -139,7 +175,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
   //     （跨 origin <video> 自動播放，否則白頁）。viewer receive-only（AppStream mic:false）→ 不需 camera/microphone。
   return (
     <iframe ref={iframeRef} src={src} title="live-3d-viewer"
-      onLoad={sendViewerLeaseToken}
+      onLoad={() => { viewerReadyRef.current = false; }}
       sandbox="allow-scripts allow-same-origin" allow="autoplay"
       style={{ width: "100%", height: "100%", minHeight: 480, border: "1px solid var(--ab-border)", background: "var(--ab-black)" }} />
   );

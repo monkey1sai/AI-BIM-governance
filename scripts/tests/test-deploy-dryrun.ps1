@@ -4,6 +4,25 @@
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $deploy = Join-Path $repoRoot 'scripts\deploy.ps1'
 $hostKitExample = Join-Path $repoRoot '.env.web-plane.host-kit.example'
+$deployTopologyEnvNames = @(
+    'PUBLIC_HOST',
+    'VIEWER_BIND_HOST',
+    'KIT_SIGNALING_HOST',
+    'KIT_MEDIA_HOST',
+    'WEB_VIEWER_COORDINATOR_API_BASE',
+    'WEB_VIEWER_COORDINATOR_SOCKET_URL',
+    'VIEWER_PUBLIC_BASE_URL',
+    'COORDINATOR_PUBLIC_BASE_URL',
+    'STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL',
+    'COORDINATOR_INTERNAL_API_BASE',
+    'INTERNAL_API_AUTH_TOKEN'
+)
+$originalDeployTopologyEnv = @{}
+foreach ($name in $deployTopologyEnvNames) {
+    $originalDeployTopologyEnv[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
+
+try {
 
 # 跑 -DryRun 並抓所有 stream(Write-Host 走 Information stream,要 *>&1 才能 capture)
 $output = & $deploy -DryRun *>&1 | Out-String
@@ -68,17 +87,7 @@ Assert-True ($collisionOutput -match 'conflicts with primary Kit signaling port'
 Write-TestPass 'spectator primary collision rejected'
 
 function Clear-DeployTopologyEnv {
-    foreach ($name in @(
-        'PUBLIC_HOST',
-        'VIEWER_BIND_HOST',
-        'KIT_SIGNALING_HOST',
-        'KIT_MEDIA_HOST',
-        'WEB_VIEWER_COORDINATOR_API_BASE',
-        'WEB_VIEWER_COORDINATOR_SOCKET_URL',
-        'VIEWER_PUBLIC_BASE_URL',
-        'COORDINATOR_PUBLIC_BASE_URL',
-        'STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL'
-    )) {
+    foreach ($name in $deployTopologyEnvNames) {
         Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
     }
 }
@@ -144,14 +153,152 @@ Assert-True ($cleanStageAudit.runtime.allowedStageHosts -match '127\.0\.0\.1:491
 Remove-Item -LiteralPath $cleanStageEnv -ErrorAction SilentlyContinue
 Write-TestPass 'clean env stage allowlist drops :8005 and keeps 49101 default'
 
-# Test 11: host-kit test deployment profile opts into MinIO watch without committing credentials
+# Test 11: host-native Kit authority derives a loopback base and never serializes the raw token
+Clear-DeployTopologyEnv
+$authorityToken = "authority-$([guid]::NewGuid().ToString('N'))"
+$authorityEnv = Join-Path $repoRoot 'scripts\.run\deploy-runtime-authority-test.env'
+Set-Content -LiteralPath $authorityEnv -Encoding ascii -Value @(
+    'COORDINATOR_PORT=48124',
+    "INTERNAL_API_AUTH_TOKEN=$authorityToken",
+    'RUNTIME_STORAGE_ROOT=C:\tmp\ai-bim-governance-runtime-authority-test\storage'
+)
+$authorityOutput = & $deploy -DryRun -EnvFile $authorityEnv *>&1 | Out-String
+$authorityExit = $LASTEXITCODE
+$authorityAuditRaw = Get-Content -LiteralPath $auditJson -Raw
+$authorityAudit = $authorityAuditRaw | ConvertFrom-Json
+$deployLog = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts\.run\deploy.log') -Raw -ErrorAction SilentlyContinue
+$kitSignaturePath = Join-Path $repoRoot 'scripts\.run\bim-streaming-server.params.json'
+$kitSignature = Get-Content -LiteralPath $kitSignaturePath -Raw -ErrorAction SilentlyContinue
+$authoritySurfaces = $authorityOutput + "`n" + $authorityAuditRaw + "`n" + $deployLog + "`n" + $kitSignature
+Assert-Equal 0 $authorityExit 'runtime authority dry-run exit 0'
+Assert-Equal 'http://127.0.0.1:48124' $authorityAudit.runtime.coordinatorInternalApiBase 'runtime authority base derives from coordinator port'
+Assert-Equal $true $authorityAudit.runtime.runtimeAuthorityPrivateTokenConfigured 'private runtime authority token configured state is audited'
+Assert-Equal 'private_configuration' $authorityAudit.runtime.runtimeAuthorityTokenSource 'runtime authority token source is classified without its value'
+Assert-True (-not $authoritySurfaces.Contains($authorityToken)) 'runtime authority token absent from output, audit, log, and signature artifacts'
+Remove-Item -LiteralPath $authorityEnv -ErrorAction SilentlyContinue
+Clear-DeployTopologyEnv
+Write-TestPass 'host-native Kit authority loopback derivation and secret-safe audit'
+
+# Test 12: non-loopback internal authority base fails closed without echoing the token
+$invalidAuthorityToken = "authority-$([guid]::NewGuid().ToString('N'))"
+$invalidAuthorityEnv = Join-Path $repoRoot 'scripts\.run\deploy-runtime-authority-invalid-test.env'
+$invalidAuthorityOut = Join-Path $repoRoot 'scripts\.run\deploy-runtime-authority-invalid-test.out.log'
+$invalidAuthorityErr = Join-Path $repoRoot 'scripts\.run\deploy-runtime-authority-invalid-test.err.log'
+Set-Content -LiteralPath $invalidAuthorityEnv -Encoding ascii -Value @(
+    'COORDINATOR_INTERNAL_API_BASE=http://192.0.2.10:8004',
+    "INTERNAL_API_AUTH_TOKEN=$invalidAuthorityToken",
+    'RUNTIME_STORAGE_ROOT=C:\tmp\ai-bim-governance-runtime-authority-invalid-test\storage'
+)
+$invalidAuthorityProc = Start-Process -FilePath 'powershell.exe' `
+    -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$deploy,'-DryRun','-EnvFile',$invalidAuthorityEnv) `
+    -RedirectStandardOutput $invalidAuthorityOut `
+    -RedirectStandardError $invalidAuthorityErr `
+    -Wait -PassThru -WindowStyle Hidden
+$invalidAuthorityOutput = ((Get-Content -LiteralPath $invalidAuthorityOut -Raw -ErrorAction SilentlyContinue) + "`n" + (Get-Content -LiteralPath $invalidAuthorityErr -Raw -ErrorAction SilentlyContinue))
+Assert-True ($invalidAuthorityProc.ExitCode -ne 0) 'non-loopback runtime authority base exits non-zero'
+Assert-True ($invalidAuthorityOutput -match 'origin-only loopback') 'non-loopback runtime authority base reports a generic validation error'
+Assert-True (-not $invalidAuthorityOutput.Contains($invalidAuthorityToken)) 'invalid runtime authority configuration does not echo the token'
+Remove-Item -LiteralPath $invalidAuthorityEnv, $invalidAuthorityOut, $invalidAuthorityErr -ErrorAction SilentlyContinue
+Write-TestPass 'non-loopback runtime authority base rejected without secret disclosure'
+
+# Test 13: token rotation changes the ignored Kit runtime signature without storing raw tokens
+$parserTokens = $null
+$parserErrors = $null
+$deployAst = [System.Management.Automation.Language.Parser]::ParseFile($deploy, [ref]$parserTokens, [ref]$parserErrors)
+Assert-Equal 0 @($parserErrors).Count 'deploy.ps1 parses before extracting signature helpers'
+$authorityHelpers = @($deployAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -in @(
+            'Get-DeployEnvValue',
+            'Resolve-HostNameOnly',
+            'Test-LoopbackHost',
+            'Resolve-CoordinatorInternalApiBase',
+            'Get-DeploySecretFingerprint',
+            'New-KitRuntimeSignature'
+        )
+}, $true) | Sort-Object { $_.Extent.StartOffset })
+Assert-Equal 6 $authorityHelpers.Count 'runtime authority validation and signature helpers found'
+foreach ($authorityHelper in $authorityHelpers) {
+    . ([scriptblock]::Create($authorityHelper.Extent.Text))
+}
+$signatureTokenA = "authority-$([guid]::NewGuid().ToString('N'))"
+$signatureTokenB = "authority-$([guid]::NewGuid().ToString('N'))"
+$signatureCommon = @{
+    PublicHost = '127.0.0.1'
+    SignalPort = 49100
+    StreamPort = 47998
+    SpectatorSignalPorts = @(49110)
+    SpectatorStreamPorts = @(48008)
+    AllowedStageHosts = '127.0.0.1:49101'
+    CoordinatorInternalApiBase = 'http://127.0.0.1:8004'
+}
+$signatureA = New-KitRuntimeSignature @signatureCommon -RuntimeAuthorityTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenA)
+$signatureB = New-KitRuntimeSignature @signatureCommon -RuntimeAuthorityTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenB)
+Assert-True ($signatureA -ne $signatureB) 'runtime authority token rotation changes Kit runtime signature'
+Assert-True (-not $signatureA.Contains($signatureTokenA)) 'Kit runtime signature excludes first raw token'
+Assert-True (-not $signatureB.Contains($signatureTokenB)) 'Kit runtime signature excludes rotated raw token'
+Write-TestPass 'runtime authority token rotation changes secret-safe Kit signature'
+
+# Test 14: internal authority base accepts loopback origins only and never echoes rejected input
+$authorityValidationEnv = Join-Path $repoRoot 'scripts\.run\deploy-runtime-authority-validation-not-present.env'
+$invalidAuthorityBases = @(
+    'http://host.docker.internal:8004',
+    'http://0.0.0.0:8004',
+    'http://192.0.2.10:8004',
+    'http://user@127.0.0.1:8004',
+    'http://127.0.0.1:8004/internal',
+    'http://127.0.0.1:8004?mode=internal',
+    'http://127.0.0.1:8004#internal',
+    'ftp://127.0.0.1:8004'
+)
+foreach ($invalidAuthorityBase in $invalidAuthorityBases) {
+    [Environment]::SetEnvironmentVariable('COORDINATOR_INTERNAL_API_BASE', $invalidAuthorityBase, 'Process')
+    $validationError = $null
+    try {
+        Resolve-CoordinatorInternalApiBase -EnvFile $authorityValidationEnv -CoordinatorPort 8004 | Out-Null
+    } catch {
+        $validationError = $_.Exception.Message
+    }
+    Assert-True (-not [string]::IsNullOrWhiteSpace($validationError)) 'invalid runtime authority origin is rejected'
+    Assert-True (-not $validationError.Contains($invalidAuthorityBase)) 'invalid runtime authority origin is not echoed'
+}
+foreach ($validAuthorityBase in @('http://127.0.0.1:8004', 'http://localhost:8004', 'http://[::1]:8004')) {
+    [Environment]::SetEnvironmentVariable('COORDINATOR_INTERNAL_API_BASE', $validAuthorityBase, 'Process')
+    $resolvedAuthorityBase = Resolve-CoordinatorInternalApiBase -EnvFile $authorityValidationEnv -CoordinatorPort 8004
+    Assert-True (Test-LoopbackHost -HostName ([uri]$resolvedAuthorityBase).Host) 'valid loopback runtime authority origin is accepted'
+}
+Clear-DeployTopologyEnv
+Write-TestPass 'runtime authority origin validation covers loopback and rejected URL surfaces'
+
+# Test 15: host-kit test deployment profile opts into MinIO watch without committing credentials
 $hostKitExampleText = Get-Content -LiteralPath $hostKitExample -Raw
-Assert-True ($hostKitExampleText -match '(?m)^RUNTIME_STORAGE_ROOT=\./storage$') 'host-kit example has deployable runtime storage root'
-Assert-True ($hostKitExampleText -match '(?m)^MINIO_WATCH_ENABLED=true$') 'host-kit example enables MinIO watch by default for test deployment'
-Assert-True ($hostKitExampleText -match '(?m)^MINIO_WATCH_ENDPOINT=http://192\.168\.20\.234:9000$') 'host-kit example points at test MinIO endpoint'
-Assert-True ($hostKitExampleText -match '(?m)^MINIO_WATCH_BUCKET=bim-control$') 'host-kit example points at bim-control bucket'
-Assert-True ($hostKitExampleText -match '(?m)^MINIO_WATCH_ACCESS_KEY=$') 'host-kit example keeps MinIO access key empty'
-Assert-True ($hostKitExampleText -match '(?m)^MINIO_WATCH_SECRET_KEY=$') 'host-kit example keeps MinIO secret key empty'
-Write-TestPass 'host-kit MinIO watch deployment defaults'
+Assert-True ($hostKitExampleText -match '(?m)^COORDINATOR_INTERNAL_API_BASE=\r?$') 'host-kit example keeps coordinator internal base placeholder empty'
+Assert-True ($hostKitExampleText -match '(?m)^INTERNAL_API_AUTH_TOKEN=\r?$') 'host-kit example keeps internal API token empty'
+Assert-True ($hostKitExampleText -match '(?m)^RUNTIME_STORAGE_ROOT=\./storage\r?$') 'host-kit example has deployable runtime storage root'
+Assert-True ($hostKitExampleText -match '(?m)^MINIO_WATCH_ENABLED=true\r?$') 'host-kit example enables MinIO watch by default for test deployment'
+Assert-True ($hostKitExampleText -match '(?m)^MINIO_WATCH_ENDPOINT=http://192\.168\.20\.234:9000\r?$') 'host-kit example points at test MinIO endpoint'
+Assert-True ($hostKitExampleText -match '(?m)^MINIO_WATCH_BUCKET=bim-control\r?$') 'host-kit example points at bim-control bucket'
+Assert-True ($hostKitExampleText -match '(?m)^MINIO_WATCH_ACCESS_KEY=\r?$') 'host-kit example keeps MinIO access key empty'
+Assert-True ($hostKitExampleText -match '(?m)^MINIO_WATCH_SECRET_KEY=\r?$') 'host-kit example keeps MinIO secret key empty'
+Write-TestPass 'host-kit runtime authority placeholders and MinIO watch deployment defaults'
 
 Write-Host "`n=== test-deploy-dryrun.ps1: ALL PASSED ===" -ForegroundColor Green
+} finally {
+    foreach ($name in $deployTopologyEnvNames) {
+        [Environment]::SetEnvironmentVariable($name, $originalDeployTopologyEnv[$name], 'Process')
+    }
+    foreach ($testArtifact in @(
+        'deploy-collision-test.out.log',
+        'deploy-collision-test.err.log',
+        'deploy-default-host-test.env',
+        'deploy-lan-test.env',
+        'deploy-clean-stage-test.env',
+        'deploy-runtime-authority-test.env',
+        'deploy-runtime-authority-invalid-test.env',
+        'deploy-runtime-authority-invalid-test.out.log',
+        'deploy-runtime-authority-invalid-test.err.log'
+    )) {
+        Remove-Item -LiteralPath (Join-Path $repoRoot "scripts\.run\$testArtifact") -ErrorAction SilentlyContinue
+    }
+}

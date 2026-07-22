@@ -5,10 +5,10 @@
 // 為相容 fallback（正規名優先），預設與 config/env.ts 一致為 http://127.0.0.1:8004。
 import { defaultCoordinatorBase } from "./coordinatorBase";
 
-const env = (import.meta as { env?: Record<string, string> }).env;
-
 const COORD_BASE: string =
-  env?.VITE_COORDINATOR_API_BASE ?? env?.VITE_COORDINATOR_BASE ?? defaultCoordinatorBase();
+  import.meta.env.VITE_COORDINATOR_API_BASE
+  ?? import.meta.env.VITE_COORDINATOR_BASE
+  ?? defaultCoordinatorBase();
 
 export interface RuleRunRequest {
   ifc_source_path: string;

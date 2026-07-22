@@ -195,7 +195,52 @@ function Resolve-HostNameOnly {
 function Test-LoopbackHost {
     param([Parameter(Mandatory = $true)][string] $HostName)
     $normalized = (Resolve-HostNameOnly -Value $HostName).Trim([char[]]'[]').ToLowerInvariant()
-    return ($normalized -eq 'localhost' -or $normalized -eq '::1' -or $normalized.StartsWith('127.'))
+    if ($normalized -eq 'localhost') { return $true }
+    $address = $null
+    if ([System.Net.IPAddress]::TryParse($normalized, [ref]$address)) {
+        return [System.Net.IPAddress]::IsLoopback($address)
+    }
+    return $false
+}
+
+function Resolve-CoordinatorInternalApiBase {
+    param(
+        [Parameter(Mandatory = $true)][string] $EnvFile,
+        [Parameter(Mandatory = $true)][int] $CoordinatorPort
+    )
+    $configured = Get-DeployEnvValue `
+        -Name 'COORDINATOR_INTERNAL_API_BASE' `
+        -EnvFile $EnvFile `
+        -Default "http://127.0.0.1:$CoordinatorPort"
+    $uri = $null
+    if (-not [uri]::TryCreate($configured, [System.UriKind]::Absolute, [ref]$uri)) {
+        throw 'COORDINATOR_INTERNAL_API_BASE must be an absolute loopback http(s) URL.'
+    }
+    if (
+        -not ($uri.Scheme -eq 'http' -or $uri.Scheme -eq 'https') -or
+        [string]::IsNullOrWhiteSpace($uri.Host) -or
+        -not (Test-LoopbackHost -HostName $uri.Host) -or
+        -not [string]::IsNullOrWhiteSpace($uri.UserInfo) -or
+        -not [string]::IsNullOrWhiteSpace($uri.Query) -or
+        -not [string]::IsNullOrWhiteSpace($uri.Fragment) -or
+        -not ($uri.AbsolutePath -eq '' -or $uri.AbsolutePath -eq '/')
+    ) {
+        throw 'COORDINATOR_INTERNAL_API_BASE must be an origin-only loopback http(s) URL without credentials, path, query, or fragment.'
+    }
+    return $uri.GetLeftPart([System.UriPartial]::Authority).TrimEnd('/')
+}
+
+function Get-DeploySecretFingerprint {
+    param([string] $Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return 'unconfigured' }
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes("ai-bim/runtime-authority/v1`0$Value")
+        $hash = $sha256.ComputeHash($bytes)
+        return ([System.BitConverter]::ToString($hash).Replace('-', '').ToLowerInvariant())
+    } finally {
+        $sha256.Dispose()
+    }
 }
 
 function Resolve-DeployPublicBaseUrl {
@@ -373,7 +418,8 @@ function Test-WebPlaneRefreshRequired {
         'WEB_VIEWER_COORDINATOR_SOCKET_URL',
         'VIEWER_PUBLIC_BASE_URL',
         'COORDINATOR_PUBLIC_BASE_URL',
-        'HOST_GOVERNANCE_API_BASE'
+        'HOST_GOVERNANCE_API_BASE',
+        'INTERNAL_API_AUTH_TOKEN'
     )
     foreach ($name in $topologyEnvNames) {
         if (Test-DeployValueConfigured -Name $name -EnvFile $EnvFile) { return $true }
@@ -388,7 +434,9 @@ function New-KitRuntimeSignature {
         [Parameter(Mandatory = $true)][int] $StreamPort,
         [Parameter(Mandatory = $true)][int[]] $SpectatorSignalPorts,
         [Parameter(Mandatory = $true)][int[]] $SpectatorStreamPorts,
-        [Parameter(Mandatory = $true)][string] $AllowedStageHosts
+        [Parameter(Mandatory = $true)][string] $AllowedStageHosts,
+        [Parameter(Mandatory = $true)][string] $CoordinatorInternalApiBase,
+        [Parameter(Mandatory = $true)][string] $RuntimeAuthorityTokenFingerprint
     )
     return ([pscustomobject]@{
         publicHost           = $PublicHost
@@ -397,6 +445,8 @@ function New-KitRuntimeSignature {
         spectatorSignalPorts = @($SpectatorSignalPorts)
         spectatorStreamPorts = @($SpectatorStreamPorts)
         allowedStageHosts    = $AllowedStageHosts
+        coordinatorInternalApiBase = $CoordinatorInternalApiBase
+        runtimeAuthorityTokenFingerprint = $RuntimeAuthorityTokenFingerprint
     } | ConvertTo-Json -Compress)
 }
 
@@ -587,6 +637,10 @@ $resolvedPublicHostRaw = if (-not [string]::IsNullOrWhiteSpace($PublicHost)) {
 }
 $resolvedPublicHost = Resolve-HostNameOnly -Value $resolvedPublicHostRaw
 $resolvedCoordinatorPort = Resolve-DeployIntValue -Name 'COORDINATOR_PORT' -EnvFile $resolvedEnvFile -Default 8004 -Min 1 -Max 65535
+$runtimeAuthorityTokenExplicitlyConfigured = Test-DeployValueConfigured -Name 'INTERNAL_API_AUTH_TOKEN' -EnvFile $resolvedEnvFile
+$resolvedInternalApiAuthToken = Get-DeployEnvValue -Name 'INTERNAL_API_AUTH_TOKEN' -EnvFile $resolvedEnvFile -Default 'dev-internal-token'
+$resolvedCoordinatorInternalApiBase = Resolve-CoordinatorInternalApiBase -EnvFile $resolvedEnvFile -CoordinatorPort $resolvedCoordinatorPort
+$runtimeAuthorityTokenFingerprint = Get-DeploySecretFingerprint -Value $resolvedInternalApiAuthToken
 $resolvedViewerPort = Resolve-DeployIntValue -Name 'VIEWER_PORT' -EnvFile $resolvedEnvFile -Default 5173 -Min 1 -Max 65535
 $resolvedKitSignalPort = Resolve-DeployIntValue `
     -Name 'KIT_SIGNALING_PORT' `
@@ -667,7 +721,15 @@ $kitRuntimeSignature = New-KitRuntimeSignature `
     -StreamPort $resolvedKitMediaPort `
     -SpectatorSignalPorts $resolvedSpectatorSignalPorts `
     -SpectatorStreamPorts $resolvedSpectatorMediaPorts `
-    -AllowedStageHosts $resolvedAllowedStageHosts
+    -AllowedStageHosts $resolvedAllowedStageHosts `
+    -CoordinatorInternalApiBase $resolvedCoordinatorInternalApiBase `
+    -RuntimeAuthorityTokenFingerprint $runtimeAuthorityTokenFingerprint
+$runtimeAuthorityConfigurationChanged = -not (Test-KitRuntimeSignatureMatches -Path $script:kitRuntimeSignaturePath -Expected $kitRuntimeSignature)
+if ($runtimeAuthorityConfigurationChanged) {
+    # Keep the Docker coordinator and host-native Kit on the same token/base when
+    # private authority configuration is added, rotated, or removed to fallback.
+    $shouldRefreshWebPlane = $true
+}
 $script:coordinatorPublicUrl = Resolve-DeployPublicBaseUrl -Name 'COORDINATOR_PUBLIC_BASE_URL' -EnvFile $resolvedEnvFile -HostName $resolvedPublicHost -Port $resolvedCoordinatorPort -PreferDerived:$shouldDerivePublicTopologyValues
 $script:viewerPublicUrl = Resolve-DeployPublicBaseUrl -Name 'VIEWER_PUBLIC_BASE_URL' -EnvFile $resolvedEnvFile -HostName $resolvedPublicHost -Port $resolvedViewerPort -PreferDerived:$shouldDerivePublicTopologyValues
 $resolvedCorsOrigins = Resolve-DeployCorsOrigins -EnvFile $resolvedEnvFile -ViewerPublicBaseUrl $script:viewerPublicUrl
@@ -679,6 +741,8 @@ $resolvedCorsOrigins = Resolve-DeployCorsOrigins -EnvFile $resolvedEnvFile -View
 [Environment]::SetEnvironmentVariable('KIT_SPECTATOR_SIGNALING_PORT_START', [string]$resolvedSpectatorSignalStart, 'Process')
 [Environment]::SetEnvironmentVariable('KIT_SPECTATOR_MEDIA_PORT_START', [string]$resolvedSpectatorMediaStart, 'Process')
 [Environment]::SetEnvironmentVariable('KIT_SPECTATOR_PORT_STRIDE', [string]$resolvedSpectatorStride, 'Process')
+[Environment]::SetEnvironmentVariable('COORDINATOR_INTERNAL_API_BASE', $resolvedCoordinatorInternalApiBase, 'Process')
+[Environment]::SetEnvironmentVariable('INTERNAL_API_AUTH_TOKEN', $resolvedInternalApiAuthToken, 'Process')
 Set-DeployEnvIfNeeded -Name 'VIEWER_BIND_HOST' -Value ($(if (Test-LoopbackHost -HostName $resolvedPublicHost) { '127.0.0.1' } else { '0.0.0.0' })) -Force:$shouldDerivePublicTopologyValues -EnvFile $resolvedEnvFile
 Set-DeployEnvIfNeeded -Name 'KIT_SIGNALING_HOST' -Value $resolvedPublicHost -Force:$shouldDerivePublicTopologyValues -EnvFile $resolvedEnvFile
 Set-DeployEnvIfNeeded -Name 'KIT_MEDIA_HOST' -Value $resolvedPublicHost -Force:$shouldDerivePublicTopologyValues -EnvFile $resolvedEnvFile
@@ -806,6 +870,10 @@ $auditObj = [pscustomobject]@{
         publicHost          = $resolvedPublicHost
         coordinatorPublicUrl = $script:coordinatorPublicUrl
         viewerPublicUrl     = $script:viewerPublicUrl
+        coordinatorInternalApiBase = $resolvedCoordinatorInternalApiBase
+        runtimeAuthorityPrivateTokenConfigured = [bool]$runtimeAuthorityTokenExplicitlyConfigured
+        runtimeAuthorityTokenSource = $(if ($runtimeAuthorityTokenExplicitlyConfigured) { 'private_configuration' } else { 'local_dev_fallback' })
+        runtimeAuthorityConfigurationChanged = [bool]$runtimeAuthorityConfigurationChanged
         conversionBindHost  = $resolvedConversionBindHost
         conversionHealthHost = $resolvedConversionHealthHost
         conversionPublicArtifactsUrl = $resolvedConversionPublicArtifactsUrl

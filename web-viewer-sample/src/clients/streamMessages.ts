@@ -6,6 +6,22 @@ interface StageCompositionRequest {
     secondary_layers: ArtifactBinding[];
 }
 
+export interface AuthorizedStageArtifact {
+    artifact_id: string;
+    role: "primary" | "secondary";
+    load_order: number;
+    usdc_url: string;
+}
+
+export interface AuthorizedStageTransaction {
+    stage_binding_authorization_id: string;
+    binding_revision_id: string;
+    stage_composition: {
+        primary: AuthorizedStageArtifact & { role: "primary" };
+        secondary_layers: Array<AuthorizedStageArtifact & { role: "secondary" }>;
+    };
+}
+
 export function buildOpenStageRequest(
     url: string,
     artifactBindings: ArtifactBinding[] = [],
@@ -27,6 +43,22 @@ export function buildOpenStageRequest(
                   }
                 : {}),
             ...(artifactBindings.length > 0 ? { artifact_bindings: artifactBindings } : {}),
+        },
+    };
+}
+
+export function buildAuthorizedOpenStageRequest(
+    transaction: AuthorizedStageTransaction,
+): StreamMessage {
+    const url = transaction.stage_composition.primary.usdc_url;
+    return {
+        event_type: "openStageRequest",
+        payload: {
+            url,
+            requested_stage_url: url,
+            stage_binding_authorization_id: transaction.stage_binding_authorization_id,
+            binding_revision_id: transaction.binding_revision_id,
+            stage_composition: transaction.stage_composition,
         },
     };
 }

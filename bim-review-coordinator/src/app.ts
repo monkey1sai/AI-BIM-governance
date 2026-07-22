@@ -8,7 +8,13 @@ import { Server } from "socket.io";
 import { z } from "zod";
 import type { CoordinatorConfig } from "./config.js";
 import { loadConfig } from "./config.js";
-import { AuthError, createAuthProvider, createUserAuthProvider, isIpAllowed } from "./services/authProvider.js";
+import {
+  AuthError,
+  createAuthProvider,
+  createUserAuthProvider,
+  isIpAllowed,
+  opaqueLocalDevSubject,
+} from "./services/authProvider.js";
 import { CallbackOutbox, MetadataOnlyViolation } from "./services/callbackOutbox.js";
 import { EventLog } from "./services/eventLog.js";
 import {
@@ -57,6 +63,10 @@ import {
 // R8＋加性慣例（手冊 §1.13）：devMeta 為 routes/*.ts 模組，app.ts 僅此 import＋單行 mount。
 import { registerDevMetaRoutes } from "./routes/devMeta.js";
 import { ViewerLeaseStore, publicLease } from "./services/viewerLeaseStore.js";
+import {
+  StageBindingAuthorityStore,
+  type StageComposition,
+} from "./services/stageBindingAuthorityStore.js";
 import {
   StreamingConversionClient,
   buildQualityMetricsSummary,
@@ -187,12 +197,92 @@ const participantSchema = z.object({
 
 const claimViewerLeaseSchema = z.object({
   viewer_id: z.string().trim().min(1).max(200),
-  user_id: z.string().trim().min(1).max(200),
+  user_id: z.string().trim().min(1).max(200).optional(),
   display_name: z.string().trim().max(200).nullish(),
   requested_role: z.enum(["auto", "primary", "spectator"]).default("auto"),
   client_nonce: z.string().trim().max(200).nullish(),
   preferred_kit_instance_id: z.string().trim().max(200).nullish(),
 });
+
+const safeCommandIdSchema = z.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
+const stageArtifactSelectionSchema = z.object({
+  artifact_id: z.string().trim().min(1).max(200),
+  role: z.enum(["primary", "secondary"]),
+  load_order: z.number().int().nonnegative().max(10_000),
+}).strict();
+const stageBindingPreauthorizationSchema = z.object({
+  source_client_id: z.string().trim().min(1).max(200),
+  role: z.literal("primary"),
+  artifacts: z.array(stageArtifactSelectionSchema).min(1).max(64),
+}).strict();
+const stageCompositionArtifactSchema = z.object({
+  artifact_id: z.string().trim().min(1).max(200),
+  role: z.enum(["primary", "secondary"]),
+  load_order: z.number().int().nonnegative().max(10_000),
+  usdc_url: z.string().trim().min(1).max(4096),
+}).strict();
+const stageCompositionSchema = z.object({
+  primary: stageCompositionArtifactSchema.refine((artifact) => artifact.role === "primary"),
+  secondary_layers: z.array(
+    stageCompositionArtifactSchema.refine((artifact) => artifact.role === "secondary"),
+  ).max(63),
+}).strict();
+const runtimeCommandAuthorizationSchema = z.object({
+  source_client_id: z.string().trim().min(1).max(200),
+  requested_event_type: z.string().trim().min(1).max(100),
+  request_id: safeCommandIdSchema,
+  command_context: z.record(z.unknown()),
+  stage_binding_authorization_id: z.string().trim().min(1).max(200).optional(),
+  binding_revision_id: z.string().trim().min(1).max(200).optional(),
+  stage_composition: stageCompositionSchema.optional(),
+}).strict();
+const stageBindingConfirmationSchema = z.object({
+  stage_binding_authorization_id: z.string().trim().min(1).max(200),
+  binding_revision_id: z.string().trim().min(1).max(200),
+  request_id: safeCommandIdSchema,
+  outcome: z.enum(["success", "failed"]),
+}).strict();
+
+const RUNTIME_MUTATOR_EVENT_TYPES = new Set([
+  "openStageRequest",
+  "loadArtifactGroupRequest",
+  "composeStageRequest",
+  "highlightPrimsRequest",
+  "focusPrimRequest",
+  "clearHighlightRequest",
+  "selectPrimsRequest",
+  "makePrimsPickable",
+  "resetStage",
+]);
+const STAGE_LOAD_EVENT_TYPES = new Set(["openStageRequest", "loadArtifactGroupRequest"]);
+const runtimePrimPathSchema = z.string().trim().min(1).max(4096).refine((path) => path.startsWith("/"));
+const runtimeHighlightItemSchema = z.object({
+  prim_path: runtimePrimPathSchema,
+}).passthrough();
+const runtimeCommandContextSchemas: Record<string, z.ZodTypeAny> = {
+  openStageRequest: z.object({}).strict(),
+  loadArtifactGroupRequest: z.object({}).strict(),
+  highlightPrimsRequest: z.object({
+    mode: z.literal("replace"),
+    items: z.array(runtimeHighlightItemSchema).min(1).max(4096),
+    focus_first: z.boolean(),
+  }).strict(),
+  focusPrimRequest: z.object({
+    prim_path: runtimePrimPathSchema,
+  }).strict(),
+  clearHighlightRequest: z.object({}).strict(),
+  selectPrimsRequest: z.object({
+    paths: z.array(runtimePrimPathSchema).max(4096),
+  }).strict(),
+  makePrimsPickable: z.object({
+    paths: z.array(runtimePrimPathSchema).min(1).max(4096),
+  }).strict(),
+  resetStage: z.object({}).strict(),
+};
+
+function isValidRuntimeCommandContext(eventType: string, commandContext: Record<string, unknown>): boolean {
+  return runtimeCommandContextSchemas[eventType]?.safeParse(commandContext).success ?? false;
+}
 
 const heartbeatViewerLeaseSchema = z.object({
   first_frame: z.boolean().optional(),
@@ -490,6 +580,7 @@ export function createCoordinatorApp(
   const store = new SessionStore(config.sessionStoreDir);
   const eventLog = new EventLog(config.eventLogDir, { structLog });
   const viewerLeaseStore = new ViewerLeaseStore();
+  const stageBindingAuthorityStore = new StageBindingAuthorityStore();
   // B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：對外 IFC-ready intake。
   const authProvider = createAuthProvider(config);
   const externalIfcReadyStore = new ExternalIfcReadyStore();
@@ -1617,6 +1708,11 @@ export function createCoordinatorApp(
 
   app.post("/api/review-sessions/:sessionId/viewer-leases/claim", (request, response, next) => {
     try {
+      const user = userAuthProvider.authenticate({ headers: headersToMap(request.headers) });
+      if (process.env.NODE_ENV === "production" && user.ssoBinding === "pending_oq5") {
+        response.status(503).json({ detail: "production_identity_unavailable" });
+        return;
+      }
       if (!isSafeSessionId(request.params.sessionId)) {
         response.status(400).json({ detail: "Invalid review session id." });
         return;
@@ -1632,10 +1728,18 @@ export function createCoordinatorApp(
       }
 
       const input = claimViewerLeaseSchema.parse(request.body);
+      if (input.user_id) {
+        const legacyPrincipal = user.provider === "local-dev"
+          ? opaqueLocalDevSubject(input.user_id)
+          : input.user_id;
+        if (legacyPrincipal !== user.userId) {
+          throw new AuthError(403, "viewer lease identity mismatch");
+        }
+      }
       const result = viewerLeaseStore.claim({
         session_id: session.session_id,
         viewer_id: input.viewer_id,
-        user_id: input.user_id,
+        user_id: user.userId,
         display_name: input.display_name ?? null,
         requested_role: input.requested_role,
         client_nonce: input.client_nonce ?? null,
@@ -1643,11 +1747,8 @@ export function createCoordinatorApp(
         bindings: runtimeKitInstanceBindings(session, config),
       });
       if (!result.ok || !result.lease) {
-        if (result.detail === "primary_already_claimed" && result.conflict) {
-          response.status(409).json({
-            detail: "primary_already_claimed",
-            primary_lease: publicLease(result.conflict),
-          });
+        if (result.detail === "primary_already_claimed") {
+          response.status(409).json({ detail: "primary_already_claimed" });
           return;
         }
         response.status(409).json({ detail: result.detail ?? "viewer lease unavailable" });
@@ -1664,6 +1765,7 @@ export function createCoordinatorApp(
       }
       response.json({
         ...publicLease(result.lease, { includeToken: true }),
+        auth_scope: user.ssoBinding === "pending_oq5" ? "local_dev_lab" : "bound",
         primary: result.lease.role === "primary",
         heartbeat_after_ms: viewerLeaseStore.heartbeatAfterMs,
         idempotent_replay: Boolean(result.idempotent_replay),
@@ -1675,6 +1777,10 @@ export function createCoordinatorApp(
 
   app.post("/api/review-sessions/:sessionId/viewer-leases/:leaseId/heartbeat", (request, response, next) => {
     try {
+      if (process.env.NODE_ENV === "production" && userAuthProvider.name === "local-dev") {
+        response.status(503).json({ detail: "production_identity_unavailable" });
+        return;
+      }
       if (!isSafeSessionId(request.params.sessionId)) {
         response.status(400).json({ detail: "Invalid review session id." });
         return;
@@ -1717,6 +1823,10 @@ export function createCoordinatorApp(
 
   app.post("/api/review-sessions/:sessionId/viewer-leases/:leaseId/release", (request, response, next) => {
     try {
+      if (process.env.NODE_ENV === "production" && userAuthProvider.name === "local-dev") {
+        response.status(503).json({ detail: "production_identity_unavailable" });
+        return;
+      }
       if (!isSafeSessionId(request.params.sessionId)) {
         response.status(400).json({ detail: "Invalid review session id." });
         return;
@@ -1743,31 +1853,34 @@ export function createCoordinatorApp(
     }
   });
 
-  app.get("/api/review-sessions/:sessionId/viewer-leases/status", (request, response) => {
-    if (!isSafeSessionId(request.params.sessionId)) {
-      response.status(400).json({ detail: "Invalid review session id." });
-      return;
+  app.get("/api/review-sessions/:sessionId/viewer-leases/status", (request, response, next) => {
+    try {
+      const user = userAuthProvider.authenticate({ headers: headersToMap(request.headers) });
+      if (!isSafeSessionId(request.params.sessionId)) {
+        response.status(400).json({ detail: "Invalid review session id." });
+        return;
+      }
+      const session = store.get(request.params.sessionId);
+      if (!session) {
+        response.status(404).json({ detail: "Review session not found." });
+        return;
+      }
+      const allLeases = viewerLeaseStore.list(session.session_id);
+      const leases = allLeases.filter((lease) => lease.user_id === user.userId);
+      const primaryLease = allLeases.find((lease) => lease.status === "active" && lease.role === "primary") ?? null;
+      response.json({
+        session_id: session.session_id,
+        auth_scope: user.ssoBinding === "pending_oq5" ? "local_dev_lab" : "bound",
+        primary: {
+          available: primaryLease === null,
+          owned_by_caller: primaryLease?.user_id === user.userId,
+        },
+        leases: leases.map((lease) => publicLease(lease)),
+        stage_binding: stageBindingAuthorityStore.summary(session.session_id, user.userId),
+      });
+    } catch (error) {
+      next(error);
     }
-    const session = store.get(request.params.sessionId);
-    if (!session) {
-      response.status(404).json({ detail: "Review session not found." });
-      return;
-    }
-    const leases = viewerLeaseStore.list(session.session_id);
-    const primaryLease = leases.find((lease) => lease.status === "active" && lease.role === "primary") ?? null;
-    response.json({
-      session_id: session.session_id,
-      primary_lease_id: primaryLease?.lease_id ?? null,
-      leases: leases.map((lease) => publicLease(lease)),
-      endpoints: runtimeKitInstanceBindings(session, config).map((binding, index) => ({
-        kit_instance_id: binding.kit_instance_id,
-        role_hint: index === 0 ? "primary" : "spectator",
-        stream_config: binding.stream_config,
-        active_lease_ids: leases
-          .filter((lease) => lease.status === "active" && lease.kit_instance_id === binding.kit_instance_id)
-          .map((lease) => lease.lease_id),
-      })),
-    });
   });
 
   app.post("/api/review-sessions/:sessionId/close", (request, response) => {
@@ -1831,76 +1944,111 @@ export function createCoordinatorApp(
     response.json(closed);
   });
 
-  // CH-C：Stage / Artifact Binding 後端角色權威（source_client_id / primary）。非 UI-only gate：
-  // 變更型 binding 交易必須由 session 的 primary client 發起，否則 403（spectator / 非 primary / 非持有者一律拒絕）。
-  // 每 session 僅一個 primary viewer lease（以 source_client_id=lease_id + token 授權）；記錄 active / last-good binding revision（交易）。
-  // 邊界：Kit DataChannel select/focus/compose 的 source_client_id 強制屬 bim-streaming-server（host GPU runtime），
-  // 此 coordinator 端權威為 binding 交易的後端授權邊界；Kit 端 per-message 強制標 GPU-pending（見 docs §11）。
-  const stageBindingAuthority = new Map<string, { primaryClientId: string; revisions: string[] }>();
-  app.post("/api/review-sessions/:sessionId/stage-binding", (request, response) => {
-    if (!isSafeSessionId(request.params.sessionId)) {
-      response.status(400).json({ detail: "Invalid review session id." });
-      return;
+  // Stage composition authority is a server-resolved, bounded transaction.
+  // Browser input may select artifact IDs/order only; URL and revision authority
+  // are generated here and remain pending until Kit confirms observed success.
+  app.post("/api/review-sessions/:sessionId/stage-binding", (request, response, next) => {
+    try {
+      const user = userAuthProvider.authenticate({ headers: headersToMap(request.headers) });
+      if (process.env.NODE_ENV === "production" && user.ssoBinding === "pending_oq5") {
+        response.status(503).json({ detail: "production_identity_unavailable" });
+        return;
+      }
+      if (!isSafeSessionId(request.params.sessionId)) {
+        response.status(400).json({ detail: "Invalid review session id." });
+        return;
+      }
+      const session = store.get(request.params.sessionId);
+      if (!session) {
+        response.status(404).json({ detail: "Review session not found." });
+        return;
+      }
+      if (!isSessionMutable(session)) {
+        response.status(409).json({ detail: "Review session is not active." });
+        return;
+      }
+
+      const input = stageBindingPreauthorizationSchema.parse(request.body);
+      const leaseToken = request.header("X-Viewer-Lease-Token") ?? "";
+      const authorizedLease = viewerLeaseStore.authorizePrimary(
+        session.session_id,
+        input.source_client_id,
+        leaseToken,
+      );
+      if (!authorizedLease || authorizedLease.user_id !== user.userId) {
+        response.status(403).json({ detail: "stage binding requires caller's active primary viewer lease" });
+        return;
+      }
+
+      const artifactIds = new Set(input.artifacts.map((artifact) => artifact.artifact_id));
+      const loadOrders = new Set(input.artifacts.map((artifact) => artifact.load_order));
+      const primarySelections = input.artifacts.filter((artifact) => artifact.role === "primary");
+      if (
+        artifactIds.size !== input.artifacts.length
+        || loadOrders.size !== input.artifacts.length
+        || primarySelections.length !== 1
+      ) {
+        response.status(400).json({ detail: "stage binding requires unique artifacts/order and exactly one primary" });
+        return;
+      }
+
+      const selected = [...input.artifacts].sort((left, right) => left.load_order - right.load_order);
+      const resolved = selected.map((selection) => {
+        const binding = session.artifact_bindings.find((candidate) => candidate.artifact_id === selection.artifact_id);
+        if (!binding || binding.ready_status !== "ready" || !binding.url) return null;
+        return {
+          artifact_id: selection.artifact_id,
+          role: selection.role,
+          load_order: selection.load_order,
+          usdc_url: binding.url,
+        };
+      });
+      if (resolved.some((artifact) => artifact === null)) {
+        response.status(409).json({ detail: "selected stage artifact is not ready or not in the session" });
+        return;
+      }
+      const resolvedArtifacts = resolved.filter((artifact): artifact is NonNullable<typeof artifact> => artifact !== null);
+      const primary = resolvedArtifacts.find((artifact) => artifact.role === "primary");
+      if (!primary) {
+        response.status(400).json({ detail: "stage binding requires exactly one primary" });
+        return;
+      }
+      const stageComposition: StageComposition = {
+        primary: { ...primary, role: "primary" },
+        secondary_layers: resolvedArtifacts
+          .filter((artifact) => artifact.role === "secondary")
+          .map((artifact) => ({ ...artifact, role: "secondary" })),
+      };
+
+      const created = stageBindingAuthorityStore.create({
+        session_id: session.session_id,
+        principal: user.userId,
+        lease_id: authorizedLease.lease_id,
+        source_client_id: input.source_client_id,
+        composition: stageComposition,
+      });
+      if (!created.ok) {
+        const status = created.reason === "capacity_exceeded" ? 503 : 409;
+        response.status(status).json({
+          detail: created.reason === "capacity_exceeded"
+            ? "stage_binding_capacity_exceeded"
+            : "stage_binding_transaction_executing",
+        });
+        return;
+      }
+
+      response.json({
+        status: "pending",
+        session_id: session.session_id,
+        auth_scope: user.ssoBinding === "pending_oq5" ? "local_dev_lab" : "bound",
+        stage_binding_authorization_id: created.transaction.stage_binding_authorization_id,
+        binding_revision_id: created.transaction.binding_revision_id,
+        stage_composition: created.transaction.stage_composition,
+        pending_expires_at: created.transaction.pending_expires_at,
+      });
+    } catch (error) {
+      next(error);
     }
-    const session = store.get(request.params.sessionId);
-    if (!session) {
-      response.status(404).json({ detail: "Review session not found." });
-      return;
-    }
-    const body = (request.body ?? {}) as Record<string, unknown>;
-    const sourceClientId = typeof body.source_client_id === "string" ? body.source_client_id.trim() : "";
-    const role = typeof body.role === "string" ? body.role : "";
-    const bindingRevisionId = typeof body.binding_revision_id === "string" ? body.binding_revision_id.trim() : "";
-    const primaryArtifactId = typeof body.primary_artifact_id === "string" ? body.primary_artifact_id.trim() : "";
-    if (!sourceClientId) {
-      response.status(400).json({ detail: "source_client_id required" });
-      return;
-    }
-    const leaseToken = request.header("X-Viewer-Lease-Token") ?? "";
-    if (!leaseToken) {
-      response.status(403).json({ detail: "stage binding requires an active primary viewer lease" });
-      return;
-    }
-    if (role !== "primary") {
-      // 後端拒絕（非 UI-only）：spectator / 非 primary 不得套用 binding。
-      response.status(403).json({ detail: "stage binding requires primary role authority", role: role || null });
-      return;
-    }
-    const authorizedLease = viewerLeaseStore.authorizePrimary(session.session_id, sourceClientId, leaseToken);
-    if (!authorizedLease) {
-      response.status(403).json({ detail: "stage binding requires an active primary viewer lease" });
-      return;
-    }
-    const reg = stageBindingAuthority.get(session.session_id);
-    if (reg && reg.primaryClientId !== sourceClientId) {
-      response.status(403).json({ detail: "another client holds primary authority for this session", primary_client_id: reg.primaryClientId });
-      return;
-    }
-    if (!primaryArtifactId) {
-      response.status(400).json({ detail: "binding transaction requires exactly one primary_artifact_id" });
-      return;
-    }
-    if (!bindingRevisionId) {
-      response.status(400).json({ detail: "binding_revision_id required" });
-      return;
-    }
-    const current = reg ?? { primaryClientId: sourceClientId, revisions: [] };
-    const lastGood = current.revisions.length > 0 ? current.revisions[current.revisions.length - 1] : null;
-    current.revisions.push(bindingRevisionId);
-    stageBindingAuthority.set(session.session_id, current);
-    eventLog.append(session.session_id, "stageBindingApplied", {
-      binding_revision_id: bindingRevisionId,
-      primary_artifact_id: primaryArtifactId,
-      source_client_id: sourceClientId,
-    });
-    response.json({
-      status: "applied",
-      session_id: session.session_id,
-      active_binding_revision: bindingRevisionId,
-      last_good_binding_revision: lastGood,
-      primary_client_id: sourceClientId,
-      primary_artifact_id: primaryArtifactId,
-    });
   });
 
   // B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：
@@ -2382,6 +2530,297 @@ export function createCoordinatorApp(
     }
     next();
   });
+
+  app.post(
+    "/api/internal/review-sessions/:sessionId/runtime-command-authorizations",
+    (request, response) => {
+      const parsed = runtimeCommandAuthorizationSchema.safeParse(request.body);
+      const rawRequestId = safeCommandIdSchema.safeParse(request.body?.request_id);
+      const correlation = rawRequestId.success
+        ? { request_id: rawRequestId.data }
+        : { rejection_id: `rejection_${randomWebViewSuffix()}` };
+      const deny = (
+        reason:
+          | "spectator_readonly"
+          | "lease_invalid"
+          | "session_lifecycle_blocked"
+          | "unauthorized_source_client"
+          | "unsupported_command"
+          | "invalid_payload",
+        detailCode: string,
+      ) => response.json({
+        authorized: false,
+        reason,
+        ...correlation,
+        retryable: false,
+        detail_code: detailCode,
+      });
+
+      if (!parsed.success || !isSafeSessionId(request.params.sessionId)) {
+        deny("invalid_payload", "runtime_authorization_payload_invalid");
+        return;
+      }
+      const input = parsed.data;
+      const session = store.get(request.params.sessionId);
+      if (!session) {
+        deny("lease_invalid", "session_not_found");
+        return;
+      }
+      if (!isSessionMutable(session)) {
+        deny("session_lifecycle_blocked", `session_${session.status}`);
+        return;
+      }
+      if (!RUNTIME_MUTATOR_EVENT_TYPES.has(input.requested_event_type)) {
+        deny("unsupported_command", "event_not_in_mutator_catalog");
+        return;
+      }
+      if (input.requested_event_type === "composeStageRequest") {
+        deny("unsupported_command", "harness_only_command");
+        return;
+      }
+      if (!isValidRuntimeCommandContext(input.requested_event_type, input.command_context)) {
+        deny("invalid_payload", "runtime_command_context_invalid");
+        return;
+      }
+
+      const leaseDecision = viewerLeaseStore.inspectRuntimeAuthority(
+        session.session_id,
+        input.source_client_id,
+        request.header("X-Viewer-Lease-Token") ?? "",
+      );
+      if (!leaseDecision.authorized) {
+        deny(leaseDecision.reason, leaseDecision.detail_code);
+        return;
+      }
+
+      const isStageLoad = STAGE_LOAD_EVENT_TYPES.has(input.requested_event_type);
+      const hasAnyStageAuthority = Boolean(
+        input.stage_binding_authorization_id
+        || input.binding_revision_id
+        || input.stage_composition,
+      );
+      if (!isStageLoad && hasAnyStageAuthority) {
+        deny("invalid_payload", "unexpected_stage_transaction");
+        return;
+      }
+      if (isStageLoad) {
+        if (
+          !input.stage_binding_authorization_id
+          || !input.binding_revision_id
+          || !input.stage_composition
+        ) {
+          deny("invalid_payload", "stage_transaction_required");
+          return;
+        }
+        const consumed = stageBindingAuthorityStore.consume({
+          session_id: session.session_id,
+          stage_binding_authorization_id: input.stage_binding_authorization_id,
+          binding_revision_id: input.binding_revision_id,
+          lease_id: leaseDecision.lease.lease_id,
+          source_client_id: input.source_client_id,
+          request_id: input.request_id,
+          event_type: input.requested_event_type as "openStageRequest" | "loadArtifactGroupRequest",
+          composition: input.stage_composition as StageComposition,
+        });
+        if (!consumed.authorized) {
+          if (consumed.reason === "transaction_mismatch") {
+            deny("invalid_payload", "stage_transaction_mismatch");
+          } else {
+            deny("lease_invalid", `stage_${consumed.reason}`);
+          }
+          return;
+        }
+      }
+
+      response.json({
+        authorized: true,
+        request_id: input.request_id,
+        retryable: false,
+      });
+    },
+  );
+
+  app.post(
+    "/api/internal/review-sessions/:sessionId/stage-binding-authorization-rollbacks",
+    (request, response) => {
+      const parsed = runtimeCommandAuthorizationSchema.safeParse(request.body);
+      const rawRequestId = safeCommandIdSchema.safeParse(request.body?.request_id);
+      const correlation = rawRequestId.success
+        ? { request_id: rawRequestId.data }
+        : { rejection_id: `rejection_${randomWebViewSuffix()}` };
+      if (!parsed.success || !isSafeSessionId(request.params.sessionId)) {
+        response.json({ rolled_back: false, ...correlation, detail_code: "rollback_payload_invalid" });
+        return;
+      }
+      const input = parsed.data;
+      if (
+        !STAGE_LOAD_EVENT_TYPES.has(input.requested_event_type)
+        || !input.stage_binding_authorization_id
+        || !input.binding_revision_id
+        || !input.stage_composition
+      ) {
+        response.json({
+          rolled_back: false,
+          request_id: input.request_id,
+          detail_code: "stage_transaction_required",
+        });
+        return;
+      }
+      const session = store.get(request.params.sessionId);
+      if (!session) {
+        response.json({
+          rolled_back: false,
+          request_id: input.request_id,
+          detail_code: "session_not_found",
+        });
+        return;
+      }
+      const leaseDecision = viewerLeaseStore.inspectRuntimeAuthority(
+        session.session_id,
+        input.source_client_id,
+        request.header("X-Viewer-Lease-Token") ?? "",
+      );
+      if (!leaseDecision.authorized) {
+        response.json({
+          rolled_back: false,
+          request_id: input.request_id,
+          detail_code: leaseDecision.detail_code,
+        });
+        return;
+      }
+
+      const rolledBack = stageBindingAuthorityStore.failBeforeMutation({
+        session_id: session.session_id,
+        stage_binding_authorization_id: input.stage_binding_authorization_id,
+        binding_revision_id: input.binding_revision_id,
+        lease_id: leaseDecision.lease.lease_id,
+        source_client_id: input.source_client_id,
+        request_id: input.request_id,
+        event_type: input.requested_event_type as "openStageRequest" | "loadArtifactGroupRequest",
+        composition: input.stage_composition as StageComposition,
+      });
+      response.json(rolledBack.failed
+        ? {
+            rolled_back: true,
+            request_id: input.request_id,
+            transaction_status: "failed",
+            idempotent_replay: rolledBack.idempotent_replay,
+          }
+        : {
+            rolled_back: false,
+            request_id: input.request_id,
+            detail_code: `stage_${rolledBack.reason}`,
+          });
+    },
+  );
+
+  app.post(
+    "/api/internal/review-sessions/:sessionId/stage-binding-confirmations",
+    (request, response) => {
+      const parsed = stageBindingConfirmationSchema.safeParse(request.body);
+      const rawRequestId = safeCommandIdSchema.safeParse(request.body?.request_id);
+      const correlation = rawRequestId.success
+        ? { request_id: rawRequestId.data }
+        : { rejection_id: `rejection_${randomWebViewSuffix()}` };
+      const deny = (reason: "lease_invalid" | "session_lifecycle_blocked" | "invalid_payload", detailCode: string) =>
+        response.json({
+          confirmed: false,
+          reason,
+          ...correlation,
+          retryable: false,
+          detail_code: detailCode,
+        });
+
+      if (!parsed.success || !isSafeSessionId(request.params.sessionId)) {
+        deny("invalid_payload", "stage_confirmation_payload_invalid");
+        return;
+      }
+      const input = parsed.data;
+      const session = store.get(request.params.sessionId);
+      if (!session) {
+        deny("lease_invalid", "session_not_found");
+        return;
+      }
+      if (!isSessionMutable(session)) {
+        deny("session_lifecycle_blocked", `session_${session.status}`);
+        return;
+      }
+      const transaction = stageBindingAuthorityStore.get(input.stage_binding_authorization_id);
+      if (!transaction) {
+        deny("lease_invalid", "stage_transaction_missing");
+        return;
+      }
+      if (
+        transaction.session_id !== session.session_id
+        || transaction.binding_revision_id !== input.binding_revision_id
+      ) {
+        deny("invalid_payload", "stage_transaction_mismatch");
+        return;
+      }
+      const leaseDecision = viewerLeaseStore.inspectRuntimeAuthority(
+        session.session_id,
+        transaction.source_client_id,
+        request.header("X-Viewer-Lease-Token") ?? "",
+      );
+      if (
+        !leaseDecision.authorized
+        || leaseDecision.lease.lease_id !== transaction.lease_id
+        || leaseDecision.lease.user_id !== transaction.principal
+      ) {
+        deny("lease_invalid", leaseDecision.authorized ? "lease_principal_changed" : leaseDecision.detail_code);
+        return;
+      }
+      if (!transaction.event_type) {
+        deny("invalid_payload", "stage_transaction_not_claimed");
+        return;
+      }
+
+      const completed = stageBindingAuthorityStore.complete(
+        {
+          session_id: transaction.session_id,
+          stage_binding_authorization_id: transaction.stage_binding_authorization_id,
+          binding_revision_id: input.binding_revision_id,
+          lease_id: transaction.lease_id,
+          source_client_id: transaction.source_client_id,
+          request_id: input.request_id,
+          event_type: transaction.event_type,
+          composition: transaction.stage_composition,
+          outcome: input.outcome,
+        },
+        input.outcome === "success"
+          ? () => eventLog.append(session.session_id, "stageBindingApplied", {
+              stage_binding_authorization_id: transaction.stage_binding_authorization_id,
+              binding_revision_id: transaction.binding_revision_id,
+              request_id: input.request_id,
+              source_client_id: transaction.source_client_id,
+              primary_artifact_id: transaction.stage_composition.primary.artifact_id,
+              secondary_artifact_ids: transaction.stage_composition.secondary_layers.map(
+                (artifact) => artifact.artifact_id,
+              ),
+            })
+          : undefined,
+      );
+      if (!completed.confirmed) {
+        deny(
+          completed.reason === "transaction_mismatch" || completed.reason === "completion_mismatch"
+            ? "invalid_payload"
+            : "lease_invalid",
+          `stage_${completed.reason}`,
+        );
+        return;
+      }
+
+      response.json({
+        confirmed: true,
+        request_id: input.request_id,
+        binding_revision_id: transaction.binding_revision_id,
+        transaction_status: completed.status,
+        active_binding_revision: completed.active_binding_revision,
+        last_good_binding_revision: completed.last_good_binding_revision,
+        idempotent_replay: completed.idempotent_replay,
+      });
+    },
+  );
 
   // B-scheme T5：本地轉檔結果 → 組 metadata-only 雲端 callback 並入 outbox。
   // 行為保持式 helper：`/api/internal/conversion-result`（外部/輪詢餵入）與

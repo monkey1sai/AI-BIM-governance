@@ -37,8 +37,7 @@ const A1_EVIDENCE = { schema: "IFC4X3", file: "fixture-bytes.ifc", total: 7126, 
 // A1/Issue legacy manual path fallback is env-only. Do not bake host absolute
 // paths into browser code; normal A1 uses file-tree / ifc-ready server resolvers.
 function defaultA1IfcPath(): string {
-  const meta = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
-  return meta?.VITE_A1_DEFAULT_IFC_PATH || "";
+  return import.meta.env.VITE_A1_DEFAULT_IFC_PATH || "";
 }
 
 export interface LeaseEvidence {

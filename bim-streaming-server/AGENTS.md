@@ -17,6 +17,7 @@
 - Kit viewport、camera、visual overlay、selection runtime behavior
 - WebRTC video streaming server behavior
 - DataChannel scene command handling
+- 依 coordinator即時decision執行runtime mutation，並觀察actual stage outcome後回報confirmation
 - Kit application / extension source in this repo
 
 ## Does Not Own
@@ -24,6 +25,7 @@
 - project / model version / artifact metadata authority
 - issue / annotation 長期保存
 - review session lifecycle 與多人 collaboration hub
+- viewer lease / runtime mutation policy authority與stage-binding control-plane transaction
 - source RVT / IFC file body storage
 - browser UI
 
@@ -33,6 +35,7 @@
 - heavy IFC→USDC conversion 必須走 headless converter app、subprocess 或 worker lane，不得阻塞 live WebRTC viewport runtime。
 - runtime state 只代表目前 stream session；若要成為正式審查資料，必須透過現行 `governance-service` 或外部公司雲端 control-plane 形成 metadata / issue / artifact record；已退役的 coordinator collaboration handlers 不是回寫路徑。
 - DataChannel payload schema 變更必須同步檢查 `web-viewer-sample` 與 `docs/contracts/streaming-datachannel-events.md`。
+- 每個production runtime mutator在任何state mutation前必須以loopback internal API向coordinator驗證；不得positive-cache authorization。Kit仍是actual GPU/stage state owner，coordinator只保存policy與confirmation shadow。
 - 不得管理 user auth、project metadata、review session lifecycle、annotation persistence。
 - Conversion / highlight / stage-load 類 user-facing runtime capability 不得只以 server-side/API 測試宣告完成；必須有前端 Review Room / Edge Console 操作與 browser evidence，或明確標為 runtime-only partial。
 

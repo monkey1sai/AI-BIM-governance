@@ -50,6 +50,29 @@ The wrapper keeps NvStreamer ETW traces under `bim-streaming-server/logs/nvstrea
 For the MVP demo, `-SkipAutoLoad` is preferred so the browser client owns the
 `openStageRequest` timing and avoids `UsdContext busy` during Kit startup.
 
+### Runtime authority wiring
+
+The root golden path is:
+
+```powershell
+.\scripts\deploy.ps1
+```
+
+It derives `COORDINATOR_INTERNAL_API_BASE` from `COORDINATOR_PORT` as an
+origin-only loopback URL and passes the same private
+`INTERNAL_API_AUTH_TOKEN` to the Docker coordinator and host-native Kit process.
+The tracked `.env.web-plane.host-kit.example` keeps both placeholders empty;
+put a real shared value only in the private `.env.web-plane.host-kit`. The
+local development fallback is lab-only and is not production identity or
+credential-hygiene evidence. Never put either bearer value in a command line,
+URL, screenshot, log summary, or PR body.
+
+For a manual Kit launch, set the two process env values in the same terminal
+before `start-streaming-server.ps1`. The internal base must remain loopback;
+LAN/public coordinator URLs and URLs with credentials, path, query, or fragment
+are rejected. Each production mutator fails closed if authority is unavailable;
+read-only scene queries and video remain available.
+
 If the browser reaches signaling but the video stays at `readyState=0`, use:
 
 ```powershell
@@ -102,7 +125,10 @@ external IFC Worker test double posts ifc-ready metadata
 → streaming produces model/mapping/manifest artifact URLs
 → coordinator records minimal shadow metadata and callback outbox state
 → web viewer opens with review_request_id or session_id and connects WebRTC
-→ streaming runtime loads ready artifact bindings by load_order
+→ viewer claims an authenticated primary lease and preauthorizes ordered artifact IDs
+→ coordinator returns a pending authorization, revision, and exact ready stage composition
+→ Kit atomically authorizes, mutates, observes the stage, and confirms completion
+→ coordinator marks the same revision active; otherwise viewer remains unproven and blocks handoff
 ```
 
 The Mapping 驗證 panel is intentionally honest: if `element_mapping.json` has
@@ -114,6 +140,7 @@ item instead of treating `/World` fallback as a real mapping validation.
 ```powershell
 .\scripts\smoke-bscheme-intake.ps1 -SkipKitLauncher
 python -m pytest tests -q -p no:cacheprovider
+python -m pytest tests/test_runtime_command_contracts.py -q -p no:cacheprovider
 cd bim-review-coordinator; npm run verify
 cd ..\web-viewer-sample; npm run verify
 cd ..\bim-streaming-server; python -m pytest tests/test_conversion_authority_api.py -q
@@ -127,3 +154,17 @@ runtime services.
 
 `bim-streaming-server/scripts/tests/test-stage-loading-contract.ps1` remains a
 non-GPU DataChannel contract smoke for the multi-artifact load-order payload.
+
+## Rollback and completion boundary
+
+Coordinator, Kit, and viewer use one breaking wire contract and must roll
+forward or back together. For rollback, stop new viewer producers, restore all
+three service versions, restart coordinator and Kit to discard process-local
+pending/executing transactions, then claim a fresh lease and authorization.
+Do not replay an in-flight stage transaction or treat coordinator last-good
+evidence as a command that restores GPU state.
+
+A4/Ornith credential revocation/rotation remains an external gate. Until the
+credential owner confirms it, this runbook supports local-dev lab validation
+only: credential hygiene, production full, and overall A4 completion remain
+failed/open regardless of CPU test results.

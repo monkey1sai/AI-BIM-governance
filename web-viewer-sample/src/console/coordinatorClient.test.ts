@@ -570,6 +570,43 @@ describe("coordinatorClient callback outbox summary / issue snapshot（F2⑩）"
   });
 });
 
+describe("coordinatorClient viewer lease lab carrier", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("claimViewerLease 只把 user carrier 放 X-User-Token，不放 URL", async () => {
+    const userToken = "dynamic_local_user_carrier";
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        lease_id: "viewer_lease_primary",
+        lease_token: "viewer_lease_token_value",
+        session_id: "review_session_x",
+        viewer_id: "viewer_x",
+        user_id: "opaque_server_subject",
+        role: "primary",
+        status: "active",
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+
+    await coordinatorClient.claimViewerLease("review_session_x", {
+      viewer_id: "viewer_x",
+      user_id: userToken,
+      requested_role: "primary",
+    }, userToken);
+
+    const [url, init] = spy.mock.calls[0];
+    expect(String(url)).toContain("/api/review-sessions/review_session_x/viewer-leases/claim");
+    expect(String(url)).not.toContain(userToken);
+    expect((init as RequestInit).headers).toEqual(expect.objectContaining({ "X-User-Token": userToken }));
+    expect(JSON.parse(String((init as RequestInit).body))).toMatchObject({
+      viewer_id: "viewer_x",
+      user_id: userToken,
+      requested_role: "primary",
+    });
+  });
+});
+
 // ── TriggerConversionResponse 型別契約斷言（compile-time only；由 `npx tsc --noEmit` 守門，
 //    vitest 執行期為無副作用 no-op）。鎖住兩條契約避免日後被悄悄放寬（quality finding #1 / #2）──
 //   #1 ifc_ready_job_id 必為 string（非 optional）：B1 後端（PR #259）202 永遠帶此欄；optional 會逼

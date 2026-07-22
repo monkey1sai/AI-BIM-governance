@@ -8,10 +8,17 @@
 # without an express license agreement from NVIDIA CORPORATION or
 # its affiliates is strictly prohibited.
 
+from typing import Optional
+
 from .stage_loading import LoadingManager
 from .stage_management import StageManager
+from .runtime_authority import RuntimeAuthorityClient
 from . import kit_struct_log
+import carb
+import carb.events
 import omni.ext
+import omni.kit.app
+import omni.kit.livestream.messaging as messaging
 
 
 # Any class derived from `omni.ext.IExt` in top level module (defined in
@@ -27,9 +34,16 @@ class Extension(omni.ext.IExt):
         # Kit subprocess (additive — `carb.log_*` channels stay).
         kit_struct_log.log_kit_startup_lifecycle()
 
+        self._runtime_authority: Optional[RuntimeAuthorityClient] = RuntimeAuthorityClient.from_env()
+        messaging.register_event_type_to_send("commandRejected")
+        omni.kit.app.register_event_alias(
+            carb.events.type_from_string("commandRejected"),
+            "commandRejected",
+        )
+
         # Internal messaging state
-        self._loading_manager: LoadingManager = LoadingManager()
-        self._stage_manager: StageManager = StageManager()
+        self._loading_manager: Optional[LoadingManager] = LoadingManager(self._runtime_authority)
+        self._stage_manager: Optional[StageManager] = StageManager(self._runtime_authority)
 
     def on_shutdown(self):
         """This is called every time the extension is deactivated. It is used to
@@ -41,6 +55,7 @@ class Extension(omni.ext.IExt):
         if self._stage_manager:
             self._stage_manager.on_shutdown()
             self._stage_manager = None
+        self._runtime_authority = None
 
         # cross-service-structured-log-baseline: emit lifecycle closed.
         kit_struct_log.log_kit_shutdown_lifecycle()

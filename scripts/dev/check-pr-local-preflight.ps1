@@ -162,21 +162,14 @@ try {
         } finally {
             Pop-Location
         }
-        Invoke-External -FilePath 'pwsh' -Arguments @(
-            '-NoProfile',
-            '-NonInteractive',
-            '-File',
-            (Join-Path $repoRootPath 'scripts\tests\verify-design-system-visual-result.ps1'),
-            '-RepoRoot',
-            $repoRootPath,
-            '-ResultPath',
-            (Join-Path $repoRootPath 'artifacts\e2e\design-system-visual-result.json'),
-            '-RequiredScreenIds',
-            @($designScope.required_screen_ids),
-            '-TargetCommit',
-            $headSha,
-            '-AllowUntrackedArtifacts'
-        ) -FailureMessage 'design-system visual result validation failed.'
+        $visualResultParameters = @{
+            RepoRoot = $repoRootPath
+            ResultPath = Join-Path $repoRootPath 'artifacts\e2e\design-system-visual-result.json'
+            RequiredScreenIds = [string[]]@($designScope.required_screen_ids)
+            TargetCommit = $headSha
+            AllowUntrackedArtifacts = $true
+        }
+        & (Join-Path $repoRootPath 'scripts\tests\verify-design-system-visual-result.ps1') @visualResultParameters
     }
     if ($hasFrontendPaths -and -not $SkipViewerVerify -and $SkipReviewAgent) {
         Write-Host '[local-pr-preflight] frontend paths detected; running web-viewer-sample npm run verify'

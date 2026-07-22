@@ -26,11 +26,13 @@ type AppInternals = {
   _overlayHighlightMany: (f: unknown[]) => unknown;
   _postToParent: (m: Record<string, unknown>, allowedOriginsCache?: ReadonlySet<string>) => void;
   _sendStreamMessage: (m: { event_type: string; payload?: unknown }) => void;
+  _runtimeMutatorBlockReason: (eventType: string) => string | null;
   _appendReviewEvent: (event: string) => void;
   _appendDemoOutgoing: (label: string, payload: unknown) => void;
   _appendDemoIncoming: (label: string, payload: unknown) => void;
-  _completeStageLoad: (loadedUrl?: string) => void;
+  _completeStageLoad: (loadedUrl?: string, bindingRevisionId?: string) => void;
   _completeStageLoadFromVisibleStream: () => boolean;
+  _resyncStageBindingProof: () => Promise<boolean>;
   _finishStageLoad: () => void;
   _hasRemoteVideoFrame: () => boolean;
   _applyBinding: (selection: Array<{
@@ -49,6 +51,23 @@ type AppInternals = {
   _onStageReset: () => void;
   _openSelectedAsset: () => void;
   _canOpenSelectedAsset: () => boolean;
+  _heartbeatStandaloneViewerLease: (sessionId: string, lease: {
+    lease_id: string;
+    lease_token: string;
+    role: "primary";
+    expires_at: string;
+    heartbeat_after_ms: number;
+  }) => Promise<void>;
+  _dropStandaloneViewerLease: (reason?: string) => void;
+  standaloneViewerLease: {
+    lease_id: string;
+    lease_token: string;
+    role: "primary";
+    expires_at: string;
+    heartbeat_after_ms: number;
+  } | null;
+  componentMounted: boolean;
+  deferredOpenStageId: number | null;
   render: () => React.ReactElement;
 };
 const internals = (app: App): AppInternals => app as unknown as AppInternals;
@@ -110,8 +129,10 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  vi.useRealTimers();
   reviewEnv.viewerLeaseToken = "";
   reviewEnv.sourceClientId = "dev_user_001";
+  reviewEnv.userToken = "";
 });
 
 describe("S3 render：嵌入時失敗清單收合於 console（viewer 僅作高亮引擎）", () => {
@@ -362,7 +383,34 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
     });
   });
 
+  it("每個 runtime mutator attempt 自動取得不同 request_id，caller 明示的 correlation 保持不變", () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+    vi.spyOn(internals(app), "_appendDemoOutgoing").mockImplementation(() => {});
+
+    for (const eventType of runtimeMutators) {
+      internals(app)._sendStreamMessage({ event_type: eventType, payload: {} });
+    }
+    internals(app)._sendStreamMessage({
+      event_type: "focusPrimRequest",
+      payload: { request_id: "caller_req_001", prim_path: "/World/C" },
+    });
+
+    const requestIds = sendSpy.mock.calls.map((call) => (
+      (call[0] as { payload: { request_id: string } }).payload.request_id
+    ));
+    const generatedIds = requestIds.slice(0, runtimeMutators.length);
+    expect(generatedIds.every((requestId) => /^cmd_/.test(requestId))).toBe(true);
+    expect(new Set(generatedIds).size).toBe(runtimeMutators.length);
+    expect(requestIds[runtimeMutators.length]).toBe("caller_req_001");
+  });
+
   it("openedStageResult with binding_revision_id is the production binding apply acknowledgement", () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     internals(app).state = {
@@ -370,13 +418,24 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
       expectedStageUrl: "stage://primary.usdc",
       govBindingApplyState: { status: "applying" },
     };
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
     vi.spyOn(internals(app), "_appendDemoIncoming").mockImplementation(() => {});
     vi.spyOn(internals(app), "_appendReviewEvent").mockImplementation(() => {});
+
+    internals(app)._sendStreamMessage({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_binding_ack_001",
+        url: "stage://primary.usdc",
+        binding_revision_id: "rev_binding_001",
+      },
+    });
 
     internals(app)._handleCustomEvent({
       event_type: "openedStageResult",
       payload: {
         result: "success",
+        request_id: "req_binding_ack_001",
         url: "stage://primary.usdc",
         binding_revision_id: "rev_binding_001",
       },
@@ -385,6 +444,722 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
     expect(internals(app).state.govBindingActiveRevision).toBe("rev_binding_001");
     expect(internals(app).state.govBindingLastGoodRevision).toBe("rev_binding_001");
     expect(internals(app).state.govBindingApplyState).toEqual({ status: "applied" });
+  });
+
+  it.each([
+    ["missing request_id", {}],
+    ["unknown request_id", { request_id: "req_unsolicited_001" }],
+  ])("openedStageResult with %s cannot mutate stage or binding proof", (_label, correlationPayload) => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: "stage://primary.usdc",
+      loadedStageUrl: null,
+      stageLoadStatus: "pending",
+      govBindingActiveRevision: null,
+      govBindingLastGoodRevision: null,
+      govBindingApplyState: { status: "applying" },
+    };
+    vi.spyOn(internals(app), "_appendDemoIncoming").mockImplementation(() => {});
+
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        url: "stage://primary.usdc",
+        binding_revision_id: "rev_unsolicited_001",
+        ...correlationPayload,
+      },
+    });
+
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.stageLoadStatus).toBe("pending");
+    expect(internals(app).state.govBindingActiveRevision).toBeNull();
+    expect(internals(app).state.govBindingLastGoodRevision).toBeNull();
+    expect(internals(app).state.govBindingApplyState).toEqual({ status: "applying" });
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual([]);
+  });
+});
+
+describe("Automatic pickability follow-up", () => {
+  it("empty getChildrenResponse is a no-op and does not send an invalid mutator", () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const sendSpy = vi.spyOn(internals(app), "_sendStreamMessage");
+
+    internals(app)._handleCustomEvent({
+      event_type: "getChildrenResponse",
+      payload: { prim_path: "/World", children: [] },
+    });
+
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(internals(app).state.usdPrims).toEqual([]);
+  });
+});
+
+describe("Runtime command rejection consumer：visible terminal、changed-unconfirmed block 與 authenticated resync", () => {
+  it("authority outage 顯示 persistent aria-live retryable terminal，固定列舉外 payload 被拒收", () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const secretSentinel = "DYNAMIC_LOCAL_USER_SECRET_SENTINEL";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    internals(app)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "focusPrimRequest",
+        reason: "lease_invalid",
+        request_id: "req_outage_001",
+        retryable: true,
+        runtime_state: "unchanged",
+        detail_code: "authority_unavailable",
+        detail: secretSentinel,
+        viewer_lease_token: secretSentinel,
+        headers: { Authorization: secretSentinel },
+      },
+    });
+
+    expect(internals(app).state.runtimeCommandRejection).toMatchObject({
+      rejected_event_type: "focusPrimRequest",
+      reason: "lease_invalid",
+      retryable: true,
+      runtime_state: "unchanged",
+      detail_code: "authority_unavailable",
+    });
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual([
+      expect.objectContaining({
+        request_id: "req_outage_001",
+        event_type: "focusPrimRequest",
+        phases: ["terminal"],
+        outcome: "rejected",
+      }),
+    ]);
+    const html = renderToString(internals(app).render());
+    expect(html).toContain('data-testid="runtime-command-rejection"');
+    expect(html).toContain('data-testid="runtime-authority-unavailable"');
+    expect(html).toContain('aria-live="assertive"');
+    expect(html).toContain("可重試");
+    expect(html).toContain("操作授權服務暫時不可用");
+    expect(html).toContain('data-testid="runtime-command-lifecycle"');
+    expect(JSON.stringify(internals(app).state)).not.toContain(secretSentinel);
+    expect(JSON.stringify(logSpy.mock.calls)).not.toContain(secretSentinel);
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(secretSentinel);
+
+    internals(app)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "focusPrimRequest",
+        reason: "lease_invalid",
+        request_id: "req_both_ids_001",
+        rejection_id: "rej_both_ids_001",
+        retryable: false,
+        runtime_state: "unchanged",
+      },
+    });
+    expect(internals(app).state.runtimeCommandRejection).toMatchObject({ request_id: "req_outage_001" });
+
+    internals(app)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "focusPrimRequest<script>",
+        reason: "lease_invalid",
+        rejection_id: "rej_invalid_001",
+        retryable: false,
+        runtime_state: "unchanged",
+      },
+    });
+    expect(internals(app).state.runtimeCommandRejection).toMatchObject({ request_id: "req_outage_001" });
+  });
+
+  it("accepted 是 executing 非 terminal；bindingApplied 才完成 lifecycle", () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+
+    internals(app)._sendStreamMessage({
+      event_type: "composeStageRequest",
+      payload: {
+        request_id: "req_lifecycle_001",
+        binding_revision_id: "rev_lifecycle_001",
+      },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "loadArtifactGroupResult",
+      payload: {
+        result: "accepted",
+        request_id: "req_lifecycle_001",
+        binding_revision_id: "rev_lifecycle_001",
+      },
+    });
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual([
+      expect.objectContaining({
+        request_id: "req_lifecycle_001",
+        phases: ["pending", "executing"],
+      }),
+    ]);
+
+    internals(app)._handleCustomEvent({
+      event_type: "bindingApplied",
+      payload: {
+        request_id: "req_lifecycle_001",
+        binding_revision_id: "rev_lifecycle_001",
+      },
+    });
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual([
+      expect.objectContaining({
+        request_id: "req_lifecycle_001",
+        event_type: "composeStageRequest",
+        phases: ["pending", "executing", "terminal"],
+        outcome: "success",
+      }),
+    ]);
+  });
+
+  it.each([
+    ["clearHighlightRequest", "clearHighlightResult"],
+    ["selectPrimsRequest", "selectPrimsResult"],
+    ["makePrimsPickable", "makePrimsPickableResponse"],
+    ["resetStage", "resetStageResponse"],
+  ])("%s 只由 correlated %s 收斂為 terminal", (requestEventType, terminalEventType) => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+    const requestId = `req_${requestEventType}`;
+
+    internals(app)._sendStreamMessage({ event_type: requestEventType, payload: { request_id: requestId } });
+    internals(app)._handleCustomEvent({
+      event_type: terminalEventType,
+      payload: { result: "success", request_id: requestId },
+    });
+
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual([
+      expect.objectContaining({
+        request_id: requestId,
+        event_type: requestEventType,
+        phases: ["pending", "terminal"],
+        outcome: "success",
+      }),
+    ]);
+  });
+
+  it("不相符的 terminal event 不得完成另一型 request", () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+
+    internals(app)._sendStreamMessage({
+      event_type: "clearHighlightRequest",
+      payload: { request_id: "req_wrong_terminal_001" },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "selectPrimsResult",
+      payload: { result: "success", request_id: "req_wrong_terminal_001" },
+    });
+
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual([
+      expect.objectContaining({
+        request_id: "req_wrong_terminal_001",
+        phases: ["pending"],
+      }),
+    ]);
+  });
+
+  it("changed_unconfirmed rejection 是 first terminal；late opened/binding success 不得覆寫", () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    reviewEnv.userToken = "local_user_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => new Promise(() => {})));
+
+    internals(app)._sendStreamMessage({
+      event_type: "composeStageRequest",
+      payload: {
+        request_id: "req_first_terminal_001",
+        binding_revision_id: "rev_first_terminal_001",
+      },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "composeStageRequest",
+        reason: "lease_invalid",
+        request_id: "req_first_terminal_001",
+        retryable: true,
+        runtime_state: "changed_unconfirmed",
+      },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "bindingApplied",
+      payload: {
+        request_id: "req_first_terminal_001",
+        binding_revision_id: "rev_first_terminal_001",
+      },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_first_terminal_001",
+        binding_revision_id: "rev_first_terminal_001",
+        url: "stage://late-success.usdc",
+      },
+    });
+
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual([
+      expect.objectContaining({
+        request_id: "req_first_terminal_001",
+        phases: ["pending", "terminal"],
+        outcome: "rejected",
+      }),
+    ]);
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+  });
+
+  it("unchanged rejection 後的同 request late open success 不得套用 stage side effects", () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: "stage://first-terminal.usdc",
+      loadedStageUrl: null,
+      stageLoadStatus: "pending",
+      selectedUSDAsset: { name: "first-terminal", url: "stage://first-terminal.usdc" },
+    };
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+
+    internals(app)._sendStreamMessage({
+      event_type: "openStageRequest",
+      payload: { request_id: "req_rejected_then_open_001", url: "stage://first-terminal.usdc" },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "openStageRequest",
+        reason: "lease_invalid",
+        request_id: "req_rejected_then_open_001",
+        retryable: false,
+        runtime_state: "unchanged",
+      },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_rejected_then_open_001",
+        url: "stage://first-terminal.usdc",
+      },
+    });
+
+    expect(internals(app).state.runtimeCommandRejection).toMatchObject({
+      request_id: "req_rejected_then_open_001",
+    });
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.stageLoadStatus).not.toBe("matched");
+  });
+
+  it("open success 後的同 request late changed_unconfirmed rejection 不得重新封鎖", () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: "stage://success-first.usdc",
+      loadedStageUrl: null,
+      stageLoadStatus: "pending",
+      selectedUSDAsset: { name: "success-first", url: "stage://success-first.usdc" },
+    };
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+
+    internals(app)._sendStreamMessage({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_open_then_reject_001",
+        binding_revision_id: "rev_success_first_001",
+        url: "stage://success-first.usdc",
+      },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_open_then_reject_001",
+        binding_revision_id: "rev_success_first_001",
+        url: "stage://success-first.usdc",
+      },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "openStageRequest",
+        reason: "lease_invalid",
+        request_id: "req_open_then_reject_001",
+        retryable: true,
+        runtime_state: "changed_unconfirmed",
+      },
+    });
+
+    expect(internals(app).state.runtimeCommandRejection).toBeNull();
+    expect(internals(app).state.loadedStageUrl).toBe("stage://success-first.usdc");
+    expect(internals(app).state.stageLoadStatus).toBe("matched");
+    internals(app)._sendStreamMessage({
+      event_type: "focusPrimRequest",
+      payload: { request_id: "req_after_terminal_001", prim_path: "/World/Allowed" },
+    });
+    expect(sendSpy.mock.calls.filter(
+      ([message]) => (message as { event_type?: string }).event_type === "focusPrimRequest",
+    )).toHaveLength(1);
+  });
+
+  it("changed_unconfirmed 先阻擋所有 mutator/handoff，只有同 revision authenticated status 才恢復", async () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    reviewEnv.userToken = "local_user_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: "stage://authorized.usdc",
+      loadedStageUrl: null,
+      stageLoadStatus: "pending",
+      selectedUSDAsset: { name: "authorized", url: "stage://authorized.usdc" },
+    };
+    vi.spyOn(internals(app), "_appendDemoOutgoing").mockImplementation(() => {});
+    vi.spyOn(internals(app), "_appendDemoIncoming").mockImplementation(() => {});
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+    const fetchSpy = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        stage_binding: {
+          active_binding_revision: "rev_other",
+          last_good_binding_revision: "rev_other",
+        },
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        stage_binding: {
+          active_binding_revision: "rev_other",
+          last_good_binding_revision: "rev_other",
+        },
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        stage_binding: {
+          active_binding_revision: "rev_authorized_001",
+          last_good_binding_revision: "rev_authorized_001",
+        },
+      }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    internals(app)._sendStreamMessage({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_changed_001",
+        url: "stage://authorized.usdc",
+        binding_revision_id: "rev_authorized_001",
+      },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "openStageRequest",
+        reason: "lease_invalid",
+        request_id: "req_changed_001",
+        retryable: true,
+        runtime_state: "changed_unconfirmed",
+        detail_code: "authority_unavailable",
+      },
+    });
+    await flushMicrotasks();
+
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual([
+      expect.objectContaining({
+        request_id: "req_changed_001",
+        phases: ["pending", "terminal"],
+        outcome: "rejected",
+      }),
+    ]);
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(parent.postMessage.mock.calls.map((call) => call[0])).toContainEqual(expect.objectContaining({
+      protocol: "vg01",
+      type: "stage_loaded",
+      stageUrl: null,
+      status: "unproven",
+      binding_revision_id: "rev_authorized_001",
+    }));
+    internals(app)._sendStreamMessage({ event_type: "focusPrimRequest", payload: { prim_path: "/World/Blocked" } });
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    const reviewEvents = internals(app).state.reviewEvents as string[];
+    expect(reviewEvents[reviewEvents.length - 1]).toContain("stage binding proof resync required");
+
+    const fetchCountBeforeBlindRetry = fetchSpy.mock.calls.length;
+    internals(app)._applyBinding([{
+      artifact_id: "artifact_primary",
+      model_version_id: "version_001",
+      usdc_url: "stage://authorized.usdc",
+      role: "primary",
+      load_order: 0,
+      ready: true,
+    }], "client_revision_must_not_be_used");
+    internals(app)._openSelectedAsset();
+    expect(fetchSpy).toHaveBeenCalledTimes(fetchCountBeforeBlindRetry);
+
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_late_success_001",
+        url: "stage://authorized.usdc",
+        binding_revision_id: "rev_authorized_001",
+      },
+    });
+    await flushMicrotasks();
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    internals(app)._sendStreamMessage({ event_type: "focusPrimRequest", payload: { prim_path: "/World/StillBlocked" } });
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+
+    expect(await internals(app)._resyncStageBindingProof()).toBe(false);
+    expect(await internals(app)._resyncStageBindingProof()).toBe(true);
+    expect(fetchSpy.mock.calls[2][1]).toMatchObject({
+      headers: expect.objectContaining({ "X-User-Token": "local_user_token_primary" }),
+    });
+    expect(internals(app).state.stageLoadStatus).toBe("matched");
+    expect(internals(app).state.loadedStageUrl).toBe("stage://authorized.usdc");
+    expect(internals(app).state.runtimeCommandRejection).toBeNull();
+    expect(parent.postMessage.mock.calls.map((call) => call[0])).toContainEqual(expect.objectContaining({
+      protocol: "vg01",
+      type: "stage_loaded",
+      stageUrl: "stage://authorized.usdc",
+      status: "active",
+      binding_revision_id: "rev_authorized_001",
+    }));
+
+    internals(app)._sendStreamMessage({ event_type: "focusPrimRequest", payload: { prim_path: "/World/Allowed" } });
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(internals(app).state)).not.toContain("local_user_token_primary");
+    expect(JSON.stringify(parent.postMessage.mock.calls)).not.toContain("local_user_token_primary");
+  });
+
+  it("舊 revision 的延遲 resync 不得解除較新的 changed_unconfirmed gate", async () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    reviewEnv.userToken = "local_user_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: "stage://a.usdc",
+      selectedUSDAsset: { name: "a", url: "stage://a.usdc" },
+      stageLoadStatus: "pending",
+    };
+    vi.spyOn(internals(app), "_appendDemoOutgoing").mockImplementation(() => {});
+    vi.spyOn(internals(app), "_appendDemoIncoming").mockImplementation(() => {});
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+
+    let resolveFirstA: (response: Response) => void = () => {};
+    let resolveSecondA: (response: Response) => void = () => {};
+    const firstA = new Promise<Response>((resolve) => { resolveFirstA = resolve; });
+    const secondA = new Promise<Response>((resolve) => { resolveSecondA = resolve; });
+    const pendingB = new Promise<Response>(() => {});
+    const fetchSpy = vi.fn()
+      .mockImplementationOnce(() => firstA)
+      .mockImplementationOnce(() => secondA)
+      .mockImplementationOnce(() => pendingB);
+    vi.stubGlobal("fetch", fetchSpy);
+    const bindingResponse = (revision: string) => new Response(JSON.stringify({
+      stage_binding: {
+        active_binding_revision: revision,
+        last_good_binding_revision: revision,
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+    const rejectChanged = (requestId: string) => internals(app)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "openStageRequest",
+        reason: "lease_invalid",
+        request_id: requestId,
+        retryable: true,
+        runtime_state: "changed_unconfirmed",
+        detail_code: "authority_unavailable",
+      },
+    });
+
+    internals(app)._sendStreamMessage({
+      event_type: "openStageRequest",
+      payload: { request_id: "req_a", url: "stage://a.usdc", binding_revision_id: "rev_a" },
+    });
+    rejectChanged("req_a");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    const secondAResync = internals(app)._resyncStageBindingProof();
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    resolveSecondA(bindingResponse("rev_a"));
+    expect(await secondAResync).toBe(true);
+
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: "stage://b.usdc",
+      selectedUSDAsset: { name: "b", url: "stage://b.usdc" },
+      loadedStageUrl: null,
+      stageLoadStatus: "pending",
+    };
+    internals(app)._sendStreamMessage({
+      event_type: "openStageRequest",
+      payload: { request_id: "req_b", url: "stage://b.usdc", binding_revision_id: "rev_b" },
+    });
+    rejectChanged("req_b");
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+
+    resolveFirstA(bindingResponse("rev_a"));
+    await flushMicrotasks();
+
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.runtimeCommandRejection).toMatchObject({
+      request_id: "req_b",
+      binding_revision_id: "rev_b",
+    });
+    internals(app)._sendStreamMessage({ event_type: "focusPrimRequest", payload: { prim_path: "/World/BlockedByB" } });
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+    expect(parent.postMessage.mock.calls.map((call) => call[0])).not.toContainEqual(expect.objectContaining({
+      protocol: "vg01",
+      type: "stage_loaded",
+      stageUrl: "stage://b.usdc",
+      status: "active",
+      binding_revision_id: "rev_a",
+    }));
+  });
+
+  it("前一 revision active 後的新 exact composition partial failure 會清除 proof 並通知 parent unproven", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = operableApp();
+    useSynchronousSetState(app);
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: "stage://a.usdc",
+      selectedUSDAsset: { name: "a", url: "stage://a.usdc" },
+      stageLoadStatus: "pending",
+    };
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+    vi.spyOn(internals(app), "_appendDemoIncoming").mockImplementation(() => {});
+
+    internals(app)._sendStreamMessage({
+      event_type: "openStageRequest",
+      payload: { request_id: "req_a", url: "stage://a.usdc", binding_revision_id: "rev_a" },
+    });
+
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_a",
+        url: "stage://a.usdc",
+        binding_revision_id: "rev_a",
+      },
+    });
+    expect(internals(app).state.stageLoadStatus).toBe("matched");
+    expect(internals(app).state.govBindingActiveRevision).toBe("rev_a");
+
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: "stage://b.usdc",
+      selectedUSDAsset: { name: "b", url: "stage://b.usdc" },
+      stageLoadStatus: "pending",
+      loadedStageUrl: "stage://a.usdc",
+    };
+    internals(app)._sendStreamMessage({
+      event_type: "openStageRequest",
+      payload: { request_id: "req_b", url: "stage://b.usdc", binding_revision_id: "rev_b" },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "error",
+        request_id: "req_b",
+        url: "stage://b.usdc",
+        error: "Stage open failed.",
+        binding_revision_id: "rev_b",
+        runtime_state: "changed_failed",
+        partial_load: true,
+        failed_bindings: [{ artifact_id: "secondary_b" }],
+      },
+    });
+
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+    expect(internals(app).state.govBindingActiveRevision).toBeNull();
+    expect(internals(app).state.govBindingLastGoodRevision).toBe("rev_a");
+    expect(internals(app).state.govBindingApplyState).toEqual({
+      status: "failed",
+      reason: "runtime_changed_transaction_failed",
+    });
+    expect(parent.postMessage.mock.calls.map((call) => call[0])).toContainEqual(expect.objectContaining({
+      protocol: "vg01",
+      type: "stage_loaded",
+      stageUrl: null,
+      status: "unproven",
+      binding_revision_id: "rev_b",
+    }));
+  });
+});
+
+describe("Late trusted viewer lease recovery", () => {
+  it("不同 late token 只替換既有 deferred timer；執行一次後 matched stage 不重開", () => {
+    vi.useFakeTimers();
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    setEmbedded(`${PARENT_ORIGIN}/ui`);
+    reviewEnv.viewerLeaseToken = "";
+    reviewEnv.userToken = "";
+    const app = operableApp();
+    internals(app).state = {
+      ...internals(app).state,
+      selectedUSDAsset: { name: "primary", url: "stage://primary.usdc" },
+      isKitReady: true,
+      stageLoadStatus: "unproven",
+    };
+    const openSpy = vi.spyOn(internals(app), "_openSelectedAsset").mockImplementation(() => {});
+    const tokenMessage = (token: string, userToken: string) => new MessageEvent("message", {
+      origin: PARENT_ORIGIN,
+      data: { protocol: "vg01", type: "viewer_lease_token", token, user_token: userToken },
+    });
+
+    internals(app)._handleParentMessage(tokenMessage("lease_late_a", ""));
+    expect(vi.getTimerCount()).toBe(0);
+    internals(app)._handleParentMessage(tokenMessage("lease_late_a", "local_user_a"));
+    expect(vi.getTimerCount()).toBe(1);
+    const firstTimer = internals(app).deferredOpenStageId;
+    internals(app)._handleParentMessage(tokenMessage("lease_late_b", "local_user_b"));
+    expect(vi.getTimerCount()).toBe(1);
+    expect(internals(app).deferredOpenStageId).not.toBe(firstTimer);
+    expect(reviewEnv.viewerLeaseToken).toBe("lease_late_b");
+    expect(reviewEnv.userToken).toBe("local_user_b");
+
+    vi.runOnlyPendingTimers();
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+
+    internals(app).state = { ...internals(app).state, stageLoadStatus: "matched" };
+    internals(app)._handleParentMessage(tokenMessage("lease_late_c", "local_user_c"));
+    expect(vi.getTimerCount()).toBe(0);
+    expect(openSpy).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -674,17 +1449,40 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
     Object.defineProperty(window, "parent", { value: window, configurable: true });
     reviewEnv.viewerLeaseToken = "";
     reviewEnv.sourceClientId = "dev_user_001";
+    reviewEnv.userToken = "";
     const app = operableApp();
-    const fetchSpy = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void init;
       const url = String(input);
       if (url.endsWith("/viewer-leases/claim")) {
-        return new Response(JSON.stringify({ lease_id: "viewer_lease_primary", lease_token: "lease_token_primary", role: "primary" }), {
+        return new Response(JSON.stringify({
+          lease_id: "viewer_lease_primary",
+          lease_token: "lease_token_primary",
+          role: "primary",
+          expires_at: new Date(Date.now() + 45_000).toISOString(),
+          heartbeat_after_ms: 15_000,
+        }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
       }
       if (url.endsWith("/stage-binding")) {
-        return new Response(JSON.stringify({ ok: true }), {
+        return new Response(JSON.stringify({
+          status: "pending",
+          session_id: "review_session_x",
+          stage_binding_authorization_id: "stage_auth_001",
+          binding_revision_id: "rev_authorized_001",
+          pending_expires_at: "2026-07-22T12:00:30.000Z",
+          stage_composition: {
+            primary: {
+              artifact_id: "artifact_primary",
+              role: "primary",
+              load_order: 0,
+              usdc_url: "stage://authorized-primary.usdc",
+            },
+            secondary_layers: [],
+          },
+        }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
@@ -709,35 +1507,93 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(String(fetchSpy.mock.calls[0][0])).toContain("/api/review-sessions/review_session_x/viewer-leases/claim");
     expect(fetchSpy.mock.calls[0][1]).toMatchObject({ method: "POST" });
+    const generatedUserToken = (fetchSpy.mock.calls[0][1]?.headers as Record<string, string>)["X-User-Token"];
+    expect(generatedUserToken).toMatch(/^standalone_viewer_operator_/);
+    expect(generatedUserToken).not.toBe(reviewEnv.defaultUserId);
+    expect(generatedUserToken).not.toBe("dev_user_001");
+    expect(reviewEnv.userToken).toBe(generatedUserToken);
     expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toMatchObject({
       viewer_id: "dev_user_001",
+      user_id: generatedUserToken,
       requested_role: "primary",
     });
     expect(String(fetchSpy.mock.calls[1][0])).toContain("/api/review-sessions/review_session_x/stage-binding");
     expect(fetchSpy.mock.calls[1][1]).toMatchObject({
       method: "POST",
-      headers: expect.objectContaining({ "X-Viewer-Lease-Token": "lease_token_primary" }),
+      headers: expect.objectContaining({
+        "X-User-Token": generatedUserToken,
+        "X-Viewer-Lease-Token": "lease_token_primary",
+      }),
     });
-    expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body))).toMatchObject({
+    expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body))).toEqual({
       source_client_id: "viewer_lease_primary",
       role: "primary",
-      binding_revision_id: "rev_binding_001",
-      primary_artifact_id: "artifact_primary",
+      artifacts: [{ artifact_id: "artifact_primary", role: "primary", load_order: 0 }],
     });
     expect(sendSpy).toHaveBeenCalledWith({
       event_type: "loadArtifactGroupRequest",
       payload: {
-        binding_revision_id: "rev_binding_001",
+        url: "stage://authorized-primary.usdc",
+        requested_stage_url: "stage://authorized-primary.usdc",
+        stage_binding_authorization_id: "stage_auth_001",
+        binding_revision_id: "rev_authorized_001",
         stage_composition: {
           primary: expect.objectContaining({
             artifact_id: "artifact_primary",
-            usdc_url: "stage://primary.usdc",
+            usdc_url: "stage://authorized-primary.usdc",
             load_order: 0,
           }),
           secondary_layers: [],
         },
       },
     });
+  });
+
+  it("heartbeats a fresh standalone lease and clears it before any expired-token mutator", async () => {
+    Object.defineProperty(window, "parent", { value: window, configurable: true });
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    reviewEnv.sourceClientId = "dev_user_001";
+    const app = operableApp();
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    useSynchronousSetState(app);
+    const lease = {
+      lease_id: "viewer_lease_primary",
+      lease_token: "lease_token_primary",
+      role: "primary" as const,
+      expires_at: new Date(Date.now() + 45_000).toISOString(),
+      heartbeat_after_ms: 15_000,
+    };
+    internals(app).standaloneViewerLease = lease;
+    internals(app).componentMounted = true;
+    const refreshedExpiry = new Date(Date.now() + 90_000).toISOString();
+    const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      lease_id: lease.lease_id,
+      expires_at: refreshedExpiry,
+      heartbeat_after_ms: 15_000,
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await internals(app)._heartbeatStandaloneViewerLease("review_session_x", lease);
+
+    expect(String(fetchSpy.mock.calls[0][0])).toContain("/viewer-leases/viewer_lease_primary/heartbeat");
+    expect(fetchSpy.mock.calls[0][1]).toMatchObject({
+      method: "POST",
+      headers: expect.objectContaining({ "X-Viewer-Lease-Token": "lease_token_primary" }),
+    });
+    expect(internals(app).standaloneViewerLease?.expires_at).toBe(refreshedExpiry);
+
+    internals(app).standaloneViewerLease = {
+      ...lease,
+      expires_at: new Date(Date.now() - 1).toISOString(),
+    };
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+    internals(app)._sendStreamMessage({ event_type: "resetStage", payload: {} });
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(reviewEnv.viewerLeaseToken).toBe("");
+    expect(reviewEnv.sourceClientId).toBe("dev_user_001");
+    expect(internals(app).standaloneViewerLease).toBeNull();
+    internals(app).componentMounted = false;
+    internals(app)._dropStandaloneViewerLease();
   });
 });
 
@@ -766,7 +1622,7 @@ describe("Important #4（修訂）：visible-stream 完成路徑不得把 pendin
     // （此處為 P1 修正的核心觀測點：first_frame.stageUrl 必為 null，A1 端 onFirstFrame 不會 setLoadedStageUrl
     //  → isStageMatched 維持 false → 高亮鈕保持 disabled，直到 Kit 真回報相符 URL）。
     expect(posted.find((m) => m.type === "first_frame")).toMatchObject({ stageUrl: null });
-    expect(posted.find((m) => m.type === "stage_loaded")).toMatchObject({ stageUrl: null });
+    expect(posted.find((m) => m.type === "stage_loaded")).toMatchObject({ stageUrl: null, status: "unproven" });
   });
 
   it("Kit 真回報相符 loaded URL（_completeStageLoad(url)）→ first_frame / stage_loaded 帶該真 url（非 null）", () => {
@@ -777,12 +1633,16 @@ describe("Important #4（修訂）：visible-stream 完成路徑不得把 pendin
     internals(app).state = { ...internals(app).state, expectedStageUrl: stageUrl, loadedStageUrl: null };
     internals(app).pendingStageUrl = stageUrl;
 
-    internals(app)._completeStageLoad(stageUrl); // Kit handler 路徑：帶真 loaded URL
+    internals(app)._completeStageLoad(stageUrl, "rev_binding_proven"); // Kit handler 路徑：帶 coordinator-confirmed revision
 
     // 對照組：有 Kit 證實的 loaded URL 時，first_frame/stage_loaded 才攜帶真 stageUrl（A1 端據此閉合 stage-match）。
     const posted = parent.postMessage.mock.calls.map((c) => c[0] as { type?: string; stageUrl?: string | null });
     expect(posted.find((m) => m.type === "first_frame")).toMatchObject({ stageUrl });
-    expect(posted.find((m) => m.type === "stage_loaded")).toMatchObject({ stageUrl });
+    expect(posted.find((m) => m.type === "stage_loaded")).toMatchObject({
+      stageUrl,
+      status: "active",
+      binding_revision_id: "rev_binding_proven",
+    });
   });
 });
 
@@ -1077,6 +1937,8 @@ describe("Important #1（task2 fix）：spectator 不驅動 openStageRequest / �
 describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支（不偽宣告成功）", () => {
   function bindingApplyApp(): App {
     const app = operableApp();
+    // Test helper name predates hooks lint; this patches class setState and is not a React hook.
+    // eslint-disable-next-line react-hooks/rules-of-hooks
     useSynchronousSetState(app);
     internals(app).state = {
       ...internals(app).state,
@@ -1088,11 +1950,31 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
     return app;
   }
 
+  function trackBindingRequest(
+    app: App,
+    eventType: "openStageRequest" | "loadArtifactGroupRequest",
+    requestId: string,
+    bindingRevisionId: string,
+  ): void {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+    internals(app)._sendStreamMessage({
+      event_type: eventType,
+      payload: {
+        request_id: requestId,
+        binding_revision_id: bindingRevisionId,
+        url: "stage://primary.usdc",
+      },
+    });
+  }
+
   it("openedStageResult success 但 loaded URL 與 expected 不符 → failed(stale_stage_or_mismatch)，不宣告 applied", () => {
     const app = bindingApplyApp();
+    trackBindingRequest(app, "openStageRequest", "req_binding_002", "rev_binding_002");
     internals(app)._handleCustomEvent({
       event_type: "openedStageResult",
-      payload: { result: "success", url: "stage://stale-other.usdc", binding_revision_id: "rev_binding_002" },
+      payload: { result: "success", request_id: "req_binding_002", url: "stage://stale-other.usdc", binding_revision_id: "rev_binding_002" },
     });
     expect(internals(app).state.govBindingApplyState).toEqual({ status: "failed", reason: "stale_stage_or_mismatch" });
     expect(internals(app).state.govBindingActiveRevision).toBeUndefined();
@@ -1100,9 +1982,10 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
 
   it("openedStageResult success 但缺 loaded URL（無 stage-match 證據）→ failed(missing_stage_evidence)，不偽宣告 applied", () => {
     const app = bindingApplyApp();
+    trackBindingRequest(app, "openStageRequest", "req_binding_003", "rev_binding_003");
     internals(app)._handleCustomEvent({
       event_type: "openedStageResult",
-      payload: { result: "success", binding_revision_id: "rev_binding_003" },
+      payload: { result: "success", request_id: "req_binding_003", binding_revision_id: "rev_binding_003" },
     });
     expect(internals(app).state.govBindingApplyState).toEqual({ status: "failed", reason: "missing_stage_evidence" });
     expect(internals(app).state.govBindingActiveRevision).toBeUndefined();
@@ -1110,9 +1993,10 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
 
   it("loadArtifactGroupResult result=error → failed 帶 Kit error reason", () => {
     const app = bindingApplyApp();
+    trackBindingRequest(app, "loadArtifactGroupRequest", "req_binding_004", "rev_binding_004");
     internals(app)._handleCustomEvent({
       event_type: "loadArtifactGroupResult",
-      payload: { result: "error", binding_revision_id: "rev_binding_004", error: "kit_compose_failed" },
+      payload: { result: "error", request_id: "req_binding_004", binding_revision_id: "rev_binding_004", error: "kit_compose_failed" },
     });
     expect(internals(app).state.govBindingApplyState).toEqual({ status: "failed", reason: "kit_compose_failed" });
   });

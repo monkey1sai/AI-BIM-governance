@@ -402,39 +402,50 @@ This sample's [Window.tsx](src/Window.tsx) has a `_handleCustomEvent` that shows
 
 ### Sample Message Loop
 
-The below function from [Window.tsx](src/Window.tsx) provides an example of sending a message to the streamed 
-Omniverse Kit application. The client sends a `openStageRequest` with a `url` property in the `payload`.
+The production path in [Window.tsx](src/Window.tsx) does not grant stage
+authority from a browser URL. It first claims an authenticated primary viewer
+lease, preauthorizes ordered artifact IDs with the coordinator, and relays the
+server-issued transaction through the central runtime-mutator send path:
 
 ```typescript
-_openSelectedAsset = () => {
-        ...
-        const message: AppStreamMessageType = {
-            event_type: "openStageRequest",
-            payload: {
-                url: this.state.selectedUSDAsset.url
-            }
-        };
-        AppStream.sendMessage(JSON.stringify(message));
-    }
+const transaction = await this._preauthorizeStageBinding(selectedArtifacts);
+this._sendStreamMessage({
+  event_type: "openStageRequest",
+  payload: {
+    stage_binding_authorization_id: transaction.stage_binding_authorization_id,
+    binding_revision_id: transaction.binding_revision_id,
+    stage_composition: transaction.stage_composition,
+    url: transaction.stage_composition.primary.usdc_url, // display/correlation only
+  },
+});
 ```
 
-The Kit application has a handler for `openStageRequest` that opens the USD asset with the provided `url`. Once that
-asset has loaded the Kit application sends a `openedStageResult` which is handled by the client as shown below.
+The central send path adds a unique `request_id`, session/source/role, and the
+ephemeral viewer lease token. Kit revalidates the exact transaction with the
+coordinator before mutation. `openedStageResult.result="success"` is trusted
+only after Kit observes the stage and coordinator confirmation succeeds;
+otherwise the only terminal is `commandRejected`. A
+`runtime_state="changed_unconfirmed"` rejection clears handoff-ready state and
+blocks blind retry until authenticated status resync proves the same revision
+active.
 
-The `openedStageResult` handler to the request to open the asset can be found in `src/Window.tsx` as well:
+The real handler in `src/Window.tsx` correlates the result, preserves
+`accepted` as non-terminal, and treats missing proof as unproven. The following
+is pseudocode; the exact implementation remains authoritative:
 
 ```typescript
-_handleCustomEvent = (event: any) => {
+_handleCustomEvent = async (event: any) => {
     ...
-    // response received once a USD asset is fully loaded
-    else if (event.event_type === "openedStageResult") {
-        if (event.payload.result === "success") {
-            this._queryLoadingState() 
-            console.log('Kit App communicates an asset was loaded: ' + event.payload.url);
-            this._getChildren(null); // Hide progress indicator
-        } else {
-            console.error('Kit App communicates there was an error loading: ' + event.payload.url);
-        }
+    if (event.payload.result === "accepted") {
+        return; // non-terminal; do not enable runtime actions
+    } else if (event.event_type === "openedStageResult" && event.payload.result === "success") {
+        const proven = await this._resyncStageBindingProof(); // authenticated/self-only proof
+        this.setState(proven
+            ? { stageLoadStatus: "matched" }
+            : { stageLoadStatus: "unproven", loadedStageUrl: null });
+    } else if (event.event_type === "commandRejected") {
+        const rejection = parseRuntimeCommandRejection(event.payload);
+        if (rejection) this.setState({ runtimeCommandRejection: rejection });
     }
     ...
 }

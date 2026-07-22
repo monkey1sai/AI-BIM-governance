@@ -75,6 +75,21 @@ export interface HeartbeatViewerLeaseInput {
   expected_stage_url?: string | null;
 }
 
+export type RuntimeLeaseAuthorityResult =
+  | { authorized: true; lease: ViewerLeaseRecord }
+  | {
+      authorized: false;
+      reason: "lease_invalid" | "spectator_readonly" | "unauthorized_source_client";
+      detail_code:
+        | "lease_not_found"
+        | "lease_expired"
+        | "lease_released"
+        | "lease_inactive"
+        | "spectator_lease"
+        | "source_client_mismatch"
+        | "cross_session_lease";
+    };
+
 const DEFAULT_TTL_MS = 45_000;
 const DEFAULT_HEARTBEAT_AFTER_MS = 15_000;
 
@@ -201,6 +216,45 @@ export class ViewerLeaseStore {
     return lease;
   }
 
+  inspectRuntimeAuthority(
+    sessionId: string,
+    sourceClientId: string,
+    token: string,
+  ): RuntimeLeaseAuthorityResult {
+    this.expire(Date.now());
+    const lease = [...this.leases.values()].find((candidate) => candidate.lease_token === token);
+    if (!lease) {
+      return { authorized: false, reason: "lease_invalid", detail_code: "lease_not_found" };
+    }
+    if (lease.session_id !== sessionId) {
+      return {
+        authorized: false,
+        reason: "unauthorized_source_client",
+        detail_code: "cross_session_lease",
+      };
+    }
+    if (lease.lease_id !== sourceClientId) {
+      return {
+        authorized: false,
+        reason: "unauthorized_source_client",
+        detail_code: "source_client_mismatch",
+      };
+    }
+    if (lease.status === "expired") {
+      return { authorized: false, reason: "lease_invalid", detail_code: "lease_expired" };
+    }
+    if (lease.status === "released") {
+      return { authorized: false, reason: "lease_invalid", detail_code: "lease_released" };
+    }
+    if (lease.status !== "active") {
+      return { authorized: false, reason: "lease_invalid", detail_code: "lease_inactive" };
+    }
+    if (lease.role !== "primary") {
+      return { authorized: false, reason: "spectator_readonly", detail_code: "spectator_lease" };
+    }
+    return { authorized: true, lease };
+  }
+
   get(sessionId: string, leaseId: string): ViewerLeaseRecord | null {
     this.expire(Date.now());
     const lease = this.leases.get(leaseId);
@@ -237,6 +291,7 @@ export class ViewerLeaseStore {
     return [...this.leases.values()].find((lease) =>
       lease.session_id === input.session_id
       && lease.viewer_id === input.viewer_id
+      && lease.user_id === input.user_id
       && lease.client_nonce === clientNonce
       && lease.status === "active"
       && (!requested || lease.role === requested),

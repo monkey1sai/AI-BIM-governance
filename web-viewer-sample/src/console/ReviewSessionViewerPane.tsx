@@ -81,14 +81,23 @@ function sessionIdIsValid(sessionId: string): boolean {
 // 「批次疊加由外部（A2 頁）經 ref handle 觸發」。
 type ReviewSessionViewerPaneMode = "review-room" | "a1-inline" | "a2-overlay";
 
-function createReviewViewerIdentity(mode: ReviewSessionViewerPaneMode): { viewer_id: string; user_id: string; display_name: string } {
+interface ReviewViewerIdentity {
+  viewer_id: string;
+  user_id: string;
+  user_token: string;
+  display_name: string;
+}
+
+function createReviewViewerIdentity(mode: ReviewSessionViewerPaneMode): ReviewViewerIdentity {
   const random = typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   const prefix = mode === "a1-inline" ? "a1_inline" : mode === "a2-overlay" ? "a2_overlay" : "review_room";
+  const userToken = `${prefix}_operator_${random}`;
   return {
     viewer_id: `${prefix}_viewer_${random}`,
-    user_id: `${prefix}_operator_${random}`,
+    user_id: userToken,
+    user_token: userToken,
     display_name: mode === "a1-inline"
       ? "A1 inline primary viewer"
       : mode === "a2-overlay"
@@ -133,6 +142,18 @@ function healthValue(value: boolean | null | undefined): string {
   return "unknown";
 }
 
+type ViewerLeaseError =
+  | { kind: "primary_occupied"; message: string }
+  | { kind: "other"; message: string };
+
+function classifyViewerLeaseError(error: unknown): ViewerLeaseError {
+  const message = String(error);
+  if (/\b409\b[\s\S]*\bprimary_already_claimed\b/.test(message)) {
+    return { kind: "primary_occupied", message };
+  }
+  return { kind: "other", message };
+}
+
 export interface ReviewSessionViewerPaneProps {
   handoff?: ReviewRoomHandoff;
   mode?: ReviewSessionViewerPaneMode;
@@ -156,13 +177,14 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
   const [runtimeErr, setRuntimeErr] = useState<string | null>(null);
   const [lease, setLease] = useState<ViewerLeaseClaimResponse | null>(null);
   const [leaseBusy, setLeaseBusy] = useState(false);
-  const [leaseErr, setLeaseErr] = useState<string | null>(null);
+  const [leaseErr, setLeaseErr] = useState<ViewerLeaseError | null>(null);
   const [firstFrame, setFirstFrame] = useState(false);
   const [dataChannelReady, setDataChannelReady] = useState(false);
   const [loadedStageUrl, setLoadedStageUrl] = useState<string | null>(null);
+  const [stageProofStatus, setStageProofStatus] = useState<"not_observed" | "active" | "unproven">("not_observed");
   const [highlightResult, setHighlightResult] = useState<{ ok: boolean; reason?: string } | null>(null);
   const [commandTrace, setCommandTrace] = useState<string | null>(null);
-  const identityRef = useRef<{ viewer_id: string; user_id: string; display_name: string } | null>(null);
+  const identityRef = useRef<ReviewViewerIdentity | null>(null);
   const viewerRef = useRef<EmbeddedViewerHandle>(null);
   const sessionInputTestId = `${tidPrefix}-session-input`;
   const sessionCandidatesTestId = `${tidPrefix}-session-candidates`;
@@ -234,6 +256,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     setFirstFrame(false);
     setDataChannelReady(false);
     setLoadedStageUrl(null);
+    setStageProofStatus("not_observed");
     setHighlightResult(null);
     setCommandTrace(null);
   }, [handoff.sessionId]);
@@ -254,7 +277,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     const heartbeatMs = Math.max(5000, activePrimaryLease.heartbeat_after_ms || 15000);
     const timer = window.setInterval(() => {
       void coordinatorClient.viewerLeaseHeartbeat(sid, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
-        ...(loadedStageUrl ? { loaded_stage_url: loadedStageUrl } : {}),
+        loaded_stage_url: loadedStageUrl,
         datachannel_ready: dataChannelReady,
       }).catch(() => {});
     }, heartbeatMs);
@@ -278,6 +301,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     setFirstFrame(false);
     setDataChannelReady(false);
     setLoadedStageUrl(null);
+    setStageProofStatus("not_observed");
     setHighlightResult(null);
     setCommandTrace(null);
     try {
@@ -287,16 +311,18 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
         display_name: identity.display_name,
         requested_role: "primary",
         client_nonce: `${identity.viewer_id}:${sid}:primary`,
-      });
+      }, identity.user_token);
       setLease(claimed);
     } catch (e) {
-      setLeaseErr(String(e));
+      setLeaseErr(classifyViewerLeaseError(e));
     } finally {
       setLeaseBusy(false);
     }
   }, [sid, validSession, viewerOrigin, sessionObserved, modelArtifactStale, leaseBusy, mode]);
 
-  const stageText = !loadedStageUrl
+  const stageText = stageProofStatus === "unproven"
+    ? t("unproven（coordinator authority 尚未證實；handoff 已阻擋）", "unproven (coordinator authority is not confirmed; handoff is blocked)")
+    : !loadedStageUrl
     ? t("not_observed（尚未收到 viewer stage）", "not_observed (no viewer stage yet)")
     : !expectedStageUrl
       ? t("loaded（無 expected 可比對）", "loaded (no expected stage to compare)")
@@ -426,6 +452,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
               setFirstFrame(false);
               setDataChannelReady(false);
               setLoadedStageUrl(null);
+              setStageProofStatus("not_observed");
               setHighlightResult(null);
               setCommandTrace(null);
             }}
@@ -467,6 +494,8 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
         <div
           className="ec-grid"
           data-testid={runtimeEvidenceTestId}
+          role="status"
+          aria-live="polite"
           style={{ marginBottom: 8, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))" }}
         >
           <Field k="session" v={sid || "—"} prov={validSession ? "asbuilt" : "p1"} />
@@ -480,7 +509,30 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
           <Field k="kit_instance_id" v={activePrimaryLease?.kit_instance_id ?? "—"} prov={activePrimaryLease?.kit_instance_id ? "asbuilt" : "p1"} />
         </div>
         {runtimeErr && <p className="ec-warn-note" data-testid="review-room-runtime-error">{runtimeErr}</p>}
-        {leaseErr && <p className="ec-warn-note" data-testid="review-room-lease-error">{leaseErr}</p>}
+        {leaseErr?.kind === "primary_occupied" ? (
+          <div
+            className="ec-warn-note"
+            data-testid={`${tidPrefix}-lease-occupied`}
+            role="alert"
+            aria-live="assertive"
+          >
+            <span>
+              {t(
+                "Primary viewer lease 已被另一位操作員占用；不會顯示持有者資訊。請稍後重新嘗試。",
+                "The primary viewer lease is occupied by another operator. Holder details stay private; retry later.",
+              )}
+            </span>{" "}
+            <Btn
+              data-testid={`${tidPrefix}-lease-retry`}
+              disabled={leaseBusy}
+              onClick={() => { void claimPrimary(); }}
+            >
+              {leaseBusy ? t("重試中...", "Retrying...") : t("重新嘗試", "Retry")}
+            </Btn>
+          </div>
+        ) : leaseErr ? (
+          <p className="ec-warn-note" data-testid="review-room-lease-error">{leaseErr.message}</p>
+        ) : null}
         {!activePrimaryLease ? (
           <p className="ec-note" data-testid={kitNotStartedTestId}>
             {isA1Inline
@@ -504,22 +556,23 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
               displayName={activePrimaryLease.display_name}
               sourceClientId={activePrimaryLease.lease_id}
               viewerLeaseToken={activePrimaryLease.lease_token}
-              onFirstFrame={(m) => {
+              userToken={identityRef.current?.user_token}
+              onFirstFrame={() => {
                 setFirstFrame(true);
                 setDataChannelReady(true);
-                if (m.stageUrl) setLoadedStageUrl(m.stageUrl);
                 void coordinatorClient.viewerLeaseHeartbeat(sid, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
                   first_frame: true,
-                  loaded_stage_url: m.stageUrl,
                   datachannel_ready: true,
                 }).catch(() => {});
                 void coordinatorClient.reportFirstFrame(sid).catch(() => {});
               }}
-              onStageLoaded={(u) => {
+              onStageLoaded={(message) => {
                 setDataChannelReady(true);
-                if (u) setLoadedStageUrl(u);
+                const activeUrl = message.status === "active" ? message.stageUrl : null;
+                setLoadedStageUrl(activeUrl);
+                setStageProofStatus(message.status);
                 void coordinatorClient.viewerLeaseHeartbeat(sid, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
-                  ...(u ? { loaded_stage_url: u } : {}),
+                  loaded_stage_url: activeUrl,
                   datachannel_ready: true,
                 }).catch(() => {});
               }}

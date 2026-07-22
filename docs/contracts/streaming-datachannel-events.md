@@ -10,21 +10,33 @@ Request:
 {
   "event_type": "openStageRequest",
   "payload": {
+    "request_id": "stage-open-001",
+    "session_id": "review_session_xxx",
+    "source_client_id": "viewer_lease_xxx",
+    "role": "primary",
+    "viewer_lease_token": "<ephemeral bearer; never log>",
+    "stage_binding_authorization_id": "stage_auth_xxx",
+    "binding_revision_id": "binding_rev_xxx",
     "url": "http://127.0.0.1:49101/artifacts/tenants/.../model.usdc",
-    "artifact_bindings": [
-      {
-        "artifact_group_id": "ag_xxx",
+    "stage_composition": {
+      "primary": {
         "artifact_id": "artifact_usdc_xxx",
-        "artifact_role": "derived",
-        "url": "http://127.0.0.1:49101/artifacts/tenants/.../model.usdc",
-        "mapping_url": "http://127.0.0.1:49101/artifacts/tenants/.../element_mapping.json",
+        "role": "primary",
         "load_order": 0,
-        "ready_status": "ready"
-      }
-    ]
+        "usdc_url": "http://127.0.0.1:49101/artifacts/tenants/.../model.usdc"
+      },
+      "secondary_layers": []
+    }
   }
 }
 ```
+
+Production `openStageRequest` and `loadArtifactGroupRequest` are server-owned
+stage transactions. The viewer first claims an authenticated primary lease,
+then calls `POST /api/review-sessions/{session_id}/stage-binding` with ordered
+artifact IDs. The coordinator resolves the exact ready URLs and returns the
+authorization ID, revision, and canonical composition shown above. Browser
+`url` fields are display/correlation only and never grant mutation authority.
 
 Response:
 
@@ -32,9 +44,11 @@ Response:
 {
   "event_type": "openedStageResult",
   "payload": {
+    "request_id": "stage-open-001",
     "url": "http://127.0.0.1:49101/artifacts/tenants/.../model.usdc",
     "result": "success",
     "error": "",
+    "binding_revision_id": "binding_rev_xxx",
     "applied_mode": "artifact_bindings_multi_layer_payload",
     "primary_binding": {
       "artifact_id": "artifact_usdc_xxx",
@@ -61,29 +75,43 @@ Response:
 }
 ```
 
-When `url` is provided, Kit loads that URL directly and reports
-`applied_mode="single_url"` for backward compatibility. When `url` is omitted,
-`bim-streaming-server` sorts `artifact_bindings[]` by `load_order`, opens the
-first ready binding as the primary stage, and composes every additional ready
-binding into the session layer as a sublayer/payload-style layer.
+Kit authorizes and atomically consumes the coordinator transaction before the
+first stage mutation. `loadArtifactGroupResult.result="accepted"` is only a
+non-terminal acknowledgement. Kit emits `openedStageResult.result="success"`
+only after it observes the requested stage and the coordinator confirms the
+same revision as active. A URL-only direct open is rejected in production;
+legacy URL-only parsing remains harness compatibility and is not acceptance
+evidence.
 
 `applied_mode` values:
 
 ```txt
-single_url
-artifact_bindings_single
-artifact_bindings_multi_layer_payload
+legacy_single_url (harness compatibility only)
+stage_composition
+artifact_bindings_single (legacy harness)
+artifact_bindings_multi_layer_payload (legacy harness)
 ```
 
 Missing binding URLs are returned in `missing_paths`. Secondary binding load
-failures are returned in `failed_bindings` and set `partial_load=true`; they do
-not falsely report the whole multi-artifact session as fully loaded.
+failures are returned in `failed_bindings` and set `partial_load=true`. For a
+coordinator-issued exact transaction, any such partial application completes
+the transaction as `failed`, emits an error terminal, and never promotes the
+revision to `active`; a primary stage being visible is not evidence that the
+whole multi-artifact composition succeeded. That terminal carries
+`runtime_state="changed_failed"`, `partial_load=true`, and `failed_bindings[]`.
+Unlike `commandRejected.changed_unconfirmed`, the coordinator has confirmed
+this transaction failed: the viewer clears active evidence and reports
+`stage_loaded.status="unproven"` to its parent, while an explicit new
+transaction may retry. If the failed completion call itself is denied or
+unavailable, Kit instead emits the single correlated
+`commandRejected.runtime_state="changed_unconfirmed"`; it must not claim the
+transaction is known-failed until the coordinator confirms that terminal.
 
 GPU / Kit manual validation when hardware is available:
 
 1. Start local services with `.\scripts\start-all.ps1`, or start Kit manually with `.\bim-streaming-server\scripts\start-streaming-server.ps1 -SkipAutoLoad`.
 2. Create Phase B conversion/session evidence with `.\scripts\smoke-bscheme-intake.ps1 -SkipKitLauncher`, then open `web-viewer-sample` with the returned `review_request_id` or `session_id` when runtime services are available.
-3. Confirm the viewer sends `openStageRequest` with `artifact_bindings[]`, Kit returns `openedStageResult.result="success"`, and `applied_mode` is `single_url`, `artifact_bindings_single`, or `artifact_bindings_multi_layer_payload`.
+3. Confirm the viewer obtains a pending stage transaction, sends `openStageRequest` with the same authorization ID, revision, and exact `stage_composition`, then receives exactly one correlated terminal result. A success is valid only when authenticated lease status reports the same revision as active.
 4. Send `highlightPrimsRequest` against a known mapped `usd_prim_path`; streaming conversion mappings may also expose `primary_usd_prim_path` and `usd_prim_paths`, with `usd_prim_path` kept as the current viewer-compatible focus alias. Real validation requires `missing_paths=[]` and `fallback_paths=[]`.
 5. Treat `/World` fallback as stream/DataChannel liveness only, not mapping correctness.
 
@@ -186,7 +214,80 @@ Response:
 }
 ```
 
-`request_id` is optional, but when present Kit must echo it in `highlightPrimsResult` / `focusPrimResult`.
+Every well-formed runtime mutator requires a unique `request_id`; success or
+the single terminal rejection echoes the same value. Read-only
+`loadingStateQuery` / `getChildrenRequest` remain outside the mutator rule.
+
+The remaining command-specific success events are also part of the closed
+catalog and retain the same request correlation:
+
+| Event | Required payload |
+|---|---|
+| `selectPrimsResult` | `result`, `error`, `selected_paths[]`, `request_id` |
+| `makePrimsPickableResponse` | `result`, `error`, `request_id` |
+| `resetStageResponse` | `result`, `error`, `request_id` |
+| `clearHighlightResult` | `result`, `applied_mode:"selection"`, `request_id` |
+
+The root contract test extracts every literal production Kit
+`dispatch_event(...)` and requires it to appear in
+`tests/contracts/kit-datachannel-v1.schema.json`, preventing producer/catalog
+drift from being hidden by hand-written fixtures.
+
+## Runtime Mutation Authority and Terminal Rejection
+
+The closed production mutator catalog is:
+
+```txt
+openStageRequest
+loadArtifactGroupRequest
+highlightPrimsRequest
+focusPrimRequest
+clearHighlightRequest
+selectPrimsRequest
+makePrimsPickable
+resetStage
+```
+
+`composeStageRequest` uses the same request envelope but is harness-only and is
+rejected by production Kit. Every mutator carries `request_id`, `role`,
+`source_client_id`, `session_id`, and the current ephemeral
+`viewer_lease_token`. Kit calls the loopback coordinator authority before any
+USD, stage, selection, highlight, focus, pickability, or reset mutation and
+does not cache positive decisions.
+
+When a mutator is denied, Kit emits exactly one terminal event and does not
+also emit a command-specific unauthorized result:
+
+```json
+{
+  "event_type": "commandRejected",
+  "payload": {
+    "rejected_event_type": "highlightPrimsRequest",
+    "reason": "lease_invalid",
+    "request_id": "mapping-highlight-001",
+    "session_id": "review_session_xxx",
+    "retryable": true,
+    "runtime_state": "unchanged",
+    "detail_code": "authority_unavailable"
+  }
+}
+```
+
+`reason` is one of `spectator_readonly`, `lease_invalid`,
+`session_lifecycle_blocked`, `unauthorized_source_client`,
+`unsupported_command`, or `invalid_payload`. `runtime_state` is
+`unchanged` or `changed_unconfirmed`. Timeout, network, redirect, non-JSON,
+non-200, and malformed authority responses fail closed as
+`lease_invalid + retryable:true + detail_code:authority_unavailable`; a normal
+forged, released, or expired lease denial is not retryable.
+
+`changed_unconfirmed` is reserved for the case where Kit observed a stage
+change but coordinator completion was not proven. The viewer clears its
+handoff-ready stage, blocks blind retry and A4 handoff, and only unblocks after
+an authenticated self-only status resync confirms the same revision active.
+User credentials, lease/internal tokens, authorization headers, and raw
+upstream responses must never enter event payloads, UI diagnostics, logs, or
+test artifacts.
 
 ## Web Viewer Demo Panel
 
@@ -226,24 +327,35 @@ Demo `highlightPrimsRequest` payload:
 
 Demo panel incoming/outgoing logs are UI diagnostics only. `/World` fallback proves only that the stream/DataChannel path is alive; it is not evidence that `element_mapping.json` is correct. Mapping correctness requires a real `element_mapping.json.items[*].usd_prim_path` response with `missing_paths=[]` and `fallback_paths=[]`; `usd_prim_path` is the current viewer-compatible alias for `primary_usd_prim_path` when streaming conversion emits one-to-many mapping data. Persistent review data is coordinated through `bim-review-coordinator` shadow metadata / external control-plane callbacks, while collaboration broadcast belongs to `bim-review-coordinator`.
 
-## `stage_composition`（單一真相 · single source，2026-07-10 R5/C4 升權威）
+## `stage_composition`（server-owned single source）
 
-`openStageRequest.payload.stage_composition` 描述 Kit 開 stage 時的多 USDC 組合交易：
+`openStageRequest.payload.stage_composition` and
+`loadArtifactGroupRequest.payload.stage_composition` are byte-for-byte copies
+of the coordinator-issued transaction. The browser selects artifact IDs and
+roles; it does not select trusted URLs or revisions.
 
-| 欄位 | 型別 / 語意 |
+| Field | Type / semantics |
 |---|---|
-| `primary` | 主模型（`{url, role: "primary_model"}`；恰好一個） |
-| `secondary` | 次要疊層清單（`[{url, role: "secondary_model"}]`，可空） |
-| `load_order` | 載入順序（URI 陣列；由呼叫端排序後送出） |
+| `primary` | Exactly one `{artifact_id, role:"primary", load_order, usdc_url}` |
+| `secondary_layers` | Ordered `[{artifact_id, role:"secondary", load_order, usdc_url}]`; may be empty |
 
-**鏡像站點（手工同步，無 codegen）**——變更本語意時，六處鏡像與本文件必須同一 PR 內同步，
-由 root contracts `tests/test_stage_composition_contract.py` 守門：
+The authority path is mirrored deliberately and must change atomically:
 
-| 站點 | 鏡像深度 |
+| Site | Ownership |
 |---|---|
-| `services/kit-manager-api/app/kit_service.py`（建構端） | 完整欄位 |
-| `bim-streaming-server/.../messaging/stage_loading.py`（消費端） | 完整欄位 |
-| `bim-review-coordinator/src/types.ts` | 完整欄位（型別） |
-| `web-viewer-sample/src/console/GovernanceOverlay.tsx`（`StageArtifactBinding`） | 完整欄位（型別） |
-| `apps/kit-manager-web/src/models.ts`（`stage_composition_payload` pass-through） | token 級 |
-| `governance-service/federation/api.py`（Review Room handoff descriptor） | token 級 |
+| `bim-review-coordinator/src/app.ts` | Validates requested artifact IDs and resolves canonical ready URLs |
+| `bim-review-coordinator/src/services/stageBindingAuthorityStore.ts` | Stores and atomically consumes the exact transaction |
+| `bim-streaming-server/.../messaging/runtime_authority.py` | Sends the exact composition for authorization and confirmation |
+| `bim-streaming-server/.../messaging/stage_loading.py` | Executes the already-authorized immutable attempt |
+| `web-viewer-sample/src/Window.tsx` | Relays the coordinator response; URL fields remain non-authoritative |
+
+Any artifact ID, role, order, URL, authorization ID, revision, session, source
+client, or request ID mismatch is a zero-mutation rejection. The active and
+last-good summaries are coordinator control-plane confirmation evidence; the
+actual GPU stage remains owned and observed by Kit.
+
+When a later exact composition reuses the same primary stage, Kit replaces the
+secondary sublayers previously added by this LoadingManager before applying the
+new tuple. It does not remove unrelated session-layer entries or entries owned
+by a different stage/session layer; a stale manager-owned secondary may never
+survive into a newly confirmed revision.

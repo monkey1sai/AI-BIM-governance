@@ -35,6 +35,14 @@ vi.mock("./EmbeddedViewer", async () => {
       React.useEffect(() => {
         const onFirstFrame = props.onFirstFrame as undefined | ((message: unknown) => void);
         onFirstFrame?.({ protocol: "vg01", type: "first_frame", stageUrl: "stage://x" });
+        const onStageLoaded = props.onStageLoaded as undefined | ((message: unknown) => void);
+        onStageLoaded?.({
+          protocol: "vg01",
+          type: "stage_loaded",
+          stageUrl: "stage://x",
+          status: "active",
+          binding_revision_id: "rev_a2_test",
+        });
       }, [props]);
       return null;
     }),
@@ -209,7 +217,11 @@ describe("A2 inline viewer 三組批次疊加", () => {
     await selectOverlaySession();
     await startA2Session();
 
-    expect(coordinatorClient.claimViewerLease).toHaveBeenCalledWith(SESSION_ID, expect.objectContaining({ requested_role: "primary" }));
+    expect(coordinatorClient.claimViewerLease).toHaveBeenCalledWith(
+      SESSION_ID,
+      expect.objectContaining({ requested_role: "primary" }),
+      expect.stringMatching(/^a2_overlay_operator_/),
+    );
     const apply = q<HTMLButtonElement>("a2-overlay-apply")!;
     expect(apply.disabled).toBe(false); // stage://x（loaded）== expected_stage_url → gate 全開
 
