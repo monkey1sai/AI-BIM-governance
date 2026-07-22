@@ -501,6 +501,28 @@ describe("coordinator runtime command authority", () => {
       .send(attempt)
       .expect(200, { authorized: true, request_id: "cmd_stage_response_lost", retryable: false });
 
+    const invalidCorrelatedRollback = await request(app.app)
+      .post(`/api/internal/review-sessions/${sessionId}/stage-binding-authorization-rollbacks`)
+      .set(internalHeaders())
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send({ ...attempt, stage_composition: { root_layer_url: 42 } });
+    expect(invalidCorrelatedRollback.body).toEqual({
+      rolled_back: false,
+      request_id: "cmd_stage_response_lost",
+      detail_code: "rollback_payload_invalid",
+    });
+
+    const invalidUncorrelatedRollback = await request(app.app)
+      .post(`/api/internal/review-sessions/${sessionId}/stage-binding-authorization-rollbacks`)
+      .set(internalHeaders())
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send({ ...attempt, request_id: "?", stage_composition: { root_layer_url: 42 } });
+    expect(invalidUncorrelatedRollback.body).toMatchObject({
+      rolled_back: false,
+      detail_code: "rollback_payload_invalid",
+    });
+    expect(invalidUncorrelatedRollback.body.rejection_id).toMatch(/^rejection_/);
+
     const rollback = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/stage-binding-authorization-rollbacks`)
       .set(internalHeaders())

@@ -2644,8 +2644,12 @@ export function createCoordinatorApp(
     "/api/internal/review-sessions/:sessionId/stage-binding-authorization-rollbacks",
     (request, response) => {
       const parsed = runtimeCommandAuthorizationSchema.safeParse(request.body);
+      const rawRequestId = safeCommandIdSchema.safeParse(request.body?.request_id);
+      const correlation = rawRequestId.success
+        ? { request_id: rawRequestId.data }
+        : { rejection_id: `rejection_${randomWebViewSuffix()}` };
       if (!parsed.success || !isSafeSessionId(request.params.sessionId)) {
-        response.json({ rolled_back: false, detail_code: "rollback_payload_invalid" });
+        response.json({ rolled_back: false, ...correlation, detail_code: "rollback_payload_invalid" });
         return;
       }
       const input = parsed.data;
