@@ -1,7 +1,7 @@
 ## 0. 前置閘門與 Open Questions 收斂
 
-- [ ] 0.1 向使用者揭示並取得裁決：OQ-A（max-hold 無硬上限是否可接受）、OQ-B（是否加 BCFzip fast-follow）、OQ-2（MVP AI 審查＝零模型確定性 IfcClash 的 headline 落差）；裁決與依據寫入可稽核文件，未決前對應 spec Requirement 標為待確認。
-- [ ] 0.2 收斂 OQ-1/OQ-3/OQ-4/OQ-5/OQ-6 為實作前設計決策：GUID churn 資料模型形狀（新 draft vs merge-candidate）、忘關分頁第二回收路徑、認領視窗「起流」判準與 N 下限、soak 是否納 spectator+探針負載、ledger 持久化落點；各寫入 design.md 補充或獨立 ADR。
+- [x] 0.1 向使用者揭示並取得裁決：已於 2026-07-22 取得使用者直接裁決——OQ-A 維持無 max-hold＋前端 10 秒回收倒數（OQ-3 一併消解）、OQ-2 本地小模型 LLM 分流納入 MVP、OQ-B BCFzip 納入本期；裁決原話與解讀寫入 proposal.md「Open Questions／已裁決」，對應 spec Requirement 已同步更新（新任務 2.11／3.6／6.4）。
+- [ ] 0.2 收斂 OQ-1/OQ-4/OQ-5/OQ-6 與「無主會議」子題為實作前設計決策：GUID churn 資料模型形狀（新 draft vs merge-candidate）、認領視窗「起流」判準與 N 下限、soak 是否納 spectator+探針負載、ledger 持久化落點、primary peer 斷線僅剩 spectator 的會議歸屬語意；各寫入 design.md 補充或獨立 ADR。（原 OQ-3 已隨 OQ-A 裁決落地為 2.11。）
 - [ ] 0.3 確認無 successor 衝突：`npx openspec list` 檢查無平行改同一 capability 的 active change；本 change 六個 capability 皆為 New，確認 `openspec/specs/` 無同名。
 
 ## 1. Phase 0 — gpu-session-baseline（量測 harness，`scripts/` + 部署文件）
@@ -16,7 +16,7 @@
 
 - [ ] 2.1（coordinator）建立 SessionBroker driver 介面（SEAM-1）：一級 API `create(model_ref)`/`join(session_id, role)`；提供 `SingleGpuDriver` + `InMemoryFakeDriver`；driver 參數（並發上限/timeout）引用 Phase 0 報告，介面內不塞拍腦袋數字。
 - [ ] 2.2（coordinator）實作 admission control（fail-closed，競爭單位＝會議 session）：既有 primary 佔用下新 primary 請求回 202 + 佇列位置，絕不多開第二 Kit primary；spectator 未滿分配 49110~49150、滿員 fail-closed 明確拒絕不轉佇列。封裝 `omni.services.livestream.session` REST 疊加路由，不動凍結三檔。
-- [ ] 2.3（coordinator）實作 primary 佇列語意：requester-TTL 逾時自動出列遞補、輪到發「輪到你」+ 認領視窗、視窗內未起流讓位；MVP 無 preemption、無 max-hold（依 0.1 裁決）。
+- [ ] 2.3（coordinator）實作 primary 佇列語意：requester-TTL 逾時自動出列遞補、輪到發「輪到你」+ 認領視窗、視窗內未起流讓位；MVP 無 preemption、無 max-hold（2026-07-22 已裁決維持，配 2.11 第二回收路徑）。
 - [ ] 2.4（coordinator）實作 TTL/idle 回收：idle＝連續 T 秒無任一 readyState=4 peer（primary+spectator 皆計入），禁用輸入/滑鼠活動判 idle；顯式 terminate；idle-timeout 預設引用 Phase 0。
 - [ ] 2.5（streaming/Kit）實作健康探針（readyState=4 + 影像尺寸 + DataChannel 回應，非 port-open）與 `-ResetUser` 自動復原：連續 N 次探針失敗觸發復原，失敗則 teardown 並寫 session ledger。
 - [ ] 2.6（coordinator）實作冷啟動 202 + statusUrl 輪詢端點；`web-viewer-sample` UI 顯示啟動進度、輪詢至 ready 才進 viewer。
@@ -24,15 +24,17 @@
 - [ ] 2.8（coordinator）確認 WebRTC 分配 endpoint 維持 RFC 8825/8826/8827 DTLS-SRTP，無未加密路徑。
 - [ ] 2.9 在 `tests/contracts/` 寫 SessionBroker `InMemoryFakeDriver` contract test，證明換 driver 不改 caller、`create`/`join` 兩動詞語意覆蓋；YAGNI gate：若無法證明則移除抽象退回直呼並記錄。
 - [ ] 2.10 跑 coordinator/streaming affected 測試（各留服務目錄）：admission fail-closed、佇列 requester-TTL/認領視窗、idle 綁 peer 存在性、`-ResetUser` 復原、冷啟動 202、指紋 fail-loud 各有自動化測試。
+- [ ] 2.11（coordinator + web-viewer-sample）無互動軟門檻第二回收路徑（2026-07-22 裁決）：viewer 互動事件（輸入／DataChannel 指令）上報彙整、連續 T_inactivity 無互動觸發回收倒數、倒數 10 秒廣播至該 session 全部已連線 viewer、前端倒數 UI 顯示、任一互動取消並重置、歸零 teardown（reason=inactivity 入 session ledger）；測試：忘關分頁回收、倒數中互動取消、活躍會議不因時長回收；前端倒數 UI 有 E2E 截圖/trace。
 
 ## 3. Phase 2a — ai-review-draft-pipeline（`bim-streaming-server` 審查執行 + `governance-service` draft store）
 
-- [ ] 3.1（streaming）建立 Finding SPI（SEAM-2）並落地唯一 IfcClash checker；凍結「LLM 層可整層關閉不中斷審查」降級接縫但不實作 LLM 層。
+- [ ] 3.1（streaming）建立 Finding SPI（SEAM-2）並落地 IfcClash checker；實作「LLM 層可整層關閉不中斷審查」降級接縫（LLM 分流層本體見 3.6）。
 - [ ] 3.2（streaming）IfcClash clash set 執行：`has_occ=False` 缺 OpenCASCADE hard guard fail-loud（非靜默回 0）、大模型 size guard 攔截逾時。
 - [ ] 3.3（streaming）離線 bounding box viewpoint 計算：以 IFC 世界座標表述相機參數；IFC→USD 座標變換（含 georeference offset）記入 ConversionLedger 保留變換鏈。
 - [ ] 3.4（governance-service）finding ingest fail-closed 驗證：強制 GUID + 規則引用 + viewpoint + 信心值 + abstain 標記，缺任一進 abstain 桶不進佇列。
 - [ ] 3.5（governance-service）issues store 疊加 `source_type=ai_review` 與 draft 狀態（不改既有狀態機語意）；draft 不入正式 issue 清單、不觸發派發。
-- [ ] 3.6 跑 streaming pytest（服務目錄）+ governance 測試：缺 OCC fail-loud、size guard、ingest 缺欄位拒收、120 筆審查後正式 issues 淨增 0；語意測試：抽樣 viewpoint 視錐在 IFC 座標系包含目標 GUID bbox。
+- [ ] 3.6（streaming/coordinator）本地小模型 LLM 分流層（2026-07-22 裁決納入）：本地 inference 服務選型與整合（Ollama／llama.cpp 類，實作期收斂）、對通過 ingest 的 finding 產 advisory 分流註記（嚴重度／分組建議／摘要）、模型 id＋版本標記寫入 draft、僅寫 advisory 欄位（觸碰強制欄位或人審欄位 fail-loud）、停用/故障/逾時整層降級。
+- [ ] 3.7 跑 streaming pytest（服務目錄）+ governance 測試：缺 OCC fail-loud、size guard、ingest 缺欄位拒收、120 筆審查後正式 issues 淨增 0、LLM 停用降級不中斷、LLM 越權寫入 fail-loud、LLM 註記含模型 id/版本；語意測試：抽樣 viewpoint 視錐在 IFC 座標系包含目標 GUID bbox。
 
 ## 4. Phase 2b — issue-idempotency（`governance-service` + 校準腳本）
 
@@ -55,6 +57,7 @@
 - [ ] 6.1（governance-service）BCF-API 3.0 topic/comment/viewpoint JSON 匯出端點（疊加於既有 BCF-IDS 匯出旁），含 guid/viewpoint 相機/GUID 綁定；不做完整 OpenCDE server。
 - [ ] 6.2（governance-service）匯出物以 BCF-API 3.0 官方 JSON schema 驗證；驗證層 pin IFC 4.3、幾何走 adapter 不硬編 entity。
 - [ ] 6.3 跑 governance 測試：匯出 3 筆 accepted issues → 官方 schema 驗證 0 error；IFC 4.3 pin 與 adapter 解耦有測試。
+- [ ] 6.4（governance-service）BCFzip（BCF-XML 3.0）serializer（2026-07-22 裁決納入本期）：與 JSON 匯出同源資料產 .bcf zip 容器（官方檔案佈局）；測試：官方 XSD 驗證 0 error、JSON/BCFzip 兩面同源一致斷言；桌面工具（BIMcollab/Solibri 任一）開啟冒煙，做不到則列 known gap 揭露。
 
 ## 7. 橫切治理 gate G1–G6 與零破壞回歸
 
@@ -66,7 +69,7 @@
 
 ## 8. Vertical slice E2E（真實 IFC fixture，host-native Kit + RTX）
 
-- [ ] 8.1 單一 vertical slice 一次跑通：轉檔 → AI 草稿（含 GUID/viewpoint/引用/信心值）→ 人審 accept 轉正式 issue → BCF 3.0 匯出 0 error → 6 人 WebRTC 會議看模型討論該 issue ≥30 分鐘不斷流 → 版本回跑產差異報告；收 E2E evidence（錄影/trace 落 `artifacts/e2e/`，PNG 需 `git add -f`）。
+- [ ] 8.1 單一 vertical slice 一次跑通：轉檔 → AI 草稿（含 GUID/viewpoint/引用/信心值）→ 人審 accept 轉正式 issue → BCF 3.0 JSON＋BCFzip 匯出 0 error → 6 人 WebRTC 會議看模型討論該 issue ≥30 分鐘不斷流 → 版本回跑產差異報告；收 E2E evidence（錄影/trace 落 `artifacts/e2e/`，PNG 需 `git add -f`）。
 - [ ] 8.2 不斷流驗證：primary 佔用下第二 primary 請求 100% 進佇列（0 次擊落）、spectator 滿員 fail-closed、6 人 ≥30 分鐘 readyState=4 trace。
 - [ ] 8.3 stop-and-ask：GIVEN Phase 0 實測 6 人 fixture 安全上限 < 6，呈使用者裁決（降人數/換 fixture/調品質/接受風險），裁決與依據入可稽核文件，禁靜默下修或硬湊 6 人。
 - [ ] 8.4 更新文件：session 生命週期 REST、Phase 0 報告 schema、draft/fingerprint 資料模型、BCF 匯出端點與 IFC→USD 變換鏈記錄，於相關 `docs/` 與服務 README 補充。
