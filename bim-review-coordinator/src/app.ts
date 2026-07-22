@@ -60,6 +60,10 @@ import {
   type RuleRunSessionResolution,
   type RuleRunSourceMetadata,
 } from "./routes/governanceProxy.js";
+import {
+  registerA4HandoffRoutes,
+  type A4SearchSessionResolution,
+} from "./routes/a4HandoffRoutes.js";
 // R8＋加性慣例（手冊 §1.13）：devMeta 為 routes/*.ts 模組，app.ts 僅此 import＋單行 mount。
 import { registerDevMetaRoutes } from "./routes/devMeta.js";
 import { ViewerLeaseStore, publicLease } from "./services/viewerLeaseStore.js";
@@ -3930,6 +3934,41 @@ export function createCoordinatorApp(
     };
   }
 
+  function resolveA4HandoffSessionContext(
+    _sessionId: string,
+    headers: Record<string, string | undefined>,
+  ): A4SearchSessionResolution {
+    try {
+      userAuthProvider.authenticate({ headers });
+    } catch (error) {
+      if (error instanceof AuthError) {
+        return {
+          ok: false,
+          status: error.statusCode,
+          error_code: "a4_authentication_required",
+          detail: "A4 authentication failed.",
+        };
+      }
+      return {
+        ok: false,
+        status: 503,
+        error_code: "a4_authentication_unavailable",
+        detail: "A4 authentication is unavailable.",
+      };
+    }
+
+    // local-dev identity and the current browser lease token are lab seams, not
+    // an authentic production capability. Keep the mounted mutation route
+    // unavailable until the shared owner supplies verifiable principal/lease
+    // authority; injected route tests cover the trusted resolver contract.
+    return {
+      ok: false,
+      status: 503,
+      error_code: "a4_authentic_lease_unavailable",
+      detail: "Authentic viewer lease verification is unavailable.",
+    };
+  }
+
   registerGovernanceProxy(app, {
     isSafeSessionId,
     isSafeIfcReadyJobId,
@@ -3954,6 +3993,10 @@ export function createCoordinatorApp(
       }
       return resolveDownloadedJobForRuleRun(job, session.model_version_id, session);
     },
+  });
+  registerA4HandoffRoutes(app, {
+    isSafeSessionId,
+    resolveA4SearchSessionContext: resolveA4HandoffSessionContext,
   });
 
   registerDevMetaRoutes(app, config); // R8：唯讀 test-data-projects meta（routes/devMeta.ts，加性慣例單行 mount）
@@ -4192,6 +4235,7 @@ const VIEWER_REDIRECT_QUERY_PARAMS = [
   "streamRole",
   "kitInstanceId",
   "kit_instance_id",
+  "a4_handoff",
 ] as const;
 
 function queryParamString(value: unknown): string | null {
@@ -4208,7 +4252,9 @@ function buildViewerRedirectUrl(config: CoordinatorConfig, session: string, forw
   url.searchParams.set("coordinatorSocketUrl", config.coordinatorPublicBaseUrl);
   for (const param of VIEWER_REDIRECT_QUERY_PARAMS) {
     const value = queryParamString(forwardedQuery[param]);
-    if (value) url.searchParams.set(param, value);
+    if (value && (param !== "a4_handoff" || /^a4h_[A-Za-z0-9_-]{16,96}$/.test(value))) {
+      url.searchParams.set(param, value);
+    }
   }
   return url.toString();
 }
