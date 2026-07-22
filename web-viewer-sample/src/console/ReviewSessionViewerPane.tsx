@@ -277,7 +277,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     const heartbeatMs = Math.max(5000, activePrimaryLease.heartbeat_after_ms || 15000);
     const timer = window.setInterval(() => {
       void coordinatorClient.viewerLeaseHeartbeat(sid, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
-        ...(loadedStageUrl ? { loaded_stage_url: loadedStageUrl } : {}),
+        loaded_stage_url: loadedStageUrl,
         datachannel_ready: dataChannelReady,
       }).catch(() => {});
     }, heartbeatMs);
@@ -572,7 +572,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
                 setLoadedStageUrl(activeUrl);
                 setStageProofStatus(message.status);
                 void coordinatorClient.viewerLeaseHeartbeat(sid, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
-                  ...(activeUrl ? { loaded_stage_url: activeUrl } : {}),
+                  loaded_stage_url: activeUrl,
                   datachannel_ready: true,
                 }).catch(() => {});
               }}

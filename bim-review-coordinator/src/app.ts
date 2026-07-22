@@ -2641,6 +2641,76 @@ export function createCoordinatorApp(
   );
 
   app.post(
+    "/api/internal/review-sessions/:sessionId/stage-binding-authorization-rollbacks",
+    (request, response) => {
+      const parsed = runtimeCommandAuthorizationSchema.safeParse(request.body);
+      if (!parsed.success || !isSafeSessionId(request.params.sessionId)) {
+        response.json({ rolled_back: false, detail_code: "rollback_payload_invalid" });
+        return;
+      }
+      const input = parsed.data;
+      if (
+        !STAGE_LOAD_EVENT_TYPES.has(input.requested_event_type)
+        || !input.stage_binding_authorization_id
+        || !input.binding_revision_id
+        || !input.stage_composition
+      ) {
+        response.json({
+          rolled_back: false,
+          request_id: input.request_id,
+          detail_code: "stage_transaction_required",
+        });
+        return;
+      }
+      const session = store.get(request.params.sessionId);
+      if (!session) {
+        response.json({
+          rolled_back: false,
+          request_id: input.request_id,
+          detail_code: "session_not_found",
+        });
+        return;
+      }
+      const leaseDecision = viewerLeaseStore.inspectRuntimeAuthority(
+        session.session_id,
+        input.source_client_id,
+        request.header("X-Viewer-Lease-Token") ?? "",
+      );
+      if (!leaseDecision.authorized) {
+        response.json({
+          rolled_back: false,
+          request_id: input.request_id,
+          detail_code: leaseDecision.detail_code,
+        });
+        return;
+      }
+
+      const rolledBack = stageBindingAuthorityStore.failBeforeMutation({
+        session_id: session.session_id,
+        stage_binding_authorization_id: input.stage_binding_authorization_id,
+        binding_revision_id: input.binding_revision_id,
+        lease_id: leaseDecision.lease.lease_id,
+        source_client_id: input.source_client_id,
+        request_id: input.request_id,
+        event_type: input.requested_event_type as "openStageRequest" | "loadArtifactGroupRequest",
+        composition: input.stage_composition as StageComposition,
+      });
+      response.json(rolledBack.failed
+        ? {
+            rolled_back: true,
+            request_id: input.request_id,
+            transaction_status: "failed",
+            idempotent_replay: rolledBack.idempotent_replay,
+          }
+        : {
+            rolled_back: false,
+            request_id: input.request_id,
+            detail_code: `stage_${rolledBack.reason}`,
+          });
+    },
+  );
+
+  app.post(
     "/api/internal/review-sessions/:sessionId/stage-binding-confirmations",
     (request, response) => {
       const parsed = stageBindingConfirmationSchema.safeParse(request.body);

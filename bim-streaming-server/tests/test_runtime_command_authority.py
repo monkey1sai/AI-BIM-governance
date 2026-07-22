@@ -272,6 +272,45 @@ def test_stage_authorization_forwards_exact_transaction_but_not_tokens():
     assert "viewer_lease_token" not in body
 
 
+def test_stage_authorization_timeout_triggers_exact_pre_mutation_rollback():
+    transport = FakeTransport([
+        TimeoutError("authorization response lost"),
+        (200, {
+            "rolled_back": True,
+            "request_id": "req-runtime-1",
+            "transaction_status": "failed",
+            "idempotent_replay": False,
+        }),
+    ])
+    authority = client(transport)
+    payload = runtime_payload(
+        stage_binding_authorization_id="stage_auth_001",
+        binding_revision_id="binding_rev_001",
+        stage_composition={
+            "primary": {
+                "artifact_id": "artifact_primary",
+                "role": "primary",
+                "load_order": 0,
+                "usdc_url": "http://127.0.0.1:49101/model.usdc",
+            },
+            "secondary_layers": [],
+        },
+    )
+
+    decision = authority.authorize("openStageRequest", payload)
+
+    assert decision.authorized is False
+    assert decision.detail_code == "authority_unavailable"
+    assert len(transport.calls) == 2
+    authorize_url, _, authorize_body, _ = transport.calls[0]
+    rollback_url, rollback_headers, rollback_body, _ = transport.calls[1]
+    assert authorize_url.endswith("/runtime-command-authorizations")
+    assert rollback_url.endswith("/stage-binding-authorization-rollbacks")
+    assert rollback_body == authorize_body
+    assert rollback_headers["X-Viewer-Lease-Token"] == "viewer-secret-sentinel"
+    assert "viewer-secret-sentinel" not in rollback_body.decode("utf-8")
+
+
 def test_stage_confirmation_requires_structured_http_200_and_preserves_changed_unconfirmed_mapping():
     transport = FakeTransport([
         (200, {

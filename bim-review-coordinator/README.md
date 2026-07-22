@@ -80,6 +80,7 @@ POST /api/review-sessions/{session_id}/viewer-leases/claim
 GET  /api/review-sessions/{session_id}/viewer-leases/status
 POST /api/review-sessions/{session_id}/stage-binding
 POST /api/internal/review-sessions/{session_id}/runtime-command-authorizations
+POST /api/internal/review-sessions/{session_id}/stage-binding-authorization-rollbacks
 POST /api/internal/review-sessions/{session_id}/stage-binding-confirmations
 ```
 
@@ -107,6 +108,11 @@ current user identity carrier; internal authorization and confirmation routes
 require the existing private internal token. A stage binding moves
 `pending -> executing -> active|failed`, and only a Kit-observed success that
 the coordinator confirms may update active/last-good evidence.
+If Kit cannot validate the authorization response before mutation, it submits
+the same exact tuple to the rollback endpoint; the coordinator closes a matching
+pending/executing attempt as failed so response loss cannot occupy the long
+executing TTL. This rollback is best-effort when the coordinator itself is
+unreachable, and it never changes GPU runtime state.
 
 That evidence is process-local control-plane shadow state. It does not mean the
 coordinator owns the USD stage, GPU process, viewport, selection, camera, or

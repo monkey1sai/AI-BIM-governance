@@ -123,6 +123,35 @@ describe("StageBindingAuthorityStore", () => {
     expect(otherRequestReplay).toMatchObject({ authorized: false, reason: "transaction_not_pending" });
   });
 
+  it("fails an exact pending or executing attempt before mutation without changing active binding", () => {
+    const { store } = testStore();
+    const executing = mustCreate(store);
+    const attempt = consumeInput(executing);
+    expect(store.consume(attempt).authorized).toBe(true);
+
+    expect(store.failBeforeMutation(attempt)).toMatchObject({
+      failed: true,
+      idempotent_replay: false,
+      transaction: {
+        status: "failed",
+        completion_outcome: "failed",
+        failure_code: "authorization_unavailable",
+      },
+    });
+    expect(store.failBeforeMutation(attempt)).toMatchObject({ failed: true, idempotent_replay: true });
+    expect(store.summary(executing.session_id, executing.principal).active_binding_revision).toBeNull();
+
+    const pending = mustCreate(store, createInput({ composition: composition("artifact_retry", "") }));
+    expect(store.failBeforeMutation(consumeInput(pending, { request_id: "cmd_pending_timeout" }))).toMatchObject({
+      failed: true,
+      transaction: { status: "failed", failure_code: "authorization_unavailable" },
+    });
+    expect(store.create(createInput({ composition: composition("artifact_replacement", "") }))).toMatchObject({
+      ok: true,
+      transaction: { status: "pending" },
+    });
+  });
+
   it("uses the independent executing deadline after a pending transaction is claimed", () => {
     const { store, advance } = testStore();
     const transaction = mustCreate(store);

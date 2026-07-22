@@ -237,6 +237,7 @@ class LoadingManager:
         self._active_stage_runtime_url = ""
         self._managed_secondary_layer_ids = set()
         self._managed_secondary_layer_owner = None
+        self._pending_tasks = set()
 
         # -- state variables
         # URL of stage load request. Can be used in messaging with client.
@@ -1065,7 +1066,14 @@ class LoadingManager:
                     runtime_state="changed_failed" if runtime_changed else None,
                 )
 
-        asyncio.ensure_future(open_stage())
+        self._schedule_background_task(open_stage())
+
+    def _schedule_background_task(self, coroutine):
+        task = asyncio.ensure_future(coroutine)
+        self._pending_tasks.add(task)
+        if hasattr(task, "add_done_callback"):
+            task.add_done_callback(self._pending_tasks.discard)
+        return task
 
     def _on_stage_event_opening(self, event) -> None:
         """Manage extension state via the stage event stream.
@@ -1119,7 +1127,7 @@ class LoadingManager:
 
         # Async call to evaluate opened state for the attempt captured by this
         # callback. A later attempt can never inherit this terminal callback.
-        asyncio.ensure_future(
+        self._schedule_background_task(
             self._evaluate_load_status(attempt, observed_runtime_url)
         )
         return
@@ -1227,6 +1235,10 @@ class LoadingManager:
         """
         if self._subscriptions:
             self._subscriptions.clear()
+        for task in list(self._pending_tasks):
+            if hasattr(task, "done") and hasattr(task, "cancel") and not task.done():
+                task.cancel()
+        self._pending_tasks.clear()
         self._active_stage_attempt = None
         self._active_terminal_started = False
         self._active_stage_runtime_url = ""

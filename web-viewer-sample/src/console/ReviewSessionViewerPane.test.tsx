@@ -352,6 +352,12 @@ describe("ReviewSessionViewerPane", () => {
     expect(q<HTMLButtonElement>("review-room-highlight")!.disabled).toBe(true);
     expect(q("review-room-runtime-evidence")?.textContent).toContain("unproven");
     expect(q("review-room-runtime-evidence")?.getAttribute("aria-live")).toBe("polite");
+    expect(coordinatorClient.viewerLeaseHeartbeat).toHaveBeenLastCalledWith(
+      "review_session_x",
+      "viewer_lease_primary",
+      "lease_token_primary",
+      { loaded_stage_url: null, datachannel_ready: true },
+    );
   });
 
   it("manual session change clears active stage proof before a new claim", async () => {

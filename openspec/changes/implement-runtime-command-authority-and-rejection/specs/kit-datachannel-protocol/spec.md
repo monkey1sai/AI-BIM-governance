@@ -26,8 +26,8 @@ console↔Kit 的 DataChannel 訊息 SHALL 固定為 envelope `{event_type: stri
 
 | event_type | payload 要點 |
 |---|---|
-| openedStageResult | `result:"success"|"error"`、`request_id?`、`url`、`error?`、`binding_revision_id?`；transaction path的success只可在coordinator confirmation後送出；exact composition部分套用的error另帶`runtime_state:"changed_failed"`、`partial_load:true`與`failed_bindings[]` |
-| loadingStateResponse | `url`、`loading_state:"idle"|"busy"` |
+| openedStageResult | `result`為`"success"`或`"error"`、`request_id`、`url`、`error?`、`binding_revision_id?`；transaction path的success只可在coordinator confirmation後送出；exact composition部分套用且failed completion已由coordinator確認的error，另以此command-specific terminal的獨立欄位`runtime_state:"changed_failed"`、`partial_load:true`與`failed_bindings[]`表示；此值不是`commandRejected.runtime_state` |
+| loadingStateResponse | `url`、`loading_state`為`"idle"`或`"busy"` |
 | getChildrenResponse | `prim_path`、`children[] {name, path, children?}` |
 | highlightPrimsResult | `result`、`request_id`、`selected_paths[]`、`missing_paths[]`、`fallback_paths[]` |
 | focusPrimResult | `result`、`request_id`、`prim_path?`、`fallback_path?` |

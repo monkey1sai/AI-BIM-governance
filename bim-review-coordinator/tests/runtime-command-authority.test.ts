@@ -476,6 +476,63 @@ describe("coordinator runtime command authority", () => {
     expect(app.eventLog.list(sessionId).filter((event) => event.type === "stageBindingApplied")).toHaveLength(1);
   });
 
+  it("fails an exact stage authorization before mutation so response loss cannot block a retry", async () => {
+    const app = makeApp();
+    const sessionId = await createSession(app);
+    const lease = await claim(app, sessionId, "stage-owner");
+    const pending = await preauthorize(app, sessionId, lease, "stage-owner");
+    expect(pending.status).toBe(200);
+    const stageFields = {
+      stage_binding_authorization_id: pending.body.stage_binding_authorization_id,
+      binding_revision_id: pending.body.binding_revision_id,
+      stage_composition: pending.body.stage_composition,
+    };
+    const attempt = runtimeBody(lease, {
+      requested_event_type: "openStageRequest",
+      request_id: "cmd_stage_response_lost",
+      command_context: {},
+      ...stageFields,
+    });
+
+    await request(app.app)
+      .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
+      .set(internalHeaders())
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send(attempt)
+      .expect(200, { authorized: true, request_id: "cmd_stage_response_lost", retryable: false });
+
+    const rollback = await request(app.app)
+      .post(`/api/internal/review-sessions/${sessionId}/stage-binding-authorization-rollbacks`)
+      .set(internalHeaders())
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send(attempt);
+    expect(rollback.status).toBe(200);
+    expect(rollback.body).toMatchObject({
+      rolled_back: true,
+      request_id: "cmd_stage_response_lost",
+      transaction_status: "failed",
+      idempotent_replay: false,
+    });
+
+    const replay = await request(app.app)
+      .post(`/api/internal/review-sessions/${sessionId}/stage-binding-authorization-rollbacks`)
+      .set(internalHeaders())
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send(attempt);
+    expect(replay.body).toMatchObject({ rolled_back: true, idempotent_replay: true });
+
+    const status = await request(app.app)
+      .get(`/api/review-sessions/${sessionId}/viewer-leases/status`)
+      .set("X-User-Token", "stage-owner");
+    expect(status.body.stage_binding).toMatchObject({
+      transaction_status: "failed",
+      active_binding_revision: null,
+    });
+    expect(await preauthorize(app, sessionId, lease, "stage-owner"))
+      .toMatchObject({ status: 200 });
+    expect(app.eventLog.list(sessionId).filter((event) => event.type === "stageBindingApplied")).toHaveLength(0);
+  });
+
   it("allows only one concurrent stage consume and rejects completion after lease turnover", async () => {
     const app = makeApp();
     const sessionId = await createSession(app, "concurrent-turnover");

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import sys
@@ -137,6 +138,7 @@ def make_manager(authority=None) -> LoadingManager:
     manager._active_stage_runtime_url = ""
     manager._managed_secondary_layer_ids = set()
     manager._managed_secondary_layer_owner = None
+    manager._pending_tasks = set()
     manager._requested_stage_url = ""
     manager._requested_stage_context = {}
     manager._stage_is_opening = False
@@ -147,6 +149,23 @@ def make_manager(authority=None) -> LoadingManager:
     manager._persisted_stage = False
     manager._is_evaluating_loading_status = False
     return manager
+
+
+@pytest.mark.asyncio
+async def test_background_tasks_are_retained_until_completion():
+    manager = make_manager()
+    release = asyncio.Event()
+
+    async def pending_work():
+        await release.wait()
+
+    task = manager._schedule_background_task(pending_work())
+    assert task in manager._pending_tasks
+
+    release.set()
+    await task
+    await asyncio.sleep(0)
+    assert task not in manager._pending_tasks
 
 
 def capture_dispatch(monkeypatch):

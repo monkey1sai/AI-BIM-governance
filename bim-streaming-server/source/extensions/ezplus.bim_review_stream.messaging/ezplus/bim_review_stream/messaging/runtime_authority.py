@@ -226,7 +226,34 @@ class RuntimeAuthorityClient:
             viewer_lease_token,
             body,
         )
-        return _authorization_decision(request_payload, response)
+        decision = _authorization_decision(request_payload, response)
+        if (
+            event_type in {"openStageRequest", "loadArtifactGroupRequest"}
+            and not decision.authorized
+            and decision.detail_code == "authority_unavailable"
+        ):
+            self._fail_stage_before_mutation(
+                session_id,
+                viewer_lease_token,
+                body,
+            )
+        return decision
+
+    def _fail_stage_before_mutation(
+        self,
+        session_id: str,
+        viewer_lease_token: str,
+        authorization_body: Mapping[str, object],
+    ) -> None:
+        # A lost/malformed authorization response must not strand the
+        # coordinator transaction in `executing` for its long stage-load TTL.
+        # The rollback is best-effort and carries the same exact tuple; the
+        # coordinator accepts it from pending or that exact executing attempt.
+        self._request_json(
+            f"/api/internal/review-sessions/{quote(session_id, safe='')}/stage-binding-authorization-rollbacks",
+            viewer_lease_token,
+            authorization_body,
+        )
 
     def confirm_stage(self, payload, outcome: str) -> AuthorityDecision:
         request_payload = payload_dict(payload)

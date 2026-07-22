@@ -110,6 +110,8 @@ Viewer `_withRuntimeAuthority` 對每個 mutator補上未提供時的 unique `re
 }
 ```
 
+若stage authorization request已被coordinator consume、但Kit在bounded timeout內沒有收到可驗證的allow response，Kit MUST在任何mutation前，以同一internal token、lease token與exact authorization body呼叫 `POST /api/internal/review-sessions/:sessionId/stage-binding-authorization-rollbacks`。Coordinator只允許該exact pending或executing tuple轉為`failed {failure_code:"authorization_unavailable"}`；duplicate rollback冪等，active/mismatched tuple拒絕。這避免response loss把session卡在10分鐘executing TTL；若coordinator整體不可達，rollback仍是best-effort residual risk，Kit維持zero mutation並回authority-unavailable。
+
 Well-formed attempt不得 dual-emit legacy unauthorized result。Direct malformed request若缺 `request_id`，Kit產生 `rejection_id`並回 `invalid_payload`，但不得假稱它能完整關聯原 caller attempt。Unknown catalog外event仍 forward-compatible ignore + diagnostic；production收到 harness-only `composeStageRequest`回 `unsupported_command`。
 
 `runtime_state`為必填封閉值 `unchanged | changed_unconfirmed`。所有pre-mutation denial/outage必須是 `unchanged`；只有runtime已觀察成功、但coordinator completion無法被證實時才可用 `changed_unconfirmed`。Viewer以persistent aria-live failure state呈現rejection並依request ID關聯；`changed_unconfirmed`時把stage標為 `unproven`、阻擋盲retry／A4 handoff並要求authenticated status resync。本 change不新增vg01 event type，而是在既有 `stage_loaded` additive傳 `status:"active"|"unproven"`與revision；parent只在active保存loaded stage，unproven或缺proof一律清除並阻擋。FakeKit提供deterministic one-shot rejection；其啟用沿用現有build flag/dev-only query守門，production build單靠query不得啟用。

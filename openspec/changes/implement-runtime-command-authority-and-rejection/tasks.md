@@ -38,6 +38,7 @@
 - [x] 5.3 新增FakeKit deterministic one-shot rejection replay；證明production build不能只靠query啟用harness
 - [x] 5.4 trusted `viewer_lease_token`晚到時，只在embedded、stage未matched、selected asset仍可開啟時重排既有deferred-open timer
 - [x] 5.5 補visible rejection、retryable outage、changed-unconfirmed resync/block、one-shot replay、late-token單次恢復、timer replacement與matched-stage不重開tests
+- [ ] 5.6 將viewer origin完整失敗態矩陣接到既有i18n keys；目前runtime-command-rejection雖有persistent aria-live錨點與action，文案仍hard-coded，因此production/full completion維持no
 
 ## 6. Wiring與可自動合併文件
 
@@ -50,18 +51,19 @@
 - [x] 7.1 依同一baseline command跑affected coordinator、Kit、viewer、root contract、typecheck、lint與build，記錄差異
 - [x] 7.2 跑controlled browser coverage，證明visible rejection、FakeKit replay、late-token recovery、pending/executing/terminal UI與changed-unconfirmed status resync/block，保存trace/screenshot
 - [ ] 7.3 跑Windows host-native Kit valid/forged/released/expired/wrong-source/outage/direct-open wrong-session/composition-tamper/concurrent replay evidence，包含first frame、observed stage、DataChannel terminal、request/runtime/session IDs、P95與zero-mutation或changed-unconfirmed proof
-- [x] 7.4 跑GitNexus `detect_changes` against `main`、strict OpenSpec validation與independent correctness/security review，揭露production IdP、process-restart、atomic-consume response-loss與canonical protocol/schema drift residual risk
+- [x] 7.4 跑GitNexus `detect_changes` against `main`、strict OpenSpec validation與independent correctness/security review，揭露production IdP、process-restart、rollback本身也不可達時的authority response-loss與canonical protocol/schema drift residual risk
 - [ ] 7.5 Commit、push、開dependency PR、修完required review/CI並merge；之後才rebase A4 convergence worktree與重跑A4-only exact impact
 
 ## 2026-07-22 verification evidence
 
-- Coordinator：`npm run verify` 通過，63 個 test files、674 tests；build/typecheck 通過。
-- Kit：`python -m pytest tests -q` 通過，153 tests；affected Python files 的 Ruff gate 通過。
-- Viewer：`npm test` 通過，65 個 test files、725 tests；typecheck 與 production build 通過；以 forbidden carrier sentinel 執行 production build後確認 `dist/` 無該值，且 source 不再以 `VITE_LOCAL_USER_TOKEN` 或 dynamic/bare `import.meta.env` 讀取 runtime carrier；整體 changed-file ESLint 為 0 errors、8 個可在基準重現的既存 warnings，本次 review-fix changed files 為 0 errors、6 個既存 warnings。Full-repo lint 仍有 2 個無關既存 errors：`src/console/EdgeConsole.aliasRedirect.test.tsx:51`、`src/console/modelData/useConversionActions.ts:87`。
+- Coordinator：`npm run verify` 通過，172 個 test suites、676 tests；build/typecheck 通過。
+- Kit：`python -m pytest tests -q` 通過，155 tests；affected Python files 的 Ruff gate 通過。
+- Viewer：`npm test` 通過，65 個 test files、727 tests；typecheck 與 production build 通過；以 forbidden carrier sentinel 執行 production build後確認 `dist/` 無該值，且 source 不再以 `VITE_LOCAL_USER_TOKEN` 或 dynamic/bare `import.meta.env` 讀取 runtime carrier；整體 changed-file ESLint 為 0 errors、8 個可在基準重現的既存 warnings，本次 review-fix changed files 為 0 errors、4 個既存 warnings。Full-repo lint 仍有 2 個無關既存 errors：`src/console/EdgeConsole.aliasRedirect.test.tsx:51`、`src/console/modelData/useConversionActions.ts:87`。
 - Root/contracts：`python -m pytest tests -q -p no:cacheprovider` 通過，113 tests；`npx openspec validate --all --strict` 通過，66 changes、0 failures；`git diff --check` 通過。
 - Deploy wiring：`scripts/tests/test-deploy-dryrun.ps1` 通過；tracked sample 只保留空 placeholder，current diff/untracked secret-safe scan 通過，未讀取或輸出真實 `.env` 值。
 - Independent correctness/security review 第一輪發現六組 authority／credential／schema／proxy／lease UI／production identity blocker，均已以 focused regression 與負向 secret/bundle probes 修正；後續 review 確認 implementation blockers 已關閉。先前 exact shared-symbol analysis 為已簽核 CRITICAL（221 changed symbols、57 affected processes、45 changed files）；rebase 後 current-tree `detect_changes(scope=compare, base_ref=origin/main)` 兩次皆 `Transport closed`，屬 unavailable、不是 pass。Fresh 7.2 read-only review另發現並驗證修正 FakeStreamer rejection 假 side effect，最後明確接受 7.2 delta與此 GitNexus unavailable residual risk。
 - PR #379 review round 發現四個 blocker：unsolicited terminal stage proof、post-mutation failure truth、iframe reload bearer handshake、session proof reset；均已加入 fail-closed regression。修正後 focused viewer 94 tests、Kit composition 24 tests、完整 viewer verify 與 Kit suite通過；本輪 GitNexus current-delta `detect_changes` 可用，結果為 HIGH（13 changed symbols、15 affected processes、8 code/test files）。
+- PR #379 第二輪 review 另發現unproven heartbeat保留舊stage、empty pickable被誤拒、authorization response-loss卡executing、standalone lease過期、background task未保留強引用，以及protocol/README/i18n完成度敘述不一致；已補fail-before-mutation rollback、lease heartbeat/expiry fail-closed、task retention與對應回歸，focused coordinator 23、Kit stage/authority 54、viewer 79 tests通過。完整i18n keys刻意保留為5.6 open gap，不宣稱完成。
 - Credential gate 維持 OPEN：舊 A4/Ornith credential 尚未由外部 owner 撤銷或輪替；僅限 `local-dev lab-only`，`production full=no`，因此 1.5 保持未完成。
 - Controlled browser：在 `web-viewer-sample/` 以 `E2E_VIEWER_PORT=5181` 執行 `npx playwright test e2e/runtime-command-authority.spec.ts --config=playwright.config.ts`，Chromium 2/2 通過。Standalone FakeKit one-shot rejection期間 outbound count與 mock viewport 均維持 zero mutation，只有 explicit retry 才 focus `/World/Site`；embedded flow 證明 late authority只開一次、binding lifecycle為 `pending → executing → terminal (success)`、changed-unconfirmed 阻擋 focus/handoff直到 authenticated matching-revision status resync。兩個 trace與三張 screenshot位於 ignored `artifacts/e2e/_output/`，CI會以 head-SHA artifact `functional-runtime-conv-<head_sha>`保存；final trace scan為 raw user/lease UUID 0、非 redacted user header 0、lease/auth header 0。Design fidelity N/A，full frontend completion不宣稱；詳見 `docs/evidence/runtime-command-authority/browser-evidence.md`。
 - 尚未完成且不得當作 pass：7.3 Windows host-native Kit/GPU runtime evidence、7.5 commit/PR/CI/merge。

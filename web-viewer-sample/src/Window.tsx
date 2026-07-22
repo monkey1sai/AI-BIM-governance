@@ -129,6 +129,8 @@ interface StandaloneViewerLease {
     lease_id: string;
     lease_token: string;
     role: "primary" | "spectator";
+    expires_at: string;
+    heartbeat_after_ms: number;
 }
 
 interface AppStreamMessageType {
@@ -513,6 +515,9 @@ export default class App extends React.Component<AppProps, AppState> {
     private _pendingGovHighlights: Record<string, { ifc_guid: string; rowKey: string; primPath: string }> = {};
     private standaloneViewerLease: StandaloneViewerLease | null = null;
     private standaloneViewerLeaseClaim: Promise<StandaloneViewerLease | null> | null = null;
+    private standaloneViewerLeaseHeartbeatId: number | null = null;
+    private componentMounted = false;
+    private readonly standaloneViewerId = reviewEnv.sourceClientId;
     // private _streamConfig: StreamConfigType = getConfig();
     
     constructor(props: AppProps) {
@@ -565,6 +570,7 @@ export default class App extends React.Component<AppProps, AppState> {
     };
 
     componentDidMount(): void {
+        this.componentMounted = true;
         // VG-01：嵌入 console iframe 時掛上 parent postMessage 橋（unmount 對稱移除），並通知 parent listener 已就緒。
         // 嚴格 additive：非嵌入（window.parent === window）時 listener 永遠 reject、不送任何訊息，既有單機/直連行為零變更。
         window.addEventListener("message", this._onParentMessage);
@@ -581,6 +587,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     componentWillUnmount(): void {
+        this.componentMounted = false;
         window.removeEventListener("load", this._notifyParentViewerReady);
         this._releaseStandaloneViewerLease();
         this._clearStreamStartTimeout();
@@ -703,6 +710,10 @@ export default class App extends React.Component<AppProps, AppState> {
         if (isSpectatorStreamMode()) return "spectator view-only";
         if (isBlockedLifecycle(this.state.reviewLifecycleStatus)) {
             return `session lifecycle=${this.state.reviewLifecycleStatus || "unknown"}`;
+        }
+        if (window.parent === window && this.standaloneViewerLease && !this._standaloneViewerLeaseIsFresh()) {
+            this._dropStandaloneViewerLease("primary viewer lease 已過期；請重新執行操作以取得新 lease");
+            return "primary viewer lease expired; reclaim required";
         }
         // NOTE(scope Task3->Task5)：以下第三條「primary 需 viewer lease token」與 _withRuntimeAuthority 的 payload
         // 注入，超出 Task3 Step2/3 字面範圍（Task3 只要求 spectator / lifecycle 兩道 gate）。此為 plan 同檔
@@ -1304,8 +1315,11 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private async _ensurePrimaryViewerLease(): Promise<string | null> {
+        if (this.standaloneViewerLease?.lease_token) {
+            if (this._standaloneViewerLeaseIsFresh()) return this.standaloneViewerLease.lease_token;
+            this._dropStandaloneViewerLease("primary viewer lease 已過期；正在重新取得");
+        }
         if (reviewEnv.viewerLeaseToken) return reviewEnv.viewerLeaseToken;
-        if (this.standaloneViewerLease?.lease_token) return this.standaloneViewerLease.lease_token;
 
         const sessionId = this.state.reviewSessionId;
         if (!sessionId || window.parent !== window) return null;
@@ -1323,13 +1337,13 @@ export default class App extends React.Component<AppProps, AppState> {
                     "X-User-Token": userToken,
                 },
                 body: JSON.stringify({
-                    viewer_id: reviewEnv.sourceClientId,
+                    viewer_id: this.standaloneViewerId,
                     // Legacy body identity must match the authenticated lab
                     // carrier; URL userId remains display/correlation only.
                     user_id: userToken,
                     display_name: reviewEnv.defaultDisplayName,
                     requested_role: "primary",
-                    client_nonce: `standalone:${reviewEnv.sourceClientId}:${sessionId}`,
+                    client_nonce: `standalone:${this.standaloneViewerId}:${sessionId}`,
                     preferred_kit_instance_id: this.state.activeStreamEndpoint.kitInstanceId,
                 }),
             })
@@ -1339,13 +1353,21 @@ export default class App extends React.Component<AppProps, AppState> {
                         return null;
                     }
                     const lease = await response.json() as StandaloneViewerLease;
-                    if (lease.role !== "primary" || !lease.lease_id || !lease.lease_token) {
+                    if (
+                        lease.role !== "primary"
+                        || !lease.lease_id
+                        || !lease.lease_token
+                        || !Number.isFinite(lease.heartbeat_after_ms)
+                        || Number.isNaN(Date.parse(lease.expires_at))
+                        || Date.parse(lease.expires_at) <= Date.now()
+                    ) {
                         this._appendReviewEvent(`primary viewer lease 不是 primary（role=${lease.role}）`);
                         return null;
                     }
                     this.standaloneViewerLease = lease;
                     reviewEnv.viewerLeaseToken = lease.lease_token;
                     reviewEnv.sourceClientId = lease.lease_id;
+                    this._scheduleStandaloneViewerLeaseHeartbeat(sessionId, lease);
                     this._appendReviewEvent(`已取得 primary viewer lease：${lease.lease_id}`);
                     return lease;
                 })
@@ -1360,6 +1382,82 @@ export default class App extends React.Component<AppProps, AppState> {
 
         const lease = await this.standaloneViewerLeaseClaim;
         return lease?.lease_token ?? null;
+    }
+
+    private _standaloneViewerLeaseIsFresh(): boolean {
+        const expiresAt = this.standaloneViewerLease?.expires_at;
+        return Boolean(expiresAt && Date.parse(expiresAt) > Date.now());
+    }
+
+    private _clearStandaloneViewerLeaseHeartbeat(): void {
+        if (this.standaloneViewerLeaseHeartbeatId !== null) {
+            window.clearTimeout(this.standaloneViewerLeaseHeartbeatId);
+            this.standaloneViewerLeaseHeartbeatId = null;
+        }
+    }
+
+    private _dropStandaloneViewerLease(reason?: string): void {
+        const lease = this.standaloneViewerLease;
+        this._clearStandaloneViewerLeaseHeartbeat();
+        this.standaloneViewerLease = null;
+        if (lease && reviewEnv.viewerLeaseToken === lease.lease_token) {
+            reviewEnv.viewerLeaseToken = "";
+        }
+        if (lease && reviewEnv.sourceClientId === lease.lease_id) {
+            reviewEnv.sourceClientId = this.standaloneViewerId;
+        }
+        if (reason) this._appendReviewEvent(reason);
+    }
+
+    private _scheduleStandaloneViewerLeaseHeartbeat(sessionId: string, lease: StandaloneViewerLease): void {
+        this._clearStandaloneViewerLeaseHeartbeat();
+        if (!this.componentMounted) return;
+        const delayMs = Math.max(1_000, lease.heartbeat_after_ms);
+        this.standaloneViewerLeaseHeartbeatId = window.setTimeout(() => {
+            this.standaloneViewerLeaseHeartbeatId = null;
+            void this._heartbeatStandaloneViewerLease(sessionId, lease);
+        }, delayMs);
+    }
+
+    private async _heartbeatStandaloneViewerLease(sessionId: string, lease: StandaloneViewerLease): Promise<void> {
+        if (
+            !this.componentMounted
+            || this.state.reviewSessionId !== sessionId
+            || this.standaloneViewerLease?.lease_id !== lease.lease_id
+            || this.standaloneViewerLease.lease_token !== lease.lease_token
+        ) return;
+        try {
+            const response = await fetch(
+                `${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(sessionId)}/viewer-leases/${encodeURIComponent(lease.lease_id)}/heartbeat`,
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-Viewer-Lease-Token": lease.lease_token,
+                    },
+                    body: "{}",
+                },
+            );
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const refreshed = await response.json() as Partial<StandaloneViewerLease>;
+            if (
+                refreshed.lease_id !== lease.lease_id
+                || typeof refreshed.expires_at !== "string"
+                || Number.isNaN(Date.parse(refreshed.expires_at))
+                || !Number.isFinite(refreshed.heartbeat_after_ms)
+            ) throw new Error("malformed heartbeat response");
+            const nextLease = {
+                ...lease,
+                expires_at: refreshed.expires_at,
+                heartbeat_after_ms: refreshed.heartbeat_after_ms as number,
+            };
+            this.standaloneViewerLease = nextLease;
+            this._scheduleStandaloneViewerLeaseHeartbeat(sessionId, nextLease);
+        } catch (error) {
+            this._dropStandaloneViewerLease(
+                `primary viewer lease heartbeat 失敗：${error instanceof Error ? error.message : String(error)}`,
+            );
+        }
     }
 
     private async _preauthorizeStageBinding(
@@ -1432,10 +1530,7 @@ export default class App extends React.Component<AppProps, AppState> {
         const sessionId = this.state.reviewSessionId;
         if (!lease || !sessionId) return;
 
-        this.standaloneViewerLease = null;
-        if (reviewEnv.viewerLeaseToken === lease.lease_token) {
-            reviewEnv.viewerLeaseToken = "";
-        }
+        this._dropStandaloneViewerLease();
         void fetch(`${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(sessionId)}/viewer-leases/${encodeURIComponent(lease.lease_id)}/release`, {
             method: "POST",
             headers: {
@@ -2242,6 +2337,7 @@ export default class App extends React.Component<AppProps, AppState> {
     */
     private _makePickable (usdPrims: USDPrimType[]): void {
         const paths: string[] = usdPrims.map(prim => prim.path);
+        if (paths.length === 0) return;
         console.log(`Sending request to make prims pickable: ${paths}.`);
         const message: AppStreamMessageType = {
             event_type: "makePrimsPickable",

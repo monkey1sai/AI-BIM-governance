@@ -26,6 +26,7 @@ type AppInternals = {
   _overlayHighlightMany: (f: unknown[]) => unknown;
   _postToParent: (m: Record<string, unknown>, allowedOriginsCache?: ReadonlySet<string>) => void;
   _sendStreamMessage: (m: { event_type: string; payload?: unknown }) => void;
+  _runtimeMutatorBlockReason: (eventType: string) => string | null;
   _appendReviewEvent: (event: string) => void;
   _appendDemoOutgoing: (label: string, payload: unknown) => void;
   _appendDemoIncoming: (label: string, payload: unknown) => void;
@@ -50,6 +51,22 @@ type AppInternals = {
   _onStageReset: () => void;
   _openSelectedAsset: () => void;
   _canOpenSelectedAsset: () => boolean;
+  _heartbeatStandaloneViewerLease: (sessionId: string, lease: {
+    lease_id: string;
+    lease_token: string;
+    role: "primary";
+    expires_at: string;
+    heartbeat_after_ms: number;
+  }) => Promise<void>;
+  _dropStandaloneViewerLease: (reason?: string) => void;
+  standaloneViewerLease: {
+    lease_id: string;
+    lease_token: string;
+    role: "primary";
+    expires_at: string;
+    heartbeat_after_ms: number;
+  } | null;
+  componentMounted: boolean;
   deferredOpenStageId: number | null;
   render: () => React.ReactElement;
 };
@@ -462,6 +479,22 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
     expect(internals(app).state.govBindingLastGoodRevision).toBeNull();
     expect(internals(app).state.govBindingApplyState).toEqual({ status: "applying" });
     expect(internals(app).state.runtimeCommandLifecycles).toEqual([]);
+  });
+});
+
+describe("Automatic pickability follow-up", () => {
+  it("empty getChildrenResponse is a no-op and does not send an invalid mutator", () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const sendSpy = vi.spyOn(internals(app), "_sendStreamMessage");
+
+    internals(app)._handleCustomEvent({
+      event_type: "getChildrenResponse",
+      payload: { prim_path: "/World", children: [] },
+    });
+
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(internals(app).state.usdPrims).toEqual([]);
   });
 });
 
@@ -1422,7 +1455,13 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
       void init;
       const url = String(input);
       if (url.endsWith("/viewer-leases/claim")) {
-        return new Response(JSON.stringify({ lease_id: "viewer_lease_primary", lease_token: "lease_token_primary", role: "primary" }), {
+        return new Response(JSON.stringify({
+          lease_id: "viewer_lease_primary",
+          lease_token: "lease_token_primary",
+          role: "primary",
+          expires_at: new Date(Date.now() + 45_000).toISOString(),
+          heartbeat_after_ms: 15_000,
+        }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
@@ -1508,6 +1547,53 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
         },
       },
     });
+  });
+
+  it("heartbeats a fresh standalone lease and clears it before any expired-token mutator", async () => {
+    Object.defineProperty(window, "parent", { value: window, configurable: true });
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    reviewEnv.sourceClientId = "dev_user_001";
+    const app = operableApp();
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    useSynchronousSetState(app);
+    const lease = {
+      lease_id: "viewer_lease_primary",
+      lease_token: "lease_token_primary",
+      role: "primary" as const,
+      expires_at: new Date(Date.now() + 45_000).toISOString(),
+      heartbeat_after_ms: 15_000,
+    };
+    internals(app).standaloneViewerLease = lease;
+    internals(app).componentMounted = true;
+    const refreshedExpiry = new Date(Date.now() + 90_000).toISOString();
+    const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      lease_id: lease.lease_id,
+      expires_at: refreshedExpiry,
+      heartbeat_after_ms: 15_000,
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await internals(app)._heartbeatStandaloneViewerLease("review_session_x", lease);
+
+    expect(String(fetchSpy.mock.calls[0][0])).toContain("/viewer-leases/viewer_lease_primary/heartbeat");
+    expect(fetchSpy.mock.calls[0][1]).toMatchObject({
+      method: "POST",
+      headers: expect.objectContaining({ "X-Viewer-Lease-Token": "lease_token_primary" }),
+    });
+    expect(internals(app).standaloneViewerLease?.expires_at).toBe(refreshedExpiry);
+
+    internals(app).standaloneViewerLease = {
+      ...lease,
+      expires_at: new Date(Date.now() - 1).toISOString(),
+    };
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+    internals(app)._sendStreamMessage({ event_type: "resetStage", payload: {} });
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(reviewEnv.viewerLeaseToken).toBe("");
+    expect(reviewEnv.sourceClientId).toBe("dev_user_001");
+    expect(internals(app).standaloneViewerLease).toBeNull();
+    internals(app).componentMounted = false;
+    internals(app)._dropStandaloneViewerLease();
   });
 });
 

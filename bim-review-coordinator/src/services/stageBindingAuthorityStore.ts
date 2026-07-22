@@ -95,6 +95,13 @@ export type StageBindingConsumeResult =
       reason: "transaction_missing" | "transaction_not_pending" | "transaction_mismatch";
     };
 
+export type StageBindingPreMutationFailureResult =
+  | { failed: true; transaction: StageBindingTransaction; idempotent_replay: boolean }
+  | {
+      failed: false;
+      reason: "transaction_missing" | "transaction_not_abortable" | "transaction_mismatch";
+    };
+
 export interface StageBindingCompleteInput extends StageBindingConsumeInput {
   outcome: StageBindingCompletionOutcome;
 }
@@ -239,6 +246,61 @@ export class StageBindingAuthorityStore {
       authorized: true,
       status: "executing",
       transaction: cloneTransaction(transaction),
+    };
+  }
+
+  /**
+   * Fail a stage attempt that Kit could not safely begin because the
+   * authorization response was unavailable. Accepting both pending and the
+   * exact executing tuple closes the response-loss race without ever making a
+   * runtime mutation look active.
+   */
+  failBeforeMutation(input: StageBindingConsumeInput): StageBindingPreMutationFailureResult {
+    const now = this.clock();
+    this.sweep(now);
+    const transaction = this.transactions.get(input.stage_binding_authorization_id);
+    if (!transaction) return { failed: false, reason: "transaction_missing" };
+
+    if (
+      transaction.status === "failed"
+      && transaction.failure_code === "authorization_unavailable"
+      && matchesAttempt(transaction, input, true)
+    ) {
+      return {
+        failed: true,
+        transaction: cloneTransaction(transaction),
+        idempotent_replay: true,
+      };
+    }
+
+    const matches = transaction.status === "pending"
+      ? matchesAttempt(transaction, input, false)
+      : transaction.status === "executing"
+        ? matchesAttempt(transaction, input, true)
+        : false;
+    if (!matches) {
+      return {
+        failed: false,
+        reason: transaction.status === "pending" || transaction.status === "executing"
+          ? "transaction_mismatch"
+          : "transaction_not_abortable",
+      };
+    }
+
+    transaction.status = "failed";
+    transaction.request_id = input.request_id;
+    transaction.event_type = input.event_type;
+    transaction.executingExpiresAtMs = null;
+    transaction.executing_expires_at = null;
+    transaction.completedAtMs = now;
+    transaction.completed_at = new Date(now).toISOString();
+    transaction.completion_outcome = "failed";
+    transaction.failure_code = "authorization_unavailable";
+    this.evictCompletedForSession(transaction.session_id);
+    return {
+      failed: true,
+      transaction: cloneTransaction(transaction),
+      idempotent_replay: false,
     };
   }
 

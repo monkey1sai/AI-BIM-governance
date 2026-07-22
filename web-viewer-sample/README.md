@@ -430,13 +430,19 @@ blocks blind retry until authenticated status resync proves the same revision
 active.
 
 The real handler in `src/Window.tsx` correlates the result, preserves
-`accepted` as non-terminal, and treats missing proof as unproven. Simplified:
+`accepted` as non-terminal, and treats missing proof as unproven. The following
+is pseudocode; the exact implementation remains authoritative:
 
 ```typescript
-_handleCustomEvent = (event: any) => {
+_handleCustomEvent = async (event: any) => {
     ...
-    if (event.event_type === "openedStageResult" && event.payload.result === "success") {
-        void this._resyncStageBindingProof(); // authenticated/self-only proof
+    if (event.payload.result === "accepted") {
+        return; // non-terminal; do not enable runtime actions
+    } else if (event.event_type === "openedStageResult" && event.payload.result === "success") {
+        const proven = await this._resyncStageBindingProof(); // authenticated/self-only proof
+        this.setState(proven
+            ? { stageLoadStatus: "matched" }
+            : { stageLoadStatus: "unproven", loadedStageUrl: null });
     } else if (event.event_type === "commandRejected") {
         const rejection = parseRuntimeCommandRejection(event.payload);
         if (rejection) this.setState({ runtimeCommandRejection: rejection });
