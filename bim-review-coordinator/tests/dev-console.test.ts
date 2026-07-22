@@ -106,7 +106,7 @@ describe("coordinator dev console", () => {
     });
 
     const response = await request(app.app)
-      .get("/ui/open?session=review_session_test_001&redirect=http://evil.example")
+      .get("/ui/open?session=review_session_test_001&a4_handoff=a4h_1234567890abcdef&redirect=http://evil.example")
       .redirects(0);
 
     expect(response.status).toBe(302);
@@ -115,8 +115,14 @@ describe("coordinator dev console", () => {
     expect(location).toContain("session=review_session_test_001");
     expect(location).toContain("coordinatorApiBase=http%3A%2F%2F192.168.10.105%3A8004");
     expect(location).toContain("coordinatorSocketUrl=http%3A%2F%2F192.168.10.105%3A8004");
+    expect(location).toContain("a4_handoff=a4h_1234567890abcdef");
     expect(location).not.toContain("127.0.0.1:5173");
     expect(location).not.toContain("evil.example");
+
+    const invalidHandoff = await request(app.app)
+      .get("/ui/open?session=review_session_test_001&a4_handoff=not-an-opaque-handoff")
+      .redirects(0);
+    expect(invalidHandoff.headers.location).not.toContain("a4_handoff");
   });
 
   it("CH-E/RK6：/ui/console 301 收斂到 /ui，且不以 /ui/* 萬用吞掉凍結的 /ui/open", async () => {

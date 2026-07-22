@@ -69,12 +69,21 @@ POST /api/review-sessions/{session_id}/leave
 GET  /api/review-sessions/{session_id}/stream-config
 GET  /api/review-sessions/{session_id}/events
 POST /api/review-sessions/{session_id}/events
+POST /api/review-sessions/{session_id}/a4-handoffs
+POST /api/review-sessions/{session_id}/a4-handoffs/{handoff_id}/consume
 POST /api/external/ifc-ready
 GET  /api/external/ifc-ready/{job_id}
 POST /api/internal/conversion-result
 POST /api/internal/callback-outbox/deliver
 POST /api/local-web-view/sessions
 ```
+
+The A4 handoff endpoints accept governance-signed row proofs, re-resolve the
+authenticated primary-session binding, and store only a bounded, one-shot
+opaque intent. `A4_HANDOFF_TTL_SECONDS` defaults to 60 seconds and is capped at
+300 seconds; the effective expiry is the earlier of that TTL and the earliest
+proof expiry. Production remains fail-closed until the shared authentic
+principal/lease resolver is available.
 
 Socket.IO namespace:
 

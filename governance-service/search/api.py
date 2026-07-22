@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import os
 import secrets
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, StringConstraints
 
 from .engine import PartialFallbackUnavailable, SearchRequest, confirm_partial_fallback, run_model_search
+from .handoff import ProofRejected, verify_handoff_evidence
 from .llm_client import load_llm_config
+from .proofs import ProofExpired, ProofUnavailable, proof_registry
 
 router = APIRouter()
 
@@ -63,6 +66,48 @@ class InternalPartialConfirmationBody(BaseModel):
 
     class Config:
         extra = "forbid"
+
+
+class A4HandoffBinding(BaseModel):
+    session_id: str = Field(..., min_length=1, max_length=160)
+    principal: str = Field(..., min_length=1, max_length=160)
+    model_version_id: str = Field(..., min_length=1, max_length=256)
+    model_artifact: str = Field(..., min_length=1, max_length=160)
+    active_binding_revision: str = Field(..., min_length=1, max_length=160)
+
+    class Config:
+        extra = "forbid"
+
+
+A4ProofToken = Annotated[
+    str,
+    StringConstraints(
+        min_length=87,
+        max_length=230,
+        pattern=r"^a4p\.[A-Za-z0-9_-]{1,64}\.[A-Za-z0-9_-]{16,96}\.[0-9a-f]{64}$",
+    ),
+]
+
+
+class InternalA4HandoffVerifyBody(BaseModel):
+    action: Literal["focus", "highlight"]
+    evidence_proofs: list[A4ProofToken] = Field(..., min_length=1, max_length=64)
+    binding: A4HandoffBinding
+
+    class Config:
+        extra = "forbid"
+
+
+class _ProofRegistryHandoffAuthority:
+    """Map the shared proof registry onto #365's sanitized authority seam."""
+
+    def verify(self, token: str, *, now: Optional[float] = None):
+        try:
+            return proof_registry.verify(token, now=now)
+        except ProofExpired as exc:
+            raise ProofRejected("proof_expired") from exc
+        except ProofUnavailable as exc:
+            raise ProofRejected("proof_invalid") from exc
 
 
 def _internal_context_token() -> Optional[str]:
@@ -175,3 +220,26 @@ def confirm_model_search_partial(
         raise HTTPException(status_code=409, detail={"code": "partial_fallback_unavailable"}) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=409, detail={"code": "partial_fallback_unavailable"}) from exc
+
+
+@router.post("/api/internal/a4/handoffs/verify")
+def verify_a4_handoff(
+    body: InternalA4HandoffVerifyBody,
+    internal_token: Optional[str] = Header(default=None, alias="X-A4-Internal-Token"),
+):
+    """Verify an atomic proof set; never persist intent or return proof/query data."""
+    configured_token = _internal_context_token()
+    if configured_token is None:
+        raise HTTPException(status_code=503, detail={"code": "a4_internal_context_unavailable"})
+    if not internal_token or not secrets.compare_digest(internal_token, configured_token):
+        raise HTTPException(status_code=401, detail={"code": "a4_internal_context_unauthorized"})
+    verified = verify_handoff_evidence(
+        action=body.action,
+        proof_tokens=body.evidence_proofs,
+        binding=body.binding.model_dump(),
+        authority=_ProofRegistryHandoffAuthority(),
+    )
+    payload = verified.to_payload()
+    if not verified.accepted:
+        return JSONResponse(status_code=409, content=payload)
+    return payload

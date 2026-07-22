@@ -1,0 +1,9 @@
+{
+  "schema_version": "a4-fixture-v1",
+  "items": [
+    {
+      "ifc_guid": "0A4DoorLow000000000001",
+      "usd_prim_path": "/World/Doors/Low"
+    }
+  ]
+}
