@@ -437,7 +437,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
             : t("Kit / WebRTC / viewer lease 必須由本畫面手動啟動；A1 不自動啟動", "Kit / WebRTC / viewer lease must be started manually here; A1 does not auto-start it")}
         prov="asbuilt"
       >
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+        <div style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", flexWrap: "wrap", marginBottom: "var(--ab-space-3)" }}>
           <input
             className="ec-btn"
             data-testid={sessionInputTestId}
@@ -496,7 +496,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
           data-testid={runtimeEvidenceTestId}
           role="status"
           aria-live="polite"
-          style={{ marginBottom: 8, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))" }}
+          style={{ marginBottom: "var(--ab-space-3)", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))" }}
         >
           <Field k="session" v={sid || "—"} prov={validSession ? "asbuilt" : "p1"} />
           <Field k="runtime session" v={!sid ? "—" : sessionObserved ? t("observed", "observed") : t("not_listed（可能 stale / 已關閉）", "not_listed (possibly stale / closed)")} prov={sessionObserved ? "asbuilt" : "p1"} />
@@ -601,7 +601,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
           <div
             className="ec-grid"
             data-testid={handoffSummaryTestId}
-            style={{ marginBottom: 8, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))" }}
+            style={{ marginBottom: "var(--ab-space-3)", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))" }}
           >
             <Field k="source" v={handoff.source ?? "—"} prov="asbuilt" />
             <Field k="rule_run_id" v={handoff.ruleRunId ?? "—"} prov="asbuilt" />
@@ -613,7 +613,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
           <Btn data-testid={highlightButtonTestId} disabled={!canHighlight} caption={canHighlight ? t("postMessage highlight -> viewer DataChannel", "postMessage highlight -> viewer DataChannel") : highlightDisabledReason} onClick={sendHighlight}>
             {isA1Inline ? t("在 A1 3D 中標示", "Highlight in A1 3D") : t("在 3D 高亮 handoff 構件", "Highlight handoff element in 3D")}
           </Btn>
-          <span className="ec-note" data-testid={highlightReasonTestId} style={{ marginLeft: 8 }}>
+          <span className="ec-note" data-testid={highlightReasonTestId} style={{ marginLeft: "var(--ab-space-3)" }}>
             {highlightResult ? highlightResultText(highlightResult) : (canHighlight ? t("可送出", "ready to send") : highlightDisabledReason)}
           </span>
           {commandTrace && <pre className="ec-note" data-testid={commandTraceTestId} style={{ whiteSpace: "pre-wrap" }}>{commandTrace}</pre>}

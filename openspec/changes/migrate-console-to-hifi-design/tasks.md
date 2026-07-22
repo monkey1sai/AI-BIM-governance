@@ -26,7 +26,7 @@
 - [x] 3.6 `legacy-console.css` 內 `IntentDialog` selectors 及 `IntentDialog.css.test.ts`：`--ec-*` → `--ab-*`，核對測試斷言（repo 不存在獨立 `IntentDialog.css`）
 - [ ] 3.7 每頁遷移後跑該頁既有 browser E2E / provenance 誠實性案例，確認本 token/style diff 未改變功能行為。三個與 `origin/main` byte-identical 的 `#conv` / `#minio` ownership assertions 明確不記為 pass；其 runtime/spec/E2E 調和已依使用者批准 deferred 至既有 change `minio-folderview-and-baseline-disclosure`，不另造 Change ID。其餘 affected-page 與 final combined-tree cases 全部通過後才勾選
 - [ ] 3.8 與進行中的 A4 convergence worktree 收斂 `A4SemanticSearchPage.tsx` 與 `EdgeConsole.tsx` 的剩餘 raw style；原 A4 owner 停工並交接前 SHALL NOT 跨 worktree 覆寫
-- [ ] 3.9 取得 exact-symbol CRITICAL sign-off 後，將 `ReviewSessionViewerPane.tsx` 的剩餘 raw spacing 收斂為等值 `--ab-*` token，並跑其 affected tests
+- [x] 3.9 取得 exact-symbol CRITICAL sign-off 後，將 `ReviewSessionViewerPane.tsx` 的剩餘 raw spacing 收斂為等值 `--ab-*` token，並跑其 affected tests
 
 ## 4. 主題切換移除
 
