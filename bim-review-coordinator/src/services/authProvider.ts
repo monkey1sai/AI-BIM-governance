@@ -194,6 +194,23 @@ export interface UserAuthProvider {
   authenticate(request: { headers: Record<string, string | undefined> }): UserAuthContext;
 }
 
+const LOCAL_DEV_SUBJECT_DOMAIN = "AI-BIM-governance/local-dev-subject/v1";
+
+/**
+ * Convert a non-secret local-dev identity carrier into the only principal form
+ * that may cross the coordinator's product-data boundary. Domain separation
+ * prevents this digest from being confused with an unrelated token hash.
+ */
+export function opaqueLocalDevSubject(carrier: string): string {
+  return `lab_${crypto
+    .createHash("sha256")
+    .update(LOCAL_DEV_SUBJECT_DOMAIN, "utf8")
+    .update("\0", "utf8")
+    .update(carrier.trim(), "utf8")
+    .digest("hex")
+    .slice(0, 32)}`;
+}
+
 /**
  * local-dev：接受 `Authorization: Bearer <token>` 或 `X-User-Token` 任一非空
  * 作為開發使用者；不驗證真實 SSO（OQ5 待外部平台確認）。介面化讓未來換成
@@ -214,8 +231,13 @@ export class LocalDevUserAuthProvider implements UserAuthProvider {
     if (token.length === 0) {
       throw new AuthError(401, "missing user token (Authorization: Bearer / X-User-Token)");
     }
-    // 開發階段：token 即視為 user id。真實 SSO introspection 為 OQ5。
-    return { provider: this.name, userId: token, ssoBinding: "pending_oq5" };
+    // local-dev carrier 只是一個 lab identity seam，不具 production auth
+    // strength。Raw bytes 不得成為 principal 或流入 response/audit/UI。
+    return {
+      provider: this.name,
+      userId: opaqueLocalDevSubject(token),
+      ssoBinding: "pending_oq5",
+    };
   }
 }
 

@@ -1,0 +1,665 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "kit-datachannel-v1.schema.json",
+  "title": "Kit DataChannel message envelope v1",
+  "description": "Canonical console-to-Kit and Kit-to-console wire contract. Runtime mutators require correlation and coordinator-backed authority; secret-bearing fields are never valid in terminal responses.",
+  "type": "object",
+  "required": ["event_type", "payload"],
+  "properties": {
+    "event_type": { "type": "string" },
+    "payload": { "type": "object" }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/openStageRequest" },
+    { "$ref": "#/$defs/loadArtifactGroupRequest" },
+    { "$ref": "#/$defs/composeStageRequest" },
+    { "$ref": "#/$defs/highlightPrimsRequest" },
+    { "$ref": "#/$defs/focusPrimRequest" },
+    { "$ref": "#/$defs/clearHighlightRequest" },
+    { "$ref": "#/$defs/selectPrimsRequest" },
+    { "$ref": "#/$defs/makePrimsPickable" },
+    { "$ref": "#/$defs/resetStage" },
+    { "$ref": "#/$defs/loadingStateQuery" },
+    { "$ref": "#/$defs/getChildrenRequest" },
+    { "$ref": "#/$defs/openedStageResult" },
+    { "$ref": "#/$defs/loadArtifactGroupResult" },
+    { "$ref": "#/$defs/highlightPrimsResult" },
+    { "$ref": "#/$defs/focusPrimResult" },
+    { "$ref": "#/$defs/selectPrimsResult" },
+    { "$ref": "#/$defs/makePrimsPickableResponse" },
+    { "$ref": "#/$defs/resetStageResponse" },
+    { "$ref": "#/$defs/clearHighlightResult" },
+    { "$ref": "#/$defs/loadingStateResponse" },
+    { "$ref": "#/$defs/getChildrenResponse" },
+    { "$ref": "#/$defs/stageSelectionChanged" },
+    { "$ref": "#/$defs/updateProgressAmount" },
+    { "$ref": "#/$defs/updateProgressActivity" },
+    { "$ref": "#/$defs/bindingApplied" },
+    { "$ref": "#/$defs/commandRejected" }
+  ],
+  "$defs": {
+    "requestId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "runtimeAuthorityEnvelope": {
+      "type": "object",
+      "required": ["request_id", "role", "source_client_id", "session_id", "viewer_lease_token"],
+      "properties": {
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "role": { "enum": ["primary", "spectator"] },
+        "source_client_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "session_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "viewer_lease_token": { "type": "string", "minLength": 1 }
+      }
+    },
+    "stageCompositionArtifact": {
+      "type": "object",
+      "required": ["artifact_id", "role", "load_order", "usdc_url"],
+      "properties": {
+        "artifact_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "role": { "enum": ["primary", "secondary"] },
+        "load_order": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "usdc_url": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      },
+      "additionalProperties": false
+    },
+    "primaryStageArtifact": {
+      "allOf": [
+        { "$ref": "#/$defs/stageCompositionArtifact" },
+        { "properties": { "role": { "const": "primary" } } }
+      ]
+    },
+    "secondaryStageArtifact": {
+      "allOf": [
+        { "$ref": "#/$defs/stageCompositionArtifact" },
+        { "properties": { "role": { "const": "secondary" } } }
+      ]
+    },
+    "stageComposition": {
+      "type": "object",
+      "required": ["primary", "secondary_layers"],
+      "properties": {
+        "primary": { "$ref": "#/$defs/primaryStageArtifact" },
+        "secondary_layers": {
+          "type": "array",
+          "maxItems": 63,
+          "items": { "$ref": "#/$defs/secondaryStageArtifact" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "publicStageBinding": {
+      "type": "object",
+      "properties": {
+        "artifact_id": { "type": ["string", "null"] },
+        "artifact_group_id": { "type": ["string", "null"] },
+        "role": { "enum": ["primary", "secondary"] },
+        "load_order": { "type": "integer" },
+        "url": { "type": "string" },
+        "usdc_url": { "type": "string" },
+        "composition_strategy": { "enum": ["primary_stage", "session_sublayer"] },
+        "error": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "stageFallbackPath": {
+      "type": "object",
+      "properties": {
+        "requested_path": { "type": "string" },
+        "selected_path": { "type": "string" },
+        "reason": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "highlightItem": {
+      "type": "object",
+      "required": ["prim_path"],
+      "properties": {
+        "prim_path": { "type": "string", "minLength": 1 },
+        "ifc_guid": { "type": ["string", "null"] },
+        "color": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 4 },
+        "label": { "type": "string" },
+        "source": { "type": "string" },
+        "issue_id": { "type": "string" },
+        "mapping_method": { "type": ["string", "null"] },
+        "mapping_confidence": { "type": ["number", "null"] }
+      }
+    },
+    "openStageRequest": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "openStageRequest" },
+        "payload": {
+          "allOf": [
+            { "$ref": "#/$defs/runtimeAuthorityEnvelope" },
+            {
+              "type": "object",
+              "required": ["stage_binding_authorization_id", "binding_revision_id", "stage_composition"],
+              "properties": {
+                "stage_binding_authorization_id": { "type": "string", "minLength": 1 },
+                "binding_revision_id": { "type": "string", "minLength": 1 },
+                "stage_composition": { "$ref": "#/$defs/stageComposition" },
+                "url": { "type": "string" },
+                "requested_stage_url": { "type": "string" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "loadArtifactGroupRequest": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "loadArtifactGroupRequest" },
+        "payload": {
+          "allOf": [
+            { "$ref": "#/$defs/runtimeAuthorityEnvelope" },
+            {
+              "type": "object",
+              "required": ["stage_binding_authorization_id", "binding_revision_id", "stage_composition"],
+              "properties": {
+                "stage_binding_authorization_id": { "type": "string", "minLength": 1 },
+                "binding_revision_id": { "type": "string", "minLength": 1 },
+                "stage_composition": { "$ref": "#/$defs/stageComposition" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "composeStageRequest": {
+      "type": "object",
+      "description": "Harness-only mutator; production Kit rejects it.",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "composeStageRequest" },
+        "payload": {
+          "allOf": [
+            { "$ref": "#/$defs/runtimeAuthorityEnvelope" },
+            {
+              "type": "object",
+              "required": ["binding_revision_id", "artifacts"],
+              "properties": {
+                "binding_revision_id": { "type": "string", "minLength": 1 },
+                "artifacts": { "type": "array", "items": { "type": "object" } }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "highlightPrimsRequest": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "highlightPrimsRequest" },
+        "payload": {
+          "allOf": [
+            { "$ref": "#/$defs/runtimeAuthorityEnvelope" },
+            {
+              "type": "object",
+              "required": ["mode", "items", "focus_first"],
+              "properties": {
+                "mode": { "const": "replace" },
+                "items": { "type": "array", "items": { "$ref": "#/$defs/highlightItem" } },
+                "focus_first": { "type": "boolean" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "focusPrimRequest": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "focusPrimRequest" },
+        "payload": {
+          "allOf": [
+            { "$ref": "#/$defs/runtimeAuthorityEnvelope" },
+            { "type": "object", "required": ["prim_path"], "properties": { "prim_path": { "type": "string", "minLength": 1 } } }
+          ]
+        }
+      }
+    },
+    "clearHighlightRequest": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "clearHighlightRequest" },
+        "payload": { "$ref": "#/$defs/runtimeAuthorityEnvelope" }
+      }
+    },
+    "selectPrimsRequest": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "selectPrimsRequest" },
+        "payload": {
+          "allOf": [
+            { "$ref": "#/$defs/runtimeAuthorityEnvelope" },
+            { "type": "object", "required": ["paths"], "properties": { "paths": { "type": "array", "items": { "type": "string" } } } }
+          ]
+        }
+      }
+    },
+    "makePrimsPickable": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "makePrimsPickable" },
+        "payload": {
+          "allOf": [
+            { "$ref": "#/$defs/runtimeAuthorityEnvelope" },
+            { "type": "object", "required": ["paths"], "properties": { "paths": { "type": "array", "items": { "type": "string" } } } }
+          ]
+        }
+      }
+    },
+    "resetStage": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "resetStage" },
+        "payload": { "$ref": "#/$defs/runtimeAuthorityEnvelope" }
+      }
+    },
+    "loadingStateQuery": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": { "event_type": { "const": "loadingStateQuery" }, "payload": { "type": "object" } }
+    },
+    "getChildrenRequest": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "getChildrenRequest" },
+        "payload": {
+          "type": "object",
+          "required": ["prim_path", "filters"],
+          "properties": {
+            "prim_path": { "type": "string" },
+            "filters": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "openedStageResult": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "openedStageResult" },
+        "payload": {
+          "type": "object",
+          "required": ["result", "request_id"],
+          "properties": {
+            "result": { "enum": ["success", "error"] },
+            "request_id": { "$ref": "#/$defs/requestId" },
+            "url": { "type": "string" },
+            "error": { "type": "string" },
+            "binding_revision_id": { "type": "string" },
+            "applied_mode": {
+              "enum": [
+                "legacy_single_url",
+                "stage_composition",
+                "artifact_bindings_single",
+                "artifact_bindings_multi_layer_payload"
+              ]
+            },
+            "artifact_id": { "type": ["string", "null"] },
+            "artifact_group_id": { "type": ["string", "null"] },
+            "load_order": { "type": "integer" },
+            "primary_binding": { "$ref": "#/$defs/publicStageBinding" },
+            "applied_primary": {
+              "oneOf": [
+                { "$ref": "#/$defs/publicStageBinding" },
+                { "type": "null" }
+              ]
+            },
+            "loaded_bindings": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/publicStageBinding" }
+            },
+            "applied_secondary_layers": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/publicStageBinding" }
+            },
+            "skipped_secondary_layers": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/publicStageBinding" }
+            },
+            "runtime_state": { "const": "changed_failed" },
+            "partial_load": { "type": "boolean" },
+            "failed_bindings": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/publicStageBinding" }
+            },
+            "missing_paths": { "type": "array", "items": { "type": "string" } },
+            "fallback_paths": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  { "type": "string" },
+                  { "$ref": "#/$defs/stageFallbackPath" }
+                ]
+              }
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "required": ["runtime_state"],
+                "properties": { "runtime_state": { "const": "changed_failed" } }
+              },
+              "then": {
+                "required": ["binding_revision_id", "partial_load", "failed_bindings"],
+                "properties": {
+                  "result": { "const": "error" },
+                  "partial_load": { "const": true }
+                }
+              }
+            },
+            {
+              "if": {
+                "required": ["partial_load"],
+                "properties": { "partial_load": { "const": true } }
+              },
+              "then": {
+                "required": ["binding_revision_id", "runtime_state", "failed_bindings"],
+                "properties": {
+                  "result": { "const": "error" },
+                  "runtime_state": { "const": "changed_failed" }
+                }
+              }
+            }
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "loadArtifactGroupResult": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "loadArtifactGroupResult" },
+        "payload": {
+          "type": "object",
+          "required": ["result", "request_id"],
+          "properties": {
+            "result": { "enum": ["accepted", "error"] },
+            "request_id": { "$ref": "#/$defs/requestId" },
+            "binding_revision_id": { "type": "string" },
+            "url": { "type": "string" },
+            "error": { "type": "string" },
+            "applied_mode": {
+              "enum": [
+                "legacy_single_url",
+                "stage_composition",
+                "artifact_bindings_single",
+                "artifact_bindings_multi_layer_payload"
+              ]
+            },
+            "artifact_id": { "type": ["string", "null"] },
+            "artifact_group_id": { "type": ["string", "null"] },
+            "load_order": { "type": "integer" },
+            "primary_binding": { "$ref": "#/$defs/publicStageBinding" },
+            "applied_primary": {
+              "oneOf": [
+                { "$ref": "#/$defs/publicStageBinding" },
+                { "type": "null" }
+              ]
+            },
+            "loaded_bindings": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/publicStageBinding" }
+            },
+            "failed_bindings": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/publicStageBinding" }
+            },
+            "applied_secondary_layers": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/publicStageBinding" }
+            },
+            "skipped_secondary_layers": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/publicStageBinding" }
+            },
+            "partial_load": { "type": "boolean" },
+            "missing_paths": { "type": "array", "items": { "type": "string" } },
+            "fallback_paths": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  { "type": "string" },
+                  { "$ref": "#/$defs/stageFallbackPath" }
+                ]
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "highlightPrimsResult": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "highlightPrimsResult" },
+        "payload": {
+          "type": "object",
+          "required": ["result", "request_id"],
+          "properties": {
+            "result": { "enum": ["success", "error"] },
+            "request_id": { "$ref": "#/$defs/requestId" },
+            "applied_mode": { "const": "selection" },
+            "selected_paths": { "type": "array", "items": { "type": "string" } },
+            "missing_paths": { "type": "array", "items": { "type": "string" } },
+            "fallback_paths": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/stageFallbackPath" }
+            },
+            "error": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "focusPrimResult": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "focusPrimResult" },
+        "payload": {
+          "type": "object",
+          "required": ["result", "request_id"],
+          "properties": {
+            "result": { "enum": ["success", "error"] },
+            "request_id": { "$ref": "#/$defs/requestId" },
+            "prim_path": { "type": ["string", "null"] },
+            "requested_prim_path": { "type": "string" },
+            "applied_mode": { "const": "selection" },
+            "fallback_path": { "type": "string" },
+            "error": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "selectPrimsResult": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "selectPrimsResult" },
+        "payload": {
+          "type": "object",
+          "required": ["result", "error", "selected_paths", "request_id"],
+          "properties": {
+            "result": { "enum": ["success", "error"] },
+            "error": { "type": "string" },
+            "selected_paths": { "type": "array", "items": { "type": "string" } },
+            "request_id": { "$ref": "#/$defs/requestId" }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "makePrimsPickableResponse": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "makePrimsPickableResponse" },
+        "payload": {
+          "type": "object",
+          "required": ["result", "error", "request_id"],
+          "properties": {
+            "result": { "enum": ["success", "error"] },
+            "error": { "type": "string" },
+            "request_id": { "$ref": "#/$defs/requestId" }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "resetStageResponse": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "resetStageResponse" },
+        "payload": {
+          "type": "object",
+          "required": ["result", "error", "request_id"],
+          "properties": {
+            "result": { "enum": ["success", "error"] },
+            "error": { "type": "string" },
+            "request_id": { "$ref": "#/$defs/requestId" }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "clearHighlightResult": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "clearHighlightResult" },
+        "payload": {
+          "type": "object",
+          "required": ["result", "applied_mode", "request_id"],
+          "properties": {
+            "result": { "enum": ["success", "error"] },
+            "applied_mode": { "const": "selection" },
+            "request_id": { "$ref": "#/$defs/requestId" }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "loadingStateResponse": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "loadingStateResponse" },
+        "payload": {
+          "type": "object",
+          "properties": { "url": { "type": "string" }, "loading_state": { "enum": ["idle", "busy"] } }
+        }
+      }
+    },
+    "getChildrenResponse": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "getChildrenResponse" },
+        "payload": {
+          "type": "object",
+          "required": ["prim_path", "children"],
+          "properties": {
+            "prim_path": { "type": "string" },
+            "children": { "type": "array", "items": { "type": "object" } }
+          }
+        }
+      }
+    },
+    "stageSelectionChanged": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "stageSelectionChanged" },
+        "payload": { "type": "object", "required": ["prims"], "properties": { "prims": { "type": "array", "items": { "type": "string" } } } }
+      }
+    },
+    "updateProgressAmount": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": { "event_type": { "const": "updateProgressAmount" }, "payload": { "type": "object" } }
+    },
+    "updateProgressActivity": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "updateProgressActivity" },
+        "payload": { "type": "object", "properties": { "text": { "type": "string" } } }
+      }
+    },
+    "bindingApplied": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "bindingApplied" },
+        "payload": { "type": "object", "required": ["binding_revision_id"], "properties": { "binding_revision_id": { "type": "string" } } }
+      }
+    },
+    "commandRejected": {
+      "type": "object",
+      "required": ["event_type", "payload"],
+      "properties": {
+        "event_type": { "const": "commandRejected" },
+        "payload": {
+          "type": "object",
+          "required": ["rejected_event_type", "reason", "retryable", "runtime_state"],
+          "properties": {
+            "rejected_event_type": {
+              "enum": [
+                "openStageRequest",
+                "loadArtifactGroupRequest",
+                "composeStageRequest",
+                "highlightPrimsRequest",
+                "focusPrimRequest",
+                "clearHighlightRequest",
+                "selectPrimsRequest",
+                "makePrimsPickable",
+                "resetStage"
+              ]
+            },
+            "reason": {
+              "enum": [
+                "spectator_readonly",
+                "lease_invalid",
+                "session_lifecycle_blocked",
+                "unauthorized_source_client",
+                "unsupported_command",
+                "invalid_payload"
+              ]
+            },
+            "request_id": { "$ref": "#/$defs/requestId" },
+            "rejection_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "session_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "retryable": { "type": "boolean" },
+            "runtime_state": { "enum": ["unchanged", "changed_unconfirmed"] },
+            "detail_code": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "detail": { "type": "string", "maxLength": 500 }
+          },
+          "oneOf": [
+            { "required": ["request_id"], "not": { "required": ["rejection_id"] } },
+            { "required": ["rejection_id"], "not": { "required": ["request_id"] } }
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  }
+}

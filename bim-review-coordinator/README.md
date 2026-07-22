@@ -18,6 +18,8 @@ Local review-session control plane for the AI-BIM governance workspace.
 - Accept external IFC-ready intake and dispatch internal streaming conversion.
 - Maintain metadata-only callback outbox for the external company cloud.
 - Return session / stream config data to the viewer.
+- Authenticate viewer lease claims and issue narrow runtime-command decisions.
+- Maintain bounded stage-binding transactions and Kit-confirmed active/last-good evidence.
 - Broadcast basic session presence over Socket.IO namespace `/review`.
 - Persist short-lived session events as JSONL files under `data/events`.
 
@@ -74,6 +76,11 @@ GET  /api/external/ifc-ready/{job_id}
 POST /api/internal/conversion-result
 POST /api/internal/callback-outbox/deliver
 POST /api/local-web-view/sessions
+POST /api/review-sessions/{session_id}/viewer-leases/claim
+GET  /api/review-sessions/{session_id}/viewer-leases/status
+POST /api/review-sessions/{session_id}/stage-binding
+POST /api/internal/review-sessions/{session_id}/runtime-command-authorizations
+POST /api/internal/review-sessions/{session_id}/stage-binding-confirmations
 ```
 
 Socket.IO namespace:
@@ -91,3 +98,25 @@ GET /dev-console-assets/dev-console.js
 ```
 
 The dev console exposes current session, stream, intake, and compatibility event-log controls. The live `/review` namespace accepts only `joinSession`, `leaveSession`, and `heartbeat`, and broadcasts `presenceUpdated`; retired selection / annotation handlers must not be treated as current behavior.
+
+## Runtime Authority Evidence Boundary
+
+The coordinator is the policy authority for session-scoped runtime mutation,
+not the 3D executor. Public claim, status, and stage-binding routes require the
+current user identity carrier; internal authorization and confirmation routes
+require the existing private internal token. A stage binding moves
+`pending -> executing -> active|failed`, and only a Kit-observed success that
+the coordinator confirms may update active/last-good evidence.
+
+That evidence is process-local control-plane shadow state. It does not mean the
+coordinator owns the USD stage, GPU process, viewport, selection, camera, or
+materials. Actual runtime state remains owned by `bim-streaming-server`.
+Tokens, credentials, authorization headers, and raw upstream responses must not
+enter public responses, events, audit payloads, or logs.
+
+This is an atomic coordinator + Kit + viewer wire change. To roll it back,
+deploy the previous versions of all three services together, restart the
+coordinator and Kit to discard process-local pending/executing transactions,
+and require a fresh lease and stage authorization. Never reuse an in-flight
+authorization, treat last-good evidence as a GPU rollback command, or keep a
+new producer with an old consumer.

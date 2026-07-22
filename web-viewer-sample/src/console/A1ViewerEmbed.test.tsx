@@ -24,6 +24,14 @@ vi.mock("./EmbeddedViewer", async () => {
     React.useEffect(() => {
       const onFirstFrame = props.onFirstFrame as undefined | ((message: unknown) => void);
       onFirstFrame?.({ protocol: "vg01", type: "first_frame", stageUrl: "stage://x" });
+      const onStageLoaded = props.onStageLoaded as undefined | ((message: unknown) => void);
+      onStageLoaded?.({
+        protocol: "vg01",
+        type: "stage_loaded",
+        stageUrl: "stage://x",
+        status: "active",
+        binding_revision_id: "rev_a1_test",
+      });
     }, [props]);
     return null;
   }),
@@ -1078,7 +1086,11 @@ describe("A1 3D review decoupling", () => {
     await act(async () => { start.click(); });
     await flush();
 
-    expect(coordinatorClient.claimViewerLease).toHaveBeenCalledWith("review_session_new", expect.objectContaining({ requested_role: "primary" }));
+    expect(coordinatorClient.claimViewerLease).toHaveBeenCalledWith(
+      "review_session_new",
+      expect.objectContaining({ requested_role: "primary" }),
+      expect.stringMatching(/^a1_inline_operator_/),
+    );
     expect(q("a1-inline-viewer-host")).not.toBeNull();
     const highlight = q<HTMLButtonElement>("a1-inline-highlight")!;
     expect(highlight.disabled).toBe(false);

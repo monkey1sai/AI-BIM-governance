@@ -102,6 +102,7 @@ describe("EmbeddedViewer postMessage 橋", () => {
           displayName="A1 auto primary viewer"
           sourceClientId="viewer_lease_primary"
           viewerLeaseToken="lease_token_primary"
+          userToken="local_user_token_primary"
         />,
       );
     });
@@ -114,6 +115,8 @@ describe("EmbeddedViewer postMessage 橋", () => {
     expect(src).toContain("sourceClientId=viewer_lease_primary");
     expect(src).not.toContain("viewerLeaseToken");
     expect(src).not.toContain("lease_token_primary");
+    expect(src).not.toContain("userToken");
+    expect(src).not.toContain("local_user_token_primary");
   });
 
   it("viewer_ready 後用 postMessage 傳 viewer lease token（targetOrigin 非 \"*\"）", async () => {
@@ -124,6 +127,7 @@ describe("EmbeddedViewer postMessage 橋", () => {
           sessionId="review_session_abc"
           viewerOrigin={VIEWER_ORIGIN}
           viewerLeaseToken="lease_token_primary"
+          userToken="local_user_token_primary"
         />,
       );
     });
@@ -133,7 +137,12 @@ describe("EmbeddedViewer postMessage 橋", () => {
     fireMessage({ protocol: "vg01", type: "viewer_ready" }, VIEWER_ORIGIN, iframeWin);
 
     expect(postSpy).toHaveBeenCalledWith(
-      { protocol: "vg01", type: "viewer_lease_token", token: "lease_token_primary" },
+      {
+        protocol: "vg01",
+        type: "viewer_lease_token",
+        token: "lease_token_primary",
+        user_token: "local_user_token_primary",
+      },
       VIEWER_ORIGIN,
     );
   });
@@ -187,9 +196,90 @@ describe("EmbeddedViewer postMessage 橋", () => {
     });
     const iframeWin = container.querySelector("iframe")!.contentWindow;
     fireMessage({ protocol: "vg01", type: "viewer_ready" }, VIEWER_ORIGIN, iframeWin);
-    fireMessage({ protocol: "vg01", type: "stage_loaded", stageUrl: "stage://loaded" }, VIEWER_ORIGIN, iframeWin);
+    const stageLoaded = {
+      protocol: "vg01" as const,
+      type: "stage_loaded" as const,
+      stageUrl: "stage://loaded",
+      status: "active" as const,
+      binding_revision_id: "rev_binding_001",
+    };
+    fireMessage(stageLoaded, VIEWER_ORIGIN, iframeWin);
     expect(onViewerReady).toHaveBeenCalledTimes(1);
-    expect(onStageLoaded).toHaveBeenCalledWith("stage://loaded");
+    expect(onStageLoaded).toHaveBeenCalledWith(stageLoaded);
+  });
+
+  it("stage_loaded 缺 authority status 時正規化為 unproven；unproven 狀態誠實分派", async () => {
+    const onStageLoaded = vi.fn();
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <EmbeddedViewer sessionId="review_session_abc" viewerOrigin={VIEWER_ORIGIN} onStageLoaded={onStageLoaded} />,
+      );
+    });
+    const iframeWin = container.querySelector("iframe")!.contentWindow;
+    fireMessage({ protocol: "vg01", type: "stage_loaded", stageUrl: "stage://legacy" }, VIEWER_ORIGIN, iframeWin);
+    expect(onStageLoaded).toHaveBeenCalledWith({
+      protocol: "vg01",
+      type: "stage_loaded",
+      stageUrl: null,
+      status: "unproven",
+    });
+    onStageLoaded.mockClear();
+
+    const unproven = {
+      protocol: "vg01" as const,
+      type: "stage_loaded" as const,
+      stageUrl: null,
+      status: "unproven" as const,
+      binding_revision_id: "rev_binding_002",
+    };
+    fireMessage(unproven, VIEWER_ORIGIN, iframeWin);
+    expect(onStageLoaded).toHaveBeenCalledWith(unproven);
+  });
+
+  it("bearer 在 viewer_ready 前不送；ready 後 props 晚到才經受限 origin 交付", async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<EmbeddedViewer sessionId="review_session_abc" viewerOrigin={VIEWER_ORIGIN} />);
+    });
+    const iframeWin = container.querySelector("iframe")!.contentWindow!;
+    const postSpy = vi.spyOn(iframeWin, "postMessage");
+
+    await act(async () => {
+      root!.render(
+        <EmbeddedViewer
+          sessionId="review_session_abc"
+          viewerOrigin={VIEWER_ORIGIN}
+          viewerLeaseToken="lease_token_late"
+          userToken="local_user_late_a"
+        />,
+      );
+    });
+    expect(postSpy).not.toHaveBeenCalled();
+
+    fireMessage({ protocol: "vg01", type: "viewer_ready" }, VIEWER_ORIGIN, iframeWin);
+    expect(postSpy).toHaveBeenCalledTimes(1);
+    expect(postSpy).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: "viewer_lease_token",
+      token: "lease_token_late",
+      user_token: "local_user_late_a",
+    }), VIEWER_ORIGIN);
+
+    await act(async () => {
+      root!.render(
+        <EmbeddedViewer
+          sessionId="review_session_abc"
+          viewerOrigin={VIEWER_ORIGIN}
+          viewerLeaseToken="lease_token_late"
+          userToken="local_user_late_b"
+        />,
+      );
+    });
+    expect(postSpy).toHaveBeenCalledTimes(2);
+    expect(postSpy).toHaveBeenLastCalledWith(expect.objectContaining({
+      token: "lease_token_late",
+      user_token: "local_user_late_b",
+    }), VIEWER_ORIGIN);
   });
 
   it("message 來自非 iframe.contentWindow 的 source 丟棄", async () => {

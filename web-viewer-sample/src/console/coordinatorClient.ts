@@ -21,10 +21,10 @@ import { defaultCoordinatorBase } from "./coordinatorBase";
 import type { ConversionQualityMetricsSummary } from "../types/review";
 import type { components as kitManagerComponents } from "../generated/kit-manager-api";
 
-const env = (import.meta as { env?: Record<string, string> }).env;
-
 const COORD_BASE: string =
-  env?.VITE_COORDINATOR_API_BASE ?? env?.VITE_COORDINATOR_BASE ?? defaultCoordinatorBase();
+  import.meta.env.VITE_COORDINATOR_API_BASE
+  ?? import.meta.env.VITE_COORDINATOR_BASE
+  ?? defaultCoordinatorBase();
 
 // W4（2026-07-10）：operator 頁（KitConsolePage / RealIfcConsolePage）需要「原樣顯示 HTTP 狀態碼」
 // 的 raw fetch 語意（非 2xx 是值不是錯誤），不能走會 throw 的 jsonGet——但裸相對路徑在
@@ -633,10 +633,11 @@ export const coordinatorClient = {
     requested_role?: "auto" | "primary" | "spectator";
     client_nonce?: string | null;
     preferred_kit_instance_id?: string | null;
-  }) =>
-    jsonPost<ViewerLeaseClaimResponse>(
+  }, userToken: string) =>
+    jsonPostWithHeaders<ViewerLeaseClaimResponse>(
       `/api/review-sessions/${encodeURIComponent(sessionId)}/viewer-leases/claim`,
       body,
+      { "X-User-Token": userToken },
     ),
   viewerLeaseHeartbeat: (
     sessionId: string,

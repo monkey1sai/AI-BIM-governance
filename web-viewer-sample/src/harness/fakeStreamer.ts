@@ -2,7 +2,13 @@
 // AppStreamer.{connect,sendMessage,terminate,resize}。只換掉 transport + 假 Kit 大腦，
 // 不碰前端狀態機（Window/hooks/builders/handlers 照跑）。harness 模式下由 streamer.ts 選用。
 import type { StreamMessage } from "../types/streamMessages";
-import { computeFakeKitResponse, createFakeKitState, type FakeKitState } from "./fakeKit";
+import {
+  computeFakeKitResponse,
+  createFakeKitState,
+  queueFakeKitRejection,
+  type FakeKitRejection,
+  type FakeKitState,
+} from "./fakeKit";
 
 type EventCallback = (message: unknown) => void;
 
@@ -44,6 +50,11 @@ export const FakeAppStreamer = {
     };
     kit = createFakeKitState();
     connected = true;
+    (globalThis as typeof globalThis & {
+      __AI_BIM_FAKE_KIT__?: { rejectNext: (rejection: FakeKitRejection) => void };
+    }).__AI_BIM_FAKE_KIT__ = {
+      rejectNext: (rejection) => queueFakeKitRejection(kit, rejection),
+    };
     // 下一 tick 觸發 stream start success → AppStream.setState(streamReady) → props.onStarted()。
     setTimeout(() => {
       captured.onStart?.({ action: "start", status: "success", info: "harness" });
@@ -68,6 +79,9 @@ export const FakeAppStreamer = {
   terminate(): void {
     connected = false;
     captured = {};
+    delete (globalThis as typeof globalThis & {
+      __AI_BIM_FAKE_KIT__?: { rejectNext: (rejection: FakeKitRejection) => void };
+    }).__AI_BIM_FAKE_KIT__;
   },
 
   resize(): Promise<void> {

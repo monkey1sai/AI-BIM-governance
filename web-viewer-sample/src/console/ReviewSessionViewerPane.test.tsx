@@ -184,7 +184,16 @@ describe("ReviewSessionViewerPane", () => {
     await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
     await flush();
 
-    expect(coordinatorClient.claimViewerLease).toHaveBeenCalledWith("review_session_x", expect.objectContaining({ requested_role: "primary" }));
+    expect(coordinatorClient.claimViewerLease).toHaveBeenCalledWith(
+      "review_session_x",
+      expect.objectContaining({
+        requested_role: "primary",
+        user_id: expect.stringMatching(/^review_room_operator_/),
+      }),
+      expect.stringMatching(/^review_room_operator_/),
+    );
+    const claimCall = vi.mocked(coordinatorClient.claimViewerLease).mock.calls[0];
+    expect(claimCall[2]).toBe(claimCall[1].user_id);
     expect(q("review-room-viewer-host")).not.toBeNull();
     expect(viewerBox.renderCount).toBe(1);
     expect(viewerBox.current?.sessionId).toBe("review_session_x");
@@ -232,16 +241,26 @@ describe("ReviewSessionViewerPane", () => {
     expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
   });
 
-  it("lease conflict is shown as a distinct lease error and does not mount the viewer", async () => {
-    vi.mocked(coordinatorClient.claimViewerLease).mockRejectedValue(new Error("409 lease conflict: primary already held"));
+  it("primary lease conflict has a stable occupied state and an actionable retry", async () => {
+    vi.mocked(coordinatorClient.claimViewerLease).mockRejectedValueOnce(
+      new Error("coordinator /api/review-sessions/review_session_x/viewer-leases/claim -> 409 primary_already_claimed"),
+    );
 
     await renderPane();
     await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
     await flush();
 
-    expect(q("review-room-lease-error")?.textContent).toContain("409 lease conflict");
+    expect(q("review-room-lease-occupied")?.textContent).toContain("占用");
+    expect(q("review-room-lease-error")).toBeNull();
     expect(q("review-room-viewer-host")).toBeNull();
     expect(viewerBox.renderCount).toBe(0);
+
+    await act(async () => { q<HTMLButtonElement>("review-room-lease-retry")!.click(); });
+    await flush();
+
+    expect(coordinatorClient.claimViewerLease).toHaveBeenCalledTimes(2);
+    expect(q("review-room-lease-occupied")).toBeNull();
+    expect(q("review-room-viewer-host")).not.toBeNull();
   });
 
   it("no first frame and stage mismatch have distinct highlight reasons", async () => {
@@ -263,7 +282,7 @@ describe("ReviewSessionViewerPane", () => {
     expect(q("review-room-runtime-evidence")?.textContent).toContain("stage truth");
   });
 
-  it("first frame plus matched stage enables Review Room highlight and records command trace", async () => {
+  it("first frame plus authority-confirmed matched stage enables Review Room highlight and records command trace", async () => {
     await renderPane();
     await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
     await flush();
@@ -275,13 +294,31 @@ describe("ReviewSessionViewerPane", () => {
     await flush();
 
     expect(q("review-room-runtime-evidence")?.textContent).toContain("DataChannel ready");
+    expect(q<HTMLButtonElement>("review-room-highlight")!.disabled).toBe(true);
+    expect(coordinatorClient.viewerLeaseHeartbeat).toHaveBeenCalledWith(
+      "review_session_x",
+      "viewer_lease_primary",
+      "lease_token_primary",
+      { first_frame: true, datachannel_ready: true },
+    );
+
+    await act(async () => {
+      (viewerBox.current!.onStageLoaded as (m: unknown) => void)({
+        protocol: "vg01",
+        type: "stage_loaded",
+        stageUrl: "stage://x",
+        status: "active",
+        binding_revision_id: "rev_binding_001",
+      });
+    });
+    await flush();
+
     expect(q("review-room-runtime-evidence")?.textContent).toContain("observed");
     const highlight = q<HTMLButtonElement>("review-room-highlight")!;
     expect(highlight.disabled).toBe(false);
     await act(async () => { highlight.click(); });
 
     expect(coordinatorClient.viewerLeaseHeartbeat).toHaveBeenCalledWith("review_session_x", "viewer_lease_primary", "lease_token_primary", expect.objectContaining({
-      first_frame: true,
       loaded_stage_url: "stage://x",
       datachannel_ready: true,
     }));
@@ -300,6 +337,21 @@ describe("ReviewSessionViewerPane", () => {
     await flush();
 
     expect(q("review-room-runtime-evidence")?.textContent).toContain("已送出並收到 viewer 回報");
+
+    await act(async () => {
+      (viewerBox.current!.onStageLoaded as (m: unknown) => void)({
+        protocol: "vg01",
+        type: "stage_loaded",
+        stageUrl: null,
+        status: "unproven",
+        binding_revision_id: "rev_binding_001",
+      });
+    });
+    await flush();
+
+    expect(q<HTMLButtonElement>("review-room-highlight")!.disabled).toBe(true);
+    expect(q("review-room-runtime-evidence")?.textContent).toContain("unproven");
+    expect(q("review-room-runtime-evidence")?.getAttribute("aria-live")).toBe("polite");
   });
 
   it("missing usd_prim_path opens Review Room diagnostic mode but blocks highlight", async () => {

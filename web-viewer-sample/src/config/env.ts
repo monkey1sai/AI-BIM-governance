@@ -63,8 +63,8 @@ const queryCoordinatorApiBase = trustedCoordinatorBaseFromQuery("coordinatorApiB
 const queryCoordinatorSocketUrl = trustedCoordinatorBaseFromQuery("coordinatorSocketUrl");
 const envCoordinatorApiBase = import.meta.env.VITE_COORDINATOR_API_BASE || "http://127.0.0.1:8004";
 
-function positiveNumberConfig(queryName: string, envName: string, fallback: number): number {
-    const raw = queryParam(queryName) || import.meta.env[envName];
+function positiveNumberConfig(queryName: string, envValue: string | undefined, fallback: number): number {
+    const raw = queryParam(queryName) || envValue;
     if (!raw) return fallback;
 
     const parsed = Number(raw);
@@ -82,10 +82,15 @@ export const reviewEnv = {
     hasExplicitEmptySessionId,
     defaultUserId: queryParam("userId") || import.meta.env.VITE_DEFAULT_USER_ID || "dev_user_001",
     sourceClientId: queryParam("sourceClientId") || queryParam("viewerLeaseId") || queryParam("leaseId") || queryParam("userId") || import.meta.env.VITE_DEFAULT_USER_ID || "dev_user_001",
+    // Ephemeral local-dev lab identity carrier. Standalone viewers generate it
+    // at runtime; embedded viewers receive it over the origin-checked vg01
+    // channel. Never source this bearer value from URL or VITE_* build config.
+    // Production remains fail-closed until a bound IdP replaces this seam.
+    userToken: "",
     // Bearer token 不從 URL query 讀取；嵌入 A1 viewer 時由 parent postMessage 注入，避免 browser history/referrer/log 外洩。
     viewerLeaseToken: "",
     defaultDisplayName: queryParam("displayName") || import.meta.env.VITE_DEFAULT_DISPLAY_NAME || "示範使用者",
     autoCreateSession: (import.meta.env.VITE_AUTO_CREATE_SESSION || "true") !== "false",
     showDemoPanel: (import.meta.env.VITE_SHOW_DEMO_PANEL || "true") !== "false",
-    streamStartTimeoutMs: positiveNumberConfig("streamTimeoutMs", "VITE_STREAM_START_TIMEOUT_MS", 30000),
+    streamStartTimeoutMs: positiveNumberConfig("streamTimeoutMs", import.meta.env.VITE_STREAM_START_TIMEOUT_MS, 30000),
 };

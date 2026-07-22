@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
-import { createAuthProvider, createUserAuthProvider, IntranetDevAuthProvider } from "../src/services/authProvider.js";
+import {
+  createAuthProvider,
+  createUserAuthProvider,
+  IntranetDevAuthProvider,
+  LocalDevUserAuthProvider,
+} from "../src/services/authProvider.js";
 
 describe("AuthProvider factories", () => {
   it("未知 service auth provider 會 fail fast，不回退到 intranet-dev", () => {
@@ -33,5 +38,18 @@ describe("AuthProvider factories", () => {
     });
 
     expect(context.correlationId).toBe("corr_docker_001");
+  });
+
+  it("local-dev carrier 只產生 stable opaque lab subject", () => {
+    const provider = new LocalDevUserAuthProvider();
+    const carrier = "dynamic-local-dev-carrier";
+    const first = provider.authenticate({ headers: { "x-user-token": carrier } });
+    const second = provider.authenticate({ headers: { authorization: `Bearer ${carrier}` } });
+    const other = provider.authenticate({ headers: { "x-user-token": `${carrier}-other` } });
+
+    expect(first.userId).toMatch(/^lab_[a-f0-9]{32}$/);
+    expect(first.userId).toBe(second.userId);
+    expect(first.userId).not.toBe(other.userId);
+    expect(JSON.stringify(first)).not.toContain(carrier);
   });
 });

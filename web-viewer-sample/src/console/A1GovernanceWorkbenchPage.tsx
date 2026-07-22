@@ -21,8 +21,7 @@ type NativeFilePickerWindow = Window & {
 };
 
 function defaultA1IdsPath(): string {
-  const meta = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
-  return meta?.VITE_A1_DEFAULT_IDS_PATH || "rules/sample-fire-rating.ids";
+  return import.meta.env.VITE_A1_DEFAULT_IDS_PATH || "rules/sample-fire-rating.ids";
 }
 
 type A1SourceKind = "local_fs" | "minio";

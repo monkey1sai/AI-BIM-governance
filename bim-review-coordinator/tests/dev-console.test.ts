@@ -170,7 +170,7 @@ describe("coordinator dev console", () => {
     expect(res.status).toBe(403);
   });
 
-  it("CH-C: stage-binding 後端角色權威（spectator/非 primary 403、primary lease token、active/last-good revision、缺 primary 400）", async () => {
+  it("CH-C: stage-binding 後端角色權威（authenticated primary lease、server-issued pending transaction、缺 primary 400）", async () => {
     const app = makeApp();
     const created = await request(app.app).post("/api/review-sessions").send({
       project_id: "project_demo_001",
@@ -196,11 +196,13 @@ describe("coordinator dev console", () => {
     expect(created.status).toBeLessThan(300);
     const sid = created.body.session_id as string;
     expect(sid).toBeTruthy();
+    const userToken = "user_primary";
     const claimed = await request(app.app)
       .post(`/api/review-sessions/${sid}/viewer-leases/claim`)
+      .set("X-User-Token", userToken)
       .send({
         viewer_id: "viewer_primary",
-        user_id: "user_primary",
+        user_id: userToken,
         display_name: "Primary viewer",
         requested_role: "primary",
         client_nonce: `viewer_primary:${sid}:primary`,
@@ -209,30 +211,40 @@ describe("coordinator dev console", () => {
     const leaseId = claimed.body.lease_id as string;
     const leaseToken = claimed.body.lease_token as string;
     const bind = (b: Record<string, unknown>, token = leaseToken) => {
-      const req = request(app.app).post(`/api/review-sessions/${sid}/stage-binding`);
+      const req = request(app.app)
+        .post(`/api/review-sessions/${sid}/stage-binding`)
+        .set("X-User-Token", userToken);
       if (token) req.set("X-Viewer-Lease-Token", token);
       return req.send(b);
     };
+    const primaryBinding = {
+      source_client_id: leaseId,
+      role: "primary",
+      artifacts: [{ artifact_id: "a1", role: "primary", load_order: 0 }],
+    };
 
-    // spectator / 非 primary → 403（後端拒絕，非 UI-only）。
-    expect((await bind({ source_client_id: "c_spec", role: "spectator", binding_revision_id: "binding_rev_1", primary_artifact_id: "a1" })).status).toBe(403);
+    // spectator / 非 primary role 不符合 server schema（後端拒絕，非 UI-only）。
+    expect((await bind({ ...primaryBinding, role: "spectator" })).status).toBe(400);
     // primary 缺 lease token → 403（不得再走 legacy first-wins bypass）。
-    expect((await bind({ source_client_id: leaseId, role: "primary", binding_revision_id: "binding_rev_1", primary_artifact_id: "a1" }, "")).status).toBe(403);
-    // primary（lease token authority）→ 200。
-    const p1 = await bind({ source_client_id: leaseId, role: "primary", binding_revision_id: "binding_rev_1", primary_artifact_id: "a1" });
+    expect((await bind(primaryBinding, "")).status).toBe(403);
+    // primary（lease token authority）→ server-owned pending transaction；browser 不提供 revision/URL authority。
+    const p1 = await bind(primaryBinding);
     expect(p1.status).toBe(200);
-    expect(p1.body.active_binding_revision).toBe("binding_rev_1");
-    expect(p1.body.primary_client_id).toBe(leaseId);
-    expect(p1.body.last_good_binding_revision).toBeNull();
-    // 另一 client 宣稱 primary → 403（已有 primary 持有者）。
-    expect((await bind({ source_client_id: "c_other", role: "primary", binding_revision_id: "binding_rev_2", primary_artifact_id: "a1" })).status).toBe(403);
-    // 原 primary 再套用 → 200 + last_good = binding_rev_1（交易式 revision 串）。
-    const p2 = await bind({ source_client_id: leaseId, role: "primary", binding_revision_id: "binding_rev_2", primary_artifact_id: "a1" });
-    expect(p2.status).toBe(200);
-    expect(p2.body.active_binding_revision).toBe("binding_rev_2");
-    expect(p2.body.last_good_binding_revision).toBe("binding_rev_1");
-    // 缺 primary_artifact_id → 400（交易需恰好一個 primary）。
-    expect((await bind({ source_client_id: leaseId, role: "primary", binding_revision_id: "binding_rev_3" })).status).toBe(400);
+    expect(p1.body.status).toBe("pending");
+    expect(p1.body.stage_binding_authorization_id).toMatch(/^stage_auth_/);
+    expect(p1.body.binding_revision_id).toMatch(/^binding_rev_/);
+    expect(p1.body.stage_composition).toMatchObject({
+      primary: { artifact_id: "a1", role: "primary", load_order: 0 },
+      secondary_layers: [],
+    });
+    // 另一 source client 不能借用 primary lease。
+    expect((await bind({ ...primaryBinding, source_client_id: "c_other" })).status).toBe(403);
+    // 交易需恰好一個 primary artifact。
+    expect((await bind({
+      source_client_id: leaseId,
+      role: "primary",
+      artifacts: [{ artifact_id: "a1", role: "secondary", load_order: 0 }],
+    })).status).toBe(400);
   });
 
   it("forwards only whitelisted viewer identity params through /ui/open", async () => {

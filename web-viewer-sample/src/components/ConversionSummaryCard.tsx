@@ -75,19 +75,7 @@ function isDevEnvironment(): boolean {
     // Vite-only signal. In Node/test environments (e.g. verify-conversion-summary-card.mjs) the
     // injected mock fetcher is what actually runs — the DEV flag is checked, but the fetch itself
     // is hooked, so production builds never reach the network.
-    try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const meta: any = (import.meta as unknown as { env?: Record<string, unknown> }).env;
-        if (meta && typeof meta.DEV === "boolean") {
-            return Boolean(meta.DEV);
-        }
-        if (meta && typeof meta.VITE_ENABLE_WORKER_FETCH === "string") {
-            return meta.VITE_ENABLE_WORKER_FETCH === "true";
-        }
-    } catch {
-        // ignore — production builds with no import.meta available stay in non-dev.
-    }
-    return false;
+    return import.meta.env.DEV || import.meta.env.VITE_ENABLE_WORKER_FETCH === "true";
 }
 
 async function defaultFetchFallback(

@@ -21,18 +21,27 @@ from carb.eventdispatcher import get_eventdispatcher
 from omni.kit.viewport.utility import get_active_viewport_camera_string
 
 try:
-    from .runtime_authority import is_authorized_mutator, unauthorized_result_payload
+    from .runtime_authority import (
+        RuntimeAuthorityClient,
+        command_rejected_payload,
+        correlated_result,
+    )
 except ImportError:  # pragma: no cover - test modules import this file directly.
-    from runtime_authority import is_authorized_mutator, unauthorized_result_payload
+    from runtime_authority import (
+        RuntimeAuthorityClient,
+        command_rejected_payload,
+        correlated_result,
+    )
 
 
 class StageManager:
     """This class manages the stage and its related events."""
-    def __init__(self):
+    def __init__(self, runtime_authority=None):
         # Internal messaging state
         self._is_external_update: bool = False
         self._camera_attrs = {}
         self._subscriptions = []
+        self._runtime_authority = runtime_authority or RuntimeAuthorityClient()
 
         # -- register outgoing events/messages
         outgoing = [
@@ -74,6 +83,8 @@ class StageManager:
             'clearHighlightRequest': self._on_clear_highlight,
             # request to focus/select one prim
             'focusPrimRequest': self._on_focus_prim,
+            # harness-only in browsers; production Kit rejects explicitly.
+            'composeStageRequest': self._on_unsupported_mutator,
         }
 
         ed = get_eventdispatcher()
@@ -182,11 +193,7 @@ class StageManager:
         Selects the given primitives.
         """
         request_payload = self._payload_dict(event.payload)
-        if not is_authorized_mutator(request_payload):
-            get_eventdispatcher().dispatch_event(
-                "selectPrimsResult",
-                payload=unauthorized_result_payload(request_payload, selected_paths=[]),
-            )
+        if not self._authorize_mutator("selectPrimsRequest", request_payload):
             return
         new_selection = []
         if "paths" in request_payload:
@@ -203,7 +210,10 @@ class StageManager:
         sel.set_selected_prim_paths(new_selection, True)
         get_eventdispatcher().dispatch_event(
             "selectPrimsResult",
-            payload={"result": "success", "error": "", "selected_paths": new_selection},
+            payload=correlated_result(
+                request_payload,
+                {"result": "success", "error": "", "selected_paths": new_selection},
+            ),
         )
 
     def _on_stage_event_opened(self, event):
@@ -242,11 +252,7 @@ class StageManager:
         A success message is sent if all attributes are succesfully reset, and error message is set otherwise.
         """
         request_payload = self._payload_dict(event.payload)
-        if not is_authorized_mutator(request_payload):
-            get_eventdispatcher().dispatch_event(
-                "resetStageResponse",
-                payload=unauthorized_result_payload(request_payload),
-            )
+        if not self._authorize_mutator("resetStage", request_payload):
             return
         ctx = omni.usd.get_context()
         stage = ctx.get_stage()
@@ -270,7 +276,10 @@ class StageManager:
         else:
             payload = {"result": "success", "error": ""}
 
-        get_eventdispatcher().dispatch_event("resetStageResponse", payload=payload)
+        get_eventdispatcher().dispatch_event(
+            "resetStageResponse",
+            payload=correlated_result(request_payload, payload),
+        )
 
     def _on_make_pickable(self, event: carb.events.IEvent):
         """
@@ -281,11 +290,7 @@ class StageManager:
         current success status.
         """
         request_payload = self._payload_dict(event.payload)
-        if not is_authorized_mutator(request_payload):
-            get_eventdispatcher().dispatch_event(
-                "makePrimsPickableResponse",
-                payload=unauthorized_result_payload(request_payload),
-            )
+        if not self._authorize_mutator("makePrimsPickable", request_payload):
             return
         # Add the provided paths to the set of pickable prims.
         ctx = omni.usd.get_context()
@@ -304,7 +309,10 @@ class StageManager:
         else:
             payload = {"result": "success", "error": ""}
 
-        get_eventdispatcher().dispatch_event("makePrimsPickableResponse", payload=payload)
+        get_eventdispatcher().dispatch_event(
+            "makePrimsPickableResponse",
+            payload=correlated_result(request_payload, payload),
+        )
 
     def _payload_list(self, value):
         if value is None:
@@ -321,6 +329,20 @@ class StageManager:
         if isinstance(value, carb.dictionary.Item):
             value = value.get_dict()
         return value if isinstance(value, dict) else {}
+
+    def _authorize_mutator(self, event_type, request_payload):
+        decision = self._runtime_authority.authorize(event_type, request_payload)
+        if decision.authorized:
+            return True
+        get_eventdispatcher().dispatch_event(
+            "commandRejected",
+            payload=command_rejected_payload(event_type, request_payload, decision),
+        )
+        return False
+
+    def _on_unsupported_mutator(self, event: carb.events.IEvent):
+        request_payload = self._payload_dict(event.payload)
+        self._authorize_mutator("composeStageRequest", request_payload)
 
     def _resolve_selectable_prim_path(self, stage, prim_path):
         if stage is None or not prim_path:
@@ -355,15 +377,7 @@ class StageManager:
         """
         request_payload = self._payload_dict(event.payload)
         request_id = request_payload.get("request_id")
-        if not is_authorized_mutator(request_payload):
-            payload = unauthorized_result_payload(
-                request_payload,
-                applied_mode="selection",
-                selected_paths=[],
-                missing_paths=[],
-                fallback_paths=[],
-            )
-            get_eventdispatcher().dispatch_event("highlightPrimsResult", payload=payload)
+        if not self._authorize_mutator("highlightPrimsRequest", request_payload):
             return
         stage = omni.usd.get_context().get_stage()
         if stage is None:
@@ -423,31 +437,23 @@ class StageManager:
 
     def _on_clear_highlight(self, event: carb.events.IEvent):
         request_payload = self._payload_dict(event.payload)
-        if not is_authorized_mutator(request_payload):
-            get_eventdispatcher().dispatch_event(
-                "clearHighlightResult",
-                payload=unauthorized_result_payload(request_payload, applied_mode="selection"),
-            )
+        if not self._authorize_mutator("clearHighlightRequest", request_payload):
             return
         sel = omni.usd.get_context().get_selection()
         self._is_external_update = True
         sel.clear_selected_prim_paths()
-        payload = {"result": "success", "applied_mode": "selection"}
+        payload = correlated_result(
+            request_payload,
+            {"result": "success", "applied_mode": "selection"},
+        )
         get_eventdispatcher().dispatch_event("clearHighlightResult", payload=payload)
 
     def _on_focus_prim(self, event: carb.events.IEvent):
-        stage = omni.usd.get_context().get_stage()
         request_payload = self._payload_dict(event.payload)
         request_id = request_payload.get("request_id")
-        if not is_authorized_mutator(request_payload):
-            get_eventdispatcher().dispatch_event(
-                "focusPrimResult",
-                payload=unauthorized_result_payload(
-                    request_payload,
-                    prim_path=request_payload.get("prim_path") or request_payload.get("usd_prim_path"),
-                ),
-            )
+        if not self._authorize_mutator("focusPrimRequest", request_payload):
             return
+        stage = omni.usd.get_context().get_stage()
         prim_path = request_payload.get("prim_path") or request_payload.get("usd_prim_path")
         selected_path = self._resolve_selectable_prim_path(stage, prim_path)
         if stage is None or not prim_path or not selected_path:

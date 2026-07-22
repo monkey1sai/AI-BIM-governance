@@ -11,10 +11,29 @@ import { harnessChildrenFor, HARNESS_STAGE_URL } from "./fixtures/usdStageTree";
 export interface FakeKitState {
   currentStageUrl: string | null;
   bindingRevisionId: string | null;
+  nextRejection: FakeKitRejection | null;
 }
 
 export function createFakeKitState(): FakeKitState {
-  return { currentStageUrl: null, bindingRevisionId: null };
+  return { currentStageUrl: null, bindingRevisionId: null, nextRejection: null };
+}
+
+export interface FakeKitRejection {
+  rejected_event_type: string;
+  reason:
+    | "spectator_readonly"
+    | "lease_invalid"
+    | "session_lifecycle_blocked"
+    | "unauthorized_source_client"
+    | "unsupported_command"
+    | "invalid_payload";
+  retryable: boolean;
+  runtime_state: "unchanged" | "changed_unconfirmed";
+  detail_code?: string;
+}
+
+export function queueFakeKitRejection(kit: FakeKitState, rejection: FakeKitRejection): void {
+  kit.nextRejection = { ...rejection };
 }
 
 export interface FakeKitResponse {
@@ -33,8 +52,39 @@ function str(obj: Record<string, unknown>, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
+const runtimeMutators = new Set([
+  "openStageRequest",
+  "loadArtifactGroupRequest",
+  "composeStageRequest",
+  "highlightPrimsRequest",
+  "focusPrimRequest",
+  "clearHighlightRequest",
+  "selectPrimsRequest",
+  "makePrimsPickable",
+  "resetStage",
+]);
+
 export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState): FakeKitResponse {
   const payload = asRecord(message.payload);
+  const queuedRejection = kit.nextRejection;
+  if (
+    queuedRejection
+    && runtimeMutators.has(message.event_type)
+    && queuedRejection.rejected_event_type === message.event_type
+  ) {
+    kit.nextRejection = null;
+    const requestId = str(payload, "request_id");
+    return {
+      result: null,
+      asyncEvents: [{
+        event_type: "commandRejected",
+        payload: {
+          ...queuedRejection,
+          ...(requestId ? { request_id: requestId } : { rejection_id: "fake_rejection_001" }),
+        },
+      }],
+    };
+  }
 
   switch (message.event_type) {
     // proof-of-life / 載入狀態輪詢。harness 永遠回 idle + 目前 stage url。
@@ -48,9 +98,16 @@ export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState
     // 觸發 _completeStageLoad（不依賴前端 USD asset 清單比對，較穩）。
     case "openStageRequest": {
       const url = str(payload, "url") || str(payload, "requested_stage_url") || HARNESS_STAGE_URL;
+      const requestId = str(payload, "request_id");
+      const bindingRevisionId = str(payload, "binding_revision_id");
       kit.currentStageUrl = url;
       return {
-        result: { status: "success", url },
+        result: {
+          status: "success",
+          url,
+          ...(requestId ? { request_id: requestId } : {}),
+          ...(bindingRevisionId ? { binding_revision_id: bindingRevisionId } : {}),
+        },
         asyncEvents: [{ event_type: "updateProgressActivity", payload: { text: "None" } }],
       };
     }
@@ -106,16 +163,30 @@ export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState
           ? payload.paths
           : [];
       const prims = (raw as unknown[]).filter((value): value is string => typeof value === "string");
-      return { result: null, asyncEvents: [{ event_type: "stageSelectionChanged", payload: { prims } }] };
+      const requestId = str(payload, "request_id");
+      return {
+        result: null,
+        asyncEvents: [{
+          event_type: "stageSelectionChanged",
+          payload: { prims, ...(requestId ? { request_id: requestId } : {}) },
+        }],
+      };
     }
 
     // CH-F 會用到：compose stage 交易。harness 回 success + bindingApplied ack（含 revision）。
     case "composeStageRequest": {
       const revision = str(payload, "binding_revision_id");
+      const requestId = str(payload, "request_id");
       if (revision) kit.bindingRevisionId = revision;
       return {
-        result: { status: "success" },
-        asyncEvents: [{ event_type: "bindingApplied", payload: { binding_revision_id: kit.bindingRevisionId ?? "" } }],
+        result: { status: "success", ...(requestId ? { request_id: requestId } : {}) },
+        asyncEvents: [{
+          event_type: "bindingApplied",
+          payload: {
+            binding_revision_id: kit.bindingRevisionId ?? "",
+            ...(requestId ? { request_id: requestId } : {}),
+          },
+        }],
       };
     }
 
@@ -123,7 +194,13 @@ export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState
     case "makePrimsPickable":
     case "loadArtifactGroupRequest":
     case "resetStage":
-      return { result: { status: "success" }, asyncEvents: [] };
+      return {
+        result: {
+          status: "success",
+          ...(str(payload, "request_id") ? { request_id: str(payload, "request_id") } : {}),
+        },
+        asyncEvents: [],
+      };
 
     default:
       return { result: null, asyncEvents: [] };

@@ -24,6 +24,8 @@
 | Review session state | `bim-review-coordinator` | 當前 session 狀態 |
 | Session presence state | `bim-review-coordinator` | `joinSession` / `leaveSession` / `heartbeat` / `presenceUpdated` |
 | Generic session event log | `bim-review-coordinator` | append-only compatibility archive；可含 legacy type，但不代表 live broadcast 或正式資料權威 |
+| Runtime mutation policy / viewer lease | `bim-review-coordinator` | 每次mutator的fresh allow/deny；不執行GPU mutation |
+| Stage-binding confirmation shadow | `bim-review-coordinator` | bounded pending/executing/active/failed與last-good evidence；不是actual GPU truth |
 | USD stage runtime state | `bim-streaming-server` | 當前 Omniverse scene runtime 狀態 |
 | Browser UI state | `web-viewer-sample` | 當前前端 UI 狀態 |
 
@@ -42,13 +44,20 @@
 ```mermaid
 sequenceDiagram
     participant WV as web-viewer-sample
+    participant CO as bim-review-coordinator
     participant KIT as bim-streaming-server
 
     WV->>KIT: WebRTC connect
     KIT-->>WV: Rendered viewport stream
-    WV->>KIT: DataChannel openStageRequest { stage_composition }
+    WV->>CO: claim primary lease + preauthorize artifact IDs
+    CO-->>WV: pending authorization + exact stage_composition
+    WV->>KIT: DataChannel openStageRequest { transaction }
+    KIT->>CO: authorize exact session/lease/source/request/composition
+    CO-->>KIT: allow + atomic pending->executing
     KIT->>KIT: Open primary USDC + apply secondary subLayers
-    KIT-->>WV: DataChannel openedStageResult
+    KIT->>CO: confirm observed stage outcome
+    CO-->>KIT: active/failed confirmation
+    KIT-->>WV: one terminal openedStageResult or commandRejected
 ```
 
 ### 邊界說明
@@ -57,6 +66,7 @@ sequenceDiagram
 WebRTC video stream 只存在於 web-viewer-sample 與 bim-streaming-server 之間。
 USD / USDC conversion result 由 bim-streaming-server 在 B 方案下提供。
 bim-streaming-server 載入、渲染，且是 IFC→USDC conversion job authority；它仍不成為 project / issue / annotation 的資料權威。
+bim-review-coordinator只決定mutation policy並保存Kit-confirmed binding shadow；actual stage/GPU truth仍在bim-streaming-server。
 ```
 
 ---
@@ -66,20 +76,26 @@ bim-streaming-server 載入、渲染，且是 IFC→USDC conversion job authorit
 ```mermaid
 sequenceDiagram
     participant WV as web-viewer-sample
+    participant CO as bim-review-coordinator
     participant KIT as bim-streaming-server
 
     WV->>KIT: DataChannel getChildrenRequest
     KIT-->>WV: getChildrenResponse
     WV->>KIT: DataChannel selectPrimsRequest
+    KIT->>CO: authorize current primary lease + command context
+    CO-->>KIT: allow / deny
     KIT-->>WV: stageSelectionChanged
     WV->>KIT: DataChannel highlightPrimsRequest
-    KIT-->>WV: highlightPrimsResult
+    KIT->>CO: authorize current primary lease + command context
+    CO-->>KIT: allow / deny
+    KIT-->>WV: highlightPrimsResult or commandRejected
 ```
 
 ### 邊界說明
 
 ```txt
 Scene interaction 是 browser client 與 Kit runtime 之間的 DataChannel JSON 流程。
+Frontend gate只改善UX；每個production mutator仍由Kit在mutation前透過loopback internal REST向coordinator即時授權，且不得positive-cache。
 這些 runtime interaction 不等於正式資料保存。
 若要保存成審查紀錄，必須走現行 governance-service / 外部 control-plane write path；已退役的 coordinator collaboration handlers 不是可用回寫路徑。
 ```
@@ -119,6 +135,7 @@ Scene interaction 是 browser client 與 Kit runtime 之間的 DataChannel JSON 
 | 通訊方式 | 起點 | 終點 | 用途 |
 |---|---|---|---|
 | REST | `web-viewer-sample` | `bim-review-coordinator` | 建立 / 查詢 session、取得 stream config、存取 governance proxy |
+| Internal REST | `bim-streaming-server` | `bim-review-coordinator` | runtime-command authorization與observed stage completion confirmation；loopback + internal token |
 | WebRTC video | `bim-streaming-server` | `web-viewer-sample` | 串流 Omniverse viewport 畫面 |
 | WebRTC DataChannel JSON | `web-viewer-sample` | `bim-streaming-server` | open stage、selection、highlight、scene query |
 | WebSocket / Socket.IO | `web-viewer-sample` | `bim-review-coordinator` | session join / leave / heartbeat 與 `presenceUpdated`；selection / annotation / issue-focus handlers 已退役 |

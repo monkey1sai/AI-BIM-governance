@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { computeFakeKitResponse, createFakeKitState } from "./fakeKit";
+import { computeFakeKitResponse, createFakeKitState, queueFakeKitRejection } from "./fakeKit";
+import { resolveHarnessEnabled } from "./harnessConfig";
 
 describe("computeFakeKitResponse — 鎖定假 Kit 對既有協定的保真度", () => {
   it("loadingStateQuery 回 idle + 目前 stage url", () => {
@@ -100,5 +101,57 @@ describe("computeFakeKitResponse — 鎖定假 Kit 對既有協定的保真度",
     expect(res.result).toEqual({ status: "success" });
     expect(kit.bindingRevisionId).toBe("rev-42");
     expect(res.asyncEvents).toEqual([{ event_type: "bindingApplied", payload: { binding_revision_id: "rev-42" } }]);
+  });
+
+  it("one-shot commandRejected 保留 correlation 且只消費一次", () => {
+    const kit = createFakeKitState();
+    queueFakeKitRejection(kit, {
+      rejected_event_type: "openStageRequest",
+      reason: "lease_invalid",
+      retryable: true,
+      runtime_state: "unchanged",
+      detail_code: "authority_unavailable",
+    });
+
+    const rejected = computeFakeKitResponse(
+      {
+        event_type: "openStageRequest",
+        payload: { request_id: "cmd-reject-once", url: "harness://stage/rejected.usdc" },
+      },
+      kit,
+    );
+    expect(rejected.result).toBeNull();
+    expect(rejected.asyncEvents).toEqual([{
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "openStageRequest",
+        reason: "lease_invalid",
+        retryable: true,
+        runtime_state: "unchanged",
+        detail_code: "authority_unavailable",
+        request_id: "cmd-reject-once",
+      },
+    }]);
+    expect(kit.currentStageUrl).toBeNull();
+
+    const replay = computeFakeKitResponse(
+      {
+        event_type: "openStageRequest",
+        payload: { request_id: "cmd-replay", url: "harness://stage/replayed.usdc" },
+      },
+      kit,
+    );
+    expect(replay.result).toMatchObject({
+      status: "success",
+      request_id: "cmd-replay",
+      url: "harness://stage/replayed.usdc",
+    });
+    expect(kit.currentStageUrl).toBe("harness://stage/replayed.usdc");
+  });
+
+  it("production build 不能只靠 query 啟用 harness", () => {
+    expect(resolveHarnessEnabled(false, false, true)).toBe(false);
+    expect(resolveHarnessEnabled(false, true, true)).toBe(true);
+    expect(resolveHarnessEnabled(true, false, false)).toBe(true);
   });
 });
