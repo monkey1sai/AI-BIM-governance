@@ -301,6 +301,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     setFirstFrame(false);
     setDataChannelReady(false);
     setLoadedStageUrl(null);
+    setStageProofStatus("not_observed");
     setHighlightResult(null);
     setCommandTrace(null);
     try {
@@ -451,6 +452,7 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
               setFirstFrame(false);
               setDataChannelReady(false);
               setLoadedStageUrl(null);
+              setStageProofStatus("not_observed");
               setHighlightResult(null);
               setCommandTrace(null);
             }}

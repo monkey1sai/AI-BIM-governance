@@ -392,6 +392,8 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
   });
 
   it("openedStageResult with binding_revision_id is the production binding apply acknowledgement", () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
     const app = operableApp();
     useSynchronousSetState(app);
     internals(app).state = {
@@ -399,13 +401,24 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
       expectedStageUrl: "stage://primary.usdc",
       govBindingApplyState: { status: "applying" },
     };
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
     vi.spyOn(internals(app), "_appendDemoIncoming").mockImplementation(() => {});
     vi.spyOn(internals(app), "_appendReviewEvent").mockImplementation(() => {});
+
+    internals(app)._sendStreamMessage({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_binding_ack_001",
+        url: "stage://primary.usdc",
+        binding_revision_id: "rev_binding_001",
+      },
+    });
 
     internals(app)._handleCustomEvent({
       event_type: "openedStageResult",
       payload: {
         result: "success",
+        request_id: "req_binding_ack_001",
         url: "stage://primary.usdc",
         binding_revision_id: "rev_binding_001",
       },
@@ -414,6 +427,41 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
     expect(internals(app).state.govBindingActiveRevision).toBe("rev_binding_001");
     expect(internals(app).state.govBindingLastGoodRevision).toBe("rev_binding_001");
     expect(internals(app).state.govBindingApplyState).toEqual({ status: "applied" });
+  });
+
+  it.each([
+    ["missing request_id", {}],
+    ["unknown request_id", { request_id: "req_unsolicited_001" }],
+  ])("openedStageResult with %s cannot mutate stage or binding proof", (_label, correlationPayload) => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: "stage://primary.usdc",
+      loadedStageUrl: null,
+      stageLoadStatus: "pending",
+      govBindingActiveRevision: null,
+      govBindingLastGoodRevision: null,
+      govBindingApplyState: { status: "applying" },
+    };
+    vi.spyOn(internals(app), "_appendDemoIncoming").mockImplementation(() => {});
+
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        url: "stage://primary.usdc",
+        binding_revision_id: "rev_unsolicited_001",
+        ...correlationPayload,
+      },
+    });
+
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.stageLoadStatus).toBe("pending");
+    expect(internals(app).state.govBindingActiveRevision).toBeNull();
+    expect(internals(app).state.govBindingLastGoodRevision).toBeNull();
+    expect(internals(app).state.govBindingApplyState).toEqual({ status: "applying" });
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual([]);
   });
 });
 
@@ -850,6 +898,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     internals(app)._sendStreamMessage({ event_type: "focusPrimRequest", payload: { prim_path: "/World/StillBlocked" } });
     expect(sendSpy).toHaveBeenCalledTimes(1);
 
+    expect(await internals(app)._resyncStageBindingProof()).toBe(false);
     expect(await internals(app)._resyncStageBindingProof()).toBe(true);
     expect(fetchSpy.mock.calls[2][1]).toMatchObject({
       headers: expect.objectContaining({ "X-User-Token": "local_user_token_primary" }),
@@ -968,13 +1017,21 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
     const app = operableApp();
     useSynchronousSetState(app);
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
     internals(app).state = {
       ...internals(app).state,
       expectedStageUrl: "stage://a.usdc",
       selectedUSDAsset: { name: "a", url: "stage://a.usdc" },
       stageLoadStatus: "pending",
     };
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
     vi.spyOn(internals(app), "_appendDemoIncoming").mockImplementation(() => {});
+
+    internals(app)._sendStreamMessage({
+      event_type: "openStageRequest",
+      payload: { request_id: "req_a", url: "stage://a.usdc", binding_revision_id: "rev_a" },
+    });
 
     internals(app)._handleCustomEvent({
       event_type: "openedStageResult",
@@ -995,6 +1052,10 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       stageLoadStatus: "pending",
       loadedStageUrl: "stage://a.usdc",
     };
+    internals(app)._sendStreamMessage({
+      event_type: "openStageRequest",
+      payload: { request_id: "req_b", url: "stage://b.usdc", binding_revision_id: "rev_b" },
+    });
     internals(app)._handleCustomEvent({
       event_type: "openedStageResult",
       payload: {
@@ -1803,11 +1864,31 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
     return app;
   }
 
+  function trackBindingRequest(
+    app: App,
+    eventType: "openStageRequest" | "loadArtifactGroupRequest",
+    requestId: string,
+    bindingRevisionId: string,
+  ): void {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+    internals(app)._sendStreamMessage({
+      event_type: eventType,
+      payload: {
+        request_id: requestId,
+        binding_revision_id: bindingRevisionId,
+        url: "stage://primary.usdc",
+      },
+    });
+  }
+
   it("openedStageResult success 但 loaded URL 與 expected 不符 → failed(stale_stage_or_mismatch)，不宣告 applied", () => {
     const app = bindingApplyApp();
+    trackBindingRequest(app, "openStageRequest", "req_binding_002", "rev_binding_002");
     internals(app)._handleCustomEvent({
       event_type: "openedStageResult",
-      payload: { result: "success", url: "stage://stale-other.usdc", binding_revision_id: "rev_binding_002" },
+      payload: { result: "success", request_id: "req_binding_002", url: "stage://stale-other.usdc", binding_revision_id: "rev_binding_002" },
     });
     expect(internals(app).state.govBindingApplyState).toEqual({ status: "failed", reason: "stale_stage_or_mismatch" });
     expect(internals(app).state.govBindingActiveRevision).toBeUndefined();
@@ -1815,9 +1896,10 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
 
   it("openedStageResult success 但缺 loaded URL（無 stage-match 證據）→ failed(missing_stage_evidence)，不偽宣告 applied", () => {
     const app = bindingApplyApp();
+    trackBindingRequest(app, "openStageRequest", "req_binding_003", "rev_binding_003");
     internals(app)._handleCustomEvent({
       event_type: "openedStageResult",
-      payload: { result: "success", binding_revision_id: "rev_binding_003" },
+      payload: { result: "success", request_id: "req_binding_003", binding_revision_id: "rev_binding_003" },
     });
     expect(internals(app).state.govBindingApplyState).toEqual({ status: "failed", reason: "missing_stage_evidence" });
     expect(internals(app).state.govBindingActiveRevision).toBeUndefined();
@@ -1825,9 +1907,10 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
 
   it("loadArtifactGroupResult result=error → failed 帶 Kit error reason", () => {
     const app = bindingApplyApp();
+    trackBindingRequest(app, "loadArtifactGroupRequest", "req_binding_004", "rev_binding_004");
     internals(app)._handleCustomEvent({
       event_type: "loadArtifactGroupResult",
-      payload: { result: "error", binding_revision_id: "rev_binding_004", error: "kit_compose_failed" },
+      payload: { result: "error", request_id: "req_binding_004", binding_revision_id: "rev_binding_004", error: "kit_compose_failed" },
     });
     expect(internals(app).state.govBindingApplyState).toEqual({ status: "failed", reason: "kit_compose_failed" });
   });

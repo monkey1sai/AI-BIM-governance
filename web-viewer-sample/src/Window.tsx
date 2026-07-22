@@ -560,11 +560,16 @@ export default class App extends React.Component<AppProps, AppState> {
         }
     }
 
+    private _notifyParentViewerReady = (): void => {
+        if (window.parent !== window) this._postToParent({ type: "viewer_ready" });
+    };
+
     componentDidMount(): void {
         // VG-01：嵌入 console iframe 時掛上 parent postMessage 橋（unmount 對稱移除），並通知 parent listener 已就緒。
         // 嚴格 additive：非嵌入（window.parent === window）時 listener 永遠 reject、不送任何訊息，既有單機/直連行為零變更。
         window.addEventListener("message", this._onParentMessage);
-        if (window.parent !== window) this._postToParent({ type: "viewer_ready" });
+        window.addEventListener("load", this._notifyParentViewerReady);
+        this._notifyParentViewerReady();
 
         if (reviewEnv.hasExplicitEmptySessionId) {
             void this._bootstrapReview();
@@ -576,6 +581,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     componentWillUnmount(): void {
+        window.removeEventListener("load", this._notifyParentViewerReady);
         this._releaseStandaloneViewerLease();
         this._clearStreamStartTimeout();
         this._clearLoadingStateRetry();
@@ -682,14 +688,8 @@ export default class App extends React.Component<AppProps, AppState> {
         outcome: RuntimeCommandOutcome,
     ): RuntimeCommandCorrelation {
         const correlation = this._correlateRuntimeCommandEvent(responseEventType, payload);
-        if (
-            correlation.disposition !== "duplicate"
-            && correlation.disposition !== "mismatch"
-            && correlation.requestId
-        ) {
-            const eventType = correlation.context?.eventType
-                || runtimeResponseRequestTypes.get(responseEventType)?.values().next().value
-                || responseEventType;
+        if (correlation.disposition === "matched" && correlation.requestId && correlation.context) {
+            const eventType = correlation.context.eventType;
             if (!this._claimRuntimeCommandTerminal(correlation.requestId, eventType, outcome)) {
                 return { ...correlation, disposition: "duplicate" };
             }
@@ -2679,7 +2679,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 payload,
                 payload.result === "success" ? "success" : "error",
             );
-            if (correlation.disposition === "duplicate" || correlation.disposition === "mismatch") return;
+            if (correlation.disposition !== "matched") return;
             if (payload.result === "success") {
                 const loadedUrl = getPayloadString(payload, "url");
                 const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
@@ -2801,7 +2801,7 @@ export default class App extends React.Component<AppProps, AppState> {
             const correlation = result === "error"
                 ? this._completeRuntimeCommandEvent("loadArtifactGroupResult", payload, "error")
                 : this._correlateRuntimeCommandEvent("loadArtifactGroupResult", payload);
-            if (correlation.disposition === "duplicate" || correlation.disposition === "mismatch") return;
+            if (correlation.disposition !== "matched") return;
             const context = correlation.context;
             if (requestId && context) {
                 if (result === "accepted") {
@@ -2944,7 +2944,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 payload,
                 result === "success" ? "success" : "error",
             );
-            if (correlation.disposition === "duplicate" || correlation.disposition === "mismatch") return;
+            if (correlation.disposition !== "matched") return;
             const nextState: Partial<AppState> = {
                 reviewEvents: [...this.state.reviewEvents, `高亮結果：${result}`],
             };
@@ -2990,7 +2990,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 payload,
                 result === "success" ? "success" : "error",
             );
-            if (correlation.disposition === "duplicate" || correlation.disposition === "mismatch") return;
+            if (correlation.disposition !== "matched") return;
             const nextState: Partial<AppState> = {
                 reviewEvents: [...this.state.reviewEvents, `聚焦結果：${result}`],
             };
@@ -3019,7 +3019,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 payload,
                 result === "success" ? "success" : "error",
             );
-            if (correlation.disposition === "duplicate" || correlation.disposition === "mismatch") return;
+            if (correlation.disposition !== "matched") return;
             this._appendReviewEvent(`${event.event_type}：${result}`);
         }
             
@@ -3070,7 +3070,7 @@ export default class App extends React.Component<AppProps, AppState> {
         else if (event.event_type === "bindingApplied") {
             const revision = getPayloadString(payload, "binding_revision_id");
             const correlation = this._completeRuntimeCommandEvent("bindingApplied", payload, "success");
-            if (correlation.disposition === "duplicate" || correlation.disposition === "mismatch") return;
+            if (correlation.disposition !== "matched") return;
             if (revision) {
                 if (this.stageProofBlockedRevision) {
                     this._appendReviewEvent("忽略未經 authenticated status resync 的 late bindingApplied");

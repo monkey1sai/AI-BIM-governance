@@ -664,6 +664,62 @@ async def test_async_open_stage_confirms_before_success(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure_point", ["next_update", "lighting"])
+async def test_async_post_open_failure_reports_runtime_changed(monkeypatch, failure_point):
+    authority = FakeAuthority()
+    manager = make_manager(authority)
+    dispatched = capture_dispatch(monkeypatch)
+    scheduled = []
+    payload = stage_payload()
+    attempt = manager._create_stage_attempt(
+        "openStageRequest",
+        payload,
+        payload["url"],
+        {"binding_revision_id": "rev_binding_001"},
+    )
+    context = manager._reserve_stage_attempt(attempt)
+    stage = types.SimpleNamespace(GetRootLayer=lambda: types.SimpleNamespace(identifier=""))
+
+    async def open_stage_async(url, load_set):
+        return True, ""
+
+    async def next_update_async():
+        if failure_point == "next_update":
+            raise RuntimeError("post-open update failed")
+
+    def ensure_default_lighting(stage):
+        if failure_point == "lighting":
+            raise RuntimeError("post-open lighting failed")
+
+    usd_context = types.SimpleNamespace(
+        get_stage=lambda: stage,
+        open_stage_async=open_stage_async,
+    )
+    monkeypatch.setattr(stage_loading.omni.usd, "get_context", lambda: usd_context)
+    monkeypatch.setattr(
+        stage_loading.omni.kit.app,
+        "get_app",
+        lambda: types.SimpleNamespace(next_update_async=next_update_async),
+    )
+    monkeypatch.setattr(manager, "_process_stage_url", lambda value: value)
+    monkeypatch.setattr(stage_loading, "_ensure_default_lighting", ensure_default_lighting)
+    monkeypatch.setattr(
+        stage_loading.asyncio,
+        "ensure_future",
+        lambda coroutine: scheduled.append(coroutine),
+    )
+
+    manager._open_authorized_stage(attempt, context)
+    await scheduled[0]
+
+    assert len(authority.confirm_calls) == 1
+    assert authority.confirm_calls[0][1] == "failed"
+    assert [name for name, _ in dispatched] == ["openedStageResult"]
+    assert dispatched[0][1]["result"] == "error"
+    assert dispatched[0][1]["runtime_state"] == "changed_failed"
+
+
+@pytest.mark.asyncio
 async def test_load_status_success_confirms_once_and_ignores_stale_callback(monkeypatch):
     authority = FakeAuthority()
     manager = make_manager(authority)

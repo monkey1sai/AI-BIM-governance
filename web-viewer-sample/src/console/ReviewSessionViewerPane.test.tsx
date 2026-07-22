@@ -354,6 +354,37 @@ describe("ReviewSessionViewerPane", () => {
     expect(q("review-room-runtime-evidence")?.getAttribute("aria-live")).toBe("polite");
   });
 
+  it("manual session change clears active stage proof before a new claim", async () => {
+    await renderPane();
+    await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
+    await flush();
+    await act(async () => {
+      (viewerBox.current!.onFirstFrame as (m: unknown) => void)({ protocol: "vg01", type: "first_frame", stageUrl: "stage://x" });
+      (viewerBox.current!.onStageLoaded as (m: unknown) => void)({
+        protocol: "vg01",
+        type: "stage_loaded",
+        stageUrl: "stage://x",
+        status: "active",
+        binding_revision_id: "rev_binding_001",
+      });
+    });
+    await flush();
+    expect(q("review-room-runtime-evidence")?.textContent).toContain("matched");
+
+    const input = q<HTMLInputElement>("review-room-session-input")!;
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(input, "review_session_other");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flush();
+
+    expect(q("review-room-runtime-evidence")?.textContent).toContain("not_observed");
+    expect(q("review-room-runtime-evidence")?.textContent).not.toContain("matched");
+    expect(q<HTMLButtonElement>("review-room-highlight")!.disabled).toBe(true);
+    expect(q("review-room-viewer-host")).toBeNull();
+  });
+
   it("missing usd_prim_path opens Review Room diagnostic mode but blocks highlight", async () => {
     await renderPane({
       ...handoff,

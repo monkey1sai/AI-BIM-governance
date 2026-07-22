@@ -1012,6 +1012,7 @@ class LoadingManager:
             return
 
         async def open_stage():
+            runtime_changed = False
             try:
                 carb.log_info("Opening stage for an authorized request.")
                 usd_context = omni.usd.get_context()
@@ -1032,6 +1033,8 @@ class LoadingManager:
                         error,
                     )
                     return
+
+                runtime_changed = True
 
                 if self._active_stage_attempt is not attempt:
                     return
@@ -1059,6 +1062,7 @@ class LoadingManager:
                     stage_context,
                     attempt.requested_stage_url or "[obfuscated]",
                     exc,
+                    runtime_state="changed_failed" if runtime_changed else None,
                 )
 
         asyncio.ensure_future(open_stage())

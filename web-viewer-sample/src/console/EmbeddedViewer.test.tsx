@@ -282,6 +282,51 @@ describe("EmbeddedViewer postMessage 橋", () => {
     }), VIEWER_ORIGIN);
   });
 
+  it("iframe navigation clears readiness and withholds bearer until the new document sends viewer_ready", async () => {
+    const onViewerReady = vi.fn();
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <EmbeddedViewer
+          sessionId="review_session_abc"
+          viewerOrigin={VIEWER_ORIGIN}
+          viewerLeaseToken="lease_token_before_reload"
+          userToken="local_user_before_reload"
+          onViewerReady={onViewerReady}
+        />,
+      );
+    });
+    const iframe = container.querySelector("iframe")!;
+    const iframeWin = iframe.contentWindow!;
+    const postSpy = vi.spyOn(iframeWin, "postMessage");
+
+    fireMessage({ protocol: "vg01", type: "viewer_ready" }, VIEWER_ORIGIN, iframeWin);
+    expect(postSpy).toHaveBeenCalledTimes(1);
+    expect(onViewerReady).toHaveBeenCalledTimes(1);
+
+    await act(async () => { iframe.dispatchEvent(new Event("load")); });
+    await act(async () => {
+      root!.render(
+        <EmbeddedViewer
+          sessionId="review_session_abc"
+          viewerOrigin={VIEWER_ORIGIN}
+          viewerLeaseToken="lease_token_after_reload"
+          userToken="local_user_after_reload"
+          onViewerReady={onViewerReady}
+        />,
+      );
+    });
+    expect(postSpy).toHaveBeenCalledTimes(1);
+
+    fireMessage({ protocol: "vg01", type: "viewer_ready" }, VIEWER_ORIGIN, iframeWin);
+    expect(postSpy).toHaveBeenCalledTimes(2);
+    expect(postSpy).toHaveBeenLastCalledWith(expect.objectContaining({
+      token: "lease_token_after_reload",
+      user_token: "local_user_after_reload",
+    }), VIEWER_ORIGIN);
+    expect(onViewerReady).toHaveBeenCalledTimes(2);
+  });
+
   it("message 來自非 iframe.contentWindow 的 source 丟棄", async () => {
     const onFirstFrame = vi.fn();
     root = createRoot(container);
