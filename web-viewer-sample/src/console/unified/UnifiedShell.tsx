@@ -12,7 +12,7 @@ import {
 import type { ReactNode } from "react";
 import { setLang, useLang } from "../i18n";
 import {
-  MONO, getL, navMain, apps, badgeTone, navItem,
+  getL, navMain, apps, badgeTone, navItem,
   initialIntake, initialConv, initialSessions, initialOutbox, initialIssues, INITIAL_ISSUE_SEQ,
 } from "./fixtures";
 import type {
@@ -117,87 +117,87 @@ function ShellFrame({ page, dock, concept, children }: UnifiedShellProps) {
 
   /* ---- topbar ---- */
   const topbar = (
-    <div style={{ display: "flex", alignItems: "center", gap: 14, height: 56, padding: "0 16px", background: "var(--ab-bar)", borderBottom: "1px solid rgba(120,160,210,.12)", flex: "none" }}>
-      <div onClick={() => nav("#home")} style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-        <div style={{ width: 30, height: 30, borderRadius: 8, background: "radial-gradient(circle at 35% 35%,rgba(65,199,232,.9),rgba(47,123,246,.55) 60%,rgba(10,16,24,.2))", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: MONO, fontWeight: 600, fontSize: 13, color: "var(--ab-on-accent)" }}>⬡</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-          <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: ".01em", whiteSpace: "nowrap" }}>AI-BIM-governance</span>
-          <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: ".1em", color: "var(--ab-text-dim)", textTransform: "uppercase" }}>{L.sub}</span>
+    <div style={{ display: "flex", alignItems: "center", gap: "var(--ab-space-px-14)", height: 56, padding: "0 var(--ab-space-6)", background: "var(--ab-bar)", borderBottom: "var(--ab-space-px-1) solid var(--ab-border)", flex: "none" }}>
+      <div onClick={() => nav("#home")} style={{ display: "flex", alignItems: "center", gap: "var(--ab-space-4)", cursor: "pointer" }}>
+        <div style={{ width: 30, height: 30, borderRadius: "var(--ab-r-md)", background: "radial-gradient(circle at 35% 35%,var(--ab-accent-a90),var(--ab-accent-2-a55) 60%,var(--ab-bar-a20))", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--ab-mono)", fontWeight: "var(--ab-fw-600)", fontSize: "var(--ab-fs-sm)", color: "var(--ab-on-accent)" }}>⬡</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--ab-space-px-1)" }}>
+          <span style={{ fontWeight: "var(--ab-fw-700)", fontSize: "var(--ab-fs-body)", letterSpacing: "var(--ab-track-01)", whiteSpace: "nowrap" }}>AI-BIM-governance</span>
+          <span style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-9)", letterSpacing: "var(--ab-track-10)", color: "var(--ab-text-dim)", textTransform: "uppercase" }}>{L.sub}</span>
         </div>
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--ab-surface)", border: "1px solid rgba(120,160,210,.12)", borderRadius: 9, padding: "7px 12px", width: 300 }}>
-        <span style={{ color: "var(--ab-text-dim)", fontSize: 12 }}>⌕</span>
-        <input placeholder={L.search} style={{ background: "none", border: "none", outline: "none", color: "var(--ab-text)", fontSize: "12.5px", fontFamily: "inherit", flex: 1 }} />
-        <span style={{ fontFamily: MONO, fontSize: "9.5px", color: "var(--ab-text-dimmer)", border: "1px solid rgba(120,160,210,.14)", borderRadius: 4, padding: "1px 5px" }}>⌘K</span>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--ab-space-3)", background: "var(--ab-surface)", border: "var(--ab-space-px-1) solid var(--ab-border)", borderRadius: "var(--ab-r-px-9)", padding: "var(--ab-space-px-7) var(--ab-space-5)", width: 300 }}>
+        <span style={{ color: "var(--ab-text-dim)", fontSize: "var(--ab-fs-xs)" }}>⌕</span>
+        <input placeholder={L.search} style={{ background: "none", border: "none", outline: "none", color: "var(--ab-text)", fontSize: "var(--ab-fs-12-5)", fontFamily: "inherit", flex: 1 }} />
+        <span style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-9-5)", color: "var(--ab-text-dimmer)", border: "var(--ab-space-px-1) solid var(--ab-border-mid)", borderRadius: "var(--ab-r-xs)", padding: "var(--ab-space-px-1) var(--ab-space-px-5)" }}>⌘K</span>
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--ab-surface)", border: "1px solid rgba(120,160,210,.12)", borderRadius: 9, padding: "7px 12px", cursor: "pointer" }}>
-        <span style={{ fontSize: 11, color: "var(--ab-text-dim)" }}>{L.project}</span>
-        <span style={{ fontSize: "12.5px", fontWeight: 500, whiteSpace: "nowrap" }}>Demo Project – A1 Tower</span>
-        <span style={{ color: "var(--ab-text-dim)", fontSize: 10 }}>▾</span>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--ab-space-3)", background: "var(--ab-surface)", border: "var(--ab-space-px-1) solid var(--ab-border)", borderRadius: "var(--ab-r-px-9)", padding: "var(--ab-space-px-7) var(--ab-space-5)", cursor: "pointer" }}>
+        <span style={{ fontSize: "var(--ab-fs-mono)", color: "var(--ab-text-dim)" }}>{L.project}</span>
+        <span style={{ fontSize: "var(--ab-fs-12-5)", fontWeight: "var(--ab-fw-500)", whiteSpace: "nowrap" }}>Demo Project – A1 Tower</span>
+        <span style={{ color: "var(--ab-text-dim)", fontSize: "var(--ab-fs-10)" }}>▾</span>
       </div>
       <div style={{ flex: 1 }} />
-      <div data-prov="fixture" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: "rgba(49,197,109,.10)", border: "1px solid rgba(49,197,109,.25)", fontSize: 11, color: "var(--ab-ok-text)" }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--ab-ok)" }} />Coordinator OK</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: "rgba(49,197,109,.10)", border: "1px solid rgba(49,197,109,.25)", fontSize: 11, color: "var(--ab-ok-text)" }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--ab-ok)" }} />Governance OK</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: "rgba(65,199,232,.10)", border: "1px solid rgba(65,199,232,.25)", fontSize: 11, color: "var(--ab-accent-text)" }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--ab-accent)" }} />Kit Runtime</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: "rgba(49,197,109,.10)", border: "1px solid rgba(49,197,109,.25)", fontFamily: MONO, fontSize: 11, color: "var(--ab-ok-text)" }}>GPU/Stream 82%</div>
+      <div data-prov="fixture" style={{ display: "flex", alignItems: "center", gap: "var(--ab-space-2)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--ab-space-2)", padding: "var(--ab-space-px-5) var(--ab-space-4)", borderRadius: "var(--ab-r-pill)", background: "var(--ab-ok-a10)", border: "var(--ab-space-px-1) solid var(--ab-ok-a25)", fontSize: "var(--ab-fs-mono)", color: "var(--ab-ok-text)" }}><span data-testid="coordinator-status-dot" style={{ width: 6, height: 6, borderRadius: "var(--ab-r-round)", background: "var(--ab-ok)" }} />Coordinator OK</div>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--ab-space-2)", padding: "var(--ab-space-px-5) var(--ab-space-4)", borderRadius: "var(--ab-r-pill)", background: "var(--ab-ok-a10)", border: "var(--ab-space-px-1) solid var(--ab-ok-a25)", fontSize: "var(--ab-fs-mono)", color: "var(--ab-ok-text)" }}><span data-testid="governance-status-dot" style={{ width: 6, height: 6, borderRadius: "var(--ab-r-round)", background: "var(--ab-ok)" }} />Governance OK</div>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--ab-space-2)", padding: "var(--ab-space-px-5) var(--ab-space-4)", borderRadius: "var(--ab-r-pill)", background: "var(--ab-accent-a10)", border: "var(--ab-space-px-1) solid var(--ab-accent-a25)", fontSize: "var(--ab-fs-mono)", color: "var(--ab-accent-text)" }}><span data-testid="kit-runtime-status-dot" style={{ width: 6, height: 6, borderRadius: "var(--ab-r-round)", background: "var(--ab-accent)" }} />Kit Runtime</div>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--ab-space-2)", padding: "var(--ab-space-px-5) var(--ab-space-4)", borderRadius: "var(--ab-r-pill)", background: "var(--ab-ok-a10)", border: "var(--ab-space-px-1) solid var(--ab-ok-a25)", fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-mono)", color: "var(--ab-ok-text)" }}>GPU/Stream 82%</div>
       </div>
-      <div onClick={() => setLang(zh ? "en" : "zh")} style={{ display: "flex", alignItems: "center", gap: 0, border: "1px solid rgba(120,160,210,.16)", borderRadius: 8, overflow: "hidden", cursor: "pointer", fontFamily: MONO, fontSize: "10.5px" }}>
-        <span data-uc="lang-zh" data-active={zh ? "true" : "false"} style={zh ? { padding: "4px 9px", background: "rgba(65,199,232,.16)", color: "var(--ab-accent-bright)" } : { padding: "4px 9px", color: "var(--ab-text-dim)" }}>中</span>
-        <span data-uc="lang-en" data-active={!zh ? "true" : "false"} style={!zh ? { padding: "4px 9px", background: "rgba(65,199,232,.16)", color: "var(--ab-accent-bright)" } : { padding: "4px 9px", color: "var(--ab-text-dim)" }}>EN</span>
+      <div onClick={() => setLang(zh ? "en" : "zh")} style={{ display: "flex", alignItems: "center", gap: 0, border: "var(--ab-space-px-1) solid var(--ab-border-strong)", borderRadius: "var(--ab-r-md)", overflow: "hidden", cursor: "pointer", fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-10-5)" }}>
+        <span data-uc="lang-zh" data-active={zh ? "true" : "false"} style={zh ? { padding: "var(--ab-space-1) var(--ab-space-px-9)", background: "var(--ab-accent-a16)", color: "var(--ab-accent-bright)" } : { padding: "var(--ab-space-1) var(--ab-space-px-9)", color: "var(--ab-text-dim)" }}>中</span>
+        <span data-uc="lang-en" data-active={!zh ? "true" : "false"} style={!zh ? { padding: "var(--ab-space-1) var(--ab-space-px-9)", background: "var(--ab-accent-a16)", color: "var(--ab-accent-bright)" } : { padding: "var(--ab-space-1) var(--ab-space-px-9)", color: "var(--ab-text-dim)" }}>EN</span>
       </div>
-      <span style={{ color: "var(--ab-text-muted)", fontSize: 15, cursor: "pointer" }}>◔</span>
-      <div style={{ width: 32, height: 32, borderRadius: "50%", background: "linear-gradient(135deg,var(--ab-accent-2),var(--ab-accent))", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11.5px", fontWeight: 700, color: "var(--ab-on-accent)" }}>AD</div>
+      <span style={{ color: "var(--ab-text-muted)", fontSize: "var(--ab-fs-body)", cursor: "pointer" }}>◔</span>
+      <div style={{ width: 32, height: 32, borderRadius: "var(--ab-r-round)", background: "linear-gradient(135deg,var(--ab-accent-2),var(--ab-accent))", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "var(--ab-fs-11-5)", fontWeight: "var(--ab-fw-700)", color: "var(--ab-on-accent)" }}>AD</div>
     </div>
   );
 
   /* ---- sidebar ---- */
   const convBadge = String(conv.filter((c) => c.st !== "done").length);
   const sidebar = (
-    <div data-prov="fixture" style={{ width: 212, flex: "none", background: "var(--ab-bar)", borderRight: "1px solid rgba(120,160,210,.10)", padding: "14px 10px 10px", display: "flex", flexDirection: "column", gap: 16, overflow: "auto" }}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: ".12em", color: "var(--ab-text-dimmer)", textTransform: "uppercase", padding: "0 10px 6px" }}>{L.g_work}</span>
+    <div data-prov="fixture" style={{ width: 212, flex: "none", background: "var(--ab-bar)", borderRight: "var(--ab-space-px-1) solid var(--ab-border-a10)", padding: "var(--ab-space-px-14) var(--ab-space-4) var(--ab-space-4)", display: "flex", flexDirection: "column", gap: "var(--ab-space-6)", overflow: "auto" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--ab-space-px-2)" }}>
+        <span style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-9)", letterSpacing: "var(--ab-track-label)", color: "var(--ab-text-dimmer)", textTransform: "uppercase", padding: "0 var(--ab-space-4) var(--ab-space-2)" }}>{L.g_work}</span>
         {navMain.map((n) => (
           <div key={n.id} className="hv-bg" data-uc={"nav-" + n.id} data-active={page === n.id ? "true" : "false"} style={navItem(page === n.id)} onClick={() => nav(n.hash)}>
-            <span style={{ width: 16, textAlign: "center", fontSize: 12, opacity: 0.85 }}>{n.icon}</span>
-            <span style={{ flex: 1, fontSize: "12.5px" }}>{L[n.labelKey]}</span>
+            <span style={{ width: 16, textAlign: "center", fontSize: "var(--ab-fs-xs)", opacity: 0.85 }}>{n.icon}</span>
+            <span style={{ flex: 1, fontSize: "var(--ab-fs-12-5)" }}>{L[n.labelKey]}</span>
             {n.id === "pipe" ? <span data-uc="nav-pipe-badge" style={badgeTone("warn")}>{convBadge}</span> : null}
           </div>
         ))}
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: ".12em", color: "var(--ab-text-dimmer)", textTransform: "uppercase", padding: "0 10px 6px" }}>{L.g_apps}</span>
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--ab-space-px-2)" }}>
+        <span style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-9)", letterSpacing: "var(--ab-track-label)", color: "var(--ab-text-dimmer)", textTransform: "uppercase", padding: "0 var(--ab-space-4) var(--ab-space-2)" }}>{L.g_apps}</span>
         {apps.map((a) => {
           const active = (page === "ws" && dock === a.code.toLowerCase()) || (page === "concept" && concept === a.code.toLowerCase());
           return (
             <div key={a.code} className="hv-bg" data-uc={"app-" + a.code.toLowerCase()} data-active={active ? "true" : "false"} style={navItem(active)} onClick={() => nav(a.hash)}>
-              <span style={{ width: 26, fontFamily: MONO, fontSize: 10, color: "var(--ab-text-code)" }}>{a.code}</span>
-              <span style={{ flex: 1, fontSize: 12 }}>{zh ? a.labelZh : a.labelEn}</span>
+              <span style={{ width: 26, fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-10)", color: "var(--ab-text-code)" }}>{a.code}</span>
+              <span style={{ flex: 1, fontSize: "var(--ab-fs-xs)" }}>{zh ? a.labelZh : a.labelEn}</span>
               <span style={badgeTone(a.tone)}>{a.badge}</span>
             </div>
           );
         })}
       </div>
-      <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: "var(--ab-space-3)" }}>
         {/* href 佔位（正本 design-doc.html 不隨產品打包；baseline 只驗外觀） */}
-        <a href="#" target="_blank" rel="noreferrer" className="hv-doc" style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", border: "1px solid rgba(120,160,210,.14)", borderRadius: 9, fontSize: "11.5px", color: "var(--ab-text-muted)", textDecoration: "none" }}>
-          <span>▦</span><span>{L.designdoc}</span><span style={{ marginLeft: "auto", fontSize: 10 }}>↗</span>
+        <a href="#" target="_blank" rel="noreferrer" className="hv-doc" style={{ display: "flex", alignItems: "center", gap: "var(--ab-space-3)", padding: "var(--ab-space-px-9) var(--ab-space-4)", border: "var(--ab-space-px-1) solid var(--ab-border-mid)", borderRadius: "var(--ab-r-px-9)", fontSize: "var(--ab-fs-11-5)", color: "var(--ab-text-muted)", textDecoration: "none" }}>
+          <span>▦</span><span>{L.designdoc}</span><span style={{ marginLeft: "auto", fontSize: "var(--ab-fs-10)" }}>↗</span>
         </a>
-        <div data-uc="runtime-note" style={{ fontFamily: MONO, fontSize: "8.5px", color: "var(--ab-text-ghost)", padding: "0 4px" }}>:8004/ui · UnifiedConsole</div>
+        <div data-uc="runtime-note" style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-8-5)", color: "var(--ab-text-ghost)", padding: "0 var(--ab-space-1)" }}>:8004/ui · UnifiedConsole</div>
       </div>
     </div>
   );
 
   /* ---- toast host ---- */
   const toastHost = toastMsg ? (
-    <div data-uc="toast" style={{ position: "fixed", bottom: 26, left: "50%", transform: "translateX(-50%)", background: "var(--ab-raised)", border: "1px solid rgba(65,199,232,.4)", borderRadius: 10, padding: "10px 18px", fontSize: "12.5px", color: "var(--ab-text)", boxShadow: "0 12px 40px rgba(0,0,0,.5)", animation: "tup .18s ease-out", display: "flex", alignItems: "center", gap: 9, zIndex: 99 }}>
-      <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--ab-accent)" }} />
-      <span style={{ fontFamily: MONO, fontSize: "11.5px" }}>{toastMsg}</span>
+    <div data-uc="toast" style={{ position: "fixed", bottom: 26, left: "50%", transform: "translateX(-50%)", background: "var(--ab-raised)", border: "var(--ab-space-px-1) solid var(--ab-accent-a40)", borderRadius: "var(--ab-r-lg)", padding: "var(--ab-space-4) var(--ab-space-px-18)", fontSize: "var(--ab-fs-12-5)", color: "var(--ab-text)", boxShadow: "0 12px 40px var(--ab-black-a50)", animation: "tup .18s ease-out", display: "flex", alignItems: "center", gap: "var(--ab-space-px-9)", zIndex: 99 }}>
+      <span style={{ width: 7, height: 7, borderRadius: "var(--ab-r-round)", background: "var(--ab-accent)" }} />
+      <span style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-11-5)" }}>{toastMsg}</span>
     </div>
   ) : null;
 
   return (
-    <div className="uc-root" style={{ display: "flex", flexDirection: "column", height: "100vh", minWidth: 1360, color: "var(--ab-text)", fontSize: 14, background: "var(--ab-bg)" }}>
+    <div className="uc-root" style={{ display: "flex", flexDirection: "column", height: "100vh", minWidth: 1360, color: "var(--ab-text)", fontSize: "var(--ab-fs-14)", background: "var(--ab-bg)" }}>
       {topbar}
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         {sidebar}

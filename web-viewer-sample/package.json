@@ -67,6 +67,8 @@
         "jsdom": "^24.1.0",
         "pixelmatch": "7.1.0",
         "pngjs": "7.0.0",
+        "postcss": "8.5.19",
+        "postcss-value-parser": "4.2.0",
         "typescript": "^5.7.2",
         "vite": "^5.0.8",
         "vitest": "^2.1.8"

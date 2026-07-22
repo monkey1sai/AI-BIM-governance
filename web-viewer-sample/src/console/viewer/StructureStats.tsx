@@ -29,7 +29,7 @@ export interface SpatialNode {
 export function SpatialTreeView({ node, depth = 0 }: { node: SpatialNode; depth?: number }) {
   const counts = Object.entries(node.type_counts ?? {}).sort((a, b) => b[1] - a[1]);
   return (
-    <div className="gv-tree" data-testid="struct-tree-node" style={{ marginLeft: depth * 12 }}>
+    <div className="gv-tree" data-testid="struct-tree-node" style={{ marginLeft: `calc(${depth} * var(--ab-space-5))` }}>
       <div className="gv-tree__node">
         <span className="gv-mono">{node.ifc_type}</span> {node.name || ""}
         {counts.length > 0 && (

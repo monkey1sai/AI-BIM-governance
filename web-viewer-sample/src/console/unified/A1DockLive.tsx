@@ -15,18 +15,18 @@ import type { CSSProperties } from "react";
 import { governanceClient, LIBRARY_IFC_PREFIX, parseLibraryIfcPath } from "../governanceClient";
 import type { FileProjectRow, RuleRunHistoryItem } from "../governanceClient";
 import { useRuleRun } from "../hooks/useRuleRun";
-import { MONO, label9 } from "./fixtures";
+import { label9 } from "./fixtures";
 
-const liveRoot: CSSProperties = { display: "flex", flexDirection: "column", gap: 8, borderTop: "1px solid rgba(120,160,210,.14)", paddingTop: 10 };
-const rowBox: CSSProperties = { display: "flex", alignItems: "center", gap: 8, background: "var(--ab-inset)", border: "1px solid rgba(120,160,210,.12)", borderRadius: 8, padding: "6px 9px" };
-const noteStyle: CSSProperties = { fontSize: 10, color: "var(--ab-text-dim)" };
-const warnStyle: CSSProperties = { fontSize: 10, color: "var(--ab-danger)", wordBreak: "break-all" };
-const selectStyle: CSSProperties = { background: "var(--ab-inset)", color: "var(--ab-text)", border: "1px solid rgba(120,160,210,.16)", borderRadius: 8, padding: "6px 8px", fontSize: 11, fontFamily: "inherit", minWidth: 0, width: "100%" };
+const liveRoot: CSSProperties = { display: "flex", flexDirection: "column", gap: "var(--ab-space-3)", borderTop: "var(--ab-space-px-1) solid var(--ab-border-mid)", paddingTop: "var(--ab-space-4)" };
+const rowBox: CSSProperties = { display: "flex", alignItems: "center", gap: "var(--ab-space-3)", background: "var(--ab-inset)", border: "var(--ab-space-px-1) solid var(--ab-border)", borderRadius: "var(--ab-r-md)", padding: "var(--ab-space-2) var(--ab-space-px-9)" };
+const noteStyle: CSSProperties = { fontSize: "var(--ab-fs-10)", color: "var(--ab-text-dim)" };
+const warnStyle: CSSProperties = { fontSize: "var(--ab-fs-10)", color: "var(--ab-danger)", wordBreak: "break-all" };
+const selectStyle: CSSProperties = { background: "var(--ab-inset)", color: "var(--ab-text)", border: "var(--ab-space-px-1) solid var(--ab-border-strong)", borderRadius: "var(--ab-r-md)", padding: "var(--ab-space-2) var(--ab-space-3)", fontSize: "var(--ab-fs-mono)", fontFamily: "inherit", minWidth: 0, width: "100%" };
 const runBtn = (enabled: boolean): CSSProperties => ({
-  textAlign: "center", fontSize: "11.5px", borderRadius: 8, padding: 7,
+  textAlign: "center", fontSize: "var(--ab-fs-11-5)", borderRadius: "var(--ab-r-md)", padding: "var(--ab-space-px-7)",
   cursor: enabled ? "pointer" : "not-allowed",
   color: enabled ? "var(--ab-accent-text)" : "var(--ab-text-dimmer)",
-  border: `1px solid ${enabled ? "rgba(65,199,232,.3)" : "rgba(120,160,210,.14)"}`,
+  border: enabled ? "var(--ab-space-px-1) solid var(--ab-border-accent)" : "var(--ab-space-px-1) solid var(--ab-border-mid)",
 });
 
 /** local_fs 檔案庫版本 → 唯一邏輯鍵 {projectId}/{modelId}/{version.name}（＝library:// 尾段）。
@@ -136,13 +136,13 @@ export function A1DockLive({ zh }: { zh: boolean }) {
 
       {/* ── 結果摘要（證據型：RUN_DONE 後才有 summary）── */}
       {state.run ? (
-        <div data-testid="a1dock-live-summary" style={{ ...rowBox, flexDirection: "column", alignItems: "stretch", gap: 4 }}>
-          <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-text-2)", wordBreak: "break-all" }}>{runId ?? "—"} · {state.run.status}</span>
+        <div data-testid="a1dock-live-summary" style={{ ...rowBox, flexDirection: "column", alignItems: "stretch", gap: "var(--ab-space-1)" }}>
+          <span style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-10)", color: "var(--ab-text-2)", wordBreak: "break-all" }}>{runId ?? "—"} · {state.run.status}</span>
           <span style={noteStyle}>
             score {state.run.score ?? "—"} · passed {state.run.summary?.passed ?? "—"} · failed {state.run.summary?.failed ?? "—"}
           </span>
           {state.failed.slice(0, 3).map((row, i) => (
-            <span key={`${row.rule_code}-${row.ifc_guid ?? i}`} style={{ fontFamily: MONO, fontSize: 9, color: "var(--ab-danger)", wordBreak: "break-all" }}>
+            <span key={`${row.rule_code}-${row.ifc_guid ?? i}`} style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-9)", color: "var(--ab-danger)", wordBreak: "break-all" }}>
               {row.rule_code} · {row.ifc_guid ?? "—"}
             </span>
           ))}
@@ -157,12 +157,12 @@ export function A1DockLive({ zh }: { zh: boolean }) {
         <span data-testid="a1dock-live-history-empty" style={noteStyle}>{zh ? "尚無 rule-run 紀錄。" : "No rule runs yet."}</span>
       ) : null}
       {history !== null && history.length > 0 ? (
-        <div data-testid="a1dock-live-history" style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+        <div data-testid="a1dock-live-history" style={{ display: "flex", flexDirection: "column", gap: "var(--ab-space-px-5)" }}>
           {history.map((item) => (
             <div key={item.rule_run_id} style={rowBox}>
-              <span style={{ fontFamily: MONO, fontSize: 9, color: "var(--ab-text-2)", flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.rule_run_id}</span>
-              <span style={{ fontFamily: MONO, fontSize: 9, color: item.status === "succeeded" ? "var(--ab-ok-text)" : item.status === "failed" ? "var(--ab-danger)" : "var(--ab-text-muted)" }}>{item.status}</span>
-              <span style={{ fontFamily: MONO, fontSize: 9, color: "var(--ab-text-dim)" }}>{item.score ?? "—"}</span>
+              <span style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-9)", color: "var(--ab-text-2)", flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.rule_run_id}</span>
+              <span style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-9)", color: item.status === "succeeded" ? "var(--ab-ok-text)" : item.status === "failed" ? "var(--ab-danger)" : "var(--ab-text-muted)" }}>{item.status}</span>
+              <span style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-9)", color: "var(--ab-text-dim)" }}>{item.score ?? "—"}</span>
             </div>
           ))}
         </div>

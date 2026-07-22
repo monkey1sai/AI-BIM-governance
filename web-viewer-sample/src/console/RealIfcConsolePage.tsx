@@ -130,12 +130,12 @@ export function RealIfcConsolePage() {
   ];
 
   return (
-    <section data-testid="real-ifc-demo-control" style={{ padding: 12 }}>
+    <section data-testid="real-ifc-demo-control" style={{ padding: "var(--ab-space-5)" }}>
       <h2 style={{ marginTop: 0 }}>{t("真實 IFC Fixture 垂直切片（demo-control）", "Real IFC Fixture Vertical Slice (demo-control)")}</h2>
-      <p style={{ color: "var(--ab-text-muted)", fontSize: 13 }}>
+      <p style={{ color: "var(--ab-text-muted)", fontSize: "var(--ab-fs-sm)" }}>
         {t("從", "From")} <code>./storage</code> {t("選真實 IFC → 真 coordinator", "select a real IFC → real coordinator")} <code>register</code>{t("（內部 loopback）→ 真轉檔 → 審查 session → viewer。誠實顯示 runtime 狀態。", " (internal loopback) → real conversion → review session → viewer. Runtime state shown honestly.")}
       </p>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "10px 0" }}>
+      <div style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", flexWrap: "wrap", margin: "var(--ab-space-4) 0" }}>
         <label htmlFor="ifcFixtureSelect">IFC fixture</label>
         <select id="ifcFixtureSelect" data-testid="ifc-fixture-select" value={selected} onChange={(e) => setSelected(e.target.value)} style={{ minWidth: 360 }}>
           {sources.length === 0 ? (
@@ -151,20 +151,20 @@ export function RealIfcConsolePage() {
         <button data-testid="ifc-refresh-btn" onClick={() => void loadSources()}>Refresh ./storage IFC list</button>
         <button data-testid="ifc-register-btn" onClick={() => void register()}>{t("註冊並轉檔（真實）", "Register and convert (real)")}</button>
       </div>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, textAlign: "left" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--ab-fs-sm)", textAlign: "left" }}>
         <tbody>
           {rows.map(([label, tid]) => (
             <tr key={tid}>
-              <td style={{ padding: "3px 8px", color: "var(--ab-text-muted)" }}>{label}</td>
-              <td data-testid={tid} style={{ fontFamily: "monospace", wordBreak: "break-all" }}>{lin[tid] ?? DASH}</td>
+              <td style={{ padding: "var(--ab-space-px-3) var(--ab-space-3)", color: "var(--ab-text-muted)" }}>{label}</td>
+              <td data-testid={tid} style={{ fontFamily: "var(--ab-mono)", wordBreak: "break-all" }}>{lin[tid] ?? DASH}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      <div style={{ marginTop: 8 }}>
-        <span data-testid="ifc-runtime-state" style={{ fontWeight: 700, color: "var(--ab-accent)" }}>{runtime}</span>
+      <div style={{ marginTop: "var(--ab-space-3)" }}>
+        <span data-testid="ifc-runtime-state" style={{ fontWeight: "var(--ab-fw-700)", color: "var(--ab-accent)" }}>{runtime}</span>
         {viewerUrl && (
-          <a data-testid="ifc-open-viewer" href={viewerUrl} target="_blank" rel="noreferrer" style={{ marginLeft: 12 }}>{t("開 viewer（/ui/open）→", "Open viewer (/ui/open) →")}</a>
+          <a data-testid="ifc-open-viewer" href={viewerUrl} target="_blank" rel="noreferrer" style={{ marginLeft: "var(--ab-space-5)" }}>{t("開 viewer（/ui/open）→", "Open viewer (/ui/open) →")}</a>
         )}
       </div>
     </section>

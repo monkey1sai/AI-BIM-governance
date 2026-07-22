@@ -39,6 +39,9 @@ describe("UnifiedConsole smoke（approved 鍵 → UnifiedShell + 新頁）", () 
     expect(html).toContain("活躍 Sessions"); // kpi_sess
     expect(html).toContain("未結 Issue"); // kpi_issue
     expect(html).toContain("Outbox 待送"); // kpi_outbox
+    expect(html).toMatch(/data-testid="coordinator-status-dot" style="[^"]*background:var\(--ab-ok\)"/);
+    expect(html).toMatch(/data-testid="governance-status-dot" style="[^"]*background:var\(--ab-ok\)"/);
+    expect(html).toMatch(/data-testid="kit-runtime-status-dot" style="[^"]*background:var\(--ab-accent\)"/);
   });
 
   it("#a1 渲染 workspace：dockTabs 5 顆 + DATACHANNEL 字條 + A1 dock 規則集 3 條", () => {
@@ -81,6 +84,7 @@ describe("UnifiedConsole smoke（approved 鍵 → UnifiedShell + 新頁）", () 
     expect(html).toContain("② 轉檔"); // st_conv 欄
     expect(html).toContain("③ Review Sessions");
     expect(html).toContain("⑤ Callback Outbox");
+    expect(html).toContain("background:linear-gradient(90deg,var(--ab-accent-2),var(--ab-accent))");
   });
 
   it("#runtime 渲染 OpsPage：標題 + 服務健康 6 列", () => {

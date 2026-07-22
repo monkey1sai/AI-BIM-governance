@@ -173,8 +173,8 @@ test.describe("infra capability slice evidence", () => {
     await page.screenshot({ path: `${ARTIFACT_DIR}/instances-live-kit.png`, fullPage: true });
   });
 
-  test("#runtime shows monitoring summary", async ({ page }) => {
-    await gotoConsole(page, "runtime");
+  test("#coordinator shows monitoring summary", async ({ page }) => {
+    await gotoConsole(page, "coordinator");
     await expect(page.getByTestId("rt-monitor-summary")).toContainText("active 1");
     await expect(page.getByTestId("rt-monitor-summary")).toContainText("created 1");
     await expect(page.getByTestId("rt-monitor-summary")).toContainText("kit_main · open");

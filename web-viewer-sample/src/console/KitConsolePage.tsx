@@ -42,24 +42,24 @@ export function KitConsolePage() {
   ];
 
   return (
-    <section data-testid="kit-proxy-panel" style={{ padding: 12 }}>
+    <section data-testid="kit-proxy-panel" style={{ padding: "var(--ab-space-5)" }}>
       <h1>{t("Kit Manager 模型台（經 /api/kit proxy）", "Kit Manager Model Console (via /api/kit proxy)")}</h1>
       <p className="ec-lead">
         {t("瀏覽器一律打 coordinator ", "The browser always calls coordinator ")}<code>:8004 /api/kit/*</code>{t("（forward → kit-manager ", "(forward → kit-manager ")}<code>:8010</code>{t(" loopback）；\n        禁直連 :8010。RK1：Kit 控制權威留 kit-manager，coordinator 只轉發（變更型需 operator/dev 授權）。", " loopback). Direct connection to :8010 is forbidden. RK1: Kit control authority stays with kit-manager; coordinator only forwards (mutating operations require operator/dev authorization).")}
       </p>
-      <div style={{ display: "flex", gap: 8, margin: "10px 0" }}>
+      <div style={{ display: "flex", gap: "var(--ab-space-3)", margin: "var(--ab-space-4) 0" }}>
         <button data-testid="kit-status-btn" className="ec-btn primary" onClick={() => void go()}>{t("查 Kit 狀態 + USDC（經 proxy）", "Check Kit status + USDC (via proxy)")}</button>
       </div>
-      <table style={{ width: "100%", fontSize: 13, textAlign: "left", borderCollapse: "collapse" }}>
+      <table style={{ width: "100%", fontSize: "var(--ab-fs-sm)", textAlign: "left", borderCollapse: "collapse" }}>
         <tbody>
           {rows.map(([label, tid, val]) => (
             <tr key={tid}>
-              <td style={{ color: "var(--ab-text-muted)", padding: "3px 8px" }}>{label}</td>
-              <td data-testid={tid} style={{ fontFamily: "monospace", wordBreak: "break-all" }}>{val}</td>
+              <td style={{ color: "var(--ab-text-muted)", padding: "var(--ab-space-px-3) var(--ab-space-3)" }}>{label}</td>
+              <td data-testid={tid} style={{ fontFamily: "var(--ab-mono)", wordBreak: "break-all" }}>{val}</td>
             </tr>
           ))}
           <tr>
-            <td style={{ color: "var(--ab-text-muted)", padding: "3px 8px" }}>proxy boundary</td>
+            <td style={{ color: "var(--ab-text-muted)", padding: "var(--ab-space-px-3) var(--ab-space-3)" }}>proxy boundary</td>
             <td data-testid="kit-proxy-note">{t("瀏覽器 → :8004 /api/kit/*（forward → :8010，無直連）", "Browser → :8004 /api/kit/* (forward → :8010, no direct connection)")}</td>
           </tr>
         </tbody>

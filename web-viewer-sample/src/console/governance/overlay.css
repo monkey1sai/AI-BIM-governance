@@ -6,21 +6,21 @@
  * .ec-cap / .ec-table 等規則現已在 legacy-console.css 直接消費 var(--ab-*)，不再需要本地 shim 供其解析。 */
 .gov-overlay {
   position: absolute; top: 0; right: 0; width: 340px; height: 100%;
-  background: rgba(11, 13, 16, 0.92); color: var(--ab-text);
-  border-left: 1px solid var(--ab-border); overflow-y: auto; padding: 12px;
-  font: 13px/1.5 var(--ab-mono); z-index: 20;
+  background: var(--ab-overlay-a92); color: var(--ab-text);
+  border-left: var(--ab-space-px-1) solid var(--ab-border); overflow-y: auto; padding: var(--ab-space-5);
+  font: var(--ab-fs-sm)/var(--ab-lh-150) var(--ab-mono); z-index: 20;
 }
 /* 完整問題分頁：variant=panel 時改全幅（覆蓋預設右側 340px 疊層），置於分頁列(40px)之下。 */
 .gov-overlay.gov-overlay--panel {
   position: absolute; top: 40px; right: 0; left: 0; width: auto; height: auto; bottom: 0;
   border-left: 0; z-index: 19;
 }
-.gov-overlay-h { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.gov-overlay-t { color: var(--ab-accent); font-weight: 700; letter-spacing: .04em; }
+.gov-overlay-h { display: flex; align-items: center; gap: var(--ab-space-4); margin-bottom: var(--ab-space-4); }
+.gov-overlay-t { color: var(--ab-accent); font-weight: var(--ab-fw-700); letter-spacing: var(--ab-track-04); }
 .gov-overlay.gov-readonly { opacity: .98; }
 .gov-overlay.gov-readonly .ec-btn:not(.gov-readonly-allowed) { pointer-events: none; opacity: .45; }
-.gov-engine { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dashed var(--ab-border); }
+.gov-engine { display: flex; align-items: center; gap: var(--ab-space-3); padding: var(--ab-space-px-5) 0; border-bottom: var(--ab-space-px-1) dashed var(--ab-border); }
 .gov-engine-code { color: var(--ab-text-dim); width: 28px; }
 .gov-engine-title { flex: 1; }
-.gov-overlay .gov-banner { padding: 8px 10px; border-radius: 4px; margin: 8px 0;
-  background: var(--ab-warn-soft); color: var(--ab-warn); border: 1px solid var(--ab-border-strong); }
+.gov-overlay .gov-banner { padding: var(--ab-space-3) var(--ab-space-4); border-radius: var(--ab-r-xs); margin: var(--ab-space-3) 0;
+  background: var(--ab-warn-soft); color: var(--ab-warn); border: var(--ab-space-px-1) solid var(--ab-border-strong); }

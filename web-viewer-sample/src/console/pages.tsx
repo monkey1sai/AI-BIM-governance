@@ -396,7 +396,7 @@ export function SessionManagementPage() {
                     return (<>
                       <td data-testid="ev-first-frame">{ev.firstFrameAt ? new Date(ev.firstFrameAt).toLocaleTimeString() : na}</td>
                       <td data-testid="ev-heartbeat">{ev.lastHeartbeatAt
-                        ? <>{new Date(ev.lastHeartbeatAt).toLocaleTimeString()}{ev.heartbeatStale ? <span className="ec-prov ec-p1" style={{ marginLeft: 4 }}>stale</span> : null}</>
+                        ? <>{new Date(ev.lastHeartbeatAt).toLocaleTimeString()}{ev.heartbeatStale ? <span className="ec-prov ec-p1" style={{ marginLeft: "var(--ab-space-1)" }}>stale</span> : null}</>
                         : na}</td>
                       <td data-testid="ev-stage">{ev.stageMatch === true ? "matched" : ev.stageMatch === false ? t("不符", "mismatch") : na}</td>
                     </>);
@@ -433,7 +433,7 @@ export function SessionManagementPage() {
             const ev = leaseEvidence(s, Date.now());
             const na = t("未取得", "not observed");
             return (
-              <div key={s.session_id} data-testid={`supply-${s.session_id}`} className="ec-s" style={{ marginBottom: 4 }}>
+              <div key={s.session_id} data-testid={`supply-${s.session_id}`} className="ec-s" style={{ marginBottom: "var(--ab-space-1)" }}>
                 <code>{s.session_id}</code>
                 {" ⇢ lease "}{s.primary_viewer_lease_id ?? na}
                 {" ⇢ "}{ev.datachannelReady ? "DataChannel ✓" : `DataChannel ${na}`}
@@ -522,7 +522,7 @@ export function KitGpuFleetPage() {
           <Field k="GPU busy / total" v={t("未取得（kit-manager 遙測待建）", "not available (kit-manager telemetry not built)")} prov="demo" />
         </div>
         {liveIds.length > 0 ? (
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+          <div style={{ display: "flex", gap: "var(--ab-space-2)", flexWrap: "wrap", marginTop: "var(--ab-space-3)" }}>
             {liveIds.map((id) => (
               <Btn key={id} data-testid={`kg-session-link-${id}`} caption={t("在 Session 管理檢視", "View in Session Management")}
                 onClick={() => { window.location.hash = buildHandoff("sessions", { source: "instances", session: id }); }}>{id} →</Btn>
@@ -700,14 +700,14 @@ export function IssuesRuleCenterPage() {
 
       <Panel title="A1 rule-run authority" sub={t("governance-service :49102（經 coordinator proxy）", "governance-service :49102 (via coordinator proxy)")} prov="asbuilt">
         <p className="ec-note">{t("後端已實作並以真實 IFC 驗證（見下方 artifact）。本頁經 coordinator ", "Backend is implemented and verified with a real IFC (see artifact below). This page triggers a live rule-run via the coordinator ")}<code>/api/governance/*</code>{t(" proxy 觸發實時 rule-run。", " proxy.")}</p>
-        <div className="ec-grid" style={{ marginBottom: 10 }}>
+        <div className="ec-grid" style={{ marginBottom: "var(--ab-space-4)" }}>
           <Field k="rule_run_id" v={runId ?? "—"} prov="asbuilt" />
           <Field k="rule_run_status" v={busy ? "running" : run?.status ?? "idle"} prov="asbuilt" />
         </div>
-        <div className="ec-field" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginBottom: 8 }}>
+        <div className="ec-field" style={{ flexDirection: "column", alignItems: "stretch", gap: "var(--ab-space-2)", marginBottom: "var(--ab-space-3)" }}>
           <span className="ec-k">{t("從檔案庫選擇", "Select from file library")} <ProvTag prov="asbuilt" /></span>
           {fsErr && (
-            <span className="ec-warn-note" style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <span className="ec-warn-note" style={{ display: "inline-flex", gap: "var(--ab-space-3)", alignItems: "center", flexWrap: "wrap" }}>
               <span>{t("檔案庫不可用（", "File library not available (")}{fsErr}{t("）；可改用下方手動輸入路徑。", "); you can manually enter a path below instead.")}</span>
               <Btn data-testid="a1-fs-retry" caption="GET /api/governance/files/tree" onClick={() => { void loadFsTree(); }}>
                 {t("重試載入檔案庫", "Retry loading file library")}
@@ -717,7 +717,7 @@ export function IssuesRuleCenterPage() {
           {!fsErr && !fsTree && <span className="ec-s">{t("載入檔案庫中…（GET /api/governance/files/tree）", "Loading file library… (GET /api/governance/files/tree)")}</span>}
           {/* 三層 select 恆渲染（含 SSR 首幀）；未載入前 disabled 且只有 placeholder option —
               誠實標示「還沒有可選項」，手動輸入照常可用，檔案庫不可用時 graceful degrade。 */}
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "var(--ab-space-3)", flexWrap: "wrap" }}>
             <select
               data-testid="a1-fs-project"
               className="ec-btn"
@@ -760,19 +760,19 @@ export function IssuesRuleCenterPage() {
             </select>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", flexWrap: "wrap" }}>
           <input className="ec-btn" style={{ minWidth: 420 }} value={ifcPath} onChange={(e) => setIfcPath(e.target.value)} />
           <Btn primary disabled={busy} caption="POST /api/governance/rule-runs" onClick={doRun}>
             {busy ? t("執行中…", "Running…") : t("執行規則檢核", "Run Rule Validation")}
           </Btn>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+        <div style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", marginTop: "var(--ab-space-2)" }}>
           <input className="ec-btn" style={{ minWidth: 420 }} placeholder={t("（選填）buildingSMART IDS .ids 路徑 — 改用 ifctester 跑", "(optional) buildingSMART IDS .ids path — runs via ifctester instead")} value={idsPath} onChange={(e) => setIdsPath(e.target.value)} />
           <span className="ec-s">{t("填 IDS 則以 IDS 規則跑（否則用內建 YAML 規則集）", "If an IDS is provided, IDS rules are used (otherwise the built-in YAML rule set)")}</span>
         </div>
         {err && <p className="ec-warn-note">{t("未連線後端（proxy / governance-service 需啟動）：", "Backend not connected (proxy / governance-service must be running): ")}{err}</p>}
         {run && (
-          <div className="ec-grid" data-testid="a1-rulerun-scoreboard" style={{ marginTop: 12 }}>
+          <div className="ec-grid" data-testid="a1-rulerun-scoreboard" style={{ marginTop: "var(--ab-space-5)" }}>
             <Metric value={run.summary?.total ?? "—"} label={t("規則評估次數", "Rule Evaluations")} />
             <Metric value={run.summary?.unique_elements ?? "—"} label={t("唯一構件", "Unique Elements")} />
             <Metric value={run.summary?.passed ?? "—"} label="passed" />
@@ -780,7 +780,7 @@ export function IssuesRuleCenterPage() {
             <Metric value={run.score ?? "—"} label="score" />
           </div>
         )}
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", marginTop: "var(--ab-space-4)", flexWrap: "wrap" }}>
           {/* [匯出 Excel]：client exportUrl 直連 coordinator proxy → governance-service openpyxl，真實下載（asbuilt）。
               成功 run 前 disabled（沒有 runId 不可匯出）——真實 gating，非假按鈕。 */}
           <Btn prov="asbuilt" caption="GET /api/governance/rule-runs/:id/export?fmt=excel" disabled={!runId || run?.status !== "succeeded"} onClick={async () => {
@@ -810,7 +810,7 @@ export function IssuesRuleCenterPage() {
         {/* A1 §4.2 失敗構件抽屜：取代舊扁平表（failed.slice(0,30)）。按規則分組、可展開、
             懶載入分頁 getFailures、補樓層、GUID 一鍵複製；全過規則不在此列。 */}
         {runId && failed.length > 0 && <FailureScoreboard runId={runId} failed={failed} />}
-        <p className="ec-note" style={{ marginTop: 8 }}>
+        <p className="ec-note" style={{ marginTop: "var(--ab-space-3)" }}>
           {t("[匯出 Excel] 為真實下載（openpyxl，asbuilt）。[在 3D 中標示] 需 viewer 的 WebRTC DataChannel（", "[Export Excel] is a real download (openpyxl, asbuilt). [Highlight in 3D] requires the viewer's WebRTC DataChannel (")}<code>highlightPrimsRequest</code>{t("）；Edge Console 為 ", "); the Edge Console is the ")}<code>/console</code>{t(" 獨立殼層，與 viewer 互斥掛載、目前無 DataChannel，故誠實標 ", " standalone shell, mutually exclusive with the viewer and currently without a DataChannel, so it is honestly marked ")}<code>p1</code>{t("（後續整合），未對映 ", " (later integration); elements not mapped to ")}<code>usd_prim_path=null</code>{t(" 本就無法標示。", " cannot be highlighted anyway.")}
         </p>
       </Panel>
@@ -842,7 +842,7 @@ export function IssuesRuleCenterPage() {
         prov="asbuilt"
         actions={<Btn caption="POST from-rule-run" disabled={!runId} onClick={makeIssuesFromRun}>{t("失敗構件建 issue", "Create issues for failed elements")}</Btn>}
       >
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "var(--ab-space-3)", flexWrap: "wrap" }}>
           <Btn caption="GET /api/governance/issues" onClick={loadIssues}>{t("載入 issues", "Load issues")}</Btn>
           <Btn caption={t("GET /api/governance/bcf/export（只含正式 issue）", "GET /api/governance/bcf/export (formal issues only)")} onClick={async () => {
             setErr(null);
@@ -863,7 +863,7 @@ export function IssuesRuleCenterPage() {
           }}>{t("匯出 BCF 2.1", "Export BCF 2.1")}</Btn>
         </div>
         {issues.length > 0 && (
-          <table className="ec-table" style={{ marginTop: 10 }}>
+          <table className="ec-table" style={{ marginTop: "var(--ab-space-4)" }}>
             <thead><tr><th>kind</th><th>severity</th><th>status</th><th>ifc_guid</th><th>title</th><th /></tr></thead>
             <tbody>
               {issues.slice(0, 30).map((it) => (
@@ -938,7 +938,7 @@ export function AppVisionPage({ slug, onOpen }: { slug: string; onOpen: (route: 
   }
   return (
     <>
-      <h1>{d.code} · {d.title}<span style={{ marginLeft: 10 }}><ProvTag prov={d.prov} /></span></h1>
+      <h1>{d.code} · {d.title}<span style={{ marginLeft: "var(--ab-space-4)" }}><ProvTag prov={d.prov} /></span></h1>
       <p className="ec-lead">{d.en} · {roadmapPhaseText(d)} · {d.pitch}</p>
       <Btn caption={t("回 Applications", "Back to Applications")} onClick={() => onOpen("apps")}>{t("← 回應用導引", "← Back to application guide")}</Btn>
 
@@ -970,11 +970,11 @@ export function AppVisionPage({ slug, onOpen }: { slug: string; onOpen: (route: 
       </Panel>
 
       <Panel title={t("UI 面板（願景）", "UI panels (vision)")} prov={d.prov}>
-        <ul style={{ margin: 0, paddingLeft: 18, color: "var(--ab-text-2)" }}>{d.ui.map((x) => <li key={x}>{x}</li>)}</ul>
+        <ul style={{ margin: 0, paddingLeft: "var(--ab-space-px-18)", color: "var(--ab-text-2)" }}>{d.ui.map((x) => <li key={x}>{x}</li>)}</ul>
       </Panel>
 
       <Panel title={t("MVP 驗收條件（願景）", "MVP acceptance criteria (vision)")} prov={d.prov}>
-        <ul style={{ margin: 0, paddingLeft: 18, color: "var(--ab-text-2)" }}>{d.mvp.map((x) => <li key={x}>{x}</li>)}</ul>
+        <ul style={{ margin: 0, paddingLeft: "var(--ab-space-px-18)", color: "var(--ab-text-2)" }}>{d.mvp.map((x) => <li key={x}>{x}</li>)}</ul>
       </Panel>
 
       <Panel title={t("Sprint steps（願景）", "Sprint steps (vision)")} prov={d.prov}>
@@ -982,7 +982,7 @@ export function AppVisionPage({ slug, onOpen }: { slug: string; onOpen: (route: 
       </Panel>
 
       <Panel title={t("風險 · Risks（願景）", "Risks · Risks (vision)")} prov={d.prov}>
-        <ul style={{ margin: 0, paddingLeft: 18, color: "var(--ab-warn)" }}>{d.risks.map((x) => <li key={x}>{x}</li>)}</ul>
+        <ul style={{ margin: 0, paddingLeft: "var(--ab-space-px-18)", color: "var(--ab-warn)" }}>{d.risks.map((x) => <li key={x}>{x}</li>)}</ul>
       </Panel>
     </>
   );
@@ -1236,15 +1236,15 @@ export function VersionDiffPage() {
         {t("以 IFC GlobalId 多級對齊（GlobalId → Tag → type+name+location）比對兩個 model version，標記 added / removed / moved / property changed；差異計算在 CPU 完成。", "Aligns two model versions with multi-level IFC GlobalId matching (GlobalId → Tag → type+name+location), marking added / removed / moved / property changed; the diff is computed on the CPU.")}
       </p>
       <Panel title="Diff Builder" sub={t("POST /api/governance/diffs（經 coordinator proxy → governance-service）", "POST /api/governance/diffs (via coordinator proxy → governance-service)")} prov="asbuilt">
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--ab-space-2)" }}>
           {fsErr && (
-            <span className="ec-warn-note" data-testid="a2-fs-error" style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <span className="ec-warn-note" data-testid="a2-fs-error" style={{ display: "inline-flex", gap: "var(--ab-space-3)", alignItems: "center", flexWrap: "wrap" }}>
               <span>{t("檔案庫不可用", "File library unavailable")}（{fsErr}）；{t("可改用下方手動輸入路徑。", "you can manually enter a path below instead.")}</span>
               <Btn data-testid="a2-fs-retry" caption="GET /api/governance/files/tree" onClick={() => { void loadFsTree(); }}>{t("重試載入檔案庫", "Retry loading file library")}</Btn>
             </span>
           )}
           {!fsErr && !fsTree && <span className="ec-s">{t("載入檔案庫中…（GET /api/governance/files/tree）", "Loading file library… (GET /api/governance/files/tree)")}</span>}
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: "var(--ab-space-3)", flexWrap: "wrap", alignItems: "center" }}>
             <span className="ec-k" style={{ minWidth: 48 }}>base</span>
             <select data-testid="a2-base-project" className="ec-btn" value={baseSel.project} disabled={!fsTree}
               onChange={(e) => clearBaseSelection(e.target.value, "")}>
@@ -1263,7 +1263,7 @@ export function VersionDiffPage() {
               {baseVersions.map((v) => <option key={v.name} value={libraryKeyFor(baseSel.project, baseSel.model, v.name)}>{v.name}</option>)}
             </select>
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: "var(--ab-space-3)", flexWrap: "wrap", alignItems: "center" }}>
             <span className="ec-k" style={{ minWidth: 48 }}>target</span>
             <select data-testid="a2-target-project" className="ec-btn" value={targetSel.project} disabled={!fsTree}
               onChange={(e) => clearTargetSelection(e.target.value, "")}>
@@ -1284,16 +1284,16 @@ export function VersionDiffPage() {
           </div>
           <input data-testid="a2-base-input" className="ec-btn" style={{ width: "100%" }} value={base} onChange={(e) => { setBase(e.target.value); setBaseVerId(""); setBaseSel((s) => ({ ...s, version: "" })); }} />
           <input data-testid="a2-target-input" className="ec-btn" style={{ width: "100%" }} value={target} onChange={(e) => { setTarget(e.target.value); setTargetVerId(""); setTargetSel((s) => ({ ...s, version: "" })); }} />
-          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: "var(--ab-space-5)", alignItems: "center" }}>
             <Btn primary disabled={busy} caption={t("GlobalId 多級對齊", "GlobalId multi-level matching")} onClick={run}>{busy ? t("比對中…", "Comparing…") : "Run Diff"}</Btn>
-            <label className="ec-s" style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <label className="ec-s" style={{ display: "flex", gap: "var(--ab-space-1)", alignItems: "center" }}>
               <input type="checkbox" checked={includeGeo} onChange={(e) => setIncludeGeo(e.target.checked)} /> {t("含幾何比對（tessellation，較重）", "Include geometry comparison (tessellation, heavier)")}
             </label>
           </div>
         </div>
         {err && <p className="ec-warn-note">{t("未連線後端（proxy / governance-service 需啟動）", "Backend not connected (proxy / governance-service must be running)")}：{err}</p>}
         {diff && (
-          <div className="ec-grid" style={{ marginTop: 12 }}>
+          <div className="ec-grid" style={{ marginTop: "var(--ab-space-5)" }}>
             <Metric value={diff.summary?.matched ?? "—"} label="matched" />
             <Metric value={counts.added ?? 0} label="added" />
             <Metric value={counts.removed ?? 0} label="removed" tone="bad" />
@@ -1315,11 +1315,11 @@ export function VersionDiffPage() {
           return (
             <>
               {items.length > 40 && (
-                <p className="ec-s" style={{ marginTop: 8, color: "var(--ab-text-muted)" }}>
+                <p className="ec-s" style={{ marginTop: "var(--ab-space-3)", color: "var(--ab-text-muted)" }}>
                   {t("顯示前 40 筆，共", "Showing first 40 of")} {items.length} {t("筆", "rows")}
                 </p>
               )}
-              <table className="ec-table" style={{ marginTop: 8 }}>
+              <table className="ec-table" style={{ marginTop: "var(--ab-space-3)" }}>
                 <thead><tr><th>change</th><th>ifc_type</th><th>ifc_guid</th><th>summary</th></tr></thead>
                 <tbody>
                   {shown.map((it, i) => (
@@ -1332,7 +1332,7 @@ export function VersionDiffPage() {
             </>
           );
         })()}
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", marginTop: "var(--ab-space-4)", flexWrap: "wrap" }}>
           <Btn caption={t("POST from-diff（綁 ifc_guid）", "POST from-diff (bound to ifc_guid)")} disabled={!diffId || items.length === 0} onClick={async () => { if (!diffId) return; try { await governanceClient.issuesFromDiff(diffId); } catch (e) { setErr(String(e)); } }}>{t("變更構件建 issue", "Create issue from changed elements")}</Btn>
           {/* [套用 3D Overlay（後端 p15）]：呼叫真實端點 POST …/apply-overlay。後端誠實回 501（p15）——
               3D 著色的可用路徑是下方「3D 疊加（inline viewer）」區塊（client highlightPrimsRequest，
@@ -1351,13 +1351,13 @@ export function VersionDiffPage() {
           }}>{t("套用 3D Overlay（後端 p15）", "Apply 3D Overlay (backend p15)")}</Btn>
         </div>
         {overlay && (
-          <p className={overlay.ok ? "ec-note" : "ec-warn-note"} style={{ marginTop: 8 }}>
+          <p className={overlay.ok ? "ec-note" : "ec-warn-note"} style={{ marginTop: "var(--ab-space-3)" }}>
             apply-overlay → {overlay.status}：{overlay.detail}
             {!overlay.ok && overlay.status === 501 && t("（p15：3D 著色走 client highlightPrimsRequest，需 viewer DataChannel；後端不做 server-push）", "(p15: 3D coloring uses client highlightPrimsRequest, requiring a viewer DataChannel; the backend does not server-push)")}
           </p>
         )}
         {impact && (
-          <div className="ec-grid" style={{ marginTop: 12 }}>
+          <div className="ec-grid" style={{ marginTop: "var(--ab-space-5)" }}>
             <Metric value={impact.possibly_addressed.count} label="issue possibly addressed" />
             <Metric value={impact.still_open.count} label="issue still open" tone="warn" />
             <Metric value={impact.new.count} label="new changes (no issue)" />
@@ -1374,7 +1374,7 @@ export function VersionDiffPage() {
           sub={t("client 端閉環：diff 構件 → element-mapping（for-session）解 usd_prim → viewer 橋單一批次 highlightPrimsRequest", "client-side loop: diff elements → element-mapping (for-session) → single batched highlightPrimsRequest over the viewer bridge")}
           prov="asbuilt"
         >
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+          <div style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", flexWrap: "wrap", marginBottom: "var(--ab-space-3)" }}>
             <span className="ec-k">review session</span>
             <select
               data-testid="a2-overlay-session-select"
@@ -1390,7 +1390,7 @@ export function VersionDiffPage() {
               <span className="ec-note">{t("runtime/status 目前無可 attach 的 active/created session（可先於 #minio 建立 3D session）", "runtime/status has no attachable active/created session (create a 3D session from #minio first)")}</span>
             )}
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+          <div style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", flexWrap: "wrap", marginBottom: "var(--ab-space-3)" }}>
             <Btn
               primary
               data-testid="a2-overlay-apply"
@@ -1421,7 +1421,7 @@ export function VersionDiffPage() {
             </span>
           </div>
           {ovSend && ovSend.sent > 0 && (
-            <div className="ec-grid" style={{ marginBottom: 8 }}>
+            <div className="ec-grid" style={{ marginBottom: "var(--ab-space-3)" }}>
               <Metric value={ovSend.groups.added} label={t("新增（藍）已送", "added (blue) sent")} />
               <Metric value={ovSend.groups.removed} label={t("移除（紅）已送", "removed (red) sent")} tone="bad" />
               <Metric value={ovSend.groups.modified} label={t("修改（橘）已送", "modified (orange) sent")} tone="warn" />
@@ -1587,13 +1587,13 @@ export function FederationPage() {
       </p>
       <Panel title="Federation Builder" sub={t("POST /api/governance/federated-sets（經 coordinator proxy → governance-service）", "POST /api/governance/federated-sets (via coordinator proxy → governance-service)")} prov="asbuilt">
         {members.map((m, i) => (
-          <div key={i} style={{ display: "flex", gap: 6, marginBottom: 4, alignItems: "center" }}>
+          <div key={i} style={{ display: "flex", gap: "var(--ab-space-2)", marginBottom: "var(--ab-space-1)", alignItems: "center" }}>
             <input className="ec-btn" style={{ width: 80 }} value={m.discipline} onChange={(e) => setMember(i, "discipline", e.target.value)} />
             <input className="ec-btn" style={{ flex: 1 }} placeholder={t("member .usd / .usdc 路徑（conversion 產出）", "member .usd / .usdc path (conversion output)")} value={m.usd_path} onChange={(e) => setMember(i, "usd_path", e.target.value)} />
             <input className="ec-btn" style={{ width: 52 }} type="number" title={t("layer_order（小=強）", "layer_order (smaller = stronger)")} value={m.layer_order} onChange={(e) => setMember(i, "layer_order", Number(e.target.value))} />
             {/* visibility：唯一真實後端能力是 build 時的 visibility_default（隱藏 member 寫成 invisible token）。
                 無「不重建即時切換」端點 → 誠實作法：勾選後須重新 Build 才生效（見下方標示），不捏造即時能力。 */}
-            <label className="ec-s" title={t("visible（build 時帶入 visibility_default；改動需重新 Build）", "visible (build applies visibility_default; changes require a rebuild)")} style={{ display: "flex", gap: 3, alignItems: "center" }}>
+            <label className="ec-s" title={t("visible（build 時帶入 visibility_default；改動需重新 Build）", "visible (build applies visibility_default; changes require a rebuild)")} style={{ display: "flex", gap: "var(--ab-space-px-3)", alignItems: "center" }}>
               <input type="checkbox" checked={m.visible} onChange={(e) => setMember(i, "visible", e.target.checked)} /> visible
             </label>
             <span className="ec-note" style={{ opacity: 0.7 }}>{t("位移", "Offset")}</span>
@@ -1602,19 +1602,19 @@ export function FederationPage() {
             <input className="ec-btn" style={{ width: 46 }} type="number" title={t("位移 Z", "Offset Z")} value={m.tz} onChange={(e) => setMember(i, "tz", Number(e.target.value))} />
           </div>
         ))}
-        <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+        <div style={{ display: "flex", gap: "var(--ab-space-3)", marginTop: "var(--ab-space-2)" }}>
           <Btn disabled={busy} caption="create set + members + validate-coords" onClick={prepare}>{t("準備 + 驗證坐標系", "Prepare + validate coordinate system")}</Btn>
           <Btn primary disabled={busy || !setId} caption="POST …/build → federated_review.usda" onClick={doBuild}>Build Federated USD</Btn>
         </div>
         {dirty && !setId && (
-          <p className="ec-warn-note" style={{ marginTop: 6 }}>
+          <p className="ec-warn-note" style={{ marginTop: "var(--ab-space-2)" }}>
             {t("成員設定已變更，先前的「準備 + 驗證坐標系」結果已作廢；請重新準備後再 Build（避免畫面勾選與實際 build 結果不一致）。", "Member settings changed, so the previous \"Prepare + validate coordinate system\" result is voided; prepare again before Build (to avoid the on-screen selections diverging from the actual build result).")}
           </p>
         )}
         {err && <p className="ec-warn-note">{t("未連線後端 / member USD 不存在", "Backend not connected / member USD does not exist")}：{err}</p>}
         {coord && <Field k={t("共享坐標系驗證", "Shared coordinate system validation")} v={coord.consistent ? t("一致 ✓", "consistent ✓") : `${t("不一致", "inconsistent")}：${coord.issues.join("; ")}`} prov="asbuilt" />}
         {build && (
-          <div style={{ marginTop: 8 }}>
+          <div style={{ marginTop: "var(--ab-space-3)" }}>
             <Field k="federated_review.usda" v={build.usda_path} prov="asbuilt" />
             <Field k={t("subLayer order（強→弱）", "subLayer order (strong→weak)")} v={build.sublayer_order.join("  →  ")} prov="asbuilt" />
             <Field k={t("member 數", "member count")} v={build.member_count} prov="asbuilt" />
@@ -1626,13 +1626,13 @@ export function FederationPage() {
             {build.transformed && build.transformed.length > 0 && (
               <Field k="per-member transform" v={build.transformed.map((t) => `${t.root_prim}:[${t.ops.join("+")}]`).join("   ")} prov="asbuilt" />
             )}
-            <div style={{ marginTop: 6 }}>
+            <div style={{ marginTop: "var(--ab-space-2)" }}>
               <Btn caption={t("GET …/review-room（stage_composition handoff）", "GET …/review-room (stage_composition handoff)")} onClick={openRoom}>Open in Review Room</Btn>
             </div>
           </div>
         )}
         {room && (
-          <div style={{ marginTop: 8 }}>
+          <div style={{ marginTop: "var(--ab-space-3)" }}>
             {room.ready && room.stage_composition ? (
               <>
                 <Field k="stage_composition.primary" v={room.stage_composition.primary.url} prov="asbuilt" />
@@ -1643,12 +1643,12 @@ export function FederationPage() {
             )}
             {/* A3-G1：review-room descriptor → 一鍵建立 coordinator review session（federated stage）。
                 descriptor 未 ready 時按鈕誠實 disabled + 理由（不藏區塊、不留死按鈕）。 */}
-            <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid rgba(128,128,128,.25)" }}>
-                  <div className="ec-s" style={{ marginBottom: 6 }}>
+            <div style={{ marginTop: "var(--ab-space-4)", paddingTop: "var(--ab-space-3)", borderTop: "var(--ab-space-px-1) solid var(--ab-neutral-a25)" }}>
+                  <div className="ec-s" style={{ marginBottom: "var(--ab-space-2)" }}>
                     {t("建立 Review Session（federated stage）", "Create review session (federated stage)")}
                     ｜{t("POST /api/review-sessions：必填 project_id / model_version_id；federated primary 以 artifact_binding（derived+ready+url）帶入，coordinator 據此推導 stream-config 的 stage_composition.primary", "POST /api/review-sessions: project_id / model_version_id required; the federated primary is carried as an artifact_binding (derived+ready+url), from which the coordinator derives stream-config stage_composition.primary")}
                   </div>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
+                  <div style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", flexWrap: "wrap", marginBottom: "var(--ab-space-2)" }}>
                     <span className="ec-k">project_id</span>
                     <input className="ec-btn" style={{ width: 160 }} value={sessProject} onChange={(e) => { setSessProject(e.target.value); resetSessionChain(); }} />
                     <span className="ec-k">model_version_id</span>
@@ -1669,7 +1669,7 @@ export function FederationPage() {
                       <>
                         <Field k="session_id" v={sessRes.session_id} prov="asbuilt" />
                         <Field k="status" v={sessRes.status} prov="asbuilt" />
-                        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
+                        <div style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", flexWrap: "wrap", marginTop: "var(--ab-space-2)" }}>
                           <a data-testid="a3-open-viewer" className="ec-btn" href={coordinatorClient.openInViewerUrl(sessRes.session_id)} target="_blank" rel="noreferrer">
                             {t("開啟 viewer（/ui/open）", "Open viewer (/ui/open)")}
                           </a>
@@ -1769,14 +1769,14 @@ export function SemanticViewerPage() {
       </p>
 
       <Panel title={t("載入 mapping artifact", "Load mapping artifact")} sub={t("mapping URL（conversion artifact）；可從 ifc-ready job（帶轉換產出）定位，或直接貼入", "mapping URL (conversion artifact); locate it from an ifc-ready job (with conversion output), or paste it directly")} prov="artifact">
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", flexWrap: "wrap" }}>
           <input className="ec-btn" style={{ minWidth: 420 }} placeholder={t("element_mapping.json 的 URL（artifact 來源）", "URL of element_mapping.json (artifact source)")} value={mapUrl} onChange={(e) => setMapUrl(e.target.value)} />
           <Btn primary disabled={busy || !mapUrl.trim()} caption="fetch mapping JSON" onClick={loadMapping}>{busy ? t("載入中…", "Loading…") : t("載入 mapping", "Load mapping")}</Btn>
           <Btn caption={t("GET /api/external/ifc-ready（找帶 mapping 產出的 job）", "GET /api/external/ifc-ready (find jobs with mapping output)")} onClick={loadCandidates}>{t("列出真實 job", "List real jobs")}</Btn>
         </div>
         {err && <p className="ec-warn-note">{err}</p>}
         {candidates.length > 0 && (
-          <div className="ec-note" style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          <div className="ec-note" style={{ display: "flex", gap: "var(--ab-space-2)", flexWrap: "wrap", alignItems: "center" }}>
             <span>{t("真實 job 候選（帶 mapping 產出，點選自動填入 mapping URL）：", "Real job candidates (with mapping output; click to auto-fill the mapping URL): ")}</span>
             {candidates.map((c) => (
               <button
@@ -1829,7 +1829,7 @@ export function SemanticViewerPage() {
                         <td>{it.name ?? ""}</td>
                         <td>{it.ifc_guid ?? <span className="ec-warn-note">null</span>}</td>
                         <td>{it.usd_prim_path ?? <span className="ec-warn-note">{t("null（未對映）", "null (unmapped)")}</span>}</td>
-                        <td>{it.mapping_method ?? ""}{itemFake && <span className="ec-prov ec-demo" style={{ marginLeft: 6 }}>fake</span>}</td>
+                        <td>{it.mapping_method ?? ""}{itemFake && <span className="ec-prov ec-demo" style={{ marginLeft: "var(--ab-space-2)" }}>fake</span>}</td>
                         <td>
                           <Btn prov="p1" disabled caption={t("需 viewer DataChannel（focusPrim / highlightPrims）", "Requires viewer DataChannel (focusPrim / highlightPrims)")}>{t("在 3D 標示", "Mark in 3D")}</Btn>
                         </td>

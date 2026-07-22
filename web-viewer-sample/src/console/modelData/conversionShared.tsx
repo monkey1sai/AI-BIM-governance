@@ -14,9 +14,9 @@ export function LifecycleStrip({ steps, statuses }: { steps: string[]; statuses?
     return i === 0 ? "active" : "";
   };
   return (
-    <div className="ec-flow" style={{ margin: "8px 0 12px" }}>
+    <div className="ec-flow" style={{ margin: "var(--ab-space-3) 0 var(--ab-space-5)" }}>
       {steps.map((s, i) => (
-        <span key={s} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <span key={s} style={{ display: "flex", alignItems: "center", gap: "var(--ab-space-1)" }}>
           <span className={`ec-flow-step ${cls(i)}`}><span className="ec-flow-n">{i + 1}</span>{s}</span>
           {i < steps.length - 1 && <span className="ec-flow-arrow">→</span>}
         </span>

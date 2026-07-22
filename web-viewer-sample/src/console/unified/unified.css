@@ -9,14 +9,14 @@ body.uc-body {
   background: var(--ab-bg);
   overflow-x: auto;
   overflow-y: hidden;
-  font-family: "Noto Sans TC", -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  font-family: var(--ab-font);
   -webkit-font-smoothing: antialiased;
   /* 反制 index.css 的全域 body 規則（display:flex/place-items/min-width）與
      :root line-height:1.5——原型頁面沒有這些，像素基準以 UA 預設為準。 */
   display: block;
   place-items: normal;
   min-width: auto;
-  line-height: normal;
+  line-height: var(--ab-lh-normal);
 }
 
 /* CSS 防火牆：viewer app 的全域樣式（bootstrap reboot 的 *{box-sizing:border-box}、
@@ -32,7 +32,7 @@ body.uc-body {
 body.uc-body a { color: var(--ab-accent); text-decoration: none; }
 body.uc-body a:hover { color: var(--ab-accent-bright); text-decoration: underline; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: var(--ab-scroll-thumb); border-radius: 8px; }
+::-webkit-scrollbar-thumb { background: var(--ab-scroll-thumb); border-radius: var(--ab-r-md); }
 ::-webkit-scrollbar-thumb:hover { background: var(--ab-scroll-thumb-hover); }
 @keyframes tup { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
@@ -43,15 +43,15 @@ input::placeholder { color: var(--ab-text-dimmer); }
    刻意不加 !important：dc runtime 的 style-hover 產生 class 規則、永遠輸給 inline style，
    因此凡與 inline 同屬性的 hover（邊框色、文字色）在原型中本來就無效；
    只有 filter 與無 inline background 的元素會有 hover 效果。此處逐一比照。 */
-.hv-accent-border:hover { border-color: rgba(65, 199, 232, .35); }
-.hv-accent-border-strong:hover { border-color: rgba(65, 199, 232, .4); }
-.hv-card:hover { border-color: rgba(65, 199, 232, .45); transform: translateY(-1px); }
+.hv-accent-border:hover { border-color: var(--ab-accent-a35); }
+.hv-accent-border-strong:hover { border-color: var(--ab-accent-a40); }
+.hv-card:hover { border-color: var(--ab-accent-a45); transform: translateY(-1px); }
 .hv-bright:hover { filter: brightness(1.12); }
 .hv-bright-more:hover { filter: brightness(1.2); }
 .hv-text:hover { color: var(--ab-text); }
-.hv-bg:hover { background: rgba(65, 199, 232, .06); }
-.hv-bg-soft:hover { background: rgba(65, 199, 232, .05); }
-.hv-bg-row:hover { background: rgba(65, 199, 232, .07); }
-.hv-accent-bg:hover { background: rgba(65, 199, 232, .08); }
-.hv-danger-bg:hover { background: rgba(232, 97, 92, .08); }
-.hv-doc:hover { border-color: rgba(65, 199, 232, .4); color: var(--ab-text); }
+.hv-bg:hover { background: var(--ab-accent-a06); }
+.hv-bg-soft:hover { background: var(--ab-accent-a05); }
+.hv-bg-row:hover { background: var(--ab-accent-a07); }
+.hv-accent-bg:hover { background: var(--ab-accent-a08); }
+.hv-danger-bg:hover { background: var(--ab-danger-a08); }
+.hv-doc:hover { border-color: var(--ab-accent-a40); color: var(--ab-text); }

@@ -247,7 +247,7 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
                         F1：以 rowKey（rule_code::ifc_guid）為 key，與 lastResult 一致 —— 同一 ifc_guid 多筆不同
                         rule_code 的列各自獨立確認，不互相覆蓋。 */}
                     {(props.highlightConfirm?.[rowKey(f)] ?? lastResult[rowKey(f)]) && (
-                      <span className="ec-note" data-testid="gov-highlight-status" style={{ marginLeft: 6 }}>
+                      <span className="ec-note" data-testid="gov-highlight-status" style={{ marginLeft: "var(--ab-space-2)" }}>
                         {props.highlightConfirm?.[rowKey(f)] ?? lastResult[rowKey(f)]}
                       </span>
                     )}

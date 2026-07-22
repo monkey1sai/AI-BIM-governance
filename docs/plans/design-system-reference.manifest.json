@@ -130,7 +130,7 @@
       }
     ],
     "snapshot_sha256": "2f414d9d4bd96adbd3102e417f2465eb4aa609b0c3a12d118f41c1ccff30c9c8",
-    "captured_at_utc": "2026-07-17T08:41:32.704Z"
+    "captured_at_utc": "2026-07-22T04:59:56.134Z"
   },
   "fidelity_contract": {
     "browser": "chromium",
@@ -142,7 +142,7 @@
     "node_version": "20.20.2",
     "npm_version": "10.9.4",
     "dependency_lock_path": "web-viewer-sample/package-lock.json",
-    "dependency_lock_sha256": "3d0722ebc85a15f20e564851b34e04c578283a7a141937372b44bc942381db62",
+    "dependency_lock_sha256": "aa0c9edf9a8905e546e8a03d753da7ef787d49b0085cdf026fd28a65b9d4f16d",
     "resolved_dependency_versions": {
       "@playwright/test": "1.61.1",
       "playwright-core": "1.61.1",

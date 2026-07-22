@@ -36,25 +36,35 @@
 
 本次視覺/design-token 遷移 SHALL 僅變更 CSS 樣式來源與外觀，SHALL NOT 變更 `openspec/specs/edge-console-operator-frontend/spec.md` 與 `openspec/specs/unified-governance-console/spec.md` 定義的任何功能行為、API 端點、coordinator-only proxy 邊界、或 provenance 誠實標記規則。所有既有 SHALL/SHALL NOT 條款（A1 rule-run、A2 apply-overlay、A3 federation、Review Room、fake-vs-real mapping 隔離、後端離線誠實顯示等）遷移後 SHALL 逐字繼續成立。
 
+「逐字繼續成立」在本 change 的驗收語意是 SHALL NOT 由此 token/style diff 新增違規；不代表把遷移前已存在的 Requirement drift 偽報為滿足。本 change 發現但未引入的三個 `#conv` / `#minio` runtime/spec/E2E ownership failures，已依使用者批准 deferred 至既有 active change `minio-folderview-and-baseline-disclosure`。本 change SHALL 保持其相對 `origin/main` 的行為不變，SHALL NOT 把這三個失敗案例記為 pass，SHALL NOT 宣稱該 deferred Requirement 已完成，且 SHALL NOT 另造 Change ID。
+
 #### Scenario: 既有功能行為在換皮後不變
 
 - **WHEN** 視覺遷移完成後執行既有功能驗收（如 A1 rule-run 觸發、A2 apply-overlay 誠實顯示 501、後端離線顯示 502）
 - **THEN** 行為結果 SHALL 與遷移前一致，僅外觀（顏色/字體/主題）改變
 - **AND** SHALL NOT 因樣式變更而新增、移除或改變任何 coordinator/governance-service API 呼叫
 
+#### Scenario: 既存 #conv / #minio ownership drift 誠實 deferred
+
+- **WHEN** 三個 `#conv` / `#minio` browser cases 因遷移前已存在的 runtime/spec/E2E ownership mismatch 失敗，且相關 production/test blobs 與 `origin/main` byte-identical
+- **THEN** 本 change SHALL 將其記為 approved deferred gap，不記為 pass、也不以此 change 修改行為或既有 capability spec
+- **AND** SHALL 交由既有 active change `minio-folderview-and-baseline-disclosure` 承接，不另造 Change ID
+- **AND** 除該具名 deferred gap 外，其餘 affected-page、final combined-tree 與 Scenario evidence gates SHALL 仍須通過
+
 ### Requirement: 遷移落地後 SHALL 重用既有 pixel/semantic 雙閘機制重新 rebaseline
 
-視覺遷移程式碼落地後，SHALL 使用既有 `web-viewer-sample/scripts/capture-design-system-reference.mjs`（帶 `--rebaseline --confirm-rebaseline` 雙旗標）重新擷取 `docs/plans/design-system-reference.manifest.json` 的 golden baseline（13 screens × 2 viewports），SHALL NOT 新建擷取機制或手動覆寫 golden 圖檔。重新擷取後 SHALL 以 `scripts/tests/verify-design-system-reference.ps1 -VerifyOrigin` 驗證通過。本 change 與 `openspec/changes/align-frontend-design-system-reference` 管理的雙閘機制成熟化工作（tasks 2.4–2.8）平行推進、互不阻塞——機制與視覺內容正交，機制無論鎖定何種視覺皆可重用。
+視覺遷移程式碼落地後，SHALL 使用既有 `web-viewer-sample/scripts/capture-design-system-reference.mjs`（帶 `--rebaseline --confirm-rebaseline` 雙旗標）重新擷取 `docs/plans/design-system-reference.manifest.json` 的 golden baseline（13 screens × 2 viewports），SHALL NOT 新建擷取機制或手動覆寫 golden 圖檔。重新擷取後 SHALL 以 `scripts/tests/verify-design-system-reference.ps1 -RepoRoot <dedicated-worktree>` 驗證 repo-local tracked snapshot 通過；external authoring origin（`C:\Repos\design\desigin-system`）SHALL 維持唯讀，CI/PR gate SHALL NOT 依賴該絕對路徑或要求 `-VerifyOrigin`。本 change 與 `openspec/changes/align-frontend-design-system-reference` 管理的其餘雙閘機制成熟化工作平行推進、互不阻塞——機制與視覺內容正交，機制無論鎖定何種視覺皆可重用。
 
 #### Scenario: 視覺遷移後重新 rebaseline 且驗證通過
 
 - **WHEN** UnifiedConsole 完成 `--ab-*` token 遷移的程式碼變更
 - **THEN** SHALL 執行 `node web-viewer-sample/scripts/capture-design-system-reference.mjs --rebaseline --confirm-rebaseline`
-- **AND** 隨後執行 `pwsh scripts/tests/verify-design-system-reference.ps1 -VerifyOrigin` SHALL 通過
+- **AND** 隨後執行 `pwsh -NoProfile -NonInteractive -File scripts/tests/verify-design-system-reference.ps1 -RepoRoot <dedicated-worktree>` SHALL 通過
+- **AND** external authoring origin SHALL 保持唯讀，且驗證 SHALL NOT 依賴 `-VerifyOrigin` 或該機器絕對路徑
 - **AND** SHALL NOT 手動編輯 `design-system-reference.manifest.json` 的 baseline hash 欄位或手動置換 golden PNG
 
 #### Scenario: 不阻塞既有雙閘機制成熟化工作
 
-- **WHEN** `align-frontend-design-system-reference` 的 tasks 2.4–2.8 仍未完成
+- **WHEN** `align-frontend-design-system-reference` 仍有機制成熟化 tasks 未完成
 - **THEN** 本 change 的視覺遷移工作 SHALL NOT 因此被阻擋而無法開始或完成
 - **AND** 本 change 的完成 SHALL NOT 要求先 archive `align-frontend-design-system-reference`

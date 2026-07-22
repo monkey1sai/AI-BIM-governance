@@ -47,11 +47,11 @@ export function MinioTreePane(props: {
       prov="asbuilt"
     >
       {/* 麵包屑：目前層 prefix（空＝bucket 根）＋ 上一層鈕（prefix 非空才顯） */}
-      <div className="ec-row" style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+      <div className="ec-row" style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", marginBottom: "var(--ab-space-3)" }}>
         {prefix ? (
           <Btn data-testid="minio-go-up" caption="prefix --" onClick={() => goUp()}>{t("⬑ 上一層", "⬑ Up")}</Btn>
         ) : null}
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, opacity: 0.7 }}>{prefix || "/"}</span>
+        <span style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-mono)", opacity: 0.7 }}>{prefix || "/"}</span>
         <Btn data-testid="minio-refresh" caption="GET /api/minio/objects?refresh=1" onClick={() => fs.refreshCurrent()}>
           {t("重新整理", "Refresh")}
         </Btn>
@@ -66,7 +66,7 @@ export function MinioTreePane(props: {
         <div
           data-testid="minio-stale-note"
           className="ec-warn-note"
-          style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}
+          style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", flexWrap: "wrap", marginBottom: "var(--ab-space-3)" }}
         >
           <span>{t("MinIO 監控偵測到此層可能有新變更。", "MinIO watcher detected possible changes in this level.")}</span>
           <Btn data-testid="minio-stale-refresh" caption="GET /api/minio/objects?refresh=1" onClick={() => fs.refreshCurrent()}>
@@ -79,7 +79,7 @@ export function MinioTreePane(props: {
         <p className="ec-note">{t("載入中…（GET /api/minio/objects）", "Loading… (GET /api/minio/objects)")}</p>
       ) : err ? (
         // error 態：誠實顯原因 + 可重試（不假裝有資料）。refreshCurrent＝delete cache + refresh 重打，等價原 retry。
-        <div className="ec-warn-note" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <div className="ec-warn-note" style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", flexWrap: "wrap" }}>
           <span>{t("讀取 MinIO 失敗：", "Failed to read MinIO: ")}{err}</span>
           <Btn data-testid="minio-tree-retry" caption="GET /api/minio/objects" onClick={() => fs.refreshCurrent()}>
             {t("重試", "Retry")}
@@ -97,7 +97,7 @@ export function MinioTreePane(props: {
           {sortedFolders.length > 0 ? (
             <div className="ec-tree">
               {sortedFolders.map((f) => (
-                <div key={f.prefix} className="ec-row" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <div key={f.prefix} className="ec-row" style={{ display: "flex", gap: "var(--ab-space-2)", alignItems: "center" }}>
                   <Btn data-testid={`minio-folder-open-${f.prefix}`} caption={t("點入此資料夾", "open folder")} onClick={() => fs.navigate(f.prefix)}>{f.prefix}</Btn>
                   {f.has_source_ifc ? (
                     <span data-testid={`minio-folder-badge-${f.prefix}`} className="ec-prov artifact">
@@ -115,7 +115,7 @@ export function MinioTreePane(props: {
                 const idk = obj.idempotency_key;
                 const st = ledgerChipStatus(idk, records, recordsIncomplete);
                 return (
-                  <li key={obj.key} className="ec-row" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  <li key={obj.key} className="ec-row" style={{ display: "flex", gap: "var(--ab-space-2)", alignItems: "center", flexWrap: "wrap" }}>
                     {/* role label（與 intake 三段脫鉤，純副檔名） */}
                     <span className={roleClass(obj.role)}>{roleLabel(obj.role)}</span>
                     {/* 變更點 (a)：source_ifc 檔名改為可點鈕（onSelect → 殼層切單檔詳情）；data-selected 反白鉤子、
@@ -127,12 +127,12 @@ export function MinioTreePane(props: {
                         data-testid={`md-tree-select-${idk}`}
                         data-selected={selectedKey === obj.key}
                         onClick={() => onSelect(obj)}
-                        style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}
+                        style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-mono)" }}
                       >
                         {obj.key}
                       </button>
                     ) : (
-                      <span className="ec-tree-file" style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{obj.key}</span>
+                      <span className="ec-tree-file" style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-mono)" }}>{obj.key}</span>
                     )}
                     {/* 三段語意 badge：有才顯（≥3 段才有，malformed 不掛）。各掛 data-testid 供 AC-badge
                         精準定位（避免 textContent 子字串誤判：如 category=main 撞 prefix 路徑字串）。 */}

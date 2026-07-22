@@ -124,15 +124,15 @@ export function ObjectDetailPane(props: {
   return (
     <>
       {/* 頂列：返回總覽 ＋ 回到檔案所在資料夾（spec §3.1 定向捷徑） */}
-      <div className="ec-row" data-testid="md-detail-topbar" style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+      <div className="ec-row" data-testid="md-detail-topbar" style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", marginBottom: "var(--ab-space-3)" }}>
         <Btn data-testid="md-detail-back" caption={t("返回全域轉檔總覽", "back to global conversion overview")} onClick={onBack}>{t("← 返回總覽", "← Back")}</Btn>
         <Btn data-testid="md-detail-gotofolder" caption={t("在左欄檔案樹定位此檔所在資料夾", "locate this file's folder in the left tree")} onClick={() => onGoToFolder(folderPrefix)}>{t("回到檔案所在資料夾", "Go to folder")}</Btn>
       </div>
 
       {/* 來源資訊：object key（mono）＋三段語意 badge（project/category/version）＋ ledger 偵測時間 */}
       <Panel title={t("來源檔案", "Source file")} sub={t("已選中的 source IFC（左欄檔案樹選檔）", "Selected source IFC (chosen from the left file tree)")} prov="asbuilt">
-        <div data-testid="md-detail-key" style={{ fontFamily: "var(--font-mono)", fontSize: 12, wordBreak: "break-all" }}>{object.key}</div>
-        <div className="ec-row" style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "6px 0" }}>
+        <div data-testid="md-detail-key" style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-xs)", wordBreak: "break-all" }}>{object.key}</div>
+        <div className="ec-row" style={{ display: "flex", gap: "var(--ab-space-2)", flexWrap: "wrap", margin: "var(--ab-space-2) 0" }}>
           {object.project_display_name ? <span data-testid="md-detail-badge-project" className="ec-prov">{object.project_display_name}</span> : null}
           {object.category ? <span data-testid="md-detail-badge-category" className="ec-prov">{object.category}</span> : null}
           {object.version ? <span data-testid="md-detail-badge-version" className="ec-prov">{object.version}</span> : null}
@@ -159,7 +159,7 @@ export function ObjectDetailPane(props: {
         <Field
           k="usdc_key"
           v={record?.usdc_key
-            ? <span data-testid="md-detail-usdc" style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{record.usdc_key}</span>
+            ? <span data-testid="md-detail-usdc" style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-mono)" }}>{record.usdc_key}</span>
             : <span data-testid="md-detail-usdc" className="ec-prov ec-p1">{t("待產生", "pending")}</span>}
           prov="artifact"
         />
@@ -183,7 +183,7 @@ export function ObjectDetailPane(props: {
 
       {/* 動作區：觸發轉檔（chip gating）＋依 job.status 掛插隊/重試（動作走 useConversionActions） */}
       <Panel title={t("轉檔動作", "Conversion actions")} sub={t("intent→confirm→audited；ledger 真值對齊（非樂觀）", "intent→confirm→audited; aligned to ledger truth (not optimistic)")} prov="asbuilt">
-        <div className="ec-row" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <div className="ec-row" style={{ display: "flex", gap: "var(--ab-space-3)", flexWrap: "wrap", alignItems: "center" }}>
           {/* 觸發轉檔：chip ∈ {untracked, failed, indeterminate} 才 enabled（ready/queued/converting 無需再觸發）。 */}
           <Btn
             data-testid="md-detail-trigger"
@@ -241,7 +241,7 @@ export function ObjectDetailPane(props: {
 
       {/* 跳轉區：SS / Review（有 review_session_id 才顯）＋ A1 檢核（恆顯，帶 minio_key）；source 一律 "minio"。 */}
       <Panel title={t("跨頁跳轉", "Cross-page handoff")} sub={t("攜帶非機密關聯 ID；接收頁須各自重驗（spec §4.2）", "Carries non-secret correlation IDs; the receiving page re-verifies each (spec §4.2)")} prov="asbuilt">
-        <div className="ec-row" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <div className="ec-row" style={{ display: "flex", gap: "var(--ab-space-3)", flexWrap: "wrap", alignItems: "center" }}>
           {job?.review_session_id ? (
             <>
               <Btn

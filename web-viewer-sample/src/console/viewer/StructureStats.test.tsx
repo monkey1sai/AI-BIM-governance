@@ -35,6 +35,9 @@ describe("SpatialTreeView（空間巢狀樹）", () => {
     expect(html).toContain("2F");
     expect(html).toContain("Wall 256");
     expect(html).toContain("Column 48");
+    expect(html).toContain("margin-left:calc(0 * var(--ab-space-5))");
+    expect(html).toContain("margin-left:calc(1 * var(--ab-space-5))");
+    expect(html).toContain("margin-left:calc(2 * var(--ab-space-5))");
   });
 });
 

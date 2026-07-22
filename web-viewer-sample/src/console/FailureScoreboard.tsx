@@ -11,7 +11,7 @@ function CopyGuidBtn({ guid }: { guid: string }) {
     <button
       type="button"
       className="ec-btn"
-      style={{ padding: "1px 6px", fontSize: 11 }}
+      style={{ padding: "var(--ab-space-px-1) var(--ab-space-2)", fontSize: "var(--ab-fs-mono)" }}
       title={t("複製 ifc_guid", "Copy ifc_guid")}
       onClick={() => {
         // navigator.clipboard 在非安全內容（http LAN）可能不存在 → 誠實降級，不假裝已複製。
@@ -69,7 +69,7 @@ export function FailureRuleRow({ runId, ruleCode, count }: { runId: string; rule
   const canLoadMore = total !== null && rows.length < total;
 
   return (
-    <div className="ec-card" data-testid={`a1-fail-rule-${ruleCode}`} style={{ marginTop: 8 }}>
+    <div className="ec-card" data-testid={`a1-fail-rule-${ruleCode}`} style={{ marginTop: "var(--ab-space-3)" }}>
       <button
         type="button"
         className="ec-btn"
@@ -81,7 +81,7 @@ export function FailureRuleRow({ runId, ruleCode, count }: { runId: string; rule
         <span>{open ? "▾" : "▸"}</span>
       </button>
       {open && (
-        <div style={{ marginTop: 8 }}>
+        <div style={{ marginTop: "var(--ab-space-3)" }}>
           {err && <p className="ec-warn-note">{t("載入失敗構件失敗：", "Failed to load failed elements: ")}{err}</p>}
           {rows.length > 0 && (
             <table className="ec-table">
@@ -118,8 +118,8 @@ export function FailureScoreboard({ runId, failed }: { runId: string; failed: Ru
   const rules = [...counts.entries()].sort((a, b) => b[1] - a[1]);
   if (rules.length === 0) return null;
   return (
-    <div data-testid="a1-failures-by-rule" style={{ marginTop: 12 }}>
-      <p className="ec-note" style={{ marginBottom: 4 }}>
+    <div data-testid="a1-failures-by-rule" style={{ marginTop: "var(--ab-space-5)" }}>
+      <p className="ec-note" style={{ marginBottom: "var(--ab-space-1)" }}>
         {t("失敗規則（點擊展開命中構件，懶載入分頁，補樓層、GUID 可複製）：", "Failed rules (click to expand matched elements; lazy-loaded paging, storey backfill, copyable GUID):")}
       </p>
       {rules.map(([code, count]) => (

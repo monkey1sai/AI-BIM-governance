@@ -187,7 +187,7 @@ export function ConversionPage(): JSX.Element {
                       <td><code>{entry.outbox_id}</code></td>
                       <td>{entry.event}</td>
                       <td>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--ab-space-2)" }}>
                           <span className="ec-status-dot" data-status={OUTBOX_STATUS_TONE[entry.status]} />
                           {entry.status}
                         </span>

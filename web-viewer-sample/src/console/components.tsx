@@ -31,7 +31,7 @@ export function ProvLegend() {
     <p className="ec-note" aria-label={t("可信度圖例（信任機制）", "Credibility legend (trust mechanism)")}>
       {t("可信度圖例（每個區塊都會標）：", "Credibility legend (tagged on every block):")}
       {PROV_LEGEND_TIERS.map((tier, i) => (
-        <span key={tier.prov} style={{ marginLeft: 8 }}>
+        <span key={tier.prov} style={{ marginLeft: "var(--ab-space-3)" }}>
           <ProvTag prov={tier.prov} /> <span style={{ opacity: 0.75 }}>{tier.meaning}</span>
           {i < PROV_LEGEND_TIERS.length - 1 ? " ·" : ""}
         </span>

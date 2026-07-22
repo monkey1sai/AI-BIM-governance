@@ -8,23 +8,23 @@
 // ═══════════════════════════════════════════════════════════════════════
 import type { CSSProperties } from "react";
 import { useLang } from "../i18n";
-import { MONO, chipBox, getL, services } from "./fixtures";
+import { chipBox, getL, services } from "./fixtures";
 import { useUnifiedState } from "./UnifiedShell";
 
 /* 1:1 對應原型 gpuBar(label, pct, fill, text) 產生器 */
 function gpuBar(label: string, pct: string, fill: string, text: string) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <span style={{ fontFamily: MONO, fontSize: "10.5px", color: "var(--ab-text-muted)", width: 70 }}>{label}</span>
-      <div style={{ flex: 1, height: 6, borderRadius: 3, background: "rgba(120,160,210,.12)", overflow: "hidden" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: "var(--ab-space-3)" }}>
+      <span style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-10-5)", color: "var(--ab-text-muted)", width: 70 }}>{label}</span>
+      <div style={{ flex: 1, height: 6, borderRadius: "var(--ab-r-px-3)", background: "var(--ab-border)", overflow: "hidden" }}>
         <div style={{ height: "100%", width: pct, background: fill }} />
       </div>
-      <span style={{ fontFamily: MONO, fontSize: "10.5px", color: "var(--ab-text)" }}>{text}</span>
+      <span style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-10-5)", color: "var(--ab-text)" }}>{text}</span>
     </div>
   );
 }
 
-const cardBase: CSSProperties = { ...chipBox, padding: 16, display: "flex", flexDirection: "column" };
+const cardBase: CSSProperties = { ...chipBox, padding: "var(--ab-space-6)", display: "flex", flexDirection: "column" };
 
 export function OpsPage() {
   const lang = useLang();
@@ -33,63 +33,63 @@ export function OpsPage() {
   const { toast } = useUnifiedState();
 
   return (
-    <div style={{ flex: 1, overflow: "auto", padding: "22px 26px", display: "flex", flexDirection: "column", gap: 16 }}>
-      <span style={{ fontSize: 20, fontWeight: 700 }}>{L.ops_title}</span>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+    <div style={{ flex: 1, overflow: "auto", padding: "var(--ab-space-7) var(--ab-space-8)", display: "flex", flexDirection: "column", gap: "var(--ab-space-6)" }}>
+      <span style={{ fontSize: "var(--ab-fs-20)", fontWeight: "var(--ab-fw-700)" }}>{L.ops_title}</span>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "var(--ab-space-5)" }}>
         {/* ── Kit Instance ── */}
-        <div data-prov="fixture" style={{ ...cardBase, gap: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 700 }}>Kit Instance</span>
-            <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--ab-ok-text)", background: "rgba(49,197,109,.08)", border: "1px solid rgba(49,197,109,.22)", borderRadius: 4, padding: "1px 6px" }}>running</span>
+        <div data-prov="fixture" style={{ ...cardBase, gap: "var(--ab-space-4)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--ab-space-3)" }}>
+            <span style={{ fontSize: "var(--ab-fs-sm)", fontWeight: "var(--ab-fw-700)" }}>Kit Instance</span>
+            <span style={{ marginLeft: "auto", fontSize: "var(--ab-fs-10)", color: "var(--ab-ok-text)", background: "var(--ab-ok-a08)", border: "var(--ab-space-px-1) solid var(--ab-ok-a22)", borderRadius: "var(--ab-r-xs)", padding: "var(--ab-space-px-1) var(--ab-space-2)" }}>running</span>
           </div>
-          <div style={{ fontFamily: MONO, fontSize: "10.5px", color: "var(--ab-text-muted)", display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-10-5)", color: "var(--ab-text-muted)", display: "flex", flexDirection: "column", gap: "var(--ab-space-1)" }}>
             <span>usd_viewer.kit · RTX renderer</span>
             <span>stage: /Review/A1_Tower_fed.usd</span>
             <span>signaling :49100 · media :47998</span>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: "var(--ab-space-3)" }}>
             <span
               className="hv-accent-bg"
               data-uc="open-stage"
-              style={{ flex: 1, textAlign: "center", fontSize: 11, color: "var(--ab-accent-text)", border: "1px solid rgba(65,199,232,.3)", borderRadius: 7, padding: 6, cursor: "pointer" }}
+              style={{ flex: 1, textAlign: "center", fontSize: "var(--ab-fs-mono)", color: "var(--ab-accent-text)", border: "var(--ab-space-px-1) solid var(--ab-border-accent)", borderRadius: "var(--ab-r-px-7)", padding: "var(--ab-space-2)", cursor: "pointer" }}
               onClick={() => toast("POST /api/kit/instances/current/open → stage loading")}
             >open stage</span>
             <span
               className="hv-danger-bg"
-              style={{ flex: 1, textAlign: "center", fontSize: 11, color: "var(--ab-danger)", border: "1px solid rgba(232,97,92,.3)", borderRadius: 7, padding: 6, cursor: "pointer" }}
+              style={{ flex: 1, textAlign: "center", fontSize: "var(--ab-fs-mono)", color: "var(--ab-danger)", border: "var(--ab-space-px-1) solid var(--ab-danger-a30)", borderRadius: "var(--ab-r-px-7)", padding: "var(--ab-space-2)", cursor: "pointer" }}
               onClick={() => toast("POST /api/kit/instances/current/close → ✓")}
             >close</span>
           </div>
         </div>
         {/* ── GPU Fleet ── */}
-        <div data-prov="fixture" style={{ ...cardBase, gap: 10 }}>
-          <span style={{ fontSize: 13, fontWeight: 700 }}>GPU Fleet</span>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div data-prov="fixture" style={{ ...cardBase, gap: "var(--ab-space-4)" }}>
+          <span style={{ fontSize: "var(--ab-fs-sm)", fontWeight: "var(--ab-fw-700)" }}>GPU Fleet</span>
+          <div style={{ display: "flex", flexDirection: "column", gap: "var(--ab-space-3)" }}>
             {gpuBar("GPU 0", "82%", "linear-gradient(90deg,var(--ab-ok),var(--ab-accent))", "82%")}
             {gpuBar("GPU 1", "24%", "linear-gradient(90deg,var(--ab-ok),var(--ab-accent))", "24%")}
             {gpuBar("VRAM", "61%", "linear-gradient(90deg,var(--ab-warn),var(--ab-danger))", "14.6/24 GB")}
           </div>
-          <span style={{ fontFamily: MONO, fontSize: "9.5px", color: "var(--ab-text-dimmer)" }}>kit-manager-api :8010 · /api/kit/* proxy</span>
+          <span style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-9-5)", color: "var(--ab-text-dimmer)" }}>kit-manager-api :8010 · /api/kit/* proxy</span>
         </div>
         {/* ── 服務健康 ── */}
-        <div data-prov="fixture" style={{ ...cardBase, gap: 8 }}>
-          <span style={{ fontSize: 13, fontWeight: 700 }}>{L.svc_health}</span>
+        <div data-prov="fixture" style={{ ...cardBase, gap: "var(--ab-space-3)" }}>
+          <span style={{ fontSize: "var(--ab-fs-sm)", fontWeight: "var(--ab-fw-700)" }}>{L.svc_health}</span>
           {services.map((sv) => (
-            <div key={sv.name} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span data-uc="svc-dot" data-ok={sv.ok ? "true" : "false"} style={{ width: 7, height: 7, borderRadius: "50%", background: sv.ok ? "var(--ab-ok)" : "var(--ab-danger)", flex: "none" }} />
-              <span style={{ fontSize: "11.5px", color: "var(--ab-text-2)", flex: 1 }}>{sv.name}</span>
-              <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-text-dim)" }}>{sv.port}</span>
+            <div key={sv.name} style={{ display: "flex", alignItems: "center", gap: "var(--ab-space-3)" }}>
+              <span data-uc="svc-dot" data-ok={sv.ok ? "true" : "false"} style={{ width: 7, height: 7, borderRadius: "var(--ab-r-round)", background: sv.ok ? "var(--ab-ok)" : "var(--ab-danger)", flex: "none" }} />
+              <span style={{ fontSize: "var(--ab-fs-11-5)", color: "var(--ab-text-2)", flex: 1 }}>{sv.name}</span>
+              <span style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-10)", color: "var(--ab-text-dim)" }}>{sv.port}</span>
             </div>
           ))}
         </div>
       </div>
       {/* ── structLog · 最近事件 ── */}
-      <div data-prov="fixture" style={{ ...cardBase, gap: 8 }}>
+      <div data-prov="fixture" style={{ ...cardBase, gap: "var(--ab-space-3)" }}>
         <div style={{ display: "flex", alignItems: "center" }}>
-          <span style={{ fontSize: 13, fontWeight: 700 }}>{`structLog · ${L.recent}`}</span>
-          <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: "9.5px", color: "var(--ab-text-dimmer)" }}>GET /api/internal/structLog/health ✓</span>
+          <span style={{ fontSize: "var(--ab-fs-sm)", fontWeight: "var(--ab-fw-700)" }}>{`structLog · ${L.recent}`}</span>
+          <span style={{ marginLeft: "auto", fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-9-5)", color: "var(--ab-text-dimmer)" }}>GET /api/internal/structLog/health ✓</span>
         </div>
-        <div style={{ fontFamily: MONO, fontSize: "10.5px", color: "var(--ab-text-dim)", display: "flex", flexDirection: "column", gap: 4 }}>
+        <div style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-10-5)", color: "var(--ab-text-dim)", display: "flex", flexDirection: "column", gap: "var(--ab-space-1)" }}>
           <span><span style={{ color: "var(--ab-ok-text)" }}>INFO</span> 10:53:43 review-session S-240601 first-frame 1840ms</span>
           <span><span style={{ color: "var(--ab-ok-text)" }}>INFO</span> 10:53:12 viewer-lease claim lease_8812 role=editor</span>
           <span><span style={{ color: "var(--ab-warn)" }}>WARN</span> 10:41:02 callback-outbox retry ×2 OB-201</span>

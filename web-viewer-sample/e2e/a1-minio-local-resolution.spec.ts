@@ -118,6 +118,37 @@ test("A1 MinIO downloaded job resolves to coordinator for-session rule-run", asy
       },
     });
   });
+  await page.route(/\/api\/governance\/rule-runs\?.*$/, async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+    const url = new URL(route.request().url());
+    expect(url.pathname).toBe("/api/governance/rule-runs");
+    expect(Object.fromEntries(url.searchParams.entries())).toEqual({
+      limit: "5",
+      project_id: "p1",
+      model_category: "建築",
+      model_version_id: "v1",
+      ifc_ready_job_id: "ifcready_1",
+      idempotency_key: MINIO_IDEMPOTENCY_KEY,
+    });
+    await route.fulfill({
+      json: {
+        filters: {
+          project_id: "p1",
+          model_category: "建築",
+          model_version_id: "v1",
+          ifc_ready_job_id: "ifcready_1",
+          idempotency_key: MINIO_IDEMPOTENCY_KEY,
+        },
+        limit: 5,
+        offset: 0,
+        total: 0,
+        items: [],
+      },
+    });
+  });
   await page.route(`**/api/governance/rule-runs/for-session/${encodeURIComponent(REVIEW_SESSION_ID)}`, async (route) => {
     forSessionBody = route.request().postDataJSON();
     await route.fulfill({ json: { rule_run_id: "rr_a1", status: "queued" } });
@@ -142,7 +173,7 @@ test("A1 MinIO downloaded job resolves to coordinator for-session rule-run", asy
     await route.fulfill({ json: { results: [] } });
   });
 
-  await page.goto("/#a1");
+  await page.goto("/#a1-workbench");
   await page.getByTestId("a1-source-minio").click();
   await page.getByTestId("a1-minio-select").selectOption(MINIO_KEY);
 
@@ -157,6 +188,8 @@ test("A1 MinIO downloaded job resolves to coordinator for-session rule-run", asy
   await expect(page.getByTestId("a1-rulerun-scoreboard")).toBeVisible();
   expect(forSessionBody).toEqual({ ids_path: expect.stringContaining("sample-fire-rating.ids") });
   expect(directRuleRunHit).toBe(false);
+  await expect(page.getByTestId("a1-minio-history-empty")).toBeVisible();
+  await expect(page.getByTestId("a1-minio-history-error")).toHaveCount(0);
 
   await page.screenshot({ path: "../artifacts/e2e/a1-minio-local-resolution.png", fullPage: true });
 });
@@ -233,6 +266,37 @@ test("A1 MinIO downloaded job without review session uses coordinator for-ifc-re
       },
     });
   });
+  await page.route(/\/api\/governance\/rule-runs\?.*$/, async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+    const url = new URL(route.request().url());
+    expect(url.pathname).toBe("/api/governance/rule-runs");
+    expect(Object.fromEntries(url.searchParams.entries())).toEqual({
+      limit: "5",
+      project_id: "p1",
+      model_category: "建築",
+      model_version_id: "v1",
+      ifc_ready_job_id: NO_SESSION_JOB_ID,
+      idempotency_key: MINIO_IDEMPOTENCY_KEY,
+    });
+    await route.fulfill({
+      json: {
+        filters: {
+          project_id: "p1",
+          model_category: "建築",
+          model_version_id: "v1",
+          ifc_ready_job_id: NO_SESSION_JOB_ID,
+          idempotency_key: MINIO_IDEMPOTENCY_KEY,
+        },
+        limit: 5,
+        offset: 0,
+        total: 0,
+        items: [],
+      },
+    });
+  });
   await page.route(`**/api/governance/rule-runs/for-ifc-ready/${encodeURIComponent(NO_SESSION_JOB_ID)}`, async (route) => {
     forIfcReadyBody = route.request().postDataJSON();
     await route.fulfill({ json: { rule_run_id: "rr_ifc_ready", status: "queued" } });
@@ -261,7 +325,7 @@ test("A1 MinIO downloaded job without review session uses coordinator for-ifc-re
     await route.fulfill({ json: { results: [] } });
   });
 
-  await page.goto("/#a1");
+  await page.goto("/#a1-workbench");
   await page.getByTestId("a1-source-minio").click();
   await page.getByTestId("a1-minio-select").selectOption(MINIO_KEY);
 
@@ -278,6 +342,8 @@ test("A1 MinIO downloaded job without review session uses coordinator for-ifc-re
   expect(forIfcReadyBody).toEqual({ ids_path: expect.stringContaining("sample-fire-rating.ids") });
   expect(directRuleRunHit).toBe(false);
   expect(forSessionHit).toBe(false);
+  await expect(page.getByTestId("a1-minio-history-empty")).toBeVisible();
+  await expect(page.getByTestId("a1-minio-history-error")).toHaveCount(0);
 
   await page.screenshot({ path: "../artifacts/e2e/a1-minio-local-resolution-no-session.png", fullPage: true });
 });

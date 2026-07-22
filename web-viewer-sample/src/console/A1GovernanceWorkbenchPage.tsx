@@ -721,7 +721,7 @@ export function A1GovernanceWorkbenchPage() {
 
       <Panel title={t("A1 五步引導式流程", "A1 Five-Step Guided Workflow")} sub={t("整頁狀態機驅動；步驟依當前 state 亮燈（證據型更新，禁樂觀）", "Driven by a page-level state machine; steps light up by current state (evidence-based updates, no optimistic UI)")} prov="asbuilt">
         <LifecycleStrip steps={[t("選 IFC", "Select IFC"), t("選 IDS", "Select IDS"), t("執行檢核", "Run Validation"), t("3D Session", "3D Session"), t("高亮審查/交付", "Highlight Review / Deliver")]} statuses={ui} />
-        <div className="ec-grid" style={{ marginBottom: 8 }}>
+        <div className="ec-grid" style={{ marginBottom: "var(--ab-space-3)" }}>
           <Field k="rule_run_id" v={runId ?? "—"} prov="asbuilt" />
           <Field k="step" v={state.step} prov="asbuilt" />
           {state.issueCount !== null && <Field k={t("已開 issue（artifact）", "issues opened (artifact)")} v={String(state.issueCount)} prov="asbuilt" />}
@@ -730,7 +730,7 @@ export function A1GovernanceWorkbenchPage() {
           {state.exported && <div data-testid="a1-exported-artifact"><Field k={t("已匯出（artifact）", "exported (artifact)")} v="excel" prov="asbuilt" /></div>}
         </div>
 
-        <div data-testid="a1-source-picker" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <div data-testid="a1-source-picker" style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", flexWrap: "wrap" }}>
           <Btn data-testid="a1-source-local" prov={sourceKind === "local_fs" ? "asbuilt" : undefined}
             caption={t("local_fs：governance-service 可讀的 server-local IFC path", "local_fs: server-local IFC path readable by governance-service")}
             onClick={() => {
@@ -833,14 +833,14 @@ export function A1GovernanceWorkbenchPage() {
             </>
           )}
         </div>
-        {fsErr && sourceKind === "local_fs" && <p className="ec-warn-note" data-testid="a1-fs-error" style={{ marginTop: 4 }}>{t("local_fs 檔案庫不可用：", "local_fs file library unavailable: ")}{fsErr}{" "}<Btn data-testid="a1-fs-retry" caption="GET /api/governance/files/tree" onClick={() => { void loadA1FsTree(); }}>{t("重試載入檔案庫", "Retry loading file library")}</Btn></p>}
-        {sourceKind === "minio" && <p className="ec-note" data-testid="a1-minio-source-note" style={{ marginTop: 4 }}>{t("A1 CPU 檢核需要 coordinator-resolved server-local IFC path；MinIO key 不會送 POST /api/governance/rule-runs。未被 watcher 偵測到的 MinIO 物件請先由轉檔排程頁觸發 POST /api/conversion/trigger。", "A1 CPU validation needs a coordinator-resolved server-local IFC path; the MinIO key is not sent to POST /api/governance/rule-runs. If the watcher missed a MinIO object, trigger POST /api/conversion/trigger from the conversion schedule page first.")}</p>}
-        {sourceKind === "minio" && selectedKey && <p className={canPickMinioDownloaded ? "ec-note" : "ec-warn-note"} data-testid="a1-minio-resolution-note" style={{ marginTop: 4 }}>{selectedMinioResolutionNote}</p>}
-        {minioErr && sourceKind === "minio" && <p className="ec-warn-note" data-testid="a1-minio-error" style={{ marginTop: 4 }}>{t("MinIO 物件清單不可用：", "MinIO object list unavailable: ")}{minioErr}</p>}
+        {fsErr && sourceKind === "local_fs" && <p className="ec-warn-note" data-testid="a1-fs-error" style={{ marginTop: "var(--ab-space-1)" }}>{t("local_fs 檔案庫不可用：", "local_fs file library unavailable: ")}{fsErr}{" "}<Btn data-testid="a1-fs-retry" caption="GET /api/governance/files/tree" onClick={() => { void loadA1FsTree(); }}>{t("重試載入檔案庫", "Retry loading file library")}</Btn></p>}
+        {sourceKind === "minio" && <p className="ec-note" data-testid="a1-minio-source-note" style={{ marginTop: "var(--ab-space-1)" }}>{t("A1 CPU 檢核需要 coordinator-resolved server-local IFC path；MinIO key 不會送 POST /api/governance/rule-runs。未被 watcher 偵測到的 MinIO 物件請先由轉檔排程頁觸發 POST /api/conversion/trigger。", "A1 CPU validation needs a coordinator-resolved server-local IFC path; the MinIO key is not sent to POST /api/governance/rule-runs. If the watcher missed a MinIO object, trigger POST /api/conversion/trigger from the conversion schedule page first.")}</p>}
+        {sourceKind === "minio" && selectedKey && <p className={canPickMinioDownloaded ? "ec-note" : "ec-warn-note"} data-testid="a1-minio-resolution-note" style={{ marginTop: "var(--ab-space-1)" }}>{selectedMinioResolutionNote}</p>}
+        {minioErr && sourceKind === "minio" && <p className="ec-warn-note" data-testid="a1-minio-error" style={{ marginTop: "var(--ab-space-1)" }}>{t("MinIO 物件清單不可用：", "MinIO object list unavailable: ")}{minioErr}</p>}
         {/* 顯示邏輯路徑（{project}/{model}/{version}），不再顯示遮蔽字面 "[server-path]"——
             誠實：真 server path 不進瀏覽器，由 coordinator run 時解析。 */}
-        {selectedLocalOption && sourceKind === "local_fs" && <p className="ec-note" data-testid="a1-localfs-selected" style={{ marginTop: 4 }}>{t("已選 local_fs：", "Selected local_fs: ")}{selectedLocalOption.modelVersionId}</p>}
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+        {selectedLocalOption && sourceKind === "local_fs" && <p className="ec-note" data-testid="a1-localfs-selected" style={{ marginTop: "var(--ab-space-1)" }}>{t("已選 local_fs：", "Selected local_fs: ")}{selectedLocalOption.modelVersionId}</p>}
+        <div style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", marginTop: "var(--ab-space-2)" }}>
           <input className="ec-btn" data-testid="a1-ids-path" style={{ minWidth: 420 }} placeholder={t("（選填）buildingSMART IDS .ids 路徑", "(optional) buildingSMART IDS .ids path")} value={idsPath} onChange={(e) => setIdsPath(e.target.value)} />
           <input
             ref={idsFileInputRef}
@@ -859,7 +859,7 @@ export function A1GovernanceWorkbenchPage() {
           </Btn>
           <span className="ec-s">{t("預設為 repo 內 sample IDS；清空欄位則改用內建 YAML 規則集。", "Defaults to the repo sample IDS; clear the field to use the built-in YAML rule set.")}</span>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", marginTop: "var(--ab-space-3)", flexWrap: "wrap" }}>
           {/* running-error 子態（runError=true）解除 disabled，讓「可重試」真的點得到（spec §5）；
               健康 running（輪詢中、runError=false）仍 disabled 防雙擊。 */}
           <Btn primary data-testid="a1-step-run" disabled={!canRunA1}
@@ -872,7 +872,7 @@ export function A1GovernanceWorkbenchPage() {
 
       {sourceKind === "minio" && selectedKey && (
         <Panel title={t("MinIO IFC 檢核歷史", "MinIO IFC Validation History")} sub={t("依目前選取的 MinIO IFC lineage 查詢 governance rule-runs", "Queries governance rule-runs by the selected MinIO IFC lineage")} prov="asbuilt">
-          <div className="ec-grid" data-testid="a1-minio-history-scope" style={{ marginBottom: 10 }}>
+          <div className="ec-grid" data-testid="a1-minio-history-scope" style={{ marginBottom: "var(--ab-space-4)" }}>
             <Field k={t("來源專案", "Source project")} v={selectedMinioObject?.project_display_name || selectedMinioObject?.project_id || "—"} prov="asbuilt" />
             <Field k={t("種類", "Category")} v={selectedMinioObject?.category || selectedMinioJob?.category || "—"} prov="asbuilt" />
             <Field k={t("版本", "Version")} v={selectedMinioJob?.external_model_version_id || selectedMinioObject?.version || "—"} prov="asbuilt" />
@@ -931,7 +931,7 @@ export function A1GovernanceWorkbenchPage() {
             />
           </div>
           {state.run.source_metadata && (
-            <div className="ec-grid" data-testid="a1-run-lineage" style={{ marginTop: 12 }}>
+            <div className="ec-grid" data-testid="a1-run-lineage" style={{ marginTop: "var(--ab-space-5)" }}>
               <Field
                 k={t("來源專案", "Source project")}
                 v={state.run.source_metadata.project_display_name || state.run.source_metadata.project_id || "—"}
@@ -972,7 +972,7 @@ export function A1GovernanceWorkbenchPage() {
         {sessions.length === 0 ? (
           <div data-testid="a1-no-session">
             <p className="ec-note">{t("無 active session。若已有 downloaded IFC-ready job，A1 仍可先跑 CPU rule-run；3D 高亮需先讓 IFC→USD conversion ready，再在本頁建立 / 啟動 3D session。", "No active session. If a downloaded IFC-ready job exists, A1 can still run the CPU rule-run; 3D highlight requires IFC->USD conversion ready, then the 3D session is created and started on this page.")}</p>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", flexWrap: "wrap" }}>
               <Btn data-testid="a1-trigger-convert" disabled
                 caption={t("A1 v2 不觸發 conversion；請到 IFC→USD 轉檔排程頁操作", "A1 v2 does not trigger conversion; use the IFC→USD schedule page")}>
                 {t("A1 不排入轉檔", "A1 does not queue conversion")}
@@ -982,7 +982,7 @@ export function A1GovernanceWorkbenchPage() {
           </div>
         ) : (
           <>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+            <div style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", marginBottom: "var(--ab-space-3)" }}>
               <label>review session</label>
               {/* 切換 session 必須同時重置 rule-run 結果（RESET → initialA1State）：
                   rule 結果是針對特定 session 的 mapping enrich 過的；切換 session 後必須重跑檢核，避免把舊 session 的
@@ -996,14 +996,14 @@ export function A1GovernanceWorkbenchPage() {
                 {sessions.map((s) => <option key={s.session_id} value={s.session_id}>{s.session_id}（{s.status}）</option>)}
               </select>
             </div>
-            <div className="ec-grid" style={{ marginBottom: 8 }}>
+            <div className="ec-grid" style={{ marginBottom: "var(--ab-space-3)" }}>
               <Field k="selected session" v={selectedSession || t("not_selected（未綁定 server-local IFC path）", "not_selected (server-local IFC path not bound)")} prov={selectedSession ? "asbuilt" : "p1"} />
               <Field k="3D owner" v={t("A1 inline viewer lease / first frame / stage match / highlight trace", "A1 inline viewer lease / first frame / stage match / highlight trace")} prov="asbuilt" />
               <Field k="A1 auto attach" v={t("manual button only", "manual button only")} prov="asbuilt" />
             </div>
           </>
         )}
-        <div data-testid="a1-review-session-actions" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
+        <div data-testid="a1-review-session-actions" style={{ display: "flex", gap: "var(--ab-space-3)", alignItems: "center", flexWrap: "wrap", marginTop: "var(--ab-space-3)" }}>
           <Btn data-testid="a1-retry-conversion"
             disabled={!selectedMinioConversionRetryable || conversionRetryBusy}
             caption={selectedMinioConversionRetryable
@@ -1028,8 +1028,8 @@ export function A1GovernanceWorkbenchPage() {
       </Panel>
 
       <Panel title={t("交付", "Deliverables")} sub={t("開 Issue / 匯出 Excel / 匯出 BCF 2.1 走真實後端；BCF 需先建 Issue（step=issued/delivered）才 enable；3D 高亮在 A1 本頁 session 面板執行", "Open Issue / Export Excel / Export BCF 2.1 go through the real backend; BCF is enabled only after Issues are created (step=issued/delivered); 3D highlight runs in the A1 session panel above")} prov="asbuilt">
-        <div data-testid="a1-bcf-review-panel" style={{ marginBottom: 10 }}>
-          <div className="ec-grid" style={{ marginBottom: 8 }}>
+        <div data-testid="a1-bcf-review-panel" style={{ marginBottom: "var(--ab-space-4)" }}>
+          <div className="ec-grid" style={{ marginBottom: "var(--ab-space-3)" }}>
             <Field k="BCF topics" v={bcfIssues.length > 0 ? String(bcfIssues.length) : t("尚未建立可匯出的正式 Issue", "no exportable formal issues created yet")} prov={bcfIssues.length > 0 ? "asbuilt" : "p1"} />
             <Field k="scope" v={t("只列 kind=issue 且含 ifc_guid 的 BCF topics；annotation 不計入", "only kind=issue rows with ifc_guid are listed as BCF topics; annotations are excluded")} prov="asbuilt" />
           </div>
@@ -1136,7 +1136,7 @@ export function A1GovernanceWorkbenchPage() {
         {issueSnapshotErr && <span className="ec-warn-note" data-testid="a1-issue-snapshot-error">{issueSnapshotErr}</span>}{" "}
         {/* 七軸 cross-link chips（§4.3）：回看 MinIO 來源物件、跳 Session 管理檢視此 session。
             證據型——目標 id 不存在時誠實 disabled，不製造無效跳轉。 */}
-        <span className="ec-crosslinks" data-testid="a1-crosslinks" style={{ display: "inline-flex", gap: 8, flexWrap: "wrap", marginLeft: 8 }}>
+        <span className="ec-crosslinks" data-testid="a1-crosslinks" style={{ display: "inline-flex", gap: "var(--ab-space-3)", flexWrap: "wrap", marginLeft: "var(--ab-space-3)" }}>
           <Btn
             data-testid="a1-link-minio"
             disabled={sourceKind !== "minio" || !selectedKey}
@@ -1157,7 +1157,7 @@ export function A1GovernanceWorkbenchPage() {
             {t("Session 管理 →", "Session Management →")}
           </Btn>
         </span>{" "}
-        {actionErr && <p className="ec-warn-note" data-testid="a1-action-error" style={{ marginTop: 8 }}>{actionErr}</p>}
+        {actionErr && <p className="ec-warn-note" data-testid="a1-action-error" style={{ marginTop: "var(--ab-space-3)" }}>{actionErr}</p>}
       </Panel>
     </>
   );

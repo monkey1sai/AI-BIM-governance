@@ -7,7 +7,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 import { useState } from "react";
 import { useLang } from "../i18n";
-import { MONO, getL, appEn, chipBox, conceptFeat, conceptMeta } from "./fixtures";
+import { getL, appEn, chipBox, conceptFeat, conceptMeta } from "./fixtures";
 import type { ConceptKey } from "./fixtures";
 
 export interface ConceptPageProps {
@@ -32,36 +32,36 @@ export function ConceptPage({ slug }: ConceptPageProps) {
   const [failedSlug, setFailedSlug] = useState<ConceptKey | null>(null);
   const imgFailed = failedSlug === slug;
 
-  const monoInline = { fontFamily: MONO, color: "var(--ab-text-2)" } as const;
+  const monoInline = { fontFamily: "var(--ab-mono)", color: "var(--ab-text-2)" } as const;
 
   return (
     <div data-prov="fixture" data-uc="concept-root" style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 22px", borderBottom: "1px solid rgba(120,160,210,.10)", background: "var(--ab-bar)" }}>
-        <span style={{ fontSize: 16, fontWeight: 700 }}>{title}</span>
-        <span style={{ fontSize: 10, color: "var(--ab-warn)", background: "rgba(230,178,62,.1)", border: "1px solid rgba(230,178,62,.3)", borderRadius: 5, padding: "2px 8px", fontFamily: MONO }}>Concept Preview / Roadmap</span>
-        <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--ab-text-dim)" }}>{L.concept_note}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--ab-space-4)", padding: "var(--ab-space-5) var(--ab-space-7)", borderBottom: "var(--ab-space-px-1) solid var(--ab-border-a10)", background: "var(--ab-bar)" }}>
+        <span style={{ fontSize: "var(--ab-fs-h3)", fontWeight: "var(--ab-fw-700)" }}>{title}</span>
+        <span style={{ fontSize: "var(--ab-fs-10)", color: "var(--ab-warn)", background: "var(--ab-warn-a10)", border: "var(--ab-space-px-1) solid var(--ab-warn-a30)", borderRadius: "var(--ab-r-px-5)", padding: "var(--ab-space-px-2) var(--ab-space-3)", fontFamily: "var(--ab-mono)" }}>Concept Preview / Roadmap</span>
+        <span style={{ marginLeft: "auto", fontSize: "var(--ab-fs-mono)", color: "var(--ab-text-dim)" }}>{L.concept_note}</span>
       </div>
       {imgFailed ? (
         <div data-uc="concept-fallback">
-          <div style={{ padding: "40px 48px", display: "flex", flexDirection: "column", gap: 22, maxWidth: 980 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-              <div style={{ width: 64, height: 64, borderRadius: 16, background: "radial-gradient(circle at 35% 35%,rgba(157,140,255,.55),rgba(47,123,246,.3) 60%,rgba(10,16,24,.2))", border: "1px solid rgba(157,140,255,.35)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: MONO, fontSize: 17, fontWeight: 600, color: "var(--ab-violet-bright)" }}>{code}</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontSize: 22, fontWeight: 700 }}>{title}</span>
-                <span style={{ fontFamily: MONO, fontSize: 11, color: "var(--ab-violet-dim)" }}>{`${appEn[code]} · Roadmap Phase ${slug === "a5" ? "P3" : "P4"}`}</span>
+          <div style={{ padding: "var(--ab-space-px-40) var(--ab-space-px-48)", display: "flex", flexDirection: "column", gap: "var(--ab-space-7)", maxWidth: 980 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "var(--ab-space-px-14)" }}>
+              <div style={{ width: 64, height: 64, borderRadius: "var(--ab-r-px-16)", background: "radial-gradient(circle at 35% 35%,var(--ab-violet-a55),var(--ab-accent-2-a30) 60%,var(--ab-bar-a20))", border: "var(--ab-space-px-1) solid var(--ab-violet-a35)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-17)", fontWeight: "var(--ab-fw-600)", color: "var(--ab-violet-bright)" }}>{code}</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--ab-space-1)" }}>
+                <span style={{ fontSize: "var(--ab-fs-22)", fontWeight: "var(--ab-fw-700)" }}>{title}</span>
+                <span style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-mono)", color: "var(--ab-violet-dim)" }}>{`${appEn[code]} · Roadmap Phase ${slug === "a5" ? "P3" : "P4"}`}</span>
               </div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--ab-space-4)" }}>
               {feats.map((f, i) => (
-                <div key={f} style={{ ...chipBox, padding: "14px 16px", display: "flex", gap: 10, alignItems: "flex-start" }}>
-                  <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-text-code)", paddingTop: 2 }}>{`0${i + 1}`}</span>
-                  <span style={{ fontSize: "12.5px", color: "var(--ab-text-2)", lineHeight: 1.55 }}>{f}</span>
+                <div key={f} style={{ ...chipBox, padding: "var(--ab-space-px-14) var(--ab-space-6)", display: "flex", gap: "var(--ab-space-4)", alignItems: "flex-start" }}>
+                  <span style={{ fontFamily: "var(--ab-mono)", fontSize: "var(--ab-fs-10)", color: "var(--ab-text-code)", paddingTop: "var(--ab-space-px-2)" }}>{`0${i + 1}`}</span>
+                  <span style={{ fontSize: "var(--ab-fs-12-5)", color: "var(--ab-text-2)", lineHeight: "var(--ab-lh-155)" }}>{f}</span>
                 </div>
               ))}
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, border: "1px dashed rgba(230,178,62,.35)", borderRadius: 10, padding: "12px 16px" }}>
-              <span style={{ fontSize: 13 }}>🖼</span>
-              <span style={{ fontSize: "11.5px", color: "var(--ab-text-muted)", lineHeight: 1.6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "var(--ab-space-4)", border: "var(--ab-space-px-1) dashed var(--ab-warn-a35)", borderRadius: "var(--ab-r-lg)", padding: "var(--ab-space-5) var(--ab-space-6)" }}>
+              <span style={{ fontSize: "var(--ab-fs-sm)" }}>🖼</span>
+              <span style={{ fontSize: "var(--ab-fs-11-5)", color: "var(--ab-text-muted)", lineHeight: "var(--ab-lh-160)" }}>
                 {zh ? (
                   <>
                     {"原始概念稿 "}<span style={monoInline}>{cm.img}</span>{" 未隨程式碼打包(檔案超過設計匯出上限)。將原圖放入 "}<span style={monoInline}>uploads/</span>{" 目錄即自動顯示。"}

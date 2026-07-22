@@ -1,6 +1,6 @@
 ## Why
 
-`docs/plans/ai-bim-governance.css`（`--ab-*`/`.ab-*`，500 行完整 token 系統，自述「extracted from Hi-Fi console」）目前是零消費者的孤兒檔案：repo 全域搜尋（`.ts`/`.tsx`/`.html`/`.md`/`.json`）0 個引用，不在唯讀 authoring origin（`C:\Repos\design\desigin-system`）內，不受 `docs/plans/design-system-reference.manifest.json` 的 pixel gate 管，也不是該 manifest 自己 `token_projection.upstream_authority` 指的 `source/styles.css`（兩者 `--ab-` 命中數、內容、大小皆不同）。production 實際的唯一 CSS 真相源是 `web-viewer-sample/src/console/edge-console.css`（217 個 `--ec-*` token，NVIDIA 綠 `#76b900` 為主色，雙主題）。使用者已在完整揭露現況（含 `edge-console.css` 內「NVIDIA 綠為核心品牌」的既有設計註解、以及亮/暗切換是真實可點的 localStorage-persisted 功能）後，明確指示：以 `AI-BIM Console Hi-Fi.dc.html` 為前端唯一操作標準、以 `ai-bim-governance.css` 為前端設計風格，並確認即使代表推翻既有品牌決策與拿掉淺色主題，仍要落地此方向。本 change 把該裁決正式轉為可驗收的 spec，讓孤兒檔案真正成為 production 消費的唯一 design token 權威。
+本 change 建立時，`docs/plans/ai-bim-governance.css`（`--ab-*`/`.ab-*`，500 行完整 token 系統，自述「extracted from Hi-Fi console」）仍是零消費者的孤兒檔案：repo 全域搜尋（`.ts`/`.tsx`/`.html`/`.md`/`.json`）0 個引用，不在唯讀 authoring origin（`C:\Repos\design\desigin-system`）內，不受 `docs/plans/design-system-reference.manifest.json` 的 pixel gate 管，也不是該 manifest 自己 `token_projection.upstream_authority` 指的 `source/styles.css`（兩者 `--ab-` 命中數、內容、大小皆不同）。當時 production 的 CSS 真相源是 `web-viewer-sample/src/console/edge-console.css`；可重現的刪除前正本 `d3c9de3f66e8f3d74fc1b0aa6f1fa7897c5549ac` 含 52 個 unique `--ec-*` 宣告名稱與 78 次宣告（全檔共 348 次 `--ec-*` occurrence），以 NVIDIA 綠 `#76b900` 為主色並提供雙主題。使用者已在完整揭露現況（含 `edge-console.css` 內「NVIDIA 綠為核心品牌」的既有設計註解、以及亮/暗切換是真實可點的 localStorage-persisted 功能）後，明確指示：以 `AI-BIM Console Hi-Fi.dc.html` 為前端唯一操作標準、以 `ai-bim-governance.css` 為前端設計風格，並確認即使代表推翻既有品牌決策與拿掉淺色主題，仍要落地此方向。本 change 把該裁決正式轉為可驗收的 spec，讓孤兒檔案真正成為 production 消費的唯一 design token 權威。
 
 ## What Changes
 
@@ -23,7 +23,7 @@
 ## Impact
 
 - **受影響程式碼**：`web-viewer-sample/src/console/edge-console.css`（retire）、`web-viewer-sample/src/console/EdgeConsole.tsx`（移除主題切換邏輯）、`web-viewer-sample/src/console/unified/*.tsx`（inline hex → `--ab-*` token）、`web-viewer-sample/src/console/unified/unified.css`、`web-viewer-sample/src/console/governance/overlay.css`、`web-viewer-sample/src/console/viewer/*.css`、`web-viewer-sample/src/console/ConversionPage.tsx`。
-- **受影響文件**：`docs/plans/AI-BIM 前後端設計文件.dc.html` §08、`docs/plans/design-system-reference.manifest.json`（golden baseline 需重新 rebaseline，13 screens × 2 viewports 全數視覺內容改變）。
+- **受影響文件**：`docs/plans/AI-BIM 前後端設計文件.dc.html` §08、`docs/plans/design-system-reference.manifest.json`（golden baseline 需受控重新擷取；實作採等值 token 後，deterministic-font rebaseline 的 13 screens × 2 viewports 為 0 pixel diff，manifest 只更新擷取時間與 dependency lock hash）。
 - **不受影響**：`bim-review-coordinator`、`governance-service`、`bim-streaming-server`、任何 API/event/DB schema/session/conversion lifecycle。前端仍只打 coordinator `:8004`。`edge-console-operator-frontend` 與 `unified-governance-console` 定義的功能行為、provenance 標記、coordinator-only proxy 邊界逐字不變，只換視覺外觀。
 - **不受影響（機制重用，非新建）**：`openspec/changes/align-frontend-design-system-reference` 管理的 pixel+semantic 雙閘機制（manifest schema、`scripts/lib/design-system-gate.ps1`、`scripts/tests/verify-design-system-reference.ps1`、`capture-design-system-reference.mjs`、`web-viewer-sample/e2e/design-system-visual.spec.ts` + `design-system-semantic-cases.ts`）—— 本 change 與其平行推進、互不阻塞，遷移完成後直接重用同一套工具重新 rebaseline。
 
@@ -31,4 +31,5 @@
 
 - `openspec/specs/edge-console-operator-frontend/spec.md` 描述的頁面結構（`CoordinatorPage`/`IntakePage`/`RuntimePage`/`AppsPage`/`OverviewPage` 等扁平頁）未反映 `#349`/`#350`（UnifiedConsole IA v2）後的新 IA 結構，本 change 不代為修正。
 - `openspec/specs/unified-governance-console/spec.md`（311 行）內部混雜至少兩三種不同時期的架構描述（primary-viewer-overlay 治理架構 `GovernanceOverlay`/`HighlightBridge`/`MappingCache` vs. 英文寫的 grouped-navigation product console shell），且引用 `docs/frontend/frontend-design-guidelines.md`（另一份尚未查核的文件）。這份 spec 本身的內部一致性與是否反映當前實碼，超出本 change 查核範圍，本 change 只確認其未規範具體顏色/CSS token 機制、不因本次視覺遷移而牴觸。
-- `openspec/changes/align-frontend-design-system-reference` 的 `documentation-source-of-truth/spec.md` 仍逐字引用已於 `#342` 刪除的 `docs/plans/TRUTH`/`TARGET`/`PROCESS`/`BACKLOG` 四檔案所有權模型，已於 PR #353 的 `docs/plans/AI-BIM 前後端設計文件.dc.html` §07 記一筆已知不一致，本 change 不代為修正該 change 的 spec 檔案本體。
+- 三個與 `origin/main` byte-identical 的 `#conv` / `#minio` browser assertions 揭露 runtime/spec/E2E ownership mismatch；使用者已批准在本 change 記為 deferred，由既有 active change `minio-folderview-and-baseline-disclosure` 承接，不另造 Change ID。本 change 不把失敗記為 pass、不修改其行為，也不宣稱該 deferred Requirement 已完成。
+- `openspec/changes/align-frontend-design-system-reference` 仍有 HTML source contract、machine gate 與 functional/runtime producer 等未完成工作；本 change 只重用目前可執行的 repo-local capture/verify 機制，不宣稱該平行 change 已完成，也不代為修改或 archive 其 spec。
