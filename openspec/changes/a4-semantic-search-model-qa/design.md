@@ -291,7 +291,7 @@ Semantic completion SHALL 另要求至少一次經 coordinator session route 的
 
 ### D10 — Capability ownership、design baseline 與 legacy naming 需要明確 sequencing
 
-本 change SHALL 不再修改 `unified-governance-console`，因此不與 active `align-frontend-design-system-reference` 形成 capability overlap。Canonical A4 route、live states、design gate 與 runtime evidence 全由 `a4-semantic-search` 擁有；A5–A10 roadmap 由 `edge-console-operator-frontend` 擁有。
+本 change SHALL 不再修改 `unified-governance-console`；`align-frontend-design-system-reference` 已於 2026-07-22 以 `--skip-specs` deferred archive，其 retained delta 非 canonical authority，亦不形成 active capability owner。Canonical A4 route、live states、design gate 與 runtime evidence 全由 `a4-semantic-search` 擁有；A5–A10 roadmap 由 `edge-console-operator-frontend` 擁有。
 
 Active `migrate-console-to-hifi-design` 依 contract behavior-neutral，但會替換 console token authority 並 rebaseline 全部 approved screens，包括 `workspace.a4.default`。Implementation MAY parallel，但 maintainers SHALL 指定 final A4 golden capture owner。後續 design migration SHALL NOT 用 old fixture state 覆寫 A4 live baseline；後續 A4 rebaseline SHALL 使用 resulting token authority。Preferred closeout：先完成 visual migration，refresh A4 screen against resulting authority，最後只 implement/re-approve 一次 live A4。
 
