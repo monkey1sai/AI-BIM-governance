@@ -196,11 +196,24 @@ export interface GetStageBindingSummaryQuery {
   principal: string;
 }
 
+export interface GetActiveStageBindingQuery {
+  sessionId: string;
+  principal: string;
+}
+
 export interface StageBindingSummaryResult {
   transactionStatus: "pending" | "executing" | "active" | "failed" | "superseded" | "none";
   bindingRevisionId: string | null;
   activeBindingRevision: string | null;
   lastGoodBindingRevision: string | null;
+}
+
+export interface ActiveStageBindingResult {
+  bindingRevisionId: string;
+  principal: string;
+  leaseId: string;
+  sourceClientId: string;
+  composition: RuntimeStageComposition;
 }
 
 export type ConfirmStageBindingResult =
@@ -497,6 +510,21 @@ export class RuntimeMutationAuthority {
 
   getStageBindingSummary(query: GetStageBindingSummaryQuery): StageBindingSummaryResult {
     return this.state.summary(query.sessionId, query.principal);
+  }
+
+  getActiveStageBinding(query: GetActiveStageBindingQuery): ActiveStageBindingResult | null {
+    const active = this.state.activeBinding(query.sessionId, query.principal);
+    if (!active) return null;
+    return {
+      bindingRevisionId: active.bindingRevisionId,
+      principal: active.principal,
+      leaseId: active.leaseId,
+      sourceClientId: active.sourceClientId,
+      composition: {
+        primary: { ...active.composition.primary },
+        secondaryLayers: active.composition.secondaryLayers.map((artifact) => ({ ...artifact })),
+      },
+    };
   }
 }
 

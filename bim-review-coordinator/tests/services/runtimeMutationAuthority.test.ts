@@ -427,6 +427,54 @@ describe("RuntimeMutationAuthority", () => {
     expect(appendedEvents).toHaveLength(2);
   });
 
+  it("returns a principal-scoped defensive snapshot for the confirmed active binding", () => {
+    const { authority } = testAuthority();
+    const transaction = mustPreauthorize(authority);
+    const command = {
+      sessionId: "review_session_a",
+      sourceClientId: "viewer_lease_a",
+      credential: "lease-token-sentinel",
+      requestId: "cmd_active_snapshot",
+      requestedEventType: "openStageRequest",
+      commandContext: {},
+      stageBindingAuthorizationId: transaction.stageBindingAuthorizationId,
+      bindingRevisionId: transaction.bindingRevisionId,
+      stageComposition: transaction.composition,
+    };
+    expect(authority.authorizeRuntimeCommand(command)).toMatchObject({ authorized: true });
+    expect(authority.confirmStageBinding({
+      sessionId: "review_session_a",
+      credential: "lease-token-sentinel",
+      stageBindingAuthorizationId: transaction.stageBindingAuthorizationId,
+      bindingRevisionId: transaction.bindingRevisionId,
+      requestId: "cmd_active_snapshot",
+      outcome: "success",
+    })).toMatchObject({ confirmed: true, transactionStatus: "active" });
+
+    const active = authority.getActiveStageBinding({
+      sessionId: "review_session_a",
+      principal: "lab_principal_a",
+    });
+    expect(active).toEqual({
+      bindingRevisionId: transaction.bindingRevisionId,
+      principal: "lab_principal_a",
+      leaseId: "viewer_lease_a",
+      sourceClientId: "viewer_lease_a",
+      composition: transaction.composition,
+    });
+    expect(authority.getActiveStageBinding({
+      sessionId: "review_session_a",
+      principal: "lab_principal_other",
+    })).toBeNull();
+    if (!active) throw new Error("confirmed binding snapshot missing");
+
+    active.composition.primary.artifactId = "caller_mutation";
+    expect(authority.getActiveStageBinding({
+      sessionId: "review_session_a",
+      principal: "lab_principal_a",
+    })?.composition.primary.artifactId).toBe(transaction.composition.primary.artifactId);
+  });
+
   it("uses independent pending and executing deadlines", () => {
     const { authority, advance } = testAuthority();
     const expiredPending = mustPreauthorize(authority);

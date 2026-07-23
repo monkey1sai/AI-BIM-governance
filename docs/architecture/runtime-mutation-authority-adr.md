@@ -43,7 +43,7 @@ The module does not own:
 
 ### 2. Public surface
 
-Export one concrete `RuntimeMutationAuthority` class with five synchronous operations:
+Export one concrete `RuntimeMutationAuthority` class with six synchronous operations:
 
 ```ts
 class RuntimeMutationAuthority {
@@ -52,8 +52,14 @@ class RuntimeMutationAuthority {
   failStageBindingBeforeMutation(command): PreMutationFailureOutcome;
   confirmStageBinding(command): ConfirmationOutcome;
   getStageBindingSummary(query): StageBindingSummary;
+  getActiveStageBinding(query): ActiveStageBindingSnapshot | null;
 }
 ```
+
+`getActiveStageBinding` is a principal-scoped, current-active-only read for
+coordinator-local consumers that need the confirmed lease, source client, and
+canonical composition. It returns a defensive snapshot, not a generic
+transaction lookup or a state mutation surface.
 
 The public surface must not expose:
 

@@ -159,6 +159,44 @@ describe("governanceClient A4 scoped search", () => {
     expect(governanceClient).not.toHaveProperty("searchModel");
   });
 
+  it("keeps scoped model-aware browser deadlines above the coordinator ceiling", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(JSON.stringify({ status: "ok" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+
+    await governanceClient.searchModelForSession(
+      "review_session_x",
+      { query: "IfcDoor", interpret_mode: "deterministic" },
+      "local_lab_principal",
+    );
+    expect(timeoutSpy).toHaveBeenLastCalledWith(15_000);
+
+    await governanceClient.searchModelForSession(
+      "review_session_x",
+      { query: "doors on level two", interpret_mode: "semantic" },
+      "local_lab_principal",
+    );
+    expect(timeoutSpy).toHaveBeenLastCalledWith(150_000);
+
+    await governanceClient.searchModelForIfcReady(
+      "ifcready_x",
+      { query: "doors on level two", interpret_mode: "auto" },
+      "local_lab_principal",
+    );
+    expect(timeoutSpy).toHaveBeenLastCalledWith(150_000);
+
+    await governanceClient.searchModelForIfcReady(
+      "ifcready_x",
+      { query: "doors on level two" },
+      "local_lab_principal",
+    );
+    expect(timeoutSpy).toHaveBeenLastCalledWith(150_000);
+  });
+
   it("fails closed before fetch when the local-dev carrier is empty", async () => {
     const spy = vi.spyOn(globalThis, "fetch");
 

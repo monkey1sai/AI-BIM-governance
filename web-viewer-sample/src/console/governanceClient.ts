@@ -109,14 +109,26 @@ export interface FailuresResponse {
 
 // F12（2026-07-10）：governance 面同樣把逾時下沉到原語層（與 coordinatorClient 對稱）；
 // __setGovFetchTimeoutMsForTests 僅測試 seam。呼叫端可自帶 init.signal 覆寫（保留彈性）。
-let GOV_FETCH_TIMEOUT_MS = 15000;
+const DEFAULT_GOV_FETCH_TIMEOUT_MS = 15_000;
+const A4_MODEL_SEARCH_FETCH_TIMEOUT_MS = 150_000;
+let GOV_FETCH_TIMEOUT_MS = DEFAULT_GOV_FETCH_TIMEOUT_MS;
 export function __setGovFetchTimeoutMsForTests(ms: number | null): void {
-  GOV_FETCH_TIMEOUT_MS = ms ?? 15000;
+  GOV_FETCH_TIMEOUT_MS = ms ?? DEFAULT_GOV_FETCH_TIMEOUT_MS;
+}
+
+function a4SearchTimeoutSignal(interpretMode?: ModelSearchInterpretMode): AbortSignal {
+  // Governance defaults an omitted mode to auto. Keep model-capable searches
+  // above the coordinator's 140-second hard ceiling, without lengthening every
+  // governance request or the explicit deterministic path.
+  const timeoutMs = interpretMode === "deterministic"
+    ? GOV_FETCH_TIMEOUT_MS
+    : A4_MODEL_SEARCH_FETCH_TIMEOUT_MS;
+  return AbortSignal.timeout(timeoutMs);
 }
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${COORD_BASE}${path}`, {
-    signal: AbortSignal.timeout(GOV_FETCH_TIMEOUT_MS),
+    signal: init?.signal ?? AbortSignal.timeout(GOV_FETCH_TIMEOUT_MS),
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
   });
@@ -286,6 +298,7 @@ export const governanceClient = {
       `/api/governance/search/model/for-session/${encodeURIComponent(sessionId)}`,
       {
         method: "POST",
+        signal: a4SearchTimeoutSignal(body.interpret_mode),
         headers: localDevPrincipalHeaders(userToken),
         body: JSON.stringify(body),
       },
@@ -299,6 +312,7 @@ export const governanceClient = {
       `/api/governance/search/model/for-ifc-ready/${encodeURIComponent(ifcReadyJobId)}`,
       {
         method: "POST",
+        signal: a4SearchTimeoutSignal(body.interpret_mode),
         headers: localDevPrincipalHeaders(userToken),
         body: JSON.stringify(body),
       },

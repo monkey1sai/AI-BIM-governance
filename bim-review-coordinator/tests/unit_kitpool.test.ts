@@ -56,6 +56,8 @@ const defaultConfig: CoordinatorConfig = {
   conversionLedgerStorePath: "/tmp/conversion-ledger.json",
   edgeSiteId: "site_local_dev",
   edgeRuntimeDataRoot: "/tmp",
+  a4ConversionArtifactsRoot: "/tmp/artifacts",
+  a4ConversionArtifactsHostRoot: "/tmp/artifacts",
   artifactHealthLedgerStorePath: "/tmp/artifact-health-ledger.json",
   userAuthProvider: "local-dev",
   // fast-ifc-link-demo-loop §2.5

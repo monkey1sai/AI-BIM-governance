@@ -102,14 +102,17 @@ type StageBindingRecord =
   | PendingExpiredStageBinding
   | ExecutingExpiredStageBinding;
 
-interface BindingSnapshot {
+export interface ActiveStageBindingSnapshot {
   bindingRevisionId: string;
   principal: string;
+  leaseId: string;
+  sourceClientId: string;
+  composition: StageComposition;
 }
 
 interface ActiveBindingSummary {
-  active: BindingSnapshot;
-  lastGood: BindingSnapshot | null;
+  active: ActiveStageBindingSnapshot;
+  lastGood: ActiveStageBindingSnapshot | null;
   updatedAtMs: number;
 }
 
@@ -417,7 +420,7 @@ export class StageBindingState {
     if (completed.phase === "active") {
       const previous = this.activeBySession.get(completed.sessionId)?.active ?? null;
       this.activeBySession.set(completed.sessionId, {
-        active: { bindingRevisionId: completed.bindingRevisionId, principal: completed.principal },
+        active: snapshotActiveBinding(completed),
         lastGood: previous,
         updatedAtMs: now,
       });
@@ -447,6 +450,12 @@ export class StageBindingState {
       activeBindingRevision: callerActive,
       lastGoodBindingRevision: callerLastGood,
     };
+  }
+
+  activeBinding(sessionId: string, principal: string): ActiveStageBindingSnapshot | null {
+    this.sweep(this.clock());
+    const active = this.activeBySession.get(sessionId)?.active;
+    return active?.principal === principal ? cloneActiveBinding(active) : null;
   }
 
   private sweep(now: number): void {
@@ -597,6 +606,23 @@ function artifactsEqual(left: StageCompositionArtifact, right: StageCompositionA
 
 function cloneAttempt(attempt: StageBindingAttempt): StageBindingAttempt {
   return { ...attempt, composition: cloneComposition(attempt.composition) };
+}
+
+function snapshotActiveBinding(transaction: StageBindingBase): ActiveStageBindingSnapshot {
+  return {
+    bindingRevisionId: transaction.bindingRevisionId,
+    principal: transaction.principal,
+    leaseId: transaction.leaseId,
+    sourceClientId: transaction.sourceClientId,
+    composition: cloneComposition(transaction.composition),
+  };
+}
+
+function cloneActiveBinding(snapshot: ActiveStageBindingSnapshot): ActiveStageBindingSnapshot {
+  return {
+    ...snapshot,
+    composition: cloneComposition(snapshot.composition),
+  };
 }
 
 function baseRecord(transaction: StageBindingRecord): StageBindingBase {
