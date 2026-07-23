@@ -21,6 +21,8 @@ const originalKitSpectatorPortStride = process.env.KIT_SPECTATOR_PORT_STRIDE;
 const originalIfcDownloadStrict = process.env.IFC_DOWNLOAD_STRICT;
 const originalEdgeSiteId = process.env.EDGE_SITE_ID;
 const originalEdgeRuntimeDataRoot = process.env.EDGE_RUNTIME_DATA_ROOT;
+const originalA4ConversionArtifactsRoot = process.env.A4_CONVERSION_ARTIFACTS_ROOT;
+const originalA4ConversionArtifactsHostRoot = process.env.A4_CONVERSION_ARTIFACTS_HOST_ROOT;
 const originalArtifactHealthLedgerStorePath = process.env.ARTIFACT_HEALTH_LEDGER_STORE_PATH;
 
 const kitEndpointEnvNames = [
@@ -43,6 +45,8 @@ beforeEach(() => {
   delete process.env.IFC_DOWNLOAD_STRICT;
   delete process.env.EDGE_SITE_ID;
   delete process.env.EDGE_RUNTIME_DATA_ROOT;
+  delete process.env.A4_CONVERSION_ARTIFACTS_ROOT;
+  delete process.env.A4_CONVERSION_ARTIFACTS_HOST_ROOT;
   delete process.env.ARTIFACT_HEALTH_LEDGER_STORE_PATH;
 });
 
@@ -159,6 +163,18 @@ afterEach(() => {
     delete process.env.EDGE_RUNTIME_DATA_ROOT;
   } else {
     process.env.EDGE_RUNTIME_DATA_ROOT = originalEdgeRuntimeDataRoot;
+  }
+
+  if (originalA4ConversionArtifactsRoot === undefined) {
+    delete process.env.A4_CONVERSION_ARTIFACTS_ROOT;
+  } else {
+    process.env.A4_CONVERSION_ARTIFACTS_ROOT = originalA4ConversionArtifactsRoot;
+  }
+
+  if (originalA4ConversionArtifactsHostRoot === undefined) {
+    delete process.env.A4_CONVERSION_ARTIFACTS_HOST_ROOT;
+  } else {
+    process.env.A4_CONVERSION_ARTIFACTS_HOST_ROOT = originalA4ConversionArtifactsHostRoot;
   }
 
   if (originalArtifactHealthLedgerStorePath === undefined) {
@@ -378,6 +394,8 @@ describe("loadConfig edge artifact health", () => {
 
     expect(config.edgeSiteId).toBe("site_local_dev");
     expect(config.edgeRuntimeDataRoot).toBe(process.cwd());
+    expect(config.a4ConversionArtifactsRoot).toBe(path.join(process.cwd(), "artifacts"));
+    expect(config.a4ConversionArtifactsHostRoot).toBe(path.join(process.cwd(), "artifacts"));
     expect(config.artifactHealthLedgerStorePath).toBe(path.join(process.cwd(), "data", "artifact-health-ledger.json"));
   });
 
@@ -389,9 +407,23 @@ describe("loadConfig edge artifact health", () => {
 
     expect(config.edgeSiteId).toBe("site_local_deploy");
     expect(config.edgeRuntimeDataRoot).toBe("D:\\Users\\deploy\\AI-bim-geo-data");
+    expect(config.a4ConversionArtifactsRoot).toBe(
+      path.join("D:\\Users\\deploy\\AI-bim-geo-data", "artifacts"),
+    );
+    expect(config.a4ConversionArtifactsHostRoot).toBe(
+      path.join("D:\\Users\\deploy\\AI-bim-geo-data", "artifacts"),
+    );
     expect(config.artifactHealthLedgerStorePath).toBe(
       path.join("D:\\Users\\deploy\\AI-bim-geo-data", "ledgers", "artifact-health-ledger.json"),
     );
+  });
+
+  it("respects the dedicated read-only A4 conversion artifacts mount", () => {
+    process.env.A4_CONVERSION_ARTIFACTS_ROOT = "/workspace/a4-conversion-artifacts";
+    process.env.A4_CONVERSION_ARTIFACTS_HOST_ROOT = "D:\\edge-data\\artifacts";
+
+    expect(loadConfig().a4ConversionArtifactsRoot).toBe("/workspace/a4-conversion-artifacts");
+    expect(loadConfig().a4ConversionArtifactsHostRoot).toBe("D:\\edge-data\\artifacts");
   });
 
   it("derives artifact health ledger path from final override edge runtime root", () => {
@@ -402,6 +434,32 @@ describe("loadConfig edge artifact health", () => {
     expect(config.artifactHealthLedgerStorePath).toBe(
       path.join("D:\\Users\\deploy\\AI-bim-geo-data", "ledgers", "artifact-health-ledger.json"),
     );
+  });
+
+  it("derives both A4 artifact roots from the final edge runtime override", () => {
+    const edgeRuntimeDataRoot = "D:\\Users\\deploy\\AI-bim-geo-data";
+    const config = loadConfig({ edgeRuntimeDataRoot });
+
+    expect(config.a4ConversionArtifactsRoot).toBe(path.join(edgeRuntimeDataRoot, "artifacts"));
+    expect(config.a4ConversionArtifactsHostRoot).toBe(path.join(edgeRuntimeDataRoot, "artifacts"));
+  });
+
+  it("derives the host A4 artifacts root from the final visible-root override", () => {
+    const config = loadConfig({
+      a4ConversionArtifactsRoot: "/workspace/custom-a4-artifacts",
+    });
+
+    expect(config.a4ConversionArtifactsHostRoot).toBe("/workspace/custom-a4-artifacts");
+  });
+
+  it("keeps an explicit host A4 artifacts root override", () => {
+    const config = loadConfig({
+      a4ConversionArtifactsRoot: "/workspace/custom-a4-artifacts",
+      a4ConversionArtifactsHostRoot: "D:\\edge-data\\custom-a4-artifacts",
+    });
+
+    expect(config.a4ConversionArtifactsRoot).toBe("/workspace/custom-a4-artifacts");
+    expect(config.a4ConversionArtifactsHostRoot).toBe("D:\\edge-data\\custom-a4-artifacts");
   });
 
   it("respects explicit ARTIFACT_HEALTH_LEDGER_STORE_PATH", () => {

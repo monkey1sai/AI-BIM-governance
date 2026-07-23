@@ -186,6 +186,19 @@ describe("StageBindingAuthorityStore", () => {
     store.consume(consumeInput(first));
     const completed = store.complete({ ...consumeInput(first), outcome: "success" });
     expect(completed).toMatchObject({ confirmed: true, idempotent_replay: false });
+    const active = store.activeBinding(first.session_id, first.principal);
+    expect(active).toEqual({
+      binding_revision_id: first.binding_revision_id,
+      principal: first.principal,
+      lease_id: first.lease_id,
+      source_client_id: first.source_client_id,
+      stage_composition: first.stage_composition,
+    });
+    expect(store.activeBinding(first.session_id, "other_principal")).toBeNull();
+    if (!active) throw new Error("active binding missing");
+    active.stage_composition.primary.artifact_id = "caller_mutation";
+    expect(store.activeBinding(first.session_id, first.principal)?.stage_composition.primary.artifact_id)
+      .toBe(first.stage_composition.primary.artifact_id);
     expect(store.complete({ ...consumeInput(first), outcome: "success" })).toMatchObject({
       confirmed: true,
       idempotent_replay: true,

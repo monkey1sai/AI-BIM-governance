@@ -17,6 +17,16 @@ services:
       # dockerized coordinator 的 governance proxy 必須走 host.docker.internal 連回；
       # 否則 governanceApiBase() fallback 到 container loopback 127.0.0.1:49102 → 502 Bad Gateway。
       GOVERNANCE_API_BASE: ${HOST_GOVERNANCE_API_BASE:-http://host.docker.internal:49102}
+      # A4 trusted routes may leave literal loopback only through this exact-origin
+      # deployment allowlist. The shared token remains secret/env-only.
+      A4_TRUSTED_GOVERNANCE_ORIGINS: ${HOST_GOVERNANCE_API_BASE:-http://host.docker.internal:49102}
+      A4_INTERNAL_CONTEXT_TOKEN: ${A4_INTERNAL_CONTEXT_TOKEN:-}
+      # Host-native conversion writes mapping files outside the coordinator
+      # storage mount. Expose only that artifacts tree read-only for A4 provenance.
+      A4_CONVERSION_ARTIFACTS_ROOT: /workspace/a4-conversion-artifacts
+      # Canonical deploy resolves this to the absolute host namespace used by
+      # host-native governance; it is never used for container-side file reads.
+      A4_CONVERSION_ARTIFACTS_HOST_ROOT: ${A4_CONVERSION_ARTIFACTS_HOST_ROOT:-}
       # CH-D：dockerized coordinator 經 host.docker.internal 連回 host-native kit-manager（:8010），
       # 供 /api/kit/* forward-only proxy（瀏覽器禁直連 :8010）。Kit 控制權威仍留 kit-manager（RK1）。
       KIT_MANAGER_API_BASE: ${HOST_KIT_MANAGER_API_BASE:-http://host.docker.internal:8010}
@@ -40,6 +50,8 @@ services:
       IFC_DOWNLOAD_STRICT: "${IFC_DOWNLOAD_STRICT:-false}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ${STREAMING_CONVERSION_ARTIFACTS_ROOT:-./bim-streaming-server/_cache/host-native-conversion/artifacts}:/workspace/a4-conversion-artifacts:ro
     ports: !override
       - "${COORDINATOR_PORT:-8004}:8004"
 

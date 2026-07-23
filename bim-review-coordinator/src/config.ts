@@ -58,6 +58,12 @@ export interface CoordinatorConfig {
   // edge artifact health：落地端 runtime data-plane metadata，不進雲端、不放 deploy checkout。
   edgeSiteId: string;
   edgeRuntimeDataRoot: string;
+  // Host-native conversion artifacts as visible to this process. Docker uses
+  // a dedicated read-only mount; host-local defaults to EDGE_RUNTIME_DATA_ROOT/artifacts.
+  a4ConversionArtifactsRoot: string;
+  // Same artifacts tree in the host-native governance process namespace.
+  // Docker deploy injects an absolute Windows/Linux host path separately.
+  a4ConversionArtifactsHostRoot: string;
   artifactHealthLedgerStorePath: string;
   // T7：使用者（local web view）auth provider，可替換；不做死 EZPLUS SSO，
   // local web view ↔ 公司 SSO 真實銜接待 OQ5。
@@ -406,6 +412,10 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
       path.join(cwd, "data", "conversion-ledger.json"),
     edgeSiteId: process.env.EDGE_SITE_ID || "site_local_dev",
     edgeRuntimeDataRoot,
+    a4ConversionArtifactsRoot:
+      process.env.A4_CONVERSION_ARTIFACTS_ROOT || path.join(edgeRuntimeDataRoot, "artifacts"),
+    a4ConversionArtifactsHostRoot:
+      process.env.A4_CONVERSION_ARTIFACTS_HOST_ROOT || path.join(edgeRuntimeDataRoot, "artifacts"),
     artifactHealthLedgerStorePath:
       process.env.ARTIFACT_HEALTH_LEDGER_STORE_PATH ||
       artifactHealthLedgerDefaultPath,
@@ -472,6 +482,12 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
       finalEdgeRoot === cwd
         ? path.join(cwd, "data", "artifact-health-ledger.json")
         : path.join(finalEdgeRoot, "ledgers", "artifact-health-ledger.json");
+  }
+  if (!process.env.A4_CONVERSION_ARTIFACTS_ROOT && overrides.a4ConversionArtifactsRoot === undefined) {
+    merged.a4ConversionArtifactsRoot = path.join(merged.edgeRuntimeDataRoot, "artifacts");
+  }
+  if (!process.env.A4_CONVERSION_ARTIFACTS_HOST_ROOT && overrides.a4ConversionArtifactsHostRoot === undefined) {
+    merged.a4ConversionArtifactsHostRoot = merged.a4ConversionArtifactsRoot;
   }
   return merged;
 }
