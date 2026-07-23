@@ -118,11 +118,11 @@ _worker / _bim-control = 已自 repo 刪除（2026-05-18 B 方案落地），僅
 | 查需求入口、服務邊界、route IA、API 契約、時序、資料模型、實作分期、AI Coding 交付守則 | `docs/plans/docs-plans-README.md`（入口）→ `AI-BIM 前後端設計文件.dc.html` §01–§08 |
 | 需要依任務種類／難度選擇 Codex workflow、subagents、模型 lane，或使用 `use agents` / `subagents` / `swarm` 開發 `docs/plans` 需求 | `docs/agents/codex-loop-workflows.md` |
 | 多終端機／多 CLI 並行 session 看板（互相感知、Claude hooks、Codex notify、Grok 整合） | `docs/agents/parallel-session-board.md` |
+| 查 domain vocabulary、GitHub issue workflow 或 triage labels | `docs/agents/domain.md`、`docs/agents/issue-tracker.md`、`docs/agents/triage-labels.md` |
 
 新增 sub-file 時：先在 `docs/agents/` 建檔，再同步更新本表與 `CLAUDE.md` index（兩份主檔的 sub-file 集合必須一致）。本文件行數預算 ≤ 250 行（目標 ≤ 200）；CLAUDE.md ≤ 130 行（目標 ≤ 100）。預算規範見 spec `agent-doc-context-budget`。
 
 ---
-
 ## 3. 探索輔助與 Source of Truth
 
 本 repo 有兩條不同優先序，禁止混用：
@@ -165,9 +165,8 @@ This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 285
 
 ## Always Do
 
-- **Lane F:** impact is optional; use direct source search, targeted tests, and `git diff`.
-- **Lane B:** run one task/entry-symbol impact; run `detect_changes()` only when code symbols or execution flows changed.
-- **Lane G/S:** run impact before shared/exported symbol edits and `detect_changes({scope: "compare", base_ref: "main"})` before commit.
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "main"})`.
 - **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
 - When exploring unfamiliar code, use `query({search_query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
 - When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
@@ -175,12 +174,12 @@ This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 285
 
 ## Never Do
 
-- NEVER use Lane F/B to bypass impact after scope expands into Lane G/S.
+- NEVER edit a function, class, or method without first running `impact` on it.
 - NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
 - NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
-- NEVER commit Lane G/S code changes without running `detect_changes()` to check affected scope.
-
+- NEVER commit changes without running `detect_changes()` to check affected scope.
 ## Resources
+
 | Resource | Use for |
 |----------|---------|
 | `gitnexus://repo/AI-BIM-governance/context` | Codebase overview, check index freshness |
@@ -188,6 +187,7 @@ This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 285
 | `gitnexus://repo/AI-BIM-governance/processes` | All execution flows |
 | `gitnexus://repo/AI-BIM-governance/process/{name}` | Step-by-step execution trace |
 ## CLI
+
 | Task | Read this skill file |
 |------|---------------------|
 | Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
@@ -196,4 +196,5 @@ This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 285
 | Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
 | Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+
 <!-- gitnexus:end -->
