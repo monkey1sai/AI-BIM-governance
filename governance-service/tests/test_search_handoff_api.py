@@ -11,6 +11,7 @@ from unittest.mock import Mock
 import app as app_module
 from search import api as search_api
 from search.handoff import ProofRejected
+from search.proofs import ProofRegistry
 
 
 INTERNAL_TOKEN = "test-a4-internal-context-token"
@@ -212,3 +213,32 @@ def test_internal_handoff_api_rejects_non_ascii_token_config_without_500(monkeyp
 
     assert response.status_code == 401
     assert response.json() == {"detail": {"code": "a4_internal_context_unauthorized"}}
+
+
+def test_internal_handoff_api_uses_the_search_proof_registry_by_default(monkeypatch):
+    monkeypatch.setenv("A4_INTERNAL_CONTEXT_TOKEN", INTERNAL_TOKEN)
+    monkeypatch.setenv("A4_PROOF_ACTIVE_KID", "a4_test_kid")
+    monkeypatch.setenv("A4_PROOF_ACTIVE_KEY", "test-proof-signing-key-material-32bytes")
+    registry = ProofRegistry()
+    monkeypatch.setattr(search_api, "proof_registry", registry)
+    monkeypatch.setattr(
+        search_api,
+        "_handoff_proof_authority",
+        search_api._ProofRegistryHandoffAuthority(),
+    )
+    issued = registry.issue(_snapshot(guid="GUID-DOOR-001", prim="/World/Doors/Door_001"))
+    assert issued is not None
+
+    response = TestClient(app_module.app).post(
+        "/api/internal/a4/handoffs/verify",
+        headers={"X-A4-Internal-Token": INTERNAL_TOKEN},
+        json={
+            "action": "focus",
+            "evidence_proofs": [issued["evidence_proof"]],
+            "binding": _binding(),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert response.json()["rows"][0]["prim_path"] == "/World/Doors/Door_001"
