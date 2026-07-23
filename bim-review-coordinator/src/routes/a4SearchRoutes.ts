@@ -66,13 +66,21 @@ type A4SearchControls = {
   retry_of_query_id?: string;
 };
 
+type GovernanceTimeoutBudget = "deterministic" | "model";
+
 type Sanitized<T> =
   | { ok: true; value: T }
   | { ok: false; authority: boolean; detail: string };
 
 const DEFAULT_GOVERNANCE_API_BASE = "http://127.0.0.1:49102";
-const DEFAULT_GOVERNANCE_TIMEOUT_MS = 5_000;
-const MAX_GOVERNANCE_TIMEOUT_MS = 15_000;
+// The canonical 89 MB IFC fixture needs more than the legacy five-second
+// proxy budget on a cold parse. Model interpretation may legally consume the
+// governance service's 120-second LLM budget before its separate 10-second IFC
+// scan budget. The scoped browser client therefore waits 150 seconds, while
+// this proxy defaults to 135 seconds and clamps overrides below that client.
+const DEFAULT_DETERMINISTIC_GOVERNANCE_TIMEOUT_MS = 12_000;
+const DEFAULT_MODEL_GOVERNANCE_TIMEOUT_MS = 135_000;
+const MAX_GOVERNANCE_TIMEOUT_MS = 140_000;
 const MAX_GOVERNANCE_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_QUERY_LENGTH = 4_000;
 const MAX_RESULT_LIMIT = 1_000;
@@ -302,10 +310,19 @@ function internalToken(deps: A4SearchRouteDeps): string | null {
   return token.length >= 16 && token.length <= 4_096 ? token : null;
 }
 
-function governanceTimeout(deps: A4SearchRouteDeps): number {
-  const candidate = deps.governanceTimeoutMs ?? DEFAULT_GOVERNANCE_TIMEOUT_MS;
-  if (!Number.isInteger(candidate) || candidate < 1) return DEFAULT_GOVERNANCE_TIMEOUT_MS;
+function governanceTimeout(deps: A4SearchRouteDeps, budget: GovernanceTimeoutBudget): number {
+  const defaultTimeout = budget === "deterministic"
+    ? DEFAULT_DETERMINISTIC_GOVERNANCE_TIMEOUT_MS
+    : DEFAULT_MODEL_GOVERNANCE_TIMEOUT_MS;
+  const candidate = deps.governanceTimeoutMs ?? defaultTimeout;
+  if (!Number.isInteger(candidate) || candidate < 1) return defaultTimeout;
   return Math.min(candidate, MAX_GOVERNANCE_TIMEOUT_MS);
+}
+
+function searchTimeoutBudget(controls: A4SearchControls): GovernanceTimeoutBudget {
+  // Governance defaults an omitted interpret_mode to auto, so only an explicit
+  // deterministic request is safe to place on the short proxy budget.
+  return controls.interpret_mode === "deterministic" ? "deterministic" : "model";
 }
 
 async function readBoundedJson(upstream: globalThis.Response): Promise<unknown> {
@@ -386,6 +403,7 @@ async function forwardTrustedA4(
   response: Response,
   deps: A4SearchRouteDeps,
   upstreamPath: string,
+  timeoutBudget: GovernanceTimeoutBudget,
   body: Record<string, unknown>,
   serverPaths: string[],
 ): Promise<void> {
@@ -402,7 +420,7 @@ async function forwardTrustedA4(
     const upstream = await fetch(new URL(upstreamPath, base), {
       method: "POST",
       redirect: "error",
-      signal: AbortSignal.timeout(governanceTimeout(deps)),
+      signal: AbortSignal.timeout(governanceTimeout(deps, timeoutBudget)),
       headers: {
         "Content-Type": "application/json",
         "X-A4-Internal-Token": token,
@@ -521,6 +539,7 @@ export function registerA4SearchRoutes(app: Express, deps: A4SearchRouteDeps): v
       response,
       deps,
       "/api/internal/a4/search/model/confirm-partial",
+      "deterministic",
       { partial_fallback_id: controls.value.partial_fallback_id, a4_trusted_context: trusted },
       [context.ifc_source_path, context.element_mapping_path ?? ""],
     );
@@ -560,6 +579,7 @@ export function registerA4SearchRoutes(app: Express, deps: A4SearchRouteDeps): v
       response,
       deps,
       "/api/internal/a4/search/model",
+      searchTimeoutBudget(controls.value),
       body,
       [context.ifc_source_path, context.element_mapping_path ?? ""],
     );
@@ -616,6 +636,7 @@ export function registerA4SearchRoutes(app: Express, deps: A4SearchRouteDeps): v
       response,
       deps,
       "/api/internal/a4/search/model",
+      searchTimeoutBudget(controls.value),
       body,
       [resolution.context.ifc_source_path],
     );

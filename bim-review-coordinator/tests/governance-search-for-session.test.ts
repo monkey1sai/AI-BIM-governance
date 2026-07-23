@@ -29,6 +29,7 @@ type GovernanceStubOptions = {
   responseBody?: unknown;
   redirectTo?: string;
   declaredLength?: number;
+  delayMs?: number;
 };
 
 const activeServers: http.Server[] = [];
@@ -91,24 +92,28 @@ async function startGovernanceStub(options: GovernanceStubOptions = {}) {
         headers: incoming.headers,
         body,
       });
-      if (options.redirectTo) {
-        outgoing.writeHead(302, { Location: options.redirectTo });
-        outgoing.end();
-        return;
-      }
-      const responseBody = options.responseBody ?? {
-        status: "ok",
-        query_id: "a4q_test_query_123456",
-        search_scope: "session_table_only",
-        results: [],
-        stats: { scanned: 0, matched: 0, returned: 0 },
+      const sendResponse = () => {
+        if (options.redirectTo) {
+          outgoing.writeHead(302, { Location: options.redirectTo });
+          outgoing.end();
+          return;
+        }
+        const responseBody = options.responseBody ?? {
+          status: "ok",
+          query_id: "a4q_test_query_123456",
+          search_scope: "session_table_only",
+          results: [],
+          stats: { scanned: 0, matched: 0, returned: 0 },
+        };
+        const payload = JSON.stringify(responseBody);
+        outgoing.writeHead(options.status ?? 200, {
+          "Content-Type": "application/json",
+          ...(options.declaredLength === undefined ? {} : { "Content-Length": String(options.declaredLength) }),
+        });
+        outgoing.end(payload);
       };
-      const payload = JSON.stringify(responseBody);
-      outgoing.writeHead(options.status ?? 200, {
-        "Content-Type": "application/json",
-        ...(options.declaredLength === undefined ? {} : { "Content-Length": String(options.declaredLength) }),
-      });
-      outgoing.end(payload);
+      if (options.delayMs && options.delayMs > 0) setTimeout(sendResponse, options.delayMs);
+      else sendResponse();
     });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -480,6 +485,64 @@ describe("A4 search route contract", () => {
       .send({ query: "IfcDoor", element_mapping_path: "C:/browser.json" });
     expect(rejected.status).toBe(400);
     expect(governance.calls).toHaveLength(1);
+  });
+
+  it("allows a cold IFC scan to exceed the legacy five-second proxy budget", async () => {
+    const governance = await startGovernanceStub({ delayMs: 5_250 });
+    process.env.GOVERNANCE_API_BASE = governance.baseUrl;
+
+    const response = await request(routeApp())
+      .post("/api/governance/search/model/for-ifc-ready/ifcready_a4_001")
+      .send({ query: "IfcDoor", interpret_mode: "deterministic" });
+
+    expect(response.status).toBe(200);
+    expect(governance.calls).toHaveLength(1);
+  });
+
+  it("assigns short deterministic and layered model-aware upstream deadlines", async () => {
+    const governance = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = governance.baseUrl;
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+
+    await request(routeApp())
+      .post("/api/governance/search/model/for-ifc-ready/ifcready_a4_001")
+      .send({ query: "IfcDoor", interpret_mode: "deterministic" });
+    expect(timeoutSpy).toHaveBeenLastCalledWith(12_000);
+
+    await request(routeApp())
+      .post("/api/governance/search/model/for-ifc-ready/ifcready_a4_001")
+      .send({ query: "doors on level two", interpret_mode: "semantic" });
+    expect(timeoutSpy).toHaveBeenLastCalledWith(135_000);
+
+    await request(routeApp())
+      .post("/api/governance/search/model/for-ifc-ready/ifcready_a4_001")
+      .send({ query: "doors on level two" });
+    expect(timeoutSpy).toHaveBeenLastCalledWith(135_000);
+
+    await request(routeApp())
+      .post("/api/governance/search/model/for-session/review_session_a4test001/partial-confirmation")
+      .send({ partial_fallback_id: "a4pf_partial_confirmation_123" });
+    expect(timeoutSpy).toHaveBeenLastCalledWith(12_000);
+
+    await request(routeApp({ governanceTimeoutMs: 999_999 }))
+      .post("/api/governance/search/model/for-ifc-ready/ifcready_a4_001")
+      .send({ query: "doors on level two", interpret_mode: "auto" });
+    expect(timeoutSpy).toHaveBeenLastCalledWith(140_000);
+  });
+
+  it("keeps an explicit upstream deadline fail-closed and response-safe", async () => {
+    const governance = await startGovernanceStub({ delayMs: 100 });
+    process.env.GOVERNANCE_API_BASE = governance.baseUrl;
+
+    const response = await request(routeApp({ governanceTimeoutMs: 25 }))
+      .post("/api/governance/search/model/for-ifc-ready/ifcready_a4_001")
+      .send({ query: "IfcDoor", interpret_mode: "deterministic" });
+
+    expect(response.status).toBe(502);
+    expect(response.body).toEqual({
+      error_code: "governance_service_unavailable",
+      detail: "Governance service is unavailable.",
+    });
   });
 
   it("disables generic browser search in every profile", async () => {
