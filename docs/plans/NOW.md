@@ -75,23 +75,25 @@
 |---|---|---|---|
 | **S1** | governance 能 atomic 驗證 3D handoff proof-set（不碰 coordinator store） | §6 governance 半部 | ✅ **#365 MERGED** `a02f20d` |
 | **S2** | coordinator session-scoped handoff create/consume + 權限（principal/lease/binding） | §6.1–6.2 後端 | ✅ **#380 MERGED** `eaf8e11` |
-| **S3** | viewer 消費 trusted handoff → 單一 focus/highlight + 狀態機 | §6.3–6.5 | 下一刀（S2 已 merge） |
-| **S4** | 收斂舊 A4 大 branch 的 §2–§5 可合部分（llm/proxy/issue/UI）成小 PR | §2–§5 子集 | 與 S2/S3 **串行**，禁止平行重寫 |
+| **S3** | viewer 消費 trusted handoff → 單一 focus/highlight + 狀態機 | §6.3–6.5 | 🟡 code complete 於 `codex/a4-s3-trusted-handoff`，待 PR；Full completion `no` |
+| **S4** | 收斂舊 A4 大 branch 的 §2–§5 可合部分（llm/proxy/issue/UI）成小 PR | §2–§5 子集 | S3 merge 後下一刀；禁止平行重寫 |
 | **S5+** | design/browser/runtime full gate | §7–§8 | 僅當 S1–S4 穩；允許長期 `Full completion claimed: no` |
 
-### S2 結案／下一個可執行 outcome（S3；尚未開 branch）
+### S3 local closeout／merge gate
 
 ```txt
 S2: #380 merged 2026-07-22；coordinator handoff create/consume 與 principal/lease/binding 重驗已進 main。
+S3 branch: codex/a4-s3-trusted-handoff（base b2cd6d3；待 commit/PR）。
 
-Outcome: viewer 消費 authorized trusted handoff，送出單一 focus/highlight，並可觀測 pending/succeeded/rejected/timed-out 狀態
-In scope: web-viewer-sample trusted handoff consumer + viewer tests；接 #380 coordinator handoff routes
-Out of scope: A4 UI 全重寫、design rebaseline、Kit producer schema、A5–A10、其他 OpenSpec
-DoD:
-  1) trusted handoff 的 focus/highlight 只在 session/principal/lease/artifact/revision 與 DataChannel readiness 都有效時送出
-  2) pending/succeeded/rejected/timed-out 與 retry linkage 可見；任一授權或 binding 變動 zero-send fail closed
-  3) Full completion claimed: no（無 browser dual-gate 不宣稱 full A4）
-  4) 更新 a4 tasks.md §6.3–6.5 對應進度
+Outcome observed locally:
+  1) viewer strict-consume opaque a4_handoff；response/body tampering fail closed
+  2) current session/principal/primary lease/model/artifact/revision + loaded stage + DataChannel gates 全過才送一個 focus/highlight
+  3) pending/succeeded/rejected/timed-out 可見；matching terminal 才成功；explicit retry 使用新 request_id + retry_of_request_id
+  4) principal/lease/binding drift、local_dev_lab、mounted a4_authentic_lease_unavailable 都 zero-send
+Verification: web-viewer-sample typecheck PASS；affected ESLint PASS；unit suite 67 files / 745 tests PASS；production build PASS
+Boundary: 未跑 browser dual-gate、design rebaseline 或 host-native Kit；未修改 shared auth/lease authority、Kit producer/schema
+Full completion claimed: no
+Next after S3 merge: S4，只選擇性收斂舊 A4 大 branch 的 §2–§5 資產，不整支 rebase/cherry-pick
 ```
 
 ### S1／S2 結案紀錄

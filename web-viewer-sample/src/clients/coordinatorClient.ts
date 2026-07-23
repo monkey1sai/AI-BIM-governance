@@ -1,5 +1,11 @@
 import type { ReviewSession, ReviewStreamConfig } from "../types/review";
 import type { ArtifactBinding } from "../types/artifacts";
+import {
+    parseA4HandoffIntent,
+    parseA4ViewerLeaseStatus,
+    type A4HandoffIntent,
+    type A4ViewerLeaseStatus,
+} from "./a4Handoff";
 
 export interface CreateReviewSessionInput {
     review_request_id?: string;
@@ -30,6 +36,17 @@ export class QueuedForInstanceError extends Error {
 
 export function isQueuedForInstanceError(error: unknown): error is QueuedForInstanceError {
     return error instanceof QueuedForInstanceError;
+}
+
+export class CoordinatorHttpError extends Error {
+    constructor(
+        readonly status: number,
+        readonly path: string,
+        readonly errorCode: string,
+    ) {
+        super(`Coordinator request failed: ${status} ${path} (${errorCode})`);
+        this.name = "CoordinatorHttpError";
+    }
 }
 
 export class CoordinatorClient {
@@ -69,6 +86,50 @@ export class CoordinatorClient {
         return this.request<ReviewStreamConfig>(`/api/review-sessions/${sessionId}/stream-config`);
     }
 
+    async consumeA4Handoff(
+        sessionId: string,
+        handoffId: string,
+        userToken: string,
+        viewerLeaseToken: string,
+    ): Promise<A4HandoffIntent> {
+        const path = `/api/review-sessions/${encodeURIComponent(sessionId)}/a4-handoffs/${encodeURIComponent(handoffId)}/consume`;
+        const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+            method: "POST",
+            headers: {
+                Accept: "application/json",
+                "Content-Type": "application/json",
+                "X-User-Token": userToken,
+                "X-Viewer-Lease-Token": viewerLeaseToken,
+            },
+            body: "{}",
+        });
+        const payload = await readJson(response);
+        if (!response.ok) throw coordinatorHttpError(response.status, path, payload);
+        const parsed = parseA4HandoffIntent(payload, handoffId);
+        if (!parsed) throw new CoordinatorHttpError(502, path, "a4_handoff_response_malformed");
+        return parsed;
+    }
+
+    async getA4ViewerLeaseStatus(
+        sessionId: string,
+        userToken: string,
+        viewerLeaseToken: string,
+    ): Promise<A4ViewerLeaseStatus> {
+        const path = `/api/review-sessions/${encodeURIComponent(sessionId)}/viewer-leases/status`;
+        const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+            headers: {
+                Accept: "application/json",
+                "X-User-Token": userToken,
+                "X-Viewer-Lease-Token": viewerLeaseToken,
+            },
+        });
+        const payload = await readJson(response);
+        if (!response.ok) throw coordinatorHttpError(response.status, path, payload);
+        const parsed = parseA4ViewerLeaseStatus(payload, sessionId);
+        if (!parsed) throw new CoordinatorHttpError(502, path, "viewer_lease_status_malformed");
+        return parsed;
+    }
+
     private async request<T>(path: string, init?: RequestInit): Promise<T> {
         const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
             headers: { Accept: "application/json", ...(init?.headers || {}) },
@@ -93,4 +154,13 @@ function isQueuedForInstanceResponse(payload: unknown): payload is QueuedForInst
     if (!payload || typeof payload !== "object") return false;
     const candidate = payload as { status?: unknown; artifact_bindings?: unknown };
     return candidate.status === "queued_for_instance" && Array.isArray(candidate.artifact_bindings);
+}
+
+function coordinatorHttpError(status: number, path: string, payload: unknown): CoordinatorHttpError {
+    const errorCode = payload && typeof payload === "object" && !Array.isArray(payload)
+        && typeof (payload as { error_code?: unknown }).error_code === "string"
+        && /^[a-z0-9_]{1,64}$/.test((payload as { error_code: string }).error_code)
+        ? (payload as { error_code: string }).error_code
+        : `http_${status}`;
+    return new CoordinatorHttpError(status, path, errorCode);
 }

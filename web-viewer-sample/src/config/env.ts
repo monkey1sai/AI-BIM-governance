@@ -1,4 +1,5 @@
 import { resolveBimControlBase } from "./envHelpers";
+import { normalizeA4HandoffId } from "../clients/a4Handoff";
 
 function queryParam(name: string): string | null {
     if (typeof globalThis.location === "undefined") return null;
@@ -59,6 +60,8 @@ function trustedCoordinatorBaseFromQuery(name: string): string | null {
 // legacy explicit key, but treat `session` as the primary coordinator handoff.
 const rawSessionId = queryParam("session") || queryParam("sessionId");
 const hasExplicitEmptySessionId = rawSessionId !== null && rawSessionId.trim() === "";
+const rawA4HandoffId = queryParam("a4_handoff");
+const a4HandoffId = normalizeA4HandoffId(rawA4HandoffId);
 const queryCoordinatorApiBase = trustedCoordinatorBaseFromQuery("coordinatorApiBase");
 const queryCoordinatorSocketUrl = trustedCoordinatorBaseFromQuery("coordinatorSocketUrl");
 const envCoordinatorApiBase = import.meta.env.VITE_COORDINATOR_API_BASE || "http://127.0.0.1:8004";
@@ -80,6 +83,8 @@ export const reviewEnv = {
     defaultReviewRequestId: queryParam("reviewRequestId") || queryParam("review_request_id") || import.meta.env.VITE_DEFAULT_REVIEW_REQUEST_ID || "",
     defaultSessionId: hasExplicitEmptySessionId ? "" : rawSessionId || import.meta.env.VITE_DEFAULT_SESSION_ID || "",
     hasExplicitEmptySessionId,
+    a4HandoffId,
+    hasInvalidA4HandoffId: rawA4HandoffId !== null && a4HandoffId === null,
     defaultUserId: queryParam("userId") || import.meta.env.VITE_DEFAULT_USER_ID || "dev_user_001",
     sourceClientId: queryParam("sourceClientId") || queryParam("viewerLeaseId") || queryParam("leaseId") || queryParam("userId") || import.meta.env.VITE_DEFAULT_USER_ID || "dev_user_001",
     // Ephemeral local-dev lab identity carrier. Standalone viewers generate it

@@ -57,13 +57,17 @@
 
 ## 6. Primary-only 3D Handoff、Focus 與 Highlight
 
-> **S1 done 2026-07-21（PR #365）**：governance 端 `verify_handoff_evidence` / proof-set 驗證權威已 merge main。下列 6.1 的 governance 半部視為已交付；coordinator create/consume store 仍屬 S2（未勾）。
+> **S1 done 2026-07-21（PR #365）**：governance 端 `verify_handoff_evidence` / proof-set 驗證權威已 merge main。
+>
+> **S2 done 2026-07-22（PR #380）**：session-scoped coordinator create／consume store、principal／lease／binding 重驗已 merge main。
+>
+> **S3 code complete 2026-07-23（branch `codex/a4-s3-trusted-handoff`，待 PR）**：session viewer 已加入 strict trusted-intent consumer、current session/model/artifact/revision/stage/DataChannel gates、single focus/highlight send、matching terminal correlation、10 秒 timeout 與 linked explicit retry。每次 command attempt 都重新讀 current session、stream config 與 caller-bound lease status；principal／lease／binding 漂移 zero-send。Mock authorized path 與 fail-closed path 有 unit/DOM evidence；正式 mounted resolver 仍回 `a4_authentic_lease_unavailable`，未跑 browser/Kit dual gate，故 `Full completion claimed: no`。
 
-- [ ] 6.1 新增 session-scoped coordinator handoff create／consume routes；governance 驗 proof/snapshot/model/mapping/accepted prim，coordinator 重新授權 current principal/primary 並比較 current artifact/revision，invalid multi-row set atomic reject，`expires_at` 取 configured TTL 與全部 proof expiry 的最小值，只存 opaque transient intent。
+- [x] 6.1 新增 session-scoped coordinator handoff create／consume routes；governance 驗 proof/snapshot/model/mapping/accepted prim，coordinator 重新授權 current principal/primary 並比較 current artifact/revision，invalid multi-row set atomic reject，`expires_at` 取 configured TTL 與全部 proof expiry 的最小值，只存 opaque transient intent。
 - [ ] 6.2 Mapped row click 只建立一個 `focus` handoff；明確 Highlight button 才建立 selected-set `highlight` handoff。只能導向 returned `/ui/open?session=...&a4_handoff=...`，URL 不得含 query/evidence/prim/proof，unmapped/spectator control 必須 disabled 並附原因。
-- [ ] 6.3 Session viewer 只消費 authorized trusted intent，比對 coordinator-bound model/artifact/revision 與 loaded stage，等待 DataChannel ready 後只送一個 `focusPrimRequest` 或 `highlightPrimsRequest`；不得假設 `console/unified/*` 已有 `mappingCache`，Console 不得送 WebRTC/DataChannel。
-- [ ] 6.4 沿用 unique `request_id` 做 ack correlation，顯示 pending/succeeded/rejected/timed-out，並以新 `request_id` + `retry_of_request_id` 做 linked retry；不得從 navigation/message send 推論成功。
-- [ ] 6.5 Initial send 與每次 retry 前都 SHALL 重新驗 authenticated principal、session、active primary lease、lease expiry/status、current artifact/revision；viewer 再驗 loaded stage 與 DataChannel readiness。任一變動必須 zero-send fail closed，過期 handoff/proof/lease 必須重新取得 authorized handoff。
+- [x] 6.3 Session viewer 只消費 authorized trusted intent，比對 coordinator-bound model/artifact/revision 與 loaded stage，等待 DataChannel ready 後只送一個 `focusPrimRequest` 或 `highlightPrimsRequest`；不得假設 `console/unified/*` 已有 `mappingCache`，Console 不得送 WebRTC/DataChannel。
+- [x] 6.4 沿用 unique `request_id` 做 ack correlation，顯示 pending/succeeded/rejected/timed-out，並以新 `request_id` + `retry_of_request_id` 做 linked retry；不得從 navigation/message send 推論成功。
+- [x] 6.5 Initial send 與每次 retry 前都 SHALL 重新驗 authenticated principal、session、active primary lease、lease expiry/status、current artifact/revision；viewer 再驗 loaded stage 與 DataChannel readiness。任一變動必須 zero-send fail closed，過期 handoff/proof/lease 必須重新取得 authorized handoff。
 - [ ] 6.6 A4 viewer 只消費 shared owner 已正式定義的 terminal result/rejection，不在本 change 新增 `commandRejected` schema、Kit/fakeKit producer 或 dual-emission rollout。Authentic lease／可信 rejection 未由 shared capability 提供時，Full completion SHALL 為 `no`。
 - [ ] 6.7 Tests SHALL 涵蓋 handoff create/consume/expiry/atomic invalid set/replay/cross-session/cross-principal/wrong-binding、focus vs highlight、mapped/unmapped/truncated、no Console send、timeout 後 stage/lease/principal 改變、unchanged retry linkage、stale cache、capability tampering 與 spectator rejection。
 
