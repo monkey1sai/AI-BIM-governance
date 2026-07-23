@@ -37,6 +37,10 @@ import {
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger } from "./services/conversionLedger.js";
 import {
+  IfcReadyConversionPipeline,
+  type ConversionTerminalEvent,
+} from "./services/ifcReadyConversionPipeline.js";
+import {
   ArtifactHealthLedger,
   toCloudProjection,
   type EdgeArtifactKind,
@@ -55,7 +59,6 @@ import {
   type MinioFolderListing,
 } from "./services/minioClient.js";
 import { maskPresignedRef } from "./services/presignedRef.js";
-import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
 import {
   registerGovernanceProxy,
   type RuleRunSessionResolution,
@@ -82,9 +85,6 @@ import {
 import {
   StreamingConversionClient,
   buildQualityMetricsSummary,
-  isTerminalConversionResult,
-  type PollerHandle,
-  type StreamingConversionResult,
 } from "./services/streamingConversionClient.js";
 import {
   allocateKitInstanceBindings,
@@ -116,14 +116,6 @@ import type {
 // m2a-coverage-report:conversion job id safe-id（比照後端 _safe_id 的 ^[A-Za-z0-9_.-]+$）。
 // 不可複用 isSafeSessionId —— 其 pattern 只認 ^review_session_,擋掉 stream_conv_*。
 const conversionJobIdPattern = /^[A-Za-z0-9_.-]+$/;
-const semanticReviewConversionProfile = "ifcopenshell_openusd_identity";
-type PendingDispatchEvent = {
-  event: ExternalIfcReadyEvent;
-  correlationId: string;
-  externalModelVersionId: string;
-  localPath: string;
-  hostLocalPath: string;
-};
 export function isSafeConversionJobId(value: string): boolean {
   return typeof value === "string" && value.length > 0 && conversionJobIdPattern.test(value);
 }
@@ -581,13 +573,11 @@ export interface CoordinatorApp {
   dispose: () => Promise<void>;
   /**
    * @internal test-only read accessor：回報某 jobId 是否仍持有 enqueue 階段暫存的
-   * dispatch 脈絡。**不是 production 介面**——production route(retry 422 守門)直接讀
-   * closure 內 pendingDispatchEvents,不得經此 getter；此 getter 只為測試斷言
-   * delete-on-success 失敗路徑「保留 pending」的行為可被 falsify。
+   * dispatch 脈絡。**不是 production 介面**——production route 經 pipeline 內部判定；
+   * 此 getter 只為測試斷言 delete-on-success 失敗路徑「保留 pending」的行為可被 falsify。
    *
    * `@internal` tag 讓 API extractor / consumer 在型別層看見 test-only 合約；只暴露
-   * boolean —— map 本體(含 unknown payload 型別)不外洩到公開介面,消費端拿不到
-   * .delete()/.clear() 也拿不到 unknown payload,維護者不會誤把它當 production 依賴。
+   * boolean —— map 本體不外洩到公開介面。
    */
   hasPendingDispatch: (jobId: string) => boolean;
 }
@@ -824,61 +814,52 @@ export function createCoordinatorApp(
   if (minioWatchRuntimeEnabled && config.minioWatchSelfBaseUrl) {
     startMinioWatcherIfEnabled();
   }
-  // coordinator-auto-poll-streaming-conversion §6:in-process auto-poll registry
-  // (keyed by conversion_job_id),dispatch 後 schedule、manual ingest endpoint
-  // 觸發前 cancel、shutdown(dispose())清空。
-  const pollerRegistry = new Map<string, PollerHandle>();
   // coordinator-serial-conversion-dispatch-queue:序列化對 streaming-server 的
   // dispatch。downloaded 後 enqueue;單一 in-flight slot;失敗不卡後續。
   const conversionDispatchQueue = new ConversionDispatchQueue();
-  // pendingDispatchEvents:enqueue 階段暫存 dispatch 所需 args,worker 取出用。
-  // jobId → { event, correlationId, externalModelVersionId, localPath, hostLocalPath }
-  const pendingDispatchEvents = new Map<string, PendingDispatchEvent>();
-  // dispatcher closure 用 streamingConversionClient / externalIfcReadyStore /
-  // pollerRegistry / schedulePollerForConversion(hoisted)。注意 enqueue 必須
-  // 在 setDispatcher 之後才能正確處理 worker。
-  conversionDispatchQueue.setDispatcher(async (jobId) => {
-    const pending = pendingDispatchEvents.get(jobId);
-    if (!pending) {
-      // 脈絡確實不存在（restart / drain 後）— 立即標失敗，retry 將回 422「請重新進件」。
-      externalIfcReadyStore.markDispatchFailed(
-        jobId,
-        "pending dispatch event lost before worker pickup",
-      );
-      return;
-    }
-    try {
-      const dispatch = await streamingConversionClient.createConversionJob(pending.event, {
-        correlationId: pending.correlationId,
-        externalModelVersionId: pending.externalModelVersionId,
-        localPath: pending.localPath,
-        hostLocalPath: pending.hostLocalPath,
-        conversionProfile: semanticReviewConversionProfile,
-      });
-      externalIfcReadyStore.markDispatched(
-        jobId,
-        dispatch.conversion_job_id,
-        dispatch.status,
-      );
-      // delete-on-success：僅派工成功才刪 pending，使 dispatch_failed job 可被 retry 重派。
-      pendingDispatchEvents.delete(jobId);
-      if (config.conversionPollEnabled && !pollerRegistry.has(dispatch.conversion_job_id)) {
-        schedulePollerForConversion(dispatch.conversion_job_id);
-      }
-    } catch (dispatchError) {
-      // 失敗保留 pending 脈絡供 retry requeue（dispose drain 仍會 delete，見 app.ts:1824）。
-      externalIfcReadyStore.markDispatchFailed(
-        jobId,
-        dispatchError instanceof Error ? dispatchError.message : String(dispatchError),
-      );
-    }
-  });
   // T5：轉檔結果回拋公司雲端（metadata-only outbox / retry / dead-letter）。
   const callbackOutbox = new CallbackOutbox(
     config.callbackOutboxMaxAttempts,
     undefined,
     config.callbackOutboxStorePath,
   );
+  // deepen-ifc-ready-conversion-pipeline：deep module 擁有 accept→terminal 編排。
+  // observer 實作於 auto-session helper 定義後替換；每次回傳值由對應 ingest
+  // result 攜回 HTTP adapter，不使用跨 request mutable slot。
+  type TerminalSessionCapture = {
+    session: ReviewSession | null;
+    session_replay: boolean;
+    session_reason?: string;
+  };
+  const emptyTerminalSessionCapture = (): TerminalSessionCapture => ({
+    session: null,
+    session_replay: false,
+    session_reason: undefined,
+  });
+  let onConversionTerminalImpl: (
+    event: ConversionTerminalEvent,
+  ) => TerminalSessionCapture = emptyTerminalSessionCapture;
+  const ifcReadyPipeline = new IfcReadyConversionPipeline<TerminalSessionCapture>({
+    store: externalIfcReadyStore,
+    streamingClient: streamingConversionClient,
+    queue: conversionDispatchQueue,
+    outbox: callbackOutbox,
+    ledger: conversionLedger,
+    config: {
+      storageRoot: config.storageRoot,
+      storageHostRoot: config.storageHostRoot,
+      ifcDownloadTimeoutSeconds: config.ifcDownloadTimeoutSeconds,
+      ifcDownloadStrict: config.ifcDownloadStrict,
+      conversionPollEnabled: config.conversionPollEnabled,
+      conversionPollIntervalSeconds: config.conversionPollIntervalSeconds,
+      conversionPollMaxAttempts: config.conversionPollMaxAttempts,
+      cloudCallbackBaseUrl: config.cloudCallbackBaseUrl,
+    },
+    onConversionTerminal: (event) => onConversionTerminalImpl(event),
+    // artifact health first cut remains app-owned (not pipeline core).
+    onAfterDownload: (job) => refreshArtifactHealthBestEffort(job),
+    structLog,
+  });
   // T7：使用者（local web view）auth，可替換；不做死 EZPLUS SSO（OQ5 pending）。
   const userAuthProvider = createUserAuthProvider(config);
 
@@ -889,32 +870,6 @@ export function createCoordinatorApp(
     const relative = path.relative(root, target);
     if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return null;
     return relative;
-  }
-
-  function rebuildPendingDispatchFromDownloadedJob(job: IfcReadyIntakeJob): PendingDispatchEvent | null {
-    if (job.download_status !== "downloaded" || !job.local_path || !job.host_local_path) return null;
-    return {
-      event: {
-        event: "ifc_ready",
-        tenant_id: job.tenant_id,
-        project_id: job.project_id,
-        external_model_version_id: job.external_model_version_id,
-        project_display_name: job.project_display_name,
-        model_category: job.category,
-        external_conversion_task_id: job.external_conversion_task_id,
-        source_ifc: {
-          ref: job.source_ifc_ref,
-          etag: job.source_ifc_etag || job.idempotency_key,
-          filename: "model.ifc",
-          format: "ifc",
-        },
-        callback_url: job.callback_url,
-      },
-      correlationId: job.correlation_id,
-      externalModelVersionId: job.external_model_version_id,
-      localPath: job.local_path,
-      hostLocalPath: job.host_local_path,
-    };
   }
 
   function fileSizeIfAvailable(hostPath: string | null): number | null {
@@ -1453,33 +1408,21 @@ export function createCoordinatorApp(
       response.status(400).json({ detail: "Invalid ifc-ready job id." });
       return;
     }
-    const job = externalIfcReadyStore.get(id);
-    if (!job) {
-      response.status(404).json({ detail: "Ifc-ready job not found." });
+    const result = ifcReadyPipeline.prioritize(id);
+    if (!result.ok) {
+      response.status(result.status).json({ detail: result.detail });
       return;
     }
-    if (job.status !== "queued_for_conversion") {
-      response.status(409).json({ detail: `Job not prioritizable in status '${job.status}'.` });
-      return;
-    }
-    if (!conversionDispatchQueue.prioritize(id)) {
-      response.status(409).json({ detail: "Job is in-flight or not in the queue." });
-      return;
-    }
-    // 重算受影響 queued position（順手收斂既有 position 快照漂移；in-flight 不在 getQueuedJobIds）。
-    const queuedOrder = conversionDispatchQueue.getQueuedJobIds();
-    queuedOrder.forEach((qid, idx) => externalIfcReadyStore.markQueuedForConversion(qid, idx + 1));
     const reason = parseReason(request);
     const actor = resolveActor(request);
     structLog.withTraceId(id).audit("conversion-control", "conversion.prioritize", {
       action: "conversion.prioritize", actor, target: id, reason,
     }, "info");
-    const updated = externalIfcReadyStore.get(id);
     response.json({
       ifc_ready_job_id: id,
-      status: updated?.status ?? "queued_for_conversion",
-      queue_position: updated?.queue_position ?? null,
-      queued_order: queuedOrder,
+      status: result.status,
+      queue_position: result.queue_position,
+      queued_order: result.queued_order,
       reason,
     });
   });
@@ -1491,34 +1434,18 @@ export function createCoordinatorApp(
       response.status(400).json({ detail: "Invalid ifc-ready job id." });
       return;
     }
-    const job = externalIfcReadyStore.get(id);
-    if (!job) {
-      response.status(404).json({ detail: "Ifc-ready job not found." });
-      return;
-    }
-    if (!["dispatch_failed", "dropped_on_restart"].includes(job.status)) {
-      response.status(409).json({
-        detail: `Job not retryable in status '${job.status}'.`,
-        recovery_action: deriveConversionRecoveryAction(job),
-      });
-      return;
-    }
-    if (!pendingDispatchEvents.has(id)) {
-      const rebuilt = rebuildPendingDispatchFromDownloadedJob(job);
-      if (!rebuilt) {
-        // 脈絡確實不存在且沒有已下載 IFC 可重建派工 — 誠實要求重新進件，不假裝可重試。
-        response.status(422).json({ detail: "Dispatch context lost (coordinator restart/drain); please re-POST the ifc-ready job." });
+    const result = ifcReadyPipeline.retryDispatch(id);
+    if (!result.ok) {
+      if (result.code === "not_retryable" && result.job) {
+        response.status(409).json({
+          detail: result.detail,
+          recovery_action: deriveConversionRecoveryAction(result.job),
+        });
         return;
       }
-      pendingDispatchEvents.set(id, rebuilt);
+      response.status(result.status).json({ detail: result.detail });
+      return;
     }
-    // requeue 回 getQueuePosition 語義的 position:0=enqueue 後 worker 閒置同步取為 in-flight
-    // (派工中)、≥1=排隊中。比照 intake(app.ts markQueuedForConversion(jobId, getQueuePosition ?? 0))
-    // 直接寫 store —— position 0 + queued_for_conversion 是既有合法「派工中」狀態,非矛盾;
-    // 前端插隊鈕在 queue_position<=1 disabled,對立即 in-flight 的重派 job 正確。worker 閒置時
-    // retry 立即重派是成功(非 409):job 確實重新進入派工流程,store/response 一致反映。
-    const pos = conversionDispatchQueue.requeue(id);
-    externalIfcReadyStore.markQueuedForConversion(id, pos);
     const reason = parseReason(request);
     const actor = resolveActor(request);
     structLog.withTraceId(id).audit("conversion-control", "conversion.retry", {
@@ -1527,7 +1454,7 @@ export function createCoordinatorApp(
     response.json({
       ifc_ready_job_id: id,
       status: "queued_for_conversion",
-      queue_position: pos,
+      queue_position: result.queue_position,
       reason,
     });
   });
@@ -2166,99 +2093,36 @@ export function createCoordinatorApp(
         },
       });
 
-      const existing = externalIfcReadyStore.findExisting(auth.idempotencyKey, auth.correlationId);
-      if (existing) {
-        // fast-ifc-link-demo-loop §2.6:idempotent replay 直接 200 reuse,不重下載也不重派工
-        // ifc-ready-api-field-redesign（replay 可見性）：持久標記 idempotent_replay 到 job record,
-        // 使列表/詳情端點（summarizeIfcReadyJob）誠實呈現「命中既有 job（去重生效可見）」（spec §111/§140：
-        // 操作員需從列表分辨新建 vs 命中既有）。原僅覆寫 200 回應物件、未寫回 store → 列表投影恆 false。
-        const replayed = externalIfcReadyStore.markIdempotentReplay(existing.ifc_ready_job_id) ?? existing;
-        // 誠實鐵律：replayed 是 IfcReadyIntakeJob，其 source_ifc_ref 含 presigned 簽章 → 經 sanitizeJobForExternal 遮蔽再外吐。
-        response.status(200).json({ ...sanitizeJobForExternal(replayed), idempotent_replay: true });
-        return;
-      }
-
-      const job = externalIfcReadyStore.create(event, {
+      // Route = auth + normalize → pipeline.accept → HTTP map（wire freeze）。
+      const acceptResult = await ifcReadyPipeline.accept({
+        event,
         correlationId: auth.correlationId,
         idempotencyKey: auth.idempotencyKey,
         tenantId: auth.tenantId,
         projectId: auth.projectId,
         externalModelVersionId: auth.externalModelVersionId,
       });
-
-      // fast-ifc-link-demo-loop §2.3:同步下載 IFC → shared volume,完成才 dispatch + 200。
-      // 失敗 → 502,job 標 download_status:"failed",**不** dispatch streaming-server。
-      externalIfcReadyStore.markDownloading(job.ifc_ready_job_id);
-      const downloadResult = await downloadIfcToSharedVolume(event.source_ifc.ref, job.ifc_ready_job_id, {
-        storageRoot: config.storageRoot,
-        storageHostRoot: config.storageHostRoot,
-        timeoutMs: config.ifcDownloadTimeoutSeconds * 1000,
-        fallbackOnFetchError: !config.ifcDownloadStrict,
-      });
-      if (!downloadResult.ok) {
-        externalIfcReadyStore.markDownloadFailed(job.ifc_ready_job_id, `${downloadResult.reason}: ${downloadResult.message}`);
+      if (acceptResult.kind === "replay") {
+        // 誠實鐵律：source_ifc_ref 含 presigned 簽章 → sanitize 再外吐。
+        response.status(200).json({
+          ...sanitizeJobForExternal(acceptResult.job),
+          idempotent_replay: true,
+        });
+        return;
+      }
+      if (acceptResult.kind === "download_failed") {
         response.status(502).json({
           detail: "IFC download failed",
-          ifc_ready_job_id: job.ifc_ready_job_id,
-          error: downloadResult.message,
-          reason: downloadResult.reason,
+          ifc_ready_job_id: acceptResult.ifc_ready_job_id,
+          error: acceptResult.message,
+          reason: acceptResult.reason,
           download_status: "failed",
         });
         return;
       }
-      externalIfcReadyStore.markDownloaded(job.ifc_ready_job_id, downloadResult.local_path, downloadResult.host_local_path);
-      await refreshArtifactHealthBestEffort(job);
-
-      // coordinator-serial-conversion-dispatch-queue:downloaded 後不直接同步
-      // dispatch,改 enqueue 進 in-memory FIFO。worker 單一 in-flight slot
-      // 序列化呼叫 streaming-server,避免並發踩到同一 GPU/Kit pipeline。
-      // 失敗或成功都由 dispatcher closure 直接 mark 進 store,worker 不卡。
-      // INVARIANT: pendingDispatchEvents.set() MUST 同步先於 enqueue(),兩行之間嚴禁插入 await — Node 單執行緒下確保 worker 取用前 map 已就緒,否則引入真 race
-      pendingDispatchEvents.set(job.ifc_ready_job_id, {
-        event,
-        correlationId: auth.correlationId,
-        externalModelVersionId: auth.externalModelVersionId,
-        localPath: downloadResult.local_path,
-        hostLocalPath: downloadResult.host_local_path,
-      });
-      conversionDispatchQueue.enqueue(job.ifc_ready_job_id);
-      // Review feedback(HIGH #1):queue_position 必須在 enqueue 之後讀,因為
-      // worker 可能 sync 啟動把 job 立即推進 in-flight(此時 queue 內沒這個
-      // jobId,getQueuePosition 回 0)。原本 enqueue 前計算 length+1 會在
-      // single-job 場景錯誤標 queue_position=1,而 queue 內已沒這個 job。
-      const queuePosition = conversionDispatchQueue.getQueuePosition(job.ifc_ready_job_id);
-      externalIfcReadyStore.markQueuedForConversion(
-        job.ifc_ready_job_id,
-        queuePosition ?? 0,
-      );
-
-      // minio-closed-loop-phase1 Task 2：watcher 偵測 → 持久 ledger（coordinator-local shadow）。
-      // 失敗不阻塞 intake（誠實降級，照 callbackOutbox 精神）。
-      try {
-        conversionLedger.upsert(
-          {
-            idempotency_key: (request.header("x-idempotency-key") ?? job.idempotency_key) as string,
-            correlation_id: request.header("x-correlation-id") ?? null,
-            project_id: event.project_id,
-            project_display_name: event.project_display_name ?? event.project_id,
-            category: event.model_category ?? "",
-            external_model_version_id: event.external_model_version_id ?? "",
-            conversion_job_id: job.conversion_job_id ?? null,
-            status: "queued",
-          },
-          new Date().toISOString(),
-        );
-      } catch {
-        /* ledger 失敗不卡 intake */
-      }
-
-      // fast-ifc-link-demo-loop §2.3:同步下載完成 → 202 Accepted(下載完,
-      // dispatch 改為 in-memory queue 序列化,viewer / dashboard 可 poll status
-      // 觀察 queued_for_conversion → dispatched 變化)。
-      const finalJob = externalIfcReadyStore.get(job.ifc_ready_job_id);
-      // 誠實鐵律：finalJob.source_ifc_ref 含 presigned 簽章 → 經 sanitizeJobForExternal 遮蔽再外吐（finalJob 理論恆存在，缺則 {} 不外洩）。
+      // accepted：同步下載完成 → 202 Accepted（dispatch 已入 in-memory queue）。
       response.status(202).json({
-        ...(finalJob ? sanitizeJobForExternal(finalJob) : {}),
+        ...sanitizeJobForExternal(acceptResult.job),
         message: "IFC 已下載至本地共享卷,轉檔已進入派工佇列",
       });
     } catch (error) {
@@ -2493,7 +2357,9 @@ export function createCoordinatorApp(
         return;
       }
 
-      const outcome = await ingestStreamingConversionResult(job.conversion_job_id, { source: "manual" });
+      const outcome = await ifcReadyPipeline.ingestStreamingResult(job.conversion_job_id, {
+        source: "manual",
+      });
       if (!outcome.ok) {
         response.status(outcome.status).json({
           error_code: "conversion_result_unavailable",
@@ -2505,22 +2371,34 @@ export function createCoordinatorApp(
         return;
       }
 
-      if (outcome.failed || !outcome.outcome.session) {
+      const sessionInfo =
+        outcome.outcome.terminal_observer_result ?? emptyTerminalSessionCapture();
+      const openedSession = sessionInfo.session;
+      if (outcome.failed || !openedSession) {
         response.status(409).json({
-          error_code: outcome.outcome.session_reason ?? (outcome.failed ? "conversion_failed" : "review_session_unavailable"),
+          error_code: sessionInfo.session_reason ?? (outcome.failed ? "conversion_failed" : "review_session_unavailable"),
           detail: "IFC-ready job is not ready for Review Room session.",
           ifc_ready_job_id: job.ifc_ready_job_id,
           conversion_job_id: job.conversion_job_id,
           conversion_status: outcome.conversion_status,
-          session_reason: outcome.outcome.session_reason ?? null,
+          session_reason: sessionInfo.session_reason ?? null,
         });
         return;
       }
 
-      await refreshArtifactHealthForSessionBestEffort(outcome.outcome.session);
-      const freshJob = externalIfcReadyStore.get(job.ifc_ready_job_id) ?? outcome.outcome.ifc_ready_job ?? job;
-      const freshSession = store.get(outcome.outcome.session.session_id) ?? outcome.outcome.session;
-      response.json(ifcReadyReviewSessionOpenPayload(freshJob, freshSession, outcome.outcome.session_replay));
+      await refreshArtifactHealthForSessionBestEffort(openedSession);
+      const freshJob =
+        externalIfcReadyStore.get(job.ifc_ready_job_id) ??
+        outcome.outcome.ifc_ready_job ??
+        job;
+      const freshSession = store.get(openedSession.session_id) ?? openedSession;
+      response.json(
+        ifcReadyReviewSessionOpenPayload(
+          freshJob,
+          freshSession,
+          sessionInfo.session_replay,
+        ),
+      );
     } catch (error) {
       next(error);
     }
@@ -2757,26 +2635,9 @@ export function createCoordinatorApp(
     },
   );
 
-  // B-scheme T5：本地轉檔結果 → 組 metadata-only 雲端 callback 並入 outbox。
-  // 行為保持式 helper：`/api/internal/conversion-result`（外部/輪詢餵入）與
-  // `/api/internal/conversions/:id/ingest`（coordinator 主動拉 host-native
-  // `GET /result`）共用同一條 ingestion 路徑，不重複邏輯。
-  //
-  // backfill-coordinator-webhook-and-auto-session §2 (D10/D11)：terminal `ready`
-  // 分支於 callback outbox enqueue 之後並行呼叫 autoCreateOrActivateSession，
-  // 把退役 `_bim-control` 孤立的 session 觸發責任 re-home 進本路徑；outbox 與
-  // session 狀態獨立分類（pending callback 不阻塞 session handoff，反之亦然）。
-  type ConversionIngestOutcome =
-    | {
-        ok: true;
-        ifc_ready_job: ReturnType<typeof externalIfcReadyStore.recordConversionOutcome>;
-        callback: ReturnType<typeof callbackOutbox.enqueue>;
-        session: ReviewSession | null;
-        session_replay: boolean;
-        session_reason?: string;
-      }
-    | { ok: false; status: number; detail: string };
-
+  // B-scheme T5 + deepen-ifc-ready-conversion-pipeline：
+  // conversion terminal（job/outbox/ledger）由 IfcReadyConversionPipeline.ingest；
+  // auto Review Session 僅經 onConversionTerminal observer（失敗不回灌 ingest/outbox）。
   // backfill-coordinator-webhook-and-auto-session §2 (D10)：抽出共用 helper，
   // 與既有 `POST /api/review-sessions` route handler 走同一份 SessionStore /
   // kitPool / eventLog 權威；不複製 binding 規則。傳入 conversion-ready 的
@@ -2852,9 +2713,8 @@ export function createCoordinatorApp(
       artifact_bindings: artifactBindings,
       kit_instance_bindings: kitInstanceBindings,
       // coordinator-forward-quality-metrics-summary:從 streaming conversion
-      // result 萃取的 quality summary(含 C1 三個 semantic 欄位)由 caller
-      // (ingestStreamingConversionResult)透過 ingestConversionReport 傳入。
-      // null 時與舊邏輯等價,backward compatible。
+      // result 萃取的 quality summary(含 C1 三個 semantic 欄位)由 pipeline
+      // onConversionTerminal 傳入。null 時與舊邏輯等價,backward compatible。
       quality_metrics_summary: qualitySummary,
     });
     // lifecycle audit event parity（與 explicit /api/review-sessions caller
@@ -2873,252 +2733,68 @@ export function createCoordinatorApp(
     return { session, replay: false };
   }
 
-  // coordinator-auto-poll-streaming-conversion §4.1:把 manual endpoint 與 auto-poll
-  // 共用的「fetch result → terminal 判定 → ingest」chain 抽成 helper。`result` 可選傳入
-  // (auto-poll 已有 fetch 結果可直接給,manual endpoint 走 fetchConversionResult)。
-  type StreamingResultIngestSuccess = Extract<ConversionIngestOutcome, { ok: true }>;
-  type StreamingResultIngestOutcome =
-    | { ok: true; outcome: StreamingResultIngestSuccess; conversion_status: "ready" | "failed"; failed: boolean }
-    | { ok: false; status: number; detail: string; conversion_job_id?: string; conversion_status?: string };
-
-  async function ingestStreamingConversionResult(
-    conversionJobId: string,
-    options: { result?: StreamingConversionResult; source: "manual" | "auto-poll" } = { source: "manual" },
-  ): Promise<StreamingResultIngestOutcome> {
-    const result = options.result ?? (await streamingConversionClient.fetchConversionResult(conversionJobId));
-    const correlationId = result.correlation_id;
-    if (!correlationId) {
-      return { ok: false, status: 422, detail: "streaming conversion result has no correlation_id" };
-    }
-    const { terminal, failed } = isTerminalConversionResult(result);
-    if (!terminal) {
-      return {
-        ok: false,
-        status: 409,
-        detail: "conversion result is not terminal yet",
-        conversion_job_id: conversionJobId,
-        conversion_status: result.model_status ?? result.status ?? "unknown",
-      };
-    }
-    const report = conversionResultReportSchema.parse({
-      correlation_id: correlationId,
-      conversion_job_id: result.conversion_job_id,
-      status: failed ? "failed" : "ready",
-      artifacts: {
-        usdc_ref: result.usdc_ref ?? null,
-        element_mapping_ref: result.element_mapping_ref ?? null,
-        manifest_ref: result.manifest_ref ?? null,
-      },
-      reason: failed ? result.reason || "conversion_failed" : undefined,
-      retryable: false,
-    });
-    // coordinator-forward-quality-metrics-summary:把 result 內 quality_metrics
-    // 萃取成 summary 並透過 ingestConversionReport 帶進 autoCreateOrActivateSession,
-    // 寫入 session.quality_metrics_summary,讓 viewer / `/ui` Semantic ready 有資料。
-    const qualitySummary = buildQualityMetricsSummary(result);
-    const outcome = ingestConversionReport(report, qualitySummary);
-    if (!outcome.ok) {
-      return { ok: false, status: outcome.status, detail: outcome.detail };
-    }
-    return { ok: true, outcome, conversion_status: failed ? "failed" : "ready", failed };
-  }
-
-  function schedulePollerForConversion(conversionJobId: string): void {
-    const handle = streamingConversionClient.pollConversionResult(conversionJobId, {
-      intervalMs: config.conversionPollIntervalSeconds * 1000,
-      maxAttempts: config.conversionPollMaxAttempts,
-      onTerminal: async (result) => {
-        try {
-          await ingestStreamingConversionResult(conversionJobId, { result, source: "auto-poll" });
-        } catch (err) {
-          structLog.withTraceId(`stream_conv_${conversionJobId}`).anomaly(
-            "autoPoll",
-            "auto-poll ingest failed",
-            {
-              anomaly_kind: "unexpected_state",
-              reason: err instanceof Error ? err.message : String(err),
-              conversion_job_id: conversionJobId,
-            },
-          );
-        } finally {
-          pollerRegistry.delete(conversionJobId);
-        }
-      },
-      onError: (err, attempt) => {
-        structLog.withTraceId(`stream_conv_${conversionJobId}`).anomaly(
-          "autoPoll",
-          "auto-poll fetch error",
-          {
-            anomaly_kind: "retry",
-            reason: err instanceof Error ? err.message : String(err),
-            conversion_job_id: conversionJobId,
-            attempt,
-          },
-        );
-      },
-    });
-    pollerRegistry.set(conversionJobId, handle);
-  }
-
-  function ingestConversionReport(
-    report: z.infer<typeof conversionResultReportSchema>,
-    qualitySummary: ConversionQualityMetricsSummary | null = null,
-  ): ConversionIngestOutcome {
-    const normalizedStatus = normalizeConversionReportStatus(report.status);
-    // conversion-artifact-id-sanitize（PR #206 review P2）：correlation collision 時
-    // 以 report.conversion_job_id 消歧，避免 unsafe job 的結果套到同字串 job 上。
-    const job = externalIfcReadyStore.getByCorrelation(report.correlation_id, report.conversion_job_id ?? null);
-    if (!job) {
-      return { ok: false, status: 404, detail: "No IFC-ready job for correlation_id." };
-    }
-    const conversionJobId = report.conversion_job_id || job.conversion_job_id || null;
-    const targetUrl = job.callback_url || config.cloudCallbackBaseUrl || null;
-
-    let payload: Record<string, unknown>;
-    let event: "conversion_result_ready" | "conversion_failed";
-    if (normalizedStatus === "ready") {
-      event = "conversion_result_ready";
-      payload = {
-        event,
-        tenant_id: job.tenant_id,
-        project_id: job.project_id,
-        external_model_version_id: job.external_model_version_id,
-        external_conversion_task_id: job.external_conversion_task_id ?? null,
-        conversion_job_id: conversionJobId,
-        correlation_id: job.correlation_id,
-        status: "ready",
-        source_ifc: { ref: maskPresignedRef(job.source_ifc_ref), etag: job.source_ifc_etag },
-        artifacts: {
-          usdc_ref: report.artifacts?.usdc_ref ?? null,
-          element_mapping_ref: report.artifacts?.element_mapping_ref ?? null,
-          manifest_ref: report.artifacts?.manifest_ref ?? null,
-        },
-        artifact_summary: report.artifact_summary ?? {},
-      };
-    } else {
-      event = "conversion_failed";
-      payload = {
-        event,
-        tenant_id: job.tenant_id,
-        project_id: job.project_id,
-        external_model_version_id: job.external_model_version_id,
-        conversion_job_id: conversionJobId,
-        correlation_id: job.correlation_id,
-        status: "failed",
-        reason: report.reason || "conversion_failed",
-        retryable: report.retryable ?? false,
-      };
-    }
-
-    const entry = callbackOutbox.enqueue({
-      event,
-      targetUrl,
-      correlationId: job.correlation_id,
-      externalModelVersionId: job.external_model_version_id,
-      conversionJobId,
-      payload,
-    });
-    const updatedJob = externalIfcReadyStore.recordConversionOutcome(
-      job.ifc_ready_job_id,
-      normalizedStatus,
-      entry.outbox_id,
-      report.artifacts?.manifest_ref ?? null,
-      // ifc-ready-api-field-redesign(quality Important #1):與上方 conversion_failed callback payload 同源,
-      // 把 report.reason 存回 job,供 deriveFailure 投影 failure_stage="conversion" 的 failure_reason(非漏報 null/null)。
-      normalizedStatus === "failed" ? (report.reason || "conversion_failed") : null,
-    );
-    // conversion ledger 是 #conv/#minio 的持久觀測面；conversion authority 回報終局後
-    // best-effort 回填，避免 watcher/intake 當下落帳的 queued 狀態長期誤導操作員。
-    try {
-      const ledgerStatus = normalizedStatus === "ready" ? "ready" : "failed";
-      const ledgerNow = new Date().toISOString();
-      conversionLedger.upsert(
-        {
-          idempotency_key: job.idempotency_key,
-          correlation_id: job.correlation_id,
-          project_id: job.project_id,
-          project_display_name: job.project_display_name ?? job.project_id,
-          category: job.category ?? "",
-          external_model_version_id: job.external_model_version_id ?? "",
-          conversion_job_id: conversionJobId,
-          status: ledgerStatus,
-        },
-        ledgerNow,
-      );
-      conversionLedger.recordCallbackOutcome(
-        job.idempotency_key,
-        {
-          status: ledgerStatus,
-          ...(normalizedStatus === "ready" ? { usdc_key: report.artifacts?.usdc_ref ?? null } : {}),
-          coverage_report: qualitySummary ?? report.artifact_summary ?? null,
-        },
-        ledgerNow,
-      );
-    } catch {
-      /* ledger 回填失敗不卡 conversion result ingest / callback outbox */
-    }
-
-    // backfill §2：terminal `ready` 才觸發本地 session handoff；`failed` 不建
-    // 可串流 session。auto-session 與 callback outbox **狀態獨立**——任一狀態
-    // 不阻塞他者，pending / dead-letter callback 不影響 session handoff，反之
-    // 亦然。
-    let session: ReviewSession | null = null;
-    let session_replay = false;
-    let session_reason: string | undefined;
-    if (normalizedStatus === "ready") {
-      // 使用 updatedJob 取得包含 review_session_id 的最新 job 狀態。
-      const sessionJob = updatedJob ?? job;
+  // Wire terminal observer: auto-session (ready only) + artifact health. Sync;
+  // failures are swallowed by pipeline and must not roll back outbox/ingest.
+  onConversionTerminalImpl = (event: ConversionTerminalEvent): TerminalSessionCapture => {
+    let sessionCapture = emptyTerminalSessionCapture();
+    if (event.status === "ready") {
       const result = autoCreateOrActivateSession(
-        sessionJob,
+        event.job,
         {
-          usdc_ref: report.artifacts?.usdc_ref ?? null,
-          element_mapping_ref: report.artifacts?.element_mapping_ref ?? null,
-          manifest_ref: report.artifacts?.manifest_ref ?? null,
+          usdc_ref: event.artifacts.usdc_ref ?? null,
+          element_mapping_ref: event.artifacts.element_mapping_ref ?? null,
+          manifest_ref: event.artifacts.manifest_ref ?? null,
         },
-        conversionJobId,
-        qualitySummary,
+        event.conversionJobId,
+        event.qualitySummary,
       );
       if (result.session) {
-        session = result.session;
-        session_replay = result.replay;
-        // fast-ifc-link-demo-loop §3.2 + LAN handoff:轉檔 ready + session
-        // 建好後,寫入 coordinator /ui/open URL。實際 viewer redirect 由
-        // trusted VIEWER_PUBLIC_BASE_URL / PUBLIC_HOST 組合,避免 LAN client 被導到
-        // 自己的 loopback。
-        // 用 review session_id 當 web_view_session_id(fast MVP 簡化:不再分兩種 session)。
-        const viewerUrl = buildCoordinatorOpenUrl(config, session.session_id);
-        externalIfcReadyStore.setViewerLink(job.ifc_ready_job_id, session.session_id, viewerUrl);
+        sessionCapture = {
+          session: result.session,
+          session_replay: result.replay,
+        };
+        const viewerUrl = buildCoordinatorOpenUrl(config, result.session.session_id);
+        externalIfcReadyStore.setViewerLink(
+          event.job.ifc_ready_job_id,
+          result.session.session_id,
+          viewerUrl,
+        );
       } else {
-        session_reason = result.reason;
+        sessionCapture = {
+          session: null,
+          session_replay: false,
+          session_reason: result.reason,
+        };
       }
     }
     void refreshArtifactHealthBestEffort(
-      externalIfcReadyStore.get(job.ifc_ready_job_id) ?? job,
+      externalIfcReadyStore.get(event.job.ifc_ready_job_id) ?? event.job,
       {
-        modelArtifactUrl: report.artifacts?.usdc_ref ?? null,
-        mappingUrl: report.artifacts?.element_mapping_ref ?? null,
+        modelArtifactUrl: event.artifacts.usdc_ref ?? null,
+        mappingUrl: event.artifacts.element_mapping_ref ?? null,
       },
     );
-
-    return { ok: true, ifc_ready_job: externalIfcReadyStore.get(job.ifc_ready_job_id) ?? updatedJob, callback: entry, session, session_replay, session_reason };
-  }
+    return sessionCapture;
+  };
 
   // 內部端點（外部/輪詢直接餵 report）。callback 投遞狀態與 conversion 成功
   // 分離；conversion 在本地 ready 即可查，callback 由 outbox 追蹤。
   app.post("/api/internal/conversion-result", (request, response, next) => {
     try {
       const report = conversionResultReportSchema.parse(request.body);
-      const outcome = ingestConversionReport(report);
+      const outcome = ifcReadyPipeline.ingest(report);
       if (!outcome.ok) {
         response.status(outcome.status).json({ detail: outcome.detail });
         return;
       }
+      const sessionInfo =
+        outcome.terminal_observer_result ?? emptyTerminalSessionCapture();
       response.status(202).json({
         ifc_ready_job: outcome.ifc_ready_job,
         callback: outcome.callback,
-        session: outcome.session,
-        session_replay: outcome.session_replay,
-        session_reason: outcome.session_reason ?? null,
+        session: sessionInfo.session,
+        session_replay: sessionInfo.session_replay,
+        session_reason: sessionInfo.session_reason ?? null,
       });
     } catch (error) {
       next(error);
@@ -3132,20 +2808,14 @@ export function createCoordinatorApp(
     try {
       const conversionJobId = request.params.conversionJobId;
       // m2a-coverage-report:即便 `/api/internal/*` 已過 internal-token，仍須跑
-      // isSafeConversionJobId 守門，避免未驗證字串流入 pollerRegistry / ingest，
-      // 與既有新路由維持一致的安全面（helper 存在即應在此 internal route 共用）。
+      // isSafeConversionJobId 守門，避免未驗證字串流入 poller / ingest。
       if (!isSafeConversionJobId(conversionJobId)) {
         response.status(400).json({ detail: "Invalid conversion job id." });
         return;
       }
-      // coordinator-auto-poll-streaming-conversion §4.4:manual endpoint 觸發前 cancel
-      // 對應 auto-poller,避免後續 onTerminal 觸發第二次 ingest(double callback)。
-      const existing = pollerRegistry.get(conversionJobId);
-      if (existing) {
-        existing.cancel();
-        pollerRegistry.delete(conversionJobId);
-      }
-      const outcome = await ingestStreamingConversionResult(conversionJobId, { source: "manual" });
+      const outcome = await ifcReadyPipeline.ingestStreamingResult(conversionJobId, {
+        source: "manual",
+      });
       if (!outcome.ok) {
         const body: Record<string, unknown> = { detail: outcome.detail };
         if (outcome.conversion_job_id) body.conversion_job_id = outcome.conversion_job_id;
@@ -3153,18 +2823,21 @@ export function createCoordinatorApp(
         response.status(outcome.status).json(body);
         return;
       }
+      const sessionInfo =
+        outcome.outcome.terminal_observer_result ?? emptyTerminalSessionCapture();
       response.status(202).json({
         ifc_ready_job: outcome.outcome.ifc_ready_job,
         callback: outcome.outcome.callback,
         conversion_status: outcome.conversion_status,
-        session: outcome.outcome.session,
-        session_replay: outcome.outcome.session_replay,
-        session_reason: outcome.outcome.session_reason ?? null,
+        session: sessionInfo.session,
+        session_replay: sessionInfo.session_replay,
+        session_reason: sessionInfo.session_reason ?? null,
       });
     } catch (error) {
       next(error);
     }
   });
+
 
   app.get("/api/internal/callback-outbox/:outboxId", (request, response) => {
     const entry = callbackOutbox.get(request.params.outboxId);
@@ -4221,35 +3894,15 @@ export function createCoordinatorApp(
       client.end();
     }
     minioEventClients.clear();
-    for (const handle of pollerRegistry.values()) {
-      handle.cancel();
-    }
-    pollerRegistry.clear();
     if (minioWatcher) {
-      // await：讓 in-flight tick settle 後再銷毀 S3 client（避免 unhandled rejection）。
+      // 先停 intake 並 await in-flight tick settle；其最後一筆 enqueue 必須在
+      // pipeline drain 前完成，否則 shutdown 後仍可能遺留 queued job。
       const w = minioWatcher;
       minioWatcher = null;
       await w.dispose();
     }
-    const droppedJobIds = conversionDispatchQueue.drain();
-    for (const jobId of droppedJobIds) {
-      externalIfcReadyStore.markDroppedOnRestart(jobId);
-      pendingDispatchEvents.delete(jobId);
-    }
-    // dispose 語義是 process lifecycle 結束 → 全清最安全。drain 只回收 queued
-    // (還沒 shift) 的 job;dispatch_failed job 的 pending 留在 map 不在 drain 範圍
-    // (Task 2 retry route 尚未實作前無人清),這裡一律 clear 杜絕殘留累積。
-    //
-    // KNOWN RISK(in-flight-during-dispose race):drain() 不等待已被 shift、dispatcher
-    // closure 仍在 await createConversionJob 的 in-flight job;dispose() 本身也沒有像
-    // minioWatcher 那樣 await in-flight closure settle。若 SIGTERM graceful shutdown
-    // 在 closure 執行中觸發 dispose,clear() 會先刪掉 in-flight pending,而 closure 的
-    // try/catch 仍會跑完並呼叫 markDispatched / markDispatchFailed——對已 clear 的 map
-    // 後續 .delete() 是無害 no-op,但 store 狀態更新仍會執行(「dispose 後 store 還有寫
-    // 入」的非預期副作用)。現有測試只覆蓋 dispatch_failed settle 後才 dispose,不覆蓋此
-    // 競態。要徹底消除需在 Task 2 給 dispatcher closure 加 in-flight tracking 並讓
-    // dispose await 其 settle(同 minioWatcher 模式);Task 0 範圍僅揭露,不引入新機制。
-    pendingDispatchEvents.clear();
+    // conversion pollers + dispatch drain + pending clear（pipeline 擁有）。
+    ifcReadyPipeline.dispose();
   };
 
   return {
@@ -4261,11 +3914,8 @@ export function createCoordinatorApp(
     eventLog,
     structLog,
     dispose,
-    // test-only boolean getter：讓測試直接斷言 dispatch_failed job 的 pending 是否保留,
-    // 不必靠 callCount 間接推論(否則 delete-on-success 失敗路徑的保留無法被 falsify)。
-    // 只回 boolean —— 內部 Map 實例(含 unknown payload)不外洩;retry route 在同一 closure
-    // 內直接讀 pendingDispatchEvents,不經此 getter。
-    hasPendingDispatch: (jobId: string): boolean => pendingDispatchEvents.has(jobId),
+    // test-only boolean getter：委派 pipeline.hasPendingDispatch（不外洩 pending map）。
+    hasPendingDispatch: (jobId: string): boolean => ifcReadyPipeline.hasPendingDispatch(jobId),
   };
 }
 function sanitizeJobForExternal(job: IfcReadyIntakeJob): IfcReadyIntakeJob {
@@ -4332,10 +3982,6 @@ function resolveAllowedCallbackTarget(candidateUrl: string | null, config: Coord
     throw new AuthError(403, `callback_url origin not allowed: ${candidate.origin}`);
   }
   return candidate.toString();
-}
-
-function normalizeConversionReportStatus(status: "ready" | "succeeded" | "failed"): "ready" | "failed" {
-  return status === "failed" ? "failed" : "ready";
 }
 
 function latestIfcReadyJobForExternalModelVersion(

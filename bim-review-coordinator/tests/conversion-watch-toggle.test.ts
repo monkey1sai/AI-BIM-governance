@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MinioWatcherStatus } from "../src/services/minioWatcher.js";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import { createLogger, type StructLogger } from "../src/lib/structLog.js";
+import { ConversionDispatchQueue } from "../src/services/conversionDispatchQueue.js";
 
 // IX-CV-04 Task 2.3b：spec §6.1 三條具名必要測試需在「無真 MinIO」下觀察 watcher 啟停。
 // 直接 startMinioWatcher 會去輪詢不存在的 :9000、洩漏 timer。故用 vi.mock 把
@@ -285,6 +286,32 @@ describe("PUT /api/conversion/watch — watcher 啟停可觀察行為（spec §6
     expect(watcherMock.disposeSpy).toHaveBeenCalledTimes(1);
     const status = await request(app.app).get("/api/external/minio-watch/status");
     expect(status.body.enabled).toBe(true);
+  });
+
+  it("shutdown 先等待 watcher intake settle，再 drain conversion pipeline", async () => {
+    const order: string[] = [];
+    watcherMock.disposeSpy.mockImplementationOnce(async () => {
+      order.push("watcher");
+    });
+    const drainSpy = vi
+      .spyOn(ConversionDispatchQueue.prototype, "drain")
+      .mockImplementation(() => {
+        order.push("pipeline");
+        return [];
+      });
+    const app = makeApp({
+      ...configuredStartOverrides(),
+      minioWatchEnabled: true,
+      externalIntakeIpAllowlist: ["127.0.0.1"],
+    });
+
+    try {
+      await app.dispose();
+    } finally {
+      drainSpy.mockRestore();
+    }
+
+    expect(order).toEqual(["watcher", "pipeline"]);
   });
 
   // IX-CV-04 spec §6.1（design 第 273/286 行）：allowlist 缺 loopback 時 enabled:true →
