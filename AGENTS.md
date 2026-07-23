@@ -118,11 +118,11 @@ _worker / _bim-control = 已自 repo 刪除（2026-05-18 B 方案落地），僅
 | 查需求入口、服務邊界、route IA、API 契約、時序、資料模型、實作分期、AI Coding 交付守則 | `docs/plans/docs-plans-README.md`（入口）→ `AI-BIM 前後端設計文件.dc.html` §01–§08 |
 | 需要依任務種類／難度選擇 Codex workflow、subagents、模型 lane，或使用 `use agents` / `subagents` / `swarm` 開發 `docs/plans` 需求 | `docs/agents/codex-loop-workflows.md` |
 | 多終端機／多 CLI 並行 session 看板（互相感知、Claude hooks、Codex notify、Grok 整合） | `docs/agents/parallel-session-board.md` |
+| 查 domain vocabulary、GitHub issue workflow 或 triage labels | `docs/agents/domain.md`、`docs/agents/issue-tracker.md`、`docs/agents/triage-labels.md` |
 
 新增 sub-file 時：先在 `docs/agents/` 建檔，再同步更新本表與 `CLAUDE.md` index（兩份主檔的 sub-file 集合必須一致）。本文件行數預算 ≤ 250 行（目標 ≤ 200）；CLAUDE.md ≤ 130 行（目標 ≤ 100）。預算規範見 spec `agent-doc-context-budget`。
 
 ---
-
 ## 3. 探索輔助與 Source of Truth
 
 本 repo 有兩條不同優先序，禁止混用：
@@ -159,7 +159,7 @@ Runtime/product 行為真相優先順序：
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **AI-BIM-governance** (12062 symbols, 26274 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 28581 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
@@ -178,7 +178,6 @@ This project is indexed by GitNexus as **AI-BIM-governance** (12062 symbols, 262
 - NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
 - NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
 - NEVER commit changes without running `detect_changes()` to check affected scope.
-
 ## Resources
 
 | Resource | Use for |
@@ -187,7 +186,6 @@ This project is indexed by GitNexus as **AI-BIM-governance** (12062 symbols, 262
 | `gitnexus://repo/AI-BIM-governance/clusters` | All functional areas |
 | `gitnexus://repo/AI-BIM-governance/processes` | All execution flows |
 | `gitnexus://repo/AI-BIM-governance/process/{name}` | Step-by-step execution trace |
-
 ## CLI
 
 | Task | Read this skill file |
