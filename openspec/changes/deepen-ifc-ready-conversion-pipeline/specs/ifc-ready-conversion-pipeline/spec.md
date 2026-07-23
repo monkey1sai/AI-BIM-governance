@@ -10,6 +10,8 @@
 4. **retryDispatch / prioritize**：與既有 HTTP 控制路由語意相容的 operator 動作。
 5. **dispose**：取消 pollers、drain 未派工 queue 並標記 dropped_on_restart、清理 pending 脈絡；dispose SHALL 冪等。
 
+Coordinator app lifecycle 在呼叫 pipeline dispose 前，SHALL 先停止並等待所有可 enqueue IFC-ready job 的 in-process intake producer（目前為 MinIO watcher）settle，確保 producer 的最後一筆 enqueue 仍會被同一次 drain 收斂。
+
 Composition root / Express routes SHALL 僅做 HTTP auth、normalize、status 映射與依賴注入 wiring。Public HTTP path 與對外 JSON 形狀 SHALL NOT 因本 capability 故意變更。
 
 #### Scenario: accept 成功後 job 進入序列派工
@@ -36,6 +38,7 @@ IfcReadyConversionPipeline 在 **conversion terminal**（ready 或 failed）完�
 - download_failed 與 dispatch_failed SHALL NOT 觸發 onConversionTerminal（它們不是 conversion terminal）。
 - **Review Session** 建立／啟用（含 auto-session）SHALL NOT 實作於 pipeline 核心；若產品需要，SHALL 僅由 onConversionTerminal（或等同 app 層 observer）執行。
 - ingest 的 pipeline 層結果型別 SHALL NOT 將 session 物件作為 conversion 成功的必要欄位；HTTP 若需回 session 相關資訊，SHALL 由 app/route 在 hook 之後組合，且對外 JSON 保持相容。
+- observer 回傳值 MAY 由該次 ingest result 攜回 app/route；SHALL NOT 透過 process-wide 或跨 request mutable slot 傳遞。
 
 #### Scenario: ready terminal 觸發 hook 且 outbox 已入列
 

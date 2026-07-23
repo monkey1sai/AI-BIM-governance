@@ -343,8 +343,8 @@ The authority path is mirrored deliberately and must change atomically:
 
 | Site | Ownership |
 |---|---|
-| `bim-review-coordinator/src/app.ts` | Validates requested artifact IDs and resolves canonical ready URLs |
-| `bim-review-coordinator/src/services/stageBindingAuthorityStore.ts` | Stores and atomically consumes the exact transaction |
+| `bim-review-coordinator/src/app.ts` | Owns transport validation, authentication, correlation, and wire/domain mapping |
+| `bim-review-coordinator/src/services/runtimeMutationAuthority/runtimeMutationAuthority.ts` | Owns mutation policy, validates requested artifact IDs, resolves canonical ready URLs, and preserves the exact transaction through one public authority seam |
 | `bim-streaming-server/.../messaging/runtime_authority.py` | Sends the exact composition for authorization and confirmation |
 | `bim-streaming-server/.../messaging/stage_loading.py` | Executes the already-authorized immutable attempt |
 | `web-viewer-sample/src/Window.tsx` | Relays the coordinator response; URL fields remain non-authoritative |

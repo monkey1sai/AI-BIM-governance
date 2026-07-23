@@ -11,7 +11,7 @@
 
 ## 2. Governance Search 契約
 
-> **S4-A code complete 2026-07-23（branch `feat/a4-s4-governance-search`，待 PR）**：只手工收斂 governance §2 search／LLM／proof／API 與 affected tests，保留 main `handoff.py`，並補上 search-issued proof → handoff verifier 的相容性 regression。Review 另補中文 proximity zero-scan、Unicode model binding 與 LLM total-deadline regressions。Targeted search/handoff 為 131 passed, 1 skipped；完整 governance suite 為 246 passed, 2 skipped；全 repo OpenSpec strict 為 63 passed。未呼叫 live Ornith、未接 coordinator proxy／Issue／UI，也未跑 A4 browser/Kit dual gate，故 `Full completion claimed: no`。
+> **S4-A complete 2026-07-23（PR #383 merged，result `84bdf5c`）**：只手工收斂 governance §2 search／LLM／proof／API 與 affected tests，保留 main `handoff.py`，並補上 search-issued proof → handoff verifier 的相容性 regression。Review 另補中文 proximity zero-scan、Unicode model binding 與 LLM total-deadline regressions。Targeted search/handoff 為 131 passed, 1 skipped；完整 governance suite 為 246 passed, 2 skipped；全 repo OpenSpec strict 為 63 passed。未呼叫 live Ornith、未接 coordinator proxy／Issue／UI，也未跑 A4 browser/Kit dual gate，故 `Full completion claimed: no`。
 
 - [x] 2.1 先加入 failing tests，驗證 server-computed coverage 與不變量：`complete => schema_valid && usable && unresolved_terms=[]`、`schema_valid=false => complete=false && usable=false`、`usable=false => scanner not called`；deterministic 與 Ornith 都須包含遺漏 proximity constraint 的案例。
 - [x] 2.2 實作明確的 `deterministic`／`semantic`／`auto` truth table；第一次 request 不得執行任何 `complete=false` candidate，schema-invalid／unusable candidate 永遠不得呼叫 IFC scanner。
@@ -28,15 +28,17 @@
 
 ## 3. Coordinator Session 與安全邊界
 
-- [ ] 3.1 先加入 failing tests，涵蓋 active／missing／closed／incomplete session、server-side source/mapping/model/stage resolution，以及 browser `ifc_source_path`／`element_mapping_path` override rejection。
+- [x] 3.1 先加入 failing tests，涵蓋 active／missing／closed／incomplete session、server-side source/mapping/model/stage resolution，以及 browser `ifc_source_path`／`element_mapping_path` override rejection。
 - [ ] 3.2 所有 session-scoped A4 search、Issue、handoff、consume、retry 與 viewer-lease claim SHALL 先由 `UserAuthProvider` 產生 server-authenticated principal；body `user_id`／actor 不得建立 authority，若 legacy 欄位與 principal 不一致 SHALL 拒絕。
 - [ ] 3.3 Lease SHALL 綁定 authenticated principal。每次 Issue create、handoff create/consume、initial command authorization 與 retry 都須驗 session active、同一 principal、active unexpired primary lease、lease capability、primary artifact 與 `active_binding_revision`。
 - [ ] 3.4 `local-dev` provider MAY 留在明確 lab profile，但 evidence SHALL 標 `auth_scope=local_dev_lab`；production 使用 `local-dev` 或 `sso_binding=pending_oq5` 時 SHALL 停用 A4 mutation/full-completion routes 或 startup fail closed。
-- [ ] 3.5 Harden `POST /api/governance/search/model/for-session/:sessionId`，先 authorize active session／principal，再從 coordinator-owned session/artifact state resolve 全部 host fields，最後才 forward-only proxy。
-- [ ] 3.6 Gate／disable generic `/api/governance/search/model` 的 production browser access；若仍需 internal test seam，只可 loopback/internal-gated、須有 path containment，且不得有 production UI caller。
-- [ ] 3.7 `for-ifc-ready/:jobId` 維持明確 `table_only` 相容 flow，移除 client mapping override／session proof，並回足夠 scope metadata 讓 UI 停用 Issue／3D／full completion。
+- [x] 3.5 Harden `POST /api/governance/search/model/for-session/:sessionId`，先 authorize active session／principal，再從 coordinator-owned session/artifact state resolve 全部 host fields，最後才 forward-only proxy。
+- [x] 3.6 Gate／disable generic `/api/governance/search/model` 的 production browser access；若仍需 internal test seam，只可 loopback/internal-gated、須有 path containment，且不得有 production UI caller。
+- [x] 3.7 `for-ifc-ready/:jobId` 維持明確 `table_only` 相容 flow，移除 client mapping override／session proof，並回足夠 scope metadata 讓 UI 停用 Issue／3D／full completion。
 - [ ] 3.8 新增 session-scoped A4 Issue proxy route，重新授權 session/principal，forward trusted non-overridable identity，並在 governance persistence 前拒絕 inactive／unauthorized／cross-session request。
-- [ ] 3.9 Coordinator integration tests SHALL 證明 byte-identical query controls、server-resolved fields、principal mismatch／stolen lease rejection、header 無法提權、governance authority 不變、actionable errors，以及無 secret/path leakage。
+- [x] 3.9 Coordinator integration tests SHALL 證明 byte-identical query controls、server-resolved fields、principal mismatch／stolen lease rejection、header 無法提權、governance authority 不變、actionable errors，以及無 secret/path leakage。
+
+> S4-B（2026-07-23，branch `feat/a4-s4b-session-search-proxy`，PR #384；後續 head／checks／merge state 以 GitHub machine truth 為準）：以獨立 `a4SearchRoutes` 在 frozen `governanceProxy` 前攔截三條 A4 search route；完成 3.1／3.5／3.6／3.7／3.9。Session path 以 authenticated principal、current primary lease 與 exact active binding server-side resolve model／artifact／source／mapping；host-kit transport 使用 exact-origin allowlist、server-only token、read-only artifact mount，以及 coordinator-visible／host-native 雙 namespace containment。Web-plane repeated reconcile P2 已以 effective-config signature + regression 修正；visible caller compatibility prerequisite 已由 PR #386 修正並 merge。真實 89 MB IFC 證明 cold parse 超過舊 5 秒 proxy budget，故 deterministic proxy 收斂為 12 秒、一般 browser 維持 15 秒；semantic／auto 採 browser 150 秒 > coordinator default 135 秒（hard max 140 秒）> governance LLM 120 秒 + IFC scan 10 秒。此鏈以 mode-specific deadline regression、5.25 秒 cold regression、explicit timeout fail-closed test 及 strict-real Playwright 4/4 鎖定；初版 12／15 秒經 review 發現會截斷合法 model request，未帶入 commit，final frozen-diff Standards／Spec review 皆 0 P1/P2。3.4 尚未勾選：production pending local-dev 已 fail closed，但 coordinator→governance 既有 trusted-context schema仍使用 `auth_scope=lab`，尚未收斂為 spec 字面要求的 `local_dev_lab`。GitNexus `detect_changes` 因 `Transport closed` 且 index stale 維持 UNKNOWN；Issue／canonical UI／live model／Kit／design gates 仍不在本切片，Full completion claimed: no。
 
 ## 4. A4 Issue 來源證據
 
@@ -86,10 +88,10 @@
 ## 8. 最終驗證、文件與 Review
 
 - [ ] 8.1 從 `governance-service` 執行 `& "C:\Program Files\Python312\python.exe" -m pytest tests/ -v`；skipped evidence script 另列。
-- [ ] 8.2 從 `bim-review-coordinator` 執行 `npm test`、`npm run build`、`npm run verify`。
+- [x] 8.2 從 `bim-review-coordinator` 執行 `npm test`、`npm run build`、`npm run verify`。
 - [ ] 8.3 從 `web-viewer-sample` 執行受影響 unit/session tests 與 `npm run build`；A4 Playwright/design 必須另跑，不得以 build 取代 user-facing evidence。
 - [ ] 8.4 Code-flow edits 後執行 GitNexus `detect_changes` 對 `main`，誠實處理 UNKNOWN/stale linked-worktree output，commit 前解決 HIGH/CRITICAL affected path。
 - [ ] 8.5 更新 design/API docs 與 archive 後的 `edge-console-operator-frontend` Purpose，使 A4 依 evidence 標 live/partial、A5–A10 保持 roadmap；legacy A4 numbering 另案處理，不修改 `unified-governance-console` capability。
-- [ ] 8.6 執行 `npx openspec validate a4-semantic-search-model-qa --strict`、全 repo OpenSpec validation、`git diff --check`、secret scan 與 `git status`；generated caches/runtime artifacts 不得進入 change。
+- [x] 8.6 執行 `npx openspec validate a4-semantic-search-model-qa --strict`、全 repo OpenSpec validation、`git diff --check`、secret scan 與 `git status`；generated caches/runtime artifacts 不得進入 change。
 - [ ] 8.7 取得 correctness、security-boundary、user-facing operability/design 與 repo-hygiene 獨立 review；finding 必須修正或以具體 residual risk 記錄。
 - [ ] 8.8 產出 machine-truth handoff：Frontend route、main buttons、fixture、backend API、observed runtime/query/request IDs、visible states、E2E command、screenshot/trace、design gate/screen/manifest/visual result、reference-missing scope、semantic/live-model/transport/auth gates、known gaps 與 `Full completion claimed`。

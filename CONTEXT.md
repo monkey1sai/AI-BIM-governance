@@ -1,6 +1,6 @@
-# AI-BIM-governance domain language
+# AI-BIM Governance Domain Context
 
-Edge BIM review platform (B-scheme): cloud control-plane is external; this workspace owns local intake, conversion coordination, Kit runtime, and governance loopback. Terms below are for architecture and code naming — not a product marketing glossary.
+Canonical project language for BIM review sessions, runtime mutation policy, IFC-ready conversion coordination, and the boundary between coordinator decisions and Kit execution. This edge BIM review workspace owns local intake, conversion coordination, Kit runtime, and governance loopback; the cloud control-plane remains external.
 
 ## Conversion closed loop
 
@@ -17,7 +17,7 @@ The conversion job has reached a final conversion status ready or failed (ingest
 _Avoid_: done, complete, finished (ambiguous which stage)
 
 **onConversionTerminal**:
-Synchronous observer invoked after the pipeline has finished job terminal write, outbox enqueue, and ledger best-effort update. Failures in the observer must not change ingest success or outbox state. Used by the app for auto Review Session and similar side effects — not for conversion authority.
+Synchronous observer invoked after the pipeline has finished job terminal write, outbox enqueue, and ledger best-effort update. Its return value stays attached to that ingest call; adapters must not pass observer state through a cross-request mutable slot. Failures in the observer must not change ingest success or outbox state. Used by the app for auto Review Session and similar side effects — not for conversion authority.
 _Avoid_: callback (confused with cloud callback outbox), event bus
 
 ## Nearby concepts (owned elsewhere)
@@ -34,3 +34,17 @@ Coordinator-local persistent shadow of conversion records for operator surfaces.
 
 **Conversion authority**:
 bim-streaming-server host-native conversion process (IFC→USDC). Pipeline talks to it only through a client adapter; does not own GPU/Kit runtime.
+
+## Runtime mutation policy
+
+**Runtime Mutation Authority**:
+The coordinator-owned, session-scoped policy state machine covering stage-binding preauthorization, Kit command authorization, rollback, and confirmation. It does not execute Kit mutations or own the viewer lease lifecycle.
+_Avoid_: Runtime command service, Kit mutation service
+
+**Stage Binding Transaction**:
+The coordinator-owned lifecycle record created by browser preauthorization for one resolved stage composition. It may remain pending, become executing, active, or failed, or be superseded without a Kit execution attempt.
+_Avoid_: Stage request, Binding job
+
+**Stage Binding Attempt**:
+The immutable identity of one proposed Kit stage-load execution tied to a Stage Binding Transaction. Its base tuple is authorization and revision IDs, session, lease, source client, and full stage composition; once claimed, request ID and event type also become part of equality.
+_Avoid_: Stage request, Runtime attempt

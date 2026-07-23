@@ -219,9 +219,13 @@ describe("A2 inline viewer 三組批次疊加", () => {
 
     expect(coordinatorClient.claimViewerLease).toHaveBeenCalledWith(
       SESSION_ID,
-      expect.objectContaining({ requested_role: "primary" }),
-      expect.stringMatching(/^a2_overlay_operator_/),
+      expect.objectContaining({
+        requested_role: "primary",
+      }),
+      expect.stringMatching(/^edge_console_operator_/),
     );
+    const overlayClaim = vi.mocked(coordinatorClient.claimViewerLease).mock.calls[0];
+    expect(overlayClaim[1]).not.toHaveProperty("user_id");
     const apply = q<HTMLButtonElement>("a2-overlay-apply")!;
     expect(apply.disabled).toBe(false); // stage://x（loaded）== expected_stage_url → gate 全開
 

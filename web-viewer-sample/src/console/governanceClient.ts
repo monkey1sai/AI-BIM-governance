@@ -109,14 +109,26 @@ export interface FailuresResponse {
 
 // F12（2026-07-10）：governance 面同樣把逾時下沉到原語層（與 coordinatorClient 對稱）；
 // __setGovFetchTimeoutMsForTests 僅測試 seam。呼叫端可自帶 init.signal 覆寫（保留彈性）。
-let GOV_FETCH_TIMEOUT_MS = 15000;
+const DEFAULT_GOV_FETCH_TIMEOUT_MS = 15_000;
+const A4_MODEL_SEARCH_FETCH_TIMEOUT_MS = 150_000;
+let GOV_FETCH_TIMEOUT_MS = DEFAULT_GOV_FETCH_TIMEOUT_MS;
 export function __setGovFetchTimeoutMsForTests(ms: number | null): void {
-  GOV_FETCH_TIMEOUT_MS = ms ?? 15000;
+  GOV_FETCH_TIMEOUT_MS = ms ?? DEFAULT_GOV_FETCH_TIMEOUT_MS;
+}
+
+function a4SearchTimeoutSignal(interpretMode?: ModelSearchInterpretMode): AbortSignal {
+  // Governance defaults an omitted mode to auto. Keep model-capable searches
+  // above the coordinator's 140-second hard ceiling, without lengthening every
+  // governance request or the explicit deterministic path.
+  const timeoutMs = interpretMode === "deterministic"
+    ? GOV_FETCH_TIMEOUT_MS
+    : A4_MODEL_SEARCH_FETCH_TIMEOUT_MS;
+  return AbortSignal.timeout(timeoutMs);
 }
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${COORD_BASE}${path}`, {
-    signal: AbortSignal.timeout(GOV_FETCH_TIMEOUT_MS),
+    signal: init?.signal ?? AbortSignal.timeout(GOV_FETCH_TIMEOUT_MS),
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
   });
@@ -137,6 +149,13 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`governance proxy ${path} -> ${res.status} ${detail}`);
   }
   return res.json() as Promise<T>;
+}
+
+function localDevPrincipalHeaders(userToken: string): Record<string, string> {
+  if (!userToken) {
+    throw new Error("A4 local-dev principal carrier is required.");
+  }
+  return { "X-User-Token": userToken };
 }
 
 export const governanceClient = {
@@ -270,26 +289,33 @@ export const governanceClient = {
   // A4 search：deterministic grammar 和/或 Ornith vLLM structured filters。
   // for-session / for-ifc-ready 由 coordinator 解析 host IFC；LLM key 只在 governance env。
   searchLlmStatus: () => jsonFetch<ModelSearchLlmStatus>("/api/governance/search/llm-status"),
-  searchModel: (req: ModelSearchRequest) =>
-    jsonFetch<ModelSearchResponse>("/api/governance/search/model", {
-      method: "POST",
-      body: JSON.stringify(req),
-    }),
-  searchModelForSession: (
+  searchModelForSession: async (
     sessionId: string,
     body: { query: string; limit?: number; interpret_mode?: ModelSearchInterpretMode },
+    userToken: string,
   ) =>
     jsonFetch<ModelSearchResponse>(
       `/api/governance/search/model/for-session/${encodeURIComponent(sessionId)}`,
-      { method: "POST", body: JSON.stringify(body) },
+      {
+        method: "POST",
+        signal: a4SearchTimeoutSignal(body.interpret_mode),
+        headers: localDevPrincipalHeaders(userToken),
+        body: JSON.stringify(body),
+      },
     ),
-  searchModelForIfcReady: (
+  searchModelForIfcReady: async (
     ifcReadyJobId: string,
     body: { query: string; limit?: number; interpret_mode?: ModelSearchInterpretMode },
+    userToken: string,
   ) =>
     jsonFetch<ModelSearchResponse>(
       `/api/governance/search/model/for-ifc-ready/${encodeURIComponent(ifcReadyJobId)}`,
-      { method: "POST", body: JSON.stringify(body) },
+      {
+        method: "POST",
+        signal: a4SearchTimeoutSignal(body.interpret_mode),
+        headers: localDevPrincipalHeaders(userToken),
+        body: JSON.stringify(body),
+      },
     ),
 
   // Issue tracking
@@ -353,25 +379,20 @@ export interface IssueCreateRequest {
 
 export type ModelSearchInterpretMode = "deterministic" | "semantic" | "auto";
 
-export interface ModelSearchRequest {
-  ifc_source_path: string;
-  query: string;
-  model_version_id?: string | null;
-  element_mapping_path?: string | null;
-  limit?: number;
-  interpret_mode?: ModelSearchInterpretMode;
-}
-
 export interface ModelSearchLlmStatus {
   service: string;
   enabled: boolean;
   configured: boolean;
-  base_url: string | null;
+  state: string;
   model: string | null;
-  timeout_s: number;
-  auth: string;
+  checked_at: string | null;
+  check_source: string;
+  freshness: string;
+  ttl_s: number;
+  transport_class: string;
+  error_code: string | null;
   reference?: string;
-  env_keys?: string[];
+  config_source_keys?: string[];
 }
 
 export interface ModelSearchPropertyFilter {
@@ -405,13 +426,23 @@ export interface ModelSearchResultRow {
   confidence: number | null;
   confidence_basis?: string | null;
   evidence_refs: string[];
+  action_eligible?: boolean;
+  proof_eligible?: boolean;
+  issue_eligible?: boolean;
   highlight_eligible: boolean;
 }
 
 export interface ModelSearchResponse {
   status: "ok" | "uninterpreted" | string;
+  query_id?: string;
+  retry_of_query_id?: string | null;
   model_version_id?: string | null;
   interpret_mode?: ModelSearchInterpretMode | string;
+  search_scope?: string;
+  completion_scope?: string;
+  proof_eligible?: boolean;
+  issue_eligible?: boolean;
+  highlight_eligible?: boolean;
   interpreted_filters: ModelSearchInterpretedFilters;
   results: ModelSearchResultRow[];
   stats: {

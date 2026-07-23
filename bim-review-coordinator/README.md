@@ -20,6 +20,7 @@ Local review-session control plane for the AI-BIM governance workspace.
 - Return session / stream config data to the viewer.
 - Authenticate viewer lease claims and issue narrow runtime-command decisions.
 - Maintain bounded stage-binding transactions and Kit-confirmed active/last-good evidence.
+- Resolve session-scoped A4 search authority without accepting browser host paths.
 - Broadcast basic session presence over Socket.IO namespace `/review`.
 - Persist short-lived session events as JSONL files under `data/events`.
 
@@ -84,7 +85,37 @@ POST /api/review-sessions/{session_id}/stage-binding
 POST /api/internal/review-sessions/{session_id}/runtime-command-authorizations
 POST /api/internal/review-sessions/{session_id}/stage-binding-authorization-rollbacks
 POST /api/internal/review-sessions/{session_id}/stage-binding-confirmations
+POST /api/governance/search/model/for-session/{session_id}
+POST /api/governance/search/model/for-session/{session_id}/partial-confirmation
+POST /api/governance/search/model/for-ifc-ready/{job_id}
 ```
+
+The canonical A4 search route authenticates the caller first, requires the
+caller's active primary viewer lease, and resolves the active session's IFC,
+mapping, model, artifact, and stage revision from coordinator-owned state. The
+browser may send only `query`, bounded `limit`, `interpret_mode`, and optional
+`retry_of_query_id`; host paths, trusted context, actor, and lease authority are
+rejected. The generic `POST /api/governance/search/model` browser route is
+disabled in every profile. `for-ifc-ready` remains an authenticated,
+lab-only `ifc_ready_table_only` compatibility route until user auth carries
+tenant/project authorization; it never forwards a mapping or session proof
+context.
+
+Trusted A4 forwarding requires a non-empty server-only
+`A4_INTERNAL_CONTEXT_TOKEN` shared with governance-service and either an exact
+loopback `GOVERNANCE_API_BASE` or an exact origin listed by
+`A4_TRUSTED_GOVERNANCE_ORIGINS`. The host-kit deployment injects only its
+configured `HOST_GOVERNANCE_API_BASE`, passes the shared token through env, and
+mounts host conversion artifacts read-only at `A4_CONVERSION_ARTIFACTS_ROOT`.
+Because governance remains host-native, canonical deploy also injects the same
+tree's absolute host path as `A4_CONVERSION_ARTIFACTS_HOST_ROOT`; coordinator
+validates the container-visible file and forwards only the identical
+`<job>/element_mapping.json` suffix in the host namespace.
+Redirects, oversized/non-JSON responses, and responses containing server paths
+or credential-shaped fields fail closed.
+The current `local-dev` identity/lease seam is labelled `lab` internally and
+cannot mint proof, Issue, or 3D authority; production with pending SSO binding
+is rejected.
 
 The A4 handoff endpoints accept governance-signed row proofs, re-resolve the
 authenticated primary-session binding, and store only a bounded, one-shot

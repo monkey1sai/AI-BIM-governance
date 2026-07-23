@@ -82,19 +82,20 @@ export type AcceptResult =
     }
   | { kind: "accepted"; job: IfcReadyIntakeJob };
 
-/** Pipeline-layer ingest result — no session fields (HTTP composes after hook). */
-export type IngestResult =
+/** Pipeline-layer ingest result — observer output stays bound to this ingest call. */
+export type IngestResult<TTerminalObserverResult = void> =
   | {
       ok: true;
       ifc_ready_job: IfcReadyIntakeJob | undefined;
       callback: CallbackOutboxEntry;
+      terminal_observer_result: TTerminalObserverResult | undefined;
     }
   | { ok: false; status: number; detail: string };
 
-export type StreamingIngestResult =
+export type StreamingIngestResult<TTerminalObserverResult = void> =
   | {
       ok: true;
-      outcome: Extract<IngestResult, { ok: true }>;
+      outcome: Extract<IngestResult<TTerminalObserverResult>, { ok: true }>;
       conversion_status: "ready" | "failed";
       failed: boolean;
     }
@@ -151,7 +152,7 @@ export type IfcReadyConversionPipelineConfig = {
   conversionProfile?: string;
 };
 
-export type IfcReadyConversionPipelineDeps = {
+export type IfcReadyConversionPipelineDeps<TTerminalObserverResult = void> = {
   store: ExternalIfcReadyStore;
   streamingClient: StreamingConversionClient;
   queue: ConversionDispatchQueue;
@@ -170,9 +171,11 @@ export type IfcReadyConversionPipelineDeps = {
   config: IfcReadyConversionPipelineConfig;
   /**
    * Sync observer after job terminal + outbox + ledger at conversion terminal.
-   * Failures must not affect ingest/outbox. Not called for download_failed / dispatch_failed.
+   * Its return value is carried by the same ingest result so adapters need no
+   * cross-request mutable slot. Failures must not affect ingest/outbox. Not
+   * called for download_failed / dispatch_failed.
    */
-  onConversionTerminal?: (event: ConversionTerminalEvent) => void;
+  onConversionTerminal?: (event: ConversionTerminalEvent) => TTerminalObserverResult;
   /**
    * Best-effort after successful download, before enqueue (artifact health first cut stays app-owned).
    * Return value is ignored.
@@ -189,15 +192,19 @@ function normalizeConversionReportStatus(
   return status === "failed" ? "failed" : "ready";
 }
 
-export class IfcReadyConversionPipeline {
+export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
   private readonly store: ExternalIfcReadyStore;
   private readonly streamingClient: StreamingConversionClient;
   private readonly queue: ConversionDispatchQueue;
   private readonly outbox: CallbackOutbox;
   private readonly ledger: ConversionLedger;
-  private readonly download: NonNullable<IfcReadyConversionPipelineDeps["download"]>;
+  private readonly download: NonNullable<
+    IfcReadyConversionPipelineDeps<TTerminalObserverResult>["download"]
+  >;
   private readonly config: IfcReadyConversionPipelineConfig;
-  private readonly onConversionTerminal: (event: ConversionTerminalEvent) => void;
+  private readonly onConversionTerminal:
+    | ((event: ConversionTerminalEvent) => TTerminalObserverResult)
+    | undefined;
   private readonly onAfterDownload: (job: IfcReadyIntakeJob) => unknown;
   private readonly structLog: StructLogger | undefined;
   private readonly conversionProfile: string;
@@ -206,7 +213,7 @@ export class IfcReadyConversionPipeline {
   private readonly pollerRegistry = new Map<string, PollerHandle>();
   private disposed = false;
 
-  constructor(deps: IfcReadyConversionPipelineDeps) {
+  constructor(deps: IfcReadyConversionPipelineDeps<TTerminalObserverResult>) {
     this.store = deps.store;
     this.streamingClient = deps.streamingClient;
     this.queue = deps.queue;
@@ -214,7 +221,7 @@ export class IfcReadyConversionPipeline {
     this.ledger = deps.ledger;
     this.download = deps.download ?? downloadIfcToSharedVolume;
     this.config = deps.config;
-    this.onConversionTerminal = deps.onConversionTerminal ?? (() => undefined);
+    this.onConversionTerminal = deps.onConversionTerminal;
     this.onAfterDownload = deps.onAfterDownload ?? (() => undefined);
     this.structLog = deps.structLog;
     this.conversionProfile =
@@ -333,7 +340,7 @@ export class IfcReadyConversionPipeline {
   ingest(
     report: ConversionResultReport,
     qualitySummary: ConversionQualityMetricsSummary | null = null,
-  ): IngestResult {
+  ): IngestResult<TTerminalObserverResult> {
     const normalizedStatus = normalizeConversionReportStatus(report.status);
     const job = this.store.getByCorrelation(
       report.correlation_id,
@@ -438,8 +445,9 @@ export class IfcReadyConversionPipeline {
       this.store.get(job.ifc_ready_job_id) ?? updatedJob ?? job;
 
     // Conversion terminal only (ready|failed). download_failed / dispatch_failed never reach here.
+    let terminalObserverResult: TTerminalObserverResult | undefined;
     try {
-      this.onConversionTerminal({
+      terminalObserverResult = this.onConversionTerminal?.({
         status: normalizedStatus,
         job: terminalJob,
         conversionJobId,
@@ -474,6 +482,7 @@ export class IfcReadyConversionPipeline {
       ok: true,
       ifc_ready_job: this.store.get(job.ifc_ready_job_id) ?? updatedJob,
       callback: entry,
+      terminal_observer_result: terminalObserverResult,
     };
   }
 
@@ -483,7 +492,7 @@ export class IfcReadyConversionPipeline {
       result?: StreamingConversionResult;
       source: "manual" | "auto-poll";
     } = { source: "manual" },
-  ): Promise<StreamingIngestResult> {
+  ): Promise<StreamingIngestResult<TTerminalObserverResult>> {
     // Manual endpoint cancels auto-poller first to avoid double ingest.
     if (options.source === "manual") {
       this.cancelPoller(conversionJobId);

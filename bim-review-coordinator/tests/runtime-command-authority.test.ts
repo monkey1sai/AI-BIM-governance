@@ -343,6 +343,113 @@ describe("coordinator runtime command authority", () => {
     }
   });
 
+  it("uses canonical snake-case prim paths regardless of alias insertion order", async () => {
+    const app = makeApp();
+    const sessionId = await createSession(app);
+    const lease = await claim(app, sessionId, "alias-collision-owner");
+    const cases = [
+      {
+        name: "canonical-invalid-first",
+        item: { prim_path: "not-an-absolute-prim-path", primPath: "/World/Alias" },
+        authorized: false,
+      },
+      {
+        name: "canonical-invalid-last",
+        item: { primPath: "/World/Alias", prim_path: "not-an-absolute-prim-path" },
+        authorized: false,
+      },
+      {
+        name: "canonical-valid-first",
+        item: { prim_path: "/World/Canonical", primPath: "not-an-absolute-prim-path" },
+        authorized: true,
+      },
+      {
+        name: "canonical-valid-last",
+        item: { primPath: "not-an-absolute-prim-path", prim_path: "/World/Canonical" },
+        authorized: true,
+      },
+    ] as const;
+
+    for (const collision of cases) {
+      const response = await request(app.app)
+        .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
+        .set(internalHeaders())
+        .set("X-Viewer-Lease-Token", lease.lease_token)
+        .send(runtimeBody(lease, {
+          request_id: `cmd_${collision.name}`,
+          command_context: {
+            mode: "replace",
+            items: [collision.item],
+            focus_first: true,
+          },
+        }));
+      expect(response.body).toMatchObject(collision.authorized
+        ? { authorized: true, request_id: `cmd_${collision.name}` }
+        : {
+            authorized: false,
+            reason: "invalid_payload",
+            request_id: `cmd_${collision.name}`,
+            detail_code: "runtime_command_context_invalid",
+          });
+    }
+  });
+
+  it("rejects top-level camel-case aliases that the frozen wire contract does not allow", async () => {
+    const app = makeApp();
+    const sessionId = await createSession(app);
+    const lease = await claim(app, sessionId, "top-level-alias-owner");
+    const cases = [
+      {
+        name: "focus-canonical-first",
+        eventType: "focusPrimRequest",
+        commandContext: { prim_path: "/World/Canonical", primPath: "/World/Alias" },
+      },
+      {
+        name: "focus-alias-first",
+        eventType: "focusPrimRequest",
+        commandContext: { primPath: "/World/Alias", prim_path: "/World/Canonical" },
+      },
+      {
+        name: "highlight-canonical-first",
+        eventType: "highlightPrimsRequest",
+        commandContext: {
+          mode: "replace",
+          items: [{ prim_path: "/World/Canonical" }],
+          focus_first: true,
+          focusFirst: false,
+        },
+      },
+      {
+        name: "highlight-alias-first",
+        eventType: "highlightPrimsRequest",
+        commandContext: {
+          mode: "replace",
+          items: [{ prim_path: "/World/Canonical" }],
+          focusFirst: false,
+          focus_first: true,
+        },
+      },
+    ] as const;
+
+    for (const collision of cases) {
+      const response = await request(app.app)
+        .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
+        .set(internalHeaders())
+        .set("X-Viewer-Lease-Token", lease.lease_token)
+        .send(runtimeBody(lease, {
+          requested_event_type: collision.eventType,
+          request_id: `cmd_${collision.name}`,
+          command_context: collision.commandContext,
+        }));
+      expect(response.body).toMatchObject({
+        authorized: false,
+        reason: "invalid_payload",
+        request_id: `cmd_${collision.name}`,
+        detail_code: "runtime_command_context_invalid",
+      });
+    }
+  });
+
   it("creates a server-resolved pending stage transaction without applying it", async () => {
     const app = makeApp();
     const sessionId = await createSession(app);
@@ -391,6 +498,25 @@ describe("coordinator runtime command authority", () => {
       });
     expect(response.status).toBe(400);
     expect(app.eventLog.list(sessionId).filter((event) => event.type === "stageBindingApplied")).toHaveLength(0);
+  });
+
+  it("keeps stage-binding session preflight ahead of malformed body parsing", async () => {
+    const app = makeApp();
+    const missing = await request(app.app)
+      .post("/api/review-sessions/review_session_missing/stage-binding")
+      .set("X-User-Token", "precedence-owner")
+      .send({ malformed: true });
+    expect(missing.status).toBe(404);
+    expect(missing.body).toEqual({ detail: "Review session not found." });
+
+    const sessionId = await createSession(app, "precedence");
+    await request(app.app).post(`/api/review-sessions/${sessionId}/close`).send({});
+    const immutable = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/stage-binding`)
+      .set("X-User-Token", "precedence-owner")
+      .send({ malformed: true });
+    expect(immutable.status).toBe(409);
+    expect(immutable.body).toEqual({ detail: "Review session is not active." });
   });
 
   it("checks caller lease authority before disclosing artifact existence or readiness", async () => {

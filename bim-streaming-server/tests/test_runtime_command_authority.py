@@ -18,8 +18,11 @@ sys.path.insert(0, str(MODULE_DIR))
 
 import runtime_authority  # noqa: E402
 from runtime_authority import (  # noqa: E402
+    HARNESS_ONLY_EVENTS,
     MUTATING_EVENTS,
     READONLY_EVENTS,
+    REJECTION_REASONS,
+    STAGE_LOAD_EVENTS,
     RuntimeAuthorityClient,
     command_rejected_payload,
 )
@@ -70,6 +73,23 @@ def test_runtime_command_catalogs_are_explicit():
     assert "composeStageRequest" in MUTATING_EVENTS
     assert "loadingStateQuery" in READONLY_EVENTS
     assert "getChildrenRequest" in READONLY_EVENTS
+
+
+def test_runtime_command_catalogs_match_cross_language_fixture():
+    fixture_path = (
+        Path(__file__).resolve().parents[2]
+        / "tests"
+        / "contracts"
+        / "runtime-mutation-authority-v1.json"
+    )
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+    assert fixture["version"] == 1
+    assert set(fixture["mutatingEventTypes"]) == MUTATING_EVENTS
+    assert set(fixture["readonlyEventTypes"]) == READONLY_EVENTS
+    assert set(fixture["stageLoadEventTypes"]) == STAGE_LOAD_EVENTS
+    assert set(fixture["harnessOnlyEventTypes"]) == HARNESS_ONLY_EVENTS
+    assert set(fixture["rejectionReasons"]) == REJECTION_REASONS
 
 
 @pytest.mark.parametrize(

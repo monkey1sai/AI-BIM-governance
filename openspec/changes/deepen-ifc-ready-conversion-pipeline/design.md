@@ -105,6 +105,7 @@ dispose() → ...
 | 大 diff / merge conflict on app.ts | 嚴格分 slice；每片綠 |
 | ingest 回應曾帶 session 欄位 | HTTP 層組合或 hook 後查 store；對外 JSON 不變 |
 | dispose vs in-flight dispatch race | 不擴 scope；對齊今日已知風險 |
+| MinIO watcher final tick 在 queue drain 後 enqueue | app shutdown 先 await watcher dispose，再呼叫 pipeline dispose；順序測試鎖定 |
 | 過度抽象 ports/ | 一 adapter 不硬拆 interface 檔；DI 用 concrete + 測試 fake |
 
 ## 驗證策略
