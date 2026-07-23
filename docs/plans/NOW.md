@@ -9,7 +9,7 @@
 |---|---|---|---|
 | **0** | 治理 WIP（#364） | active ≤2；defer 其餘；採納 throughput 預算 | ✅ #364 MERGED + `governance-throughput-budget` archived |
 | **1** | 收口 | 把「code 已 merge、tasks 假開著」的 change archive | **已 archive 7 案**（2026-07-21/22） |
-| **2** | A4 | 只走切片 PR（先 #365，再下一刀） | **#365 + #380 MERGED**；下一刀 = S3 viewer trusted handoff |
+| **2** | A4 | 只走切片 PR（先 #365，再下一刀） | **#365 + #380 MERGED**；S3 viewer trusted handoff = **#382** |
 
 **並行規則：** 0 可與 1 同天；**2 與新功能不得再開第 3 條 active product change**。  
 **本週不做：** A5–A10 全棧、`rvt-ifc-usdc-lineage` 實作、新 OpenSpec（除 archive/defer 註記）、整 repo 重掃。
@@ -75,7 +75,7 @@
 |---|---|---|---|
 | **S1** | governance 能 atomic 驗證 3D handoff proof-set（不碰 coordinator store） | §6 governance 半部 | ✅ **#365 MERGED** `a02f20d` |
 | **S2** | coordinator session-scoped handoff create/consume + 權限（principal/lease/binding） | §6.1–6.2 後端 | ✅ **#380 MERGED** `eaf8e11` |
-| **S3** | viewer 消費 trusted handoff → 單一 focus/highlight + 狀態機 | §6.3–6.5 | 🟡 code complete 於 `codex/a4-s3-trusted-handoff`，待 PR；Full completion `no` |
+| **S3** | viewer 消費 trusted handoff → 單一 focus/highlight + 狀態機 | §6.3–6.5 | ✅ code complete，交付於 **PR #382**；Full completion `no` |
 | **S4** | 收斂舊 A4 大 branch 的 §2–§5 可合部分（llm/proxy/issue/UI）成小 PR | §2–§5 子集 | S3 merge 後下一刀；禁止平行重寫 |
 | **S5+** | design/browser/runtime full gate | §7–§8 | 僅當 S1–S4 穩；允許長期 `Full completion claimed: no` |
 
@@ -83,7 +83,7 @@
 
 ```txt
 S2: #380 merged 2026-07-22；coordinator handoff create/consume 與 principal/lease/binding 重驗已進 main。
-S3 branch: codex/a4-s3-trusted-handoff（base b2cd6d3；待 commit/PR）。
+S3 delivery: PR #382（branch codex/a4-s3-trusted-handoff；base b2cd6d3）。
 
 Outcome observed locally:
   1) viewer strict-consume opaque a4_handoff；response/body tampering fail closed
