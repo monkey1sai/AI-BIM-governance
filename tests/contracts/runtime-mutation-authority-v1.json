@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "mutatingEventTypes": [
+    "openStageRequest",
+    "loadArtifactGroupRequest",
+    "composeStageRequest",
+    "highlightPrimsRequest",
+    "focusPrimRequest",
+    "clearHighlightRequest",
+    "selectPrimsRequest",
+    "makePrimsPickable",
+    "resetStage"
+  ],
+  "readonlyEventTypes": [
+    "loadingStateQuery",
+    "getChildrenRequest"
+  ],
+  "stageLoadEventTypes": [
+    "openStageRequest",
+    "loadArtifactGroupRequest"
+  ],
+  "harnessOnlyEventTypes": [
+    "composeStageRequest"
+  ],
+  "rejectionReasons": [
+    "spectator_readonly",
+    "lease_invalid",
+    "session_lifecycle_blocked",
+    "unauthorized_source_client",
+    "unsupported_command",
+    "invalid_payload"
+  ]
+}

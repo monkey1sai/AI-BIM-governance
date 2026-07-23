@@ -26,6 +26,13 @@ READONLY_EVENTS = {
     "getChildrenRequest",
 }
 
+STAGE_LOAD_EVENTS = {
+    "openStageRequest",
+    "loadArtifactGroupRequest",
+}
+
+HARNESS_ONLY_EVENTS = {"composeStageRequest"}
+
 REJECTION_REASONS = {
     "spectator_readonly",
     "lease_invalid",
@@ -189,7 +196,7 @@ class RuntimeAuthorityClient:
         request_payload = payload_dict(payload)
         if event_type not in MUTATING_EVENTS:
             return local_denial(request_payload, "unsupported_command", "event_not_in_mutator_catalog")
-        if event_type == "composeStageRequest":
+        if event_type in HARNESS_ONLY_EVENTS:
             return local_denial(request_payload, "unsupported_command", "harness_only_command")
 
         request_id = _safe_request_id(request_payload)
@@ -212,7 +219,7 @@ class RuntimeAuthorityClient:
             "request_id": request_id,
             "command_context": _command_context(event_type, request_payload),
         }
-        if event_type in {"openStageRequest", "loadArtifactGroupRequest"}:
+        if event_type in STAGE_LOAD_EVENTS:
             for key in (
                 "stage_binding_authorization_id",
                 "binding_revision_id",
@@ -228,7 +235,7 @@ class RuntimeAuthorityClient:
         )
         decision = _authorization_decision(request_payload, response)
         if (
-            event_type in {"openStageRequest", "loadArtifactGroupRequest"}
+            event_type in STAGE_LOAD_EVENTS
             and not decision.authorized
             and decision.detail_code == "authority_unavailable"
         ):

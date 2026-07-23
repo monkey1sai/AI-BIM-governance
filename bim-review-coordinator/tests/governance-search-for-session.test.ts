@@ -159,17 +159,34 @@ function routeApp(overrides: Partial<A4SearchRouteDeps> = {}) {
   return app;
 }
 
-async function claimPrimary(app: CoordinatorApp, sessionId: string, userToken: string) {
+async function claimPrimary(
+  app: CoordinatorApp,
+  sessionId: string,
+  userToken: string,
+  clientNonce = `${sessionId}:${userToken}`,
+) {
   const response = await request(app.app)
     .post(`/api/review-sessions/${sessionId}/viewer-leases/claim`)
     .set("X-User-Token", userToken)
     .send({
       viewer_id: `viewer_${userToken}`,
       requested_role: "primary",
-      client_nonce: `${sessionId}:${userToken}`,
+      client_nonce: clientNonce,
     });
   expect(response.status).toBe(200);
   return response.body as { lease_id: string; lease_token: string };
+}
+
+async function releaseLease(
+  app: CoordinatorApp,
+  sessionId: string,
+  lease: { lease_id: string; lease_token: string },
+) {
+  const response = await request(app.app)
+    .post(`/api/review-sessions/${sessionId}/viewer-leases/${lease.lease_id}/release`)
+    .set("X-Viewer-Lease-Token", lease.lease_token)
+    .send({});
+  expect(response.status).toBe(200);
 }
 
 async function activateStage(
@@ -829,6 +846,32 @@ describe("createCoordinatorApp A4 search integration", () => {
         active_binding_revision: bindingRevision,
       },
     });
+  });
+
+  it("rejects a stage binding when its confirmed primary lease has turned over", async () => {
+    const governance = await startGovernanceStub();
+    const fixture = seedCoordinatorFixture(governance.baseUrl);
+    const owner = "a4-owner-lease-turnover";
+    const firstLease = await claimPrimary(fixture.app, fixture.sessionId, owner);
+    await activateStage(fixture.app, fixture.sessionId, owner, firstLease, fixture.artifactId);
+    await releaseLease(fixture.app, fixture.sessionId, firstLease);
+
+    const replacementLease = await claimPrimary(
+      fixture.app,
+      fixture.sessionId,
+      owner,
+      `${fixture.sessionId}:${owner}:replacement`,
+    );
+    expect(replacementLease.lease_id).not.toBe(firstLease.lease_id);
+
+    const response = await request(fixture.app.app)
+      .post(`/api/governance/search/model/for-session/${fixture.sessionId}`)
+      .set("X-User-Token", owner)
+      .send({ query: "IfcDoor" });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error_code).toBe("a4_session_stage_unavailable");
+    expect(governance.calls).toHaveLength(0);
   });
 
   it("verifies the container-visible mapping but forwards the host-native mapping path", async () => {
