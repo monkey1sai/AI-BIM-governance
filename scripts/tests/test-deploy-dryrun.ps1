@@ -266,10 +266,14 @@ $authorityHelpers = @($deployAst.FindAll({
             'Test-LoopbackHost',
             'Resolve-CoordinatorInternalApiBase',
             'Get-DeploySecretFingerprint',
-            'New-KitRuntimeSignature'
+            'New-KitRuntimeSignature',
+            'New-WebPlaneRuntimeSignature',
+            'New-ConversionRuntimeSignature',
+            'Test-KitRuntimeSignatureMatches',
+            'Set-KitRuntimeSignature'
         )
 }, $true) | Sort-Object { $_.Extent.StartOffset })
-Assert-Equal 6 $authorityHelpers.Count 'runtime authority validation and signature helpers found'
+Assert-Equal 10 $authorityHelpers.Count 'runtime authority validation and signature helpers found'
 foreach ($authorityHelper in $authorityHelpers) {
     . ([scriptblock]::Create($authorityHelper.Extent.Text))
 }
@@ -290,6 +294,50 @@ Assert-True ($signatureA -ne $signatureB) 'runtime authority token rotation chan
 Assert-True (-not $signatureA.Contains($signatureTokenA)) 'Kit runtime signature excludes first raw token'
 Assert-True (-not $signatureB.Contains($signatureTokenB)) 'Kit runtime signature excludes rotated raw token'
 Write-TestPass 'runtime authority token rotation changes secret-safe Kit signature'
+
+$webPlaneSignatureRootA = 'C:\edge-data\artifacts-a'
+$webPlaneSignatureRootB = 'C:\edge-data\artifacts-b'
+$webPlaneSignatureA = New-WebPlaneRuntimeSignature `
+    -A4ConversionArtifactsHostRoot $webPlaneSignatureRootA `
+    -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenA)
+$webPlaneSignatureSame = New-WebPlaneRuntimeSignature `
+    -A4ConversionArtifactsHostRoot $webPlaneSignatureRootA `
+    -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenA)
+$webPlaneSignatureRootChanged = New-WebPlaneRuntimeSignature `
+    -A4ConversionArtifactsHostRoot $webPlaneSignatureRootB `
+    -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenA)
+$webPlaneSignatureTokenChanged = New-WebPlaneRuntimeSignature `
+    -A4ConversionArtifactsHostRoot $webPlaneSignatureRootA `
+    -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenB)
+Assert-Equal $webPlaneSignatureA $webPlaneSignatureSame 'unchanged effective A4 web-plane inputs keep the same signature'
+Assert-True ($webPlaneSignatureA -ne $webPlaneSignatureRootChanged) 'effective A4 artifacts root change updates web-plane signature'
+Assert-True ($webPlaneSignatureA -ne $webPlaneSignatureTokenChanged) 'A4 token rotation updates web-plane signature'
+Assert-True (-not $webPlaneSignatureA.Contains($signatureTokenA)) 'web-plane signature excludes raw A4 token'
+Assert-True (-not $webPlaneSignatureTokenChanged.Contains($signatureTokenB)) 'rotated raw A4 token is excluded from web-plane signature'
+$webPlaneSignaturePath = Join-Path $repoRoot 'scripts\.run\deploy-web-plane-signature-test.params.json'
+Remove-Item -LiteralPath $webPlaneSignaturePath -ErrorAction SilentlyContinue
+Assert-True (-not (Test-KitRuntimeSignatureMatches -Path $webPlaneSignaturePath -Expected $webPlaneSignatureA)) 'missing web-plane signature requires first reconcile'
+Set-KitRuntimeSignature -Path $webPlaneSignaturePath -Value $webPlaneSignatureA
+Assert-True (Test-KitRuntimeSignatureMatches -Path $webPlaneSignaturePath -Expected $webPlaneSignatureSame) 'unchanged effective A4 inputs skip repeated reconcile'
+Assert-True (-not (Test-KitRuntimeSignatureMatches -Path $webPlaneSignaturePath -Expected $webPlaneSignatureRootChanged)) 'changed A4 artifacts root requires reconcile'
+Assert-True (-not (Test-KitRuntimeSignatureMatches -Path $webPlaneSignaturePath -Expected $webPlaneSignatureTokenChanged)) 'rotated A4 token requires reconcile'
+Remove-Item -LiteralPath $webPlaneSignaturePath -ErrorAction SilentlyContinue
+Write-TestPass 'effective A4 web-plane signature is stable and secret-safe'
+
+$conversionSignatureA = New-ConversionRuntimeSignature `
+    -BindHost '127.0.0.1' `
+    -Port 49101 `
+    -HealthHost '127.0.0.1' `
+    -PublicArtifactsUrl 'http://127.0.0.1:49101/artifacts' `
+    -ArtifactsRoot $webPlaneSignatureRootA
+$conversionSignatureRootChanged = New-ConversionRuntimeSignature `
+    -BindHost '127.0.0.1' `
+    -Port 49101 `
+    -HealthHost '127.0.0.1' `
+    -PublicArtifactsUrl 'http://127.0.0.1:49101/artifacts' `
+    -ArtifactsRoot $webPlaneSignatureRootB
+Assert-True ($conversionSignatureA -ne $conversionSignatureRootChanged) 'artifacts root change updates host-native conversion signature'
+Write-TestPass 'conversion signature tracks effective artifacts root'
 
 $governanceSignatureHelper = @($deployAst.FindAll({
     param($node)
@@ -373,7 +421,11 @@ Write-Host "`n=== test-deploy-dryrun.ps1: ALL PASSED ===" -ForegroundColor Green
         'deploy-runtime-authority-invalid-test.err.log',
         'deploy-a4-token-short-test.env',
         'deploy-a4-token-short-test.out.log',
-        'deploy-a4-token-short-test.err.log'
+        'deploy-a4-token-short-test.err.log',
+        'deploy-a4-token-long-test.env',
+        'deploy-a4-token-long-test.out.log',
+        'deploy-a4-token-long-test.err.log',
+        'deploy-web-plane-signature-test.params.json'
     )) {
         Remove-Item -LiteralPath (Join-Path $repoRoot "scripts\.run\$testArtifact") -ErrorAction SilentlyContinue
     }

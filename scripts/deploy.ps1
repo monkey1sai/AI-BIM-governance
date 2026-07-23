@@ -80,6 +80,7 @@ $script:viewerPublicUrl = ''
 $script:conversionRuntimeSignaturePath = Join-Path $RunDir 'bim-streaming-conversion-service.params.json'
 $script:governanceRuntimeSignaturePath = Join-Path $RunDir 'governance-service.params.json'
 $script:kitRuntimeSignaturePath = Join-Path $RunDir 'bim-streaming-server.params.json'
+$script:webPlaneRuntimeSignaturePath = Join-Path $RunDir 'web-plane.params.json'
 
 # ============================================================
 # Helper: Print-FinalSummary(在 Phase 1 之前定義,讓任何階段都可呼叫)
@@ -419,9 +420,7 @@ function Test-WebPlaneRefreshRequired {
         'VIEWER_PUBLIC_BASE_URL',
         'COORDINATOR_PUBLIC_BASE_URL',
         'HOST_GOVERNANCE_API_BASE',
-        'INTERNAL_API_AUTH_TOKEN',
-        'A4_INTERNAL_CONTEXT_TOKEN',
-        'A4_CONVERSION_ARTIFACTS_HOST_ROOT'
+        'INTERNAL_API_AUTH_TOKEN'
     )
     foreach ($name in $topologyEnvNames) {
         if (Test-DeployValueConfigured -Name $name -EnvFile $EnvFile) { return $true }
@@ -457,13 +456,26 @@ function New-ConversionRuntimeSignature {
         [Parameter(Mandatory = $true)][string] $BindHost,
         [Parameter(Mandatory = $true)][int] $Port,
         [Parameter(Mandatory = $true)][string] $HealthHost,
-        [string] $PublicArtifactsUrl = ''
+        [string] $PublicArtifactsUrl = '',
+        [Parameter(Mandatory = $true)][string] $ArtifactsRoot
     )
     return ([pscustomobject]@{
         bindHost           = $BindHost
         port               = $Port
         healthHost         = $HealthHost
         publicArtifactsUrl = $PublicArtifactsUrl
+        artifactsRoot      = $ArtifactsRoot
+    } | ConvertTo-Json -Compress)
+}
+
+function New-WebPlaneRuntimeSignature {
+    param(
+        [Parameter(Mandatory = $true)][string] $A4ConversionArtifactsHostRoot,
+        [Parameter(Mandatory = $true)][string] $A4InternalContextTokenFingerprint
+    )
+    return ([pscustomobject]@{
+        a4ConversionArtifactsHostRoot      = $A4ConversionArtifactsHostRoot
+        a4InternalContextTokenFingerprint = $A4InternalContextTokenFingerprint
     } | ConvertTo-Json -Compress)
 }
 
@@ -736,6 +748,12 @@ $shouldRefreshWebPlane = Test-WebPlaneRefreshRequired `
     -ResolvedPublicHost $resolvedPublicHost `
     -SpectatorCount $resolvedSpectatorCount `
     -EnvFile $resolvedEnvFile
+$webPlaneRuntimeSignature = New-WebPlaneRuntimeSignature `
+    -A4ConversionArtifactsHostRoot $resolvedConversionArtifactsRoot `
+    -A4InternalContextTokenFingerprint $a4InternalContextTokenFingerprint
+if (-not (Test-KitRuntimeSignatureMatches -Path $script:webPlaneRuntimeSignaturePath -Expected $webPlaneRuntimeSignature)) {
+    $shouldRefreshWebPlane = $true
+}
 $resolvedConversionHealthHost = Resolve-HealthProbeHost -BindHost $resolvedConversionBindHost
 $resolvedAllowedStageHosts = Resolve-AllowedStageHosts -EnvFile $resolvedEnvFile -PublicHost $resolvedPublicHost -ConversionPort 49101
 $kitRuntimeSignature = New-KitRuntimeSignature `
@@ -782,7 +800,8 @@ $conversionRuntimeSignature = New-ConversionRuntimeSignature `
     -BindHost $resolvedConversionBindHost `
     -Port 49101 `
     -HealthHost $resolvedConversionHealthHost `
-    -PublicArtifactsUrl $resolvedConversionPublicArtifactsUrl
+    -PublicArtifactsUrl $resolvedConversionPublicArtifactsUrl `
+    -ArtifactsRoot $resolvedConversionArtifactsRoot
 
 $volume = Resolve-DeployVolumeState -Volume (Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile) -EdgeRuntimeContract $edgeRuntimeContract
 $script:volume = $volume
@@ -1461,6 +1480,7 @@ if ($SkipDocker) {
         Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4d (docker)'
         exit 4
     }
+    Set-KitRuntimeSignature -Path $script:webPlaneRuntimeSignaturePath -Value $webPlaneRuntimeSignature
     Write-DeployTag -Tag 'ok' -Message 'Phase 4d docker compose up complete' -LogPath $LogPath | Out-Null
 }
 

@@ -1,5 +1,6 @@
 # NOW — 本週主線（2026-07-23）
 
+> 文件性質：working note；用於本週工作排序，不是 runtime/API contract 或完成證據。
 > **AI / 人：只聽這份。** 與本檔衝突時，以使用者最新口令為準，其次本檔，再才是 OpenSpec / 設計正本。  
 > 維護規則：每完成一個 outcome 就改狀態；禁止同時推進 >2 個 active OpenSpec product change。
 
@@ -9,7 +10,7 @@
 |---|---|---|---|
 | **0** | 治理 WIP（#364） | active ≤2；defer 其餘；採納 throughput 預算 | ✅ #364 MERGED + `governance-throughput-budget` archived |
 | **1** | 收口 | 把「code 已 merge、tasks 假開著」的 change archive | **已 archive 7 案**（2026-07-21/22） |
-| **2** | A4 | 只走切片 PR（先 #365，再下一刀） | **#365 + #380 + #382 + #383 MERGED**；current = S4-B coordinator session search proxy local-ready |
+| **2** | A4 | 只走切片 PR（先 #365，再下一刀） | **#365 + #380 + #382 + #383 MERGED**；current = S4-B PR #384 delivery gate |
 
 **並行規則：** 0 可與 1 同天；**2 與新功能不得再開第 3 條 active product change**。  
 **本週不做：** A5–A10 全棧、`rvt-ifc-usdc-lineage` 實作、新 OpenSpec（除 archive/defer 註記）、整 repo 重掃。
@@ -76,7 +77,7 @@
 | **S1** | governance 能 atomic 驗證 3D handoff proof-set（不碰 coordinator store） | §6 governance 半部 | ✅ **#365 MERGED** `a02f20d` |
 | **S2** | coordinator session-scoped handoff create/consume + 權限（principal/lease/binding） | §6.1–6.2 後端 | ✅ **#380 MERGED** `eaf8e11` |
 | **S3** | viewer 消費 trusted handoff → 單一 focus/highlight + 狀態機 | §6.3–6.5 | ✅ **#382 MERGED** `add1d9b`；Full completion `no` |
-| **S4** | 收斂舊 A4 大 branch 的 §2–§5 可合部分（llm/proxy/issue/UI）成小 PR | §2–§5 子集 | 🟡 S4-A #383 已 merge（`84bdf5c`）；S4-B local-ready 於 `feat/a4-s4b-session-search-proxy`；S4-C/D pending |
+| **S4** | 收斂舊 A4 大 branch 的 §2–§5 可合部分（llm/proxy/issue/UI）成小 PR | §2–§5 子集 | 🟡 S4-A #383 已 merge（`84bdf5c`）；S4-B 由 PR #384 交付（最終狀態以 GitHub machine truth 為準）；S4-C/D pending |
 | **S5+** | design/browser/runtime full gate | §7–§8 | 僅當 S1–S4 穩；允許長期 `Full completion claimed: no` |
 
 ### S3 local closeout／merge gate
@@ -116,7 +117,7 @@ Next: S4-B coordinator proxy；不得把 S4-C Issue 或 S4-D UI 混入本 PR
 ### S4-B coordinator session search local closeout／merge gate
 
 ```txt
-Base: origin/main 84bdf5c（#383 merged）；branch feat/a4-s4b-session-search-proxy；目前未 commit／push／開 PR。
+Base: origin/main 84bdf5c（#383 merged）；branch feat/a4-s4b-session-search-proxy；commit 1915d40 已建立 PR #384，後續 head／checks／merge state 以 GitHub machine truth 為準。
 Scope: 只做 coordinator session／partial-confirmation／IFC-ready search proxy、安全 transport 與 host-kit deploy seam；frozen governanceProxy.ts 不變。
 Outcome:
   1) generic browser search 固定停用；session route 先驗 authenticated principal、active primary lease 與 exact active binding，再 server-side resolve model/artifact/source/mapping
@@ -124,7 +125,7 @@ Outcome:
   3) governance transport 預設 loopback；non-loopback 必須 exact origin allowlist + 16–4096 字元 server-only token；redirect、timeout、response size/content type 與 recursive secret/path leak 均 fail closed
   4) mapping 採 coordinator-visible realpath containment + host-native absolute root 雙 namespace；host-kit 只讀 mount，token rotation 以 fingerprint 觸發 governance restart且不保存 raw token
 Verification: coordinator npm run verify 64 files / 697 tests PASS（含 build）；deploy static + dry-run PASS；compose config PASS；OpenSpec change strict + 全 repo 63 items strict PASS；diff／secret／status gates於本切片 closeout重驗
-Independent review: correctness/security/repo-hygiene 未發現新的 P1/P2；active binding、response leak、host bridge/token、IFC-ready 越權與雙 OS namespace blockers 已解除
+Independent review: pre-PR local correctness/security/repo-hygiene review 未發現新的 P1/P2；PR review 後續找出 web-plane repeated reconcile P2，本切片以 effective-config signature + regression 修正並待 PR gates 重驗
 GitNexus: detect_changes 三次 Transport closed，index stale at b2cd6d3；狀態為 UNKNOWN，不宣稱 pass
 Boundary: 未跑 live Ornith、真實 Docker coordinator + host-native governance search、browser/Kit/design dual gate；未做 S4-C Issue 或 S4-D UI
 Full completion claimed: no
@@ -176,4 +177,4 @@ Done: 通過 DoD 所列測試；回報 verified / inferences / risks
 | 2026-07-21 | 採納建議/A/全做：#365 merge；4 change archive；deferred 三案；S2 成當前 outcome |
 | 2026-07-21 | #364 merge；archive governance-throughput-budget；OQ 全落地 |
 | 2026-07-22 | 使用者確認 deferred archive：`minio-folderview-and-baseline-disclosure`、`align-frontend-design-system-reference`、`rvt-ifc-usdc-lineage` 均以 `--skip-specs` archive；#380 merged，下一刀改為 S3。 |
-| 2026-07-23 | #382／#383 merged；S4-B coordinator session search proxy、安全 transport 與 host-kit dual-namespace seam local-ready，S4-C/D 仍 pending。 |
+| 2026-07-23 | #382／#383 merged；S4-B coordinator session search proxy、安全 transport 與 host-kit dual-namespace seam 由 PR #384 交付（狀態以 GitHub machine truth 為準），S4-C/D 仍 pending。 |

@@ -416,12 +416,6 @@ describe("loadConfig edge artifact health", () => {
     expect(config.artifactHealthLedgerStorePath).toBe(
       path.join("D:\\Users\\deploy\\AI-bim-geo-data", "ledgers", "artifact-health-ledger.json"),
     );
-    expect(config.a4ConversionArtifactsRoot).toBe(
-      path.join("D:\\Users\\deploy\\AI-bim-geo-data", "artifacts"),
-    );
-    expect(config.a4ConversionArtifactsHostRoot).toBe(
-      path.join("D:\\Users\\deploy\\AI-bim-geo-data", "artifacts"),
-    );
   });
 
   it("respects the dedicated read-only A4 conversion artifacts mount", () => {
@@ -440,6 +434,32 @@ describe("loadConfig edge artifact health", () => {
     expect(config.artifactHealthLedgerStorePath).toBe(
       path.join("D:\\Users\\deploy\\AI-bim-geo-data", "ledgers", "artifact-health-ledger.json"),
     );
+  });
+
+  it("derives both A4 artifact roots from the final edge runtime override", () => {
+    const edgeRuntimeDataRoot = "D:\\Users\\deploy\\AI-bim-geo-data";
+    const config = loadConfig({ edgeRuntimeDataRoot });
+
+    expect(config.a4ConversionArtifactsRoot).toBe(path.join(edgeRuntimeDataRoot, "artifacts"));
+    expect(config.a4ConversionArtifactsHostRoot).toBe(path.join(edgeRuntimeDataRoot, "artifacts"));
+  });
+
+  it("derives the host A4 artifacts root from the final visible-root override", () => {
+    const config = loadConfig({
+      a4ConversionArtifactsRoot: "/workspace/custom-a4-artifacts",
+    });
+
+    expect(config.a4ConversionArtifactsHostRoot).toBe("/workspace/custom-a4-artifacts");
+  });
+
+  it("keeps an explicit host A4 artifacts root override", () => {
+    const config = loadConfig({
+      a4ConversionArtifactsRoot: "/workspace/custom-a4-artifacts",
+      a4ConversionArtifactsHostRoot: "D:\\edge-data\\custom-a4-artifacts",
+    });
+
+    expect(config.a4ConversionArtifactsRoot).toBe("/workspace/custom-a4-artifacts");
+    expect(config.a4ConversionArtifactsHostRoot).toBe("D:\\edge-data\\custom-a4-artifacts");
   });
 
   it("respects explicit ARTIFACT_HEALTH_LEDGER_STORE_PATH", () => {

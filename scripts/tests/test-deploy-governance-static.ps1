@@ -23,6 +23,11 @@ Assert-Contains $deploy "'HOST_GOVERNANCE_API_BASE'" 'deploy.ps1 must consider g
 Assert-Contains $deploy "'A4_INTERNAL_CONTEXT_TOKEN'" 'deploy.ps1 must inject and refresh the A4 shared token without embedding it'
 Assert-Contains $deploy 'A4InternalContextTokenFingerprint' 'governance runtime signature must react to A4 token rotation'
 Assert-Contains $deploy "[Environment]::SetEnvironmentVariable('A4_CONVERSION_ARTIFACTS_HOST_ROOT'" 'deploy.ps1 must inject an absolute host-native artifacts namespace'
+Assert-Contains $deploy "Join-Path `$RunDir 'web-plane.params.json'" 'deploy.ps1 must persist effective web-plane inputs separately'
+Assert-Contains $deploy 'function New-WebPlaneRuntimeSignature' 'deploy.ps1 must build a secret-safe effective web-plane signature'
+Assert-Contains $deploy 'Test-KitRuntimeSignatureMatches -Path $script:webPlaneRuntimeSignaturePath' 'deploy.ps1 must compare the effective web-plane signature before refresh'
+Assert-Contains $deploy 'Set-KitRuntimeSignature -Path $script:webPlaneRuntimeSignaturePath' 'deploy.ps1 must persist the web-plane signature after reconcile'
+Assert-Contains $deploy '-ArtifactsRoot $resolvedConversionArtifactsRoot' 'conversion runtime signature must track its effective output root'
 Assert-Contains $deploy '$shouldRefreshWebPlane = $true' 'deploy.ps1 must force web-plane refresh for custom governance port'
 Assert-Contains $deploy 'coordinator-governance-files-tree' 'deploy.ps1 must verify coordinator to governance proxy'
 Assert-Contains $launcher 'function Start-HostNativeGovernance' 'launcher must define Start-HostNativeGovernance'
@@ -38,6 +43,31 @@ $clearUserSite = $launcher.IndexOf('Remove-Item Env:PYTHONNOUSERSITE')
 $importCheck = $launcher.IndexOf('import ifcopenshell, fastapi, uvicorn')
 if ($clearUserSite -lt 0 -or $importCheck -lt 0 -or $clearUserSite -gt $importCheck) {
     throw 'launcher must clear PYTHONNOUSERSITE before governance import sanity check'
+}
+
+$parserTokens = $null
+$parserErrors = $null
+$deployAst = [System.Management.Automation.Language.Parser]::ParseInput($deploy, [ref]$parserTokens, [ref]$parserErrors)
+if (@($parserErrors).Count -ne 0) {
+    throw 'deploy.ps1 must parse before governance static inspection'
+}
+$refreshFunction = @($deployAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Test-WebPlaneRefreshRequired'
+}, $true))
+if ($refreshFunction.Count -ne 1) {
+    throw 'deploy.ps1 must define exactly one Test-WebPlaneRefreshRequired helper'
+}
+$refreshFunctionText = $refreshFunction[0].Extent.Text
+if ($refreshFunctionText -match "'A4_INTERNAL_CONTEXT_TOKEN'" -or $refreshFunctionText -match "'A4_CONVERSION_ARTIFACTS_HOST_ROOT'") {
+    throw 'script-derived A4 values must use effective signatures, not presence-only web-plane refresh triggers'
+}
+
+$dockerFailureIndex = $deploy.IndexOf('if ($dockerExit -ne 0)')
+$webPlaneSignatureSaveIndex = $deploy.IndexOf('Set-KitRuntimeSignature -Path $script:webPlaneRuntimeSignaturePath')
+if ($dockerFailureIndex -lt 0 -or $webPlaneSignatureSaveIndex -le $dockerFailureIndex) {
+    throw 'web-plane signature must be persisted only after docker compose succeeds'
 }
 
 [scriptblock]::Create($deploy) | Out-Null
