@@ -628,7 +628,7 @@ export const coordinatorClient = {
     jsonPost<CreateReviewSessionResponse>("/api/review-sessions", body),
   claimViewerLease: (sessionId: string, body: {
     viewer_id: string;
-    user_id: string;
+    user_id?: string;
     display_name?: string | null;
     requested_role?: "auto" | "primary" | "spectator";
     client_nonce?: string | null;

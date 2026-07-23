@@ -13,8 +13,8 @@ import {
 import {
   coordinatorClient,
   type IfcReadyListItem,
-  type RuntimeSessionSummary,
 } from "./coordinatorClient";
+import { getLocalDevUserCarrier } from "./localDevPrincipal";
 
 const EXAMPLE_QUERIES = [
   "找 4F 防火門且 FireRating < 60",
@@ -24,51 +24,62 @@ const EXAMPLE_QUERIES = [
   "FireRating >= 60",
 ];
 
-type SourceMode = "session" | "ifc_ready" | "path";
-
 export function A4SemanticSearchPage() {
   const [query, setQuery] = useState(EXAMPLE_QUERIES[0]);
-  const [sourceMode, setSourceMode] = useState<SourceMode>("ifc_ready");
   const [interpretMode, setInterpretMode] = useState<ModelSearchInterpretMode>("auto");
   const [llmStatus, setLlmStatus] = useState<ModelSearchLlmStatus | null>(null);
-  const [sessions, setSessions] = useState<RuntimeSessionSummary[]>([]);
   const [jobs, setJobs] = useState<IfcReadyListItem[]>([]);
-  const [sessionId, setSessionId] = useState("");
   const [jobId, setJobId] = useState("");
-  const [path, setPath] = useState("");
+  const [sourcesLoading, setSourcesLoading] = useState(true);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [runErr, setRunErr] = useState<string | null>(null);
   const [result, setResult] = useState<ModelSearchResponse | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [issueMsg, setIssueMsg] = useState<string | null>(null);
-  const [issueBusy, setIssueBusy] = useState(false);
 
   const refreshSources = useCallback(async () => {
+    setSourcesLoading(true);
     setLoadErr(null);
     try {
-      const [rt, ready, llm] = await Promise.all([
-        coordinatorClient.runtimeStatus().catch(() => null),
-        coordinatorClient.listIfcReady().catch(() => null),
-        governanceClient.searchLlmStatus().catch(() => null),
+      const [readyResult, llmResult] = await Promise.allSettled([
+        coordinatorClient.listIfcReady(),
+        governanceClient.searchLlmStatus(),
       ]);
-      setLlmStatus(llm);
-      const sessionList = rt?.sessions?.items ?? [];
-      setSessions(sessionList);
-      if (!sessionId && sessionList[0]?.session_id) {
-        setSessionId(sessionList[0].session_id);
-      }
-      const items = ready?.items ?? [];
-      setJobs(items);
-      if (!jobId) {
+      const failures: string[] = [];
+
+      if (readyResult.status === "fulfilled") {
+        const items = readyResult.value.items.filter((item) => item.download_status === "downloaded");
+        setJobs(items);
         const preferred =
           items.find((j) => j.conversion_status === "ready" || j.status === "ready") ?? items[0];
-        if (preferred?.ifc_ready_job_id) setJobId(preferred.ifc_ready_job_id);
+        setJobId((current) => (
+          items.some((item) => item.ifc_ready_job_id === current)
+            ? current
+            : preferred?.ifc_ready_job_id ?? ""
+        ));
+      } else {
+        setJobs([]);
+        setJobId("");
+        failures.push(t(
+          "IFC-ready 來源清單載入失敗；請確認 coordinator 後重試。",
+          "Failed to load IFC-ready sources. Check the coordinator and retry.",
+        ));
       }
-    } catch (e) {
-      setLoadErr(String(e));
+
+      if (llmResult.status === "fulfilled") {
+        setLlmStatus(llmResult.value);
+      } else {
+        setLlmStatus(null);
+        failures.push(t(
+          "LLM readiness 狀態載入失敗；semantic 不可宣稱可用。",
+          "Failed to load LLM readiness. Semantic availability is not established.",
+        ));
+      }
+
+      if (failures.length) setLoadErr(failures.join(" "));
+    } finally {
+      setSourcesLoading(false);
     }
-  }, [jobId, sessionId]);
+  }, []);
 
   useEffect(() => {
     void refreshSources();
@@ -79,37 +90,19 @@ export function A4SemanticSearchPage() {
   const matchedCount = result?.stats?.matched ?? 0;
 
   const canRun = useMemo(() => {
-    if (!query.trim()) return false;
-    if (sourceMode === "session") return Boolean(sessionId);
-    if (sourceMode === "ifc_ready") return Boolean(jobId);
-    return Boolean(path.trim());
-  }, [query, sourceMode, sessionId, jobId, path]);
+    return Boolean(query.trim() && jobId);
+  }, [query, jobId]);
 
   async function onRun() {
     setBusy(true);
     setRunErr(null);
-    setIssueMsg(null);
     setResult(null);
-    setSelected(new Set());
     try {
-      let res: ModelSearchResponse;
-      if (sourceMode === "session") {
-        res = await governanceClient.searchModelForSession(sessionId, {
-          query: query.trim(),
-          interpret_mode: interpretMode,
-        });
-      } else if (sourceMode === "ifc_ready") {
-        res = await governanceClient.searchModelForIfcReady(jobId, {
-          query: query.trim(),
-          interpret_mode: interpretMode,
-        });
-      } else {
-        res = await governanceClient.searchModel({
-          ifc_source_path: path.trim(),
-          query: query.trim(),
-          interpret_mode: interpretMode,
-        });
-      }
+      const userToken = getLocalDevUserCarrier();
+      const res: ModelSearchResponse = await governanceClient.searchModelForIfcReady(jobId, {
+        query: query.trim(),
+        interpret_mode: interpretMode,
+      }, userToken);
       setResult(res);
       if (res.status === "uninterpreted") {
         setRunErr(t("無法解譯問句 — 請用範例語法改寫", "Query not interpreted — rewrite using example grammar"));
@@ -123,58 +116,10 @@ export function A4SemanticSearchPage() {
     }
   }
 
-  function toggleRow(guid: string | null) {
-    if (!guid) return;
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(guid)) next.delete(guid);
-      else next.add(guid);
-      return next;
-    });
-  }
-
-  function selectAllMatched() {
-    setSelected(new Set(rows.map((r) => r.ifc_guid).filter(Boolean) as string[]));
-  }
-
-  async function onCreateIssues() {
-    const targets = rows.filter((r) => r.ifc_guid && selected.has(r.ifc_guid));
-    if (!targets.length) {
-      setIssueMsg(t("請先勾選結果列", "Select result rows first"));
-      return;
-    }
-    setIssueBusy(true);
-    setIssueMsg(null);
-    try {
-      const created: string[] = [];
-      for (const row of targets) {
-        const issue = await governanceClient.createIssue({
-          title: `[A4] ${row.name || row.ifc_class || row.ifc_guid}`,
-          description: [
-            "source=A4",
-            `query=${result?.interpreted_filters?.raw_query ?? query}`,
-            `evidence=${(row.evidence_refs || []).join("; ")}`,
-            "bcf_gate=unavailable_until_provenance_bridge",
-          ].join("\n"),
-          severity: "medium",
-          ifc_guid: row.ifc_guid,
-          usd_prim_path: row.usd_prim_path,
-          model_version_id: result?.model_version_id ?? undefined,
-        });
-        created.push(issue.id);
-      }
-      setIssueMsg(
-        t(
-          `已建立 ${created.length} 筆 Issue（source_type=manual；A4 尚無 BCF provenance bridge）`,
-          `Created ${created.length} issue(s) (source_type=manual; no A4 BCF provenance bridge yet)`,
-        ),
-      );
-    } catch (e) {
-      setIssueMsg(String(e));
-    } finally {
-      setIssueBusy(false);
-    }
-  }
+  const actionsUnavailableReason = t(
+    "此 legacy 相容頁只提供查詢結果表；Issue 需 S4-C signed-proof route，3D 需 canonical handoff。未接通前兩者皆停用。",
+    "This legacy compatibility page is table-only. Issues require the S4-C signed-proof route, and 3D requires the canonical handoff; both stay disabled until then.",
+  );
 
   return (
     <div className="ec-page" data-testid="a4-semantic-search-page">
@@ -190,18 +135,23 @@ export function A4SemanticSearchPage() {
       </p>
       <Panel title={t("語意模型（Ornith）", "Semantic model (Ornith)")} sub="GET /api/governance/search/llm-status" prov="asbuilt">
         <Field
-          k="enabled"
-          v={llmStatus ? String(llmStatus.enabled) : t("未取得", "not observed")}
+          k="state"
+          v={llmStatus?.state ?? t("未取得", "not observed")}
           prov="asbuilt"
         />
-        <Field k="model" v={llmStatus?.model ?? "—"} prov="asbuilt" />
-        <Field k="base_url" v={llmStatus?.base_url ?? "—"} prov="asbuilt" />
-        <Field k="auth" v={llmStatus?.auth ?? "—"} prov="asbuilt" />
+        <Field k="configured_model" v={llmStatus?.model ?? "—"} prov="asbuilt" />
+        <Field k="transport_class" v={llmStatus?.transport_class ?? "—"} prov="asbuilt" />
+        <Field
+          k="readiness_evidence"
+          v={llmStatus ? `${llmStatus.check_source} · ${llmStatus.freshness}` : "—"}
+          prov="asbuilt"
+        />
+        {llmStatus?.error_code && <Field k="error_code" v={llmStatus.error_code} prov="asbuilt" />}
         {!llmStatus?.configured && (
           <p className="ec-warn" data-testid="a4-llm-missing">
             {t(
-              "未設定 ORNITH_API_KEY / A4_LLM_API_KEY → semantic 模式會失敗；可用 deterministic 或 auto（僅文法）。",
-              "ORNITH_API_KEY / A4_LLM_API_KEY not set → semantic mode fails; use deterministic or auto (grammar only).",
+              "LLM readiness 未成立；semantic 模式會 fail closed，可用 deterministic，auto 只會依後端明示狀態降級。",
+              "LLM readiness is not established. Semantic mode fails closed; deterministic remains available and auto degrades only when the backend says so.",
             )}
           </p>
         )}
@@ -227,18 +177,21 @@ export function A4SemanticSearchPage() {
             />
           </label>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-            {(["ifc_ready", "session", "path"] as SourceMode[]).map((m) => (
-              <Btn
-                key={m}
-                data-testid={`a4-source-${m}`}
-                onClick={() => setSourceMode(m)}
-                primary={sourceMode === m}
-              >
-                {m}
-              </Btn>
-            ))}
-            <Btn data-testid="a4-refresh-sources" onClick={() => void refreshSources()}>
-              {t("重新整理來源", "Refresh sources")}
+            <Btn data-testid="a4-source-ifc_ready" primary>
+              ifc_ready
+            </Btn>
+            <Btn
+              data-testid="a4-source-session"
+              disabled
+              caption={t(
+                "legacy route 無法與 active primary viewer lease 共置；等待 canonical S4-D workspace",
+                "The legacy route cannot co-locate an active primary viewer lease; awaiting the canonical S4-D workspace",
+              )}
+            >
+              session
+            </Btn>
+            <Btn data-testid="a4-refresh-sources" disabled={sourcesLoading} onClick={() => void refreshSources()}>
+              {sourcesLoading ? t("載入來源中…", "Loading sources…") : t("重新整理來源", "Refresh sources")}
             </Btn>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }} data-testid="a4-interpret-mode">
@@ -257,47 +210,39 @@ export function A4SemanticSearchPage() {
           <p className="ec-muted" style={{ marginTop: 6 }}>
             auto＝文法先、失敗再 Ornith；semantic＝強制 LLM；deterministic＝純文法。
           </p>
-          {sourceMode === "session" && (
-            <label className="ec-field" style={{ display: "block", marginTop: 8 }}>
-              <span>session_id</span>
-              <select data-testid="a4-session-select" value={sessionId} onChange={(e) => setSessionId(e.target.value)}>
-                <option value="">{t("— 選擇 session —", "— select session —")}</option>
-                {sessions.map((s) => (
-                  <option key={s.session_id} value={s.session_id}>{s.session_id}</option>
-                ))}
-              </select>
-            </label>
-          )}
-          {sourceMode === "ifc_ready" && (
-            <label className="ec-field" style={{ display: "block", marginTop: 8 }}>
-              <span>ifc_ready_job_id</span>
-              <select data-testid="a4-job-select" value={jobId} onChange={(e) => setJobId(e.target.value)}>
-                <option value="">{t("— 選擇 ifc-ready job —", "— select ifc-ready job —")}</option>
-                {jobs.map((j) => (
-                  <option key={j.ifc_ready_job_id} value={j.ifc_ready_job_id}>
-                    {j.ifc_ready_job_id} · {j.status}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {sourceMode === "path" && (
-            <label className="ec-field" style={{ display: "block", marginTop: 8 }}>
-              <span>{t("host ifc_source_path（dev / 本機）", "host ifc_source_path (dev / local)")}</span>
-              <input
-                data-testid="a4-path-input"
-                value={path}
-                onChange={(e) => setPath(e.target.value)}
-                placeholder="C:\\…\\a4_fire_doors.ifc"
-                style={{ width: "100%" }}
-              />
-            </label>
-          )}
+          <p className="ec-muted" data-testid="a4-auth-scope" style={{ marginTop: 6 }}>
+            {t(
+              "Auth：同一 Console runtime 的 ephemeral local_dev_lab carrier；production SSO 尚未綁定時由 server fail closed。",
+              "Auth: an ephemeral local_dev_lab carrier shared by this Console runtime; the server fails closed until production SSO is bound.",
+            )}
+          </p>
+          <label className="ec-field" style={{ display: "block", marginTop: 8 }}>
+            <span>ifc_ready_job_id ({t("僅已下載", "downloaded only")})</span>
+            <select data-testid="a4-job-select" value={jobId} onChange={(e) => setJobId(e.target.value)}>
+              <option value="">{t("— 選擇 ifc-ready job —", "— select ifc-ready job —")}</option>
+              {jobs.map((j) => (
+                <option key={j.ifc_ready_job_id} value={j.ifc_ready_job_id}>
+                  {j.ifc_ready_job_id} · {j.status}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="ec-note" data-testid="a4-source-scope-note" style={{ marginTop: 8 }}>
+            {t(
+              "ifc_ready_table_only：只顯示查詢結果，不具備 active viewer／Issue／3D authority；session flow 等 canonical S4-D workspace 共置 viewer lease 後才啟用。",
+              "ifc_ready_table_only: results only; it has no active viewer, Issue, or 3D authority. Session flow stays disabled until the canonical S4-D workspace co-locates the viewer lease.",
+            )}
+          </p>
           <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-            <Btn data-testid="a4-run" disabled={!canRun || busy} onClick={() => void onRun()}>
+            <Btn data-testid="a4-run" disabled={!canRun || busy || sourcesLoading} onClick={() => void onRun()}>
               {busy ? t("執行中…", "Running…") : t("執行查詢", "Run query")}
             </Btn>
           </div>
+          {sourcesLoading && (
+            <p className="ec-muted" data-testid="a4-source-loading">
+              {t("正在載入可用來源與 readiness…", "Loading available sources and readiness…")}
+            </p>
+          )}
           {loadErr && <p className="ec-err" data-testid="a4-load-err">{loadErr}</p>}
           {runErr && <p className="ec-warn" data-testid="a4-run-err">{runErr}</p>}
         </Panel>
@@ -308,6 +253,9 @@ export function A4SemanticSearchPage() {
             <>
               <Field k="status" v={result.status} prov="asbuilt" />
               <Field k="interpret_mode" v={String(result.interpret_mode ?? interpretMode)} prov="asbuilt" />
+              <Field k="search_scope" v={result.search_scope ?? "not_observed"} prov="asbuilt" />
+              <Field k="completion_scope" v="table_only" prov="asbuilt" />
+              <Field k="result_scan_scope" v={result.completion_scope ?? "not_observed"} prov="asbuilt" />
               <Field k="interpret_source" v={interpreted?.interpret_source ?? "—"} prov="asbuilt" />
               <Field k="model_version_id" v={result.model_version_id ?? "—"} prov="asbuilt" />
               <Field
@@ -366,19 +314,17 @@ export function A4SemanticSearchPage() {
         prov="asbuilt"
       >
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-          <Btn data-testid="a4-select-all" disabled={!rows.length} onClick={selectAllMatched}>
-            {t("全選匹配", "Select all matches")}
-          </Btn>
-          <Btn data-testid="a4-create-issues" disabled={!selected.size || issueBusy} onClick={() => void onCreateIssues()}>
-            {issueBusy ? t("建立中…", "Creating…") : t(`批次建 Issue（${selected.size}）`, `Batch create issues (${selected.size})`)}
+          <Btn data-testid="a4-create-issues" disabled caption={actionsUnavailableReason}>
+            {t("Issue 尚不可用", "Issue unavailable")}
           </Btn>
         </div>
-        {issueMsg && <p className="ec-muted" data-testid="a4-issue-msg">{issueMsg}</p>}
+        <p className="ec-note" data-testid="a4-actions-unavailable">
+          {actionsUnavailableReason}
+        </p>
         <div className="ec-table-wrap">
           <table className="ec-table" data-testid="a4-results-table">
             <thead>
               <tr>
-                <th />
                 <th>guid</th>
                 <th>class</th>
                 <th>name</th>
@@ -390,22 +336,13 @@ export function A4SemanticSearchPage() {
             <tbody>
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="ec-muted">{t("無列", "No rows")}</td>
+                  <td colSpan={6} className="ec-muted">{t("無列", "No rows")}</td>
                 </tr>
               )}
               {rows.map((row: ModelSearchResultRow) => {
                 const guid = row.ifc_guid ?? "";
                 return (
                   <tr key={guid || `${row.name}-${row.storey}`}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        data-testid={`a4-row-check-${guid}`}
-                        checked={Boolean(guid && selected.has(guid))}
-                        disabled={!guid}
-                        onChange={() => toggleRow(row.ifc_guid)}
-                      />
-                    </td>
                     <td className="mono">{row.ifc_guid ?? "—"}</td>
                     <td>{row.ifc_class}</td>
                     <td>{row.name ?? "—"}</td>
@@ -426,8 +363,8 @@ export function A4SemanticSearchPage() {
         </div>
         <p className="ec-muted" style={{ marginTop: 8 }}>
           {t(
-            "3D 高亮：有 session + mapping 時請至 Review Room / viewer 以 client highlight 對 prim；本頁不偽造 GPU first frame。",
-            "3D highlight: with session + mapping, use Review Room / viewer client highlight; this page does not fake GPU first frame.",
+            "3D：此 legacy table 不建立 handoff、不送 DataChannel，也不把 mapping 欄位視為 runtime authority。",
+            "3D: this legacy table creates no handoff, sends no DataChannel message, and does not treat a mapping field as runtime authority.",
           )}
         </p>
       </Panel>
