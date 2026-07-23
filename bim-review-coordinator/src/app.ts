@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { randomBytes } from "node:crypto";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -68,9 +69,9 @@ import {
 import { registerDevMetaRoutes } from "./routes/devMeta.js";
 import { ViewerLeaseStore, publicLease } from "./services/viewerLeaseStore.js";
 import {
-  StageBindingAuthorityStore,
-  type StageComposition,
-} from "./services/stageBindingAuthorityStore.js";
+  RuntimeMutationAuthority,
+  type RuntimeStageComposition,
+} from "./services/runtimeMutationAuthority/runtimeMutationAuthority.js";
 import {
   StreamingConversionClient,
   buildQualityMetricsSummary,
@@ -247,45 +248,81 @@ const stageBindingConfirmationSchema = z.object({
   outcome: z.enum(["success", "failed"]),
 }).strict();
 
-const RUNTIME_MUTATOR_EVENT_TYPES = new Set([
-  "openStageRequest",
-  "loadArtifactGroupRequest",
-  "composeStageRequest",
-  "highlightPrimsRequest",
-  "focusPrimRequest",
-  "clearHighlightRequest",
-  "selectPrimsRequest",
-  "makePrimsPickable",
-  "resetStage",
-]);
-const STAGE_LOAD_EVENT_TYPES = new Set(["openStageRequest", "loadArtifactGroupRequest"]);
-const runtimePrimPathSchema = z.string().trim().min(1).max(4096).refine((path) => path.startsWith("/"));
-const runtimeHighlightItemSchema = z.object({
-  prim_path: runtimePrimPathSchema,
-}).passthrough();
-const runtimeCommandContextSchemas: Record<string, z.ZodTypeAny> = {
-  openStageRequest: z.object({}).strict(),
-  loadArtifactGroupRequest: z.object({}).strict(),
-  highlightPrimsRequest: z.object({
-    mode: z.literal("replace"),
-    items: z.array(runtimeHighlightItemSchema).min(1).max(4096),
-    focus_first: z.boolean(),
-  }).strict(),
-  focusPrimRequest: z.object({
-    prim_path: runtimePrimPathSchema,
-  }).strict(),
-  clearHighlightRequest: z.object({}).strict(),
-  selectPrimsRequest: z.object({
-    paths: z.array(runtimePrimPathSchema).max(4096),
-  }).strict(),
-  makePrimsPickable: z.object({
-    paths: z.array(runtimePrimPathSchema).min(1).max(4096),
-  }).strict(),
-  resetStage: z.object({}).strict(),
-};
+type WireStageComposition = z.infer<typeof stageCompositionSchema>;
 
-function isValidRuntimeCommandContext(eventType: string, commandContext: Record<string, unknown>): boolean {
-  return runtimeCommandContextSchemas[eventType]?.safeParse(commandContext).success ?? false;
+function toRuntimeStageComposition(composition: WireStageComposition): RuntimeStageComposition {
+  return {
+    primary: {
+      artifactId: composition.primary.artifact_id,
+      role: "primary",
+      loadOrder: composition.primary.load_order,
+      usdcUrl: composition.primary.usdc_url,
+    },
+    secondaryLayers: composition.secondary_layers.map((artifact) => ({
+      artifactId: artifact.artifact_id,
+      role: "secondary",
+      loadOrder: artifact.load_order,
+      usdcUrl: artifact.usdc_url,
+    })),
+  };
+}
+
+function toWireStageComposition(composition: RuntimeStageComposition): WireStageComposition {
+  return {
+    primary: {
+      artifact_id: composition.primary.artifactId,
+      role: "primary",
+      load_order: composition.primary.loadOrder,
+      usdc_url: composition.primary.usdcUrl,
+    },
+    secondary_layers: composition.secondaryLayers.map((artifact) => ({
+      artifact_id: artifact.artifactId,
+      role: "secondary",
+      load_order: artifact.loadOrder,
+      usdc_url: artifact.usdcUrl,
+    })),
+  };
+}
+
+function isRuntimeCommandRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function toRuntimeCommandContext(
+  requestedEventType: string,
+  commandContext: Record<string, unknown>,
+): Record<string, unknown> {
+  if (requestedEventType === "highlightPrimsRequest") {
+    const runtimeContext = { ...commandContext };
+    const hasWireAlias = Object.prototype.hasOwnProperty.call(commandContext, "focusFirst");
+    delete runtimeContext.focus_first;
+    delete runtimeContext.focusFirst;
+    runtimeContext.focusFirst = commandContext.focus_first;
+    if (hasWireAlias) runtimeContext.__wireAliasCollision = true;
+    runtimeContext.items = Array.isArray(commandContext.items)
+      ? commandContext.items.map((item) => {
+          if (!isRuntimeCommandRecord(item)) return item;
+          const runtimeItem = { ...item };
+          delete runtimeItem.prim_path;
+          delete runtimeItem.primPath;
+          runtimeItem.primPath = item.prim_path;
+          return runtimeItem;
+        })
+      : commandContext.items;
+    return runtimeContext;
+  }
+
+  if (requestedEventType === "focusPrimRequest") {
+    const runtimeContext = { ...commandContext };
+    const hasWireAlias = Object.prototype.hasOwnProperty.call(commandContext, "primPath");
+    delete runtimeContext.prim_path;
+    delete runtimeContext.primPath;
+    runtimeContext.primPath = commandContext.prim_path;
+    if (hasWireAlias) runtimeContext.__wireAliasCollision = true;
+    return runtimeContext;
+  }
+
+  return { ...commandContext };
 }
 
 const heartbeatViewerLeaseSchema = z.object({
@@ -584,7 +621,54 @@ export function createCoordinatorApp(
   const store = new SessionStore(config.sessionStoreDir);
   const eventLog = new EventLog(config.eventLogDir, { structLog });
   const viewerLeaseStore = new ViewerLeaseStore();
-  const stageBindingAuthorityStore = new StageBindingAuthorityStore();
+  const runtimeMutationAuthority = new RuntimeMutationAuthority({
+    now: Date.now,
+    generateId: (prefix) => `${prefix}_${randomBytes(12).toString("hex")}`,
+    getSessionContext: (sessionId) => {
+      const session = store.get(sessionId);
+      return session
+        ? {
+            sessionId: session.session_id,
+            status: session.status,
+            artifacts: session.artifact_bindings.map((binding) => ({
+              artifactId: binding.artifact_id,
+              readyStatus: binding.ready_status,
+              usdcUrl: binding.url ?? null,
+            })),
+          }
+        : null;
+    },
+    inspectPrimaryLease: ({ sessionId, sourceClientId, credential }) => {
+      const lease = viewerLeaseStore.authorizePrimary(sessionId, sourceClientId, credential);
+      return lease
+        ? {
+            authorized: true,
+            lease: { leaseId: lease.lease_id, principal: lease.user_id },
+          }
+        : { authorized: false };
+    },
+    inspectRuntimeLease: ({ sessionId, sourceClientId, credential }) => {
+      const decision = viewerLeaseStore.inspectRuntimeAuthority(sessionId, sourceClientId, credential);
+      return decision.authorized
+        ? {
+            authorized: true,
+            lease: { leaseId: decision.lease.lease_id, principal: decision.lease.user_id },
+          }
+        : {
+            authorized: false,
+            reason: decision.reason,
+            detailCode: decision.detail_code,
+          };
+    },
+    appendStageBindingApplied: (event) => eventLog.append(event.sessionId, "stageBindingApplied", {
+      stage_binding_authorization_id: event.stageBindingAuthorizationId,
+      binding_revision_id: event.bindingRevisionId,
+      request_id: event.requestId,
+      source_client_id: event.sourceClientId,
+      primary_artifact_id: event.primaryArtifactId,
+      secondary_artifact_ids: event.secondaryArtifactIds,
+    }),
+  });
   // B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：對外 IFC-ready intake。
   const authProvider = createAuthProvider(config);
   const externalIfcReadyStore = new ExternalIfcReadyStore();
@@ -1880,7 +1964,18 @@ export function createCoordinatorApp(
           owned_by_caller: primaryLease?.user_id === user.userId,
         },
         leases: leases.map((lease) => publicLease(lease)),
-        stage_binding: stageBindingAuthorityStore.summary(session.session_id, user.userId),
+        stage_binding: (() => {
+          const summary = runtimeMutationAuthority.getStageBindingSummary({
+            sessionId: session.session_id,
+            principal: user.userId,
+          });
+          return {
+            transaction_status: summary.transactionStatus,
+            binding_revision_id: summary.bindingRevisionId,
+            active_binding_revision: summary.activeBindingRevision,
+            last_good_binding_revision: summary.lastGoodBindingRevision,
+          };
+        })(),
       });
     } catch (error) {
       next(error);
@@ -1973,71 +2068,47 @@ export function createCoordinatorApp(
       }
 
       const input = stageBindingPreauthorizationSchema.parse(request.body);
-      const leaseToken = request.header("X-Viewer-Lease-Token") ?? "";
-      const authorizedLease = viewerLeaseStore.authorizePrimary(
-        session.session_id,
-        input.source_client_id,
-        leaseToken,
-      );
-      if (!authorizedLease || authorizedLease.user_id !== user.userId) {
-        response.status(403).json({ detail: "stage binding requires caller's active primary viewer lease" });
-        return;
-      }
-
-      const artifactIds = new Set(input.artifacts.map((artifact) => artifact.artifact_id));
-      const loadOrders = new Set(input.artifacts.map((artifact) => artifact.load_order));
-      const primarySelections = input.artifacts.filter((artifact) => artifact.role === "primary");
-      if (
-        artifactIds.size !== input.artifacts.length
-        || loadOrders.size !== input.artifacts.length
-        || primarySelections.length !== 1
-      ) {
-        response.status(400).json({ detail: "stage binding requires unique artifacts/order and exactly one primary" });
-        return;
-      }
-
-      const selected = [...input.artifacts].sort((left, right) => left.load_order - right.load_order);
-      const resolved = selected.map((selection) => {
-        const binding = session.artifact_bindings.find((candidate) => candidate.artifact_id === selection.artifact_id);
-        if (!binding || binding.ready_status !== "ready" || !binding.url) return null;
-        return {
-          artifact_id: selection.artifact_id,
-          role: selection.role,
-          load_order: selection.load_order,
-          usdc_url: binding.url,
-        };
-      });
-      if (resolved.some((artifact) => artifact === null)) {
-        response.status(409).json({ detail: "selected stage artifact is not ready or not in the session" });
-        return;
-      }
-      const resolvedArtifacts = resolved.filter((artifact): artifact is NonNullable<typeof artifact> => artifact !== null);
-      const primary = resolvedArtifacts.find((artifact) => artifact.role === "primary");
-      if (!primary) {
-        response.status(400).json({ detail: "stage binding requires exactly one primary" });
-        return;
-      }
-      const stageComposition: StageComposition = {
-        primary: { ...primary, role: "primary" },
-        secondary_layers: resolvedArtifacts
-          .filter((artifact) => artifact.role === "secondary")
-          .map((artifact) => ({ ...artifact, role: "secondary" })),
-      };
-
-      const created = stageBindingAuthorityStore.create({
-        session_id: session.session_id,
+      const created = runtimeMutationAuthority.preauthorizeStageBinding({
+        sessionId: session.session_id,
         principal: user.userId,
-        lease_id: authorizedLease.lease_id,
-        source_client_id: input.source_client_id,
-        composition: stageComposition,
+        sourceClientId: input.source_client_id,
+        credential: request.header("X-Viewer-Lease-Token") ?? "",
+        artifacts: input.artifacts.map((artifact) => ({
+          artifactId: artifact.artifact_id,
+          role: artifact.role,
+          loadOrder: artifact.load_order,
+        })),
       });
       if (!created.ok) {
-        const status = created.reason === "capacity_exceeded" ? 503 : 409;
-        response.status(status).json({
-          detail: created.reason === "capacity_exceeded"
-            ? "stage_binding_capacity_exceeded"
-            : "stage_binding_transaction_executing",
-        });
+        switch (created.reason) {
+          case "session_not_found":
+            response.status(404).json({ detail: "Review session not found." });
+            break;
+          case "session_lifecycle_blocked":
+            response.status(409).json({ detail: "Review session is not active." });
+            break;
+          case "primary_lease_required":
+            response.status(403).json({ detail: "stage binding requires caller's active primary viewer lease" });
+            break;
+          case "artifact_selection_invalid":
+            response.status(400).json({
+              detail: "stage binding requires unique artifacts/order and exactly one primary",
+            });
+            break;
+          case "artifact_unavailable":
+            response.status(409).json({ detail: "selected stage artifact is not ready or not in the session" });
+            break;
+          case "capacity_exceeded":
+            response.status(503).json({ detail: "stage_binding_capacity_exceeded" });
+            break;
+          case "transaction_executing":
+            response.status(409).json({ detail: "stage_binding_transaction_executing" });
+            break;
+          default: {
+            const unhandledReason: never = created.reason;
+            throw new Error(`Unhandled stage-binding preauthorization outcome: ${unhandledReason}`);
+          }
+        }
         return;
       }
 
@@ -2045,10 +2116,10 @@ export function createCoordinatorApp(
         status: "pending",
         session_id: session.session_id,
         auth_scope: user.ssoBinding === "pending_oq5" ? "local_dev_lab" : "bound",
-        stage_binding_authorization_id: created.transaction.stage_binding_authorization_id,
-        binding_revision_id: created.transaction.binding_revision_id,
-        stage_composition: created.transaction.stage_composition,
-        pending_expires_at: created.transaction.pending_expires_at,
+        stage_binding_authorization_id: created.stageBindingAuthorizationId,
+        binding_revision_id: created.bindingRevisionId,
+        stage_composition: toWireStageComposition(created.composition),
+        pending_expires_at: created.pendingExpiresAt,
       });
     } catch (error) {
       next(error);
@@ -2565,75 +2636,22 @@ export function createCoordinatorApp(
         return;
       }
       const input = parsed.data;
-      const session = store.get(request.params.sessionId);
-      if (!session) {
-        deny("lease_invalid", "session_not_found");
+      const decision = runtimeMutationAuthority.authorizeRuntimeCommand({
+        sessionId: request.params.sessionId,
+        sourceClientId: input.source_client_id,
+        credential: request.header("X-Viewer-Lease-Token") ?? "",
+        requestId: input.request_id,
+        requestedEventType: input.requested_event_type,
+        commandContext: toRuntimeCommandContext(input.requested_event_type, input.command_context),
+        stageBindingAuthorizationId: input.stage_binding_authorization_id,
+        bindingRevisionId: input.binding_revision_id,
+        stageComposition: input.stage_composition
+          ? toRuntimeStageComposition(input.stage_composition)
+          : undefined,
+      });
+      if (!decision.authorized) {
+        deny(decision.reason, decision.detailCode);
         return;
-      }
-      if (!isSessionMutable(session)) {
-        deny("session_lifecycle_blocked", `session_${session.status}`);
-        return;
-      }
-      if (!RUNTIME_MUTATOR_EVENT_TYPES.has(input.requested_event_type)) {
-        deny("unsupported_command", "event_not_in_mutator_catalog");
-        return;
-      }
-      if (input.requested_event_type === "composeStageRequest") {
-        deny("unsupported_command", "harness_only_command");
-        return;
-      }
-      if (!isValidRuntimeCommandContext(input.requested_event_type, input.command_context)) {
-        deny("invalid_payload", "runtime_command_context_invalid");
-        return;
-      }
-
-      const leaseDecision = viewerLeaseStore.inspectRuntimeAuthority(
-        session.session_id,
-        input.source_client_id,
-        request.header("X-Viewer-Lease-Token") ?? "",
-      );
-      if (!leaseDecision.authorized) {
-        deny(leaseDecision.reason, leaseDecision.detail_code);
-        return;
-      }
-
-      const isStageLoad = STAGE_LOAD_EVENT_TYPES.has(input.requested_event_type);
-      const hasAnyStageAuthority = Boolean(
-        input.stage_binding_authorization_id
-        || input.binding_revision_id
-        || input.stage_composition,
-      );
-      if (!isStageLoad && hasAnyStageAuthority) {
-        deny("invalid_payload", "unexpected_stage_transaction");
-        return;
-      }
-      if (isStageLoad) {
-        if (
-          !input.stage_binding_authorization_id
-          || !input.binding_revision_id
-          || !input.stage_composition
-        ) {
-          deny("invalid_payload", "stage_transaction_required");
-          return;
-        }
-        const consumed = stageBindingAuthorityStore.consume({
-          session_id: session.session_id,
-          stage_binding_authorization_id: input.stage_binding_authorization_id,
-          binding_revision_id: input.binding_revision_id,
-          lease_id: leaseDecision.lease.lease_id,
-          source_client_id: input.source_client_id,
-          request_id: input.request_id,
-          event_type: input.requested_event_type as "openStageRequest" | "loadArtifactGroupRequest",
-          composition: input.stage_composition as StageComposition,
-        });
-        if (!consumed.authorized) {
-          if (consumed.reason === "transaction_mismatch") {
-            deny("invalid_payload", "stage_transaction_mismatch");
-          } else {
-            deny("lease_invalid", `stage_${consumed.reason}`);
-          }
-          return;
-        }
       }
 
       response.json({
@@ -2657,63 +2675,30 @@ export function createCoordinatorApp(
         return;
       }
       const input = parsed.data;
-      if (
-        !STAGE_LOAD_EVENT_TYPES.has(input.requested_event_type)
-        || !input.stage_binding_authorization_id
-        || !input.binding_revision_id
-        || !input.stage_composition
-      ) {
-        response.json({
-          rolled_back: false,
-          request_id: input.request_id,
-          detail_code: "stage_transaction_required",
-        });
-        return;
-      }
-      const session = store.get(request.params.sessionId);
-      if (!session) {
-        response.json({
-          rolled_back: false,
-          request_id: input.request_id,
-          detail_code: "session_not_found",
-        });
-        return;
-      }
-      const leaseDecision = viewerLeaseStore.inspectRuntimeAuthority(
-        session.session_id,
-        input.source_client_id,
-        request.header("X-Viewer-Lease-Token") ?? "",
-      );
-      if (!leaseDecision.authorized) {
-        response.json({
-          rolled_back: false,
-          request_id: input.request_id,
-          detail_code: leaseDecision.detail_code,
-        });
-        return;
-      }
-
-      const rolledBack = stageBindingAuthorityStore.failBeforeMutation({
-        session_id: session.session_id,
-        stage_binding_authorization_id: input.stage_binding_authorization_id,
-        binding_revision_id: input.binding_revision_id,
-        lease_id: leaseDecision.lease.lease_id,
-        source_client_id: input.source_client_id,
-        request_id: input.request_id,
-        event_type: input.requested_event_type as "openStageRequest" | "loadArtifactGroupRequest",
-        composition: input.stage_composition as StageComposition,
+      const rolledBack = runtimeMutationAuthority.failStageBindingBeforeMutation({
+        sessionId: request.params.sessionId,
+        sourceClientId: input.source_client_id,
+        credential: request.header("X-Viewer-Lease-Token") ?? "",
+        requestId: input.request_id,
+        requestedEventType: input.requested_event_type,
+        commandContext: toRuntimeCommandContext(input.requested_event_type, input.command_context),
+        stageBindingAuthorizationId: input.stage_binding_authorization_id,
+        bindingRevisionId: input.binding_revision_id,
+        stageComposition: input.stage_composition
+          ? toRuntimeStageComposition(input.stage_composition)
+          : undefined,
       });
       response.json(rolledBack.failed
         ? {
             rolled_back: true,
-            request_id: input.request_id,
+            request_id: rolledBack.requestId,
             transaction_status: "failed",
-            idempotent_replay: rolledBack.idempotent_replay,
+            idempotent_replay: rolledBack.idempotentReplay,
           }
         : {
             rolled_back: false,
-            request_id: input.request_id,
-            detail_code: `stage_${rolledBack.reason}`,
+            request_id: rolledBack.requestId,
+            detail_code: rolledBack.detailCode,
           });
     },
   );
@@ -2740,88 +2725,27 @@ export function createCoordinatorApp(
         return;
       }
       const input = parsed.data;
-      const session = store.get(request.params.sessionId);
-      if (!session) {
-        deny("lease_invalid", "session_not_found");
-        return;
-      }
-      if (!isSessionMutable(session)) {
-        deny("session_lifecycle_blocked", `session_${session.status}`);
-        return;
-      }
-      const transaction = stageBindingAuthorityStore.get(input.stage_binding_authorization_id);
-      if (!transaction) {
-        deny("lease_invalid", "stage_transaction_missing");
-        return;
-      }
-      if (
-        transaction.session_id !== session.session_id
-        || transaction.binding_revision_id !== input.binding_revision_id
-      ) {
-        deny("invalid_payload", "stage_transaction_mismatch");
-        return;
-      }
-      const leaseDecision = viewerLeaseStore.inspectRuntimeAuthority(
-        session.session_id,
-        transaction.source_client_id,
-        request.header("X-Viewer-Lease-Token") ?? "",
-      );
-      if (
-        !leaseDecision.authorized
-        || leaseDecision.lease.lease_id !== transaction.lease_id
-        || leaseDecision.lease.user_id !== transaction.principal
-      ) {
-        deny("lease_invalid", leaseDecision.authorized ? "lease_principal_changed" : leaseDecision.detail_code);
-        return;
-      }
-      if (!transaction.event_type) {
-        deny("invalid_payload", "stage_transaction_not_claimed");
-        return;
-      }
-
-      const completed = stageBindingAuthorityStore.complete(
-        {
-          session_id: transaction.session_id,
-          stage_binding_authorization_id: transaction.stage_binding_authorization_id,
-          binding_revision_id: input.binding_revision_id,
-          lease_id: transaction.lease_id,
-          source_client_id: transaction.source_client_id,
-          request_id: input.request_id,
-          event_type: transaction.event_type,
-          composition: transaction.stage_composition,
-          outcome: input.outcome,
-        },
-        input.outcome === "success"
-          ? () => eventLog.append(session.session_id, "stageBindingApplied", {
-              stage_binding_authorization_id: transaction.stage_binding_authorization_id,
-              binding_revision_id: transaction.binding_revision_id,
-              request_id: input.request_id,
-              source_client_id: transaction.source_client_id,
-              primary_artifact_id: transaction.stage_composition.primary.artifact_id,
-              secondary_artifact_ids: transaction.stage_composition.secondary_layers.map(
-                (artifact) => artifact.artifact_id,
-              ),
-            })
-          : undefined,
-      );
+      const completed = runtimeMutationAuthority.confirmStageBinding({
+        sessionId: request.params.sessionId,
+        credential: request.header("X-Viewer-Lease-Token") ?? "",
+        stageBindingAuthorizationId: input.stage_binding_authorization_id,
+        bindingRevisionId: input.binding_revision_id,
+        requestId: input.request_id,
+        outcome: input.outcome,
+      });
       if (!completed.confirmed) {
-        deny(
-          completed.reason === "transaction_mismatch" || completed.reason === "completion_mismatch"
-            ? "invalid_payload"
-            : "lease_invalid",
-          `stage_${completed.reason}`,
-        );
+        deny(completed.reason, completed.detailCode);
         return;
       }
 
       response.json({
         confirmed: true,
-        request_id: input.request_id,
-        binding_revision_id: transaction.binding_revision_id,
-        transaction_status: completed.status,
-        active_binding_revision: completed.active_binding_revision,
-        last_good_binding_revision: completed.last_good_binding_revision,
-        idempotent_replay: completed.idempotent_replay,
+        request_id: completed.requestId,
+        binding_revision_id: completed.bindingRevisionId,
+        transaction_status: completed.transactionStatus,
+        active_binding_revision: completed.activeBindingRevision,
+        last_good_binding_revision: completed.lastGoodBindingRevision,
+        idempotent_replay: completed.idempotentReplay,
       });
     },
   );
