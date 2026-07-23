@@ -44,7 +44,7 @@
 
 ### Requirement: 遷移落地後 SHALL 重用既有 pixel/semantic 雙閘機制重新 rebaseline
 
-視覺遷移程式碼落地後，SHALL 使用既有 `web-viewer-sample/scripts/capture-design-system-reference.mjs`（帶 `--rebaseline --confirm-rebaseline` 雙旗標）重新擷取 `docs/plans/design-system-reference.manifest.json` 的 golden baseline（13 screens × 2 viewports），SHALL NOT 新建擷取機制或手動覆寫 golden 圖檔。重新擷取後 SHALL 以 `scripts/tests/verify-design-system-reference.ps1 -VerifyOrigin` 驗證通過。本 change 與 `openspec/changes/align-frontend-design-system-reference` 管理的雙閘機制成熟化工作（tasks 2.4–2.8）平行推進、互不阻塞——機制與視覺內容正交，機制無論鎖定何種視覺皆可重用。
+視覺遷移程式碼落地後，SHALL 使用既有 `web-viewer-sample/scripts/capture-design-system-reference.mjs`（帶 `--rebaseline --confirm-rebaseline` 雙旗標）重新擷取 `docs/plans/design-system-reference.manifest.json` 的 golden baseline（13 screens × 2 viewports），SHALL NOT 新建擷取機制或手動覆寫 golden 圖檔。重新擷取後 SHALL 以 `scripts/tests/verify-design-system-reference.ps1 -VerifyOrigin` 驗證通過。`align-frontend-design-system-reference` 已於 2026-07-22 以 `--skip-specs` deferred archive；其未完成 tasks 2.4–2.8 是 non-canonical 歷史工件，並非平行中的 gate owner。既有機制與視覺內容正交，無論鎖定何種視覺皆可重用。
 
 #### Scenario: 視覺遷移後重新 rebaseline 且驗證通過
 
@@ -53,8 +53,8 @@
 - **AND** 隨後執行 `pwsh scripts/tests/verify-design-system-reference.ps1 -VerifyOrigin` SHALL 通過
 - **AND** SHALL NOT 手動編輯 `design-system-reference.manifest.json` 的 baseline hash 欄位或手動置換 golden PNG
 
-#### Scenario: 不阻塞既有雙閘機制成熟化工作
+#### Scenario: deferred archive 不阻塞視覺遷移
 
-- **WHEN** `align-frontend-design-system-reference` 的 tasks 2.4–2.8 仍未完成
+- **WHEN** `align-frontend-design-system-reference` 已 deferred archive，且其 tasks 2.4–2.8 未完成
 - **THEN** 本 change 的視覺遷移工作 SHALL NOT 因此被阻擋而無法開始或完成
-- **AND** 本 change 的完成 SHALL NOT 要求先 archive `align-frontend-design-system-reference`
+- **AND** 本 change 的完成 SHALL NOT 要求 thaw 或實作該 non-canonical archive
