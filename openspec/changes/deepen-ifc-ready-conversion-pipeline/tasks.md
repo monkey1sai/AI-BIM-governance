@@ -11,14 +11,15 @@
 - [x] 2.2 遷移 `pendingDispatchEvents`、`pollerRegistry`、queue `setDispatcher` 骨架與 `dispose` / `hasPendingDispatch` 委派；`createCoordinatorApp` 建構 pipeline。
 - [x] 2.3 驗證：dispatch-queue 與 control-routes 中 `hasPendingDispatch`、dispose drain 測仍綠；行為不變更。
 - [x] 2.4 PR review：shutdown 先收斂 MinIO watcher intake 再 drain pipeline；以順序回歸測試鎖定。
+- [x] 2.5 PR review：in-flight dispatch 在 dispose 後完成不得建立新 poller；以 completion guard 回歸測試鎖定。
 
 ## 3. Conversion terminal 路徑
 
 - [x] 3.1 遷移 `ingestConversionReport`、`ingestStreamingConversionResult`、`schedulePollerForConversion` 入 pipeline。
 - [x] 3.2 outbox enqueue + ledger terminal 留在 pipeline；auto-session 改掛 `onConversionTerminal`（同步、失敗不回灌）。
 - [x] 3.3 observer 結果綁定單次 ingest return，移除跨 request `lastTerminalSession` mutable slot。
-- [x] 3.3 Internal conversion-result / manual ingest routes 只轉呼叫 pipeline；對外 JSON 相容。
-- [x] 3.4 驗證：auto-poll、host-native-ingest、cloud-callback-outbox、session handoff 相關測全綠。
+- [x] 3.4 Internal conversion-result / manual ingest routes 只轉呼叫 pipeline；對外 JSON 相容。
+- [x] 3.5 驗證：auto-poll、host-native-ingest、cloud-callback-outbox、session handoff 相關測全綠。
 
 ## 4. Accept 路徑（J2）
 

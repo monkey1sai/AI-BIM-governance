@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import type { CoordinatorConfig } from "../src/config.js";
 import { createLogger, type StructLogger } from "../src/lib/structLog.js";
+import { ExternalIfcReadyStore } from "../src/services/externalIfcReadyStore.js";
+import type { ExternalIfcReadyEvent } from "../src/types.js";
 
 // conv-prioritize-retry §6.3:協調器自有 dispatch 佇列的 controlled action route 測試。
 // harness 逐字沿用 conversion-dispatch-queue.test.ts（CONTRACT / makeApp / authHeaders /
@@ -316,6 +318,50 @@ describe("conversion control routes — retry", () => {
       const r = await request(app.app).get(`/api/external/ifc-ready/${jobB}`);
       return r.body.status === "dispatched" && r.body.conversion_job_id === "stream_conv_2";
     });
+  });
+
+  it("dropped_on_restart 缺少已下載脈絡時 retry 回 422 且不改 job", async () => {
+    const seedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-control-seed-"));
+    const persistencePath = path.join(seedRoot, "ifc-ready-store.json");
+    const seedStore = new ExternalIfcReadyStore(persistencePath);
+    const event = payload() as unknown as ExternalIfcReadyEvent;
+    const seeded = seedStore.create(event, {
+      correlationId: "corr_drop_missing",
+      idempotencyKey: "idem_drop_missing",
+      tenantId: "tenant_drop_missing",
+      projectId: "project_drop_missing",
+      externalModelVersionId: "ext_drop_missing",
+    });
+    seedStore.markQueuedForConversion(seeded.ifc_ready_job_id, 1);
+
+    const previousStorePath = process.env.EXTERNAL_IFC_READY_STORE_PATH;
+    process.env.EXTERNAL_IFC_READY_STORE_PATH = persistencePath;
+    try {
+      const app = makeApp();
+      const before = await request(app.app).get(
+        `/api/external/ifc-ready/${seeded.ifc_ready_job_id}`,
+      );
+      expect(before.body.status).toBe("dropped_on_restart");
+
+      const retry = await request(app.app)
+        .post(`/api/conversion/jobs/${seeded.ifc_ready_job_id}/retry`)
+        .send({ reason: "missing persisted download context" });
+      expect(retry.status).toBe(422);
+      expect(retry.body.detail).toMatch(/dispatch context lost/i);
+
+      const after = await request(app.app).get(
+        `/api/external/ifc-ready/${seeded.ifc_ready_job_id}`,
+      );
+      expect(after.body.status).toBe("dropped_on_restart");
+      expect(after.body.conversion_job_id).toBeNull();
+      expect(after.body.queue_position).toBeNull();
+    } finally {
+      if (previousStorePath === undefined) {
+        delete process.env.EXTERNAL_IFC_READY_STORE_PATH;
+      } else {
+        process.env.EXTERNAL_IFC_READY_STORE_PATH = previousStorePath;
+      }
+    }
   });
 
   it("prioritize / retry 成功時 reason 寫入 audit log（模式 3 ③）", async () => {

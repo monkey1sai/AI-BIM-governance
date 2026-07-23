@@ -18,6 +18,16 @@ coordinator SHALL 提供 `POST /api/conversion/jobs/:id/prioritize` 與 `POST /a
 - **WHEN** 某 ifc_ready job 因下游派工失敗處於 `dispatch_failed`，operator 對其打 `POST /api/conversion/jobs/:id/retry`
 - **THEN** 路由 SHALL 回 200 且 body `status` SHALL 為 `queued_for_conversion`，該 job SHALL 被 worker 重新取件再派工（非立即 re-fail）
 
+#### Scenario: dropped_on_restart 且已下載脈絡存在時可重試
+
+- **WHEN** 某 ifc_ready job 處於 `dropped_on_restart`，且持久 job record 仍有完整 downloaded IFC dispatch context
+- **THEN** retry 路由 SHALL 重建 pending-dispatch context、回 200，並將 job 重新排入 `queued_for_conversion`
+
+#### Scenario: dropped_on_restart 缺少已下載脈絡時拒絕重試
+
+- **WHEN** 某 ifc_ready job 處於 `dropped_on_restart`，但 required downloaded IFC dispatch context 不存在或不完整
+- **THEN** retry 路由 SHALL 回 422，SHALL NOT 改變 job 狀態、SHALL NOT 建立 queue entry、SHALL NOT 回捏造資料
+
 #### Scenario: prioritize 把排隊中 job 移到隊首
 
 - **WHEN** 佇列有一筆 in-flight job 與多筆 `queued_for_conversion` job，operator 對其中一筆非隊首 job 打 `POST /api/conversion/jobs/:id/prioritize`
@@ -25,5 +35,5 @@ coordinator SHALL 提供 `POST /api/conversion/jobs/:id/prioritize` 與 `POST /a
 
 #### Scenario: 非法 / 不存在 / 狀態不符 SHALL 回對應錯誤碼
 
-- **WHEN** 對控制路由傳入非法 id、不存在 id、或狀態不符（prioritize 非 queued / retry 非 dispatch_failed）
+- **WHEN** 對控制路由傳入非法 id、不存在 id、或狀態不符（prioritize 非 queued / retry 既非 dispatch_failed 亦非 dropped_on_restart）
 - **THEN** 路由 SHALL 分別回 400 / 404 / 409，且 SHALL NOT 改任何 job 狀態、SHALL NOT 回捏造資料

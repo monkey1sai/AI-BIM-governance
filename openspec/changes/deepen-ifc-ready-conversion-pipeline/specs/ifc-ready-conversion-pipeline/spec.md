@@ -11,6 +11,7 @@
 5. **dispose**：取消 pollers、drain 未派工 queue 並標記 dropped_on_restart、清理 pending 脈絡；dispose SHALL 冪等。
 
 Coordinator app lifecycle 在呼叫 pipeline dispose 前，SHALL 先停止並等待所有可 enqueue IFC-ready job 的 in-process intake producer（目前為 MinIO watcher）settle，確保 producer 的最後一筆 enqueue 仍會被同一次 drain 收斂。
+若已啟動的 dispatch 在 dispose 後才完成，pipeline SHALL NOT 為該結果啟動新的 conversion poller；dispose 不因此擴張為取消或等待既有 in-flight dispatch。
 
 Composition root / Express routes SHALL 僅做 HTTP auth、normalize、status 映射與依賴注入 wiring。Public HTTP path 與對外 JSON 形狀 SHALL NOT 因本 capability 故意變更。
 
@@ -29,6 +30,11 @@ Composition root / Express routes SHALL 僅做 HTTP auth、normalize、status �
 
 - **WHEN** download 失敗
 - **THEN** job SHALL 標記 download 失敗語意，SHALL NOT enqueue conversion dispatch，HTTP 層仍映射既有錯誤狀態（例如 502）
+
+#### Scenario: in-flight dispatch 在 dispose 後完成
+
+- **WHEN** pipeline dispose 時已有一筆 dispatch 正等待 conversion authority 回應，且該回應在 dispose 完成後才成功返回
+- **THEN** pipeline MAY 依既有語意記錄該 dispatch 結果，但 SHALL NOT 建立新的 poller handle 或 post-dispose timer
 
 ### Requirement: onConversionTerminal hook SHALL NOT own conversion success
 

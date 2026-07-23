@@ -696,6 +696,7 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
       // delete-on-success：僅派工成功才刪 pending，使 dispatch_failed job 可被 retry 重派。
       this.pendingDispatchEvents.delete(jobId);
       if (
+        !this.disposed &&
         this.config.conversionPollEnabled &&
         !this.pollerRegistry.has(dispatch.conversion_job_id)
       ) {

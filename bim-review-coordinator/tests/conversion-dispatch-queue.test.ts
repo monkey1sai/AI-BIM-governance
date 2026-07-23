@@ -4,10 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import request from "supertest";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import type { CoordinatorConfig } from "../src/config.js";
 import { ConversionDispatchQueue } from "../src/services/conversionDispatchQueue.js";
+import { StreamingConversionClient } from "../src/services/streamingConversionClient.js";
 
 // coordinator-serial-conversion-dispatch-queue:in-memory FIFO 序列化 dispatch。
 
@@ -537,5 +538,36 @@ describe("Restart drop semantics", () => {
 
     // teardown release 讓 stub 完成,避免 dangling promise
     stub.releaseNext();
+  });
+
+  it("dispose 後才完成的 in-flight dispatch 不得啟動新 poller", async () => {
+    const pollSpy = vi
+      .spyOn(StreamingConversionClient.prototype, "pollConversionResult")
+      .mockReturnValue({ cancel: vi.fn() });
+    const stub = await startControllableStreamingStub();
+    const app = makeApp({
+      streamingConversionApiBase: stub.baseUrl,
+      conversionPollEnabled: true,
+    });
+
+    try {
+      const accepted = await request(app.app)
+        .post("/api/external/ifc-ready")
+        .set(authHeaders("corr_dispose_inflight", "idem_dispose_inflight"))
+        .send(payload({ external_model_version_id: "ext_mv_dispose_inflight" }));
+      const jobId = accepted.body.ifc_ready_job_id as string;
+      await waitFor(() => stub.bodies.length >= 1);
+
+      await app.dispose();
+      stub.releaseNext();
+      await waitFor(async () => {
+        const detail = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+        return detail.body.status === "dispatched";
+      });
+
+      expect(pollSpy).not.toHaveBeenCalled();
+    } finally {
+      pollSpy.mockRestore();
+    }
   });
 });
