@@ -1,0 +1,36 @@
+# AI-BIM-governance domain language
+
+Edge BIM review platform (B-scheme): cloud control-plane is external; this workspace owns local intake, conversion coordination, Kit runtime, and governance loopback. Terms below are for architecture and code naming — not a product marketing glossary.
+
+## Conversion closed loop
+
+**IfcReadyConversionPipeline**:
+The deep module that owns one IFC-ready job from accept through conversion terminal: create/replay identity, download to shared volume, serial dispatch to conversion authority, poll/ingest, ConversionLedger writes, and metadata-only callback outbox enqueue.
+_Avoid_: ConversionService, ConversionOrchestrator (vague), EdgeConversionControlPlane (implies session ownership)
+
+**IntakeCommand**:
+Already-authenticated, normalized domain input for accept (event fields, idempotency/correlation keys, resolved callback target). Not a raw HTTP request.
+_Avoid_: Request, payload, webhook body (HTTP-layer words)
+
+**Conversion terminal**:
+The conversion job has reached a final conversion status ready or failed (ingest path). Distinct from download_failed and dispatch_failed, which are pre-conversion failures on the same ifc-ready job.
+_Avoid_: done, complete, finished (ambiguous which stage)
+
+**onConversionTerminal**:
+Synchronous observer invoked after the pipeline has finished job terminal write, outbox enqueue, and ledger best-effort update. Failures in the observer must not change ingest success or outbox state. Used by the app for auto Review Session and similar side effects — not for conversion authority.
+_Avoid_: callback (confused with cloud callback outbox), event bus
+
+## Nearby concepts (owned elsewhere)
+
+**Review Session**:
+Coordinator-owned collaboration/session control-plane record (lease, stage-binding policy shadow, stream config). Not created inside IfcReadyConversionPipeline; may be attached after conversion ready via onConversionTerminal.
+_Avoid_: putting session create inside the pipeline module
+
+**Callback outbox**:
+Metadata-only delivery queue to external cloud control-plane. Owned as a required step inside the pipeline at conversion terminal; retry/dead-letter remain outbox implementation details.
+
+**ConversionLedger**:
+Coordinator-local persistent shadow of conversion records for operator surfaces. Pipeline writes queued at accept path and terminal at ingest; failures are best-effort and must not block intake or ingest.
+
+**Conversion authority**:
+bim-streaming-server host-native conversion process (IFC→USDC). Pipeline talks to it only through a client adapter; does not own GPU/Kit runtime.

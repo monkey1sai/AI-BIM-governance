@@ -6,8 +6,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type AddressInfo } from "node:net";
 import request from "supertest";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
+import { createLogger, type StructLogger } from "../src/lib/structLog.js";
 import { ExternalIfcReadyStore } from "../src/services/externalIfcReadyStore.js";
 import type { ExternalIfcReadyEvent } from "../src/types.js";
 import { sanitizeArtifactIdPart } from "../src/services/streamingConversionClient.js";
@@ -75,17 +76,24 @@ function startStreamingStub(resultPayload: Record<string, unknown>): Promise<str
   });
 }
 
-function makeApp(streamingBase: string, overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
+function makeApp(
+  streamingBase: string,
+  overrides: Partial<CoordinatorConfig> = {},
+  structLog?: StructLogger,
+): CoordinatorApp {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-hnci-test-"));
-  active = createCoordinatorApp({
-    sessionStoreDir: path.join(root, "sessions"),
-    eventLogDir: path.join(root, "events"),
-    callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
-    streamingConversionApiBase: streamingBase,
-    callbackOutboxMaxAttempts: 2,
-    corsOrigins: ["http://127.0.0.1:5173"],
-    ...overrides,
-  });
+  active = createCoordinatorApp(
+    {
+      sessionStoreDir: path.join(root, "sessions"),
+      eventLogDir: path.join(root, "events"),
+      callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
+      streamingConversionApiBase: streamingBase,
+      callbackOutboxMaxAttempts: 2,
+      corsOrigins: ["http://127.0.0.1:5173"],
+      ...overrides,
+    },
+    structLog ? { structLog } : undefined,
+  );
   return active;
 }
 
@@ -384,6 +392,75 @@ describe("conversion-ready auto-session handoff", () => {
     expect(res.body.callback.event).toBe("conversion_failed");
   });
 
+  it("a ready terminal without a streamable artifact does not roll back ingest or its outbox entry", async () => {
+    const app = makeApp("http://127.0.0.1:1");
+    await seedIfcReadyJob(app);
+
+    const res = await request(app.app)
+      .post("/api/internal/conversion-result")
+      .set({ "X-Internal-Token": INTERNAL_TOKEN })
+      .send({
+        correlation_id: CORRELATION,
+        conversion_job_id: "stream_conv_test_001",
+        status: "ready",
+        artifacts: {},
+      });
+
+    expect(res.status).toBe(202);
+    expect(res.body.ifc_ready_job.conversion_status).toBe("ready");
+    expect(res.body.callback.event).toBe("conversion_result_ready");
+    expect(res.body.session).toBeNull();
+    expect(res.body.session_reason).toBe("no_usdc_ref");
+  });
+
+  it("a throwing terminal observer records an anomaly without rolling back ingest or its outbox entry", async () => {
+    const base = await startStreamingStub(READY_RESULT);
+    const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-hnci-log-"));
+    const structLog = createLogger("coordinator", {
+      logRoot,
+      runId: "run_ifc_ready_terminal_observer_failure",
+      skipEnvSnapshot: true,
+    });
+    const app = makeApp(base, {}, structLog);
+    await seedIfcReadyJob(app);
+    const createSession = vi
+      .spyOn(app.store, "create")
+      .mockImplementation(() => {
+        throw new Error("simulated observer failure");
+      });
+
+    const res = await request(app.app)
+      .post("/api/internal/conversions/stream_conv_test_001/ingest")
+      .set({ "X-Internal-Token": INTERNAL_TOKEN })
+      .send({});
+
+    expect(res.status).toBe(202);
+    expect(res.body.ifc_ready_job.conversion_status).toBe("ready");
+    expect(res.body.callback.event).toBe("conversion_result_ready");
+    expect(res.body.session).toBeNull();
+    const anomalies = fs
+      .readFileSync(structLog.currentFile(), "utf-8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter(
+        (record) =>
+          record.event_type === "operation_anomaly" &&
+          record.component === "ifcReadyConversionPipeline" &&
+          record.msg === "onConversionTerminal observer failed",
+      );
+    expect(anomalies).toHaveLength(1);
+    expect(anomalies[0].data).toMatchObject({
+      anomaly_kind: "unexpected_state",
+      reason: "on_conversion_terminal_failed",
+      error_name: "Error",
+      conversion_job_id: "stream_conv_test_001",
+      conversion_status: "ready",
+    });
+    createSession.mockRestore();
+  });
+
   it("pending cloud callback 不阻塞 local session handoff（spec: Pending cloud callback does not block local session handoff）", async () => {
     // 不設 cloudCallbackBaseUrl → callback 仍入 outbox（默認 pending；本測試
     // 不啟動 delivery loop，故 outbox status 一直 pending）；本 assert 關注的是
@@ -448,6 +525,138 @@ describe("conversion-ready auto-session handoff", () => {
     const types = (lifecycleRes.body.items as Array<{ type: string }>).map((it) => it.type);
     expect(types).toContain("sessionCreated");
     expect(types).toContain("sessionActive");
+  });
+
+  it("concurrent manual ingests retain each request's auto-session response", async () => {
+    const correlations = {
+      a: "corr_concurrent_ingest_a",
+      b: "corr_concurrent_ingest_b",
+    };
+    const conversionJobIds = {
+      a: "stream_conv_concurrent_a",
+      b: "stream_conv_concurrent_b",
+    };
+    const pendingResults = new Map<string, http.ServerResponse>();
+    let resolveBothResults: (() => void) | undefined;
+    const bothResultsRequested = new Promise<void>((resolve) => {
+      resolveBothResults = resolve;
+    });
+
+    const base = await new Promise<string>((resolve) => {
+      stub = http.createServer((req, res) => {
+        if (req.method === "POST" && req.url === "/api/conversions/ifc-to-usdc") {
+          let rawBody = "";
+          req.setEncoding("utf8");
+          req.on("data", (chunk) => {
+            rawBody += chunk;
+          });
+          req.on("end", () => {
+            const correlationId = JSON.parse(rawBody).correlation_id as string;
+            const key = correlationId === correlations.a ? "a" : "b";
+            const conversionJobId = conversionJobIds[key];
+            res.writeHead(202, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                conversion_job_id: conversionJobId,
+                status: "queued",
+                authority: "bim-streaming-server",
+                correlation_id: correlationId,
+              }),
+            );
+          });
+          return;
+        }
+
+        const key = Object.entries(conversionJobIds).find(([, id]) =>
+          req.url === `/api/conversions/${id}/result`,
+        )?.[0] as "a" | "b" | undefined;
+        if (req.method === "GET" && key) {
+          pendingResults.set(key, res);
+          if (pendingResults.size === 2) resolveBothResults?.();
+          return;
+        }
+
+        res.writeHead(404).end("{}");
+      });
+      stub.listen(0, "127.0.0.1", () => {
+        const port = (stub!.address() as AddressInfo).port;
+        resolve(`http://127.0.0.1:${port}`);
+      });
+    });
+    const app = makeApp(base, { conversionPollEnabled: false });
+    const acceptedJobIds: Record<"a" | "b", string> = { a: "", b: "" };
+
+    for (const key of ["a", "b"] as const) {
+      const event = structuredClone(IFC_CONTRACT.example) as Record<string, unknown>;
+      event.external_model_version_id = `ext_mv_concurrent_${key}`;
+      const accepted = await request(app.app)
+        .post("/api/external/ifc-ready")
+        .set({
+          "X-Webhook-Secret": "dev-webhook-secret",
+          "X-Correlation-Id": correlations[key],
+          "X-Idempotency-Key": `idem_concurrent_ingest_${key}`,
+        })
+        .send(event);
+      expect(accepted.status).toBe(202);
+      acceptedJobIds[key] = accepted.body.ifc_ready_job_id as string;
+    }
+
+    const waitForDispatch = async (key: "a" | "b"): Promise<void> => {
+      const deadline = Date.now() + 3_000;
+      while (Date.now() < deadline) {
+        const detail = await request(app.app).get(
+          `/api/external/ifc-ready/${acceptedJobIds[key]}`,
+        );
+        if (detail.body.conversion_job_id === conversionJobIds[key]) {
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error(`timed out waiting for ${key} dispatch`);
+    };
+    await Promise.all([waitForDispatch("a"), waitForDispatch("b")]);
+
+    const ingestA = request(app.app)
+      .post(`/api/internal/conversions/${conversionJobIds.a}/ingest`)
+      .set({ "X-Internal-Token": INTERNAL_TOKEN })
+      .send({});
+    const ingestB = request(app.app)
+      .post(`/api/internal/conversions/${conversionJobIds.b}/ingest`)
+      .set({ "X-Internal-Token": INTERNAL_TOKEN })
+      .send({});
+    const responses = Promise.all([ingestA, ingestB]);
+
+    await bothResultsRequested;
+    for (const key of ["a", "b"] as const) {
+      const conversionJobId = conversionJobIds[key];
+      const result = pendingResults.get(key);
+      if (!result) throw new Error(`missing held result for ${key}`);
+      result.writeHead(200, { "Content-Type": "application/json" });
+      result.end(
+        JSON.stringify({
+          ...READY_RESULT,
+          conversion_job_id: conversionJobId,
+          correlation_id: correlations[key],
+          model: {
+            status: "ready",
+            format: "usdc",
+            url: `http://127.0.0.1:49101/artifacts/${conversionJobId}/model.usdc`,
+          },
+          artifacts: {
+            model_usdc: { url: `http://127.0.0.1:49101/artifacts/${conversionJobId}/model.usdc` },
+            element_mapping: { url: `http://127.0.0.1:49101/artifacts/${conversionJobId}/element_mapping.json` },
+            entity_index: { url: `http://127.0.0.1:49101/artifacts/${conversionJobId}/entity_index.json` },
+            metadata: { url: `http://127.0.0.1:49101/artifacts/${conversionJobId}/metadata.json` },
+          },
+        }),
+      );
+    }
+
+    const [first, second] = await responses;
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(202);
+    expect(first.body.session.model_version_id).toBe("ext_mv_concurrent_a");
+    expect(second.body.session.model_version_id).toBe("ext_mv_concurrent_b");
   });
 });
 
