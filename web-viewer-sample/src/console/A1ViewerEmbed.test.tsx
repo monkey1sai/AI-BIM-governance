@@ -1088,9 +1088,13 @@ describe("A1 3D review decoupling", () => {
 
     expect(coordinatorClient.claimViewerLease).toHaveBeenCalledWith(
       "review_session_new",
-      expect.objectContaining({ requested_role: "primary" }),
-      expect.stringMatching(/^a1_inline_operator_/),
+      expect.objectContaining({
+        requested_role: "primary",
+      }),
+      expect.stringMatching(/^edge_console_operator_/),
     );
+    const inlineClaim = vi.mocked(coordinatorClient.claimViewerLease).mock.calls[0];
+    expect(inlineClaim[1]).not.toHaveProperty("user_id");
     expect(q("a1-inline-viewer-host")).not.toBeNull();
     const highlight = q<HTMLButtonElement>("a1-inline-highlight")!;
     expect(highlight.disabled).toBe(false);

@@ -24,6 +24,7 @@ vi.mock("./EmbeddedViewer", () => ({
 }));
 
 import { coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
+import { __resetLocalDevUserCarrierForTests, getLocalDevUserCarrier } from "./localDevPrincipal";
 import { parseReviewRoomHandoff, ReviewSessionViewerPane, type ReviewRoomHandoff } from "./ReviewSessionViewerPane";
 
 const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
@@ -130,6 +131,7 @@ describe("ReviewSessionViewerPane", () => {
     viewerBox.sendHighlight.mockClear();
     viewerBox.sendFocus.mockClear();
     viewerBox.sendClear.mockClear();
+    __resetLocalDevUserCarrierForTests();
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus() as never);
     vi.spyOn(coordinatorClient, "claimViewerLease").mockResolvedValue(fakePrimaryLease() as never);
     vi.spyOn(coordinatorClient, "viewerLeaseHeartbeat").mockResolvedValue(fakePrimaryLease() as never);
@@ -179,6 +181,7 @@ describe("ReviewSessionViewerPane", () => {
   });
 
   it("manual start claims primary lease and mounts the viewer", async () => {
+    const sharedCarrier = getLocalDevUserCarrier();
     await renderPane();
 
     await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
@@ -188,12 +191,12 @@ describe("ReviewSessionViewerPane", () => {
       "review_session_x",
       expect.objectContaining({
         requested_role: "primary",
-        user_id: expect.stringMatching(/^review_room_operator_/),
       }),
-      expect.stringMatching(/^review_room_operator_/),
+      sharedCarrier,
     );
     const claimCall = vi.mocked(coordinatorClient.claimViewerLease).mock.calls[0];
-    expect(claimCall[2]).toBe(claimCall[1].user_id);
+    expect(claimCall[1]).not.toHaveProperty("user_id");
+    expect(claimCall[2]).toBe(sharedCarrier);
     expect(q("review-room-viewer-host")).not.toBeNull();
     expect(viewerBox.renderCount).toBe(1);
     expect(viewerBox.current?.sessionId).toBe("review_session_x");

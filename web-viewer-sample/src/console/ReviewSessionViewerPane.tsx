@@ -3,6 +3,7 @@ import { Btn, Field, Panel } from "./components";
 import { coordinatorClient, type RuntimeSessionSummary, type ViewerLeaseClaimResponse } from "./coordinatorClient";
 import { EmbeddedViewer, type EmbeddedViewerHandle, type HighlightItem, type HighlightResultMessage } from "./EmbeddedViewer";
 import { t } from "./i18n";
+import { getLocalDevUserCarrier } from "./localDevPrincipal";
 import { useSharedStatus } from "./useSharedStatus";
 
 export interface ReviewRoomHandoff {
@@ -83,7 +84,6 @@ type ReviewSessionViewerPaneMode = "review-room" | "a1-inline" | "a2-overlay";
 
 interface ReviewViewerIdentity {
   viewer_id: string;
-  user_id: string;
   user_token: string;
   display_name: string;
 }
@@ -93,10 +93,9 @@ function createReviewViewerIdentity(mode: ReviewSessionViewerPaneMode): ReviewVi
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   const prefix = mode === "a1-inline" ? "a1_inline" : mode === "a2-overlay" ? "a2_overlay" : "review_room";
-  const userToken = `${prefix}_operator_${random}`;
+  const userToken = getLocalDevUserCarrier();
   return {
     viewer_id: `${prefix}_viewer_${random}`,
-    user_id: userToken,
     user_token: userToken,
     display_name: mode === "a1-inline"
       ? "A1 inline primary viewer"
@@ -307,7 +306,6 @@ export const ReviewSessionViewerPane = forwardRef<ReviewSessionViewerPaneHandle,
     try {
       const claimed = await coordinatorClient.claimViewerLease(sid, {
         viewer_id: identity.viewer_id,
-        user_id: identity.user_id,
         display_name: identity.display_name,
         requested_role: "primary",
         client_nonce: `${identity.viewer_id}:${sid}:primary`,

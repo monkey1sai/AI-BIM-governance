@@ -115,3 +115,58 @@ describe("governanceClient.createDiffForLibrary", () => {
     expect(result.diff_id).toBe("d_lib");
   });
 });
+
+describe("governanceClient A4 scoped search", () => {
+  it.each([
+    {
+      name: "session",
+      expectedPath: "/api/governance/search/model/for-session/review_session_x",
+      invoke: (carrier: string) => governanceClient.searchModelForSession(
+        "review_session_x",
+        { query: "IfcDoor", interpret_mode: "deterministic" },
+        carrier,
+      ),
+    },
+    {
+      name: "ifc-ready",
+      expectedPath: "/api/governance/search/model/for-ifc-ready/ifcready_x",
+      invoke: (carrier: string) => governanceClient.searchModelForIfcReady(
+        "ifcready_x",
+        { query: "IfcDoor", interpret_mode: "deterministic" },
+        carrier,
+      ),
+    },
+  ])("keeps the $name principal carrier in X-User-Token only", async ({ expectedPath, invoke }) => {
+    const carrier = "dynamic_local_lab_principal_carrier";
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ status: "ok" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await invoke(carrier);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    const [url, init] = spy.mock.calls[0];
+    expect(String(url)).toContain(expectedPath);
+    expect(String(url)).not.toContain(carrier);
+    expect(init?.headers).toEqual(expect.objectContaining({ "X-User-Token": carrier }));
+    expect(String(init?.body)).not.toContain(carrier);
+  });
+
+  it("does not expose the generic host-path search client to production callers", () => {
+    expect(governanceClient).not.toHaveProperty("searchModel");
+  });
+
+  it("fails closed before fetch when the local-dev carrier is empty", async () => {
+    const spy = vi.spyOn(globalThis, "fetch");
+
+    await expect(governanceClient.searchModelForSession(
+      "review_session_x",
+      { query: "IfcDoor" },
+      "",
+    )).rejects.toThrow(/principal carrier/i);
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
