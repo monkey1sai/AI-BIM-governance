@@ -61,6 +61,13 @@ import {
   type RuleRunSourceMetadata,
 } from "./routes/governanceProxy.js";
 import {
+  registerA4SearchRoutes,
+  type A4SearchIfcReadyResolution,
+  type A4SearchPrincipal,
+  type A4SearchPrincipalResolution,
+  type A4SearchSessionResolution as A4SearchRouteSessionResolution,
+} from "./routes/a4SearchRoutes.js";
+import {
   registerA4HandoffRoutes,
   type A4SearchSessionResolution,
 } from "./routes/a4HandoffRoutes.js";
@@ -3968,6 +3975,250 @@ export function createCoordinatorApp(
       detail: "Authentic viewer lease verification is unavailable.",
     };
   }
+
+  function authenticateA4SearchPrincipal(
+    headers: Record<string, string | undefined>,
+  ): A4SearchPrincipalResolution {
+    try {
+      const user = userAuthProvider.authenticate({ headers });
+      if (process.env.NODE_ENV === "production" && user.ssoBinding === "pending_oq5") {
+        return {
+          ok: false,
+          status: 503,
+          error_code: "a4_production_identity_unavailable",
+          detail: "Production A4 identity is unavailable.",
+        };
+      }
+      return {
+        ok: true,
+        principal: {
+          principal_ref: user.userId,
+          auth_scope: user.ssoBinding === "bound" ? "production" : "lab",
+        },
+      };
+    } catch (error) {
+      if (error instanceof AuthError) {
+        return {
+          ok: false,
+          status: error.statusCode === 403 ? 403 : 401,
+          error_code: "a4_authentication_required",
+          detail: "A4 authentication failed.",
+        };
+      }
+      return {
+        ok: false,
+        status: 503,
+        error_code: "a4_authentication_unavailable",
+        detail: "A4 authentication is unavailable.",
+      };
+    }
+  }
+
+  function isExactConversionArtifactUrl(
+    value: string | null | undefined,
+    conversionJobId: string,
+    filename: "model.usdc" | "element_mapping.json",
+  ): boolean {
+    if (!value || !isSafeConversionJobId(conversionJobId)) return false;
+    try {
+      const parsed = new URL(value);
+      return (parsed.protocol === "http:" || parsed.protocol === "https:")
+        && parsed.username.length === 0
+        && parsed.password.length === 0
+        && parsed.search.length === 0
+        && parsed.hash.length === 0
+        && parsed.pathname === `/artifacts/${conversionJobId}/${filename}`;
+    } catch {
+      return false;
+    }
+  }
+
+  function containedA4MappingPath(
+    binding: ArtifactBinding,
+    linkedConversionJobId: string | null | undefined,
+  ): string | null {
+    const conversionJobId = binding.conversion_job_id;
+    if (
+      binding.conversion_authority !== "bim-streaming-server"
+      || binding.conversion_status !== "ready"
+      || !conversionJobId
+      || conversionJobId !== linkedConversionJobId
+      || !isExactConversionArtifactUrl(binding.url, conversionJobId, "model.usdc")
+      || !isExactConversionArtifactUrl(binding.mapping_url, conversionJobId, "element_mapping.json")
+    ) return null;
+
+    const artifactsRoot = path.resolve(config.a4ConversionArtifactsRoot);
+    const candidate = path.resolve(artifactsRoot, conversionJobId, "element_mapping.json");
+    const relative = path.relative(artifactsRoot, candidate);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return null;
+    try {
+      if (!fs.statSync(candidate).isFile()) return null;
+      const realRoot = fs.realpathSync(artifactsRoot);
+      const realCandidate = fs.realpathSync(candidate);
+      const realRelative = path.relative(realRoot, realCandidate);
+      if (!realRelative || realRelative.startsWith("..") || path.isAbsolute(realRelative)) return null;
+
+      const hostRootValue = config.a4ConversionArtifactsHostRoot;
+      const hostPath = /^[A-Za-z]:[\\/]|^\\\\/.test(hostRootValue) ? path.win32 : path.posix;
+      if (!hostPath.isAbsolute(hostRootValue)) return null;
+      const hostRoot = hostPath.resolve(hostRootValue);
+      const hostCandidate = hostPath.resolve(hostRoot, conversionJobId, "element_mapping.json");
+      const hostRelative = hostPath.relative(hostRoot, hostCandidate);
+      if (!hostRelative || hostRelative.startsWith("..") || hostPath.isAbsolute(hostRelative)) return null;
+      return hostCandidate;
+    } catch {
+      return null;
+    }
+  }
+
+  function resolveA4SearchSessionContext(
+    sessionId: string,
+    principal: A4SearchPrincipal,
+  ): A4SearchRouteSessionResolution {
+    const session = store.get(sessionId);
+    if (!session) {
+      return {
+        ok: false,
+        status: 404,
+        error_code: "a4_session_not_found",
+        detail: "A4 review session was not found.",
+      };
+    }
+    if (session.status !== "active") {
+      return {
+        ok: false,
+        status: 409,
+        error_code: "a4_session_inactive",
+        detail: "A4 requires an active review session.",
+      };
+    }
+
+    const primaryLease = viewerLeaseStore.primary(sessionId);
+    if (!primaryLease || primaryLease.user_id !== principal.principal_ref) {
+      return {
+        ok: false,
+        status: 403,
+        error_code: "a4_primary_lease_required",
+        detail: "A4 requires the caller's active primary viewer lease.",
+      };
+    }
+
+    const modelVersionId = session.model_version_id?.trim();
+    const activeBinding = stageBindingAuthorityStore.activeBinding(sessionId, principal.principal_ref);
+    if (!activeBinding || activeBinding.lease_id !== primaryLease.lease_id) {
+      return {
+        ok: false,
+        status: 409,
+        error_code: "a4_session_stage_unavailable",
+        detail: "A4 session stage binding is not active.",
+      };
+    }
+    const activePrimary = activeBinding.stage_composition.primary;
+    const primaryBinding = session.artifact_bindings.find((binding) =>
+      binding.artifact_id === activePrimary.artifact_id,
+    );
+    if (
+      !modelVersionId
+      || !primaryBinding
+      || primaryBinding.model_version_id !== modelVersionId
+      || !primaryBinding.artifact_id
+      || primaryBinding.url !== activePrimary.usdc_url
+    ) {
+      return {
+        ok: false,
+        status: 409,
+        error_code: "a4_session_model_unavailable",
+        detail: "A4 session model binding is incomplete.",
+      };
+    }
+
+    const linkedJob = latestIfcReadyJobForSession(sessionId);
+    if (!linkedJob || linkedJob.external_model_version_id !== modelVersionId) {
+      return {
+        ok: false,
+        status: 409,
+        error_code: "a4_session_model_unavailable",
+        detail: "A4 session model binding is incomplete.",
+      };
+    }
+    const source = resolveDownloadedJobForRuleRun(linkedJob, modelVersionId, session);
+    if (!source.ok) {
+      return {
+        ok: false,
+        status: 409,
+        error_code: "a4_session_source_unavailable",
+        detail: "A4 session source IFC is unavailable.",
+      };
+    }
+
+    const mappingPath = linkedJob.conversion_authority === "bim-streaming-server"
+      && linkedJob.conversion_status === "ready"
+      ? containedA4MappingPath(primaryBinding, linkedJob.conversion_job_id)
+      : null;
+    if (!mappingPath) {
+      return {
+        ok: false,
+        status: 409,
+        error_code: "a4_session_mapping_unavailable",
+        detail: "A4 session element mapping is unavailable.",
+      };
+    }
+
+    return {
+      ok: true,
+      context: {
+        ifc_source_path: source.context.ifc_source_path,
+        element_mapping_path: mappingPath,
+        model_version_id: modelVersionId,
+        review_session_id: sessionId,
+        primary_artifact_id: primaryBinding.artifact_id,
+        active_binding_revision: activeBinding.binding_revision_id,
+        mapping_provenance: "server_resolved",
+        // Current browser lease carriers are local runtime seams, not a
+        // production-verifiable shared capability. Governance therefore keeps
+        // this route table-only and cannot mint proof/Issue/3D authority.
+        primary_lease_capability: "lab_unverified",
+      },
+    };
+  }
+
+  function resolveA4SearchIfcReadyContext(jobId: string): A4SearchIfcReadyResolution {
+    const job = externalIfcReadyStore.get(jobId);
+    if (!job) {
+      return {
+        ok: false,
+        status: 404,
+        error_code: "a4_ifc_ready_not_found",
+        detail: "A4 IFC-ready job was not found.",
+      };
+    }
+    const source = resolveDownloadedJobForRuleRun(job, job.external_model_version_id ?? null);
+    if (!source.ok) {
+      return {
+        ok: false,
+        status: 409,
+        error_code: "a4_ifc_ready_source_unavailable",
+        detail: "A4 IFC-ready source is unavailable.",
+      };
+    }
+    return {
+      ok: true,
+      context: {
+        ifc_source_path: source.context.ifc_source_path,
+        model_version_id: source.context.model_version_id ?? null,
+      },
+    };
+  }
+
+  // Mount before the frozen generic governance proxy so Express's first-match
+  // routing enforces the A4 browser boundary without editing that shared file.
+  registerA4SearchRoutes(app, {
+    isSafeSessionId,
+    isSafeIfcReadyJobId,
+    authenticatePrincipal: authenticateA4SearchPrincipal,
+    resolveSessionContext: resolveA4SearchSessionContext,
+    resolveIfcReadyContext: resolveA4SearchIfcReadyContext,
+  });
 
   registerGovernanceProxy(app, {
     isSafeSessionId,

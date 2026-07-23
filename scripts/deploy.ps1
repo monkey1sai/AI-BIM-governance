@@ -419,7 +419,9 @@ function Test-WebPlaneRefreshRequired {
         'VIEWER_PUBLIC_BASE_URL',
         'COORDINATOR_PUBLIC_BASE_URL',
         'HOST_GOVERNANCE_API_BASE',
-        'INTERNAL_API_AUTH_TOKEN'
+        'INTERNAL_API_AUTH_TOKEN',
+        'A4_INTERNAL_CONTEXT_TOKEN',
+        'A4_CONVERSION_ARTIFACTS_HOST_ROOT'
     )
     foreach ($name in $topologyEnvNames) {
         if (Test-DeployValueConfigured -Name $name -EnvFile $EnvFile) { return $true }
@@ -469,13 +471,15 @@ function New-GovernanceRuntimeSignature {
     param(
         [Parameter(Mandatory = $true)][int] $Port,
         [Parameter(Mandatory = $true)][string] $DbPath,
-        [Parameter(Mandatory = $true)][string] $FileLibraryRoot
+        [Parameter(Mandatory = $true)][string] $FileLibraryRoot,
+        [Parameter(Mandatory = $true)][string] $A4InternalContextTokenFingerprint
     )
     return ([pscustomobject]@{
         host            = '127.0.0.1'
         port            = $Port
         dbPath          = $DbPath
         fileLibraryRoot = $FileLibraryRoot
+        a4InternalContextTokenFingerprint = $A4InternalContextTokenFingerprint
     } | ConvertTo-Json -Compress)
 }
 
@@ -630,6 +634,20 @@ if ((-not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable('ED
     $edgeRuntimeContract = Resolve-DeployEdgeRuntimeContract
     Set-DeployEdgeRuntimeContractEnv -Contract $edgeRuntimeContract
 }
+$configuredConversionArtifactsRoot = if ($null -ne $edgeRuntimeContract) {
+    [string]$edgeRuntimeContract.STREAMING_CONVERSION_ARTIFACTS_ROOT
+} else {
+    Get-DeployEnvValue `
+        -Name 'STREAMING_CONVERSION_ARTIFACTS_ROOT' `
+        -EnvFile $resolvedEnvFile `
+        -Default (Join-Path $RepoRoot 'bim-streaming-server\_cache\host-native-conversion\artifacts')
+}
+if (-not [System.IO.Path]::IsPathRooted($configuredConversionArtifactsRoot)) {
+    $configuredConversionArtifactsRoot = Join-Path $RepoRoot $configuredConversionArtifactsRoot
+}
+$resolvedConversionArtifactsRoot = Normalize-DeployManagedPath -Path $configuredConversionArtifactsRoot
+[Environment]::SetEnvironmentVariable('STREAMING_CONVERSION_ARTIFACTS_ROOT', $resolvedConversionArtifactsRoot, 'Process')
+[Environment]::SetEnvironmentVariable('A4_CONVERSION_ARTIFACTS_HOST_ROOT', $resolvedConversionArtifactsRoot, 'Process')
 $resolvedPublicHostRaw = if (-not [string]::IsNullOrWhiteSpace($PublicHost)) {
     $PublicHost
 } else {
@@ -639,6 +657,11 @@ $resolvedPublicHost = Resolve-HostNameOnly -Value $resolvedPublicHostRaw
 $resolvedCoordinatorPort = Resolve-DeployIntValue -Name 'COORDINATOR_PORT' -EnvFile $resolvedEnvFile -Default 8004 -Min 1 -Max 65535
 $runtimeAuthorityTokenExplicitlyConfigured = Test-DeployValueConfigured -Name 'INTERNAL_API_AUTH_TOKEN' -EnvFile $resolvedEnvFile
 $resolvedInternalApiAuthToken = Get-DeployEnvValue -Name 'INTERNAL_API_AUTH_TOKEN' -EnvFile $resolvedEnvFile -Default 'dev-internal-token'
+$resolvedA4InternalContextToken = (Get-DeployEnvValue -Name 'A4_INTERNAL_CONTEXT_TOKEN' -EnvFile $resolvedEnvFile -Default '').Trim()
+if ($resolvedA4InternalContextToken.Length -gt 0 -and ($resolvedA4InternalContextToken.Length -lt 16 -or $resolvedA4InternalContextToken.Length -gt 4096)) {
+    throw 'A4_INTERNAL_CONTEXT_TOKEN must be blank (A4 disabled) or between 16 and 4096 characters.'
+}
+$a4InternalContextTokenFingerprint = Get-DeploySecretFingerprint -Value $resolvedA4InternalContextToken
 $resolvedCoordinatorInternalApiBase = Resolve-CoordinatorInternalApiBase -EnvFile $resolvedEnvFile -CoordinatorPort $resolvedCoordinatorPort
 $runtimeAuthorityTokenFingerprint = Get-DeploySecretFingerprint -Value $resolvedInternalApiAuthToken
 $resolvedViewerPort = Resolve-DeployIntValue -Name 'VIEWER_PORT' -EnvFile $resolvedEnvFile -Default 5173 -Min 1 -Max 65535
@@ -743,6 +766,7 @@ $resolvedCorsOrigins = Resolve-DeployCorsOrigins -EnvFile $resolvedEnvFile -View
 [Environment]::SetEnvironmentVariable('KIT_SPECTATOR_PORT_STRIDE', [string]$resolvedSpectatorStride, 'Process')
 [Environment]::SetEnvironmentVariable('COORDINATOR_INTERNAL_API_BASE', $resolvedCoordinatorInternalApiBase, 'Process')
 [Environment]::SetEnvironmentVariable('INTERNAL_API_AUTH_TOKEN', $resolvedInternalApiAuthToken, 'Process')
+[Environment]::SetEnvironmentVariable('A4_INTERNAL_CONTEXT_TOKEN', $resolvedA4InternalContextToken, 'Process')
 Set-DeployEnvIfNeeded -Name 'VIEWER_BIND_HOST' -Value ($(if (Test-LoopbackHost -HostName $resolvedPublicHost) { '127.0.0.1' } else { '0.0.0.0' })) -Force:$shouldDerivePublicTopologyValues -EnvFile $resolvedEnvFile
 Set-DeployEnvIfNeeded -Name 'KIT_SIGNALING_HOST' -Value $resolvedPublicHost -Force:$shouldDerivePublicTopologyValues -EnvFile $resolvedEnvFile
 Set-DeployEnvIfNeeded -Name 'KIT_MEDIA_HOST' -Value $resolvedPublicHost -Force:$shouldDerivePublicTopologyValues -EnvFile $resolvedEnvFile
@@ -779,7 +803,8 @@ $resolvedGovernanceFileLibraryRoot = if ($volume -and $volume.runtimeStorageRoot
 $governanceRuntimeSignature = New-GovernanceRuntimeSignature `
     -Port $resolvedGovernancePort `
     -DbPath $resolvedGovernanceDbPath `
-    -FileLibraryRoot $resolvedGovernanceFileLibraryRoot
+    -FileLibraryRoot $resolvedGovernanceFileLibraryRoot `
+    -A4InternalContextTokenFingerprint $a4InternalContextTokenFingerprint
 $resolvedGovernanceApiBaseForDocker = if ($SkipGovernance) { '' } else { "http://host.docker.internal:$resolvedGovernancePort" }
 if (-not $SkipGovernance) {
     [Environment]::SetEnvironmentVariable('HOST_GOVERNANCE_API_BASE', $resolvedGovernanceApiBaseForDocker, 'Process')

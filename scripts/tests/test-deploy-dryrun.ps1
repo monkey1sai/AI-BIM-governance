@@ -15,7 +15,10 @@ $deployTopologyEnvNames = @(
     'COORDINATOR_PUBLIC_BASE_URL',
     'STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL',
     'COORDINATOR_INTERNAL_API_BASE',
-    'INTERNAL_API_AUTH_TOKEN'
+    'INTERNAL_API_AUTH_TOKEN',
+    'A4_INTERNAL_CONTEXT_TOKEN',
+    'STREAMING_CONVERSION_ARTIFACTS_ROOT',
+    'A4_CONVERSION_ARTIFACTS_HOST_ROOT'
 )
 $originalDeployTopologyEnv = @{}
 foreach ($name in $deployTopologyEnvNames) {
@@ -53,6 +56,10 @@ $audit = Get-Content -LiteralPath $auditJson -Raw | ConvertFrom-Json
 Assert-Equal 49102 $audit.runtime.governancePort 'default governance port is 49102'
 Assert-Equal $false $audit.runtime.governanceSkipped 'default governance is not skipped'
 Assert-Equal 'http://host.docker.internal:49102' $audit.runtime.governanceApiBaseForDocker 'default Docker governance base URL'
+$resolvedStreamingArtifactsRoot = [Environment]::GetEnvironmentVariable('STREAMING_CONVERSION_ARTIFACTS_ROOT', 'Process')
+$resolvedA4HostArtifactsRoot = [Environment]::GetEnvironmentVariable('A4_CONVERSION_ARTIFACTS_HOST_ROOT', 'Process')
+Assert-True ([System.IO.Path]::IsPathRooted($resolvedA4HostArtifactsRoot)) 'A4 governance mapping root is absolute in the host namespace'
+Assert-Equal $resolvedStreamingArtifactsRoot $resolvedA4HostArtifactsRoot 'A4 host mapping root matches host-native conversion output root'
 Write-TestPass 'governance dry-run audit defaults'
 
 # Test 6: Phase 4 / 5 應不出現
@@ -156,10 +163,12 @@ Write-TestPass 'clean env stage allowlist drops :8005 and keeps 49101 default'
 # Test 11: host-native Kit authority derives a loopback base and never serializes the raw token
 Clear-DeployTopologyEnv
 $authorityToken = "authority-$([guid]::NewGuid().ToString('N'))"
+$a4ContextToken = "a4-context-$([guid]::NewGuid().ToString('N'))"
 $authorityEnv = Join-Path $repoRoot 'scripts\.run\deploy-runtime-authority-test.env'
 Set-Content -LiteralPath $authorityEnv -Encoding ascii -Value @(
     'COORDINATOR_PORT=48124',
     "INTERNAL_API_AUTH_TOKEN=$authorityToken",
+    "A4_INTERNAL_CONTEXT_TOKEN=$a4ContextToken",
     'RUNTIME_STORAGE_ROOT=C:\tmp\ai-bim-governance-runtime-authority-test\storage'
 )
 $authorityOutput = & $deploy -DryRun -EnvFile $authorityEnv *>&1 | Out-String
@@ -175,6 +184,7 @@ Assert-Equal 'http://127.0.0.1:48124' $authorityAudit.runtime.coordinatorInterna
 Assert-Equal $true $authorityAudit.runtime.runtimeAuthorityPrivateTokenConfigured 'private runtime authority token configured state is audited'
 Assert-Equal 'private_configuration' $authorityAudit.runtime.runtimeAuthorityTokenSource 'runtime authority token source is classified without its value'
 Assert-True (-not $authoritySurfaces.Contains($authorityToken)) 'runtime authority token absent from output, audit, log, and signature artifacts'
+Assert-True (-not $authoritySurfaces.Contains($a4ContextToken)) 'A4 context token absent from output, audit, log, and signature artifacts'
 Remove-Item -LiteralPath $authorityEnv -ErrorAction SilentlyContinue
 Clear-DeployTopologyEnv
 Write-TestPass 'host-native Kit authority loopback derivation and secret-safe audit'
@@ -200,6 +210,47 @@ Assert-True ($invalidAuthorityOutput -match 'origin-only loopback') 'non-loopbac
 Assert-True (-not $invalidAuthorityOutput.Contains($invalidAuthorityToken)) 'invalid runtime authority configuration does not echo the token'
 Remove-Item -LiteralPath $invalidAuthorityEnv, $invalidAuthorityOut, $invalidAuthorityErr -ErrorAction SilentlyContinue
 Write-TestPass 'non-loopback runtime authority base rejected without secret disclosure'
+
+# A configured A4 token must meet the coordinator boundary without being echoed.
+$shortA4Token = 's7x'
+$shortA4Env = Join-Path $repoRoot 'scripts\.run\deploy-a4-token-short-test.env'
+$shortA4Out = Join-Path $repoRoot 'scripts\.run\deploy-a4-token-short-test.out.log'
+$shortA4Err = Join-Path $repoRoot 'scripts\.run\deploy-a4-token-short-test.err.log'
+Set-Content -LiteralPath $shortA4Env -Encoding ascii -Value @(
+    "A4_INTERNAL_CONTEXT_TOKEN=$shortA4Token",
+    'RUNTIME_STORAGE_ROOT=C:\tmp\ai-bim-governance-a4-token-test\storage'
+)
+$shortA4Proc = Start-Process -FilePath 'powershell.exe' `
+    -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$deploy,'-DryRun','-EnvFile',$shortA4Env) `
+    -RedirectStandardOutput $shortA4Out `
+    -RedirectStandardError $shortA4Err `
+    -Wait -PassThru -WindowStyle Hidden
+$shortA4Output = ((Get-Content -LiteralPath $shortA4Out -Raw -ErrorAction SilentlyContinue) + "`n" + (Get-Content -LiteralPath $shortA4Err -Raw -ErrorAction SilentlyContinue))
+Assert-True ($shortA4Proc.ExitCode -ne 0) 'short configured A4 token exits non-zero'
+Assert-True ($shortA4Output -match 'blank .* or between 16 and 4096 characters') 'short configured A4 token reports generic validation error'
+Assert-True (-not $shortA4Output.Contains($shortA4Token)) 'short configured A4 token is not echoed'
+Remove-Item -LiteralPath $shortA4Env, $shortA4Out, $shortA4Err -ErrorAction SilentlyContinue
+Write-TestPass 'short A4 context token rejected without secret disclosure'
+
+$longA4Token = 'x' * 4097
+$longA4Env = Join-Path $repoRoot 'scripts\.run\deploy-a4-token-long-test.env'
+$longA4Out = Join-Path $repoRoot 'scripts\.run\deploy-a4-token-long-test.out.log'
+$longA4Err = Join-Path $repoRoot 'scripts\.run\deploy-a4-token-long-test.err.log'
+Set-Content -LiteralPath $longA4Env -Encoding ascii -Value @(
+    "A4_INTERNAL_CONTEXT_TOKEN=$longA4Token",
+    'RUNTIME_STORAGE_ROOT=C:\tmp\ai-bim-governance-a4-token-test\storage'
+)
+$longA4Proc = Start-Process -FilePath 'powershell.exe' `
+    -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$deploy,'-DryRun','-EnvFile',$longA4Env) `
+    -RedirectStandardOutput $longA4Out `
+    -RedirectStandardError $longA4Err `
+    -Wait -PassThru -WindowStyle Hidden
+$longA4Output = ((Get-Content -LiteralPath $longA4Out -Raw -ErrorAction SilentlyContinue) + "`n" + (Get-Content -LiteralPath $longA4Err -Raw -ErrorAction SilentlyContinue))
+Assert-True ($longA4Proc.ExitCode -ne 0) 'long configured A4 token exits non-zero'
+Assert-True ($longA4Output -match 'blank .* or between 16 and 4096 characters') 'long configured A4 token reports generic validation error'
+Assert-True (-not $longA4Output.Contains($longA4Token)) 'long configured A4 token is not echoed'
+Remove-Item -LiteralPath $longA4Env, $longA4Out, $longA4Err -ErrorAction SilentlyContinue
+Write-TestPass 'long A4 context token rejected without secret disclosure'
 
 # Test 13: token rotation changes the ignored Kit runtime signature without storing raw tokens
 $parserTokens = $null
@@ -240,6 +291,27 @@ Assert-True (-not $signatureA.Contains($signatureTokenA)) 'Kit runtime signature
 Assert-True (-not $signatureB.Contains($signatureTokenB)) 'Kit runtime signature excludes rotated raw token'
 Write-TestPass 'runtime authority token rotation changes secret-safe Kit signature'
 
+$governanceSignatureHelper = @($deployAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'New-GovernanceRuntimeSignature'
+}, $true))
+Assert-Equal 1 $governanceSignatureHelper.Count 'governance signature helper found'
+. ([scriptblock]::Create($governanceSignatureHelper[0].Extent.Text))
+$a4SignatureTokenA = "a4-context-$([guid]::NewGuid().ToString('N'))"
+$a4SignatureTokenB = "a4-context-$([guid]::NewGuid().ToString('N'))"
+$governanceSignatureCommon = @{
+    Port = 49102
+    DbPath = 'C:\edge\governance.db'
+    FileLibraryRoot = 'C:\edge\storage'
+}
+$governanceSignatureA = New-GovernanceRuntimeSignature @governanceSignatureCommon -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $a4SignatureTokenA)
+$governanceSignatureB = New-GovernanceRuntimeSignature @governanceSignatureCommon -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $a4SignatureTokenB)
+Assert-True ($governanceSignatureA -ne $governanceSignatureB) 'A4 token rotation changes governance runtime signature'
+Assert-True (-not $governanceSignatureA.Contains($a4SignatureTokenA)) 'governance signature excludes first raw A4 token'
+Assert-True (-not $governanceSignatureB.Contains($a4SignatureTokenB)) 'governance signature excludes rotated raw A4 token'
+Write-TestPass 'A4 token rotation changes secret-safe governance signature'
+
 # Test 14: internal authority base accepts loopback origins only and never echoes rejected input
 $authorityValidationEnv = Join-Path $repoRoot 'scripts\.run\deploy-runtime-authority-validation-not-present.env'
 $invalidAuthorityBases = @(
@@ -275,6 +347,7 @@ Write-TestPass 'runtime authority origin validation covers loopback and rejected
 $hostKitExampleText = Get-Content -LiteralPath $hostKitExample -Raw
 Assert-True ($hostKitExampleText -match '(?m)^COORDINATOR_INTERNAL_API_BASE=\r?$') 'host-kit example keeps coordinator internal base placeholder empty'
 Assert-True ($hostKitExampleText -match '(?m)^INTERNAL_API_AUTH_TOKEN=\r?$') 'host-kit example keeps internal API token empty'
+Assert-True ($hostKitExampleText -match '(?m)^A4_INTERNAL_CONTEXT_TOKEN=\r?$') 'host-kit example keeps A4 context token empty'
 Assert-True ($hostKitExampleText -match '(?m)^RUNTIME_STORAGE_ROOT=\./storage\r?$') 'host-kit example has deployable runtime storage root'
 Assert-True ($hostKitExampleText -match '(?m)^MINIO_WATCH_ENABLED=true\r?$') 'host-kit example enables MinIO watch by default for test deployment'
 Assert-True ($hostKitExampleText -match '(?m)^MINIO_WATCH_ENDPOINT=http://192\.168\.20\.234:9000\r?$') 'host-kit example points at test MinIO endpoint'
@@ -297,7 +370,10 @@ Write-Host "`n=== test-deploy-dryrun.ps1: ALL PASSED ===" -ForegroundColor Green
         'deploy-runtime-authority-test.env',
         'deploy-runtime-authority-invalid-test.env',
         'deploy-runtime-authority-invalid-test.out.log',
-        'deploy-runtime-authority-invalid-test.err.log'
+        'deploy-runtime-authority-invalid-test.err.log',
+        'deploy-a4-token-short-test.env',
+        'deploy-a4-token-short-test.out.log',
+        'deploy-a4-token-short-test.err.log'
     )) {
         Remove-Item -LiteralPath (Join-Path $repoRoot "scripts\.run\$testArtifact") -ErrorAction SilentlyContinue
     }

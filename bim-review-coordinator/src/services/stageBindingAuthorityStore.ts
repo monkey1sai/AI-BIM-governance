@@ -50,14 +50,17 @@ interface StoredStageBindingTransaction extends StageBindingTransaction {
   completedAtMs: number | null;
 }
 
-interface BindingSnapshot {
+export interface ActiveStageBindingSnapshot {
   binding_revision_id: string;
   principal: string;
+  lease_id: string;
+  source_client_id: string;
+  stage_composition: StageComposition;
 }
 
 interface ActiveBindingSummary {
-  active: BindingSnapshot;
-  lastGood: BindingSnapshot | null;
+  active: ActiveStageBindingSnapshot;
+  lastGood: ActiveStageBindingSnapshot | null;
   updatedAtMs: number;
 }
 
@@ -338,10 +341,7 @@ export class StageBindingAuthorityStore {
     if (input.outcome === "success") {
       const previous = this.activeBySession.get(transaction.session_id)?.active ?? null;
       this.activeBySession.set(transaction.session_id, {
-        active: {
-          binding_revision_id: transaction.binding_revision_id,
-          principal: transaction.principal,
-        },
+        active: snapshotBinding(transaction),
         lastGood: previous,
         updatedAtMs: now,
       });
@@ -359,6 +359,12 @@ export class StageBindingAuthorityStore {
     this.sweep(this.clock());
     const transaction = this.transactions.get(stageBindingAuthorizationId);
     return transaction ? cloneTransaction(transaction) : null;
+  }
+
+  activeBinding(sessionId: string, principal: string): ActiveStageBindingSnapshot | null {
+    this.sweep(this.clock());
+    const active = this.activeBySession.get(sessionId)?.active;
+    return active?.principal === principal ? cloneBindingSnapshot(active) : null;
   }
 
   summary(sessionId: string, principal: string): StageBindingPrincipalSummary {
@@ -531,6 +537,23 @@ function cloneComposition(composition: StageComposition): StageComposition {
   return {
     primary: { ...composition.primary },
     secondary_layers: composition.secondary_layers.map((artifact) => ({ ...artifact })),
+  };
+}
+
+function snapshotBinding(transaction: StoredStageBindingTransaction): ActiveStageBindingSnapshot {
+  return {
+    binding_revision_id: transaction.binding_revision_id,
+    principal: transaction.principal,
+    lease_id: transaction.lease_id,
+    source_client_id: transaction.source_client_id,
+    stage_composition: cloneComposition(transaction.stage_composition),
+  };
+}
+
+function cloneBindingSnapshot(snapshot: ActiveStageBindingSnapshot): ActiveStageBindingSnapshot {
+  return {
+    ...snapshot,
+    stage_composition: cloneComposition(snapshot.stage_composition),
   };
 }
 
