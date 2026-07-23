@@ -23,9 +23,17 @@ import { isBlockedLifecycle, lifecycleStatusText, sameStreamEndpoint, sameStream
 // MVP 不需多人協作 UI;spec REMOVED「Viewer separates runtime commands from
 // collaboration events」)。
 import { BimControlClient } from "./clients/bimControlClient";
-import { CoordinatorClient, isQueuedForInstanceError } from "./clients/coordinatorClient";
+import { CoordinatorClient, CoordinatorHttpError, isQueuedForInstanceError } from "./clients/coordinatorClient";
 import { connectReviewSocket, type ReviewSocketClient } from "./clients/reviewSocket";
 import { buildAuthorizedOpenStageRequest, buildClearHighlightRequest, buildFocusPrimRequest, buildGetChildrenRequest, buildHighlightPrimsRequest, buildLoadingStateQuery, buildOpenStageRequest } from "./clients/streamMessages";
+import {
+    A4_HANDOFF_COMMAND_TIMEOUT_MS,
+    a4ServerAuthorityBlockReason,
+    buildA4HandoffCommand,
+    evaluateA4LocalAuthority,
+    type A4HandoffAction,
+    type A4HandoffIntent,
+} from "./clients/a4Handoff";
 import { demoPrimPath } from "./clients/demoDefaults";
 import { allowedCoordinatorOrigins, reviewEnv } from "./config/env";
 import { canHandleHighlight, failedElementsForEmbed, shouldAcceptParentMessage } from "./parentMessageGuard";
@@ -120,6 +128,7 @@ interface AppState {
     stageLoadStatus: "unproven" | "pending" | "matched" | "mismatch" | "disconnected";
     runtimeCommandRejection: RuntimeCommandRejection | null;
     runtimeCommandLifecycles: RuntimeCommandLifecycle[];
+    a4Handoff: A4HandoffViewState;
     webrtcLifecycleStatus: "initializing" | "started" | "stopped" | "terminated" | "failed";
     activeStreamEndpoint: StreamEndpoint;
     streamMountKey: number;
@@ -205,7 +214,7 @@ interface RuntimeCommandRejection {
 }
 
 type RuntimeCommandPhase = "pending" | "executing" | "terminal";
-type RuntimeCommandOutcome = "success" | "rejected" | "error";
+type RuntimeCommandOutcome = "success" | "rejected" | "error" | "timed-out";
 
 interface RuntimeCommandLifecycle {
     request_id: string;
@@ -224,6 +233,20 @@ interface RuntimeCommandCorrelation {
     requestId: string;
     context?: RuntimeCommandContext;
     disposition: "matched" | "untracked" | "uncorrelated" | "duplicate" | "mismatch";
+}
+
+type A4HandoffStatus = "idle" | "pending" | "succeeded" | "rejected" | "timed-out";
+type A4HandoffPhase = "idle" | "waiting-session" | "consuming" | "waiting-readiness" | "revalidating" | "command-pending" | "terminal";
+
+interface A4HandoffViewState {
+    status: A4HandoffStatus;
+    phase: A4HandoffPhase;
+    handoff_id: string | null;
+    action: A4HandoffAction | null;
+    request_id: string | null;
+    retry_of_request_id: string | null;
+    detail: string | null;
+    retryable: boolean;
 }
 
 interface StageBindingArtifact {
@@ -500,6 +523,15 @@ export default class App extends React.Component<AppProps, AppState> {
     private pendingMappingPrimPath: string | null = null;
     private runtimeCommandContexts = new Map<string, RuntimeCommandContext>();
     private runtimeCommandTerminalClaims = new Map<string, { eventType: string; outcome: RuntimeCommandOutcome }>();
+    private a4HandoffIntent: A4HandoffIntent | null = null;
+    private a4HandoffStarted = false;
+    private a4HandoffAttemptInFlight = false;
+    private a4HandoffReadinessTimerId: number | null = null;
+    private a4HandoffCommandTimeoutId: number | null = null;
+    private a4HandoffPendingRequestId: string | null = null;
+    private a4HandoffUserCarrier: string | null = null;
+    private a4HandoffLeaseId: string | null = null;
+    private a4HandoffLeaseToken: string | null = null;
     private stageProofBlockedRevision: string | null = null;
     private unprovenStageUrl: string | null = null;
     private stageProofBlockGeneration = 0;
@@ -558,6 +590,27 @@ export default class App extends React.Component<AppProps, AppState> {
             stageLoadStatus: "unproven",
             runtimeCommandRejection: null,
             runtimeCommandLifecycles: [],
+            a4Handoff: reviewEnv.hasInvalidA4HandoffId
+                ? {
+                    status: "rejected",
+                    phase: "terminal",
+                    handoff_id: null,
+                    action: null,
+                    request_id: null,
+                    retry_of_request_id: null,
+                    detail: "invalid_a4_handoff",
+                    retryable: false,
+                }
+                : {
+                    status: reviewEnv.a4HandoffId ? "pending" : "idle",
+                    phase: reviewEnv.a4HandoffId ? "waiting-session" : "idle",
+                    handoff_id: reviewEnv.a4HandoffId,
+                    action: null,
+                    request_id: null,
+                    retry_of_request_id: null,
+                    detail: reviewEnv.a4HandoffId ? "waiting_for_review_session" : null,
+                    retryable: false,
+                },
             webrtcLifecycleStatus: "initializing",
             isLoading: true,
             activeStreamEndpoint,
@@ -595,6 +648,10 @@ export default class App extends React.Component<AppProps, AppState> {
         this._clearStageLoadTimeout();
         this._clearDeferredOpenStage();
         this._clearPollForKitReady();
+        this._clearA4HandoffReadinessTimer();
+        this._clearA4HandoffCommandTimeout();
+        this.a4HandoffUserCarrier = null;
+        this.a4HandoffLeaseToken = null;
         this.reviewSocket?.disconnect();
         window.removeEventListener("message", this._onParentMessage);
     }
@@ -621,6 +678,348 @@ export default class App extends React.Component<AppProps, AppState> {
                 ...state.demoIncomingMessages,
             ].slice(0, 20),
         }));
+    }
+
+    private _clearA4HandoffReadinessTimer(): void {
+        if (this.a4HandoffReadinessTimerId === null) return;
+        window.clearTimeout(this.a4HandoffReadinessTimerId);
+        this.a4HandoffReadinessTimerId = null;
+    }
+
+    private _clearA4HandoffCommandTimeout(): void {
+        if (this.a4HandoffCommandTimeoutId === null) return;
+        window.clearTimeout(this.a4HandoffCommandTimeoutId);
+        this.a4HandoffCommandTimeoutId = null;
+    }
+
+    private _setA4HandoffRejected(detail: string, retryable: boolean, requestId?: string): void {
+        this._clearA4HandoffReadinessTimer();
+        this._clearA4HandoffCommandTimeout();
+        this.a4HandoffPendingRequestId = null;
+        this.setState((state) => ({
+            a4Handoff: {
+                ...state.a4Handoff,
+                status: "rejected",
+                phase: "terminal",
+                handoff_id: state.a4Handoff.handoff_id || reviewEnv.a4HandoffId,
+                request_id: requestId || state.a4Handoff.request_id,
+                detail,
+                retryable,
+            },
+            reviewEvents: [...state.reviewEvents, `A4 handoff rejected：${detail}`].slice(-80),
+        }));
+    }
+
+    private _rejectA4HandoffBeforeConsume(detail: string): void {
+        if (!reviewEnv.a4HandoffId && !reviewEnv.hasInvalidA4HandoffId) return;
+        this._setA4HandoffRejected(detail, false);
+    }
+
+    private _a4HandoffError(error: unknown): { detail: string; retryable: boolean } {
+        if (error instanceof CoordinatorHttpError) {
+            return {
+                detail: error.errorCode,
+                retryable: error.status >= 500,
+            };
+        }
+        return { detail: "a4_handoff_request_failed", retryable: true };
+    }
+
+    private async _beginA4Handoff(sessionId: string): Promise<void> {
+        if (reviewEnv.hasInvalidA4HandoffId) {
+            this._setA4HandoffRejected("invalid_a4_handoff", false);
+            return;
+        }
+        const handoffId = reviewEnv.a4HandoffId;
+        if (!handoffId || this.a4HandoffStarted || this.a4HandoffIntent) return;
+        if (isSpectatorStreamMode()) {
+            this._setA4HandoffRejected("spectator_readonly", false);
+            return;
+        }
+
+        this.a4HandoffStarted = true;
+        this.setState((state) => ({
+            a4Handoff: {
+                ...state.a4Handoff,
+                status: "pending",
+                phase: "consuming",
+                handoff_id: handoffId,
+                detail: "authorizing_trusted_handoff",
+                retryable: false,
+            },
+        }));
+
+        try {
+            const userCarrier = reviewEnv.userToken || this._ensureStandaloneLabUserToken();
+            const leaseToken = await this._ensurePrimaryViewerLease();
+            const leaseId = reviewEnv.sourceClientId;
+            if (!userCarrier || !leaseToken || !leaseId) {
+                throw new CoordinatorHttpError(401, "local:a4-handoff", "a4_viewer_authority_missing");
+            }
+            const intent = await this.coordinatorClient.consumeA4Handoff(
+                sessionId,
+                handoffId,
+                userCarrier,
+                leaseToken,
+            );
+            if (!this.componentMounted) return;
+            this.a4HandoffIntent = intent;
+            this.a4HandoffUserCarrier = userCarrier;
+            this.a4HandoffLeaseId = leaseId;
+            this.a4HandoffLeaseToken = leaseToken;
+            this.setState((state) => ({
+                a4Handoff: {
+                    ...state.a4Handoff,
+                    status: "pending",
+                    phase: "waiting-readiness",
+                    action: intent.action,
+                    detail: "waiting_for_bound_stage_and_datachannel",
+                    retryable: false,
+                },
+            }));
+            this._scheduleA4HandoffAttempt();
+        } catch (error) {
+            if (!this.componentMounted) return;
+            this.a4HandoffStarted = false;
+            const failure = this._a4HandoffError(error);
+            this._setA4HandoffRejected(failure.detail, failure.retryable);
+        }
+    }
+
+    private _scheduleA4HandoffAttempt(delayMs = 0, retryOfRequestId?: string): void {
+        this._clearA4HandoffReadinessTimer();
+        if (!this.a4HandoffIntent || this.a4HandoffPendingRequestId) return;
+        this.a4HandoffReadinessTimerId = window.setTimeout(() => {
+            this.a4HandoffReadinessTimerId = null;
+            void this._attemptA4HandoffCommand(retryOfRequestId);
+        }, delayMs);
+    }
+
+    private _a4LocalAuthority() {
+        const intent = this.a4HandoffIntent;
+        if (!intent) return { kind: "reject", code: "a4_handoff_unavailable" } as const;
+        const streamConfig = this.state.latestStreamConfig;
+        const primaryArtifactId = streamConfig?.stage_composition?.primary_artifact_id
+            || streamConfig?.model.artifact_id
+            || null;
+        const loadedStageUrl = this.state.loadedStageUrl;
+        return evaluateA4LocalAuthority(intent, {
+            session_id: this.state.reviewSessionId,
+            model_version_id: this.state.currentModelVersionId,
+            primary_artifact_id: primaryArtifactId,
+            active_binding_revision: this.confirmedStageBindingRevision,
+            lifecycle_status: this.state.reviewLifecycleStatus,
+            stage_status: this.state.stageLoadStatus,
+            stage_matches_expected: Boolean(loadedStageUrl && this._isLoadedStageExpected(loadedStageUrl)),
+            datachannel_ready: this.state.webrtcLifecycleStatus === "started" && this.state.isKitReady,
+            spectator: isSpectatorStreamMode(),
+        });
+    }
+
+    private async _attemptA4HandoffCommand(retryOfRequestId?: string): Promise<void> {
+        const intent = this.a4HandoffIntent;
+        if (!intent || this.a4HandoffAttemptInFlight || this.a4HandoffPendingRequestId) return;
+
+        const localGate = this._a4LocalAuthority();
+        if (localGate.kind === "wait") {
+            this.setState((state) => ({
+                a4Handoff: {
+                    ...state.a4Handoff,
+                    status: "pending",
+                    phase: "waiting-readiness",
+                    retry_of_request_id: retryOfRequestId || null,
+                    detail: localGate.code,
+                    retryable: false,
+                },
+            }));
+            this._scheduleA4HandoffAttempt(250, retryOfRequestId);
+            return;
+        }
+        if (localGate.kind === "reject") {
+            this._setA4HandoffRejected(localGate.code, false);
+            return;
+        }
+
+        const userCarrier = reviewEnv.userToken;
+        const leaseId = reviewEnv.sourceClientId;
+        const leaseToken = reviewEnv.viewerLeaseToken;
+        if (
+            !userCarrier
+            || !leaseId
+            || !leaseToken
+            || userCarrier !== this.a4HandoffUserCarrier
+            || leaseId !== this.a4HandoffLeaseId
+            || leaseToken !== this.a4HandoffLeaseToken
+        ) {
+            this._setA4HandoffRejected("principal_or_primary_lease_changed", false);
+            return;
+        }
+
+        this.a4HandoffAttemptInFlight = true;
+        this.setState((state) => ({
+            a4Handoff: {
+                ...state.a4Handoff,
+                status: "pending",
+                phase: "revalidating",
+                retry_of_request_id: retryOfRequestId || null,
+                detail: "revalidating_current_authority",
+                retryable: false,
+            },
+        }));
+        try {
+            const [session, streamConfig, leaseStatus] = await Promise.all([
+                this.coordinatorClient.getReviewSession(intent.binding.review_session_id),
+                this.coordinatorClient.getStreamConfig(intent.binding.review_session_id),
+                this.coordinatorClient.getA4ViewerLeaseStatus(
+                    intent.binding.review_session_id,
+                    userCarrier,
+                    leaseToken,
+                ),
+            ]);
+            if (!this.componentMounted) return;
+            if (
+                reviewEnv.userToken !== userCarrier
+                || reviewEnv.sourceClientId !== leaseId
+                || reviewEnv.viewerLeaseToken !== leaseToken
+            ) {
+                this._setA4HandoffRejected("principal_or_primary_lease_changed", false);
+                return;
+            }
+            const expectedStageUrl = this.state.expectedStageUrl;
+            if (!expectedStageUrl) {
+                this._setA4HandoffRejected("loaded_stage_invalid", false);
+                return;
+            }
+            const serverBlockReason = a4ServerAuthorityBlockReason(
+                intent,
+                { session, stream_config: streamConfig, lease_status: leaseStatus },
+                leaseId,
+                expectedStageUrl,
+            );
+            if (serverBlockReason) {
+                this._setA4HandoffRejected(serverBlockReason, false);
+                return;
+            }
+            const finalLocalGate = this._a4LocalAuthority();
+            if (finalLocalGate.kind === "wait") {
+                this.setState((state) => ({
+                    a4Handoff: {
+                        ...state.a4Handoff,
+                        status: "pending",
+                        phase: "waiting-readiness",
+                        detail: finalLocalGate.code,
+                        retryable: false,
+                    },
+                }));
+                this._scheduleA4HandoffAttempt(250, retryOfRequestId);
+                return;
+            }
+            if (finalLocalGate.kind === "reject") {
+                this._setA4HandoffRejected(finalLocalGate.code, false);
+                return;
+            }
+
+            const requestId = createRuntimeRequestId();
+            const message = buildA4HandoffCommand(intent, requestId, retryOfRequestId);
+            this.a4HandoffPendingRequestId = requestId;
+            this.setState((state) => ({
+                a4Handoff: {
+                    ...state.a4Handoff,
+                    status: "pending",
+                    phase: "command-pending",
+                    request_id: requestId,
+                    retry_of_request_id: retryOfRequestId || null,
+                    detail: "waiting_for_runtime_result",
+                    retryable: false,
+                },
+            }));
+            if (!this._sendStreamMessage(message)) {
+                this.a4HandoffPendingRequestId = null;
+                this._setA4HandoffRejected("runtime_command_blocked", false, requestId);
+                return;
+            }
+            this._clearA4HandoffCommandTimeout();
+            this.a4HandoffCommandTimeoutId = window.setTimeout(() => {
+                this.a4HandoffCommandTimeoutId = null;
+                if (this.a4HandoffPendingRequestId !== requestId) return;
+                if (!this._claimRuntimeCommandTerminal(requestId, message.event_type, "timed-out")) return;
+                this._finishA4HandoffCommand(requestId, "timed-out", "runtime_result_timeout", true);
+            }, A4_HANDOFF_COMMAND_TIMEOUT_MS);
+        } catch (error) {
+            if (!this.componentMounted) return;
+            const failure = this._a4HandoffError(error);
+            this._setA4HandoffRejected(failure.detail, failure.retryable);
+        } finally {
+            this.a4HandoffAttemptInFlight = false;
+        }
+    }
+
+    private _finishA4HandoffCommand(
+        requestId: string,
+        status: "succeeded" | "rejected" | "timed-out",
+        detail: string,
+        retryable: boolean,
+    ): void {
+        if (this.a4HandoffPendingRequestId !== requestId) return;
+        this._clearA4HandoffCommandTimeout();
+        this.a4HandoffPendingRequestId = null;
+        this.setState((state) => ({
+            a4Handoff: {
+                ...state.a4Handoff,
+                status,
+                phase: "terminal",
+                request_id: requestId,
+                detail,
+                retryable,
+            },
+            reviewEvents: [...state.reviewEvents, `A4 handoff ${status}：${detail}`].slice(-80),
+        }));
+    }
+
+    private _retryA4Handoff(): void {
+        const current = this.state.a4Handoff;
+        if ((current.status !== "rejected" && current.status !== "timed-out") || !current.retryable) return;
+        if (!this.a4HandoffIntent) {
+            const sessionId = this.state.reviewSessionId;
+            if (!sessionId) {
+                this._setA4HandoffRejected("review_session_unavailable", false);
+                return;
+            }
+            this.a4HandoffStarted = false;
+            void this._beginA4Handoff(sessionId);
+            return;
+        }
+        this.setState((state) => ({
+            a4Handoff: {
+                ...state.a4Handoff,
+                status: "pending",
+                phase: "revalidating",
+                retry_of_request_id: current.request_id,
+                detail: "retry_revalidating_current_authority",
+                retryable: false,
+            },
+        }));
+        void this._attemptA4HandoffCommand(current.request_id || undefined);
+    }
+
+    private _a4RuntimeResultSucceeded(eventType: string, payload: Record<string, unknown>): boolean | null {
+        const requestId = getPayloadString(payload, "request_id");
+        const intent = this.a4HandoffIntent;
+        if (!requestId || requestId !== this.a4HandoffPendingRequestId || !intent) return null;
+        if (getPayloadString(payload, "result") !== "success") return false;
+        if (intent.action === "focus") {
+            return eventType === "focusPrimResult"
+                && getPayloadString(payload, "prim_path") === intent.prim_paths[0]
+                && !getPayloadString(payload, "fallback_path");
+        }
+        if (eventType !== "highlightPrimsResult") return false;
+        const selectedPaths = getPayloadStringArray(payload, "selected_paths");
+        const missingPaths = getPayloadStringArray(payload, "missing_paths");
+        const fallbackPaths = getPayloadObjectArray(payload, "fallback_paths");
+        return selectedPaths.length === intent.prim_paths.length
+            && intent.prim_paths.every((path) => selectedPaths.includes(path))
+            && missingPaths.length === 0
+            && fallbackPaths.length === 0;
     }
 
     private _recordRuntimeCommandPhase(
@@ -753,11 +1152,11 @@ export default class App extends React.Component<AppProps, AppState> {
         };
     }
 
-    private _sendStreamMessage(message: AppStreamMessageType | StreamMessage): void {
+    private _sendStreamMessage(message: AppStreamMessageType | StreamMessage): boolean {
         const blockReason = this._runtimeMutatorBlockReason(message.event_type);
         if (blockReason) {
             this._appendReviewEvent(`略過 ${message.event_type}：${blockReason}`);
-            return;
+            return false;
         }
         const outgoing = this._withRuntimeAuthority(message);
         let runtimeRequestId = "";
@@ -766,7 +1165,7 @@ export default class App extends React.Component<AppProps, AppState> {
             if (requestId) {
                 if (this.runtimeCommandTerminalClaims.has(requestId) || this.runtimeCommandContexts.has(requestId)) {
                     this._appendReviewEvent(`略過 ${outgoing.event_type}：request_id 已使用`);
-                    return;
+                    return false;
                 }
                 runtimeRequestId = requestId;
                 const bindingRevisionId = getPayloadString(outgoing.payload, "binding_revision_id");
@@ -796,6 +1195,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 const diagnostic = "stream_transport_error";
                 if (runtimeRequestId) {
                     if (!this._claimRuntimeCommandTerminal(runtimeRequestId, outgoing.event_type, "error")) return;
+                    this._finishA4HandoffCommand(runtimeRequestId, "rejected", diagnostic, true);
                 }
                 this._appendReviewEvent(`${outgoing.event_type} failed: ${diagnostic}`);
                 if (outgoing.event_type === "openStageRequest") {
@@ -803,6 +1203,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 }
             });
         this._appendDemoOutgoing(outgoing.event_type, { ...outgoing, payload: redactStreamPayload(outgoing.payload) });
+        return true;
     }
 
     private _scheduleStreamStartTimeout(): void {
@@ -1757,6 +2158,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private async _bootstrapReview(): Promise<void> {
         if (harnessEnabled()) {
             this._bootstrapHarnessSession();
+            this._rejectA4HandoffBeforeConsume("harness_handoff_not_authorized");
             return;
         }
         try {
@@ -1779,12 +2181,14 @@ export default class App extends React.Component<AppProps, AppState> {
                     isLoading: false,
                     reviewEvents: [...state.reviewEvents, "空 sessionId 已阻止自動建立 review session"],
                 }));
+                this._rejectA4HandoffBeforeConsume("review_session_unavailable");
                 return;
             }
 
             if (!reviewEnv.autoCreateSession && !reviewEnv.defaultSessionId && !reviewEnv.defaultReviewRequestId) {
                 this.setState({ reviewStatus: "Review session 自動建立已停用" });
                 await this._loadReviewDataFromBimControl();
+                this._rejectA4HandoffBeforeConsume("review_session_unavailable");
                 return;
             }
 
@@ -1803,6 +2207,7 @@ export default class App extends React.Component<AppProps, AppState> {
                         isLoading: false,
                         reviewEvents: [...this.state.reviewEvents, `已載入 review request：${reviewRequest.status}`],
                     });
+                    this._rejectA4HandoffBeforeConsume("session_lifecycle_blocked");
                     return;
                 }
             }
@@ -1826,6 +2231,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 } catch (error) {
                     if (isQueuedForInstanceError(error)) {
                         await this._handleQueuedForInstance(reviewRequest, error.response.artifact_bindings);
+                        this._rejectA4HandoffBeforeConsume("session_lifecycle_blocked");
                         return;
                     }
                     throw error;
@@ -1838,6 +2244,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     reviewStatus: lifecycleStatusText(reviewRequest?.status || null),
                     isLoading: false,
                 });
+                this._rejectA4HandoffBeforeConsume("review_session_unavailable");
                 return;
             }
             const bootstrapModelVersionId = loadedSession?.model_version_id
@@ -1915,6 +2322,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 if (this.state.isKitReady && this.state.selectedUSDAsset && streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
                     this._openSelectedAsset();
                 }
+                void this._beginA4Handoff(sessionId);
             });
         }
         catch (error) {
@@ -1923,6 +2331,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 reviewStatus: "Review coordinator 無法連線",
                 reviewEvents: [...this.state.reviewEvents, "review bootstrap 載入失敗"],
             });
+            this._rejectA4HandoffBeforeConsume("review_bootstrap_failed");
             await this._loadReviewDataFromBimControl();
         }
     }
@@ -2718,6 +3127,14 @@ export default class App extends React.Component<AppProps, AppState> {
                     ? { binding_revision_id: context.bindingRevisionId }
                     : {}),
             };
+            if (parsed.request_id) {
+                this._finishA4HandoffCommand(
+                    parsed.request_id,
+                    "rejected",
+                    parsed.detail_code || parsed.reason,
+                    parsed.retryable,
+                );
+            }
             if (rejection.runtime_state === "changed_unconfirmed") {
                 const revision = context?.bindingRevisionId || "unknown";
                 const unprovenUrl = context?.stageUrl || this.state.loadedStageUrl || this.pendingStageUrl;
@@ -3035,12 +3452,21 @@ export default class App extends React.Component<AppProps, AppState> {
             const missingPaths = getPayloadStringArray(payload, "missing_paths");
             const fallbackPaths = getPayloadObjectArray(payload, "fallback_paths");
             const requestId = getPayloadString(payload, "request_id");
+            const a4Succeeded = this._a4RuntimeResultSucceeded("highlightPrimsResult", payload);
             const correlation = this._completeRuntimeCommandEvent(
                 "highlightPrimsResult",
                 payload,
-                result === "success" ? "success" : "error",
+                result === "success" && a4Succeeded !== false ? "success" : "error",
             );
             if (correlation.disposition !== "matched") return;
+            if (a4Succeeded !== null && requestId) {
+                this._finishA4HandoffCommand(
+                    requestId,
+                    a4Succeeded ? "succeeded" : "rejected",
+                    a4Succeeded ? "matching_highlight_result" : "runtime_result_mismatch",
+                    !a4Succeeded,
+                );
+            }
             const nextState: Partial<AppState> = {
                 reviewEvents: [...this.state.reviewEvents, `高亮結果：${result}`],
             };
@@ -3081,12 +3507,21 @@ export default class App extends React.Component<AppProps, AppState> {
         else if (event.event_type === "focusPrimResult") {
             const result = getPayloadString(payload, "result") || "unknown";
             const requestId = getPayloadString(payload, "request_id");
+            const a4Succeeded = this._a4RuntimeResultSucceeded("focusPrimResult", payload);
             const correlation = this._completeRuntimeCommandEvent(
                 "focusPrimResult",
                 payload,
-                result === "success" ? "success" : "error",
+                result === "success" && a4Succeeded !== false ? "success" : "error",
             );
             if (correlation.disposition !== "matched") return;
+            if (a4Succeeded !== null && requestId) {
+                this._finishA4HandoffCommand(
+                    requestId,
+                    a4Succeeded ? "succeeded" : "rejected",
+                    a4Succeeded ? "matching_focus_result" : "runtime_result_mismatch",
+                    !a4Succeeded,
+                );
+            }
             const nextState: Partial<AppState> = {
                 reviewEvents: [...this.state.reviewEvents, `聚焦結果：${result}`],
             };
@@ -3269,6 +3704,53 @@ export default class App extends React.Component<AppProps, AppState> {
                                     title="需 live 3D 工具（DataChannel）— roadmap，未實作不假裝可用">{label}<span className="gv-nav__rm">⌛</span></button>
                         ))}
                     </nav>
+                )}
+
+                {this.state.a4Handoff.status !== "idle" && (
+                    <section
+                        role={this.state.a4Handoff.status === "rejected" || this.state.a4Handoff.status === "timed-out" ? "alert" : "status"}
+                        aria-live="polite"
+                        data-testid="a4-handoff-status"
+                        data-status={this.state.a4Handoff.status}
+                        data-phase={this.state.a4Handoff.phase}
+                        style={{
+                            position: "absolute",
+                            zIndex: 31,
+                            top: this.state.runtimeCommandRejection ? 136 : 52,
+                            left: 16,
+                            right: 16,
+                            padding: "10px 12px",
+                            border: "1px solid #38bdf8",
+                            background: "rgba(8, 30, 45, 0.96)",
+                            color: "#e0f2fe",
+                        }}
+                    >
+                        <strong>A4 3D handoff</strong>
+                        {this.state.a4Handoff.action ? ` · ${this.state.a4Handoff.action}` : ""}
+                        {`：${this.state.a4Handoff.status}`}
+                        {this.state.a4Handoff.detail ? `（${this.state.a4Handoff.detail}）` : ""}
+                        {this.state.a4Handoff.handoff_id && (
+                            <span data-testid="a4-handoff-id"> · handoff <code>{this.state.a4Handoff.handoff_id}</code></span>
+                        )}
+                        {this.state.a4Handoff.request_id && (
+                            <span data-testid="a4-handoff-request-id"> · request <code>{this.state.a4Handoff.request_id}</code></span>
+                        )}
+                        {this.state.a4Handoff.retry_of_request_id && (
+                            <span data-testid="a4-handoff-retry-link"> · retry of <code>{this.state.a4Handoff.retry_of_request_id}</code></span>
+                        )}
+                        {(this.state.a4Handoff.status === "rejected" || this.state.a4Handoff.status === "timed-out")
+                            && this.state.a4Handoff.retryable
+                            && (
+                            <button
+                                type="button"
+                                data-testid="a4-handoff-retry"
+                                onClick={() => this._retryA4Handoff()}
+                                style={{ marginLeft: 12 }}
+                            >
+                                Retry
+                            </button>
+                        )}
+                    </section>
                 )}
 
                 {this.state.runtimeCommandRejection && (
