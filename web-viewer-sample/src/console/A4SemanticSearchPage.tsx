@@ -1,6 +1,6 @@
 // A4 semantic search workbench — deterministic filters via coordinator → governance.
 // B-loop binding: ifc-ready job / review session resolve host IFC path server-side.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { t } from "./i18n";
 import { Btn, Field, Metric, Panel } from "./components";
 import {
@@ -24,70 +24,145 @@ const EXAMPLE_QUERIES = [
   "FireRating >= 60",
 ];
 
+const IFC_READY_SOURCE_LIMIT = 100;
+const LLM_OPERATIONAL_CHECK_SOURCES = new Set([
+  "query_observation",
+  "bounded_probe",
+  "last_query",
+]);
+
 export function A4SemanticSearchPage() {
   const [query, setQuery] = useState(EXAMPLE_QUERIES[0]);
   const [interpretMode, setInterpretMode] = useState<ModelSearchInterpretMode>("auto");
   const [llmStatus, setLlmStatus] = useState<ModelSearchLlmStatus | null>(null);
   const [jobs, setJobs] = useState<IfcReadyListItem[]>([]);
   const [jobId, setJobId] = useState("");
+  const [sourceWindowTruncated, setSourceWindowTruncated] = useState(false);
   const [sourcesLoading, setSourcesLoading] = useState(true);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [runErr, setRunErr] = useState<string | null>(null);
   const [result, setResult] = useState<ModelSearchResponse | null>(null);
+  const [llmReadinessExpired, setLlmReadinessExpired] = useState(false);
+  const [llmReadinessExpiresAtMs, setLlmReadinessExpiresAtMs] = useState<number | null>(null);
+  const llmStatusRequestIdRef = useRef(0);
+  const sourceSelectionInitializedRef = useRef(false);
+
+  const acceptLlmStatus = useCallback((nextStatus: ModelSearchLlmStatus) => {
+    const expiresAtMs = nextStatus.freshness === "fresh" && nextStatus.ttl_s > 0
+      ? performance.now() + nextStatus.ttl_s * 1000
+      : null;
+    setLlmStatus(nextStatus);
+    setLlmReadinessExpired(false);
+    setLlmReadinessExpiresAtMs(expiresAtMs);
+  }, []);
 
   const refreshSources = useCallback(async () => {
     setSourcesLoading(true);
     setLoadErr(null);
+    const llmStatusRequestId = ++llmStatusRequestIdRef.current;
     try {
       const [readyResult, llmResult] = await Promise.allSettled([
-        coordinatorClient.listIfcReady(),
+        coordinatorClient.listIfcReady(IFC_READY_SOURCE_LIMIT),
         governanceClient.searchLlmStatus(),
       ]);
       const failures: string[] = [];
 
       if (readyResult.status === "fulfilled") {
+        setSourceWindowTruncated(readyResult.value.count > readyResult.value.items.length);
         const items = readyResult.value.items.filter((item) => item.download_status === "downloaded");
         setJobs(items);
         const preferred =
           items.find((j) => j.conversion_status === "ready" || j.status === "ready") ?? items[0];
-        setJobId((current) => (
-          items.some((item) => item.ifc_ready_job_id === current)
-            ? current
-            : preferred?.ifc_ready_job_id ?? ""
-        ));
+        setJobId((current) => {
+          if (items.some((item) => item.ifc_ready_job_id === current)) return current;
+          if (!sourceSelectionInitializedRef.current && preferred) {
+            sourceSelectionInitializedRef.current = true;
+            return preferred.ifc_ready_job_id;
+          }
+          return "";
+        });
       } else {
         setJobs([]);
         setJobId("");
+        setSourceWindowTruncated(false);
         failures.push(t(
           "IFC-ready 來源清單載入失敗；請確認 coordinator 後重試。",
           "Failed to load IFC-ready sources. Check the coordinator and retry.",
         ));
       }
 
-      if (llmResult.status === "fulfilled") {
-        setLlmStatus(llmResult.value);
-      } else {
-        setLlmStatus(null);
-        failures.push(t(
-          "LLM readiness 狀態載入失敗；semantic 不可宣稱可用。",
-          "Failed to load LLM readiness. Semantic availability is not established.",
-        ));
+      if (llmStatusRequestId === llmStatusRequestIdRef.current) {
+        if (llmResult.status === "fulfilled") {
+          acceptLlmStatus(llmResult.value);
+        } else {
+          setLlmStatus(null);
+          setLlmReadinessExpired(false);
+          setLlmReadinessExpiresAtMs(null);
+          failures.push(t(
+            "LLM readiness 狀態載入失敗；semantic 不可宣稱可用。",
+            "Failed to load LLM readiness. Semantic availability is not established.",
+          ));
+        }
       }
 
       if (failures.length) setLoadErr(failures.join(" "));
     } finally {
       setSourcesLoading(false);
     }
-  }, []);
+  }, [acceptLlmStatus]);
 
   useEffect(() => {
     void refreshSources();
   }, [refreshSources]);
 
+  useEffect(() => {
+    if (llmReadinessExpiresAtMs == null) return undefined;
+    const remainingMs = Math.max(0, llmReadinessExpiresAtMs - performance.now());
+    if (remainingMs === 0) {
+      setLlmReadinessExpired(true);
+      return undefined;
+    }
+    const expiryTimer = window.setTimeout(() => {
+      setLlmReadinessExpired(true);
+    }, remainingMs);
+    return () => window.clearTimeout(expiryTimer);
+  }, [llmReadinessExpiresAtMs]);
+
+  const refreshLlmStatusAfterRun = useCallback(async () => {
+    const requestId = ++llmStatusRequestIdRef.current;
+    setLlmReadinessExpired(true);
+    setLlmReadinessExpiresAtMs(null);
+    try {
+      const nextStatus = await governanceClient.searchLlmStatus();
+      if (requestId !== llmStatusRequestIdRef.current) return;
+      acceptLlmStatus(nextStatus);
+    } catch {
+      // The search result remains authoritative; a status-only refresh failure
+      // must not erase it, retain a stale readiness claim, or expose raw details.
+      if (requestId === llmStatusRequestIdRef.current) setLlmReadinessExpired(true);
+    }
+  }, [acceptLlmStatus]);
+
   const interpreted = result?.interpreted_filters;
   const rows = result?.results ?? [];
   const matchedCount = result?.stats?.matched ?? 0;
+  const displayedLlmState = llmReadinessExpired
+    ? "unknown"
+    : llmStatus?.state ?? t("未取得", "not observed");
+  const displayedLlmFreshness = llmReadinessExpired
+    ? "unknown"
+    : llmStatus?.freshness ?? "unknown";
+  const semanticReadinessEstablished = Boolean(
+    llmStatus?.enabled === true
+    && llmStatus.configured === true
+    && llmStatus.state === "available"
+    && llmStatus.freshness === "fresh"
+    && LLM_OPERATIONAL_CHECK_SOURCES.has(llmStatus.check_source)
+    && Boolean(llmStatus.checked_at)
+    && llmStatus.ttl_s > 0
+    && !llmReadinessExpired,
+  );
 
   const canRun = useMemo(() => {
     return Boolean(query.trim() && jobId);
@@ -112,6 +187,7 @@ export function A4SemanticSearchPage() {
     } catch (e) {
       setRunErr(String(e));
     } finally {
+      if (interpretMode !== "deterministic") void refreshLlmStatusAfterRun();
       setBusy(false);
     }
   }
@@ -136,22 +212,22 @@ export function A4SemanticSearchPage() {
       <Panel title={t("語意模型（Ornith）", "Semantic model (Ornith)")} sub="GET /api/governance/search/llm-status" prov="asbuilt">
         <Field
           k="state"
-          v={llmStatus?.state ?? t("未取得", "not observed")}
+          v={displayedLlmState}
           prov="asbuilt"
         />
         <Field k="configured_model" v={llmStatus?.model ?? "—"} prov="asbuilt" />
         <Field k="transport_class" v={llmStatus?.transport_class ?? "—"} prov="asbuilt" />
         <Field
           k="readiness_evidence"
-          v={llmStatus ? `${llmStatus.check_source} · ${llmStatus.freshness}` : "—"}
+          v={llmStatus ? `${llmStatus.check_source} · ${displayedLlmFreshness}` : "—"}
           prov="asbuilt"
         />
         {llmStatus?.error_code && <Field k="error_code" v={llmStatus.error_code} prov="asbuilt" />}
-        {!llmStatus?.configured && (
+        {!semanticReadinessEstablished && (
           <p className="ec-warn" data-testid="a4-llm-missing">
             {t(
-              "LLM readiness 未成立；semantic 模式會 fail closed，可用 deterministic，auto 只會依後端明示狀態降級。",
-              "LLM readiness is not established. Semantic mode fails closed; deterministic remains available and auto degrades only when the backend says so.",
+              "LLM live availability 尚未證實或證據已過期；semantic request 可能 fail closed，可用 deterministic，auto 只會依後端明示狀態降級。",
+              "Live LLM availability is unproven or its evidence has expired. A semantic request may fail closed; deterministic remains available and auto degrades only when the backend says so.",
             )}
           </p>
         )}
@@ -227,6 +303,14 @@ export function A4SemanticSearchPage() {
               ))}
             </select>
           </label>
+          {sourceWindowTruncated && (
+            <p className="ec-warn" data-testid="a4-source-truncated" style={{ marginTop: 8 }}>
+              {t(
+                `目前只檢查最新 ${IFC_READY_SOURCE_LIMIT} 筆 IFC-ready jobs；這不是完整集合，較舊的 downloaded job 可能未出現在清單。`,
+                `Only the latest ${IFC_READY_SOURCE_LIMIT} IFC-ready jobs were checked. This is not a complete set, so an older downloaded job may be absent.`,
+              )}
+            </p>
+          )}
           <p className="ec-note" data-testid="a4-source-scope-note" style={{ marginTop: 8 }}>
             {t(
               "ifc_ready_table_only：只顯示查詢結果，不具備 active viewer／Issue／3D authority；session flow 等 canonical S4-D workspace 共置 viewer lease 後才啟用。",
@@ -254,6 +338,7 @@ export function A4SemanticSearchPage() {
               <Field k="status" v={result.status} prov="asbuilt" />
               <Field k="interpret_mode" v={String(result.interpret_mode ?? interpretMode)} prov="asbuilt" />
               <Field k="search_scope" v={result.search_scope ?? "not_observed"} prov="asbuilt" />
+              {/* UI capability scope and backend scan completeness are deliberately separate evidence fields. */}
               <Field k="completion_scope" v="table_only" prov="asbuilt" />
               <Field k="result_scan_scope" v={result.completion_scope ?? "not_observed"} prov="asbuilt" />
               <Field k="interpret_source" v={interpreted?.interpret_source ?? "—"} prov="asbuilt" />
