@@ -9,7 +9,7 @@
 |---|---|---|---|
 | **0** | 治理 WIP（#364） | active ≤2；defer 其餘；採納 throughput 預算 | ✅ #364 MERGED + `governance-throughput-budget` archived |
 | **1** | 收口 | 把「code 已 merge、tasks 假開著」的 change archive | **已 archive 7 案**（2026-07-21/22） |
-| **2** | A4 | 只走切片 PR（先 #365，再下一刀） | **#365 + #380 MERGED**；S3 viewer trusted handoff = **#382** |
+| **2** | A4 | 只走切片 PR（先 #365，再下一刀） | **#365 + #380 + #382 MERGED**；current = S4-A governance §2 |
 
 **並行規則：** 0 可與 1 同天；**2 與新功能不得再開第 3 條 active product change**。  
 **本週不做：** A5–A10 全棧、`rvt-ifc-usdc-lineage` 實作、新 OpenSpec（除 archive/defer 註記）、整 repo 重掃。
@@ -75,8 +75,8 @@
 |---|---|---|---|
 | **S1** | governance 能 atomic 驗證 3D handoff proof-set（不碰 coordinator store） | §6 governance 半部 | ✅ **#365 MERGED** `a02f20d` |
 | **S2** | coordinator session-scoped handoff create/consume + 權限（principal/lease/binding） | §6.1–6.2 後端 | ✅ **#380 MERGED** `eaf8e11` |
-| **S3** | viewer 消費 trusted handoff → 單一 focus/highlight + 狀態機 | §6.3–6.5 | ✅ code complete，交付於 **PR #382**；Full completion `no` |
-| **S4** | 收斂舊 A4 大 branch 的 §2–§5 可合部分（llm/proxy/issue/UI）成小 PR | §2–§5 子集 | S3 merge 後下一刀；禁止平行重寫 |
+| **S3** | viewer 消費 trusted handoff → 單一 focus/highlight + 狀態機 | §6.3–6.5 | ✅ **#382 MERGED** `add1d9b`；Full completion `no` |
+| **S4** | 收斂舊 A4 大 branch 的 §2–§5 可合部分（llm/proxy/issue/UI）成小 PR | §2–§5 子集 | 🟡 S4-A governance §2 code complete 於 `feat/a4-s4-governance-search`，待 PR；S4-B/C/D 仍 pending |
 | **S5+** | design/browser/runtime full gate | §7–§8 | 僅當 S1–S4 穩；允許長期 `Full completion claimed: no` |
 
 ### S3 local closeout／merge gate
@@ -94,6 +94,23 @@ Verification: web-viewer-sample typecheck PASS；affected ESLint PASS；unit sui
 Boundary: 未跑 browser dual-gate、design rebaseline 或 host-native Kit；未修改 shared auth/lease authority、Kit producer/schema
 Full completion claimed: no
 Next after S3 merge: S4，只選擇性收斂舊 A4 大 branch 的 §2–§5 資產，不整支 rebase/cherry-pick
+```
+
+### S4-A governance search local closeout／merge gate
+
+```txt
+Base: origin/main add1d9b（#382 merged）；branch feat/a4-s4-governance-search。
+Scope: 只收斂 governance §2 interpreter / engine / LLM transport / proof / API + affected tests；保留 main handoff.py。
+Outcome:
+  1) deterministic / semantic / auto 只執行 governance validator 判定 complete + usable 的 candidate
+  2) incomplete deterministic 只發 session-bound opaque partial_fallback_id，另次 exact confirmation 才能 table-only 執行
+  3) LLM explicit-enable + transport matrix + bounded response/timeout + secret-safe observed status
+  4) opaque query/retry correlation、truthful counts、dedicated rotating proof keyring；search-issued proof 可由既有 handoff verifier 驗證
+Verification: targeted search/handoff 131 passed, 1 skipped；governance tests 246 passed, 2 skipped；OpenSpec strict 63 passed
+Review fixes: 中文 `靠近` proximity 保持 unresolved 並 zero-scan；Unicode model binding 不再 500；LLM response read 以 remaining socket timeout + read 後 deadline guard 強制 bounded total deadline
+Boundary: 未呼叫 live Ornith；未收斂 coordinator proxy、Issue persistence 或 canonical UI；未跑 A4 browser/Kit dual gate
+Full completion claimed: no
+Next: S4-B coordinator proxy；不得把 S4-C Issue 或 S4-D UI 混入本 PR
 ```
 
 ### S1／S2 結案紀錄

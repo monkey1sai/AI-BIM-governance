@@ -11,18 +11,20 @@
 
 ## 2. Governance Search 契約
 
-- [ ] 2.1 先加入 failing tests，驗證 server-computed coverage 與不變量：`complete => schema_valid && usable && unresolved_terms=[]`、`schema_valid=false => complete=false && usable=false`、`usable=false => scanner not called`；deterministic 與 Ornith 都須包含遺漏 proximity constraint 的案例。
-- [ ] 2.2 實作明確的 `deterministic`／`semantic`／`auto` truth table；第一次 request 不得執行任何 `complete=false` candidate，schema-invalid／unusable candidate 永遠不得呼叫 IFC scanner。
-- [ ] 2.3 對可安全執行但不完整的 deterministic candidate，先回傳零 rows 的 `partial_fallback_confirmation_required`，顯示 exact filters／`unresolved_terms`，並發出短效、session／principal／model／artifact／binding-bound `partial_fallback_id`。只有另次明確確認 exact candidate 才 MAY 執行，且結果 SHALL 為 `partial_table_only`、`degraded_to_deterministic=true`、`partial_execution_confirmed=true`，不得發 proof 或啟用 Issue／3D。
-- [ ] 2.4 讓 `complete`、`usable`、`unresolved_terms` 由 governance-service validator 依原 query、normalized filters 與 consumed spans 計算；不得信任 Ornith 自報的 execution flags。
-- [ ] 2.5 Ornith client SHALL 回傳 sanitized served model、latency、finish reason 與 structured error class；empty、invalid、schema-breaking、length-truncated／non-terminal 與 incomplete/unusable output 都不得直接執行或外露 raw completion。
-- [ ] 2.6 `A4_LLM_ENABLED` 未設定時預設 `false`，不得因 key 存在而自動啟用。啟用時 URL、model、bounded timeout、credential、profile 與 transport mode 必須全部明確有效；`A4_*`／`ORNITH_*` aliases normalized 值衝突時 SHALL 回 `llm_config_invalid` 且 zero outbound。
-- [ ] 2.7 實作 transport matrix：`verified_https` 必須驗 hostname／CA；`loopback_tunnel` 只接受 `127.0.0.1`／`::1`；`trusted_lab_http` 只限明確 local-dev/lab profile、allow-insecure 與 allowlisted host。Production non-loopback HTTP SHALL fail closed，禁止 skip-verify。
-- [ ] 2.8 新增 per-attempt opaque `query_id`、optional `retry_of_query_id`、sanitized trusted session binding、structured interpretation/model metadata、secret-safe Evidence Trace，以及完整且合格 rows 的短效 governance-signed proof；不得建立 query-history store。
-- [ ] 2.9 新增專用 server-only signing keyring：唯一 active `kid`、previous verify-only key、missing/invalid config fail closed、不得提交 default key，也不得重用 Ornith token。
-- [ ] 2.10 結果統計 SHALL 誠實區分完整 candidate 的 `scanned`／`matched`／`not_matched`、limited `returned`、returned-row `mapped`／`unmapped` 與 `truncated`；fake/rejected mapping 不得取得 highlight eligibility。
-- [ ] 2.11 擴充 unit／contract tests，證明 schema-invalid、`complete=false usable=true`、`usable=false`、timeout、HTTP error、empty/truncated、未確認 partial fallback 都不呼叫 scanner、不發 proof，也不開 Issue／3D eligibility；另證明確認後只執行 exact bound deterministic candidate。
-- [ ] 2.12 Sanitized `GET /api/search/llm-status` 只回 `checked_at`、probe/query/config source、transport class、model、freshness/TTL 與 error code；endpoint、token、Authorization header、remote error body、raw probe／completion SHALL NOT 出現。
+> **S4-A code complete 2026-07-23（branch `feat/a4-s4-governance-search`，待 PR）**：只手工收斂 governance §2 search／LLM／proof／API 與 affected tests，保留 main `handoff.py`，並補上 search-issued proof → handoff verifier 的相容性 regression。Review 另補中文 proximity zero-scan、Unicode model binding 與 LLM total-deadline regressions。Targeted search/handoff 為 131 passed, 1 skipped；完整 governance suite 為 246 passed, 2 skipped；全 repo OpenSpec strict 為 63 passed。未呼叫 live Ornith、未接 coordinator proxy／Issue／UI，也未跑 A4 browser/Kit dual gate，故 `Full completion claimed: no`。
+
+- [x] 2.1 先加入 failing tests，驗證 server-computed coverage 與不變量：`complete => schema_valid && usable && unresolved_terms=[]`、`schema_valid=false => complete=false && usable=false`、`usable=false => scanner not called`；deterministic 與 Ornith 都須包含遺漏 proximity constraint 的案例。
+- [x] 2.2 實作明確的 `deterministic`／`semantic`／`auto` truth table；第一次 request 不得執行任何 `complete=false` candidate，schema-invalid／unusable candidate 永遠不得呼叫 IFC scanner。
+- [x] 2.3 對可安全執行但不完整的 deterministic candidate，先回傳零 rows 的 `partial_fallback_confirmation_required`，顯示 exact filters／`unresolved_terms`，並發出短效、session／principal／model／artifact／binding-bound `partial_fallback_id`。只有另次明確確認 exact candidate 才 MAY 執行，且結果 SHALL 為 `partial_table_only`、`degraded_to_deterministic=true`、`partial_execution_confirmed=true`，不得發 proof 或啟用 Issue／3D。
+- [x] 2.4 讓 `complete`、`usable`、`unresolved_terms` 由 governance-service validator 依原 query、normalized filters 與 consumed spans 計算；不得信任 Ornith 自報的 execution flags。
+- [x] 2.5 Ornith client SHALL 回傳 sanitized served model、latency、finish reason 與 structured error class；empty、invalid、schema-breaking、length-truncated／non-terminal 與 incomplete/unusable output 都不得直接執行或外露 raw completion。
+- [x] 2.6 `A4_LLM_ENABLED` 未設定時預設 `false`，不得因 key 存在而自動啟用。啟用時 URL、model、bounded timeout、credential、profile 與 transport mode 必須全部明確有效；`A4_*`／`ORNITH_*` aliases normalized 值衝突時 SHALL 回 `llm_config_invalid` 且 zero outbound。
+- [x] 2.7 實作 transport matrix：`verified_https` 必須驗 hostname／CA；`loopback_tunnel` 只接受 `127.0.0.1`／`::1`；`trusted_lab_http` 只限明確 local-dev/lab profile、allow-insecure 與 allowlisted host。Production non-loopback HTTP SHALL fail closed，禁止 skip-verify。
+- [x] 2.8 新增 per-attempt opaque `query_id`、optional `retry_of_query_id`、sanitized trusted session binding、structured interpretation/model metadata、secret-safe Evidence Trace，以及完整且合格 rows 的短效 governance-signed proof；不得建立 query-history store。
+- [x] 2.9 新增專用 server-only signing keyring：唯一 active `kid`、previous verify-only key、missing/invalid config fail closed、不得提交 default key，也不得重用 Ornith token。
+- [x] 2.10 結果統計 SHALL 誠實區分完整 candidate 的 `scanned`／`matched`／`not_matched`、limited `returned`、returned-row `mapped`／`unmapped` 與 `truncated`；fake/rejected mapping 不得取得 highlight eligibility。
+- [x] 2.11 擴充 unit／contract tests，證明 schema-invalid、`complete=false usable=true`、`usable=false`、timeout、HTTP error、empty/truncated、未確認 partial fallback 都不呼叫 scanner、不發 proof，也不開 Issue／3D eligibility；另證明確認後只執行 exact bound deterministic candidate。
+- [x] 2.12 Sanitized `GET /api/search/llm-status` 只回 `checked_at`、probe/query/config source、transport class、model、freshness/TTL 與 error code；endpoint、token、Authorization header、remote error body、raw probe／completion SHALL NOT 出現。
 
 ## 3. Coordinator Session 與安全邊界
 
