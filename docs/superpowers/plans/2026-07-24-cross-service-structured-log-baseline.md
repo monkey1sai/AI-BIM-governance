@@ -345,6 +345,9 @@ Build one `streaming-server` structured logger when `create_conversion_api_app` 
 
 - Modify: `web-viewer-sample/src/lib/structLog.ts`
 - Test: `web-viewer-sample/scripts/verify-struct-log.mjs`
+- Modify: `infra/docker/web-viewer-sample.Dockerfile`
+- Modify: `infra/docker/coordinator-web-plane.Dockerfile`
+- Test: `scripts/tests/test-edge-console-deploy-contract.ps1`
 
 - [ ] Reconstruct state and rerun impact for `createBrowserLogger`.
 
@@ -386,6 +389,20 @@ Build one `streaming-server` structured logger when `create_conversion_api_app` 
 
   Sanitization accepts only documented entry fields/key names and applies existing redaction/type-only rules. It never enumerates `window`, query values, cookies, storage, or `import.meta.env` wholesale. Do not add synchronous XHR or a second startup snapshot.
 
+- [ ] **Approved Task 3 plan correction: package the canonical allow-list in both production viewer build paths.** The user-delegated read-only scope approver confirmed that host checks can resolve the root JSON while both Docker build paths omit it. Keep `tests/contracts/structured-log/env-allowlist.json` unchanged as the only machine source. In both `infra/docker/web-viewer-sample.Dockerfile` and the `console-build` stage of `infra/docker/coordinator-web-plane.Dockerfile`, copy that canonical file from the repo-root build context to `/workspace/tests/contracts/structured-log/env-allowlist.json` before Vite starts/builds. Do not add a viewer-local duplicate, generator, compose volume, or `.dockerignore` change. Extend `scripts/tests/test-edge-console-deploy-contract.ps1` to prove the canonical source exists, both exact COPY contracts exist, coordinator/viewer contexts remain `.`, and `.dockerignore` does not exclude the source.
+
+  ```powershell
+  Push-Location web-viewer-sample
+  npm run verify
+  Pop-Location
+  pwsh -NoProfile -NonInteractive -File scripts/tests/test-edge-console-deploy-contract.ps1
+  docker compose -f compose.runtime-manager.yml config --quiet
+  docker compose -f compose.runtime-manager.yml build coordinator viewer
+  & .\.venv\Scripts\python.exe -m pytest tests/contracts/structured-log/test_validate.py -q -p no:cacheprovider
+  ```
+
+  Expected: viewer verify and deploy contract pass; compose config is valid; both production images build from the repo-root canonical allow-list without starting services; structured-log contract drift guard passes. Image build does not authorize `up`, deployment, or process stop.
+
 - [ ] Run viewer checks and commit.
 
   Run before staging:
@@ -400,7 +417,7 @@ Build one `streaming-server` structured logger when `create_conversion_api_app` 
   node scripts/verify-struct-log.mjs
   Pop-Location
   git diff --check
-  git add -- web-viewer-sample/src/lib/structLog.ts web-viewer-sample/scripts/verify-struct-log.mjs
+  git add -- web-viewer-sample/src/lib/structLog.ts web-viewer-sample/scripts/verify-struct-log.mjs infra/docker/web-viewer-sample.Dockerfile infra/docker/coordinator-web-plane.Dockerfile scripts/tests/test-edge-console-deploy-contract.ps1
   git diff --cached --check
   git commit -m "task#3: enqueue browser-safe env snapshot" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   ```
