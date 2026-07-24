@@ -106,7 +106,8 @@ Each entry SHALL also record `source` (one of `.env`/`.env.example`/`system`/`do
 
 #### Scenario: logger factory emits env_snapshot before returning
 - **WHEN** any of `createLogger()` (TS), `create_logger()` (Python), `createBrowserLogger()` (Browser), or `New-StructLogger` (PowerShell) is invoked
-- **THEN** an `env_snapshot` record SHALL be written to the sink before the function returns the logger handle
+- **THEN** server and PowerShell factories SHALL write an `env_snapshot` record to their sink before returning the logger handle
+- **AND** `createBrowserLogger()` SHALL enqueue exactly one `env_snapshot` in its in-memory buffer before returning and SHALL deliver it through the existing asynchronous flush policy
 
 #### Scenario: Secret-pattern env value is redacted
 - **WHEN** env contains `INTERNAL_API_TOKEN=abc123xyz`

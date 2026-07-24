@@ -132,7 +132,7 @@ gitignore    : logs/                                            (新增到 .giti
 - 不在 allow_list 但 key 含 `TOKEN` / `SECRET` / `KEY` / `PASSWORD` / `AUTH` / `CREDENTIAL`：寫 `[REDACTED:type=<string|number|boolean>, len=<n>]`
 - 其餘（不在 allow_list、也不命中 secret pattern）：寫 type + length，不寫原值
 - `source`：`.env` \| `.env.example` \| `system` \| `docker-compose` \| `default`
-- **觸發時機**：每個 service 的 `createLogger()` / `create_logger()` / `createBrowserLogger()` / `New-StructLogger` 在回傳 logger 之前，立刻 emit 一筆 `env_snapshot`（即 logger 取得即送，不延後到第一次一般 log 呼叫）
+- **觸發時機**：每個 service 的 `createLogger()` / `create_logger()` / `createBrowserLogger()` / `New-StructLogger` 在回傳 logger 之前，立刻 emit 一筆 `env_snapshot`（即 logger 取得即送，不延後到第一次一般 log 呼叫）。Browser transport 必然非同步，因此 browser 的「emit」定義為 return 前進入既有 buffer，並由既有 flush policy送往 coordinator；不得用同步 XHR 阻塞 bootstrap。
 - Browser 沒有 `process.env`；viewer snapshot 只列 build-time allow-list runtime config 與 browser 可觀察 metadata，禁止掃描或序列化任意 `window` / storage / query 值。`trace_id` 是 record envelope，不列入 snapshot vars。
 
 **Network**：
