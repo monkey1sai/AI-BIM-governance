@@ -84,7 +84,7 @@ git log --since="14 days ago" --oneline origin/main -- `
 | `minio-folderview-and-baseline-disclosure` | 0/7 未動工 | deferred | 重啟條件：active ≤ 2 有額度且需求回到當期優先；重啟時 SHALL 先重驗 main 現況（#259 trigger 端點、watcher ledger）再調和 tasks |
 | `align-frontend-design-system-reference` | 0/23 未動工（specs delta 已由 #363 PF-3 調和至 doc-first） | deferred | 重啟條件：active ≤ 2 有額度；重啟時 SHALL 重跑 `openspec validate --strict` 確認 delta 仍對準當時 main spec |
 | `a4-semantic-search-model-qa` | 0/64 未動工（8 節全空） | 留待 OQ-1 裁決 | — |
-| `rvt-ifc-usdc-lineage` | 1/48（僅 8.1 contract-only） | 留待 OQ-1 裁決 | — |
+| `rvt-ifc-usdc-lineage` | 1/48（僅 8.1 contract-only） | `Status: deferred`、frozen/non-owner；2026-07-24 historical correction 恢復原 id | 解凍前重驗 current main、完成 predecessor/successor crosswalk 並拆成不重疊 slices |
 | `migrate-console-to-hifi-design` | tasks 0/35 未勾，但 main #357 已落 1/2 product code | 留待 OQ-1 裁決（建議傾向優先收尾） | 先對帳 tasks.md 勾選與 main 實際落地，再裁 |
 
 - **Trigger**：本 change 被使用者採納且 OQ-1 裁決完成。

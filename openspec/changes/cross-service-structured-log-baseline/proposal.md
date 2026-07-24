@@ -1,5 +1,9 @@
 # cross-service-structured-log-baseline — Proposal
 
+> **Status: deferred 2026-07-24**：不計入 active WIP；code、contracts 與 canonical capability spec 已落地，只有 tasks 10.1–10.5 的真 4-service runtime evidence 尚未完成。`deepen-ifc-ready-conversion-pipeline` closeout 前不得為了 smoke 修改其 pipeline implementation。
+
+> **Historical correction 2026-07-24**：本 change 曾在缺少 runtime evidence 時被 archive；現依嚴格 terminal rule 恢復原 change id。它目前只允許 execution/evidence closeout：跑 IFC-ready → conversion → session → close、驗四個 service JSONL/trace/env redaction，並落 durable evidence。既有 delta 已同步至 `openspec/specs/cross-service-structured-log-baseline/`，**不得重新套用或回滾 canonical spec，也不得重做已落地 adapters/contracts**。
+
 ## Why
 
 目前 4 個執行單元（coordinator TypeScript、streaming-server Python/Kit、web-viewer-sample Browser、PowerShell scripts）各自用 `console.*` / `carb.log_*` / `Add-Content` / `kit-stdout.log` / `.run/*.log.err` 寫 log，沒有共用 schema、沒有跨服務 `trace_id`、沒有 env snapshot、沒有統一 retention 規則。agent 在跨服務 incident 追蹤時必須手動 join 多個格式不同的 log 來源；env 設定誤差只能靠口頭釐清；roadmap 候選 #8 `observability-audit-baseline`（Prometheus / Grafana / Loki）要等 Phase 6 才解凍，目前夾在「無基線」與「過早全套上 stack」之間。本 change 建立可給 #8 直接掃的 baseline，把 schema、trace_id 命名、env redaction、檔案佈局一次落定，後續 Loki promtail 接上不需改 schema。
