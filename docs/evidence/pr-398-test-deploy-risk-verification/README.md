@@ -1,5 +1,7 @@
 # PR #398 測試部署區風險驗證
 
+> 文件性質：working note（驗收證據；非 runtime/API contract 或行為權威）。適用規則見 [docs/AGENTS.md](../../AGENTS.md)；若與程式碼或可執行測試衝突，以後者為準。
+
 日期：2026-07-24（Asia/Taipei）
 
 範圍：PR #398 `feat(a4): persist session-bound search issues`
@@ -24,10 +26,10 @@ PR #398 的 owner-service backend 行為已在 deployment checkout 內以真 HTT
 | Canonical rebuild | **未通過** | 兩次皆 Phase 2 `Get-FileHash` failure，exit `2` |
 | Deploy implementation under clean child module path | **通過，但僅 causal diagnostic** | design assets count=`10`；governance/conversion/Kit/kit-manager/coordinator/viewer deploy-time checks通過 |
 | A4 owner-service search → Issue persistence | **通過** | live isolated authority：search `200`、create `201`、replay `200`、DB=`1 Issue + 1 evidence` |
-| Mounted coordinator mutation | **安全拒絕，未達 production 201** | no auth=`401`；local-dev identity=`503 a4_issue_authority_unavailable`；零 governance write |
+| Mounted coordinator mutation | **安全拒絕，未達 production 201** | no auth=`401`；local-dev identity=`503 a4_issue_authority_unavailable`；特定 `storage/governance.db` 未觀察到 write |
 | PR #398 targeted tests | **通過** | coordinator `7 passed`；governance `120 passed, 1 skipped` |
 | Aggregate verification | **未通過** | `verify-all`: `101 passed, 12 failed`；失敗皆引用 deployment contract 已移除的 docs/tooling path |
-| Ruff 工具不可用 | **已否定，但仍有 baseline finding** | PATH 有 `ruff 0.15.21`；PR changed Python files僅一個base-known F401 |
+| Ruff 工具不可用 | **已否定，但仍有 baseline finding** | PATH 有 `ruff 0.15.21`；PR #398 subject commit changed Python files僅一個base-known F401 |
 | Browser/design/Kit feature gate | **對本 backend slice不適用** | 無 production frontend diff；不能外推為 full-system E2E |
 | Full completion | **no** | canonical helper、authentic identity/lease與aggregate gate仍有缺口 |
 
@@ -115,7 +117,7 @@ rebuild-test-deploy.ps1
 
 ## PR #398 live Issue verification
 
-### 1. Canonical mounted route：fail closed 且零寫入
+### 1. Canonical mounted route：fail closed；特定 SQLite 未觀察到寫入
 
 Target route：
 
@@ -139,14 +141,17 @@ Canonical deployment的 env key-only audit（不輸出值）確認：
 
 Canonical governance internal search另以非機密 probe token實測回 `503 a4_internal_context_unavailable`，與 env audit一致。
 
-`storage/governance.db` 在 probe前後都沒有 `issues` 或 `a4_issue_evidence` table，證明 mounted reject沒有 upstream persistence side effect。這是預期的 security posture，不是 production success path。
+`storage/governance.db` 在 probe前後都沒有 `issues` 或 `a4_issue_evidence` table，證明 mounted reject未在該 SQLite database產生可觀察的 persistence side effect；這項觀察不能排除其他未觀測位置的 upstream side effect。這是預期的 security posture，不是 production success path。
 
 ### 2. Isolated live owner-service authority：201、replay與 persistence
 
-為避免修改既有 `.env`，從相同 deployment checkout啟動一次性的 host-native governance process：
+為避免修改既有 `.env`，從相同 deployment checkout啟動一次性的 host-native governance process。驗證使用未保存的一次性 inline PowerShell orchestration，因此不能從 repo逐字重播整段 orchestration；以下保留可重建的 cwd、subject commit、process command、HTTP ledger與外部 evidence digest：
 
+- orchestration cwd：`D:\Users\deploy\AI-bim-geo`
 - bind：`127.0.0.1:49202`
 - source：`D:\Users\deploy\AI-bim-geo\governance-service`
+- subject commit：`64cadb06c8eba6400aecb8f75125dd2f7df2e1b7`
+- process command：`C:\Program Files\Python312\python.exe -m uvicorn app:app --host 127.0.0.1 --port 49202`
 - DB：獨立 `scripts\.run\pr398-a4-live-20260724121731_5f1cbe67.db`
 - credentials：process-only random test token/signing key，未寫檔、未輸出
 - fixture：主工作區 local `storage\e2e-a1\demo\tiny.ifc`（688 bytes）
@@ -200,7 +205,7 @@ Governance targeted run另有 5 個 Pydantic deprecation warnings與 1 個 pytes
 
 ## Ruff、browser、design與Kit applicability
 
-- `ruff --version`=`0.15.21`。PR changed 12 個 Python files只有 `governance-service/issues/api.py:13` 的 F401；同一 finding在 base content也存在。其餘 11 檔通過。
+- `ruff --version`=`0.15.21`。PR #398 subject commit changed 12 個 Python files；其中只有 `governance-service/issues/api.py:13` 有 base-known F401，其餘 11 檔通過。PR #399 本身仍是 docs-only。
 - Repo的 CI、deploy、`verify-all`與 governance requirements沒有 Ruff gate/config；deployment venv缺 Ruff不是既定 release failure。
 - Machine design scope：`status=not_applicable`、`frontend_product=false`、`visual_required=false`、`required_screen_ids=[]`、`unknown_paths=[]`。
 - Pinned design reference integrity：13 screens、26 golden files pass；這不是 pixel comparison。
@@ -232,7 +237,7 @@ Clean-module-path deploy logs仍由已啟動的 runtime children繼承 file hand
 | Backend API called | internal search + internal Issue create；mounted coordinator Issue route |
 | Runtime action / ID | Issue `iss_46dde731ecea` in isolated test DB |
 | Visible success state | not applicable；backend-only slice |
-| E2E command | process-only isolated authority script documented by observed HTTP ledger above |
+| E2E command | one-shot inline PowerShell orchestration；未保存，不能逐字重播。可重建 process command、cwd、commit與 HTTP ledger見上節 |
 | Screenshot / trace | none；uvicorn request log + SQLite digest retained externally |
 | Design gate status | `not_applicable`; reference integrity separately passed |
 | Design screen(s) | none |
@@ -249,7 +254,7 @@ Clean-module-path deploy logs仍由已啟動的 runtime children繼承 file hand
 - Deployment checkout使用正確的 PR #398 merge commit。
 - Canonical helper的 Phase 2 failure可重現；clean WindowsPowerShell-only module path使同一 inner deploy通過。
 - PR #398 targeted tests通過，owner-service live Issue persistence與 replay通過。
-- Mounted coordinator route對 no-auth/local-dev caller fail closed且零寫入。
+- Mounted coordinator route對 no-auth/local-dev caller fail closed；特定 `storage/governance.db` 未觀察到 persistence write。
 - Canonical A4 token/proof key未配置；mounted production `201`目前不可成立。
 - Aggregate verifier與 canonical pruning contract不相容；full test gate不是綠燈。
 
