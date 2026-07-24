@@ -320,6 +320,19 @@ try {
         Assert-True ($codexSpecToDone -match [regex]::Escape($hardGate)) "Codex spec-to-done preserves hard-gate marker: $hardGate"
         Assert-True ($claudeSpecToDone -match [regex]::Escape($hardGate)) "Claude spec-to-done preserves hard-gate marker: $hardGate"
     }
+    foreach ($shipSafetyMarker in @('review_required', 'cyber_safeguard_payload', 'git merge-base', 'git rebase origin/main', 'published PR branch', 'git merge --no-edit origin/main', 'seg/seg/id', 'passwd')) {
+        Assert-True ($codexSpecToDone -match [regex]::Escape($shipSafetyMarker)) "Codex spec-to-done preserves ship safety marker: $shipSafetyMarker"
+        Assert-True ($claudeSpecToDone -match [regex]::Escape($shipSafetyMarker)) "Claude spec-to-done preserves ship safety marker: $shipSafetyMarker"
+    }
+
+    $shipItemMarkdown = Get-Content -LiteralPath '.claude/workflows/ship-item.md' -Raw -Encoding UTF8
+    $shipItemPrompt = Get-Content -LiteralPath '.claude/workflows/ship-item.js' -Raw -Encoding UTF8
+    foreach ($shipSource in @($shipItemMarkdown, $shipItemPrompt)) {
+        foreach ($shipSafetyMarker in @('review_required', 'cyber_safeguard_payload', 'git fetch origin', 'git merge-base', 'git rebase origin/main', 'published PR branch', 'git merge --no-edit origin/main', 'seg/seg/id', 'passwd')) {
+            Assert-True ($shipSource -match [regex]::Escape($shipSafetyMarker)) "ship-item dual-maintained source preserves safety marker: $shipSafetyMarker"
+        }
+        Assert-True ($shipSource -match 'MUST NOT[^\r\n]*gh pr merge --admin') 'ship-item forbids the agent from using the admin merge override'
+    }
 
     $claudeSettingsRaw = Get-Content -LiteralPath '.claude/settings.json' -Raw
     $claudeSettings = $claudeSettingsRaw | ConvertFrom-Json
