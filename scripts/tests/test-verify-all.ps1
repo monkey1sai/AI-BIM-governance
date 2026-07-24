@@ -89,3 +89,5 @@ try {
 } finally {
     Remove-TestSandbox -Path $sandbox
 }
+
+exit 0
