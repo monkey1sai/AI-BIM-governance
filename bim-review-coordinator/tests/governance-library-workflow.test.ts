@@ -86,6 +86,7 @@ describe("GovernanceLibraryWorkflow.runLibraryRuleRun", () => {
     "/rules/x.ids",
     "nested/x.ids",
     "rules/x.txt",
+    null,
     42,
   ])("rejects unsafe IDS value %p before tree or POST I/O", async (idsPath) => {
     const port = new RecordingGovernanceLibraryPort();
