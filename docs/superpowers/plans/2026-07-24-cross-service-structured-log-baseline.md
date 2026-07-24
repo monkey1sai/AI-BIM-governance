@@ -252,8 +252,10 @@ Expected baseline: MEDIUM/LOW/LOW/MEDIUM/MEDIUM with no processes and none HIGH.
 
 - Modify: `bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/conversion_authority.py`
 - Modify: `bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/ifc2usdc_powershell_adapter.py`
+- Modify: `bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/struct_log.py`
 - Test: `bim-streaming-server/tests/test_conversion_authority_api.py`
 - Test: `bim-streaming-server/tests/test_host_native_conversion_service.py`
+- Test: `tests/contracts/structured-log/test_python_adapter.py`
 
 - [ ] Reconstruct state and record the verified formal impacts before editing; manual source inspection is supplemental.
 
@@ -296,7 +298,18 @@ Expected baseline: MEDIUM/LOW/LOW/MEDIUM/MEDIUM with no processes and none HIGH.
   cmd += ["-TraceId", trace_id]
   ```
 
-  Build one `streaming-server` structured logger when `create_conversion_api_app` constructs the app; use `with_trace_id(job["trace_id"])` for inbound network plus conversion lifecycle transitions. Do not create a logger per request (which would violate exactly-one env snapshot per logger run). Keep trace in persisted job/read/result projections; never accept arbitrary header bytes or a second `ifcready_` prefix.
+Build one `streaming-server` structured logger when `create_conversion_api_app` constructs the app; use `with_trace_id(job["trace_id"])` for inbound network plus conversion lifecycle transitions. Do not create a logger per request (which would violate exactly-one env snapshot per logger run). Keep trace in persisted job/read/result projections; never accept arbitrary header bytes or a second `ifcready_` prefix.
+
+- [ ] **Approved Task 2 plan correction: make child logger run state concurrency-safe.** The user-delegated read-only scope approver confirmed that the new app singleton plus concurrent FastAPI requests exposes the existing child scalar copy/write-back race. Scope is limited to `struct_log.py` and `test_python_adapter.py`. `trace_id` remains handle-local, while `records_written`, `records_dropped`, `last_failure`, `closed`, `current_file`, `current_date`, the sink, ring buffer and per-trace sequence map must be genuinely shared across parent and descendants; remove snapshot/write-back sharing. Add a deterministic two-child barrier test proving two sink records, parent and both child counts equal two, both threads finish without exception, and each trace starts at seq one. Preserve the existing sequential inheritance test, logger public API, schema, exactly one factory/env snapshot, and all conversion behavior. Formal refreshed impacts before this correction: `StructLogger.with_trace_id` LOW/0, `_SharedStateStructLogger._emit` LOW/0, and `StructLogger._write_record` LOW/14 impacted/2 processes.
+
+  ```powershell
+  & .\.venv\Scripts\python.exe -m pytest tests\contracts\structured-log\test_python_adapter.py -q -p no:cacheprovider
+  Push-Location bim-streaming-server
+  & ..\.venv\Scripts\python.exe -m pytest tests/test_conversion_authority_api.py tests/test_host_native_conversion_service.py -q -p no:cacheprovider
+  Pop-Location
+  ```
+
+  Expected: deterministic concurrent-child regression and existing adapter tests pass; affected streaming tests remain green; no additional logger factory or startup snapshot is introduced.
 
 - [ ] Run the affected service tests.
 
@@ -319,7 +332,7 @@ Expected baseline: MEDIUM/LOW/LOW/MEDIUM/MEDIUM with no processes and none HIGH.
   ```powershell
   git diff --check
   git diff --name-only
-  git add -- bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/conversion_authority.py bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/ifc2usdc_powershell_adapter.py bim-streaming-server/tests/test_conversion_authority_api.py bim-streaming-server/tests/test_host_native_conversion_service.py
+  git add -- bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/conversion_authority.py bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/ifc2usdc_powershell_adapter.py bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/struct_log.py bim-streaming-server/tests/test_conversion_authority_api.py bim-streaming-server/tests/test_host_native_conversion_service.py tests/contracts/structured-log/test_python_adapter.py
   git diff --cached --check
   git commit -m "task#2: persist streaming conversion root trace" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   ```
