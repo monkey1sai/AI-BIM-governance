@@ -158,7 +158,8 @@ C:\Repos\active\iot\AI-BIM-governance\storage\許良宇圖書館建築_2026.ifc
 - Helper MUST 排除所有層級 `AGENTS.md` / `CLAUDE.md`，以及 root `.codex/`、`.agents/`、`.agent/`、`.claude/`、`.cursor/`、`.windsurf/`、`.github/skills/`、`.github/prompts/`、`docs/`、`openspec/`、`patches/`；MUST 保留 `.github/workflows/`。
 - Helper 完成清理後 MUST 從 `D:\Users\deploy\AI-bim-geo` 執行 `.\scripts\deploy.ps1 -Build` 並回報 exit code / log path。
 - 禁止 `-DryRun`；若 sandbox 需要寫入 `D:\Users\deploy\AI-bim-geo` 的 approval，agent 必須針對 build-only rebuild command 申請，不得改用其他路徑或 dry-run 替代。
-- 若 `deploy.ps1 -Build` Phase 3 被外部 host-native runtime blocker 擋住（例如 `kit.exe` 佔用 49100/49110+，或 conversion `python.exe` 佔用 49101），已授權 agent 只停止可由部署區 pidfile 或 command line / executable path 證明屬於 `D:\Users\deploy\AI-bim-geo` 的 PID tree，並記錄 port / PID / process name / ownership evidence，然後重跑同一條 `.\scripts\deploy.ps1 -Build`；若只有 port/process-name 證據，先取得使用者確認。不得停止無關 process，也不得改用 `-Force` / `-DryRun`。
+- `spec-to-done` 在目前 spec PR 已 merge、commit 可由 freshly fetched `origin/main` 取得後，可於測試部署區真實驗證前執行 ownership-gated preflight。helper 無參數預設只偵測；只有明確傳入 `-StopOwnedRuntime -DeploymentRoot 'D:\Users\deploy\AI-bim-geo'`，且 listener 符合 per-port service role、deployment pidfile ancestor 與精確 launcher entrypoint、creation identity 經完整雙快照與每次 stop 前重驗一致，才可用 exact process handle 停止。pidfile 僅供 lineage 佐證，不能單獨授權；port topology 由 deployment env 的 immutable snapshot 推導，不接受 caller parameter/process-environment override，且每次 stop 前重驗 hash。MUST 記錄 port / PID / process name / ownership kind，且同一 port 的全部 busy owners 都通過後才可進入 cleanup。
+- 既有一般 Phase 3 重試能力不變，但所有自動停止（無論是否走 `spec-to-done`）也 MUST 使用同一 hardened helper 與相同閘門，再重跑同一條 `.\scripts\deploy.ps1 -Build`。helper 無法證明 ownership 時必須 HELD；只有使用者逐次確認明確 PID 與 ownership evidence 後才可人工例外。不得停止無關 process、驗證未 merge branch，或改用 `-Force` / `-DryRun`。
 
 正式 operator entrypoints：
 
