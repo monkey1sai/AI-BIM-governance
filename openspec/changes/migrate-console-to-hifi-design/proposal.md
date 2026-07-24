@@ -2,9 +2,9 @@
 
 ### 2026-07-24 current-main reconciliation
 
-下方原始敘述保留本 change 建立時的基線，不再代表目前 `main`：`origin/main@008acb6f5658e1a759616f38dfbde9f7bedd1567` 已由 `EdgeConsole.tsx` 真實 import `docs/plans/ai-bim-governance.css`，production `--ec-*` 消費已歸零，舊 `edge-console.css` 已由 `legacy-console.css` 取代。因此本 change 剩餘工作不是「讓孤兒 CSS 首次上線」，而是以 current main 重新裁決尚存的 raw geometry、token 缺口、受影響畫面與驗證範圍。
+下方原始敘述保留本 change 建立時的基線，不再代表目前 `main`：`origin/main@1959a4905a76ee95d9f314a6e52c67a415a7700f` 已由 `EdgeConsole.tsx` 真實 import `docs/plans/ai-bim-governance.css`，production `--ec-*` 消費已歸零，舊 `edge-console.css` 已由 `legacy-console.css` 取代。因此本 change 剩餘工作不是「讓孤兒 CSS 首次上線」，而是以 current main 重新裁決尚存的 raw geometry、token 缺口、受影響畫面與驗證範圍。
 
-Legacy checkpoint `codex/openspec/migrate-console-to-hifi-design@94a557571c25fe6e058251d39e3dad139eb65bf3` 已與 current main 分歧（current-only 13 commits、legacy-only 2 commits），且把受保護 design canon、machine snapshot、product code、測試與 15 張 user-facing 圖片混在同一 bundle；不得 cherry-pick 或視為已核准的 canonical migration。其 CSS delta 的 93 個 declaration 只保留為本 change 下的平行 proposal draft，等待使用者逐項裁決，並不修改 `docs/plans/ai-bim-governance.css`。
+Legacy checkpoint `codex/openspec/migrate-console-to-hifi-design@94a557571c25fe6e058251d39e3dad139eb65bf3` 已與 current main 分歧（current-only 17 commits、legacy-only 2 commits），且把受保護 design canon、machine snapshot、product code、測試與 15 張 user-facing 圖片混在同一 bundle；不得 cherry-pick 或視為已核准的 canonical migration。其 CSS delta 的 93 個 declaration 只保留為本 change 下的平行 proposal draft，等待使用者逐項裁決，並不修改 `docs/plans/ai-bim-governance.css`。
 
 本 reconciliation 不變更 API、資料結構、event、storage、session 或 runtime boundary，也不宣稱 Hi-Fi migration 或 user-facing visual gate 已完成。下方其餘段落記錄原始問題與預定 end-state；當前完成度只以 `tasks.md` 與 `token-gap-ledger.md` 為準。
 

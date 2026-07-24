@@ -2,7 +2,7 @@
 
 ## Scope and immutable anchors
 
-- Current main: `008acb6f5658e1a759616f38dfbde9f7bedd1567`
+- Current main: `1959a4905a76ee95d9f314a6e52c67a415a7700f`
 - Initial convergence analysis base: `64cadb06c8eba6400aecb8f75125dd2f7df2e1b7`（兩者只差 `docs/evidence/pr-398-test-deploy-risk-verification/README.md`，CSS/product blobs 未變）
 - Current canon CSS blob: `78c23c936f530b2938520f05588d114dd9b230ab`
 - Legacy checkpoint: `94a557571c25fe6e058251d39e3dad139eb65bf3`

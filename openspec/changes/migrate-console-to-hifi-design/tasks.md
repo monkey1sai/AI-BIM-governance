@@ -1,6 +1,6 @@
 ## 0. Current-main convergence reconciliation（2026-07-24）
 
-- [x] 0.1 固定 current main `008acb6f5658e1a759616f38dfbde9f7bedd1567`、legacy tip `94a557571c25fe6e058251d39e3dad139eb65bf3` 與兩個 CSS blob，禁止整包 cherry-pick
+- [x] 0.1 固定 current main `1959a4905a76ee95d9f314a6e52c67a415a7700f`、legacy tip `94a557571c25fe6e058251d39e3dad139eb65bf3` 與兩個 CSS blob，禁止整包 cherry-pick
 - [x] 0.2 以 parser-backed census 確認 current/legacy canon 分別有 86/179 個 unique declaration、差集為 93；legacy consumer 相對 current canon 的第 94 個缺名是負向測試 sentinel `--ab-not-real`
 - [x] 0.3 建立 `token-gap-ledger.md` 與 `adjudication-index.md`，揭露 current-main 已完成事項、未裁決缺口與 GitNexus HIGH/CRITICAL gates
 - [x] 0.4 在 `drafts/ai-bim-governance.token-extension.proposed.css` 保存平行 proposal；不得 import、不得覆寫受保護 canon

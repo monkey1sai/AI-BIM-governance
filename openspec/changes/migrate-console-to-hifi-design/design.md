@@ -2,7 +2,7 @@
 
 ### 2026-07-24 reconciliation note
 
-本文件下方的三套樣式描述是 change 建立時的歷史基線。Current main `008acb6f5658e1a759616f38dfbde9f7bedd1567` 已完成 authority import 與 `--ec-*` retirement，但 active tasks 尚未完全同步，且 legacy checkpoint 的 93-token 擴充是未經使用者核准的實作假設。依 `design-canon-change-control` R-A1，本輪只建立 current-main ledger、adjudication index 與平行 CSS draft；不原地修改四個手寫正本、machine snapshot 或 frontend consumer。
+本文件下方的三套樣式描述是 change 建立時的歷史基線。Current main `1959a4905a76ee95d9f314a6e52c67a415a7700f` 已完成 authority import 與 `--ec-*` retirement，但 active tasks 尚未完全同步，且 legacy checkpoint 的 93-token 擴充是未經使用者核准的實作假設。依 `design-canon-change-control` R-A1，本輪只建立 current-main ledger、adjudication index 與平行 CSS draft；不原地修改四個手寫正本、machine snapshot 或 frontend consumer。
 
 後續若要採納 token definition，必須先由使用者裁決 `reuse`／`consolidate`／`propose-add`／`reject`，再由 human owner 依 canon version/date、backup 與 restore dry-run 契約執行；使用者核准不會把 AI 的 parallel proposal 權限擴張成 protected-canon 原地寫入權。若修改 frontend consumer，另須重新取得 GitNexus HIGH/CRITICAL sign-off 並跑 affected browser、semantic 與 visual gates；proposal-only reconciliation 不以 OpenSpec strict validation冒充 rendered behavior 證據。
 
