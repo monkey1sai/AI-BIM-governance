@@ -737,6 +737,56 @@ function Invoke-TestDeployGitCommand {
     return $result
 }
 
+function Get-TestDeployPruningContract {
+    [CmdletBinding()]
+    param()
+
+    return [pscustomobject]@{
+        RootToolingDirNames = @($script:TestDeployRootToolingDirNames)
+        PreservedProductionFiles = @($script:TestDeployPreservedProductionFiles)
+    }
+}
+
+function Get-TestDeployWindowsPowerShellChildEnvironment {
+    [CmdletBinding()]
+    param()
+
+    $systemRoot = [Environment]::GetEnvironmentVariable('SystemRoot', 'Machine')
+    if ([string]::IsNullOrWhiteSpace($systemRoot)) {
+        $systemRoot = [Environment]::GetEnvironmentVariable('SystemRoot', 'Process')
+    }
+    $programFiles = [Environment]::GetEnvironmentVariable('ProgramFiles', 'Machine')
+    if ([string]::IsNullOrWhiteSpace($programFiles)) {
+        $programFiles = [Environment]::GetEnvironmentVariable('ProgramFiles', 'Process')
+    }
+    $programFilesX86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)', 'Machine')
+    if ([string]::IsNullOrWhiteSpace($programFilesX86)) {
+        $programFilesX86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)', 'Process')
+    }
+
+    $candidateRoots = @()
+    if (-not [string]::IsNullOrWhiteSpace($systemRoot)) {
+        $candidateRoots += Join-Path $systemRoot 'System32\WindowsPowerShell\v1.0\Modules'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($programFiles)) {
+        $candidateRoots += Join-Path $programFiles 'WindowsPowerShell\Modules'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($programFilesX86)) {
+        $candidateRoots += Join-Path $programFilesX86 'WindowsPowerShell\Modules'
+    }
+
+    $moduleRoots = @(
+        $candidateRoots |
+            Where-Object { Test-Path -LiteralPath $_ -PathType Container } |
+            Select-Object -Unique
+    )
+    if ($moduleRoots.Count -eq 0) {
+        throw 'Windows PowerShell module roots are unavailable for the deployment child process.'
+    }
+
+    return @{ PSModulePath = ($moduleRoots -join [IO.Path]::PathSeparator) }
+}
+
 function Invoke-TestDeployScript {
     [CmdletBinding()]
     param(
@@ -745,8 +795,13 @@ function Invoke-TestDeployScript {
     )
 
     $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts\deploy.ps1', '-Build')
+    $childEnvironment = Get-TestDeployWindowsPowerShellChildEnvironment
     if ($null -ne $ProcessRunner) {
-        $exitCode = & $ProcessRunner -FilePath 'powershell.exe' -ArgumentList $arguments -WorkingDirectory $DeploymentRoot
+        $exitCode = & $ProcessRunner `
+            -FilePath 'powershell.exe' `
+            -ArgumentList $arguments `
+            -WorkingDirectory $DeploymentRoot `
+            -Environment $childEnvironment
     } else {
         function ConvertTo-CmdQuotedArgument {
             param([Parameter(Mandatory = $true)][string] $Value)
@@ -766,7 +821,7 @@ function Invoke-TestDeployScript {
         # with file redirection so long-lived child processes cannot keep the agent
         # harness pipe open; then wait only for the direct cmd.exe process.
         $quotedArgs = ($arguments | ForEach-Object { ConvertTo-CmdQuotedArgument -Value $_ }) -join ' '
-        $cmdLine = "powershell.exe $quotedArgs > $(ConvertTo-CmdQuotedArgument -Value $stdoutPath) 2> $(ConvertTo-CmdQuotedArgument -Value $stderrPath)"
+        $cmdLine = 'set "PSModulePath=' + $childEnvironment.PSModulePath + '" && powershell.exe ' + $quotedArgs + ' > ' + (ConvertTo-CmdQuotedArgument -Value $stdoutPath) + ' 2> ' + (ConvertTo-CmdQuotedArgument -Value $stderrPath)
         $process = Start-Process -FilePath 'cmd.exe' `
             -ArgumentList @('/c', $cmdLine) `
             -WorkingDirectory $DeploymentRoot `
