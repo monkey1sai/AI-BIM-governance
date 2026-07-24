@@ -30,6 +30,7 @@ Assert-True ($runner -match [regex]::Escape('PlaywrightEvidenceTimeoutSeconds'))
 Assert-True ($runner -match [regex]::Escape('Stop-RunnerOwnedProcessTree')) 'runner reclaims its own Playwright command tree on failure'
 Assert-True ($runner -match [regex]::Escape('taskkill.exe /PID')) 'runner cleanup is scoped to the Start-Process child PID'
 Assert-True ($runner -match [regex]::Escape('/T')) 'runner cleanup includes only the owned child process tree'
+Assert-True (-not ($runner -match 'Split-Path\s+-LiteralPath\s+\$Path\s+-Parent')) 'runner uses a valid Split-Path parameter set for evidence directories'
 Assert-True ($runner -match [regex]::Escape('Assert-NoReparsePointPath')) 'runner rejects reparse-point control and evidence paths'
 Assert-True ($runner -match [regex]::Escape('Assert-NoBroadWriteAcl')) 'runner rejects broad write ACLs on deployment evidence roots'
 Assert-True ($runner -match [regex]::Escape('Test-ProcessDescendsFrom')) 'runner proves the signaling listener descends from the deployment PID'
