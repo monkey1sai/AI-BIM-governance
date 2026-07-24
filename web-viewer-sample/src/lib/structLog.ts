@@ -23,6 +23,8 @@
  * to wire up `window.addEventListener('error', ...)` and `unhandledrejection`.
  */
 
+import envAllowListSpec from "../../../tests/contracts/structured-log/env-allowlist.json";
+
 export type LogLevel = "debug" | "info" | "warn" | "error" | "fatal";
 
 export type EventType =
@@ -72,6 +74,15 @@ export interface AnomalyData {
   [extra: string]: unknown;
 }
 
+export type EnvSource = ".env" | ".env.example" | "system" | "docker-compose" | "default";
+
+export interface EnvVar {
+  key: string;
+  source: EnvSource;
+  value_or_redacted: string;
+  type: "string" | "number" | "boolean" | "null" | "object" | "array";
+}
+
 export interface BrowserStructLogger {
   readonly runId: string;
   readonly traceId: string;
@@ -112,6 +123,8 @@ export interface BrowserLoggerOptions {
   runId?: string;
   /** Trace id to attach to every record until `setTraceId` is called. */
   initialTraceId?: string;
+  /** Explicit browser-safe runtime config or metadata for the startup snapshot. */
+  browserSnapshotVars?: EnvVar[];
   /** Max records held in buffer; older ones dropped when exceeded. */
   bufferCapacity?: number;
   /** Records buffered before triggering an automatic flush. */
@@ -146,6 +159,37 @@ const DEFAULTS = {
   flushMaxAttempts: 3,
   flushBackoffMs: 500,
 };
+
+const ENV_ALLOW_LIST = new Set(envAllowListSpec.allow_list);
+const SECRET_PATTERN = new RegExp(envAllowListSpec.secret_patterns.join("|"), "i");
+const ENV_KEY_PATTERN = /^[A-Z][A-Z0-9_]{0,127}$/;
+const ENV_SOURCES = new Set<EnvSource>([".env", ".env.example", "system", "docker-compose", "default"]);
+const ENV_TYPES = new Set<EnvVar["type"]>(["string", "number", "boolean", "null", "object", "array"]);
+
+function sanitizeBrowserSnapshotVars(vars: EnvVar[]): EnvVar[] {
+  if (!Array.isArray(vars)) return [];
+  const safeVars: EnvVar[] = [];
+  for (const candidate of vars) {
+    if (!candidate || typeof candidate !== "object") continue;
+    const { key, source, value_or_redacted: value, type } = candidate;
+    if (
+      typeof key !== "string" ||
+      !ENV_KEY_PATTERN.test(key) ||
+      !ENV_SOURCES.has(source) ||
+      typeof value !== "string" ||
+      !ENV_TYPES.has(type)
+    ) {
+      continue;
+    }
+    const value_or_redacted = ENV_ALLOW_LIST.has(key)
+      ? value
+      : SECRET_PATTERN.test(key)
+        ? `[REDACTED:type=${type}, len=${value.length}]`
+        : `[TYPE:type=${type}, len=${value.length}]`;
+    safeVars.push({ key, source, value_or_redacted, type });
+  }
+  return safeVars;
+}
 
 function defaultRandomHex(): string {
   // 6 hex digits using crypto when available, Math.random fallback otherwise.
@@ -454,6 +498,8 @@ export function createBrowserLogger(options: BrowserLoggerOptions = {}): Browser
       await flushOnce(state).catch(() => undefined);
     },
   };
+  const safeVars = sanitizeBrowserSnapshotVars(options.browserSnapshotVars ?? []);
+  append(buildRecord(state, "info", "env_snapshot", "bootstrap", "browser env snapshot", { vars: safeVars }));
   return logger;
 }
 

@@ -14,14 +14,16 @@ import { createRequire } from "node:module";
 import ts from "typescript";
 
 const repoRoot = process.cwd();
-const localRequire = createRequire(import.meta.url);
+const structLogPath = path.join(repoRoot, "src/lib/structLog.ts");
+const localRequire = createRequire(structLogPath);
 
 function loadStructLogModule() {
-    const source = fs.readFileSync(path.join(repoRoot, "src/lib/structLog.ts"), "utf8");
+    const source = fs.readFileSync(structLogPath, "utf8");
     const compiled = ts.transpileModule(source, {
         compilerOptions: {
             module: ts.ModuleKind.CommonJS,
             target: ts.ScriptTarget.ES2020,
+            esModuleInterop: true,
         },
     });
     const module = { exports: {} };
@@ -81,6 +83,132 @@ test("isoUtcMs always emits millisecond precision", () => {
 
 const REQUIRED_FIELDS = ["ts", "level", "event_type", "service", "component", "run_id", "trace_id", "msg", "data"];
 
+await test("factory buffers exactly one browser-safe env snapshot and flushes that same record", async () => {
+    const calls = [];
+    const hostileSentinels = {
+        query: "query-secret-sentinel",
+        localStorage: "local-storage-secret-sentinel",
+        sessionStorage: "session-storage-secret-sentinel",
+        cookie: "cookie-secret-sentinel",
+        token: "token-secret-sentinel",
+        window: "window-secret-sentinel",
+        importMetaEnv: "import-meta-env-secret-sentinel",
+    };
+    const globalNames = ["window", "document", "localStorage", "sessionStorage"];
+    const originalDescriptors = new Map(
+        globalNames.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]),
+    );
+
+    Object.defineProperty(globalThis, "window", {
+        configurable: true,
+        value: {
+            location: { origin: "http://127.0.0.1:5173", search: `?trace_id=${hostileSentinels.query}` },
+            arbitraryProperty: hostileSentinels.window,
+        },
+    });
+    Object.defineProperty(globalThis, "document", {
+        configurable: true,
+        value: { cookie: hostileSentinels.cookie },
+    });
+    Object.defineProperty(globalThis, "localStorage", {
+        configurable: true,
+        value: { arbitrary: hostileSentinels.localStorage },
+    });
+    Object.defineProperty(globalThis, "sessionStorage", {
+        configurable: true,
+        value: { arbitrary: hostileSentinels.sessionStorage },
+    });
+
+    try {
+        const logger = createBrowserLogger({
+            runId: "run_20260526_142010_a3f900",
+            initialTraceId: "ifcready_browser_snapshot_trace",
+            browserSnapshotVars: [
+                {
+                    key: "VIEWER_PORT",
+                    source: "default",
+                    value_or_redacted: "5173",
+                    type: "string",
+                    query: hostileSentinels.query,
+                    localStorage: hostileSentinels.localStorage,
+                    sessionStorage: hostileSentinels.sessionStorage,
+                    cookie: hostileSentinels.cookie,
+                    token: hostileSentinels.token,
+                    arbitraryWindowProperty: hostileSentinels.window,
+                    importMetaEnv: hostileSentinels.importMetaEnv,
+                },
+                {
+                    key: "VIEWER_API_TOKEN",
+                    source: "system",
+                    value_or_redacted: "browser-token-sentinel",
+                    type: "string",
+                },
+                {
+                    key: "BROWSER_THEME",
+                    source: "default",
+                    value_or_redacted: "dark-theme-sentinel",
+                    type: "string",
+                },
+            ],
+            endpoint: "http://127.0.0.1:8004/api/internal/viewer-log",
+            transport: async (_url, body) => {
+                calls.push(body);
+                return { ok: true, status: 200 };
+            },
+            enableTimer: false,
+            flushAtRecords: 99,
+        });
+
+        assert.equal(logger.bufferLength(), 1, "factory return must already contain one startup record");
+        assert.equal(calls.length, 0, "factory must not synchronously transport the startup record");
+        const [snapshot] = logger.tail();
+        assert.equal(snapshot.event_type, "env_snapshot");
+        assert.equal(snapshot.component, "bootstrap");
+        assert.equal(snapshot.msg, "browser env snapshot");
+        assert.equal(snapshot.trace_id, "ifcready_browser_snapshot_trace");
+        assert.equal(snapshot.seq, 1);
+        assert.deepEqual(snapshot.data.vars, [
+            {
+                key: "VIEWER_PORT",
+                source: "default",
+                value_or_redacted: "5173",
+                type: "string",
+            },
+            {
+                key: "VIEWER_API_TOKEN",
+                source: "system",
+                value_or_redacted: "[REDACTED:type=string, len=22]",
+                type: "string",
+            },
+            {
+                key: "BROWSER_THEME",
+                source: "default",
+                value_or_redacted: "[TYPE:type=string, len=19]",
+                type: "string",
+            },
+        ]);
+        for (const entry of snapshot.data.vars) {
+            assert.deepEqual(Object.keys(entry).sort(), ["key", "source", "type", "value_or_redacted"]);
+        }
+        const serialized = JSON.stringify(snapshot);
+        for (const sentinel of Object.values(hostileSentinels)) {
+            assert.equal(serialized.includes(sentinel), false, `snapshot leaked forbidden browser value: ${sentinel}`);
+        }
+
+        assert.equal(await logger.flush(), 1);
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0].length, 1);
+        assert.strictEqual(calls[0][0], snapshot, "flush must transport the buffered startup record itself");
+        assert.equal(logger.bufferLength(), 0);
+        assert.equal(logger.flushedTotal(), 1);
+    } finally {
+        for (const [name, descriptor] of originalDescriptors) {
+            if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+            else delete globalThis[name];
+        }
+    }
+});
+
 await test("info() builds a schema-shaped general record", async () => {
     const calls = [];
     const transport = async (_url, body) => {
@@ -92,13 +220,14 @@ await test("info() builds a schema-shaped general record", async () => {
         initialTraceId: "rev_20260526_1234abcd",
         transport,
         enableTimer: false,
-        flushAtRecords: 1,
+        flushAtRecords: 2,
     });
     logger.info("app", "viewer ready");
     await new Promise((resolve) => setTimeout(resolve, 5));
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].length, 1);
-    const rec = calls[0][0];
+    assert.equal(calls[0].length, 2);
+    assert.equal(calls[0][0].event_type, "env_snapshot");
+    const rec = calls[0][1];
     for (const field of REQUIRED_FIELDS) assert.ok(field in rec, `missing ${field}`);
     assert.equal(rec.service, "viewer");
     assert.equal(rec.event_type, "general");
@@ -117,11 +246,12 @@ await test("error() builds a logic_error record with error metadata", async () =
             return { ok: true, status: 200 };
         },
         enableTimer: false,
-        flushAtRecords: 1,
+        flushAtRecords: 2,
     });
     logger.error("webrtc", "datachannel failed", new Error("timeout"));
     await new Promise((resolve) => setTimeout(resolve, 5));
-    const rec = calls[0][0];
+    assert.equal(calls[0][0].event_type, "env_snapshot");
+    const rec = calls[0][1];
     assert.equal(rec.event_type, "logic_error");
     assert.equal(rec.level, "error");
     assert.equal(rec.data.error.name, "Error");
@@ -154,10 +284,11 @@ await test("network/lifecycle/anomaly helpers attach correct event_type", async 
     });
     logger.anomaly("flushPipeline", "fallback", { anomaly_kind: "fallback", reason: "x" });
     await logger.flush();
-    assert.equal(sent.length, 3);
-    assert.equal(sent[0].event_type, "network");
-    assert.equal(sent[1].event_type, "lifecycle");
-    assert.equal(sent[2].event_type, "operation_anomaly");
+    assert.equal(sent.length, 4);
+    assert.equal(sent[0].event_type, "env_snapshot");
+    assert.equal(sent[1].event_type, "network");
+    assert.equal(sent[2].event_type, "lifecycle");
+    assert.equal(sent[3].event_type, "operation_anomaly");
 });
 
 // ---------------------------------------------------------------------------
@@ -166,22 +297,26 @@ await test("network/lifecycle/anomaly helpers attach correct event_type", async 
 
 await test("flushAtRecords triggers an auto-flush when threshold reached", async () => {
     let flushes = 0;
+    const batches = [];
     const logger = createBrowserLogger({
         runId: "run_20260526_142010_a3f900",
         initialTraceId: "rev_20260526_1234abcd",
-        transport: async () => {
+        transport: async (_url, body) => {
             flushes += 1;
+            batches.push(body);
             return { ok: true, status: 200 };
         },
         enableTimer: false,
         flushAtRecords: 3,
     });
+    assert.equal(logger.bufferLength(), 1, "startup snapshot counts as the first buffered record");
     logger.info("app", "1");
-    logger.info("app", "2");
     assert.equal(flushes, 0, "should not flush yet");
-    logger.info("app", "3");
+    logger.info("app", "2");
     await new Promise((resolve) => setTimeout(resolve, 10));
     assert.equal(flushes, 1, "should auto-flush at threshold");
+    assert.equal(batches[0].length, 3);
+    assert.equal(batches[0][0].event_type, "env_snapshot");
 });
 
 await test("ring buffer drops oldest when over capacity", async () => {
@@ -197,7 +332,7 @@ await test("ring buffer drops oldest when over capacity", async () => {
     });
     for (let i = 0; i < 5; i += 1) logger.info("app", `m-${i}`);
     assert.equal(logger.bufferLength(), 3);
-    assert.equal(logger.droppedTotal(), 2);
+    assert.equal(logger.droppedTotal(), 3, "startup snapshot is included in capacity accounting");
 });
 
 await test("failed flush keeps records until retainOnFailureMs elapses", async () => {
@@ -214,12 +349,12 @@ await test("failed flush keeps records until retainOnFailureMs elapses", async (
     });
     logger.info("app", "1");
     await logger.flush();
-    assert.equal(logger.bufferLength(), 1, "record retained after failed flush");
+    assert.equal(logger.bufferLength(), 2, "startup snapshot and info record retained after failed flush");
     // Advance past retainOnFailureMs and flush again — record should expire.
     clock.t += 1500;
     await logger.flush();
     assert.equal(logger.bufferLength(), 0, "record dropped after retention window");
-    assert.equal(logger.droppedTotal(), 1);
+    assert.equal(logger.droppedTotal(), 2);
 });
 
 await test("tail() returns the last N buffered records for inspection", async () => {
@@ -257,7 +392,8 @@ await test("setTraceId rotates trace id and resets per-trace seq", async () => {
     await logger.flush();
     const aaa = sent.filter((r) => r.trace_id === "rev_aaa");
     const bbb = sent.filter((r) => r.trace_id === "rev_bbb");
-    assert.deepEqual(aaa.map((r) => r.seq), [1]);
+    assert.equal(aaa[0].event_type, "env_snapshot");
+    assert.deepEqual(aaa.map((r) => r.seq), [1, 2]);
     assert.deepEqual(bbb.map((r) => r.seq), [1, 2]);
 });
 
