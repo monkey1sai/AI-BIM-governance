@@ -97,7 +97,7 @@ function Assert-NoBroadWriteAcl {
 function Ensure-Directory {
     param([Parameter(Mandatory = $true)][string] $Path)
 
-    Assert-NoReparsePointPath -Path (Split-Path -LiteralPath $Path -Parent)
+    Assert-NoReparsePointPath -Path (Split-Path -Path $Path -Parent)
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
         New-Item -ItemType Directory -Path $Path | Out-Null
     }
@@ -292,7 +292,7 @@ function Write-ControlMarker {
         [Parameter(Mandatory = $true)][hashtable] $Marker
     )
 
-    Assert-NoReparsePointPath -Path (Split-Path -LiteralPath $Path -Parent)
+    Assert-NoReparsePointPath -Path (Split-Path -Path $Path -Parent)
     if (Test-Path -LiteralPath $Path) {
         throw "Control marker already exists and will not be overwritten: $Path"
     }
