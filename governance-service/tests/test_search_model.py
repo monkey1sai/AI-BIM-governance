@@ -49,6 +49,10 @@ ENDSEC;
 END-ISO-10303-21;
 """
 
+A4_COMMITTED_FIXTURE_ROOT = Path(__file__).resolve().parents[2] / "_fixtures" / "a4-semantic-search"
+A4_COMMITTED_IFC = A4_COMMITTED_FIXTURE_ROOT / "a4_fire_doors.ifc"
+A4_COMMITTED_MAPPING = A4_COMMITTED_FIXTURE_ROOT / "element_mapping.json"
+
 TINY = Path(__file__).resolve().parents[2] / "storage" / "e2e-a1" / "demo" / "tiny.ifc"
 
 
@@ -1166,6 +1170,55 @@ def test_limit_keeps_honest_full_candidate_counts(client, a4_ifc):
     assert body["highlight_eligible"] is False
     assert all(row["action_eligible"] is False for row in body["results"])
     assert all(row["highlight_eligible"] is False for row in body["results"])
+
+
+def test_committed_a4_fixture_covers_mapping_nonmatch_and_truncation():
+    assert A4_COMMITTED_IFC.is_file()
+    assert A4_COMMITTED_MAPPING.is_file()
+
+    complete = run_model_search(
+        SearchRequest(
+            ifc_source_path=str(A4_COMMITTED_IFC),
+            element_mapping_path=str(A4_COMMITTED_MAPPING),
+            query="IfcDoor",
+            interpret_mode="deterministic",
+        )
+    )
+    assert complete["stats"]["total"] == 3
+    assert complete["stats"]["scanned"] == 3
+    assert complete["stats"]["matched"] == 3
+    assert complete["stats"]["mapped"] == 1
+    assert complete["stats"]["unmapped"] == 2
+    assert complete["stats"]["truncated"] is False
+    mapped_rows = [row for row in complete["results"] if row["usd_prim_path"] is not None]
+    assert [(row["ifc_guid"], row["usd_prim_path"]) for row in mapped_rows] == [
+        ("0A4DoorLow000000000001", "/World/Doors/Low")
+    ]
+
+    empty = run_model_search(
+        SearchRequest(
+            ifc_source_path=str(A4_COMMITTED_IFC),
+            element_mapping_path=str(A4_COMMITTED_MAPPING),
+            query="找 4F 防火門且 FireRating > 100",
+            interpret_mode="deterministic",
+        )
+    )
+    assert empty["stats"]["matched"] == 0
+    assert empty["stats"]["not_matched"] == 3
+    assert empty["results"] == []
+
+    limited = run_model_search(
+        SearchRequest(
+            ifc_source_path=str(A4_COMMITTED_IFC),
+            element_mapping_path=str(A4_COMMITTED_MAPPING),
+            query="IfcDoor",
+            limit=1,
+            interpret_mode="deterministic",
+        )
+    )
+    assert limited["stats"]["matched"] == 3
+    assert limited["stats"]["returned"] == 1
+    assert limited["stats"]["truncated"] is True
 
 
 def test_search_model_missing_path(client, a4_ifc):
