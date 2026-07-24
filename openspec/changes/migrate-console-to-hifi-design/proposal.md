@@ -1,6 +1,16 @@
 ## Why
 
-`docs/plans/ai-bim-governance.css`（`--ab-*`/`.ab-*`，500 行完整 token 系統，自述「extracted from Hi-Fi console」）目前是零消費者的孤兒檔案：repo 全域搜尋（`.ts`/`.tsx`/`.html`/`.md`/`.json`）0 個引用，不在唯讀 authoring origin（`C:\Repos\design\desigin-system`）內，不受 `docs/plans/design-system-reference.manifest.json` 的 pixel gate 管，也不是該 manifest 自己 `token_projection.upstream_authority` 指的 `source/styles.css`（兩者 `--ab-` 命中數、內容、大小皆不同）。production 實際的唯一 CSS 真相源是 `web-viewer-sample/src/console/edge-console.css`（217 個 `--ec-*` token，NVIDIA 綠 `#76b900` 為主色，雙主題）。使用者已在完整揭露現況（含 `edge-console.css` 內「NVIDIA 綠為核心品牌」的既有設計註解、以及亮/暗切換是真實可點的 localStorage-persisted 功能）後，明確指示：以 `AI-BIM Console Hi-Fi.dc.html` 為前端唯一操作標準、以 `ai-bim-governance.css` 為前端設計風格，並確認即使代表推翻既有品牌決策與拿掉淺色主題，仍要落地此方向。本 change 把該裁決正式轉為可驗收的 spec，讓孤兒檔案真正成為 production 消費的唯一 design token 權威。
+### 2026-07-24 current-main reconciliation
+
+下方原始敘述保留本 change 建立時的基線，不再代表目前 `main`：`origin/main@008acb6f5658e1a759616f38dfbde9f7bedd1567` 已由 `EdgeConsole.tsx` 真實 import `docs/plans/ai-bim-governance.css`，production `--ec-*` 消費已歸零，舊 `edge-console.css` 已由 `legacy-console.css` 取代。因此本 change 剩餘工作不是「讓孤兒 CSS 首次上線」，而是以 current main 重新裁決尚存的 raw geometry、token 缺口、受影響畫面與驗證範圍。
+
+Legacy checkpoint `codex/openspec/migrate-console-to-hifi-design@94a557571c25fe6e058251d39e3dad139eb65bf3` 已與 current main 分歧（current-only 13 commits、legacy-only 2 commits），且把受保護 design canon、machine snapshot、product code、測試與 15 張 user-facing 圖片混在同一 bundle；不得 cherry-pick 或視為已核准的 canonical migration。其 CSS delta 的 93 個 declaration 只保留為本 change 下的平行 proposal draft，等待使用者逐項裁決，並不修改 `docs/plans/ai-bim-governance.css`。
+
+本 reconciliation 不變更 API、資料結構、event、storage、session 或 runtime boundary，也不宣稱 Hi-Fi migration 或 user-facing visual gate 已完成。下方其餘段落記錄原始問題與預定 end-state；當前完成度只以 `tasks.md` 與 `token-gap-ledger.md` 為準。
+
+### Original why at change creation
+
+本 change 建立時，`docs/plans/ai-bim-governance.css`（`--ab-*`/`.ab-*`，500 行完整 token 系統，自述「extracted from Hi-Fi console」）是零消費者的孤兒檔案：repo 全域搜尋（`.ts`/`.tsx`/`.html`/`.md`/`.json`）0 個引用，不在唯讀 authoring origin（`C:\Repos\design\desigin-system`）內，不受 `docs/plans/design-system-reference.manifest.json` 的 pixel gate 管，也不是該 manifest 自己 `token_projection.upstream_authority` 指的 `source/styles.css`（兩者 `--ab-` 命中數、內容、大小皆不同）。當時 production 實際的唯一 CSS 真相源是 `web-viewer-sample/src/console/edge-console.css`（217 個 `--ec-*` token，NVIDIA 綠 `#76b900` 為主色，雙主題）。使用者已在完整揭露當時現況（含 `edge-console.css` 內「NVIDIA 綠為核心品牌」的既有設計註解、以及亮/暗切換是真實可點的 localStorage-persisted 功能）後，明確指示：以 `AI-BIM Console Hi-Fi.dc.html` 為前端唯一操作標準、以 `ai-bim-governance.css` 為前端設計風格，並確認即使代表推翻既有品牌決策與拿掉淺色主題，仍要落地此方向。本 change 把該裁決正式轉為可驗收的 spec；目前進度與剩餘裁決以上方 reconciliation 為準。
 
 ## What Changes
 

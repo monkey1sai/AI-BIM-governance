@@ -1,0 +1,110 @@
+/*
+ * PROPOSAL ONLY — DO NOT IMPORT.
+ * Source: legacy checkpoint 94a557571c25fe6e058251d39e3dad139eb65bf3,
+ * CSS blob 2abb09ebe78a2929ce47bdefa1b3226448b21b6e.
+ *
+ * This parallel draft preserves 93 candidate declarations for user adjudication.
+ * It does not modify or replace docs/plans/ai-bim-governance.css.
+ */
+
+:root {
+  /* Literal geometry candidates. Prefer semantic-scale consolidation when equivalent. */
+  --ab-space-px-1: 1px;
+  --ab-space-px-2: 2px;
+  --ab-space-px-3: 3px;
+  --ab-space-px-5: 5px;
+  --ab-space-px-7: 7px;
+  --ab-space-px-9: 9px;
+  --ab-space-px-11: 11px;
+  --ab-space-px-13: 13px;
+  --ab-space-px-14: 14px;
+  --ab-space-px-18: 18px;
+  --ab-space-px-20: 20px;
+  --ab-space-px-24: 24px;
+  --ab-space-px-36: 36px;
+  --ab-space-px-40: 40px;
+  --ab-space-px-48: 48px;
+  --ab-space-px-54: 54px;
+
+  --ab-r-px-3: 3px;
+  --ab-r-px-5: 5px;
+  --ab-r-px-7: 7px;
+  --ab-r-px-9: 9px;
+  --ab-r-px-16: 16px;
+  --ab-r-round: 50%;
+
+  --ab-fs-8-5: 8.5px;
+  --ab-fs-9: 9px;
+  --ab-fs-9-5: 9.5px;
+  --ab-fs-10: 10px;
+  --ab-fs-10-5: 10.5px;
+  --ab-fs-11-5: 11.5px;
+  --ab-fs-12-5: 12.5px;
+  --ab-fs-13-5: 13.5px;
+  --ab-fs-14: 14px;
+  --ab-fs-17: 17px;
+  --ab-fs-18: 18px;
+  --ab-fs-19: 19px;
+  --ab-fs-20: 20px;
+  --ab-fs-22: 22px;
+  --ab-fs-26: 26px;
+
+  --ab-fw-400: 400;
+  --ab-fw-500: 500;
+  --ab-fw-600: 600;
+  --ab-fw-700: 700;
+  --ab-fw-800: 800;
+  --ab-lh-normal: normal;
+  --ab-lh-150: 1.5;
+  --ab-lh-155: 1.55;
+  --ab-lh-160: 1.6;
+  --ab-lh-180: 1.8;
+  --ab-track-tight: -.01em;
+  --ab-track-none: 0;
+  --ab-track-01: .01em;
+  --ab-track-02: .02em;
+  --ab-track-03: .03em;
+  --ab-track-04: .04em;
+  --ab-track-08: .08em;
+  --ab-track-10: .1em;
+
+  /* Alpha/color candidates. Prefer existing named semantic tokens when values match. */
+  --ab-transparent: transparent;
+  --ab-black-a50: rgba(0, 0, 0, 0.5);
+  --ab-black-a55: rgba(0, 0, 0, 0.55);
+  --ab-bar-a20: rgba(10, 16, 24, 0.2);
+  --ab-overlay-a92: rgba(11, 13, 16, 0.92);
+  --ab-overlay-a96: rgba(11, 13, 16, 0.96);
+  --ab-panel-glass-a60: rgba(13, 20, 28, 0.6);
+  --ab-neutral-a25: rgba(128, 128, 128, 0.25);
+  --ab-border-a10: rgba(120, 160, 210, .10);
+  --ab-accent-a05: rgba(65, 199, 232, 0.05);
+  --ab-accent-a06: rgba(65, 199, 232, 0.06);
+  --ab-accent-a07: rgba(65, 199, 232, 0.07);
+  --ab-accent-a08: rgba(65, 199, 232, 0.08);
+  --ab-accent-a10: rgba(65, 199, 232, .10);
+  --ab-accent-a16: rgba(65, 199, 232, 0.16);
+  --ab-accent-a20: rgba(65, 199, 232, .20);
+  --ab-accent-a25: rgba(65, 199, 232, 0.25);
+  --ab-accent-a28: rgba(65, 199, 232, 0.28);
+  --ab-accent-a35: rgba(65, 199, 232, 0.35);
+  --ab-accent-a40: rgba(65, 199, 232, .40);
+  --ab-accent-a45: rgba(65, 199, 232, 0.45);
+  --ab-accent-a90: rgba(65, 199, 232, .90);
+  --ab-accent-2-a30: rgba(47, 123, 246, .30);
+  --ab-accent-2-a55: rgba(47, 123, 246, 0.55);
+  --ab-ok-a08: rgba(49, 197, 109, 0.08);
+  --ab-ok-a10: rgba(49, 197, 109, .10);
+  --ab-ok-a22: rgba(49, 197, 109, 0.22);
+  --ab-ok-a25: rgba(49, 197, 109, 0.25);
+  --ab-warn-a08: rgba(230, 178, 62, 0.08);
+  --ab-warn-a10: rgba(230, 178, 62, .10);
+  --ab-warn-a30: rgba(230, 178, 62, .30);
+  --ab-warn-a35: rgba(230, 178, 62, 0.35);
+  --ab-danger-a08: rgba(232, 97, 92, 0.08);
+  --ab-danger-a30: rgba(232, 97, 92, .30);
+  --ab-danger-a35: rgba(232, 97, 92, 0.35);
+  --ab-danger-a40: rgba(232, 97, 92, .40);
+  --ab-violet-a35: rgba(157, 140, 255, 0.35);
+  --ab-violet-a55: rgba(157, 140, 255, 0.55);
+}

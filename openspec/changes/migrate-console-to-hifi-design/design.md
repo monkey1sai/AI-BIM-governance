@@ -1,6 +1,14 @@
 ## Context
 
-UnifiedConsole 目前的視覺樣式來源分裂成三套，彼此互不相通：
+### 2026-07-24 reconciliation note
+
+本文件下方的三套樣式描述是 change 建立時的歷史基線。Current main `008acb6f5658e1a759616f38dfbde9f7bedd1567` 已完成 authority import 與 `--ec-*` retirement，但 active tasks 尚未完全同步，且 legacy checkpoint 的 93-token 擴充是未經使用者核准的實作假設。依 `design-canon-change-control` R-A1，本輪只建立 current-main ledger、adjudication index 與平行 CSS draft；不原地修改四個手寫正本、machine snapshot 或 frontend consumer。
+
+後續若要採納 token definition，必須先由使用者裁決 `reuse`／`consolidate`／`propose-add`／`reject`，再由 human owner 依 canon version/date、backup 與 restore dry-run 契約執行；使用者核准不會把 AI 的 parallel proposal 權限擴張成 protected-canon 原地寫入權。若修改 frontend consumer，另須重新取得 GitNexus HIGH/CRITICAL sign-off 並跑 affected browser、semantic 與 visual gates；proposal-only reconciliation 不以 OpenSpec strict validation冒充 rendered behavior 證據。
+
+### Original context at change creation
+
+本 change 建立時，UnifiedConsole 的視覺樣式來源分裂成三套，彼此互不相通：
 
 1. **`edge-console.css`**（`web-viewer-sample/src/console/`，217 個 `--ec-*` token，NVIDIA 綠 `#76b900` 主色，深色+淺色雙主題，淺色主題由 `EdgeConsole.tsx` 一個真實可點的按鈕切換並存 `localStorage["aibim:ec-theme"]`）——現行 production 唯一真相源，`§08 R1` 白紙黑字鎖定。仍在服務 `LegacyEdgeConsole`（`#/kit`、`#/demo-control`、`#conv` 等路由）、`ConversionPage.tsx`、`governance/overlay.css`、`viewer/*.css`。
 2. **`console/unified/*.tsx`（IA v2，commit #349/#350 落地）**：`UnifiedShell`/`HomePage`/`WorkspacePage`/`PipelinePage`/`OpsPage`/`ConceptPage`。伴隨的 `unified.css` 只有 58 行、僅處理 body 層級 scrollbar/keyframes，元件層級顏色是**直接寫死的 inline hex JSX style**（1:1 抄自 Hi-Fi 原型），未消費任何 CSS custom-property 檔案。
