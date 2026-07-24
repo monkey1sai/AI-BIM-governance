@@ -1,13 +1,14 @@
 """A4 POST /api/search/model — deterministic semantic search."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from search.handoff import verify_handoff_evidence
-from search.interpreter import interpret_query
+from search.interpreter import InterpretedFilters, PropertyFilter, interpret_query
 from search.engine import PartialFallbackUnavailable, SearchRequest, _storey_match, confirm_partial_fallback, run_model_search
 from search.proofs import ProofRegistry, _safe_ttl_seconds
 
@@ -189,19 +190,86 @@ def test_proof_registry_uses_unambiguous_token_and_never_evicts_an_active_record
 
     monkeypatch.setenv("A4_PROOF_ACTIVE_KID", "a4_test_kid")
     monkeypatch.setenv("A4_PROOF_ACTIVE_KEY", "test-proof-signing-key-material-32bytes")
-    ids = iter(("proof_id_with_under_score_0001", "proof_id_with_under_score_0002"))
-    monkeypatch.setattr(proofs_mod.secrets, "token_urlsafe", lambda _n: next(ids))
     registry = ProofRegistry(max_records=1)
 
     first = registry.issue(_proof_snapshot())
     assert first is not None
-    assert first["evidence_proof"].startswith("a4p.a4_test_kid.proof_id_with_under_score_0001.")
-    assert registry.verify(first["evidence_proof"]).proof_id == "proof_id_with_under_score_0001"
+    assert first["evidence_proof"].startswith("a4p.a4_test_kid.")
+    assert first["evidence_proof"].count(".") == 3
+    reference = proofs_mod.parse_proof_token(first["evidence_proof"])
+    assert reference is not None
+    assert reference.proof_id == first["proof_id"]
+    assert registry.verify(first["evidence_proof"]).proof_id == first["proof_id"]
 
     # Saturation degrades the second request to table-only but does not remove a
     # still-valid proof belonging to the first request.
     assert registry.issue(_proof_snapshot(query_id="a4q_proof_fixture_0002")) is None
-    assert registry.verify(first["evidence_proof"]).proof_id == "proof_id_with_under_score_0001"
+    assert registry.verify(first["evidence_proof"]).proof_id == first["proof_id"]
+
+
+def test_proof_registry_enforces_binding_and_principal_quotas(monkeypatch):
+    monkeypatch.setenv("A4_PROOF_ACTIVE_KID", "a4_test_kid")
+    monkeypatch.setenv("A4_PROOF_ACTIVE_KEY", "test-proof-signing-key-material-32bytes")
+    registry = ProofRegistry(
+        max_records=10,
+        max_records_per_binding=1,
+        max_records_per_principal=2,
+    )
+
+    first_snapshot = _proof_snapshot(query_id="a4q_quota_fixture_0001")
+    first = registry.issue(first_snapshot)
+    assert first is not None
+    assert registry.issue(_proof_snapshot(query_id="a4q_quota_fixture_0002")) is None
+
+    second_session = _proof_snapshot(query_id="a4q_quota_fixture_0003")
+    second_session["session_binding"] = {
+        **second_session["session_binding"],
+        "review_session_id": "review_session_deadbeef13",
+    }
+    assert registry.issue(second_session) is not None
+
+    third_session = _proof_snapshot(query_id="a4q_quota_fixture_0004")
+    third_session["session_binding"] = {
+        **third_session["session_binding"],
+        "review_session_id": "review_session_deadbeef14",
+    }
+    assert registry.issue(third_session) is None
+
+    other_principal = _proof_snapshot(query_id="a4q_quota_fixture_0005")
+    other_principal["session_binding"] = {
+        **other_principal["session_binding"],
+        "review_session_id": "review_session_deadbeef14",
+        "principal_ref": "a4p_other",
+    }
+    assert registry.issue(other_principal) is not None
+
+    # Removing an unreturned proof must release both quota dimensions.
+    registry.discard(first["proof_id"])
+    assert registry.issue(_proof_snapshot(query_id="a4q_quota_fixture_0006")) is not None
+
+
+def test_expiry_purge_releases_binding_and_principal_quotas(monkeypatch):
+    import search.proofs as proofs_mod
+
+    current_time = [1_000.0]
+    monkeypatch.setenv("A4_PROOF_ACTIVE_KID", "a4_test_kid")
+    monkeypatch.setenv("A4_PROOF_ACTIVE_KEY", "test-proof-signing-key-material-32bytes")
+    monkeypatch.setenv("A4_PROOF_TTL_SECONDS", "1")
+    monkeypatch.setattr(proofs_mod.time, "time", lambda: current_time[0])
+    registry = ProofRegistry(
+        max_records=10,
+        max_records_per_binding=1,
+        max_records_per_principal=1,
+    )
+
+    first = registry.issue(_proof_snapshot(query_id="a4q_expiry_quota_0001"))
+    assert first is not None
+    assert registry.issue(_proof_snapshot(query_id="a4q_expiry_quota_0002")) is None
+
+    current_time[0] = 1_002.0
+    replacement = registry.issue(_proof_snapshot(query_id="a4q_expiry_quota_0003"))
+
+    assert replacement is not None
 
 
 def test_proof_registry_rejects_invalid_config_and_unsafe_snapshot(monkeypatch):
@@ -216,6 +284,10 @@ def test_proof_registry_rejects_invalid_config_and_unsafe_snapshot(monkeypatch):
     unsafe = _proof_snapshot()
     unsafe["row"]["ifc_source_path"] = "C:/host/path/never-eligible.ifc"
     assert registry.issue(unsafe) is None
+
+    oversized_integer = _proof_snapshot(query_id="a4q_oversized_integer_0001")
+    oversized_integer["row"]["matched_properties"] = {"Huge": 10**10_000}
+    assert registry.issue(oversized_integer) is None
 
     monkeypatch.setenv("A4_PROOF_TTL_SECONDS", "NaN")
     assert _safe_ttl_seconds() is None
@@ -254,6 +326,7 @@ def test_session_bound_partial_confirmation_executes_only_the_minted_candidate(a
     assert first["status"] == "partial_fallback_confirmation_required"
     assert first["partial_confirmation_available"] is True
     assert first["partial_fallback_id"].startswith("a4pf_")
+    assert first["degraded_to_deterministic"] is False
     assert first["results"] == []
     assert first["stats"]["scanned"] == 0
     assert open_calls == []
@@ -262,13 +335,39 @@ def test_session_bound_partial_confirmation_executes_only_the_minted_candidate(a
     assert confirmed["status"] == "ok"
     assert confirmed["completion_scope"] == "partial_table_only"
     assert confirmed["partial_execution_confirmed"] is True
-    assert confirmed["degraded_to_deterministic"] is True
+    assert confirmed["degraded_to_deterministic"] is False
     assert confirmed["interpreted_filters"]["raw_query"] == "IfcDoor within 3m of exit"
     assert confirmed["retry_of_query_id"] == first["query_id"]
     assert confirmed["proof_eligible"] is False
     assert confirmed["issue_eligible"] is False
     assert confirmed["highlight_eligible"] is False
     assert open_calls == [str(a4_ifc)]
+
+
+def test_auto_llm_failure_preserves_true_degradation_flag_after_confirmation(a4_ifc, monkeypatch):
+    import search.engine as engine_mod
+
+    def fail_completion(**_kwargs):
+        raise engine_mod.LlmError("llm_unavailable", "test fallback")
+
+    monkeypatch.setattr(engine_mod, "chat_completion", fail_completion)
+    context = _trusted_partial_context()
+    first = run_model_search(
+        SearchRequest(
+            ifc_source_path=str(a4_ifc),
+            query="IfcDoor within 3m of exit",
+            interpret_mode="auto",
+            model_version_id="a4_fixture_v1",
+            trusted_a4_context=context,
+        )
+    )
+
+    assert first["status"] == "partial_fallback_confirmation_required"
+    assert first["degraded_to_deterministic"] is True
+    confirmed = confirm_partial_fallback(first["partial_fallback_id"], context)
+    assert confirmed["status"] == "ok"
+    assert confirmed["degraded_to_deterministic"] is True
+    assert confirmed["proof_eligible"] is False
 
 
 def test_partial_confirmation_rejects_mismatched_or_replayed_binding_without_scan(a4_ifc, monkeypatch):
@@ -414,6 +513,7 @@ def test_complete_trusted_row_mints_a_path_free_proof(a4_ifc, tmp_path, monkeypa
     assert body["highlight_eligible"] is True
     assert row["evidence_proof"].startswith("a4p.")
     verified = registry.verify(row["evidence_proof"])
+    assert row["a4_evidence_snapshot"] == verified.snapshot
     assert verified.snapshot["row"]["ifc_guid"] == row["ifc_guid"]
     assert verified.snapshot["row"]["accepted_usd_prim"] == "/World/Doors/Low"
     assert verified.snapshot["row"]["usd_prim_path"] == "/World/Doors/Low"
@@ -437,6 +537,309 @@ def test_complete_trusted_row_mints_a_path_free_proof(a4_ifc, tmp_path, monkeypa
     assert handoff.rows[0].prim_path == "/World/Doors/Low"
     assert str(a4_ifc) not in str(verified.snapshot)
     assert str(mapping) not in str(verified.snapshot)
+
+
+def test_proof_response_budget_stays_below_coordinator_limit(a4_ifc, monkeypatch):
+    import search.engine as engine_mod
+
+    class Candidate:
+        def __init__(self, identifier: int):
+            self._identifier = identifier
+            self.GlobalId = f"A4Budget{identifier:08d}"
+            self.Name = f"Door {identifier}"
+
+        def id(self):
+            return self._identifier
+
+        def is_a(self):
+            return "IfcDoor"
+
+    class Model:
+        def by_type(self, ifc_class):
+            return [Candidate(index) for index in range(1_000)] if ifc_class == "IfcDoor" else []
+
+    monkeypatch.setenv("A4_PROOF_ACTIVE_KID", "a4_test_kid")
+    monkeypatch.setenv("A4_PROOF_ACTIVE_KEY", "test-proof-signing-key-material-32bytes")
+    monkeypatch.setattr(engine_mod, "proof_registry", ProofRegistry())
+    monkeypatch.setattr(engine_mod, "open_model", lambda _path: Model())
+    monkeypatch.setattr(engine_mod, "_storey_name", lambda _element: None)
+    monkeypatch.setattr(engine_mod, "_psets_flat", lambda _element: {})
+    request = SearchRequest(
+        ifc_source_path=str(a4_ifc),
+        query="Q" * 4_000,
+        interpret_mode="deterministic",
+        model_version_id="a4_fixture_v1",
+        limit=1_000,
+        trusted_a4_context=_trusted_partial_context(),
+    )
+    filters = interpret_query("IfcDoor")
+    evidence_refs: list[dict] = []
+    base = engine_mod._base_response(request, filters, evidence_refs)
+
+    body = engine_mod._execute_search(
+        request,
+        filters,
+        evidence_refs,
+        base,
+        partial_execution=False,
+        degraded_to_deterministic=False,
+    )
+
+    assert len(body["results"]) == 1_000
+    assert 0 < body["stats"]["proof_eligible_returned"] <= engine_mod.MAX_A4_PROOF_ROWS_PER_RESPONSE
+    assert body["stats"]["proof_limited"] is True
+    assert len(json.dumps(body, ensure_ascii=False).encode("utf-8")) < 2 * 1024 * 1024
+
+
+def test_proof_attempt_budget_bounds_saturated_registry_work(a4_ifc, monkeypatch):
+    import search.engine as engine_mod
+
+    class Candidate:
+        def __init__(self, identifier: int):
+            self._identifier = identifier
+            self.GlobalId = f"A4Attempt{identifier:08d}"
+            self.Name = f"Door {identifier}"
+
+        def id(self):
+            return self._identifier
+
+        def is_a(self):
+            return "IfcDoor"
+
+    class Model:
+        def by_type(self, ifc_class):
+            return [Candidate(index) for index in range(1_000)] if ifc_class == "IfcDoor" else []
+
+    class SaturatedRegistry:
+        def __init__(self):
+            self.attempts = 0
+
+        def issue(self, _snapshot):
+            self.attempts += 1
+            return None
+
+    registry = SaturatedRegistry()
+    monkeypatch.setattr(engine_mod, "proof_registry", registry)
+    monkeypatch.setattr(engine_mod, "open_model", lambda _path: Model())
+    monkeypatch.setattr(engine_mod, "_storey_name", lambda _element: None)
+    monkeypatch.setattr(engine_mod, "_psets_flat", lambda _element: {})
+    request = SearchRequest(
+        ifc_source_path=str(a4_ifc),
+        query="IfcDoor",
+        interpret_mode="deterministic",
+        model_version_id="a4_fixture_v1",
+        limit=1_000,
+        trusted_a4_context=_trusted_partial_context(),
+    )
+    filters = interpret_query("IfcDoor")
+    evidence_refs: list[dict] = []
+
+    body = engine_mod._execute_search(
+        request,
+        filters,
+        evidence_refs,
+        engine_mod._base_response(request, filters, evidence_refs),
+        partial_execution=False,
+        degraded_to_deterministic=False,
+    )
+
+    assert registry.attempts == engine_mod.MAX_A4_PROOF_ATTEMPTS_PER_RESPONSE
+    assert body["stats"]["proof_eligible_returned"] == 0
+    assert body["stats"]["proof_limited"] is True
+
+
+def test_oversized_ifc_values_are_projected_before_response_serialization(
+    a4_ifc,
+    monkeypatch,
+):
+    import search.engine as engine_mod
+
+    oversized = "9" * 2_000_000
+
+    class Candidate:
+        def __init__(self, identifier: int):
+            self._identifier = identifier
+            self.GlobalId = f"A4Bounded{identifier:08d}"
+            self.Name = oversized
+
+        def id(self):
+            return self._identifier
+
+        def is_a(self):
+            return "IfcDoor"
+
+    class Model:
+        def by_type(self, ifc_class):
+            return [Candidate(index) for index in range(1_000)] if ifc_class == "IfcDoor" else []
+
+    monkeypatch.setattr(engine_mod, "open_model", lambda _path: Model())
+    monkeypatch.setattr(engine_mod, "_storey_name", lambda _element: oversized)
+    monkeypatch.setattr(engine_mod, "_psets_flat", lambda _element: {"Unused": oversized})
+    request = SearchRequest(
+        ifc_source_path=str(a4_ifc),
+        query="IfcDoor",
+        interpret_mode="deterministic",
+        model_version_id="a4_fixture_v1",
+        limit=1_000,
+    )
+    filters = interpret_query("IfcDoor")
+    evidence_refs: list[dict] = []
+
+    body = engine_mod._execute_search(
+        request,
+        filters,
+        evidence_refs,
+        engine_mod._base_response(request, filters, evidence_refs),
+        partial_execution=False,
+        degraded_to_deterministic=False,
+    )
+
+    encoded = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+    assert len(body["results"]) == 1_000
+    assert all(row["name"] is None and row["name_omitted"] for row in body["results"])
+    assert all(row["storey"] is None and row["storey_omitted"] for row in body["results"])
+    assert oversized[:1_024] not in encoded
+    assert len(encoded.encode("utf-8")) < engine_mod.MAX_A4_SEARCH_RESPONSE_BYTES
+    assert engine_mod._numeric(10**10_000) is None
+    assert engine_mod._table_scalar(10**10_000) is None
+
+
+@pytest.mark.parametrize(
+    "filter_kwargs",
+    [
+        {"name_contains": ["Door"]},
+        {"storey_tokens": ["4F"]},
+    ],
+)
+def test_oversized_predicate_evidence_cannot_mint_proof(
+    a4_ifc,
+    monkeypatch,
+    filter_kwargs,
+):
+    import search.engine as engine_mod
+
+    oversized = "D" * 2_000_000
+
+    class Candidate:
+        GlobalId = "A4OversizedEvidence0001"
+        Name = oversized
+
+        def id(self):
+            return 1
+
+        def is_a(self):
+            return "IfcDoor"
+
+    class Model:
+        def by_type(self, ifc_class):
+            return [Candidate()] if ifc_class == "IfcDoor" else []
+
+    monkeypatch.setenv("A4_PROOF_ACTIVE_KID", "a4_test_kid")
+    monkeypatch.setenv("A4_PROOF_ACTIVE_KEY", "test-proof-signing-key-material-32bytes")
+    monkeypatch.setattr(engine_mod, "proof_registry", ProofRegistry())
+    monkeypatch.setattr(engine_mod, "open_model", lambda _path: Model())
+    monkeypatch.setattr(engine_mod, "_storey_name", lambda _element: oversized)
+    monkeypatch.setattr(engine_mod, "_psets_flat", lambda _element: {})
+    request = SearchRequest(
+        ifc_source_path=str(a4_ifc),
+        query="bounded predicate evidence",
+        interpret_mode="deterministic",
+        model_version_id="a4_fixture_v1",
+        trusted_a4_context=_trusted_partial_context(),
+    )
+    filters = InterpretedFilters(
+        raw_query=request.query,
+        ifc_classes=["IfcDoor"],
+        **filter_kwargs,
+    )
+    filters.refresh_validation()
+    evidence_refs: list[dict] = []
+
+    body = engine_mod._execute_search(
+        request,
+        filters,
+        evidence_refs,
+        engine_mod._base_response(request, filters, evidence_refs),
+        partial_execution=False,
+        degraded_to_deterministic=False,
+    )
+
+    assert body["stats"]["matched"] == 0
+    assert body["results"] == []
+    assert body["stats"]["proof_eligible_returned"] == 0
+    assert body["proof_eligible"] is False
+    assert body["issue_eligible"] is False
+
+
+def test_complete_response_budget_truncates_large_valid_rows_honestly(a4_ifc, monkeypatch):
+    import search.engine as engine_mod
+
+    property_filters = [
+        PropertyFilter(name=f"P{index:02d}_" + ("x" * 60), op="<", value=100.0)
+        for index in range(10)
+    ]
+    properties = {predicate.name: 0 for predicate in property_filters}
+
+    class Candidate:
+        def __init__(self, identifier: int):
+            self._identifier = identifier
+            self.GlobalId = f"A4Large{identifier:08d}"
+            self.Name = ("D" * 251) + f"{identifier:04d}"
+
+        def id(self):
+            return self._identifier
+
+        def is_a(self):
+            return "IfcDoor"
+
+    class Model:
+        def by_type(self, ifc_class):
+            return [Candidate(index) for index in range(1_000)] if ifc_class == "IfcDoor" else []
+
+    monkeypatch.setenv("A4_PROOF_ACTIVE_KID", "a4_test_kid")
+    monkeypatch.setenv("A4_PROOF_ACTIVE_KEY", "test-proof-signing-key-material-32bytes")
+    monkeypatch.setattr(engine_mod, "proof_registry", ProofRegistry())
+    monkeypatch.setattr(engine_mod, "open_model", lambda _path: Model())
+    monkeypatch.setattr(engine_mod, "_storey_name", lambda _element: None)
+    monkeypatch.setattr(engine_mod, "_psets_flat", lambda _element: properties)
+    request = SearchRequest(
+        ifc_source_path=str(a4_ifc),
+        query="Q" * 800,
+        interpret_mode="deterministic",
+        model_version_id="a4_fixture_v1",
+        limit=1_000,
+        trusted_a4_context=_trusted_partial_context(),
+    )
+    filters = InterpretedFilters(
+        raw_query=request.query,
+        ifc_classes=["IfcDoor"],
+        property_filters=property_filters,
+    )
+    filters.refresh_validation()
+    evidence_refs: list[dict] = []
+    base = engine_mod._base_response(request, filters, evidence_refs)
+
+    body = engine_mod._execute_search(
+        request,
+        filters,
+        evidence_refs,
+        base,
+        partial_execution=False,
+        degraded_to_deterministic=False,
+    )
+
+    assert body["stats"]["scanned"] == 1_000
+    assert body["stats"]["matched"] == 1_000
+    assert 0 < body["stats"]["returned"] < 1_000
+    assert body["stats"]["truncated"] is True
+    assert body["completion_scope"] == "truncated_table"
+    assert body["proof_eligible"] is False
+    assert body["next_step"] == "narrow_query_or_reduce_result_limit"
+    assert len(
+        json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ) <= (
+        engine_mod.MAX_A4_SEARCH_RESPONSE_BYTES - engine_mod.MAX_A4_SEARCH_RESPONSE_MARGIN_BYTES
+    )
 
 
 @pytest.mark.parametrize("invalid_ttl", ["NaN", "Infinity", "0", "-1", "901"])

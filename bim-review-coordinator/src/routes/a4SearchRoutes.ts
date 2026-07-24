@@ -66,7 +66,7 @@ type A4SearchControls = {
   retry_of_query_id?: string;
 };
 
-type GovernanceTimeoutBudget = "deterministic" | "model";
+export type GovernanceTimeoutBudget = "deterministic" | "model";
 
 type Sanitized<T> =
   | { ok: true; value: T }
@@ -307,7 +307,9 @@ function internalToken(deps: A4SearchRouteDeps): string | null {
   // A short shared value is both weak authority and unsafe to use as a
   // substring-based response leak sentinel (for example, token "a" would
   // match almost every JSON response). Fail closed on either condition.
-  return token.length >= 16 && token.length <= 4_096 ? token : null;
+  return token.length >= 16 && token.length <= 4_096 && /^[\x21-\x7E]+$/.test(token)
+    ? token
+    : null;
 }
 
 function governanceTimeout(deps: A4SearchRouteDeps, budget: GovernanceTimeoutBudget): number {
@@ -365,6 +367,7 @@ async function readBoundedJson(upstream: globalThis.Response): Promise<unknown> 
 function responseContainsForbiddenData(
   value: unknown,
   forbiddenStrings: string[],
+  allowedEchoStrings = new Set<string>(),
   seen = new Set<unknown>(),
   parentKey = "",
 ): boolean {
@@ -372,6 +375,10 @@ function responseContainsForbiddenData(
     if (forbiddenStrings.some((candidate) => candidate.length > 0 && value.includes(candidate))) {
       return true;
     }
+    // A session-authorized mutation may safely echo an exact browser draft
+    // string.  Treat only exact values as provenance-aware echoes; any extra
+    // upstream text still goes through the path/credential leak checks.
+    if (allowedEchoStrings.has(value)) return false;
     const normalizedKey = parentKey.toLowerCase();
     if (USD_PRIM_PATH_KEYS.has(normalizedKey) && /^\/(?:[A-Za-z_][A-Za-z0-9_]*)+(?:\/[A-Za-z_][A-Za-z0-9_]*)*$/.test(value)) {
       return false;
@@ -383,12 +390,17 @@ function responseContainsForbiddenData(
   if (!value || typeof value !== "object" || seen.has(value)) return false;
   seen.add(value);
   if (Array.isArray(value)) {
-    return value.some((item) => responseContainsForbiddenData(item, forbiddenStrings, seen));
+    return value.some((item) => responseContainsForbiddenData(
+      item,
+      forbiddenStrings,
+      allowedEchoStrings,
+      seen,
+    ));
   }
   return Object.entries(value as Record<string, unknown>).some(([key, nested]) =>
     FORBIDDEN_UPSTREAM_RESPONSE_KEYS.has(key.toLowerCase())
     || FORBIDDEN_CREDENTIAL_KEY_PATTERN.test(key)
-    || responseContainsForbiddenData(nested, forbiddenStrings, seen, key),
+    || responseContainsForbiddenData(nested, forbiddenStrings, allowedEchoStrings, seen, key),
   );
 }
 
@@ -399,13 +411,14 @@ function sendGovernanceUnavailable(response: Response): void {
   });
 }
 
-async function forwardTrustedA4(
+export async function forwardTrustedA4(
   response: Response,
   deps: A4SearchRouteDeps,
   upstreamPath: string,
   timeoutBudget: GovernanceTimeoutBudget,
   body: Record<string, unknown>,
   serverPaths: string[],
+  allowedResponseEchoes: string[] = [],
 ): Promise<void> {
   const base = governanceBaseUrl(deps);
   const token = internalToken(deps);
@@ -429,7 +442,7 @@ async function forwardTrustedA4(
     });
     const payload = await readBoundedJson(upstream);
     const forbiddenStrings = [...serverPaths, token, base.toString()];
-    if (responseContainsForbiddenData(payload, forbiddenStrings)) {
+    if (responseContainsForbiddenData(payload, forbiddenStrings, new Set(allowedResponseEchoes))) {
       sendGovernanceUnavailable(response);
       return;
     }

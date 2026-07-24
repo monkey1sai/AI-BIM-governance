@@ -202,8 +202,12 @@ def test_internal_handoff_api_fails_closed_without_proof_authority(monkeypatch):
     assert response.json() == {"detail": {"code": "a4_handoff_authority_unavailable"}}
 
 
-def test_internal_handoff_api_rejects_non_ascii_token_config_without_500(monkeypatch):
-    monkeypatch.setenv("A4_INTERNAL_CONTEXT_TOKEN", "test-token-非-ascii")
+@pytest.mark.parametrize("invalid_token", ["test-token-非-ascii", "short"])
+def test_internal_handoff_api_rejects_invalid_token_config_without_500(
+    monkeypatch,
+    invalid_token,
+):
+    monkeypatch.setenv("A4_INTERNAL_CONTEXT_TOKEN", invalid_token)
 
     response = TestClient(app_module.app).post(
         "/api/internal/a4/handoffs/verify",
@@ -211,8 +215,8 @@ def test_internal_handoff_api_rejects_non_ascii_token_config_without_500(monkeyp
         json={"action": "focus", "evidence_proofs": [VALID_SHAPED_UNKNOWN_PROOF], "binding": _binding()},
     )
 
-    assert response.status_code == 401
-    assert response.json() == {"detail": {"code": "a4_internal_context_unauthorized"}}
+    assert response.status_code == 503
+    assert response.json() == {"detail": {"code": "a4_internal_context_unavailable"}}
 
 
 def test_internal_handoff_api_uses_the_search_proof_registry_by_default(monkeypatch):

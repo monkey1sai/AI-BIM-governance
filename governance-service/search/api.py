@@ -1,8 +1,6 @@
 """A4 search REST — hung under governance-service; browser reaches via coordinator proxy."""
 from __future__ import annotations
 
-import os
-import secrets
 from typing import Annotated, Any, Literal, Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -11,6 +9,7 @@ from pydantic import BaseModel, Field, StringConstraints
 
 from .engine import PartialFallbackUnavailable, SearchRequest, confirm_partial_fallback, run_model_search
 from .handoff import ProofAuthority, ProofRejected, verify_handoff_evidence
+from .internal_auth import internal_context_token, internal_token_matches
 from .llm_client import load_llm_config
 from .proofs import ProofExpired, ProofUnavailable, proof_registry
 
@@ -113,21 +112,6 @@ class _ProofRegistryHandoffAuthority:
 _handoff_proof_authority: Optional[ProofAuthority] = _ProofRegistryHandoffAuthority()
 
 
-def _internal_context_token() -> Optional[str]:
-    token = os.getenv("A4_INTERNAL_CONTEXT_TOKEN", "").strip()
-    return token or None
-
-
-def _internal_token_matches(candidate: str, configured: str) -> bool:
-    """Compare the opaque internal token and fail closed on non-ASCII input."""
-    try:
-        candidate_bytes = candidate.encode("ascii")
-        configured_bytes = configured.encode("ascii")
-    except UnicodeEncodeError:
-        return False
-    return secrets.compare_digest(candidate_bytes, configured_bytes)
-
-
 def _require_matching_session_model_version(body: InternalModelSearchBody) -> None:
     """A session proof may never bind a different model than the scanned model."""
     context = body.a4_trusted_context
@@ -207,10 +191,10 @@ def search_model_with_trusted_context(
     internal_token: Optional[str] = Header(default=None, alias="X-A4-Internal-Token"),
 ) -> dict[str, Any]:
     """Accept coordinator provenance only over the configured internal channel."""
-    configured_token = _internal_context_token()
+    configured_token = internal_context_token()
     if configured_token is None:
         raise HTTPException(status_code=503, detail={"code": "a4_internal_context_unavailable"})
-    if not internal_token or not _internal_token_matches(internal_token, configured_token):
+    if not internal_token or not internal_token_matches(internal_token, configured_token):
         raise HTTPException(status_code=401, detail={"code": "a4_internal_context_unauthorized"})
     _require_matching_session_model_version(body)
     return _run_search(body, body.a4_trusted_context.model_dump(exclude_none=True))
@@ -222,10 +206,10 @@ def confirm_model_search_partial(
     internal_token: Optional[str] = Header(default=None, alias="X-A4-Internal-Token"),
 ) -> dict[str, Any]:
     """Run only the exact short-lived session-bound candidate after confirmation."""
-    configured_token = _internal_context_token()
+    configured_token = internal_context_token()
     if configured_token is None:
         raise HTTPException(status_code=503, detail={"code": "a4_internal_context_unavailable"})
-    if not internal_token or not _internal_token_matches(internal_token, configured_token):
+    if not internal_token or not internal_token_matches(internal_token, configured_token):
         raise HTTPException(status_code=401, detail={"code": "a4_internal_context_unauthorized"})
     try:
         return confirm_partial_fallback(
@@ -244,10 +228,10 @@ def verify_a4_handoff(
     internal_token: Optional[str] = Header(default=None, alias="X-A4-Internal-Token"),
 ):
     """Verify an atomic proof set; never persist intent or return proof/query data."""
-    configured_token = _internal_context_token()
+    configured_token = internal_context_token()
     if configured_token is None:
         raise HTTPException(status_code=503, detail={"code": "a4_internal_context_unavailable"})
-    if not internal_token or not _internal_token_matches(internal_token, configured_token):
+    if not internal_token or not internal_token_matches(internal_token, configured_token):
         raise HTTPException(status_code=401, detail={"code": "a4_internal_context_unauthorized"})
     authority = _handoff_proof_authority
     if authority is None:

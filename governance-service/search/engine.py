@@ -32,6 +32,19 @@ MAX_A4_SEARCH_CANDIDATES = 50_000
 MAX_A4_SEARCH_WALL_TIME_SECONDS = 10.0
 PARTIAL_FALLBACK_TTL_SECONDS = 300.0
 PARTIAL_FALLBACK_MAX_ENTRIES = 256
+MAX_A4_PROOF_ROWS_PER_RESPONSE = 128
+MAX_A4_PROOF_ATTEMPTS_PER_RESPONSE = 128
+MAX_A4_PROOF_RESPONSE_BYTES = 512 * 1024
+# Keep governance safely below the coordinator's 2 MiB hard response cap. The
+# margin covers serializer/envelope differences and small future additive fields.
+MAX_A4_SEARCH_RESPONSE_BYTES = 1_792 * 1024
+MAX_A4_SEARCH_RESPONSE_MARGIN_BYTES = 16 * 1024
+MAX_A4_FILTER_ITEMS_PER_FIELD = 64
+MAX_A4_TABLE_TEXT = 1_024
+MAX_A4_NUMERIC_TEXT = 256
+MAX_SAFE_JSON_INTEGER = (1 << 53) - 1
+MAX_A4_INTEGER_BITS = 851
+_USD_PRIM_RE = re.compile(r"^/(?:[A-Za-z_][A-Za-z0-9_]*)+(?:/[A-Za-z_][A-Za-z0-9_]*)*$")
 
 
 @dataclass
@@ -56,6 +69,7 @@ class _FilterResolution:
     semantic_error_code: Optional[str] = None
     semantic_retryable: bool = False
     partial_candidate: bool = False
+    degraded_to_deterministic: bool = False
 
 
 class PartialFallbackUnavailable(ValueError):
@@ -71,6 +85,7 @@ class _PartialFallbackRecord:
     query_digest: str
     binding: dict[str, str]
     binding_digest: str
+    degraded_to_deterministic: bool
     expires_at: float
 
 
@@ -100,6 +115,7 @@ class _PartialFallbackStore:
         evidence_refs: list[dict[str, Any]],
         query_id: str,
         binding: dict[str, str],
+        degraded_to_deterministic: bool,
     ) -> tuple[str, str]:
         now = time.time()
         expires_at = now + self.ttl_seconds
@@ -114,6 +130,7 @@ class _PartialFallbackStore:
             binding_digest=hashlib.sha256(
                 json.dumps(binding, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
             ).hexdigest(),
+            degraded_to_deterministic=degraded_to_deterministic,
             expires_at=expires_at,
         )
         with self._lock:
@@ -204,9 +221,15 @@ def _numeric(value: Any) -> Optional[float]:
     if value is None or isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        numeric = float(value)
+        try:
+            numeric = float(value)
+        except (OverflowError, ValueError):
+            return None
         return numeric if math.isfinite(numeric) else None
-    match = re.search(r"-?\d+(?:\.\d+)?", str(value).strip())
+    if not isinstance(value, str) or len(value) > MAX_A4_NUMERIC_TEXT:
+        return None
+    text = value.strip()
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
     if not match:
         return None
     try:
@@ -214,6 +237,46 @@ def _numeric(value: Any) -> Optional[float]:
     except ValueError:
         return None
     return numeric if math.isfinite(numeric) else None
+
+
+def _table_scalar(value: Any) -> Any:
+    """Project one bounded, JSON-wire-stable value into a table row."""
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        if abs(value) <= MAX_SAFE_JSON_INTEGER:
+            return value
+        if value.bit_length() > MAX_A4_INTEGER_BITS:
+            return None
+        text = str(value)
+        return text if len(text.lstrip("-")) <= MAX_A4_NUMERIC_TEXT else None
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, str):
+        return value if len(value) <= MAX_A4_TABLE_TEXT else None
+    return None
+
+
+def _trace_scalar(value: Any) -> str:
+    safe = _table_scalar(value)
+    if safe is None and value is not None:
+        return "<omitted:oversized-or-unsupported>"
+    text = str(safe)
+    return text if len(text) <= 160 else "<omitted:oversized-or-unsupported>"
+
+
+def _safe_row_guid(value: Any) -> Optional[str]:
+    return value if isinstance(value, str) and 0 < len(value) <= 64 else None
+
+
+def _safe_prim_path(value: Any) -> Optional[str]:
+    return (
+        value
+        if isinstance(value, str)
+        and len(value) <= 2_048
+        and _USD_PRIM_RE.fullmatch(value)
+        else None
+    )
 
 
 def _prop_match(properties: dict[str, Any], predicate: PropertyFilter) -> tuple[bool, Any, str]:
@@ -230,7 +293,7 @@ def _prop_match(properties: dict[str, Any], predicate: PropertyFilter) -> tuple[
         ">=": numeric >= predicate.value,
         "==": numeric == predicate.value,
     }.get(predicate.op, False)
-    return matches, actual, f"{predicate.name}{predicate.op}{predicate.value} actual={actual}"
+    return matches, actual, f"{predicate.name}{predicate.op}{predicate.value} actual={_trace_scalar(actual)}"
 
 
 def _storey_match(storey: Optional[str], tokens: list[str]) -> bool:
@@ -347,7 +410,12 @@ def _resolve_filters(request: SearchRequest) -> _FilterResolution:
                     "fallback": "after_incomplete_llm",
                 }
             )
-            return _FilterResolution(filters=deterministic, evidence=evidence, partial_candidate=True)
+            return _FilterResolution(
+                filters=deterministic,
+                evidence=evidence,
+                partial_candidate=True,
+                degraded_to_deterministic=True,
+            )
         return _FilterResolution(
             filters=semantic,
             evidence=evidence,
@@ -364,7 +432,12 @@ def _resolve_filters(request: SearchRequest) -> _FilterResolution:
                     "fallback": "after_llm_error",
                 }
             )
-            return _FilterResolution(filters=deterministic, evidence=evidence, partial_candidate=True)
+            return _FilterResolution(
+                filters=deterministic,
+                evidence=evidence,
+                partial_candidate=True,
+                degraded_to_deterministic=True,
+            )
         return _FilterResolution(
             filters=_semantic_failure_filters(request.query, exc.code),
             evidence=evidence,
@@ -477,11 +550,20 @@ def _issue_row_proof(
     filters: InterpretedFilters,
     base_response: dict[str, Any],
     row: dict[str, Any],
-) -> Optional[dict[str, str]]:
+    *,
+    degraded_to_deterministic: bool,
+) -> Optional[dict[str, Any]]:
     """Mint a small immutable proof only for a complete trusted result row."""
     binding = _proof_binding(request)
     guid = row.get("ifc_guid")
-    if binding is None or not isinstance(guid, str) or not guid:
+    if (
+        binding is None
+        or not isinstance(guid, str)
+        or not guid
+        or row.get("property_values_omitted")
+        or (filters.name_contains and row.get("name_omitted"))
+        or (filters.storey_tokens and row.get("storey_omitted"))
+    ):
         return None
     accepted_prim = row.get("usd_prim_path")
     if not isinstance(accepted_prim, str):
@@ -528,7 +610,7 @@ def _issue_row_proof(
             "partial_execution": False,
             "scan_complete": True,
             "truncated": False,
-            "degraded_to_deterministic": False,
+            "degraded_to_deterministic": degraded_to_deterministic,
             "unresolved_terms": list(filters.unresolved_terms[:64]),
         },
         "row": {
@@ -627,6 +709,55 @@ def _is_deadline_exceeded(started_at: float) -> bool:
     return time.monotonic() - started_at > MAX_A4_SEARCH_WALL_TIME_SECONDS
 
 
+def _success_response(
+    *,
+    base_response: dict[str, Any],
+    results: list[dict[str, Any]],
+    candidate_count: int,
+    scanned: int,
+    matched: int,
+    partial_execution: bool,
+    degraded_to_deterministic: bool,
+    proof_count: int,
+    proof_limited: bool,
+) -> dict[str, Any]:
+    truncated = matched > len(results)
+    mapped = sum(1 for row in results if row.get("mapping_observed") is True)
+    unmapped = len(results) - mapped
+    return {
+        **base_response,
+        "status": "ok",
+        "results": results,
+        "stats": {
+            "total": candidate_count,
+            "scanned": scanned,
+            "matched": matched,
+            "not_matched": scanned - matched,
+            "returned": len(results),
+            "mapped": mapped,
+            "unmapped": unmapped,
+            "truncated": truncated,
+            "total_is_lower_bound": False,
+            "scan_complete": True,
+            "proof_eligible_returned": proof_count,
+            "proof_limited": proof_limited,
+        },
+        "completion_scope": "partial_table_only" if partial_execution else ("complete_table" if not truncated else "truncated_table"),
+        "partial_execution_confirmed": partial_execution,
+        "partial_confirmation_available": False,
+        "partial_fallback_id": None,
+        "degraded_to_deterministic": degraded_to_deterministic,
+        "proof_eligible": proof_count > 0,
+        "issue_eligible": proof_count > 0,
+        "highlight_eligible": any(row.get("highlight_eligible") is True for row in results),
+        "next_step": (
+            "narrow_query_or_reduce_result_limit"
+            if truncated
+            else (None if results else "broaden_filters_or_check_model_content")
+        ),
+    }
+
+
 def _execute_search(
     request: SearchRequest,
     filters: InterpretedFilters,
@@ -634,7 +765,18 @@ def _execute_search(
     base_response: dict[str, Any],
     *,
     partial_execution: bool,
+    degraded_to_deterministic: bool,
 ) -> dict[str, Any]:
+    if any(
+        len(items) > MAX_A4_FILTER_ITEMS_PER_FIELD
+        for items in (
+            filters.ifc_classes,
+            filters.storey_tokens,
+            filters.property_filters,
+            filters.name_contains,
+        )
+    ):
+        return _resource_limit_response(base_response, "filter_budget_exhausted")
     try:
         if os.path.getsize(request.ifc_source_path) > MAX_A4_IFC_BYTES:
             return _resource_limit_response(base_response, "ifc_source_too_large")
@@ -705,8 +847,6 @@ def _execute_search(
     limit = max(1, min(int(request.limit or 200), 1000))
     results: list[dict[str, Any]] = []
     matched = 0
-    mapped = 0
-    unmapped = 0
     scanned = 0
     for element in candidates:
         if _is_deadline_exceeded(started_at):
@@ -723,6 +863,8 @@ def _execute_search(
         ifc_class = element.is_a()
         storey = _storey_name(element)
         properties = _psets_flat(element)
+        safe_name = _table_scalar(name)
+        safe_storey = _table_scalar(storey)
         traces: list[str] = []
         matches = True
 
@@ -730,13 +872,16 @@ def _execute_search(
             matches = False
             traces.append(f"class_mismatch:{ifc_class}")
         if matches and filters.storey_tokens:
-            if _storey_match(storey, filters.storey_tokens):
-                traces.append(f"storey_match:{storey}")
+            if isinstance(safe_storey, str) and _storey_match(
+                safe_storey,
+                filters.storey_tokens,
+            ):
+                traces.append(f"storey_match:{_trace_scalar(safe_storey)}")
             else:
                 matches = False
-                traces.append(f"storey_mismatch:{storey}")
+                traces.append(f"storey_mismatch:{_trace_scalar(safe_storey)}")
         if matches and filters.name_contains:
-            normalized_name = (name or "").lower()
+            normalized_name = safe_name.lower() if isinstance(safe_name, str) else ""
             for fragment in filters.name_contains:
                 if fragment.lower() in normalized_name:
                     traces.append(f"name_contains:{fragment}")
@@ -755,23 +900,29 @@ def _execute_search(
             continue
 
         matched += 1
-        prim_path = mapping.get(guid) if guid else None
+        safe_guid = _safe_row_guid(guid)
+        prim_path = _safe_prim_path(mapping.get(guid)) if guid else None
         if len(results) < limit:
-            if prim_path:
-                mapped += 1
-            else:
-                unmapped += 1
+            row_properties: dict[str, Any] = {}
+            omitted_properties: list[str] = []
+            for predicate in filters.property_filters:
+                actual = properties.get(predicate.name)
+                projected = _table_scalar(actual)
+                row_properties[predicate.name] = projected
+                if actual is not None and projected is None:
+                    omitted_properties.append(predicate.name)
             results.append(
                 {
-                    "ifc_guid": guid,
+                    "ifc_guid": safe_guid,
                     "usd_prim_path": prim_path,
                     "mapping_observed": bool(prim_path),
                     "ifc_class": ifc_class,
-                    "name": name,
-                    "storey": storey,
-                    "properties": {predicate.name: properties.get(predicate.name) for predicate in filters.property_filters}
-                    if filters.property_filters
-                    else {},
+                    "name": safe_name,
+                    "name_omitted": name is not None and safe_name is None,
+                    "storey": safe_storey,
+                    "storey_omitted": storey is not None and safe_storey is None,
+                    "properties": row_properties,
+                    "property_values_omitted": omitted_properties,
                     # This is a query-predicate result, never a compliance
                     # verdict.  Keep the wire value explicit for every UI.
                     "match_status": "matched_query",
@@ -785,46 +936,112 @@ def _execute_search(
                 }
             )
 
+    # Bound the complete response, not just proof attachments. IFC names,
+    # property evidence, and predicate traces are all variable-size legitimate
+    # data. Reduce returned rows honestly while preserving full scan counts.
+    response_wire_limit = MAX_A4_SEARCH_RESPONSE_BYTES - MAX_A4_SEARCH_RESPONSE_MARGIN_BYTES
+
+    def unproved_response_for(candidate_results: list[dict[str, Any]]) -> dict[str, Any]:
+        return _success_response(
+            base_response=base_response,
+            results=candidate_results,
+            candidate_count=len(candidates),
+            scanned=scanned,
+            matched=matched,
+            partial_execution=partial_execution,
+            degraded_to_deterministic=degraded_to_deterministic,
+            proof_count=0,
+            proof_limited=True,
+        )
+
+    unproved_response = unproved_response_for(results)
+    if len(canonical_json(unproved_response)) > response_wire_limit:
+        low = 0
+        high = len(results)
+        while low < high:
+            midpoint = (low + high + 1) // 2
+            candidate_response = unproved_response_for(results[:midpoint])
+            if len(canonical_json(candidate_response)) <= response_wire_limit:
+                low = midpoint
+            else:
+                high = midpoint - 1
+        del results[low:]
+        unproved_response = unproved_response_for(results)
+        if len(canonical_json(unproved_response)) > response_wire_limit:
+            return _resource_limit_response(
+                base_response,
+                "response_budget_exhausted",
+                candidate_count_lower_bound=len(candidates),
+                scanned=scanned,
+                matched=matched,
+            )
+
     truncated = matched > len(results)
     proof_count = 0
+    proof_attempts = 0
+    proof_response_bytes = 0
+    proof_limited = False
+    unproved_response_bytes = len(canonical_json(unproved_response))
+    proof_wire_limit = max(
+        0,
+        min(
+            MAX_A4_PROOF_RESPONSE_BYTES,
+            response_wire_limit - unproved_response_bytes,
+        ),
+    )
     if not partial_execution and not truncated:
         for row in results:
-            proof = _issue_row_proof(request, filters, base_response, row)
+            if (
+                proof_count >= MAX_A4_PROOF_ROWS_PER_RESPONSE
+                or proof_attempts >= MAX_A4_PROOF_ATTEMPTS_PER_RESPONSE
+            ):
+                proof_limited = True
+                break
+            proof_attempts += 1
+            proof = _issue_row_proof(
+                request,
+                filters,
+                base_response,
+                row,
+                degraded_to_deterministic=degraded_to_deterministic,
+            )
             if proof is None:
                 continue
+            attachment_bytes = len(
+                canonical_json(
+                    {
+                        "evidence_proof": proof["evidence_proof"],
+                        "a4_evidence_snapshot": proof["a4_evidence_snapshot"],
+                        "proof_expires_at": proof["expires_at"],
+                    }
+                )
+            )
+            if proof_response_bytes + attachment_bytes > proof_wire_limit:
+                proof_registry.discard(proof["proof_id"])
+                proof_limited = True
+                break
             row["evidence_proof"] = proof["evidence_proof"]
+            row["a4_evidence_snapshot"] = proof["a4_evidence_snapshot"]
             row["proof_expires_at"] = proof["expires_at"]
             row["proof_eligible"] = True
             row["issue_eligible"] = True
             row["action_eligible"] = bool(row.get("mapping_observed"))
             row["highlight_eligible"] = bool(row.get("mapping_observed"))
             proof_count += 1
-    return {
-        **base_response,
-        "status": "ok",
-        "results": results,
-        "stats": {
-            "total": len(candidates),
-            "scanned": scanned,
-            "matched": matched,
-            "not_matched": scanned - matched,
-            "returned": len(results),
-            "mapped": mapped,
-            "unmapped": unmapped,
-            "truncated": truncated,
-            "total_is_lower_bound": False,
-            "scan_complete": True,
-        },
-        "completion_scope": "partial_table_only" if partial_execution else ("complete_table" if not truncated else "truncated_table"),
-        "partial_execution_confirmed": partial_execution,
-        "partial_confirmation_available": False,
-        "partial_fallback_id": None,
-        "degraded_to_deterministic": partial_execution,
-        "proof_eligible": proof_count > 0,
-        "issue_eligible": proof_count > 0,
-        "highlight_eligible": any(row.get("highlight_eligible") is True for row in results),
-        "next_step": None if results else "broaden_filters_or_check_model_content",
-    }
+            proof_response_bytes += attachment_bytes
+        if _proof_binding(request) is not None and proof_count < len(results):
+            proof_limited = True
+    return _success_response(
+        base_response=base_response,
+        results=results,
+        candidate_count=len(candidates),
+        scanned=scanned,
+        matched=matched,
+        partial_execution=partial_execution,
+        degraded_to_deterministic=degraded_to_deterministic,
+        proof_count=proof_count,
+        proof_limited=proof_limited,
+    )
 
 
 def run_model_search(request: SearchRequest) -> dict[str, Any]:
@@ -867,6 +1084,7 @@ def run_model_search(request: SearchRequest) -> dict[str, Any]:
                     evidence_refs=evidence_refs,
                     query_id=query_id,
                     binding=binding,
+                    degraded_to_deterministic=resolution.degraded_to_deterministic,
                 )
             except PartialFallbackUnavailable:
                 return {
@@ -877,7 +1095,7 @@ def run_model_search(request: SearchRequest) -> dict[str, Any]:
                     "partial_execution_confirmed": False,
                     "partial_confirmation_available": False,
                     "partial_fallback_id": None,
-                    "degraded_to_deterministic": True,
+                    "degraded_to_deterministic": resolution.degraded_to_deterministic,
                     "next_step": "retry_authenticated_query_later",
                 }
             return {
@@ -888,7 +1106,7 @@ def run_model_search(request: SearchRequest) -> dict[str, Any]:
                 "partial_confirmation_available": True,
                 "partial_fallback_id": partial_fallback_id,
                 "partial_fallback_expires_at": expires_at,
-                "degraded_to_deterministic": True,
+                "degraded_to_deterministic": resolution.degraded_to_deterministic,
                 "next_step": "confirm_exact_partial_filters",
             }
         # Exact, bound partial confirmation can only be minted by the coordinator
@@ -901,11 +1119,18 @@ def run_model_search(request: SearchRequest) -> dict[str, Any]:
             "partial_execution_confirmed": False,
             "partial_confirmation_available": False,
             "partial_fallback_id": None,
-            "degraded_to_deterministic": resolution.partial_candidate,
+            "degraded_to_deterministic": resolution.degraded_to_deterministic,
             "next_step": "run_through_authenticated_session_confirmation",
         }
 
-    return _execute_search(request, filters, evidence_refs, base_response, partial_execution=False)
+    return _execute_search(
+        request,
+        filters,
+        evidence_refs,
+        base_response,
+        partial_execution=False,
+        degraded_to_deterministic=resolution.degraded_to_deterministic,
+    )
 
 
 def confirm_partial_fallback(partial_fallback_id: str, trusted_a4_context: dict[str, Any]) -> dict[str, Any]:
@@ -925,4 +1150,11 @@ def confirm_partial_fallback(partial_fallback_id: str, trusted_a4_context: dict[
     evidence_refs = copy.deepcopy(record.evidence_refs)
     evidence_refs.append({"kind": "partial_confirmation", "mode": "exact_bound_candidate"})
     base_response = _base_response(request, record.filters, evidence_refs)
-    return _execute_search(request, record.filters, evidence_refs, base_response, partial_execution=True)
+    return _execute_search(
+        request,
+        record.filters,
+        evidence_refs,
+        base_response,
+        partial_execution=True,
+        degraded_to_deterministic=record.degraded_to_deterministic,
+    )

@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import hmac
 import json
 import os
 import sqlite3
@@ -36,7 +37,7 @@ CREATE TABLE IF NOT EXISTS issues(
   ifc_guid TEXT,
   usd_prim_path TEXT,
   model_version_id TEXT,
-  source_type TEXT,          -- 'manual' | 'rule_result' | 'diff_item'
+  source_type TEXT,          -- 'manual' | 'rule_result' | 'diff_item' | 'a4_search'
   source_ref TEXT,
   created_at TEXT,
   updated_at TEXT
@@ -52,6 +53,22 @@ CREATE TABLE IF NOT EXISTS issue_events(
 );
 CREATE INDEX IF NOT EXISTS idx_issue_events_issue ON issue_events(issue_id);
 CREATE INDEX IF NOT EXISTS idx_issues_mv ON issues(model_version_id);
+CREATE TABLE IF NOT EXISTS a4_issue_evidence(
+  issue_id TEXT PRIMARY KEY,
+  schema_version TEXT NOT NULL,
+  evidence_snapshot TEXT NOT NULL,
+  review_session_id TEXT NOT NULL,
+  principal_ref TEXT NOT NULL,
+  primary_artifact_id TEXT NOT NULL,
+  active_binding_revision TEXT NOT NULL,
+  proof_id TEXT NOT NULL UNIQUE,
+  snapshot_hash TEXT NOT NULL,
+  proof_digest TEXT NOT NULL,
+  creation_request_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(issue_id) REFERENCES issues(id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_a4_issue_evidence_proof ON a4_issue_evidence(proof_id);
 """
 
 
@@ -67,6 +84,14 @@ class TransitionError(ValueError):
     pass
 
 
+class A4IssueReplayConflict(ValueError):
+    """A consumed proof ID was replayed with different immutable bytes."""
+
+
+class A4IssueUnauthorized(PermissionError):
+    """Current trusted session/principal does not own the consumed proof."""
+
+
 class IssueStore:
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -80,6 +105,209 @@ class IssueStore:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
+
+    @staticmethod
+    def _attach_a4_evidence(issue: dict, evidence: sqlite3.Row | None) -> dict:
+        if evidence is None:
+            return issue
+        issue.update(
+            {
+                "primary_artifact_id": evidence["primary_artifact_id"],
+                "active_binding_revision": evidence["active_binding_revision"],
+                "a4_evidence_snapshot": json.loads(evidence["evidence_snapshot"]),
+                "a4_proof_id": evidence["proof_id"],
+                "snapshot_hash": evidence["snapshot_hash"],
+                "proof_digest": evidence["proof_digest"],
+                "creation_request_hash": evidence["creation_request_hash"],
+            }
+        )
+        return issue
+
+    def _a4_record_by_proof(self, conn: sqlite3.Connection, proof_id: str):
+        evidence = conn.execute(
+            "SELECT * FROM a4_issue_evidence WHERE proof_id=?",
+            (proof_id,),
+        ).fetchone()
+        if evidence is None:
+            return None
+        issue_row = conn.execute("SELECT * FROM issues WHERE id=?", (evidence["issue_id"],)).fetchone()
+        if issue_row is None:
+            # The two rows are inserted atomically. Treat corruption as a hard
+            # failure rather than fabricating an Issue or accepting a replay.
+            raise RuntimeError("A4 Issue evidence has no owning Issue")
+        return {
+            "issue": self._attach_a4_evidence(dict(issue_row), evidence),
+            "review_session_id": evidence["review_session_id"],
+            "principal_ref": evidence["principal_ref"],
+            "snapshot_hash": evidence["snapshot_hash"],
+            "proof_digest": evidence["proof_digest"],
+            "creation_request_hash": evidence["creation_request_hash"],
+        }
+
+    @staticmethod
+    def _validated_a4_replay(
+        record: dict,
+        *,
+        review_session_id: str,
+        principal_ref: str,
+        snapshot_hash: str,
+        proof_digest: str,
+        creation_request_hash: str,
+    ) -> dict:
+        # Authorization deliberately precedes digest comparisons so an
+        # authenticated but different session cannot use replay responses as a
+        # proof-existence oracle.
+        if (
+            record["review_session_id"] != review_session_id
+            or record["principal_ref"] != principal_ref
+        ):
+            raise A4IssueUnauthorized("A4 Issue replay is not authorized")
+
+        # Evaluate all three comparisons before combining their results. This
+        # avoids a data-dependent short circuit across immutable replay fields.
+        snapshot_matches = hmac.compare_digest(record["snapshot_hash"], snapshot_hash)
+        proof_matches = hmac.compare_digest(record["proof_digest"], proof_digest)
+        request_matches = hmac.compare_digest(
+            record["creation_request_hash"], creation_request_hash
+        )
+        if not (snapshot_matches and proof_matches and request_matches):
+            raise A4IssueReplayConflict("A4 Issue replay conflicts with the stored request")
+        return record["issue"]
+
+    def find_a4_issue_replay(
+        self,
+        *,
+        proof_id: str,
+        review_session_id: str,
+        principal_ref: str,
+        snapshot_hash: str,
+        proof_digest: str,
+        creation_request_hash: str,
+    ) -> dict | None:
+        """Return an exact consumed-proof replay without consulting live keys."""
+        with self._conn() as conn:
+            record = self._a4_record_by_proof(conn, proof_id)
+        if record is None:
+            return None
+        return self._validated_a4_replay(
+            record,
+            review_session_id=review_session_id,
+            principal_ref=principal_ref,
+            snapshot_hash=snapshot_hash,
+            proof_digest=proof_digest,
+            creation_request_hash=creation_request_hash,
+        )
+
+    def create_a4_issue(
+        self,
+        *,
+        title: str,
+        description: str | None,
+        severity: str,
+        assignee: str | None,
+        ifc_guid: str,
+        usd_prim_path: str | None,
+        model_version_id: str,
+        primary_artifact_id: str,
+        active_binding_revision: str,
+        query_id: str,
+        schema_version: str,
+        evidence_snapshot_json: str,
+        review_session_id: str,
+        principal_ref: str,
+        proof_id: str,
+        snapshot_hash: str,
+        proof_digest: str,
+        creation_request_hash: str,
+    ) -> tuple[dict, bool]:
+        """Atomically create one confirmed A4 Issue or return its exact replay."""
+        issue_id = _new_id("iss")
+        now = _now()
+        conn = self._conn()
+        conn.isolation_level = None
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("BEGIN IMMEDIATE")
+            existing = self._a4_record_by_proof(conn, proof_id)
+            if existing is not None:
+                issue = self._validated_a4_replay(
+                    existing,
+                    review_session_id=review_session_id,
+                    principal_ref=principal_ref,
+                    snapshot_hash=snapshot_hash,
+                    proof_digest=proof_digest,
+                    creation_request_hash=creation_request_hash,
+                )
+                conn.execute("COMMIT")
+                return issue, True
+
+            conn.execute(
+                "INSERT INTO issues(id, kind, title, description, status, severity, assignee, ifc_guid,"
+                " usd_prim_path, model_version_id, source_type, source_ref, created_at, updated_at)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    issue_id,
+                    "issue",
+                    title,
+                    description,
+                    "open",
+                    severity,
+                    assignee,
+                    ifc_guid,
+                    usd_prim_path,
+                    model_version_id,
+                    "a4_search",
+                    query_id,
+                    now,
+                    now,
+                ),
+            )
+            conn.execute(
+                "INSERT INTO a4_issue_evidence(issue_id, schema_version, evidence_snapshot,"
+                " review_session_id, principal_ref, primary_artifact_id, active_binding_revision,"
+                " proof_id, snapshot_hash, proof_digest, creation_request_hash, created_at)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    issue_id,
+                    schema_version,
+                    evidence_snapshot_json,
+                    review_session_id,
+                    principal_ref,
+                    primary_artifact_id,
+                    active_binding_revision,
+                    proof_id,
+                    snapshot_hash,
+                    proof_digest,
+                    creation_request_hash,
+                    now,
+                ),
+            )
+            conn.execute(
+                "INSERT INTO issue_events(id, issue_id, event_type, from_status, to_status, note, created_at)"
+                " VALUES(?,?,?,?,?,?,?)",
+                (
+                    _new_id("ev"),
+                    issue_id,
+                    "created",
+                    None,
+                    "open",
+                    f"source=a4_search;query_id={query_id}",
+                    now,
+                ),
+            )
+            conn.execute("COMMIT")
+        except Exception:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+        finally:
+            conn.close()
+        issue = self.get_a4_issue(issue_id)
+        if issue is None:
+            raise RuntimeError("A4 Issue transaction committed without a readable Issue")
+        return issue, False
 
     def create_issue(
         self,
@@ -168,16 +396,40 @@ class IssueStore:
     def get_issue(self, issue_id: str):
         with self._conn() as conn:
             row = conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
-            return dict(row) if row else None
+            return dict(row) if row is not None else None
+
+    def get_a4_issue(self, issue_id: str):
+        """Read A4 evidence only for the trusted internal creation boundary."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
+            if row is None:
+                return None
+            evidence = conn.execute(
+                "SELECT * FROM a4_issue_evidence WHERE issue_id=?",
+                (issue_id,),
+            ).fetchone()
+            return self._attach_a4_evidence(dict(row), evidence)
 
     def get_events(self, issue_id: str) -> list[dict]:
         with self._conn() as conn:
             return [dict(r) for r in conn.execute(
                 "SELECT * FROM issue_events WHERE issue_id=? ORDER BY created_at", (issue_id,)).fetchall()]
 
-    def list_issues(self, status=None, severity=None, model_version_id=None, kind=None) -> list[dict]:
+    def list_issues(
+        self,
+        status=None,
+        severity=None,
+        model_version_id=None,
+        kind=None,
+        *,
+        include_a4: bool = False,
+    ) -> list[dict]:
         query = "SELECT * FROM issues WHERE 1=1"
         args: list = []
+        if not include_a4:
+            # The generic issue surface is not session-authorized.  Keep A4
+            # records non-enumerable until a trusted lifecycle route exists.
+            query += " AND (source_type IS NULL OR source_type <> 'a4_search')"
         for col, val in (("status", status), ("severity", severity), ("model_version_id", model_version_id), ("kind", kind)):
             if val:
                 query += f" AND {col}=?"

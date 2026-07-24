@@ -71,6 +71,7 @@ import {
   type A4SearchPrincipalResolution,
   type A4SearchSessionResolution as A4SearchRouteSessionResolution,
 } from "./routes/a4SearchRoutes.js";
+import { registerA4IssueRoutes } from "./routes/a4IssueRoutes.js";
 import {
   registerA4HandoffRoutes,
   type A4SearchSessionResolution,
@@ -3818,6 +3819,12 @@ export function createCoordinatorApp(
     authenticatePrincipal: authenticateA4SearchPrincipal,
     resolveSessionContext: resolveA4SearchSessionContext,
     resolveIfcReadyContext: resolveA4SearchIfcReadyContext,
+  });
+
+  registerA4IssueRoutes(app, {
+    isSafeSessionId,
+    authenticatePrincipal: authenticateA4SearchPrincipal,
+    resolveSessionContext: resolveA4SearchSessionContext,
   });
 
   registerGovernanceProxy(app, {
