@@ -10,69 +10,55 @@ subject commit：`64cadb06c8eba6400aecb8f75125dd2f7df2e1b7`
 
 ## 結論
 
-測試部署區已重建到正確的 `origin/main` commit，但 canonical deploy 在 Phase 2 design-assets staging 失敗，exit code 為 `2`。因此本次不能宣稱 deployment、`verify-all`、A4 live flow、browser runtime 或 Kit/WebRTC 通過。
+PR #398 的 owner-service backend 行為已在 deployment checkout 內以真 HTTP、真 IFC parser、真 proof registry 與隔離 SQLite 完成驗證：搜尋 `200`、Issue 建立 `201`、同請求 replay `200`、Issue/evidence 各持久化一筆，且回應不洩漏 raw proof。
 
-原 closeout 中的兩組 residual risk 經本輪重分類如下：
+但不能宣稱 canonical production flow 或 full deployment complete：
+
+- `rebuild-test-deploy.ps1 -Build` 仍會在 Phase 2 因 Windows PowerShell child 繼承 PowerShell 7 `PSModulePath` 而無法解析 `Get-FileHash`，兩次皆 exit `2`。
+- 只清理 child process 的 `PSModulePath` 後，同一份 deployment checkout、同一條 inner `deploy.ps1 -Build` 可完整通過；這是 causal diagnostic，不是 canonical helper pass。
+- canonical env 的 A4 internal token 與 proof signing key皆未配置，coordinator 也只有 local-dev lab identity；mounted `8004` route 因此正確 fail closed，沒有 live `201`。
+- aggregate `verify-all` 與 coordinator full suite 會讀 canonical helper 刻意移除的 `docs/`、`.claude/`、root `tests/contracts/`，所以不是綠燈；PR #398 的 targeted tests則通過。
 
 | 項目 | 本輪判定 | 證據摘要 |
 |---|---|---|
-| Ruff 工具不可用 | **已否定，但仍有 baseline lint finding** | PATH 有 `ruff 0.15.21`；PR changed Python files 只有一個 base 已存在的 F401，其餘 11 檔通過 |
-| Ruff 是 release/deploy gate | **否** | CI、deploy、`verify-all` 與 governance requirements 都沒有 Ruff gate/config |
-| Browser feature E2E | **對本 PR 不適用** | PR 沒有 `web-viewer-sample` 或 production frontend route/button/fixture 變更 |
-| Design pixel fidelity | **對本 PR 不適用** | machine change-scope=`not_applicable`、`visual_required=false`；pinned reference integrity 另行通過，但不是 pixel result |
-| Kit/WebRTC first-frame | **本 PR 無 feature-specific 適用面；deployment smoke 未觀察** | deploy 未啟動 runtime；無 first-frame、stage truth 或 DataChannel ack |
-| A4 live production flow | **仍未驗證** | mounted lease capability 仍為 `lab_unverified`；success path 需要 authentic session/lease/stage/model/mapping/proof |
-| Full completion | **no** | canonical deploy 未完成，且 production A4 success path 仍不可操作 |
+| Canonical rebuild | **未通過** | 兩次皆 Phase 2 `Get-FileHash` failure，exit `2` |
+| Deploy implementation under clean child module path | **通過，但僅 causal diagnostic** | design assets count=`10`；governance/conversion/Kit/kit-manager/coordinator/viewer deploy-time checks通過 |
+| A4 owner-service search → Issue persistence | **通過** | live isolated authority：search `200`、create `201`、replay `200`、DB=`1 Issue + 1 evidence` |
+| Mounted coordinator mutation | **安全拒絕，未達 production 201** | no auth=`401`；local-dev identity=`503 a4_issue_authority_unavailable`；零 governance write |
+| PR #398 targeted tests | **通過** | coordinator `7 passed`；governance `120 passed, 1 skipped` |
+| Aggregate verification | **未通過** | `verify-all`: `101 passed, 12 failed`；失敗皆引用 deployment contract 已移除的 docs/tooling path |
+| Ruff 工具不可用 | **已否定，但仍有 baseline finding** | PATH 有 `ruff 0.15.21`；PR changed Python files僅一個base-known F401 |
+| Browser/design/Kit feature gate | **對本 backend slice不適用** | 無 production frontend diff；不能外推為 full-system E2E |
+| Full completion | **no** | canonical helper、authentic identity/lease與aggregate gate仍有缺口 |
 
 ## Canonical test-deploy execution
 
-從以下 worktree 執行：
+從以下 evidence worktree 執行 repo 規定的唯一命令：
 
 ```text
 C:\Repos\active\iot\AI-BIM-governance.worktrees\pr398-test-deploy-risk-evidence
 ```
 
-精確命令：
-
 ```powershell
 .\scripts\dev\rebuild-test-deploy.ps1 -Build
 ```
 
-執行結果：
+兩輪結果：
 
-| Field | Observed |
-|---|---|
-| Started | `2026-07-24T11:07:48.1374597+08:00` |
-| Finished | `2026-07-24T11:10:58.6567564+08:00` |
-| Exit code | `2` |
-| Helper lifecycle run id | `run_20260724_030812_28a15f` |
-| Helper origin-main commit | `64cadb06c8eba6400aecb8f75125dd2f7df2e1b7` |
-| Deployment checkout HEAD | `64cadb06c8eba6400aecb8f75125dd2f7df2e1b7` |
-| Deployment path | `D:\Users\deploy\AI-bim-geo` |
-| Previous checkout retained | `D:\Users\deploy\.AI-bim-geo.rebuild-previous-2a15cd44740041e5b56eee608db6a150` |
-| Process stopped by verifier | none |
+| Field | First run | Reproduction run |
+|---|---|---|
+| Helper lifecycle run id | `run_20260724_030812_28a15f` | `run_20260724_034107_8af09f` |
+| Result | exit `2` | exit `2` |
+| Failed phase | Phase 2 design assets | Phase 2 design assets |
+| Fetched/deployed commit | `64cadb06c8eba6400aecb8f75125dd2f7df2e1b7` | same |
+| Previous checkout retained | `D:\Users\deploy\.AI-bim-geo.rebuild-previous-2a15cd44740041e5b56eee608db6a150` | `D:\Users\deploy\.AI-bim-geo.rebuild-previous-fb5ff3e77b994470bc7bdff313cc18fc` |
+| PID stopped by verifier | none | none |
 
-Helper 依 contract 移除 deployment checkout 的 agent/tooling docs 並保留 local env files，因此 deployment checkout 的工作樹不以 clean status 作成功判準；commit identity 以 `HEAD`／`origin/main` 驗證。
+第二輪 lifecycle 在 `2026-07-24T11:41:07.855+08:00` 啟用 staged checkout，於 `11:43:07.391+08:00` 記錄 failure。Deployment checkout `HEAD` 與 `origin/main` 均為 subject commit。Helper 依 contract 移除 agent/tooling、root `docs/`、`openspec/` 等內容並保留 local env files，所以該 checkout 的大量 tracked deletion 是預期 deployment state，不能用 clean worktree 當成功條件。
 
-Helper lifecycle log確認 previous checkout已保留作 recovery；該目錄目前存在、具standalone `.git`與`scripts/deploy.ps1`。本輪未嘗試restore，也未刪除任何previous checkout。
+### Failure card 與 root cause
 
-### External log inventory
-
-Logs 未複製進 git；下列 digest 固定本次觀察到的內容，且未在本文件輸出 secret/env values。
-
-| File | Bytes | SHA-256 |
-|---|---:|---|
-| `D:\Users\deploy\AI-bim-geo\scripts\.run\deploy.log` | 3266 | `765f457fee7c5c30ba9ddc403e25fedda6fe21ce785ee59013150f117f61ecb1` |
-| `D:\Users\deploy\AI-bim-geo\scripts\.run\rebuild-test-deploy.deploy.stdout.log` | 11468 | `3a4277e1fb642c811cad1399131f68abb24d4804da1210f8e924211f3e9731e1` |
-| `D:\Users\deploy\AI-bim-geo\scripts\.run\rebuild-test-deploy.deploy.stderr.log` | 169 | `c148800c94c5ba86578f8562eadd3301604d59135c44a18a7d62eca32ee4246c` |
-| `D:\Users\deploy\AI-bim-geo\scripts\.run\deploy-audit.json` | 12541 | `f8f91d6e66aec63e0fffad73ac4f27dab2fe01d3bc74f756934bc705c9a6e63a` |
-| `logs\scripts\2026-07-24\scripts-run_20260724_030812_28a15f.jsonl`（evidence worktree） | 1269 | `0a944ad4eba0a2897b3adcb0d9e6ecdb644d1327108c95fc5ef8ec1db5bc0f12` |
-
-## Deployment failure card
-
-### Symptom
-
-`deploy.ps1 -Build` 在 Phase 2 結束：
+兩輪共同 symptom：
 
 ```text
 design assets staging failed: The term 'Get-FileHash' is not recognized as
@@ -81,168 +67,207 @@ the name of a cmdlet, function, script file, or operable program.
 Status: FAILED (exit 2, Phase 2 (design assets))
 ```
 
-### Context
-
-- OS/shell：Windows；helper 由 PowerShell 執行，child deploy 使用 `powershell.exe -NoProfile`。
-- Deploy mode：hybrid web-plane Docker + host-native Kit。
-- Failing call path：`scripts/deploy.ps1` → `Sync-DeploymentDesignAssets` → `Get-DeploymentDesignAssetHash` → `Get-FileHash`。
-- Deploy preflight 回報 coordinator/viewer/governance/conversion/Kit target ports 皆 free；不是 Phase 3 port ownership blocker。
-
-### Root-cause evidence
-
-已完成兩輪 read-only probe：
-
-1. 目前 `pwsh 7.5.4` 與 fresh `powershell.exe 5.1.26100.6899 -NoProfile -NonInteractive` 都能解析 `Get-FileHash`，來源均為 `Microsoft.PowerShell.Utility`。
-2. Fresh Windows PowerShell child dot-source deployment checkout 的 `scripts/lib/design-assets.ps1` 後，能對實際 staged PNG 執行 `Get-DeploymentDesignAssetHash`，結果符合 64 位 hex digest。
-3. Fresh child 執行完整 `Assert-DeploymentDesignAssetsPrestaged` 也成功，回報 `Mode=prestaged`、`Count=10`。
-4. Static scan 未找到 deploy path 內的 `Remove-Module`、`PSModuleAutoLoadingPreference`、alias 或 function removal。
-
-因此已排除「Windows PowerShell 5.1 不支援 `Get-FileHash`」與「cmdlet 全域缺失」。目前只能把 failure 定位到**原長生命週期 deploy session 在 Phase 2 的 command-resolution state**；缺少 failure 當下的 module/command telemetry，尚不能確認是哪個前置操作造成 state drift。
-
-### Smallest next diagnostic（未執行）
-
-在 `Sync-DeploymentDesignAssets` 前記錄 `Get-Command Get-FileHash`、command source、PowerShell version、`Microsoft.PowerShell.Utility` loaded/available module metadata，再重跑同一條 canonical helper。未確認 root cause 前，不以直接 import module或改 hash implementation當作修正。
-
-### Regression guard status
-
-尚未新增。應在 root cause 確認後，先建立能在與 production helper 相同 child-shell lifecycle 重現的 failing test，再實作單一修正並重跑 canonical rebuild。
-
-## Post-failure runtime evidence
-
-失敗後 coordinator 8004、viewer 5173、Kit 49100、conversion 49101、governance 49102、kit-manager 8010 與 spectator 49110/49120/49130/49140/49150 均為 `listener_count=0`。
-
-下列 endpoints 皆 unreachable：
+Failing call path：
 
 ```text
-http://127.0.0.1:8004/health
-http://127.0.0.1:8004/ui
-http://127.0.0.1:5173/health
-http://127.0.0.1:49102/health
-http://127.0.0.1:49101/health
-http://127.0.0.1:49100/
-http://127.0.0.1:8010/health
+rebuild-test-deploy.ps1
+  -> Invoke-TestDeployScript (powershell.exe -NoProfile)
+  -> deploy.ps1
+  -> Sync-DeploymentDesignAssets
+  -> Get-DeploymentDesignAssetHash
+  -> Get-FileHash
 ```
 
-這只證明 canonical deploy 沒有完成並且 runtime 未啟動；不能推論 PR #398 runtime correctness。因 rebuild 未成功，`D:\Users\deploy\AI-bim-geo\scripts\verify-all.ps1` **未執行，並非 pass**。
+已驗證的 causal evidence：
 
-## Ruff verification
+1. `pwsh 7.5.4` 與 standalone `powershell.exe 5.1.26100.6899 -NoProfile` 都能解析 `Get-FileHash`。
+2. Standalone PS5 child dot-source `design-assets.ps1` 後可 hash 實際 staged PNG，`Assert-DeploymentDesignAssetsPrestaged` 回 `Mode=prestaged`、`Count=10`。
+3. Failing child 繼承的 `PSModulePath` 把 `Documents\PowerShell\Modules`、`Program Files\PowerShell\Modules`、PowerShell 7 modules排在 WindowsPowerShell module paths之前；可用 module同時含 `Microsoft.PowerShell.Utility 7.0.0.0` 與 `3.1.0.0`。
+4. 只在 child process 清理成 Windows PowerShell module roots後，同一 `deploy.ps1 -Build` exit `0`。沒有修改 repo source、env file或 secret。
 
-### Availability
+因此 root cause定位為：**跨 edition `PSModulePath` 汙染了 helper → Windows PowerShell child 的 command-resolution boundary**。最小 durable fix應在 `Invoke-TestDeployScript` child boundary正規化 module path，而不是更換 hash演算法或把 `lab_unverified` 改成 `verified`。
 
-```text
-ruff --version
-ruff 0.15.21
-exit 0
-```
+本 branch未修改 shared deploy script。GitNexus對該 PowerShell helper/file回 `UNKNOWN`（index找不到 target）；依 Lane G規則，shared deploy-flow修正需另行 sign-off、regression test與重新跑 canonical helper。
 
-Deployment venv 並未安裝 Ruff：
+## Clean-module-path causal deploy
 
-```text
-D:\Users\deploy\AI-bim-geo\.venv\Scripts\python.exe -m ruff --version
-No module named ruff
-exit 1
-```
-
-Repo 沒有 root/governance `pyproject.toml`、`ruff.toml` 或 `.ruff.toml`；`.github/workflows`、`scripts/deploy.ps1`、`scripts/verify-all.ps1` 與 `governance-service/requirements.txt` 的 Ruff reference count 為 0。因此 deployment venv 沒有 Ruff 不構成已定義 release/deploy gate failure。
-
-### Affected-files result
-
-對 PR base `a9f68c6e3bb72771a740e033c126d4e47e72040f` 到 merge commit的 12 個 changed Python files執行：
+診斷只對 child process 設定 Windows PowerShell module roots，再從 deployment checkout 執行：
 
 ```powershell
-ruff check <12 changed Python files>
+.\scripts\deploy.ps1 -Build
 ```
 
-結果為一個 F401：
+結果為 exit `0`，elapsed `3m 37s`。Deploy-time evidence：
+
+- design assets prestaged count=`10`
+- governance `49102/health`=`200`
+- conversion `49101/health`=`200`
+- Kit `49100 LISTEN + app ready`
+- kit-manager-api `8010/health`=`200`
+- coordinator `8004/health`=`200`
+- viewer `5173`=`200`
+- coordinator UI asset=`200`
+- coordinator governance files tree=`200`
+
+這證明 deploy implementation在乾淨 child module resolution下可工作；它不把 canonical helper的 exit `2`改寫成 pass。
+
+後續 snapshot顯示 coordinator、viewer、governance與kit-manager仍健康，Kit/spectator ports仍有 listener；conversion `49101` 已無 listener。故 deploy-time readiness通過，但 conversion長時間存活未通過，需獨立診斷。
+
+## PR #398 live Issue verification
+
+### 1. Canonical mounted route：fail closed 且零寫入
+
+Target route：
 
 ```text
-governance-service/issues/api.py:13
-`.store.ISSUE_STATUSES` imported but unused
+POST http://127.0.0.1:8004/api/governance/issues/from-a4-search/for-session/{session_id}
 ```
 
-同一檔的 base content 以 stdin 重跑也得到同一 F401；排除該 base-known 檔後，其餘 11 個 changed/new Python files為 `All checks passed`。因此本輪沒有發現 PR #398 新增的 Ruff finding，但 repo baseline仍非全綠。
+以合法-shaped Issue draft執行兩個無 bypass probe：
 
-## Browser、design、Kit 與 live A4 applicability
+| Probe | HTTP | error_code |
+|---|---:|---|
+| no auth | `401` | `a4_authentication_required` |
+| process-generated local-dev carrier | `503` | `a4_issue_authority_unavailable` |
 
-### Design scope
+Canonical deployment的 env key-only audit（不輸出值）確認：
 
-以 PR exact base/head paths 呼叫 `Get-DesignSystemChangeScope`：
+- `A4_INTERNAL_CONTEXT_TOKEN`：未配置非空值
+- `A4_PROOF_ACTIVE_KID`：未配置
+- `A4_PROOF_ACTIVE_KEY`：未配置
+- user auth provider：`local-dev`
 
-```text
-status=not_applicable
-frontend_product=false
-visual_required=false
-required_screen_ids=[]
-unknown_paths=[]
-```
+Canonical governance internal search另以非機密 probe token實測回 `503 a4_internal_context_unavailable`，與 env audit一致。
 
-Pinned reference integrity另行實測：
+`storage/governance.db` 在 probe前後都沒有 `issues` 或 `a4_issue_evidence` table，證明 mounted reject沒有 upstream persistence side effect。這是預期的 security posture，不是 production success path。
 
-```text
-scripts/tests/verify-design-system-reference.ps1
-passed — 13 screens, 26 golden files
-exit 0
-```
+### 2. Isolated live owner-service authority：201、replay與 persistence
 
-這只證明 manifest/baseline integrity，不是 current pixel/semantic fidelity result。PR #398 的 20 個 changed files沒有 `web-viewer-sample`，`bim-review-coordinator/src/app.ts` 只新增 route import/mount；沒有 production frontend route、button、browser default fixture 或 visible states。因此 feature-specific browser/design gate對此 backend slice不適用。
+為避免修改既有 `.env`，從相同 deployment checkout啟動一次性的 host-native governance process：
 
-### Kit/WebRTC
+- bind：`127.0.0.1:49202`
+- source：`D:\Users\deploy\AI-bim-geo\governance-service`
+- DB：獨立 `scripts\.run\pr398-a4-live-20260724121731_5f1cbe67.db`
+- credentials：process-only random test token/signing key，未寫檔、未輸出
+- fixture：主工作區 local `storage\e2e-a1\demo\tiny.ifc`（688 bytes）
+- query：deterministic `IfcDoor`
 
-Kit generic process/port即使健康也不能替代 WebRTC first-frame、stage truth或DataChannel ack。本次 deployment未啟動，這些 evidence皆 `not observed`；它們不應被寫成 pass，也不是 PR #398 backend route的 feature-specific完成條件。
+Observed flow：
 
-### Live A4 success path
+| Step | Result |
+|---|---|
+| `GET /health` | `200` |
+| `POST /api/internal/a4/search/model` | `200`，1 row，`proof_eligible=true`，`issue_eligible=true` |
+| selected row | IFC GUID `1aPLZA3Rz8sQ5wH9NVtkZs`，mapping not observed |
+| `POST /api/internal/a4/issues/from-search` | `201`，Issue `iss_46dde731ecea`，`source_type=a4_search`，`replayed=false` |
+| create response proof check | raw `evidence_proof` absent |
+| exact replay | `200`，same Issue ID，`replayed=true` |
+| generic `GET /api/issues` | A4 visible count=`0`（session-authorized lifecycle尚未提供） |
+| direct isolated DB | `a4_search Issue=1`，`a4_issue_evidence=1` |
 
-新增 backend route是：
+Shadow process PID `43908`由本輪啟動並已停止；isolated DB與無 secret的uvicorn request logs保留在 deployment `.run` 作 external evidence。這一輪驗證 governance owner API的真正 persistence/replay contract，但不替代 coordinator authentic principal/lease的 production E2E。
 
-```text
-POST /api/governance/issues/from-a4-search/for-session/{session_id}
-```
+## Tests and aggregate gates
 
-目前 mounted resolver仍在 `bim-review-coordinator/src/app.ts` 產生 `primary_lease_capability: "lab_unverified"`；README與測試均把該狀態定義為 fail closed `503`。實際 production success需要server-authenticated principal、current primary lease、active stage/model/mapping、signed row proof與已啟動的coordinator/governance。
+### Targeted gates
 
-Live model本身不是 additive persistence contract的必要證明，但完整的「搜尋結果 → 使用者確認 → persisted Issue」production flow仍因 authentic lease authority與本次deploy failure而未驗證。
-
-## Verification ledger
-
-| Command/probe | Cwd | Result |
+| Command | Cwd/runtime | Result |
 |---|---|---|
-| `.\scripts\dev\rebuild-test-deploy.ps1 -Build` | evidence worktree | exit 2，Phase 2 blocker |
-| `git rev-parse HEAD` / `origin/main` | deployment checkout | both `64cadb06...` |
-| target-port listener probe | local host | 11 ports，listener count皆0 |
-| seven HTTP endpoint probes | local host | all unreachable |
-| `ruff --version` | evidence worktree | 0.15.21，exit 0 |
-| deployment venv `python -m ruff --version` | deployment checkout | module missing，exit 1 |
-| `ruff check` changed Python files | evidence worktree | one base-known F401 |
-| `ruff check` remaining 11 files | evidence worktree | pass |
-| `Get-DesignSystemChangeScope` | evidence worktree | not_applicable |
-| `verify-design-system-reference.ps1` | evidence worktree | pass |
-| fresh PS5 design-assets hash/manifest probes | deployment checkout | pass |
-| `verify-all.ps1` | deployment checkout | not run；rebuild prerequisite failed |
+| `npm run build` | deployed coordinator container | pass |
+| `vitest run tests/governance-issue-from-a4-session.test.ts` | deployed coordinator container | `7 passed` |
+| `pytest test_a4_issues.py test_search_model.py test_search_handoff.py test_search_handoff_api.py` | deployment checkout governance source, Python 3.12 | `120 passed, 1 skipped` |
+
+Governance targeted run另有 5 個 Pydantic deprecation warnings與 1 個 pytest-asyncio configuration warning；不是 assertion failure。
+
+### Aggregate gates（不可標 pass）
+
+`scripts\verify-all.ps1` 一開始因 deployment root `.venv`沒有 pytest/jsonschema而無法 collection；在**只修改 deployment venv package、不改 tracked source/env**後重跑，結果：
+
+```text
+101 passed, 12 failed
+```
+
+12 個 failure皆引用 canonical helper刻意移除的 path，例如：
+
+- `docs/contracts/structured-log-env-allowlist.md`
+- `docs/contracts/streaming-datachannel-events.md`
+- `.claude/workflows/routing.json`
+- `.claude/workflows/std-*.js`
+
+部署容器的 `npm run verify` 也呈現同類問題：TypeScript build通過，full Vitest失敗包含缺少 `/workspace/tests/contracts/*.json`，另有受 production MinIO/Kit env影響、原本假設「未配置」的測試。沒有為了讓 suite變綠而把 pruned docs/tooling複製回 deployment。
+
+因此目前有一個獨立 contract mismatch：canonical deployment pruning contract與 unscoped aggregate verifier不相容。它不推翻 PR #398 targeted pass，也不能被忽略成 full pass。
+
+## Ruff、browser、design與Kit applicability
+
+- `ruff --version`=`0.15.21`。PR changed 12 個 Python files只有 `governance-service/issues/api.py:13` 的 F401；同一 finding在 base content也存在。其餘 11 檔通過。
+- Repo的 CI、deploy、`verify-all`與 governance requirements沒有 Ruff gate/config；deployment venv缺 Ruff不是既定 release failure。
+- Machine design scope：`status=not_applicable`、`frontend_product=false`、`visual_required=false`、`required_screen_ids=[]`、`unknown_paths=[]`。
+- Pinned design reference integrity：13 screens、26 golden files pass；這不是 pixel comparison。
+- PR #398沒有 `web-viewer-sample` production route/button/fixture diff。Browser semantic、pixel fidelity、Kit WebRTC first-frame/stage/DataChannel不屬於此 backend slice的 feature-specific gate，也沒有被本報告宣稱 pass。
+
+## External evidence inventory
+
+External logs/DB沒有 commit進 git；以下 digest不含 secret values。
+
+| File | Bytes | SHA-256 |
+|---|---:|---|
+| first canonical `rebuild-test-deploy.deploy.stdout.log` snapshot | 11468 | `3a4277e1fb642c811cad1399131f68abb24d4804da1210f8e924211f3e9731e1` |
+| second canonical `rebuild-test-deploy.deploy.stdout.log` | 11071 | `1b8433d381392351f276074aaa894b6af1f6fafe5083f0daf3a67155c02b42df` |
+| second canonical `rebuild-test-deploy.deploy.stderr.log` | 169 | `c148800c94c5ba86578f8562eadd3301604d59135c44a18a7d62eca32ee4246c` |
+| `logs\scripts\2026-07-24\scripts-run_20260724_034107_8af09f.jsonl` | 1269 | `c5508c50a95941ae0b6663bb8641d0e3f58a3a529d4d933d5f06de352a29043f` |
+| `pr398-a4-live-20260724121731_5f1cbe67.db` | 65536 | `02bb24ebf7f8730ffa9e153e6d4dde192664210b84cfc5f9ab921fac05047a5c` |
+| isolated live stdout log | 385 | `ed5423560feb6cf41b80c12bf00b3a7b6399523502fb55279c739750bb91b9a1` |
+| isolated live stderr log | 203 | `70d9f08585225a0025543ce3c3ef9dd0c3615b6fbf58c2af85586ff0b102b1c4` |
+
+Clean-module-path deploy logs仍由已啟動的 runtime children繼承 file handle，因此本輪沒有宣稱穩定 digest；其可讀內容記錄 deploy-time checks與 exit `0`。
+
+## PR machine truth
+
+| Field | Value |
+|---|---|
+| Frontend route | none in PR scope |
+| Main button(s) tested | not applicable |
+| Fixture used | `storage\e2e-a1\demo\tiny.ifc`（local ignored input） |
+| Backend API called | internal search + internal Issue create；mounted coordinator Issue route |
+| Runtime action / ID | Issue `iss_46dde731ecea` in isolated test DB |
+| Visible success state | not applicable；backend-only slice |
+| E2E command | process-only isolated authority script documented by observed HTTP ledger above |
+| Screenshot / trace | none；uvicorn request log + SQLite digest retained externally |
+| Design gate status | `not_applicable`; reference integrity separately passed |
+| Design screen(s) | none |
+| Reference-missing route(s) | none in changed frontend scope |
+| Full completion claimed | `no` |
+| Design reference manifest | unchanged |
+| Visual fidelity result/comparison/artifacts | not applicable / not run |
+| Known gaps | canonical helper, authentic identity/lease, A4 secrets, aggregate verifier, conversion long-lived health |
 
 ## Verified facts / Inferences / Unverified risks / Next actions
 
 ### Verified facts
 
-- Deployment checkout使用正確的PR #398 merge commit。
-- Canonical build-only deploy停在Phase 2，沒有任何 runtime listener。
-- Ruff CLI目前可用；PR changed Python files沒有新增 Ruff finding，但有一個base-known F401。
-- Machine design scope對PR #398為`not_applicable`。
-- Mounted A4 lease capability仍為`lab_unverified`，production mutation刻意fail closed。
+- Deployment checkout使用正確的 PR #398 merge commit。
+- Canonical helper的 Phase 2 failure可重現；clean WindowsPowerShell-only module path使同一 inner deploy通過。
+- PR #398 targeted tests通過，owner-service live Issue persistence與 replay通過。
+- Mounted coordinator route對 no-auth/local-dev caller fail closed且零寫入。
+- Canonical A4 token/proof key未配置；mounted production `201`目前不可成立。
+- Aggregate verifier與 canonical pruning contract不相容；full test gate不是綠燈。
 
 ### Inferences
 
-- Phase 2 failure與原長生命週期deploy session的command-resolution state有關；fresh child無法重現。
-- Deployment venv不含Ruff是dev-tooling差異，不是repo已定義的runtime/release gate。
+- Shared deploy helper在 child boundary正規化 `PSModulePath`是目前最小、最接近 root cause的 durable fix；仍需 regression test與 canonical rerun裁決。
+- Conversion `49101`在 deploy-time ready後退出屬另一個 lifecycle問題，不能由 PR #398 targeted evidence推論原因。
 
 ### Unverified risks
 
-- `Get-FileHash`在原deploy session失去解析能力的確切觸發點。
-- Canonical deploy、aggregate verify與所有service health。
-- Authentic A4 session/lease/stage/model/mapping/proof的live 201 flow。
-- Browser-visible A4 confirmation、Kit first-frame/stage/DataChannel與current visual artifacts；其中browser/design/Kit不屬於本PR backend diff的feature-specificgate，但full-system claim仍不得使用它們。
+- 修正後的 canonical `rebuild-test-deploy.ps1 -Build` exit `0`（尚未實作修正）。
+- Authentic shared SSO principal、verified primary lease、active stage/model/mapping的 mounted end-to-end `201`。
+- Conversion service為何在 deploy-time ready後失去 listener。
+- Browser confirmation UI、Kit first-frame/stage/DataChannel與current pixel artifacts；對本 backend slice不適用，但 full-system claim仍缺。
 
 ### Next actions
 
-1. 先對Phase 2 command-resolution加入最小、無secret的pre-stage telemetry，重跑相同canonical helper以確認root cause。
-2. root cause修復後，必須重新執行`.\scripts\dev\rebuild-test-deploy.ps1 -Build`；只有exit 0後才跑deployment checkout的`.\scripts\verify-all.ps1`與runtime health probes。
-3. A4 production E2E另需真正的shared/authenticated primary-lease authority；不得把`lab_unverified`直接改成`verified`來取證。
+1. 以獨立 Lane G change修正 `Invoke-TestDeployScript`的 cross-edition `PSModulePath` boundary，加 Windows PowerShell child regression test，再跑原 canonical command。
+2. 定義 deployment-safe aggregate suite，或調整 verifier讓已被 contract移除的 docs/tooling checks不進 deployment run；不得反向破壞 pruning contract。
+3. 由真正 authority owner配置 A4 internal/proof secrets並提供 authentic SSO/lease verification；之後才可用真 session/stage/mapping重跑 mounted `201`。不得把 `lab_unverified`直接改成 `verified`。
+4. 另行診斷 conversion `49101`的 post-readiness exit，保留目前 coordinator/governance runtime。
