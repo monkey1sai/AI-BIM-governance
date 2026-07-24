@@ -1,8 +1,8 @@
 # cross-service-structured-log-baseline — Proposal
 
-> **Status: deferred 2026-07-24**：不計入 active WIP；code、contracts 與 canonical capability spec 已落地，只有 tasks 10.1–10.5 的真 4-service runtime evidence 尚未完成。`deepen-ifc-ready-conversion-pipeline` closeout 前不得為了 smoke 修改其 pipeline implementation。
+> **Status: active completion amendment approved 2026-07-24**：使用者選擇 option A，授權限縮修改 production trace carriers、viewer logger bootstrap/env snapshot，以及受支援 PowerShell smoke participant，直到 tasks 10.0–10.5 的真 4-service runtime evidence閉合。
 
-> **Historical correction 2026-07-24**：本 change 曾在缺少 runtime evidence 時被 archive；現依嚴格 terminal rule 恢復原 change id。它目前只允許 execution/evidence closeout：跑 IFC-ready → conversion → session → close、驗四個 service JSONL/trace/env redaction，並落 durable evidence。既有 delta 已同步至 `openspec/specs/cross-service-structured-log-baseline/`，**不得重新套用或回滾 canonical spec，也不得重做已落地 adapters/contracts**。
+> **Historical correction 2026-07-24**：本 change 曾在缺少 runtime evidence 時被 archive；現依嚴格 terminal rule恢復原 change id。既有 adapters/contracts不得重寫；但四單位 production closed loop缺少的 carrier/wiring 已由使用者明確批准補齊。既有 delta 已同步至 `openspec/specs/cross-service-structured-log-baseline/`，本 amendment必須同步維護 canonical spec，最終 archive使用 `--skip-specs` 並以 byte-identical diff作硬 gate，避免重複套用舊 delta。
 
 ## Why
 
@@ -21,6 +21,8 @@
 - 新增 **logger health endpoint** `GET /api/internal/structLog/health` 於 coordinator。
 - 新增 **trace_id 命名規約**：`ifcready_<job_id>` / `rev_<session_id>` / `stream_conv_<job_id>` / `script_<run_id>`，配 `parent_trace_id` 串多層關係。
 - 新增 **trace_id 跨通道傳遞**：HTTP `X-Trace-Id` header / Socket.IO event field / WebRTC DataChannel envelope field / Kit subprocess `--trace-id` CLI arg / PowerShell `BIM_TRACE_ID` env var。
+- 補齊 **production carrier wiring**：IFC-ready job id 作 root trace，coordinator dispatch、streaming persisted job/converter、review session/viewer URL、viewer bootstrap與受支援 smoke runner全部承襲同一 trace；standalone session/conversion才自 mint `rev_*` / `stream_conv_*`。
+- 補齊 viewer `createBrowserLogger()` 自動 browser-safe `env_snapshot` 與 production singleton/global handlers；不得掃描任意 browser storage/query payload。
 - 新增 **retention script** `scripts/log-retention/prune-logs.ps1`：daily dir + 30 天 cutoff，預設 `-DryRun`。
 - 新增 `.gitignore` 條目 `/logs/`。
 - coordinator 既有 `EventLog` (`storage/event-log/*.jsonl`) **不動**；在 `EventLog.append()` 既有路徑後追加 `structLog.lifecycle(...)` 雙 sink。`/api/.../lifecycle-events` API 不變。
@@ -59,6 +61,12 @@
 - `tests/contracts/structured-log/test_validate.py`（root pytest）
 - `tests/integration/structured-log-cross-service.test.ts`
 - 各 sub-repo 內 adapter unit test 檔（位置見 design §6.2）
+
+**Code（2026-07-24 completion amendment 修改）**
+- coordinator IFC-ready pipeline、streaming conversion client、review-session/open payload carrier與測試
+- streaming conversion authority/job persistence、converter `TraceId` propagation與測試
+- viewer production bootstrap、browser env snapshot與測試
+- `scripts/smoke-bscheme-intake.ps1` structured-log participation與測試
 
 **Docs（新增）**
 - `docs/contracts/structured-log-schema.md`

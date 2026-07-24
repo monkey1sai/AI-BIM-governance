@@ -63,29 +63,40 @@ The system SHALL transport `trace_id` between services so that grep over `logs/`
 - PowerShell scripts: env var `BIM_TRACE_ID`
 
 `trace_id` naming convention:
-- `ifcready_<existing_job_id>` for IFC-ready originated traces
-- `rev_<existing_session_id>` for review session originated traces (MAY include `parent_trace_id` referencing an `ifcready_*` trace)
-- `stream_conv_<existing_job_id>` for internal conversion originated traces
+- the existing `ifc_ready_job_id` (already prefixed `ifcready_`) is the root trace for an IFC-ready originated closed loop and MUST NOT be prefixed a second time
+- `rev_<existing_session_id>` for standalone review-session originated traces only; a review session derived from IFC-ready MUST retain the upstream `ifcready_*` root trace
+- `stream_conv_<existing_job_id>` for internal conversion originated traces only when no valid inbound trace exists
 - `script_<run_id>` for PowerShell script originated traces with no upstream
 
 Optional record field `parent_trace_id` MAY link derived traces back to originating trace.
 
 #### Scenario: Coordinator outbound HTTP carries X-Trace-Id
 - **WHEN** coordinator dispatches conversion request to bim-streaming-server
-- **THEN** the HTTP request SHALL include header `X-Trace-Id: ifcready_<job_id>` (or `rev_<session_id>` / `stream_conv_<job_id>` depending on origin)
+- **THEN** the HTTP request SHALL include `X-Trace-Id` equal to the originating IFC-ready job's `ifc_ready_job_id`
+- **AND** streaming-server SHALL validate and persist that trace with the conversion job and use it for conversion lifecycle records
+
+#### Scenario: IFC-ready review session carries the root trace into viewer bootstrap
+- **WHEN** coordinator creates or reuses a review session for an IFC-ready job
+- **THEN** the session/open response and browser-visible viewer URL SHALL carry the same `ifcready_*` root trace
+- **AND** viewer production bootstrap SHALL create one browser logger with that trace, install global handlers, and emit startup records through `POST /api/internal/viewer-log`
+
+#### Scenario: Supported PowerShell smoke runner joins the root trace
+- **WHEN** `scripts/smoke-bscheme-intake.ps1` receives the accepted IFC-ready job response
+- **THEN** it SHALL set its structured logger to the returned `ifc_ready_job_id` and emit subsequent poll/session/close records with that trace
 
 #### Scenario: Kit subprocess receives trace_id via CLI
 - **WHEN** `convert-ifc-to-usdc.ps1` launches Kit subprocess
 - **THEN** the subprocess command line SHALL include `--trace-id=<trace_id>` and the Kit extension SHALL adopt it as the active `trace_id` for the run
 
 #### Scenario: Grep one trace_id returns timeline across 4 services
-- **WHEN** an IFC-ready job completes a full closed loop (coordinator intake → streaming conversion → review session → viewer DataChannel → callback outbox)
+- **WHEN** an IFC-ready job completes a full closed loop (PowerShell smoke runner → coordinator intake → streaming conversion → review session → viewer bootstrap → close)
 - **AND** an agent runs `Select-String -Path logs/**/*.jsonl -Pattern '"trace_id":"<id>"'`
-- **THEN** the result SHALL contain records from coordinator, streaming-server, viewer (via coordinator intake), and any participating PowerShell script, sortable by `ts`
+- **THEN** the result SHALL contain records from coordinator, streaming-server, viewer (via coordinator intake), and the participating PowerShell runner, sortable by `ts`
+- **AND** evidence produced by manually injecting the same trace into otherwise-unwired adapters SHALL NOT satisfy this scenario
 
 ### Requirement: Each service SHALL emit env_snapshot at logger creation
 
-The system SHALL emit exactly one `env_snapshot` record per service run, before the logger creation API returns. The snapshot SHALL include all process environment variables observed at startup, with values transformed as follows:
+The system SHALL emit exactly one `env_snapshot` record per service logger run, before the logger creation API returns. Server and PowerShell snapshots SHALL include all process environment variables observed at startup. Browser snapshots SHALL include only documented build-time allow-list runtime config and non-sensitive browser metadata; they SHALL NOT enumerate arbitrary `window`, storage, or query-string values. Values SHALL be transformed as follows:
 
 - If `key` is in the allow-list documented at `docs/contracts/structured-log-env-allowlist.md`: emit raw value
 - Else if `key` contains pattern `TOKEN`/`SECRET`/`KEY`/`PASSWORD`/`AUTH`/`CREDENTIAL` (case-insensitive): emit `[REDACTED:type=<string|number|boolean>, len=<n>]`
@@ -93,8 +104,8 @@ The system SHALL emit exactly one `env_snapshot` record per service run, before 
 
 Each entry SHALL also record `source` (one of `.env`/`.env.example`/`system`/`docker-compose`/`default`).
 
-#### Scenario: createLogger emits env_snapshot before returning
-- **WHEN** any of `createLogger()` (TS), `create_logger()` (Python), `New-StructLogger` (PowerShell) is invoked
+#### Scenario: logger factory emits env_snapshot before returning
+- **WHEN** any of `createLogger()` (TS), `create_logger()` (Python), `createBrowserLogger()` (Browser), or `New-StructLogger` (PowerShell) is invoked
 - **THEN** an `env_snapshot` record SHALL be written to the sink before the function returns the logger handle
 
 #### Scenario: Secret-pattern env value is redacted

@@ -1,12 +1,12 @@
 # Cross-Service Structured Log Baseline — Design
 
-- **Status**: Draft (brainstorming complete, awaiting user review)
+- **Status**: Approved; production-wiring completion scope approved by user on 2026-07-24 (option A)
 - **Date**: 2026-05-26
 - **Change id**: `cross-service-structured-log-baseline`
 - **Worktree**: `.worktrees/cross-service-structured-log-baseline/`
 - **Branch**: `codex/openspec/cross-service-structured-log-baseline`
 - **Predecessor closeout**: `trim-docs-and-dedupe-ide-skills` archived (origin/main `18aad0f`)
-- **Author**: agent (brainstormed with user via `superpowers:brainstorming`)
+- **Author**: agent (brainstormed with user via `superpowers:brainstorming`; 2026-07-24 completion amendment explicitly approved by user)
 - **Audience**: AI-BIM-governance maintainers / agents working incidents
 
 ---
@@ -132,7 +132,8 @@ gitignore    : logs/                                            (新增到 .giti
 - 不在 allow_list 但 key 含 `TOKEN` / `SECRET` / `KEY` / `PASSWORD` / `AUTH` / `CREDENTIAL`：寫 `[REDACTED:type=<string|number|boolean>, len=<n>]`
 - 其餘（不在 allow_list、也不命中 secret pattern）：寫 type + length，不寫原值
 - `source`：`.env` \| `.env.example` \| `system` \| `docker-compose` \| `default`
-- **觸發時機**：每個 service 的 `createLogger()` / `create_logger()` / `New-StructLogger` 在回傳 logger 之前，立刻 emit 一筆 `env_snapshot`（即 logger 取得即送，不延後到第一次 log 呼叫）
+- **觸發時機**：每個 service 的 `createLogger()` / `create_logger()` / `createBrowserLogger()` / `New-StructLogger` 在回傳 logger 之前，立刻 emit 一筆 `env_snapshot`（即 logger 取得即送，不延後到第一次一般 log 呼叫）
+- Browser 沒有 `process.env`；viewer snapshot 只列 build-time allow-list runtime config 與 browser 可觀察 metadata，禁止掃描或序列化任意 `window` / storage / query 值。`trace_id` 是 record envelope，不列入 snapshot vars。
 
 **Network**：
 - `peer` 只記 logical name (`coordinator` / `streaming-server` / `external-edge` / `external-cloud` / `kit-subprocess`)，**不寫**原始 host:port / URL
@@ -272,12 +273,12 @@ $log | Write-StructAudit -Msg 'deploy-report generated' -Data @{ action='deploy-
 
 | trace_id 前綴 | 起源 | 範例 |
 |---|---|---|
-| `ifcready_<existing_job_id>` | coordinator IFC-ready intake | `ifcready_1779687625000_064c6813` |
-| `rev_<existing_session_id>` | review session（mint 新 trace_id；可帶 `parent_trace_id=ifcready_...`） | `rev_20260526_1234abcd` |
-| `stream_conv_<existing_job_id>` | internal conversion（從 `ifcready_` 接過來，或 streaming-server 自 mint） | `stream_conv_20260525055218_115177da` |
+| `ifcready_<existing_job_id>` | coordinator IFC-ready intake；該 `ifc_ready_job_id` 已含 `ifcready_` 前綴，直接作 root trace，不重複加前綴 | `ifcready_1779687625000_064c6813` |
+| `rev_<existing_session_id>` | 只有無 IFC-ready 上游的 standalone review session 才 mint；由 IFC-ready 建立的 session 必須保留 upstream `ifcready_*` root trace | `rev_20260526_1234abcd` |
+| `stream_conv_<existing_job_id>` | 只有無 inbound trace 的 internal conversion 才自 mint；有 `X-Trace-Id` 時必須承襲 inbound root trace | `stream_conv_20260525055218_115177da` |
 | `script_<run_id>` | pure PowerShell scripts（無上游） | `script_run_20260526_142010_a3f9` |
 
-`parent_trace_id` 用於串多層關係：一個 `ifcready_*` 可能對應多個 `rev_*`。
+`parent_trace_id` 用於另起 standalone child trace 時描述衍生關係。IFC-ready closed loop 的驗收以同一個 `ifcready_*` root trace 貫穿為準，不得只靠 parent link 冒充 one-trace grep。
 
 ### 4.2 Trace_id 傳遞通道
 
@@ -289,6 +290,14 @@ $log | Write-StructAudit -Msg 'deploy-report generated' -Data @{ action='deploy-
 | 外部 cloud callback outbox | payload `trace_id` field（外部 cloud 不一定理會，至少 outbox 記錄） |
 | Kit subprocess invocation | command-line arg `--trace-id=<id>` |
 | PowerShell scripts 之間 | env var `BIM_TRACE_ID` |
+
+Production completion wiring：
+
+- coordinator dispatch conversion 時以 `ifc_ready_job_id` 作 root trace，送 `X-Trace-Id`，並用同一 trace 寫 outbound network record。
+- streaming conversion authority 驗證並持久化 inbound trace；conversion lifecycle、converter adapter與 `-TraceId` / `BIM_TRACE_ID` 都承襲它。缺 header 時才以 conversion job id mint `stream_conv_*`。
+- coordinator 從 IFC-ready job 建立 review session時，session/open payload與 viewer URL query攜帶同一 root trace；standalone session才使用 `rev_*`。
+- viewer production bootstrap 從受信任的 query carrier讀取合法 trace，建立 singleton browser logger、安裝 global handlers，並在一般 app log前送出 viewer `env_snapshot`。
+- `scripts/smoke-bscheme-intake.ps1` 是四單位 smoke 中的 PowerShell participant；取得 intake job後切換到該 root trace，記錄 poll/session/close lifecycle。它是受支援的真 runner，不得用另寫 evidence harness 取代。
 
 ### 4.3 範例 timeline
 
@@ -310,7 +319,11 @@ $log | Write-StructAudit -Msg 'deploy-report generated' -Data @{ action='deploy-
    operation_anomaly anomaly_kind=fallback reason=hoops_a3d_failed
    lifecycle closed
                               │
-[browser viewer]              ▼  mint trace_id=rev_Y, parent_trace_id=ifcready_X
+[PowerShell smoke runner]     ▼  trace_id=ifcready_X (取得 intake response 後承襲)
+   lifecycle active subject=script_run
+                              │
+[browser viewer]              ▼  trace_id=ifcready_X (viewer URL/query 承襲)
+   env_snapshot (browser-safe runtime config only)
    network outbound viewer→coordinator /api/review-sessions
    lifecycle start subject=review_session
    network outbound viewer→streaming-server WebRTC DataChannel openStageRequest
@@ -320,7 +333,7 @@ agent 在 incident debugging 時跑：
 
 ```powershell
 Get-ChildItem logs -Recurse -Filter *.jsonl |
-  Select-String -Pattern '"trace_id":"rev_Y"' |
+  Select-String -Pattern '"trace_id":"ifcready_X"' |
   ForEach-Object { $_.Line } |
   ConvertFrom-Json |
   Sort-Object ts
@@ -416,8 +429,8 @@ Get-ChildItem logs -Recurse -Filter *.jsonl |
 
 ### 6.4 Smoke / runtime evidence
 
-- 跑一次本地完整 IFC-ready → conversion → session → close 閉環
-- 驗 4 service log 都產生、目錄結構正確、trace_id 串得起、env_snapshot 各 service 都有寫且 secret pattern 不出現原值
+- 跑一次本地完整 IFC-ready → conversion → session → viewer bootstrap → close 閉環；使用受支援的 `smoke-bscheme-intake.ps1` 作 PowerShell participant
+- 驗 4 service log 都產生、目錄結構正確、同一 `ifcready_*` trace_id 串得起、env_snapshot 各 service 每 run 恰一筆且 secret pattern 不出現原值
 - Evidence 寫 `docs/evidence/structured-log-baseline-2026-05-26.md`
 
 ### 6.5 Retention script test
@@ -503,7 +516,7 @@ Get-ChildItem logs -Recurse -Filter *.jsonl |
 2. 共用 schema contract test：4 個 validator 用同一份 fixtures 全 pass。
 3. `tests/integration/structured-log-cross-service.test.ts` 跑通：mock cross-service flow，trace_id 串得起。
 4. `scripts/log-retention/prune-logs.ps1` 有 Pester test，`-DryRun` / `-Apply` 行為正確、30 天邊界正確。
-5. Smoke evidence：本地跑一次 IFC-ready → conversion → session → close 閉環，4 service log 都產生，agent 用 trace_id grep 拉得齊。
+5. Smoke evidence：本地跑一次 IFC-ready → conversion → session → viewer bootstrap → close 閉環，4 service log 都產生，agent 用同一 `ifcready_*` trace_id grep 拉得齊；不得以人工注入相同 trace 的 adapter harness 代替 production carriers。
 6. `docs/contracts/structured-log-schema.md` + `docs/contracts/structured-log-env-allowlist.md` 完成；新加 env var 的 PR review checklist 提到必更 allow-list。
 7. `.gitignore` 加 `/logs/`。
 8. `coordinator npm run verify` / streaming pytest / viewer build / root pytest 全 pass。

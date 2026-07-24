@@ -110,6 +110,12 @@ Local-dev-only baseline。endpoint 做基本 schema validation（drop oversized 
 
 PowerShell scripts 不同 process 寫不同 `<service>-<run_id>.jsonl`，sidestep file lock race。其他 service 都單 process。跨午夜瞬間 record 可能掉到舊檔 — schema 有 `ts`，join/sort 不受影響，acceptable。
 
+### D10：2026-07-24 production-wiring completion amendment
+
+使用者明確選擇 option A。IFC-ready closed loop 以既有 `ifc_ready_job_id`（已含 `ifcready_` 前綴）作 root trace：coordinator conversion dispatch送 `X-Trace-Id`；streaming authority持久化並傳給 converter；IFC-ready衍生的 review session/open payload與 viewer URL query延續同一 trace；viewer production bootstrap建立 singleton logger並立即送 browser-safe `env_snapshot`。只有沒有 upstream carrier的 standalone review/conversion才自 mint `rev_*` / `stream_conv_*`。
+
+四單位 smoke的 PowerShell participant固定為受支援的 `scripts/smoke-bscheme-intake.ps1`。它在取得 intake response後以 `Set-StructLogTraceId` 切到同一 root trace並記錄後續 poll/session/close；不得用獨立 harness人工灌四份相同 trace。這個 amendment不重寫既有 adapter/schema，只補缺少的 production wiring與相應 tests。
+
 ## Risks / Trade-offs
 
 | Risk | Mitigation |
