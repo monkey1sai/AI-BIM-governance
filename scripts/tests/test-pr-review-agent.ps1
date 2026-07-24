@@ -86,7 +86,7 @@ $result1 = Invoke-PrReviewAgent -RepoRoot $repoRoot `
 $loaded1 = Get-Content -LiteralPath $result1.json_path -Raw | ConvertFrom-Json
 Assert-True ($loaded1.schema_version -eq 'pr-review-agent/v1') 'schema version present'
 Assert-True ($loaded1.openspec_changes -contains 'add-pr-review-agent') 'OpenSpec change id detected'
-Assert-True ($loaded1.validation_commands -contains 'openspec validate add-pr-review-agent') 'OpenSpec validation command planned'
+Assert-True ($loaded1.validation_commands -contains 'openspec validate add-pr-review-agent --type change') 'OpenSpec change validation command is type-disambiguated'
 $optionalAiWarning = $loaded1.warnings | Where-Object { $_.kind -eq 'optional_ai_adapter_skipped' } | Select-Object -First 1
 $optionalAiNote = $loaded1.human_review_notes | Where-Object { $_ -match 'Optional AI adapter' } | Select-Object -First 1
 Assert-True ($null -eq $optionalAiWarning) 'optional AI skip is not a warning by default'
@@ -110,7 +110,7 @@ $archivePlan = Get-PrReviewValidationPlan -RepoRoot $repoRoot `
     -OpenSpecChangeIds $archiveIds
 $archiveCommands = @($archivePlan | ForEach-Object { $_.command })
 Assert-True ($archiveCommands -contains 'openspec validate --specs --strict') 'archive/formal spec changes validate strict specs'
-Assert-True (-not ($archiveCommands -contains 'openspec validate archive')) 'archive validation command is not planned'
+Assert-True (-not ($archiveCommands -contains 'openspec validate archive --type change')) 'archive validation command is not planned'
 
 # Test 1b2: Archiving an active change does not validate the deleted change id at PR head.
 $tempArchiveGit = Join-Path ([System.IO.Path]::GetTempPath()) "pr-review-agent-archive-$([Guid]::NewGuid().ToString('N'))"
@@ -143,7 +143,7 @@ try {
     $loaded1b2 = Get-Content -LiteralPath $result1b2.json_path -Raw | ConvertFrom-Json
     Assert-True (-not ($loaded1b2.openspec_changes -contains 'archive-me')) 'archive rename skips the deleted active change id'
     Assert-True ($loaded1b2.validation_commands -contains 'openspec validate --specs --strict') 'archive rename keeps strict canonical spec validation'
-    Assert-True (-not ($loaded1b2.validation_commands -contains 'openspec validate archive-me')) 'archive rename does not validate a deleted active change'
+    Assert-True (-not ($loaded1b2.validation_commands -contains 'openspec validate archive-me --type change')) 'archive rename does not validate a deleted active change'
     Remove-Item -LiteralPath $out1b2 -Recurse -Force
 } finally {
     Pop-Location

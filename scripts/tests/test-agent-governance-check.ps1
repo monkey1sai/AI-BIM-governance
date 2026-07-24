@@ -38,6 +38,7 @@ try {
         '.github/PULL_REQUEST_TEMPLATE.md',
         'scripts/tests/check-pr-body-evidence.ps1',
         'scripts/tests/test-pr-body-evidence.ps1',
+        'scripts/tests/verify-openspec-lifecycle.ps1',
         'scripts/lib/design-system-gate.ps1',
         'scripts/tests/verify-design-system-reference.ps1',
         'scripts/tests/test-design-system-reference.ps1',
@@ -59,7 +60,8 @@ try {
         '.codex/skills/spec-to-done/agents/openai.yaml',
         'docs/agents/superpowers-invocation-policy.md',
         'docs/PR_REVIEW_AGENT.md',
-        'docs/superpowers/plans/2026-06-18-ai-coding-maturity-governance.md'
+        'docs/superpowers/plans/2026-06-18-ai-coding-maturity-governance.md',
+        'openspec/AGENTS.md'
     )) {
         Assert-True (Test-Path -LiteralPath $path -PathType Leaf) "$path exists"
     }
@@ -73,6 +75,12 @@ try {
     Assert-FileContains '.github/ISSUE_TEMPLATE/governance-change.yml' 'agent-workflow' 'governance change template carries agent workflow label'
 
     Assert-FileContains '.github/CODEOWNERS' '@monkey1sai' 'CODEOWNERS names repository owner'
+    Assert-FileContains '.github/workflows/agent-governance.yml' 'verify-openspec-lifecycle\.ps1' 'agent governance runs OpenSpec lifecycle verification'
+    Assert-FileContains 'openspec/AGENTS.md' 'deferred change 保留在 `openspec/changes/<change-id>/`' 'OpenSpec instructions keep deferred changes outside completed archive'
+    Assert-FileContains 'openspec/AGENTS.md' '--skip-specs.*不是.*deferred state' 'OpenSpec instructions do not treat skip-specs as deferral'
+    Assert-FileContains 'openspec/specs/governance-throughput-budget/spec.md' 'active OpenSpec change 同時數量 SHALL 不超過 6' 'canonical OpenSpec WIP limit is six'
+    Assert-FileContains 'scripts/tests/verify-openspec-lifecycle.ps1' '\$wipLimit\s*=\s*6' 'OpenSpec lifecycle verifier enforces the canonical WIP limit'
+    Assert-FileContains 'docs/plans/NOW.md' '禁止同時推進 >6 個 active OpenSpec product change' 'NOW reflects the canonical OpenSpec WIP limit'
     foreach ($ownedPath in @('/AGENTS.md', '/docs/agents/', '/docs/plans/', '/.github/', '/scripts/')) {
         Assert-FileContains '.github/CODEOWNERS' ([regex]::Escape($ownedPath)) "CODEOWNERS covers $ownedPath"
     }

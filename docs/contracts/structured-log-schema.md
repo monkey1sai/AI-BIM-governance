@@ -1,7 +1,7 @@
 # Structured Log Schema — Contract
 
 > **Source of truth** for the cross-service structured log baseline.
-> Capability spec: `openspec/specs/cross-service-structured-log-baseline/` (post-archive).
+> Capability spec: `openspec/specs/cross-service-structured-log-baseline/`（已同步 canonical；active change 只剩 deferred runtime-evidence closeout）。
 > Design rationale: `docs/superpowers/specs/2026-05-26-cross-service-structured-log-baseline-design.md`.
 > JSON Schema artifact: `tests/contracts/structured-log/schema.json` (draft-07).
 

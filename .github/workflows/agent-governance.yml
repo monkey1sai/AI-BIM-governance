@@ -20,6 +20,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Setup Node.js for PNG recomputation tests
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -40,6 +41,10 @@ jobs:
       - name: Run governance static check
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
+
+      - name: Verify OpenSpec lifecycle state
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/verify-openspec-lifecycle.ps1 -BaseRef '${{ github.event.pull_request.base.sha }}'
 
       - name: Run PR body evidence tests
         shell: pwsh
