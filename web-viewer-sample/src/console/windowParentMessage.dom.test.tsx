@@ -15,8 +15,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import AppStream from "../AppStream";
 import App from "../Window";
 import { reviewEnv } from "../config/env";
+import { getLang, setLang } from "./i18n";
 
 const PARENT_ORIGIN = "http://127.0.0.1:8004"; // console（coordinator）origin；複用 VITE_ALLOWED_COORDINATOR_ORIGINS 白名單。
+const initialLang = getLang();
 
 type AppInternals = {
   state: Record<string, unknown>;
@@ -133,6 +135,7 @@ afterEach(() => {
   reviewEnv.viewerLeaseToken = "";
   reviewEnv.sourceClientId = "dev_user_001";
   reviewEnv.userToken = "";
+  setLang(initialLang);
 });
 
 describe("S3 render：嵌入時失敗清單收合於 console（viewer 僅作高亮引擎）", () => {
@@ -540,7 +543,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     expect(html).toContain('data-testid="runtime-command-rejection"');
     expect(html).toContain('data-testid="runtime-authority-unavailable"');
     expect(html).toContain('aria-live="assertive"');
-    expect(html).toContain("可重試");
+    expect(html).toContain("可安全重試原操作");
     expect(html).toContain("操作授權服務暫時不可用");
     expect(html).toContain('data-testid="runtime-command-lifecycle"');
     expect(JSON.stringify(internals(app).state)).not.toContain(secretSentinel);
@@ -571,6 +574,128 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       },
     });
     expect(internals(app).state.runtimeCommandRejection).toMatchObject({ request_id: "req_outage_001" });
+  });
+
+  const rejectionReasonCases = [
+    ["spectator_readonly", "目前為僅檢視模式，無法執行此操作", "This action is unavailable in read-only spectator mode."],
+    ["lease_invalid", "檢視者 lease 無效或已過期", "The viewer lease is invalid or has expired."],
+    ["session_lifecycle_blocked", "目前 session 狀態不允許此操作", "The current session state does not allow this action."],
+    ["unauthorized_source_client", "目前來源無權執行此操作", "The current source is not authorized to perform this action."],
+    ["unsupported_command", "目前 runtime 不支援此操作", "The current runtime does not support this action."],
+    ["invalid_payload", "操作資料無效，未執行任何變更", "The command data is invalid; no change was performed."],
+  ] as const;
+
+  it.each(rejectionReasonCases)("%s renders the complete localized rejection matrix", (reason, zhReason, enReason) => {
+    const languageCases = [
+      { language: "zh" as const, title: "執行階段命令遭拒絕", expectedReason: zhReason, retry: "可安全重試原操作", noRetry: "請勿盲目重試" },
+      { language: "en" as const, title: "Runtime command rejected", expectedReason: enReason, retry: "You can safely retry the original action.", noRetry: "Do not retry blindly." },
+    ];
+
+    for (const languageCase of languageCases) {
+      for (const retryable of [true, false]) {
+        setLang(languageCase.language);
+        const app = operableApp();
+        internals(app).state = {
+          ...internals(app).state,
+          runtimeCommandRejection: {
+            rejected_event_type: "focusPrimRequest",
+            reason,
+            request_id: `req_${reason}_${languageCase.language}_${retryable}`,
+            retryable,
+            runtime_state: "unchanged",
+          },
+        };
+
+        const html = renderToString(internals(app).render());
+        expect(html).toContain('data-testid="runtime-command-rejection"');
+        expect(html).toContain('data-testid="runtime-command-rejection-reason-code"');
+        expect(html).toContain(languageCase.title);
+        expect(html).toContain(languageCase.expectedReason);
+        expect(html).toContain(reason);
+        expect(html).toContain(retryable ? languageCase.retry : languageCase.noRetry);
+      }
+    }
+  });
+
+  it.each([
+    {
+      language: "zh" as const,
+      authority: "操作授權服務暫時不可用",
+      authorityDetail: "請稍後重新執行原操作，系統不會重播舊 transaction。",
+      stage: "stage 已變更但尚未由 coordinator 證實",
+      stageDetail: "handoff 已阻擋。",
+      resync: "重新同步 stage proof",
+      noRetry: "請勿盲目重試",
+      leaseInvalid: "檢視者 lease 無效或已過期",
+    },
+    {
+      language: "en" as const,
+      authority: "The operation authority service is temporarily unavailable.",
+      authorityDetail: "Retry the original action later; the system will not replay an old transaction.",
+      stage: "The stage changed but is not yet confirmed.",
+      stageDetail: "Handoff is blocked.",
+      resync: "Resync stage proof",
+      noRetry: "Do not retry blindly.",
+      leaseInvalid: "The viewer lease is invalid or has expired.",
+    },
+  ])("$language prioritizes authority outage and stage-unproven copy", (copy) => {
+    setLang(copy.language);
+    const app = operableApp();
+    internals(app).state = {
+      ...internals(app).state,
+      runtimeCommandRejection: {
+        rejected_event_type: "focusPrimRequest",
+        reason: "lease_invalid",
+        request_id: `req_outage_${copy.language}`,
+        retryable: true,
+        runtime_state: "unchanged",
+        detail_code: "authority_unavailable",
+      },
+    };
+
+    let html = renderToString(internals(app).render());
+    expect(html).toContain('data-testid="runtime-authority-unavailable"');
+    expect(html).toContain(copy.authority);
+    expect(html).toContain(copy.authorityDetail);
+    expect(html).not.toContain(copy.leaseInvalid);
+
+    internals(app).state = {
+      ...internals(app).state,
+      runtimeCommandRejection: {
+        rejected_event_type: "loadArtifactGroupRequest",
+        reason: "lease_invalid",
+        request_id: `req_outage_changed_${copy.language}`,
+        retryable: true,
+        runtime_state: "changed_unconfirmed",
+        detail_code: "authority_unavailable",
+      },
+    };
+    html = renderToString(internals(app).render());
+    expect(html).toContain(copy.authority);
+    expect(html).toContain(copy.authorityDetail);
+    expect(html).toContain(copy.stage);
+    expect(html).toContain(copy.stageDetail);
+    expect(html).toContain(copy.resync);
+    expect(html).toContain('data-testid="runtime-command-rejection-stage-unproven"');
+    expect(html).toContain('data-testid="runtime-command-resync"');
+    expect(html).toContain(copy.noRetry);
+
+    internals(app).state = {
+      ...internals(app).state,
+      runtimeCommandRejection: {
+        rejected_event_type: "loadArtifactGroupRequest",
+        reason: "lease_invalid",
+        request_id: `req_changed_${copy.language}`,
+        retryable: true,
+        runtime_state: "changed_unconfirmed",
+      },
+    };
+    html = renderToString(internals(app).render());
+    expect(html).toContain(copy.stage);
+    expect(html).toContain(copy.stageDetail);
+    expect(html).toContain(copy.resync);
+    expect(html).toContain('data-testid="runtime-command-resync"');
+    expect(html).toContain(copy.noRetry);
   });
 
   it("accepted 是 executing 非 terminal；bindingApplied 才完成 lifecycle", () => {
@@ -1566,11 +1691,15 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
     internals(app).standaloneViewerLease = lease;
     internals(app).componentMounted = true;
     const refreshedExpiry = new Date(Date.now() + 90_000).toISOString();
-    const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
-      lease_id: lease.lease_id,
-      expires_at: refreshedExpiry,
-      heartbeat_after_ms: 15_000,
-    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void input;
+      void init;
+      return new Response(JSON.stringify({
+        lease_id: lease.lease_id,
+        expires_at: refreshedExpiry,
+        heartbeat_after_ms: 15_000,
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
     vi.stubGlobal("fetch", fetchSpy);
 
     await internals(app)._heartbeatStandaloneViewerLease("review_session_x", lease);

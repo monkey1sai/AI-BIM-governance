@@ -1,17 +1,22 @@
 import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { expect, test, type Page } from "@playwright/test";
 
 const enabled = process.env.E2E_HOST_NATIVE_RUNTIME_AUTHORITY === "1";
 const coordinatorBase = process.env.E2E_COORDINATOR_BASE_URL || "";
-const coordinatorPid = Number(process.env.E2E_COORDINATOR_PID || "0");
 const kitSignalPort = Number(process.env.E2E_KIT_SIGNAL_PORT || "0");
 const kitMediaPort = Number(process.env.E2E_KIT_MEDIA_PORT || "0");
 const stageUrlA = process.env.E2E_STAGE_URL_A || "";
 const stageUrlB = process.env.E2E_STAGE_URL_B || "";
 const runtimeId = process.env.E2E_KIT_RUNTIME_ID || "kit_runtime_authority_host_native";
 const runtimePid = Number(process.env.E2E_KIT_PID || "0");
+const controlDir = process.env.E2E_RUNTIME_AUTHORITY_CONTROL_DIR || "";
+const evidenceRunId = process.env.E2E_RUNTIME_AUTHORITY_RUN_ID || "";
+const controlNonce = process.env.E2E_RUNTIME_AUTHORITY_CONTROL_NONCE || "";
+const originMainSha = process.env.E2E_ORIGIN_MAIN_SHA || "";
+const denialStageStabilityMs = 750;
 const processLogPaths = (process.env.E2E_RUNTIME_PROCESS_LOGS || "")
   .split(";")
   .map((value) => value.trim())
@@ -36,6 +41,14 @@ type SafePayload = {
 };
 
 type SafeEvent = { event_type: string; payload: SafePayload };
+
+type ControlMarker = {
+  schema_version: "runtime-command-authority-control/v1";
+  run_id: string;
+  request_id: string;
+  control_nonce: string;
+  coordinator_stopped?: boolean;
+};
 
 type Lease = {
   lease_id: string;
@@ -76,12 +89,10 @@ async function apiJson<T>(
     },
     ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
   });
-  const body = await response.json().catch(() => ({})) as Record<string, unknown>;
   if (!response.ok) {
-    const detail = typeof body.detail === "string" ? body.detail : "no_detail";
-    throw new Error(`coordinator ${path} -> ${response.status} ${detail}`);
+    throw new Error(`coordinator request failed with status ${response.status}`);
   }
-  return body as T;
+  return await response.json() as T;
 }
 
 async function createSession(label: string, stageUrl: string): Promise<SessionFixture> {
@@ -263,6 +274,36 @@ async function safeEvents(page: Page, requestId?: string): Promise<SafeEvent[]> 
   }, requestId);
 }
 
+function controlMarkerPath(name: string): string {
+  if (!controlDir) throw new Error("E2E_RUNTIME_AUTHORITY_CONTROL_DIR is required");
+  return join(controlDir, name);
+}
+
+async function writeControlMarker(name: string, marker: ControlMarker): Promise<void> {
+  await writeFile(controlMarkerPath(name), `${JSON.stringify(marker)}\n`, { encoding: "utf8", flag: "wx" });
+}
+
+async function waitForControlMarker(
+  name: string,
+  requestId: string,
+  timeoutMs = 90_000,
+): Promise<ControlMarker> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    const marker = await readFile(controlMarkerPath(name), "utf8")
+      .then((content) => JSON.parse(content) as ControlMarker)
+      .catch(() => null);
+    if (
+      marker?.schema_version === "runtime-command-authority-control/v1"
+      && marker.run_id === evidenceRunId
+      && marker.request_id === requestId
+      && marker.control_nonce === controlNonce
+    ) return marker;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  } while (Date.now() < deadline);
+  throw new Error(`Timed out waiting for runner marker ${name}`);
+}
+
 async function waitForEvent(
   page: Page,
   requestId: string,
@@ -301,6 +342,24 @@ async function observedStageUrl(page: Page): Promise<string> {
   return responses.at(-1)?.payload.url || "";
 }
 
+async function assertStageStable(
+  page: Page,
+  expectedStage: string,
+  settleMs = denialStageStabilityMs,
+): Promise<string> {
+  const deadline = Date.now() + settleMs;
+  let observedStage = "";
+  do {
+    observedStage = await observedStageUrl(page);
+    expect(observedStage).toBe(expectedStage);
+    const remainingMs = deadline - Date.now();
+    if (remainingMs > 0) await page.waitForTimeout(Math.min(100, remainingMs));
+  } while (Date.now() < deadline);
+  const finalStage = await observedStageUrl(page);
+  expect(finalStage).toBe(expectedStage);
+  return finalStage;
+}
+
 function commandPayload(
   fixture: SessionFixture,
   requestId: string,
@@ -321,18 +380,59 @@ function safeTerminal(event: SafeEvent): SafeEvent {
 }
 
 test("host-native Kit enforces runtime authority and preserves stage truth", async ({ page }, testInfo) => {
-  test.setTimeout(240_000);
+  test.setTimeout(300_000);
   expect(coordinatorBase).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
-  expect(coordinatorPid).toBeGreaterThan(0);
   expect(kitSignalPort).toBeGreaterThan(0);
   expect(kitMediaPort).toBeGreaterThan(0);
   expect(stageUrlA).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//);
   expect(stageUrlB).toMatch(/^http:\/\/localhost:\d+\//);
+  expect(controlDir).not.toBe("");
+  expect(evidenceRunId).toMatch(/^[a-z0-9-]+$/);
+  expect(controlNonce).toMatch(/^[0-9a-f]{32}$/);
+  expect(originMainSha).toMatch(/^[0-9a-f]{40}$/);
+
+  const expiring = await createSession("expired", stageUrlA);
+
+  await connectProbe(page);
+  const video = await page.locator("#remote-video").evaluate((element) => {
+    const media = element as HTMLVideoElement;
+    return { width: media.videoWidth, height: media.videoHeight, readyState: media.readyState };
+  });
+  expect(video.width).toBeGreaterThan(0);
+  expect(video.height).toBeGreaterThan(0);
+
+  // Deliberately expire this one lease before minting the leases that must remain
+  // usable for the subsequent mismatch, replay, and outage checks. Probe traffic
+  // does not renew a viewer lease, so creating all four at once would exhaust them.
+  const denialEvidence: Record<string, {
+    terminal: SafeEvent;
+    observed_stage_before: string;
+    observed_stage_after: string;
+  }> = {};
+  const expiresAtMs = Date.parse(expiring.lease.expires_at);
+  const expiryWaitMs = Math.max(0, expiresAtMs - Date.now() + 1_000);
+  if (expiryWaitMs > 0) await page.waitForTimeout(expiryWaitMs);
+  const expiredRequestId = `host_expired_${randomUUID()}`;
+  const expiredStageBefore = await observedStageUrl(page);
+  await sendCommand(page, "focusPrimRequest", commandPayload(expiring, expiredRequestId, { prim_path: "/World" }));
+  const expiredTerminal = await waitForEvent(page, expiredRequestId, ["commandRejected"]);
+  expect(expiredTerminal.payload).toMatchObject({
+    reason: "lease_invalid",
+    detail_code: "lease_expired",
+    runtime_state: "unchanged",
+    retryable: false,
+  });
+  const expiredStageAfter = await assertStageStable(page, expiredStageBefore);
+  expect(expiredStageAfter).toBe(expiredStageBefore);
+  denialEvidence.expired = {
+    terminal: safeTerminal(expiredTerminal),
+    observed_stage_before: expiredStageBefore,
+    observed_stage_after: expiredStageAfter,
+  };
 
   const primary = await createSession("primary", stageUrlA);
   const wrongSession = await createSession("wrong_session", stageUrlB);
   const released = await createSession("released", stageUrlA);
-  const expiring = await createSession("expired", stageUrlA);
   const secrets = [
     primary.userCarrier,
     primary.lease.lease_token,
@@ -343,14 +443,6 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
     expiring.userCarrier,
     expiring.lease.lease_token,
   ];
-
-  await connectProbe(page);
-  const video = await page.locator("#remote-video").evaluate((element) => {
-    const media = element as HTMLVideoElement;
-    return { width: media.videoWidth, height: media.videoHeight, readyState: media.readyState };
-  });
-  expect(video.width).toBeGreaterThan(0);
-  expect(video.height).toBeGreaterThan(0);
 
   const initialAuthorization = await preauthorize(primary);
   const initialRequestId = `host_stage_${randomUUID()}`;
@@ -382,17 +474,25 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
   const p95Ms = orderedLatencies[Math.ceil(orderedLatencies.length * 0.95) - 1];
   expect(p95Ms).toBeLessThan(500);
 
-  const denialEvidence: Record<string, { terminal: SafeEvent; observed_stage_url: string }> = {};
   const forgedRequestId = `host_forged_${randomUUID()}`;
+  const forgedStageBefore = await observedStageUrl(page);
+  expect(forgedStageBefore).toBe(baselineStage);
   await sendCommand(page, "focusPrimRequest", {
     ...commandPayload(primary, forgedRequestId, { prim_path: "/World" }),
     viewer_lease_token: "forged-host-native-lease",
   });
   const forgedTerminal = await waitForEvent(page, forgedRequestId, ["commandRejected"]);
   expect(forgedTerminal.payload).toMatchObject({ reason: "lease_invalid", runtime_state: "unchanged", retryable: false });
-  denialEvidence.forged = { terminal: safeTerminal(forgedTerminal), observed_stage_url: await observedStageUrl(page) };
+  const forgedStageAfter = await assertStageStable(page, baselineStage);
+  denialEvidence.forged = {
+    terminal: safeTerminal(forgedTerminal),
+    observed_stage_before: forgedStageBefore,
+    observed_stage_after: forgedStageAfter,
+  };
 
   const wrongSourceRequestId = `host_wrong_source_${randomUUID()}`;
+  const wrongSourceStageBefore = await observedStageUrl(page);
+  expect(wrongSourceStageBefore).toBe(baselineStage);
   await sendCommand(page, "focusPrimRequest", {
     ...commandPayload(primary, wrongSourceRequestId, { prim_path: "/World" }),
     source_client_id: "viewer_lease_wrong_source_host_native",
@@ -403,9 +503,11 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
     runtime_state: "unchanged",
     retryable: false,
   });
+  const wrongSourceStageAfter = await assertStageStable(page, baselineStage);
   denialEvidence.wrong_source = {
     terminal: safeTerminal(wrongSourceTerminal),
-    observed_stage_url: await observedStageUrl(page),
+    observed_stage_before: wrongSourceStageBefore,
+    observed_stage_after: wrongSourceStageAfter,
   };
 
   await apiJson(
@@ -417,6 +519,8 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
     },
   );
   const releasedRequestId = `host_released_${randomUUID()}`;
+  const releasedStageBefore = await observedStageUrl(page);
+  expect(releasedStageBefore).toBe(baselineStage);
   await sendCommand(page, "focusPrimRequest", commandPayload(released, releasedRequestId, { prim_path: "/World" }));
   const releasedTerminal = await waitForEvent(page, releasedRequestId, ["commandRejected"]);
   expect(releasedTerminal.payload).toMatchObject({
@@ -425,30 +529,17 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
     runtime_state: "unchanged",
     retryable: false,
   });
+  const releasedStageAfter = await assertStageStable(page, baselineStage);
   denialEvidence.released = {
     terminal: safeTerminal(releasedTerminal),
-    observed_stage_url: await observedStageUrl(page),
-  };
-
-  const expiresAtMs = Date.parse(expiring.lease.expires_at);
-  const expiryWaitMs = Math.max(0, expiresAtMs - Date.now() + 1_000);
-  if (expiryWaitMs > 0) await page.waitForTimeout(expiryWaitMs);
-  const expiredRequestId = `host_expired_${randomUUID()}`;
-  await sendCommand(page, "focusPrimRequest", commandPayload(expiring, expiredRequestId, { prim_path: "/World" }));
-  const expiredTerminal = await waitForEvent(page, expiredRequestId, ["commandRejected"]);
-  expect(expiredTerminal.payload).toMatchObject({
-    reason: "lease_invalid",
-    detail_code: "lease_expired",
-    runtime_state: "unchanged",
-    retryable: false,
-  });
-  denialEvidence.expired = {
-    terminal: safeTerminal(expiredTerminal),
-    observed_stage_url: await observedStageUrl(page),
+    observed_stage_before: releasedStageBefore,
+    observed_stage_after: releasedStageAfter,
   };
 
   const wrongSessionAuthorization = await preauthorize(wrongSession);
   const wrongSessionRequestId = `host_wrong_session_${randomUUID()}`;
+  const wrongSessionStageBefore = await observedStageUrl(page);
+  expect(wrongSessionStageBefore).toBe(baselineStage);
   await sendCommand(page, "openStageRequest", commandPayload(primary, wrongSessionRequestId, {
     stage_binding_authorization_id: wrongSessionAuthorization.stage_binding_authorization_id,
     binding_revision_id: wrongSessionAuthorization.binding_revision_id,
@@ -461,15 +552,19 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
     detail_code: "stage_transaction_mismatch",
     runtime_state: "unchanged",
   });
+  const wrongSessionStageAfter = await assertStageStable(page, baselineStage);
   denialEvidence.direct_open_wrong_session = {
     terminal: safeTerminal(wrongSessionTerminal),
-    observed_stage_url: await observedStageUrl(page),
+    observed_stage_before: wrongSessionStageBefore,
+    observed_stage_after: wrongSessionStageAfter,
   };
 
   const tamperAuthorization = await preauthorize(primary);
   const tamperedComposition = structuredClone(tamperAuthorization.stage_composition);
   tamperedComposition.primary.usdc_url = stageUrlB;
   const tamperRequestId = `host_composition_tamper_${randomUUID()}`;
+  const tamperStageBefore = await observedStageUrl(page);
+  expect(tamperStageBefore).toBe(baselineStage);
   await sendCommand(page, "loadArtifactGroupRequest", commandPayload(primary, tamperRequestId, {
     stage_binding_authorization_id: tamperAuthorization.stage_binding_authorization_id,
     binding_revision_id: tamperAuthorization.binding_revision_id,
@@ -482,42 +577,48 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
     detail_code: "stage_transaction_mismatch",
     runtime_state: "unchanged",
   });
+  const tamperStageAfter = await assertStageStable(page, baselineStage);
   denialEvidence.composition_tamper = {
     terminal: safeTerminal(tamperTerminal),
-    observed_stage_url: await observedStageUrl(page),
+    observed_stage_before: tamperStageBefore,
+    observed_stage_after: tamperStageAfter,
   };
 
   const replayAuthorization = await preauthorize(primary);
-  const replayRequestId = `host_concurrent_replay_${randomUUID()}`;
-  const replayPayload = commandPayload(primary, replayRequestId, {
-    stage_binding_authorization_id: replayAuthorization.stage_binding_authorization_id,
-    binding_revision_id: replayAuthorization.binding_revision_id,
-    stage_composition: replayAuthorization.stage_composition,
-    url: replayAuthorization.stage_composition.primary.usdc_url,
-  });
-  await page.evaluate(async ({ eventType, payload }) => {
+  const replayRequestIds = [
+    `host_concurrent_replay_a_${randomUUID()}`,
+    `host_concurrent_replay_b_${randomUUID()}`,
+  ];
+  const replayPayloads = replayRequestIds.map((requestId) => commandPayload(primary, requestId, {
+      stage_binding_authorization_id: replayAuthorization.stage_binding_authorization_id,
+      binding_revision_id: replayAuthorization.binding_revision_id,
+      stage_composition: replayAuthorization.stage_composition,
+      url: replayAuthorization.stage_composition.primary.usdc_url,
+  }));
+  await page.evaluate(async ({ eventType, payloads }) => {
     const probe = (globalThis as typeof globalThis & {
       __HOST_NATIVE_AUTHORITY_PROBE__?: {
         streamer: { sendMessage: (message: unknown) => Promise<unknown> };
       };
     }).__HOST_NATIVE_AUTHORITY_PROBE__;
     if (!probe) throw new Error("host-native probe is unavailable");
-    await Promise.all([
-      probe.streamer.sendMessage({ event_type: eventType, payload }),
-      probe.streamer.sendMessage({ event_type: eventType, payload }),
-    ]);
-  }, { eventType: "loadArtifactGroupRequest", payload: replayPayload });
-  await page.waitForFunction((requestId) => {
+    await Promise.all(payloads.map((payload) => probe.streamer.sendMessage({ event_type: eventType, payload })));
+  }, { eventType: "loadArtifactGroupRequest", payloads: replayPayloads });
+  await page.waitForFunction((requestIds) => {
     const probe = (globalThis as typeof globalThis & {
       __HOST_NATIVE_AUTHORITY_PROBE__?: { events: SafeEvent[] };
     }).__HOST_NATIVE_AUTHORITY_PROBE__;
-    const terminals = (probe?.events || []).filter((event) => (
+    return requestIds.every((requestId) => (probe?.events || []).some((event) => (
       event.payload.request_id === requestId
       && (event.event_type === "openedStageResult" || event.event_type === "commandRejected")
-    ));
-    return terminals.length >= 2;
-  }, replayRequestId, { timeout: 60_000 });
-  const replayEvents = await safeEvents(page, replayRequestId);
+    )));
+  }, replayRequestIds, { timeout: 60_000 });
+  const replayEventsByRequest = await Promise.all(replayRequestIds.map((requestId) => safeEvents(page, requestId)));
+  const replayTerminalsByRequest = replayEventsByRequest.map((events) => events.filter((event) => (
+    event.event_type === "openedStageResult" || event.event_type === "commandRejected"
+  )));
+  for (const terminals of replayTerminalsByRequest) expect(terminals).toHaveLength(1);
+  const replayEvents = replayEventsByRequest.flat();
   const replaySuccess = replayEvents.filter((event) => (
     event.event_type === "openedStageResult" && event.payload.result === "success"
   ));
@@ -528,22 +629,25 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
   expect(replaySuccess).toHaveLength(1);
   expect(replayAccepted).toHaveLength(1);
   expect(replayRejections).toHaveLength(1);
-  expect(await observedStageUrl(page)).toBe(baselineStage);
+  expect(await assertStageStable(page, baselineStage)).toBe(baselineStage);
 
-  for (const evidence of Object.values(denialEvidence)) {
-    expect(evidence.observed_stage_url).toBe(baselineStage);
+  for (const [name, evidence] of Object.entries(denialEvidence)) {
+    expect(evidence.observed_stage_after).toBe(evidence.observed_stage_before);
+    if (name !== "expired") {
+      expect(evidence.observed_stage_before).toBe(baselineStage);
+      expect(evidence.observed_stage_after).toBe(baselineStage);
+    }
   }
 
-  process.kill(coordinatorPid);
-  await expect.poll(async () => {
-    try {
-      await fetch(`${coordinatorBase}/health`, { signal: AbortSignal.timeout(500) });
-      return "listening";
-    } catch {
-      return "stopped";
-    }
-  }, { timeout: 15_000 }).toBe("stopped");
   const outageRequestId = `host_outage_${randomUUID()}`;
+  await writeControlMarker("outage-ready.json", {
+    schema_version: "runtime-command-authority-control/v1",
+    run_id: evidenceRunId,
+    request_id: outageRequestId,
+    control_nonce: controlNonce,
+  });
+  const outageGo = await waitForControlMarker("outage-go.json", outageRequestId);
+  expect(outageGo.coordinator_stopped).toBe(true);
   await sendCommand(page, "focusPrimRequest", commandPayload(primary, outageRequestId, { prim_path: "/World" }));
   const outageTerminal = await waitForEvent(page, outageRequestId, ["commandRejected"], 30_000);
   expect(outageTerminal.payload).toMatchObject({
@@ -558,6 +662,12 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
   const result = {
     schema_version: "runtime-command-authority-host-native-evidence/v1",
     observed_at: new Date().toISOString(),
+    post_merge_corrective: true,
+    origin_main_sha: originMainSha,
+    runner_control: {
+      run_id: evidenceRunId,
+      outage_handshake: "deployment-owned-coordinator",
+    },
     runtime: {
       runtime_id: runtimeId,
       process_id: runtimePid || null,
@@ -583,12 +693,12 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
     },
     denials: denialEvidence,
     concurrent_replay: {
-      request_id: replayRequestId,
+      request_ids: replayRequestIds,
       binding_revision_id: replayAuthorization.binding_revision_id,
       accepted_count: replayAccepted.length,
       success_terminal_count: replaySuccess.length,
       rejection_terminal_count: replayRejections.length,
-      rejection: safeTerminal(replayRejections[0]),
+      terminals: replayTerminalsByRequest.map((terminals) => safeTerminal(terminals[0])),
       observed_stage_url: baselineStage,
     },
     outage: {
@@ -607,11 +717,11 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
     },
   };
   const serialized = JSON.stringify(result, null, 2);
-  for (const secret of secrets) expect(serialized).not.toContain(secret);
+  for (const secret of secrets) expect(serialized.includes(secret)).toBe(false);
 
   for (const logPath of processLogPaths) {
     const logText = await readFile(logPath, "utf8").catch(() => "");
-    for (const secret of secrets) expect(logText).not.toContain(secret);
+    for (const secret of secrets) expect(logText.includes(secret)).toBe(false);
   }
 
   const status = page.locator("#probe-status");
@@ -628,6 +738,12 @@ test("host-native Kit enforces runtime authority and preserves stage truth", asy
     ].join("\n");
   }, result);
   await writeFile(testInfo.outputPath("runtime-command-authority-host-native.json"), `${serialized}\n`, "utf8");
+  await writeControlMarker("outage-complete.json", {
+    schema_version: "runtime-command-authority-control/v1",
+    run_id: evidenceRunId,
+    request_id: outageRequestId,
+    control_nonce: controlNonce,
+  });
   await page.screenshot({
     path: testInfo.outputPath("runtime-command-authority-host-native.png"),
     fullPage: true,

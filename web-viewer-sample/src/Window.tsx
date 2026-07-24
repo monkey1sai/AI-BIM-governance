@@ -55,6 +55,7 @@ import "./console/viewer/viewer.css";
 import { evaluateCoverageGate } from "./console/governance/govEndpoints";
 // 統一治理控制台 MVP（W1/W3）：A3 rule-run / A8 issue / BCF 都打 coordinator :8004 的 /api/governance/* proxy。
 import { governanceClient, type RuleResultRow, type RuleRunStatus } from "./console/governanceClient";
+import { t } from "./console/i18n";
 
 
 interface USDPrimType {
@@ -201,6 +202,70 @@ type RuntimeRejectionReason =
     | "unauthorized_source_client"
     | "unsupported_command"
     | "invalid_payload";
+
+type LocalizedCopy = Readonly<{ zh: string; en: string }>;
+
+const runtimeRejectionReasonCopy: Readonly<Record<RuntimeRejectionReason, LocalizedCopy>> = {
+    spectator_readonly: {
+        zh: "目前為僅檢視模式，無法執行此操作",
+        en: "This action is unavailable in read-only spectator mode.",
+    },
+    lease_invalid: {
+        zh: "檢視者 lease 無效或已過期",
+        en: "The viewer lease is invalid or has expired.",
+    },
+    session_lifecycle_blocked: {
+        zh: "目前 session 狀態不允許此操作",
+        en: "The current session state does not allow this action.",
+    },
+    unauthorized_source_client: {
+        zh: "目前來源無權執行此操作",
+        en: "The current source is not authorized to perform this action.",
+    },
+    unsupported_command: {
+        zh: "目前 runtime 不支援此操作",
+        en: "The current runtime does not support this action.",
+    },
+    invalid_payload: {
+        zh: "操作資料無效，未執行任何變更",
+        en: "The command data is invalid; no change was performed.",
+    },
+};
+
+const runtimeRejectionPresentation = {
+    title: {
+        zh: "執行階段命令遭拒絕",
+        en: "Runtime command rejected",
+    },
+    authorityUnavailable: {
+        zh: "操作授權服務暫時不可用",
+        en: "The operation authority service is temporarily unavailable.",
+    },
+    authorityUnavailableDetail: {
+        zh: "請稍後重新執行原操作，系統不會重播舊 transaction。",
+        en: "Retry the original action later; the system will not replay an old transaction.",
+    },
+    stageUnproven: {
+        zh: "stage 已變更但尚未由 coordinator 證實",
+        en: "The stage changed but is not yet confirmed.",
+    },
+    stageUnprovenDetail: {
+        zh: "handoff 已阻擋。",
+        en: "Handoff is blocked.",
+    },
+    retryable: {
+        zh: "可安全重試原操作",
+        en: "You can safely retry the original action.",
+    },
+    doNotRetry: {
+        zh: "請勿盲目重試",
+        en: "Do not retry blindly.",
+    },
+    resync: {
+        zh: "重新同步 stage proof",
+        en: "Resync stage proof",
+    },
+} as const satisfies Record<string, LocalizedCopy>;
 
 interface RuntimeCommandRejection {
     rejected_event_type: string;
@@ -3664,6 +3729,15 @@ export default class App extends React.Component<AppProps, AppState> {
         const shouldRenderAppStream = !reviewEnv.hasExplicitEmptySessionId && Boolean(this.state.reviewSessionId);
         const streamRole = isSpectatorStreamMode() ? "spectator" : "primary";
         const liveFrameObserved = this._hasRemoteVideoFrame();
+        const runtimeCommandRejection = this.state.runtimeCommandRejection;
+        const runtimeAuthorityUnavailable = runtimeCommandRejection?.detail_code === "authority_unavailable";
+        const runtimeCommandRejectionReason = runtimeCommandRejection
+            ? runtimeCommandRejection.runtime_state === "changed_unconfirmed"
+                ? runtimeRejectionPresentation.stageUnproven
+                : runtimeRejectionReasonCopy[runtimeCommandRejection.reason]
+            : null;
+        const runtimeCommandCanSafelyRetry = runtimeCommandRejection?.retryable === true
+            && runtimeCommandRejection.runtime_state !== "changed_unconfirmed";
         const triReady = {
             file: computeFileReady(this.state.latestStreamConfig),
             runtime: computeRuntimeReady(this.state.webrtcLifecycleStatus, this.state.stageLoadStatus),
@@ -3753,7 +3827,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     </section>
                 )}
 
-                {this.state.runtimeCommandRejection && (
+                {runtimeCommandRejection && runtimeCommandRejectionReason && (
                     <div
                         role="alert"
                         aria-live="assertive"
@@ -3770,24 +3844,33 @@ export default class App extends React.Component<AppProps, AppState> {
                             color: "#fff7ed",
                         }}
                     >
-                        <strong>Runtime command rejected</strong>
-                        {`：${this.state.runtimeCommandRejection.reason}`}
-                        {this.state.runtimeCommandRejection.retryable ? "（可重試）" : "（不可盲重試）"}
-                        {this.state.runtimeCommandRejection.detail_code === "authority_unavailable" && (
+                        <strong>{t(runtimeRejectionPresentation.title.zh, runtimeRejectionPresentation.title.en)}</strong>
+                        {runtimeAuthorityUnavailable ? (
                             <span data-testid="runtime-authority-unavailable">
-                                ；操作授權服務暫時不可用。請稍後重新執行原操作，系統不會重播舊 transaction。
+                                {`：${t(runtimeRejectionPresentation.authorityUnavailable.zh, runtimeRejectionPresentation.authorityUnavailable.en)}；${t(runtimeRejectionPresentation.authorityUnavailableDetail.zh, runtimeRejectionPresentation.authorityUnavailableDetail.en)}`}
+                            </span>
+                        ) : (
+                            `：${t(runtimeCommandRejectionReason.zh, runtimeCommandRejectionReason.en)}`
+                        )}
+                        {runtimeAuthorityUnavailable && runtimeCommandRejection.runtime_state === "changed_unconfirmed" && (
+                            <span data-testid="runtime-command-rejection-stage-unproven">
+                                {`；${t(runtimeRejectionPresentation.stageUnproven.zh, runtimeRejectionPresentation.stageUnproven.en)}`}
                             </span>
                         )}
-                        {this.state.runtimeCommandRejection.runtime_state === "changed_unconfirmed" && (
+                        <span data-testid="runtime-command-rejection-reason-code"> (<code>{runtimeCommandRejection.reason}</code>)</span>
+                        {runtimeCommandCanSafelyRetry
+                            ? `（${t(runtimeRejectionPresentation.retryable.zh, runtimeRejectionPresentation.retryable.en)}）`
+                            : `（${t(runtimeRejectionPresentation.doNotRetry.zh, runtimeRejectionPresentation.doNotRetry.en)}）`}
+                        {runtimeCommandRejection.runtime_state === "changed_unconfirmed" && (
                             <>
-                                <span>；stage 已變更但尚未由 coordinator 證實，handoff 已阻擋。</span>
+                                <span>{`；${t(runtimeRejectionPresentation.stageUnprovenDetail.zh, runtimeRejectionPresentation.stageUnprovenDetail.en)}`}</span>
                                 <button
                                     type="button"
                                     data-testid="runtime-command-resync"
                                     onClick={() => { void this._resyncStageBindingProof(); }}
                                     style={{ marginLeft: 12 }}
                                 >
-                                    重新同步 stage proof
+                                    {t(runtimeRejectionPresentation.resync.zh, runtimeRejectionPresentation.resync.en)}
                                 </button>
                             </>
                         )}

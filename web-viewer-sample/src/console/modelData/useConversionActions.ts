@@ -84,7 +84,7 @@ export function useConversionActions(
   // Task 8（AC6(b)）：ledger 列「觸發轉檔」鈕的 confirm handler。走 main 已合併的 triggerConversion
   //（POST /api/conversion/trigger，force_retrigger=true）；成功後 loadRecords() 由 ledger 真值對齊 chip
   //（ledger 為狀態真相來源，誠實鐵律，非樂觀 patch）。失敗顯 inline error、不關 dialog、ledger 不變。
-  const confirmTrigger = useCallback(async (_reason: string) => {
+  const confirmTrigger = useCallback(async () => {
     if (!pendingTriggerKey) return;
     if (triggerBusyRef.current) return; // finding #1：同步攔截重入（React state 尚未更新前）
     triggerBusyRef.current = true;
