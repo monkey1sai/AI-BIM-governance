@@ -2,17 +2,17 @@
 
 > 文件性質：working note；用於本週工作排序，不是 runtime/API contract 或完成證據。
 > **AI / 人：只聽這份。** 與本檔衝突時，以使用者最新口令為準，其次本檔，再才是 OpenSpec / 設計正本。  
-> 維護規則：每完成一個 outcome 就改狀態；禁止同時推進 >2 個 active OpenSpec product change。
+> 維護規則：每完成一個 outcome 就改狀態；禁止同時推進 >6 個 active OpenSpec product change。
 
 ## 本週三軌（你已選 1/2/3）
 
 | 序 | 軌 | 目標 | 狀態 |
 |---|---|---|---|
-| **0** | 治理 WIP（#364） | active ≤2；defer 其餘；採納 throughput 預算 | ✅ #364 MERGED + `governance-throughput-budget` archived |
+| **0** | 治理 WIP（#364） | active ≤6；defer 其餘；採納 throughput 預算 | ✅ #364 MERGED；2026-07-24 使用者將上限由 2 調整為 6 |
 | **1** | 收口 | completed 才 archive；deferred 留在 changes 並 frozen | **4 個近期 completed 維持 archive；4 個 unfinished historical correction 恢復 deferred** |
 | **2** | A4 | 只走切片 PR（先 #365，再下一刀） | **#365 + #380 + #382 + #383 + #386 MERGED**；current = S4-B PR #384 final gate，next = S4-C |
 
-**並行規則：** 0 可與 1 同天；**2 與新功能不得再開第 3 條 active product change**。  
+**並行規則：** 0 可與 1 同天；所有軌與新功能合計不得超過 6 個 active product change；deferred/frozen 不因額度增加自動 thaw。
 **本週不做：** A5–A10 全棧、`rvt-ifc-usdc-lineage` 實作、新 OpenSpec（除 archive/defer 註記）、整 repo 重掃。
 
 ---
@@ -21,7 +21,7 @@
 
 | OQ | 題目 | **建議裁決** |
 |---|---|---|
-| OQ-1 | 收斂後保留哪個 ≤2 大 active | ✅ **已採納**：保留 `a4-semantic-search-model-qa` + `migrate-console-to-hifi-design`；`rvt-ifc-usdc-lineage` 為 `Status: deferred`、frozen/non-owner |
+| OQ-1 | 收斂後保留哪個 active | ✅ 2026-07-21 原採納上限 2；2026-07-24 使用者調整為 ≤6。既有 `rvt-ifc-usdc-lineage` 仍為 `Status: deferred`、frozen/non-owner，須另行滿足 thaw 條件 |
 | OQ-2 | docs+chore ≤30% | ✅ **已採納**：首月 40% → 次月 30% |
 | OQ-3 | #364 自身是第 10 個 active | ✅ **已採納**：#364 merge 後 archive `governance-throughput-budget` |
 
@@ -183,4 +183,5 @@ Done: 通過 DoD 所列測試；回報 verified / inferences / risks
 | 2026-07-21 | #364 merge；archive governance-throughput-budget；OQ 全落地 |
 | 2026-07-22 | 使用者確認 deferred archive：`minio-folderview-and-baseline-disclosure`、`align-frontend-design-system-reference`、`rvt-ifc-usdc-lineage` 均以 `--skip-specs` archive；#380 merged，下一刀改為 S3。 |
 | 2026-07-24 | 使用者改採嚴格 terminal rule：archive 僅限 completed／完整 successor；三個 7/22 deferred change 與 structured-log evidence 缺口 historical correction 恢復原 id，維持 frozen/non-owner。 |
+| 2026-07-24 | 使用者將 active OpenSpec WIP 上限由 2 調整為 6；新增額度不自動 thaw deferred/frozen change。 |
 | 2026-07-23 | #382／#383／#386 merged；#386 先收斂 scoped A4 visible caller compatibility，S4-B coordinator session search proxy、安全 transport、host-kit dual-namespace seam 與 cold-scan timeout regression 由 PR #384 交付（狀態以 GitHub machine truth 為準），S4-C/D 仍 pending。 |

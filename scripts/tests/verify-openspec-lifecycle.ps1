@@ -58,6 +58,7 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 
 $failures = [System.Collections.Generic.List[string]]::new()
 $warnings = [System.Collections.Generic.List[string]]::new()
+$wipLimit = 6
 
 Push-Location $RepoRoot
 try {
@@ -99,8 +100,8 @@ try {
         }
     }
 
-    if ($nonDeferredChanges.Count -gt 2) {
-        $warnings.Add("existing non-deferred WIP is $($nonDeferredChanges.Count) > 2: $($nonDeferredChanges -join ', ')")
+    if ($nonDeferredChanges.Count -gt $wipLimit) {
+        $warnings.Add("existing non-deferred WIP is $($nonDeferredChanges.Count) > $($wipLimit): $($nonDeferredChanges -join ', ')")
     }
 
     # A deferred marker is never valid in completed archive, including legacy entries.
@@ -153,7 +154,7 @@ try {
 
         # Historical corrections may add a change path while the repo is already over WIP.
         # Such additions are safe only when the restored/new change is explicitly deferred.
-        if ($nonDeferredChanges.Count -gt 2) {
+        if ($nonDeferredChanges.Count -gt $wipLimit) {
             foreach ($changeId in $newChangeIds) {
                 if ($changeId -eq 'archive') { continue }
                 $directory = Join-Path $changesRoot $changeId

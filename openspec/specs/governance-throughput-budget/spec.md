@@ -3,12 +3,12 @@
 ## Purpose
 TBD - created by archiving change governance-throughput-budget. Update Purpose after archive.
 ## Requirements
-### Requirement: active OpenSpec change 同時數量 SHALL 不超過 2（WIP 上限）
+### Requirement: active OpenSpec change 同時數量 SHALL 不超過 6（WIP 上限）
 
-（採納後生效）`openspec/changes/` 下之 active change——不含 `archive/`、不含 proposal.md 頂部帶 `Status: deferred` 系列標記者——同時 SHALL ≤ 2。deferred 標記格式 SHALL 為 proposal.md 頂部 blockquote：提案期 `Status: deferred-proposed <日期>`、使用者採納後改 `Status: deferred <日期>`，並各附理由與重啟條件；標記 SHALL 只加註不刪改原內容。
+（2026-07-24 使用者將原上限 2 調整為 6 後生效）`openspec/changes/` 下之 active change——不含 `archive/`、不含 proposal.md 頂部帶 `Status: deferred` 系列標記者——同時 SHALL ≤ 6。deferred 標記格式 SHALL 為 proposal.md 頂部 blockquote：提案期 `Status: deferred-proposed <日期>`、使用者採納後改 `Status: deferred <日期>`，並各附理由與重啟條件；標記 SHALL 只加註不刪改原內容。提高上限只增加可用 WIP 額度，不會自動 thaw 既有 deferred/frozen change；各 change 的重啟條件與 ownership crosswalk 仍須獨立滿足。
 
 - **Trigger**：任何人或 agent 欲新建 active change（`/openspec new`、openspec-forge 產出落地前）。
-- **Action**：先計數 active change；已達 2 → SHALL NOT 新建，改為先 archive／close-out／defer 既有 change 騰出額度。緊急安全修補或誠實鐵律違規修正得暫時超額，但 SHALL 於同 PR body 揭露超額理由與回落計畫。
+- **Action**：先計數 active change；已達 6 → SHALL NOT 新建，改為先 archive／close-out／defer 既有 change 騰出額度。緊急安全修補或誠實鐵律違規修正得暫時超額，但 SHALL 於同 PR body 揭露超額理由與回落計畫。
 - **Validation**（repo root，PowerShell）：
 
 ```powershell
@@ -18,11 +18,11 @@ TBD - created by archiving change governance-throughput-budget. Update Purpose a
 ).Count
 ```
 
-輸出 SHALL ≤ 2；或以 `npx openspec list` 人工核對。
+輸出 SHALL ≤ 6；或以 `npx openspec list` 人工核對。
 
-#### Scenario: 已有 2 個 active change 時新提案被擋下
+#### Scenario: 已有 6 個 active change 時新提案被擋下
 
-- **WHEN** active（非 deferred）change 數已達 2 且 agent 欲新建第 3 個 change
+- **WHEN** active（非 deferred）change 數已達 6 且 agent 欲新建第 7 個 change
 - **THEN** agent SHALL 停止新建並回報現有 active 清單與收斂選項（archive／close-out／defer）
 - **AND** 僅在使用者裁決騰出額度或明文核准暫時超額後才得新建
 
@@ -81,19 +81,19 @@ git log --since="14 days ago" --oneline origin/main -- `
 | `viewer-embed-a1-highlight` | 6/7 [x]；僅餘 task 6 follow-up（明文不在本 change） | close-out → archive | follow-up 移 issue 追蹤後 archive |
 | `minio-trigger-lifecycle-backend` | 5/6 [x]；僅餘 task 5 follow-up（明文不在本 change，含 PR #257 系列） | close-out → archive | follow-up 留 issue 對照後 archive |
 | `minio-watch-key-structure` | 4/5 [x]；餘 task 5「P7 部署區 browser E2E」 | 條件式 close-out | 完成 P7 E2E 並附 evidence 後 archive；或使用者明文裁決記為 known gap（不是 pass）後 archive |
-| `minio-folderview-and-baseline-disclosure` | 0/7 未動工 | deferred | 重啟條件：active ≤ 2 有額度且需求回到當期優先；重啟時 SHALL 先重驗 main 現況（#259 trigger 端點、watcher ledger）再調和 tasks |
-| `align-frontend-design-system-reference` | 0/23 未動工（specs delta 已由 #363 PF-3 調和至 doc-first） | deferred | 重啟條件：active ≤ 2 有額度；重啟時 SHALL 重跑 `openspec validate --strict` 確認 delta 仍對準當時 main spec |
+| `minio-folderview-and-baseline-disclosure` | 0/7 未動工 | deferred | 重啟條件：active < 6 有額度且需求回到當期優先；重啟時 SHALL 先重驗 main 現況（#259 trigger 端點、watcher ledger）再調和 tasks |
+| `align-frontend-design-system-reference` | 0/23 未動工（specs delta 已由 #363 PF-3 調和至 doc-first） | deferred | 重啟條件：active < 6 有額度，且完成與 successor 的 requirement crosswalk；重啟時 SHALL 重跑 `openspec validate --strict` 確認 delta 仍對準當時 main spec |
 | `a4-semantic-search-model-qa` | 0/64 未動工（8 節全空） | 留待 OQ-1 裁決 | — |
 | `rvt-ifc-usdc-lineage` | 1/48（僅 8.1 contract-only） | `Status: deferred`、frozen/non-owner；2026-07-24 historical correction 恢復原 id | 解凍前重驗 current main、完成 predecessor/successor crosswalk 並拆成不重疊 slices |
 | `migrate-console-to-hifi-design` | tasks 0/35 未勾，但 main #357 已落 1/2 product code | 留待 OQ-1 裁決（建議傾向優先收尾） | 先對帳 tasks.md 勾選與 main 實際落地，再裁 |
 
 - **Trigger**：本 change 被使用者採納且 OQ-1 裁決完成。
 - **Action**：依本 change tasks §3 逐項執行，每項附最小驗證；deferred 註記由 `deferred-proposed` 改為 `deferred`。
-- **Validation**：全部執行後，R1 之計數指令輸出 SHALL ≤ 2（另加本 change 自身於 archive 前的暫時 +1），且 `npx openspec validate --all --strict` 綠。
+- **Validation**：全部執行後，R1 之計數指令輸出 SHALL ≤ 6（另加本 change 自身於 archive 前的暫時 +1），且 `npx openspec validate --all --strict` 綠。
 
 #### Scenario: 採納後執行收斂使 active 降至上限內
 
 - **WHEN** 使用者採納本 change 並完成 OQ-1 裁決
-- **THEN** 執行收斂動作後 `openspec/changes/` 之 active（非 deferred）change 數 SHALL ≤ 2（不計本 change 自身 archive 前的暫時佔位）
+- **THEN** 執行收斂動作後 `openspec/changes/` 之 active（非 deferred）change 數 SHALL ≤ 6（不計本 change 自身 archive 前的暫時佔位）
 - **AND** 每個被 archive 的 change SHALL 滿足：對應 PR 已 merge、剩餘 follow-up 有 issue 對照或明文 known gap 紀錄
 

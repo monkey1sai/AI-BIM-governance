@@ -78,6 +78,9 @@ try {
     Assert-FileContains '.github/workflows/agent-governance.yml' 'verify-openspec-lifecycle\.ps1' 'agent governance runs OpenSpec lifecycle verification'
     Assert-FileContains 'openspec/AGENTS.md' 'deferred change 保留在 `openspec/changes/<change-id>/`' 'OpenSpec instructions keep deferred changes outside completed archive'
     Assert-FileContains 'openspec/AGENTS.md' '--skip-specs.*不是.*deferred state' 'OpenSpec instructions do not treat skip-specs as deferral'
+    Assert-FileContains 'openspec/specs/governance-throughput-budget/spec.md' 'active OpenSpec change 同時數量 SHALL 不超過 6' 'canonical OpenSpec WIP limit is six'
+    Assert-FileContains 'scripts/tests/verify-openspec-lifecycle.ps1' '\$wipLimit\s*=\s*6' 'OpenSpec lifecycle verifier enforces the canonical WIP limit'
+    Assert-FileContains 'docs/plans/NOW.md' '禁止同時推進 >6 個 active OpenSpec product change' 'NOW reflects the canonical OpenSpec WIP limit'
     foreach ($ownedPath in @('/AGENTS.md', '/docs/agents/', '/docs/plans/', '/.github/', '/scripts/')) {
         Assert-FileContains '.github/CODEOWNERS' ([regex]::Escape($ownedPath)) "CODEOWNERS covers $ownedPath"
     }
