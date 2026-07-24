@@ -1,5 +1,7 @@
 > **Status: deferred 2026-07-21**（使用者裁決／NOW 軌0 OQ-1）：本 change 暫不計入 active product WIP 上限；契約草稿保留，本週不排實作 PR。解凍條件：A4 切片 S1–S3 穩定或使用者明確 thaw。
 
+> **Historical correction 2026-07-24**：本 change 曾以 `--skip-specs` 誤作 completed archive；現因 tasks 僅 1/48 完成而恢復原 change id。它仍是 frozen、non-canonical、non-owner，**不得直接 apply 或 coding**。解凍前 MUST 先重驗 current main，完成 predecessor/successor crosswalk，並把 contract、coordinator、streaming/admission、cloud outbox、frontend/E2E 切成不重疊且可獨立驗證的 slices；在 `migrate-console-to-hifi-design`、conversion pipeline、runtime command/lease 與 single-GPU session ownership 未調和前不得進入實作。
+
 ## Why
 
 目前 repo 已正式描述 IFC-ready intake、IFC→USDC conversion 與 `IFC GlobalId ↔ USD prim path`，但尚未把 2026-07-14～07-15 定案的 MinIO version bundle、`schedule.csv` RVT identity、三向 alignment、result publication、attempt/runtime admission 與治理操作收斂成可執行契約。缺少這層契約會讓同一版本的 RVT、IFC、USDC 與 mapping/report 各自成功，卻無法證明它們屬於同一條可稽核 lineage；現有legacy workflow callback也沒有versioned Cloud Ingest、HMAC、commit ACK、health history或「cloud只存result locator＋summary」的MySQL邊界。

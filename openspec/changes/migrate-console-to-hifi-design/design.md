@@ -1,6 +1,14 @@
 ## Context
 
-UnifiedConsole 目前的視覺樣式來源分裂成三套，彼此互不相通：
+### 2026-07-24 reconciliation note
+
+本文件下方的三套樣式描述是 change 建立時的歷史基線。Current main `1959a4905a76ee95d9f314a6e52c67a415a7700f` 已完成 authority import 與 `--ec-*` retirement，但 active tasks 尚未完全同步，且 legacy checkpoint 的 93-token 擴充是未經使用者核准的實作假設。依 `design-canon-change-control` R-A1，本輪只建立 current-main ledger、adjudication index 與平行 CSS draft；不原地修改四個手寫正本、machine snapshot 或 frontend consumer。
+
+後續若要採納 token definition，必須先由使用者裁決 `reuse`／`consolidate`／`propose-add`／`reject`，再由 human owner 依 canon version/date、backup 與 restore dry-run 契約執行；使用者核准不會把 AI 的 parallel proposal 權限擴張成 protected-canon 原地寫入權。若修改 frontend consumer，另須重新取得 GitNexus HIGH/CRITICAL sign-off 並跑 affected browser、semantic 與 visual gates；proposal-only reconciliation 不以 OpenSpec strict validation冒充 rendered behavior 證據。
+
+### Original context at change creation
+
+本 change 建立時，UnifiedConsole 的視覺樣式來源分裂成三套，彼此互不相通：
 
 1. **`edge-console.css`**（`web-viewer-sample/src/console/`，217 個 `--ec-*` token，NVIDIA 綠 `#76b900` 主色，深色+淺色雙主題，淺色主題由 `EdgeConsole.tsx` 一個真實可點的按鈕切換並存 `localStorage["aibim:ec-theme"]`）——現行 production 唯一真相源，`§08 R1` 白紙黑字鎖定。仍在服務 `LegacyEdgeConsole`（`#/kit`、`#/demo-control`、`#conv` 等路由）、`ConversionPage.tsx`、`governance/overlay.css`、`viewer/*.css`。
 2. **`console/unified/*.tsx`（IA v2，commit #349/#350 落地）**：`UnifiedShell`/`HomePage`/`WorkspacePage`/`PipelinePage`/`OpsPage`/`ConceptPage`。伴隨的 `unified.css` 只有 58 行、僅處理 body 層級 scrollbar/keyframes，元件層級顏色是**直接寫死的 inline hex JSX style**（1:1 抄自 Hi-Fi 原型），未消費任何 CSS custom-property 檔案。
@@ -20,7 +28,7 @@ UnifiedConsole 目前的視覺樣式來源分裂成三套，彼此互不相通�
 - 不變更 `edge-console-operator-frontend` 或 `unified-governance-console` 任何一條既有功能/API/provenance SHALL 條款。
 - 不修正這兩份 spec 本身被發現的內部過時/不一致問題（見 proposal.md Known Risks）。
 - 不擴大處理 A4–A10 願景頁以外的後端能力。
-- 不以已於 2026-07-22 deferred archive 的 `align-frontend-design-system-reference` tasks 2.4–2.8 當作前置。
+- 不以 frozen deferred `align-frontend-design-system-reference` 的 tasks 2.4–2.8 當作前置；兩案完成 requirement/successor crosswalk 前不得平行 coding。
 - 不在本 change 內執行實際的 rebaseline 操作（golden baseline 擷取是 tasks.md 的實作步驟，時機在視覺程式碼落地「之後」，不在 propose 階段先跑）。
 
 ## Decisions
@@ -41,9 +49,9 @@ UnifiedConsole 目前的視覺樣式來源分裂成三套，彼此互不相通�
 
 **取捨**：查核發現 `unified-governance-console` spec.md（311 行）本身混雜至少兩三個不同時期的架構描述（primary-viewer-overlay 治理架構 vs. 英文寫的 grouped-navigation console shell），且兩份既有 spec 都**沒有規範任何具體顏色/CSS token 機制**——本次視覺遷移不牴觸其任何一條 SHALL。若順手一併 reconcile，範圍會從「換皮」爆炸成「重新盤點並修正兩份大型既有 spec 的內部一致性」，超出 grill-me 這次收斂的決策範圍。保守作法是新開一個正交 capability，把既有 spec 的內部問題記錄為 Known Risk，留給後續獨立處理。
 
-### D3：不以 deferred archive 的雙閘方案作為遷移前置
+### D3：不以 frozen deferred 的雙閘方案作為遷移前置
 
-**決策**：`align-frontend-design-system-reference` 已於 2026-07-22 以 `--skip-specs` deferred archive，其未完成的 tasks 2.4–2.8（branch-protection required check、11 個語意案例 approved state variants、獨立 review authority、runner/font fingerprint pin）不是 active 前置，也不是 canonical implementation authority。本 change 可重用現有驗證工具；若要補齊該方案，須依當時 main 現況新開／調和 change。
+**決策**：`align-frontend-design-system-reference` 已於 2026-07-24 historical correction 恢復為 `Status: deferred` 的 frozen change，其未完成的 tasks 2.4–2.8（branch-protection required check、11 個語意案例 approved state variants、獨立 review authority、runner/font fingerprint pin）不是 active 前置，也不是 canonical implementation authority。本 change 可重用現有驗證工具；若要補齊該方案，須先依 current main 完成兩案 requirement/successor crosswalk，再另行 thaw／調和，禁止平行 coding。
 
 **理由**：archive 記錄的 pixel+semantic 雙閘**機制**（manifest schema、verify script、capture/rebaseline 工具、Playwright spec 結構）與被鎖定的視覺內容正交；既有工具對顏色系統無感知，換皮後直接用同一套工具重新 rebaseline 即可。archive 內容保留作歷史脈絡，不提供現行工作計畫或權威。
 

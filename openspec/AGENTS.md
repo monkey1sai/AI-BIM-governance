@@ -26,6 +26,8 @@ OpenSpec 入口：`npx openspec`（list / validate / show / archive / new）。
 - MUST 把每個 OpenSpec change 隔離到 `codex/openspec/<change-id>` branch + `.worktrees/<change-id>/` worktree；不得在 `main` 上開發 OpenSpec change。
 - MUST 在 active change 寫好後 `npx openspec validate <id> --strict` 通過再開 PR。
 - MUST 在 PR merge 後跑 `npx openspec archive <change-id>` 落地 spec；archive 後 active change 目錄消失、`specs/<capability>/spec.md` 出現。
+- MUST 將 deferred change 保留在 `openspec/changes/<change-id>/`，並在 `proposal.md` 頂部使用 canonical `Status: deferred <日期>` 標記、理由與重啟條件；deferred 不構成 active capability owner，也不得為了 WIP 計數移入 archive。`--skip-specs` 只會跳過 canonical spec 同步，**不是** deferred state。
+- MUST 僅 archive 已完成的 change：所有 task checkbox 均已結案；若原工作由明確、非重疊且已接受的 successor 完整承接，須先把原 checkbox 改成已勾選的 terminal disposition 並記錄 successor，不得留下 unchecked task。delta specs 已同步 canonical specs，或已由 successor 明確 supersede。單純 warning、known gap、使用者確認繼續或 `--skip-specs` 均不得把 unfinished/deferred change 重新分類為 completed。
 - MUST 用繁體中文撰寫 proposal / design / tasks / spec；保留 OpenSpec parser 必要標頭（`## ADDED Requirements` / `## MODIFIED Requirements` / `### Requirement:` / `#### Scenario:` 等）為原文。
 - MUST NOT 修改 `openspec/changes/archive/` 內任何檔案；歷史 correction 需獨立 PR 並在 PR 描述標示。
 - MUST NOT 把 `openspec/AGENTS.md` 或 `openspec/CLAUDE.md` 視為 spec 或 change —— `npx openspec validate` scope 限 `changes/` 與 `specs/` 子目錄。
@@ -48,6 +50,7 @@ npx openspec validate --all --strict
 ## Done Criteria
 
 - 改動沒有越過 archive 邊界。
+- deferred change 不在 archive；archive 內沒有未被完整 successor 承接的 in-scope 未完成工作。
 - `openspec validate --strict` 通過；新 capability 至少含一條 Requirement + 至少一個 Scenario。
 - PR 描述附 `openspec validate` 輸出。
 - 最終回覆列出 changed files、validation、known risks。

@@ -35,6 +35,16 @@ Coordinator-local persistent shadow of conversion records for operator surfaces.
 **Conversion authority**:
 bim-streaming-server host-native conversion process (IFC→USDC). Pipeline talks to it only through a client adapter; does not own GPU/Kit runtime.
 
+## Governance library workflow
+
+**Governance Library Version Reference**:
+Browser-safe logical identity `{project_id, model_id, version_name}` for one governance library IFC version. The coordinator resolves it to a governance-host path only inside the Governance Library Workflow; the browser never receives or submits that host path.
+_Avoid_: IFC path, file path, server path
+
+**Governance Library Workflow**:
+The coordinator-owned bridge that validates one library command, resolves logical version references from one governance tree snapshot, shapes trusted rule-run or diff input, and returns a path-redacted opaque governance response. Governance results remain owned by governance-service.
+_Avoid_: Governance service, Governance gateway, Governance authority
+
 ## Runtime mutation policy
 
 **Runtime Mutation Authority**:

@@ -96,7 +96,13 @@ function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
  * governance-service stub：GET /api/files/tree（真形狀樹）＋ POST /api/rule-runs / /api/diffs
  * （記錄收到的 body 供 assert；回應刻意內嵌絕對路徑，驗證 coordinator 遮蔽後才透傳給瀏覽器）。
  */
-async function startGovernanceStub(): Promise<{
+async function startGovernanceStub(
+  options: {
+    ruleRunStatus?: number;
+    ruleRunContentType?: string;
+    ruleRunBody?: string;
+  } = {},
+): Promise<{
   baseUrl: string;
   urls: string[];
   ruleRunBodies: Array<Record<string, unknown>>;
@@ -120,9 +126,13 @@ async function startGovernanceStub(): Promise<{
         const body = JSON.parse(raw) as Record<string, unknown>;
         if (url === "/api/rule-runs") {
           ruleRunBodies.push(body);
-          res.writeHead(200, { "Content-Type": "application/json" });
+          res.writeHead(
+            options.ruleRunStatus ?? 200,
+            { "Content-Type": options.ruleRunContentType ?? "application/json" },
+          );
           // governance 回應會回顯絕對路徑——coordinator 必須遮蔽後才給瀏覽器。
-          res.end(JSON.stringify({ rule_run_id: "rr_lib_001", status: "queued", ifc_source_path: body.ifc_source_path }));
+          res.end(options.ruleRunBody
+            ?? JSON.stringify({ rule_run_id: "rr_lib_001", status: "queued", ifc_source_path: body.ifc_source_path }));
         } else {
           diffBodies.push(body);
           res.writeHead(200, { "Content-Type": "application/json" });
@@ -171,6 +181,28 @@ describe("POST /api/governance-library/rule-runs", () => {
     expect(raw).not.toMatch(/[A-Za-z]:[\\/]/); // 無任何 drive-letter 絕對路徑外洩
     expect(raw).toContain("[server-path]");
   });
+
+  it.each([202, 400, 404, 500])(
+    "透傳 upstream %i/custom content-type/opaque text，且先遮蔽 Windows/POSIX 路徑",
+    async (status) => {
+      const upstreamBody = "windows=\"" + BASE_PATH + "\" posix=\"/var/data/model.ifc\"";
+      const gov = await startGovernanceStub({
+        ruleRunStatus: status,
+        ruleRunContentType: "text/plain",
+        ruleRunBody: upstreamBody,
+      });
+      process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+      const app = makeApp();
+
+      const res = await request(app.app)
+        .post("/api/governance-library/rule-runs")
+        .send({ project_id: "270", model_id: "機電", version_name: "ver 000001.ifc" });
+
+      expect(res.status).toBe(status);
+      expect(res.headers["content-type"]).toMatch(/^text\/plain/);
+      expect(res.text).toBe("windows=\"[server-path]\" posix=\"[server-path]\"");
+    },
+  );
 
   it("三層 version name（v1/japanese_villa.ifc）也可解析", async () => {
     const gov = await startGovernanceStub();

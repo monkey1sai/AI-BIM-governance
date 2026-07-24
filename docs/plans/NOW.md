@@ -2,17 +2,17 @@
 
 > 文件性質：working note；用於本週工作排序，不是 runtime/API contract 或完成證據。
 > **AI / 人：只聽這份。** 與本檔衝突時，以使用者最新口令為準，其次本檔，再才是 OpenSpec / 設計正本。  
-> 維護規則：每完成一個 outcome 就改狀態；禁止同時推進 >2 個 active OpenSpec product change。
+> 維護規則：每完成一個 outcome 就改狀態；禁止同時推進 >6 個 active OpenSpec product change。
 
 ## 本週三軌（你已選 1/2/3）
 
 | 序 | 軌 | 目標 | 狀態 |
 |---|---|---|---|
-| **0** | 治理 WIP（#364） | active ≤2；defer 其餘；採納 throughput 預算 | ✅ #364 MERGED + `governance-throughput-budget` archived |
-| **1** | 收口 | 把「code 已 merge、tasks 假開著」的 change archive | **已 archive 7 案**（2026-07-21/22） |
+| **0** | 治理 WIP（#364） | active ≤6；defer 其餘；採納 throughput 預算 | ✅ #364 MERGED；2026-07-24 使用者將上限由 2 調整為 6 |
+| **1** | 收口 | completed 才 archive；deferred 留在 changes 並 frozen | **4 個近期 completed 維持 archive；4 個 unfinished historical correction 恢復 deferred** |
 | **2** | A4 | 只走切片 PR（先 #365，再下一刀） | **#365 + #380 + #382 + #383 + #386 MERGED**；current = S4-B PR #384 final gate，next = S4-C |
 
-**並行規則：** 0 可與 1 同天；**2 與新功能不得再開第 3 條 active product change**。  
+**並行規則：** 0 可與 1 同天；所有軌與新功能合計不得超過 6 個 active product change；deferred/frozen 不因額度增加自動 thaw。
 **本週不做：** A5–A10 全棧、`rvt-ifc-usdc-lineage` 實作、新 OpenSpec（除 archive/defer 註記）、整 repo 重掃。
 
 ---
@@ -21,15 +21,18 @@
 
 | OQ | 題目 | **建議裁決** |
 |---|---|---|
-| OQ-1 | 收斂後保留哪個 ≤2 大 active | ✅ **已採納**：保留 `a4-semantic-search-model-qa` + `migrate-console-to-hifi-design`；`rvt-ifc-usdc-lineage` 已 deferred archive |
+| OQ-1 | 收斂後保留哪個 active | ✅ 2026-07-21 原採納上限 2；2026-07-24 使用者調整為 ≤6。既有 `rvt-ifc-usdc-lineage` 仍為 `Status: deferred`、frozen/non-owner，須另行滿足 thaw 條件 |
 | OQ-2 | docs+chore ≤30% | ✅ **已採納**：首月 40% → 次月 30% |
 | OQ-3 | #364 自身是第 10 個 active | ✅ **已採納**：#364 merge 後 archive `governance-throughput-budget` |
 
-已完成 deferred archive（與 #364 裁決一致；均以 `--skip-specs` 保留未落地 delta，不同步 canonical specs）：
+2026-07-24 historical correction：deferred 不再放 completed archive；下列 change 均恢復原 id、保留 `Status: deferred`，未落地 delta 仍不構成 canonical authority：
 
-- `minio-folderview-and-baseline-disclosure` → `2026-07-22-minio-folderview-and-baseline-disclosure`
-- `align-frontend-design-system-reference` → `2026-07-22-align-frontend-design-system-reference`（動視覺前再 thaw；本週 A4 切片以 `Full completion claimed: no` 可不綁 full design rebaseline）
-- `rvt-ifc-usdc-lineage` → `2026-07-22-rvt-ifc-usdc-lineage`
+- `openspec/changes/minio-folderview-and-baseline-disclosure/`（只允許 canonical closeout reconciliation，不重做 #259/#265 code）
+- `openspec/changes/align-frontend-design-system-reference/`（與 migrate 的互斥需求完成 crosswalk 前不得 thaw）
+- `openspec/changes/rvt-ifc-usdc-lineage/`（1/48；切片與 shared ownership 調和前不得 coding）
+- `openspec/changes/cross-service-structured-log-baseline/`（只補 tasks 10.1–10.5 runtime evidence；不重套已同步 delta）
+
+Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unchecked checkbox；三層交叉裁決未把它們判為獨立、可繼續執行的 unfinished owner（主要是已落地但 task bookkeeping 過時、已被 successor 承接，或已退役 service 的歷史工作），因此不批次搬移，也不改寫 archive 歷史。這批屬 legacy audit debt；新增 lifecycle gate 只對本次之後的新 archive fail closed，禁止再產生 unchecked/deferred archive。
 
 ---
 
@@ -43,9 +46,10 @@
 | `minio-trigger-lifecycle-backend` | ✅ archived `2026-07-21-minio-trigger-lifecycle-backend` | done | #259 |
 | `c-m4-runtime-command-bridge` | ✅ archived `2026-07-21-c-m4-runtime-command-bridge`（新建 capability spec） | done | #309 |
 | `minio-watch-key-structure` | ✅ archived `2026-07-21-minio-watch-key-structure`（`--skip-specs`；主線 scenario 已在 main） | 選 A deferred-evidence | #237 |
-| `minio-folderview-and-baseline-disclosure` | ✅ deferred archive `2026-07-22-minio-folderview-and-baseline-disclosure`（`--skip-specs`） | 未完成 tasks 保留在 archive，non-canonical | #265 |
-| `align-frontend-design-system-reference` | ✅ deferred archive `2026-07-22-align-frontend-design-system-reference`（`--skip-specs`） | 未完成 tasks／delta 保留在 archive，non-canonical | #363 |
-| `rvt-ifc-usdc-lineage` | ✅ deferred archive `2026-07-22-rvt-ifc-usdc-lineage`（`--skip-specs`） | 未完成 tasks／6 個 new capability delta 保留在 archive，non-canonical | #354 |
+| `cross-service-structured-log-baseline` | ↩ restored deferred、evidence-only | 只補真 4-service runtime evidence；不改 pipeline/code/canonical spec | #126 |
+| `minio-folderview-and-baseline-disclosure` | ↩ restored deferred、frozen | 對帳 code/tests/tasks/canonical spec；禁止重做 code | #265 |
+| `align-frontend-design-system-reference` | ↩ restored deferred、frozen | 先與 migrate 做 requirement/successor crosswalk；禁止平行 design coding | #363 |
+| `rvt-ifc-usdc-lineage` | ↩ restored deferred、frozen（1/48） | 先切片與調和 shared ownership；禁止直接 apply | #354 |
 
 ### minio-watch task 5
 
@@ -53,8 +57,8 @@
 
 ### 收口 DoD（軌 1）
 
-- [x] 7 個 closeout change 進入 `openspec/changes/archive/2026-07-21-*` 或 `2026-07-22-*`
-- [x] deferred archive：lineage / minio-folderview / align-frontend（`--skip-specs`；不計 active WIP）
+- [x] 4 個近期 completed closeout change 維持 archive；4 個 unfinished change 已於 2026-07-24 從 archive 恢復原 id
+- [x] lineage / minio-folderview / align-frontend / structured-log 保留 `Status: deferred`、frozen/non-owner，不計 active WIP
 - [x] #364 merge + `governance-throughput-budget` archive（OQ-3 出場）
 - [x] 本週 WIP focus 只保留 **A4 + migrate-console**；`implement-runtime-command-authority-and-rejection` 與 `add-single-gpu-session-ai-review-mvp` 的 retain/defer 另案裁決，不在本次 archive 範圍
 - [ ] 過期 worktree 刪到 ≤5（人工／下一切可選）
@@ -178,4 +182,6 @@ Done: 通過 DoD 所列測試；回報 verified / inferences / risks
 | 2026-07-21 | 採納建議/A/全做：#365 merge；4 change archive；deferred 三案；S2 成當前 outcome |
 | 2026-07-21 | #364 merge；archive governance-throughput-budget；OQ 全落地 |
 | 2026-07-22 | 使用者確認 deferred archive：`minio-folderview-and-baseline-disclosure`、`align-frontend-design-system-reference`、`rvt-ifc-usdc-lineage` 均以 `--skip-specs` archive；#380 merged，下一刀改為 S3。 |
+| 2026-07-24 | 使用者改採嚴格 terminal rule：archive 僅限 completed／完整 successor；三個 7/22 deferred change 與 structured-log evidence 缺口 historical correction 恢復原 id，維持 frozen/non-owner。 |
+| 2026-07-24 | 使用者將 active OpenSpec WIP 上限由 2 調整為 6；新增額度不自動 thaw deferred/frozen change。 |
 | 2026-07-23 | #382／#383／#386 merged；#386 先收斂 scoped A4 visible caller compatibility，S4-B coordinator session search proxy、安全 transport、host-kit dual-namespace seam 與 cold-scan timeout regression 由 PR #384 交付（狀態以 GitHub machine truth 為準），S4-C/D 仍 pending。 |
