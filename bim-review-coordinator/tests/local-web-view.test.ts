@@ -81,6 +81,60 @@ async function seedJob(
 }
 
 describe("T7 local web view session / artifact resolution", () => {
+  it("allows the configured alternate viewer origin for viewer-log CORS only", async () => {
+    const app = makeApp({
+      coordinatorPublicBaseUrl: "http://127.0.0.1:8005",
+      viewerPublicBaseUrl: "http://127.0.0.1:5175",
+    });
+
+    const allowed = await request(app.app)
+      .options("/api/internal/viewer-log")
+      .set("Origin", "http://127.0.0.1:5175")
+      .set("Access-Control-Request-Method", "POST");
+    expect(allowed.headers["access-control-allow-origin"]).toBe("http://127.0.0.1:5175");
+
+    const rejected = await request(app.app)
+      .options("/api/internal/viewer-log")
+      .set("Origin", "https://untrusted.example")
+      .set("Access-Control-Request-Method", "POST");
+    expect(rejected.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  it("forwards only a trusted IFC-ready trace and keeps standalone URLs trace-free", async () => {
+    const app = makeApp();
+    const session = "review_session_trace_carrier";
+
+    const trusted = await request(app.app).get(
+      `/ui/open?session=${session}&trace_id=ifcready_20260724120000_deadbeef`,
+    );
+    expect(new URL(trusted.headers.location).searchParams.get("trace_id")).toBe(
+      "ifcready_20260724120000_deadbeef",
+    );
+
+    const standalone = await request(app.app).get(`/ui/open?session=${session}`);
+    expect(new URL(standalone.headers.location).searchParams.get("trace_id")).toBeNull();
+
+    const malformed = await request(app.app).get(
+      `/ui/open?session=${session}&trace_id=${encodeURIComponent("ifcready_bad/value")}`,
+    );
+    expect(new URL(malformed.headers.location).searchParams.get("trace_id")).toBeNull();
+
+    const dotted = await request(app.app).get(
+      `/ui/open?session=${session}&trace_id=ifcready_bad.value`,
+    );
+    expect(new URL(dotted.headers.location).searchParams.get("trace_id")).toBeNull();
+
+    const oversized = await request(app.app).get(
+      `/ui/open?session=${session}&trace_id=${`ifcready_${"a".repeat(192)}`}`,
+    );
+    expect(new URL(oversized.headers.location).searchParams.get("trace_id")).toBeNull();
+
+    const untrusted = await request(app.app).get(
+      `/ui/open?session=${session}&trace_id=external_untrusted`,
+    );
+    expect(new URL(untrusted.headers.location).searchParams.get("trace_id")).toBeNull();
+  });
+
   it("缺使用者 token → 401（不做死 SSO，可替換 provider）", async () => {
     const app = makeApp();
     const { jobId } = await seedJob(app);

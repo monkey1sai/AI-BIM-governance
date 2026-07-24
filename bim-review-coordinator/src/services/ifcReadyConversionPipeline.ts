@@ -463,7 +463,7 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
       // Observer failure is deliberately non-fatal, but it must remain
       // diagnosable without logging a potentially sensitive error message.
       this.structLog
-        ?.withTraceId(job.correlation_id)
+        ?.withTraceId(job.ifc_ready_job_id)
         .anomaly(
           "ifcReadyConversionPipeline",
           "onConversionTerminal observer failed",
@@ -678,6 +678,7 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
       return;
     }
     try {
+      const rootTraceId = jobId;
       const dispatch = await this.streamingClient.createConversionJob(
         pending.event,
         {
@@ -687,7 +688,17 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
           hostLocalPath: pending.hostLocalPath,
           conversionProfile: this.conversionProfile,
         },
+        rootTraceId,
       );
+      this.structLog
+        ?.withTraceId(rootTraceId)
+        .network("ifcReadyDispatch", "conversion dispatched", {
+          direction: "outbound",
+          protocol: "http",
+          peer: "streaming-server",
+          status: dispatch.status,
+          path: "/api/conversions/ifc-to-usdc",
+        });
       this.store.markDispatched(
         jobId,
         dispatch.conversion_job_id,
@@ -700,7 +711,7 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
         this.config.conversionPollEnabled &&
         !this.pollerRegistry.has(dispatch.conversion_job_id)
       ) {
-        this.schedulePollerForConversion(dispatch.conversion_job_id);
+        this.schedulePollerForConversion(dispatch.conversion_job_id, rootTraceId);
       }
     } catch (dispatchError) {
       // 失敗保留 pending 脈絡供 retry requeue。
@@ -713,7 +724,10 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
     }
   }
 
-  private schedulePollerForConversion(conversionJobId: string): void {
+  private schedulePollerForConversion(
+    conversionJobId: string,
+    rootTraceId: string,
+  ): void {
     const handle = this.streamingClient.pollConversionResult(conversionJobId, {
       intervalMs: this.config.conversionPollIntervalSeconds * 1000,
       maxAttempts: this.config.conversionPollMaxAttempts,
@@ -725,7 +739,7 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
           });
         } catch (err) {
           this.structLog
-            ?.withTraceId(`stream_conv_${conversionJobId}`)
+            ?.withTraceId(rootTraceId)
             .anomaly("autoPoll", "auto-poll ingest failed", {
               anomaly_kind: "unexpected_state",
               reason: err instanceof Error ? err.message : String(err),
@@ -737,7 +751,7 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
       },
       onError: (err, attempt) => {
         this.structLog
-          ?.withTraceId(`stream_conv_${conversionJobId}`)
+          ?.withTraceId(rootTraceId)
           .anomaly("autoPoll", "auto-poll fetch error", {
             anomaly_kind: "retry",
             reason: err instanceof Error ? err.message : String(err),

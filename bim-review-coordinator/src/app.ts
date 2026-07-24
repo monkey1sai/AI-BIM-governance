@@ -585,10 +585,13 @@ export function createCoordinatorApp(
   const governanceLibraryWorkflow = new GovernanceLibraryWorkflow(
     new GovernanceLibraryHttpAdapter(),
   );
+  const corsOrigins = Array.from(
+    new Set([...config.corsOrigins, new URL(config.viewerPublicBaseUrl).origin]),
+  );
   const server = http.createServer(app);
   const io = new Server(server, {
     cors: {
-      origin: config.corsOrigins,
+      origin: corsOrigins,
       credentials: false,
     },
   });
@@ -1125,7 +1128,23 @@ export function createCoordinatorApp(
     }
   }
 
-  app.use(cors({ origin: config.corsOrigins }));
+  function logIfcReadyReviewSessionActive(
+    job: IfcReadyIntakeJob,
+    session: ReviewSession,
+    sessionReplay: boolean,
+  ): void {
+    structLog
+      .withTraceId(job.ifc_ready_job_id)
+      .lifecycle("ifcReadyReviewSession", "IFC-ready review session opened", {
+        phase: "active",
+        subject_kind: "review_session",
+        subject_id: session.session_id,
+        ifc_ready_job_id: job.ifc_ready_job_id,
+        session_replay: sessionReplay,
+      });
+  }
+
+  app.use(cors({ origin: corsOrigins }));
   app.use(
     express.json({
       limit: "1mb",
@@ -1959,6 +1978,17 @@ export function createCoordinatorApp(
     eventLog.append(session.session_id, "kitInstanceReleased", {
       kit_instance_bindings: closed?.kit_instance_bindings.map((binding) => binding.kit_instance_id) || [],
     });
+    const linkedJob = latestIfcReadyJobForSession(session.session_id);
+    if (linkedJob) {
+      structLog
+        .withTraceId(linkedJob.ifc_ready_job_id)
+        .lifecycle("ifcReadyReviewSession", "IFC-ready review session closed", {
+          phase: "closed",
+          subject_kind: "review_session",
+          subject_id: session.session_id,
+          ifc_ready_job_id: linkedJob.ifc_ready_job_id,
+        });
+    }
     response.json(closed);
   });
 
@@ -2291,13 +2321,21 @@ export function createCoordinatorApp(
     session: ReviewSession,
     sessionReplay: boolean,
   ): Record<string, unknown> {
-    const openUrl = buildCoordinatorOpenUrl(config, session.session_id);
+    const openUrl = buildCoordinatorOpenUrl(
+      config,
+      session.session_id,
+      job.ifc_ready_job_id,
+    );
     externalIfcReadyStore.recordReviewSession(job.ifc_ready_job_id, session.session_id);
     externalIfcReadyStore.setViewerLink(job.ifc_ready_job_id, session.session_id, openUrl);
     const linkedJob = externalIfcReadyStore.get(job.ifc_ready_job_id) ?? job;
     const binding = expectedStageBinding(session);
+    if (sessionReplay) {
+      logIfcReadyReviewSessionActive(linkedJob, session, true);
+    }
     return {
       ifc_ready_job_id: linkedJob.ifc_ready_job_id,
+      trace_id: linkedJob.ifc_ready_job_id,
       conversion_job_id: linkedJob.conversion_job_id ?? null,
       conversion_status: linkedJob.conversion_status ?? null,
       review_session_id: session.session_id,
@@ -2738,12 +2776,19 @@ export function createCoordinatorApp(
           session: result.session,
           session_replay: result.replay,
         };
-        const viewerUrl = buildCoordinatorOpenUrl(config, result.session.session_id);
+        const viewerUrl = buildCoordinatorOpenUrl(
+          config,
+          result.session.session_id,
+          event.job.ifc_ready_job_id,
+        );
         externalIfcReadyStore.setViewerLink(
           event.job.ifc_ready_job_id,
           result.session.session_id,
           viewerUrl,
         );
+        if (!result.replay) {
+          logIfcReadyReviewSessionActive(event.job, result.session, false);
+        }
       } else {
         sessionCapture = {
           session: null,
@@ -4040,9 +4085,23 @@ function mountDevConsole(app: express.Express, config: CoordinatorConfig): void 
   }
 }
 
-function buildCoordinatorOpenUrl(config: CoordinatorConfig, session: string): string {
+const IFC_READY_TRACE_ID_PATTERN = /^ifcready_[A-Za-z0-9_-]+$/;
+const TRACE_ID_MAX_LENGTH = 200;
+
+function isSafeIfcReadyTraceId(value: string): boolean {
+  return value.length <= TRACE_ID_MAX_LENGTH && IFC_READY_TRACE_ID_PATTERN.test(value);
+}
+
+function buildCoordinatorOpenUrl(
+  config: CoordinatorConfig,
+  session: string,
+  traceId?: string,
+): string {
   const url = new URL("ui/open", `${config.coordinatorPublicBaseUrl}/`);
   url.searchParams.set("session", session);
+  if (traceId && isSafeIfcReadyTraceId(traceId)) {
+    url.searchParams.set("trace_id", traceId);
+  }
   return url.toString();
 }
 
@@ -4055,6 +4114,7 @@ const VIEWER_REDIRECT_QUERY_PARAMS = [
   "kitInstanceId",
   "kit_instance_id",
   "a4_handoff",
+  "trace_id",
 ] as const;
 
 function queryParamString(value: unknown): string | null {
@@ -4071,9 +4131,10 @@ function buildViewerRedirectUrl(config: CoordinatorConfig, session: string, forw
   url.searchParams.set("coordinatorSocketUrl", config.coordinatorPublicBaseUrl);
   for (const param of VIEWER_REDIRECT_QUERY_PARAMS) {
     const value = queryParamString(forwardedQuery[param]);
-    if (value && (param !== "a4_handoff" || /^a4h_[A-Za-z0-9_-]{16,96}$/.test(value))) {
-      url.searchParams.set(param, value);
-    }
+    if (!value) continue;
+    if (param === "a4_handoff" && !/^a4h_[A-Za-z0-9_-]{16,96}$/.test(value)) continue;
+    if (param === "trace_id" && !isSafeIfcReadyTraceId(value)) continue;
+    url.searchParams.set(param, value);
   }
   return url.toString();
 }

@@ -97,8 +97,8 @@ function makeApp(
   return active;
 }
 
-async function seedIfcReadyJob(app: CoordinatorApp): Promise<void> {
-  await request(app.app)
+async function seedIfcReadyJob(app: CoordinatorApp): Promise<string> {
+  const response = await request(app.app)
     .post("/api/external/ifc-ready")
     .set({
       "X-Webhook-Secret": "dev-webhook-secret",
@@ -106,6 +106,8 @@ async function seedIfcReadyJob(app: CoordinatorApp): Promise<void> {
       "X-Idempotency-Key": "idem_cbk_001",
     })
     .send({ ...structuredClone(IFC_CONTRACT.example) });
+  expect(response.status).toBe(202);
+  return response.body.ifc_ready_job_id as string;
 }
 
 const READY_RESULT = {
@@ -327,6 +329,79 @@ describe("host-native conversion result ingest (pull)", () => {
 // §"Terminal conversion-ready ingestion triggers local review session handoff"
 // （含 3 scenarios）。
 describe("conversion-ready auto-session handoff", () => {
+  it("carries the IFC-ready root trace through open, redirect, and additive lifecycle records", async () => {
+    const base = await startStreamingStub(READY_RESULT);
+    const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-root-trace-"));
+    const structLog = createLogger("coordinator", {
+      logRoot,
+      runId: "run_ifc_ready_root_trace",
+      skipEnvSnapshot: true,
+    });
+    const app = makeApp(base, {}, structLog);
+    const ifcReadyJobId = await seedIfcReadyJob(app);
+
+    const ingest = await request(app.app)
+      .post("/api/internal/conversions/stream_conv_test_001/ingest")
+      .set({ "X-Internal-Token": INTERNAL_TOKEN })
+      .send({});
+    expect(ingest.status).toBe(202);
+    const sessionId = ingest.body.session.session_id as string;
+    expect(
+      new URL(ingest.body.ifc_ready_job.viewer_url).searchParams.get("trace_id"),
+    ).toBe(ifcReadyJobId);
+    const initialLifecycle = fs
+      .readFileSync(structLog.currentFile(), "utf-8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((record) => record.component === "ifcReadyReviewSession");
+    expect(initialLifecycle).toHaveLength(1);
+    expect(initialLifecycle[0]).toMatchObject({
+      trace_id: ifcReadyJobId,
+      data: {
+        phase: "active",
+        subject_kind: "review_session",
+        subject_id: sessionId,
+        session_replay: false,
+      },
+    });
+
+    const open = await request(app.app)
+      .post(`/api/external/ifc-ready/${ifcReadyJobId}/review-session`)
+      .send({});
+    expect(open.status).toBe(200);
+    expect(open.body.trace_id).toBe(ifcReadyJobId);
+    expect(new URL(open.body.open_url).searchParams.get("trace_id")).toBe(ifcReadyJobId);
+
+    const redirectPath = new URL(open.body.open_url).pathname + new URL(open.body.open_url).search;
+    const redirect = await request(app.app).get(redirectPath);
+    expect(new URL(redirect.headers.location).searchParams.get("trace_id")).toBe(ifcReadyJobId);
+
+    const close = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/close`)
+      .send({});
+    expect(close.status).toBe(200);
+
+    const lifecycle = fs
+      .readFileSync(structLog.currentFile(), "utf-8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((record) => record.component === "ifcReadyReviewSession");
+    expect(lifecycle.map((record) => record.trace_id)).toEqual([
+      ifcReadyJobId,
+      ifcReadyJobId,
+      ifcReadyJobId,
+    ]);
+    expect(lifecycle.map((record) => (record.data as Record<string, unknown>).phase)).toEqual([
+      "active",
+      "active",
+      "closed",
+    ]);
+  });
+
   it("ready ingestion 自動建立綁 USDC + Kit binding 的 session（spec: auto-creates a review session under retired _bim-control）", async () => {
     const base = await startStreamingStub(READY_RESULT);
     const app = makeApp(base);
