@@ -48,9 +48,20 @@ POST /api/rule-runs                       {ifc_source_path, rule_set?, model_ver
 GET  /api/rule-runs/{id}                  status / score / summary
 GET  /api/rule-runs/{id}/results?status=failed   失敗構件（ifc_guid, usd_prim_path, message）
 GET  /api/rule-runs/{id}/export?fmt=excel openpyxl xlsx（fmt=bcf -> 501 p15）
+POST /api/internal/a4/issues/from-search   coordinator-only；signed row proof -> atomic confirmed Issue
 ```
 
 `element_mapping_path` 可選；提供時 join `ifc_guid -> usd_prim_path`（未對映留 `null`，fake/smoke mapping 一律不視為覆蓋率）。
+
+A4 Issue route 只接受 16–4096 字元 printable-ASCII server-only internal token 與 trusted current
+session/principal context 的單列 request。首次 consume 原子保存 Issue、immutable
+snapshot、unique proof ID 與三個 replay digests；exact replay 回原 Issue，generic
+manual/rule/diff Issue 不會被 fabricated A4 provenance 回填。
+在 session-authorized lifecycle route 落地前，generic Issue list/detail/transition
+不列出也不揭露 A4 Issue；trusted internal create response 是目前唯一可讀完整 A4
+immutable evidence 的 API boundary。
+Proof snapshot 中的 finite float 與超過 JavaScript safe range 的 integer 會以
+exact decimal string 傳輸，避免 Python/Node JSON round-trip 改變 signed bytes。
 
 ## 執行 / 測試
 

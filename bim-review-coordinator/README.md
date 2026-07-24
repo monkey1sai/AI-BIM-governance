@@ -88,6 +88,7 @@ POST /api/internal/review-sessions/{session_id}/stage-binding-confirmations
 POST /api/governance/search/model/for-session/{session_id}
 POST /api/governance/search/model/for-session/{session_id}/partial-confirmation
 POST /api/governance/search/model/for-ifc-ready/{job_id}
+POST /api/governance/issues/from-a4-search/for-session/{session_id}
 ```
 
 The canonical A4 search route authenticates the caller first, requires the
@@ -101,7 +102,15 @@ lab-only `ifc_ready_table_only` compatibility route until user auth carries
 tenant/project authorization; it never forwards a mapping or session proof
 context.
 
-Trusted A4 forwarding requires a non-empty server-only
+The scoped A4 Issue route accepts one confirmed row/draft per request. It
+reauthenticates the current session principal and primary lease, requires the
+exact production model/artifact/binding and verified mapping capability, then
+adds non-overridable trusted context before forwarding. Browser actor/source,
+session, lease, proof-digest, and trusted-context fields are rejected. The
+currently mounted local-dev lease remains `lab_unverified`, so mutation stays
+fail-closed until an authentic shared lease capability is available.
+
+Trusted A4 forwarding requires a 16–4096 character printable-ASCII server-only
 `A4_INTERNAL_CONTEXT_TOKEN` shared with governance-service and either an exact
 loopback `GOVERNANCE_API_BASE` or an exact origin listed by
 `A4_TRUSTED_GOVERNANCE_ORIGINS`. The host-kit deployment injects only its

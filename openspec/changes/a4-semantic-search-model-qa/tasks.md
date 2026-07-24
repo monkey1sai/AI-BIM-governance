@@ -42,13 +42,15 @@
 
 ## 4. A4 Issue 來源證據
 
-- [ ] 4.1 新增 additive、schema-versioned persistence field/table 保存 immutable `a4_evidence_snapshot`；歷史 Issues 仍可讀，且不需要 fabricated backfill。
-- [ ] 4.2 定義三個不同 digest：`snapshot_hash` 綁 immutable A4 evidence；`proof_digest` 是 exact signed proof envelope bytes 的 SHA-256；`creation_request_hash` 是 server-normalized canonical create payload 的 SHA-256，必須包含初始 title／description／severity／assignee、IFC GUID、accepted prim、model/artifact/revision、`snapshot_hash` 與 `proof_digest`。
-- [ ] 4.3 首次 consume SHALL 驗 signature、`kid`、expiry、current session/principal 與 `snapshot_hash`，並把 Issue、snapshot、proof ID、`proof_digest`、`creation_request_hash` 在同一 transaction 寫入；proof ID 為 unique idempotency key，`source_ref=query_id` 不得阻止同 query 的不同 rows 各自建立 Issue。
-- [ ] 4.4 已 consumed proof replay SHALL 先重新驗 current session/principal，再 constant-time 比對三個 digest；完全相同時，即使 proof 過期或 signing key 已退休也回原 Issue。任一不符回 409，且不得形成 proof-existence oracle。
+- [x] 4.1 新增 additive、schema-versioned persistence field/table 保存 immutable `a4_evidence_snapshot`；歷史 Issues 仍可讀，且不需要 fabricated backfill。
+- [x] 4.2 定義三個不同 digest：`snapshot_hash` 綁 immutable A4 evidence；`proof_digest` 是 exact signed proof envelope bytes 的 SHA-256；`creation_request_hash` 是 server-normalized canonical create payload 的 SHA-256，必須包含初始 title／description／severity／assignee、IFC GUID、accepted prim、model/artifact/revision、`snapshot_hash` 與 `proof_digest`。
+- [x] 4.3 首次 consume SHALL 驗 signature、`kid`、expiry、current session/principal 與 `snapshot_hash`，並把 Issue、snapshot、proof ID、`proof_digest`、`creation_request_hash` 在同一 transaction 寫入；proof ID 為 unique idempotency key，`source_ref=query_id` 不得阻止同 query 的不同 rows 各自建立 Issue。
+- [x] 4.4 已 consumed proof replay SHALL 先重新驗 current session/principal，再 constant-time 比對三個 digest；完全相同時，即使 proof 過期或 signing key 已退休也回原 Issue。任一不符回 409，且不得形成 proof-existence oracle。
 - [ ] 4.5 未 consumed proof 過期 SHALL 回 `a4_proof_expired`、`retryable=true`、`recovery=rerun_query`、`draft_preserved=true`。UI 只在 browser memory 保留 draft，重跑原 query/mode 後要求使用者重新核對 current row/binding，不得自動換 proof 或寫 partial DB row。
 - [ ] 4.6 正常 rotation SHALL 保留 previous key 至最後一張 proof expiry 加 clock skew；emergency revocation MAY 立即拒絕未 consumed proof 並要求 rerun。已 consumed exact replay 只依 persisted digests，不依賴退休 key。
-- [ ] 4.7 Tests SHALL 涵蓋 exact replay before/after expiry、old key removal、altered draft、不同 proof bytes、concurrent identical requests、same query different rows、unauthorized replay、expired-draft recovery、canonical JSON/Unicode normalization 與既有 source backward compatibility。
+- [x] 4.7 Tests SHALL 涵蓋 exact replay before/after expiry、old key removal、altered draft、不同 proof bytes、concurrent identical requests、same query different rows、unauthorized replay、expired-draft recovery、canonical JSON/Unicode normalization 與既有 source backward compatibility。
+
+> S4-C backend slice（2026-07-23，branch `feat/a4-s4c-session-issue-proxy`）：完成 4.1–4.4／4.7 的 additive persistence、三 digest、atomic consume、exact replay 與 backward-compatibility tests；另加入 response/proof resource budget、global/session/principal quota、shared internal-token validation，並讓 generic Issue list/detail/transition 對 A4 records fail closed。`3.8` 仍未勾選，因正式 mounted resolver 的 lease capability 仍為 `lab_unverified`，只具 injected production-authority integration evidence；`4.5` 只完成 backend expiry hints，browser-memory draft/recheck UI 尚屬 S4-D；`4.6` 已證明 previous-key restart verification與 consumed replay 不依賴退休 key，但尚無「最後一張 proof expiry + clock skew」的 operational retirement contract。未跑 browser／Kit／live model／design dual gate，`Full completion claimed: no`。
 
 ## 5. Canonical A4 UI 與 Issue 確認
 

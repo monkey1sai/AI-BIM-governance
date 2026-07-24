@@ -65,15 +65,21 @@ def list_issues(status: Optional[str] = Query(None), severity: Optional[str] = Q
 @router.get("/api/issues/{issue_id}")
 def get_issue(issue_id: str):
     issue = _get_store().get_issue(issue_id)
-    if not issue:
+    if not issue or issue.get("source_type") == "a4_search":
         raise HTTPException(status_code=404, detail="issue not found")
     return {"issue": issue, "events": _get_store().get_events(issue_id)}
 
 
 @router.post("/api/issues/{issue_id}/transition")
 def transition_issue(issue_id: str, body: TransitionBody):
+    store = _get_store()
+    current = store.get_issue(issue_id)
+    if current is None or current.get("source_type") == "a4_search":
+        # Do not expose whether an A4 Issue exists through the generic,
+        # non-session-authorized route.
+        raise HTTPException(status_code=404, detail="issue not found")
     try:
-        return _get_store().transition(issue_id, body.to_status, body.note)
+        return store.transition(issue_id, body.to_status, body.note)
     except KeyError:
         raise HTTPException(status_code=404, detail="issue not found")
     except TransitionError as exc:

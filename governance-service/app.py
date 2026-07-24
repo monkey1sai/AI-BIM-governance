@@ -61,6 +61,12 @@ from issues.api import router as issue_router  # noqa: E402
 
 app.include_router(issue_router)
 
+# A4 confirmed-row Issue creation is a coordinator-only trusted-context route;
+# it is separate from generic/manual/rule/diff Issue semantics.
+from issues.a4_api import router as a4_issue_router  # noqa: E402
+
+app.include_router(a4_issue_router)
+
 # BCF 匯出（issue → BCF 2.1 .bcfzip）：匯出模組執行期只用 stdlib、不 import bcf-client；
 # ifctester 會在環境 transitive 安裝 bcf-client(GPLv3)，匯出產物不含其程式碼。
 from bcf.api import router as bcf_router  # noqa: E402

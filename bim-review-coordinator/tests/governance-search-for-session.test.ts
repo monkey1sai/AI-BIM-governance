@@ -692,7 +692,7 @@ describe("A4 search route contract", () => {
 });
 
 describe("createCoordinatorApp A4 search integration", () => {
-  it("mounts the A4 router before all three legacy search routes", async () => {
+  it("mounts the scoped A4 search and Issue routers before the generic proxy", async () => {
     const governance = await startGovernanceStub();
     const fixture = seedCoordinatorFixture(governance.baseUrl);
 
@@ -705,6 +705,9 @@ describe("createCoordinatorApp A4 search integration", () => {
     const ifcReady = await request(fixture.app.app)
       .post(`/api/governance/search/model/for-ifc-ready/${fixture.ifcReadyJobId}`)
       .send({ query: "IfcDoor" });
+    const issue = await request(fixture.app.app)
+      .post(`/api/governance/issues/from-a4-search/for-session/${fixture.sessionId}`)
+      .send({});
 
     expect(generic.status).toBe(404);
     expect(generic.body.error_code).toBe("a4_generic_search_disabled");
@@ -712,6 +715,8 @@ describe("createCoordinatorApp A4 search integration", () => {
     expect(session.body.error_code).toBe("a4_authentication_required");
     expect(ifcReady.status).toBe(401);
     expect(ifcReady.body.error_code).toBe("a4_authentication_required");
+    expect(issue.status).toBe(401);
+    expect(issue.body.error_code).toBe("a4_authentication_required");
     expect(governance.calls).toHaveLength(0);
   });
 
@@ -759,6 +764,14 @@ describe("createCoordinatorApp A4 search integration", () => {
     });
     expect(JSON.stringify(ready.body)).not.toContain(fixture.sourcePath);
     expect(JSON.stringify(ready.body)).not.toContain(fixture.mappingPath);
+
+    const issueMutation = await request(fixture.app.app)
+      .post(`/api/governance/issues/from-a4-search/for-session/${fixture.sessionId}`)
+      .set("X-User-Token", owner)
+      .send({});
+    expect(issueMutation.status).toBe(503);
+    expect(issueMutation.body.error_code).toBe("a4_issue_authority_unavailable");
+    expect(governance.calls).toHaveLength(1);
 
     const stolenLease = await request(fixture.app.app)
       .post(`/api/governance/search/model/for-session/${fixture.sessionId}`)
