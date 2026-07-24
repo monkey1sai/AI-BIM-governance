@@ -53,7 +53,7 @@ coordinator `governanceProxy` SHALL 提供白名單一條 `GET /api/governance/f
 
 ### Requirement: `#/minio` SHALL 顯示真實檔案庫樹（四態 + 可重試）
 
-> Deferred archive（2026-07-22，`--skip-specs`）：原 `minio-folderview-and-baseline-disclosure` change 的 raw-folder、ledger 與手動觸發提案保留在 `openspec/changes/archive/2026-07-22-minio-folderview-and-baseline-disclosure/`，但未合併至 canonical specs。因此 archive 內容僅為 non-canonical 歷史工件，**不** supersede 本 requirement；下方現行 `#/minio` requirement 仍是權威。若要重啟，MUST 先依當時 main 現況新開／調和 change，並重新驗證 UI／API contract。
+> Deferred change（2026-07-24 historical correction）：`minio-folderview-and-baseline-disclosure` 已恢復至 `openspec/changes/minio-folderview-and-baseline-disclosure/`，其 raw-folder、ledger 與手動觸發 delta 尚未合併至 canonical specs，仍為 frozen、non-canonical、non-owner，**不**自動 supersede 本 requirement；下方現行 `#/minio` requirement 仍是權威。解凍前 MUST 先以現行 main source/tests 對帳 #259/#265 已落地行為、調和 tasks 與 delta，並重新驗證 UI／API contract；不得重做既有 production code。
 
 `#/minio`（MinioDataPage）SHALL 經 `governanceClient.filesTree()` 取真樹並渲染 project/model/version（含 `source_kind` / `root` 誠實標示），SHALL 呈現 loading / error / empty / populated 四態：error 態 SHALL 誠實顯示「未連線後端」與錯誤原因並提供使用者可觸發的「重試」動作（重打同一條真實 fetch，SHALL NOT 要求整頁 reload）；empty 態 SHALL 誠實顯示「檔案庫為空」。SHALL NOT 以寫死示意樹偽裝真資料；`model.usdc` 轉檔產物仍標 p1 待建。
 

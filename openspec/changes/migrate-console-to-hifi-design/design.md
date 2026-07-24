@@ -28,7 +28,7 @@
 - 不變更 `edge-console-operator-frontend` 或 `unified-governance-console` 任何一條既有功能/API/provenance SHALL 條款。
 - 不修正這兩份 spec 本身被發現的內部過時/不一致問題（見 proposal.md Known Risks）。
 - 不擴大處理 A4–A10 願景頁以外的後端能力。
-- 不以已於 2026-07-22 deferred archive 的 `align-frontend-design-system-reference` tasks 2.4–2.8 當作前置。
+- 不以 frozen deferred `align-frontend-design-system-reference` 的 tasks 2.4–2.8 當作前置；兩案完成 requirement/successor crosswalk 前不得平行 coding。
 - 不在本 change 內執行實際的 rebaseline 操作（golden baseline 擷取是 tasks.md 的實作步驟，時機在視覺程式碼落地「之後」，不在 propose 階段先跑）。
 
 ## Decisions
@@ -49,9 +49,9 @@
 
 **取捨**：查核發現 `unified-governance-console` spec.md（311 行）本身混雜至少兩三個不同時期的架構描述（primary-viewer-overlay 治理架構 vs. 英文寫的 grouped-navigation console shell），且兩份既有 spec 都**沒有規範任何具體顏色/CSS token 機制**——本次視覺遷移不牴觸其任何一條 SHALL。若順手一併 reconcile，範圍會從「換皮」爆炸成「重新盤點並修正兩份大型既有 spec 的內部一致性」，超出 grill-me 這次收斂的決策範圍。保守作法是新開一個正交 capability，把既有 spec 的內部問題記錄為 Known Risk，留給後續獨立處理。
 
-### D3：不以 deferred archive 的雙閘方案作為遷移前置
+### D3：不以 frozen deferred 的雙閘方案作為遷移前置
 
-**決策**：`align-frontend-design-system-reference` 已於 2026-07-22 以 `--skip-specs` deferred archive，其未完成的 tasks 2.4–2.8（branch-protection required check、11 個語意案例 approved state variants、獨立 review authority、runner/font fingerprint pin）不是 active 前置，也不是 canonical implementation authority。本 change 可重用現有驗證工具；若要補齊該方案，須依當時 main 現況新開／調和 change。
+**決策**：`align-frontend-design-system-reference` 已於 2026-07-24 historical correction 恢復為 `Status: deferred` 的 frozen change，其未完成的 tasks 2.4–2.8（branch-protection required check、11 個語意案例 approved state variants、獨立 review authority、runner/font fingerprint pin）不是 active 前置，也不是 canonical implementation authority。本 change 可重用現有驗證工具；若要補齊該方案，須先依 current main 完成兩案 requirement/successor crosswalk，再另行 thaw／調和，禁止平行 coding。
 
 **理由**：archive 記錄的 pixel+semantic 雙閘**機制**（manifest schema、verify script、capture/rebaseline 工具、Playwright spec 結構）與被鎖定的視覺內容正交；既有工具對顏色系統無感知，換皮後直接用同一套工具重新 rebaseline 即可。archive 內容保留作歷史脈絡，不提供現行工作計畫或權威。
 

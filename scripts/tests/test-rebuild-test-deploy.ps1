@@ -499,6 +499,8 @@ try {
     'tampered' | Set-Content -LiteralPath (Join-Path $assetStageRoot 'web-viewer-sample\public\design-assets\vp-test.png') -Encoding ascii
     Assert-Throws { Sync-DeploymentDesignAssets -RepoRoot $assetStageRoot } 'tampered prestaged asset is rejected by SHA-256 manifest'
 
+    $resolveTestReparseTargetPath = ${function:Resolve-TestReparseTargetPath}
+    $assertTrue = ${function:Assert-True}
     $removeVerifiedAssetJunction = {
         param(
             [Parameter(Mandatory = $true)][string] $LinkPath,
@@ -509,7 +511,7 @@ try {
         if (-not [bool]($linkItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
             throw "design asset test cleanup refused non-reparse path: '$LinkPath'"
         }
-        $resolvedTarget = Resolve-TestReparseTargetPath -LinkItem $linkItem
+        $resolvedTarget = & $resolveTestReparseTargetPath -LinkItem $linkItem
         if (
             [string]::IsNullOrWhiteSpace($resolvedTarget) -or
             -not $resolvedTarget.Equals(
@@ -520,8 +522,8 @@ try {
             throw "design asset test cleanup refused junction target mismatch: '$LinkPath'"
         }
         [System.IO.Directory]::Delete([System.IO.Path]::GetFullPath($LinkPath), $false)
-        Assert-True (-not (Test-Path -LiteralPath $LinkPath)) 'design asset test junction is detached without traversing target'
-        Assert-True (Test-Path -LiteralPath $ExpectedTarget -PathType Container) 'design asset test junction target remains after detach'
+        & $assertTrue (-not (Test-Path -LiteralPath $LinkPath)) 'design asset test junction is detached without traversing target'
+        & $assertTrue (Test-Path -LiteralPath $ExpectedTarget -PathType Container) 'design asset test junction target remains after detach'
     }.GetNewClosure()
 
     $sourceGuardRoot = Join-Path $sandbox 'design-assets-source-guard'
@@ -1531,7 +1533,7 @@ exit 7
     New-Item -ItemType Directory -Path $deployHelperRoot -Force | Out-Null
     $deployHelperProbes = New-Object 'System.Collections.Generic.List[object]'
     $deployHelperRunner = {
-        param([string] $FilePath, [string[]] $ArgumentList, [string] $WorkingDirectory)
+        param([string] $FilePath, [string[]] $ArgumentList, [string] $WorkingDirectory, [hashtable] $Environment)
         $deployHelperProbes.Add([pscustomobject]@{
             FilePath = $FilePath
             ArgumentList = @($ArgumentList)
@@ -1547,8 +1549,59 @@ exit 7
     Assert-Equal $deployHelperRoot $deployHelperProbe.WorkingDirectory 'deploy helper runs inside deployment root'
     Assert-True (($deployHelperProbe.ArgumentList -join ' ') -match 'scripts\\deploy\.ps1') 'deploy helper invokes scripts\deploy.ps1'
     Assert-True ($deployHelperProbe.ArgumentList -contains '-Build') 'deploy helper preserves -Build'
+
+    $realChildDeployRoot = Join-Path $sandbox 'real-child-module-path'
+    New-Item -ItemType Directory -Path (Join-Path $realChildDeployRoot 'scripts') -Force | Out-Null
+    @'
+$hashCommand = Get-Command Get-FileHash -ErrorAction SilentlyContinue
+if ($null -eq $hashCommand) {
+    exit 42
+}
+exit 0
+'@ | Set-Content -LiteralPath (Join-Path $realChildDeployRoot 'scripts\deploy.ps1') -Encoding ascii
+
+    $contaminatedParentModulePath = 'C:\Program Files\PowerShell\7\Modules;C:\Users\operator\Documents\PowerShell\Modules'
+    $originalParentModulePath = [Environment]::GetEnvironmentVariable('PSModulePath', 'Process')
+    try {
+        [Environment]::SetEnvironmentVariable('PSModulePath', $contaminatedParentModulePath, 'Process')
+        $env:PSModulePath = $contaminatedParentModulePath
+
+        $realChildResult = Invoke-TestDeployScript -DeploymentRoot $realChildDeployRoot
+        Assert-Equal 0 $realChildResult.ExitCode 'Windows PowerShell child resolves Get-FileHash under a PowerShell 7-first parent module path'
+        Assert-Equal $contaminatedParentModulePath ([Environment]::GetEnvironmentVariable('PSModulePath', 'Process')) 'real Windows PowerShell child does not mutate the PowerShell 7-first parent environment'
+
+        $childEnvironmentProbe = New-Object 'System.Collections.Generic.List[object]'
+        $childEnvironmentRunner = {
+            param(
+                [string] $FilePath,
+                [string[]] $ArgumentList,
+                [string] $WorkingDirectory,
+                [hashtable] $Environment
+            )
+            $childEnvironmentProbe.Add([pscustomobject]@{
+                FilePath = $FilePath
+                ArgumentList = @($ArgumentList)
+                WorkingDirectory = $WorkingDirectory
+                Environment = $Environment
+            }) | Out-Null
+            return 0
+        }.GetNewClosure()
+
+        $childEnvironmentResult = Invoke-TestDeployScript -DeploymentRoot $deployHelperRoot -ProcessRunner $childEnvironmentRunner
+        Assert-Equal 0 $childEnvironmentResult.ExitCode 'deploy helper preserves its direct process result under a PowerShell 7-first parent'
+        Assert-Equal 1 $childEnvironmentProbe.Count 'deploy helper exposes one normalized child environment to the injected process runner'
+        $childModulePath = [string]$childEnvironmentProbe[0].Environment['PSModulePath']
+        Assert-True (-not [string]::IsNullOrWhiteSpace($childModulePath)) 'deploy helper provides PSModulePath only to its Windows PowerShell child'
+        Assert-True ($childModulePath -match '(?i)WindowsPowerShell') 'deploy helper child PSModulePath includes Windows PowerShell module roots'
+        Assert-True ($childModulePath -notmatch '(?i)[\\/]PowerShell[\\/]7[\\/]Modules') 'deploy helper child PSModulePath excludes PowerShell 7 module roots'
+        Assert-Equal $contaminatedParentModulePath ([Environment]::GetEnvironmentVariable('PSModulePath', 'Process')) 'deploy helper does not mutate the PowerShell 7-first parent environment'
+    } finally {
+        [Environment]::SetEnvironmentVariable('PSModulePath', $originalParentModulePath, 'Process')
+        $env:PSModulePath = $originalParentModulePath
+    }
+
     $nullExitResult = Invoke-TestDeployScript -DeploymentRoot $deployHelperRoot -ProcessRunner {
-        param([string] $FilePath, [string[]] $ArgumentList, [string] $WorkingDirectory)
+        param([string] $FilePath, [string[]] $ArgumentList, [string] $WorkingDirectory, [hashtable] $Environment)
         return $null
     }
     Assert-Equal 1 $nullExitResult.ExitCode 'deploy helper treats missing exit code as failure'

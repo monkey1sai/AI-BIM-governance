@@ -16,6 +16,20 @@
    Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
    ```
 
+2.1. **base freshness gate（push 前）**：implementation 與 evidence 的 tracked work 必須已 commit，且 worktree 必須乾淨。接著執行：
+
+   ```bash
+   git fetch origin +refs/heads/main:refs/remotes/origin/main
+   test "$(git merge-base HEAD origin/main)" = "$(git rev-parse origin/main)"
+   ```
+
+   若比較失敗，branch 已 stale，依是否已發布分流：
+
+   - 尚無既有 PR、也沒有 remote upstream 的未發布 branch：執行 `git rebase origin/main`。
+   - 已有既有 PR，或可由 upstream 證明是 published PR branch：**MUST NOT rebase / force-push**；執行 `git merge --no-edit origin/main`，保留 remote ancestry 讓後續 normal push 可 fast-forward。merge conflict 回傳 hold，不得自動丟棄任一側。
+
+   更新 base 後重跑 affected verify、必要的 evidence 與 GitNexus `detect_changes`。不得把更新前的測試結果或 evidence 當成目前 head 的通過證據。
+
 3. **push**：`git push -u origin <branch>`。遇 deny rule（如 force-push）改等價路徑——用新 commit 取代 `--amend`，不要硬推。
 4. **回報 diff/log**：回報 `git diff --stat origin/main...HEAD`（這次 ship 的 **commit** 改動面，非 worktree diff）與 `git log`（這次的 commit）。
 5. **開 PR（若尚無）**：branch 尚無 PR 才 `gh pr create --base main`（已有 PR——如 resume/watch 既有 PR——則沿用，不重複建立）；title / body 繁體中文。
@@ -63,6 +77,7 @@
 
    inline comment 只看綁在 **當前 head commit** 上的；review / issue comment 因不綁 diff line，按**內容**判斷該發現是否已被後續 push 真正解決（見下方 carry-forward 原則），不可只因 commit_id 移出當前 head 就當已解決。
    對每個 P0/P1/P2 finding，agent SHALL 建立穩定 key：`source + file/path + line/anchor + normalized finding text`。這個 key 是後續 carry-forward 與「同一處不重複 autofix」的判斷依據。
+8.1. **cyber safeguard payload recovery**：若 reviewer/test agent 對 exploit-like test payload 觸發 deterministic safeguard，先回傳 `heldReason='cyber_safeguard_payload'`，不得反覆重送同一內容。只有當驗證目的純粹是階層 separator、且不依賴 traversal/exploit 語意時，才可把 test-only fixture 改成安全等價的 `a/b` 或 `seg/seg/id`；對本次 payload-bearing test/fixture paths 執行 `rg -n 'passwd' <paths>`，必須無輸出，才可 resume 同一 reviewer/buffer cycle。若替換會削弱 security regression，維持 hold 並交由使用者裁決。
 9. **跨 push carry-forward 未解除的 substantive 發現**：gate **不可**只看「當前 head 是否還有新 comment」就放行。reviewer 在舊 head 提出的 substantive P0/P1/P2，若 agent push 了新 head 但**並未真正修復**（reviewer 未重貼確認、或只是被 force-push / rebase 把 comment 的 `commit_id` 推離當前 head），該發現**仍視為未解除**。實作上：
    - agent SHALL 自行維護一份「**已知未解除的 substantive 發現**」清單（finding → 是否已實際修復）。
    - 每次 push 後**沿用**上一輪清單，逐項判斷是否確已修復（看對應 code 改了沒、reviewer 有無 resolve / 回覆 LGTM），而**不是**把清單清空重來。
@@ -74,6 +89,7 @@
    - 本機 PR preflight 綠：`scripts/dev/check-pr-local-preflight.ps1 -PrNumber <n>` 已在目前 head / PR body 上通過；
    - 官方 checks 全綠或未受影響 PR job-level skipped-success：main branch protection 的 **全部 required checks** 以 GitHub 設定為準；PR 上未受影響的 service-level checks 可因 job-level condition skipped-success，受影響的 checks 必須通過。CodeRabbit **非** required check，其發現走步驟 8 三處來源交叉查看；
    - 步驟 8 三處來源**無新增** substantive P0/P1/P2 / Blocker，**且**步驟 9 的 carry-forward 清單**已全數解除**。
+   - merge 前立即執行 `gh pr view <n> --json mergeStateStatus,reviewDecision`。若 `reviewDecision=REVIEW_REQUIRED`，或 `mergeStateStatus` 顯示 required review 尚未解除，回傳 `heldReason='review_required'` 並停止。使用者須自行完成 CODEOWNER/manual approval，或自行執行 branch-protection admin override，再以同一 PR resume；agent **MUST NOT run `gh pr merge --admin`**。
    - 滿足 → `gh pr merge <n> --squash --delete-branch` → 接 **closeout**（見下方「closeout worktree 守衛」）：`git fetch origin --prune`、本地 `main` 用 `--ff-only` 對齊 `origin/main`（依 `github-workflow.md` 的 closeout 盤點規則）。
 11. **有新 P0/P1/P2 發現就驗證後修 → 重跑 buffer cycle**：當前 head 出現新的 P0/P1/P2 finding（或 carry-forward 清單仍有未解項）時 → 先做交叉對抗驗證 → 若裁定 autofix，做一次最小修補 → push → **每一次 push 都各自重跑一次 step 6–10 的 buffer cycle**（不是只跑第一輪）。新 push 會產生新 head，舊 inline comment 不再綁當前 head，但其代表的 substantive 發現**未修復前仍留在 carry-forward 清單**；同一 finding key 不得第二次自動修補。
 
