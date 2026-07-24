@@ -32,15 +32,42 @@ param(
     [string] $WebhookSecret = "dev-webhook-secret",
     [string] $InternalApiToken = "dev-internal-token",
     [int] $LivePollSeconds = 45,
+    [string] $StructLogRoot = "",
+    [string] $BrowserArtifactDir = "",
+    [scriptblock] $RequestInvoker,
+    [scriptblock] $BrowserInvoker,
+    [switch] $SkipVerificationTiers,
     [switch] $SkipKitLauncher
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$ExecutionMode = if ($null -ne $RequestInvoker -or $null -ne $BrowserInvoker) {
+    'test_double'
+} elseif ($SkipVerificationTiers) {
+    'test_only'
+} else {
+    'production'
+}
+$ArtifactProvenance = if ($ExecutionMode -eq 'production') { 'playwright_live' } else { $ExecutionMode }
+$IsTestExecution = $ExecutionMode -ne 'production'
+
+Import-Module -Force (Join-Path $PSScriptRoot 'lib\StructLog.psm1')
 . (Join-Path $PSScriptRoot 'lib\smoke-evidence.ps1')
 
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
+$StructRunId = New-StructLogRunId
+$StructLoggerArgs = @{
+    Service = 'scripts'
+    Component = 'smoke-bscheme-intake'
+    RunId = $StructRunId
+    InitialTraceId = "script_$StructRunId"
+}
+if (-not [string]::IsNullOrWhiteSpace($StructLogRoot)) {
+    $StructLoggerArgs.LogRoot = $StructLogRoot
+}
+$StructLogger = New-StructLogger @StructLoggerArgs
 $Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $Python)) { $Python = "python" }
 $EvidenceDir = Join-Path $RepoRoot 'docs\verification\evidence\2026-05-18-bscheme-intake-smoke'
@@ -52,6 +79,8 @@ $Record = New-SmokeEvidenceRecord -Command $MyInvocation.MyCommand.Path -Cwd (Ge
     change_id = 'local-coordinator-ifc-ready-intake-boundary'
     task      = 'T8 readiness/smoke/evidence rewrite'
     note      = 'default smoke 不依賴 _worker/_bim-control；contract stub + optional real storage/*.ifc → coordinator intake → streaming conversion'
+    execution_mode = $ExecutionMode
+    artifact_provenance = $ArtifactProvenance
 }
 
 function Invoke-Tier {
@@ -137,6 +166,9 @@ function Invoke-JsonRequest {
         [hashtable] $Headers = @{},
         [int] $TimeoutSec = 15
     )
+    if ($null -ne $RequestInvoker) {
+        return & $RequestInvoker $Method $Url $Body $Headers $TimeoutSec
+    }
     $params = @{
         Uri         = $Url
         Method      = $Method
@@ -149,6 +181,46 @@ function Invoke-JsonRequest {
         $params.Body = ($Body | ConvertTo-Json -Depth 20)
     }
     return Invoke-RestMethod @params
+}
+
+function Invoke-ViewerBootstrap {
+    param(
+        [Parameter(Mandatory = $true)][string] $Url,
+        [Parameter(Mandatory = $true)][string] $TraceId,
+        [Parameter(Mandatory = $true)][string] $ArtifactDir
+    )
+    if ($null -ne $BrowserInvoker) {
+        $result = & $BrowserInvoker $Url $TraceId $ArtifactDir
+    } else {
+        $helper = Join-Path $RepoRoot 'web-viewer-sample\scripts\smoke-struct-log-bootstrap.mjs'
+        $output = @(& node $helper --url $Url --trace-id $TraceId --artifact-dir $ArtifactDir 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            throw "viewer bootstrap helper failed: $(($output | ForEach-Object { [string]$_ }) -join ' ')"
+        }
+        $jsonLine = @($output | ForEach-Object { [string]$_ } | Where-Object { $_.TrimStart().StartsWith('{') }) | Select-Object -Last 1
+        if ([string]::IsNullOrWhiteSpace($jsonLine)) {
+            throw 'viewer bootstrap helper returned no JSON result'
+        }
+        $result = $jsonLine | ConvertFrom-Json
+    }
+
+    $screenshotPath = [string](Get-JsonProperty $result 'screenshotPath')
+    $tracePath = [string](Get-JsonProperty $result 'tracePath')
+    if ([string]::IsNullOrWhiteSpace($screenshotPath) -or
+        -not (Test-Path -LiteralPath $screenshotPath -PathType Leaf) -or
+        (Get-Item -LiteralPath $screenshotPath).Length -le 0) {
+        throw 'viewer bootstrap did not produce a nonempty screenshot'
+    }
+    if ([string]::IsNullOrWhiteSpace($tracePath) -or
+        -not (Test-Path -LiteralPath $tracePath -PathType Leaf) -or
+        (Get-Item -LiteralPath $tracePath).Length -le 0) {
+        throw 'viewer bootstrap did not produce a nonempty Playwright trace'
+    }
+    return [pscustomobject]@{
+        result = $result
+        screenshot_path = $screenshotPath
+        playwright_trace_path = $tracePath
+    }
 }
 
 function Get-TopLevelIfcFixtures {
@@ -361,6 +433,34 @@ function Invoke-RealIfcIntakeConversion {
     }
 
     $ifcReadyJobId = [string](Get-JsonProperty $job 'ifc_ready_job_id')
+    if ([string]::IsNullOrWhiteSpace($ifcReadyJobId)) {
+        $StructLogger | Write-StructAnomaly -Msg 'IFC-ready intake response missing root trace' -Data @{
+            anomaly_kind = 'unexpected_state'
+            phase = 'intake'
+            reason = 'missing_ifc_ready_job_id'
+        }
+        $detail = $fixtureDetail.Clone()
+        $detail.coordinator_health = $health
+        $detail.ifc_ready_job = $job
+        return [pscustomobject]@{
+            fixture_status = 'passed'
+            fixture_blocker = ''
+            fixture_ids = $fixtureIds
+            fixture_detail = $fixtureDetail
+            integration_status = 'blocked'
+            integration_blocker = 'coordinator accepted intake without ifc_ready_job_id'
+            integration_ids = $fixtureIds
+            integration_detail = $detail
+            callback_detail = $null
+            quality_metrics = $null
+        }
+    }
+    Set-StructLogTraceId -Logger $StructLogger -TraceId $ifcReadyJobId
+    $StructLogger | Write-StructLifecycle -Msg 'IFC-ready intake accepted' -Data @{
+        phase = 'active'
+        subject_kind = 'script_run'
+        subject_id = $StructLogger.RunId
+    }
     $conversionJobId = [string](Get-JsonProperty $job 'conversion_job_id')
     $jobStatus = [string](Get-JsonProperty $job 'status')
     $conversionStatus = [string](Get-JsonProperty $job 'conversion_status')
@@ -376,6 +476,14 @@ function Invoke-RealIfcIntakeConversion {
     $integrationDetail = $fixtureDetail.Clone()
     $integrationDetail.coordinator_health = $health
     $integrationDetail.ifc_ready_job = $job
+    $integrationDetail.execution_mode = $ExecutionMode
+    $integrationDetail.artifact_provenance = $ArtifactProvenance
+    $integrationDetail.root_trace_id = $ifcReadyJobId
+    $integrationDetail.review_session_id = $null
+    $integrationDetail.open_url = $null
+    $integrationDetail.browser_status = 'not_attempted'
+    $integrationDetail.browser_artifacts = $null
+    $integrationDetail.close_status = 'not_attempted'
 
     if ([string]::IsNullOrWhiteSpace($conversionJobId)) {
         $blocker = if ([string]::IsNullOrWhiteSpace($dispatchError)) { 'coordinator accepted intake but did not return conversion_job_id' } else { $dispatchError }
@@ -393,10 +501,22 @@ function Invoke-RealIfcIntakeConversion {
         }
     }
 
+    $StructLogger | Write-StructLifecycle -Msg 'Streaming conversion poll started' -Data @{
+        phase = 'active'
+        subject_kind = 'conversion_job'
+        subject_id = $conversionJobId
+    }
     $poll = Wait-StreamingConversionResult -BaseUrl $StreamingBase -ConversionJobId $conversionJobId -PollSeconds $PollSeconds
     $integrationDetail.streaming_poll = $poll
     if (-not $poll.completed) {
         $blocker = if ($poll.error) { $poll.error } else { 'streaming conversion result was not observed' }
+        $anomalyKind = if ($poll.status -eq 'not_observed') { 'timeout' } else { 'unexpected_state' }
+        $StructLogger | Write-StructAnomaly -Msg 'Streaming conversion poll failed' -Data @{
+            anomaly_kind = $anomalyKind
+            phase = 'poll'
+            reason = $blocker
+            conversion_job_id = $conversionJobId
+        }
         return [pscustomobject]@{
             fixture_status     = 'passed'
             fixture_blocker    = ''
@@ -409,6 +529,12 @@ function Invoke-RealIfcIntakeConversion {
             callback_detail    = $null
             quality_metrics    = $null
         }
+    }
+    $StructLogger | Write-StructLifecycle -Msg 'Streaming conversion poll completed' -Data @{
+        phase = 'closed'
+        subject_kind = 'conversion_job'
+        subject_id = $conversionJobId
+        status = $poll.status
     }
 
     $callback = $null
@@ -430,6 +556,123 @@ function Invoke-RealIfcIntakeConversion {
         $message = Get-JsonProperty $error 'message'
         $blocker = "streaming conversion result status=$resultStatus"
         if ($code -or $message) { $blocker = "$blocker; $code $message".Trim() }
+        $StructLogger | Write-StructAnomaly -Msg 'Streaming conversion did not succeed' -Data @{
+            anomaly_kind = 'unexpected_state'
+            phase = 'conversion'
+            reason = $blocker
+            conversion_job_id = $conversionJobId
+        }
+    } else {
+        $sessionId = $null
+        $primaryError = $null
+        try {
+            $openEndpoint = "$($CoordinatorBase.TrimEnd('/'))/api/external/ifc-ready/$([Uri]::EscapeDataString($ifcReadyJobId))/review-session"
+            $StructLogger | Write-StructLifecycle -Msg 'Review session open started' -Data @{
+                phase = 'active'
+                subject_kind = 'ifc_ready_job'
+                subject_id = $ifcReadyJobId
+            }
+            $reviewSession = Invoke-JsonRequest -Method 'POST' -Url $openEndpoint -Body @{} -TimeoutSec 20
+            $sessionId = [string](Get-JsonProperty $reviewSession 'review_session_id')
+            $openUrl = [string](Get-JsonProperty $reviewSession 'open_url')
+            if (-not [string]::IsNullOrWhiteSpace($sessionId)) {
+                $integrationDetail.review_session_id = $sessionId
+            }
+            if (-not [string]::IsNullOrWhiteSpace($openUrl)) {
+                $integrationDetail.open_url = $openUrl
+            }
+            $integrationDetail.review_session = $reviewSession
+            $responseTraceId = [string](Get-JsonProperty $reviewSession 'trace_id')
+            if ($responseTraceId -cne $ifcReadyJobId) {
+                throw "review-session trace mismatch (expected '$ifcReadyJobId', got '$responseTraceId')"
+            }
+            if ([string]::IsNullOrWhiteSpace($sessionId) -or [string]::IsNullOrWhiteSpace($openUrl)) {
+                throw 'review-session response is missing review_session_id or open_url'
+            }
+            $StructLogger | Write-StructLifecycle -Msg 'Review session opened' -Data @{
+                phase = 'active'
+                subject_kind = 'review_session'
+                subject_id = $sessionId
+                open_url = $openUrl
+            }
+
+            $artifactDir = $BrowserArtifactDir
+            if ([string]::IsNullOrWhiteSpace($artifactDir)) {
+                $artifactDir = Join-Path $EvidenceDir (Join-Path 'browser' $ifcReadyJobId)
+            }
+            $StructLogger | Write-StructLifecycle -Msg 'Viewer bootstrap started' -Data @{
+                phase = 'active'
+                subject_kind = 'review_session'
+                subject_id = $sessionId
+                open_url = $openUrl
+            }
+            $browser = Invoke-ViewerBootstrap -Url $openUrl -TraceId $ifcReadyJobId -ArtifactDir $artifactDir
+            $integrationDetail.browser_status = if ($IsTestExecution) { 'test_double_observed' } else { 'passed' }
+            $integrationDetail.browser_artifacts = @{
+                screenshot_path = $browser.screenshot_path
+                playwright_trace_path = $browser.playwright_trace_path
+                provenance = $ArtifactProvenance
+            }
+            $StructLogger | Write-StructLifecycle -Msg 'Viewer bootstrap completed' -Data @{
+                phase = 'closed'
+                subject_kind = 'review_session'
+                subject_id = $sessionId
+                screenshot_path = $browser.screenshot_path
+                playwright_trace_path = $browser.playwright_trace_path
+            }
+        } catch {
+            $primaryError = Get-HttpErrorDetail $_
+            if ($integrationDetail.browser_status -eq 'not_attempted' -and -not [string]::IsNullOrWhiteSpace($sessionId)) {
+                $integrationDetail.browser_status = 'failed'
+            }
+            $integrationDetail.lifecycle_error = $primaryError
+            $StructLogger | Write-StructAnomaly -Msg 'Review-session browser lifecycle failed' -Data @{
+                anomaly_kind = 'unexpected_state'
+                phase = 'browser_lifecycle'
+                reason = $primaryError
+                review_session_id = $integrationDetail.review_session_id
+            }
+            $status = 'blocked'
+            $blocker = $primaryError
+        } finally {
+            if (-not [string]::IsNullOrWhiteSpace($sessionId)) {
+                try {
+                    $closeEndpoint = "$($CoordinatorBase.TrimEnd('/'))/api/review-sessions/$([Uri]::EscapeDataString($sessionId))/close"
+                    $StructLogger | Write-StructLifecycle -Msg 'Review session close started' -Data @{
+                        phase = 'closing'
+                        subject_kind = 'review_session'
+                        subject_id = $sessionId
+                    }
+                    $closeResult = Invoke-JsonRequest -Method 'POST' -Url $closeEndpoint -Body @{ reason = 'structured-log-smoke-complete' } -TimeoutSec 20
+                    $closeStatus = [string](Get-JsonProperty $closeResult 'status')
+                    if ($closeStatus -cne 'closed') {
+                        throw "review session close did not return status=closed (got '$closeStatus')"
+                    }
+                    $integrationDetail.close_status = $closeStatus
+                    $integrationDetail.close_result = $closeResult
+                    $StructLogger | Write-StructLifecycle -Msg 'Review session closed' -Data @{
+                        phase = 'closed'
+                        subject_kind = 'review_session'
+                        subject_id = $sessionId
+                        status = $closeStatus
+                    }
+                } catch {
+                    $closeError = Get-HttpErrorDetail $_
+                    $integrationDetail.close_status = 'failed'
+                    $integrationDetail.close_error = $closeError
+                    $StructLogger | Write-StructAnomaly -Msg 'Review session cleanup close failed' -Data @{
+                        anomaly_kind = 'unexpected_state'
+                        phase = 'cleanup'
+                        reason = $closeError
+                        review_session_id = $sessionId
+                    }
+                    $status = 'blocked'
+                    if ([string]::IsNullOrWhiteSpace($primaryError)) {
+                        $blocker = $closeError
+                    }
+                }
+            }
+        }
     }
     return [pscustomobject]@{
         fixture_status     = 'passed'
@@ -446,38 +689,53 @@ function Invoke-RealIfcIntakeConversion {
 }
 
 # external platform contracts + test-only fakes（repo-root pytest）
-$ExternalContractsStatus = Invoke-Tier -Tier 'external_ifc_ready_intake' -Owner 'scripts' -Cwd '.' `
-    -CmdArgs @($Python, '-m', 'pytest', 'tests', '-q', '-p', 'no:cacheprovider') `
-    -NextCommand 'python -m pytest tests -q'
+$ExternalContractsStatus = 'deferred'
+if (-not $SkipVerificationTiers -and -not $IsTestExecution) {
+    $ExternalContractsStatus = Invoke-Tier -Tier 'external_ifc_ready_intake' -Owner 'scripts' -Cwd '.' `
+        -CmdArgs @($Python, '-m', 'pytest', 'tests', '-q', '-p', 'no:cacheprovider') `
+        -NextCommand 'python -m pytest tests -q'
+}
 
 $Live = Invoke-RealIfcIntakeConversion -FixtureRoot $StorageRoot -CoordinatorBase $CoordinatorBaseUrl `
     -StreamingBase $StreamingConversionApiBase -Secret $WebhookSecret -InternalToken $InternalApiToken `
     -PollSeconds $LivePollSeconds
 
-Add-SmokeTier -Record $Record -Tier 'real_ifc_fixture' -Status $Live.fixture_status -Owner 'scripts' `
-    -Blocker $Live.fixture_blocker `
+$testExecutionBlocker = "execution_mode=$ExecutionMode uses test-only hooks; live evidence was not observed"
+$fixtureTierStatus = if ($IsTestExecution) { 'not_observed' } else { $Live.fixture_status }
+$fixtureTierBlocker = if ($IsTestExecution) { $testExecutionBlocker } else { $Live.fixture_blocker }
+$integrationTierStatus = if ($IsTestExecution) { 'not_observed' } else { $Live.integration_status }
+$integrationTierBlocker = if ($IsTestExecution) { $testExecutionBlocker } else { $Live.integration_blocker }
+
+Add-SmokeTier -Record $Record -Tier 'real_ifc_fixture' -Status $fixtureTierStatus -Owner 'scripts' `
+    -Blocker $fixtureTierBlocker `
     -NextCommand 'Put a real .ifc directly under storage/ (gitignored), then rerun scripts/smoke-bscheme-intake.ps1' `
     -Ids $Live.fixture_ids -Detail $Live.fixture_detail | Out-Null
 
-Add-SmokeTier -Record $Record -Tier 'real_ifc_intake_conversion' -Status $Live.integration_status -Owner 'bim-review-coordinator' `
-    -Blocker $Live.integration_blocker `
+Add-SmokeTier -Record $Record -Tier 'real_ifc_intake_conversion' -Status $integrationTierStatus -Owner 'bim-review-coordinator' `
+    -Blocker $integrationTierBlocker `
     -NextCommand 'Start bim-review-coordinator on 8004 and a streaming conversion API on 49101, then rerun scripts/smoke-bscheme-intake.ps1' `
     -Ids $Live.integration_ids -Detail $Live.integration_detail | Out-Null
 
 # coordinator B-scheme intake（含 callback outbox / shadow / local-web-view 契約測試）
-$CoordinatorStatus = Invoke-Tier -Tier 'coordinator_session_lifecycle' -Owner 'bim-review-coordinator' -Cwd 'bim-review-coordinator' `
-    -CmdArgs @('npm', 'run', 'verify') -NextCommand 'cd bim-review-coordinator && npm run verify'
+$CoordinatorStatus = 'deferred'
+if (-not $SkipVerificationTiers -and -not $IsTestExecution) {
+    $CoordinatorStatus = Invoke-Tier -Tier 'coordinator_session_lifecycle' -Owner 'bim-review-coordinator' -Cwd 'bim-review-coordinator' `
+        -CmdArgs @('npm', 'run', 'verify') -NextCommand 'cd bim-review-coordinator && npm run verify'
+}
 
 # streaming internal conversion authority
-$StreamingStatus = Invoke-Tier -Tier 'streaming_internal_conversion' -Owner 'bim-streaming-server' -Cwd 'bim-streaming-server' `
-    -CmdArgs @($Python, '-m', 'pytest', 'tests/test_conversion_authority_api.py', '-q', '-p', 'no:cacheprovider') `
-    -NextCommand 'cd bim-streaming-server && python -m pytest tests/test_conversion_authority_api.py -q -p no:cacheprovider'
+$StreamingStatus = 'deferred'
+if (-not $SkipVerificationTiers -and -not $IsTestExecution) {
+    $StreamingStatus = Invoke-Tier -Tier 'streaming_internal_conversion' -Owner 'bim-streaming-server' -Cwd 'bim-streaming-server' `
+        -CmdArgs @($Python, '-m', 'pytest', 'tests/test_conversion_authority_api.py', '-q', '-p', 'no:cacheprovider') `
+        -NextCommand 'cd bim-streaming-server && python -m pytest tests/test_conversion_authority_api.py -q -p no:cacheprovider'
+}
 
 # mapping quality 需要 streaming-owned quality evidence；本 smoke 不用 historical worker evidence 充當。
 $MappingStatus = 'not_observed'
 $MappingBlocker = 'no streaming-owned mapping-quality evidence collected by this pass'
-$MappingDetail = @{ live_real_ifc_intake_conversion = $Live.integration_status }
-if ($Live.integration_status -eq 'passed' -and $null -ne $Live.quality_metrics) {
+$MappingDetail = @{ live_real_ifc_intake_conversion = $integrationTierStatus }
+if (-not $IsTestExecution -and $Live.integration_status -eq 'passed' -and $null -ne $Live.quality_metrics) {
     $MappingStatus = 'passed'
     $MappingBlocker = ''
     $MappingDetail.quality_metrics = $Live.quality_metrics
@@ -495,9 +753,10 @@ Add-SmokeTier -Record $Record -Tier 'cloud_callback_outbox' -Status $Coordinator
     -Detail @{ retry = 'pending->retry'; exhausted = 'dead_letter'; metadata_only = 'enforced (422)'; live_real_ifc_callback = $Live.callback_detail } | Out-Null
 
 # runtime image Kit launcher：沿用 T0 誠實規則
-if ($SkipKitLauncher) {
+if ($SkipKitLauncher -or $IsTestExecution) {
+    $kitSkipBlocker = if ($IsTestExecution) { $testExecutionBlocker } else { 'skipped by -SkipKitLauncher; see T0 evidence' }
     Add-SmokeTier -Record $Record -Tier 'runtime_image_kit_launcher' -Status 'deferred' -Owner 'bim-streaming-server' `
-        -Blocker 'skipped by -SkipKitLauncher; see T0 evidence' `
+        -Blocker $kitSkipBlocker `
         -NextCommand 'pwsh -File scripts/verify-runtime-kit-launcher.ps1' | Out-Null
 } else {
     & (Join-Path $PSScriptRoot 'verify-runtime-kit-launcher.ps1') 2>&1 | Out-Null
