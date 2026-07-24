@@ -179,10 +179,11 @@ describe("session-scoped A4 Issue route", () => {
     });
   });
 
-  it("allows exact path-like draft echoes without hiding a committed Issue", async () => {
+  it("allows exact path-like Issue field echoes without hiding a committed Issue", async () => {
     const title = "/Door defect";
     const description = "Inspect user note C:\\model";
-    const snapshot = evidenceSnapshot({ query: "/Door query" });
+    const assignee = "C:\\reviewer";
+    const snapshot = evidenceSnapshot();
     const governance = await startGovernanceStub({
       body: {
         issue: {
@@ -190,6 +191,7 @@ describe("session-scoped A4 Issue route", () => {
           source_type: "a4_search",
           title,
           description,
+          assignee,
           a4_evidence_snapshot: snapshot,
         },
         replayed: false,
@@ -199,12 +201,36 @@ describe("session-scoped A4 Issue route", () => {
 
     const response = await request(routeApp())
       .post(`/api/governance/issues/from-a4-search/for-session/${sessionId}`)
-      .send(issuePayload({ title, description, a4_evidence_snapshot: snapshot }));
+      .send(issuePayload({ title, description, assignee, a4_evidence_snapshot: snapshot }));
 
     expect(response.status).toBe(201);
     expect(response.body.issue.title).toBe(title);
     expect(response.body.issue.description).toBe(description);
-    expect(response.body.issue.a4_evidence_snapshot.query).toBe("/Door query");
+    expect(response.body.issue.assignee).toBe(assignee);
+    expect(governance.calls).toHaveLength(1);
+  });
+
+  it("does not allowlist path-like strings from browser-controlled evidence", async () => {
+    const snapshot = evidenceSnapshot({ query: "/Door query" });
+    const governance = await startGovernanceStub({
+      body: {
+        issue: {
+          id: "iss_a4_snapshot_path",
+          source_type: "a4_search",
+          a4_evidence_snapshot: snapshot,
+        },
+        replayed: false,
+      },
+    });
+    process.env.GOVERNANCE_API_BASE = governance.baseUrl;
+
+    const response = await request(routeApp())
+      .post(`/api/governance/issues/from-a4-search/for-session/${sessionId}`)
+      .send(issuePayload({ a4_evidence_snapshot: snapshot }));
+
+    expect(response.status).toBe(502);
+    expect(response.body.error_code).toBe("governance_service_unavailable");
+    expect(JSON.stringify(response.body)).not.toContain("/Door query");
     expect(governance.calls).toHaveLength(1);
   });
 

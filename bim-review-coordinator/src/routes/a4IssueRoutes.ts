@@ -81,21 +81,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function collectExactStringEchoes(value: unknown, output: string[] = []): string[] {
-  if (typeof value === "string") {
-    output.push(value);
-    return output;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) collectExactStringEchoes(item, output);
-    return output;
-  }
-  if (isRecord(value)) {
-    for (const item of Object.values(value)) collectExactStringEchoes(item, output);
-  }
-  return output;
-}
-
 function normalizedRequestHeaders(request: Request): Record<string, string | undefined> {
   const headers: Record<string, string | undefined> = {};
   for (const [name, value] of Object.entries(request.headers)) {
@@ -351,7 +336,6 @@ export function registerA4IssueRoutes(app: Express, deps: A4IssueRouteDeps): voi
       { ...draft.value, a4_trusted_context: trusted },
       [context.ifc_source_path, context.element_mapping_path ?? ""],
       [
-        ...collectExactStringEchoes(draft.value),
         draft.value.title.normalize("NFC").trim(),
         ...(draft.value.description
           ? [draft.value.description.normalize("NFC")]
