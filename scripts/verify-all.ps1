@@ -4,7 +4,7 @@ param(
     [switch] $TsOnly,
     [switch] $PyOnly,
     [switch] $ContinueOnError,
-    [ValidateSet('Developer', 'Deployment')][string] $Profile = 'Developer',
+    [Alias('Profile')][ValidateSet('Developer', 'Deployment')][string] $VerifyProfile = 'Developer',
     [switch] $PlanOnly,
     [string] $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 )
@@ -87,15 +87,15 @@ function New-DeploymentHealthTarget {
     }
 }
 
-if ($Profile -eq 'Deployment' -and ($StreamingOnly -or $TsOnly -or $PyOnly)) {
+if ($VerifyProfile -eq 'Deployment' -and ($StreamingOnly -or $TsOnly -or $PyOnly)) {
     throw 'Deployment profile does not accept StreamingOnly, TsOnly, or PyOnly filters.'
 }
 
 $Targets = @()
 $OmittedTargets = @()
-$publishInventory = $PlanOnly -or $Profile -eq 'Deployment'
+$publishInventory = $PlanOnly -or $VerifyProfile -eq 'Deployment'
 
-if ($Profile -eq 'Deployment') {
+if ($VerifyProfile -eq 'Deployment') {
     # The deployment checkout intentionally prunes authoring/tooling scripts;
     # load the verifier's contract from this canonical script directory.
     . (Join-Path $PSScriptRoot 'lib\rebuild-test-deploy.ps1')
@@ -152,7 +152,7 @@ else {
 }
 
 if ($publishInventory) {
-    Write-Host "[PLAN] profile=$($Profile.ToLowerInvariant())" -ForegroundColor Cyan
+    Write-Host "[PLAN] profile=$($VerifyProfile.ToLowerInvariant())" -ForegroundColor Cyan
     foreach ($target in $Targets) {
         $detail = if ($target.ContainsKey('Detail')) { $target.Detail } else { "$($target.Cmd) $($target.Args -join ' ')" }
         Write-Host "[EXECUTE] $($target.Name) — $detail"
