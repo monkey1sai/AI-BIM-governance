@@ -82,7 +82,7 @@ jobs:
           emit kit_manager_web '^apps/kit-manager-web/'
           emit compose_config '^(compose\..*\.yml|\.env.*\.example|infra/docker/)'
           emit powershell_static '^(\.github/workflows/|\.claude/workflows/|scripts/.*\.(ps1|psm1)$|AGENTS\.md|docs/agents/)'
-          emit rebuild_test_deploy '^scripts/(deploy\.ps1|dev/rebuild-test-deploy\.ps1|lib/(rebuild-test-deploy|design-assets|host-native-launcher)\.ps1|lib/StructLog\.psm1|tests/(test-rebuild-test-deploy|test-helpers)\.ps1)$'
+          emit rebuild_test_deploy '^scripts/(deploy\.ps1|dev/rebuild-test-deploy\.ps1|lib/(rebuild-test-deploy|design-assets|host-native-launcher)\.ps1|lib/StructLog\.psm1|tests/(test-rebuild-test-deploy|test-verify-all|test-helpers)\.ps1)$'
           echo "secret_pattern_scan=true" >> "$GITHUB_OUTPUT"
 
       - name: Classify frontend design scope from base and head manifests
@@ -560,6 +560,11 @@ jobs:
         if: needs.changes.outputs.rebuild_test_deploy == 'true'
         shell: pwsh
         run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-rebuild-test-deploy.ps1
+
+      - name: Run aggregate verifier profile tests
+        if: needs.changes.outputs.rebuild_test_deploy == 'true'
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-verify-all.ps1
 
   secret-pattern-scan:
     name: secret pattern scan

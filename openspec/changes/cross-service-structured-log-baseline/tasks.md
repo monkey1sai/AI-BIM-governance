@@ -111,5 +111,5 @@
 - [x] 11.6 GitNexus re-analyze 完成後（worktree 索引到 `c8a0723`，2 commits behind HEAD 但皆是 tests/docs）：`gitnexus detect_changes` → 2 files changed / 0 changed_symbols / 0 affected processes / risk=LOW。對 `EventLog` (Class) + `createCoordinatorApp` (Function) 跑 `gitnexus_impact` upstream → 兩者都 risk=LOW / impactedCount=0，確認 backward-compatible additive args 沒影響任何 caller
 - [x] 11.7 每次 commit 前 `git diff --cached --check` exit=0 確認無 trailing whitespace
 - [x] 11.8 開 [PR #126](https://github.com/monkey1sai/AI-BIM-governance/pull/126)，body 含 design / spec / tasks 對應、verification 摘要、capability change 摘要、smoke evidence deferred 註記。Draft → Ready-for-review transition 完成（`gh pr ready 126`）
-- [ ] 11.9 等 GitHub Actions / PR Review Gate / CodeRabbit 通過（自動化階段）
-- [ ] 11.10 Merge 後跑 OpenSpec sync/archive（依 `docs/agents/github-workflow.md`，merge 後動作）
+- [x] 11.9 GitHub Actions / PR Review Gate / CodeRabbit 通過（PR #126，2026-05-27；本次 historical correction 以 `gh pr view 126` 重驗）
+- [x] 11.10 Merge 後已完成 OpenSpec sync/archive；2026-07-24 僅因 runtime evidence 未完成而恢復 deferred，不回滾已同步 canonical spec

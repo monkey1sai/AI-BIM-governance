@@ -38,6 +38,7 @@ try {
         '.github/PULL_REQUEST_TEMPLATE.md',
         'scripts/tests/check-pr-body-evidence.ps1',
         'scripts/tests/test-pr-body-evidence.ps1',
+        'scripts/tests/verify-openspec-lifecycle.ps1',
         'scripts/lib/design-system-gate.ps1',
         'scripts/tests/verify-design-system-reference.ps1',
         'scripts/tests/test-design-system-reference.ps1',
@@ -59,7 +60,8 @@ try {
         '.codex/skills/spec-to-done/agents/openai.yaml',
         'docs/agents/superpowers-invocation-policy.md',
         'docs/PR_REVIEW_AGENT.md',
-        'docs/superpowers/plans/2026-06-18-ai-coding-maturity-governance.md'
+        'docs/superpowers/plans/2026-06-18-ai-coding-maturity-governance.md',
+        'openspec/AGENTS.md'
     )) {
         Assert-True (Test-Path -LiteralPath $path -PathType Leaf) "$path exists"
     }
@@ -73,6 +75,12 @@ try {
     Assert-FileContains '.github/ISSUE_TEMPLATE/governance-change.yml' 'agent-workflow' 'governance change template carries agent workflow label'
 
     Assert-FileContains '.github/CODEOWNERS' '@monkey1sai' 'CODEOWNERS names repository owner'
+    Assert-FileContains '.github/workflows/agent-governance.yml' 'verify-openspec-lifecycle\.ps1' 'agent governance runs OpenSpec lifecycle verification'
+    Assert-FileContains 'openspec/AGENTS.md' 'deferred change 保留在 `openspec/changes/<change-id>/`' 'OpenSpec instructions keep deferred changes outside completed archive'
+    Assert-FileContains 'openspec/AGENTS.md' '--skip-specs.*不是.*deferred state' 'OpenSpec instructions do not treat skip-specs as deferral'
+    Assert-FileContains 'openspec/specs/governance-throughput-budget/spec.md' 'active OpenSpec change 同時數量 SHALL 不超過 6' 'canonical OpenSpec WIP limit is six'
+    Assert-FileContains 'scripts/tests/verify-openspec-lifecycle.ps1' '\$wipLimit\s*=\s*6' 'OpenSpec lifecycle verifier enforces the canonical WIP limit'
+    Assert-FileContains 'docs/plans/NOW.md' '禁止同時推進 >6 個 active OpenSpec product change' 'NOW reflects the canonical OpenSpec WIP limit'
     foreach ($ownedPath in @('/AGENTS.md', '/docs/agents/', '/docs/plans/', '/.github/', '/scripts/')) {
         Assert-FileContains '.github/CODEOWNERS' ([regex]::Escape($ownedPath)) "CODEOWNERS covers $ownedPath"
     }
@@ -319,6 +327,19 @@ try {
     foreach ($hardGate in @('P0', 'P1', 'P3', 'P4', 'P5', 'P6', 'P7', 'HELD', 'browser evidence', 'ship-item', 'GitNexus')) {
         Assert-True ($codexSpecToDone -match [regex]::Escape($hardGate)) "Codex spec-to-done preserves hard-gate marker: $hardGate"
         Assert-True ($claudeSpecToDone -match [regex]::Escape($hardGate)) "Claude spec-to-done preserves hard-gate marker: $hardGate"
+    }
+    foreach ($shipSafetyMarker in @('review_required', 'cyber_safeguard_payload', 'git merge-base', 'git rebase origin/main', 'published PR branch', 'git merge --no-edit origin/main', 'seg/seg/id', 'passwd')) {
+        Assert-True ($codexSpecToDone -match [regex]::Escape($shipSafetyMarker)) "Codex spec-to-done preserves ship safety marker: $shipSafetyMarker"
+        Assert-True ($claudeSpecToDone -match [regex]::Escape($shipSafetyMarker)) "Claude spec-to-done preserves ship safety marker: $shipSafetyMarker"
+    }
+
+    $shipItemMarkdown = Get-Content -LiteralPath '.claude/workflows/ship-item.md' -Raw -Encoding UTF8
+    $shipItemPrompt = Get-Content -LiteralPath '.claude/workflows/ship-item.js' -Raw -Encoding UTF8
+    foreach ($shipSource in @($shipItemMarkdown, $shipItemPrompt)) {
+        foreach ($shipSafetyMarker in @('review_required', 'cyber_safeguard_payload', 'git fetch origin', 'git merge-base', 'git rebase origin/main', 'published PR branch', 'git merge --no-edit origin/main', 'seg/seg/id', 'passwd')) {
+            Assert-True ($shipSource -match [regex]::Escape($shipSafetyMarker)) "ship-item dual-maintained source preserves safety marker: $shipSafetyMarker"
+        }
+        Assert-True ($shipSource -match 'MUST NOT[^\r\n]*gh pr merge --admin') 'ship-item forbids the agent from using the admin merge override'
     }
 
     $claudeSettingsRaw = Get-Content -LiteralPath '.claude/settings.json' -Raw

@@ -2,6 +2,8 @@
 
 > **Status: deferred 2026-07-21**（**使用者已採納**／NOW 軌0；原 #364 deferred-proposed 升格）。不計入 active WIP；動前端 visual full gate 前再 thaw。A4 切片允許 `Full completion claimed: no` 而不強制本 change 全線接通。重啟時須重跑 `npx openspec validate align-frontend-design-system-reference --strict`。
 
+> **Historical correction 2026-07-24**：本 change 曾被誤作 completed archive；現依「deferred 留在 `openspec/changes/`」規則恢復原 change id。它仍是 frozen、non-canonical、non-owner，**不得直接 apply 或 coding**。解凍前 MUST 先與 `migrate-console-to-hifi-design` 建立逐 requirement disposition／successor crosswalk，裁決 HTML-only authority、repo 外唯讀 origin、mixed-change fail-closed 與 rebaseline ownership 的互斥設計；沒有 crosswalk 不得修改 production frontend、manifest、goldens 或 branch-protection gate。
+
 ## Why
 
 2026-07-14～2026-07-15 的設計文件整併後，repo 已由兩份 Git-tracked `docs/plans/*.html` 承接設計與規格；但現行 active change、manifest、route inventory 與 capture flow 仍引用外部 `C:\Repos\design\desigin-system`、已刪除文件或舊 hash routes。這會形成平行 design authority，也無法證明每個 screen、state、route 與 golden 都可從目前 checkout 的 HTML 重建。

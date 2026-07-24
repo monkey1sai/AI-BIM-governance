@@ -279,10 +279,12 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
             if (message.action === 'authUser' && message.status === 'success') {
                 if (typeof message.info === "string") {
                     this.props.onLoggedIn(message.info);
+                } else {
+                    console.error('AppStream authUser success ignored: info must be a string');
                 }
             }
-        } catch (error) {
-            console.error(message);
+        } catch {
+            console.error('AppStream authUser callback failed');
         }
     }
 

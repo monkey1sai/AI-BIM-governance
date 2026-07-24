@@ -1,5 +1,7 @@
 > **Status: deferred 2026-07-21**（**使用者已採納**／NOW 軌0；原 #364 deferred-proposed 升格）。不計入 active WIP；解凍前不做實作。重啟時須先重驗 main 現況（#259 trigger、watcher ledger）再調和 tasks。
 
+> **Historical correction 2026-07-24**：本 change 曾以 `--skip-specs` 誤作 completed archive；現依 deferred state model 恢復原 change id。#259／#265 與現行 source/tests 已落地 raw-folder、ledger auto-enroll、trigger 與 UI/E2E 的大部分行為，因此此 change 目前只允許 **frozen closeout reconciliation**：對帳 tasks、現行 code/tests 與 canonical specs，禁止重做既有 production code。完成 canonical delta 調和、affected tests 與 strict validation 前，仍為 non-canonical、non-owner。
+
 ## Why
 
 部署中 console 對真實 `bim-control` bucket 暴露兩個與直覺不符、且使 NOT BUILT 文件背離現實的現象（live coordinator `:8004` 2026-06-24 實測）：

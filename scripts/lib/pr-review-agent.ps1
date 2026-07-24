@@ -738,7 +738,7 @@ function Get-PrReviewValidationPlan {
     }
     foreach ($changeId in $OpenSpecChangeIds) {
         if ($added.Add("openspec:$changeId")) {
-            [void]$plans.Add((New-PrReviewCommandPlan -Name "openspec validate $changeId" -Owner 'openspec' -Cwd $RepoRoot -FileName 'openspec' -Arguments @('validate', $changeId)))
+            [void]$plans.Add((New-PrReviewCommandPlan -Name "openspec validate $changeId --type change" -Owner 'openspec' -Cwd $RepoRoot -FileName 'openspec' -Arguments @('validate', $changeId, '--type', 'change')))
         }
     }
 
