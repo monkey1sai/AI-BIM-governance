@@ -17,15 +17,49 @@ CONTINUE=0
 TS_ONLY=0
 PY_ONLY=0
 STREAMING_ONLY=0
+PROFILE="Developer"
+PLAN_ONLY=0
+PROFILE_ARG_PENDING=0
 for arg in "$@"; do
+    if [ "$PROFILE_ARG_PENDING" -eq 1 ]; then
+        PROFILE="$arg"
+        PROFILE_ARG_PENDING=0
+        continue
+    fi
     case "$arg" in
         --continue-on-error) CONTINUE=1 ;;
         --ts-only) TS_ONLY=1 ;;
         --py-only) PY_ONLY=1 ;;
         --streaming-only) STREAMING_ONLY=1 ;;
+        --profile) PROFILE_ARG_PENDING=1 ;;
+        --profile=*) PROFILE="${arg#*=}" ;;
+        --plan-only) PLAN_ONLY=1 ;;
         *) echo "unknown arg: $arg" >&2; exit 2 ;;
     esac
 done
+if [ "$PROFILE_ARG_PENDING" -eq 1 ]; then
+    echo "--profile requires a value" >&2
+    exit 2
+fi
+
+case "$PROFILE" in
+    Developer) ;;
+    Deployment)
+        echo "[PLAN] profile=deployment"
+        echo "[EXECUTE] deployment required artifacts"
+        echo "[EXECUTE] coordinator health"
+        echo "[EXECUTE] governance health"
+        echo "[EXECUTE] conversion health"
+        echo "[EXECUTE] kit manager health"
+        echo "[EXECUTE] viewer endpoint"
+        echo "[OMIT] tests (contracts+fakes)"
+        echo "[OMIT] bim-review-coordinator (full verify)"
+        echo "[OMIT] web-viewer-sample (full verify)"
+        echo "[OMIT] bim-streaming-server stage-loading contract"
+        if [ "$PLAN_ONLY" -eq 1 ]; then exit 0; fi
+        ;;
+    *) echo "unknown profile: $PROFILE" >&2; exit 2 ;;
+esac
 
 declare -a TARGETS
 PS=""
