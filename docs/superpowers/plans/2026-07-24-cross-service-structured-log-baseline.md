@@ -1,420 +1,612 @@
-# Cross-Service Structured Log Baseline Historical Closeout Implementation Plan
+# Cross-Service Structured Log Baseline Production Wiring Implementation Plan
 
 **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
 
-**Goal:** 只執行 OpenSpec `cross-service-structured-log-baseline` 的 10.1–10.5，以真實 IFC-ready→conversion→session→close runtime、明示的 viewer/PowerShell evidence harness、四單位 JSONL/trace/redaction 檢查及可稽核文件判定此歷史 change 能否誠實 archive。
+**Goal:** 補齊使用者於 2026-07-24 核准的 production trace carriers，讓受支援的 PowerShell smoke runner、coordinator、streaming conversion authority、真 viewer bootstrap 以同一個既有 `ifc_ready_job_id` 作 root trace，並以真 runtime JSONL 完成 OpenSpec 10.0.1–10.5。
 
-**Architecture:** Production code、shared schema、四語言 adapter 與 contracts 已由歷史 PR 落在 `origin/main`，本輪不得重做或修補；真實 runtime 閉環使用既有 host-native stack 與 `smoke-bscheme-intake.ps1`，而沒有 production caller 的 viewer adapter及不屬於 fast-MVP smoke 的 PowerShell adapter，必須以同一 trace 的 evidence harness 明確分列。所有 runtime 產物寫入 gitignored `artifacts/spec-to-done/cross-service-structured-log-baseline/evidence/`，只有 evidence 文件與 OpenSpec closeout 內容進 commit；任何缺少的四單位 record、env snapshot、secret redaction 或自動 trace propagation 都是 HELD，不得以合成 record 宣稱 runtime 通過。
+**Architecture:** coordinator 以 `ifc_ready_job_id` 作根 trace，dispatch 時送 `X-Trace-Id`，session/open payload與 viewer redirect保留同一值；streaming authority驗證、持久化並將 trace傳到 lifecycle logger與 `convert-ifc-to-usdc.ps1 -TraceId`；viewer factory在回傳前只把一筆 browser-safe `env_snapshot` enqueue 到既有 buffer，`main.tsx` 建唯一 logger並安裝 global handlers；`smoke-bscheme-intake.ps1` 在 intake response後切換同一 trace，透過 Playwright helper載入真 production viewer URL再 close session。不得以手工四-adapter harness、同步 XHR、parent-only trace link或測試 fixture取代 production carriers。
 
-**Tech Stack:** Windows PowerShell 7、Node.js 20/npm、TypeScript/tsx、Python/pytest、host-native Kit/conversion runtime、JSONL/JSON Schema draft-07、OpenSpec CLI、GitNexus、Git/GitHub CLI。
+**Tech Stack:** TypeScript/Node.js 20/Vitest/tsx、Python 3/FastAPI/pytest、PowerShell 7、React/Vite/Playwright、JSON Schema draft-07、OpenSpec CLI、GitNexus、Windows host-native Kit/conversion runtime。
 
-**Assumptions and hard gates:**
+## P1 impact and risk record
 
-- Branch 固定為 `codex/openspec/cross-service-structured-log-baseline`，worktree 固定為 `C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline`；predecessor archive commit `6c71eb0` 已在 branch。
-- `userFacing=false`，不新增 browser E2E；viewer adapter evidence 是 Node 中載入 production adapter並 POST 真 coordinator endpoint，不是 UI evidence。
-- 主 checkout 的唯一允許 fixture root 是 `C:\Repos\active\iot\AI-BIM-governance\storage`；只讀其中 top-level IFC，不複製、不 commit IFC/USDC/runtime artifacts。
-- `web-viewer-sample/src/lib/structLog.ts` 當前沒有 production app caller；`scripts/dev/sync-agent-skills.ps1` 與 `scripts/lib/rebuild-test-deploy.ps1` 雖有 PowerShell runtime caller，但不屬於 fast-MVP smoke。兩者的 harness evidence必須標為 adapter invocation，不得寫成自動四服務 propagation。
-- 只有 10.1–10.5 可由本輪更動。若任一 acceptance gate 需要 production symbol、contract、schema 或 adapter修正，立即以 `HELD@P3` 回報；不擴 scope。
+- `StreamingConversionClient.createConversionJob`: GitNexus LOW，1 direct caller、1 process。
+- `IfcReadyConversionPipeline.dispatchJob`: LOW。
+- `ifcReadyReviewSessionOpenPayload`: MEDIUM，67 impacted、1 direct caller、`createCoordinatorApp` process。
+- `buildCoordinatorOpenUrl`: MEDIUM，68 impacted、2 direct callers、2 processes；mitigation 是只新增合法 `trace_id` query、保留 standalone call 相容性並跑全部 coordinator verify。
+- `createBrowserLogger`: LOW，0 upstream。
+- `main.tsx`: LOW，0 upstream。
+- `scripts/smoke-bscheme-intake.ps1`: LOW，3 affected。
+- Python `create_conversion_api_app`、`StreamingConversionStore.create_conversion_job`、`StreamingConversionStore.complete_conversion_job`、`Ifc2UsdcPowershellConverterAdapter.convert`、`_run_powershell_conversion` 在 branch 明確 re-index 後仍不在健康 index：P1 risk維持 `UNKNOWN` advisory，P3 修改前必須以原始碼、精準 pytest與 Git diff人工界定；不得寫成 GitNexus pass。GitNexus整體可用，因此這個 per-symbol miss不改已找到 symbols 的風險分級。
 
-### Task 1: Baseline, fixture, and host-native ownership gates
+## P3 start gate (not a commit task)
+
+每次重新進入 P3 都從 worktree root 重建變數，不依賴前一個 shell：
+
+```powershell
+$root = 'C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'
+Set-Location -LiteralPath $root
+$branch = git branch --show-current
+if ($branch -ne 'codex/openspec/cross-service-structured-log-baseline') { throw "wrong branch: $branch" }
+git status --short --branch
+git fetch origin +refs/heads/main:refs/remotes/origin/main
+if (git status --porcelain) { throw 'P3 requires a clean worktree before the first implementation task' }
+node scripts/dev/agents-board.mjs status
+```
+
+Expected: branch正確、worktree乾淨、`origin/main` fresh。若 board 顯示另一個 session擁有 host-native stack、ports或相同 change，立即 HELD；不得停止對方 process。
+
+Bootstrap worktree-local dependencies once before Task 1:
+
+```powershell
+Push-Location bim-review-coordinator
+npm ci
+Pop-Location
+Push-Location web-viewer-sample
+npm ci
+npx playwright install chromium
+Pop-Location
+if (-not (Test-Path -LiteralPath '.venv\Scripts\python.exe')) { throw 'root .venv missing; create it through repo setup before P3' }
+& .\.venv\Scripts\python.exe -c "import fastapi, jsonschema, pytest; print('python deps ok')"
+```
+
+Expected: both `npm ci` commands succeed, Chromium is installed, Python prints `python deps ok`; dependency/bootstrap artifacts remain untracked.
+
+### Task 1: Coordinator root trace dispatch and viewer carrier
 
 **Files:**
 
-- Read: `.codex/skills/spec-to-done/ensure-host-native-ports-free.ps1`
-- Read: `scripts/start-all.ps1`
-- Read: `scripts/demo-health-check.ps1`
-- Read: `scripts/smoke-bscheme-intake.ps1`
-- Generate (gitignored): `artifacts/spec-to-done/cross-service-structured-log-baseline/evidence/baseline.json`
+- Modify: `bim-review-coordinator/src/services/streamingConversionClient.ts`
+- Modify: `bim-review-coordinator/src/services/ifcReadyConversionPipeline.ts`
+- Modify: `bim-review-coordinator/src/app.ts`
+- Test: `bim-review-coordinator/tests/streaming-conversion-client.test.ts`
+- Test: `bim-review-coordinator/tests/auto-poll-conversion.test.ts`
+- Test: `bim-review-coordinator/tests/local-web-view.test.ts`
+- Test: `bim-review-coordinator/tests/host-native-conversion-ingest.test.ts`
 
-- [ ] From the worktree root, prove branch/base and confirm that only the predecessor archive commit is present before runtime work.
+- [ ] Reconstruct task state and rerun exact impacts before editing.
 
   ```powershell
   $root = 'C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'
   Set-Location -LiteralPath $root
-  git status --short --branch
-  git log --oneline origin/main..HEAD
-  git diff --check origin/main...HEAD
+  git status --short
+  # GitNexus impact upstream: createConversionJob, dispatchJob,
+  # ifcReadyReviewSessionOpenPayload, buildCoordinatorOpenUrl, buildViewerRedirectUrl
   ```
 
-  Expected: branch is `codex/openspec/cross-service-structured-log-baseline`; log contains `6c71eb0`; status has no unexpected tracked edits; `git diff --check` exits 0.
+  Expected: no unexpected dirty files; risks remain LOW/MEDIUM. Any new HIGH is reported with callers/processes before continuing; CRITICAL is HELD.
 
-- [ ] Verify the main-checkout fixture without printing IFC content and create the isolated evidence/log directories.
+- [ ] Add failing tests for the exact carrier contract.
+
+  Tests must assert:
+
+  ```typescript
+  expect(fetchInit.headers).toMatchObject({ "X-Trace-Id": ifcReadyJobId });
+  expect(open.body.trace_id).toBe(ifcReadyJobId);
+  expect(new URL(open.body.open_url).searchParams.get("trace_id")).toBe(ifcReadyJobId);
+  expect(new URL(redirect.headers.location).searchParams.get("trace_id")).toBe(ifcReadyJobId);
+  ```
+
+  Also assert malformed or untrusted `trace_id` query is not forwarded, standalone session URLs remain valid without a root trace, and auto-poll lifecycle records use the root trace instead of a newly minted `stream_conv_20260724120000_deadbeef` trace.
 
   ```powershell
-  $runDir = Join-Path $root 'artifacts\spec-to-done\cross-service-structured-log-baseline'
-  $evidenceDir = Join-Path $runDir 'evidence'
-  $logRoot = Join-Path $evidenceDir 'runtime-logs'
-  New-Item -ItemType Directory -Force -Path $evidenceDir,$logRoot | Out-Null
-  $fixtures = @(Get-ChildItem -LiteralPath 'C:\Repos\active\iot\AI-BIM-governance\storage' -Filter '*.ifc' -File)
-  if ($fixtures.Count -eq 0) { throw 'HELD: no top-level IFC fixture in authorized main-checkout storage root' }
-  $fixtures | Select-Object Name,Length | Format-Table -AutoSize
+  Push-Location bim-review-coordinator
+  npm test -- --run tests/streaming-conversion-client.test.ts tests/auto-poll-conversion.test.ts tests/local-web-view.test.ts tests/host-native-conversion-ingest.test.ts
+  Pop-Location
   ```
 
-  Expected: at least one top-level `.ifc` is listed by name/size; no fixture is added to git.
+  Expected before implementation: new assertions fail because `X-Trace-Id`, response `trace_id`, and viewer query are absent.
 
-- [ ] Detect host-native port/process ownership before stopping anything, then run the required helper.
+- [ ] Implement the minimum carrier changes.
+
+  Required shape:
+
+  ```typescript
+  async createConversionJob(event, binding, traceId: string) {
+    // existing payload and auth headers stay unchanged
+    headers: this.authHeaders({
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "X-Trace-Id": traceId,
+    });
+  }
+
+  // dispatchJob: existing IFC-ready id already starts ifcready_; do not prefix again.
+  const rootTraceId = jobId;
+  const dispatch = await this.streamingClient.createConversionJob(pending.event, binding, rootTraceId);
+  this.structLog?.withTraceId(rootTraceId).network("ifcReadyDispatch", "conversion dispatched", {
+    direction: "outbound", protocol: "http", peer: "streaming-server", status: dispatch.status,
+    path: "/api/conversions/ifc-to-usdc",
+  });
+  ```
+
+  Pass `rootTraceId` into the poller callback so its lifecycle/anomaly logs retain the root. Change `buildCoordinatorOpenUrl(config, session, traceId?)` to set `trace_id` only after the same safe-id validation used for IFC-ready ids. `ifcReadyReviewSessionOpenPayload` returns `trace_id` and calls the URL builder with `job.ifc_ready_job_id`; `VIEWER_REDIRECT_QUERY_PARAMS` forwards only validated `trace_id`. Update both auto-session and replay paths; standalone sessions omit it and continue minting their existing `rev_` trace. When an IFC-ready-derived session opens or closes, emit additive coordinator lifecycle records through `structLog.withTraceId(linkedJob.ifc_ready_job_id)` while leaving the existing EventLog JSONL/API contract unchanged.
+
+- [ ] Run focused tests and coordinator verify.
 
   ```powershell
-  powershell -NoProfile -ExecutionPolicy Bypass -File .codex\skills\spec-to-done\ensure-host-native-ports-free.ps1 -DetectOnly
-  powershell -NoProfile -ExecutionPolicy Bypass -File .codex\skills\spec-to-done\ensure-host-native-ports-free.ps1
-  powershell -NoProfile -ExecutionPolicy Bypass -File .codex\skills\spec-to-done\ensure-host-native-ports-free.ps1 -DetectOnly
+  Push-Location bim-review-coordinator
+  npm test -- --run tests/streaming-conversion-client.test.ts tests/auto-poll-conversion.test.ts tests/local-web-view.test.ts tests/host-native-conversion-ingest.test.ts
+  npm run verify
+  Pop-Location
   ```
 
-  Expected: first call records ownership; the helper stops only recognized repo host-native runtime; final detect reports required Kit/conversion ports free. Unknown ownership is a hard stop, not authorization to kill by port or process name alone.
+  Expected: focused tests and full coordinator build/tests pass; existing URL/session response fields remain byte-compatible except additive `trace_id`/query.
 
-- [ ] Record the baseline without secret values.
+- [ ] Detect scope and create the tracked checkpoint.
 
   ```powershell
-  [ordered]@{
-    captured_at = (Get-Date).ToUniversalTime().ToString('o')
-    branch = (git branch --show-current)
-    head = (git rev-parse HEAD)
-    origin_main = (git rev-parse origin/main)
-    fixture_root = 'C:\Repos\active\iot\AI-BIM-governance\storage'
-    fixture_names = @($fixtures.Name)
-    log_root = $logRoot
-  } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $evidenceDir 'baseline.json') -Encoding utf8
+  git diff --check
+  # GitNexus detect_changes(scope="compare", base_ref="origin/main")
+  git add -- bim-review-coordinator/src/services/streamingConversionClient.ts bim-review-coordinator/src/services/ifcReadyConversionPipeline.ts bim-review-coordinator/src/app.ts bim-review-coordinator/tests/streaming-conversion-client.test.ts bim-review-coordinator/tests/auto-poll-conversion.test.ts bim-review-coordinator/tests/local-web-view.test.ts bim-review-coordinator/tests/host-native-conversion-ingest.test.ts
+  git diff --cached --check
+  git commit -m "task#1: propagate IFC-ready root trace in coordinator" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   ```
 
-  Expected: `baseline.json` exists under the gitignored run directory and contains paths/IDs only, no `.env` value.
+  Expected: one Task 1 commit; no generated logs/build output staged.
 
-### Task 2: Observe the real IFC-ready → conversion → session → close runtime
+### Task 2: Streaming authority persistence, lifecycle, and converter propagation
 
 **Files:**
 
-- Generate (gitignored): `artifacts/spec-to-done/cross-service-structured-log-baseline/evidence/bscheme-readiness.json`
-- Generate (gitignored): `artifacts/spec-to-done/cross-service-structured-log-baseline/evidence/runtime-summary.json`
-- Generate (gitignored): `artifacts/spec-to-done/cross-service-structured-log-baseline/evidence/runtime-logs/**`
+- Modify: `bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/conversion_authority.py`
+- Modify: `bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/ifc2usdc_powershell_adapter.py`
+- Test: `bim-streaming-server/tests/test_conversion_authority_api.py`
+- Test: `bim-streaming-server/tests/test_host_native_conversion_service.py`
 
-- [ ] Start the host-native stack with the isolated `LOG_ROOT`, then run the repository health check.
-
-  ```powershell
-  $env:LOG_ROOT = $logRoot
-  .\scripts\start-all.ps1 -HealthTimeoutSeconds 60
-  .\scripts\demo-health-check.ps1
-  ```
-
-  Expected: coordinator `:8004`, conversion API `:49101`, viewer `:5173`, and configured Kit health gates report healthy; any owned runtime failure remains evidence and stops this task.
-
-- [ ] Run the existing B-scheme smoke against the authorized real IFC fixture and keep its report inside the run directory.
+- [ ] Reconstruct state, inspect the Python symbols manually, and record GitNexus UNKNOWN without treating it as pass.
 
   ```powershell
-  $smokePath = Join-Path $evidenceDir 'bscheme-readiness.json'
-  .\scripts\smoke-bscheme-intake.ps1 `
-    -EvidencePath $smokePath `
-    -StorageRoot 'C:\Repos\active\iot\AI-BIM-governance\storage' `
-    -CoordinatorBaseUrl 'http://127.0.0.1:8004' `
-    -StreamingConversionApiBase 'http://127.0.0.1:49101' `
-    -LivePollSeconds 180
-  $smoke = Get-Content -Raw -LiteralPath $smokePath | ConvertFrom-Json
-  $realTier = $smoke.tiers | Where-Object tier -eq 'real_ifc_intake_conversion'
-  if ($realTier.status -ne 'passed') { throw "HELD: real IFC intake/conversion status=$($realTier.status); blocker=$($realTier.blocker)" }
+  $root = 'C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'
+  Set-Location -LiteralPath $root
+  git status --short
+  rg -n 'def create_conversion_api_app|def create_conversion_job|def complete_conversion_job|def convert\(|def _run_powershell_conversion' bim-streaming-server/source bim-streaming-server/tests
   ```
 
-  Expected: `real_ifc_fixture` and `real_ifc_intake_conversion` are `passed`; a real `ifc_ready_job_id` and `conversion_job_id` are present. Contract-only tiers never substitute for the live tier.
+  Expected: exact definitions/callers are manually identified. GitNexus per-symbol state is recorded as UNKNOWN/index miss; test and diff gates below are mandatory mitigation.
 
-- [ ] Resolve the auto-created review session from the live job, close it through the real coordinator route, and persist only IDs/statuses.
+- [ ] Add failing API/store/converter tests.
+
+  Tests must cover: valid `X-Trace-Id=ifcready_1779687625000_064c6813` is persisted as `trace_id`; replay returns the same trace; missing header falls back to the generated conversion job id; whitespace/control/overlength/unknown-prefix headers return 400; lifecycle records for queued/running/succeeded/failed use persisted trace; converter subprocess command contains exactly one `-TraceId $rootTraceId` pair.
 
   ```powershell
-  $ifcReadyJobId = [string]$realTier.ids.ifc_ready_job_id
-  $jobs = Invoke-RestMethod -Method Get -Uri 'http://127.0.0.1:8004/api/external/ifc-ready?limit=100'
-  $job = $jobs.items | Where-Object ifc_ready_job_id -eq $ifcReadyJobId | Select-Object -First 1
-  if ($null -eq $job) { throw "HELD: live IFC-ready job not returned by coordinator: $ifcReadyJobId" }
-  $sessionId = [string]$job.review_session_id
-  if ([string]::IsNullOrWhiteSpace($sessionId)) { throw 'HELD: conversion completed without auto-created review_session_id' }
-  $close = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8004/api/review-sessions/$sessionId/close" -ContentType 'application/json' -Body '{}'
-  if ($close.status -ne 'closed') { throw "HELD: review session close status=$($close.status)" }
-  $runtimeTrace = "rev_$sessionId"
-  [ordered]@{
-    ifc_ready_job_id = $ifcReadyJobId
-    conversion_job_id = [string]$realTier.ids.conversion_job_id
-    review_session_id = $sessionId
-    review_trace_id = $runtimeTrace
-    intake_conversion_status = $realTier.status
-    close_status = $close.status
-  } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $evidenceDir 'runtime-summary.json') -Encoding utf8
+  Push-Location bim-streaming-server
+  & ..\.venv\Scripts\python.exe -m pytest tests/test_conversion_authority_api.py tests/test_host_native_conversion_service.py -q -p no:cacheprovider
+  Pop-Location
   ```
 
-  Expected: the summary has non-empty three IDs, `intake_conversion_status=passed`, and `close_status=closed`; coordinator JSONL contains `rev_<session_id>` lifecycle start/closing/closed records. This proves 10.1 only and does not yet prove four-unit propagation.
+  Expected before implementation: new trace persistence/header/command assertions fail.
 
-### Task 3: Invoke the otherwise-unwired viewer and PowerShell adapters with the observed trace
+- [ ] Implement validation, persistence, lifecycle logging, and converter propagation.
+
+  Required behavior:
+
+  ```python
+  inbound_trace = _validated_trace_id(request.headers.get("X-Trace-Id"))
+  job = store.create_conversion_job(ifc_ready_event, trace_id=inbound_trace)
+
+  # Inside create_conversion_job, after conversion_job_id exists:
+  effective_trace = trace_id or conversion_job_id
+  job["trace_id"] = effective_trace
+
+  # Converter adapter:
+  trace_id = str(job.get("trace_id") or job["conversion_job_id"])
+  self._run_powershell_conversion(ifc_path=ifc_path, output_dir=output_dir, trace_id=trace_id)
+  cmd += ["-TraceId", trace_id]
+  ```
+
+  Build one `streaming-server` structured logger when `create_conversion_api_app` constructs the app; use `with_trace_id(job["trace_id"])` for inbound network plus conversion lifecycle transitions. Do not create a logger per request (which would violate exactly-one env snapshot per logger run). Keep trace in persisted job/read/result projections; never accept arbitrary header bytes or a second `ifcready_` prefix.
+
+- [ ] Run the affected service tests.
+
+  ```powershell
+  Push-Location bim-streaming-server
+  & ..\.venv\Scripts\python.exe -m pytest tests/test_conversion_authority_api.py tests/test_host_native_conversion_service.py -q -p no:cacheprovider
+  Pop-Location
+  ```
+
+  Expected: all affected streaming tests pass; test records show root trace on success and failure; PowerShell command assertion includes `-TraceId` once.
+
+- [ ] Commit the streaming checkpoint with manual-scope disclosure.
+
+  ```powershell
+  git diff --check
+  git diff --name-only
+  git add -- bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/conversion_authority.py bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/ifc2usdc_powershell_adapter.py bim-streaming-server/tests/test_conversion_authority_api.py bim-streaming-server/tests/test_host_native_conversion_service.py
+  git diff --cached --check
+  git commit -m "task#2: persist streaming conversion root trace" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+  ```
+
+  Expected: one Task 2 commit; commit/durable state records Python GitNexus index miss as UNKNOWN, with source/tests as fallback rather than claiming detect pass.
+
+### Task 3: Browser-safe env snapshot in `createBrowserLogger`
 
 **Files:**
 
-- Read/execute: `web-viewer-sample/src/lib/structLog.ts`
-- Read/execute: `scripts/lib/StructLog.psm1`
-- Generate (gitignored): `artifacts/spec-to-done/cross-service-structured-log-baseline/evidence/adapter-harness-summary.json`
+- Modify: `web-viewer-sample/src/lib/structLog.ts`
+- Test: `web-viewer-sample/scripts/verify-struct-log.mjs`
 
-- [ ] Invoke the production viewer adapter under Node, emit a lifecycle record with the observed `rev_` trace, and POST through the live unauthenticated coordinator intake.
+- [ ] Reconstruct state and rerun impact for `createBrowserLogger`.
 
   ```powershell
-  $env:BIM_TRACE_ID = $runtimeTrace
-  $viewerResult = & .\bim-review-coordinator\node_modules\.bin\tsx.cmd -e "import {createBrowserLogger} from './web-viewer-sample/src/lib/structLog.ts'; const trace=process.env.BIM_TRACE_ID; if(!trace) throw new Error('BIM_TRACE_ID missing'); const logger=createBrowserLogger({initialTraceId:trace,endpoint:'http://127.0.0.1:8004/api/internal/viewer-log',enableTimer:false}); logger.lifecycle('evidence-harness','historical closeout adapter invocation',{phase:'closed',subject_kind:'review_session',subject_id:trace.slice(4)}); const flushed=await logger.flush(); await logger.shutdown(); if(flushed<1) throw new Error('viewer adapter did not flush'); console.log(JSON.stringify({adapter:'viewer',trace_id:trace,records_flushed:flushed}));"
-  if ($LASTEXITCODE -ne 0) { throw 'HELD: viewer adapter harness failed' }
+  $root = 'C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'
+  Set-Location -LiteralPath $root
+  git status --short
+  # GitNexus impact(target="createBrowserLogger", direction="upstream")
   ```
 
-  Expected: one JSON summary reports `adapter=viewer`, the exact runtime trace, and `records_flushed>=1`; a schema-valid viewer JSONL line appears under the isolated log root. The evidence document must label this `adapter_harness`, because the app has no production caller.
+  Expected: LOW/0 upstream or disclosed newer risk.
 
-- [ ] Invoke the production PowerShell module with the same trace and let logger creation emit its actual `env_snapshot` before a lifecycle record.
+- [ ] Extend the adapter verification first. Assert factory return already has exactly one buffered `env_snapshot`; record uses the supplied trace; `vars` contains only explicit browser-safe entries; query string, local/session storage, cookies, tokens and arbitrary window properties never appear. After `flush()`, the same single record reaches existing async transport. Existing buffer/threshold tests must count the startup record explicitly instead of disabling it.
 
   ```powershell
-  Import-Module .\scripts\lib\StructLog.psm1 -Force
-  $scriptLogger = New-StructLogger -Service scripts -Component 'structured-log-closeout' -LogRoot $logRoot -InitialTraceId $runtimeTrace
-  $scriptLogger | Write-StructLifecycle -Msg 'historical closeout adapter invocation' -Data @{
-    phase = 'closed'
-    subject_kind = 'script_run'
-    subject_id = $scriptLogger.RunId
+  Push-Location web-viewer-sample
+  node scripts/verify-struct-log.mjs
+  Pop-Location
+  ```
+
+  Expected before implementation: new assertion fails because buffer is empty after factory return.
+
+- [ ] Add a narrow `browserSnapshotVars` option and enqueue exactly one record before return.
+
+  Required shape:
+
+  ```typescript
+  export interface BrowserLoggerOptions {
+    browserSnapshotVars?: EnvVar[];
   }
-  if ($scriptLogger.RecordsWritten -lt 2) { throw 'HELD: PowerShell adapter did not emit env_snapshot plus lifecycle' }
-  [ordered]@{
-    trace_id = $runtimeTrace
-    viewer_stdout = @($viewerResult)
-    scripts_run_id = $scriptLogger.RunId
-    scripts_records_written = $scriptLogger.RecordsWritten
-  } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $evidenceDir 'adapter-harness-summary.json') -Encoding utf8
+
+  const safeVars = sanitizeBrowserSnapshotVars(options.browserSnapshotVars ?? []);
+  append(buildRecord(state, "info", "env_snapshot", "bootstrap", "browser env snapshot", { vars: safeVars }));
+  // return logger only after append; transport remains async through existing flush policy.
   ```
 
-  Expected: scripts JSONL has the exact runtime trace, one `env_snapshot`, and one lifecycle record. The evidence document must label this `adapter_harness`, because existing PowerShell runtime callers are outside the fast-MVP smoke.
+  Sanitization accepts only documented entry fields/key names and applies existing redaction/type-only rules. It never enumerates `window`, query values, cookies, storage, or `import.meta.env` wholesale. Do not add synchronous XHR or a second startup snapshot.
 
-- [ ] Query coordinator structured-log health after viewer intake and preserve counters in the harness summary.
+- [ ] Run viewer checks and commit.
 
   ```powershell
-  $health = Invoke-RestMethod -Method Get -Uri 'http://127.0.0.1:8004/api/internal/structLog/health'
-  if ($health.viewer_intake.records_accepted -lt 1) { throw 'HELD: coordinator did not persist the viewer adapter record' }
-  $harnessPath = Join-Path $evidenceDir 'adapter-harness-summary.json'
-  $harness = Get-Content -Raw -LiteralPath $harnessPath | ConvertFrom-Json
-  $harness | Add-Member -NotePropertyName viewer_records_accepted -NotePropertyValue $health.viewer_intake.records_accepted -Force
-  $harness | Add-Member -NotePropertyName viewer_records_dropped -NotePropertyValue $health.viewer_intake.records_dropped -Force
-  $harness | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $harnessPath -Encoding utf8
+  Push-Location web-viewer-sample
+  npm run typecheck
+  node scripts/verify-struct-log.mjs
+  Pop-Location
+  git diff --check
+  git add -- web-viewer-sample/src/lib/structLog.ts web-viewer-sample/scripts/verify-struct-log.mjs
+  git diff --cached --check
+  git commit -m "task#3: enqueue browser-safe env snapshot" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   ```
 
-  Expected: accepted count is at least one; dropped count is recorded, not silently ignored.
+  Expected: typecheck and adapter verification pass; exactly one Task 3 commit.
 
-### Task 4: Validate four-unit JSONL, timeline, schema, env snapshots, and redaction
+### Task 4: Production viewer singleton, trusted query carrier, and real bootstrap probe
 
 **Files:**
 
-- Read: `tests/contracts/structured-log/schema.json`
-- Generate (gitignored): `artifacts/spec-to-done/cross-service-structured-log-baseline/evidence/log-validation.json`
-- Generate (gitignored): `artifacts/spec-to-done/cross-service-structured-log-baseline/evidence/timeline.json`
+- Create: `web-viewer-sample/src/lib/structLogBootstrap.ts`
+- Create: `web-viewer-sample/src/lib/structLogBootstrap.test.ts`
+- Modify: `web-viewer-sample/src/main.tsx`
+- Create: `web-viewer-sample/scripts/smoke-struct-log-bootstrap.mjs`
 
-- [ ] Enumerate JSONL per service and fail if any unit has no actual file.
-
-  ```powershell
-  $services = @('coordinator','streaming-server','viewer','scripts')
-  $filesByService = @{}
-  foreach ($service in $services) {
-    $filesByService[$service] = @(Get-ChildItem -LiteralPath (Join-Path $logRoot $service) -Recurse -Filter '*.jsonl' -File -ErrorAction SilentlyContinue)
-    if ($filesByService[$service].Count -eq 0) { throw "HELD: no JSONL produced for $service" }
-  }
-  $filesByService.GetEnumerator() | ForEach-Object { [pscustomobject]@{ service=$_.Key; files=$_.Value.Count } } | Format-Table -AutoSize
-  ```
-
-  Expected: all four service names have at least one JSONL file. Streaming-server must come from the host-native runtime/Kit path; a test fixture or manually fabricated record is not acceptable.
-
-- [ ] Parse every line, validate every record against the shared schema with the existing contract validator, and extract the chosen trace sorted by timestamp.
+- [ ] Reconstruct state and run impact for `main.tsx`; treat the new bootstrap module as zero-upstream until imported.
 
   ```powershell
-  & .\.venv\Scripts\python.exe -m pytest tests\contracts\structured-log\test_validate.py tests\contracts\structured-log\test_cross_service_integration.py -q -p no:cacheprovider
-  if ($LASTEXITCODE -ne 0) { throw 'HELD: structured-log contract validation failed' }
-  $allRecords = foreach ($service in $services) {
-    foreach ($file in $filesByService[$service]) {
-      $lineNo = 0
-      foreach ($line in Get-Content -LiteralPath $file.FullName) {
-        $lineNo++
-        try { $record = $line | ConvertFrom-Json -ErrorAction Stop } catch { throw "HELD: malformed JSONL $($file.FullName):$lineNo" }
-        [pscustomobject]@{ service=$service; file=$file.FullName; line=$lineNo; record=$record }
-      }
-    }
-  }
-  $timeline = @($allRecords | Where-Object { $_.record.trace_id -eq $runtimeTrace } | Sort-Object { [datetime]$_.record.ts })
-  $timeline | ForEach-Object { [ordered]@{ ts=$_.record.ts; service=$_.record.service; event_type=$_.record.event_type; msg=$_.record.msg; file=$_.file; line=$_.line } } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $evidenceDir 'timeline.json') -Encoding utf8
+  $root = 'C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'
+  Set-Location -LiteralPath $root
+  git status --short
+  # GitNexus impact(target="main.tsx", direction="upstream")
   ```
 
-  Expected: pytest passes; every JSONL line parses; `timeline.json` is ordered by `ts`. Runtime-derived coordinator/streaming observations and harness-derived viewer/scripts observations remain distinguishable by component/message.
+  Expected: LOW/0 or disclosed newer risk.
 
-- [ ] Enforce the honest propagation and env-snapshot gates without printing any environment value.
+- [ ] Write failing bootstrap tests for a pure `traceIdFromSearch(search)` validator and singleton creator. Accept only one `trace_id` matching documented prefixes and safe-id length; reject double-prefix, duplicates, whitespace/control characters, unknown prefixes and arbitrary query payload. Assert singleton identity, one global-handler install, one initial env snapshot, and `window.__structLog` availability.
 
   ```powershell
-  $traceServices = @($timeline | ForEach-Object { [string]$_.record.service } | Sort-Object -Unique)
-  $snapshotServices = @($allRecords | Where-Object { $_.record.event_type -eq 'env_snapshot' } | ForEach-Object { [string]$_.record.service } | Sort-Object -Unique)
-  $missingTrace = @($services | Where-Object { $_ -notin $traceServices })
-  $missingSnapshot = @($services | Where-Object { $_ -notin $snapshotServices })
-  $redactionViolations = @()
-  foreach ($entry in $allRecords | Where-Object { $_.record.event_type -eq 'env_snapshot' }) {
-    foreach ($var in @($entry.record.data.vars)) {
-      $key = [string]$var.key
-      $marker = [string]$var.value_or_redacted
-      if ($key -match '(?i)(TOKEN|SECRET|KEY|PASSWORD|AUTH|CREDENTIAL)' -and $marker -notmatch '^\[REDACTED:type=') {
-        $redactionViolations += [pscustomobject]@{ service=$entry.service; key=$key; file=$entry.file; line=$entry.line }
-      }
-    }
-  }
-  [ordered]@{
-    trace_id = $runtimeTrace
-    trace_services = $traceServices
-    env_snapshot_services = $snapshotServices
-    missing_trace_services = $missingTrace
-    missing_env_snapshot_services = $missingSnapshot
-    redaction_violation_keys = @($redactionViolations | Select-Object service,key,file,line)
-    automatic_runtime_propagation_claimed = $false
-    viewer_and_scripts_evidence_kind = 'adapter_harness'
-  } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $evidenceDir 'log-validation.json') -Encoding utf8
-  if ($missingTrace.Count -gt 0) { throw "HELD: chosen trace absent from services: $($missingTrace -join ', ')" }
-  if ($missingSnapshot.Count -gt 0) { throw "HELD: env_snapshot absent from services: $($missingSnapshot -join ', ')" }
-  if ($redactionViolations.Count -gt 0) { throw "HELD: secret-pattern keys lack redaction markers: $($redactionViolations.key -join ', ')" }
+  Push-Location web-viewer-sample
+  npm test -- --run src/lib/structLogBootstrap.test.ts
+  Pop-Location
   ```
 
-  Expected: all four names are present in both arrays and violation list is empty. Known source inspection says the viewer adapter currently has no automatic logger-creation snapshot API; if runtime confirms that gap, task 10.4 stays unchecked and P3 is HELD because production repair is outside authorized 10.1–10.5 scope. Never add a hand-written viewer `env_snapshot` to force this gate green.
+  Expected before implementation: module/test fails because bootstrap does not exist.
 
-### Task 5: Write durable evidence and update only OpenSpec tasks 10.1–10.5
+- [ ] Implement the pure validator and singleton, then wire `main.tsx` before React render.
+
+  The singleton calls `createBrowserLogger` exactly once with the validated root trace and an explicit safe list such as build mode, viewer port presence, browser language type/length and secure-context boolean; raw query value is used only as the record envelope trace and never included in `vars`. Call `installGlobalHandlers(logger, window)` once. Preserve existing `__INITIAL_SESSION_FROM_QUERY__` behavior and remove the startup `console.info` only if replaced by `logger.lifecycle` with the same diagnostics.
+
+- [ ] Add a Playwright CLI helper that opens a supplied `--url`, waits for `window.__structLog`, calls its real async `flush()`, and exits nonzero unless the production page reports the expected trace. It must never import/call `createBrowserLogger` directly.
+
+  ```javascript
+  const page = await browser.newPage();
+  await page.goto(url, { waitUntil: "domcontentloaded" });
+  await page.waitForFunction((trace) => window.__structLog?.logger?.traceId === trace, expectedTrace);
+  await page.evaluate(() => window.__structLog.logger.flush());
+  ```
+
+- [ ] Run viewer tests/build and commit.
+
+  ```powershell
+  Push-Location web-viewer-sample
+  npm test -- --run src/lib/structLogBootstrap.test.ts
+  npm run verify
+  Pop-Location
+  git diff --check
+  git add -- web-viewer-sample/src/lib/structLogBootstrap.ts web-viewer-sample/src/lib/structLogBootstrap.test.ts web-viewer-sample/src/main.tsx web-viewer-sample/scripts/smoke-struct-log-bootstrap.mjs
+  git diff --cached --check
+  git commit -m "task#4: wire production viewer structured logger" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+  ```
+
+  Expected: bootstrap tests and full viewer verify pass; helper touches the true page path; one Task 4 commit.
+
+### Task 5: Supported PowerShell smoke participant and production browser step
+
+**Files:**
+
+- Modify: `scripts/smoke-bscheme-intake.ps1`
+- Create: `scripts/tests/test-smoke-bscheme-structured-log.ps1`
+
+- [ ] Reconstruct state and rerun impact for the script before editing.
+
+  ```powershell
+  $root = 'C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'
+  Set-Location -LiteralPath $root
+  git status --short
+  # GitNexus impact(target="scripts/smoke-bscheme-intake.ps1", direction="upstream")
+  ```
+
+  Expected: LOW/3 affected or disclosed newer risk.
+
+- [ ] Create a narrow script test using a temporary log root and mocked request/browser functions. Assert one scripts env snapshot at logger creation; intake response switches via `Set-StructLogTraceId` to exact `ifc_ready_job_id`; poll, review-session open, viewer-bootstrap and close lifecycle records all use the root trace; failure closes no fake session and records an anomaly; output evidence includes root trace/open URL/session/close status without secret values.
+
+  ```powershell
+  pwsh -NoProfile -File scripts/tests/test-smoke-bscheme-structured-log.ps1
+  ```
+
+  Expected before implementation: test fails because the smoke owns no structured logger/session/browser close path.
+
+- [ ] Modify the supported smoke, not a separate adapter harness.
+
+  At script startup import `StructLog.psm1` and create one scripts logger (emits one startup snapshot under its generated `script_run_20260724_120000_a1b2c3`-shaped trace). Immediately after the accepted intake response:
+
+  ```powershell
+  $rootTraceId = [string](Get-JsonProperty $job 'ifc_ready_job_id')
+  Set-StructLogTraceId -Logger $StructLogger -TraceId $rootTraceId
+  $StructLogger | Write-StructLifecycle -Msg 'IFC-ready intake accepted' -Data @{
+      phase='active'; subject_kind='script_run'; subject_id=$StructLogger.RunId
+  }
+  ```
+
+  After conversion success call `POST /api/external/ifc-ready/$rootTraceId/review-session`; require response `trace_id` equals root and capture `$openUrl`/`$sessionId`. Invoke `node web-viewer-sample/scripts/smoke-struct-log-bootstrap.mjs --url $openUrl --trace-id $rootTraceId`; only after it succeeds call `POST /api/review-sessions/$sessionId/close`. Add root trace/session/open URL/browser status/close status to the existing evidence tier IDs. Never log webhook/internal token values.
+
+- [ ] Run both PowerShell log suites and syntax parse.
+
+  ```powershell
+  pwsh -NoProfile -Command "[scriptblock]::Create((Get-Content -Raw scripts/smoke-bscheme-intake.ps1)) | Out-Null"
+  pwsh -NoProfile -File scripts/tests/test-struct-log.ps1
+  pwsh -NoProfile -File scripts/tests/test-smoke-bscheme-structured-log.ps1
+  ```
+
+  Expected: syntax parse and both suites pass; test proves real page helper invocation rather than direct adapter injection.
+
+- [ ] Commit the smoke checkpoint.
+
+  ```powershell
+  git diff --check
+  git add -- scripts/smoke-bscheme-intake.ps1 scripts/tests/test-smoke-bscheme-structured-log.ps1
+  git diff --cached --check
+  git commit -m "task#5: join smoke runner to IFC-ready root trace" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+  ```
+
+  Expected: one Task 5 commit; no smoke JSON/runtime log staged.
+
+### Task 6: Runtime JSONL validator, production-carrier integration gate, and 10.0 closeout
+
+**Files:**
+
+- Create: `tests/contracts/structured-log/validate_runtime_logs.py`
+- Create: `tests/contracts/structured-log/test_validate_runtime_logs.py`
+- Modify: `docs/contracts/structured-log-schema.md`
+- Modify: `openspec/changes/cross-service-structured-log-baseline/tasks.md`
+
+- [ ] Reconstruct state and add a validator test fixture that represents actual `logs/coordinator/2026-07-24/*.jsonl`-shaped layout for all four service directories. Test malformed JSON, schema failure, missing service, wrong trace, absent/duplicate env snapshot, secret-pattern raw value, and success with all four units.
+
+  ```powershell
+  $root = 'C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'
+  Set-Location -LiteralPath $root
+  & .\.venv\Scripts\python.exe -m pytest tests/contracts/structured-log/test_validate_runtime_logs.py -q -p no:cacheprovider
+  ```
+
+  Expected before implementation: import/file-not-found failure.
+
+- [ ] Implement CLI validation against `tests/contracts/structured-log/schema.json`, never against a copied schema, and expose the exact runtime flags used in Task 7.
+
+  ```powershell
+  & .\.venv\Scripts\python.exe tests/contracts/structured-log/validate_runtime_logs.py --help
+  ```
+
+  Expected: help exits 0 and lists `--log-root`, `--trace-id`, `--require-services`, `--require-one-env-snapshot-per-run`, and `--output`.
+
+  The JSON result lists files/line numbers/event counts and redaction violations but never raw env values. Exit nonzero for malformed/schema-invalid lines, missing root trace service, missing/duplicate snapshot per `(service,run_id)`, or a secret-pattern key without a redaction marker.
+
+- [ ] Update the contract doc with the clarified root trace, browser async enqueue semantics, supported smoke participant and production-carrier diagram. Mark 10.0.1–10.0.5 `[x]` only after Tasks 1–5 tests and this validator test pass; leave 10.1–10.5 open.
+
+- [ ] Run cross-service affected tests and strict OpenSpec.
+
+  ```powershell
+  & .\.venv\Scripts\python.exe -m pytest tests/contracts/structured-log -q -p no:cacheprovider
+  Push-Location bim-review-coordinator
+  npm run verify
+  Pop-Location
+  Push-Location bim-streaming-server
+  & ..\.venv\Scripts\python.exe -m pytest tests/test_conversion_authority_api.py tests/test_host_native_conversion_service.py -q -p no:cacheprovider
+  Pop-Location
+  Push-Location web-viewer-sample
+  npm run verify
+  Pop-Location
+  pwsh -NoProfile -File scripts/tests/test-struct-log.ps1
+  pwsh -NoProfile -File scripts/tests/test-smoke-bscheme-structured-log.ps1
+  npx --no-install openspec validate cross-service-structured-log-baseline --strict
+  npx --no-install openspec validate --all --strict
+  ```
+
+  Expected: all affected suites and both strict validations pass; no historical pass count is reused.
+
+- [ ] Run detect/manual scope gates and commit.
+
+  ```powershell
+  # GitNexus detect_changes(scope="compare", base_ref="origin/main")
+  git diff --name-status origin/main...HEAD
+  git diff --check
+  git add -- tests/contracts/structured-log/validate_runtime_logs.py tests/contracts/structured-log/test_validate_runtime_logs.py docs/contracts/structured-log-schema.md openspec/changes/cross-service-structured-log-baseline/tasks.md
+  git diff --cached --check
+  git commit -m "task#6: validate production structured-log carriers" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+  ```
+
+  Expected: 10.0.1–10.0.5 checked, 10.1–10.5 open, one Task 6 commit; Python index misses remain disclosed.
+
+### Task 7: Fresh unique runtime attempt, shutdown, final evidence, and implementation PR readiness
 
 **Files:**
 
 - Create: `docs/evidence/structured-log-baseline-2026-05-26.md`
 - Modify: `openspec/changes/cross-service-structured-log-baseline/tasks.md`
+- Generate (gitignored): `artifacts/spec-to-done/cross-service-structured-log-baseline/evidence/attempt-*/**`
 
-- [ ] Create the durable evidence document from observed artifacts, with these exact sections and no secret values: `Scope and machine context`, `Commands`, `True runtime closed loop`, `Adapter harness disclosure`, `Four-unit files`, `Trace timeline`, `Environment snapshot and redaction`, `Verified facts`, `Inferences`, `Unverified risks`, `Artifact paths`.
-
-  The document must name the branch/head, Windows/PowerShell/Node/Python versions, authorized IFC fixture name and SHA-256, `ifc_ready_job_id`, `conversion_job_id`, `review_session_id`, chosen `trace_id`, per-service file counts, per-service record/event summaries, env-snapshot presence, redaction result, smoke status, and shutdown result. It must say verbatim: `automatic four-service propagation claimed: no` and `viewer/scripts records in this run are adapter-harness evidence, not production app-path evidence`.
-
-  Expected: every claim points to `baseline.json`, `bscheme-readiness.json`, `runtime-summary.json`, `adapter-harness-summary.json`, `log-validation.json`, or `timeline.json`; no raw environment value or fixture content appears.
-
-- [ ] Mark each of 10.1–10.5 `[x]` only when its matching observation passed; preserve all historical 1–9 and 11 text byte-for-byte.
+- [ ] Reconstruct state, fetch base before runtime, and require implementation branch freshness. If unpublished and stale, rebase now; if already published, merge `origin/main` without rewriting.
 
   ```powershell
-  git diff -- openspec\changes\cross-service-structured-log-baseline\tasks.md
-  rg -n '^\- \[[ x]\] 10\.[1-5]' openspec\changes\cross-service-structured-log-baseline\tasks.md
-  ```
-
-  Expected: exactly five 10.x lines are checked only after Task 4 passes; no other task checkbox or historical count changes.
-
-- [ ] Run focused document/change validation, inspect staged scope, and commit the evidence closeout.
-
-  ```powershell
-  npx --no-install openspec validate cross-service-structured-log-baseline --strict
-  git diff --check
-  git add -- docs\evidence\structured-log-baseline-2026-05-26.md openspec\changes\cross-service-structured-log-baseline\tasks.md
-  git diff --cached --name-only
-  git diff --cached --check
-  git commit -m "docs: record structured-log runtime evidence" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
-  ```
-
-  Expected: strict validation passes; staged names are exactly the evidence doc and tasks file; commit succeeds. If any 10.x observation is missing, do not commit a false checkmark—record HELD state instead.
-
-### Task 6: Run affected verification and GitNexus scope gate
-
-**Files:**
-
-- Read/execute: `tests/contracts/structured-log/**`
-- Read/execute: `bim-review-coordinator/tests/app/viewerLogIntake.test.ts`
-- Read/execute: `web-viewer-sample/scripts/verify-struct-log.mjs`
-- Read/execute: `bim-streaming-server/tests/test_conversion_authority_api.py`
-- Read/execute: `scripts/tests/test-struct-log.ps1`
-
-- [ ] Run the affected checks from their prescribed working directories.
-
-  ```powershell
+  $root = 'C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'
   Set-Location -LiteralPath $root
-  & .\.venv\Scripts\python.exe -m pytest tests\contracts\structured-log -q -p no:cacheprovider
-  if ($LASTEXITCODE -ne 0) { throw 'root structured-log tests failed' }
-  Push-Location bim-review-coordinator
-  npm run verify
-  if ($LASTEXITCODE -ne 0) { Pop-Location; throw 'coordinator verify failed' }
-  Pop-Location
-  Push-Location web-viewer-sample
-  npm run typecheck
-  npm run test:struct-log
-  if ($LASTEXITCODE -ne 0) { Pop-Location; throw 'viewer structured-log verification failed' }
-  Pop-Location
-  Push-Location bim-streaming-server
-  & ..\.venv\Scripts\python.exe -m pytest tests\test_conversion_authority_api.py -q -p no:cacheprovider
-  if ($LASTEXITCODE -ne 0) { Pop-Location; throw 'streaming conversion authority tests failed' }
-  Pop-Location
-  pwsh -NoProfile -File scripts\tests\test-struct-log.ps1
-  if ($LASTEXITCODE -ne 0) { throw 'PowerShell structured-log tests failed' }
-  ```
-
-  Expected: root structured-log suite, coordinator verify, viewer typecheck/adapter test, streaming conversion authority, and PowerShell adapter tests all exit 0. Record exact counts from stdout in the evidence document rather than copying historical counts.
-
-- [ ] Run strict OpenSpec validation and PR local preflight.
-
-  ```powershell
-  npx --no-install openspec validate cross-service-structured-log-baseline --strict
-  npx --no-install openspec validate --all --strict
-  .\scripts\dev\check-pr-local-preflight.ps1
-  ```
-
-  Expected: both OpenSpec validations and local preflight exit 0; any skip is recorded as a known gap, not pass.
-
-- [ ] Run GitNexus `detect_changes({scope:"compare", base_ref:"origin/main"})`; because this closeout modifies no production symbols, expected changed symbols/processes are zero. Independently cross-check with Git.
-
-  ```powershell
-  git diff --name-status origin/main...HEAD
-  git diff --check origin/main...HEAD
-  ```
-
-  Expected: Git shows only predecessor archive plus plan/evidence/OpenSpec closeout paths; GitNexus reports no production symbol/flow impact. If linked-worktree indexing is stale/unavailable, report `UNKNOWN` with the Git diff fallback and do not invent a pass.
-
-### Task 7: Archive the completed change and prepare ship-ready evidence
-
-**Files:**
-
-- Move/delete by OpenSpec CLI: `openspec/changes/cross-service-structured-log-baseline/**`
-- Modify if required by archive sync: `openspec/specs/cross-service-structured-log-baseline/spec.md`
-- Create by OpenSpec CLI: `openspec/changes/archive/2026-07-24-cross-service-structured-log-baseline/**`
-
-- [ ] Stop only this worktree-owned stack and preserve shutdown evidence before archive.
-
-  ```powershell
-  Set-Location -LiteralPath $root
-  .\scripts\stop-all.ps1
-  powershell -NoProfile -ExecutionPolicy Bypass -File .codex\skills\spec-to-done\ensure-host-native-ports-free.ps1 -DetectOnly
-  Remove-Item Env:\BIM_TRACE_ID -ErrorAction SilentlyContinue
-  Remove-Item Env:\LOG_ROOT -ErrorAction SilentlyContinue
-  ```
-
-  Expected: tracked pidfile-owned services stop; final detect shows no owned listener on required ports. Unknown processes are not stopped.
-
-- [ ] Archive only after all five 10.x tasks are checked and both strict validations are green.
-
-  ```powershell
-  $remaining = rg -n '^\- \[ \] 10\.[1-5]' openspec\changes\cross-service-structured-log-baseline\tasks.md
-  if ($LASTEXITCODE -eq 0 -or $remaining) { throw 'HELD: smoke/runtime evidence tasks remain open' }
-  npx --no-install openspec archive cross-service-structured-log-baseline -y
-  npx --no-install openspec validate --specs --strict
-  npx --no-install openspec validate --all --strict
-  git diff --check
-  ```
-
-  Expected: active change directory is gone, dated archive exists, canonical spec remains valid, and both strict validations exit 0. No `--skip-specs` or `--no-validate` is used.
-
-- [ ] Inspect exact archive delta, run GitNexus compare again, and commit archive closeout.
-
-  ```powershell
-  git status --short
-  git diff --name-status
-  git diff --check
-  git add -- openspec\changes\archive\2026-07-24-cross-service-structured-log-baseline openspec\specs\cross-service-structured-log-baseline\spec.md
-  git diff --cached --name-status
-  git diff --cached --check
-  git commit -m "openspec: archive structured-log baseline" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
-  ```
-
-  Expected: staged delta contains only the dated archive and any CLI-produced canonical spec sync; commit succeeds. If the archive date/path differs in actual CLI output, stage the exact CLI-produced dated path and record it in closeout rather than fabricating the expected path.
-
-- [ ] Rebase/merge freshness and ship-readiness gate before P6.
-
-  ```powershell
   git status --short
   git fetch origin +refs/heads/main:refs/remotes/origin/main
   $mergeBase = git merge-base HEAD origin/main
   $originMain = git rev-parse origin/main
   if ($mergeBase -ne $originMain) { git rebase origin/main }
-  npx --no-install openspec validate --all --strict
-  .\scripts\dev\check-pr-local-preflight.ps1
-  git diff --check origin/main...HEAD
-  git status --short
+  git status --short --branch
+  node scripts/dev/agents-board.mjs status
   ```
 
-  Expected: unpublished branch is rebased onto current `origin/main`, validations rerun after rebase, and worktree is clean. P6 PR body must disclose `Change lane=S`, `Behavior contract changed=yes`, requirement source path, `userFacing=false`, true runtime versus harness evidence, GitNexus result/fallback, exact evidence paths, and `automatic four-service propagation claimed: no`; merge proceeds only through the spec-to-done ship gate.
+  Expected: clean branch based on current `origin/main`; no other board session owns runtime. After any rebase rerun Task 6 affected verification before continuing.
+
+- [ ] Create a unique attempt root and never reuse historical logs.
+
+  ```powershell
+  $attemptId = 'attempt-' + (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ') + '-' + (git rev-parse --short HEAD)
+  $attemptRoot = Join-Path $root "artifacts\spec-to-done\cross-service-structured-log-baseline\evidence\$attemptId"
+  if (Test-Path -LiteralPath $attemptRoot) { throw "attempt root already exists: $attemptRoot" }
+  $logRoot = Join-Path $attemptRoot 'logs'
+  New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
+  $attemptRoot | Set-Content -LiteralPath (Join-Path $root 'artifacts\spec-to-done\cross-service-structured-log-baseline\active-attempt.txt') -Encoding utf8
+  ```
+
+  Expected: new empty attempt root tied to current HEAD; later commands reconstruct it from `active-attempt.txt`.
+
+- [ ] Check authorized main-checkout IFC fixture and runtime ownership. Run the port helper only after board is clear; never kill by port alone.
+
+  ```powershell
+  $attemptRoot = (Get-Content -Raw -LiteralPath 'artifacts\spec-to-done\cross-service-structured-log-baseline\active-attempt.txt').Trim()
+  $logRoot = Join-Path $attemptRoot 'logs'
+  $fixtureRoot = 'C:\Repos\active\iot\AI-BIM-governance\storage'
+  $fixtures = @(Get-ChildItem -LiteralPath $fixtureRoot -Filter '*.ifc' -File)
+  if ($fixtures.Count -eq 0) { throw 'HELD: no top-level IFC fixture in authorized storage root' }
+  powershell -NoProfile -ExecutionPolicy Bypass -File .codex\skills\spec-to-done\ensure-host-native-ports-free.ps1 -DetectOnly
+  powershell -NoProfile -ExecutionPolicy Bypass -File .codex\skills\spec-to-done\ensure-host-native-ports-free.ps1
+  powershell -NoProfile -ExecutionPolicy Bypass -File .codex\skills\spec-to-done\ensure-host-native-ports-free.ps1 -DetectOnly
+  ```
+
+  Expected: fixture exists; only PID tree proven owned by this repo is stopped; final detect shows required ports free. Ambiguous ownership is HELD.
+
+- [ ] Start the full stack with isolated `LOG_ROOT`, health-check, and run supported smoke including the production viewer bootstrap/close path.
+
+  ```powershell
+  $env:LOG_ROOT = $logRoot
+  .\scripts\start-all.ps1 -HealthTimeoutSeconds 60
+  .\scripts\demo-health-check.ps1
+  $smokePath = Join-Path $attemptRoot 'bscheme-readiness.json'
+  .\scripts\smoke-bscheme-intake.ps1 -EvidencePath $smokePath -StorageRoot $fixtureRoot -CoordinatorBaseUrl 'http://127.0.0.1:8004' -StreamingConversionApiBase 'http://127.0.0.1:49101' -LivePollSeconds 180
+  if ($LASTEXITCODE -ne 0) { throw 'HELD: production smoke failed' }
+  ```
+
+  Expected: real intake/conversion/session/viewer bootstrap/close passes and evidence contains one `ifcready_*` root trace plus real IDs; no manual adapter harness exists.
+
+- [ ] Run final affected tests while the exact runtime revision is checked out, then stop the stack before authoring evidence.
+
+  ```powershell
+  & .\.venv\Scripts\python.exe -m pytest tests/contracts/structured-log -q -p no:cacheprovider
+  Push-Location bim-review-coordinator; npm run verify; Pop-Location
+  Push-Location bim-streaming-server; & ..\.venv\Scripts\python.exe -m pytest tests/test_conversion_authority_api.py tests/test_host_native_conversion_service.py -q -p no:cacheprovider; Pop-Location
+  Push-Location web-viewer-sample; npm run verify; Pop-Location
+  pwsh -NoProfile -File scripts/tests/test-struct-log.ps1
+  pwsh -NoProfile -File scripts/tests/test-smoke-bscheme-structured-log.ps1
+  .\scripts\stop-all.ps1
+  powershell -NoProfile -ExecutionPolicy Bypass -File .codex\skills\spec-to-done\ensure-host-native-ports-free.ps1 -DetectOnly
+  ```
+
+  Expected: all tests pass; stack is stopped; shutdown/port result is saved in attempt command provenance. A running or ambiguously-owned process blocks final evidence.
+
+- [ ] Extract root trace from smoke and validate every actual runtime JSONL line against the canonical schema.
+
+  ```powershell
+  $smoke = Get-Content -Raw -LiteralPath (Join-Path $attemptRoot 'bscheme-readiness.json') | ConvertFrom-Json
+  $realTier = $smoke.tiers | Where-Object tier -eq 'real_ifc_intake_conversion'
+  $rootTrace = [string]$realTier.ids.ifc_ready_job_id
+  if ($rootTrace -notmatch '^ifcready_[A-Za-z0-9_.-]+$') { throw 'HELD: invalid or absent IFC-ready root trace' }
+  & .\.venv\Scripts\python.exe tests/contracts/structured-log/validate_runtime_logs.py --log-root $logRoot --trace-id $rootTrace --require-services coordinator streaming-server viewer scripts --require-one-env-snapshot-per-run --output (Join-Path $attemptRoot 'runtime-log-validation.json')
+  if ($LASTEXITCODE -ne 0) { throw 'HELD: actual runtime JSONL validation failed' }
+  ```
+
+  Expected: all lines schema-valid; the same root trace appears in all four services; each `(service,run_id)` has exactly one snapshot; redaction violations empty.
+
+- [ ] Only now write `docs/evidence/structured-log-baseline-2026-05-26.md`. Include exact cwd/branch/HEAD/base, attempt root, fixture name/size/SHA-256, commands and exit codes, service/run/file/record counts, root trace timeline, intake/conversion/session/viewer/close IDs, browser helper result, schema validation summary, env-snapshot/redaction result, shutdown ownership evidence, verified facts/inferences/unverified risks/skipped checks. Never include `.env` values, raw secret values, IFC contents, or claim full system/WebRTC render evidence not observed.
+
+- [ ] Mark 10.1–10.5 `[x]` only when the runtime validator and evidence document support each line. Keep active OpenSpec in place for the implementation PR.
+
+  ```powershell
+  npx --no-install openspec validate cross-service-structured-log-baseline --strict
+  npx --no-install openspec validate --all --strict
+  .\scripts\dev\check-pr-local-preflight.ps1
+  git diff --check
+  git add -- docs/evidence/structured-log-baseline-2026-05-26.md openspec/changes/cross-service-structured-log-baseline/tasks.md
+  git diff --cached --check
+  git commit -m "task#7: record structured log production evidence" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+  ```
+
+  Expected: one Task 7 commit; 10.0.1–10.5 all checked; active change still exists because `openspec/config.yaml` requires merge before archive.
+
+- [ ] Run final compare/detect and prepare P6 implementation PR. PR body must disclose Lane S, behavior contract change, approved spec, all P1 MEDIUM mitigations, Python GitNexus UNKNOWN/index miss, exact attempt/evidence paths, tests, runtime IDs, shutdown status, and `OpenSpec archive pending post-merge closeout PR`.
+
+  ```powershell
+  git status --short
+  git diff --check origin/main...HEAD
+  # GitNexus detect_changes(scope="compare", base_ref="origin/main")
+  git status --short --branch
+  ```
+
+  Expected: worktree clean; implementation PR can enter normal P5/P6 review/CI/merge. Do not archive before this PR is merged.
+
+## Post-merge OpenSpec archive closeout (separate branch and PR)
+
+This section runs only after the implementation PR is confirmed merged and current `origin/main` contains all Task 1–7 commits. It is not a pre-merge P3 task.
+
+```powershell
+$repo = 'C:\Repos\active\iot\AI-BIM-governance'
+Set-Location -LiteralPath $repo
+git fetch origin +refs/heads/main:refs/remotes/origin/main
+$archiveBranch = 'codex/openspec/archive-cross-service-structured-log-baseline'
+$archiveWorktree = 'C:\Repos\active\iot\AI-BIM-governance\.worktrees\archive-cross-service-structured-log-baseline'
+git worktree add -b $archiveBranch $archiveWorktree origin/main
+Set-Location -LiteralPath $archiveWorktree
+$canonical = 'openspec\specs\cross-service-structured-log-baseline\spec.md'
+$beforeHash = (Get-FileHash -LiteralPath $canonical -Algorithm SHA256).Hash
+npx --no-install openspec validate cross-service-structured-log-baseline --strict
+npx --no-install openspec archive cross-service-structured-log-baseline --skip-specs -y
+$afterHash = (Get-FileHash -LiteralPath $canonical -Algorithm SHA256).Hash
+if ($beforeHash -ne $afterHash) { throw 'HELD: canonical spec changed during --skip-specs archive' }
+if (Test-Path -LiteralPath 'openspec\changes\cross-service-structured-log-baseline') { throw 'active change still present after archive' }
+npx --no-install openspec validate --specs --strict
+npx --no-install openspec validate --all --strict
+git diff --check
+git add -A -- openspec\changes\cross-service-structured-log-baseline openspec\changes\archive
+git diff --cached --check
+git commit -m "openspec: archive cross-service structured log baseline" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+```
+
+Expected: dated archive is committed, canonical spec hash is byte-identical, active change is gone, strict validation passes. Push this closeout branch, open a separate archive PR, pass CI/review, and merge through normal P6. Never use `--no-validate`; never archive from the already-merged implementation branch.
