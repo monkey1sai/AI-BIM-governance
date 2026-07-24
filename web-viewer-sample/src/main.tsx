@@ -14,8 +14,37 @@ import ReactDOM from "react-dom/client";
 import App from "./App.tsx";
 import EdgeConsole from "./console/EdgeConsole";
 import { isOperatorConsolePath } from "./console/routing";
+import { reviewEnv } from "./config/env";
+import { bootstrapStructLog } from "./lib/structLogBootstrap";
 import "./index.css";
 import "./styles/demo-theme.css";
+
+const coordinatorUrl = new URL(reviewEnv.coordinatorApiBase);
+bootstrapStructLog({
+    search: window.location.search,
+    coordinatorApiBase: reviewEnv.coordinatorApiBase,
+    browserSnapshotVars: [
+        {
+            key: "NODE_ENV",
+            source: "default",
+            value_or_redacted: import.meta.env.MODE,
+            type: "string",
+        },
+        {
+            key: "COORDINATOR_PORT",
+            source: "default",
+            value_or_redacted: coordinatorUrl.port || (coordinatorUrl.protocol === "https:" ? "443" : "80"),
+            type: "string",
+        },
+        {
+            key: "VIEWER_PORT",
+            source: "default",
+            value_or_redacted: window.location.port || (window.location.protocol === "https:" ? "443" : "80"),
+            type: "string",
+        },
+    ],
+    win: window,
+});
 
 // fast-ifc-link-demo-loop §6.1:解析 ?session=lwv_xxx | review_session_xxx,
 // 寫進 window.__INITIAL_SESSION_FROM_QUERY__ 供 App / Window bootstrap 階段接手,
