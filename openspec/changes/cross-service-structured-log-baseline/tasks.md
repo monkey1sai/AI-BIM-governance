@@ -95,11 +95,11 @@
 
 ## 10. Smoke / runtime evidence
 
-- [ ] 10.0.1 Coordinator production carrier：IFC-ready root trace → conversion `X-Trace-Id`，並保留到 review session/open payload與 viewer URL；補 unit/integration tests
-- [ ] 10.0.2 Streaming production carrier：驗證/持久化 inbound trace，conversion lifecycle與 converter `-TraceId` / `BIM_TRACE_ID` 承襲；無 inbound 才 mint fallback；補 tests
-- [ ] 10.0.3 Viewer production wiring：`createBrowserLogger()` return 前 emit browser-safe `env_snapshot`；`main.tsx` 建 singleton、安裝 global handlers並從合法 query carrier採用 root trace；補 verify/tests
-- [ ] 10.0.4 PowerShell production smoke participant：`scripts/smoke-bscheme-intake.ps1` 建 logger，取得 intake response後切換 root trace並記 poll/session/close；補 narrow script test
-- [ ] 10.0.5 Cross-service integration：不得人工注入四份 record；驗 coordinator HTTP header、streaming persisted trace、viewer query/bootstrap、PowerShell runner handoff使用同一 root trace
+- [x] 10.0.1 Coordinator production carrier：IFC-ready root trace → conversion `X-Trace-Id`，並保留到 review session/open payload與 viewer URL；補 unit/integration tests
+- [x] 10.0.2 Streaming production carrier：驗證/持久化 inbound trace，conversion lifecycle與 converter `-TraceId` / `BIM_TRACE_ID` 承襲；無 inbound 才 mint fallback；補 tests
+- [x] 10.0.3 Viewer production wiring：`createBrowserLogger()` return 前 emit browser-safe `env_snapshot`；`main.tsx` 建 singleton、安裝 global handlers並從合法 query carrier採用 root trace；補 verify/tests
+- [x] 10.0.4 PowerShell production smoke participant：`scripts/smoke-bscheme-intake.ps1` 建 logger，取得 intake response後切換 root trace並記 poll/session/close；補 narrow script test
+- [x] 10.0.5 Cross-service integration：不得人工注入四份 record；驗 coordinator HTTP header、streaming persisted trace、viewer query/bootstrap、PowerShell runner handoff使用同一 root trace
 - [ ] 10.1 本地完整跑一次 IFC-ready → conversion → session → close 閉環（用既有 fast MVP playbook）
 - [ ] 10.2 驗 4 個 service 的 `logs/<service>/<date>/*.jsonl` 都產生
 - [ ] 10.3 用 trace_id 跨 service grep 串得起來 timeline

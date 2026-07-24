@@ -170,16 +170,20 @@ No required keys. `data` MAY be omitted entirely or be an empty object.
 
 | Prefix | Origin | Example |
 |---|---|---|
-| `ifcready_<existing_job_id>` | Coordinator IFC-ready intake | `ifcready_1779687625000_064c6813` |
-| `rev_<existing_session_id>` | Coordinator review session (mint new; MAY carry `parent_trace_id` referencing the upstream `ifcready_*`) | `rev_20260526_1234abcd` |
-| `stream_conv_<existing_job_id>` | Streaming-server internal conversion (typically inherits from `ifcready_*`; MAY mint when conversion is invoked directly) | `stream_conv_20260525055218_115177da` |
+| existing `ifc_ready_job_id` | Coordinator IFC-ready intake; the id already starts with `ifcready_` and is the closed-loop root trace | `ifcready_1779687625000_064c6813` |
+| `rev_<existing_session_id>` | Standalone coordinator review session only, when no upstream IFC-ready trace exists | `rev_20260526_1234abcd` |
+| `stream_conv_<existing_job_id>` | Standalone streaming conversion only, when no valid inbound trace exists | `stream_conv_20260525055218_115177da` |
 | `script_<run_id>` | PowerShell script with no upstream | `script_run_20260526_142010_a3f9` |
+
+For an IFC-ready-originated flow, the existing `ifc_ready_job_id` is used byte-for-byte as the root `trace_id`; it MUST NOT be prefixed with `ifcready_` a second time. Conversion dispatch, persisted streaming jobs, conversion lifecycle records, review session/open payloads, the viewer URL, browser logger, and the supported smoke runner all retain that root. `rev_*` and `stream_conv_*` are fallback roots for standalone entrypoints, not child traces for the IFC-ready closed loop.
 
 ### 4.2 Propagation carriers
 
 | Carrier | Field |
 |---|---|
-| HTTP request (coordinator ⇄ streaming-server, coordinator ⇄ external cloud callback) | Header `X-Trace-Id` |
+| Coordinator → streaming-server conversion HTTP request | Header `X-Trace-Id` containing the existing `ifc_ready_job_id` root |
+| Coordinator review session/open response | JSON field `trace_id` |
+| Coordinator-generated viewer URL | Query field `trace_id` (one validated value only) |
 | Socket.IO events (coordinator ⇄ viewer) | Event payload field `trace_id` |
 | WebRTC DataChannel envelope (viewer ⇄ streaming-server) | Envelope field `trace_id` |
 | External cloud callback outbox payload | Payload field `trace_id` |
@@ -189,7 +193,29 @@ No required keys. `data` MAY be omitted entirely or be an empty object.
 Receivers MUST:
 1. Read the inbound carrier if present and adopt it as the active `trace_id`.
 2. Forward the same `trace_id` to all downstream carriers.
-3. If no inbound carrier is present, derive `trace_id` from an existing entity id (e.g. `ifcready_<job_id>` when ingesting a fresh IFC-ready request) before any log record is emitted.
+3. If IFC-ready intake has no inbound carrier, adopt the newly created existing `ifc_ready_job_id` as the root before dispatch. Standalone review or conversion entrypoints MAY mint their documented fallback roots.
+
+### 4.3 Production carrier closed loop
+
+The only supported PowerShell participant for the four-unit production smoke is `scripts/smoke-bscheme-intake.ps1`. It creates its logger with a standalone `script_<run_id>` trace, calls IFC-ready intake, then switches the existing logger to the returned `ifc_ready_job_id` root before poll, review-session open, browser lifecycle, and close records. A harness that manually writes four records with the same trace does not satisfy this contract.
+
+```mermaid
+flowchart LR
+    PS["smoke-bscheme-intake.ps1<br/>script trace → returned IFC-ready root"]
+    CO["coordinator<br/>existing ifc_ready_job_id = root"]
+    ST["streaming authority<br/>validate + persist root"]
+    KIT["converter / Kit<br/>-TraceId / BIM_TRACE_ID"]
+    VIEW["production viewer bootstrap<br/>singleton logger(root)"]
+    BUF["browser buffer<br/>env_snapshot enqueued before return"]
+    INTAKE["coordinator viewer-log intake<br/>logs/viewer/YYYY-MM-DD/*.jsonl"]
+
+    PS -->|"POST IFC-ready; response returns root"| CO
+    CO -->|"X-Trace-Id: root"| ST
+    ST -->|"root propagated"| KIT
+    CO -->|"session/open trace_id + viewer URL query"| VIEW
+    VIEW --> BUF
+    BUF -->|"existing async threshold / timer / explicit flush"| INTAKE
+```
 
 ## 5. Redaction rules
 
@@ -234,6 +260,8 @@ Browser viewers cannot write to the local file system. They batch records in an 
 - ≥ 50 buffered records
 - 2 seconds elapsed since last flush
 - Explicit flush call
+
+`createBrowserLogger()` enqueues exactly one browser-safe `env_snapshot` into this buffer before returning. It does not synchronously POST, use synchronous XHR, or enumerate arbitrary `window`, storage, or query-string values. Delivery uses the same asynchronous flush policy above; production bootstrap creates one singleton with the validated viewer-URL root trace and installs the global handlers once.
 
 Coordinator's intake validates each record against this schema, persists passing records to `logs/viewer/<date>/viewer-<run_id>.jsonl`, drops failing or oversized records (counted in `GET /api/internal/structLog/health.records_dropped`), and responds with HTTP 200 (or 413 if request body exceeds the configured maximum).
 
