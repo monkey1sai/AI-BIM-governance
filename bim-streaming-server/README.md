@@ -59,6 +59,34 @@
   - Desktop development with C++
   - Windows SDK
 
+### IfcClash capability canary（manual diagnostic）
+
+IfcClash 使用 IfcOpenShell iterator 產生的 triangulated BVH。不要用
+`ifcopenshell.geom.has_occ` 判定 clash 能力；該欄位只表示可選的
+PythonOCC bindings 是否可匯入，不代表 IfcOpenShell 內建 C++ OpenCASCADE
+kernel 是否可用。
+
+此 canary 尚未接入 deploy 或 startup gate，因為 clash API / job contract
+目前尚未建成。請用預定承載 clash runtime 的**同一個 Python interpreter**
+手動執行；它會對 overlap、clearance-only 與 separated 的記憶體內 IFC
+控制組執行檢查，不會寫入模型或 runtime artifact：
+
+```powershell
+$pythonExe = "C:\Program Files\Python312\python.exe" # 若未來 A3 runtime 不同，請換成其絕對路徑
+& $pythonExe scripts/probe_ifc_clash_capability.py
+```
+
+成功時 exit code 為 `0`，JSON 會有 `capable=true`，且：
+
+- `overlap.intersection>=1`、`overlap.collision>=1`
+- `near_clearance` 僅有 `clearance>=1`
+- `separated` 的三種 clash count 均為 `0`
+
+缺 geometry backend、known-positive 靜默回零、clearance 語意錯誤或
+known-negative 誤報時均 fail-loud 並回非零。
+
+建樹與 clash 語意以 [IfcOpenShell 0.8.5 Geometry tree](https://docs.ifcopenshell.org/ifcopenshell-python/geometry_tree.html) 官方文件為準。
+
 ## 目錄說明
 
 | 路徑 | 用途 |

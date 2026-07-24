@@ -102,6 +102,12 @@ P6 前置(指揮官親自做,解決 PR body 資料通道):
      a. behavior gate:PR body 填 Change lane=S、Behavior contract changed=yes、
         Requirement source=superpowers spec,並連到本次已核准 specPath。不得只因 changed path
         建立 OpenSpec；只有 repo 需求明確要求 OpenSpec artifact 時才建立。
+     a.1 base freshness gate:先把 implementation + evidence 的 tracked work commit 完整並確認 worktree clean；
+        `git fetch origin +refs/heads/main:refs/remotes/origin/main` 後用 `git merge-base HEAD origin/main`
+        與 `git rev-parse origin/main` 比對。不同代表 branch stale：尚無 prNumber 且未發布的 branch MUST
+        `git rebase origin/main`；已有 prNumber 或 published PR branch MUST NOT 改寫 history，改用
+        `git merge --no-edit origin/main` 以維持 normal push（conflict → HELD）。完成後重跑 affected verify、
+        必要 evidence 與 GitNexus detect_changes；不得拿更新 base 前的驗證直接進 P6。
      b. push:git push -u origin <branch>
      c. gh pr create --base main(繁中):body 含 ──
         - Change lane / Behavior contract changed / Requirement source 三個 machine fields
@@ -119,6 +125,13 @@ P6 = Workflow({name:'ship-item', args:{branch, prNumber:<前置 c 的號碼>, us
        P6.merged===true → P7
        P6.heldReason 屬 production P1/P2 → fix 迴圈(同 P5 的 mode:'fix',fixFindings=該 P1/P2)
          → 重呼 ship-item 帶同一 prNumber(沿用 PR 重跑 buffer cycle)
+       P6.heldReason === 'review_required' → HELD；使用者須自行完成 CODEOWNER/manual approval，
+         或由使用者自行執行 branch-protection admin override，再以同一 prNumber resume。agent MUST NOT run
+         `gh pr merge --admin`，也不得把 required review 當成一般 CI 重試。
+       P6.heldReason === 'cyber_safeguard_payload' → 僅當 reviewer/test 的目的只需階層 separator、
+         不依賴 traversal/exploit 語意時，將 test-only payload 改成安全等價 `a/b` 或 `seg/seg/id`；
+         對本次 payload-bearing test/fixture paths 跑 `rg -n 'passwd' <paths>`，必須無輸出才 resume
+         原 P5/P6 phase。若替換會削弱 security regression，維持 HELD 並請使用者裁決。
        P6.heldReason 屬 consent carve-out(revert-*/release/hotfix/破壞性對外)→ HELD(須使用者明確同意)
        其他(CI 持續紅、merge conflict、report generation failed 類工具故障)→ 對話回報 +
          依 ship-item.md 判斷層次處置;不可只看 check 狀態 merge
@@ -141,6 +154,8 @@ P1 內含 plan 四軸 review(Completeness/Spec Alignment/Task Decomposition/Buil
 | `spec_review_not_closing` / `quality_review_not_closing` | P3 修 N 輪仍不過 | HELD(附 gaps/qualityDetail)— 真 P1/P2 修不閉合,不可繞 |
 | `detect_changes_repeatedly_failing` | P3 同 run 內 detectVerdict=fail 達 3 次 | HELD;指揮官 `gh issue create`(標題含 branch + 失敗摘要),等修復或 reviewer sign-off |
 | `no_browser_engine` / `no_browser_evidence` | P4 | 見編排 P4 gate(第 3 層 / stack 啟動 / HELD) |
+| `review_required` | P6 branch protection | HELD；使用者自行完成 manual/CODEOWNER approval 或 admin override 後，以同一 prNumber resume；agent 禁止 `gh pr merge --admin` |
+| `cyber_safeguard_payload` | P5/P6 reviewer safeguard | separator-only fixture 才可換成 `a/b` / `seg/seg/id`，確認 payload paths 的 `passwd` grep 無結果後 resume；涉及 security 語意則 HELD |
 | `ship_blocked` 類(由 heldReason 文字) | P6 | 見編排 P6 consume |
 
 ## 強制停下點(repo 規範明文,不可自動繞)
