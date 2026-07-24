@@ -14,7 +14,7 @@ function Invoke-VerificationPlan {
         [Parameter(Mandatory = $true)][string] $RepoRoot
     )
 
-    $output = @(& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $verifyScript `
+    $output = @(& (Get-Command pwsh -ErrorAction Stop).Source -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $verifyScript `
         -Profile $Profile -PlanOnly -RepoRoot $RepoRoot 2>&1)
     return [pscustomobject]@{
         ExitCode = $LASTEXITCODE
