@@ -83,7 +83,7 @@ cd D:\Users\deploy\AI-bim-geo
 
 禁止 `-DryRun`。若 fetch `origin` explicit main refspec 失敗、approval 被拒、或清理後缺少 `scripts\deploy.ps1`，回報 blocker 並停止；不得部署 stale code。
 清理規則會移除 agent/tooling docs、`.github\skills` / `.github\prompts`、root `docs` / `openspec` / `patches`，但保留 `.github\workflows`。
-若 `deploy.ps1 -Build` Phase 3 被外部 `kit.exe` / conversion `python.exe` 佔用必要 ports 擋住，已授權只停止可由部署區 pidfile 或 command line / executable path 證明屬於 `D:\Users\deploy\AI-bim-geo` 的 PID tree，並記錄 port / PID / process name / ownership evidence 後重跑同一條 `-Build`。若只有 port/process-name 證據，先取得使用者確認；不得改用 `-Force` / `-DryRun`。
+明確啟動的 `spec-to-done` 在目前 spec PR 已 merge、commit 可由 freshly fetched `origin/main` 取得後，可於真實測試部署前先用 skill helper 的 `-StopOwnedRuntime -DeploymentRoot 'D:\Users\deploy\AI-bim-geo'` 模式處理 blocker。只有 listener 符合 per-port service role、deployment pidfile ancestor 與精確 launcher entrypoint、creation identity 經雙快照與 stop 前重驗一致時，才可用 exact process handle 停止；pidfile 僅供 lineage 佐證，port topology 由 deployment env immutable snapshot 推導，不接受 caller parameter/process-environment override，且每次 stop 前重驗 hash。MUST 記錄 port / PID / process name / ownership kind，同一 port 的全部 busy owners 通過後才可進入 cleanup。既有一般 Phase 3 重試能力不變，但所有自動停止也 MUST 使用同一 hardened helper 與相同閘門，再重跑同一條 `-Build`；helper 無法證明 ownership 時必須 HELD，只有使用者逐次確認明確 PID 與 evidence 後才可人工例外。不得驗證未 merge branch或改用 `-Force` / `-DryRun`。
 
 本機 runtime 可用時優先補：
 

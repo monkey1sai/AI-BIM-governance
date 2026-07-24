@@ -81,7 +81,7 @@ jobs:
           emit kit_manager_api '^services/kit-manager-api/'
           emit kit_manager_web '^apps/kit-manager-web/'
           emit compose_config '^(compose\..*\.yml|\.env.*\.example|infra/docker/)'
-          emit powershell_static '^(\.github/workflows/|\.claude/workflows/|scripts/.*\.(ps1|psm1)$|AGENTS\.md|docs/agents/)'
+          emit powershell_static '^(\.github/workflows/|\.claude/workflows/|\.(claude|codex)/skills/spec-to-done/.*\.ps1$|scripts/.*\.(ps1|psm1)$|AGENTS\.md|docs/agents/)'
           emit rebuild_test_deploy '^scripts/(deploy\.ps1|dev/rebuild-test-deploy\.ps1|lib/(rebuild-test-deploy|design-assets|host-native-launcher)\.ps1|lib/StructLog\.psm1|tests/(test-rebuild-test-deploy|test-verify-all|test-helpers)\.ps1)$'
           echo "secret_pattern_scan=true" >> "$GITHUB_OUTPUT"
 
@@ -550,6 +550,14 @@ jobs:
             exit 1
           }
           Write-Host 'No PSScriptAnalyzer Error severity findings.'
+
+      - name: Run spec-to-done port helper safety tests (PowerShell 7)
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-spec-to-done-port-helper.ps1
+
+      - name: Run spec-to-done port helper safety tests (Windows PowerShell 5.1)
+        shell: pwsh
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-spec-to-done-port-helper.ps1
 
       - name: Run rebuild transaction safety tests (PowerShell 7)
         if: needs.changes.outputs.rebuild_test_deploy == 'true'

@@ -58,6 +58,8 @@ try {
         '.codex/skills/ai-bim-bounded-change/SKILL.md',
         '.codex/skills/repo-health/SKILL.md',
         '.codex/skills/spec-to-done/agents/openai.yaml',
+        '.claude/skills/spec-to-done/ensure-host-native-ports-free.ps1',
+        '.codex/skills/spec-to-done/ensure-host-native-ports-free.ps1',
         'docs/agents/superpowers-invocation-policy.md',
         'docs/PR_REVIEW_AGENT.md',
         'docs/superpowers/plans/2026-06-18-ai-coding-maturity-governance.md',
@@ -327,6 +329,64 @@ try {
     foreach ($hardGate in @('P0', 'P1', 'P3', 'P4', 'P5', 'P6', 'P7', 'HELD', 'browser evidence', 'ship-item', 'GitNexus')) {
         Assert-True ($codexSpecToDone -match [regex]::Escape($hardGate)) "Codex spec-to-done preserves hard-gate marker: $hardGate"
         Assert-True ($claudeSpecToDone -match [regex]::Escape($hardGate)) "Claude spec-to-done preserves hard-gate marker: $hardGate"
+    }
+    foreach ($testDeploySafetyMarker in @(
+        'test_deploy_process_unproven',
+        '-StopOwnedRuntime',
+        "-DeploymentRoot 'D:\Users\deploy\AI-bim-geo'",
+        'freshly fetched `origin/main`',
+        '不得拿未 merge branch 宣稱已在部署區驗證'
+    )) {
+        Assert-True ($codexSpecToDone -match [regex]::Escape($testDeploySafetyMarker)) "Codex spec-to-done preserves test-deploy safety marker: $testDeploySafetyMarker"
+        Assert-True ($claudeSpecToDone -match [regex]::Escape($testDeploySafetyMarker)) "Claude spec-to-done preserves test-deploy safety marker: $testDeploySafetyMarker"
+    }
+
+    $claudePortHelperPath = '.claude/skills/spec-to-done/ensure-host-native-ports-free.ps1'
+    $codexPortHelperPath = '.codex/skills/spec-to-done/ensure-host-native-ports-free.ps1'
+    $claudePortHelper = Get-Content -LiteralPath $claudePortHelperPath -Raw -Encoding UTF8
+    $codexPortHelper = Get-Content -LiteralPath $codexPortHelperPath -Raw -Encoding UTF8
+    Assert-True ($claudePortHelper -ceq $codexPortHelper) 'Claude and Codex spec-to-done port helpers remain byte-equivalent as text'
+    foreach ($helperSafetyMarker in @(
+        '[switch] $StopOwnedRuntime',
+        '[string] $DeploymentRoot',
+        'deployment-pidfile',
+        'executable-path',
+        'CreationKey',
+        'Test-PortSnapshotsExact',
+        'Get-RuntimeRoleEvidence',
+        'kit-launcher-lineage',
+        'conversion-launcher-lineage',
+        'Test-DeploymentTopologyUnchanged',
+        '$process.Handle',
+        '$process.Kill()',
+        'caller port overrides are forbidden',
+        "CanonicalTestDeploymentRoot = 'D:\Users\deploy\AI-bim-geo'"
+    )) {
+        Assert-True ($claudePortHelper -match [regex]::Escape($helperSafetyMarker)) "spec-to-done port helper contains safety marker: $helperSafetyMarker"
+    }
+    Assert-True (-not ($claudePortHelper -match 'command-line-path|Test-TextContainsPathBoundary|taskkill\.exe')) 'spec-to-done stop authorization excludes spoofable command-line evidence and PID-only taskkill'
+    Assert-True (-not ($claudePortHelper -match 'GetEnvironmentVariable\(\$Name')) 'spec-to-done explicit stop topology does not inherit caller process environment'
+    Assert-True (-not ($claudePortHelper -match '實際停（預設）')) 'spec-to-done port helper no longer defaults to destructive cleanup'
+
+    $portHelperBehaviorTestPath = 'scripts/tests/test-spec-to-done-port-helper.ps1'
+    Assert-True (Test-Path -LiteralPath $portHelperBehaviorTestPath -PathType Leaf) 'spec-to-done port helper has a dedicated behavior test'
+    $portHelperBehaviorTest = Get-Content -LiteralPath $portHelperBehaviorTestPath -Raw
+    foreach ($behaviorMarker in @(
+        'every owner of the same target port is classified',
+        'pidfile identity cannot independently authorize stop',
+        'PID reuse is caught before the first stop',
+        'stable owner invokes exactly one validated stop'
+    )) {
+        Assert-True ($portHelperBehaviorTest -match [regex]::Escape($behaviorMarker)) "spec-to-done helper behavior test covers: $behaviorMarker"
+    }
+    Assert-True ($ci -match '(?s)Run spec-to-done port helper safety tests \(PowerShell 7\).*?pwsh .*?test-spec-to-done-port-helper\.ps1') 'CI runs spec-to-done helper safety tests in PowerShell 7'
+    Assert-True ($ci -match '(?s)Run spec-to-done port helper safety tests \(Windows PowerShell 5\.1\).*?powershell\.exe .*?test-spec-to-done-port-helper\.ps1') 'CI runs spec-to-done helper safety tests in Windows PowerShell 5.1'
+
+    foreach ($testDeployContractPath in @('AGENTS.md', 'docs/agents/product-operability-and-script-contract.md', 'docs/agents/sub-repo-verify-commands.md')) {
+        $testDeployContract = Get-Content -LiteralPath $testDeployContractPath -Raw -Encoding UTF8
+        Assert-True ($testDeployContract -match [regex]::Escape('-StopOwnedRuntime')) "$testDeployContractPath documents the explicit ownership-gated stop"
+        Assert-True ($testDeployContract -match [regex]::Escape("D:\Users\deploy\AI-bim-geo")) "$testDeployContractPath pins the canonical test deployment root"
+        Assert-True ($testDeployContract -match 'helper 無法證明 ownership 時必須 HELD') "$testDeployContractPath keeps unproven ownership non-destructive"
     }
     foreach ($shipSafetyMarker in @('review_required', 'cyber_safeguard_payload', 'git merge-base', 'git rebase origin/main', 'published PR branch', 'git merge --no-edit origin/main', 'seg/seg/id', 'passwd')) {
         Assert-True ($codexSpecToDone -match [regex]::Escape($shipSafetyMarker)) "Codex spec-to-done preserves ship safety marker: $shipSafetyMarker"

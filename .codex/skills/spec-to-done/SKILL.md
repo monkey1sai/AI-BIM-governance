@@ -196,6 +196,7 @@ P1 內含 plan 四軸 review(Completeness/Spec Alignment/Task Decomposition/Buil
 | `spec_review_not_closing` / `quality_review_not_closing` | P3 修 N 輪仍不過 | HELD(附 gaps/qualityDetail)— 真 P1/P2 修不閉合,不可繞 |
 | `detect_changes_repeatedly_failing` | P3 同 run 內 detectVerdict=fail 達 3 次 | HELD;指揮官 `gh issue create`(標題含 branch + 失敗摘要),等修復或 reviewer sign-off |
 | `no_browser_engine` / `no_browser_evidence` | P4 | 見編排 P4 gate(第 3 層 / stack 啟動 / HELD) |
+| `test_deploy_process_unproven` | backend / 測試部署區 preflight | HELD；port / process-name / pidfile 都不能單獨授權停止。listener 必須符合 per-port service role、deployment pidfile ancestor 與精確 launcher entrypoint，且 creation identity 經雙快照與 stop 前重驗一致，才可用下方 explicit stop 模式重跑 |
 | `review_required` | P6 branch protection | HELD；使用者自行完成 manual/CODEOWNER approval 或 admin override 後，以同一 prNumber resume；agent 禁止 `gh pr merge --admin` |
 | `cyber_safeguard_payload` | P5/P6 reviewer safeguard | separator-only fixture 才可換成 `a/b` / `seg/seg/id`，確認 payload paths 的 `passwd` grep 無結果後 resume；涉及 security 語意則 HELD |
 | `ship_blocked` 類(由 heldReason 文字) | P6 | 見編排 P6 consume |
@@ -220,32 +221,43 @@ HELD@P<n> | reason=<held 值> | spec=<specPath> | slug=<slug> | userFacing=<bool
 - 前序產物(plan 檔、commits、evidence)都在 git/磁碟,不重做;P3 錨點 = startTaskIndex(per-task commit 訊息規定前綴 `task#N:`,崩潰時可從 git log 重建);P6 帶同一 prNumber(ship-item 沿用既有 PR,不重複 create)。
 - 時間戳一律由主對話經 args 注入(dateStamp);workflow 內禁時鐘/亂數 API。
 
-## 啟動 / 重建 backend stack 前置:host-native port 乾淨化(防 deploy Read-Host 卡死)
+## 啟動 / 重建 backend stack 前置:host-native port preflight(防 deploy Read-Host 卡死)
 
-**鐵則**:跑 `.\scripts\deploy.ps1` 或 `.\scripts\dev\rebuild-test-deploy.ps1 -Build` **之前**,指揮官(主對話)
-MUST 先從主工作區 root 跑本技能 helper 清掉佔住必要 host-native port 的殘留:
-
-優先順序固定如下;從 repo root 執行第一個存在的 helper(不加 `-DetectOnly`,因本 repo 已授權停止 blocking Kit / conversion runtime PID)。兩份 helper 內容必須維持一致(user 級路徑經 2026-07-02 磁碟盤點確認不存在,勿引用):
+**預設鐵則**:跑 `.\scripts\deploy.ps1` 或 `.\scripts\dev\rebuild-test-deploy.ps1 -Build` **之前**,指揮官(主對話)
+MUST 先從主工作區 root 執行第一個存在的 helper。無參數與 `-DetectOnly` 都是 read-only；不得預設停止任何程序。兩份
+helper 內容必須維持一致(user 級路徑不存在,勿引用):
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .claude\skills\spec-to-done\ensure-host-native-ports-free.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .codex\skills\spec-to-done\ensure-host-native-ports-free.ps1
 ```
 
-- **為什麼**:Kit 無 live reload / migration(docs/plans 鐵則 #4、D9——換 stage 只能 terminate+recreate)。殘留的
-  `kit.exe`(49100 + spectator 49110…)/ conversion `python.exe`(49101)還佔著 port 時,`deploy.ps1` Phase 3 會把
-  它們當『非 docker-forwarder stranger』丟給 `Read-Host 'y/N'`(`deploy.ps1:961`);spec-to-done 無人值守 + stdin
-  非互動 → **無限阻塞、卡數小時**。`rebuild-test-deploy` 的 `git clean -fdx` 清掉 `scripts\.run\*.pid`,讓 deploy
-  連自己上一輪起的 process 都認不得 → 必觸發。
-- **helper 做什麼**:by-port(不依賴 `.pid` / workspace 路徑,跨主工作區 / worktree / 部署區 D:\ 通殺)tree-kill
-  `kit/python/nvstreamer` owner → **釋放 Kit 對 storage/*.usd(c) 的檔案鎖**(根治殘留導致 viewer 切不動 / 轉檔覆寫失敗),
-  輪詢等到全 FREE。對齊 CLAUDE.md 授權(停 blocking PID,不用 `-Force`/`-DryRun`);只動 host-native,docker plane 交給
-  deploy.ps1 idempotent 處理。
-- **退出碼處置**:`0` = port 全 FREE → 接著跑 deploy / rebuild。`1` = 逾時仍有殘留(helper 已列 PID,多為非 kit/python
-  程序、helper 不擅殺)→ 對話回報該 PID + port 並 **HELD**,不可硬跑 deploy(會撞 Read-Host)。`-DetectOnly` 只偵測不停
-  (啟動前先看一眼)。
-- **範圍限制(誠實)**:只解 host-native port 這條 Read-Host;`deploy.ps1:989` 的 `.venv WRONG_VERSION` Read-Host 不在
-  範圍(需重建 .venv 或 `-Force`,CLAUDE.md 禁),撞到 HELD 回報。spectator count 非預設 5 時須同步調整 helper 內 port 陣列。
+**測試部署區真實驗證授權(放寬但限縮)**:只有明確執行 spec-to-done、目前 spec 的 PR 已 merge 且 commit 可由 freshly
+fetched `origin/main` 取得時，才可在 P7 真實驗證前對第一個存在的 helper 執行 explicit stop 模式，接著走唯一 rebuild 入口:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .claude\skills\spec-to-done\ensure-host-native-ports-free.ps1 `
+  -StopOwnedRuntime -DeploymentRoot 'D:\Users\deploy\AI-bim-geo'
+# 若只有 Codex copy 存在，使用同參數呼叫 .codex\skills\spec-to-done\ensure-host-native-ports-free.ps1
+# 只有 exit 0 才可繼續
+.\scripts\dev\rebuild-test-deploy.ps1 -Build
+```
+
+- **停止條件**:conversion port 只接受 deployment venv Python、精確 conversion launcher lineage；Kit / spectator ports 只接受
+  Kit executable、精確 port argument、extension root 與 streaming launcher lineage。pidfile 必須是目前 listener 的 ancestor，
+  只能作 lineage 佐證，不能單獨授權。creation identity 在完整雙快照、每次 stop 前與取得 handle 後都必須一致；同一 port
+  的全部 owners 先分類，任何一個未通過即不做 initial partial cleanup，回 `test_deploy_process_unproven` HELD。這個精確
+  lineage 也容納 Kit build 的 Packman symlink，不把任意 reparse path 當 ownership。禁止其他 root / worktree / caller topology。
+- **為什麼**:Kit 無 live reload / migration。殘留 runtime 會讓 `deploy.ps1` Phase 3 對非互動 stdin 啟動 `Read-Host`,並持有
+  `storage/*.usd(c)` 鎖。explicit stop 只用已取得且重驗一致的 exact process handle 停止 canonical deployment listener；
+  不用 PID-only tree kill。docker plane 仍由 `deploy.ps1` idempotent 處理。
+- **退出碼處置**:`0` = port 全 FREE。`1` = busy / ownership unproven / identity changed / timeout；`2` = 非 canonical root、
+  topology/參數不合法或無法可靠檢查 port。任何
+  nonzero 都回報 port + PID + process name + ownership kind 並 **HELD**,不可硬跑 deploy。helper 不輸出完整 command line。
+- **誠實限制**:rebuild 固定驗證 freshly fetched `origin/main`,不得拿未 merge branch 宣稱已在部署區驗證。`.venv WRONG_VERSION`
+  等非 port prompt 不在本 helper 範圍。explicit stop 會一次讀取 canonical deployment 的 `.env.web-plane.host-kit`（或
+  tracked `.example` fallback）形成 immutable hash + topology snapshot；不讀 caller process environment，caller port/count
+  override 一律拒絕，且每次 stop 前重驗 source hash。
 
 ## 模型預算與角色路由（Codex）
 
