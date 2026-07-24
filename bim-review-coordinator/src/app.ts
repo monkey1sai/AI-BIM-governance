@@ -18,6 +18,8 @@ import {
 } from "./services/authProvider.js";
 import { CallbackOutbox, MetadataOnlyViolation } from "./services/callbackOutbox.js";
 import { EventLog } from "./services/eventLog.js";
+import { GovernanceLibraryHttpAdapter } from "./services/governanceLibraryHttpAdapter.js";
+import { GovernanceLibraryWorkflow } from "./services/governanceLibraryWorkflow.js";
 import {
   createLogger,
   persistRecordsToServicePaths,
@@ -412,27 +414,6 @@ function redactServerPathsForBrowser(text: string): string {
     .replace(/\/(?:workspace|storage|data|mnt|home|tmp|var|Users)\/[^"'\s<>]*/g, "[server-path]");
 }
 
-// ids_path 白名單（與 governanceProxy.ts normalizeIdsPath 同語意；私有未 export 故複刻）：
-// 只收 rules/ 下的 .ids basename，擋絕對路徑 / drive / 上跳穿越。
-const libraryIdsBasenamePattern = /^[A-Za-z0-9_.-]+\.ids$/;
-function normalizeLibraryIdsPath(value: unknown): { ok: true; value?: string } | { ok: false; detail: string } {
-  if (value === undefined || value === null || value === "") return { ok: true };
-  if (typeof value !== "string") {
-    return { ok: false, detail: "ids_path must be a rule basename under rules/." };
-  }
-  const raw = value.trim().replace(/\\/g, "/");
-  if (!raw) return { ok: true };
-  if (raw.includes(":") || raw.startsWith("/") || raw.includes("..")) {
-    return { ok: false, detail: "ids_path must be a rule basename under rules/." };
-  }
-  const parts = raw.split("/").filter(Boolean);
-  const basename = parts.length === 1 ? parts[0] : parts.length === 2 && parts[0] === "rules" ? parts[1] : "";
-  if (!libraryIdsBasenamePattern.test(basename)) {
-    return { ok: false, detail: "ids_path must be a rule basename under rules/." };
-  }
-  return { ok: true, value: `rules/${basename}` };
-}
-
 // B-scheme（local-coordinator-ifc-ready-intake-boundary T3 §4.1）。
 // 契約權威：tests/contracts/ifc_ready_payload.json。correlation_id /
 // idempotency_key 的權威來源是 AuthProvider（X-Correlation-Id /
@@ -601,6 +582,9 @@ export function createCoordinatorApp(
 ): CoordinatorApp {
   const config = loadConfig(overrides);
   const app = express();
+  const governanceLibraryWorkflow = new GovernanceLibraryWorkflow(
+    new GovernanceLibraryHttpAdapter(),
+  );
   const server = http.createServer(app);
   const io = new Server(server, {
     cors: {
@@ -3009,11 +2993,6 @@ export function createCoordinatorApp(
     return (await res.json()) as LibraryTreeShape;
   }
 
-  /** 邏輯三段 → governance host 真實 IFC 絕對路徑；找不到回 null；governance 不可達 throw。 */
-  async function resolveLibraryVersionPath(ref: LibraryVersionRef): Promise<string | null> {
-    return findLibraryVersionPath(await fetchGovernanceLibraryTree(), ref);
-  }
-
   /** POST 轉發 governance 並以 proxy 同語意遮蔽回應中的絕對路徑；不可達回 502。 */
   async function forwardLibraryPostToGovernance(
     response: express.Response,
@@ -3041,26 +3020,35 @@ export function createCoordinatorApp(
   app.post("/api/governance-library/rule-runs", async (request, response, next) => {
     try {
       const input = libraryRuleRunSchema.parse(request.body);
-      const ids = normalizeLibraryIdsPath(input.ids_path);
-      if (!ids.ok) {
-        response.status(400).json({ error_code: "invalid_ids_path", detail: ids.detail });
-        return;
+      const outcome = await governanceLibraryWorkflow.runLibraryRuleRun({
+        version: {
+          projectId: input.project_id,
+          modelId: input.model_id,
+          versionName: input.version_name,
+        },
+        idsPath: input.ids_path,
+        modelVersionId: input.model_version_id,
+      });
+      switch (outcome.kind) {
+        case "invalid_ids":
+          response.status(400).json({
+            error_code: "invalid_ids_path",
+            detail: outcome.detail,
+          });
+          return;
+        case "version_not_found":
+          response.status(404).json({ error: "library_version_not_found" });
+          return;
+        case "unavailable":
+          response.status(502).json({ error: "governance_unreachable" });
+          return;
+        case "forwarded":
+          response.status(outcome.status);
+          response.setHeader("Content-Type", outcome.contentType);
+          response.send(outcome.bodyText);
+          return;
       }
-      let ifcSourcePath: string | null;
-      try {
-        ifcSourcePath = await resolveLibraryVersionPath(input);
-      } catch {
-        response.status(502).json({ error: "governance_unreachable" });
-        return;
-      }
-      if (!ifcSourcePath) {
-        response.status(404).json({ error: "library_version_not_found" });
-        return;
-      }
-      const forwardBody: Record<string, unknown> = { ifc_source_path: ifcSourcePath };
-      if (ids.value) forwardBody.ids_path = ids.value;
-      if (input.model_version_id) forwardBody.model_version_id = input.model_version_id;
-      await forwardLibraryPostToGovernance(response, "/api/rule-runs", forwardBody);
+      outcome satisfies never;
     } catch (error) {
       next(error);
     }
