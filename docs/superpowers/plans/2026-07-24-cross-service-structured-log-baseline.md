@@ -8,6 +8,12 @@
 
 **Tech Stack:** TypeScript/Node.js 20/Vitest/tsx、Python 3/FastAPI/pytest、PowerShell 7、React/Vite/Playwright、JSON Schema draft-07、OpenSpec CLI、GitNexus、Windows host-native Kit/conversion runtime。
 
+## P0 scope and classifier record
+
+- Requirement source: `superpowers spec: docs/superpowers/specs/2026-05-26-cross-service-structured-log-baseline-design.md`; approved implementation is Option A.
+- Repo classifier on planned viewer paths: `frontend_product=true`, `visual_required=true`, `status=mixed`, `full_completion_allowed=false`; therefore canonical `userFacing=true`, P4 browser/design evidence and full PR frontend table are mandatory.
+- Scope preserves production trace carriers, async browser transport, isolated owned runtime and two-PR archive closeout. No manual harness, synchronous XHR, default-port process cleanup, or deployment checkout.
+
 ## P1 impact and risk record
 
 - `StreamingConversionClient.createConversionJob`: GitNexus LOW，1 direct caller、1 process。
@@ -38,10 +44,14 @@ $published = $branchPrs.Count -gt 0 -or $remoteHeads.Count -gt 0
 if (-not $published) { throw 'HELD: expected published branch/old PR #126 publication evidence is absent' }
 $beforeBase = git merge-base HEAD origin/main
 $originMain = git rev-parse origin/main
+$preMergeHead = git rev-parse HEAD
 if ($beforeBase -ne $originMain) {
   git merge --no-edit origin/main
   if ($LASTEXITCODE -ne 0) { throw 'HELD: base freshness integration failed' }
 }
+$excludedPythonTargets=@('bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/conversion_authority.py','bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/ifc2usdc_powershell_adapter.py')
+$mergeTouched=@(git diff --name-only $preMergeHead..HEAD); $refreshPythonImpact=@($mergeTouched|Where-Object { $_ -in $excludedPythonTargets }).Count -gt 0
+$refreshState=Join-Path $root 'artifacts\spec-to-done\cross-service-structured-log-baseline\base-refresh.json'; New-Item -ItemType Directory -Force (Split-Path $refreshState -Parent)|Out-Null; @{pre_merge_head=$preMergeHead;head=(git rev-parse HEAD);python_targets_touched=$refreshPythonImpact;touched=$mergeTouched}|ConvertTo-Json -Depth 4|Set-Content $refreshState
 $boardSessionPath = Join-Path $root 'artifacts\spec-to-done\cross-service-structured-log-baseline\board-session.txt'
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $boardSessionPath) | Out-Null
 $board = node scripts/dev/agents-board.mjs status --json | ConvertFrom-Json
@@ -66,6 +76,17 @@ if ($overlaps.Count -gt 0) { throw 'HELD: overlapping task/runtime lease is acti
 ```
 
 Expected: branch正確、worktree乾淨、`origin/main` fresh。此 branch已 published（舊 PR #126/remote publication），所以 behind時只能 merge `origin/main`，絕不 rebase或 rewrite。board session只可由 `AGENTS_BOARD_SESSION`、持久化 marker或完全相同 cwd/worktree ownership恢復。
+
+If `$refreshPythonImpact` is true, before any task edit make a backup, reversibly add only the two target negations to `.gitnexusignore`, run GitNexus 1.6.9 with one worker, execute the five exact calls below, and restore the byte-identical ignore file in `finally`:
+
+```powershell
+$root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root; $refresh=Get-Content -Raw 'artifacts\spec-to-done\cross-service-structured-log-baseline\base-refresh.json'|ConvertFrom-Json; if(-not $refresh.python_targets_touched){Write-Host 'Python targets untouched; skip re-index and continue with per-task formal impact'; return}; $ignore=Join-Path $root '.gitnexusignore'; $backup=Join-Path ([IO.Path]::GetTempPath()) ('gitnexusignore-'+[guid]::NewGuid().ToString('N'))
+Copy-Item -LiteralPath $ignore -Destination $backup
+try { Add-Content -LiteralPath $ignore -Value "`n!bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/conversion_authority.py`n!bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/ifc2usdc_powershell_adapter.py"; $env:GITNEXUS_MAX_WORKERS='1'; node .gitnexus/run.cjs analyze; if($LASTEXITCODE -ne 0){throw 'GitNexus re-index failed'} } finally { Copy-Item -LiteralPath $backup -Destination $ignore -Force; Remove-Item -LiteralPath $backup -Force; Remove-Item Env:GITNEXUS_MAX_WORKERS -ErrorAction SilentlyContinue }
+git diff --exit-code -- .gitnexusignore; if($LASTEXITCODE -ne 0){throw 'HELD: .gitnexusignore was not restored'}
+```
+
+Whether or not merge touched those files, every Task 1–8 must run its listed formal impact immediately before editing; do not reuse the previous task's result. Task 2 uses all five Python calls, Tasks 1/3/4/5 use their exact calls, Task 6 impacts `validate_runtime_logs.py` after the failing test creates the symbol, and Task 7/8 impact the tracked runner entry `Invoke-StructuredLogRuntimeEvidence` after its failing test creates the symbol. New HIGH is warned/replanned; CRITICAL is HELD. Never permanently change `.gitnexusignore`.
 
 Bootstrap worktree-local dependencies once before Task 1:
 
@@ -111,11 +132,11 @@ if ($LASTEXITCODE -ne 0) { throw 'PowerShell structured-log baseline failed' }
 Record the already verified Python formal impacts and use these exact calls only when deliberately refreshing them:
 
 ```text
-mcp__gitnexus__impact({repo:"C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\cross-service-structured-log-baseline",target:"create_conversion_api_app",direction:"upstream"})
-mcp__gitnexus__impact({repo:"C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\cross-service-structured-log-baseline",target:"StreamingConversionStore.create_conversion_job",direction:"upstream"})
-mcp__gitnexus__impact({repo:"C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\cross-service-structured-log-baseline",target:"StreamingConversionStore.complete_conversion_job",direction:"upstream"})
-mcp__gitnexus__impact({repo:"C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\cross-service-structured-log-baseline",target:"Ifc2UsdcPowershellConverterAdapter.convert",direction:"upstream"})
-mcp__gitnexus__impact({repo:"C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\cross-service-structured-log-baseline",target:"_run_powershell_conversion",direction:"upstream"})
+mcp__gitnexus__impact({repo:"C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\cross-service-structured-log-baseline",target:"create_conversion_api_app",file_path:"bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/conversion_authority.py",kind:"Function",direction:"upstream",includeTests:true})
+mcp__gitnexus__impact({repo:"C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\cross-service-structured-log-baseline",target:"create_conversion_job",file_path:"bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/conversion_authority.py",kind:"Method",direction:"upstream",includeTests:true})
+mcp__gitnexus__impact({repo:"C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\cross-service-structured-log-baseline",target:"complete_conversion_job",file_path:"bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/conversion_authority.py",kind:"Method",direction:"upstream",includeTests:true})
+mcp__gitnexus__impact({repo:"C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\cross-service-structured-log-baseline",target:"convert",file_path:"bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/ifc2usdc_powershell_adapter.py",kind:"Method",direction:"upstream",includeTests:true})
+mcp__gitnexus__impact({repo:"C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\cross-service-structured-log-baseline",target:"_run_powershell_conversion",file_path:"bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/ifc2usdc_powershell_adapter.py",kind:"Method",direction:"upstream",includeTests:true})
 ```
 
 Expected baseline: MEDIUM/LOW/LOW/MEDIUM/MEDIUM with no processes and none HIGH. A future UNKNOWN after `analyze` is disclosed as the known `.gitnexusignore` durability limitation; it does not erase this P1 evidence, but any new edit surface requires a deliberate re-index/workaround decision. Any new HIGH is warned and re-planned; CRITICAL is HELD.
@@ -411,7 +432,7 @@ Expected baseline: MEDIUM/LOW/LOW/MEDIUM/MEDIUM with no processes and none HIGH.
 
   The singleton calls `createBrowserLogger` exactly once with the validated root trace, explicit safe vars, and endpoint derived from the already validated `reviewEnv.coordinatorApiBase`: `${reviewEnv.coordinatorApiBase}/api/internal/viewer-log`. It must not derive transport from `window.location.origin`, so alternate-port runtime flushes to coordinator `:8005`, not Vite `:5175`. Call `installGlobalHandlers(logger, window)` once. Preserve existing `__INITIAL_SESSION_FROM_QUERY__` behavior and remove the startup `console.info` only if replaced by `logger.lifecycle` with the same diagnostics.
 
-- [ ] Add a Playwright CLI helper that opens a supplied `--url`, waits for `window.__structLog`, calls its real async `flush()`, and exits nonzero unless the production page reports the expected trace. It must never import/call `createBrowserLogger` directly.
+- [ ] Add a Playwright CLI helper that opens a supplied `--url`, accepts `--artifact-dir`, starts Playwright tracing, captures a real production-page screenshot plus `trace.zip`, waits for `window.__structLog`, calls its real async `flush()`, and exits nonzero unless the page reports the expected trace. It must never import/call `createBrowserLogger` directly. Tests assert screenshot and trace files are nonempty and bound to the supplied root trace.
 
   ```javascript
   const page = await browser.newPage();
@@ -482,7 +503,7 @@ Expected baseline: MEDIUM/LOW/LOW/MEDIUM/MEDIUM with no processes and none HIGH.
   }
   ```
 
-  After conversion success call `POST /api/external/ifc-ready/$rootTraceId/review-session`; require response `trace_id` equals root and capture `$openUrl`/`$sessionId`. Invoke `node web-viewer-sample/scripts/smoke-struct-log-bootstrap.mjs --url $openUrl --trace-id $rootTraceId`; only after it succeeds call `POST /api/review-sessions/$sessionId/close`. Add root trace/session/open URL/browser status/close status to the existing evidence tier IDs. Never log webhook/internal token values.
+  After conversion success call `POST /api/external/ifc-ready/$rootTraceId/review-session`; require response `trace_id` equals root and capture `$openUrl`/`$sessionId`. Invoke `node web-viewer-sample/scripts/smoke-struct-log-bootstrap.mjs --url $openUrl --trace-id $rootTraceId --artifact-dir $BrowserArtifactDir`; require nonempty screenshot and Playwright trace before closing the session. Only after it succeeds call `POST /api/review-sessions/$sessionId/close`. Add root trace/session/open URL/browser status/artifact paths/close status to evidence. Never log webhook/internal token values.
 
 - [ ] Run both PowerShell log suites and syntax parse.
 
@@ -588,9 +609,63 @@ Expected baseline: MEDIUM/LOW/LOW/MEDIUM/MEDIUM with no processes and none HIGH.
 - Create: `scripts/dev/run-structured-log-runtime-evidence.ps1`
 - Create: `scripts/tests/test-run-structured-log-runtime-evidence.ps1`
 
-- [ ] **7.1 (2–5 min): context, port, fixture, and provisioning slice.** Add `New-StructuredLogAttemptContext(RepoRoot,AttemptRoot,FixturePath,PythonExe,Ports,KitProvision)` and `Resolve-StructuredLogKitPrerequisites(Context)`. `-KitProvisionMode Build` runs branch-local `repo.bat build` only when assets are absent; `VerifiedPackage` requires package path plus expected SHA-256 before extraction. Add narrow mock case `ContextAndProvisioning`: fresh absolute attempt required, occupied port fails without stop, fixture hash is recorded, build exit is checked, bad package hash is rejected.
+Before the first Task 7 edit, formally impact the existing supported participant that the runner will call:
 
-- [ ] **7.2 (2–5 min): process specification and lease slice.** Add `New-StructuredLogProcessSpecs(Context) -> ProcessSpec[]` and `Start-StructuredLogOwnedProcess(Context,ProcessSpec) -> LeaseEntry`. Minimal schemas:
+```text
+mcp__gitnexus__impact({repo:"C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\cross-service-structured-log-baseline",target:"smoke-bscheme-intake.ps1",file_path:"scripts/smoke-bscheme-intake.ps1",kind:"File",direction:"upstream",includeTests:true})
+```
+
+After `Invoke-StructuredLogRuntimeEvidence` first exists, immediately run its formal impact with `target:"Invoke-StructuredLogRuntimeEvidence"`, `file_path:"scripts/dev/run-structured-log-runtime-evidence.ps1"`, `kind:"Function"`, `includeTests:true` before the next edit; disclose UNKNOWN if the new file is not yet indexed and re-run after Task 7 detect.
+
+- [ ] **7.1 (2–5 min): context/ports/fixture.** Red:
+
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root; pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case ContextPortsFixture
+  ```
+
+  Expected failure: `New-StructuredLogAttemptContext(RepoRoot,AttemptRoot,FixturePath,PythonExe,Ports)` is absent or does not fail closed on non-absolute/reused attempt, missing IFC, or occupied `8005/5175/49104` without any stop call. Implement only this function plus fixture SHA-256/machine capture. Green:
+
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root; pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case ContextPortsFixture
+  ```
+
+- [ ] **7.2 (2–5 min): Kit provisioning.** Red:
+
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root; pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case KitProvisioning
+  ```
+
+  Expected failure: `Resolve-StructuredLogKitPrerequisites(Context,KitProvisionMode,KitPackagePath,KitPackageSha256)` is absent. Implement branch-local build/checksum rules. Green (bad hash and missing-after-build remain asserted failures):
+
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root; pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case KitProvisioning
+  ```
+
+- [ ] **7.3 (2–5 min): process specs.** Red:
+
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root; pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case ProcessSpecs
+  ```
+
+  Expected failure: `New-StructuredLogProcessSpecs(Context) -> ProcessSpec[]` is absent or emits default ports/wrong viewer log endpoint. Implement exact specs. Green:
+
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root; pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case ProcessSpecs
+  ```
+
+- [ ] **7.4 (2–5 min): owned start and immediate lease persistence.** Red:
+
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root; pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case OwnedStartLease
+  ```
+
+  Expected failure: `Start-StructuredLogOwnedProcess(Context,ProcessSpec) -> LeaseEntry` is absent or fails to use `Start-Process -PassThru`, restore env, and persist identity before next launch. Implement it. Green:
+
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root; pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case OwnedStartLease
+  ```
+
+  Minimal schemas:
 
   ```text
   ProcessSpec = {name,file_path,argument_list,cwd,env,port,health_uri,stdout_path,stderr_path}
@@ -598,43 +673,86 @@ Expected baseline: MEDIUM/LOW/LOW/MEDIUM/MEDIUM with no processes and none HIGH.
   runtime-lease.json = {schema_version:"1",attempt_id,processes:LeaseEntry[]}
   ```
 
-  Mock case `ProcessSpecsAndLease` proves exact conversion/coordinator/viewer commands, only `8005/5175/49104`, validated coordinator logger endpoint `http://127.0.0.1:8005/api/internal/viewer-log`, `Start-Process -PassThru`, immediate pidfile/lease persistence, attempt-local stdout/stderr, and restoration of every env key after each start.
+- [ ] **7.5 (2–5 min): health and supported smoke.** Red:
 
-- [ ] **7.3 (2–5 min): health and supported smoke slice.** Add `Wait-StructuredLogRuntimeHealth(Context,LeaseEntry[]) -> HealthReport` and `Invoke-StructuredLogSupportedSmoke(Context) -> SmokeReport`. Minimal schemas:
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root; pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case HealthSupportedSmoke
+  ```
+
+  Expected failure: health/smoke functions absent, unrecorded native failure, or parent `LOG_ROOT` leak. Implement exact probes/supported smoke/env restore. Green:
+
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root; pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case HealthSupportedSmoke
+  ```
+
+  Minimal schemas:
 
   ```text
   health.json = {schema_version:"1",probes:[{name,uri,started_utc,ended_utc,status,http_status}]}
   provenance JSONL = {seq,ts_utc,phase,command,cwd,status,exit_code}
   ```
 
-  Mock case `HealthAndSmoke` proves every failed probe/native exit is nonzero and recorded, the smoke is the supported `smoke-bscheme-intake.ps1`, parent `LOG_ROOT` is set before invocation and restored on success/failure, and browser flush targets coordinator `:8005`, never Vite `:5175`.
+- [ ] **7.6 (2–5 min): identity-bound shutdown.** Red:
 
-- [ ] **7.4 (2–5 min): identity-bound shutdown slice.** Add `Stop-StructuredLogOwnedRuntime(Context,LeaseEntry[]) -> ShutdownReport`. Minimal schema:
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root; pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case IdentityShutdown
+  ```
+
+  Expected failure: shutdown absent or stops PID/path/start-time mismatch. Implement child-first leased-tree shutdown, root-last, idempotence and foreign reporting. Green:
+
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root; pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case IdentityShutdown
+  ```
+
+  Minimal schema:
 
   ```text
   shutdown.json = {schema_version:"1",attempt_id,entries:[{pid,path,start_time_utc,identity_match,action,result}],foreign_listeners:[]}
   ```
 
-  Mock case `OwnedShutdown` proves descendants stop child-first, leased root stops last, PID/path/start-time mismatch is recorded and never stopped, repeated shutdown is safe, and every launch/health/smoke/validator failure plus success passes through the same outer `finally`.
-
-- [ ] **7.5 (2–5 min): artifact completion and orchestration slice.** Add `Complete-StructuredLogRuntimeArtifacts(Context,Lease,Health,Smoke,Shutdown) -> ArtifactManifest` and top-level `Invoke-StructuredLogRuntimeEvidence(...)`. Minimal artifact manifest is `{schema_version,attempt_id,status,files:[{name,path,sha256}],root_trace_id,runtime_ids,shutdown_status,known_gaps}`. Mock case `ArtifactsAndOrchestration` proves canonical validator invocation, required artifact hashes, secret-free summary/`pr-fields.json`, `try/finally` ownership shutdown, no manual adapter harness, and no synchronous XHR.
-
-  Public runner parameter contract is `AttemptRoot:string`, `FixturePath:string`, `PythonExe:string`, `CoordinatorPort:int=8005`, `ViewerPort:int=5175`, `ConversionPort:int=49104`, `KitProvisionMode:Build|VerifiedPackage`, `KitPackagePath?:string`, `KitPackageSha256?:string`, and `LivePollSeconds:int=180`. Task 8 contains the fully reconstructed invocation.
+- [ ] **7.7 (2–5 min): artifact renderer.** Red:
 
   ```powershell
-  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root
-  pwsh -NoProfile -Command "[scriptblock]::Create((Get-Content -Raw scripts/dev/run-structured-log-runtime-evidence.ps1)) | Out-Null"
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root; pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case ArtifactRenderer
   ```
+
+  Expected failure: renderer absent or accepts missing/hash-invalid artifacts. Implement canonical validator, hashes, summaries, screenshot/trace references. Green:
 
   ```powershell
-  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root
-  pwsh -NoProfile -Command "[scriptblock]::Create((Get-Content -Raw scripts/dev/run-structured-log-runtime-evidence.ps1)) | Out-Null"
-  foreach($case in 'ContextAndProvisioning','ProcessSpecsAndLease','HealthAndSmoke','OwnedShutdown','ArtifactsAndOrchestration'){pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case $case; if($LASTEXITCODE -ne 0){throw "runner case failed: $case"}}
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root; pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case ArtifactRenderer
   ```
 
-  Expected before implementation: missing runner/tests or contract failures.
+  Manifest is `{schema_version,attempt_id,status,files:[{name,path,sha256}],root_trace_id,runtime_ids,shutdown_status,known_gaps}`.
 
-- [ ] Integrate the five slices under one orchestration boundary with these invariants:
+- [ ] **7.8 (2–5 min): active-attempt reconciliation.** Red:
+
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root; pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case AttemptReconcile
+  ```
+
+  Expected failure: reconcile function absent. Implement status schema/lineage and owned-only reconcile rules. Green:
+
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root; pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case AttemptReconcile
+  ```
+
+  Schema is `{schema_version:"1",head_oid,attempt_id,attempt_root,status:"running|failed|succeeded|superseded",started_utc,finished_utc,lineage:[]}`. Same-HEAD succeeded resumes only after artifact hashes pass; running reconciles PID/path/start-time, owned shutdown, then superseded; failed/superseded lineage remains.
+
+- [ ] **7.9 (2–5 min): top-level orchestration.** Red:
+
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root; pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case TopLevelOrchestration
+  ```
+
+  Expected failure: orchestrator absent or any path bypasses outer `try/finally`. Implement composition only. Green:
+
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root; pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case TopLevelOrchestration
+  ```
+
+  Public parameters remain `AttemptRoot`, `FixturePath`, `PythonExe`, ports `8005/5175/49104`, Kit provision inputs, and `LivePollSeconds`.
+
+- [ ] Integrate the slices under these invariants:
 
   - Use only `8005/5175/49104`; any pre-existing listener is HELD and is never stopped. Never call `start-all`, `stop-all`, default-port cleanup, deployment checkout, or kill-by-port.
   - If Kit/HOOPS assets are absent and `-KitProvisionMode Build`, run branch-local `bim-streaming-server\repo.bat build`, record cwd/argv/exit, then revalidate `kit.exe`, `hoops_main.py`, converter config and wrapper. `VerifiedPackage` is allowed only with explicit package path plus expected SHA-256 checked before extraction. A missing asset after provisioning is HELD.
@@ -643,7 +761,7 @@ Expected baseline: MEDIUM/LOW/LOW/MEDIUM/MEDIUM with no processes and none HIGH.
   - Health-check all three alternate endpoints, then set/restore the parent `LOG_ROOT` around the supported `smoke-bscheme-intake.ps1`. In one outer `try/finally`, run smoke and canonical runtime validator, always shutdown, restore every touched env key, and verify leased PIDs ended. A foreign listener after shutdown is evidence, not authority to stop it.
   - Emit `attempt-manifest.json`, `runtime-lease.json`, pidfiles, `command-provenance.jsonl`, `machine.json`, `fixture.json` with SHA-256, `health.json`, `bscheme-readiness.json`, `root-trace-timeline.json`, `runtime-log-validation.json`, `shutdown.json`, `artifact-manifest.json`, `pr-fields.json`, and secret-free `evidence-summary.md`. No manual logging harness or synchronous XHR.
 
-- [ ] Make tests pass, run exact detect, and commit the tracked helper.
+- [ ] Run the aggregate guard only after every individual red/green slice, then exact detect and one tracked Task 7 commit.
 
   ```powershell
   $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root
@@ -671,15 +789,25 @@ Expected baseline: MEDIUM/LOW/LOW/MEDIUM/MEDIUM with no processes and none HIGH.
 - Modify: `openspec/changes/cross-service-structured-log-baseline/tasks.md`
 - Generate (gitignored): `artifacts/spec-to-done/cross-service-structured-log-baseline/evidence/attempt-*/**`
 
+Before editing Task 8 evidence/tasks, run:
+
+```text
+mcp__gitnexus__impact({repo:"C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\cross-service-structured-log-baseline",target:"Invoke-StructuredLogRuntimeEvidence",file_path:"scripts/dev/run-structured-log-runtime-evidence.ps1",kind:"Function",direction:"upstream",includeTests:true})
+```
+
 - [ ] Create one fresh attempt and run the helper. This shell reconstructs every value:
 
   ```powershell
   $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root
+  pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1 -Case AttemptReconcile; if($LASTEXITCODE -ne 0){throw 'attempt reconcile guard failed'}
+  $headOid=git rev-parse HEAD; $pointerPath=Join-Path $root 'artifacts\spec-to-done\cross-service-structured-log-baseline\active-attempt.json'; . .\scripts\dev\run-structured-log-runtime-evidence.ps1
+  $reconcile=Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid $headOid
+  if($reconcile.action -eq 'resume_succeeded'){$attemptRoot=[string]$reconcile.attempt_root; Write-Host "resume hash-verified $attemptRoot"; return}
+  if($reconcile.action -notin 'none','superseded_owned_runtime'){throw "HELD: unsafe attempt reconcile: $($reconcile.action)"}
   $fixtureRoot='C:\Repos\active\iot\AI-BIM-governance\storage'; $fixture=@(Get-ChildItem -LiteralPath $fixtureRoot -Filter *.ifc -File)[0]; if(-not $fixture){throw 'HELD: authorized IFC fixture absent'}
-  $attemptId='attempt-'+(Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')+'-'+(git rev-parse --short HEAD)
-  $attemptRoot=Join-Path $root "artifacts\spec-to-done\cross-service-structured-log-baseline\evidence\$attemptId"; if(Test-Path $attemptRoot){throw 'attempt exists'}
+  $attemptId='attempt-'+(Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')+'-'+(git rev-parse --short HEAD); $attemptRoot=Join-Path $root "artifacts\spec-to-done\cross-service-structured-log-baseline\evidence\$attemptId"; if(Test-Path $attemptRoot){throw 'attempt exists'}
   $pointer=Join-Path $root 'artifacts\spec-to-done\cross-service-structured-log-baseline\active-attempt.json'; New-Item -ItemType Directory -Force (Split-Path $pointer -Parent)|Out-Null
-  @{attempt_id=$attemptId;attempt_root=$attemptRoot;status='running';started_utc=(Get-Date).ToUniversalTime().ToString('o');head=(git rev-parse HEAD)}|ConvertTo-Json|Set-Content $pointer
+  $lineage=@($reconcile.lineage); @{schema_version='1';head_oid=$headOid;attempt_id=$attemptId;attempt_root=$attemptRoot;status='running';started_utc=(Get-Date).ToUniversalTime().ToString('o');lineage=$lineage}|ConvertTo-Json -Depth 8|Set-Content $pointer
   try {
     pwsh -NoProfile -File scripts/dev/run-structured-log-runtime-evidence.ps1 -AttemptRoot $attemptRoot -FixturePath $fixture.FullName -PythonExe (Join-Path $root '.venv\Scripts\python.exe') -CoordinatorPort 8005 -ViewerPort 5175 -ConversionPort 49104 -KitProvisionMode Build -LivePollSeconds 180
     if($LASTEXITCODE -ne 0){throw 'HELD: runtime evidence runner failed'}
@@ -735,6 +863,23 @@ Expected baseline: MEDIUM/LOW/LOW/MEDIUM/MEDIUM with no processes and none HIGH.
   git status --short
   ```
 
+## P4 canonical browser/design evidence (userFacing=true; not a P3 task)
+
+The current classifier result for planned viewer paths is authoritative: `frontend_product=true`, `visual_required=true`, `status=mixed`, `full_completion_allowed=false`. Do not downgrade to backend-only or `userFacing=false`.
+
+- [ ] Run canonical `Workflow({name:'std-evidence',args:{worktreeRoot:$root,slug:'cross-service-structured-log-baseline',specPath:'docs/superpowers/specs/2026-05-26-cross-service-structured-log-baseline-design.md',planPath:'docs/superpowers/plans/2026-07-24-cross-service-structured-log-baseline.md'}})` and require `P4.ok===true`. It must use the real coordinator-generated viewer route and authorized IFC fixture, exercise the primary bootstrap/flush/session-close action, and record backend API, root trace plus conversion/session/runtime IDs, loading, success, forced failure and retry, console/network, real screenshot, and Playwright `trace.zip`.
+
+- [ ] Run the prescribed design gates from a self-contained shell:
+
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root
+  pwsh -NoProfile -File scripts/tests/verify-design-system-reference.ps1; if($LASTEXITCODE -ne 0){throw 'design reference failed'}
+  Push-Location web-viewer-sample; npm run test:visual:design-system; $visual=$LASTEXITCODE; Pop-Location; if($visual -ne 0){throw 'design Playwright failed'}
+  pwsh -NoProfile -File scripts/tests/verify-design-system-visual-result.ps1; if($LASTEXITCODE -ne 0){throw 'visual result failed'}
+  ```
+
+  Serialize the unmodified P4 StructuredOutput and a derived, secret-free `artifacts/spec-to-done/cross-service-structured-log-baseline/p4-pr-fields.json`. It must expose the exact machine fields consumed by the PR body: route, primary action, fixture, API, runtime IDs, four visible states, E2E command, screenshot/trace, design status `mixed`, required design screen IDs, reference-missing surfaces, `Full completion claimed=no`, manifest path, visual result path, both viewport diff ratios `<=1%`, semantic `100%`, actual/diff artifacts, and known gaps. P4 may not claim full completion.
+
 ## P5/P6 implementation ship phase (not a P3 task)
 
 Run only after P3 Task 8 is committed and review readiness is explicit.
@@ -744,9 +889,22 @@ Run only after P3 Task 8 is committed and review readiness is explicit.
   ```powershell
   $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root
   $pointer=Get-Content -Raw 'artifacts\spec-to-done\cross-service-structured-log-baseline\active-attempt.json'|ConvertFrom-Json; if($pointer.status -ne 'succeeded'){throw 'HELD: runtime attempt not succeeded'}
-  $fields=Get-Content -Raw (Join-Path $pointer.attempt_root 'pr-fields.json')|ConvertFrom-Json; $bodyPath='artifacts\spec-to-done\cross-service-structured-log-baseline\implementation-pr.md'
-  @("Change lane: S","Behavior contract changed: yes","Requirement source: openspec/changes/cross-service-structured-log-baseline/specs/cross-service-structured-log-baseline/spec.md","Approved option: A","Formal impacts: create_conversion_api_app MEDIUM direct2 impacted41; create LOW direct1; complete LOW direct0; adapter.convert MEDIUM direct7; _run_powershell_conversion MEDIUM direct5 impacted12; no processes; none HIGH","Index durability: temporary .gitnexusignore negation restored; future analyze may lose Python symbols","Tests: $($fields.tests)","Attempt: $($pointer.attempt_id)","Root trace: $($fields.root_trace_id)","Runtime IDs: $($fields.runtime_ids)","Shutdown: $($fields.shutdown_status)","Known gaps: $($fields.known_gaps)","Deployment path: not run; no deployment checkout","OpenSpec archive: pending after implementation merge") -join "`n`n"|Set-Content $bodyPath
-  $body=Get-Content -Raw $bodyPath; foreach($required in 'Change lane: S','Behavior contract changed: yes','Requirement source: openspec/changes/cross-service-structured-log-baseline/specs/cross-service-structured-log-baseline/spec.md','Formal impacts:','Runtime IDs:','Shutdown:','Known gaps:','Deployment path:','OpenSpec archive: pending'){if($body -notmatch [regex]::Escape($required)){throw "HELD: PR body missing $required"}}
+  $fields=Get-Content -Raw (Join-Path $pointer.attempt_root 'pr-fields.json')|ConvertFrom-Json; $p4=Get-Content -Raw 'artifacts\spec-to-done\cross-service-structured-log-baseline\p4-pr-fields.json'|ConvertFrom-Json; $bodyPath='artifacts\spec-to-done\cross-service-structured-log-baseline\implementation-pr.md'
+  @(
+    '| Item | Result |','|---|---|','| Change lane | S |','| Behavior contract changed | yes |','| Requirement source | superpowers spec: docs/superpowers/specs/2026-05-26-cross-service-structured-log-baseline-design.md |','',
+    '| Frontend Verification | Result |','|---|---|',"| Frontend route | $($p4.frontend_route) |","| Main button(s) tested | $($p4.primary_action) |","| Fixture used | $($p4.fixture) |","| Backend API called | $($p4.backend_api) |","| Runtime action | $($p4.runtime_action) |","| Visible success state | $($p4.visible_states) |","| E2E command | $($p4.e2e_command) |","| Screenshot / trace | $($p4.screenshot_trace) |",'| Design gate status | mixed |',"| Design screen(s) | $($p4.design_screens) |","| Reference-missing route(s) / surface(s) | $($p4.reference_missing) |",'| Full completion claimed | no |',"| Design reference manifest | $($p4.design_manifest) |","| Visual fidelity result | $($p4.visual_result) |","| Visual comparison | $($p4.visual_comparison) |","| Visual artifacts | $($p4.visual_artifacts) |","| Known gaps | $($p4.known_gaps) |",'',
+    '| Deploy Path Verification | Result |','|---|---|','| Affects runtime / docker / Kit / viewer / ports / env? | yes |','| Canonical deploy path updated? | not needed; isolated evidence runner only |','| Deploy dry-run command | not run; no deployment checkout |',"| Verify command | $($fields.tests) |",'',
+    "Formal impacts: create_conversion_api_app MEDIUM direct2 impacted41; create LOW direct1; complete LOW direct0; adapter.convert MEDIUM direct7; _run_powershell_conversion MEDIUM direct5 impacted12; none HIGH.","Index durability: temporary .gitnexusignore negation restored; future analyze may lose Python symbols.","Attempt: $($pointer.attempt_id); root trace: $($fields.root_trace_id); runtime IDs: $($fields.runtime_ids); shutdown: $($fields.shutdown_status).","OpenSpec archive: pending after implementation merge."
+  )|Set-Content $bodyPath
+  ```
+
+- [ ] Run the repository's fixture-based and planned-path PR body checks locally before push:
+
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root; $gateRoot='artifacts\spec-to-done\cross-service-structured-log-baseline'; $bodyPath=Join-Path $gateRoot 'implementation-pr.md'; $pathsPath=Join-Path $gateRoot 'planned-changed-paths.txt'; $baseSha=git merge-base HEAD origin/main; $headSha=git rev-parse HEAD
+  git diff --name-only $baseSha..$headSha|Set-Content $pathsPath
+  pwsh -NoProfile -File scripts/tests/test-pr-body-evidence.ps1; if($LASTEXITCODE -ne 0){throw 'fixture PR body tests failed'}
+  pwsh -NoProfile -File scripts/tests/check-pr-body-evidence.ps1 -BodyPath $bodyPath -ChangedPathsPath $pathsPath -RepoRoot $root -BaseSha $baseSha -HeadSha $headSha; if($LASTEXITCODE -ne 0){throw 'planned-path PR body evidence failed'}
   ```
 
 - [ ] Push and create/reuse exactly one PR for the current head OID, then run preflight with its real number:
@@ -763,7 +921,7 @@ Run only after P3 Task 8 is committed and review readiness is explicit.
 
 - [ ] **P5 hard gate:** call canonical `Workflow({name:'fu-adversarial-verify-generic',args:{root:$root,label:'cross-service-structured-log-baseline',findings:[...P3.finalReview.findings,...((P4.evidence&&P4.evidence.gaps)||[])],criticFocus:'通讀全 diff 找新誠實違規 / 行為 regression / spec-drift / 空測試 / DEMO DATA 漏標。'}})`. Gate exactly: output non-null, `critic` non-null, `verdicts.length` equals submitted findings count, `not_closed.length===0`, `new_issues.length===0`, and `critic.overall_safe===true`. Retry once with `resumeFromRunId` only for infra-null/mismatched verdict count; otherwise fix loop or HELD per canonical workflow. Serialize the unmodified StructuredOutput as evidence; do not invent an adapter schema。`gh pr checks` is not P5.
 
-- [ ] **P6 hard gate:** reconstruct `$prNumber` from the unique current-head PR above, then call canonical `Workflow({name:'ship-item',args:{branch:'codex/openspec/cross-service-structured-log-baseline',prNumber:$prNumber,userFacing:false}})`. Consume only canonical output: null retries once then HELD; `merged===true` permits ancestry closeout; otherwise consume `heldReason` exactly per spec-to-done (production P1/P2 fix loop, `review_required` HELD, safeguard/consent cases, or other tool/CI failure). Serialize the unmodified StructuredOutput as evidence. There is no direct `gh pr merge` path outside ship-item.
+- [ ] **P6 hard gate:** reconstruct `$prNumber` from the unique current-head PR above, then call canonical `Workflow({name:'ship-item',args:{branch:'codex/openspec/cross-service-structured-log-baseline',prNumber:$prNumber,userFacing:true}})`. Consume only canonical output: null retries once then HELD; `merged===true` permits ancestry closeout; otherwise consume `heldReason` exactly per spec-to-done. Serialize the unmodified StructuredOutput as evidence. There is no direct merge path outside ship-item, and frontend classification may not be bypassed.
 
 - [ ] After and only after canonical P6 returns `merged===true`, persist the actual merge OID and prove ancestry:
 
@@ -802,7 +960,7 @@ Run only after P3 Task 8 is committed and review readiness is explicit.
   ```powershell
   $repo='C:\Repos\active\iot\AI-BIM-governance'; $archiveBranch='codex/openspec/archive-cross-service-structured-log-baseline'; $archiveWorktree='C:\Repos\active\iot\AI-BIM-governance\.worktrees\archive-cross-service-structured-log-baseline'; Set-Location $archiveWorktree; $headOid=git rev-parse HEAD
   $prs=@(gh pr list --head $archiveBranch --base main --state all --json number,state,url,headRefOid|ConvertFrom-Json|Where-Object headRefOid -eq $headOid); if($prs.Count -gt 1){throw 'HELD: multiple archive PRs for current head'}
-  if($prs.Count -eq 0){$archiveBody=Join-Path $repo 'artifacts\spec-to-done\cross-service-structured-log-baseline\archive-pr.md'; @('Change lane: S','Behavior contract changed: no','Requirement source: openspec/changes/cross-service-structured-log-baseline/specs/cross-service-structured-log-baseline/spec.md','Archive-only closeout after implementation merge; canonical spec hash unchanged.') -join "`n`n"|Set-Content $archiveBody; git push -u origin $archiveBranch; if($LASTEXITCODE -ne 0){throw 'archive push failed'}; gh pr create --base main --head $archiveBranch --title 'openspec: archive cross-service structured log baseline' --body-file $archiveBody; if($LASTEXITCODE -ne 0){throw 'archive PR create failed'}; $prs=@(gh pr list --head $archiveBranch --base main --state all --json number,state,url,headRefOid|ConvertFrom-Json|Where-Object headRefOid -eq $headOid)}
+  if($prs.Count -eq 0){$archiveBody=Join-Path $repo 'artifacts\spec-to-done\cross-service-structured-log-baseline\archive-pr.md'; @('| Item | Result |','|---|---|','| Change lane | S |','| Behavior contract changed | no |','| Requirement source | superpowers spec: docs/superpowers/specs/2026-05-26-cross-service-structured-log-baseline-design.md |','','Archive-only, non-frontend closeout after implementation merge; frontend/deploy evidence is not applicable to this archive-only diff; canonical spec hash unchanged.')|Set-Content $archiveBody; git push -u origin $archiveBranch; if($LASTEXITCODE -ne 0){throw 'archive push failed'}; gh pr create --base main --head $archiveBranch --title 'openspec: archive cross-service structured log baseline' --body-file $archiveBody; if($LASTEXITCODE -ne 0){throw 'archive PR create failed'}; $prs=@(gh pr list --head $archiveBranch --base main --state all --json number,state,url,headRefOid|ConvertFrom-Json|Where-Object headRefOid -eq $headOid)}
   elseif($prs[0].state -eq 'OPEN'){git push -u origin $archiveBranch; if($LASTEXITCODE -ne 0){throw 'archive push failed'}}
   $archivePr=[int]$prs[0].number
   $shipPath=Join-Path $repo 'artifacts\spec-to-done\cross-service-structured-log-baseline\archive-ship.json'; $ship=Get-Content -Raw $shipPath|ConvertFrom-Json; $ship|Add-Member -Force NoteProperty archive_pr $archivePr; $ship|Add-Member -Force NoteProperty archive_url $prs[0].url; $ship|ConvertTo-Json|Set-Content $shipPath
