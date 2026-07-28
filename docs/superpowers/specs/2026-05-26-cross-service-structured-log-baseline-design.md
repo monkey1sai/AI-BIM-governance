@@ -1,12 +1,12 @@
 # Cross-Service Structured Log Baseline — Design
 
-- **Status**: Approved; production-wiring completion scope approved by user on 2026-07-24 (option A)
+- **Status**: Approved; production-wiring completion scope approved by user on 2026-07-24 (option A); bounded viewer-operability correction approved by user on 2026-07-28 (option A after P4 hold)
 - **Date**: 2026-05-26
 - **Change id**: `cross-service-structured-log-baseline`
 - **Worktree**: `.worktrees/cross-service-structured-log-baseline/`
 - **Branch**: `codex/openspec/cross-service-structured-log-baseline`
 - **Predecessor closeout**: `trim-docs-and-dedupe-ide-skills` archived (origin/main `18aad0f`)
-- **Author**: agent (brainstormed with user via `superpowers:brainstorming`; 2026-07-24 completion amendment explicitly approved by user)
+- **Author**: agent (brainstormed with user via `superpowers:brainstorming`; 2026-07-24 completion amendment and 2026-07-28 bounded viewer-operability correction explicitly approved by user)
 - **Audience**: AI-BIM-governance maintainers / agents working incidents
 
 ---
@@ -265,6 +265,24 @@ $log | Write-StructAudit -Msg 'deploy-report generated' -Data @{ action='deploy-
 - `tests/contracts/structured-log/schema.json` — JSON Schema draft-07
 - `tests/contracts/structured-log/fixtures/<event_type>-*.jsonl` — 各 event_type 1~3 sample
 
+### 3.8 Bounded viewer diagnostics surface（2026-07-28 completion correction）
+
+P4 證據第一次執行因 `no_browser_evidence` held。使用者選擇 Option A：在 coordinator `/ui/open` handoff 最終落地的 standalone review viewer route 上補一個**窄範圍 delivery diagnostics surface**，使既有 browser adapter 的 production carrier 可由使用者操作並可被 Playwright 誠實驗證。Operator console route／control 不得代替這個 surface。這不是集中式 log dashboard，也不新增 backend route。
+
+只有同時存在合法 review session 與已 bootstrap 的 browser logger 時才渲染。surface MUST：
+
+- 顯示 browser logger `trace_id`、`run_id`、review session id，以及 stream config 已提供時的 conversion job / Kit instance id；缺值一律顯示「未觀測」，不得捏造 runtime ID。
+- 提供明確的 `Flush structured logs` 主操作：先 enqueue 一筆 diagnostics record，再呼叫既有 `BrowserStructLogger.flush()`，使 browser 只透過 coordinator `POST /api/internal/viewer-log` 送出。
+- 顯示 `idle`、`loading`、`success`、`failure` 四種狀態；失敗時保留明確 `Retry flush` 操作，重試仍走同一真實 endpoint。
+- 提供 `Close review session` 操作，重用既有 coordinator cooperative-close `POST /api/review-sessions/:sessionId/close`，body 為 `{}`（不得帶 operator `reason`）；顯示 closing / closed / failure，close 失敗時可重試。
+- 不呈現 JSONL record body、env value、absolute log path，不讀取 repo-local log files，也不直接呼叫 streaming / governance / Kit internal service。
+
+Forced failure 只允許由 Playwright 在測試程序內攔截第一輪 viewer-log POST；production code 不得新增 `forceFailure` query、fault-injection endpoint 或測試專用成功分支。解除攔截後的 retry MUST 命中真 coordinator 並取得 2xx。
+
+Manual-flush correctness MUST 不受 2 秒 timer 競態影響：public `flush()` 若遇到既有 in-flight batch，先等待該 batch terminal，再 drain 當時仍保留的 records。Logger 提供 `setAutoFlushPaused(boolean)`；UI 在第一次 action 前 pause timer/threshold auto-flush，failure 到 explicit Retry 之間保持 paused，success 或 component cleanup 後 resume。UI enqueue 唯一 `evidence_action_id` 後，固定 `target_flushed_total = flushedTotal + bufferLength` 與 `droppedTotal` baseline；只有 `flushedTotal >= target_flushed_total`、最新 status=`ok`、`droppedTotal` 未增加且該 action 已不在 retained buffer 時才可顯 success。Timeout / terminal failure一律顯 failure；Retry 沿用 buffer 中同一 action，不重複 enqueue。
+
+Surface 的 action gate MUST 要求 route 上唯一合法 session/root trace carrier與已載入 session case-exact一致，且 logger `trace_id` 與 carrier case-exact一致；不一致時只顯 unavailable，不得執行 evidence flush/close。一般 review route允許 documented `ifcready_*` / `rev_*` root；canonical P4 route MUST 是 `ifcready_*`。
+
 ---
 
 ## 4. Data flow / trace_id propagation
@@ -431,6 +449,8 @@ Get-ChildItem logs -Recurse -Filter *.jsonl |
 
 - 跑一次本地完整 IFC-ready → conversion → session → viewer bootstrap → close 閉環；使用受支援的 `smoke-bscheme-intake.ps1` 作 PowerShell participant
 - 驗 4 service log 都產生、目錄結構正確、同一 `ifcready_*` trace_id 串得起、env_snapshot 各 service 每 run 恰一筆且 secret pattern 不出現原值
+- 在 coordinator 產生的真 viewer route 操作 diagnostics：觀測 flush loading → Playwright-only forced POST failure → visible retry → 真 coordinator 2xx success，再由同一 browser surface close 同一 review session
+- Browser evidence MUST 保存 failure 與 final success/closed screenshot、Playwright trace、secret-free console events、viewer-log/session-close network events與 runtime IDs；預期攔截的 503 必須標成 test-injected，不得寫成 backend incident
 - Evidence 寫 `docs/evidence/structured-log-baseline-2026-05-26.md`
 
 ### 6.5 Retention script test
@@ -483,7 +503,7 @@ Get-ChildItem logs -Recurse -Filter *.jsonl |
 | Log payload evidence sidecar（`logs/<service>/<date>/evidence/`） | schema 留 hook `data.evidence_ref`，本 change 不實作機制 | 真有 incident 需要追大 payload 時 |
 | OpenTelemetry W3C `traceparent` 格式 | dev 期無人股 OTel SDK | roadmap #8 |
 | Daily retention CI 自動化 | 手動跑 / Windows 任務排程已夠 | Phase 5/6 production |
-| Log 集中 dashboard UI | 屬 #8 | Phase 6 |
+| 完整 Log 集中 dashboard UI（search / tail / filter / download / cross-service aggregation） | 屬 #8；本 change 只核准 §3.8 的單一 viewer delivery diagnostics surface | Phase 6 |
 
 ---
 
@@ -505,6 +525,7 @@ Get-ChildItem logs -Recurse -Filter *.jsonl |
 | viewer-log endpoint 沒 auth → LAN 內任意 POST | local-dev only；endpoint 做 schema validation 擋亂寫；production 上線前必補 |
 | daily rotate 跨午夜瞬間 record 寫到舊檔 | schema 有 `ts`，join/sort 不受影響 |
 | 30 天 retention 對追長期 incident 不夠 | 本 baseline 預設 30；env var 可調 `LOG_RETENTION_DAYS`；長期歸檔屬 Phase 6 |
+| P4 forced failure 被誤作 production fault path | 只允許 Playwright route interception；production UI / API 不接受 fault-injection flag |
 
 ---
 
@@ -520,6 +541,7 @@ Get-ChildItem logs -Recurse -Filter *.jsonl |
 6. `docs/contracts/structured-log-schema.md` + `docs/contracts/structured-log-env-allowlist.md` 完成；新加 env var 的 PR review checklist 提到必更 allow-list。
 7. `.gitignore` 加 `/logs/`。
 8. `coordinator npm run verify` / streaming pytest / viewer build / root pytest 全 pass。
+9. Coordinator 產生的真 viewer route 上，使用者可操作 structured-log flush 與同 session close；P4 觀測 visible loading、forced failure、retry、success/closed、真 API、console/network、runtime IDs、screenshots 與 `trace.zip`。Design status 保持 `mixed`、reference-missing surface 誠實列出、`Full completion claimed=no`。
 
 ---
 

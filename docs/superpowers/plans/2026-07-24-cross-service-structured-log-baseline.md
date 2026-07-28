@@ -872,7 +872,7 @@ mcp__gitnexus__impact({repo:"C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktre
 
   The fixed evidence template headings are: `Revision and machine`, `Fixture name-size-SHA256`, `Exact command provenance`, `Owned process lease and shutdown`, `Root trace timeline and runtime IDs`, `Schema/env-snapshot/redaction validation`, `OpenSpec 10.1-10.5 mapping`, `Verified facts`, `Inferences`, `Unverified risks`, `Skipped checks`. Use `apply_patch` to check only evidence-backed active `tasks.md` boxes. Do not copy raw env/secret/IFC data or claim WebRTC/render evidence.
 
-- [ ] Strict-validate, detect, and commit Task 8. P3 ends after this commit; it does not push, create a PR, review, merge, archive, or enter P7.
+- [ ] Strict-validate, detect, and commit Task 8. Under the original scope P3 ended after this commit; after P4 returned `no_browser_evidence`, the user's 2026-07-28 Option A explicitly resumes P3 only for Tasks 9–11. Task 8 itself does not push, create a PR, merge, archive, or enter P7.
 
   ```powershell
   $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root
@@ -893,11 +893,123 @@ mcp__gitnexus__impact({repo:"C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktre
   git status --short
   ```
 
+### Task 9: Authorize the bounded viewer-operability correction
+
+P4 first ran against Task 8 HEAD and returned `HELD: no_browser_evidence`. On 2026-07-28 the user selected Option A: expand product scope only enough to make the existing production browser carrier operable. This task does not waive P4 and does not authorize a centralized log dashboard.
+
+**Files:**
+
+- Modify: `docs/superpowers/specs/2026-05-26-cross-service-structured-log-baseline-design.md`
+- Modify: `docs/superpowers/plans/2026-07-24-cross-service-structured-log-baseline.md`
+- Modify: `docs/plans/NOW.md`
+- Modify: `openspec/changes/cross-service-structured-log-baseline/specs/cross-service-structured-log-baseline/spec.md`
+- Modify: `openspec/changes/cross-service-structured-log-baseline/tasks.md`
+
+- [x] Record the approved narrow surface on the coordinator-generated standalone viewer route: existing browser logger flush, visible idle/loading/success/failure/retry, honest runtime IDs, and cooperative close of the same review session.
+- [x] Keep full search, tail, filter, download, record-body display, repository log-file reading, and cross-service dashboard aggregation out of scope.
+- [x] State that forced failure is Playwright-only traffic interception. Do not add a production query flag, fault endpoint, or test-only success branch.
+- [x] State that viewer close uses the existing cooperative contract with exact body `{}` and no operator `reason`.
+- [x] Independent four-axis review passed after the timer/in-flight race, first product click, Kit ID hard gate, route correlation, and artifact containment requirements were made normative.
+- [x] Run the formal spec gates and commit only the five contract/planning files:
+
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root
+  npx --no-install openspec change validate cross-service-structured-log-baseline --strict; if($LASTEXITCODE -ne 0){throw 'change validation failed'}
+  npx --no-install openspec validate --all --strict; if($LASTEXITCODE -ne 0){throw 'all validation failed'}
+  git diff --check
+  git add -- docs/superpowers/specs/2026-05-26-cross-service-structured-log-baseline-design.md docs/superpowers/plans/2026-07-24-cross-service-structured-log-baseline.md docs/plans/NOW.md openspec/changes/cross-service-structured-log-baseline/specs/cross-service-structured-log-baseline/spec.md openspec/changes/cross-service-structured-log-baseline/tasks.md
+  git diff --cached --check
+  git commit -m "task#9: specify viewer diagnostics correction"
+  ```
+
+### Task 10: Implement the standalone viewer diagnostics state machine with TDD
+
+**Files:**
+
+- Create: `web-viewer-sample/src/components/StructuredLogDiagnostics.tsx`
+- Create: `web-viewer-sample/src/components/StructuredLogDiagnostics.css`
+- Create: `web-viewer-sample/src/components/StructuredLogDiagnostics.test.tsx`
+- Create: `web-viewer-sample/src/clients/coordinatorClient.close.test.ts`
+- Modify: `web-viewer-sample/src/clients/coordinatorClient.ts`
+- Modify: `web-viewer-sample/src/lib/structLog.ts`
+- Modify: `web-viewer-sample/scripts/verify-struct-log.mjs`
+- Modify: `web-viewer-sample/src/Window.tsx`
+- Modify: `openspec/changes/cross-service-structured-log-baseline/tasks.md`
+
+Before editing existing symbols, run and record:
+
+```text
+mcp__gitnexus__impact({repo:"C:\\Repos\\active\\iot\\AI-BIM-governance",target:"render",file_path:"web-viewer-sample/src/Window.tsx",kind:"Method",direction:"upstream",includeTests:true})
+mcp__gitnexus__impact({repo:"C:\\Repos\\active\\iot\\AI-BIM-governance",target:"CoordinatorClient",file_path:"web-viewer-sample/src/clients/coordinatorClient.ts",kind:"Class",direction:"upstream",includeTests:true})
+mcp__gitnexus__impact({repo:"C:\\Repos\\active\\iot\\AI-BIM-governance",target:"createBrowserLogger",file_path:"web-viewer-sample/src/lib/structLog.ts",kind:"Function",direction:"upstream",includeTests:true})
+```
+
+Current exact pre-edit results: `Window.render` LOW / 0 impacted; `CoordinatorClient` LOW / 8 impacted (3 direct). New component symbols have no pre-existing callers. Re-run if the source target changes.
+
+- [ ] Write RED component tests for idle IDs, route/session/trace mismatch unavailable, visible flush loading, timer pause/resume, permanent flush failure, same-action retry success, cooperative close loading/closed, and close failure retry. Assert flush failure never claims success, never duplicates the diagnostics action, and never implicitly closes the session.
+- [ ] Write RED client tests proving `POST /api/review-sessions/:sessionId/close`, encoded session id, JSON body exactly `{}`, non-2xx rejection, and fail-closed handling of malformed/mismatched/non-closed responses.
+- [ ] Add one `CoordinatorClient.closeReviewSession(sessionId)` method with a narrow response parser that requires the same `session_id` and `status='closed'`; do not modify backend routes, response schemas, auth/CORS, or the shared structured-log schema.
+- [ ] Make public manual `flush()` wait for any timer/threshold-started in-flight batch, then attempt records still retained. Add `setAutoFlushPaused(boolean)`: pausing prevents new timer/threshold flushes but does not cancel an in-flight batch; resuming reinstates the single timer unless closed. Add real-logger regressions for timer-before-click/in-flight, pause during backoff, terminal failure remaining paused across elapsed intervals, explicit retry, resume, and cleanup; no production fault flag.
+- [ ] Implement the isolated component. It receives the already-bootstrapped `BrowserStructLogger`, current review session id, conversion job id, Kit instance id, and a close callback. In the same synchronous action stack it enqueues one unique `evidence_action_id`, then records `targetFlushedTotal = flushedTotal + bufferLength` and the dropped baseline. Success requires `flushedTotal >= targetFlushedTotal`, latest status `ok`, unchanged dropped count, and the action absent from `tail()`; timeout/terminal failure is visible failure. Retry reuses that retained action and never enqueues a duplicate.
+- [ ] Render the component from `Window.render` independently of Kit first-frame/stream readiness, but enable actions only when route session equals the loaded session and `traceIdFromSearch(location.search)` equals `window.__structLog.logger.traceId` case-exactly. Invalid/missing/mismatched carriers render unavailable. Use exact ID sources: conversion=`latestStreamConfig.model.conversion_job_id`; active Kit runtime=`activeStreamEndpoint.kitInstanceId`; never guess from binding order. Missing values display `未觀測` and remain explicit in general UI evidence; canonical P4 later requires a real nonempty Kit ID.
+- [ ] Use existing design tokens with fallbacks, keyboard-operable buttons, `aria-live`, stable `data-testid` selectors, and a compact standalone-viewer overlay. The surface is reference-missing and must not trigger a manifest/baseline rewrite.
+- [ ] Run GREEN and the affected viewer gates:
+
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root
+  Push-Location web-viewer-sample
+  npx --no-install vitest run src/components/StructuredLogDiagnostics.test.tsx src/clients/coordinatorClient.close.test.ts
+  if($LASTEXITCODE -ne 0){Pop-Location; throw 'viewer diagnostics tests failed'}
+  npm run typecheck; if($LASTEXITCODE -ne 0){Pop-Location; throw 'viewer typecheck failed'}
+  npx --no-install eslint src/components/StructuredLogDiagnostics.tsx src/components/StructuredLogDiagnostics.test.tsx src/clients/coordinatorClient.ts src/clients/coordinatorClient.close.test.ts src/lib/structLog.ts src/Window.tsx --report-unused-disable-directives --max-warnings 0
+  if($LASTEXITCODE -ne 0){Pop-Location; throw 'affected viewer lint failed'}
+  npm run test:struct-log; if($LASTEXITCODE -ne 0){Pop-Location; throw 'viewer struct-log verification failed'}
+  npm run build; $v=$LASTEXITCODE; Pop-Location; if($v -ne 0){throw 'viewer build failed'}
+  git diff --check
+  ```
+
+  Full `npm run lint` is a known pre-existing baseline gap at Task 9 review time (`2 errors, 18 warnings` outside this task's approved files, with `--max-warnings 0`). Run it for disclosure, but do not expand this task to clean unrelated `src/console/**`; the hard gate is the zero-warning affected-file command above. Any new full-lint finding in an affected file remains blocking.
+
+- [ ] Run `detect_changes({scope:'compare',base_ref:'origin/main',worktree:<root>})`, obtain an independent correctness review, fix all findings, check OpenSpec 12.2, and commit the bounded implementation as `task#10: add viewer structured log diagnostics`.
+
+### Task 11: Upgrade the production browser helper and evidence contract
+
+**Files:**
+
+- Modify: `web-viewer-sample/scripts/smoke-struct-log-bootstrap.mjs`
+- Modify: `scripts/smoke-bscheme-intake.ps1`
+- Modify: `scripts/tests/test-smoke-bscheme-structured-log.ps1`
+- Modify: `scripts/dev/run-structured-log-runtime-evidence.ps1`
+- Modify: `scripts/tests/test-run-structured-log-runtime-evidence.ps1`
+- Modify: `openspec/changes/cross-service-structured-log-baseline/tasks.md`
+
+Formal pre-edit impact attempts for `smoke-struct-log-bootstrap.mjs:main` and `Invoke-ViewerBootstrap` currently return `UNKNOWN / target not found`; disclose this index blind spot and compensate with the script contract tests plus the live runtime rerun.
+
+- [ ] Extend the existing programmatic Playwright helper; do not seed a fake session and do not replace the coordinator-generated URL. Install console/pageerror/request/response collectors before navigation and start Playwright tracing.
+- [ ] Validate the input as coordinator `/ui/open`, extract one safe session/root trace carrier, and require the final viewer URL plus rendered IDs to preserve the same values. Redirect/query stripping or session/trace mismatch is a hard failure.
+- [ ] After the real logger and diagnostics surface are ready, enable interception, click the product `Flush structured logs` selector, assert visible loading, and force **all three** internal viewer-log POST attempts to 503 until the product UI reaches visible failure. Capture the failure screenshot and retry control, then remove interception. Background timer/env-snapshot traffic alone never satisfies this step.
+- [ ] Click the product `Retry flush` control and require a real coordinator viewer-log 2xx whose request body contains the active root trace and the unique diagnostics action record. Then click the product `Close review session` control and require a browser-originated real close 2xx for the same session.
+- [ ] Save secret-free machine artifacts under the supplied artifact directory: failure screenshot, final success/closed screenshot, `trace.zip`, console JSON, bounded network JSON, and browser-operability JSON containing states, IDs, injected-failure provenance, response statuses, and artifact sizes. Never serialize headers, query values other than safe IDs, response bodies, or tokens.
+- [ ] Treat browser close as primary. When the helper proves the exact session closed, record `close_origin=browser` and skip the duplicate runner POST; otherwise keep the PowerShell `finally` close as `runner_fallback`. A helper crash after browser close may cause one idempotent fallback POST, which is acceptable but MUST remain distinguishable in evidence.
+- [ ] Extend the smoke/runtime projection and tests to require all new browser artifact paths/state fields and a nonempty canonical `kit_instance_id` matching the viewer surface. General UI may show `未觀測`; a fresh canonical P4 attempt MUST fail readiness if the runtime ID is absent.
+- [ ] Resolve the artifact root and every returned artifact to canonical full paths; reject `..`, reparse points, unexpected filenames, or any child outside the supplied artifact directory. Evidence stores relative paths only. Add relative paths, sizes, and SHA-256 values to the attempt artifact manifest; manifest verification reconstructs paths from the attempt root, repeats containment checks, and recomputes hashes so artifacts cannot be replaced after success.
+- [ ] Run the narrow gates, detect, independent review, and commit:
+
+  ```powershell
+  $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root
+  node --check web-viewer-sample/scripts/smoke-struct-log-bootstrap.mjs; if($LASTEXITCODE -ne 0){throw 'browser helper syntax failed'}
+  pwsh -NoProfile -File scripts/tests/test-smoke-bscheme-structured-log.ps1; if($LASTEXITCODE -ne 0){throw 'smoke contract tests failed'}
+  pwsh -NoProfile -File scripts/tests/test-run-structured-log-runtime-evidence.ps1; if($LASTEXITCODE -ne 0){throw 'runner tests failed'}
+  git diff --check
+  ```
+
+  After `detect_changes`, review, and OpenSpec 12.3–12.4 checkoff, commit as `task#11: capture viewer diagnostics evidence`.
+
 ## P4 canonical browser/design evidence (userFacing=true; not a P3 task)
 
 The current classifier result for planned viewer paths is authoritative: `frontend_product=true`, `visual_required=true`, `status=mixed`, `full_completion_allowed=false`. Do not downgrade to backend-only or `userFacing=false`.
 
-- [ ] Run canonical `Workflow({name:'std-evidence',args:{worktreeRoot:$root,slug:'cross-service-structured-log-baseline',specPath:'docs/superpowers/specs/2026-05-26-cross-service-structured-log-baseline-design.md',planPath:'docs/superpowers/plans/2026-07-24-cross-service-structured-log-baseline.md'}})` and require `P4.ok===true`. It must use the real coordinator-generated viewer route and authorized IFC fixture, exercise the primary bootstrap/flush/session-close action, and record backend API, root trace plus conversion/session/runtime IDs, loading, success, forced failure and retry, console/network, real screenshot, and Playwright `trace.zip`.
+- [ ] From Task 11 HEAD, run one fresh owned runtime attempt with the authorized IFC fixture, then run canonical `Workflow({name:'std-evidence',args:{worktreeRoot:$root,slug:'cross-service-structured-log-baseline',specPath:'docs/superpowers/specs/2026-05-26-cross-service-structured-log-baseline-design.md',planPath:'docs/superpowers/plans/2026-07-24-cross-service-structured-log-baseline.md'}})` and require `P4.ok===true`. It must use the real coordinator-generated viewer route and exercise product UI for the primary flush/retry/same-session-close flow. Record backend API, root trace plus conversion/session/runtime IDs, loading, success, Playwright-only forced failure and retry, console/network, failure/final screenshots, and Playwright `trace.zip`.
 
 - [ ] Run the prescribed design gates from a self-contained shell:
 
@@ -905,14 +1017,14 @@ The current classifier result for planned viewer paths is authoritative: `fronte
   $root='C:\Repos\active\iot\AI-BIM-governance\.worktrees\cross-service-structured-log-baseline'; Set-Location $root
   pwsh -NoProfile -File scripts/tests/verify-design-system-reference.ps1; if($LASTEXITCODE -ne 0){throw 'design reference failed'}
   Push-Location web-viewer-sample; npm run test:visual:design-system; $visual=$LASTEXITCODE; Pop-Location; if($visual -ne 0){throw 'design Playwright failed'}
-  pwsh -NoProfile -File scripts/tests/verify-design-system-visual-result.ps1; if($LASTEXITCODE -ne 0){throw 'visual result failed'}
+  pwsh -NoProfile -File scripts/tests/verify-design-system-visual-result.ps1 -TargetCommit HEAD -AllowUntrackedArtifacts; if($LASTEXITCODE -ne 0){throw 'visual result failed'}
   ```
 
   Serialize the unmodified P4 StructuredOutput and a derived, secret-free `artifacts/spec-to-done/cross-service-structured-log-baseline/p4-pr-fields.json`. It must expose the exact machine fields consumed by the PR body: route, primary action, fixture, API, runtime IDs, four visible states, E2E command, screenshot/trace, design status `mixed`, required design screen IDs, reference-missing surfaces, `Full completion claimed=no`, manifest path, visual result path, both viewport diff ratios `<=1%`, semantic `100%`, actual/diff artifacts, and known gaps. P4 may not claim full completion.
 
 ## P5/P6 implementation ship phase (not a P3 task)
 
-Run only after P3 Task 8 is committed and review readiness is explicit.
+Run only after P3 Tasks 8–11 are committed, the fresh Task 11 HEAD runtime attempt succeeds, P4 passes, and review readiness is explicit.
 
 - [ ] Generate and validate the implementation PR body before publication. Required fields are Lane S, approved Option A, all formal impacts plus index-durability disclosure, exact tests, attempt/root trace/runtime IDs, shutdown, known gaps, deployment path (`not run; no deployment checkout`), and `archive pending after implementation merge`:
 

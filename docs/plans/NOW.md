@@ -46,7 +46,7 @@ Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unch
 | `minio-trigger-lifecycle-backend` | ✅ archived `2026-07-21-minio-trigger-lifecycle-backend` | done | #259 |
 | `c-m4-runtime-command-bridge` | ✅ archived `2026-07-21-c-m4-runtime-command-bridge`（新建 capability spec） | done | #309 |
 | `minio-watch-key-structure` | ✅ archived `2026-07-21-minio-watch-key-structure`（`--skip-specs`；主線 scenario 已在 main） | 選 A deferred-evidence | #237 |
-| `cross-service-structured-log-baseline` | ↩ restored deferred、evidence-only | 只補真 4-service runtime evidence；不改 pipeline/code/canonical spec | #126 |
+| `cross-service-structured-log-baseline` | ↩ restored deferred；2026-07-28 P4 `no_browser_evidence` 後使用者選 A 核准 bounded viewer correction | 補真 4-service runtime evidence + standalone viewer flush/failure/retry/cooperative-close；不改 backend pipeline/schema、不做 log dashboard | #126 |
 | `minio-folderview-and-baseline-disclosure` | ↩ restored deferred、frozen | 對帳 code/tests/tasks/canonical spec；禁止重做 code | #265 |
 | `align-frontend-design-system-reference` | ↩ restored deferred、frozen | 先與 migrate 做 requirement/successor crosswalk；禁止平行 design coding | #363 |
 | `rvt-ifc-usdc-lineage` | ↩ restored deferred、frozen（1/48） | 先切片與調和 shared ownership；禁止直接 apply | #354 |

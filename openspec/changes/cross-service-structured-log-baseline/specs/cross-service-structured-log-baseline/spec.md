@@ -220,3 +220,65 @@ The `POST /api/internal/viewer-log` endpoint SHALL NOT enforce token-based authe
 #### Scenario: Unauthenticated POST is accepted
 - **WHEN** a client POSTs to `/api/internal/viewer-log` without any authentication header
 - **THEN** coordinator SHALL accept and process the request as documented
+
+### Requirement: Standalone review viewer SHALL provide bounded structured-log delivery diagnostics
+
+The standalone viewer route reached through coordinator `/ui/open` for an existing review session SHALL render one bounded structured-log delivery diagnostics surface when the browser logger is available. Operator-console routes and controls SHALL NOT substitute for this surface. This surface is not a centralized log dashboard. It SHALL reuse the existing browser logger and coordinator contracts without adding a backend endpoint or changing the shared log schema.
+
+The surface SHALL expose:
+
+- the active root `trace_id`, browser logger `run_id`, and review session id;
+- the conversion job id and Kit instance id when the coordinator stream config provides them, otherwise an explicit not-observed value;
+- a user-triggered flush control with idle, loading, success, failure, and retry states; and
+- a user-triggered review-session close control with closing, closed, failure, and retry states.
+
+The UI SHALL NOT render structured-log record bodies, environment values, absolute JSONL paths, or read repository log files. Browser network traffic SHALL remain coordinator-only.
+
+The action controls SHALL be enabled only when the route contains one valid review session/root trace carrier, the loaded session matches that carrier, and the bootstrapped logger trace matches the route trace case-exactly. A mismatch SHALL render an unavailable state rather than perform an evidence action.
+
+#### Scenario: User flushes browser records through the real coordinator endpoint
+- **GIVEN** a coordinator-generated viewer route has a valid review session and root trace
+- **WHEN** the user activates `Flush structured logs`
+- **THEN** the viewer SHALL enqueue a diagnostics record and show a visible loading state
+- **AND** the existing browser logger SHALL POST buffered records to coordinator `/api/internal/viewer-log`
+- **AND** a visible success state SHALL require the action's target flushed count to be reached with no new drops and the unique diagnostics action absent from the retained buffer
+- **AND** success SHALL contain the active trace and browser run ids
+
+#### Scenario: Viewer-log delivery failure exposes a retry without false success
+- **WHEN** all transport attempts for the user-triggered flush fail
+- **THEN** the viewer SHALL show a visible failure state and a `Retry flush` control
+- **AND** the viewer SHALL NOT show success or discard a still-retained record merely to clear the UI state
+
+#### Scenario: Retry uses the same production carrier
+- **GIVEN** the prior user-triggered flush is visibly failed
+- **WHEN** the user activates `Retry flush`
+- **THEN** the viewer SHALL retry through the same browser logger and coordinator `/api/internal/viewer-log` endpoint
+- **AND** the viewer SHALL reuse the retained diagnostics action rather than enqueue a duplicate action
+- **AND** a successful response SHALL replace the failure state with visible success
+
+#### Scenario: Manual flush waits for a timer-started batch
+- **GIVEN** the browser timer already has a flush in flight when the user action is enqueued
+- **WHEN** the diagnostics surface invokes the public manual flush
+- **THEN** manual flush SHALL wait for the in-flight batch to reach a terminal state
+- **AND** SHALL attempt any diagnostics action still retained afterward
+- **AND** the UI SHALL NOT treat progress from only the older batch as delivery of the diagnostics action
+
+#### Scenario: Visible failure remains stable until explicit retry
+- **WHEN** the user-triggered diagnostics batch reaches terminal failure
+- **THEN** the viewer SHALL keep timer and threshold auto-flush paused while the failure and retry control are visible
+- **AND** background delivery SHALL NOT consume the retained diagnostics action before the user activates Retry
+- **AND** auto-flush SHALL resume after successful retry or component cleanup
+
+#### Scenario: User closes the same review session from the diagnostics surface
+- **GIVEN** the diagnostics surface identifies review session `<sessionId>`
+- **WHEN** the user activates `Close review session`
+- **THEN** the viewer SHALL show a visible closing state and POST cooperative-close body `{}` to coordinator `/api/review-sessions/<sessionId>/close`
+- **AND** the viewer SHALL NOT attach an operator termination `reason`
+- **AND** response status `closed` SHALL produce a visible closed state for that same session
+- **AND** a failed close SHALL expose a retry control without claiming the session is closed
+
+#### Scenario: Forced delivery failure exists only in browser evidence
+- **WHEN** Playwright verifies the failure and retry states
+- **THEN** the test MAY intercept the first user-triggered viewer-log POST sequence
+- **AND** production code SHALL NOT expose a failure query parameter, fault-injection endpoint, or test-only success branch
+- **AND** the successful retry SHALL reach the real coordinator endpoint after interception is removed
