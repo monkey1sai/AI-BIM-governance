@@ -1,3 +1,5 @@
+> **Status: deferred 2026-07-28**（使用者裁決）。不計入 active WIP；解凍前不做實作。48/49 task 未動工且無任何實作 commit；依 2026-07-28 read-only 盤點分類：(a) **機制層已被既有落地取代**——冪等/指紋對齊階梯＝`governance-service/diff_engine/keys.py`（`model-version-diff-authority`）、「人審 gate、不自動建 issue」語意＝a4 change tasks 4.x/5.5＋PR #398、BCFzip serializer 骨架＝`bcf/bcf_writer.py`（BCF 2.1，`governance-bcf-export`）、checker→批次 issue 骨架＝`rule_engine/`（`governance-rule-run-authority`）、task 7.5 凍結三檔回歸＝repo 常設鐵律；(b) **真正無人認領的獨有主線**＝Phase 0 GPU 量測 harness（1.1–1.5）與 2.11 無互動回收倒數，規劃另切小 change（暫名 `gpu-session-baseline-and-idle-reclaim`）承接，屆時對本 change 做 requirement/successor crosswalk；(c) IfcClash/LLM 草稿管線、人審 triage 佇列、BCF-API 3.0 端點維持凍結待裁。重啟條件：T1 小 change 落地後 thaw 做 crosswalk，或使用者明確 thaw；重啟時須重跑 `npx openspec validate add-single-gpu-session-ai-review-mvp --strict` 並重驗上列 supersede 證據仍成立。
+
 ## Why
 
 使用者首要目標是「穩定多 session、單 GPU 的生命週期」，其上再疊加「AI 產草稿 → 人審轉正」的最小審查閉環，Kit 定位為前期渲染 / 3D viewer / WebRTC 多人會議檢討。四個問題驅動本 change：
