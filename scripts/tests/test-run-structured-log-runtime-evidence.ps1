@@ -63,7 +63,7 @@ function Write-TestSmokeEvidence {
         [ValidateSet('passed','blocked')] [string] $TierStatus = 'passed',
         [ValidateSet('production','test_double')] [string] $ExecutionMode = 'production',
         [ValidateRange(0, 2)] [int] $TierCount = 1,
-        [ValidateSet('none','root_mismatch','ambiguous_conversion','ambiguous_review','browser_failed','close_failed','kit_missing','close_origin')]
+        [ValidateSet('none','root_mismatch','ambiguous_conversion','ambiguous_review','ambiguous_browser_run','browser_failed','close_failed','kit_missing','close_origin')]
         [string] $Mutation = 'none'
     )
     $ifcReadyJobId = if ($Mutation -eq 'root_mismatch') { 'ifcready_conflict' } else { 'ifcready_testroot' }
@@ -94,6 +94,7 @@ function Write-TestSmokeEvidence {
                     review_session_id = 'session_1'
                     conversion_job_id = 'conv_1'
                     kit_instance_id = $kitInstanceId
+                    browser_run_id = 'run_browser_1'
                     state_transitions = $ExpectedBrowserStates
                     failure_provenance = 'playwright_intercepted_503'
                     forced_viewer_log_statuses = @(503,503,503)
@@ -114,6 +115,7 @@ function Write-TestSmokeEvidence {
     $context = [ordered]@{ execution_mode = $ExecutionMode }
     if ($Mutation -eq 'ambiguous_conversion') { $context.conversion_job_id = 'conv_conflict' }
     if ($Mutation -eq 'ambiguous_review') { $context.review_session_id = 'session_conflict' }
+    if ($Mutation -eq 'ambiguous_browser_run') { $context.browser_run_id = 'run_browser_conflict' }
     [ordered]@{
         schema_version = 'demo-runtime-readiness-smoke/v1'
         context = $context
@@ -188,6 +190,7 @@ function New-TestCanonicalReadiness {
                     review_session_id = 'review_session_1'
                     conversion_job_id = 'stream_conv_1'
                     kit_instance_id = 'kit_instance_1'
+                    browser_run_id = 'run_20260728_010203_abcdef'
                     state_transitions = $ExpectedBrowserStates
                     failure_provenance = 'playwright_intercepted_503'
                     forced_viewer_log_statuses = @(503,503,503)
@@ -267,7 +270,7 @@ function Write-TestCompleteArtifactManifest {
         'root-trace-timeline.json' = [ordered]@{schema_version='1';root_trace_id='ifcready_root';records=@()}
         'runtime-log-validation.json' = [ordered]@{schema_version='1';status='passed';files=@();line_counts=[ordered]@{};event_counts=[ordered]@{};violations=@();redaction_violations=@()}
         'shutdown.json' = [ordered]@{schema_version='1';attempt_id=$AttemptId;status='succeeded';entries=@();foreign_listeners=@()}
-        'pr-fields.json' = [ordered]@{schema_version='1';attempt_id=$AttemptId;root_trace_id='ifcready_root';runtime_ids=[ordered]@{ifc_ready_job_id=@('ifcready_root');conversion_job_id=@('stream_conv_1');review_session_id=@('review_session_1');kit_instance_id=@('kit_instance_1')};shutdown_status='owned_shutdown_complete';tests='scripts/tests/test-run-structured-log-runtime-evidence.ps1';screenshot_trace=[ordered]@{failure_screenshot='browser/structured-log-failure.png';final_screenshot='browser/structured-log-success-closed.png';trace='browser/structured-log-trace.zip'};browser_evidence=[ordered]@{console='browser/structured-log-console.json';network='browser/structured-log-network.json';operability='browser/structured-log-operability.json'};known_gaps=@()}
+        'pr-fields.json' = [ordered]@{schema_version='1';attempt_id=$AttemptId;root_trace_id='ifcready_root';runtime_ids=[ordered]@{ifc_ready_job_id=@('ifcready_root');conversion_job_id=@('stream_conv_1');review_session_id=@('review_session_1');kit_instance_id=@('kit_instance_1');browser_run_id=@('run_20260728_010203_abcdef')};shutdown_status='owned_shutdown_complete';tests='scripts/tests/test-run-structured-log-runtime-evidence.ps1';screenshot_trace=[ordered]@{failure_screenshot='browser/structured-log-failure.png';final_screenshot='browser/structured-log-success-closed.png';trace='browser/structured-log-trace.zip'};browser_evidence=[ordered]@{console='browser/structured-log-console.json';network='browser/structured-log-network.json';operability='browser/structured-log-operability.json'};known_gaps=@()}
     }
     foreach ($artifact in $jsonArtifacts.GetEnumerator()) {
         $artifact.Value | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $AttemptRoot $artifact.Key) -Encoding utf8
@@ -290,6 +293,7 @@ function Write-TestCompleteArtifactManifest {
         status = 'succeeded'
         files = $entries
         root_trace_id = 'ifcready_root'
+        runtime_ids = [ordered]@{ifc_ready_job_id=@('ifcready_root');conversion_job_id=@('stream_conv_1');review_session_id=@('review_session_1');kit_instance_id=@('kit_instance_1');browser_run_id=@('run_20260728_010203_abcdef')}
         shutdown_status = 'owned_shutdown_complete'
         known_gaps = @()
     }
@@ -791,6 +795,7 @@ param(
     [string] $EvidencePath,
     [string] $StorageRoot,
     [string] $CoordinatorBaseUrl,
+    [string] $ViewerBaseUrl,
     [string] $StreamingConversionApiBase,
     [int] $LivePollSeconds,
     [string] $StructLogRoot,
@@ -800,7 +805,7 @@ param(
     [switch] $SkipKitLauncher
 )
 Write-Output 'child stdout that must not become the exit code'
-@{ schema_version='demo-runtime-readiness-smoke/v1'; context=@{execution_mode='production'}; tiers=@(@{tier='real_ifc_intake_conversion';status='passed';blocker='';ids=@{ifc_ready_job_id='ifcready_default';conversion_job_id='conv_default';kit_instance_id='kit_default'};detail=@{execution_mode='production';root_trace_id='ifcready_default';review_session_id='session_default';browser_status='passed';close_status='closed';close_origin='browser';browser_artifacts=@{root_trace_id='ifcready_default';review_session_id='session_default';conversion_job_id='conv_default';kit_instance_id='kit_default';state_transitions=@('ready','flush_loading','flush_failure','retry_loading','flush_success','close_loading','closed');failure_provenance='playwright_intercepted_503';forced_viewer_log_statuses=@(503,503,503);retry_viewer_log_status=200;close_http_status=200;artifacts=@{failure_screenshot=@{path='browser/structured-log-failure.png'};final_screenshot=@{path='browser/structured-log-success-closed.png'};playwright_trace=@{path='browser/structured-log-trace.zip'};console_events=@{path='browser/structured-log-console.json'};network_events=@{path='browser/structured-log-network.json'};operability=@{path='browser/structured-log-operability.json'}}}}}) } | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $EvidencePath
+@{ schema_version='demo-runtime-readiness-smoke/v1'; context=@{execution_mode='production'}; tiers=@(@{tier='real_ifc_intake_conversion';status='passed';blocker='';ids=@{ifc_ready_job_id='ifcready_default';conversion_job_id='conv_default';kit_instance_id='kit_default'};detail=@{execution_mode='production';root_trace_id='ifcready_default';review_session_id='session_default';browser_status='passed';close_status='closed';close_origin='browser';browser_artifacts=@{root_trace_id='ifcready_default';review_session_id='session_default';browser_run_id='browser_default';conversion_job_id='conv_default';kit_instance_id='kit_default';state_transitions=@('ready','flush_loading','flush_failure','retry_loading','flush_success','close_loading','closed');failure_provenance='playwright_intercepted_503';forced_viewer_log_statuses=@(503,503,503);retry_viewer_log_status=200;close_http_status=200;artifacts=@{failure_screenshot=@{path='browser/structured-log-failure.png'};final_screenshot=@{path='browser/structured-log-success-closed.png'};playwright_trace=@{path='browser/structured-log-trace.zip'};console_events=@{path='browser/structured-log-console.json'};network_events=@{path='browser/structured-log-network.json'};operability=@{path='browser/structured-log-operability.json'}}}}}) } | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $EvidencePath
 exit 0
 '@
         $specs = @(
@@ -861,6 +866,7 @@ exit 0
             [pscustomobject]@{Name='root-mismatch';Status='passed';Mode='production';Count=1;Mutation='root_mismatch';Pattern='ifc-ready-job-id'},
             [pscustomobject]@{Name='ambiguous-conversion';Status='passed';Mode='production';Count=1;Mutation='ambiguous_conversion';Pattern='ambiguous-conversion_job_id'},
             [pscustomobject]@{Name='ambiguous-review';Status='passed';Mode='production';Count=1;Mutation='ambiguous_review';Pattern='ambiguous-review_session_id'},
+            [pscustomobject]@{Name='ambiguous-browser-run';Status='passed';Mode='production';Count=1;Mutation='ambiguous_browser_run';Pattern='ambiguous-browser_run_id'},
             [pscustomobject]@{Name='browser-failed';Status='passed';Mode='production';Count=1;Mutation='browser_failed';Pattern='browser-status'},
             [pscustomobject]@{Name='close-failed';Status='passed';Mode='production';Count=1;Mutation='close_failed';Pattern='close-status'},
             [pscustomobject]@{Name='kit-missing';Status='passed';Mode='production';Count=1;Mutation='kit_missing';Pattern='kit-instance-id'},
@@ -1144,6 +1150,8 @@ function Invoke-ArtifactRendererCase {
                 [pscustomobject]@{Name='close-origin';Error='readiness:close-origin'},
                 [pscustomobject]@{Name='kit-missing';Error='readiness:kit-instance-id'},
                 [pscustomobject]@{Name='kit-mismatch';Error='readiness:browser-kit-instance-id'},
+                [pscustomobject]@{Name='browser-run-missing';Error='readiness:browser-run-id'},
+                [pscustomobject]@{Name='browser-run-ambiguous';Error='readiness:ambiguous-browser_run_id'},
                 [pscustomobject]@{Name='states';Error='readiness:browser-state-transitions'},
                 [pscustomobject]@{Name='forced-status';Error='readiness:browser-forced-statuses'},
                 [pscustomobject]@{Name='retry-status';Error='readiness:browser-retry-status'}
@@ -1173,6 +1181,8 @@ function Invoke-ArtifactRendererCase {
                     'close-origin' { $value.tiers[0].detail.close_origin = 'runner_fallback' }
                     'kit-missing' { $value.tiers[0].ids.kit_instance_id = $null; $value.tiers[0].detail.browser_artifacts.kit_instance_id = $null }
                     'kit-mismatch' { $value.tiers[0].detail.browser_artifacts.kit_instance_id = 'kit_other' }
+                    'browser-run-missing' { $value.tiers[0].detail.browser_artifacts.browser_run_id = $null }
+                    'browser-run-ambiguous' { $value.context | Add-Member -Force NoteProperty browser_run_id 'run_browser_other' }
                     'states' { $value.tiers[0].detail.browser_artifacts.state_transitions = @('ready','flush_success','closed') }
                     'forced-status' { $value.tiers[0].detail.browser_artifacts.forced_viewer_log_statuses = @(503,503) }
                     'retry-status' { $value.tiers[0].detail.browser_artifacts.retry_viewer_log_status = 503 }
@@ -1195,6 +1205,26 @@ function Invoke-ArtifactRendererCase {
                 Assert-True (-not $result.valid) "$rootArtifact root mismatch is rejected"
                 Assert-True (@($result.errors) -ccontains "root-mismatch:$rootArtifact") "$rootArtifact reports cross-artifact root mismatch; errors=$($result.errors -join ',')"
             }
+            foreach ($runtimeProjection in @('artifact-manifest.json','pr-fields.json')) {
+                Write-TestCompleteArtifactManifest -AttemptRoot $semanticAttempt -AttemptId 'attempt-semantic'
+                $runtimeProjectionPath = Join-Path $semanticAttempt $runtimeProjection
+                $value = Get-Content -Raw -LiteralPath $runtimeProjectionPath | ConvertFrom-Json
+                $value.runtime_ids.browser_run_id = @('run_browser_substituted')
+                $value | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $runtimeProjectionPath -Encoding utf8
+                if ($runtimeProjection -cne 'artifact-manifest.json') { Update-TestArtifactManifestHash $semanticAttempt $runtimeProjection }
+                $result = Test-StructuredLogArtifactManifest -AttemptRoot $semanticAttempt
+                Assert-True (-not $result.valid) "$runtimeProjection substituted browser run is rejected"
+                Assert-True (@($result.errors) -ccontains "runtime-id-mismatch:${runtimeProjection}:browser_run_id") "$runtimeProjection reports browser-run projection mismatch; errors=$($result.errors -join ',')"
+            }
+            Write-TestCompleteArtifactManifest -AttemptRoot $semanticAttempt -AttemptId 'attempt-semantic'
+            $operabilityPath = Join-Path $semanticAttempt 'browser\structured-log-operability.json'
+            $operability = Get-Content -Raw -LiteralPath $operabilityPath | ConvertFrom-Json
+            $operability.browser_run_id = 'run_browser_substituted'
+            $operability | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $operabilityPath -Encoding utf8
+            Update-TestArtifactManifestHash $semanticAttempt 'browser/structured-log-operability.json'
+            $result = Test-StructuredLogArtifactManifest -AttemptRoot $semanticAttempt
+            Assert-True (-not $result.valid) 'substituted operability browser run is rejected'
+            Assert-True (@($result.errors) -ccontains 'browser-operability:browser-run-id') "operability reports browser-run mismatch; errors=$($result.errors -join ',')"
         } finally { Remove-Item -LiteralPath $semanticRoot -Recurse -Force -ErrorAction SilentlyContinue }
 
         $validatorFailureRoot = New-TestRoot 'validator-failure'

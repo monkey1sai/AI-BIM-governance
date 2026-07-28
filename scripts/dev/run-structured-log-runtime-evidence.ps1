@@ -690,6 +690,7 @@ function Invoke-StructuredLogSupportedSmoke {
         '-EvidencePath', $evidencePath,
         '-StorageRoot', $Context.StorageRoot,
         '-CoordinatorBaseUrl', "http://127.0.0.1:$($Context.Ports.Coordinator)",
+        '-ViewerBaseUrl', "http://127.0.0.1:$($Context.Ports.Viewer)",
         '-StreamingConversionApiBase', "http://127.0.0.1:$($Context.Ports.Conversion)",
         '-LivePollSeconds', [string]$LivePollSeconds,
         '-StructLogRoot', $Context.LogRoot,
@@ -882,6 +883,7 @@ function Test-StructuredLogReadinessEvidence {
     $reviewSessionId = [string](Get-ReadinessPathValue $liveTier @('detail','review_session_id'))
     $kitInstanceId = [string](Get-ReadinessPathValue $liveTier @('ids','kit_instance_id'))
     $browserArtifacts = Get-ReadinessPathValue $liveTier @('detail','browser_artifacts')
+    $browserRunId = [string](Get-ReadinessPathValue $browserArtifacts @('browser_run_id'))
     $expectedBrowserStates = @('ready','flush_loading','flush_failure','retry_loading','flush_success','close_loading','closed')
     if ($null -ne $liveTier) {
         if ([string](Get-ReadinessPathValue $liveTier @('status')) -cne 'passed') { $errors.Add('readiness:live-tier-status') }
@@ -892,6 +894,7 @@ function Test-StructuredLogReadinessEvidence {
         if ([string]::IsNullOrWhiteSpace($conversionJobId)) { $errors.Add('readiness:conversion-job-id') }
         if ([string]::IsNullOrWhiteSpace($reviewSessionId)) { $errors.Add('readiness:review-session-id') }
         if ([string]::IsNullOrWhiteSpace($kitInstanceId)) { $errors.Add('readiness:kit-instance-id') }
+        if ([string]::IsNullOrWhiteSpace($browserRunId)) { $errors.Add('readiness:browser-run-id') }
         if ([string](Get-ReadinessPathValue $liveTier @('detail','browser_status')) -cne 'passed') { $errors.Add('readiness:browser-status') }
         if ([string](Get-ReadinessPathValue $liveTier @('detail','close_status')) -cne 'closed') { $errors.Add('readiness:close-status') }
         if ([string](Get-ReadinessPathValue $liveTier @('detail','close_origin')) -cne 'browser') { $errors.Add('readiness:close-origin') }
@@ -923,7 +926,7 @@ function Test-StructuredLogReadinessEvidence {
         }
     }
 
-    foreach ($propertyName in @('root_trace_id','ifc_ready_job_id','conversion_job_id','review_session_id','kit_instance_id')) {
+    foreach ($propertyName in @('root_trace_id','ifc_ready_job_id','conversion_job_id','review_session_id','kit_instance_id','browser_run_id')) {
         $distinct = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
         foreach ($value in @(Find-StructuredLogNamedValues -Value $Evidence -NamePattern "^$propertyName$")) {
             if (-not [string]::IsNullOrWhiteSpace([string]$value)) { $distinct.Add([string]$value) | Out-Null }
@@ -941,6 +944,7 @@ function Test-StructuredLogReadinessEvidence {
             conversion_job_id = $conversionJobId
             review_session_id = $reviewSessionId
             kit_instance_id = $kitInstanceId
+            browser_run_id = $browserRunId
         }
     }
 }
@@ -1314,6 +1318,27 @@ function Test-StructuredLogArtifactManifest {
                     $rootProperty = $values[$artifactName].PSObject.Properties['root_trace_id']
                     if ($null -eq $rootProperty -or [string]$rootProperty.Value -cne $expectedRootTraceId) { $errors.Add("root-mismatch:$artifactName") }
                 }
+                $expectedBrowserRunId = [string]$readiness.runtime_ids.browser_run_id
+                foreach ($runtimeProjection in @('artifact-manifest.json','pr-fields.json')) {
+                    $projection = if ($runtimeProjection -ceq 'artifact-manifest.json') {
+                        $manifest
+                    } elseif ($values.ContainsKey($runtimeProjection)) {
+                        $values[$runtimeProjection]
+                    } else {
+                        $null
+                    }
+                    $runtimeIdsProperty = if ($null -eq $projection) { $null } else { $projection.PSObject.Properties['runtime_ids'] }
+                    $browserRunProperty = if ($null -eq $runtimeIdsProperty -or $null -eq $runtimeIdsProperty.Value) {
+                        $null
+                    } else {
+                        $runtimeIdsProperty.Value.PSObject.Properties['browser_run_id']
+                    }
+                    [object[]] $projectedBrowserRunIds = @()
+                    if ($null -ne $browserRunProperty) { $projectedBrowserRunIds = [object[]] @($browserRunProperty.Value) }
+                    if ($projectedBrowserRunIds.Count -ne 1 -or [string]$projectedBrowserRunIds[0] -cne $expectedBrowserRunId) {
+                        $errors.Add("runtime-id-mismatch:${runtimeProjection}:browser_run_id")
+                    }
+                }
             }
         } catch {
             $errors.Add('readiness:validation-exception')
@@ -1359,6 +1384,7 @@ function Test-StructuredLogArtifactManifest {
         if ([string]$operability.review_session_id -cne [string]$readiness.runtime_ids.review_session_id) { $errors.Add('browser-operability:review-session-id') }
         if ([string]$operability.conversion_job_id -cne [string]$readiness.runtime_ids.conversion_job_id) { $errors.Add('browser-operability:conversion-job-id') }
         if ([string]$operability.kit_instance_id -cne [string]$readiness.runtime_ids.kit_instance_id) { $errors.Add('browser-operability:kit-instance-id') }
+        if ([string]$operability.browser_run_id -cne [string]$readiness.runtime_ids.browser_run_id) { $errors.Add('browser-operability:browser-run-id') }
         if ((@($operability.state_transitions | ForEach-Object {[string]$_}) -join ',') -cne 'ready,flush_loading,flush_failure,retry_loading,flush_success,close_loading,closed') { $errors.Add('browser-operability:state-transitions') }
         if ([string]$operability.failure_provenance -cne 'playwright_intercepted_503') { $errors.Add('browser-operability:failure-provenance') }
         $forced = @($operability.forced_viewer_log_statuses | ForEach-Object {[int]$_})
@@ -1463,6 +1489,7 @@ function Write-StructuredLogEvidenceArtifacts {
         conversion_job_id = @([string]$readiness.runtime_ids.conversion_job_id)
         review_session_id = @([string]$readiness.runtime_ids.review_session_id)
         kit_instance_id = @([string]$readiness.runtime_ids.kit_instance_id)
+        browser_run_id = @([string]$readiness.runtime_ids.browser_run_id)
     }
     foreach ($property in @('runtime_id')) {
         $values = @(Find-StructuredLogNamedValues -Value $smoke -NamePattern "^$property$" | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique)

@@ -37,13 +37,16 @@ export function registerReviewNamespace(
         return;
       }
       const sessionId = sessionCheck.sessionId;
+      // A rejected cross-session join must not commit a legacy trace backfill.
+      // Membership is socket-local and this handler has no await boundary, so
+      // the precondition remains stable through the trace commit below.
+      if (membership && membership.sessionId !== sessionId) {
+        ack?.({ ok: false, error: "Socket is already joined to another review session." });
+        return;
+      }
       const traceCheck = authorizeCanonicalTrace(traceResolver, sessionId, payload.trace_id);
       if (!traceCheck.ok) {
         ack?.(traceCheck);
-        return;
-      }
-      if (membership && membership.sessionId !== sessionId) {
-        ack?.({ ok: false, error: "Socket is already joined to another review session." });
         return;
       }
       // Presence identity is server-owned. payload.user_id remains accepted for
@@ -76,13 +79,13 @@ export function registerReviewNamespace(
         ack?.(sessionCheck);
         return;
       }
+      if (!membership || membership.sessionId !== sessionCheck.sessionId) {
+        ack?.({ ok: false, error: "Socket is not joined to this review session." });
+        return;
+      }
       const traceCheck = authorizeCanonicalTrace(traceResolver, sessionCheck.sessionId, payload.trace_id);
       if (!traceCheck.ok) {
         ack?.(traceCheck);
-        return;
-      }
-      if (!membership || membership.sessionId !== sessionCheck.sessionId) {
-        ack?.({ ok: false, error: "Socket is not joined to this review session." });
         return;
       }
       ack?.({
@@ -100,13 +103,13 @@ export function registerReviewNamespace(
         return;
       }
       const sessionId = sessionCheck.sessionId;
+      if (!membership || membership.sessionId !== sessionId) {
+        ack?.({ ok: false, error: "Socket is not joined to this review session." });
+        return;
+      }
       const traceCheck = authorizeCanonicalTrace(traceResolver, sessionId, payload.trace_id);
       if (!traceCheck.ok) {
         ack?.(traceCheck);
-        return;
-      }
-      if (!membership || membership.sessionId !== sessionId) {
-        ack?.({ ok: false, error: "Socket is not joined to this review session." });
         return;
       }
       const session = store.leave(sessionId, membership.userId);

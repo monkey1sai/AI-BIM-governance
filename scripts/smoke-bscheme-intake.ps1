@@ -28,6 +28,7 @@ param(
     [string] $EvidencePath = "",
     [string] $StorageRoot = "",
     [string] $CoordinatorBaseUrl = "http://127.0.0.1:8004",
+    [string] $ViewerBaseUrl = "http://127.0.0.1:5173",
     [string] $StreamingConversionApiBase = "http://127.0.0.1:49101",
     [string] $WebhookSecret = "dev-webhook-secret",
     [string] $InternalApiToken = "dev-internal-token",
@@ -207,6 +208,21 @@ function Get-UriQueryValues {
     return @($values)
 }
 
+function Get-TrustedHttpOrigin {
+    param([Parameter(Mandatory)] [string] $Value, [Parameter(Mandatory)] [string] $Label)
+    try {
+        $uri = [Uri]::new($Value, [UriKind]::Absolute)
+    } catch {
+        throw "$Label must be a standalone credential-free HTTP(S) origin"
+    }
+    if ($uri.Scheme -notin @('http','https') -or -not [string]::IsNullOrWhiteSpace($uri.UserInfo) `
+        -or $uri.AbsolutePath -cne '/' -or -not [string]::IsNullOrEmpty($uri.Query) `
+        -or -not [string]::IsNullOrEmpty($uri.Fragment)) {
+        throw "$Label must be a standalone credential-free HTTP(S) origin"
+    }
+    return $uri.GetLeftPart([UriPartial]::Authority)
+}
+
 function Assert-CoordinatorOpenUrl {
     param(
         [Parameter(Mandatory)] [string] $Url,
@@ -299,16 +315,19 @@ function Invoke-ViewerBootstrap {
         [Parameter(Mandatory = $true)][string] $TraceId,
         [Parameter(Mandatory = $true)][string] $SessionId,
         [Parameter(Mandatory = $true)][string] $CoordinatorBase,
+        [Parameter(Mandatory = $true)][string] $ViewerBase,
         [Parameter(Mandatory = $true)][string] $EvidencePath,
         [Parameter(Mandatory = $true)][string] $ArtifactDir
     )
-    Assert-CoordinatorOpenUrl -Url $Url -CoordinatorBase $CoordinatorBase -SessionId $SessionId -TraceId $TraceId
+    $trustedCoordinatorOrigin = Get-TrustedHttpOrigin -Value $CoordinatorBase -Label 'CoordinatorBase'
+    $trustedViewerOrigin = Get-TrustedHttpOrigin -Value $ViewerBase -Label 'ViewerBase'
+    Assert-CoordinatorOpenUrl -Url $Url -CoordinatorBase $trustedCoordinatorOrigin -SessionId $SessionId -TraceId $TraceId
     Assert-BrowserArtifactRoot -EvidencePath $EvidencePath -ArtifactDir $ArtifactDir | Out-Null
     if ($null -ne $BrowserInvoker) {
-        $result = & $BrowserInvoker $Url $TraceId $ArtifactDir
+        $result = & $BrowserInvoker $Url $TraceId $ArtifactDir $trustedCoordinatorOrigin $trustedViewerOrigin
     } else {
         $helper = Join-Path $RepoRoot 'web-viewer-sample\scripts\smoke-struct-log-bootstrap.mjs'
-        $output = @(& node $helper --url $Url --trace-id $TraceId --artifact-dir $ArtifactDir 2>&1)
+        $output = @(& node $helper --url $Url --trace-id $TraceId --artifact-dir $ArtifactDir --coordinator-origin $trustedCoordinatorOrigin --viewer-origin $trustedViewerOrigin 2>&1)
         if ($LASTEXITCODE -ne 0) {
             throw "viewer bootstrap helper failed: $(($output | ForEach-Object { [string]$_ }) -join ' ')"
         }
@@ -320,6 +339,10 @@ function Invoke-ViewerBootstrap {
     }
 
     if ((Get-JsonProperty $result 'ok') -ne $true) { throw 'viewer bootstrap did not report ok=true' }
+    if ([string](Get-JsonProperty $result 'handoffOrigin') -cne $trustedCoordinatorOrigin `
+        -or [string](Get-JsonProperty $result 'viewerOrigin') -cne $trustedViewerOrigin) {
+        throw 'viewer bootstrap returned an untrusted coordinator or viewer origin'
+    }
     if ([string](Get-JsonProperty $result 'traceId') -cne $TraceId -or [string](Get-JsonProperty $result 'sessionId') -cne $SessionId) {
         throw 'viewer bootstrap returned a trace or session mismatch'
     }
@@ -542,6 +565,7 @@ function Invoke-RealIfcIntakeConversion {
     param(
         [string] $FixtureRoot,
         [string] $CoordinatorBase,
+        [string] $ViewerBase,
         [string] $StreamingBase,
         [string] $Secret,
         [string] $InternalToken,
@@ -828,7 +852,7 @@ function Invoke-RealIfcIntakeConversion {
                 handoff_path = '/ui/open'
             }
             $browser = Invoke-ViewerBootstrap -Url $openUrl -TraceId $ifcReadyJobId -SessionId $sessionId `
-                -CoordinatorBase $CoordinatorBase -EvidencePath $EvidencePath -ArtifactDir $artifactDir
+                -CoordinatorBase $CoordinatorBase -ViewerBase $ViewerBase -EvidencePath $EvidencePath -ArtifactDir $artifactDir
             $integrationDetail.browser_status = if ($IsTestExecution) { 'test_double_observed' } else { 'passed' }
             $integrationIds.kit_instance_id = $browser.kit_instance_id
             $integrationDetail.browser_artifacts = [ordered]@{
@@ -944,7 +968,7 @@ if (-not $SkipVerificationTiers -and -not $IsTestExecution) {
         -NextCommand 'python -m pytest tests -q'
 }
 
-$Live = Invoke-RealIfcIntakeConversion -FixtureRoot $StorageRoot -CoordinatorBase $CoordinatorBaseUrl `
+$Live = Invoke-RealIfcIntakeConversion -FixtureRoot $StorageRoot -CoordinatorBase $CoordinatorBaseUrl -ViewerBase $ViewerBaseUrl `
     -StreamingBase $StreamingConversionApiBase -Secret $WebhookSecret -InternalToken $InternalApiToken `
     -PollSeconds $LivePollSeconds
 

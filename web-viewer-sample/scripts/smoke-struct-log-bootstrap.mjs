@@ -1,5 +1,6 @@
-import { createHash, randomBytes } from "node:crypto";
-import { lstat, mkdir, readFile, realpath, unlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rmdir, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { inflateRawSync } from "node:zlib";
@@ -290,13 +291,13 @@ async function sanitizePlaywrightTrace(rawPath, finalPath, expected) {
 }
 
 function parseArgs(argv) {
-  const allowed = new Set(["--url", "--trace-id", "--artifact-dir"]);
+  const allowed = new Set(["--url", "--trace-id", "--artifact-dir", "--coordinator-origin", "--viewer-origin"]);
   const parsed = new Map();
   for (let index = 0; index < argv.length; index += 2) {
     const key = argv[index];
     const value = argv[index + 1];
     if (!allowed.has(key) || !value || parsed.has(key)) {
-      throw new Error("Usage: node scripts/smoke-struct-log-bootstrap.mjs --url <coordinator /ui/open URL> --trace-id <id> --artifact-dir <absolute-dir>");
+      throw new Error("Usage: node scripts/smoke-struct-log-bootstrap.mjs --url <coordinator /ui/open URL> --trace-id <id> --artifact-dir <absolute-dir> --coordinator-origin <origin> --viewer-origin <origin>");
     }
     parsed.set(key, value);
   }
@@ -307,6 +308,9 @@ function parseArgs(argv) {
     throw new Error("--url must identify a credential-free HTTP(S) coordinator page");
   }
   if (url.pathname !== "/ui/open" || url.hash) throw new Error("--url must use the exact coordinator /ui/open handoff");
+  const coordinatorOrigin = parseTrustedOrigin(parsed.get("--coordinator-origin"), "--coordinator-origin");
+  const viewerOrigin = parseTrustedOrigin(parsed.get("--viewer-origin"), "--viewer-origin");
+  if (url.origin !== coordinatorOrigin) throw new Error("--url origin must case-exactly match --coordinator-origin");
   const queryNames = [...url.searchParams.keys()];
   if (queryNames.some((name) => name !== "session" && name !== "trace_id")) {
     throw new Error("--url contains an unexpected handoff query carrier");
@@ -335,11 +339,27 @@ function parseArgs(argv) {
 
   return {
     url: url.href,
-    coordinatorOrigin: url.origin,
+    coordinatorOrigin,
+    viewerOrigin,
     sessionId: sessions[0],
     traceId,
     artifactDir,
   };
+}
+
+function parseTrustedOrigin(value, label) {
+  let candidate;
+  try {
+    candidate = new URL(value);
+  } catch {
+    throw new Error(`${label} must be a standalone credential-free HTTP(S) origin`);
+  }
+  if ((candidate.protocol !== "http:" && candidate.protocol !== "https:")
+      || candidate.username || candidate.password || candidate.pathname !== "/"
+      || candidate.search || candidate.hash) {
+    throw new Error(`${label} must be a standalone credential-free HTTP(S) origin`);
+  }
+  return candidate.origin;
 }
 
 function samePath(left, right) {
@@ -374,6 +394,30 @@ async function assertTrustedArtifactRoot(artifactDir) {
       if (error instanceof Error && error.message.startsWith("Artifact target already exists:")) throw error;
       if (!(error && typeof error === "object" && error.code === "ENOENT")) throw error;
     }
+  }
+}
+
+async function createPrivateTraceTemp(artifactDir) {
+  const traceTempDir = await mkdtemp(path.join(tmpdir(), "bim-struct-log-trace-"));
+  try {
+    await chmod(traceTempDir, 0o700);
+    const [details, canonicalDir] = await Promise.all([lstat(traceTempDir), realpath(traceTempDir)]);
+    if (!details.isDirectory() || details.isSymbolicLink() || !samePath(canonicalDir, traceTempDir)) {
+      throw new Error("Playwright trace temporary directory is not canonical");
+    }
+    if (samePath(traceTempDir, artifactDir)
+        || isContainedPath(artifactDir, traceTempDir)
+        || isContainedPath(traceTempDir, artifactDir)) {
+      throw new Error("Playwright trace temporary directory must be outside the retained artifact directory");
+    }
+    const traceTempPath = path.join(traceTempDir, "raw-trace.partial.zip");
+    if (!isContainedPath(traceTempDir, traceTempPath)) {
+      throw new Error("Playwright trace temporary path escaped its private directory");
+    }
+    return { traceTempDir, traceTempPath };
+  } catch (error) {
+    await rmdir(traceTempDir).catch(() => undefined);
+    throw error;
   }
 }
 
@@ -486,20 +530,27 @@ async function describeArtifact(artifactDir, filename) {
 }
 
 async function main() {
-  const { url, coordinatorOrigin, sessionId, traceId, artifactDir } = parseArgs(process.argv.slice(2));
+  const { url, coordinatorOrigin, viewerOrigin, sessionId, traceId, artifactDir } = parseArgs(process.argv.slice(2));
   await assertTrustedArtifactRoot(artifactDir);
   const artifactPaths = Object.fromEntries(
     Object.entries(ARTIFACT_NAMES).map(([role, filename]) => [role, path.join(artifactDir, filename)]),
   );
   const closePath = `/api/review-sessions/${encodeURIComponent(sessionId)}/close`;
-  const traceTempPath = path.join(artifactDir, `.structured-log-trace-${randomBytes(16).toString("hex")}.partial.zip`);
+  const { traceTempDir, traceTempPath } = await createPrivateTraceTemp(artifactDir);
 
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext();
+  let browser;
+  let context;
   let tracingStarted = false;
   let tracingStopped = false;
+  let successResult;
   try {
+    browser = await chromium.launch({ headless: true });
+    context = await browser.newContext();
     const page = await context.newPage();
+    await page.route(
+      (candidate) => candidate.origin !== coordinatorOrigin && candidate.origin !== viewerOrigin,
+      (route) => route.abort("blockedbyclient"),
+    );
     const consoleEvents = [];
     const networkEvents = [];
     const stateTransitions = [];
@@ -540,10 +591,9 @@ async function main() {
     if (!response?.ok()) throw new Error(`Production page navigation failed: ${response?.status() ?? "no_response"}`);
 
     const finalUrl = new URL(page.url());
-    const handoffUrl = new URL(url);
     const finalQueryNames = [...finalUrl.searchParams.keys()];
     if ((finalUrl.protocol !== "http:" && finalUrl.protocol !== "https:") || finalUrl.username || finalUrl.password || finalUrl.hash
-        || finalUrl.hostname !== handoffUrl.hostname || finalUrl.pathname !== "/" || finalQueryNames.length !== 4
+        || finalUrl.origin !== viewerOrigin || finalUrl.pathname !== "/" || finalQueryNames.length !== 4
         || !["session", "trace_id", "coordinatorApiBase", "coordinatorSocketUrl"].every((name) => finalQueryNames.includes(name))) {
       throw new Error("Final viewer URL is not the canonical credential-free route");
     }
@@ -677,7 +727,8 @@ async function main() {
     await context.tracing.stop({ path: traceTempPath });
     tracingStopped = true;
     const [traceTempStat, traceTempCanonical] = await Promise.all([lstat(traceTempPath), realpath(traceTempPath)]);
-    if (!traceTempStat.isFile() || traceTempStat.isSymbolicLink() || traceTempStat.nlink !== 1 || !isContainedPath(artifactDir, traceTempCanonical)) {
+    if (!traceTempStat.isFile() || traceTempStat.isSymbolicLink() || traceTempStat.nlink !== 1
+        || !isContainedPath(traceTempDir, traceTempCanonical) || isContainedPath(artifactDir, traceTempCanonical)) {
       throw new Error("Playwright trace temporary file is not canonical");
     }
     await sanitizePlaywrightTrace(traceTempPath, artifactPaths.playwright_trace, { coordinatorOrigin, sessionId, traceId });
@@ -691,7 +742,7 @@ async function main() {
     operability.artifacts = artifacts;
     await writeJsonArtifact(artifactPaths.operability, operability);
     artifacts.operability = await describeArtifact(artifactDir, ARTIFACT_NAMES.operability);
-    process.stdout.write(`${JSON.stringify({
+    successResult = {
       ok: true,
       handoffOrigin: coordinatorOrigin,
       handoffPath: "/ui/open",
@@ -712,17 +763,20 @@ async function main() {
       closeSessionId: sessionId,
       closeHttpStatus: closeResponse.status(),
       artifacts,
-    })}\n`);
+    };
   } finally {
     try {
-      if (tracingStarted && !tracingStopped) await context.tracing.stop().catch(() => undefined);
+      if (context && tracingStarted && !tracingStopped) await context.tracing.stop().catch(() => undefined);
       await unlink(traceTempPath).catch((error) => {
         if (!(error && typeof error === "object" && error.code === "ENOENT")) throw error;
       });
+      await rmdir(traceTempDir);
     } finally {
-      await browser.close();
+      if (browser) await browser.close();
     }
   }
+  if (!successResult) throw new Error("Browser smoke did not produce a result");
+  process.stdout.write(`${JSON.stringify(successResult)}\n`);
 }
 
 main().catch(() => {

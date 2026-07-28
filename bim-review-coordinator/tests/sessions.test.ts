@@ -822,6 +822,68 @@ describe("bim-review-coordinator", () => {
     expect(app.store.get(sessionId)?.trace_id).toBe(traceId);
   });
 
+  it("does not backfill a legacy trace for exact heartbeat or leave before socket membership", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "project_unjoined", model_version_id: "version_unjoined", created_by: "test" });
+    const sessionId = created.body.session_id as string;
+    const sessionFile = removePersistedSessionTrace(sessionId);
+    const traceId = linkIfcReadyRoot(app, sessionId, "unjoined_exact");
+    const originalSessionJson = fs.readFileSync(sessionFile, "utf8");
+    const client = await connectReviewSocket(await listen(app));
+
+    const heartbeat = await emitWithAck<Record<string, unknown>>(client, "heartbeat", {
+      session_id: sessionId,
+      trace_id: traceId,
+    });
+    expect(heartbeat).toEqual({ ok: false, error: "Socket is not joined to this review session." });
+
+    const leave = await emitWithAck<Record<string, unknown>>(client, "leaveSession", {
+      session_id: sessionId,
+      trace_id: traceId,
+    });
+    expect(leave).toEqual({ ok: false, error: "Socket is not joined to this review session." });
+    expect(fs.readFileSync(sessionFile, "utf8")).toBe(originalSessionJson);
+    expect(app.store.get(sessionId)?.trace_id).toBeUndefined();
+    expect(app.store.get(sessionId)?.participants).toEqual([]);
+    expect(app.io.of("/review").adapter.rooms.get(sessionId)).toBeUndefined();
+  });
+
+  it("does not backfill a second legacy session when the socket is already joined elsewhere", async () => {
+    const app = makeApp();
+    const first = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "project_first", model_version_id: "version_first", created_by: "test" });
+    const second = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "project_second", model_version_id: "version_second", created_by: "test" });
+    const firstSessionId = first.body.session_id as string;
+    const secondSessionId = second.body.session_id as string;
+    removePersistedSessionTrace(firstSessionId);
+    const secondSessionFile = removePersistedSessionTrace(secondSessionId);
+    const firstTraceId = linkIfcReadyRoot(app, firstSessionId, "first_exact");
+    const secondTraceId = linkIfcReadyRoot(app, secondSessionId, "second_exact");
+    const originalSecondSessionJson = fs.readFileSync(secondSessionFile, "utf8");
+    const client = await connectReviewSocket(await listen(app));
+
+    const joined = await emitWithAck<Record<string, unknown>>(client, "joinSession", {
+      session_id: firstSessionId,
+      trace_id: firstTraceId,
+    });
+    expect(joined).toMatchObject({ ok: true, trace_id: firstTraceId });
+
+    const rejected = await emitWithAck<Record<string, unknown>>(client, "joinSession", {
+      session_id: secondSessionId,
+      trace_id: secondTraceId,
+    });
+    expect(rejected).toEqual({ ok: false, error: "Socket is already joined to another review session." });
+    expect(fs.readFileSync(secondSessionFile, "utf8")).toBe(originalSecondSessionJson);
+    expect(app.store.get(secondSessionId)?.trace_id).toBeUndefined();
+    expect(app.store.get(secondSessionId)?.participants).toEqual([]);
+    expect(app.io.of("/review").adapter.rooms.get(secondSessionId)).toBeUndefined();
+  });
+
   it("rejects ambiguous legacy linked roots with zero socket or session side effects", async () => {
     const app = makeApp();
     const created = await request(app.app)

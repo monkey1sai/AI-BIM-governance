@@ -11,6 +11,7 @@ $StructLogSchema = Join-Path $RepoRoot 'tests\contracts\structured-log\schema.js
 $RootTraceId = 'ifcready_test_root_123'
 $SessionId = 'review_session_test_123'
 $OpenUrl = "http://coordinator.test/ui/open?session=$SessionId&trace_id=$RootTraceId"
+$ViewerOrigin = 'http://127.0.0.1:5173'
 $WebhookSecret = 'webhook-secret-must-not-appear'
 $InternalToken = 'internal-token-must-not-appear'
 $SmokeSource = Get-Content -LiteralPath $SmokeScript -Raw
@@ -111,6 +112,8 @@ function New-TestBrowserResult {
         ok = $true
         inputUrl = $Url
         finalUrl = "http://127.0.0.1:5173/?session=$SessionId&trace_id=$TraceId&coordinatorApiBase=http%3A%2F%2Fcoordinator.test&coordinatorSocketUrl=http%3A%2F%2Fcoordinator.test"
+        handoffOrigin = 'http://coordinator.test'
+        viewerOrigin = $ViewerOrigin
         traceId = $TraceId
         sessionId = $SessionId
         runId = 'run_20260728_010203_abcdef'
@@ -264,6 +267,7 @@ function Invoke-TestSmoke {
         -EvidencePath $Paths.EvidencePath `
         -StorageRoot $Paths.Storage `
         -CoordinatorBaseUrl 'http://coordinator.test' `
+        -ViewerBaseUrl $ViewerOrigin `
         -StreamingConversionApiBase 'http://streaming.test' `
         -WebhookSecret $WebhookSecret `
         -InternalApiToken $InternalToken `
@@ -308,7 +312,12 @@ foreach ($tierName in @('external_ifc_ready_intake','coordinator_session_lifecyc
 
 Write-Host '[test-smoke-bscheme-structured-log] success lifecycle'
 Assert-True -Condition ($SmokeSource -match [regex]::Escape("web-viewer-sample\scripts\smoke-struct-log-bootstrap.mjs")) -Message 'supported smoke owns production browser helper path'
-Assert-True -Condition ($SmokeSource -match '& node \$helper --url \$Url --trace-id \$TraceId --artifact-dir \$ArtifactDir') -Message 'default path invokes real page helper with URL, trace, and artifact directory'
+Assert-True -Condition ($SmokeSource -match '& node \$helper --url \$Url --trace-id \$TraceId --artifact-dir \$ArtifactDir --coordinator-origin \$trustedCoordinatorOrigin --viewer-origin \$trustedViewerOrigin') -Message 'default path invokes the real helper with separately trusted coordinator and viewer origins'
+Assert-True -Condition ($BrowserHelperSource -match 'finalUrl\.origin !== viewerOrigin') -Message 'browser helper requires the final redirect to match the exact trusted viewer origin'
+Assert-True -Condition ($BrowserHelperSource -match 'page\.route\(\s*\(candidate\) => candidate\.origin !== coordinatorOrigin && candidate\.origin !== viewerOrigin') -Message 'browser helper blocks untrusted redirect origins before any request is sent'
+Assert-True -Condition ($BrowserHelperSource -match 'mkdtemp\(path\.join\(tmpdir\(\), "bim-struct-log-trace-"\)\)') -Message 'raw Playwright trace uses a fresh system temp directory outside retained artifacts'
+Assert-True -Condition ($BrowserHelperSource -match 'chmod\(traceTempDir, 0o700\)') -Message 'raw trace temp directory is restricted before use'
+Assert-True -Condition ($BrowserHelperSource -notmatch 'path\.join\(artifactDir, `\.structured-log-trace-') -Message 'raw trace is never created inside retained artifactDir'
 Assert-True -Condition ($BrowserHelperSource -match 'function actionIdsForTrace[\s\S]*?const values = \[\];[\s\S]*?values\.push\(actionId\)[\s\S]*?return values;') -Message 'browser helper preserves diagnostics action occurrences instead of deduplicating them'
 Assert-True -Condition ($BrowserHelperSource -notmatch 'function actionIdsForTrace[\s\S]*?new Set\(') -Message 'duplicate same-ID diagnostics records cannot collapse into one evidence action'
 Assert-True -Condition ($BrowserHelperSource -match 'tracing\.start\(\{ screenshots: false, snapshots: false, sources: false \}\)') -Message 'Playwright trace excludes visual resources that can retain page secrets'
@@ -317,13 +326,14 @@ Assert-True -Condition ($BrowserHelperSource -match 'main\(\)\.catch\(\(\) => \{
 Assert-True -Condition ($BrowserHelperSource -notmatch 'error\.stack') -Message 'browser helper never serializes a stack into smoke evidence'
 $helperArgRoot = New-TestRoot
 foreach ($invalidHandoff in @(
+    "http://attacker.test/ui/open?session=$SessionId&trace_id=$RootTraceId",
     "http://coordinator.test/ui/open?session=$SessionId&session=$SessionId&trace_id=$RootTraceId",
     "http://coordinator.test/ui/open?session=$SessionId",
     "http://coordinator.test/ui/open?session=$SessionId&trace_id=ifcready_other",
     "http://coordinator.test/not-open?session=$SessionId&trace_id=$RootTraceId",
     "http://coordinator.test/ui/open?session=$SessionId&trace_id=$RootTraceId&access_token=must-not-echo"
 )) {
-    $helperOutput = @(& node $BrowserHelper --url $invalidHandoff --trace-id $RootTraceId --artifact-dir $helperArgRoot.ArtifactRoot 2>&1)
+    $helperOutput = @(& node $BrowserHelper --url $invalidHandoff --trace-id $RootTraceId --artifact-dir $helperArgRoot.ArtifactRoot --coordinator-origin 'http://coordinator.test' --viewer-origin $ViewerOrigin 2>&1)
     Assert-True -Condition ($LASTEXITCODE -ne 0) -Message 'browser helper rejects invalid or ambiguous coordinator handoff'
     $helperOutputText = (@($helperOutput | ForEach-Object { [string]$_ }) -join "`n").Trim()
     Assert-Equal -Expected 'STRUCT_LOG_BROWSER_HELPER_FAILED' -Actual $helperOutputText -Message 'browser helper stderr exposes only the fixed safe failure code'
@@ -332,9 +342,11 @@ foreach ($invalidHandoff in @(
 $success = New-TestRoot
 $successRequests = New-RequestHarness
 $successBrowser = {
-    param([string] $Url, [string] $TraceId, [string] $ArtifactDir)
+    param([string] $Url, [string] $TraceId, [string] $ArtifactDir, [string] $CoordinatorOrigin, [string] $TrustedViewerOrigin)
     Assert-Equal -Expected $OpenUrl -Actual $Url -Message 'browser receives coordinator open URL'
     Assert-Equal -Expected $RootTraceId -Actual $TraceId -Message 'browser receives root trace'
+    Assert-Equal -Expected 'http://coordinator.test' -Actual $CoordinatorOrigin -Message 'browser receives independently trusted coordinator origin'
+    Assert-Equal -Expected $ViewerOrigin -Actual $TrustedViewerOrigin -Message 'browser receives independently trusted viewer origin'
     return New-TestBrowserResult -Url $Url -TraceId $TraceId -ArtifactDir $ArtifactDir
 }.GetNewClosure()
 Invoke-TestSmoke -Paths $success -RequestHandler $successRequests.Handler -BrowserHandler $successBrowser
