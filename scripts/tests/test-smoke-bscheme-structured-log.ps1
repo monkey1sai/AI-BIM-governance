@@ -6,14 +6,25 @@ $ErrorActionPreference = 'Stop'
 
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $SmokeScript = Join-Path $RepoRoot 'scripts\smoke-bscheme-intake.ps1'
+$BrowserHelper = Join-Path $RepoRoot 'web-viewer-sample\scripts\smoke-struct-log-bootstrap.mjs'
 $StructLogSchema = Join-Path $RepoRoot 'tests\contracts\structured-log\schema.json'
 $RootTraceId = 'ifcready_test_root_123'
 $SessionId = 'review_session_test_123'
-$OpenUrl = "http://127.0.0.1:5173/review?session=$SessionId&trace_id=$RootTraceId"
+$OpenUrl = "http://coordinator.test/ui/open?session=$SessionId&trace_id=$RootTraceId"
 $WebhookSecret = 'webhook-secret-must-not-appear'
 $InternalToken = 'internal-token-must-not-appear'
 $SmokeSource = Get-Content -LiteralPath $SmokeScript -Raw
+$BrowserHelperSource = Get-Content -LiteralPath $BrowserHelper -Raw
 $TestRoots = [System.Collections.ArrayList]::new()
+$ExpectedBrowserStates = @('ready','flush_loading','flush_failure','retry_loading','flush_success','close_loading','closed')
+$BrowserArtifactNames = [ordered]@{
+    failure_screenshot = 'structured-log-failure.png'
+    final_screenshot = 'structured-log-success-closed.png'
+    playwright_trace = 'structured-log-trace.zip'
+    console_events = 'structured-log-console.json'
+    network_events = 'structured-log-network.json'
+    operability = 'structured-log-operability.json'
+}
 
 function Assert-True {
     param([bool] $Condition, [string] $Message)
@@ -24,6 +35,97 @@ function Assert-Equal {
     param($Expected, $Actual, [string] $Message)
     if ($Expected -cne $Actual) {
         throw "ASSERT FAILED: $Message (expected '$Expected', got '$Actual')"
+    }
+}
+
+function New-TestBrowserResult {
+    param(
+        [Parameter(Mandatory)] [string] $Url,
+        [Parameter(Mandatory)] [string] $TraceId,
+        [Parameter(Mandatory)] [string] $ArtifactDir
+    )
+    New-Item -ItemType Directory -Path $ArtifactDir -Force | Out-Null
+    $jsonValues = [ordered]@{
+        console_events = [ordered]@{
+            schema_version = '1'
+            events = @([ordered]@{ seq = 1; type = 'log' })
+        }
+        network_events = [ordered]@{
+            schema_version = '1'
+            events = @(
+                [ordered]@{ seq = 1; method = 'POST'; path = '/api/internal/viewer-log'; status = 503; phase = 'forced_failure'; provenance = 'playwright_intercepted' },
+                [ordered]@{ seq = 2; method = 'POST'; path = '/api/internal/viewer-log'; status = 200; phase = 'retry_success'; provenance = 'coordinator' },
+                [ordered]@{ seq = 3; method = 'POST'; path = "/api/review-sessions/$SessionId/close"; status = 200; phase = 'browser_close'; provenance = 'coordinator' }
+            )
+        }
+        operability = [ordered]@{
+            schema_version = '1'
+            root_trace_id = $TraceId
+            review_session_id = $SessionId
+            conversion_job_id = 'stream_conv_test_123'
+            kit_instance_id = 'kit_test_123'
+            browser_run_id = 'run_20260728_010203_abcdef'
+            state_transitions = $ExpectedBrowserStates
+            failure_provenance = 'playwright_intercepted_503'
+            forced_viewer_log_statuses = @(503,503,503)
+            retry_viewer_log_status = 200
+            close_origin = 'browser'
+            close_status = 'closed'
+            close_http_status = 200
+        }
+    }
+
+    foreach ($entry in $BrowserArtifactNames.GetEnumerator()) {
+        $path = Join-Path $ArtifactDir $entry.Value
+        if ($entry.Key -eq 'operability') {
+            $operabilityArtifacts = [ordered]@{}
+            foreach ($prior in $BrowserArtifactNames.GetEnumerator() | Where-Object Key -ne 'operability') {
+                $priorPath = Join-Path $ArtifactDir $prior.Value
+                $operabilityArtifacts[$prior.Key] = [ordered]@{
+                    path=$prior.Value
+                    size_bytes=[int64](Get-Item -LiteralPath $priorPath).Length
+                    sha256=(Get-FileHash -LiteralPath $priorPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                }
+            }
+            $jsonValues['operability']['artifacts'] = $operabilityArtifacts
+        }
+        if ($jsonValues.Contains($entry.Key)) {
+            $jsonValues[$entry.Key] | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $path -Encoding utf8
+        } else {
+            Set-Content -LiteralPath $path -Value "$($entry.Key)-bytes" -Encoding utf8
+        }
+    }
+
+    $artifacts = [ordered]@{}
+    foreach ($entry in $BrowserArtifactNames.GetEnumerator()) {
+        $path = Join-Path $ArtifactDir $entry.Value
+        $item = Get-Item -LiteralPath $path
+        $artifacts[$entry.Key] = [pscustomobject][ordered]@{
+            path = $entry.Value
+            size_bytes = [int64]$item.Length
+            sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+    }
+
+    return [pscustomobject][ordered]@{
+        ok = $true
+        inputUrl = $Url
+        finalUrl = "http://127.0.0.1:5173/?session=$SessionId&trace_id=$TraceId&coordinatorApiBase=http%3A%2F%2Fcoordinator.test&coordinatorSocketUrl=http%3A%2F%2Fcoordinator.test"
+        traceId = $TraceId
+        sessionId = $SessionId
+        runId = 'run_20260728_010203_abcdef'
+        conversionJobId = 'stream_conv_test_123'
+        kitInstanceId = 'kit_test_123'
+        stateTransitions = $ExpectedBrowserStates
+        failureProvenance = 'playwright_intercepted_503'
+        forcedViewerLogStatuses = @(503,503,503)
+        retryViewerLogStatus = 200
+        actionId = 'evidence_action_0123456789abcdef'
+        closeOrigin = 'browser'
+        closeStatus = 'closed'
+        closeSessionId = $SessionId
+        closeHttpStatus = 200
+        artifacts = [pscustomobject]$artifacts
     }
 }
 
@@ -44,7 +146,7 @@ function New-TestRoot {
 }
 
 function New-RequestHarness {
-    param([ValidateSet('', 'review_session', 'close', 'dispatch', 'timeout', 'duplicate_source', 'boundary_success')][string] $FailureMode = '')
+    param([ValidateSet('', 'review_session', 'close', 'dispatch', 'timeout', 'duplicate_source', 'boundary_success', 'unsafe_open_url')][string] $FailureMode = '')
     $calls = [System.Collections.ArrayList]::new()
     $handler = {
         param([string] $Method, [string] $Url, $Body, [hashtable] $Headers, [int] $TimeoutSec)
@@ -124,7 +226,7 @@ function New-RequestHarness {
             return [pscustomobject]@{
                 trace_id = $RootTraceId
                 review_session_id = $SessionId
-                open_url = $OpenUrl
+                open_url = if ($FailureMode -eq 'unsafe_open_url') { "$OpenUrl&access_token=test-only-forbidden" } else { $OpenUrl }
                 session_status = 'active'
             }
         }
@@ -207,23 +309,33 @@ foreach ($tierName in @('external_ifc_ready_intake','coordinator_session_lifecyc
 Write-Host '[test-smoke-bscheme-structured-log] success lifecycle'
 Assert-True -Condition ($SmokeSource -match [regex]::Escape("web-viewer-sample\scripts\smoke-struct-log-bootstrap.mjs")) -Message 'supported smoke owns production browser helper path'
 Assert-True -Condition ($SmokeSource -match '& node \$helper --url \$Url --trace-id \$TraceId --artifact-dir \$ArtifactDir') -Message 'default path invokes real page helper with URL, trace, and artifact directory'
+Assert-True -Condition ($BrowserHelperSource -match 'function actionIdsForTrace[\s\S]*?const values = \[\];[\s\S]*?values\.push\(actionId\)[\s\S]*?return values;') -Message 'browser helper preserves diagnostics action occurrences instead of deduplicating them'
+Assert-True -Condition ($BrowserHelperSource -notmatch 'function actionIdsForTrace[\s\S]*?new Set\(') -Message 'duplicate same-ID diagnostics records cannot collapse into one evidence action'
+Assert-True -Condition ($BrowserHelperSource -match 'tracing\.start\(\{ screenshots: false, snapshots: false, sources: false \}\)') -Message 'Playwright trace excludes visual resources that can retain page secrets'
+Assert-True -Condition ($BrowserHelperSource -notmatch 'screencast-frame|resources/') -Message 'sanitized Playwright trace has no unsanitizable binary resources'
+Assert-True -Condition ($BrowserHelperSource -match 'main\(\)\.catch\(\(\) => \{\s*process\.stderr\.write\("STRUCT_LOG_BROWSER_HELPER_FAILED\\n"\)') -Message 'browser helper failure output is a fixed safe code'
+Assert-True -Condition ($BrowserHelperSource -notmatch 'error\.stack') -Message 'browser helper never serializes a stack into smoke evidence'
+$helperArgRoot = New-TestRoot
+foreach ($invalidHandoff in @(
+    "http://coordinator.test/ui/open?session=$SessionId&session=$SessionId&trace_id=$RootTraceId",
+    "http://coordinator.test/ui/open?session=$SessionId",
+    "http://coordinator.test/ui/open?session=$SessionId&trace_id=ifcready_other",
+    "http://coordinator.test/not-open?session=$SessionId&trace_id=$RootTraceId",
+    "http://coordinator.test/ui/open?session=$SessionId&trace_id=$RootTraceId&access_token=must-not-echo"
+)) {
+    $helperOutput = @(& node $BrowserHelper --url $invalidHandoff --trace-id $RootTraceId --artifact-dir $helperArgRoot.ArtifactRoot 2>&1)
+    Assert-True -Condition ($LASTEXITCODE -ne 0) -Message 'browser helper rejects invalid or ambiguous coordinator handoff'
+    $helperOutputText = (@($helperOutput | ForEach-Object { [string]$_ }) -join "`n").Trim()
+    Assert-Equal -Expected 'STRUCT_LOG_BROWSER_HELPER_FAILED' -Actual $helperOutputText -Message 'browser helper stderr exposes only the fixed safe failure code'
+    Assert-True -Condition ($helperOutputText -notmatch 'must-not-echo|smoke-struct-log-bootstrap|[A-Za-z]:[\\/]') -Message 'browser helper stderr contains no URL marker, filename, or absolute path'
+}
 $success = New-TestRoot
 $successRequests = New-RequestHarness
 $successBrowser = {
     param([string] $Url, [string] $TraceId, [string] $ArtifactDir)
     Assert-Equal -Expected $OpenUrl -Actual $Url -Message 'browser receives coordinator open URL'
     Assert-Equal -Expected $RootTraceId -Actual $TraceId -Message 'browser receives root trace'
-    New-Item -ItemType Directory -Path $ArtifactDir -Force | Out-Null
-    $screenshot = Join-Path $ArtifactDir 'struct-log-bootstrap.png'
-    $trace = Join-Path $ArtifactDir 'struct-log-bootstrap-trace.zip'
-    Set-Content -LiteralPath $screenshot -Value 'png-bytes' -Encoding utf8
-    Set-Content -LiteralPath $trace -Value 'trace-bytes' -Encoding utf8
-    return [pscustomobject]@{
-        ok = $true
-        traceId = $TraceId
-        screenshotPath = $screenshot
-        tracePath = $trace
-    }
+    return New-TestBrowserResult -Url $Url -TraceId $TraceId -ArtifactDir $ArtifactDir
 }.GetNewClosure()
 Invoke-TestSmoke -Paths $success -RequestHandler $successRequests.Handler -BrowserHandler $successBrowser
 $sourceListCalls = @($successRequests.Calls | Where-Object { $_.method -eq 'GET' -and $_.url -match '/api/dev/ifc-sources$' })
@@ -235,7 +347,7 @@ Assert-Equal -Expected 1 -Actual $sourceRegisterCalls.Count -Message 'supported 
 Assert-Equal -Expected 0 -Actual $directFileUriIntakeCalls.Count -Message 'supported smoke never bypasses coordinator download with direct file URI intake'
 Assert-True -Condition ($dispatchPollCalls.Count -ge 1) -Message 'async coordinator job is polled until conversion_job_id appears'
 $successCloseCalls = @($successRequests.Calls | Where-Object url -match '/api/review-sessions/.+/close$')
-Assert-Equal -Expected 1 -Actual $successCloseCalls.Count -Message 'successful browser closes session exactly once after artifacts'
+Assert-Equal -Expected 0 -Actual $successCloseCalls.Count -Message 'browser-proven exact close skips runner fallback close'
 
 $successRecords = Read-StructRecords -LogRoot $success.LogRoot
 Assert-RecordsValidate -Records $successRecords -Scenario 'success'
@@ -263,8 +375,16 @@ Assert-Equal -Expected $RootTraceId -Actual $successTier.detail.root_trace_id -M
 Assert-Equal -Expected $OpenUrl -Actual $successTier.detail.open_url -Message 'evidence open URL'
 Assert-Equal -Expected $SessionId -Actual $successTier.detail.review_session_id -Message 'evidence review session'
 Assert-Equal -Expected 'test_double_observed' -Actual $successTier.detail.browser_status -Message 'test-double browser status is not live passed'
-Assert-True -Condition ((Get-Item -LiteralPath $successTier.detail.browser_artifacts.screenshot_path).Length -gt 0) -Message 'nonempty screenshot evidence'
-Assert-True -Condition ((Get-Item -LiteralPath $successTier.detail.browser_artifacts.playwright_trace_path).Length -gt 0) -Message 'nonempty trace evidence'
+Assert-Equal -Expected 'browser' -Actual $successTier.detail.close_origin -Message 'browser close origin is explicit'
+Assert-Equal -Expected 'kit_test_123' -Actual $successTier.ids.kit_instance_id -Message 'canonical Kit id is projected from the rendered viewer surface'
+Assert-Equal -Expected ($ExpectedBrowserStates -join ',') -Actual (@($successTier.detail.browser_artifacts.state_transitions) -join ',') -Message 'browser evidence preserves ordered product state transitions'
+Assert-Equal -Expected 'playwright_intercepted_503' -Actual $successTier.detail.browser_artifacts.failure_provenance -Message 'forced failure provenance is explicit'
+foreach ($entry in $BrowserArtifactNames.GetEnumerator()) {
+    $relativePath = [string]$successTier.detail.browser_artifacts.artifacts.$($entry.Key).path
+    Assert-Equal -Expected "browser/$($entry.Value)" -Actual ($relativePath.Replace('\','/')) -Message "$($entry.Key) evidence path is attempt-relative"
+    Assert-True -Condition (-not [IO.Path]::IsPathRooted($relativePath)) -Message "$($entry.Key) evidence never stores an absolute path"
+    Assert-True -Condition ((Get-Item -LiteralPath (Join-Path $success.Root $relativePath)).Length -gt 0) -Message "$($entry.Key) evidence is nonempty"
+}
 Assert-Equal -Expected 'test_double' -Actual $successTier.detail.browser_artifacts.provenance -Message 'browser artifact provenance'
 Assert-Equal -Expected 'closed' -Actual $successTier.detail.close_status -Message 'evidence close status'
 $liveTierNames = @('real_ifc_fixture', 'real_ifc_intake_conversion', 'mapping_quality', 'runtime_image_kit_launcher', 'single_kit_render', 'single_kit_multi_viewer', 'usd_stage_composition')
@@ -281,6 +401,47 @@ Assert-True -Condition (-not $successLogText.Contains($WebhookSecret)) -Message 
 Assert-True -Condition (-not $successLogText.Contains($InternalToken)) -Message 'internal token absent from logs'
 $callbackCall = @($successRequests.Calls | Where-Object url -match '/api/internal/conversion-result$') | Select-Object -First 1
 Assert-Equal -Expected 'corr_devreg_test_123' -Actual $callbackCall.body.correlation_id -Message 'callback uses register job correlation_id'
+
+Write-Host '[test-smoke-bscheme-structured-log] legacy or incomplete browser result fails closed and uses runner fallback'
+$legacy = New-TestRoot
+$legacyRequests = New-RequestHarness
+$legacyBrowser = {
+    param([string] $Url, [string] $TraceId, [string] $ArtifactDir)
+    New-Item -ItemType Directory -Path $ArtifactDir -Force | Out-Null
+    $screenshot = Join-Path $ArtifactDir 'struct-log-bootstrap.png'
+    $trace = Join-Path $ArtifactDir 'struct-log-bootstrap-trace.zip'
+    Set-Content -LiteralPath $screenshot -Value 'legacy-png' -Encoding utf8
+    Set-Content -LiteralPath $trace -Value 'legacy-trace' -Encoding utf8
+    return [pscustomobject]@{ ok=$true; traceId=$TraceId; screenshotPath=$screenshot; tracePath=$trace }
+}
+Invoke-TestSmoke -Paths $legacy -RequestHandler $legacyRequests.Handler -BrowserHandler $legacyBrowser
+$legacyEvidence = Get-Content -LiteralPath $legacy.EvidencePath -Raw | ConvertFrom-Json
+$legacyTier = $legacyEvidence.tiers | Where-Object tier -eq 'real_ifc_intake_conversion'
+Assert-Equal -Expected 'failed' -Actual $legacyTier.detail.browser_status -Message 'legacy two-artifact result cannot become browser pass evidence'
+Assert-Equal -Expected 'runner_fallback' -Actual $legacyTier.detail.close_origin -Message 'incomplete helper evidence is closed by runner fallback'
+Assert-Equal -Expected 1 -Actual @($legacyRequests.Calls | Where-Object url -match '/api/review-sessions/.+/close$').Count -Message 'legacy helper result triggers exactly one fallback close'
+
+Write-Host '[test-smoke-bscheme-structured-log] helper artifact path and hash claims fail closed'
+foreach ($artifactMutation in @('path_escape','hash_mismatch')) {
+    $invalidArtifact = New-TestRoot
+    $invalidArtifactRequests = New-RequestHarness
+    $invalidArtifactBrowser = {
+        param([string] $Url, [string] $TraceId, [string] $ArtifactDir)
+        $result = New-TestBrowserResult -Url $Url -TraceId $TraceId -ArtifactDir $ArtifactDir
+        if ($artifactMutation -eq 'path_escape') {
+            $result.artifacts.failure_screenshot.path = '..\structured-log-failure.png'
+        } else {
+            $result.artifacts.failure_screenshot.sha256 = ('0' * 64)
+        }
+        return $result
+    }.GetNewClosure()
+    Invoke-TestSmoke -Paths $invalidArtifact -RequestHandler $invalidArtifactRequests.Handler -BrowserHandler $invalidArtifactBrowser
+    $invalidArtifactEvidence = Get-Content -LiteralPath $invalidArtifact.EvidencePath -Raw | ConvertFrom-Json
+    $invalidArtifactTier = $invalidArtifactEvidence.tiers | Where-Object tier -eq 'real_ifc_intake_conversion'
+    Assert-Equal -Expected 'failed' -Actual $invalidArtifactTier.detail.browser_status -Message "$artifactMutation helper evidence is rejected"
+    Assert-Equal -Expected 'runner_fallback' -Actual $invalidArtifactTier.detail.close_origin -Message "$artifactMutation uses explicit runner fallback"
+    Assert-Equal -Expected 1 -Actual @($invalidArtifactRequests.Calls | Where-Object url -match '/api/review-sessions/.+/close$').Count -Message "$artifactMutation triggers one fallback close"
+}
 
 Write-Host '[test-smoke-bscheme-structured-log] deadline-boundary dispatch success is evaluated before timeout'
 $boundarySuccess = New-TestRoot
@@ -341,9 +502,21 @@ $failureEvidence = $failureEvidenceText | ConvertFrom-Json
 $failureTier = $failureEvidence.tiers | Where-Object tier -eq 'real_ifc_intake_conversion'
 Assert-Equal -Expected 'failed' -Actual $failureTier.detail.browser_status -Message 'failed browser evidence status'
 Assert-Equal -Expected 'closed' -Actual $failureTier.detail.close_status -Message 'failed browser cleanup close status'
+Assert-Equal -Expected 'runner_fallback' -Actual $failureTier.detail.close_origin -Message 'browser failure records runner fallback origin'
 Assert-True -Condition ([string]$failureTier.detail.lifecycle_error -match 'mock browser bootstrap failure') -Message 'primary browser error preserved'
 Assert-True -Condition (-not $failureEvidenceText.Contains($WebhookSecret)) -Message 'webhook secret absent from failure evidence'
 Assert-True -Condition (-not $failureEvidenceText.Contains($InternalToken)) -Message 'internal token absent from failure evidence'
+
+Write-Host '[test-smoke-bscheme-structured-log] unsafe coordinator open URL is rejected before evidence serialization'
+$unsafeOpen = New-TestRoot
+$unsafeOpenRequests = New-RequestHarness -FailureMode 'unsafe_open_url'
+$unsafeOpenBrowser = { throw 'browser must not run for an unsafe coordinator redirect' }
+Invoke-TestSmoke -Paths $unsafeOpen -RequestHandler $unsafeOpenRequests.Handler -BrowserHandler $unsafeOpenBrowser
+$unsafeOpenEvidenceRaw = Get-Content -Raw -LiteralPath $unsafeOpen.EvidencePath
+$unsafeOpenLogRaw = @(Get-ChildItem -LiteralPath $unsafeOpen.LogRoot -Recurse -Filter '*.jsonl' -File | Get-Content -Raw) -join "`n"
+Assert-True -Condition ($unsafeOpenEvidenceRaw -notmatch 'test-only-forbidden') -Message 'unsafe open URL value never enters evidence'
+Assert-True -Condition ($unsafeOpenLogRaw -notmatch 'test-only-forbidden') -Message 'unsafe open URL value never enters structured logs'
+Assert-Equal -Expected 1 -Actual @($unsafeOpenRequests.Calls | Where-Object url -match '/api/review-sessions/.+/close$').Count -Message 'unsafe redirect still closes the created session exactly once'
 
 Write-Host '[test-smoke-bscheme-structured-log] cleanup failure is independent from primary browser failure'
 $cleanupFailure = New-TestRoot
@@ -360,6 +533,7 @@ $cleanupEvidenceText = Get-Content -LiteralPath $cleanupFailure.EvidencePath -Ra
 $cleanupTier = $cleanupEvidence.tiers | Where-Object tier -eq 'real_ifc_intake_conversion'
 Assert-True -Condition ([string]$cleanupTier.detail.lifecycle_error -match 'mock browser bootstrap failure') -Message 'cleanup failure does not overwrite primary error'
 Assert-Equal -Expected 'failed' -Actual $cleanupTier.detail.close_status -Message 'cleanup failure close status'
+Assert-Equal -Expected 'runner_fallback' -Actual $cleanupTier.detail.close_origin -Message 'cleanup failure remains attributable to runner fallback'
 Assert-True -Condition ([string]$cleanupTier.detail.close_error -match 'mock cleanup close failure') -Message 'cleanup error recorded independently'
 Assert-True -Condition (-not $cleanupEvidenceText.Contains($WebhookSecret) -and -not $cleanupEvidenceText.Contains($InternalToken)) -Message 'secrets absent from cleanup failure evidence'
 

@@ -9,6 +9,15 @@ $ErrorActionPreference = 'Stop'
 
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $RunnerPath = Join-Path $RepoRoot 'scripts\dev\run-structured-log-runtime-evidence.ps1'
+$ExpectedBrowserStates = @('ready','flush_loading','flush_failure','retry_loading','flush_success','close_loading','closed')
+$TestBrowserArtifactNames = @(
+    'browser/structured-log-failure.png',
+    'browser/structured-log-success-closed.png',
+    'browser/structured-log-trace.zip',
+    'browser/structured-log-console.json',
+    'browser/structured-log-network.json',
+    'browser/structured-log-operability.json'
+)
 if (Test-Path -LiteralPath $RunnerPath) {
     . $RunnerPath
 }
@@ -54,12 +63,14 @@ function Write-TestSmokeEvidence {
         [ValidateSet('passed','blocked')] [string] $TierStatus = 'passed',
         [ValidateSet('production','test_double')] [string] $ExecutionMode = 'production',
         [ValidateRange(0, 2)] [int] $TierCount = 1,
-        [ValidateSet('none','root_mismatch','ambiguous_conversion','ambiguous_review','browser_failed','close_failed')]
+        [ValidateSet('none','root_mismatch','ambiguous_conversion','ambiguous_review','browser_failed','close_failed','kit_missing','close_origin')]
         [string] $Mutation = 'none'
     )
     $ifcReadyJobId = if ($Mutation -eq 'root_mismatch') { 'ifcready_conflict' } else { 'ifcready_testroot' }
     $browserStatus = if ($Mutation -eq 'browser_failed') { 'failed' } else { 'passed' }
     $closeStatus = if ($Mutation -eq 'close_failed') { 'failed' } else { 'closed' }
+    $kitInstanceId = if ($Mutation -eq 'kit_missing') { $null } else { 'kit_test_1' }
+    $closeOrigin = if ($Mutation -eq 'close_origin') { 'runner_fallback' } else { 'browser' }
     $tiers = @()
     for ($index = 0; $index -lt $TierCount; $index++) {
         $tiers += [ordered]@{
@@ -69,6 +80,7 @@ function Write-TestSmokeEvidence {
             ids = [ordered]@{
                 ifc_ready_job_id = $ifcReadyJobId
                 conversion_job_id = 'conv_1'
+                kit_instance_id = $kitInstanceId
             }
             detail = [ordered]@{
                 execution_mode = $ExecutionMode
@@ -76,6 +88,26 @@ function Write-TestSmokeEvidence {
                 review_session_id = 'session_1'
                 browser_status = $browserStatus
                 close_status = $closeStatus
+                close_origin = $closeOrigin
+                browser_artifacts = [ordered]@{
+                    root_trace_id = 'ifcready_testroot'
+                    review_session_id = 'session_1'
+                    conversion_job_id = 'conv_1'
+                    kit_instance_id = $kitInstanceId
+                    state_transitions = $ExpectedBrowserStates
+                    failure_provenance = 'playwright_intercepted_503'
+                    forced_viewer_log_statuses = @(503,503,503)
+                    retry_viewer_log_status = 200
+                    close_http_status = 200
+                    artifacts = [ordered]@{
+                        failure_screenshot = [ordered]@{path='browser/structured-log-failure.png'}
+                        final_screenshot = [ordered]@{path='browser/structured-log-success-closed.png'}
+                        playwright_trace = [ordered]@{path='browser/structured-log-trace.zip'}
+                        console_events = [ordered]@{path='browser/structured-log-console.json'}
+                        network_events = [ordered]@{path='browser/structured-log-network.json'}
+                        operability = [ordered]@{path='browser/structured-log-operability.json'}
+                    }
+                }
             }
         }
     }
@@ -126,6 +158,7 @@ function Get-TestRequiredArtifactNames {
         'shutdown.json',
         'pr-fields.json',
         'evidence-summary.md'
+        $TestBrowserArtifactNames
     )
 }
 
@@ -141,6 +174,7 @@ function New-TestCanonicalReadiness {
             ids = [ordered]@{
                 ifc_ready_job_id = $RootTraceId
                 conversion_job_id = 'stream_conv_1'
+                kit_instance_id = 'kit_instance_1'
             }
             detail = [ordered]@{
                 execution_mode = 'production'
@@ -148,18 +182,81 @@ function New-TestCanonicalReadiness {
                 review_session_id = 'review_session_1'
                 browser_status = 'passed'
                 close_status = 'closed'
+                close_origin = 'browser'
                 browser_artifacts = [ordered]@{
-                    screenshot_path = 'shot.png'
-                    playwright_trace_path = 'trace.zip'
+                    root_trace_id = $RootTraceId
+                    review_session_id = 'review_session_1'
+                    conversion_job_id = 'stream_conv_1'
+                    kit_instance_id = 'kit_instance_1'
+                    state_transitions = $ExpectedBrowserStates
+                    failure_provenance = 'playwright_intercepted_503'
+                    forced_viewer_log_statuses = @(503,503,503)
+                    retry_viewer_log_status = 200
+                    close_http_status = 200
+                    artifacts = [ordered]@{
+                        failure_screenshot = [ordered]@{path='browser/structured-log-failure.png'}
+                        final_screenshot = [ordered]@{path='browser/structured-log-success-closed.png'}
+                        playwright_trace = [ordered]@{path='browser/structured-log-trace.zip'}
+                        console_events = [ordered]@{path='browser/structured-log-console.json'}
+                        network_events = [ordered]@{path='browser/structured-log-network.json'}
+                        operability = [ordered]@{path='browser/structured-log-operability.json'}
+                    }
                 }
             }
         })
     }
 }
 
+function Write-TestBrowserArtifacts {
+    param([Parameter(Mandatory)] [string] $AttemptRoot)
+    $browserDir = Join-Path $AttemptRoot 'browser'
+    New-Item -ItemType Directory -Path $browserDir -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $browserDir 'structured-log-failure.png') -Value 'failure-png' -Encoding utf8
+    Set-Content -LiteralPath (Join-Path $browserDir 'structured-log-success-closed.png') -Value 'success-png' -Encoding utf8
+    Write-TestPrivacyTrace -Path (Join-Path $browserDir 'structured-log-trace.zip')
+    [ordered]@{schema_version='1';events=@([ordered]@{seq=1;type='log'})} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $browserDir 'structured-log-console.json') -Encoding utf8
+    [ordered]@{schema_version='1';events=@(
+        [ordered]@{seq=1;method='POST';path='/api/internal/viewer-log';status=503;phase='forced_failure';provenance='playwright_intercepted'},
+        [ordered]@{seq=2;method='POST';path='/api/internal/viewer-log';status=200;phase='retry_success';provenance='coordinator'},
+        [ordered]@{seq=3;method='POST';path='/api/review-sessions/review_session_1/close';status=200;phase='browser_close';provenance='coordinator'}
+    )} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $browserDir 'structured-log-network.json') -Encoding utf8
+    $operabilityArtifacts = [ordered]@{}
+    foreach ($entry in ([ordered]@{
+        failure_screenshot='structured-log-failure.png'
+        final_screenshot='structured-log-success-closed.png'
+        playwright_trace='structured-log-trace.zip'
+        console_events='structured-log-console.json'
+        network_events='structured-log-network.json'
+    }).GetEnumerator()) {
+        $artifactPath = Join-Path $browserDir $entry.Value
+        $operabilityArtifacts[$entry.Key] = [ordered]@{
+            path=$entry.Value
+            size_bytes=[int64](Get-Item -LiteralPath $artifactPath).Length
+            sha256=(Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+    }
+    [ordered]@{
+        schema_version='1'
+        root_trace_id='ifcready_root'
+        review_session_id='review_session_1'
+        conversion_job_id='stream_conv_1'
+        kit_instance_id='kit_instance_1'
+        browser_run_id='run_20260728_010203_abcdef'
+        state_transitions=$ExpectedBrowserStates
+        failure_provenance='playwright_intercepted_503'
+        forced_viewer_log_statuses=@(503,503,503)
+        retry_viewer_log_status=200
+        close_origin='browser'
+        close_status='closed'
+        close_http_status=200
+        artifacts=$operabilityArtifacts
+    } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $browserDir 'structured-log-operability.json') -Encoding utf8
+}
+
 function Write-TestCompleteArtifactManifest {
     param([string] $AttemptRoot, [string] $AttemptId)
     $now = '2026-07-24T00:00:00.0000000Z'
+    Write-TestBrowserArtifacts -AttemptRoot $AttemptRoot
     $jsonArtifacts = [ordered]@{
         'attempt-manifest.json' = [ordered]@{schema_version='1';attempt_id=$AttemptId;status='succeeded';root_trace_id='ifcready_root';ports=[ordered]@{Coordinator=8005;Viewer=5175;Conversion=49104};fixture_sha256=('a'*64)}
         'runtime-lease.json' = [ordered]@{schema_version='1';attempt_id=$AttemptId;processes=@()}
@@ -170,7 +267,7 @@ function Write-TestCompleteArtifactManifest {
         'root-trace-timeline.json' = [ordered]@{schema_version='1';root_trace_id='ifcready_root';records=@()}
         'runtime-log-validation.json' = [ordered]@{schema_version='1';status='passed';files=@();line_counts=[ordered]@{};event_counts=[ordered]@{};violations=@();redaction_violations=@()}
         'shutdown.json' = [ordered]@{schema_version='1';attempt_id=$AttemptId;status='succeeded';entries=@();foreign_listeners=@()}
-        'pr-fields.json' = [ordered]@{schema_version='1';attempt_id=$AttemptId;root_trace_id='ifcready_root';runtime_ids=[ordered]@{};shutdown_status='owned_shutdown_complete';tests='scripts/tests/test-run-structured-log-runtime-evidence.ps1';screenshot_trace=[ordered]@{screenshot=@();trace=@()};known_gaps=@()}
+        'pr-fields.json' = [ordered]@{schema_version='1';attempt_id=$AttemptId;root_trace_id='ifcready_root';runtime_ids=[ordered]@{ifc_ready_job_id=@('ifcready_root');conversion_job_id=@('stream_conv_1');review_session_id=@('review_session_1');kit_instance_id=@('kit_instance_1')};shutdown_status='owned_shutdown_complete';tests='scripts/tests/test-run-structured-log-runtime-evidence.ps1';screenshot_trace=[ordered]@{failure_screenshot='browser/structured-log-failure.png';final_screenshot='browser/structured-log-success-closed.png';trace='browser/structured-log-trace.zip'};browser_evidence=[ordered]@{console='browser/structured-log-console.json';network='browser/structured-log-network.json';operability='browser/structured-log-operability.json'};known_gaps=@()}
     }
     foreach ($artifact in $jsonArtifacts.GetEnumerator()) {
         $artifact.Value | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $AttemptRoot $artifact.Key) -Encoding utf8
@@ -183,6 +280,7 @@ function Write-TestCompleteArtifactManifest {
         $entries += [pscustomobject]@{
             name = $name
             path = $name
+            size_bytes = [int64](Get-Item -LiteralPath $path).Length
             sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
         }
     }
@@ -203,8 +301,66 @@ function Update-TestArtifactManifestHash {
     $manifestPath = Join-Path $AttemptRoot 'artifact-manifest.json'
     $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
     $entry = $manifest.files | Where-Object name -CEQ $Name | Select-Object -First 1
+    $entry.size_bytes = [int64](Get-Item -LiteralPath (Join-Path $AttemptRoot $Name)).Length
     $entry.sha256 = (Get-FileHash -LiteralPath (Join-Path $AttemptRoot $Name) -Algorithm SHA256).Hash.ToLowerInvariant()
     $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding utf8
+}
+
+function Update-TestBrowserArtifactBindings {
+    param([string] $AttemptRoot, [string] $Role, [string] $Name)
+    $artifactPath = Join-Path $AttemptRoot "browser/$Name"
+    $operabilityPath = Join-Path $AttemptRoot 'browser/structured-log-operability.json'
+    $operability = Get-Content -Raw -LiteralPath $operabilityPath | ConvertFrom-Json
+    $descriptor = $operability.artifacts.PSObject.Properties[$Role].Value
+    $descriptor.path = $Name
+    $descriptor.size_bytes = [int64](Get-Item -LiteralPath $artifactPath).Length
+    $descriptor.sha256 = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $operability | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $operabilityPath -Encoding utf8
+    Update-TestArtifactManifestHash -AttemptRoot $AttemptRoot -Name "browser/$Name"
+    Update-TestArtifactManifestHash -AttemptRoot $AttemptRoot -Name 'browser/structured-log-operability.json'
+}
+
+function Get-TestPrivacyTraceEntries {
+    param(
+        [string] $Url = 'http://127.0.0.1:8005/ui/open?session=review_session_1&trace_id=ifcready_root',
+        [string] $UnsafeProperty = '',
+        [string] $NetworkContent = '',
+        [object[]] $AdditionalEntries = @(),
+        [string[]] $AdditionalTraceLines = @(),
+        [byte[]] $StacksBytes = ([Text.Encoding]::UTF8.GetBytes('{"files":["playwright-helper-0.mjs"],"stacks":[]}')),
+        [int] $StacksExternalAttributes = 0
+    )
+    $before = [ordered]@{type='before';callId='call@1';startTime=1;apiName='page.goto';class='Frame';method='goto';params=[ordered]@{url=$Url}}
+    if (-not [string]::IsNullOrWhiteSpace($UnsafeProperty)) { $before.params[$UnsafeProperty] = 'test-only-forbidden-value' }
+    $traceLines = @(
+        ([ordered]@{type='context-options';version='1';browserName='chromium';options=[ordered]@{}} | ConvertTo-Json -Compress -Depth 10),
+        ($before | ConvertTo-Json -Compress -Depth 10),
+        ([ordered]@{type='after';callId='call@1';endTime=2} | ConvertTo-Json -Compress -Depth 10)
+    ) + @($AdditionalTraceLines)
+    $trace = $traceLines -join "`n"
+    $effectiveStacksExternalAttributes = if ($StacksExternalAttributes -ne 0) { $StacksExternalAttributes } else { -2119958528 }
+    $entries = @(
+        [pscustomobject]@{Name='trace.trace';Bytes=[Text.Encoding]::UTF8.GetBytes("$trace`n");ExternalAttributes=-2119958528},
+        [pscustomobject]@{Name='trace.network';Bytes=[Text.Encoding]::UTF8.GetBytes($NetworkContent);ExternalAttributes=-2119958528},
+        [pscustomobject]@{Name='trace.stacks';Bytes=$StacksBytes;ExternalAttributes=$effectiveStacksExternalAttributes}
+    )
+    return @($entries + $AdditionalEntries)
+}
+
+function Write-TestPrivacyTrace {
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [string] $Url = 'http://127.0.0.1:8005/ui/open?session=review_session_1&trace_id=ifcready_root',
+        [string] $UnsafeProperty = '',
+        [string] $NetworkContent = '',
+        [object[]] $AdditionalEntries = @(),
+        [string[]] $AdditionalTraceLines = @(),
+        [byte[]] $StacksBytes = ([Text.Encoding]::UTF8.GetBytes('{"files":["playwright-helper-0.mjs"],"stacks":[]}')),
+        [int] $StacksExternalAttributes = 0
+    )
+    New-TestZip -Path $Path -Entries (Get-TestPrivacyTraceEntries -Url $Url -UnsafeProperty $UnsafeProperty `
+        -NetworkContent $NetworkContent -AdditionalEntries $AdditionalEntries -AdditionalTraceLines $AdditionalTraceLines `
+        -StacksBytes $StacksBytes -StacksExternalAttributes $StacksExternalAttributes)
 }
 
 function New-TestKitAssets {
@@ -237,8 +393,17 @@ function New-TestZip {
                 $entry = $archive.CreateEntry([string]$item.Name)
                 if ($null -ne $item.PSObject.Properties['ExternalAttributes']) { $entry.ExternalAttributes = [int]$item.ExternalAttributes }
                 if (-not ([string]$item.Name).EndsWith('/')) {
-                    $writer = [IO.StreamWriter]::new($entry.Open())
-                    try { $writer.Write([string]$item.Content) } finally { $writer.Dispose() }
+                    $bytesProperty = $item.PSObject.Properties['Bytes']
+                    if ($null -ne $bytesProperty) {
+                        $entryStream = $entry.Open()
+                        try {
+                            [byte[]]$bytes = $bytesProperty.Value
+                            $entryStream.Write($bytes,0,$bytes.Length)
+                        } finally { $entryStream.Dispose() }
+                    } else {
+                        $writer = [IO.StreamWriter]::new($entry.Open())
+                        try { $writer.Write([string]$item.Content) } finally { $writer.Dispose() }
+                    }
                 }
             }
         } finally { $archive.Dispose() }
@@ -635,7 +800,7 @@ param(
     [switch] $SkipKitLauncher
 )
 Write-Output 'child stdout that must not become the exit code'
-@{ schema_version='demo-runtime-readiness-smoke/v1'; context=@{execution_mode='production'}; tiers=@(@{tier='real_ifc_intake_conversion';status='passed';blocker='';ids=@{ifc_ready_job_id='ifcready_default';conversion_job_id='conv_default'};detail=@{execution_mode='production';root_trace_id='ifcready_default';review_session_id='session_default';browser_status='passed';close_status='closed'}}) } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $EvidencePath
+@{ schema_version='demo-runtime-readiness-smoke/v1'; context=@{execution_mode='production'}; tiers=@(@{tier='real_ifc_intake_conversion';status='passed';blocker='';ids=@{ifc_ready_job_id='ifcready_default';conversion_job_id='conv_default';kit_instance_id='kit_default'};detail=@{execution_mode='production';root_trace_id='ifcready_default';review_session_id='session_default';browser_status='passed';close_status='closed';close_origin='browser';browser_artifacts=@{root_trace_id='ifcready_default';review_session_id='session_default';conversion_job_id='conv_default';kit_instance_id='kit_default';state_transitions=@('ready','flush_loading','flush_failure','retry_loading','flush_success','close_loading','closed');failure_provenance='playwright_intercepted_503';forced_viewer_log_statuses=@(503,503,503);retry_viewer_log_status=200;close_http_status=200;artifacts=@{failure_screenshot=@{path='browser/structured-log-failure.png'};final_screenshot=@{path='browser/structured-log-success-closed.png'};playwright_trace=@{path='browser/structured-log-trace.zip'};console_events=@{path='browser/structured-log-console.json'};network_events=@{path='browser/structured-log-network.json'};operability=@{path='browser/structured-log-operability.json'}}}}}) } | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $EvidencePath
 exit 0
 '@
         $specs = @(
@@ -697,7 +862,9 @@ exit 0
             [pscustomobject]@{Name='ambiguous-conversion';Status='passed';Mode='production';Count=1;Mutation='ambiguous_conversion';Pattern='ambiguous-conversion_job_id'},
             [pscustomobject]@{Name='ambiguous-review';Status='passed';Mode='production';Count=1;Mutation='ambiguous_review';Pattern='ambiguous-review_session_id'},
             [pscustomobject]@{Name='browser-failed';Status='passed';Mode='production';Count=1;Mutation='browser_failed';Pattern='browser-status'},
-            [pscustomobject]@{Name='close-failed';Status='passed';Mode='production';Count=1;Mutation='close_failed';Pattern='close-status'}
+            [pscustomobject]@{Name='close-failed';Status='passed';Mode='production';Count=1;Mutation='close_failed';Pattern='close-status'},
+            [pscustomobject]@{Name='kit-missing';Status='passed';Mode='production';Count=1;Mutation='kit_missing';Pattern='kit-instance-id'},
+            [pscustomobject]@{Name='runner-close';Status='passed';Mode='production';Count=1;Mutation='close_origin';Pattern='close-origin'}
         )) {
             $provenanceBefore = @(Get-Content -LiteralPath $ctx.ProvenancePath).Count
             Assert-Throws {
@@ -811,6 +978,7 @@ function Invoke-ArtifactRendererCase {
         @{schema_version='1';attempt_id=$ctx.AttemptId;status='succeeded';entries=@();foreign_listeners=@()}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $ctx.AttemptRoot 'shutdown.json')
         [ordered]@{seq=1;ts_utc=$now;started_utc=$now;ended_utc=$now;phase='test';command='test';cwd=$root;status='passed';exit_code=0}|ConvertTo-Json -Compress|Set-Content -LiteralPath $ctx.ProvenancePath
         New-TestCanonicalReadiness | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $ctx.AttemptRoot 'bscheme-readiness.json')
+        Write-TestBrowserArtifacts -AttemptRoot $ctx.AttemptRoot
         $report = Write-StructuredLogEvidenceArtifacts -Context $ctx -ValidatorInvoker {
             param($python, $arguments, $outputPath)
             @{schema_version='1';status='passed';files=@('scripts/x.jsonl');line_counts=@{};event_counts=@{};violations=@();redaction_violations=@()}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $outputPath
@@ -843,6 +1011,10 @@ function Invoke-ArtifactRendererCase {
         Assert-Equal 'succeeded' $baseline.status 'manifest status is canonical'
         Assert-Equal ((Get-TestRequiredArtifactNames | Sort-Object) -join ',') (@($baseline.files.path | Sort-Object) -join ',') 'manifest contains the exact required artifact set'
         Assert-True (@($baseline.files | Where-Object { [string]$_.sha256 -notmatch '^[0-9a-f]{64}$' }).Count -eq 0) 'all manifest hashes are canonical SHA-256'
+        Assert-True (@($baseline.files | Where-Object { [int64]$_.size_bytes -le 0 }).Count -eq 0) 'all manifest entries bind a positive artifact size'
+        Assert-Equal 'browser/structured-log-failure.png' $report.screenshot_trace.failure_screenshot 'manifest projects the failure screenshot by role'
+        Assert-Equal 'browser/structured-log-success-closed.png' $report.screenshot_trace.final_screenshot 'manifest projects the final screenshot by role'
+        Assert-Equal 'browser/structured-log-operability.json' $report.browser_evidence.operability 'manifest projects machine-readable browser evidence'
 
         $writeMutation = {
             param($value)
@@ -879,9 +1051,16 @@ function Invoke-ArtifactRendererCase {
         $mutation.files[0].sha256 = 'not-a-sha256'
         & $writeMutation $mutation
 
+        $mutation = $baseline | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+        $mutation.files[0].size_bytes = [int64]$mutation.files[0].size_bytes + 1
+        & $writeMutation $mutation
+
         $baseline | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding utf8
         Add-Content -LiteralPath (Join-Path $ctx.AttemptRoot 'health.json') -Value 'tamper'
         Assert-True (-not (Test-StructuredLogArtifactManifest -AttemptRoot $ctx.AttemptRoot).valid) 'tampered artifact rejected'
+        $baseline | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding utf8
+        Add-Content -LiteralPath (Join-Path $ctx.AttemptRoot 'browser\structured-log-operability.json') -Value 'browser-tamper'
+        Assert-True (-not (Test-StructuredLogArtifactManifest -AttemptRoot $ctx.AttemptRoot).valid) 'tampered browser artifact rejected'
         $baseline | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding utf8
         Remove-Item -LiteralPath (Join-Path $ctx.AttemptRoot 'fixture.json') -Force
         Assert-True (-not (Test-StructuredLogArtifactManifest -AttemptRoot $ctx.AttemptRoot).valid) 'missing artifact rejected'
@@ -892,7 +1071,13 @@ function Invoke-ArtifactRendererCase {
             New-Item -ItemType Directory -Path $semanticAttempt -Force | Out-Null
             Write-TestCompleteArtifactManifest -AttemptRoot $semanticAttempt -AttemptId 'attempt-semantic'
             Assert-True (Test-StructuredLogArtifactManifest -AttemptRoot $semanticAttempt).valid 'complete semantic fixture validates'
-            foreach ($semanticCase in @('malformed','version','wrong-attempt','shutdown-status','attempt-status','jsonl-seq','markdown-heading')) {
+            foreach ($semanticCase in @(
+                'malformed','version','wrong-attempt','shutdown-status','attempt-status','jsonl-seq','markdown-heading',
+                'browser-operability-root','browser-operability-artifact-size','browser-operability-artifact-string','browser-operability-artifact-missing-field',
+                'browser-network-forbidden','trace-network','trace-postdata','trace-authorization','trace-escaped-authorization','trace-query',
+                'trace-escaped-unscoped-url','trace-screencast-event','trace-body-resource','trace-traversal','trace-duplicate','trace-symlink',
+                'trace-oversize','trace-escaped-stack-key','trace-escaped-stack-path'
+            )) {
                 Write-TestCompleteArtifactManifest -AttemptRoot $semanticAttempt -AttemptId 'attempt-semantic'
                 switch ($semanticCase) {
                     'malformed' { Set-Content -LiteralPath (Join-Path $semanticAttempt 'machine.json') -Value '{not-json'; Update-TestArtifactManifestHash $semanticAttempt 'machine.json' }
@@ -902,8 +1087,40 @@ function Invoke-ArtifactRendererCase {
                     'attempt-status' { $value=Get-Content -Raw (Join-Path $semanticAttempt 'attempt-manifest.json')|ConvertFrom-Json;$value.status='unknown';$value|ConvertTo-Json -Depth 8|Set-Content (Join-Path $semanticAttempt 'attempt-manifest.json');Update-TestArtifactManifestHash $semanticAttempt 'attempt-manifest.json' }
                     'jsonl-seq' { Add-Content -LiteralPath (Join-Path $semanticAttempt 'command-provenance.jsonl') -Value '{"seq":3,"ts_utc":"2026-07-24T00:00:01Z","started_utc":"2026-07-24T00:00:01Z","ended_utc":"2026-07-24T00:00:01Z","phase":"test","command":"test","cwd":"C:\\\\test","status":"passed","exit_code":0}';Update-TestArtifactManifestHash $semanticAttempt 'command-provenance.jsonl' }
                     'markdown-heading' { (Get-Content (Join-Path $semanticAttempt 'evidence-summary.md')|Where-Object {$_ -cne '## Verified facts'})|Set-Content (Join-Path $semanticAttempt 'evidence-summary.md');Update-TestArtifactManifestHash $semanticAttempt 'evidence-summary.md' }
+                    'browser-operability-root' { $value=Get-Content -Raw (Join-Path $semanticAttempt 'browser\structured-log-operability.json')|ConvertFrom-Json;$value.root_trace_id='ifcready_other';$value|ConvertTo-Json -Depth 8|Set-Content (Join-Path $semanticAttempt 'browser\structured-log-operability.json');Update-TestArtifactManifestHash $semanticAttempt 'browser/structured-log-operability.json' }
+                    'browser-operability-artifact-size' { $value=Get-Content -Raw (Join-Path $semanticAttempt 'browser\structured-log-operability.json')|ConvertFrom-Json;$value.artifacts.failure_screenshot.size_bytes=[int64]$value.artifacts.failure_screenshot.size_bytes+1;$value|ConvertTo-Json -Depth 8|Set-Content (Join-Path $semanticAttempt 'browser\structured-log-operability.json');Update-TestArtifactManifestHash $semanticAttempt 'browser/structured-log-operability.json' }
+                    'browser-operability-artifact-string' { $value=Get-Content -Raw (Join-Path $semanticAttempt 'browser\structured-log-operability.json')|ConvertFrom-Json;$value.artifacts.playwright_trace='structured-log-trace.zip';$value|ConvertTo-Json -Depth 8|Set-Content (Join-Path $semanticAttempt 'browser\structured-log-operability.json');Update-TestArtifactManifestHash $semanticAttempt 'browser/structured-log-operability.json' }
+                    'browser-operability-artifact-missing-field' { $value=Get-Content -Raw (Join-Path $semanticAttempt 'browser\structured-log-operability.json')|ConvertFrom-Json;$value.artifacts.playwright_trace.PSObject.Properties.Remove('sha256');$value|ConvertTo-Json -Depth 8|Set-Content (Join-Path $semanticAttempt 'browser\structured-log-operability.json');Update-TestArtifactManifestHash $semanticAttempt 'browser/structured-log-operability.json' }
+                    'browser-network-forbidden' { $value=Get-Content -Raw (Join-Path $semanticAttempt 'browser\structured-log-network.json')|ConvertFrom-Json;$value.events[0]|Add-Member -Force NoteProperty headers @{authorization='redacted-but-forbidden'};$value|ConvertTo-Json -Depth 8|Set-Content (Join-Path $semanticAttempt 'browser\structured-log-network.json');Update-TestArtifactManifestHash $semanticAttempt 'browser/structured-log-network.json' }
+                    'trace-network' { Write-TestPrivacyTrace -Path (Join-Path $semanticAttempt 'browser\structured-log-trace.zip') -NetworkContent '{"request":{"headers":[]}}';Update-TestBrowserArtifactBindings $semanticAttempt 'playwright_trace' 'structured-log-trace.zip' }
+                    'trace-postdata' { Write-TestPrivacyTrace -Path (Join-Path $semanticAttempt 'browser\structured-log-trace.zip') -UnsafeProperty 'postData';Update-TestBrowserArtifactBindings $semanticAttempt 'playwright_trace' 'structured-log-trace.zip' }
+                    'trace-authorization' { Write-TestPrivacyTrace -Path (Join-Path $semanticAttempt 'browser\structured-log-trace.zip') -UnsafeProperty 'authorization';Update-TestBrowserArtifactBindings $semanticAttempt 'playwright_trace' 'structured-log-trace.zip' }
+                    'trace-escaped-authorization' { Write-TestPrivacyTrace -Path (Join-Path $semanticAttempt 'browser\structured-log-trace.zip') -AdditionalTraceLines '{"type":"input","callId":"call@2","\u0061uthorization":"test-only-forbidden-value"}';Update-TestBrowserArtifactBindings $semanticAttempt 'playwright_trace' 'structured-log-trace.zip' }
+                    'trace-query' { Write-TestPrivacyTrace -Path (Join-Path $semanticAttempt 'browser\structured-log-trace.zip') -Url 'http://127.0.0.1:8005/ui/open?session=review_session_1&trace_id=ifcready_root&access_token=test-only';Update-TestBrowserArtifactBindings $semanticAttempt 'playwright_trace' 'structured-log-trace.zip' }
+                    'trace-escaped-unscoped-url' { Write-TestPrivacyTrace -Path (Join-Path $semanticAttempt 'browser\structured-log-trace.zip') -AdditionalTraceLines '{"type":"input","callId":"call@2","value":"https:\/\/evil.test\/secret"}';Update-TestBrowserArtifactBindings $semanticAttempt 'playwright_trace' 'structured-log-trace.zip' }
+                    'trace-screencast-event' { Write-TestPrivacyTrace -Path (Join-Path $semanticAttempt 'browser\structured-log-trace.zip') -AdditionalTraceLines '{"type":"screencast-frame","pageId":"page@1","sha1":"page@test-1.jpeg"}';Update-TestBrowserArtifactBindings $semanticAttempt 'playwright_trace' 'structured-log-trace.zip' }
+                    'trace-body-resource' { $extra=[pscustomobject]@{Name='resources/response-body.json';Bytes=[Text.Encoding]::UTF8.GetBytes('{}')};Write-TestPrivacyTrace -Path (Join-Path $semanticAttempt 'browser\structured-log-trace.zip') -AdditionalEntries @($extra);Update-TestBrowserArtifactBindings $semanticAttempt 'playwright_trace' 'structured-log-trace.zip' }
+                    'trace-traversal' { $extra=[pscustomobject]@{Name='../outside.txt';Bytes=[Text.Encoding]::UTF8.GetBytes('x')};Write-TestPrivacyTrace -Path (Join-Path $semanticAttempt 'browser\structured-log-trace.zip') -AdditionalEntries @($extra);Update-TestBrowserArtifactBindings $semanticAttempt 'playwright_trace' 'structured-log-trace.zip' }
+                    'trace-duplicate' { $extra=[pscustomobject]@{Name='TRACE.TRACE';Bytes=[Text.Encoding]::UTF8.GetBytes('{}')};Write-TestPrivacyTrace -Path (Join-Path $semanticAttempt 'browser\structured-log-trace.zip') -AdditionalEntries @($extra);Update-TestBrowserArtifactBindings $semanticAttempt 'playwright_trace' 'structured-log-trace.zip' }
+                    'trace-symlink' { Write-TestPrivacyTrace -Path (Join-Path $semanticAttempt 'browser\structured-log-trace.zip') -StacksExternalAttributes -1610612736;Update-TestBrowserArtifactBindings $semanticAttempt 'playwright_trace' 'structured-log-trace.zip' }
+                    'trace-oversize' { Write-TestPrivacyTrace -Path (Join-Path $semanticAttempt 'browser\structured-log-trace.zip') -StacksBytes ([byte[]]::new(5MB + 1));Update-TestBrowserArtifactBindings $semanticAttempt 'playwright_trace' 'structured-log-trace.zip' }
+                    'trace-escaped-stack-key' { Write-TestPrivacyTrace -Path (Join-Path $semanticAttempt 'browser\structured-log-trace.zip') -StacksBytes ([Text.Encoding]::UTF8.GetBytes('{"files":["playwright-helper-0.mjs"],"stacks":[],"\u0061uthorization":"test-only-forbidden-value"}'));Update-TestBrowserArtifactBindings $semanticAttempt 'playwright_trace' 'structured-log-trace.zip' }
+                    'trace-escaped-stack-path' { Write-TestPrivacyTrace -Path (Join-Path $semanticAttempt 'browser\structured-log-trace.zip') -StacksBytes ([Text.Encoding]::UTF8.GetBytes('{"files":["C:\u005cprivate\u005chelper.mjs"],"stacks":[]}'));Update-TestBrowserArtifactBindings $semanticAttempt 'playwright_trace' 'structured-log-trace.zip' }
                 }
                 Assert-True (-not (Test-StructuredLogArtifactManifest -AttemptRoot $semanticAttempt).valid) "$semanticCase semantic corruption is rejected even with a matching hash"
+            }
+
+            Write-TestCompleteArtifactManifest -AttemptRoot $semanticAttempt -AttemptId 'attempt-semantic'
+            $outsideBrowser = Join-Path $semanticRoot 'outside-browser'
+            Move-Item -LiteralPath (Join-Path $semanticAttempt 'browser') -Destination $outsideBrowser
+            $browserJunction = Join-Path $semanticAttempt 'browser'
+            try {
+                New-Item -ItemType Junction -Path $browserJunction -Target $outsideBrowser | Out-Null
+                $reparseResult = Test-StructuredLogArtifactManifest -AttemptRoot $semanticAttempt
+                Assert-True (-not $reparseResult.valid) 'browser artifact reparse ancestor is rejected even when hashes match'
+                Assert-True (@($reparseResult.errors | Where-Object { $_ -like 'reparse:browser/*' }).Count -gt 0) 'browser reparse rejection is explicit'
+            } finally {
+                if (Test-Path -LiteralPath $browserJunction) { Remove-Item -LiteralPath $browserJunction -Force }
             }
 
             $readinessCases = @(
@@ -923,7 +1140,13 @@ function Invoke-ArtifactRendererCase {
                 [pscustomobject]@{Name='review-missing';Error='readiness:review-session-id'},
                 [pscustomobject]@{Name='review-ambiguous';Error='readiness:ambiguous-review_session_id'},
                 [pscustomobject]@{Name='browser';Error='readiness:browser-status'},
-                [pscustomobject]@{Name='close';Error='readiness:close-status'}
+                [pscustomobject]@{Name='close';Error='readiness:close-status'},
+                [pscustomobject]@{Name='close-origin';Error='readiness:close-origin'},
+                [pscustomobject]@{Name='kit-missing';Error='readiness:kit-instance-id'},
+                [pscustomobject]@{Name='kit-mismatch';Error='readiness:browser-kit-instance-id'},
+                [pscustomobject]@{Name='states';Error='readiness:browser-state-transitions'},
+                [pscustomobject]@{Name='forced-status';Error='readiness:browser-forced-statuses'},
+                [pscustomobject]@{Name='retry-status';Error='readiness:browser-retry-status'}
             )
             foreach ($readinessCase in $readinessCases) {
                 Write-TestCompleteArtifactManifest -AttemptRoot $semanticAttempt -AttemptId 'attempt-semantic'
@@ -947,6 +1170,12 @@ function Invoke-ArtifactRendererCase {
                     'review-ambiguous' { $value | Add-Member -Force NoteProperty review_session_id 'review_session_other' }
                     'browser' { $value.tiers[0].detail.browser_status = 'failed' }
                     'close' { $value.tiers[0].detail.close_status = 'close_failed' }
+                    'close-origin' { $value.tiers[0].detail.close_origin = 'runner_fallback' }
+                    'kit-missing' { $value.tiers[0].ids.kit_instance_id = $null; $value.tiers[0].detail.browser_artifacts.kit_instance_id = $null }
+                    'kit-mismatch' { $value.tiers[0].detail.browser_artifacts.kit_instance_id = 'kit_other' }
+                    'states' { $value.tiers[0].detail.browser_artifacts.state_transitions = @('ready','flush_success','closed') }
+                    'forced-status' { $value.tiers[0].detail.browser_artifacts.forced_viewer_log_statuses = @(503,503) }
+                    'retry-status' { $value.tiers[0].detail.browser_artifacts.retry_viewer_log_status = 503 }
                 }
                 $value | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $readinessPath -Encoding utf8
                 Update-TestArtifactManifestHash $semanticAttempt 'bscheme-readiness.json'
@@ -976,6 +1205,7 @@ function Invoke-ArtifactRendererCase {
             }
             Set-Content -LiteralPath $validatorFailureContext.ProvenancePath -Value '{"seq":1,"status":"passed"}'
             New-TestCanonicalReadiness -RootTraceId 'ifcready_failure' | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $validatorFailureContext.AttemptRoot 'bscheme-readiness.json')
+            Write-TestBrowserArtifacts -AttemptRoot $validatorFailureContext.AttemptRoot
             Assert-Throws { Write-StructuredLogEvidenceArtifacts -Context $validatorFailureContext -ValidatorInvoker { return 7 } } 'validator failed|exit code 7' 'canonical validator failure is surfaced'
             $failedValidator = Get-Content -LiteralPath $validatorFailureContext.ProvenancePath | Select-Object -Last 1 | ConvertFrom-Json
             Assert-Equal 'runtime_validator' $failedValidator.phase 'validator failure phase'
@@ -1005,6 +1235,14 @@ function Invoke-AttemptReconcileCase {
         @{schema_version='1';head_oid='abc';attempt_id='attempt-ok';attempt_root=$attempt;status='succeeded';started_utc='2026-07-24T00:00:00Z';finished_utc='2026-07-24T00:01:00Z';lineage=@()}|ConvertTo-Json -Depth 8|Set-Content $pointer
         $resume=Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'abc'
         Assert-Equal 'resume_succeeded' $resume.action 'same HEAD succeeded resumes only with valid hashes'
+        $operabilityPath = Join-Path $attempt 'browser\structured-log-operability.json'
+        $malformedOperability = Get-Content -Raw -LiteralPath $operabilityPath | ConvertFrom-Json
+        $malformedOperability.artifacts.playwright_trace = 'structured-log-trace.zip'
+        $malformedOperability | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $operabilityPath -Encoding utf8
+        Update-TestArtifactManifestHash -AttemptRoot $attempt -Name 'browser/structured-log-operability.json'
+        $malformedDescriptor = Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'abc'
+        Assert-Equal 'invalid_succeeded_artifacts' $malformedDescriptor.action 'malformed browser descriptor invalidates succeeded attempt without throwing'
+        Write-TestCompleteArtifactManifest -AttemptRoot $attempt -AttemptId 'attempt-ok'
         $pointerState = Get-Content -Raw -LiteralPath $pointer | ConvertFrom-Json
         $pointerState.attempt_id = 'ATTEMPT-OK'
         $pointerState | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $pointer

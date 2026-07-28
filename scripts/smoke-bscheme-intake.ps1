@@ -59,6 +59,15 @@ if ($ExecutionProfile -eq 'owned_runtime' -and -not $SkipVerificationTiers) {
 }
 $ArtifactProvenance = if ($ExecutionMode -eq 'production') { 'playwright_live' } else { $ExecutionMode }
 $IsTestExecution = $ExecutionMode -ne 'production'
+$BrowserStateContract = @('ready','flush_loading','flush_failure','retry_loading','flush_success','close_loading','closed')
+$BrowserArtifactContract = [ordered]@{
+    failure_screenshot = 'structured-log-failure.png'
+    final_screenshot = 'structured-log-success-closed.png'
+    playwright_trace = 'structured-log-trace.zip'
+    console_events = 'structured-log-console.json'
+    network_events = 'structured-log-network.json'
+    operability = 'structured-log-operability.json'
+}
 
 Import-Module -Force (Join-Path $PSScriptRoot 'lib\StructLog.psm1')
 . (Join-Path $PSScriptRoot 'lib\smoke-evidence.ps1')
@@ -190,12 +199,111 @@ function Invoke-JsonRequest {
     return Invoke-RestMethod @params
 }
 
+function Get-UriQueryValues {
+    param([Parameter(Mandatory)] [Uri] $Uri, [Parameter(Mandatory)] [string] $Name)
+    $query = [System.Web.HttpUtility]::ParseQueryString($Uri.Query)
+    $values = $query.GetValues($Name)
+    if ($null -eq $values) { return @() }
+    return @($values)
+}
+
+function Assert-CoordinatorOpenUrl {
+    param(
+        [Parameter(Mandatory)] [string] $Url,
+        [Parameter(Mandatory)] [string] $CoordinatorBase,
+        [Parameter(Mandatory)] [string] $SessionId,
+        [Parameter(Mandatory)] [string] $TraceId
+    )
+    try {
+        $openUri = [Uri]::new($Url, [UriKind]::Absolute)
+        $baseUri = [Uri]::new($CoordinatorBase, [UriKind]::Absolute)
+    } catch {
+        throw 'viewer open URL or coordinator base is not an absolute URI'
+    }
+    if ($openUri.Scheme -notin @('http','https') -or -not [string]::IsNullOrWhiteSpace($openUri.UserInfo)) {
+        throw 'viewer open URL must be credential-free HTTP(S)'
+    }
+    if (-not $openUri.GetLeftPart([UriPartial]::Authority).Equals($baseUri.GetLeftPart([UriPartial]::Authority), [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'viewer open URL authority does not match the configured coordinator'
+    }
+    if ($openUri.AbsolutePath -cne '/ui/open' -or -not [string]::IsNullOrEmpty($openUri.Fragment)) {
+        throw 'viewer open URL must use the exact coordinator /ui/open handoff'
+    }
+    $query = [System.Web.HttpUtility]::ParseQueryString($openUri.Query)
+    foreach ($key in @($query.AllKeys)) {
+        if ($key -cnotin @('session','trace_id')) { throw "viewer open URL contains unexpected query carrier '$key'" }
+    }
+    $sessionValues = @(Get-UriQueryValues -Uri $openUri -Name 'session')
+    $traceValues = @(Get-UriQueryValues -Uri $openUri -Name 'trace_id')
+    if ($sessionValues.Count -ne 1 -or [string]$sessionValues[0] -cne $SessionId) {
+        throw 'viewer open URL must contain one case-exact review session carrier'
+    }
+    if ($traceValues.Count -ne 1 -or [string]$traceValues[0] -cne $TraceId) {
+        throw 'viewer open URL must contain one case-exact root trace carrier'
+    }
+}
+
+function Assert-BrowserArtifactRoot {
+    param(
+        [Parameter(Mandatory)] [string] $EvidencePath,
+        [Parameter(Mandatory)] [string] $ArtifactDir,
+        [switch] $RequireExisting
+    )
+    if (-not [IO.Path]::IsPathFullyQualified($EvidencePath) -or -not [IO.Path]::IsPathFullyQualified($ArtifactDir)) {
+        throw 'browser evidence and artifact paths must be absolute'
+    }
+    if ($ArtifactDir -match '(^|[\\/])\.\.?([\\/]|$)') { throw 'browser artifact root must not contain dot segments' }
+    $evidenceRoot = [IO.Path]::GetFullPath((Split-Path -Parent $EvidencePath)).TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)
+    $artifactRoot = [IO.Path]::GetFullPath($ArtifactDir).TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)
+    if ($artifactRoot -cne $ArtifactDir.TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)) {
+        throw 'browser artifact root is not canonical or case-correct'
+    }
+    $rootPrefix = $evidenceRoot + [IO.Path]::DirectorySeparatorChar
+    if (-not $artifactRoot.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'browser artifact root escaped the evidence root'
+    }
+    $relative = [IO.Path]::GetRelativePath($evidenceRoot, $artifactRoot)
+    if ([IO.Path]::IsPathRooted($relative) -or $relative -match '(^|[\\/])\.\.?([\\/]|$)') {
+        throw 'browser artifact root is not a canonical evidence descendant'
+    }
+    $evidenceRootItem = Get-Item -LiteralPath $evidenceRoot -Force -ErrorAction Stop
+    if (($evidenceRootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'browser evidence root must not be a reparse point'
+    }
+    $cursor = $evidenceRoot
+    foreach ($segment in @($relative -split '[\\/]')) {
+        if ([string]::IsNullOrWhiteSpace($segment)) { continue }
+        if (Test-Path -LiteralPath $cursor -PathType Container) {
+            $actual = Get-ChildItem -LiteralPath $cursor -Force -ErrorAction Stop | Where-Object { $_.Name -ieq $segment } | Select-Object -First 1
+            if ($null -ne $actual) {
+                if ([string]$actual.Name -cne $segment) { throw 'browser artifact path casing does not match the filesystem' }
+                if (($actual.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'browser artifact path contains a reparse point' }
+            }
+        }
+        $cursor = Join-Path $cursor $segment
+    }
+    if ($RequireExisting -and -not (Test-Path -LiteralPath $artifactRoot -PathType Container)) {
+        throw 'browser artifact root does not exist after helper completion'
+    }
+    return [pscustomobject]@{ evidence_root=$evidenceRoot; artifact_root=$artifactRoot }
+}
+
+function Test-SafeBrowserRuntimeId {
+    param([string] $Value)
+    return -not [string]::IsNullOrWhiteSpace($Value) -and $Value.Length -le 200 -and $Value -cmatch '^[A-Za-z0-9_.:-]+$'
+}
+
 function Invoke-ViewerBootstrap {
     param(
         [Parameter(Mandatory = $true)][string] $Url,
         [Parameter(Mandatory = $true)][string] $TraceId,
+        [Parameter(Mandatory = $true)][string] $SessionId,
+        [Parameter(Mandatory = $true)][string] $CoordinatorBase,
+        [Parameter(Mandatory = $true)][string] $EvidencePath,
         [Parameter(Mandatory = $true)][string] $ArtifactDir
     )
+    Assert-CoordinatorOpenUrl -Url $Url -CoordinatorBase $CoordinatorBase -SessionId $SessionId -TraceId $TraceId
+    Assert-BrowserArtifactRoot -EvidencePath $EvidencePath -ArtifactDir $ArtifactDir | Out-Null
     if ($null -ne $BrowserInvoker) {
         $result = & $BrowserInvoker $Url $TraceId $ArtifactDir
     } else {
@@ -211,22 +319,76 @@ function Invoke-ViewerBootstrap {
         $result = $jsonLine | ConvertFrom-Json
     }
 
-    $screenshotPath = [string](Get-JsonProperty $result 'screenshotPath')
-    $tracePath = [string](Get-JsonProperty $result 'tracePath')
-    if ([string]::IsNullOrWhiteSpace($screenshotPath) -or
-        -not (Test-Path -LiteralPath $screenshotPath -PathType Leaf) -or
-        (Get-Item -LiteralPath $screenshotPath).Length -le 0) {
-        throw 'viewer bootstrap did not produce a nonempty screenshot'
+    if ((Get-JsonProperty $result 'ok') -ne $true) { throw 'viewer bootstrap did not report ok=true' }
+    if ([string](Get-JsonProperty $result 'traceId') -cne $TraceId -or [string](Get-JsonProperty $result 'sessionId') -cne $SessionId) {
+        throw 'viewer bootstrap returned a trace or session mismatch'
     }
-    if ([string]::IsNullOrWhiteSpace($tracePath) -or
-        -not (Test-Path -LiteralPath $tracePath -PathType Leaf) -or
-        (Get-Item -LiteralPath $tracePath).Length -le 0) {
-        throw 'viewer bootstrap did not produce a nonempty Playwright trace'
+    $runId = [string](Get-JsonProperty $result 'runId')
+    $conversionJobId = [string](Get-JsonProperty $result 'conversionJobId')
+    $kitInstanceId = [string](Get-JsonProperty $result 'kitInstanceId')
+    foreach ($entry in ([ordered]@{run_id=$runId;conversion_job_id=$conversionJobId;kit_instance_id=$kitInstanceId}).GetEnumerator()) {
+        if (-not (Test-SafeBrowserRuntimeId -Value ([string]$entry.Value))) { throw "viewer bootstrap returned an unsafe or missing $($entry.Key)" }
     }
-    return [pscustomobject]@{
-        result = $result
-        screenshot_path = $screenshotPath
-        playwright_trace_path = $tracePath
+    $states = @((Get-JsonProperty $result 'stateTransitions') | ForEach-Object {[string]$_})
+    if (($states -join ',') -cne ($BrowserStateContract -join ',')) { throw 'viewer bootstrap state transition contract is incomplete' }
+    if ([string](Get-JsonProperty $result 'failureProvenance') -cne 'playwright_intercepted_503') { throw 'viewer bootstrap failure provenance is not Playwright interception' }
+    $forcedStatuses = @((Get-JsonProperty $result 'forcedViewerLogStatuses') | ForEach-Object {[int]$_})
+    if ($forcedStatuses.Count -ne 3 -or @($forcedStatuses | Where-Object { $_ -ne 503 }).Count -ne 0) { throw 'viewer bootstrap must prove exactly three forced 503 attempts' }
+    $retryStatus = [int](Get-JsonProperty $result 'retryViewerLogStatus')
+    if ($retryStatus -lt 200 -or $retryStatus -ge 300) { throw 'viewer bootstrap retry did not reach a real coordinator 2xx' }
+    if ([string](Get-JsonProperty $result 'actionId') -cnotmatch '^evidence_action_[A-Za-z0-9_]{8,128}$') { throw 'viewer bootstrap diagnostics action id is missing or unsafe' }
+    $closeStatus = [string](Get-JsonProperty $result 'closeStatus')
+    $closeOrigin = [string](Get-JsonProperty $result 'closeOrigin')
+    $closeSessionId = [string](Get-JsonProperty $result 'closeSessionId')
+    $closeHttpStatus = [int](Get-JsonProperty $result 'closeHttpStatus')
+    if ($closeOrigin -cne 'browser' -or $closeStatus -cne 'closed' -or $closeSessionId -cne $SessionId -or $closeHttpStatus -lt 200 -or $closeHttpStatus -ge 300) {
+        throw 'viewer bootstrap did not prove an exact browser-origin session close'
+    }
+
+    $roots = Assert-BrowserArtifactRoot -EvidencePath $EvidencePath -ArtifactDir $ArtifactDir -RequireExisting
+    $artifactResult = Get-JsonProperty $result 'artifacts'
+    if ($null -eq $artifactResult) { throw 'viewer bootstrap returned no artifact descriptors' }
+    $sanitizedArtifacts = [ordered]@{}
+    foreach ($entry in $BrowserArtifactContract.GetEnumerator()) {
+        $descriptor = Get-JsonProperty $artifactResult $entry.Key
+        if ($null -eq $descriptor) { throw "viewer bootstrap is missing $($entry.Key) artifact descriptor" }
+        $rawPath = [string](Get-JsonProperty $descriptor 'path')
+        if ($rawPath -cne $entry.Value -or [IO.Path]::IsPathRooted($rawPath) -or $rawPath -match '[\\/]' -or $rawPath -match '^\.\.?$') {
+            throw "viewer bootstrap returned an unexpected $($entry.Key) artifact path"
+        }
+        $fullPath = [IO.Path]::GetFullPath((Join-Path $roots.artifact_root $rawPath))
+        $artifactPrefix = $roots.artifact_root + [IO.Path]::DirectorySeparatorChar
+        if (-not $fullPath.StartsWith($artifactPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw "viewer bootstrap $($entry.Key) escaped artifact root" }
+        $item = Get-Item -LiteralPath $fullPath -Force -ErrorAction Stop
+        if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or [int64]$item.Length -le 0) {
+            throw "viewer bootstrap $($entry.Key) is not a canonical nonempty file"
+        }
+        $size = [int64](Get-JsonProperty $descriptor 'size_bytes')
+        $sha = [string](Get-JsonProperty $descriptor 'sha256')
+        $actualSha = (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($size -ne [int64]$item.Length -or $sha -cnotmatch '^[0-9a-f]{64}$' -or $sha -cne $actualSha) {
+            throw "viewer bootstrap $($entry.Key) size or hash mismatch"
+        }
+        $evidenceRelative = [IO.Path]::GetRelativePath($roots.evidence_root, $fullPath).Replace('\','/')
+        if ($evidenceRelative.StartsWith('../', [StringComparison]::Ordinal) -or [IO.Path]::IsPathRooted($evidenceRelative)) {
+            throw "viewer bootstrap $($entry.Key) escaped evidence root"
+        }
+        $sanitizedArtifacts[$entry.Key] = [pscustomobject][ordered]@{path=$evidenceRelative;size_bytes=$size;sha256=$sha}
+    }
+    return [pscustomobject][ordered]@{
+        root_trace_id = $TraceId
+        review_session_id = $SessionId
+        browser_run_id = $runId
+        conversion_job_id = $conversionJobId
+        kit_instance_id = $kitInstanceId
+        state_transitions = $states
+        failure_provenance = 'playwright_intercepted_503'
+        forced_viewer_log_statuses = $forcedStatuses
+        retry_viewer_log_status = $retryStatus
+        close_origin = $closeOrigin
+        close_status = $closeStatus
+        close_http_status = $closeHttpStatus
+        artifacts = [pscustomobject]$sanitizedArtifacts
     }
 }
 
@@ -538,6 +700,7 @@ function Invoke-RealIfcIntakeConversion {
     $integrationDetail.browser_status = 'not_attempted'
     $integrationDetail.browser_artifacts = $null
     $integrationDetail.close_status = 'not_attempted'
+    $integrationDetail.close_origin = 'not_attempted'
     $integrationDetail.coordinator_dispatch_poll = $dispatchPoll
 
     if (-not $dispatchPoll.completed -or [string]::IsNullOrWhiteSpace($conversionJobId) -or [string]::IsNullOrWhiteSpace($correlationId)) {
@@ -636,13 +799,6 @@ function Invoke-RealIfcIntakeConversion {
             $reviewSession = Invoke-JsonRequest -Method 'POST' -Url $openEndpoint -Body @{} -TimeoutSec 20
             $sessionId = [string](Get-JsonProperty $reviewSession 'review_session_id')
             $openUrl = [string](Get-JsonProperty $reviewSession 'open_url')
-            if (-not [string]::IsNullOrWhiteSpace($sessionId)) {
-                $integrationDetail.review_session_id = $sessionId
-            }
-            if (-not [string]::IsNullOrWhiteSpace($openUrl)) {
-                $integrationDetail.open_url = $openUrl
-            }
-            $integrationDetail.review_session = $reviewSession
             $responseTraceId = [string](Get-JsonProperty $reviewSession 'trace_id')
             if ($responseTraceId -cne $ifcReadyJobId) {
                 throw "review-session trace mismatch (expected '$ifcReadyJobId', got '$responseTraceId')"
@@ -650,11 +806,15 @@ function Invoke-RealIfcIntakeConversion {
             if ([string]::IsNullOrWhiteSpace($sessionId) -or [string]::IsNullOrWhiteSpace($openUrl)) {
                 throw 'review-session response is missing review_session_id or open_url'
             }
+            Assert-CoordinatorOpenUrl -Url $openUrl -CoordinatorBase $CoordinatorBase -SessionId $sessionId -TraceId $ifcReadyJobId
+            $integrationDetail.review_session_id = $sessionId
+            $integrationDetail.open_url = $openUrl
+            $integrationDetail.review_session = $reviewSession
             $StructLogger | Write-StructLifecycle -Msg 'Review session opened' -Data @{
                 phase = 'active'
                 subject_kind = 'review_session'
                 subject_id = $sessionId
-                open_url = $openUrl
+                handoff_path = '/ui/open'
             }
 
             $artifactDir = $BrowserArtifactDir
@@ -665,21 +825,43 @@ function Invoke-RealIfcIntakeConversion {
                 phase = 'active'
                 subject_kind = 'review_session'
                 subject_id = $sessionId
-                open_url = $openUrl
+                handoff_path = '/ui/open'
             }
-            $browser = Invoke-ViewerBootstrap -Url $openUrl -TraceId $ifcReadyJobId -ArtifactDir $artifactDir
+            $browser = Invoke-ViewerBootstrap -Url $openUrl -TraceId $ifcReadyJobId -SessionId $sessionId `
+                -CoordinatorBase $CoordinatorBase -EvidencePath $EvidencePath -ArtifactDir $artifactDir
             $integrationDetail.browser_status = if ($IsTestExecution) { 'test_double_observed' } else { 'passed' }
-            $integrationDetail.browser_artifacts = @{
-                screenshot_path = $browser.screenshot_path
-                playwright_trace_path = $browser.playwright_trace_path
+            $integrationIds.kit_instance_id = $browser.kit_instance_id
+            $integrationDetail.browser_artifacts = [ordered]@{
+                root_trace_id = $browser.root_trace_id
+                review_session_id = $browser.review_session_id
+                browser_run_id = $browser.browser_run_id
+                conversion_job_id = $browser.conversion_job_id
+                kit_instance_id = $browser.kit_instance_id
+                state_transitions = @($browser.state_transitions)
+                failure_provenance = $browser.failure_provenance
+                forced_viewer_log_statuses = @($browser.forced_viewer_log_statuses)
+                retry_viewer_log_status = $browser.retry_viewer_log_status
+                close_http_status = $browser.close_http_status
+                artifacts = $browser.artifacts
                 provenance = $ArtifactProvenance
             }
+            $integrationDetail.close_status = $browser.close_status
+            $integrationDetail.close_origin = $browser.close_origin
+            $integrationDetail.close_result = [ordered]@{session_id=$sessionId;status=$browser.close_status;origin=$browser.close_origin;http_status=$browser.close_http_status}
             $StructLogger | Write-StructLifecycle -Msg 'Viewer bootstrap completed' -Data @{
                 phase = 'closed'
                 subject_kind = 'review_session'
                 subject_id = $sessionId
-                screenshot_path = $browser.screenshot_path
-                playwright_trace_path = $browser.playwright_trace_path
+                failure_screenshot = $browser.artifacts.failure_screenshot.path
+                final_screenshot = $browser.artifacts.final_screenshot.path
+                playwright_trace = $browser.artifacts.playwright_trace.path
+            }
+            $StructLogger | Write-StructLifecycle -Msg 'Review session closed' -Data @{
+                phase = 'closed'
+                subject_kind = 'review_session'
+                subject_id = $sessionId
+                status = $browser.close_status
+                close_origin = $browser.close_origin
             }
         } catch {
             $primaryError = Get-HttpErrorDetail $_
@@ -696,7 +878,11 @@ function Invoke-RealIfcIntakeConversion {
             $status = 'blocked'
             $blocker = $primaryError
         } finally {
-            if (-not [string]::IsNullOrWhiteSpace($sessionId)) {
+            if (-not [string]::IsNullOrWhiteSpace($sessionId) -and -not (
+                [string]$integrationDetail.close_origin -ceq 'browser' -and
+                [string]$integrationDetail.close_status -ceq 'closed'
+            )) {
+                $integrationDetail.close_origin = 'runner_fallback'
                 try {
                     $closeEndpoint = "$($CoordinatorBase.TrimEnd('/'))/api/review-sessions/$([Uri]::EscapeDataString($sessionId))/close"
                     $StructLogger | Write-StructLifecycle -Msg 'Review session close started' -Data @{
@@ -706,8 +892,9 @@ function Invoke-RealIfcIntakeConversion {
                     }
                     $closeResult = Invoke-JsonRequest -Method 'POST' -Url $closeEndpoint -Body @{ reason = 'structured-log-smoke-complete' } -TimeoutSec 20
                     $closeStatus = [string](Get-JsonProperty $closeResult 'status')
-                    if ($closeStatus -cne 'closed') {
-                        throw "review session close did not return status=closed (got '$closeStatus')"
+                    $closeSessionId = [string](Get-JsonProperty $closeResult 'session_id')
+                    if ($closeStatus -cne 'closed' -or $closeSessionId -cne $sessionId) {
+                        throw "review session close did not return the exact session with status=closed (session='$closeSessionId', status='$closeStatus')"
                     }
                     $integrationDetail.close_status = $closeStatus
                     $integrationDetail.close_result = $closeResult

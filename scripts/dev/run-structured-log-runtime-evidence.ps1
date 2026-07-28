@@ -880,6 +880,9 @@ function Test-StructuredLogReadinessEvidence {
     $ifcReadyJobId = [string](Get-ReadinessPathValue $liveTier @('ids','ifc_ready_job_id'))
     $conversionJobId = [string](Get-ReadinessPathValue $liveTier @('ids','conversion_job_id'))
     $reviewSessionId = [string](Get-ReadinessPathValue $liveTier @('detail','review_session_id'))
+    $kitInstanceId = [string](Get-ReadinessPathValue $liveTier @('ids','kit_instance_id'))
+    $browserArtifacts = Get-ReadinessPathValue $liveTier @('detail','browser_artifacts')
+    $expectedBrowserStates = @('ready','flush_loading','flush_failure','retry_loading','flush_success','close_loading','closed')
     if ($null -ne $liveTier) {
         if ([string](Get-ReadinessPathValue $liveTier @('status')) -cne 'passed') { $errors.Add('readiness:live-tier-status') }
         if ([string](Get-ReadinessPathValue $Evidence @('context','execution_mode')) -cne 'production') { $errors.Add('readiness:context-execution-mode') }
@@ -888,11 +891,39 @@ function Test-StructuredLogReadinessEvidence {
         if ([string]::IsNullOrWhiteSpace($ifcReadyJobId) -or $rootTraceId -cne $ifcReadyJobId) { $errors.Add('readiness:ifc-ready-job-id') }
         if ([string]::IsNullOrWhiteSpace($conversionJobId)) { $errors.Add('readiness:conversion-job-id') }
         if ([string]::IsNullOrWhiteSpace($reviewSessionId)) { $errors.Add('readiness:review-session-id') }
+        if ([string]::IsNullOrWhiteSpace($kitInstanceId)) { $errors.Add('readiness:kit-instance-id') }
         if ([string](Get-ReadinessPathValue $liveTier @('detail','browser_status')) -cne 'passed') { $errors.Add('readiness:browser-status') }
         if ([string](Get-ReadinessPathValue $liveTier @('detail','close_status')) -cne 'closed') { $errors.Add('readiness:close-status') }
+        if ([string](Get-ReadinessPathValue $liveTier @('detail','close_origin')) -cne 'browser') { $errors.Add('readiness:close-origin') }
+        if ([string](Get-ReadinessPathValue $browserArtifacts @('root_trace_id')) -cne $rootTraceId) { $errors.Add('readiness:browser-root-trace-id') }
+        if ([string](Get-ReadinessPathValue $browserArtifacts @('review_session_id')) -cne $reviewSessionId) { $errors.Add('readiness:browser-review-session-id') }
+        if ([string](Get-ReadinessPathValue $browserArtifacts @('conversion_job_id')) -cne $conversionJobId) { $errors.Add('readiness:browser-conversion-job-id') }
+        if ([string](Get-ReadinessPathValue $browserArtifacts @('kit_instance_id')) -cne $kitInstanceId) { $errors.Add('readiness:browser-kit-instance-id') }
+        $states = @((Get-ReadinessPathValue $browserArtifacts @('state_transitions')) | ForEach-Object {[string]$_})
+        if (($states -join ',') -cne ($expectedBrowserStates -join ',')) { $errors.Add('readiness:browser-state-transitions') }
+        if ([string](Get-ReadinessPathValue $browserArtifacts @('failure_provenance')) -cne 'playwright_intercepted_503') { $errors.Add('readiness:browser-failure-provenance') }
+        $forcedStatuses = @((Get-ReadinessPathValue $browserArtifacts @('forced_viewer_log_statuses')) | ForEach-Object {[int]$_})
+        if ($forcedStatuses.Count -ne 3 -or @($forcedStatuses | Where-Object { $_ -ne 503 }).Count -ne 0) { $errors.Add('readiness:browser-forced-statuses') }
+        $retryStatus = [int](Get-ReadinessPathValue $browserArtifacts @('retry_viewer_log_status'))
+        if ($retryStatus -lt 200 -or $retryStatus -ge 300) { $errors.Add('readiness:browser-retry-status') }
+        $closeHttpStatus = [int](Get-ReadinessPathValue $browserArtifacts @('close_http_status'))
+        if ($closeHttpStatus -lt 200 -or $closeHttpStatus -ge 300) { $errors.Add('readiness:browser-close-http-status') }
+        $artifactPaths = [ordered]@{
+            failure_screenshot = 'browser/structured-log-failure.png'
+            final_screenshot = 'browser/structured-log-success-closed.png'
+            playwright_trace = 'browser/structured-log-trace.zip'
+            console_events = 'browser/structured-log-console.json'
+            network_events = 'browser/structured-log-network.json'
+            operability = 'browser/structured-log-operability.json'
+        }
+        foreach ($artifact in $artifactPaths.GetEnumerator()) {
+            if ([string](Get-ReadinessPathValue $browserArtifacts @('artifacts',$artifact.Key,'path')) -cne $artifact.Value) {
+                $errors.Add("readiness:browser-artifact-$($artifact.Key)")
+            }
+        }
     }
 
-    foreach ($propertyName in @('root_trace_id','ifc_ready_job_id','conversion_job_id','review_session_id')) {
+    foreach ($propertyName in @('root_trace_id','ifc_ready_job_id','conversion_job_id','review_session_id','kit_instance_id')) {
         $distinct = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
         foreach ($value in @(Find-StructuredLogNamedValues -Value $Evidence -NamePattern "^$propertyName$")) {
             if (-not [string]::IsNullOrWhiteSpace([string]$value)) { $distinct.Add([string]$value) | Out-Null }
@@ -909,6 +940,7 @@ function Test-StructuredLogReadinessEvidence {
             ifc_ready_job_id = $ifcReadyJobId
             conversion_job_id = $conversionJobId
             review_session_id = $reviewSessionId
+            kit_instance_id = $kitInstanceId
         }
     }
 }
@@ -926,8 +958,205 @@ function Get-StructuredLogRequiredArtifactNames {
         'runtime-log-validation.json',
         'shutdown.json',
         'pr-fields.json',
-        'evidence-summary.md'
+        'evidence-summary.md',
+        'browser/structured-log-failure.png',
+        'browser/structured-log-success-closed.png',
+        'browser/structured-log-trace.zip',
+        'browser/structured-log-console.json',
+        'browser/structured-log-network.json',
+        'browser/structured-log-operability.json'
     )
+}
+
+function Test-StructuredLogTraceValue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] $Value,
+        [switch] $AllowUrlProperty
+    )
+
+    $errors = [System.Collections.Generic.List[string]]::new()
+    function Visit-StructuredLogTraceValue {
+        param($Node, [string] $PropertyName = '', [int] $Depth = 0)
+        if ($Depth -gt 100) {
+            $errors.Add('depth')
+            return
+        }
+        if ($null -eq $Node -or $Node -is [ValueType]) { return }
+        if ($Node -is [string]) {
+            if ($Node.Contains([char]0) -or
+                $Node -match '(?i)bearer\s+|(?:access[_-]?token|api[_-]?key|password|secret|authorization|cookie)\s*[:=]' -or
+                $Node -match '(?i)^[A-Za-z]:[\\/]' -or $Node -match '(?i)^file:' -or $Node -match '^\\\\') {
+                $errors.Add('unsafe-string')
+            }
+            if ($Node -match '(?i)https?://' -and (-not $AllowUrlProperty -or $PropertyName -cne 'url')) {
+                $errors.Add('unscoped-url')
+            }
+            return
+        }
+        if ($Node -is [System.Collections.IDictionary]) {
+            foreach ($key in $Node.Keys) {
+                $name = [string]$key
+                if ($name -match '(?i)header|cookie|authorization|token|secret|password|credential|query|body|postdata') {
+                    $errors.Add("forbidden-key:$name")
+                }
+                Visit-StructuredLogTraceValue -Node $Node[$key] -PropertyName $name -Depth ($Depth + 1)
+            }
+            return
+        }
+        if ($Node -is [System.Collections.IEnumerable]) {
+            foreach ($item in $Node) { Visit-StructuredLogTraceValue -Node $item -PropertyName $PropertyName -Depth ($Depth + 1) }
+            return
+        }
+        foreach ($property in $Node.PSObject.Properties) {
+            if ($property.Name -match '(?i)header|cookie|authorization|token|secret|password|credential|query|body|postdata') {
+                $errors.Add("forbidden-key:$($property.Name)")
+            }
+            Visit-StructuredLogTraceValue -Node $property.Value -PropertyName $property.Name -Depth ($Depth + 1)
+        }
+    }
+
+    Visit-StructuredLogTraceValue -Node $Value
+    return @($errors | ForEach-Object { $_ })
+}
+
+function Test-StructuredLogPlaywrightTrace {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [Parameter(Mandatory)] [string] $ExpectedTraceId,
+        [Parameter(Mandatory)] [string] $ExpectedSessionId,
+        [Parameter(Mandatory)] [int] $ExpectedCoordinatorPort
+    )
+    $errors = [System.Collections.Generic.List[string]]::new()
+    if ($ExpectedTraceId -cnotmatch '^(?:ifcready_|rev_|stream_conv_|script_)[A-Za-z0-9_-]+$') { $errors.Add('expected-trace-id') }
+    if ($ExpectedSessionId -cnotmatch '^(?:lwv_|review_session_)[A-Za-z0-9_]+$') { $errors.Add('expected-session-id') }
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        $errors.Add('missing')
+        return [pscustomobject]@{valid=$false;errors=@($errors)}
+    }
+    $traceFile = Get-Item -LiteralPath $Path -Force
+    if ($traceFile.Length -le 0 -or $traceFile.Length -gt 32MB -or ($traceFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        $errors.Add('archive-size-or-type')
+        return [pscustomobject]@{valid=$false;errors=@($errors)}
+    }
+
+    Add-Type -AssemblyName System.IO.Compression
+    $stream = $null
+    $archive = $null
+    try {
+        $stream = [IO.FileStream]::new($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+        $archive = [IO.Compression.ZipArchive]::new($stream,[IO.Compression.ZipArchiveMode]::Read,$false)
+        $entries = @($archive.Entries)
+        if ($entries.Count -ne 3) { $errors.Add('entry-count') }
+        $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        $byName = @{}
+        [int64]$totalLength = 0
+        foreach ($entry in $entries) {
+            $name = [string]$entry.FullName
+            if ([string]::IsNullOrWhiteSpace($name) -or $name.Contains('\') -or $name.StartsWith('/') -or $name.Contains(':') -or
+                @($name.Split('/') | Where-Object { [string]::IsNullOrWhiteSpace($_) -or $_ -in @('.','..') }).Count -gt 0 -or -not $seen.Add($name)) {
+                $errors.Add('entry-path')
+                continue
+            }
+            $attributes = [BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$entry.ExternalAttributes),0)
+            $mode = (($attributes -shr 16) -band 0xf000)
+            if ($mode -eq 0xa000) { $errors.Add("entry-symlink:$name") }
+            if ($entry.Length -lt 0 -or $entry.Length -gt 5MB -or ($entry.CompressedLength -eq 0 -and $entry.Length -ne 0) -or
+                $entry.Length -gt ([Math]::Max([int64]1,[int64]$entry.CompressedLength) * 50)) {
+                $errors.Add("entry-size:$name")
+            }
+            $totalLength += [int64]$entry.Length
+            if ($totalLength -gt 32MB) { $errors.Add('expanded-size') }
+            $byName[$name] = $entry
+            if ($name -in @('trace.trace','trace.network','trace.stacks')) { continue }
+            $errors.Add("entry-allowlist:$name")
+        }
+        foreach ($required in @('trace.trace','trace.network','trace.stacks')) {
+            if (-not $byName.ContainsKey($required)) { $errors.Add("missing-entry:$required") }
+        }
+        if ($byName.ContainsKey('trace.network') -and [int64]$byName['trace.network'].Length -ne 0) { $errors.Add('network-not-empty') }
+
+        if ($byName.ContainsKey('trace.trace')) {
+            $reader = [IO.StreamReader]::new($byName['trace.trace'].Open())
+            [int]$lineCount = 0
+            [int]$beforeCount = 0
+            [int]$afterCount = 0
+            [int]$urlCount = 0
+            try {
+                while (($line = $reader.ReadLine()) -ne $null) {
+                    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                    $lineCount++
+                    if ($lineCount -gt 5000) { $errors.Add('trace-line-count'); break }
+                    if ($line -match '"[^"\\]*(?:header|cookie|authorization|token|secret|password|credential|query|body|postdata)[^"\\]*"\s*:' -or
+                        $line -match '(?i)bearer\s+|(?:access[_-]?token|api[_-]?key|password|secret|authorization|cookie)\s*[:=]' -or
+                        $line -match '(?i)file:|"[A-Za-z]:[\\/]') {
+                        $errors.Add('trace-forbidden-data')
+                        continue
+                    }
+                    try { $event = $line | ConvertFrom-Json -Depth 100 } catch { $errors.Add('trace-json'); continue }
+                    $typeProperty = $event.PSObject.Properties['type']
+                    if ($null -eq $typeProperty -or [string]$typeProperty.Value -cnotin @('context-options','before','after','input')) {
+                        $errors.Add('trace-event-type')
+                        continue
+                    }
+                    foreach ($privacyError in @(Test-StructuredLogTraceValue -Value $event -AllowUrlProperty)) {
+                        $errors.Add("trace-value:$privacyError")
+                    }
+                    if ([string]$typeProperty.Value -ceq 'before') { $beforeCount++ }
+                    if ([string]$typeProperty.Value -ceq 'after') { $afterCount++ }
+                    $urls = @(Find-StructuredLogNamedValues -Value $event -NamePattern '^url$')
+                    foreach ($urlValue in $urls) {
+                        $urlCount++
+                        try { $uri = [Uri]::new([string]$urlValue,[UriKind]::Absolute) } catch { $errors.Add('trace-url'); continue }
+                        if ($uri.Scheme -cne 'http' -or $uri.Host -cne '127.0.0.1' -or $uri.Port -ne $ExpectedCoordinatorPort -or
+                            -not [string]::IsNullOrWhiteSpace($uri.UserInfo) -or $uri.AbsolutePath -cne '/ui/open' -or -not [string]::IsNullOrEmpty($uri.Fragment)) {
+                            $errors.Add('trace-url')
+                            continue
+                        }
+                        $query = [System.Web.HttpUtility]::ParseQueryString($uri.Query)
+                        if (@($query.AllKeys).Count -ne 2 -or @($query.AllKeys | Where-Object { $_ -cnotin @('session','trace_id') }).Count -ne 0 -or
+                            @($query.GetValues('session')).Count -ne 1 -or [string]$query.GetValues('session')[0] -cne $ExpectedSessionId -or
+                            @($query.GetValues('trace_id')).Count -ne 1 -or [string]$query.GetValues('trace_id')[0] -cne $ExpectedTraceId) {
+                            $errors.Add('trace-url-query')
+                        }
+                    }
+                    $withoutAllowedUrls = [regex]::Replace($line, '"url"\s*:\s*"https?://[^"\\]*"', '"url":"<allowed>"')
+                    if ($withoutAllowedUrls -match 'https?://') { $errors.Add('trace-unscoped-url') }
+                }
+            } finally { $reader.Dispose() }
+            if ($lineCount -eq 0 -or $beforeCount -eq 0 -or $afterCount -eq 0 -or $urlCount -eq 0) { $errors.Add('trace-actions') }
+        }
+
+        if ($byName.ContainsKey('trace.stacks')) {
+            $reader = [IO.StreamReader]::new($byName['trace.stacks'].Open())
+            try { $stackRaw = $reader.ReadToEnd() } finally { $reader.Dispose() }
+            if ($stackRaw.Length -le 0 -or $stackRaw.Length -gt 1MB -or $stackRaw -match '(?i)https?://|file:|"[A-Za-z]:[\\/]|bearer\s+|(?:access[_-]?token|api[_-]?key|password|secret|authorization|cookie)\s*[:=]') {
+                $errors.Add('trace-stacks-data')
+            } else {
+                try { $stacks = $stackRaw | ConvertFrom-Json -Depth 100 } catch { $errors.Add('trace-stacks-json'); $stacks = $null }
+                if ($null -ne $stacks) {
+                    foreach ($privacyError in @(Test-StructuredLogTraceValue -Value $stacks)) {
+                        $errors.Add("trace-stacks-value:$privacyError")
+                    }
+                    if ($null -eq $stacks.PSObject.Properties['files'] -or $null -eq $stacks.PSObject.Properties['stacks']) {
+                        $errors.Add('trace-stacks-shape')
+                    } else {
+                        $files = @($stacks.files)
+                        if ($files.Count -gt 64 -or @($files | Where-Object { [string]$_ -cnotmatch '^playwright-helper-[0-9]+\.mjs$' }).Count -gt 0) {
+                            $errors.Add('trace-stacks-files')
+                        }
+                    }
+                }
+            }
+        }
+    } catch {
+        $errors.Add('archive-read')
+    } finally {
+        if ($null -ne $archive) { $archive.Dispose() }
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
+    return [pscustomobject]@{valid=$errors.Count -eq 0;errors=@($errors | ForEach-Object {$_})}
 }
 
 function Test-StructuredLogArtifactManifest {
@@ -960,6 +1189,10 @@ function Test-StructuredLogArtifactManifest {
     $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $rootFull = [System.IO.Path]::GetFullPath($AttemptRoot).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
     $rootPrefix = $rootFull + [System.IO.Path]::DirectorySeparatorChar
+    try {
+        $rootItem = Get-Item -LiteralPath $rootFull -Force -ErrorAction Stop
+        if (($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { $errors.Add('reparse:attempt-root') }
+    } catch { $errors.Add('path:attempt-root') }
     foreach ($entry in $entries) {
         $rawPath = [string]$entry.path
         $rawName = [string]$entry.name
@@ -983,9 +1216,26 @@ function Test-StructuredLogArtifactManifest {
             continue
         }
         if ($rawName -cne $relativePath -or $relativePath -cnotin $required) { $errors.Add("name:$rawName") }
+        $cursor = $rootFull
+        foreach ($segment in @($relativePath -split '/')) {
+            if ([string]::IsNullOrWhiteSpace($segment) -or -not (Test-Path -LiteralPath $cursor -PathType Container)) { break }
+            $candidateChild = Join-Path $cursor $segment
+            if (-not (Test-Path -LiteralPath $candidateChild)) { break }
+            $actualChild = Get-Item -LiteralPath $candidateChild -Force -ErrorAction SilentlyContinue
+            if ($null -eq $actualChild) { break }
+            if ([string]$actualChild.Name -cne $segment) { $errors.Add("path-case:$relativePath") }
+            if (($actualChild.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { $errors.Add("reparse:$relativePath") }
+            $cursor = $actualChild.FullName
+        }
         $sha = [string]$entry.sha256
         if ($sha -cnotmatch '^[0-9a-f]{64}$') { $errors.Add("sha256:$relativePath"); continue }
         if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) { $errors.Add("missing:$relativePath"); continue }
+        [int64]$declaredSize = 0
+        if (-not [int64]::TryParse([string]$entry.size_bytes, [ref]$declaredSize) -or $declaredSize -le 0) {
+            $errors.Add("size:$relativePath")
+        } elseif ((Get-Item -LiteralPath $fullPath -Force).Length -ne $declaredSize) {
+            $errors.Add("size:$relativePath")
+        }
         $actual = (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actual -cne $sha) { $errors.Add("hash:$relativePath") }
     }
@@ -1000,7 +1250,11 @@ function Test-StructuredLogArtifactManifest {
         } catch { $errors.Add('json:cleanup-quarantine.json') }
     }
 
-    $jsonArtifacts = @('attempt-manifest.json','runtime-lease.json','machine.json','fixture.json','health.json','bscheme-readiness.json','root-trace-timeline.json','runtime-log-validation.json','shutdown.json','pr-fields.json')
+    $jsonArtifacts = @(
+        'attempt-manifest.json','runtime-lease.json','machine.json','fixture.json','health.json',
+        'bscheme-readiness.json','root-trace-timeline.json','runtime-log-validation.json','shutdown.json','pr-fields.json',
+        'browser/structured-log-console.json','browser/structured-log-network.json','browser/structured-log-operability.json'
+    )
     $values = @{}
     foreach ($name in $jsonArtifacts) {
         $path = Join-Path $AttemptRoot $name
@@ -1025,7 +1279,10 @@ function Test-StructuredLogArtifactManifest {
         'root-trace-timeline.json' = @('root_trace_id','records')
         'runtime-log-validation.json' = @('status','files','line_counts','event_counts','violations','redaction_violations')
         'shutdown.json' = @('attempt_id','status','entries','foreign_listeners')
-        'pr-fields.json' = @('attempt_id','root_trace_id','runtime_ids','shutdown_status','tests','screenshot_trace','known_gaps')
+        'pr-fields.json' = @('attempt_id','root_trace_id','runtime_ids','shutdown_status','tests','screenshot_trace','browser_evidence','known_gaps')
+        'browser/structured-log-console.json' = @('events')
+        'browser/structured-log-network.json' = @('events')
+        'browser/structured-log-operability.json' = @('root_trace_id','review_session_id','conversion_job_id','kit_instance_id','browser_run_id','state_transitions','failure_provenance','forced_viewer_log_statuses','retry_viewer_log_status','close_origin','close_status','close_http_status','artifacts')
     }
     foreach ($artifactName in $requiredFields.Keys) {
         if (-not $values.ContainsKey($artifactName)) { continue }
@@ -1044,6 +1301,7 @@ function Test-StructuredLogArtifactManifest {
             if ([string]$probe.status -notin @('passed','failed')) { $errors.Add('status:health.json') }
         }
     }
+    $readiness = $null
     if ($values.ContainsKey('bscheme-readiness.json')) {
         try {
             $readiness = Test-StructuredLogReadinessEvidence -Evidence $values['bscheme-readiness.json']
@@ -1068,6 +1326,95 @@ function Test-StructuredLogArtifactManifest {
     if ($values.ContainsKey('shutdown.json') -and [string]$values['shutdown.json'].status -cne 'succeeded') { $errors.Add('status:shutdown.json') }
     if ($values.ContainsKey('pr-fields.json') -and [string]$values['pr-fields.json'].shutdown_status -notin @('owned_shutdown_complete','owned_shutdown_failed')) { $errors.Add('status:pr-fields.json') }
     if ([string]$manifest.shutdown_status -notin @('owned_shutdown_complete','owned_shutdown_failed')) { $errors.Add('shutdown_status') }
+
+    foreach ($browserJsonName in @('browser/structured-log-console.json','browser/structured-log-network.json','browser/structured-log-operability.json')) {
+        $browserJsonPath = Join-Path $AttemptRoot $browserJsonName
+        $rawBrowserJson = Get-Content -Raw -LiteralPath $browserJsonPath -ErrorAction SilentlyContinue
+        if ($rawBrowserJson -match '"(?:headers?|body|query|url|token|cookie|authorization)"\s*:') { $errors.Add("forbidden-field:$browserJsonName") }
+    }
+    if ($values.ContainsKey('browser/structured-log-console.json')) {
+        $consoleEvents = @($values['browser/structured-log-console.json'].events)
+        if ($consoleEvents.Count -gt 200) { $errors.Add('bounded:browser-console') }
+        foreach ($event in $consoleEvents) {
+            foreach ($property in @($event.PSObject.Properties.Name)) {
+                if ($property -cnotin @('seq','type','name')) { $errors.Add("field:browser-console:$property") }
+            }
+        }
+    }
+    if ($values.ContainsKey('browser/structured-log-network.json')) {
+        $networkEvents = @($values['browser/structured-log-network.json'].events)
+        if ($networkEvents.Count -gt 200) { $errors.Add('bounded:browser-network') }
+        foreach ($event in $networkEvents) {
+            foreach ($property in @($event.PSObject.Properties.Name)) {
+                if ($property -cnotin @('seq','kind','method','path','status','phase','provenance')) { $errors.Add("field:browser-network:$property") }
+            }
+            if ([string]$event.method -cne 'POST' -or [string]$event.path -cnotmatch '^/api/(?:internal/viewer-log|review-sessions/[A-Za-z0-9_]+/close)$') {
+                $errors.Add('value:browser-network')
+            }
+        }
+    }
+    if ($null -ne $readiness -and $readiness.valid -and $values.ContainsKey('browser/structured-log-operability.json')) {
+        $operability = $values['browser/structured-log-operability.json']
+        if ([string]$operability.root_trace_id -cne [string]$readiness.root_trace_id) { $errors.Add('browser-operability:root-trace-id') }
+        if ([string]$operability.review_session_id -cne [string]$readiness.runtime_ids.review_session_id) { $errors.Add('browser-operability:review-session-id') }
+        if ([string]$operability.conversion_job_id -cne [string]$readiness.runtime_ids.conversion_job_id) { $errors.Add('browser-operability:conversion-job-id') }
+        if ([string]$operability.kit_instance_id -cne [string]$readiness.runtime_ids.kit_instance_id) { $errors.Add('browser-operability:kit-instance-id') }
+        if ((@($operability.state_transitions | ForEach-Object {[string]$_}) -join ',') -cne 'ready,flush_loading,flush_failure,retry_loading,flush_success,close_loading,closed') { $errors.Add('browser-operability:state-transitions') }
+        if ([string]$operability.failure_provenance -cne 'playwright_intercepted_503') { $errors.Add('browser-operability:failure-provenance') }
+        $forced = @($operability.forced_viewer_log_statuses | ForEach-Object {[int]$_})
+        if ($forced.Count -ne 3 -or @($forced | Where-Object {$_ -ne 503}).Count -ne 0) { $errors.Add('browser-operability:forced-statuses') }
+        if ([int]$operability.retry_viewer_log_status -lt 200 -or [int]$operability.retry_viewer_log_status -ge 300) { $errors.Add('browser-operability:retry-status') }
+        if ([string]$operability.close_origin -cne 'browser' -or [string]$operability.close_status -cne 'closed' -or [int]$operability.close_http_status -lt 200 -or [int]$operability.close_http_status -ge 300) { $errors.Add('browser-operability:close') }
+        $artifactContainerProperty = $operability.PSObject.Properties['artifacts']
+        $artifactContainer = if ($null -eq $artifactContainerProperty) { $null } else { $artifactContainerProperty.Value }
+        if ($null -eq $artifactContainer -or $artifactContainer -is [string] -or $artifactContainer -is [ValueType]) {
+            $errors.Add('browser-operability:artifacts')
+            $artifactContainer = $null
+        }
+        foreach ($artifact in ([ordered]@{
+            failure_screenshot='structured-log-failure.png'
+            final_screenshot='structured-log-success-closed.png'
+            playwright_trace='structured-log-trace.zip'
+            console_events='structured-log-console.json'
+            network_events='structured-log-network.json'
+        }).GetEnumerator()) {
+            if ($null -eq $artifactContainer) { continue }
+            $descriptorProperty = $artifactContainer.PSObject.Properties[$artifact.Key]
+            if ($null -eq $descriptorProperty) { $errors.Add("browser-operability:artifact-$($artifact.Key)"); continue }
+            $descriptor = $descriptorProperty.Value
+            if ($null -eq $descriptor -or $descriptor -is [string] -or $descriptor -is [ValueType] -or
+                $null -eq $descriptor.PSObject.Properties['path'] -or $null -eq $descriptor.PSObject.Properties['size_bytes'] -or $null -eq $descriptor.PSObject.Properties['sha256']) {
+                $errors.Add("browser-operability:artifact-descriptor-$($artifact.Key)")
+                continue
+            }
+            $artifactPath = Join-Path $AttemptRoot "browser/$($artifact.Value)"
+            if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { $errors.Add("browser-operability:artifact-$($artifact.Key)"); continue }
+            [int64]$descriptorSize = 0
+            if ([string]$descriptor.path -cne $artifact.Value -or -not [int64]::TryParse([string]$descriptor.size_bytes,[ref]$descriptorSize) -or
+                $descriptorSize -le 0 -or $descriptorSize -ne [int64](Get-Item -LiteralPath $artifactPath -Force).Length) {
+                $errors.Add("browser-operability:artifact-$($artifact.Key)")
+            }
+            $descriptorSha = [string]$descriptor.sha256
+            if ($descriptorSha -cnotmatch '^[0-9a-f]{64}$' -or $descriptorSha -cne (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()) {
+                $errors.Add("browser-operability:artifact-hash-$($artifact.Key)")
+            }
+        }
+        $coordinatorPort = 0
+        if ($values.ContainsKey('attempt-manifest.json')) {
+            $portsProperty = $values['attempt-manifest.json'].PSObject.Properties['ports']
+            if ($null -ne $portsProperty -and $null -ne $portsProperty.Value -and $null -ne $portsProperty.Value.PSObject.Properties['Coordinator']) {
+                [void][int]::TryParse([string]$portsProperty.Value.Coordinator,[ref]$coordinatorPort)
+            }
+        }
+        if ($coordinatorPort -le 0) {
+            $errors.Add('playwright-trace:coordinator-port')
+        } else {
+            $traceCheck = Test-StructuredLogPlaywrightTrace -Path (Join-Path $AttemptRoot 'browser/structured-log-trace.zip') `
+                -ExpectedTraceId ([string]$operability.root_trace_id) -ExpectedSessionId ([string]$operability.review_session_id) `
+                -ExpectedCoordinatorPort $coordinatorPort
+            foreach ($traceError in @($traceCheck.errors)) { $errors.Add("playwright-trace:$traceError") }
+        }
+    }
 
     $provenancePath = Join-Path $AttemptRoot 'command-provenance.jsonl'
     $expectedSeq = 1
@@ -1099,7 +1446,11 @@ function Write-StructuredLogEvidenceArtifacts {
             return [int]$LASTEXITCODE
         }
     )
-    $baseRequired = @('machine.json','fixture.json','health.json','bscheme-readiness.json','runtime-lease.json','shutdown.json','command-provenance.jsonl')
+    $baseRequired = @(
+        'machine.json','fixture.json','health.json','bscheme-readiness.json','runtime-lease.json','shutdown.json','command-provenance.jsonl',
+        'browser/structured-log-failure.png','browser/structured-log-success-closed.png','browser/structured-log-trace.zip',
+        'browser/structured-log-console.json','browser/structured-log-network.json','browser/structured-log-operability.json'
+    )
     foreach ($name in $baseRequired) {
         if (-not (Test-Path -LiteralPath (Join-Path $Context.AttemptRoot $name) -PathType Leaf)) { throw "required evidence artifact missing: $name" }
     }
@@ -1111,8 +1462,9 @@ function Write-StructuredLogEvidenceArtifacts {
         ifc_ready_job_id = @([string]$readiness.runtime_ids.ifc_ready_job_id)
         conversion_job_id = @([string]$readiness.runtime_ids.conversion_job_id)
         review_session_id = @([string]$readiness.runtime_ids.review_session_id)
+        kit_instance_id = @([string]$readiness.runtime_ids.kit_instance_id)
     }
-    foreach ($property in @('runtime_id','kit_instance_id')) {
+    foreach ($property in @('runtime_id')) {
         $values = @(Find-StructuredLogNamedValues -Value $smoke -NamePattern "^$property$" | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique)
         if ($values.Count -gt 0) { $runtimeIds[$property] = @($values | ForEach-Object {[string]$_}) }
     }
@@ -1151,14 +1503,25 @@ function Write-StructuredLogEvidenceArtifacts {
     $shutdown = Get-Content -Raw -LiteralPath (Join-Path $Context.AttemptRoot 'shutdown.json') | ConvertFrom-Json
     $shutdownEntries = if ($null -ne $shutdown.PSObject.Properties['entries']) { @($shutdown.entries) } else { @() }
     $shutdownStatus = if (@($shutdownEntries | Where-Object result -eq 'failed').Count -eq 0) { 'owned_shutdown_complete' } else { 'owned_shutdown_failed' }
+    $browserArtifactDetail = $readiness.live_tier.detail.browser_artifacts
     $references = [ordered]@{
-        screenshot = @(Find-StructuredLogNamedValues -Value $smoke -NamePattern '^screenshot_path$' | Select-Object -Unique)
-        trace = @(Find-StructuredLogNamedValues -Value $smoke -NamePattern '^(playwright_)?trace(_path)?$' | Select-Object -Unique)
+        failure_screenshot = [string]$browserArtifactDetail.artifacts.failure_screenshot.path
+        final_screenshot = [string]$browserArtifactDetail.artifacts.final_screenshot.path
+        trace = [string]$browserArtifactDetail.artifacts.playwright_trace.path
+    }
+    $browserEvidence = [ordered]@{
+        console = [string]$browserArtifactDetail.artifacts.console_events.path
+        network = [string]$browserArtifactDetail.artifacts.network_events.path
+        operability = [string]$browserArtifactDetail.artifacts.operability.path
+        state_transitions = @($browserArtifactDetail.state_transitions | ForEach-Object {[string]$_})
+        failure_provenance = [string]$browserArtifactDetail.failure_provenance
+        retry_viewer_log_status = [int]$browserArtifactDetail.retry_viewer_log_status
+        close_origin = [string]$readiness.live_tier.detail.close_origin
     }
     $knownGaps = @('WebRTC first-frame, render fidelity, and stage evidence are not claimed by this runtime-log evidence pass.')
     $attemptManifest = [ordered]@{schema_version='1';attempt_id=$Context.AttemptId;status='succeeded';root_trace_id=$rootTraceId;ports=$Context.Ports;fixture_sha256=$Context.FixtureSha256}
     Write-StructuredLogJson -Path (Join-Path $Context.AttemptRoot 'attempt-manifest.json') -Value $attemptManifest
-    $prFields = [ordered]@{schema_version='1';attempt_id=$Context.AttemptId;root_trace_id=$rootTraceId;runtime_ids=$runtimeIds;shutdown_status=$shutdownStatus;tests='scripts/tests/test-run-structured-log-runtime-evidence.ps1';screenshot_trace=$references;known_gaps=$knownGaps}
+    $prFields = [ordered]@{schema_version='1';attempt_id=$Context.AttemptId;root_trace_id=$rootTraceId;runtime_ids=$runtimeIds;shutdown_status=$shutdownStatus;tests='scripts/tests/test-run-structured-log-runtime-evidence.ps1';screenshot_trace=$references;browser_evidence=$browserEvidence;known_gaps=$knownGaps}
     Write-StructuredLogJson -Path (Join-Path $Context.AttemptRoot 'pr-fields.json') -Value $prFields
     @(
         '# Structured Log Runtime Evidence','',
@@ -1179,9 +1542,9 @@ function Write-StructuredLogEvidenceArtifacts {
     $files = @($manifestNames | ForEach-Object {
         $path = Join-Path $Context.AttemptRoot $_
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "artifact missing during hash render: $_" }
-        [pscustomobject]@{name=$_;path=$_;sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
+        [pscustomobject]@{name=$_;path=$_;size_bytes=[int64](Get-Item -LiteralPath $path -Force).Length;sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
     })
-    $manifest = [ordered]@{schema_version='1';attempt_id=$Context.AttemptId;status='succeeded';files=$files;root_trace_id=$rootTraceId;runtime_ids=$runtimeIds;shutdown_status=$shutdownStatus;known_gaps=$knownGaps;screenshot_trace=$references}
+    $manifest = [ordered]@{schema_version='1';attempt_id=$Context.AttemptId;status='succeeded';files=$files;root_trace_id=$rootTraceId;runtime_ids=$runtimeIds;shutdown_status=$shutdownStatus;known_gaps=$knownGaps;screenshot_trace=$references;browser_evidence=$browserEvidence}
     Write-StructuredLogJson -Path (Join-Path $Context.AttemptRoot 'artifact-manifest.json') -Value $manifest
     $check = Test-StructuredLogArtifactManifest -AttemptRoot $Context.AttemptRoot
     if (-not $check.valid) { throw "artifact manifest self-check failed: $($check.errors -join ',')" }
