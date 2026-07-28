@@ -125,5 +125,5 @@
 - [x] 12.2 Viewer diagnostics 以 TDD 實作真實 `POST /api/internal/viewer-log` flush、visible loading/success/failure/retry、runtime IDs 與同 session browser close；不新增 backend endpoint或 production fault flag
 - [x] 12.3 Production browser helper 以 Playwright-only interception 觀測 forced viewer-log failure，解除 interception 後 retry 命中真 coordinator 2xx，再由同一 browser surface close session
 - [x] 12.4 Browser evidence 保存 failure/final screenshots、Playwright trace、secret-free console/network events與 machine-readable state transitions；smoke/runtime runner tests 覆蓋新 artifact contract
-- [ ] 12.5 Affected unit/build/script/OpenSpec checks、GitNexus `detect_changes` 與獨立 review 通過，並從 current HEAD 重跑真實 IFC runtime evidence
-- [ ] 12.6 P4 canonical evidence `ok=true`；design status=`mixed`、reference-missing surface與 `Full completion claimed=no` 誠實保留
+- [x] 12.5 Affected unit/build/script/OpenSpec checks、GitNexus `detect_changes` 與獨立 review 通過，並從 current HEAD 重跑真實 IFC runtime evidence
+- [x] 12.6 P4 canonical evidence `ok=true`；design status=`mixed`、reference-missing surface與 `Full completion claimed=no` 誠實保留
