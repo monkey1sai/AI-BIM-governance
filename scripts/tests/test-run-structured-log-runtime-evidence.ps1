@@ -375,7 +375,11 @@ function Invoke-ProcessSpecsCase {
         $specs = @(New-StructuredLogProcessSpecs -Context $ctx)
         Assert-Equal 3 $specs.Count 'three owned participants'
         Assert-Equal 49104 ($specs | Where-Object name -eq 'conversion').port 'conversion alternate port'
-        Assert-Equal $ctx.Kit.converter_config ($specs | Where-Object name -eq 'conversion').env.STREAMING_CONVERSION_CONFIG_PATH 'conversion uses adapter-owned config env key'
+        $conversion = $specs | Where-Object name -eq 'conversion'
+        Assert-Equal $ctx.Kit.converter_config $conversion.env.STREAMING_CONVERSION_CONFIG_PATH 'conversion uses adapter-owned config env key'
+        Assert-Equal (Join-Path $ctx.AttemptRoot 'conversion-service') $conversion.env.STREAMING_CONVERSION_SERVICE_ROOT 'conversion service root is attempt-local'
+        Assert-Equal (Join-Path $ctx.AttemptRoot 'conversion-service\artifacts') $conversion.env.STREAMING_CONVERSION_ARTIFACTS_ROOT 'conversion artifacts are attempt-local'
+        Assert-Equal (Join-Path $ctx.AttemptRoot 'conversion-service\jobs') $conversion.env.STREAMING_CONVERSION_JOBS_DIR 'conversion jobs are attempt-local'
         Assert-Equal 8005 ($specs | Where-Object name -eq 'coordinator').port 'coordinator alternate port'
         Assert-Equal 5175 ($specs | Where-Object name -eq 'viewer').port 'viewer alternate port'
         $viewer = $specs | Where-Object name -eq 'viewer'
@@ -543,7 +547,21 @@ function Invoke-HealthSupportedSmokeCase {
     $root = New-TestRoot 'health'
     try {
         $ctx = New-TestContext $root
-        Write-TestFile (Join-Path $root 'scripts\smoke-bscheme-intake.ps1') 'param()'
+        Write-TestFile (Join-Path $root 'scripts\smoke-bscheme-intake.ps1') @'
+param(
+    [string] $EvidencePath,
+    [string] $StorageRoot,
+    [string] $CoordinatorBaseUrl,
+    [string] $StreamingConversionApiBase,
+    [int] $LivePollSeconds,
+    [string] $StructLogRoot,
+    [string] $BrowserArtifactDir,
+    [switch] $SkipKitLauncher
+)
+Write-Output 'child stdout that must not become the exit code'
+@{ schema_version='demo-runtime-readiness-smoke/v1'; tiers=@(); root_trace_id='ifcready_default'; integration_ids=@{ conversion_job_id='conv_default'; review_session_id='session_default' } } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $EvidencePath
+exit 0
+'@
         $specs = @(
             [pscustomobject]@{name='conversion';health_uri='http://127.0.0.1:49104/health'},
             [pscustomobject]@{name='coordinator';health_uri='http://127.0.0.1:8005/health'},
@@ -584,6 +602,11 @@ function Invoke-HealthSupportedSmokeCase {
         }
         Assert-Equal 0 $smoke.exit_code 'supported smoke succeeds'
         Assert-Equal 'parent-log-root' $env:LOG_ROOT 'parent LOG_ROOT restored'
+
+        Remove-Item -LiteralPath (Join-Path $ctx.AttemptRoot 'bscheme-readiness.json') -Force
+        $defaultSmoke = Invoke-StructuredLogSupportedSmoke -Context $ctx -LivePollSeconds 3
+        Assert-Equal 0 $defaultSmoke.exit_code 'default smoke child stdout does not contaminate scalar exit code'
+        Assert-True (Test-Path -LiteralPath $defaultSmoke.evidence_path -PathType Leaf) 'default smoke still produces readiness evidence'
 
         Assert-Throws { Invoke-StructuredLogSupportedSmoke -Context $ctx -LivePollSeconds 3 -SmokeInvoker { throw 'native failure' } } 'native failure' 'native smoke failure is surfaced'
         $last = Get-Content -LiteralPath $ctx.ProvenancePath | Select-Object -Last 1 | ConvertFrom-Json

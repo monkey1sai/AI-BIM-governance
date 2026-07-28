@@ -44,22 +44,65 @@ function New-TestRoot {
 }
 
 function New-RequestHarness {
-    param([ValidateSet('', 'review_session', 'close')][string] $FailureMode = '')
+    param([ValidateSet('', 'review_session', 'close', 'dispatch', 'timeout', 'duplicate_source', 'boundary_success')][string] $FailureMode = '')
     $calls = [System.Collections.ArrayList]::new()
     $handler = {
         param([string] $Method, [string] $Url, $Body, [hashtable] $Headers, [int] $TimeoutSec)
         $null = $calls.Add([pscustomobject]@{
             method = $Method
             url = $Url
+            body = $Body
             header_names = @($Headers.Keys)
         })
         if ($Url -match '/health$') { return [pscustomobject]@{ status = 'ok' } }
-        if ($Url -match '/api/external/ifc-ready$') {
+        if ($Method -eq 'GET' -and $Url -match '/api/dev/ifc-sources$') {
+            $items = @([pscustomobject]@{ source_id = 'ifcsrc_fixture'; filename = 'fixture.ifc'; relative_path = 'fixture.ifc' })
+            if ($FailureMode -eq 'duplicate_source') {
+                $items += [pscustomobject]@{ source_id = 'ifcsrc_duplicate'; filename = 'fixture.ifc'; relative_path = 'fixture.ifc' }
+            }
+            return [pscustomobject]@{
+                root = [pscustomobject]@{ exists = $true; readable = $true; item_count = $items.Count }
+                items = $items
+            }
+        }
+        if ($Method -eq 'POST' -and $Url -match '/api/dev/ifc-sources/ifcsrc_fixture/register$') {
+            return [pscustomobject]@{
+                ifc_ready_job_id = $RootTraceId
+                conversion_job_id = $null
+                correlation_id = 'corr_devreg_test_123'
+                status = 'queued_for_conversion'
+                conversion_status = $null
+            }
+        }
+        if ($Method -eq 'GET' -and $Url -match "/api/external/ifc-ready/$RootTraceId$") {
+            if ($FailureMode -eq 'dispatch') {
+                return [pscustomobject]@{
+                    ifc_ready_job_id = $RootTraceId
+                    conversion_job_id = $null
+                    correlation_id = 'corr_devreg_test_123'
+                    status = 'dispatch_failed'
+                    conversion_status = 'dispatch_failed'
+                    dispatch_error = 'mock dispatch failure'
+                }
+            }
+            if ($FailureMode -eq 'timeout') {
+                return [pscustomobject]@{
+                    ifc_ready_job_id = $RootTraceId
+                    conversion_job_id = $null
+                    correlation_id = 'corr_devreg_test_123'
+                    status = 'queued_for_conversion'
+                    conversion_status = $null
+                }
+            }
+            if ($FailureMode -eq 'boundary_success') {
+                Start-Sleep -Milliseconds 1100
+            }
             return [pscustomobject]@{
                 ifc_ready_job_id = $RootTraceId
                 conversion_job_id = 'stream_conv_test_123'
-                status = 'accepted'
-                conversion_status = 'dispatched'
+                correlation_id = 'corr_devreg_test_123'
+                status = 'dispatched'
+                conversion_status = 'running'
             }
         }
         if ($Url -match '/api/conversions/stream_conv_test_123/result$') {
@@ -154,6 +197,14 @@ $successBrowser = {
     }
 }.GetNewClosure()
 Invoke-TestSmoke -Paths $success -RequestHandler $successRequests.Handler -BrowserHandler $successBrowser
+$sourceListCalls = @($successRequests.Calls | Where-Object { $_.method -eq 'GET' -and $_.url -match '/api/dev/ifc-sources$' })
+$sourceRegisterCalls = @($successRequests.Calls | Where-Object { $_.method -eq 'POST' -and $_.url -match '/api/dev/ifc-sources/ifcsrc_fixture/register$' })
+$directFileUriIntakeCalls = @($successRequests.Calls | Where-Object { $_.method -eq 'POST' -and $_.url -match '/api/external/ifc-ready$' })
+$dispatchPollCalls = @($successRequests.Calls | Where-Object { $_.method -eq 'GET' -and $_.url -match "/api/external/ifc-ready/$RootTraceId$" })
+Assert-Equal -Expected 1 -Actual $sourceListCalls.Count -Message 'supported smoke resolves coordinator-owned IFC source id'
+Assert-Equal -Expected 1 -Actual $sourceRegisterCalls.Count -Message 'supported smoke registers the selected coordinator source'
+Assert-Equal -Expected 0 -Actual $directFileUriIntakeCalls.Count -Message 'supported smoke never bypasses coordinator download with direct file URI intake'
+Assert-True -Condition ($dispatchPollCalls.Count -ge 1) -Message 'async coordinator job is polled until conversion_job_id appears'
 $successCloseCalls = @($successRequests.Calls | Where-Object url -match '/api/review-sessions/.+/close$')
 Assert-Equal -Expected 1 -Actual $successCloseCalls.Count -Message 'successful browser closes session exactly once after artifacts'
 
@@ -199,6 +250,50 @@ Assert-True -Condition (-not $successEvidenceText.Contains($InternalToken)) -Mes
 $successLogText = ($successRecords | ConvertTo-Json -Depth 20)
 Assert-True -Condition (-not $successLogText.Contains($WebhookSecret)) -Message 'webhook secret absent from logs'
 Assert-True -Condition (-not $successLogText.Contains($InternalToken)) -Message 'internal token absent from logs'
+$callbackCall = @($successRequests.Calls | Where-Object url -match '/api/internal/conversion-result$') | Select-Object -First 1
+Assert-Equal -Expected 'corr_devreg_test_123' -Actual $callbackCall.body.correlation_id -Message 'callback uses register job correlation_id'
+
+Write-Host '[test-smoke-bscheme-structured-log] deadline-boundary dispatch success is evaluated before timeout'
+$boundarySuccess = New-TestRoot
+$boundarySuccessRequests = New-RequestHarness -FailureMode 'boundary_success'
+Invoke-TestSmoke -Paths $boundarySuccess -RequestHandler $boundarySuccessRequests.Handler -BrowserHandler $successBrowser
+$boundarySuccessEvidence = Get-Content -LiteralPath $boundarySuccess.EvidencePath -Raw | ConvertFrom-Json
+$boundarySuccessTier = $boundarySuccessEvidence.tiers | Where-Object tier -eq 'real_ifc_intake_conversion'
+Assert-Equal -Expected $true -Actual $boundarySuccessTier.detail.coordinator_dispatch_poll.completed -Message 'last GET conversion id wins over expired deadline'
+Assert-Equal -Expected 'dispatched' -Actual $boundarySuccessTier.detail.coordinator_dispatch_poll.status -Message 'deadline-boundary conversion is dispatched, not timeout'
+
+Write-Host '[test-smoke-bscheme-structured-log] async dispatch failure stops before streaming poll'
+$dispatchFailure = New-TestRoot
+$dispatchFailureRequests = New-RequestHarness -FailureMode 'dispatch'
+$dispatchFailureBrowser = { throw 'browser must not run after dispatch failure' }
+Invoke-TestSmoke -Paths $dispatchFailure -RequestHandler $dispatchFailureRequests.Handler -BrowserHandler $dispatchFailureBrowser
+$dispatchStreamingCalls = @($dispatchFailureRequests.Calls | Where-Object url -match '/api/conversions/.+/result$')
+Assert-Equal -Expected 0 -Actual $dispatchStreamingCalls.Count -Message 'terminal coordinator dispatch failure stops before streaming result polling'
+$dispatchFailureEvidence = Get-Content -LiteralPath $dispatchFailure.EvidencePath -Raw | ConvertFrom-Json
+$dispatchFailureTier = $dispatchFailureEvidence.tiers | Where-Object tier -eq 'real_ifc_intake_conversion'
+Assert-True -Condition ([string]$dispatchFailureTier.detail.ifc_ready_job.dispatch_error -match 'mock dispatch failure') -Message 'dispatch failure is preserved in evidence'
+Assert-Equal -Expected $false -Actual $dispatchFailureTier.detail.coordinator_dispatch_poll.completed -Message 'dispatch terminal failure is not completed'
+Assert-Equal -Expected 'blocked' -Actual $dispatchFailureTier.detail.coordinator_dispatch_poll.status -Message 'dispatch terminal failure is blocked, not timeout'
+Assert-Equal -Expected 'mock dispatch failure' -Actual $dispatchFailureTier.detail.coordinator_dispatch_poll.error -Message 'dispatch terminal error is preserved without timeout substitution'
+
+Write-Host '[test-smoke-bscheme-structured-log] async dispatch timeout is deterministic and preserves last job'
+$dispatchTimeout = New-TestRoot
+$dispatchTimeoutRequests = New-RequestHarness -FailureMode 'timeout'
+Invoke-TestSmoke -Paths $dispatchTimeout -RequestHandler $dispatchTimeoutRequests.Handler -BrowserHandler $dispatchFailureBrowser
+$dispatchTimeoutEvidence = Get-Content -LiteralPath $dispatchTimeout.EvidencePath -Raw | ConvertFrom-Json
+$dispatchTimeoutTier = $dispatchTimeoutEvidence.tiers | Where-Object tier -eq 'real_ifc_intake_conversion'
+Assert-Equal -Expected 'queued_for_conversion' -Actual $dispatchTimeoutTier.detail.ifc_ready_job.status -Message 'timeout evidence preserves last coordinator job state'
+Assert-True -Condition ([string]$dispatchTimeoutTier.detail.coordinator_dispatch_poll.error -match 'not observed within 1s') -Message 'timeout evidence records deterministic blocker'
+Assert-Equal -Expected 0 -Actual @($dispatchTimeoutRequests.Calls | Where-Object url -match '/api/conversions/.+/result$').Count -Message 'dispatch timeout stops before streaming poll'
+
+Write-Host '[test-smoke-bscheme-structured-log] duplicate source match fails closed'
+$duplicateSource = New-TestRoot
+$duplicateSourceRequests = New-RequestHarness -FailureMode 'duplicate_source'
+Invoke-TestSmoke -Paths $duplicateSource -RequestHandler $duplicateSourceRequests.Handler -BrowserHandler $dispatchFailureBrowser
+Assert-Equal -Expected 0 -Actual @($duplicateSourceRequests.Calls | Where-Object url -match '/register$').Count -Message 'ambiguous source catalog never registers a guessed source id'
+$duplicateEvidence = Get-Content -LiteralPath $duplicateSource.EvidencePath -Raw | ConvertFrom-Json
+$duplicateTier = $duplicateEvidence.tiers | Where-Object tier -eq 'real_ifc_intake_conversion'
+Assert-True -Condition ([string]$duplicateTier.detail.error -match 'exactly one coordinator IFC source') -Message 'ambiguous source blocker is explicit'
 
 Write-Host '[test-smoke-bscheme-structured-log] browser failure best-effort closes session once'
 $failure = New-TestRoot

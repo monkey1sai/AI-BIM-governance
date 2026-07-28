@@ -349,7 +349,9 @@ function New-StructuredLogProcessSpecs {
     $viewerBase = "http://127.0.0.1:$($Context.Ports.Viewer)"
     $conversionBase = "http://127.0.0.1:$($Context.Ports.Conversion)"
     $coordinatorData = Join-Path $Context.AttemptRoot 'coordinator-data'
+    $conversionServiceRoot = Join-Path $Context.AttemptRoot 'conversion-service'
     New-Item -ItemType Directory -Path $coordinatorData -Force | Out-Null
+    New-Item -ItemType Directory -Path $conversionServiceRoot -Force | Out-Null
 
     $conversion = [pscustomobject]@{
         name = 'conversion'
@@ -364,6 +366,9 @@ function New-StructuredLogProcessSpecs {
             STREAMING_CONVERSION_HOOPS_MAIN = [string]$Context.Kit.hoops_main
             STREAMING_CONVERSION_CONFIG_PATH = [string]$Context.Kit.converter_config
             STREAMING_CONVERSION_WRAPPER = [string]$Context.Kit.converter_wrapper
+            STREAMING_CONVERSION_SERVICE_ROOT = $conversionServiceRoot
+            STREAMING_CONVERSION_ARTIFACTS_ROOT = Join-Path $conversionServiceRoot 'artifacts'
+            STREAMING_CONVERSION_JOBS_DIR = Join-Path $conversionServiceRoot 'jobs'
             STORAGE_ROOT = $Context.StorageRoot
             LOG_ROOT = $Context.LogRoot
         }
@@ -664,8 +669,10 @@ function Invoke-StructuredLogSupportedSmoke {
         [ValidateRange(1, 3600)] [int] $LivePollSeconds = 180,
         [scriptblock] $SmokeInvoker = {
             param($scriptPath, $arguments)
-            & (Get-Command pwsh -ErrorAction Stop).Source -NoProfile -File $scriptPath @arguments
-            return [int]$LASTEXITCODE
+            $smokeOutput = @(& (Get-Command pwsh -ErrorAction Stop).Source -NoProfile -File $scriptPath @arguments 2>&1)
+            $exitCode = [int]$LASTEXITCODE
+            foreach ($line in $smokeOutput) { Write-Host "[supported-smoke] $line" }
+            return $exitCode
         }
     )
     $scriptPath = Join-Path $Context.RepoRoot 'scripts\smoke-bscheme-intake.ps1'

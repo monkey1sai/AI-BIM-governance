@@ -285,6 +285,48 @@ function Wait-StreamingConversionResult {
     return [pscustomobject]@{ completed = $false; status = 'not_observed'; result = $lastResult; error = "conversion result not completed within ${PollSeconds}s" }
 }
 
+function Wait-CoordinatorConversionDispatch {
+    param(
+        [string] $BaseUrl,
+        [string] $IfcReadyJobId,
+        $InitialJob,
+        [int] $PollSeconds
+    )
+    $deadline = (Get-Date).AddSeconds($PollSeconds)
+    $lastJob = $InitialJob
+    $evaluateState = {
+        param($candidateJob)
+        $conversionJobId = [string](Get-JsonProperty $candidateJob 'conversion_job_id')
+        if (-not [string]::IsNullOrWhiteSpace($conversionJobId)) {
+            return [pscustomobject]@{ completed = $true; status = 'dispatched'; job = $candidateJob; error = $null }
+        }
+        $dispatchError = [string](Get-JsonProperty $candidateJob 'dispatch_error')
+        $jobStatus = [string](Get-JsonProperty $candidateJob 'status')
+        if (-not [string]::IsNullOrWhiteSpace($dispatchError) -or
+            @('failed', 'dispatch_failed', 'dropped_on_restart') -contains $jobStatus) {
+            $error = if (-not [string]::IsNullOrWhiteSpace($dispatchError)) { $dispatchError } else { "coordinator job status=$jobStatus" }
+            return [pscustomobject]@{ completed = $false; status = 'blocked'; job = $candidateJob; error = $error }
+        }
+        return $null
+    }
+    while ($true) {
+        $state = & $evaluateState $lastJob
+        if ($null -ne $state) { return $state }
+        if ((Get-Date) -ge $deadline) { break }
+        try {
+            $url = "$($BaseUrl.TrimEnd('/'))/api/external/ifc-ready/$([Uri]::EscapeDataString($IfcReadyJobId))"
+            $lastJob = Invoke-JsonRequest -Method 'GET' -Url $url -TimeoutSec 15
+        } catch {
+            return [pscustomobject]@{ completed = $false; status = 'blocked'; job = $lastJob; error = (Get-HttpErrorDetail $_) }
+        }
+        $state = & $evaluateState $lastJob
+        if ($null -ne $state) { return $state }
+        if ((Get-Date) -ge $deadline) { break }
+        Start-Sleep -Seconds 1
+    }
+    return [pscustomobject]@{ completed = $false; status = 'not_observed'; job = $lastJob; error = "coordinator conversion dispatch not observed within ${PollSeconds}s" }
+}
+
 function Publish-CoordinatorConversionResult {
     param(
         [string] $CoordinatorBase,
@@ -373,18 +415,14 @@ function Invoke-RealIfcIntakeConversion {
     }
 
     $fixture = $topLevelFixtures[0]
-    $timestamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')
     $safeName = ConvertTo-SafeIdPart ([System.IO.Path]::GetFileNameWithoutExtension($fixture.Name))
-    $correlationId = "corr_bscheme_${timestamp}_$safeName"
-    $idempotencyKey = "idem_bscheme_${timestamp}_$safeName"
-    $eventId = "evt_bscheme_${timestamp}_$safeName"
-    $payload = New-RealIfcReadyPayload -Fixture $fixture -CorrelationId $correlationId -IdempotencyKey $idempotencyKey -EventId $eventId
+    $fixtureHash = (Get-FileHash -LiteralPath $fixture.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
     $fixtureDetail.selected_fixture = @{
         full_name    = $fixture.FullName
         filename     = $fixture.Name
         size_bytes   = [int64]$fixture.Length
-        sha256       = ($payload.source_ifc.etag -replace '^sha256:', '')
-        source_ref   = $payload.source_ifc.ref
+        sha256       = $fixtureHash
+        source_id    = $null
     }
 
     try {
@@ -406,14 +444,24 @@ function Invoke-RealIfcIntakeConversion {
         }
     }
 
-    $headers = @{
-        'X-Correlation-Id'  = $correlationId
-        'X-Idempotency-Key' = $idempotencyKey
-        'X-Webhook-Secret'  = $Secret
-    }
     try {
-        $intakeUrl = "$($CoordinatorBase.TrimEnd('/'))/api/external/ifc-ready"
-        $job = Invoke-JsonRequest -Method 'POST' -Url $intakeUrl -Body $payload -Headers $headers -TimeoutSec 20
+        $sourcesUrl = "$($CoordinatorBase.TrimEnd('/'))/api/dev/ifc-sources"
+        $sourceCatalog = Invoke-JsonRequest -Method 'GET' -Url $sourcesUrl -TimeoutSec 20
+        $sourceMatches = @(Get-JsonProperty $sourceCatalog 'items' | Where-Object {
+            [string](Get-JsonProperty $_ 'filename') -ceq $fixture.Name -and
+            [string](Get-JsonProperty $_ 'relative_path') -ceq $fixture.Name
+        })
+        if ($sourceMatches.Count -ne 1) {
+            throw "selected fixture must resolve to exactly one coordinator IFC source (found $($sourceMatches.Count)): $($fixture.Name)"
+        }
+        $sourceId = [string](Get-JsonProperty $sourceMatches[0] 'source_id')
+        if ([string]::IsNullOrWhiteSpace($sourceId)) { throw 'coordinator IFC source is missing source_id' }
+        $fixtureDetail.selected_fixture.source_id = $sourceId
+        $registerUrl = "$($CoordinatorBase.TrimEnd('/'))/api/dev/ifc-sources/$([Uri]::EscapeDataString($sourceId))/register"
+        $job = Invoke-JsonRequest -Method 'POST' -Url $registerUrl -Body @{
+            project_id = 'project_local_smoke'
+            model_version_id = "ext_mv_$safeName"
+        } -TimeoutSec 20
     } catch {
         $detail = $fixtureDetail.Clone()
         $detail.coordinator_health = $health
@@ -424,7 +472,7 @@ function Invoke-RealIfcIntakeConversion {
             fixture_ids        = $fixtureIds
             fixture_detail     = $fixtureDetail
             integration_status = 'blocked'
-            integration_blocker = 'coordinator rejected or failed the IFC-ready intake request'
+            integration_blocker = 'coordinator rejected or failed the local IFC source registration request'
             integration_ids    = $fixtureIds
             integration_detail = $detail
             callback_detail    = $null
@@ -461,17 +509,16 @@ function Invoke-RealIfcIntakeConversion {
         subject_kind = 'script_run'
         subject_id = $StructLogger.RunId
     }
+    $dispatchPoll = Wait-CoordinatorConversionDispatch -BaseUrl $CoordinatorBase -IfcReadyJobId $ifcReadyJobId -InitialJob $job -PollSeconds $PollSeconds
+    $job = $dispatchPoll.job
     $conversionJobId = [string](Get-JsonProperty $job 'conversion_job_id')
-    $jobStatus = [string](Get-JsonProperty $job 'status')
-    $conversionStatus = [string](Get-JsonProperty $job 'conversion_status')
-    $dispatchError = [string](Get-JsonProperty $job 'dispatch_error')
+    $correlationId = [string](Get-JsonProperty $job 'correlation_id')
     $integrationIds = @{
         storage_root        = $summary.root
         selected_fixture    = $fixture.Name
         ifc_ready_job_id    = $ifcReadyJobId
         conversion_job_id   = $conversionJobId
         correlation_id      = $correlationId
-        idempotency_key     = $idempotencyKey
     }
     $integrationDetail = $fixtureDetail.Clone()
     $integrationDetail.coordinator_health = $health
@@ -484,9 +531,16 @@ function Invoke-RealIfcIntakeConversion {
     $integrationDetail.browser_status = 'not_attempted'
     $integrationDetail.browser_artifacts = $null
     $integrationDetail.close_status = 'not_attempted'
+    $integrationDetail.coordinator_dispatch_poll = $dispatchPoll
 
-    if ([string]::IsNullOrWhiteSpace($conversionJobId)) {
-        $blocker = if ([string]::IsNullOrWhiteSpace($dispatchError)) { 'coordinator accepted intake but did not return conversion_job_id' } else { $dispatchError }
+    if (-not $dispatchPoll.completed -or [string]::IsNullOrWhiteSpace($conversionJobId) -or [string]::IsNullOrWhiteSpace($correlationId)) {
+        $blocker = if ([string]::IsNullOrWhiteSpace($correlationId) -and $dispatchPoll.completed) {
+            'coordinator dispatch job is missing correlation_id'
+        } elseif (-not [string]::IsNullOrWhiteSpace([string]$dispatchPoll.error)) {
+            [string]$dispatchPoll.error
+        } else {
+            'coordinator accepted intake but conversion dispatch was not observed'
+        }
         return [pscustomobject]@{
             fixture_status     = 'passed'
             fixture_blocker    = ''
