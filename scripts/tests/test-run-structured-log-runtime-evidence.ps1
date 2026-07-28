@@ -820,6 +820,12 @@ function Invoke-ArtifactRendererCase {
         foreach($name in @('root-trace-timeline.json','runtime-log-validation.json','artifact-manifest.json','pr-fields.json','evidence-summary.md')) {
             Assert-True (Test-Path (Join-Path $ctx.AttemptRoot $name)) "$name rendered"
         }
+        $summaryLines = @(Get-Content -LiteralPath (Join-Path $ctx.AttemptRoot 'evidence-summary.md'))
+        $rootTraceLines = @($summaryLines | Where-Object { $_ -like 'Root trace:*' })
+        Assert-Equal 1 $rootTraceLines.Count 'summary has exactly one root trace line'
+        Assert-Equal 'Root trace: `ifcready_root`. See `root-trace-timeline.json`.' $rootTraceLines[0] 'summary root trace line is exact'
+        Assert-True ($rootTraceLines[0] -notmatch '\$rootTraceId') 'summary root trace line does not contain the literal variable name'
+        Assert-True ($rootTraceLines[0] -notmatch '[\x00-\x1F\x7F]') 'summary root trace line contains no control characters'
         $check = Test-StructuredLogArtifactManifest -AttemptRoot $ctx.AttemptRoot
         Assert-True $check.valid 'fresh artifact hashes validate'
         $validatorProvenance = @(Get-Content -LiteralPath $ctx.ProvenancePath | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $null -ne $_.PSObject.Properties['phase'] -and $_.phase -eq 'runtime_validator' })

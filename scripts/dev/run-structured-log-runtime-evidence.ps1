@@ -1166,7 +1166,7 @@ function Write-StructuredLogEvidenceArtifacts {
         '## Fixture name-size-SHA256','See `fixture.json`.','',
         '## Exact command provenance','See `command-provenance.jsonl`.','',
         '## Owned process lease and shutdown','See `runtime-lease.json` and `shutdown.json`.','',
-        '## Root trace timeline and runtime IDs',"Root trace: `$rootTraceId`. See `root-trace-timeline.json`. ",'',
+        '## Root trace timeline and runtime IDs',"Root trace: ``$rootTraceId``. See ``root-trace-timeline.json``.",'',
         '## Schema/env-snapshot/redaction validation','See `runtime-log-validation.json`; canonical validator reported no violations.','',
         '## OpenSpec 10.1-10.5 mapping','Evidence remains subject to the tracked OpenSpec evidence review.','',
         '## Verified facts','Artifacts referenced above are hash-bound by `artifact-manifest.json`.','',

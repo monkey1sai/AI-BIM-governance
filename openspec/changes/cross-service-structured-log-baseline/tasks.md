@@ -100,11 +100,11 @@
 - [x] 10.0.3 Viewer production wiring：`createBrowserLogger()` return 前 emit browser-safe `env_snapshot`；`main.tsx` 建 singleton、安裝 global handlers並從合法 query carrier採用 root trace；補 verify/tests
 - [x] 10.0.4 PowerShell production smoke participant：`scripts/smoke-bscheme-intake.ps1` 建 logger，取得 intake response後切換 root trace並記 poll/session/close；補 narrow script test
 - [x] 10.0.5 Cross-service integration：不得人工注入四份 record；驗 coordinator HTTP header、streaming persisted trace、viewer query/bootstrap、PowerShell runner handoff使用同一 root trace
-- [ ] 10.1 本地完整跑一次 IFC-ready → conversion → session → close 閉環（用既有 fast MVP playbook）
-- [ ] 10.2 驗 4 個 service 的 `logs/<service>/<date>/*.jsonl` 都產生
-- [ ] 10.3 用 trace_id 跨 service grep 串得起來 timeline
-- [ ] 10.4 驗 env_snapshot 4 個 service 都有寫、secret pattern key 不出現原值
-- [ ] 10.5 撰寫 `docs/evidence/structured-log-baseline-2026-05-26.md` 記錄 evidence（含 `trace_id` 與 record 摘要）
+- [x] 10.1 本地完整跑一次 IFC-ready → conversion → session → close 閉環（用既有 fast MVP playbook）
+- [x] 10.2 驗 4 個 service 的 `logs/<service>/<date>/*.jsonl` 都產生
+- [x] 10.3 用 trace_id 跨 service grep 串得起來 timeline
+- [x] 10.4 驗 env_snapshot 4 個 service 都有寫、secret pattern key 不出現原值
+- [x] 10.5 撰寫 `docs/evidence/structured-log-baseline-2026-05-26.md` 記錄 evidence（含 `trace_id` 與 record 摘要）
 
 ## 11. Verification 與 PR
 
