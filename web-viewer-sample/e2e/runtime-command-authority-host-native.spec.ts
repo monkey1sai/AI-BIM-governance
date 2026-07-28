@@ -22,13 +22,40 @@ const processLogPaths = (process.env.E2E_RUNTIME_PROCESS_LOGS || "")
   .map((value) => value.trim())
   .filter(Boolean);
 
+// Keep this aligned with the pinned Playwright 1.61.1 Chromium defaults.
+const playwrightChromiumDisabledFeatures = [
+  "AvoidUnnecessaryBeforeUnloadCheckSync",
+  "BoundaryEventDispatchTracksNodeRemoval",
+  "DestroyProfileOnBrowserClose",
+  "DialMediaRouteProvider",
+  "GlobalMediaControls",
+  "HttpsUpgrades",
+  "LensOverlay",
+  "MediaRouter",
+  "PaintHolding",
+  "ThirdPartyStoragePartitioning",
+  "Translate",
+  "AutoDeElevate",
+  "RenderDocument",
+  "OptimizationHints",
+  "msForceBrowserSignIn",
+  "msEdgeUpdateLaunchServicesPreferredVersion",
+];
+const playwrightDisableFeaturesArg =
+  `--disable-features=${playwrightChromiumDisabledFeatures.join(",")}`;
+const hostNativeDisableFeaturesArg = `--disable-features=${[
+  ...playwrightChromiumDisabledFeatures,
+  "LocalNetworkAccessChecksWebSockets",
+].join(",")}`;
+
 test.use({
   trace: "off",
   screenshot: "off",
   video: "off",
   launchOptions: {
     // Headless Chromium cannot grant the localhost WebSocket LNA prompt.
-    args: ["--disable-features=LocalNetworkAccessChecksWebSockets"],
+    ignoreDefaultArgs: [playwrightDisableFeaturesArg],
+    args: [hostNativeDisableFeaturesArg],
   },
 });
 test.skip(!enabled, "opt-in Windows host-native Kit/GPU runtime authority evidence");
