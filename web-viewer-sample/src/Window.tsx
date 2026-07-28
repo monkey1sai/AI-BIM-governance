@@ -18,6 +18,7 @@ import USDStage from "./USDStage";
 import { headerHeight } from './App';
 import { fetchUSDAssets, type USDAsset as USDAssetType } from './assetsApi';
 import DemoControlPanel from "./components/DemoControlPanel";
+import { StructuredLogDiagnostics } from "./components/StructuredLogDiagnostics";
 import { isBlockedLifecycle, lifecycleStatusText, sameStreamEndpoint, sameStreamTransportEndpoint, selectSpectatorBinding, type StreamEndpoint } from "./utils/windowHelpers";
 // viewer-edge-bim-server-console:ReviewLauncher / PresencePanel 已刪(fast
 // MVP 不需多人協作 UI;spec REMOVED「Viewer separates runtime commands from
@@ -4138,6 +4139,14 @@ export default class App extends React.Component<AppProps, AppState> {
                         </>
                     );
                 })()}
+                <StructuredLogDiagnostics
+                    search={window.location.search}
+                    logger={window.__structLog?.logger ?? null}
+                    reviewSessionId={this.state.reviewSessionId}
+                    conversionJobId={this.state.latestStreamConfig?.model.conversion_job_id ?? null}
+                    kitInstanceId={this.state.activeStreamEndpoint.kitInstanceId || null}
+                    closeReviewSession={(sessionId) => this.coordinatorClient.closeReviewSession(sessionId)}
+                />
             </div>
             );
         }

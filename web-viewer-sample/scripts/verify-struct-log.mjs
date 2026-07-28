@@ -62,6 +62,55 @@ function freezeClock(start) {
     return () => new Date(fixed.getTime());
 }
 
+function deferred() {
+    let resolve;
+    const promise = new Promise((resolvePromise) => {
+        resolve = resolvePromise;
+    });
+    return { promise, resolve };
+}
+
+async function exerciseDefaultTransport(responseFactory, extraRecords = 0) {
+    const originalFetchDescriptor = Object.getOwnPropertyDescriptor(globalThis, "fetch");
+    Object.defineProperty(globalThis, "fetch", {
+        configurable: true,
+        writable: true,
+        value: async () => responseFactory(),
+    });
+
+    try {
+        const logger = createBrowserLogger({
+            runId: "run_20260526_142010_a3f900",
+            initialTraceId: "ifcready_ack_contract",
+            enableTimer: false,
+            flushAtRecords: 999,
+            flushMaxAttempts: 1,
+        });
+        for (let i = 0; i < extraRecords; i += 1) logger.info("app", `ack-${i}`);
+        const flushed = await logger.flush();
+        return {
+            flushed,
+            bufferLength: logger.bufferLength(),
+            lastFlushStatus: logger.lastFlushStatus(),
+        };
+    } finally {
+        if (originalFetchDescriptor) {
+            Object.defineProperty(globalThis, "fetch", originalFetchDescriptor);
+        } else {
+            delete globalThis.fetch;
+        }
+    }
+}
+
+function ackResponse(payload) {
+    return {
+        ok: true,
+        status: 200,
+        json: async () => payload,
+        text: async () => JSON.stringify(payload),
+    };
+}
+
 // ---------------------------------------------------------------------------
 // generateRunId pattern (matches schema.json)
 // ---------------------------------------------------------------------------
@@ -317,6 +366,294 @@ await test("flushAtRecords triggers an auto-flush when threshold reached", async
     assert.equal(flushes, 1, "should auto-flush at threshold");
     assert.equal(batches[0].length, 3);
     assert.equal(batches[0][0].event_type, "env_snapshot");
+});
+
+await test("default transport accepts only a complete viewer-log acknowledgement", async () => {
+    const result = await exerciseDefaultTransport(() => ackResponse({ accepted: 1, dropped: 0 }));
+    assert.equal(result.flushed, 1);
+    assert.equal(result.bufferLength, 0);
+    assert.equal(result.lastFlushStatus?.status, "ok");
+});
+
+await test("default transport retains a partially dropped viewer-log batch", async () => {
+    const result = await exerciseDefaultTransport(
+        () => ackResponse({ accepted: 1, dropped: 1 }),
+        1,
+    );
+    assert.equal(result.flushed, 0);
+    assert.equal(result.bufferLength, 2);
+    assert.equal(result.lastFlushStatus?.status, "failed");
+    assert.equal(result.lastFlushStatus?.detail, "viewer_log_ack_incomplete");
+});
+
+await test("default transport retains an entirely dropped viewer-log batch", async () => {
+    const result = await exerciseDefaultTransport(
+        () => ackResponse({ accepted: 0, dropped: 2 }),
+        1,
+    );
+    assert.equal(result.flushed, 0);
+    assert.equal(result.bufferLength, 2);
+    assert.equal(result.lastFlushStatus?.status, "failed");
+    assert.equal(result.lastFlushStatus?.detail, "viewer_log_ack_incomplete");
+});
+
+await test("default transport fails closed on malformed or missing viewer-log acknowledgement", async () => {
+    const malformed = await exerciseDefaultTransport(() => ({
+        ok: true,
+        status: 200,
+        json: async () => { throw new SyntaxError("invalid JSON"); },
+        text: async () => "not-json",
+    }));
+    assert.equal(malformed.flushed, 0);
+    assert.equal(malformed.bufferLength, 1);
+    assert.equal(malformed.lastFlushStatus?.detail, "viewer_log_ack_malformed");
+
+    const missing = await exerciseDefaultTransport(() => ackResponse({ accepted: 1 }));
+    assert.equal(missing.flushed, 0);
+    assert.equal(missing.bufferLength, 1);
+    assert.equal(missing.lastFlushStatus?.detail, "viewer_log_ack_malformed");
+});
+
+await test("manual flush waits for a timer-started batch and drains records appended afterward", async () => {
+    const originalSetInterval = globalThis.setInterval;
+    const originalClearInterval = globalThis.clearInterval;
+    const firstResult = deferred();
+    const batches = [];
+    let timerCallback = null;
+    globalThis.setInterval = ((callback) => {
+        timerCallback = callback;
+        return 43;
+    });
+    globalThis.clearInterval = (() => undefined);
+
+    try {
+        const logger = createBrowserLogger({
+            runId: "run_20260526_142010_a3f900",
+            initialTraceId: "ifcready_manual_wait",
+            transport: async (_url, body) => {
+                batches.push(body);
+                if (batches.length === 1) return firstResult.promise;
+                return { ok: true, status: 200 };
+            },
+            flushAtRecords: 999,
+            flushIntervalMs: 10,
+        });
+
+        timerCallback();
+        logger.info("structuredLogDiagnostics", "manual action", { evidence_action_id: "evidence_action_wait" });
+        let settled = false;
+        const manualFlush = logger.flush().then((count) => {
+            settled = true;
+            return count;
+        });
+
+        await Promise.resolve();
+        assert.equal(settled, false, "manual flush must wait for the timer-started transport");
+        firstResult.resolve({ ok: true, status: 200 });
+        const flushed = await manualFlush;
+
+        assert.equal(batches.length, 2);
+        assert.equal(batches[0].some((record) => record.data?.evidence_action_id === "evidence_action_wait"), false);
+        assert.equal(batches[1].filter((record) => record.data?.evidence_action_id === "evidence_action_wait").length, 1);
+        assert.equal(flushed, 2);
+        assert.equal(logger.bufferLength(), 0);
+        await logger.shutdown();
+    } finally {
+        globalThis.setInterval = originalSetInterval;
+        globalThis.clearInterval = originalClearInterval;
+    }
+});
+
+await test("manual flush retries a retained action after a timer-started batch fails", async () => {
+    const originalSetInterval = globalThis.setInterval;
+    const originalClearInterval = globalThis.clearInterval;
+    const firstResult = deferred();
+    const batches = [];
+    let timerCallback = null;
+    globalThis.setInterval = ((callback) => {
+        timerCallback = callback;
+        return 44;
+    });
+    globalThis.clearInterval = (() => undefined);
+
+    try {
+        const logger = createBrowserLogger({
+            runId: "run_20260526_142010_a3f900",
+            initialTraceId: "ifcready_manual_retry",
+            transport: async (_url, body) => {
+                batches.push(body);
+                if (batches.length === 1) return firstResult.promise;
+                return { ok: true, status: 200 };
+            },
+            flushAtRecords: 999,
+            flushIntervalMs: 10,
+            flushMaxAttempts: 1,
+        });
+
+        timerCallback();
+        logger.info("structuredLogDiagnostics", "manual action", { evidence_action_id: "evidence_action_after_failure" });
+        const manualFlush = logger.flush();
+        firstResult.resolve({ ok: false, status: 503, detail: "forced_failure" });
+        await manualFlush;
+
+        assert.equal(batches.length, 2, "the retained diagnostics action needs its own attempt");
+        assert.equal(batches[0].some((record) => record.data?.evidence_action_id === "evidence_action_after_failure"), false);
+        assert.equal(batches[1].filter((record) => record.data?.evidence_action_id === "evidence_action_after_failure").length, 1);
+        assert.equal(logger.bufferLength(), 0);
+        assert.equal(logger.lastFlushStatus()?.status, "ok");
+        await logger.shutdown();
+    } finally {
+        globalThis.setInterval = originalSetInterval;
+        globalThis.clearInterval = originalClearInterval;
+    }
+});
+
+await test("auto-flush pause blocks timer and threshold while manual flush remains available", async () => {
+    const originalSetInterval = globalThis.setInterval;
+    const originalClearInterval = globalThis.clearInterval;
+    let timerCallback = null;
+    let timerRegistrations = 0;
+    const sent = [];
+    globalThis.setInterval = ((callback) => {
+        timerRegistrations += 1;
+        timerCallback = callback;
+        return 41;
+    });
+    globalThis.clearInterval = (() => undefined);
+
+    try {
+        const logger = createBrowserLogger({
+            runId: "run_20260526_142010_a3f900",
+            initialTraceId: "ifcready_pause",
+            transport: async (_url, body) => {
+                sent.push(body);
+                return { ok: true, status: 200 };
+            },
+            flushAtRecords: 2,
+            flushIntervalMs: 10,
+        });
+
+        assert.equal(timerRegistrations, 1);
+        logger.setAutoFlushPaused(true);
+        logger.info("app", "threshold while paused");
+        await Promise.resolve();
+        assert.equal(sent.length, 0, "threshold flush must stay paused");
+        timerCallback();
+        await Promise.resolve();
+        assert.equal(sent.length, 0, "timer flush must stay paused");
+
+        await logger.flush();
+        assert.equal(sent.length, 1, "explicit flush must work while auto-flush is paused");
+        logger.info("app", "timer after resume");
+        logger.setAutoFlushPaused(false);
+        logger.setAutoFlushPaused(true);
+        logger.setAutoFlushPaused(false);
+        assert.equal(timerRegistrations, 1, "resuming must not register duplicate timers");
+        timerCallback();
+        await Promise.resolve();
+        assert.equal(sent.length, 2);
+        await logger.shutdown();
+    } finally {
+        globalThis.setInterval = originalSetInterval;
+        globalThis.clearInterval = originalClearInterval;
+    }
+});
+
+await test("a retained failed action is not consumed by timer or threshold before resume", async () => {
+    const originalSetInterval = globalThis.setInterval;
+    const originalClearInterval = globalThis.clearInterval;
+    let timerCallback = null;
+    let transportCalls = 0;
+    let shouldSucceed = false;
+    globalThis.setInterval = ((callback) => {
+        timerCallback = callback;
+        return 42;
+    });
+    globalThis.clearInterval = (() => undefined);
+
+    try {
+        const logger = createBrowserLogger({
+            runId: "run_20260526_142010_a3f900",
+            initialTraceId: "ifcready_retained_failure",
+            transport: async () => {
+                transportCalls += 1;
+                return shouldSucceed
+                    ? { ok: true, status: 200 }
+                    : { ok: false, status: 503, detail: "forced_failure" };
+            },
+            flushAtRecords: 2,
+            flushIntervalMs: 10,
+            flushMaxAttempts: 3,
+            flushBackoffMs: 0,
+        });
+
+        logger.setAutoFlushPaused(true);
+        logger.info("structuredLogDiagnostics", "manual action", { evidence_action_id: "evidence_action_retained" });
+        await logger.flush();
+        assert.equal(transportCalls, 3);
+        assert.equal(logger.lastFlushStatus()?.status, "failed");
+        assert.equal(logger.tail().filter((record) => record.data?.evidence_action_id === "evidence_action_retained").length, 1);
+
+        timerCallback();
+        logger.info("app", "threshold remains paused");
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        assert.equal(transportCalls, 3, "background paths must not consume the retained action");
+
+        shouldSucceed = true;
+        logger.setAutoFlushPaused(false);
+        timerCallback();
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        assert.equal(transportCalls, 4);
+        assert.equal(logger.tail().some((record) => record.data?.evidence_action_id === "evidence_action_retained"), false);
+        await logger.shutdown();
+    } finally {
+        globalThis.setInterval = originalSetInterval;
+        globalThis.clearInterval = originalClearInterval;
+    }
+});
+
+await test("shutdown waits for an in-flight batch even while auto-flush is paused", async () => {
+    const originalSetInterval = globalThis.setInterval;
+    const originalClearInterval = globalThis.clearInterval;
+    const firstResult = deferred();
+    const batches = [];
+    let timerCallback = null;
+    globalThis.setInterval = ((callback) => {
+        timerCallback = callback;
+        return 45;
+    });
+    globalThis.clearInterval = (() => undefined);
+
+    try {
+        const logger = createBrowserLogger({
+            runId: "run_20260526_142010_a3f900",
+            initialTraceId: "ifcready_shutdown_wait",
+            transport: async (_url, body) => {
+                batches.push(body);
+                if (batches.length === 1) return firstResult.promise;
+                return { ok: true, status: 200 };
+            },
+            flushAtRecords: 999,
+            flushIntervalMs: 10,
+        });
+        timerCallback();
+        logger.setAutoFlushPaused(true);
+        logger.info("app", "record appended while timer batch is in flight and paused");
+
+        let shutdownSettled = false;
+        const shutdown = logger.shutdown().then(() => {
+            shutdownSettled = true;
+        });
+        await Promise.resolve();
+        assert.equal(shutdownSettled, false);
+        firstResult.resolve({ ok: true, status: 200 });
+        await shutdown;
+        assert.equal(batches.length, 2);
+        assert.equal(logger.bufferLength(), 0);
+    } finally {
+        globalThis.setInterval = originalSetInterval;
+        globalThis.clearInterval = originalClearInterval;
+    }
 });
 
 await test("ring buffer drops oldest when over capacity", async () => {

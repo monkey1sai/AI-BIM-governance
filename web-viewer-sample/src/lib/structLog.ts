@@ -104,6 +104,9 @@ export interface BrowserStructLogger {
   /** Update the active trace_id (e.g. when entering a new review session). */
   setTraceId(traceId: string): void;
 
+  /** Pause or resume timer/threshold flushes without blocking explicit flush(). */
+  setAutoFlushPaused(paused: boolean): void;
+
   /** Manually trigger a flush. Returns the number of records persisted. */
   flush(): Promise<number>;
 
@@ -271,7 +274,8 @@ interface LoggerState {
   flushedTotal: number;
   droppedTotal: number;
   lastFlushStatus: { ts: string; status: "ok" | "failed"; detail?: string } | null;
-  flushing: boolean;
+  autoFlushPaused: boolean;
+  inFlightFlush: Promise<number> | null;
   timerId: ReturnType<typeof setInterval> | null;
   seqByTrace: Map<string, number>;
   closed: boolean;
@@ -292,18 +296,48 @@ function defaultEndpoint(): string {
   return `${origin}/api/internal/viewer-log`;
 }
 
-function defaultTransport(url: string, body: LogRecord[]): Promise<{ ok: boolean; status: number; detail?: string }> {
+async function defaultTransport(url: string, body: LogRecord[]): Promise<{ ok: boolean; status: number; detail?: string }> {
   const fetchFn = (globalThis as { fetch?: typeof fetch }).fetch;
   if (!fetchFn) {
-    return Promise.resolve({ ok: false, status: 0, detail: "no_fetch_in_environment" });
+    return { ok: false, status: 0, detail: "no_fetch_in_environment" };
   }
-  return fetchFn(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  })
-    .then(async (r) => ({ ok: r.ok, status: r.status, detail: r.ok ? undefined : await r.text().catch(() => undefined) }))
-    .catch((err: unknown) => ({ ok: false, status: 0, detail: err instanceof Error ? err.message : String(err) }));
+
+  try {
+    const response = await fetchFn(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      return { ok: false, status: response.status, detail: `http_${response.status}` };
+    }
+
+    let acknowledgement: unknown;
+    try {
+      acknowledgement = await response.json();
+    } catch {
+      return { ok: false, status: response.status, detail: "viewer_log_ack_malformed" };
+    }
+    if (
+      typeof acknowledgement !== "object"
+      || acknowledgement === null
+      || !Number.isSafeInteger((acknowledgement as { accepted?: unknown }).accepted)
+      || (acknowledgement as { accepted: number }).accepted < 0
+      || !Number.isSafeInteger((acknowledgement as { dropped?: unknown }).dropped)
+      || (acknowledgement as { dropped: number }).dropped < 0
+    ) {
+      return { ok: false, status: response.status, detail: "viewer_log_ack_malformed" };
+    }
+    if (
+      (acknowledgement as { accepted: number }).accepted !== body.length
+      || (acknowledgement as { dropped: number }).dropped !== 0
+    ) {
+      return { ok: false, status: response.status, detail: "viewer_log_ack_incomplete" };
+    }
+    return { ok: true, status: response.status };
+  } catch {
+    return { ok: false, status: 0, detail: "viewer_log_transport_failed" };
+  }
 }
 
 function buildRecord(state: LoggerState, level: LogLevel, eventType: EventType, component: string, msg: string, data: Record<string, unknown> = {}, options: { caller?: string; error?: LogRecord["error"]; parent_trace_id?: string } = {}): LogRecord {
@@ -341,23 +375,29 @@ function enqueue(state: LoggerState, record: LogRecord): void {
   }
 }
 
-async function flushOnce(state: LoggerState): Promise<number> {
-  if (state.flushing || state.buffer.length === 0) return 0;
-  state.flushing = true;
+async function flushBatch(state: LoggerState): Promise<number> {
   const inFlight = state.buffer.slice();
   const inFlightRecords = inFlight.map((b) => b.record);
   const url = state.endpoint();
   let backoff = state.flushBackoffMs;
   let lastDetail: string | undefined;
   for (let attempt = 1; attempt <= state.flushMaxAttempts; attempt += 1) {
-    const result = await state.transport(url, inFlightRecords);
+    let result: { ok: boolean; status: number; detail?: string };
+    try {
+      result = await state.transport(url, inFlightRecords);
+    } catch (err) {
+      result = {
+        ok: false,
+        status: 0,
+        detail: err instanceof Error ? err.message : String(err),
+      };
+    }
     if (result.ok) {
       // remove the in-flight entries (only those still at the head — if new
       // ones arrived after slice() they remain).
       const removed = state.buffer.splice(0, inFlight.length);
       state.flushedTotal += removed.length;
       state.lastFlushStatus = { ts: isoUtcMs(state.now()), status: "ok" };
-      state.flushing = false;
       return removed.length;
     }
     lastDetail = result.detail ?? `http_${result.status}`;
@@ -381,8 +421,29 @@ async function flushOnce(state: LoggerState): Promise<number> {
     }
   }
   state.lastFlushStatus = { ts: isoUtcMs(state.now()), status: "failed", detail: lastDetail };
-  state.flushing = false;
   return 0;
+}
+
+function flushOnce(state: LoggerState): Promise<number> {
+  if (state.inFlightFlush) return state.inFlightFlush;
+  if (state.buffer.length === 0) return Promise.resolve(0);
+
+  const inFlight = flushBatch(state).finally(() => {
+    if (state.inFlightFlush === inFlight) state.inFlightFlush = null;
+  });
+  state.inFlightFlush = inFlight;
+  return inFlight;
+}
+
+async function flushManually(state: LoggerState): Promise<number> {
+  const existing = state.inFlightFlush;
+  if (!existing) return flushOnce(state);
+
+  let flushedTotal = await existing;
+  if (state.buffer.length > 0) {
+    flushedTotal += await flushOnce(state);
+  }
+  return flushedTotal;
 }
 
 export function createBrowserLogger(options: BrowserLoggerOptions = {}): BrowserStructLogger {
@@ -412,7 +473,8 @@ export function createBrowserLogger(options: BrowserLoggerOptions = {}): Browser
     flushedTotal: 0,
     droppedTotal: 0,
     lastFlushStatus: null,
-    flushing: false,
+    autoFlushPaused: false,
+    inFlightFlush: null,
     timerId: null,
     seqByTrace: new Map(),
     closed: false,
@@ -420,6 +482,7 @@ export function createBrowserLogger(options: BrowserLoggerOptions = {}): Browser
 
   if (options.enableTimer !== false) {
     state.timerId = setInterval(() => {
+      if (state.autoFlushPaused) return;
       void flushOnce(state).catch(() => {
         // flushOnce already records lastFlushStatus on failure; swallow here.
       });
@@ -429,7 +492,7 @@ export function createBrowserLogger(options: BrowserLoggerOptions = {}): Browser
   function append(record: LogRecord): void {
     if (state.closed) return;
     enqueue(state, record);
-    if (state.buffer.length >= state.flushAtRecords) {
+    if (!state.autoFlushPaused && state.buffer.length >= state.flushAtRecords) {
       void flushOnce(state).catch(() => {
         // flushOnce already records lastFlushStatus; swallow.
       });
@@ -486,8 +549,11 @@ export function createBrowserLogger(options: BrowserLoggerOptions = {}): Browser
     setTraceId(traceId) {
       state.traceId = traceId;
     },
+    setAutoFlushPaused(paused) {
+      state.autoFlushPaused = paused;
+    },
     async flush() {
-      return flushOnce(state);
+      return flushManually(state);
     },
     tail(n = 100) {
       return state.buffer.slice(-n).map((entry) => entry.record);
@@ -495,7 +561,7 @@ export function createBrowserLogger(options: BrowserLoggerOptions = {}): Browser
     async shutdown() {
       state.closed = true;
       if (state.timerId !== null) clearInterval(state.timerId);
-      await flushOnce(state).catch(() => undefined);
+      await flushManually(state).catch(() => undefined);
     },
   };
   const safeVars = sanitizeBrowserSnapshotVars(options.browserSnapshotVars ?? []);

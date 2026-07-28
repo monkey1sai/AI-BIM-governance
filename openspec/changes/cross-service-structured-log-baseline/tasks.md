@@ -122,7 +122,7 @@
 ## 12. Option A — P4 viewer operability correction（2026-07-28）
 
 - [x] 12.1 Approved design、active OpenSpec delta 與 implementation plan 明確核准 bounded standalone-viewer diagnostics；完整 dashboard / search / tail / aggregation 維持 out of scope
-- [ ] 12.2 Viewer diagnostics 以 TDD 實作真實 `POST /api/internal/viewer-log` flush、visible loading/success/failure/retry、runtime IDs 與同 session browser close；不新增 backend endpoint或 production fault flag
+- [x] 12.2 Viewer diagnostics 以 TDD 實作真實 `POST /api/internal/viewer-log` flush、visible loading/success/failure/retry、runtime IDs 與同 session browser close；不新增 backend endpoint或 production fault flag
 - [ ] 12.3 Production browser helper 以 Playwright-only interception 觀測 forced viewer-log failure，解除 interception 後 retry 命中真 coordinator 2xx，再由同一 browser surface close session
 - [ ] 12.4 Browser evidence 保存 failure/final screenshots、Playwright trace、secret-free console/network events與 machine-readable state transitions；smoke/runtime runner tests 覆蓋新 artifact contract
 - [ ] 12.5 Affected unit/build/script/OpenSpec checks、GitNexus `detect_changes` 與獨立 review 通過，並從 current HEAD 重跑真實 IFC runtime evidence

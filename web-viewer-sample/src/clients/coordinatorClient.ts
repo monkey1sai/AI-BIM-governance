@@ -27,6 +27,11 @@ export interface QueuedForInstanceResponse {
     artifact_bindings: ArtifactBinding[];
 }
 
+export interface CloseReviewSessionResponse {
+    session_id: string;
+    status: "closed";
+}
+
 export class QueuedForInstanceError extends Error {
     constructor(readonly response: QueuedForInstanceResponse) {
         super(response.detail || "No Kit capacity available.");
@@ -84,6 +89,21 @@ export class CoordinatorClient {
 
     async getStreamConfig(sessionId: string): Promise<ReviewStreamConfig> {
         return this.request<ReviewStreamConfig>(`/api/review-sessions/${sessionId}/stream-config`);
+    }
+
+    async closeReviewSession(sessionId: string): Promise<CloseReviewSessionResponse> {
+        const path = `/api/review-sessions/${encodeURIComponent(sessionId)}/close`;
+        const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+            method: "POST",
+            headers: { Accept: "application/json", "Content-Type": "application/json" },
+            body: "{}",
+        });
+        const payload = await readJson(response);
+        if (!response.ok) throw coordinatorHttpError(response.status, path, payload);
+        if (!isCloseReviewSessionResponse(payload, sessionId)) {
+            throw new CoordinatorHttpError(502, path, "review_session_close_response_malformed");
+        }
+        return payload;
     }
 
     async consumeA4Handoff(
@@ -154,6 +174,15 @@ function isQueuedForInstanceResponse(payload: unknown): payload is QueuedForInst
     if (!payload || typeof payload !== "object") return false;
     const candidate = payload as { status?: unknown; artifact_bindings?: unknown };
     return candidate.status === "queued_for_instance" && Array.isArray(candidate.artifact_bindings);
+}
+
+function isCloseReviewSessionResponse(
+    payload: unknown,
+    sessionId: string,
+): payload is CloseReviewSessionResponse {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+    const candidate = payload as { session_id?: unknown; status?: unknown };
+    return candidate.session_id === sessionId && candidate.status === "closed";
 }
 
 function coordinatorHttpError(status: number, path: string, payload: unknown): CoordinatorHttpError {
