@@ -70,6 +70,8 @@ Assert-True ($e2e -match [regex]::Escape('flag: "wx"')) 'E2E will not overwrite 
 Assert-True ($e2e -match [regex]::Escape('control_nonce: controlNonce')) 'E2E binds all emitted control markers to the per-run nonce'
 Assert-True ($e2e -match [regex]::Escape('serialized.includes(secret)).toBe(false)')) 'secret guard asserts a boolean rather than echoing bearer text'
 Assert-True (-not ($e2e -match [regex]::Escape('not.toContain(secret)'))) 'secret guard never prints bearer text through matcher diagnostics'
+Assert-True ($e2e -match [regex]::Escape('--disable-features=LocalNetworkAccessChecksWebSockets')) 'E2E disables only the headless Chromium WebSocket LNA gate'
+Assert-True (-not ($e2e -match [regex]::Escape('args: ["--disable-features=LocalNetworkAccessChecks"]'))) 'E2E does not disable the broader Chromium LNA parent gate'
 $expiryWaitIndex = $e2e.IndexOf('await page.waitForTimeout(expiryWaitMs)')
 $primaryLeaseIndex = $e2e.IndexOf('const primary = await createSession')
 $wrongSessionLeaseIndex = $e2e.IndexOf('const wrongSession = await createSession')

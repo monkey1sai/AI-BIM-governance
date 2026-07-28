@@ -22,7 +22,15 @@ const processLogPaths = (process.env.E2E_RUNTIME_PROCESS_LOGS || "")
   .map((value) => value.trim())
   .filter(Boolean);
 
-test.use({ trace: "off", screenshot: "off", video: "off" });
+test.use({
+  trace: "off",
+  screenshot: "off",
+  video: "off",
+  launchOptions: {
+    // Headless Chromium cannot grant the localhost WebSocket LNA prompt.
+    args: ["--disable-features=LocalNetworkAccessChecksWebSockets"],
+  },
+});
 test.skip(!enabled, "opt-in Windows host-native Kit/GPU runtime authority evidence");
 
 type SafePayload = {
