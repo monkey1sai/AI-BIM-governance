@@ -567,6 +567,27 @@ function Test-ListenerHasLauncherLineage {
     return $false
 }
 
+function Get-DeploymentVenvBaseExecutables {
+    param([Parameter(Mandatory = $true)][string] $Root)
+
+    # Windows venv redirector topology: `.venv\Scripts\python.exe` is a launcher that spawns the
+    # base interpreter recorded in pyvenv.cfg (`home = <dir>`) as a child, and that child is the
+    # process that actually binds the port. Only that exact configured interpreter is acceptable.
+    $configPath = Join-Path $Root '.venv\pyvenv.cfg'
+    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) { return @() }
+    $homeDir = ''
+    foreach ($line in @(Get-Content -LiteralPath $configPath -ErrorAction SilentlyContinue)) {
+        if ([string]$line -match '^\s*home\s*=\s*(.+?)\s*$') { $homeDir = $Matches[1]; break }
+    }
+    if ([string]::IsNullOrWhiteSpace($homeDir) -or -not (Test-Path -LiteralPath $homeDir -PathType Container)) { return @() }
+    $executables = [System.Collections.Generic.List[string]]::new()
+    foreach ($name in @('python.exe', 'pythonw.exe')) {
+        $candidate = Join-Path $homeDir $name
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { $executables.Add($candidate) }
+    }
+    return @($executables)
+}
+
 function Get-RuntimeRoleEvidence {
     param(
         [Parameter(Mandatory = $true)] $PortOwner,
@@ -579,13 +600,38 @@ function Get-RuntimeRoleEvidence {
         $expectedPython = Join-Path $Root '.venv\Scripts\python.exe'
         $conversionCode = 'import host_native_conversion_service as s; raise SystemExit(s.main())'
         if ($ProcessInfo.Name -notmatch '^(python|pythonw)$' -or
-            -not (Test-SamePath -Left ([string]$ProcessInfo.ExecutablePath) -Right $expectedPython) -or
-            -not (Test-SecurelyContainedPath -Candidate ([string]$ProcessInfo.ExecutablePath) -Root $Root) -or
-            -not ([string]$ProcessInfo.CommandLine).Contains($conversionCode) -or
+            -not ([string]$ProcessInfo.CommandLine).Contains($conversionCode)) {
+            return @()
+        }
+
+        if ((Test-SamePath -Left ([string]$ProcessInfo.ExecutablePath) -Right $expectedPython) -and
+            (Test-SecurelyContainedPath -Candidate ([string]$ProcessInfo.ExecutablePath) -Root $Root) -and
+            (Test-ListenerHasLauncherLineage -ProcessInfo $ProcessInfo -Root $Root -PidFileRecords $PidFileRecords -ServiceKind conversion)) {
+            return @('conversion-launcher-lineage')
+        }
+
+        # Windows venv redirector: the listener is the pyvenv.cfg base interpreter whose direct
+        # parent must be the deployment venv python running the exact conversion entrypoint, and
+        # the full launcher lineage (pidfile powershell + exact -File entrypoint) must still hold.
+        $venvBaseExecutables = @(Get-DeploymentVenvBaseExecutables -Root $Root)
+        $listenerMatchesBase = $false
+        foreach ($candidate in $venvBaseExecutables) {
+            if (Test-SamePath -Left ([string]$ProcessInfo.ExecutablePath) -Right ([string]$candidate)) {
+                $listenerMatchesBase = $true
+                break
+            }
+        }
+        if (-not $listenerMatchesBase) { return @() }
+
+        $parentInfo = Get-HostNativeProcessInfo -ProcId ([int]$ProcessInfo.ParentProcessId)
+        if ($parentInfo.Name -notmatch '^(python|pythonw)$' -or
+            -not (Test-SamePath -Left ([string]$parentInfo.ExecutablePath) -Right $expectedPython) -or
+            -not (Test-SecurelyContainedPath -Candidate ([string]$parentInfo.ExecutablePath) -Root $Root) -or
+            -not ([string]$parentInfo.CommandLine).Contains($conversionCode) -or
             -not (Test-ListenerHasLauncherLineage -ProcessInfo $ProcessInfo -Root $Root -PidFileRecords $PidFileRecords -ServiceKind conversion)) {
             return @()
         }
-        return @('conversion-launcher-lineage')
+        return @('conversion-venv-redirector-lineage')
     }
 
     $expectedKit = Join-Path $Root 'bim-streaming-server\_build\windows-x86_64\release\kit\kit.exe'
@@ -655,7 +701,8 @@ function Get-HostNativePortSnapshot {
             ) | Sort-Object -Unique)
         $nameAllowed = $processInfo.Name -match $script:KillableHostNativeProcessPattern
         $hasRuntimeRoleProof = ($ownership -contains 'kit-launcher-lineage') -or
-            ($ownership -contains 'conversion-launcher-lineage')
+            ($ownership -contains 'conversion-launcher-lineage') -or
+            ($ownership -contains 'conversion-venv-redirector-lineage')
         $hasCreationIdentity = -not [string]::IsNullOrWhiteSpace([string]$processInfo.CreationKey)
         $records += [pscustomobject]@{
             Port = [int]$item.Port

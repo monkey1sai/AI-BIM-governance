@@ -60,6 +60,13 @@ try {
     $null = New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot '.venv\Scripts')
     Set-Content -LiteralPath (Join-Path $tempRoot 'scripts\deploy.ps1') -Value '# marker' -Encoding ASCII
     Set-Content -LiteralPath (Join-Path $tempRoot '.venv\Scripts\python.exe') -Value '' -Encoding ASCII
+    $null = New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot 'basepython')
+    Set-Content -LiteralPath (Join-Path $tempRoot 'basepython\python.exe') -Value '' -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $tempRoot '.venv\pyvenv.cfg') -Encoding ASCII -Value @(
+        ('home = ' + (Join-Path $tempRoot 'basepython')),
+        'include-system-site-packages = false',
+        'version = 3.12.0'
+    )
     Set-Content -LiteralPath (Join-Path $tempRoot '.env.web-plane.host-kit') -Encoding ASCII -Value @(
         'KIT_SIGNALING_PORT=50100',
         'KIT_MEDIA_PORT=48998',
@@ -137,6 +144,53 @@ try {
         Assert-True ($conversionRole -contains 'conversion-launcher-lineage') 'conversion port requires exact service command and deployment launcher ancestry'
         $sharedPythonRole = @(Get-RuntimeRoleEvidence -PortOwner ([pscustomobject]@{ Protocol = 'TCP'; Port = 50100 }) -ProcessInfo ([pscustomobject]@{ ProcessId=212;Name='python';ExecutablePath=(Join-Path $tempRoot '.venv\Scripts\python.exe');CreationKey='2026-07-24T00:00:02.0000000Z';CommandLine='python maintenance.py';ParentProcessId=211 }) -Root $tempRoot -PidFileRecords @([pscustomobject]@{ Name = 'bim-streaming-server'; ProcId = 211 }))
         Assert-True ($sharedPythonRole.Count -eq 0) 'deployment-shared Python cannot satisfy a Kit port role'
+    }
+    & {
+        $venvRedirector = [pscustomobject]@{
+            ProcessId = 312
+            Name = 'python'
+            ExecutablePath = (Join-Path $tempRoot '.venv\Scripts\python.exe')
+            CreationKey = '2026-07-24T00:00:02.0000000Z'
+            CommandLine = 'python.exe -c "import host_native_conversion_service as s; raise SystemExit(s.main())"'
+            ParentProcessId = 311
+        }
+        function Get-HostNativeProcessInfo {
+            param([int] $ProcId)
+            if ($ProcId -eq 312) { return $venvRedirector }
+            if ($ProcId -eq 311) { return $conversionLauncher }
+            throw 'unexpected ancestor'
+        }
+        $conversionRecords = @([pscustomobject]@{ Name = 'bim-streaming-conversion-service'; ProcId = 311 })
+        $baseInterpreterListener = [pscustomobject]@{
+            ProcessId = 320
+            Name = 'python'
+            ExecutablePath = (Join-Path $tempRoot 'basepython\python.exe')
+            CreationKey = '2026-07-24T00:00:03.0000000Z'
+            CommandLine = 'python.exe -c "import host_native_conversion_service as s; raise SystemExit(s.main())"'
+            ParentProcessId = 312
+        }
+        $redirectorRole = @(Get-RuntimeRoleEvidence -PortOwner ([pscustomobject]@{ Protocol = 'TCP'; Port = 49101 }) -ProcessInfo $baseInterpreterListener -Root $tempRoot -PidFileRecords $conversionRecords)
+        Assert-True ($redirectorRole -contains 'conversion-venv-redirector-lineage') 'pyvenv.cfg base interpreter with venv redirector parent and launcher lineage is accepted'
+
+        $foreignBaseListener = [pscustomobject]@{
+            ProcessId = 321
+            Name = 'python'
+            ExecutablePath = 'C:\Python312\python.exe'
+            CreationKey = '2026-07-24T00:00:03.0000000Z'
+            CommandLine = 'python.exe -c "import host_native_conversion_service as s; raise SystemExit(s.main())"'
+            ParentProcessId = 312
+        }
+        Assert-True (@(Get-RuntimeRoleEvidence -PortOwner ([pscustomobject]@{ Protocol = 'TCP'; Port = 49101 }) -ProcessInfo $foreignBaseListener -Root $tempRoot -PidFileRecords $conversionRecords).Count -eq 0) 'an interpreter not recorded in pyvenv.cfg home cannot claim the conversion role'
+
+        $orphanBaseListener = [pscustomobject]@{
+            ProcessId = 322
+            Name = 'python'
+            ExecutablePath = (Join-Path $tempRoot 'basepython\python.exe')
+            CreationKey = '2026-07-24T00:00:03.0000000Z'
+            CommandLine = 'python.exe -c "import host_native_conversion_service as s; raise SystemExit(s.main())"'
+            ParentProcessId = 311
+        }
+        Assert-True (@(Get-RuntimeRoleEvidence -PortOwner ([pscustomobject]@{ Protocol = 'TCP'; Port = 49101 }) -ProcessInfo $orphanBaseListener -Root $tempRoot -PidFileRecords $conversionRecords).Count -eq 0) 'a base interpreter without the venv redirector parent is rejected'
     }
     & {
         function Get-BusyPorts { param([int[]] $TcpPorts, [int[]] $UdpPorts); return @([pscustomobject]@{ Port = 50100; Protocol = 'TCP'; ProcId = 210 }) }
