@@ -36,6 +36,8 @@ param(
     [string] $BrowserArtifactDir = "",
     [scriptblock] $RequestInvoker,
     [scriptblock] $BrowserInvoker,
+    [ValidateSet('auto', 'owned_runtime')]
+    [string] $ExecutionProfile = 'auto',
     [switch] $SkipVerificationTiers,
     [switch] $SkipKitLauncher
 )
@@ -45,10 +47,15 @@ $ErrorActionPreference = "Stop"
 
 $ExecutionMode = if ($null -ne $RequestInvoker -or $null -ne $BrowserInvoker) {
     'test_double'
+} elseif ($ExecutionProfile -eq 'owned_runtime') {
+    'production'
 } elseif ($SkipVerificationTiers) {
     'test_only'
 } else {
     'production'
+}
+if ($ExecutionProfile -eq 'owned_runtime' -and -not $SkipVerificationTiers) {
+    throw 'ExecutionProfile=owned_runtime requires SkipVerificationTiers so runtime evidence is isolated from nested verification logs'
 }
 $ArtifactProvenance = if ($ExecutionMode -eq 'production') { 'playwright_live' } else { $ExecutionMode }
 $IsTestExecution = $ExecutionMode -ne 'production'

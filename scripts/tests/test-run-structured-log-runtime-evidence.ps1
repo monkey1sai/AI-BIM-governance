@@ -48,6 +48,47 @@ function Write-TestFile {
     Set-Content -LiteralPath $Path -Value $Content -Encoding utf8
 }
 
+function Write-TestSmokeEvidence {
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [ValidateSet('passed','blocked')] [string] $TierStatus = 'passed',
+        [ValidateSet('production','test_double')] [string] $ExecutionMode = 'production',
+        [ValidateRange(0, 2)] [int] $TierCount = 1,
+        [ValidateSet('none','root_mismatch','ambiguous_conversion','ambiguous_review','browser_failed','close_failed')]
+        [string] $Mutation = 'none'
+    )
+    $ifcReadyJobId = if ($Mutation -eq 'root_mismatch') { 'ifcready_conflict' } else { 'ifcready_testroot' }
+    $browserStatus = if ($Mutation -eq 'browser_failed') { 'failed' } else { 'passed' }
+    $closeStatus = if ($Mutation -eq 'close_failed') { 'failed' } else { 'closed' }
+    $tiers = @()
+    for ($index = 0; $index -lt $TierCount; $index++) {
+        $tiers += [ordered]@{
+            tier = 'real_ifc_intake_conversion'
+            status = $TierStatus
+            blocker = if ($TierStatus -eq 'passed') { '' } else { 'blocked fixture' }
+            ids = [ordered]@{
+                ifc_ready_job_id = $ifcReadyJobId
+                conversion_job_id = 'conv_1'
+            }
+            detail = [ordered]@{
+                execution_mode = $ExecutionMode
+                root_trace_id = 'ifcready_testroot'
+                review_session_id = 'session_1'
+                browser_status = $browserStatus
+                close_status = $closeStatus
+            }
+        }
+    }
+    $context = [ordered]@{ execution_mode = $ExecutionMode }
+    if ($Mutation -eq 'ambiguous_conversion') { $context.conversion_job_id = 'conv_conflict' }
+    if ($Mutation -eq 'ambiguous_review') { $context.review_session_id = 'session_conflict' }
+    [ordered]@{
+        schema_version = 'demo-runtime-readiness-smoke/v1'
+        context = $context
+        tiers = $tiers
+    } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $Path -Encoding utf8
+}
+
 function New-TestContext {
     param([string] $Root)
     $attempt = Join-Path $Root 'artifacts\spec-to-done\cross-service-structured-log-baseline\evidence\attempt-001'
@@ -556,10 +597,12 @@ param(
     [int] $LivePollSeconds,
     [string] $StructLogRoot,
     [string] $BrowserArtifactDir,
+    [ValidateSet('auto','owned_runtime')] [string] $ExecutionProfile,
+    [switch] $SkipVerificationTiers,
     [switch] $SkipKitLauncher
 )
 Write-Output 'child stdout that must not become the exit code'
-@{ schema_version='demo-runtime-readiness-smoke/v1'; tiers=@(); root_trace_id='ifcready_default'; integration_ids=@{ conversion_job_id='conv_default'; review_session_id='session_default' } } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $EvidencePath
+@{ schema_version='demo-runtime-readiness-smoke/v1'; context=@{execution_mode='production'}; tiers=@(@{tier='real_ifc_intake_conversion';status='passed';blocker='';ids=@{ifc_ready_job_id='ifcready_default';conversion_job_id='conv_default'};detail=@{execution_mode='production';root_trace_id='ifcready_default';review_session_id='session_default';browser_status='passed';close_status='closed'}}) } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $EvidencePath
 exit 0
 '@
         $specs = @(
@@ -597,7 +640,11 @@ exit 0
         $smoke = Invoke-StructuredLogSupportedSmoke -Context $ctx -LivePollSeconds 3 -SmokeInvoker {
             param($scriptPath, $arguments)
             Assert-Equal $ctx.LogRoot $env:LOG_ROOT 'supported smoke receives scoped LOG_ROOT'
-            @{ schema_version='demo-runtime-readiness-smoke/v1'; tiers=@(); root_trace_id='ifcready_testroot'; integration_ids=@{ conversion_job_id='conv_1'; review_session_id='session_1' } } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $ctx.AttemptRoot 'bscheme-readiness.json')
+            $profileIndex = [Array]::IndexOf($arguments, '-ExecutionProfile')
+            Assert-True ($profileIndex -ge 0) 'supported smoke declares owned runtime execution profile'
+            Assert-Equal 'owned_runtime' $arguments[$profileIndex + 1] 'supported smoke uses owned runtime profile'
+            Assert-True ($arguments -contains '-SkipVerificationTiers') 'owned runtime skips nested verification tiers'
+            Write-TestSmokeEvidence -Path (Join-Path $ctx.AttemptRoot 'bscheme-readiness.json')
             return 0
         }
         Assert-Equal 0 $smoke.exit_code 'supported smoke succeeds'
@@ -607,6 +654,30 @@ exit 0
         $defaultSmoke = Invoke-StructuredLogSupportedSmoke -Context $ctx -LivePollSeconds 3
         Assert-Equal 0 $defaultSmoke.exit_code 'default smoke child stdout does not contaminate scalar exit code'
         Assert-True (Test-Path -LiteralPath $defaultSmoke.evidence_path -PathType Leaf) 'default smoke still produces readiness evidence'
+
+        foreach ($negative in @(
+            [pscustomobject]@{Name='blocked';Status='blocked';Mode='production';Count=1;Mutation='none';Pattern='status|passed|blocked'},
+            [pscustomobject]@{Name='missing';Status='passed';Mode='production';Count=0;Mutation='none';Pattern='exactly one|tier'},
+            [pscustomobject]@{Name='duplicate';Status='passed';Mode='production';Count=2;Mutation='none';Pattern='exactly one|tier'},
+            [pscustomobject]@{Name='test-double';Status='passed';Mode='test_double';Count=1;Mutation='none';Pattern='production|execution_mode'},
+            [pscustomobject]@{Name='root-mismatch';Status='passed';Mode='production';Count=1;Mutation='root_mismatch';Pattern='byte-identical|ifc_ready_job_id'},
+            [pscustomobject]@{Name='ambiguous-conversion';Status='passed';Mode='production';Count=1;Mutation='ambiguous_conversion';Pattern='unambiguous conversion_job_id'},
+            [pscustomobject]@{Name='ambiguous-review';Status='passed';Mode='production';Count=1;Mutation='ambiguous_review';Pattern='unambiguous review_session_id'},
+            [pscustomobject]@{Name='browser-failed';Status='passed';Mode='production';Count=1;Mutation='browser_failed';Pattern='browser_status=passed'},
+            [pscustomobject]@{Name='close-failed';Status='passed';Mode='production';Count=1;Mutation='close_failed';Pattern='close_status=closed'}
+        )) {
+            $provenanceBefore = @(Get-Content -LiteralPath $ctx.ProvenancePath).Count
+            Assert-Throws {
+                Invoke-StructuredLogSupportedSmoke -Context $ctx -LivePollSeconds 3 -SmokeInvoker {
+                    param($scriptPath, $arguments)
+                    Write-TestSmokeEvidence -Path (Join-Path $ctx.AttemptRoot 'bscheme-readiness.json') -TierStatus $negative.Status -ExecutionMode $negative.Mode -TierCount $negative.Count -Mutation $negative.Mutation
+                    return 0
+                }
+            } $negative.Pattern "exit zero $($negative.Name) readiness is rejected"
+            $negativeProvenance = @(Get-Content -LiteralPath $ctx.ProvenancePath | ForEach-Object { $_ | ConvertFrom-Json })
+            Assert-Equal ($provenanceBefore + 1) $negativeProvenance.Count "$($negative.Name) adds exactly one provenance record"
+            Assert-Equal 'failed' $negativeProvenance[-1].status "$($negative.Name) readiness records failed provenance without a later success"
+        }
 
         Assert-Throws { Invoke-StructuredLogSupportedSmoke -Context $ctx -LivePollSeconds 3 -SmokeInvoker { throw 'native failure' } } 'native failure' 'native smoke failure is surfaced'
         $last = Get-Content -LiteralPath $ctx.ProvenancePath | Select-Object -Last 1 | ConvertFrom-Json

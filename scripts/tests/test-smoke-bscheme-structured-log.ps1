@@ -170,11 +170,40 @@ function Invoke-TestSmoke {
         -BrowserArtifactDir $Paths.ArtifactRoot `
         -RequestInvoker $RequestHandler `
         -BrowserInvoker $BrowserHandler `
+        -ExecutionProfile owned_runtime `
         -SkipVerificationTiers `
         -SkipKitLauncher 6>&1 | Out-Null
 }
 
+function Invoke-ExecutionModeSmoke {
+    param($Paths, [ValidateSet('auto','owned_runtime')] [string] $ExecutionProfile)
+    & $SmokeScript `
+        -EvidencePath $Paths.EvidencePath `
+        -StorageRoot $Paths.Storage `
+        -CoordinatorBaseUrl 'http://127.0.0.1:1' `
+        -StreamingConversionApiBase 'http://127.0.0.1:1' `
+        -LivePollSeconds 1 `
+        -StructLogRoot $Paths.LogRoot `
+        -BrowserArtifactDir $Paths.ArtifactRoot `
+        -ExecutionProfile $ExecutionProfile `
+        -SkipVerificationTiers `
+        -SkipKitLauncher 6>&1 | Out-Null
+    return Get-Content -LiteralPath $Paths.EvidencePath -Raw | ConvertFrom-Json
+}
+
 try {
+Write-Host '[test-smoke-bscheme-structured-log] execution profiles isolate owned runtime from nested verification tiers'
+$autoMode = New-TestRoot
+$autoEvidence = Invoke-ExecutionModeSmoke -Paths $autoMode -ExecutionProfile auto
+Assert-Equal -Expected 'test_only' -Actual $autoEvidence.context.execution_mode -Message 'auto plus skip verification preserves historical test_only mode'
+$ownedMode = New-TestRoot
+$ownedEvidence = Invoke-ExecutionModeSmoke -Paths $ownedMode -ExecutionProfile owned_runtime
+Assert-Equal -Expected 'production' -Actual $ownedEvidence.context.execution_mode -Message 'owned runtime plus skip verification remains production evidence mode'
+foreach ($tierName in @('external_ifc_ready_intake','coordinator_session_lifecycle','streaming_internal_conversion')) {
+    $ownedTiers = @($ownedEvidence.tiers | Where-Object tier -eq $tierName)
+    Assert-Equal -Expected 0 -Actual $ownedTiers.Count -Message "owned runtime does not add or execute nested verification tier $tierName"
+}
+
 Write-Host '[test-smoke-bscheme-structured-log] success lifecycle'
 Assert-True -Condition ($SmokeSource -match [regex]::Escape("web-viewer-sample\scripts\smoke-struct-log-bootstrap.mjs")) -Message 'supported smoke owns production browser helper path'
 Assert-True -Condition ($SmokeSource -match '& node \$helper --url \$Url --trace-id \$TraceId --artifact-dir \$ArtifactDir') -Message 'default path invokes real page helper with URL, trace, and artifact directory'

@@ -688,6 +688,8 @@ function Invoke-StructuredLogSupportedSmoke {
         '-LivePollSeconds', [string]$LivePollSeconds,
         '-StructLogRoot', $Context.LogRoot,
         '-BrowserArtifactDir', $browserDir,
+        '-ExecutionProfile', 'owned_runtime',
+        '-SkipVerificationTiers',
         '-SkipKitLauncher'
     )
     $snapshot = Set-StructuredLogEnvironment -Values ([ordered]@{ LOG_ROOT=$Context.LogRoot })
@@ -696,6 +698,49 @@ function Invoke-StructuredLogSupportedSmoke {
         $exitCode = & $SmokeInvoker $scriptPath $arguments
         if ([int]$exitCode -ne 0) { throw "supported smoke exited with code $exitCode" }
         if (-not (Test-Path -LiteralPath $evidencePath -PathType Leaf)) { throw 'supported smoke did not produce bscheme-readiness.json' }
+        try {
+            $evidence = Get-Content -Raw -LiteralPath $evidencePath | ConvertFrom-Json -ErrorAction Stop
+        } catch {
+            throw "supported smoke evidence is not valid JSON: $($_.Exception.Message)"
+        }
+
+        $liveTiers = @($evidence.tiers | Where-Object { [string]$_.tier -ceq 'real_ifc_intake_conversion' })
+        if ($liveTiers.Count -ne 1) {
+            throw "supported smoke evidence must contain exactly one real_ifc_intake_conversion tier; found $($liveTiers.Count)"
+        }
+        $liveTier = $liveTiers[0]
+        if ([string]$liveTier.status -cne 'passed') {
+            throw "supported smoke real_ifc_intake_conversion status must be passed; observed '$([string]$liveTier.status)'"
+        }
+        if ([string]$evidence.context.execution_mode -cne 'production' -or [string]$liveTier.detail.execution_mode -cne 'production') {
+            throw 'supported smoke evidence must be production at both context and real_ifc_intake_conversion detail'
+        }
+
+        $rootTraceId = [string]$liveTier.detail.root_trace_id
+        $ifcReadyJobId = [string]$liveTier.ids.ifc_ready_job_id
+        $conversionJobId = [string]$liveTier.ids.conversion_job_id
+        $reviewSessionId = [string]$liveTier.detail.review_session_id
+        if ($rootTraceId -notmatch '^ifcready_[A-Za-z0-9_.-]+$') {
+            throw 'supported smoke evidence is missing a valid real_ifc_intake_conversion root_trace_id'
+        }
+        if ([string]::IsNullOrWhiteSpace($ifcReadyJobId) -or $rootTraceId -cne $ifcReadyJobId) {
+            throw 'supported smoke root_trace_id and ifc_ready_job_id must exist and be byte-identical'
+        }
+        if ([string]::IsNullOrWhiteSpace($conversionJobId) -or [string]::IsNullOrWhiteSpace($reviewSessionId)) {
+            throw 'supported smoke evidence requires non-empty conversion_job_id and review_session_id'
+        }
+        foreach ($property in @('root_trace_id', 'ifc_ready_job_id', 'conversion_job_id', 'review_session_id')) {
+            $values = @(Find-StructuredLogNamedValues -Value $evidence -NamePattern "^$property$" |
+                Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+                ForEach-Object { [string]$_ } |
+                Select-Object -Unique)
+            if ($values.Count -ne 1) {
+                throw "supported smoke evidence must contain one unambiguous $property value; found $($values.Count)"
+            }
+        }
+        if ([string]$liveTier.detail.browser_status -cne 'passed' -or [string]$liveTier.detail.close_status -cne 'closed') {
+            throw 'supported smoke evidence requires browser_status=passed and close_status=closed'
+        }
         Write-StructuredLogProvenance -Context $Context -Phase 'supported_smoke' -Command 'scripts/smoke-bscheme-intake.ps1 (supported)' -Cwd $Context.RepoRoot -Status 'passed' -ExitCode $exitCode | Out-Null
     } catch {
         Write-StructuredLogProvenance -Context $Context -Phase 'supported_smoke' -Command 'scripts/smoke-bscheme-intake.ps1 (supported)' -Cwd $Context.RepoRoot -Status 'failed' -ExitCode $exitCode | Out-Null
