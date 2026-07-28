@@ -30,7 +30,7 @@
 
 ## 3. coordinator viewer-log intake + health endpoint
 
-- [x] 3.1 加 `POST /api/internal/viewer-log`：256 KiB body limit + 500 records/batch 上限；white-list bypass internal-auth middleware（local-dev-only baseline）；`validateLogRecordBasic` runtime 檢查 + `persistRecordsToServicePaths` 寫 `logs/viewer/<date>/viewer-<run_id>.jsonl`；413 body / 400 non-array / 413 too-many-records 全覆蓋
+- [x] 3.1 歷史 baseline實作 `POST /api/internal/viewer-log`：256 KiB body limit + 500 records/batch、schema validation與 viewer JSONL persistence；原 unauth bypass已由 P5 finding撤銷，current authority/parser/service-pin契約以 13.3為準
 - [x] 3.2 加 `GET /api/internal/structLog/health`：回 `{run_id, current_file, records_written, records_dropped, last_failure, viewer_intake: {records_received, records_accepted, records_dropped, ...}}`
 - [x] 3.3 + 3.4 `tests/app/viewerLogIntake.test.ts` 7 tests pass — 10 valid → 200 + 10 lines、混合 valid/invalid → 200 + 8 lines + dropped 累計、非 array → 400、oversized body → 413、太多 records → 413、health endpoint 必填欄位齊全、dropped counter 跨 request 累積正確
 
@@ -127,3 +127,17 @@
 - [x] 12.4 Browser evidence 保存 failure/final screenshots、Playwright trace、secret-free console/network events與 machine-readable state transitions；smoke/runtime runner tests 覆蓋新 artifact contract
 - [x] 12.5 Affected unit/build/script/OpenSpec checks、GitNexus `detect_changes` 與獨立 review 通過，並從 current HEAD 重跑真實 IFC runtime evidence
 - [x] 12.6 P4 canonical evidence `ok=true`；design status=`mixed`、reference-missing surface與 `Full completion claimed=no` 誠實保留
+
+## 13. P5 adversarial remediation（2026-07-28）
+
+- [ ] 13.1 以 20 個 conservative P3 closure findings + byte-exact P4 e1/e2 建立 immutable 22-item registry；source map逐項對應 durable state/run/commit/code/tests，獨立 completeness audit通過；舊 11-verdict output只保留為 noncanonical diagnostic
+- [ ] 13.2 修正 plan invocation，使 runtime evidence runner獨佔 active-attempt reconcile、attempt-root creation與 atomic running/terminal/superseded pointer lifecycle；outer wrapper不再 precreate或寫 pointer
+- [ ] 13.3 Base Compose coordinator/viewer host publish收斂到 `127.0.0.1`、explicit host-kit LAN override保留；viewer-log body parse前驗 active primary/spectator lease三 headers、256 KiB parser先於 global parser、只持久化 `service="viewer"`；health沿用 internal token
+- [ ] 13.4 Browser delivery authority只在 memory/headers，explicit Flush才 ensure/reuse lease；無 authority不 fetch且保留 action，spectator不搶 primary；flush成功只刪 exact in-flight entry identities
+- [ ] 13.5 四 adapter ordinary event data套用 `MAX_REDACTION_DEPTH=8`（root=0、depth9=`[Truncated]`）、cycle=`[Circular]`且保留原 event type的 recursive secret-key redaction；general `auth`/`key`無全域豁免，`env_snapshot.vars[]`專用 sanitizer。Coordinator TS、streaming Python、browser TS、PowerShell各自證明 nested/array/auth-key/depth/cycle與 secret-free serialized sink/body
+- [ ] 13.6 Browser evidence拒絕 generic URI scheme/UNC、驗 exact trusted viewer origin、raw Playwright trace只在 retained tree外的 owned private temp、final sanitized artifact才入 allow-list；`browser_run_id`跨 operability/readiness/viewer timeline/manifest/PR fields case-exact綁定
+- [ ] 13.7 External cloud callback ready/failed outbox payload在 persist/reload/delivery均保留 exact IFC-ready root `trace_id`
+- [ ] 13.8 Socket.IO使用 server-owned immutable/fail-closed session trace resolver；join/heartbeat/leave candidate exact-match，成功 ack/presence回 canonical trace，rejected ack只回stable error且在room/participant/session/presence副作用前停止；linked/standalone/mismatch/ambiguous cases有零副作用 tests
+- [ ] 13.9 DataChannel正式 contract改為每個 `payload.trace_id`；完整 26-message catalog的 viewer outbound、Kit inbound/outbound、viewer inbound皆在任何 read/mutation/correlation/UI更新前驗證，同時保留 mutator runtime authority
+- [ ] 13.10 Affected unit/type/lint/build/contract/PowerShell/full suites、OpenSpec strict validate、Compose config與 GitNexus detect通過；CRITICAL/UNKNOWN index blind spots由 delegated reviewer sign-off並以 source/tests補償
+- [ ] 13.11 從 final remediation HEAD重跑 owned runtime、browser/design P4 evidence，並以同一 22-item registry取得 canonical P5 22/22 closed、zero new issue、critic safe

@@ -29,7 +29,7 @@ source of truth：bim-streaming-server 對 conversion job / Kit subprocess 行�
 - 不上 Prometheus `/metrics`、不上 Loki、不上 Grafana、不上 OpenTelemetry SDK（屬 roadmap #8 範圍）。
 - 不取消 `carb.log_*`（Kit ext 內部觀察通道）、不取消 `kit-stdout.log` / `kit-stderr.log` 既有 capture。
 - 不替代 coordinator `EventLog`、不破 `/api/.../lifecycle-events` schema / 行為。
-- 不加 viewer-log endpoint 的 auth（local-dev-only baseline；production hardening 屬未來 change）。
+- 不新增 Internet-grade viewer identity、TLS或edge firewall；本 change限縮重用 active viewer lease與既有 internal token。
 - 不在本 change 設計集中 log 服務 / production retention 自動化（手動 prune script + Windows 任務排程）。
 - 不引入任何 production dependency。
 - 不改 source of truth 歸屬。
@@ -59,8 +59,8 @@ source of truth：bim-streaming-server 對 conversion job / Kit subprocess 行�
 
 ### D3：`trace_id` 命名沿用既有 id，前綴標來源
 
-- `ifcready_<existing_job_id>`：coordinator IFC-ready intake 起源
-- `rev_<existing_session_id>`：review session（mint 新 id；`parent_trace_id` 連到 `ifcready_`）
+- existing `ifc_ready_job_id`：coordinator IFC-ready intake建立時已含`ifcready_` prefix，byte-for-byte作root，不得再次加prefix
+- `rev_<existing_session_id>`：只有 standalone review session 才 mint；IFC-ready-linked session保留 immutable `ifcready_*` root
 - `stream_conv_<existing_job_id>`：internal conversion
 - `script_<run_id>`：pure PowerShell scripts
 
@@ -68,7 +68,7 @@ source of truth：bim-streaming-server 對 conversion job / Kit subprocess 行�
 
 ### D4：viewer 不寫 local file，靠 coordinator endpoint 中繼
 
-Browser 不能寫 file system。新加 `POST /api/internal/viewer-log` 於 coordinator：buffer 500 records / 2 秒 / 50 筆三選一條件 flush。失敗：保留 buffer 5 min 並 `console.error` fallback。
+Browser 不能寫 file system。新加 `POST /api/internal/viewer-log` 於 coordinator：buffer 500 records / 2 秒 / 50 筆三選一條件 flush。失敗或缺 active viewer lease authority時不丟 buffer；authority只從 in-memory lease state放進三個 request headers，不得進 URL/body/log/console/evidence。成功只移除 transport已確認的 exact in-flight entry identities，不能用 buffer position刪除 concurrent append。
 
 viewer 本來就只能跟 coordinator 通訊（`bim-review-coordinator/CLAUDE.md` 邊界），加 internal endpoint 不破 boundary。
 
@@ -76,11 +76,11 @@ viewer 本來就只能跟 coordinator 通訊（`bim-review-coordinator/CLAUDE.md
 - viewer 寫 IndexedDB → 定期匯出 — 需要使用者操作；agent 取不到
 - viewer 直連 streaming-server log endpoint — 破現有 boundary（viewer 不直接寫 streaming-server）
 
-### D5：viewer-log endpoint **不**加 internal token
+### D5：viewer-log 使用 active viewer lease；health 使用 internal token
 
-Local-dev-only baseline。endpoint 做基本 schema validation（drop oversized / malformed records），不加 auth。
+P5 security review確認 base Compose與 host-kit LAN capability可並存，不能再靠「預期 loopback」取代 auth。base runtime-manager只 publish coordinator/viewer至 host `127.0.0.1`；explicit host-kit override保留 LAN publish。viewer-log在 body parse前以 `X-Review-Session-Id` / `X-Viewer-Lease-Id` / `X-Viewer-Lease-Token` 驗 primary或spectator active lease，256 KiB parser先於 global parser，且 route只接受 `service="viewer"`。health沿用既有 internal token。
 
-**Trade-off：** LAN 內任何 device 可 POST 任意 JSON 進來；接受該 risk，因部署綁 `127.0.0.1:8004`。production 上線前 **MUST** 加 `INTERNAL_API_TOKEN` 機制，屬 future change。
+**Trade-off：** active viewer lease 是 session-scoped delivery authority，不是 Internet-grade identity；host-kit仍只宣稱 LAN/single-machine。TLS、edge firewall與正式 IdP不在本 change。缺/錯/cross-session/expired/released authority統一 401且零寫入，token不可進 retained evidence。
 
 ### D6：與既有 `EventLog` 雙 sink 並存（不替換）
 
@@ -104,6 +104,18 @@ Local-dev-only baseline。endpoint 做基本 schema validation（drop oversized 
 
 ### D8：env_snapshot 觸發時機 = `createLogger()` 回傳前
 
+### D9：ordinary event redaction 與 env_snapshot 分流
+
+四 adapter 的 ordinary event `data` 都走 bounded、cycle-safe recursive sanitizer；任何 nested secret-pattern key（含 literal `auth` / `key`）一律 `[REDACTED]`。env allow-list只適用 env value；只有 `env_snapshot.vars[]` 的專用 sanitizer可保留 `key/source/value_or_redacted/type` schema vocabulary。`MAX_REDACTION_DEPTH=8`且root container為depth 0；進入depth 9前以exact `[Truncated]`取代整棵subtree，cycle只換成`[Circular]`並保留原event type。
+
+### D10：Socket/DataChannel carrier 服從實際 vendor bridge
+
+Socket canonical trace由 session建立時持久化的 immutable trace決定；legacy session只能由零或一個 distinct valid linked root backfill，multiple/conflict/malformed均fail closed，禁止用mutable `updated_at`/latest-job排序。client只能提交 exact-match candidate；每個成功join/heartbeat/leave ack與presence帶canonical trace，rejected ack只回stable error且在socket room/participant/session/presence任何副作用前停止。vendor `ApplicationMessage` transport實際序列化 `{event_type,payload}` 且 extension看不到獨立 root envelope，所以正式 contract使用每個 `payload.trace_id`。完整26-message catalog涵蓋viewer outbound、Kit inbound/outbound與viewer inbound；viewer對Kit→viewer缺/mismatch trace須在correlation、request completion、accepted logging或UI/state mutation前拒絕。Mutator另需coordinator runtime authority。
+
+### D11：browser evidence 的 raw/final 分離
+
+Raw Playwright trace只能寫進 process-owned random private temp root且不得位於 retained artifact tree；sanitized final zip才進 allow-listed attempt artifact root。generic URI scheme與UNC在非 canonical URL欄位 fail closed；final viewer origin必須等於 runner以獨立可信參數傳入的 credential-free origin。`browser_run_id`跨 operability、readiness、viewer timeline、manifest與PR fields case-exact綁定。硬 kill仍可能在 OS temp留下殘檔，這是誠實揭露的 residual，不得宣稱完全消除。
+
 `createLogger()` / `create_logger()` / `New-StructLogger` 在回傳 logger 物件之前**立刻** emit 一筆 `env_snapshot`。不延後到第一次 log 呼叫，避免漏寫。
 
 ### D9：daily rotate 設計為單 process per service，跨午夜 fail-soft
@@ -122,7 +134,8 @@ PowerShell scripts 不同 process 寫不同 `<service>-<run_id>.jsonl`，sideste
 |---|---|
 | 4 adapter 各自實作 schema → 漂移 | 共用 fixtures + contract test 4 個語言全跑；CI fail-fast |
 | Kit ext 整合 `struct_log` 影響 Kit subprocess perf | 寫 file 是 I/O bound 每筆 < 1ms；Kit 對單筆 log 不敏感；hot loop 預設 `debug` 關 |
-| viewer-log endpoint 無 auth → LAN 內任意 POST | local-dev only；endpoint 做 schema validation 擋亂寫；production 上線前必補（已明列為 non-goal） |
+| explicit host-kit LAN仍可達 viewer-log | body parse前驗 active viewer lease、health驗 internal token；missing/wrong/cross-session/expired/released均401零寫入，base profile另綁host loopback |
+| viewer lease不是Internet-grade identity | host-kit只宣稱LAN/single-machine；TLS/firewall/IdP留production edge rollout |
 | daily rotate 跨午夜 record 寫到舊檔 | schema 有 `ts`，sort 不影響 |
 | 30 天 retention 對追長期 incident 不夠 | env var 可調 `LOG_RETENTION_DAYS`；長期歸檔屬 Phase 6 |
 | 雙 sink lifecycle event → 寫兩次 disk I/O | 可接受：lifecycle event 量低（每 session 數筆，非 hot loop） |

@@ -3,6 +3,7 @@
 ## Purpose
 TBD - created by archiving change cross-service-structured-log-baseline. Update Purpose after archive.
 ## Requirements
+
 ### Requirement: Cross-service log records SHALL conform to a shared JSON schema
 
 The system SHALL provide a single JSON schema at `tests/contracts/structured-log/schema.json` that all four execution units (bim-review-coordinator, bim-streaming-server, web-viewer-sample, PowerShell scripts) MUST validate against when emitting structured log records. Each record SHALL be a single-line JSON object with required fields `ts` (ISO-8601 UTC ms precision), `level` (`debug`/`info`/`warn`/`error`/`fatal`), `event_type` (one of seven: `logic_error`/`operation_anomaly`/`env_snapshot`/`lifecycle`/`audit`/`network`/`general`), `service` (`coordinator`/`streaming-server`/`viewer`/`scripts`), `component`, `run_id`, `trace_id`, `msg`, `data`.
@@ -58,7 +59,7 @@ The system SHALL transport `trace_id` between services so that grep over `logs/`
 
 - coordinator ⇄ streaming-server HTTP: header `X-Trace-Id`
 - coordinator ⇄ viewer Socket.IO: event payload field `trace_id`
-- viewer ⇄ streaming-server WebRTC DataChannel: envelope field `trace_id`
+- viewer ⇄ streaming-server WebRTC DataChannel: event payload field `trace_id` (the vendor `ApplicationMessage` bridge serializes `{event_type,payload}` and does not expose an independent root envelope field)
 - external cloud callback outbox: payload field `trace_id`
 - Kit subprocess invocation: CLI arg `--trace-id=<id>`
 - PowerShell scripts: env var `BIM_TRACE_ID`
@@ -88,6 +89,29 @@ Optional record field `parent_trace_id` MAY link derived traces back to originat
 #### Scenario: Kit subprocess receives trace_id via CLI
 - **WHEN** `convert-ifc-to-usdc.ps1` launches Kit subprocess
 - **THEN** the subprocess command line SHALL include `--trace-id=<trace_id>` and the Kit extension SHALL adopt it as the active `trace_id` for the run
+
+#### Scenario: Socket.IO binds one server-owned root trace
+- **WHEN** a viewer joins, heartbeats, or leaves a review session over Socket.IO
+- **THEN** the client event SHALL carry only a candidate `trace_id` and coordinator SHALL resolve the canonical trace persisted immutably at session creation
+- **AND** a legacy session MAY backfill from zero or one distinct valid linked root, while multiple roots, stored/linked conflict, malformed state, or mutable latest-job ordering SHALL NOT produce authority
+- **AND** every successful acknowledgement and presence emission SHALL carry the canonical trace; a rejected acknowledgement SHALL carry only a stable error and no canonical trace
+- **AND** rejection SHALL occur before socket-room join/leave, participant/session mutation, or presence emission
+- **AND** malformed, mismatched, or ambiguous linked roots SHALL fail closed rather than replace the browser trace
+- **AND** an IFC-ready-linked session SHALL retain its `ifcready_*` root while a standalone session SHALL use `rev_<session_id>`
+
+#### Scenario: Every DataChannel message carries the verified root trace
+- **GIVEN** Socket.IO has case-exactly verified the viewer's canonical session trace
+- **WHEN** viewer or Kit sends any DataChannel catalog message, including a read-only request/response, mutation/result/rejection, progress update, binding event, selection event, or other unsolicited event
+- **THEN** that message's `payload.trace_id` SHALL equal the verified canonical trace
+- **AND** viewer SHALL send no DataChannel message before verification
+- **AND** Kit SHALL reject a missing or mismatched inbound trace before acting and SHALL propagate the same trace on every response or event
+- **AND** all 26 event types enumerated by `tests/contracts/kit-datachannel-v1.schema.json` SHALL be covered in viewer outbound, Kit inbound, Kit outbound, and viewer inbound directions
+- **AND** viewer SHALL reject a Kit→viewer message with missing or mismatched trace before correlation bookkeeping, request completion, accepted logging, or UI/state mutation
+- **AND** mutators SHALL still obtain coordinator runtime authority before changing state
+
+#### Scenario: Callback outbox retains the root trace
+- **WHEN** coordinator persists or delivers a ready or failed external cloud callback
+- **THEN** the outbox payload SHALL include `trace_id` case-exactly equal to the IFC-ready root
 
 #### Scenario: Grep one trace_id returns timeline across 4 services
 - **WHEN** an IFC-ready job completes a full closed loop (PowerShell smoke runner → coordinator intake → streaming conversion → review session → viewer bootstrap → close)
@@ -122,6 +146,24 @@ Each entry SHALL also record `source` (one of `.env`/`.env.example`/`system`/`do
 - **WHEN** env contains `RANDOM_KEY=some-value-12345` and `RANDOM_KEY` is neither in allow-list nor matches secret pattern
 - **THEN** the env_snapshot record SHALL contain `value_or_redacted` indicating type and length but SHALL NOT contain the original value
 
+### Requirement: Every adapter SHALL redact secret-like keys in general event data
+
+Before serialization, all four adapters SHALL traverse ordinary event `data` with a bounded, cycle-safe recursive sanitizer. Any nested key matching `TOKEN`/`SECRET`/`KEY`/`PASSWORD`/`AUTH`/`CREDENTIAL` case-insensitively—including literal `key` and `auth`—SHALL replace its value with `[REDACTED]`. The env allow-list SHALL NOT exempt ordinary event keys. Only `env_snapshot.vars[]` MAY use its dedicated schema-aware sanitizer to preserve the structural fields `key`, `source`, `value_or_redacted`, and `type`. `MAX_REDACTION_DEPTH` SHALL be 8 with the root `data` container at depth 0; an object or array that would be entered at depth 9 SHALL be replaced exactly with `[Truncated]`. Circular references SHALL replace only the cyclic subtree with `[Circular]`. No marker or error SHALL echo the original secret value.
+
+#### Scenario: Nested general data cannot persist an auth or key value
+- **WHEN** any adapter receives ordinary event data containing secret sentinel values under nested object or array keys such as `auth`, `key`, `password`, `api_key`, or `token`
+- **THEN** the emitted record SHALL contain redaction markers at those positions
+- **AND** its serialized representation SHALL NOT contain any sentinel value
+
+#### Scenario: env_snapshot preserves schema vocabulary without creating a global exemption
+- **WHEN** an adapter emits `env_snapshot.vars[]`
+- **THEN** the row's structural `key`, `source`, `value_or_redacted`, and `type` fields SHALL remain available
+- **AND** secret-like fields elsewhere in the same event SHALL still be recursively redacted
+
+#### Scenario: Deep or circular data fails safe
+- **WHEN** ordinary event data exceeds the redaction depth bound or contains a circular collection
+- **THEN** the adapter SHALL retain the original record event type, replace only the affected subtree with `[Truncated]` or `[Circular]`, and SHALL NOT throw or expose values reachable only beyond that boundary or cyclic edge
+
 ### Requirement: Log records SHALL persist to logs/<service>/YYYY-MM-DD/<service>-<run_id>.jsonl
 
 The system SHALL write structured log records as one-record-per-line JSONL into a directory structure rooted at repository root `logs/`. The path SHALL be `logs/<service>/<YYYY-MM-DD>/<service>-<run_id>.jsonl`, where `<run_id>` is generated at logger creation and stable for the lifetime of the service process. Records SHALL also be emitted to stdout for the same process.
@@ -142,23 +184,32 @@ The `logs/` directory SHALL be ignored by git.
 
 ### Requirement: Coordinator SHALL accept viewer log records via POST /api/internal/viewer-log
 
-bim-review-coordinator SHALL expose `POST /api/internal/viewer-log` that accepts an array of `LogRecord` JSON objects in request body. The endpoint SHALL validate each record against the shared schema and persist passing records to `logs/viewer/<date>/<run_id>.jsonl`. Records failing validation SHALL be dropped silently from disk but counted in a per-process counter exposed via `GET /api/internal/structLog/health`. The endpoint SHALL NOT require authentication in this baseline; it relies on `127.0.0.1` binding.
+bim-review-coordinator SHALL expose `POST /api/internal/viewer-log` that accepts an array of `LogRecord` JSON objects in request body. Before parsing the body, the endpoint SHALL authenticate one active primary or spectator viewer lease using the case-exact headers `X-Review-Session-Id`, `X-Viewer-Lease-Id`, and `X-Viewer-Lease-Token`. Missing, wrong, cross-session, expired, or released authority SHALL return 401 without reading or persisting the body. The endpoint SHALL enforce its 256 KiB parser before the global 1 MiB JSON parser, validate each record against the shared schema, accept only records whose `service` is exactly `viewer`, and persist passing records to `logs/viewer/<date>/<run_id>.jsonl`. Records failing validation or service pinning SHALL be dropped from disk but counted in the per-process counter exposed via authenticated `GET /api/internal/structLog/health`.
 
 #### Scenario: Viewer batch is persisted to logs/viewer/
-- **WHEN** web-viewer-sample POSTs an array of 10 schema-valid records to `/api/internal/viewer-log`
+- **WHEN** web-viewer-sample with an active viewer lease POSTs an array of 10 schema-valid `service: "viewer"` records to `/api/internal/viewer-log` with all three authority headers
 - **THEN** coordinator SHALL respond 200 and append 10 lines to `logs/viewer/<date>/viewer-<run_id>.jsonl`
 
 #### Scenario: Oversized request is rejected
-- **WHEN** viewer POSTs a request larger than the configured max (default 256 KiB)
+- **WHEN** an authenticated viewer POSTs a fixed-length or chunked request larger than the configured max (default 256 KiB)
 - **THEN** coordinator SHALL respond 413 and SHALL NOT write any line
 
 #### Scenario: Malformed records are dropped, valid records persist
 - **WHEN** viewer POSTs an array containing 8 schema-valid records and 2 records missing required fields
 - **THEN** coordinator SHALL respond 200, persist 8 lines, increment dropped counter by 2, and NOT throw
 
+#### Scenario: Invalid lease authority is rejected before body parsing
+- **WHEN** viewer-log receives missing, wrong, cross-session, expired, or released lease authority
+- **THEN** coordinator SHALL respond 401 with one uniform public error shape
+- **AND** SHALL NOT parse or persist any request record
+
+#### Scenario: Viewer intake cannot spoof another service
+- **WHEN** an authenticated batch contains a schema-valid record whose `service` is `coordinator`, `streaming-server`, or `scripts`
+- **THEN** that record SHALL be counted as dropped and SHALL NOT create or append to any non-viewer service log path
+
 ### Requirement: Coordinator SHALL expose GET /api/internal/structLog/health
 
-bim-review-coordinator SHALL expose `GET /api/internal/structLog/health` returning a JSON object describing the coordinator logger's runtime state:
+bim-review-coordinator SHALL expose `GET /api/internal/structLog/health`, protected by the existing internal token contract, returning a JSON object describing the coordinator logger's runtime state:
 
 - `run_id`: current run_id string
 - `current_file`: absolute path of the active JSONL file
@@ -167,8 +218,12 @@ bim-review-coordinator SHALL expose `GET /api/internal/structLog/health` returni
 - `last_failure`: object `{ts, reason}` or null
 
 #### Scenario: Health endpoint returns logger metadata
-- **WHEN** an agent GETs `/api/internal/structLog/health`
+- **WHEN** an authorized internal client GETs `/api/internal/structLog/health` with the existing internal token
 - **THEN** the response SHALL be 200 with JSON containing `run_id`, `current_file`, `records_written`, `records_dropped`, `last_failure`
+
+#### Scenario: Health endpoint rejects missing or wrong internal token
+- **WHEN** a client GETs `/api/internal/structLog/health` without the configured internal token or with a wrong token
+- **THEN** coordinator SHALL respond 401 and SHALL NOT return logger file or run metadata
 
 ### Requirement: Logger SHALL fail-soft on sink errors
 
@@ -183,9 +238,9 @@ The logging adapter SHALL never throw exceptions that propagate to caller code i
 - **WHEN** the sink file write fails because disk is full
 - **THEN** the adapter SHALL NOT throw to caller, SHALL write `[structLog sink failed]` to stderr with the dropped record, and SHALL continue accepting subsequent records
 
-#### Scenario: Circular reference in data triggers degraded record
+#### Scenario: Circular reference in data retains the original event safely
 - **WHEN** caller passes a `data` object containing a circular reference
-- **THEN** the adapter SHALL write a downgraded record with `event_type: "operation_anomaly"`, `data.anomaly_kind: "unexpected_state"`, `data.reason: "struct_log serialization failed"`, listing original top-level keys, and SHALL NOT throw
+- **THEN** the adapter SHALL retain the original record event type, replace only the cyclic subtree with `[Circular]`, and SHALL NOT throw or expose values reachable only through the cyclic edge
 
 ### Requirement: Coordinator EventLog SHALL mirror lifecycle events to structured log
 
@@ -214,10 +269,91 @@ The system SHALL provide `scripts/log-retention/prune-logs.ps1` that scans `logs
 - **AND** the 5-day, 15-day, and 30-day directories SHALL remain
 - **AND** `logs/` and each `<service>/` directory SHALL remain
 
-### Requirement: viewer-log endpoint MUST NOT require authentication in this baseline
+### Requirement: Viewer-log delivery SHALL use active lease authority and bounded host exposure
 
-The `POST /api/internal/viewer-log` endpoint SHALL NOT enforce token-based authentication, header-based authentication, or session cookie verification in this baseline. The deployment relies on coordinator and viewer both binding to `127.0.0.1` interface only. Production hardening (e.g., `INTERNAL_API_TOKEN` requirement, IP allow-list) SHALL be a future change and SHALL NOT be introduced in this capability spec.
+The base runtime-manager Compose profile SHALL publish coordinator and viewer host ports only on `127.0.0.1`. The explicit host-kit LAN profile MAY continue publishing its documented LAN ports, so viewer-log SHALL NOT rely on host binding as authentication. Browser delivery authority SHALL exist only in memory and the three viewer-log request headers; the lease token SHALL NOT appear in a URL, request body, structured-log record, console artifact, trace artifact, or evidence metadata. The browser SHALL obtain or reuse authority only for an explicit user Flush and SHALL NOT claim a primary lease on component mount or let a spectator steal primary. If no valid authority is available, it SHALL perform no viewer-log fetch and SHALL retain the batch for retry.
 
-#### Scenario: Unauthenticated POST is accepted
-- **WHEN** a client POSTs to `/api/internal/viewer-log` without any authentication header
-- **THEN** coordinator SHALL accept and process the request as documented
+#### Scenario: Base profile is loopback-only while host-kit retains explicit LAN behavior
+- **WHEN** the base runtime-manager Compose configuration is rendered
+- **THEN** coordinator and viewer published host ports SHALL bind to `127.0.0.1`
+- **AND** the explicit host-kit override MAY retain its documented LAN publish without weakening viewer-log authentication
+
+#### Scenario: Browser has no delivery authority
+- **WHEN** the user activates Flush but the viewer cannot obtain or reuse an active primary or spectator lease
+- **THEN** the browser SHALL issue no request to `/api/internal/viewer-log`
+- **AND** SHALL retain the diagnostics action and show a retryable failure
+
+#### Scenario: Authority remains outside persisted evidence
+- **WHEN** a viewer-log request is sent or browser evidence is captured
+- **THEN** the lease token SHALL exist only in the request header and in-memory lease state
+- **AND** SHALL NOT appear in the request body, structured-log buffer, console/network evidence, Playwright trace, or artifact manifest
+
+### Requirement: Standalone review viewer SHALL provide bounded structured-log delivery diagnostics
+
+The standalone viewer route reached through coordinator `/ui/open` for an existing review session SHALL render one bounded structured-log delivery diagnostics surface when the browser logger is available. Operator-console routes and controls SHALL NOT substitute for this surface. This surface is not a centralized log dashboard. It SHALL reuse the existing browser logger and coordinator contracts without adding a backend endpoint or changing the shared log schema.
+
+The surface SHALL expose:
+
+- the active root `trace_id`, browser logger `run_id`, and review session id;
+- the conversion job id and Kit instance id when the coordinator stream config provides them, otherwise an explicit not-observed value;
+- a user-triggered flush control with idle, loading, success, failure, and retry states; and
+- a user-triggered review-session close control with closing, closed, failure, and retry states.
+
+The UI SHALL NOT render structured-log record bodies, environment values, absolute JSONL paths, or read repository log files. Browser network traffic SHALL remain coordinator-only.
+
+The action controls SHALL be enabled only when the route contains one valid review session/root trace carrier, the loaded session matches that carrier, and the bootstrapped logger trace matches the route trace case-exactly. A mismatch SHALL render an unavailable state rather than perform an evidence action.
+
+On explicit Flush, the diagnostics surface SHALL obtain or reuse structured-log delivery authority before transport. A successful flush SHALL remove only the exact captured in-flight buffer entries acknowledged by the transport; records appended or retained during the request SHALL remain queued and SHALL NOT be counted as delivered.
+
+#### Scenario: User flushes browser records through the real coordinator endpoint
+- **GIVEN** a coordinator-generated viewer route has a valid review session and root trace
+- **WHEN** the user activates `Flush structured logs`
+- **THEN** the viewer SHALL enqueue a diagnostics record and show a visible loading state
+- **AND** the existing browser logger SHALL POST buffered records to coordinator `/api/internal/viewer-log`
+- **AND** a visible success state SHALL require the action's target flushed count to be reached with no new drops and the unique diagnostics action absent from the retained buffer
+- **AND** success SHALL contain the active trace and browser run ids
+
+#### Scenario: Viewer-log delivery failure exposes a retry without false success
+- **WHEN** all transport attempts for the user-triggered flush fail
+- **THEN** the viewer SHALL show a visible failure state and a `Retry flush` control
+- **AND** the viewer SHALL NOT show success or discard a still-retained record merely to clear the UI state
+
+#### Scenario: Retry uses the same production carrier
+- **GIVEN** the prior user-triggered flush is visibly failed
+- **WHEN** the user activates `Retry flush`
+- **THEN** the viewer SHALL retry through the same browser logger and coordinator `/api/internal/viewer-log` endpoint
+- **AND** the viewer SHALL reuse the retained diagnostics action rather than enqueue a duplicate action
+- **AND** a successful response SHALL replace the failure state with visible success
+
+#### Scenario: Manual flush waits for a timer-started batch
+- **GIVEN** the browser timer already has a flush in flight when the user action is enqueued
+- **WHEN** the diagnostics surface invokes the public manual flush
+- **THEN** manual flush SHALL wait for the in-flight batch to reach a terminal state
+- **AND** SHALL attempt any diagnostics action still retained afterward
+- **AND** the UI SHALL NOT treat progress from only the older batch as delivery of the diagnostics action
+
+#### Scenario: Concurrent append survives a successful in-flight flush
+- **GIVEN** a captured batch is in flight and a newer record is appended or buffer overflow removes an older entry
+- **WHEN** the transport acknowledges the captured batch
+- **THEN** the logger SHALL remove only the captured entry identities still present
+- **AND** every newer or unrelated retained entry SHALL remain queued for exactly one later delivery
+
+#### Scenario: Visible failure remains stable until explicit retry
+- **WHEN** the user-triggered diagnostics batch reaches terminal failure
+- **THEN** the viewer SHALL keep timer and threshold auto-flush paused while the failure and retry control are visible
+- **AND** background delivery SHALL NOT consume the retained diagnostics action before the user activates Retry
+- **AND** auto-flush SHALL resume after successful retry or component cleanup
+
+#### Scenario: User closes the same review session from the diagnostics surface
+- **GIVEN** the diagnostics surface identifies review session `<sessionId>`
+- **WHEN** the user activates `Close review session`
+- **THEN** the viewer SHALL show a visible closing state and POST cooperative-close body `{}` to coordinator `/api/review-sessions/<sessionId>/close`
+- **AND** the viewer SHALL NOT attach an operator termination `reason`
+- **AND** response status `closed` SHALL produce a visible closed state for that same session
+- **AND** a failed close SHALL expose a retry control without claiming the session is closed
+
+#### Scenario: Forced delivery failure exists only in browser evidence
+- **WHEN** Playwright verifies the failure and retry states
+- **THEN** the test MAY intercept the first user-triggered viewer-log POST sequence
+- **AND** production code SHALL NOT expose a failure query parameter, fault-injection endpoint, or test-only success branch
+- **AND** the successful retry SHALL reach the real coordinator endpoint after interception is removed
