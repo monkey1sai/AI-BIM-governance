@@ -148,13 +148,14 @@ P1 內含 plan 四軸 review(Completeness/Spec Alignment/Task Decomposition/Buil
 | `bad_args` | 任一 std-* / fu-generic(必填 args 缺或被字串化) | 修正 args 為正確 object 後重呼(非流程問題) |
 | `plan_author_failed` / `plan_parse_failed` / `reviewer_agent_failed` | P1/P3 infra(agent 回 null) | 重呼該 workflow 一次(resumeFromRunId);再失敗 → HELD |
 | `plan_not_aligned` | P1 修 2 輪仍不過 | **一律 HELD**(附 spec 矛盾診斷 specConflict;不自動重跑 P1 — 強制停下點,不可自動繞) |
-| `critical_impact` | P1 預掃 / P3 per-task | HELD(CRITICAL 阻擋)。使用者選:(a) 拆 change → 修 spec/plan 後重跑;(b) reviewer sign-off → resume 時把該 symbols 放進 `acknowledgedCriticalSymbols`,gate 對已 ack 的 symbol 放行(這是唯一解鎖通道) |
+| `critical_impact` | P1 預掃 / P3 per-task | HELD(CRITICAL 阻擋)。使用者選:(a) 拆 change → 修 spec/plan 後重跑;(b) reviewer sign-off → resume 時把該 symbols 放進 `acknowledgedCriticalSymbols`,gate 對已 ack 的 symbol 放行(這是唯一解鎖通道;sign-off 由使用者親自給,或經「State 行詞彙與簽核委派」節的委派通道由受委派 agent 代行) |
 | `impact_unavailable` | P1/P3 GitNexus 整體故障(含 overallRisk=UNKNOWN) | HELD;按 memory 復原 LadybugDB(`gitnexus status`+meta.json 為準)後 resume;復原前可用 codebase-memory trace_path 取暫時 blast-radius 寫 note 供 resume 判斷,**held 不因此解除** |
 | `plan_error_at_task` | P3 implementer 判 plan 錯 | HELD(附 blockedDetail);使用者核可後修 plan 檔 → resume P3 帶 startTaskIndex=該 task(P3 會重新 Parse 修過的 plan) |
 | `spec_review_not_closing` / `quality_review_not_closing` | P3 修 N 輪仍不過 | HELD(附 gaps/qualityDetail)— 真 P1/P2 修不閉合,不可繞 |
 | `detect_changes_repeatedly_failing` | P3 同 run 內 detectVerdict=fail 達 3 次 | HELD;指揮官 `gh issue create`(標題含 branch + 失敗摘要),等修復或 reviewer sign-off |
 | `no_browser_engine` / `no_browser_evidence` | P4 | 見編排 P4 gate(第 3 層 / stack 啟動 / HELD) |
 | `test_deploy_process_unproven` | backend / 測試部署區 preflight | HELD；port / process-name / pidfile 都不能單獨授權停止。listener 必須符合 per-port service role、deployment pidfile ancestor 與精確 launcher entrypoint，且 creation identity 經雙快照與 stop 前重驗一致，才可用下方 explicit stop 模式重跑 |
+| `host_env_blocked` | 任一 phase(host/環境層阻斷:CLI auth 失效、platform command/approval policy 擋操作、runtime 依賴或探測缺口等,非 spec/plan/品質問題) | HELD;診斷欄寫明被阻斷的具體操作與環境成因;修復環境後以同 phase(同 taskIndex/prNumber)resume;不得因環境阻斷降級或跳過任何 gate,也不得為個別環境狀況發明表外 held 值(細節一律進診斷欄) |
 | `review_required` | P6 branch protection | HELD；使用者自行完成 manual/CODEOWNER approval 或 admin override 後，以同一 prNumber resume；agent 禁止 `gh pr merge --admin` |
 | `cyber_safeguard_payload` | P5/P6 reviewer safeguard | separator-only fixture 才可換成 `a/b` / `seg/seg/id`，確認 payload paths 的 `passwd` grep 無結果後 resume；涉及 security 語意則 HELD |
 | `ship_blocked` 類(由 heldReason 文字) | P6 | 見編排 P6 consume |
@@ -169,7 +170,7 @@ HIGH 不是停下點:在對話中明確回報 blast radius 後繼續,PR body 必
 ```
 HELD@P<n> | reason=<held 值> | spec=<specPath> | slug=<slug> | userFacing=<bool> | dateStamp=<..>
 | branch=<..> | worktree=<絕對路徑> | planPath=<..> | taskIndex=<..> | prNumber=<..>
-| runIds=<P1:wf_.. P3:wf_.. ...> | 診斷=<specConflict/gaps/blockedDetail 摘要> | 需要使用者決定:<具體選項>
+| runIds=<P1:wf_.. P3:wf_.. ...> | 診斷=<specConflict/gaps/blockedDetail 摘要> | 需要使用者決定=<具體選項>
 ```
 
 ## Resume(使用者一句話重入;支援跨 session)
@@ -178,6 +179,23 @@ HELD@P<n> | reason=<held 值> | spec=<specPath> | slug=<slug> | userFacing=<bool
 - 「繼續 spec-to-done」→ 讀 state 檔最後一行還原全部 args → 只重跑該 phase:`Workflow({name:<phase>, args:{...還原}, resumeFromRunId:<該 phase runId>})`(resumeFromRunId 讓已完成的 agent 呼叫吃 cache,只重跑未完成段)。
 - 前序產物(plan 檔、commits、evidence)都在 git/磁碟,不重做;P3 錨點 = startTaskIndex(per-task commit 訊息規定前綴 `task#N:`,崩潰時可從 git log 重建);P6 帶同一 prNumber(ship-item 沿用既有 PR,不重複 create)。
 - 時間戳一律由主對話經 args 注入(dateStamp);workflow 內禁時鐘/亂數 API。
+
+## State 行詞彙與簽核委派(跨 CLI resume 契約;Claude 與 Codex 共用)
+
+state 檔是跨 session / 跨 CLI 的唯一 resume 座標;自本節加入起,新寫入的行一律遵守下列詞彙(歷史行不回溯改寫,讀取時盡力解析):
+
+- **行首 token 只允許四種**:`HELD@P<n>`(hold block 格式)、`DONE@P<n>`(phase 完成;task 級進度寫進 `taskIndex=`/`commit=` 欄位,不另創行首)、`RESUMED@P<n>`(使用者重入,附 `decision=`)、`AUTHORIZATION@P<n>`(簽核委派,見下)。
+- **`reason=` 的 held 值 MUST 取自本檔「held 對照表」**;不得發明表外值、不得把多個值併成複合值(一行一個主因,其餘寫診斷欄)。host/環境層阻斷一律用 `host_env_blocked`。
+- **欄位鍵固定 hold block 的中文鍵**(`診斷=`、`需要使用者決定=`);不得混入其他 schema 的同義欄位(`diagnosis=` / `need=` / `stateSchema=`)。歷史檔案中的 `需要使用者決定:` 視為等價舊寫法。
+- **phase 編號固定 P0/P1/P3–P7 跳號,不存在 P2**;任何 state 行不得出現 `P2`(全域或他處 skill 的「P2 Test Design」詞彙不得滲入本 repo 的 run;測項設計屬 P1 plan 範圍)。
+
+**簽核委派(delegated sign-off)**:使用者可顯式委派一個獨立 read-only agent 代行本 run 後續 HIGH/CRITICAL sign-off。委派必須由使用者明說(agent 不得自行發起或暗示),記錄為一行:
+
+```
+AUTHORIZATION@P<n> | decision=delegate-repo-workflow-signoff | scope=<代簽範圍> | exclusions=<排除項> | 診斷=<使用者授權原文摘要>
+```
+
+scope 僅限 repo workflow 的 impact/detect/review sign-off;secrets、credentials、billing、production data、不可逆刪除、未證明 ownership 的程序停止**永遠排除、不可委派**。代簽結果仍走 `acknowledgedCriticalSymbols` 通道並照常記入 state 檔;委派不解除 `critical_impact` 以外的任何 HELD 類別。
 
 ## 啟動 / 重建 backend stack 前置:host-native port preflight(防 deploy Read-Host 卡死)
 
