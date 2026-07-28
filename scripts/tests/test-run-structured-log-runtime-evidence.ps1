@@ -247,6 +247,23 @@ function Invoke-KitProvisioningCase {
         Assert-True (Test-Path -LiteralPath $result.kit_exe) 'kit.exe revalidated'
         Assert-True (Test-Path -LiteralPath $result.hoops_main) 'HOOPS revalidated'
 
+        $linkRoot = New-TestRoot 'kit-extscache-link'
+        try {
+            $linkContext = New-TestContext $linkRoot
+            Write-TestFile (Join-Path $linkRoot 'bim-streaming-server\repo.bat') 'build'
+            New-TestKitAssets $linkRoot
+            $extensionTarget = Join-Path $linkRoot 'extension-target'
+            $canonicalSuffix = 'omni\services\convert\cad\services\process\hoops_main.py'
+            Write-TestFile -Path (Join-Path $extensionTarget $canonicalSuffix) -Content 'linked-hoops'
+            $extensionLink = Join-Path $linkRoot 'bim-streaming-server\_build\windows-x86_64\release\extscache\omni.services.convert.cad-linked'
+            New-Item -ItemType Directory -Path (Split-Path -Parent $extensionLink) -Force | Out-Null
+            New-Item -ItemType Junction -Path $extensionLink -Target $extensionTarget | Out-Null
+            $linkedResult = Resolve-StructuredLogKitPrerequisites -Context $linkContext -KitProvisionMode Build -ProcessInvoker { return 0 }
+            Assert-True (Test-Path -LiteralPath $linkedResult.hoops_main -PathType Leaf) 'Build discovery traverses an extscache immediate-child directory link candidate'
+            Assert-True ([string]$linkedResult.hoops_main -like "*$canonicalSuffix") 'linked HOOPS match keeps only the canonical suffix'
+            Assert-Equal (Join-Path $extensionLink $canonicalSuffix) $linkedResult.hoops_main 'extscache first-hit wins when both extscache link and exts contain canonical HOOPS'
+        } finally { Remove-Item -LiteralPath $linkRoot -Recurse -Force -ErrorAction SilentlyContinue }
+
         $badPackage = Join-Path $root 'bad.zip'
         Write-TestFile $badPackage 'package'
         Assert-Throws { Resolve-StructuredLogKitPrerequisites -Context $ctx -KitProvisionMode VerifiedPackage -KitPackagePath $badPackage -KitPackageSha256 ('0' * 64) -PackageExtractor { throw 'must not extract bad hash' } } 'SHA-256|checksum|hash' 'bad package hash fails before extraction'

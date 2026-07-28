@@ -189,13 +189,29 @@ function Write-StructuredLogProvenance {
 }
 
 function Get-StructuredLogKitAssetPaths {
-    param([string] $RepoRoot, [string] $SearchRoot = '')
+    param([string] $RepoRoot, [string] $SearchRoot = '', [switch] $BuildDiscovery)
     $serverRoot = if ([string]::IsNullOrWhiteSpace($SearchRoot)) { Join-Path $RepoRoot 'bim-streaming-server' } else { $SearchRoot }
     $buildRoot = Join-Path $serverRoot '_build\windows-x86_64\release'
-    $hoops = @(Get-ChildItem -LiteralPath $buildRoot -Recurse -File -Filter 'hoops_main.py' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName -First 1)
+    $canonicalHoopsSuffix = 'omni/services/convert/cad/services/process/hoops_main.py'
+    $selectedHoops = $null
+    :hoopsSearch foreach ($relativeRoot in @('extscache','exts','extsbuild')) {
+        $searchRootPath = Join-Path $buildRoot $relativeRoot
+        if (-not (Test-Path -LiteralPath $searchRootPath -PathType Container)) { continue }
+        $candidates = [Collections.Generic.List[IO.DirectoryInfo]]::new()
+        $candidates.Add((Get-Item -LiteralPath $searchRootPath -Force))
+        if ($BuildDiscovery) {
+            foreach ($child in @(Get-ChildItem -LiteralPath $searchRootPath -Directory -Force -ErrorAction SilentlyContinue | Sort-Object -Property FullName)) { $candidates.Add($child) }
+        }
+        foreach ($candidate in $candidates) {
+            $candidateMatches = @(Get-ChildItem -LiteralPath $candidate.FullName -Recurse -File -Filter 'hoops_main.py' -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName.Replace('\','/').EndsWith($canonicalHoopsSuffix,[StringComparison]::OrdinalIgnoreCase) } |
+                Sort-Object -Property FullName)
+            if ($candidateMatches.Count -gt 0) { $selectedHoops = $candidateMatches[0].FullName; break hoopsSearch }
+        }
+    }
     return [ordered]@{
         kit_exe = Join-Path $buildRoot 'kit\kit.exe'
-        hoops_main = if ($hoops.Count -gt 0) { $hoops[0] } else { Join-Path $buildRoot 'exts\omni.services.convert.cad\omni\services\convert\cad\services\process\hoops_main.py' }
+        hoops_main = if ($null -ne $selectedHoops) { $selectedHoops } else { Join-Path $buildRoot 'exts\omni.services.convert.cad\omni\services\convert\cad\services\process\hoops_main.py' }
         converter_config = Join-Path $serverRoot 'source\apps\ezplus.bim_ifc_usd_converter.kit'
         converter_wrapper = Join-Path $serverRoot 'scripts\convert-ifc-to-usdc.ps1'
     }
@@ -314,7 +330,7 @@ function Resolve-StructuredLogKitPrerequisites {
     }
 
     $paths = if ($KitProvisionMode -eq 'Build') {
-        Get-StructuredLogKitAssetPaths -RepoRoot $Context.RepoRoot
+        Get-StructuredLogKitAssetPaths -RepoRoot $Context.RepoRoot -BuildDiscovery
     } else {
         Get-StructuredLogKitAssetPaths -RepoRoot $Context.RepoRoot -SearchRoot $serverRoot
     }
