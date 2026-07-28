@@ -349,7 +349,13 @@ function New-StructuredLogProcessSpecs {
     $viewerBase = "http://127.0.0.1:$($Context.Ports.Viewer)"
     $conversionBase = "http://127.0.0.1:$($Context.Ports.Conversion)"
     $coordinatorData = Join-Path $Context.AttemptRoot 'coordinator-data'
-    $conversionServiceRoot = Join-Path $Context.AttemptRoot 'conversion-service'
+    $conversionServiceRoot = Join-Path $Context.AttemptRoot 'c'
+    $conversionArtifactsRoot = Join-Path $conversionServiceRoot 'a'
+    $conversionJobsRoot = Join-Path $conversionServiceRoot 'j'
+    $projectedModelPath = [IO.Path]::GetFullPath((Join-Path $conversionArtifactsRoot 'stream_conv_YYYYMMDDHHMMSS_12345678\model.usdc'))
+    if ($projectedModelPath.Length -ge 260) {
+        throw "HELD: projected OpenUSD model path exceeds the Windows path budget ($($projectedModelPath.Length) >= 260): $projectedModelPath"
+    }
     New-Item -ItemType Directory -Path $coordinatorData -Force | Out-Null
     New-Item -ItemType Directory -Path $conversionServiceRoot -Force | Out-Null
 
@@ -367,8 +373,8 @@ function New-StructuredLogProcessSpecs {
             STREAMING_CONVERSION_CONFIG_PATH = [string]$Context.Kit.converter_config
             STREAMING_CONVERSION_WRAPPER = [string]$Context.Kit.converter_wrapper
             STREAMING_CONVERSION_SERVICE_ROOT = $conversionServiceRoot
-            STREAMING_CONVERSION_ARTIFACTS_ROOT = Join-Path $conversionServiceRoot 'artifacts'
-            STREAMING_CONVERSION_JOBS_DIR = Join-Path $conversionServiceRoot 'jobs'
+            STREAMING_CONVERSION_ARTIFACTS_ROOT = $conversionArtifactsRoot
+            STREAMING_CONVERSION_JOBS_DIR = $conversionJobsRoot
             STORAGE_ROOT = $Context.StorageRoot
             LOG_ROOT = $Context.LogRoot
         }
@@ -820,7 +826,8 @@ function Stop-StructuredLogOwnedProcesses {
             $fresh = @(& $ProcessInventoryProvider) | Where-Object { [int]$_.pid -eq [int]$node.item.pid } | Select-Object -First 1
             $nodeMatch = Test-StructuredLogIdentityMatch -Expected $node.item -Actual $fresh
             if (-not $nodeMatch) {
-                $entries.Add([pscustomobject][ordered]@{pid=[int]$node.item.pid;path=[string]$node.item.path;start_time_utc=[string]$node.item.start_time_utc;identity_match=$false;action='none';result='identity_changed'})
+                $result = if ($null -eq $fresh) { 'not_running' } else { 'identity_changed' }
+                $entries.Add([pscustomobject][ordered]@{pid=[int]$node.item.pid;path=[string]$node.item.path;start_time_utc=[string]$node.item.start_time_utc;identity_match=$false;action='none';result=$result})
                 continue
             }
             try {

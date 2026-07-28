@@ -418,9 +418,14 @@ function Invoke-ProcessSpecsCase {
         Assert-Equal 49104 ($specs | Where-Object name -eq 'conversion').port 'conversion alternate port'
         $conversion = $specs | Where-Object name -eq 'conversion'
         Assert-Equal $ctx.Kit.converter_config $conversion.env.STREAMING_CONVERSION_CONFIG_PATH 'conversion uses adapter-owned config env key'
-        Assert-Equal (Join-Path $ctx.AttemptRoot 'conversion-service') $conversion.env.STREAMING_CONVERSION_SERVICE_ROOT 'conversion service root is attempt-local'
-        Assert-Equal (Join-Path $ctx.AttemptRoot 'conversion-service\artifacts') $conversion.env.STREAMING_CONVERSION_ARTIFACTS_ROOT 'conversion artifacts are attempt-local'
-        Assert-Equal (Join-Path $ctx.AttemptRoot 'conversion-service\jobs') $conversion.env.STREAMING_CONVERSION_JOBS_DIR 'conversion jobs are attempt-local'
+        Assert-Equal (Join-Path $ctx.AttemptRoot 'c') $conversion.env.STREAMING_CONVERSION_SERVICE_ROOT 'conversion service root is short and attempt-local'
+        Assert-Equal (Join-Path $ctx.AttemptRoot 'c\a') $conversion.env.STREAMING_CONVERSION_ARTIFACTS_ROOT 'conversion artifacts are short and attempt-local'
+        Assert-Equal (Join-Path $ctx.AttemptRoot 'c\j') $conversion.env.STREAMING_CONVERSION_JOBS_DIR 'conversion jobs are short and attempt-local'
+        $projectedModelPath = Join-Path $conversion.env.STREAMING_CONVERSION_ARTIFACTS_ROOT 'stream_conv_YYYYMMDDHHMMSS_12345678\model.usdc'
+        Assert-True ([IO.Path]::GetFullPath($projectedModelPath).Length -lt 260) 'representative OpenUSD output stays below the Windows path budget'
+        $longContext = $ctx.PSObject.Copy()
+        $longContext.AttemptRoot = Join-Path $ctx.AttemptRoot ('x' * 80)
+        Assert-Throws { New-StructuredLogProcessSpecs -Context $longContext } 'path budget|260|OpenUSD' 'over-budget OpenUSD output fails before process start'
         Assert-Equal 8005 ($specs | Where-Object name -eq 'coordinator').port 'coordinator alternate port'
         Assert-Equal 5175 ($specs | Where-Object name -eq 'viewer').port 'viewer alternate port'
         $viewer = $specs | Where-Object name -eq 'viewer'
@@ -713,6 +718,54 @@ function Invoke-IdentityShutdownCase {
         Assert-True ($result.foreign_listeners.Count -eq 1) 'foreign listener only reported'
         $again = Stop-StructuredLogOwnedProcesses -Context $ctx -ProcessInventoryProvider { @() } -StopProcessInvoker { throw 'idempotent shutdown must not stop' } -ListenerInspector { @() }
         Assert-True ($again.entries.Count -ge 2) 'idempotent shutdown still reports lease entries'
+
+        @{schema_version='1';attempt_id=$ctx.AttemptId;processes=@(
+            @{name='disappearing-tree';pid=300;parent_pid=$PID;path='C:\owned\parent.exe';start_time_utc='2026-07-24T00:00:00.0000000Z';cwd=$root;port=8005;pidfile='parent.pid'}
+        )}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $ctx.LeasePath
+        $disappearingInventoryCall = [pscustomobject]@{ Value = 0 }
+        $disappearingInventory = {
+            $disappearingInventoryCall.Value++
+            if ($disappearingInventoryCall.Value -eq 1) {
+                return @(
+                    [pscustomobject]@{pid=300;parent_pid=$PID;path='C:\owned\parent.exe';start_time_utc='2026-07-24T00:00:00.0000000Z'},
+                    [pscustomobject]@{pid=301;parent_pid=300;path='C:\owned\child.exe';start_time_utc='2026-07-24T00:00:01.0000000Z'}
+                )
+            }
+            return @([pscustomobject]@{pid=300;parent_pid=$PID;path='C:\owned\parent.exe';start_time_utc='2026-07-24T00:00:00.0000000Z'})
+        }
+        $disappearingStopped = [System.Collections.Generic.List[int]]::new()
+        $disappearingResult = Stop-StructuredLogOwnedProcesses -Context $ctx -ProcessInventoryProvider $disappearingInventory -StopProcessInvoker { param($processId) $disappearingStopped.Add([int]$processId) } -ListenerInspector { @() }
+        Assert-Equal 'not_running' ($disappearingResult.entries | Where-Object pid -eq 301).result 'child that disappears before cleanup is already not running'
+        Assert-True (-not $disappearingStopped.Contains(301)) 'disappeared child is never passed to StopProcessInvoker'
+        Assert-Equal '300' (($disappearingStopped | ForEach-Object { [string]$_ }) -join ',') 'remaining identity-matched root is still stopped'
+        Assert-Equal 'succeeded' $disappearingResult.status 'disappeared child does not make owned shutdown fail'
+
+        @{schema_version='1';attempt_id=$ctx.AttemptId;processes=@(
+            @{name='changed-tree';pid=400;parent_pid=$PID;path='C:\owned\parent.exe';start_time_utc='2026-07-24T00:00:00.0000000Z';cwd=$root;port=8005;pidfile='parent.pid'}
+        )}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $ctx.LeasePath
+        $changedInventoryCall = [pscustomobject]@{ Value = 0 }
+        $changedInventory = {
+            $changedInventoryCall.Value++
+            if ($changedInventoryCall.Value -eq 1) {
+                return @(
+                    [pscustomobject]@{pid=400;parent_pid=$PID;path='C:\owned\parent.exe';start_time_utc='2026-07-24T00:00:00.0000000Z'},
+                    [pscustomobject]@{pid=401;parent_pid=400;path='C:\owned\child.exe';start_time_utc='2026-07-24T00:00:01.0000000Z'}
+                )
+            }
+            if ($changedInventoryCall.Value -eq 2) {
+                return @(
+                    [pscustomobject]@{pid=400;parent_pid=$PID;path='C:\owned\parent.exe';start_time_utc='2026-07-24T00:00:00.0000000Z'},
+                    [pscustomobject]@{pid=401;parent_pid=400;path='C:\foreign\reused.exe';start_time_utc='2026-07-24T00:00:02.0000000Z'}
+                )
+            }
+            return @([pscustomobject]@{pid=400;parent_pid=$PID;path='C:\owned\parent.exe';start_time_utc='2026-07-24T00:00:00.0000000Z'})
+        }
+        $changedStopped = [System.Collections.Generic.List[int]]::new()
+        $changedResult = Stop-StructuredLogOwnedProcesses -Context $ctx -ProcessInventoryProvider $changedInventory -StopProcessInvoker { param($processId) $changedStopped.Add([int]$processId) } -ListenerInspector { @() }
+        Assert-Equal 'identity_changed' ($changedResult.entries | Where-Object pid -eq 401).result 'same PID with changed path/start remains unsafe'
+        Assert-True (-not $changedStopped.Contains(401)) 'identity-changed child is never stopped'
+        Assert-True ($changedStopped.Contains(400)) 'remaining identity-matched root is still stopped after child mismatch'
+        Assert-Equal 'failed' $changedResult.status 'identity-changed child keeps shutdown failed'
     } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
