@@ -33,6 +33,11 @@ function loadStructLogModule() {
 }
 
 const { createBrowserLogger, generateRunId, isoUtcMs } = loadStructLogModule();
+const TEST_DELIVERY_AUTHORITY = {
+    reviewSessionId: "review_session_log_delivery",
+    leaseId: "viewer_lease_log_delivery",
+    leaseToken: "lease_token_log_delivery",
+};
 
 let testCount = 0;
 function test(name, fn) {
@@ -70,12 +75,15 @@ function deferred() {
     return { promise, resolve };
 }
 
-async function exerciseDefaultTransport(responseFactory, extraRecords = 0) {
+async function exerciseDefaultTransport(responseFactory, extraRecords = 0, fetchObserver = () => undefined) {
     const originalFetchDescriptor = Object.getOwnPropertyDescriptor(globalThis, "fetch");
     Object.defineProperty(globalThis, "fetch", {
         configurable: true,
         writable: true,
-        value: async () => responseFactory(),
+        value: async (url, init) => {
+            fetchObserver(url, init);
+            return responseFactory();
+        },
     });
 
     try {
@@ -85,6 +93,7 @@ async function exerciseDefaultTransport(responseFactory, extraRecords = 0) {
             enableTimer: false,
             flushAtRecords: 999,
             flushMaxAttempts: 1,
+            deliveryAuthority: () => TEST_DELIVERY_AUTHORITY,
         });
         for (let i = 0; i < extraRecords; i += 1) logger.info("app", `ack-${i}`);
         const flushed = await logger.flush();
@@ -340,6 +349,78 @@ await test("network/lifecycle/anomaly helpers attach correct event_type", async 
     assert.equal(sent[3].event_type, "operation_anomaly");
 });
 
+await test("ordinary data redacts nested secrets, bounds depth, and preserves only cyclic edges", async () => {
+    const sentinels = [
+        "browser-auth-secret",
+        "browser-key-secret",
+        "browser-password-secret",
+        "browser-api-key-secret",
+        "browser-token-secret",
+        "browser-depth-secret",
+        "browser-cycle-secret",
+    ];
+    const cycle = { visible: "cycle-visible", credential: sentinels[6] };
+    cycle.self = cycle;
+    const shared = { visible: "shared-visible" };
+    const deep = {};
+    let cursor = deep;
+    for (let depth = 1; depth <= 8; depth += 1) {
+        cursor.child = {};
+        cursor = cursor.child;
+    }
+    cursor.beyond = { password: sentinels[5] };
+
+    const originalFetchDescriptor = Object.getOwnPropertyDescriptor(globalThis, "fetch");
+    let serializedBody = "";
+    Object.defineProperty(globalThis, "fetch", {
+        configurable: true,
+        writable: true,
+        value: async (_url, init) => {
+            serializedBody = String(init.body);
+            const count = JSON.parse(serializedBody).length;
+            return ackResponse({ accepted: count, dropped: 0 });
+        },
+    });
+    try {
+        const logger = createBrowserLogger({
+            runId: "run_20260526_142010_a3f900",
+            initialTraceId: "ifcready_browser_redaction",
+            deliveryAuthority: () => TEST_DELIVERY_AUTHORITY,
+            enableTimer: false,
+            flushAtRecords: 999,
+        });
+        logger.info("redaction", "hostile ordinary data", {
+            auth: sentinels[0],
+            nested: [{ key: sentinels[1], password: sentinels[2], api_key: sentinels[3], token: sentinels[4] }],
+            deep,
+            cycle,
+            sharedA: shared,
+            sharedB: shared,
+        });
+        const record = logger.tail()[1];
+        assert.equal(record.event_type, "general");
+        assert.equal(record.data.auth, "[REDACTED]");
+        assert.equal(record.data.nested[0].key, "[REDACTED]");
+        assert.equal(record.data.nested[0].password, "[REDACTED]");
+        assert.equal(record.data.nested[0].api_key, "[REDACTED]");
+        assert.equal(record.data.nested[0].token, "[REDACTED]");
+        assert.equal(record.data.cycle.self, "[Circular]");
+        assert.deepEqual(record.data.sharedA, { visible: "shared-visible" });
+        assert.deepEqual(record.data.sharedB, { visible: "shared-visible" });
+        let bounded = record.data.deep;
+        for (let depth = 1; depth <= 7; depth += 1) bounded = bounded.child;
+        assert.equal(bounded.child, "[Truncated]");
+
+        await logger.flush();
+        for (const sentinel of sentinels) {
+            assert.equal(serializedBody.includes(sentinel), false, `serialized POST body leaked ${sentinel}`);
+        }
+    } finally {
+        if (originalFetchDescriptor) Object.defineProperty(globalThis, "fetch", originalFetchDescriptor);
+        else delete globalThis.fetch;
+    }
+});
+
 // ---------------------------------------------------------------------------
 // Buffer / flush behaviour
 // ---------------------------------------------------------------------------
@@ -369,10 +450,47 @@ await test("flushAtRecords triggers an auto-flush when threshold reached", async
 });
 
 await test("default transport accepts only a complete viewer-log acknowledgement", async () => {
-    const result = await exerciseDefaultTransport(() => ackResponse({ accepted: 1, dropped: 0 }));
+    let requestInit;
+    const result = await exerciseDefaultTransport(
+        () => ackResponse({ accepted: 1, dropped: 0 }),
+        0,
+        (_url, init) => { requestInit = init; },
+    );
     assert.equal(result.flushed, 1);
     assert.equal(result.bufferLength, 0);
     assert.equal(result.lastFlushStatus?.status, "ok");
+    assert.equal(requestInit.headers["X-Review-Session-Id"], TEST_DELIVERY_AUTHORITY.reviewSessionId);
+    assert.equal(requestInit.headers["X-Viewer-Lease-Id"], TEST_DELIVERY_AUTHORITY.leaseId);
+    assert.equal(requestInit.headers["X-Viewer-Lease-Token"], TEST_DELIVERY_AUTHORITY.leaseToken);
+});
+
+await test("default transport retains buffered records and never fetches without delivery authority", async () => {
+    const originalFetchDescriptor = Object.getOwnPropertyDescriptor(globalThis, "fetch");
+    let fetchCalls = 0;
+    Object.defineProperty(globalThis, "fetch", {
+        configurable: true,
+        writable: true,
+        value: async () => {
+            fetchCalls += 1;
+            return ackResponse({ accepted: 1, dropped: 0 });
+        },
+    });
+    try {
+        const logger = createBrowserLogger({
+            runId: "run_20260526_142010_a3f900",
+            initialTraceId: "ifcready_no_delivery_authority",
+            enableTimer: false,
+            flushAtRecords: 999,
+            flushMaxAttempts: 1,
+        });
+        assert.equal(await logger.flush(), 0);
+        assert.equal(fetchCalls, 0);
+        assert.equal(logger.bufferLength(), 1);
+        assert.equal(logger.lastFlushStatus()?.detail, "viewer_log_authority_unavailable");
+    } finally {
+        if (originalFetchDescriptor) Object.defineProperty(globalThis, "fetch", originalFetchDescriptor);
+        else delete globalThis.fetch;
+    }
 });
 
 await test("default transport retains a partially dropped viewer-log batch", async () => {
@@ -462,6 +580,39 @@ await test("manual flush waits for a timer-started batch and drains records appe
         globalThis.setInterval = originalSetInterval;
         globalThis.clearInterval = originalClearInterval;
     }
+});
+
+await test("successful in-flight completion removes captured entries by identity after overflow", async () => {
+    const firstResult = deferred();
+    const batches = [];
+    const logger = createBrowserLogger({
+        runId: "run_20260526_142010_a3f900",
+        initialTraceId: "ifcready_identity_removal",
+        transport: async (_url, body) => {
+            batches.push(body);
+            if (batches.length === 1) return firstResult.promise;
+            return { ok: true, status: 200 };
+        },
+        bufferCapacity: 1,
+        enableTimer: false,
+        flushAtRecords: 999,
+    });
+
+    const firstFlush = logger.flush();
+    logger.info("structuredLogDiagnostics", "manual action", {
+        evidence_action_id: "evidence_action_survives_old_completion",
+    });
+    firstResult.resolve({ ok: true, status: 200 });
+    assert.equal(await firstFlush, 0, "the remotely accepted but locally evicted entry is not removed twice");
+    assert.equal(logger.tail()[0].data.evidence_action_id, "evidence_action_survives_old_completion");
+
+    assert.equal(await logger.flush(), 1);
+    assert.equal(batches.length, 2);
+    assert.equal(
+        batches[1].filter((record) => record.data?.evidence_action_id === "evidence_action_survives_old_completion").length,
+        1,
+    );
+    assert.equal(logger.bufferLength(), 0);
 });
 
 await test("manual flush retries a retained action after a timer-started batch fails", async () => {

@@ -1,11 +1,12 @@
 import { test, expect } from "@playwright/test";
+import { harnessRoute } from "./harnessRoute";
 
 // CH-H1：中央 3D 視區「不再空白」。harness（無 GPU）下，原本中央是空白 <video>；現以資訊濃密 mock viewport
 // 取代——明標 deterministic·no-GPU（非壞掉），含範本①模型資訊卡 + ④對構表（誠實空狀態）+ loaded layers + 選取 echo。
 // 截圖證明「不空白、友善」。真實 ①④ 資料 + live 3D 由 real-ifc 路徑驗。
 test.describe("CH-H1 semantic viewer · mock viewport（harness 不空白）", () => {
   test("?harness=1 中央顯資訊濃密 mock viewport（banner/stage/model-info/mapping/layers），非空白", async ({ page }) => {
-    await page.goto("/?harness=1");
+    await page.goto(harnessRoute());
 
     const mv = page.getByTestId("mock-viewport");
     await expect(mv).toBeVisible({ timeout: 30_000 });
@@ -58,7 +59,7 @@ test.describe("CH-H1 semantic viewer · mock viewport（harness 不空白）", (
 
   test("?harness=1 窄視窗七軸 rail 不溢出，且 model tab 不顯示治理/debug 面板", async ({ page }) => {
     await page.setViewportSize({ width: 820, height: 900 });
-    await page.goto("/?harness=1");
+    await page.goto(harnessRoute());
 
     const mv = page.getByTestId("mock-viewport");
     await expect(mv).toBeVisible({ timeout: 30_000 });
@@ -92,7 +93,7 @@ test.describe("CH-H1 semantic viewer · mock viewport（harness 不空白）", (
   // 這條斷言 .gv-C 本身 display:grid + 五具名區、evidence/left/center/right/bottom 為直接 grid item，並用 boundingBox
   // 驗證 evidence 滿版置頂、left|center|right 併排同列、bottom 滿版置底。對舊的巢狀 2 欄版會 RED（display:block、子節點非直屬）。
   test("?harness=1 C 區塊為真 3x3 grid IA（evidence 滿版 / left|center|right 併排 / bottom 滿版），非巢狀 2 欄", async ({ page }) => {
-    await page.goto("/?harness=1");
+    await page.goto(harnessRoute());
     const mv = page.getByTestId("mock-viewport");
     await expect(mv).toBeVisible({ timeout: 30_000 });
 
@@ -154,7 +155,7 @@ test.describe("CH-H1 semantic viewer · mock viewport（harness 不空白）", (
   // (②IFC語意/③Pset·Qto/⑥空間)靜默裁到框外看不到。此測驗證修復後 .gv-C 收成單欄、無被裁切的水平溢出、右欄完整可見。
   test("?harness=1&debug=1 中等視窗 reservedLeft 生效時，C 版面收單欄、右側語意欄不被 overflow 靜默裁切", async ({ page }) => {
     await page.setViewportSize({ width: 1100, height: 900 });
-    await page.goto("/?harness=1&debug=1");
+    await page.goto(harnessRoute({ debug: "1" }));
 
     const mv = page.getByTestId("mock-viewport");
     await expect(mv).toBeVisible({ timeout: 30_000 });

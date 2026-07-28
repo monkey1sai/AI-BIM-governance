@@ -103,15 +103,26 @@ async function claim(
       client_nonce: `${sessionId}:${role}:${user}`,
     });
   expect(response.status).toBe(200);
-  return response.body as {
+  return {
+    ...response.body,
+    session_id: sessionId,
+  } as {
     lease_id: string;
     lease_token: string;
     user_id: string;
+    session_id: string;
   };
 }
 
-function internalHeaders() {
-  return { "X-Internal-Token": "test-internal-token" };
+function internalHeaders(sessionId?: string) {
+  return {
+    "X-Internal-Token": "test-internal-token",
+    ...(sessionId ? { "X-Trace-Id": sessionTrace(sessionId) } : {}),
+  };
+}
+
+function sessionTrace(sessionId: string): string {
+  return `rev_${sessionId}`;
 }
 
 function stageSelection(suffix = "a") {
@@ -140,10 +151,13 @@ async function preauthorize(
 }
 
 function runtimeBody(
-  lease: { lease_id: string },
+  lease: { lease_id: string; session_id?: string },
   overrides: Record<string, unknown> = {},
+  traceId?: string,
 ) {
+  const effectiveTraceId = traceId ?? (lease.session_id ? sessionTrace(lease.session_id) : undefined);
   return {
+    ...(effectiveTraceId ? { trace_id: effectiveTraceId } : {}),
     source_client_id: lease.lease_id,
     requested_event_type: "highlightPrimsRequest",
     request_id: "cmd_highlight_001",
@@ -161,37 +175,80 @@ describe("coordinator runtime command authority", () => {
     const app = makeApp();
     const sessionId = await createSession(app);
     const lease = await claim(app, sessionId, "authority-user");
+    const traceId = sessionTrace(sessionId);
 
     const missingInternal = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
+      .set("X-Trace-Id", traceId)
       .set("X-Viewer-Lease-Token", lease.lease_token)
-      .send(runtimeBody(lease));
+      .send(runtimeBody(lease, {}, traceId));
     expect(missingInternal.status).toBe(401);
 
     const allowed = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
       .set(internalHeaders())
+      .set("X-Trace-Id", traceId)
       .set("X-Viewer-Lease-Token", lease.lease_token)
-      .send(runtimeBody(lease));
+      .send(runtimeBody(lease, {}, traceId));
     expect(allowed.status).toBe(200);
     expect(allowed.body).toEqual({
       authorized: true,
       request_id: "cmd_highlight_001",
       retryable: false,
+      trace_id: traceId,
     });
+    expect(allowed.headers["x-trace-id"]).toBe(traceId);
 
     const forged = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
       .set(internalHeaders())
+      .set("X-Trace-Id", traceId)
       .set("X-Viewer-Lease-Token", "forged-viewer-lease-token")
-      .send(runtimeBody(lease, { request_id: "cmd_forged_001" }));
+      .send(runtimeBody(lease, { request_id: "cmd_forged_001" }, traceId));
     expect(forged.status).toBe(200);
     expect(forged.body).toMatchObject({
       authorized: false,
       reason: "lease_invalid",
       request_id: "cmd_forged_001",
       retryable: false,
+      trace_id: traceId,
     });
+    expect(forged.headers["x-trace-id"]).toBe(traceId);
+  });
+
+  it("verifies an exact read-only DataChannel session/trace pair without exposing authority on failure", async () => {
+    const app = makeApp();
+    const sessionId = await createSession(app, "readonly-trace");
+    const traceId = sessionTrace(sessionId);
+    const route = `/api/internal/review-sessions/${sessionId}/datachannel-trace-verifications`;
+
+    const exact = await request(app.app)
+      .post(route)
+      .set(internalHeaders())
+      .set("X-Trace-Id", traceId)
+      .send({ trace_id: traceId });
+    expect(exact.status).toBe(200);
+    expect(exact.body).toEqual({
+      verified: true,
+      session_id: sessionId,
+      trace_id: traceId,
+    });
+    expect(exact.headers["x-trace-id"]).toBe(traceId);
+
+    for (const [label, headerTrace, body] of [
+      ["missing header", undefined, { trace_id: traceId }],
+      ["missing body", traceId, {}],
+      ["header/body mismatch", traceId.toUpperCase(), { trace_id: traceId }],
+      ["canonical mismatch", `${traceId}_other`, { trace_id: `${traceId}_other` }],
+    ] as const) {
+      let pending = request(app.app).post(route).set(internalHeaders());
+      if (headerTrace) pending = pending.set("X-Trace-Id", headerTrace);
+      const denied = await pending.send(body);
+      expect(denied.status, label).toBe(200);
+      expect(denied.body, label).toMatchObject({ verified: false });
+      expect(denied.body.trace_id, label).toBeUndefined();
+      expect(denied.headers["x-trace-id"], label).toBeUndefined();
+    }
   });
 
   it("classifies spectator, wrong-source, blocked lifecycle, unsupported and malformed attempts", async () => {
@@ -202,30 +259,38 @@ describe("coordinator runtime command authority", () => {
 
     const spectatorDecision = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", spectator.lease_token)
       .send(runtimeBody(spectator, { request_id: "cmd_spectator_001" }));
     expect(spectatorDecision.body).toMatchObject({ authorized: false, reason: "spectator_readonly" });
 
     const wrongSource = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", primary.lease_token)
-      .send(runtimeBody({ lease_id: "viewer_lease_wrong_source" }, { request_id: "cmd_wrong_source_001" }));
+      .send(runtimeBody(
+        { lease_id: "viewer_lease_wrong_source" },
+        { request_id: "cmd_wrong_source_001" },
+        sessionTrace(sessionId),
+      ));
     expect(wrongSource.body).toMatchObject({ authorized: false, reason: "unauthorized_source_client" });
 
     const unsupported = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", primary.lease_token)
       .send(runtimeBody(primary, { requested_event_type: "composeStageRequest", request_id: "cmd_compose_001" }));
     expect(unsupported.body).toMatchObject({ authorized: false, reason: "unsupported_command" });
 
     const malformed = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", primary.lease_token)
-      .send({ source_client_id: primary.lease_id, requested_event_type: "highlightPrimsRequest" });
+      .send({
+        trace_id: sessionTrace(sessionId),
+        source_client_id: primary.lease_id,
+        requested_event_type: "highlightPrimsRequest",
+      });
     expect(malformed.status).toBe(200);
     expect(malformed.body).toMatchObject({ authorized: false, reason: "invalid_payload" });
     expect(malformed.body.rejection_id).toMatch(/^rejection_/);
@@ -233,7 +298,7 @@ describe("coordinator runtime command authority", () => {
     await request(app.app).post(`/api/review-sessions/${sessionId}/close`).send({});
     const blocked = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", primary.lease_token)
       .send(runtimeBody(primary, { request_id: "cmd_blocked_001" }));
     expect(blocked.body).toMatchObject({ authorized: false, reason: "session_lifecycle_blocked" });
@@ -249,9 +314,13 @@ describe("coordinator runtime command authority", () => {
 
     const crossSession = await request(app.app)
       .post(`/api/internal/review-sessions/${secondSessionId}/runtime-command-authorizations`)
-      .set(internalHeaders())
+      .set(internalHeaders(secondSessionId))
       .set("X-Viewer-Lease-Token", firstLease.lease_token)
-      .send(runtimeBody(firstLease, { request_id: "cmd_cross_session_001" }));
+      .send(runtimeBody(
+        firstLease,
+        { request_id: "cmd_cross_session_001" },
+        sessionTrace(secondSessionId),
+      ));
     expect(crossSession.status).toBe(200);
     expect(crossSession.body).toMatchObject({
       authorized: false,
@@ -268,7 +337,7 @@ describe("coordinator runtime command authority", () => {
       .expect(200);
     const released = await request(app.app)
       .post(`/api/internal/review-sessions/${firstSessionId}/runtime-command-authorizations`)
-      .set(internalHeaders())
+      .set(internalHeaders(firstSessionId))
       .set("X-Viewer-Lease-Token", firstLease.lease_token)
       .send(runtimeBody(firstLease, { request_id: "cmd_released_001" }));
     expect(released.status).toBe(200);
@@ -283,7 +352,7 @@ describe("coordinator runtime command authority", () => {
     vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
     const expired = await request(app.app)
       .post(`/api/internal/review-sessions/${thirdSessionId}/runtime-command-authorizations`)
-      .set(internalHeaders())
+      .set(internalHeaders(thirdSessionId))
       .set("X-Viewer-Lease-Token", expiringLease.lease_token)
       .send(runtimeBody(expiringLease, { request_id: "cmd_expired_001" }));
     expect(expired.status).toBe(200);
@@ -316,7 +385,7 @@ describe("coordinator runtime command authority", () => {
     for (const [index, [eventType, validContext, invalidContext]] of cases.entries()) {
       const valid = await request(app.app)
         .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
-        .set(internalHeaders())
+        .set(internalHeaders(sessionId))
         .set("X-Viewer-Lease-Token", lease.lease_token)
         .send(runtimeBody(lease, {
           requested_event_type: eventType,
@@ -327,7 +396,7 @@ describe("coordinator runtime command authority", () => {
 
       const invalid = await request(app.app)
         .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
-        .set(internalHeaders())
+        .set(internalHeaders(sessionId))
         .set("X-Viewer-Lease-Token", lease.lease_token)
         .send(runtimeBody(lease, {
           requested_event_type: eventType,
@@ -373,7 +442,7 @@ describe("coordinator runtime command authority", () => {
     for (const collision of cases) {
       const response = await request(app.app)
         .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
-        .set(internalHeaders())
+        .set(internalHeaders(sessionId))
         .set("X-Viewer-Lease-Token", lease.lease_token)
         .send(runtimeBody(lease, {
           request_id: `cmd_${collision.name}`,
@@ -434,7 +503,7 @@ describe("coordinator runtime command authority", () => {
     for (const collision of cases) {
       const response = await request(app.app)
         .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
-        .set(internalHeaders())
+        .set(internalHeaders(sessionId))
         .set("X-Viewer-Lease-Token", lease.lease_token)
         .send(runtimeBody(lease, {
           requested_event_type: collision.eventType,
@@ -551,7 +620,7 @@ describe("coordinator runtime command authority", () => {
 
     const authorization = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", lease.lease_token)
       .send(runtimeBody(lease, {
         requested_event_type: "openStageRequest",
@@ -559,12 +628,17 @@ describe("coordinator runtime command authority", () => {
         command_context: {},
         ...stageFields,
       }));
-    expect(authorization.body).toEqual({ authorized: true, request_id: "cmd_stage_001", retryable: false });
+    expect(authorization.body).toEqual({
+      authorized: true,
+      request_id: "cmd_stage_001",
+      retryable: false,
+      trace_id: sessionTrace(sessionId),
+    });
     expect(app.eventLog.list(sessionId).filter((event) => event.type === "stageBindingApplied")).toHaveLength(0);
 
     const replay = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", lease.lease_token)
       .send(runtimeBody(lease, {
         requested_event_type: "openStageRequest",
@@ -575,6 +649,7 @@ describe("coordinator runtime command authority", () => {
     expect(replay.body).toMatchObject({ authorized: false, retryable: false });
 
     const confirmationBody = {
+      trace_id: sessionTrace(sessionId),
       stage_binding_authorization_id: pending.body.stage_binding_authorization_id,
       binding_revision_id: pending.body.binding_revision_id,
       request_id: "cmd_stage_001",
@@ -582,7 +657,7 @@ describe("coordinator runtime command authority", () => {
     };
     const confirmation = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/stage-binding-confirmations`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", lease.lease_token)
       .send(confirmationBody);
     expect(confirmation.body).toMatchObject({
@@ -595,11 +670,171 @@ describe("coordinator runtime command authority", () => {
 
     const duplicate = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/stage-binding-confirmations`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", lease.lease_token)
       .send(confirmationBody);
     expect(duplicate.body).toMatchObject({ confirmed: true, idempotent_replay: true });
     expect(app.eventLog.list(sessionId).filter((event) => event.type === "stageBindingApplied")).toHaveLength(1);
+  });
+
+  it("trace mismatch cannot consume or confirm a pending stage transaction", async () => {
+    const app = makeApp();
+    const sessionId = await createSession(app, "trace-zero-side-effect");
+    const traceId = sessionTrace(sessionId);
+    const lease = await claim(app, sessionId, "trace-zero-side-effect-owner");
+    const pending = await preauthorize(
+      app,
+      sessionId,
+      lease,
+      "trace-zero-side-effect-owner",
+      "trace-zero-side-effect",
+    );
+    expect(pending.status).toBe(200);
+    const attempt = runtimeBody(lease, {
+      requested_event_type: "openStageRequest",
+      request_id: "cmd_trace_zero_side_effect",
+      command_context: {},
+      stage_binding_authorization_id: pending.body.stage_binding_authorization_id,
+      binding_revision_id: pending.body.binding_revision_id,
+      stage_composition: pending.body.stage_composition,
+    });
+
+    const mismatchedAuthorization = await request(app.app)
+      .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
+      .set(internalHeaders())
+      .set("X-Trace-Id", traceId.toUpperCase())
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send(attempt);
+    expect(mismatchedAuthorization.body).toEqual({
+      authorized: false,
+      reason: "invalid_payload",
+      request_id: "cmd_trace_zero_side_effect",
+      retryable: false,
+      detail_code: "runtime_trace_mismatch",
+    });
+    expect(mismatchedAuthorization.headers["x-trace-id"]).toBeUndefined();
+
+    const exactAuthorization = await request(app.app)
+      .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
+      .set(internalHeaders(sessionId))
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send(attempt);
+    expect(exactAuthorization.body).toEqual({
+      authorized: true,
+      request_id: "cmd_trace_zero_side_effect",
+      retryable: false,
+      trace_id: traceId,
+    });
+
+    const confirmationBody = {
+      trace_id: traceId,
+      stage_binding_authorization_id: pending.body.stage_binding_authorization_id,
+      binding_revision_id: pending.body.binding_revision_id,
+      request_id: "cmd_trace_zero_side_effect",
+      outcome: "success",
+    };
+    const mismatchedConfirmation = await request(app.app)
+      .post(`/api/internal/review-sessions/${sessionId}/stage-binding-confirmations`)
+      .set(internalHeaders())
+      .set("X-Trace-Id", traceId.toUpperCase())
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send(confirmationBody);
+    expect(mismatchedConfirmation.body).toEqual({
+      confirmed: false,
+      reason: "invalid_payload",
+      request_id: "cmd_trace_zero_side_effect",
+      retryable: false,
+      detail_code: "stage_confirmation_trace_authority_unavailable",
+    });
+    expect(mismatchedConfirmation.headers["x-trace-id"]).toBeUndefined();
+
+    const statusAfterMismatch = await request(app.app)
+      .get(`/api/review-sessions/${sessionId}/viewer-leases/status`)
+      .set("X-User-Token", "trace-zero-side-effect-owner");
+    expect(statusAfterMismatch.body.stage_binding).toMatchObject({
+      transaction_status: "executing",
+      active_binding_revision: null,
+    });
+
+    const exactConfirmation = await request(app.app)
+      .post(`/api/internal/review-sessions/${sessionId}/stage-binding-confirmations`)
+      .set(internalHeaders(sessionId))
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send(confirmationBody);
+    expect(exactConfirmation.body).toMatchObject({
+      confirmed: true,
+      transaction_status: "active",
+      active_binding_revision: pending.body.binding_revision_id,
+      trace_id: traceId,
+    });
+  });
+
+  it("trace mismatch cannot roll back an executing stage transaction", async () => {
+    const app = makeApp();
+    const sessionId = await createSession(app, "rollback-trace-zero-side-effect");
+    const traceId = sessionTrace(sessionId);
+    const lease = await claim(app, sessionId, "rollback-trace-owner");
+    const pending = await preauthorize(
+      app,
+      sessionId,
+      lease,
+      "rollback-trace-owner",
+      "rollback-trace-zero-side-effect",
+    );
+    expect(pending.status).toBe(200);
+    const attempt = runtimeBody(lease, {
+      requested_event_type: "openStageRequest",
+      request_id: "cmd_rollback_trace_zero_side_effect",
+      command_context: {},
+      stage_binding_authorization_id: pending.body.stage_binding_authorization_id,
+      binding_revision_id: pending.body.binding_revision_id,
+      stage_composition: pending.body.stage_composition,
+    });
+
+    await request(app.app)
+      .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
+      .set(internalHeaders(sessionId))
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send(attempt)
+      .expect(200, {
+        authorized: true,
+        request_id: "cmd_rollback_trace_zero_side_effect",
+        retryable: false,
+        trace_id: traceId,
+      });
+
+    const mismatchedRollback = await request(app.app)
+      .post(`/api/internal/review-sessions/${sessionId}/stage-binding-authorization-rollbacks`)
+      .set(internalHeaders())
+      .set("X-Trace-Id", traceId.toUpperCase())
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send(attempt);
+    expect(mismatchedRollback.body).toEqual({
+      rolled_back: false,
+      request_id: "cmd_rollback_trace_zero_side_effect",
+      detail_code: "rollback_trace_authority_unavailable",
+    });
+    expect(mismatchedRollback.headers["x-trace-id"]).toBeUndefined();
+
+    const statusAfterMismatch = await request(app.app)
+      .get(`/api/review-sessions/${sessionId}/viewer-leases/status`)
+      .set("X-User-Token", "rollback-trace-owner");
+    expect(statusAfterMismatch.body.stage_binding).toMatchObject({
+      transaction_status: "executing",
+      active_binding_revision: null,
+    });
+
+    const exactRollback = await request(app.app)
+      .post(`/api/internal/review-sessions/${sessionId}/stage-binding-authorization-rollbacks`)
+      .set(internalHeaders(sessionId))
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send(attempt);
+    expect(exactRollback.body).toMatchObject({
+      rolled_back: true,
+      request_id: "cmd_rollback_trace_zero_side_effect",
+      transaction_status: "failed",
+      trace_id: traceId,
+    });
   });
 
   it("fails an exact stage authorization before mutation so response loss cannot block a retry", async () => {
@@ -622,14 +857,19 @@ describe("coordinator runtime command authority", () => {
 
     await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", lease.lease_token)
       .send(attempt)
-      .expect(200, { authorized: true, request_id: "cmd_stage_response_lost", retryable: false });
+      .expect(200, {
+        authorized: true,
+        request_id: "cmd_stage_response_lost",
+        retryable: false,
+        trace_id: sessionTrace(sessionId),
+      });
 
     const invalidCorrelatedRollback = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/stage-binding-authorization-rollbacks`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", lease.lease_token)
       .send({ ...attempt, stage_composition: { root_layer_url: 42 } });
     expect(invalidCorrelatedRollback.body).toEqual({
@@ -640,7 +880,7 @@ describe("coordinator runtime command authority", () => {
 
     const invalidUncorrelatedRollback = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/stage-binding-authorization-rollbacks`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", lease.lease_token)
       .send({ ...attempt, request_id: "?", stage_composition: { root_layer_url: 42 } });
     expect(invalidUncorrelatedRollback.body).toMatchObject({
@@ -651,7 +891,7 @@ describe("coordinator runtime command authority", () => {
 
     const rollback = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/stage-binding-authorization-rollbacks`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", lease.lease_token)
       .send(attempt);
     expect(rollback.status).toBe(200);
@@ -664,7 +904,7 @@ describe("coordinator runtime command authority", () => {
 
     const replay = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/stage-binding-authorization-rollbacks`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", lease.lease_token)
       .send(attempt);
     expect(replay.body).toMatchObject({ rolled_back: true, idempotent_replay: true });
@@ -694,7 +934,7 @@ describe("coordinator runtime command authority", () => {
     };
     const authorize = (requestId: string) => request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", originalLease.lease_token)
       .send(runtimeBody(originalLease, {
         requested_event_type: "loadArtifactGroupRequest",
@@ -730,6 +970,7 @@ describe("coordinator runtime command authority", () => {
       .expect(200);
     const replacementLease = await claim(app, sessionId, "turnover-owner-b");
     const confirmationBody = {
+      trace_id: sessionTrace(sessionId),
       stage_binding_authorization_id: pending.body.stage_binding_authorization_id,
       binding_revision_id: pending.body.binding_revision_id,
       request_id: acceptedRequestId,
@@ -738,7 +979,7 @@ describe("coordinator runtime command authority", () => {
 
     const releasedCompletion = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/stage-binding-confirmations`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", originalLease.lease_token)
       .send(confirmationBody);
     expect(releasedCompletion.status).toBe(200);
@@ -751,7 +992,7 @@ describe("coordinator runtime command authority", () => {
 
     const replacementCompletion = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/stage-binding-confirmations`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", replacementLease.lease_token)
       .send(confirmationBody);
     expect(replacementCompletion.status).toBe(200);
@@ -785,7 +1026,7 @@ describe("coordinator runtime command authority", () => {
     };
     await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", lease.lease_token)
       .send(runtimeBody(lease, {
         requested_event_type: "openStageRequest",
@@ -800,6 +1041,7 @@ describe("coordinator runtime command authority", () => {
       throw new Error("simulated stageBindingApplied audit failure");
     });
     const confirmationBody = {
+      trace_id: sessionTrace(sessionId),
       stage_binding_authorization_id: pending.body.stage_binding_authorization_id,
       binding_revision_id: pending.body.binding_revision_id,
       request_id: "cmd_stage_audit_failure",
@@ -807,7 +1049,7 @@ describe("coordinator runtime command authority", () => {
     };
     const failed = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/stage-binding-confirmations`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", lease.lease_token)
       .send(confirmationBody);
     expect(failed.status).toBe(500);
@@ -823,7 +1065,7 @@ describe("coordinator runtime command authority", () => {
 
     const retry = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/stage-binding-confirmations`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", lease.lease_token)
       .send(confirmationBody);
     expect(retry.body).toMatchObject({
@@ -844,7 +1086,7 @@ describe("coordinator runtime command authority", () => {
 
     const tampered = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", lease.lease_token)
       .send(runtimeBody(lease, {
         requested_event_type: "loadArtifactGroupRequest",
@@ -858,7 +1100,7 @@ describe("coordinator runtime command authority", () => {
 
     const exact = await request(app.app)
       .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
-      .set(internalHeaders())
+      .set(internalHeaders(sessionId))
       .set("X-Viewer-Lease-Token", lease.lease_token)
       .send(runtimeBody(lease, {
         requested_event_type: "loadArtifactGroupRequest",
@@ -868,6 +1110,11 @@ describe("coordinator runtime command authority", () => {
         binding_revision_id: pending.body.binding_revision_id,
         stage_composition: pending.body.stage_composition,
       }));
-    expect(exact.body).toEqual({ authorized: true, request_id: "cmd_stage_exact", retryable: false });
+    expect(exact.body).toEqual({
+      authorized: true,
+      request_id: "cmd_stage_exact",
+      retryable: false,
+      trace_id: sessionTrace(sessionId),
+    });
   });
 });

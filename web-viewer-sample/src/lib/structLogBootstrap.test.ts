@@ -62,8 +62,28 @@ describe("traceIdFromSearch", () => {
 });
 
 describe("bootstrapStructLog", () => {
+  it.each([
+    ["missing", "?session=review_session_demo"],
+    ["duplicate", "?trace_id=ifcready_a&trace_id=ifcready_a"],
+    ["malformed", "?trace_id=ifcready_ifcready_a"],
+  ])("fails closed before creating a logger when the trace carrier is %s", (_label, search) => {
+    const createLogger = vi.fn();
+    expect(() => bootstrapStructLog({
+      search,
+      coordinatorApiBase: "http://127.0.0.1:8005",
+      browserSnapshotVars: SAFE_SNAPSHOT_VARS,
+      createLogger,
+      win: window,
+    })).toThrow(/valid structured-log trace carrier/i);
+    expect(createLogger).not.toHaveBeenCalled();
+  });
+
   it("creates one singleton, installs handlers once, exposes the logger, and flushes to coordinator", async () => {
-    const transport = vi.fn(async (_url: string, _body: unknown[]) => ({ ok: true, status: 200 }));
+    const transport = vi.fn(async (url: string, body: unknown[]) => {
+      void url;
+      void body;
+      return { ok: true, status: 200 };
+    });
     const createLogger = vi.fn((options: BrowserLoggerOptions) =>
       createBrowserLogger({
         ...options,

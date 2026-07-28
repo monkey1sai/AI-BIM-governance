@@ -65,8 +65,11 @@ export function bootstrapStructLog(options: StructLogBootstrapOptions): BrowserS
   if (!win) throw new Error("Browser window is required for structured log bootstrap");
 
   const traceId = traceIdFromSearch(options.search);
+  if (!traceId) {
+    throw new Error("A valid structured-log trace carrier is required before browser bootstrap");
+  }
   const logger = createLogger({
-    ...(traceId ? { initialTraceId: traceId } : {}),
+    initialTraceId: traceId,
     browserSnapshotVars: options.browserSnapshotVars,
     endpoint: `${coordinatorApiBase}/api/internal/viewer-log`,
   });

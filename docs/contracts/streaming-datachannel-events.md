@@ -8,6 +8,8 @@ The supported vendor `ApplicationMessage` ABI is exactly `{event_type,payload}`;
 
 Viewer sends no DataChannel message before the coordinator Socket.IO acknowledgement verifies the session root. Kit rejects every viewer→Kit message with a missing or mismatched payload trace before any stage read or mutation, and propagates the verified trace on every response/result/rejection/progress/unsolicited event. Viewer rejects every Kit→viewer message with a missing or mismatched trace before correlation bookkeeping, pending-request completion, accepted logging, or UI/state mutation. Mutators still require coordinator runtime authority; trace matching never replaces lease authorization.
 
+Every viewer→Kit catalog payload also carries the Socket-verified `session_id` beside `trace_id`. Both values are untrusted resolver candidates at the Kit boundary: Kit must verify their case-exact pair through the coordinator internal API before any read or mutation. `session_id` is correlation context, not an independent authority and never replaces the runtime mutator lease check.
+
 ## Open Stage
 
 Request:

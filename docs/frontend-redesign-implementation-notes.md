@@ -68,7 +68,7 @@
 **原則**：只換掉 transport + 假 Kit 大腦，**不假造前端狀態機**（Window/hooks/builders/handlers 照跑）。
 
 - 注入點：新增 `src/harness/fakeStreamer.ts`（實作 `connect/sendMessage/terminate/resize`，介面同 `AppStreamer`）+ `src/harness/streamer.ts`（`export const Streamer = harnessEnabled() ? FakeAppStreamer : AppStreamer`）。`AppStream.tsx` 把直接呼叫的 `AppStreamer.X` 改為 `Streamer.X`（harness 關閉時恆等於原物件，prod 行為零變更）。
-- 啟用旗標：`?harness=1` 或 `VITE_VIEWER_HARNESS=1`（預設關）。
+- 啟用雙閘門：runner-owned process 必須明確設定 `VITE_VIEWER_HARNESS=1`，且 route 同時帶 `?harness=1`；任一缺少都 fail closed（canonical compose/deploy 不傳此環境旗標）。
 - FakeAppStreamer 行為：connect 時捕獲 config 的 `onStart/onCustomEvent`；下一 tick 觸 `onStart(success)`→streamReady；`sendMessage(msg)` 依 `event_type` 產生**符合既有 payload 形狀**的回應（`openStageRequest`→`openedStageResult`+`loadingStateResponse(idle)`；`getChildrenRequest`→`getChildrenResponse`(以 fixture USD 樹)；`focusPrimRequest`→`focusPrimResult`；`highlightPrimsRequest`→`highlightPrimsResult`；`selectPrimsRequest`→`stageSelectionChanged`；`composeStageRequest`→ ack）。
 - 假影像：harness 模式 render 一個可決定性「viewport」placeholder（標示 stage url / 選取 prim），讓截圖有可見內容。
 - fixture：USD 樹 + element_mapping 取樣（不放真 IFC/usdc 進 repo；真 runtime 驗證另記）。

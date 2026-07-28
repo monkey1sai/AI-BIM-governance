@@ -140,8 +140,8 @@ def test_redact_data_before_write_strips_secret_field_names_at_depth():
     assert out["nested"]["body"]["token"] == "[REDACTED]"
 
 
-def test_redact_data_before_write_preserves_env_snapshot_var_keys():
-    """`vars[].key` should NOT be redacted even though "key" matches /KEY/i."""
+def test_redact_data_before_write_does_not_exempt_generic_vars_keys():
+    """Only the event-aware env_snapshot sanitizer may preserve vars[].key."""
     al = struct_log.load_allowlist()
     data = {
         "vars": [
@@ -149,7 +149,7 @@ def test_redact_data_before_write_preserves_env_snapshot_var_keys():
         ]
     }
     out = struct_log.redact_data_before_write(data, allowlist=al)
-    assert out["vars"][0]["key"] == "STORAGE_ROOT"
+    assert out["vars"][0]["key"] == "[REDACTED]"
 
 
 def test_safe_dumps_handles_circular_reference_without_throwing():

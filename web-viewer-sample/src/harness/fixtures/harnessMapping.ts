@@ -1,5 +1,5 @@
 // 可決定性 harness 用的 element mapping fixture（對構表④ demo 資料）。
-// 僅在 harness 模式（VITE_VIEWER_HARNESS=1 或 dev ?harness=1）下使用，絕不進入 production 串流路徑。
+// 僅在明確 VITE_VIEWER_HARNESS=1 且 route ?harness=1 時使用，絕不進入 production 串流路徑。
 // 誠實鐵律：每筆都標 mock:true + mapping_method:"fake_for_smoke_test"，讓 MappingTable 既有的
 // isFakeMappingItem 機制顯示 fake badge / 逐列 fake 標示，不冒充真實對映（見 src/types/mapping.ts）。
 // 命名比照 usdStageTree.ts 的 harness:// 前綴慣例，guid 用 HARNESS-DEMO-* 避免與真資料混淆。

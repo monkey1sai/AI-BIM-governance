@@ -123,6 +123,11 @@ export interface ConversionQualityMetricsSummary {
 
 export interface ReviewSession {
   session_id: string;
+  /**
+   * Server-owned immutable root trace. Optional only so persisted legacy JSON
+   * can be read and deterministically backfilled by SessionTraceResolver.
+   */
+  trace_id?: string;
   review_request_id?: string;
   tenant_id: string;
   project_id: string;
@@ -313,6 +318,7 @@ export interface LocalWebViewSession {
 
 export interface StreamConfigResponse {
   session_id: string;
+  trace_id: string;
   lifecycle_status: SessionStatus;
   source: "local_fixed";
   webrtc: {

@@ -59,6 +59,7 @@ export interface KitInstanceBinding {
 
 export interface ReviewSession {
     session_id: string;
+    trace_id?: string;
     review_request_id?: string;
     status: ReviewLifecycleStatus;
     project_id: string;
@@ -75,6 +76,7 @@ export interface ReviewSession {
 
 export interface ReviewStreamConfig {
     session_id: string;
+    trace_id: string;
     lifecycle_status: ReviewLifecycleStatus;
     source: "local_fixed";
     webrtc: {

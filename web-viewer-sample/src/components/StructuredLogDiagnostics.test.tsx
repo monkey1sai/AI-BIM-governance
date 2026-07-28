@@ -1,7 +1,12 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createBrowserLogger, type BrowserStructLogger, type LogRecord } from "../lib/structLog";
+import {
+    createBrowserLogger,
+    type BrowserStructLogger,
+    type LogRecord,
+    type ViewerLogDeliveryAuthority,
+} from "../lib/structLog";
 import {
     routeReviewSessionIdFromSearch,
     StructuredLogDiagnostics,
@@ -19,6 +24,11 @@ function deferred<T>() {
 }
 
 describe("StructuredLogDiagnostics", () => {
+    const deliveryAuthority: ViewerLogDeliveryAuthority = {
+        reviewSessionId: "review_session_diagnostics_x",
+        leaseId: "viewer_lease_diagnostics_x",
+        leaseToken: "lease_token_diagnostics_x",
+    };
     let container: HTMLDivElement;
     let root: Root | null;
     const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
@@ -69,6 +79,7 @@ describe("StructuredLogDiagnostics", () => {
             reviewSessionId: "review_session_diagnostics_x",
             conversionJobId: "stream_conv_diagnostics_x",
             kitInstanceId: "kit_local_001",
+            ensureViewerLogAuthority: async () => deliveryAuthority,
             closeReviewSession: async (sessionId) => ({ session_id: sessionId, status: "closed" }),
             ...overrides,
         };
@@ -184,6 +195,26 @@ describe("StructuredLogDiagnostics", () => {
         expect(logger.tail(logger.bufferLength())
             .some((record) => record.data?.evidence_action_id === actionId)).toBe(false);
         expect(pauseCalls).toEqual([true, false]);
+    });
+
+    it("retains the diagnostics action and does not transport when lease authority is unavailable", async () => {
+        const transport = vi.fn(async () => ({ ok: true, status: 200 }));
+        const logger = makeLogger(transport);
+        const ensureViewerLogAuthority = vi.fn(async () => null);
+        await renderDiagnostics({ logger, ensureViewerLogAuthority });
+
+        await act(async () => {
+            q<HTMLButtonElement>("structured-log-flush")!.click();
+            await Promise.resolve();
+        });
+        await flushReact();
+
+        expect(ensureViewerLogAuthority).toHaveBeenCalledTimes(1);
+        expect(transport).not.toHaveBeenCalled();
+        expect(q("structured-log-flush-status")?.dataset.state).toBe("failure");
+        expect(logger.tail(logger.bufferLength()).filter(
+            (record) => typeof record.data?.evidence_action_id === "string",
+        )).toHaveLength(1);
     });
 
     it("resumes auto-flush when a failed diagnostics component unmounts", async () => {

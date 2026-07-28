@@ -182,7 +182,7 @@ The `logs/` directory SHALL be ignored by git.
 
 ### Requirement: Coordinator SHALL accept viewer log records via POST /api/internal/viewer-log
 
-bim-review-coordinator SHALL expose `POST /api/internal/viewer-log` that accepts an array of `LogRecord` JSON objects in request body. Before parsing the body, the endpoint SHALL authenticate one active primary or spectator viewer lease using the case-exact headers `X-Review-Session-Id`, `X-Viewer-Lease-Id`, and `X-Viewer-Lease-Token`. Missing, wrong, cross-session, expired, or released authority SHALL return 401 without reading or persisting the body. The endpoint SHALL enforce its 256 KiB parser before the global 1 MiB JSON parser, validate each record against the shared schema, accept only records whose `service` is exactly `viewer`, and persist passing records to `logs/viewer/<date>/<run_id>.jsonl`. Records failing validation or service pinning SHALL be dropped from disk but counted in the per-process counter exposed via authenticated `GET /api/internal/structLog/health`.
+bim-review-coordinator SHALL expose `POST /api/internal/viewer-log` that accepts an array of `LogRecord` JSON objects in request body. Before parsing the body, the endpoint SHALL authenticate one active primary or spectator viewer lease using the case-exact headers `X-Review-Session-Id`, `X-Viewer-Lease-Id`, and `X-Viewer-Lease-Token`. Missing, wrong, cross-session, expired, or released authority SHALL return 401 without reading or persisting the body. The endpoint SHALL enforce its 256 KiB parser before the global 1 MiB JSON parser, validate every common field and event-specific `data` shape against the shared schema, accept only records whose `service` is exactly `viewer`, and persist passing records to `logs/viewer/<date>/<run_id>.jsonl`. The trusted sink SHALL reconstruct the allowed record shape and reapply bounded recursive redaction, including the dedicated untrusted `env_snapshot.vars[]` sanitizer. Every accepted record SHALL carry the authenticated session's case-exact canonical trace. Resolution before validation SHALL be side-effect free; a mismatched batch SHALL return 409 atomically without writing a record or backfilling a legacy session trace, and a still-current trace plan SHALL be committed only after an exact record passes validation and before persistence. Records failing schema validation or service pinning SHALL be dropped from disk but counted in the per-process counter exposed via authenticated `GET /api/internal/structLog/health`.
 
 #### Scenario: Viewer batch is persisted to logs/viewer/
 - **WHEN** web-viewer-sample with an active viewer lease POSTs an array of 10 schema-valid `service: "viewer"` records to `/api/internal/viewer-log` with all three authority headers
@@ -204,6 +204,16 @@ bim-review-coordinator SHALL expose `POST /api/internal/viewer-log` that accepts
 #### Scenario: Viewer intake cannot spoof another service
 - **WHEN** an authenticated batch contains a schema-valid record whose `service` is `coordinator`, `streaming-server`, or `scripts`
 - **THEN** that record SHALL be counted as dropped and SHALL NOT create or append to any non-viewer service log path
+
+#### Scenario: Viewer intake binds the whole batch to the authenticated session trace
+- **WHEN** an authenticated batch contains any record whose `trace_id` is not case-exactly equal to the server-owned session trace
+- **THEN** coordinator SHALL respond 409 and reject the whole batch without persisting its valid prefix
+- **AND** a legacy session trace SHALL remain unmodified until an exact-trace, schema-valid record is ready to persist
+
+#### Scenario: Trusted viewer intake enforces event data and redaction
+- **WHEN** an authenticated viewer submits a record with an invalid event-specific `data` shape, a query-bearing network `path`, an unknown top-level field, or nested secret-like values
+- **THEN** invalid records SHALL be dropped without persistence
+- **AND** accepted records SHALL be reconstructed from allowed fields and re-redacted before the trusted sink writes them
 
 ### Requirement: Coordinator SHALL expose GET /api/internal/structLog/health
 

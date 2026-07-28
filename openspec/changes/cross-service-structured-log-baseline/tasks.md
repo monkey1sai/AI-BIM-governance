@@ -130,14 +130,14 @@
 
 ## 13. P5 adversarial remediation（2026-07-28）
 
-- [ ] 13.1 以 20 個 conservative P3 closure findings + byte-exact P4 e1/e2 建立 immutable 22-item registry；source map逐項對應 durable state/run/commit/code/tests，獨立 completeness audit通過；舊 11-verdict output只保留為 noncanonical diagnostic
-- [ ] 13.2 修正 plan invocation，使 runtime evidence runner獨佔 active-attempt reconcile、attempt-root creation與 atomic running/terminal/superseded pointer lifecycle；outer wrapper不再 precreate或寫 pointer
-- [ ] 13.3 Base Compose coordinator/viewer host publish收斂到 `127.0.0.1`、explicit host-kit LAN override保留；viewer-log body parse前驗 active primary/spectator lease三 headers、256 KiB parser先於 global parser、只持久化 `service="viewer"`；health沿用 internal token
-- [ ] 13.4 Browser delivery authority只在 memory/headers，explicit Flush才 ensure/reuse lease；無 authority不 fetch且保留 action，spectator不搶 primary；flush成功只刪 exact in-flight entry identities
-- [ ] 13.5 四 adapter ordinary event data套用 `MAX_REDACTION_DEPTH=8`（root=0、depth9=`[Truncated]`）、cycle=`[Circular]`且保留原 event type的 recursive secret-key redaction；general `auth`/`key`無全域豁免，`env_snapshot.vars[]`專用 sanitizer。Coordinator TS、streaming Python、browser TS、PowerShell各自證明 nested/array/auth-key/depth/cycle與 secret-free serialized sink/body
-- [ ] 13.6 Browser evidence拒絕 generic URI scheme/UNC、驗 exact trusted viewer origin、raw Playwright trace只在 retained tree外的 owned private temp、final sanitized artifact才入 allow-list；`browser_run_id`跨 operability/readiness/viewer timeline/manifest/PR fields case-exact綁定
-- [ ] 13.7 External cloud callback ready/failed outbox payload在 persist/reload/delivery均保留 exact IFC-ready root `trace_id`
-- [ ] 13.8 Socket.IO使用 server-owned immutable/fail-closed session trace resolver；join/heartbeat/leave candidate exact-match，成功 ack/presence回 canonical trace，rejected ack只回stable error且在room/participant/session/presence副作用前停止；linked/standalone/mismatch/ambiguous cases有零副作用 tests
-- [ ] 13.9 DataChannel正式 contract改為每個 `payload.trace_id`；完整 26-message catalog的 viewer outbound、Kit inbound/outbound、viewer inbound皆在任何 read/mutation/correlation/UI更新前驗證，同時保留 mutator runtime authority
-- [ ] 13.10 Affected unit/type/lint/build/contract/PowerShell/full suites、OpenSpec strict validate、Compose config與 GitNexus detect通過；CRITICAL/UNKNOWN index blind spots由 delegated reviewer sign-off並以 source/tests補償
+- [x] 13.1 以 20 個 conservative P3 closure findings + byte-exact P4 e1/e2 建立 immutable 22-item registry；source map逐項對應 durable state/run/commit/code/tests，獨立 completeness audit通過；舊 11-verdict output只保留為 noncanonical diagnostic
+- [x] 13.2 修正 plan invocation，使 runtime evidence runner獨佔 active-attempt reconcile、attempt-root creation與 atomic running/terminal/superseded pointer lifecycle；outer wrapper不再 precreate或寫 pointer
+- [x] 13.3 Base Compose coordinator/viewer host publish收斂到 `127.0.0.1`、explicit host-kit LAN override保留；viewer-log body parse前驗 active primary/spectator lease三 headers、256 KiB parser先於 global parser、只持久化 `service="viewer"`；health沿用 internal token
+- [x] 13.4 Browser delivery authority只在 memory/headers，explicit Flush才 ensure/reuse lease；無 authority不 fetch且保留 action，spectator不搶 primary；flush成功只刪 exact in-flight entry identities
+- [x] 13.5 四 adapter ordinary event data套用 `MAX_REDACTION_DEPTH=8`（root=0、depth9=`[Truncated]`）、cycle=`[Circular]`且保留原 event type的 recursive secret-key redaction；general `auth`/`key`無全域豁免，`env_snapshot.vars[]`專用 sanitizer。Coordinator TS、streaming Python、browser TS、PowerShell各自證明 nested/array/auth-key/depth/cycle與 secret-free serialized sink/body
+- [x] 13.6 Browser evidence拒絕 generic URI scheme/UNC、驗 exact trusted viewer origin、raw Playwright trace只在 retained tree外的 owned private temp、final sanitized artifact才入 allow-list；`browser_run_id`跨 operability/readiness/viewer timeline/manifest/PR fields case-exact綁定
+- [x] 13.7 External cloud callback ready/failed outbox payload在 persist/reload/delivery均保留 exact IFC-ready root `trace_id`
+- [x] 13.8 Socket.IO使用 server-owned immutable/fail-closed session trace resolver；join/heartbeat/leave candidate exact-match，成功 ack/presence回 canonical trace，rejected ack只回stable error且在room/participant/session/presence副作用前停止；linked/standalone/mismatch/ambiguous cases有零副作用 tests
+- [x] 13.9 DataChannel正式 contract改為每個 `payload.trace_id`；完整 26-message catalog的 viewer outbound、Kit inbound/outbound、viewer inbound皆在任何 read/mutation/correlation/UI更新前驗證，同時保留 mutator runtime authority
+- [x] 13.10 Affected unit/type/lint/build/contract/PowerShell/full suites、OpenSpec strict validate、Compose config與 GitNexus detect通過；CRITICAL/UNKNOWN index blind spots由 delegated reviewer sign-off並以 source/tests補償
 - [ ] 13.11 從 final remediation HEAD重跑 owned runtime、browser/design P4 evidence，並以同一 22-item registry取得 canonical P5 22/22 closed、zero new issue、critic safe

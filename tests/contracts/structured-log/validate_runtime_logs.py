@@ -274,6 +274,15 @@ def validate_runtime_logs(
             violations.append(_violation(file_name, 0, "outside_log_root"))
             line_counts[file_name] = 0
             continue
+        try:
+            if path.stat().st_nlink > 1:
+                violations.append(_violation(file_name, 0, "hardlink_input"))
+                line_counts[file_name] = 0
+                continue
+        except OSError:
+            violations.append(_violation(file_name, 0, "input_stat_failed"))
+            line_counts[file_name] = 0
+            continue
 
         path_metadata, path_violations = _path_contract(path, log_root)
         violations.extend(path_violations)

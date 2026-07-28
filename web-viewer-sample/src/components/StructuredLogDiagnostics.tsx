@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CloseReviewSessionResponse } from "../clients/coordinatorClient";
 import { traceIdFromSearch } from "../lib/structLogBootstrap";
-import type { BrowserStructLogger } from "../lib/structLog";
+import type { BrowserStructLogger, ViewerLogDeliveryAuthority } from "../lib/structLog";
 import "./StructuredLogDiagnostics.css";
 
 const REVIEW_SESSION_PATTERN = /^(?:lwv_|review_session_)[A-Za-z0-9_]+$/;
@@ -22,6 +22,7 @@ export interface StructuredLogDiagnosticsProps {
     reviewSessionId: string | null;
     conversionJobId?: string | null;
     kitInstanceId?: string | null;
+    ensureViewerLogAuthority?: () => Promise<ViewerLogDeliveryAuthority | null>;
     closeReviewSession: (sessionId: string) => Promise<CloseReviewSessionResponse>;
 }
 
@@ -52,6 +53,7 @@ export function StructuredLogDiagnostics({
     reviewSessionId,
     conversionJobId,
     kitInstanceId,
+    ensureViewerLogAuthority = async () => null,
     closeReviewSession,
 }: StructuredLogDiagnosticsProps) {
     const [flushState, setFlushState] = useState<FlushState>("idle");
@@ -124,7 +126,13 @@ export function StructuredLogDiagnostics({
 
         setFlushState("loading");
         try {
-            await logger.flush();
+            const authority = await ensureViewerLogAuthority();
+            if (!mounted.current || activeIdentity.current !== operationIdentity) return;
+            if (!authority || authority.reviewSessionId !== reviewSessionId) {
+                setFlushState("failure");
+                return;
+            }
+            await logger.flush(authority);
             if (!mounted.current || activeIdentity.current !== operationIdentity) return;
             const delivered = logger.lastFlushStatus()?.status === "ok"
                 && logger.flushedTotal() >= pending.targetFlushedTotal

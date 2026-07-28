@@ -359,6 +359,7 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
       event = "conversion_result_ready";
       payload = {
         event,
+        trace_id: job.ifc_ready_job_id,
         tenant_id: job.tenant_id,
         project_id: job.project_id,
         external_model_version_id: job.external_model_version_id,
@@ -381,6 +382,7 @@ export class IfcReadyConversionPipeline<TTerminalObserverResult = void> {
       event = "conversion_failed";
       payload = {
         event,
+        trace_id: job.ifc_ready_job_id,
         tenant_id: job.tenant_id,
         project_id: job.project_id,
         external_model_version_id: job.external_model_version_id,

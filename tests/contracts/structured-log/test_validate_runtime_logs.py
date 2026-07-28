@@ -492,6 +492,21 @@ def test_existing_output_hardlink_to_input_is_rejected_by_filesystem_identity(
     assert output.read_bytes() == original
 
 
+def test_hardlinked_jsonl_input_is_rejected_before_reading(tmp_path: Path):
+    log_root = _four_service_log_root(tmp_path)
+    source = next((log_root / "viewer" / DATE).glob("*.jsonl"))
+    outside_alias = tmp_path / "outside-viewer-alias.jsonl"
+    try:
+        os.link(source, outside_alias)
+    except OSError as error:
+        pytest.skip(f"hardlink creation unavailable on this Windows host: {error}")
+
+    completed, result, _ = _invoke(log_root, tmp_path / "result.json")
+
+    assert completed.returncode != 0
+    assert "hardlink_input" in _violation_codes(result)
+
+
 @pytest.mark.parametrize(
     ("key", "expected"),
     [

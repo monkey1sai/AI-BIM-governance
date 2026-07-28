@@ -6,11 +6,9 @@ import request from "supertest";
 
 import { createCoordinatorApp, type CoordinatorApp } from "../../src/app.js";
 
-// Internal API auth boundary (cross-service-structured-log-baseline): every
-// `/api/internal/*` route requires a valid internal token EXCEPT the two
-// intentionally-open paths (`/viewer-log`, `/structLog/health`). These tests
-// pin that contract so the allowlist cannot silently widen and so the
-// non-allowlisted routes cannot silently drop their token gate.
+// Internal API auth boundary (cross-service-structured-log-baseline): health
+// keeps the existing internal token. Viewer-log uses its narrower active lease
+// authority and must not fall through to an unauthenticated allowlist.
 const INTERNAL_TOKEN = "test-internal-token-internalAuth";
 
 describe("/api/internal auth boundary", () => {
@@ -73,15 +71,22 @@ describe("/api/internal auth boundary", () => {
     expect(response.status).not.toBe(401);
   });
 
-  it("allows /api/internal/viewer-log without a token (intentional allowlist)", async () => {
+  it("rejects /api/internal/viewer-log without active lease headers", async () => {
     const response = await request(app!.app)
       .post("/api/internal/viewer-log")
       .send([]);
-    expect(response.status).not.toBe(401);
+    expect(response.status).toBe(401);
+    expect(response.body).toEqual({ detail: "missing or invalid viewer lease" });
   });
 
-  it("allows GET /api/internal/structLog/health without a token (intentional allowlist)", async () => {
+  it("requires the internal token for GET /api/internal/structLog/health", async () => {
     const response = await request(app!.app).get("/api/internal/structLog/health");
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(401);
+    expect(response.body).toEqual({ detail: "missing or invalid internal API token" });
+
+    const authorized = await request(app!.app)
+      .get("/api/internal/structLog/health")
+      .set("X-Internal-Token", INTERNAL_TOKEN);
+    expect(authorized.status).toBe(200);
   });
 });

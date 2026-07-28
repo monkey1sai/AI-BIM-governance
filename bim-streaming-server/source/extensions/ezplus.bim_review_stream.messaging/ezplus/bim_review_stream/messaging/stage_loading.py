@@ -31,6 +31,7 @@ from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux
 
 try:
     from .runtime_authority import (
+        DataChannelTraceContext,
         RuntimeAuthorityClient,
         command_rejected_payload,
         correlated_result,
@@ -39,6 +40,7 @@ try:
     )
 except ImportError:  # pragma: no cover - test modules import this file directly.
     from runtime_authority import (
+        DataChannelTraceContext,
         RuntimeAuthorityClient,
         command_rejected_payload,
         correlated_result,
@@ -206,6 +208,7 @@ class _AuthorizedStageAttempt:
     event_type: str
     request_id: str
     session_id: str
+    trace_id: str
     source_client_id: str
     viewer_lease_token: str = field(repr=False)
     stage_binding_authorization_id: str
@@ -220,6 +223,7 @@ class _AuthorizedStageAttempt:
         return {
             "request_id": self.request_id,
             "session_id": self.session_id,
+            "trace_id": self.trace_id,
             "source_client_id": self.source_client_id,
             "viewer_lease_token": self.viewer_lease_token,
             "stage_binding_authorization_id": self.stage_binding_authorization_id,
@@ -229,9 +233,10 @@ class _AuthorizedStageAttempt:
 
 class LoadingManager:
     """Manages the loading of USD stages and sends messages to the client"""
-    def __init__(self, runtime_authority=None):
+    def __init__(self, runtime_authority=None, trace_context=None):
         self._subscriptions = []  # Holds subscription pointers
         self._runtime_authority = runtime_authority or RuntimeAuthorityClient()
+        self._trace_context = trace_context or DataChannelTraceContext()
         self._active_stage_attempt = None
         self._active_terminal_started = False
         self._active_stage_runtime_url = ""
@@ -325,6 +330,18 @@ class LoadingManager:
 
     def _payload_dict(self, value):
         return payload_dict(value)
+
+    def _verify_datachannel_trace(self, event_type, request_payload):
+        try:
+            return self._runtime_authority.verify_datachannel_trace(event_type, request_payload)
+        except Exception:
+            return None
+
+    def _active_output_trace_id(self):
+        if self._active_stage_attempt is not None:
+            return self._active_stage_attempt.trace_id
+        active_stage = self._trace_context.active_stage()
+        return active_stage[1] if active_stage is not None else None
 
     def _payload_list(self, value):
         if value is None:
@@ -691,6 +708,8 @@ class LoadingManager:
 
     def _on_load_artifact_group(self, event: carb.events.IEvent) -> None:
         request_payload = self._payload_dict(event.payload)
+        if self._verify_datachannel_trace("loadArtifactGroupRequest", request_payload) is None:
+            return
         if self._reject_if_stage_attempt_active("loadArtifactGroupRequest", request_payload):
             return
         decision = self._runtime_authority.authorize("loadArtifactGroupRequest", request_payload)
@@ -745,12 +764,24 @@ class LoadingManager:
         self._open_authorized_stage(attempt, active_context)
 
     def _on_load_state_query(self, event: carb.events.IEvent) -> None:
+        request_payload = self._payload_dict(event.payload)
+        trace_id = self._verify_datachannel_trace("loadingStateQuery", request_payload)
+        if trace_id is None:
+            return
         public_url = self._public_opened_stage_url or self._opened_stage_url
-        payload = {"loading_state": "idle", "url": public_url}
+        payload = {"loading_state": "idle", "url": public_url, "trace_id": trace_id}
         if self._stage_is_opening:
-            payload = { "loading_state": "busy", "url": self._requested_stage_url }
+            payload = {
+                "loading_state": "busy",
+                "url": self._requested_stage_url,
+                "trace_id": trace_id,
+            }
         elif self._stage_has_opened:
-            payload = { "loading_state": "idle", "url": self._requested_stage_url }
+            payload = {
+                "loading_state": "idle",
+                "url": self._requested_stage_url,
+                "trace_id": trace_id,
+            }
 
         get_eventdispatcher().dispatch_event("loadingStateResponse", payload=payload)
 
@@ -764,6 +795,8 @@ class LoadingManager:
         """
 
         request_payload = self._payload_dict(event.payload)
+        if self._verify_datachannel_trace("openStageRequest", request_payload) is None:
+            return
         if self._reject_if_stage_attempt_active("openStageRequest", request_payload):
             return
         decision = self._runtime_authority.authorize("openStageRequest", request_payload)
@@ -842,6 +875,7 @@ class LoadingManager:
         required = {
             "request_id": request_payload.get("request_id"),
             "session_id": request_payload.get("session_id"),
+            "trace_id": request_payload.get("trace_id"),
             "source_client_id": request_payload.get("source_client_id"),
             "viewer_lease_token": request_payload.get("viewer_lease_token")
             or request_payload.get("lease_token"),
@@ -963,6 +997,9 @@ class LoadingManager:
             return
         decision = self._runtime_authority.confirm_stage(attempt.authority_payload(), "success")
         if decision.authorized:
+            if not self._trace_context.bind_active_stage(attempt.session_id, attempt.trace_id):
+                self._reset_state(attempt)
+                return
             self._public_opened_stage_url = public_url
             payload = {
                 "url": public_url,
@@ -1210,10 +1247,15 @@ class LoadingManager:
         # Only notify for stage loaded from storage.
         if not self._persisted_stage:
             return
+        trace_id = self._active_output_trace_id()
+        if trace_id is None:
+            return
 
         # Send progress message
         carb.log_info('Sending message to client about loading progress.')
-        get_eventdispatcher().dispatch_event("updateProgressAmount", payload=dict(event.payload))
+        payload = dict(event.payload)
+        payload["trace_id"] = trace_id
+        get_eventdispatcher().dispatch_event("updateProgressAmount", payload=payload)
 
     def _on_activity(self, event: carb.events.IEvent):
         """
@@ -1223,11 +1265,16 @@ class LoadingManager:
         # Only notify for stage loaded from storage.
         if not self._persisted_stage:
             return
+        trace_id = self._active_output_trace_id()
+        if trace_id is None:
+            return
 
         carb.log_info('Storing message about loading activity.')
         # Send activity message
         carb.log_info('Sending message to client about loading activity.')
-        get_eventdispatcher().dispatch_event("updateProgressActivity", payload=dict(event.payload))
+        payload = dict(event.payload)
+        payload["trace_id"] = trace_id
+        get_eventdispatcher().dispatch_event("updateProgressActivity", payload=payload)
 
     def on_shutdown(self) -> None:
         """

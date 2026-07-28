@@ -19,6 +19,8 @@ MESSAGING_SOURCE = (
     / "bim_review_stream"
     / "messaging"
 )
+TRACE_ID = "ifcready_runtime_command_contract"
+SESSION_ID = "review_session_001"
 
 
 def load_validator(name: str) -> Draft202012Validator:
@@ -29,6 +31,7 @@ def load_validator(name: str) -> Draft202012Validator:
 
 def authority_envelope() -> dict:
     return {
+        "trace_id": TRACE_ID,
         "request_id": "request_001",
         "role": "primary",
         "source_client_id": "viewer_lease_001",
@@ -63,6 +66,128 @@ def kit_event_catalog() -> set[str]:
         definition_name = entry["$ref"].rsplit("/", 1)[-1]
         catalog.add(schema["$defs"][definition_name]["properties"]["event_type"]["const"])
     return catalog
+
+
+def datachannel_message_samples() -> dict[str, dict]:
+    authority = authority_envelope()
+    return {
+        "openStageRequest": {
+            **authority,
+            "stage_binding_authorization_id": "stage_auth_001",
+            "binding_revision_id": "binding_rev_001",
+            "stage_composition": stage_composition(),
+        },
+        "loadArtifactGroupRequest": {
+            **authority,
+            "stage_binding_authorization_id": "stage_auth_001",
+            "binding_revision_id": "binding_rev_001",
+            "stage_composition": stage_composition(),
+        },
+        "composeStageRequest": {**authority, "binding_revision_id": "binding_rev_001", "artifacts": []},
+        "highlightPrimsRequest": {
+            **authority,
+            "mode": "replace",
+            "items": [{"prim_path": "/World"}],
+            "focus_first": True,
+        },
+        "focusPrimRequest": {**authority, "prim_path": "/World"},
+        "clearHighlightRequest": authority,
+        "selectPrimsRequest": {**authority, "paths": ["/World"]},
+        "makePrimsPickable": {**authority, "paths": ["/World"]},
+        "resetStage": authority,
+        "loadingStateQuery": {"trace_id": TRACE_ID, "session_id": SESSION_ID},
+        "getChildrenRequest": {
+            "trace_id": TRACE_ID,
+            "session_id": SESSION_ID,
+            "prim_path": "/World",
+            "filters": [],
+        },
+        "openedStageResult": {"trace_id": TRACE_ID, "result": "success", "request_id": "request_001"},
+        "loadArtifactGroupResult": {"trace_id": TRACE_ID, "result": "accepted", "request_id": "request_001"},
+        "highlightPrimsResult": {"trace_id": TRACE_ID, "result": "success", "request_id": "request_001"},
+        "focusPrimResult": {"trace_id": TRACE_ID, "result": "success", "request_id": "request_001"},
+        "selectPrimsResult": {
+            "trace_id": TRACE_ID,
+            "result": "success",
+            "error": "",
+            "selected_paths": [],
+            "request_id": "request_001",
+        },
+        "makePrimsPickableResponse": {
+            "trace_id": TRACE_ID,
+            "result": "success",
+            "error": "",
+            "request_id": "request_001",
+        },
+        "resetStageResponse": {
+            "trace_id": TRACE_ID,
+            "result": "success",
+            "error": "",
+            "request_id": "request_001",
+        },
+        "clearHighlightResult": {
+            "trace_id": TRACE_ID,
+            "result": "success",
+            "applied_mode": "selection",
+            "request_id": "request_001",
+        },
+        "loadingStateResponse": {"trace_id": TRACE_ID, "url": "", "loading_state": "idle"},
+        "getChildrenResponse": {"trace_id": TRACE_ID, "prim_path": "/World", "children": []},
+        "stageSelectionChanged": {"trace_id": TRACE_ID, "prims": []},
+        "updateProgressAmount": {"trace_id": TRACE_ID},
+        "updateProgressActivity": {"trace_id": TRACE_ID, "text": "Loading"},
+        "bindingApplied": {"trace_id": TRACE_ID, "binding_revision_id": "binding_rev_001"},
+        "commandRejected": {
+            "trace_id": TRACE_ID,
+            "rejected_event_type": "highlightPrimsRequest",
+            "reason": "lease_invalid",
+            "request_id": "request_001",
+            "session_id": SESSION_ID,
+            "retryable": False,
+            "runtime_state": "unchanged",
+        },
+    }
+
+
+def effective_payload_contract(schema: dict, event_type: str) -> tuple[set[str], set[str]]:
+    definition = schema["$defs"][event_type]
+    payload = definition["properties"]["payload"]
+
+    def collect(fragment: dict) -> tuple[set[str], set[str]]:
+        if "$ref" in fragment:
+            referenced = schema["$defs"][fragment["$ref"].rsplit("/", 1)[-1]]
+            return collect(referenced)
+        required = set(fragment.get("required", []))
+        properties = set(fragment.get("properties", {}))
+        for child in fragment.get("allOf", []):
+            child_required, child_properties = collect(child)
+            required.update(child_required)
+            properties.update(child_properties)
+        return required, properties
+
+    return collect(payload)
+
+
+def test_all_26_datachannel_payload_contracts_require_and_validate_trace_id() -> None:
+    schema = json.loads((CONTRACTS / "kit-datachannel-v1.schema.json").read_text(encoding="utf-8"))
+    validator = load_validator("kit-datachannel-v1.schema.json")
+    samples = datachannel_message_samples()
+    assert kit_event_catalog() == set(samples)
+    assert len(samples) == 26
+
+    for event_type, payload in samples.items():
+        required, properties = effective_payload_contract(schema, event_type)
+        assert "trace_id" in required, event_type
+        assert "trace_id" in properties, event_type
+        validator.validate({"event_type": event_type, "payload": payload})
+
+        missing = copy.deepcopy(payload)
+        missing.pop("trace_id")
+        assert list(validator.iter_errors({"event_type": event_type, "payload": missing})), event_type
+
+        empty = copy.deepcopy(payload)
+        empty["trace_id"] = ""
+        assert list(validator.iter_errors({"event_type": event_type, "payload": empty})), event_type
 
 
 @pytest.mark.parametrize(
@@ -138,6 +263,7 @@ def test_command_rejected_has_closed_machine_fields_and_no_secret_surface() -> N
     rejection = {
         "event_type": "commandRejected",
         "payload": {
+            "trace_id": TRACE_ID,
             "rejected_event_type": "highlightPrimsRequest",
             "reason": "lease_invalid",
             "request_id": "request_001",
@@ -233,7 +359,7 @@ def test_command_rejected_has_closed_machine_fields_and_no_secret_surface() -> N
 )
 def test_terminal_results_have_closed_public_payloads(event_type: str, payload: dict) -> None:
     validator = load_validator("kit-datachannel-v1.schema.json")
-    message = {"event_type": event_type, "payload": payload}
+    message = {"event_type": event_type, "payload": {"trace_id": TRACE_ID, **payload}}
     validator.validate(message)
 
     for field in ("viewer_lease_token", "internal_token", "authorization", "raw_response"):
@@ -270,7 +396,7 @@ def test_terminal_results_have_closed_public_payloads(event_type: str, payload: 
 )
 def test_existing_mutator_success_events_are_catalogued(event_type: str, payload: dict) -> None:
     load_validator("kit-datachannel-v1.schema.json").validate(
-        {"event_type": event_type, "payload": payload}
+        {"event_type": event_type, "payload": {"trace_id": TRACE_ID, **payload}}
     )
 
 
@@ -279,6 +405,7 @@ def test_partial_exact_stage_failure_exposes_closed_changed_failed_state() -> No
     message = {
         "event_type": "openedStageResult",
         "payload": {
+            "trace_id": TRACE_ID,
             "result": "error",
             "request_id": "request_001",
             "url": "stage://partially-applied.usdc",

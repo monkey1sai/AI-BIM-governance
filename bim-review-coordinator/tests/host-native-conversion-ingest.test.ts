@@ -141,7 +141,7 @@ describe("host-native conversion result ingest (pull)", () => {
   it("ready result enqueues a metadata-only conversion_result_ready callback", async () => {
     const base = await startStreamingStub(READY_RESULT);
     const app = makeApp(base);
-    await seedIfcReadyJob(app);
+    const traceId = await seedIfcReadyJob(app);
 
     const res = await request(app.app)
       .post("/api/internal/conversions/stream_conv_test_001/ingest")
@@ -154,6 +154,7 @@ describe("host-native conversion result ingest (pull)", () => {
     const payloadText = JSON.stringify(res.body.callback.payload);
     // metadata refs only — no large file bodies.
     expect(res.body.callback.payload.artifacts.usdc_ref).toContain("model.usdc");
+    expect(res.body.callback.payload.trace_id).toBe(traceId);
     expect(payloadText).not.toContain("PXR-USDC");
     expect(res.body.ifc_ready_job.conversion_status).toBe("ready");
   });
@@ -161,7 +162,7 @@ describe("host-native conversion result ingest (pull)", () => {
   it("failed result enqueues conversion_failed with reason", async () => {
     const base = await startStreamingStub(FAILED_RESULT);
     const app = makeApp(base);
-    await seedIfcReadyJob(app);
+    const traceId = await seedIfcReadyJob(app);
 
     const res = await request(app.app)
       .post("/api/internal/conversions/stream_conv_test_001/ingest")
@@ -172,6 +173,7 @@ describe("host-native conversion result ingest (pull)", () => {
     expect(res.body.conversion_status).toBe("failed");
     expect(res.body.callback.event).toBe("conversion_failed");
     expect(res.body.callback.payload.reason).toContain("converter prerequisites missing");
+    expect(res.body.callback.payload.trace_id).toBe(traceId);
   });
 
   it("rejects internal route without internal token", async () => {
@@ -405,7 +407,7 @@ describe("conversion-ready auto-session handoff", () => {
   it("ready ingestion 自動建立綁 USDC + Kit binding 的 session（spec: auto-creates a review session under retired _bim-control）", async () => {
     const base = await startStreamingStub(READY_RESULT);
     const app = makeApp(base);
-    await seedIfcReadyJob(app);
+    const traceId = await seedIfcReadyJob(app);
 
     const res = await request(app.app)
       .post("/api/internal/conversions/stream_conv_test_001/ingest")
@@ -417,6 +419,7 @@ describe("conversion-ready auto-session handoff", () => {
     expect(res.body.session).toBeTruthy();
     expect(res.body.session.session_id).toMatch(/^review_session_/);
     expect(res.body.session.status).toBe("active");
+    expect(res.body.session.trace_id).toBe(traceId);
     expect(res.body.session.usdc_artifact_id).toContain("auto_usdc_");
     expect(res.body.session.model_version_id).toBe("ext_mv_demo_001");
     // Kit binding 已被分配（control-plane 接線）

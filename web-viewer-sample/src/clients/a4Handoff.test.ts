@@ -44,6 +44,7 @@ function serverSnapshot(): A4ServerAuthoritySnapshot {
         },
         stream_config: {
             session_id: SESSION_ID,
+            trace_id: `rev_${SESSION_ID}`,
             lifecycle_status: "active",
             source: "local_fixed",
             webrtc: { signalingServer: "127.0.0.1", signalingPort: 49100, mediaServer: "127.0.0.1" },

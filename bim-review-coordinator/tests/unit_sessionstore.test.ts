@@ -156,6 +156,39 @@ describe("SessionStore", () => {
       expect(session.session_id).toMatch(/^review_session_/);
     });
 
+    it("mints and persists the server-owned standalone trace root", () => {
+      const session = createBaseSession(store);
+
+      expect(session.trace_id).toBe(`rev_${session.session_id}`);
+      expect(store.get(session.session_id)?.trace_id).toBe(session.trace_id);
+    });
+
+    it("persists an exact server-supplied IFC-ready trace root", () => {
+      const session = createBaseSession(store, { trace_id: "ifcready_root_001" });
+
+      expect(session.trace_id).toBe("ifcready_root_001");
+      expect(store.get(session.session_id)?.trace_id).toBe("ifcready_root_001");
+    });
+
+    it("rejects malformed or nested server-supplied trace roots", () => {
+      expect(() => createBaseSession(store, { trace_id: "ifcready_ifcready_nested" })).toThrow(
+        "Invalid review session trace_id.",
+      );
+      expect(() => createBaseSession(store, { trace_id: "external_untrusted" })).toThrow(
+        "Invalid review session trace_id.",
+      );
+      for (const nested of [
+        "ifcready_rev_nested",
+        "ifcready_stream_conv_nested",
+        "ifcready_script_nested",
+        "ifcready_external_nested",
+      ]) {
+        expect(() => createBaseSession(store, { trace_id: nested })).toThrow(
+          "Invalid review session trace_id.",
+        );
+      }
+    });
+
     it("sets status to created when no kit_instance_bindings are provided", () => {
       const session = createBaseSession(store, { kit_instance_bindings: [] });
 
@@ -352,6 +385,32 @@ describe("SessionStore", () => {
 
       expect(reloaded?.mode).toBe("multi_kit");
     });
+
+    it("rejects attempts to replace an existing canonical trace root", () => {
+      const session = createBaseSession(store);
+
+      expect(() => store.update(session.session_id, { trace_id: "ifcready_replacement" })).toThrow(
+        "Review session trace_id is immutable.",
+      );
+      expect(store.get(session.session_id)?.trace_id).toBe(session.trace_id);
+    });
+  });
+
+  describe("backfillTraceId", () => {
+    it("backfills a legacy missing trace exactly once", () => {
+      const session = createBaseSession(store);
+      const filePath = path.join(tmpDir, `${session.session_id}.json`);
+      const legacy = JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
+      delete legacy.trace_id;
+      fs.writeFileSync(filePath, JSON.stringify(legacy, null, 2), "utf8");
+
+      const first = store.backfillTraceId(session.session_id, "ifcready_legacy_001");
+      expect(first?.trace_id).toBe("ifcready_legacy_001");
+      expect(() => store.backfillTraceId(session.session_id, "ifcready_legacy_002")).toThrow(
+        "Review session trace_id is immutable.",
+      );
+      expect(store.get(session.session_id)?.trace_id).toBe("ifcready_legacy_001");
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -393,6 +452,18 @@ describe("SessionStore", () => {
       session.session_id = "../traversal/evil";
 
       expect(() => store.save(session)).toThrow("Invalid review session id.");
+    });
+
+    it("does not allow public save to bypass resolver-owned legacy backfill", () => {
+      const session = createBaseSession(store);
+      const filePath = path.join(tmpDir, `${session.session_id}.json`);
+      const legacy = JSON.parse(fs.readFileSync(filePath, "utf8")) as ReviewSession;
+      delete legacy.trace_id;
+      fs.writeFileSync(filePath, JSON.stringify(legacy, null, 2), "utf8");
+      legacy.trace_id = "ifcready_bypass_001";
+
+      expect(() => store.save(legacy)).toThrow("Review session trace_id backfill requires resolver.");
+      expect(store.get(session.session_id)?.trace_id).toBeUndefined();
     });
   });
 });

@@ -16,6 +16,7 @@
       "when": "local conversion job succeeded",
       "required_fields": [
         "event",
+        "trace_id",
         "tenant_id",
         "project_id",
         "external_model_version_id",
@@ -28,6 +29,7 @@
       ],
       "example": {
         "event": "conversion_result_ready",
+        "trace_id": "ifcready_demo_001",
         "tenant_id": "tenant_demo_001",
         "project_id": "project_demo_001",
         "external_model_version_id": "ext_mv_demo_001",
@@ -59,6 +61,7 @@
       "when": "local conversion job failed",
       "required_fields": [
         "event",
+        "trace_id",
         "tenant_id",
         "project_id",
         "external_model_version_id",
@@ -70,6 +73,7 @@
       ],
       "example": {
         "event": "conversion_failed",
+        "trace_id": "ifcready_demo_001",
         "tenant_id": "tenant_demo_001",
         "project_id": "project_demo_001",
         "external_model_version_id": "ext_mv_demo_001",

@@ -33,6 +33,20 @@ function makeApp(overrides: Parameters<typeof createCoordinatorApp>[0] = {}): Co
   return active;
 }
 
+async function createReviewSession(app: CoordinatorApp, suffix: string): Promise<string> {
+  const response = await request(app.app)
+    .post("/api/review-sessions")
+    .send({
+      project_id: `project_dev_console_${suffix}`,
+      model_version_id: `version_dev_console_${suffix}`,
+      created_by: "dev_console_fixture",
+      artifact_bindings: [],
+    });
+  expect(response.status).toBe(200);
+  expect(response.body.trace_id).toBe(`rev_${response.body.session_id}`);
+  return response.body.session_id as string;
+}
+
 describe("coordinator dev console", () => {
   it("serves the dev console from /ui and /dev-console", async () => {
     const app = makeApp();
@@ -78,12 +92,13 @@ describe("coordinator dev console", () => {
       viewerPublicBaseUrl: "http://192.168.10.105:5173",
       publicHost: "192.168.10.105",
     });
+    const sessionId = await createReviewSession(app, "console_dist");
 
     const ui = await request(app.app).get("/ui");
     const asset = await request(app.app).get("/ui/assets/index-test.js");
     const devConsole = await request(app.app).get("/dev-console");
     const invalidOpen = await request(app.app).get("/ui/open?session=bad");
-    const validOpen = await request(app.app).get("/ui/open?session=review_session_console_dist").redirects(0);
+    const validOpen = await request(app.app).get(`/ui/open?session=${sessionId}`).redirects(0);
 
     expect(ui.status).toBe(200);
     expect(ui.text).toContain("Vite Shell");
@@ -95,7 +110,7 @@ describe("coordinator dev console", () => {
     expect(invalidOpen.status).toBe(400);
     expect(validOpen.status).toBe(302);
     expect(validOpen.headers.location).toContain("http://192.168.10.105:5173/");
-    expect(validOpen.headers.location).toContain("session=review_session_console_dist");
+    expect(validOpen.headers.location).toContain(`session=${sessionId}`);
   });
 
   it("redirects /ui/open to configured browser-visible viewer URL", async () => {
@@ -104,15 +119,16 @@ describe("coordinator dev console", () => {
       viewerPublicBaseUrl: "http://192.168.10.105:5173",
       publicHost: "192.168.10.105",
     });
+    const sessionId = await createReviewSession(app, "browser_url");
 
     const response = await request(app.app)
-      .get("/ui/open?session=review_session_test_001&a4_handoff=a4h_1234567890abcdef&redirect=http://evil.example")
+      .get(`/ui/open?session=${sessionId}&a4_handoff=a4h_1234567890abcdef&redirect=http://evil.example`)
       .redirects(0);
 
     expect(response.status).toBe(302);
     const location = response.headers.location as string;
     expect(location).toContain("http://192.168.10.105:5173/");
-    expect(location).toContain("session=review_session_test_001");
+    expect(location).toContain(`session=${sessionId}`);
     expect(location).toContain("coordinatorApiBase=http%3A%2F%2F192.168.10.105%3A8004");
     expect(location).toContain("coordinatorSocketUrl=http%3A%2F%2F192.168.10.105%3A8004");
     expect(location).toContain("a4_handoff=a4h_1234567890abcdef");
@@ -120,7 +136,7 @@ describe("coordinator dev console", () => {
     expect(location).not.toContain("evil.example");
 
     const invalidHandoff = await request(app.app)
-      .get("/ui/open?session=review_session_test_001&a4_handoff=not-an-opaque-handoff")
+      .get(`/ui/open?session=${sessionId}&a4_handoff=not-an-opaque-handoff`)
       .redirects(0);
     expect(invalidHandoff.headers.location).not.toContain("a4_handoff");
   });
@@ -131,6 +147,7 @@ describe("coordinator dev console", () => {
       viewerPublicBaseUrl: "http://192.168.10.105:5173",
       publicHost: "192.168.10.105",
     });
+    const sessionId = await createReviewSession(app, "rk6_guard");
 
     // /ui/console → 301 /ui（顯式收斂，非 /ui/* 萬用）。
     const consoleRedirect = await request(app.app).get("/ui/console").redirects(0);
@@ -139,11 +156,11 @@ describe("coordinator dev console", () => {
 
     // RK6：/ui/open 仍 302 到 viewer，未被 /ui/console 或任何 /ui/* 萬用吞掉（凍結 handoff 逐字保留）。
     const openRedirect = await request(app.app)
-      .get("/ui/open?session=review_session_rk6_guard")
+      .get(`/ui/open?session=${sessionId}`)
       .redirects(0);
     expect(openRedirect.status).toBe(302);
     expect(openRedirect.headers.location).toContain("http://192.168.10.105:5173/");
-    expect(openRedirect.headers.location).toContain("session=review_session_rk6_guard");
+    expect(openRedirect.headers.location).toContain(`session=${sessionId}`);
 
     // /ui 仍服務 console（200），未被 301 影響。
     const ui = await request(app.app).get("/ui");
@@ -259,10 +276,11 @@ describe("coordinator dev console", () => {
       viewerPublicBaseUrl: "http://192.168.10.105:5173",
       publicHost: "192.168.10.105",
     });
+    const sessionId = await createReviewSession(app, "viewer_identity");
 
     const response = await request(app.app)
       .get(
-        "/ui/open?session=review_session_test_001&userId=viewer_001&displayName=Viewer%20One&streamRole=spectator&kitInstanceId=kit_local_001_spectator_02&signalingServer=evil.example"
+        `/ui/open?session=${sessionId}&userId=viewer_001&displayName=Viewer%20One&streamRole=spectator&kitInstanceId=kit_local_001_spectator_02&signalingServer=evil.example`
       )
       .redirects(0);
 
@@ -282,8 +300,9 @@ describe("coordinator dev console", () => {
       viewerPublicBaseUrl: "https://review.example.test/bim-viewer",
       publicHost: "review.example.test",
     });
+    const sessionId = await createReviewSession(app, "path_prefix");
 
-    const response = await request(app.app).get("/ui/open?session=review_session_test_001").redirects(0);
+    const response = await request(app.app).get(`/ui/open?session=${sessionId}`).redirects(0);
 
     expect(response.status).toBe(302);
     expect(response.headers.location).toContain("https://review.example.test/bim-viewer/");

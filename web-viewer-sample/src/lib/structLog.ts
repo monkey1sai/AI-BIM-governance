@@ -83,6 +83,12 @@ export interface EnvVar {
   type: "string" | "number" | "boolean" | "null" | "object" | "array";
 }
 
+export interface ViewerLogDeliveryAuthority {
+  reviewSessionId: string;
+  leaseId: string;
+  leaseToken: string;
+}
+
 export interface BrowserStructLogger {
   readonly runId: string;
   readonly traceId: string;
@@ -107,8 +113,11 @@ export interface BrowserStructLogger {
   /** Pause or resume timer/threshold flushes without blocking explicit flush(). */
   setAutoFlushPaused(paused: boolean): void;
 
+  /** Supply a live, memory-only lease authority for automatic delivery. */
+  setDeliveryAuthorityProvider(provider: (() => ViewerLogDeliveryAuthority | null) | null): void;
+
   /** Manually trigger a flush. Returns the number of records persisted. */
-  flush(): Promise<number>;
+  flush(authority?: ViewerLogDeliveryAuthority): Promise<number>;
 
   /** Used by tests / Chrome MCP to inspect last N records still in buffer. */
   tail(n?: number): LogRecord[];
@@ -149,7 +158,13 @@ export interface BrowserLoggerOptions {
    * Override the transport function. Defaults to global `fetch`. Tests
    * inject this to avoid jsdom.
    */
-  transport?: (url: string, body: LogRecord[]) => Promise<{ ok: boolean; status: number; detail?: string }>;
+  transport?: (
+    url: string,
+    body: LogRecord[],
+    authority: ViewerLogDeliveryAuthority | null,
+  ) => Promise<{ ok: boolean; status: number; detail?: string }>;
+  /** Resolve the current memory-only lease authority for automatic flushes. */
+  deliveryAuthority?: () => ViewerLogDeliveryAuthority | null;
   /** Set to `false` to disable timer-based flushing entirely (tests). */
   enableTimer?: boolean;
 }
@@ -168,6 +183,10 @@ const SECRET_PATTERN = new RegExp(envAllowListSpec.secret_patterns.join("|"), "i
 const ENV_KEY_PATTERN = /^[A-Z][A-Z0-9_]{0,127}$/;
 const ENV_SOURCES = new Set<EnvSource>([".env", ".env.example", "system", "docker-compose", "default"]);
 const ENV_TYPES = new Set<EnvVar["type"]>(["string", "number", "boolean", "null", "object", "array"]);
+const MAX_REDACTION_DEPTH = 8;
+const REDACTED_MARKER = "[REDACTED]";
+const TRUNCATED_MARKER = "[Truncated]";
+const CIRCULAR_MARKER = "[Circular]";
 
 function sanitizeBrowserSnapshotVars(vars: EnvVar[]): EnvVar[] {
   if (!Array.isArray(vars)) return [];
@@ -192,6 +211,56 @@ function sanitizeBrowserSnapshotVars(vars: EnvVar[]): EnvVar[] {
     safeVars.push({ key, source, value_or_redacted, type });
   }
   return safeVars;
+}
+
+function sanitizeOrdinaryData(
+  value: unknown,
+  depth = 0,
+  activePath = new WeakSet<object>(),
+): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (depth > MAX_REDACTION_DEPTH) return TRUNCATED_MARKER;
+  if (activePath.has(value)) return CIRCULAR_MARKER;
+
+  activePath.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return value.map((entry) => sanitizeOrdinaryData(entry, depth + 1, activePath));
+    }
+    const safe: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      safe[key] = SECRET_PATTERN.test(key)
+        ? REDACTED_MARKER
+        : sanitizeOrdinaryData(entry, depth + 1, activePath);
+    }
+    return safe;
+  } finally {
+    activePath.delete(value);
+  }
+}
+
+function sanitizeRecordData(eventType: EventType, data: Record<string, unknown>): Record<string, unknown> {
+  if (eventType !== "env_snapshot") {
+    return sanitizeOrdinaryData(data) as Record<string, unknown>;
+  }
+
+  const activePath = new WeakSet<object>();
+  activePath.add(data);
+  try {
+    const safe: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (key === "vars") {
+        safe.vars = sanitizeBrowserSnapshotVars(Array.isArray(value) ? value as EnvVar[] : []);
+      } else {
+        safe[key] = SECRET_PATTERN.test(key)
+          ? REDACTED_MARKER
+          : sanitizeOrdinaryData(value, 1, activePath);
+      }
+    }
+    return safe;
+  } finally {
+    activePath.delete(data);
+  }
 }
 
 function defaultRandomHex(): string {
@@ -270,6 +339,7 @@ interface LoggerState {
   flushBackoffMs: number;
   endpoint: () => string;
   transport: NonNullable<BrowserLoggerOptions["transport"]>;
+  deliveryAuthority: (() => ViewerLogDeliveryAuthority | null) | null;
   now: () => Date;
   flushedTotal: number;
   droppedTotal: number;
@@ -296,7 +366,14 @@ function defaultEndpoint(): string {
   return `${origin}/api/internal/viewer-log`;
 }
 
-async function defaultTransport(url: string, body: LogRecord[]): Promise<{ ok: boolean; status: number; detail?: string }> {
+async function defaultTransport(
+  url: string,
+  body: LogRecord[],
+  authority: ViewerLogDeliveryAuthority | null,
+): Promise<{ ok: boolean; status: number; detail?: string }> {
+  if (!authority) {
+    return { ok: false, status: 0, detail: "viewer_log_authority_unavailable" };
+  }
   const fetchFn = (globalThis as { fetch?: typeof fetch }).fetch;
   if (!fetchFn) {
     return { ok: false, status: 0, detail: "no_fetch_in_environment" };
@@ -305,7 +382,12 @@ async function defaultTransport(url: string, body: LogRecord[]): Promise<{ ok: b
   try {
     const response = await fetchFn(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Review-Session-Id": authority.reviewSessionId,
+        "X-Viewer-Lease-Id": authority.leaseId,
+        "X-Viewer-Lease-Token": authority.leaseToken,
+      },
       body: JSON.stringify(body),
     });
     if (!response.ok) {
@@ -352,7 +434,7 @@ function buildRecord(state: LoggerState, level: LogLevel, eventType: EventType, 
     run_id: state.runId,
     trace_id: traceId,
     msg,
-    data,
+    data: sanitizeRecordData(eventType, data),
     seq: nextSeq(state, traceId),
   };
   if (options.caller) record.caller = options.caller;
@@ -375,16 +457,20 @@ function enqueue(state: LoggerState, record: LogRecord): void {
   }
 }
 
-async function flushBatch(state: LoggerState): Promise<number> {
+async function flushBatch(
+  state: LoggerState,
+  authorityOverride?: ViewerLogDeliveryAuthority,
+): Promise<number> {
   const inFlight = state.buffer.slice();
   const inFlightRecords = inFlight.map((b) => b.record);
   const url = state.endpoint();
+  const authority = authorityOverride ?? state.deliveryAuthority?.() ?? null;
   let backoff = state.flushBackoffMs;
   let lastDetail: string | undefined;
   for (let attempt = 1; attempt <= state.flushMaxAttempts; attempt += 1) {
     let result: { ok: boolean; status: number; detail?: string };
     try {
-      result = await state.transport(url, inFlightRecords);
+      result = await state.transport(url, inFlightRecords, authority);
     } catch (err) {
       result = {
         ok: false,
@@ -393,12 +479,13 @@ async function flushBatch(state: LoggerState): Promise<number> {
       };
     }
     if (result.ok) {
-      // remove the in-flight entries (only those still at the head — if new
-      // ones arrived after slice() they remain).
-      const removed = state.buffer.splice(0, inFlight.length);
-      state.flushedTotal += removed.length;
+      const captured = new Set(inFlight);
+      const before = state.buffer.length;
+      state.buffer = state.buffer.filter((entry) => !captured.has(entry));
+      const removed = before - state.buffer.length;
+      state.flushedTotal += removed;
       state.lastFlushStatus = { ts: isoUtcMs(state.now()), status: "ok" };
-      return removed.length;
+      return removed;
     }
     lastDetail = result.detail ?? `http_${result.status}`;
     // Backoff before retrying.
@@ -424,24 +511,27 @@ async function flushBatch(state: LoggerState): Promise<number> {
   return 0;
 }
 
-function flushOnce(state: LoggerState): Promise<number> {
+function flushOnce(state: LoggerState, authorityOverride?: ViewerLogDeliveryAuthority): Promise<number> {
   if (state.inFlightFlush) return state.inFlightFlush;
   if (state.buffer.length === 0) return Promise.resolve(0);
 
-  const inFlight = flushBatch(state).finally(() => {
+  const inFlight = flushBatch(state, authorityOverride).finally(() => {
     if (state.inFlightFlush === inFlight) state.inFlightFlush = null;
   });
   state.inFlightFlush = inFlight;
   return inFlight;
 }
 
-async function flushManually(state: LoggerState): Promise<number> {
+async function flushManually(
+  state: LoggerState,
+  authorityOverride?: ViewerLogDeliveryAuthority,
+): Promise<number> {
   const existing = state.inFlightFlush;
-  if (!existing) return flushOnce(state);
+  if (!existing) return flushOnce(state, authorityOverride);
 
   let flushedTotal = await existing;
   if (state.buffer.length > 0) {
-    flushedTotal += await flushOnce(state);
+    flushedTotal += await flushOnce(state, authorityOverride);
   }
   return flushedTotal;
 }
@@ -469,6 +559,7 @@ export function createBrowserLogger(options: BrowserLoggerOptions = {}): Browser
     flushBackoffMs: options.flushBackoffMs ?? DEFAULTS.flushBackoffMs,
     endpoint: endpointFn,
     transport: options.transport ?? defaultTransport,
+    deliveryAuthority: options.deliveryAuthority ?? null,
     now,
     flushedTotal: 0,
     droppedTotal: 0,
@@ -552,8 +643,11 @@ export function createBrowserLogger(options: BrowserLoggerOptions = {}): Browser
     setAutoFlushPaused(paused) {
       state.autoFlushPaused = paused;
     },
-    async flush() {
-      return flushManually(state);
+    setDeliveryAuthorityProvider(provider) {
+      state.deliveryAuthority = provider;
+    },
+    async flush(authority) {
+      return flushManually(state, authority);
     },
     tail(n = 100) {
       return state.buffer.slice(-n).map((entry) => entry.record);
@@ -564,8 +658,9 @@ export function createBrowserLogger(options: BrowserLoggerOptions = {}): Browser
       await flushManually(state).catch(() => undefined);
     },
   };
-  const safeVars = sanitizeBrowserSnapshotVars(options.browserSnapshotVars ?? []);
-  append(buildRecord(state, "info", "env_snapshot", "bootstrap", "browser env snapshot", { vars: safeVars }));
+  append(buildRecord(state, "info", "env_snapshot", "bootstrap", "browser env snapshot", {
+    vars: options.browserSnapshotVars ?? [],
+  }));
   return logger;
 }
 

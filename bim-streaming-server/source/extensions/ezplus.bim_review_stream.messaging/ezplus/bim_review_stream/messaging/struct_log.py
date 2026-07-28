@@ -102,44 +102,7 @@ ANOMALY_KINDS: Tuple[str, ...] = ("retry", "fallback", "timeout", "unexpected_st
 
 _SECRET_PATTERN_FALLBACK = re.compile(r"TOKEN|SECRET|KEY|PASSWORD|AUTH|CREDENTIAL", re.IGNORECASE)
 _RUN_ID_PATTERN = re.compile(r"^run_\d{8}_\d{6}_[0-9a-f]{6}$")
-
-# Schema field vocabulary that shares spelling with secret-pattern fragments
-# (e.g. "key" matches /KEY/i). Listed here so depth-defense never wipes the
-# env_snapshot vars[].key field by mistake.
-_NEVER_REDACT_FIELD_NAMES: Set[str] = {
-    "key",
-    "auth",
-    "name",
-    "type",
-    "source",
-    "value_or_redacted",
-    "status",
-    "reason",
-    "msg",
-    "data",
-    "event_type",
-    "level",
-    "service",
-    "component",
-    "run_id",
-    "trace_id",
-    "parent_trace_id",
-    "subject_kind",
-    "subject_id",
-    "phase",
-    "actor",
-    "action",
-    "target",
-    "direction",
-    "protocol",
-    "peer",
-    "duration_ms",
-    "path",
-    "anomaly_kind",
-    "vars",
-    "error",
-    "stack_tail",
-}
+MAX_REDACTION_DEPTH = 8
 
 # ---------------------------------------------------------------------------
 # Allow-list loading
@@ -285,49 +248,84 @@ def redact_env_value(
     }
 
 
-def _is_secret_field_name(name: str, allowlist: _AllowList) -> bool:
-    if name in allowlist.keys:
-        return False
-    if name.lower() in _NEVER_REDACT_FIELD_NAMES:
-        return False
-    return allowlist.secret_pattern.search(name) is not None
-
-
 def redact_data_before_write(
     data: Any,
     allowlist: Optional[_AllowList] = None,
-    _seen: Optional[Set[int]] = None,
+    _active_path: Optional[Set[int]] = None,
+    _depth: int = 0,
 ) -> Any:
-    """Depth-defense redaction over a ``data`` payload.
-
-    Replaces values whose keys look like secrets with ``"[REDACTED]"`` while
-    preserving schema vocabulary (`key`, `auth`, …). Circular references
-    collapse to ``"[Circular]"``.
-    """
+    """Bounded, cycle-safe secret-key redaction for ordinary event data."""
     al = allowlist or load_allowlist()
-    _seen = set() if _seen is None else _seen
+    _active_path = set() if _active_path is None else _active_path
     if data is None or isinstance(data, (str, int, float, bool)):
         return data
+    if _depth > MAX_REDACTION_DEPTH:
+        return "[Truncated]"
     if isinstance(data, Mapping):
         ident = id(data)
-        if ident in _seen:
+        if ident in _active_path:
             return "[Circular]"
-        _seen.add(ident)
-        out: Dict[str, Any] = {}
-        for raw_key, value in data.items():
-            key = str(raw_key)
-            if _is_secret_field_name(key, al):
-                out[key] = "[REDACTED]"
-            else:
-                out[key] = redact_data_before_write(value, al, _seen)
-        return out
+        _active_path.add(ident)
+        try:
+            out: Dict[str, Any] = {}
+            for raw_key, value in data.items():
+                key = str(raw_key)
+                if al.secret_pattern.search(key) is not None:
+                    out[key] = "[REDACTED]"
+                else:
+                    out[key] = redact_data_before_write(value, al, _active_path, _depth + 1)
+            return out
+        finally:
+            _active_path.remove(ident)
     if isinstance(data, (list, tuple, set, frozenset)):
         ident = id(data)
-        if ident in _seen:
+        if ident in _active_path:
             return "[Circular]"
-        _seen.add(ident)
-        return [redact_data_before_write(item, al, _seen) for item in data]
+        _active_path.add(ident)
+        try:
+            return [redact_data_before_write(item, al, _active_path, _depth + 1) for item in data]
+        finally:
+            _active_path.remove(ident)
     return str(data)
+
+
+def _sanitize_env_snapshot_vars(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    safe: List[Dict[str, Any]] = []
+    for candidate in value:
+        if not isinstance(candidate, Mapping):
+            continue
+        if not all(field in candidate for field in ("key", "source", "value_or_redacted", "type")):
+            continue
+        safe.append({
+            "key": candidate["key"],
+            "source": candidate["source"],
+            "value_or_redacted": candidate["value_or_redacted"],
+            "type": candidate["type"],
+        })
+    return safe
+
+
+def _sanitize_record_data(
+    event_type: str,
+    data: Mapping[str, Any],
+    allowlist: _AllowList,
+) -> Dict[str, Any]:
+    if event_type != "env_snapshot":
+        return redact_data_before_write(data, allowlist)
+
+    active_path = {id(data)}
+    safe: Dict[str, Any] = {}
+    for raw_key, value in data.items():
+        key = str(raw_key)
+        if key == "vars":
+            safe["vars"] = _sanitize_env_snapshot_vars(value)
+        elif allowlist.secret_pattern.search(key) is not None:
+            safe[key] = "[REDACTED]"
+        else:
+            safe[key] = redact_data_before_write(value, allowlist, active_path, 1)
+    return safe
 
 
 def _safe_default(obj: Any) -> Any:
@@ -615,14 +613,9 @@ class StructLogger:
             seq = run.seq_by_trace.get(trace_id, 0) + 1
             run.seq_by_trace[trace_id] = seq
         try:
-            safe_data = redact_data_before_write(dict(data or {}), self._allowlist)
-        except Exception as exc:
-            safe_data = {
-                "anomaly_kind": "unexpected_state",
-                "reason": f"redact failure: {exc!r}",
-            }
-            event_type = "operation_anomaly"
-            level = "warn"
+            safe_data = _sanitize_record_data(event_type, dict(data or {}), self._allowlist)
+        except Exception:
+            safe_data = {"redaction_failure": "[Truncated]"}
         record: Dict[str, Any] = {
             "ts": ts,
             "level": level,

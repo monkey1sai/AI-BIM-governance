@@ -53,14 +53,21 @@ export interface EventLogOptions {
    * working without the mirror.
    */
   structLog?: StructLogger;
+  /**
+   * App-owned canonical trace authority. A missing/null/throw result fails the
+   * mirror closed rather than inventing a standalone root.
+   */
+  resolveTraceId?: (sessionId: string) => string | null;
 }
 
 export class EventLog {
   private readonly structLog?: StructLogger;
+  private readonly resolveTraceId?: (sessionId: string) => string | null;
 
   constructor(private readonly rootDir: string, options: EventLogOptions = {}) {
     fs.mkdirSync(this.rootDir, { recursive: true });
     this.structLog = options.structLog;
+    this.resolveTraceId = options.resolveTraceId;
   }
 
   append(sessionId: string, type: string, payload: unknown): SessionEvent {
@@ -93,8 +100,11 @@ export class EventLog {
       if (Array.isArray(released)) subjectId = released.map(String).join(",");
     }
     try {
+      if (!this.resolveTraceId) return;
+      const traceId = this.resolveTraceId(event.session_id);
+      if (!traceId) return;
       this.structLog
-        .withTraceId(`rev_${event.session_id}`)
+        .withTraceId(traceId)
         .lifecycle("eventLog", `${event.type} (sequence=${event.sequence})`, {
           phase: mapping.phase,
           subject_kind: mapping.subject_kind,

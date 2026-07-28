@@ -81,15 +81,43 @@ Run-Test 'Get-RedactedEnvVar emits type-only for non-listed non-secret keys' {
     Assert-Equal -Expected '[TYPE:type=string, len=5]' -Actual $v.value_or_redacted -Message "type-only"
 }
 
-Run-Test 'ConvertTo-StructLogRedactedData strips secret-pattern keys at depth' {
+Run-Test 'ConvertTo-StructLogRedactedData bounds depth and handles secrets, cycles, and shared references' {
     $allow = Get-StructLogAllowList
-    $out = ConvertTo-StructLogRedactedData -Data @{
-        password = 'abc'
-        nested = @{ api_key = 'shh'; body = @{ token = 'tok' } }
-    } -AllowList $allow
-    Assert-Equal -Expected '[REDACTED]' -Actual $out.password -Message "top-level"
-    Assert-Equal -Expected '[REDACTED]' -Actual $out.nested.api_key -Message "nested api_key"
-    Assert-Equal -Expected '[REDACTED]' -Actual $out.nested.body.token -Message "deep token"
+    $cycle = [System.Collections.ArrayList]::new()
+    [void] $cycle.Add($cycle)
+    $shared = [ordered]@{ visible = 'shared-visible' }
+    $deep = [ordered]@{}
+    $cursor = $deep
+    foreach ($depth in 1..8) {
+        $child = [ordered]@{}
+        $cursor['child'] = $child
+        $cursor = $child
+    }
+    $cursor['beyond'] = [ordered]@{ password = 'powershell-depth-secret' }
+    $out = ConvertTo-StructLogRedactedData -Data ([ordered]@{
+        auth = 'powershell-auth-secret'
+        nested = @([ordered]@{
+            key = 'powershell-key-secret'
+            password = 'powershell-password-secret'
+            api_key = 'powershell-api-key-secret'
+            token = 'powershell-token-secret'
+        })
+        deep = $deep
+        cycle = $cycle
+        shared_a = $shared
+        shared_b = $shared
+    }) -AllowList $allow
+    Assert-Equal -Expected '[REDACTED]' -Actual $out.auth -Message 'literal auth'
+    Assert-Equal -Expected '[REDACTED]' -Actual $out.nested[0].key -Message 'literal key'
+    Assert-Equal -Expected '[REDACTED]' -Actual $out.nested[0].password -Message 'password'
+    Assert-Equal -Expected '[REDACTED]' -Actual $out.nested[0].api_key -Message 'api_key'
+    Assert-Equal -Expected '[REDACTED]' -Actual $out.nested[0].token -Message 'token'
+    Assert-Equal -Expected '[Circular]' -Actual $out.cycle[0] -Message 'enumerable cycle edge'
+    Assert-Equal -Expected 'shared-visible' -Actual $out.shared_a.visible -Message 'first shared reference'
+    Assert-Equal -Expected 'shared-visible' -Actual $out.shared_b.visible -Message 'second shared reference'
+    $bounded = $out.deep
+    foreach ($depth in 1..7) { $bounded = $bounded.child }
+    Assert-Equal -Expected '[Truncated]' -Actual $bounded.child -Message 'depth-9 container'
 }
 
 Run-Test 'ConvertTo-StructLogRedactedData preserves env_snapshot vars[].key field' {
@@ -99,8 +127,27 @@ Run-Test 'ConvertTo-StructLogRedactedData preserves env_snapshot vars[].key fiel
             [ordered]@{ key = 'STORAGE_ROOT'; source = '.env'; value_or_redacted = 'C:\x'; type = 'string' }
         )
     }
-    $out = ConvertTo-StructLogRedactedData -Data $data -AllowList $allow
+    $data.auth = 'powershell-env-auth-secret'
+    $out = ConvertTo-StructLogRedactedData -Data $data -AllowList $allow -EnvSnapshot
     Assert-Equal -Expected 'STORAGE_ROOT' -Actual $out.vars[0].key -Message "schema 'key' field not redacted"
+    Assert-Equal -Expected '[REDACTED]' -Actual $out.auth -Message 'env peer auth redacted'
+}
+
+Run-Test 'PowerShell serialized sink contains no ordinary-data secret sentinels' {
+    $records = [System.Collections.Generic.List[object]]::new()
+    $sink = { param($record) [void] $records.Add($record) }.GetNewClosure()
+    $logger = New-StructLogger -Service 'scripts' -Component 'redaction' `
+        -RunId 'run_20260728_120000_a3f900' -InitialTraceId 'ifcready_powershell_redaction' `
+        -SkipEnvSnapshot -InMemoryOnly -RecordSink $sink
+    $logger | Write-StructInfo -Component 'redaction' -Msg 'hostile data' -Data ([ordered]@{
+        auth = 'powershell-sink-auth-secret'
+        nested = @([ordered]@{ key = 'powershell-sink-key-secret'; token = 'powershell-sink-token-secret' })
+    })
+    Assert-Equal -Expected 'general' -Actual $records[0].event_type -Message 'event type preserved'
+    $serialized = ConvertTo-StructLogJson -Record $records[0]
+    Assert-True -Condition (-not $serialized.Contains('powershell-sink-auth-secret')) -Message 'auth sentinel absent'
+    Assert-True -Condition (-not $serialized.Contains('powershell-sink-key-secret')) -Message 'key sentinel absent'
+    Assert-True -Condition (-not $serialized.Contains('powershell-sink-token-secret')) -Message 'token sentinel absent'
 }
 
 Run-Test 'New-StructLogger emits env_snapshot to the daily file' {

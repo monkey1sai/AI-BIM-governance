@@ -7,15 +7,22 @@
 // 本檔為純函式，不碰 DOM / transport，便於單元測試鎖定保真度。
 import type { StreamMessage } from "../types/streamMessages";
 import { harnessChildrenFor, HARNESS_STAGE_URL } from "./fixtures/usdStageTree";
+import type { HarnessReviewAuthority } from "./fixtures/reviewAuthority";
 
 export interface FakeKitState {
+  readonly authority: HarnessReviewAuthority;
   currentStageUrl: string | null;
   bindingRevisionId: string | null;
   nextRejection: FakeKitRejection | null;
 }
 
-export function createFakeKitState(): FakeKitState {
-  return { currentStageUrl: null, bindingRevisionId: null, nextRejection: null };
+export function createFakeKitState(authority: HarnessReviewAuthority): FakeKitState {
+  return {
+    authority: Object.freeze({ ...authority }),
+    currentStageUrl: null,
+    bindingRevisionId: null,
+    nextRejection: null,
+  };
 }
 
 export interface FakeKitRejection {
@@ -64,8 +71,29 @@ const runtimeMutators = new Set([
   "resetStage",
 ]);
 
+function tracedPayload(
+  kit: FakeKitState,
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  return { trace_id: kit.authority.traceId, ...payload };
+}
+
+function tracedEvent(
+  kit: FakeKitState,
+  eventType: string,
+  payload: Record<string, unknown>,
+): StreamMessage {
+  return { event_type: eventType, payload: tracedPayload(kit, payload) };
+}
+
 export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState): FakeKitResponse {
   const payload = asRecord(message.payload);
+  if (
+    payload.session_id !== kit.authority.sessionId
+    || payload.trace_id !== kit.authority.traceId
+  ) {
+    return { result: null, asyncEvents: [] };
+  }
   const queuedRejection = kit.nextRejection;
   if (
     queuedRejection
@@ -76,13 +104,10 @@ export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState
     const requestId = str(payload, "request_id");
     return {
       result: null,
-      asyncEvents: [{
-        event_type: "commandRejected",
-        payload: {
+      asyncEvents: [tracedEvent(kit, "commandRejected", {
           ...queuedRejection,
           ...(requestId ? { request_id: requestId } : { rejection_id: "fake_rejection_001" }),
-        },
-      }],
+      })],
     };
   }
 
@@ -90,7 +115,11 @@ export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState
     // proof-of-life / 載入狀態輪詢。harness 永遠回 idle + 目前 stage url。
     case "loadingStateQuery":
       return {
-        result: { status: "success", loadingState: "idle", url: kit.currentStageUrl ?? "" },
+        result: tracedPayload(kit, {
+          status: "success",
+          loadingState: "idle",
+          url: kit.currentStageUrl ?? "",
+        }),
         asyncEvents: [],
       };
 
@@ -102,13 +131,16 @@ export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState
       const bindingRevisionId = str(payload, "binding_revision_id");
       kit.currentStageUrl = url;
       return {
-        result: {
+        result: tracedPayload(kit, {
           status: "success",
           url,
           ...(requestId ? { request_id: requestId } : {}),
           ...(bindingRevisionId ? { binding_revision_id: bindingRevisionId } : {}),
-        },
-        asyncEvents: [{ event_type: "updateProgressActivity", payload: { text: "None" } }],
+        }),
+        asyncEvents: [
+          tracedEvent(kit, "updateProgressAmount", { progress: 1 }),
+          tracedEvent(kit, "updateProgressActivity", { text: "None" }),
+        ],
       };
     }
 
@@ -116,7 +148,11 @@ export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState
     case "getChildrenRequest": {
       const primPath = str(payload, "prim_path") || "/World";
       return {
-        result: { status: "success", primPath, children: harnessChildrenFor(primPath) },
+        result: tracedPayload(kit, {
+          status: "success",
+          primPath,
+          children: harnessChildrenFor(primPath),
+        }),
         asyncEvents: [],
       };
     }
@@ -128,7 +164,11 @@ export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState
       return {
         result: null,
         asyncEvents: [
-          { event_type: "focusPrimResult", payload: { result: "success", prim_path: primPath, request_id: requestId } },
+          tracedEvent(kit, "focusPrimResult", {
+            result: "success",
+            prim_path: primPath,
+            request_id: requestId,
+          }),
         ],
       };
     }
@@ -141,16 +181,13 @@ export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState
       return {
         result: null,
         asyncEvents: [
-          {
-            event_type: "highlightPrimsResult",
-            payload: {
+          tracedEvent(kit, "highlightPrimsResult", {
               result: "success",
               selected_paths: selected,
               missing_paths: [],
               fallback_paths: [],
               request_id: requestId,
-            },
-          },
+          }),
         ],
       };
     }
@@ -167,19 +204,13 @@ export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState
       return {
         result: null,
         asyncEvents: [
-          {
-            event_type: "selectPrimsResult",
-            payload: {
+          tracedEvent(kit, "selectPrimsResult", {
               result: "success",
               error: "",
               selected_paths: prims,
               ...(requestId ? { request_id: requestId } : {}),
-            },
-          },
-          {
-            event_type: "stageSelectionChanged",
-            payload: { prims },
-          },
+          }),
+          tracedEvent(kit, "stageSelectionChanged", { prims }),
         ],
       };
     }
@@ -190,23 +221,22 @@ export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState
       const requestId = str(payload, "request_id");
       if (revision) kit.bindingRevisionId = revision;
       return {
-        result: { status: "success", ...(requestId ? { request_id: requestId } : {}) },
+        result: tracedPayload(kit, {
+          status: "success",
+          ...(requestId ? { request_id: requestId } : {}),
+        }),
         asyncEvents: [
-          {
-            event_type: "loadArtifactGroupResult",
-            payload: {
+          tracedEvent(kit, "loadArtifactGroupResult", {
               result: "accepted",
               binding_revision_id: kit.bindingRevisionId ?? "",
               ...(requestId ? { request_id: requestId } : {}),
-            },
-          },
-          {
-            event_type: "bindingApplied",
-            payload: {
+          }),
+          // Harness-only legacy acknowledgement; production Kit proves the
+          // same transaction through openedStageResult + coordinator audit.
+          tracedEvent(kit, "bindingApplied", {
               binding_revision_id: kit.bindingRevisionId ?? "",
               ...(requestId ? { request_id: requestId } : {}),
-            },
-          },
+          }),
         ],
       };
     }
@@ -215,14 +245,11 @@ export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState
       const requestId = str(payload, "request_id");
       return {
         result: null,
-        asyncEvents: [{
-          event_type: "clearHighlightResult",
-          payload: {
+        asyncEvents: [tracedEvent(kit, "clearHighlightResult", {
             result: "success",
             applied_mode: "selection",
             ...(requestId ? { request_id: requestId } : {}),
-          },
-        }],
+        })],
       };
     }
 
@@ -230,10 +257,11 @@ export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState
       const requestId = str(payload, "request_id");
       return {
         result: null,
-        asyncEvents: [{
-          event_type: "makePrimsPickableResponse",
-          payload: { result: "success", error: "", ...(requestId ? { request_id: requestId } : {}) },
-        }],
+        asyncEvents: [tracedEvent(kit, "makePrimsPickableResponse", {
+          result: "success",
+          error: "",
+          ...(requestId ? { request_id: requestId } : {}),
+        })],
       };
     }
 
@@ -241,10 +269,11 @@ export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState
       const requestId = str(payload, "request_id");
       return {
         result: null,
-        asyncEvents: [{
-          event_type: "resetStageResponse",
-          payload: { result: "success", error: "", ...(requestId ? { request_id: requestId } : {}) },
-        }],
+        asyncEvents: [tracedEvent(kit, "resetStageResponse", {
+          result: "success",
+          error: "",
+          ...(requestId ? { request_id: requestId } : {}),
+        })],
       };
     }
 
@@ -259,24 +288,18 @@ export function computeFakeKitResponse(message: StreamMessage, kit: FakeKitState
       return {
         result: null,
         asyncEvents: [
-          {
-            event_type: "loadArtifactGroupResult",
-            payload: {
+          tracedEvent(kit, "loadArtifactGroupResult", {
               result: "accepted",
               ...(requestId ? { request_id: requestId } : {}),
               ...(bindingRevisionId ? { binding_revision_id: bindingRevisionId } : {}),
-            },
-          },
-          {
-            event_type: "openedStageResult",
-            payload: {
+          }),
+          tracedEvent(kit, "openedStageResult", {
               result: "success",
               url,
               error: "",
               ...(requestId ? { request_id: requestId } : {}),
               ...(bindingRevisionId ? { binding_revision_id: bindingRevisionId } : {}),
-            },
-          },
+          }),
         ],
       };
     }

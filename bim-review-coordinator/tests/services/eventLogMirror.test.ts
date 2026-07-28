@@ -41,7 +41,10 @@ describe("EventLog → structLog mirror", () => {
 
   it("mirrors sessionCreated to lifecycle phase=start, subject_kind=review_session", () => {
     const logger = createLogger("coordinator", { logRoot, runId: "run_20260526_142010_a3f900", skipEnvSnapshot: true });
-    const eventLog = new EventLog(storageRoot, { structLog: logger });
+    const eventLog = new EventLog(storageRoot, {
+      structLog: logger,
+      resolveTraceId: (sessionId) => `rev_${sessionId}`,
+    });
 
     eventLog.append("review_session_aaa", "sessionCreated", { foo: 1 });
 
@@ -58,7 +61,10 @@ describe("EventLog → structLog mirror", () => {
 
   it("maps the six EventLog types to documented subject_kind/phase pairs", () => {
     const logger = createLogger("coordinator", { logRoot, runId: "run_20260526_142010_a3f900", skipEnvSnapshot: true });
-    const eventLog = new EventLog(storageRoot, { structLog: logger });
+    const eventLog = new EventLog(storageRoot, {
+      structLog: logger,
+      resolveTraceId: (sessionId) => `rev_${sessionId}`,
+    });
 
     const cases: Array<[string, string, unknown, { phase: string; subject_kind: string; subject_id: string }]> = [
       ["review_session_a", "sessionCreated", {}, { phase: "start", subject_kind: "review_session", subject_id: "review_session_a" }],
@@ -94,6 +100,22 @@ describe("EventLog → structLog mirror", () => {
     });
   });
 
+  it("uses an injected canonical IFC-ready root and skips an unresolved mirror", () => {
+    const logger = createLogger("coordinator", { logRoot, runId: "run_20260526_142010_a3f900", skipEnvSnapshot: true });
+    const eventLog = new EventLog(storageRoot, {
+      structLog: logger,
+      resolveTraceId: (sessionId) => sessionId === "review_session_linked" ? "ifcready_exact_root" : null,
+    });
+
+    eventLog.append("review_session_linked", "sessionCreated", {});
+    eventLog.append("review_session_unresolved", "sessionCreated", {});
+
+    const mirrored = readMirrorLines(logger).filter((record): record is { trace_id: string } =>
+      (record as { event_type?: string }).event_type === "lifecycle",
+    );
+    expect(mirrored.map((record) => record.trace_id)).toEqual(["ifcready_exact_root"]);
+  });
+
   it("does not break EventLog when structLog is omitted (backward compat)", () => {
     const eventLog = new EventLog(storageRoot);
     expect(() => eventLog.append("review_session_a", "sessionCreated", {})).not.toThrow();
@@ -101,7 +123,10 @@ describe("EventLog → structLog mirror", () => {
 
   it("preserves storage/event-log file shape (no extra fields injected)", () => {
     const logger = createLogger("coordinator", { logRoot, runId: "run_20260526_142010_a3f900", skipEnvSnapshot: true });
-    const eventLog = new EventLog(storageRoot, { structLog: logger });
+    const eventLog = new EventLog(storageRoot, {
+      structLog: logger,
+      resolveTraceId: (sessionId) => `rev_${sessionId}`,
+    });
     eventLog.append("review_session_a", "sessionCreated", { src: "test" });
 
     const files = readdirSync(storageRoot).filter((f) => f.endsWith(".jsonl"));

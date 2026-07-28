@@ -42,10 +42,16 @@
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
     },
+    "dataChannelTraceId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
     "runtimeAuthorityEnvelope": {
       "type": "object",
-      "required": ["request_id", "role", "source_client_id", "session_id", "viewer_lease_token"],
+      "required": ["trace_id", "request_id", "role", "source_client_id", "session_id", "viewer_lease_token"],
       "properties": {
+        "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
         "request_id": { "$ref": "#/$defs/requestId" },
         "role": { "enum": ["primary", "spectator"] },
         "source_client_id": { "type": "string", "minLength": 1, "maxLength": 200 },
@@ -270,7 +276,17 @@
     "loadingStateQuery": {
       "type": "object",
       "required": ["event_type", "payload"],
-      "properties": { "event_type": { "const": "loadingStateQuery" }, "payload": { "type": "object" } }
+      "properties": {
+        "event_type": { "const": "loadingStateQuery" },
+        "payload": {
+          "type": "object",
+          "required": ["trace_id", "session_id"],
+          "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
+            "session_id": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        }
+      }
     },
     "getChildrenRequest": {
       "type": "object",
@@ -279,8 +295,10 @@
         "event_type": { "const": "getChildrenRequest" },
         "payload": {
           "type": "object",
-          "required": ["prim_path", "filters"],
+          "required": ["trace_id", "session_id", "prim_path", "filters"],
           "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
+            "session_id": { "type": "string", "minLength": 1, "maxLength": 200 },
             "prim_path": { "type": "string" },
             "filters": { "type": "array", "items": { "type": "string" } }
           }
@@ -294,8 +312,9 @@
         "event_type": { "const": "openedStageResult" },
         "payload": {
           "type": "object",
-          "required": ["result", "request_id"],
+          "required": ["trace_id", "result", "request_id"],
           "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
             "result": { "enum": ["success", "error"] },
             "request_id": { "$ref": "#/$defs/requestId" },
             "url": { "type": "string" },
@@ -387,8 +406,9 @@
         "event_type": { "const": "loadArtifactGroupResult" },
         "payload": {
           "type": "object",
-          "required": ["result", "request_id"],
+          "required": ["trace_id", "result", "request_id"],
           "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
             "result": { "enum": ["accepted", "error"] },
             "request_id": { "$ref": "#/$defs/requestId" },
             "binding_revision_id": { "type": "string" },
@@ -451,8 +471,9 @@
         "event_type": { "const": "highlightPrimsResult" },
         "payload": {
           "type": "object",
-          "required": ["result", "request_id"],
+          "required": ["trace_id", "result", "request_id"],
           "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
             "result": { "enum": ["success", "error"] },
             "request_id": { "$ref": "#/$defs/requestId" },
             "applied_mode": { "const": "selection" },
@@ -475,8 +496,9 @@
         "event_type": { "const": "focusPrimResult" },
         "payload": {
           "type": "object",
-          "required": ["result", "request_id"],
+          "required": ["trace_id", "result", "request_id"],
           "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
             "result": { "enum": ["success", "error"] },
             "request_id": { "$ref": "#/$defs/requestId" },
             "prim_path": { "type": ["string", "null"] },
@@ -496,8 +518,9 @@
         "event_type": { "const": "selectPrimsResult" },
         "payload": {
           "type": "object",
-          "required": ["result", "error", "selected_paths", "request_id"],
+          "required": ["trace_id", "result", "error", "selected_paths", "request_id"],
           "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
             "result": { "enum": ["success", "error"] },
             "error": { "type": "string" },
             "selected_paths": { "type": "array", "items": { "type": "string" } },
@@ -514,8 +537,9 @@
         "event_type": { "const": "makePrimsPickableResponse" },
         "payload": {
           "type": "object",
-          "required": ["result", "error", "request_id"],
+          "required": ["trace_id", "result", "error", "request_id"],
           "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
             "result": { "enum": ["success", "error"] },
             "error": { "type": "string" },
             "request_id": { "$ref": "#/$defs/requestId" }
@@ -531,8 +555,9 @@
         "event_type": { "const": "resetStageResponse" },
         "payload": {
           "type": "object",
-          "required": ["result", "error", "request_id"],
+          "required": ["trace_id", "result", "error", "request_id"],
           "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
             "result": { "enum": ["success", "error"] },
             "error": { "type": "string" },
             "request_id": { "$ref": "#/$defs/requestId" }
@@ -548,8 +573,9 @@
         "event_type": { "const": "clearHighlightResult" },
         "payload": {
           "type": "object",
-          "required": ["result", "applied_mode", "request_id"],
+          "required": ["trace_id", "result", "applied_mode", "request_id"],
           "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
             "result": { "enum": ["success", "error"] },
             "applied_mode": { "const": "selection" },
             "request_id": { "$ref": "#/$defs/requestId" }
@@ -565,7 +591,12 @@
         "event_type": { "const": "loadingStateResponse" },
         "payload": {
           "type": "object",
-          "properties": { "url": { "type": "string" }, "loading_state": { "enum": ["idle", "busy"] } }
+          "required": ["trace_id"],
+          "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
+            "url": { "type": "string" },
+            "loading_state": { "enum": ["idle", "busy"] }
+          }
         }
       }
     },
@@ -576,8 +607,9 @@
         "event_type": { "const": "getChildrenResponse" },
         "payload": {
           "type": "object",
-          "required": ["prim_path", "children"],
+          "required": ["trace_id", "prim_path", "children"],
           "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
             "prim_path": { "type": "string" },
             "children": { "type": "array", "items": { "type": "object" } }
           }
@@ -589,20 +621,41 @@
       "required": ["event_type", "payload"],
       "properties": {
         "event_type": { "const": "stageSelectionChanged" },
-        "payload": { "type": "object", "required": ["prims"], "properties": { "prims": { "type": "array", "items": { "type": "string" } } } }
+        "payload": {
+          "type": "object",
+          "required": ["trace_id", "prims"],
+          "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
+            "prims": { "type": "array", "items": { "type": "string" } }
+          }
+        }
       }
     },
     "updateProgressAmount": {
       "type": "object",
       "required": ["event_type", "payload"],
-      "properties": { "event_type": { "const": "updateProgressAmount" }, "payload": { "type": "object" } }
+      "properties": {
+        "event_type": { "const": "updateProgressAmount" },
+        "payload": {
+          "type": "object",
+          "required": ["trace_id"],
+          "properties": { "trace_id": { "$ref": "#/$defs/dataChannelTraceId" } }
+        }
+      }
     },
     "updateProgressActivity": {
       "type": "object",
       "required": ["event_type", "payload"],
       "properties": {
         "event_type": { "const": "updateProgressActivity" },
-        "payload": { "type": "object", "properties": { "text": { "type": "string" } } }
+        "payload": {
+          "type": "object",
+          "required": ["trace_id"],
+          "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
+            "text": { "type": "string" }
+          }
+        }
       }
     },
     "bindingApplied": {
@@ -610,7 +663,14 @@
       "required": ["event_type", "payload"],
       "properties": {
         "event_type": { "const": "bindingApplied" },
-        "payload": { "type": "object", "required": ["binding_revision_id"], "properties": { "binding_revision_id": { "type": "string" } } }
+        "payload": {
+          "type": "object",
+          "required": ["trace_id", "binding_revision_id"],
+          "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
+            "binding_revision_id": { "type": "string" }
+          }
+        }
       }
     },
     "commandRejected": {
@@ -620,8 +680,9 @@
         "event_type": { "const": "commandRejected" },
         "payload": {
           "type": "object",
-          "required": ["rejected_event_type", "reason", "retryable", "runtime_state"],
+          "required": ["trace_id", "rejected_event_type", "reason", "retryable", "runtime_state"],
           "properties": {
+            "trace_id": { "$ref": "#/$defs/dataChannelTraceId" },
             "rejected_event_type": {
               "enum": [
                 "openStageRequest",

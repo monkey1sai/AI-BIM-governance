@@ -100,39 +100,51 @@ describe("T7 local web view session / artifact resolution", () => {
     expect(rejected.headers["access-control-allow-origin"]).toBeUndefined();
   });
 
-  it("forwards only a trusted IFC-ready trace and keeps standalone URLs trace-free", async () => {
+  it("resolves one server-owned standalone trace and rejects conflicting carriers before redirect", async () => {
     const app = makeApp();
-    const session = "review_session_trace_carrier";
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_trace_redirect",
+        model_version_id: "version_trace_redirect",
+        created_by: "trace_redirect_fixture",
+        artifact_bindings: [],
+      });
+    expect(created.status).toBe(200);
+    const session = created.body.session_id as string;
+    const standaloneTrace = created.body.trace_id as string;
 
-    const trusted = await request(app.app).get(
-      `/ui/open?session=${session}&trace_id=ifcready_20260724120000_deadbeef`,
+    const missing = await request(app.app).get(`/ui/open?session=${session}`);
+    expect(missing.status).toBe(302);
+    expect(new URL(missing.headers.location).searchParams.get("trace_id")).toBe(standaloneTrace);
+
+    const exact = await request(app.app).get(
+      `/ui/open?session=${session}&trace_id=${standaloneTrace}`,
     );
-    expect(new URL(trusted.headers.location).searchParams.get("trace_id")).toBe(
+    expect(exact.status).toBe(302);
+    expect(new URL(exact.headers.location).searchParams.get("trace_id")).toBe(standaloneTrace);
+
+    for (const conflictingTrace of [
+      "rev_review_session_other",
       "ifcready_20260724120000_deadbeef",
-    );
+      "ifcready_bad.value",
+      "ifcready_ifcready_nested",
+      "external_untrusted",
+    ]) {
+      const conflicting = await request(app.app).get(
+        `/ui/open?session=${session}&trace_id=${encodeURIComponent(conflictingTrace)}`,
+      );
+      expect(conflicting.status).toBe(409);
+      expect(conflicting.body).toEqual({ detail: "session trace authority mismatch" });
+      expect(conflicting.headers.location).toBeUndefined();
+    }
 
-    const standalone = await request(app.app).get(`/ui/open?session=${session}`);
-    expect(new URL(standalone.headers.location).searchParams.get("trace_id")).toBeNull();
-
-    const malformed = await request(app.app).get(
-      `/ui/open?session=${session}&trace_id=${encodeURIComponent("ifcready_bad/value")}`,
+    const duplicate = await request(app.app).get(
+      `/ui/open?session=${session}&trace_id=${standaloneTrace}&trace_id=${standaloneTrace}`,
     );
-    expect(new URL(malformed.headers.location).searchParams.get("trace_id")).toBeNull();
-
-    const dotted = await request(app.app).get(
-      `/ui/open?session=${session}&trace_id=ifcready_bad.value`,
-    );
-    expect(new URL(dotted.headers.location).searchParams.get("trace_id")).toBeNull();
-
-    const oversized = await request(app.app).get(
-      `/ui/open?session=${session}&trace_id=${`ifcready_${"a".repeat(192)}`}`,
-    );
-    expect(new URL(oversized.headers.location).searchParams.get("trace_id")).toBeNull();
-
-    const untrusted = await request(app.app).get(
-      `/ui/open?session=${session}&trace_id=external_untrusted`,
-    );
-    expect(new URL(untrusted.headers.location).searchParams.get("trace_id")).toBeNull();
+    expect(duplicate.status).toBe(400);
+    expect(duplicate.body).toEqual({ detail: "invalid session trace carrier" });
+    expect(duplicate.headers.location).toBeUndefined();
   });
 
   it("缺使用者 token → 401（不做死 SSO，可替換 provider）", async () => {

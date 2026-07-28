@@ -216,6 +216,14 @@ export class ViewerLeaseStore {
     return lease;
   }
 
+  authorizeActive(sessionId: string, leaseId: string, token: string): ViewerLeaseRecord | null {
+    this.expire(Date.now());
+    const lease = this.leases.get(leaseId);
+    if (!lease || lease.session_id !== sessionId || lease.status !== "active") return null;
+    if (lease.lease_token !== token) return null;
+    return lease;
+  }
+
   inspectRuntimeAuthority(
     sessionId: string,
     sourceClientId: string,

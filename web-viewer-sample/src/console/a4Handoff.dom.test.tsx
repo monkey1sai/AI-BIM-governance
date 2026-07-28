@@ -9,6 +9,7 @@ import { reviewEnv } from "../config/env";
 
 const HANDOFF_ID = "a4h_1234567890abcdef";
 const SESSION_ID = "review_session_a4_001";
+const TRACE_ID = "ifcready_a4_handoff";
 const STAGE_URL = "stage://model.usdc";
 const NOW_MS = Date.parse("2026-07-23T03:00:00.000Z");
 
@@ -42,6 +43,12 @@ type SentMessage = {
 type AppInternals = {
   state: TestAppState;
   componentMounted: boolean;
+  verifiedDataChannelAuthority: {
+    sessionId: string;
+    traceId: string;
+    connectionGeneration: number;
+  } | null;
+  reviewSocketEpoch: number;
   confirmedStageBindingRevision: string | null;
   coordinatorClient: TestCoordinator;
   _ensurePrimaryViewerLease: () => Promise<string | null>;
@@ -71,6 +78,7 @@ function intent(action: "focus" | "highlight" = "focus"): A4HandoffIntent {
 function streamConfig() {
   return {
     session_id: SESSION_ID,
+    trace_id: TRACE_ID,
     lifecycle_status: "active",
     source: "local_fixed",
     webrtc: { signalingServer: "127.0.0.1", signalingPort: 49100, mediaServer: "127.0.0.1" },
@@ -150,10 +158,16 @@ function readyApp(action: "focus" | "highlight" = "focus", authScope: "bound" | 
   reviewEnv.userToken = "principal_carrier_a4";
   reviewEnv.viewerLeaseToken = "lease_token_a4";
   reviewEnv.sourceClientId = "viewer_lease_a4";
+  window.history.replaceState({}, "", `/?session=${SESSION_ID}&trace_id=${TRACE_ID}`);
   const app = new App({} as never);
   mockSynchronousSetState(app);
   const target = internals(app);
   target.componentMounted = true;
+  target.verifiedDataChannelAuthority = {
+    sessionId: SESSION_ID,
+    traceId: TRACE_ID,
+    connectionGeneration: target.reviewSocketEpoch,
+  };
   target.confirmedStageBindingRevision = "binding_rev_1";
   target.coordinatorClient = coordinatorFor(action, authScope);
   target._ensurePrimaryViewerLease = vi.fn().mockResolvedValue("lease_token_a4");
@@ -236,6 +250,7 @@ describe("A4 S3 trusted handoff viewer", () => {
     expect(sent.event_type).toBe("focusPrimRequest");
     expect(sent.payload).toMatchObject({
       prim_path: "/World/Door_001",
+      trace_id: TRACE_ID,
       role: "primary",
       session_id: SESSION_ID,
       source_client_id: "viewer_lease_a4",
@@ -246,7 +261,12 @@ describe("A4 S3 trusted handoff viewer", () => {
 
     target._handleCustomEvent({
       event_type: "focusPrimResult",
-      payload: { result: "success", request_id: sent.payload.request_id, prim_path: "/World/Door_001" },
+      payload: {
+        trace_id: TRACE_ID,
+        result: "success",
+        request_id: sent.payload.request_id,
+        prim_path: "/World/Door_001",
+      },
     });
     expect(target.state.a4Handoff).toMatchObject({ status: "succeeded", detail: "matching_focus_result" });
   });
@@ -281,6 +301,7 @@ describe("A4 S3 trusted handoff viewer", () => {
     target._handleCustomEvent({
       event_type: "highlightPrimsResult",
       payload: {
+        trace_id: TRACE_ID,
         result: "success",
         request_id: retry.payload.request_id,
         selected_paths: ["/World/Door_001", "/World/Wall_002"],
@@ -323,6 +344,7 @@ describe("A4 S3 trusted handoff viewer", () => {
     target._handleCustomEvent({
       event_type: "commandRejected",
       payload: {
+        trace_id: TRACE_ID,
         rejected_event_type: "focusPrimRequest",
         reason: "lease_invalid",
         request_id: sent.payload.request_id,

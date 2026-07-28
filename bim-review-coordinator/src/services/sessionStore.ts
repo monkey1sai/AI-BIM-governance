@@ -13,8 +13,12 @@ import type {
 import { nowIso } from "../utils/time.js";
 
 const safeSessionIdPattern = /^review_session_[A-Za-z0-9_-]+$/;
+const safeIfcReadyTracePattern = /^ifcready_(?!ifcready_|rev_|stream_conv_|script_|external_)[A-Za-z0-9][A-Za-z0-9_-]*$/;
+const MAX_SESSION_TRACE_ID_LENGTH = 200;
 
 export interface CreateSessionInput {
+  /** Server-internal only; public create-session input never accepts this field. */
+  trace_id?: string;
   review_request_id?: string;
   tenant_id?: string;
   project_id: string;
@@ -37,8 +41,14 @@ export class SessionStore {
   create(input: CreateSessionInput): ReviewSession {
     const timestamp = nowIso();
     const kitInstanceBindings = input.kit_instance_bindings || [];
+    const sessionId = `review_session_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    const traceId = input.trace_id ?? `rev_${sessionId}`;
+    if (!isCanonicalSessionTraceId(traceId, sessionId)) {
+      throw new Error("Invalid review session trace_id.");
+    }
     const session: ReviewSession = {
-      session_id: `review_session_${randomUUID().replaceAll("-", "").slice(0, 12)}`,
+      session_id: sessionId,
+      trace_id: traceId,
       review_request_id: input.review_request_id,
       tenant_id: input.tenant_id || "tenant_demo_001",
       project_id: input.project_id,
@@ -80,9 +90,47 @@ export class SessionStore {
   }
 
   save(session: ReviewSession): void {
+    this.persistSession(session, false);
+  }
+
+  backfillTraceId(sessionId: string, traceId: string): ReviewSession | null {
+    const session = this.get(sessionId);
+    if (!session) return null;
+    if (session.trace_id !== undefined) {
+      if (session.trace_id !== traceId) {
+        throw new Error("Review session trace_id is immutable.");
+      }
+      return session;
+    }
+    if (!isCanonicalSessionTraceId(traceId, sessionId)) {
+      throw new Error("Invalid review session trace_id.");
+    }
+    session.trace_id = traceId;
+    this.persistSession(session, true);
+    return session;
+  }
+
+  private persistSession(session: ReviewSession, allowLegacyTraceBackfill: boolean): void {
     assertSafeSessionId(session.session_id);
+    const file = this.filePath(session.session_id);
+    const existing = fs.existsSync(file)
+      ? (JSON.parse(fs.readFileSync(file, "utf8")) as ReviewSession)
+      : null;
+    if (existing?.trace_id !== undefined) {
+      if (session.trace_id !== existing.trace_id) {
+        throw new Error("Review session trace_id is immutable.");
+      }
+    } else if (existing && session.trace_id !== undefined && !allowLegacyTraceBackfill) {
+      throw new Error("Review session trace_id backfill requires resolver.");
+    } else if (session.trace_id !== undefined) {
+      if (!isCanonicalSessionTraceId(session.trace_id, session.session_id)) {
+        throw new Error("Invalid review session trace_id.");
+      }
+    } else if (!existing) {
+      throw new Error("Invalid review session trace_id.");
+    }
     session.updated_at = nowIso();
-    fs.writeFileSync(this.filePath(session.session_id), JSON.stringify(session, null, 2), "utf8");
+    fs.writeFileSync(file, JSON.stringify(session, null, 2), "utf8");
   }
 
   join(sessionId: string, participant: Pick<ReviewParticipant, "user_id" | "display_name">): ReviewSession | null {
@@ -128,6 +176,19 @@ export class SessionStore {
 
 export function isSafeSessionId(sessionId: string): boolean {
   return safeSessionIdPattern.test(sessionId);
+}
+
+export function isIfcReadySessionTraceId(traceId: unknown): traceId is string {
+  return typeof traceId === "string"
+    && traceId.length <= MAX_SESSION_TRACE_ID_LENGTH
+    && safeIfcReadyTracePattern.test(traceId);
+}
+
+export function isCanonicalSessionTraceId(traceId: unknown, sessionId: string): traceId is string {
+  if (typeof traceId !== "string" || traceId.length > MAX_SESSION_TRACE_ID_LENGTH) {
+    return false;
+  }
+  return traceId === `rev_${sessionId}` || isIfcReadySessionTraceId(traceId);
 }
 
 export function isSessionMutable(session: ReviewSession): boolean {
