@@ -129,6 +129,34 @@ function Get-TestRequiredArtifactNames {
     )
 }
 
+function New-TestCanonicalReadiness {
+    param([string] $RootTraceId = 'ifcready_root')
+    return [ordered]@{
+        schema_version = 'demo-runtime-readiness-smoke/v1'
+        capability = 'demo-runtime-readiness-smoke'
+        context = [ordered]@{ execution_mode = 'production' }
+        tiers = @([ordered]@{
+            tier = 'real_ifc_intake_conversion'
+            status = 'passed'
+            ids = [ordered]@{
+                ifc_ready_job_id = $RootTraceId
+                conversion_job_id = 'stream_conv_1'
+            }
+            detail = [ordered]@{
+                execution_mode = 'production'
+                root_trace_id = $RootTraceId
+                review_session_id = 'review_session_1'
+                browser_status = 'passed'
+                close_status = 'closed'
+                browser_artifacts = [ordered]@{
+                    screenshot_path = 'shot.png'
+                    playwright_trace_path = 'trace.zip'
+                }
+            }
+        })
+    }
+}
+
 function Write-TestCompleteArtifactManifest {
     param([string] $AttemptRoot, [string] $AttemptId)
     $now = '2026-07-24T00:00:00.0000000Z'
@@ -138,7 +166,7 @@ function Write-TestCompleteArtifactManifest {
         'machine.json' = [ordered]@{schema_version='1';machine_name='test-machine';os_version='test-os';pwsh_version='7.5';process_architecture='X64'}
         'fixture.json' = [ordered]@{schema_version='1';name='model.ifc';size_bytes=3;sha256=('a'*64);source_path='C:\fixture\model.ifc';attempt_copy=(Join-Path $AttemptRoot 'storage\model.ifc')}
         'health.json' = [ordered]@{schema_version='1';probes=@([ordered]@{name='coordinator';uri='http://127.0.0.1:8005/health';started_utc=$now;ended_utc=$now;status='passed';http_status=200;error_type=$null})}
-        'bscheme-readiness.json' = [ordered]@{schema_version='1';status='passed';root_trace_id='ifcready_root';integration_ids=[ordered]@{conversion_job_id='conv_1';review_session_id='session_1'}}
+        'bscheme-readiness.json' = New-TestCanonicalReadiness
         'root-trace-timeline.json' = [ordered]@{schema_version='1';root_trace_id='ifcready_root';records=@()}
         'runtime-log-validation.json' = [ordered]@{schema_version='1';status='passed';files=@();line_counts=[ordered]@{};event_counts=[ordered]@{};violations=@();redaction_violations=@()}
         'shutdown.json' = [ordered]@{schema_version='1';attempt_id=$AttemptId;status='succeeded';entries=@();foreign_listeners=@()}
@@ -664,12 +692,12 @@ exit 0
             [pscustomobject]@{Name='blocked';Status='blocked';Mode='production';Count=1;Mutation='none';Pattern='status|passed|blocked'},
             [pscustomobject]@{Name='missing';Status='passed';Mode='production';Count=0;Mutation='none';Pattern='exactly one|tier'},
             [pscustomobject]@{Name='duplicate';Status='passed';Mode='production';Count=2;Mutation='none';Pattern='exactly one|tier'},
-            [pscustomobject]@{Name='test-double';Status='passed';Mode='test_double';Count=1;Mutation='none';Pattern='production|execution_mode'},
-            [pscustomobject]@{Name='root-mismatch';Status='passed';Mode='production';Count=1;Mutation='root_mismatch';Pattern='byte-identical|ifc_ready_job_id'},
-            [pscustomobject]@{Name='ambiguous-conversion';Status='passed';Mode='production';Count=1;Mutation='ambiguous_conversion';Pattern='unambiguous conversion_job_id'},
-            [pscustomobject]@{Name='ambiguous-review';Status='passed';Mode='production';Count=1;Mutation='ambiguous_review';Pattern='unambiguous review_session_id'},
-            [pscustomobject]@{Name='browser-failed';Status='passed';Mode='production';Count=1;Mutation='browser_failed';Pattern='browser_status=passed'},
-            [pscustomobject]@{Name='close-failed';Status='passed';Mode='production';Count=1;Mutation='close_failed';Pattern='close_status=closed'}
+            [pscustomobject]@{Name='test-double';Status='passed';Mode='test_double';Count=1;Mutation='none';Pattern='context-execution-mode|tier-execution-mode'},
+            [pscustomobject]@{Name='root-mismatch';Status='passed';Mode='production';Count=1;Mutation='root_mismatch';Pattern='ifc-ready-job-id'},
+            [pscustomobject]@{Name='ambiguous-conversion';Status='passed';Mode='production';Count=1;Mutation='ambiguous_conversion';Pattern='ambiguous-conversion_job_id'},
+            [pscustomobject]@{Name='ambiguous-review';Status='passed';Mode='production';Count=1;Mutation='ambiguous_review';Pattern='ambiguous-review_session_id'},
+            [pscustomobject]@{Name='browser-failed';Status='passed';Mode='production';Count=1;Mutation='browser_failed';Pattern='browser-status'},
+            [pscustomobject]@{Name='close-failed';Status='passed';Mode='production';Count=1;Mutation='close_failed';Pattern='close-status'}
         )) {
             $provenanceBefore = @(Get-Content -LiteralPath $ctx.ProvenancePath).Count
             Assert-Throws {
@@ -782,7 +810,7 @@ function Invoke-ArtifactRendererCase {
         @{schema_version='1';attempt_id=$ctx.AttemptId;processes=@()}|ConvertTo-Json|Set-Content -LiteralPath $ctx.LeasePath
         @{schema_version='1';attempt_id=$ctx.AttemptId;status='succeeded';entries=@();foreign_listeners=@()}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $ctx.AttemptRoot 'shutdown.json')
         [ordered]@{seq=1;ts_utc=$now;started_utc=$now;ended_utc=$now;phase='test';command='test';cwd=$root;status='passed';exit_code=0}|ConvertTo-Json -Compress|Set-Content -LiteralPath $ctx.ProvenancePath
-        @{schema_version='1';status='passed';root_trace_id='ifcready_root';integration_ids=@{conversion_job_id='conv_1';review_session_id='session_1'};integration_detail=@{browser_artifacts=@{screenshot_path='shot.png';playwright_trace_path='trace.zip'}}}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $ctx.AttemptRoot 'bscheme-readiness.json')
+        New-TestCanonicalReadiness | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $ctx.AttemptRoot 'bscheme-readiness.json')
         $report = Write-StructuredLogEvidenceArtifacts -Context $ctx -ValidatorInvoker {
             param($python, $arguments, $outputPath)
             @{schema_version='1';status='passed';files=@('scripts/x.jsonl');line_counts=@{};event_counts=@{};violations=@();redaction_violations=@()}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $outputPath
@@ -871,6 +899,67 @@ function Invoke-ArtifactRendererCase {
                 }
                 Assert-True (-not (Test-StructuredLogArtifactManifest -AttemptRoot $semanticAttempt).valid) "$semanticCase semantic corruption is rejected even with a matching hash"
             }
+
+            $readinessCases = @(
+                [pscustomobject]@{Name='schema';Error='readiness:schema-version'},
+                [pscustomobject]@{Name='missing-tier';Error='readiness:live-tier-count'},
+                [pscustomobject]@{Name='duplicate-tier';Error='readiness:live-tier-count'},
+                [pscustomobject]@{Name='tier-status';Error='readiness:live-tier-status'},
+                [pscustomobject]@{Name='context-mode';Error='readiness:context-execution-mode'},
+                [pscustomobject]@{Name='detail-mode';Error='readiness:tier-execution-mode'},
+                [pscustomobject]@{Name='root-missing-with-decoy';Error='readiness:root-trace-id'},
+                [pscustomobject]@{Name='root-invalid';Error='readiness:root-trace-id'},
+                [pscustomobject]@{Name='root-mismatch';Error='readiness:ifc-ready-job-id'},
+                [pscustomobject]@{Name='root-ambiguous';Error='readiness:ambiguous-root_trace_id'},
+                [pscustomobject]@{Name='ifc-ready-ambiguous';Error='readiness:ambiguous-ifc_ready_job_id'},
+                [pscustomobject]@{Name='conversion-missing';Error='readiness:conversion-job-id'},
+                [pscustomobject]@{Name='conversion-ambiguous';Error='readiness:ambiguous-conversion_job_id'},
+                [pscustomobject]@{Name='review-missing';Error='readiness:review-session-id'},
+                [pscustomobject]@{Name='review-ambiguous';Error='readiness:ambiguous-review_session_id'},
+                [pscustomobject]@{Name='browser';Error='readiness:browser-status'},
+                [pscustomobject]@{Name='close';Error='readiness:close-status'}
+            )
+            foreach ($readinessCase in $readinessCases) {
+                Write-TestCompleteArtifactManifest -AttemptRoot $semanticAttempt -AttemptId 'attempt-semantic'
+                $readinessPath = Join-Path $semanticAttempt 'bscheme-readiness.json'
+                $value = Get-Content -Raw -LiteralPath $readinessPath | ConvertFrom-Json
+                switch ($readinessCase.Name) {
+                    'schema' { $value.schema_version = '1' }
+                    'missing-tier' { $value.tiers = @() }
+                    'duplicate-tier' { $value.tiers = @($value.tiers[0], ($value.tiers[0] | ConvertTo-Json -Depth 10 | ConvertFrom-Json)) }
+                    'tier-status' { $value.tiers[0].status = 'blocked' }
+                    'context-mode' { $value.context.execution_mode = 'test_double' }
+                    'detail-mode' { $value.tiers[0].detail.execution_mode = 'test_double' }
+                    'root-missing-with-decoy' { $value.tiers[0].detail.root_trace_id = $null; $value | Add-Member -Force NoteProperty root_trace_id 'ifcready_decoy' }
+                    'root-invalid' { $value.tiers[0].detail.root_trace_id = 'invalid-root' }
+                    'root-mismatch' { $value.tiers[0].ids.ifc_ready_job_id = 'ifcready_other' }
+                    'root-ambiguous' { $value | Add-Member -Force NoteProperty root_trace_id 'ifcready_other' }
+                    'ifc-ready-ambiguous' { $value | Add-Member -Force NoteProperty ifc_ready_job_id 'ifcready_other' }
+                    'conversion-missing' { $value.tiers[0].ids.conversion_job_id = $null }
+                    'conversion-ambiguous' { $value | Add-Member -Force NoteProperty conversion_job_id 'stream_conv_other' }
+                    'review-missing' { $value.tiers[0].detail.review_session_id = $null }
+                    'review-ambiguous' { $value | Add-Member -Force NoteProperty review_session_id 'review_session_other' }
+                    'browser' { $value.tiers[0].detail.browser_status = 'failed' }
+                    'close' { $value.tiers[0].detail.close_status = 'close_failed' }
+                }
+                $value | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $readinessPath -Encoding utf8
+                Update-TestArtifactManifestHash $semanticAttempt 'bscheme-readiness.json'
+                $result = Test-StructuredLogArtifactManifest -AttemptRoot $semanticAttempt
+                Assert-True (-not $result.valid) "$($readinessCase.Name) readiness corruption is rejected with matching hash"
+                Assert-True (@($result.errors) -ccontains $readinessCase.Error) "$($readinessCase.Name) reports readiness-specific error; errors=$($result.errors -join ',')"
+            }
+
+            foreach ($rootArtifact in @('artifact-manifest.json','attempt-manifest.json','root-trace-timeline.json','pr-fields.json')) {
+                Write-TestCompleteArtifactManifest -AttemptRoot $semanticAttempt -AttemptId 'attempt-semantic'
+                $rootArtifactPath = Join-Path $semanticAttempt $rootArtifact
+                $value = Get-Content -Raw -LiteralPath $rootArtifactPath | ConvertFrom-Json
+                $value.root_trace_id = 'ifcready_other'
+                $value | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $rootArtifactPath -Encoding utf8
+                if ($rootArtifact -cne 'artifact-manifest.json') { Update-TestArtifactManifestHash $semanticAttempt $rootArtifact }
+                $result = Test-StructuredLogArtifactManifest -AttemptRoot $semanticAttempt
+                Assert-True (-not $result.valid) "$rootArtifact root mismatch is rejected"
+                Assert-True (@($result.errors) -ccontains "root-mismatch:$rootArtifact") "$rootArtifact reports cross-artifact root mismatch; errors=$($result.errors -join ',')"
+            }
         } finally { Remove-Item -LiteralPath $semanticRoot -Recurse -Force -ErrorAction SilentlyContinue }
 
         $validatorFailureRoot = New-TestRoot 'validator-failure'
@@ -880,7 +969,7 @@ function Invoke-ArtifactRendererCase {
                 @{schema_version='1';name=$name}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $validatorFailureContext.AttemptRoot $name)
             }
             Set-Content -LiteralPath $validatorFailureContext.ProvenancePath -Value '{"seq":1,"status":"passed"}'
-            @{root_trace_id='ifcready_failure'}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $validatorFailureContext.AttemptRoot 'bscheme-readiness.json')
+            New-TestCanonicalReadiness -RootTraceId 'ifcready_failure' | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $validatorFailureContext.AttemptRoot 'bscheme-readiness.json')
             Assert-Throws { Write-StructuredLogEvidenceArtifacts -Context $validatorFailureContext -ValidatorInvoker { return 7 } } 'validator failed|exit code 7' 'canonical validator failure is surfaced'
             $failedValidator = Get-Content -LiteralPath $validatorFailureContext.ProvenancePath | Select-Object -Last 1 | ConvertFrom-Json
             Assert-Equal 'runtime_validator' $failedValidator.phase 'validator failure phase'

@@ -710,42 +710,9 @@ function Invoke-StructuredLogSupportedSmoke {
             throw "supported smoke evidence is not valid JSON: $($_.Exception.Message)"
         }
 
-        $liveTiers = @($evidence.tiers | Where-Object { [string]$_.tier -ceq 'real_ifc_intake_conversion' })
-        if ($liveTiers.Count -ne 1) {
-            throw "supported smoke evidence must contain exactly one real_ifc_intake_conversion tier; found $($liveTiers.Count)"
-        }
-        $liveTier = $liveTiers[0]
-        if ([string]$liveTier.status -cne 'passed') {
-            throw "supported smoke real_ifc_intake_conversion status must be passed; observed '$([string]$liveTier.status)'"
-        }
-        if ([string]$evidence.context.execution_mode -cne 'production' -or [string]$liveTier.detail.execution_mode -cne 'production') {
-            throw 'supported smoke evidence must be production at both context and real_ifc_intake_conversion detail'
-        }
-
-        $rootTraceId = [string]$liveTier.detail.root_trace_id
-        $ifcReadyJobId = [string]$liveTier.ids.ifc_ready_job_id
-        $conversionJobId = [string]$liveTier.ids.conversion_job_id
-        $reviewSessionId = [string]$liveTier.detail.review_session_id
-        if ($rootTraceId -notmatch '^ifcready_[A-Za-z0-9_.-]+$') {
-            throw 'supported smoke evidence is missing a valid real_ifc_intake_conversion root_trace_id'
-        }
-        if ([string]::IsNullOrWhiteSpace($ifcReadyJobId) -or $rootTraceId -cne $ifcReadyJobId) {
-            throw 'supported smoke root_trace_id and ifc_ready_job_id must exist and be byte-identical'
-        }
-        if ([string]::IsNullOrWhiteSpace($conversionJobId) -or [string]::IsNullOrWhiteSpace($reviewSessionId)) {
-            throw 'supported smoke evidence requires non-empty conversion_job_id and review_session_id'
-        }
-        foreach ($property in @('root_trace_id', 'ifc_ready_job_id', 'conversion_job_id', 'review_session_id')) {
-            $values = @(Find-StructuredLogNamedValues -Value $evidence -NamePattern "^$property$" |
-                Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
-                ForEach-Object { [string]$_ } |
-                Select-Object -Unique)
-            if ($values.Count -ne 1) {
-                throw "supported smoke evidence must contain one unambiguous $property value; found $($values.Count)"
-            }
-        }
-        if ([string]$liveTier.detail.browser_status -cne 'passed' -or [string]$liveTier.detail.close_status -cne 'closed') {
-            throw 'supported smoke evidence requires browser_status=passed and close_status=closed'
+        $readiness = Test-StructuredLogReadinessEvidence -Evidence $evidence
+        if (-not $readiness.valid) {
+            throw "supported smoke evidence is invalid: $($readiness.errors -join ',')"
         }
         Write-StructuredLogProvenance -Context $Context -Phase 'supported_smoke' -Command 'scripts/smoke-bscheme-intake.ps1 (supported)' -Cwd $Context.RepoRoot -Status 'passed' -ExitCode $exitCode | Out-Null
     } catch {
@@ -878,6 +845,74 @@ function Find-StructuredLogNamedValues {
     return @($found | ForEach-Object { $_ })
 }
 
+function Test-StructuredLogReadinessEvidence {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] $Evidence)
+
+    $errors = [System.Collections.Generic.List[string]]::new()
+    function Get-ReadinessPathValue {
+        param($Object, [string[]] $Path)
+        $current = $Object
+        foreach ($name in $Path) {
+            if ($null -eq $current) { return $null }
+            if ($current -is [System.Collections.IDictionary]) {
+                if (-not $current.Contains($name)) { return $null }
+                $current = $current[$name]
+                continue
+            }
+            $property = $current.PSObject.Properties[$name]
+            if ($null -eq $property) { return $null }
+            $current = $property.Value
+        }
+        return $current
+    }
+
+    if ([string](Get-ReadinessPathValue $Evidence @('schema_version')) -cne 'demo-runtime-readiness-smoke/v1') {
+        $errors.Add('readiness:schema-version')
+    }
+    $tiersValue = Get-ReadinessPathValue $Evidence @('tiers')
+    $tiers = if ($null -eq $tiersValue) { @() } else { @($tiersValue) }
+    $liveTiers = @($tiers | Where-Object { [string](Get-ReadinessPathValue $_ @('tier')) -ceq 'real_ifc_intake_conversion' })
+    if ($liveTiers.Count -ne 1) { $errors.Add('readiness:live-tier-count') }
+    $liveTier = if ($liveTiers.Count -eq 1) { $liveTiers[0] } else { $null }
+
+    $rootTraceId = [string](Get-ReadinessPathValue $liveTier @('detail','root_trace_id'))
+    $ifcReadyJobId = [string](Get-ReadinessPathValue $liveTier @('ids','ifc_ready_job_id'))
+    $conversionJobId = [string](Get-ReadinessPathValue $liveTier @('ids','conversion_job_id'))
+    $reviewSessionId = [string](Get-ReadinessPathValue $liveTier @('detail','review_session_id'))
+    if ($null -ne $liveTier) {
+        if ([string](Get-ReadinessPathValue $liveTier @('status')) -cne 'passed') { $errors.Add('readiness:live-tier-status') }
+        if ([string](Get-ReadinessPathValue $Evidence @('context','execution_mode')) -cne 'production') { $errors.Add('readiness:context-execution-mode') }
+        if ([string](Get-ReadinessPathValue $liveTier @('detail','execution_mode')) -cne 'production') { $errors.Add('readiness:tier-execution-mode') }
+        if ($rootTraceId -cnotmatch '^ifcready_[A-Za-z0-9_.-]+$') { $errors.Add('readiness:root-trace-id') }
+        if ([string]::IsNullOrWhiteSpace($ifcReadyJobId) -or $rootTraceId -cne $ifcReadyJobId) { $errors.Add('readiness:ifc-ready-job-id') }
+        if ([string]::IsNullOrWhiteSpace($conversionJobId)) { $errors.Add('readiness:conversion-job-id') }
+        if ([string]::IsNullOrWhiteSpace($reviewSessionId)) { $errors.Add('readiness:review-session-id') }
+        if ([string](Get-ReadinessPathValue $liveTier @('detail','browser_status')) -cne 'passed') { $errors.Add('readiness:browser-status') }
+        if ([string](Get-ReadinessPathValue $liveTier @('detail','close_status')) -cne 'closed') { $errors.Add('readiness:close-status') }
+    }
+
+    foreach ($propertyName in @('root_trace_id','ifc_ready_job_id','conversion_job_id','review_session_id')) {
+        $distinct = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        foreach ($value in @(Find-StructuredLogNamedValues -Value $Evidence -NamePattern "^$propertyName$")) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$value)) { $distinct.Add([string]$value) | Out-Null }
+        }
+        if ($distinct.Count -ne 1) { $errors.Add("readiness:ambiguous-$propertyName") }
+    }
+
+    return [pscustomobject][ordered]@{
+        valid = $errors.Count -eq 0
+        errors = @($errors | ForEach-Object { $_ })
+        live_tier = $liveTier
+        root_trace_id = $rootTraceId
+        runtime_ids = [ordered]@{
+            ifc_ready_job_id = $ifcReadyJobId
+            conversion_job_id = $conversionJobId
+            review_session_id = $reviewSessionId
+        }
+    }
+}
+
 function Get-StructuredLogRequiredArtifactNames {
     return @(
         'attempt-manifest.json',
@@ -986,7 +1021,7 @@ function Test-StructuredLogArtifactManifest {
         'machine.json' = @('machine_name','os_version','pwsh_version','process_architecture')
         'fixture.json' = @('name','size_bytes','sha256','source_path','attempt_copy')
         'health.json' = @('probes')
-        'bscheme-readiness.json' = @('root_trace_id')
+        'bscheme-readiness.json' = @('context','tiers')
         'root-trace-timeline.json' = @('root_trace_id','records')
         'runtime-log-validation.json' = @('status','files','line_counts','event_counts','violations','redaction_violations')
         'shutdown.json' = @('attempt_id','status','entries','foreign_listeners')
@@ -1009,7 +1044,23 @@ function Test-StructuredLogArtifactManifest {
             if ([string]$probe.status -notin @('passed','failed')) { $errors.Add('status:health.json') }
         }
     }
-    if ($values.ContainsKey('bscheme-readiness.json') -and $null -ne $values['bscheme-readiness.json'].PSObject.Properties['status'] -and [string]$values['bscheme-readiness.json'].status -notin @('passed','failed','succeeded')) { $errors.Add('status:bscheme-readiness.json') }
+    if ($values.ContainsKey('bscheme-readiness.json')) {
+        try {
+            $readiness = Test-StructuredLogReadinessEvidence -Evidence $values['bscheme-readiness.json']
+            foreach ($readinessError in @($readiness.errors)) { $errors.Add([string]$readinessError) }
+            if ($readiness.valid) {
+                $expectedRootTraceId = [string]$readiness.root_trace_id
+                if ([string]$manifest.root_trace_id -cne $expectedRootTraceId) { $errors.Add('root-mismatch:artifact-manifest.json') }
+                foreach ($artifactName in @('attempt-manifest.json','root-trace-timeline.json','pr-fields.json')) {
+                    if (-not $values.ContainsKey($artifactName)) { continue }
+                    $rootProperty = $values[$artifactName].PSObject.Properties['root_trace_id']
+                    if ($null -eq $rootProperty -or [string]$rootProperty.Value -cne $expectedRootTraceId) { $errors.Add("root-mismatch:$artifactName") }
+                }
+            }
+        } catch {
+            $errors.Add('readiness:validation-exception')
+        }
+    }
     if ($values.ContainsKey('runtime-log-validation.json')) {
         $validation = $values['runtime-log-validation.json']
         if ([string]$validation.status -cne 'passed' -or @($validation.violations).Count -gt 0 -or @($validation.redaction_violations).Count -gt 0) { $errors.Add('status:runtime-log-validation.json') }
@@ -1053,11 +1104,15 @@ function Write-StructuredLogEvidenceArtifacts {
         if (-not (Test-Path -LiteralPath (Join-Path $Context.AttemptRoot $name) -PathType Leaf)) { throw "required evidence artifact missing: $name" }
     }
     $smoke = Get-Content -Raw -LiteralPath (Join-Path $Context.AttemptRoot 'bscheme-readiness.json') | ConvertFrom-Json
-    $rootTrace = @(Find-StructuredLogNamedValues -Value $smoke -NamePattern '^root_trace_id$' | Where-Object { [string]$_ -match '^ifcready_[A-Za-z0-9_.-]+$' } | Select-Object -First 1)
-    if ($rootTrace.Count -eq 0) { throw 'supported smoke evidence is missing a valid root_trace_id' }
-    $rootTraceId = [string]$rootTrace[0]
-    $runtimeIds = [ordered]@{}
-    foreach ($property in @('ifc_ready_job_id','conversion_job_id','review_session_id','runtime_id','kit_instance_id')) {
+    $readiness = Test-StructuredLogReadinessEvidence -Evidence $smoke
+    if (-not $readiness.valid) { throw "supported smoke evidence is invalid: $($readiness.errors -join ',')" }
+    $rootTraceId = [string]$readiness.root_trace_id
+    $runtimeIds = [ordered]@{
+        ifc_ready_job_id = @([string]$readiness.runtime_ids.ifc_ready_job_id)
+        conversion_job_id = @([string]$readiness.runtime_ids.conversion_job_id)
+        review_session_id = @([string]$readiness.runtime_ids.review_session_id)
+    }
+    foreach ($property in @('runtime_id','kit_instance_id')) {
         $values = @(Find-StructuredLogNamedValues -Value $smoke -NamePattern "^$property$" | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique)
         if ($values.Count -gt 0) { $runtimeIds[$property] = @($values | ForEach-Object {[string]$_}) }
     }
