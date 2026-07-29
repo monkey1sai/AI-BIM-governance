@@ -117,12 +117,65 @@ $cleanedSpawned = [System.Collections.Generic.List[object]]::new()
 Assert-Throws {
     Start-IsolatedBackend -Role 'governance' -WorkingDirectory $repoRoot -Executable 'python' -Arguments @('--version') `
         -Environment @{} -RunDirectory (Join-Path $repoRoot 'artifacts\test-spawn-cleanup') -Entrypoint 'app:app' `
-        -StartProcessFn { param($exe,$args,$cwd,$envMap,$stdout,$stderr) $script:spawned } `
+        -StartProcessFn { param($exe,$argumentList,$cwd,$envMap,$stdout,$stderr) $script:spawned } `
         -IdentityLookup { param($processId,$entrypoint) throw 'snapshot failed' } `
         -StopSpawnedProcessFn { param($spawnedProcess) $script:cleanedSpawned.Add($spawnedProcess) }
 } 'identity snapshot failure cleans the exact spawned process handle'
 Assert-Equal 1 $cleanedSpawned.Count 'snapshot failure cleans exactly one spawned process'
 Assert-True ([object]::ReferenceEquals($spawned, $cleanedSpawned[0])) 'snapshot failure cleans the spawned process object, not a rediscovered PID'
+
+$realProcessSandbox = New-TestSandbox -Prefix 'isolated-stack-real-process'
+$realIdentity = $null
+$failureCleanupHandles = [System.Collections.Generic.List[object]]::new()
+$bodyFailure = $null
+try {
+    $capturedFailure = $null
+    try {
+        $realIdentity = Start-IsolatedBackend -Role 'argument-forwarding' -WorkingDirectory $repoRoot `
+            -Executable (Get-Command pwsh -CommandType Application -ErrorAction Stop).Source `
+            -Arguments @('-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 30') `
+            -Environment @{} -RunDirectory $realProcessSandbox -Entrypoint 'Start-Sleep' `
+            -StopSpawnedProcessFn {
+                param($spawnedProcess)
+                $script:failureCleanupHandles.Add($spawnedProcess)
+                if ($null -ne $spawnedProcess -and -not $spawnedProcess.HasExited) {
+                    $spawnedProcess.Kill()
+                    $spawnedProcess.WaitForExit()
+                }
+            }
+    } catch {
+        $capturedFailure = $_
+    }
+
+    if ($null -ne $capturedFailure) {
+        Assert-True ($capturedFailure.Exception.Message -match [regex]::Escape('command line does not contain exact entrypoint Start-Sleep')) 'broken argument forwarding fails at the real identity entrypoint check'
+        Assert-Equal 1 $failureCleanupHandles.Count 'broken argument forwarding cleans exactly the spawned process handle'
+        Assert-True $failureCleanupHandles[0].HasExited 'broken argument forwarding leaves the exact spawned process handle exited'
+        throw $capturedFailure
+    }
+
+    Assert-Equal 'Start-Sleep' $realIdentity.entrypoint 'real process identity preserves expected entrypoint'
+    Assert-True ($realIdentity.command_line -match [regex]::Escape('Start-Sleep -Seconds 30')) 'real process command line receives Start-IsolatedBackend arguments'
+} catch {
+    $bodyFailure = $_
+    throw
+}
+finally {
+    try {
+        if ($null -ne $realIdentity) {
+            $cleanupProcess = Get-Process -Id ([int]$realIdentity.pid) -ErrorAction Stop
+            $cleanupIdentity = Get-IsolatedProcessIdentity -ProcessId ([int]$realIdentity.pid) -Entrypoint 'Start-Sleep'
+            Assert-True (Test-IsolatedProcessOwnership -Expected $realIdentity -Actual $cleanupIdentity) 'cleanup revalidates exact creation identity and command line before stopping the returned process'
+            $cleanupProcess.Kill()
+            $cleanupProcess.WaitForExit()
+            Assert-True $cleanupProcess.HasExited 'successful argument-forwarding test stops its exact revalidated process handle'
+        }
+    } catch {
+        if ($null -eq $bodyFailure) { throw }
+    } finally {
+        Remove-TestSandbox -Path $realProcessSandbox
+    }
+}
 
 $sandbox = New-TestSandbox -Prefix 'isolated-stack-collision'
 try {

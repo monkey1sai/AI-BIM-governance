@@ -136,8 +136,8 @@ function Start-IsolatedBackend {
         [string[]] $Arguments, [hashtable] $Environment, [string] $RunDirectory,
         [string] $Entrypoint,
         [scriptblock] $StartProcessFn = {
-            param($exe,$args,$cwd,$envMap,$stdout,$stderr)
-            Start-Process -FilePath $exe -ArgumentList $args -WorkingDirectory $cwd `
+            param($exe,$argumentList,$cwd,$envMap,$stdout,$stderr)
+            Start-Process -FilePath $exe -ArgumentList $argumentList -WorkingDirectory $cwd `
               -Environment $envMap -WindowStyle Hidden -PassThru `
               -RedirectStandardOutput $stdout -RedirectStandardError $stderr
         },
