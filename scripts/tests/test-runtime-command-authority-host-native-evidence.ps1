@@ -9,11 +9,15 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $runnerPath = Join-Path $repoRoot 'scripts\dev\run-runtime-command-authority-host-native-evidence.ps1'
 $e2ePath = Join-Path $repoRoot 'web-viewer-sample\e2e\runtime-command-authority-host-native.spec.ts'
+$playwrightConfigPath = Join-Path $repoRoot 'web-viewer-sample\playwright.config.ts'
 
 Assert-True (Test-Path -LiteralPath $runnerPath -PathType Leaf) 'host-native authority evidence runner exists'
+Assert-True (Test-Path -LiteralPath $playwrightConfigPath -PathType Leaf) 'Playwright config exists'
 
 $runner = Get-Content -LiteralPath $runnerPath -Raw
 $e2e = Get-Content -LiteralPath $e2ePath -Raw
+$playwrightConfig = Get-Content -LiteralPath $playwrightConfigPath -Raw
+$browserLaunchSurface = "$playwrightConfig`n$e2e"
 
 Assert-True ($runner -match [regex]::Escape("D:\Users\deploy\AI-bim-geo")) 'runner pins canonical test deployment root'
 Assert-True ($runner -match [regex]::Escape("D:\Users\deploy\AI-bim-geo-data")) 'runner pins canonical deployment data root'
@@ -70,6 +74,10 @@ Assert-True ($e2e -match [regex]::Escape('flag: "wx"')) 'E2E will not overwrite 
 Assert-True ($e2e -match [regex]::Escape('control_nonce: controlNonce')) 'E2E binds all emitted control markers to the per-run nonce'
 Assert-True ($e2e -match [regex]::Escape('serialized.includes(secret)).toBe(false)')) 'secret guard asserts a boolean rather than echoing bearer text'
 Assert-True (-not ($e2e -match [regex]::Escape('not.toContain(secret)'))) 'secret guard never prints bearer text through matcher diagnostics'
+Assert-True ($e2e -match [regex]::Escape('ignoreDefaultArgs: [playwrightDisableFeaturesArg]')) 'E2E replaces the pinned Playwright disable-features switch instead of overriding it accidentally'
+Assert-True ($e2e -match [regex]::Escape('...playwrightChromiumDisabledFeatures') -and $e2e -match [regex]::Escape('"LocalNetworkAccessChecksWebSockets"')) 'E2E preserves Playwright disabled features while adding the WebSocket LNA gate'
+Assert-True ($e2e -match [regex]::Escape('LocalNetworkAccessChecksWebSockets')) 'E2E disables only the headless Chromium WebSocket LNA gate'
+Assert-True (-not ($browserLaunchSurface -match '(?<![A-Za-z0-9_])LocalNetworkAccessChecks(?!WebSockets|[A-Za-z0-9_])')) 'E2E and inherited Playwright config do not disable the broader Chromium LNA parent gate'
 $expiryWaitIndex = $e2e.IndexOf('await page.waitForTimeout(expiryWaitMs)')
 $primaryLeaseIndex = $e2e.IndexOf('const primary = await createSession')
 $wrongSessionLeaseIndex = $e2e.IndexOf('const wrongSession = await createSession')

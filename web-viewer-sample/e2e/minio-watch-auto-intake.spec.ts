@@ -8,7 +8,7 @@ import { test, expect, request as pwRequest } from "@playwright/test";
 
 // minio-watch-auto-intake（spec 2026-06-12，O4 觸發機制 B 案）：user-facing vertical slice。
 // MINIO_WATCH_ENABLED=true 的真 coordinator + 本機 fake S3 stub（ListObjectsV2 XML）+ stub conversion。
-// stub 注入新物件 → watcher 自動 intake（不碰任何按鈕）→ #/conv 出現 job + watcher Panel triggered≥1。
+// stub 注入新物件 → watcher 自動 intake（不碰任何按鈕）→ #/minio 出現 job + watcher Panel triggered≥1。
 //
 // *** 誠實標記：STUB MINIO + STUB CONVERSION API ***
 //   真 MinIO（192.168.20.234:9000）需唯讀 credentials（使用者提供入 env，屬 P7 部署區驗證）；
@@ -171,6 +171,9 @@ test.describe("MinIO watcher 自動 intake（STUB MINIO + STUB CONVERSION）", (
       SESSION_STORE_DIR: path.join(tmpRoot, "sessions"),
       EVENT_LOG_DIR: path.join(tmpRoot, "events"),
       CALLBACK_OUTBOX_STORE_PATH: path.join(tmpRoot, "callback-outbox.json"),
+      // §3.4 auto-enroll 後 watcher 以「持久 ledger」去重；不掛 tmp ledger 會吃到 repo 預設
+      // data/conversion-ledger.json 的舊帳 → 觸發被 skip 的假失敗。必須 attempt-local。
+      CONVERSION_LEDGER_STORE_PATH: path.join(tmpRoot, "conversion-ledger.json"),
       STORAGE_ROOT: path.join(tmpRoot, "storage"),
       LOG_ROOT: path.join(tmpRoot, "logs"),
       // watcher opt-in：指向本機 fake S3 stub、interval 調短。
@@ -217,10 +220,11 @@ test.describe("MinIO watcher 自動 intake（STUB MINIO + STUB CONVERSION）", (
     if (tmpRoot && fs.existsSync(tmpRoot)) fs.rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  test("stub 注入新物件 → watcher 自動 intake → #/conv 出現 job + Panel triggered≥1（不碰按鈕）", async ({ page }) => {
+  test("stub 注入新物件 → watcher 自動 intake → #/minio 出現 job + Panel triggered≥1（不碰按鈕）", async ({ page }) => {
     const api = await pwRequest.newContext();
     try {
-      // 1) 等 watcher baseline 完成（baseline_count=1，base 物件登 seen 不觸發）。
+      // 1) 等 watcher 首輪完成（baseline_count=1 為純診斷值；§3.4 auto-enroll 下 base 物件因
+      //    ledger 無紀錄「會」被觸發補轉——非舊「登 seen 不觸發」模型，該模型已隨持久 ledger 去重退役）。
       await expect.poll(async () => {
         const r = await api.get(`${coordinatorBase}/api/external/minio-watch/status`);
         return (await r.json()).baseline_count;
@@ -240,32 +244,25 @@ test.describe("MinIO watcher 自動 intake（STUB MINIO + STUB CONVERSION）", (
         return (await r.json()).triggered_total;
       }, { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
 
-      // 4) 前端：開 #/conv（coordinator 同源 /ui）。仍不碰按鈕——但 ConversionSchedulingPage useEffect
-      //    首掛載即自動 load（listIfcReady + minioWatchStatus），故 reload 後資料自動出現。
-      await page.goto(`${coordinatorBase}/ui#/conv`);
+      // 4) 前端：開 #/minio（#303/#304 IA 合併後 watcher/佇列面板在 ModelDataPage 的
+      //    GlobalConversionPane，#/conv 只剩轉檔歷史）。仍不碰任何觸發按鈕——頁面首掛載即自動 load。
+      await page.goto(`${coordinatorBase}/ui#/minio`);
 
       // 5) MinIO 自動偵測 Panel：啟用中 + triggered≥1（UI 直接斷言，不只後端對帳）。
       const panel = page.getByTestId("minio-watch-panel");
       await expect(panel).toBeVisible({ timeout: 20_000 });
       await expect(panel).toContainText("啟用中", { timeout: 20_000 });
-      // pages.tsx:336 把 triggered 渲染進「baseline / seen / 觸發 / 跳過」Field 的 .ec-v
-      //（格式 `${baseline} / ${seen} / ${triggered} / ${skipped}`）。後端步驟 3 已確認 triggered_total≥1，
-      //   故此值在 page.goto 後確定性渲染。鎖該 Field 的值欄、斷言第 3 槽（觸發）為非零整數，
-      //   讓「Panel triggered≥1」由 UI 層直接驗證，而非僅 backend API 對帳。
-      const triggeredField = panel
-        .locator(".ec-field", { hasText: "baseline / seen / 觸發 / 跳過" })
-        .locator(".ec-v");
-      await expect(triggeredField).toBeVisible({ timeout: 20_000 });
-      // .ec-v 內容為 `${baseline} / ${seen} / ${triggered} / ${skipped}` + 空白 + ProvTag 文字（如「已實作」），
-      //   故用 containText + 不錨末尾的 regex：第 3 槽（觸發）= [1-9]\d*（非零）。
-      await expect(triggeredField).toContainText(/\d+\s*\/\s*\d+\s*\/\s*[1-9]\d*\s*\/\s*\d+/);
+      // #303 後舊「baseline / seen / 觸發 / 跳過」四合一 Field 已拆分為獨立 testid 欄位，
+      // 位於 <details data-testid="md-pipeline-details"> 內：先展開再斷言 triggered 為非零整數，
+      // 讓「Panel triggered≥1」由 UI 層直接驗證，而非僅 backend API 對帳。
+      await page.getByTestId("md-pipeline-details").locator("summary").click();
+      await expect(page.getByTestId("conv-triggered-total")).toHaveText(/^[1-9]\d*$/, { timeout: 20_000 });
 
-      // 6) Ifc-ready jobs 表：988 的 job 自動出現（watcher 建立，非手動註冊）。
-      //    須 scope 到「Ifc-ready jobs」Panel——另有 MinIO 自動偵測 triggered 表的列文字含
+      // 6) Ifc-ready jobs 表（#/minio GlobalConversionPane）：988 的 job 自動出現（watcher 建立，
+      //    非手動註冊）。須 scope 到「Ifc-ready jobs」Panel——展開的 MinIO 診斷 triggered 表列文字含
       //    `988/main/auto/model.ifc`（子字串也含 "988"），已限定 Panel 排除該表。
-      //    task#3 後 project 欄改渲「project_display_name · category」＝「988 · main」
-      //    （key 988/main/auto/model.ifc 推導 projectDisplayName="988"、category="main"），
-      //    故 row-id 由 /^988$/ 改為錨定開頭的 /^988\b/（避開分隔符字元編碼；Panel 內僅 project 欄以 988 起頭）。
+      //    project 欄渲染「project_display_name · category」＝「988 · main」，row-id 用錨定開頭的
+      //    /^988\b/。表頭欄序 job/key/lifecycle/project/usdc/conversion/…，conversion 欄仍為 nth(5)。
       const ifcReadyPanel = page.locator("section.ec-panel", { hasText: "Ifc-ready jobs" });
       const row988 = ifcReadyPanel
         .locator("table.ec-table tbody tr")
