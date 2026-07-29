@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "semantic-validation-results.schema.json",
+  "title": "Base-controlled semantic artifact validation results v1",
+  "type": "object",
+  "required": ["schema_version", "subject_sha", "validators"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "semantic-validation-results/v1" },
+    "subject_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "validators": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "required": ["target_id", "validator", "result"],
+        "additionalProperties": false,
+        "properties": {
+          "target_id": { "type": "string", "enum": ["functional-runtime-conv", "design-semantic-visual"] },
+          "validator": { "type": "string", "enum": ["functional-runtime-result/v1", "design-system-visual-result/v2"] },
+          "result": { "const": "passed" }
+        }
+      }
+    }
+  }
+}

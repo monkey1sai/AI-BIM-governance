@@ -1,0 +1,253 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "task-packet.schema.json",
+  "title": "Task packet or golden corpus v2",
+  "oneOf": [
+    {"$ref": "#/definitions/task_packet"},
+    {"$ref": "#/definitions/corpus"}
+  ],
+  "definitions": {
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$"},
+    "task_packet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "id", "lane", "scope", "owner", "worktree_required", "authorization_requirement", "max_agents", "read_set", "read_set_max", "required_evidence", "required_gates", "allowed_agents", "forbidden_actions", "escalation"],
+      "properties": {
+        "schema_version": {"const": "task-packet/v2"},
+        "id": {"$ref": "#/definitions/id"},
+        "lane": {"enum": ["F", "B", "G", "S"]},
+        "scope": {"enum": ["docs_or_text", "single_assertion", "single_service_internal", "single_service_non_symbol", "cross_service", "public_contract", "user_workflow", "runtime_or_deploy", "security_or_permission", "explicit_spec"]},
+        "owner": {"const": "coordinator"},
+        "worktree_required": {"type": "boolean"},
+        "authorization_requirement": {"enum": ["none", "external_explicit_user_instruction"]},
+        "max_agents": {"type": "integer", "minimum": 1, "maximum": 3},
+        "read_set": {"$ref": "#/definitions/read_set"},
+        "read_set_max": {"type": "integer", "minimum": 1, "maximum": 8},
+        "required_evidence": {"$ref": "#/definitions/evidence"},
+        "required_gates": {"$ref": "#/definitions/gates"},
+        "allowed_agents": {"$ref": "#/definitions/agents"},
+        "forbidden_actions": {"$ref": "#/definitions/forbidden_actions"},
+        "escalation": {"enum": ["scope_expansion", "high_impact", "critical_or_authority"]}
+      },
+      "allOf": [
+        {
+          "properties": {
+            "allowed_agents": {"items": [{"const": "coordinator"}]},
+            "forbidden_actions": {
+              "allOf": [
+                {"contains": {"const": "parallel_writers"}},
+                {"contains": {"const": "implicit_superpowers"}},
+                {"contains": {"const": "unapproved_ship_or_merge"}},
+                {"contains": {"const": "unapproved_production_change"}},
+                {"contains": {"const": "unapproved_destructive_action"}},
+                {"contains": {"const": "unapproved_cross_repo_access"}},
+                {"contains": {"const": "unapproved_reindex"}}
+              ]
+            }
+          }
+        },
+        {
+          "if": {"properties": {"lane": {"const": "F"}}},
+          "then": {
+            "properties": {
+              "scope": {"enum": ["docs_or_text", "single_assertion", "single_service_internal"]},
+              "worktree_required": {"const": false}, "authorization_requirement": {"const": "none"},
+              "max_agents": {"const": 1}, "read_set_max": {"const": 4}, "read_set": {"maxItems": 4},
+              "required_evidence": {"contains": {"const": "test_result"}},
+              "required_gates": {"minItems": 1, "maxItems": 1, "contains": {"const": "targeted"}},
+              "allowed_agents": {"minItems": 1, "maxItems": 1, "items": {"const": "coordinator"}},
+              "escalation": {"const": "scope_expansion"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"lane": {"const": "B"}}},
+          "then": {
+            "properties": {
+              "scope": {"enum": ["single_service_internal", "single_service_non_symbol"]},
+              "worktree_required": {"const": false}, "authorization_requirement": {"const": "none"},
+              "max_agents": {"const": 2}, "read_set_max": {"const": 6}, "read_set": {"maxItems": 6},
+              "required_evidence": {"contains": {"const": "test_result"}},
+              "required_gates": {"contains": {"const": "affected"}},
+              "allowed_agents": {"minItems": 2, "maxItems": 2, "items": {"enum": ["coordinator", "debugger", "reviewer"]}},
+              "escalation": {"const": "high_impact"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"lane": {"const": "B"}, "scope": {"const": "single_service_internal"}}},
+          "then": {
+            "properties": {
+              "required_evidence": {"contains": {"const": "impact_result"}},
+              "required_gates": {"contains": {"const": "impact"}},
+              "read_set": {
+                "allOf": [
+                  {"contains": {"const": "docs/agents/gitnexus-usage.md"}},
+                  {"contains": {"const": "docs/agents/sub-repo-verify-commands.md"}}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"lane": {"const": "B"}, "scope": {"const": "single_service_non_symbol"}}},
+          "then": {
+            "properties": {
+              "required_evidence": {"minItems": 1, "maxItems": 1, "contains": {"const": "test_result"}},
+              "required_gates": {"minItems": 1, "maxItems": 1, "contains": {"const": "affected"}}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"lane": {"const": "G"}}},
+          "then": {
+            "properties": {
+              "scope": {"enum": ["cross_service", "public_contract", "user_workflow", "runtime_or_deploy", "security_or_permission"]},
+              "worktree_required": {"const": true}, "authorization_requirement": {"const": "none"},
+              "max_agents": {"const": 3}, "read_set_max": {"const": 8},
+              "required_evidence": {
+                "allOf": [
+                  {"contains": {"const": "test_result"}}, {"contains": {"const": "impact_result"}},
+                  {"contains": {"const": "integration_result"}}
+                ]
+              },
+              "required_gates": {
+                "allOf": [
+                  {"contains": {"const": "affected"}}, {"contains": {"const": "impact"}},
+                  {"contains": {"const": "detect_changes"}}, {"contains": {"const": "integration"}},
+                  {"contains": {"const": "pr_local_preflight"}}
+                ]
+              },
+              "read_set": {
+                "allOf": [
+                  {"contains": {"const": "docs/agents/gitnexus-usage.md"}},
+                  {"contains": {"const": "docs/agents/sub-repo-verify-commands.md"}}
+                ]
+              },
+              "allowed_agents": {"minItems": 3, "maxItems": 3},
+              "escalation": {"const": "critical_or_authority"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"lane": {"const": "G"}, "scope": {"const": "user_workflow"}}},
+          "then": {"properties": {
+            "required_evidence": {"contains": {"const": "browser_artifacts"}},
+            "required_gates": {"contains": {"const": "browser_e2e"}}
+          }}
+        },
+        {
+          "if": {"properties": {"lane": {"const": "G"}, "scope": {"const": "runtime_or_deploy"}}},
+          "then": {"properties": {
+            "required_evidence": {"contains": {"const": "runtime_log"}},
+            "required_gates": {"contains": {"const": "runtime_evidence"}}
+          }}
+        },
+        {
+          "if": {"properties": {"lane": {"const": "G"}, "scope": {"const": "security_or_permission"}}},
+          "then": {"properties": {
+            "required_evidence": {"contains": {"const": "security_review"}},
+            "required_gates": {"contains": {"const": "security_review"}},
+            "allowed_agents": {"contains": {"const": "security_auditor"}}
+          }}
+        },
+        {
+          "if": {"properties": {"lane": {"const": "S"}}},
+          "then": {
+            "properties": {
+              "scope": {"const": "explicit_spec"}, "worktree_required": {"const": true}, "authorization_requirement": {"const": "external_explicit_user_instruction"},
+              "max_agents": {"const": 3}, "read_set_max": {"const": 8},
+              "required_evidence": {"contains": {"const": "p0_p7_evidence"}},
+              "required_gates": {"contains": {"const": "p0_p7"}},
+              "read_set": {
+                "allOf": [
+                  {"contains": {"const": "task:approved_spec"}},
+                  {"contains": {"const": "docs/agents/superpowers-invocation-policy.md"}}
+                ]
+              },
+              "allowed_agents": {"minItems": 3, "maxItems": 3},
+              "escalation": {"const": "critical_or_authority"}
+            }
+          }
+        }
+      ]
+    },
+    "corpus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "tasks", "routing_guards"],
+      "properties": {
+        "schema_version": {"const": "task-packet-corpus/v2"},
+        "tasks": {
+          "type": "array", "minItems": 12, "maxItems": 20, "items": {"$ref": "#/definitions/task_packet"},
+          "allOf": [
+            {"contains": {"properties": {"lane": {"const": "F"}}}},
+            {"contains": {"properties": {"lane": {"const": "B"}}}},
+            {"contains": {"properties": {"lane": {"const": "G"}}}},
+            {"contains": {"properties": {"lane": {"const": "S"}}}}
+          ]
+        },
+        "routing_guards": {
+          "type": "array", "minItems": 11, "maxItems": 11, "items": {"$ref": "#/definitions/routing_guard"},
+          "allOf": [
+            {"contains": {"properties": {"signal": {"const": "ordinary_completion_word"}}}},
+            {"contains": {"properties": {"signal": {"const": "docs_only"}}}},
+            {"contains": {"properties": {"signal": {"const": "test_only"}}}},
+            {"contains": {"properties": {"signal": {"const": "implicit_skill"}}}},
+            {"contains": {"properties": {"signal": {"const": "active_governance"}}}},
+            {"contains": {"properties": {"signal": {"const": "public_contract_delete"}}}},
+            {"contains": {"properties": {"signal": {"const": "deploy_policy"}}}},
+            {"contains": {"properties": {"signal": {"const": "permission_boundary"}}}},
+            {"contains": {"properties": {"signal": {"const": "user_workflow"}}}},
+            {"contains": {"properties": {"signal": {"const": "real_fixture_workflow"}}}},
+            {"contains": {"properties": {"signal": {"const": "explicit_spec_request"}}}}
+          ]
+        }
+      }
+    },
+    "routing_guard": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "signal", "assertion", "expected_minimum_lane", "external_lane_s_authorization_required"],
+      "properties": {
+        "id": {"$ref": "#/definitions/id"},
+        "signal": {"type": "string"},
+        "assertion": {"type": "string"},
+        "expected_minimum_lane": {"enum": ["F", "G", "S"]},
+        "external_lane_s_authorization_required": {"type": "boolean"}
+      },
+      "oneOf": [
+        {"properties": {"signal": {"const": "ordinary_completion_word"}, "assertion": {"const": "must_not_trigger_lane_s"}, "expected_minimum_lane": {"const": "F"}, "external_lane_s_authorization_required": {"const": false}}},
+        {"properties": {"signal": {"const": "docs_only"}, "assertion": {"const": "must_not_trigger_superpowers"}, "expected_minimum_lane": {"const": "F"}, "external_lane_s_authorization_required": {"const": false}}},
+        {"properties": {"signal": {"const": "test_only"}, "assertion": {"const": "must_not_require_spec"}, "expected_minimum_lane": {"const": "F"}, "external_lane_s_authorization_required": {"const": false}}},
+        {"properties": {"signal": {"const": "implicit_skill"}, "assertion": {"const": "must_remain_disabled"}, "expected_minimum_lane": {"const": "F"}, "external_lane_s_authorization_required": {"const": false}}},
+        {"properties": {"signal": {"const": "active_governance"}, "assertion": {"const": "must_not_pin_model"}, "expected_minimum_lane": {"const": "F"}, "external_lane_s_authorization_required": {"const": false}}},
+        {"properties": {"signal": {"const": "public_contract_delete"}, "assertion": {"const": "minimum_lane_g"}, "expected_minimum_lane": {"const": "G"}, "external_lane_s_authorization_required": {"const": false}}},
+        {"properties": {"signal": {"const": "deploy_policy"}, "assertion": {"const": "minimum_lane_g"}, "expected_minimum_lane": {"const": "G"}, "external_lane_s_authorization_required": {"const": false}}},
+        {"properties": {"signal": {"const": "permission_boundary"}, "assertion": {"const": "minimum_lane_g"}, "expected_minimum_lane": {"const": "G"}, "external_lane_s_authorization_required": {"const": false}}},
+        {"properties": {"signal": {"const": "user_workflow"}, "assertion": {"const": "requires_browser_e2e"}, "expected_minimum_lane": {"const": "G"}, "external_lane_s_authorization_required": {"const": false}}},
+        {"properties": {"signal": {"const": "real_fixture_workflow"}, "assertion": {"const": "requires_real_runtime_fixture"}, "expected_minimum_lane": {"const": "G"}, "external_lane_s_authorization_required": {"const": false}}},
+        {"properties": {"signal": {"const": "explicit_spec_request"}, "assertion": {"const": "requires_external_lane_s_authorization"}, "expected_minimum_lane": {"const": "S"}, "external_lane_s_authorization_required": {"const": true}}}
+      ]
+    },
+    "read_set": {
+      "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true,
+      "items": {"enum": ["AGENTS.md", "nearest:AGENTS.md", "task:target_source", "task:affected_tests", "task:service_contract", "task:approved_spec", "docs/agents/gitnexus-usage.md", "docs/agents/sub-repo-verify-commands.md", "docs/agents/product-operability-and-script-contract.md", "docs/agents/superpowers-invocation-policy.md", "docs/agents/github-workflow.md", "docs/plans/docs-plans-README.md", "scripts/verification-manifest.json"]}
+    },
+    "evidence": {
+      "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true,
+      "items": {"enum": ["test_result", "impact_result", "contract_result", "integration_result", "browser_artifacts", "runtime_log", "security_review", "p0_p7_evidence"]}
+    },
+    "gates": {
+      "type": "array", "minItems": 1, "maxItems": 10, "uniqueItems": true,
+      "items": {"enum": ["targeted", "affected", "impact", "detect_changes", "integration", "browser_e2e", "runtime_evidence", "security_review", "pr_local_preflight", "p0_p7"]}
+    },
+    "agents": {
+      "type": "array", "minItems": 1, "maxItems": 5, "uniqueItems": true,
+      "items": {"enum": ["coordinator", "debugger", "explorer", "reviewer", "security_auditor"]}
+    },
+    "forbidden_actions": {
+      "type": "array", "minItems": 1, "maxItems": 7, "uniqueItems": true,
+      "items": {"enum": ["parallel_writers", "implicit_superpowers", "unapproved_ship_or_merge", "unapproved_production_change", "unapproved_destructive_action", "unapproved_cross_repo_access", "unapproved_reindex"]}
+    }
+  }
+}

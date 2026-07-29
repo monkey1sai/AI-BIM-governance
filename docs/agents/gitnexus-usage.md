@@ -1,6 +1,6 @@
 > Loaded lazily by AGENTS.md / CLAUDE.md。Source-of-truth: AGENTS.md。
 >
-> 何時讀本檔：GitNexus index stale 需重建、LadybugDB crash 復原、查 re-index 授權邊界時。
+> 何時讀本檔：開工前檢查 GitNexus/worktree health、index stale 需重建、LadybugDB crash 復原、查 re-index 授權邊界時。
 
 # GitNexus Usage（stale 重建與復原）
 
@@ -10,12 +10,24 @@ GitNexus 規則本文（Always Do / Never Do / Resources / CLI skill 對應表�
 
 Lane-aware 核心規則：F 不強制 impact；B 對 task/主要 entry symbol 跑一次 batch impact，且只在實際改到 code symbol/flow 時跑 detect_changes；G/S 對 shared/exported symbol 改前跑 impact、commit 前跑 detect_changes。HIGH 明確回報補強策略後可繼續；CRITICAL 需 reviewer/user sign-off。
 
+## Read-only health report
+
+從目前 worktree root 執行：
+
+```powershell
+node scripts/dev/report-gitnexus-worktree-health.mjs --format json
+```
+
+它只讀 Git、`git worktree list` 與 agent board，不讀或修改 repo 外 GitNexus registry/index，也不 fetch、reindex 或清 worktree。沒有 exact-path GitNexus observation 時，linked worktree 的 `current_checkout_trust` 必須是 `unknown`；不得借用另一個 checkout 的 index。exit code：`0=healthy`、`1=warning`、`2=unknown/unhealthy`。
+
+已由當輪明確授權的 GitNexus collector 可將 bounded JSON object 以 `--gitnexus-observation <path>` 注入；格式須符合 `gitnexus-worktree-health-observation.schema.json` 的 `gitnexus` 欄位。完整離線 fixture/診斷則用 `--observation <path>`。兩種模式都只產生 report，不執行 maintenance。
+
 ## GitNexus unavailable gate
 
 GitNexus 是 Lane B/G/S code-symbol impact / detect_changes 的權威 gate；不可因為工具慢或不方便就把 required 結果寫成 pass。只有以下情境可進 unavailable gate：
 
 1. GitNexus MCP / CLI 明確 unavailable、index stale 且重建失敗、registry 找不到 repo、或 linked worktree staged diff 已知失真。
-2. 已從 repo root 嘗試一次最小修復或確認：`node .gitnexus/run.cjs status` / `analyze`（無 run.cjs 時用 `npx gitnexus analyze`），並記錄失敗摘要。
+2. 已從 repo root 跑 read-only health report；若當輪另有權限，可再跑既有 local runner 的 `status`。沒有 current-turn 明確授權時不得以 `analyze`、`npx` 安裝或 reindex 當成「最小修復」。
 3. 本輪只用 raw source、tests、`git diff --name-only --cached` / `git diff` 當 advisory evidence；不得把這些包裝成 GitNexus passed。
 
 Unavailable gate 的決策：
@@ -27,7 +39,7 @@ Unavailable gate 的決策：
 
 ## 本 repo 的 stale 處理
 
-若 GitNexus index stale，但 re-index 需要匯出或重新分析私有 repo，需遵守當前工具權限與使用者授權；不可自動 export sensitive code。重 index 流程：
+若 GitNexus index stale，但 re-index 需要匯出或重新分析私有 repo，需遵守當前工具權限與使用者授權；不可自動 export sensitive code。下列命令屬於**另案 maintenance**，只有 current-turn 明確授權 exact target、backup/rollback 與驗證方法後才可執行：
 
 ```powershell
 node .gitnexus/run.cjs analyze   # 自動選 runner；無 run.cjs 時 npx gitnexus analyze（npm 11 crash → npm i -g gitnexus）

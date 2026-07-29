@@ -154,6 +154,8 @@ try {
         param($candidate)
         $candidate.workspace_clean = $false
     }
+    Assert-Rejected -ExpectedPattern 'clean subject commit' -Mutation { param($candidate) $candidate.workspace_clean = 'false' }
+    Assert-Rejected -ExpectedPattern 'semantic state' -Mutation { param($candidate) $candidate.screens[0].semantic_states.failure = 'false' }
     Assert-Rejected -ExpectedPattern 'current manifest SHA-256' -Mutation {
         param($candidate)
         $candidate.manifest_sha256 = ('0' * 64)

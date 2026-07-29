@@ -1,0 +1,27 @@
+{
+  "schema_version": "ai-coding-telemetry-observation/v1",
+  "authority": "telemetry_only",
+  "observed_at": "2026-07-29T12:00:00.000Z",
+  "subject_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "plan_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "ref_class": "pull_request",
+  "package_id": "root-governance",
+  "environment_class": "github-hosted-windows",
+  "toolchain_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "retry_of_sha256": null,
+  "records": [
+    {
+      "gate_id": "agent-governance-tests",
+      "test_id": "governance-contracts",
+      "attempt": 1,
+      "retry_of": null,
+      "duration_ms": 1250,
+      "timeout_ms": 30000,
+      "result": "passed",
+      "exit_code": 0,
+      "trace_sha256": null,
+      "trace_size_bytes": null
+    }
+  ]
+}

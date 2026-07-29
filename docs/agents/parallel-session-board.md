@@ -15,7 +15,7 @@
 ## 通用契約(所有 CLI 一體適用)
 
 1. **開工註冊**:session 開始時執行 `node scripts/dev/agents-board.mjs register --agent <claude|codex|grok> [--task "一句話任務"]`。指令會回印 `session=<id>`,同一 session 後續指令沿用該 id(或設 `AGENTS_BOARD_SESSION` 環境變數)。
-2. **動工前查看板**:開始編輯檔案前執行 `node scripts/dev/agents-board.mjs status`,確認不與其他 active session 的 branch/檔案相撞;會撞就先協調(換 worktree/branch 或等待),遵循 Lane 規則。
+2. **動工前查看板**:開始編輯檔案前執行 `node scripts/dev/agents-board.mjs status`,確認不與其他 active session 的 branch/檔案相撞;會撞就先協調(換 worktree/branch 或等待),遵循 Lane 規則。診斷器只需 snapshot 時必須加 `--no-prune`，避免讀取動作清除 retention 到期的 session。
 3. **任務切換即更新**:`node scripts/dev/agents-board.mjs update --agent <cli> --session <id> --task "新任務"`。
 4. **收工標記**:`node scripts/dev/agents-board.mjs done --agent <cli> --session <id>`。
 5. 看板寫入失敗不得阻斷開發工作;它是 best-effort 感知層,不是 gate。

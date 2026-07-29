@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ai-coding-telemetry-observation.schema.json",
+  "title": "AI coding telemetry observation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "authority", "observed_at", "subject_sha", "plan_sha256", "manifest_sha256", "ref_class", "package_id", "environment_class", "toolchain_sha256", "retry_of_sha256", "records"],
+  "properties": {
+    "schema_version": { "const": "ai-coding-telemetry-observation/v1" },
+    "authority": { "const": "telemetry_only" },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "subject_sha": { "$ref": "#/definitions/sha" },
+    "plan_sha256": { "$ref": "#/definitions/sha256" },
+    "manifest_sha256": { "$ref": "#/definitions/sha256" },
+    "ref_class": { "type": "string", "enum": ["pull_request", "main", "manual"] },
+    "package_id": { "$ref": "#/definitions/id" },
+    "environment_class": { "type": "string", "enum": ["github-hosted-windows", "local-windows", "host-native-windows"] },
+    "toolchain_sha256": { "$ref": "#/definitions/sha256" },
+    "retry_of_sha256": { "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/sha256" }] },
+    "records": { "type": "array", "minItems": 1, "maxItems": 500, "items": { "$ref": "#/definitions/record" } }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "records": { "contains": { "properties": { "attempt": { "const": 2 } }, "required": ["attempt"] } } } },
+      "then": { "properties": { "retry_of_sha256": { "$ref": "#/definitions/sha256" } } },
+      "else": { "properties": { "retry_of_sha256": { "type": "null" } } }
+    }
+  ],
+  "definitions": {
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "record": {
+      "type": "object", "additionalProperties": false,
+      "required": ["gate_id", "test_id", "attempt", "retry_of", "duration_ms", "timeout_ms", "result", "exit_code", "trace_sha256", "trace_size_bytes"],
+      "properties": {
+        "gate_id": { "$ref": "#/definitions/id" },
+        "test_id": { "$ref": "#/definitions/id" },
+        "attempt": { "type": "integer", "enum": [1, 2] },
+        "retry_of": { "oneOf": [{ "type": "null" }, { "const": 1 }] },
+        "duration_ms": { "type": "integer", "minimum": 0, "maximum": 3605000 },
+        "timeout_ms": { "type": "integer", "minimum": 1000, "maximum": 3600000 },
+        "result": { "type": "string", "enum": ["passed", "failed", "timed_out"] },
+        "exit_code": { "oneOf": [{ "type": "null" }, { "type": "integer" }] },
+        "trace_sha256": { "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/sha256" }] },
+        "trace_size_bytes": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0, "maximum": 1073741824 }] }
+      },
+      "allOf": [
+        { "if": { "properties": { "attempt": { "const": 1 } }, "required": ["attempt"] }, "then": { "properties": { "retry_of": { "type": "null" } } } },
+        { "if": { "properties": { "attempt": { "const": 2 } }, "required": ["attempt"] }, "then": { "properties": { "retry_of": { "const": 1 } } } },
+        { "if": { "properties": { "result": { "const": "passed" } }, "required": ["result"] }, "then": { "properties": { "exit_code": { "const": 0 } } } },
+        { "if": { "properties": { "result": { "const": "failed" } }, "required": ["result"] }, "then": { "properties": { "exit_code": { "type": "integer", "not": { "const": 0 } } } } },
+        { "if": { "properties": { "result": { "const": "timed_out" } }, "required": ["result"] }, "then": { "properties": { "exit_code": { "type": "null" } } } },
+        {
+          "oneOf": [
+            { "properties": { "trace_sha256": { "type": "null" }, "trace_size_bytes": { "type": "null" } } },
+            { "properties": { "trace_sha256": { "$ref": "#/definitions/sha256" }, "trace_size_bytes": { "type": "integer", "minimum": 0, "maximum": 1073741824 } } }
+          ]
+        }
+      ]
+    }
+  }
+}

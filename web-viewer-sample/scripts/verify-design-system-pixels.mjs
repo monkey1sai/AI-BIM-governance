@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
+import { inspectPngBeforeDecode } from "./lib/png-preflight.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultRepoRoot = path.resolve(scriptDir, "..", "..");
@@ -55,15 +56,8 @@ async function resolveExistingInside(root, relativePath, requiredPrefix) {
   return canonical;
 }
 
-function decodePng(buffer, label) {
-  assert(
-    buffer.length >= 8 &&
-      buffer[0] === 0x89 &&
-      buffer[1] === 0x50 &&
-      buffer[2] === 0x4e &&
-      buffer[3] === 0x47,
-    label + " is not a PNG.",
-  );
+function decodePng(buffer, label, viewport) {
+  inspectPngBeforeDecode(buffer, viewport, label);
   try {
     return PNG.sync.read(buffer);
   } catch (error) {
@@ -75,6 +69,8 @@ const [manifestBuffer, resultBuffer] = await Promise.all([
   readFile(manifestPath),
   readFile(resultPath),
 ]);
+assert(manifestBuffer.length <= 2 * 1024 * 1024, "manifest exceeds the JSON byte budget.");
+assert(resultBuffer.length <= 2 * 1024 * 1024, "result exceeds the JSON byte budget.");
 const manifest = JSON.parse(manifestBuffer.toString("utf8"));
 const result = JSON.parse(resultBuffer.toString("utf8"));
 const screenMap = new Map(manifest.screens.map((screen) => [screen.id, screen]));
@@ -119,9 +115,9 @@ for (const screenResult of result.screens || []) {
     assert(sha256(actualBuffer) === viewportResult.actual_sha256, "actual hash drifted.");
     assert(sha256(suppliedDiffBuffer) === viewportResult.diff_sha256, "diff hash drifted.");
 
-    const baseline = decodePng(baselineBuffer, "baseline");
-    const actual = decodePng(actualBuffer, "actual");
-    const suppliedDiff = decodePng(suppliedDiffBuffer, "diff");
+    const baseline = decodePng(baselineBuffer, "baseline", viewport);
+    const actual = decodePng(actualBuffer, "actual", viewport);
+    const suppliedDiff = decodePng(suppliedDiffBuffer, "diff", viewport);
     for (const [label, image] of [
       ["baseline", baseline],
       ["actual", actual],

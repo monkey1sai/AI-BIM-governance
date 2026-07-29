@@ -5,7 +5,7 @@
 // 用法:
 //   node scripts/dev/agents-board.mjs register --agent codex [--session <id>] [--task "..."]
 //   node scripts/dev/agents-board.mjs update   --agent codex [--session <id>] [--task "..."] [--status active|idle|ended] [--file <path>]
-//   node scripts/dev/agents-board.mjs status   [--json]
+//   node scripts/dev/agents-board.mjs status   [--json] [--no-prune]
 //   node scripts/dev/agents-board.mjs done     --agent codex [--session <id>]
 //   node scripts/dev/agents-board.mjs hook     --event SessionStart|UserPromptSubmit|PostToolUse|Stop|SessionEnd   (讀 stdin JSON;Claude Code hooks 專用)
 //   node scripts/dev/agents-board.mjs codex-notify '<json>'   (Codex config.toml notify 專用)
@@ -181,8 +181,8 @@ function formatSessionLine(s) {
   return `${s.agent} [${s.status}]${stale} ${s.session}${branch}${task} (${relTime(s.updatedAt)})`;
 }
 
-function printStatus(boardDir, asJson) {
-  pruneSessions(boardDir);
+function printStatus(boardDir, asJson, shouldPrune = true) {
+  if (shouldPrune) pruneSessions(boardDir);
   const order = { active: 0, idle: 1, ended: 2 };
   const sessions = readSessions(boardDir)
     .sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9) || Date.parse(b.updatedAt || 0) - Date.parse(a.updatedAt || 0));
@@ -251,7 +251,7 @@ function runManual(command, args) {
     process.exit(1);
   }
   if (command === 'status') {
-    printStatus(boardDir, Boolean(args.json));
+    printStatus(boardDir, Boolean(args.json), !Boolean(args['no-prune']));
     return;
   }
   const agent = sanitizeId(args.agent || detectHookAgent());

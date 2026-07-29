@@ -7,46 +7,46 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-function Get-ProposalState {
-    param([Parameter(Mandatory = $true)][string] $ChangeDirectory)
-
-    $proposalPath = Join-Path $ChangeDirectory 'proposal.md'
-    if (-not (Test-Path -LiteralPath $proposalPath -PathType Leaf)) {
-        return [pscustomobject]@{
-            Exists       = $false
-            IsDeferred   = $false
-            HasCondition = $false
-            Content      = ''
-        }
-    }
-
-    $content = Get-Content -LiteralPath $proposalPath -Raw
-    return [pscustomobject]@{
-        Exists       = $true
-        IsDeferred   = $content -match '(?m)^>\s*\*\*Status:\s*deferred\b'
-        HasCondition = $content -match '(重啟|解凍|thaw|closeout)'
-        Content      = $content
-    }
-}
+. (Join-Path $PSScriptRoot '..\lib\openspec-lifecycle.ps1')
 
 function Get-DiffTargetPaths {
     param([Parameter(Mandatory = $true)][string] $Against)
 
-    # Compare the base commit directly with the current tree. This works both in
-    # CI (where the PR diff is committed) and during a local pre-commit check.
-    $lines = @(git diff --name-status -M $Against --)
-    if ($LASTEXITCODE -ne 0) {
-        throw "Unable to diff lifecycle state against $Against"
+    # Disable rename detection and consume NUL-delimited output so both the old
+    # and new side of a move are evaluated. Deleted archive evidence must remain
+    # visible to the completion gate instead of disappearing from the path set.
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = 'git'
+    $startInfo.WorkingDirectory = $RepoRoot
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.CreateNoWindow = $true
+    foreach ($argument in @('-c', 'core.quotepath=false', 'diff', '--name-only', '-z', '--no-renames', $Against, '--')) {
+        [void]$startInfo.ArgumentList.Add($argument)
     }
 
-    foreach ($line in $lines) {
-        if ([string]::IsNullOrWhiteSpace($line)) { continue }
-        $parts = @($line -split "`t")
-        if ($parts[0] -match '^R\d+$') {
-            if ($parts.Count -ge 3) { $parts[2] }
-            continue
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) {
+            throw "Unable to start git diff against $Against"
         }
-        if ($parts.Count -ge 2 -and $parts[0] -ne 'D') { $parts[1] }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(30000)) {
+            $process.Kill($true)
+            [void]$process.WaitForExit(5000)
+            throw "Timed out diffing lifecycle state against $Against"
+        }
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult().Trim()
+        if ($process.ExitCode -ne 0) {
+            throw "Unable to diff lifecycle state against ${Against}: $stderr"
+        }
+        return @($stdout.Split([char]0, [System.StringSplitOptions]::RemoveEmptyEntries))
+    } finally {
+        $process.Dispose()
     }
 }
 
@@ -60,13 +60,16 @@ $failures = [System.Collections.Generic.List[string]]::new()
 $warnings = [System.Collections.Generic.List[string]]::new()
 $wipLimit = 6
 
-Push-Location $RepoRoot
+Push-Location -LiteralPath $RepoRoot
 try {
     $changesRoot = Join-Path $RepoRoot 'openspec\changes'
     $archiveRoot = Join-Path $changesRoot 'archive'
     if (-not (Test-Path -LiteralPath $changesRoot -PathType Container)) {
         throw "OpenSpec changes root not found: $changesRoot"
     }
+    [void](Assert-OpenSpecNoReparseComponents -Anchor $RepoRoot -Target $changesRoot `
+        -Label 'openspec/changes' -UnreadableCode 'repository_unreadable' `
+        -ReparseCode 'repository_reparse_point')
 
     $activeChanges = @(Get-ChildItem -LiteralPath $changesRoot -Directory | Where-Object Name -ne 'archive')
     $deferredChanges = [System.Collections.Generic.List[string]]::new()
@@ -74,7 +77,10 @@ try {
     $capabilityOwners = @{}
 
     foreach ($change in $activeChanges) {
-        $state = Get-ProposalState -ChangeDirectory $change.FullName
+        $state = Get-OpenSpecProposalState -ChangeDirectory $change.FullName -TrustedRoot $RepoRoot
+        if ($state.LifecycleStatus -eq 'invalid') {
+            $failures.Add("active change has invalid lifecycle marker: $($change.Name)")
+        }
         if ($state.IsDeferred) {
             $deferredChanges.Add($change.Name)
             if (-not $state.HasCondition) {
@@ -86,6 +92,9 @@ try {
         $nonDeferredChanges.Add($change.Name)
         $specRoot = Join-Path $change.FullName 'specs'
         if (-not (Test-Path -LiteralPath $specRoot -PathType Container)) { continue }
+        [void](Assert-OpenSpecNoReparseComponents -Anchor $RepoRoot -Target $specRoot `
+            -Label "OpenSpec specs for $($change.Name)" -UnreadableCode 'repository_unreadable' `
+            -ReparseCode 'repository_reparse_point')
         foreach ($capability in Get-ChildItem -LiteralPath $specRoot -Directory) {
             if (-not $capabilityOwners.ContainsKey($capability.Name)) {
                 $capabilityOwners[$capability.Name] = [System.Collections.Generic.List[string]]::new()
@@ -106,8 +115,11 @@ try {
 
     # A deferred marker is never valid in completed archive, including legacy entries.
     if (Test-Path -LiteralPath $archiveRoot -PathType Container) {
+        [void](Assert-OpenSpecNoReparseComponents -Anchor $RepoRoot -Target $archiveRoot `
+            -Label 'OpenSpec archive' -UnreadableCode 'repository_unreadable' `
+            -ReparseCode 'repository_reparse_point')
         foreach ($archived in Get-ChildItem -LiteralPath $archiveRoot -Directory) {
-            $state = Get-ProposalState -ChangeDirectory $archived.FullName
+            $state = Get-OpenSpecProposalState -ChangeDirectory $archived.FullName -TrustedRoot $RepoRoot
             if ($state.IsDeferred) {
                 $failures.Add("deferred change is stored in completed archive: $($archived.Name)")
             }
@@ -138,17 +150,24 @@ try {
 
         foreach ($archiveId in $newArchiveIds) {
             $directory = Join-Path $archiveRoot $archiveId
-            if (-not (Test-Path -LiteralPath $directory -PathType Container)) { continue }
-            $state = Get-ProposalState -ChangeDirectory $directory
+            if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
+                $failures.Add("affected archive directory is missing after delete or rename: $archiveId")
+                continue
+            }
+            $state = Get-OpenSpecProposalState -ChangeDirectory $directory -TrustedRoot $RepoRoot
+            if (-not $state.Exists) {
+                $failures.Add("affected archive is missing proposal.md: $archiveId")
+            }
             if ($state.IsDeferred) {
                 $failures.Add("new archive contains deferred marker: $archiveId")
             }
-            $tasksPath = Join-Path $directory 'tasks.md'
-            if (Test-Path -LiteralPath $tasksPath -PathType Leaf) {
-                $unchecked = @(Select-String -LiteralPath $tasksPath -Pattern '^\s*- \[ \]' -CaseSensitive).Count
-                if ($unchecked -gt 0) {
-                    $failures.Add("new archive contains $unchecked unchecked tasks: $archiveId")
-                }
+            $taskLedger = Get-OpenSpecTaskLedger -ChangeDirectory $directory -TrustedRoot $RepoRoot
+            if (-not $taskLedger.Exists) {
+                $failures.Add("affected archive is missing tasks.md: $archiveId")
+            } elseif ($taskLedger.Unchecked -gt 0) {
+                $failures.Add("new archive contains $($taskLedger.Unchecked) unchecked tasks: $archiveId")
+            } elseif ($taskLedger.UnsupportedCheckboxes -gt 0) {
+                $failures.Add("new archive contains $($taskLedger.UnsupportedCheckboxes) unsupported task checkboxes: $archiveId")
             }
         }
 
@@ -167,7 +186,7 @@ try {
                 $existedAtBase = $baseProposal.Count -gt 0
                 if ($existedAtBase) { continue }
 
-                $state = Get-ProposalState -ChangeDirectory $directory
+                $state = Get-OpenSpecProposalState -ChangeDirectory $directory -TrustedRoot $RepoRoot
                 if (-not $state.IsDeferred) {
                     $failures.Add("new non-deferred change increases an already-over-budget WIP set: $changeId")
                 }

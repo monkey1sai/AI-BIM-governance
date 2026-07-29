@@ -83,6 +83,15 @@ try {
     $partialOutput = @(& pwsh -NoProfile -NonInteractive -File $script:checker -BodyPath $bodyPath -ChangedPathsPath $pathsPath 2>&1)
     Assert-True ($LASTEXITCODE -eq 0) "partial_reference_missing body passes: $($partialOutput -join ' | ')"
 
+    $paths0 = Join-Path $tempRoot 'paths.bin'
+    $nulPaths = "AGENTS.md$([char]0)apps/kit-manager-web/src/App.tsx$([char]0)docs/line`nbreak.md$([char]0)"
+    [IO.File]::WriteAllBytes($paths0, [Text.Encoding]::UTF8.GetBytes($nulPaths))
+    $nulOutput = @(& pwsh -NoProfile -NonInteractive -File $script:checker -BodyPath $bodyPath -ChangedPathsPath $paths0 -ChangedPathsNulDelimited 2>&1)
+    Assert-True ($LASTEXITCODE -eq 0) "NUL-delimited paths preserve an embedded newline: $($nulOutput -join ' | ')"
+    [IO.File]::WriteAllBytes($paths0, [Text.Encoding]::UTF8.GetBytes('AGENTS.md'))
+    & pwsh -NoProfile -NonInteractive -File $script:checker -BodyPath $bodyPath -ChangedPathsPath $paths0 -ChangedPathsNulDelimited *> $null
+    Assert-True ($LASTEXITCODE -ne 0) 'NUL-delimited input without a terminal NUL fails closed'
+
     ($partialBody -replace 'runtimeId=runtime-123', 'none') | Set-Content -LiteralPath $bodyPath -Encoding utf8
     Assert-CheckerFails -BodyPath $bodyPath -PathsPath $pathsPath -Message 'partial frontend still requires observed runtime evidence'
 

@@ -4,6 +4,26 @@
 > **AI / 人：只聽這份。** 與本檔衝突時，以使用者最新口令為準，其次本檔，再才是 OpenSpec / 設計正本。  
 > 維護規則：每完成一個 outcome 就改狀態；禁止同時推進 >6 個 active OpenSpec product change。
 
+<!-- lifecycle-ledger:start -->
+```json
+{
+  "schema_version": "openspec-now-view/v1",
+  "scope": "current",
+  "changes": [
+    { "id": "a4-semantic-search-model-qa", "status": "active" },
+    { "id": "add-single-gpu-session-ai-review-mvp", "status": "deferred" },
+    { "id": "align-frontend-design-system-reference", "status": "deferred" },
+    { "id": "cross-service-structured-log-baseline", "status": "deferred" },
+    { "id": "gpu-session-baseline-and-idle-reclaim", "status": "active" },
+    { "id": "implement-runtime-command-authority-and-rejection", "status": "active" },
+    { "id": "migrate-console-to-hifi-design", "status": "active" },
+    { "id": "minio-folderview-and-baseline-disclosure", "status": "deferred" },
+    { "id": "rvt-ifc-usdc-lineage", "status": "deferred" }
+  ]
+}
+```
+<!-- lifecycle-ledger:end -->
+
 ## 本週三軌（你已選 1/2/3）
 
 | 序 | 軌 | 目標 | 狀態 |

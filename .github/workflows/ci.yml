@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
   workflow_dispatch:
@@ -20,8 +21,10 @@ jobs:
     outputs:
       root_contracts: ${{ steps.paths.outputs.root_contracts }}
       coordinator: ${{ steps.paths.outputs.coordinator }}
+      streaming: ${{ steps.paths.outputs.streaming }}
       governance_service: ${{ steps.paths.outputs.governance_service }}
       viewer: ${{ steps.paths.outputs.viewer }}
+      agent_governance: ${{ steps.paths.outputs.agent_governance }}
       conv_functional: ${{ steps.paths.outputs.conv_functional }}
       kit_manager_api: ${{ steps.paths.outputs.kit_manager_api }}
       kit_manager_web: ${{ steps.paths.outputs.kit_manager_web }}
@@ -32,16 +35,22 @@ jobs:
       frontend_product: ${{ steps.design_scope.outputs.frontend_product }}
       frontend_visual_required: ${{ steps.design_scope.outputs.frontend_visual_required }}
       frontend_design_status: ${{ steps.design_scope.outputs.frontend_design_status }}
-      frontend_reference_missing: ${{ steps.design_scope.outputs.frontend_reference_missing }}
       frontend_required_screen_ids: ${{ steps.design_scope.outputs.frontend_required_screen_ids }}
       base_sha: ${{ steps.paths.outputs.base_sha }}
       head_sha: ${{ steps.paths.outputs.head_sha }}
+      plan_result: ${{ steps.paths.outputs.plan_result }}
+      plan_sha256: ${{ steps.paths.outputs.plan_sha256 }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Setup Node.js for the shared classifier
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20.20.2'
 
       - name: Classify changed paths
         id: paths
@@ -50,47 +59,45 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base_sha='${{ github.event.pull_request.base.sha }}'
             head_sha='${{ github.event.pull_request.head.sha }}'
-            git -c core.quotepath=false diff --no-renames --name-only "$base_sha...$head_sha" > changed-paths.txt
+            git -c core.quotepath=false diff --no-renames --name-only -z "$base_sha...$head_sha" > changed-paths.bin
           elif [ "${{ github.event_name }}" = "push" ] && [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
             base_sha='${{ github.event.before }}'
             head_sha='${{ github.sha }}'
-            git -c core.quotepath=false diff --no-renames --name-only "$base_sha" "$head_sha" > changed-paths.txt
+            git -c core.quotepath=false diff --no-renames --name-only -z "$base_sha" "$head_sha" > changed-paths.bin
           else
-            printf "__full__\n" > changed-paths.txt
+            printf "__full__\0" > changed-paths.bin
             base_sha=''
             head_sha='${{ github.sha }}'
           fi
           echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
           echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+          planner_args=(
+            --manifest scripts/verification-manifest.json
+            --changed-paths0-file changed-paths.bin
+            --subject "$head_sha"
+            --json-out verification-plan.json
+            --github-output "$GITHUB_OUTPUT"
+          )
+          if [ -n "$base_sha" ]; then
+            planner_args+=(--base "$base_sha")
+          fi
+          node scripts/lib/verification-plan.mjs "${planner_args[@]}"
 
-          emit() {
-            local name="$1"
-            local pattern="$2"
-            if grep -qx "__full__" changed-paths.txt || grep -Eq "$pattern" changed-paths.txt; then
-              echo "$name=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "$name=false" >> "$GITHUB_OUTPUT"
-            fi
-          }
-
-          emit root_contracts '^(tests/|scripts/tests/)'
-          emit coordinator '^bim-review-coordinator/'
-          emit governance_service '^(governance-service/|rules/)'
-          emit viewer '^(web-viewer-sample/|bim-review-coordinator/(src|public)/|docs/plans/(.*prototype\.html|design-system-reference\.manifest\.json|design-system-baseline/))'
-          emit conv_functional '^(\.github/workflows/ci\.yml|bim-review-coordinator/|docs/plans/design-system-reference\.manifest\.json|scripts/tests/(test|verify)-functional-runtime-result\.ps1|web-viewer-sample/)'
-          emit kit_manager_api '^services/kit-manager-api/'
-          emit kit_manager_web '^apps/kit-manager-web/'
-          emit compose_config '^(compose\..*\.yml|\.env.*\.example|infra/docker/)'
-          emit powershell_static '^(\.github/workflows/|\.claude/workflows/|\.(claude|codex)/skills/spec-to-done/.*\.ps1$|scripts/.*\.(ps1|psm1)$|AGENTS\.md|docs/agents/)'
-          emit rebuild_test_deploy '^scripts/(deploy\.ps1|dev/rebuild-test-deploy\.ps1|lib/(rebuild-test-deploy|design-assets|host-native-launcher)\.ps1|lib/StructLog\.psm1|tests/(test-rebuild-test-deploy|test-verify-all|test-helpers)\.ps1)$'
-          echo "secret_pattern_scan=true" >> "$GITHUB_OUTPUT"
+      - name: Upload commit-bound verification plan
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: verification-plan-${{ steps.paths.outputs.head_sha }}-attempt-${{ github.run_attempt }}
+          path: verification-plan.json
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Classify frontend design scope from base and head manifests
         id: design_scope
         shell: pwsh
         run: |
-          $paths = @(Get-Content -LiteralPath changed-paths.txt | Where-Object { $_ })
-          if ($paths -contains '__full__') {
+          $verificationPlan = Get-Content -LiteralPath verification-plan.json -Raw | ConvertFrom-Json -Depth 100
+          $paths = @($verificationPlan.changed_paths | Where-Object { $_ -ne '__full__' })
+          if ($verificationPlan.dispatch -eq 'full') {
             $frontendProduct = 'true'
             $visualRequired = 'true'
             $status = 'mixed'
@@ -112,11 +119,20 @@ jobs:
             $referenceMissing = @($scope.reference_missing_items) -join ','
             $requiredScreenIds = @($scope.required_screen_ids) -join ','
           }
+          if ($frontendProduct -notin @('true', 'false') -or $visualRequired -notin @('true', 'false')) {
+            throw 'Design scope booleans are not canonical.'
+          }
+          if ($status -notin @('passed', 'mixed', 'partial_reference_missing', 'gate_infrastructure_only', 'not_applicable')) {
+            throw "Design scope status is not an allowed non-failing enum: $status"
+          }
+          $screenIds = @($requiredScreenIds.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() })
+          if (@($screenIds | Where-Object { $_ -notmatch '^[a-z0-9][a-z0-9-]{0,63}$' }).Count -gt 0) {
+            throw 'Design scope contains an unsafe screen id.'
+          }
           "frontend_product=$frontendProduct" >> $env:GITHUB_OUTPUT
           "frontend_visual_required=$visualRequired" >> $env:GITHUB_OUTPUT
           "frontend_design_status=$status" >> $env:GITHUB_OUTPUT
-          "frontend_reference_missing=$referenceMissing" >> $env:GITHUB_OUTPUT
-          "frontend_required_screen_ids=$requiredScreenIds" >> $env:GITHUB_OUTPUT
+          "frontend_required_screen_ids=$($screenIds -join ',')" >> $env:GITHUB_OUTPUT
 
   root-contracts:
     name: root contracts and fakes
@@ -168,19 +184,40 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '20'
+          node-version: '20.20.2'
           cache: 'npm'
           cache-dependency-path: bim-review-coordinator/package-lock.json
 
       - name: Install dependencies
         shell: pwsh
         working-directory: bim-review-coordinator
-        run: npm ci
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Run verify
         shell: pwsh
         working-directory: bim-review-coordinator
         run: npm run verify
+
+  streaming:
+    name: streaming stage-loading contract
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.streaming == 'true')
+    runs-on: windows-latest
+    steps:
+      - name: Require changed-path classifier success
+        if: needs.changes.result != 'success'
+        shell: pwsh
+        run: throw 'changed path classifier did not succeed; refusing a skipped-success required check.'
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Run stage-loading contract
+        shell: pwsh
+        working-directory: bim-streaming-server
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/tests/test-stage-loading-contract.ps1
 
   governance-service:
     name: governance-service tests
@@ -213,6 +250,27 @@ jobs:
         shell: pwsh
         run: python -m pytest governance-service/tests -q
 
+  agent-governance-contracts:
+    name: agent governance contracts
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.agent_governance == 'true')
+    runs-on: windows-latest
+    steps:
+      - name: Require changed-path classifier success
+        if: needs.changes.result != 'success'
+        shell: pwsh
+        run: throw 'changed path classifier did not succeed; refusing a skipped-success required check.'
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run agent governance contracts
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
+
   viewer:
     name: viewer build and tests
     needs: changes
@@ -236,19 +294,42 @@ jobs:
           cache: 'npm'
           cache-dependency-path: web-viewer-sample/package-lock.json
 
-      - name: Pin npm version
-        shell: pwsh
-        run: npm install --global npm@10.9.4 --no-audit --no-fund
-
       - name: Install dependencies
         shell: pwsh
         working-directory: web-viewer-sample
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Run verify
         shell: pwsh
         working-directory: web-viewer-sample
         run: npm run verify
+
+      - name: Resolve trusted ESLint baseline
+        id: eslint-baseline
+        shell: pwsh
+        env:
+          TRUSTED_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          $target = Join-Path $env:RUNNER_TEMP 'viewer-eslint-baseline.json'
+          if ($env:TRUSTED_BASE_SHA -match '^[0-9a-f]{40}$' -and $env:TRUSTED_BASE_SHA -notmatch '^0{40}$') {
+            $content = @(git show "$($env:TRUSTED_BASE_SHA):web-viewer-sample/scripts/eslint-baseline.json" 2>$null)
+            if ($LASTEXITCODE -eq 0) {
+              [IO.File]::WriteAllText($target, (($content -join [Environment]::NewLine) + "`n"), [Text.UTF8Encoding]::new($false))
+            } else {
+              $baseManifest = @(git show "$($env:TRUSTED_BASE_SHA):scripts/verification-manifest.json" 2>$null) -join "`n"
+              if ($baseManifest -match 'verification-manifest/v2') { throw 'trusted base ESLint baseline is unavailable' }
+              Write-Warning 'bootstrap baseline is candidate-owned; the existing self-change guard prevents this run from granting merge authority'
+              Copy-Item -LiteralPath 'web-viewer-sample/scripts/eslint-baseline.json' -Destination $target
+            }
+          } else {
+            Copy-Item -LiteralPath 'web-viewer-sample/scripts/eslint-baseline.json' -Destination $target
+          }
+          "path=$target" >> $env:GITHUB_OUTPUT
+
+      - name: Reject new ESLint debt against shrink-only baseline
+        shell: pwsh
+        working-directory: web-viewer-sample
+        run: npm run lint:baseline -- --trusted-baseline '${{ steps.eslint-baseline.outputs.path }}'
 
       - name: Run session-first contract
         shell: pwsh
@@ -275,9 +356,11 @@ jobs:
 
       - name: Validate pinned desigin-system manifest and baselines
         shell: pwsh
+        env:
+          REQUIRED_SCREEN_IDS: ${{ needs.changes.outputs.frontend_required_screen_ids }}
         run: |
           pwsh -NoProfile -NonInteractive -File scripts/tests/verify-design-system-reference.ps1 -RepoRoot '${{ github.workspace }}'
-          $requiredScreenIds = @('${{ needs.changes.outputs.frontend_required_screen_ids }}'.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() })
+          $requiredScreenIds = @($env:REQUIRED_SCREEN_IDS.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() })
           $headScreenIds = @((Get-Content -LiteralPath 'docs/plans/design-system-reference.manifest.json' -Raw | ConvertFrom-Json).screens | ForEach-Object { [string]$_.id })
           $missingScreenIds = @($requiredScreenIds | Where-Object { $_ -notin $headScreenIds })
           if ($missingScreenIds.Count -gt 0) { throw "Head manifest removed base-approved screen IDs: $($missingScreenIds -join ', ')" }
@@ -287,7 +370,6 @@ jobs:
         shell: pwsh
         run: |
           "Design gate status: ${{ needs.changes.outputs.frontend_design_status }}" >> $env:GITHUB_STEP_SUMMARY
-          "Reference missing: ${{ needs.changes.outputs.frontend_reference_missing }}" >> $env:GITHUB_STEP_SUMMARY
           'No pixel result is fabricated. Functional/runtime evidence remains an independent required gate and full completion is forbidden.' >> $env:GITHUB_STEP_SUMMARY
 
       - name: Setup Node.js
@@ -298,16 +380,11 @@ jobs:
           cache: 'npm'
           cache-dependency-path: web-viewer-sample/package-lock.json
 
-      - name: Pin npm version
-        if: needs.changes.outputs.frontend_visual_required == 'true'
-        shell: pwsh
-        run: npm install --global npm@10.9.4 --no-audit --no-fund
-
       - name: Install viewer dependencies
         if: needs.changes.outputs.frontend_visual_required == 'true'
         shell: pwsh
         working-directory: web-viewer-sample
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Install pinned Playwright Chromium
         if: needs.changes.outputs.frontend_visual_required == 'true'
@@ -324,8 +401,10 @@ jobs:
       - name: Recompute and validate design result
         if: needs.changes.outputs.frontend_visual_required == 'true'
         shell: pwsh
+        env:
+          REQUIRED_SCREEN_IDS: ${{ needs.changes.outputs.frontend_required_screen_ids }}
         run: |
-          $requiredScreenIds = @('${{ needs.changes.outputs.frontend_required_screen_ids }}'.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() })
+          $requiredScreenIds = @($env:REQUIRED_SCREEN_IDS.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() })
           # dot-source in-process instead of spawning a nested `pwsh -File` process: passing a
           # multi-element array across that process boundary flattens it into separate command-line
           # tokens, which PowerShell then mis-binds onto later positional parameters (observed: a
@@ -341,12 +420,12 @@ jobs:
         if: always() && needs.changes.outputs.frontend_visual_required == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: design-semantic-visual-${{ needs.changes.outputs.head_sha }}
+          name: design-semantic-visual-${{ needs.changes.outputs.head_sha }}-attempt-${{ github.run_attempt }}
           path: |
             artifacts/e2e/design-system-visual-result.json
             artifacts/e2e/design-system-visual/
             artifacts/e2e/design-system-playwright/
-          if-no-files-found: warn
+          if-no-files-found: error
 
   functional-runtime-conv:
     name: functional-runtime-conv
@@ -375,19 +454,15 @@ jobs:
             bim-review-coordinator/package-lock.json
             web-viewer-sample/package-lock.json
 
-      - name: Pin npm version
-        shell: pwsh
-        run: npm install --global npm@10.9.4 --no-audit --no-fund
-
       - name: Install coordinator dependencies
         shell: pwsh
         working-directory: bim-review-coordinator
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Install viewer dependencies
         shell: pwsh
         working-directory: web-viewer-sample
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Install pinned Playwright Chromium
         shell: pwsh
@@ -431,7 +506,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: functional-runtime-conv-${{ needs.changes.outputs.head_sha }}
+          name: functional-runtime-conv-${{ needs.changes.outputs.head_sha }}-attempt-${{ github.run_attempt }}
           path: |
             artifacts/e2e/functional-runtime/functional-runtime-result.json
             artifacts/e2e/functional-runtime/conv-history.png
@@ -490,12 +565,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '20'
+          node-version: '20.20.2'
 
       - name: Install dependencies
         shell: pwsh
         working-directory: apps/kit-manager-web
-        run: npm install --no-audit --no-fund
+        run: npm install --ignore-scripts --no-audit --no-fund
 
       - name: Build
         shell: pwsh
@@ -543,13 +618,8 @@ jobs:
         shell: pwsh
         run: |
           Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
-          $results = Invoke-ScriptAnalyzer -Path scripts -Recurse -Severity Error
-          if ($results) {
-            $results | Format-Table -AutoSize
-            exit 1
-          }
-          Write-Host 'No PSScriptAnalyzer Error severity findings.'
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force
+          pwsh -NoProfile -NonInteractive -File scripts/tests/invoke-powershell-static.ps1
 
       - name: Run spec-to-done port helper safety tests (PowerShell 7)
         shell: pwsh
@@ -559,18 +629,32 @@ jobs:
         shell: pwsh
         run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-spec-to-done-port-helper.ps1
 
+  rebuild-test-deploy:
+    name: rebuild/test-deploy contracts
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.rebuild_test_deploy == 'true')
+    runs-on: windows-latest
+    steps:
+      - name: Require changed-path classifier success
+        if: needs.changes.result != 'success'
+        shell: pwsh
+        run: throw 'changed path classifier did not succeed; refusing a skipped-success required check.'
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
       - name: Run rebuild transaction safety tests (PowerShell 7)
-        if: needs.changes.outputs.rebuild_test_deploy == 'true'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-rebuild-test-deploy.ps1
 
       - name: Run rebuild transaction safety tests (Windows PowerShell 5.1)
-        if: needs.changes.outputs.rebuild_test_deploy == 'true'
         shell: pwsh
         run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-rebuild-test-deploy.ps1
 
       - name: Run aggregate verifier profile tests
-        if: needs.changes.outputs.rebuild_test_deploy == 'true'
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-verify-all.ps1
 
@@ -590,18 +674,15 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Setup pinned Node.js for security policy
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20.20.2'
+
       - name: Scan high-signal secret patterns
         shell: pwsh
-        run: |
-          $pattern = 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{50,}|xox[baprs]-[A-Za-z0-9-]+'
-          $matches = git grep -nE $pattern -- . ':(exclude)*.example' ':(exclude)package-lock.json' ':(exclude)tests/**'
-          $exitCode = $LASTEXITCODE
-          if ($exitCode -eq 0) {
-            Write-Error "Potential secret pattern found:`n$matches"
-            exit 1
-          }
-          if ($exitCode -eq 1) {
-            Write-Host 'No high-signal secret patterns found.'
-            exit 0
-          }
-          exit $exitCode
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/scan-secret-patterns.ps1
+
+      - name: Validate canonical security exceptions
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/verify-security-exceptions.ps1

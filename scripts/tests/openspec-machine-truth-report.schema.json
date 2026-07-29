@@ -1,0 +1,103 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "openspec-machine-truth-report.schema.json",
+  "title": "OpenSpec machine-truth reconciliation report v1",
+  "type": "object",
+  "required": ["schema_version", "result", "subject_commit", "sources", "summary", "mismatches", "errors"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "openspec-machine-truth-report/v1" },
+    "result": { "type": "string", "enum": ["consistent", "consistent_with_accepted_debt", "mismatch", "input_error"] },
+    "subject_commit": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+      ]
+    },
+    "sources": {
+      "type": "object",
+      "required": ["ledger", "now", "github", "openspec", "previous_ledger"],
+      "additionalProperties": false,
+      "properties": {
+        "ledger": { "type": "string", "maxLength": 100 },
+        "now": { "type": "string", "maxLength": 100 },
+        "github": { "type": "string", "maxLength": 100 },
+        "openspec": { "type": "string", "maxLength": 100 },
+        "previous_ledger": { "type": "string", "maxLength": 100 }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["change_count", "active_count", "archive_count", "archive_debt_count", "mismatch_count"],
+      "additionalProperties": false,
+      "properties": {
+        "change_count": { "type": "integer", "minimum": 0, "maximum": 500 },
+        "active_count": { "type": "integer", "minimum": 0, "maximum": 500 },
+        "archive_count": { "type": "integer", "minimum": 0, "maximum": 500 },
+        "archive_debt_count": { "type": "integer", "minimum": 0, "maximum": 500 },
+        "mismatch_count": { "type": "integer", "minimum": 0, "maximum": 10000 }
+      }
+    },
+    "mismatches": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "required": ["code", "reason", "change_id", "field", "expected_source", "expected", "actual_source", "actual", "message"],
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": ["archive", "blocker_graph", "evidence", "github", "lifecycle", "presence", "projection", "subject", "task_ledger", "transition", "wip"]
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "archive_debt_stale", "archive_entry_untracked", "archive_history_conflict", "archive_identity_duplicate",
+              "archive_incomplete", "blocker_missing",
+              "budget_exceeded", "change_missing", "change_removed", "completed_mismatch", "cycle_detected",
+              "directory_missing", "duplicate_active_archive", "evidence_target_missing", "invalid_marker",
+              "lifecycle_disagreement", "machine_state_missing", "openspec_entry_missing", "openspec_status_disagreement",
+              "evidence_changed_since_subject", "pr_duplicate", "proposal_missing", "required_evidence_missing",
+              "source_changed_since_subject", "subject_mismatch", "tasks_missing", "terminal_change_added",
+              "total_mismatch", "transition_invalid", "unexpected_change", "unsupported_checkbox"
+            ]
+          },
+          "change_id": {
+            "oneOf": [
+              { "type": "null" },
+              { "type": "string", "maxLength": 128, "pattern": "^[a-z0-9][a-z0-9-]*$" }
+            ]
+          },
+          "field": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "expected_source": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "expected": { "oneOf": [{ "type": "null" }, { "type": "string", "maxLength": 500 }] },
+          "actual_source": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "actual": { "oneOf": [{ "type": "null" }, { "type": "string", "maxLength": 500 }] },
+          "message": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "required": ["code", "field", "message"],
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "archive_identity_invalid", "artifact_invalid_json", "artifact_too_large", "artifact_unreadable",
+              "artifact_untrusted", "input_unreadable", "invalid_argument", "now_view_invalid", "repository_invalid",
+              "schema_invalid", "source_observation_invalid", "subject_invalid", "subject_unavailable"
+            ]
+          },
+          "field": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "message": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,445 @@
+{
+  "schema_version": "verification-manifest/v2",
+  "unknown_path_policy": "fail_closed",
+  "full_dispatch_globs": [
+    ".github/CODEOWNERS",
+    ".github/workflows/**",
+    ".gitignore",
+    "scripts/verification-manifest.json",
+    "scripts/lib/verification-plan.mjs",
+    "scripts/lib/verification-runner.mjs",
+    "scripts/lib/verification-outcome.mjs",
+    "scripts/lib/verification-command-policy.mjs",
+    "scripts/lib/security-exceptions.mjs",
+    "scripts/lib/security-exceptions-cli.mjs",
+    "scripts/security-exceptions.json",
+    "scripts/ai-coding-metrics-policy.json",
+    "scripts/lib/ai-coding-metrics.mjs",
+    "scripts/dev/record-ai-coding-telemetry.mjs",
+    "scripts/dev/report-ai-coding-metrics.mjs",
+    "scripts/tests/ai-coding-metrics-policy.schema.json",
+    "scripts/tests/ai-coding-telemetry-observation.schema.json",
+    "scripts/tests/ai-coding-metrics-report.schema.json",
+    "scripts/tests/test-ai-coding-metrics.mjs",
+    "scripts/lib/merge-evidence.mjs",
+    "scripts/lib/verification-run-metadata.mjs",
+    "scripts/lib/GitHubArtifact.psm1",
+    "scripts/lib/collect-openspec-github-state.mjs",
+    "scripts/lib/gitnexus-worktree-health.mjs",
+    "scripts/dev/report-gitnexus-worktree-health.mjs",
+    "scripts/lib/task-packet.mjs",
+    "scripts/dev/validate-task-packet.mjs",
+    "scripts/tests/task-packet.schema.json",
+    "scripts/tests/fixtures/agent-governance-routing.json",
+    "scripts/tests/test-task-packet.mjs",
+    "skills-lock.json",
+    "scripts/lib/design-system-gate.ps1",
+    "scripts/tooling/openspec-observer/package.json",
+    "scripts/tooling/openspec-observer/package-lock.json",
+    "scripts/verify-all.ps1",
+    "scripts/verify-all.sh",
+    "scripts/tests/verification-manifest.schema.json",
+    "scripts/tests/verification-plan.schema.json",
+    "scripts/tests/verification-outcome.schema.json",
+    "scripts/tests/security-exceptions.schema.json",
+    "scripts/tests/test-verification-plan.mjs",
+    "scripts/tests/test-verification-runner.mjs",
+    "scripts/tests/test-security-exceptions.mjs",
+    "scripts/tests/verify-security-exceptions.ps1",
+    "scripts/tests/test-verify-all.ps1",
+    "scripts/tests/merge-evidence-report.schema.json",
+    "scripts/tests/semantic-validation-results.schema.json",
+    "scripts/tests/verification-job-results.schema.json",
+    "scripts/tests/test-merge-evidence.mjs",
+    "scripts/tests/test-verification-run-metadata.mjs",
+    "scripts/tests/test-verification-command-policy.mjs",
+    "scripts/tests/test-github-artifact-extractor.ps1",
+    "scripts/tests/test-collect-openspec-github-state.mjs",
+    "scripts/tests/gitnexus-worktree-health-observation.schema.json",
+    "scripts/tests/gitnexus-worktree-health-report.schema.json",
+    "scripts/tests/fixtures/gitnexus-worktree-health/**",
+    "scripts/tests/test-gitnexus-worktree-health.mjs",
+    "scripts/tests/reconcile-openspec-ledger.ps1",
+    "scripts/tests/verify-openspec-machine-truth.mjs",
+    "scripts/tests/invoke-powershell-static.ps1",
+    "scripts/tests/scan-secret-patterns.ps1",
+    "scripts/tests/test-agent-governance-check.ps1",
+    "scripts/tests/check-pr-body-evidence.ps1",
+    "scripts/tests/test-design-system-visual-result.ps1",
+    "scripts/tests/test-functional-runtime-result.ps1",
+    "scripts/tests/verify-design-system-reference.ps1",
+    "scripts/tests/verify-design-system-visual-result.ps1",
+    "scripts/tests/verify-functional-runtime-result.ps1",
+    "docs/plans/design-system-reference.manifest.json",
+    "docs/plans/design-system-baseline/**",
+    "web-viewer-sample/scripts/capture-design-system-reference.mjs",
+    "web-viewer-sample/scripts/verify-design-system-pixels.mjs",
+    "web-viewer-sample/scripts/check-eslint-baseline.mjs",
+    "web-viewer-sample/scripts/eslint-baseline.json",
+    "web-viewer-sample/scripts/test-eslint-baseline.mjs",
+    "web-viewer-sample/scripts/lib/png-preflight.mjs",
+    "scripts/tests/test-png-preflight.mjs",
+    "web-viewer-sample/package.json",
+    "web-viewer-sample/package-lock.json",
+    "web-viewer-sample/playwright.config.ts",
+    "web-viewer-sample/playwright.design-system.config.ts",
+    "web-viewer-sample/playwright.functional-runtime.config.ts",
+    "web-viewer-sample/e2e/design-system-visual.spec.ts",
+    "web-viewer-sample/e2e/design-system-semantic-cases.ts",
+    "web-viewer-sample/e2e/conv-history.spec.ts",
+    "web-viewer-sample/e2e/hifi-token-authority.spec.ts",
+    "web-viewer-sample/e2e/runtime-command-authority.spec.ts",
+    "bim-review-coordinator/package.json",
+    "bim-review-coordinator/package-lock.json"
+  ],
+  "known_non_code_globs": [
+    "README*.md",
+    "docs/**",
+    "patches/**",
+    ".github/ISSUE_TEMPLATE/**",
+    ".github/PULL_REQUEST_TEMPLATE.md"
+  ],
+  "path_classes": [
+    {
+      "id": "tracked-repository",
+      "path_globs": [
+        "AGENTS.md", "CLAUDE.md", "README*.md", "*.json", "*.md", "*.yml", "*.yaml",
+        ".claude/**", ".codex/**", ".github/**", "apps/**", "artifacts/**",
+        "bim-review-coordinator/**", "bim-streaming-server/**", "docs/**", "governance-service/**",
+        "infra/**", "openspec/**", "patches/**", "rules/**", "scripts/**", "services/**", "tests/**",
+        "web-viewer-sample/**"
+      ]
+    },
+    {
+      "id": "root-contracts",
+      "path_globs": [
+        "tests/**", "scripts/tests/**", "scripts/gen_routing.py", ".claude/workflows/**", "docs/contracts/**",
+        "bim-review-coordinator/**", "bim-streaming-server/**", "governance-service/**", "rules/**",
+        "web-viewer-sample/**", "services/kit-manager-api/**", "apps/kit-manager-web/**"
+      ]
+    },
+    { "id": "coordinator", "path_globs": ["bim-review-coordinator/**", "tests/contracts/**"] },
+    { "id": "streaming", "path_globs": ["bim-streaming-server/**", "tests/contracts/**"] },
+    { "id": "governance", "path_globs": ["governance-service/**", "rules/**", "tests/contracts/**"] },
+    {
+      "id": "viewer",
+      "path_globs": [
+        "web-viewer-sample/**", "bim-review-coordinator/src/**", "bim-review-coordinator/public/**",
+        "docs/plans/**/*prototype.html", "docs/plans/design-system-reference.manifest.json", "docs/plans/design-system-baseline/**"
+      ]
+    },
+    { "id": "kit-manager-api", "path_globs": ["services/kit-manager-api/**", "tests/contracts/**"] },
+    { "id": "kit-manager-web", "path_globs": ["apps/kit-manager-web/**", "services/kit-manager-api/**"] },
+    {
+      "id": "agent-governance",
+      "path_globs": [
+        "AGENTS.md", "CLAUDE.md", ".claude/**", ".codex/**", ".github/**", "docs/agents/**",
+        "openspec/**", "scripts/**", "agent-skills-manifest.json", "skills-lock.json"
+      ]
+    },
+    { "id": "compose-config", "path_globs": ["compose.*.yml", ".env*.example", "infra/docker/**"] },
+    {
+      "id": "powershell-static",
+      "path_globs": ["AGENTS.md", "docs/agents/**", ".github/workflows/**", ".claude/workflows/**", ".claude/skills/**/*.ps1", ".codex/skills/**/*.ps1", "scripts/**/*.ps1", "scripts/**/*.psm1"]
+    },
+    {
+      "id": "rebuild-test-deploy",
+      "path_globs": [
+        "scripts/deploy.ps1", "scripts/dev/rebuild-test-deploy.ps1", "scripts/lib/rebuild-test-deploy.ps1",
+        "scripts/lib/design-assets.ps1", "scripts/lib/host-native-launcher.ps1", "scripts/lib/StructLog.psm1",
+        "scripts/tests/test-rebuild-test-deploy.ps1", "scripts/tests/test-verify-all.ps1", "scripts/tests/test-helpers.ps1"
+      ]
+    },
+    {
+      "id": "frontend-product",
+      "path_globs": [
+        "web-viewer-sample/**", "apps/kit-manager-web/**", "bim-review-coordinator/src/**", "bim-review-coordinator/public/**",
+        "docs/plans/**/*prototype.html", "docs/plans/design-system-reference.manifest.json", "docs/plans/design-system-baseline/**"
+      ]
+    },
+    {
+      "id": "functional-runtime",
+      "path_globs": [
+        "bim-review-coordinator/**", "web-viewer-sample/**", "docs/plans/design-system-reference.manifest.json",
+        "scripts/tests/test-functional-runtime-result.ps1", "scripts/tests/verify-functional-runtime-result.ps1"
+      ]
+    }
+  ],
+  "gates": [
+    {
+      "id": "root-contracts", "capabilities": ["contract"], "enforcement": "required",
+      "command": { "executable": "python", "args": ["-m", "pytest", "tests", "-q", "-p", "no:cacheprovider"] },
+      "cwd": ".", "evidence_class": "contract", "configured": true, "not_configured_reason": null
+    },
+    {
+      "id": "coordinator-verify", "capabilities": ["types", "unit", "contract"], "enforcement": "required",
+      "command": { "executable": "npm", "args": ["run", "verify"] },
+      "cwd": "bim-review-coordinator", "evidence_class": "fast", "configured": true, "not_configured_reason": null
+    },
+    {
+      "id": "coordinator-lint", "capabilities": ["lint"], "enforcement": "advisory", "command": null,
+      "cwd": "bim-review-coordinator", "evidence_class": "fast", "configured": false, "not_configured_reason": "tooling_absent"
+    },
+    {
+      "id": "coordinator-changed-lines", "capabilities": ["changed-lines-coverage"], "enforcement": "advisory", "command": null,
+      "cwd": "bim-review-coordinator", "evidence_class": "fast", "configured": false, "not_configured_reason": "coverage_instrumentation_absent"
+    },
+    {
+      "id": "viewer-verify", "capabilities": ["types", "unit", "contract", "build"], "enforcement": "required",
+      "command": { "executable": "npm", "args": ["run", "verify"] },
+      "cwd": "web-viewer-sample", "evidence_class": "fast", "configured": true, "not_configured_reason": null
+    },
+    {
+      "id": "viewer-lint", "capabilities": ["lint"], "enforcement": "required",
+      "command": { "executable": "npm", "args": ["run", "lint:baseline"] },
+      "cwd": "web-viewer-sample", "evidence_class": "fast", "configured": true, "not_configured_reason": null
+    },
+    {
+      "id": "viewer-changed-lines", "capabilities": ["changed-lines-coverage"], "enforcement": "advisory", "command": null,
+      "cwd": "web-viewer-sample", "evidence_class": "fast", "configured": false, "not_configured_reason": "coverage_instrumentation_absent"
+    },
+    {
+      "id": "streaming-contract", "capabilities": ["contract"], "enforcement": "required",
+      "command": { "executable": "pwsh", "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "scripts/tests/test-stage-loading-contract.ps1"] },
+      "cwd": "bim-streaming-server", "evidence_class": "contract", "configured": true, "not_configured_reason": null
+    },
+    {
+      "id": "governance-tests", "capabilities": ["unit", "contract"], "enforcement": "required",
+      "command": { "executable": "python", "args": ["-m", "pytest", "tests", "-q"] },
+      "cwd": "governance-service", "evidence_class": "contract", "configured": true, "not_configured_reason": null
+    },
+    {
+      "id": "viewer-session-first", "capabilities": ["contract"], "enforcement": "required",
+      "command": { "executable": "npm", "args": ["run", "test:session-first"] },
+      "cwd": "web-viewer-sample", "evidence_class": "contract", "configured": true, "not_configured_reason": null
+    },
+    {
+      "id": "kit-manager-api-tests", "capabilities": ["unit", "contract"], "enforcement": "required",
+      "command": { "executable": "python", "args": ["-m", "pytest", "tests", "-q"] },
+      "cwd": "services/kit-manager-api", "evidence_class": "contract", "configured": true, "not_configured_reason": null
+    },
+    {
+      "id": "kit-manager-api-types", "capabilities": ["types"], "enforcement": "advisory", "command": null,
+      "cwd": "services/kit-manager-api", "evidence_class": "fast", "configured": false, "not_configured_reason": "tooling_absent"
+    },
+    {
+      "id": "kit-manager-api-lint", "capabilities": ["lint"], "enforcement": "advisory", "command": null,
+      "cwd": "services/kit-manager-api", "evidence_class": "fast", "configured": false, "not_configured_reason": "tooling_absent"
+    },
+    {
+      "id": "kit-manager-api-changed-lines", "capabilities": ["changed-lines-coverage"], "enforcement": "advisory", "command": null,
+      "cwd": "services/kit-manager-api", "evidence_class": "fast", "configured": false, "not_configured_reason": "coverage_instrumentation_absent"
+    },
+    {
+      "id": "kit-manager-web-build", "capabilities": ["types", "build"], "enforcement": "required",
+      "command": { "executable": "npm", "args": ["run", "build"] },
+      "cwd": "apps/kit-manager-web", "evidence_class": "fast", "configured": true, "not_configured_reason": null
+    },
+    {
+      "id": "kit-manager-web-lint", "capabilities": ["lint"], "enforcement": "advisory", "command": null,
+      "cwd": "apps/kit-manager-web", "evidence_class": "fast", "configured": false, "not_configured_reason": "tooling_absent"
+    },
+    {
+      "id": "kit-manager-web-unit-contract", "capabilities": ["unit", "contract"], "enforcement": "advisory", "command": null,
+      "cwd": "apps/kit-manager-web", "evidence_class": "contract", "configured": false, "not_configured_reason": "tooling_absent"
+    },
+    {
+      "id": "kit-manager-web-changed-lines", "capabilities": ["changed-lines-coverage"], "enforcement": "advisory", "command": null,
+      "cwd": "apps/kit-manager-web", "evidence_class": "fast", "configured": false, "not_configured_reason": "coverage_instrumentation_absent"
+    },
+    {
+      "id": "agent-governance-tests", "capabilities": ["contract"], "enforcement": "required",
+      "command": { "executable": "pwsh", "args": ["-NoProfile", "-NonInteractive", "-File", "scripts/tests/test-agent-governance-check.ps1"] },
+      "cwd": ".", "evidence_class": "contract", "configured": true, "not_configured_reason": null
+    },
+    {
+      "id": "compose-config", "capabilities": ["deployment-contract"], "enforcement": "required",
+      "command": { "executable": "docker", "args": ["compose", "-f", "compose.runtime-manager.yml", "-f", "compose.host-kit.yml", "--env-file", ".env.web-plane.host-kit.example", "config", "--quiet"] },
+      "cwd": ".", "evidence_class": "fast", "configured": true, "not_configured_reason": null
+    },
+    {
+      "id": "powershell-static", "capabilities": ["static-analysis"], "enforcement": "required",
+      "command": { "executable": "pwsh", "args": ["-NoProfile", "-NonInteractive", "-File", "scripts/tests/invoke-powershell-static.ps1"] },
+      "cwd": ".", "evidence_class": "fast", "configured": true, "not_configured_reason": null
+    },
+    {
+      "id": "rebuild-test-deploy", "capabilities": ["deployment-contract"], "enforcement": "required",
+      "command": { "executable": "pwsh", "args": ["-NoProfile", "-NonInteractive", "-File", "scripts/tests/test-rebuild-test-deploy.ps1"] },
+      "cwd": ".", "evidence_class": "contract", "configured": true, "not_configured_reason": null
+    },
+    {
+      "id": "design-semantic-visual", "capabilities": ["visual"], "enforcement": "required",
+      "command": { "executable": "npm", "args": ["run", "test:visual:design-system"] },
+      "cwd": "web-viewer-sample", "evidence_class": "slow", "configured": true, "not_configured_reason": null
+    },
+    {
+      "id": "functional-runtime-conv", "capabilities": ["runtime"], "enforcement": "required",
+      "command": { "executable": "npx", "args": ["--no-install", "playwright", "test", "--config=playwright.functional-runtime.config.ts"] },
+      "cwd": "web-viewer-sample", "evidence_class": "slow", "configured": true, "not_configured_reason": null
+    },
+    {
+      "id": "secret-pattern-scan", "capabilities": ["secret"], "enforcement": "required",
+      "command": { "executable": "pwsh", "args": ["-NoProfile", "-NonInteractive", "-File", "scripts/tests/scan-secret-patterns.ps1"] },
+      "cwd": ".", "evidence_class": "security", "configured": true, "not_configured_reason": null
+    },
+    {
+      "id": "security-exception-policy", "capabilities": ["secret"], "enforcement": "required",
+      "command": { "executable": "pwsh", "args": ["-NoProfile", "-NonInteractive", "-File", "scripts/tests/verify-security-exceptions.ps1"] },
+      "cwd": ".", "evidence_class": "security", "configured": true, "not_configured_reason": null
+    },
+    {
+      "id": "dependency-review", "capabilities": ["dependency"], "enforcement": "advisory", "command": null,
+      "cwd": ".", "evidence_class": "security", "configured": false, "not_configured_reason": "hosted_capability_unverified"
+    },
+    {
+      "id": "sast", "capabilities": ["sast"], "enforcement": "advisory", "command": null,
+      "cwd": ".", "evidence_class": "security", "configured": false, "not_configured_reason": "hosted_capability_unverified"
+    }
+  ],
+  "targets": [
+    {
+      "id": "root-contracts", "display_name": "tests (contracts+fakes)", "path_globs": ["tests/**", "scripts/tests/**", "scripts/gen_routing.py", ".claude/workflows/**", "docs/contracts/**", "bim-review-coordinator/**", "bim-streaming-server/**", "governance-service/**", "rules/**", "web-viewer-sample/**", "services/kit-manager-api/**", "apps/kit-manager-web/**"],
+      "owner": "contract-owner", "fast_gates": [], "contract_gates": ["root-contracts"], "slow_evidence_gates": [],
+      "required_when": { "predicate": "changed_path_class", "any_of": ["root-contracts"] }, "skip_reason": "path_not_affected",
+      "default_profiles": ["developer", "developer-py"], "ci_output": "root_contracts",
+      "ci_job": "root contracts and fakes", "result_artifact": null
+    },
+    {
+      "id": "coordinator", "display_name": "bim-review-coordinator", "path_globs": ["bim-review-coordinator/**", "tests/contracts/**"],
+      "owner": "bim-review-coordinator", "fast_gates": ["coordinator-verify", "coordinator-lint", "coordinator-changed-lines"], "contract_gates": [], "slow_evidence_gates": [],
+      "required_when": { "predicate": "changed_path_class", "any_of": ["coordinator"] }, "skip_reason": "path_not_affected",
+      "default_profiles": ["developer", "developer-ts"], "ci_output": "coordinator",
+      "ci_job": "coordinator build and tests", "result_artifact": null
+    },
+    {
+      "id": "viewer", "display_name": "web-viewer-sample", "path_globs": ["web-viewer-sample/**", "bim-review-coordinator/src/**", "bim-review-coordinator/public/**", "docs/plans/**/*prototype.html", "docs/plans/design-system-reference.manifest.json", "docs/plans/design-system-baseline/**"],
+      "owner": "web-viewer-sample", "fast_gates": ["viewer-verify", "viewer-lint", "viewer-changed-lines"], "contract_gates": [], "slow_evidence_gates": [],
+      "required_when": { "predicate": "changed_path_class", "any_of": ["viewer"] }, "skip_reason": "path_not_affected",
+      "default_profiles": ["developer", "developer-ts"], "ci_output": "viewer",
+      "ci_job": "viewer build and tests", "result_artifact": null
+    },
+    {
+      "id": "streaming", "display_name": "bim-streaming-server", "path_globs": ["bim-streaming-server/**", "tests/contracts/**"],
+      "owner": "bim-streaming-server", "fast_gates": [], "contract_gates": ["streaming-contract"], "slow_evidence_gates": [],
+      "required_when": { "predicate": "changed_path_class", "any_of": ["streaming"] }, "skip_reason": "path_not_affected",
+      "default_profiles": ["developer", "developer-streaming"], "ci_output": "streaming",
+      "ci_job": "streaming stage-loading contract", "result_artifact": null
+    },
+    {
+      "id": "governance", "display_name": "governance-service", "path_globs": ["governance-service/**", "rules/**", "tests/contracts/**"],
+      "owner": "governance-service", "fast_gates": [], "contract_gates": ["governance-tests"], "slow_evidence_gates": [],
+      "required_when": { "predicate": "changed_path_class", "any_of": ["governance"] }, "skip_reason": "path_not_affected",
+      "default_profiles": [], "ci_output": "governance_service",
+      "ci_job": "governance-service tests", "result_artifact": null
+    },
+    {
+      "id": "viewer-session", "display_name": "viewer session-first contract", "path_globs": ["web-viewer-sample/**", "bim-review-coordinator/src/**"],
+      "owner": "web-viewer-sample", "fast_gates": [], "contract_gates": ["viewer-session-first"], "slow_evidence_gates": [],
+      "required_when": { "predicate": "changed_path_class", "any_of": ["viewer"] }, "skip_reason": "path_not_affected",
+      "default_profiles": [], "ci_output": "viewer",
+      "ci_job": "viewer build and tests", "result_artifact": null
+    },
+    {
+      "id": "kit-manager-api", "display_name": "kit-manager-api", "path_globs": ["services/kit-manager-api/**", "tests/contracts/**"],
+      "owner": "kit-manager-api", "fast_gates": ["kit-manager-api-types", "kit-manager-api-lint", "kit-manager-api-changed-lines"], "contract_gates": ["kit-manager-api-tests"], "slow_evidence_gates": [],
+      "required_when": { "predicate": "changed_path_class", "any_of": ["kit-manager-api"] }, "skip_reason": "path_not_affected",
+      "default_profiles": [], "ci_output": "kit_manager_api",
+      "ci_job": "kit-manager-api tests", "result_artifact": null
+    },
+    {
+      "id": "kit-manager-web", "display_name": "kit-manager-web", "path_globs": ["apps/kit-manager-web/**", "services/kit-manager-api/**"],
+      "owner": "kit-manager-web", "fast_gates": ["kit-manager-web-build", "kit-manager-web-lint", "kit-manager-web-changed-lines"], "contract_gates": ["kit-manager-web-unit-contract"], "slow_evidence_gates": [],
+      "required_when": { "predicate": "changed_path_class", "any_of": ["kit-manager-web"] }, "skip_reason": "path_not_affected",
+      "default_profiles": [], "ci_output": "kit_manager_web",
+      "ci_job": "kit-manager-web build", "result_artifact": null
+    },
+    {
+      "id": "agent-governance", "display_name": "agent governance contracts", "path_globs": ["AGENTS.md", "CLAUDE.md", ".claude/**", ".codex/**", ".github/**", "docs/agents/**", "openspec/**", "scripts/**", "agent-skills-manifest.json", "skills-lock.json"],
+      "owner": "agent-governance", "fast_gates": [], "contract_gates": ["agent-governance-tests"], "slow_evidence_gates": [],
+      "required_when": { "predicate": "changed_path_class", "any_of": ["agent-governance"] }, "skip_reason": "path_not_affected",
+      "default_profiles": [], "ci_output": "agent_governance",
+      "ci_job": "agent governance contracts", "result_artifact": null
+    },
+    {
+      "id": "compose-config", "display_name": "docker compose config", "path_globs": ["compose.*.yml", ".env*.example", "infra/docker/**"],
+      "owner": "deployment", "fast_gates": ["compose-config"], "contract_gates": [], "slow_evidence_gates": [],
+      "required_when": { "predicate": "changed_path_class", "any_of": ["compose-config"] }, "skip_reason": "path_not_affected",
+      "default_profiles": [], "ci_output": "compose_config",
+      "ci_job": "docker compose config", "result_artifact": null
+    },
+    {
+      "id": "powershell-static", "display_name": "PowerShell static analysis", "path_globs": ["AGENTS.md", "docs/agents/**", ".github/workflows/**", ".claude/workflows/**", ".claude/skills/**/*.ps1", ".codex/skills/**/*.ps1", "scripts/**/*.ps1", "scripts/**/*.psm1"],
+      "owner": "scripts", "fast_gates": ["powershell-static"], "contract_gates": [], "slow_evidence_gates": [],
+      "required_when": { "predicate": "changed_path_class", "any_of": ["powershell-static"] }, "skip_reason": "path_not_affected",
+      "default_profiles": [], "ci_output": "powershell_static",
+      "ci_job": "powershell static analysis", "result_artifact": null
+    },
+    {
+      "id": "rebuild-test-deploy", "display_name": "rebuild/test-deploy contracts", "path_globs": ["scripts/deploy.ps1", "scripts/dev/rebuild-test-deploy.ps1", "scripts/lib/rebuild-test-deploy.ps1", "scripts/lib/design-assets.ps1", "scripts/lib/host-native-launcher.ps1", "scripts/lib/StructLog.psm1", "scripts/tests/test-rebuild-test-deploy.ps1", "scripts/tests/test-verify-all.ps1", "scripts/tests/test-helpers.ps1"],
+      "owner": "deployment", "fast_gates": [], "contract_gates": ["rebuild-test-deploy"], "slow_evidence_gates": [],
+      "required_when": { "predicate": "changed_path_class", "any_of": ["rebuild-test-deploy"] }, "skip_reason": "path_not_affected",
+      "default_profiles": [], "ci_output": "rebuild_test_deploy",
+      "ci_job": "rebuild/test-deploy contracts", "result_artifact": null
+    },
+    {
+      "id": "design-semantic-visual", "display_name": "design semantic visual evidence", "path_globs": ["web-viewer-sample/**", "apps/kit-manager-web/**", "bim-review-coordinator/src/**", "bim-review-coordinator/public/**", "docs/plans/*prototype.html", "docs/plans/design-system-reference.manifest.json", "docs/plans/design-system-baseline/**"],
+      "owner": "frontend-evidence", "fast_gates": [], "contract_gates": [], "slow_evidence_gates": ["design-semantic-visual"],
+      "required_when": { "predicate": "changed_path_class", "any_of": ["frontend-product"] }, "skip_reason": "path_not_affected",
+      "default_profiles": [], "ci_output": null,
+      "ci_job": "design-semantic-visual",
+      "result_artifact": {
+        "artifact_name_prefix": "design-semantic-visual-",
+        "result_path": "artifacts/e2e/design-system-visual-result.json",
+        "kind": "ai-bim-design-system-visual-result",
+        "schema_version": 2,
+        "subject_field": "subject_commit"
+      }
+    },
+    {
+      "id": "functional-runtime-conv", "display_name": "functional runtime evidence", "path_globs": ["bim-review-coordinator/**", "web-viewer-sample/**", "docs/plans/design-system-reference.manifest.json", "scripts/tests/test-functional-runtime-result.ps1", "scripts/tests/verify-functional-runtime-result.ps1"],
+      "owner": "frontend-evidence", "fast_gates": [], "contract_gates": [], "slow_evidence_gates": ["functional-runtime-conv"],
+      "required_when": { "predicate": "changed_path_class", "any_of": ["functional-runtime"] }, "skip_reason": "path_not_affected",
+      "default_profiles": [], "ci_output": "conv_functional",
+      "ci_job": "functional-runtime-conv",
+      "result_artifact": {
+        "artifact_name_prefix": "functional-runtime-conv-",
+        "result_path": "artifacts/e2e/functional-runtime/functional-runtime-result.json",
+        "kind": "ai-bim-functional-runtime-result",
+        "schema_version": 1,
+        "subject_field": "subject_commit"
+      }
+    },
+    {
+      "id": "secret-pattern-scan", "display_name": "secret pattern scan", "path_globs": ["AGENTS.md", "CLAUDE.md", "README*.md", "*.json", "*.md", "*.yml", "*.yaml", ".claude/**", ".codex/**", ".github/**", "apps/**", "artifacts/**", "bim-review-coordinator/**", "bim-streaming-server/**", "docs/**", "governance-service/**", "infra/**", "openspec/**", "patches/**", "rules/**", "scripts/**", "services/**", "tests/**", "web-viewer-sample/**"],
+      "owner": "security", "fast_gates": ["secret-pattern-scan", "security-exception-policy", "dependency-review", "sast"], "contract_gates": [], "slow_evidence_gates": [],
+      "required_when": { "predicate": "changed_path_class", "any_of": ["tracked-repository"] }, "skip_reason": "path_not_affected",
+      "default_profiles": [], "ci_output": "secret_pattern_scan",
+      "ci_job": "secret pattern scan", "result_artifact": null
+    }
+  ],
+  "quality_policy": {
+    "service_targets": ["coordinator", "viewer", "kit-manager-api", "kit-manager-web"],
+    "minimum_capabilities": ["types", "lint", "unit-or-contract"],
+    "coverage": {
+      "mode": "changed-lines-and-critical-contracts",
+      "whole_repository_percentage": null,
+      "changed_lines_gate_ids": ["coordinator-changed-lines", "viewer-changed-lines", "kit-manager-api-changed-lines", "kit-manager-web-changed-lines"],
+      "critical_contract_gate_ids": ["coordinator-verify", "viewer-verify", "viewer-session-first", "kit-manager-api-tests", "kit-manager-web-unit-contract"]
+    }
+  },
+  "security_policy": {
+    "exception_registry": "scripts/security-exceptions.json",
+    "exception_max_days": 90,
+    "scan_gate_ids": ["secret-pattern-scan", "dependency-review", "sast"],
+    "redacted_output_fields": ["secret-values", "source-snippets", "raw-output"]
+  },
+  "artifact_policy": {
+    "attestation_scope": "deployables-only",
+    "attestation_enforcement": "not_configured",
+    "not_configured_reason": "deployment_pipeline_absent",
+    "deployable_kinds": ["binary", "container"],
+    "evidence_kinds": ["ai-bim-design-system-visual-result", "ai-bim-functional-runtime-result"],
+    "evidence_bindings": ["subject-commit", "sha256"],
+    "excluded_globs": ["artifacts/e2e/**"]
+  }
+}

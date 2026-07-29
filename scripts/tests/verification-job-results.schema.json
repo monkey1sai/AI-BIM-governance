@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "verification-job-results.schema.json",
+  "title": "Trusted GitHub workflow-run observation v1",
+  "type": "object",
+  "required": [
+    "schema_version", "authority", "repository", "repository_id", "source_workflow", "source_workflow_id", "source_workflow_path",
+    "source_run_id", "source_run_attempt", "event_name", "pull_request_number", "body_sha256", "base_ref", "base_sha",
+    "subject_sha", "live_head_sha", "source_conclusion", "jobs", "artifacts"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "verification-job-results/v1" },
+    "authority": { "type": "string", "enum": ["trusted_base", "trusted_main", "bootstrap_untrusted"] },
+    "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", "maxLength": 200 },
+    "repository_id": { "type": "integer", "minimum": 1 },
+    "source_workflow": { "const": "CI" },
+    "source_workflow_id": { "type": "integer", "minimum": 1 },
+    "source_workflow_path": { "const": ".github/workflows/ci.yml" },
+    "source_run_id": { "type": "integer", "minimum": 1 },
+    "source_run_attempt": { "type": "integer", "minimum": 1, "maximum": 1000 },
+    "event_name": { "type": "string", "enum": ["pull_request", "push"] },
+    "pull_request_number": {
+      "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 1 }]
+    },
+    "body_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "base_ref": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$" },
+    "base_sha": {
+      "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^[0-9a-f]{40}$" }]
+    },
+    "subject_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "live_head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "source_conclusion": { "$ref": "#/definitions/conclusion" },
+    "jobs": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "required": ["name", "conclusion"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._:/()\\[\\]\\-]{0,199}$" },
+          "conclusion": { "$ref": "#/definitions/conclusion" }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "size_in_bytes", "expired", "source_run_id", "source_run_attempt", "subject_sha"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "integer", "minimum": 1 },
+          "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\-]{0,199}$" },
+          "size_in_bytes": { "type": "integer", "minimum": 1, "maximum": 134217728 },
+          "expired": { "type": "boolean" },
+          "source_run_id": { "type": "integer", "minimum": 1 },
+          "source_run_attempt": { "type": "integer", "minimum": 1, "maximum": 1000 },
+          "subject_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "conclusion": {
+      "type": "string",
+      "enum": ["success", "failure", "cancelled", "skipped", "neutral", "timed_out", "action_required", "stale", "startup_failure"]
+    }
+  }
+}

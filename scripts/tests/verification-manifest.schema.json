@@ -1,0 +1,195 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "verification-manifest.schema.json",
+  "title": "Verification manifest v2",
+  "type": "object",
+  "required": ["schema_version", "unknown_path_policy", "full_dispatch_globs", "known_non_code_globs", "path_classes", "gates", "targets", "quality_policy", "security_policy", "artifact_policy"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "verification-manifest/v2" },
+    "unknown_path_policy": { "const": "fail_closed" },
+    "full_dispatch_globs": { "$ref": "#/definitions/globs" },
+    "known_non_code_globs": { "$ref": "#/definitions/globs" },
+    "path_classes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "required": ["id", "path_globs"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/definitions/id" },
+          "path_globs": { "$ref": "#/definitions/globs" }
+        }
+      }
+    },
+    "gates": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "required": ["id", "capabilities", "enforcement", "command", "cwd", "evidence_class", "configured", "not_configured_reason"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/definitions/id" },
+          "capabilities": { "$ref": "#/definitions/capabilities" },
+          "enforcement": { "type": "string", "enum": ["required", "advisory"] },
+          "command": { "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/command" }] },
+          "cwd": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "evidence_class": { "type": "string", "enum": ["fast", "contract", "slow", "security"] },
+          "configured": { "type": "boolean" },
+          "not_configured_reason": { "oneOf": [{ "type": "null" }, { "type": "string", "enum": ["tooling_absent", "coverage_instrumentation_absent", "host_runtime_required", "hosted_capability_unverified", "deployment_pipeline_absent"] }] }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "configured": { "const": true } }, "required": ["configured"] },
+            "then": { "properties": { "command": { "$ref": "#/definitions/command" }, "not_configured_reason": { "type": "null" } } }
+          },
+          {
+            "if": { "properties": { "configured": { "const": false } }, "required": ["configured"] },
+            "then": { "properties": { "command": { "type": "null" }, "not_configured_reason": { "type": "string", "enum": ["tooling_absent", "coverage_instrumentation_absent", "host_runtime_required", "hosted_capability_unverified", "deployment_pipeline_absent"] } } }
+          }
+        ]
+      }
+    },
+    "quality_policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["service_targets", "minimum_capabilities", "coverage"],
+      "properties": {
+        "service_targets": { "$ref": "#/definitions/ids" },
+        "minimum_capabilities": { "type": "array", "const": ["types", "lint", "unit-or-contract"] },
+        "coverage": {
+          "type": "object", "additionalProperties": false,
+          "required": ["mode", "whole_repository_percentage", "changed_lines_gate_ids", "critical_contract_gate_ids"],
+          "properties": {
+            "mode": { "const": "changed-lines-and-critical-contracts" },
+            "whole_repository_percentage": { "type": "null" },
+            "changed_lines_gate_ids": { "$ref": "#/definitions/ids" },
+            "critical_contract_gate_ids": { "$ref": "#/definitions/ids" }
+          }
+        }
+      }
+    },
+    "security_policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["exception_registry", "exception_max_days", "scan_gate_ids", "redacted_output_fields"],
+      "properties": {
+        "exception_registry": { "type": "string", "const": "scripts/security-exceptions.json" },
+        "exception_max_days": { "type": "integer", "minimum": 1, "maximum": 365 },
+        "scan_gate_ids": { "$ref": "#/definitions/ids" },
+        "redacted_output_fields": { "type": "array", "const": ["secret-values", "source-snippets", "raw-output"] }
+      }
+    },
+    "artifact_policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["attestation_scope", "attestation_enforcement", "not_configured_reason", "deployable_kinds", "evidence_kinds", "evidence_bindings", "excluded_globs"],
+      "properties": {
+        "attestation_scope": { "const": "deployables-only" },
+        "attestation_enforcement": { "const": "not_configured" },
+        "not_configured_reason": { "const": "deployment_pipeline_absent" },
+        "deployable_kinds": { "type": "array", "const": ["binary", "container"] },
+        "evidence_kinds": { "type": "array", "const": ["ai-bim-design-system-visual-result", "ai-bim-functional-runtime-result"] },
+        "evidence_bindings": { "type": "array", "const": ["subject-commit", "sha256"] },
+        "excluded_globs": { "type": "array", "const": ["artifacts/e2e/**"] }
+      }
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "required": ["id", "display_name", "path_globs", "owner", "fast_gates", "contract_gates", "slow_evidence_gates", "required_when", "skip_reason", "default_profiles", "ci_output", "ci_job", "result_artifact"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/definitions/id" },
+          "display_name": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "path_globs": { "$ref": "#/definitions/globs" },
+          "owner": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "fast_gates": { "$ref": "#/definitions/ids" },
+          "contract_gates": { "$ref": "#/definitions/ids" },
+          "slow_evidence_gates": { "$ref": "#/definitions/ids" },
+          "required_when": {
+            "type": "object",
+            "required": ["predicate", "any_of"],
+            "additionalProperties": false,
+            "properties": {
+              "predicate": { "const": "changed_path_class" },
+              "any_of": { "$ref": "#/definitions/ids" }
+            }
+          },
+          "skip_reason": { "const": "path_not_affected" },
+          "default_profiles": {
+            "type": "array",
+            "uniqueItems": true,
+            "maxItems": 5,
+            "items": {
+              "type": "string",
+              "enum": ["developer", "developer-ts", "developer-py", "developer-streaming", "developer-none"]
+            }
+          },
+          "ci_output": {
+            "oneOf": [
+              { "type": "null" },
+              { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }
+            ]
+          },
+          "ci_job": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._:/()\\-]{0,199}$" },
+          "result_artifact": {
+            "oneOf": [
+              { "type": "null" },
+              { "$ref": "#/definitions/result_artifact" }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+    "ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 100,
+      "items": { "$ref": "#/definitions/id" }
+    },
+    "capabilities": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "type": "string", "enum": ["types", "lint", "unit", "contract", "build", "static-analysis", "deployment-contract", "visual", "runtime", "secret", "dependency", "sast", "changed-lines-coverage"] }
+    },
+    "globs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "maxItems": 100,
+      "items": { "type": "string", "minLength": 1, "maxLength": 300 }
+    },
+    "command": {
+      "type": "object",
+      "required": ["executable", "args"],
+      "additionalProperties": false,
+      "properties": {
+        "executable": { "type": "string", "enum": ["docker", "npm", "npx", "pwsh", "python"] },
+        "args": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "type": "string", "maxLength": 500 }
+        }
+      }
+    },
+    "result_artifact": {
+      "type": "object",
+      "required": ["artifact_name_prefix", "result_path", "kind", "schema_version", "subject_field"],
+      "additionalProperties": false,
+      "properties": {
+        "artifact_name_prefix": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*-$", "maxLength": 100 },
+        "result_path": { "type": "string", "pattern": "^artifacts/e2e/(?!.*(?:^|/)(?:\\.\\.?)(?:/|$))(?!.*\\\\)[^\\u0000]+$", "maxLength": 300 },
+        "kind": { "type": "string", "enum": ["ai-bim-design-system-visual-result", "ai-bim-functional-runtime-result"] },
+        "schema_version": { "type": "integer", "enum": [1, 2] },
+        "subject_field": { "const": "subject_commit" }
+      }
+    }
+  }
+}

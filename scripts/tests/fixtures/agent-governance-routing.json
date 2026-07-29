@@ -1,29 +1,788 @@
 {
-  "schema_version": "agent-governance-routing/v1",
+  "schema_version": "task-packet-corpus/v2",
   "tasks": [
-    {"id":"f-doc-typo","prompt":"修正文檔 typo","lane":"F","superpowers":false,"worktree_required":false,"spec_required":false,"max_subagents":0,"validation":"targeted"},
-    {"id":"f-timeout","prompt":"修正單一 timeout","lane":"F","superpowers":false,"worktree_required":false,"spec_required":false,"max_subagents":0,"validation":"targeted"},
-    {"id":"f-test-assertion","prompt":"修正單一測試 assertion","lane":"F","superpowers":false,"worktree_required":false,"spec_required":false,"max_subagents":0,"validation":"targeted"},
-    {"id":"f-log-message","prompt":"修正 log message","lane":"F","superpowers":false,"worktree_required":false,"spec_required":false,"max_subagents":0,"validation":"targeted"},
-    {"id":"b-internal-helper","prompt":"單一 service 新增 internal helper","lane":"B","superpowers":false,"worktree_required":false,"spec_required":false,"max_subagents":1,"validation":"affected"},
-    {"id":"b-api-error","prompt":"單一 API 內部錯誤處理，不改 contract","lane":"B","superpowers":false,"worktree_required":false,"spec_required":false,"max_subagents":1,"validation":"affected"},
-    {"id":"b-component-state","prompt":"單一 frontend component 內部 state fix，不改 route","lane":"B","superpowers":false,"worktree_required":false,"spec_required":false,"max_subagents":1,"validation":"affected"},
-    {"id":"b-worker-retry","prompt":"單一 worker retry logic，不改外部 contract","lane":"B","superpowers":false,"worktree_required":false,"spec_required":false,"max_subagents":1,"validation":"affected"},
-    {"id":"g-public-endpoint","prompt":"新增 public coordinator endpoint","lane":"G","superpowers":false,"worktree_required":true,"spec_required":true,"max_subagents":2,"validation":"integration"},
-    {"id":"g-webrtc-lifecycle","prompt":"修改 WebRTC session lifecycle","lane":"G","superpowers":false,"worktree_required":true,"spec_required":true,"max_subagents":2,"validation":"integration_e2e"},
-    {"id":"s-explicit-spec-to-done","prompt":"用 spec-to-done 跑 docs/superpowers/specs/example.md","lane":"S","superpowers":true,"worktree_required":true,"spec_required":true,"max_subagents":2,"validation":"p0_p7"},
-    {"id":"s-explicit-superpowers","prompt":"使用完整 Superpowers 自主做到 merged PR","lane":"S","superpowers":true,"worktree_required":true,"spec_required":true,"max_subagents":2,"validation":"p0_p7"}
+    {
+      "schema_version": "task-packet/v2",
+      "id": "f-doc-text",
+      "lane": "F",
+      "scope": "docs_or_text",
+      "owner": "coordinator",
+      "worktree_required": false,
+      "max_agents": 1,
+      "read_set": [
+        "AGENTS.md",
+        "nearest:AGENTS.md",
+        "task:target_source",
+        "task:affected_tests"
+      ],
+      "read_set_max": 4,
+      "required_evidence": [
+        "test_result"
+      ],
+      "required_gates": [
+        "targeted"
+      ],
+      "allowed_agents": [
+        "coordinator"
+      ],
+      "forbidden_actions": [
+        "parallel_writers",
+        "implicit_superpowers",
+        "unapproved_ship_or_merge",
+        "unapproved_production_change",
+        "unapproved_destructive_action",
+        "unapproved_cross_repo_access",
+        "unapproved_reindex"
+      ],
+      "escalation": "scope_expansion",
+      "authorization_requirement": "none"
+    },
+    {
+      "schema_version": "task-packet/v2",
+      "id": "f-log-wording",
+      "lane": "F",
+      "scope": "single_service_internal",
+      "owner": "coordinator",
+      "worktree_required": false,
+      "max_agents": 1,
+      "read_set": [
+        "AGENTS.md",
+        "nearest:AGENTS.md",
+        "task:target_source",
+        "task:affected_tests"
+      ],
+      "read_set_max": 4,
+      "required_evidence": [
+        "test_result"
+      ],
+      "required_gates": [
+        "targeted"
+      ],
+      "allowed_agents": [
+        "coordinator"
+      ],
+      "forbidden_actions": [
+        "parallel_writers",
+        "implicit_superpowers",
+        "unapproved_ship_or_merge",
+        "unapproved_production_change",
+        "unapproved_destructive_action",
+        "unapproved_cross_repo_access",
+        "unapproved_reindex"
+      ],
+      "escalation": "scope_expansion",
+      "authorization_requirement": "none"
+    },
+    {
+      "schema_version": "task-packet/v2",
+      "id": "f-single-assertion",
+      "lane": "F",
+      "scope": "single_assertion",
+      "owner": "coordinator",
+      "worktree_required": false,
+      "max_agents": 1,
+      "read_set": [
+        "AGENTS.md",
+        "nearest:AGENTS.md",
+        "task:target_source",
+        "task:affected_tests"
+      ],
+      "read_set_max": 4,
+      "required_evidence": [
+        "test_result"
+      ],
+      "required_gates": [
+        "targeted"
+      ],
+      "allowed_agents": [
+        "coordinator"
+      ],
+      "forbidden_actions": [
+        "parallel_writers",
+        "implicit_superpowers",
+        "unapproved_ship_or_merge",
+        "unapproved_production_change",
+        "unapproved_destructive_action",
+        "unapproved_cross_repo_access",
+        "unapproved_reindex"
+      ],
+      "escalation": "scope_expansion",
+      "authorization_requirement": "none"
+    },
+    {
+      "schema_version": "task-packet/v2",
+      "id": "f-local-timeout",
+      "lane": "F",
+      "scope": "single_service_internal",
+      "owner": "coordinator",
+      "worktree_required": false,
+      "max_agents": 1,
+      "read_set": [
+        "AGENTS.md",
+        "nearest:AGENTS.md",
+        "task:target_source",
+        "task:affected_tests"
+      ],
+      "read_set_max": 4,
+      "required_evidence": [
+        "test_result"
+      ],
+      "required_gates": [
+        "targeted"
+      ],
+      "allowed_agents": [
+        "coordinator"
+      ],
+      "forbidden_actions": [
+        "parallel_writers",
+        "implicit_superpowers",
+        "unapproved_ship_or_merge",
+        "unapproved_production_change",
+        "unapproved_destructive_action",
+        "unapproved_cross_repo_access",
+        "unapproved_reindex"
+      ],
+      "escalation": "scope_expansion",
+      "authorization_requirement": "none"
+    },
+    {
+      "schema_version": "task-packet/v2",
+      "id": "b-private-helper",
+      "lane": "B",
+      "scope": "single_service_internal",
+      "owner": "coordinator",
+      "worktree_required": false,
+      "max_agents": 2,
+      "read_set": [
+        "AGENTS.md",
+        "nearest:AGENTS.md",
+        "task:target_source",
+        "task:affected_tests",
+        "docs/agents/gitnexus-usage.md",
+        "docs/agents/sub-repo-verify-commands.md"
+      ],
+      "read_set_max": 6,
+      "required_evidence": [
+        "test_result",
+        "impact_result"
+      ],
+      "required_gates": [
+        "affected",
+        "impact"
+      ],
+      "allowed_agents": [
+        "coordinator",
+        "reviewer"
+      ],
+      "forbidden_actions": [
+        "parallel_writers",
+        "implicit_superpowers",
+        "unapproved_ship_or_merge",
+        "unapproved_production_change",
+        "unapproved_destructive_action",
+        "unapproved_cross_repo_access",
+        "unapproved_reindex"
+      ],
+      "escalation": "high_impact",
+      "authorization_requirement": "none"
+    },
+    {
+      "schema_version": "task-packet/v2",
+      "id": "b-internal-error-path",
+      "lane": "B",
+      "scope": "single_service_internal",
+      "owner": "coordinator",
+      "worktree_required": false,
+      "max_agents": 2,
+      "read_set": [
+        "AGENTS.md",
+        "nearest:AGENTS.md",
+        "task:target_source",
+        "task:affected_tests",
+        "docs/agents/gitnexus-usage.md",
+        "docs/agents/sub-repo-verify-commands.md"
+      ],
+      "read_set_max": 6,
+      "required_evidence": [
+        "test_result",
+        "impact_result"
+      ],
+      "required_gates": [
+        "affected",
+        "impact"
+      ],
+      "allowed_agents": [
+        "coordinator",
+        "debugger"
+      ],
+      "forbidden_actions": [
+        "parallel_writers",
+        "implicit_superpowers",
+        "unapproved_ship_or_merge",
+        "unapproved_production_change",
+        "unapproved_destructive_action",
+        "unapproved_cross_repo_access",
+        "unapproved_reindex"
+      ],
+      "escalation": "high_impact",
+      "authorization_requirement": "none"
+    },
+    {
+      "schema_version": "task-packet/v2",
+      "id": "b-component-state",
+      "lane": "B",
+      "scope": "single_service_internal",
+      "owner": "coordinator",
+      "worktree_required": false,
+      "max_agents": 2,
+      "read_set": [
+        "AGENTS.md",
+        "nearest:AGENTS.md",
+        "task:target_source",
+        "task:affected_tests",
+        "docs/agents/gitnexus-usage.md",
+        "docs/agents/sub-repo-verify-commands.md"
+      ],
+      "read_set_max": 6,
+      "required_evidence": [
+        "test_result",
+        "impact_result"
+      ],
+      "required_gates": [
+        "affected",
+        "impact"
+      ],
+      "allowed_agents": [
+        "coordinator",
+        "reviewer"
+      ],
+      "forbidden_actions": [
+        "parallel_writers",
+        "implicit_superpowers",
+        "unapproved_ship_or_merge",
+        "unapproved_production_change",
+        "unapproved_destructive_action",
+        "unapproved_cross_repo_access",
+        "unapproved_reindex"
+      ],
+      "escalation": "high_impact",
+      "authorization_requirement": "none"
+    },
+    {
+      "schema_version": "task-packet/v2",
+      "id": "b-static-config",
+      "lane": "B",
+      "scope": "single_service_non_symbol",
+      "owner": "coordinator",
+      "worktree_required": false,
+      "max_agents": 2,
+      "read_set": [
+        "AGENTS.md",
+        "nearest:AGENTS.md",
+        "task:target_source",
+        "task:affected_tests"
+      ],
+      "read_set_max": 6,
+      "required_evidence": [
+        "test_result"
+      ],
+      "required_gates": [
+        "affected"
+      ],
+      "allowed_agents": [
+        "coordinator",
+        "debugger"
+      ],
+      "forbidden_actions": [
+        "parallel_writers",
+        "implicit_superpowers",
+        "unapproved_ship_or_merge",
+        "unapproved_production_change",
+        "unapproved_destructive_action",
+        "unapproved_cross_repo_access",
+        "unapproved_reindex"
+      ],
+      "escalation": "high_impact",
+      "authorization_requirement": "none"
+    },
+    {
+      "schema_version": "task-packet/v2",
+      "id": "g-public-route",
+      "lane": "G",
+      "scope": "public_contract",
+      "owner": "coordinator",
+      "worktree_required": true,
+      "max_agents": 3,
+      "read_set": [
+        "AGENTS.md",
+        "nearest:AGENTS.md",
+        "task:target_source",
+        "task:affected_tests",
+        "task:service_contract",
+        "docs/agents/gitnexus-usage.md",
+        "docs/agents/sub-repo-verify-commands.md",
+        "scripts/verification-manifest.json"
+      ],
+      "read_set_max": 8,
+      "required_evidence": [
+        "test_result",
+        "impact_result",
+        "contract_result",
+        "integration_result"
+      ],
+      "required_gates": [
+        "affected",
+        "impact",
+        "detect_changes",
+        "integration",
+        "pr_local_preflight"
+      ],
+      "allowed_agents": [
+        "coordinator",
+        "explorer",
+        "reviewer"
+      ],
+      "forbidden_actions": [
+        "parallel_writers",
+        "implicit_superpowers",
+        "unapproved_ship_or_merge",
+        "unapproved_production_change",
+        "unapproved_destructive_action",
+        "unapproved_cross_repo_access",
+        "unapproved_reindex"
+      ],
+      "escalation": "critical_or_authority",
+      "authorization_requirement": "none"
+    },
+    {
+      "schema_version": "task-packet/v2",
+      "id": "g-persisted-schema",
+      "lane": "G",
+      "scope": "public_contract",
+      "owner": "coordinator",
+      "worktree_required": true,
+      "max_agents": 3,
+      "read_set": [
+        "AGENTS.md",
+        "nearest:AGENTS.md",
+        "task:target_source",
+        "task:affected_tests",
+        "task:service_contract",
+        "docs/agents/gitnexus-usage.md",
+        "docs/agents/sub-repo-verify-commands.md",
+        "scripts/verification-manifest.json"
+      ],
+      "read_set_max": 8,
+      "required_evidence": [
+        "test_result",
+        "impact_result",
+        "contract_result",
+        "integration_result"
+      ],
+      "required_gates": [
+        "affected",
+        "impact",
+        "detect_changes",
+        "integration",
+        "pr_local_preflight"
+      ],
+      "allowed_agents": [
+        "coordinator",
+        "explorer",
+        "reviewer"
+      ],
+      "forbidden_actions": [
+        "parallel_writers",
+        "implicit_superpowers",
+        "unapproved_ship_or_merge",
+        "unapproved_production_change",
+        "unapproved_destructive_action",
+        "unapproved_cross_repo_access",
+        "unapproved_reindex"
+      ],
+      "escalation": "critical_or_authority",
+      "authorization_requirement": "none"
+    },
+    {
+      "schema_version": "task-packet/v2",
+      "id": "g-user-visible-flow",
+      "lane": "G",
+      "scope": "user_workflow",
+      "owner": "coordinator",
+      "worktree_required": true,
+      "max_agents": 3,
+      "read_set": [
+        "AGENTS.md",
+        "nearest:AGENTS.md",
+        "task:target_source",
+        "task:affected_tests",
+        "docs/agents/product-operability-and-script-contract.md",
+        "docs/plans/docs-plans-README.md",
+        "docs/agents/gitnexus-usage.md",
+        "docs/agents/sub-repo-verify-commands.md"
+      ],
+      "read_set_max": 8,
+      "required_evidence": [
+        "test_result",
+        "impact_result",
+        "integration_result",
+        "browser_artifacts"
+      ],
+      "required_gates": [
+        "affected",
+        "impact",
+        "detect_changes",
+        "integration",
+        "browser_e2e",
+        "pr_local_preflight"
+      ],
+      "allowed_agents": [
+        "coordinator",
+        "explorer",
+        "reviewer"
+      ],
+      "forbidden_actions": [
+        "parallel_writers",
+        "implicit_superpowers",
+        "unapproved_ship_or_merge",
+        "unapproved_production_change",
+        "unapproved_destructive_action",
+        "unapproved_cross_repo_access",
+        "unapproved_reindex"
+      ],
+      "escalation": "critical_or_authority",
+      "authorization_requirement": "none"
+    },
+    {
+      "schema_version": "task-packet/v2",
+      "id": "g-runtime-session",
+      "lane": "G",
+      "scope": "runtime_or_deploy",
+      "owner": "coordinator",
+      "worktree_required": true,
+      "max_agents": 3,
+      "read_set": [
+        "AGENTS.md",
+        "nearest:AGENTS.md",
+        "task:target_source",
+        "task:affected_tests",
+        "task:service_contract",
+        "docs/agents/product-operability-and-script-contract.md",
+        "docs/agents/gitnexus-usage.md",
+        "docs/agents/sub-repo-verify-commands.md"
+      ],
+      "read_set_max": 8,
+      "required_evidence": [
+        "test_result",
+        "impact_result",
+        "integration_result",
+        "runtime_log"
+      ],
+      "required_gates": [
+        "affected",
+        "impact",
+        "detect_changes",
+        "integration",
+        "runtime_evidence",
+        "pr_local_preflight"
+      ],
+      "allowed_agents": [
+        "coordinator",
+        "debugger",
+        "reviewer"
+      ],
+      "forbidden_actions": [
+        "parallel_writers",
+        "implicit_superpowers",
+        "unapproved_ship_or_merge",
+        "unapproved_production_change",
+        "unapproved_destructive_action",
+        "unapproved_cross_repo_access",
+        "unapproved_reindex"
+      ],
+      "escalation": "critical_or_authority",
+      "authorization_requirement": "none"
+    },
+    {
+      "schema_version": "task-packet/v2",
+      "id": "g-deployment-policy",
+      "lane": "G",
+      "scope": "runtime_or_deploy",
+      "owner": "coordinator",
+      "worktree_required": true,
+      "max_agents": 3,
+      "read_set": [
+        "AGENTS.md",
+        "nearest:AGENTS.md",
+        "task:target_source",
+        "task:affected_tests",
+        "task:service_contract",
+        "docs/agents/product-operability-and-script-contract.md",
+        "docs/agents/gitnexus-usage.md",
+        "docs/agents/sub-repo-verify-commands.md"
+      ],
+      "read_set_max": 8,
+      "required_evidence": [
+        "test_result",
+        "impact_result",
+        "integration_result",
+        "runtime_log",
+        "security_review"
+      ],
+      "required_gates": [
+        "affected",
+        "impact",
+        "detect_changes",
+        "integration",
+        "runtime_evidence",
+        "security_review",
+        "pr_local_preflight"
+      ],
+      "allowed_agents": [
+        "coordinator",
+        "security_auditor",
+        "reviewer"
+      ],
+      "forbidden_actions": [
+        "parallel_writers",
+        "implicit_superpowers",
+        "unapproved_ship_or_merge",
+        "unapproved_production_change",
+        "unapproved_destructive_action",
+        "unapproved_cross_repo_access",
+        "unapproved_reindex"
+      ],
+      "escalation": "critical_or_authority",
+      "authorization_requirement": "none"
+    },
+    {
+      "schema_version": "task-packet/v2",
+      "id": "g-permission-boundary",
+      "lane": "G",
+      "scope": "security_or_permission",
+      "owner": "coordinator",
+      "worktree_required": true,
+      "max_agents": 3,
+      "read_set": [
+        "AGENTS.md",
+        "nearest:AGENTS.md",
+        "task:target_source",
+        "task:affected_tests",
+        "task:service_contract",
+        "docs/agents/gitnexus-usage.md",
+        "docs/agents/sub-repo-verify-commands.md",
+        "scripts/verification-manifest.json"
+      ],
+      "read_set_max": 8,
+      "required_evidence": [
+        "test_result",
+        "impact_result",
+        "integration_result",
+        "security_review"
+      ],
+      "required_gates": [
+        "affected",
+        "impact",
+        "detect_changes",
+        "integration",
+        "security_review",
+        "pr_local_preflight"
+      ],
+      "allowed_agents": [
+        "coordinator",
+        "security_auditor",
+        "reviewer"
+      ],
+      "forbidden_actions": [
+        "parallel_writers",
+        "implicit_superpowers",
+        "unapproved_ship_or_merge",
+        "unapproved_production_change",
+        "unapproved_destructive_action",
+        "unapproved_cross_repo_access",
+        "unapproved_reindex"
+      ],
+      "escalation": "critical_or_authority",
+      "authorization_requirement": "none"
+    },
+    {
+      "schema_version": "task-packet/v2",
+      "id": "s-explicit-approved-spec",
+      "lane": "S",
+      "scope": "explicit_spec",
+      "owner": "coordinator",
+      "worktree_required": true,
+      "max_agents": 3,
+      "read_set": [
+        "AGENTS.md",
+        "nearest:AGENTS.md",
+        "task:approved_spec",
+        "task:target_source",
+        "task:affected_tests",
+        "docs/agents/superpowers-invocation-policy.md",
+        "docs/agents/github-workflow.md",
+        "scripts/verification-manifest.json"
+      ],
+      "read_set_max": 8,
+      "required_evidence": [
+        "p0_p7_evidence",
+        "test_result",
+        "impact_result",
+        "integration_result"
+      ],
+      "required_gates": [
+        "p0_p7",
+        "impact",
+        "detect_changes",
+        "integration",
+        "pr_local_preflight"
+      ],
+      "allowed_agents": [
+        "coordinator",
+        "explorer",
+        "reviewer"
+      ],
+      "forbidden_actions": [
+        "parallel_writers",
+        "implicit_superpowers",
+        "unapproved_ship_or_merge",
+        "unapproved_production_change",
+        "unapproved_destructive_action",
+        "unapproved_cross_repo_access",
+        "unapproved_reindex"
+      ],
+      "escalation": "critical_or_authority",
+      "authorization_requirement": "external_explicit_user_instruction"
+    },
+    {
+      "schema_version": "task-packet/v2",
+      "id": "s-explicit-full-lifecycle",
+      "lane": "S",
+      "scope": "explicit_spec",
+      "owner": "coordinator",
+      "worktree_required": true,
+      "max_agents": 3,
+      "read_set": [
+        "AGENTS.md",
+        "nearest:AGENTS.md",
+        "task:approved_spec",
+        "task:target_source",
+        "task:affected_tests",
+        "docs/agents/superpowers-invocation-policy.md",
+        "docs/agents/github-workflow.md",
+        "scripts/verification-manifest.json"
+      ],
+      "read_set_max": 8,
+      "required_evidence": [
+        "p0_p7_evidence",
+        "test_result",
+        "impact_result",
+        "integration_result",
+        "security_review"
+      ],
+      "required_gates": [
+        "p0_p7",
+        "impact",
+        "detect_changes",
+        "integration",
+        "security_review",
+        "pr_local_preflight"
+      ],
+      "allowed_agents": [
+        "coordinator",
+        "security_auditor",
+        "reviewer"
+      ],
+      "forbidden_actions": [
+        "parallel_writers",
+        "implicit_superpowers",
+        "unapproved_ship_or_merge",
+        "unapproved_production_change",
+        "unapproved_destructive_action",
+        "unapproved_cross_repo_access",
+        "unapproved_reindex"
+      ],
+      "escalation": "critical_or_authority",
+      "authorization_requirement": "external_explicit_user_instruction"
+    }
   ],
-  "negative_cases": [
-    {"id":"complete-word","prompt":"完成這個普通 bug fix","must_not_lane":"S"},
-    {"id":"docs-superpowers","prompt":"更新普通 docs","must_not_use_superpowers":true},
-    {"id":"tests-formal-spec","prompt":"只修改 tests/ assertion","must_not_require_formal_spec":true},
-    {"id":"implicit-skill","policy":"allow_implicit_invocation","expected":false},
-    {"id":"model-pin","scope":"active repo governance","must_not_match":"gpt-[0-9]"},
-    {"id":"delete-public-contract","prompt":"刪除既有 public endpoint","minimum_lane":"G","behavior_contract_changed":true},
-    {"id":"deploy-false-fast","prompt":"以 Lane F 修改 deploy port policy","minimum_lane":"G","must_reject_declared_lane":"F"},
-    {"id":"security-false-bounded","prompt":"以 Lane B 修改 auth permission","minimum_lane":"G","must_reject_declared_lane":"B"},
-    {"id":"kit-browser-evidence","prompt":"修改 Kit Manager user workflow","minimum_lane":"G","requires_browser_evidence":true},
-    {"id":"ifc-fixture-contract","prompt":"驗證 user-facing IFC workflow","minimum_lane":"G","requires_real_ifc_fixture":true}
+  "routing_guards": [
+    {
+      "id": "complete-word",
+      "signal": "ordinary_completion_word",
+      "assertion": "must_not_trigger_lane_s",
+      "expected_minimum_lane": "F",
+      "external_lane_s_authorization_required": false
+    },
+    {
+      "id": "docs-superpowers",
+      "signal": "docs_only",
+      "assertion": "must_not_trigger_superpowers",
+      "expected_minimum_lane": "F",
+      "external_lane_s_authorization_required": false
+    },
+    {
+      "id": "tests-formal-spec",
+      "signal": "test_only",
+      "assertion": "must_not_require_spec",
+      "expected_minimum_lane": "F",
+      "external_lane_s_authorization_required": false
+    },
+    {
+      "id": "implicit-skill",
+      "signal": "implicit_skill",
+      "assertion": "must_remain_disabled",
+      "expected_minimum_lane": "F",
+      "external_lane_s_authorization_required": false
+    },
+    {
+      "id": "model-pin",
+      "signal": "active_governance",
+      "assertion": "must_not_pin_model",
+      "expected_minimum_lane": "F",
+      "external_lane_s_authorization_required": false
+    },
+    {
+      "id": "delete-public-contract",
+      "signal": "public_contract_delete",
+      "assertion": "minimum_lane_g",
+      "expected_minimum_lane": "G",
+      "external_lane_s_authorization_required": false
+    },
+    {
+      "id": "deploy-false-fast",
+      "signal": "deploy_policy",
+      "assertion": "minimum_lane_g",
+      "expected_minimum_lane": "G",
+      "external_lane_s_authorization_required": false
+    },
+    {
+      "id": "security-false-bounded",
+      "signal": "permission_boundary",
+      "assertion": "minimum_lane_g",
+      "expected_minimum_lane": "G",
+      "external_lane_s_authorization_required": false
+    },
+    {
+      "id": "browser-evidence",
+      "signal": "user_workflow",
+      "assertion": "requires_browser_e2e",
+      "expected_minimum_lane": "G",
+      "external_lane_s_authorization_required": false
+    },
+    {
+      "id": "real-fixture-contract",
+      "signal": "real_fixture_workflow",
+      "assertion": "requires_real_runtime_fixture",
+      "expected_minimum_lane": "G",
+      "external_lane_s_authorization_required": false
+    },
+    {
+      "id": "explicit-spec-authority",
+      "signal": "explicit_spec_request",
+      "assertion": "requires_external_lane_s_authorization",
+      "expected_minimum_lane": "S",
+      "external_lane_s_authorization_required": true
+    }
   ]
 }

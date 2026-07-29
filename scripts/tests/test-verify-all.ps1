@@ -11,11 +11,12 @@ $verifyScript = Join-Path $repoRoot 'scripts\verify-all.ps1'
 function Invoke-VerificationPlan {
     param(
         [Parameter(Mandatory = $true)][string] $Profile,
-        [Parameter(Mandatory = $true)][string] $RepoRoot
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [string[]] $AdditionalArguments = @()
     )
 
     $output = @(& (Get-Command pwsh -ErrorAction Stop).Source -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $verifyScript `
-        -Profile $Profile -PlanOnly -RepoRoot $RepoRoot 2>&1)
+        -Profile $Profile -PlanOnly -RepoRoot $RepoRoot @AdditionalArguments 2>&1)
     return [pscustomobject]@{
         ExitCode = $LASTEXITCODE
         Output = ($output -join "`n")
@@ -35,7 +36,56 @@ try {
     )) {
         Assert-True ($developerPlan.Output -match "\[EXECUTE\] $target") "developer profile retains complete target '$target'"
     }
-    Assert-True ($developerPlan.Output -notmatch '\[OMIT\]') 'developer profile does not omit its normal contract targets'
+    foreach ($policyGap in @(
+        'bim-review-coordinator \[coordinator-lint\].*not_configured:tooling_absent',
+        'bim-review-coordinator \[coordinator-changed-lines\].*not_configured:coverage_instrumentation_absent',
+        'web-viewer-sample \[viewer-changed-lines\].*not_configured:coverage_instrumentation_absent'
+    )) {
+        Assert-True ($developerPlan.Output -match "\[OMIT\] $policyGap") "developer profile exposes policy gap '$policyGap'"
+    }
+    Assert-True ($developerPlan.Output -notmatch '\[EXECUTE\].*(coordinator-lint|coordinator-changed-lines|viewer-changed-lines)') 'not-configured policies never become no-op executions'
+
+    foreach ($filter in @(
+        @{ Arguments = @('-TsOnly'); Expected = @('bim-review-coordinator', 'web-viewer-sample'); Excluded = @('tests \(contracts\+fakes\)', 'bim-streaming-server') },
+        @{ Arguments = @('-PyOnly'); Expected = @('tests \(contracts\+fakes\)'); Excluded = @('bim-review-coordinator', 'web-viewer-sample', 'bim-streaming-server') },
+        @{ Arguments = @('-StreamingOnly'); Expected = @('bim-streaming-server'); Excluded = @('tests \(contracts\+fakes\)', 'bim-review-coordinator', 'web-viewer-sample') },
+        @{ Arguments = @('-TsOnly', '-PyOnly'); Expected = @(); Excluded = @('tests \(contracts\+fakes\)', 'bim-review-coordinator', 'web-viewer-sample', 'bim-streaming-server') }
+    )) {
+        $filtered = Invoke-VerificationPlan -Profile 'Developer' -RepoRoot $repoRoot -AdditionalArguments $filter.Arguments
+        Assert-Equal 0 $filtered.ExitCode "developer filter '$($filter.Arguments -join ' ')' exits zero"
+        foreach ($target in $filter.Expected) {
+            Assert-True ($filtered.Output -match "\[EXECUTE\] $target") "developer filter retains '$target'"
+        }
+        foreach ($target in $filter.Excluded) {
+            Assert-True ($filtered.Output -notmatch "\[EXECUTE\] $target") "developer filter excludes '$target'"
+        }
+    }
+
+    $jsonPlan = Invoke-VerificationPlan -Profile 'Developer' -RepoRoot $repoRoot -AdditionalArguments @('-Json')
+    Assert-Equal 0 $jsonPlan.ExitCode 'PowerShell JSON plan exits zero'
+    Assert-True ($jsonPlan.Output -notmatch '\[PLAN\]|\[EXECUTE\]') 'JSON plan contains no human log prefix'
+    $jsonDocument = $jsonPlan.Output | ConvertFrom-Json -Depth 100 -ErrorAction Stop
+    $directJson = & (Get-Command node -ErrorAction Stop).Source `
+        (Join-Path $repoRoot 'scripts\lib\verification-plan.mjs') `
+        '--manifest' (Join-Path $repoRoot 'scripts\verification-manifest.json') `
+        '--default-profile' 'developer'
+    Assert-Equal 0 $LASTEXITCODE 'direct planner exits zero'
+    $directDocument = $directJson | ConvertFrom-Json -Depth 100 -ErrorAction Stop
+    Assert-Equal ($directDocument | ConvertTo-Json -Depth 100 -Compress) `
+        ($jsonDocument | ConvertTo-Json -Depth 100 -Compress) `
+        'PowerShell and direct planner JSON are semantically identical'
+
+    $affectedPlan = Invoke-VerificationPlan -Profile 'Developer' -RepoRoot $repoRoot `
+        -AdditionalArguments @('-ChangedPath', 'governance-service/app.py')
+    Assert-Equal 0 $affectedPlan.ExitCode 'affected-path plan exits zero'
+    foreach ($target in @('tests \(contracts\+fakes\)', 'governance-service', 'secret pattern scan')) {
+        Assert-True ($affectedPlan.Output -match "\[EXECUTE\] $target") "affected plan includes '$target'"
+    }
+
+    $unknownPlan = Invoke-VerificationPlan -Profile 'Developer' -RepoRoot $repoRoot `
+        -AdditionalArguments @('-ChangedPath', 'new-unowned-service/file.xyz')
+    Assert-Equal 2 $unknownPlan.ExitCode 'unknown path fails closed with planner exit two'
+    Assert-True ($unknownPlan.Output -match 'unknown_path_fail_closed|fail_closed') 'unknown path reports a typed fail-closed reason'
 
     $deploymentRoot = Join-Path $sandbox 'pruned-deployment'
     foreach ($directory in @(
@@ -76,6 +126,11 @@ try {
     $verifyShell = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts\verify-all.sh') -Raw
     Assert-True ($verifyShell -match '--profile') 'POSIX verifier mirror accepts an explicit deployment profile'
     Assert-True ($verifyShell -match '--plan-only') 'POSIX verifier mirror publishes the same profile inventory without executing it'
+    Assert-True ($verifyShell -match 'verification-runner\.mjs') 'POSIX verifier consumes the shared manifest runner'
+    Assert-True ($verifyShell -notmatch '\beval\b') 'POSIX verifier never reconstructs manifest argv through eval'
+
+    $runnerSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts\lib\verification-runner.mjs') -Raw
+    Assert-True ($runnerSource -match 'shell:\s*false') 'shared runner executes argv without a shell'
 
     Remove-Item -LiteralPath (Join-Path $deploymentRoot 'docs\plans\ai-bim-governance.css') -Force
     $missingArtifactPlan = Invoke-VerificationPlan -Profile 'Deployment' -RepoRoot $deploymentRoot

@@ -1,0 +1,144 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "openspec-lifecycle-ledger.schema.json",
+  "title": "OpenSpec lifecycle ledger v1",
+  "description": "Canonical versioned machine-state contract for OpenSpec lifecycle, task and evidence reconciliation.",
+  "type": "object",
+  "required": ["schema_version", "changes"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "openspec-lifecycle-ledger/v1"
+    },
+    "changes": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "$ref": "#/definitions/change"
+      }
+    }
+  },
+  "definitions": {
+    "changeId": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "taskLedger": {
+      "type": "object",
+      "required": ["completed", "total"],
+      "additionalProperties": false,
+      "properties": {
+        "completed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        }
+      }
+    },
+    "archiveDebt": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["reason", "unchecked_tasks", "unsupported_checkboxes", "owner", "review_due"],
+          "additionalProperties": false,
+          "anyOf": [
+            { "properties": { "unchecked_tasks": { "minimum": 1 } } },
+            { "properties": { "unsupported_checkboxes": { "minimum": 1 } } }
+          ],
+          "properties": {
+            "reason": { "const": "historical_task_ledger_debt" },
+            "unchecked_tasks": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+            "unsupported_checkboxes": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+            "owner": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "\\S" },
+            "review_due": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }
+          }
+        }
+      ]
+    },
+    "change": {
+      "type": "object",
+      "required": [
+        "id",
+        "status",
+        "owner",
+        "current_slice",
+        "blocked_by",
+        "last_verified",
+        "task_ledger",
+        "evidence_refs",
+        "subject_commit",
+        "archive_debt"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/changeId"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "deferred", "held", "completed", "archived"]
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "\\S"
+        },
+        "current_slice": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500,
+              "pattern": "\\S"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "blocked_by": {
+          "type": "array",
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/changeId"
+          }
+        },
+        "last_verified": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$"
+        },
+        "task_ledger": {
+          "$ref": "#/definitions/taskLedger"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "pattern": "\\S"
+          }
+        },
+        "subject_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "archive_debt": {
+          "$ref": "#/definitions/archiveDebt"
+        }
+      }
+    }
+  }
+}
