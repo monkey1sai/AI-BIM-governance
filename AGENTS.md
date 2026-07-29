@@ -148,26 +148,7 @@ Runtime/product 行為真相優先順序：
 
 ### 政策：CLI-only（Grok / Claude / Codex 共用）
 
-本 workspace **不啟動** `gitnexus mcp`，也 **禁止** 依賴 `mcp__gitnexus__*` / MCP resources（`gitnexus://…`）。三端 agent 仍 **必須** 使用 GitNexus 圖譜能力，但一律經 **shell CLI**（全域 `gitnexus` 或 `node .gitnexus/run.cjs <cmd>`）。index 本機共用（repo `.gitnexus/` + `~/.gitnexus/registry.json`），無需每 agent 長駐一支 MCP process。
-
-| 目的 | CLI |
-|------|-----|
-| 索引狀態 / 是否 stale | `gitnexus status` 或 `node .gitnexus/run.cjs status` |
-| 重索引 | `gitnexus analyze` 或 `node .gitnexus/run.cjs analyze` |
-| 已索引 repo 列表 | `gitnexus list` |
-| 概念 / 流程搜尋 | `gitnexus query "concept" -r AI-BIM-governance` |
-| 符號 360° | `gitnexus context SymbolName -r AI-BIM-governance` |
-| 改動前 blast radius | `gitnexus impact SymbolName -d upstream -r AI-BIM-governance` |
-| 兩符號最短路徑 | `gitnexus trace From To -r AI-BIM-governance` |
-| commit 前 diff 影響 | `gitnexus detect-changes --scope compare --base-ref main` |
-| 結構檢查 | `gitnexus check` |
-| 原始 Cypher | `gitnexus cypher "MATCH …"` |
-
-- 若 skill / 舊文件寫 `impact({…})` 或 `gitnexus://…`，**改跑上表 CLI**，不得宣稱 GitNexus 不可用。
-- **禁止** 為查詢而背景執行 `gitnexus mcp` / `gitnexus setup` 把 MCP 寫回 editors（除非使用者明確要求改回 MCP）。
-- Grok：原生不掛 gitnexus MCP；`[compat.claude] mcps` 若開啟也不得再依賴 Claude 側 gitnexus MCP entry。
-- Claude：user MCP 不得含 `gitnexus` stdio server（hooks / skills 可保留）。
-- Codex：`[mcp_servers.gitnexus] enabled = false`（entry 可留作日後 re-enable）。
+本 workspace **不啟動** `gitnexus mcp`，也 **禁止** 依賴 `mcp__gitnexus__*` / MCP resources（`gitnexus://…`）。三端 agent 仍 **必須** 使用 GitNexus 圖譜能力，但一律經 **shell CLI**（全域 `gitnexus` 或 `node .gitnexus/run.cjs <cmd>`）。舊 skill / 文件寫 `impact({…})` 或 `gitnexus://…` 時改跑等價 CLI，**不得**宣稱 GitNexus 不可用，也不得為查詢而背景啟動 `gitnexus mcp` / `gitnexus setup`。完整 CLI 對照表、三端設定現況與 re-enable 條件見 `docs/agents/gitnexus-usage.md`。
 
 ### 驗證與回報
 
@@ -202,17 +183,6 @@ This project is indexed by GitNexus as **AI-BIM-governance**. **Do not use GitNe
 - NEVER rename symbols with blind find-and-replace when call-graph impact is required — use impact/context CLI first, then coordinated edits.
 - NEVER commit changes without running `gitnexus detect-changes` when Lane policy requires it.
 - NEVER start `gitnexus mcp` or re-add gitnexus MCP solely to satisfy these rules.
-
-## CLI quick reference
-
-| Task | Command |
-|------|---------|
-| Status | `gitnexus status` / `node .gitnexus/run.cjs status` |
-| Query | `gitnexus query "concept" -r AI-BIM-governance` |
-| Context | `gitnexus context SymbolName -r AI-BIM-governance` |
-| Impact | `gitnexus impact SymbolName -d upstream -r AI-BIM-governance` |
-| Detect changes | `gitnexus detect-changes --scope compare --base-ref main` |
-| List repos | `gitnexus list` |
 
 ## Skills
 

@@ -65,17 +65,6 @@ This project is indexed by GitNexus as **AI-BIM-governance**. **Do not use GitNe
 - NEVER commit changes without running `gitnexus detect-changes` when Lane policy requires it.
 - NEVER start `gitnexus mcp` or re-add gitnexus MCP solely to satisfy these rules.
 
-## CLI quick reference
-
-| Task | Command |
-|------|---------|
-| Status | `gitnexus status` / `node .gitnexus/run.cjs status` |
-| Query | `gitnexus query "concept" -r AI-BIM-governance` |
-| Context | `gitnexus context SymbolName -r AI-BIM-governance` |
-| Impact | `gitnexus impact SymbolName -d upstream -r AI-BIM-governance` |
-| Detect changes | `gitnexus detect-changes --scope compare --base-ref main` |
-| List repos | `gitnexus list` |
-
 ## Skills
 
 | Task | Read this skill file |

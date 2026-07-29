@@ -1,6 +1,6 @@
 > Loaded lazily by AGENTS.md / CLAUDE.md。Source-of-truth: AGENTS.md。
 >
-> 何時讀本檔：GitNexus index stale 需重建、LadybugDB crash 復原、查 re-index 授權邊界時。
+> 何時讀本檔：查 CLI 對照表或三端 MCP 設定現況、GitNexus index stale 需重建、LadybugDB crash 復原、查 re-index 授權邊界時。
 
 # GitNexus Usage（stale 重建與復原）
 
@@ -9,6 +9,31 @@
 GitNexus 規則本文（Always Do / Never Do / CLI 對照 / skill 表）以根目錄 `AGENTS.md` / `CLAUDE.md` 內 `<!-- gitnexus:start -->` … `<!-- gitnexus:end -->` 區塊與 **AGENTS.md §4 CLI-only 政策** 為準。該區塊可能被 `analyze` 覆寫；若覆寫回 MCP 用語，**仍以 AGENTS.md §4 CLI-only 為準**（本 workspace 不啟動 `gitnexus mcp`）。
 
 Lane-aware 核心規則：F 不強制 impact；B 對 task/主要 entry symbol 跑一次 batch impact，且只在實際改到 code symbol/flow 時跑 detect_changes；G/S 對 shared/exported symbol 改前跑 impact、commit 前跑 detect_changes。HIGH 明確回報補強策略後可繼續；CRITICAL 需 reviewer/user sign-off。查詢一律用 shell：`gitnexus impact|context|query|detect-changes|…`（或 `node .gitnexus/run.cjs …`）。
+
+## CLI 對照表（AGENTS.md §4 CLI-only 政策的細節）
+
+| 目的 | CLI |
+|------|-----|
+| 索引狀態 / 是否 stale | `gitnexus status` 或 `node .gitnexus/run.cjs status` |
+| 重索引 | `gitnexus analyze` 或 `node .gitnexus/run.cjs analyze` |
+| 已索引 repo 列表 | `gitnexus list` |
+| 概念 / 流程搜尋 | `gitnexus query "concept" -r AI-BIM-governance` |
+| 符號 360° | `gitnexus context SymbolName -r AI-BIM-governance` |
+| 改動前 blast radius | `gitnexus impact SymbolName -d upstream -r AI-BIM-governance` |
+| 兩符號最短路徑 | `gitnexus trace From To -r AI-BIM-governance` |
+| commit 前 diff 影響 | `gitnexus detect-changes --scope compare --base-ref main` |
+| 結構檢查 | `gitnexus check` |
+| 原始 Cypher | `gitnexus cypher "MATCH …"` |
+
+index 本機共用（repo `.gitnexus/` + `~/.gitnexus/registry.json`），無需每 agent 長駐一支 MCP process。
+
+### 三端設定現況
+
+- **Grok**：原生不掛 gitnexus MCP；`[compat.claude] mcps` 若開啟也不得再依賴 Claude 側 gitnexus MCP entry。
+- **Claude**：user MCP 不得含 `gitnexus` stdio server（hooks / skills 可保留）。
+- **Codex**：`[mcp_servers.gitnexus] enabled = false`（entry 可留作日後 re-enable）。
+
+要改回 MCP 必須由使用者明確要求；agent 不得自行 re-enable 或執行 `gitnexus setup` 把 MCP 寫回 editors。
 
 ## GitNexus unavailable gate
 
