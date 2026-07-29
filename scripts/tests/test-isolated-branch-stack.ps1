@@ -67,6 +67,47 @@ Assert-True ($LASTEXITCODE -ne 0) 'direct launcher execution fails before Task 4
 Assert-True ($directExecutionOutput -match [regex]::Escape('Direct execution is unavailable until the Task 4 dispatcher is implemented.')) `
     'direct launcher execution reports dispatcher guard'
 
+$expected = [pscustomobject]@{ role='governance'; pid=4201; entrypoint='app:app'; command_line='python -m uvicorn app:app'; creation_identity='c1' }
+$same = [pscustomobject]@{ role='governance'; pid=4201; entrypoint='app:app'; command_line='python -m uvicorn app:app'; creation_identity='c1' }
+$snapshot = Get-IsolatedProcessIdentity -ProcessId 4201 -Entrypoint 'app:app' -ProcessLookup {
+    param($processId)
+    Assert-Equal 4201 $processId 'process identity lookup receives ProcessId'
+    [pscustomobject]@{
+        ProcessId = 4201
+        CommandLine = 'python -m uvicorn app:app --port 49103'
+        CreationDate = 'c1'
+        ExecutablePath = 'C:\Python\python.exe'
+    }
+}
+Assert-Equal 4201 $snapshot.pid 'process identity snapshot PID'
+Assert-Equal 'app:app' $snapshot.entrypoint 'process identity snapshot entrypoint'
+Assert-Equal 'python -m uvicorn app:app --port 49103' $snapshot.command_line 'process identity snapshot command line'
+Assert-Equal 'c1' $snapshot.creation_identity 'process identity snapshot creation identity'
+Assert-True (Test-IsolatedProcessOwnership -Expected $expected -Actual $same) 'exact identity accepted'
+foreach ($field in @('pid','entrypoint','command_line','creation_identity')) {
+    $changed = $same.PSObject.Copy()
+    $changed.$field = if ($field -eq 'pid') { 9999 } else { "wrong-$field" }
+    Assert-True (-not (Test-IsolatedProcessOwnership -Expected $expected -Actual $changed)) "$field mismatch rejected"
+}
+
+$stopped = [System.Collections.Generic.List[int]]::new()
+$owned = @(
+    [pscustomobject]@{ role='governance';pid=4201;entrypoint='app:app';command_line='gov';creation_identity='c1' },
+    [pscustomobject]@{ role='coordinator';pid=4202;entrypoint='src/index.ts';command_line='coord';creation_identity='c2' }
+)
+Assert-Throws {
+    Stop-IsolatedBackends -Processes $owned `
+      -IdentityLookup { param($e) if($e.pid -eq 4201){$e}else{[pscustomobject]@{role='coordinator';pid=4202;entrypoint='wrong';command_line='coord';creation_identity='c2'}} } `
+      -StopProcessFn { param($processId) $script:stopped.Add($processId) }
+} 'one mismatch holds the entire stop'
+Assert-Equal 0 $stopped.Count 'all identities validate before any stop'
+
+$stoppedExactly = [System.Collections.Generic.List[int]]::new()
+Stop-IsolatedBackends -Processes $owned `
+  -IdentityLookup { param($expectedProcess) $expectedProcess } `
+  -StopProcessFn { param($processId) $script:stoppedExactly.Add($processId) }
+Assert-Equal '4202,4201' ($stoppedExactly -join ',') 'exact identities stop in reverse manifest order'
+
 $sandbox = New-TestSandbox -Prefix 'isolated-stack-collision'
 try {
     $manifest = Resolve-IsolatedStackManifestPath -RepoRoot $sandbox -ChangeId 'change-a' -RunId 'run-a'

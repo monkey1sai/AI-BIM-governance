@@ -85,6 +85,120 @@ function Assert-IsolatedStackStartPreflight {
     [pscustomobject]@{ ports = $ports; manifest_path = $manifestPath; offset = [int]$OffsetInput }
 }
 
+function Resolve-IsolatedRuntime {
+    param([string] $RepoRoot)
+    $pythonCandidates = @(
+        (Join-Path $RepoRoot 'governance-service\.venv\Scripts\python.exe'),
+        (Join-Path $RepoRoot '.venv\Scripts\python.exe'),
+        'C:\Program Files\Python312\python.exe'
+    )
+    $pythonExe = $pythonCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+    if (-not $pythonExe) { throw 'No supported host Python was found.' }
+    $nodeExe = (Get-Command node -CommandType Application -ErrorAction Stop).Source
+    $tsxCli = Join-Path $RepoRoot 'bim-review-coordinator\node_modules\tsx\dist\cli.mjs'
+    if (-not (Test-Path -LiteralPath $tsxCli -PathType Leaf)) { throw "Missing current-worktree tsx CLI: $tsxCli" }
+    [pscustomobject]@{ python = $pythonExe; node = $nodeExe; tsx = $tsxCli }
+}
+
+function Get-IsolatedProcessIdentity {
+    param(
+        [int] $ProcessId,
+        [string] $Entrypoint,
+        [scriptblock] $ProcessLookup = { param($id) Get-CimInstance Win32_Process -Filter "ProcessId=$id" -ErrorAction Stop }
+    )
+    $process = & $ProcessLookup $ProcessId
+    if ($null -eq $process) { throw "Process $ProcessId is not running." }
+    $commandLine = [string]$process.CommandLine
+    if (-not $commandLine.Contains($Entrypoint, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Process $ProcessId command line does not contain exact entrypoint $Entrypoint."
+    }
+    [pscustomobject]@{
+        pid = [int]$process.ProcessId
+        entrypoint = $Entrypoint
+        command_line = $commandLine
+        creation_identity = [string]$process.CreationDate
+        executable_path = [string]$process.ExecutablePath
+    }
+}
+
+function Test-IsolatedProcessOwnership {
+    param($Expected, $Actual)
+    $null -ne $Actual `
+      -and [int]$Expected.pid -eq [int]$Actual.pid `
+      -and [string]$Expected.entrypoint -ceq [string]$Actual.entrypoint `
+      -and [string]$Expected.command_line -ceq [string]$Actual.command_line `
+      -and [string]$Expected.creation_identity -ceq [string]$Actual.creation_identity
+}
+
+function Start-IsolatedBackend {
+    param(
+        [string] $Role, [string] $WorkingDirectory, [string] $Executable,
+        [string[]] $Arguments, [hashtable] $Environment, [string] $RunDirectory,
+        [string] $Entrypoint,
+        [scriptblock] $StartProcessFn = {
+            param($exe,$args,$cwd,$envMap,$stdout,$stderr)
+            Start-Process -FilePath $exe -ArgumentList $args -WorkingDirectory $cwd `
+              -Environment $envMap -WindowStyle Hidden -PassThru `
+              -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        },
+        [scriptblock] $IdentityLookup = { param($processId,$entry) Get-IsolatedProcessIdentity -ProcessId $processId -Entrypoint $entry }
+    )
+    New-Item -ItemType Directory -Force -Path $RunDirectory | Out-Null
+    $stdout = Join-Path $RunDirectory "$Role.stdout.log"
+    $stderr = Join-Path $RunDirectory "$Role.stderr.log"
+    $process = & $StartProcessFn $Executable $Arguments $WorkingDirectory $Environment $stdout $stderr
+    $identity = & $IdentityLookup ([int]$process.Id) $Entrypoint
+    $identity | Add-Member -NotePropertyName 'role' -NotePropertyValue $Role
+    $identity | Add-Member -NotePropertyName 'stdout_path' -NotePropertyValue $stdout
+    $identity | Add-Member -NotePropertyName 'stderr_path' -NotePropertyValue $stderr
+    $identity
+}
+
+function Wait-IsolatedHealth {
+    param(
+        [string] $Url, [int] $TimeoutSeconds = 45,
+        [scriptblock] $Probe = { param($uri) Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 -Uri $uri }
+    )
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        try { if ((& $Probe $Url).StatusCode -eq 200) { return $true } } catch {}
+        Start-Sleep -Milliseconds 500
+    }
+    $false
+}
+
+function Stop-IsolatedBackends {
+    param(
+        [object[]] $Processes,
+        [scriptblock] $IdentityLookup = { param($e) Get-IsolatedProcessIdentity -ProcessId ([int]$e.pid) -Entrypoint ([string]$e.entrypoint) },
+        [scriptblock] $StopProcessFn = { param($processId) Stop-Process -Id $processId -Force -ErrorAction Stop }
+    )
+    $verified = foreach ($expected in $Processes) {
+        $actual = & $IdentityLookup $expected
+        if (-not (Test-IsolatedProcessOwnership -Expected $expected -Actual $actual)) {
+            throw "Ownership mismatch for $($expected.role) PID $($expected.pid); no process was stopped."
+        }
+        $expected
+    }
+    foreach ($process in @($verified | Sort-Object { [array]::IndexOf($Processes, $_) } -Descending)) {
+        & $StopProcessFn ([int]$process.pid)
+    }
+}
+
+function Write-IsolatedJsonAtomic {
+    param([string] $Path, $Value, [switch] $NoClobber)
+    if ($NoClobber -and (Test-Path -LiteralPath $Path)) { throw "Manifest collision: $Path" }
+    $directory = Split-Path -Parent $Path
+    New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    $temporary = Join-Path $directory ".stack-manifest.$([Guid]::NewGuid().ToString('N')).tmp"
+    try {
+        $Value | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $temporary -Encoding utf8NoBOM
+        [System.IO.File]::Move($temporary, $Path, -not $NoClobber)
+    } finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+    }
+}
+
 if ($MyInvocation.InvocationName -ne '.') {
     throw 'Direct execution is unavailable until the Task 4 dispatcher is implemented. Dot-source this file only for tests.'
 }
