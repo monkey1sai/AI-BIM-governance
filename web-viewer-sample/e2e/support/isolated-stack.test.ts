@@ -80,6 +80,15 @@ afterEach(() => {
 });
 
 describe("loadIsolatedStackConfig", () => {
+  it("keeps A3 require-real on the manifest-owned federation route", () => {
+    const source = readFileSync(path.join(process.cwd(), "e2e", "a3-federated-session-chain.spec.ts"), "utf8");
+    expect(source).not.toMatch(/test\.skip|dist-ui|:8004|49102/);
+    expect(source).toContain("requireIsolatedStackConfig");
+    expect(source).toContain("requireReal");
+    expect(source).toContain("watchForbiddenRequests");
+    expect(source).toContain('page.goto("/#/federation")');
+  });
+
   it("keeps A4 require-real without legacy skip gates", () => {
     const source = readFileSync(path.join(process.cwd(), "e2e", "a4-closeout.spec.ts"), "utf8");
     expect(source).not.toMatch(/A4_E2E_REQUIRE_REAL|test\.skip|function unavailable/);
