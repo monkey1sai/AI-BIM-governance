@@ -316,6 +316,22 @@ Fixture proposal.
     Assert-True ($null -eq $machineView.PSObject.Properties['evidence_refs']) 'report does not echo evidence references'
     Assert-Equal 1 $machineView.evidence_ref_count 'report exposes only evidence reference count'
 
+    # Archive history is deliberately outside the active-state reconciliation
+    # contract: an archived machine row must not become a false active-directory
+    # mismatch when the archive tree is not being reconciled.
+    $archivedMachineLedgerPath = Join-Path $repoRoot 'archived-machine-ledger.json'
+    Write-JsonDocument -Path $archivedMachineLedgerPath -Document ([ordered]@{
+        schema_version = 'openspec-lifecycle-ledger/v1'
+        changes       = @(
+            $baseLedgerChanges + (New-MachineChange -Id 'change-archived' -Status 'archived' -Completed 0 -Total 0)
+        )
+    })
+    $archivedMachineResult = Invoke-Reconciler -Root $repoRoot -Ledger $archivedMachineLedgerPath -OpenSpecList $openSpecPath
+    Assert-ReportContract -Result $archivedMachineResult -Message 'archived machine row reconcile'
+    Assert-Equal 0 $archivedMachineResult.ExitCode 'archived machine rows do not fail active-state reconciliation'
+    Assert-Equal 'consistent' $archivedMachineResult.Document.outcome 'archived machine rows preserve a consistent active-state report'
+    Assert-True (@($archivedMachineResult.Document.inventory | ForEach-Object id) -notcontains 'change-archived') 'archived machine rows are excluded from the active-state inventory'
+
     # Existing archive vocabulary stays compatible, while any deferred marker remains fail-closed.
     $archiveFixtureRoot = Join-Path $changesRoot 'archive\2026-07-28-adopted-fixture'
     New-Item -ItemType Directory -Path $archiveFixtureRoot -Force | Out-Null

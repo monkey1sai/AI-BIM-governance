@@ -31,7 +31,7 @@ Lane G/S 不得弱化 secrets、repo boundaries、GitNexus HIGH/CRITICAL、front
 | sub-repo verification | `docs/agents/sub-repo-verify-commands.md` |
 | advanced reasoning overlay | `docs/agents/advanced-agent-reasoning-contract.md` |
 | Superpowers invocation / no-auto-chain / subagent budget | `docs/agents/superpowers-invocation-policy.md` |
-| archive / retired services | `docs/agents/history-and-archive.md` |
+| archive / retired services、quality / security gates、AI coding telemetry / privacy / metrics | `docs/agents/history-and-archive.md`、`docs/agents/quality-security-gates.md`、`docs/agents/ai-coding-metrics.md` |
 | 查需求入口、服務邊界、route IA、API 契約、時序、資料模型、實作分期、AI Coding 交付守則 | `docs/plans/docs-plans-README.md`（入口）→ `AI-BIM 前後端設計文件.dc.html` §01–§08 |
 | 需要依任務種類／難度選擇 Codex workflow、subagents、模型 lane，或使用 `use agents` / `subagents` / `swarm` 開發 `docs/plans` 需求 | `docs/agents/codex-loop-workflows.md` |
 | 多終端機／多 CLI 並行 session 看板（互相感知） | `docs/agents/parallel-session-board.md` |

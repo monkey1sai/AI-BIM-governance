@@ -175,6 +175,7 @@ try {
         $expectedOutput = $output + ': ${{ steps.design_scope.outputs.' + $output + ' }}'
         Assert-True ($ci -match [regex]::Escape($expectedOutput)) "changes job exposes manifest-derived $output output"
     }
+    Assert-True ($ci -match [regex]::Escape("^[a-z0-9][a-z0-9.-]{0,63}$")) 'CI accepts the dotted screen identifiers used by the design-system manifest'
     foreach ($gate in @('root_contracts', 'coordinator', 'streaming', 'governance_service', 'viewer', 'agent_governance', 'conv_functional', 'kit_manager_api', 'kit_manager_web', 'compose_config', 'powershell_static', 'rebuild_test_deploy', 'secret_pattern_scan')) {
         Assert-True ($ci -match [regex]::Escape("needs.changes.outputs.$gate == 'true'")) "ci.yml gates affected job on $gate"
     }

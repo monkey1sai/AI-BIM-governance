@@ -720,7 +720,11 @@ try {
     $idSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     foreach ($id in $repositoryById.Keys) { [void]$idSet.Add([string]$id) }
     foreach ($id in $openSpecById.Keys) { [void]$idSet.Add([string]$id) }
-    foreach ($id in $machineById.Keys) { [void]$idSet.Add([string]$id) }
+    foreach ($id in $machineById.Keys) {
+        if ([string]$machineById[$id].status -ne 'archived') {
+            [void]$idSet.Add([string]$id)
+        }
+    }
     if ($idSet.Count -gt 1000) {
         Throw-LedgerError -Code 'inventory_too_large' -Message 'The reconciled change inventory exceeds the report limit.'
     }

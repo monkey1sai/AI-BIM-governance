@@ -90,8 +90,9 @@ case "$PROFILE" in
     Developer) ;;
     Deployment)
         if [ "$TS_ONLY" -eq 1 ] || [ "$PY_ONLY" -eq 1 ] || [ "$STREAMING_ONLY" -eq 1 ] ||
-           [ "$JSON" -eq 1 ] || [ "$FULL" -eq 1 ] || [ "${#CHANGED_PATHS[@]}" -gt 0 ]; then
-            echo "Deployment does not accept filters, JSON, full, or changed-path dispatch." >&2
+           [ "$JSON" -eq 1 ] || [ "$FULL" -eq 1 ] || [ "${#CHANGED_PATHS[@]}" -gt 0 ] ||
+           [ -n "$SUBJECT" ] || [ -n "$OUTCOME_OUT" ]; then
+            echo "Deployment is a legacy_profile_not_migrated adapter and does not accept Json, ChangedPath, Full, Subject, or OutcomeOut." >&2
             exit 2
         fi
         if [ -z "$PS" ]; then

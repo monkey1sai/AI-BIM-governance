@@ -128,6 +128,7 @@ try {
     Assert-True ($verifyShell -match '--plan-only') 'POSIX verifier mirror publishes the same profile inventory without executing it'
     Assert-True ($verifyShell -match 'verification-runner\.mjs') 'POSIX verifier consumes the shared manifest runner'
     Assert-True ($verifyShell -notmatch '\beval\b') 'POSIX verifier never reconstructs manifest argv through eval'
+    Assert-True ($verifyShell -match '\[ -n "\$SUBJECT" \] \|\| \[ -n "\$OUTCOME_OUT" \]') 'POSIX Deployment adapter rejects execution-outcome arguments it cannot forward'
 
     $runnerSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts\lib\verification-runner.mjs') -Raw
     Assert-True ($runnerSource -match 'shell:\s*false') 'shared runner executes argv without a shell'

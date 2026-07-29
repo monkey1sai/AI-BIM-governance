@@ -126,7 +126,7 @@ jobs:
             throw "Design scope status is not an allowed non-failing enum: $status"
           }
           $screenIds = @($requiredScreenIds.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() })
-          if (@($screenIds | Where-Object { $_ -notmatch '^[a-z0-9][a-z0-9-]{0,63}$' }).Count -gt 0) {
+          if (@($screenIds | Where-Object { $_ -notmatch '^[a-z0-9][a-z0-9.-]{0,63}$' }).Count -gt 0) {
             throw 'Design scope contains an unsafe screen id.'
           }
           "frontend_product=$frontendProduct" >> $env:GITHUB_OUTPUT
