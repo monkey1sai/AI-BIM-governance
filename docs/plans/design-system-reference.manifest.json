@@ -422,20 +422,14 @@
         "type": "click_exact_text",
         "value": "A4"
       },
-      "baseline_provenance": {
-        "authority": "canonical_product_surface",
-        "canonical_route": "#workspace?dock=a4",
-        "capture_runner": "web-viewer-sample/e2e/design-system-visual.spec.ts",
-        "approval": "explicit A4 rebaseline 2026-07-29"
-      },
       "baselines": {
         "1440x900": {
           "path": "docs/plans/design-system-baseline/workspace.a4.default/1440x900.png",
-          "sha256": "c8323fcc1860ae28f3ace96aa6f10e013b4ecd728279166471c2349d2224f61d"
+          "sha256": "a67240fdc556419907a98c18ce71c27a30a0f94fe934e99013be82fa11ac81a6"
         },
         "1920x1080": {
           "path": "docs/plans/design-system-baseline/workspace.a4.default/1920x1080.png",
-          "sha256": "2dc85cc567e9c707d5720798ba0b80cefe4e2265da8dff3f788928ebf7e3e42c"
+          "sha256": "51f333465e63c19b45df86945af5d25a015d6e3c05f2e6ea569f5cdd40987176"
         }
       }
     },
@@ -730,5 +724,5 @@
     "docs/plans/ai-bim-geo-viewer-A1.png..A10.png",
     "docs/plans/ai-bim-geo-Ai-codeing-A1.png..A10.png"
   ],
-  "baseline_snapshot_sha256": "4bbc08edced37102d9f93a6e76a958739d5830f32d7e043f89205b46a7cef50e"
+  "baseline_snapshot_sha256": "bc767176013f3033cadbf2393add8162984c5333562f75077a6843386de0f698"
 }
