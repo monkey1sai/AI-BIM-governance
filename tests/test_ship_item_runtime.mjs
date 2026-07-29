@@ -14,7 +14,8 @@ const BASE = 'c'.repeat(40)
 const MERGE = 'd'.repeat(40)
 const PR = 42
 const BRANCH = 'feat/routine'
-const APPROVALS = JSON.stringify([{ state: 'APPROVED', commit_id: HEAD, author_association: 'MEMBER', user: { login: 'trusted-human' } }])
+const APPROVAL = { state: 'APPROVED', commit_id: HEAD, author_association: 'MEMBER', user: { login: 'trusted-human' } }
+const APPROVAL_PAGES = JSON.stringify([[APPROVAL]])
 
 function commandText(strings, values) {
   return strings.reduce((result, part, index) => result + part + (index < values.length ? String(values[index]) : ''), '')
@@ -70,11 +71,11 @@ function harness(options = {}) {
         }
         if (command === `git diff --no-ext-diff --no-textconv --stat ${BASE}...${HEAD}`) return '1 file changed'
         if (command === `git log --oneline ${BASE}..${HEAD}`) return 'abc routine change'
-        if (command.includes(`/pulls/${PR}/comments`)) return '[]'
-        if (command.includes(`/pulls/${PR}/reviews`)) return APPROVALS
+        if (command.includes(`/pulls/${PR}/comments`)) return '[[]]'
+        if (command.includes(`/pulls/${PR}/reviews`)) return options.reviewPages || APPROVAL_PAGES
         if (command.includes(`/issues/${PR}/comments`)) {
           issueReadCount += 1
-          return options.reviewEvidenceChanges && issueReadCount === 2 ? '[{"id":2,"body":"P1 new"}]' : '[]'
+          return options.reviewEvidenceChanges && issueReadCount === 2 ? '[[{"id":2,"body":"P1 new"}]]' : '[[]]'
         }
         if (command.startsWith(`gh pr merge ${PR} `)) {
           if (options.mergeCommandThrows) throw new Error('simulated client failure')
@@ -140,6 +141,7 @@ test('happy path uses one shell-less Fable/max arbiter and exact-head merge', as
   assert.ok(!run.commands[mergeIndex].includes('--delete-branch'))
   assert.ok(run.commands.indexOf(`git diff --no-ext-diff --no-textconv --no-renames ${BASE}...${HEAD}`) < mergeIndex)
   assert.ok(run.commands.filter((command) => command.includes(`/issues/${PR}/comments`)).length === 2)
+  assert.ok(run.commands.filter((command) => command.includes('gh api --paginate')).every((command) => command.includes('--slurp')))
 })
 
 test('governance diff requires human consent before agent or merge', async () => {
@@ -148,6 +150,30 @@ test('governance diff requires human consent before agent or merge', async () =>
   assert.equal(result.heldReason, 'governance_change_requires_human_consent')
   assert.equal(run.agents.length, 0)
   assert.ok(!run.commands.some((command) => command.startsWith('gh pr merge ')))
+})
+
+test('every high-risk or self-governance path requires consent before arbitration', async () => {
+  for (const path of [
+    'infra/prod/main.tf',
+    'src/auth/login.ts',
+    'src/permissions/check.ts',
+    'db/migrations/001-add-role.sql',
+    'src/destructive-cleanup.ts',
+    'agent-skills-manifest.json',
+  ]) {
+    const run = harness({ diffNames: `${path}\n` })
+    const result = await run.run()
+    assert.equal(result.heldReason, 'governance_change_requires_human_consent', path)
+    assert.equal(run.agents.length, 0, path)
+    assert.ok(!run.commands.some((command) => command.startsWith('gh pr merge ')), path)
+  }
+})
+
+test('paginated review pages are slurped and flattened before approval checks', async () => {
+  const run = harness({ reviewPages: JSON.stringify([[], [APPROVAL]]) })
+  const result = await run.run()
+  assert.equal(result.merged, true)
+  assert.equal(result.mergeCommit, MERGE)
 })
 
 test('weak branch protection prevents arbiter and merge', async () => {

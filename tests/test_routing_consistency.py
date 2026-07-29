@@ -126,6 +126,15 @@ def test_repo_personas_route_apex_reviewers_and_secondary_test_engineer():
     assert not (personas / "ship-preparer.md").exists()
 
 
+def test_read_only_scanners_preserve_explore_capability_boundary():
+    health = _read("repo-health-scan.js")
+    plan_next = _read("plan-next-spec-to-done-aware.js")
+    assert re.search(r"label: `scan:\$\{s\.key\}`[^\n]*agentType: 'Explore'", health)
+    assert re.search(r"label: 'scan:progress'[^\n]*agentType: 'Explore'", health)
+    assert re.search(r"label: 'repo:frontend-routes'[^\n]*agentType: 'Explore'", plan_next)
+    assert re.search(r"label: 'repo:backend-capabilities'[^\n]*agentType: 'Explore'", plan_next)
+
+
 def test_do_not_codegen_sites_unchanged():
     impl = _read("std-implement.js")
     assert "const implModel = 'sonnet'" in impl
@@ -151,6 +160,8 @@ def test_ship_merge_sink_is_fixed_evidence_and_identity_bound():
     assert "Number.isSafeInteger(INPUT_PR_NUMBER)" in ship
     assert "branch_requires_human_consent" in ship
     assert "path.startsWith('.claude/')" in ship and "path.startsWith('scripts/')" in ship
+    assert "path === 'agent-skills-manifest.json'" in ship and "path.startsWith('infra/')" in ship
+    assert "gh api --paginate --slurp" in ship
     assert "check-pr-local-preflight.ps1" not in ship
     assert "gh pr diff" not in ship
     assert "git diff --no-ext-diff --no-textconv --no-renames --name-only ${preparedBase}...${preparedHead}" in ship

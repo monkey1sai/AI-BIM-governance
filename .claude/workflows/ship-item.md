@@ -59,7 +59,7 @@ coordinator 依序執行固定命令並 fail closed：
 
 11. evidence JSON 超過 500,000 字元時回 `evidence_too_large_for_arbiter`，不可截斷後假裝完整。
 
-任何 `.claude/`、`.codex/`、`.github/`、`scripts/`、`docs/agents/`、`AGENTS.md` 或 `CLAUDE.md` 變更都是治理自我修改，必須在派 agent 與 merge 前回 `governance_change_requires_human_consent`。這些 PR 不適用 routine auto-merge。
+任何 `.claude/`、`.codex/`、`.github/`、`scripts/`、`docs/agents/`、`AGENTS.md`、`CLAUDE.md`、`agent-skills-manifest.json`、`infra/**`，以及 auth/permission/migration/destructive/production/deployment path 變更，都必須在派 agent 與 merge 前回 `governance_change_requires_human_consent`。這些 PR 不適用 routine auto-merge。
 
 ## 3. Fable/max apex prompt contract
 
@@ -94,7 +94,7 @@ gh pr merge <n> --repo monkey1sai/AI-BIM-governance --squash --match-head-commit
 
 routine feature PR 可依上述 buffered gate 自動合併；以下仍須使用者本輪明確同意：
 
-- 任何 agent/governance/self-approval 變更。
+- 任何 agent/governance/self-approval、infra、auth/permission/migration/destructive/production/deployment 變更。
 - revert、release、hotfix branch。
 - 刪資料、權限、production/deployment、付款、對外發佈或其他不可逆／敏感動作。
 

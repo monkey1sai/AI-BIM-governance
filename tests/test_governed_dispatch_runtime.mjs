@@ -29,9 +29,11 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 5))
 
 test('secondary fan-out first obtains one successful Fable/max apex and never exceeds two active children', async () => {
   const calls = []
+  const prompts = []
   let active = 0
   let maxActive = 0
-  const { governedAgent } = await loadDispatch(async (_prompt, options) => {
+  const { governedAgent } = await loadDispatch(async (prompt, options) => {
+    prompts.push(prompt)
     calls.push(options)
     active += 1
     maxActive = Math.max(maxActive, active)
@@ -55,6 +57,9 @@ test('secondary fan-out first obtains one successful Fable/max apex and never ex
   assert.equal(calls[0].model, 'fable')
   assert.equal(calls[0].effort, 'max')
   assert.equal(calls[0].agentType, 'code-reviewer')
+  assert.match(prompts[0], /outputSchema/)
+  assert.match(prompts[0], /coordinator holds on denial/)
+  assert.match(prompts[0], /Objective.*Scope.*Inputs.*Evidence.*Stop.*Output/)
   assert.ok(results.every((result) => result?.ok === true))
   assert.ok(maxActive <= 2, `observed ${maxActive} active agents`)
 })
@@ -67,13 +72,27 @@ test('synthetic apex null verdict prevents every secondary dispatch', async () =
   })
 
   const results = await Promise.allSettled([
-    governedAgent('one', { label: 'scan:one', phase: 'Scan', model: 'sonnet', effort: 'medium' }),
-    governedAgent('two', { label: 'scan:two', phase: 'Scan', model: 'sonnet', effort: 'medium' }),
+    governedAgent('one', { label: 'scan:one', phase: 'Scan', model: 'sonnet', effort: 'medium', schema: { type: 'object' } }),
+    governedAgent('two', { label: 'scan:two', phase: 'Scan', model: 'sonnet', effort: 'medium', schema: { type: 'object' } }),
   ])
 
   assert.equal(calls.length, 1)
   assert.match(calls[0].label, /^governance:apex:/)
   assert.ok(results.every((result) => result.status === 'rejected' && /HELD: apex_unavailable_or_denied/.test(result.reason.message)))
+})
+
+test('synthetic apex rejects a missing child schema before any agent starts', async () => {
+  const calls = []
+  const { governedAgent } = await loadDispatch(async (_prompt, options) => {
+    calls.push(options)
+    return gateVerdict
+  })
+
+  await assert.rejects(
+    governedAgent('missing schema', { label: 'scan:missing-schema', phase: 'Scan', model: 'sonnet', effort: 'medium' }),
+    /HELD: apex_unavailable_or_denied/,
+  )
+  assert.equal(calls.length, 0)
 })
 
 test('requested apex must actually return before a concurrent secondary can run', async () => {
@@ -115,6 +134,7 @@ test('nested fan-out shares the same two-child semaphore', async () => {
       phase: 'Verify',
       model: 'opus',
       effort: 'xhigh',
+      schema: { type: 'object' },
     })),
   )))
 
@@ -131,10 +151,10 @@ test('a throwing child releases its slot for later work', async () => {
   })
 
   await assert.rejects(
-    governedAgent('throw', { label: 'throw', phase: 'Verify', model: 'opus', effort: 'xhigh' }),
+    governedAgent('throw', { label: 'throw', phase: 'Verify', model: 'opus', effort: 'xhigh', schema: { type: 'object' } }),
     /expected/,
   )
-  const result = await governedAgent('after', { label: 'after', phase: 'Verify', model: 'opus', effort: 'xhigh' })
+  const result = await governedAgent('after', { label: 'after', phase: 'Verify', model: 'opus', effort: 'xhigh', schema: { type: 'object' } })
   assert.deepEqual(result, { ok: true })
   assert.equal(attempts, 2)
 })

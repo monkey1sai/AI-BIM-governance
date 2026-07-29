@@ -55,6 +55,9 @@ def test_render_block_includes_apex_first_gate_and_semaphore():
     assert "const MAX_CHILD_CONCURRENCY = 2" in block
     assert "HELD: apex_unavailable_or_denied" in block
     assert "agentType: 'code-reviewer'" in block
+    assert "outputSchema: schema" in block
+    assert "coordinator holds on denial" in block
+    assert "if (!schema) return Promise.resolve(false)" in block
     assert block.startswith("// <routing:gen>") and block.rstrip().endswith("// </routing:gen>")
 
 
