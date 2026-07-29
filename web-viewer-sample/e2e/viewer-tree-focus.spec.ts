@@ -1,10 +1,11 @@
 import { test, expect } from "@playwright/test";
+import { harnessRoute } from "./harnessRoute";
 
 // CH-B 證據：左側 USD/BIM 語意樹點選 → 相機聚焦該元件。
 // 真實前端互動（_onSelectUSDPrims → selectPrimsRequest + focusPrimRequest）跑在可決定性假 Kit 上。
 test.describe("viewer USD 語意樹 → 相機聚焦（CH-B，deterministic harness）", () => {
   test("點樹節點 Building → 送 focusPrimRequest（harness viewport 顯示 focus: 該 prim path）", async ({ page }) => {
-    await page.goto("/?harness=1");
+    await page.goto(harnessRoute());
 
     const label = page.getByTestId("harness-viewport-label");
     await expect(label).toBeVisible({ timeout: 25_000 });

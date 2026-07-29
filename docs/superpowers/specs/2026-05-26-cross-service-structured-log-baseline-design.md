@@ -1,12 +1,12 @@
 # Cross-Service Structured Log Baseline — Design
 
-- **Status**: Draft (brainstorming complete, awaiting user review)
+- **Status**: Approved; production-wiring completion scope approved by user on 2026-07-24 (option A); bounded viewer-operability correction approved by user on 2026-07-28; P5 adversarial security/correctness remediation approved for autonomous continuation on 2026-07-28
 - **Date**: 2026-05-26
 - **Change id**: `cross-service-structured-log-baseline`
 - **Worktree**: `.worktrees/cross-service-structured-log-baseline/`
 - **Branch**: `codex/openspec/cross-service-structured-log-baseline`
 - **Predecessor closeout**: `trim-docs-and-dedupe-ide-skills` archived (origin/main `18aad0f`)
-- **Author**: agent (brainstormed with user via `superpowers:brainstorming`)
+- **Author**: agent (brainstormed with user via `superpowers:brainstorming`; 2026-07-24 completion amendment, 2026-07-28 bounded viewer-operability correction, and P5 remediation explicitly approved by user)
 - **Audience**: AI-BIM-governance maintainers / agents working incidents
 
 ---
@@ -132,7 +132,8 @@ gitignore    : logs/                                            (新增到 .giti
 - 不在 allow_list 但 key 含 `TOKEN` / `SECRET` / `KEY` / `PASSWORD` / `AUTH` / `CREDENTIAL`：寫 `[REDACTED:type=<string|number|boolean>, len=<n>]`
 - 其餘（不在 allow_list、也不命中 secret pattern）：寫 type + length，不寫原值
 - `source`：`.env` \| `.env.example` \| `system` \| `docker-compose` \| `default`
-- **觸發時機**：每個 service 的 `createLogger()` / `create_logger()` / `New-StructLogger` 在回傳 logger 之前，立刻 emit 一筆 `env_snapshot`（即 logger 取得即送，不延後到第一次 log 呼叫）
+- **觸發時機**：每個 service 的 `createLogger()` / `create_logger()` / `createBrowserLogger()` / `New-StructLogger` 在回傳 logger 之前，立刻 emit 一筆 `env_snapshot`（即 logger 取得即送，不延後到第一次一般 log 呼叫）。Browser transport 必然非同步，因此 browser 的「emit」定義為 return 前進入既有 buffer，並由既有 flush policy送往 coordinator；不得用同步 XHR 阻塞 bootstrap。
+- Browser 沒有 `process.env`；viewer snapshot 只列 build-time allow-list runtime config 與 browser 可觀察 metadata，禁止掃描或序列化任意 `window` / storage / query 值。`trace_id` 是 record envelope，不列入 snapshot vars。
 
 **Network**：
 - `peer` 只記 logical name (`coordinator` / `streaming-server` / `external-edge` / `external-cloud` / `kit-subprocess`)，**不寫**原始 host:port / URL
@@ -185,7 +186,7 @@ export function createLogger(service: 'coordinator' | 'viewer', opts?: { logRoot
 - 跨日 rotate：每寫一筆檢查 date，跨了 close 舊 stream 開新的
 - Redaction helper：`redactEnvValue(key, value)` 共用
 
-**Viewer-log intake**：coordinator app.ts 加 `POST /api/internal/viewer-log` → 收 `LogRecord[]` → 用 logger 寫到 `logs/viewer/<date>/...`（service 欄已是 `viewer`，coordinator 只當搬運工）。**Local-dev-only baseline**，不加 internal token；endpoint 做基本 schema validation（drop oversized / malformed records）。
+**Viewer-log intake**：coordinator app.ts 加 `POST /api/internal/viewer-log` → body parse前驗 active primary/spectator viewer lease三個 headers → 256 KiB parser → 收 `LogRecord[]` → 僅將 `service="viewer"` records寫到 `logs/viewer/<date>/...`。health endpoint沿用 internal token；base host publish綁loopback但 explicit host-kit LAN profile仍受同一 auth約束。
 
 ### 3.2 Python adapter — `bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/struct_log.py`
 
@@ -239,8 +240,9 @@ $log | Write-StructAudit -Msg 'deploy-report generated' -Data @{ action='deploy-
 **內部**：
 - **不**寫 local file（browser 不行）
 - ring buffer max 500 records
-- 每 2 秒或 buffer ≥ 50 筆 flush：`fetch('POST /api/internal/viewer-log', body=records[])`
-- 失敗：保留 buffer 最多 5 min；超過丟最舊；同時 `console.error` fallback
+- 每 2 秒或 buffer ≥ 50 筆 flush：以 active viewer lease authority headers呼叫 `fetch('POST /api/internal/viewer-log', body=records[])`；authority只存在 memory/headers
+- 缺 authority或 transport失敗：不發 request或保留 buffer最多 5 min；超過丟最舊；同時 `console.error` fallback但不得輸出 token
+- 成功只移除 exact captured in-flight entry identities；concurrent append/overflow後的新 entry不得被 positional splice誤刪或計為 delivered
 - 全域 `window.addEventListener('error', ...)` + `unhandledrejection` 自動產 `logic_error`
 - 暴露 `window.__structLog.tail(n=100)`，使用者 / Chrome MCP 隨時 inspect
 
@@ -264,6 +266,25 @@ $log | Write-StructAudit -Msg 'deploy-report generated' -Data @{ action='deploy-
 - `tests/contracts/structured-log/schema.json` — JSON Schema draft-07
 - `tests/contracts/structured-log/fixtures/<event_type>-*.jsonl` — 各 event_type 1~3 sample
 
+### 3.8 Bounded viewer diagnostics surface（2026-07-28 completion correction）
+
+P4 證據第一次執行因 `no_browser_evidence` held。使用者選擇 Option A：在 coordinator `/ui/open` handoff 最終落地的 standalone review viewer route 上補一個**窄範圍 delivery diagnostics surface**，使既有 browser adapter 的 production carrier 可由使用者操作並可被 Playwright 誠實驗證。Operator console route／control 不得代替這個 surface。這不是集中式 log dashboard，也不新增 backend route。
+
+只有同時存在合法 review session 與已 bootstrap 的 browser logger 時才渲染。surface MUST：
+
+- 顯示 browser logger `trace_id`、`run_id`、review session id，以及 stream config 已提供時的 conversion job / Kit instance id；缺值一律顯示「未觀測」，不得捏造 runtime ID。
+- 提供明確的 `Flush structured logs` 主操作：先 enqueue 一筆 diagnostics record，再呼叫既有 `BrowserStructLogger.flush()`，使 browser 只透過 coordinator `POST /api/internal/viewer-log` 送出。
+- 顯示 `idle`、`loading`、`success`、`failure` 四種狀態；失敗時保留明確 `Retry flush` 操作，重試仍走同一真實 endpoint。
+- 提供 `Close review session` 操作，重用既有 coordinator cooperative-close `POST /api/review-sessions/:sessionId/close`，body 為 `{}`（不得帶 operator `reason`）；顯示 closing / closed / failure，close 失敗時可重試。
+- 不呈現 JSONL record body、env value、absolute log path，不讀取 repo-local log files，也不直接呼叫 streaming / governance / Kit internal service。
+- explicit Flush前取得或重用 active primary/spectator viewer lease；component mount不得自動 claim，spectator不得偷走 primary。authority缺失時顯示 retryable failure、不得 fetch且保留同一 diagnostics action。
+
+Forced failure 只允許由 Playwright 在測試程序內攔截第一輪 viewer-log POST；production code 不得新增 `forceFailure` query、fault-injection endpoint 或測試專用成功分支。解除攔截後的 retry MUST 命中真 coordinator 並取得 2xx。
+
+Manual-flush correctness MUST 不受 2 秒 timer 競態影響：public `flush()` 若遇到既有 in-flight batch，先等待該 batch terminal，再 drain 當時仍保留的 records。Logger 提供 `setAutoFlushPaused(boolean)`；UI 在第一次 action 前 pause timer/threshold auto-flush，failure 到 explicit Retry 之間保持 paused，success 或 component cleanup 後 resume。UI enqueue 唯一 `evidence_action_id` 後，固定 `target_flushed_total = flushedTotal + bufferLength` 與 `droppedTotal` baseline；只有 `flushedTotal >= target_flushed_total`、最新 status=`ok`、`droppedTotal` 未增加且該 action 已不在 retained buffer 時才可顯 success。Transport成功後只以 exact `BufferEntry` object identity移除該 in-flight batch，不能用 index/count splice刪除等待期間新增或保留的 entries。Timeout / terminal failure一律顯 failure；Retry 沿用 buffer 中同一 action，不重複 enqueue。
+
+Surface 的 action gate MUST 要求 route 上唯一合法 session/root trace carrier與已載入 session case-exact一致，且 logger `trace_id` 與 carrier case-exact一致；不一致時只顯 unavailable，不得執行 evidence flush/close。一般 review route允許 documented `ifcready_*` / `rev_*` root；canonical P4 route MUST 是 `ifcready_*`。
+
 ---
 
 ## 4. Data flow / trace_id propagation
@@ -272,12 +293,12 @@ $log | Write-StructAudit -Msg 'deploy-report generated' -Data @{ action='deploy-
 
 | trace_id 前綴 | 起源 | 範例 |
 |---|---|---|
-| `ifcready_<existing_job_id>` | coordinator IFC-ready intake | `ifcready_1779687625000_064c6813` |
-| `rev_<existing_session_id>` | review session（mint 新 trace_id；可帶 `parent_trace_id=ifcready_...`） | `rev_20260526_1234abcd` |
-| `stream_conv_<existing_job_id>` | internal conversion（從 `ifcready_` 接過來，或 streaming-server 自 mint） | `stream_conv_20260525055218_115177da` |
+| existing `ifc_ready_job_id` (already `ifcready_*`) | coordinator IFC-ready intake；byte-for-byte作 root trace，不重複加前綴 | `ifcready_1779687625000_064c6813` |
+| `rev_<existing_session_id>` | 只有無 IFC-ready 上游的 standalone review session 才 mint；由 IFC-ready 建立的 session 必須保留 upstream `ifcready_*` root trace | `rev_20260526_1234abcd` |
+| `stream_conv_<existing_job_id>` | 只有無 inbound trace 的 internal conversion 才自 mint；有 `X-Trace-Id` 時必須承襲 inbound root trace | `stream_conv_20260525055218_115177da` |
 | `script_<run_id>` | pure PowerShell scripts（無上游） | `script_run_20260526_142010_a3f9` |
 
-`parent_trace_id` 用於串多層關係：一個 `ifcready_*` 可能對應多個 `rev_*`。
+`parent_trace_id` 用於另起 standalone child trace 時描述衍生關係。IFC-ready closed loop 的驗收以同一個 `ifcready_*` root trace 貫穿為準，不得只靠 parent link 冒充 one-trace grep。
 
 ### 4.2 Trace_id 傳遞通道
 
@@ -285,10 +306,21 @@ $log | Write-StructAudit -Msg 'deploy-report generated' -Data @{ action='deploy-
 |---|---|
 | coordinator ⇄ streaming-server HTTP | `X-Trace-Id` header |
 | coordinator ⇄ viewer Socket.IO | event payload `trace_id` field |
-| viewer ⇄ streaming-server WebRTC DataChannel | envelope `trace_id` field |
+| viewer ⇄ streaming-server WebRTC DataChannel | 每個 event `payload.trace_id`；vendor `ApplicationMessage` bridge只有 `{event_type,payload}`，不宣稱不存在的 root envelope field |
 | 外部 cloud callback outbox | payload `trace_id` field（外部 cloud 不一定理會，至少 outbox 記錄） |
 | Kit subprocess invocation | command-line arg `--trace-id=<id>` |
 | PowerShell scripts 之間 | env var `BIM_TRACE_ID` |
+
+Production completion wiring：
+
+- coordinator dispatch conversion 時以 `ifc_ready_job_id` 作 root trace，送 `X-Trace-Id`，並用同一 trace 寫 outbound network record。
+- streaming conversion authority 驗證並持久化 inbound trace；conversion lifecycle、converter adapter與 `-TraceId` / `BIM_TRACE_ID` 都承襲它。缺 header 時才以 conversion job id mint `stream_conv_*`。
+- coordinator 從 IFC-ready job 建立 review session時，session/open payload與 viewer URL query攜帶同一 root trace；standalone session才使用 `rev_*`。
+- viewer production bootstrap 從受信任的 query carrier讀取合法 trace，建立 singleton browser logger、安裝 global handlers，並在一般 app log前送出 viewer `env_snapshot`。
+- `scripts/smoke-bscheme-intake.ps1` 是四單位 smoke 中的 PowerShell participant；取得 intake job後切換到該 root trace，記錄 poll/session/close lifecycle。它是受支援的真 runner，不得用另寫 evidence harness 取代。
+- coordinator callback outbox ready/failed payload都保留 exact IFC-ready root；persist/reload/delivery不得丟失或改寫。
+- Socket.IO canonical trace在session建立時immutable persist；legacy只允許zero/one distinct valid linked root backfill，multiple/conflict/malformed fail closed，禁止latest-by-updated_at。join/heartbeat/leave request帶candidate；成功ack/presence帶canonical trace，rejected ack只回stable error且在room/participant/session/presence副作用前停止。
+- viewer在 Socket exact-match驗證前不送 DataChannel。Schema完整26-message catalog涵蓋viewer outbound、Kit inbound/outbound與viewer inbound；Kit先驗inbound mismatch，viewer在correlation/request completion/accepted logging/UI mutation前拒絕Kit→viewer缺失或mismatch trace，mutator另走coordinator runtime authority。
 
 ### 4.3 範例 timeline
 
@@ -310,7 +342,11 @@ $log | Write-StructAudit -Msg 'deploy-report generated' -Data @{ action='deploy-
    operation_anomaly anomaly_kind=fallback reason=hoops_a3d_failed
    lifecycle closed
                               │
-[browser viewer]              ▼  mint trace_id=rev_Y, parent_trace_id=ifcready_X
+[PowerShell smoke runner]     ▼  trace_id=ifcready_X (取得 intake response 後承襲)
+   lifecycle active subject=script_run
+                              │
+[browser viewer]              ▼  trace_id=ifcready_X (viewer URL/query 承襲)
+   env_snapshot (browser-safe runtime config only)
    network outbound viewer→coordinator /api/review-sessions
    lifecycle start subject=review_session
    network outbound viewer→streaming-server WebRTC DataChannel openStageRequest
@@ -320,7 +356,7 @@ agent 在 incident debugging 時跑：
 
 ```powershell
 Get-ChildItem logs -Recurse -Filter *.jsonl |
-  Select-String -Pattern '"trace_id":"rev_Y"' |
+  Select-String -Pattern '"trace_id":"ifcready_X"' |
   ForEach-Object { $_.Line } |
   ConvertFrom-Json |
   Sort-Object ts
@@ -347,12 +383,14 @@ Get-ChildItem logs -Recurse -Filter *.jsonl |
 
 - safe stringify wrapper：捕獲 circular ref（TS: `JSON.stringify(obj, safeReplacer)`；Python: `default=lambda o: f"<unserializable:{type(o).__name__}>"`）
 - BigInt / Date / Error 明定 serializer
-- 失敗的 record 不丟，改寫降級：`{level:"warn", event_type:"operation_anomaly", msg:"struct_log serialization failed", data:{original_keys:[...], reason:"..."}}`
+- non-redaction serialization失敗的 record不丟，才改寫降級 anomaly；redaction traversal的 depth/cycle由下節 marker處理且保留原 event type
 
 ### 5.3 Redaction depth defense
 
-- adapter 入口 mandatory 跑 `redactDataBeforeWrite(data)`
-- 寫測試：放 fixture record 帶 `data.password="abc"`，斷言寫出去的 file 字串裡不出現 `"abc"`
+- adapter 入口 mandatory 跑 bounded、cycle-safe `redactDataBeforeWrite(data)`；ordinary event nested `auth` / `key` / `password` / `api_key` / `token`等 secret-pattern key一律固定 marker，env allow-list不得形成 general-data exemption
+- 只有 `env_snapshot.vars[]` 專用 sanitizer可保留 `key/source/value_or_redacted/type` schema vocabulary；同 event其他 secret field仍redact
+- `MAX_REDACTION_DEPTH=8`，root `data` container算 depth 0；將要進入 depth 9的 object/array整棵換成 exact `[Truncated]`。cycle只替換該 subtree為 `[Circular]`並保留原 event type；marker/error不得包含原值
+- coordinator `tests/lib/structLog.test.ts`、streaming `tests/contracts/structured-log/test_python_adapter.py`、browser `web-viewer-sample/scripts/verify-struct-log.mjs`、PowerShell `scripts/tests/test-struct-log.ps1`各自測 nested object/array、literal auth/key/password/api_key/token、env_snapshot structure、depth 8/9、circular（PowerShell另測 cyclic enumerable），斷言 serialized sink/buffered POST body不含 sentinel且不改 event type
 
 ### 5.4 Daily rotate race
 
@@ -362,7 +400,9 @@ Get-ChildItem logs -Recurse -Filter *.jsonl |
 
 ### 5.5 viewer POST 失敗
 
-- buffer 5 min；超過丟最舊；同時 `console.error`
+- viewer-log在 body parse前驗 active primary/spectator lease三個 headers；route-local 256 KiB parser先於 global 1 MiB parser，只持久化 `service="viewer"`
+- base runtime-manager publish coordinator/viewer只綁 host loopback；explicit host-kit LAN override保留，因此 auth不可只依賴 bind address
+- buffer 5 min；缺 authority不 fetch，transport失敗保留；超過丟最舊；同時 `console.error`但不得輸出 token
 - coordinator endpoint 回 5xx → viewer 不持續 retry 同樣 payload，指數 backoff 最多 3 次
 
 ### 5.6 Schema 自我驗證
@@ -373,7 +413,7 @@ Get-ChildItem logs -Recurse -Filter *.jsonl |
 
 ### 5.7 Logger 健康觀察
 
-- coordinator: `GET /api/internal/structLog/health` → `{ run_id, current_file, records_written, last_failure }`
+- coordinator: 既有 internal token保護 `GET /api/internal/structLog/health` → `{ run_id, current_file, records_written, last_failure }`
 - streaming-server / scripts / viewer：不另開 endpoint，dev 直接看檔 / `window.__structLog.tail()`
 
 ---
@@ -395,16 +435,17 @@ Get-ChildItem logs -Recurse -Filter *.jsonl |
 | Adapter | Test 位置 | 框架 |
 |---|---|---|
 | coordinator TS | `bim-review-coordinator/tests/lib/structLog.test.ts` | Vitest |
-| viewer TS | `web-viewer-sample/src/lib/structLog.test.ts` | Vitest |
-| streaming Python | `bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/tests/test_struct_log.py` | pytest |
-| PowerShell module | `scripts/tests/StructLog.Tests.ps1` | Pester |
+| viewer TS | `web-viewer-sample/scripts/verify-struct-log.mjs` | Node assertions against logger buffer/transport |
+| streaming Python | `tests/contracts/structured-log/test_python_adapter.py` | root pytest |
+| PowerShell module | `scripts/tests/test-struct-log.ps1` | plain PowerShell assertions |
 
 每 adapter 必測：
 - write 一筆 → 合法 JSONL 行、通過 §6.1 schema
 - `withTraceId` / `with_trace_id` child logger 繼承
-- redaction：`data.password="secret"` → 檔案不含 `secret`
+- redaction：nested object/array 的 `auth` / `key` / `password` / `api_key` / `token` → serialized sink或buffered POST body不含 sentinel
 - redaction：env_snapshot 對 allow-list 外的 key → `[REDACTED:...]`
-- circular ref → 降級 record 而非 crash
+- depth 8/9 boundary → depth-9 subtree exact `[Truncated]`
+- circular ref → subtree exact `[Circular]`、保留原 event type且不 crash；PowerShell另測 cyclic enumerable
 - daily rotate：mock 時間跨午夜 → 新檔產生、舊檔不變
 - 多筆順序：seq 正確遞增（同 trace_id 內）
 
@@ -416,8 +457,12 @@ Get-ChildItem logs -Recurse -Filter *.jsonl |
 
 ### 6.4 Smoke / runtime evidence
 
-- 跑一次本地完整 IFC-ready → conversion → session → close 閉環
-- 驗 4 service log 都產生、目錄結構正確、trace_id 串得起、env_snapshot 各 service 都有寫且 secret pattern 不出現原值
+- 跑一次本地完整 IFC-ready → conversion → session → viewer bootstrap → close 閉環；使用受支援的 `smoke-bscheme-intake.ps1` 作 PowerShell participant
+- 驗 4 service log 都產生、目錄結構正確、同一 `ifcready_*` trace_id 串得起、env_snapshot 各 service 每 run 恰一筆且 secret pattern 不出現原值
+- 在 coordinator 產生的真 viewer route 操作 diagnostics：觀測 flush loading → Playwright-only forced POST failure → visible retry → 真 coordinator 2xx success，再由同一 browser surface close 同一 review session
+- Browser evidence MUST 保存 failure 與 final success/closed screenshot、Playwright trace、secret-free console events、viewer-log/session-close network events與 runtime IDs；預期攔截的 503 必須標成 test-injected，不得寫成 backend incident
+- raw Playwright trace只能進 owned random private OS temp root，sanitized final zip才進 retained artifact tree；non-canonical URI scheme/UNC fail closed，final viewer origin必須精確等於獨立 trusted origin參數
+- `browser_run_id` MUST 在 operability、readiness、root timeline的唯一 viewer run、artifact manifest與PR fields case-exact一致
 - Evidence 寫 `docs/evidence/structured-log-baseline-2026-05-26.md`
 
 ### 6.5 Retention script test
@@ -433,7 +478,7 @@ Get-ChildItem logs -Recurse -Filter *.jsonl |
 - 不測 `carb.log_*` 行為
 - 不測 docker logs / systemd stdout 接收（屬 sink 外層）
 - 不測 production sink（Loki，roadmap #8 範疇）
-- 不測 viewer endpoint production auth（已記為 Out of scope hardening）
+- 不測 Internet-grade IdP/TLS/firewall；viewer lease/internal-token auth與 base/host-kit Compose boundary是本 change必測
 
 ---
 
@@ -466,11 +511,11 @@ Get-ChildItem logs -Recurse -Filter *.jsonl |
 |---|---|---|
 | Prometheus `/metrics` 端點 | 屬 roadmap #8 `observability-audit-baseline` | Phase 6 解凍時 |
 | Loki / Grafana production sink | 同上 | 同上 |
-| viewer-log endpoint 加 internal token | local-dev-only baseline；production 部署再評估 | Phase 5/6 production hardening |
+| Internet-grade viewer-log identity、TLS、edge firewall | 本 change只重用 active viewer lease並收斂 host publish；host-kit仍是 LAN/single-machine profile | production edge rollout |
 | Log payload evidence sidecar（`logs/<service>/<date>/evidence/`） | schema 留 hook `data.evidence_ref`，本 change 不實作機制 | 真有 incident 需要追大 payload 時 |
 | OpenTelemetry W3C `traceparent` 格式 | dev 期無人股 OTel SDK | roadmap #8 |
 | Daily retention CI 自動化 | 手動跑 / Windows 任務排程已夠 | Phase 5/6 production |
-| Log 集中 dashboard UI | 屬 #8 | Phase 6 |
+| 完整 Log 集中 dashboard UI（search / tail / filter / download / cross-service aggregation） | 屬 #8；本 change 只核准 §3.8 的單一 viewer delivery diagnostics surface | Phase 6 |
 
 ---
 
@@ -489,9 +534,12 @@ Get-ChildItem logs -Recurse -Filter *.jsonl |
 |---|---|
 | 4 adapter 各自實作 schema → 漂移 | 共用 fixtures + contract test，CI fail-fast |
 | Kit ext 整合 struct_log 影響 Kit subprocess perf | 寫 file 是 I/O bound，每筆 < 1ms；Kit 對單筆 log 不敏感；若真有 hot loop 用 debug level 預設關 |
-| viewer-log endpoint 沒 auth → LAN 內任意 POST | local-dev only；endpoint 做 schema validation 擋亂寫；production 上線前必補 |
+| host-kit LAN仍可達 viewer-log | body parse前要求 active viewer lease，health要求 internal token；missing/wrong/cross-session/expired/released全部401零寫入，base profile另綁host loopback |
+| viewer lease不是Internet-grade identity | host-kit只宣稱LAN/single-machine；TLS/firewall/IdP留production edge rollout |
+| raw trace在硬 kill後殘留OS temp | raw永不進retained evidence tree；owned temp finally cleanup並誠實揭露hard-kill residual |
 | daily rotate 跨午夜瞬間 record 寫到舊檔 | schema 有 `ts`，join/sort 不受影響 |
 | 30 天 retention 對追長期 incident 不夠 | 本 baseline 預設 30；env var 可調 `LOG_RETENTION_DAYS`；長期歸檔屬 Phase 6 |
+| P4 forced failure 被誤作 production fault path | 只允許 Playwright route interception；production UI / API 不接受 fault-injection flag |
 
 ---
 
@@ -503,10 +551,11 @@ Get-ChildItem logs -Recurse -Filter *.jsonl |
 2. 共用 schema contract test：4 個 validator 用同一份 fixtures 全 pass。
 3. `tests/integration/structured-log-cross-service.test.ts` 跑通：mock cross-service flow，trace_id 串得起。
 4. `scripts/log-retention/prune-logs.ps1` 有 Pester test，`-DryRun` / `-Apply` 行為正確、30 天邊界正確。
-5. Smoke evidence：本地跑一次 IFC-ready → conversion → session → close 閉環，4 service log 都產生，agent 用 trace_id grep 拉得齊。
+5. Smoke evidence：本地跑一次 IFC-ready → conversion → session → viewer bootstrap → close 閉環，4 service log 都產生，agent 用同一 `ifcready_*` trace_id grep 拉得齊；不得以人工注入相同 trace 的 adapter harness 代替 production carriers。
 6. `docs/contracts/structured-log-schema.md` + `docs/contracts/structured-log-env-allowlist.md` 完成；新加 env var 的 PR review checklist 提到必更 allow-list。
 7. `.gitignore` 加 `/logs/`。
 8. `coordinator npm run verify` / streaming pytest / viewer build / root pytest 全 pass。
+9. Coordinator 產生的真 viewer route 上，使用者可操作 structured-log flush 與同 session close；P4 觀測 visible loading、forced failure、retry、success/closed、真 API、console/network、runtime IDs、screenshots 與 `trace.zip`。Design status 保持 `mixed`、reference-missing surface 誠實列出、`Full completion claimed=no`。
 
 ---
 

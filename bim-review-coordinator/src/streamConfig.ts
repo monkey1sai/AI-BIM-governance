@@ -192,7 +192,12 @@ export function runtimeKitInstanceBindings(session: ReviewSession, config: Coord
   ];
 }
 
-export function buildStreamConfig(session: ReviewSession, artifacts: Artifact[], config: CoordinatorConfig): StreamConfigResponse {
+export function buildStreamConfig(
+  session: ReviewSession,
+  artifacts: Artifact[],
+  config: CoordinatorConfig,
+  canonicalTraceId: string,
+): StreamConfigResponse {
   const artifactBindings =
     session.artifact_bindings.length > 0
       ? session.artifact_bindings
@@ -211,6 +216,7 @@ export function buildStreamConfig(session: ReviewSession, artifacts: Artifact[],
   const secondaryStageBindings = loadableDerivedBindings.slice(1);
   return {
     session_id: session.session_id,
+    trace_id: canonicalTraceId,
     lifecycle_status: session.status,
     source: "local_fixed",
     webrtc: {

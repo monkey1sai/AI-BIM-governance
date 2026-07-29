@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { harnessRoute } from "./harnessRoute";
 
 // Task3 Step1（2026-07-06 plan 修正，supersedes 先前「打真 coordinator + test.skip」版本）：
 // mapping-row 選列是 UI-local intent（design doc §2 select_mapping_row），只更新語意狀態，
@@ -11,7 +12,7 @@ import { test, expect } from "@playwright/test";
 // 對映、不新增網路請求。故本測試現在字面可執行，於 ?harness=1 下真的點擊 mapping-row。
 test.describe("C M4 runtime command bridge", () => {
   test("mapping row selection updates semantic state without sending runtime mutator", async ({ page }) => {
-    await page.goto("/?harness=1");
+    await page.goto(harnessRoute());
     await page.getByTestId("mapping-row").first().click();
     await expect(page.getByTestId("geo-viewer-right-semantic")).toBeVisible();
     await expect(page.getByTestId("geo-viewer-bottom-mapping")).toBeVisible();

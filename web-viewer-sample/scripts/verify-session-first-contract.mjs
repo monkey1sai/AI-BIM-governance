@@ -189,7 +189,7 @@ assert.match(
 );
 assert.match(
     windowSource,
-    /this\.setState\(\{[\s\S]*?reviewSessionId: sessionId,[\s\S]*?\}, \(\) => \{\s*this\._scheduleStreamStartTimeout\(\);/,
+    /this\.setState\(\{[\s\S]*?reviewSessionId: sessionId,[\s\S]*?latestStreamConfig: streamConfig,[\s\S]*?\}, \(\) => \{[\s\S]*?this\._scheduleStreamStartTimeout\(\);/,
     "viewer must start the WebRTC timeout only after session stream-config has bound AppStream inputs",
 );
 assert.match(

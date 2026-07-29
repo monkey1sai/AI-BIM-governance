@@ -247,84 +247,100 @@ export function redactEnvValue(
   };
 }
 
-/**
- * Field names that share spelling with secret-pattern fragments but are part of
- * our own schema vocabulary. Lowercase comparison.
- *
- * Without this guard, `redactDataBeforeWrite` would treat the literal field
- * name `key` inside the env_snapshot `vars[]` entries as a secret (because the
- * pattern includes `KEY`) and wipe the env var name, hiding every snapshot row.
- */
-const NEVER_REDACT_FIELD_NAMES = new Set([
-  "key",
-  "auth",
-  "name",
-  "type",
-  "source",
-  "value_or_redacted",
-  "status",
-  "reason",
-  "msg",
-  "data",
-  "event_type",
-  "level",
-  "service",
-  "component",
-  "run_id",
-  "trace_id",
-  "parent_trace_id",
-  "subject_kind",
-  "subject_id",
-  "phase",
-  "actor",
-  "action",
-  "target",
-  "direction",
-  "protocol",
-  "peer",
-  "duration_ms",
-  "path",
-  "anomaly_kind",
-  "vars",
-  "error",
-  "stack_tail",
-]);
+export const MAX_REDACTION_DEPTH = 8;
 
-function isSecretFieldName(name: string, patterns: RegExp, allowKeys: Set<string>): boolean {
-  if (allowKeys.has(name)) return false;
-  if (NEVER_REDACT_FIELD_NAMES.has(name.toLowerCase())) return false;
-  return patterns.test(name);
-}
-
-/**
- * Depth-first redaction over a `data` object. Any key whose spelling implies a
- * secret is replaced with `[REDACTED]`. Schema-vocabulary field names
- * (`key`, `auth`, …) are exempted via NEVER_REDACT_FIELD_NAMES so the env
- * snapshot row layout survives this pass. Circular references collapse to
- * `[Circular]`.
- */
 export function redactDataBeforeWrite(
   data: unknown,
   allowList: { keys: Set<string>; patterns: RegExp } = loadAllowList(),
-  seen: WeakSet<object> = new WeakSet(),
+  activePath: WeakSet<object> = new WeakSet(),
+  depth = 0,
 ): unknown {
   if (data === null || data === undefined) return data;
   if (typeof data !== "object") return data;
-  if (seen.has(data as object)) return "[Circular]";
-  seen.add(data as object);
+  if (depth > MAX_REDACTION_DEPTH) return "[Truncated]";
+  if (activePath.has(data as object)) return "[Circular]";
+  activePath.add(data as object);
 
-  if (Array.isArray(data)) {
-    return data.map((item) => redactDataBeforeWrite(item, allowList, seen));
-  }
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
-    if (isSecretFieldName(key, allowList.patterns, allowList.keys)) {
-      out[key] = "[REDACTED]";
-    } else {
-      out[key] = redactDataBeforeWrite(value, allowList, seen);
+  try {
+    if (Array.isArray(data)) {
+      return data.map((item) => redactDataBeforeWrite(item, allowList, activePath, depth + 1));
     }
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+      out[key] = allowList.patterns.test(key)
+        ? "[REDACTED]"
+        : redactDataBeforeWrite(value, allowList, activePath, depth + 1);
+    }
+    return out;
+  } finally {
+    activePath.delete(data as object);
   }
-  return out;
+}
+
+function sanitizeEnvSnapshotVars(value: unknown): EnvVar[] {
+  if (!Array.isArray(value)) return [];
+  const vars: EnvVar[] = [];
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+    const row = candidate as Partial<EnvVar>;
+    if (
+      typeof row.key !== "string"
+      || typeof row.source !== "string"
+      || typeof row.value_or_redacted !== "string"
+      || typeof row.type !== "string"
+    ) continue;
+    vars.push({
+      key: row.key,
+      source: row.source as EnvSource,
+      value_or_redacted: row.value_or_redacted,
+      type: row.type as EnvVar["type"],
+    });
+  }
+  return vars;
+}
+
+function sanitizeInboundEnvSnapshotVars(value: unknown): EnvVar[] {
+  return sanitizeEnvSnapshotVars(value).map((row) => {
+    const sanitized = redactEnvValue(row.key, row.value_or_redacted);
+    return {
+      ...row,
+      value_or_redacted: sanitized.value_or_redacted,
+    };
+  });
+}
+
+function sanitizeRecordData(
+  eventType: EventType,
+  data: Record<string, unknown>,
+  trustEnvSnapshotValues = true,
+): Record<string, unknown> {
+  try {
+    if (eventType !== "env_snapshot") {
+      return redactDataBeforeWrite(data) as Record<string, unknown>;
+    }
+    const allowList = loadAllowList();
+    const activePath = new WeakSet<object>();
+    activePath.add(data);
+    try {
+      const safe: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(data)) {
+        if (key === "vars") {
+          safe.vars = trustEnvSnapshotValues
+            ? sanitizeEnvSnapshotVars(value)
+            : sanitizeInboundEnvSnapshotVars(value);
+        } else {
+          safe[key] = allowList.patterns.test(key)
+            ? "[REDACTED]"
+            : redactDataBeforeWrite(value, allowList, activePath, 1);
+        }
+      }
+      return safe;
+    } finally {
+      activePath.delete(data);
+    }
+  } catch {
+    return { redaction_failure: "[Truncated]" };
+  }
 }
 
 /**
@@ -359,11 +375,114 @@ const VALID_EVENT_TYPES: ReadonlySet<string> = new Set([
   "general",
 ]);
 const VALID_SERVICES: ReadonlySet<string> = new Set(["coordinator", "streaming-server", "viewer", "scripts"]);
+const VALID_ENV_SOURCES: ReadonlySet<string> = new Set([".env", ".env.example", "system", "docker-compose", "default"]);
+const VALID_ENV_TYPES: ReadonlySet<string> = new Set(["string", "number", "boolean", "null", "object", "array"]);
+const VALID_ANOMALY_KINDS: ReadonlySet<string> = new Set(["retry", "fallback", "timeout", "unexpected_state"]);
+const VALID_LIFECYCLE_PHASES: ReadonlySet<string> = new Set(["start", "active", "closing", "closed"]);
+const VALID_LIFECYCLE_SUBJECTS: ReadonlySet<string> = new Set([
+  "review_session", "conversion_job", "kit_subprocess", "ifc_ready_job", "script_run", "outbox_delivery",
+]);
+const VALID_NETWORK_DIRECTIONS: ReadonlySet<string> = new Set(["inbound", "outbound"]);
+const VALID_NETWORK_PROTOCOLS: ReadonlySet<string> = new Set([
+  "http", "websocket", "socket.io", "webrtc-signal", "datachannel",
+]);
+const VALID_NETWORK_PEERS: ReadonlySet<string> = new Set([
+  "coordinator", "streaming-server", "external-edge", "external-cloud", "kit-subprocess", "viewer",
+]);
 const RUN_ID_PATTERN = /^run_\d{8}_\d{6}_[0-9a-f]{6}$/;
 const TRACE_ID_PATTERN = /^(ifcready_|rev_|stream_conv_|script_|external_)[A-Za-z0-9_\-]+$/;
 const ISO_MS_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const CALLER_PATTERN = /^.+:\d+$/;
+const LOG_RECORD_KEYS = new Set([
+  "ts", "level", "event_type", "service", "component", "run_id", "trace_id", "msg", "data",
+  "seq", "caller", "error", "parent_event_id", "parent_trace_id",
+]);
 
 export type ValidationResult = { valid: true; record: LogRecord } | { valid: false; reason: string };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasNonEmptyString(record: Record<string, unknown>, key: string): boolean {
+  return typeof record[key] === "string" && record[key].length > 0;
+}
+
+function isErrorShape(value: unknown, allowExtraFields: boolean): boolean {
+  if (!isRecord(value)) return false;
+  if (!allowExtraFields && Object.keys(value).some((key) => !["name", "message", "stack_tail"].includes(key))) {
+    return false;
+  }
+  return hasNonEmptyString(value, "name")
+    && typeof value.message === "string"
+    && Array.isArray(value.stack_tail)
+    && value.stack_tail.length <= 8
+    && value.stack_tail.every((line) => typeof line === "string");
+}
+
+function validateEventData(eventType: EventType, data: Record<string, unknown>, error: unknown): string | null {
+  switch (eventType) {
+    case "logic_error":
+      return isErrorShape(error, false) && isErrorShape(data.error, true) ? null : "bad_logic_error_data";
+    case "operation_anomaly":
+      return typeof data.anomaly_kind === "string"
+        && VALID_ANOMALY_KINDS.has(data.anomaly_kind)
+        && hasNonEmptyString(data, "reason")
+        ? null
+        : "bad_operation_anomaly_data";
+    case "env_snapshot": {
+      if (!Array.isArray(data.vars)) return "bad_env_snapshot_data";
+      const validVars = data.vars.every((value) => {
+        if (!isRecord(value)) return false;
+        if (Object.keys(value).some((key) => !["key", "source", "value_or_redacted", "type"].includes(key))) {
+          return false;
+        }
+        return hasNonEmptyString(value, "key")
+          && typeof value.source === "string"
+          && VALID_ENV_SOURCES.has(value.source)
+          && typeof value.value_or_redacted === "string"
+          && typeof value.type === "string"
+          && VALID_ENV_TYPES.has(value.type);
+      });
+      return validVars ? null : "bad_env_snapshot_data";
+    }
+    case "lifecycle":
+      return typeof data.phase === "string"
+        && VALID_LIFECYCLE_PHASES.has(data.phase)
+        && typeof data.subject_kind === "string"
+        && VALID_LIFECYCLE_SUBJECTS.has(data.subject_kind)
+        && hasNonEmptyString(data, "subject_id")
+        ? null
+        : "bad_lifecycle_data";
+    case "audit":
+      return hasNonEmptyString(data, "action")
+        && hasNonEmptyString(data, "actor")
+        && hasNonEmptyString(data, "target")
+        ? null
+        : "bad_audit_data";
+    case "network": {
+      const statusValid = (typeof data.status === "string" && data.status.length > 0)
+        || Number.isInteger(data.status);
+      const durationValid = data.duration_ms === undefined
+        || (Number.isInteger(data.duration_ms) && (data.duration_ms as number) >= 0);
+      const pathValid = data.path === undefined
+        || (typeof data.path === "string" && !data.path.includes("?"));
+      return typeof data.direction === "string"
+        && VALID_NETWORK_DIRECTIONS.has(data.direction)
+        && typeof data.protocol === "string"
+        && VALID_NETWORK_PROTOCOLS.has(data.protocol)
+        && typeof data.peer === "string"
+        && VALID_NETWORK_PEERS.has(data.peer)
+        && statusValid
+        && durationValid
+        && pathValid
+        ? null
+        : "bad_network_data";
+    }
+    case "general":
+      return null;
+  }
+}
 
 /**
  * Lightweight runtime validation used by viewer-log intake to drop malformed
@@ -376,6 +495,9 @@ export function validateLogRecordBasic(input: unknown): ValidationResult {
     return { valid: false, reason: "not_an_object" };
   }
   const rec = input as Record<string, unknown>;
+  for (const key of Object.keys(rec)) {
+    if (!LOG_RECORD_KEYS.has(key)) return { valid: false, reason: "unknown_top_level_field" };
+  }
   const required = ["ts", "level", "event_type", "service", "component", "run_id", "trace_id", "msg", "data"] as const;
   for (const field of required) {
     if (!(field in rec)) return { valid: false, reason: `missing_${field}` };
@@ -388,13 +510,13 @@ export function validateLogRecordBasic(input: unknown): ValidationResult {
   if (typeof rec.service !== "string" || !VALID_SERVICES.has(rec.service)) {
     return { valid: false, reason: "bad_service" };
   }
-  if (typeof rec.component !== "string" || rec.component.length === 0) {
+  if (typeof rec.component !== "string" || rec.component.length === 0 || rec.component.length > 200) {
     return { valid: false, reason: "bad_component" };
   }
   if (typeof rec.run_id !== "string" || !RUN_ID_PATTERN.test(rec.run_id)) {
     return { valid: false, reason: "bad_run_id" };
   }
-  if (typeof rec.trace_id !== "string" || !TRACE_ID_PATTERN.test(rec.trace_id)) {
+  if (typeof rec.trace_id !== "string" || rec.trace_id.length > 200 || !TRACE_ID_PATTERN.test(rec.trace_id)) {
     return { valid: false, reason: "bad_trace_id" };
   }
   if (typeof rec.msg !== "string" || rec.msg.length === 0 || rec.msg.length > 2000) {
@@ -403,7 +525,42 @@ export function validateLogRecordBasic(input: unknown): ValidationResult {
   if (rec.data === null || typeof rec.data !== "object" || Array.isArray(rec.data)) {
     return { valid: false, reason: "bad_data" };
   }
-  return { valid: true, record: rec as unknown as LogRecord };
+  if (rec.seq !== undefined && (!Number.isInteger(rec.seq) || (rec.seq as number) < 1)) {
+    return { valid: false, reason: "bad_seq" };
+  }
+  if (rec.caller !== undefined && (typeof rec.caller !== "string" || !CALLER_PATTERN.test(rec.caller))) {
+    return { valid: false, reason: "bad_caller" };
+  }
+  if (rec.parent_event_id !== undefined && (typeof rec.parent_event_id !== "string" || rec.parent_event_id.length === 0)) {
+    return { valid: false, reason: "bad_parent_event_id" };
+  }
+  if (rec.parent_trace_id !== undefined && (typeof rec.parent_trace_id !== "string" || !TRACE_ID_PATTERN.test(rec.parent_trace_id))) {
+    return { valid: false, reason: "bad_parent_trace_id" };
+  }
+  if (rec.error !== undefined && !isErrorShape(rec.error, false)) return { valid: false, reason: "bad_error" };
+  const eventDataError = validateEventData(
+    rec.event_type as EventType,
+    rec.data as Record<string, unknown>,
+    rec.error,
+  );
+  if (eventDataError) return { valid: false, reason: eventDataError };
+  const record: LogRecord = {
+    ts: rec.ts as string,
+    level: rec.level as LogLevel,
+    event_type: rec.event_type as EventType,
+    service: rec.service as Service,
+    component: rec.component as string,
+    run_id: rec.run_id as string,
+    trace_id: rec.trace_id as string,
+    msg: rec.msg as string,
+    data: rec.data as Record<string, unknown>,
+  };
+  if (rec.seq !== undefined) record.seq = rec.seq as number;
+  if (rec.caller !== undefined) record.caller = rec.caller as string;
+  if (rec.error !== undefined) record.error = rec.error as LogRecord["error"];
+  if (rec.parent_event_id !== undefined) record.parent_event_id = rec.parent_event_id as string;
+  if (rec.parent_trace_id !== undefined) record.parent_trace_id = rec.parent_trace_id as string;
+  return { valid: true, record };
 }
 
 // -------------------- Persistence helper (used by viewer-log intake) --------------------
@@ -426,6 +583,10 @@ export function persistRecordsToServicePaths(
 ): PersistResult {
   const result: PersistResult = { written: 0, dropped: 0, droppedReasons: new Map() };
   for (const record of records) {
+    const safeRecord: LogRecord = {
+      ...record,
+      data: sanitizeRecordData(record.event_type, record.data, false),
+    };
     const dateDir = dateDirFromIso(record.ts);
     const dir = path.join(logRoot, record.service, dateDir);
     if (!ensureDir(dir)) {
@@ -435,7 +596,7 @@ export function persistRecordsToServicePaths(
     }
     const file = path.join(dir, `${record.service}-${record.run_id}.jsonl`);
     try {
-      fs.appendFileSync(file, safeStringify(record) + "\n", { encoding: "utf-8" });
+      fs.appendFileSync(file, safeStringify(safeRecord) + "\n", { encoding: "utf-8" });
       result.written += 1;
     } catch (err) {
       const reason = err instanceof Error ? err.name : "append_failed";
@@ -561,7 +722,7 @@ function buildRecord(
   const ts = isoUtcMs(state.now());
   // Default trace_id falls back to script_<run_id> when no upstream id has been set.
   const traceId = state.traceId ?? `script_${state.runId}`;
-  const safeData = data ? (redactDataBeforeWrite(data) as Record<string, unknown>) : {};
+  const safeData = data ? sanitizeRecordData(eventType, data) : {};
 
   const nextSeq = (state.seqByTrace.get(traceId) ?? 0) + 1;
   state.seqByTrace.set(traceId, nextSeq);
@@ -698,7 +859,10 @@ function makeLogger(state: LoggerInternalState): StructLogger {
       attemptWrite(state, buildRecord(state, "info", "env_snapshot", component, "env snapshot", { vars: safeVars }));
     },
     writeRaw(record) {
-      attemptWrite(state, record);
+      attemptWrite(state, {
+        ...record,
+        data: sanitizeRecordData(record.event_type, record.data),
+      });
     },
     withTraceId(traceId) {
       // Children share mutable counters, recovery state, and seq map with the parent

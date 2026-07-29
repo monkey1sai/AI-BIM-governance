@@ -62,19 +62,24 @@ function internalHeaders(): Record<string, string> {
   return { "X-Internal-Token": INTERNAL_TOKEN };
 }
 
-async function seedIfcReadyJob(app: CoordinatorApp): Promise<string> {
+async function seedIfcReadyJob(
+  app: CoordinatorApp,
+): Promise<{ correlationId: string; traceId: string }> {
   const res = await request(app.app)
     .post("/api/external/ifc-ready")
     .set(authHeaders())
     .send({ ...structuredClone(IFC_CONTRACT.example) });
   expect(res.status).toBe(202);
-  return "corr_cbk_001";
+  return {
+    correlationId: "corr_cbk_001",
+    traceId: res.body.ifc_ready_job_id as string,
+  };
 }
 
 describe("T5 cloud callback outbox（metadata-only / retry / dead-letter）", () => {
   it("ready 結果→組 conversion_result_ready（僅 metadata refs）入 outbox，conversion 與 callback 狀態分離", async () => {
     const app = makeApp();
-    const correlationId = await seedIfcReadyJob(app);
+    const { correlationId, traceId } = await seedIfcReadyJob(app);
 
     const res = await request(app.app).post("/api/internal/conversion-result").set(internalHeaders()).send({
       correlation_id: correlationId,
@@ -93,6 +98,7 @@ describe("T5 cloud callback outbox（metadata-only / retry / dead-letter）", ()
     expect(res.body.ifc_ready_job.conversion_status).toBe("ready");
     expect(res.body.callback.status).toBe("pending");
     expect(res.body.callback.event).toBe("conversion_result_ready");
+    expect(res.body.callback.payload.trace_id).toBe(traceId);
     // payload 僅含 metadata refs，無 .usdc 本體
     for (const f of CB_CONTRACT.events.conversion_result_ready.required_fields) {
       expect(res.body.callback.payload).toHaveProperty(f);
@@ -129,7 +135,7 @@ describe("T5 cloud callback outbox（metadata-only / retry / dead-letter）", ()
 
   it("cloud 不可達 → outbox 保留重試，retry 耗盡 → dead_letter（不靜默丟棄）", async () => {
     const app = makeApp();
-    const correlationId = await seedIfcReadyJob(app);
+    const { correlationId } = await seedIfcReadyJob(app);
     const enqueue = await request(app.app)
       .post("/api/internal/conversion-result")
       .set(internalHeaders())
@@ -153,7 +159,7 @@ describe("T5 cloud callback outbox（metadata-only / retry / dead-letter）", ()
 
   it("conversion 失敗 → conversion_failed callback（status/reason/retryable）", async () => {
     const app = makeApp();
-    const correlationId = await seedIfcReadyJob(app);
+    const { correlationId, traceId } = await seedIfcReadyJob(app);
     const res = await request(app.app).post("/api/internal/conversion-result").set(internalHeaders()).send({
       correlation_id: correlationId,
       status: "failed",
@@ -165,12 +171,13 @@ describe("T5 cloud callback outbox（metadata-only / retry / dead-letter）", ()
     expect(res.body.callback.payload.status).toBe("failed");
     expect(res.body.callback.payload.reason).toMatch(/converter_failed/);
     expect(res.body.callback.payload.retryable).toBe(false);
+    expect(res.body.callback.payload.trace_id).toBe(traceId);
     expect(res.body.ifc_ready_job.conversion_status).toBe("failed");
   });
 
   it("metadata-only 鐵律：callback payload 內嵌模型本體 → 422 拒絕", async () => {
     const app = makeApp();
-    const correlationId = await seedIfcReadyJob(app);
+    const { correlationId } = await seedIfcReadyJob(app);
     const res = await request(app.app)
       .post("/api/internal/conversion-result")
       .set(internalHeaders())
@@ -194,7 +201,7 @@ describe("T5 cloud callback outbox（metadata-only / retry / dead-letter）", ()
 
   it("internal conversion-result 需要 service token", async () => {
     const app = makeApp();
-    const correlationId = await seedIfcReadyJob(app);
+    const { correlationId } = await seedIfcReadyJob(app);
     const res = await request(app.app)
       .post("/api/internal/conversion-result")
       .send({ correlation_id: correlationId, status: "ready", artifacts: {} });
@@ -203,7 +210,7 @@ describe("T5 cloud callback outbox（metadata-only / retry / dead-letter）", ()
 
   it("接受 streaming /result 的 succeeded 並正規化為 ready", async () => {
     const app = makeApp();
-    const correlationId = await seedIfcReadyJob(app);
+    const { correlationId } = await seedIfcReadyJob(app);
     const res = await request(app.app)
       .post("/api/internal/conversion-result")
       .set(internalHeaders())
@@ -214,21 +221,38 @@ describe("T5 cloud callback outbox（metadata-only / retry / dead-letter）", ()
     expect(res.body.callback.payload.status).toBe("ready");
   });
 
-  it("outbox entries survive service re-instantiation through the JSON store", () => {
+  it("outbox preserves the exact root trace through persist, reload, and delivery", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-cbk-persist-test-"));
     const storePath = path.join(root, "callback-outbox.json");
-    const first = new CallbackOutbox(2, async () => undefined, storePath);
+    const traceId = "ifcready_persist_001";
+    const delivered: Array<Record<string, unknown>> = [];
+    const deliverer = async (_targetUrl: string, payload: Record<string, unknown>) => {
+      delivered.push(structuredClone(payload));
+    };
+    const first = new CallbackOutbox(2, deliverer, storePath);
     const entry = first.enqueue({
       event: "conversion_result_ready",
-      targetUrl: null,
+      targetUrl: "https://cloud.example.test/callback",
       correlationId: "corr_persist_001",
       externalModelVersionId: "ext_mv_persist_001",
       conversionJobId: "cj_persist_001",
-      payload: { event: "conversion_result_ready", status: "ready", artifacts: { usdc_ref: "edge-local://model.usdc" } },
+      payload: {
+        event: "conversion_result_ready",
+        trace_id: traceId,
+        status: "ready",
+        artifacts: { usdc_ref: "edge-local://model.usdc" },
+      },
     });
 
-    const reloaded = new CallbackOutbox(2, async () => undefined, storePath);
+    const reloaded = new CallbackOutbox(2, deliverer, storePath);
     expect(reloaded.get(entry.outbox_id)?.status).toBe("pending");
     expect(reloaded.get(entry.outbox_id)?.payload).toEqual(entry.payload);
+    expect(reloaded.get(entry.outbox_id)?.payload.trace_id).toBe(traceId);
+
+    await reloaded.deliverPending();
+
+    expect(delivered).toEqual([entry.payload]);
+    expect(delivered[0]?.trace_id).toBe(traceId);
+    expect(reloaded.get(entry.outbox_id)?.status).toBe("delivered");
   });
 });

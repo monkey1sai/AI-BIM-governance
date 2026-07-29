@@ -40,8 +40,7 @@ function baseUrlString(url: URL): string {
     return `${url.origin}${pathname && pathname !== "/" ? pathname : ""}`;
 }
 
-function trustedCoordinatorBaseFromQuery(name: string): string | null {
-    const raw = queryParam(name);
+export function trustedCoordinatorBase(raw: string): string | null {
     if (!raw || typeof globalThis.location === "undefined") return null;
 
     const parsed = normalizedHttpBaseUrl(raw);
@@ -55,6 +54,11 @@ function trustedCoordinatorBaseFromQuery(name: string): string | null {
     return null;
 }
 
+function trustedCoordinatorBaseFromQuery(name: string): string | null {
+    const raw = queryParam(name);
+    return raw ? trustedCoordinatorBase(raw) : null;
+}
+
 // coordinator `/ui/open?session=review_session_xxx` redirects the browser to
 // the Vite viewer with the same `session` query key. Keep `sessionId` as the
 // legacy explicit key, but treat `session` as the primary coordinator handoff.
@@ -64,7 +68,9 @@ const rawA4HandoffId = queryParam("a4_handoff");
 const a4HandoffId = normalizeA4HandoffId(rawA4HandoffId);
 const queryCoordinatorApiBase = trustedCoordinatorBaseFromQuery("coordinatorApiBase");
 const queryCoordinatorSocketUrl = trustedCoordinatorBaseFromQuery("coordinatorSocketUrl");
-const envCoordinatorApiBase = import.meta.env.VITE_COORDINATOR_API_BASE || "http://127.0.0.1:8004";
+const defaultCoordinatorApiBase = "http://127.0.0.1:8004";
+const rawEnvCoordinatorApiBase = import.meta.env.VITE_COORDINATOR_API_BASE || defaultCoordinatorApiBase;
+const envCoordinatorApiBase = trustedCoordinatorBase(rawEnvCoordinatorApiBase) || defaultCoordinatorApiBase;
 
 function positiveNumberConfig(queryName: string, envValue: string | undefined, fallback: number): number {
     const raw = queryParam(queryName) || envValue;

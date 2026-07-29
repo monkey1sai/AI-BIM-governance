@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   sanitizeArtifactIdPart,
+  StreamingConversionClient,
   toInternalIfcReadyEvent,
 } from "../src/services/streamingConversionClient.js";
 import type { ExternalIfcReadyEvent } from "../src/types.js";
@@ -107,6 +108,45 @@ describe("toInternalIfcReadyEvent", () => {
     });
     const SAFE = /^[A-Za-z0-9_.-]+$/;
     expect(SAFE.test(payload.correlation_id as string)).toBe(true);
+  });
+});
+
+describe("StreamingConversionClient", () => {
+  it("dispatches the IFC-ready root trace in X-Trace-Id", async () => {
+    const ifcReadyJobId = "ifcready_20260724120000_deadbeef";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          conversion_job_id: "stream_conv_trace_carrier",
+          status: "queued",
+        }),
+        { status: 202, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    try {
+      const client = new StreamingConversionClient(
+        "http://127.0.0.1:49101",
+        10000,
+        "internal-conversion-token",
+      );
+      await client.createConversionJob(
+        EVENT,
+        {
+          correlationId: "corr_trace_carrier",
+          externalModelVersionId: EVENT.external_model_version_id,
+        },
+        ifcReadyJobId,
+      );
+
+      const fetchInit = fetchMock.mock.calls[0]?.[1];
+      expect(fetchInit?.headers).toMatchObject({
+        "X-Internal-Conversion-Token": "internal-conversion-token",
+        "X-Trace-Id": ifcReadyJobId,
+      });
+    } finally {
+      fetchMock.mockRestore();
+    }
   });
 });
 

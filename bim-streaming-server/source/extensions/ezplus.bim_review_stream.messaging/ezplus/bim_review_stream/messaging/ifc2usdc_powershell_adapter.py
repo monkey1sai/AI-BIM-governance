@@ -164,8 +164,13 @@ class Ifc2UsdcPowershellConverterAdapter:
                 f"Unsupported conversion_profile: {conversion_profile}",
             )
 
+        trace_id = str(job.get("trace_id") or job["conversion_job_id"])
         try:
-            self._run_powershell_conversion(ifc_path=ifc_path, output_dir=output_dir)
+            self._run_powershell_conversion(
+                ifc_path=ifc_path,
+                output_dir=output_dir,
+                trace_id=trace_id,
+            )
         except ConversionAuthorityError as exc:
             if not self._is_primary_ifc_import_failure(exc):
                 raise
@@ -327,7 +332,13 @@ class Ifc2UsdcPowershellConverterAdapter:
             ) from exc
         return resolved
 
-    def _run_powershell_conversion(self, *, ifc_path: Path, output_dir: Path) -> None:
+    def _run_powershell_conversion(
+        self,
+        *,
+        ifc_path: Path,
+        output_dir: Path,
+        trace_id: str | None = None,
+    ) -> None:
         cmd: list[str] = [
             self.powershell_exe,
             "-NoProfile",
@@ -345,6 +356,8 @@ class Ifc2UsdcPowershellConverterAdapter:
             str(self.timeout_seconds),
             "-Force",
         ]
+        if trace_id:
+            cmd += ["-TraceId", trace_id]
         if self.config_path is not None:
             cmd += ["-ConfigPath", str(self.config_path.resolve())]
         if self.kit_exe_path is not None:

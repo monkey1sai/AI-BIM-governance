@@ -103,7 +103,7 @@ MODULE_DIR = (
 sys.path.insert(0, str(MODULE_DIR))
 
 import stage_loading  # noqa: E402
-from runtime_authority import AuthorityDecision  # noqa: E402
+from runtime_authority import AuthorityDecision, DataChannelTraceContext  # noqa: E402
 from stage_loading import LoadingManager, _http_stage_allowed_hosts  # noqa: E402
 
 
@@ -119,6 +119,16 @@ class FakeAuthority:
         )
         self.authorize_calls = []
         self.confirm_calls = []
+        self.verify_calls = []
+
+    def verify_datachannel_trace(self, event_type, payload):
+        self.verify_calls.append((event_type, payload))
+        if (
+            payload.get("session_id") == "review_session_x"
+            and payload.get("trace_id") == "rev_review_session_x"
+        ):
+            return "rev_review_session_x"
+        return None
 
     def authorize(self, event_type, payload):
         self.authorize_calls.append((event_type, payload))
@@ -133,6 +143,7 @@ def make_manager(authority=None) -> LoadingManager:
     manager = LoadingManager.__new__(LoadingManager)
     manager._subscriptions = []
     manager._runtime_authority = authority or FakeAuthority()
+    manager._trace_context = DataChannelTraceContext()
     manager._active_stage_attempt = None
     manager._active_terminal_started = False
     manager._active_stage_runtime_url = ""
@@ -180,6 +191,86 @@ def capture_dispatch(monkeypatch):
     return dispatched
 
 
+@pytest.mark.parametrize(
+    "handler_name,event_type",
+    [
+        ("_on_open_stage", "openStageRequest"),
+        ("_on_load_artifact_group", "loadArtifactGroupRequest"),
+        ("_on_load_state_query", "loadingStateQuery"),
+    ],
+)
+@pytest.mark.parametrize("trace_id", [None, "rev_review_session_other"])
+def test_all_loading_inbound_handlers_drop_unverified_trace_before_read_or_mutation(
+    monkeypatch,
+    handler_name,
+    event_type,
+    trace_id,
+):
+    class ReadBomb:
+        def __bool__(self):
+            raise AssertionError("loading state read before trace verification")
+
+    authority = FakeAuthority()
+    manager = make_manager(authority)
+    dispatched = capture_dispatch(monkeypatch)
+    manager._public_opened_stage_url = ReadBomb()
+    monkeypatch.setattr(
+        manager,
+        "_resolve_stage_request",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("stage request resolved before trace verification")
+        ),
+    )
+    payload = stage_payload()
+    if trace_id is None:
+        payload.pop("trace_id")
+    else:
+        payload["trace_id"] = trace_id
+
+    getattr(manager, handler_name)(types.SimpleNamespace(payload=payload))
+
+    assert [call[0] for call in authority.verify_calls] == [event_type]
+    assert authority.authorize_calls == []
+    assert authority.confirm_calls == []
+    assert dispatched == []
+
+
+def test_loading_state_and_progress_events_use_verified_or_active_stage_trace(monkeypatch):
+    authority = FakeAuthority()
+    manager = make_manager(authority)
+    dispatched = capture_dispatch(monkeypatch)
+
+    manager._on_load_state_query(types.SimpleNamespace(payload={
+        "session_id": "review_session_x",
+        "trace_id": "rev_review_session_x",
+    }))
+    assert dispatched == [(
+        "loadingStateResponse",
+        {"loading_state": "idle", "url": "", "trace_id": "rev_review_session_x"},
+    )]
+
+    dispatched.clear()
+    manager._persisted_stage = True
+    manager._on_progress(types.SimpleNamespace(payload={"progress": 0.5}))
+    manager._on_activity(types.SimpleNamespace(payload={"activity": "loading"}))
+    assert dispatched == []
+
+    assert manager._trace_context.bind_active_stage(
+        "review_session_x",
+        "rev_review_session_x",
+    )
+    manager._on_progress(types.SimpleNamespace(payload={"progress": 0.5}))
+    manager._on_activity(types.SimpleNamespace(payload={"activity": "loading"}))
+    assert [name for name, _payload in dispatched] == [
+        "updateProgressAmount",
+        "updateProgressActivity",
+    ]
+    assert all(
+        payload["trace_id"] == "rev_review_session_x"
+        for _name, payload in dispatched
+    )
+
+
 def stage_payload(*, request_id="request_stage_001"):
     primary = {
         "artifact_id": "artifact_primary",
@@ -193,6 +284,7 @@ def stage_payload(*, request_id="request_stage_001"):
         "source_client_id": "viewer_primary",
         "viewer_lease_token": "lease_secret_must_not_echo",
         "session_id": "review_session_x",
+        "trace_id": "rev_review_session_x",
         "stage_binding_authorization_id": "stage_auth_001",
         "binding_revision_id": "rev_binding_001",
         "url": primary["url"],
@@ -311,8 +403,10 @@ def test_artifact_group_authorizes_once_mutates_once_and_has_one_terminal(monkey
     ]
     assert dispatched[0][1]["result"] == "accepted"
     assert dispatched[0][1]["request_id"] == "request_stage_001"
+    assert dispatched[0][1]["trace_id"] == "rev_review_session_x"
     assert dispatched[1][1]["result"] == "success"
     assert dispatched[1][1]["request_id"] == "request_stage_001"
+    assert dispatched[1][1]["trace_id"] == "rev_review_session_x"
     assert len(authority.confirm_calls) == 1
     assert authority.confirm_calls[0][1] == "success"
     assert "lease_secret_must_not_echo" not in repr(dispatched)
@@ -355,9 +449,10 @@ def test_stage_authority_denial_emits_only_command_rejected(
         "reason": "spectator_readonly",
         "retryable": False,
         "runtime_state": "unchanged",
-        "request_id": "request_stage_001",
-        "session_id": "review_session_x",
-        "detail_code": "primary_lease_required",
+            "request_id": "request_stage_001",
+            "session_id": "review_session_x",
+            "trace_id": "rev_review_session_x",
+            "detail_code": "primary_lease_required",
     }
 
 
@@ -639,6 +734,11 @@ def test_already_open_stage_confirms_before_success(monkeypatch):
     assert len(authority.confirm_calls) == 1
     assert [name for name, _ in dispatched] == ["openedStageResult"]
     assert dispatched[0][1]["result"] == "success"
+    assert dispatched[0][1]["trace_id"] == "rev_review_session_x"
+    assert manager._trace_context.active_stage() == (
+        "review_session_x",
+        "rev_review_session_x",
+    )
 
 
 @pytest.mark.asyncio

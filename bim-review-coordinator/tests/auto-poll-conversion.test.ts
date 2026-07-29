@@ -7,6 +7,7 @@ import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import type { CoordinatorConfig } from "../src/config.js";
+import { createLogger, type StructLogger } from "../src/lib/structLog.js";
 
 // coordinator-auto-poll-streaming-conversion §5 unit cover:
 // - dispatch 後 in-process polling 自動 ingest ready / failed
@@ -42,6 +43,7 @@ afterEach(async () => {
 interface StubBehavior {
   /** 順序回的 /result body;最後一個 entry 用完後重複。 */
   resultSequence: Array<Record<string, unknown>>;
+  resultStatus?: number;
 }
 
 async function startStreamingStub(behavior: StubBehavior): Promise<{
@@ -72,7 +74,7 @@ async function startStreamingStub(behavior: StubBehavior): Promise<{
         const idx = Math.min(resultCount.value, behavior.resultSequence.length - 1);
         resultCount.value += 1;
         const payload = behavior.resultSequence[idx];
-        res.writeHead(200, { "Content-Type": "application/json" });
+        res.writeHead(behavior.resultStatus ?? 200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(payload));
         return;
       }
@@ -126,22 +128,29 @@ function queuedResultPayload(correlationId: string): Record<string, unknown> {
   };
 }
 
-function makeApp(streamingBase: string, overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
+function makeApp(
+  streamingBase: string,
+  overrides: Partial<CoordinatorConfig> = {},
+  structLog?: StructLogger,
+): CoordinatorApp {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-coord-auto-poll-test-"));
-  active = createCoordinatorApp({
-    sessionStoreDir: path.join(root, "sessions"),
-    eventLogDir: path.join(root, "events"),
-    callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
-    streamingConversionApiBase: streamingBase,
-    corsOrigins: ["http://127.0.0.1:5173"],
-    conversionPollEnabled: true,
-    // 50ms tick → 半秒內 ~10 次 poll,test 跑完很快
-    conversionPollIntervalSeconds: 0.05,
-    conversionPollMaxAttempts: 20,
-    storageRoot: path.join(root, "storage"),
-    storageHostRoot: path.join(root, "storage"),
-    ...overrides,
-  });
+  active = createCoordinatorApp(
+    {
+      sessionStoreDir: path.join(root, "sessions"),
+      eventLogDir: path.join(root, "events"),
+      callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
+      streamingConversionApiBase: streamingBase,
+      corsOrigins: ["http://127.0.0.1:5173"],
+      conversionPollEnabled: true,
+      // 50ms tick → 半秒內 ~10 次 poll,test 跑完很快
+      conversionPollIntervalSeconds: 0.05,
+      conversionPollMaxAttempts: 20,
+      storageRoot: path.join(root, "storage"),
+      storageHostRoot: path.join(root, "storage"),
+      ...overrides,
+    },
+    structLog ? { structLog } : undefined,
+  );
   return active;
 }
 
@@ -167,6 +176,47 @@ async function waitFor(check: () => Promise<boolean> | boolean, timeoutMs = 2000
 }
 
 describe("coordinator auto-poll streaming conversion", () => {
+  it("auto-poll anomaly records retain the IFC-ready root trace", async () => {
+    const stub = await startStreamingStub({
+      resultSequence: [{ detail: "temporarily unavailable" }],
+      resultStatus: 503,
+    });
+    const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bim-coord-auto-poll-log-"));
+    const structLog = createLogger("coordinator", {
+      logRoot,
+      runId: "run_auto_poll_root_trace",
+      skipEnvSnapshot: true,
+    });
+    const app = makeApp(
+      stub.baseUrl,
+      { conversionPollMaxAttempts: 1 },
+      structLog,
+    );
+
+    const submit = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders("corr_ap_trace_001", "idem_ap_trace_001"))
+      .send(dispatchPayload());
+    expect(submit.status).toBe(202);
+    const ifcReadyJobId = submit.body.ifc_ready_job_id as string;
+
+    await waitFor(() => {
+      if (!fs.existsSync(structLog.currentFile())) return false;
+      return fs.readFileSync(structLog.currentFile(), "utf-8").includes("auto-poll fetch error");
+    });
+    const records = fs
+      .readFileSync(structLog.currentFile(), "utf-8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((record) => record.component === "autoPoll");
+
+    expect(records).not.toHaveLength(0);
+    expect(records.every((record) => record.trace_id === ifcReadyJobId)).toBe(true);
+    expect(records.some((record) => record.trace_id === "stream_conv_stream_conv_auto_poll_test")).toBe(false);
+  });
+
   it("dispatch 成功後 poller 自動 fetch 直到 ready,自動 ingest 出 viewer_url + callback", async () => {
     const stub = await startStreamingStub({
       resultSequence: [

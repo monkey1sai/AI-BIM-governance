@@ -1,5 +1,7 @@
 import type { Page } from "@playwright/test";
 
+import { HARNESS_TRACE_ID } from "../src/harness/fixtures/reviewAuthority";
+
 export type SemanticCaseContext = {
   page: Page;
   screenId: string;
@@ -54,9 +56,20 @@ export type SemanticCaseDefinition = {
 
 const RUNTIME_NOTE = ":8004/ui · UnifiedConsole";
 
-/** 任務規約：prepare 一律自行 page.goto(`/${productionRoute}`, networkidle)。 */
+export function designHarnessRoute(productionRoute: string): string {
+  if (!productionRoute.startsWith("#")) {
+    throw new Error("Design harness routes must be hash routes");
+  }
+  const params = new URLSearchParams({
+    harness: "1",
+    trace_id: HARNESS_TRACE_ID,
+  });
+  return `/?${params.toString()}${productionRoute}`;
+}
+
+/** 任務規約：prepare 一律以 design-owned canonical harness carriers 自行導頁。 */
 const gotoRoute = async ({ page, productionRoute }: SemanticCaseContext): Promise<void> => {
-  await page.goto(`/${productionRoute}`, { waitUntil: "networkidle" });
+  await page.goto(designHarnessRoute(productionRoute), { waitUntil: "networkidle" });
 };
 
 /** 先經 about:blank 造成 full document load → React/fixture state 全部重置。 */

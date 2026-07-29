@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import express from "express";
 import type { CoordinatorConfig } from "../config.js";
+import { isCanonicalSessionTraceId } from "../services/sessionStore.js";
 
 const VIEWER_REDIRECT_QUERY_PARAMS = [
   "projectId",
@@ -12,12 +13,14 @@ const VIEWER_REDIRECT_QUERY_PARAMS = [
   "kitInstanceId",
   "kit_instance_id",
   "a4_handoff",
+  "trace_id",
 ] as const;
 
 export function registerConsoleRoutes(
   app: express.Express,
   config: CoordinatorConfig,
   publicDir: string,
+  resolveSessionTrace: (sessionId: string) => string | null,
 ): void {
   app.use("/dev-console-assets", express.static(publicDir));
 
@@ -45,7 +48,25 @@ export function registerConsoleRoutes(
       response.status(400).json({ detail: "invalid session id" });
       return;
     }
-    response.redirect(302, buildViewerRedirectUrl(config, session, request.query));
+    let forwardedQuery: Record<string, unknown> = request.query;
+    if (session.startsWith("review_session_")) {
+      if (Array.isArray(request.query.trace_id)) {
+        response.status(400).json({ detail: "invalid session trace carrier" });
+        return;
+      }
+      const canonicalTraceId = resolveSessionTrace(session);
+      if (!canonicalTraceId) {
+        response.status(409).json({ detail: "session trace authority unavailable" });
+        return;
+      }
+      const candidateTrace = queryParamString(request.query.trace_id);
+      if (candidateTrace !== null && candidateTrace !== canonicalTraceId) {
+        response.status(409).json({ detail: "session trace authority mismatch" });
+        return;
+      }
+      forwardedQuery = { ...request.query, trace_id: canonicalTraceId };
+    }
+    response.redirect(302, buildViewerRedirectUrl(config, session, forwardedQuery));
   });
 
   if (consoleDist) {
@@ -87,7 +108,9 @@ function buildViewerRedirectUrl(
   url.searchParams.set("coordinatorSocketUrl", config.coordinatorPublicBaseUrl);
   for (const param of VIEWER_REDIRECT_QUERY_PARAMS) {
     const value = queryParamString(forwardedQuery[param]);
-    if (value && (param !== "a4_handoff" || /^a4h_[A-Za-z0-9_-]{16,96}$/.test(value))) {
+    if (value
+      && (param !== "a4_handoff" || /^a4h_[A-Za-z0-9_-]{16,96}$/.test(value))
+      && (param !== "trace_id" || isCanonicalSessionTraceId(value, session))) {
       url.searchParams.set(param, value);
     }
   }

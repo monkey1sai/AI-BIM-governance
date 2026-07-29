@@ -2,6 +2,14 @@
 
 These events are exchanged between `web-viewer-sample` and `bim-streaming-server`.
 
+## Verified trace carrier
+
+The supported vendor `ApplicationMessage` ABI is exactly `{event_type,payload}`; it does not expose a separately supported root envelope field. Every one of the 26 event types enumerated by `tests/contracts/kit-datachannel-v1.schema.json` therefore carries the case-exact verified review root in `payload.trace_id`. A top-level `trace_id` is not a valid substitute.
+
+Viewer sends no DataChannel message before the coordinator Socket.IO acknowledgement verifies the session root. Kit rejects every viewer→Kit message with a missing or mismatched payload trace before any stage read or mutation, and propagates the verified trace on every response/result/rejection/progress/unsolicited event. Viewer rejects every Kit→viewer message with a missing or mismatched trace before correlation bookkeeping, pending-request completion, accepted logging, or UI/state mutation. Mutators still require coordinator runtime authority; trace matching never replaces lease authorization.
+
+Every viewer→Kit catalog payload also carries the Socket-verified `session_id` beside `trace_id`. Both values are untrusted resolver candidates at the Kit boundary: Kit must verify their case-exact pair through the coordinator internal API before any read or mutation. `session_id` is correlation context, not an independent authority and never replaces the runtime mutator lease check.
+
 ## Open Stage
 
 Request:
@@ -10,6 +18,7 @@ Request:
 {
   "event_type": "openStageRequest",
   "payload": {
+    "trace_id": "ifcready_1779687625000_064c6813",
     "request_id": "stage-open-001",
     "session_id": "review_session_xxx",
     "source_client_id": "viewer_lease_xxx",
@@ -44,6 +53,7 @@ Response:
 {
   "event_type": "openedStageResult",
   "payload": {
+    "trace_id": "ifcready_1779687625000_064c6813",
     "request_id": "stage-open-001",
     "url": "http://127.0.0.1:49101/artifacts/tenants/.../model.usdc",
     "result": "success",
@@ -123,6 +133,7 @@ Request:
 {
   "event_type": "highlightPrimsRequest",
   "payload": {
+    "trace_id": "ifcready_1779687625000_064c6813",
     "request_id": "mapping-highlight-001",
     "mode": "replace",
     "items": [
@@ -146,6 +157,7 @@ Response:
 {
   "event_type": "highlightPrimsResult",
   "payload": {
+    "trace_id": "ifcready_1779687625000_064c6813",
     "result": "success",
     "request_id": "mapping-highlight-001",
     "applied_mode": "selection",
@@ -169,6 +181,7 @@ If a converted BIM stage uses another root prim such as `/model`, a `/World` req
 {
   "event_type": "highlightPrimsResult",
   "payload": {
+    "trace_id": "ifcready_1779687625000_064c6813",
     "result": "success",
     "request_id": "mapping-highlight-001",
     "applied_mode": "selection",
@@ -193,6 +206,7 @@ Request:
 {
   "event_type": "focusPrimRequest",
   "payload": {
+    "trace_id": "ifcready_1779687625000_064c6813",
     "request_id": "mapping-focus-001",
     "prim_path": "/World/IFCWALL/tn__115cm551956_body"
   }
@@ -205,6 +219,7 @@ Response:
 {
   "event_type": "focusPrimResult",
   "payload": {
+    "trace_id": "ifcready_1779687625000_064c6813",
     "result": "success",
     "request_id": "mapping-focus-001",
     "prim_path": "/World/IFCWALL/tn__115cm551956_body",
@@ -262,6 +277,7 @@ also emit a command-specific unauthorized result:
 {
   "event_type": "commandRejected",
   "payload": {
+    "trace_id": "ifcready_1779687625000_064c6813",
     "rejected_event_type": "highlightPrimsRequest",
     "reason": "lease_invalid",
     "request_id": "mapping-highlight-001",
@@ -308,6 +324,7 @@ Demo `highlightPrimsRequest` payload:
 {
   "event_type": "highlightPrimsRequest",
   "payload": {
+    "trace_id": "ifcready_1779687625000_064c6813",
     "request_id": "world-smoke-001",
     "mode": "replace",
     "items": [

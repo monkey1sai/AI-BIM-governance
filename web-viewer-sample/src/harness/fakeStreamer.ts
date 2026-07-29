@@ -9,6 +9,7 @@ import {
   type FakeKitRejection,
   type FakeKitState,
 } from "./fakeKit";
+import { HARNESS_REVIEW_AUTHORITY } from "./fixtures/reviewAuthority";
 
 type EventCallback = (message: unknown) => void;
 
@@ -20,15 +21,34 @@ interface CapturedCallbacks {
 
 // 模組級單例（鏡像真實 AppStreamer 的全域 singleton 性質）。
 let captured: CapturedCallbacks = {};
-let kit: FakeKitState = createFakeKitState();
+let kit: FakeKitState = createFakeKitState(HARNESS_REVIEW_AUTHORITY);
 let connected = false;
 let sentEventTypes: string[] = [];
+let connectionGeneration = 0;
+const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
 
-function scheduleEmit(events: StreamMessage[]): void {
-  const callback = captured.onCustomEvent;
+function clearPendingTimers(): void {
+  for (const timer of pendingTimers) clearTimeout(timer);
+  pendingTimers.clear();
+}
+
+function scheduleForGeneration(generation: number, action: () => void): void {
+  const timer = setTimeout(() => {
+    pendingTimers.delete(timer);
+    if (!connected || connectionGeneration !== generation) return;
+    action();
+  }, 0);
+  pendingTimers.add(timer);
+}
+
+function scheduleEmit(
+  events: StreamMessage[],
+  generation: number,
+  callback: EventCallback | undefined,
+): void {
   if (!callback || events.length === 0) return;
   events.forEach((event) => {
-    setTimeout(() => {
+    scheduleForGeneration(generation, () => {
       if (event.event_type === "focusPrimResult") {
         const payload = event.payload && typeof event.payload === "object"
           ? event.payload as Record<string, unknown>
@@ -38,7 +58,7 @@ function scheduleEmit(events: StreamMessage[]): void {
         }
       }
       callback(event);
-    }, 0);
+    });
   });
 }
 
@@ -54,12 +74,16 @@ export const FakeAppStreamer = {
       string,
       unknown
     >;
-    captured = {
+    connectionGeneration += 1;
+    clearPendingTimers();
+    const generation = connectionGeneration;
+    const callbacks: CapturedCallbacks = {
       onStart: config.onStart as CapturedCallbacks["onStart"],
       onCustomEvent: config.onCustomEvent as EventCallback,
       onStreamStats: config.onStreamStats as EventCallback,
     };
-    kit = createFakeKitState();
+    captured = callbacks;
+    kit = createFakeKitState(HARNESS_REVIEW_AUTHORITY);
     sentEventTypes = [];
     connected = true;
     (globalThis as typeof globalThis & {
@@ -74,26 +98,30 @@ export const FakeAppStreamer = {
       eventTypes: () => [...sentEventTypes],
     };
     // 下一 tick 觸發 stream start success → AppStream.setState(streamReady) → props.onStarted()。
-    setTimeout(() => {
-      captured.onStart?.({ action: "start", status: "success", info: "harness" });
+    scheduleForGeneration(generation, () => {
+      callbacks.onStart?.({ action: "start", status: "success", info: "harness" });
       updateViewportLabel("stream ready (deterministic harness)");
-    }, 0);
+    });
     return Promise.resolve({ status: "success", info: "harness-connect" });
   },
 
   sendMessage(message: StreamMessage): Promise<unknown> {
     if (!connected) return Promise.resolve(null);
+    const generation = connectionGeneration;
+    const callback = captured.onCustomEvent;
     sentEventTypes.push(message.event_type);
     const { result, asyncEvents } = computeFakeKitResponse(message, kit);
     if (message.event_type === "openStageRequest" && result?.status === "success") {
       updateViewportLabel(`stage: ${kit.currentStageUrl ?? ""}`);
     }
-    scheduleEmit(asyncEvents);
+    scheduleEmit(asyncEvents, generation, callback);
     return Promise.resolve(result);
   },
 
   terminate(): void {
+    connectionGeneration += 1;
     connected = false;
+    clearPendingTimers();
     captured = {};
     delete (globalThis as typeof globalThis & {
       __AI_BIM_FAKE_KIT__?: {

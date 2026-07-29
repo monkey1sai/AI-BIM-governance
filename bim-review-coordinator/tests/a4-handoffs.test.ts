@@ -24,6 +24,7 @@ function proof(id: string): string {
 
 function trustedContext(overrides: Partial<A4SearchSessionContext> = {}): A4SearchSessionContext {
   return {
+    trace_id: `rev_${SESSION_ID}`,
     ifc_source_path: "C:/server-only/a4.ifc",
     model_version_id: "a4_fixture_v1",
     review_session_id: SESSION_ID,
@@ -147,7 +148,7 @@ describe("A4 coordinator handoffs", () => {
     expect(created.status).toBe(201);
     expect(created.body.handoff_id).toMatch(/^a4h_[A-Za-z0-9_-]{16,96}$/);
     expect(created.body.open_url).toBe(
-      `/ui/open?session=${SESSION_ID}&a4_handoff=${encodeURIComponent(created.body.handoff_id)}`,
+      `/ui/open?session=${SESSION_ID}&trace_id=${encodeURIComponent(`rev_${SESSION_ID}`)}&a4_handoff=${encodeURIComponent(created.body.handoff_id)}`,
     );
     expect(created.body.viewer_url).toBe(created.body.open_url);
     expect(created.body.expires_at).toBe("2026-07-21T03:00:30.000Z");
@@ -194,6 +195,28 @@ describe("A4 coordinator handoffs", () => {
       .send({});
     expect(replay.status).toBe(404);
     expect(replay.body.error_code).toBe("a4_handoff_unavailable");
+  });
+
+  it("fails closed before governance when the server-owned session trace is not canonical", async () => {
+    const gov = await startGovernanceStub();
+    const app = makeApp({
+      isSafeSessionId: () => true,
+      a4InternalContextToken: INTERNAL_TOKEN,
+      resolveA4SearchSessionContext: () => okResolution(trustedContext({
+        trace_id: "rev_review_session_other",
+      })),
+    });
+
+    const response = await request(app)
+      .post(`/api/review-sessions/${SESSION_ID}/a4-handoffs`)
+      .send({ action: "focus", evidence_proofs: [proof("proof_id_bad_trace_01")] });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      error_code: "a4_handoff_trace_unavailable",
+      detail: "A4 handoff trace authority is unavailable.",
+    });
+    expect(gov.calls).toHaveLength(0);
   });
 
   it("atomically rejects an invalid selected set without creating a handoff", async () => {

@@ -102,44 +102,7 @@ ANOMALY_KINDS: Tuple[str, ...] = ("retry", "fallback", "timeout", "unexpected_st
 
 _SECRET_PATTERN_FALLBACK = re.compile(r"TOKEN|SECRET|KEY|PASSWORD|AUTH|CREDENTIAL", re.IGNORECASE)
 _RUN_ID_PATTERN = re.compile(r"^run_\d{8}_\d{6}_[0-9a-f]{6}$")
-
-# Schema field vocabulary that shares spelling with secret-pattern fragments
-# (e.g. "key" matches /KEY/i). Listed here so depth-defense never wipes the
-# env_snapshot vars[].key field by mistake.
-_NEVER_REDACT_FIELD_NAMES: Set[str] = {
-    "key",
-    "auth",
-    "name",
-    "type",
-    "source",
-    "value_or_redacted",
-    "status",
-    "reason",
-    "msg",
-    "data",
-    "event_type",
-    "level",
-    "service",
-    "component",
-    "run_id",
-    "trace_id",
-    "parent_trace_id",
-    "subject_kind",
-    "subject_id",
-    "phase",
-    "actor",
-    "action",
-    "target",
-    "direction",
-    "protocol",
-    "peer",
-    "duration_ms",
-    "path",
-    "anomaly_kind",
-    "vars",
-    "error",
-    "stack_tail",
-}
+MAX_REDACTION_DEPTH = 8
 
 # ---------------------------------------------------------------------------
 # Allow-list loading
@@ -285,49 +248,84 @@ def redact_env_value(
     }
 
 
-def _is_secret_field_name(name: str, allowlist: _AllowList) -> bool:
-    if name in allowlist.keys:
-        return False
-    if name.lower() in _NEVER_REDACT_FIELD_NAMES:
-        return False
-    return allowlist.secret_pattern.search(name) is not None
-
-
 def redact_data_before_write(
     data: Any,
     allowlist: Optional[_AllowList] = None,
-    _seen: Optional[Set[int]] = None,
+    _active_path: Optional[Set[int]] = None,
+    _depth: int = 0,
 ) -> Any:
-    """Depth-defense redaction over a ``data`` payload.
-
-    Replaces values whose keys look like secrets with ``"[REDACTED]"`` while
-    preserving schema vocabulary (`key`, `auth`, …). Circular references
-    collapse to ``"[Circular]"``.
-    """
+    """Bounded, cycle-safe secret-key redaction for ordinary event data."""
     al = allowlist or load_allowlist()
-    _seen = set() if _seen is None else _seen
+    _active_path = set() if _active_path is None else _active_path
     if data is None or isinstance(data, (str, int, float, bool)):
         return data
+    if _depth > MAX_REDACTION_DEPTH:
+        return "[Truncated]"
     if isinstance(data, Mapping):
         ident = id(data)
-        if ident in _seen:
+        if ident in _active_path:
             return "[Circular]"
-        _seen.add(ident)
-        out: Dict[str, Any] = {}
-        for raw_key, value in data.items():
-            key = str(raw_key)
-            if _is_secret_field_name(key, al):
-                out[key] = "[REDACTED]"
-            else:
-                out[key] = redact_data_before_write(value, al, _seen)
-        return out
+        _active_path.add(ident)
+        try:
+            out: Dict[str, Any] = {}
+            for raw_key, value in data.items():
+                key = str(raw_key)
+                if al.secret_pattern.search(key) is not None:
+                    out[key] = "[REDACTED]"
+                else:
+                    out[key] = redact_data_before_write(value, al, _active_path, _depth + 1)
+            return out
+        finally:
+            _active_path.remove(ident)
     if isinstance(data, (list, tuple, set, frozenset)):
         ident = id(data)
-        if ident in _seen:
+        if ident in _active_path:
             return "[Circular]"
-        _seen.add(ident)
-        return [redact_data_before_write(item, al, _seen) for item in data]
+        _active_path.add(ident)
+        try:
+            return [redact_data_before_write(item, al, _active_path, _depth + 1) for item in data]
+        finally:
+            _active_path.remove(ident)
     return str(data)
+
+
+def _sanitize_env_snapshot_vars(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    safe: List[Dict[str, Any]] = []
+    for candidate in value:
+        if not isinstance(candidate, Mapping):
+            continue
+        if not all(field in candidate for field in ("key", "source", "value_or_redacted", "type")):
+            continue
+        safe.append({
+            "key": candidate["key"],
+            "source": candidate["source"],
+            "value_or_redacted": candidate["value_or_redacted"],
+            "type": candidate["type"],
+        })
+    return safe
+
+
+def _sanitize_record_data(
+    event_type: str,
+    data: Mapping[str, Any],
+    allowlist: _AllowList,
+) -> Dict[str, Any]:
+    if event_type != "env_snapshot":
+        return redact_data_before_write(data, allowlist)
+
+    active_path = {id(data)}
+    safe: Dict[str, Any] = {}
+    for raw_key, value in data.items():
+        key = str(raw_key)
+        if key == "vars":
+            safe["vars"] = _sanitize_env_snapshot_vars(value)
+        elif allowlist.secret_pattern.search(key) is not None:
+            safe[key] = "[REDACTED]"
+        else:
+            safe[key] = redact_data_before_write(value, allowlist, active_path, 1)
+    return safe
 
 
 def _safe_default(obj: Any) -> Any:
@@ -411,12 +409,11 @@ def _extract_caller_from_stack(stack_tail: Sequence[str], err: Optional[BaseExce
 
 
 @dataclass
-class _LoggerState:
+class _LoggerRunState:
     service: str
     component: str
     run_id: str
     log_root: Path
-    trace_id: str
     current_date: str
     current_file: Path
     records_written: int = 0
@@ -429,6 +426,12 @@ class _LoggerState:
     record_sink: Optional[Callable[[Dict[str, Any]], None]] = None
     now_provider: Callable[[], _dt.datetime] = field(default=lambda: _dt.datetime.now(_dt.timezone.utc))
     lock: threading.Lock = field(default_factory=threading.Lock)
+
+
+@dataclass
+class _LoggerState:
+    trace_id: str
+    run: _LoggerRunState
 
 
 class StructLogger:
@@ -447,11 +450,11 @@ class StructLogger:
 
     @property
     def service(self) -> str:
-        return self._state.service
+        return self._state.run.service
 
     @property
     def run_id(self) -> str:
-        return self._state.run_id
+        return self._state.run.run_id
 
     @property
     def trace_id(self) -> str:
@@ -459,19 +462,27 @@ class StructLogger:
 
     @property
     def current_file(self) -> Path:
-        return self._state.current_file
+        run = self._state.run
+        with run.lock:
+            return run.current_file
 
     @property
     def records_written(self) -> int:
-        return self._state.records_written
+        run = self._state.run
+        with run.lock:
+            return run.records_written
 
     @property
     def records_dropped(self) -> int:
-        return self._state.records_dropped
+        run = self._state.run
+        with run.lock:
+            return run.records_dropped
 
     @property
     def last_failure(self) -> Optional[Dict[str, str]]:
-        return self._state.last_failure
+        run = self._state.run
+        with run.lock:
+            return run.last_failure
 
     # -- raw level helpers ------------------------------------------------
 
@@ -557,30 +568,16 @@ class StructLogger:
 
     def with_trace_id(self, trace_id: str) -> "StructLogger":
         """Return a child logger sharing sink/counters but with new trace_id."""
-        # Shallow-copy state but keep mutable structures shared.
         child_state = _LoggerState(
-            service=self._state.service,
-            component=self._state.component,
-            run_id=self._state.run_id,
-            log_root=self._state.log_root,
             trace_id=trace_id,
-            current_date=self._state.current_date,
-            current_file=self._state.current_file,
-            now_provider=self._state.now_provider,
+            run=self._state.run,
         )
-        # Wire the mutable fields back to the parent so both observe the same
-        # counters / failure markers / ring buffer / seq map.
-        child_state.__dict__["ring_buffer"] = self._state.ring_buffer
-        child_state.__dict__["seq_by_trace"] = self._state.seq_by_trace
-        child_state.__dict__["lock"] = self._state.lock
-        # records_written/dropped/last_failure/closed must be shared via the
-        # underlying dict so writes through either logger update the same slot.
-        # We use property-like proxy via __getattr__/__setattr__ overrides on a
-        # subclass to avoid python's "value-type" copy semantics.
-        return _SharedStateStructLogger(parent=self, child_state=child_state, allowlist=self._allowlist)
+        return StructLogger(state=child_state, allowlist=self._allowlist)
 
     def flush_and_close(self) -> None:
-        self._state.closed = True
+        run = self._state.run
+        with run.lock:
+            run.closed = True
 
     # -- internal --------------------------------------------------------
 
@@ -605,31 +602,27 @@ class StructLogger:
                 {"anomaly_kind": "unexpected_state", "reason": f"invalid level {level!r}"},
             )
             return
+        run = self._state.run
         try:
-            now = self._state.now_provider()
+            now = run.now_provider()
         except Exception:
             now = _dt.datetime.now(_dt.timezone.utc)
         ts = iso_utc_ms(now)
-        trace_id = self._state.trace_id or f"script_{self._state.run_id}"
-        with self._state.lock:
-            seq = self._state.seq_by_trace.get(trace_id, 0) + 1
-            self._state.seq_by_trace[trace_id] = seq
+        trace_id = self._state.trace_id or f"script_{run.run_id}"
+        with run.lock:
+            seq = run.seq_by_trace.get(trace_id, 0) + 1
+            run.seq_by_trace[trace_id] = seq
         try:
-            safe_data = redact_data_before_write(dict(data or {}), self._allowlist)
-        except Exception as exc:
-            safe_data = {
-                "anomaly_kind": "unexpected_state",
-                "reason": f"redact failure: {exc!r}",
-            }
-            event_type = "operation_anomaly"
-            level = "warn"
+            safe_data = _sanitize_record_data(event_type, dict(data or {}), self._allowlist)
+        except Exception:
+            safe_data = {"redaction_failure": "[Truncated]"}
         record: Dict[str, Any] = {
             "ts": ts,
             "level": level,
             "event_type": event_type,
-            "service": self._state.service,
+            "service": run.service,
             "component": component,
-            "run_id": self._state.run_id,
+            "run_id": run.run_id,
             "trace_id": trace_id,
             "msg": msg,
             "data": safe_data,
@@ -642,20 +635,54 @@ class StructLogger:
         self._write_record(record)
 
     def _write_record(self, record: Dict[str, Any]) -> None:
-        state = self._state
-        if state.closed:
-            return
-        # Daily rotate
-        date_dir = _date_dir_from_ts(record["ts"])
-        if date_dir != state.current_date:
-            state.current_date = date_dir
-            state.current_file = _file_path_for(state, date_dir)
-            if not state.in_memory_only:
-                _ensure_dir(state.current_file.parent)
+        state = self._state.run
         line = safe_dumps(record) + "\n"
-        if state.record_sink is not None:
+        sink_failure_reason: str | None = None
+        with state.lock:
+            if state.closed:
+                return
+            record_sink = state.record_sink
+            # Daily rotation, sink selection, file I/O and scalar counters share
+            # one run-level critical section. External sinks/stdout stay outside
+            # the lock so a blocking or re-entrant sink cannot deadlock peers.
+            date_dir = _date_dir_from_ts(record["ts"])
+            if date_dir != state.current_date:
+                state.current_date = date_dir
+                state.current_file = _file_path_for(state, date_dir)
+                if not state.in_memory_only:
+                    _ensure_dir(state.current_file.parent)
+            if state.in_memory_only:
+                state.records_written += 1
+            else:
+                try:
+                    _ensure_dir(state.current_file.parent)
+                    with state.current_file.open("a", encoding="utf-8") as fh:
+                        fh.write(line)
+                    state.records_written += 1
+                except Exception as exc:
+                    reason = f"{type(exc).__name__}: {exc}"
+                    try:
+                        recovery_dir = state.log_root / state.service / "_recovery"
+                        _ensure_dir(recovery_dir)
+                        recovery_file = recovery_dir / f"{state.current_date}-{state.run_id}.jsonl"
+                        with recovery_file.open("a", encoding="utf-8") as fh:
+                            fh.write(line)
+                        state.records_written += 1
+                        state.last_failure = {
+                            "ts": iso_utc_ms(state.now_provider()),
+                            "reason": f"{reason} (recovered)",
+                        }
+                    except Exception:
+                        state.records_dropped += 1
+                        state.last_failure = {
+                            "ts": iso_utc_ms(state.now_provider()),
+                            "reason": reason,
+                        }
+                        state.ring_buffer.append(record)
+                        sink_failure_reason = reason
+        if record_sink is not None:
             try:
-                state.record_sink(record)
+                record_sink(record)
             except Exception:
                 pass
         # stdout — best-effort
@@ -664,38 +691,9 @@ class StructLogger:
             sys.stdout.flush()
         except Exception:
             pass
-        if state.in_memory_only:
-            state.records_written += 1
-            return
-        try:
-            _ensure_dir(state.current_file.parent)
-            with state.current_file.open("a", encoding="utf-8") as fh:
-                fh.write(line)
-            state.records_written += 1
-        except Exception as exc:
-            reason = f"{type(exc).__name__}: {exc}"
+        if sink_failure_reason is not None:
             try:
-                recovery_dir = state.log_root / state.service / "_recovery"
-                _ensure_dir(recovery_dir)
-                recovery_file = recovery_dir / f"{state.current_date}-{state.run_id}.jsonl"
-                with recovery_file.open("a", encoding="utf-8") as fh:
-                    fh.write(line)
-                state.records_written += 1
-                state.last_failure = {
-                    "ts": iso_utc_ms(state.now_provider()),
-                    "reason": f"{reason} (recovered)",
-                }
-                return
-            except Exception:
-                pass
-            state.records_dropped += 1
-            state.last_failure = {
-                "ts": iso_utc_ms(state.now_provider()),
-                "reason": reason,
-            }
-            state.ring_buffer.append(record)
-            try:
-                sys.stderr.write(f"[structLog sink failed: {reason}] {line}")
+                sys.stderr.write(f"[structLog sink failed: {sink_failure_reason}] {line}")
             except Exception:
                 pass
 
@@ -712,47 +710,12 @@ class StructLogger:
         return {"name": "NonErrorThrown", "message": str(err), "stack_tail": []}
 
 
-class _SharedStateStructLogger(StructLogger):
-    """Child logger that reads & writes counters via its parent's state.
-
-    Why this is needed: ``_LoggerState`` stores ``records_written`` etc. as
-    primitives (``int``). A naive ``copy.copy`` would snapshot those values,
-    so a child's writes would not be observable from the parent. We instead
-    proxy the parent state for every mutable attribute.
-    """
-
-    _SHARED_ATTRS = {
-        "records_written",
-        "records_dropped",
-        "last_failure",
-        "closed",
-        "current_file",
-        "current_date",
-        "in_memory_only",
-        "record_sink",
-    }
-
-    def __init__(self, parent: "StructLogger", child_state: _LoggerState, allowlist: _AllowList) -> None:
-        super().__init__(state=child_state, allowlist=allowlist)
-        object.__setattr__(self, "_parent", parent)
-
-    def _emit(self, level, event_type, component, msg, data, *, caller=None, error=None):  # type: ignore[override]
-        # Snapshot the parent-mutable fields onto the child state before/after.
-        parent_state = self._parent._state
-        # Pull in shared mutable fields
-        for attr in self._SHARED_ATTRS:
-            setattr(self._state, attr, getattr(parent_state, attr))
-        super()._emit(level, event_type, component, msg, data, caller=caller, error=error)
-        for attr in self._SHARED_ATTRS:
-            setattr(parent_state, attr, getattr(self._state, attr))
-
-
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
 
 
-def _file_path_for(state: _LoggerState, date_dir: str) -> Path:
+def _file_path_for(state: _LoggerRunState, date_dir: str) -> Path:
     return state.log_root / state.service / date_dir / f"{state.service}-{state.run_id}.jsonl"
 
 
@@ -818,20 +781,20 @@ def create_logger(
     allowlist = load_allowlist(Path(allowlist_path) if allowlist_path is not None else None)
     trace_id = initial_trace_id or _initial_trace_id(run_id)
     date_dir = _date_dir_from_ts(iso_utc_ms(initial_now))
-    state = _LoggerState(
+    run_state = _LoggerRunState(
         service=service,
         component=component,
         run_id=run_id,
         log_root=log_root_path,
-        trace_id=trace_id,
         current_date=date_dir,
         current_file=log_root_path / service / date_dir / f"{service}-{run_id}.jsonl",
         in_memory_only=in_memory_only,
         record_sink=record_sink,
         now_provider=now_fn,
     )
+    state = _LoggerState(trace_id=trace_id, run=run_state)
     if not in_memory_only:
-        _ensure_dir(state.current_file.parent)
+        _ensure_dir(run_state.current_file.parent)
     logger = StructLogger(state=state, allowlist=allowlist)
     if not skip_env_snapshot:
         logger.env_snapshot(component, _collect_env_snapshot(allowlist))

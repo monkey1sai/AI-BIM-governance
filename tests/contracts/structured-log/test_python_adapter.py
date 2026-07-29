@@ -26,6 +26,7 @@ import importlib.util
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 from typing import Iterable, List
 
@@ -139,8 +140,8 @@ def test_redact_data_before_write_strips_secret_field_names_at_depth():
     assert out["nested"]["body"]["token"] == "[REDACTED]"
 
 
-def test_redact_data_before_write_preserves_env_snapshot_var_keys():
-    """`vars[].key` should NOT be redacted even though "key" matches /KEY/i."""
+def test_redact_data_before_write_does_not_exempt_generic_vars_keys():
+    """Only the event-aware env_snapshot sanitizer may preserve vars[].key."""
     al = struct_log.load_allowlist()
     data = {
         "vars": [
@@ -148,7 +149,7 @@ def test_redact_data_before_write_preserves_env_snapshot_var_keys():
         ]
     }
     out = struct_log.redact_data_before_write(data, allowlist=al)
-    assert out["vars"][0]["key"] == "STORAGE_ROOT"
+    assert out["vars"][0]["key"] == "[REDACTED]"
 
 
 def test_safe_dumps_handles_circular_reference_without_throwing():
@@ -270,6 +271,68 @@ def test_with_trace_id_shares_run_id_file_and_seq_counters(tmp_path, fixed_clock
     # records_written counter is shared between parent and child.
     assert logger.records_written == 4
     assert child.records_written == 4
+
+
+def test_concurrent_trace_children_share_run_state_without_lost_updates(tmp_path, fixed_clock):
+    sink_records: list[dict] = []
+    sink_lock = threading.Lock()
+    both_children_in_sink = threading.Barrier(2)
+    errors: list[BaseException] = []
+    logger = struct_log.create_logger(
+        "streaming-server",
+        log_root=tmp_path,
+        run_id="run_20260526_142010_a3f900",
+        initial_trace_id="stream_conv_parent",
+        now=fixed_clock("2026-05-26T14:23:11.482Z"),
+        skip_env_snapshot=True,
+        in_memory_only=True,
+        record_sink=lambda record: _barrier_sink(
+            record,
+            sink_records=sink_records,
+            sink_lock=sink_lock,
+            barrier=both_children_in_sink,
+        ),
+    )
+    first = logger.with_trace_id("stream_conv_child_a")
+    second = logger.with_trace_id("stream_conv_child_b")
+
+    def emit(child, message: str) -> None:
+        try:
+            child.info("conversion", message)
+        except BaseException as exc:  # pragma: no cover - asserted empty below
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=emit, args=(first, "child a")),
+        threading.Thread(target=emit, args=(second, "child b")),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+    assert len(sink_records) == 2
+    assert logger.records_written == 2
+    assert first.records_written == 2
+    assert second.records_written == 2
+    assert {record["trace_id"]: record["seq"] for record in sink_records} == {
+        "stream_conv_child_a": 1,
+        "stream_conv_child_b": 1,
+    }
+
+
+def _barrier_sink(
+    record: dict,
+    *,
+    sink_records: list[dict],
+    sink_lock: threading.Lock,
+    barrier: threading.Barrier,
+) -> None:
+    with sink_lock:
+        sink_records.append(record)
+    barrier.wait(timeout=2)
 
 
 def test_circular_reference_does_not_crash_emit(tmp_path, fixed_clock):

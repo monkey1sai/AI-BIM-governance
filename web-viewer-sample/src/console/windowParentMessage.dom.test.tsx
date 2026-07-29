@@ -18,6 +18,7 @@ import { reviewEnv } from "../config/env";
 import { getLang, setLang } from "./i18n";
 
 const PARENT_ORIGIN = "http://127.0.0.1:8004"; // console（coordinator）origin；複用 VITE_ALLOWED_COORDINATOR_ORIGINS 白名單。
+const DATA_CHANNEL_TRACE_ID = "ifcready_window_parent_message";
 const initialLang = getLang();
 
 type AppInternals = {
@@ -68,6 +69,12 @@ type AppInternals = {
     expires_at: string;
     heartbeat_after_ms: number;
   } | null;
+  verifiedDataChannelAuthority: {
+    sessionId: string;
+    traceId: string;
+    connectionGeneration: number;
+  } | null;
+  reviewSocketEpoch: number;
   componentMounted: boolean;
   deferredOpenStageId: number | null;
   render: () => React.ReactElement;
@@ -95,13 +102,54 @@ function focusMessage(ifc_guid: string): MessageEvent {
 }
 
 function operableApp(): App {
+  window.history.replaceState({}, "", `/?session=review_session_x&trace_id=${DATA_CHANNEL_TRACE_ID}`);
   const app = new App({} as never);
-  internals(app).state = {
-    ...internals(app).state,
+  const target = internals(app);
+  target.verifiedDataChannelAuthority = {
+    sessionId: "review_session_x",
+    traceId: DATA_CHANNEL_TRACE_ID,
+    connectionGeneration: target.reviewSocketEpoch,
+  };
+  target.state = {
+    ...target.state,
     viewerTab: "issues",
     reviewSessionId: "review_session_x",
     reviewLifecycleStatus: "active",
+    latestStreamConfig: {
+      session_id: "review_session_x",
+      trace_id: DATA_CHANNEL_TRACE_ID,
+      lifecycle_status: "active",
+      source: "local_fixed",
+      webrtc: {
+        signalingServer: "127.0.0.1",
+        signalingPort: 49100,
+        mediaServer: "127.0.0.1",
+        mediaPort: null,
+      },
+      model: {
+        status: "ready",
+        artifact_id: null,
+        url: null,
+        mapping_url: null,
+        conversion_job_id: null,
+      },
+      artifacts: [],
+      artifact_bindings: [],
+      kit_instance_bindings: [],
+    },
   };
+  const handleCustomEvent = target._handleCustomEvent.bind(app);
+  target._handleCustomEvent = (event) => handleCustomEvent(event
+    ? {
+        ...event,
+        payload: {
+          ...(event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+            ? event.payload as Record<string, unknown>
+            : {}),
+          trace_id: DATA_CHANNEL_TRACE_ID,
+        },
+      }
+    : event);
   return app;
 }
 
@@ -348,7 +396,13 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
 
     internals(app)._sendStreamMessage({ event_type: "loadingStateQuery", payload: {} });
 
-    expect(sendSpy).toHaveBeenCalledWith({ event_type: "loadingStateQuery", payload: {} });
+    expect(sendSpy).toHaveBeenCalledWith({
+      event_type: "loadingStateQuery",
+      payload: {
+        session_id: "review_session_x",
+        trace_id: DATA_CHANNEL_TRACE_ID,
+      },
+    });
     stubGet.mockRestore();
   });
 
@@ -382,6 +436,7 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
         source_client_id: "viewer_lease_primary",
         viewer_lease_token: "lease_token_primary",
         session_id: "review_session_x",
+        trace_id: DATA_CHANNEL_TRACE_ID,
       }),
     });
   });

@@ -81,6 +81,72 @@ async function seedJob(
 }
 
 describe("T7 local web view session / artifact resolution", () => {
+  it("allows the configured alternate viewer origin for viewer-log CORS only", async () => {
+    const app = makeApp({
+      coordinatorPublicBaseUrl: "http://127.0.0.1:8005",
+      viewerPublicBaseUrl: "http://127.0.0.1:5175",
+    });
+
+    const allowed = await request(app.app)
+      .options("/api/internal/viewer-log")
+      .set("Origin", "http://127.0.0.1:5175")
+      .set("Access-Control-Request-Method", "POST");
+    expect(allowed.headers["access-control-allow-origin"]).toBe("http://127.0.0.1:5175");
+
+    const rejected = await request(app.app)
+      .options("/api/internal/viewer-log")
+      .set("Origin", "https://untrusted.example")
+      .set("Access-Control-Request-Method", "POST");
+    expect(rejected.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  it("resolves one server-owned standalone trace and rejects conflicting carriers before redirect", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_trace_redirect",
+        model_version_id: "version_trace_redirect",
+        created_by: "trace_redirect_fixture",
+        artifact_bindings: [],
+      });
+    expect(created.status).toBe(200);
+    const session = created.body.session_id as string;
+    const standaloneTrace = created.body.trace_id as string;
+
+    const missing = await request(app.app).get(`/ui/open?session=${session}`);
+    expect(missing.status).toBe(302);
+    expect(new URL(missing.headers.location).searchParams.get("trace_id")).toBe(standaloneTrace);
+
+    const exact = await request(app.app).get(
+      `/ui/open?session=${session}&trace_id=${standaloneTrace}`,
+    );
+    expect(exact.status).toBe(302);
+    expect(new URL(exact.headers.location).searchParams.get("trace_id")).toBe(standaloneTrace);
+
+    for (const conflictingTrace of [
+      "rev_review_session_other",
+      "ifcready_20260724120000_deadbeef",
+      "ifcready_bad.value",
+      "ifcready_ifcready_nested",
+      "external_untrusted",
+    ]) {
+      const conflicting = await request(app.app).get(
+        `/ui/open?session=${session}&trace_id=${encodeURIComponent(conflictingTrace)}`,
+      );
+      expect(conflicting.status).toBe(409);
+      expect(conflicting.body).toEqual({ detail: "session trace authority mismatch" });
+      expect(conflicting.headers.location).toBeUndefined();
+    }
+
+    const duplicate = await request(app.app).get(
+      `/ui/open?session=${session}&trace_id=${standaloneTrace}&trace_id=${standaloneTrace}`,
+    );
+    expect(duplicate.status).toBe(400);
+    expect(duplicate.body).toEqual({ detail: "invalid session trace carrier" });
+    expect(duplicate.headers.location).toBeUndefined();
+  });
+
   it("缺使用者 token → 401（不做死 SSO，可替換 provider）", async () => {
     const app = makeApp();
     const { jobId } = await seedJob(app);

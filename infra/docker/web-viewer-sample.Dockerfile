@@ -10,6 +10,7 @@ USER node
 RUN npm install
 
 COPY --chown=node:node web-viewer-sample/ /workspace/web-viewer-sample/
+COPY tests/contracts/structured-log/env-allowlist.json /workspace/tests/contracts/structured-log/env-allowlist.json
 # EdgeConsole.tsx imports ../../../docs/plans/ai-bim-governance.css (design token authority)
 COPY --chown=node:node docs/plans/ai-bim-governance.css /workspace/docs/plans/ai-bim-governance.css
 RUN node scripts/sync-design-assets.mjs

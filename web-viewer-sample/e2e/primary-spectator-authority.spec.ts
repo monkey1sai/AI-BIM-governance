@@ -1,10 +1,11 @@
 import { test, expect } from "@playwright/test";
+import { harnessRoute } from "./harnessRoute";
 
 // primary / spectator 業務權限（NVIDIA streaming 角色之上的 app 授權）。
 // primary：可操作 binding（mutating）；spectator：同樣控制可見但 disabled + 誠實理由 banner，不送 mutating 指令。
 test.describe("primary / spectator authority", () => {
   test("primary：binding-apply enabled，套用後出現 active binding revision", async ({ page }) => {
-    await page.goto("/?harness=1");
+    await page.goto(harnessRoute());
     await expect(page.getByTestId("harness-viewport-label")).toContainText("stage:", { timeout: 25_000 });
     await page.getByTestId("nav-issues").click();
     await expect(page.getByTestId("nav-issues")).toHaveAttribute("aria-current", "page");
@@ -20,7 +21,7 @@ test.describe("primary / spectator authority", () => {
   });
 
   test("spectator：控制可見但 disabled + 誠實 readonly banner（不送 mutating）", async ({ page }) => {
-    await page.goto("/?harness=1&streamRole=spectator");
+    await page.goto(harnessRoute({ streamRole: "spectator" }));
     await page.getByTestId("nav-issues").click();
     await expect(page.getByTestId("nav-issues")).toHaveAttribute("aria-current", "page");
 

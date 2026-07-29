@@ -80,7 +80,6 @@ import {
 } from "./routes/a4HandoffRoutes.js";
 // R8＋加性慣例（手冊 §1.13）：devMeta 為 routes/*.ts 模組，app.ts 僅此 import＋單行 mount。
 import { registerDevMetaRoutes } from "./routes/devMeta.js";
-import { registerConsoleRoutes } from "./routes/consoleRoutes.js";
 import { ViewerLeaseStore, publicLease } from "./services/viewerLeaseStore.js";
 import {
   RuntimeMutationAuthority,
@@ -97,8 +96,15 @@ import {
   markKitBindingsDraining,
   releaseKitBindings,
 } from "./services/kitPool.js";
-import { isSafeSessionId, isSessionMutable, SessionStore } from "./services/sessionStore.js";
+import {
+  isCanonicalSessionTraceId,
+  isSafeSessionId,
+  isSessionMutable,
+  SessionStore,
+} from "./services/sessionStore.js";
+import { SessionTraceResolver, type SessionTracePlan } from "./services/sessionTraceResolver.js";
 import { registerReviewNamespace } from "./socket/reviewNamespace.js";
+import { registerConsoleRoutes } from "./routes/consoleRoutes.js";
 import { buildRuntimeStatus, expectedStageBinding, summarizeIfcReadyJob } from "./runtimeStatus.js";
 import {
   buildArtifactBindings,
@@ -235,7 +241,9 @@ const stageCompositionSchema = z.object({
     stageCompositionArtifactSchema.refine((artifact) => artifact.role === "secondary"),
   ).max(63),
 }).strict();
+const dataChannelTraceCandidateSchema = z.string().min(1).max(200);
 const runtimeCommandAuthorizationSchema = z.object({
+  trace_id: dataChannelTraceCandidateSchema,
   source_client_id: z.string().trim().min(1).max(200),
   requested_event_type: z.string().trim().min(1).max(100),
   request_id: safeCommandIdSchema,
@@ -244,7 +252,11 @@ const runtimeCommandAuthorizationSchema = z.object({
   binding_revision_id: z.string().trim().min(1).max(200).optional(),
   stage_composition: stageCompositionSchema.optional(),
 }).strict();
+const dataChannelTraceVerificationSchema = z.object({
+  trace_id: dataChannelTraceCandidateSchema,
+}).strict();
 const stageBindingConfirmationSchema = z.object({
+  trace_id: dataChannelTraceCandidateSchema,
   stage_binding_authorization_id: z.string().trim().min(1).max(200),
   binding_revision_id: z.string().trim().min(1).max(200),
   request_id: safeCommandIdSchema,
@@ -546,6 +558,8 @@ export interface CoordinatorApp {
   io: Server;
   config: CoordinatorConfig;
   store: SessionStore;
+  /** @internal exposed for deterministic contract tests; not a public route API. */
+  externalIfcReadyStore: ExternalIfcReadyStore;
   eventLog: EventLog;
   structLog: StructLogger;
   // coordinator-auto-poll-streaming-conversion §6:cancel 全部 in-process auto-poll
@@ -586,10 +600,13 @@ export function createCoordinatorApp(
   const governanceLibraryWorkflow = new GovernanceLibraryWorkflow(
     new GovernanceLibraryHttpAdapter(),
   );
+  const corsOrigins = Array.from(
+    new Set([...config.corsOrigins, new URL(config.viewerPublicBaseUrl).origin]),
+  );
   const server = http.createServer(app);
   const io = new Server(server, {
     cors: {
-      origin: config.corsOrigins,
+      origin: corsOrigins,
       credentials: false,
     },
   });
@@ -602,7 +619,20 @@ export function createCoordinatorApp(
       skipEnvSnapshot: process.env.NODE_ENV === "test",
     });
   const store = new SessionStore(config.sessionStoreDir);
-  const eventLog = new EventLog(config.eventLogDir, { structLog });
+  const externalIfcReadyStore = new ExternalIfcReadyStore();
+  const sessionTraceResolver = new SessionTraceResolver(store, (sessionId) =>
+    externalIfcReadyStore
+      .list()
+      .filter((job) => job.review_session_id === sessionId || job.web_view_session_id === sessionId)
+      .map((job) => job.ifc_ready_job_id),
+  );
+  const eventLog = new EventLog(config.eventLogDir, {
+    structLog,
+    resolveTraceId: (sessionId) => {
+      const resolved = sessionTraceResolver.resolveAndCommit(sessionId);
+      return resolved.ok ? resolved.canonicalTraceId : null;
+    },
+  });
   const viewerLeaseStore = new ViewerLeaseStore();
   const runtimeMutationAuthority = new RuntimeMutationAuthority({
     now: Date.now,
@@ -654,7 +684,6 @@ export function createCoordinatorApp(
   });
   // B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：對外 IFC-ready intake。
   const authProvider = createAuthProvider(config);
-  const externalIfcReadyStore = new ExternalIfcReadyStore();
   const streamingConversionClient = new StreamingConversionClient(
     config.streamingConversionApiBase,
     undefined,
@@ -1126,16 +1155,42 @@ export function createCoordinatorApp(
     }
   }
 
-  app.use(cors({ origin: config.corsOrigins }));
-  app.use(
-    express.json({
-      limit: "1mb",
-      verify: (request, _response, buffer) => {
-        (request as RawBodyRequest).rawBody = buffer.toString("utf8");
-      },
-    }),
-  );
-  registerConsoleRoutes(app, config, resolvePublicDir());
+  function logIfcReadyReviewSessionActive(
+    job: IfcReadyIntakeJob,
+    session: ReviewSession,
+    sessionReplay: boolean,
+  ): void {
+    structLog
+      .withTraceId(job.ifc_ready_job_id)
+      .lifecycle("ifcReadyReviewSession", "IFC-ready review session opened", {
+        phase: "active",
+        subject_kind: "review_session",
+        subject_id: session.session_id,
+        ifc_ready_job_id: job.ifc_ready_job_id,
+        session_replay: sessionReplay,
+      });
+  }
+
+  app.use(cors({ origin: corsOrigins }));
+  const globalJsonParser = express.json({
+    limit: "1mb",
+    verify: (request, _response, buffer) => {
+      (request as RawBodyRequest).rawBody = buffer.toString("utf8");
+    },
+  });
+  app.use((request, response, next) => {
+    response.locals.viewerLogIntakeRequest = request.method === "POST"
+      && /^\/api\/internal\/viewer-log\/?$/i.test(request.path);
+    if (response.locals.viewerLogIntakeRequest === true) {
+      next();
+      return;
+    }
+    globalJsonParser(request, response, next);
+  });
+  registerConsoleRoutes(app, config, resolvePublicDir(), (sessionId) => {
+    const resolved = sessionTraceResolver.resolveAndCommit(sessionId);
+    return resolved.ok ? resolved.canonicalTraceId : null;
+  });
 
   app.get("/health", (_request, response) => {
     response.json({
@@ -1320,7 +1375,17 @@ export function createCoordinatorApp(
       return;
     }
     await refreshArtifactHealthForSessionBestEffort(session);
-    response.json(buildStreamConfig(store.get(session.session_id) ?? session, [], config));
+    const traceAuthority = sessionTraceResolver.resolveAndCommit(session.session_id);
+    if (!traceAuthority.ok) {
+      response.status(409).json({ detail: "Session trace authority unavailable." });
+      return;
+    }
+    response.json(buildStreamConfig(
+      store.get(session.session_id) ?? session,
+      [],
+      config,
+      traceAuthority.canonicalTraceId,
+    ));
   });
 
   // m2a-coverage-report:production 唯讀 passthrough。以 conversion_job_id 取後端品質摘要,
@@ -1960,6 +2025,17 @@ export function createCoordinatorApp(
     eventLog.append(session.session_id, "kitInstanceReleased", {
       kit_instance_bindings: closed?.kit_instance_bindings.map((binding) => binding.kit_instance_id) || [],
     });
+    const traceAuthority = sessionTraceResolver.resolveAndCommit(session.session_id);
+    if (traceAuthority.ok && traceAuthority.canonicalTraceId.startsWith("ifcready_")) {
+      structLog
+        .withTraceId(traceAuthority.canonicalTraceId)
+        .lifecycle("ifcReadyReviewSession", "IFC-ready review session closed", {
+          phase: "closed",
+          subject_kind: "review_session",
+          subject_id: session.session_id,
+          ifc_ready_job_id: traceAuthority.canonicalTraceId,
+        });
+    }
     response.json(closed);
   });
 
@@ -2287,18 +2363,73 @@ export function createCoordinatorApp(
     response.json(currentMinioWatchStatusPayload());
   });
 
+  function resolveExactIfcReadySessionTrace(sessionId: string, candidateTraceId: string): string {
+    const planned = sessionTraceResolver.plan(sessionId);
+    if (!planned.ok || planned.plan.canonicalTraceId !== candidateTraceId) {
+      throw new Error("Session trace authority unavailable.");
+    }
+    const committed = sessionTraceResolver.commit(planned.plan);
+    if (!committed.ok) {
+      throw new Error("Session trace authority unavailable.");
+    }
+    return committed.canonicalTraceId;
+  }
+
+  function resolveExactDataChannelTrace(sessionId: string, candidateTraceId: string): string | null {
+    try {
+      const planned = sessionTraceResolver.plan(sessionId);
+      if (!planned.ok || planned.plan.canonicalTraceId !== candidateTraceId) {
+        return null;
+      }
+      const committed = sessionTraceResolver.commit(planned.plan);
+      if (!committed.ok || committed.canonicalTraceId !== candidateTraceId) {
+        return null;
+      }
+      return committed.canonicalTraceId;
+    } catch {
+      return null;
+    }
+  }
+
+  function resolveExactInternalTraceCarrier(
+    sessionId: string,
+    candidateTraceId: string,
+    headerTraceId: string | undefined,
+  ): string | null {
+    if (!isSafeSessionId(sessionId) || headerTraceId === undefined) {
+      return null;
+    }
+    const parsedHeader = dataChannelTraceCandidateSchema.safeParse(headerTraceId);
+    if (!parsedHeader.success || parsedHeader.data !== candidateTraceId) {
+      return null;
+    }
+    return resolveExactDataChannelTrace(sessionId, candidateTraceId);
+  }
+
   function ifcReadyReviewSessionOpenPayload(
     job: IfcReadyIntakeJob,
     session: ReviewSession,
     sessionReplay: boolean,
   ): Record<string, unknown> {
-    const openUrl = buildCoordinatorOpenUrl(config, session.session_id);
+    const canonicalTraceId = resolveExactIfcReadySessionTrace(
+      session.session_id,
+      job.ifc_ready_job_id,
+    );
+    const openUrl = buildCoordinatorOpenUrl(
+      config,
+      session.session_id,
+      canonicalTraceId,
+    );
     externalIfcReadyStore.recordReviewSession(job.ifc_ready_job_id, session.session_id);
     externalIfcReadyStore.setViewerLink(job.ifc_ready_job_id, session.session_id, openUrl);
     const linkedJob = externalIfcReadyStore.get(job.ifc_ready_job_id) ?? job;
     const binding = expectedStageBinding(session);
+    if (sessionReplay) {
+      logIfcReadyReviewSessionActive(linkedJob, session, true);
+    }
     return {
       ifc_ready_job_id: linkedJob.ifc_ready_job_id,
+      trace_id: canonicalTraceId,
       conversion_job_id: linkedJob.conversion_job_id ?? null,
       conversion_status: linkedJob.conversion_status ?? null,
       review_session_id: session.session_id,
@@ -2453,20 +2584,25 @@ export function createCoordinatorApp(
     });
   });
 
-  // Internal API auth boundary (cross-service-structured-log-baseline).
-  // The two paths below are an intentional, narrowly-scoped allowlist; every
-  // other `/api/internal/*` route still requires a valid internal token:
-  //   - `/viewer-log`     : log ingest must never drop records because of an
-  //                         auth failure — data-plane availability for the log
-  //                         pipeline takes priority over gating writes.
-  //   - `/structLog/health`: a liveness/probe surface for monitoring; health
-  //                         checks must stay reachable without credentials.
-  // These endpoints are reached via the 127.0.0.1 binding, so the open paths
-  // are not exposed beyond the local host.
-  const STRUCT_LOG_UNAUTH_PATHS = new Set(["/viewer-log", "/structLog/health"]); // Intentionally unauth — see justification above
-
   app.use("/api/internal", (request, response, next) => {
-    if (STRUCT_LOG_UNAUTH_PATHS.has(request.path)) {
+    if (response.locals.viewerLogIntakeRequest === true) {
+      const lease = viewerLeaseStore.authorizeActive(
+        request.header("X-Review-Session-Id") ?? "",
+        request.header("X-Viewer-Lease-Id") ?? "",
+        request.header("X-Viewer-Lease-Token") ?? "",
+      );
+      if (!lease) {
+        response.status(401).json({ detail: "missing or invalid viewer lease" });
+        return;
+      }
+      const traceResolution = sessionTraceResolver.plan(lease.session_id);
+      if (!traceResolution.ok) {
+        response.status(409).json({ detail: "viewer log trace authority unavailable" });
+        return;
+      }
+      response.locals.viewerLogSessionId = lease.session_id;
+      response.locals.viewerLogTraceId = traceResolution.plan.canonicalTraceId;
+      response.locals.viewerLogTracePlan = traceResolution.plan;
       next();
       return;
     }
@@ -2476,6 +2612,62 @@ export function createCoordinatorApp(
     }
     next();
   });
+
+  app.post(
+    "/api/internal/review-sessions/:sessionId/datachannel-trace-verifications",
+    (request, response) => {
+      const parsed = dataChannelTraceVerificationSchema.safeParse(request.body);
+      if (!parsed.success || !isSafeSessionId(request.params.sessionId)) {
+        response.json({
+          verified: false,
+          detail_code: "datachannel_trace_payload_invalid",
+        });
+        return;
+      }
+
+      const rawHeaderTraceId = request.header("X-Trace-Id");
+      if (rawHeaderTraceId === undefined) {
+        response.json({
+          verified: false,
+          detail_code: "datachannel_trace_header_missing",
+        });
+        return;
+      }
+      const headerTraceId = dataChannelTraceCandidateSchema.safeParse(rawHeaderTraceId);
+      if (!headerTraceId.success) {
+        response.json({
+          verified: false,
+          detail_code: "datachannel_trace_header_invalid",
+        });
+        return;
+      }
+      if (headerTraceId.data !== parsed.data.trace_id) {
+        response.json({
+          verified: false,
+          detail_code: "datachannel_trace_header_body_mismatch",
+        });
+        return;
+      }
+
+      const canonicalTraceId = resolveExactDataChannelTrace(
+        request.params.sessionId,
+        parsed.data.trace_id,
+      );
+      if (canonicalTraceId === null) {
+        response.json({
+          verified: false,
+          detail_code: "datachannel_trace_authority_unavailable",
+        });
+        return;
+      }
+
+      response.set("X-Trace-Id", canonicalTraceId).json({
+        verified: true,
+        session_id: request.params.sessionId,
+        trace_id: canonicalTraceId,
+      });
+    },
+  );
 
   app.post(
     "/api/internal/review-sessions/:sessionId/runtime-command-authorizations",
@@ -2494,19 +2686,48 @@ export function createCoordinatorApp(
           | "unsupported_command"
           | "invalid_payload",
         detailCode: string,
-      ) => response.json({
-        authorized: false,
-        reason,
-        ...correlation,
-        retryable: false,
-        detail_code: detailCode,
-      });
+        canonicalTraceId?: string,
+      ) => {
+        if (canonicalTraceId !== undefined) {
+          response.set("X-Trace-Id", canonicalTraceId);
+        }
+        return response.json({
+          authorized: false,
+          reason,
+          ...correlation,
+          retryable: false,
+          detail_code: detailCode,
+          ...(canonicalTraceId !== undefined ? { trace_id: canonicalTraceId } : {}),
+        });
+      };
 
       if (!parsed.success || !isSafeSessionId(request.params.sessionId)) {
         deny("invalid_payload", "runtime_authorization_payload_invalid");
         return;
       }
       const input = parsed.data;
+      const rawHeaderTraceId = request.header("X-Trace-Id");
+      if (rawHeaderTraceId === undefined) {
+        deny("invalid_payload", "runtime_trace_missing");
+        return;
+      }
+      const headerTraceId = dataChannelTraceCandidateSchema.safeParse(rawHeaderTraceId);
+      if (!headerTraceId.success) {
+        deny("invalid_payload", "runtime_trace_invalid");
+        return;
+      }
+      if (headerTraceId.data !== input.trace_id) {
+        deny("invalid_payload", "runtime_trace_mismatch");
+        return;
+      }
+      const canonicalTraceId = resolveExactDataChannelTrace(
+        request.params.sessionId,
+        input.trace_id,
+      );
+      if (canonicalTraceId === null) {
+        deny("invalid_payload", "runtime_trace_authority_unavailable");
+        return;
+      }
       const decision = runtimeMutationAuthority.authorizeRuntimeCommand({
         sessionId: request.params.sessionId,
         sourceClientId: input.source_client_id,
@@ -2521,14 +2742,15 @@ export function createCoordinatorApp(
           : undefined,
       });
       if (!decision.authorized) {
-        deny(decision.reason, decision.detailCode);
+        deny(decision.reason, decision.detailCode, canonicalTraceId);
         return;
       }
 
-      response.json({
+      response.set("X-Trace-Id", canonicalTraceId).json({
         authorized: true,
         request_id: input.request_id,
         retryable: false,
+        trace_id: canonicalTraceId,
       });
     },
   );
@@ -2546,6 +2768,19 @@ export function createCoordinatorApp(
         return;
       }
       const input = parsed.data;
+      const canonicalTraceId = resolveExactInternalTraceCarrier(
+        request.params.sessionId,
+        input.trace_id,
+        request.header("X-Trace-Id"),
+      );
+      if (canonicalTraceId === null) {
+        response.json({
+          rolled_back: false,
+          ...correlation,
+          detail_code: "rollback_trace_authority_unavailable",
+        });
+        return;
+      }
       const rolledBack = runtimeMutationAuthority.failStageBindingBeforeMutation({
         sessionId: request.params.sessionId,
         sourceClientId: input.source_client_id,
@@ -2559,17 +2794,19 @@ export function createCoordinatorApp(
           ? toRuntimeStageComposition(input.stage_composition)
           : undefined,
       });
-      response.json(rolledBack.failed
+      response.set("X-Trace-Id", canonicalTraceId).json(rolledBack.failed
         ? {
             rolled_back: true,
             request_id: rolledBack.requestId,
             transaction_status: "failed",
             idempotent_replay: rolledBack.idempotentReplay,
+            trace_id: canonicalTraceId,
           }
         : {
             rolled_back: false,
             request_id: rolledBack.requestId,
             detail_code: rolledBack.detailCode,
+            trace_id: canonicalTraceId,
           });
     },
   );
@@ -2582,20 +2819,38 @@ export function createCoordinatorApp(
       const correlation = rawRequestId.success
         ? { request_id: rawRequestId.data }
         : { rejection_id: `rejection_${randomWebViewSuffix()}` };
-      const deny = (reason: "lease_invalid" | "session_lifecycle_blocked" | "invalid_payload", detailCode: string) =>
-        response.json({
+      const deny = (
+        reason: "lease_invalid" | "session_lifecycle_blocked" | "invalid_payload",
+        detailCode: string,
+        canonicalTraceId?: string,
+      ) => {
+        if (canonicalTraceId !== undefined) {
+          response.set("X-Trace-Id", canonicalTraceId);
+        }
+        return response.json({
           confirmed: false,
           reason,
           ...correlation,
           retryable: false,
           detail_code: detailCode,
+          ...(canonicalTraceId !== undefined ? { trace_id: canonicalTraceId } : {}),
         });
+      };
 
       if (!parsed.success || !isSafeSessionId(request.params.sessionId)) {
         deny("invalid_payload", "stage_confirmation_payload_invalid");
         return;
       }
       const input = parsed.data;
+      const canonicalTraceId = resolveExactInternalTraceCarrier(
+        request.params.sessionId,
+        input.trace_id,
+        request.header("X-Trace-Id"),
+      );
+      if (canonicalTraceId === null) {
+        deny("invalid_payload", "stage_confirmation_trace_authority_unavailable");
+        return;
+      }
       const completed = runtimeMutationAuthority.confirmStageBinding({
         sessionId: request.params.sessionId,
         credential: request.header("X-Viewer-Lease-Token") ?? "",
@@ -2605,11 +2860,11 @@ export function createCoordinatorApp(
         outcome: input.outcome,
       });
       if (!completed.confirmed) {
-        deny(completed.reason, completed.detailCode);
+        deny(completed.reason, completed.detailCode, canonicalTraceId);
         return;
       }
 
-      response.json({
+      response.set("X-Trace-Id", canonicalTraceId).json({
         confirmed: true,
         request_id: completed.requestId,
         binding_revision_id: completed.bindingRevisionId,
@@ -2617,6 +2872,7 @@ export function createCoordinatorApp(
         active_binding_revision: completed.activeBindingRevision,
         last_good_binding_revision: completed.lastGoodBindingRevision,
         idempotent_replay: completed.idempotentReplay,
+        trace_id: canonicalTraceId,
       });
     },
   );
@@ -2687,6 +2943,7 @@ export function createCoordinatorApp(
     }
 
     const session = store.create({
+      trace_id: job.ifc_ready_job_id,
       review_request_id: undefined,
       tenant_id: job.tenant_id,
       project_id: job.project_id,
@@ -2739,12 +2996,19 @@ export function createCoordinatorApp(
           session: result.session,
           session_replay: result.replay,
         };
-        const viewerUrl = buildCoordinatorOpenUrl(config, result.session.session_id);
+        const viewerUrl = buildCoordinatorOpenUrl(
+          config,
+          result.session.session_id,
+          event.job.ifc_ready_job_id,
+        );
         externalIfcReadyStore.setViewerLink(
           event.job.ifc_ready_job_id,
           result.session.session_id,
           viewerUrl,
         );
+        if (!result.replay) {
+          logIfcReadyReviewSessionActive(event.job, result.session, false);
+        }
       } else {
         sessionCapture = {
           session: null,
@@ -3087,9 +3351,8 @@ export function createCoordinatorApp(
 
   // ---------------------------------------------------------------------------
   // Structured log baseline endpoints (capability:
-  // cross-service-structured-log-baseline). LOCAL-DEV-ONLY: these intentionally
-  // do NOT require auth — they rely on the coordinator binding to 127.0.0.1.
-  // Production hardening (token, IP allow-list) is a future change.
+  // cross-service-structured-log-baseline). Viewer intake requires a matching
+  // active viewer lease; health uses the internal API token boundary.
   // ---------------------------------------------------------------------------
 
   const VIEWER_LOG_BYTE_LIMIT = 256 * 1024; // 256 KiB per spec §6
@@ -3129,16 +3392,64 @@ export function createCoordinatorApp(
           });
           return;
         }
+        const trustedSessionId = response.locals.viewerLogSessionId;
+        const trustedTraceId = response.locals.viewerLogTraceId;
+        const trustedTracePlan = response.locals.viewerLogTracePlan as SessionTracePlan | undefined;
+        if (
+          typeof trustedSessionId !== "string"
+          || typeof trustedTraceId !== "string"
+          || trustedTracePlan?.sessionId !== trustedSessionId
+          || trustedTracePlan.canonicalTraceId !== trustedTraceId
+        ) {
+          response.status(401).json({ detail: "missing or invalid viewer lease" });
+          return;
+        }
         viewerLogIntakeStats.records_received += body.length;
         const validated: LogRecord[] = [];
         let droppedThisBatch = 0;
+        let traceMismatch = false;
         for (const candidate of body) {
           const result = validateLogRecordBasic(candidate);
-          if (result.valid) {
+          if (result.valid && result.record.service === "viewer") {
+            if (result.record.trace_id !== trustedTraceId) {
+              traceMismatch = true;
+              break;
+            }
             validated.push(result.record);
           } else {
             droppedThisBatch += 1;
-            viewerLogIntakeStats.last_drop_reason = result.reason;
+            viewerLogIntakeStats.last_drop_reason = result.valid
+              ? "viewer_log_service_mismatch"
+              : result.reason;
+          }
+        }
+        if (traceMismatch) {
+          viewerLogIntakeStats.records_dropped += body.length;
+          viewerLogIntakeStats.last_drop_reason = "viewer_log_trace_mismatch";
+          for (let i = 0; i < body.length; i += 1) {
+            structLog.noteDropped("viewer_log_trace_mismatch");
+          }
+          response.status(409).json({
+            detail: "viewer log trace does not match authenticated session",
+            accepted: 0,
+            dropped: body.length,
+          });
+          return;
+        }
+        if (validated.length > 0) {
+          const committedTrace = sessionTraceResolver.commit(trustedTracePlan);
+          if (!committedTrace.ok || committedTrace.canonicalTraceId !== trustedTraceId) {
+            viewerLogIntakeStats.records_dropped += body.length;
+            viewerLogIntakeStats.last_drop_reason = "viewer_log_trace_authority_changed";
+            for (let i = 0; i < body.length; i += 1) {
+              structLog.noteDropped("viewer_log_trace_authority_changed");
+            }
+            response.status(409).json({
+              detail: "viewer log trace authority unavailable",
+              accepted: 0,
+              dropped: body.length,
+            });
+            return;
           }
         }
         const persisted = persistRecordsToServicePaths(validated, config.logRoot);
@@ -3872,7 +4183,7 @@ export function createCoordinatorApp(
     response.status(500).json({ detail: error instanceof Error ? error.message : String(error) });
   });
 
-  registerReviewNamespace(io, store, eventLog);
+  registerReviewNamespace(io, store, eventLog, sessionTraceResolver);
 
   // coordinator-auto-poll-streaming-conversion §6:dispose 清空所有 in-process auto
   // poller timer。process shutdown / 測試 teardown 必呼叫,避免 keep-alive 阻 exit。
@@ -3907,6 +4218,7 @@ export function createCoordinatorApp(
     io,
     config,
     store,
+    externalIfcReadyStore,
     eventLog,
     structLog,
     dispose,
@@ -3989,9 +4301,25 @@ function latestIfcReadyJobForExternalModelVersion(
     .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))[0];
 }
 
-function buildCoordinatorOpenUrl(config: CoordinatorConfig, session: string): string {
+const IFC_READY_TRACE_ID_PATTERN = /^ifcready_[A-Za-z0-9_-]+$/;
+const TRACE_ID_MAX_LENGTH = 200;
+
+function isSafeIfcReadyTraceId(value: string): boolean {
+  return value.length <= TRACE_ID_MAX_LENGTH
+    && IFC_READY_TRACE_ID_PATTERN.test(value)
+    && !value.startsWith("ifcready_ifcready_");
+}
+
+function buildCoordinatorOpenUrl(
+  config: CoordinatorConfig,
+  session: string,
+  traceId?: string,
+): string {
   const url = new URL("ui/open", `${config.coordinatorPublicBaseUrl}/`);
   url.searchParams.set("session", session);
+  if (traceId && isSafeIfcReadyTraceId(traceId)) {
+    url.searchParams.set("trace_id", traceId);
+  }
   return url.toString();
 }
 

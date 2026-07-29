@@ -195,6 +195,7 @@ export class StreamingConversionClient {
   async createConversionJob(
     event: ExternalIfcReadyEvent,
     binding: StreamingConversionBinding,
+    traceId: string,
   ): Promise<StreamingConversionDispatchResult> {
     const url = new URL(
       "api/conversions/ifc-to-usdc",
@@ -206,6 +207,7 @@ export class StreamingConversionClient {
       headers: this.authHeaders({
         "Content-Type": "application/json",
         Accept: "application/json",
+        "X-Trace-Id": traceId,
       }),
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(this.requestTimeoutMs),

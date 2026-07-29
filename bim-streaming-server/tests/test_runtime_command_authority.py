@@ -28,10 +28,14 @@ from runtime_authority import (  # noqa: E402
 )
 
 
+TRACE_ID = "rev_review_session_x"
+
+
 def runtime_payload(**overrides):
     payload = {
         "request_id": "req-runtime-1",
         "session_id": "review_session_x",
+        "trace_id": TRACE_ID,
         "source_client_id": "viewer_lease_primary",
         "viewer_lease_token": "viewer-secret-sentinel",
         "mode": "replace",
@@ -52,9 +56,15 @@ class FakeTransport:
         response = self.responses.pop(0)
         if isinstance(response, Exception):
             raise response
-        status, payload = response
+        if len(response) == 3:
+            status, headers, payload = response
+        else:
+            status, payload = response
+            headers = {}
+            if isinstance(payload, dict) and isinstance(payload.get("trace_id"), str):
+                headers["X-Trace-Id"] = payload["trace_id"]
         raw = payload if isinstance(payload, bytes) else json.dumps(payload).encode("utf-8")
-        return status, raw
+        return status, headers, raw
 
 
 def client(transport, **overrides):
@@ -92,6 +102,69 @@ def test_runtime_command_catalogs_match_cross_language_fixture():
     assert set(fixture["rejectionReasons"]) == REJECTION_REASONS
 
 
+@pytest.mark.parametrize("event_type", ["loadingStateQuery", "highlightPrimsRequest"])
+def test_verifies_readonly_and_mutating_datachannel_trace_with_exact_http_carriers(event_type):
+    transport = FakeTransport([(
+        200,
+        {
+            "verified": True,
+            "session_id": "review_session_x",
+            "trace_id": TRACE_ID,
+        },
+    )])
+
+    verified = client(transport).verify_datachannel_trace(event_type, runtime_payload())
+
+    assert verified == TRACE_ID
+    assert len(transport.calls) == 1
+    url, headers, raw_body, _timeout = transport.calls[0]
+    assert url.endswith(
+        "/api/internal/review-sessions/review_session_x/datachannel-trace-verifications"
+    )
+    assert headers["X-Internal-Token"] == "internal-secret-sentinel"
+    assert headers["X-Trace-Id"] == TRACE_ID
+    assert "X-Viewer-Lease-Token" not in headers
+    assert json.loads(raw_body) == {"trace_id": TRACE_ID}
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        (200, {}, {"verified": True, "session_id": "review_session_x", "trace_id": TRACE_ID}),
+        (
+            200,
+            {"X-Trace-Id": f"{TRACE_ID}_other"},
+            {"verified": True, "session_id": "review_session_x", "trace_id": TRACE_ID},
+        ),
+        (200, {"verified": True, "session_id": "review_session_other", "trace_id": TRACE_ID}),
+        (200, {"verified": False, "detail_code": "datachannel_trace_authority_unavailable"}),
+    ],
+)
+def test_datachannel_trace_verification_fails_closed_on_malformed_or_mismatched_response(response):
+    assert client(FakeTransport([response])).verify_datachannel_trace(
+        "loadingStateQuery",
+        runtime_payload(),
+    ) is None
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"trace_id": None},
+        {"trace_id": ""},
+        {"trace_id": "stream_conv_not_a_session_root"},
+        {"session_id": None},
+    ],
+)
+def test_datachannel_trace_verification_rejects_invalid_candidates_without_network(overrides):
+    transport = FakeTransport([])
+    assert client(transport).verify_datachannel_trace(
+        "getChildrenRequest",
+        runtime_payload(**overrides),
+    ) is None
+    assert transport.calls == []
+
+
 @pytest.mark.parametrize(
     "base_url, valid",
     [
@@ -118,6 +191,7 @@ def test_default_transport_disables_environment_proxies(monkeypatch):
 
     class FakeResponse:
         status = 200
+        headers = {}
 
         def __enter__(self):
             return self
@@ -139,7 +213,7 @@ def test_default_transport_disables_environment_proxies(monkeypatch):
 
     monkeypatch.setattr(runtime_authority, "build_opener", fake_build_opener)
 
-    status, raw = RuntimeAuthorityClient._default_transport(
+    status, response_headers, raw = RuntimeAuthorityClient._default_transport(
         "http://127.0.0.1:8004/api/internal/test",
         {"X-Internal-Token": "internal-secret-sentinel"},
         b"{}",
@@ -147,6 +221,7 @@ def test_default_transport_disables_environment_proxies(monkeypatch):
     )
 
     assert status == 200
+    assert response_headers == {}
     assert raw == b"{}"
     assert any(
         type(handler).__name__ == "ProxyHandler" and handler.proxies == {}
@@ -156,8 +231,8 @@ def test_default_transport_disables_environment_proxies(monkeypatch):
 
 def test_authorizes_each_attempt_without_positive_cache_and_strips_secrets_from_body():
     transport = FakeTransport([
-        (200, {"authorized": True, "request_id": "req-runtime-1", "retryable": False}),
-        (200, {"authorized": True, "request_id": "req-runtime-1", "retryable": False}),
+        (200, {"authorized": True, "request_id": "req-runtime-1", "retryable": False, "trace_id": TRACE_ID}),
+        (200, {"authorized": True, "request_id": "req-runtime-1", "retryable": False, "trace_id": TRACE_ID}),
     ])
     authority = client(transport)
 
@@ -173,7 +248,9 @@ def test_authorizes_each_attempt_without_positive_cache_and_strips_secrets_from_
     assert timeout == 0.4
     assert headers["X-Internal-Token"] == "internal-secret-sentinel"
     assert headers["X-Viewer-Lease-Token"] == "viewer-secret-sentinel"
+    assert headers["X-Trace-Id"] == TRACE_ID
     assert body == {
+        "trace_id": TRACE_ID,
         "source_client_id": "viewer_lease_primary",
         "requested_event_type": "highlightPrimsRequest",
         "request_id": "req-runtime-1",
@@ -196,6 +273,7 @@ def test_maps_structured_business_denial_without_making_it_retryable():
             "request_id": "req-runtime-1",
             "retryable": False,
             "detail_code": "lease_released",
+            "trace_id": TRACE_ID,
         },
     )])
     authority = client(transport)
@@ -207,6 +285,7 @@ def test_maps_structured_business_denial_without_making_it_retryable():
         "reason": "lease_invalid",
         "request_id": "req-runtime-1",
         "session_id": "review_session_x",
+        "trace_id": TRACE_ID,
         "retryable": False,
         "runtime_state": "unchanged",
         "detail_code": "lease_released",
@@ -227,6 +306,21 @@ def test_maps_structured_business_denial_without_making_it_retryable():
         (200, {"authorized": "yes"}),
         (200, {"authorized": True, "request_id": "wrong-id", "retryable": False}),
         (200, {"authorized": False, "reason": "unknown", "request_id": "req-runtime-1", "retryable": False}),
+        (
+            200,
+            {},
+            {"authorized": True, "request_id": "req-runtime-1", "retryable": False, "trace_id": TRACE_ID},
+        ),
+        (
+            200,
+            {"X-Trace-Id": f"{TRACE_ID}_other"},
+            {"authorized": True, "request_id": "req-runtime-1", "retryable": False, "trace_id": TRACE_ID},
+        ),
+        (
+            200,
+            {"X-Trace-Id": TRACE_ID},
+            {"authorized": True, "request_id": "req-runtime-1", "retryable": False},
+        ),
     ],
 )
 def test_transport_or_malformed_response_is_classified_as_authority_unavailable(response):
@@ -266,7 +360,7 @@ def test_harness_only_compose_is_rejected_without_network_call():
 def test_stage_authorization_forwards_exact_transaction_but_not_tokens():
     transport = FakeTransport([(
         200,
-        {"authorized": True, "request_id": "req-runtime-1", "retryable": False},
+        {"authorized": True, "request_id": "req-runtime-1", "retryable": False, "trace_id": TRACE_ID},
     )])
     payload = runtime_payload(
         stage_binding_authorization_id="stage_auth_1",
@@ -341,6 +435,7 @@ def test_stage_confirmation_requires_structured_http_200_and_preserves_changed_u
             "active_binding_revision": "binding_rev_1",
             "last_good_binding_revision": "binding_rev_1",
             "idempotent_replay": False,
+            "trace_id": TRACE_ID,
         }),
         (503, b"raw upstream secret viewer-secret-sentinel"),
     ])
@@ -351,6 +446,10 @@ def test_stage_confirmation_requires_structured_http_200_and_preserves_changed_u
     authority = client(transport)
 
     assert authority.confirm_stage(payload, "success").authorized is True
+    confirmation_url, confirmation_headers, confirmation_body, _timeout = transport.calls[0]
+    assert confirmation_url.endswith("/stage-binding-confirmations")
+    assert confirmation_headers["X-Trace-Id"] == TRACE_ID
+    assert json.loads(confirmation_body)["trace_id"] == TRACE_ID
     unavailable = authority.confirm_stage(payload, "success")
     rejection = command_rejected_payload(
         "openStageRequest",
@@ -426,6 +525,7 @@ def test_failed_stage_confirmation_requires_matching_failed_status_and_revision(
         "active_binding_revision": "binding_rev_previous",
         "last_good_binding_revision": "binding_rev_previous",
         "idempotent_replay": False,
+        "trace_id": TRACE_ID,
     }
 
     decision = client(FakeTransport([(200, response)])).confirm_stage(payload, "failed")
