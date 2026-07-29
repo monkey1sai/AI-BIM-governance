@@ -278,6 +278,10 @@ test("approved screens match desigin-system golden and semantic contracts", asyn
         window.sessionStorage.clear();
       });
       await page.goto(designHarnessRoute(productionRoute), { waitUntil: "networkidle" });
+      if (screenId === "workspace.a4.default") {
+        await page.waitForURL(/#workspace\?dock=a4$/);
+        await page.getByTestId("a4-semantic-search-page").waitFor({ state: "visible" });
+      }
       const observedDpr = await page.evaluate(() => window.devicePixelRatio);
       if (observedDpr !== manifest.fidelity_contract.device_scale_factor) {
         failures.push(

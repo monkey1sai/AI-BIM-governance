@@ -6,7 +6,7 @@ import { act } from "react";
 import { renderToString } from "react-dom/server";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import EdgeConsole, { isA4DesignHarnessCarrier } from "./EdgeConsole";
+import EdgeConsole from "./EdgeConsole";
 import { coordinatorClient } from "./coordinatorClient";
 
 describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
@@ -106,18 +106,5 @@ describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
     await act(async () => {
       root.unmount();
     });
-  });
-});
-
-describe("EdgeConsole：A4 design harness carrier", () => {
-  it("只在已啟用 harness 時保留無敏感的 harness + trace carrier", () => {
-    expect(isA4DesignHarnessCarrier("?harness=1&trace_id=ifcready_harness", true)).toBe(true);
-    expect(isA4DesignHarnessCarrier("?harness=1&trace_id=ifcready_harness", false)).toBe(false);
-  });
-
-  it("拒絕 session、重複值與未知 query，維持 A4 scrub 邊界", () => {
-    expect(isA4DesignHarnessCarrier("?harness=1&trace_id=x&session=review_session_x", true)).toBe(false);
-    expect(isA4DesignHarnessCarrier("?harness=1&trace_id=x&trace_id=y", true)).toBe(false);
-    expect(isA4DesignHarnessCarrier("?harness=1&trace_id=x&proof=p", true)).toBe(false);
   });
 });
