@@ -492,10 +492,15 @@ export function A4SemanticSearchPage() {
             </p>
           )}
           <p className="ec-note" data-testid="a4-source-scope-note" style={{ marginTop: 8 }}>
-            {t(
-              "ifc_ready_table_only：只顯示查詢結果，不具備 active viewer／Issue／3D authority；session flow 等 canonical S4-D workspace 共置 viewer lease 後才啟用。",
-              "ifc_ready_table_only: results only; it has no active viewer, Issue, or 3D authority. Session flow stays disabled until the canonical S4-D workspace co-locates the viewer lease.",
-            )}
+            {sourceMode === "session"
+              ? t(
+                "session_table_only：來源由 coordinator 依 active Review Session 於伺服器端解析。本頁仍只提供結果表——Issue 需 signed-proof route、3D 需 canonical handoff，兩者尚未接通。",
+                "session_table_only: the coordinator resolves the source server-side from the active Review Session. This surface is still results-only — Issue needs the signed-proof route and 3D needs the canonical handoff; neither is wired yet.",
+              )
+              : t(
+                "ifc_ready_table_only：只顯示查詢結果，不具備 active viewer／Issue／3D authority；需要 session 綁定時請切換到 session 來源。",
+                "ifc_ready_table_only: results only, with no active viewer, Issue, or 3D authority. Switch to the session source when session binding is required.",
+              )}
           </p>
           <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
             <Btn data-testid="a4-run" disabled={!canRun || busy || sourcesLoading} onClick={() => void onRun()}>
