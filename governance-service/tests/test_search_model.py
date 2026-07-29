@@ -10,42 +10,9 @@ from search.interpreter import interpret_query
 from search.engine import PartialFallbackUnavailable, SearchRequest, _storey_match, confirm_partial_fallback, run_model_search
 from search.proofs import ProofRegistry, _safe_ttl_seconds
 
-# Inline IFC (*.ifc is gitignored) — written to tmp_path per test.
-A4_FIRE_DOORS_IFC = """ISO-10303-21;
-HEADER;
-FILE_DESCRIPTION(('ViewDefinition [CoordinationView]'),'2;1');
-FILE_NAME('a4_fire_doors.ifc','2026-07-14T00:00:00',(''),(''),'IfcOpenShell','IfcOpenShell','');
-FILE_SCHEMA(('IFC4'));
-ENDSEC;
-DATA;
-#1=IFCPROJECT('0A4Proj000000000000001',$,'A4E2E',$,$,$,$,$,$);
-#2=IFCCARTESIANPOINT((0.,0.,0.));
-#3=IFCAXIS2PLACEMENT3D(#2,$,$);
-#4=IFCGEOMETRICREPRESENTATIONCONTEXT($,'Model',3,1.0E-05,#3,$);
-#5=IFCSITE('0A4Site000000000000001',$,'S1',$,$,$,$,$,$,$,$,$,$,$);
-#6=IFCBUILDING('0A4Bldg000000000000001',$,'B1',$,$,$,$,$,$,$,$,$);
-#7=IFCBUILDINGSTOREY('0A4Sty400000000000001',$,'4F',$,$,$,$,$,$,$);
-#8=IFCBUILDINGSTOREY('0A4Sty100000000000001',$,'1F',$,$,$,$,$,$,$);
-#10=IFCDOOR('0A4DoorLow000000000001',$,'FireDoor-Low',$,$,$,$,$,$,$,$,$,$);
-#11=IFCDOOR('0A4DoorHigh00000000001',$,'FireDoor-High',$,$,$,$,$,$,$,$,$,$);
-#12=IFCDOOR('0A4Door1F0000000000001',$,'FireDoor-1F',$,$,$,$,$,$,$,$,$,$);
-#20=IFCPROPERTYSINGLEVALUE('FireRating',$,IFCLABEL('30'),$);
-#21=IFCPROPERTYSINGLEVALUE('FireRating',$,IFCLABEL('90'),$);
-#22=IFCPROPERTYSINGLEVALUE('FireRating',$,IFCLABEL('45'),$);
-#30=IFCPROPERTYSET('0A4Pset00000000000001',$,'Pset_DoorCommon',$,(#20));
-#31=IFCPROPERTYSET('0A4Pset00000000000002',$,'Pset_DoorCommon',$,(#21));
-#32=IFCPROPERTYSET('0A4Pset00000000000003',$,'Pset_DoorCommon',$,(#22));
-#40=IFCRELDEFINESBYPROPERTIES('0A4RelP0000000000001',$,$,$,(#10),#30);
-#41=IFCRELDEFINESBYPROPERTIES('0A4RelP0000000000002',$,$,$,(#11),#31);
-#42=IFCRELDEFINESBYPROPERTIES('0A4RelP0000000000003',$,$,$,(#12),#32);
-#50=IFCRELAGGREGATES('0A4RelA0000000000001',$,$,$,#1,(#5));
-#51=IFCRELAGGREGATES('0A4RelA0000000000002',$,$,$,#5,(#6));
-#52=IFCRELAGGREGATES('0A4RelA0000000000003',$,$,$,#6,(#7,#8));
-#60=IFCRELCONTAINEDINSPATIALSTRUCTURE('0A4RelC0000000000001',$,$,$,(#10,#11),#7);
-#61=IFCRELCONTAINEDINSPATIALSTRUCTURE('0A4RelC0000000000002',$,$,$,(#12),#8);
-ENDSEC;
-END-ISO-10303-21;
-"""
+A4_FIXTURE_ROOT = Path(__file__).resolve().parents[2] / "_fixtures" / "a4-semantic-search"
+A4_FIRE_DOORS_IFC = A4_FIXTURE_ROOT / "a4_fire_doors.ifc"
+A4_ELEMENT_MAPPING = A4_FIXTURE_ROOT / "element_mapping.json"
 
 TINY = Path(__file__).resolve().parents[2] / "storage" / "e2e-a1" / "demo" / "tiny.ifc"
 
@@ -62,10 +29,10 @@ def client(tmp_path, monkeypatch):
 
 
 @pytest.fixture()
-def a4_ifc(tmp_path) -> Path:
-    path = tmp_path / "a4_fire_doors.ifc"
-    path.write_text(A4_FIRE_DOORS_IFC, encoding="utf-8")
-    return path
+def a4_ifc() -> Path:
+    assert A4_FIRE_DOORS_IFC.is_file()
+    assert A4_ELEMENT_MAPPING.is_file()
+    return A4_FIRE_DOORS_IFC
 
 
 def test_interpret_fire_door_query():
@@ -364,14 +331,10 @@ def test_search_wall_time_budget_stops_before_scanning(a4_ifc, monkeypatch):
     assert exhausted["stats"]["scanned"] == 0
 
 
-def test_complete_trusted_row_mints_a_path_free_proof(a4_ifc, tmp_path, monkeypatch):
+def test_complete_trusted_row_mints_a_path_free_proof(a4_ifc, monkeypatch):
     import search.engine as engine_mod
 
-    mapping = tmp_path / "element_mapping.json"
-    mapping.write_text(
-        '{"items":[{"ifc_guid":"0A4DoorLow000000000001","usd_prim_path":"/World/Doors/Low"}]}',
-        encoding="utf-8",
-    )
+    mapping = A4_ELEMENT_MAPPING
     monkeypatch.setenv("A4_PROOF_ACTIVE_KID", "a4_test_kid")
     monkeypatch.setenv("A4_PROOF_ACTIVE_KEY", "test-proof-signing-key-material-32bytes")
     registry = ProofRegistry()
@@ -405,17 +368,12 @@ def test_complete_trusted_row_mints_a_path_free_proof(a4_ifc, tmp_path, monkeypa
 @pytest.mark.parametrize("invalid_ttl", ["NaN", "Infinity", "0", "-1", "901"])
 def test_invalid_explicit_proof_ttl_keeps_search_table_only(
     a4_ifc,
-    tmp_path,
     monkeypatch,
     invalid_ttl,
 ):
     import search.engine as engine_mod
 
-    mapping = tmp_path / "element_mapping.json"
-    mapping.write_text(
-        '{"items":[{"ifc_guid":"0A4DoorLow000000000001","usd_prim_path":"/World/Doors/Low"}]}',
-        encoding="utf-8",
-    )
+    mapping = A4_ELEMENT_MAPPING
     monkeypatch.setenv("A4_PROOF_ACTIVE_KID", "a4_test_kid")
     monkeypatch.setenv("A4_PROOF_ACTIVE_KEY", "test-proof-signing-key-material-32bytes")
     monkeypatch.setenv("A4_PROOF_TTL_SECONDS", invalid_ttl)
@@ -491,6 +449,54 @@ def test_search_model_fire_rating_filter(client, a4_ifc):
     assert body["stats"]["scanned"] >= body["stats"]["matched"]
     assert body["stats"]["returned"] == len(body["results"])
     assert body["stats"]["not_matched"] >= 0
+
+
+def test_committed_a4_fixture_covers_mapping_nonmatch_and_truncation(a4_ifc):
+    complete = run_model_search(
+        SearchRequest(
+            ifc_source_path=str(a4_ifc),
+            element_mapping_path=str(A4_ELEMENT_MAPPING),
+            query="IfcDoor",
+            interpret_mode="deterministic",
+        )
+    )
+    assert complete["stats"] == {
+        "total": 3,
+        "scanned": 3,
+        "matched": 3,
+        "not_matched": 0,
+        "returned": 3,
+        "mapped": 1,
+        "unmapped": 2,
+        "truncated": False,
+        "total_is_lower_bound": False,
+        "scan_complete": True,
+    }
+
+    empty = run_model_search(
+        SearchRequest(
+            ifc_source_path=str(a4_ifc),
+            element_mapping_path=str(A4_ELEMENT_MAPPING),
+            query="找 4F 防火門且 FireRating > 100",
+            interpret_mode="deterministic",
+        )
+    )
+    assert empty["stats"]["matched"] == 0
+    assert empty["stats"]["not_matched"] == 3
+    assert empty["results"] == []
+
+    limited = run_model_search(
+        SearchRequest(
+            ifc_source_path=str(a4_ifc),
+            element_mapping_path=str(A4_ELEMENT_MAPPING),
+            query="IfcDoor",
+            limit=1,
+            interpret_mode="deterministic",
+        )
+    )
+    assert limited["stats"]["matched"] == 3
+    assert limited["stats"]["returned"] == 1
+    assert limited["stats"]["truncated"] is True
 
 
 def test_session_table_scope_returns_only_sanitized_trusted_binding(a4_ifc):

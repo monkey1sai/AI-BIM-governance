@@ -70,7 +70,7 @@
 | Slice | Outcome（一句話） | 對應 tasks（約） | PR / 狀態 |
 |---|---|---|---|
 | **S1** | governance 能 atomic 驗證 3D handoff proof-set（不碰 coordinator store） | §6 governance 半部 | ✅ **#365 MERGED** `a02f20d` |
-| **S2** | coordinator session-scoped handoff create/consume + 權限（principal/lease/binding） | §6.1–6.2 後端 | 待 S1 merge 後開 |
+| **S2** | coordinator session-scoped handoff create/consume + 權限（principal/lease/binding） | §6.1–6.2 後端 | 🧪 local implementation + full service tests passed；PR 尚未開 |
 | **S3** | viewer 消費 trusted handoff → 單一 focus/highlight + 狀態機 | §6.3–6.5 | 待 S2 |
 | **S4** | 收斂舊 A4 大 branch 的 §2–§5 可合部分（llm/proxy/issue/UI）成小 PR | §2–§5 子集 | 與 S2/S3 **串行**，禁止平行重寫 |
 | **S5+** | design/browser/runtime full gate | §7–§8 | 僅當 S1–S4 穩；允許長期 `Full completion claimed: no` |
@@ -91,6 +91,15 @@ DoD:
 ### S1 結案紀錄
 
 - PR #365 merged 2026-07-21；tasks.md 已註 S1 done。
+
+### S2 本機結案紀錄
+
+- Branch：`codex/openspec/a4-semantic-search-model-qa-convergence`（rebase 後基於 current `origin/main`）。
+- 新增 session-scoped create/consume、bounded one-shot intent store、`/ui/open` opaque handoff forwarding，以及 governance loopback internal verify seam；未修改 `governance-service/app.py` 或 shared Kit schema。
+- 驗證：governance full suite `244 passed, 2 skipped`；coordinator `npm run verify` 為 `658 passed`。
+- Authentic production principal/lease capability 尚未由 shared owner 交付，預設 production resolver 維持 fail closed；未跑 browser/design/runtime gate，`Full completion claimed: no`。
+- 下一刀為 **S3 viewer handoff** 或 **S4 舊 branch 收斂**，在 S2 PR 前後順序由 owner 裁決，禁止平行重寫。
+
 ### 給 AI 的固定 prompt（之後每刀都貼）
 
 ```txt
@@ -134,3 +143,4 @@ Done: 通過 DoD 所列測試；回報 verified / inferences / risks
 | 2026-07-21 | 初版：使用者選 1 收口 / 2 A4 / 3 #364+NOW |
 | 2026-07-21 | 採納建議/A/全做：#365 merge；4 change archive；deferred 三案；S2 成當前 outcome |
 | 2026-07-21 | #364 merge；archive governance-throughput-budget；OQ 全落地 |
+| 2026-07-21 | A4 S2 backend local implementation + full service tests 完成；PR/下一刀方向待 owner 裁決，Full completion=no |

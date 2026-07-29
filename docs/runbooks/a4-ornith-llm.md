@@ -21,6 +21,8 @@ A4_LLM_BASE_URL=<operator-provided HTTPS-or-allowed-loopback URL>
 A4_LLM_MODEL=<operator-provided model identifier>
 A4_LLM_TIMEOUT_S=<bounded timeout seconds>
 A4_LLM_ENABLED=<true|false>
+A4_LLM_PROFILE=<production|local-dev|trusted_lab_http>
+A4_LLM_TRANSPORT_MODE=<verified_https|loopback_tunnel|trusted_lab_http>
 ORNITH_API_KEY=<operator-provided secret>
 ```
 
@@ -54,7 +56,7 @@ A4_PROOF_PREVIOUS_KEY=<previous at-least-32-byte secret>
 | Mode | Behavior |
 |---|---|
 | `deterministic` | 僅文法（離線可測） |
-| `semantic` | 強制 Ornith → JSON filters；失敗回 `uninterpreted`＋next_step |
+| `semantic` | 強制 Ornith → JSON filters；模型／transport／schema 失敗回 `semantic_error`＋structured error code，無法由任何解譯器形成 usable candidate 才回 `uninterpreted` |
 | `auto` | 文法可解則直接用；否則再呼叫 LLM |
 
 ## Deploy 注意（host-native governance）
