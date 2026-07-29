@@ -273,7 +273,7 @@ test.describe("中文 model_version_id 派工修復 + dispatch_error 可見（ST
   }
 
   function rowOf(page: import("@playwright/test").Page, jobId: string) {
-    // #/conv「Ifc-ready jobs」表第一欄 td = ifc_ready_job_id（pages.tsx ConversionSchedulingPage）。
+    // #/minio「Ifc-ready jobs」表第一欄 td = ifc_ready_job_id（modelData/GlobalConversionPane；#303 後佇列表在 #/minio）。
     return page.locator("table.ec-table tbody tr").filter({ has: page.locator("td", { hasText: jobId }) });
   }
 
@@ -300,7 +300,7 @@ test.describe("中文 model_version_id 派工修復 + dispatch_error 可見（ST
       expect(String(failDetail.dispatch_error), "forcefail job 應帶 dispatch_error 明細").toContain("400");
 
       // 3) 前端：開 #/conv（由本 coordinator 同源 /ui 服務）→ 按 Refresh queue → 列表渲染。
-      await page.goto(`${coordinatorBase}/ui#/conv`);
+      await page.goto(`${coordinatorBase}/ui#/minio`);
       await page.getByRole("button", { name: /Refresh queue|讀取中/ }).click();
       const table = page.locator("table.ec-table");
       await expect(table).toBeVisible({ timeout: 20_000 });
