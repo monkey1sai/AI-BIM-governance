@@ -38,6 +38,8 @@
 
 > **2026-07-29 例外揭露：** 使用者明確要求開立 `isolated-branch-stack-browser-e2e`（A4 tasks 4.x 所需的隔離 stack browser E2E 契約），依本檔優先序「使用者最新口令 > 本檔」採納，偏離上面「本週不做：新 OpenSpec」。non-deferred active 由 4 增為 5，仍在 ≤6 內。
 
+> **2026-07-29 design gate 現況（唯讀查證，subject `13033cb`）：** main 的 `design-semantic-visual` 為 **FAILURE** 且會持續紅到有人處置。唯一失敗項 `workspace.a4.default`（diff ratio `0.2794` / `0.3186` > 上限 `0.01`），其餘 12 screens PASS、`semantic_parity = 1`。成因**不是**樣式回歸，而是 `#a4` 的 route IA 遷移：`EdgeConsole.tsx` 的 `UNIFIED_WS_KEYS` 已移除 `a4`，`#a4` 改渲染 `A4SemanticSearchPage`，manifest 釘的 golden 描繪的 `WorkspacePage` A4 dock 已無路由可達。另查證：pinned origin `C:\Repos\design\desigin-system` 對 `manifest.source.files` **23/23 hash MATCH**（rebaseline 對 `source.files` 為 no-op，該面不需設計側核准）；真正需要裁決的是 (a) `A4SemanticSearchPage` 未套 `--ab-*` 且 IA 偏離 Hi-Fi canon，(b) R-A2 使 manifest 無合法路徑跟隨 route IA 變更。完整證據與 owner 指派見 `openspec/changes/isolated-branch-stack-browser-e2e/proposal.md`「相鄰既有缺口」D-1～D-5。**歸屬**：D-1/D-2/D-3(IA) → `a4-console-convergence`；D-3(token)/D-5 → `migrate-console-to-hifi-design`；D-4 → 待使用者裁決（候選 `align-frontend-design-system-reference`，frozen）。
+
 ---
 
 ## 軌 0 — #364 OQ 裁決建議（請你回「採用建議」或改數字）
@@ -207,4 +209,5 @@ Done: 通過 DoD 所列測試；回報 verified / inferences / risks
 | 2026-07-24 | 使用者改採嚴格 terminal rule：archive 僅限 completed／完整 successor；三個 7/22 deferred change 與 structured-log evidence 缺口 historical correction 恢復原 id，維持 frozen/non-owner。 |
 | 2026-07-29 | `minio-folderview-and-baseline-disclosure` 完成 frozen closeout reconciliation：7/7 tasks 已有 terminal disposition，更新 lifecycle ledger 與 NOW projection 後 archive。 |
 | 2026-07-24 | 使用者將 active OpenSpec WIP 上限由 2 調整為 6；新增額度不自動 thaw deferred/frozen change。 |
+| 2026-07-29 | design gate 唯讀查證：main `design-semantic-visual` 紅燈成因＝`#a4` route IA 遷移（非樣式回歸）；pinned origin 23/23 MATCH，rebaseline 對 `source.files` 為 no-op。缺口 D-1～D-5 與 owner 指派記入 `isolated-branch-stack-browser-e2e` proposal，D-3／D-4 待使用者裁決。 |
 | 2026-07-23 | #382／#383／#386 merged；#386 先收斂 scoped A4 visible caller compatibility，S4-B coordinator session search proxy、安全 transport、host-kit dual-namespace seam 與 cold-scan timeout regression 由 PR #384 交付（狀態以 GitHub machine truth 為準），S4-C/D 仍 pending。 |

@@ -66,6 +66,7 @@ viewer dev server 由 Playwright 的 `webServer` 啟動（既有機制，`reuseE
 
 - **無 GPU／無 Kit**：隔離 stack 不啟動 streaming server、Kit、WebRTC。任何 3D highlight、first frame、stage truth、DataChannel 結論**不得**由隔離 stack evidence 推得；需要時仍走 host-native Kit 既有契約（每埠單一 viewer，primary `49100` + spectator `49110–49150`），並在 evidence 中分開標示。
 - **不是 design gate**：pixel diff 與 semantic states 由 `verify-design-system-reference.ps1` / `verify-design-system-visual-result.ps1` 判定，與本 capability 正交。隔離 stack 的截圖是 functional evidence，不是 golden。
+  - **且該路徑目前為紅**（2026-07-29 唯讀查證，subject `13033cb`）：`design-semantic-visual` FAILURE，唯一失敗項 `workspace.a4.default`（diff ratio `0.2794` / `0.3186` > `0.01`），成因是 `#a4` 的 route IA 遷移使 golden 描繪的 UI 已無路由可達，非本 change 造成。詳見 `proposal.md`「相鄰既有缺口」表 D-1～D-5。因此「design gate 由既有路徑判定」**不得**被讀成「既有路徑健康、可直接引用為綠」；本 change 的 evidence 亦不得用來推論該紅燈已解除。
 - **不是部署路徑驗證**：`Deploy dry-run command` / `Full deploy tested` 欄位仍必須來自部署區或 `deploy.ps1`，不得以隔離 stack 代替。
 - **Windows host-native**：launcher 為 PowerShell，走既有 `scripts/lib/preflight-ports.ps1`／`host-native-launcher.ps1` 慣例；POSIX mirror 不在本 change 範圍。
 - **artifacts 入庫**：`artifacts/e2e/**` 的 PNG 依 repo 既有 `.gitignore` 設計需要明確入庫動作（`git add -f`）；本 capability 只要求「evidence 路徑可被 reviewer 取得」，不強制一定要 commit 二進位檔，但 PR body SHALL 給出可解析的路徑或 CI artifact 連結。
@@ -79,3 +80,5 @@ viewer dev server 由 Playwright 的 `webServer` 啟動（既有機制，`reuseE
 | E2E 改為 require-real 後既有綠燈變紅 | 這是揭露既有假通過，不是回歸。首次落地時把 red 結果誠實記為 known gap 交回對應 change，不在本 change 修其他 capability 的實作 |
 | 兩處（doc 與 script）port 表漂移 | machine check 直接比對 doc 表格、registry 與 launcher 的常數，漂移即 CI fail |
 | A4 與本 change 同時在飛 | capability 不重疊；A4 若先用本 branch harness，PR body 揭露來源 branch/commit |
+| main 的 `design-semantic-visual` 已為紅燈，本 change 的 PR 也會帶著它，易被誤判為本 change 造成的回歸 | 成因與歸屬已記於 `proposal.md`「相鄰既有缺口」D-1～D-3；task 6.6 要求 PR body 逐字揭露該紅燈為 pre-existing 且非本 change 範圍 |
+| `design-canon-change-control` R-A2 只允許雙旗標腳本寫機器快照面，而該腳本無法增刪 `screens[]` 或改 route 歸屬，導致 route IA 變更後 manifest 無合法更新路徑 | 屬治理缺口，本 change 不代為裁決；記於 `proposal.md` D-4，候選 owner `align-frontend-design-system-reference`（frozen，thaw 需使用者裁決）。本 change 全程不觸碰 manifest 與 baseline |
