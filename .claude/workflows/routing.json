@@ -1,13 +1,27 @@
 {
   "tiers": {
-    "extract":  { "model": "haiku",  "effort": null,    "fallback": [{ "model": "sonnet", "effort": "high" }], "note": "純抽取/格式化，零判斷，下游必複核" },
-    "standard": { "model": "sonnet", "effort": "max",   "fallback": [{ "model": "opus", "effort": "max" }],   "note": "讀/探索/標準實作(全類 task 首發)/首審；sonnet=Sonnet 5" },
+    "extract":  { "model": "haiku",  "effort": "low",    "fallback": [{ "model": "sonnet", "effort": "medium" }], "note": "純抽取/格式化，零判斷，下游必複核" },
+    "scan":     { "model": "sonnet", "effort": "medium", "fallback": [{ "model": "opus", "effort": "xhigh" }],   "note": "有界唯讀探索、盤點與證據收集；prompt 必須明列 scope/evidence/stop" },
+    "standard": { "model": "sonnet", "effort": "xhigh",  "fallback": [{ "model": "opus", "effort": "xhigh" }],   "note": "標準實作與首審；有界 prompt + 明確驗證，困難判斷升級到 reason/judge" },
     "reason":   { "model": "opus",   "effort": "xhigh", "fallback": [{ "model": "fable", "effort": "max" }],  "note": "創造/長程；唯一 max->xhigh 降階點" },
     "judge":    { "model": "opus",   "effort": "max",   "immutable": true, "fallback": [{ "model": "fable", "effort": "max" }], "note": "驗證/fix；不可降，codegen 只驗不覆寫" },
-    "arbiter":  { "model": "fable",  "effort": "max",   "immutable": true, "fallback": [{ "model": "opus", "effort": "max" }],  "note": "單點裁決層(plan 作者/final-review/P4 evidence)；Fable 5，只可升不可降" }
+    "arbiter":  { "model": "fable",  "effort": "max",   "immutable": true, "fallback": [], "on_unavailable": "HELD", "note": "單點裁決層(plan 作者/final-review/P4 evidence)；Fable 5 不可用時停止，不以次級模型替代 apex" }
   },
-  "allowed_efforts": { "haiku": [null, "max"], "sonnet": ["high", "max"], "opus": ["xhigh", "max"], "fable": ["max"] },
-  "fallback_policy": "供應中斷限定（模型退役/API 不可用），非日常降階。應變：取該 tier fallback 鏈第一個可用項改寫 model/effort → 跑 gen_routing 重生 → 與 pinned tests 同 commit 原子調整；供應恢復即原子回退（arbiter 前科：2026-06-15）。全鏈不可用時人工選當時最強模型並同步 allowed_efforts。immutable 指品質語義不可日常降級，不阻擋供應例外。",
+  "allowed_efforts": { "haiku": ["low"], "sonnet": ["medium", "xhigh"], "opus": ["xhigh", "max"], "fable": ["max"] },
+  "fallback_policy": "供應中斷限定（模型退役/API 不可用），非日常降階。非 apex tier 可取 fallback 鏈第一個可用項並以同一 commit 原子更新 registry/generated files/tests；arbiter 無 fallback，Fable/max 不可用時必須 HELD。",
+  "prompt_contract": {
+    "version": 1,
+    "required_input_fields": ["Objective", "Scope", "Inputs", "Evidence", "Stop", "Output"],
+    "native_output_headings": ["Scope", "Evidence", "Finding", "Uncertainty", "Risk", "Next step"],
+    "workflow_schema_equivalence": {
+      "Objective": "imperative task text",
+      "Scope": "bounded label and phase",
+      "Inputs": "explicitly delimited prompt payload",
+      "Evidence": "prompt evidence duty plus StructuredOutput fields",
+      "Stop": "fail-closed null/error/hold path",
+      "Output": "StructuredOutput JSON schema"
+    }
+  },
   "flags": { "plan_author_xhigh": false },
   "do_not_codegen": ["std-implement.js:288", "std-implement.js:294", "std-implement.js:300"]
 }

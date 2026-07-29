@@ -1,0 +1,38 @@
+{
+  "schema_version": "ai-coding-metrics-report/v1",
+  "authority": "telemetry_only",
+  "generated_at": "2026-07-30T12:00:00.000Z",
+  "window": {
+    "start": "2026-07-28T00:00:00.000Z",
+    "end": "2026-07-30T12:00:00.000Z",
+    "days": 28,
+    "baseline_started_on": "2026-07-28",
+    "elapsed_days": 2,
+    "phase": "baseline_provenance_unverified"
+  },
+  "source_summary": {
+    "telemetry": {
+      "supplied": 0,
+      "accepted": 0,
+      "rejected": 0,
+      "rejections": []
+    },
+    "lifecycle_snapshot": "not_available",
+    "task_packet_snapshot": "not_available"
+  },
+  "metrics": [
+    { "id": "first-pass-gate-yield", "status": "no_observations", "value": null, "unit": "ratio", "sample_size": 0, "reason": "no-observations" },
+    { "id": "change-to-fast-check-ms", "status": "not_configured", "value": null, "unit": "milliseconds", "sample_size": 0, "reason": "first-change-timestamp-unavailable" },
+    { "id": "rework-commit-count", "status": "not_configured", "value": null, "unit": "count", "sample_size": 0, "reason": "work-item-rework-link-unavailable" },
+    { "id": "active-change-wip", "status": "not_configured", "value": null, "unit": "count", "sample_size": 0, "reason": "lifecycle-snapshot-unavailable" },
+    { "id": "active-change-age-days", "status": "not_configured", "value": null, "unit": "days", "sample_size": 0, "reason": "active-start-timestamp-unavailable" },
+    { "id": "context-packet-size", "status": "not_configured", "value": null, "unit": "declared_read_set_entries", "sample_size": 0, "reason": "task-packet-snapshot-unavailable" },
+    { "id": "flake-rate", "status": "no_observations", "value": null, "unit": "ratio", "sample_size": 0, "reason": "no-observations" }
+  ],
+  "packages": [],
+  "decision": {
+    "improvement_targets": null,
+    "monthly_comparison": null,
+    "reason": "no-observations"
+  }
+}

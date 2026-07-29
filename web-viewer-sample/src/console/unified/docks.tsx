@@ -1,8 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════════
 // UnifiedConsole — 3D Workspace 右欄 dock 面板（A1/A2/A3/A4/Issues）
 // 像素級移植正本：scratchpad/design-origin/app.js（ws 區段 dock content）
-// 所有 inline style / 文案 byte-identical；互動為 fixture 語意（local state +
-// toast 假 API 字串），本檔本體不打任何 /api。
+// A1/A2/A3/Issues 保留 fixture 語意；A4 只提供到 canonical live surface 的
+// 非操作性導流，避免假 API 或假 runtime acknowledgement。
 // 例外（純加性增強，C3 slice 1）：live=true（/health probe 成功）時 A1Dock 尾端
 // 掛 A1DockLive（真 API、data-prov="asbuilt"）；離線/超時/例外 → 完全不渲染新
 // DOM（design gate 離線預設像素零變化鐵則，同 DockLiveLink 判斷路徑）。
@@ -12,7 +12,7 @@ import { useUnifiedState } from "./UnifiedShell";
 import { A1DockLive } from "./A1DockLive";
 import {
   ACCENT, MONO, BTN, label9, sevTone, kindTone, memColors,
-  ruleDefs, failDefs, diffDefs, fedMembers, a4Defs,
+  ruleDefs, failDefs, diffDefs, fedMembers,
 } from "./fixtures";
 import type {
   Dict, DockKey, IssueItem, OutboxItem, RuleOn, SelItem,
@@ -26,7 +26,6 @@ export interface WsLocal {
   a1Ran: boolean;
   a2Ran: boolean;
   a3Built: boolean;
-  a4Ran: boolean;
   overlayOn: boolean;
   ruleOn: RuleOn;
   opened: Record<string, boolean>;
@@ -49,13 +48,12 @@ const dockTitle: CSSProperties = { fontSize: "13.5px", fontWeight: 700 };
 const liveChip: CSSProperties = { fontFamily: MONO, fontSize: 9, color: "var(--ab-ok-text)", background: "rgba(49,197,109,.1)", border: "1px solid rgba(49,197,109,.25)", borderRadius: 4, padding: "1px 6px" };
 
 /* ── live 導流 chip（liveBackend=true 才渲染；設計殼 → legacy 真實功能頁）── */
-/** dock → legacy 真實工具 hash 對映（A1→a1-workbench、A2→version-diff、A3→federation、
-    A4→semantic-search、Issues→issues）。 */
+/** dock → 真實工具 hash 對映（A4 使用唯一 canonical live surface）。 */
 const LIVE_LINK_HREF: Record<DockKey, string> = {
   a1: "#a1-workbench",
   a2: "#version-diff",
   a3: "#federation",
-  a4: "#semantic-search",
+  a4: "#workspace?dock=a4",
   issues: "#issues",
 };
 /* 風格對齊殼層既有 cyan chip（WorkspacePage session 膠囊 var(--ab-accent-text) / rgba(65,199,232)）；
@@ -236,39 +234,16 @@ export function A3Dock({ zh, L, ws, patch, live }: DockProps) {
 }
 
 /* ═══ A4 語意查詢 ═══ */
-export function A4Dock({ zh, L, ws, patch, live }: DockProps) {
-  const u = useUnifiedState();
+export function A4Dock({ L }: DockProps) {
   return (
-    <div data-prov="fixture" style={dockRoot}>
-      <div style={dockHead}><span style={dockTitle}>A4 {L.a4}</span><span style={liveChip}>LIVE</span>{live === true ? <DockLiveLink dock="a4" /> : null}</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        <span style={label9}>{L.nlq}</span>
-        <div style={{ background: "var(--ab-inset)", border: "1px solid rgba(65,199,232,.3)", borderRadius: 9, padding: "10px 12px", fontSize: 12, color: "var(--ab-text)", lineHeight: 1.5 }}>找出 4F 所有防火門並標示未符合規範者<span style={{ display: "inline-block", width: 1, height: 13, background: "var(--ab-accent)", marginLeft: 2, animation: "pulse 1.2s infinite", verticalAlign: "-2px" }} /></div>
-      </div>
-      <div className="hv-bright" data-uc="dock-cta" style={BTN} onClick={() => { patch({ a4Ran: true }); u.toast("POST /api/search/model → 12 hits · " + (zh ? "信心度 0.86" : "confidence 0.86")); }}>{ws.a4Ran ? L.rerun : (zh ? "執行查詢" : "Run query")}</div>
-      {ws.a4Ran ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={label9}>{L.results} · 12 IfcDoor</span>
-            <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--ab-danger)" }}>不符合 5</span><span style={{ fontSize: 10, color: "var(--ab-ok-text)" }}>符合 7</span>
-          </div>
-          {a4Defs.map((q) => (
-            <div key={q.el} className="hv-accent-border-strong" onClick={() => patch({ sel: { name: "IfcDoor " + q.el, path: "/World/A1_Tower/4F/Doors/" + q.el }, dcLog: `highlightPrimsRequest → ack ✓ (${q.el})` })} style={rowBox(ws.sel !== null && ws.sel.name === "IfcDoor " + q.el)}>
-              <span style={{ flex: "none", fontSize: "9.5px", padding: "2px 7px", borderRadius: 4, ...(q.ok ? { color: "var(--ab-ok-text)", background: "rgba(49,197,109,.1)", border: "1px solid rgba(49,197,109,.3)" } : { color: "var(--ab-danger)", background: "rgba(232,97,92,.1)", border: "1px solid rgba(232,97,92,.3)" }) }}>{q.ok ? (zh ? "符合" : "pass") : (zh ? "不符合" : "fail")}</span>
-              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
-                <span style={{ fontSize: "11.5px", color: "var(--ab-text)" }}>{q.el}</span>
-                <span style={{ fontFamily: MONO, fontSize: 9, color: "var(--ab-text-dim)" }}>{q.pset}</span>
-              </div>
-              <span style={{ fontFamily: MONO, fontSize: 10, color: "var(--ab-text-muted)" }}>{q.conf}</span>
-            </div>
-          ))}
-          <div style={{ display: "flex", flexDirection: "column", gap: 5, background: "var(--ab-inset)", border: "1px solid rgba(120,160,210,.12)", borderRadius: 9, padding: 10 }}>
-            <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: ".1em", color: "var(--ab-violet)", textTransform: "uppercase" }}>Evidence Trace</span>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "10.5px" }}><span style={{ color: "var(--ab-text-muted)" }}>規範條文 · 建築技術規則 76 條</span><span style={{ color: "var(--ab-ok-text)" }}>Matched</span></div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "10.5px" }}><span style={{ color: "var(--ab-text-muted)" }}>Pset_DoorCommon.FireRating</span><span style={{ color: "var(--ab-ok-text)" }}>Matched</span></div>
-          </div>
-        </div>
-      ) : null}
+    <div data-prov="redirect" style={dockRoot}>
+      <div style={dockHead}><span style={dockTitle}>A4 {L.a4}</span></div>
+      <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, color: "var(--ab-text-2)" }}>
+        A4 live search is session-scoped and table-only until trusted proof and C-M4 runtime capability are available.
+      </p>
+      <a data-uc="a4-canonical-link" href="#workspace?dock=a4" style={{ ...BTN, textAlign: "center", textDecoration: "none" }}>
+        Open A4 search →
+      </a>
     </div>
   );
 }

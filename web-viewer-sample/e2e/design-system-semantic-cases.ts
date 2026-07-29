@@ -204,16 +204,15 @@ function homeCases(): ScreenCases {
   };
 }
 
-/* ═══ workspace.a1..a4.default（#a1..#a4）═══ */
+/* ═══ fixture workspace.a1..a3.default（#a1..#a3）═══ */
 
-type WsDock = "a1" | "a2" | "a3" | "a4";
+type WsDock = "a1" | "a2" | "a3";
 
 const WS_CTA: Record<WsDock, { label: string; confirmToast: string }> = {
   // a1Ran 初值 true → CTA 顯示「重新執行」；其餘 dock 初值未執行。
   a1: { label: "重新執行", confirmToast: "POST /api/rule-runs → 202" },
   a2: { label: "計算差異", confirmToast: "POST /api/diffs → 202" },
   a3: { label: "Build Federated USD", confirmToast: "POST /api/federated-sets/FS-01/build" },
-  a4: { label: "執行查詢", confirmToast: "POST /api/search/model" },
 };
 
 function workspaceCases(dock: WsDock): ScreenCases {
@@ -235,15 +234,10 @@ function workspaceCases(dock: WsDock): ScreenCases {
             prepare: runDockCta,
             assertions: [{ id: "a2-diff-added-chip", locator: "text=■ 新增 12", expectation: "visible" }],
           }
-        : dock === "a3"
-          ? {
-              prepare: runDockCta,
-              assertions: [{ id: "a3-federated-stage-check", locator: "text=Federated Stage ✓", expectation: "visible" }],
-            }
-          : {
-              prepare: runDockCta,
-              assertions: [{ id: "a4-pass-count-green", locator: 'text="符合 7"', expectation: "visible" }],
-            };
+        : {
+            prepare: runDockCta,
+            assertions: [{ id: "a3-federated-stage-check", locator: "text=Federated Stage ✓", expectation: "visible" }],
+          };
 
   const failure: SemanticCaseDefinition =
     dock === "a1"
@@ -260,23 +254,18 @@ function workspaceCases(dock: WsDock): ScreenCases {
             prepare: runDockCta,
             assertions: [{ id: "a2-diff-removed-chip", locator: "text=■ 移除 4", expectation: "visible" }],
           }
-        : dock === "a3"
-          ? {
-              // 誠實對映：A3 dock 本身無紅色失敗態；工作區的失敗浮出面 = Issues/BCF
-              // dock（open 紅 chip 的既有 fixture issue），以 dock tab 切換（local state）。
-              prepare: async (context) => {
-                await gotoRoute(context);
-                await clickFirst(context.page, '[data-uc="dock-tab-issues"]');
-              },
-              assertions: [
-                { id: "issues-open-red-chip", locator: 'text="open"', expectation: "visible" },
-                { id: "issues-firerating-issue-title", locator: "text=防火時效不足", expectation: "visible" },
-              ],
-            }
-          : {
-              prepare: runDockCta,
-              assertions: [{ id: "a4-fail-count-red", locator: 'text="不符合 5"', expectation: "visible" }],
-            };
+        : {
+            // 誠實對映：A3 dock 本身無紅色失敗態；工作區的失敗浮出面 = Issues/BCF
+            // dock（open 紅 chip 的既有 fixture issue），以 dock tab 切換（local state）。
+            prepare: async (context) => {
+              await gotoRoute(context);
+              await clickFirst(context.page, '[data-uc="dock-tab-issues"]');
+            },
+            assertions: [
+              { id: "issues-open-red-chip", locator: 'text="open"', expectation: "visible" },
+              { id: "issues-firerating-issue-title", locator: "text=防火時效不足", expectation: "visible" },
+            ],
+          };
 
   return {
     navigation: {
@@ -351,6 +340,113 @@ function workspaceCases(dock: WsDock): ScreenCases {
       ],
     },
     runtime_truth: runtimeTruthCase(),
+  };
+}
+
+/* ═══ workspace.a4.default（canonical live/table-only surface）═══ */
+
+function a4Cases(): ScreenCases {
+  // The manifest still reaches this screen through the legacy #a4 alias until
+  // the design-reference owner re-approves its canonical query-bearing route.
+  // Wait for the explicit scrubbed canonical destination before observing DOM.
+  const gotoA4 = async (context: SemanticCaseContext): Promise<void> => {
+    await gotoRoute(context);
+    await context.page.waitForURL(/#workspace\?dock=a4$/);
+    await context.page.getByTestId("a4-semantic-search-page").waitFor({ state: "visible" });
+  };
+  const gotoFreshA4 = async (context: SemanticCaseContext): Promise<void> => {
+    await context.page.goto("about:blank");
+    await gotoA4(context);
+  };
+
+  return {
+    navigation: {
+      prepare: gotoA4,
+      assertions: [
+        { id: "sidebar-nav-ws-active", locator: '[data-uc="nav-ws"]', expectation: "attribute_equals", attribute: "data-active", expected: "true" },
+        { id: "sidebar-app-a4-active", locator: '[data-uc="app-a4"]', expectation: "attribute_equals", attribute: "data-active", expected: "true" },
+        { id: "canonical-a4-page-visible", locator: '[data-testid="a4-semantic-search-page"]', expectation: "visible" },
+      ],
+    },
+    primary_actions: {
+      // The design harness deliberately gives every /api request a 503.  A4
+      // must therefore expose input but never fake an enabled runtime action.
+      prepare: gotoA4,
+      assertions: [
+        { id: "a4-query-input-visible", locator: '[data-testid="a4-query-input"]', expectation: "visible" },
+        { id: "a4-refresh-sources-visible", locator: '[data-testid="a4-refresh-sources"]', expectation: "visible" },
+        { id: "a4-run-disabled-without-live-session", locator: '[data-testid="a4-run"]', expectation: "disabled" },
+      ],
+    },
+    loading: {
+      // Offline design evidence may observe only safe, unconfigured/not-observed
+      // model state; it must not claim that a model was reached.
+      prepare: gotoA4,
+      assertions: [
+        { id: "a4-llm-readiness-not-observed", locator: '[data-testid="a4-llm-missing"]', expectation: "visible" },
+      ],
+    },
+    empty: {
+      prepare: gotoA4,
+      assertions: [
+        { id: "a4-empty-results-table", locator: '[data-testid="a4-results-table"]', expectation: "text_contains", expected: "無列" },
+      ],
+    },
+    success: {
+      // A design-only 503 harness has no authority to fabricate a search result.
+      // This required semantic slot proves the absence of the retired fake success
+      // surface rather than marking an external search as successful.
+      prepare: gotoA4,
+      assertions: [
+        { id: "a4-no-fixed-compliance-success", locator: 'text="符合 7"', expectation: "count_equals", expected: 0 },
+        { id: "a4-no-local-query-success-fixture", locator: '[data-testid="a4-results-table"] tbody tr', expectation: "count_equals", expected: 1 },
+      ],
+    },
+    warning: {
+      prepare: gotoA4,
+      assertions: [
+        { id: "a4-table-only-boundary-visible", locator: '[data-testid="a4-table-only"]', expectation: "visible" },
+      ],
+    },
+    failure: {
+      prepare: gotoA4,
+      assertions: [
+        { id: "a4-source-load-safe-error", locator: '[data-testid="a4-load-err"]', expectation: "visible" },
+      ],
+    },
+    disabled: {
+      prepare: gotoA4,
+      assertions: [
+        { id: "a4-run-disabled", locator: '[data-testid="a4-run"]', expectation: "disabled" },
+        // main 生態（unit test 與 a4-closeout e2e）以「存在但 disabled」表達
+        // Issue 尚不可用，而非移除控制項；此處對齊該既有契約。
+        { id: "a4-no-issue-control", locator: '[data-testid="a4-create-issues"]', expectation: "disabled" },
+        { id: "a4-no-handoff-control", locator: '[data-testid*="handoff"]', expectation: "count_equals", expected: 0 },
+      ],
+    },
+    confirmation: {
+      // There is no A4 Issue/3D confirmation until proof + authentic C-M4 lease
+      // capabilities exist; absence is the truthful fail-closed confirmation.
+      prepare: gotoA4,
+      assertions: [
+        { id: "a4-no-manual-issue-confirmation", locator: '[data-testid="a4-issue-msg"]', expectation: "count_equals", expected: 0 },
+        { id: "a4-no-viewer-command-confirmation", locator: '[data-testid*="highlight"], [data-testid*="focus"]', expectation: "count_equals", expected: 0 },
+      ],
+    },
+    i18n_zh_tw: {
+      prepare: gotoA4,
+      assertions: [
+        { id: "zh-a4-title", locator: "text=A4 語意查詢與證據", expectation: "visible" },
+        langZhActive,
+      ],
+    },
+    runtime_truth: {
+      prepare: gotoFreshA4,
+      assertions: [
+        { id: "a4-asbuilt-partial-marker", locator: "text=asbuilt · PARTIAL", expectation: "visible" },
+        { id: "a4-runtime-table-only-marker", locator: '[data-testid="a4-table-only"]', expectation: "visible" },
+      ],
+    },
   };
 }
 
@@ -657,7 +753,7 @@ const screenFamilies: ReadonlyArray<readonly [string, ScreenCases]> = [
   ["workspace.a1.default", workspaceCases("a1")],
   ["workspace.a2.default", workspaceCases("a2")],
   ["workspace.a3.default", workspaceCases("a3")],
-  ["workspace.a4.default", workspaceCases("a4")],
+  ["workspace.a4.default", a4Cases()],
   ["pipeline.default", pipelineCases()],
   ["runtime.ops.default", opsCases()],
   ["concept.a5.default", conceptCases("a5")],

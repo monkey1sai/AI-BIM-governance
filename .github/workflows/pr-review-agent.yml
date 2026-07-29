@@ -1,4 +1,4 @@
-name: PR Review Agent
+name: PR Metadata Contract
 
 on:
   pull_request:
@@ -12,8 +12,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  pr-review-agent:
-    name: pr-review-agent
+  pr-metadata-contract:
+    name: pr-metadata-contract-diagnostic
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -22,42 +22,69 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Check PR body evidence
+      - name: Capture NUL-safe changed paths
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git -c core.quotepath=false diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/changed-paths.bin"
+
+      - name: Check PR body metadata without retaining raw body
         shell: pwsh
         env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          New-Item -ItemType Directory -Path artifacts/pr-review-agent -Force | Out-Null
-          $env:PR_BODY | Set-Content -LiteralPath artifacts/pr-review-agent/pr-body.md -Encoding utf8
-          git -c core.quotepath=false diff --no-renames --name-only '${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}' | Set-Content -LiteralPath artifacts/pr-review-agent/changed-paths.txt -Encoding utf8
-          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/tests/check-pr-body-evidence.ps1 `
-            -BodyPath artifacts/pr-review-agent/pr-body.md `
-            -ChangedPathsPath artifacts/pr-review-agent/changed-paths.txt `
-            -RepoRoot ${{ github.workspace }} `
-            -BaseSha '${{ github.event.pull_request.base.sha }}' `
-            -HeadSha '${{ github.event.pull_request.head.sha }}'
+          $artifactRoot = 'artifacts/pr-metadata-contract'
+          $bodyPath = Join-Path $env:RUNNER_TEMP 'pr-body.md'
+          New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
+          [IO.File]::WriteAllText($bodyPath, [string]$env:PR_BODY, [Text.UTF8Encoding]::new($false))
+          $result = 'failed'
+          try {
+            pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/tests/check-pr-body-evidence.ps1 `
+              -BodyPath $bodyPath `
+              -ChangedPathsPath (Join-Path $env:RUNNER_TEMP 'changed-paths.bin') `
+              -ChangedPathsNulDelimited `
+              -RepoRoot '${{ github.workspace }}' `
+              -BaseSha $env:BASE_SHA `
+              -HeadSha $env:HEAD_SHA
+            if ($LASTEXITCODE -ne 0) { throw 'PR body metadata contract failed.' }
+            $result = 'passed'
+          } finally {
+            [ordered]@{
+              schema_version = 'pr-metadata-contract/v1'
+              result = $result
+              base_sha = $env:BASE_SHA
+              subject_sha = $env:HEAD_SHA
+              body_sha256 = (Get-FileHash -LiteralPath $bodyPath -Algorithm SHA256).Hash.ToLowerInvariant()
+              raw_body_retained = $false
+            } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $artifactRoot 'result.json') -Encoding utf8
+            Remove-Item -LiteralPath $bodyPath -Force
+          }
 
       - name: Summarize local-preflight policy
         shell: pwsh
         run: |
           $summary = @'
-          # PR Review Agent
+          # PR Metadata Contract (diagnostic)
 
           Required PR validation is split by authority:
 
-          - PR body machine evidence is present and non-placeholder.
+          - PR body metadata is present and non-placeholder; the raw body is never retained in the artifact.
           - Changed-path scope is derived from the base/head design manifests; the PR body cannot self-select an easier screen.
-          - The `design-semantic-visual` CI job is the only semantic/pixel producer and validator for approved or mixed frontend product changes. PR-provided JSON is never gate input. It becomes merge authority only after repository branch protection marks the check required; current enforcement truth is recorded in TRUTH.
+          - The `design-semantic-visual` CI job is the only semantic/pixel producer for approved or mixed frontend product changes. PR-provided JSON is never gate input.
+          - Merge authority belongs only to the default-branch `required merge evidence` status, which repeats this contract with base-pinned code and a live body hash.
           - `scripts/dev/check-pr-local-preflight.ps1 -PrNumber <n>` is the authoritative local gate for PR review agent and affected sub-repo verification before push.
           - Functional/runtime operability evidence remains an independent requirement and cannot be replaced by the design job. Until its machine producer/validator and required check exist, full-completion claims remain forbidden.
           '@
-          $summary | Set-Content -LiteralPath artifacts/pr-review-agent/pr-review-agent.md -Encoding utf8
+          $summary | Set-Content -LiteralPath artifacts/pr-metadata-contract/summary.md -Encoding utf8
           $summary >> $env:GITHUB_STEP_SUMMARY
 
       - name: Upload review artifacts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pr-review-agent-${{ github.event.pull_request.number }}-${{ github.run_id }}
-          path: artifacts/pr-review-agent
+          name: pr-metadata-contract-${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/pr-metadata-contract
           if-no-files-found: error

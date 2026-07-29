@@ -88,7 +88,7 @@ export function WorkspacePage({ initialDock }: WorkspacePageProps) {
     a1: [zh ? "● 檢核失敗 ×18 疊加中" : "● 18 failures overlaid", "rgba(232,97,92"],
     a2: [ws.overlayOn ? (zh ? "■ 差異疊加:新增12 移除4 修改28" : "■ Diff overlay: +12 −4 ~28") : (zh ? "◌ 尚未套用差異疊加" : "◌ overlay not applied"), "rgba(230,178,62"],
     a3: [zh ? "● 5 領域 SubLayer 合成" : "● 5-discipline composition", "rgba(49,197,109"],
-    a4: [zh ? "● 不符合 5 · 符合 7" : "● 5 fail · 7 pass", "rgba(232,97,92"],
+    a4: [zh ? "● A4 語意查詢在 canonical session surface" : "● A4 search uses the canonical session surface", "rgba(65,199,232"],
     issues: [zh ? "◉ Issue 錨點 ×" + u.issues.length : "◉ Issue anchors ×" + u.issues.length, "rgba(65,199,232"],
   };
   const lg = legends[ws.dock];

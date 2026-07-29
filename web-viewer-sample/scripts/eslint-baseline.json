@@ -1,0 +1,15 @@
+{
+  "schema_version": "eslint-baseline/v1",
+  "policy": "shrink-only",
+  "findings": [
+    { "path": "src/console/ConversionPage.tsx", "rule_id": "react-hooks/exhaustive-deps", "severity": "warning", "message_sha256": "bd00b0f84d0330241b5412451e93a3c674dade674b1504fb51f141cbddb154f4", "count": 1 },
+    { "path": "src/console/EmbeddedViewer.tsx", "rule_id": "react-hooks/exhaustive-deps", "severity": "warning", "message_sha256": "d8955f209d642b53c987bca79be8d814563b5e6d43c511aadab6d0e17fd109ef", "count": 2 },
+    { "path": "src/console/incomingHandoff.tsx", "rule_id": "react-refresh/only-export-components", "severity": "warning", "message_sha256": "2349ab0476664e17598da159731d5387fc8aee13486a18409df554d5ff826474", "count": 1 },
+    { "path": "src/console/modelData/conversionShared.tsx", "rule_id": "react-refresh/only-export-components", "severity": "warning", "message_sha256": "2349ab0476664e17598da159731d5387fc8aee13486a18409df554d5ff826474", "count": 7 },
+    { "path": "src/console/pages.tsx", "rule_id": "react-hooks/exhaustive-deps", "severity": "warning", "message_sha256": "268c4ed5e75ac49185d02a0b2567a0a8ca8182ecbedf4be717188ff5c3d46751", "count": 1 },
+    { "path": "src/console/pages.tsx", "rule_id": "react-refresh/only-export-components", "severity": "warning", "message_sha256": "2349ab0476664e17598da159731d5387fc8aee13486a18409df554d5ff826474", "count": 1 },
+    { "path": "src/console/ReviewSessionViewerPane.tsx", "rule_id": "react-hooks/exhaustive-deps", "severity": "warning", "message_sha256": "761b82ceed434ce64c77e1656ec2a4d4e333f10f00ec98c0885c15e2558e37cf", "count": 2 },
+    { "path": "src/console/ReviewSessionViewerPane.tsx", "rule_id": "react-refresh/only-export-components", "severity": "warning", "message_sha256": "2349ab0476664e17598da159731d5387fc8aee13486a18409df554d5ff826474", "count": 2 },
+    { "path": "src/console/unified/UnifiedShell.tsx", "rule_id": "react-refresh/only-export-components", "severity": "warning", "message_sha256": "2349ab0476664e17598da159731d5387fc8aee13486a18409df554d5ff826474", "count": 1 }
+  ]
+}

@@ -1,0 +1,129 @@
+{
+  "schema_version": "ai-coding-metrics-policy/v1",
+  "authority": "telemetry_only",
+  "baseline": {
+    "started_on": "2026-07-28",
+    "minimum_days": 28,
+    "historical_backfill": "forbidden",
+    "capture_provenance": "unattested",
+    "readiness_gate": "hosted-attested-capture-required",
+    "improvement_targets": null
+  },
+  "retention": {
+    "raw_observations_days": 35,
+    "monthly_aggregate_identity": "package_only",
+    "enforcement": "not_configured",
+    "not_configured_reason": "hosted-retention-unverified"
+  },
+  "merge_truth": {
+    "required_retry_count": 0,
+    "telemetry_is_merge_authority": false
+  },
+  "diagnostic_retry": {
+    "enabled": true,
+    "maximum_retries": 1,
+    "raw_trace_storage": "forbidden"
+  },
+  "privacy": {
+    "stored_envelope_fields": [
+      "authority",
+      "environment_class",
+      "manifest_sha256",
+      "observed_at",
+      "package_id",
+      "plan_sha256",
+      "records",
+      "ref_class",
+      "retry_of_sha256",
+      "schema_version",
+      "subject_sha",
+      "toolchain_sha256"
+    ],
+    "stored_record_fields": [
+      "attempt",
+      "duration_ms",
+      "exit_code",
+      "gate_id",
+      "result",
+      "retry_of",
+      "test_id",
+      "timeout_ms",
+      "trace_sha256",
+      "trace_size_bytes"
+    ],
+    "forbidden_fields": [
+      "actor",
+      "args",
+      "command",
+      "cwd",
+      "env",
+      "hostname",
+      "log",
+      "message",
+      "path",
+      "prompt",
+      "repository",
+      "session",
+      "source",
+      "stack",
+      "stderr",
+      "stdout",
+      "url",
+      "user"
+    ]
+  },
+  "registry": [
+    {
+      "package_id": "root-governance",
+      "gate_id": "agent-governance-tests",
+      "test_ids": ["governance-contracts"]
+    },
+    {
+      "package_id": "coordinator",
+      "gate_id": "coordinator-verify",
+      "test_ids": ["full-verify"]
+    },
+    {
+      "package_id": "viewer",
+      "gate_id": "viewer-verify",
+      "test_ids": ["full-verify"]
+    }
+  ],
+  "metrics": [
+    {
+      "id": "first-pass-gate-yield",
+      "state": "collecting_baseline",
+      "reason": "baseline-provenance-unverified"
+    },
+    {
+      "id": "change-to-fast-check-ms",
+      "state": "not_configured",
+      "reason": "first-change-timestamp-unavailable"
+    },
+    {
+      "id": "rework-commit-count",
+      "state": "not_configured",
+      "reason": "work-item-rework-link-unavailable"
+    },
+    {
+      "id": "active-change-wip",
+      "state": "snapshot_only",
+      "reason": "lifecycle-current-state-only"
+    },
+    {
+      "id": "active-change-age-days",
+      "state": "not_configured",
+      "reason": "active-start-timestamp-unavailable"
+    },
+    {
+      "id": "context-packet-size",
+      "state": "snapshot_only",
+      "reason": "declared-corpus-snapshot-only"
+    },
+    {
+      "id": "flake-rate",
+      "state": "collecting_baseline",
+      "reason": "baseline-provenance-unverified"
+    }
+  ]
+}

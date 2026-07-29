@@ -51,13 +51,63 @@ import { PipelinePage } from "./unified/PipelinePage";
 import { OpsPage } from "./unified/OpsPage";
 import type { ConceptKey, DockKey } from "./unified/fixtures";
 
+const A4_SESSION_ID_RE = /^review_session_[A-Za-z0-9_-]+$/;
+const A4_SESSION_STORAGE_KEY = "aibim:a4-session-context";
+
+function firstValidA4SessionId(candidates: unknown[]): string | null {
+  const candidate = candidates.find(
+    (value): value is string => typeof value === "string" && A4_SESSION_ID_RE.test(value),
+  );
+  return candidate ?? null;
+}
+
+function a4SessionContextFromLocation(): string | null {
+  const searchParams = new URLSearchParams(window.location.search);
+  const rawHash = window.location.hash.replace(/^#\/?console\/?/, "").replace(/^#\/?/, "");
+  const hashQuery = rawHash.includes("?") ? rawHash.slice(rawHash.indexOf("?") + 1) : "";
+  const hashParams = new URLSearchParams(hashQuery);
+  const historyCandidate = (window.history.state as { a4SessionId?: unknown } | null)?.a4SessionId;
+  let storedCandidate: string | null = null;
+  try {
+    storedCandidate = window.sessionStorage.getItem(A4_SESSION_STORAGE_KEY);
+  } catch {
+    // Storage can be unavailable in hardened browser contexts.
+  }
+  return firstValidA4SessionId([
+    searchParams.get("session"),
+    hashParams.get("session"),
+    historyCandidate,
+    storedCandidate,
+  ]);
+}
+
 function usePageHash(): [string, (k: string) => void] {
-  const read = () => window.location.hash.replace(/^#\/?console\/?/, "").replace(/^#\/?/, "").split("?")[0] || "home";
+  const read = () => {
+    const raw = window.location.hash.replace(/^#\/?console\/?/, "").replace(/^#\/?/, "");
+    const queryIndex = raw.indexOf("?");
+    const page = queryIndex === -1 ? raw : raw.slice(0, queryIndex);
+    const query = queryIndex === -1 ? "" : raw.slice(queryIndex + 1);
+    const routeParams = new URLSearchParams(query.replace(/\?/g, "&"));
+    if (page === "workspace" && routeParams.get("dock") === "a4") {
+      // The only URL-carried A4 context is a syntactically valid opaque
+      // review-session selector. Query/proof/prim/handoff material is scrubbed.
+      // The coordinator still authenticates and resolves the session; this
+      // selector is never authority by itself.
+      return query === "dock=a4" && !window.location.search
+        ? "workspace-a4"
+        : "workspace-a4-scrub";
+    }
+    return page || "home";
+  };
   const [page, setPage] = useState(read);
   useEffect(() => {
     const on = () => setPage(read());
     window.addEventListener("hashchange", on);
-    return () => window.removeEventListener("hashchange", on);
+    window.addEventListener("popstate", on);
+    return () => {
+      window.removeEventListener("hashchange", on);
+      window.removeEventListener("popstate", on);
+    };
   }, []);
   const go = (k: string) => {
     window.location.hash = k;
@@ -67,26 +117,72 @@ function usePageHash(): [string, (k: string) => void] {
 }
 
 // URL 重寫式 alias：舊 #intake deep link 重導到合一後的 #minio；#conv 是獨立既有-job 歷史頁。
-// 只能在 useEffect 內做（renderToString 純渲染不觸發 → SSR 不導航，避免 hydration 前搶跑）；
-// window.location.replace 不留 history 污染，並保留原 hash 的 query（如 job_id）供接收端重驗。
-function AliasRedirect({ to }: { to: string }) {
+// 只能在 useEffect 內做（renderToString 純渲染不觸發 → SSR 不導航，避免 hydration 前搶跑）。
+// 一般 alias 保留既有 hash query 行為；A4 則以 replaceState 移除 hash 與 search 中的
+// 資料，避免 query/proof/prim/session 片段留在 history 或被下游路由誤用。
+function AliasRedirect({
+  to,
+  preserveQuery = true,
+  scrubSearch = false,
+  preserveA4Session = false,
+}: {
+  to: string;
+  preserveQuery?: boolean;
+  scrubSearch?: boolean;
+  preserveA4Session?: boolean;
+}) {
   useEffect(() => {
     const raw = window.location.hash;
     const q = raw.includes("?") ? raw.slice(raw.indexOf("?")) : "";
-    window.location.replace(`#${to}${q}`); // replace：不留 history 污染
-  }, [to]);
+    const preservedQuery = preserveQuery ? (q && to.includes("?") ? `&${q.slice(1)}` : q) : "";
+    if (scrubSearch) {
+      let active = true;
+      const a4SessionId = preserveA4Session ? a4SessionContextFromLocation() : null;
+      if (preserveA4Session) {
+        try {
+          if (a4SessionId) {
+            window.sessionStorage.setItem(A4_SESSION_STORAGE_KEY, a4SessionId);
+          } else {
+            window.sessionStorage.removeItem(A4_SESSION_STORAGE_KEY);
+          }
+        } catch {
+          // history.state remains the in-memory fallback.
+        }
+      }
+      const nextState = a4SessionId ? { a4SessionId } : null;
+      window.history.replaceState(nextState, "", `${window.location.pathname}#${to}${preservedQuery}`);
+      // Child effects run before the parent router effect on first mount.  A
+      // microtask makes the synthetic event observable after that listener is
+      // attached, while replaceState keeps sensitive alias data out of history.
+      queueMicrotask(() => {
+        if (active) window.dispatchEvent(new HashChangeEvent("hashchange"));
+      });
+      return () => {
+        active = false;
+      };
+    }
+    window.location.replace(`#${to}${preservedQuery}`); // replace：不留 history 污染
+  }, [to, preserveQuery, scrubSearch, preserveA4Session]);
   return null;
 }
 
 // ── UnifiedConsole 分流表（IA v2）──
 // approved 鍵 {home,a1..a10,pipeline,runtime} 掛 UnifiedShell + 對應新頁；回 null 則走 legacy 殼。
-// a1..a4 → WorkspacePage（dock=aN；key=page 讓 #a1→#a2 換 dock 時重建 local state）；
+// a1..a3 → WorkspacePage（dock=aN；key=page 讓 #a1→#a2 換 dock 時重建 local state）；
+// A4 is the real session-scoped surface at #/workspace?dock=a4, not a fixture dock.
 // a5..a10 → ConceptPage；pipeline → PipelinePage；runtime → OpsPage；home → UnifiedHomePage。
 // #conv 不進 unified（legacy ConversionPage=IFC→USD 轉檔歷史，雙路由分治）。
-const UNIFIED_WS_KEYS: readonly string[] = ["a1", "a2", "a3", "a4"];
+const UNIFIED_WS_KEYS: readonly string[] = ["a1", "a2", "a3"];
 const UNIFIED_CONCEPT_KEYS: readonly string[] = ["a5", "a6", "a7", "a8", "a9", "a10"];
 
 function renderUnified(page: string): ReactElement | null {
+  if (page === "workspace-a4") {
+    return (
+      <UnifiedShell page="ws" dock="a4">
+        <A4SemanticSearchPage />
+      </UnifiedShell>
+    );
+  }
   if (UNIFIED_WS_KEYS.includes(page)) {
     const dock = page as DockKey;
     return (
@@ -113,13 +209,15 @@ function renderUnified(page: string): ReactElement | null {
 
 function renderBody(page: string, go: (k: string) => void) {
   // app/<slug> → vision 詳頁；#app/ai-search 舊 deep link 轉到 live #a4。
-  if (page === "app/ai-search") return <AliasRedirect to="a4" />;
+  if (page === "workspace-a4-scrub") return <AliasRedirect to="workspace?dock=a4" preserveQuery={false} scrubSearch preserveA4Session />;
+  if (page === "app/ai-search") return <AliasRedirect to="workspace?dock=a4" preserveQuery={false} scrubSearch preserveA4Session />;
   if (page.startsWith("app/")) return <AppVisionPage slug={page.slice(4)} onOpen={go} />;
   switch (page) {
-    // IA v2 alias 重排：原 #a1 / #a4 讓位給 UnifiedConsole workspace，
-    // legacy 單頁改掛 #a1-workbench / #semantic-search 深連結。
+    // IA v2 alias 重排：原 #a1 讓位給 UnifiedConsole workspace；A4 aliases
+    // converge on one session-scoped canonical surface rather than a fixture dock.
     case "a1-workbench": return <A1GovernanceWorkbenchPage />;
-    case "semantic-search": return <A4SemanticSearchPage />;
+    case "a4":
+    case "semantic-search": return <AliasRedirect to="workspace?dock=a4" preserveQuery={false} scrubSearch preserveA4Session />;
     case "viewer": return <ViewerPresentationPage />;
     case "gpu": return <GpuReviewRoomPage />;
     case "conv": return <ConversionPage />;

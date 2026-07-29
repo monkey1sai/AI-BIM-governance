@@ -5,14 +5,17 @@ RJSON = ROOT / ".claude/workflows/routing.json"
 def test_routing_json_schema():
     data = json.loads(RJSON.read_text(encoding="utf-8"))
     tiers = data["tiers"]
-    assert tiers["extract"]  == {"model": "haiku",  "effort": None, "note": tiers["extract"]["note"],
-                                 "fallback": [{"model": "sonnet", "effort": "high"}]}
-    assert tiers["standard"]["model"] == "sonnet" and tiers["standard"]["effort"] == "max"
+    assert tiers["extract"]  == {"model": "haiku",  "effort": "low", "note": tiers["extract"]["note"],
+                                 "fallback": [{"model": "sonnet", "effort": "medium"}]}
+    assert tiers["scan"]["model"] == "sonnet" and tiers["scan"]["effort"] == "medium"
+    assert tiers["standard"]["model"] == "sonnet" and tiers["standard"]["effort"] == "xhigh"
     assert tiers["reason"]["model"]   == "opus"   and tiers["reason"]["effort"]   == "xhigh"
     assert tiers["judge"]["model"]    == "opus"   and tiers["judge"]["effort"]    == "max"
     assert tiers["judge"].get("immutable") is True
     assert tiers["arbiter"]["model"]  == "fable"  and tiers["arbiter"]["effort"]  == "max"
     assert tiers["arbiter"].get("immutable") is True
+    assert tiers["arbiter"]["fallback"] == []
+    assert tiers["arbiter"]["on_unavailable"] == "HELD"
     allowed = data["allowed_efforts"]
     assert allowed["fable"] == ["max"]
     for name, t in tiers.items():
@@ -24,12 +27,16 @@ def test_fallback_chains_pinned():
     # 供應中斷降落點逐字釘住（SKILL.md「供應例外，非品質降級」政策的機器可讀形式）
     data = json.loads(RJSON.read_text(encoding="utf-8"))
     tiers, allowed = data["tiers"], data["allowed_efforts"]
-    assert tiers["arbiter"]["fallback"]  == [{"model": "opus",  "effort": "max"}]   # 2026-06-15 前科的正式化
+    assert tiers["arbiter"]["fallback"] == []  # apex 不可用即 HELD，不以次級模型替代
     assert tiers["judge"]["fallback"]    == [{"model": "fable", "effort": "max"}]   # judge 不降，只可升
-    assert tiers["standard"]["fallback"] == [{"model": "opus",  "effort": "max"}]   # 與 BLOCKED 升級通道同向
+    assert tiers["standard"]["fallback"] == [{"model": "opus",  "effort": "xhigh"}] # 同 effort 升級模型能力
+    assert tiers["scan"]["fallback"]     == [{"model": "opus",  "effort": "xhigh"}] # bounded scan 升級到 reason
     assert tiers["reason"]["fallback"]   == [{"model": "fable", "effort": "max"}]
     assert data["fallback_policy"]
     for name, t in tiers.items():
+        if name == "arbiter":
+            assert t.get("on_unavailable") == "HELD"
+            continue
         assert t.get("fallback"), f"{name}: 缺 fallback 鏈"
         for i, fb in enumerate(t["fallback"]):
             assert fb["effort"] in allowed[fb["model"]], f"{name}.fallback[{i}] 違反 allowed_efforts"

@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "verification-outcome.schema.json",
+  "title": "Verification outcome v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "manifest_version", "manifest_sha256", "plan_sha256", "base_sha", "subject_sha", "dispatch", "started_at", "completed_at", "duration_ms", "result", "gates"],
+  "properties": {
+    "schema_version": { "const": "verification-outcome/v1" },
+    "manifest_version": { "const": "verification-manifest/v2" },
+    "manifest_sha256": { "$ref": "#/definitions/sha256" },
+    "plan_sha256": { "$ref": "#/definitions/sha256" },
+    "base_sha": { "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/sha" }] },
+    "subject_sha": { "$ref": "#/definitions/sha" },
+    "dispatch": { "type": "string", "enum": ["affected", "full", "profile"] },
+    "started_at": { "type": "string", "format": "date-time" },
+    "completed_at": { "type": "string", "format": "date-time" },
+    "duration_ms": { "type": "integer", "minimum": 0 },
+    "result": { "type": "string", "enum": ["passed", "failed", "passed_with_advisories", "incomplete"] },
+    "gates": { "type": "array", "maxItems": 500, "items": { "$ref": "#/definitions/gate" } }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "result": { "enum": ["passed", "failed", "passed_with_advisories"] } }, "required": ["result"] },
+      "then": { "properties": { "gates": { "minItems": 1 } } }
+    }
+  ],
+  "definitions": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "gate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["target_id", "gate_id", "capabilities", "enforcement", "command", "cwd", "subject_sha", "duration_ms", "exit_code", "result", "reason", "report_sha256"],
+      "properties": {
+        "target_id": { "$ref": "#/definitions/id" }, "gate_id": { "$ref": "#/definitions/id" },
+        "capabilities": { "$ref": "#/definitions/capabilities" },
+        "enforcement": { "type": "string", "enum": ["required", "advisory"] },
+        "command": { "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/command" }] },
+        "cwd": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^(?![A-Za-z]:)(?![\\\\/])(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$)).+$" }, "subject_sha": { "$ref": "#/definitions/sha" },
+        "duration_ms": { "type": "integer", "minimum": 0 }, "exit_code": { "oneOf": [{ "type": "null" }, { "type": "integer" }] },
+        "result": { "type": "string", "enum": ["passed", "failed", "not_configured", "not_run", "skipped"] },
+        "reason": { "oneOf": [{ "type": "null" }, { "type": "string", "maxLength": 100 }] },
+        "report_sha256": { "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/sha256" }] }
+      }
+    },
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+    "capabilities": { "type": "array", "minItems": 1, "maxItems": 20, "uniqueItems": true, "items": { "type": "string", "enum": ["types", "lint", "unit", "contract", "build", "static-analysis", "deployment-contract", "visual", "runtime", "secret", "dependency", "sast", "changed-lines-coverage"] } },
+    "command": {
+      "type": "object", "additionalProperties": false, "required": ["executable", "args"],
+      "properties": {
+        "executable": { "type": "string", "enum": ["docker", "npm", "npx", "pwsh", "python"] },
+        "args": { "type": "array", "maxItems": 16, "items": { "type": "string", "maxLength": 500 } }
+      }
+    }
+  }
+}

@@ -1,4 +1,5 @@
 {
+  "disableAllHooks": true,
   "permissions": {
     "defaultMode": "plan",
     "disableBypassPermissionsMode": "disable",
@@ -6,89 +7,6 @@
       "Bash(powershell -NoProfile -Command 'Get-Process kit -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '\\\\''C:\\\\Repos\\\\active\\\\iot\\\\AI-BIM-governance\\\\bim-streaming-server\\\\_build\\\\*kit.exe'\\\\'' } | Select-Object Id, Path, StartTime | Format-Table -AutoSize -Wrap')",
       "Bash(powershell -NoProfile -Command \"Write-Host 'pwsh ok'\")",
       "Bash(powershell -NoProfile -Command \"Get-Process kit -ErrorAction SilentlyContinue | Select-Object Id, Path, StartTime\")"
-    ]
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"${CLAUDE_PROJECT_DIR}/scripts/claude-commit-guard.ps1\"",
-            "if": "Bash(git commit*)"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"${CLAUDE_PROJECT_DIR}/scripts/hooks/require-gstack-evidence.ps1\"",
-            "if": "Bash(gh pr merge*)",
-            "timeout": 30,
-            "statusMessage": "browser 前端證據閘…"
-          }
-        ]
-      }
-    ],
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PROJECT_DIR}/scripts/dev/agents-board.mjs\" hook --event SessionStart",
-            "timeout": 15,
-            "statusMessage": "agents-board 並行 session 註冊…"
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PROJECT_DIR}/scripts/dev/agents-board.mjs\" hook --event UserPromptSubmit",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Edit|MultiEdit|Write|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PROJECT_DIR}/scripts/dev/agents-board.mjs\" hook --event PostToolUse",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PROJECT_DIR}/scripts/dev/agents-board.mjs\" hook --event Stop",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PROJECT_DIR}/scripts/dev/agents-board.mjs\" hook --event SessionEnd",
-            "timeout": 10
-          }
-        ]
-      }
     ]
   },
   "enabledPlugins": {

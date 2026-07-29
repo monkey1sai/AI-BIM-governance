@@ -11,6 +11,7 @@ OpenSpec 入口：`npx openspec`（list / validate / show / archive / new）。
 ## Owns
 
 - `openspec/config.yaml` — OpenSpec runtime 設定（schema / context / rules）
+- `openspec/lifecycle-ledger.json` — current + archive lifecycle/task/evidence machine truth；`docs/plans/NOW.md` 只投影 `scope: current`
 - `openspec/changes/<active-id>/` — active change artifacts（proposal / design / tasks / specs delta）
 - `openspec/specs/<capability>/spec.md` — archive 後的 capability spec（source of truth）
 
@@ -28,6 +29,8 @@ OpenSpec 入口：`npx openspec`（list / validate / show / archive / new）。
 - MUST 在 PR merge 後跑 `npx openspec archive <change-id>` 落地 spec；archive 後 active change 目錄消失、`specs/<capability>/spec.md` 出現。
 - MUST 將 deferred change 保留在 `openspec/changes/<change-id>/`，並在 `proposal.md` 頂部使用 canonical `Status: deferred <日期>` 標記、理由與重啟條件；deferred 不構成 active capability owner，也不得為了 WIP 計數移入 archive。`--skip-specs` 只會跳過 canonical spec 同步，**不是** deferred state。
 - MUST 僅 archive 已完成的 change：所有 task checkbox 均已結案；若原工作由明確、非重疊且已接受的 successor 完整承接，須先把原 checkbox 改成已勾選的 terminal disposition 並記錄 successor，不得留下 unchecked task。delta specs 已同步 canonical specs，或已由 successor 明確 supersede。單純 warning、known gap、使用者確認繼續或 `--skip-specs` 均不得把 unfinished/deferred change 重新分類為 completed。
+- MUST 先更新 `lifecycle-ledger.json` 再更新 NOW projection；不得由 unchecked checkbox 推論 active。`subject_commit` 表示 proposal/tasks/evidence 被觀察的 source snapshot，full verifier 會要求這些 source 自該 commit 起未改動。
+- MUST 將既有歷史 archive 的 unchecked／unsupported checkbox 只記為 typed `archive_debt`（owner + review due）；這是 migration debt disclosure，不是完成證據，也不得用於新的 archive。
 - MUST 用繁體中文撰寫 proposal / design / tasks / spec；保留 OpenSpec parser 必要標頭（`## ADDED Requirements` / `## MODIFIED Requirements` / `### Requirement:` / `#### Scenario:` 等）為原文。
 - MUST NOT 修改 `openspec/changes/archive/` 內任何檔案；歷史 correction 需獨立 PR 並在 PR 描述標示。
 - MUST NOT 把 `openspec/AGENTS.md` 或 `openspec/CLAUDE.md` 視為 spec 或 change —— `npx openspec validate` scope 限 `changes/` 與 `specs/` 子目錄。
@@ -45,6 +48,7 @@ OpenSpec 入口：`npx openspec`（list / validate / show / archive / new）。
 ```powershell
 npx openspec validate <change-id> --strict
 npx openspec validate --all --strict
+node scripts/tests/verify-openspec-machine-truth.mjs --repo-root . --ledger openspec/lifecycle-ledger.json --now docs/plans/NOW.md --github-state <repo-contained-raw-github-json> --openspec-list <repo-contained-openspec-list-json> --subject <observed-source-sha>
 ```
 
 ## Done Criteria

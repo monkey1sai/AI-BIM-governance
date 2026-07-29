@@ -1,0 +1,477 @@
+name: Trusted Merge Evidence
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  pull_request_target:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+concurrency:
+  group: trusted-merge-evidence-${{ github.event.workflow_run.pull_requests[0].number || github.event.pull_request.number || github.run_id }}-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  invalidate:
+    name: invalidate stale required merge evidence
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.base.ref == github.event.repository.default_branch && github.event.pull_request.base.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+      statuses: write
+    steps:
+      # Base-controlled event handler: no checkout, artifact download, package install, or PR code.
+      - name: Publish pending status for every evidence-affecting PR event
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+          SUBJECT_SHA: ${{ github.event.pull_request.head.sha }}
+          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [[ ! "$SUBJECT_SHA" =~ ^[0-9a-f]{40}$ ]] || [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            exit 2
+          fi
+          gh api --method POST "repos/$REPOSITORY/statuses/$SUBJECT_SHA" \
+            -f state='pending' \
+            -f context='required merge evidence' \
+            -f description='Fresh base-pinned evidence is being collected.' \
+            -f target_url="$TARGET_URL" > /dev/null
+
+  validate:
+    name: validate base-pinned merge evidence
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.pull_requests[0].number != null
+    runs-on: windows-2025
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      base_sha: ${{ steps.metadata.outputs.base_sha }}
+      body_sha256: ${{ steps.metadata.outputs.body_sha256 }}
+      pr_number: ${{ steps.metadata.outputs.pr_number }}
+      repository_id: ${{ steps.metadata.outputs.repository_id }}
+      run_attempt: ${{ steps.metadata.outputs.run_attempt }}
+      subject_sha: ${{ steps.metadata.outputs.subject_sha }}
+      workflow_id: ${{ steps.metadata.outputs.workflow_id }}
+    steps:
+      # workflow_run executes the workflow definition from the default branch. Candidate files and
+      # downloaded artifacts remain untrusted data; this job has no status-write permission.
+      - name: Checkout trusted default-branch control code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          path: trusted-control
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Setup Node.js for trusted validators
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20.20.2'
+
+      - name: Collect exact source-run and live-PR metadata
+        id: metadata
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: >-
+          node trusted-control/scripts/lib/verification-run-metadata.mjs collect
+          --repository '${{ github.repository }}'
+          --run-id $env:SOURCE_RUN_ID
+          --expected-run-attempt $env:SOURCE_RUN_ATTEMPT
+          --authority trusted_base
+          --output "$env:RUNNER_TEMP/job-results.json"
+          --body-output "$env:RUNNER_TEMP/pr-body.md"
+          --github-output $env:GITHUB_OUTPUT
+
+      - name: Checkout exact trusted PR base
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          path: trusted-base
+          ref: ${{ steps.metadata.outputs.base_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout exact candidate head as data only
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          path: candidate
+          ref: refs/pull/${{ steps.metadata.outputs.pr_number }}/head
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require two-phase gate bootstrap and exact candidate head
+        shell: pwsh
+        env:
+          EXPECTED_HEAD: ${{ steps.metadata.outputs.subject_sha }}
+        run: |
+          foreach ($path in @(
+            'trusted-base/scripts/lib/verification-plan.mjs',
+            'trusted-base/scripts/lib/merge-evidence.mjs',
+            'trusted-base/scripts/lib/GitHubArtifact.psm1',
+            'trusted-base/scripts/lib/collect-openspec-github-state.mjs',
+            'trusted-base/scripts/lib/design-system-gate.ps1',
+            'trusted-base/scripts/tests/check-pr-body-evidence.ps1',
+            'trusted-base/scripts/tests/reconcile-openspec-ledger.ps1',
+            'trusted-base/scripts/tests/verify-openspec-machine-truth.mjs',
+            'trusted-base/scripts/tooling/openspec-observer/package.json',
+            'trusted-base/scripts/tooling/openspec-observer/package-lock.json',
+            'trusted-base/scripts/verification-manifest.json'
+          )) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Base does not contain the trusted gate bootstrap: $path"
+            }
+          }
+          $actualHead = (& git -C candidate rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actualHead -ne $env:EXPECTED_HEAD) {
+            throw 'Candidate checkout is not the exact source-run head.'
+          }
+
+      - name: Recompute NUL-safe changed paths with trusted base logic
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.metadata.outputs.base_sha }}
+          SUBJECT_SHA: ${{ steps.metadata.outputs.subject_sha }}
+        run: |
+          git -C candidate -c core.quotepath=false diff --no-renames --name-only -z "$BASE_SHA...$SUBJECT_SHA" > "$RUNNER_TEMP/changed-paths.bin"
+          node trusted-base/scripts/lib/verification-plan.mjs \
+            --manifest trusted-base/scripts/verification-manifest.json \
+            --changed-paths0-file "$RUNNER_TEMP/changed-paths.bin" \
+            --base "$BASE_SHA" \
+            --subject "$SUBJECT_SHA" \
+            --json-out "$RUNNER_TEMP/trusted-plan.json"
+
+      - name: Recompute trusted design scope without executing candidate code
+        shell: pwsh
+        env:
+          BASE_SHA: ${{ steps.metadata.outputs.base_sha }}
+          SUBJECT_SHA: ${{ steps.metadata.outputs.subject_sha }}
+        run: |
+          $plan = Get-Content -Raw -LiteralPath "$env:RUNNER_TEMP/trusted-plan.json" | ConvertFrom-Json -Depth 100
+          if ($plan.dispatch -eq 'full') {
+            $baseManifest = Get-Content -Raw -LiteralPath 'trusted-base/docs/plans/design-system-reference.manifest.json' | ConvertFrom-Json -Depth 100
+            $scope = [pscustomobject]@{
+              status = 'mixed'
+              frontend_product = $true
+              visual_required = $true
+              full_completion_allowed = $false
+              required_screen_ids = @($baseManifest.screens | ForEach-Object { [string]$_.id } | Sort-Object -Unique)
+              reference_missing_items = @('full-dispatch')
+            }
+          } else {
+            . ./trusted-base/scripts/lib/design-system-gate.ps1
+            $scope = Get-DesignSystemChangeScope `
+              -RepoRoot (Resolve-Path -LiteralPath candidate).Path `
+              -ChangedPaths @($plan.changed_paths) `
+              -BaseSha $env:BASE_SHA `
+              -HeadSha $env:SUBJECT_SHA
+            if ($scope.status -in @('unknown_fail_closed', 'reference_authority_mixed_fail_closed')) {
+              throw "Trusted design scope failed closed: $($scope.status)"
+            }
+          }
+          $screenIds = @($scope.required_screen_ids | ForEach-Object { [string]$_ })
+          if (@($screenIds | Where-Object { $_ -notmatch '^[a-z0-9][a-z0-9.-]{0,63}$' }).Count -gt 0) {
+            throw 'Trusted design scope contains an unsafe screen id.'
+          }
+          $missing = @($scope.reference_missing_items | ForEach-Object { [string]$_ })
+          if (@($missing | Where-Object { $_.Length -eq 0 -or $_.Length -gt 200 -or $_ -match "[`0`r`n]" }).Count -gt 0) {
+            throw 'Trusted design scope contains an unsafe reference-missing item.'
+          }
+          [ordered]@{
+            schema_version = 'design-scope/v1'
+            base_sha = $env:BASE_SHA
+            subject_sha = $env:SUBJECT_SHA
+            status = [string]$scope.status
+            frontend_product = $scope.frontend_product -is [bool] -and $scope.frontend_product
+            visual_required = $scope.visual_required -is [bool] -and $scope.visual_required
+            full_completion_allowed = $scope.full_completion_allowed -is [bool] -and $scope.full_completion_allowed
+            required_screen_ids = $screenIds
+            reference_missing_items = $missing
+          } | ConvertTo-Json -Depth 20 -Compress | Set-Content -LiteralPath "$env:RUNNER_TEMP/design-scope.json" -Encoding utf8
+
+      - name: Validate live PR metadata with base-pinned code and NUL-safe paths
+        shell: pwsh
+        env:
+          BODY_SHA256: ${{ steps.metadata.outputs.body_sha256 }}
+          BASE_SHA: ${{ steps.metadata.outputs.base_sha }}
+          SUBJECT_SHA: ${{ steps.metadata.outputs.subject_sha }}
+        run: |
+          $actualBodyHash = (Get-FileHash -LiteralPath "$env:RUNNER_TEMP/pr-body.md" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualBodyHash -ne $env:BODY_SHA256) { throw 'Live PR body bytes changed after metadata collection.' }
+          & ./trusted-base/scripts/tests/check-pr-body-evidence.ps1 `
+            -BodyPath "$env:RUNNER_TEMP/pr-body.md" `
+            -ChangedPathsPath "$env:RUNNER_TEMP/changed-paths.bin" `
+            -ChangedPathsNulDelimited `
+            -RepoRoot (Resolve-Path -LiteralPath candidate).Path `
+            -BaseSha $env:BASE_SHA `
+            -HeadSha $env:SUBJECT_SHA
+
+      - name: Capture actual pinned OpenSpec observation without a repository-controlled install
+        id: openspec_observation
+        shell: pwsh
+        env:
+          NPM_CONFIG_AUDIT: 'false'
+          NPM_CONFIG_FUND: 'false'
+          NPM_CONFIG_IGNORE_SCRIPTS: 'true'
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_RUN_ATTEMPT: ${{ steps.metadata.outputs.run_attempt }}
+          SUBJECT_SHA: ${{ steps.metadata.outputs.subject_sha }}
+        run: |
+          $candidateRoot = (Resolve-Path -LiteralPath candidate).Path
+          $evidenceRoot = Join-Path $candidateRoot 'artifacts/machine-truth'
+          New-Item -ItemType Directory -Path $evidenceRoot -Force | Out-Null
+          $toolRoot = Join-Path $env:RUNNER_TOOL_CACHE "ai-bim-openspec/1.6.0/$env:SOURCE_RUN_ID-$env:SOURCE_RUN_ATTEMPT"
+          if (Test-Path -LiteralPath $toolRoot) { throw 'Pinned OpenSpec tool root already exists.' }
+          New-Item -ItemType Directory -Path $toolRoot -Force | Out-Null
+          $toolManifestRoot = (Resolve-Path -LiteralPath 'trusted-base/scripts/tooling/openspec-observer').Path
+          Copy-Item -LiteralPath (Join-Path $toolManifestRoot 'package.json') -Destination $toolRoot
+          Copy-Item -LiteralPath (Join-Path $toolManifestRoot 'package-lock.json') -Destination $toolRoot
+          $lockHash = (Get-FileHash -LiteralPath (Join-Path $toolRoot 'package-lock.json') -Algorithm SHA256).Hash
+          Push-Location $toolRoot
+          try {
+            & npm ci --ignore-scripts --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { throw 'Integrity-locked OpenSpec install failed.' }
+          } finally { Pop-Location }
+          if ((Get-FileHash -LiteralPath (Join-Path $toolRoot 'package-lock.json') -Algorithm SHA256).Hash -ne $lockHash) {
+            throw 'OpenSpec dependency lock changed during installation.'
+          }
+          $packagePath = Join-Path $toolRoot 'node_modules/@fission-ai/openspec/package.json'
+          $package = Get-Content -Raw -LiteralPath $packagePath | ConvertFrom-Json -Depth 20
+          if ($package.name -ne '@fission-ai/openspec' -or $package.version -ne '1.6.0') { throw 'Installed OpenSpec package identity drifted.' }
+          $openSpecPath = Join-Path $toolRoot 'node_modules/.bin/openspec.ps1'
+          $nodePath = (Get-Command node -CommandType Application | Select-Object -First 1).Source
+          $openSpecHash = (Get-FileHash -LiteralPath $openSpecPath -Algorithm SHA256).Hash
+          $nodeHash = (Get-FileHash -LiteralPath $nodePath -Algorithm SHA256).Hash
+          $report = & ./trusted-base/scripts/tests/reconcile-openspec-ledger.ps1 `
+            -Mode Reconcile `
+            -RepoRoot $candidateRoot `
+            -LedgerPath 'openspec/lifecycle-ledger.json' `
+            -OpenSpecExecutablePath $openSpecPath `
+            -OpenSpecExecutableSha256 $openSpecHash `
+            -OpenSpecTrustedRoot $toolRoot `
+            -OpenSpecObservationOutputPath 'artifacts/machine-truth/openspec-list.json' `
+            -NodeExecutablePath $nodePath `
+            -NodeExecutableSha256 $nodeHash `
+            -NodeTrustedRoot (Split-Path -Parent $nodePath)
+          if ($LASTEXITCODE -ne 0) { throw "Actual OpenSpec reconciliation failed: $report" }
+          # Ledger rows are lifecycle records and may legitimately cite historical
+          # commits.  The source-run SHA remains the only merge-evidence subject.
+          "subject=$env:SUBJECT_SHA" >> $env:GITHUB_OUTPUT
+
+      - name: Capture sanitized GitHub lifecycle observation with base-pinned collector
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SUBJECT: ${{ steps.openspec_observation.outputs.subject }}
+        run: >-
+          node trusted-base/scripts/lib/collect-openspec-github-state.mjs
+          --repository $env:REPOSITORY
+          --repo-root candidate
+          --ledger openspec/lifecycle-ledger.json
+          --subject $env:SUBJECT
+          --output artifacts/machine-truth/github-state.json
+
+      - name: Reconcile ledger, NOW, actual OpenSpec, and actual GitHub observations
+        shell: pwsh
+        env:
+          SUBJECT: ${{ steps.openspec_observation.outputs.subject }}
+        run: >-
+          node trusted-base/scripts/tests/verify-openspec-machine-truth.mjs
+          --repo-root candidate
+          --ledger openspec/lifecycle-ledger.json
+          --now docs/plans/NOW.md
+          --github-state artifacts/machine-truth/github-state.json
+          --openspec-list artifacts/machine-truth/openspec-list.json
+          --subject $env:SUBJECT
+
+      - name: Download and bounded-extract only exact required artifacts
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ATTEMPT: ${{ steps.metadata.outputs.run_attempt }}
+          SUBJECT_SHA: ${{ steps.metadata.outputs.subject_sha }}
+        run: |
+          Import-Module ./trusted-base/scripts/lib/GitHubArtifact.psm1 -Force
+          $plan = Get-Content -Raw -LiteralPath "$env:RUNNER_TEMP/trusted-plan.json" | ConvertFrom-Json -Depth 100
+          $scope = Get-Content -Raw -LiteralPath "$env:RUNNER_TEMP/design-scope.json" | ConvertFrom-Json -Depth 100
+          $suffix = "$env:SUBJECT_SHA-attempt-$env:RUN_ATTEMPT"
+          $names = [Collections.Generic.List[string]]::new()
+          $names.Add("verification-plan-$suffix")
+          foreach ($target in @($plan.targets | Where-Object { $_.required -eq $true -and $null -ne $_.result_artifact })) {
+            if ($target.id -eq 'design-semantic-visual' -and $scope.visual_required -ne $true) { continue }
+            $names.Add("$($target.result_artifact.artifact_name_prefix)$suffix")
+          }
+          Receive-GitHubArtifactSet `
+            -Repository $env:REPOSITORY `
+            -ObservationPath "$env:RUNNER_TEMP/job-results.json" `
+            -ArtifactNames @($names) `
+            -DestinationRoot "$env:RUNNER_TEMP/merge-evidence-artifacts" `
+            -Token $env:GITHUB_TOKEN
+
+      - name: Validate plan, job conclusions, subjects, attempts, and artifact hashes
+        shell: pwsh
+        run: >-
+          node trusted-base/scripts/lib/merge-evidence.mjs
+          --trusted-plan "$env:RUNNER_TEMP/trusted-plan.json"
+          --job-results "$env:RUNNER_TEMP/job-results.json"
+          --design-scope "$env:RUNNER_TEMP/design-scope.json"
+          --artifacts-root "$env:RUNNER_TEMP/merge-evidence-artifacts"
+          --expected-repository '${{ github.repository }}'
+          --expected-repository-id '${{ steps.metadata.outputs.repository_id }}'
+          --expected-workflow-id '${{ steps.metadata.outputs.workflow_id }}'
+          --expected-base-ref '${{ github.event.repository.default_branch }}'
+          --expected-run-id '${{ github.event.workflow_run.id }}'
+          --expected-run-attempt '${{ steps.metadata.outputs.run_attempt }}'
+          --expected-pr '${{ steps.metadata.outputs.pr_number }}'
+          --report "$env:RUNNER_TEMP/merge-evidence-prevalidated.json"
+
+      - name: Run complete base-pinned functional and pixel validators
+        shell: pwsh
+        env:
+          RUN_ATTEMPT: ${{ steps.metadata.outputs.run_attempt }}
+          SUBJECT_SHA: ${{ steps.metadata.outputs.subject_sha }}
+        run: |
+          $plan = Get-Content -Raw -LiteralPath "$env:RUNNER_TEMP/trusted-plan.json" | ConvertFrom-Json -Depth 100
+          $scope = Get-Content -Raw -LiteralPath "$env:RUNNER_TEMP/design-scope.json" | ConvertFrom-Json -Depth 100
+          $incoming = (Resolve-Path -LiteralPath "$env:RUNNER_TEMP/merge-evidence-artifacts").Path
+          $trustedBase = (Resolve-Path -LiteralPath trusted-base).Path
+          $e2eRoot = Join-Path $trustedBase 'artifacts/e2e'
+          New-Item -ItemType Directory -Path $e2eRoot -Force | Out-Null
+          $attemptSuffix = "$env:SUBJECT_SHA-attempt-$env:RUN_ATTEMPT"
+          $semanticValidators = [Collections.Generic.List[object]]::new()
+
+          $functional = @($plan.targets | Where-Object id -eq 'functional-runtime-conv')[0]
+          if ($functional.required) {
+            $source = Join-Path $incoming "functional-runtime-conv-$attemptSuffix/artifacts/e2e/functional-runtime"
+            if (-not (Test-Path -LiteralPath $source -PathType Container)) { throw 'Functional evidence directory is missing.' }
+            Copy-Item -LiteralPath $source -Destination $e2eRoot -Recurse -Force
+            & (Join-Path $trustedBase 'scripts/tests/verify-functional-runtime-result.ps1') `
+              -RepoRoot $trustedBase `
+              -ResultPath (Join-Path $e2eRoot 'functional-runtime/functional-runtime-result.json') `
+              -AllowUntrackedArtifacts `
+              -SkipGitBinding
+            $semanticValidators.Add([ordered]@{ target_id = 'functional-runtime-conv'; validator = 'functional-runtime-result/v1'; result = 'passed' })
+          }
+
+          $visual = @($plan.targets | Where-Object id -eq 'design-semantic-visual')[0]
+          if ($visual.required -and $scope.visual_required -eq $true) {
+            $sourceRoot = Join-Path $incoming "design-semantic-visual-$attemptSuffix/artifacts/e2e"
+            foreach ($name in @('design-system-visual-result.json', 'design-system-visual')) {
+              $source = Join-Path $sourceRoot $name
+              if (-not (Test-Path -LiteralPath $source)) { throw "Visual evidence is missing: $name" }
+              Copy-Item -LiteralPath $source -Destination $e2eRoot -Recurse -Force
+            }
+            Push-Location (Join-Path $trustedBase 'web-viewer-sample')
+            try {
+              & npm ci --ignore-scripts --no-audit --no-fund
+              if ($LASTEXITCODE -ne 0) { throw 'Trusted visual validator dependencies failed to install.' }
+            } finally {
+              Pop-Location
+            }
+            & (Join-Path $trustedBase 'scripts/tests/verify-design-system-visual-result.ps1') `
+              -RepoRoot $trustedBase `
+              -ManifestPath (Join-Path $trustedBase 'docs/plans/design-system-reference.manifest.json') `
+              -ResultPath (Join-Path $e2eRoot 'design-system-visual-result.json') `
+              -RequiredScreenIds @($scope.required_screen_ids) `
+              -AllowUntrackedArtifacts `
+              -SkipGitBinding
+            $semanticValidators.Add([ordered]@{ target_id = 'design-semantic-visual'; validator = 'design-system-visual-result/v2'; result = 'passed' })
+          }
+          [ordered]@{
+            schema_version = 'semantic-validation-results/v1'
+            subject_sha = $env:SUBJECT_SHA
+            validators = @($semanticValidators)
+          } | ConvertTo-Json -Depth 10 -Compress | Set-Content -LiteralPath "$env:RUNNER_TEMP/semantic-validation-results.json" -Encoding utf8
+
+      - name: Finalize merge evidence only after complete base semantic validators
+        shell: pwsh
+        run: >-
+          node trusted-base/scripts/lib/merge-evidence.mjs finalize
+          --prevalidated-report "$env:RUNNER_TEMP/merge-evidence-prevalidated.json"
+          --semantic-results "$env:RUNNER_TEMP/semantic-validation-results.json"
+          --report "$env:RUNNER_TEMP/merge-evidence-report.json"
+
+  publish:
+    name: publish trusted merge status
+    needs: validate
+    if: always() && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.pull_requests[0].number != null
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      pull-requests: read
+      statuses: write
+    steps:
+      # This job deliberately has no checkout/artifact/npm step. It only rechecks the live head and
+      # publishes a fixed commit status from the trusted default-branch workflow.
+      - name: Publish fixed commit status after live-head recheck
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EXPECTED_BASE_SHA: ${{ needs.validate.outputs.base_sha }}
+          EXPECTED_BODY_SHA: ${{ needs.validate.outputs.body_sha256 }}
+          EXPECTED_HEAD: ${{ github.event.workflow_run.pull_requests[0].head.sha }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          VALIDATION_RESULT: ${{ needs.validate.result }}
+          WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
+        run: |
+          if [[ ! "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] ||
+             [[ ! "$SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || [[ ! "$SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] ||
+             [[ ! "$WORKFLOW_ID" =~ ^[1-9][0-9]*$ ]]; then
+            exit 2
+          fi
+          # Invalidate any prior success before reading fallible validate outputs or live APIs. A
+          # metadata/validation/API failure must leave this exact event-owned head in failure.
+          gh api --method POST "repos/$REPOSITORY/statuses/$EXPECTED_HEAD" \
+            -f state='failure' \
+            -f context='required merge evidence' \
+            -f description='Required evidence is incomplete, stale, or non-authoritative.' \
+            -f target_url="$TARGET_URL" > /dev/null
+          gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/live-pr.json"
+          live_head="$(jq -r '.head.sha' "$RUNNER_TEMP/live-pr.json")"
+          live_state="$(jq -r '.state' "$RUNNER_TEMP/live-pr.json")"
+          live_base="$(jq -r '.base.ref' "$RUNNER_TEMP/live-pr.json")"
+          live_base_sha="$(jq -r '.base.sha' "$RUNNER_TEMP/live-pr.json")"
+          live_body_sha="$(jq -j '.body // ""' "$RUNNER_TEMP/live-pr.json" | sha256sum | cut -d ' ' -f 1)"
+          gh api --method GET "repos/$REPOSITORY/commits/$EXPECTED_HEAD/pulls" -f per_page=100 > "$RUNNER_TEMP/associated-prs.json"
+          associated_pr_total="$(jq 'length' "$RUNNER_TEMP/associated-prs.json")"
+          authoritative_pr_count="$(jq --argjson pr "$PR_NUMBER" --arg head "$EXPECTED_HEAD" --arg base "$DEFAULT_BRANCH" \
+            '[.[] | select(.state == "open" and .head.sha == $head and .base.ref == $base)] | length' "$RUNNER_TEMP/associated-prs.json")"
+          associated_pr_number="$(jq -r --arg head "$EXPECTED_HEAD" --arg base "$DEFAULT_BRANCH" \
+            '[.[] | select(.state == "open" and .head.sha == $head and .base.ref == $base)] | first | .number // 0' "$RUNNER_TEMP/associated-prs.json")"
+          gh api "repos/$REPOSITORY/actions/runs/$SOURCE_RUN_ID" > "$RUNNER_TEMP/source-run.json"
+          current_attempt="$(jq -r '.run_attempt' "$RUNNER_TEMP/source-run.json")"
+          current_conclusion="$(jq -r '.conclusion' "$RUNNER_TEMP/source-run.json")"
+          gh api --method GET "repos/$REPOSITORY/actions/workflows/$WORKFLOW_ID/runs" \
+            -f event=pull_request -f head_sha="$EXPECTED_HEAD" -f per_page=100 > "$RUNNER_TEMP/head-runs.json"
+          latest_run="$(jq -r --argjson pr "$PR_NUMBER" \
+            '[.workflow_runs[] | select(any(.pull_requests[]?; .number == $pr))] | sort_by(.run_number) | last | [.id, .run_attempt, .status, .conclusion] | @tsv' \
+            "$RUNNER_TEMP/head-runs.json")"
+          IFS=$'\t' read -r latest_id latest_attempt latest_status latest_conclusion <<< "$latest_run"
+          if [[ "$VALIDATION_RESULT" == 'success' && "$live_state" == 'open' && "$live_head" == "$EXPECTED_HEAD" &&
+                "$live_base" == "$DEFAULT_BRANCH" && "$live_base_sha" == "$EXPECTED_BASE_SHA" && "$live_body_sha" == "$EXPECTED_BODY_SHA" &&
+                "$associated_pr_total" -lt 100 && "$authoritative_pr_count" == '1' && "$associated_pr_number" == "$PR_NUMBER" &&
+                "$current_attempt" == "$SOURCE_RUN_ATTEMPT" && "$current_conclusion" == 'success' &&
+                "$latest_id" == "$SOURCE_RUN_ID" && "$latest_attempt" == "$SOURCE_RUN_ATTEMPT" &&
+                "$latest_status" == 'completed' && "$latest_conclusion" == 'success' ]]; then
+            gh api --method POST "repos/$REPOSITORY/statuses/$EXPECTED_HEAD" \
+              -f state='success' \
+              -f context='required merge evidence' \
+              -f description='Base-pinned required evidence is complete.' \
+              -f target_url="$TARGET_URL" > /dev/null
+          fi

@@ -147,6 +147,8 @@ Generated wiki / Graphify / GitNexus 內容只能當探索輔助。若目前 che
 
 本 repo 不採單一固定管線；先依 [AGENTS.md](AGENTS.md) 判定 Lane F / B / G / S：
 
+AI coding 工程改善的 proposed backlog 見 [AI Coding Optimization Roadmap](docs/agent-tooling/AI-CODING-OPTIMIZATION-ROADMAP.md)。它不是產品需求、active WIP 或 runtime 完成證據；只有被使用者或 `NOW.md` 明確提升的單一 work package 才進入實作。
+
 - Lane F：最小修正 + targeted tests，不強制 plan、worktree 或 GitNexus impact。
 - Lane B：3–5 項 inline checklist + affected tests；改主要 code symbol 時跑一次 GitNexus impact。
 - Lane G：dedicated branch/worktree + 簡潔 plan + GitNexus impact / `detect_changes` + integration evidence；user-facing 變更另需獨立的 design-semantic-visual 與 functional/runtime browser evidence。

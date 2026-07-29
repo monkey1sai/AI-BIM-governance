@@ -1,0 +1,138 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ai-coding-metrics-report.schema.json",
+  "title": "AI coding metrics report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "authority", "generated_at", "window", "source_summary", "metrics", "packages", "decision"],
+  "properties": {
+    "schema_version": { "const": "ai-coding-metrics-report/v1" },
+    "authority": { "const": "telemetry_only" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "window": {
+      "type": "object", "additionalProperties": false,
+      "required": ["start", "end", "days", "baseline_started_on", "elapsed_days", "phase"],
+      "properties": {
+        "start": { "type": "string", "format": "date-time" },
+        "end": { "type": "string", "format": "date-time" },
+        "days": { "const": 28 },
+        "baseline_started_on": { "const": "2026-07-28" },
+        "elapsed_days": { "type": "integer", "minimum": 0 },
+        "phase": { "const": "baseline_provenance_unverified" }
+      }
+    },
+    "source_summary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["telemetry", "lifecycle_snapshot", "task_packet_snapshot"],
+      "properties": {
+        "telemetry": {
+          "type": "object", "additionalProperties": false,
+          "required": ["supplied", "accepted", "rejected", "rejections"],
+          "properties": {
+            "supplied": { "type": "integer", "minimum": 0 },
+            "accepted": { "type": "integer", "minimum": 0 },
+            "rejected": { "type": "integer", "minimum": 0 },
+            "rejections": {
+              "type": "array", "maxItems": 7,
+              "items": {
+                "type": "object", "additionalProperties": false, "required": ["reason", "count"],
+                "properties": {
+                  "reason": { "type": "string", "enum": ["historical_backfill_forbidden", "outside_window", "future_timestamp", "invalid_contract", "duplicate_observation", "missing_attempt_one", "retry_mismatch"] },
+                  "count": { "type": "integer", "minimum": 1 }
+                }
+              }
+            }
+          }
+        },
+        "lifecycle_snapshot": { "type": "string", "enum": ["accepted", "not_available"] },
+        "task_packet_snapshot": { "type": "string", "enum": ["accepted", "not_available"] }
+      }
+    },
+    "metrics": { "type": "array", "minItems": 7, "maxItems": 7, "items": { "$ref": "#/definitions/metric" } },
+    "packages": { "type": "array", "maxItems": 20, "items": { "$ref": "#/definitions/package" } },
+    "decision": {
+      "type": "object", "additionalProperties": false,
+      "required": ["improvement_targets", "monthly_comparison", "reason"],
+      "properties": {
+        "improvement_targets": { "type": "null" },
+        "monthly_comparison": { "type": "null" },
+        "reason": { "type": "string", "enum": ["no-observations", "baseline-provenance-unverified"] }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "source_summary": {
+            "properties": {
+              "telemetry": { "properties": { "accepted": { "const": 0 } }, "required": ["accepted"] }
+            },
+            "required": ["telemetry"]
+          }
+        },
+        "required": ["source_summary"]
+      },
+      "then": {
+        "properties": {
+          "packages": { "maxItems": 0 },
+          "decision": { "properties": { "reason": { "const": "no-observations" } } },
+          "metrics": {
+            "allOf": [
+              {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "const": "first-pass-gate-yield" },
+                    "status": { "const": "no_observations" },
+                    "value": { "type": "null" },
+                    "sample_size": { "const": 0 }
+                  },
+                  "required": ["id", "status", "value", "sample_size"]
+                }
+              },
+              {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "const": "flake-rate" },
+                    "status": { "const": "no_observations" },
+                    "value": { "type": "null" },
+                    "sample_size": { "const": 0 }
+                  },
+                  "required": ["id", "status", "value", "sample_size"]
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+    "metric": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "status", "value", "unit", "sample_size", "reason"],
+      "properties": {
+        "id": { "type": "string", "enum": ["first-pass-gate-yield", "change-to-fast-check-ms", "rework-commit-count", "active-change-wip", "active-change-age-days", "context-packet-size", "flake-rate"] },
+        "status": { "type": "string", "enum": ["collecting_baseline", "snapshot_only", "not_configured", "no_observations"] },
+        "value": { "oneOf": [{ "type": "null" }, { "type": "number", "minimum": 0 }] },
+        "unit": { "type": "string", "enum": ["ratio", "milliseconds", "count", "days", "declared_read_set_entries"] },
+        "sample_size": { "type": "integer", "minimum": 0 },
+        "reason": { "$ref": "#/definitions/id" }
+      }
+    },
+    "package": {
+      "type": "object", "additionalProperties": false,
+      "required": ["package_id", "sample_size", "first_pass_gate_yield", "flake_rate", "attempt_one_duration_median_ms"],
+      "properties": {
+        "package_id": { "$ref": "#/definitions/id" },
+        "sample_size": { "type": "integer", "minimum": 1 },
+        "first_pass_gate_yield": { "type": "number", "minimum": 0, "maximum": 1 },
+        "flake_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "attempt_one_duration_median_ms": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

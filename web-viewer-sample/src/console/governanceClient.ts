@@ -126,13 +126,80 @@ function a4SearchTimeoutSignal(interpretMode?: ModelSearchInterpretMode): AbortS
   return AbortSignal.timeout(timeoutMs);
 }
 
-async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
+// A4 safe error surface：A4 的 query/error UI 只能拿到 allowlist 內的 stable code，
+// 不得取得 coordinator/upstream diagnostics（避免 endpoint / path / secret 洩漏）。
+export type A4SafeErrorCode =
+  | "a4_authentication_required"
+  | "a4_authentication_unavailable"
+  | "a4_session_not_found"
+  | "a4_session_not_active"
+  | "a4_session_source_unavailable"
+  | "a4_primary_authority_required"
+  | "a4_authentic_lease_unavailable"
+  | "a4_lab_scope_not_enabled"
+  | "a4_trusted_context_unavailable"
+  | "a4_issue_not_eligible"
+  | "invalid_a4_issue_controls"
+  | "a4_proof_expired"
+  | "a4_proof_unavailable"
+  | "partial_fallback_unavailable"
+  | "stale_session_artifact"
+  | "invalid_a4_search_controls"
+  | "governance_service_unavailable";
+
+const A4_SAFE_ERROR_CODES = new Set<A4SafeErrorCode>([
+  "a4_authentication_required",
+  "a4_authentication_unavailable",
+  "a4_session_not_found",
+  "a4_session_not_active",
+  "a4_session_source_unavailable",
+  "a4_primary_authority_required",
+  "a4_authentic_lease_unavailable",
+  "a4_lab_scope_not_enabled",
+  "a4_trusted_context_unavailable",
+  "a4_issue_not_eligible",
+  "invalid_a4_issue_controls",
+  "a4_proof_expired",
+  "a4_proof_unavailable",
+  "partial_fallback_unavailable",
+  "stale_session_artifact",
+  "invalid_a4_search_controls",
+  "governance_service_unavailable",
+]);
+
+export class A4GovernanceError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly code?: A4SafeErrorCode,
+  ) {
+    super(`A4 governance request failed (${status})`);
+    this.name = "A4GovernanceError";
+  }
+}
+
+async function jsonFetch<T>(path: string, init?: RequestInit, options?: { safeError?: boolean }): Promise<T> {
   const res = await fetch(`${COORD_BASE}${path}`, {
+    // init.signal 覆寫保留（#384 的 a4SearchTimeoutSignal 靠它把 model-capable
+    // search 拉到 150s；移除會讓 semantic search 退回 15s 逾時）。
     signal: init?.signal ?? AbortSignal.timeout(GOV_FETCH_TIMEOUT_MS),
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
   });
   if (!res.ok) {
+    if (options?.safeError) {
+      // A4 query/error surfaces must not acquire coordinator/upstream diagnostics.
+      let code: A4SafeErrorCode | undefined;
+      try {
+        const body = await res.clone().json() as { error_code?: unknown; detail?: { code?: unknown } };
+        const candidate = body.error_code ?? body.detail?.code;
+        if (typeof candidate === "string" && A4_SAFE_ERROR_CODES.has(candidate as A4SafeErrorCode)) {
+          code = candidate as A4SafeErrorCode;
+        }
+      } catch {
+        // HTTP status remains safe when no allowlisted code is available.
+      }
+      throw new A4GovernanceError(res.status, code);
+    }
     let detail = res.statusText;
     try {
       const body = await res.clone().json() as { detail?: unknown; error?: unknown; reason?: unknown };
@@ -302,6 +369,7 @@ export const governanceClient = {
         headers: localDevPrincipalHeaders(userToken),
         body: JSON.stringify(body),
       },
+      { safeError: true },
     ),
   searchModelForIfcReady: async (
     ifcReadyJobId: string,
@@ -316,6 +384,7 @@ export const governanceClient = {
         headers: localDevPrincipalHeaders(userToken),
         body: JSON.stringify(body),
       },
+      { safeError: true },
     ),
 
   // Issue tracking
@@ -438,7 +507,7 @@ export interface ModelSearchResponse {
   retry_of_query_id?: string | null;
   model_version_id?: string | null;
   interpret_mode?: ModelSearchInterpretMode | string;
-  search_scope?: string;
+  search_scope?: "session_table_only" | "ifc_ready_table_only" | "table_only" | string;
   completion_scope?: string;
   proof_eligible?: boolean;
   issue_eligible?: boolean;
@@ -450,9 +519,39 @@ export interface ModelSearchResponse {
     matched: number;
     unmapped: number;
     scanned: number;
+    returned?: number;
+    mapped?: number;
+    not_matched?: number;
     truncated?: boolean;
+    total_is_lower_bound?: boolean;
+    scan_complete?: boolean;
   };
   evidence_refs: unknown[];
+  model_invocation?: {
+    attempted: boolean;
+    served_model: string | null;
+    finish_reason: string | null;
+    latency_ms: number | null;
+    error_code: string | null;
+  };
+  session_binding?: {
+    review_session_id: string | null;
+    principal_ref: string | null;
+    model_version_id: string | null;
+    primary_artifact_id: string | null;
+    active_binding_revision: string | null;
+    mapping_provenance: "server_resolved" | "unavailable" | null;
+    primary_lease_capability: "verified" | "lab_unverified" | null;
+  } | null;
+  error_code?: string | null;
+  retryable?: boolean;
+  // partial fallback 的傳輸型別先補齊（後端已可回傳）；本 change 的 UI 不實作
+  // partial-confirmation-required / confirmed partial 兩個 visible state，
+  // 它們仍屬 deferred 母版 a4-semantic-search-model-qa。
+  partial_execution_confirmed?: boolean;
+  partial_confirmation_available?: boolean;
+  partial_fallback_id?: string | null;
+  partial_fallback_expires_at?: string | null;
   next_step?: string | null;
 }
 

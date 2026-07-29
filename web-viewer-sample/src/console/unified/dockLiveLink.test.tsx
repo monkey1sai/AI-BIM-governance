@@ -12,12 +12,11 @@ import { coordinatorClient, type CoordinatorHealth } from "../coordinatorClient"
 
 const HEALTH: CoordinatorHealth = { status: "ok", service: "bim-review-coordinator", kit_signaling_port: 49100 };
 
-/** dock → legacy 真實工具 hash（docks.tsx LIVE_LINK_HREF 的驗收基準）。 */
+/** fixture dock → 真實工具 hash（A4 is a non-operable canonical redirect). */
 const EXPECTED_HREF: Record<string, string> = {
   a1: "#a1-workbench",
   a2: "#version-diff",
   a3: "#federation",
-  a4: "#semantic-search",
   issues: "#issues",
 };
 
@@ -59,11 +58,11 @@ describe("workspace dock live link（health probe 導流 chip）", () => {
     await act(async () => { root.unmount(); });
   });
 
-  it("(b) health 成功 stub：chip 出現（data-prov=live）且五個 dock href 正確", async () => {
+  it("(b) health 成功 stub：fixture dock chip 導向正確；A4 只導向 canonical live surface", async () => {
     const spy = vi.spyOn(coordinatorClient, "health").mockResolvedValue(HEALTH);
     const root = await mountAt("#a1");
     expect(spy).toHaveBeenCalledTimes(1); // probe 只在 mount 打一次，切 dock 不重打。
-    for (const dock of ["a1", "a2", "a3", "a4", "issues"]) {
+    for (const dock of ["a1", "a2", "a3", "issues"]) {
       await act(async () => {
         container.querySelector(`[data-uc="dock-tab-${dock}"]`)!
           .dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -75,6 +74,13 @@ describe("workspace dock live link（health probe 導流 chip）", () => {
       expect(link.getAttribute("data-prov"), dock).toBe("live");
       expect(link.textContent, dock).toBe("完整工具 ↗");
     }
+    await act(async () => {
+      container.querySelector('[data-uc="dock-tab-a4"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(container.querySelector('[data-testid="dock-live-link"]')).toBeNull();
+    expect(container.querySelector('[data-uc="a4-canonical-link"]')?.getAttribute("href"))
+      .toBe("#workspace?dock=a4");
     await act(async () => { root.unmount(); });
   });
 

@@ -16,11 +16,11 @@ Machine values: `Change lane` = `F` / `B` / `G` / `S`; `Behavior contract change
 | GitNexus evidence | impact / detect_changes / not needed |
 | Browser E2E evidence | Playwright / gstack / supported engine / not user-facing |
 | Agent workflow changed? | no / yes, describe rollback |
-| Required checks expected | CI / Agent Governance / PR Review Agent |
+| Required checks expected | CI / Agent Governance / required merge evidence |
 
 ## Frontend Verification
 
-User-facing changes must pass two independent gates: real frontend/runtime operability evidence and the pinned `docs/plans/design-system-reference.manifest.json` fidelity gate. Scope is derived from changed paths plus the base/head manifest union; the PR body cannot select an easier screen. `mixed` and `partial_reference_missing` permit honest partial work but require `Full completion claimed = no`. Semantic evidence is produced only by the `design-semantic-visual` CI Playwright job, never supplied as PR input; that job has merge authority only when branch protection and TRUTH／manifest record its required context as configured.
+User-facing changes must pass two independent producers: real frontend/runtime operability evidence and the pinned `docs/plans/design-system-reference.manifest.json` fidelity gate. Scope is derived from changed paths plus the base/head manifest union; the PR body cannot select an easier screen. `mixed` and `partial_reference_missing` permit honest partial work but require `Full completion claimed = no`. Semantic evidence is produced only by the `design-semantic-visual` CI Playwright job, never supplied as PR input; merge authority belongs only to the base-pinned `required merge evidence` status after it validates the plan, live PR metadata, conclusions, subjects and artifacts.
 
 | Item | Result |
 |---|---|

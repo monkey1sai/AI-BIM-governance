@@ -4,12 +4,32 @@
 > **AI / 人：只聽這份。** 與本檔衝突時，以使用者最新口令為準，其次本檔，再才是 OpenSpec / 設計正本。  
 > 維護規則：每完成一個 outcome 就改狀態；禁止同時推進 >6 個 active OpenSpec product change。
 
+<!-- lifecycle-ledger:start -->
+```json
+{
+  "schema_version": "openspec-now-view/v1",
+  "scope": "current",
+  "changes": [
+    { "id": "a4-console-convergence", "status": "active" },
+    { "id": "a4-semantic-search-model-qa", "status": "deferred" },
+    { "id": "add-single-gpu-session-ai-review-mvp", "status": "deferred" },
+    { "id": "align-frontend-design-system-reference", "status": "deferred" },
+    { "id": "cross-service-structured-log-baseline", "status": "deferred" },
+    { "id": "gpu-session-baseline-and-idle-reclaim", "status": "active" },
+    { "id": "implement-runtime-command-authority-and-rejection", "status": "active" },
+    { "id": "migrate-console-to-hifi-design", "status": "active" },
+    { "id": "rvt-ifc-usdc-lineage", "status": "deferred" }
+  ]
+}
+```
+<!-- lifecycle-ledger:end -->
+
 ## 本週三軌（你已選 1/2/3）
 
 | 序 | 軌 | 目標 | 狀態 |
 |---|---|---|---|
 | **0** | 治理 WIP（#364） | active ≤6；defer 其餘；採納 throughput 預算 | ✅ #364 MERGED；2026-07-24 使用者將上限由 2 調整為 6 |
-| **1** | 收口 | completed 才 archive；deferred 留在 changes 並 frozen | **4 個近期 completed 維持 archive；4 個 unfinished historical correction 恢復 deferred** |
+| **1** | 收口 | completed 才 archive；deferred 留在 changes 並 frozen | **5 個近期 completed 維持 archive；3 個 unfinished historical correction 維持 deferred** |
 | **2** | A4 | 只走切片 PR（先 #365，再下一刀） | **#365 + #380 + #382 + #383 + #386 MERGED**；current = S4-B PR #384 final gate，next = S4-C |
 
 **並行規則：** 0 可與 1 同天；所有軌與新功能合計不得超過 6 個 active product change；deferred/frozen 不因額度增加自動 thaw。
@@ -25,9 +45,8 @@
 | OQ-2 | docs+chore ≤30% | ✅ **已採納**：首月 40% → 次月 30% |
 | OQ-3 | #364 自身是第 10 個 active | ✅ **已採納**：#364 merge 後 archive `governance-throughput-budget` |
 
-2026-07-24 historical correction：deferred 不再放 completed archive；下列 change 均恢復原 id、保留 `Status: deferred`，未落地 delta 仍不構成 canonical authority：
+2026-07-24 historical correction：deferred 不再放 completed archive；下列 change 均恢復原 id、保留 `Status: deferred`，未落地 delta 仍不構成 canonical authority。`minio-folderview-and-baseline-disclosure` 已於 2026-07-29 對帳 7/7 task 與 archive 證據後封存：
 
-- `openspec/changes/minio-folderview-and-baseline-disclosure/`（只允許 canonical closeout reconciliation，不重做 #259/#265 code）
 - `openspec/changes/align-frontend-design-system-reference/`（與 migrate 的互斥需求完成 crosswalk 前不得 thaw）
 - `openspec/changes/rvt-ifc-usdc-lineage/`（1/48；切片與 shared ownership 調和前不得 coding）
 - `openspec/changes/cross-service-structured-log-baseline/`（只補 tasks 10.1–10.5 runtime evidence；不重套已同步 delta）
@@ -46,8 +65,8 @@ Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unch
 | `minio-trigger-lifecycle-backend` | ✅ archived `2026-07-21-minio-trigger-lifecycle-backend` | done | #259 |
 | `c-m4-runtime-command-bridge` | ✅ archived `2026-07-21-c-m4-runtime-command-bridge`（新建 capability spec） | done | #309 |
 | `minio-watch-key-structure` | ✅ archived `2026-07-21-minio-watch-key-structure`（`--skip-specs`；主線 scenario 已在 main） | 選 A deferred-evidence | #237 |
-| `cross-service-structured-log-baseline` | ↩ restored deferred；2026-07-28 P4 `no_browser_evidence` 後使用者選 A 核准 bounded viewer correction | 補真 4-service runtime evidence + standalone viewer flush/failure/retry/cooperative-close；不改 backend pipeline/schema、不做 log dashboard | #126 |
-| `minio-folderview-and-baseline-disclosure` | ↩ restored deferred、frozen | 對帳 code/tests/tasks/canonical spec；禁止重做 code | #265 |
+| `cross-service-structured-log-baseline` | ↩ restored deferred、evidence-only | 只補真 4-service runtime evidence；不改 pipeline/code/canonical spec | #126 |
+| `minio-folderview-and-baseline-disclosure` | ✅ archived `2026-07-29-minio-folderview-and-baseline-disclosure`（7/7 closeout reconciled） | done；archive proposal/tasks 為證據 | #265 |
 | `align-frontend-design-system-reference` | ↩ restored deferred、frozen | 先與 migrate 做 requirement/successor crosswalk；禁止平行 design coding | #363 |
 | `rvt-ifc-usdc-lineage` | ↩ restored deferred、frozen（1/48） | 先切片與調和 shared ownership；禁止直接 apply | #354 |
 
@@ -57,8 +76,8 @@ Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unch
 
 ### 收口 DoD（軌 1）
 
-- [x] 4 個近期 completed closeout change 維持 archive；4 個 unfinished change 已於 2026-07-24 從 archive 恢復原 id
-- [x] lineage / minio-folderview / align-frontend / structured-log 保留 `Status: deferred`、frozen/non-owner，不計 active WIP
+- [x] 5 個近期 completed closeout change 維持 archive；其餘 3 個 unfinished change 維持 deferred／frozen
+- [x] lineage / align-frontend / structured-log 保留 `Status: deferred`、frozen/non-owner，不計 active WIP；minio-folderview 已在 2026-07-29 closeout 後 archive
 - [x] #364 merge + `governance-throughput-budget` archive（OQ-3 出場）
 - [x] 本週 WIP focus 只保留 **A4 + migrate-console**；`implement-runtime-command-authority-and-rejection` 與 `add-single-gpu-session-ai-review-mvp` 的 retain/defer 另案裁決，不在本次 archive 範圍
 - [ ] 過期 worktree 刪到 ≤5（人工／下一切可選）
@@ -69,10 +88,10 @@ Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unch
 
 ### 權威
 
-- OpenSpec：`openspec/changes/a4-semantic-search-model-qa/`（**整包仍 active，但只執行當前切片**）
+- OpenSpec：`openspec/changes/a4-console-convergence/`（**當前 active 切片**：前後端收斂為單一 canonical A4 實作）。母版 `openspec/changes/a4-semantic-search-model-qa/` 已於 2026-07-29 標 `Status: deferred`（雙向分岔 126 衝突 + 1.8／7.4／7.5／8.7 受外部條件封鎖），不計入 active WIP，重啟條件見其 proposal 頂部。
 - 設計正本：`docs/plans/AI-BIM 前後端設計文件.dc.html` §04 / §08 R2–R4
 - 凍結面：不改 `governance-service/app.py` 入口形態、不改 `governanceProxy` 契約形狀亂擴、不改 `conversion_authority.py`
-- 既有大 branch `codex/openspec/a4-semantic-search-model-qa`（~6k 行）= **待收斂資產**，不是本週重做來源
+- 既有大 branch = **待收斂資產**，不是本週重做來源。2026-07-29 已保全上 origin：`codex/openspec/a4-semantic-search-model-qa-convergence`（`e0bac06`，前端 live Console 938 行在此）為收斂來源；其前身 `codex/openspec/a4-semantic-search-model-qa`（`9abb4af`）經逐檔比對確認被 superseded，本地已場銷。後端與 3D handoff 以 `origin/main` 為基準（`engine.py` 1160 行、`proofs.py` 623 行、6.3–6.5 已勾）。
 
 ### 切片佇列
 
@@ -183,5 +202,6 @@ Done: 通過 DoD 所列測試；回報 verified / inferences / risks
 | 2026-07-21 | #364 merge；archive governance-throughput-budget；OQ 全落地 |
 | 2026-07-22 | 使用者確認 deferred archive：`minio-folderview-and-baseline-disclosure`、`align-frontend-design-system-reference`、`rvt-ifc-usdc-lineage` 均以 `--skip-specs` archive；#380 merged，下一刀改為 S3。 |
 | 2026-07-24 | 使用者改採嚴格 terminal rule：archive 僅限 completed／完整 successor；三個 7/22 deferred change 與 structured-log evidence 缺口 historical correction 恢復原 id，維持 frozen/non-owner。 |
+| 2026-07-29 | `minio-folderview-and-baseline-disclosure` 完成 frozen closeout reconciliation：7/7 tasks 已有 terminal disposition，更新 lifecycle ledger 與 NOW projection 後 archive。 |
 | 2026-07-24 | 使用者將 active OpenSpec WIP 上限由 2 調整為 6；新增額度不自動 thaw deferred/frozen change。 |
 | 2026-07-23 | #382／#383／#386 merged；#386 先收斂 scoped A4 visible caller compatibility，S4-B coordinator session search proxy、安全 transport、host-kit dual-namespace seam 與 cold-scan timeout regression 由 PR #384 交付（狀態以 GitHub machine truth 為準），S4-C/D 仍 pending。 |
