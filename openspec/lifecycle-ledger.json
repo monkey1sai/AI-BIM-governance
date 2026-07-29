@@ -1417,18 +1417,20 @@
       "id": "isolated-branch-stack-browser-e2e",
       "status": "active",
       "owner": "repository-maintainer",
-      "current_slice": "隔離 stack 契約與 repo-owned launcher（proposal 已立，實作未開始）",
+      "current_slice": "隔離 stack launcher／manifest contract 已完成；A4 consumer 為 pre-browser downloaded-job known gap；PR-only closeout pending",
       "blocked_by": [],
-      "last_verified": "2026-07-29T10:00:00Z",
+      "last_verified": "2026-07-29T19:25:19Z",
       "task_ledger": {
-        "completed": 0,
-        "total": 30
+        "completed": 21,
+        "total": 31
       },
       "evidence_refs": [
         "openspec/changes/isolated-branch-stack-browser-e2e/proposal.md",
-        "openspec/changes/isolated-branch-stack-browser-e2e/tasks.md"
+        "openspec/changes/isolated-branch-stack-browser-e2e/tasks.md",
+        "artifacts/e2e/isolated-branch-stack-browser-e2e/p1-consumer-20260730-030207201-c15f2e25/consumer-result.json",
+        "artifacts/e2e/isolated-branch-stack-browser-e2e/p1-consumer-20260730-030207201-c15f2e25/stack-manifest.json"
       ],
-      "subject_commit": "13033cb4331642f6b04dd3ab39f2c6e32787d939",
+      "subject_commit": "8b34c8e0c2f01bd62c38b296d10be2335016c2da",
       "archive_debt": null
     },
     {
