@@ -3,11 +3,13 @@ param(
     [ValidateSet('start', 'stop', 'status')][string] $Action = 'status',
     [string] $ChangeId,
     [string] $RunId,
-    [string] $Offset
+    [string] $Offset,
+    [Alias('RepoRoot')][string] $CliRepoRoot
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+Import-Module -Force (Join-Path $PSScriptRoot '..\lib\StructLog.psm1')
 
 $script:IsolatedStackPolicy = [ordered]@{
     base = [ordered]@{ coordinator = 8005; governance = 49103; viewer = 5180 }
@@ -163,6 +165,74 @@ function Resolve-IsolatedRuntime {
     [pscustomobject]@{ python = $pythonExe; node = $nodeExe; tsx = $tsxCli }
 }
 
+function Resolve-IsolatedStackStateLayout {
+    param([string] $RepoRoot, [string] $RunDirectory)
+    $fixtureRoot = [IO.Path]::GetFullPath((Join-Path $RepoRoot 'storage'))
+    $stateRoot = [IO.Path]::GetFullPath((Join-Path $RunDirectory 'state'))
+    $governanceRoot = Join-Path $stateRoot 'governance'
+    $coordinatorRoot = Join-Path $stateRoot 'coordinator'
+    [pscustomobject]@{
+        fixture_root = $fixtureRoot
+        state_root = $stateRoot
+        governance_root = $governanceRoot
+        governance_db = Join-Path $governanceRoot 'governance.db'
+        governance_federation_out = Join-Path $governanceRoot 'federated'
+        coordinator_root = $coordinatorRoot
+    }
+}
+
+function New-IsolatedBackendEnvironment {
+    param(
+        [ValidateSet('governance','coordinator')][string] $Role,
+        $StateLayout,
+        $Ports
+    )
+    if ($Role -eq 'governance') {
+        return @{
+            GOV_PORT = "$($Ports.governance)"
+            GOV_DB_PATH = [string]$StateLayout.governance_db
+            GOV_FED_OUT = [string]$StateLayout.governance_federation_out
+            BIM_FILE_LIBRARY_ROOT = [string]$StateLayout.fixture_root
+            RUNTIME_STORAGE_ROOT = [string]$StateLayout.fixture_root
+            LOG_ROOT = (Join-Path $StateLayout.governance_root 'logs')
+        }
+    }
+
+    $coordinatorRoot = [string]$StateLayout.coordinator_root
+    $fixtureArtifacts = Join-Path $StateLayout.fixture_root 'artifacts'
+    $coordinatorStorage = Join-Path $coordinatorRoot 'storage'
+    @{
+        PORT = "$($Ports.coordinator)"
+        HOST = '127.0.0.1'
+        GOVERNANCE_API_BASE = "http://127.0.0.1:$($Ports.governance)"
+        COORDINATOR_PUBLIC_BASE_URL = "http://127.0.0.1:$($Ports.coordinator)"
+        VIEWER_PUBLIC_BASE_URL = "http://127.0.0.1:$($Ports.viewer)"
+        CORS_ORIGINS = "http://127.0.0.1:$($Ports.viewer)"
+        SESSION_STORE_DIR = (Join-Path $coordinatorRoot 'sessions')
+        EVENT_LOG_DIR = (Join-Path $coordinatorRoot 'events')
+        CALLBACK_OUTBOX_STORE_PATH = (Join-Path $coordinatorRoot 'callback-outbox.json')
+        CONVERSION_LEDGER_STORE_PATH = (Join-Path $coordinatorRoot 'conversion-ledger.json')
+        ARTIFACT_HEALTH_LEDGER_STORE_PATH = (Join-Path $coordinatorRoot 'artifact-health-ledger.json')
+        EXTERNAL_IFC_READY_STORE_PATH = (Join-Path $coordinatorRoot 'external-ifc-ready.json')
+        STORAGE_ROOT = $coordinatorStorage
+        STORAGE_HOST_ROOT = $coordinatorStorage
+        RUNTIME_STORAGE_ROOT = $coordinatorStorage
+        EDGE_RUNTIME_DATA_ROOT = (Join-Path $coordinatorRoot 'edge-runtime')
+        A4_CONVERSION_ARTIFACTS_ROOT = $fixtureArtifacts
+        A4_CONVERSION_ARTIFACTS_HOST_ROOT = $fixtureArtifacts
+        LOG_ROOT = (Join-Path $coordinatorRoot 'logs')
+        MINIO_WATCH_ENABLED = 'false'
+    }
+}
+
+function ConvertTo-IsolatedCreationIdentity {
+    param($CreationDate)
+    if ($CreationDate -is [datetime]) {
+        return $CreationDate.ToUniversalTime().ToString('o')
+    }
+    return [string]$CreationDate
+}
+
 function Get-IsolatedProcessIdentity {
     param(
         [int] $ProcessId,
@@ -179,9 +249,30 @@ function Get-IsolatedProcessIdentity {
         pid = [int]$process.ProcessId
         entrypoint = $Entrypoint
         command_line = $commandLine
-        creation_identity = [string]$process.CreationDate
+        creation_identity = ConvertTo-IsolatedCreationIdentity $process.CreationDate
         executable_path = [string]$process.ExecutablePath
     }
+}
+
+function New-IsolatedStackLifecycleData {
+    param(
+        [string]$StructRunId,
+        [string]$ChangeId,
+        [string]$StackRunId,
+        [ValidateSet('start','status','stop','rollback')][string]$Action,
+        [ValidateSet('start','active','closing','closed')][string]$Phase,
+        [string]$Status
+    )
+    $data = @{
+        phase = $Phase
+        subject_kind = 'script_run'
+        subject_id = $StructRunId
+        change_id = $ChangeId
+        stack_run_id = $StackRunId
+        action = $Action
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Status)) { $data.status = $Status }
+    return $data
 }
 
 function Test-IsolatedProcessOwnership {
@@ -347,7 +438,7 @@ function Assert-IsolatedStackManifestIdentity {
 }
 
 function New-IsolatedStackManifest {
-    param([string]$RepoRoot,[string]$ChangeId,[string]$RunId,$Preflight,[string]$HeadSha,[object[]]$Processes)
+    param([string]$RepoRoot,[string]$ChangeId,[string]$RunId,$Preflight,[string]$HeadSha,[object[]]$Processes,$StateLayout)
     [ordered]@{
         schema_version='isolated-branch-stack/v1'; stack_kind='isolated_branch_stack'
         change_id=$ChangeId; run_id=$RunId; worktree_root=$RepoRoot; offset=$Preflight.offset
@@ -361,6 +452,13 @@ function New-IsolatedStackManifest {
         backend_ready=[ordered]@{governance=$true;coordinator=$true}
         lifecycle_owners=[ordered]@{governance='repo_launcher';coordinator='repo_launcher';viewer='playwright_webserver'}
         viewer=[ordered]@{expected_port=$Preflight.ports.viewer;owner='playwright_webserver';managed_by_launcher=$false}
+        read_only_fixture_root=[string]$StateLayout.fixture_root
+        mutable_state=[ordered]@{
+            root=[string]$StateLayout.state_root
+            governance_db=[string]$StateLayout.governance_db
+            governance_federation_out=[string]$StateLayout.governance_federation_out
+            coordinator_root=[string]$StateLayout.coordinator_root
+        }
         processes=$Processes
     }
 }
@@ -425,9 +523,19 @@ function Stop-IsolatedStackRun {
 function Start-IsolatedStackRun {
     param(
         $RepoRoot,$ChangeId,$RunId,$Preflight,$Runtime,$Reservation,$StartBackendFn,$HealthFn,$IdentityLookup,$StopProcessFn,$HeadShaFn,
-        [scriptblock]$ProcessExistsFn,[scriptblock]$ListenerLookupFn
+        [scriptblock]$ProcessExistsFn,[scriptblock]$ListenerLookupFn,$LifecycleLogger
     )
     $runDirectory=Split-Path -Parent $Preflight.manifest_path
+    $stateLayout=Resolve-IsolatedStackStateLayout -RepoRoot $RepoRoot -RunDirectory $runDirectory
+    foreach ($directory in @(
+        $stateLayout.state_root,
+        $stateLayout.governance_root,
+        $stateLayout.coordinator_root,
+        (Join-Path $stateLayout.coordinator_root 'storage'),
+        (Join-Path $stateLayout.coordinator_root 'edge-runtime')
+    )) {
+        New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    }
     $started=[System.Collections.Generic.List[object]]::new()
     try {
         $head=& $HeadShaFn $RepoRoot
@@ -436,7 +544,8 @@ function Start-IsolatedStackRun {
         $governanceSpec=@{
             Role='governance';WorkingDirectory=(Join-Path $RepoRoot 'governance-service');Executable=$Runtime.python
             Arguments=@('-m','uvicorn','app:app','--host','127.0.0.1','--port',"$($Preflight.ports.governance)")
-            Environment=@{GOV_PORT="$($Preflight.ports.governance)"};RunDirectory=$runDirectory;Entrypoint='app:app'
+            Environment=(New-IsolatedBackendEnvironment -Role governance -StateLayout $stateLayout -Ports $Preflight.ports)
+            RunDirectory=$runDirectory;Entrypoint='app:app'
         }
         $governance=& $StartBackendFn $governanceSpec
         $started.Add($governance)
@@ -446,20 +555,14 @@ function Start-IsolatedStackRun {
         $coordinatorSpec=@{
             Role='coordinator';WorkingDirectory=(Join-Path $RepoRoot 'bim-review-coordinator');Executable=$Runtime.node
             Arguments=@($Runtime.tsx,$indexPath)
-            Environment=@{
-                PORT="$($Preflight.ports.coordinator)";HOST='127.0.0.1'
-                GOVERNANCE_API_BASE="http://127.0.0.1:$($Preflight.ports.governance)"
-                COORDINATOR_PUBLIC_BASE_URL="http://127.0.0.1:$($Preflight.ports.coordinator)"
-                VIEWER_PUBLIC_BASE_URL="http://127.0.0.1:$($Preflight.ports.viewer)"
-                CORS_ORIGINS="http://127.0.0.1:$($Preflight.ports.viewer)"
-            }
+            Environment=(New-IsolatedBackendEnvironment -Role coordinator -StateLayout $stateLayout -Ports $Preflight.ports)
             RunDirectory=$runDirectory;Entrypoint=$indexPath
         }
         $coordinator=& $StartBackendFn $coordinatorSpec
         $started.Add($coordinator)
         if(-not (& $HealthFn "http://127.0.0.1:$($Preflight.ports.coordinator)/health")){throw 'coordinator health failed'}
 
-        $manifest=New-IsolatedStackManifest -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Preflight $Preflight -HeadSha $head -Processes @($started)
+        $manifest=New-IsolatedStackManifest -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Preflight $Preflight -HeadSha $head -Processes @($started) -StateLayout $stateLayout
         Write-IsolatedJsonAtomic -Path $Preflight.manifest_path -Value $manifest -NoClobber
         [pscustomobject]@{status='started';manifest_path=$Preflight.manifest_path;manifest=$manifest}
     } catch {
@@ -468,9 +571,15 @@ function Start-IsolatedStackRun {
             $rollbackMissingProcessFn = New-IsolatedMissingProcessGuard -Ports $Preflight.ports -ProcessExistsFn $ProcessExistsFn -ListenerLookupFn $ListenerLookupFn
             $rollbackResults = @(Stop-IsolatedBackends -Processes @($started) -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn -MissingProcessFn $rollbackMissingProcessFn -AllowMissing)
             $rollbackFailures = @($rollbackResults | Where-Object { $_.status -in @('not_owned','stop_failed') })
+            if ($null -ne $LifecycleLogger) {
+                $rollbackStatus = if ($rollbackFailures.Count -eq 0) { 'complete' } else { 'incomplete' }
+                $rollbackData = New-IsolatedStackLifecycleData -StructRunId $LifecycleLogger.RunId -ChangeId $ChangeId `
+                    -StackRunId $RunId -Action rollback -Phase closed -Status $rollbackStatus
+                $LifecycleLogger | Write-StructLifecycle -Msg 'isolated branch stack startup rollback completed' -Data $rollbackData | Out-Null
+            }
             if ($rollbackFailures.Count -gt 0) {
                 try {
-                    $recovery = New-IsolatedStackManifest -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Preflight $Preflight -HeadSha $head -Processes @($started)
+                    $recovery = New-IsolatedStackManifest -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Preflight $Preflight -HeadSha $head -Processes @($started) -StateLayout $stateLayout
                     $recovery.backend_ready.governance = $false
                     $recovery.backend_ready.coordinator = $false
                     $recovery | Add-Member -Force -NotePropertyName reservation_held -NotePropertyValue $true
@@ -513,7 +622,8 @@ function Invoke-IsolatedBranchStack {
         [scriptblock]$HeadShaFn={param($root) (& git -C $root rev-parse HEAD).Trim()},
         [scriptblock]$WorktreeStatusFn={param($root) & git -C $root status --porcelain --untracked-files=all},
         [scriptblock]$ReservationAcquireFn={param($root,$change,$run,$offset) Acquire-IsolatedStackReservations -RepoRoot $root -ChangeId $change -RunId $run -Offset $offset},
-        [scriptblock]$ReservationReleaseFn={param($reservation) Release-IsolatedStackReservations -Reservation $reservation}
+        [scriptblock]$ReservationReleaseFn={param($reservation) Release-IsolatedStackReservations -Reservation $reservation},
+        $LifecycleLogger=$null
     )
     Assert-SafeStackSegment -Name 'ChangeId' -Value $ChangeId
     Assert-SafeStackSegment -Name 'RunId' -Value $RunId
@@ -545,7 +655,7 @@ function Invoke-IsolatedBranchStack {
         $runtime=& $RuntimeResolver $RepoRoot
         Start-IsolatedStackRun -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Preflight $preflight -Runtime $runtime -Reservation $reservation `
           -StartBackendFn $StartBackendFn -HealthFn $HealthFn -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn -HeadShaFn $HeadShaFn `
-          -ProcessExistsFn $ProcessExistsFn -ListenerLookupFn $StopListenerLookupFn
+          -ProcessExistsFn $ProcessExistsFn -ListenerLookupFn $StopListenerLookupFn -LifecycleLogger $LifecycleLogger
     } catch {
         if ($_.Exception.Data['KeepIsolatedReservation'] -eq $true) { $releaseReservation = $false }
         throw
@@ -554,6 +664,48 @@ function Invoke-IsolatedBranchStack {
     }
 }
 
+function Invoke-IsolatedBranchStackCli {
+    param(
+        [ValidateSet('start','status','stop')][string]$Action,
+        [string]$ChangeId,
+        [string]$RunId,
+        [string]$OffsetInput,
+        [string]$RepoRoot=(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+    )
+    $logRoot = Join-Path $RepoRoot 'artifacts\e2e\_launcher\structured-logs'
+    $structRunId = New-StructLogRunId
+    $logger = New-StructLogger -Service 'scripts' -Component 'isolated-branch-stack' -RunId $structRunId `
+        -InitialTraceId "script_$structRunId" -LogRoot $logRoot -SkipEnvSnapshot
+    $inputsValidated = $false
+    try {
+        Assert-SafeStackSegment -Name 'ChangeId' -Value $ChangeId
+        Assert-SafeStackSegment -Name 'RunId' -Value $RunId
+        $inputsValidated = $true
+        $startData = New-IsolatedStackLifecycleData -StructRunId $structRunId -ChangeId $ChangeId `
+            -StackRunId $RunId -Action $Action -Phase start
+        $logger | Write-StructLifecycle -Msg 'isolated branch stack action started' -Data $startData | Out-Null
+        $result = Invoke-IsolatedBranchStack -Action $Action -ChangeId $ChangeId -RunId $RunId -OffsetInput $OffsetInput -RepoRoot $RepoRoot -LifecycleLogger $logger
+        $completionData = New-IsolatedStackLifecycleData -StructRunId $structRunId -ChangeId $ChangeId `
+            -StackRunId $RunId -Action $Action -Phase closed -Status ([string]$result.status)
+        $logger | Write-StructLifecycle -Msg 'isolated branch stack action completed' -Data $completionData | Out-Null
+        return $result
+    } catch {
+        $safeChangeId = if ($inputsValidated) { $ChangeId } else { 'invalid' }
+        $safeStackRunId = if ($inputsValidated) { $RunId } else { 'invalid' }
+        $safeReason = if ($inputsValidated) { $_.Exception.Message } else { 'input validation failed' }
+        $failureData = New-IsolatedStackLifecycleData -StructRunId $structRunId -ChangeId $safeChangeId `
+            -StackRunId $safeStackRunId -Action $Action -Phase closed -Status failed
+        $logger | Write-StructLifecycle -Msg 'isolated branch stack action failed' -Data $failureData -Level error | Out-Null
+        $logger | Write-StructAnomaly -Msg 'isolated branch stack action failed' -Data @{
+            anomaly_kind = 'unexpected_state'; phase = $Action; reason = $safeReason
+            subject_kind = 'script_run'; subject_id = $structRunId; change_id = $safeChangeId; stack_run_id = $safeStackRunId; action = $Action
+        } | Out-Null
+        throw
+    }
+}
+
 if ($MyInvocation.InvocationName -ne '.') {
-    Invoke-IsolatedBranchStack -Action $Action -ChangeId $ChangeId -RunId $RunId -OffsetInput $Offset
+    $cliParameters = @{ Action=$Action; ChangeId=$ChangeId; RunId=$RunId; OffsetInput=$Offset }
+    if (-not [string]::IsNullOrWhiteSpace($CliRepoRoot)) { $cliParameters.RepoRoot = $CliRepoRoot }
+    Invoke-IsolatedBranchStackCli @cliParameters
 }

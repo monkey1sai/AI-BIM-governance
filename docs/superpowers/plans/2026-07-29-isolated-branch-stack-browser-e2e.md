@@ -16,7 +16,9 @@
 - 保留集合固定含 `8004`、`49102`、`49101`、`8010`、`5173`、`5174`、`49100`、`49110..49150`；domain 與交集檢查必須先於任何 listener 查詢、cleanup 或 service start。
 - `ChangeId` 與 `RunId` 必填且只能是安全單一路徑 segment；manifest 固定為 `artifacts/e2e/<change-id>/<run-id>/stack-manifest.json`，同名存在時不得覆寫、停止或啟動。
 - cleanup 只允許 manifest PID、精確 process entrypoint/command line、creation identity 三者在 stop 前全部重驗相符的 backend；先驗完全部 backend，再停止任何一個 PID。
-- launcher 只管理 governance/coordinator；viewer 只由 Playwright `webServer` 或同 manifest viewer port 上的明示 external server 管理。不得啟動 Kit、streaming server、WebRTC 或 GPU runtime。
+- launcher 只管理 governance/coordinator；viewer 只由 Playwright `webServer` 管理，require-real 禁止未綁 build identity 的 external server。不得啟動 Kit、streaming server、WebRTC 或 GPU runtime。
+- governance DB/federation output 與 coordinator session/event/outbox/ledger/IFC-ready store/storage 全部位於每 run 的 `state/`；worktree `storage/` 僅作 read-only fixture root，child process 不得沿用 deployment mutable env。
+- require-real global setup 在 health 後重驗 backend process identity 與 listener lineage；lineage 每節含 creation identity、拒絕 PID-reuse chronology，snapshot 前再重驗 listener/lineage；browser guard 同時涵蓋 HTTP request 與 WebSocket。
 - 被引用為 evidence 的 run 必須設 `E2E_REQUIRE_REAL=1` 與 `E2E_STACK_MANIFEST`；缺 manifest、錯 worktree/path/content/head、env mismatch、API/fixture/surface 缺失或保留 port request 都是 hard failure，不得 `test.skip`。
 - browser 只呼叫 manifest coordinator；不得直連 governance internal port。harness build flag 與 query flag都要揭露，任一 fake control-plane harness 生效時不得宣稱 coordinator review socket／authority ack 真實。
 - 本 change 不修改 A4 runtime/UI 實作、不修 A4 consumer failure、不碰 Kit/WebRTC/design baselines/deploy semantics，也不執行 `scripts/dev/rebuild-test-deploy.ps1`。

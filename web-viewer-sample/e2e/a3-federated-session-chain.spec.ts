@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { expect, test, type APIRequestContext, type Locator, type TestInfo } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Locator } from "@playwright/test";
 import {
   classifyHarnessUse,
   loadIsolatedStackConfig,

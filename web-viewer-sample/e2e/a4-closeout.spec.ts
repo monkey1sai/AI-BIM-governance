@@ -2,6 +2,7 @@ import { expect, test, type Page, type Route, type TestInfo } from "@playwright/
 import {
   classifyHarnessUse,
   loadIsolatedStackConfig,
+  parseObservedNetworkUrl,
   requireReal,
   watchForbiddenRequests,
   writeIsolatedEvidenceManifest,
@@ -83,7 +84,7 @@ for (const viewport of VIEWPORTS) {
       genericSearchRequests = [];
       pendingEvidence = null;
       page.on("request", requestEvent => {
-        if (new URL(requestEvent.url()).pathname === "/api/governance/search/model") {
+        if (parseObservedNetworkUrl(requestEvent.url())?.pathname === "/api/governance/search/model") {
           genericSearchRequests.push(requestEvent.url());
         }
       });
@@ -282,6 +283,19 @@ for (const viewport of VIEWPORTS) {
       await expect(page.getByTestId("a4-results-table")).toBeVisible();
       await expect(page.getByTestId("a4-results-table").locator("tbody tr").first().locator("td").nth(1)).toHaveText(searchQuery);
       await expect(page.getByTestId("a4-job-select")).toHaveValue(jobId);
+      await expect(page.getByTestId("a4-source-scope-note")).toContainText("ifc_ready_table_only");
+      const scopeField = page.getByText("search_scope", { exact: true }).first().locator("..").locator(".ec-v");
+      await expect.poll(() => scopeField.evaluate(element => element.firstChild?.textContent?.trim()))
+        .toBe("ifc_ready_table_only");
+      const completionField = page.getByText("completion_scope", { exact: true }).first().locator("..").locator(".ec-v");
+      await expect.poll(() => completionField.evaluate(element => element.firstChild?.textContent?.trim()))
+        .toBe("table_only");
+      const resultScanField = page.getByText("result_scan_scope", { exact: true }).first().locator("..").locator(".ec-v");
+      await expect.poll(() => resultScanField.evaluate(element => element.firstChild?.textContent?.trim()))
+        .toBe("complete_table");
+      await expect(page.getByText("deterministic_grammar").first()).toBeVisible();
+      await expect(page.getByTestId("a4-create-issues")).toBeDisabled();
+      await expect(page.getByTestId("a4-actions-unavailable")).toContainText("signed-proof");
       await finishEvidence(page, testInfo, `a4-real-success-${viewport.label}`, ["success"], `POST /api/governance/search/model/for-ifc-ready/${jobId}`);
     });
   });

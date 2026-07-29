@@ -3,6 +3,7 @@
 # 確需新增入庫時用 git add -f）。
 _output/
 _playwright-output/
+_launcher/
 report/
 vg01-branch-coordinator/
 *.png

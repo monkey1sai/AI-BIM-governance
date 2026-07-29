@@ -28,7 +28,44 @@ $governanceWorkflow = Get-Content -Raw -LiteralPath (Join-Path $repoRoot '.githu
 Assert-True ($governanceWorkflow -match 'pwsh -NoProfile -NonInteractive -File scripts/tests/test-isolated-branch-stack\.ps1') 'agent-governance workflow runs isolated stack machine test'
 
 $launcherPath = Join-Path $repoRoot 'scripts\dev\start-isolated-branch-stack.ps1'
+$launcherSource = Get-Content -Raw -LiteralPath $launcherPath
+Assert-True ($launcherSource -match 'Import-Module.*StructLog\.psm1') 'launcher imports the repository StructLog module'
+$ignoredLauncherLog = & git -C $repoRoot check-ignore --no-index 'artifacts/e2e/_launcher/structured-logs/probe.jsonl'
+Assert-Equal 0 $LASTEXITCODE 'fixed-root launcher logs remain outside the clean-worktree gate'
+Assert-True ($ignoredLauncherLog -match 'artifacts/e2e/_launcher/structured-logs/probe\.jsonl') 'git check-ignore identifies the launcher log path'
 . $launcherPath
+
+$capturedLifecycleRecords = [System.Collections.Generic.List[object]]::new()
+$captureLifecycleRecord = ({ param($record) [void]$capturedLifecycleRecords.Add($record) }).GetNewClosure()
+$lifecycleLogger = New-StructLogger -Service 'scripts' -Component 'isolated-branch-stack' `
+    -RunId 'run_20260730_051500_abc123' -InitialTraceId 'script_run_20260730_051500_abc123' `
+    -SkipEnvSnapshot -InMemoryOnly -RecordSink $captureLifecycleRecord
+$lifecycleData = New-IsolatedStackLifecycleData -StructRunId $lifecycleLogger.RunId -ChangeId 'change-a' `
+    -StackRunId 'run-a' -Action start -Phase closed -Status started
+$lifecycleLogger | Write-StructLifecycle -Msg 'isolated branch stack action completed' -Data $lifecycleData | Out-Null
+$failureLifecycleData = New-IsolatedStackLifecycleData -StructRunId $lifecycleLogger.RunId -ChangeId 'change-a' `
+    -StackRunId 'run-a' -Action start -Phase closed -Status failed
+$lifecycleLogger | Write-StructLifecycle -Msg 'isolated branch stack action failed' -Data $failureLifecycleData -Level error | Out-Null
+Assert-Equal 2 $capturedLifecycleRecords.Count 'launcher lifecycle helper emits terminal success and failure records'
+$structuredSchema = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'tests\contracts\structured-log\schema.json') | ConvertFrom-Json
+$lifecycleSchema = @($structuredSchema.allOf | Where-Object { $_.if.properties.event_type.const -ceq 'lifecycle' })[0].then.properties.data
+foreach ($lifecycleRecord in $capturedLifecycleRecords) {
+    foreach ($requiredField in @($structuredSchema.required)) {
+        Assert-True ($null -ne $lifecycleRecord.$requiredField) "lifecycle record has required top-level field $requiredField"
+    }
+    foreach ($requiredField in @($lifecycleSchema.required)) {
+        Assert-True ($null -ne $lifecycleRecord.data.$requiredField) "lifecycle data has required schema field $requiredField"
+    }
+    Assert-True (@($lifecycleSchema.properties.phase.enum) -contains $lifecycleRecord.data.phase) 'lifecycle phase is schema-valid'
+    Assert-True (@($lifecycleSchema.properties.subject_kind.enum) -contains $lifecycleRecord.data.subject_kind) 'lifecycle subject kind is schema-valid'
+    Assert-Equal 'closed' $lifecycleRecord.data.phase 'launcher invocation emits a terminal lifecycle phase'
+    Assert-Equal 'script_run' $lifecycleRecord.data.subject_kind 'launcher lifecycle uses the script_run subject kind'
+    Assert-Equal $lifecycleLogger.RunId $lifecycleRecord.data.subject_id 'launcher lifecycle subject id is the structured logger run id'
+    Assert-Equal 'change-a' $lifecycleRecord.data.change_id 'launcher lifecycle records the isolated change id as extra data'
+    Assert-Equal 'run-a' $lifecycleRecord.data.stack_run_id 'launcher lifecycle records the isolated stack run id as extra data'
+}
+Assert-Equal 'started' $capturedLifecycleRecords[0].data.status 'success lifecycle records the result status'
+Assert-Equal 'failed' $capturedLifecycleRecords[1].data.status 'failure lifecycle records the terminal failure status'
 
 $p0 = Resolve-IsolatedStackPorts -OffsetInput '0'
 Assert-Equal 8005 $p0.coordinator 'offset 0 coordinator'
@@ -256,6 +293,20 @@ finally {
 
 $dispatcherSandbox = New-TestSandbox -Prefix 'isolated-stack-dispatcher'
 try {
+    $rejectedRawSegment = '..\sensitive-path'
+    Assert-Throws {
+        Invoke-IsolatedBranchStackCli -Action start -ChangeId $rejectedRawSegment -RunId 'run-rejected' -RepoRoot $dispatcherSandbox
+    } 'Invalid ChangeId'
+    $rejectedLogFiles = @(Get-ChildItem -LiteralPath (Join-Path $dispatcherSandbox 'artifacts\e2e\_launcher\structured-logs') -File -Recurse)
+    Assert-Equal 1 $rejectedLogFiles.Count 'invalid direct invocation writes one fixed-root structured log file'
+    $rejectedLogText = Get-Content -Raw -LiteralPath $rejectedLogFiles[0].FullName
+    Assert-True (-not $rejectedLogText.Contains($rejectedRawSegment, [StringComparison]::Ordinal)) 'rejected raw segment is absent from structured logs'
+    $rejectedRecords = @($rejectedLogText -split "`r?`n" | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+    Assert-Equal 2 $rejectedRecords.Count 'invalid direct invocation emits terminal lifecycle plus anomaly'
+    Assert-Equal 'closed' $rejectedRecords[0].data.phase 'invalid direct invocation lifecycle is terminal'
+    Assert-Equal 'invalid' $rejectedRecords[0].data.change_id 'invalid direct invocation uses a safe change-id marker'
+    Assert-Equal 'input validation failed' $rejectedRecords[1].data.reason 'invalid direct invocation redacts the rejected segment from reason'
+
     $startedRoles = [System.Collections.Generic.List[string]]::new()
     $stoppedPids = [System.Collections.Generic.List[int]]::new()
     $startManifestPath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-start'
@@ -305,12 +356,14 @@ try {
     Assert-Equal 0 $dirtyStarts.Count 'dirty worktree starts no backend'
 
     $successManifestPath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-success'
+    $successSpecs = [System.Collections.Generic.List[object]]::new()
     $success = Invoke-IsolatedBranchStack -Action start -ChangeId 'change-a' -RunId 'run-success' -OffsetInput '0' `
         -RepoRoot $dispatcherSandbox -WorktreeStatusFn { param($root) @() } `
         -PreflightFn { param($root,$change,$run,$offset) [pscustomobject]@{offset=0;ports=[pscustomobject]@{coordinator=8005;governance=49103;viewer=5180};manifest_path=$successManifestPath} } `
         -RuntimeResolver { param($root) [pscustomobject]@{python='python';node='node';tsx='tsx.mjs'} } `
         -StartBackendFn {
             param($spec)
+            $script:successSpecs.Add($spec)
             $backendId = if ($spec.role -eq 'governance') { 4201 } else { 4202 }
             [pscustomobject]@{role=$spec.role;pid=$backendId;entrypoint=$spec.entrypoint;command_line=$spec.role;creation_identity=$spec.role}
         } `
@@ -324,6 +377,25 @@ try {
     Assert-Equal 'isolated-branch-stack/v1' $successManifest.schema_version 'successful start writes v1 manifest'
     Assert-Equal 'isolated_branch_stack' $successManifest.stack_kind 'successful start writes isolated stack kind'
     Assert-Equal 2 @($successManifest.processes).Count 'successful start writes both backend identities'
+    $successRunDirectory = Split-Path -Parent $successManifestPath
+    $expectedStateRoot = Join-Path $successRunDirectory 'state'
+    $expectedFixtureRoot = Join-Path $dispatcherSandbox 'storage'
+    Assert-Equal $expectedStateRoot ([string]$successManifest.mutable_state.root) 'manifest binds mutable state to this run directory'
+    Assert-Equal $expectedFixtureRoot ([string]$successManifest.read_only_fixture_root) 'manifest records the worktree fixture root'
+    $governanceSpec = @($successSpecs | Where-Object role -eq 'governance')[0]
+    $coordinatorSpec = @($successSpecs | Where-Object role -eq 'coordinator')[0]
+    Assert-Equal (Join-Path $expectedStateRoot 'governance\governance.db') ([string]$governanceSpec.Environment.GOV_DB_PATH) 'governance DB is per run'
+    Assert-Equal (Join-Path $expectedStateRoot 'governance\federated') ([string]$governanceSpec.Environment.GOV_FED_OUT) 'governance federation output is per run'
+    Assert-Equal $expectedFixtureRoot ([string]$governanceSpec.Environment.BIM_FILE_LIBRARY_ROOT) 'governance fixture root is explicit and worktree-scoped'
+    Assert-Equal (Join-Path $expectedStateRoot 'coordinator\sessions') ([string]$coordinatorSpec.Environment.SESSION_STORE_DIR) 'coordinator sessions are per run'
+    Assert-Equal (Join-Path $expectedStateRoot 'coordinator\events') ([string]$coordinatorSpec.Environment.EVENT_LOG_DIR) 'coordinator events are per run'
+    Assert-Equal (Join-Path $expectedStateRoot 'coordinator\callback-outbox.json') ([string]$coordinatorSpec.Environment.CALLBACK_OUTBOX_STORE_PATH) 'callback outbox is per run'
+    Assert-Equal (Join-Path $expectedStateRoot 'coordinator\conversion-ledger.json') ([string]$coordinatorSpec.Environment.CONVERSION_LEDGER_STORE_PATH) 'conversion ledger is per run'
+    Assert-Equal (Join-Path $expectedStateRoot 'coordinator\external-ifc-ready.json') ([string]$coordinatorSpec.Environment.EXTERNAL_IFC_READY_STORE_PATH) 'IFC-ready intake store is per run'
+    $expectedCoordinatorStorage = Join-Path $expectedStateRoot 'coordinator\storage'
+    Assert-Equal $expectedCoordinatorStorage ([string]$coordinatorSpec.Environment.STORAGE_ROOT) 'coordinator mutable storage is per run'
+    Assert-Equal $expectedCoordinatorStorage ([string]$coordinatorSpec.Environment.STORAGE_HOST_ROOT) 'coordinator host storage view matches its per-run mutable storage'
+    Assert-Equal $expectedCoordinatorStorage ([string]$coordinatorSpec.Environment.RUNTIME_STORAGE_ROOT) 'coordinator runtime storage stays in the same per-run root'
 
     $statusManifest = [ordered]@{
         schema_version='isolated-branch-stack/v1';stack_kind='isolated_branch_stack';change_id='change-a';run_id='run-status'
@@ -574,7 +646,7 @@ try {
     Assert-True (-not [string]::IsNullOrWhiteSpace([string]$stoppedManifest.stopped_at)) 'successful stop atomically records stopped_at'
     Assert-True (-not $stoppedManifest.backend_ready.governance -and -not $stoppedManifest.backend_ready.coordinator) 'successful stop clears backend readiness'
 
-    $directExecutionOutput = (& pwsh -NoProfile -NonInteractive -File $launcherPath -Action status -ChangeId '.' -RunId 'run-a' 2>&1 | Out-String)
+    $directExecutionOutput = (& pwsh -NoProfile -NonInteractive -File $launcherPath -Action status -ChangeId '.' -RunId 'run-a' -RepoRoot $dispatcherSandbox 2>&1 | Out-String)
     Assert-True ($LASTEXITCODE -ne 0) 'direct launcher execution dispatches invalid identity failure'
     Assert-True ($directExecutionOutput -match [regex]::Escape('ChangeId must be one safe path segment')) 'direct launcher execution reaches dispatcher validation'
 }

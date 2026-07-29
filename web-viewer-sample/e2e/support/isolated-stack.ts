@@ -29,6 +29,38 @@ export type IsolatedStackManifest = {
   backend_ready: { governance: boolean; coordinator: boolean };
   lifecycle_owners: { governance: string; coordinator: string; viewer: string };
   viewer: { expected_port: number; owner: string; managed_by_launcher: boolean };
+  read_only_fixture_root: string;
+  mutable_state: {
+    root: string;
+    governance_db: string;
+    governance_federation_out: string;
+    coordinator_root: string;
+  };
+  processes: IsolatedBackendProcessRecord[];
+};
+
+export type IsolatedBackendProcessRecord = {
+  role: "governance" | "coordinator";
+  pid: number;
+  entrypoint: string;
+  command_line: string;
+  creation_identity: string;
+  executable_path?: string | null;
+};
+
+export type IsolatedBackendProcessSnapshot = {
+  process: {
+    pid: number;
+    command_line: string;
+    creation_identity: string;
+    executable_path?: string | null;
+  };
+  listener_pid: number;
+  listener_lineage: Array<{
+    pid: number;
+    parent_pid: number;
+    creation_identity: string;
+  }>;
 };
 
 export type IsolatedStackConfig = {
@@ -55,11 +87,21 @@ export function requireReal(condition: unknown, message: string): asserts condit
   if (!condition) throw new Error(`[require-real] ${message}`);
 }
 
+export function parseObservedNetworkUrl(rawUrl: string): URL | null {
+  try {
+    const url = new URL(rawUrl);
+    return ["http:", "https:", "ws:", "wss:"].includes(url.protocol) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 export function createForbiddenRequestGuard() {
   const violations: string[] = [];
   return {
     observe(rawUrl: string) {
-      const url = new URL(rawUrl);
+      const url = parseObservedNetworkUrl(rawUrl);
+      if (!url) return;
       if (RESERVED_PORTS.has(Number(url.port))) violations.push(rawUrl);
     },
     assertClean() {
@@ -72,7 +114,74 @@ export function createForbiddenRequestGuard() {
 export function watchForbiddenRequests(page: Page) {
   const guard = createForbiddenRequestGuard();
   page.on("request", request => guard.observe(request.url()));
+  page.on("websocket", websocket => guard.observe(websocket.url()));
   return guard;
+}
+
+function manifestProcessForRole(
+  manifest: IsolatedStackManifest,
+  role: IsolatedBackendProcessRecord["role"],
+): IsolatedBackendProcessRecord {
+  const matches = Array.isArray(manifest.processes)
+    ? manifest.processes.filter(processRecord => processRecord?.role === role)
+    : [];
+  if (matches.length !== 1) throw new Error(`manifest must contain exactly one ${role} process identity`);
+  const processRecord = matches[0];
+  if (
+    !Number.isSafeInteger(processRecord.pid) || processRecord.pid <= 0 ||
+    typeof processRecord.entrypoint !== "string" || !processRecord.entrypoint ||
+    typeof processRecord.command_line !== "string" || !processRecord.command_line ||
+    typeof processRecord.creation_identity !== "string" || !processRecord.creation_identity
+  ) {
+    throw new Error(`manifest ${role} process identity is incomplete`);
+  }
+  return processRecord;
+}
+
+export function assertIsolatedBackendProcessSnapshot(
+  manifest: IsolatedStackManifest,
+  role: IsolatedBackendProcessRecord["role"],
+  snapshot: IsolatedBackendProcessSnapshot,
+): void {
+  const expected = manifestProcessForRole(manifest, role);
+  if (
+    snapshot.process.pid !== expected.pid ||
+    snapshot.process.command_line !== expected.command_line ||
+    snapshot.process.creation_identity !== expected.creation_identity ||
+    (expected.executable_path != null && snapshot.process.executable_path !== expected.executable_path)
+  ) {
+    throw new Error(`${role} process identity does not match the manifest`);
+  }
+  if (!Number.isSafeInteger(snapshot.listener_pid) || !Array.isArray(snapshot.listener_lineage)) {
+    throw new Error(`${role} listener process is not owned by the manifest backend lineage`);
+  }
+  const lineage = snapshot.listener_lineage;
+  if (lineage.length === 0 || lineage[0]?.pid !== snapshot.listener_pid) {
+    throw new Error(`${role} listener process is not owned by the manifest backend lineage`);
+  }
+  const seen = new Set<number>();
+  for (let index = 0; index < lineage.length; index += 1) {
+    const node = lineage[index];
+    const createdAt = Date.parse(node.creation_identity);
+    if (
+      !Number.isSafeInteger(node.pid) || node.pid <= 0 || seen.has(node.pid) ||
+      !Number.isSafeInteger(node.parent_pid) || !Number.isFinite(createdAt)
+    ) {
+      throw new Error(`${role} listener process lineage identity is invalid`);
+    }
+    seen.add(node.pid);
+    const parent = lineage[index + 1];
+    if (parent) {
+      const parentCreatedAt = Date.parse(parent.creation_identity);
+      if (node.parent_pid !== parent.pid || !Number.isFinite(parentCreatedAt) || parentCreatedAt > createdAt) {
+        throw new Error(`${role} listener process lineage contains a reused or impossible parent identity`);
+      }
+    }
+  }
+  const root = lineage.find(node => node.pid === expected.pid);
+  if (!root || root.creation_identity !== expected.creation_identity) {
+    throw new Error(`${role} listener process is not owned by the manifest backend lineage`);
+  }
 }
 
 export function classifyHarnessUse(flags: { buildFlag: boolean; queryFlag: boolean }) {
@@ -136,6 +245,8 @@ export function loadIsolatedStackConfig(options: {
   ) {
     throw new Error("unexpected lifecycle ownership");
   }
+  manifestProcessForRole(manifest, "governance");
+  manifestProcessForRole(manifest, "coordinator");
 
   if (!Number.isSafeInteger(manifest.offset) || manifest.offset < 0 || manifest.offset > 4) {
     throw new Error("manifest offset must be an integer from 0 through 4");

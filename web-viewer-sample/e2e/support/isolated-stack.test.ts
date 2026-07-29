@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { closeSync, mkdtempSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { captureWindowsBackendSnapshot } from "./isolated-stack-global-setup";
 import {
+  assertIsolatedBackendProcessSnapshot,
   classifyHarnessUse,
   createForbiddenRequestGuard,
   loadIsolatedStackConfig,
+  parseObservedNetworkUrl,
   parseStandaloneViewerPort,
   requireReal,
   writeIsolatedEvidenceManifest,
@@ -46,7 +50,31 @@ function fixture() {
       viewer: "playwright_webserver",
     },
     viewer: { expected_port: 5180, owner: "playwright_webserver", managed_by_launcher: false },
-    processes: {},
+    read_only_fixture_root: path.join(worktreeRoot, "storage"),
+    mutable_state: {
+      root: path.join(runDir, "state"),
+      governance_db: path.join(runDir, "state", "governance", "governance.db"),
+      governance_federation_out: path.join(runDir, "state", "governance", "federated"),
+      coordinator_root: path.join(runDir, "state", "coordinator"),
+    },
+    processes: [
+      {
+        role: "governance",
+        pid: 4101,
+        entrypoint: "app:app",
+        command_line: "python -m uvicorn app:app --port 49103",
+        creation_identity: "2026-07-30T01:00:00.000Z",
+        executable_path: "C:\\Python312\\python.exe",
+      },
+      {
+        role: "coordinator",
+        pid: 4102,
+        entrypoint: path.join(worktreeRoot, "bim-review-coordinator", "src", "index.ts"),
+        command_line: `node tsx ${path.join(worktreeRoot, "bim-review-coordinator", "src", "index.ts")}`,
+        creation_identity: "2026-07-30T01:00:01.000Z",
+        executable_path: "C:\\Program Files\\nodejs\\node.exe",
+      },
+    ],
   };
   writeFileSync(manifestPath, JSON.stringify(manifest));
   return { worktreeRoot, manifestPath, manifest, headSha };
@@ -98,6 +126,17 @@ describe("loadIsolatedStackConfig", () => {
     expect(source).toContain("DETERMINISTIC_CLASS_CANDIDATES");
     expect(source).toContain("selectOption(jobId)");
     expect(source).toContain("finally");
+    for (const failClosedAssertion of [
+      "ifc_ready_table_only",
+      "search_scope",
+      "completion_scope",
+      "result_scan_scope",
+      "complete_table",
+      "a4-create-issues",
+      "signed-proof",
+    ]) {
+      expect(source).toContain(failClosedAssertion);
+    }
   });
 
   it("publishes A3 and A4 evidence only after request guards pass", () => {
@@ -216,6 +255,99 @@ describe("loadIsolatedStackConfig", () => {
     guard.observe("http://127.0.0.1:8004/api/runtime/status");
     guard.observe("http://127.0.0.1:49102/api/search");
     expect(() => guard.assertClean()).toThrow(/8004.*49102/);
+  });
+
+  it("records reserved-port WebSockets and ignores malformed or non-network URLs", () => {
+    const guard = createForbiddenRequestGuard();
+    guard.observe("ws://127.0.0.1:49100/signaling");
+    guard.observe("blob:http://127.0.0.1:5180/fixture");
+    guard.observe("not a URL");
+    expect(() => guard.assertClean()).toThrow(/49100/);
+    expect(parseObservedNetworkUrl("data:text/plain,fixture")).toBeNull();
+    expect(parseObservedNetworkUrl("not a URL")).toBeNull();
+  });
+
+  it("binds each live backend listener to the exact manifest process lineage", () => {
+    const value = fixture();
+    const coordinator = value.manifest.processes.find(processRecord => processRecord.role === "coordinator")!;
+    expect(() => assertIsolatedBackendProcessSnapshot(value.manifest, "coordinator", {
+      process: {
+        pid: coordinator.pid,
+        command_line: coordinator.command_line,
+        creation_identity: coordinator.creation_identity,
+        executable_path: coordinator.executable_path,
+      },
+      listener_pid: 4202,
+      listener_lineage: [
+        { pid: 4202, parent_pid: coordinator.pid, creation_identity: "2026-07-30T01:00:02.000Z" },
+        { pid: coordinator.pid, parent_pid: 1, creation_identity: coordinator.creation_identity },
+      ],
+    })).not.toThrow();
+
+    expect(() => assertIsolatedBackendProcessSnapshot(value.manifest, "coordinator", {
+      process: {
+        pid: coordinator.pid,
+        command_line: coordinator.command_line,
+        creation_identity: coordinator.creation_identity,
+        executable_path: coordinator.executable_path,
+      },
+      listener_pid: 9999,
+      listener_lineage: [
+        { pid: 9999, parent_pid: 9998, creation_identity: "2026-07-30T01:00:02.000Z" },
+        { pid: 9998, parent_pid: 1, creation_identity: "2026-07-30T01:00:01.000Z" },
+      ],
+    })).toThrow(/listener process is not owned by the manifest backend lineage/);
+
+    expect(() => assertIsolatedBackendProcessSnapshot(value.manifest, "coordinator", {
+      process: {
+        pid: coordinator.pid,
+        command_line: coordinator.command_line,
+        creation_identity: coordinator.creation_identity,
+        executable_path: coordinator.executable_path,
+      },
+      listener_pid: 4202,
+      listener_lineage: [
+        { pid: 4202, parent_pid: coordinator.pid, creation_identity: "2026-07-30T01:00:00.000Z" },
+        { pid: coordinator.pid, parent_pid: 1, creation_identity: coordinator.creation_identity },
+      ],
+    })).toThrow(/reused or impossible parent identity/);
+  });
+
+  it.skipIf(process.platform !== "win32")("passes backend snapshot identity through a real pwsh process", async () => {
+    const server = createServer();
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    try {
+      const address = server.address();
+      expect(address && typeof address !== "string").toBe(true);
+      if (!address || typeof address === "string") throw new Error("test listener did not expose a TCP port");
+      const value = fixture();
+      value.manifest.ports.coordinator = address.port;
+      const coordinator = value.manifest.processes.find(processRecord => processRecord.role === "coordinator")!;
+      coordinator.pid = process.pid;
+      coordinator.entrypoint = "node";
+      const isolated = {
+        manifestPath: value.manifestPath,
+        runDir: path.dirname(value.manifestPath),
+        coordinatorBaseUrl: "http://127.0.0.1:8005",
+        governanceBaseUrl: "http://127.0.0.1:49103",
+        viewerPort: 5180,
+        viewerOrigin: "http://127.0.0.1:5180",
+        harnessBuildFlag: false,
+        manifest: value.manifest,
+      } as unknown as IsolatedStackConfig;
+      const snapshot = captureWindowsBackendSnapshot(isolated, "coordinator");
+      coordinator.command_line = snapshot.process.command_line;
+      coordinator.creation_identity = snapshot.process.creation_identity;
+      coordinator.executable_path = snapshot.process.executable_path;
+      expect(snapshot.listener_pid).toBe(process.pid);
+      expect(snapshot.listener_lineage[0]?.pid).toBe(process.pid);
+      expect(() => assertIsolatedBackendProcessSnapshot(isolated.manifest, "coordinator", snapshot)).not.toThrow();
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
   });
 
   it.each([

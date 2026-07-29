@@ -37,6 +37,8 @@
 
 啟動前的 port cleanup SHALL 只作用於 resolved backend port set，且只有 manifest 所記 PID、精確 launcher entrypoint 與 process creation identity 在 stop 前重驗全部一致時，才可停止該 repo-owned backend。未知 listener、缺少 manifest、PID reuse、entrypoint 不符或 creation identity 不符時 SHALL fail closed，SHALL NOT 停止任何 process。cleanup SHALL NOT 觸及 viewer port 或保留集合中的任何 port。
 
+每個 run 的 governance DB/federation output、coordinator session/event、callback outbox、conversion/artifact-health ledger、IFC-ready intake store、mutable storage 與 service logs SHALL 全部位於該 run 的 `artifacts/e2e/<change-id>/<run-id>/state/` 或其 run directory 子路徑。launcher SHALL 明示覆寫這些 child-process environment，不得繼承另一 run 或 deployment 的 mutable path。worktree `storage/` 只可作 manifest 記錄的 read-only fixture root，不得與上述 mutable state 混用。
+
 隔離 stack SHALL NOT 啟動 streaming server、Kit runtime 或 WebRTC；這些 runtime 的 evidence 仍由既有 host-native 契約提供。
 
 **備註（決策原因）:** 固定 base 加明示 offset，讓 evidence 中的 port 可被 reviewer 以固定表比對；若改為自動挑選空 port，每份 evidence 的 port 都不同，就無法從 evidence 本身判斷有沒有打到部署區。
@@ -76,13 +78,20 @@
 - **WHEN** 隔離 stack 啟動、執行 E2E 後停止
 - **THEN** 部署區 listener 狀態 SHALL 在啟動前、執行中與停止後保持一致
 
+#### Scenario: 兩個 offset 不得共用 mutable backend state
+
+- **GIVEN** 同一 worktree 以不同 run ID 或 offset 啟動兩個隔離 stack
+- **WHEN** launcher 建立 child-process environment
+- **THEN** 兩個 run 的 governance DB/federation output、session/event、outbox、ledger、IFC-ready store 與 mutable storage path SHALL 全部不同
+- **AND** inherited deployment storage variables SHALL NOT 覆寫這些 per-run path
+
 ### Requirement: 隔離 backend SHALL 由 repo-owned script 管理，viewer SHALL 由 Playwright webServer 管理
 
 隔離 governance／coordinator backend 的啟動、停止與狀態查詢 SHALL 由 repo 內受版本控管的 script 提供，並 SHALL 登記於 script registry 與 script contract。viewer dev server 的 lifecycle SHALL 由 Playwright `webServer` 唯一擁有；repo launcher SHALL NOT 啟動或停止 viewer。launcher SHALL NOT 成為 canonical operator entrypoint，也 SHALL NOT 取代 `deploy.ps1`、`verify-all.ps1`、`stop-all.ps1`。
 
 隔離 stack 的任何必要步驟（含 port 清理）SHALL NOT 以 `.claude/**`、`.codex/**` 或其他 agent skill 目錄下的檔案作為唯一實作來源；installed skill 是 workflow helper，不是 product source of truth。
 
-launcher 的三個 action SHALL 要求 caller 明示 `ChangeId` 與 `RunId`；兩者只允許安全的單一路徑 segment，並共同定位 `artifacts/e2e/<change-id>/<run-id>/stack-manifest.json`。start 發現同名 manifest 已存在時 SHALL fail closed，不得覆寫既有 run。backend 啟動成功時 manifest SHALL 至少包含 stack kind、change/run ID、offset、resolved ports、base URLs、head commit sha、啟動時間、backend ready state、lifecycle owners，以及每個 backend 的 PID、精確 launcher entrypoint 與 process creation identity；startup rollback 不完整時，同一路徑 SHALL 保留 recovery manifest、start failure、per-process stop state 與 reservation-held 狀態。停止時 SHALL 保留 manifest 並補記停止時間；partial stop SHALL 原子保存已停止角色，retry SHALL 跳過已停止角色。`status` SHALL 回報 backend ready/ownership 狀態與 manifest 所期待的 Playwright-owned viewer port，不得把 viewer 未由 launcher 啟動誤報為 backend failure。
+launcher 的三個 action SHALL 要求 caller 明示 `ChangeId` 與 `RunId`；兩者只允許安全的單一路徑 segment，並共同定位 `artifacts/e2e/<change-id>/<run-id>/stack-manifest.json`。start 發現同名 manifest 已存在時 SHALL fail closed，不得覆寫既有 run。backend 啟動成功時 manifest SHALL 至少包含 stack kind、change/run ID、offset、resolved ports、base URLs、head commit sha、啟動時間、backend ready state、lifecycle owners、read-only fixture root、per-run mutable state root，以及每個 backend 的 PID、精確 launcher entrypoint 與 process creation identity；startup rollback 不完整時，同一路徑 SHALL 保留 recovery manifest、start failure、per-process stop state 與 reservation-held 狀態。停止時 SHALL 保留 manifest 並補記停止時間；partial stop SHALL 原子保存已停止角色，retry SHALL 跳過已停止角色。`status` SHALL 回報 backend ready/ownership 狀態與 manifest 所期待的 Playwright-owned viewer port，不得把 viewer 未由 launcher 啟動誤報為 backend failure。直接執行 launcher SHALL 先在固定安全 log root 建立 logger；start/status/stop 成功、失敗或 safe-segment validation 拒絕 SHALL 透過 repo `StructLog.psm1` 發出 phase=`closed` 的 terminal `script_run` lifecycle。被拒絕的 raw segment SHALL NOT 進入 log path/data；dot-source functions 仍 SHALL 回傳原物件供 machine tests 使用。
 
 #### Scenario: 啟動器登記於 script 契約
 
@@ -109,9 +118,11 @@ launcher 的三個 action SHALL 要求 caller 明示 `ChangeId` 與 `RunId`；�
 
 viewer bundle 的 coordinator base SHALL 綁定到隔離 coordinator origin。瀏覽器 SHALL NOT 直接連線 governance internal port 或任何非 coordinator 的 internal loopback service。
 
-E2E run SHALL 在整場期間監看瀏覽器發出的 request；任何命中保留集合 port 的 request SHALL 使該 run 失敗。
+E2E run SHALL 在整場期間監看瀏覽器發出的 HTTP request 與 WebSocket connection；任何命中保留集合 port 的 URL SHALL 使該 run 失敗。malformed、`blob:`、`data:` 等非 network URL SHALL 被安全忽略，不得使 Playwright worker 因 listener callback 未捕捉例外而中止。
 
 evidence run SHALL 以必填 `E2E_STACK_MANIFEST` 指向唯一 manifest；resolved path SHALL 位於目前 worktree 的 `artifacts/e2e/<change-id>/<run-id>/stack-manifest.json`，其 change/run ID SHALL 與內容相同，`head_sha` SHALL 等於目前 checkout HEAD。任一條件不符 SHALL 在啟動 webServer 或執行任何 spec 前中止。base URL 解析 SHALL 有唯一入口；manifest coordinator base SHALL 是 browser E2E authority。若 `E2E_COORDINATOR_BASE_URL` 存在，其值 SHALL 與 manifest coordinator base 完全相同；即使另一個隔離 offset 的 port 不在保留集合，mismatch 仍 SHALL 提前中止。解析結果落入保留集合時亦同。
+
+require-real global setup 在 coordinator health 成功後 SHALL 重新取得 governance/coordinator 的 live process identity 與 resolved listener owner；PID、command line、creation identity SHALL 與 manifest 一致，且 listener PID SHALL 是該 manifest process 本身或其 descendant。lineage 的每一節 SHALL 記錄 PID、parent PID 與 creation identity；parent creation 晚於 child、節點重複、edge 不連續，或 snapshot 輸出前重新查詢發現 listener/lineage 改變時 SHALL 視為 PID reuse 或 ownership 無法證明。任一 backend 已退出、PID reused、listener 被其他 process 取代、provider lookup 失敗或 lineage 無法證明時 SHALL fail closed，不得開始 browser spec。
 
 stack manifest 的 resolved viewer port SHALL 是 browser E2E 的 authority。若 `E2E_VIEWER_PORT` 存在，其值 SHALL 與 manifest viewer port 完全相同，否則 SHALL 在啟動 webServer 或執行任何 spec 前中止。require-real evidence SHALL 由 Playwright `webServer` 啟動 viewer；`E2E_DISABLE_WEBSERVER=1` 因無法證明外部 bundle 的 HEAD 與 coordinator binding，SHALL 在啟動任何 spec 前中止。
 
@@ -129,11 +140,18 @@ stack manifest 的 resolved viewer port SHALL 是 browser E2E 的 authority。�
 - **THEN** 解析入口 SHALL 直接拋錯
 - **AND** SHALL NOT 啟動 viewer webServer 或執行任何 spec
 
-#### Scenario: 瀏覽器打到保留 port 即失敗
+#### Scenario: 瀏覽器 request 或 WebSocket 打到保留 port 即失敗
 
 - **GIVEN** 隔離 stack 已啟動且 E2E 正在執行
-- **WHEN** 瀏覽器對保留集合中的任一 port 發出 request
-- **THEN** 該 run SHALL 失敗並記錄違規 request URL
+- **WHEN** 瀏覽器對保留集合中的任一 port 發出 HTTP request 或建立 WebSocket
+- **THEN** 該 run SHALL 失敗並記錄違規 URL
+
+#### Scenario: health 被其他 process 接管時提前中止
+
+- **GIVEN** manifest backend 已退出，但另一 process 在相同 resolved port 回應成功 health
+- **WHEN** require-real global setup 驗證 live backend
+- **THEN** process identity 或 listener lineage 檢查 SHALL 失敗
+- **AND** SHALL NOT 執行任何 browser spec 或產出成功 evidence
 
 #### Scenario: base URL 落入保留集合時提前中止
 

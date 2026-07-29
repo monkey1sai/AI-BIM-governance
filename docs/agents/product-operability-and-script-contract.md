@@ -218,10 +218,17 @@ launcher `scripts/dev/start-isolated-branch-stack.ps1` 的 `start|stop|status` �
 `ChangeId`、`RunId`，且只管理 governance/coordinator。manifest 位於
 `artifacts/e2e/<change-id>/<run-id>/stack-manifest.json`；同名不得覆寫。停止 backend 前必須
 同時重驗 manifest PID、完整 entrypoint/command line 與 process creation identity；任一 backend
-不符時不得停止任何 process。viewer lifecycle 僅由 Playwright `webServer` 擁有。
+不符時不得停止任何 process。每個 run 的 governance DB/federation output、coordinator session/event/outbox/ledger/
+IFC-ready store/mutable storage 必須落在該 run 的 `state/`；child environment 必須明示覆寫 inherited
+deployment mutable paths，worktree `storage/` 只作 read-only fixture root。直接執行 launcher 必須先在固定
+安全 log root 建立 logger，再以 `StructLog.psm1` 記錄 terminal action lifecycle；safe-segment validation
+失敗也要記錄，但拒絕的 raw segment 不得進入 log path/data。viewer lifecycle 僅由 Playwright `webServer` 擁有。
 
 引用 browser result 作 evidence 時必須設 `E2E_REQUIRE_REAL=1` 與 `E2E_STACK_MANIFEST`。
-manifest path/content/worktree/HEAD、coordinator/viewer env 或保留 port request 不符時 hard fail；
+manifest path/content/worktree/HEAD、coordinator/viewer env 或保留 port HTTP/WebSocket 不符時 hard fail；
+global setup 必須在 health 後重驗 backend PID/command line/creation identity，且 resolved listener 必須
+位於 manifest process lineage；lineage 每節必須帶 creation identity、拒絕 parent 比 child 晚的 PID-reuse
+假關聯，並在輸出 snapshot 前重驗 listener 與整條 lineage 未改變；
 不得以 conditional skip 計為通過。evidence 必須揭露 harness build/query flags、resolved ports、
 base URLs、observed runtime IDs 與 screenshot/trace 路徑。
 

@@ -66,11 +66,12 @@ browser E2E (web-viewer-sample; viewer lifecycle owner = Playwright webServer)
 | 資料 | 擁有者 | 說明 |
 |---|---|---|
 | port 配置與保留集合 | `openspec/specs/isolated-branch-stack-verification`（本 spec）→ 由 launcher 實作 | 文件與 script 都不得各自維護第二份表 |
-| stack manifest | launcher（`artifacts/e2e/<change-id>/<run-id>/stack-manifest.json`） | `ChangeId`／`RunId` 皆由 caller 明示且只允許安全單一路徑 segment；同名 manifest 已存在即 fail closed，不覆寫。記錄 backend lifecycle owner、ready state 與可重驗 process identity；stop 後保留供 evidence 引用 |
+| stack manifest | launcher（`artifacts/e2e/<change-id>/<run-id>/stack-manifest.json`） | `ChangeId`／`RunId` 皆由 caller 明示且只允許安全單一路徑 segment；同名 manifest 已存在即 fail closed，不覆寫。記錄 backend lifecycle owner、ready state、read-only fixture root、per-run mutable state root 與可重驗 process identity；stop 後保留供 evidence 引用 |
+| mutable backend state | launcher（`artifacts/e2e/<change-id>/<run-id>/state/`） | governance DB/federation output、coordinator session/event/outbox/ledger/IFC-ready store/storage 全部由 launcher child environment 明示指向 run directory；不得沿用 parent/deployment mutable path。worktree `storage/` 僅作 read-only fixture root |
 | evidence manifest | 產出 evidence 的那個 change | 本 capability 只規定必要欄位，不代管內容 |
 | browser manifest／coordinator base／viewer port 解析 | `web-viewer-sample/playwright.config.ts` | evidence run 必填 `E2E_STACK_MANIFEST`，且限定本 worktree 的 `artifacts/e2e/<change>/<run>/stack-manifest.json`、`head_sha=HEAD`；manifest 的 coordinator base 與 viewer port 皆為 authority，對應 env 只能相同、不得覆寫 |
 
-launcher 的 `start`／`stop`／`status` 僅管理 governance／coordinator backend；三個 action 都以同一組 `-ChangeId`／`-RunId` 定位唯一 manifest。viewer dev server 由 Playwright 的 `webServer` 啟動，launcher 不啟停 viewer；status 只回報 manifest 所期待的 viewer port 與 Playwright-owned 狀態。require-real evidence 禁止 `E2E_DISABLE_WEBSERVER=1`：沒有可驗證 build identity 的外部 viewer 一律 fail closed。
+launcher 的 `start`／`stop`／`status` 僅管理 governance／coordinator backend；三個 action 都以同一組 `-ChangeId`／`-RunId` 定位唯一 manifest。直接執行時先在固定安全 log root 建立 logger，再以 `StructLog.psm1` 記錄 terminal action lifecycle；safe-segment validation 失敗也要記錄，但被拒絕的 raw segment 不得進入 log path/data。viewer dev server 由 Playwright 的 `webServer` 啟動，launcher 不啟停 viewer；status 只回報 manifest 所期待的 viewer port 與 Playwright-owned 狀態。require-real evidence 禁止 `E2E_DISABLE_WEBSERVER=1`：沒有可驗證 build identity 的外部 viewer 一律 fail closed。global setup 在 health 後重驗兩個 backend identity，並要求 resolved listener 屬於 manifest PID 的 process lineage；lineage 每節記 creation identity、拒絕 parent 比 child 晚的 PID-reuse 假關聯，輸出 snapshot 前再重驗 listener 與整條 lineage；HTTP request 與 WebSocket 都受保留埠 guard 約束。
 
 ## 4. 環境限制與誠實邊界
 
@@ -86,6 +87,7 @@ launcher 的 `start`／`stop`／`status` 僅管理 governance／coordinator back
 | 風險 | 處置 |
 |---|---|
 | launcher 的 port 清理誤殺其他 session 或部署區進程 | resolved set 先過 offset domain 與保留集合檢查；其後仍須以 manifest PID、精確 launcher entrypoint、creation identity 三重重驗 ownership。未知或不一致 listener 一律 fail closed，不停止 process |
+| 兩個 offset 或 deployment env 共用 mutable DB/state | child environment 明示覆寫 DB、session/event、outbox、ledger、IFC-ready store 與 storage path 到各 run 的 `state/`；manifest 分開記錄 read-only fixture root 與 mutable state root |
 | offset 慣例與保留集合太近 | domain 固定為 `0..4`，只提供五組連續配置；`>4` 在任何 listener／cleanup 前拒絕，不允許高 offset 繞回合法 |
 | E2E 改為 require-real 後既有綠燈變紅 | 這是揭露既有假通過，不是回歸。首次落地時把 red 結果誠實記為 known gap 交回對應 change，不在本 change 修其他 capability 的實作 |
 | 兩處（doc 與 script）port 表漂移 | machine check 直接比對 doc 表格、registry 與 launcher 的常數，漂移即 CI fail |

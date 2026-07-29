@@ -16,6 +16,7 @@
 - [x] 2.3 stack manifest 落 `artifacts/e2e/<change-id>/<run-id>/stack-manifest.json`，欄位至少含 `stack_kind`、`change_id`、`run_id`、`offset`、`ports`、`base_urls`、`head_sha`、`started_at`、`backend_ready`、`lifecycle_owners`，以及每個 backend 的 `pid`／精確 `entrypoint`／`creation_identity`；start 不覆寫既有 manifest。startup rollback 不完整時寫 recovery manifest 並保留 reservation；`stop` 原子保存 per-process 結果、可重試已自行退出且 port free 的 backend，完成後補 `stopped_at` 並釋放 recovery reservation。
 - [x] 2.4 於 `scripts/script-registry.json` 新增登記；確認未新增任何 root-level `scripts/start-*.ps1`。
 - [ ] 2.5 跑 `pwsh -NoProfile -File .\scripts\tests\invoke-powershell-static.ps1` 靜態檢查與 2.1 的測試，全綠。
+- [x] 2.6 Review hardening：launcher 直接執行先在固定安全 root 建 logger，再以 `StructLog.psm1` 記錄 schema-valid、phase=`closed` 的 terminal `script_run` lifecycle；safe-segment rejection 也要記錄，但 raw segment 不進入 log path/data。governance DB 與 coordinator session/event/outbox/ledger/IFC-ready store/storage 全部綁定 `artifacts/e2e/<change>/<run>/state/`，`STORAGE_ROOT`／host view／runtime root 同指 per-run storage，child env 明示覆寫 inherited deployment mutable paths。RED：缺 lifecycle helper；GREEN：success/failure/rejected-input canonical-schema assertions 與 `pwsh -NoProfile -NonInteractive -File scripts/tests/test-isolated-branch-stack.ps1` 通過。
 
 ## 3. Browser E2E 對接（owner：`web-viewer-sample/`）
 
@@ -26,6 +27,7 @@
 - [x] 3.5 跑 `npm run typecheck` 與 `npx vitest run`，結果不得低於改動前 baseline（先記錄 baseline 數字）。
 - [x] 3.6 先寫 failing test（RED）：3.2 的 helper 與 evidence manifest 必須揭露 `VITE_VIEWER_HARNESS` build flag 與 `?harness=1` query flag；harness run 不得被標為 coordinator review socket／authority ack 真實控制面證據。
 - [ ] 3.7 實作 3.6 的 harness 標示與 evidence eligibility 判定，再重跑該測試至 GREEN，並跑 `npm run typecheck`、受影響 Vitest 與適用 browser E2E；保留 RED／GREEN 指令及結果。
+- [x] 3.8 Review hardening：require-real global setup 在 health 後以 manifest PID/command line/creation identity 重驗 governance/coordinator，resolved listener 必須位於逐節帶 creation identity、拒絕 PID-reuse chronology 且 snapshot 前重驗的 process lineage；reserved-port guard 同時監看 HTTP request/WebSocket 並安全忽略非 network URL；A4 success 保留 table-only、complete-table、signed-proof unavailable 與 issue-disabled assertions。RED：Vitest 43 項中 3 項失敗，另真 `pwsh` snapshot test 證明原 trailing argv 固定失敗；GREEN：targeted Vitest 44/44（含真 `pwsh`/CIM/listener）與 `npm run typecheck` 通過。
 
 ## 4. Machine gate（owner：`.github/`、`scripts/tests/`）
 
@@ -44,9 +46,9 @@
 ## 6. 收尾與誠實揭露
 
 - [x] 6.1 執行 `npx openspec validate isolated-branch-stack-browser-e2e --strict` 與 `npx openspec validate --all --strict`，輸出貼進 PR body。
-- [x] 6.2 更新 `openspec/lifecycle-ledger.json`（本 change 的 task ledger 與 `subject_commit`）→ 再更新 `docs/plans/NOW.md` 的 projection → 再確認 `scripts/tests/test-ai-coding-metrics.mjs` 的 `active-change-wip` 期望值仍與 ledger 一致（本 change 已改為由 ledger 推導 `activeChangeCount`，不應再需手改；若日後有人改回硬編碼，此步即為攔截點）。三步順序不得顛倒。
-- [x] 6.3 對 launcher 與 helper 涉及的既有符號跑 `gitnexus impact -d upstream -r AI-BIM-governance`；commit 前跑 `gitnexus detect-changes --scope compare --base-ref main`，HIGH／CRITICAL 於 PR body 揭露；index stale 或 CLI 不可用時依 `docs/agents/gitnexus-usage.md` 走 unavailable gate。
-- [x] 6.4 依 `scripts/SCRIPT_CONTRACT.md` 跑 `.\scripts\deploy.ps1 -DryRun`（只作 operator-path 回歸，不是 deploy evidence），再跑 `git diff --check`、secret scan（`scripts/tests/scan-secret-patterns.ps1`）與 `git status`；generated cache 與非 evidence runtime artifact 不得進 change。
-- [x] 6.5 PR body 填妥 Change Classification 與 AI Coding Governance 表（本 PR 觸及 `docs/plans/` 與 `.github/`），並明確標示 `Full completion claimed`、`stack_kind=isolated_branch_stack`，以及本 change **不**涵蓋 A4 tasks 4.1–4.4 的判讀與修復。
-- [x] 6.6 PR body 據實描述 design gate **歷史時間線**：`13033cb` failure（run `30440400040`）→ #429（`2b9573e`）重核轉 success；`bfcc433` 僅為歷史 success 快照，fresh branch baseline 為 `deb5af552022c3ee171e3174f59c9f1e3dfb5936`。不得據此宣稱 current status；必須附本 PR 當下 job 實跑結果與 run link。另以 `git diff --name-only` 佐證未觸及 design manifest／baseline／R-A1 正本。DoD：body 含上述項目且 `pr-review-agent` 綠。
+- [ ] 6.2 第二輪 review repair 完成後，更新 `openspec/lifecycle-ledger.json`（本 change 的 task ledger 與 `subject_commit`）→ 再更新 `docs/plans/NOW.md` 的 projection → 再確認 `scripts/tests/test-ai-coding-metrics.mjs` 的 `active-change-wip` 期望值仍與 ledger 一致。三步順序不得顛倒。
+- [x] 6.3 對 launcher 與 helper 涉及的既有符號跑 `gitnexus impact -d upstream -r AI-BIM-governance`；commit 前重跑 `gitnexus detect-changes --scope compare --base-ref main`。本輪 index stale at `8b34c8e` 且 FTS load-only unavailable，依 `docs/agents/gitnexus-usage.md` 走 unavailable gate並保留 raw-import/targeted-test reviewer sign-off，不宣稱 impact pass。
+- [x] 6.4 第二輪 review repair 後，依 `scripts/SCRIPT_CONTRACT.md` 重跑 `.\scripts\deploy.ps1 -DryRun`（只作 operator-path 回歸，不是 deploy evidence）、`git diff --check`、secret scan 與 `git status`；generated cache 與非 evidence runtime artifact 不得進 change。
+- [ ] 6.5 第二輪 review repair 與最新 CI 完成後，更新 PR body 的 Change Classification、AI Coding Governance、known gaps 與最新 head/evidence run。
+- [ ] 6.6 PR body 據實描述 design gate 歷史時間線與最新 job；不得以歷史 success 宣稱 current status，並以最新 diff 佐證未觸及 design manifest／baseline／R-A1 正本。
 - [x] 6.7 PR body 以**摘要＋連結**指向 `proposal.md` 的相鄰缺口、對抗驗證與 A1–A10 記錄，明示其不構成本 change requirement。U 狀態須依提案現況誠實列示：U-1／U-3／U-4／U-5／U-6／U-11 pending；U-2／U-8／U-9 closed；U-7／U-10 partial；U-12 已併入 U-6。上述均不在本 PR 內實作。
