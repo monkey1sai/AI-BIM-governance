@@ -407,8 +407,8 @@ Archive rejection fixture.
     $deterministicRepeat = Invoke-Reconciler -Root $repoRoot -Ledger $ledgerPath -OpenSpecList $openSpecPath
     Assert-Equal $deterministicBaseline $deterministicRepeat.Stdout 'entry order and lastModified do not affect report'
 
-    # A canonical deferred proposal is visible as lifecycle divergence. Both modes inventory
-    # the same mismatches; only Reconcile enforces exit 2.
+    # OpenSpec 1.6 represents a directory-backed deferred proposal as in-progress.
+    # The explicit proposal prologue remains authoritative, so this is not a mismatch.
     $deferredProposal = @'
 > **Status: deferred 2026-07-28** — thaw when fixture is ready.
 
@@ -429,22 +429,21 @@ Fixture proposal.
     })
     $inventoryResult = Invoke-Reconciler -Root $repoRoot -Mode Inventory -Ledger $ledgerPath -OpenSpecList $openSpecPath
     $reconcileResult = Invoke-Reconciler -Root $repoRoot -Mode Reconcile -Ledger $ledgerPath -OpenSpecList $openSpecPath
-    Assert-ReportContract -Result $inventoryResult -Message 'inventory mismatch'
-    Assert-ReportContract -Result $reconcileResult -Message 'reconcile mismatch'
-    Assert-Equal 0 $inventoryResult.ExitCode 'inventory exits zero with mismatches'
-    Assert-Equal 2 $reconcileResult.ExitCode 'reconcile exits two with mismatches'
+    Assert-ReportContract -Result $inventoryResult -Message 'inventory deferred representation'
+    Assert-ReportContract -Result $reconcileResult -Message 'reconcile deferred representation'
+    Assert-Equal 0 $inventoryResult.ExitCode 'inventory accepts the deferred CLI representation'
+    Assert-Equal 0 $reconcileResult.ExitCode 'reconcile accepts the deferred CLI representation'
     Assert-Equal 'inventoried' $inventoryResult.Document.outcome 'inventory outcome remains inventoried'
-    Assert-Equal 'ledger_mismatch' $reconcileResult.Document.outcome 'reconcile outcome reports mismatch'
-    Assert-Equal (($inventoryResult.Document.mismatches | ConvertTo-Json -Depth 10 -Compress)) `
-        (($reconcileResult.Document.mismatches | ConvertTo-Json -Depth 10 -Compress)) `
-        'inventory and reconcile emit the same mismatch set'
+    Assert-Equal 'consistent' $reconcileResult.Document.outcome 'reconcile outcome accepts the deferred CLI representation'
+    Assert-Equal 0 @($inventoryResult.Document.mismatches).Count 'inventory has no deferred lifecycle mismatch'
+    Assert-Equal 0 @($reconcileResult.Document.mismatches).Count 'reconcile has no deferred lifecycle mismatch'
     $lifecycleMismatch = @($reconcileResult.Document.mismatches | Where-Object {
         $_.code -eq 'lifecycle' -and
         $_.reason -eq 'lifecycle_unrepresented' -and
         $_.change_id -eq 'change-zeta' -and
         $_.field -eq 'lifecycle.status'
     })
-    Assert-Equal 1 $lifecycleMismatch.Count 'deferred divergence identifies exact change and field'
+    Assert-Equal 0 $lifecycleMismatch.Count 'deferred proposal prologue accepts the OpenSpec in-progress representation'
 
     $deferredProposedProposal = @'
 > **Status: deferred-proposed 2026-07-28** — thaw when fixture is ready.
@@ -457,7 +456,7 @@ Fixture proposal.
 '@
     Write-Utf8Text -Path (Join-Path $zetaRoot 'proposal.md') -Value $deferredProposedProposal
     $deferredProposedResult = Invoke-Reconciler -Root $repoRoot -Ledger $ledgerPath -OpenSpecList $openSpecPath
-    Assert-Equal 2 $deferredProposedResult.ExitCode 'deferred-proposed divergence exits two'
+    Assert-Equal 0 $deferredProposedResult.ExitCode 'deferred-proposed accepts the deferred CLI representation'
     $deferredProposedInventory = $deferredProposedResult.Document.inventory |
         Where-Object id -eq 'change-zeta' | Select-Object -First 1
     Assert-Equal 'deferred' $deferredProposedInventory.repository.proposal_status 'deferred-proposed normalizes to deferred'
