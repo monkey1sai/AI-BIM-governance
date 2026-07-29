@@ -3,7 +3,7 @@ param(
     [ValidateSet('start', 'stop', 'status')][string] $Action = 'status',
     [string] $ChangeId,
     [string] $RunId,
-    [string] $Offset = '0'
+    [string] $Offset
 )
 
 Set-StrictMode -Version Latest
@@ -60,13 +60,21 @@ function Resolve-IsolatedStackManifestPath {
     return Join-Path $RepoRoot "artifacts\e2e\$ChangeId\$RunId\stack-manifest.json"
 }
 
+function Get-IsolatedPortListener {
+    param(
+        [int] $Port,
+        [scriptblock] $ConnectionLookup = { Get-NetTCPConnection -ErrorAction Stop }
+    )
+    $connections = @(& $ConnectionLookup)
+    @($connections | Where-Object { [int]$_.LocalPort -eq $Port -and [string]$_.State -eq 'Listen' }) | Select-Object -First 1
+}
+
 function Assert-IsolatedStackStartPreflight {
     param(
         [string] $RepoRoot, [string] $ChangeId, [string] $RunId, [string] $OffsetInput,
         [scriptblock] $ListenerLookup = {
             param($port)
-            Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue |
-                Select-Object -First 1
+            Get-IsolatedPortListener -Port $port
         }
     )
     Assert-SafeStackSegment -Name 'ChangeId' -Value $ChangeId
@@ -83,6 +91,61 @@ function Assert-IsolatedStackStartPreflight {
         }
     }
     [pscustomobject]@{ ports = $ports; manifest_path = $manifestPath; offset = [int]$OffsetInput }
+}
+
+function Assert-IsolatedCleanWorktree {
+    param([string] $RepoRoot, [scriptblock] $StatusFn = { param($root) & git -C $root status --porcelain --untracked-files=all })
+    $entries = @(& $StatusFn $RepoRoot | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    if ($entries.Count -gt 0) {
+        throw 'Isolated stack start requires a clean worktree; tracked or nonignored untracked changes are not allowed.'
+    }
+}
+
+function ConvertTo-IsolatedWindowsArgumentLine {
+    param([string[]] $Arguments)
+    @($Arguments | ForEach-Object {
+        $argument = [string]$_
+        if ($argument -notmatch '[\s"]') { return $argument }
+        '"' + ([regex]::Replace($argument, '(\\*)"', '$1$1\\"') -replace '(\\+)$', '$1$1') + '"'
+    }) -join ' '
+}
+
+function Resolve-IsolatedStackReservation {
+    param([string] $RepoRoot, [string] $ChangeId, [string] $RunId, [int] $Offset)
+    $runPath = Join-Path $RepoRoot "artifacts\e2e\$ChangeId\$RunId\.stack-reservation.json"
+    $portPath = Join-Path $RepoRoot "artifacts\e2e\_isolated-stack-reservations\offset-$Offset.reservation.json"
+    [pscustomobject]@{ paths=@($runPath,$portPath) }
+}
+
+function Acquire-IsolatedStackReservations {
+    param([string] $RepoRoot, [string] $ChangeId, [string] $RunId, [int] $Offset)
+    $reservation = Resolve-IsolatedStackReservation -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Offset $Offset
+    $created = [System.Collections.Generic.List[string]]::new()
+    try {
+        foreach ($path in @($reservation.paths)) {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+            try {
+                $stream = [IO.File]::Open($path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+                try { [Text.Encoding]::UTF8.GetBytes('{"owner":"isolated-branch-stack"}') | ForEach-Object { $stream.WriteByte($_) } } finally { $stream.Dispose() }
+                $created.Add($path)
+            } catch [IO.IOException] {
+                throw "Isolated stack reservation is already held: $path"
+            }
+        }
+        [pscustomobject]@{ paths=@($created) }
+    } catch {
+        foreach ($path in @($created)) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+        throw
+    }
+}
+
+function Release-IsolatedStackReservations {
+    param($Reservation)
+    if ($null -eq $Reservation) { return }
+    foreach ($path in @($Reservation.paths)) {
+        Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $path) { throw "Failed to release isolated stack reservation: $path" }
+    }
 }
 
 function Resolve-IsolatedRuntime {
@@ -137,7 +200,7 @@ function Start-IsolatedBackend {
         [string] $Entrypoint,
         [scriptblock] $StartProcessFn = {
             param($exe,$argumentList,$cwd,$envMap,$stdout,$stderr)
-            Start-Process -FilePath $exe -ArgumentList $argumentList -WorkingDirectory $cwd `
+            Start-Process -FilePath $exe -ArgumentList (ConvertTo-IsolatedWindowsArgumentLine -Arguments $argumentList) -WorkingDirectory $cwd `
               -Environment $envMap -WindowStyle Hidden -PassThru `
               -RedirectStandardOutput $stdout -RedirectStandardError $stderr
         },
@@ -183,18 +246,45 @@ function Stop-IsolatedBackends {
     param(
         [object[]] $Processes,
         [scriptblock] $IdentityLookup = { param($e) Get-IsolatedProcessIdentity -ProcessId ([int]$e.pid) -Entrypoint ([string]$e.entrypoint) },
-        [scriptblock] $StopProcessFn = { param($processId) Stop-Process -Id $processId -Force -ErrorAction Stop }
+        [scriptblock] $StopProcessFn = { param($processId) Stop-Process -Id $processId -Force -ErrorAction Stop },
+        [scriptblock] $MissingProcessFn,
+        [switch] $AllowMissing
     )
-    $verified = foreach ($expected in $Processes) {
-        $actual = & $IdentityLookup $expected
-        if (-not (Test-IsolatedProcessOwnership -Expected $expected -Actual $actual)) {
-            throw "Ownership mismatch for $($expected.role) PID $($expected.pid); no process was stopped."
+    $verified = [System.Collections.Generic.List[object]]::new()
+    $results = [System.Collections.Generic.List[object]]::new()
+    $prevalidationFailed = $false
+    foreach ($expected in $Processes) {
+        if ($expected.PSObject.Properties['stop_status'] -and [string]$expected.stop_status -eq 'stopped') {
+            $results.Add([pscustomobject]@{role=$expected.role;pid=$expected.pid;status='already_stopped';reason='persisted_stop_state'})
+            continue
         }
-        $expected
+        try { $actual = & $IdentityLookup $expected } catch {
+            if ($null -ne $MissingProcessFn -and [bool](& $MissingProcessFn $expected)) {
+                $results.Add([pscustomobject]@{role=$expected.role;pid=$expected.pid;status='already_stopped';reason='process_absent_and_port_free'})
+            } else {
+                $reason = if ($AllowMissing) { 'rollback_identity_unproven' } else { 'identity_lookup_failed' }
+                $results.Add([pscustomobject]@{role=$expected.role;pid=$expected.pid;status='not_owned';reason=$reason})
+                $prevalidationFailed = $true
+            }
+            continue
+        }
+        if (-not (Test-IsolatedProcessOwnership -Expected $expected -Actual $actual)) {
+            $results.Add([pscustomobject]@{role=$expected.role;pid=$expected.pid;status='not_owned';reason='identity_mismatch'})
+            $prevalidationFailed = $true
+            continue
+        }
+        $verified.Add($expected)
     }
+    if ($prevalidationFailed) { return @($results) }
     foreach ($process in @($verified | Sort-Object { [array]::IndexOf($Processes, $_) } -Descending)) {
-        & $StopProcessFn ([int]$process.pid)
+        try {
+            & $StopProcessFn ([int]$process.pid)
+            $results.Add([pscustomobject]@{role=$process.role;pid=$process.pid;status='stopped';reason=$null})
+        } catch {
+            $results.Add([pscustomobject]@{role=$process.role;pid=$process.pid;status='stop_failed';reason=$_.Exception.Message})
+        }
     }
+    @($results)
 }
 
 function Write-IsolatedJsonAtomic {
@@ -291,22 +381,58 @@ function Get-IsolatedStackStatus {
     [pscustomobject]@{stack_kind=$Manifest.stack_kind;backend=@($backend);viewer=$Manifest.viewer;manifest_path=$ManifestPath}
 }
 
+function New-IsolatedMissingProcessGuard {
+    param($Ports,[scriptblock]$ProcessExistsFn,[scriptblock]$ListenerLookupFn)
+    {
+        param($expected)
+        try {
+            if ([bool](& $ProcessExistsFn ([int]$expected.pid))) { return $false }
+            $port = [int]$Ports.($expected.role)
+            return $null -eq (& $ListenerLookupFn $port)
+        } catch {
+            return $false
+        }
+    }.GetNewClosure()
+}
+
 function Stop-IsolatedStackRun {
-    param($Manifest,[string]$ManifestPath,[scriptblock]$IdentityLookup,[scriptblock]$StopProcessFn)
+    param(
+        $Manifest,[string]$ManifestPath,[scriptblock]$IdentityLookup,[scriptblock]$StopProcessFn,
+        [scriptblock]$ProcessExistsFn,[scriptblock]$ListenerLookupFn
+    )
     if ($Manifest.stopped_at) { return [pscustomobject]@{status='already_stopped';manifest_path=$ManifestPath} }
-    Stop-IsolatedBackends -Processes @($Manifest.processes) -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn
-    $Manifest.stopped_at=[DateTime]::UtcNow.ToString('o')
-    $Manifest.backend_ready.governance=$false
-    $Manifest.backend_ready.coordinator=$false
+    $missingProcessFn = New-IsolatedMissingProcessGuard -Ports $Manifest.ports -ProcessExistsFn $ProcessExistsFn -ListenerLookupFn $ListenerLookupFn
+    $results = @(Stop-IsolatedBackends -Processes @($Manifest.processes) -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn -MissingProcessFn $missingProcessFn)
+    $Manifest | Add-Member -Force -NotePropertyName stop_state -NotePropertyValue ([ordered]@{ attempted_at=[DateTime]::UtcNow.ToString('o'); entries=$results })
+    foreach ($result in $results) {
+        $process = @($Manifest.processes | Where-Object { $_.role -eq $result.role -and $_.pid -eq $result.pid }) | Select-Object -First 1
+        if ($process -and $result.status -in @('stopped','already_stopped')) {
+            $process | Add-Member -Force -NotePropertyName stop_status -NotePropertyValue 'stopped'
+            $Manifest.backend_ready.($result.role) = $false
+        }
+    }
+    $failed = @($results | Where-Object { $_.status -in @('not_owned','stop_failed') })
+    if ($failed.Count -eq 0) {
+        $Manifest.stopped_at=[DateTime]::UtcNow.ToString('o')
+        $Manifest.backend_ready.governance=$false
+        $Manifest.backend_ready.coordinator=$false
+    }
     Write-IsolatedJsonAtomic -Path $ManifestPath -Value $Manifest
+    if ($failed.Count -gt 0) { throw "Partial stop; recoverable per-process state persisted for: $($failed.role -join ',')" }
     [pscustomobject]@{status='stopped';manifest_path=$ManifestPath}
 }
 
 function Start-IsolatedStackRun {
-    param($RepoRoot,$ChangeId,$RunId,$Preflight,$Runtime,$StartBackendFn,$HealthFn,$IdentityLookup,$StopProcessFn,$HeadShaFn)
+    param(
+        $RepoRoot,$ChangeId,$RunId,$Preflight,$Runtime,$Reservation,$StartBackendFn,$HealthFn,$IdentityLookup,$StopProcessFn,$HeadShaFn,
+        [scriptblock]$ProcessExistsFn,[scriptblock]$ListenerLookupFn
+    )
     $runDirectory=Split-Path -Parent $Preflight.manifest_path
     $started=[System.Collections.Generic.List[object]]::new()
     try {
+        $head=& $HeadShaFn $RepoRoot
+        if($head -notmatch '^[0-9a-f]{40}$'){throw 'HEAD identity is not a 40-character commit SHA'}
+
         $governanceSpec=@{
             Role='governance';WorkingDirectory=(Join-Path $RepoRoot 'governance-service');Executable=$Runtime.python
             Arguments=@('-m','uvicorn','app:app','--host','127.0.0.1','--port',"$($Preflight.ports.governance)")
@@ -333,13 +459,40 @@ function Start-IsolatedStackRun {
         $started.Add($coordinator)
         if(-not (& $HealthFn "http://127.0.0.1:$($Preflight.ports.coordinator)/health")){throw 'coordinator health failed'}
 
-        $head=& $HeadShaFn $RepoRoot
-        if($head -notmatch '^[0-9a-f]{40}$'){throw 'HEAD identity is not a 40-character commit SHA'}
         $manifest=New-IsolatedStackManifest -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Preflight $Preflight -HeadSha $head -Processes @($started)
         Write-IsolatedJsonAtomic -Path $Preflight.manifest_path -Value $manifest -NoClobber
         [pscustomobject]@{status='started';manifest_path=$Preflight.manifest_path;manifest=$manifest}
     } catch {
-        if($started.Count -gt 0){Stop-IsolatedBackends -Processes @($started) -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn}
+        $startFailure = $_
+        if($started.Count -gt 0){
+            $rollbackMissingProcessFn = New-IsolatedMissingProcessGuard -Ports $Preflight.ports -ProcessExistsFn $ProcessExistsFn -ListenerLookupFn $ListenerLookupFn
+            $rollbackResults = @(Stop-IsolatedBackends -Processes @($started) -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn -MissingProcessFn $rollbackMissingProcessFn -AllowMissing)
+            $rollbackFailures = @($rollbackResults | Where-Object { $_.status -in @('not_owned','stop_failed') })
+            if ($rollbackFailures.Count -gt 0) {
+                try {
+                    $recovery = New-IsolatedStackManifest -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Preflight $Preflight -HeadSha $head -Processes @($started)
+                    $recovery.backend_ready.governance = $false
+                    $recovery.backend_ready.coordinator = $false
+                    $recovery | Add-Member -Force -NotePropertyName reservation_held -NotePropertyValue $true
+                    $recovery | Add-Member -Force -NotePropertyName start_failure -NotePropertyValue ([ordered]@{ message=$startFailure.Exception.Message; occurred_at=[DateTime]::UtcNow.ToString('o') })
+                    $recovery | Add-Member -Force -NotePropertyName stop_state -NotePropertyValue ([ordered]@{ attempted_at=[DateTime]::UtcNow.ToString('o'); entries=$rollbackResults })
+                    foreach ($result in $rollbackResults) {
+                        $process = @($recovery.processes | Where-Object { $_.role -eq $result.role -and $_.pid -eq $result.pid }) | Select-Object -First 1
+                        if ($process -and $result.status -in @('stopped','already_stopped')) {
+                            $process | Add-Member -Force -NotePropertyName stop_status -NotePropertyValue 'stopped'
+                        }
+                    }
+                    Write-IsolatedJsonAtomic -Path $Preflight.manifest_path -Value $recovery -NoClobber
+                } catch {
+                    $recoveryPersistenceError = [InvalidOperationException]::new("Start failed, rollback was incomplete, and the recovery manifest could not be persisted; reservations remain held for manual recovery. Cause: $($startFailure.Exception.Message). Persistence error: $($_.Exception.Message)")
+                    $recoveryPersistenceError.Data['KeepIsolatedReservation'] = $true
+                    throw $recoveryPersistenceError
+                }
+                $recoveryError = [InvalidOperationException]::new("Start failed and rollback was incomplete; recovery manifest retained at $($Preflight.manifest_path). Cause: $($startFailure.Exception.Message)")
+                $recoveryError.Data['KeepIsolatedReservation'] = $true
+                throw $recoveryError
+            }
+        }
         throw
     }
 }
@@ -347,7 +500,7 @@ function Start-IsolatedStackRun {
 function Invoke-IsolatedBranchStack {
     param(
         [ValidateSet('start','status','stop')][string]$Action,
-        [string]$ChangeId,[string]$RunId,[string]$OffsetInput='0',
+        [string]$ChangeId,[string]$RunId,[string]$OffsetInput,
         [string]$RepoRoot=(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
         [scriptblock]$PreflightFn={param($root,$change,$run,$offset) Assert-IsolatedStackStartPreflight -RepoRoot $root -ChangeId $change -RunId $run -OffsetInput $offset},
         [scriptblock]$RuntimeResolver={param($root) Resolve-IsolatedRuntime -RepoRoot $root},
@@ -355,7 +508,12 @@ function Invoke-IsolatedBranchStack {
         [scriptblock]$HealthFn={param($url) Wait-IsolatedHealth -Url $url},
         [scriptblock]$IdentityLookup={param($e) Get-IsolatedProcessIdentity -ProcessId ([int]$e.pid) -Entrypoint ([string]$e.entrypoint)},
         [scriptblock]$StopProcessFn={param($processId) Stop-Process -Id $processId -Force -ErrorAction Stop},
-        [scriptblock]$HeadShaFn={param($root) (& git -C $root rev-parse HEAD).Trim()}
+        [scriptblock]$ProcessExistsFn={param($processId) $null -ne (Get-Process -Id $processId -ErrorAction SilentlyContinue)},
+        [scriptblock]$StopListenerLookupFn={param($port) Get-IsolatedPortListener -Port $port},
+        [scriptblock]$HeadShaFn={param($root) (& git -C $root rev-parse HEAD).Trim()},
+        [scriptblock]$WorktreeStatusFn={param($root) & git -C $root status --porcelain --untracked-files=all},
+        [scriptblock]$ReservationAcquireFn={param($root,$change,$run,$offset) Acquire-IsolatedStackReservations -RepoRoot $root -ChangeId $change -RunId $run -Offset $offset},
+        [scriptblock]$ReservationReleaseFn={param($reservation) Release-IsolatedStackReservations -Reservation $reservation}
     )
     Assert-SafeStackSegment -Name 'ChangeId' -Value $ChangeId
     Assert-SafeStackSegment -Name 'RunId' -Value $RunId
@@ -363,15 +521,37 @@ function Invoke-IsolatedBranchStack {
 
     if($Action -in @('status','stop')){
         $manifest=Read-IsolatedStackManifest -Path $manifestPath
-        Assert-IsolatedStackManifestIdentity -Manifest $manifest -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -OffsetInput $OffsetInput
+        $effectiveOffset = if ([string]::IsNullOrWhiteSpace($OffsetInput)) { [string]$manifest.offset } else { $OffsetInput }
+        Assert-IsolatedStackManifestIdentity -Manifest $manifest -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -OffsetInput $effectiveOffset
         if($Action -eq 'status'){return Get-IsolatedStackStatus -Manifest $manifest -ManifestPath $manifestPath -IdentityLookup $IdentityLookup -HealthFn $HealthFn}
-        return Stop-IsolatedStackRun -Manifest $manifest -ManifestPath $manifestPath -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn
+        $stopResult = Stop-IsolatedStackRun -Manifest $manifest -ManifestPath $manifestPath -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn `
+            -ProcessExistsFn $ProcessExistsFn -ListenerLookupFn $StopListenerLookupFn
+        if ($manifest.PSObject.Properties['reservation_held'] -and [bool]$manifest.reservation_held) {
+            $heldReservation = Resolve-IsolatedStackReservation -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Offset ([int]$manifest.offset)
+            & $ReservationReleaseFn $heldReservation
+            $manifest.reservation_held = $false
+            Write-IsolatedJsonAtomic -Path $manifestPath -Value $manifest
+        }
+        return $stopResult
     }
 
-    $preflight=& $PreflightFn $RepoRoot $ChangeId $RunId $OffsetInput
-    $runtime=& $RuntimeResolver $RepoRoot
-    Start-IsolatedStackRun -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Preflight $preflight -Runtime $runtime `
-      -StartBackendFn $StartBackendFn -HealthFn $HealthFn -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn -HeadShaFn $HeadShaFn
+    $effectiveOffset = if ([string]::IsNullOrWhiteSpace($OffsetInput)) { '0' } else { $OffsetInput }
+    Assert-IsolatedCleanWorktree -RepoRoot $RepoRoot -StatusFn $WorktreeStatusFn
+    $null = Resolve-IsolatedStackPorts -OffsetInput $effectiveOffset
+    $reservation = & $ReservationAcquireFn $RepoRoot $ChangeId $RunId ([int]$effectiveOffset)
+    $releaseReservation = $true
+    try {
+        $preflight=& $PreflightFn $RepoRoot $ChangeId $RunId $effectiveOffset
+        $runtime=& $RuntimeResolver $RepoRoot
+        Start-IsolatedStackRun -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Preflight $preflight -Runtime $runtime -Reservation $reservation `
+          -StartBackendFn $StartBackendFn -HealthFn $HealthFn -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn -HeadShaFn $HeadShaFn `
+          -ProcessExistsFn $ProcessExistsFn -ListenerLookupFn $StopListenerLookupFn
+    } catch {
+        if ($_.Exception.Data['KeepIsolatedReservation'] -eq $true) { $releaseReservation = $false }
+        throw
+    } finally {
+        if ($releaseReservation) { & $ReservationReleaseFn $reservation }
+    }
 }
 
 if ($MyInvocation.InvocationName -ne '.') {

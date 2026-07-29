@@ -47,6 +47,7 @@ const webServer = process.env.E2E_DISABLE_WEBSERVER === "1"
 // - harness 模式必須同時有 runner-owned VITE_VIEWER_HARNESS=1 與各測試的 ?harness=1。
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: ["**/support/**/*.test.ts"],
   globalSetup: isolated ? "./e2e/support/isolated-stack-global-setup.ts" : undefined,
   outputDir: isolated ? path.join(isolated.runDir, "playwright-output") : "../artifacts/e2e/_output",
   timeout: 60_000,

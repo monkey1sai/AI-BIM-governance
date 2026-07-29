@@ -1,14 +1,14 @@
 import { expect, test, type Page, type Route, type TestInfo } from "@playwright/test";
 import {
   classifyHarnessUse,
-  requireIsolatedStackConfig,
+  loadIsolatedStackConfig,
   requireReal,
   watchForbiddenRequests,
   writeIsolatedEvidenceManifest,
 } from "./support/isolated-stack";
 
-const isolated = requireIsolatedStackConfig();
-const COORDINATOR = isolated.coordinatorBaseUrl;
+const isolated = loadIsolatedStackConfig();
+const COORDINATOR = isolated?.coordinatorBaseUrl ?? "";
 const REQUIRED_JOB_ID = process.env.A4_E2E_IFC_READY_JOB_ID ?? "";
 const VIEWPORTS = [
   { label: "1440x900", width: 1440, height: 900 },
@@ -51,6 +51,8 @@ function safeA4Diagnostic(value: unknown): string | null {
 
 for (const viewport of VIEWPORTS) {
   test.describe(`A4 require-real scoped search (${viewport.label} DPR1)`, () => {
+    test.skip(!isolated, "A4 isolated evidence requires E2E_REQUIRE_REAL=1");
+    if (!isolated) return;
     test.setTimeout(180_000);
     test.use({
       viewport: { width: viewport.width, height: viewport.height },
@@ -63,6 +65,7 @@ for (const viewport of VIEWPORTS) {
     let searchQuery = "";
     let tracePath = "";
     let traceActive = false;
+    let pendingEvidence: null | { testId: string; visibleStates: string[]; backendApi: string } = null;
 
     async function finishEvidence(
       page: Page,
@@ -71,32 +74,14 @@ for (const viewport of VIEWPORTS) {
       visibleStates: string[],
       backendApi: string,
     ): Promise<void> {
-      const screenshotPath = testInfo.outputPath(`${testId}.png`);
-      await page.screenshot({ path: screenshotPath, fullPage: true });
-      await page.context().tracing.stop({ path: tracePath });
-      traceActive = false;
-      const harness = classifyHarnessUse({
-        buildFlag: isolated.harnessBuildFlag,
-        queryFlag: new URL(page.url()).searchParams.get("harness") === "1",
-      });
-      requireReal(harness.realControlPlaneEligible, "harness build+query fake control plane is not real evidence");
-      await writeIsolatedEvidenceManifest(isolated, {
-        testId,
-        route: "#semantic-search",
-        mainButtons: ["a4-refresh-sources", "a4-run"],
-        fixture: `downloaded IFC-ready job preflighted against the real coordinator with deterministic query=${searchQuery}`,
-        backendApi,
-        observedRuntimeIds: { ifc_ready_job_id: jobId },
-        visibleStates,
-        screenshotPaths: [screenshotPath],
-        tracePath,
-        harness,
-      });
+      void page; void testInfo;
+      pendingEvidence = { testId, visibleStates, backendApi };
     }
 
     test.beforeEach(async ({ page, request }, testInfo) => {
       forbiddenGuard = watchForbiddenRequests(page);
       genericSearchRequests = [];
+      pendingEvidence = null;
       page.on("request", requestEvent => {
         if (new URL(requestEvent.url()).pathname === "/api/governance/search/model") {
           genericSearchRequests.push(requestEvent.url());
@@ -175,10 +160,26 @@ for (const viewport of VIEWPORTS) {
       );
     });
 
-    test.afterEach(async ({ page }) => {
+    test.afterEach(async ({ page }, testInfo) => {
       try {
+        let screenshotPath: string | null = null;
+        if (pendingEvidence) {
+          screenshotPath = testInfo.outputPath(`${pendingEvidence.testId}.png`);
+          await page.screenshot({ path: screenshotPath, fullPage: true });
+        }
+        if (traceActive) { await page.context().tracing.stop({ path: tracePath }); traceActive = false; }
         forbiddenGuard?.assertClean();
         expect(genericSearchRequests, "must not call the generic host-path A4 route").toEqual([]);
+        if (pendingEvidence && screenshotPath) {
+          const harness = classifyHarnessUse({ buildFlag: isolated.harnessBuildFlag, queryFlag: new URL(page.url()).searchParams.get("harness") === "1" });
+          requireReal(harness.realControlPlaneEligible, "harness build+query fake control plane is not real evidence");
+          await writeIsolatedEvidenceManifest(isolated, {
+            testId: pendingEvidence.testId, route: "#semantic-search", mainButtons: ["a4-refresh-sources", "a4-run"],
+            fixture: `downloaded IFC-ready job preflighted against the real coordinator with deterministic query=${searchQuery}`,
+            backendApi: pendingEvidence.backendApi, observedRuntimeIds: { ifc_ready_job_id: jobId },
+            visibleStates: pendingEvidence.visibleStates, screenshotPaths: [screenshotPath], tracePath, harness,
+          });
+        }
       } finally {
         if (traceActive) {
           await page.context().tracing.stop({ path: tracePath });

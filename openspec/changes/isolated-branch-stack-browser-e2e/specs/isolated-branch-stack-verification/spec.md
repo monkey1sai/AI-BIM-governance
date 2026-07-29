@@ -33,6 +33,8 @@
 
 隔離 stack SHALL 只接受整數 offset `0..4` 以支援 parallel session，resolved port SHALL 為 base 加 offset。負值、非整數或 `>4` SHALL 在 listener 查詢、cleanup 或服務啟動之前 fail closed。通過 domain 後，啟動流程 SHALL 計算 resolved port set 並與保留集合求交集；交集非空時 SHALL fail closed——回報衝突 port 與 owner，且 SHALL NOT 啟動任何服務、SHALL NOT 對任何 port 執行清理。
 
+通過 offset domain 與保留集合檢查後，start SHALL 以 atomic create-new 取得該 change/run 與 resolved offset 的 reservation；manifest collision 與 listener preflight SHALL 在 reservation 持有期間重新執行，且 reservation SHALL 持續覆蓋 backend health 與 manifest commit，避免以 reservation 前的 stale preflight 啟動。正常成功或完整 rollback 後可釋放 reservation；若 startup rollback 仍有 `stop_failed`／ownership failure，launcher SHALL 寫出 recovery manifest、保留 reservation，直到同一 change/run 的 `stop` 證明所有本 run backend 已停止後才釋放。
+
 啟動前的 port cleanup SHALL 只作用於 resolved backend port set，且只有 manifest 所記 PID、精確 launcher entrypoint 與 process creation identity 在 stop 前重驗全部一致時，才可停止該 repo-owned backend。未知 listener、缺少 manifest、PID reuse、entrypoint 不符或 creation identity 不符時 SHALL fail closed，SHALL NOT 停止任何 process。cleanup SHALL NOT 觸及 viewer port 或保留集合中的任何 port。
 
 隔離 stack SHALL NOT 啟動 streaming server、Kit runtime 或 WebRTC；這些 runtime 的 evidence 仍由既有 host-native 契約提供。
@@ -61,6 +63,13 @@
 - **THEN** 流程 SHALL fail closed 並回報 occupied/ownership-unknown
 - **AND** SHALL NOT 停止該 listener 或啟動任何新服務
 
+#### Scenario: partial stop 後 process 已自行退出
+
+- **GIVEN** recovery manifest 記錄某 backend 尚未停止，但 retry 時該 PID 已不存在
+- **WHEN** launcher 重試 `stop`
+- **THEN** 只有在該 PID 確認不存在且其 resolved backend port 也沒有 listener 時，才可記為 `already_stopped`
+- **AND** PID 仍存在、listener lookup 失敗或該 port 出現任何 listener時 SHALL fail closed，不得停止未知 process，也不得釋放 recovery reservation
+
 #### Scenario: 隔離 stack 啟停不改動部署區
 
 - **GIVEN** 測試部署區正在 `8004` 與 `49102` 上提供服務
@@ -73,7 +82,7 @@
 
 隔離 stack 的任何必要步驟（含 port 清理）SHALL NOT 以 `.claude/**`、`.codex/**` 或其他 agent skill 目錄下的檔案作為唯一實作來源；installed skill 是 workflow helper，不是 product source of truth。
 
-launcher 的三個 action SHALL 要求 caller 明示 `ChangeId` 與 `RunId`；兩者只允許安全的單一路徑 segment，並共同定位 `artifacts/e2e/<change-id>/<run-id>/stack-manifest.json`。start 發現同名 manifest 已存在時 SHALL fail closed，不得覆寫既有 run。backend 啟動成功時 manifest SHALL 至少包含 stack kind、change/run ID、offset、resolved ports、base URLs、head commit sha、啟動時間、backend ready state、lifecycle owners，以及每個 backend 的 PID、精確 launcher entrypoint 與 process creation identity；停止時 SHALL 保留 manifest 並補記停止時間。`status` SHALL 回報 backend ready/ownership 狀態與 manifest 所期待的 Playwright-owned viewer port，不得把 viewer 未由 launcher 啟動誤報為 backend failure。
+launcher 的三個 action SHALL 要求 caller 明示 `ChangeId` 與 `RunId`；兩者只允許安全的單一路徑 segment，並共同定位 `artifacts/e2e/<change-id>/<run-id>/stack-manifest.json`。start 發現同名 manifest 已存在時 SHALL fail closed，不得覆寫既有 run。backend 啟動成功時 manifest SHALL 至少包含 stack kind、change/run ID、offset、resolved ports、base URLs、head commit sha、啟動時間、backend ready state、lifecycle owners，以及每個 backend 的 PID、精確 launcher entrypoint 與 process creation identity；startup rollback 不完整時，同一路徑 SHALL 保留 recovery manifest、start failure、per-process stop state 與 reservation-held 狀態。停止時 SHALL 保留 manifest 並補記停止時間；partial stop SHALL 原子保存已停止角色，retry SHALL 跳過已停止角色。`status` SHALL 回報 backend ready/ownership 狀態與 manifest 所期待的 Playwright-owned viewer port，不得把 viewer 未由 launcher 啟動誤報為 backend failure。
 
 #### Scenario: 啟動器登記於 script 契約
 
@@ -104,7 +113,7 @@ E2E run SHALL 在整場期間監看瀏覽器發出的 request；任何命中保�
 
 evidence run SHALL 以必填 `E2E_STACK_MANIFEST` 指向唯一 manifest；resolved path SHALL 位於目前 worktree 的 `artifacts/e2e/<change-id>/<run-id>/stack-manifest.json`，其 change/run ID SHALL 與內容相同，`head_sha` SHALL 等於目前 checkout HEAD。任一條件不符 SHALL 在啟動 webServer 或執行任何 spec 前中止。base URL 解析 SHALL 有唯一入口；manifest coordinator base SHALL 是 browser E2E authority。若 `E2E_COORDINATOR_BASE_URL` 存在，其值 SHALL 與 manifest coordinator base 完全相同；即使另一個隔離 offset 的 port 不在保留集合，mismatch 仍 SHALL 提前中止。解析結果落入保留集合時亦同。
 
-stack manifest 的 resolved viewer port SHALL 是 browser E2E 的 authority。若 `E2E_VIEWER_PORT` 存在，其值 SHALL 與 manifest viewer port 完全相同，否則 SHALL 在啟動 webServer 或執行任何 spec 前中止。若 `E2E_DISABLE_WEBSERVER=1`，外部 viewer SHALL 已在相同 manifest port 提供服務；不得藉 env 改用另一個 port。
+stack manifest 的 resolved viewer port SHALL 是 browser E2E 的 authority。若 `E2E_VIEWER_PORT` 存在，其值 SHALL 與 manifest viewer port 完全相同，否則 SHALL 在啟動 webServer 或執行任何 spec 前中止。require-real evidence SHALL 由 Playwright `webServer` 啟動 viewer；`E2E_DISABLE_WEBSERVER=1` 因無法證明外部 bundle 的 HEAD 與 coordinator binding，SHALL 在啟動任何 spec 前中止。
 
 #### Scenario: 缺前置條件時 hard fail 而非 skip
 

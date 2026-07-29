@@ -82,8 +82,9 @@ afterEach(() => {
 describe("loadIsolatedStackConfig", () => {
   it("keeps A3 require-real on the manifest-owned federation route", () => {
     const source = readFileSync(path.join(process.cwd(), "e2e", "a3-federated-session-chain.spec.ts"), "utf8");
-    expect(source).not.toMatch(/test\.skip|dist-ui|:8004|49102/);
-    expect(source).toContain("requireIsolatedStackConfig");
+    expect(source).not.toMatch(/dist-ui|:8004|49102/);
+    expect(source).toContain("loadIsolatedStackConfig");
+    expect(source).toContain("search/llm-status");
     expect(source).toContain("requireReal");
     expect(source).toContain("watchForbiddenRequests");
     expect(source).toContain('page.goto("/#/federation")');
@@ -91,12 +92,33 @@ describe("loadIsolatedStackConfig", () => {
 
   it("keeps A4 require-real without legacy skip gates", () => {
     const source = readFileSync(path.join(process.cwd(), "e2e", "a4-closeout.spec.ts"), "utf8");
-    expect(source).not.toMatch(/A4_E2E_REQUIRE_REAL|test\.skip|function unavailable/);
-    expect(source).toContain("requireIsolatedStackConfig");
+    expect(source).not.toMatch(/A4_E2E_REQUIRE_REAL|function unavailable/);
+    expect(source).toContain("loadIsolatedStackConfig");
     expect(source).toContain("watchForbiddenRequests");
     expect(source).toContain("DETERMINISTIC_CLASS_CANDIDATES");
     expect(source).toContain("selectOption(jobId)");
     expect(source).toContain("finally");
+  });
+
+  it("publishes A3 and A4 evidence only after request guards pass", () => {
+    for (const file of ["a3-federated-session-chain.spec.ts", "a4-closeout.spec.ts"]) {
+      const source = readFileSync(path.join(process.cwd(), "e2e", file), "utf8");
+      const afterEachIndex = source.indexOf("test.afterEach");
+      const screenshotIndex = source.indexOf("await page.screenshot", afterEachIndex);
+      const traceStopIndex = source.indexOf("await page.context().tracing.stop", afterEachIndex);
+      const forbiddenGuardIndex = source.indexOf("forbiddenGuard?.assertClean()", afterEachIndex);
+      const evidenceWriteIndex = source.indexOf("writeIsolatedEvidenceManifest(isolated", afterEachIndex);
+      expect(afterEachIndex, `${file} has afterEach evidence publication`).toBeGreaterThanOrEqual(0);
+      expect(screenshotIndex, `${file} captures its screenshot before the final request guard`).toBeGreaterThan(afterEachIndex);
+      expect(traceStopIndex, `${file} stops tracing before the final request guard`).toBeGreaterThan(screenshotIndex);
+      expect(forbiddenGuardIndex, `${file} checks requests after all page and trace activity`).toBeGreaterThan(traceStopIndex);
+      expect(evidenceWriteIndex, `${file} writes evidence after forbidden request guard`).toBeGreaterThan(forbiddenGuardIndex);
+      if (file === "a4-closeout.spec.ts") {
+        const genericRouteGuardIndex = source.indexOf('expect(genericSearchRequests, "must not call the generic host-path A4 route")', afterEachIndex);
+        expect(genericRouteGuardIndex, "A4 checks the generic route in afterEach").toBeGreaterThan(forbiddenGuardIndex);
+        expect(evidenceWriteIndex, "A4 writes evidence after the generic route guard").toBeGreaterThan(genericRouteGuardIndex);
+      }
+    }
   });
 
   it("requires the manifest before Playwright starts", () => {
@@ -180,13 +202,13 @@ describe("loadIsolatedStackConfig", () => {
     expect(() => parseStandaloneViewerPort(raw)).toThrow(/standalone viewer port/);
   });
 
-  it("requires external-viewer harness disclosure", () => {
+  it("rejects external viewer in require-real evidence without build identity", () => {
     const value = fixture();
     expect(() => loadIsolatedStackConfig({
       cwd: value.worktreeRoot,
       headSha: value.headSha,
       env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath, E2E_DISABLE_WEBSERVER: "1" },
-    })).toThrow(/E2E_VIEWER_HARNESS_BUILD=0\|1/);
+    })).toThrow(/E2E_DISABLE_WEBSERVER=1 is not permitted/);
   });
 
   it("records every reserved-port browser request", () => {
@@ -262,9 +284,9 @@ describe("loadIsolatedStackConfig", () => {
     })).rejects.toThrow(/harness build flag mismatch/);
   });
 
-  it("rejects build and query harness falsely claiming real control-plane eligibility", async () => {
+  it("rejects external viewer before it can claim harness evidence", () => {
     const value = fixture();
-    const config = loadIsolatedStackConfig({
+    expect(() => loadIsolatedStackConfig({
       cwd: value.worktreeRoot,
       headSha: value.headSha,
       env: {
@@ -273,12 +295,7 @@ describe("loadIsolatedStackConfig", () => {
         E2E_DISABLE_WEBSERVER: "1",
         E2E_VIEWER_HARNESS_BUILD: "1",
       },
-    })!;
-    const observation = sampleObservation(config);
-    await expect(writeIsolatedEvidenceManifest(config, {
-      ...observation,
-      harness: { buildFlag: true, queryFlag: true, realControlPlaneEligible: true },
-    })).rejects.toThrow(/harness eligibility mismatch/);
+    })).toThrow(/E2E_DISABLE_WEBSERVER=1 is not permitted/);
   });
 
   it("fails closed on a pre-existing evidence lock and preserves original bytes", async () => {

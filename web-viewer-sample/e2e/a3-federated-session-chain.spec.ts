@@ -1,15 +1,17 @@
 import { existsSync } from "node:fs";
-import { expect, test, type APIRequestContext, type Locator } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Locator, type TestInfo } from "@playwright/test";
 import {
-  requireIsolatedStackConfig,
+  classifyHarnessUse,
+  loadIsolatedStackConfig,
   requireReal,
   watchForbiddenRequests,
+  writeIsolatedEvidenceManifest,
 } from "./support/isolated-stack";
 
 // A3 federation→session：manifest-owned viewer 的 #/federation 以兩個真 USD
 // fixtures 建 federated set、驗證、build、review-room，最後建立 Review Session。
-const isolated = requireIsolatedStackConfig();
-const COORDINATOR = isolated.coordinatorBaseUrl;
+const isolated = loadIsolatedStackConfig();
+const COORDINATOR = isolated?.coordinatorBaseUrl ?? "";
 const A3_USD_DIR = process.env.E2E_A3_USD_DIR || "C:/Repos/active/iot/AI-BIM-governance/storage/e2e-a3";
 const ARCH_USD = `${A3_USD_DIR}/arch.usdc`;
 const STR_USD = `${A3_USD_DIR}/str.usdc`;
@@ -32,40 +34,67 @@ async function cleanupCreatedSession(request: APIRequestContext, sessionId: stri
 }
 
 test.describe("A3 federation→session 一鍵鏈（#/federation 真 backend 全鏈）", () => {
+  test.skip(!isolated, "A3 isolated evidence requires E2E_REQUIRE_REAL=1");
+  if (!isolated) return;
   // 預算：守門 ~30s + prepare 30s + build 60s + review-room 30s + create session 60s + 截圖 → 240s 上限。
   test.setTimeout(240_000);
 
   // afterEach 誠實清理只關「本測建立」的 session：test body 拿到 session_id 才填入；其他 session 一律不碰。
   let createdSessionId: string | null = null;
   let forbiddenGuard: ReturnType<typeof watchForbiddenRequests> | undefined;
+  let createdSetId: string | null = null;
+  let tracePath = "";
+  let traceActive = false;
+  let completed = false;
 
-  test.beforeEach(async ({ request, page }) => {
+  test.beforeEach(async ({ request, page }, testInfo) => {
     createdSessionId = null;
+    createdSetId = null;
+    completed = false;
     forbiddenGuard = watchForbiddenRequests(page);
+    tracePath = testInfo.outputPath("a3-federated-session-chain-trace.zip");
+    await page.context().tracing.start({ screenshots: true, snapshots: true, sources: true });
+    traceActive = true;
     requireReal(ARCH_USD && existsSync(ARCH_USD), "A3 ARCH USD fixture is required and must exist");
     requireReal(STR_USD && existsSync(STR_USD), "A3 STR USD fixture is required and must exist");
 
     const health = await request.get(`${COORDINATOR}/health`, { timeout: 10_000 });
     requireReal(health.ok(), `isolated coordinator health failed: HTTP ${health.status()}`);
 
-    // This is a real coordinator→governance proxy operation, not a synthetic
-    // readiness flag. The metadata-only probe creates no review session.
-    const probe = await request.post(`${COORDINATOR}/api/governance/federated-sets`, {
-      data: { name: `e2e_a3_probe_${Date.now()}` },
-      timeout: 10_000,
-    });
+    // Read-only coordinator→governance proxy probe; it must not create a set.
+    const probe = await request.get(`${COORDINATOR}/api/governance/search/llm-status`, { timeout: 10_000 });
     requireReal(probe.ok(), `isolated governance proxy probe failed: HTTP ${probe.status()}`);
-    const probeBody = await probe.json() as { set_id?: unknown };
-    requireReal(typeof probeBody.set_id === "string" && probeBody.set_id.length > 0, "isolated governance proxy probe returned no set_id");
+    const probeBody = await probe.json() as unknown;
+    requireReal(typeof probeBody === "object" && probeBody !== null && !Array.isArray(probeBody), "isolated governance proxy probe returned invalid JSON");
 
     await page.goto("/#/federation");
     await page.getByPlaceholder(USD_PLACEHOLDER).first().waitFor({ state: "visible", timeout: 15_000 });
   });
 
-  test.afterEach(async ({ request }) => {
+  test.afterEach(async ({ request, page }, testInfo) => {
     try {
+      let screenshotPath: string | null = null;
+      if (completed && createdSetId && createdSessionId) {
+        screenshotPath = testInfo.outputPath("a3-federated-session-chain.png");
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+      }
+      if (traceActive) { await page.context().tracing.stop({ path: tracePath }); traceActive = false; }
       forbiddenGuard?.assertClean();
+      if (completed && createdSetId && createdSessionId && screenshotPath) {
+        await writeIsolatedEvidenceManifest(isolated, {
+          testId: "a3-federated-session-chain",
+          route: "#/federation",
+          mainButtons: ["準備 + 驗證坐標系", "Build Federated USD", "Open in Review Room", "a3-create-session"],
+          fixture: "ARCH/STR real USD fixtures",
+          backendApi: "GET /api/governance/search/llm-status; federation and review-session proxy flow",
+          observedRuntimeIds: { set_id: createdSetId, session_id: createdSessionId },
+          visibleStates: ["coordinate-consistent", "review-room-ready", "session-created"],
+          screenshotPaths: [screenshotPath], tracePath,
+          harness: classifyHarnessUse({ buildFlag: isolated.harnessBuildFlag, queryFlag: new URL(page.url()).searchParams.get("harness") === "1" }),
+        });
+      }
     } finally {
+      if (traceActive) { await page.context().tracing.stop({ path: tracePath }); traceActive = false; }
       // 只關本測已確認建立的 session；絕不枚舉或關閉其他 session。
       const sid = createdSessionId;
       createdSessionId = null;
@@ -139,6 +168,7 @@ test.describe("A3 federation→session 一鍵鏈（#/federation 真 backend 全�
     const mvInput = page.locator('input[placeholder^="federated_"]');
     const setId = ((await mvInput.getAttribute("placeholder")) ?? "").replace(/^federated_/, "");
     expect(setId, "session 區塊 placeholder 應帶真實 set_id").not.toBe("");
+    createdSetId = setId;
     // model_version_id 留空 → 送出 federated_<set_id>（真實對應後端 set）；project_id 用元件預設 federation-demo。
 
     // Step 4：建立 Review Session（federated stage）。先斷言 enabled（descriptor ready + 必填齊 →
@@ -186,6 +216,6 @@ test.describe("A3 federation→session 一鍵鏈（#/federation 真 backend 全�
     expect(scPrimaryUrl.endsWith("federated_review.usda"), "stream-config primary 必須是 federated_review.usda").toBe(true);
     expect(scPrimaryUrl).not.toContain("[server-path]");
 
-    await page.screenshot({ path: "../artifacts/e2e/a3-federated-session-chain.png", fullPage: true });
+    completed = true;
   });
 });

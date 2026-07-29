@@ -32,17 +32,20 @@
 
 ```txt
 launcher (scripts/dev/start-isolated-branch-stack.ps1 -Action start -ChangeId <slug> -RunId <run-id> [-Offset n])
-  → 驗證 ChangeId/RunId 為安全單一路徑 segment；缺值或既有同名 manifest即失敗，不覆寫
+  → 驗證 ChangeId/RunId 為安全單一路徑 segment；缺值即失敗
   → 驗證 offset 為 0..4；非法值在任何 listener/cleanup 動作前失敗
   → 解析 resolved port set
   → 與保留集合求交集；非空 → 退出並回報衝突 port 與 owner PID（不啟動任何服務）
-  → port ownership preflight：只認 manifest PID + 精確 launcher entrypoint + process creation identity 三者一致的既有 backend
+  → atomic create-new 取得 change/run + offset reservation
+  → reservation 內重新執行 manifest collision + listener preflight；同名 manifest 或 occupied port → fail closed
+  → stop ownership preflight：只認 manifest PID + 精確 launcher entrypoint + process creation identity 三者一致的既有 backend
   → 只有 ownership 可證明時才可停止；未知／不一致 listener → fail closed，不停止任何 process
   → 啟動 governance :49103+o  → 健康檢查
   → 啟動 coordinator :8005+o（governance base 指向上一步） → 健康檢查
   → 產出 stack manifest JSON
         { stack_kind, offset, ports{}, base_urls{}, head_sha, started_at,
           lifecycle_owners{}, backend_ready{}, processes[{pid, entrypoint, creation_identity}] }
+  → 正常成功或完整 rollback 後釋放 reservation；rollback 不完整則寫 recovery manifest 並保留 reservation，直到同一 run 的 stop 完成
 
 browser E2E (web-viewer-sample; viewer lifecycle owner = Playwright webServer)
   → 由必填 E2E_STACK_MANIFEST 讀 manifest；路徑須位於本 worktree artifacts/e2e/<change>/<run>/ 且 head_sha=HEAD
@@ -67,7 +70,7 @@ browser E2E (web-viewer-sample; viewer lifecycle owner = Playwright webServer)
 | evidence manifest | 產出 evidence 的那個 change | 本 capability 只規定必要欄位，不代管內容 |
 | browser manifest／coordinator base／viewer port 解析 | `web-viewer-sample/playwright.config.ts` | evidence run 必填 `E2E_STACK_MANIFEST`，且限定本 worktree 的 `artifacts/e2e/<change>/<run>/stack-manifest.json`、`head_sha=HEAD`；manifest 的 coordinator base 與 viewer port 皆為 authority，對應 env 只能相同、不得覆寫 |
 
-launcher 的 `start`／`stop`／`status` 僅管理 governance／coordinator backend；三個 action 都以同一組 `-ChangeId`／`-RunId` 定位唯一 manifest。viewer dev server 由 Playwright 的 `webServer` 啟動，launcher 不啟停 viewer；status 只回報 manifest 所期待的 viewer port 與「external/Playwright-owned」狀態。若保留 `E2E_DISABLE_WEBSERVER=1`，外部 viewer 也必須已在 manifest 的同一 resolved viewer port 上，否則 fail closed。
+launcher 的 `start`／`stop`／`status` 僅管理 governance／coordinator backend；三個 action 都以同一組 `-ChangeId`／`-RunId` 定位唯一 manifest。viewer dev server 由 Playwright 的 `webServer` 啟動，launcher 不啟停 viewer；status 只回報 manifest 所期待的 viewer port 與 Playwright-owned 狀態。require-real evidence 禁止 `E2E_DISABLE_WEBSERVER=1`：沒有可驗證 build identity 的外部 viewer 一律 fail closed。
 
 ## 4. 環境限制與誠實邊界
 

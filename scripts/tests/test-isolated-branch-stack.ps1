@@ -1,4 +1,6 @@
 . (Join-Path $PSScriptRoot 'test-helpers.ps1')
+Import-Module -Force (Join-Path $PSScriptRoot '..\lib\StructLog.psm1')
+$testLogger = New-StructLogger -Service 'scripts' -Component 'test-isolated-branch-stack' -SkipEnvSnapshot -InMemoryOnly
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $productContractPath = Join-Path $repoRoot 'docs\agents\product-operability-and-script-contract.md'
@@ -36,6 +38,12 @@ $p4 = Resolve-IsolatedStackPorts -OffsetInput '4'
 Assert-Equal 8009 $p4.coordinator 'offset 4 coordinator'
 Assert-Equal 49107 $p4.governance 'offset 4 governance'
 Assert-Equal 5184 $p4.viewer 'offset 4 viewer'
+$spacedWorktreeArgumentLine = ConvertTo-IsolatedWindowsArgumentLine -Arguments @(
+    'C:\Repos\isolated branch stack\bim-review-coordinator\src\index.ts',
+    '--port',
+    '8005'
+)
+Assert-Equal '"C:\Repos\isolated branch stack\bim-review-coordinator\src\index.ts" --port 8005' $spacedWorktreeArgumentLine 'Start-Process argument boundaries preserve a spaced worktree path'
 $reservedPorts = @(8004, 49102, 49101, 8010, 5173, 5174, 49100) + @(49110..49150)
 foreach ($reservedPort in $reservedPorts) {
     Assert-Throws {
@@ -51,6 +59,19 @@ foreach ($bad in @('-1', '1.5', '5', '48', 'abc')) {
     } "offset $bad rejected"
     Assert-Equal 0 $listenerCalls "offset $bad rejected before listener lookup"
 }
+
+$listener = Get-IsolatedPortListener -Port 8005 -ConnectionLookup {
+    @(
+        [pscustomobject]@{LocalPort=8005;State='Established';OwningProcess=1},
+        [pscustomobject]@{LocalPort=8006;State='Listen';OwningProcess=2},
+        [pscustomobject]@{LocalPort=8005;State='Listen';OwningProcess=3}
+    )
+}
+Assert-Equal 3 $listener.OwningProcess 'listener lookup returns only the exact listening port'
+Assert-True ($null -eq (Get-IsolatedPortListener -Port 8007 -ConnectionLookup { @([pscustomobject]@{LocalPort=8005;State='Listen'}) })) 'successful query with no matching port returns no listener'
+Assert-Throws {
+    Get-IsolatedPortListener -Port 8005 -ConnectionLookup { throw 'injected provider failure' }
+} 'listener provider failure remains distinguishable from a free port'
 
 foreach ($badId in @('', '.', '..', 'a/b', 'a\b', 'a:b', ' leading', 'NUL', 'con.txt', 'COM1', 'LPT9.log', 'change-a.')) {
     foreach ($field in @('ChangeId', 'RunId')) {
@@ -99,12 +120,27 @@ $owned = @(
     [pscustomobject]@{ role='governance';pid=4201;entrypoint='app:app';command_line='gov';creation_identity='c1' },
     [pscustomobject]@{ role='coordinator';pid=4202;entrypoint='src/index.ts';command_line='coord';creation_identity='c2' }
 )
-Assert-Throws {
-    Stop-IsolatedBackends -Processes $owned `
-      -IdentityLookup { param($e) if($e.pid -eq 4201){$e}else{[pscustomobject]@{role='coordinator';pid=4202;entrypoint='wrong';command_line='coord';creation_identity='c2'}} } `
-      -StopProcessFn { param($processId) $script:stopped.Add($processId) }
-} 'one mismatch holds the entire stop'
+$mismatchStop = Stop-IsolatedBackends -Processes $owned `
+  -IdentityLookup { param($e) if($e.pid -eq 4201){$e}else{[pscustomobject]@{role='coordinator';pid=4202;entrypoint='wrong';command_line='coord';creation_identity='c2'}} } `
+  -StopProcessFn { param($processId) $script:stopped.Add($processId) }
+Assert-Equal 'not_owned' @($mismatchStop | Where-Object role -eq 'coordinator')[0].status 'one mismatch is recorded before stopping'
 Assert-Equal 0 $stopped.Count 'all identities validate before any stop'
+
+$rollbackStops = [System.Collections.Generic.List[int]]::new()
+$rollback = Stop-IsolatedBackends -Processes $owned -AllowMissing `
+  -IdentityLookup { param($e) if ($e.role -eq 'governance') { throw 'already exited' }; $e } `
+  -MissingProcessFn { param($e) $e.role -eq 'governance' } `
+  -StopProcessFn { param($processId) $script:rollbackStops.Add($processId) }
+Assert-Equal '4202' ($rollbackStops -join ',') 'rollback skips missing child and stops surviving owned backend'
+Assert-Equal 'already_stopped' @($rollback | Where-Object role -eq 'governance')[0].status 'rollback records missing child as already stopped'
+
+$unprovenRollbackStops = [System.Collections.Generic.List[int]]::new()
+$unprovenRollback = Stop-IsolatedBackends -Processes $owned -AllowMissing `
+  -IdentityLookup { param($e) if ($e.role -eq 'governance') { throw 'identity lookup failed' }; $e } `
+  -MissingProcessFn { param($e) $false } `
+  -StopProcessFn { param($processId) $script:unprovenRollbackStops.Add($processId) }
+Assert-Equal 'not_owned' @($unprovenRollback | Where-Object role -eq 'governance')[0].status 'rollback does not equate an unproven identity lookup failure with process exit'
+Assert-Equal 0 $unprovenRollbackStops.Count 'unproven rollback identity fails before stopping any backend'
 
 $stoppedExactly = [System.Collections.Generic.List[int]]::new()
 Stop-IsolatedBackends -Processes $owned `
@@ -192,6 +228,32 @@ try {
 }
 finally { Remove-TestSandbox -Path $sandbox }
 
+$reservationSandbox = New-TestSandbox -Prefix 'isolated-stack-reservation'
+$firstReservation = $null
+$reacquiredReservation = $null
+try {
+    $firstReservation = Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-a' -Offset 2
+    Assert-Equal 2 @($firstReservation.paths).Count 'reservation owns both run and offset files'
+    foreach ($reservationPath in @($firstReservation.paths)) {
+        Assert-True (Test-Path -LiteralPath $reservationPath -PathType Leaf) "reservation file exists: $reservationPath"
+    }
+    Assert-Throws {
+        Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-a' -Offset 2
+    } 'same run cannot acquire an active reservation twice'
+    Assert-Throws {
+        Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-b' -Offset 2
+    } 'different run cannot acquire the same active offset'
+    Release-IsolatedStackReservations -Reservation $firstReservation
+    $firstReservation = $null
+    $reacquiredReservation = Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-b' -Offset 2
+    Assert-Equal 2 @($reacquiredReservation.paths).Count 'released run and offset reservation can be reacquired'
+}
+finally {
+    Release-IsolatedStackReservations -Reservation $firstReservation
+    Release-IsolatedStackReservations -Reservation $reacquiredReservation
+    Remove-TestSandbox -Path $reservationSandbox
+}
+
 $dispatcherSandbox = New-TestSandbox -Prefix 'isolated-stack-dispatcher'
 try {
     $startedRoles = [System.Collections.Generic.List[string]]::new()
@@ -199,7 +261,7 @@ try {
     $startManifestPath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-start'
     Assert-Throws {
         Invoke-IsolatedBranchStack -Action start -ChangeId 'change-a' -RunId 'run-start' -OffsetInput '0' `
-          -RepoRoot $dispatcherSandbox `
+          -RepoRoot $dispatcherSandbox -WorktreeStatusFn { param($root) @() } `
           -PreflightFn { param($root,$change,$run,$offset) [pscustomobject]@{offset=0;ports=[pscustomobject]@{coordinator=8005;governance=49103;viewer=5180};manifest_path=$startManifestPath} } `
           -RuntimeResolver { param($root) [pscustomobject]@{python='python';node='node';tsx='tsx.mjs'} } `
           -StartBackendFn { param($spec) $script:startedRoles.Add($spec.role); if($spec.role -eq 'coordinator'){throw 'coordinator start failed'}; [pscustomobject]@{role='governance';pid=4101;entrypoint='app:app';command_line='gov';creation_identity='c1'} } `
@@ -212,9 +274,39 @@ try {
     Assert-Equal '4101' ($stoppedPids -join ',') 'only this-run owned first backend stopped'
     Assert-True (-not (Test-Path -LiteralPath $startManifestPath)) 'failed start writes no success manifest'
 
+    $reservationStarts = [System.Collections.Generic.List[string]]::new()
+    Assert-Throws {
+        Invoke-IsolatedBranchStack -Action start -ChangeId 'change-a' -RunId 'run-reserved' -RepoRoot $dispatcherSandbox `
+          -WorktreeStatusFn { param($root) @() } `
+          -PreflightFn { param($root,$change,$run,$offset) [pscustomobject]@{offset=0;ports=[pscustomobject]@{coordinator=8005;governance=49103;viewer=5180};manifest_path=(Resolve-IsolatedStackManifestPath -RepoRoot $root -ChangeId $change -RunId $run)} } `
+          -ReservationAcquireFn { param($root,$change,$run,$offset) throw 'reservation held' } `
+          -StartBackendFn { param($spec) $script:reservationStarts.Add($spec.role) } `
+          -RuntimeResolver { param($root) throw 'runtime must not resolve while reservation is held' }
+    } 'held reservation rejects before backend start'
+    Assert-Equal 0 $reservationStarts.Count 'held reservation starts no backend'
+
+    $reservationOrder = [System.Collections.Generic.List[string]]::new()
+    Assert-Throws {
+        Invoke-IsolatedBranchStack -Action start -ChangeId 'change-a' -RunId 'run-preflight-order' -RepoRoot $dispatcherSandbox `
+          -WorktreeStatusFn { param($root) @() } `
+          -ReservationAcquireFn { param($root,$change,$run,$offset) $script:reservationOrder.Add('acquire'); [pscustomobject]@{paths=@()} } `
+          -PreflightFn { param($root,$change,$run,$offset) $script:reservationOrder.Add('preflight'); throw 'injected preflight failure' } `
+          -ReservationReleaseFn { param($reservation) $script:reservationOrder.Add('release') } `
+          -RuntimeResolver { param($root) throw 'runtime must not resolve after preflight failure' }
+    } 'listener and manifest preflight runs while reservation is held'
+    Assert-Equal 'acquire,preflight,release' ($reservationOrder -join ',') 'reservation brackets the decision-making preflight'
+
+    $dirtyStarts = [System.Collections.Generic.List[string]]::new()
+    Assert-Throws {
+        Invoke-IsolatedBranchStack -Action start -ChangeId 'change-a' -RunId 'run-dirty' -RepoRoot $dispatcherSandbox `
+          -WorktreeStatusFn { param($root) ' M tracked-file.txt' } `
+          -StartBackendFn { param($spec) $script:dirtyStarts.Add($spec.role) }
+    } 'dirty worktree rejects before backend start or identity recording'
+    Assert-Equal 0 $dirtyStarts.Count 'dirty worktree starts no backend'
+
     $successManifestPath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-success'
     $success = Invoke-IsolatedBranchStack -Action start -ChangeId 'change-a' -RunId 'run-success' -OffsetInput '0' `
-        -RepoRoot $dispatcherSandbox `
+        -RepoRoot $dispatcherSandbox -WorktreeStatusFn { param($root) @() } `
         -PreflightFn { param($root,$change,$run,$offset) [pscustomobject]@{offset=0;ports=[pscustomobject]@{coordinator=8005;governance=49103;viewer=5180};manifest_path=$successManifestPath} } `
         -RuntimeResolver { param($root) [pscustomobject]@{python='python';node='node';tsx='tsx.mjs'} } `
         -StartBackendFn {
@@ -257,6 +349,28 @@ try {
     Assert-True ($governanceStatus.owned -and $governanceStatus.ready) 'owned healthy governance is ready'
     Assert-True ($coordinatorStatus.owned -and -not $coordinatorStatus.ready) 'owned coordinator with failed live health is not ready'
 
+    $offsetOneManifest = $statusManifest | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
+    $offsetOneManifest.run_id = 'run-status-offset-one'
+    $offsetOneManifest.offset = 1
+    $offsetOneManifest.ports.coordinator = 8006; $offsetOneManifest.ports.governance = 49104; $offsetOneManifest.ports.viewer = 5181
+    $offsetOneManifest.base_urls.coordinator = 'http://127.0.0.1:8006'; $offsetOneManifest.base_urls.governance = 'http://127.0.0.1:49104'; $offsetOneManifest.base_urls.viewer = 'http://127.0.0.1:5181'
+    $offsetOneManifest.viewer.expected_port = 5181
+    $offsetOnePath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-status-offset-one'
+    Write-IsolatedJsonAtomic -Path $offsetOnePath -Value $offsetOneManifest -NoClobber
+    $derivedOffsetStatus = Invoke-IsolatedBranchStack -Action status -ChangeId 'change-a' -RunId 'run-status-offset-one' -RepoRoot $dispatcherSandbox `
+        -IdentityLookup { param($expectedProcess) $expectedProcess } -HealthFn { param($url) $true }
+    Assert-Equal 2 @($derivedOffsetStatus.backend).Count 'status derives nonzero offset from manifest when omitted'
+    Assert-Throws {
+        Invoke-IsolatedBranchStack -Action status -ChangeId 'change-a' -RunId 'run-status-offset-one' -OffsetInput '0' -RepoRoot $dispatcherSandbox `
+            -IdentityLookup { param($expectedProcess) $expectedProcess } -HealthFn { param($url) $true }
+    } 'explicit mismatching offset is rejected'
+    $derivedOffsetStops = [System.Collections.Generic.List[int]]::new()
+    $derivedOffsetStop = Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-status-offset-one' -RepoRoot $dispatcherSandbox `
+        -IdentityLookup { param($expectedProcess) $expectedProcess } `
+        -StopProcessFn { param($processId) $script:derivedOffsetStops.Add($processId) }
+    Assert-Equal 'stopped' $derivedOffsetStop.status 'stop derives nonzero offset from manifest when omitted'
+    Assert-Equal '4102,4101' ($derivedOffsetStops -join ',') 'derived-offset stop uses manifest-owned backend identities'
+
     $manifestIdentityMutations = @(
         [pscustomobject]@{name='schema';mutate={ param($manifest) $manifest.schema_version='wrong' }},
         [pscustomobject]@{name='stack kind';mutate={ param($manifest) $manifest.stack_kind='wrong' }},
@@ -285,7 +399,7 @@ try {
         [pscustomobject]@{runId='run-gov-health';kind='governance_health';expectedStarted='governance';expectedStopped='5101';preseed=$false},
         [pscustomobject]@{runId='run-coord-start';kind='coordinator_start';expectedStarted='governance,coordinator';expectedStopped='5101';preseed=$false},
         [pscustomobject]@{runId='run-coord-health';kind='coordinator_health';expectedStarted='governance,coordinator';expectedStopped='5102,5101';preseed=$false},
-        [pscustomobject]@{runId='run-invalid-head';kind='invalid_head';expectedStarted='governance,coordinator';expectedStopped='5102,5101';preseed=$false},
+        [pscustomobject]@{runId='run-invalid-head';kind='invalid_head';expectedStarted='';expectedStopped='';preseed=$false},
         [pscustomobject]@{runId='run-manifest-collision';kind='manifest_collision';expectedStarted='governance,coordinator';expectedStopped='5102,5101';preseed=$true}
     )
     foreach ($failure in $failureMatrix) {
@@ -299,7 +413,7 @@ try {
         $failedStopIds = [System.Collections.Generic.List[int]]::new()
         Assert-Throws {
             Invoke-IsolatedBranchStack -Action start -ChangeId 'change-a' -RunId $failure.runId -OffsetInput '0' `
-                -RepoRoot $dispatcherSandbox `
+                -RepoRoot $dispatcherSandbox -WorktreeStatusFn { param($root) @() } `
                 -PreflightFn { param($root,$change,$run,$offset) [pscustomobject]@{offset=0;ports=[pscustomobject]@{coordinator=8005;governance=49103;viewer=5180};manifest_path=$failureManifestPath} } `
                 -RuntimeResolver { param($root) [pscustomobject]@{python='python';node='node';tsx='tsx.mjs'} } `
                 -StartBackendFn {
@@ -328,6 +442,114 @@ try {
             Assert-True (-not (Test-Path -LiteralPath $failureManifestPath)) "failed $($failure.kind) writes no success manifest"
         }
     }
+
+    $recoveryRunId = 'run-rollback-stop-failure'
+    $recoveryManifestPath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId $recoveryRunId
+    Assert-Throws {
+        Invoke-IsolatedBranchStack -Action start -ChangeId 'change-a' -RunId $recoveryRunId -OffsetInput '0' -RepoRoot $dispatcherSandbox `
+            -WorktreeStatusFn { param($root) @() } `
+            -PreflightFn { param($root,$change,$run,$offset) [pscustomobject]@{offset=0;ports=[pscustomobject]@{coordinator=8005;governance=49103;viewer=5180};manifest_path=$recoveryManifestPath} } `
+            -RuntimeResolver { param($root) [pscustomobject]@{python='python';node='node';tsx='tsx.mjs'} } `
+            -StartBackendFn {
+                param($spec)
+                if ($spec.role -eq 'coordinator') { throw 'coordinator start failed' }
+                [pscustomobject]@{role='governance';pid=6101;entrypoint='app:app';command_line='gov';creation_identity='recovery-c1'}
+            } `
+            -HealthFn { param($url) $true } `
+            -IdentityLookup { param($expectedProcess) $expectedProcess } `
+            -StopProcessFn { param($processId) throw 'injected rollback stop failure' } `
+            -HeadShaFn { param($root) ('d' * 40 -join '') }
+    } 'incomplete startup rollback writes a recovery manifest and holds reservations'
+    Assert-True (Test-Path -LiteralPath $recoveryManifestPath -PathType Leaf) 'incomplete rollback retains a recovery manifest'
+    $recoveryManifest = Read-IsolatedStackManifest -Path $recoveryManifestPath
+    Assert-True ([bool]$recoveryManifest.reservation_held) 'incomplete rollback marks its reservation held'
+    Assert-Equal 'stop_failed' @($recoveryManifest.stop_state.entries)[0].status 'recovery manifest records rollback stop failure'
+    Assert-True (-not $recoveryManifest.backend_ready.governance -and -not $recoveryManifest.backend_ready.coordinator) 'recovery manifest cannot claim backend readiness'
+    $heldRecoveryReservation = Resolve-IsolatedStackReservation -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId $recoveryRunId -Offset 0
+    foreach ($reservationPath in @($heldRecoveryReservation.paths)) {
+        Assert-True (Test-Path -LiteralPath $reservationPath -PathType Leaf) "incomplete rollback retains reservation file: $reservationPath"
+    }
+    $recoveryRetryStops = [System.Collections.Generic.List[int]]::new()
+    $recoveryStop = Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId $recoveryRunId -RepoRoot $dispatcherSandbox `
+        -IdentityLookup { param($expectedProcess) $expectedProcess } `
+        -StopProcessFn { param($processId) $script:recoveryRetryStops.Add($processId) }
+    Assert-Equal 'stopped' $recoveryStop.status 'recovery manifest supports an explicit stop retry'
+    Assert-Equal '6101' ($recoveryRetryStops -join ',') 'recovery retry stops only the surviving owned backend'
+    $recoveredManifest = Read-IsolatedStackManifest -Path $recoveryManifestPath
+    Assert-True (-not [bool]$recoveredManifest.reservation_held) 'successful recovery stop clears held reservation state'
+    foreach ($reservationPath in @($heldRecoveryReservation.paths)) {
+        Assert-True (-not (Test-Path -LiteralPath $reservationPath)) "successful recovery stop releases reservation file: $reservationPath"
+    }
+
+    $partialStopManifest = $statusManifest | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
+    $partialStopManifest.run_id = 'run-partial-stop'
+    $partialStopPath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-partial-stop'
+    Write-IsolatedJsonAtomic -Path $partialStopPath -Value $partialStopManifest -NoClobber
+    $partialStopAttempts = [System.Collections.Generic.List[int]]::new()
+    Assert-Throws {
+        Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-partial-stop' -RepoRoot $dispatcherSandbox `
+            -IdentityLookup { param($expectedProcess) $expectedProcess } `
+            -StopProcessFn {
+                param($processId)
+                $script:partialStopAttempts.Add($processId)
+                if ($processId -eq 4102) { throw 'injected coordinator stop failure' }
+            }
+    } 'partial stop persists recoverable per-process state'
+    Assert-Equal '4102,4101' ($partialStopAttempts -join ',') 'partial stop still attempts every prevalidated owned backend'
+    $afterPartialStop = Read-IsolatedStackManifest -Path $partialStopPath
+    Assert-True (-not $afterPartialStop.stopped_at) 'partial stop leaves stopped_at unset'
+    Assert-True (-not $afterPartialStop.backend_ready.governance -and $afterPartialStop.backend_ready.coordinator) 'partial stop clears readiness only for the backend that stopped'
+    Assert-Equal 'stopped' @($afterPartialStop.processes | Where-Object role -eq 'governance')[0].stop_status 'partial stop records the stopped backend'
+
+    $missingExitManifest = $afterPartialStop | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
+    $missingExitManifest.run_id = 'run-partial-stop-missing-exit'
+    $missingExitPath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-partial-stop-missing-exit'
+    Write-IsolatedJsonAtomic -Path $missingExitPath -Value $missingExitManifest -NoClobber
+    $missingExitStops = [System.Collections.Generic.List[int]]::new()
+    $missingExitRetry = Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-partial-stop-missing-exit' -RepoRoot $dispatcherSandbox `
+        -IdentityLookup { param($expectedProcess) throw 'process missing' } `
+        -ProcessExistsFn { param($processId) $false } `
+        -StopListenerLookupFn { param($port) $null } `
+        -StopProcessFn { param($processId) $script:missingExitStops.Add($processId) }
+    Assert-Equal 'stopped' $missingExitRetry.status 'retry accepts an absent failed process only when its role port is free'
+    Assert-Equal 0 $missingExitStops.Count 'already-exited retry stops no rediscovered process'
+    Assert-True (-not [string]::IsNullOrWhiteSpace([string](Read-IsolatedStackManifest -Path $missingExitPath).stopped_at)) 'safe missing-process retry records stopped_at'
+
+    $unknownListenerManifest = $afterPartialStop | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
+    $unknownListenerManifest.run_id = 'run-partial-stop-unknown-listener'
+    $unknownListenerPath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-partial-stop-unknown-listener'
+    Write-IsolatedJsonAtomic -Path $unknownListenerPath -Value $unknownListenerManifest -NoClobber
+    Assert-Throws {
+        Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-partial-stop-unknown-listener' -RepoRoot $dispatcherSandbox `
+            -IdentityLookup { param($expectedProcess) throw 'process missing' } `
+            -ProcessExistsFn { param($processId) $false } `
+            -StopListenerLookupFn { param($port) [pscustomobject]@{LocalPort=$port;OwningProcess=9999} } `
+            -StopProcessFn { param($processId) throw 'unknown listener must not be stopped' }
+    } 'missing process with an unknown listener remains fail closed'
+    Assert-True (-not (Read-IsolatedStackManifest -Path $unknownListenerPath).stopped_at) 'unknown-listener retry leaves stopped_at unset'
+
+    $listenerFailureManifest = $afterPartialStop | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
+    $listenerFailureManifest.run_id = 'run-partial-stop-listener-failure'
+    $listenerFailurePath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-partial-stop-listener-failure'
+    Write-IsolatedJsonAtomic -Path $listenerFailurePath -Value $listenerFailureManifest -NoClobber
+    Assert-Throws {
+        Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-partial-stop-listener-failure' -RepoRoot $dispatcherSandbox `
+            -IdentityLookup { param($expectedProcess) throw 'process missing' } `
+            -ProcessExistsFn { param($processId) $false } `
+            -StopListenerLookupFn { param($port) throw 'injected listener provider failure' } `
+            -StopProcessFn { param($processId) throw 'listener lookup failure must not stop a process' }
+    } 'listener provider failure is not treated as a free port'
+    Assert-True (-not (Read-IsolatedStackManifest -Path $listenerFailurePath).stopped_at) 'listener-provider failure leaves stopped_at unset'
+
+    $partialRetryStops = [System.Collections.Generic.List[int]]::new()
+    $partialRetry = Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-partial-stop' -RepoRoot $dispatcherSandbox `
+        -IdentityLookup { param($expectedProcess) $expectedProcess } `
+        -StopProcessFn { param($processId) $script:partialRetryStops.Add($processId) }
+    Assert-Equal 'stopped' $partialRetry.status 'partial stop can be retried to completion'
+    Assert-Equal '4102' ($partialRetryStops -join ',') 'retry skips the backend already recorded as stopped'
+    $afterPartialRetry = Read-IsolatedStackManifest -Path $partialStopPath
+    Assert-True (-not [string]::IsNullOrWhiteSpace([string]$afterPartialRetry.stopped_at)) 'successful retry records stopped_at'
+    Assert-True (-not $afterPartialRetry.backend_ready.governance -and -not $afterPartialRetry.backend_ready.coordinator) 'successful retry clears both backend readiness flags'
 
     $stopManifest = [ordered]@{}
     foreach ($key in $statusManifest.Keys) { $stopManifest[$key] = $statusManifest[$key] }
@@ -358,4 +580,4 @@ try {
 }
 finally { Remove-TestSandbox -Path $dispatcherSandbox }
 
-Write-Host '[test-isolated-branch-stack] contract assertions passed'
+$testLogger | Write-StructInfo -Component 'test-isolated-branch-stack' -Msg 'contract assertions passed' -Data @{ assertions = 'isolated-stack' }

@@ -188,8 +188,8 @@ export function loadIsolatedStackConfig(options: {
     throw new Error("viewer base env/manifest mismatch");
   }
   const externalViewer = env.E2E_DISABLE_WEBSERVER === "1";
-  if (externalViewer && !["0", "1"].includes(env.E2E_VIEWER_HARNESS_BUILD ?? "")) {
-    throw new Error("E2E_VIEWER_HARNESS_BUILD=0|1 is required for an external viewer");
+  if (externalViewer) {
+    throw new Error("E2E_DISABLE_WEBSERVER=1 is not permitted for require-real evidence without a verifiable build identity");
   }
   return {
     manifestPath,
@@ -198,7 +198,7 @@ export function loadIsolatedStackConfig(options: {
     governanceBaseUrl: expectedBaseUrls.governance,
     viewerPort,
     viewerOrigin,
-    harnessBuildFlag: externalViewer ? env.E2E_VIEWER_HARNESS_BUILD === "1" : false,
+    harnessBuildFlag: false,
     manifest,
   };
 }

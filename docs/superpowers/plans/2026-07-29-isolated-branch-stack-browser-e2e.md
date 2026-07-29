@@ -1,5 +1,7 @@
 # Isolated Branch Stack Browser E2E Implementation Plan
 
+**文件性質：working note。** 程式碼與可執行測試才是 runtime truth；本文件的舊步驟僅保留決策脈絡，與現行 fail-closed contract 衝突時以實作與測試為準。
+
 **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
 
 **Goal:** 建立 repo-owned、fail-closed 的未 merge branch CPU governance／coordinator／browser operability 隔離驗證切片，讓每份 evidence 可由 manifest 綁定 worktree、HEAD、port、process identity 與真實 browser run。
@@ -37,6 +39,8 @@
 
 ```powershell
 . (Join-Path $PSScriptRoot 'test-helpers.ps1')
+Import-Module -Force (Join-Path $PSScriptRoot '..\lib\StructLog.psm1')
+$testLogger = New-StructLogger -Service 'scripts' -Component 'test-isolated-branch-stack' -SkipEnvSnapshot -InMemoryOnly
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $productContractPath = Join-Path $repoRoot 'docs\agents\product-operability-and-script-contract.md'
@@ -54,7 +58,7 @@ foreach ($boundary in @('不得推論 design gate', '不得推論 deploy', '不�
 Assert-True ($scriptContract -match 'scripts/dev/start-isolated-branch-stack\.ps1') 'script contract registers launcher'
 Assert-True ($scriptContract -match 'Playwright.*viewer') 'script contract keeps viewer lifecycle in Playwright'
 
-Write-Host '[test-isolated-branch-stack] contract assertions passed'
+$testLogger | Write-StructInfo -Component 'test-isolated-branch-stack' -Msg 'contract assertions passed' -Data @{ assertions = 'isolated-stack' }
 ```
 
 - [ ] **Step 2: 跑 RED，確認目前缺少正式 section 與 launcher contract**
@@ -486,7 +490,7 @@ git commit -m "feat: add isolated backend ownership primitives"
 
 **Interfaces:**
 - Consumes: Tasks 2–3 functions.
-- Produces: complete `Invoke-IsolatedBranchStack` dispatcher; successful start writes `isolated-branch-stack/v1`; status reports live `{ owned, ready }` per backend without stopping; stop performs all-before-any-stop then atomically updates the manifest.
+- Produces: complete `Invoke-IsolatedBranchStack` dispatcher; atomic run+offset reservation brackets manifest/listener preflight through manifest commit; successful start writes `isolated-branch-stack/v1`; incomplete startup rollback writes a recovery manifest and retains the reservation; status reports live `{ owned, ready }`; stop persists per-process progress, supports safe retry, and releases a held recovery reservation only after all roles are stopped.
 
 - [ ] **Step 1: Add RED tests for second-start failure rollback and stop atomicity**
 
@@ -609,7 +613,9 @@ Run: `pwsh -NoProfile -NonInteractive -File .\scripts\tests\test-isolated-branch
 
 Expected: the status RED case turns GREEN: governance is `{owned:true,ready:true}` and coordinator is `{owned:true,ready:false}` when only its live health probe fails。
 
-- [ ] **Step 5: Implement stop as one all-before-any-stop function**
+- [ ] **Step 5: Historical stop sketch (superseded; do not implement or copy)**
+
+The sketch below predates partial-stop persistence, PID-absent plus port-free recovery, and held-reservation release. The executable launcher and `scripts/tests/test-isolated-branch-stack.ps1` are the current contract.
 
 ```powershell
 function Stop-IsolatedStackRun {
@@ -628,7 +634,9 @@ Run: `pwsh -NoProfile -NonInteractive -File .\scripts\tests\test-isolated-branch
 
 Expected: stop identity mismatch leaves every PID running; valid stop verifies both identities first and atomically adds `stopped_at`。
 
-- [ ] **Step 6: Implement start and rollback as one backend-only function**
+- [ ] **Step 6: Historical start/rollback sketch (superseded; do not implement or copy)**
+
+The sketch below predates HEAD validation before process launch, recovery-manifest persistence, and reservation retention on incomplete rollback. Use the executable launcher and its contract tests instead.
 
 ```powershell
 function Start-IsolatedStackRun {
@@ -678,7 +686,9 @@ Run: `pwsh -NoProfile -NonInteractive -File .\scripts\tests\test-isolated-branch
 
 Expected: governance/start/health and coordinator/start/health failures each roll back only exact this-run identities and write no success manifest。
 
-- [ ] **Step 7: Add the small action dispatcher**
+- [ ] **Step 7: Historical dispatcher sketch (superseded; do not implement or copy)**
+
+The sketch below predates clean-worktree enforcement, atomic reservation before full preflight, manifest-derived stop/status offset, and recovery-reservation release. Use the executable launcher and its contract tests instead.
 
 ```powershell
 function Invoke-IsolatedBranchStack {
@@ -724,7 +734,7 @@ if ($MyInvocation.InvocationName -ne '.') {
 
 Run: `pwsh -NoProfile -NonInteractive -File .\scripts\tests\test-isolated-branch-stack.ps1`
 
-Expected: PASS for start order, governance-health rollback, coordinator-start rollback, coordinator-health rollback, success manifest collision, status viewer ownership, change/run/worktree/offset identity mismatch, stop all-before-any-stop, and atomic `stopped_at` update.
+Expected: PASS for reservation-before-preflight ordering, start order, complete and incomplete rollback, recovery manifest/held reservation, success manifest collision, status viewer ownership, change/run/worktree/offset identity mismatch, all-before-any-stop ownership validation, partial-stop retry (including PID absent + port free), unknown-listener fail-closed, and atomic `stopped_at` update.
 
 - [ ] **Step 10: Run static analysis**
 
@@ -752,7 +762,7 @@ git commit -m "feat: dispatch isolated branch stack lifecycle"
 
 **Interfaces:**
 - Consumes: Task 4 `isolated-branch-stack/v1` manifest and env `E2E_REQUIRE_REAL`, `E2E_STACK_MANIFEST`, optional compatibility assertions `E2E_COORDINATOR_BASE_URL`, `E2E_VIEWER_PORT`, `E2E_VIEWER_BASE_URL`, `E2E_VIEWER_HARNESS_BUILD`。
-- Produces: `parseStandaloneViewerPort()` and `loadIsolatedStackConfig()` returning manifest-authoritative `{ manifestPath, runDir, coordinatorBaseUrl, governanceBaseUrl, viewerPort, viewerOrigin, harnessBuildFlag, manifest }`; default export global setup probes externally owned endpoints before any spec。
+- Produces: `parseStandaloneViewerPort()` and `loadIsolatedStackConfig()` returning manifest-authoritative `{ manifestPath, runDir, coordinatorBaseUrl, governanceBaseUrl, viewerPort, viewerOrigin, harnessBuildFlag, manifest }`; require-real mode rejects an external viewer before Playwright starts, and global setup probes the isolated coordinator before any spec。
 
 - [ ] **Step 1: 建立完整 fixture 與 table-driven failing unit test**
 
@@ -872,13 +882,13 @@ describe("loadIsolatedStackConfig", () => {
     expect(() => parseStandaloneViewerPort(raw)).toThrow(/standalone viewer port/);
   });
 
-  it("requires external-viewer harness disclosure", () => {
+  it("rejects an external viewer for require-real evidence", () => {
     const value = fixture();
     expect(() => loadIsolatedStackConfig({
       cwd: value.worktreeRoot,
       headSha: value.headSha,
       env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath, E2E_DISABLE_WEBSERVER: "1" },
-    })).toThrow(/E2E_VIEWER_HARNESS_BUILD=0\|1/);
+    })).toThrow(/E2E_DISABLE_WEBSERVER=1 is not permitted/);
   });
 });
 ```
@@ -1000,8 +1010,7 @@ export function loadIsolatedStackConfig(options: {
   if (env.E2E_COORDINATOR_BASE_URL && env.E2E_COORDINATOR_BASE_URL !== coordinatorBaseUrl) throw new Error("coordinator env/manifest mismatch");
   if (env.E2E_VIEWER_PORT && env.E2E_VIEWER_PORT !== String(viewerPort)) throw new Error("viewer env/manifest mismatch");
   if (env.E2E_VIEWER_BASE_URL && new URL(env.E2E_VIEWER_BASE_URL).origin !== viewerOrigin) throw new Error("viewer base env/manifest mismatch");
-  const externalViewer = env.E2E_DISABLE_WEBSERVER === "1";
-  if (externalViewer && !["0", "1"].includes(env.E2E_VIEWER_HARNESS_BUILD ?? "")) throw new Error("E2E_VIEWER_HARNESS_BUILD=0|1 is required for an external viewer");
+  if (env.E2E_DISABLE_WEBSERVER === "1") throw new Error("E2E_DISABLE_WEBSERVER=1 is not permitted for require-real evidence without a verifiable build identity");
   return {
     manifestPath,
     runDir: path.dirname(manifestPath),
@@ -1009,7 +1018,7 @@ export function loadIsolatedStackConfig(options: {
     governanceBaseUrl: expectedBaseUrls.governance,
     viewerPort,
     viewerOrigin,
-    harnessBuildFlag: externalViewer ? env.E2E_VIEWER_HARNESS_BUILD === "1" : false,
+    harnessBuildFlag: false,
     manifest,
   };
 }
@@ -1031,7 +1040,7 @@ Expected: every exact path/content/worktree/head/readiness/ownership/reserved/en
 
 Run: `Pop-Location`
 
-- [ ] **Step 6: 實作 external viewer global setup 的兩個 health probes**
+- [ ] **Step 6: 實作 isolated coordinator global setup health probe**
 
 Create `web-viewer-sample/e2e/support/isolated-stack-global-setup.ts`:
 
@@ -1044,10 +1053,6 @@ export default async function isolatedStackGlobalSetup(): Promise<void> {
   const isolated = requireIsolatedStackConfig();
   const client = await request.newContext();
   try {
-    if (process.env.E2E_DISABLE_WEBSERVER === "1") {
-      const viewer = await client.get(isolated.viewerOrigin);
-      if (!viewer.ok()) throw new Error(`external viewer probe failed: ${viewer.status()} ${isolated.viewerOrigin}`);
-    }
     const coordinator = await client.get(`${isolated.coordinatorBaseUrl}/health`);
     if (!coordinator.ok()) throw new Error(`coordinator probe failed: ${coordinator.status()} ${isolated.coordinatorBaseUrl}/health`);
   } finally {
@@ -1066,6 +1071,8 @@ const viewerPort = isolated?.viewerPort ?? parseStandaloneViewerPort(process.env
 const viewerOrigin = isolated?.viewerOrigin ?? `http://127.0.0.1:${viewerPort}`;
 const viewerBaseUrl = isolated?.viewerOrigin ?? process.env.E2E_VIEWER_BASE_URL ?? viewerOrigin;
 const coordinatorBaseUrl = isolated?.coordinatorBaseUrl ?? process.env.E2E_COORDINATOR_BASE_URL ?? "http://127.0.0.1:8005";
+// loadIsolatedStackConfig() has already rejected E2E_DISABLE_WEBSERVER=1 in require-real mode.
+// The empty webServer branch remains only for ordinary non-evidence local runs.
 const webServer = process.env.E2E_DISABLE_WEBSERVER === "1" ? [] : [{
   command: `npm run dev -- --host 127.0.0.1 --port ${viewerPort} --strictPort`,
   url: viewerOrigin,
@@ -1086,7 +1093,7 @@ export default defineConfig({
 });
 ```
 
-Add `import path from "node:path"` and preserve all other existing config fields. In require-real mode, `testInfo.outputPath()` now resolves below the same run directory, so the evidence writer can enforce containment。`E2E_DISABLE_WEBSERVER=1` still uses the manifest viewer port, and `E2E_VIEWER_HARNESS_BUILD` must be explicit for later evidence disclosure。
+Add `import path from "node:path"` and preserve all other existing config fields. In require-real mode, `testInfo.outputPath()` now resolves below the same run directory, so the evidence writer can enforce containment；`E2E_DISABLE_WEBSERVER=1` is rejected before config can use an external viewer. Ordinary non-evidence local runs may still disable Playwright webServer under the pre-existing standalone behavior。
 
 - [ ] **Step 8: 將 Vitest include 擴至共用 E2E helper test，跑 GREEN 與 typecheck**
 
