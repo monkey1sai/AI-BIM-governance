@@ -27,6 +27,14 @@
 
 原則：adapter 可以被 `deploy.ps1`、`verify-all.ps1` 或 runbook 呼叫，但新增功能不應繞過 `deploy.ps1` 另起一條入口。
 
+### Isolated branch verification adapter
+
+- `scripts/dev/start-isolated-branch-stack.ps1`：只供未 merge branch 的 CPU governance／coordinator
+  browser evidence；`start|stop|status` 以每-run manifest 管理 backend，Playwright viewer lifecycle 由
+  Playwright 管理。
+  它不是 canonical operator entrypoint，不得取代 `deploy.ps1`、`verify-all.ps1` 或 `stop-all.ps1`，
+  也不得啟動 Kit、streaming server、WebRTC 或 GPU runtime。
+
 ## Test / Smoke / Dev Scripts
 
 新的 smoke、check、E2E、diagnostic script 預設應放：

@@ -69,6 +69,7 @@ UI route
 
 ### MUST
 
+- 未 merge branch 的 CPU governance／coordinator／browser operability evidence MUST 依 §8 隔離 stack 契約取得並標示 stack kind；Kit／WebRTC／GPU evidence 另走 host-native 契約。
 - 新增或更新 visible frontend route。
 - 提供明確 UI controls / buttons。
 - 提供 default fixture；不得要求使用者手動 curl / Postman / 找 payload。
@@ -204,3 +205,25 @@ Internal adapters 只能被 canonical entrypoints 或明確 runbook 呼叫：
 | Verify command | `.\scripts\verify-all.ps1` |
 | Frontend URL verified |  |
 | Evidence path |  |
+
+## 8. 隔離 branch stack 驗證
+
+未 merge branch 的 CPU governance／coordinator／browser operability evidence MUST 在
+`stack_kind=isolated_branch_stack` 的 repo-owned 隔離切片取得。base ports 為 coordinator
+`8005`、governance `49103`、Playwright viewer `5180`；parallel offset 只接受整數 `0..4`。
+部署區 `8004/49102/49101/8010/5173/5174` 與 Kit `49100/49110..49150` 全部保留。
+非法 offset 與 resolved-port 交集必須在 listener 查詢、cleanup、啟動之前 fail closed。
+
+launcher `scripts/dev/start-isolated-branch-stack.ps1` 的 `start|stop|status` 必須收到安全的
+`ChangeId`、`RunId`，且只管理 governance/coordinator。manifest 位於
+`artifacts/e2e/<change-id>/<run-id>/stack-manifest.json`；同名不得覆寫。停止 backend 前必須
+同時重驗 manifest PID、完整 entrypoint/command line 與 process creation identity；任一 backend
+不符時不得停止任何 process。viewer lifecycle 僅由 Playwright `webServer` 擁有。
+
+引用 browser result 作 evidence 時必須設 `E2E_REQUIRE_REAL=1` 與 `E2E_STACK_MANIFEST`。
+manifest path/content/worktree/HEAD、coordinator/viewer env 或保留 port request 不符時 hard fail；
+不得以 conditional skip 計為通過。evidence 必須揭露 harness build/query flags、resolved ports、
+base URLs、observed runtime IDs 與 screenshot/trace 路徑。
+
+隔離 stack evidence 不得推論 design gate；不得推論 deploy path；不得推論 Kit/WebRTC、GPU、
+first-frame、stage truth 或 DataChannel。這些 gate 仍各自由既有契約產生 evidence。
