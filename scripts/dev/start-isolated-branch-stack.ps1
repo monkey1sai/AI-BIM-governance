@@ -141,13 +141,25 @@ function Start-IsolatedBackend {
               -Environment $envMap -WindowStyle Hidden -PassThru `
               -RedirectStandardOutput $stdout -RedirectStandardError $stderr
         },
-        [scriptblock] $IdentityLookup = { param($processId,$entry) Get-IsolatedProcessIdentity -ProcessId $processId -Entrypoint $entry }
+        [scriptblock] $IdentityLookup = { param($processId,$entry) Get-IsolatedProcessIdentity -ProcessId $processId -Entrypoint $entry },
+        [scriptblock] $StopSpawnedProcessFn = {
+            param($spawnedProcess)
+            if ($null -ne $spawnedProcess -and -not $spawnedProcess.HasExited) {
+                $spawnedProcess.Kill()
+                $spawnedProcess.WaitForExit()
+            }
+        }
     )
     New-Item -ItemType Directory -Force -Path $RunDirectory | Out-Null
     $stdout = Join-Path $RunDirectory "$Role.stdout.log"
     $stderr = Join-Path $RunDirectory "$Role.stderr.log"
     $process = & $StartProcessFn $Executable $Arguments $WorkingDirectory $Environment $stdout $stderr
-    $identity = & $IdentityLookup ([int]$process.Id) $Entrypoint
+    try {
+        $identity = & $IdentityLookup ([int]$process.Id) $Entrypoint
+    } catch {
+        try { & $StopSpawnedProcessFn $process } catch {}
+        throw
+    }
     $identity | Add-Member -NotePropertyName 'role' -NotePropertyValue $Role
     $identity | Add-Member -NotePropertyName 'stdout_path' -NotePropertyValue $stdout
     $identity | Add-Member -NotePropertyName 'stderr_path' -NotePropertyValue $stderr
@@ -199,6 +211,169 @@ function Write-IsolatedJsonAtomic {
     }
 }
 
+function Read-IsolatedStackManifest {
+    param([string] $Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Stack manifest not found: $Path" }
+    Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json -Depth 12
+}
+
+function Assert-IsolatedStackManifestIdentity {
+    param($Manifest,[string]$RepoRoot,[string]$ChangeId,[string]$RunId,[string]$OffsetInput)
+    if ([string]$Manifest.schema_version -cne 'isolated-branch-stack/v1' -or
+        [string]$Manifest.stack_kind -cne 'isolated_branch_stack') {
+        throw 'Manifest schema/stack identity mismatch.'
+    }
+    if ([string]$Manifest.change_id -cne $ChangeId -or [string]$Manifest.run_id -cne $RunId) {
+        throw 'Manifest change/run identity mismatch.'
+    }
+    $expectedRoot = [IO.Path]::GetFullPath($RepoRoot).TrimEnd('\')
+    $actualRoot = [IO.Path]::GetFullPath([string]$Manifest.worktree_root).TrimEnd('\')
+    if (-not $actualRoot.Equals($expectedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Manifest worktree identity mismatch.'
+    }
+    $ports = Resolve-IsolatedStackPorts -OffsetInput $OffsetInput
+    if ([int]$Manifest.offset -ne [int]$OffsetInput -or
+        [int]$Manifest.ports.coordinator -ne $ports.coordinator -or
+        [int]$Manifest.ports.governance -ne $ports.governance -or
+        [int]$Manifest.ports.viewer -ne $ports.viewer) {
+        throw 'Manifest offset/port identity mismatch.'
+    }
+    if ([string]$Manifest.base_urls.coordinator -cne "http://127.0.0.1:$($ports.coordinator)" -or
+        [string]$Manifest.base_urls.governance -cne "http://127.0.0.1:$($ports.governance)" -or
+        [string]$Manifest.base_urls.viewer -cne "http://127.0.0.1:$($ports.viewer)") {
+        throw 'Manifest base URL identity mismatch.'
+    }
+    if ([string]$Manifest.lifecycle_owners.governance -cne 'repo_launcher' -or
+        [string]$Manifest.lifecycle_owners.coordinator -cne 'repo_launcher' -or
+        [string]$Manifest.lifecycle_owners.viewer -cne 'playwright_webserver') {
+        throw 'Manifest lifecycle owner identity mismatch.'
+    }
+    if ([int]$Manifest.viewer.expected_port -ne $ports.viewer -or
+        [string]$Manifest.viewer.owner -cne 'playwright_webserver' -or
+        $null -eq $Manifest.viewer.managed_by_launcher -or
+        [bool]$Manifest.viewer.managed_by_launcher) {
+        throw 'Manifest viewer identity mismatch.'
+    }
+}
+
+function New-IsolatedStackManifest {
+    param([string]$RepoRoot,[string]$ChangeId,[string]$RunId,$Preflight,[string]$HeadSha,[object[]]$Processes)
+    [ordered]@{
+        schema_version='isolated-branch-stack/v1'; stack_kind='isolated_branch_stack'
+        change_id=$ChangeId; run_id=$RunId; worktree_root=$RepoRoot; offset=$Preflight.offset
+        ports=$Preflight.ports
+        base_urls=[ordered]@{
+            coordinator="http://127.0.0.1:$($Preflight.ports.coordinator)"
+            governance="http://127.0.0.1:$($Preflight.ports.governance)"
+            viewer="http://127.0.0.1:$($Preflight.ports.viewer)"
+        }
+        head_sha=$HeadSha; started_at=[DateTime]::UtcNow.ToString('o'); stopped_at=$null
+        backend_ready=[ordered]@{governance=$true;coordinator=$true}
+        lifecycle_owners=[ordered]@{governance='repo_launcher';coordinator='repo_launcher';viewer='playwright_webserver'}
+        viewer=[ordered]@{expected_port=$Preflight.ports.viewer;owner='playwright_webserver';managed_by_launcher=$false}
+        processes=$Processes
+    }
+}
+
+function Get-IsolatedStackStatus {
+    param($Manifest,[string]$ManifestPath,[scriptblock]$IdentityLookup,[scriptblock]$HealthFn)
+    $backend = foreach ($expected in @($Manifest.processes)) {
+        $actual = $null
+        try { $actual = & $IdentityLookup $expected } catch {}
+        $owned = Test-IsolatedProcessOwnership -Expected $expected -Actual $actual
+        $ready = $false
+        if ($owned) {
+            $healthUrl = "$($Manifest.base_urls.($expected.role))/health"
+            try { $ready = [bool](& $HealthFn $healthUrl) } catch { $ready = $false }
+        }
+        [pscustomobject]@{ role=$expected.role;pid=$expected.pid;owned=$owned;ready=$ready }
+    }
+    [pscustomobject]@{stack_kind=$Manifest.stack_kind;backend=@($backend);viewer=$Manifest.viewer;manifest_path=$ManifestPath}
+}
+
+function Stop-IsolatedStackRun {
+    param($Manifest,[string]$ManifestPath,[scriptblock]$IdentityLookup,[scriptblock]$StopProcessFn)
+    if ($Manifest.stopped_at) { return [pscustomobject]@{status='already_stopped';manifest_path=$ManifestPath} }
+    Stop-IsolatedBackends -Processes @($Manifest.processes) -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn
+    $Manifest.stopped_at=[DateTime]::UtcNow.ToString('o')
+    $Manifest.backend_ready.governance=$false
+    $Manifest.backend_ready.coordinator=$false
+    Write-IsolatedJsonAtomic -Path $ManifestPath -Value $Manifest
+    [pscustomobject]@{status='stopped';manifest_path=$ManifestPath}
+}
+
+function Start-IsolatedStackRun {
+    param($RepoRoot,$ChangeId,$RunId,$Preflight,$Runtime,$StartBackendFn,$HealthFn,$IdentityLookup,$StopProcessFn,$HeadShaFn)
+    $runDirectory=Split-Path -Parent $Preflight.manifest_path
+    $started=[System.Collections.Generic.List[object]]::new()
+    try {
+        $governanceSpec=@{
+            Role='governance';WorkingDirectory=(Join-Path $RepoRoot 'governance-service');Executable=$Runtime.python
+            Arguments=@('-m','uvicorn','app:app','--host','127.0.0.1','--port',"$($Preflight.ports.governance)")
+            Environment=@{GOV_PORT="$($Preflight.ports.governance)"};RunDirectory=$runDirectory;Entrypoint='app:app'
+        }
+        $governance=& $StartBackendFn $governanceSpec
+        $started.Add($governance)
+        if(-not (& $HealthFn "http://127.0.0.1:$($Preflight.ports.governance)/health")){throw 'governance health failed'}
+
+        $indexPath=Join-Path $RepoRoot 'bim-review-coordinator\src\index.ts'
+        $coordinatorSpec=@{
+            Role='coordinator';WorkingDirectory=(Join-Path $RepoRoot 'bim-review-coordinator');Executable=$Runtime.node
+            Arguments=@($Runtime.tsx,$indexPath)
+            Environment=@{
+                PORT="$($Preflight.ports.coordinator)";HOST='127.0.0.1'
+                GOVERNANCE_API_BASE="http://127.0.0.1:$($Preflight.ports.governance)"
+                COORDINATOR_PUBLIC_BASE_URL="http://127.0.0.1:$($Preflight.ports.coordinator)"
+                VIEWER_PUBLIC_BASE_URL="http://127.0.0.1:$($Preflight.ports.viewer)"
+                CORS_ORIGINS="http://127.0.0.1:$($Preflight.ports.viewer)"
+            }
+            RunDirectory=$runDirectory;Entrypoint=$indexPath
+        }
+        $coordinator=& $StartBackendFn $coordinatorSpec
+        $started.Add($coordinator)
+        if(-not (& $HealthFn "http://127.0.0.1:$($Preflight.ports.coordinator)/health")){throw 'coordinator health failed'}
+
+        $head=& $HeadShaFn $RepoRoot
+        if($head -notmatch '^[0-9a-f]{40}$'){throw 'HEAD identity is not a 40-character commit SHA'}
+        $manifest=New-IsolatedStackManifest -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Preflight $Preflight -HeadSha $head -Processes @($started)
+        Write-IsolatedJsonAtomic -Path $Preflight.manifest_path -Value $manifest -NoClobber
+        [pscustomobject]@{status='started';manifest_path=$Preflight.manifest_path;manifest=$manifest}
+    } catch {
+        if($started.Count -gt 0){Stop-IsolatedBackends -Processes @($started) -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn}
+        throw
+    }
+}
+
+function Invoke-IsolatedBranchStack {
+    param(
+        [ValidateSet('start','status','stop')][string]$Action,
+        [string]$ChangeId,[string]$RunId,[string]$OffsetInput='0',
+        [string]$RepoRoot=(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
+        [scriptblock]$PreflightFn={param($root,$change,$run,$offset) Assert-IsolatedStackStartPreflight -RepoRoot $root -ChangeId $change -RunId $run -OffsetInput $offset},
+        [scriptblock]$RuntimeResolver={param($root) Resolve-IsolatedRuntime -RepoRoot $root},
+        [scriptblock]$StartBackendFn={param($spec) Start-IsolatedBackend @spec},
+        [scriptblock]$HealthFn={param($url) Wait-IsolatedHealth -Url $url},
+        [scriptblock]$IdentityLookup={param($e) Get-IsolatedProcessIdentity -ProcessId ([int]$e.pid) -Entrypoint ([string]$e.entrypoint)},
+        [scriptblock]$StopProcessFn={param($processId) Stop-Process -Id $processId -Force -ErrorAction Stop},
+        [scriptblock]$HeadShaFn={param($root) (& git -C $root rev-parse HEAD).Trim()}
+    )
+    Assert-SafeStackSegment -Name 'ChangeId' -Value $ChangeId
+    Assert-SafeStackSegment -Name 'RunId' -Value $RunId
+    $manifestPath=Resolve-IsolatedStackManifestPath -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId
+
+    if($Action -in @('status','stop')){
+        $manifest=Read-IsolatedStackManifest -Path $manifestPath
+        Assert-IsolatedStackManifestIdentity -Manifest $manifest -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -OffsetInput $OffsetInput
+        if($Action -eq 'status'){return Get-IsolatedStackStatus -Manifest $manifest -ManifestPath $manifestPath -IdentityLookup $IdentityLookup -HealthFn $HealthFn}
+        return Stop-IsolatedStackRun -Manifest $manifest -ManifestPath $manifestPath -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn
+    }
+
+    $preflight=& $PreflightFn $RepoRoot $ChangeId $RunId $OffsetInput
+    $runtime=& $RuntimeResolver $RepoRoot
+    Start-IsolatedStackRun -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Preflight $preflight -Runtime $runtime `
+      -StartBackendFn $StartBackendFn -HealthFn $HealthFn -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn -HeadShaFn $HeadShaFn
+}
+
 if ($MyInvocation.InvocationName -ne '.') {
-    throw 'Direct execution is unavailable until the Task 4 dispatcher is implemented. Dot-source this file only for tests.'
+    Invoke-IsolatedBranchStack -Action $Action -ChangeId $ChangeId -RunId $RunId -OffsetInput $Offset
 }
