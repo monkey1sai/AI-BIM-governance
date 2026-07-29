@@ -15,6 +15,15 @@ foreach ($boundary in @('不得推論 design gate', '不得推論 deploy', '不�
 }
 Assert-True ($scriptContract -match 'scripts/dev/start-isolated-branch-stack\.ps1') 'script contract registers launcher'
 Assert-True ($scriptContract -match 'Playwright.*viewer') 'script contract keeps viewer lifecycle in Playwright'
+$scriptRegistry = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'scripts\script-registry.json') | ConvertFrom-Json
+$registryEntries = @($scriptRegistry.scripts | Where-Object path -eq 'scripts/dev/start-isolated-branch-stack.ps1')
+Assert-Equal 1 $registryEntries.Count 'isolated stack launcher has exactly one registry entry'
+$registryEntry = $registryEntries[0]
+Assert-Equal 'isolated-branch-verifier' $registryEntry.role 'isolated stack launcher registry role'
+Assert-Equal 'scripts' $registryEntry.owner 'isolated stack launcher registry owner'
+Assert-Equal 'Backend-only branch evidence adapter; Playwright owns viewer lifecycle. Not a canonical operator entrypoint.' $registryEntry.notes 'isolated stack launcher registry notes'
+$governanceWorkflow = Get-Content -Raw -LiteralPath (Join-Path $repoRoot '.github\workflows\agent-governance.yml')
+Assert-True ($governanceWorkflow -match 'pwsh -NoProfile -NonInteractive -File scripts/tests/test-isolated-branch-stack\.ps1') 'agent-governance workflow runs isolated stack machine test'
 
 $launcherPath = Join-Path $repoRoot 'scripts\dev\start-isolated-branch-stack.ps1'
 . $launcherPath

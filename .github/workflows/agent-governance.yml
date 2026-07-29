@@ -32,6 +32,10 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
 
+      - name: Run isolated branch stack machine tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-isolated-branch-stack.ps1
+
       - name: Test GitNexus and worktree health report
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-gitnexus-worktree-health.mjs"
