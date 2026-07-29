@@ -46,7 +46,7 @@
 ## 6. 收尾與誠實揭露
 
 - [x] 6.1 執行 `npx openspec validate isolated-branch-stack-browser-e2e --strict` 與 `npx openspec validate --all --strict`，輸出貼進 PR body。
-- [ ] 6.2 第二輪 review repair 完成後，更新 `openspec/lifecycle-ledger.json`（本 change 的 task ledger 與 `subject_commit`）→ 再更新 `docs/plans/NOW.md` 的 projection → 再確認 `scripts/tests/test-ai-coding-metrics.mjs` 的 `active-change-wip` 期望值仍與 ledger 一致。三步順序不得顛倒。
+- [x] 6.2 第二輪 review repair 完成後，更新 `openspec/lifecycle-ledger.json`（本 change 的 task ledger 與 `subject_commit`）→ 再更新 `docs/plans/NOW.md` 的 projection → 再確認 `scripts/tests/test-ai-coding-metrics.mjs` 的 `active-change-wip` 期望值仍與 ledger 一致。三步順序不得顛倒。
 - [x] 6.3 對 launcher 與 helper 涉及的既有符號跑 `gitnexus impact -d upstream -r AI-BIM-governance`；commit 前重跑 `gitnexus detect-changes --scope compare --base-ref main`。本輪 index stale at `8b34c8e` 且 FTS load-only unavailable，依 `docs/agents/gitnexus-usage.md` 走 unavailable gate並保留 raw-import/targeted-test reviewer sign-off，不宣稱 impact pass。
 - [x] 6.4 第二輪 review repair 後，依 `scripts/SCRIPT_CONTRACT.md` 重跑 `.\scripts\deploy.ps1 -DryRun`（只作 operator-path 回歸，不是 deploy evidence）、`git diff --check`、secret scan 與 `git status`；generated cache 與非 evidence runtime artifact 不得進 change。
 - [ ] 6.5 第二輪 review repair 與最新 CI 完成後，更新 PR body 的 Change Classification、AI Coding Governance、known gaps 與最新 head/evidence run。

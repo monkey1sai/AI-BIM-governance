@@ -146,6 +146,14 @@ Assert-Equal 'app:app' $snapshot.entrypoint 'process identity snapshot entrypoin
 Assert-Equal 'python -m uvicorn app:app --port 49103' $snapshot.command_line 'process identity snapshot command line'
 Assert-Equal 'c1' $snapshot.creation_identity 'process identity snapshot creation identity'
 Assert-True (Test-IsolatedProcessOwnership -Expected $expected -Actual $same) 'exact identity accepted'
+$isoExpected = [pscustomobject]@{
+    role='governance'; pid=4201; entrypoint='app:app'; command_line='python -m uvicorn app:app'
+    creation_identity='2026-07-29T21:39:35.694283Z'
+}
+$jsonRoundTrippedExpected = $isoExpected | ConvertTo-Json -Depth 3 | ConvertFrom-Json -Depth 3
+$isoActual = $isoExpected.PSObject.Copy()
+$isoActual.creation_identity = '2026-07-29T21:39:35.6942830Z'
+Assert-True (Test-IsolatedProcessOwnership -Expected $jsonRoundTrippedExpected -Actual $isoActual) 'JSON round-trip preserves the exact creation instant for ownership checks'
 foreach ($field in @('pid','entrypoint','command_line','creation_identity')) {
     $changed = $same.PSObject.Copy()
     $changed.$field = if ($field -eq 'pid') { 9999 } else { "wrong-$field" }

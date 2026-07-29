@@ -227,10 +227,25 @@ function New-IsolatedBackendEnvironment {
 
 function ConvertTo-IsolatedCreationIdentity {
     param($CreationDate)
+    if ($CreationDate -is [DateTimeOffset]) {
+        return $CreationDate.UtcDateTime.ToString('o')
+    }
     if ($CreationDate -is [datetime]) {
         return $CreationDate.ToUniversalTime().ToString('o')
     }
-    return [string]$CreationDate
+    $value = [string]$CreationDate
+    if ($value -match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?Z$') {
+        $parsed = [DateTimeOffset]::MinValue
+        if ([DateTimeOffset]::TryParse(
+            $value,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::AllowWhiteSpaces,
+            [ref]$parsed
+        )) {
+            return $parsed.UtcDateTime.ToString('o')
+        }
+    }
+    return $value
 }
 
 function Get-IsolatedProcessIdentity {
@@ -281,7 +296,7 @@ function Test-IsolatedProcessOwnership {
       -and [int]$Expected.pid -eq [int]$Actual.pid `
       -and [string]$Expected.entrypoint -ceq [string]$Actual.entrypoint `
       -and [string]$Expected.command_line -ceq [string]$Actual.command_line `
-      -and [string]$Expected.creation_identity -ceq [string]$Actual.creation_identity
+      -and (ConvertTo-IsolatedCreationIdentity $Expected.creation_identity) -ceq (ConvertTo-IsolatedCreationIdentity $Actual.creation_identity)
 }
 
 function Start-IsolatedBackend {
