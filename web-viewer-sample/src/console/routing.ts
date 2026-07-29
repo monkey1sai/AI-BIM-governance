@@ -11,7 +11,7 @@ const PRODUCT_CONSOLE_ROUTES = [
   "home", "overview",
   "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9", "a10",
   "viewer", "gpu",
-  "conv", "pipeline", "sessions", "instances", "minio",
+  "conv", "pipeline", "workspace", "sessions", "instances", "minio",
   "issues", "reports", "runtime", "admin", "spec",
   "coordinator", "intake", "review", "semantic",
   "version-diff", "federation", "apps",
