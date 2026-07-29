@@ -867,7 +867,11 @@ try {
             $repo.Proposal.Exists -and
             $repo.Proposal.LifecycleStatus -eq 'deferred' -and
             $hasOpenSpec -and
-            $openSpecById[$id].Status -notin @('deferred', 'deferred-proposed')
+            # OpenSpec 1.6 represents every directory-backed deferred proposal as
+            # "in-progress". The signed proposal prologue is the lifecycle
+            # authority, so accept that lossy CLI representation while retaining
+            # failures for every other unexpected status.
+            $openSpecById[$id].Status -notin @('deferred', 'deferred-proposed', 'in-progress')
         ) {
             $mismatches.Add((New-Mismatch -Code 'lifecycle' -Reason 'lifecycle_unrepresented' `
                 -ChangeId $id -Field 'lifecycle.status' -ExpectedSource 'proposal' `
