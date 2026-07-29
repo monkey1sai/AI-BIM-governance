@@ -10,7 +10,8 @@
   "schema_version": "openspec-now-view/v1",
   "scope": "current",
   "changes": [
-    { "id": "a4-semantic-search-model-qa", "status": "active" },
+    { "id": "a4-console-convergence", "status": "active" },
+    { "id": "a4-semantic-search-model-qa", "status": "deferred" },
     { "id": "add-single-gpu-session-ai-review-mvp", "status": "deferred" },
     { "id": "align-frontend-design-system-reference", "status": "deferred" },
     { "id": "cross-service-structured-log-baseline", "status": "deferred" },
@@ -87,10 +88,10 @@ Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unch
 
 ### 權威
 
-- OpenSpec：`openspec/changes/a4-semantic-search-model-qa/`（**整包仍 active，但只執行當前切片**）
+- OpenSpec：`openspec/changes/a4-console-convergence/`（**當前 active 切片**：前後端收斂為單一 canonical A4 實作）。母版 `openspec/changes/a4-semantic-search-model-qa/` 已於 2026-07-29 標 `Status: deferred`（雙向分岔 126 衝突 + 1.8／7.4／7.5／8.7 受外部條件封鎖），不計入 active WIP，重啟條件見其 proposal 頂部。
 - 設計正本：`docs/plans/AI-BIM 前後端設計文件.dc.html` §04 / §08 R2–R4
 - 凍結面：不改 `governance-service/app.py` 入口形態、不改 `governanceProxy` 契約形狀亂擴、不改 `conversion_authority.py`
-- 既有大 branch `codex/openspec/a4-semantic-search-model-qa`（~6k 行）= **待收斂資產**，不是本週重做來源
+- 既有大 branch = **待收斂資產**，不是本週重做來源。2026-07-29 已保全上 origin：`codex/openspec/a4-semantic-search-model-qa-convergence`（`e0bac06`，前端 live Console 938 行在此）為收斂來源；其前身 `codex/openspec/a4-semantic-search-model-qa`（`9abb4af`）經逐檔比對確認被 superseded，本地已場銷。後端與 3D handoff 以 `origin/main` 為基準（`engine.py` 1160 行、`proofs.py` 623 行、6.3–6.5 已勾）。
 
 ### 切片佇列
 
