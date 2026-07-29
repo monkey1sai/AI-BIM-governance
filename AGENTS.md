@@ -18,7 +18,7 @@
 | **G — Governed Change** | 跨 ≥2 services、public API/event/DB schema、user-facing route/workflow、Kit/WebRTC/GPU、deploy/auth/permission/migration/destructive script、architecture boundary、GitNexus HIGH/CRITICAL | dedicated branch/worktree；簡潔 plan；GitNexus impact + detect_changes；按風險 reviewer/debugger/security_auditor；integration tests；user-facing browser E2E；PR local preflight |
 | **S — Spec-to-Done** | 使用者明確輸入 `spec-to-done`、明確要求完整 Superpowers，或指定已核准 spec 並要求自主推進至 merged PR | 保留完整 P0/P1/P3/P4/P5/P6/P7；只能明確啟動，不得由模型自行升級 |
 
-只有工作可安全平行、需要獨立風險檢查，或符合 Lane G/S 條件時才派 worker。coordinator 擁有所有寫入與最終決策；F 不派 subagent，B 禁止多個 writer 並行。多終端機／多 CLI（Claude Code、Codex、Grok）並行 session 以 gitignored `.agents/board/` 看板互相感知——Claude Code 由 `.claude/settings.json` hooks 自動維護，其他 CLI 開工 `node scripts/dev/agents-board.mjs register --agent <cli>`、動工前 `status`、收工 `done`；看板僅提供感知，不取代 Lane 隔離規則，契約見 `docs/agents/parallel-session-board.md`。
+只有工作可安全平行、需要獨立風險檢查，或符合 Lane G/S 條件時才派 worker。coordinator 擁有所有寫入與最終決策；F 不派 subagent，B 禁止多個 writer 並行。多終端機／多 CLI（Claude Code、Codex、Grok）並行 session 以 gitignored `.agents/board/` 看板互相感知——所有 CLI 都明確執行開工 `node scripts/dev/agents-board.mjs register --agent <cli>`、動工前 `status`、收工 `done`；repo 不分發自動 command hooks。看板僅提供感知，不取代 Lane 隔離規則，契約見 `docs/agents/parallel-session-board.md`。
 
 ### Superpowers invocation policy
 
@@ -116,7 +116,7 @@ _worker / _bim-control = 已自 repo 刪除（2026-05-18 B 方案落地），僅
 | 看舊 PR / 退役服務 / 歷史 spec、quality/security gates，或 AI coding telemetry、privacy 與四週品質指標 | `docs/agents/history-and-archive.md`、`docs/agents/quality-security-gates.md`、`docs/agents/ai-coding-metrics.md` |
 | 查需求入口、服務邊界、route IA、API 契約、時序、資料模型、實作分期、AI Coding 交付守則 | `docs/plans/docs-plans-README.md`（入口）→ `AI-BIM 前後端設計文件.dc.html` §01–§08 |
 | 需要依任務種類／難度選擇 Codex workflow、subagents、模型 lane，或使用 `use agents` / `subagents` / `swarm` 開發 `docs/plans` 需求 | `docs/agents/codex-loop-workflows.md` |
-| 多終端機／多 CLI 並行 session 看板（互相感知、Claude hooks、Codex notify、Grok 整合） | `docs/agents/parallel-session-board.md` |
+| 多終端機／多 CLI 並行 session 看板（明確 register/status/done、選用 Codex notify） | `docs/agents/parallel-session-board.md` |
 | 查 domain vocabulary、GitHub issue workflow 或 triage labels | `docs/agents/domain.md`、`docs/agents/issue-tracker.md`、`docs/agents/triage-labels.md` |
 
 新增 sub-file 時：先在 `docs/agents/` 建檔，再同步更新本表與 `CLAUDE.md` index（兩份主檔的 sub-file 集合必須一致）。本文件行數預算 ≤ 250 行（目標 ≤ 200）；CLAUDE.md ≤ 130 行（目標 ≤ 100）。預算規範見 spec `agent-doc-context-budget`。
