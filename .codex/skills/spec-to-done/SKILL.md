@@ -164,7 +164,14 @@ P6 前置(指揮官親自做,解決 PR body 資料通道):
         - 若 impact 曾走 codebase-memory fallback(GitNexus UNKNOWN/crash)或有 `[xref]` 雙圖譜分歧 → 揭露「impact 由 codebase-memory 佐證;分歧 symbol(若有):…」(informational,非 gate)
         - 動 runtime/deploy 時附 Deploy Path 表;純 tooling/docs 註明不適用
         記下 prNumber
+     d. local preflight（進入持 merge authority 的 workflow 前）：在目前已 push 的乾淨 head 上執行
+        `.\scripts\dev\check-pr-local-preflight.ps1 -PrNumber <prNumber>`；通過後立即比對
+        `git rev-parse HEAD` 與 `gh pr view <prNumber> --json headRefOid --jq .headRefOid` 完全相同。
+        任一失敗或 head 改變都 HELD；不得把舊 head 的 preflight 當成 P6 證據。
 P6 = Workflow({name:'ship-item', args:{branch, prNumber:<前置 c 的號碼>, userFacing}})
+     P6 內部由 workflow coordinator 用固定命令收集即時 diff/checks/三處 reviews 與精確 base/head；唯一 child 是
+       無 shell/write capability 的 apex arbiter。只有 identity-bound allow verdict 才能 merge；治理 gate 自我修改、
+       缺 verdict、base/head 改變一律 HELD，merge command 必須帶 --match-head-commit。
      consume:
        P6===null → 對話回報 ship agent 失敗,重呼一次;仍 null → HELD
        P6.merged===true → P7
@@ -289,7 +296,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .claude\skills\spec-to-done\
 
 模型與 reasoning effort 不在本 adapter 內固定。依全域 `C:\Users\IOT\.codex\docs\agents\task-routing.md` 的 task tier 與 capability routing，指揮官使用目前 session 選定的 global profile，並依工作內容派發角色 lane：`explorer` 負責 source discovery，`debugger` 負責 root-cause isolation，`reviewer` 負責 correctness / regression review，`security_auditor` 負責 auth、權限、破壞性操作與部署風險。各 lane 的 effort 由 global task tier 決定，不得在此文件寫死模型 slug。
 
-角色路由不改變本流程的 gate 或升級語意：P4 evidence、P5 verifier/critic 與 P6 ship-item 一律使用 Codex 可用的完整 lane；因為 adapter 运行於 Codex，不得以模型差異刪減、降級或放寬 P4/P5/P6、HELD、resume 或 evidence 條件。平行僅限互不衝突的 review / verification；P3 implementer 維持單一協調流程。
+角色路由不改變本流程的 gate 或升級語意：P4 evidence、P5 verifier/critic 與 P6 ship-item 一律使用 Codex 可用的完整 lane；P6 由 workflow coordinator 用固定命令收集 evidence 並獨占 merge sink，唯一 child 是無 shell/write capability 的獨立 apex arbiter。因為 adapter 运行於 Codex，不得以模型差異刪減、降級或放寬 P4/P5/P6、HELD、resume 或 evidence 條件。平行僅限互不衝突的 review / verification；P3 implementer 維持單一協調流程。
 
 ## 誠實鐵律(本流程的落實)
 

@@ -28,19 +28,9 @@
 
 `status --json` 提供機器可讀輸出(sessions + recentEvents)。
 
-## Claude Code 整合(全自動,無需自律)
+## Claude Code 整合
 
-`.claude/settings.json` hooks 自動維護看板,人與 agent 都不需手動執行契約步驟:
-
-| Hook | 行為 |
-|---|---|
-| `SessionStart` | 註冊 session;若偵測到其他並行 session,把摘要注入 context(agent 一開場就「看見」別人) |
-| `UserPromptSubmit` | 把使用者 prompt 前 160 字寫成目前任務 |
-| `PostToolUse`(Edit/Write/NotebookEdit) | 記錄最近編輯檔案 |
-| `Stop` | 標記 `idle`(回合結束等待使用者) |
-| `SessionEnd` | 標記 `ended` |
-
-Hook 模式永遠 exit 0、不寫 stderr、失敗靜默,絕不干擾對話或其他 hooks。
+repo `.claude/settings.json` 設定 `disableAllHooks: true` 且不分發 lifecycle command hooks，避免 branch-controlled checkout/session code execution。Claude Code 與其他 CLI 使用同一份明確契約：開工 `register --agent claude`、編輯前 `status`、任務切換 `update`、收工 `done`。看板是 best-effort，因此漏記只降低並行感知，不得被解讀成授權或安全 gate。
 
 ## Codex 整合
 
@@ -56,7 +46,7 @@ notify = ["node", "C:\\Repos\\active\\iot\\AI-BIM-governance\\scripts\\dev\\agen
 ## Grok 整合
 
 - 基本盤:xAI Grok Build 與社群 grok-cli 都自動讀 `AGENTS.md`,同樣執行通用契約,`--agent grok`。
-- Grok Build 官方宣稱相容 Claude Code 生態(`.claude/` hooks);若它真的執行本 repo hooks,先在該終端機設 `AGENTS_BOARD_AGENT=grok`,session 會以正確身分登錄(相容性 **unverified**,未實測)。
+- 不依賴 Claude-compatible hooks；Grok 也明確使用 `register/status/update/done`，避免 checkout 內容自動執行。
 
 ## 驗證
 
@@ -64,8 +54,8 @@ notify = ["node", "C:\\Repos\\active\\iot\\AI-BIM-governance\\scripts\\dev\\agen
 # 看板總覽(任一終端機/任一 CLI)
 node scripts/dev/agents-board.mjs status
 
-# 模擬 Claude hook(不需真的開 session)
-'{"session_id":"deadbeef01","cwd":"C:\\Repos\\active\\iot\\AI-BIM-governance","prompt":"測試任務"}' | node scripts/dev/agents-board.mjs hook --event UserPromptSubmit
+# 明確註冊後結束一個測試 session
+node scripts/dev/agents-board.mjs register --agent claude --task "board smoke test"
 
 # worktree 共用驗證:在 linked worktree 內跑 status,應指向主 checkout 的 .agents/board
 ```

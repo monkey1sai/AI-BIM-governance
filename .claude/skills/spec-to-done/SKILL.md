@@ -119,7 +119,14 @@ P6 前置(指揮官親自做,解決 PR body 資料通道):
         - 若 impact 曾走 codebase-memory fallback(GitNexus UNKNOWN/crash)或有 `[xref]` 雙圖譜分歧 → 揭露「impact 由 codebase-memory 佐證;分歧 symbol(若有):…」(informational,非 gate)
         - 動 runtime/deploy 時附 Deploy Path 表;純 tooling/docs 註明不適用
         記下 prNumber
+     d. local preflight（進入持 merge authority 的 workflow 前）：在目前已 push 的乾淨 head 上執行
+        `.\scripts\dev\check-pr-local-preflight.ps1 -PrNumber <prNumber>`；通過後立即比對
+        `git rev-parse HEAD` 與 `gh pr view <prNumber> --json headRefOid --jq .headRefOid` 完全相同。
+        任一失敗或 head 改變都 HELD；不得把舊 head 的 preflight 當成 P6 證據。
 P6 = Workflow({name:'ship-item', args:{branch, prNumber:<前置 c 的號碼>, userFacing}})
+     P6 內部由 workflow coordinator 用固定命令收集即時 diff/checks/三處 reviews 與精確 base/head；唯一 child 是
+       無 shell/write capability 的 apex arbiter。只有 identity-bound allow verdict 才能 merge；治理 gate 自我修改、
+       缺 verdict、base/head 改變一律 HELD，merge command 必須帶 --match-head-commit。
      consume:
        P6===null → 對話回報 ship agent 失敗,重呼一次;仍 null → HELD
        P6.merged===true → P7
@@ -238,19 +245,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .claude\skills\spec-to-done\
   shell 工具呼叫直跑;必須背景執行,以其持久化 log/artifact 輪詢判定結果。外層工具 timeout 強殺不是 runtime pass/fail
   證據——該 attempt 一律誠實作廢、記入 state,不得改寫成 success。
 
-## 模型預算(agent 四級 haiku/sonnet/opus/fable + 指揮官/runtime-default=session=Fable 5 max;gates 不動)
+## 模型、effort 與 prompt 路由
 
-| 位置 | 模型 | 品質守恆(誰兜底) |
-|---|---|---|
-| 指揮官(主對話) | 當前 session(**Fable 5 max**;2026-07-02 恢復供應,正式納入 routing) | — |
-| plan 解析(P3 Parse)、引擎偵測(P4 Probe) | haiku | 機械抽取/探測,錯誤顯性:抽壞 → implementer 立刻 BLOCKED;探錯 → E2E 起不來即 held |
-| GitNexus impact 預掃 + per-task impact、**全類 task implementer 首發(機械/非機械皆是)**、P1 四軸 reviewer、P3 spec/quality reviewer(首審) | sonnet(=Sonnet 5) | impact 只是風險輸入(CRITICAL gate 在指揮官);implementer 有雙 review + final-review(fable) + P5 兜底,BLOCKED/NEEDS_CONTEXT → opus/max 升級通道 |
-| NEEDS_CONTEXT/BLOCKED 升級重派、plan/spec/quality fix、fix-cycle + fix-verify(P5 修復) | opus(judge tier,immutable) | 修復/迭代兜底層,**不降**;sonnet 與 fable 間的一階升級緩衝 |
-| plan 作者、final-review(全 diff 兜底)、evidence 執行+裁決(P4 誠實鐵律本體) | fable(arbiter tier,immutable) | 單點失誤代價最高,**只可升不可降** |
-| P5 fu-adversarial-verify-generic(verifier + critic)、P6 ship-item | runtime default(=session 模型,現為 **Fable 5 max**) | P5=抓雷主力(實績:#206 三顆連環雷 + fix 自引 regression 全在 merge 前攔下);P6=端到端代理操作(git/gh/merge 判斷),sonnet 首跑即出程序偏差(#208),**兩者不降** |
+本 skill 不保存第三份 exact model table。repo operational source of truth 是 `.claude/workflows/routing.json`；`scripts/gen_routing.py` 將它的 model/effort、apex-first gate、兩席 semaphore 與 prompt contract 生成至所有 active workflow，pinned tests 阻止 drift。全域 `task-routing.md` 只擁有跨 repo 的角色／難度政策。
 
-升級通道(自動,腳本內建):sonnet implementer(全類首發)回 BLOCKED → 換 opus/max 重派;NEEDS_CONTEXT → opus/max 補脈絡重派。供應中斷應變(2026-06-15 arbiter 有前科):各 tier 的降落點已形式化為 routing.json `fallback` 鏈(gen_routing validate + pinned tests 釘住,如 arbiter: fable→opus/max),程序見「維運注意事項」§2;供應例外,非品質降級,恢復即原子回退。
-平行:P1 四軸 review、P5 per-finding verifier 平行;**P3 implementer 嚴禁平行**(實作衝突)。
+升級通道由 call-site task tier 決定：機械抽取、有界掃描、一般實作、困難推理、修復／裁決逐級選用最小充分 assignment。只有 non-apex tier 可依 registry 的 fallback 鏈原子切換；arbiter 無 fallback，無法取得成功 Fable/max apex verdict 就 `HELD: apex_unavailable_or_denied`。P6 apex 沒有 shell/write capability，coordinator 收集 evidence 並獨占 identity-bound merge sink。
+平行:P1 四軸 review、P5 per-finding verifier 可 fan-out，但 generated `governedAgent` 對每個 workflow 硬限最多 2 個 active child；nested workflow 必須序列呼叫，避免各自 semaphore 疊加。**P3 implementer 嚴禁平行**(實作衝突)。
 **降本原則**:hard gates(四軸 approved 條件/兩階段 review 閉合條件/P4 vertical slice 七項/P5 refute-by-default + critic/P6 buffered merge)一個不動;降級只發生在「產出被 ≥2 層更強 gate 複核」或「錯誤顯性必爆」的位置。等效性靠 gate 結構保證,非靠單點模型強度。
 
 ## 誠實鐵律(本流程的落實)
@@ -275,4 +275,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .claude\skills\spec-to-done\
 ## 維運注意事項
 
 1. routing.json 改動後須跑 `.venv\Scripts\python.exe scripts/gen_routing.py` 重生各 std-*.js 的 ROUTING 區塊，並 re-save 受影響 workflow 讓 harness reload；禁止 workflow run 中途執行 codegen。
-2. 模型退役/供應中斷應變：取 routing.json 該 tier `fallback` 鏈第一個可用項改寫 model/effort → 跑 gen_routing 重生 → **同 commit** 更新 pinned routing tests（字面釘住是刻意的人工確認閘，防靜默降級）→ 全套 `.venv\Scripts\python.exe -m pytest tests`。fallback 僅限供應例外、不得作日常降階；全鏈不可用時人工選當時最強模型並同步 allowed_efforts；供應恢復即原子回退。
+2. 模型退役/供應中斷應變：non-apex tier 可取 routing.json 的 `fallback` 第一個可用項，並以同一 commit 原子更新 registry、generated files 與 tests；fallback 不得作日常降階。arbiter 沒有 fallback，Fable/max 不可用時維持 HELD，直到供應恢復或使用者明確修改 apex 政策。
