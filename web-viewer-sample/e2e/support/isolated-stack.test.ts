@@ -1,8 +1,17 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, mkdtempSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { loadIsolatedStackConfig, parseStandaloneViewerPort } from "./isolated-stack";
+import {
+  classifyHarnessUse,
+  createForbiddenRequestGuard,
+  loadIsolatedStackConfig,
+  parseStandaloneViewerPort,
+  requireReal,
+  writeIsolatedEvidenceManifest,
+  type BrowserEvidenceObservation,
+  type IsolatedStackConfig,
+} from "./isolated-stack";
 
 const roots: string[] = [];
 
@@ -22,7 +31,7 @@ function fixture() {
     run_id: runId,
     worktree_root: worktreeRoot,
     head_sha: headSha,
-    started_at: "2026-07-30T00:00:00.000Z",
+    started_at: "2026-07-01T00:00:00.000Z",
     offset: 0,
     ports: { coordinator: 8005, governance: 49103, viewer: 5180 },
     base_urls: {
@@ -45,6 +54,25 @@ function fixture() {
 
 function alternateWindowsDriveCasing(value: string): string {
   return value.replace(/^[A-Za-z]:/, drive => drive === drive.toUpperCase() ? drive.toLowerCase() : drive.toUpperCase());
+}
+
+function sampleObservation(config: IsolatedStackConfig): BrowserEvidenceObservation {
+  const screenshotPath = path.join(config.runDir, "a4-success.png");
+  const tracePath = path.join(config.runDir, "a4-success-trace.zip");
+  writeFileSync(screenshotPath, "png-fixture");
+  writeFileSync(tracePath, "trace-fixture");
+  return {
+    testId: "a4-success",
+    route: "#semantic-search",
+    mainButtons: ["a4-refresh-sources", "a4-run"],
+    fixture: "downloaded ifc_ready_job_id selected from real coordinator",
+    backendApi: "POST /api/governance/search/model/for-ifc-ready/job-1",
+    observedRuntimeIds: { ifc_ready_job_id: "job-1" },
+    visibleStates: ["success"],
+    screenshotPaths: [screenshotPath],
+    tracePath,
+    harness: { buildFlag: false, queryFlag: false, realControlPlaneEligible: true },
+  };
 }
 
 afterEach(() => {
@@ -140,5 +168,131 @@ describe("loadIsolatedStackConfig", () => {
       headSha: value.headSha,
       env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath, E2E_DISABLE_WEBSERVER: "1" },
     })).toThrow(/E2E_VIEWER_HARNESS_BUILD=0\|1/);
+  });
+
+  it("records every reserved-port browser request", () => {
+    const guard = createForbiddenRequestGuard();
+    guard.observe("http://127.0.0.1:8004/api/runtime/status");
+    guard.observe("http://127.0.0.1:49102/api/search");
+    expect(() => guard.assertClean()).toThrow(/8004.*49102/);
+  });
+
+  it.each([
+    [{ buildFlag: false, queryFlag: false }, true],
+    [{ buildFlag: true, queryFlag: false }, true],
+    [{ buildFlag: true, queryFlag: true }, false],
+  ])("discloses harness flags and real-control-plane eligibility", (flags, eligible) => {
+    expect(classifyHarnessUse(flags)).toEqual({ ...flags, realControlPlaneEligible: eligible });
+  });
+
+  it("requires all real prerequisites without skip semantics", () => {
+    expect(() => requireReal(false, "fixture missing")).toThrow("fixture missing");
+  });
+
+  it("atomically merges observations only for the same run identity", async () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({
+      cwd: value.worktreeRoot,
+      headSha: value.headSha,
+      env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath },
+    })!;
+    const observation = sampleObservation(config);
+    const output = await writeIsolatedEvidenceManifest(config, observation);
+    await writeIsolatedEvidenceManifest(config, { ...observation, visibleStates: ["loading", "success", "retry"] });
+    const evidence = JSON.parse(readFileSync(output, "utf8"));
+    expect(evidence.observations).toHaveLength(1);
+    expect(evidence.observations[0].visible_states).toContain("retry");
+    expect(evidence.execution_window.started_at).toBe(value.manifest.started_at);
+    expect(Date.parse(evidence.execution_window.finished_at)).toBeGreaterThanOrEqual(Date.parse(value.manifest.started_at));
+    expect(readdirSync(config.runDir).filter(name => name.includes(".tmp-") || name === "evidence-manifest.lock")).toEqual([]);
+  });
+
+  it("preserves original bytes on evidence identity mismatch", async () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
+    const output = path.join(config.runDir, "evidence-manifest.json");
+    const original = JSON.stringify({ schema_version: "isolated-branch-browser-evidence/v1", stack_kind: "isolated_branch_stack", change_id: "other", run_id: "other", head_sha: "f".repeat(40), observations: [] });
+    writeFileSync(output, original);
+    await expect(writeIsolatedEvidenceManifest(config, sampleObservation(config))).rejects.toThrow(/evidence identity mismatch/);
+    expect(readFileSync(output, "utf8")).toBe(original);
+  });
+
+  it("rejects evidence artifacts outside the current run directory", async () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
+    const outsidePath = path.join(value.worktreeRoot, "outside.png");
+    writeFileSync(outsidePath, "outside");
+    await expect(writeIsolatedEvidenceManifest(config, { ...sampleObservation(config), screenshotPaths: [outsidePath] })).rejects.toThrow(/artifact path must stay inside current run/);
+  });
+
+  it("rejects a contained screenshot or trace path that does not exist", async () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
+    const observation = sampleObservation(config);
+    rmSync(observation.tracePath!, { force: true });
+    await expect(writeIsolatedEvidenceManifest(config, observation)).rejects.toThrow(/artifact does not exist/);
+  });
+
+  it("rejects caller harness build flags that disagree with the manifest authority", async () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
+    const observation = sampleObservation(config);
+    await expect(writeIsolatedEvidenceManifest(config, {
+      ...observation,
+      harness: { ...observation.harness, buildFlag: true },
+    })).rejects.toThrow(/harness build flag mismatch/);
+  });
+
+  it("rejects build and query harness falsely claiming real control-plane eligibility", async () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({
+      cwd: value.worktreeRoot,
+      headSha: value.headSha,
+      env: {
+        E2E_REQUIRE_REAL: "1",
+        E2E_STACK_MANIFEST: value.manifestPath,
+        E2E_DISABLE_WEBSERVER: "1",
+        E2E_VIEWER_HARNESS_BUILD: "1",
+      },
+    })!;
+    const observation = sampleObservation(config);
+    await expect(writeIsolatedEvidenceManifest(config, {
+      ...observation,
+      harness: { buildFlag: true, queryFlag: true, realControlPlaneEligible: true },
+    })).rejects.toThrow(/harness eligibility mismatch/);
+  });
+
+  it("fails closed on a pre-existing evidence lock and preserves original bytes", async () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
+    const output = await writeIsolatedEvidenceManifest(config, sampleObservation(config));
+    const original = readFileSync(output, "utf8");
+    const lockPath = path.join(config.runDir, "evidence-manifest.lock");
+    closeSync(openSync(lockPath, "wx"));
+    try {
+      await expect(writeIsolatedEvidenceManifest(config, { ...sampleObservation(config), visibleStates: ["retry"] })).rejects.toThrow(/evidence writer lock exists/);
+      expect(readFileSync(output, "utf8")).toBe(original);
+    } finally {
+      unlinkSync(lockPath);
+    }
+  });
+
+  it("rejects directory artifacts and physical symlink or junction escapes", async () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
+    const artifactDirectory = path.join(config.runDir, "not-a-file");
+    mkdirSync(artifactDirectory);
+    await expect(writeIsolatedEvidenceManifest(config, { ...sampleObservation(config), screenshotPaths: [artifactDirectory] })).rejects.toThrow(/artifact must be a file/);
+
+    const outsideDirectory = path.join(value.worktreeRoot, "outside-artifacts");
+    const outsideFile = path.join(outsideDirectory, "outside.png");
+    const escape = path.join(config.runDir, "artifact-escape");
+    mkdirSync(outsideDirectory);
+    writeFileSync(outsideFile, "outside");
+    symlinkSync(outsideDirectory, escape, process.platform === "win32" ? "junction" : "dir");
+    await expect(writeIsolatedEvidenceManifest(config, {
+      ...sampleObservation(config),
+      screenshotPaths: [path.join(escape, "outside.png")],
+    })).rejects.toThrow(/artifact path must stay inside current run/);
   });
 });

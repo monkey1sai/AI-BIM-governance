@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, realpathSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
+import type { Page } from "@playwright/test";
 
 const RESERVED_PORTS = new Set([
   8004,
@@ -47,6 +49,34 @@ export function parseStandaloneViewerPort(raw: string): number {
     throw new Error(`invalid standalone viewer port: ${raw}`);
   }
   return port;
+}
+
+export function requireReal(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(`[require-real] ${message}`);
+}
+
+export function createForbiddenRequestGuard() {
+  const violations: string[] = [];
+  return {
+    observe(rawUrl: string) {
+      const url = new URL(rawUrl);
+      if (RESERVED_PORTS.has(Number(url.port))) violations.push(rawUrl);
+    },
+    assertClean() {
+      if (violations.length) throw new Error(`browser requested reserved ports: ${violations.join(", ")}`);
+    },
+    violations,
+  };
+}
+
+export function watchForbiddenRequests(page: Page) {
+  const guard = createForbiddenRequestGuard();
+  page.on("request", request => guard.observe(request.url()));
+  return guard;
+}
+
+export function classifyHarnessUse(flags: { buildFlag: boolean; queryFlag: boolean }) {
+  return { ...flags, realControlPlaneEligible: !(flags.buildFlag && flags.queryFlag) };
 }
 
 function comparablePath(value: string): string {
@@ -177,4 +207,127 @@ export function requireIsolatedStackConfig(): IsolatedStackConfig {
   const config = loadIsolatedStackConfig();
   if (!config) throw new Error("E2E_REQUIRE_REAL=1 is required by this spec");
   return config;
+}
+
+export type HarnessDisclosure = {
+  buildFlag: boolean;
+  queryFlag: boolean;
+  realControlPlaneEligible: boolean;
+};
+
+export type BrowserEvidenceObservation = {
+  testId: string;
+  route: string;
+  mainButtons: string[];
+  fixture: string;
+  backendApi: string;
+  observedRuntimeIds: Record<string, string>;
+  visibleStates: string[];
+  screenshotPaths: string[];
+  tracePath: string | null;
+  harness: HarnessDisclosure;
+};
+
+function relativeRunArtifact(runDir: string, candidate: string): string {
+  const absolute = path.resolve(candidate);
+  if (!existsSync(absolute)) throw new Error(`evidence artifact does not exist: ${candidate}`);
+  const physicalRunDir = realpathSync(runDir);
+  const physicalArtifact = realpathSync(absolute);
+  if (!statSync(physicalArtifact).isFile()) throw new Error(`evidence artifact must be a file: ${candidate}`);
+  const relative = path.relative(comparablePath(physicalRunDir), comparablePath(physicalArtifact));
+  if (
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error(`artifact path must stay inside current run: ${candidate}`);
+  }
+  return path.relative(physicalRunDir, physicalArtifact).split(path.sep).join("/");
+}
+
+export async function writeIsolatedEvidenceManifest(
+  config: IsolatedStackConfig,
+  observation: BrowserEvidenceObservation,
+): Promise<string> {
+  const output = path.join(config.runDir, "evidence-manifest.json");
+  if (observation.harness.buildFlag !== config.harnessBuildFlag) {
+    throw new Error("evidence harness build flag mismatch");
+  }
+  const harness = classifyHarnessUse({
+    buildFlag: config.harnessBuildFlag,
+    queryFlag: observation.harness.queryFlag,
+  });
+  if (observation.harness.realControlPlaneEligible !== harness.realControlPlaneEligible) {
+    throw new Error("evidence harness eligibility mismatch");
+  }
+  const identity = {
+    schema_version: "isolated-branch-browser-evidence/v1",
+    stack_kind: config.manifest.stack_kind,
+    change_id: config.manifest.change_id,
+    run_id: config.manifest.run_id,
+    head_sha: config.manifest.head_sha,
+  };
+  const lockPath = path.join(config.runDir, "evidence-manifest.lock");
+  let lockDescriptor: number | undefined;
+  let temporary: string | undefined;
+  try {
+    try {
+      lockDescriptor = openSync(lockPath, "wx");
+    } catch (error) {
+      if (existsSync(lockPath)) throw new Error(`evidence writer lock exists: ${lockPath}`);
+      throw error;
+    }
+    const existing = existsSync(output)
+      ? JSON.parse(readFileSync(output, "utf8"))
+      : { ...identity, observations: [] };
+    for (const key of ["schema_version", "stack_kind", "change_id", "run_id", "head_sha"] as const) {
+      if (existing[key] !== identity[key]) throw new Error(`evidence identity mismatch: ${key}`);
+    }
+    const normalized = {
+      test_id: observation.testId,
+      route: observation.route,
+      main_buttons: observation.mainButtons,
+      fixture: observation.fixture,
+      backend_api: observation.backendApi,
+      observed_runtime_ids: observation.observedRuntimeIds,
+      visible_states: observation.visibleStates,
+      harness,
+      artifacts: {
+        screenshots: observation.screenshotPaths.map(candidate => relativeRunArtifact(config.runDir, candidate)),
+        trace: observation.tracePath ? relativeRunArtifact(config.runDir, observation.tracePath) : null,
+      },
+    };
+    const observations = [...(existing.observations ?? []).filter((item: { test_id: string }) => item.test_id !== normalized.test_id), normalized]
+      .sort((left, right) => left.test_id.localeCompare(right.test_id));
+    const evidence = {
+      ...identity,
+      resolved_ports: config.manifest.ports,
+      base_urls: {
+        coordinator: config.coordinatorBaseUrl,
+        governance: config.governanceBaseUrl,
+        viewer: config.viewerOrigin,
+      },
+      execution_window: {
+        started_at: config.manifest.started_at,
+        finished_at: new Date().toISOString(),
+      },
+      observations,
+      scope: {
+        cpu_browser_operability: "observed",
+        design: "not_claimed",
+        deploy: "not_claimed",
+        kit_webrtc: "not_claimed",
+      },
+    };
+    temporary = `${output}.tmp-${process.pid}-${randomUUID()}`;
+    writeFileSync(temporary, `${JSON.stringify(evidence, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+    renameSync(temporary, output);
+    return output;
+  } finally {
+    if (temporary && existsSync(temporary)) unlinkSync(temporary);
+    if (lockDescriptor !== undefined) {
+      closeSync(lockDescriptor);
+      if (existsSync(lockPath)) unlinkSync(lockPath);
+    }
+  }
 }
