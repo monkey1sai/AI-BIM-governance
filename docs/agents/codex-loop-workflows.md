@@ -17,6 +17,8 @@ Default to one coordinator and Lane F/B. Use these local mappings only:
 
 The coordinator owns scope, source-of-truth loading, write-conflict control, evidence synthesis, and final verification. Workers are read-only unless a bounded, non-conflicting scope is explicitly granted. Do not pin model names or duplicate global tiers, effort lanes, output schemas, or generic workflow modes here.
 
+The global apex-slot gate applies to every child dispatch in this repo. Reserve one apex planning/review/decision assignment, then route any remaining worker with the minimum sufficient model, effort, bounded prompt, and evidence responsibility; no apex means `HELD` rather than a downgraded swarm.
+
 ## Situational work shaping
 
 Use G-shape only when the destination is too large or uncertain for one effective session: greenfield architecture, a major cross-service capability, unresolved product/runtime trade-offs, or a feature whose decisions cannot yet be expressed as agent-ready acceptance criteria. It is not the default entrypoint and does not replace Lane G execution.

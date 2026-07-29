@@ -599,6 +599,9 @@ try {
             Assert-True ($shipSource -match [regex]::Escape($shipSafetyMarker)) "ship-item dual-maintained source preserves safety marker: $shipSafetyMarker"
         }
         Assert-True ($shipSource -match 'MUST NOT[^\r\n]*gh pr merge --admin') 'ship-item forbids the agent from using the admin merge override'
+        Assert-True ($shipSource -match 'preparation') 'ship-item separates preparation from merge authority'
+        Assert-True (($shipSource -match 'apex') -and ($shipSource -match 'arbiter|裁決')) 'ship-item requires an independent apex merge verdict'
+        Assert-True ($shipSource -match 'headOid') 'ship-item binds the verdict to an exact PR head'
     }
 
     $claudeSettingsRaw = Get-Content -LiteralPath '.claude/settings.json' -Raw
@@ -607,14 +610,9 @@ try {
     Assert-True ($claudeSettings.permissions.disableBypassPermissionsMode -eq 'disable') 'Claude project settings disable bypass-permissions mode'
     Assert-True (-not ($claudeSettingsRaw -match '_tmp_inventory\.ps1')) 'Claude read-only permissions do not pre-approve an external mutable inventory script'
     Assert-True ($claudeSettings.enabledPlugins.'superpowers@claude-plugins-official' -eq $false) 'Claude project-specific configuration disables the Superpowers plugin'
-    Assert-True (-not ($claudeSettingsRaw -match 'Write\|Edit\|MultiEdit|verify-reminder')) 'Claude no longer runs verify reminder after every edit'
-    Assert-True ($claudeSettingsRaw -match 'Bash\(git commit\*\)') 'Claude commit guard runs only for git commit'
-    Assert-True ($claudeSettingsRaw -match 'Bash\(gh pr merge\*\)') 'Claude keeps the merge evidence gate'
-    Assert-True (-not ($claudeSettingsRaw -match 'powershell\.exe|C:/Repos/active/iot/AI-BIM-governance/scripts')) 'Claude hooks use PowerShell 7 and resolve within the active worktree'
-    $claudeHookCommands = @($claudeSettings.hooks.PreToolUse | ForEach-Object { @($_.hooks) | ForEach-Object { [string]$_.command } })
-    $anchoredHookCommands = @($claudeHookCommands | Where-Object { $_ -match [regex]::Escape('${CLAUDE_PROJECT_DIR}/scripts/') })
-    Assert-True ($claudeHookCommands.Count -eq 2 -and $anchoredHookCommands.Count -eq 2) 'every Claude hook command anchors its script beneath CLAUDE_PROJECT_DIR'
-    Assert-True (@($claudeHookCommands | Where-Object { $_ -match '-File\s+"scripts/' }).Count -eq 0) 'Claude hooks reject cwd-relative script paths'
+    Assert-True ($claudeSettings.disableAllHooks -eq $true) 'Claude project settings disable all lifecycle hooks'
+    Assert-True ($claudeSettings.PSObject.Properties.Name -notcontains 'hooks') 'Claude project settings do not distribute branch-controlled command hooks'
+    Assert-True (-not ($claudeSettingsRaw -match '"type"\s*:\s*"command"')) 'Claude project settings contain no automatic command hook'
     $browserGate = Get-Content -LiteralPath 'scripts/hooks/require-gstack-evidence.ps1' -Raw
     Assert-True ($browserGate -match 'verify-design-system-visual-result\.ps1') 'merge evidence gate validates the design-system visual result'
     Assert-True ($browserGate -match 'baseRefOid,headRefOid') 'merge evidence gate binds to the actual PR base/head'
@@ -792,6 +790,9 @@ try {
     foreach ($dir in $agentsDirs) {
         Assert-True ($claudeDirs -contains $dir) "AGENTS.md in '$dir' has CLAUDE.md mirror"
     }
+
+    & node --test tests/test_governed_dispatch_runtime.mjs tests/test_ship_item_runtime.mjs
+    Assert-True ($LASTEXITCODE -eq 0) 'governed dispatch and ship-item runtime tests pass'
 } finally {
     Pop-Location
 }

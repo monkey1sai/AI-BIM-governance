@@ -25,6 +25,10 @@ Workers are read-only unless the coordinator grants a bounded, non-conflicting f
 
 Task packet validator **只驗結構與 routing contract，不授權執行**：結果固定為 `authorization_granted: false`。Lane S packet 不再包含可自我宣告的 `explicit_trigger`，只能宣告 `authorization_requirement: external_explicit_user_instruction`；實際授權必須來自 packet 外、目前對話中的明確 user instruction。closed routing signal evaluator 只回傳 expected minimum lane 與是否需要外部 Lane S 授權，不讀取或保存 prompt，也不能把普通的 `complete`／`do it` 字樣升格為 Lane S。下游若展開 symbolic `read_set`，仍須另行執行 repo containment、檔案數與 byte budget 檢查。
 
+## Apex slot
+
+Every dispatch with at least one child must satisfy the global apex-slot invariant before work starts. The primary counts only when its actual provider model and effort meet the global apex mapping; otherwise reserve an independent apex planner, reviewer, or decision role. If that assignment is unavailable, return `HELD` without dispatching. Other workers use the minimum sufficient model, effort, bounded prompt, evidence duty, and stop condition; high-risk builder and apex reviewer remain separate assignments.
+
 ## AI-BIM evidence contract
 
 For user-facing capability, verify a real frontend route and explicit main button, use the default fixture, call the coordinator API, observe the runtime action/result, and capture visible loading/success/failure/retry state with the runtime ID. Record:

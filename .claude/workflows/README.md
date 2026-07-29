@@ -11,14 +11,14 @@
 | `std-evidence.js` | spec-to-done P4：browser E2E 收 evidence → vertical slice 裁決 | `.claude/skills/spec-to-done/SKILL.md` 編排 |
 | `fu-adversarial-verify-generic.js` | 參數化修復對抗複驗：per-finding 懷疑者（refute-by-default）＋ holistic critic | spec-to-done SKILL.md P5；`tests/test_fu_verdict_schema.py`、`tests/test_dacs_findings_contract.py` 硬編名稱/路徑（改名須連動） |
 | `spec-to-done-adversarial-verify.js` | 對抗驗證 spec-to-done 四個落地檔（規範一致/技術正確/應用測試/防錯覆蓋） | 獨立 slash workflow（維護 spec-to-done 本身時用） |
-| `ship-item.js` | 單一 work item 自動 ship：commit→PR→CI watch→buffered auto-merge→closeout | spec-to-done P6；權威程序見 `ship-item.md` |
+| `ship-item.js` | 單一 work item 自動 ship：coordinator evidence→shell-less Fable/max verdict→identity-bound merge→複驗 | spec-to-done P6；權威程序見 `ship-item.md` |
 | `ship-item.md` | ship-item 的權威程序文件（非腳本） | `ship-item.js` 引用 |
 | `repo-health-scan.js` | 五面向 repo 健檢唯讀掃描（版本漂移/清理/.claude 資產/文件同步＋進度差異） | `.claude/skills/repo-health/SKILL.md` 編排 |
 | `plan-next-spec-to-done-aware.js` | 推薦下一個 spec-to-done（考慮 merged ＋ in-flight branch） | 獨立 slash workflow（刻意無 skill 編排） |
 | `plan-test-deploy-and-tidy.js` | 勘查測試區一鍵部署＋參數整理＋散落檔清理計畫 | 獨立 slash workflow（刻意無 skill 編排） |
 | `fable5-repo-advisory.js` | 告別盤點：6 視角唯讀掃描＋合併去重＋懷疑者驗證 | 獨立 slash workflow（一次性盤點工具，保留可重跑） |
 | `saas-blueprint-tournament.js` | **已退役**：PR #301 一次性 SaaS 文件產生器；舊 input packet／11-file contract 已不存在 | 保留同名入口並 fail-closed；current source 讀 `docs/plans/docs-plans-README.md` → `AI-BIM 前後端設計文件.dc.html` §01–§08 |
-| `routing.json` | spec-to-done 模型 routing 資料（tiers/fallback 鏈） | `scripts/gen_routing.py` codegen 至 std-*.js 的 `// <routing:gen>` 區塊 |
+| `routing.json` | active `agent()` workflow 的模型 routing 資料（tiers/fallback 鏈） | `scripts/gen_routing.py` codegen 至上述 active JS 的 `// <routing:gen>` 區塊；retired/fail-closed workflow 不生成 |
 
 ## 命名備註
 

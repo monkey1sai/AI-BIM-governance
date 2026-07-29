@@ -20,6 +20,8 @@ Three layers, each with a distinct job:
 
 The coordinator interprets explicit user intent and owns orchestration. **Personas do not call other personas.** Skills are mandatory hops inside a persona's workflow.
 
+Every child dispatch also obeys the global apex-slot gate. `code-reviewer` and `security-auditor` are hard read-only apex roles: their tool allowlist excludes shell and write tools. `test-engineer` is a secondary role and may run only when the primary is already apex or an independent apex assignment is reserved. Writing tests additionally requires an explicit, non-conflicting file scope. Remaining worker selection uses the minimum sufficient model, effort, bounded prompt, and evidence duty.
+
 ## When to use each
 
 ### Direct persona invocation
@@ -38,7 +40,7 @@ Pick this when explicit user intent maps to one repeatable perspective.
 ### Coordinator entrypoint (risk-based fan-out)
 Pick this only when **independent** investigations can run in parallel and produce reports that the coordinator then merges.
 
-- An explicit ship request follows [ship-item.md](../workflows/ship-item.md). The coordinator dispatches `code-reviewer`, `security-auditor`, or `test-engineer` only when the lane and risk justify that perspective, then synthesizes a go/no-go decision.
+- An explicit ship request follows [ship-item.md](../workflows/ship-item.md): the workflow coordinator collects actual PR evidence with fixed commands, an independent shell-less Fable/max `code-reviewer` acts as apex arbiter, and only the coordinator may execute the identity-bound merge sink.
 
 This is the only orchestration pattern this repo endorses. See [references/orchestration-patterns.md](../references/orchestration-patterns.md) for the full pattern catalog and anti-patterns.
 
@@ -58,11 +60,11 @@ An explicit ship request is the canonical merge orchestrator in this repo:
 
 ```text
 ship request → coordinator follows ship-item.md
-  ├── (as risk requires) code-reviewer    → review report
-  ├── (as risk requires) security-auditor → audit report
-  └── (as risk requires) test-engineer    → coverage report
-                  ↓
-        merge phase (main agent)
+  ├── fixed coordinator commands → PR/base/head/checks/diff/reviewer evidence
+  ├── code-reviewer → shell-less Fable/max apex allow/hold verdict
+  └── (as risk requires) security-auditor / test-engineer reports
+                  ↓ exact PR/head + allow verdict
+        merge sink (workflow coordinator only)
                   ↓
         go/no-go decision + rollback plan
 ```
@@ -104,12 +106,12 @@ Why this fails:
 
 The personas in this repo are designed to work as Claude Code subagents and as Agent Teams teammates without modification:
 
-- **As subagents:** auto-discovered when this plugin is enabled (no path config needed). Use the Agent tool with `subagent_type: code-reviewer` (or `security-auditor`, `test-engineer`). An explicit ship request governed by [ship-item.md](../workflows/ship-item.md) is the canonical example.
+- **As subagents:** auto-discovered from the project (and when packaged as a plugin). Use the Agent tool with `subagent_type: code-reviewer` (or `security-auditor`, `test-engineer`). [ship-item.md](../workflows/ship-item.md) is the canonical merge example.
 - **As Agent Teams teammates** (experimental, requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`): reference the same persona name when spawning a teammate. The persona's body is **appended to** the teammate's system prompt as additional instructions (not a replacement), so your persona text sits on top of the team-coordination instructions the lead installs (SendMessage, task-list tools, etc.).
 
 Subagents only report results back to the main agent. Agent Teams let teammates message each other directly. Use subagents when reports are enough; use Agent Teams when sub-agents need to challenge each other's findings (e.g. competing-hypothesis debugging). See [references/orchestration-patterns.md](../references/orchestration-patterns.md) for the full mapping.
 
-Plugin agents do not support `hooks`, `mcpServers`, or `permissionMode` frontmatter — those fields are silently ignored. Avoid relying on them when authoring new personas here.
+Project-local agents support frontmatter hooks after workspace trust; plugin-packaged agents ignore hooks. Security boundaries therefore require declarative `disallowedTools` first. Hooks may add defense in depth but must not be the only barrier.
 
 ## Adding a new persona
 
