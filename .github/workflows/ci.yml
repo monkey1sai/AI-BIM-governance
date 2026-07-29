@@ -294,10 +294,14 @@ jobs:
           cache: 'npm'
           cache-dependency-path: web-viewer-sample/package-lock.json
 
+      - name: Install pinned npm
+        shell: pwsh
+        run: npm install --global npm@10.9.4 --no-audit --no-fund
+
       - name: Install dependencies
         shell: pwsh
         working-directory: web-viewer-sample
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Run verify
         shell: pwsh
@@ -380,11 +384,16 @@ jobs:
           cache: 'npm'
           cache-dependency-path: web-viewer-sample/package-lock.json
 
+      - name: Install pinned npm
+        if: needs.changes.outputs.frontend_visual_required == 'true'
+        shell: pwsh
+        run: npm install --global npm@10.9.4 --no-audit --no-fund
+
       - name: Install viewer dependencies
         if: needs.changes.outputs.frontend_visual_required == 'true'
         shell: pwsh
         working-directory: web-viewer-sample
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Install pinned Playwright Chromium
         if: needs.changes.outputs.frontend_visual_required == 'true'
