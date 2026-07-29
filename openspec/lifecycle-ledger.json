@@ -771,16 +771,16 @@
       "owner": "cross-service-observability",
       "current_slice": null,
       "blocked_by": [],
-      "last_verified": "2026-07-28T06:30:00Z",
+      "last_verified": "2026-07-29T14:30:00Z",
       "task_ledger": {
-        "completed": 66,
-        "total": 71
+        "completed": 92,
+        "total": 93
       },
       "evidence_refs": [
         "openspec/changes/cross-service-structured-log-baseline/proposal.md",
         "openspec/changes/cross-service-structured-log-baseline/tasks.md"
       ],
-      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "subject_commit": "bfcc43361783deaddc14eb542d3fbe31d361866b",
       "archive_debt": null
     },
     {
@@ -1422,7 +1422,7 @@
       "last_verified": "2026-07-29T10:00:00Z",
       "task_ledger": {
         "completed": 0,
-        "total": 29
+        "total": 30
       },
       "evidence_refs": [
         "openspec/changes/isolated-branch-stack-browser-e2e/proposal.md",

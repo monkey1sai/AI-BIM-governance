@@ -136,6 +136,13 @@ PR body 引用隔離 stack evidence 時 SHALL 標明其 stack kind。隔離 stac
 - **THEN** 該宣稱 SHALL 被視為不成立
 - **AND** 相關 evidence SHALL 另行依 host-native Kit 契約取得並分開標示
 
+#### Scenario: harness fake 控制面之下的 run 須揭露且不得跨界引用
+
+- **GIVEN** viewer bundle 以 `VITE_VIEWER_HARNESS=1` 建置且 E2E 以 harness route（`?harness=1`）執行，使 review socket／authority ack 由 fake 實作提供
+- **WHEN** 該 run 的結果被引用為 completion evidence
+- **THEN** evidence SHALL 標示 harness 使用狀態（build flag 與 query flag）
+- **AND** 該 run SHALL NOT 被引用為 coordinator review socket／authority ack 真實控制面行為的證據
+
 ### Requirement: 隔離 stack 契約 SHALL 有 machine check
 
 隔離 stack 的 port 表 SHALL 只有一份權威定義。文件中的 port 表、script registry 登記與 launcher 內的常數 SHALL 保持一致；三者漂移時 machine check SHALL 失敗。

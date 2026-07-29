@@ -24,6 +24,7 @@
 - [ ] 3.3 讓 `a4-closeout.spec.ts` 與 `a3-federated-session-chain.spec.ts` 改用 3.2 的 helper，移除各自檔頭手抄的 port 常數與 skip 邏輯；斷言內容維持不變。
 - [ ] 3.4 `playwright.config.ts`：coordinator base 改由 helper 統一解析，落入保留集合即 throw；保留既有 `E2E_VIEWER_PORT`／`E2E_DISABLE_WEBSERVER` 行為與 `strictPort` + `reuseExistingServer:false`。
 - [ ] 3.5 跑 `npm run typecheck` 與 `npx vitest run`，結果不得低於改動前 baseline（先記錄 baseline 數字）。
+- [ ] 3.6 先寫 failing test：3.2 的 helper 與 evidence manifest 增 harness 標示欄位（`VITE_VIEWER_HARNESS` build flag 與 `?harness=1` query flag 的實際狀態）；被引用為 evidence 的 run 若 harness 生效，manifest SHALL 記錄之，且不得作為 coordinator review socket／authority ack 真實控制面行為的證據（對應 spec R5 harness Scenario 與 proposal D-14）。
 
 ## 4. Machine gate（owner：`.github/`、`scripts/tests/`）
 
@@ -46,5 +47,5 @@
 - [ ] 6.3 對 launcher 與 helper 涉及的既有符號跑 `gitnexus impact -d upstream -r AI-BIM-governance`；commit 前跑 `gitnexus detect-changes --scope compare --base-ref main`，HIGH／CRITICAL 於 PR body 揭露；index stale 或 CLI 不可用時依 `docs/agents/gitnexus-usage.md` 走 unavailable gate。
 - [ ] 6.4 `git diff --check`、secret scan（`scripts/tests/scan-secret-patterns.ps1`）、`git status` 乾淨；generated cache 與 runtime artifact 不得進 change。
 - [ ] 6.5 PR body 填妥 Change Classification 與 AI Coding Governance 表（本 PR 觸及 `docs/plans/` 與 `.github/`），並明確標示 `Full completion claimed`、`stack_kind=isolated_branch_stack`，以及本 change **不**涵蓋 A4 tasks 4.1–4.4 的判讀與修復。
-- [ ] 6.6 PR body 據實描述 design gate 狀態：`design-semantic-visual` 在 main `13033cb` 為 **failure**（CI run `30440400040`，成因為 `#a4` route IA 遷移，pre-existing、非本 change 造成），而在**本 PR 為 skipped**（只動 `docs/plans/` 與 `openspec/**`，未觸發 `frontend_visual_required`）——不得宣稱本 PR 帶著該紅燈。並以 `git diff --name-only` 佐證本 change 未觸及 `docs/plans/design-system-reference.manifest.json`、`docs/plans/design-system-baseline/**` 與 R-A1 手寫正本四檔。DoD：body 含上述三項且 `pr-review-agent` 綠。
+- [ ] 6.6 PR body 據實描述 design gate **時間線**（不得照抄任何單點歷史狀態）：main `13033cb` failure（run `30440400040`，成因 `#a4` route IA 遷移，pre-existing）→ #429（`2b9573e`）就地重核 A4 golden 轉 success → 現 main（`bfcc433`）success；並附**本 PR 當下**該 job 的實跑結果與 run link。以 `git diff --name-only` 佐證本 change 未觸及 `docs/plans/design-system-reference.manifest.json`、`docs/plans/design-system-baseline/**` 與 R-A1 手寫正本四檔（本 change 的 diff 實際觸及 `docs/plans/NOW.md`、`openspec/**` 與 `scripts/tests/test-ai-coding-metrics.mjs`）。DoD：body 含上述三項且 `pr-review-agent` 綠。
 - [ ] 6.7 PR body 以**摘要＋連結**（非逐字複製整節）指向 `proposal.md` 的「相鄰既有缺口」D-1～D-13、「三層交叉對抗驗證」與「A1–A10 viewer 架構」三節；明示這些是**揭露與撤回紀錄**，不構成 requirement、不擴張本 change 的 capability 範圍、且 U-1～U-12 全部為「待使用者裁決」不在本 PR 內處置。避免逐字塞入而稀釋 `pr-review-agent` 解析的 machine-truth 欄位。
