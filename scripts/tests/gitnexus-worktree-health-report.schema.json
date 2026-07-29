@@ -1,0 +1,110 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://example.invalid/schemas/gitnexus-worktree-health-report.schema.json",
+  "title": "GitNexus and worktree health report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "overall_status", "repository_name", "current_checkout", "canonical_checkout", "gitnexus", "worktrees", "manual_actions", "findings"],
+  "properties": {
+    "schema_version": {"const": "gitnexus-worktree-health-report/v1"},
+    "overall_status": {"enum": ["healthy", "warning", "unhealthy", "unknown"]},
+    "repository_name": {"type": "string", "minLength": 1, "maxLength": 256},
+    "current_checkout": {"$ref": "#/definitions/current_checkout"},
+    "canonical_checkout": {"$ref": "#/definitions/canonical_checkout"},
+    "gitnexus": {"$ref": "#/definitions/gitnexus"},
+    "worktrees": {"type": "array", "minItems": 1, "maxItems": 200, "items": {"$ref": "#/definitions/worktree"}},
+    "manual_actions": {"type": "array", "maxItems": 200, "items": {"$ref": "#/definitions/manual_action"}},
+    "findings": {"type": "array", "items": {"$ref": "#/definitions/finding"}}
+  },
+  "definitions": {
+    "sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},
+    "nullable_sha": {"oneOf": [{"type": "null"}, {"$ref": "#/definitions/sha"}]},
+    "nullable_path": {"type": ["string", "null"], "maxLength": 1024},
+    "current_checkout": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "head_sha", "origin_main_sha", "branch", "dirty", "relationship"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "head_sha": {"$ref": "#/definitions/sha"},
+        "origin_main_sha": {"$ref": "#/definitions/nullable_sha"},
+        "branch": {"type": ["string", "null"], "maxLength": 512},
+        "dirty": {"type": "boolean"},
+        "relationship": {"enum": ["canonical", "linked", "unknown"]}
+      }
+    },
+    "canonical_checkout": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "path", "head_sha", "matches_origin_main"],
+      "properties": {
+        "status": {"enum": ["identified", "missing", "ambiguous"]},
+        "path": {"$ref": "#/definitions/nullable_path"},
+        "head_sha": {"$ref": "#/definitions/nullable_sha"},
+        "matches_origin_main": {"type": ["boolean", "null"]}
+      }
+    },
+    "gitnexus": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "indexed_path", "indexed_commit", "index_freshness", "fts_status", "registration_status", "registration_count", "current_checkout_trust"],
+      "properties": {
+        "status": {"enum": ["healthy", "stale", "unavailable", "unknown"]},
+        "indexed_path": {"$ref": "#/definitions/nullable_path"},
+        "indexed_commit": {"$ref": "#/definitions/nullable_sha"},
+        "index_freshness": {"enum": ["fresh", "stale", "unknown"]},
+        "fts_status": {"enum": ["healthy", "missing", "degraded", "unknown"]},
+        "registration_status": {"enum": ["unique", "missing", "duplicate", "ambiguous", "unknown"]},
+        "registration_count": {"type": "integer", "minimum": 0, "maximum": 100},
+        "current_checkout_trust": {"enum": ["trusted", "untrusted", "unknown"]}
+      }
+    },
+    "worktree": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "head_sha", "branch", "dirty", "detached", "locked", "prunable", "owner", "owner_status", "last_activity", "is_current", "is_canonical", "kind"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "head_sha": {"$ref": "#/definitions/sha"},
+        "branch": {"type": ["string", "null"], "maxLength": 512},
+        "dirty": {"type": ["boolean", "null"]},
+        "detached": {"type": "boolean"},
+        "locked": {"type": "boolean"},
+        "prunable": {"type": "boolean"},
+        "owner": {"type": ["string", "null"], "maxLength": 128},
+        "owner_status": {"enum": ["active", "idle", "ended", "unclaimed", "unknown"]},
+        "last_activity": {"type": ["string", "null"], "maxLength": 64},
+        "is_current": {"type": "boolean"},
+        "is_canonical": {"type": "boolean"},
+        "kind": {"enum": ["current", "canonical", "linked", "deployment", "tooling"]}
+      }
+    },
+    "finding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["code", "severity", "message", "path"],
+      "properties": {
+        "code": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+        "severity": {"enum": ["error", "unknown", "warning"]},
+        "message": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "path": {"$ref": "#/definitions/nullable_path"}
+      }
+    },
+    "manual_action": {
+      "type": "object", "additionalProperties": false,
+      "required": ["action", "target", "requires_authorization", "command_argv", "preconditions"],
+      "properties": {
+        "action": {"const": "inspect_then_remove_prunable_worktree"},
+        "target": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "requires_authorization": {"const": true},
+        "command_argv": {
+          "type": "array", "minItems": 4, "maxItems": 4,
+          "items": [
+            {"const": "git"}, {"const": "worktree"}, {"const": "remove"}, {"type": "string", "minLength": 1, "maxLength": 1024}
+          ],
+          "additionalItems": false
+        },
+        "preconditions": {
+          "type": "array", "minItems": 5, "maxItems": 5,
+          "items": {"enum": ["exact_target_verified", "not_deployment", "clean", "merged", "unowned"]},
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

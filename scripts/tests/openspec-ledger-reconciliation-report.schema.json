@@ -1,0 +1,375 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "openspec-ledger-reconciliation-report.schema.json",
+  "title": "OpenSpec ledger reconciliation report v1",
+  "description": "Deterministic, read-only inventory and mismatch report emitted by reconcile-openspec-ledger.ps1.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "mode",
+    "outcome",
+    "sources",
+    "summary",
+    "inventory",
+    "mismatches",
+    "errors"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "openspec-ledger-reconciliation-report/v1"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["inventory", "reconcile", "unknown"]
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["inventoried", "consistent", "ledger_mismatch", "input_error"]
+    },
+    "sources": {
+      "type": "object",
+      "required": ["repository", "openspec_cli", "machine_state", "not_evaluated"],
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "const": "openspec/changes"
+        },
+        "openspec_cli": {
+          "$ref": "#/definitions/source"
+        },
+        "machine_state": {
+          "$ref": "#/definitions/source"
+        },
+        "not_evaluated": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "archive_history",
+              "github_pr",
+              "now_md",
+              "spec_to_done_state",
+              "task_commits",
+              "subject_commit",
+              "blocked_by_graph",
+              "evidence_refs"
+            ]
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["changes", "mismatches", "errors"],
+      "additionalProperties": false,
+      "properties": {
+        "changes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mismatches": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "errors": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "inventory": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "$ref": "#/definitions/inventoryItem"
+      }
+    },
+    "mismatches": {
+      "type": "array",
+      "maxItems": 5000,
+      "items": {
+        "$ref": "#/definitions/mismatch"
+      }
+    },
+    "errors": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "$ref": "#/definitions/error"
+      }
+    }
+  },
+  "definitions": {
+    "changeId": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "taskLedger": {
+      "type": "object",
+      "required": ["completed", "total"],
+      "additionalProperties": false,
+      "properties": {
+        "completed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        }
+      }
+    },
+    "nullableTaskLedger": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/taskLedger"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "source": {
+      "type": "object",
+      "required": ["kind", "available"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["command", "file", "not_provided", "unavailable"]
+        },
+        "available": {
+          "type": "boolean"
+        }
+      }
+    },
+    "repositoryObservation": {
+      "type": "object",
+      "required": ["location", "proposal_status", "proposal_raw_status", "proposal_exists", "tasks_exists", "task_ledger"],
+      "additionalProperties": false,
+      "properties": {
+        "location": {
+          "type": "string",
+          "enum": ["active", "missing"]
+        },
+        "proposal_status": {
+          "type": "string",
+          "enum": ["active", "deferred", "invalid", "missing"]
+        },
+        "proposal_raw_status": {
+          "type": ["string", "null"],
+          "maxLength": 128
+        },
+        "proposal_exists": {
+          "type": "boolean"
+        },
+        "tasks_exists": {
+          "type": "boolean"
+        },
+        "task_ledger": {
+          "$ref": "#/definitions/nullableTaskLedger"
+        }
+      }
+    },
+    "openspecObservation": {
+      "type": "object",
+      "required": ["present", "status", "task_ledger"],
+      "additionalProperties": false,
+      "properties": {
+        "present": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": ["string", "null"],
+          "maxLength": 64
+        },
+        "task_ledger": {
+          "$ref": "#/definitions/nullableTaskLedger"
+        }
+      }
+    },
+    "machineStateObservation": {
+      "type": "object",
+      "required": [
+        "present",
+        "status",
+        "owner_present",
+        "current_slice_present",
+        "blocked_by_count",
+        "last_verified_present",
+        "task_ledger",
+        "evidence_ref_count",
+        "subject_commit_present"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "present": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": ["string", "null"],
+          "enum": ["active", "deferred", "held", "completed", "archived", null]
+        },
+        "owner_present": {
+          "type": "boolean"
+        },
+        "current_slice_present": {
+          "type": "boolean"
+        },
+        "blocked_by_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "last_verified_present": {
+          "type": "boolean"
+        },
+        "task_ledger": {
+          "$ref": "#/definitions/nullableTaskLedger"
+        },
+        "evidence_ref_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 200
+        },
+        "subject_commit_present": {
+          "type": "boolean"
+        }
+      }
+    },
+    "inventoryItem": {
+      "type": "object",
+      "required": ["id", "repository", "openspec_cli", "machine_state"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/changeId"
+        },
+        "repository": {
+          "$ref": "#/definitions/repositoryObservation"
+        },
+        "openspec_cli": {
+          "$ref": "#/definitions/openspecObservation"
+        },
+        "machine_state": {
+          "$ref": "#/definitions/machineStateObservation"
+        }
+      }
+    },
+    "mismatch": {
+      "type": "object",
+      "required": [
+        "code",
+        "reason",
+        "change_id",
+        "field",
+        "expected_source",
+        "expected",
+        "actual_source",
+        "actual",
+        "message"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": ["change_presence", "lifecycle", "task_counts"]
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "directory_missing",
+            "openspec_entry_missing",
+            "machine_state_missing",
+            "proposal_missing",
+            "tasks_missing",
+            "invalid_marker",
+            "lifecycle_unrepresented",
+            "lifecycle_disagreement",
+            "completed_mismatch",
+            "total_mismatch",
+            "unsupported_checkbox"
+          ]
+        },
+        "change_id": {
+          "$ref": "#/definitions/changeId"
+        },
+        "field": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expected_source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "expected": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "actual_source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "actual": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "invalid_argument",
+            "repo_root_invalid",
+            "repository_unreadable",
+            "repository_reparse_point",
+            "repository_artifact_too_large",
+            "inventory_too_large",
+            "artifact_unreadable",
+            "artifact_reparse_point",
+            "artifact_outside_repo",
+            "artifact_too_large",
+            "tool_path_required",
+            "tool_path_invalid",
+            "tool_path_untrusted",
+            "tool_hash_mismatch",
+            "tool_unavailable",
+            "tool_exit_nonzero",
+            "tool_timeout",
+            "tool_output_too_large",
+            "tool_output_invalid",
+            "tool_root_mismatch",
+            "tool_version_mismatch",
+            "ledger_schema_invalid",
+            "ledger_duplicate_id",
+            "ledger_semantic_invalid",
+            "unexpected_failure"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      }
+    }
+  }
+}

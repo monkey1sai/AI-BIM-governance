@@ -49,6 +49,14 @@ function New-TestAgentSkillManifestEntry {
             source = 'test fixture'
             import_commit = '1111111111111111111111111111111111111111'
         }
+        integrity = [ordered]@{
+            format = 'agent-skill-tree/v1'
+            algorithm = 'sha256'
+            trees = [ordered]@{
+                claude = ('1' * 64)
+                codex = ('1' * 64)
+            }
+        }
     }
 }
 
@@ -380,7 +388,7 @@ try {
         Copy-Item -LiteralPath ".claude/skills/$name/SKILL.md" -Destination ".codex/skills/$name/SKILL.md"
     }
     $mirrorManifest = [ordered]@{
-        schema_version = 'agent-skills-manifest/v1'
+        schema_version = 'agent-skills-manifest/v2'
         roots = [ordered]@{
             claude = '.claude/skills'
             codex = '.codex/skills'

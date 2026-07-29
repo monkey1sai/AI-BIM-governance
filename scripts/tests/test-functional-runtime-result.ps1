@@ -4,17 +4,66 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../..')).Path
 $validator = Join-Path $PSScriptRoot 'verify-functional-runtime-result.ps1'
 $tempId = [guid]::NewGuid().ToString('N')
-$artifactRoot = Join-Path $repoRoot "artifacts/e2e/functional-runtime/_gate-test-$tempId"
+$tempRoot = Join-Path $repoRoot "artifacts/tmp/functional-runtime-gate-$tempId"
+$fixtureRepoRoot = Join-Path $tempRoot 'repository'
+$artifactRoot = Join-Path $fixtureRepoRoot 'artifacts/e2e/functional-runtime'
 $resultPath = Join-Path $artifactRoot 'functional-runtime-result.json'
-$screenshotPath = Join-Path $artifactRoot 'success.png'
-$tracePath = Join-Path $artifactRoot 'trace.zip'
+$screenshotPath = Join-Path $artifactRoot 'conv-history.png'
+$tracePath = Join-Path $artifactRoot 'conv-history-trace.zip'
 New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
-[System.IO.File]::WriteAllBytes($screenshotPath, [byte[]](1, 2, 3, 4))
-[System.IO.File]::WriteAllBytes($tracePath, [byte[]](5, 6, 7, 8))
+[System.IO.File]::WriteAllBytes($screenshotPath, [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='))
+
+function Add-ZipTextEntry {
+    param(
+        [Parameter(Mandatory = $true)] $Archive,
+        [Parameter(Mandatory = $true)][string] $Name,
+        [Parameter(Mandatory = $true)][string[]] $Lines
+    )
+    $entry = $Archive.CreateEntry($Name, [System.IO.Compression.CompressionLevel]::Optimal)
+    $stream = $entry.Open()
+    try {
+        $writer = [System.IO.StreamWriter]::new($stream, [System.Text.UTF8Encoding]::new($false), 4096, $true)
+        try {
+            foreach ($line in $Lines) { $writer.WriteLine($line) }
+        } finally {
+            $writer.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
+function Write-ValidTrace {
+    param([Parameter(Mandatory = $true)][string] $LiteralPath)
+    Add-Type -AssemblyName System.IO.Compression
+    $stream = [System.IO.File]::Open($LiteralPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+    try {
+        $archive = [System.IO.Compression.ZipArchive]::new($stream, [System.IO.Compression.ZipArchiveMode]::Create, $true)
+        try {
+            Add-ZipTextEntry -Archive $archive -Name 'trace.trace' -Lines @(
+                '{"version":8,"type":"context-options","origin":"library","playwrightVersion":"1.61.0"}',
+                '{"type":"before","callId":"call@1","class":"Page","method":"goto"}',
+                '{"type":"after","callId":"call@1"}'
+            )
+            Add-ZipTextEntry -Archive $archive -Name 'trace.network' -Lines @(
+                '{"type":"resource-snapshot","snapshot":{"request":{"method":"GET","url":"http://127.0.0.1:8005/api/external/ifc-ready"},"response":{"status":200}}}',
+                '{"type":"resource-snapshot","snapshot":{"request":{"method":"GET","url":"http://127.0.0.1:8005/api/dev/conversions"},"response":{"status":200}}}',
+                '{"type":"resource-snapshot","snapshot":{"request":{"method":"GET","url":"http://127.0.0.1:8005/api/dev/conversions/stream_conv_test_001/result"},"response":{"status":503}}}',
+                '{"type":"resource-snapshot","snapshot":{"request":{"method":"GET","url":"http://127.0.0.1:8005/api/dev/conversions/stream_conv_test_001/result"},"response":{"status":200}}}'
+            )
+        } finally {
+            $archive.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
+Write-ValidTrace -LiteralPath $tracePath
 
 function Get-RelativeArtifactPath {
     param([Parameter(Mandatory = $true)][string] $LiteralPath)
-    return [System.IO.Path]::GetRelativePath($repoRoot, $LiteralPath).Replace('\', '/')
+    return [System.IO.Path]::GetRelativePath($fixtureRepoRoot, $LiteralPath).Replace('\', '/')
 }
 
 function Get-Sha256 {
@@ -85,7 +134,20 @@ function Assert-Rejected {
     Write-Result -Value $candidate
     $caught = $null
     try {
-        & $validator -RepoRoot $repoRoot -ResultPath $resultPath -AllowUntrackedArtifacts -SkipGitBinding
+        & $validator -RepoRoot $fixtureRepoRoot -ResultPath $resultPath -AllowUntrackedArtifacts -SkipGitBinding
+    } catch {
+        $caught = $_.Exception.Message
+    }
+    if ($null -eq $caught -or $caught -notmatch $ExpectedPattern) {
+        throw "Expected functional/runtime rejection matching '$ExpectedPattern'; actual='$caught'"
+    }
+}
+
+function Assert-CurrentResultRejected {
+    param([Parameter(Mandatory = $true)][string] $ExpectedPattern)
+    $caught = $null
+    try {
+        & $validator -RepoRoot $fixtureRepoRoot -ResultPath $resultPath -AllowUntrackedArtifacts -SkipGitBinding
     } catch {
         $caught = $_.Exception.Message
     }
@@ -98,9 +160,11 @@ try {
     $valid = New-Result
     $script:validJson = $valid | ConvertTo-Json -Depth 20
     Write-Result -Value $valid
-    & $validator -RepoRoot $repoRoot -ResultPath $resultPath -AllowUntrackedArtifacts -SkipGitBinding
+    & $validator -RepoRoot $fixtureRepoRoot -ResultPath $resultPath -AllowUntrackedArtifacts -SkipGitBinding
 
     Assert-Rejected -ExpectedPattern 'skipped' -Mutation { param($candidate) $candidate.skipped = $true }
+    Assert-Rejected -ExpectedPattern 'skipped' -Mutation { param($candidate) $candidate.skipped = 'false' }
+    Assert-Rejected -ExpectedPattern 'clean subject' -Mutation { param($candidate) $candidate.workspace_clean = 'false' }
     Assert-Rejected -ExpectedPattern 'route' -Mutation { param($candidate) $candidate.route = 'conv' }
     Assert-Rejected -ExpectedPattern 'scope' -Mutation { param($candidate) $candidate.PSObject.Properties.Remove('scope') }
     Assert-Rejected -ExpectedPattern 'known_gaps' -Mutation { param($candidate) $candidate.known_gaps = @() }
@@ -108,14 +172,37 @@ try {
     Assert-Rejected -ExpectedPattern 'coordinator must be real' -Mutation { param($candidate) $candidate.runtime_boundary.coordinator = 'browser_mock' }
     Assert-Rejected -ExpectedPattern 'cannot claim live GPU' -Mutation { param($candidate) $candidate.runtime_boundary.live_gpu = 'observed' }
     Assert-Rejected -ExpectedPattern "visible state 'failure'" -Mutation { param($candidate) $candidate.visible_states.failure.observed = $false }
+    Assert-Rejected -ExpectedPattern "visible state 'failure'" -Mutation { param($candidate) $candidate.visible_states.failure.observed = 'false' }
     Assert-Rejected -ExpectedPattern 'artifact SHA-256' -Mutation { param($candidate) $candidate.artifacts[0].sha256 = ('0' * 64) }
     Assert-Rejected -ExpectedPattern 'DataChannel' -Mutation {
         param($candidate)
         $candidate.kit_runtime = [pscustomobject]@{ first_frame_observed = $true; stage_id = 'stage-1'; datachannel_ack_observed = $false }
     }
 
+    [byte[]]$validScreenshot = [System.IO.File]::ReadAllBytes($screenshotPath)
+    try {
+        [System.IO.File]::WriteAllBytes($screenshotPath, [System.Text.Encoding]::UTF8.GetBytes('image'))
+        $candidate = $script:validJson | ConvertFrom-Json
+        $candidate.artifacts[0].sha256 = Get-Sha256 $screenshotPath
+        Write-Result -Value $candidate
+        Assert-CurrentResultRejected -ExpectedPattern 'PNG'
+    } finally {
+        [System.IO.File]::WriteAllBytes($screenshotPath, $validScreenshot)
+    }
+
+    [byte[]]$validTrace = [System.IO.File]::ReadAllBytes($tracePath)
+    try {
+        [System.IO.File]::WriteAllBytes($tracePath, [System.Text.Encoding]::UTF8.GetBytes('trace'))
+        $candidate = $script:validJson | ConvertFrom-Json
+        $candidate.artifacts[1].sha256 = Get-Sha256 $tracePath
+        Write-Result -Value $candidate
+        Assert-CurrentResultRejected -ExpectedPattern 'ZIP'
+    } finally {
+        [System.IO.File]::WriteAllBytes($tracePath, $validTrace)
+    }
+
     $workflow = Get-Content -LiteralPath (Join-Path $repoRoot '.github/workflows/ci.yml') -Raw
-    foreach ($requiredText in @('functional-runtime-conv:', 'playwright.functional-runtime.config.ts', 'verify-functional-runtime-result.ps1', 'needs.changes.outputs.head_sha', 'npm run build:ui', 'scripts/tests/(test|verify)-functional-runtime-result')) {
+    foreach ($requiredText in @('functional-runtime-conv:', 'playwright.functional-runtime.config.ts', 'verify-functional-runtime-result.ps1', 'needs.changes.outputs.head_sha', 'npm run build:ui')) {
         if (-not $workflow.Contains($requiredText)) { throw "CI targeted functional/runtime producer is missing '$requiredText'." }
     }
     $functionalConfig = Get-Content -LiteralPath (Join-Path $repoRoot 'web-viewer-sample/playwright.functional-runtime.config.ts') -Raw
@@ -149,7 +236,7 @@ try {
         throw 'Hi-Fi runtime screenshots must use one comparison helper; direct per-test writes can mutate tracked baselines.'
     }
 
-    Write-Host '[test-functional-runtime-result] passed — positive evidence plus skip/route/runtime/state/hash/Kit negative cases'
+    Write-Host '[test-functional-runtime-result] passed — positive evidence plus skip/route/runtime/state/hash/Kit/PNG/trace negative cases'
 } finally {
-    Remove-Item -LiteralPath $artifactRoot -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

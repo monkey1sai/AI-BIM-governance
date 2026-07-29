@@ -230,6 +230,9 @@ artifacts/e2e/product-console-report/
 # spec-to-done 執行期 state/log/pr-body 與設計期 readings/designs/verdicts(本機 scratch,可重生,不入庫)
 artifacts/spec-to-done/
 artifacts/spec-to-done-design/
+# AI coding raw telemetry and generated package aggregates are local/hosted artifacts, never source.
+artifacts/telemetry/ai-coding/
+artifacts/metrics/ai-coding/
 
 # ----------------------------
 # Session workflow scratch (.workflow/ultracode 執行痕跡,可重生,不入庫)
@@ -240,5 +243,6 @@ artifacts/spec-to-done-design/
 # 本機 scratch:tmp 工作目錄與 coordinator 追蹤檔(可重生,不入庫)
 # ----------------------------
 artifacts/tmp/
+artifacts/verification-outcomes/
 bim-review-coordinator/track.txt
 .aider*

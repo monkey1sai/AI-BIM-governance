@@ -2,6 +2,7 @@
 param(
     [Parameter(Mandatory = $true)][string] $BodyPath,
     [Parameter(Mandatory = $true)][string] $ChangedPathsPath,
+    [switch] $ChangedPathsNulDelimited,
     [string] $RepoRoot = '',
     [string] $BaseSha = '',
     [string] $HeadSha = ''
@@ -204,7 +205,23 @@ if (-not (Test-Path -LiteralPath $ChangedPathsPath -PathType Leaf)) {
 }
 
 $body = Get-Content -LiteralPath $BodyPath -Raw
-$changedPaths = @(Get-Content -LiteralPath $ChangedPathsPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+if ($ChangedPathsNulDelimited) {
+    $pathBytes = [IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $ChangedPathsPath).Path)
+    if ($pathBytes.Length -eq 0 -or $pathBytes[$pathBytes.Length - 1] -ne 0) {
+        throw 'NUL-delimited changed-path input must be non-empty and end in NUL.'
+    }
+    try {
+        $pathText = [Text.UTF8Encoding]::new($false, $true).GetString($pathBytes, 0, $pathBytes.Length - 1)
+    } catch {
+        throw 'NUL-delimited changed-path input is not valid UTF-8.'
+    }
+    $changedPaths = @($pathText.Split([char]0))
+    if (@($changedPaths | Where-Object { [string]::IsNullOrEmpty($_) }).Count -gt 0) {
+        throw 'NUL-delimited changed-path input contains an empty path.'
+    }
+} else {
+    $changedPaths = @(Get-Content -LiteralPath $ChangedPathsPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+}
 $designScope = Get-DesignSystemChangeScope -RepoRoot $RepoRoot -ChangedPaths $changedPaths -BaseSha $BaseSha -HeadSha $HeadSha
 if ($designScope.status -like '*_fail_closed') {
     throw "Frontend design scope failed closed with status '$($designScope.status)'; unknown=$($designScope.unknown_paths -join ', '); reference-authority=$($designScope.reference_authority_paths -join ', ')."

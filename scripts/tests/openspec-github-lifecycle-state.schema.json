@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "openspec-github-lifecycle-state.schema.json",
+  "title": "Read-only raw GitHub PR observation v1",
+  "type": "object",
+  "required": ["schema_version", "scope", "repository_subject", "changes"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "openspec-github-lifecycle-state/v1" },
+    "scope": { "const": "current" },
+    "repository_subject": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "changes": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "required": ["id", "prs"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "maxLength": 128, "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "prs": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "required": ["number", "state", "head_sha"],
+              "additionalProperties": false,
+              "properties": {
+                "number": { "type": "integer", "minimum": 1 },
+                "state": { "type": "string", "enum": ["open", "closed", "merged"] },
+                "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

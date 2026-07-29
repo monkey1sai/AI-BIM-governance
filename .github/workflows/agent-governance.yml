@@ -13,8 +13,9 @@ concurrency:
 
 jobs:
   agent-governance:
-    name: agent-governance
+    name: ${{ github.event_name == 'pull_request' && 'agent-governance' || 'agent-governance-diagnostic' }}
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -22,29 +23,50 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Setup Node.js for PNG recomputation tests
+      - name: Setup pinned Node.js for governance tests
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '20.20.2'
-          cache: 'npm'
-          cache-dependency-path: web-viewer-sample/package-lock.json
-
-      - name: Pin npm version
-        shell: pwsh
-        run: pwsh -NoProfile -NonInteractive -Command "npm install --global npm@10.9.4 --no-audit --no-fund"
-
-      - name: Install design-gate Node dependencies
-        shell: pwsh
-        working-directory: web-viewer-sample
-        run: pwsh -NoProfile -NonInteractive -Command "npm ci --no-audit --no-fund"
 
       - name: Run governance static check
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
 
+      - name: Test GitNexus and worktree health report
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-gitnexus-worktree-health.mjs"
+
+      - name: Test task packet routing contract
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-task-packet.mjs"
+
+      - name: Test verification outcomes and security exception policy
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-verification-plan.mjs scripts/tests/test-verification-command-policy.mjs scripts/tests/test-verification-runner.mjs scripts/tests/test-security-exceptions.mjs"
+
+      - name: Test AI coding metrics privacy and truth contract
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-ai-coding-metrics.mjs"
+
       - name: Verify OpenSpec lifecycle state
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/verify-openspec-lifecycle.ps1 -BaseRef '${{ github.event.pull_request.base.sha }}'
+
+      - name: Test OpenSpec archive diff guard
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-openspec-lifecycle-archive-diff.ps1
+
+      - name: Run OpenSpec ledger reconciliation tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-openspec-ledger-reconciliation.ps1
+
+      - name: Run OpenSpec machine-truth tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-openspec-machine-truth.mjs scripts/tests/test-openspec-machine-truth-cli.mjs scripts/tests/test-collect-openspec-github-state.mjs"
+
+      - name: Test bounded GitHub artifact extraction
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-github-artifact-extractor.ps1
 
       - name: Run PR body evidence tests
         shell: pwsh
@@ -66,6 +88,6 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-functional-runtime-result.ps1
 
-      - name: Run design-system visual-result gate tests
+      - name: Run PNG pre-decode bound tests
         shell: pwsh
-        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-design-system-visual-result.ps1
+        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-png-preflight.mjs"

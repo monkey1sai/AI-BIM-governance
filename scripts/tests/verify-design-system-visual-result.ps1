@@ -79,10 +79,10 @@ Assert-VisualResult ($result.chromium_revision -eq $manifest.fidelity_contract.c
 Assert-VisualResult ($result.chromium_version -eq $manifest.fidelity_contract.chromium_version) 'result Chromium version does not match the approved pin.'
 Assert-VisualResult ($result.ci_runner_label -in @($manifest.fidelity_contract.ci_runner_label, 'local-windows')) 'result runner label is not approved.'
 Assert-VisualResult ($runtimePlatform -eq $manifest.fidelity_contract.platform) "validator host platform '$runtimePlatform' does not match the approved manifest platform '$($manifest.fidelity_contract.platform)'."
-Assert-VisualResult ([bool]$result.workspace_clean) 'visual result was not produced from a clean subject commit.'
+Assert-VisualResult ($result.workspace_clean -is [bool] -and $result.workspace_clean -eq $true) 'visual result was not produced from a clean subject commit.'
 Assert-VisualResult ([double]$result.device_scale_factor -eq 1) 'result device scale factor must be 1.'
 Assert-VisualResult ($manifest.semantic_contract.status -eq 'executable') 'semantic state variants are reference_missing; a visual result cannot claim 99% yet.'
-Assert-VisualResult (-not [bool]$manifest.semantic_contract.external_result_input_allowed) 'external semantic-result input is forbidden.'
+Assert-VisualResult ($manifest.semantic_contract.external_result_input_allowed -is [bool] -and $manifest.semantic_contract.external_result_input_allowed -eq $false) 'external semantic-result input is forbidden.'
 Assert-VisualResult ($result.semantic_contract_schema_version -eq $manifest.semantic_contract.schema_version) 'semantic contract schema version drifted.'
 
 $pixelValidator = Join-Path $RepoRoot 'web-viewer-sample/scripts/verify-design-system-pixels.mjs'
@@ -125,7 +125,7 @@ foreach ($screenResult in $resultScreens) {
     Assert-VisualResult ((@($caseIds | Sort-Object) -join '|') -eq ((@($requiredCaseIds | Sort-Object)) -join '|')) "screen '$screenId' does not contain the exact semantic case set."
     foreach ($state in $requiredStates) {
         $property = $screenResult.semantic_states.PSObject.Properties[[string]$state]
-        Assert-VisualResult ($null -ne $property -and [bool]$property.Value) "screen '$screenId' semantic state '$state' is missing or false."
+        Assert-VisualResult ($null -ne $property -and $property.Value -is [bool] -and $property.Value -eq $true) "screen '$screenId' semantic state '$state' is missing or false."
     }
     $semanticAssertions = @($screenResult.semantic_assertions)
     Assert-VisualResult ($semanticAssertions.Count -ge $requiredCaseIds.Count) "screen '$screenId' lacks spec-executed semantic assertions."
@@ -137,7 +137,7 @@ foreach ($screenResult in $resultScreens) {
             Assert-VisualResult (-not [string]::IsNullOrWhiteSpace([string]$assertion.assertion_id)) "screen '$screenId' semantic case '$caseId' has an empty assertion ID."
             Assert-VisualResult (-not [string]::IsNullOrWhiteSpace([string]$assertion.locator)) "screen '$screenId' semantic case '$caseId' has an empty locator."
             Assert-VisualResult ([string]$assertion.expectation -in @('visible', 'hidden', 'enabled', 'disabled', 'text_equals', 'text_contains', 'attribute_equals', 'count_equals')) "screen '$screenId' semantic assertion '$($assertion.assertion_id)' has an unsupported expectation."
-            Assert-VisualResult ([bool]$assertion.passed) "screen '$screenId' semantic assertion '$($assertion.assertion_id)' did not pass in Playwright."
+            Assert-VisualResult ($assertion.passed -is [bool] -and $assertion.passed -eq $true) "screen '$screenId' semantic assertion '$($assertion.assertion_id)' did not pass in Playwright."
             Assert-VisualResult ($null -ne $assertion.PSObject.Properties['observed']) "screen '$screenId' semantic assertion '$($assertion.assertion_id)' has no observed DOM value."
         }
     }

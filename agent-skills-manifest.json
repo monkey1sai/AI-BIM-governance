@@ -1,13 +1,18 @@
 {
-  "schema_version": "agent-skills-manifest/v1",
+  "schema_version": "agent-skills-manifest/v2",
   "policy": {
     "canonical": "This file is the tracked inventory and provenance source of truth for repo-local Claude and Codex skills.",
     "materialization": "Tracked copies only. Symlinks and junctions are forbidden.",
-    "sync": "Mirror entries copy files from their declared source platform to declared target platforms. Sync may remove stale files only inside a declared target skill directory and never deletes a whole skill tree."
+    "sync": "Mirror entries copy files from their declared source platform to declared target platforms. Sync may remove stale files only inside a declared target skill directory and never deletes a whole skill tree.",
+    "integrity": "Every declared tree is pinned by agent-skill-tree/v1 SHA-256 over ordinal relative paths and file-content SHA-256 values. Sync validates every canonical source before writing and never updates these reviewed digests."
   },
   "roots": {
     "claude": ".claude/skills",
     "codex": ".codex/skills"
+  },
+  "entry_defaults": {
+    "owner": "agent-governance",
+    "executable_consumer": "scripts/dev/sync-agent-skills.ps1"
   },
   "skills": [
     {
@@ -22,6 +27,13 @@
         "kind": "repo-authored",
         "source": "AI-BIM-governance",
         "import_commit": "34fc67f254a7034555e434b2a1d418832d80215d"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "codex": "d65666fe21df0fb6af4b98e7d46521d6f3009927f907312643717f6bf6aaf195"
+        }
       }
     },
     {
@@ -36,6 +48,13 @@
         "kind": "repo-authored",
         "source": "AI-BIM-governance",
         "import_commit": "34fc67f254a7034555e434b2a1d418832d80215d"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "codex": "021e426b1592700dc4b04ba0aefd154c2cb347d11464552eb4dc1262e912544b"
+        }
       }
     },
     {
@@ -47,12 +66,22 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "OpenAI official Figma UI/UX skill bundle",
         "import_commit": "feea64212e6917d107d2b6a9db83743224f43aa8"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "a1df1ee9e538b78b9d23535cbe71445fd63d906d68146fbc19731a730d6780ac",
+          "codex": "a1df1ee9e538b78b9d23535cbe71445fd63d906d68146fbc19731a730d6780ac"
+        }
       }
     },
     {
@@ -64,12 +93,22 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "OpenAI official Figma UI/UX skill bundle",
         "import_commit": "feea64212e6917d107d2b6a9db83743224f43aa8"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "cdddf471a0b2b266ed46c60640b820c1e4a1c30a399b9d1c1047d76881c5aead",
+          "codex": "cdddf471a0b2b266ed46c60640b820c1e4a1c30a399b9d1c1047d76881c5aead"
+        }
       }
     },
     {
@@ -81,12 +120,22 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "OpenAI official Figma UI/UX skill bundle",
         "import_commit": "feea64212e6917d107d2b6a9db83743224f43aa8"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "119f13aa922b07b453db13a9afa147f11eb38fd99a67746fe8d6201b70aa59e5",
+          "codex": "119f13aa922b07b453db13a9afa147f11eb38fd99a67746fe8d6201b70aa59e5"
+        }
       }
     },
     {
@@ -98,12 +147,22 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "OpenAI official Figma UI/UX skill bundle",
         "import_commit": "feea64212e6917d107d2b6a9db83743224f43aa8"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "758a646b71ca96e39ac8b3b3dcb279fdff599157f4227d0161d9679030f57c26",
+          "codex": "758a646b71ca96e39ac8b3b3dcb279fdff599157f4227d0161d9679030f57c26"
+        }
       }
     },
     {
@@ -118,6 +177,13 @@
         "kind": "generated",
         "source": "GitNexus CLI analyze",
         "import_commit": "6f07f969fd17ae568b4c39876ce743a5cd06e82a"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "38770742b839f82a5dcd2e9b2dc8266f62a7e33179d09fb06bd7ca7b92c0874b"
+        }
       }
     },
     {
@@ -129,12 +195,22 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "repo-authored",
         "source": "AI-BIM-governance",
         "import_commit": "fa96c55becde19acd96e456b7957302a05f9b93a"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "c1d793f381e1fd2bf5860d07846089347a330be2ecdba860b659803a80ba7a70",
+          "codex": "c1d793f381e1fd2bf5860d07846089347a330be2ecdba860b659803a80ba7a70"
+        }
       }
     },
     {
@@ -146,12 +222,22 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "NVIDIA Omniverse skill bundle",
         "import_commit": "c414e1cd4ca46ae3443db76a1a43a5334695db01"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "bfd1a1ea36fa10b7225fe1a84966fade58e9e6c05234ff8b69c831ae51d95220",
+          "codex": "bfd1a1ea36fa10b7225fe1a84966fade58e9e6c05234ff8b69c831ae51d95220"
+        }
       }
     },
     {
@@ -163,12 +249,22 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "NVIDIA Omniverse skill bundle",
         "import_commit": "c414e1cd4ca46ae3443db76a1a43a5334695db01"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "7f2f147d4570f3f1103fc9866b719f39ba3ddb1d5f420d49260b42b0352b5680",
+          "codex": "7f2f147d4570f3f1103fc9866b719f39ba3ddb1d5f420d49260b42b0352b5680"
+        }
       }
     },
     {
@@ -180,12 +276,22 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "NVIDIA Omniverse skill bundle",
         "import_commit": "c414e1cd4ca46ae3443db76a1a43a5334695db01"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "78aef96a7cf3ef1271bc89efe3824aa03e2ee46e7838fade2357d80c1a072ac1",
+          "codex": "78aef96a7cf3ef1271bc89efe3824aa03e2ee46e7838fade2357d80c1a072ac1"
+        }
       }
     },
     {
@@ -202,6 +308,14 @@
         "source": "AI-BIM-governance",
         "import_commit": "6f07f969fd17ae568b4c39876ce743a5cd06e82a",
         "notes": "Claude uses the repo-health-scan workflow; Codex performs the same dimensions directly with local read-only discovery and reporting."
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "888bdee7cdb69a37c0a38d7dd482f9aec98d63a801a21634a95ce8b3a67738d0",
+          "codex": "ce72092aaacb1a21ee1d35b1abe58e0e6e4094cc7db1fa4e1a390c4403a6b7b2"
+        }
       }
     },
     {
@@ -218,6 +332,14 @@
         "source": "AI-BIM-governance",
         "import_commit": "c414e1cd4ca46ae3443db76a1a43a5334695db01",
         "notes": "Claude and Codex entrypoints intentionally differ; shared P0-P7 gates are checked by agent-governance tests instead of byte mirroring."
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "2653c806ee8eca9f6244d3053029e046405afaf514f0e4606b9c49911596952d",
+          "codex": "d850a107835429c611f53fc1575632e64c59e327765b5df2ee42592c7b90b5ad"
+        }
       }
     },
     {
@@ -229,13 +351,23 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "obra/superpowers@v6.1.1",
         "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
         "license": "MIT"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "42147d498c19fcedaf8249834d06a900fefaa390848fd61baa56c089b104b46d",
+          "codex": "42147d498c19fcedaf8249834d06a900fefaa390848fd61baa56c089b104b46d"
+        }
       }
     },
     {
@@ -247,13 +379,23 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "obra/superpowers@v6.1.1",
         "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
         "license": "MIT"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "9ada7c75f84fff1de327a0fee0725bd45f017cf50792b95f03ae06a1c8adbfaf",
+          "codex": "9ada7c75f84fff1de327a0fee0725bd45f017cf50792b95f03ae06a1c8adbfaf"
+        }
       }
     },
     {
@@ -265,13 +407,23 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "obra/superpowers@v6.1.1",
         "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
         "license": "MIT"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "b116599eed5eb125fda55b487212a3df7ba5136b70ca732661b2f46a3bf52d95",
+          "codex": "b116599eed5eb125fda55b487212a3df7ba5136b70ca732661b2f46a3bf52d95"
+        }
       }
     },
     {
@@ -283,13 +435,23 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "obra/superpowers@v6.1.1",
         "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
         "license": "MIT"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "c2772f7e35dc7dc9880720fce1d21a44a47b63c0f1464f5ee550633136f8b270",
+          "codex": "c2772f7e35dc7dc9880720fce1d21a44a47b63c0f1464f5ee550633136f8b270"
+        }
       }
     },
     {
@@ -301,13 +463,23 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "obra/superpowers@v6.1.1",
         "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
         "license": "MIT"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "66ccaa052f3cf9afe1a2120402bfbaf342fd98313f94c2c1c190ec535b4c5b1d",
+          "codex": "66ccaa052f3cf9afe1a2120402bfbaf342fd98313f94c2c1c190ec535b4c5b1d"
+        }
       }
     },
     {
@@ -319,13 +491,23 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "obra/superpowers@v6.1.1",
         "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
         "license": "MIT"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "c3de7f5af1a064282e7a141a1ee5c424f6249acea70f032e27453d995817aa04",
+          "codex": "c3de7f5af1a064282e7a141a1ee5c424f6249acea70f032e27453d995817aa04"
+        }
       }
     },
     {
@@ -337,13 +519,23 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "obra/superpowers@v6.1.1",
         "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
         "license": "MIT"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "606a8829e5e5041d04ba47e27c207bd33e2dc8176994768a05c1dc5b17b77387",
+          "codex": "606a8829e5e5041d04ba47e27c207bd33e2dc8176994768a05c1dc5b17b77387"
+        }
       }
     },
     {
@@ -355,13 +547,23 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "obra/superpowers@v6.1.1",
         "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
         "license": "MIT"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "a8ad6a6929e7d4af014a6d9adab2ceba67aed92458ed7995295484c12262320b",
+          "codex": "a8ad6a6929e7d4af014a6d9adab2ceba67aed92458ed7995295484c12262320b"
+        }
       }
     },
     {
@@ -373,13 +575,23 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "obra/superpowers@v6.1.1",
         "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
         "license": "MIT"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "0a0c5b5d55c2c346e817ca9cd84223dd648902141c4c38f2e01dc16af9bcf600",
+          "codex": "0a0c5b5d55c2c346e817ca9cd84223dd648902141c4c38f2e01dc16af9bcf600"
+        }
       }
     },
     {
@@ -391,13 +603,23 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "obra/superpowers@v6.1.1",
         "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
         "license": "MIT"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "f4b34e90c1b02cefe58bb1e781604328bd6f7c58a999a8d496370904c3ac0677",
+          "codex": "f4b34e90c1b02cefe58bb1e781604328bd6f7c58a999a8d496370904c3ac0677"
+        }
       }
     },
     {
@@ -409,13 +631,23 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "obra/superpowers@v6.1.1",
         "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
         "license": "MIT"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "e8964dc4698cd6ffbf05bd20e03e781f1ddac8e983f1816ac87ead838089c521",
+          "codex": "e8964dc4698cd6ffbf05bd20e03e781f1ddac8e983f1816ac87ead838089c521"
+        }
       }
     },
     {
@@ -427,13 +659,23 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "obra/superpowers@v6.1.1",
         "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
         "license": "MIT"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "4c8cecf3a88286502d383f85572759d093a0efc983ee5285b369894e3d0806d8",
+          "codex": "4c8cecf3a88286502d383f85572759d093a0efc983ee5285b369894e3d0806d8"
+        }
       }
     },
     {
@@ -445,13 +687,23 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "obra/superpowers@v6.1.1",
         "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
         "license": "MIT"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "4a71fbd87b08f7a18b68fc0e8a0c250d11ccd9fdd13d3d7a83c051879085f520",
+          "codex": "4a71fbd87b08f7a18b68fc0e8a0c250d11ccd9fdd13d3d7a83c051879085f520"
+        }
       }
     },
     {
@@ -463,13 +715,23 @@
       "sync": {
         "mode": "mirror",
         "source": "claude",
-        "targets": ["codex"]
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "vendored-official",
         "source": "obra/superpowers@v6.1.1",
         "import_commit": "d884ae04edebef577e82ff7c4e143debd0bbec99",
         "license": "MIT"
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "cebbba98088af384fa52899903be355ae0c722901fce520b264f3072b3759ff5",
+          "codex": "cebbba98088af384fa52899903be355ae0c722901fce520b264f3072b3759ff5"
+        }
       }
     }
   ]

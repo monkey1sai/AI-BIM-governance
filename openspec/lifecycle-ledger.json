@@ -1,0 +1,2381 @@
+{
+  "schema_version": "openspec-lifecycle-ledger/v1",
+  "changes": [
+    {
+      "id": "a1-bcf-export",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 12,
+        "total": 14
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-03-a1-bcf-export/proposal.md",
+        "openspec/changes/archive/2026-06-03-a1-bcf-export/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 2,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "a1-ids-import",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 9,
+        "total": 13
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-03-a1-ids-import/proposal.md",
+        "openspec/changes/archive/2026-06-03-a1-ids-import/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 4,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "a1-m1-closeout",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 18,
+        "total": 18
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-15-a1-m1-closeout/proposal.md",
+        "openspec/changes/archive/2026-06-15-a1-m1-closeout/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "a1-rule-engine-honesty",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 21,
+        "total": 21
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-03-a1-rule-engine-honesty/proposal.md",
+        "openspec/changes/archive/2026-06-03-a1-rule-engine-honesty/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "a2-diff-tag-typeguard",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 14,
+        "total": 14
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-03-a2-diff-tag-typeguard/proposal.md",
+        "openspec/changes/archive/2026-06-03-a2-diff-tag-typeguard/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "a2-geometry-issue-impact",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 10,
+        "total": 14
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-03-a2-geometry-issue-impact/proposal.md",
+        "openspec/changes/archive/2026-06-03-a2-geometry-issue-impact/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 4,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "a2-version-diff-selector",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 5,
+        "total": 5
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-11-a2-version-diff-selector/proposal.md",
+        "openspec/changes/archive/2026-06-11-a2-version-diff-selector/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "a3-federation-trs-coords",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 14,
+        "total": 14
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-03-a3-federation-trs-coords/proposal.md",
+        "openspec/changes/archive/2026-06-03-a3-federation-trs-coords/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "a3-transform-review-room",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 10,
+        "total": 14
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-03-a3-transform-review-room/proposal.md",
+        "openspec/changes/archive/2026-06-03-a3-transform-review-room/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 4,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "a4-semantic-search-model-qa",
+      "status": "active",
+      "owner": "governance-service",
+      "current_slice": "S4-C/S4-D closeout",
+      "blocked_by": [],
+      "last_verified": "2026-07-28T06:30:00Z",
+      "task_ledger": {
+        "completed": 28,
+        "total": 64
+      },
+      "evidence_refs": [
+        "openspec/changes/a4-semantic-search-model-qa/proposal.md",
+        "openspec/changes/a4-semantic-search-model-qa/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "add-dev-ifc-source-selection-flow",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 45,
+        "total": 48
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-07-add-dev-ifc-source-selection-flow/proposal.md",
+        "openspec/changes/archive/2026-05-07-add-dev-ifc-source-selection-flow/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 3,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "add-one-click-deploy-hybrid",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 53,
+        "total": 53
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-27-add-one-click-deploy-hybrid/proposal.md",
+        "openspec/changes/archive/2026-05-27-add-one-click-deploy-hybrid/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "add-pr-review-agent",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 29,
+        "total": 29
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-26-add-pr-review-agent/proposal.md",
+        "openspec/changes/archive/2026-05-26-add-pr-review-agent/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "add-single-gpu-session-ai-review-mvp",
+      "status": "deferred",
+      "owner": "bim-streaming-server",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T06:30:00Z",
+      "task_ledger": {
+        "completed": 1,
+        "total": 49
+      },
+      "evidence_refs": [
+        "openspec/changes/add-single-gpu-session-ai-review-mvp/proposal.md",
+        "openspec/changes/add-single-gpu-session-ai-review-mvp/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "add-worker-original-filename-tracking",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 34,
+        "total": 34
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-08-add-worker-original-filename-tracking/proposal.md",
+        "openspec/changes/archive/2026-05-08-add-worker-original-filename-tracking/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "agent-entry-boundaries",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 16,
+        "total": 16
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-03-agent-entry-boundaries/proposal.md",
+        "openspec/changes/archive/2026-06-03-agent-entry-boundaries/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "agent-ship-cycle-automation",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 12,
+        "total": 12
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-04-agent-ship-cycle-automation/proposal.md",
+        "openspec/changes/archive/2026-06-04-agent-ship-cycle-automation/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "align-frontend-design-system-reference",
+      "status": "deferred",
+      "owner": "web-viewer-sample",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T06:30:00Z",
+      "task_ledger": {
+        "completed": 0,
+        "total": 23
+      },
+      "evidence_refs": [
+        "openspec/changes/align-frontend-design-system-reference/proposal.md",
+        "openspec/changes/align-frontend-design-system-reference/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "align-workflow-v3-with-saas-roadmap",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 18,
+        "total": 18
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-11-align-workflow-v3-with-saas-roadmap/proposal.md",
+        "openspec/changes/archive/2026-05-11-align-workflow-v3-with-saas-roadmap/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "architecture-rework-2026-05-14",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 75,
+        "total": 75
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-14-architecture-rework-2026-05-14/proposal.md",
+        "openspec/changes/archive/2026-05-14-architecture-rework-2026-05-14/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "author-ifc-openusd-identity-paths",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 35,
+        "total": 35
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-02-author-ifc-openusd-identity-paths/proposal.md",
+        "openspec/changes/archive/2026-06-02-author-ifc-openusd-identity-paths/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "backfill-coordinator-webhook-and-auto-session",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 30,
+        "total": 34
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-21-backfill-coordinator-webhook-and-auto-session/proposal.md",
+        "openspec/changes/archive/2026-05-21-backfill-coordinator-webhook-and-auto-session/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 4,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "c-m4-runtime-command-bridge",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 8,
+        "total": 8
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-07-21-c-m4-runtime-command-bridge/proposal.md",
+        "openspec/changes/archive/2026-07-21-c-m4-runtime-command-bridge/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "complete-spec-runtime-verification",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 24,
+        "total": 24
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-08-complete-spec-runtime-verification/proposal.md",
+        "openspec/changes/archive/2026-05-08-complete-spec-runtime-verification/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "console-live-semantic-coexist",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 7,
+        "total": 9
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-09-console-live-semantic-coexist/proposal.md",
+        "openspec/changes/archive/2026-06-09-console-live-semantic-coexist/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 2,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "console-mapping-proxy",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 9,
+        "total": 10
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-09-console-mapping-proxy/proposal.md",
+        "openspec/changes/archive/2026-06-09-console-mapping-proxy/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 1,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "conv-coverage-report",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 12,
+        "total": 12
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-16-conv-coverage-report/proposal.md",
+        "openspec/changes/archive/2026-06-16-conv-coverage-report/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "conv-prioritize-retry",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 9,
+        "total": 9
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-17-conv-prioritize-retry/proposal.md",
+        "openspec/changes/archive/2026-06-17-conv-prioritize-retry/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "conv-watch-toggle",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 0,
+        "total": 8
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-17-conv-watch-toggle/proposal.md",
+        "openspec/changes/archive/2026-06-17-conv-watch-toggle/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 8,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "conversion-artifact-id-sanitize",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 7,
+        "total": 7
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-11-conversion-artifact-id-sanitize/proposal.md",
+        "openspec/changes/archive/2026-06-11-conversion-artifact-id-sanitize/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "conversion-kit-lifecycle-recovery",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 7,
+        "total": 7
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-07-14-conversion-kit-lifecycle-recovery/proposal.md",
+        "openspec/changes/archive/2026-07-14-conversion-kit-lifecycle-recovery/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "coordinator-auto-poll-streaming-conversion",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 3,
+        "total": 48
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-22-coordinator-auto-poll-streaming-conversion/proposal.md",
+        "openspec/changes/archive/2026-05-22-coordinator-auto-poll-streaming-conversion/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 45,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "coordinator-forward-quality-metrics-summary",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 3,
+        "total": 24
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-26-coordinator-forward-quality-metrics-summary/proposal.md",
+        "openspec/changes/archive/2026-05-26-coordinator-forward-quality-metrics-summary/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 21,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "coordinator-ifc-ready-worker-webhook",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 26,
+        "total": 26
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-21-coordinator-ifc-ready-worker-webhook/proposal.md",
+        "openspec/changes/archive/2026-05-21-coordinator-ifc-ready-worker-webhook/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "coordinator-serial-conversion-dispatch-queue",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 3,
+        "total": 28
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-25-coordinator-serial-conversion-dispatch-queue/proposal.md",
+        "openspec/changes/archive/2026-05-25-coordinator-serial-conversion-dispatch-queue/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 25,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "coordinator-session-lifecycle-events-audit",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 21,
+        "total": 21
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-12-coordinator-session-lifecycle-events-audit/proposal.md",
+        "openspec/changes/archive/2026-05-12-coordinator-session-lifecycle-events-audit/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "coordinator-ui-tri-ready-and-queue",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 3,
+        "total": 19
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-25-coordinator-ui-tri-ready-and-queue/proposal.md",
+        "openspec/changes/archive/2026-05-25-coordinator-ui-tri-ready-and-queue/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 16,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "cross-service-structured-log-baseline",
+      "status": "deferred",
+      "owner": "cross-service-observability",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T06:30:00Z",
+      "task_ledger": {
+        "completed": 66,
+        "total": 71
+      },
+      "evidence_refs": [
+        "openspec/changes/cross-service-structured-log-baseline/proposal.md",
+        "openspec/changes/cross-service-structured-log-baseline/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "deepen-ifc-ready-conversion-pipeline",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 25,
+        "total": 25
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-07-28-deepen-ifc-ready-conversion-pipeline/proposal.md",
+        "openspec/changes/archive/2026-07-28-deepen-ifc-ready-conversion-pipeline/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "demo-current-runtime-observation",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 34,
+        "total": 34
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-14-demo-current-runtime-observation/proposal.md",
+        "openspec/changes/archive/2026-05-14-demo-current-runtime-observation/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "deploy-nullderef-guard",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 9,
+        "total": 9
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-03-deploy-nullderef-guard/proposal.md",
+        "openspec/changes/archive/2026-06-03-deploy-nullderef-guard/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "doc-first-canon-v2",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 46,
+        "total": 46
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-07-20-doc-first-canon-v2/proposal.md",
+        "openspec/changes/archive/2026-07-20-doc-first-canon-v2/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "docker-web-plane-host-native-kit",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 33,
+        "total": 33
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-21-docker-web-plane-host-native-kit/proposal.md",
+        "openspec/changes/archive/2026-05-21-docker-web-plane-host-native-kit/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "docs-design-spec-source-of-truth",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 18,
+        "total": 20
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-09-docs-design-spec-source-of-truth/proposal.md",
+        "openspec/changes/archive/2026-06-09-docs-design-spec-source-of-truth/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 2,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "edge-console-a1a3-interface-completion",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 24,
+        "total": 24
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-03-edge-console-a1a3-interface-completion/proposal.md",
+        "openspec/changes/archive/2026-06-03-edge-console-a1a3-interface-completion/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "edge-console-p2-p4-buildout",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 35,
+        "total": 36
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-04-edge-console-p2-p4-buildout/proposal.md",
+        "openspec/changes/archive/2026-06-04-edge-console-p2-p4-buildout/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 1,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "edge-console-shell",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 13,
+        "total": 21
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-03-edge-console-shell/proposal.md",
+        "openspec/changes/archive/2026-06-03-edge-console-shell/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 8,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "edge-console-type-prov",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 23,
+        "total": 23
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-03-edge-console-type-prov/proposal.md",
+        "openspec/changes/archive/2026-06-03-edge-console-type-prov/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "fast-ifc-link-demo-loop",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 2,
+        "total": 82
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-21-fast-ifc-link-demo-loop/proposal.md",
+        "openspec/changes/archive/2026-05-21-fast-ifc-link-demo-loop/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 80,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "fix-federation-resetxformstack",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 9,
+        "total": 9
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-03-fix-federation-resetxformstack/proposal.md",
+        "openspec/changes/archive/2026-06-03-fix-federation-resetxformstack/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "fix-ifc-usdc-hoops-load-failure",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 66,
+        "total": 66
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-22-fix-ifc-usdc-hoops-load-failure/proposal.md",
+        "openspec/changes/archive/2026-05-22-fix-ifc-usdc-hoops-load-failure/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "fix-lan-runtime-params-spectator-capacity",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 22,
+        "total": 22
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-27-fix-lan-runtime-params-spectator-capacity/proposal.md",
+        "openspec/changes/archive/2026-05-27-fix-lan-runtime-params-spectator-capacity/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "fix-lan-webrtc-multi-viewer-handoff",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 21,
+        "total": 21
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-27-fix-lan-webrtc-multi-viewer-handoff/proposal.md",
+        "openspec/changes/archive/2026-05-27-fix-lan-webrtc-multi-viewer-handoff/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "fix-runtime-verification-task-status",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 24,
+        "total": 24
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-08-fix-runtime-verification-task-status/proposal.md",
+        "openspec/changes/archive/2026-05-08-fix-runtime-verification-task-status/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "frontend-coordinator-env",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 13,
+        "total": 13
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-03-frontend-coordinator-env/proposal.md",
+        "openspec/changes/archive/2026-06-03-frontend-coordinator-env/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "governance-adversarial-followups-2",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 23,
+        "total": 23
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-03-governance-adversarial-followups-2/proposal.md",
+        "openspec/changes/archive/2026-06-03-governance-adversarial-followups-2/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "governance-issue-db",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 9,
+        "total": 17
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-03-governance-issue-db/proposal.md",
+        "openspec/changes/archive/2026-06-03-governance-issue-db/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 8,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "governance-rule-run-service",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 18,
+        "total": 27
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-03-governance-rule-run-service/proposal.md",
+        "openspec/changes/archive/2026-06-03-governance-rule-run-service/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 9,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "governance-service-deploy",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 16,
+        "total": 16
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-16-governance-service-deploy/proposal.md",
+        "openspec/changes/archive/2026-06-16-governance-service-deploy/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "governance-throughput-budget",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 15,
+        "total": 15
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-07-21-governance-throughput-budget/proposal.md",
+        "openspec/changes/archive/2026-07-21-governance-throughput-budget/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "gpu-session-baseline-and-idle-reclaim",
+      "status": "active",
+      "owner": "bim-streaming-server",
+      "current_slice": "GPU baseline harness and idle reclaim",
+      "blocked_by": [],
+      "last_verified": "2026-07-28T06:30:00Z",
+      "task_ledger": {
+        "completed": 0,
+        "total": 6
+      },
+      "evidence_refs": [
+        "openspec/changes/gpu-session-baseline-and-idle-reclaim/proposal.md",
+        "openspec/changes/gpu-session-baseline-and-idle-reclaim/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "harden-coordinator-ifc-intake",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 18,
+        "total": 18
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-01-harden-coordinator-ifc-intake/proposal.md",
+        "openspec/changes/archive/2026-06-01-harden-coordinator-ifc-intake/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "harden-host-native-conversion-service",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 21,
+        "total": 21
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-01-harden-host-native-conversion-service/proposal.md",
+        "openspec/changes/archive/2026-06-01-harden-host-native-conversion-service/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "harden-internal-auth-and-config-hygiene",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 0,
+        "total": 20
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-02-harden-internal-auth-and-config-hygiene/proposal.md",
+        "openspec/changes/archive/2026-06-02-harden-internal-auth-and-config-hygiene/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 20,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "harden-stage-host-allowlist",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 18,
+        "total": 18
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-02-harden-stage-host-allowlist/proposal.md",
+        "openspec/changes/archive/2026-06-02-harden-stage-host-allowlist/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "harden-web-viewer-test-resilience",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 0,
+        "total": 20
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-02-harden-web-viewer-test-resilience/proposal.md",
+        "openspec/changes/archive/2026-06-02-harden-web-viewer-test-resilience/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 20,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "implement-runtime-command-authority-and-rejection",
+      "status": "active",
+      "owner": "bim-review-coordinator",
+      "current_slice": "runtime evidence closure",
+      "blocked_by": [],
+      "last_verified": "2026-07-28T06:30:00Z",
+      "task_ledger": {
+        "completed": 31,
+        "total": 35
+      },
+      "evidence_refs": [
+        "openspec/changes/implement-runtime-command-authority-and-rejection/proposal.md",
+        "openspec/changes/implement-runtime-command-authority-and-rejection/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "introduce-ai-bim-runtime-manager-docker-kit-mvp",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 20,
+        "total": 21
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-18-introduce-ai-bim-runtime-manager-docker-kit-mvp/proposal.md",
+        "openspec/changes/archive/2026-05-18-introduce-ai-bim-runtime-manager-docker-kit-mvp/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 1,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "introduce-host-native-conversion-authority-service",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 31,
+        "total": 31
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-20-introduce-host-native-conversion-authority-service/proposal.md",
+        "openspec/changes/archive/2026-05-20-introduce-host-native-conversion-authority-service/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "introduce-worker-review-session-lifecycle",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 50,
+        "total": 50
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-07-introduce-worker-review-session-lifecycle/proposal.md",
+        "openspec/changes/archive/2026-05-07-introduce-worker-review-session-lifecycle/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "issue-bcf-integrity",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 17,
+        "total": 17
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-03-issue-bcf-integrity/proposal.md",
+        "openspec/changes/archive/2026-06-03-issue-bcf-integrity/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "local-coordinator-ifc-ready-intake-boundary",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 36,
+        "total": 36
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-18-local-coordinator-ifc-ready-intake-boundary/proposal.md",
+        "openspec/changes/archive/2026-05-18-local-coordinator-ifc-ready-intake-boundary/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "migrate-console-to-hifi-design",
+      "status": "active",
+      "owner": "web-viewer-sample",
+      "current_slice": "console route migration",
+      "blocked_by": [],
+      "last_verified": "2026-07-28T06:30:00Z",
+      "task_ledger": {
+        "completed": 31,
+        "total": 40
+      },
+      "evidence_refs": [
+        "openspec/changes/migrate-console-to-hifi-design/proposal.md",
+        "openspec/changes/migrate-console-to-hifi-design/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "minio-fileserver-source",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 6,
+        "total": 6
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-10-minio-fileserver-source/proposal.md",
+        "openspec/changes/archive/2026-06-10-minio-fileserver-source/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "minio-folderview-and-baseline-disclosure",
+      "status": "archived",
+      "owner": "bim-review-coordinator",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-29T03:44:09.582Z",
+      "task_ledger": {
+        "completed": 7,
+        "total": 7
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-07-29-minio-folderview-and-baseline-disclosure/proposal.md",
+        "openspec/changes/archive/2026-07-29-minio-folderview-and-baseline-disclosure/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "minio-trigger-lifecycle-backend",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 6,
+        "total": 6
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-07-21-minio-trigger-lifecycle-backend/proposal.md",
+        "openspec/changes/archive/2026-07-21-minio-trigger-lifecycle-backend/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "minio-watch-auto-intake",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 10,
+        "total": 10
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-15-minio-watch-auto-intake/proposal.md",
+        "openspec/changes/archive/2026-06-15-minio-watch-auto-intake/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "minio-watch-key-structure",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 5,
+        "total": 5
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-07-21-minio-watch-key-structure/proposal.md",
+        "openspec/changes/archive/2026-07-21-minio-watch-key-structure/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "model-version-diff-globalid",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 13,
+        "total": 21
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-03-model-version-diff-globalid/proposal.md",
+        "openspec/changes/archive/2026-06-03-model-version-diff-globalid/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 8,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "optimize-worker-canonical-batch-and-secondary-enumeration",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 28,
+        "total": 35
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-15-optimize-worker-canonical-batch-and-secondary-enumeration/proposal.md",
+        "openspec/changes/archive/2026-05-15-optimize-worker-canonical-batch-and-secondary-enumeration/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 7,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "optimize-worker-non-renderable-materialization",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 34,
+        "total": 34
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-14-optimize-worker-non-renderable-materialization/proposal.md",
+        "openspec/changes/archive/2026-05-14-optimize-worker-non-renderable-materialization/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "optimize-worker-source-entity-enumeration",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 26,
+        "total": 26
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-13-optimize-worker-source-entity-enumeration/proposal.md",
+        "openspec/changes/archive/2026-05-13-optimize-worker-source-entity-enumeration/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "plans-ai-coding-docs-redesign",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 8,
+        "total": 8
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-07-13-plans-ai-coding-docs-redesign/proposal.md",
+        "openspec/changes/archive/2026-07-13-plans-ai-coding-docs-redesign/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "product-governance-console-integration",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 20,
+        "total": 20
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-09-product-governance-console-integration/proposal.md",
+        "openspec/changes/archive/2026-06-09-product-governance-console-integration/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "project-risks-mitigation",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 8,
+        "total": 8
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-27-project-risks-mitigation/proposal.md",
+        "openspec/changes/archive/2026-05-27-project-risks-mitigation/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 0,
+        "unsupported_checkboxes": 3,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "queue-batch-dispatch-and-post-usdc-artifact-retention",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 33,
+        "total": 35
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-15-queue-batch-dispatch-and-post-usdc-artifact-retention/proposal.md",
+        "openspec/changes/archive/2026-05-15-queue-batch-dispatch-and-post-usdc-artifact-retention/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 2,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "raise-claude-md-line-budget",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 6,
+        "total": 7
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-10-raise-claude-md-line-budget/proposal.md",
+        "openspec/changes/archive/2026-06-10-raise-claude-md-line-budget/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 1,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "recap",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 24,
+        "total": 24
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-21-recap/proposal.md",
+        "openspec/changes/archive/2026-05-21-recap/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "remove-conflict-review-from-fast-mvp",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 3,
+        "total": 78
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-21-remove-conflict-review-from-fast-mvp/proposal.md",
+        "openspec/changes/archive/2026-05-21-remove-conflict-review-from-fast-mvp/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 75,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "rvt-ifc-usdc-lineage",
+      "status": "deferred",
+      "owner": "conversion-lineage",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T06:30:00Z",
+      "task_ledger": {
+        "completed": 1,
+        "total": 48
+      },
+      "evidence_refs": [
+        "openspec/changes/rvt-ifc-usdc-lineage/proposal.md",
+        "openspec/changes/rvt-ifc-usdc-lineage/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "sessions-terminate",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 6,
+        "total": 6
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-17-sessions-terminate/proposal.md",
+        "openspec/changes/archive/2026-06-17-sessions-terminate/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "slim-agents-md-auto-load",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 0,
+        "total": 33
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-26-slim-agents-md-auto-load/proposal.md",
+        "openspec/changes/archive/2026-05-26-slim-agents-md-auto-load/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 33,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "spec-to-done-routing-gate",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 8,
+        "total": 8
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-19-spec-to-done-routing-gate/proposal.md",
+        "openspec/changes/archive/2026-06-19-spec-to-done-routing-gate/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "stabilize-demo-runtime-readiness",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 39,
+        "total": 39
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-14-stabilize-demo-runtime-readiness/proposal.md",
+        "openspec/changes/archive/2026-05-14-stabilize-demo-runtime-readiness/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "stop-all-single-pid-cleanup",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 5,
+        "total": 6
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-16-stop-all-single-pid-cleanup/proposal.md",
+        "openspec/changes/archive/2026-06-16-stop-all-single-pid-cleanup/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 1,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "streaming-ifc-ready-intake-contract",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 13,
+        "total": 13
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-19-streaming-ifc-ready-intake-contract/proposal.md",
+        "openspec/changes/archive/2026-05-19-streaming-ifc-ready-intake-contract/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "streaming-server-capture-kit-conversion-logs",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 30,
+        "total": 38
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-25-streaming-server-capture-kit-conversion-logs/proposal.md",
+        "openspec/changes/archive/2026-05-25-streaming-server-capture-kit-conversion-logs/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 8,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "streaming-server-enumeration-semantic-mapping",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 3,
+        "total": 26
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-26-streaming-server-enumeration-semantic-mapping/proposal.md",
+        "openspec/changes/archive/2026-05-26-streaming-server-enumeration-semantic-mapping/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 23,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "streaming-server-fallback-semantic-mapping",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 3,
+        "total": 36
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-25-streaming-server-fallback-semantic-mapping/proposal.md",
+        "openspec/changes/archive/2026-05-25-streaming-server-fallback-semantic-mapping/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 33,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "streaming-server-ifcopenshell-semantic-sidecar-pass",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 8,
+        "total": 34
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-28-streaming-server-ifcopenshell-semantic-sidecar-pass/proposal.md",
+        "openspec/changes/archive/2026-05-28-streaming-server-ifcopenshell-semantic-sidecar-pass/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 26,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "streaming-server-prefer-local-ifc-path",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 3,
+        "total": 48
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-22-streaming-server-prefer-local-ifc-path/proposal.md",
+        "openspec/changes/archive/2026-05-22-streaming-server-prefer-local-ifc-path/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 45,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "subfolder-agent-boundary-coverage",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 3,
+        "total": 28
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-27-subfolder-agent-boundary-coverage/proposal.md",
+        "openspec/changes/archive/2026-05-27-subfolder-agent-boundary-coverage/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 25,
+        "unsupported_checkboxes": 4,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "test-deploy-rebuild-workflow",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 10,
+        "total": 10
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-10-test-deploy-rebuild-workflow/proposal.md",
+        "openspec/changes/archive/2026-06-10-test-deploy-rebuild-workflow/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "tidy-repo-scripts-tests-hygiene",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 0,
+        "total": 22
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-02-tidy-repo-scripts-tests-hygiene/proposal.md",
+        "openspec/changes/archive/2026-06-02-tidy-repo-scripts-tests-hygiene/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 22,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "trim-docs-and-dedupe-ide-skills",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 0,
+        "total": 41
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-26-trim-docs-and-dedupe-ide-skills/proposal.md",
+        "openspec/changes/archive/2026-05-26-trim-docs-and-dedupe-ide-skills/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 41,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "unified-console-fe-redesign",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 21,
+        "total": 22
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-09-unified-console-fe-redesign/proposal.md",
+        "openspec/changes/archive/2026-06-09-unified-console-fe-redesign/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 1,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "unified-console-issues-tab",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 6,
+        "total": 6
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-09-unified-console-issues-tab/proposal.md",
+        "openspec/changes/archive/2026-06-09-unified-console-issues-tab/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "unified-console-mvp",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 18,
+        "total": 19
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-09-unified-console-mvp/proposal.md",
+        "openspec/changes/archive/2026-06-09-unified-console-mvp/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 1,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "unified-console-semantic-viewer",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 15,
+        "total": 16
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-09-unified-console-semantic-viewer/proposal.md",
+        "openspec/changes/archive/2026-06-09-unified-console-semantic-viewer/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 1,
+        "unsupported_checkboxes": 3,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "unified-governance-console",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 13,
+        "total": 17
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-04-unified-governance-console/proposal.md",
+        "openspec/changes/archive/2026-06-04-unified-governance-console/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 4,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "usd-federation-sublayer-sets",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 12,
+        "total": 21
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-06-03-usd-federation-sublayer-sets/proposal.md",
+        "openspec/changes/archive/2026-06-03-usd-federation-sublayer-sets/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 9,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "viewer-edge-bim-server-console",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 3,
+        "total": 35
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-25-viewer-edge-bim-server-console/proposal.md",
+        "openspec/changes/archive/2026-05-25-viewer-edge-bim-server-console/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 32,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "viewer-embed-a1-highlight",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 7,
+        "total": 7
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-07-21-viewer-embed-a1-highlight/proposal.md",
+        "openspec/changes/archive/2026-07-21-viewer-embed-a1-highlight/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "viewer-redesign",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 9,
+        "total": 9
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-07-21-viewer-redesign/proposal.md",
+        "openspec/changes/archive/2026-07-21-viewer-redesign/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "worker-canonical-storage-batch-baseline",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 30,
+        "total": 40
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-12-worker-canonical-storage-batch-baseline/proposal.md",
+        "openspec/changes/archive/2026-05-12-worker-canonical-storage-batch-baseline/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": {
+        "reason": "historical_task_ledger_debt",
+        "unchecked_tasks": 10,
+        "unsupported_checkboxes": 0,
+        "owner": "repository-maintainer",
+        "review_due": "2026-08-31"
+      }
+    },
+    {
+      "id": "worker-mapping-lineage-quality-baseline",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 31,
+        "total": 31
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-12-worker-mapping-lineage-quality-baseline/proposal.md",
+        "openspec/changes/archive/2026-05-12-worker-mapping-lineage-quality-baseline/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    },
+    {
+      "id": "worker-real-conversion-quality",
+      "status": "archived",
+      "owner": "repository-maintainer",
+      "current_slice": null,
+      "blocked_by": [],
+      "last_verified": "2026-07-28T07:00:00Z",
+      "task_ledger": {
+        "completed": 35,
+        "total": 35
+      },
+      "evidence_refs": [
+        "openspec/changes/archive/2026-05-11-worker-real-conversion-quality/proposal.md",
+        "openspec/changes/archive/2026-05-11-worker-real-conversion-quality/tasks.md"
+      ],
+      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "archive_debt": null
+    }
+  ]
+}

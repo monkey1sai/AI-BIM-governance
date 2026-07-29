@@ -6,6 +6,11 @@ param(
     [switch] $ContinueOnError,
     [Alias('Profile')][ValidateSet('Developer', 'Deployment')][string] $VerifyProfile = 'Developer',
     [switch] $PlanOnly,
+    [switch] $Json,
+    [string[]] $ChangedPath = @(),
+    [switch] $Full,
+    [ValidatePattern('^[0-9a-f]{40}$')][string] $Subject,
+    [string] $OutcomeOut,
     [string] $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 )
 
@@ -91,6 +96,57 @@ if ($VerifyProfile -eq 'Deployment' -and ($StreamingOnly -or $TsOnly -or $PyOnly
     throw 'Deployment profile does not accept StreamingOnly, TsOnly, or PyOnly filters.'
 }
 
+function Invoke-VerificationPlannerProcess {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $NodePath,
+        [Parameter(Mandatory = $true)][string[]] $Arguments,
+        [Parameter(Mandatory = $true)][string] $WorkingDirectory
+    )
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $NodePath
+    $startInfo.WorkingDirectory = $WorkingDirectory
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.CreateNoWindow = $true
+    foreach ($argument in $Arguments) { [void]$startInfo.ArgumentList.Add($argument) }
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) { throw 'Verification planner process could not be started.' }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(30000)) {
+            $process.Kill($true)
+            [void]$process.WaitForExit(5000)
+            throw 'Verification planner process timed out.'
+        }
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+        if ($stdout.Length + $stderr.Length -gt 4194304) {
+            throw 'Verification planner output exceeded the size limit.'
+        }
+        return [pscustomobject]@{ ExitCode = $process.ExitCode; Stdout = $stdout; Stderr = $stderr }
+    } finally {
+        $process.Dispose()
+    }
+}
+if ($Json -and -not $PlanOnly) {
+    throw 'Json output is supported only with PlanOnly.'
+}
+if (-not [string]::IsNullOrWhiteSpace($OutcomeOut) -and ($PlanOnly -or $Json -or [string]::IsNullOrWhiteSpace($Subject))) {
+    throw 'OutcomeOut requires an executing Developer run and a full lowercase Subject commit.'
+}
+if ($VerifyProfile -eq 'Deployment' -and ($Json -or $ChangedPath.Count -gt 0 -or $Full -or
+    -not [string]::IsNullOrWhiteSpace($Subject) -or -not [string]::IsNullOrWhiteSpace($OutcomeOut))) {
+    throw 'Deployment is a legacy_profile_not_migrated adapter and does not accept Json, ChangedPath, Full, Subject, or OutcomeOut.'
+}
+if (($ChangedPath.Count -gt 0 -or $Full) -and ($StreamingOnly -or $TsOnly -or $PyOnly)) {
+    throw 'ChangedPath/Full dispatch cannot be combined with legacy Developer filters.'
+}
+
 $Targets = @()
 $OmittedTargets = @()
 $publishInventory = $PlanOnly -or $VerifyProfile -eq 'Deployment'
@@ -125,34 +181,103 @@ if ($VerifyProfile -eq 'Deployment') {
     )
 }
 else {
-    $StreamingTarget = @{
-        Name = 'bim-streaming-server'
-        Cmd = $PowerShell
-        Args = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts\tests\test-stage-loading-contract.ps1')
-        Cwd = 'bim-streaming-server'
-        Required = $false
+    $manifestPath = Join-Path $RepoRoot 'scripts\verification-manifest.json'
+    $plannerPath = Join-Path $RepoRoot 'scripts\lib\verification-plan.mjs'
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $plannerPath -PathType Leaf)) {
+        throw 'Developer verification manifest or planner is missing.'
     }
-    if ($StreamingOnly) {
-        $Targets += $StreamingTarget
+    $node = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $node) { throw 'Node.js is required to read the verification manifest.' }
+
+    $plannerArgs = @($plannerPath, '--manifest', $manifestPath)
+    if ($ChangedPath.Count -gt 0 -or $Full) {
+        foreach ($path in $ChangedPath) { $plannerArgs += @('--path', $path) }
+        if ($Full) { $plannerArgs += '--full' }
     }
     else {
-        if (-not $TsOnly) {
-            # B-scheme T8 §9.1：default verify 不再依賴已刪 _bim-control / _worker；
-            # 改以 repo-root tests/（外部平台 contracts + test-only fakes）作 Python 覆蓋。
-            $Targets += @{ Name = 'tests (contracts+fakes)'; Cmd = $Python; Args = @('-m', 'pytest', 'tests', '-q', '-p', 'no:cacheprovider'); Cwd = '.'; Required = $false }
+        $developerProfile = if ($StreamingOnly) {
+            'developer-streaming'
+        } elseif ($TsOnly -and $PyOnly) {
+            'developer-none'
+        } elseif ($TsOnly) {
+            'developer-ts'
+        } elseif ($PyOnly) {
+            'developer-py'
+        } else {
+            'developer'
         }
-        if (-not $PyOnly) {
-            $Targets += @{ Name = 'bim-review-coordinator'; Cmd = 'npm'; Args = @('run', 'verify'); Cwd = 'bim-review-coordinator'; Required = $false }
-            $Targets += @{ Name = 'web-viewer-sample'; Cmd = 'npm'; Args = @('run', 'verify'); Cwd = 'web-viewer-sample'; Required = $false }
+        $plannerArgs += @('--default-profile', $developerProfile)
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($OutcomeOut)) {
+        $runnerPath = Join-Path $RepoRoot 'scripts\lib\verification-runner.mjs'
+        if (-not (Test-Path -LiteralPath $runnerPath -PathType Leaf)) { throw 'Developer verification runner is missing.' }
+        $runnerArgs = @($runnerPath, '--repo-root', $RepoRoot) + @($plannerArgs | Select-Object -Skip 1) + @('--subject', $Subject, '--outcome-out', $OutcomeOut)
+        if ($ContinueOnError) { $runnerArgs += '--continue-on-error' }
+        & $node.Source @runnerArgs
+        exit $LASTEXITCODE
+    }
+
+    $plannerResult = Invoke-VerificationPlannerProcess -NodePath $node.Source `
+        -Arguments $plannerArgs -WorkingDirectory $RepoRoot
+    $plannerExitCode = $plannerResult.ExitCode
+    $planJson = $plannerResult.Stdout.TrimEnd("`r", "`n")
+    if ([string]::IsNullOrWhiteSpace($planJson)) {
+        throw 'Verification planner returned no JSON document.'
+    }
+    if ($Json) {
+        [Console]::Out.WriteLine($planJson)
+        exit $plannerExitCode
+    }
+    try {
+        $PlanDocument = $planJson | ConvertFrom-Json -Depth 100 -ErrorAction Stop
+    } catch {
+        throw 'Verification planner returned invalid JSON.'
+    }
+    if ($plannerExitCode -ne 0) {
+        Write-Host "[FAIL] planner result=$($PlanDocument.result) — unknown_paths=$(@($PlanDocument.unknown_paths) -join ',')" -ForegroundColor Red
+        foreach ($errorItem in @($PlanDocument.errors)) {
+            Write-Host "[FAIL] planner $($errorItem.code) — $($errorItem.message)" -ForegroundColor Red
         }
-        if (-not $TsOnly -and -not $PyOnly) {
-            $Targets += $StreamingTarget
+        exit $plannerExitCode
+    }
+
+    foreach ($plannedTarget in @($PlanDocument.targets | Where-Object { $_.required })) {
+        $plannedGates = @($plannedTarget.gates)
+        foreach ($gate in $plannedGates) {
+            if (-not $gate.configured) {
+                $omittedName = [string]$plannedTarget.display_name
+                if ($plannedGates.Count -gt 1) { $omittedName = "$omittedName [$($gate.id)]" }
+                $OmittedTargets += @{ Name = $omittedName; Reason = "not_configured:$($gate.not_configured_reason)" }
+                continue
+            }
+            $command = switch ([string]$gate.command.executable) {
+                'python' { $Python }
+                'pwsh' { $PowerShell }
+                default { [string]$gate.command.executable }
+            }
+            $name = [string]$plannedTarget.display_name
+            if ($plannedGates.Count -gt 1) { $name = "$name [$($gate.id)]" }
+            $Targets += @{
+                Name = $name
+                Cmd = $command
+                Args = @($gate.command.args | ForEach-Object { [string]$_ })
+                Cwd = [string]$gate.cwd
+                Required = $PlanDocument.dispatch -ne 'profile'
+                Reason = [string]$plannedTarget.reason
+            }
         }
     }
 }
 
 if ($publishInventory) {
-    Write-Host "[PLAN] profile=$($VerifyProfile.ToLowerInvariant())" -ForegroundColor Cyan
+    if ($VerifyProfile -eq 'Developer' -and $null -ne $PlanDocument -and $PlanDocument.dispatch -ne 'profile') {
+        Write-Host "[PLAN] dispatch=$($PlanDocument.dispatch) result=$($PlanDocument.result)" -ForegroundColor Cyan
+    }
+    else {
+        Write-Host "[PLAN] profile=$($VerifyProfile.ToLowerInvariant())" -ForegroundColor Cyan
+    }
     foreach ($target in $Targets) {
         $detail = if ($target.ContainsKey('Detail')) { $target.Detail } else { "$($target.Cmd) $($target.Args -join ' ')" }
         Write-Host "[EXECUTE] $($target.Name) — $detail"
