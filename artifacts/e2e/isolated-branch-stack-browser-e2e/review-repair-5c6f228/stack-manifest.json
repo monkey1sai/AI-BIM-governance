@@ -1,0 +1,83 @@
+{
+  "schema_version": "isolated-branch-stack/v1",
+  "stack_kind": "isolated_branch_stack",
+  "change_id": "isolated-branch-stack-browser-e2e",
+  "run_id": "review-repair-5c6f228",
+  "worktree_root": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-branch-stack-browser-e2e",
+  "offset": 0,
+  "ports": {
+    "coordinator": 8005,
+    "governance": 49103,
+    "viewer": 5180
+  },
+  "base_urls": {
+    "coordinator": "http://127.0.0.1:8005",
+    "governance": "http://127.0.0.1:49103",
+    "viewer": "http://127.0.0.1:5180"
+  },
+  "head_sha": "5c6f228fbe67acf338bf22f419a4c2f0f70c99a0",
+  "started_at": "2026-07-29T21:45:59.1890555Z",
+  "stopped_at": "2026-07-29T21:46:40.5025690Z",
+  "backend_ready": {
+    "governance": false,
+    "coordinator": false
+  },
+  "lifecycle_owners": {
+    "governance": "repo_launcher",
+    "coordinator": "repo_launcher",
+    "viewer": "playwright_webserver"
+  },
+  "viewer": {
+    "expected_port": 5180,
+    "owner": "playwright_webserver",
+    "managed_by_launcher": false
+  },
+  "read_only_fixture_root": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-branch-stack-browser-e2e\\storage",
+  "mutable_state": {
+    "root": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-branch-stack-browser-e2e\\artifacts\\e2e\\isolated-branch-stack-browser-e2e\\review-repair-5c6f228\\state",
+    "governance_db": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-branch-stack-browser-e2e\\artifacts\\e2e\\isolated-branch-stack-browser-e2e\\review-repair-5c6f228\\state\\governance\\governance.db",
+    "governance_federation_out": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-branch-stack-browser-e2e\\artifacts\\e2e\\isolated-branch-stack-browser-e2e\\review-repair-5c6f228\\state\\governance\\federated",
+    "coordinator_root": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-branch-stack-browser-e2e\\artifacts\\e2e\\isolated-branch-stack-browser-e2e\\review-repair-5c6f228\\state\\coordinator"
+  },
+  "processes": [
+    {
+      "pid": 31296,
+      "entrypoint": "app:app",
+      "command_line": "\"C:\\Program Files\\Python312\\python.exe\" -m uvicorn app:app --host 127.0.0.1 --port 49103",
+      "creation_identity": "2026-07-29T21:45:57.318421Z",
+      "executable_path": "C:\\Program Files\\Python312\\python.exe",
+      "role": "governance",
+      "stdout_path": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-branch-stack-browser-e2e\\artifacts\\e2e\\isolated-branch-stack-browser-e2e\\review-repair-5c6f228\\governance.stdout.log",
+      "stderr_path": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-branch-stack-browser-e2e\\artifacts\\e2e\\isolated-branch-stack-browser-e2e\\review-repair-5c6f228\\governance.stderr.log",
+      "stop_status": "stopped"
+    },
+    {
+      "pid": 23836,
+      "entrypoint": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-branch-stack-browser-e2e\\bim-review-coordinator\\src\\index.ts",
+      "command_line": "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-branch-stack-browser-e2e\\bim-review-coordinator\\node_modules\\tsx\\dist\\cli.mjs C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-branch-stack-browser-e2e\\bim-review-coordinator\\src\\index.ts",
+      "creation_identity": "2026-07-29T21:45:58.530425Z",
+      "executable_path": "C:\\Program Files\\nodejs\\node.exe",
+      "role": "coordinator",
+      "stdout_path": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-branch-stack-browser-e2e\\artifacts\\e2e\\isolated-branch-stack-browser-e2e\\review-repair-5c6f228\\coordinator.stdout.log",
+      "stderr_path": "C:\\Repos\\active\\iot\\AI-BIM-governance.worktrees\\isolated-branch-stack-browser-e2e\\artifacts\\e2e\\isolated-branch-stack-browser-e2e\\review-repair-5c6f228\\coordinator.stderr.log",
+      "stop_status": "stopped"
+    }
+  ],
+  "stop_state": {
+    "attempted_at": "2026-07-29T21:46:40.4895698Z",
+    "entries": [
+      {
+        "role": "coordinator",
+        "pid": 23836,
+        "status": "stopped",
+        "reason": null
+      },
+      {
+        "role": "governance",
+        "pid": 31296,
+        "status": "stopped",
+        "reason": null
+      }
+    ]
+  }
+}
