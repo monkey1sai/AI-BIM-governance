@@ -1,17 +1,13 @@
 import { defineConfig, devices } from "@playwright/test";
+import path from "node:path";
+import { loadIsolatedStackConfig, parseStandaloneViewerPort } from "./e2e/support/isolated-stack";
 
-const viewerPortInput = process.env.E2E_VIEWER_PORT || "5180";
-if (!/^\d+$/.test(viewerPortInput)) {
-  throw new Error("E2E_VIEWER_PORT must be an integer from 1 through 65535");
-}
-const viewerPortNumber = Number(viewerPortInput);
-if (!Number.isSafeInteger(viewerPortNumber) || viewerPortNumber < 1 || viewerPortNumber > 65_535) {
-  throw new Error("E2E_VIEWER_PORT must be an integer from 1 through 65535");
-}
+const isolated = loadIsolatedStackConfig();
+const viewerPortNumber = isolated?.viewerPort ?? parseStandaloneViewerPort(process.env.E2E_VIEWER_PORT ?? "5180");
 const viewerPort = String(viewerPortNumber);
-const viewerOrigin = `http://127.0.0.1:${viewerPort}`;
+const viewerOrigin = isolated?.viewerOrigin ?? `http://127.0.0.1:${viewerPort}`;
 const viewerBaseUrl =
-  process.env.E2E_VIEWER_BASE_URL || viewerOrigin;
+  isolated?.viewerOrigin ?? (process.env.E2E_VIEWER_BASE_URL || viewerOrigin);
 let viewerBaseOrigin: string;
 try {
   viewerBaseOrigin = new URL(viewerBaseUrl).origin;
@@ -31,12 +27,12 @@ const webServer = process.env.E2E_DISABLE_WEBSERVER === "1"
         reuseExistingServer: false,
         timeout: 120_000,
         env: {
-          VITE_VIEWER_HARNESS: "1",
+          VITE_VIEWER_HARNESS: isolated ? "0" : "1",
           VITE_COORDINATOR_API_BASE:
-            process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005",
+            isolated?.coordinatorBaseUrl || process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005",
           VITE_ALLOWED_COORDINATOR_ORIGINS:
             [...new Set([
-              process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005",
+              isolated?.coordinatorBaseUrl || process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005",
               viewerOrigin,
               viewerBaseOrigin,
             ])].join(","),
@@ -51,7 +47,8 @@ const webServer = process.env.E2E_DISABLE_WEBSERVER === "1"
 // - harness 模式必須同時有 runner-owned VITE_VIEWER_HARNESS=1 與各測試的 ?harness=1。
 export default defineConfig({
   testDir: "./e2e",
-  outputDir: "../artifacts/e2e/_output",
+  globalSetup: isolated ? "./e2e/support/isolated-stack-global-setup.ts" : undefined,
+  outputDir: isolated ? path.join(isolated.runDir, "playwright-output") : "../artifacts/e2e/_output",
   timeout: 60_000,
   expect: { timeout: 15_000 },
   fullyParallel: false,
@@ -63,8 +60,8 @@ export default defineConfig({
   ],
   use: {
     baseURL: viewerBaseUrl,
-    trace: "on",
-    screenshot: "on",
+    trace: isolated ? "off" : "on",
+    screenshot: isolated ? "off" : "on",
     video: "retain-on-failure",
     viewport: { width: 1440, height: 900 },
   },
