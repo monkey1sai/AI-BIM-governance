@@ -188,12 +188,35 @@
       }
     },
     {
-      "id": "a4-semantic-search-model-qa",
+      "id": "a4-console-convergence",
       "status": "active",
       "owner": "governance-service",
-      "current_slice": "S4-C/S4-D closeout",
+      "current_slice": "前後端收斂（main 後端 × convergence 分支前端）",
       "blocked_by": [],
-      "last_verified": "2026-07-28T06:30:00Z",
+      "last_verified": "2026-07-29T07:00:00Z",
+      "task_ledger": {
+        "completed": 0,
+        "total": 23
+      },
+      "evidence_refs": [
+        "openspec/changes/a4-console-convergence/proposal.md",
+        "openspec/changes/a4-console-convergence/tasks.md"
+      ],
+      "subject_commit": "04e49f542508f76d23a0c6f39191788a05096b6c",
+      "archive_debt": null
+    },
+    {
+      "id": "a4-semantic-search-model-qa",
+      "status": "deferred",
+      "owner": "governance-service",
+      "current_slice": null,
+      "blocked_by": [
+        "a4-console-convergence",
+        "credential-owner-rotate-1.8",
+        "windows-host-native-kit-and-ornith-lab",
+        "independent-review-8.7"
+      ],
+      "last_verified": "2026-07-29T07:00:00Z",
       "task_ledger": {
         "completed": 28,
         "total": 64
@@ -202,7 +225,7 @@
         "openspec/changes/a4-semantic-search-model-qa/proposal.md",
         "openspec/changes/a4-semantic-search-model-qa/tasks.md"
       ],
-      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "subject_commit": "04e49f542508f76d23a0c6f39191788a05096b6c",
       "archive_debt": null
     },
     {
