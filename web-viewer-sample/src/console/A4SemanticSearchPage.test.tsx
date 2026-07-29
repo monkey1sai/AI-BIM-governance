@@ -4,7 +4,7 @@ import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { A4SemanticSearchPage } from "./A4SemanticSearchPage";
 import { coordinatorClient } from "./coordinatorClient";
-import { governanceClient } from "./governanceClient";
+import { A4GovernanceError, governanceClient } from "./governanceClient";
 import { __resetLocalDevUserCarrierForTests, getLocalDevUserCarrier } from "./localDevPrincipal";
 
 describe("A4SemanticSearchPage", () => {
@@ -124,11 +124,13 @@ describe("A4SemanticSearchPage", () => {
       await flush();
 
       expect(coordinatorClient.listIfcReady).toHaveBeenCalledWith(100);
-      expect(container.querySelector<HTMLButtonElement>('[data-testid="a4-source-session"]')?.disabled).toBe(true);
+      // canonical session 來源已可選（不再是等待 S4-D 的停用按鈕）；但沒有
+      // session context 進站時仍預設 ifc_ready，因此此處不渲染 session select。
+      expect(container.querySelector<HTMLButtonElement>('[data-testid="a4-source-session"]')?.disabled).toBe(false);
       expect(container.querySelector('[data-testid="a4-session-select"]')).toBeNull();
       expect(container.querySelector<HTMLSelectElement>('[data-testid="a4-job-select"]')?.value).toBe("ifcready_x");
       expect(container.textContent).not.toContain("ifcready_pending");
-      expect(coordinatorClient.runtimeStatus).not.toHaveBeenCalled();
+      expect(coordinatorClient.runtimeStatus).toHaveBeenCalled();
       const run = container.querySelector<HTMLButtonElement>('[data-testid="a4-run"]')!;
       expect(run.disabled).toBe(false);
       vi.mocked(governanceClient.searchLlmStatus)
@@ -551,6 +553,85 @@ describe("A4SemanticSearchPage", () => {
       expect(container.querySelector('[data-testid="a4-load-err"]')).toBeNull();
       expect(container.querySelector<HTMLSelectElement>('[data-testid="a4-job-select"]')?.value).toBe("ifcready_x");
       expect(container.querySelector<HTMLButtonElement>('[data-testid="a4-run"]')?.disabled).toBe(false);
+    });
+
+    it("routes the canonical session source to the session-scoped search", async () => {
+      vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue({
+        sessions: {
+          items: [
+            { session_id: "review_session_alpha", status: "active", model_version_id: "mv_alpha" },
+            { session_id: "review_session_closed", status: "closed", model_version_id: "mv_closed" },
+          ],
+        },
+      } as never);
+      const sessionSearch = vi.spyOn(governanceClient, "searchModelForSession").mockResolvedValue({
+        status: "ok",
+        interpreted_filters: {},
+        results: [],
+        stats: { total: 0, matched: 0, unmapped: 0, scanned: 0 },
+        evidence_refs: [],
+      } as never);
+      const ifcReadySearch = vi.spyOn(governanceClient, "searchModelForIfcReady");
+      const carrier = getLocalDevUserCarrier();
+
+      root = createRoot(container);
+      await act(async () => { root!.render(<A4SemanticSearchPage />); });
+      await flush();
+
+      // 無 session context 進站 → 預設 ifc_ready；使用者切到 canonical session 來源。
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="a4-source-session"]')!.click();
+      });
+      await flush();
+
+      const sessionSelect = container.querySelector<HTMLSelectElement>('[data-testid="a4-session-select"]');
+      expect(sessionSelect).not.toBeNull();
+      // 只有 active session 進入可選清單；closed 的不得出現。
+      expect(sessionSelect!.value).toBe("review_session_alpha");
+      expect(container.textContent).not.toContain("review_session_closed");
+      expect(container.querySelector('[data-testid="a4-job-select"]')).toBeNull();
+
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="a4-run"]')!.click();
+      });
+      await flush();
+
+      expect(sessionSearch).toHaveBeenCalledWith(
+        "review_session_alpha",
+        expect.objectContaining({ interpret_mode: "auto" }),
+        carrier,
+      );
+      expect(ifcReadySearch).not.toHaveBeenCalled();
+    });
+
+    it("keeps upstream detail out of the surface when a session search fails", async () => {
+      vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue({
+        sessions: {
+          items: [{ session_id: "review_session_alpha", status: "active", model_version_id: "mv_alpha" }],
+        },
+      } as never);
+      vi.spyOn(governanceClient, "searchModelForSession")
+        .mockRejectedValue(new A4GovernanceError(409, "a4_session_not_active"));
+
+      root = createRoot(container);
+      await act(async () => { root!.render(<A4SemanticSearchPage />); });
+      await flush();
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="a4-source-session"]')!.click();
+      });
+      await flush();
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="a4-run"]')!.click();
+      });
+      await flush();
+
+      const surfaceText = container.textContent ?? "";
+      // 只顯示 allowlist code 對應的復原指引。頁面本身會在 Panel sub 標示 API
+      // 群組路徑，因此這裡檢查的是「錯誤不得帶出實際 request path 或 status」。
+      expect(surfaceText).toContain("此 Review Session 目前不是 active");
+      expect(surfaceText).not.toContain("409");
+      expect(surfaceText).not.toContain("for-session/");
+      expect(surfaceText).not.toContain("A4 governance request failed");
     });
   });
 });
