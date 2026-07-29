@@ -1,11 +1,11 @@
 import { expect, test, type Frame, type FrameLocator, type Page } from "@playwright/test";
+import { harnessRoute } from "./harnessRoute";
 
 const VIEWER_BASE_URL =
   process.env.E2E_VIEWER_BASE_URL ||
   `http://127.0.0.1:${process.env.E2E_VIEWER_PORT || "5180"}`;
 const VIEWER_ORIGIN = new URL(VIEWER_BASE_URL).origin;
 const PARENT_ORIGIN = VIEWER_ORIGIN;
-const HARNESS_SESSION_ID = "review_session_harness0001";
 
 type RuntimeRejection = {
   rejected_event_type: string;
@@ -103,7 +103,10 @@ async function installEmbeddedParent(page: Page): Promise<{
             id="viewer-frame"
             title="runtime-authority-viewer"
             style="width:1440px;height:900px;border:0"
-            src="${VIEWER_ORIGIN}/?harness=1&harnessAuthority=1&session=${HARNESS_SESSION_ID}&coordinatorApiBase=${encodeURIComponent(PARENT_ORIGIN)}"
+            src="${VIEWER_ORIGIN}${harnessRoute({
+              harnessAuthority: "1",
+              coordinatorApiBase: PARENT_ORIGIN,
+            })}"
           ></iframe>
         </body></html>`,
     });
@@ -126,7 +129,7 @@ async function installEmbeddedParent(page: Page): Promise<{
 
 test.describe("runtime command authority controlled browser evidence", () => {
   test("visible authority rejection is one-shot and only an explicit retry mutates", async ({ page }, testInfo) => {
-    await page.goto("/?harness=1");
+    await page.goto(harnessRoute());
     const label = page.getByTestId("harness-viewport-label");
     await expect(label).toContainText("stage:", { timeout: 25_000 });
     const frame = await viewerFrame(page);

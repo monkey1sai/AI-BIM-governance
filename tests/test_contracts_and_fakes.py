@@ -38,7 +38,11 @@ def test_ifc_ready_contract_parses_with_required_fields():
 def test_conversion_result_callback_contract_metadata_only():
     cb = _contract("conversion_result_callback.json")
     ready = cb["events"]["conversion_result_ready"]
+    failed = cb["events"]["conversion_failed"]
     assert set(ready["required_fields"]).issubset(ready["example"].keys())
+    assert set(failed["required_fields"]).issubset(failed["example"].keys())
+    assert ready["example"]["trace_id"].startswith("ifcready_")
+    assert failed["example"]["trace_id"].startswith("ifcready_")
     # metadata-only：example 僅含 *_ref，無 .usdc 本體
     blob = json.dumps(ready["example"]).lower()
     assert "usdc_ref" in blob

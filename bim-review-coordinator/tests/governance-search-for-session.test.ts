@@ -192,6 +192,7 @@ async function releaseLease(
 async function activateStage(
   app: CoordinatorApp,
   sessionId: string,
+  traceId: string,
   userToken: string,
   lease: { lease_id: string; lease_token: string },
   artifactId: string,
@@ -212,7 +213,9 @@ async function activateStage(
     .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
     .set("X-Internal-Token", "test-internal-token")
     .set("X-Viewer-Lease-Token", lease.lease_token)
+    .set("X-Trace-Id", traceId)
     .send({
+      trace_id: traceId,
       source_client_id: lease.lease_id,
       requested_event_type: "openStageRequest",
       request_id: requestId,
@@ -221,13 +224,20 @@ async function activateStage(
       binding_revision_id: pending.body.binding_revision_id,
       stage_composition: pending.body.stage_composition,
     });
-  expect(authorization.body).toEqual({ authorized: true, request_id: requestId, retryable: false });
+  expect(authorization.body).toEqual({
+    authorized: true,
+    request_id: requestId,
+    retryable: false,
+    trace_id: traceId,
+  });
 
   const confirmation = await request(app.app)
     .post(`/api/internal/review-sessions/${sessionId}/stage-binding-confirmations`)
     .set("X-Internal-Token", "test-internal-token")
     .set("X-Viewer-Lease-Token", lease.lease_token)
+    .set("X-Trace-Id", traceId)
     .send({
+      trace_id: traceId,
       stage_binding_authorization_id: pending.body.stage_binding_authorization_id,
       binding_revision_id: pending.body.binding_revision_id,
       request_id: requestId,
@@ -262,8 +272,23 @@ function seedCoordinatorFixture(
   fs.writeFileSync(mappingPath, "{}", "utf8");
 
   const timestamp = new Date().toISOString();
+  const externalStore = new ExternalIfcReadyStore(externalStorePath);
+  const job = externalStore.create({
+    event: "ifc_ready",
+    tenant_id: "tenant_demo_001",
+    project_id: "project_a4_001",
+    external_model_version_id: modelVersionId,
+    source_ifc: { ref: "http://127.0.0.1/source.ifc", etag: "etag-a4-001" },
+  }, {
+    correlationId: "corr_a4_001",
+    idempotencyKey: "idem_a4_001",
+    tenantId: "tenant_demo_001",
+    projectId: "project_a4_001",
+    externalModelVersionId: modelVersionId,
+  });
   const sessions = new SessionStore(sessionStoreDir);
   const session = sessions.create({
+    trace_id: job.ifc_ready_job_id,
     project_id: "project_a4_001",
     model_version_id: modelVersionId,
     created_by: "a4_test_fixture",
@@ -310,20 +335,6 @@ function seedCoordinatorFixture(
     }],
   });
 
-  const externalStore = new ExternalIfcReadyStore(externalStorePath);
-  const job = externalStore.create({
-    event: "ifc_ready",
-    tenant_id: "tenant_demo_001",
-    project_id: "project_a4_001",
-    external_model_version_id: modelVersionId,
-    source_ifc: { ref: "http://127.0.0.1/source.ifc", etag: "etag-a4-001" },
-  }, {
-    correlationId: "corr_a4_001",
-    idempotencyKey: "idem_a4_001",
-    tenantId: "tenant_demo_001",
-    projectId: "project_a4_001",
-    externalModelVersionId: modelVersionId,
-  });
   externalStore.markDownloaded(job.ifc_ready_job_id, sourcePath, sourcePath);
   externalStore.markDispatched(job.ifc_ready_job_id, conversionJobId, "ready");
   externalStore.recordConversionOutcome(job.ifc_ready_job_id, "ready", "outbox_a4_001");
@@ -736,6 +747,7 @@ describe("createCoordinatorApp A4 search integration", () => {
     const bindingRevision = await activateStage(
       fixture.app,
       fixture.sessionId,
+      fixture.ifcReadyJobId,
       owner,
       lease,
       fixture.artifactId,
@@ -842,6 +854,7 @@ describe("createCoordinatorApp A4 search integration", () => {
     const bindingRevision = await activateStage(
       fixture.app,
       fixture.sessionId,
+      fixture.ifcReadyJobId,
       owner,
       lease,
       activeArtifactId,
@@ -866,7 +879,14 @@ describe("createCoordinatorApp A4 search integration", () => {
     const fixture = seedCoordinatorFixture(governance.baseUrl);
     const owner = "a4-owner-lease-turnover";
     const firstLease = await claimPrimary(fixture.app, fixture.sessionId, owner);
-    await activateStage(fixture.app, fixture.sessionId, owner, firstLease, fixture.artifactId);
+    await activateStage(
+      fixture.app,
+      fixture.sessionId,
+      fixture.ifcReadyJobId,
+      owner,
+      firstLease,
+      fixture.artifactId,
+    );
     await releaseLease(fixture.app, fixture.sessionId, firstLease);
 
     const replacementLease = await claimPrimary(
@@ -893,7 +913,14 @@ describe("createCoordinatorApp A4 search integration", () => {
     const fixture = seedCoordinatorFixture(governance.baseUrl, { hostArtifactsRoot });
     const owner = "a4-owner-dual-namespace";
     const lease = await claimPrimary(fixture.app, fixture.sessionId, owner);
-    await activateStage(fixture.app, fixture.sessionId, owner, lease, fixture.artifactId);
+    await activateStage(
+      fixture.app,
+      fixture.sessionId,
+      fixture.ifcReadyJobId,
+      owner,
+      lease,
+      fixture.artifactId,
+    );
 
     const response = await request(fixture.app.app)
       .post(`/api/governance/search/model/for-session/${fixture.sessionId}`)

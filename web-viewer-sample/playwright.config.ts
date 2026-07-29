@@ -31,6 +31,7 @@ const webServer = process.env.E2E_DISABLE_WEBSERVER === "1"
         reuseExistingServer: false,
         timeout: 120_000,
         env: {
+          VITE_VIEWER_HARNESS: "1",
           VITE_COORDINATOR_API_BASE:
             process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005",
           VITE_ALLOWED_COORDINATOR_ORIGINS:
@@ -47,7 +48,7 @@ const webServer = process.env.E2E_DISABLE_WEBSERVER === "1"
 // - viewer dev server（預設 :5180，可由 E2E_VIEWER_PORT 覆寫）由 webServer 啟動；不 reuse 既有服務。
 // - coordinator（:8004）視測試需要另行啟動（console / intake 類測試）；viewer harness 開機測試不需 coordinator。
 // - 截圖 / trace / video 落在 repo 根 artifacts/e2e/_output（對齊任務指定路徑）。
-// - harness 模式由各測試以 ?harness=1 query 開啟（dev build 下生效），不污染 prod。
+// - harness 模式必須同時有 runner-owned VITE_VIEWER_HARNESS=1 與各測試的 ?harness=1。
 export default defineConfig({
   testDir: "./e2e",
   outputDir: "../artifacts/e2e/_output",

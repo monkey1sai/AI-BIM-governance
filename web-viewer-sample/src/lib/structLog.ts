@@ -23,6 +23,8 @@
  * to wire up `window.addEventListener('error', ...)` and `unhandledrejection`.
  */
 
+import envAllowListSpec from "../../../tests/contracts/structured-log/env-allowlist.json";
+
 export type LogLevel = "debug" | "info" | "warn" | "error" | "fatal";
 
 export type EventType =
@@ -72,6 +74,21 @@ export interface AnomalyData {
   [extra: string]: unknown;
 }
 
+export type EnvSource = ".env" | ".env.example" | "system" | "docker-compose" | "default";
+
+export interface EnvVar {
+  key: string;
+  source: EnvSource;
+  value_or_redacted: string;
+  type: "string" | "number" | "boolean" | "null" | "object" | "array";
+}
+
+export interface ViewerLogDeliveryAuthority {
+  reviewSessionId: string;
+  leaseId: string;
+  leaseToken: string;
+}
+
 export interface BrowserStructLogger {
   readonly runId: string;
   readonly traceId: string;
@@ -93,8 +110,14 @@ export interface BrowserStructLogger {
   /** Update the active trace_id (e.g. when entering a new review session). */
   setTraceId(traceId: string): void;
 
+  /** Pause or resume timer/threshold flushes without blocking explicit flush(). */
+  setAutoFlushPaused(paused: boolean): void;
+
+  /** Supply a live, memory-only lease authority for automatic delivery. */
+  setDeliveryAuthorityProvider(provider: (() => ViewerLogDeliveryAuthority | null) | null): void;
+
   /** Manually trigger a flush. Returns the number of records persisted. */
-  flush(): Promise<number>;
+  flush(authority?: ViewerLogDeliveryAuthority): Promise<number>;
 
   /** Used by tests / Chrome MCP to inspect last N records still in buffer. */
   tail(n?: number): LogRecord[];
@@ -112,6 +135,8 @@ export interface BrowserLoggerOptions {
   runId?: string;
   /** Trace id to attach to every record until `setTraceId` is called. */
   initialTraceId?: string;
+  /** Explicit browser-safe runtime config or metadata for the startup snapshot. */
+  browserSnapshotVars?: EnvVar[];
   /** Max records held in buffer; older ones dropped when exceeded. */
   bufferCapacity?: number;
   /** Records buffered before triggering an automatic flush. */
@@ -133,7 +158,13 @@ export interface BrowserLoggerOptions {
    * Override the transport function. Defaults to global `fetch`. Tests
    * inject this to avoid jsdom.
    */
-  transport?: (url: string, body: LogRecord[]) => Promise<{ ok: boolean; status: number; detail?: string }>;
+  transport?: (
+    url: string,
+    body: LogRecord[],
+    authority: ViewerLogDeliveryAuthority | null,
+  ) => Promise<{ ok: boolean; status: number; detail?: string }>;
+  /** Resolve the current memory-only lease authority for automatic flushes. */
+  deliveryAuthority?: () => ViewerLogDeliveryAuthority | null;
   /** Set to `false` to disable timer-based flushing entirely (tests). */
   enableTimer?: boolean;
 }
@@ -146,6 +177,91 @@ const DEFAULTS = {
   flushMaxAttempts: 3,
   flushBackoffMs: 500,
 };
+
+const ENV_ALLOW_LIST = new Set(envAllowListSpec.allow_list);
+const SECRET_PATTERN = new RegExp(envAllowListSpec.secret_patterns.join("|"), "i");
+const ENV_KEY_PATTERN = /^[A-Z][A-Z0-9_]{0,127}$/;
+const ENV_SOURCES = new Set<EnvSource>([".env", ".env.example", "system", "docker-compose", "default"]);
+const ENV_TYPES = new Set<EnvVar["type"]>(["string", "number", "boolean", "null", "object", "array"]);
+const MAX_REDACTION_DEPTH = 8;
+const REDACTED_MARKER = "[REDACTED]";
+const TRUNCATED_MARKER = "[Truncated]";
+const CIRCULAR_MARKER = "[Circular]";
+
+function sanitizeBrowserSnapshotVars(vars: EnvVar[]): EnvVar[] {
+  if (!Array.isArray(vars)) return [];
+  const safeVars: EnvVar[] = [];
+  for (const candidate of vars) {
+    if (!candidate || typeof candidate !== "object") continue;
+    const { key, source, value_or_redacted: value, type } = candidate;
+    if (
+      typeof key !== "string" ||
+      !ENV_KEY_PATTERN.test(key) ||
+      !ENV_SOURCES.has(source) ||
+      typeof value !== "string" ||
+      !ENV_TYPES.has(type)
+    ) {
+      continue;
+    }
+    const value_or_redacted = ENV_ALLOW_LIST.has(key)
+      ? value
+      : SECRET_PATTERN.test(key)
+        ? `[REDACTED:type=${type}, len=${value.length}]`
+        : `[TYPE:type=${type}, len=${value.length}]`;
+    safeVars.push({ key, source, value_or_redacted, type });
+  }
+  return safeVars;
+}
+
+function sanitizeOrdinaryData(
+  value: unknown,
+  depth = 0,
+  activePath = new WeakSet<object>(),
+): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (depth > MAX_REDACTION_DEPTH) return TRUNCATED_MARKER;
+  if (activePath.has(value)) return CIRCULAR_MARKER;
+
+  activePath.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return value.map((entry) => sanitizeOrdinaryData(entry, depth + 1, activePath));
+    }
+    const safe: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      safe[key] = SECRET_PATTERN.test(key)
+        ? REDACTED_MARKER
+        : sanitizeOrdinaryData(entry, depth + 1, activePath);
+    }
+    return safe;
+  } finally {
+    activePath.delete(value);
+  }
+}
+
+function sanitizeRecordData(eventType: EventType, data: Record<string, unknown>): Record<string, unknown> {
+  if (eventType !== "env_snapshot") {
+    return sanitizeOrdinaryData(data) as Record<string, unknown>;
+  }
+
+  const activePath = new WeakSet<object>();
+  activePath.add(data);
+  try {
+    const safe: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (key === "vars") {
+        safe.vars = sanitizeBrowserSnapshotVars(Array.isArray(value) ? value as EnvVar[] : []);
+      } else {
+        safe[key] = SECRET_PATTERN.test(key)
+          ? REDACTED_MARKER
+          : sanitizeOrdinaryData(value, 1, activePath);
+      }
+    }
+    return safe;
+  } finally {
+    activePath.delete(data);
+  }
+}
 
 function defaultRandomHex(): string {
   // 6 hex digits using crypto when available, Math.random fallback otherwise.
@@ -223,11 +339,13 @@ interface LoggerState {
   flushBackoffMs: number;
   endpoint: () => string;
   transport: NonNullable<BrowserLoggerOptions["transport"]>;
+  deliveryAuthority: (() => ViewerLogDeliveryAuthority | null) | null;
   now: () => Date;
   flushedTotal: number;
   droppedTotal: number;
   lastFlushStatus: { ts: string; status: "ok" | "failed"; detail?: string } | null;
-  flushing: boolean;
+  autoFlushPaused: boolean;
+  inFlightFlush: Promise<number> | null;
   timerId: ReturnType<typeof setInterval> | null;
   seqByTrace: Map<string, number>;
   closed: boolean;
@@ -248,18 +366,60 @@ function defaultEndpoint(): string {
   return `${origin}/api/internal/viewer-log`;
 }
 
-function defaultTransport(url: string, body: LogRecord[]): Promise<{ ok: boolean; status: number; detail?: string }> {
+async function defaultTransport(
+  url: string,
+  body: LogRecord[],
+  authority: ViewerLogDeliveryAuthority | null,
+): Promise<{ ok: boolean; status: number; detail?: string }> {
+  if (!authority) {
+    return { ok: false, status: 0, detail: "viewer_log_authority_unavailable" };
+  }
   const fetchFn = (globalThis as { fetch?: typeof fetch }).fetch;
   if (!fetchFn) {
-    return Promise.resolve({ ok: false, status: 0, detail: "no_fetch_in_environment" });
+    return { ok: false, status: 0, detail: "no_fetch_in_environment" };
   }
-  return fetchFn(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  })
-    .then(async (r) => ({ ok: r.ok, status: r.status, detail: r.ok ? undefined : await r.text().catch(() => undefined) }))
-    .catch((err: unknown) => ({ ok: false, status: 0, detail: err instanceof Error ? err.message : String(err) }));
+
+  try {
+    const response = await fetchFn(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Review-Session-Id": authority.reviewSessionId,
+        "X-Viewer-Lease-Id": authority.leaseId,
+        "X-Viewer-Lease-Token": authority.leaseToken,
+      },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      return { ok: false, status: response.status, detail: `http_${response.status}` };
+    }
+
+    let acknowledgement: unknown;
+    try {
+      acknowledgement = await response.json();
+    } catch {
+      return { ok: false, status: response.status, detail: "viewer_log_ack_malformed" };
+    }
+    if (
+      typeof acknowledgement !== "object"
+      || acknowledgement === null
+      || !Number.isSafeInteger((acknowledgement as { accepted?: unknown }).accepted)
+      || (acknowledgement as { accepted: number }).accepted < 0
+      || !Number.isSafeInteger((acknowledgement as { dropped?: unknown }).dropped)
+      || (acknowledgement as { dropped: number }).dropped < 0
+    ) {
+      return { ok: false, status: response.status, detail: "viewer_log_ack_malformed" };
+    }
+    if (
+      (acknowledgement as { accepted: number }).accepted !== body.length
+      || (acknowledgement as { dropped: number }).dropped !== 0
+    ) {
+      return { ok: false, status: response.status, detail: "viewer_log_ack_incomplete" };
+    }
+    return { ok: true, status: response.status };
+  } catch {
+    return { ok: false, status: 0, detail: "viewer_log_transport_failed" };
+  }
 }
 
 function buildRecord(state: LoggerState, level: LogLevel, eventType: EventType, component: string, msg: string, data: Record<string, unknown> = {}, options: { caller?: string; error?: LogRecord["error"]; parent_trace_id?: string } = {}): LogRecord {
@@ -274,7 +434,7 @@ function buildRecord(state: LoggerState, level: LogLevel, eventType: EventType, 
     run_id: state.runId,
     trace_id: traceId,
     msg,
-    data,
+    data: sanitizeRecordData(eventType, data),
     seq: nextSeq(state, traceId),
   };
   if (options.caller) record.caller = options.caller;
@@ -297,24 +457,35 @@ function enqueue(state: LoggerState, record: LogRecord): void {
   }
 }
 
-async function flushOnce(state: LoggerState): Promise<number> {
-  if (state.flushing || state.buffer.length === 0) return 0;
-  state.flushing = true;
+async function flushBatch(
+  state: LoggerState,
+  authorityOverride?: ViewerLogDeliveryAuthority,
+): Promise<number> {
   const inFlight = state.buffer.slice();
   const inFlightRecords = inFlight.map((b) => b.record);
   const url = state.endpoint();
+  const authority = authorityOverride ?? state.deliveryAuthority?.() ?? null;
   let backoff = state.flushBackoffMs;
   let lastDetail: string | undefined;
   for (let attempt = 1; attempt <= state.flushMaxAttempts; attempt += 1) {
-    const result = await state.transport(url, inFlightRecords);
+    let result: { ok: boolean; status: number; detail?: string };
+    try {
+      result = await state.transport(url, inFlightRecords, authority);
+    } catch (err) {
+      result = {
+        ok: false,
+        status: 0,
+        detail: err instanceof Error ? err.message : String(err),
+      };
+    }
     if (result.ok) {
-      // remove the in-flight entries (only those still at the head — if new
-      // ones arrived after slice() they remain).
-      const removed = state.buffer.splice(0, inFlight.length);
-      state.flushedTotal += removed.length;
+      const captured = new Set(inFlight);
+      const before = state.buffer.length;
+      state.buffer = state.buffer.filter((entry) => !captured.has(entry));
+      const removed = before - state.buffer.length;
+      state.flushedTotal += removed;
       state.lastFlushStatus = { ts: isoUtcMs(state.now()), status: "ok" };
-      state.flushing = false;
-      return removed.length;
+      return removed;
     }
     lastDetail = result.detail ?? `http_${result.status}`;
     // Backoff before retrying.
@@ -337,8 +508,32 @@ async function flushOnce(state: LoggerState): Promise<number> {
     }
   }
   state.lastFlushStatus = { ts: isoUtcMs(state.now()), status: "failed", detail: lastDetail };
-  state.flushing = false;
   return 0;
+}
+
+function flushOnce(state: LoggerState, authorityOverride?: ViewerLogDeliveryAuthority): Promise<number> {
+  if (state.inFlightFlush) return state.inFlightFlush;
+  if (state.buffer.length === 0) return Promise.resolve(0);
+
+  const inFlight = flushBatch(state, authorityOverride).finally(() => {
+    if (state.inFlightFlush === inFlight) state.inFlightFlush = null;
+  });
+  state.inFlightFlush = inFlight;
+  return inFlight;
+}
+
+async function flushManually(
+  state: LoggerState,
+  authorityOverride?: ViewerLogDeliveryAuthority,
+): Promise<number> {
+  const existing = state.inFlightFlush;
+  if (!existing) return flushOnce(state, authorityOverride);
+
+  let flushedTotal = await existing;
+  if (state.buffer.length > 0) {
+    flushedTotal += await flushOnce(state, authorityOverride);
+  }
+  return flushedTotal;
 }
 
 export function createBrowserLogger(options: BrowserLoggerOptions = {}): BrowserStructLogger {
@@ -364,11 +559,13 @@ export function createBrowserLogger(options: BrowserLoggerOptions = {}): Browser
     flushBackoffMs: options.flushBackoffMs ?? DEFAULTS.flushBackoffMs,
     endpoint: endpointFn,
     transport: options.transport ?? defaultTransport,
+    deliveryAuthority: options.deliveryAuthority ?? null,
     now,
     flushedTotal: 0,
     droppedTotal: 0,
     lastFlushStatus: null,
-    flushing: false,
+    autoFlushPaused: false,
+    inFlightFlush: null,
     timerId: null,
     seqByTrace: new Map(),
     closed: false,
@@ -376,6 +573,7 @@ export function createBrowserLogger(options: BrowserLoggerOptions = {}): Browser
 
   if (options.enableTimer !== false) {
     state.timerId = setInterval(() => {
+      if (state.autoFlushPaused) return;
       void flushOnce(state).catch(() => {
         // flushOnce already records lastFlushStatus on failure; swallow here.
       });
@@ -385,7 +583,7 @@ export function createBrowserLogger(options: BrowserLoggerOptions = {}): Browser
   function append(record: LogRecord): void {
     if (state.closed) return;
     enqueue(state, record);
-    if (state.buffer.length >= state.flushAtRecords) {
+    if (!state.autoFlushPaused && state.buffer.length >= state.flushAtRecords) {
       void flushOnce(state).catch(() => {
         // flushOnce already records lastFlushStatus; swallow.
       });
@@ -442,8 +640,14 @@ export function createBrowserLogger(options: BrowserLoggerOptions = {}): Browser
     setTraceId(traceId) {
       state.traceId = traceId;
     },
-    async flush() {
-      return flushOnce(state);
+    setAutoFlushPaused(paused) {
+      state.autoFlushPaused = paused;
+    },
+    setDeliveryAuthorityProvider(provider) {
+      state.deliveryAuthority = provider;
+    },
+    async flush(authority) {
+      return flushManually(state, authority);
     },
     tail(n = 100) {
       return state.buffer.slice(-n).map((entry) => entry.record);
@@ -451,9 +655,12 @@ export function createBrowserLogger(options: BrowserLoggerOptions = {}): Browser
     async shutdown() {
       state.closed = true;
       if (state.timerId !== null) clearInterval(state.timerId);
-      await flushOnce(state).catch(() => undefined);
+      await flushManually(state).catch(() => undefined);
     },
   };
+  append(buildRecord(state, "info", "env_snapshot", "bootstrap", "browser env snapshot", {
+    vars: options.browserSnapshotVars ?? [],
+  }));
   return logger;
 }
 

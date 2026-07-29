@@ -9,6 +9,7 @@ import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
 
 import {
+  designHarnessRoute,
   semanticCaseDefinitions,
   type SemanticAssertionDefinition,
 } from "./design-system-semantic-cases";
@@ -276,7 +277,7 @@ test("approved screens match desigin-system golden and semantic contracts", asyn
         window.localStorage.clear();
         window.sessionStorage.clear();
       });
-      await page.goto(`/${productionRoute}`, { waitUntil: "networkidle" });
+      await page.goto(designHarnessRoute(productionRoute), { waitUntil: "networkidle" });
       const observedDpr = await page.evaluate(() => window.devicePixelRatio);
       if (observedDpr !== manifest.fidelity_contract.device_scale_factor) {
         failures.push(

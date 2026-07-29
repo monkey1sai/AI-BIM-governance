@@ -5,9 +5,11 @@ import {
   type A4HandoffBinding,
   type A4HandoffRow,
 } from "../services/a4HandoffStore.js";
+import { isCanonicalSessionTraceId } from "../services/sessionStore.js";
 
 /** Server-owned A4 authority needed to create or consume a transient handoff. */
 export interface A4SearchSessionContext {
+  trace_id: string;
   ifc_source_path?: string;
   model_version_id?: string | null;
   review_session_id: string;
@@ -325,6 +327,11 @@ export function registerA4HandoffRoutes(app: Express, deps: A4HandoffRouteDeps):
       response.status(409).json({ error_code: "a4_handoff_not_eligible", detail: "A4 3D handoff authority is unavailable for this session." });
       return;
     }
+    const initialTraceId = initialResolution.context.trace_id;
+    if (!isCanonicalSessionTraceId(initialTraceId, sessionId)) {
+      response.status(503).json({ error_code: "a4_handoff_trace_unavailable", detail: "A4 handoff trace authority is unavailable." });
+      return;
+    }
     const controls = sanitizeCreateControls(request.body);
     if (!controls.ok) {
       response.status(400).json({ error_code: "invalid_a4_handoff_controls", detail: "A4 handoff controls are invalid." });
@@ -359,7 +366,13 @@ export function registerA4HandoffRoutes(app: Express, deps: A4HandoffRouteDeps):
       return;
     }
     const refreshedBinding = eligibleBinding(refreshedResolution.context, sessionId);
-    if (!refreshedBinding || !sameBinding(initialBinding, refreshedBinding)) {
+    const refreshedTraceId = refreshedResolution.context.trace_id;
+    if (
+      !refreshedBinding
+      || !sameBinding(initialBinding, refreshedBinding)
+      || !isCanonicalSessionTraceId(refreshedTraceId, sessionId)
+      || refreshedTraceId !== initialTraceId
+    ) {
       response.status(409).json({ error_code: "a4_handoff_binding_changed", detail: "A4 session binding changed during handoff creation." });
       return;
     }
@@ -374,7 +387,7 @@ export function registerA4HandoffRoutes(app: Express, deps: A4HandoffRouteDeps):
       response.status(status).json({ error_code: created.code, detail: "A4 handoff could not be created." });
       return;
     }
-    const openUrl = `/ui/open?session=${encodeURIComponent(sessionId)}&a4_handoff=${encodeURIComponent(created.intent.handoff_id)}`;
+    const openUrl = `/ui/open?session=${encodeURIComponent(sessionId)}&trace_id=${encodeURIComponent(refreshedTraceId)}&a4_handoff=${encodeURIComponent(created.intent.handoff_id)}`;
     response.status(201).json({
       handoff_id: created.intent.handoff_id,
       action: created.intent.action,

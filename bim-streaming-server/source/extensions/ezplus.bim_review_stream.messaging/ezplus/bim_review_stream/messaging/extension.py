@@ -12,7 +12,7 @@ from typing import Optional
 
 from .stage_loading import LoadingManager
 from .stage_management import StageManager
-from .runtime_authority import RuntimeAuthorityClient
+from .runtime_authority import DataChannelTraceContext, RuntimeAuthorityClient
 from . import kit_struct_log
 import carb
 import carb.events
@@ -35,6 +35,7 @@ class Extension(omni.ext.IExt):
         kit_struct_log.log_kit_startup_lifecycle()
 
         self._runtime_authority: Optional[RuntimeAuthorityClient] = RuntimeAuthorityClient.from_env()
+        self._datachannel_trace_context = DataChannelTraceContext()
         messaging.register_event_type_to_send("commandRejected")
         omni.kit.app.register_event_alias(
             carb.events.type_from_string("commandRejected"),
@@ -42,8 +43,14 @@ class Extension(omni.ext.IExt):
         )
 
         # Internal messaging state
-        self._loading_manager: Optional[LoadingManager] = LoadingManager(self._runtime_authority)
-        self._stage_manager: Optional[StageManager] = StageManager(self._runtime_authority)
+        self._loading_manager: Optional[LoadingManager] = LoadingManager(
+            self._runtime_authority,
+            self._datachannel_trace_context,
+        )
+        self._stage_manager: Optional[StageManager] = StageManager(
+            self._runtime_authority,
+            self._datachannel_trace_context,
+        )
 
     def on_shutdown(self):
         """This is called every time the extension is deactivated. It is used to

@@ -1,15 +1,21 @@
 import { test, expect } from "@playwright/test";
+import { harnessRoute } from "./harnessRoute";
 
 // CH-0 基礎證據：可決定性 harness 讓 viewer 在「無真實 Kit / WebRTC」下也能開機到 streamReady。
 // 不假造前端狀態機 —— Window/AppStream 的真實邏輯照跑，只有 transport + Kit 回應被 FakeAppStreamer 取代。
 test.describe("viewer harness 開機（deterministic，無真實 Kit）", () => {
   test("?harness=1 → streamReady → 顯示 HARNESS VIEWPORT 佔位", async ({ page }) => {
+    await page.route("https://fonts.googleapis.com/**", (route) => route.fulfill({
+      status: 200,
+      contentType: "text/css",
+      body: "",
+    }));
     const consoleErrors: string[] = [];
     page.on("console", (msg) => {
       if (msg.type() === "error") consoleErrors.push(msg.text());
     });
 
-    await page.goto("/?harness=1");
+    await page.goto(harnessRoute());
 
     const label = page.getByTestId("harness-viewport-label");
     await expect(label).toBeVisible({ timeout: 25_000 });

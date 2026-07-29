@@ -14,6 +14,8 @@ import ReactDOM from "react-dom/client";
 import App from "./App.tsx";
 import EdgeConsole from "./console/EdgeConsole";
 import { isOperatorConsolePath } from "./console/routing";
+import { reviewEnv } from "./config/env";
+import { bootstrapStructLog } from "./lib/structLogBootstrap";
 import "./index.css";
 import "./styles/demo-theme.css";
 
@@ -26,8 +28,12 @@ declare global {
     }
 }
 const initialQueryParams = new URLSearchParams(window.location.search);
-const initialSession = initialQueryParams.get("session");
-if (initialSession && /^(lwv_|review_session_)[A-Za-z0-9_]+$/.test(initialSession)) {
+const sessionCandidates = initialQueryParams.getAll("session");
+const initialSession = sessionCandidates.length === 1
+    && /^(lwv_|review_session_)[A-Za-z0-9_]+$/.test(sessionCandidates[0])
+    ? sessionCandidates[0]
+    : null;
+if (initialSession) {
     window.__INITIAL_SESSION_FROM_QUERY__ = initialSession;
     console.info(`[fast-mvp] auto-attach session from query string:${initialSession}`);
 } else {
@@ -36,6 +42,34 @@ if (initialSession && /^(lwv_|review_session_)[A-Za-z0-9_]+$/.test(initialSessio
 
 // /console[/...] 或 #/console[/...] 掛統一治理控制台 operator 三頁；其餘維持既有 viewer App 不變。
 const useOperatorConsole = isOperatorConsolePath(window.location.pathname, window.location.hash, window.location.search);
+if (!useOperatorConsole && initialSession) {
+    const coordinatorUrl = new URL(reviewEnv.coordinatorApiBase);
+    bootstrapStructLog({
+        search: window.location.search,
+        coordinatorApiBase: reviewEnv.coordinatorApiBase,
+        browserSnapshotVars: [
+            {
+                key: "NODE_ENV",
+                source: "default",
+                value_or_redacted: import.meta.env.MODE,
+                type: "string",
+            },
+            {
+                key: "COORDINATOR_PORT",
+                source: "default",
+                value_or_redacted: coordinatorUrl.port || (coordinatorUrl.protocol === "https:" ? "443" : "80"),
+                type: "string",
+            },
+            {
+                key: "VIEWER_PORT",
+                source: "default",
+                value_or_redacted: window.location.port || (window.location.protocol === "https:" ? "443" : "80"),
+                type: "string",
+            },
+        ],
+        win: window,
+    });
+}
 ReactDOM.createRoot(document.getElementById("root")!).render(
     useOperatorConsole ? <EdgeConsole /> : <App />
 );

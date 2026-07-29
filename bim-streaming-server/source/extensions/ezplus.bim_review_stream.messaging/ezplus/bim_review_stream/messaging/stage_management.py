@@ -22,12 +22,14 @@ from omni.kit.viewport.utility import get_active_viewport_camera_string
 
 try:
     from .runtime_authority import (
+        DataChannelTraceContext,
         RuntimeAuthorityClient,
         command_rejected_payload,
         correlated_result,
     )
 except ImportError:  # pragma: no cover - test modules import this file directly.
     from runtime_authority import (
+        DataChannelTraceContext,
         RuntimeAuthorityClient,
         command_rejected_payload,
         correlated_result,
@@ -36,12 +38,13 @@ except ImportError:  # pragma: no cover - test modules import this file directly
 
 class StageManager:
     """This class manages the stage and its related events."""
-    def __init__(self, runtime_authority=None):
+    def __init__(self, runtime_authority=None, trace_context=None):
         # Internal messaging state
         self._is_external_update: bool = False
         self._camera_attrs = {}
         self._subscriptions = []
         self._runtime_authority = runtime_authority or RuntimeAuthorityClient()
+        self._trace_context = trace_context or DataChannelTraceContext()
 
         # -- register outgoing events/messages
         outgoing = [
@@ -171,20 +174,30 @@ class StageManager:
         Collects a filtered collection of a given primitives children.
         """
 
+        request_payload = self._payload_dict(event.payload)
+        trace_id = self._verify_datachannel_trace(
+            "getChildrenRequest",
+            request_payload,
+        )
+        if trace_id is None:
+            return
         carb.log_info(
             "Received message to return list of a prim\'s children"
         )
         children = self.get_children(
-            prim_path=event.payload["prim_path"],
-            filters=event.payload["filters"]
+            prim_path=request_payload["prim_path"],
+            filters=request_payload["filters"]
         )
         payload = {
-            "prim_path": event.payload["prim_path"],
+            "prim_path": request_payload["prim_path"],
             "children": children
         }
 
 
-        get_eventdispatcher().dispatch_event("getChildrenResponse", payload=payload)
+        get_eventdispatcher().dispatch_event(
+            "getChildrenResponse",
+            payload=correlated_result(request_payload, payload),
+        )
 
     def _on_select_prims(self, event: carb.events.IEvent) -> None:
         """
@@ -238,8 +251,11 @@ class StageManager:
         if self._is_external_update:
             self._is_external_update = False
         else:
+            active_stage = self._trace_context.active_stage()
+            if active_stage is None:
+                return
             payload = {"prims": omni.usd.get_context().get_selection().
-                        get_selected_prim_paths()}
+                        get_selected_prim_paths(), "trace_id": active_stage[1]}
 
             get_eventdispatcher().dispatch_event("stageSelectionChanged", payload=payload)
             carb.log_info(f"Selection changed: Path to USD prims currently selected = {omni.usd.get_context().get_selection().get_selected_prim_paths()}")
@@ -330,10 +346,19 @@ class StageManager:
             value = value.get_dict()
         return value if isinstance(value, dict) else {}
 
+    def _verify_datachannel_trace(self, event_type, request_payload):
+        try:
+            return self._runtime_authority.verify_datachannel_trace(event_type, request_payload)
+        except Exception:
+            return None
+
     def _authorize_mutator(self, event_type, request_payload):
+        trace_id = self._verify_datachannel_trace(event_type, request_payload)
+        if trace_id is None:
+            return False
         decision = self._runtime_authority.authorize(event_type, request_payload)
         if decision.authorized:
-            return True
+            return trace_id
         get_eventdispatcher().dispatch_event(
             "commandRejected",
             payload=command_rejected_payload(event_type, request_payload, decision),
@@ -376,7 +401,6 @@ class StageManager:
         explicit missing paths so client/coordinator state remains honest.
         """
         request_payload = self._payload_dict(event.payload)
-        request_id = request_payload.get("request_id")
         if not self._authorize_mutator("highlightPrimsRequest", request_payload):
             return
         stage = omni.usd.get_context().get_stage()
@@ -389,9 +413,10 @@ class StageManager:
                 "fallback_paths": [],
                 "error": "No stage is open.",
             }
-            if request_id:
-                payload["request_id"] = request_id
-            get_eventdispatcher().dispatch_event("highlightPrimsResult", payload=payload)
+            get_eventdispatcher().dispatch_event(
+                "highlightPrimsResult",
+                payload=correlated_result(request_payload, payload),
+            )
             return
 
         items = self._payload_list(request_payload.get("items"))
@@ -431,9 +456,10 @@ class StageManager:
             "missing_paths": missing_paths,
             "fallback_paths": fallback_paths,
         }
-        if request_id:
-            payload["request_id"] = request_id
-        get_eventdispatcher().dispatch_event("highlightPrimsResult", payload=payload)
+        get_eventdispatcher().dispatch_event(
+            "highlightPrimsResult",
+            payload=correlated_result(request_payload, payload),
+        )
 
     def _on_clear_highlight(self, event: carb.events.IEvent):
         request_payload = self._payload_dict(event.payload)
@@ -450,7 +476,6 @@ class StageManager:
 
     def _on_focus_prim(self, event: carb.events.IEvent):
         request_payload = self._payload_dict(event.payload)
-        request_id = request_payload.get("request_id")
         if not self._authorize_mutator("focusPrimRequest", request_payload):
             return
         stage = omni.usd.get_context().get_stage()
@@ -469,9 +494,10 @@ class StageManager:
             }
             if selected_path != prim_path:
                 payload["fallback_path"] = selected_path
-        if request_id:
-            payload["request_id"] = request_id
-        get_eventdispatcher().dispatch_event("focusPrimResult", payload=payload)
+        get_eventdispatcher().dispatch_event(
+            "focusPrimResult",
+            payload=correlated_result(request_payload, payload),
+        )
 
     def on_shutdown(self):
         """This is called every time the extension is deactivated. It is used

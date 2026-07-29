@@ -18,13 +18,21 @@ import USDStage from "./USDStage";
 import { headerHeight } from './App';
 import { fetchUSDAssets, type USDAsset as USDAssetType } from './assetsApi';
 import DemoControlPanel from "./components/DemoControlPanel";
+import { StructuredLogDiagnostics } from "./components/StructuredLogDiagnostics";
 import { isBlockedLifecycle, lifecycleStatusText, sameStreamEndpoint, sameStreamTransportEndpoint, selectSpectatorBinding, type StreamEndpoint } from "./utils/windowHelpers";
 // viewer-edge-bim-server-console:ReviewLauncher / PresencePanel 已刪(fast
 // MVP 不需多人協作 UI;spec REMOVED「Viewer separates runtime commands from
 // collaboration events」)。
 import { BimControlClient } from "./clients/bimControlClient";
 import { CoordinatorClient, CoordinatorHttpError, isQueuedForInstanceError } from "./clients/coordinatorClient";
-import { connectReviewSocket, type ReviewSocketClient } from "./clients/reviewSocket";
+import {
+    connectReviewSocket,
+    type ReviewSocketAck,
+    type ReviewSocketCandidate,
+    type ReviewSocketClient,
+    type ReviewSocketEvent,
+    type ReviewSocketHandlers,
+} from "./clients/reviewSocket";
 import { buildAuthorizedOpenStageRequest, buildClearHighlightRequest, buildFocusPrimRequest, buildGetChildrenRequest, buildHighlightPrimsRequest, buildLoadingStateQuery, buildOpenStageRequest } from "./clients/streamMessages";
 import {
     A4_HANDOFF_COMMAND_TIMEOUT_MS,
@@ -38,6 +46,12 @@ import { demoPrimPath } from "./clients/demoDefaults";
 import { allowedCoordinatorOrigins, reviewEnv } from "./config/env";
 import { canHandleHighlight, failedElementsForEmbed, shouldAcceptParentMessage } from "./parentMessageGuard";
 import { harnessAuthorityRequired, harnessEnabled } from "./harness/harnessConfig";
+import { connectHarnessReviewSocket } from "./harness/fakeReviewSocket";
+import {
+    HARNESS_REVIEW_AUTHORITY,
+    HARNESS_SESSION_ID,
+    HARNESS_TRACE_ID,
+} from "./harness/fixtures/reviewAuthority";
 import { HARNESS_STAGE_URL } from "./harness/fixtures/usdStageTree";
 import { computeFileReady, computeRuntimeReady, computeSemanticReady } from "./utils/triReady";
 import type { DemoLogEntry } from "./types/demo";
@@ -45,6 +59,8 @@ import { mappingVerificationBlockReason, type ElementMappingDocument, type Eleme
 import type { ArtifactBinding, ReviewArtifact } from "./types/artifacts";
 import type { ReviewLifecycleStatus, ReviewSession, ReviewSessionRequest, ReviewStreamConfig } from "./types/review";
 import type { HighlightItem, StreamMessage } from "./types/streamMessages";
+import type { ViewerLogDeliveryAuthority } from "./lib/structLog";
+import { traceIdFromSearch } from "./lib/structLogBootstrap";
 // 統一治理控制台 MVP：A1–A10 治理 overlay 疊在 primary viewer live 3D 上（client 主動拉，不 server-push）。
 import { GovernanceOverlay, type RuleCheckState, type IssueCreateState, type StageArtifactBinding, type BindingApplyState } from "./console/GovernanceOverlay";
 import { deriveOverlayInputs } from "./console/governance/windowOverlayGlue";
@@ -160,6 +176,38 @@ const runtimeMutatingEvents = new Set([
     "resetStage",
 ]);
 
+const viewerToKitEventTypes = new Set([
+    "openStageRequest",
+    "loadArtifactGroupRequest",
+    "composeStageRequest",
+    "highlightPrimsRequest",
+    "focusPrimRequest",
+    "clearHighlightRequest",
+    "selectPrimsRequest",
+    "makePrimsPickable",
+    "resetStage",
+    "loadingStateQuery",
+    "getChildrenRequest",
+]);
+
+const kitToViewerEventTypes = new Set([
+    "openedStageResult",
+    "loadArtifactGroupResult",
+    "highlightPrimsResult",
+    "focusPrimResult",
+    "selectPrimsResult",
+    "makePrimsPickableResponse",
+    "resetStageResponse",
+    "clearHighlightResult",
+    "loadingStateResponse",
+    "getChildrenResponse",
+    "stageSelectionChanged",
+    "updateProgressAmount",
+    "updateProgressActivity",
+    "bindingApplied",
+    "commandRejected",
+]);
+
 const runtimeResponseRequestTypes = new Map<string, ReadonlySet<string>>([
     ["openedStageResult", new Set(["openStageRequest", "loadArtifactGroupRequest"])],
     ["loadArtifactGroupResult", new Set(["loadArtifactGroupRequest", "composeStageRequest"])],
@@ -184,6 +232,12 @@ interface AppStreamEventType {
     messageRecipient?: string;
     data?: string;
     payload?: unknown;
+}
+
+interface VerifiedDataChannelAuthority {
+    sessionId: string;
+    traceId: string;
+    connectionGeneration: number;
 }
 
 const runtimeRejectionReasons = new Set([
@@ -452,6 +506,8 @@ function parseRuntimeCommandRejection(payload: Record<string, unknown>): Runtime
 
 function appStreamResultToAppEvent(requestEventType: string, result: unknown): AppStreamEventType | null {
     if (!isRecord(result)) return null;
+    const traceId = result.trace_id;
+    if (typeof traceId !== "string" || traceId.length === 0) return null;
     const status = getPayloadString(result, "status");
     const info = getPayloadString(result, "info");
     const responseResult = status === "error" ? "error" : "success";
@@ -460,6 +516,7 @@ function appStreamResultToAppEvent(requestEventType: string, result: unknown): A
         return {
             event_type: "openedStageResult",
             payload: {
+                trace_id: traceId,
                 result: responseResult,
                 url: getPayloadString(result, "url"),
                 error: responseResult === "error" ? info || "openStageRequest failed" : "",
@@ -477,6 +534,7 @@ function appStreamResultToAppEvent(requestEventType: string, result: unknown): A
         return {
             event_type: "loadingStateResponse",
             payload: {
+                trace_id: traceId,
                 loading_state: getPayloadString(result, "loadingState"),
                 url: getPayloadString(result, "url"),
             },
@@ -487,6 +545,7 @@ function appStreamResultToAppEvent(requestEventType: string, result: unknown): A
         return {
             event_type: "getChildrenResponse",
             payload: {
+                trace_id: traceId,
                 prim_path: getPayloadString(result, "primPath"),
                 children: Array.isArray(result.children) ? result.children : [],
             },
@@ -570,6 +629,8 @@ export default class App extends React.Component<AppProps, AppState> {
     private coordinatorClient = new CoordinatorClient(reviewEnv.coordinatorApiBase);
     private bimControlClient = new BimControlClient(reviewEnv.bimControlApiBase);
     private reviewSocket: ReviewSocketClient | null = null;
+    private verifiedDataChannelAuthority: VerifiedDataChannelAuthority | null = null;
+    private reviewSocketEpoch = 0;
     private streamStartTimeoutId: number | null = null;
     private loadingStateRetryId: number | null = null;
     private stageLoadTimeoutId: number | null = null;
@@ -689,6 +750,7 @@ export default class App extends React.Component<AppProps, AppState> {
 
     componentDidMount(): void {
         this.componentMounted = true;
+        window.__structLog?.logger.setDeliveryAuthorityProvider(() => this._currentViewerLogDeliveryAuthority());
         // VG-01：嵌入 console iframe 時掛上 parent postMessage 橋（unmount 對稱移除），並通知 parent listener 已就緒。
         // 嚴格 additive：非嵌入（window.parent === window）時 listener 永遠 reject、不送任何訊息，既有單機/直連行為零變更。
         window.addEventListener("message", this._onParentMessage);
@@ -706,6 +768,9 @@ export default class App extends React.Component<AppProps, AppState> {
 
     componentWillUnmount(): void {
         this.componentMounted = false;
+        this.reviewSocketEpoch += 1;
+        this.verifiedDataChannelAuthority = null;
+        window.__structLog?.logger.setDeliveryAuthorityProvider(null);
         window.removeEventListener("load", this._notifyParentViewerReady);
         this._releaseStandaloneViewerLease();
         this._clearStreamStartTimeout();
@@ -717,6 +782,7 @@ export default class App extends React.Component<AppProps, AppState> {
         this._clearA4HandoffCommandTimeout();
         this.a4HandoffUserCarrier = null;
         this.a4HandoffLeaseToken = null;
+        this.reviewSocket?.leave();
         this.reviewSocket?.disconnect();
         window.removeEventListener("message", this._onParentMessage);
     }
@@ -1212,18 +1278,71 @@ export default class App extends React.Component<AppProps, AppState> {
                 role: isSpectatorStreamMode() ? "spectator" : "primary",
                 source_client_id: reviewEnv.sourceClientId,
                 ...(reviewEnv.viewerLeaseToken ? { viewer_lease_token: reviewEnv.viewerLeaseToken } : {}),
-                ...(this.state.reviewSessionId ? { session_id: this.state.reviewSessionId } : {}),
+            },
+        };
+    }
+
+    private _currentVerifiedDataChannelAuthority(): VerifiedDataChannelAuthority | null {
+        const authority = this.verifiedDataChannelAuthority;
+        const streamConfig = this.state.latestStreamConfig;
+        if (!authority || authority.connectionGeneration !== this.reviewSocketEpoch || !streamConfig) return null;
+        if (
+            this.state.reviewSessionId !== authority.sessionId
+            || streamConfig.session_id !== authority.sessionId
+            || streamConfig.trace_id !== authority.traceId
+            || traceIdFromSearch(window.location.search) !== authority.traceId
+            || !this._harnessRouteAuthorityMatches(authority.sessionId, authority.traceId)
+        ) return null;
+        return authority;
+    }
+
+    private _harnessRouteAuthorityMatches(sessionId: string, traceId: string): boolean {
+        if (!harnessEnabled()) return true;
+        const routeSessions = new URLSearchParams(window.location.search).getAll("session");
+        return sessionId === HARNESS_SESSION_ID
+            && traceId === HARNESS_TRACE_ID
+            && routeSessions.length === 1
+            && routeSessions[0] === HARNESS_SESSION_ID
+            && traceIdFromSearch(window.location.search) === HARNESS_TRACE_ID;
+    }
+
+    private _withVerifiedDataChannelTrace(
+        message: AppStreamMessageType | StreamMessage,
+    ): AppStreamMessageType | StreamMessage | null {
+        if (!viewerToKitEventTypes.has(message.event_type) || !isRecord(message.payload)) return null;
+        const authority = this._currentVerifiedDataChannelAuthority();
+        if (!authority) return null;
+        const hasSessionId = Object.prototype.hasOwnProperty.call(message.payload, "session_id");
+        const hasTraceId = Object.prototype.hasOwnProperty.call(message.payload, "trace_id");
+        if (
+            (hasSessionId && (
+                typeof message.payload.session_id !== "string"
+                || message.payload.session_id !== authority.sessionId
+            ))
+            || (hasTraceId && (
+                typeof message.payload.trace_id !== "string"
+                || message.payload.trace_id !== authority.traceId
+            ))
+        ) return null;
+        return {
+            ...message,
+            payload: {
+                ...message.payload,
+                ...(hasSessionId ? {} : { session_id: authority.sessionId }),
+                ...(hasTraceId ? {} : { trace_id: authority.traceId }),
             },
         };
     }
 
     private _sendStreamMessage(message: AppStreamMessageType | StreamMessage): boolean {
-        const blockReason = this._runtimeMutatorBlockReason(message.event_type);
+        const tracedMessage = this._withVerifiedDataChannelTrace(message);
+        if (!tracedMessage) return false;
+        const blockReason = this._runtimeMutatorBlockReason(tracedMessage.event_type);
         if (blockReason) {
-            this._appendReviewEvent(`略過 ${message.event_type}：${blockReason}`);
+            this._appendReviewEvent(`略過 ${tracedMessage.event_type}：${blockReason}`);
             return false;
         }
-        const outgoing = this._withRuntimeAuthority(message);
+        const outgoing = this._withRuntimeAuthority(tracedMessage);
         let runtimeRequestId = "";
         if (isRuntimeMutator(outgoing.event_type) && isRecord(outgoing.payload)) {
             const requestId = getPayloadString(outgoing.payload, "request_id");
@@ -1781,6 +1900,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private async _ensurePrimaryViewerLease(): Promise<string | null> {
+        if (isSpectatorStreamMode()) return null;
         if (this.standaloneViewerLease?.lease_token) {
             if (this._standaloneViewerLeaseIsFresh()) return this.standaloneViewerLease.lease_token;
             this._dropStandaloneViewerLease("primary viewer lease 已過期；正在重新取得");
@@ -1848,6 +1968,35 @@ export default class App extends React.Component<AppProps, AppState> {
 
         const lease = await this.standaloneViewerLeaseClaim;
         return lease?.lease_token ?? null;
+    }
+
+    private _currentViewerLogDeliveryAuthority(): ViewerLogDeliveryAuthority | null {
+        const reviewSessionId = this.state.reviewSessionId;
+        const leaseId = reviewEnv.sourceClientId;
+        const leaseToken = reviewEnv.viewerLeaseToken;
+        const loggerTraceId = window.__structLog?.logger.traceId;
+        const authority = this._currentVerifiedDataChannelAuthority();
+        if (
+            !reviewSessionId
+            || !leaseId
+            || !leaseToken
+            || !authority
+            || authority.sessionId !== reviewSessionId
+            || loggerTraceId !== authority.traceId
+        ) return null;
+        if (this.standaloneViewerLease && !this._standaloneViewerLeaseIsFresh()) return null;
+        return { reviewSessionId, leaseId, leaseToken };
+    }
+
+    private async _ensureViewerLogDeliveryAuthority(): Promise<ViewerLogDeliveryAuthority | null> {
+        const current = this._currentViewerLogDeliveryAuthority();
+        if (current) return current;
+        // Structured-log delivery never upgrades a spectator into a primary.
+        // A supplied active spectator lease may be reused; otherwise the batch
+        // is retained and no primary claim request is sent.
+        if (isSpectatorStreamMode()) return null;
+        await this._ensurePrimaryViewerLease();
+        return this._currentViewerLogDeliveryAuthority();
     }
 
     private _standaloneViewerLeaseIsFresh(): boolean {
@@ -2065,20 +2214,110 @@ export default class App extends React.Component<AppProps, AppState> {
         };
     }
 
-    private _connectReviewSocket(sessionId: string): void {
+    private _connectReviewSocket(sessionId: string, traceId: string): void {
         if (isBlockedLifecycle(this.state.reviewLifecycleStatus)) {
             this._appendReviewEvent(`略過 Socket.IO join：session lifecycle=${this.state.reviewLifecycleStatus}`);
             return;
         }
+        this.reviewSocketEpoch += 1;
+        const socketEpoch = this.reviewSocketEpoch;
+        this.verifiedDataChannelAuthority = null;
         this.reviewSocket?.disconnect();
-        this.reviewSocket = connectReviewSocket(reviewEnv.coordinatorSocketUrl, {
-            onStatus: (status) => this._appendReviewEvent(`Socket.IO ${status === "connected" ? "已連線" : "已中斷"}`),
+        this.reviewSocket = null;
+
+        const routeTraceId = traceIdFromSearch(window.location.search);
+        const streamConfig = this.state.latestStreamConfig;
+        if (
+            !this.componentMounted
+            || !routeTraceId
+            || routeTraceId !== traceId
+            || streamConfig?.session_id !== sessionId
+            || streamConfig.trace_id !== traceId
+            || !this._harnessRouteAuthorityMatches(sessionId, traceId)
+        ) {
+            this._appendReviewEvent("略過 Socket.IO join：session trace authority mismatch");
+            return;
+        }
+
+        const candidate: ReviewSocketCandidate = {
+            sessionId,
+            userId: reviewEnv.defaultUserId,
+            displayName: reviewEnv.defaultDisplayName,
+            traceId,
+        };
+        const socketHandlers: ReviewSocketHandlers = {
+            onStatus: (status) => {
+                if (socketEpoch !== this.reviewSocketEpoch) return;
+                this.verifiedDataChannelAuthority = null;
+                this._appendReviewEvent(`Socket.IO ${status === "connected" ? "已連線，等待 trace 驗證" : "已中斷"}`);
+            },
+            onAck: (event, acknowledgedCandidate, ack) => {
+                this._handleReviewSocketAck(socketEpoch, event, acknowledgedCandidate, ack);
+            },
             onEvent: (event, payload) => {
+                if (
+                    event === "presenceUpdated"
+                    && (
+                        !isRecord(payload)
+                        || !this.verifiedDataChannelAuthority
+                        || this.verifiedDataChannelAuthority.connectionGeneration !== socketEpoch
+                        || payload.session_id !== this.verifiedDataChannelAuthority.sessionId
+                        || payload.trace_id !== this.verifiedDataChannelAuthority.traceId
+                    )
+                ) return;
                 this._appendReviewEvent(`收到 Socket.IO 事件：${event}`);
                 this._appendDemoIncoming(`socket:${event}`, payload);
             },
-        });
-        this.reviewSocket.join(sessionId, reviewEnv.defaultUserId, reviewEnv.defaultDisplayName);
+        };
+        this.reviewSocket = harnessEnabled()
+            ? connectHarnessReviewSocket(socketHandlers, HARNESS_REVIEW_AUTHORITY)
+            : connectReviewSocket(reviewEnv.coordinatorSocketUrl, socketHandlers);
+        this.reviewSocket.join(candidate);
+    }
+
+    private _handleReviewSocketAck(
+        socketEpoch: number,
+        event: ReviewSocketEvent,
+        candidate: ReviewSocketCandidate,
+        ack: ReviewSocketAck,
+    ): void {
+        if (socketEpoch !== this.reviewSocketEpoch || !this.componentMounted) return;
+        if (
+            !ack.ok
+            || ack.trace_id !== candidate.traceId
+            || (ack.session_id !== undefined && ack.session_id !== candidate.sessionId)
+            || candidate.sessionId !== this.state.reviewSessionId
+            || candidate.traceId !== this.state.latestStreamConfig?.trace_id
+            || candidate.traceId !== traceIdFromSearch(window.location.search)
+            || !this._harnessRouteAuthorityMatches(candidate.sessionId, candidate.traceId)
+        ) {
+            this.verifiedDataChannelAuthority = null;
+            this._appendReviewEvent(`Socket.IO ${event} trace 驗證失敗`);
+            return;
+        }
+        if (event === "leaveSession") {
+            this.verifiedDataChannelAuthority = null;
+            return;
+        }
+        if (event === "heartbeat") {
+            const authority = this.verifiedDataChannelAuthority;
+            if (
+                !authority
+                || authority.connectionGeneration !== socketEpoch
+                || authority.sessionId !== candidate.sessionId
+                || authority.traceId !== ack.trace_id
+            ) this.verifiedDataChannelAuthority = null;
+            return;
+        }
+
+        this.verifiedDataChannelAuthority = {
+            sessionId: candidate.sessionId,
+            traceId: ack.trace_id,
+            connectionGeneration: socketEpoch,
+        };
+        window.__structLog?.logger.setTraceId(ack.trace_id);
+        this._appendReviewEvent(`Socket.IO trace 已驗證：${ack.trace_id}`);
+        if (this.state.webrtcLifecycleStatus === "started") this._queryLoadingState();
     }
 
     private _getReadyLoadingText(): string {
@@ -2182,6 +2421,10 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _bootstrapHarnessSession(): void {
+        this.verifiedDataChannelAuthority = null;
+        this.reviewSocketEpoch += 1;
+        this.reviewSocket?.disconnect();
+        this.reviewSocket = null;
         const stageUrl = HARNESS_STAGE_URL;
         const harnessAsset: USDAssetType = { name: "Sample Building (harness)", url: stageUrl };
         // CH-F：harness 提供多個 ready derived USDC artifact，供 BindingComposer 選 1..N / 指定 primary / 調 load_order。
@@ -2191,7 +2434,8 @@ export default class App extends React.Component<AppProps, AppState> {
             { binding_id: "b_h_mep", artifact_group_id: "ag_harness", model_version_id: "version_harness_demo", artifact_id: "artifact_h_mep", display_name: "MEP Overlay", source_ifc_filename: "sample-building.ifc", artifact_role: "derived", url: "harness://stage/World/mep.usdc", mapping_url: null, load_order: 2, routing_policy: "same_instance", ready_status: "ready" },
         ];
         const streamConfig: ReviewStreamConfig = {
-            session_id: "review_session_harness0001",
+            session_id: HARNESS_SESSION_ID,
+            trace_id: HARNESS_TRACE_ID,
             lifecycle_status: "active",
             source: "local_fixed",
             webrtc: { signalingServer: "127.0.0.1", signalingPort: 49100, mediaServer: "127.0.0.1", mediaPort: null },
@@ -2217,6 +2461,14 @@ export default class App extends React.Component<AppProps, AppState> {
             stageLoadStatus: "pending",
             showUI: true,
             reviewEvents: [...this.state.reviewEvents, "harness session 已注入（deterministic）"],
+        }, () => {
+            if (
+                !this.componentMounted
+                || !harnessEnabled()
+                || this.state.latestStreamConfig?.session_id !== HARNESS_SESSION_ID
+                || this.state.latestStreamConfig.trace_id !== HARNESS_TRACE_ID
+            ) return;
+            this._connectReviewSocket(HARNESS_SESSION_ID, HARNESS_TRACE_ID);
         });
     }
 
@@ -2331,7 +2583,6 @@ export default class App extends React.Component<AppProps, AppState> {
                 ?? this.state.selectedUSDAsset;
             const shouldShowReviewUI = mergedUSDAssets.length > 0 || artifacts.length > 0 || streamConfig.artifact_bindings.length > 0;
 
-            this._connectReviewSocket(sessionId);
             if (reviewRequest && createdSession) {
                 void this.bimControlClient.patchReviewSessionRequest(reviewRequest.review_request_id, {
                     status: streamConfig.lifecycle_status,
@@ -2383,6 +2634,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     endpointEvent,
                 ],
             }, () => {
+                this._connectReviewSocket(sessionId, streamConfig.trace_id);
                 this._scheduleStreamStartTimeout();
                 if (this.state.isKitReady && this.state.selectedUSDAsset && streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
                     this._openSelectedAsset();
@@ -3028,11 +3280,12 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _connectDemoSocket(): void {
-        if (!this.state.reviewSessionId) {
+        const traceId = this.state.latestStreamConfig?.trace_id;
+        if (!this.state.reviewSessionId || !traceId) {
             this._appendReviewEvent("略過 Socket.IO 連線：尚未建立 review session");
             return;
         }
-        this._connectReviewSocket(this.state.reviewSessionId);
+        this._connectReviewSocket(this.state.reviewSessionId, traceId);
     }
 
     /**
@@ -3149,7 +3402,12 @@ export default class App extends React.Component<AppProps, AppState> {
                 // Keep the original event shape so the fallback logger below can surface it.
             }
         }
-        const payload = isRecord(event.payload) ? event.payload : {};
+        if (!event.event_type || !kitToViewerEventTypes.has(event.event_type) || !isRecord(event.payload)) {
+            return;
+        }
+        const authority = this._currentVerifiedDataChannelAuthority();
+        if (!authority || event.payload.trace_id !== authority.traceId) return;
+        const payload = event.payload;
 
         if (event.event_type === "commandRejected") {
             const parsed = parseRuntimeCommandRejection(payload);
@@ -4138,6 +4396,15 @@ export default class App extends React.Component<AppProps, AppState> {
                         </>
                     );
                 })()}
+                <StructuredLogDiagnostics
+                    search={window.location.search}
+                    logger={window.__structLog?.logger ?? null}
+                    reviewSessionId={this.state.reviewSessionId}
+                    conversionJobId={this.state.latestStreamConfig?.model.conversion_job_id ?? null}
+                    kitInstanceId={this.state.activeStreamEndpoint.kitInstanceId || null}
+                    ensureViewerLogAuthority={() => this._ensureViewerLogDeliveryAuthority()}
+                    closeReviewSession={(sessionId) => this.coordinatorClient.closeReviewSession(sessionId)}
+                />
             </div>
             );
         }

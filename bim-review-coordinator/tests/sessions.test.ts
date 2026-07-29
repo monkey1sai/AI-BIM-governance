@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import type { CoordinatorConfig } from "../src/config.js";
 import { EventLog } from "../src/services/eventLog.js";
+import type { ExternalIfcReadyEvent } from "../src/types.js";
 
 let active: CoordinatorApp | null = null;
 let activeRoot: string | null = null;
@@ -34,6 +35,38 @@ function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
     ...overrides,
   });
   return active;
+}
+
+function linkIfcReadyRoot(app: CoordinatorApp, sessionId: string, suffix: string): string {
+  const event: ExternalIfcReadyEvent = {
+    event: "ifc_ready",
+    tenant_id: "tenant_trace",
+    project_id: "project_trace",
+    external_model_version_id: `version_${suffix}`,
+    external_conversion_task_id: null,
+    source_ifc: {
+      ref: `http://127.0.0.1:1/${suffix}.ifc`,
+      etag: `etag_${suffix}`,
+    },
+    callback_url: null,
+  };
+  const job = app.externalIfcReadyStore.create(event, {
+    correlationId: `corr_${suffix}`,
+    idempotencyKey: `idem_${suffix}`,
+    tenantId: event.tenant_id,
+    projectId: event.project_id,
+    externalModelVersionId: event.external_model_version_id,
+  });
+  app.externalIfcReadyStore.recordReviewSession(job.ifc_ready_job_id, sessionId);
+  return job.ifc_ready_job_id;
+}
+
+function removePersistedSessionTrace(sessionId: string): string {
+  const file = path.join(activeRoot as string, "sessions", `${sessionId}.json`);
+  const payload = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+  delete payload.trace_id;
+  fs.writeFileSync(file, JSON.stringify(payload, null, 2), "utf8");
+  return file;
 }
 
 function multiEndpointOverrides(): Partial<CoordinatorConfig> {
@@ -188,10 +221,13 @@ describe("bim-review-coordinator", () => {
         project_id: "project_demo_001",
         model_version_id: "version_demo_001",
         created_by: "dev_user_001",
+        trace_id: "ifcready_attacker_supplied",
       });
 
     expect(created.status).toBe(200);
     expect(created.body.session_id).toMatch(/^review_session_/);
+    expect(created.body.trace_id).toBe(`rev_${created.body.session_id}`);
+    expect(created.body.trace_id).not.toBe("ifcready_attacker_supplied");
     expect(created.body.kit_instance.signaling_port).toBe(49100);
 
     const config = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/stream-config`);
@@ -199,6 +235,7 @@ describe("bim-review-coordinator", () => {
     expect(config.body.webrtc.signalingPort).toBe(49100);
     expect(config.body.model.status).toBe("missing");
     expect(config.body.lifecycle_status).toBe("active");
+    expect(config.body.trace_id).toBe(created.body.trace_id);
     expect(Array.isArray(config.body.artifact_bindings)).toBe(true);
     expect(Array.isArray(config.body.kit_instance_bindings)).toBe(true);
     // Additive pass-through: when not provided, stream_config still exposes the field as null.
@@ -611,6 +648,269 @@ describe("bim-review-coordinator", () => {
     });
     expect(unknownJoin).toEqual({ ok: false, error: "Review session not found." });
     expect(fs.existsSync(path.join(activeRoot as string, "events", "review_session_missing.jsonl"))).toBe(false);
+  });
+
+  it("binds join, heartbeat, and leave to one exact canonical trace before side effects", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_trace_001",
+        model_version_id: "version_trace_001",
+        created_by: "dev_user_001",
+      });
+    const sessionId = created.body.session_id as string;
+    const traceId = created.body.trace_id as string;
+    const client = await connectReviewSocket(await listen(app));
+    const serverUserId = `socket:${client.id}`;
+    const presence: unknown[] = [];
+    client.on("presenceUpdated", (payload) => presence.push(payload));
+
+    const missing = await emitWithAck<Record<string, unknown>>(client, "joinSession", {
+      session_id: sessionId,
+      user_id: "viewer_trace_001",
+    });
+    expect(missing).toEqual({ ok: false, error: "Missing trace_id" });
+
+    const mismatched = await emitWithAck<Record<string, unknown>>(client, "joinSession", {
+      session_id: sessionId,
+      trace_id: "ifcready_other_root",
+      user_id: "viewer_trace_001",
+    });
+    expect(mismatched).toEqual({ ok: false, error: "trace_id does not match session." });
+    expect(app.store.get(sessionId)?.participants).toEqual([]);
+    expect(app.io.of("/review").adapter.rooms.get(sessionId)).toBeUndefined();
+    expect(presence).toEqual([]);
+    expect(mismatched).not.toHaveProperty("trace_id");
+
+    const joinedPresence = new Promise<Record<string, unknown>>((resolve) => {
+      client.once("presenceUpdated", resolve);
+    });
+    const joined = await emitWithAck<Record<string, unknown>>(client, "joinSession", {
+      session_id: sessionId,
+      trace_id: traceId,
+      user_id: "viewer_trace_001",
+      display_name: "Trace Viewer",
+    });
+    expect(joined).toMatchObject({ ok: true, trace_id: traceId });
+    expect(await joinedPresence).toMatchObject({ session_id: sessionId, trace_id: traceId });
+    expect(app.store.get(sessionId)?.participants.map((item) => item.user_id)).toEqual([serverUserId]);
+    expect(app.io.of("/review").adapter.rooms.get(sessionId)?.has(client.id as string)).toBe(true);
+    const sessionFile = path.join(activeRoot as string, "sessions", `${sessionId}.json`);
+    const joinedSessionJson = fs.readFileSync(sessionFile, "utf8");
+    const joinedPresenceCount = presence.length;
+
+    const rejectedHeartbeat = await emitWithAck<Record<string, unknown>>(client, "heartbeat", {
+      session_id: sessionId,
+      trace_id: "ifcready_other_root",
+      user_id: "viewer_trace_001",
+    });
+    expect(rejectedHeartbeat).toEqual({ ok: false, error: "trace_id does not match session." });
+    expect(rejectedHeartbeat).not.toHaveProperty("trace_id");
+    expect(app.store.get(sessionId)?.participants.map((item) => item.user_id)).toEqual([serverUserId]);
+    expect(fs.readFileSync(sessionFile, "utf8")).toBe(joinedSessionJson);
+    expect(presence).toHaveLength(joinedPresenceCount);
+
+    const rejectedLeave = await emitWithAck<Record<string, unknown>>(client, "leaveSession", {
+      session_id: sessionId,
+      trace_id: "ifcready_other_root",
+      user_id: "viewer_trace_001",
+    });
+    expect(rejectedLeave).toEqual({ ok: false, error: "trace_id does not match session." });
+    expect(rejectedLeave).not.toHaveProperty("trace_id");
+    expect(app.store.get(sessionId)?.participants.map((item) => item.user_id)).toEqual([serverUserId]);
+    expect(app.io.of("/review").adapter.rooms.get(sessionId)?.has(client.id as string)).toBe(true);
+    expect(fs.readFileSync(sessionFile, "utf8")).toBe(joinedSessionJson);
+    expect(presence).toHaveLength(joinedPresenceCount);
+
+    const heartbeat = await emitWithAck<Record<string, unknown>>(client, "heartbeat", {
+      session_id: sessionId,
+      trace_id: traceId,
+      user_id: "viewer_trace_001",
+    });
+    expect(heartbeat).toMatchObject({ ok: true, session_id: sessionId, trace_id: traceId });
+
+    const leftPresence = new Promise<Record<string, unknown>>((resolve) => {
+      client.once("presenceUpdated", resolve);
+    });
+    const left = await emitWithAck<Record<string, unknown>>(client, "leaveSession", {
+      session_id: sessionId,
+      trace_id: traceId,
+      user_id: "viewer_trace_001",
+    });
+    expect(left).toEqual({ ok: true, trace_id: traceId });
+    expect(await leftPresence).toMatchObject({ session_id: sessionId, trace_id: traceId });
+    expect(app.store.get(sessionId)?.participants).toEqual([]);
+    expect(app.io.of("/review").adapter.rooms.get(sessionId)).toBeUndefined();
+  });
+
+  it("binds presence identity to each socket and ignores spoofed join/leave user_id values", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "project_socket_identity", model_version_id: "version_socket_identity" });
+    const sessionId = created.body.session_id as string;
+    const traceId = created.body.trace_id as string;
+    const url = await listen(app);
+    const first = await connectReviewSocket(url);
+    const second = await connectReviewSocket(url);
+    const firstUserId = `socket:${first.id}`;
+    const secondUserId = `socket:${second.id}`;
+
+    const firstJoin = await emitWithAck<Record<string, unknown>>(first, "joinSession", {
+      session_id: sessionId,
+      trace_id: traceId,
+      user_id: "shared_victim_id",
+      display_name: "First",
+    });
+    const secondJoin = await emitWithAck<Record<string, unknown>>(second, "joinSession", {
+      session_id: sessionId,
+      trace_id: traceId,
+      user_id: "shared_victim_id",
+      display_name: "Second",
+    });
+    expect(firstJoin).toMatchObject({ ok: true, trace_id: traceId });
+    expect(secondJoin).toMatchObject({ ok: true, trace_id: traceId });
+    expect(app.store.get(sessionId)?.participants.map((item) => item.user_id).sort())
+      .toEqual([firstUserId, secondUserId].sort());
+
+    const spoofedLeave = await emitWithAck<Record<string, unknown>>(second, "leaveSession", {
+      session_id: sessionId,
+      trace_id: traceId,
+      user_id: firstUserId,
+    });
+    expect(spoofedLeave).toEqual({ ok: true, trace_id: traceId });
+    expect(app.store.get(sessionId)?.participants.map((item) => item.user_id)).toEqual([firstUserId]);
+  });
+
+  it("does not backfill a legacy linked session until an exact candidate succeeds", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "project_linked", model_version_id: "version_linked", created_by: "test" });
+    const sessionId = created.body.session_id as string;
+    const sessionFile = removePersistedSessionTrace(sessionId);
+    const traceId = linkIfcReadyRoot(app, sessionId, "linked_single");
+    const originalSessionJson = fs.readFileSync(sessionFile, "utf8");
+    const client = await connectReviewSocket(await listen(app));
+    const presence: unknown[] = [];
+    client.on("presenceUpdated", (payload) => presence.push(payload));
+
+    const rejected = await emitWithAck<Record<string, unknown>>(client, "joinSession", {
+      session_id: sessionId,
+      trace_id: "ifcready_other_root",
+      user_id: "viewer_linked",
+    });
+    expect(rejected).toEqual({ ok: false, error: "trace_id does not match session." });
+    expect(rejected).not.toHaveProperty("trace_id");
+    expect(fs.readFileSync(sessionFile, "utf8")).toBe(originalSessionJson);
+    expect(app.store.get(sessionId)?.trace_id).toBeUndefined();
+    expect(app.store.get(sessionId)?.participants).toEqual([]);
+    expect(app.io.of("/review").adapter.rooms.get(sessionId)).toBeUndefined();
+    expect(presence).toEqual([]);
+
+    const presencePromise = new Promise<Record<string, unknown>>((resolve) => {
+      client.once("presenceUpdated", resolve);
+    });
+    const accepted = await emitWithAck<Record<string, unknown>>(client, "joinSession", {
+      session_id: sessionId,
+      trace_id: traceId,
+      user_id: "viewer_linked",
+    });
+    expect(accepted).toMatchObject({ ok: true, trace_id: traceId });
+    expect(await presencePromise).toMatchObject({ session_id: sessionId, trace_id: traceId });
+    expect(app.store.get(sessionId)?.trace_id).toBe(traceId);
+  });
+
+  it("does not backfill a legacy trace for exact heartbeat or leave before socket membership", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "project_unjoined", model_version_id: "version_unjoined", created_by: "test" });
+    const sessionId = created.body.session_id as string;
+    const sessionFile = removePersistedSessionTrace(sessionId);
+    const traceId = linkIfcReadyRoot(app, sessionId, "unjoined_exact");
+    const originalSessionJson = fs.readFileSync(sessionFile, "utf8");
+    const client = await connectReviewSocket(await listen(app));
+
+    const heartbeat = await emitWithAck<Record<string, unknown>>(client, "heartbeat", {
+      session_id: sessionId,
+      trace_id: traceId,
+    });
+    expect(heartbeat).toEqual({ ok: false, error: "Socket is not joined to this review session." });
+
+    const leave = await emitWithAck<Record<string, unknown>>(client, "leaveSession", {
+      session_id: sessionId,
+      trace_id: traceId,
+    });
+    expect(leave).toEqual({ ok: false, error: "Socket is not joined to this review session." });
+    expect(fs.readFileSync(sessionFile, "utf8")).toBe(originalSessionJson);
+    expect(app.store.get(sessionId)?.trace_id).toBeUndefined();
+    expect(app.store.get(sessionId)?.participants).toEqual([]);
+    expect(app.io.of("/review").adapter.rooms.get(sessionId)).toBeUndefined();
+  });
+
+  it("does not backfill a second legacy session when the socket is already joined elsewhere", async () => {
+    const app = makeApp();
+    const first = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "project_first", model_version_id: "version_first", created_by: "test" });
+    const second = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "project_second", model_version_id: "version_second", created_by: "test" });
+    const firstSessionId = first.body.session_id as string;
+    const secondSessionId = second.body.session_id as string;
+    removePersistedSessionTrace(firstSessionId);
+    const secondSessionFile = removePersistedSessionTrace(secondSessionId);
+    const firstTraceId = linkIfcReadyRoot(app, firstSessionId, "first_exact");
+    const secondTraceId = linkIfcReadyRoot(app, secondSessionId, "second_exact");
+    const originalSecondSessionJson = fs.readFileSync(secondSessionFile, "utf8");
+    const client = await connectReviewSocket(await listen(app));
+
+    const joined = await emitWithAck<Record<string, unknown>>(client, "joinSession", {
+      session_id: firstSessionId,
+      trace_id: firstTraceId,
+    });
+    expect(joined).toMatchObject({ ok: true, trace_id: firstTraceId });
+
+    const rejected = await emitWithAck<Record<string, unknown>>(client, "joinSession", {
+      session_id: secondSessionId,
+      trace_id: secondTraceId,
+    });
+    expect(rejected).toEqual({ ok: false, error: "Socket is already joined to another review session." });
+    expect(fs.readFileSync(secondSessionFile, "utf8")).toBe(originalSecondSessionJson);
+    expect(app.store.get(secondSessionId)?.trace_id).toBeUndefined();
+    expect(app.store.get(secondSessionId)?.participants).toEqual([]);
+    expect(app.io.of("/review").adapter.rooms.get(secondSessionId)).toBeUndefined();
+  });
+
+  it("rejects ambiguous legacy linked roots with zero socket or session side effects", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "project_ambiguous", model_version_id: "version_ambiguous", created_by: "test" });
+    const sessionId = created.body.session_id as string;
+    const sessionFile = removePersistedSessionTrace(sessionId);
+    const firstTraceId = linkIfcReadyRoot(app, sessionId, "ambiguous_a");
+    linkIfcReadyRoot(app, sessionId, "ambiguous_b");
+    const originalSessionJson = fs.readFileSync(sessionFile, "utf8");
+    const client = await connectReviewSocket(await listen(app));
+    const presence: unknown[] = [];
+    client.on("presenceUpdated", (payload) => presence.push(payload));
+
+    const rejected = await emitWithAck<Record<string, unknown>>(client, "joinSession", {
+      session_id: sessionId,
+      trace_id: firstTraceId,
+      user_id: "viewer_ambiguous",
+    });
+
+    expect(rejected).toEqual({ ok: false, error: "Session trace authority unavailable." });
+    expect(rejected).not.toHaveProperty("trace_id");
+    expect(fs.readFileSync(sessionFile, "utf8")).toBe(originalSessionJson);
+    expect(app.store.get(sessionId)?.trace_id).toBeUndefined();
+    expect(app.store.get(sessionId)?.participants).toEqual([]);
+    expect(app.io.of("/review").adapter.rooms.get(sessionId)).toBeUndefined();
+    expect(presence).toEqual([]);
   });
 
   it("rejects socket joins for closed sessions", async () => {

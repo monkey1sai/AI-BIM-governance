@@ -354,7 +354,10 @@ def test_adapter_builds_powershell_command_and_confirms_usdc(tmp_path: Path, mon
     monkeypatch.setattr("subprocess.run", fake_run)
 
     result = adapter.convert(
-        job={"conversion_job_id": "stream_conv_real"},
+        job={
+            "conversion_job_id": "stream_conv_real",
+            "trace_id": "ifcready_1779687625000_064c6813",
+        },
         ifc_ready_event=ifc_ready_payload(),
         output_dir=tmp_path / "out",
     )
@@ -367,6 +370,8 @@ def test_adapter_builds_powershell_command_and_confirms_usdc(tmp_path: Path, mon
     assert cmd[cmd.index("-OutputName") + 1] == "model.usdc"
     assert cmd[cmd.index("-TimeoutSeconds") + 1] == "42"
     assert "-Force" in cmd
+    assert cmd.count("-TraceId") == 1
+    assert cmd[cmd.index("-TraceId") + 1] == "ifcready_1779687625000_064c6813"
     assert captured["kwargs"]["shell"] is False
     assert captured["kwargs"]["cwd"] == str(repo_root)
     assert Path(result["model_path"]).name == "model.usdc"
@@ -1065,7 +1070,7 @@ def test_adapter_falls_back_when_hoops_cannot_load_parseable_ifc(tmp_path: Path,
         work_dir=repo_root,
     )
 
-    def fake_primary_failure(*, ifc_path: Path, output_dir: Path) -> None:
+    def fake_primary_failure(*, ifc_path: Path, output_dir: Path, trace_id: str) -> None:
         raise ConversionAuthorityError(
             "converter_failed",
             "Failed to import model C:/source.ifc. Error Code -10007 (A3D_LOAD_CANNOT_LOAD_MODEL)",
@@ -1114,7 +1119,7 @@ def test_adapter_does_not_fallback_for_non_import_converter_failure(tmp_path: Pa
         work_dir=repo_root,
     )
 
-    def fake_primary_failure(*, ifc_path: Path, output_dir: Path) -> None:
+    def fake_primary_failure(*, ifc_path: Path, output_dir: Path, trace_id: str) -> None:
         raise ConversionAuthorityError("converter_failed", "license checkout failed")
 
     def fallback_must_not_run(**_kwargs) -> None:
@@ -1158,7 +1163,7 @@ def test_adapter_rejects_placeholder_written_by_fallback(tmp_path: Path, monkeyp
         work_dir=repo_root,
     )
 
-    def fake_primary_failure(*, ifc_path: Path, output_dir: Path) -> None:
+    def fake_primary_failure(*, ifc_path: Path, output_dir: Path, trace_id: str) -> None:
         raise ConversionAuthorityError(
             "converter_failed",
             "Failed to import model C:/source.ifc. Error Code -10007 (A3D_LOAD_CANNOT_LOAD_MODEL)",
@@ -2569,7 +2574,7 @@ def test_adapter_convert_rejects_placeholder_marker_beyond_prefix(tmp_path: Path
     合法 bytes)→ 仍 raise placeholder_usdc(證明 adapter 掃全檔非僅前綴)。"""
     adapter = _adapter_with_ps1(tmp_path)
 
-    def fake_run_ps1(*, ifc_path: Path, output_dir: Path) -> None:
+    def fake_run_ps1(*, ifc_path: Path, output_dir: Path, trace_id: str) -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
         # 前 5KB 合法,placeholder 標記落在 4096 之後
         (output_dir / "model.usdc").write_bytes(

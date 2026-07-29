@@ -2,6 +2,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 
 def install_stage_management_stubs() -> None:
     class DummyItem:
@@ -88,7 +90,7 @@ MODULE_DIR = (
 sys.path.insert(0, str(MODULE_DIR))
 
 import stage_management  # noqa: E402
-from runtime_authority import AuthorityDecision  # noqa: E402
+from runtime_authority import AuthorityDecision, DataChannelTraceContext  # noqa: E402
 from stage_management import StageManager  # noqa: E402
 
 
@@ -96,17 +98,32 @@ class FakeAuthority:
     def __init__(self, authorized):
         self.authorized = authorized
         self.calls = []
+        self.verify_calls = []
+
+    def verify_datachannel_trace(self, event_type, payload):
+        self.verify_calls.append((event_type, payload))
+        if (
+            payload.get("session_id") == "review_session_x"
+            and payload.get("trace_id") == "rev_review_session_x"
+        ):
+            return "rev_review_session_x"
+        return None
 
     def authorize(self, event_type, payload):
         self.calls.append((event_type, payload))
         if self.authorized:
-            return AuthorityDecision(True, request_id=payload.get("request_id"))
+            return AuthorityDecision(
+                True,
+                request_id=payload.get("request_id"),
+                trace_id="rev_review_session_x",
+            )
         return AuthorityDecision(
             False,
             reason="lease_invalid",
             request_id=payload.get("request_id"),
             retryable=False,
             detail_code="lease_released",
+            trace_id="rev_review_session_x",
         )
 
 
@@ -140,6 +157,9 @@ class DummySelection:
     def set_selected_prim_paths(self, paths, expand):
         self.set_calls.append((list(paths), expand))
 
+    def get_selected_prim_paths(self):
+        return ["/World/Wall_001"]
+
 
 class DummyUsdContext:
     def __init__(self):
@@ -160,6 +180,11 @@ class DummyUsdContext:
 def make_manager(authority):
     manager = StageManager.__new__(StageManager)
     manager._runtime_authority = authority
+    manager._trace_context = DataChannelTraceContext()
+    assert manager._trace_context.bind_active_stage(
+        "review_session_x",
+        "rev_review_session_x",
+    )
     manager._is_external_update = False
     manager._camera_attrs = {}
     manager._subscriptions = []
@@ -174,6 +199,7 @@ def base_payload(request_id="req-1"):
     return {
         "request_id": request_id,
         "session_id": "review_session_x",
+        "trace_id": "rev_review_session_x",
         "source_client_id": "viewer_lease_x",
         "viewer_lease_token": "viewer-secret-sentinel",
     }
@@ -214,6 +240,7 @@ def test_every_stage_mutator_denial_emits_only_command_rejected_before_mutation(
         assert [name for name, _payload in dispatched] == ["commandRejected"]
         assert dispatched[0][1]["rejected_event_type"] == event_type
         assert dispatched[0][1]["runtime_state"] == "unchanged"
+        assert dispatched[0][1]["trace_id"] == "rev_review_session_x"
         assert "viewer-secret-sentinel" not in str(dispatched[0][1])
 
     assert [event_type for event_type, _payload in authority.calls] == [case[1] for case in cases]
@@ -266,6 +293,9 @@ def test_allowed_mutators_change_state_and_echo_request_id_on_existing_result(mo
         "req-clear",
         "req-focus",
     ]
+    assert {payload["trace_id"] for _name, payload in result_events} == {
+        "rev_review_session_x"
+    }
     assert context.pickable_calls == [("/World/Wall_001", True)]
     assert context.selection.set_calls
     assert len(authority.calls) == 6
@@ -287,3 +317,104 @@ def test_compose_stage_is_explicitly_rejected_and_never_emits_legacy_result(monk
 
     assert [name for name, _payload in dispatched] == ["commandRejected"]
     assert authority.calls[0][0] == "composeStageRequest"
+
+
+@pytest.mark.parametrize(
+    "handler_name,event_type,fields",
+    [
+        ("_on_get_children", "getChildrenRequest", {"prim_path": "/World", "filters": []}),
+        ("_on_select_prims", "selectPrimsRequest", {"paths": []}),
+        ("_on_make_pickable", "makePrimsPickable", {"paths": []}),
+        ("_on_reset_camera", "resetStage", {}),
+        ("_on_highlight_prims", "highlightPrimsRequest", {"items": []}),
+        ("_on_clear_highlight", "clearHighlightRequest", {}),
+        ("_on_focus_prim", "focusPrimRequest", {"prim_path": "/World"}),
+        ("_on_unsupported_mutator", "composeStageRequest", {}),
+    ],
+)
+@pytest.mark.parametrize("trace_id", [None, "rev_review_session_other"])
+def test_all_stage_inbound_handlers_drop_unverified_trace_before_read_or_mutation(
+    monkeypatch,
+    handler_name,
+    event_type,
+    fields,
+    trace_id,
+):
+    dispatched = []
+    authority = FakeAuthority(True)
+    manager = make_manager(authority)
+    monkeypatch.setattr(
+        stage_management,
+        "get_eventdispatcher",
+        lambda: types.SimpleNamespace(
+            dispatch_event=lambda name, payload: dispatched.append((name, payload))
+        ),
+    )
+    monkeypatch.setattr(
+        stage_management.omni.usd,
+        "get_context",
+        lambda: (_ for _ in ()).throw(AssertionError("stage read before trace verification")),
+    )
+    monkeypatch.setattr(
+        manager,
+        "get_children",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("tree read before trace verification")),
+    )
+    payload = {**base_payload(), **fields}
+    if trace_id is None:
+        payload.pop("trace_id")
+    else:
+        payload["trace_id"] = trace_id
+
+    getattr(manager, handler_name)(event(payload))
+
+    assert [call[0] for call in authority.verify_calls] == [event_type]
+    assert authority.calls == []
+    assert dispatched == []
+
+
+def test_get_children_response_and_unsolicited_selection_use_verified_active_trace(monkeypatch):
+    dispatched = []
+    context = DummyUsdContext()
+    authority = FakeAuthority(True)
+    manager = make_manager(authority)
+    monkeypatch.setattr(
+        stage_management,
+        "get_eventdispatcher",
+        lambda: types.SimpleNamespace(
+            dispatch_event=lambda name, payload: dispatched.append((name, payload))
+        ),
+    )
+    monkeypatch.setattr(stage_management.omni.usd, "get_context", lambda: context)
+    monkeypatch.setattr(
+        manager,
+        "get_children",
+        lambda **_kwargs: [{"name": "Wall", "path": "/World/Wall"}],
+    )
+
+    manager._on_get_children(event({
+        **base_payload("req-children"),
+        "prim_path": "/World",
+        "filters": [],
+    }))
+    manager._on_stage_event_selection_changed(event({}))
+
+    assert [name for name, _payload in dispatched] == [
+        "getChildrenResponse",
+        "stageSelectionChanged",
+    ]
+    assert all(
+        payload["trace_id"] == "rev_review_session_x"
+        for _name, payload in dispatched
+    )
+    assert dispatched[0][1]["request_id"] == "req-children"
+
+    dispatched.clear()
+    manager._trace_context.clear()
+    monkeypatch.setattr(
+        stage_management.omni.usd,
+        "get_context",
+        lambda: (_ for _ in ()).throw(AssertionError("selection read without active owner")),
+    )
+    manager._on_stage_event_selection_changed(event({}))
+    assert dispatched == []

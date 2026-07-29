@@ -15,6 +15,7 @@ import {
   safeStringify,
   loadAllowList,
   _resetAllowListCacheForTest,
+  type EnvVar,
   type StructLogger,
 } from "../../src/lib/structLog.js";
 
@@ -100,17 +101,42 @@ describe("structLog adapter", () => {
     expect(v.value_or_redacted).toBe("[TYPE:type=string, len=5]");
   });
 
-  it("redactDataBeforeWrite strips secret-pattern keys at any depth", () => {
+  it("redactDataBeforeWrite handles nested auth/key, depth, cycles, and shared references", () => {
     const allow = freshAllowList();
+    const cycle: Record<string, unknown> = { visible: "cycle-visible", credential: "cycle-secret" };
+    cycle.self = cycle;
+    const shared = { visible: "shared-visible" };
+    const deep: Record<string, unknown> = {};
+    let cursor = deep;
+    for (let depth = 1; depth <= 8; depth += 1) {
+      const child: Record<string, unknown> = {};
+      cursor.child = child;
+      cursor = child;
+    }
+    cursor.beyond = { password: "depth-secret" };
     const out = redactDataBeforeWrite(
-      { password: "abc", nested: { api_key: "shh", body: { token: "tok" } } },
+      {
+        auth: "auth-secret",
+        nested: [{ key: "key-secret", password: "password-secret", api_key: "api-key-secret", token: "token-secret" }],
+        deep,
+        cycle,
+        sharedA: shared,
+        sharedB: shared,
+      },
       allow,
     ) as Record<string, unknown>;
-    expect(out.password).toBe("[REDACTED]");
-    const nested = out.nested as Record<string, unknown>;
+    expect(out.auth).toBe("[REDACTED]");
+    const nested = (out.nested as Array<Record<string, unknown>>)[0]!;
+    expect(nested.key).toBe("[REDACTED]");
+    expect(nested.password).toBe("[REDACTED]");
     expect(nested.api_key).toBe("[REDACTED]");
-    const body = nested.body as Record<string, unknown>;
-    expect(body.token).toBe("[REDACTED]");
+    expect(nested.token).toBe("[REDACTED]");
+    expect((out.cycle as Record<string, unknown>).self).toBe("[Circular]");
+    expect(out.sharedA).toEqual({ visible: "shared-visible" });
+    expect(out.sharedB).toEqual({ visible: "shared-visible" });
+    let bounded = out.deep as Record<string, unknown>;
+    for (let depth = 1; depth <= 7; depth += 1) bounded = bounded.child as Record<string, unknown>;
+    expect(bounded.child).toBe("[Truncated]");
   });
 
   it("safeStringify handles circular references without throwing", () => {
@@ -329,7 +355,7 @@ describe("structLog adapter", () => {
     expect(logger.recordsDropped()).toBe(0);
   });
 
-  it("writeRaw forwards a viewer-shaped record without re-redacting allow-listed plaintext", () => {
+  it("writeRaw preserves env structure while removing hostile values from the serialized sink", () => {
     const logger = createLogger("coordinator", {
       logRoot: tmpRoot,
       runId: "run_20260526_142010_a3f900",
@@ -340,18 +366,40 @@ describe("structLog adapter", () => {
     logger.writeRaw({
       ts: "2026-05-26T14:25:00.000Z",
       level: "info",
-      event_type: "network",
+      event_type: "env_snapshot",
       service: "viewer",
       component: "webrtcClient",
       run_id: "run_20260526_142455_d3e400",
       trace_id: "rev_20260526_1234abcd",
-      msg: "DataChannel openStageRequest sent",
-      data: { direction: "outbound", protocol: "datachannel", peer: "streaming-server", status: "openStageRequest" },
+      msg: "viewer env snapshot",
+      data: {
+        vars: [{ key: "VIEWER_PORT", source: "default", value_or_redacted: "5173", type: "string" }],
+        auth: "write-raw-auth-secret",
+        nested: [{ key: "write-raw-key-secret", token: "write-raw-token-secret" }],
+      },
     });
-    const lines = readAllLines(logger.currentFile()) as Array<{ service: string; component: string }>;
+    const lines = readAllLines(logger.currentFile()) as Array<{
+      service: string;
+      component: string;
+      event_type: string;
+      data: { vars: EnvVar[]; auth: string; nested: Array<{ key: string; token: string }> };
+    }>;
     expect(lines).toHaveLength(1);
     expect(lines[0].service).toBe("viewer");
     expect(lines[0].component).toBe("webrtcClient");
+    expect(lines[0].event_type).toBe("env_snapshot");
+    expect(lines[0].data.vars[0]).toEqual({
+      key: "VIEWER_PORT",
+      source: "default",
+      value_or_redacted: "5173",
+      type: "string",
+    });
+    expect(lines[0].data.auth).toBe("[REDACTED]");
+    expect(lines[0].data.nested[0]).toEqual({ key: "[REDACTED]", token: "[REDACTED]" });
+    const serialized = JSON.stringify(lines[0]);
+    expect(serialized).not.toContain("write-raw-auth-secret");
+    expect(serialized).not.toContain("write-raw-key-secret");
+    expect(serialized).not.toContain("write-raw-token-secret");
     expect(validate(lines[0])).toBe(true);
   });
 });

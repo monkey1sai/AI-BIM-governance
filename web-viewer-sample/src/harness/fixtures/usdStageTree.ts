@@ -1,5 +1,5 @@
 // 可決定性 harness 用的 USD stage 樹 + element mapping fixture。
-// 僅在 harness 模式（VITE_VIEWER_HARNESS=1 或 dev ?harness=1）或 Playwright route-stub 下使用，
+// 僅在明確 VITE_VIEWER_HARNESS=1 且 route ?harness=1，或 Playwright route-stub 下使用，
 // 絕不進入 production 串流路徑。形狀對齊 Window.tsx 的 USDPrimType / mapping.ts 的 ElementMappingDocument。
 
 export interface HarnessPrim {

@@ -170,26 +170,56 @@ No required keys. `data` MAY be omitted entirely or be an empty object.
 
 | Prefix | Origin | Example |
 |---|---|---|
-| `ifcready_<existing_job_id>` | Coordinator IFC-ready intake | `ifcready_1779687625000_064c6813` |
-| `rev_<existing_session_id>` | Coordinator review session (mint new; MAY carry `parent_trace_id` referencing the upstream `ifcready_*`) | `rev_20260526_1234abcd` |
-| `stream_conv_<existing_job_id>` | Streaming-server internal conversion (typically inherits from `ifcready_*`; MAY mint when conversion is invoked directly) | `stream_conv_20260525055218_115177da` |
+| existing `ifc_ready_job_id` | Coordinator IFC-ready intake; the id already starts with `ifcready_` and is the closed-loop root trace | `ifcready_1779687625000_064c6813` |
+| `rev_<existing_session_id>` | Standalone coordinator review session only, when no upstream IFC-ready trace exists | `rev_20260526_1234abcd` |
+| `stream_conv_<existing_job_id>` | Standalone streaming conversion only, when no valid inbound trace exists | `stream_conv_20260525055218_115177da` |
 | `script_<run_id>` | PowerShell script with no upstream | `script_run_20260526_142010_a3f9` |
+
+For an IFC-ready-originated flow, the existing `ifc_ready_job_id` is used byte-for-byte as the root `trace_id`; it MUST NOT be prefixed with `ifcready_` a second time. Conversion dispatch, persisted streaming jobs, conversion lifecycle records, review session/open payloads, the viewer URL, browser logger, and the supported smoke runner all retain that root. `rev_*` and `stream_conv_*` are fallback roots for standalone entrypoints, not child traces for the IFC-ready closed loop.
 
 ### 4.2 Propagation carriers
 
 | Carrier | Field |
 |---|---|
-| HTTP request (coordinator ⇄ streaming-server, coordinator ⇄ external cloud callback) | Header `X-Trace-Id` |
+| Coordinator → streaming-server conversion HTTP request | Header `X-Trace-Id` containing the existing `ifc_ready_job_id` root |
+| Coordinator review session/open response | JSON field `trace_id` |
+| Coordinator-generated viewer URL | Query field `trace_id` (one validated value only) |
 | Socket.IO events (coordinator ⇄ viewer) | Event payload field `trace_id` |
-| WebRTC DataChannel envelope (viewer ⇄ streaming-server) | Envelope field `trace_id` |
+| WebRTC DataChannel event (viewer ⇄ streaming-server) | Every event payload field `trace_id`; the vendor `ApplicationMessage` bridge serializes `{event_type,payload}` and has no independent root envelope field |
 | External cloud callback outbox payload | Payload field `trace_id` |
 | Kit subprocess invocation | CLI argument `--trace-id=<id>` |
 | PowerShell scripts (cross-process / cross-script) | Environment variable `BIM_TRACE_ID` |
 
 Receivers MUST:
-1. Read the inbound carrier if present and adopt it as the active `trace_id`.
-2. Forward the same `trace_id` to all downstream carriers.
-3. If no inbound carrier is present, derive `trace_id` from an existing entity id (e.g. `ifcready_<job_id>` when ingesting a fresh IFC-ready request) before any log record is emitted.
+1. Treat every inbound carrier as an untrusted candidate until it passes format validation and a case-exact server-owned or otherwise verified binding check.
+2. Adopt and forward the candidate only after verification; missing, mismatched, malformed, or ambiguous authority fails before any protected action.
+3. Only the documented root owner may mint a root: IFC-ready intake adopts its newly created existing `ifc_ready_job_id`; a true standalone review or conversion entrypoint may mint its documented fallback.
+
+Socket.IO uses one coordinator-owned immutable/fail-closed session resolver. The canonical trace is persisted when a session is created. A legacy session may backfill from zero or one distinct valid linked root; multiple roots, stored/linked conflict, or malformed state fails closed, and mutable `updated_at`/latest-job ordering is never authority. Viewer join/heartbeat/leave events carry only an exact-match candidate. Every successful acknowledgement and presence emission carries the canonical root; a rejected acknowledgement carries only a stable error and no canonical trace. Rejection occurs before `socket.join`, participant/room/session mutation, or presence emission. An IFC-ready-linked session retains its `ifcready_*` root; a standalone session uses `rev_<session_id>`.
+
+All 26 DataChannel event types enumerated by `tests/contracts/kit-datachannel-v1.schema.json` carry `payload.trace_id` in both directions: read-only requests/responses, mutations/results/rejections, progress, binding/selection changes, and unsolicited events. Viewer sends nothing before Socket trace verification. Kit rejects missing or mismatched inbound trace before acting and propagates the same trace on every response/event; mutators additionally require coordinator runtime authority. Viewer rejects every Kit→viewer message whose trace is missing or not case-exactly equal before correlation bookkeeping, request completion, logging it as accepted, or UI/state mutation. Callback ready/failed outbox payloads retain the same upstream root through persistence, reload, and delivery.
+
+### 4.3 Production carrier closed loop
+
+The only supported PowerShell participant for the four-unit production smoke is `scripts/smoke-bscheme-intake.ps1`. It creates its logger with a standalone `script_<run_id>` trace, calls IFC-ready intake, then switches the existing logger to the returned `ifc_ready_job_id` root before poll, review-session open, browser lifecycle, and close records. A harness that manually writes four records with the same trace does not satisfy this contract.
+
+```mermaid
+flowchart LR
+    PS["smoke-bscheme-intake.ps1<br/>script trace → returned IFC-ready root"]
+    CO["coordinator<br/>existing ifc_ready_job_id = root"]
+    ST["streaming authority<br/>validate + persist root"]
+    KIT["converter / Kit<br/>-TraceId / BIM_TRACE_ID"]
+    VIEW["production viewer bootstrap<br/>singleton logger(root)"]
+    BUF["browser buffer<br/>env_snapshot enqueued before return"]
+    INTAKE["coordinator viewer-log intake<br/>logs/viewer/YYYY-MM-DD/*.jsonl"]
+
+    PS -->|"POST IFC-ready; response returns root"| CO
+    CO -->|"X-Trace-Id: root"| ST
+    ST -->|"root propagated"| KIT
+    CO -->|"session/open trace_id + viewer URL query"| VIEW
+    VIEW --> BUF
+    BUF -->|"existing async threshold / timer / explicit flush"| INTAKE
+```
 
 ## 5. Redaction rules
 
@@ -201,7 +231,9 @@ Receivers MUST:
 
 ### 5.2 Generic `data` depth-defense redaction
 
-Adapters MUST run a `redactDataBeforeWrite(data)` pass before serialization. The pass walks the `data` object recursively; if any key (case-insensitive) contains a secret pattern (§5.1 step 2), its value is replaced with `[REDACTED]` regardless of how the caller constructed `data`.
+Adapters MUST run a bounded, cycle-safe `redactDataBeforeWrite(data)` pass before serialization. The pass walks ordinary event `data` recursively; if any key (case-insensitive) contains a secret pattern (§5.1 step 2), including literal `auth` or `key`, its value is replaced with `[REDACTED]` regardless of how the caller constructed `data`. Env allow-list membership never exempts ordinary event keys.
+
+Only the dedicated `env_snapshot.vars[]` sanitizer may preserve the schema vocabulary `key`, `source`, `value_or_redacted`, and `type`. Secret-like fields elsewhere in the same event still redact. `MAX_REDACTION_DEPTH` is 8 with the root `data` container at depth 0; an object or array that would be entered at depth 9 is replaced exactly with `[Truncated]`. A cyclic edge replaces only its subtree with `[Circular]`. The original record event type is retained. These markers and all failures MUST NOT include an original secret value.
 
 ### 5.3 Network record host/URL handling
 
@@ -235,13 +267,15 @@ Browser viewers cannot write to the local file system. They batch records in an 
 - 2 seconds elapsed since last flush
 - Explicit flush call
 
-Coordinator's intake validates each record against this schema, persists passing records to `logs/viewer/<date>/viewer-<run_id>.jsonl`, drops failing or oversized records (counted in `GET /api/internal/structLog/health.records_dropped`), and responds with HTTP 200 (or 413 if request body exceeds the configured maximum).
+`createBrowserLogger()` enqueues exactly one browser-safe `env_snapshot` into this buffer before returning. It does not synchronously POST, use synchronous XHR, or enumerate arbitrary `window`, storage, or query-string values. Delivery uses the same asynchronous flush policy above; production bootstrap creates one singleton with the validated viewer-URL root trace and installs the global handlers once. A successful transport removes only the exact captured in-flight entry identities; concurrent appends and unrelated retained entries stay queued.
 
-This endpoint is **local-dev-only baseline** and MUST NOT require authentication in this capability. Production hardening (token, IP allow-list) is a future change.
+Before parsing a viewer-log body, coordinator authenticates one active primary or spectator viewer lease using `X-Review-Session-Id`, `X-Viewer-Lease-Id`, and `X-Viewer-Lease-Token`. Missing, wrong, cross-session, expired, or released authority returns one uniform 401 and writes nothing. The 256 KiB route parser runs before the global parser. Intake validates common fields and every event-specific `data` shape against this schema, accepts only `service="viewer"`, reconstructs the allowed top-level shape, and reapplies bounded recursive redaction (including untrusted `env_snapshot.vars[]`) at the trusted sink. Every accepted record must carry the authenticated session's case-exact canonical trace. Pre-validation trace resolution is side-effect free; any mismatch rejects the whole batch with 409, persists no valid prefix, and does not backfill a legacy session. A still-current exact trace plan is committed only after at least one exact record passes validation and before persistence. Passing records are written to `logs/viewer/<date>/viewer-<run_id>.jsonl`; other schema/service failures are dropped and counted in authenticated `GET /api/internal/structLog/health.records_dropped`. The normal response is HTTP 200 (or 413 if a fixed-length or chunked body exceeds the configured maximum).
+
+Base runtime-manager Compose publishes coordinator/viewer host ports on `127.0.0.1`; the explicit host-kit override retains its documented LAN publish. Therefore binding is defense-in-depth, not authentication. Browser authority exists only in memory and the three headers; it never appears in URL, body, log, console, trace, or evidence. Explicit Flush may obtain/reuse authority; component mount may not auto-claim primary, and spectator mode may not steal primary. With no authority, browser makes no fetch and retains the batch.
 
 ## 8. Health endpoint
 
-Coordinator exposes `GET /api/internal/structLog/health`:
+Coordinator exposes `GET /api/internal/structLog/health` protected by the existing internal token contract:
 
 ```jsonc
 {

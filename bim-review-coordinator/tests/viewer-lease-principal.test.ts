@@ -190,6 +190,7 @@ describe("viewer lease server principal", () => {
     const internalSentinel = `internal-sentinel-${randomUUID()}`;
     const app = makeApp({ internalApiAuthToken: internalSentinel });
     const sessionId = await createSession(app);
+    const traceId = `rev_${sessionId}`;
 
     const response = await request(app.app)
       .post(`/api/review-sessions/${sessionId}/viewer-leases/claim`)
@@ -227,14 +228,20 @@ describe("viewer lease server principal", () => {
       .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
       .set("X-Internal-Token", internalSentinel)
       .set("X-Viewer-Lease-Token", response.body.lease_token)
+      .set("X-Trace-Id", traceId)
       .send({
+        trace_id: traceId,
         source_client_id: response.body.lease_id,
         requested_event_type: "focusPrimRequest",
         request_id: "dynamic-redaction-check",
         command_context: { prim_path: "/World" },
       });
     expect(runtimeDecision.status).toBe(200);
-    expect(runtimeDecision.body).toMatchObject({ authorized: true, request_id: "dynamic-redaction-check" });
+    expect(runtimeDecision.body).toMatchObject({
+      authorized: true,
+      request_id: "dynamic-redaction-check",
+      trace_id: traceId,
+    });
     expect(JSON.stringify(runtimeDecision.body)).not.toContain(internalSentinel);
     expect(JSON.stringify(runtimeDecision.body)).not.toContain(response.body.lease_token);
 

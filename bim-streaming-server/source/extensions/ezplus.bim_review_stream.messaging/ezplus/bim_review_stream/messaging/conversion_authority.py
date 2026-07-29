@@ -7,8 +7,12 @@ import threading
 from typing import Any, Mapping
 from uuid import uuid4
 
+from struct_log import create_logger
+
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+IFC_READY_TRACE_ID_RE = re.compile(r"^ifcready_[A-Za-z0-9_-]+$")
+TRACE_ID_MAX_LENGTH = 200
 CONVERSION_API_ENDPOINTS = {
     "create": "POST /api/conversions/ifc-to-usdc",
     "list": "GET /api/conversions",
@@ -78,8 +82,14 @@ def create_conversion_api_app(
 ):
     from fastapi import BackgroundTasks, Body, FastAPI, HTTPException, Request
 
-    store = StreamingConversionStore(settings=settings, converter=converter)
+    structured_logger = create_logger("streaming-server", component="conversion_authority")
+    store = StreamingConversionStore(
+        settings=settings,
+        converter=converter,
+        structured_logger=structured_logger,
+    )
     app = FastAPI(title="BIM Streaming Conversion Authority", version="0.1.0")
+    app.state.structured_logger = structured_logger
 
     @app.post("/api/conversions/ifc-to-usdc", status_code=202)
     def create_conversion(
@@ -104,11 +114,23 @@ def create_conversion_api_app(
             if actual_token != expected_token:
                 raise HTTPException(status_code=403, detail="Invalid internal conversion token.")
         try:
-            job = store.create_conversion_job(ifc_ready_event)
+            inbound_trace = _validated_trace_id(request.headers.get("X-Trace-Id"))
+            job = store.create_conversion_job(ifc_ready_event, trace_id=inbound_trace)
         except ConversionRequestError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        structured_logger.with_trace_id(job["trace_id"]).network(
+            "conversion_authority",
+            "conversion request accepted",
+            {
+                "direction": "inbound",
+                "protocol": "http",
+                "peer": "coordinator",
+                "status": 202,
+                "path": "/api/conversions/ifc-to-usdc",
+            },
+        )
         if run_background and (not job.get("idempotent_replay") or job.get("status") in {"queued", "running"}):
             background_tasks.add_task(store.complete_conversion_job, job["conversion_job_id"])
         return job
@@ -162,6 +184,7 @@ def create_conversion_api_app(
             raise HTTPException(status_code=404, detail="Conversion job not found.")
         return job.get("result") or {
             "conversion_job_id": conversion_job_id,
+            "trace_id": job.get("trace_id") or conversion_job_id,
             "authority": "bim-streaming-server",
             "status": job.get("status", "unknown"),
             "ready": False,
@@ -226,9 +249,16 @@ def create_conversion_api_app(
 
 
 class StreamingConversionStore:
-    def __init__(self, *, settings: ConversionAuthoritySettings, converter: Any | None = None):
+    def __init__(
+        self,
+        *,
+        settings: ConversionAuthoritySettings,
+        converter: Any | None = None,
+        structured_logger: Any | None = None,
+    ):
         self.settings = settings
         self.converter = converter or HeadlessConverterNotConfigured()
+        self.structured_logger = structured_logger
         Path(self.settings.artifacts_root).mkdir(parents=True, exist_ok=True)
         Path(self.settings.jobs_dir).mkdir(parents=True, exist_ok=True)
         # conversion-kit-port-race: `/api/conversions/ifc-to-usdc` returns 202 and
@@ -242,7 +272,12 @@ class StreamingConversionStore:
         # to run one job at a time within this process.
         self._conversion_lock = threading.Lock()
 
-    def create_conversion_job(self, ifc_ready_event: Mapping[str, Any]) -> dict[str, Any]:
+    def create_conversion_job(
+        self,
+        ifc_ready_event: Mapping[str, Any],
+        *,
+        trace_id: str | None = None,
+    ) -> dict[str, Any]:
         event = dict(ifc_ready_event)
         if event.get("event_type") != "ifc_ready":
             raise ValueError("Expected ifc_ready event.")
@@ -254,16 +289,21 @@ class StreamingConversionStore:
             existing_fingerprint = existing.get("request_fingerprint")
             if existing_fingerprint and existing_fingerprint != request_fingerprint:
                 raise ConversionRequestError(409, "Idempotency key already belongs to a different conversion request.")
+            if not existing.get("trace_id"):
+                existing["trace_id"] = str(existing["conversion_job_id"])
+                self._write_job(existing)
             replay = dict(existing)
             replay["idempotent_replay"] = True
             return replay
 
         ifc_artifact = _ifc_artifact(event)
         conversion_job_id = f"stream_conv_{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}"
+        effective_trace = trace_id or conversion_job_id
         now = _utc_now()
         job = {
             "conversion_job_id": conversion_job_id,
             "job_id": conversion_job_id,
+            "trace_id": effective_trace,
             "authority": "bim-streaming-server",
             "event_id": event_id,
             "idempotency_key": idempotency_key,
@@ -296,6 +336,7 @@ class StreamingConversionStore:
             },
         }
         self._write_job(job)
+        self._log_conversion_lifecycle(job, status="queued", phase="start")
         return job
 
     def get_conversion_job(self, conversion_job_id: str) -> dict[str, Any] | None:
@@ -354,6 +395,7 @@ class StreamingConversionStore:
         # actually start, so status faithfully reflects what's really executing.
         with self._conversion_lock:
             job = self._update_job(conversion_job_id, status="running", stage="running_headless_converter")
+            self._log_conversion_lifecycle(job, status="running", phase="active")
             output_dir = Path(self.settings.artifacts_root) / conversion_job_id
             try:
                 converter_result = self.converter.convert(
@@ -391,7 +433,7 @@ class StreamingConversionStore:
                 "target_url": None,
                 "reason": "no callback_url; coordinator polls /result, cloud callback is T5 outbox",
             }
-        return self._update_job(
+        completed = self._update_job(
             conversion_job_id,
             status="succeeded",
             stage="done",
@@ -399,6 +441,8 @@ class StreamingConversionStore:
             callback_payload=callback_payload,
             callback_delivery=callback_delivery,
         )
+        self._log_conversion_lifecycle(completed, status="succeeded", phase="closed")
+        return completed
 
     def _build_success_result(self, job: Mapping[str, Any], converter_result: Mapping[str, Any]) -> dict[str, Any]:
         output_paths = self._required_output_paths(converter_result)
@@ -459,6 +503,7 @@ class StreamingConversionStore:
             )
         return {
             "conversion_job_id": job["conversion_job_id"],
+            "trace_id": job.get("trace_id") or job["conversion_job_id"],
             "authority": "bim-streaming-server",
             "status": "succeeded",
             "ready": True,
@@ -616,6 +661,7 @@ class StreamingConversionStore:
                     error_dict[key] = value
         result = {
             "conversion_job_id": job["conversion_job_id"],
+            "trace_id": job.get("trace_id") or job["conversion_job_id"],
             "authority": "bim-streaming-server",
             "status": "failed",
             "ready": False,
@@ -638,7 +684,7 @@ class StreamingConversionStore:
         }
         callback_payload = self._callback_payload(job, result)
         callback_url = job.get("callback_url")
-        return self._update_job(
+        failed = self._update_job(
             job["conversion_job_id"],
             status="failed",
             stage=stage,
@@ -650,6 +696,30 @@ class StreamingConversionStore:
                 "reason": "network delivery is performed by the service runtime loop"
                 if callback_url
                 else "no callback_url; coordinator polls /result, cloud callback is T5 outbox",
+            },
+        )
+        self._log_conversion_lifecycle(failed, status="failed", phase="closed")
+        return failed
+
+    def _log_conversion_lifecycle(
+        self,
+        job: Mapping[str, Any],
+        *,
+        status: str,
+        phase: str,
+    ) -> None:
+        if self.structured_logger is None:
+            return
+        conversion_job_id = str(job["conversion_job_id"])
+        trace_id = str(job.get("trace_id") or conversion_job_id)
+        self.structured_logger.with_trace_id(trace_id).lifecycle(
+            "conversion_authority",
+            f"conversion job {status}",
+            {
+                "phase": phase,
+                "subject_kind": "conversion_job",
+                "subject_id": conversion_job_id,
+                "status": status,
             },
         )
 
@@ -772,6 +842,7 @@ class StreamingConversionStore:
         if not result:
             result = {
                 "conversion_job_id": job.get("conversion_job_id"),
+                "trace_id": job.get("trace_id") or job.get("conversion_job_id"),
                 "authority": job.get("authority", "bim-streaming-server"),
                 "status": job.get("status", "unknown"),
                 "ready": False,
@@ -780,6 +851,7 @@ class StreamingConversionStore:
                 "model_version_id": job.get("model_version_id"),
                 "correlation_id": job.get("correlation_id"),
             }
+        result.setdefault("trace_id", job.get("trace_id") or job.get("conversion_job_id"))
         ifc_artifact = job.get("ifc_artifact") if isinstance(job.get("ifc_artifact"), dict) else {}
         artifacts = result.get("artifacts") if isinstance(result.get("artifacts"), dict) else {}
         model_artifact = artifacts.get("model_usdc") if isinstance(artifacts.get("model_usdc"), dict) else {}
@@ -820,6 +892,18 @@ def _ifc_artifact(event: Mapping[str, Any]) -> dict[str, Any]:
 def _safe_id(value: str, label: str) -> str:
     if not value or not SAFE_ID_RE.fullmatch(value):
         raise ValueError(f"Invalid {label}: {value}")
+    return value
+
+
+def _validated_trace_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if (
+        len(value) > TRACE_ID_MAX_LENGTH
+        or not IFC_READY_TRACE_ID_RE.fullmatch(value)
+        or value.startswith("ifcready_ifcready_")
+    ):
+        raise ValueError("Invalid X-Trace-Id header.")
     return value
 
 

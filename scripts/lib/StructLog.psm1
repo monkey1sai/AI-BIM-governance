@@ -151,15 +151,40 @@ function Get-RedactedEnvVar {
 
 function Test-StructLogIsSecretFieldName {
     param([string] $Name, [string] $Pattern)
-    # Reserved schema vocabulary; never treated as secret even though the literal
-    # text matches the secret regex (e.g. the schema field name `key`).
-    $reserved = @('key', 'auth', 'name', 'type', 'source', 'value_or_redacted', 'status',
-                  'reason', 'msg', 'data', 'event_type', 'level', 'service', 'component',
-                  'run_id', 'trace_id', 'parent_trace_id', 'subject_kind', 'subject_id',
-                  'phase', 'actor', 'action', 'target', 'direction', 'protocol', 'peer',
-                  'duration_ms', 'path', 'anomaly_kind', 'vars', 'error', 'stack_tail')
-    if ($reserved -contains $Name.ToLowerInvariant()) { return $false }
     return ($Name -match $Pattern)
+}
+
+function Test-StructLogActiveReference {
+    param([System.Collections.Generic.List[object]] $ActivePath, $Value)
+    foreach ($candidate in $ActivePath) {
+        if ([object]::ReferenceEquals($candidate, $Value)) { return $true }
+    }
+    return $false
+}
+
+function ConvertTo-StructLogEnvSnapshotVars {
+    param($Value)
+    if (-not ($Value -is [System.Collections.IEnumerable]) -or $Value -is [string]) { return ,@() }
+    $safe = [System.Collections.ArrayList]::new()
+    foreach ($candidate in $Value) {
+        $row = [ordered]@{}
+        if ($candidate -is [System.Collections.IDictionary]) {
+            foreach ($field in @('key', 'source', 'value_or_redacted', 'type')) {
+                if (-not $candidate.Contains($field)) { $row = $null; break }
+                $row[$field] = $candidate[$field]
+            }
+        } elseif ($candidate -is [psobject]) {
+            foreach ($field in @('key', 'source', 'value_or_redacted', 'type')) {
+                $property = $candidate.PSObject.Properties[$field]
+                if ($null -eq $property) { $row = $null; break }
+                $row[$field] = $property.Value
+            }
+        } else {
+            $row = $null
+        }
+        if ($null -ne $row) { [void] $safe.Add($row) }
+    }
+    return ,$safe.ToArray()
 }
 
 function ConvertTo-StructLogRedactedData {
@@ -167,51 +192,70 @@ function ConvertTo-StructLogRedactedData {
     param(
         $Data,
         $AllowList,
-        [hashtable] $Seen
+        [System.Collections.Generic.List[object]] $ActivePath,
+        [int] $Depth = 0,
+        [switch] $EnvSnapshot
     )
     if (-not $AllowList) { $AllowList = Get-StructLogAllowList }
-    if (-not $Seen) { $Seen = @{} }
+    if ($null -eq $ActivePath) { $ActivePath = [System.Collections.Generic.List[object]]::new() }
     if ($null -eq $Data) { return $null }
     if ($Data -is [string] -or $Data -is [int] -or $Data -is [long] -or $Data -is [bool] -or $Data -is [double] -or $Data -is [decimal]) {
         return $Data
     }
+    if ($Depth -gt 8) { return '[Truncated]' }
     # Dict-likes come BEFORE the IEnumerable check because OrderedDictionary
     # also enumerates and would otherwise be mistaken for an array.
     if ($Data -is [System.Collections.IDictionary]) {
-        $id = [System.Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($Data)
-        if ($Seen.ContainsKey($id)) { return '[Circular]' }
-        $Seen[$id] = $true
-        $out = [ordered]@{}
-        foreach ($k in @($Data.Keys)) {
-            $value = $Data[$k]
-            if (Test-StructLogIsSecretFieldName -Name ([string] $k) -Pattern $AllowList.SecretPattern) {
-                $out[$k] = '[REDACTED]'
-            } else {
-                $out[$k] = ConvertTo-StructLogRedactedData -Data $value -AllowList $AllowList -Seen $Seen
+        if (Test-StructLogActiveReference -ActivePath $ActivePath -Value $Data) { return '[Circular]' }
+        [void] $ActivePath.Add($Data)
+        try {
+            $out = [ordered]@{}
+            foreach ($k in @($Data.Keys)) {
+                $value = $Data[$k]
+                if ($EnvSnapshot -and $Depth -eq 0 -and ([string] $k) -ceq 'vars') {
+                    $out[$k] = ConvertTo-StructLogEnvSnapshotVars -Value $value
+                } elseif (Test-StructLogIsSecretFieldName -Name ([string] $k) -Pattern $AllowList.SecretPattern) {
+                    $out[$k] = '[REDACTED]'
+                } else {
+                    $out[$k] = ConvertTo-StructLogRedactedData -Data $value -AllowList $AllowList -ActivePath $ActivePath -Depth ($Depth + 1)
+                }
             }
+            return $out
+        } finally {
+            $ActivePath.RemoveAt($ActivePath.Count - 1)
         }
-        return $out
     }
     if ($Data -is [psobject] -and $Data.PSObject -and $Data.PSObject.Properties.Count -gt 0 -and -not ($Data -is [System.Collections.IEnumerable])) {
-        $id = [System.Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($Data)
-        if ($Seen.ContainsKey($id)) { return '[Circular]' }
-        $Seen[$id] = $true
-        $out = [ordered]@{}
-        foreach ($prop in $Data.PSObject.Properties) {
-            if (Test-StructLogIsSecretFieldName -Name $prop.Name -Pattern $AllowList.SecretPattern) {
-                $out[$prop.Name] = '[REDACTED]'
-            } else {
-                $out[$prop.Name] = ConvertTo-StructLogRedactedData -Data $prop.Value -AllowList $AllowList -Seen $Seen
+        if (Test-StructLogActiveReference -ActivePath $ActivePath -Value $Data) { return '[Circular]' }
+        [void] $ActivePath.Add($Data)
+        try {
+            $out = [ordered]@{}
+            foreach ($prop in $Data.PSObject.Properties) {
+                if ($EnvSnapshot -and $Depth -eq 0 -and $prop.Name -ceq 'vars') {
+                    $out[$prop.Name] = ConvertTo-StructLogEnvSnapshotVars -Value $prop.Value
+                } elseif (Test-StructLogIsSecretFieldName -Name $prop.Name -Pattern $AllowList.SecretPattern) {
+                    $out[$prop.Name] = '[REDACTED]'
+                } else {
+                    $out[$prop.Name] = ConvertTo-StructLogRedactedData -Data $prop.Value -AllowList $AllowList -ActivePath $ActivePath -Depth ($Depth + 1)
+                }
             }
+            return $out
+        } finally {
+            $ActivePath.RemoveAt($ActivePath.Count - 1)
         }
-        return $out
     }
     if ($Data -is [System.Collections.IEnumerable]) {
-        $list = @()
-        foreach ($item in $Data) {
-            $list += (ConvertTo-StructLogRedactedData -Data $item -AllowList $AllowList -Seen $Seen)
+        if (Test-StructLogActiveReference -ActivePath $ActivePath -Value $Data) { return '[Circular]' }
+        [void] $ActivePath.Add($Data)
+        try {
+            $list = [System.Collections.ArrayList]::new()
+            foreach ($item in $Data) {
+                [void] $list.Add((ConvertTo-StructLogRedactedData -Data $item -AllowList $AllowList -ActivePath $ActivePath -Depth ($Depth + 1)))
+            }
+            return ,$list.ToArray()
+        } finally {
+            $ActivePath.RemoveAt($ActivePath.Count - 1)
         }
-        return ,$list
     }
     return ([string] $Data)
 }
@@ -219,8 +263,8 @@ function ConvertTo-StructLogRedactedData {
 function ConvertTo-StructLogJson {
     [CmdletBinding()]
     param($Record)
-    # ConvertTo-Json -Compress -Depth 8 - one record per line.
-    return ($Record | ConvertTo-Json -Compress -Depth 8)
+    # Semantic depth is bounded by the sanitizer; serialization must retain it.
+    return ($Record | ConvertTo-Json -Compress -Depth 100)
 }
 
 # --- Logger factory --------------------------------------------------------
@@ -361,7 +405,12 @@ function _Build-StructLogRecord {
     if (-not $traceId) { $traceId = "script_$($State.RunId)" }
     $seq = $State.GetSeq($traceId)
     $dataForRedaction = if ($null -eq $Data) { @{} } else { $Data }
-    $safeData = ConvertTo-StructLogRedactedData -Data $dataForRedaction -AllowList $State.AllowList
+    try {
+        $safeData = ConvertTo-StructLogRedactedData -Data $dataForRedaction -AllowList $State.AllowList `
+            -EnvSnapshot:($EventType -ceq 'env_snapshot')
+    } catch {
+        $safeData = [ordered]@{ redaction_failure = '[Truncated]' }
+    }
     if ($null -eq $safeData) { $safeData = [ordered]@{} }
     $record = [ordered]@{
         ts = $ts

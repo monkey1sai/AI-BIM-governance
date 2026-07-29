@@ -4,6 +4,7 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 MODULE_DIR = (
@@ -17,12 +18,14 @@ MODULE_DIR = (
 )
 sys.path.insert(0, str(MODULE_DIR))
 
+import conversion_authority as conversion_authority_module  # noqa: E402
 from conversion_authority import (  # noqa: E402
     ConversionAuthorityError,
     ConversionAuthoritySettings,
     _ifc_artifact,
     create_conversion_api_app,
 )
+from struct_log import create_logger as create_struct_logger  # noqa: E402
 
 
 class FakeSuccessfulConverter:
@@ -165,6 +168,28 @@ def ifc_ready_payload(**overrides):
 
 def job_file_count(tmp_path: Path) -> int:
     return len(list((tmp_path / "jobs").glob("stream_conv_*.json")))
+
+
+def capture_structured_records(monkeypatch):
+    records: list[dict] = []
+    logger_creations: list[str] = []
+
+    def create_test_logger(service: str, **kwargs):
+        logger_creations.append(service)
+        return create_struct_logger(
+            service,
+            component=str(kwargs.get("component") or "conversion_authority"),
+            in_memory_only=True,
+            record_sink=records.append,
+        )
+
+    monkeypatch.setattr(
+        conversion_authority_module,
+        "create_logger",
+        create_test_logger,
+        raising=False,
+    )
+    return records, logger_creations
 
 
 def test_ifc_ready_creates_queued_streaming_conversion_job(tmp_path: Path):
@@ -521,6 +546,110 @@ def test_duplicate_idempotency_key_replays_existing_job(tmp_path: Path):
     assert second.json()["conversion_job_id"] == first.json()["conversion_job_id"]
     assert second.json()["idempotent_replay"] is True
     assert job_file_count(tmp_path) == 1
+
+
+def test_ifc_ready_root_trace_is_persisted_projected_and_replayed(tmp_path: Path, monkeypatch):
+    records, logger_creations = capture_structured_records(monkeypatch)
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter(), run_background=False)
+    root_trace = "ifcready_1779687625000_064c6813"
+    payload = ifc_ready_payload(event_id="evt_trace_001", idempotency_key="idem_trace_001")
+
+    first = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=payload,
+        headers={"X-Trace-Id": root_trace},
+    )
+    replay = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=payload,
+        headers={"X-Trace-Id": "ifcready_1779687625001_064c6814"},
+    )
+
+    assert first.status_code == 202
+    assert first.json()["trace_id"] == root_trace
+    conversion_job_id = first.json()["conversion_job_id"]
+    persisted = json.loads((tmp_path / "jobs" / f"{conversion_job_id}.json").read_text(encoding="utf-8"))
+    assert persisted["trace_id"] == root_trace
+    assert replay.status_code == 202
+    assert replay.json()["trace_id"] == root_trace
+    assert client.get(f"/api/conversions/{conversion_job_id}").json()["trace_id"] == root_trace
+    assert client.get(f"/api/conversions/{conversion_job_id}/result").json()["trace_id"] == root_trace
+    assert logger_creations == ["streaming-server"]
+    assert sum(record["event_type"] == "env_snapshot" for record in records) == 1
+    inbound = [record for record in records if record["event_type"] == "network"]
+    assert inbound
+    assert all(record["trace_id"] == root_trace for record in inbound)
+
+
+def test_missing_trace_header_falls_back_to_generated_conversion_job_id(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter(), run_background=False)
+
+    response = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["trace_id"] == body["conversion_job_id"]
+    persisted = json.loads(
+        (tmp_path / "jobs" / f"{body['conversion_job_id']}.json").read_text(encoding="utf-8")
+    )
+    assert persisted["trace_id"] == body["conversion_job_id"]
+    assert client.get(f"/api/conversions/{body['conversion_job_id']}/result").json()["trace_id"] == body["conversion_job_id"]
+
+
+@pytest.mark.parametrize(
+    "trace_id",
+    [
+        "ifcready_bad value",
+        "ifcready_bad\x7fvalue",
+        "ifcready_" + "a" * 192,
+        "rev_1779687625000_064c6813",
+        "ifcready_ifcready_1779687625000_064c6813",
+    ],
+)
+def test_invalid_trace_header_returns_400_without_creating_job(tmp_path: Path, trace_id: str):
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter(), run_background=False)
+
+    response = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(),
+        headers={"X-Trace-Id": trace_id},
+    )
+
+    assert response.status_code == 400
+    assert job_file_count(tmp_path) == 0
+
+
+def test_conversion_lifecycle_records_keep_persisted_trace_on_success_and_failure(tmp_path: Path, monkeypatch):
+    records, logger_creations = capture_structured_records(monkeypatch)
+    success_trace = "ifcready_1779687625000_success01"
+    failed_trace = "ifcready_1779687625000_failure01"
+    success_client = make_client(tmp_path / "success", converter=FakeSuccessfulConverter())
+    failed_client = make_client(tmp_path / "failed", converter=FakeFailedConverter())
+
+    success = success_client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(event_id="evt_lifecycle_success", idempotency_key="idem_lifecycle_success"),
+        headers={"X-Trace-Id": success_trace},
+    )
+    failed = failed_client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(event_id="evt_lifecycle_failed", idempotency_key="idem_lifecycle_failed"),
+        headers={"X-Trace-Id": failed_trace},
+    )
+
+    assert success.status_code == 202
+    assert failed.status_code == 202
+    success_job_id = success.json()["conversion_job_id"]
+    failed_job_id = failed.json()["conversion_job_id"]
+    assert success_client.get(f"/api/conversions/{success_job_id}/result").json()["trace_id"] == success_trace
+    assert failed_client.get(f"/api/conversions/{failed_job_id}/result").json()["trace_id"] == failed_trace
+    assert logger_creations == ["streaming-server", "streaming-server"]
+    lifecycle = [record for record in records if record["event_type"] == "lifecycle"]
+    success_records = [record for record in lifecycle if record["trace_id"] == success_trace]
+    failed_records = [record for record in lifecycle if record["trace_id"] == failed_trace]
+    assert [record["data"]["status"] for record in success_records] == ["queued", "running", "succeeded"]
+    assert [record["data"]["status"] for record in failed_records] == ["queued", "running", "failed"]
+    assert all(record["data"]["subject_kind"] == "conversion_job" for record in lifecycle)
 
 
 def test_minio_retrigger_with_new_presigned_url_and_cache_path_replays_existing_job(tmp_path: Path):

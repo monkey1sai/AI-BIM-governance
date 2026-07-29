@@ -1,14 +1,73 @@
 import { io, type Socket } from "socket.io-client";
 
+export const REVIEW_SOCKET_ACK_TIMEOUT_MS = 5_000;
+
+export type ReviewSocketEvent = "joinSession" | "heartbeat" | "leaveSession";
+export type ReviewSocketStatus = "connected" | "disconnected";
+
+export interface ReviewSocketCandidate {
+    sessionId: string;
+    userId: string;
+    displayName: string;
+    traceId: string;
+}
+
+export type ReviewSocketAck =
+    | {
+        ok: true;
+        trace_id: string;
+        session_id?: string;
+        session?: unknown;
+        received_at?: string;
+    }
+    | {
+        ok: false;
+        error: string;
+    };
+
 export interface ReviewSocketHandlers {
     onEvent?: (event: string, payload: unknown) => void;
-    onStatus?: (status: string) => void;
+    onStatus?: (status: ReviewSocketStatus) => void;
+    onAck?: (event: ReviewSocketEvent, candidate: ReviewSocketCandidate, ack: ReviewSocketAck) => void;
 }
 
 export interface ReviewSocketClient {
-    join(sessionId: string, userId: string, displayName: string): void;
-    heartbeat(sessionId: string, userId: string): void;
+    join(candidate: ReviewSocketCandidate): void;
+    heartbeat(): void;
+    leave(): void;
     disconnect(): void;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeAck(value: unknown): ReviewSocketAck {
+    if (!isRecord(value)) {
+        return { ok: false, error: "Malformed Socket.IO acknowledgement." };
+    }
+    if (value.ok === true && typeof value.trace_id === "string" && value.trace_id.length > 0) {
+        return {
+            ok: true,
+            trace_id: value.trace_id,
+            ...(typeof value.session_id === "string" ? { session_id: value.session_id } : {}),
+            ...(value.session !== undefined ? { session: value.session } : {}),
+            ...(typeof value.received_at === "string" ? { received_at: value.received_at } : {}),
+        };
+    }
+    if (value.ok === false && typeof value.error === "string" && value.error.length > 0) {
+        return { ok: false, error: value.error };
+    }
+    return { ok: false, error: "Malformed Socket.IO acknowledgement." };
+}
+
+function candidateKey(candidate: ReviewSocketCandidate): string {
+    return JSON.stringify([
+        candidate.sessionId,
+        candidate.userId,
+        candidate.displayName,
+        candidate.traceId,
+    ]);
 }
 
 export function connectReviewSocket(baseUrl: string, handlers: ReviewSocketHandlers = {}): ReviewSocketClient {
@@ -16,19 +75,98 @@ export function connectReviewSocket(baseUrl: string, handlers: ReviewSocketHandl
         transports: ["websocket", "polling"],
         autoConnect: true,
     });
+    const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
+    let activeCandidate: ReviewSocketCandidate | null = null;
+    let connectionGeneration = 0;
+    let manuallyDisconnected = false;
 
-    socket.on("connect", () => handlers.onStatus?.("connected"));
-    socket.on("disconnect", () => handlers.onStatus?.("disconnected"));
+    const clearPendingTimers = (): void => {
+        for (const timer of pendingTimers) clearTimeout(timer);
+        pendingTimers.clear();
+    };
+
+    const emitWithAck = (
+        event: ReviewSocketEvent,
+        candidate: ReviewSocketCandidate,
+        payload: Record<string, unknown>,
+    ): void => {
+        if (!socket.connected || manuallyDisconnected) return;
+        const expectedGeneration = connectionGeneration;
+        const expectedCandidateKey = candidateKey(candidate);
+        let settled = false;
+
+        const settle = (ack: ReviewSocketAck): void => {
+            if (settled) return;
+            settled = true;
+            if (
+                manuallyDisconnected
+                || expectedGeneration !== connectionGeneration
+                || candidateKey(activeCandidate ?? candidate) !== expectedCandidateKey
+            ) return;
+            if (event === "leaveSession" && ack.ok) activeCandidate = null;
+            handlers.onAck?.(event, candidate, ack);
+        };
+
+        const timer = setTimeout(() => {
+            pendingTimers.delete(timer);
+            settle({ ok: false, error: "Socket.IO acknowledgement timeout." });
+        }, REVIEW_SOCKET_ACK_TIMEOUT_MS);
+        pendingTimers.add(timer);
+
+        socket.emit(event, payload, (value: unknown) => {
+            clearTimeout(timer);
+            pendingTimers.delete(timer);
+            settle(normalizeAck(value));
+        });
+    };
+
+    const emitJoin = (candidate: ReviewSocketCandidate): void => {
+        emitWithAck("joinSession", candidate, {
+            session_id: candidate.sessionId,
+            user_id: candidate.userId,
+            display_name: candidate.displayName,
+            trace_id: candidate.traceId,
+        });
+    };
+
+    socket.on("connect", () => {
+        connectionGeneration += 1;
+        handlers.onStatus?.("connected");
+        if (activeCandidate && !manuallyDisconnected) emitJoin(activeCandidate);
+    });
+    socket.on("disconnect", () => {
+        connectionGeneration += 1;
+        clearPendingTimers();
+        handlers.onStatus?.("disconnected");
+    });
     socket.onAny((event, payload) => handlers.onEvent?.(event, payload));
 
     return {
-        join(sessionId: string, userId: string, displayName: string) {
-            socket.emit("joinSession", { session_id: sessionId, user_id: userId, display_name: displayName });
+        join(candidate: ReviewSocketCandidate) {
+            activeCandidate = { ...candidate };
+            if (socket.connected && !manuallyDisconnected) emitJoin(activeCandidate);
         },
-        heartbeat(sessionId: string, userId: string) {
-            socket.emit("heartbeat", { session_id: sessionId, actor_id: userId });
+        heartbeat() {
+            if (!activeCandidate) return;
+            emitWithAck("heartbeat", activeCandidate, {
+                session_id: activeCandidate.sessionId,
+                actor_id: activeCandidate.userId,
+                trace_id: activeCandidate.traceId,
+            });
+        },
+        leave() {
+            if (!activeCandidate) return;
+            emitWithAck("leaveSession", activeCandidate, {
+                session_id: activeCandidate.sessionId,
+                user_id: activeCandidate.userId,
+                trace_id: activeCandidate.traceId,
+            });
         },
         disconnect() {
+            manuallyDisconnected = true;
+            activeCandidate = null;
+            connectionGeneration += 1;
+            clearPendingTimers();
             socket.disconnect();
         },
     };

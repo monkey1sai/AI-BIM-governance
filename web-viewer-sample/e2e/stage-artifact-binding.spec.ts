@@ -1,10 +1,11 @@
 import { test, expect } from "@playwright/test";
+import { harnessRoute } from "./harnessRoute";
 
 // CH-F：Stage / Artifact Binding —— 選 1..N ready USDC、指定唯一 primary、調 load_order、交易式套用 → 重組 stage。
 // 用 deterministic harness 的 ready USDC fixtures；apply → composeStageRequest → 假 Kit 回 bindingApplied → active revision。
 test.describe("CH-F：Stage / Artifact Binding（primary 交易式套用）", () => {
   test("選 N 個 ready USDC → 指定 primary → 調 load_order → 套用 → active binding revision 出現", async ({ page }) => {
-    await page.goto("/?harness=1");
+    await page.goto(harnessRoute());
 
     const label = page.getByTestId("harness-viewport-label");
     await expect(label).toBeVisible({ timeout: 25_000 });
