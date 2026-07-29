@@ -1,3 +1,11 @@
+> **Status: deferred 2026-07-29**（使用者裁決）。不計入 active WIP。
+>
+> **理由**：2026-07-29 收斂盤點實測，本 change 的實作已在 `origin/main` 與 `codex/openspec/a4-semantic-search-model-qa-convergence` 之間**雙向分岔**，任一側都不是完整實作：前端 live session-scoped Console 只在 convergence 分支（`A4SemanticSearchPage.tsx` 938 行 vs main 458 行 fixture 版），後端 deterministic engine／proofs 與 3D handoff 只在 main（`engine.py` 1160 vs 915、`proofs.py` 623 vs 356；6.3–6.5 僅 main 已勾）。實測 `merge origin/main` 產生 **126 個衝突 hunk／23 檔**。同時本 change 剩餘 21 項有多項受外部條件封鎖：1.8 需 credential owner 協調 rotate、7.4／7.5 需 Windows host-native Kit 與 authorized Ornith lab、8.7 需獨立 reviewer。傘型 change 在此狀態下無法一次收斂。
+>
+> **重啟條件**：(1) successor change `a4-console-convergence` 完成前後端收斂並 merge，使單一 canonical A4 實作存在於 `main`；(2) credential owner 完成 1.8 rotate；(3) Windows host-native Kit 與 authorized Ornith lab 環境就緒可跑 7.4／7.5；(4) 取得 8.7 獨立 review 資源。四者齊備後 thaw，並先與 successor 做 Requirement crosswalk 再續接剩餘 task。
+>
+> **Successor crosswalk**：`a4-console-convergence` 承接本 change 的 5.1／5.2（已在 convergence 分支落地但未進 main）與 5.3／5.6／8.3／8.4，並沿用 Requirement 名稱「Canonical A4 UI SHALL 可操作且接受誠實的 design gate」以利 crosswalk；其餘 Requirement 與 task 仍屬本 change，不得平行實作。
+
 ## Why
 
 目前核可的 `#/workspace?dock=a4` 仍以固定假資料呈現，真實 A4 API 則停留在另一個未收斂的頁面；介面同時把「符合查詢條件」誤寫成「符合規範」，且 production proxy 仍可接受瀏覽器提供的 host 路徑。現在需要一份 session-bound、可追溯且不冒充法規判定的 A4 v1 契約，讓既有 deterministic IFC search、Ornith query interpreter、Evidence Trace 與 3D highlight 成為同一條可驗收流程。
