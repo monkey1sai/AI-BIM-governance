@@ -56,6 +56,12 @@ function artifactPolicy(name, subjectSha, runAttempt) {
   fail('workflow run contains an unexpected artifact');
 }
 
+export function filterArtifactsForAttempt(artifacts, subjectSha, runAttempt) {
+  if (!Array.isArray(artifacts) || artifacts.length > 100) fail('workflow artifact page is invalid or unbounded');
+  const suffix = `-${safeCommit(subjectSha, 'subject_sha')}-attempt-${safeInteger(runAttempt, 'run_attempt')}`;
+  return artifacts.filter((artifact) => typeof artifact?.name === 'string' && artifact.name.endsWith(suffix));
+}
+
 export function isCurrentSourceRun({ sourceRunId, sourceRunAttempt, pullRequestNumber, subjectSha, run }) {
   try {
     exactKeysSubset(run, ['id', 'run_attempt', 'event', 'head_sha', 'conclusion', 'pull_requests'], 'current_run');
@@ -222,14 +228,13 @@ async function collect(args) {
   const jobPage = await api(`/repos/${repository}/actions/runs/${runId}/attempts/${attempt}/jobs?per_page=100`, token);
   if (jobPage.total_count > 100 || !Array.isArray(jobPage.jobs)) fail('workflow run has too many jobs');
   const artifactPage = await api(`/repos/${repository}/actions/runs/${runId}/artifacts?per_page=100`, token);
-  if (artifactPage.total_count > 100 || !Array.isArray(artifactPage.artifacts)) fail('workflow run has too many artifacts');
   if (!Array.isArray(run.pull_requests) || run.pull_requests.length !== 1) fail('source run does not bind one pull request');
   const prNumber = safeInteger(run.pull_requests[0].number, 'pull_request.number');
   const livePull = await api(`/repos/${repository}/pulls/${prNumber}`, token);
   const associatedPulls = await api(`/repos/${repository}/commits/${run.head_sha}/pulls?per_page=100`, token);
   const observation = buildWorkflowRunObservation({
     repository, authority: args.authority, repositoryInfo, run, workflow, jobs: jobPage.jobs,
-    artifacts: artifactPage.artifacts, livePull, associatedPulls, expectedRunAttempt,
+    artifacts: filterArtifactsForAttempt(artifactPage.artifacts, run.head_sha, attempt), livePull, associatedPulls, expectedRunAttempt,
   });
   writeFileSync(path.resolve(args.output), `${JSON.stringify(observation)}\n`, 'utf8');
   writeFileSync(path.resolve(args.bodyOutput), livePull.body, 'utf8');

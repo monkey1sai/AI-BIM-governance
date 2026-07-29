@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildWorkflowRunObservation, isCurrentSourceRun } from '../lib/verification-run-metadata.mjs';
+import { buildWorkflowRunObservation, filterArtifactsForAttempt, isCurrentSourceRun } from '../lib/verification-run-metadata.mjs';
 
 const baseSha = '1'.repeat(40);
 const subjectSha = '2'.repeat(40);
@@ -80,6 +80,23 @@ test('wrong base identity, stale event attempt, and unsafe artifact inventory fa
     mutate(value);
     assert.throws(() => buildWorkflowRunObservation(value));
   }
+});
+
+test('only artifacts from the current CI rerun are admitted to merge evidence', () => {
+  const value = fixture();
+  value.artifacts.unshift({
+    ...value.artifacts[0], id: 500, name: `verification-plan-${subjectSha}-attempt-2`,
+  });
+  const artifacts = filterArtifactsForAttempt(value.artifacts, subjectSha, 3);
+  assert.equal(artifacts.length, 1);
+  assert.equal(buildWorkflowRunObservation({ ...value, artifacts }).artifacts[0].id, 501);
+
+  value.artifacts.push({
+    ...value.artifacts[0], id: 502, name: `unexpected-${subjectSha}-attempt-3`,
+  });
+  assert.throws(() => buildWorkflowRunObservation({
+    ...value, artifacts: filterArtifactsForAttempt(value.artifacts, subjectSha, 3),
+  }));
 });
 
 test('publisher freshness helper rejects an old attempt and a cross-PR run', () => {

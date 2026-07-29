@@ -178,7 +178,7 @@ jobs:
             }
           }
           $screenIds = @($scope.required_screen_ids | ForEach-Object { [string]$_ })
-          if (@($screenIds | Where-Object { $_ -notmatch '^[a-z0-9][a-z0-9-]{0,63}$' }).Count -gt 0) {
+          if (@($screenIds | Where-Object { $_ -notmatch '^[a-z0-9][a-z0-9.-]{0,63}$' }).Count -gt 0) {
             throw 'Trusted design scope contains an unsafe screen id.'
           }
           $missing = @($scope.reference_missing_items | ForEach-Object { [string]$_ })
@@ -250,11 +250,6 @@ jobs:
           $nodePath = (Get-Command node -CommandType Application | Select-Object -First 1).Source
           $openSpecHash = (Get-FileHash -LiteralPath $openSpecPath -Algorithm SHA256).Hash
           $nodeHash = (Get-FileHash -LiteralPath $nodePath -Algorithm SHA256).Hash
-          $ledger = Get-Content -Raw -LiteralPath (Join-Path $candidateRoot 'openspec/lifecycle-ledger.json') | ConvertFrom-Json -Depth 100
-          $subjects = @($ledger.changes | ForEach-Object { [string]$_.subject_commit } | Sort-Object -Unique)
-          if ($subjects.Count -ne 1 -or $subjects[0] -notmatch '^[0-9a-f]{40}$' -or $subjects[0] -ne $env:SUBJECT_SHA) {
-            throw 'Lifecycle ledger does not bind the exact source-run subject.'
-          }
           $report = & ./trusted-base/scripts/tests/reconcile-openspec-ledger.ps1 `
             -Mode Reconcile `
             -RepoRoot $candidateRoot `
@@ -267,7 +262,9 @@ jobs:
             -NodeExecutableSha256 $nodeHash `
             -NodeTrustedRoot (Split-Path -Parent $nodePath)
           if ($LASTEXITCODE -ne 0) { throw "Actual OpenSpec reconciliation failed: $report" }
-          "subject=$($subjects[0])" >> $env:GITHUB_OUTPUT
+          # Ledger rows are lifecycle records and may legitimately cite historical
+          # commits.  The source-run SHA remains the only merge-evidence subject.
+          "subject=$env:SUBJECT_SHA" >> $env:GITHUB_OUTPUT
 
       - name: Capture sanitized GitHub lifecycle observation with base-pinned collector
         shell: pwsh

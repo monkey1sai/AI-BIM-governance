@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
@@ -10,14 +10,18 @@ import { createVerificationPlan } from '../lib/verification-plan.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const runner = path.join(root, 'scripts', 'lib', 'verification-runner.mjs');
 const sourceManifest = JSON.parse(readFileSync(path.join(root, 'scripts', 'verification-manifest.json'), 'utf8'));
-const subject = 'a'.repeat(40);
-
 function command(file) {
   return { executable: 'pwsh', args: ['-NoProfile', '-NonInteractive', '-File', `scripts/tests/fixtures/${file}`] };
 }
 
-function runFixture(configure) {
-  const tempBase = path.join(root, 'artifacts', 'verification-outcomes');
+function git(sandbox, args) {
+  const result = spawnSync('git', args, { cwd: sandbox, encoding: 'utf8', windowsHide: true });
+  if (result.error || result.status !== 0) throw new Error(result.stderr || 'fixture git command failed');
+  return result.stdout.trim();
+}
+
+function createFixtureRepository(configure) {
+  const tempBase = path.join(root, 'artifacts', 'tmp');
   mkdirSync(tempBase, { recursive: true });
   const sandbox = mkdtempSync(path.join(tempBase, 'verification-runner-'));
   const manifest = structuredClone(sourceManifest);
@@ -26,15 +30,30 @@ function runFixture(configure) {
   target.default_profiles = ['developer'];
   manifest.gates.find(({ id }) => id === 'root-contracts').command = command('verification-gate-pass.ps1');
   configure?.(manifest, target);
+  mkdirSync(path.join(sandbox, 'scripts', 'tests', 'fixtures'), { recursive: true });
+  writeFileSync(path.join(sandbox, '.gitignore'), 'artifacts/verification-outcomes/\n');
+  writeFileSync(path.join(sandbox, 'scripts', 'tests', 'fixtures', 'verification-gate-pass.ps1'), 'exit 0\n');
+  writeFileSync(path.join(sandbox, 'scripts', 'tests', 'fixtures', 'verification-gate-fail.ps1'), 'exit 17\n');
   const manifestPath = path.join(sandbox, 'manifest.json');
-  const outcomePath = path.join(sandbox, 'outcome.json');
   writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
+  git(sandbox, ['init']);
+  git(sandbox, ['config', 'user.email', 'verification-runner@example.test']);
+  git(sandbox, ['config', 'user.name', 'Verification Runner Test']);
+  git(sandbox, ['add', '.']);
+  git(sandbox, ['commit', '-m', 'fixture']);
+  return { sandbox, manifest, manifestPath, subject: git(sandbox, ['rev-parse', 'HEAD']) };
+}
+
+function runFixture(configure, beforeRun) {
+  const { sandbox, manifest, manifestPath, subject } = createFixtureRepository(configure);
+  const outcomePath = path.join(sandbox, 'artifacts', 'verification-outcomes', 'outcome.json');
   const plan = createVerificationPlan(manifest, { defaultProfile: 'developer', subjectSha: subject });
-  const result = spawnSync(process.execPath, [runner, '--repo-root', root, '--manifest', manifestPath,
+  beforeRun?.({ sandbox, subject });
+  const result = spawnSync(process.execPath, [runner, '--repo-root', sandbox, '--manifest', manifestPath,
     '--default-profile', 'developer', '--subject', subject, '--outcome-out', outcomePath], {
     encoding: 'utf8', timeout: 30_000, windowsHide: true,
   });
-  const outcome = JSON.parse(readFileSync(outcomePath, 'utf8'));
+  const outcome = existsSync(outcomePath) ? JSON.parse(readFileSync(outcomePath, 'utf8')) : null;
   return { result, outcome, plan, sandbox };
 }
 
@@ -42,6 +61,7 @@ test('runner writes a complete subject-bound outcome for a passing gate', () => 
   const fixture = runFixture();
   try {
     assert.equal(fixture.result.status, 0, fixture.result.stderr);
+    assert.equal(existsSync(path.join(fixture.sandbox, 'artifacts', 'verification-outcomes')), true);
     validateVerificationOutcome(fixture.outcome, fixture.plan);
     assert.equal(fixture.outcome.result, 'passed');
     assert.deepEqual(fixture.outcome.gates.map(({ result, exit_code }) => [result, exit_code]), [['passed', 0]]);
@@ -88,15 +108,32 @@ test('not_configured is typed as incomplete and advisory failure stays non-block
 });
 
 test('outcome mode rejects abbreviated subject and repository escape', () => {
-  for (const args of [
-    ['--subject', 'abc', '--outcome-out', 'artifacts/verification-outcomes/rejected.json'],
-    ['--subject', subject, '--outcome-out', '../rejected.json'],
-    ['--subject', subject, '--outcome-out', 'scripts/rejected.json'],
-  ]) {
-    const result = spawnSync(process.execPath, [runner, '--repo-root', root, '--manifest', path.join(root, 'scripts', 'verification-manifest.json'),
-      '--default-profile', 'developer-none', ...args], { encoding: 'utf8', timeout: 15_000, windowsHide: true });
-    assert.notEqual(result.status, 0);
-  }
+  const fixture = createFixtureRepository();
+  try {
+    for (const args of [
+      ['--subject', 'abc', '--outcome-out', 'artifacts/verification-outcomes/rejected.json'],
+      ['--subject', fixture.subject, '--outcome-out', '../rejected.json'],
+      ['--subject', fixture.subject, '--outcome-out', 'scripts/rejected.json'],
+    ]) {
+      const result = spawnSync(process.execPath, [runner, '--repo-root', fixture.sandbox, '--manifest', fixture.manifestPath,
+        '--default-profile', 'developer-none', ...args], { encoding: 'utf8', timeout: 15_000, windowsHide: true });
+      assert.notEqual(result.status, 0);
+    }
+  } finally { rmSync(fixture.sandbox, { recursive: true, force: true }); }
+});
+
+test('outcome mode rejects a stale subject or a dirty working tree', () => {
+  const stale = runFixture(undefined, ({ sandbox }) => { git(sandbox, ['commit', '--allow-empty', '-m', 'head drift']); });
+  try {
+    assert.notEqual(stale.result.status, 0);
+    assert.equal(stale.outcome, null);
+  } finally { rmSync(stale.sandbox, { recursive: true, force: true }); }
+
+  const dirty = runFixture(undefined, ({ sandbox }) => { writeFileSync(path.join(sandbox, 'dirty.txt'), 'dirty\n'); });
+  try {
+    assert.notEqual(dirty.result.status, 0);
+    assert.equal(dirty.outcome, null);
+  } finally { rmSync(dirty.sandbox, { recursive: true, force: true }); }
 });
 
 test('outcome validator rejects malformed typed fields', () => {

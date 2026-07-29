@@ -364,7 +364,8 @@ try {
     $lockedPackages = @($openSpecToolLock.packages.GetEnumerator() | Where-Object Key)
     Assert-True ($openSpecToolLock.lockfileVersion -eq 3 -and $lockedPackages.Count -gt 0 -and @($lockedPackages | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.Value.resolved) -or [string]$_.Value.integrity -notmatch '^sha512-' }).Count -eq 0) 'trusted OpenSpec transitive dependency closure is integrity-locked'
     Assert-True ($mergeEvidenceWorkflow -match 'scripts/tooling/openspec-observer/package-lock\.json' -and $mergeEvidenceWorkflow -match 'npm ci --ignore-scripts' -and $mergeEvidenceWorkflow -match 'dependency lock changed') 'actual OpenSpec observation installs only the base-owned integrity lock outside the repository'
-    Assert-True ($mergeEvidenceWorkflow -match 'subjects\[0\].*-ne \$env:SUBJECT_SHA') 'actual OpenSpec observation binds every ledger row to the exact source-run subject'
+    Assert-True ($mergeEvidenceWorkflow -notmatch 'Lifecycle ledger does not bind the exact source-run subject' -and
+        $mergeEvidenceWorkflow -match [regex]::Escape('"subject=$env:SUBJECT_SHA" >> $env:GITHUB_OUTPUT')) 'actual OpenSpec observation keeps the source-run SHA as merge-evidence subject without rewriting historical ledger provenance'
     $validateBlock = [regex]::Match($mergeEvidenceWorkflow, '(?ms)^\s{2}validate:.*?^\s{2}publish:').Value
     $publishBlock = [regex]::Match($mergeEvidenceWorkflow, '(?ms)^\s{2}publish:.*\z').Value
     Assert-True ($validateBlock -notmatch 'statuses:\s*write') 'artifact-consuming trusted validation has no status-write permission'

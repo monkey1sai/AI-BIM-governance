@@ -95,6 +95,25 @@ function resolveExecutable(repoRoot, logical) {
   return logical;
 }
 
+function gitOutput(repoRoot, args) {
+  const result = spawnSync('git', ['-C', repoRoot, '--no-optional-locks', ...args], {
+    encoding: 'utf8', shell: false, windowsHide: true, maxBuffer: 1024 * 1024,
+  });
+  if (result.error || result.status !== 0 || typeof result.stdout !== 'string') {
+    fail('Verification outcome requires a readable Git repository.');
+  }
+  return result.stdout.trim();
+}
+
+function assertOutcomeCheckout(repoRoot, subjectSha) {
+  if (gitOutput(repoRoot, ['rev-parse', 'HEAD']) !== subjectSha) {
+    fail('Verification outcome subject does not match repository HEAD.');
+  }
+  if (gitOutput(repoRoot, ['status', '--porcelain=v1', '--untracked-files=all']) !== '') {
+    fail('Verification outcome requires a clean working tree.');
+  }
+}
+
 function displayPlan(plan) {
   if (plan.dispatch === 'profile') process.stdout.write('[PLAN] profile=developer\n');
   else process.stdout.write(`[PLAN] dispatch=${plan.dispatch} result=${plan.result}\n`);
@@ -142,6 +161,7 @@ if (options.json) {
 displayPlan(plan);
 if (plan.result !== 'planned') process.exit(2);
 if (options.planOnly) process.exit(0);
+if (options.outcomeOut) assertOutcomeCheckout(repoRoot, options.subjectSha);
 
 const failures = [];
 const passed = [];
@@ -230,6 +250,7 @@ const incomplete = gateOutcomes.length === 0 || gateOutcomes.some(({ result }) =
 const outcomeResult = failures.length > 0 ? 'failed' : (incomplete ? 'incomplete' : (advisoryFailures.length > 0 ? 'passed_with_advisories' : 'passed'));
 if (options.outcomeOut) {
   try {
+    assertOutcomeCheckout(repoRoot, options.subjectSha);
     const writtenPath = writeVerificationOutcome(repoRoot, options.outcomeOut, {
       schema_version: 'verification-outcome/v1',
       manifest_version: plan.manifest_version,

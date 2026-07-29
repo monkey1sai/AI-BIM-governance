@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { assertSafeVerificationCommand } from './verification-command-policy.mjs';
 
@@ -104,8 +104,14 @@ export function writeVerificationOutcome(repoRoot, outputPath, outcome, expected
     reject('Outcome path must use the artifacts/verification-outcomes JSON namespace.');
   }
   const parent = path.dirname(destination);
-  if (!existsSync(parent) || !lstatSync(parent).isDirectory()) reject('Outcome parent directory must already exist.');
   let cursor = trustedRoot;
+  for (const segment of path.relative(trustedRoot, parent).split(path.sep).filter(Boolean)) {
+    cursor = path.join(cursor, segment);
+    if (!existsSync(cursor)) mkdirSync(cursor);
+    const item = lstatSync(cursor);
+    if (!item.isDirectory() || item.isSymbolicLink()) reject('Outcome path cannot contain a link or non-directory component.');
+  }
+  cursor = trustedRoot;
   for (const segment of path.relative(trustedRoot, parent).split(path.sep).filter(Boolean)) {
     cursor = path.join(cursor, segment);
     if (lstatSync(cursor).isSymbolicLink()) reject('Outcome path cannot contain a link or reparse component.');

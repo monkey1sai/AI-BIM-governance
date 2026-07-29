@@ -243,5 +243,6 @@ artifacts/metrics/ai-coding/
 # 本機 scratch:tmp 工作目錄與 coordinator 追蹤檔(可重生,不入庫)
 # ----------------------------
 artifacts/tmp/
+artifacts/verification-outcomes/
 bim-review-coordinator/track.txt
 .aider*

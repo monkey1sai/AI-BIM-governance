@@ -1467,18 +1467,18 @@
     },
     {
       "id": "minio-folderview-and-baseline-disclosure",
-      "status": "deferred",
+      "status": "archived",
       "owner": "bim-review-coordinator",
       "current_slice": null,
       "blocked_by": [],
-      "last_verified": "2026-07-28T06:30:00Z",
+      "last_verified": "2026-07-29T03:44:09.582Z",
       "task_ledger": {
-        "completed": 0,
+        "completed": 7,
         "total": 7
       },
       "evidence_refs": [
-        "openspec/changes/minio-folderview-and-baseline-disclosure/proposal.md",
-        "openspec/changes/minio-folderview-and-baseline-disclosure/tasks.md"
+        "openspec/changes/archive/2026-07-29-minio-folderview-and-baseline-disclosure/proposal.md",
+        "openspec/changes/archive/2026-07-29-minio-folderview-and-baseline-disclosure/tasks.md"
       ],
       "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
       "archive_debt": null
