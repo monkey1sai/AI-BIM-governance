@@ -60,9 +60,9 @@
 | # | 觀察 | 機器證據（2026-07-29 / `13033cb`） | 歸屬 |
 |---|---|---|---|
 | D-1 | main 的 `design-semantic-visual` 為 FAILURE，唯一失敗項是 `workspace.a4.default` 的兩個 viewport；其餘 12 screens PASS，且同一 run 的 `semantic_parity = 1`（11/11 semantic states 全過）——屬純 pixel 失效，非語意回歸 | CI run `30440400040`：`workspace.a4.default/1440x900` diff ratio `0.2794`、`1920x1080` `0.3186`，上限 `fidelity_contract.max_diff_pixel_ratio = 0.01` | `a4-console-convergence` |
-| D-2 | 失敗成因是 **route IA 遷移**，不是樣式回歸。golden 描繪的 UI 已無任何路由可達 | `EdgeConsole.tsx` `UNIFIED_WS_KEYS = ["a1","a2","a3"]`（a4 已移除）；`#a4` → `AliasRedirect to "workspace?dock=a4"` → `<UnifiedShell page="ws" dock="a4"><A4SemanticSearchPage /></UnifiedShell>`。manifest `workspace.a4.default` 仍釘 `production_routes: ["#a4"]` + `reference_action: click_exact_text "A4"`，其 golden PNG 自 `351ad96`（#340）起未變，描繪的是 `WorkspacePage` 的 A4 dock | `a4-console-convergence` |
+| D-2 | 失敗成因是 **route IA 遷移**，不是樣式回歸。**（2026-07-29 對抗驗證修正）** 初版本欄寫「golden 描繪的 UI 已無任何路由可達」，該敘述不精確：A4 dock tab 與 `A4Dock` 元件**兩者都仍在**，只是面板被掏空為導流卡；不可達的是 golden 描繪的**已填充**的 A4 dock 面板 | `EdgeConsole.tsx` `UNIFIED_WS_KEYS = ["a1","a2","a3"]`（a4 自該陣列移除）；`#a4` → `AliasRedirect to "workspace?dock=a4"` → `<UnifiedShell page="ws" dock="a4"><A4SemanticSearchPage /></UnifiedShell>`。但 `fixtures.ts:178-184` 的 `dockTabs` 仍含 a4、`WorkspacePage.tsx:159` 仍渲染 `{ws.dock === "a4" ? <A4Dock/> : null}`、`docks.tsx:237-249` 之 `A4Dock` 現為 `data-prov="redirect"` 導流卡、`unified.test.tsx:44-50` 測試 pin 住「dockTabs 5 顆」與「A4 語意查詢」。manifest `workspace.a4.default` 仍釘 `production_routes: ["#a4"]` + `reference_action: click_exact_text "A4"`，golden PNG 自 `351ad96`（#340）起未變 | `a4-console-convergence` |
 | D-3 | `A4SemanticSearchPage` 未套 design token 與版面（原生 `<select>`、瀏覽器預設 button、無卡片網格與 typography 階層），且其 IA 與設計正本不一致 | Hi-Fi 正本 `dockTabs = [a1, a2, a3, a4, issues]`——A4 在 canon 是 3D 工作區內的 dock；設計正本記 A4 ＝「NL query · Evidence Trace · 3D 高亮」。依 `docs/plans/docs-plans-README.md` §3 權威順序，前端視覺／互動面以 Hi-Fi ＋ `ai-bim-governance.css` 為最高權威 | IA 分歧＝`a4-console-convergence`；token/版面套用＝`migrate-console-to-hifi-design`。**需使用者裁決**：改 code 對齊 canon，或依 R-A1 提案改 canon |
-| D-4 | **R-A2 對 route IA 變更沒有合法跟隨路徑**（治理缺口） | `design-canon-change-control` R-A2 規定機器快照面只能由 `capture-design-system-reference.mjs --rebaseline --confirm-rebaseline` 寫入；但該腳本只重算 `source.files`、`screens[].baselines[].sha256`、`baseline_snapshot_sha256`、`captured_at_utc`（`capture-design-system-reference.mjs:331-354`），**無法增刪 `screens[]` 成員，也無法改 `route_inventory` / `routes_without_approved_pixel_reference` 歸屬**。先例 `ca20a9c`（#349）曾手改 `production_routes`（`pipeline.default` 由 `#conv` 改掛 `#pipeline`），但早於 R-A2 落地的 #360，非乾淨先例 | **需使用者裁決**；候選 owner `align-frontend-design-system-reference`（deferred／frozen、0/23） |
+| D-4 | **R-A2 對 route IA 變更沒有合法跟隨路徑**（治理缺口）。**（2026-07-29 對抗驗證修正）** 此缺口為 **latent 而非 active**：目前結構性斷言全數仍成立，D-1 只是 pixel 失效；且封鎖不只一道，是**三道牆** | (1) `capture-design-system-reference.mjs:331-354` 在 `--rebaseline` 時重算 `source.files` / `snapshot_sha256` / `captured_at_utc`、重截全部 baseline PNG，但**從不寫** `route_inventory` / `routes_without_approved_pixel_reference`（全檔 grep 該二鍵零命中），亦無法增刪 `screens[]` 成員。(2) `scripts/tests/verify-design-system-reference.ps1:280` 將 24 條 canonical route **hard-code** 於 `$expectedRoutes`，`:281`/`:284` 斷言集合逐字相等——re-scope 必須同時改這個 gate 的判定邏輯。(3) `.github/workflows/ci.yml:386-390` 對移除 base-approved screen ID **fail-closed**（`Head manifest removed base-approved screen IDs`）。另：`verify-design-system-reference.ps1:279-299` 的 route_inventory 覆蓋與 approved↔screen 對映**目前全部仍成立**；`a4-semantic-search-model-qa/tasks.md:82` 已指名 A4 的合法路徑就是雙旗標 rebaseline。先例 `ca20a9c`（#349，2026-07-16）早於 R-A2 隨 `doc-first-canon-v2` 落地（提案 #360、**採納 #361**、2026-07-20 archive），非乾淨先例 | **需使用者裁決**。**初版指派候選 owner `align-frontend-design-system-reference` 已撤回**——「rebaseline ownership」正是該 change 解凍前必須裁決的四項互斥設計之一，指派 owner 等於預決 crosswalk 結論 |
 | D-5 | pinned reference **未**漂移——「卡設計側核准」不適用於 `source.files` 面；但 repo 內正本副本與 pinned 快照分歧 | `C:\Repos\design\desigin-system` 對 `manifest.source.files` 23/23 hash MATCH（今日執行 rebaseline 對 `source.files` 為 no-op）。repo 側：`AI-BIM 前後端設計文件.dc.html` 130,443 vs pinned 102,244；`AI-BIM Console Hi-Fi.dc.html` 90,553 vs 87,937；`support.js` 65,990 vs 64,222（`support.js` 另受 R-A3「永不手改」約束） | `migrate-console-to-hifi-design` task 6.4（**human owner only**） |
 
 ### 歸屬依據：未實作 change 盤點（machine truth ＝ `openspec/lifecycle-ledger.json`）
@@ -80,3 +80,55 @@
 | `migrate-console-to-hifi-design` | active | 31/40 | D-3（token）／D-5 歸屬；§7 rebaseline 4 項全未勾 |
 | `implement-runtime-command-authority-and-rejection` | active | 31/35 | 無關 |
 | `cross-service-structured-log-baseline` | deferred | 66/71 | 無關（evidence-only） |
+
+## 三層交叉對抗驗證（2026-07-29；**不改變本 change 的範圍**）
+
+依使用者 2026-07-29 指令，對 D-1～D-5 衍生的設計問題執行三層交叉對抗驗證：**L1** 提出裁決草案 → **L2** 三個獨立驗證者以 refute-by-default 立場分別從 code truth／canon-governance／runtime-capacity 三個視角攻擊 → **L3** 仲裁。驗證基準 main `13033cb`，全程唯讀。
+
+結果：**L1 的多數裁決被推翻**。以下誠實記錄，避免同一批錯誤結論被後續 agent 從對話紀錄撿回去重做。本節**不新增 requirement、不改變本 change 的 capability 範圍**，也不觸碰 manifest／baseline／R-A1 手寫正本面。
+
+### 被推翻並撤回的裁決
+
+| L1 裁決 | 撤回原因（機器證據） |
+|---|---|
+| **「改 code 對齊 canon：`UNIFIED_WS_KEYS` 恢復含 a4、A4 面板回 dock、viewport 改真 `EmbeddedViewer`」** | (a) **與指定 owner 的 tasks 直接對撞**：`a4-console-convergence/tasks.md` 3.3 逐字「`#/workspace?dock=a4` 成為唯一 canonical 操作面；不得留下第二套實作」、3.4／4.4「停用 Issue／3D」——#427 落地的正是 owner 自己的 task。(b) **無法閉合 D-1**：golden 由 `capture-design-system-reference.mjs:40-45` 自 `authority.authoring_origin` 擷取，即 golden ＝ canon 投影，其畫面內含 `不符合 5 · 符合 7`／`12.48M tris · 1.17 GB`／`Streaming · 28 ms`；production 若「回 dock 但不放假數據」，pixel diff 對照的仍是含數字的 golden，`max_diff_pixel_ratio = 0.01` 永遠過不了。(c) **改 viewport 是偏離 canon 而非對齊**：canon 的 viewport 就是靜態圖（`WorkspacePage.tsx:131` 為 `data-prov="fixture"` 的 PNG），且 `align-frontend-design-system-reference` 非目標逐字禁止「對 live WebRTC/GPU frame 做 `<=0.01` pixel assertion」。(d) **blast radius 低估**：dock chrome（頂條／stage tree／viewport／DataChannel 字條）為 a1–a4 共用，改動會讓現行 PASS 的 `workspace.a1/a2/a3.default` 三個 screen 一併轉紅 |
+| **「S3（#382）已交付 → A4 的 3D 高亮不是 vaporware」** | 偷換概念。#382 交付的是 **viewer 消費端**（`Window.tsx` 的 `_beginA4Handoff`，入口為 URL query `a4_handoff`）與 coordinator 建立 API（`a4HandoffRoutes.ts:307`）。`web-viewer-sample/` 全域搜 `a4-handoffs` 僅三處**全為 consume**，**無任何 UI 會 POST 建立 handoff**。A4 頁 UI 文案逐字自陳「此 legacy table 不建立 handoff、不送 DataChannel」「3D 動作維持停用」，且**不存在 3D 按鈕** |
+| **「擴充 `capture-design-system-reference.mjs` 加第三旗標以 re-scope screens」** | 解方不完整且前提未觸發。見修正後的 D-4：三道牆中此解方只動第一道；另兩道（verifier hard-coded `$expectedRoutes`、CI base-approved screen fail-closed）未被涵蓋 |
+| **「D-4 的候選 owner ＝ `align-frontend-design-system-reference`」** | 預決 crosswalk 結論。該 change 解凍前必須裁決的四項互斥設計逐字含「**rebaseline ownership**」 |
+| **「A5–A10 共用一條 console-scoped spectator 連線，佔 1 個名額、保留 4 個給真人」** | 數值基準錯誤且機制不存在。active canon `documentation-source-of-truth/spec.md:208-209` 逐字「**KIT_SPECTATOR_COUNT 預設 MUST 為 0**」，coordinator `config.ts:278` 亦為 0；「5」僅存在於部署層與一個 `.claude/skills/**` agent skill，而 `openspec/config.yaml:27-28` 明令 installed skills 不得定義 product requirement。另 `viewerLeaseStore.ts:340-352` 使所有 spectator 一律取 `bindings[1]`，**無名額記帳**，「保留 4 個」無機制可執行 |
+| **「A5–A10 dashboard 殼可先做」** | 以 R3 當建置許可。R2 鐵律三態無一允許「先建前端殼、後端 NOT_BUILT」——in-canon 可建者明文「一次建到位，預設不做 mock 過渡」，missing 者「NOT_BUILT，想做先走 R-A1 提案」。R3 管的是已建之物如何誠實標示，不是建置授權 |
+| **「A1–A4 共用單一 primary lease（前瞻約束）」** | 降級為現況觀察。作為現況描述不成立：UnifiedConsole dock 內**無任何 WebRTC**（`WorkspacePage.tsx:131` 為 PNG），唯一 `<EmbeddedViewer>` 在 `ReviewSessionViewerPane.tsx:544` 且硬編碼 `streamRole="primary"`；lease 為 per-component-instance、unmount 即 `releaseViewerLease`，無 shell 層持有者。作為前瞻 SHALL 則撞 `a4-console-convergence` 明確不做清單（3.2–3.4 lease 綁定屬 deferred 母版）。另 L1 引用的「Hi-Fi 的 lease 膠囊位於 dock tabs 之上」經查為誤——`AI-BIM Console Hi-Fi.dc.html:186-193` 顯示兩者在**同一 flex row**，由 `flex:1` 推至右側 |
+
+### 存活的結論
+
+- **不採用 Kit extension 作為 A5–A10 的 3D 路徑**（結論存活，依據改寫）。正確依據為「本 repo 未建置該能力」而非「Kit 一定要經 WebRTC」：`web-viewer-sample` 無 `three`／`web-ifc`／`@thatopen`／`xeokit`／`babylon` 相依，唯一非 WebRTC「viewport」是 `MockViewport.tsx` 自陳的「deterministic · no-GPU」資訊面板而非幾何 renderer。**應撤回**的原依據：「兩個 extension 皆為 streaming 支援」不實——`ezplus.bim_review_stream.messaging` 同時是 host-native IFC→USD 轉檔與 runtime authority 的宿主（`conversion_authority.py`、`stage_loading.py`、`runtime_authority.py`），`ezplus.bim_review_stream.setup` 的 `extension.toml` 自述為「the setup extension for the **USD Viewer template**」；該交付面**已在生產關鍵路徑上**，代價是「擴充」而非「新增」。
+- **D-1～D-5 維持為揭露，不升級為裁決**；本 change 維持 Non-goals 不變。
+
+### 對抗驗證新發現的缺口（D-6～D-13，皆不在本 change 範圍）
+
+| # | 觀察 | 機器證據 | 歸屬 |
+|---|---|---|---|
+| D-6 | A4 → 3D handoff 的 **producer 端在前端不存在**，管線斷在 A4 這一側 | `a4HandoffRoutes.ts:307` 有 `POST /api/review-sessions/:sessionId/a4-handoffs`；`web-viewer-sample/` 內 `a4-handoffs` 三處全為 consume；`A4SemanticSearchPage.tsx:337-338/594-595/647-648` 逐字自陳停用 | `a4-console-convergence`（其 tasks 3.4／4.4 本就要求 table-only 停用 3D，故此為**設計意圖內的現況**，非缺陷；記錄以防被誤讀為 bug） |
+| D-7 | **部署預設與 active canon 衝突**：canon 明令 `KIT_SPECTATOR_COUNT` 預設 MUST 為 0，部署層預設為 5 | canon `openspec/specs/documentation-source-of-truth/spec.md:208-209`；`config.ts:278` = 0；`scripts/deploy.ps1:699` = 5；`compose.host-kit.yml:37` = `${KIT_SPECTATOR_COUNT:-5}` | **待裁決**：改部署預設，或依 R-A1 流程改 canon |
+| D-8 | **canon 已具名的 R3 誠實違規至今未修**：Spectator 邀請連結為假複製 | canon `documentation-source-of-truth/spec.md:209` 逐字「邀請連結 MUST 真複製（`navigator.clipboard`；**現況 unified 假複製＝R3 違規**）」；`WorkspacePage.tsx:108` 仍為 `onClick={() => u.toast("已複製 Spectator 邀請連結 …")}`，無 clipboard 呼叫 | `migrate-console-to-hifi-design`（active）或 `a4-console-convergence`，**待裁決** |
+| D-9 | **spectator 名額無記帳**：所有 spectator lease 一律落到同一個 endpoint | `viewerLeaseStore.ts:340-352` `chooseBindingForLease` 於非 primary 時回 `bindings[1] ?? bindings[0]`；`windowHelpers.ts:89-92` 取第一個非 primary。`49120`–`49150` 僅能以手動 URL `kitInstanceId=..._0N` 觸及。若 `KIT_SPECTATOR_COUNT=0`（canon 預設）則回落 `bindings[0]` ＝ primary 埠 | **待裁決**（容量／部署決策） |
+| D-10 | **零 admission control**：session 可無限建立 | `kitPool.ts:51-60` 預設 `same_instance` 政策恆回長度 1，使 `app.ts:1220-1226` 的 `409 No Kit capacity available` **不可達**；`bim-streaming-server/SYSTEM_DESIGN.md:176-179` 自陳 no GPU slot bookkeeping、no `/capacity` enforcement | `gpu-session-baseline-and-idle-reclaim`（active，0/6）——其 proposal §Why 正是此問題 |
+| D-11 | `dedicated_instance` 政策把 spectator port 當作獨立 Kit instance 發放，容量模型謊報 | `kitPool.ts:26,39-48` 於該政策下以 `endpoints.length` 為 slot 數，`endpoints` ＝ `[primary, spectator_01..05]`；但 `SYSTEM_DESIGN.md:446-452` 明說 spectator「view-only，不取得自己的 GPU slot 或 stage」。既有測試 `unit_kitpool.test.ts:225` 只驗 id 相異，未驗其為獨立 runtime | **待裁決** |
+| D-12 | **靜態縮圖能力零實作**，且其唯一技術路線需佔用那唯一的 Kit/GPU（雞生蛋） | Kit app `ezplus.bim_review_stream.kit:18-38` 相依無 capture／thumbnail extension，`:61` `livestream.skipCapture = 1`；轉檔服務無 renderer（`SYSTEM_DESIGN.md:141-143`「Conversion-only: NOT Kit / NOT WebRTC」）；全 repo 無 `usdrecord`、無 Pillow/PIL/sharp。現存可用作「縮圖」者只有 `public/design-assets/*.png` 設計稿——用它冒充模型畫面即違反 R3 | **待裁決**（若採「無 session 顯示縮圖」的產品方向則必須先解此題） |
+| D-13 | **golden ＝ canon 投影且內含 fixture 數字**，故「production 改誠實但 canon 不動」在 pixel gate 下結構性不可能通過 | `capture-design-system-reference.mjs:40-45` `sourceRoot = manifest.authority.authoring_origin`（`origin_mode: read_only`）；golden PNG 畫面含 `不符合 5 · 符合 7`／`12.48M tris · 1.17 GB`／`Streaming · 28 ms`／`Omniverse RTX · 60 FPS`；Hi-Fi 正本 grep `12.48M`×2、`不符合`×3、`28 ms`×2 | **待裁決**（U-2） |
+
+### 精煉後的待使用者裁決清單
+
+以下皆為產品／設計方向、凍結面解凍或正本改寫，經三層驗證確認**不可由工程判斷關閉**。
+
+| # | 待裁決事項 | 為何只能由你決定 |
+|---|---|---|
+| U-1 | **canon 的 fixture 數字 vs R3 誠實鐵律，哪一邊讓步** | D-13 證明兩者在 pixel gate 下結構性互斥。這是價值取捨，不是工程問題。此題是 D-1／D-3 的真正根節點 |
+| U-2 | A4 的處置：(a) 依 R-A1 提案改 Hi-Fi 使 A4 畫面誠實化後 rebaseline；(b) 將 `workspace.a4.default` 降為 `reference_missing`（需先解 D-4 三道牆）；(c) 維持紅燈並接受 | 三條路分別通向正本改寫、branch-protected gate 語意變更、或長期紅燈 |
+| U-3 | 是否授權執行 `migrate-console-to-hifi-design` ↔ `align-frontend-design-system-reference` 的 requirement／successor crosswalk | 它是 D-4 與 rebaseline ownership 的唯一解鎖鑰匙；兩個 change 的 proposal 與 `NOW.md:50/70` 都把它設為 frozen 解除前置 |
+| U-4 | 是否以 OpenSpec `## MODIFIED` 擴充 R-A2（第三旗標語意） | 動的是 branch-protected gate 語意，且需開新 OpenSpec ⇒ 撞 `NOW.md:36` 黑名單，只有使用者口令能解 |
+| U-5 | `verify-design-system-reference.ps1:280` 的 hard-coded `$expectedRoutes` 是否可動 | align-frontend 明文「沒有 crosswalk 不得修改 branch-protection gate」 |
+| U-6 | `KIT_SPECTATOR_COUNT` 的權威預設（canon 0 vs 部署 5） | D-7 的 canon-vs-deploy 衝突；且屬容量／部署決策 |
+| U-7 | A5–A10 是否可先於後端建置 dashboard 殼 | R2 鐵律預設「不做 mock 過渡」；且屬 `NOW.md` 排程權 |
+| U-8 | 「無 active session 顯示靜態縮圖」是否仍為產品方向 | D-12 顯示該能力零實作且有雞生蛋依賴；若保留此方向，需先排 capture 能力 |
+| U-9 | A1–A4 的 lease 語意是否固定為單一 primary | `a4-console-convergence` 已把 lease 綁定劃入 deferred 母版範圍 |
