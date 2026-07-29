@@ -204,7 +204,7 @@ phase('Discover')
 
 const [deploy, features, params, files] = await parallel([
   () => governedAgent(
-    `${CONTEXT}\n\n任務(Opus,難):精讀部署機制,輸出「main=origin/main 一鍵部署到測試區」的精確指令序列與服務啟動真相。\n` +
+    `${CONTEXT}\n\n任務(Fable,max):精讀部署機制,輸出「main=origin/main 一鍵部署到測試區」的精確指令序列與服務啟動真相。\n` +
     `READ: ${REPO}/scripts/deploy.ps1 全文、${REPO}/scripts/dev/rebuild-test-deploy.ps1、${REPO}/scripts/script-registry.json、${REPO}/scripts/SCRIPT_CONTRACT.md(若存在)、任何 docker-compose*.yml、${REPO}/scripts/lib/ 內被 deploy.ps1 dot-source 的檔。\n` +
     `釐清:一鍵測試區部署的「確切命令序列」(從目前 repo 觸發 rebuild-test-deploy.ps1 -Build → 部署區 deploy.ps1 -Build);deploy.ps1 實際會 build/啟動哪些服務、各在哪個 port、哪些 default 啟動 vs 條件啟動;Phase 3 host-native blocker 的判定與處理;任何會擋住「一鍵成功」的缺口/風險。只回報你在檔案裡讀到的真相,讀不到的標 unknown,不要臆測。`,
     { label: 'deploy-path', phase: 'Discover', ...ROUTING.arbiter, schema: DEPLOY_SCHEMA },

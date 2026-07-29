@@ -338,7 +338,7 @@
         "algorithm": "sha256",
         "trees": {
           "claude": "97ee22f4e24266494c3143bf724ab2966e9b2245c65f770f7eabb97bb2054b13",
-          "codex": "b31d1f78844358473984e11c1b3be3047f80b36070b8322666e30d2096885766"
+          "codex": "00fcb0d93f2364047e1624a7f23f2dddade8aeec7bda350b81054f585874584a"
         }
       }
     },

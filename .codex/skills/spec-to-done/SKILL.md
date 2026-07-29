@@ -296,7 +296,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .claude\skills\spec-to-done\
 
 模型與 reasoning effort 不在本 adapter 內固定。依全域 `C:\Users\IOT\.codex\docs\agents\task-routing.md` 的 task tier 與 capability routing，指揮官使用目前 session 選定的 global profile，並依工作內容派發角色 lane：`explorer` 負責 source discovery，`debugger` 負責 root-cause isolation，`reviewer` 負責 correctness / regression review，`security_auditor` 負責 auth、權限、破壞性操作與部署風險。各 lane 的 effort 由 global task tier 決定，不得在此文件寫死模型 slug。
 
-角色路由不改變本流程的 gate 或升級語意：P4 evidence、P5 verifier/critic 與 P6 ship-item 一律使用 Codex 可用的完整 lane；P6 由 workflow coordinator 用固定命令收集 evidence 並獨占 merge sink，唯一 child 是無 shell/write capability 的獨立 apex arbiter。因為 adapter 运行於 Codex，不得以模型差異刪減、降級或放寬 P4/P5/P6、HELD、resume 或 evidence 條件。平行僅限互不衝突的 review / verification；P3 implementer 維持單一協調流程。
+角色路由不改變本流程的 gate 或升級語意：P4 evidence、P5 verifier/critic 與 P6 ship-item 一律使用 Codex 可用的完整 lane；P6 由 workflow coordinator 用固定命令收集 evidence 並獨占 merge sink，唯一 child 是無 shell/write capability 的獨立 apex arbiter。因為 adapter 運行於 Codex，不得以模型差異刪減、降級或放寬 P4/P5/P6、HELD、resume 或 evidence 條件。平行僅限互不衝突的 review / verification；P3 implementer 維持單一協調流程。
 
 ## 誠實鐵律(本流程的落實)
 
