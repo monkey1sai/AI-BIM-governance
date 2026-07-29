@@ -50,8 +50,8 @@ def _assert_validate_raises(data):
 
 def test_render_block_includes_apex_first_gate_and_semaphore():
     block = gen.render_block(_valid_data())
-    assert "planAuthor: { model: 'fable', effort: 'max' }" in block
-    assert "arbiter: { model: 'fable', effort: 'max' }" in block
+    assert 'planAuthor: { model: "fable", effort: "max" }' in block
+    assert 'arbiter: { model: "fable", effort: "max" }' in block
     assert "const MAX_CHILD_CONCURRENCY = 2" in block
     assert "HELD: apex_unavailable_or_denied" in block
     assert "agentType: 'code-reviewer'" in block
@@ -62,8 +62,8 @@ def test_render_block_planauthor_flag_only_changes_plan_author():
     data = _valid_data()
     data["flags"]["plan_author_xhigh"] = True
     block = gen.render_block(data)
-    assert "planAuthor: { model: 'opus', effort: 'xhigh' }" in block
-    assert "arbiter: { model: 'fable', effort: 'max' }" in block
+    assert 'planAuthor: { model: "opus", effort: "xhigh" }' in block
+    assert 'arbiter: { model: "fable", effort: "max" }' in block
 
 
 def test_validate_accepts_complete_contract():
@@ -74,6 +74,20 @@ def test_validate_rejects_illegal_effort():
     data = _valid_data()
     data["tiers"]["scan"]["effort"] = "high"
     _assert_validate_raises(data)
+
+
+def test_validate_rejects_registry_attempt_to_expand_model_enum():
+    data = _valid_data()
+    data["allowed_efforts"]["attacker-model"] = ["max"]
+    _assert_validate_raises(data)
+
+
+def test_entry_uses_json_string_literals_for_untrusted_values():
+    model = 'fable" }; globalThis.injected = true; //'
+    effort = 'max" }; throw new Error("injected") //'
+    entry = gen._entry(model, effort)
+    assert f"model: {gen.json.dumps(model)}" in entry
+    assert f"effort: {gen.json.dumps(effort)}" in entry
 
 
 def test_validate_rejects_missing_required_tier():

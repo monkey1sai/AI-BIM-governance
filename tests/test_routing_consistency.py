@@ -90,11 +90,11 @@ def test_callsites_reference_expected_tier():
 def test_generated_model_literals_and_efforts_are_pinned():
     for name in EXPECTED:
         content = _read(name)
-        assert "scan: { model: 'sonnet', effort: 'medium' }" in content
-        assert "judge: { model: 'opus', effort: 'max' }" in content
-        assert "arbiter: { model: 'fable', effort: 'max' }" in content
-        assert "planAuthor: { model: 'fable', effort: 'max' }" in content
-        assert "effort: 'high'" not in content
+        assert 'scan: { model: "sonnet", effort: "medium" }' in content
+        assert 'judge: { model: "opus", effort: "max" }' in content
+        assert 'arbiter: { model: "fable", effort: "max" }' in content
+        assert 'planAuthor: { model: "fable", effort: "max" }' in content
+        assert 'effort: "high"' not in content
         assert "mediua" not in content
 
 

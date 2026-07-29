@@ -21,8 +21,17 @@ TARGETS = [
 BEGIN, END = "// <routing:gen>", "// </routing:gen>"
 _MARK = re.compile(re.escape(BEGIN) + r".*?" + re.escape(END), re.DOTALL)
 
+ALLOWED_MODEL_EFFORTS = {
+    "haiku": ["low"],
+    "sonnet": ["medium", "xhigh"],
+    "opus": ["xhigh", "max"],
+    "fable": ["max"],
+}
+
 def validate(data):
     allowed = data["allowed_efforts"]
+    if allowed != ALLOWED_MODEL_EFFORTS:
+        raise ValueError("allowed_efforts must match the generator-owned model/effort enum")
     required_tiers = {"extract", "scan", "standard", "reason", "judge", "arbiter"}
     missing_tiers = required_tiers - set(data["tiers"])
     if missing_tiers:
@@ -64,9 +73,9 @@ def load_routing():
     return data
 
 def _entry(model, effort):
-    parts = [f"model: '{model}'"]
+    parts = [f"model: {json.dumps(model)}"]
     if effort is not None:
-        parts.append(f"effort: '{effort}'")
+        parts.append(f"effort: {json.dumps(effort)}")
     return "{ " + ", ".join(parts) + " }"
 
 def render_block(data):

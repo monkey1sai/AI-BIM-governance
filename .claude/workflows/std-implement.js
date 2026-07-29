@@ -14,13 +14,13 @@ export const meta = {
 
 // <routing:gen>
 const ROUTING = {
-  extract: { model: 'haiku', effort: 'low' },
-  scan: { model: 'sonnet', effort: 'medium' },
-  standard: { model: 'sonnet', effort: 'xhigh' },
-  reason: { model: 'opus', effort: 'xhigh' },
-  judge: { model: 'opus', effort: 'max' },
-  arbiter: { model: 'fable', effort: 'max' },
-  planAuthor: { model: 'fable', effort: 'max' },
+  extract: { model: "haiku", effort: "low" },
+  scan: { model: "sonnet", effort: "medium" },
+  standard: { model: "sonnet", effort: "xhigh" },
+  reason: { model: "opus", effort: "xhigh" },
+  judge: { model: "opus", effort: "max" },
+  arbiter: { model: "fable", effort: "max" },
+  planAuthor: { model: "fable", effort: "max" },
 }
 const MAX_CHILD_CONCURRENCY = 2
 const RAW_AGENT = agent
