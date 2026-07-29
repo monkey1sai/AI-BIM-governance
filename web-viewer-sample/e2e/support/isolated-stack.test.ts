@@ -80,6 +80,16 @@ afterEach(() => {
 });
 
 describe("loadIsolatedStackConfig", () => {
+  it("keeps A4 require-real without legacy skip gates", () => {
+    const source = readFileSync(path.join(process.cwd(), "e2e", "a4-closeout.spec.ts"), "utf8");
+    expect(source).not.toMatch(/A4_E2E_REQUIRE_REAL|test\.skip|function unavailable/);
+    expect(source).toContain("requireIsolatedStackConfig");
+    expect(source).toContain("watchForbiddenRequests");
+    expect(source).toContain("DETERMINISTIC_CLASS_CANDIDATES");
+    expect(source).toContain("selectOption(jobId)");
+    expect(source).toContain("finally");
+  });
+
   it("requires the manifest before Playwright starts", () => {
     expect(() => loadIsolatedStackConfig({ env: { E2E_REQUIRE_REAL: "1" } })).toThrow(/E2E_STACK_MANIFEST is required/);
   });
