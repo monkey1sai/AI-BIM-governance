@@ -124,11 +124,13 @@ describe("A4SemanticSearchPage", () => {
       await flush();
 
       expect(coordinatorClient.listIfcReady).toHaveBeenCalledWith(100);
-      expect(container.querySelector<HTMLButtonElement>('[data-testid="a4-source-session"]')?.disabled).toBe(true);
+      // canonical session 來源已可選（不再是等待 S4-D 的停用按鈕）；但沒有
+      // session context 進站時仍預設 ifc_ready，因此此處不渲染 session select。
+      expect(container.querySelector<HTMLButtonElement>('[data-testid="a4-source-session"]')?.disabled).toBe(false);
       expect(container.querySelector('[data-testid="a4-session-select"]')).toBeNull();
       expect(container.querySelector<HTMLSelectElement>('[data-testid="a4-job-select"]')?.value).toBe("ifcready_x");
       expect(container.textContent).not.toContain("ifcready_pending");
-      expect(coordinatorClient.runtimeStatus).not.toHaveBeenCalled();
+      expect(coordinatorClient.runtimeStatus).toHaveBeenCalled();
       const run = container.querySelector<HTMLButtonElement>('[data-testid="a4-run"]')!;
       expect(run.disabled).toBe(false);
       vi.mocked(governanceClient.searchLlmStatus)

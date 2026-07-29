@@ -369,6 +369,7 @@ export const governanceClient = {
         headers: localDevPrincipalHeaders(userToken),
         body: JSON.stringify(body),
       },
+      { safeError: true },
     ),
   searchModelForIfcReady: async (
     ifcReadyJobId: string,
@@ -383,6 +384,7 @@ export const governanceClient = {
         headers: localDevPrincipalHeaders(userToken),
         body: JSON.stringify(body),
       },
+      { safeError: true },
     ),
 
   // Issue tracking
