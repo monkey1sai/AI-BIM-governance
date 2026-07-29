@@ -588,6 +588,17 @@ export function A4SemanticSearchPage() {
             {t("Issue 尚不可用", "Issue unavailable")}
           </Btn>
         </div>
+        <p className="ec-warn" data-testid="a4-table-only">
+          {sourceMode === "session"
+            ? t(
+              "目前結果僅供表格檢視：A4 Issue 需要完整 session-bound proof 與認證 lease，3D 動作維持停用。",
+              "Results are table-only: A4 Issue requires a complete session-bound proof and an authenticated lease; 3D actions remain disabled.",
+            )
+            : t(
+              "目前結果僅供表格檢視：ifc_ready 相容入口不具 Issue 或 3D authority。",
+              "Results are table-only: the ifc_ready compatibility entry carries no Issue or 3D authority.",
+            )}
+        </p>
         <p className="ec-note" data-testid="a4-actions-unavailable">
           {actionsUnavailableReason}
         </p>

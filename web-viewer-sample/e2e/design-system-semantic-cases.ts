@@ -405,7 +405,9 @@ function a4Cases(): ScreenCases {
       prepare: gotoA4,
       assertions: [
         { id: "a4-run-disabled", locator: '[data-testid="a4-run"]', expectation: "disabled" },
-        { id: "a4-no-issue-control", locator: '[data-testid="a4-create-issues"]', expectation: "count_equals", expected: 0 },
+        // main 生態（unit test 與 a4-closeout e2e）以「存在但 disabled」表達
+        // Issue 尚不可用，而非移除控制項；此處對齊該既有契約。
+        { id: "a4-no-issue-control", locator: '[data-testid="a4-create-issues"]', expectation: "disabled" },
         { id: "a4-no-handoff-control", locator: '[data-testid*="handoff"]', expectation: "count_equals", expected: 0 },
       ],
     },
