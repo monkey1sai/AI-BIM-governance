@@ -1,22 +1,22 @@
 # isolated-branch-stack-verification（本 change 的 delta）
 
-本 delta 定義「未 merge branch 如何取得 user-facing runtime evidence」的執行場所契約。它不涵蓋 evidence 的內容分級（屬 `runtime-verification-evidence`）、測試部署區重建（屬 `test-deploy-rebuild-workflow`）、design fidelity 判定（屬既有 design-system gate），也不涵蓋任何 A4 功能行為（屬 `a4-semantic-search`）。
+本 delta 定義「未 merge branch 如何取得 CPU governance／coordinator／browser operability evidence」的執行場所契約。它不涵蓋 Kit／WebRTC／GPU host-native evidence、evidence 的內容分級、測試部署區重建、design fidelity 判定或任何 A4 功能行為。
 
 ## ADDED Requirements
 
-### Requirement: 未 merge branch 的 user-facing runtime evidence SHALL 在隔離 branch stack 取得
+### Requirement: 未 merge branch 的 CPU governance/coordinator/browser operability evidence SHALL 在隔離 branch stack 取得
 
-當一個 change 尚未 merge 進 `main`，而它需要 user-facing runtime evidence（visible route、按鈕打真實 backend API、observed runtime ID、screenshot／trace）時，該 evidence SHALL 在隔離 branch stack 上產生。隔離 branch stack 的定義是：以本 branch 的 checkout 啟動的 governance、coordinator 與 viewer 三層，且其對外 listener SHALL 全部落在專供隔離使用的 port 集合。
+當一個 change 尚未 merge 進 `main`，而它需要 CPU governance／coordinator／browser operability evidence（visible route、按鈕打真實 backend API、observed runtime ID、screenshot／trace）時，該 evidence SHALL 在隔離 branch stack 上產生。隔離切片以本 branch checkout 啟動 governance 與 coordinator backend；viewer dev server 由 Playwright `webServer` 以同一份 stack manifest 的 resolved viewer port 啟動。Kit／WebRTC／GPU、first-frame、stage truth 與 DataChannel evidence 不在此 Requirement 範圍，仍須另依 host-native Kit 契約取得。
 
 測試部署區 SHALL NOT 被用來驗證未 merge 的 branch。測試部署區的重建契約固定為 freshly fetched `origin/main`，因此把 branch 產物載入部署區會使該環境同時不代表 `main` 也不代表 branch。
 
 本 Requirement SHALL NOT 放寬既有 Frontend Dual-Gate：隔離 stack 提供的是 operability／runtime vertical slice 的執行場所，design fidelity 仍由既有 design gate 獨立判定。
 
-**備註（決策原因）:** `a4-console-convergence` tasks 4.1–4.4 已把 A4 的全部 runtime evidence 押在隔離 stack 上，但 repo 內既無定義、無 launcher、也無檢查，導致「打錯環境」與「skip 後宣稱通過」兩種失效沒有任何機器攔截點。
+**備註（決策原因）:** `a4-console-convergence` tasks 4.1–4.4 已引用隔離 stack，但 repo 內既無 CPU/browser 切片定義、無 launcher、也無檢查，導致「打錯環境」與「skip 後宣稱通過」兩種失效沒有機器攔截點；Kit/WebRTC 部分不由本 change 承接。
 
-#### Scenario: branch change 取得 runtime evidence
+#### Scenario: branch change 取得 CPU/browser operability evidence
 
-- **GIVEN** 一個尚未 merge 的 change 需要 user-facing runtime evidence
+- **GIVEN** 一個尚未 merge 的 change 需要 CPU governance／coordinator／browser operability evidence
 - **WHEN** 它執行 browser E2E 並收集 screenshot／trace／console／network
 - **THEN** 該 run SHALL 對隔離 branch stack 執行
 - **AND** evidence SHALL 記錄 stack kind、resolved ports、base URLs 與 head commit sha
@@ -31,9 +31,9 @@
 
 隔離 branch stack SHALL 使用固定 base port：coordinator `8005`、governance `49103`、viewer dev server `5180`。保留集合 SHALL 包含測試部署區 port（`8004`、`49102`、`49101`、`8010`、`5173`、`5174`）與 Kit runtime range（`49100` 與 `49110`–`49150`）。
 
-隔離 stack SHALL 接受非負整數 offset 以支援 parallel session，resolved port SHALL 為 base 加 offset。啟動流程 SHALL 在啟動任何服務之前計算 resolved port set 並與保留集合求交集；交集非空時 SHALL fail closed——回報衝突 port 與 owner，且 SHALL NOT 啟動任何服務、SHALL NOT 對任何 port 執行清理。
+隔離 stack SHALL 只接受整數 offset `0..4` 以支援 parallel session，resolved port SHALL 為 base 加 offset。負值、非整數或 `>4` SHALL 在 listener 查詢、cleanup 或服務啟動之前 fail closed。通過 domain 後，啟動流程 SHALL 計算 resolved port set 並與保留集合求交集；交集非空時 SHALL fail closed——回報衝突 port 與 owner，且 SHALL NOT 啟動任何服務、SHALL NOT 對任何 port 執行清理。
 
-啟動前的 port 清理 SHALL 只作用於 resolved port set。清理 SHALL NOT 觸及保留集合中的任何 port。
+啟動前的 port cleanup SHALL 只作用於 resolved backend port set，且只有 manifest 所記 PID、精確 launcher entrypoint 與 process creation identity 在 stop 前重驗全部一致時，才可停止該 repo-owned backend。未知 listener、缺少 manifest、PID reuse、entrypoint 不符或 creation identity 不符時 SHALL fail closed，SHALL NOT 停止任何 process。cleanup SHALL NOT 觸及 viewer port 或保留集合中的任何 port。
 
 隔離 stack SHALL NOT 啟動 streaming server、Kit runtime 或 WebRTC；這些 runtime 的 evidence 仍由既有 host-native 契約提供。
 
@@ -47,12 +47,19 @@
 - **AND** SHALL NOT 啟動任何服務
 - **AND** SHALL NOT 對任何 port 執行清理動作
 
-#### Scenario: offset 越界被同一檢查擋下
+#### Scenario: offset domain 在任何 listener 或 cleanup 前被檢查
 
-- **GIVEN** offset 使 governance resolved port 進入 Kit range
-- **WHEN** 啟動流程執行不相交檢查
+- **GIVEN** offset 是負值、非整數或大於 `4`（包含 `5`、`48`）
+- **WHEN** 啟動流程驗證輸入
 - **THEN** 流程 SHALL fail closed
-- **AND** SHALL NOT 靜默 wrap、重試或改用其他 port
+- **AND** SHALL NOT 查詢或停止 listener、靜默 wrap、重試或改用其他 port
+
+#### Scenario: 未知 listener 不得被 cleanup
+
+- **GIVEN** resolved backend port 已有 listener，但其 manifest PID、精確 launcher entrypoint 與 creation identity 無法全部匹配
+- **WHEN** launcher 執行 start 或 stop ownership preflight
+- **THEN** 流程 SHALL fail closed 並回報 occupied/ownership-unknown
+- **AND** SHALL NOT 停止該 listener 或啟動任何新服務
 
 #### Scenario: 隔離 stack 啟停不改動部署區
 
@@ -60,19 +67,26 @@
 - **WHEN** 隔離 stack 啟動、執行 E2E 後停止
 - **THEN** 部署區 listener 狀態 SHALL 在啟動前、執行中與停止後保持一致
 
-### Requirement: 隔離 stack SHALL 由 repo-owned script 啟停，不得依賴 agent skill
+### Requirement: 隔離 backend SHALL 由 repo-owned script 管理，viewer SHALL 由 Playwright webServer 管理
 
-隔離 stack 的啟動、停止與狀態查詢 SHALL 由 repo 內受版本控管的 script 提供，並 SHALL 登記於 script registry 與 script contract。它 SHALL NOT 成為 canonical operator entrypoint，也 SHALL NOT 取代 `deploy.ps1`、`verify-all.ps1`、`stop-all.ps1`。
+隔離 governance／coordinator backend 的啟動、停止與狀態查詢 SHALL 由 repo 內受版本控管的 script 提供，並 SHALL 登記於 script registry 與 script contract。viewer dev server 的 lifecycle SHALL 由 Playwright `webServer` 唯一擁有；repo launcher SHALL NOT 啟動或停止 viewer。launcher SHALL NOT 成為 canonical operator entrypoint，也 SHALL NOT 取代 `deploy.ps1`、`verify-all.ps1`、`stop-all.ps1`。
 
 隔離 stack 的任何必要步驟（含 port 清理）SHALL NOT 以 `.claude/**`、`.codex/**` 或其他 agent skill 目錄下的檔案作為唯一實作來源；installed skill 是 workflow helper，不是 product source of truth。
 
-啟動成功時 SHALL 產出 stack manifest，內容至少包含 stack kind、offset、resolved ports、base URLs、head commit sha、啟動時間與 process 識別；停止時 SHALL 保留 manifest 並補記停止時間。
+launcher 的三個 action SHALL 要求 caller 明示 `ChangeId` 與 `RunId`；兩者只允許安全的單一路徑 segment，並共同定位 `artifacts/e2e/<change-id>/<run-id>/stack-manifest.json`。start 發現同名 manifest 已存在時 SHALL fail closed，不得覆寫既有 run。backend 啟動成功時 manifest SHALL 至少包含 stack kind、change/run ID、offset、resolved ports、base URLs、head commit sha、啟動時間、backend ready state、lifecycle owners，以及每個 backend 的 PID、精確 launcher entrypoint 與 process creation identity；停止時 SHALL 保留 manifest 並補記停止時間。`status` SHALL 回報 backend ready/ownership 狀態與 manifest 所期待的 Playwright-owned viewer port，不得把 viewer 未由 launcher 啟動誤報為 backend failure。
 
 #### Scenario: 啟動器登記於 script 契約
 
 - **WHEN** 隔離 stack launcher 被新增或更名
 - **THEN** script registry 與 script contract SHALL 同步登記其路徑與角色
 - **AND** SHALL NOT 新增 root-level start script
+
+#### Scenario: 同一 evidence run 不得被覆寫
+
+- **GIVEN** 指定 change ID 與 run ID 的 stack manifest 已存在
+- **WHEN** launcher 再次以相同識別執行 start
+- **THEN** launcher SHALL fail closed 並回報 manifest collision
+- **AND** SHALL NOT 覆寫 manifest、停止既有 process 或啟動新服務
 
 #### Scenario: 契約不得指向 agent skill
 
@@ -82,13 +96,15 @@
 
 ### Requirement: 被引用為 evidence 的 browser E2E SHALL 以 require-real 模式對隔離 stack 執行
 
-當 browser E2E 的結果被引用為 completion evidence 時，該 run SHALL 以 require-real 模式執行：任何缺失的前置條件（stack 未啟動、API 不可用、fixture 不存在、必要 surface 未 mount）SHALL 成為 hard failure。條件式 skip 後的綠燈 SHALL NOT 被引用為通過。
+當 browser E2E 的結果被引用為 completion evidence 時，該 run SHALL 以 require-real 模式執行：任何缺失的前置條件（stack manifest 未指定、stack 未啟動、API 不可用、fixture 不存在、必要 surface 未 mount）SHALL 成為 hard failure。條件式 skip 後的綠燈 SHALL NOT 被引用為通過。
 
 viewer bundle 的 coordinator base SHALL 綁定到隔離 coordinator origin。瀏覽器 SHALL NOT 直接連線 governance internal port 或任何非 coordinator 的 internal loopback service。
 
 E2E run SHALL 在整場期間監看瀏覽器發出的 request；任何命中保留集合 port 的 request SHALL 使該 run 失敗。
 
-base URL 解析 SHALL 有唯一入口；解析結果落入保留集合時 SHALL 在執行任何 spec 之前即中止。
+evidence run SHALL 以必填 `E2E_STACK_MANIFEST` 指向唯一 manifest；resolved path SHALL 位於目前 worktree 的 `artifacts/e2e/<change-id>/<run-id>/stack-manifest.json`，其 change/run ID SHALL 與內容相同，`head_sha` SHALL 等於目前 checkout HEAD。任一條件不符 SHALL 在啟動 webServer 或執行任何 spec 前中止。base URL 解析 SHALL 有唯一入口；manifest coordinator base SHALL 是 browser E2E authority。若 `E2E_COORDINATOR_BASE_URL` 存在，其值 SHALL 與 manifest coordinator base 完全相同；即使另一個隔離 offset 的 port 不在保留集合，mismatch 仍 SHALL 提前中止。解析結果落入保留集合時亦同。
+
+stack manifest 的 resolved viewer port SHALL 是 browser E2E 的 authority。若 `E2E_VIEWER_PORT` 存在，其值 SHALL 與 manifest viewer port 完全相同，否則 SHALL 在啟動 webServer 或執行任何 spec 前中止。若 `E2E_DISABLE_WEBSERVER=1`，外部 viewer SHALL 已在相同 manifest port 提供服務；不得藉 env 改用另一個 port。
 
 #### Scenario: 缺前置條件時 hard fail 而非 skip
 
@@ -96,6 +112,13 @@ base URL 解析 SHALL 有唯一入口；解析結果落入保留集合時 SHALL 
 - **WHEN** 以 require-real 模式執行 browser E2E
 - **THEN** run SHALL 失敗並指出缺失的前置條件
 - **AND** SHALL NOT 以 skip 結束後被計為通過
+
+#### Scenario: manifest path 或 head identity 不可信時提前中止
+
+- **GIVEN** `E2E_STACK_MANIFEST` 缺失、位於目前 worktree `artifacts/e2e` 外、path ID 與內容不符，或 manifest `head_sha` 不等於 HEAD
+- **WHEN** Playwright config 解析 browser E2E 設定
+- **THEN** 解析入口 SHALL 直接拋錯
+- **AND** SHALL NOT 啟動 viewer webServer 或執行任何 spec
 
 #### Scenario: 瀏覽器打到保留 port 即失敗
 
@@ -108,6 +131,20 @@ base URL 解析 SHALL 有唯一入口；解析結果落入保留集合時 SHALL 
 - **WHEN** 設定解析出的 coordinator base 指向保留集合中的 port
 - **THEN** 解析入口 SHALL 直接拋錯
 - **AND** SHALL NOT 執行任何 spec
+
+#### Scenario: coordinator env 與 manifest base 不一致時提前中止
+
+- **GIVEN** stack manifest 的 coordinator base 與 `E2E_COORDINATOR_BASE_URL` 不同
+- **WHEN** Playwright config 解析 browser E2E 設定
+- **THEN** 解析入口 SHALL 直接拋錯，即使 env 指向另一個非保留的隔離 offset
+- **AND** SHALL NOT 啟動 viewer webServer 或執行任何 spec
+
+#### Scenario: viewer env 與 manifest port 不一致時提前中止
+
+- **GIVEN** stack manifest 的 resolved viewer port 與 `E2E_VIEWER_PORT` 不同
+- **WHEN** Playwright config 解析 browser E2E 設定
+- **THEN** 解析入口 SHALL 直接拋錯
+- **AND** SHALL NOT 啟動 viewer webServer 或執行任何 spec
 
 ### Requirement: 隔離 stack evidence SHALL 自我標示範圍且不得跨界推論
 
@@ -147,7 +184,7 @@ PR body 引用隔離 stack evidence 時 SHALL 標明其 stack kind。隔離 stac
 
 隔離 stack 的 port 表 SHALL 只有一份權威定義。文件中的 port 表、script registry 登記與 launcher 內的常數 SHALL 保持一致；三者漂移時 machine check SHALL 失敗。
 
-machine check SHALL 驗證：resolved port set 的計算、與保留集合的不相交檢查、offset 越界與非法值的拒絕、launcher 已登記於 script registry，以及文件中對應章節存在且與 launcher 常數一致。
+machine check SHALL 驗證：resolved port set 的計算、offset `0..4` 的接受與 `5`／`48`／負值／非整數的前置拒絕、與保留集合的不相交檢查、未知 listener 不被停止、manifest process identity ownership gate、launcher 已登記於 script registry，以及文件中對應章節存在且與 launcher 常數一致。
 
 machine check SHALL 在 PR 的自動化驗證流程中執行，SHALL NOT 只依賴人工執行。
 
