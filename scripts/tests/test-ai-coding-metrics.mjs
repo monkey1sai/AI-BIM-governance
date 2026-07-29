@@ -21,6 +21,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const policy = readBoundedJson(root, 'scripts/ai-coding-metrics-policy.json', 'policy');
 const ledger = JSON.parse(readFileSync(path.join(root, 'openspec', 'lifecycle-ledger.json'), 'utf8'));
 const corpus = JSON.parse(readFileSync(path.join(root, 'scripts', 'tests', 'fixtures', 'agent-governance-routing.json'), 'utf8'));
+// WIP 期望值由同一份 ledger 推導，不硬編碼：這兩個斷言驗的是「零觀測→null」與 held/completed
+// 狀態處理，WIP 數字對其為附帶值；硬編碼會讓每次新增/封存 change 都誤觸紅燈。
+// WIP 預算上限（≤6）的真正 gate 在 scripts/tests/verify-openspec-lifecycle.ps1，不在此檔。
+const activeChangeCount = ledger.changes.filter((item) => item.status === 'active').length;
 
 function observation({
   attempt = 1, result = 'passed', packageId = 'root-governance', gateId = 'agent-governance-tests',
@@ -88,7 +92,7 @@ test('zero observations stay null while current WIP and declared packet size are
   assert.equal(metric(report, 'first-pass-gate-yield').status, 'no_observations');
   assert.equal(metric(report, 'first-pass-gate-yield').value, null);
   assert.equal(metric(report, 'flake-rate').value, null);
-  assert.equal(metric(report, 'active-change-wip').value, 4);
+  assert.equal(metric(report, 'active-change-wip').value, activeChangeCount);
   assert.equal(metric(report, 'active-change-wip').status, 'snapshot_only');
   assert.equal(metric(report, 'context-packet-size').status, 'snapshot_only');
   assert.equal(metric(report, 'change-to-fast-check-ms').status, 'not_configured');
@@ -102,7 +106,7 @@ test('WIP snapshot uses the full lifecycle ledger contract and supports held/com
   const active = heldLedger.changes.find((item) => item.status === 'active');
   active.status = 'held';
   const heldReport = buildAiCodingMetricsReport({ policy, generatedAt: '2026-07-30T12:00:00.000Z', lifecycleLedger: heldLedger });
-  assert.equal(metric(heldReport, 'active-change-wip').value, 3);
+  assert.equal(metric(heldReport, 'active-change-wip').value, activeChangeCount - 1);
 
   for (const invalidLedger of [
     { schema_version: 'openspec-lifecycle-ledger/v1', changes: [{ status: 'active' }] },
