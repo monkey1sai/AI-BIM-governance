@@ -7,7 +7,7 @@
 - [x] 1.1 在 `docs/agents/product-operability-and-script-contract.md` 新增「隔離 branch stack 驗證」一節：port 配置表、部署區與 Kit 保留集合、offset 僅允許整數 `0..4`、backend-only `start` / `stop` / `status`、Playwright-owned viewer lifecycle、process ownership gate、stack manifest 欄位、evidence 標示規則，以及「隔離 stack evidence 不得推論 design gate／deploy path／Kit-WebRTC runtime」三條禁止句。
 - [x] 1.2 在同檔 §3 Frontend Dual-Gate 的 MUST 清單補一行：未 merge branch 的 CPU governance／coordinator／browser operability evidence 來源必須是隔離 stack並標明 stack kind；Kit／WebRTC／GPU evidence 另依 host-native 契約取得；不新增第二份 port 表。
 - [x] 1.3 在 `scripts/SCRIPT_CONTRACT.md` 的「Test / Smoke / Dev Scripts」段落登記新 launcher 的角色與呼叫邊界，明確它不是 canonical operator entrypoint、不得取代 `deploy.ps1`。
-- [ ] 1.4 檢查根 `AGENTS.md` / `CLAUDE.md` 的 sub-file 表是否已涵蓋本主題（`product / frontend / deploy contract` 列已指向 1.1 所在檔案）；已涵蓋則不新增列，並在 PR body 說明未改 `AGENTS.md` 的理由。
+- [x] 1.4 檢查根 `AGENTS.md` / `CLAUDE.md` 的 sub-file 表是否已涵蓋本主題（`product / frontend / deploy contract` 列已指向 1.1 所在檔案）；已涵蓋則不新增列，並在 PR body 說明未改 `AGENTS.md` 的理由。
 
 ## 2. Launcher（owner：`scripts/dev/`、`scripts/tests/`）
 
@@ -30,7 +30,7 @@
 ## 4. Machine gate（owner：`.github/`、`scripts/tests/`）
 
 - [x] 4.1 在 `.github/workflows/agent-governance.yml` 新增一步執行 `scripts/tests/test-isolated-branch-stack.ps1`。
-- [ ] 4.2 確認 `scripts/verification-manifest.json` / `scripts/verify-all.ps1` 是否需要納入；若不納入，於 PR body 說明理由（避免把 branch-only harness 塞進 operator golden path）。
+- [x] 4.2 確認 `scripts/verification-manifest.json` / `scripts/verify-all.ps1` 是否需要納入；若不納入，於 PR body 說明理由（避免把 branch-only harness 塞進 operator golden path）。
 - [ ] 4.3 對 `scripts/tests/test-agent-governance-check.ps1` 既有 dead-link／行數 gate 重跑，確認 1.1–1.3 的文件改動未破壞既有檢查。
 
 ## 5. 首個 consumer 實跑（owner：本 change，唯讀對待 A4 實作）
@@ -47,6 +47,6 @@
 - [x] 6.2 更新 `openspec/lifecycle-ledger.json`（本 change 的 task ledger 與 `subject_commit`）→ 再更新 `docs/plans/NOW.md` 的 projection → 再確認 `scripts/tests/test-ai-coding-metrics.mjs` 的 `active-change-wip` 期望值仍與 ledger 一致（本 change 已改為由 ledger 推導 `activeChangeCount`，不應再需手改；若日後有人改回硬編碼，此步即為攔截點）。三步順序不得顛倒。
 - [x] 6.3 對 launcher 與 helper 涉及的既有符號跑 `gitnexus impact -d upstream -r AI-BIM-governance`；commit 前跑 `gitnexus detect-changes --scope compare --base-ref main`，HIGH／CRITICAL 於 PR body 揭露；index stale 或 CLI 不可用時依 `docs/agents/gitnexus-usage.md` 走 unavailable gate。
 - [x] 6.4 依 `scripts/SCRIPT_CONTRACT.md` 跑 `.\scripts\deploy.ps1 -DryRun`（只作 operator-path 回歸，不是 deploy evidence），再跑 `git diff --check`、secret scan（`scripts/tests/scan-secret-patterns.ps1`）與 `git status`；generated cache 與非 evidence runtime artifact 不得進 change。
-- [ ] 6.5 PR body 填妥 Change Classification 與 AI Coding Governance 表（本 PR 觸及 `docs/plans/` 與 `.github/`），並明確標示 `Full completion claimed`、`stack_kind=isolated_branch_stack`，以及本 change **不**涵蓋 A4 tasks 4.1–4.4 的判讀與修復。
-- [ ] 6.6 PR body 據實描述 design gate **歷史時間線**：`13033cb` failure（run `30440400040`）→ #429（`2b9573e`）重核轉 success；`bfcc433` 僅為歷史 success 快照，fresh branch baseline 為 `deb5af552022c3ee171e3174f59c9f1e3dfb5936`。不得據此宣稱 current status；必須附本 PR 當下 job 實跑結果與 run link。另以 `git diff --name-only` 佐證未觸及 design manifest／baseline／R-A1 正本。DoD：body 含上述項目且 `pr-review-agent` 綠。
-- [ ] 6.7 PR body 以**摘要＋連結**指向 `proposal.md` 的相鄰缺口、對抗驗證與 A1–A10 記錄，明示其不構成本 change requirement。U 狀態須依提案現況誠實列示：U-1／U-3／U-4／U-5／U-6／U-11 pending；U-2／U-8／U-9 closed；U-7／U-10 partial；U-12 已併入 U-6。上述均不在本 PR 內實作。
+- [x] 6.5 PR body 填妥 Change Classification 與 AI Coding Governance 表（本 PR 觸及 `docs/plans/` 與 `.github/`），並明確標示 `Full completion claimed`、`stack_kind=isolated_branch_stack`，以及本 change **不**涵蓋 A4 tasks 4.1–4.4 的判讀與修復。
+- [x] 6.6 PR body 據實描述 design gate **歷史時間線**：`13033cb` failure（run `30440400040`）→ #429（`2b9573e`）重核轉 success；`bfcc433` 僅為歷史 success 快照，fresh branch baseline 為 `deb5af552022c3ee171e3174f59c9f1e3dfb5936`。不得據此宣稱 current status；必須附本 PR 當下 job 實跑結果與 run link。另以 `git diff --name-only` 佐證未觸及 design manifest／baseline／R-A1 正本。DoD：body 含上述項目且 `pr-review-agent` 綠。
+- [x] 6.7 PR body 以**摘要＋連結**指向 `proposal.md` 的相鄰缺口、對抗驗證與 A1–A10 記錄，明示其不構成本 change requirement。U 狀態須依提案現況誠實列示：U-1／U-3／U-4／U-5／U-6／U-11 pending；U-2／U-8／U-9 closed；U-7／U-10 partial；U-12 已併入 U-6。上述均不在本 PR 內實作。

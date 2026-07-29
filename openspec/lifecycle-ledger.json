@@ -1417,11 +1417,11 @@
       "id": "isolated-branch-stack-browser-e2e",
       "status": "active",
       "owner": "repository-maintainer",
-      "current_slice": "隔離 stack launcher／manifest contract 已完成；A4 consumer 為 pre-browser downloaded-job known gap；PR-only closeout pending",
+      "current_slice": "PR #431 verified evidence subject 678abc1562522935259c84a5c002e2ba7c5229f8（recorded before this closeout commit）／CI run 30485216188／design job 90689945982 success；PR evidence closeout 已擷取；剩餘 gates 僅為 2.5／3.7／4.3／5.2／5.3 與外部 required-merge-evidence／owner-consent",
       "blocked_by": [],
-      "last_verified": "2026-07-29T19:25:19Z",
+      "last_verified": "2026-07-29T19:49:16Z",
       "task_ledger": {
-        "completed": 21,
+        "completed": 26,
         "total": 31
       },
       "evidence_refs": [
