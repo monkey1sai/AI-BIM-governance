@@ -1,6 +1,12 @@
-## MODIFIED Requirements
+## REMOVED Requirements
 
 ### Requirement: coordinator SHALL 以輪詢自動偵測 MinIO 新 IFC 並觸發既有 intake 鏈（O4 定案）
+
+**Reason**: 去重模型由「首輪 baseline 不觸發＋in-memory seen」改為持久 ledger 去重（#265 落地）；「首輪 baseline 不爆量」scenario 隨之刻意刪除（auto-enroll 下 ledger 無紀錄的既有物件首輪即補轉，重啟防風暴改由持久 ledger 命中保證）。由下方 ADDED Requirement 整體取代。
+
+## ADDED Requirements
+
+### Requirement: coordinator SHALL 以輪詢自動偵測 MinIO 新 IFC 並以持久 ledger 去重觸發既有 intake 鏈
 
 watcher SHALL 為 env opt-in（`MINIO_WATCH_ENABLED` 預設 false，未啟用時系統行為與無此功能完全一致）。啟用時 SHALL 以 `ListObjectsV2`（含 `IsTruncated`/`NextContinuationToken` 分頁）定時輪詢指定 bucket/prefix，僅對 key 以設定後綴（預設 `/model.ifc`）結尾者反應。
 
@@ -39,6 +45,8 @@ watcher SHALL 為 env opt-in（`MINIO_WATCH_ENABLED` 預設 false，未啟用時
 - **WHEN** 某物件的 loopback intake POST 因暫時性原因失敗（presign 失敗 / 網路錯誤 / 逾時 / HTTP error / 2xx 非 JSON）
 - **THEN** watcher SHALL NOT 將該物件標記為已處理（不落 ledger 成功紀錄），SHALL 於後續輪重試直到成功
 - **AND** 重試若命中既有去重 SHALL 視為觸發成功（idempotent_replay，不重複建 job）
+
+## MODIFIED Requirements
 
 ### Requirement: watcher SHALL 具備安全防護且狀態對 operator 誠實可見
 

@@ -1,4 +1,10 @@
-## MODIFIED Requirements
+## REMOVED Requirements
+
+### Requirement: `#/minio` SHALL 顯示真實檔案庫樹（四態 + 可重試）
+
+**Reason**: `#/minio` 顯示來源由 governance local_fs files-tree 改為真 MinIO raw-folder 逐層瀏覽（#265 落地、#303 IA 重塑）；由下方 ADDED Requirement 整體取代。local_fs `GET /api/files/tree` API 與 `#/a1` 選擇器等其餘 Requirement 不受影響。
+
+## ADDED Requirements
 
 ### Requirement: `#/minio` SHALL 顯示真實 MinIO raw-folder 逐層瀏覽（四態 + 可重試）
 
