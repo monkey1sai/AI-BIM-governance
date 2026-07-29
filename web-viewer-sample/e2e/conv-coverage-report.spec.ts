@@ -67,7 +67,7 @@ test.describe("M2-a #conv 轉檔 coverage 報告展開", () => {
   }) => {
     const job = readyJob!;
     // viewer 由 webServer 起在 :5180（baseURL），coordinator base 由 VITE_COORDINATOR_API_BASE 注入。
-    await page.goto(`/#conv`);
+    await page.goto(`/#minio`);
 
     // Refresh queue（GET /api/external/ifc-ready）—— 載入佇列。
     const refresh = page.getByRole("button", { name: /Refresh queue|讀取中/ });

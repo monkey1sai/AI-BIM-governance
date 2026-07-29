@@ -33,7 +33,7 @@ coordinator 與 web-viewer 的 `ConversionQualityMetricsSummary` SHALL additive 
 
 ### Requirement: `#/conv` SHALL 可逐 job 展開後端原樣 coverage 報告且誠實降級
 
-`#/conv`（`ConversionSchedulingPage`）每列已派工 job（有 `conversion_job_id`）SHALL 可展開，懶載入 `conversionQualityMetrics` 顯示 coverage%（後端 `coverage_ratio`×100 原樣呈現）/ `coverage_status` / mapped/unmapped / usdc 路徑 / mapping_url；前端 SHALL NOT 計算 coverage。無 `conversion_job_id` 的 job SHALL NOT 可展開（顯尚未派工）。property/relationship/attribute 三項拆分 SHALL 誠實標「後端未提供」（後端未產，SHALL NOT 捏造百分比）。`coverage_ratio<1` 卻四捨五入到 `100.00%` 時 SHALL 下修顯 `99.99%`（SHALL NOT 謊報 100% lossless）。
+`#/conv`（`ConversionPage`；`ConversionSchedulingPage` 已於 #303 退役。`#/minio` GlobalConversionPane 亦提供等價展開與 `conv-coverage-*` testid）每列已派工 job（有 `conversion_job_id`）SHALL 可展開，懶載入 `conversionQualityMetrics` 顯示 coverage%（後端 `coverage_ratio`×100 原樣呈現）/ `coverage_status` / mapped/unmapped / usdc 路徑 / mapping_url；前端 SHALL NOT 計算 coverage。無 `conversion_job_id` 的 job SHALL NOT 可展開（`#/minio` 顯『尚未派工』、`#/conv` 顯 `—`）。property/relationship/attribute 三項拆分 SHALL 誠實標「後端未提供」（後端未產，SHALL NOT 捏造百分比）。`coverage_ratio<1` 卻四捨五入到 `100.00%` 時 SHALL 下修顯 `99.99%`（SHALL NOT 謊報 100% lossless）。
 
 #### Scenario: 展開已派工 job 看後端真 coverage
 

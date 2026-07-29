@@ -38,14 +38,14 @@ conversion authority 儲存/回傳的是 sanitize 後 `correlation_id`。coordin
 - **WHEN** job A 的 raw correlation sanitize 後為 `S`，之後另一 intake 以真實 `X-Correlation-Id: S` 與不同 idempotency key 進來
 - **THEN** coordinator SHALL 建立獨立新 job（`idempotent_replay=false`），SHALL NOT 視為 job A 的 replay
 
-### Requirement: `#/conv` Ifc-ready jobs 列表 SHALL 顯示 dispatch_error 明細
+### Requirement: `#/minio` Ifc-ready jobs 列表 SHALL 顯示 dispatch_error 明細
 
-EdgeConsole `#/conv` 的 Ifc-ready jobs 列表 SHALL 消費 `GET /api/external/ifc-ready` 回應的 `dispatch_error` 欄位：有錯時 SHALL 顯示截斷明細（完整字串置於 `title`）；`dispatch_error` 為 null 時 SHALL NOT 渲染錯誤節點。
+EdgeConsole `#/minio`（ModelDataPage · GlobalConversionPane；#303/#304 IA 合併後 Ifc-ready jobs 佇列表自 `#/conv` 移入，`#/conv`（ConversionPage）佇列僅保留裸文字錯誤附註）的 Ifc-ready jobs 列表 SHALL 消費 `GET /api/external/ifc-ready` 回應的 `dispatch_error` 欄位：有錯時 SHALL 顯示截斷明細（完整字串置於 `title`）；`dispatch_error` 為 null 時 SHALL NOT 渲染錯誤節點。
 
 #### Scenario: dispatch_failed job 的失敗原因可見
 
 - **WHEN** 某 job 派工失敗且後端回傳非空 `dispatch_error`
-- **THEN** `#/conv` 列表該 job 列 SHALL 顯示 dispatch_error 明細（截斷 + 完整字串入 title），operator 無需打 API 即可知失敗原因
+- **THEN** `#/minio` 列表該 job 列 SHALL 顯示 dispatch_error 明細（截斷 + 完整字串入 title），operator 無需打 API 即可知失敗原因
 
 #### Scenario: 無錯誤時不佔版面
 
