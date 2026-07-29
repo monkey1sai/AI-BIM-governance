@@ -1,4 +1,4 @@
-> **Status: deferred 2026-07-21**（**使用者已採納**／NOW 軌0；原 #364 deferred-proposed 升格）。不計入 active WIP；解凍前不做實作。重啟時須先重驗 main 現況（#259 trigger、watcher ledger）再調和 tasks。
+> **Status: closeout reconciled 2026-07-29**（原 deferred 2026-07-21；使用者 2026-07-29 啟動 rvt 前置鏈明確 thaw）。7/7 task 已具終局處置——全部行為由 #259/#265/#303/#304 落地或 supersede，本次 closeout 零新 production code；兩支 stale E2E 已修 #303 IA 並實跑 2 passed（STUB MINIO + real coordinator；真 MinIO 端點未在本環境驗證，fullCompletion=false）；兩份 delta 已依 main 現實修訂（觸發鈕位置／`400 invalid_delimiter`／indeterminate chip／快取揭露／watcher panel 移 `#/minio`）。**可 archive**：canonical 調和以本 delta 為準（含刪除兩個 canonical 檔的 2026-07-24 deferred banner 與 `#/conv` 舊路由掃除）。
 
 > **Historical correction 2026-07-24**：本 change 曾以 `--skip-specs` 誤作 completed archive；現依 deferred state model 恢復原 change id。#259／#265 與現行 source/tests 已落地 raw-folder、ledger auto-enroll、trigger 與 UI/E2E 的大部分行為，因此此 change 目前只允許 **frozen closeout reconciliation**：對帳 tasks、現行 code/tests 與 canonical specs，禁止重做既有 production code。完成 canonical delta 調和、affected tests 與 strict validation 前，仍為 non-canonical、non-owner。
 

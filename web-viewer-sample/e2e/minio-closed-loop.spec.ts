@@ -14,7 +14,8 @@ import { test, expect, request as pwRequest } from "@playwright/test";
 //   → ledger 落 queued
 //   → #/minio 逐層資料夾導覽（S3 Delimiter='/'）：頂層見 松風庵/ 資料夾 → 點入 root/→main/→000001/
 //     → 葉層見 model.ifc（來源 IFC role）+ ledger chip「排隊」（stub 無 .usdc → 不偽稱已轉 USDC）
-//   → #/conv 出現 ledger 紀錄（000001 版本，status=排隊）+ watcher 啟用中
+//   → 同頁 GlobalConversionPane（#303 IA 合併後 ledger/watcher 面板在 #/minio，#/conv 只剩轉檔歷史）：
+//     watcher 啟用中 + Ifc-ready 佇列出現 job（conversion=queued）+ 診斷 triggered≥1
 //   → **全程無假 ready、無捏造 coverage**
 //
 // *** 誠實標記：STUB MINIO + STUB CONVERSION API ***
@@ -226,7 +227,7 @@ test.describe("MinIO 閉環四段一致 + 逐層資料夾導覽（STUB MINIO + S
     if (tmpRoot && fs.existsSync(tmpRoot)) fs.rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  test("四段一致：auto-enroll 觸發 → ledger queued → #/minio 逐層導覽到 model.ifc（來源IFC+排隊chip）→ #/conv 紀錄+啟用中+無假 ready", async ({ page }) => {
+  test("四段一致：auto-enroll 觸發 → ledger queued → #/minio 逐層導覽到 model.ifc（來源IFC+排隊chip）→ 同頁轉檔面板 紀錄+啟用中+無假 ready", async ({ page }) => {
     const api = await pwRequest.newContext();
     try {
       // 1) §3.4 auto-enroll：watcher 首輪即對 ledger 無紀錄的既有物件觸發（triggered_total≥1）。
@@ -270,20 +271,28 @@ test.describe("MinIO 閉環四段一致 + 逐層資料夾導覽（STUB MINIO + S
       await expect(page.locator("body")).not.toContainText("已轉 USDC");
       await page.screenshot({ path: "../artifacts/e2e/minio-folderview-leaf.png", fullPage: true });
 
-      // 4) 斷言二：#/conv → ledger panel 出現 000001 紀錄、status=排隊、watcher 啟用中、不含假 ready。
-      await page.goto(`${coordinatorBase}/ui#/conv`);
-
-      const ledgerPanel = page.getByTestId("conv-ledger-panel");
-      await expect(ledgerPanel).toBeVisible({ timeout: 15_000 });
-      await expect(ledgerPanel.getByText("000001", { exact: false })).toBeVisible({ timeout: 15_000 });
-      await expect(ledgerPanel.getByText("排隊", { exact: false })).toBeVisible({ timeout: 15_000 });
-      // 誠實鐵律：ledger panel 不得含「完成」（ready Phase 2 才回填，Phase 1 禁假 ready）。
-      await expect(ledgerPanel).not.toContainText("完成");
-
+      // 4) 斷言二（#303/#304 IA 合併後，ledger/watcher 面板在 #/minio 的 GlobalConversionPane；
+      //    舊 conv-ledger-panel 已不存在，#/conv 只剩轉檔歷史）：同頁直接斷言，不另 goto。
       // minio-watch-panel：watcher 啟用中（MINIO_WATCH_ENABLED=true）。
       const mwPanel = page.getByTestId("minio-watch-panel");
       await expect(mwPanel).toBeVisible({ timeout: 15_000 });
       await expect(mwPanel).toContainText("啟用中", { timeout: 15_000 });
+
+      // Ifc-ready jobs 佇列表：auto-enroll 建立的 job（project 欄渲染「松風庵 · main」），
+      // conversion 欄（表頭 job/key/lifecycle/project/usdc/conversion/… 的 nth(5)）= conv stub 回的 queued。
+      const jobsPanel = page.locator("section.ec-panel", { hasText: "Ifc-ready jobs" });
+      const rowShofuan = jobsPanel
+        .locator("table.ec-table tbody tr")
+        .filter({ has: page.locator("td", { hasText: "松風庵" }) });
+      await expect(rowShofuan.first()).toBeVisible({ timeout: 15_000 });
+      await expect(rowShofuan.first().locator("td").nth(5)).toContainText("queued", { timeout: 15_000 });
+
+      // watcher 診斷欄位在 <details data-testid="md-pipeline-details"> 內，先展開再斷言 triggered≥1。
+      await page.getByTestId("md-pipeline-details").locator("summary").click();
+      await expect(page.getByTestId("conv-triggered-total")).toHaveText(/^[1-9]\d*$/, { timeout: 15_000 });
+
+      // 誠實鐵律：stub 無真轉檔 → ready 統計必為 0（ready Phase 2 才回填，Phase 1 禁假 ready）。
+      await expect(page.getByTestId("md-stat-ready")).toHaveText("0");
 
       await page.screenshot({ path: "../artifacts/e2e/minio-folderview-conv.png", fullPage: true });
     } finally {
