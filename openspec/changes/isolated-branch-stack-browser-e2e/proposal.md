@@ -132,3 +132,47 @@
 | U-7 | A5–A10 是否可先於後端建置 dashboard 殼 | R2 鐵律預設「不做 mock 過渡」；且屬 `NOW.md` 排程權 |
 | U-8 | 「無 active session 顯示靜態縮圖」是否仍為產品方向 | D-12 顯示該能力零實作且有雞生蛋依賴；若保留此方向，需先排 capture 能力 |
 | U-9 | A1–A4 的 lease 語意是否固定為單一 primary | `a4-console-convergence` 已把 lease 綁定劃入 deferred 母版範圍 |
+
+## A1–A10 viewer 架構：使用者陳述、已裁決事項與現況落差（2026-07-29）
+
+> 記錄性質。本節**不新增 requirement、不改變本 change 的 capability 範圍**，也不對 A1–A10 授權任何實作。它存在的理由是：本 change 的 harness 明文「不在隔離 stack 內啟動 Kit / WebRTC / GPU runtime」（見 Non-goals），因此**下列 viewer 面全部落在本 harness 的覆蓋邊界之外**——把邊界寫清楚，才不會有人拿隔離 stack 的 functional evidence 去推論 3D／串流已驗證。
+
+### 使用者陳述的目標架構（2026-07-29，逐字）
+
+> 「A1~A4 是 primary 內嵌 webRTC viewer 並可分享 spectator，A5~A10 則是以 dashboard 但 3d viewer 跟 A1~A4 的顯示相似，可以是 nvidia kit webRTC primary 或 nvidia kit extensions 3d viewer editor」
+
+### 使用者已裁決事項
+
+**Q：「A5~A10 的 3d viewer 跟 A1~A4 的顯示相似」相似到哪一層？**
+**A（使用者裁決）：只有外殼相似，runtime 分級。** A5–A10 沿用同一套 viewport 框／工具列／狀態列的視覺語言，但**預設不起自己的 Kit session**；有 active session 時以 spectator 唯讀掛入，無 session 時顯示靜態縮圖並誠實停用。
+
+此裁決依 `docs/plans/docs-plans-README.md` §3.1（使用者最新明確指令 > 本目錄一切文件）為最高權威，記錄於此以免遺失。**惟其可行性受下列 C-1～C-6 約束限制，且 D-12（靜態縮圖能力零實作）為其未解前提。**
+
+### 目標 vs 現況落差（唯讀查證，main `13033cb`）
+
+| 使用者陳述 | 現況 | 機器證據 |
+|---|---|---|
+| 「A1~A4 是 primary 內嵌 webRTC viewer」 | UnifiedConsole 的 A1–A4 dock 內**無任何 WebRTC**；viewport 是 `data-prov="fixture"` 的靜態設計稿 PNG | `WorkspacePage.tsx:131` `design-assets/${VP_BASE[ws.dock]}.png`；`fixtures.ts:321-323`（a4 → `vp-semantic`）；該檔無 `<video>`／`iframe`／`EmbeddedViewer` |
+| — | 全 repo 生產路徑唯一的 `<EmbeddedViewer>` 在 `ReviewSessionViewerPane.tsx:544`，且**硬編碼 `streamRole="primary"`**；僅出現於 legacy route `#a1-workbench`／`#gpu`／`#viewer` | `EdgeConsole.tsx:218,221-222`；`EmbeddedViewerProps.streamRole` 型別雖含 `"spectator"`（`EmbeddedViewer.tsx:64`）但生產路徑無人傳它 |
+| 「並可分享 spectator」 | dock 上的「+ 邀請 Spectator」是 `u.toast()` **假複製**，無 `navigator.clipboard` 呼叫；canon 已具名此為 R3 誠實違規（見 D-8） | `WorkspacePage.tsx:108`；`openspec/specs/documentation-source-of-truth/spec.md:209` |
+| — | 產給真人的 spectator 連結**不帶** `kitInstanceId`，而 lease 分配讓所有 spectator 落到同一 endpoint（見 D-9） | `pages.tsx:1102`；`viewerLeaseStore.ts:340-352`；`windowHelpers.ts:89-92` |
+| 「A5~A10 則是以 dashboard」 | 現為靜態概念圖頁，掛 `data-prov="fixture"` ＋「Concept Preview / Roadmap」＋ Roadmap Phase P3（a5）／P4（a6–a10）。無 dashboard、無 KPI、無 3D | `ConceptPage.tsx:38,41,51`；圖源 `fixtures.ts:284-289` `uploads/ai-bim-geo-viewer-A5..A10.png` |
+| 「可以是 nvidia kit webRTC primary」 | 全域**只有一個 Kit 進程、一個 stage**；spectator 是 primary 視角的鏡像，非獨立視角，且無自己的 GPU slot 或 stage | `bim-streaming-server/SYSTEM_DESIGN.md:443-452`；`start-all.ps1:194-196` 明禁「多 Kit ＋ spectator」組合 |
+| 「或 nvidia kit extensions 3d viewer editor」 | repo **未建置**瀏覽器端非 WebRTC 的 3D viewer 能力 | `web-viewer-sample` 無 `three`／`web-ifc`／`@thatopen`／`xeokit`／`babylon` 相依；唯一非 WebRTC「viewport」是 `MockViewport.tsx` 自陳的「deterministic · no-GPU」資訊面板，非幾何 renderer。`ezplus.bim_review_stream.setup/config/extension.toml` 自述為「the setup extension for the **USD Viewer template**」（Kit 端 viewport setup，非瀏覽器 viewer）；`ezplus.bim_review_stream.messaging` 實為 host-native IFC→USD 轉檔與 runtime authority 宿主 |
+
+### 經三層對抗驗證後仍成立的約束（任何未來實作 SHALL 先滿足）
+
+| # | 約束 | 機器證據 |
+|---|---|---|
+| C-1 | **spectator 是唯讀鏡像，無法作為 A5–A10 的獨立 3D 視圖**。不能 focus／select／載入 stage，因此「點這條資料 → 3D 定位」在 spectator 路徑上做不到 | `Window.tsx:1763-1768` `if (isSpectatorStreamMode()) return false;`；`viewerLeaseStore.ts:252-254` 非 primary 回 `spectator_readonly`；`a4Handoff.ts:162` spectator 一律 reject |
+| C-2 | **跨 session 切換必然重連**，且因全域單一 stage，切到非當前載入 stage 的 session 會顯示**別的模型**而 spectator 無權糾正——那是假畫面，比黑畫面更違反 R3 | lease 硬綁 session：`viewerLeaseStore.ts:229-234` `cross_session_lease`；`EmbeddedViewer.tsx:53-57` 契約明示「切換 session 用 `key={sessionId}` 強制乾淨 remount」；現行實作已照做：`ReviewSessionViewerPane.tsx:546` |
+| C-3 | **route 切換會 unmount viewer**。若把真 viewer 放進 dock，`#a1`↔`#a4` 換 route 每次都重建 iframe。要避免必須把 viewer 提升到 `UnifiedShell` 之上或移除 `key={page}`——repo 內無此機制（全 repo `createPortal` 零命中，`UnifiedShell.tsx:205` 為 inline `{children}`） | `EdgeConsole.tsx:190` `<WorkspacePage key={page} …>`；註解 `:171` 自陳「key=page 讓 #a1→#a2 換 dock 時重建 local state」 |
+| C-4 | **兩個面各自 claim primary 會 409**；且 lease 為 per-component-instance、unmount 即 `releaseViewerLease`，無 shell 層持有者。「A1–A4 共用單一 primary lease」是**需新建**的結構，不是現況 | `ReviewSessionViewerPane.tsx:177`（component-local state）、`:269-278`（cleanup 即 release）；`viewer-lease-principal.test.ts:287-288` 已驗第二次 claim 回 `409 primary_already_claimed` |
+| C-5 | **A5–A10 的 dashboard 資料須依 R2 三態**；三態中無一允許「先建前端殼、後端 NOT_BUILT」 | `docs-plans-README.md` §3.3 R2：in-canon 可建者「一次建到位，預設不做 mock 過渡」；missing 者「NOT_BUILT，想做先走 R-A1 提案」 |
+| C-6 | **無 admission control**，session 可無限建立且全部指向同一 kit.exe；容量承諾在 `gpu-session-baseline` 基準報告產出前為硬 gate 禁止事項 | 見 D-10；`openspec/changes/gpu-session-baseline-and-idle-reclaim/specs/gpu-session-baseline/spec.md:37`「無基準報告則 admission 參數 SHALL NOT 上線（硬 gate）」 |
+
+### 本節與本 change 的關係
+
+隔離 branch stack **不啟動 Kit／WebRTC／GPU**，因此上述 A1–A10 viewer 面**全部在本 harness 覆蓋範圍外**。本 change 的 evidence manifest 已規定 `stack_kind=isolated_branch_stack` 且「SHALL NOT 用它推論 design gate（pixel/semantic）或 deploy path verification 已通過」；本節再補一條同等強度的邊界：**SHALL NOT 用隔離 stack evidence 推論任何 A1–A10 的 3D／串流／spectator 行為已驗證**。該類 evidence 仍走既有 host-native Kit 契約。
+
+實作歸屬：A1–A4 面歸 `a4-console-convergence`（active，0/23）；A5–A10 面在 `NOW.md` 黑名單內（「A5–A10 假後端／新 service」「A5–A10 全棧」），**未解禁前不得動工**。C-1～C-6 與 D-12 為使用者裁決落地前必須先處理的前提。
