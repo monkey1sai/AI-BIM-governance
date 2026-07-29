@@ -39,39 +39,33 @@ Lane G/S 不得弱化 secrets、repo boundaries、GitNexus HIGH/CRITICAL、front
 
 ## 4. GitNexus 入口
 
-<!-- gitnexus:start -->
-# GitNexus — Code Intelligence
+完整 CLI-only 政策（Grok / Claude / Codex）以 [`AGENTS.md`](AGENTS.md) §4 為準：**不啟動** `gitnexus mcp`，圖譜查詢一律用 shell CLI。
 
-This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 28581 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+<!-- gitnexus:start -->
+# GitNexus — Code Intelligence (CLI-only)
+
+This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 28581 relationships, 300 execution flows). **Do not use GitNexus MCP tools or `gitnexus://` resources.** Query the graph via shell CLI (`gitnexus` or `node .gitnexus/run.cjs`).
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
 ## Always Do
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "main"})`.
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus impact SymbolName -d upstream -r AI-BIM-governance` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run detect-changes before committing** to verify your changes only affect expected symbols and execution flows. For regression review: `gitnexus detect-changes --scope compare --base-ref main`.
 - **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `query({search_query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
-- For security review, `explain({target: "fileOrSymbol"})` lists taint findings (source→sink flows; needs `analyze --pdg`).
+- When exploring unfamiliar code, use `gitnexus query "concept" -r AI-BIM-governance` to find execution flows instead of grepping.
+- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus context SymbolName -r AI-BIM-governance`.
+- Prefer CLI over MCP even if an editor still has a disabled gitnexus MCP entry.
 
 ## Never Do
 
-- NEVER edit a function, class, or method without first running `impact` on it.
+- NEVER edit a function, class, or method without first running `gitnexus impact` on it (Lane B/G/S as scoped in AGENTS.md).
 - NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
-- NEVER commit changes without running `detect_changes()` to check affected scope.
+- NEVER rename symbols with blind find-and-replace when call-graph impact is required — use impact/context CLI first, then coordinated edits.
+- NEVER commit changes without running `gitnexus detect-changes` when Lane policy requires it.
+- NEVER start `gitnexus mcp` or re-add gitnexus MCP solely to satisfy these rules.
 
-## Resources
-
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/AI-BIM-governance/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/AI-BIM-governance/clusters` | All functional areas |
-| `gitnexus://repo/AI-BIM-governance/processes` | All execution flows |
-| `gitnexus://repo/AI-BIM-governance/process/{name}` | Step-by-step execution trace |
-
-## CLI
+## Skills
 
 | Task | Read this skill file |
 |------|---------------------|
@@ -79,7 +73,7 @@ This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 285
 | Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
 | Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
 | Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
+| Tools / schema reference (map MCP names → CLI) | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
