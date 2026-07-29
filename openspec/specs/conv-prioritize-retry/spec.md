@@ -43,7 +43,7 @@ coordinator SHALL 提供 `POST /api/conversion/jobs/:id/prioritize` 與 `POST /a
 
 ### Requirement: `#conv` SHALL 以模式 3 三段式提供非樂觀的控制動作
 
-`#conv`（`ConversionSchedulingPage`）ifc-ready job 列 SHALL 依狀態渲染控制鈕：`dispatch_failed`/`dropped_on_restart` 顯「重試」、`queued_for_conversion` 且 `queue_position>=2` 顯可按「插隊」（`queue_position` 為 null/0/1 時插隊鈕 SHALL disabled）。點按 SHALL 開 `IntentDialog`（模式 3 ①：顯成本白話 + optional reason），confirm SHALL 打真 coordinator 控制路由（模式 3 ②）。前端 SHALL NOT 樂觀更新：POST 成功後 SHALL 以 `load()` 重抓真佇列狀態才關 dialog；POST 失敗或「POST 成功但重抓失敗」時 dialog SHALL 保持開啟並顯誠實錯誤、SHALL NOT 靜默關閉。`queue_position` SHALL 由後端原樣呈現，SHALL NOT 前端計算。
+`#conv`（`ConversionPage`；`ConversionSchedulingPage` 已於 #303 退役）ifc-ready job 列 SHALL 依狀態渲染控制鈕：`dispatch_failed`/`dropped_on_restart` 顯「重試」、`queued_for_conversion` 且 `queue_position>=2` 顯可按「插隊」（`queue_position` 為 null/0/1 時插隊鈕 SHALL disabled）。點按 SHALL 開 `IntentDialog`（模式 3 ①：顯成本白話 + optional reason），confirm SHALL 打真 coordinator 控制路由（模式 3 ②）。前端 SHALL NOT 樂觀更新：POST 成功後 SHALL 以 `load()` 重抓真佇列狀態才關 dialog；POST 失敗或「POST 成功但重抓失敗」時 dialog SHALL 保持開啟並顯誠實錯誤、SHALL NOT 靜默關閉。`queue_position` SHALL 由後端原樣呈現，SHALL NOT 前端計算。
 
 #### Scenario: 重試鈕 → IntentDialog → 真 POST → 證據型刷新
 

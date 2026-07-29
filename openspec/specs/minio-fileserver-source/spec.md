@@ -68,9 +68,9 @@ coordinator `governanceProxy` SHALL 提供白名單一條 `GET /api/governance/f
 - **THEN** 頁面 SHALL 顯示「未連線後端」與錯誤原因（不吞錯、不偽裝有樹）
 - **AND** SHALL 提供「重試」按鈕，點擊後重打 `filesTree()`，成功即渲染真樹
 
-### Requirement: `#/a1` SHALL 提供檔案庫三層選擇器（持值受控 + 換層清理 + graceful degrade）
+### Requirement: `#/issues` SHALL 提供檔案庫三層選擇器（持值受控 + 換層清理 + graceful degrade）
 
-`#/a1`（IssuesRuleCenterPage）SHALL 提供 project → model → version 三層選擇器：選定 version SHALL 將其絕對 `path` 填入既有 `ifc_source_path` 輸入框，且 version select SHALL 為持值受控元件（選定後 SHALL NOT 跳回 placeholder）。換 project/model 或將 version 清回 placeholder 時 SHALL 重置 version 選擇並清空「由選擇器填入的」`ifc_source_path`（避免殘留舊選擇被誤送出檢核）；使用者手動輸入的路徑 SHALL NOT 被此清理波及。檔案庫不可用時 SHALL graceful degrade（誠實標示「檔案庫不可用」+ 提供「重試載入檔案庫」動作），手動輸入路徑流程 SHALL 照常可用。
+`#/issues`（IssuesRuleCenterPage；route 遷移後 `#/a1` 已改為 reducer stepper（A1GovernanceWorkbenchPage），本選擇器與 rule-run 記分板現駐 `#/issues`）SHALL 提供 project → model → version 三層選擇器：選定 version SHALL 將其絕對 `path` 填入既有 `ifc_source_path` 輸入框，且 version select SHALL 為持值受控元件（選定後 SHALL NOT 跳回 placeholder）。換 project/model 或將 version 清回 placeholder 時 SHALL 重置 version 選擇並清空「由選擇器填入的」`ifc_source_path`（避免殘留舊選擇被誤送出檢核）；使用者手動輸入的路徑 SHALL NOT 被此清理波及。檔案庫不可用時 SHALL graceful degrade（誠實標示「檔案庫不可用」+ 提供「重試載入檔案庫」動作），手動輸入路徑流程 SHALL 照常可用。
 
 #### Scenario: 選定 version 填入路徑且 select 持值
 
