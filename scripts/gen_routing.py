@@ -10,6 +10,7 @@ TARGETS = [
     "std-plan.js",
     "std-implement.js",
     "std-evidence.js",
+    "std-evidence-closeout.js",
     "fable5-repo-advisory.js",
     "fu-adversarial-verify-generic.js",
     "plan-next-spec-to-done-aware.js",

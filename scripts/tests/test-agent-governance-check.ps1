@@ -121,8 +121,11 @@ try {
         '.codex/skills/ai-bim-bounded-change/SKILL.md',
         '.codex/skills/repo-health/SKILL.md',
         '.codex/skills/spec-to-done/agents/openai.yaml',
+        '.claude/skills/spec-to-done/validate-state.mjs',
+        '.codex/skills/spec-to-done/validate-state.mjs',
         '.claude/skills/spec-to-done/ensure-host-native-ports-free.ps1',
         '.codex/skills/spec-to-done/ensure-host-native-ports-free.ps1',
+        '.claude/workflows/std-evidence-closeout.js',
         'docs/agents/superpowers-invocation-policy.md',
         'docs/agents/ai-coding-metrics.md',
         'docs/PR_REVIEW_AGENT.md',
@@ -496,6 +499,48 @@ try {
     foreach ($hardGate in @('P0', 'P1', 'P3', 'P4', 'P5', 'P6', 'P7', 'HELD', 'browser evidence', 'ship-item', 'GitNexus')) {
         Assert-True ($codexSpecToDone -match [regex]::Escape($hardGate)) "Codex spec-to-done preserves hard-gate marker: $hardGate"
         Assert-True ($claudeSpecToDone -match [regex]::Escape($hardGate)) "Claude spec-to-done preserves hard-gate marker: $hardGate"
+    }
+    foreach ($costGuardrail in @(
+        'maxAgentCalls=40',
+        'maxP5VerifierBatches=2',
+        'maxP5Rounds=2',
+        'maxEvidenceAttempts=2',
+        'evidence-closeout',
+        'run_budget_exhausted',
+        'resume_state_invalid',
+        'scope_drift',
+        'evidence_stale'
+    )) {
+        Assert-True ($codexSpecToDone -match [regex]::Escape($costGuardrail)) "Codex spec-to-done preserves cost guardrail: $costGuardrail"
+        Assert-True ($claudeSpecToDone -match [regex]::Escape($costGuardrail)) "Claude spec-to-done preserves cost guardrail: $costGuardrail"
+    }
+    Assert-True ($codexSpecToDone -match [regex]::Escape('fork_turns:"none"')) 'Codex spec-to-done forbids full-history native subagent forks'
+    Assert-True ($codexSpecToDone -match [regex]::Escape('codex:<actual-session-or-agent-id>')) 'Codex spec-to-done records actual resumable session or agent IDs'
+
+    $claudeStateValidator = Get-Content -LiteralPath '.claude/skills/spec-to-done/validate-state.mjs' -Raw -Encoding UTF8
+    $codexStateValidator = Get-Content -LiteralPath '.codex/skills/spec-to-done/validate-state.mjs' -Raw -Encoding UTF8
+    Assert-True ($claudeStateValidator -ceq $codexStateValidator) 'Claude and Codex spec-to-done state validators remain byte-equivalent as text'
+    foreach ($stateMarker in @('native-* labels are not resumable run IDs', 'run_budget_exhausted', 'evidence_stale', 'expected-agent-limit', 'expected-worktree', 'production files changed after evidence was captured')) {
+        Assert-True ($claudeStateValidator -match [regex]::Escape($stateMarker)) "spec-to-done state validator contains: $stateMarker"
+    }
+
+    $stdPlan = Get-Content -LiteralPath '.claude/workflows/std-plan.js' -Raw -Encoding UTF8
+    $stdImplement = Get-Content -LiteralPath '.claude/workflows/std-implement.js' -Raw -Encoding UTF8
+    $stdEvidence = Get-Content -LiteralPath '.claude/workflows/std-evidence.js' -Raw -Encoding UTF8
+    $stdCloseout = Get-Content -LiteralPath '.claude/workflows/std-evidence-closeout.js' -Raw -Encoding UTF8
+    $fuAdversarial = Get-Content -LiteralPath '.claude/workflows/fu-adversarial-verify-generic.js' -Raw -Encoding UTF8
+    Assert-True ($stdPlan -match 'MAX_PARALLEL_REVIEWERS\s*=\s*2') 'P1 reviewer fan-out is capped at two'
+    Assert-True (-not ($stdPlan -match 'parallel\(pendingAxes\.map')) 'P1 no longer launches all pending axes in one wave'
+    foreach ($budgetedWorkflow in @($stdPlan, $stdImplement, $stdEvidence, $stdCloseout, $fuAdversarial)) {
+        Assert-True ($budgetedWorkflow -match 'remainingAgentCalls') 'every agent-bearing spec-to-done workflow accepts the remaining run budget'
+        Assert-True ($budgetedWorkflow -match 'agentCallsUsed') 'every agent-bearing spec-to-done workflow reports consumed calls'
+        Assert-True ($budgetedWorkflow -match 'run_budget_exhausted') 'every agent-bearing spec-to-done workflow fails closed at the run budget'
+    }
+    Assert-True ($fuAdversarial -match 'MAX_VERIFIER_BATCHES\s*=\s*2') 'P5 verifier concurrency is capped at two batches'
+    Assert-True ($fuAdversarial -match 'MAX_FINDINGS\s*=\s*32') 'P5 rejects unbounded finding registries'
+    Assert-True ($stdCloseout -match 'MAX_EVIDENCE_ATTEMPTS.*2|MAX_EVIDENCE_ATTEMPTS\).*?>\s*2') 'evidence closeout is capped at two attempts'
+    foreach ($closeoutMarker in @('closeoutTaskIds', 'productionFilesChanged', 'scope_drift', 'evidence_stale', 'evidence_not_closing')) {
+        Assert-True ($stdCloseout -match [regex]::Escape($closeoutMarker)) "evidence closeout preserves fail-closed marker: $closeoutMarker"
     }
     foreach ($testDeploySafetyMarker in @(
         'test_deploy_process_unproven',

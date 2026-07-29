@@ -110,9 +110,25 @@ const MAX_FIX = A.maxFixRounds ?? 2
 const MODE = A.mode || 'tasks'
 const FIX_FINDINGS = A.fixFindings || []
 const ACKED_CRITICAL = A.acknowledgedCriticalSymbols || []
+const MAX_AGENT_CALLS = 40
+const REMAINING_AGENT_CALLS = A.remainingAgentCalls
+let agentCallsUsed = 0
+let budgetExhausted = false
+const budgetedAgent = async (prompt, options) => {
+  if (agentCallsUsed >= REMAINING_AGENT_CALLS) {
+    budgetExhausted = true
+    return null
+  }
+  agentCallsUsed += 1
+  return governedAgent(prompt, options)
+}
+const agentFailureHeld = (fallback) => budgetExhausted ? 'run_budget_exhausted' : fallback
+
+const runWorkflow = async () => {
 {
   const missing = [['planPath', PLAN_PATH], ['worktreeRoot', ROOT], ['branch', BRANCH], ['specPath', SPEC_PATH]].filter(([, v]) => !v).map(([k]) => k)
-  if (missing.length) return { ok: false, held: 'bad_args', missing }
+  const badBudget = !Number.isInteger(REMAINING_AGENT_CALLS) || REMAINING_AGENT_CALLS < 0 || REMAINING_AGENT_CALLS > MAX_AGENT_CALLS
+  if (missing.length || badBudget) return { ok: false, held: 'bad_args', missing }
 }
 
 const TASKS_SCHEMA = {
@@ -258,7 +274,8 @@ if (MODE === 'fix') {
   log(`fix-cycle:${FIX_FINDINGS.length} 個 findings`)
 
   const fixList = FIX_FINDINGS.map((f) => `- [${f.id || f.finding_id || '?'}] ${f.q || f.reason || f.detail || JSON.stringify(f)}`).join('\n')
-  const fix = await governedAgent(`你是修復者。逐項修掉以下對抗複驗/reviewer 未閉合的 findings,修完 commit。
+  const fix = await budgetedAgent(`你是修復者。逐項修掉以下對抗複驗/reviewer 未閉合的 findings,修完 commit。
+
 spec:${SPEC_PATH};plan:${ROOT}/${PLAN_PATH}(理解原意,但以 findings 為準)
 ## 必修 findings
 ${fixList}
@@ -267,10 +284,11 @@ ${disciplineFor('fix:')}
 回傳 StructuredOutput:fixed(至少修了一項或確認全為誤報)、commitSha、summary(逐項:修了什麼/為何誤報)、detectVerdict(依紀律第 6 條;無 commit 時 skipped)。`,
     { label: 'fix:cycle', phase: 'Fix', ...ROUTING.judge, schema: FIX_SCHEMA })
 
-  if (!fix) return { ok: false, mode: 'fix', held: 'reviewer_agent_failed', notClosed: FIX_FINDINGS, note: 'fixer 回 null' }
+  if (!fix) return { ok: false, mode: 'fix', held: agentFailureHeld('reviewer_agent_failed'), notClosed: FIX_FINDINGS, note: 'fixer 回 null' }
   trackFixDetect('fix:cycle', fix)
 
-  const verify = await governedAgent(`你是 fix 驗證 reviewer。Do Not Trust the Report——親自 Read 真實 code,逐項判斷以下 findings 是否已真正閉合(fixer 自述:${fix.summary})。
+  const verify = await budgetedAgent(`你是 fix 驗證 reviewer。Do Not Trust the Report——親自 Read 真實 code,逐項判斷以下 findings 是否已真正閉合(fixer 自述:${fix.summary})。
+
 工作目錄:${ROOT}
 ## findings
 ${fixList}
@@ -278,7 +296,7 @@ ${fixList}
 回傳 StructuredOutput:closed[](已閉合的 id)、notClosed[](id + why)。`,
     { label: 'fix:verify', phase: 'Fix', ...ROUTING.judge, schema: FIX_VERIFY_SCHEMA })
 
-  if (!verify) return { ok: false, mode: 'fix', held: 'reviewer_agent_failed', notClosed: FIX_FINDINGS, note: 'fix verify reviewer 回 null' }
+  if (!verify) return { ok: false, mode: 'fix', held: agentFailureHeld('reviewer_agent_failed'), notClosed: FIX_FINDINGS, note: 'fix verify reviewer 回 null' }
   log(`fix-cycle:closed=${verify.closed.length} notClosed=${verify.notClosed.length}`)
   return { ok: verify.notClosed.length === 0, mode: 'fix', closed: verify.closed, notClosed: verify.notClosed, fixCommit: fix.commitSha, fixDetectVerdicts }
 }
@@ -287,14 +305,15 @@ ${fixList}
 phase('Parse')
 log(`std-implement:plan=${PLAN_PATH} from task#${START}(branch=${BRANCH})`)
 
-const parsed = await governedAgent(`你是 plan 解析員。讀 ${ROOT}/${PLAN_PATH} 全文,把每個「### Task N」節抽成獨立 task。
+const parsed = await budgetedAgent(`你是 plan 解析員。讀 ${ROOT}/${PLAN_PATH} 全文,把每個「### Task N」節抽成獨立 task。
+
 fullText 必須含該 task 的完整原文(含 Files 清單、全部 checkbox 步驟、code block)——之後的 implementer 不會讀 plan 檔,只看你抽的 fullText。
 symbols = 該 task 會**修改**的既有 function/class/method 名(新建的不算;沒有就空陣列)。
 mechanical = 該 task 只動 1-2 個檔、步驟完整可機械執行、且**不動使用者可見 UI**(動 UI 一律 false)。
 回傳 StructuredOutput:tasks[](index 從 0、title、fullText、files、symbols、mechanical)。`,
   { label: 'parse:plan', phase: 'Parse', ...ROUTING.extract, schema: TASKS_SCHEMA })
 
-if (!parsed || !parsed.tasks.length) return { ok: false, held: 'plan_parse_failed', resumeHint: { startTaskIndex: START } }
+if (!parsed || !parsed.tasks.length) return { ok: false, held: agentFailureHeld('plan_parse_failed'), resumeHint: { startTaskIndex: START } }
 const tasks = parsed.tasks
 log(`plan 解析:${tasks.length} tasks,從 #${START} 開始`)
 
@@ -318,7 +337,8 @@ for (const task of tasks) {
   // 1) 改前 impact(per-task;index 隨 commit 演進,改前再驗)
   const symbolsToCheck = (task.symbols || []).filter((s) => !ACKED_CRITICAL.includes(s))
   if (symbolsToCheck.length) {
-    const imp = await governedAgent(`你是 GitNexus 影響分析員。工作目錄:${ROOT}。
+    const imp = await budgetedAgent(`你是 GitNexus 影響分析員。工作目錄:${ROOT}。
+
 ToolSearch 載入 mcp__gitnexus__impact;對下列 symbols 各跑 impact({target, direction:"upstream"}),回報最大風險:
 ${symbolsToCheck.map((s) => `- ${s}`).join('\n')}
 1.5 (best-effort,失敗略過):並列 ToolSearch 載入 mcp__codebase-memory-mcp__trace_path 跑 trace_path({function_name, direction:"inbound", depth:3}) 取第二圖譜 callers,超出 GitNexus 數量則在 note 補「[xref] codebase-memory 額外 callers:N(指揮官覆核)」。**硬約束:overallRisk 最終只以 GitNexus 為準;codebase-memory 不得把 overallRisk 升至 CRITICAL/UNKNOWN、不得觸發早停。GitNexus UNKNOWN/crash 時可當 fallback 寫 note,但 overallRisk 仍維持 UNKNOWN(held 照常)。**
@@ -327,6 +347,9 @@ ${symbolsToCheck.map((s) => `- ${s}`).join('\n')}
 若 tool 報 index stale → bash 跑「npx gitnexus analyze --skip-agents-md」+「npx gitnexus status」確認(banner 不算成功)後重試;工具整體故障(crash/連不上)→ overallRisk=UNKNOWN 並在 note 寫明故障。UNKNOWN 只保留給真正的工具故障/既有 symbol 消失。
 回傳 StructuredOutput:overallRisk、note(直接 callers / 關鍵 processes / 故障說明)。`,
       { label: `impact:${T}`, phase: 'Implement', ...ROUTING.standard, schema: TASK_IMPACT_SCHEMA })
+    if (!imp && budgetExhausted) {
+      return { ok: false, held: 'run_budget_exhausted', taskIndex: task.index, perTask, highRiskNotes, resumeHint: { startTaskIndex: task.index } }
+    }
     if (imp && imp.overallRisk === 'CRITICAL') {
       return {
         ok: false, held: 'critical_impact', taskIndex: task.index, impactNote: imp.note,
@@ -361,25 +384,28 @@ NEEDS_CONTEXT:說清楚缺什麼脈絡。BLOCKED:說清楚卡在哪(含 plan 本
 
   const implModel = 'sonnet'
   // do-not-codegen: Sonnet 5 起全類 task 首發 sonnet;BLOCKED/NEEDS_CONTEXT → opus/max 升級通道不變
-  let impl = await governedAgent(implPrompt(''), { label: `impl:${T}`, phase: 'Implement', model: implModel, schema: IMPL_SCHEMA })
+  let impl = await budgetedAgent(implPrompt(''), { label: `impl:${T}`, phase: 'Implement', model: implModel, schema: IMPL_SCHEMA })
+
 
   if (impl && impl.status === 'NEEDS_CONTEXT') {
     log(`${T} NEEDS_CONTEXT:${impl.summary} → 補脈絡重派`)
     const neighbor = tasks.filter((t) => Math.abs(t.index - task.index) === 1).map((t) => `### 鄰近 Task ${t.index}:${t.title}\n${t.fullText}`).join('\n\n')
     // do-not-codegen: 失敗補救升級，刻意保留 opus/max
-    impl = await governedAgent(implPrompt(`\n## 補充脈絡(前次回報缺:${impl.summary})\n請先 Read spec 全文 ${SPEC_PATH} 取得需求脈絡。\n${neighbor}`),
+    impl = await budgetedAgent(implPrompt(`\n## 補充脈絡(前次回報缺:${impl.summary})\n請先 Read spec 全文 ${SPEC_PATH} 取得需求脈絡。\n${neighbor}`),
+
       { label: `impl:${T}:retry`, phase: 'Implement', model: 'opus', effort: 'max', schema: IMPL_SCHEMA })
   }
   if (impl && impl.status === 'BLOCKED' && implModel === 'sonnet') {
     log(`${T} BLOCKED(sonnet)→ 換 opus 重派`)
     // do-not-codegen: BLOCKED 升級，刻意保留 opus/max
-    impl = await governedAgent(implPrompt(`\n## 前次嘗試 BLOCKED:${impl.summary}(concerns:${(impl.concerns || []).join(';')})`),
+    impl = await budgetedAgent(implPrompt(`\n## 前次嘗試 BLOCKED:${impl.summary}(concerns:${(impl.concerns || []).join(';')})`),
+
       { label: `impl:${T}:opus`, phase: 'Implement', model: 'opus', effort: 'max', schema: IMPL_SCHEMA })
   }
   if (!impl) {
     // infra null ≠ plan 錯;held 值決定指揮官處置通道(reviewer_agent_failed=重呼一次,plan_error_at_task=要使用者修 plan)
     return {
-      ok: false, held: 'reviewer_agent_failed', taskIndex: task.index,
+      ok: false, held: agentFailureHeld('reviewer_agent_failed'), taskIndex: task.index,
       note: 'implementer agent 失敗(回 null)', perTask, highRiskNotes, resumeHint: { startTaskIndex: task.index },
     }
   }
@@ -405,7 +431,8 @@ NEEDS_CONTEXT:說清楚缺什麼脈絡。BLOCKED:說清楚卡在哪(含 plan 本
   }
 
   // 3) spec-compliance review(先)→ 4) quality review(後);各自動修 ≤ MAX_FIX 輪
-  const reviewSpec = () => governedAgent(`你是 spec-compliance reviewer。Do Not Trust the Report——不要相信 implementer 的自述,親自 Read 真實 code 逐行比對 task 需求。
+  const reviewSpec = () => budgetedAgent(`你是 spec-compliance reviewer。Do Not Trust the Report——不要相信 implementer 的自述,親自 Read 真實 code 逐行比對 task 需求。
+
 工作目錄:${ROOT};本 task 的 commits:git log --oneline -30 中第一行以「task#${task.index}:」開頭的那些(含「task#${task.index}: fix」;最早一個的 ^ 到 HEAD 即本 task diff 範圍;不要抓「fix:」開頭的 P5 修復 commits)。
 ## Task ${task.index}:${task.title}(需求原文)
 ${task.fullText}
@@ -415,11 +442,12 @@ ${task.fullText}
 
   let sr = await withRetry(reviewSpec, `${T} spec-review`)
   if (!sr) {
-    return { ok: false, held: 'reviewer_agent_failed', taskIndex: task.index, perTask, highRiskNotes, resumeHint: { startTaskIndex: task.index }, note: 'spec reviewer 連兩次回 null' }
+    return { ok: false, held: agentFailureHeld('reviewer_agent_failed'), taskIndex: task.index, perTask, highRiskNotes, resumeHint: { startTaskIndex: task.index }, note: 'spec reviewer 連兩次回 null' }
   }
   for (let round = 1; !sr.specOk && round <= MAX_FIX; round++) {
     log(`${T} spec review 未過(第 ${round} 輪):${sr.gaps.length} gaps → 修復`)
-    const fixR = await governedAgent(`你是修復者,修掉本 task 的 spec-compliance gaps 後 commit。
+    const fixR = await budgetedAgent(`你是修復者,修掉本 task 的 spec-compliance gaps 後 commit。
+
 ## Task ${task.index}:${task.title}
 ${task.fullText}
 ## 必修 gaps
@@ -429,14 +457,14 @@ ${disciplineFor(`task#${task.index}: fix `)}
       { label: `spec-fix:${T}:r${round}`, phase: 'Implement', ...ROUTING.judge, schema: FIX_SCHEMA })
     if (!fixR) {
       // fixer infra null 不可靜默吞掉續輪(會被誤分類成 not_closing 硬停;同構於 std-plan plan-fixer 守門)
-      return { ok: false, held: 'reviewer_agent_failed', taskIndex: task.index, note: `spec-fix r${round} 回 null`, perTask, highRiskNotes, resumeHint: { startTaskIndex: task.index } }
+      return { ok: false, held: agentFailureHeld('reviewer_agent_failed'), taskIndex: task.index, note: `spec-fix r${round} 回 null`, perTask, highRiskNotes, resumeHint: { startTaskIndex: task.index } }
     }
     if (fixR.fixed === false) {
       return { ok: false, held: 'plan_error_at_task', taskIndex: task.index, blockedDetail: `spec-fix 判定問題源自 plan/spec:${fixR.summary}`, perTask, highRiskNotes, resumeHint: { startTaskIndex: task.index } }
     }
     trackFixDetect(`spec-fix:${T}:r${round}`, fixR)
     sr = await withRetry(reviewSpec, `${T} spec-review`)
-    if (!sr) return { ok: false, held: 'reviewer_agent_failed', taskIndex: task.index, perTask, highRiskNotes, resumeHint: { startTaskIndex: task.index }, note: 'spec reviewer 連兩次回 null' }
+    if (!sr) return { ok: false, held: agentFailureHeld('reviewer_agent_failed'), taskIndex: task.index, perTask, highRiskNotes, resumeHint: { startTaskIndex: task.index }, note: 'spec reviewer 連兩次回 null' }
   }
   if (!sr.specOk) {
     return {
@@ -445,7 +473,8 @@ ${disciplineFor(`task#${task.index}: fix `)}
     }
   }
 
-  const reviewQuality = () => governedAgent(`你是 code quality reviewer(superpowers requesting-code-review 模板精神)。
+  const reviewQuality = () => budgetedAgent(`你是 code quality reviewer(superpowers requesting-code-review 模板精神)。
+
 工作目錄:${ROOT};review 範圍:git log --oneline -15 中第一行前綴「task#${task.index}:」「task#${task.index}: fix」的全部 commits(最早一個的 ^ 到 HEAD)。
 ## Task 脈絡
 ${task.title}(spec:${SPEC_PATH})
@@ -454,10 +483,11 @@ ${task.title}(spec:${SPEC_PATH})
     { label: `quality-review:${T}`, phase: 'Implement', ...ROUTING.standard, schema: QUALITY_SCHEMA })
 
   let qr = await withRetry(reviewQuality, `${T} quality-review`)
-  if (!qr) return { ok: false, held: 'reviewer_agent_failed', taskIndex: task.index, perTask, highRiskNotes, resumeHint: { startTaskIndex: task.index }, note: 'quality reviewer 連兩次回 null' }
+  if (!qr) return { ok: false, held: agentFailureHeld('reviewer_agent_failed'), taskIndex: task.index, perTask, highRiskNotes, resumeHint: { startTaskIndex: task.index }, note: 'quality reviewer 連兩次回 null' }
   for (let round = 1; (qr.criticalCount > 0 || qr.importantCount > 0) && round <= MAX_FIX; round++) {
     log(`${T} quality review:critical=${qr.criticalCount} important=${qr.importantCount}(第 ${round} 輪)→ 修復`)
-    const qFix = await governedAgent(`你是修復者,修掉本 task 的 quality 發現後 commit。
+    const qFix = await budgetedAgent(`你是修復者,修掉本 task 的 quality 發現後 commit。
+
 ## 發現(critical/important 必修;minor 不動)
 ${qr.detail}
 ## Task 脈絡
@@ -466,11 +496,11 @@ ${disciplineFor(`task#${task.index}: fix `)}
 回傳 StructuredOutput:fixed、commitSha、summary、detectVerdict。`,
       { label: `quality-fix:${T}:r${round}`, phase: 'Implement', ...ROUTING.judge, schema: FIX_SCHEMA })
     if (!qFix) {
-      return { ok: false, held: 'reviewer_agent_failed', taskIndex: task.index, note: `quality-fix r${round} 回 null`, perTask, highRiskNotes, resumeHint: { startTaskIndex: task.index } }
+      return { ok: false, held: agentFailureHeld('reviewer_agent_failed'), taskIndex: task.index, note: `quality-fix r${round} 回 null`, perTask, highRiskNotes, resumeHint: { startTaskIndex: task.index } }
     }
     trackFixDetect(`quality-fix:${T}:r${round}`, qFix)
     qr = await withRetry(reviewQuality, `${T} quality-review`)
-    if (!qr) return { ok: false, held: 'reviewer_agent_failed', taskIndex: task.index, perTask, highRiskNotes, resumeHint: { startTaskIndex: task.index }, note: 'quality reviewer 連兩次回 null' }
+    if (!qr) return { ok: false, held: agentFailureHeld('reviewer_agent_failed'), taskIndex: task.index, perTask, highRiskNotes, resumeHint: { startTaskIndex: task.index }, note: 'quality reviewer 連兩次回 null' }
   }
   if (qr.criticalCount > 0 || qr.importantCount > 0) {
     return {
@@ -500,12 +530,21 @@ phase('FinalReview')
 
 const scopeRecheckTasks = perTask.filter((t) => t.detectVerdict === 'fallback' || t.detectVerdict === 'fail' || t.detectVerdict === 'skipped')
 const scopeRecheckFixes = fixDetectVerdicts.filter((f) => f.verdict !== 'pass')
-const final = await governedAgent(`你是最終總 reviewer。整體檢視本 feature branch 全部改動是否精準完成 spec。
+const final = await budgetedAgent(`你是最終總 reviewer。整體檢視本 feature branch 全部改動是否精準完成 spec。
+
 工作目錄:${ROOT};diff 範圍:git diff origin/main...HEAD(加 git log origin/main..HEAD --oneline)。
 spec:${SPEC_PATH};plan:${ROOT}/${PLAN_PATH}
 檢查:(1) spec 每條需求都有對應實作與測試;(2) 無 plan 外的意外改動;(3) 跨 task 整合點(task 各自綠但合起來壞);(4) 誠實標註完整(DEMO DATA / NOT BUILT / not observed);(5) **scope 覆核**:detect_changes 非 pass 的 commits(tasks:${scopeRecheckTasks.map((t) => `task#${t.index}=${t.detectVerdict}`).join(', ') || '無'};fix commits:${scopeRecheckFixes.map((f) => `${f.label}=${f.verdict}`).join(', ') || '無'})逐一用 git show 驗 commit 只含預期檔案。
 回傳 StructuredOutput:ok(無重大疑慮)、findings[](每項 id 用 f1/f2/...,q = 待對抗驗證的具體疑慮:檔案+行號+宣稱的失效模式;沒有就空陣列)。ok=true 仍可帶低信心 findings 供後續對抗複驗;ok=false 時 findings 必須涵蓋你的全部疑慮(這是它們進入修復迴圈的唯一通道)。`,
   { label: 'final-review', phase: 'FinalReview', ...ROUTING.arbiter, schema: FINAL_SCHEMA })
+
+if (!final && budgetExhausted) {
+  const completedThrough = perTask.length ? perTask[perTask.length - 1].index : (START - 1)
+  return {
+    ok: false, held: 'run_budget_exhausted', completedThrough, perTask, highRiskNotes, minorNotes,
+    fixDetectVerdicts, resumeHint: { startTaskIndex: completedThrough + 1 },
+  }
+}
 
 const completedThrough = perTask.length ? perTask[perTask.length - 1].index : (START - 1)
 log(`std-implement 完成:${perTask.length} tasks,finalReviewOk=${final ? final.ok : 'null'}`)
@@ -520,3 +559,7 @@ return {
   fixDetectVerdicts,
   resumeHint: { startTaskIndex: completedThrough + 1 },
 }
+}
+
+const workflowResult = await runWorkflow()
+return { ...workflowResult, agentCallsUsed }
