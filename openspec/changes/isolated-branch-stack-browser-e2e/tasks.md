@@ -42,8 +42,9 @@
 ## 6. 收尾與誠實揭露
 
 - [ ] 6.1 執行 `npx openspec validate isolated-branch-stack-browser-e2e --strict` 與 `npx openspec validate --all --strict`，輸出貼進 PR body。
-- [ ] 6.2 更新 `openspec/lifecycle-ledger.json`（本 change 的 task ledger 與 `subject_commit`），再更新 `docs/plans/NOW.md` 的 projection；順序不得顛倒。
+- [ ] 6.2 更新 `openspec/lifecycle-ledger.json`（本 change 的 task ledger 與 `subject_commit`）→ 再更新 `docs/plans/NOW.md` 的 projection → 再確認 `scripts/tests/test-ai-coding-metrics.mjs` 的 `active-change-wip` 期望值仍與 ledger 一致（本 change 已改為由 ledger 推導 `activeChangeCount`，不應再需手改；若日後有人改回硬編碼，此步即為攔截點）。三步順序不得顛倒。
 - [ ] 6.3 對 launcher 與 helper 涉及的既有符號跑 `gitnexus impact -d upstream -r AI-BIM-governance`；commit 前跑 `gitnexus detect-changes --scope compare --base-ref main`，HIGH／CRITICAL 於 PR body 揭露；index stale 或 CLI 不可用時依 `docs/agents/gitnexus-usage.md` 走 unavailable gate。
 - [ ] 6.4 `git diff --check`、secret scan（`scripts/tests/scan-secret-patterns.ps1`）、`git status` 乾淨；generated cache 與 runtime artifact 不得進 change。
 - [ ] 6.5 PR body 填妥 Change Classification 與 AI Coding Governance 表（本 PR 觸及 `docs/plans/` 與 `.github/`），並明確標示 `Full completion claimed`、`stack_kind=isolated_branch_stack`，以及本 change **不**涵蓋 A4 tasks 4.1–4.4 的判讀與修復。
-- [ ] 6.6 PR body 逐字揭露 `proposal.md`「相鄰既有缺口」D-1～D-13 與「三層交叉對抗驗證」節：本 PR 的 `design-semantic-visual` 紅燈為 **pre-existing**（main `13033cb` 已紅，成因為 `#a4` route IA 遷移），非本 change 造成的回歸；並確認本 change 的 diff **未**觸及 `docs/plans/design-system-reference.manifest.json`、`docs/plans/design-system-baseline/**` 與任何 R-A1 手寫正本面檔案（以 `git diff --name-only` 輸出佐證）。U-1～U-9 全部標為「待使用者裁決」，不在本 PR 內處置；PR body SHALL 明示本節為**揭露與撤回紀錄**，不構成 requirement，亦不擴張本 change 的 capability 範圍。
+- [ ] 6.6 PR body 據實描述 design gate 狀態：`design-semantic-visual` 在 main `13033cb` 為 **failure**（CI run `30440400040`，成因為 `#a4` route IA 遷移，pre-existing、非本 change 造成），而在**本 PR 為 skipped**（只動 `docs/plans/` 與 `openspec/**`，未觸發 `frontend_visual_required`）——不得宣稱本 PR 帶著該紅燈。並以 `git diff --name-only` 佐證本 change 未觸及 `docs/plans/design-system-reference.manifest.json`、`docs/plans/design-system-baseline/**` 與 R-A1 手寫正本四檔。DoD：body 含上述三項且 `pr-review-agent` 綠。
+- [ ] 6.7 PR body 以**摘要＋連結**（非逐字複製整節）指向 `proposal.md` 的「相鄰既有缺口」D-1～D-13、「三層交叉對抗驗證」與「A1–A10 viewer 架構」三節；明示這些是**揭露與撤回紀錄**，不構成 requirement、不擴張本 change 的 capability 範圍、且 U-1～U-12 全部為「待使用者裁決」不在本 PR 內處置。避免逐字塞入而稀釋 `pr-review-agent` 解析的 machine-truth 欄位。

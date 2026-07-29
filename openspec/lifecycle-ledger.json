@@ -1422,7 +1422,7 @@
       "last_verified": "2026-07-29T10:00:00Z",
       "task_ledger": {
         "completed": 0,
-        "total": 28
+        "total": 29
       },
       "evidence_refs": [
         "openspec/changes/isolated-branch-stack-browser-e2e/proposal.md",
