@@ -17,6 +17,7 @@
     { "id": "cross-service-structured-log-baseline", "status": "deferred" },
     { "id": "gpu-session-baseline-and-idle-reclaim", "status": "active" },
     { "id": "implement-runtime-command-authority-and-rejection", "status": "active" },
+    { "id": "isolated-branch-stack-browser-e2e", "status": "active" },
     { "id": "migrate-console-to-hifi-design", "status": "active" },
     { "id": "rvt-ifc-usdc-lineage", "status": "deferred" }
   ]
@@ -34,6 +35,8 @@
 
 **並行規則：** 0 可與 1 同天；所有軌與新功能合計不得超過 6 個 active product change；deferred/frozen 不因額度增加自動 thaw。
 **本週不做：** A5–A10 全棧、`rvt-ifc-usdc-lineage` 實作、新 OpenSpec（除 archive/defer 註記）、整 repo 重掃。
+
+> **2026-07-29 例外揭露：** 使用者明確要求開立 `isolated-branch-stack-browser-e2e`（A4 tasks 4.x 所需的隔離 stack browser E2E 契約），依本檔優先序「使用者最新口令 > 本檔」採納，偏離上面「本週不做：新 OpenSpec」。non-deferred active 由 4 增為 5，仍在 ≤6 內。
 
 ---
 

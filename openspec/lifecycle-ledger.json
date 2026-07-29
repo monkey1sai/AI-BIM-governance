@@ -1414,6 +1414,24 @@
       "archive_debt": null
     },
     {
+      "id": "isolated-branch-stack-browser-e2e",
+      "status": "active",
+      "owner": "repository-maintainer",
+      "current_slice": "隔離 stack 契約與 repo-owned launcher（proposal 已立，實作未開始）",
+      "blocked_by": [],
+      "last_verified": "2026-07-29T10:00:00Z",
+      "task_ledger": {
+        "completed": 0,
+        "total": 27
+      },
+      "evidence_refs": [
+        "openspec/changes/isolated-branch-stack-browser-e2e/proposal.md",
+        "openspec/changes/isolated-branch-stack-browser-e2e/tasks.md"
+      ],
+      "subject_commit": "13033cb4331642f6b04dd3ab39f2c6e32787d939",
+      "archive_debt": null
+    },
+    {
       "id": "issue-bcf-integrity",
       "status": "archived",
       "owner": "repository-maintainer",
