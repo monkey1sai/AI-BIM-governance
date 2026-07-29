@@ -63,7 +63,7 @@ test.describe("IX-CV-04 #conv 自動偵測開關 controlled action", () => {
       return;
     }
     await page.goto(`/#conv`);
-    const refreshOff = page.getByRole("button", { name: /Refresh queue|讀取中/ });
+    const refreshOff = page.getByTestId("conv-refresh"); // #303 後 #/conv 的 refresh 是「重新整理」
     await refreshOff.waitFor({ state: "visible", timeout: 30_000 });
     await refreshOff.click();
     // 關閉自動偵測 → IntentDialog → confirm → 攔 PUT 200
@@ -95,7 +95,7 @@ test.describe("IX-CV-04 #conv 自動偵測開關 controlled action", () => {
       return;
     }
     await page.goto(`/#conv`);
-    const refreshEnable = page.getByRole("button", { name: /Refresh queue|讀取中/ });
+    const refreshEnable = page.getByTestId("conv-refresh"); // #303 後 #/conv 的 refresh 是「重新整理」
     await refreshEnable.waitFor({ state: "visible", timeout: 30_000 });
     await refreshEnable.click();
     await expect(page.locator('[data-testid="conv-watch-off-banner"]')).toBeVisible();
@@ -125,7 +125,7 @@ test.describe("IX-CV-04 #conv 自動偵測開關 controlled action", () => {
 
 test("渲染 #conv 真頁面 → Refresh queue → 截圖 render surface（evidence，非 controlled-action 觀察）", async ({ page }) => {
   await page.goto(`/#conv`);
-  const refreshRender = page.getByRole("button", { name: /Refresh queue|讀取中/ });
+  const refreshRender = page.getByTestId("conv-refresh"); // #303 後 #/conv 的 refresh 是「重新整理」
   await refreshRender.waitFor({ state: "visible", timeout: 30_000 });
   await refreshRender.click();
   await expect(page.getByText("IFC→USD 轉檔排程", { exact: false })).toBeVisible({ timeout: 30_000 });

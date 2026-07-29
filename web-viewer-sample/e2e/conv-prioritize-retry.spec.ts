@@ -111,7 +111,7 @@ test.describe("IX-CV-03 #conv 插隊／重試 controlled action", () => {
     await page.goto(`/#conv`);
 
     // Refresh queue（GET /api/external/ifc-ready）—— 載入佇列。
-    const refresh = page.getByRole("button", { name: /Refresh queue|讀取中/ });
+    const refresh = page.getByTestId("conv-refresh"); // #303 後 #/conv 的 refresh 是「重新整理」，Refresh queue 按鈕已移 #/minio
     await refresh.waitFor({ state: "visible", timeout: 30_000 });
     await refresh.click();
 
@@ -201,7 +201,7 @@ test.describe("conv-prioritize-retry render-surface 證據（非 controlled-acti
     page,
   }) => {
     await page.goto(`/#conv`);
-    const refresh = page.getByRole("button", { name: /Refresh queue|讀取中/ });
+    const refresh = page.getByTestId("conv-refresh"); // #303 後 #/conv 的 refresh 是「重新整理」，Refresh queue 按鈕已移 #/minio
     await refresh.waitFor({ state: "visible", timeout: 30_000 });
     await refresh.click();
     // 等佇列表渲染（IFC→USD 轉檔排程頁標題即代表 #conv 真頁面已掛載）。

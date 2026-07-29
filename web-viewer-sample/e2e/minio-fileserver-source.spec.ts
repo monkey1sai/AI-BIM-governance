@@ -1,7 +1,11 @@
 import { test, expect } from "@playwright/test";
 
 // MinIO file-server source（storage/{270,889,990}/{機電,水電,消防}/*.ifc）端到端：
-// #/minio 真樹可見三專案；#/issues 由選擇器選 270/機電/ver 竣工.ifc → rule-run → 檢核結果出現。
+// #/issues 由選擇器選 270/機電/ver 竣工.ifc → rule-run → 檢核結果出現。
+// （原「#/minio 真樹可見三專案」test 已於 2026-07-29 移除：#/minio 顯示來源自 #265/#303 起為
+//   真 MinIO raw-folder 逐層（MinioTreePane 打 /api/minio/objects），不再消費 governance
+//   files/tree；file-library 顯示模式已退役，其 raw-folder 後繼覆蓋在 e2e/minio-closed-loop.spec.ts。
+//   canonical 見 openspec/specs/minio-fileserver-source（#420 已改 REMOVED+ADDED）。）
 // （本 branch 把檔案庫選擇器 + rule-run 記分板留在 #/issues 的 IssuesRuleCenterPage；
 //   #/a1 改為 reducer stepper，不再內嵌該選擇器。）
 //
@@ -69,27 +73,6 @@ test.describe("MinIO file-server source 端到端", () => {
       !uiOk,
       "coordinator dist-ui 非本 branch（#/issues 缺 a1-fs-project 選擇器）：需 `npm run build:ui` 後重啟服務 :8004 dist-ui 的 coordinator（見檔頭前置）。",
     );
-  });
-
-  test("#/minio 真樹可見 270/889/990 三專案與版本檔", async ({ page }) => {
-    await page.goto(`${COORDINATOR}/ui/?route=minio`);
-    // EdgeConsole 以 hash route 切頁；直接導 hash 確保到 minio 頁。
-    await page.goto(`${COORDINATOR}/ui/#/minio`);
-
-    // 檔案庫 Panel 載入真樹後，三個 project_id 應可見。
-    // 注意：getByText 可能在頁面多處命中（樹節點 + 其他文案）→ 一律 .first() 避免
-    // Playwright strict-mode（locator 解析到 >1 element 時 toBeVisible 會直接拋錯而非判可見）。
-    // 樹節點實作為 <span className="ec-tree-file">{project_id}/</span>，故用 main .ec-tree 收斂範圍 + .first()。
-    const tree = page.locator("main .ec-tree");
-    await expect(tree.getByText("270/", { exact: false }).first()).toBeVisible({ timeout: 30_000 });
-    await expect(tree.getByText("889/", { exact: false }).first()).toBeVisible({ timeout: 30_000 });
-    await expect(tree.getByText("990/", { exact: false }).first()).toBeVisible({ timeout: 30_000 });
-    // 誠實標記：local file-server 文案存在（lead 段 + Panel 副標可能多重命中 → .first()）。
-    await expect(page.getByText("local file-server", { exact: false }).first()).toBeVisible();
-    // 版本檔（竣工）可見（多專案/多模型下「ver 竣工.ifc」會多重命中 → .first()）。
-    await expect(tree.getByText("ver 竣工.ifc", { exact: false }).first()).toBeVisible({ timeout: 30_000 });
-
-    await page.screenshot({ path: "../artifacts/e2e/minio-fileserver-source-minio-tree.png", fullPage: true });
   });
 
   test("#/issues 選擇器選 270/機電/ver 竣工.ifc → rule-run → 檢核結果出現", async ({ page }) => {
