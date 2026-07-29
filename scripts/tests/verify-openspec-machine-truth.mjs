@@ -3,6 +3,7 @@ import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { TextDecoder } from 'node:util';
 import {
   MachineTruthInputError,
@@ -11,17 +12,23 @@ import {
   taskLedgerFromText,
 } from '../lib/openspec-machine-truth.mjs';
 
+const MAX_UNIQUE_SUBJECTS = 64;
+const MAX_OBSERVED_PATHS = 10_000;
+const MAX_OBSERVED_PATH_BYTES = 2 * 1024 * 1024;
+const MAX_RAW_OBSERVED_PATHS = 10_000;
+const MAX_RAW_OBSERVED_PATH_BYTES = 2 * 1024 * 1024;
+
 function usage() {
   return [
     'Usage: node scripts/tests/verify-openspec-machine-truth.mjs',
     '  --repo-root <path> --ledger <path> --now <path>',
-    '  --github-state <path> --openspec-list <path> --subject <40-hex>',
+    '  --github-state <path> --openspec-list <path> --subject <40-hex> --base <40-hex>',
   ].join('\n');
 }
 
 function parseArguments(argv) {
   const allowed = new Set([
-    '--repo-root', '--ledger', '--now', '--github-state', '--openspec-list', '--subject',
+    '--repo-root', '--ledger', '--now', '--github-state', '--openspec-list', '--subject', '--base',
   ]);
   const result = {};
   for (let index = 0; index < argv.length; index += 2) {
@@ -35,7 +42,7 @@ function parseArguments(argv) {
     }
     result[flag] = value;
   }
-  for (const required of ['--repo-root', '--ledger', '--now', '--github-state', '--openspec-list', '--subject']) {
+  for (const required of ['--repo-root', '--ledger', '--now', '--github-state', '--openspec-list', '--subject', '--base']) {
     if (!result[required]) throw new MachineTruthInputError('invalid_argument', 'arguments', usage());
   }
   return result;
@@ -150,21 +157,129 @@ function decodeNulList(buffer, field) {
   }
 }
 
-function collectSourceChanges(repoRoot, subjectCommit, ledger) {
-  const tracked = gitOutput(repoRoot, ['-c', 'core.quotepath=false', 'diff', '--name-only', '-z', '--no-renames',
-    subjectCommit, '--'], 'source_diff');
-  const untracked = gitOutput(repoRoot, ['-c', 'core.quotepath=false', 'ls-files', '--others', '--exclude-standard', '-z'],
-    'source_untracked');
-  const relevantEvidence = new Set(ledger.changes.flatMap((change) =>
-    change.evidence_refs.map((reference) => reference.replaceAll('\\', '/'))));
-  return [...new Set([
-    ...decodeNulList(tracked.stdout, 'source_diff'),
-    ...decodeNulList(untracked.stdout, 'source_untracked'),
-  ])].filter((changedPath) => changedPath.startsWith('openspec/changes/') || relevantEvidence.has(changedPath));
+function isOwnedOpenSpecSource(changeId, candidate) {
+  if (candidate.startsWith(`openspec/changes/${changeId}/`)) return true;
+  const escapedId = changeId.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  return new RegExp(`^openspec/changes/archive/\\d{4}-\\d{2}-\\d{2}-${escapedId}/`, 'u').test(candidate);
 }
 
-function previousLedgerAtSubject(repoRoot, subjectCommit) {
-  const object = `${subjectCommit}:openspec/lifecycle-ledger.json`;
+export function createRawObservationBudget() {
+  return { path_count: 0, utf8_bytes: 0 };
+}
+
+export function consumeRawObservationPaths(budget, paths, field) {
+  if (!budget || !Number.isInteger(budget.path_count) || !Number.isInteger(budget.utf8_bytes) || !Array.isArray(paths)) {
+    throw new MachineTruthInputError('source_observation_invalid', field, 'Raw source observation budget is invalid.');
+  }
+  const pathCount = paths.length;
+  const utf8Bytes = paths.reduce((total, value) => {
+    if (typeof value !== 'string' || !value || value.includes('\0')) {
+      throw new MachineTruthInputError('source_observation_invalid', field, 'Raw source observation path is invalid.');
+    }
+    return total + Buffer.byteLength(value, 'utf8');
+  }, 0);
+  if (budget.path_count + pathCount > MAX_RAW_OBSERVED_PATHS || budget.utf8_bytes + utf8Bytes > MAX_RAW_OBSERVED_PATH_BYTES) {
+    throw new MachineTruthInputError('source_observation_invalid', field, 'Raw source observations exceed the global bounded budget.');
+  }
+  budget.path_count += pathCount;
+  budget.utf8_bytes += utf8Bytes;
+}
+
+function assertGitBase(repoRoot, baseCommit) {
+  if (!/^[0-9a-f]{40}$/u.test(baseCommit)) {
+    throw new MachineTruthInputError('base_unavailable', 'base_commit', 'Trusted base must be a lowercase full commit SHA.');
+  }
+  const available = gitOutput(repoRoot, ['cat-file', '-e', `${baseCommit}^{commit}`], 'base_commit', true);
+  if (available.status !== 0) {
+    throw new MachineTruthInputError('base_unavailable', 'base_commit', 'Trusted base is not a local commit.');
+  }
+  const ancestor = gitOutput(repoRoot, ['merge-base', '--is-ancestor', baseCommit, 'HEAD'], 'base_commit', true);
+  if (ancestor.status !== 0) {
+    throw new MachineTruthInputError('base_not_ancestor', 'base_commit', 'Trusted base must be an ancestor of the checked-out HEAD.');
+  }
+}
+
+export function assertRowSubjectAncestor(repoRoot, change, cache) {
+  if (cache.has(change.subject_commit)) return false;
+  const available = gitOutput(repoRoot, ['cat-file', '-e', `${change.subject_commit}^{commit}`],
+    `source_observations.${change.id}.subject_commit`, true);
+  if (available.status !== 0) {
+    throw new MachineTruthInputError('subject_unavailable', `source_observations.${change.id}.subject_commit`,
+      'Lifecycle row subject is not a local commit.');
+  }
+  const ancestor = gitOutput(repoRoot, ['merge-base', '--is-ancestor', change.subject_commit, 'HEAD'],
+    `source_observations.${change.id}.subject_commit`, true);
+  if (ancestor.status !== 0) {
+    throw new MachineTruthInputError('subject_not_ancestor', `source_observations.${change.id}.subject_commit`,
+      'Lifecycle row subject must be an ancestor of the checked-out HEAD.');
+  }
+  cache.add(change.subject_commit);
+  return true;
+}
+
+export function changedPathsSince(repoRoot, subjectCommit, cache, rawBudget) {
+  if (cache.has(subjectCommit)) return cache.get(subjectCommit);
+  const tracked = gitOutput(repoRoot, ['-c', 'core.quotepath=false', 'diff', '--name-only', '-z', '--no-renames',
+    `${subjectCommit}..HEAD`, '--'], `source_observations.${subjectCommit}.diff`);
+  const paths = decodeNulList(tracked.stdout, `source_observations.${subjectCommit}.diff`);
+  consumeRawObservationPaths(rawBudget, paths, `source_observations.${subjectCommit}.diff`);
+  cache.set(subjectCommit, paths);
+  return paths;
+}
+
+function collectSourceObservations(repoRoot, ledger) {
+  if (!ledger || !Array.isArray(ledger.changes) || ledger.changes.length > 500) {
+    throw new MachineTruthInputError('source_observation_invalid', 'ledger.changes', 'Lifecycle rows are invalid for source observation.');
+  }
+  const worktree = gitOutput(repoRoot, ['-c', 'core.quotepath=false', 'diff', '--name-only', '-z', '--no-renames', 'HEAD', '--'],
+    'source_worktree');
+  const untracked = gitOutput(repoRoot, ['-c', 'core.quotepath=false', 'ls-files', '--others', '--exclude-standard', '-z'],
+    'source_untracked');
+  const rawBudget = createRawObservationBudget();
+  const worktreePaths = decodeNulList(worktree.stdout, 'source_worktree');
+  const untrackedPaths = decodeNulList(untracked.stdout, 'source_untracked');
+  consumeRawObservationPaths(rawBudget, worktreePaths, 'source_worktree');
+  consumeRawObservationPaths(rawBudget, untrackedPaths, 'source_untracked');
+  const localPaths = [...worktreePaths, ...untrackedPaths];
+  const tracked = gitOutput(repoRoot, ['-c', 'core.quotepath=false', 'ls-files', '-z'], 'tracked_evidence_paths');
+  const trackedEvidencePaths = decodeNulList(tracked.stdout, 'tracked_evidence_paths');
+  consumeRawObservationPaths(rawBudget, trackedEvidencePaths, 'tracked_evidence_paths');
+  const bySubject = new Map();
+  const checkedSubjects = new Set();
+  const seen = new Set();
+  const subjects = new Set(ledger.changes.map((change) => change?.subject_commit));
+  if (subjects.size > MAX_UNIQUE_SUBJECTS) {
+    throw new MachineTruthInputError('source_observation_invalid', 'ledger.changes', 'Lifecycle rows exceed the unique subject budget.');
+  }
+  let aggregatePaths = 0;
+  let aggregateBytes = 0;
+  const sourceObservations = ledger.changes.map((change) => {
+    if (!change || typeof change.id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,127}$/u.test(change.id) || seen.has(change.id) ||
+        typeof change.subject_commit !== 'string' || !/^[0-9a-f]{40}$/u.test(change.subject_commit) ||
+        !Array.isArray(change.evidence_refs)) {
+      throw new MachineTruthInputError('source_observation_invalid', 'ledger.changes', 'Lifecycle row identity is invalid for source observation.');
+    }
+    seen.add(change.id);
+    assertRowSubjectAncestor(repoRoot, change, checkedSubjects);
+    const evidence = new Set(change.evidence_refs.filter((reference) => typeof reference === 'string')
+      .map((reference) => reference.replaceAll('\\', '/')));
+    const changedPaths = [...new Set([
+      ...changedPathsSince(repoRoot, change.subject_commit, bySubject, rawBudget),
+      ...localPaths,
+    ])].filter((candidate) => isOwnedOpenSpecSource(change.id, candidate) || evidence.has(candidate));
+    aggregatePaths += changedPaths.length;
+    aggregateBytes += changedPaths.reduce((total, value) => total + Buffer.byteLength(value, 'utf8'), 0);
+    if (changedPaths.length > MAX_OBSERVED_PATHS || aggregatePaths > MAX_OBSERVED_PATHS || aggregateBytes > MAX_OBSERVED_PATH_BYTES) {
+      throw new MachineTruthInputError('source_observation_invalid', `source_observations.${change.id}`,
+        'Lifecycle row source observation exceeds the path budget.');
+    }
+    return { change_id: change.id, subject_commit: change.subject_commit, changed_paths: changedPaths };
+  });
+  return { sourceObservations, trackedEvidencePaths };
+}
+
+function previousLedgerAtBase(repoRoot, baseCommit) {
+  const object = `${baseCommit}:openspec/lifecycle-ledger.json`;
   const exists = gitOutput(repoRoot, ['cat-file', '-e', object], 'previous_ledger', true);
   if (exists.status !== 0) return null;
   const shown = gitOutput(repoRoot, ['show', object], 'previous_ledger');
@@ -234,31 +349,36 @@ function errorReport(error) {
   };
 }
 
-try {
-  const args = parseArguments(process.argv.slice(2));
-  const repoRoot = assertTrustedRepository(args['--repo-root']);
-  const subjectCommit = args['--subject'].toLowerCase();
-  assertGitSubject(repoRoot, subjectCommit);
-  const input = loadOpenSpecMachineTruthInputs({
-    ledgerPath: resolveInput(repoRoot, args['--ledger'], 'ledger'),
-    githubPath: resolveInput(repoRoot, args['--github-state'], 'github_state'),
-    openSpecPath: resolveInput(repoRoot, args['--openspec-list'], 'openspec_list'),
-    previousLedgerPath: null,
-  });
-  input.previousLedger = previousLedgerAtSubject(repoRoot, subjectCommit);
-  input.baselineArchiveTasks = input.previousLedger === null
-    ? baselineArchiveTasksAtSubject(repoRoot, subjectCommit, input.ledger)
-    : null;
-  const report = evaluateOpenSpecMachineTruth({
-    repoRoot,
-    ...input,
-    nowText: readBoundedText(resolveInput(repoRoot, args['--now'], 'now'), 'now'),
-    subjectCommit,
-    sourceChangedPaths: collectSourceChanges(repoRoot, subjectCommit, input.ledger),
-  });
-  process.stdout.write(`${JSON.stringify(report)}\n`);
-  process.exitCode = report.result === 'consistent' || report.result === 'consistent_with_accepted_debt' ? 0 : 2;
-} catch (error) {
-  process.stdout.write(`${JSON.stringify(errorReport(error))}\n`);
-  process.exitCode = 3;
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+  try {
+    const args = parseArguments(process.argv.slice(2));
+    const repoRoot = assertTrustedRepository(args['--repo-root']);
+    const subjectCommit = args['--subject'].toLowerCase();
+    const baseCommit = args['--base'].toLowerCase();
+    assertGitSubject(repoRoot, subjectCommit);
+    assertGitBase(repoRoot, baseCommit);
+    const input = loadOpenSpecMachineTruthInputs({
+      ledgerPath: resolveInput(repoRoot, args['--ledger'], 'ledger'),
+      githubPath: resolveInput(repoRoot, args['--github-state'], 'github_state'),
+      openSpecPath: resolveInput(repoRoot, args['--openspec-list'], 'openspec_list'),
+      previousLedgerPath: null,
+    });
+    input.previousLedger = previousLedgerAtBase(repoRoot, baseCommit);
+    input.baselineArchiveTasks = input.previousLedger === null
+      ? baselineArchiveTasksAtSubject(repoRoot, subjectCommit, input.ledger)
+      : null;
+    const source = collectSourceObservations(repoRoot, input.ledger);
+    const report = evaluateOpenSpecMachineTruth({
+      repoRoot,
+      ...input,
+      nowText: readBoundedText(resolveInput(repoRoot, args['--now'], 'now'), 'now'),
+      subjectCommit,
+      ...source,
+    });
+    process.stdout.write(`${JSON.stringify(report)}\n`);
+    process.exitCode = report.result === 'consistent' || report.result === 'consistent_with_accepted_debt' ? 0 : 2;
+  } catch (error) {
+    process.stdout.write(`${JSON.stringify(errorReport(error))}\n`);
+    process.exitCode = 3;
+  }
 }

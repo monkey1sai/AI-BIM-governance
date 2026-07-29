@@ -12,6 +12,11 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import {
+  assertRowSubjectAncestor,
+  changedPathsSince,
+  createRawObservationBudget,
+} from './verify-openspec-machine-truth.mjs';
 
 const commandPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'verify-openspec-machine-truth.mjs');
 
@@ -45,7 +50,7 @@ function snapshot(root) {
   return rows.sort().join('\n');
 }
 
-function runVerifier(root, subject) {
+function runVerifier(root, subject, base = subject) {
   const result = spawnSync(process.execPath, [
     commandPath,
     '--repo-root', root,
@@ -54,10 +59,22 @@ function runVerifier(root, subject) {
     '--github-state', 'artifacts/github.json',
     '--openspec-list', 'artifacts/openspec-list.json',
     '--subject', subject,
+    '--base', base,
   ], { encoding: 'utf8', timeout: 30_000, windowsHide: true });
   assert.equal(result.stderr, '', 'verifier keeps stderr empty and emits one JSON envelope');
   return { status: result.status, document: JSON.parse(result.stdout) };
 }
+
+test('CLI without arguments fails closed with one machine-readable envelope', () => {
+  const result = spawnSync(process.execPath, [commandPath], {
+    encoding: 'utf8', timeout: 30_000, windowsHide: true,
+  });
+  assert.equal(result.status, 3);
+  assert.equal(result.stderr, '');
+  const document = JSON.parse(result.stdout);
+  assert.equal(document.result, 'input_error');
+  assert.equal(document.errors[0].code, 'invalid_argument');
+});
 
 function makeRepository() {
   const trustRoot = process.env.AI_BIM_TEST_TRUST_ROOT || path.dirname(process.cwd());
@@ -103,6 +120,46 @@ function makeRepository() {
   return { root, subject };
 }
 
+function commitLifecycleSnapshot(fixture) {
+  runGit(fixture.root, ['add', '--all']);
+  runGit(fixture.root, ['commit', '--quiet', '-m', 'record lifecycle snapshot']);
+  return runGit(fixture.root, ['rev-parse', 'HEAD']);
+}
+
+function makeHistoricalRowRepository() {
+  const fixture = makeRepository();
+  write(path.join(fixture.root, 'openspec/changes/beta/proposal.md'), '# Beta\n');
+  write(path.join(fixture.root, 'openspec/changes/beta/tasks.md'), '- [x] done\n- [ ] todo\n');
+  runGit(fixture.root, ['add', 'openspec/changes/beta']);
+  runGit(fixture.root, ['commit', '--quiet', '-m', 'add beta source']);
+  const head = runGit(fixture.root, ['rev-parse', 'HEAD']);
+  const ledgerPath = path.join(fixture.root, 'openspec/lifecycle-ledger.json');
+  const ledger = JSON.parse(readFileSync(ledgerPath, 'utf8'));
+  ledger.changes.push({
+    ...structuredClone(ledger.changes[0]),
+    id: 'beta',
+    subject_commit: head,
+    evidence_refs: ['openspec/changes/beta/proposal.md', 'openspec/changes/beta/tasks.md'],
+  });
+  write(ledgerPath, `${JSON.stringify(ledger)}\n`);
+  write(path.join(fixture.root, 'docs/plans/NOW.md'), `<!-- lifecycle-ledger:start -->\n\`\`\`json\n${JSON.stringify({
+    schema_version: 'openspec-now-view/v1', scope: 'current', changes: [
+      { id: 'alpha', status: 'active' }, { id: 'beta', status: 'active' },
+    ],
+  })}\n\`\`\`\n<!-- lifecycle-ledger:end -->\n`);
+  write(path.join(fixture.root, 'artifacts/github.json'), `${JSON.stringify({
+    schema_version: 'openspec-github-lifecycle-state/v1', scope: 'current', repository_subject: head,
+    changes: [{ id: 'alpha', prs: [] }, { id: 'beta', prs: [] }],
+  })}\n`);
+  write(path.join(fixture.root, 'artifacts/openspec-list.json'), `${JSON.stringify({
+    changes: [
+      { name: 'alpha', status: 'in-progress', completedTasks: 1, totalTasks: 2 },
+      { name: 'beta', status: 'in-progress', completedTasks: 1, totalTasks: 2 },
+    ],
+  })}\n`);
+  return { ...fixture, head, ledgerPath };
+}
+
 test('CLI enforces 0/2/3 outcomes, source binding and read-only behavior', () => {
   const fixture = makeRepository();
   try {
@@ -140,6 +197,129 @@ test('CLI rejects an existing historical commit as the trusted subject', () => {
     assert.equal(historical.status, 3);
     assert.equal(historical.document.result, 'input_error');
     assert.equal(historical.document.errors[0].code, 'subject_not_head');
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('CLI accepts ancestral heterogeneous row subjects and attributes later source drift to its row', () => {
+  const fixture = makeHistoricalRowRepository();
+  try {
+    const accepted = runVerifier(fixture.root, fixture.head);
+    assert.equal(accepted.status, 0);
+    assert.equal(accepted.document.result, 'consistent');
+
+    write(path.join(fixture.root, 'openspec/changes/alpha/proposal.md'), '# Changed alpha source\n');
+    const drifted = runVerifier(fixture.root, fixture.head);
+    assert.equal(drifted.status, 2);
+    assert.ok(drifted.document.mismatches.some(({ change_id: id, reason }) => id === 'alpha' && reason === 'source_changed_since_subject'));
+    assert.ok(!drifted.document.mismatches.some(({ change_id: id, reason }) => id === 'beta' && reason === 'source_changed_since_subject'));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('CLI fails closed when a row subject is unavailable or not a HEAD ancestor', () => {
+  const fixture = makeHistoricalRowRepository();
+  try {
+    const unavailable = JSON.parse(readFileSync(fixture.ledgerPath, 'utf8'));
+    unavailable.changes[0].subject_commit = 'f'.repeat(40);
+    write(fixture.ledgerPath, `${JSON.stringify(unavailable)}\n`);
+    const missing = runVerifier(fixture.root, fixture.head);
+    assert.equal(missing.status, 3);
+    assert.equal(missing.document.errors[0].code, 'subject_unavailable');
+
+    const nonancestor = JSON.parse(readFileSync(fixture.ledgerPath, 'utf8'));
+    nonancestor.changes[0].subject_commit = runGit(fixture.root, ['commit-tree', 'HEAD^{tree}', '-m', 'orphan row snapshot']);
+    write(fixture.ledgerPath, `${JSON.stringify(nonancestor)}\n`);
+    const orphan = runVerifier(fixture.root, fixture.head);
+    assert.equal(orphan.status, 3);
+    assert.equal(orphan.document.errors[0].code, 'subject_not_ancestor');
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('CLI compares against the explicit base and rejects a committed candidate that removes a lifecycle row and its sources', () => {
+  const fixture = makeRepository();
+  try {
+    const base = commitLifecycleSnapshot(fixture);
+    runGit(fixture.root, ['rm', '-r', 'openspec/changes/alpha']);
+    write(path.join(fixture.root, 'openspec/lifecycle-ledger.json'), '{"schema_version":"openspec-lifecycle-ledger/v1","changes":[]}\n');
+    write(path.join(fixture.root, 'docs/plans/NOW.md'), '<!-- lifecycle-ledger:start -->\n```json\n{"schema_version":"openspec-now-view/v1","scope":"current","changes":[]}\n```\n<!-- lifecycle-ledger:end -->\n');
+    write(path.join(fixture.root, 'artifacts/github.json'), '{"schema_version":"openspec-github-lifecycle-state/v1","scope":"current","repository_subject":"PLACEHOLDER","changes":[]}\n');
+    write(path.join(fixture.root, 'artifacts/openspec-list.json'), '{"changes":[]}\n');
+    runGit(fixture.root, ['add', '--all']);
+    runGit(fixture.root, ['commit', '--quiet', '-m', 'remove lifecycle row and source']);
+    const head = runGit(fixture.root, ['rev-parse', 'HEAD']);
+    write(path.join(fixture.root, 'artifacts/github.json'), `${JSON.stringify({
+      schema_version: 'openspec-github-lifecycle-state/v1', scope: 'current', repository_subject: head, changes: [],
+    })}\n`);
+    const result = runVerifier(fixture.root, head, base);
+    assert.equal(result.status, 2);
+    assert.ok(result.document.mismatches.some(({ change_id: id, reason }) => id === 'alpha' && reason === 'change_removed'));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('CLI rejects more than the bounded number of unique lifecycle row subjects before Git fan-out', () => {
+  const fixture = makeRepository();
+  try {
+    const ledgerPath = path.join(fixture.root, 'openspec/lifecycle-ledger.json');
+    const ledger = JSON.parse(readFileSync(ledgerPath, 'utf8'));
+    ledger.changes = Array.from({ length: 65 }, (_, index) => ({
+      ...structuredClone(ledger.changes[0]),
+      id: `change-${index}`,
+      subject_commit: `${'a'.repeat(38)}${index.toString(16).padStart(2, '0')}`,
+    }));
+    write(ledgerPath, `${JSON.stringify(ledger)}\n`);
+    const result = runVerifier(fixture.root, fixture.subject);
+    assert.equal(result.status, 3);
+    assert.equal(result.document.errors[0].code, 'source_observation_invalid');
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('machine-truth report schema accepts every emitted subject failure code', () => {
+  const schema = JSON.parse(readFileSync(path.join(path.dirname(commandPath), 'openspec-machine-truth-report.schema.json'), 'utf8'));
+  const codes = schema.properties.errors.items.properties.code.enum;
+  for (const code of ['subject_not_head', 'subject_not_ancestor', 'subject_unavailable']) {
+    assert.ok(codes.includes(code), `schema must accept ${code}`);
+  }
+});
+
+test('raw observation budget rejects unrelated decoded paths before row-subject fan-out', () => {
+  const fixture = makeRepository();
+  try {
+    for (let index = 0; index <= 10_000; index += 1) {
+      write(path.join(fixture.root, 'unrelated', `${index}.json`), '');
+    }
+    const result = runVerifier(fixture.root, fixture.subject);
+    assert.equal(result.status, 3);
+    assert.equal(result.document.errors[0].code, 'source_observation_invalid');
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('repeated row subject reuses actual Git ancestor and diff caches without consuming raw budget twice', () => {
+  const fixture = makeRepository();
+  try {
+    write(path.join(fixture.root, 'unrelated/changed.json'), '{}\n');
+    runGit(fixture.root, ['add', '--all']);
+    runGit(fixture.root, ['commit', '--quiet', '-m', 'unrelated change']);
+    const subjects = new Set();
+    assert.equal(assertRowSubjectAncestor(fixture.root, { subject_commit: fixture.subject, id: 'alpha' }, subjects), true);
+    assert.equal(assertRowSubjectAncestor(fixture.root, { subject_commit: fixture.subject, id: 'alpha' }, subjects), false);
+    const cache = new Map();
+    const budget = createRawObservationBudget();
+    const first = changedPathsSince(fixture.root, fixture.subject, cache, budget);
+    const afterFirst = structuredClone(budget);
+    const second = changedPathsSince(fixture.root, fixture.subject, cache, budget);
+    assert.deepEqual(second, first);
+    assert.deepEqual(budget, afterFirst);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }

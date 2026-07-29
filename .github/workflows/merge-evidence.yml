@@ -284,6 +284,7 @@ jobs:
         shell: pwsh
         env:
           SUBJECT: ${{ steps.openspec_observation.outputs.subject }}
+          BASE_SHA: ${{ steps.metadata.outputs.base_sha }}
         run: >-
           node trusted-base/scripts/tests/verify-openspec-machine-truth.mjs
           --repo-root candidate
@@ -292,6 +293,7 @@ jobs:
           --github-state artifacts/machine-truth/github-state.json
           --openspec-list artifacts/machine-truth/openspec-list.json
           --subject $env:SUBJECT
+          --base $env:BASE_SHA
 
       - name: Download and bounded-extract only exact required artifacts
         shell: pwsh
