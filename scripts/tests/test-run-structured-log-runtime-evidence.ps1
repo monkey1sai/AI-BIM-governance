@@ -646,6 +646,9 @@ function Invoke-OwnedStartLeaseCase {
             param($filePath, $argumentList, $cwd, $stdoutPath, $stderrPath)
             Assert-Equal 'child' $env:STRUCT_LOG_TEST_KEEP 'child env scoped during Start-Process'
             Assert-Equal 'new' $env:STRUCT_LOG_TEST_NEW 'new child env present during Start-Process'
+            $launchIntent = Get-Content -Raw -LiteralPath (Join-Path $ctx.AttemptRoot 'launch-intent.json') | ConvertFrom-Json
+            Assert-Equal 'starting' $launchIntent.status 'launch intent is durable before the OS process is created'
+            Assert-Equal $ctx.AttemptId $launchIntent.attempt_id 'launch intent is case-bound to the attempt'
             $startObserved.Value = $true
             [pscustomobject]@{ Id = 4242 }
         } -IdentityProvider {
@@ -660,6 +663,25 @@ function Invoke-OwnedStartLeaseCase {
         Assert-Equal 4242 $persisted.processes[0].pid 'identity persisted immediately'
         Assert-Equal '1' $persisted.schema_version 'lease schema version'
         Assert-True ($persisted.processes[0].env_keys -contains 'STRUCT_LOG_TEST_NEW') 'only env key names persisted'
+        Assert-True ([string]$persisted.processes[0].launch_nonce -match '^[0-9a-f]{32}$') 'lease entry binds the durable pre-launch intent nonce'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $ctx.AttemptRoot 'launch-intent.json'))) 'durable lease commit clears launch intent on success'
+
+        $blockedRoot = New-TestRoot 'lease-preexisting-intent'
+        try {
+            $blockedContext = New-TestContext $blockedRoot
+            Initialize-StructuredLogRuntimeLease -Context $blockedContext
+            Write-StructuredLogJsonAtomic -Path (Join-Path $blockedContext.AttemptRoot 'launch-intent.json') -Value ([ordered]@{schema_version='1';attempt_id=$blockedContext.AttemptId;process_name='prior';launch_nonce=('b'*32);status='starting';recorded_utc='2026-07-24T00:00:00Z'})
+            $env:STRUCT_LOG_TEST_KEEP = 'parent-before-held'
+            Remove-Item Env:STRUCT_LOG_TEST_NEW -ErrorAction SilentlyContinue
+            $blockedStartCalls = [pscustomobject]@{Value=0}
+            Assert-Throws {
+                Start-StructuredLogOwnedProcess -Context $blockedContext -ProcessSpec $spec -StartProcessInvoker { $blockedStartCalls.Value++; throw 'must not create process' }
+            } 'HELD|launch intent' 'preexisting launch intent blocks before environment mutation or process creation'
+            Assert-Equal 0 $blockedStartCalls.Value 'preexisting launch intent never invokes Start-Process'
+            Assert-Equal 'parent-before-held' $env:STRUCT_LOG_TEST_KEEP 'preexisting launch intent preserves the parent environment value'
+            Assert-True (-not (Test-Path Env:STRUCT_LOG_TEST_NEW)) 'preexisting launch intent does not create a child-only environment key'
+        } finally { Remove-Item -LiteralPath $blockedRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        $env:STRUCT_LOG_TEST_KEEP = 'parent'
 
         foreach($failureKind in @('identity','lease')) {
             $negativeRoot = New-TestRoot "lease-$failureKind"
@@ -674,7 +696,11 @@ function Invoke-OwnedStartLeaseCase {
                 } 'failed|lease' "$failureKind failure is surfaced"
                 Assert-Equal 1 $cleanup.Count "$failureKind failure cleans exactly one owned handle"
                 Assert-True ([object]::ReferenceEquals($handle,$cleanup[0])) "$failureKind cleanup uses exact PassThru handle"
-                Assert-True (-not(Test-Path -LiteralPath $negativeContext.LeasePath)) "$failureKind failure leaves no durable lease"
+                Assert-True (Test-Path -LiteralPath $negativeContext.LeasePath -PathType Leaf) "$failureKind failure preserves the durable zero-start lease"
+                $failedStartLease = Get-Content -Raw -LiteralPath $negativeContext.LeasePath | ConvertFrom-Json
+                Assert-Equal $negativeContext.AttemptId $failedStartLease.attempt_id "$failureKind zero-start lease remains attempt-bound"
+                Assert-Equal 0 @($failedStartLease.processes).Count "$failureKind cleaned process is not represented as live ownership"
+                Assert-True (-not (Test-Path -LiteralPath (Join-Path $negativeContext.AttemptRoot 'launch-intent.json'))) "$failureKind exact cleanup clears the launch intent"
                 Assert-True (-not(Test-Path -LiteralPath (Join-Path $negativeContext.AttemptRoot 'coordinator.pid'))) "$failureKind failure removes pidfile"
                 Assert-Equal 'parent' $env:STRUCT_LOG_TEST_KEEP "$failureKind failure restores parent env"
                 Assert-True (-not(Test-Path Env:STRUCT_LOG_TEST_NEW)) "$failureKind failure removes child env"
@@ -712,11 +738,12 @@ function Invoke-OwnedStartLeaseCase {
                 Assert-Equal $quarantineHandle.Id $quarantine.entries[0].pid "$cleanupFailureKind quarantine PID"
                 Assert-True (-not [string]::IsNullOrWhiteSpace([string]$quarantine.entries[0].path) -and -not [string]::IsNullOrWhiteSpace([string]$quarantine.entries[0].start_time_utc)) "$cleanupFailureKind preserves identity path/start"
                 Assert-True (Test-Path -LiteralPath (Join-Path $quarantineContext.AttemptRoot 'coordinator.pid')) "$cleanupFailureKind preserves pidfile evidence"
+                Assert-True (Test-Path -LiteralPath (Join-Path $quarantineContext.AttemptRoot 'launch-intent.json') -PathType Leaf) "$cleanupFailureKind preserves unresolved launch intent for fail-closed recovery"
                 $emergencyLease = Get-Content -Raw -LiteralPath $quarantineContext.LeasePath | ConvertFrom-Json
                 Assert-Equal $quarantineHandle.Id $emergencyLease.processes[0].pid "$cleanupFailureKind leaves identity for next reconcile"
                 $stopped = [System.Collections.Generic.List[int]]::new()
                 $identity = [pscustomobject]@{pid=[int]$quarantineHandle.Id;parent_pid=$PID;path=[string]$emergencyLease.processes[0].path;start_time_utc=$emergencyLease.processes[0].start_time_utc}
-                $reconcileShutdown = Stop-StructuredLogOwnedProcesses -Context $quarantineContext -ProcessInventoryProvider { @($identity) } -StopProcessInvoker { param($processId) $stopped.Add([int]$processId) } -ListenerInspector { @() }
+                $reconcileShutdown = Stop-StructuredLogOwnedProcesses -Context $quarantineContext -ProcessInventoryProvider { @($identity) } -StopProcessInvoker { param($expectedIdentity) $stopped.Add([int]$expectedIdentity.pid) } -ListenerInspector { @() }
                 Assert-Equal 1 $stopped.Count "$cleanupFailureKind emergency lease is actionable by next reconcile; entries=$($reconcileShutdown.entries|ConvertTo-Json -Compress -Depth 5)"
                 Assert-Equal $quarantineHandle.Id $stopped[0] "$cleanupFailureKind next reconcile retains exact PID"
             } finally { Remove-Item -LiteralPath $quarantineRoot -Recurse -Force -ErrorAction SilentlyContinue }
@@ -740,10 +767,11 @@ function Invoke-OwnedStartLeaseCase {
             Assert-Equal 7001 $completeQuarantine.entries[0].pid 'complete fallback preserves PID'
             Assert-True (Test-Path -LiteralPath $identityCleanupContext.LeasePath) 'complete fallback writes emergency lease'
             Assert-True (Test-Path -LiteralPath (Join-Path $identityCleanupContext.AttemptRoot 'coordinator.pid')) 'complete fallback preserves pidfile'
+            Assert-True (Test-Path -LiteralPath (Join-Path $identityCleanupContext.AttemptRoot 'launch-intent.json') -PathType Leaf) 'complete cleanup failure preserves launch intent instead of guessing recovery safety'
             $completeLease = Get-Content -Raw $identityCleanupContext.LeasePath | ConvertFrom-Json
             $completeIdentity = [pscustomobject]@{pid=7001;parent_pid=$PID;path=[string]$completeLease.processes[0].path;start_time_utc=$completeLease.processes[0].start_time_utc}
             $completeStops = [System.Collections.Generic.List[int]]::new()
-            Stop-StructuredLogOwnedProcesses -Context $identityCleanupContext -ProcessInventoryProvider { @($completeIdentity) } -StopProcessInvoker { param($processId) $completeStops.Add([int]$processId) } -ListenerInspector { @() } | Out-Null
+            Stop-StructuredLogOwnedProcesses -Context $identityCleanupContext -ProcessInventoryProvider { @($completeIdentity) } -StopProcessInvoker { param($expectedIdentity) $completeStops.Add([int]$expectedIdentity.pid) } -ListenerInspector { @() } | Out-Null
             Assert-Equal 7001 $completeStops[0] 'complete fallback emergency identity is actionable by next reconcile'
         } finally { Remove-Item -LiteralPath $identityCleanupRoot -Recurse -Force -ErrorAction SilentlyContinue }
 
@@ -767,7 +795,10 @@ function Invoke-OwnedStartLeaseCase {
             Assert-Equal 7002 $unavailableQuarantine.entries[0].pid 'incomplete fallback preserves available PID'
             Assert-Equal 8005 $unavailableQuarantine.entries[0].port 'incomplete fallback preserves requested port as evidence only'
             Assert-Equal $false $unavailableQuarantine.entries[0].handle_evidence.has_exited 'incomplete fallback preserves available handle state'
-            Assert-True (-not (Test-Path -LiteralPath $unavailableContext.LeasePath)) 'incomplete fallback does not invent an actionable lease'
+            Assert-True (Test-Path -LiteralPath $unavailableContext.LeasePath -PathType Leaf) 'incomplete fallback preserves the pre-launch zero-identity lease'
+            $unavailableLease = Get-Content -Raw -LiteralPath $unavailableContext.LeasePath | ConvertFrom-Json
+            Assert-Equal 0 @($unavailableLease.processes).Count 'incomplete fallback does not invent an actionable process identity'
+            Assert-True (Test-Path -LiteralPath (Join-Path $unavailableContext.AttemptRoot 'launch-intent.json') -PathType Leaf) 'incomplete fallback preserves unresolved launch intent'
 
             $stateDir = Join-Path $unavailableRoot 'artifacts\spec-to-done\cross-service-structured-log-baseline'
             New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
@@ -911,7 +942,7 @@ function Invoke-IdentityShutdownCase {
                 [pscustomobject]@{pid=200;parent_pid=$PID;path='C:\foreign\different.exe';start_time_utc='2026-07-24T00:00:00.0000000Z'}
             )
         }
-        $result = Stop-StructuredLogOwnedProcesses -Context $ctx -ProcessInventoryProvider $inventory -StopProcessInvoker { param($processId) $stopped.Add([int]$processId) } -ListenerInspector { param($port) if($port -eq 5175){@([pscustomobject]@{pid=200;path='C:\foreign\different.exe'})}else{@()} }
+        $result = Stop-StructuredLogOwnedProcesses -Context $ctx -ProcessInventoryProvider $inventory -StopProcessInvoker { param($expectedIdentity) $stopped.Add([int]$expectedIdentity.pid) } -ListenerInspector { param($port) if($port -eq 5175){@([pscustomobject]@{pid=200;path='C:\foreign\different.exe'})}else{@()} }
         $stoppedEntries = @($result.entries | Where-Object { $_.action -eq 'stop_owned' -and $_.result -eq 'stopped' })
         $stoppedIds = @($stoppedEntries | ForEach-Object { [string]$_.pid })
         Assert-Equal '101,100' ($stoppedIds -join ',') "owned descendants stop child-first and root-last; entries=$($result.entries | ConvertTo-Json -Compress -Depth 5)"
@@ -920,6 +951,7 @@ function Invoke-IdentityShutdownCase {
         $again = Stop-StructuredLogOwnedProcesses -Context $ctx -ProcessInventoryProvider { @() } -StopProcessInvoker { throw 'idempotent shutdown must not stop' } -ListenerInspector { @() }
         Assert-True ($again.entries.Count -ge 2) 'idempotent shutdown still reports lease entries'
 
+        $ctx.PSObject.Properties.Remove('ValidatedLeaseProcesses')
         @{schema_version='1';attempt_id=$ctx.AttemptId;processes=@(
             @{name='disappearing-tree';pid=300;parent_pid=$PID;path='C:\owned\parent.exe';start_time_utc='2026-07-24T00:00:00.0000000Z';cwd=$root;port=8005;pidfile='parent.pid'}
         )}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $ctx.LeasePath
@@ -935,12 +967,13 @@ function Invoke-IdentityShutdownCase {
             return @([pscustomobject]@{pid=300;parent_pid=$PID;path='C:\owned\parent.exe';start_time_utc='2026-07-24T00:00:00.0000000Z'})
         }
         $disappearingStopped = [System.Collections.Generic.List[int]]::new()
-        $disappearingResult = Stop-StructuredLogOwnedProcesses -Context $ctx -ProcessInventoryProvider $disappearingInventory -StopProcessInvoker { param($processId) $disappearingStopped.Add([int]$processId) } -ListenerInspector { @() }
+        $disappearingResult = Stop-StructuredLogOwnedProcesses -Context $ctx -ProcessInventoryProvider $disappearingInventory -StopProcessInvoker { param($expectedIdentity) $disappearingStopped.Add([int]$expectedIdentity.pid) } -ListenerInspector { @() }
         Assert-Equal 'not_running' ($disappearingResult.entries | Where-Object pid -eq 301).result 'child that disappears before cleanup is already not running'
         Assert-True (-not $disappearingStopped.Contains(301)) 'disappeared child is never passed to StopProcessInvoker'
         Assert-Equal '300' (($disappearingStopped | ForEach-Object { [string]$_ }) -join ',') 'remaining identity-matched root is still stopped'
         Assert-Equal 'succeeded' $disappearingResult.status 'disappeared child does not make owned shutdown fail'
 
+        $ctx.PSObject.Properties.Remove('ValidatedLeaseProcesses')
         @{schema_version='1';attempt_id=$ctx.AttemptId;processes=@(
             @{name='changed-tree';pid=400;parent_pid=$PID;path='C:\owned\parent.exe';start_time_utc='2026-07-24T00:00:00.0000000Z';cwd=$root;port=8005;pidfile='parent.pid'}
         )}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $ctx.LeasePath
@@ -962,11 +995,33 @@ function Invoke-IdentityShutdownCase {
             return @([pscustomobject]@{pid=400;parent_pid=$PID;path='C:\owned\parent.exe';start_time_utc='2026-07-24T00:00:00.0000000Z'})
         }
         $changedStopped = [System.Collections.Generic.List[int]]::new()
-        $changedResult = Stop-StructuredLogOwnedProcesses -Context $ctx -ProcessInventoryProvider $changedInventory -StopProcessInvoker { param($processId) $changedStopped.Add([int]$processId) } -ListenerInspector { @() }
+        $changedResult = Stop-StructuredLogOwnedProcesses -Context $ctx -ProcessInventoryProvider $changedInventory -StopProcessInvoker { param($expectedIdentity) $changedStopped.Add([int]$expectedIdentity.pid) } -ListenerInspector { @() }
         Assert-Equal 'identity_changed' ($changedResult.entries | Where-Object pid -eq 401).result 'same PID with changed path/start remains unsafe'
         Assert-True (-not $changedStopped.Contains(401)) 'identity-changed child is never stopped'
         Assert-True ($changedStopped.Contains(400)) 'remaining identity-matched root is still stopped after child mismatch'
         Assert-Equal 'failed' $changedResult.status 'identity-changed child keeps shutdown failed'
+
+        $ctx.PSObject.Properties.Remove('ValidatedLeaseProcesses')
+        $validatedSnapshot = [pscustomobject]@{name='snapshot-root';pid=500;parent_pid=$PID;path='C:\owned\snapshot.exe';start_time_utc='2026-07-24T00:00:00.0000000Z';cwd=$root;port=8005;pidfile='snapshot.pid'}
+        $ctx | Add-Member -NotePropertyName ValidatedLeaseProcesses -NotePropertyValue @($validatedSnapshot)
+        @{schema_version='1';attempt_id=$ctx.AttemptId;processes=@(
+            @{name='replaced-lease';pid=501;parent_pid=$PID;path='C:\foreign\replacement.exe';start_time_utc='2026-07-24T00:00:00.0000000Z';cwd=$root;port=8005;pidfile='replacement.pid'}
+        )}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $ctx.LeasePath
+        $snapshotStopped = [System.Collections.Generic.List[int]]::new()
+        $snapshotResult = Stop-StructuredLogOwnedProcesses -Context $ctx -ProcessInventoryProvider {
+            @(
+                [pscustomobject]@{pid=500;parent_pid=$PID;path='C:\owned\snapshot.exe';start_time_utc='2026-07-24T00:00:00.0000000Z'},
+                [pscustomobject]@{pid=501;parent_pid=$PID;path='C:\foreign\replacement.exe';start_time_utc='2026-07-24T00:00:00.0000000Z'}
+            )
+        } -StopProcessInvoker { param($expectedIdentity) $snapshotStopped.Add([int]$expectedIdentity.pid) } -ListenerInspector { @() }
+        Assert-Equal '500' (($snapshotStopped | ForEach-Object { [string]$_ }) -join ',') 'shutdown consumes only the validated immutable lease snapshot'
+        Assert-True (@($snapshotResult.entries | Where-Object pid -eq 501).Count -eq 0) 'mutable replacement lease identity is never inspected or stopped'
+
+        $inventoryFailureStops = [pscustomobject]@{Value=0}
+        Assert-Throws {
+            Stop-StructuredLogOwnedProcesses -Context $ctx -ProcessInventoryProvider { throw 'process inventory unavailable' } -StopProcessInvoker { $inventoryFailureStops.Value++ } -ListenerInspector { @() } | Out-Null
+        } 'process inventory unavailable' 'process inventory acquisition failure is not treated as empty inventory'
+        Assert-Equal 0 $inventoryFailureStops.Value 'inventory failure happens before any destructive stop'
     } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
@@ -1265,6 +1320,12 @@ function Invoke-AttemptReconcileCase {
         @{schema_version='1';head_oid='abc';attempt_id='attempt-ok';attempt_root=$attempt;status='succeeded';started_utc='2026-07-24T00:00:00Z';finished_utc='2026-07-24T00:01:00Z';lineage=@()}|ConvertTo-Json -Depth 8|Set-Content $pointer
         $resume=Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'abc'
         Assert-Equal 'resume_succeeded' $resume.action 'same HEAD succeeded resumes only with valid hashes'
+        @{schema_version='1';attempt_id='attempt-ok';status='unknown_cleanup_state';entries=@([ordered]@{pid='invalid';path=$null;start_time_utc=$null})}|ConvertTo-Json -Depth 8|Set-Content (Join-Path $attempt 'cleanup-quarantine.json')
+        $succeededQuarantineCalls = [pscustomobject]@{Value=0}
+        $succeededQuarantine = Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'abc' -ShutdownInvoker { $succeededQuarantineCalls.Value++; [pscustomobject]@{entries=@();foreign_listeners=@()} }
+        Assert-Equal 'unsafe_running_identity' $succeededQuarantine.action 'same-HEAD succeeded pointer validates quarantine before resume'
+        Assert-Equal 0 $succeededQuarantineCalls.Value 'invalid succeeded quarantine never reaches shutdown'
+        Remove-Item -LiteralPath (Join-Path $attempt 'cleanup-quarantine.json') -Force
         $operabilityPath = Join-Path $attempt 'browser\structured-log-operability.json'
         $malformedOperability = Get-Content -Raw -LiteralPath $operabilityPath | ConvertFrom-Json
         $malformedOperability.artifacts.playwright_trace = 'structured-log-trace.zip'
@@ -1307,17 +1368,191 @@ function Invoke-AttemptReconcileCase {
         Assert-Equal 0 $trustShutdownCalls.Value 'unsafe pointers never read outside lease or invoke shutdown'
 
         $running=Join-Path $stateDir 'evidence\attempt-running';New-Item -ItemType Directory -Path $running -Force|Out-Null
-        @{schema_version='1';attempt_id='attempt-running';processes=@()}|ConvertTo-Json|Set-Content (Join-Path $running 'runtime-lease.json')
+        @{schema_version='1';attempt_id='wrong-attempt';processes=@([ordered]@{pid=99;path='C:\foreign\wrong.exe';start_time_utc='2026-07-24T00:00:00Z'})}|ConvertTo-Json|Set-Content (Join-Path $running 'runtime-lease.json')
         @{schema_version='1';head_oid='old';attempt_id='attempt-running';attempt_root=$running;status='running';started_utc='2026-07-24T00:00:00Z';lineage=@()}|ConvertTo-Json -Depth 8|Set-Content $pointer
+        $wrongRunningLeaseCalls = [pscustomobject]@{Value=0}
+        $wrongRunningLease = Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new' -ShutdownInvoker { $wrongRunningLeaseCalls.Value++; throw 'wrong-attempt running lease must not reach shutdown' }
+        Assert-Equal 'unsafe_running_identity' $wrongRunningLease.action 'running pointer validates lease attempt identity before shutdown'
+        Assert-Equal 0 $wrongRunningLeaseCalls.Value 'wrong-attempt running lease cannot trigger destructive stop'
+
+        @{schema_version='1';attempt_id='attempt-running';processes=@(
+            [ordered]@{pid=98;path='C:\owned\first.exe';start_time_utc='2026-07-24T00:00:00Z'},
+            [ordered]@{pid=98;path='C:\owned\reused.exe';start_time_utc='2026-07-24T00:00:01Z'}
+        )}|ConvertTo-Json -Depth 8|Set-Content (Join-Path $running 'runtime-lease.json')
+        $duplicatePidCalls = [pscustomobject]@{Value=0}
+        $duplicatePidLease = Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new' -ShutdownInvoker { $duplicatePidCalls.Value++; throw 'duplicate PID lease must fail before shutdown' }
+        Assert-Equal 'unsafe_running_identity' $duplicatePidLease.action 'same PID with conflicting lease identity fails before destructive action'
+        Assert-Equal 0 $duplicatePidCalls.Value 'duplicate PID lease never reaches shutdown'
+
+        Remove-Item -LiteralPath (Join-Path $running 'runtime-lease.json') -Force
+        $missingRunningLeaseCalls = [pscustomobject]@{Value=0}
+        $missingRunningLease = Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new' -ShutdownInvoker { $missingRunningLeaseCalls.Value++; throw 'missing running lease must fail before shutdown' }
+        Assert-Equal 'unsafe_running_identity' $missingRunningLease.action 'running pointer cannot infer zero ownership from a missing lease'
+        Assert-Equal 0 $missingRunningLeaseCalls.Value 'missing running lease never reaches shutdown'
+
+        @{schema_version='1';attempt_id='attempt-running';processes=@()}|ConvertTo-Json|Set-Content (Join-Path $running 'runtime-lease.json')
+        @{schema_version='1';attempt_id='attempt-running';process_name='conversion';launch_nonce=('a'*32);status='starting';recorded_utc='2026-07-24T00:00:00Z'}|ConvertTo-Json|Set-Content (Join-Path $running 'launch-intent.json')
+        $launchIntentCalls = [pscustomobject]@{Value=0}
+        $unresolvedLaunch = Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new' -ShutdownInvoker { $launchIntentCalls.Value++; throw 'unresolved launch intent must fail before shutdown' }
+        Assert-Equal 'unsafe_running_identity' $unresolvedLaunch.action 'durable pre-launch intent prevents guessing whether a process was created'
+        Assert-Equal 0 $launchIntentCalls.Value 'unresolved launch intent never reaches shutdown'
+        $crossAttemptIntent = Get-Content -Raw (Join-Path $running 'launch-intent.json') | ConvertFrom-Json
+        $crossAttemptIntent.attempt_id = 'other-attempt'
+        $crossAttemptIntent | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $running 'launch-intent.json')
+        Assert-Equal 'unsafe_running_identity' (Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new').action 'cross-attempt launch intent is rejected'
+        Remove-Item -LiteralPath (Join-Path $running 'launch-intent.json') -Force
+
+        $runningIdentity = [ordered]@{pid=97;path='C:\owned\running.exe';start_time_utc='2026-07-24T00:00:00Z'}
+        @{schema_version='1';attempt_id='attempt-running';processes=@($runningIdentity)}|ConvertTo-Json -Depth 8|Set-Content (Join-Path $running 'runtime-lease.json')
+        $emptyAccountabilityCalls = [pscustomobject]@{Value=0}
+        $emptyAccountability = Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new' -ShutdownInvoker { $emptyAccountabilityCalls.Value++; [pscustomobject]@{entries=@();foreign_listeners=@()} }
+        Assert-Equal 'unsafe_running_identity' $emptyAccountability.action 'nonempty running lease requires exact-one shutdown accountability without quarantine'
+        Assert-Equal 1 $emptyAccountabilityCalls.Value 'normal running accountability is checked after exactly one shutdown invocation'
+        Assert-Equal 'running' (Get-Content -Raw $pointer | ConvertFrom-Json).status 'missing running accountability never advances the pointer'
+
+        @{schema_version='1';attempt_id='attempt-running';processes=@()}|ConvertTo-Json|Set-Content (Join-Path $running 'runtime-lease.json')
         $shutdownCalls=[pscustomobject]@{Value=0}
         $atomicWrites=[pscustomobject]@{Value=0}
         $superseded=Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new' -ShutdownInvoker { param($context) $shutdownCalls.Value++; [pscustomobject]@{entries=@();foreign_listeners=@()} } -AtomicStateWriter { param($repoRoot,$state) $atomicWrites.Value++; Set-StructuredLogActiveAttempt -RepoRoot $repoRoot -State $state }
-        Assert-Equal 'superseded_owned_runtime' $superseded.action 'running owned attempt reconciled then superseded'
+        $supersededDetail = if ($null -ne $superseded.PSObject.Properties['detail']) { [string]$superseded.detail } else { '' }
+        Assert-Equal 'superseded_owned_runtime' $superseded.action "running owned attempt reconciled then superseded; detail=$supersededDetail"
         Assert-Equal 1 $shutdownCalls.Value 'owned shutdown invoked once'
         Assert-Equal 1 $atomicWrites.Value 'running-to-superseded pointer uses injectable atomic writer exactly once'
         $updated=Get-Content -Raw $pointer|ConvertFrom-Json
         Assert-Equal 'superseded' $updated.status 'pointer status preserved as superseded lineage'
         Assert-True $updated.lineage.Count -ge 1 'lineage retained'
+
+        $failed = Join-Path $stateDir 'evidence\attempt-failed'
+        New-Item -ItemType Directory -Path $failed -Force | Out-Null
+        $seedAttempt = Join-Path $stateDir 'evidence\attempt-seed'
+        New-Item -ItemType Directory -Path $seedAttempt -Force | Out-Null
+        $seedLineage = @([pscustomobject]@{attempt_id='attempt-seed';attempt_root=$seedAttempt;head_oid='seed';status='succeeded';started_utc='2026-07-23T00:00:00Z';finished_utc='2026-07-23T00:01:00Z'})
+        @{schema_version='1';head_oid='old';attempt_id='attempt-failed';attempt_root=$failed;status='failed';started_utc='2026-07-24T00:00:00Z';finished_utc='2026-07-24T00:01:00Z';lineage=$seedLineage}|ConvertTo-Json -Depth 8|Set-Content $pointer
+        $failedTerminal = Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new'
+        Assert-Equal 'none' $failedTerminal.action 'ordinary failed pointer permits a new attempt'
+        Assert-Equal 2 @($failedTerminal.lineage).Count 'ordinary failed pointer appends itself to lineage'
+        $failedLineage = @($failedTerminal.lineage | Where-Object { [string]$_.attempt_id -ceq 'attempt-failed' })
+        Assert-Equal 1 $failedLineage.Count 'failed attempt is appended once'
+        Assert-Equal 'failed' $failedLineage[0].status 'failed lineage preserves terminal status'
+        Assert-Equal '2026-07-24T00:01:00.0000000Z' ([DateTime]$failedLineage[0].finished_utc).ToUniversalTime().ToString('o') 'failed lineage preserves terminal finish time'
+
+        $forgedRootLineage = @([pscustomobject]@{attempt_id='attempt-forged';attempt_root=$attempt;head_oid='forged';status='failed';started_utc='2026-07-23T00:00:00Z';finished_utc='2026-07-23T00:01:00Z'})
+        @{schema_version='1';head_oid='old';attempt_id='attempt-failed';attempt_root=$failed;status='failed';started_utc='2026-07-24T00:00:00Z';finished_utc='2026-07-24T00:01:00Z';lineage=$forgedRootLineage}|ConvertTo-Json -Depth 8|Set-Content $pointer
+        Assert-Equal 'invalid_pointer' (Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new').action 'historical lineage root leaf must case-exactly match attempt_id'
+
+        $historyOne = Join-Path $stateDir 'evidence\attempt-history-one'
+        $historyTwo = Join-Path $stateDir 'evidence\attempt-history-two'
+        New-Item -ItemType Directory -Path $historyOne,$historyTwo -Force | Out-Null
+        $overlappingLineage = @(
+            [pscustomobject]@{attempt_id='attempt-history-one';attempt_root=$historyOne;head_oid='one';status='succeeded';started_utc='2026-07-23T00:00:00Z';finished_utc='2026-07-23T00:02:00Z'},
+            [pscustomobject]@{attempt_id='attempt-history-two';attempt_root=$historyTwo;head_oid='two';status='failed';started_utc='2026-07-23T00:01:00Z';finished_utc='2026-07-23T00:03:00Z'}
+        )
+        @{schema_version='1';head_oid='old';attempt_id='attempt-failed';attempt_root=$failed;status='failed';started_utc='2026-07-24T00:00:00Z';finished_utc='2026-07-24T00:01:00Z';lineage=$overlappingLineage}|ConvertTo-Json -Depth 8|Set-Content $pointer
+        Assert-Equal 'invalid_pointer' (Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new').action 'historical lineage entries must be ordered and non-overlapping'
+        $futureLineage = @([pscustomobject]@{attempt_id='attempt-history-one';attempt_root=$historyOne;head_oid='one';status='succeeded';started_utc='2026-07-24T00:00:00Z';finished_utc='2026-07-24T00:05:00Z'})
+        @{schema_version='1';head_oid='old';attempt_id='attempt-failed';attempt_root=$failed;status='failed';started_utc='2026-07-24T00:04:00Z';finished_utc='2026-07-24T00:06:00Z';lineage=$futureLineage}|ConvertTo-Json -Depth 8|Set-Content $pointer
+        Assert-Equal 'invalid_pointer' (Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new').action 'active attempt cannot start before its prior lineage completed'
+
+        @{schema_version='1';head_oid='old';attempt_id='attempt-ok';attempt_root=$attempt;status='succeeded';started_utc='2026-07-24T00:00:00Z';finished_utc='2026-07-24T00:01:00Z';lineage=@()}|ConvertTo-Json -Depth 8|Set-Content $pointer
+        $oldSucceeded = Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new'
+        Assert-Equal 'none' $oldSucceeded.action 'different-HEAD succeeded pointer permits a new attempt'
+        Assert-Equal 1 @($oldSucceeded.lineage).Count 'different-HEAD succeeded pointer appends itself to lineage'
+        Assert-Equal 'succeeded' $oldSucceeded.lineage[0].status 'succeeded lineage preserves terminal status'
+        @{schema_version='1';head_oid='old';attempt_id='attempt-ok';attempt_root=$attempt;status='succeeded';started_utc='2026-07-24T00:00:00Z';finished_utc='2026-07-24T00:01:00Z';lineage=@($oldSucceeded.lineage)}|ConvertTo-Json -Depth 8|Set-Content $pointer
+        $deduplicatedSucceeded = Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new'
+        Assert-Equal 1 @($deduplicatedSucceeded.lineage).Count 'terminal lineage deduplicates by case-exact attempt id'
+        $caseCollisionLineage = @($oldSucceeded.lineage) + @([pscustomobject]@{attempt_id='ATTEMPT-OK';attempt_root=$attempt;head_oid='old';status='succeeded';started_utc='2026-07-24T00:00:00Z';finished_utc='2026-07-24T00:01:00Z'})
+        @{schema_version='1';head_oid='old';attempt_id='attempt-ok';attempt_root=$attempt;status='succeeded';started_utc='2026-07-24T00:00:00Z';finished_utc='2026-07-24T00:01:00Z';lineage=$caseCollisionLineage}|ConvertTo-Json -Depth 8|Set-Content $pointer
+        Assert-Equal 'invalid_pointer' (Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new').action 'lineage duplicate and case-collision is fail-closed'
+        $badChronology = @([pscustomobject]@{attempt_id='attempt-history';attempt_root=$attempt;head_oid='history';status='failed';started_utc='2026-07-24T00:02:00Z';finished_utc='2026-07-24T00:01:00Z'})
+        @{schema_version='1';head_oid='old';attempt_id='attempt-failed';attempt_root=$failed;status='failed';started_utc='2026-07-24T00:00:00Z';finished_utc='2026-07-24T00:01:00Z';lineage=$badChronology}|ConvertTo-Json -Depth 8|Set-Content $pointer
+        Assert-Equal 'invalid_pointer' (Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new').action 'lineage finished time cannot precede started time'
+        $conflictingCurrent = @([pscustomobject]@{attempt_id='attempt-ok';attempt_root=$attempt;head_oid='old';status='succeeded';started_utc='2026-07-24T00:00:00Z';finished_utc='2026-07-24T00:01:00Z'})
+        @{schema_version='1';head_oid='old';attempt_id='attempt-ok';attempt_root=$attempt;status='succeeded';started_utc='2026-07-24T00:00:00Z';finished_utc='2026-07-24T00:02:00Z';lineage=$conflictingCurrent}|ConvertTo-Json -Depth 8|Set-Content $pointer
+        Assert-Equal 'invalid_pointer' (Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new').action 'current terminal lineage finish must match pointer finish'
+
+        $failedQuarantine = Join-Path $stateDir 'evidence\attempt-failed-quarantine'
+        New-Item -ItemType Directory -Path $failedQuarantine -Force | Out-Null
+        @{schema_version='1';attempt_id='attempt-failed-quarantine';status='cleanup_failed_identity_unavailable';entries=@([ordered]@{pid=7002;path=$null;start_time_utc=$null})}|ConvertTo-Json -Depth 8|Set-Content (Join-Path $failedQuarantine 'cleanup-quarantine.json')
+        @{schema_version='1';head_oid='old';attempt_id='attempt-failed-quarantine';attempt_root=$failedQuarantine;status='failed';started_utc='2026-07-24T00:00:00Z';finished_utc='2026-07-24T00:01:00Z';lineage=@()}|ConvertTo-Json -Depth 8|Set-Content $pointer
+        $failedUnsafeCalls = [pscustomobject]@{Value=0}
+        $failedUnsafe = Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new' -ShutdownInvoker { $failedUnsafeCalls.Value++; [pscustomobject]@{entries=@();foreign_listeners=@()} }
+        Assert-Equal 'unsafe_running_identity' $failedUnsafe.action 'failed identity-unavailable quarantine remains HELD'
+        Assert-Equal 0 $failedUnsafeCalls.Value 'failed identity-unavailable quarantine never invokes shutdown'
+
+        $completeEntry = [ordered]@{name='conversion';pid=7003;parent_pid=$PID;path='C:\fake\complete.exe';start_time_utc='2026-07-24T00:00:00Z';cwd=$root;argv=@();env_keys=@();port=49104;pidfile=(Join-Path $failedQuarantine 'conversion.pid')}
+        @{schema_version='1';attempt_id='attempt-failed-quarantine';status='cleanup_failed';entries=@([ordered]@{name='conversion';pid=7003;port=49104;path=$completeEntry.path;start_time_utc=$completeEntry.start_time_utc})}|ConvertTo-Json -Depth 8|Set-Content (Join-Path $failedQuarantine 'cleanup-quarantine.json')
+        $failedMissingLeaseCalls = [pscustomobject]@{Value=0}
+        $failedMissingLease = Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new' -ShutdownInvoker { $failedMissingLeaseCalls.Value++; [pscustomobject]@{entries=@();foreign_listeners=@()} }
+        Assert-Equal 'unsafe_running_identity' $failedMissingLease.action 'cleanup_failed without an actionable lease remains HELD'
+        Assert-Equal 0 $failedMissingLeaseCalls.Value 'missing lease never reaches shutdown'
+
+        @{schema_version='1';attempt_id='attempt-failed-quarantine';processes=@($completeEntry)}|ConvertTo-Json -Depth 8|Set-Content (Join-Path $failedQuarantine 'runtime-lease.json')
+        @{schema_version='1';attempt_id='attempt-failed-quarantine';status='cleanup_failed';entries=@(
+            [ordered]@{name='conversion';pid=7003;port=49104;path=$completeEntry.path;start_time_utc=$completeEntry.start_time_utc},
+            [ordered]@{name='reused';pid=7003;port=49104;path='C:\fake\reused.exe';start_time_utc='2026-07-24T00:00:01Z'}
+        )}|ConvertTo-Json -Depth 8|Set-Content (Join-Path $failedQuarantine 'cleanup-quarantine.json')
+        $duplicateQuarantineCalls = [pscustomobject]@{Value=0}
+        $duplicateQuarantinePid = Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new' -ShutdownInvoker { $duplicateQuarantineCalls.Value++; throw 'duplicate quarantine PID must fail before shutdown' }
+        Assert-Equal 'unsafe_running_identity' $duplicateQuarantinePid.action 'same PID with conflicting quarantine identity fails before destructive action'
+        Assert-Equal 0 $duplicateQuarantineCalls.Value 'duplicate quarantine PID never reaches shutdown'
+
+        @{schema_version='1';attempt_id='attempt-failed-quarantine';status='cleanup_failed';entries=@([ordered]@{name='conversion';pid='not-a-pid';port=49104;path=$completeEntry.path;start_time_utc=$completeEntry.start_time_utc})}|ConvertTo-Json -Depth 8|Set-Content (Join-Path $failedQuarantine 'cleanup-quarantine.json')
+        $malformedIdentityCalls = [pscustomobject]@{Value=0}
+        $malformedIdentity = Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new' -ShutdownInvoker { $malformedIdentityCalls.Value++; [pscustomobject]@{entries=@();foreign_listeners=@()} }
+        Assert-Equal 'unsafe_running_identity' $malformedIdentity.action 'malformed cleanup PID returns deterministic HELD result'
+        Assert-Equal 0 $malformedIdentityCalls.Value 'malformed cleanup PID never reaches shutdown'
+        @{schema_version='1';attempt_id='attempt-failed-quarantine';status='cleanup_failed';entries=@([ordered]@{name='conversion';pid=7003;port=49104;path=$completeEntry.path;start_time_utc=$completeEntry.start_time_utc})}|ConvertTo-Json -Depth 8|Set-Content (Join-Path $failedQuarantine 'cleanup-quarantine.json')
+        $quarantinePath = Join-Path $failedQuarantine 'cleanup-quarantine.json'
+        $quarantineBytes = [IO.File]::ReadAllBytes($quarantinePath)
+        $duplicateAccountabilityCalls = [pscustomobject]@{Value=0}
+        $duplicateAccountability = Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new' -ShutdownInvoker {
+            $duplicateAccountabilityCalls.Value++
+            $row = [pscustomobject]@{lease_pid=7003;pid=7003;path='C:\fake\complete.exe';start_time_utc='2026-07-24T00:00:00Z';result='stopped'}
+            [pscustomobject]@{entries=@($row,$row);foreign_listeners=@()}
+        }
+        Assert-Equal 'unsafe_running_identity' $duplicateAccountability.action 'duplicate shutdown rows cannot satisfy exact-once accountability'
+        Assert-Equal 1 $duplicateAccountabilityCalls.Value 'duplicate accountability is checked after one shutdown invocation'
+        Assert-Equal 'failed' (Get-Content -Raw $pointer | ConvertFrom-Json).status 'duplicate shutdown evidence never advances the pointer'
+        $failedCleanupCalls = [pscustomobject]@{Value=0}
+        $reconciledFailed = Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new' -ShutdownInvoker {
+            $failedCleanupCalls.Value++
+            [pscustomobject]@{entries=@([pscustomobject]@{lease_pid=7003;pid=7003;path='C:\fake\complete.exe';start_time_utc='2026-07-24T00:00:00Z';result='stopped'});foreign_listeners=@()}
+        }
+        Assert-Equal 'superseded_owned_runtime' $reconciledFailed.action 'failed cleanup quarantine is reconciled only with complete identity'
+        Assert-Equal 1 $failedCleanupCalls.Value 'failed complete identity invokes exact owned shutdown once'
+        $failedReconciledLineage = @($reconciledFailed.lineage | Where-Object { [string]$_.attempt_id -ceq 'attempt-failed-quarantine' })
+        Assert-Equal 1 $failedReconciledLineage.Count 'reconciled failed attempt is retained once in lineage'
+        Assert-Equal 'failed' $failedReconciledLineage[0].status 'reconciled failed attempt preserves failed terminal status'
+        Assert-True (Test-Path -LiteralPath $quarantinePath) 'accounted shutdown preserves quarantine evidence'
+        $resolvedPointer = Get-Content -Raw $pointer | ConvertFrom-Json
+        Assert-True ([string]$resolvedPointer.resolved_quarantine_sha256 -match '^[0-9a-f]{64}$') 'superseded pointer hash-binds the resolved quarantine'
+        Assert-Equal 'failed' $resolvedPointer.resolved_prior_status 'superseded pointer records the resolved prior terminal status'
+        $mismatchedResolvedLineage = Get-Content -Raw $pointer | ConvertFrom-Json
+        ($mismatchedResolvedLineage.lineage | Where-Object { [string]$_.attempt_id -ceq 'attempt-failed-quarantine' }).status = 'superseded'
+        $mismatchedResolvedLineage | ConvertTo-Json -Depth 8 | Set-Content $pointer
+        Assert-Equal 'invalid_pointer' (Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new').action 'resolved failed proof cannot rewrite canonical failed lineage as superseded'
+        $resolvedPointer | ConvertTo-Json -Depth 8 | Set-Content $pointer
+        $secondReconcile = Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new' -ShutdownInvoker {
+            $failedCleanupCalls.Value++
+            throw 'resolved quarantine must not trigger a second shutdown'
+        }
+        Assert-Equal 'none' $secondReconcile.action 'superseded pointer remains idempotently reconcilable after crash window'
+        Assert-Equal 1 $failedCleanupCalls.Value 'second reconcile does not repeat accounted shutdown'
+        Assert-Equal 1 @($secondReconcile.lineage | Where-Object { [string]$_.attempt_id -ceq 'attempt-failed-quarantine' }).Count 'second reconcile preserves one failed lineage entry'
+        $resolvedPointerBytes = [IO.File]::ReadAllBytes($pointer)
+        $missingResolvedLineage = Get-Content -Raw $pointer | ConvertFrom-Json
+        $missingResolvedLineage.lineage = @()
+        $missingResolvedLineage | ConvertTo-Json -Depth 8 | Set-Content $pointer
+        Assert-Equal 'unsafe_running_identity' (Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new').action 'resolved quarantine proof requires exactly one matching current lineage entry'
+        [IO.File]::WriteAllBytes($pointer, $resolvedPointerBytes)
+        [IO.File]::AppendAllText($quarantinePath, ' ')
+        $tamperedResolved = Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new' -ShutdownInvoker { $failedCleanupCalls.Value++; throw 'tampered proof must not trigger shutdown' }
+        Assert-Equal 'unsafe_running_identity' $tamperedResolved.action 'changed quarantine no longer matches durable resolution proof'
+        Assert-Equal 1 $failedCleanupCalls.Value 'tampered resolved quarantine is HELD without another shutdown'
+        [IO.File]::WriteAllBytes($quarantinePath, $quarantineBytes)
+        $restoredResolved = Resolve-StructuredLogActiveAttempt -RepoRoot $root -HeadOid 'new' -ShutdownInvoker { throw 'restored resolved proof must not trigger shutdown' }
+        Assert-Equal 'none' $restoredResolved.action 'byte-exact restored quarantine proof is idempotent'
     } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
@@ -1355,7 +1590,17 @@ function Invoke-TopLevelOrchestrationCase {
             NewContext = { param($repoRoot,$attemptRoot,$fixturePath,$pythonExe,$ports) $order.Add('context'); $ctx }
             ResolveKit = { param($context,$mode,$packagePath,$packageSha) $order.Add('kit'); [pscustomobject]@{kit_exe='kit';hoops_main='hoops';converter_config='config';converter_wrapper='wrapper'} }
             ProcessSpecs = { param($context) $order.Add('specs'); @([pscustomobject]@{name='conversion'},[pscustomobject]@{name='coordinator'},[pscustomobject]@{name='viewer'}) }
-            Start = { param($context,$spec) $running=Get-Content -Raw (Join-Path $root 'artifacts\spec-to-done\cross-service-structured-log-baseline\active-attempt.json')|ConvertFrom-Json;Assert-Equal 'running' $running.status 'running pointer is durable before first start';$order.Add("start:$($spec.name)"); [pscustomobject]@{pid=1} }
+            Start = {
+                param($context,$spec)
+                $running=Get-Content -Raw (Join-Path $root 'artifacts\spec-to-done\cross-service-structured-log-baseline\active-attempt.json')|ConvertFrom-Json
+                Assert-Equal 'running' $running.status 'running pointer is durable before first start'
+                $initialLease = Get-Content -Raw -LiteralPath $context.LeasePath | ConvertFrom-Json
+                Assert-Equal $context.AttemptId $initialLease.attempt_id 'zero-start lease is durable before first start'
+                Assert-Equal 0 @($initialLease.processes).Count 'zero-start lease proves no process was leased yet'
+                Assert-Throws { Open-StructuredLogLifecycleLock -RepoRoot $root | ForEach-Object { $_.Dispose() } } 'another|lifecycle|HELD' 'exclusive lifecycle lock remains held through process start'
+                $order.Add("start:$($spec.name)")
+                [pscustomobject]@{pid=1}
+            }
             Health = { param($context,$specs) $order.Add('health') }
             Smoke = { param($context,$seconds) $order.Add('smoke') }
             Shutdown = { param($context) $order.Add('shutdown'); [pscustomobject]@{entries=@();foreign_listeners=@()} }
@@ -1373,6 +1618,39 @@ function Invoke-TopLevelOrchestrationCase {
         Assert-Equal 'succeeded' $pointer.status 'active attempt finalized succeeded'
         Assert-Equal 'head-123' $pointer.head_oid 'active attempt bound to HEAD'
         Assert-True ($null -ne $pointer.finished_utc) 'success pointer has finished_utc'
+
+        $accountabilityRoot = Join-Path $root 'top-level-accountability'
+        New-Item -ItemType Directory -Path $accountabilityRoot -Force | Out-Null
+        Write-TestFile (Join-Path $accountabilityRoot 'source.ifc') 'IFC'
+        Write-TestFile (Join-Path $accountabilityRoot 'python.exe') 'python'
+        $accountabilityContext = New-TestContext $accountabilityRoot
+        $accountabilityConfirmCalls = [pscustomobject]@{Value=0}
+        $accountabilityRenderCalls = [pscustomobject]@{Value=0}
+        Assert-Throws {
+            Invoke-StructuredLogRuntimeEvidence -RepoRoot $accountabilityRoot -AttemptRoot $accountabilityContext.AttemptRoot -FixturePath (Join-Path $accountabilityRoot 'source.ifc') -PythonExe (Join-Path $accountabilityRoot 'python.exe') -Dependencies @{
+                GetHeadOid = { 'head-accountability' }
+                Reconcile = { [pscustomobject]@{action='none';lineage=@()} }
+                NewContext = { $accountabilityContext }
+                ResolveKit = { [pscustomobject]@{kit_exe='kit';hoops_main='hoops';converter_config='config';converter_wrapper='wrapper'} }
+                ProcessSpecs = { @([pscustomobject]@{name='conversion'}) }
+                Start = {
+                    param($context,$spec)
+                    $leaseState = Get-Content -Raw -LiteralPath $context.LeasePath | ConvertFrom-Json
+                    $leaseState.processes = @([pscustomobject]@{name='conversion';pid=8100;path='C:\owned\top.exe';start_time_utc='2026-07-24T00:00:00Z'})
+                    Write-StructuredLogJsonAtomic -Path $context.LeasePath -Value $leaseState
+                }
+                Health = { }
+                Smoke = { }
+                Shutdown = { [pscustomobject]@{entries=@();foreign_listeners=@()} }
+                ConfirmEnded = { $accountabilityConfirmCalls.Value++ }
+                Render = { $accountabilityRenderCalls.Value++; [pscustomobject]@{status='succeeded'} }
+                ManifestCheck = { [pscustomobject]@{valid=$true;errors=@()} }
+            } | Out-Null
+        } 'account exactly once|validated lease root|shutdown' 'top-level finalization rejects empty shutdown evidence for a nonempty lease'
+        Assert-Equal 0 $accountabilityConfirmCalls.Value 'top-level accountability fails before trusting injected confirmation'
+        Assert-Equal 0 $accountabilityRenderCalls.Value 'top-level accountability failure never renders succeeded evidence'
+        $accountabilityPointer = Get-Content -Raw (Join-Path $accountabilityRoot 'artifacts\spec-to-done\cross-service-structured-log-baseline\active-attempt.json') | ConvertFrom-Json
+        Assert-Equal 'failed' $accountabilityPointer.status 'top-level accountability gap finalizes a failed pointer'
 
         $resumeOrder = [System.Collections.Generic.List[string]]::new()
         $resumeDeps = @{
@@ -1449,6 +1727,42 @@ function Invoke-TopLevelOrchestrationCase {
             Assert-Equal 'failed' $failedPointer.status "$($scenario.Name) finalizes failed pointer"
             Assert-True (-not [string]::IsNullOrWhiteSpace([string]$failedPointer.finished_utc)) "$($scenario.Name) records finished_utc"
         }
+
+        $heldRoot = Join-Path $root 'scenario-start-cleanup-held'
+        New-Item -ItemType Directory -Path $heldRoot -Force | Out-Null
+        Write-TestFile (Join-Path $heldRoot 'source.ifc') 'IFC'
+        Write-TestFile (Join-Path $heldRoot 'python.exe') 'python'
+        $heldContext = New-TestContext $heldRoot
+        $heldDependencies = @{
+            GetHeadOid = { 'head-held' }
+            Reconcile = { [pscustomobject]@{action='none';lineage=@()} }
+            NewContext = { $heldContext }
+            ResolveKit = { [pscustomobject]@{kit_exe='kit';hoops_main='hoops';converter_config='config';converter_wrapper='wrapper'} }
+            ProcessSpecs = { @([pscustomobject]@{name='conversion'}) }
+            Start = {
+                param($context,$spec)
+                Write-StructuredLogJson -Path (Join-Path $context.AttemptRoot 'cleanup-quarantine.json') -Value ([ordered]@{schema_version='1';attempt_id=$context.AttemptId;status='cleanup_failed_identity_unavailable';entries=@([ordered]@{pid=7100;path=$null;start_time_utc=$null})})
+                throw 'start cleanup identity unavailable'
+            }
+            Health = { throw 'health must not run after start failure' }
+            Smoke = { throw 'smoke must not run after start failure' }
+            Shutdown = { [pscustomobject]@{entries=@();foreign_listeners=@()} }
+            ConfirmEnded = { }
+        }
+        Assert-Throws {
+            Invoke-StructuredLogRuntimeEvidence -RepoRoot $heldRoot -AttemptRoot $heldContext.AttemptRoot -FixturePath (Join-Path $heldRoot 'source.ifc') -PythonExe (Join-Path $heldRoot 'python.exe') -Dependencies $heldDependencies | Out-Null
+        } 'start cleanup identity unavailable' 'start plus cleanup identity failure reaches terminal failed pointer'
+        $heldPointer = Get-Content -Raw (Join-Path $heldRoot 'artifacts\spec-to-done\cross-service-structured-log-baseline\active-attempt.json') | ConvertFrom-Json
+        Assert-Equal 'failed' $heldPointer.status 'top-level finalizes cleanup identity failure as failed'
+        $nextContextCalls = [pscustomobject]@{Value=0}
+        $nextAttempt = Join-Path $heldRoot 'artifacts\spec-to-done\cross-service-structured-log-baseline\evidence\attempt-next'
+        Assert-Throws {
+            Invoke-StructuredLogRuntimeEvidence -RepoRoot $heldRoot -AttemptRoot $nextAttempt -FixturePath (Join-Path $heldRoot 'source.ifc') -PythonExe (Join-Path $heldRoot 'python.exe') -Dependencies @{
+                GetHeadOid = { 'head-next' }
+                NewContext = { $nextContextCalls.Value++; throw 'new context must not run while prior identity is unsafe' }
+            } | Out-Null
+        } 'HELD: unsafe running attempt identity' 'next attempt is HELD before context creation when failed cleanup identity is unavailable'
+        Assert-Equal 0 $nextContextCalls.Value 'HELD failed cleanup identity never creates a replacement attempt'
     } finally {
         $env:LOG_ROOT = $null
         Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue

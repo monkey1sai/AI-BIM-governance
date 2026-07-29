@@ -65,6 +65,32 @@ function Write-StructuredLogJson {
     $Value | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $Path -Encoding utf8
 }
 
+function Read-StructuredLogCanonicalJsonFile {
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [Parameter(Mandatory)] [string] $ExpectedName
+    )
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if ($item.PSIsContainer -or $item.Name -cne $ExpectedName -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "$ExpectedName must be a canonical non-reparse file"
+    }
+    $stream = $null
+    $memory = $null
+    try {
+        $stream = [IO.FileStream]::new($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        $memory = [IO.MemoryStream]::new()
+        $stream.CopyTo($memory)
+        $bytes = $memory.ToArray()
+        $raw = [Text.UTF8Encoding]::new($false, $true).GetString($bytes)
+        $value = $raw | ConvertFrom-Json
+        $sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+        return [pscustomobject]@{value=$value;sha256=$sha256}
+    } finally {
+        if ($null -ne $memory) { $memory.Dispose() }
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
+}
+
 function Get-StructuredLogPortListeners {
     param([int] $Port)
     if (-not (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue)) { return @() }
@@ -157,6 +183,71 @@ function New-StructuredLogAttemptContext {
         Kit = $null
         TouchedEnvironment = [ordered]@{}
     }
+}
+
+function Open-StructuredLogLifecycleLock {
+    param([Parameter(Mandatory)] [string] $RepoRoot)
+    if (-not (Test-StructuredLogAbsolutePath $RepoRoot)) { throw 'HELD: RepoRoot must be absolute before acquiring the runtime evidence lifecycle lock' }
+    $stateRoot = Join-Path $RepoRoot 'artifacts\spec-to-done\cross-service-structured-log-baseline'
+    New-Item -ItemType Directory -Path $stateRoot -Force -ErrorAction Stop | Out-Null
+    $lockPath = Join-Path $stateRoot 'runtime-evidence.lock'
+    try {
+        return [IO.FileStream]::new($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    } catch {
+        throw "HELD: another structured-log runtime evidence lifecycle owns $lockPath"
+    }
+}
+
+function Assert-StructuredLogLifecycleLock {
+    param(
+        [Parameter(Mandatory)] [string] $RepoRoot,
+        [Parameter(Mandatory)] [IO.FileStream] $LifecycleLock
+    )
+    $expectedPath = Join-Path $RepoRoot 'artifacts\spec-to-done\cross-service-structured-log-baseline\runtime-evidence.lock'
+    if (-not $LifecycleLock.CanRead -or -not $LifecycleLock.CanWrite -or [string]$LifecycleLock.Name -cne $expectedPath) {
+        throw 'HELD: runtime evidence lifecycle lock does not match the repository state boundary'
+    }
+}
+
+function Initialize-StructuredLogRuntimeLease {
+    param([Parameter(Mandatory)] $Context)
+    $expectedPath = Join-Path $Context.AttemptRoot 'runtime-lease.json'
+    if ([string]$Context.LeasePath -cne $expectedPath) { throw 'HELD: runtime lease path is not canonical for the attempt' }
+    if (Test-Path -LiteralPath $expectedPath) { throw 'HELD: initial runtime lease already exists' }
+    Write-StructuredLogJsonAtomic -Path $expectedPath -Value ([ordered]@{schema_version='1';attempt_id=$Context.AttemptId;processes=@()})
+}
+
+function New-StructuredLogLaunchIntent {
+    param(
+        [Parameter(Mandatory)] $Context,
+        [Parameter(Mandatory)] $ProcessSpec
+    )
+    $path = Join-Path $Context.AttemptRoot 'launch-intent.json'
+    if (Test-Path -LiteralPath $path) { throw 'HELD: unresolved launch intent already exists' }
+    $intent = [ordered]@{
+        schema_version = '1'
+        attempt_id = [string]$Context.AttemptId
+        process_name = [string]$ProcessSpec.name
+        launch_nonce = [guid]::NewGuid().ToString('N')
+        status = 'starting'
+        recorded_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    }
+    Write-StructuredLogJsonAtomic -Path $path -Value $intent
+    return [pscustomobject]$intent
+}
+
+function Remove-StructuredLogLaunchIntent {
+    param(
+        [Parameter(Mandatory)] $Context,
+        [Parameter(Mandatory)] $Intent
+    )
+    $path = Join-Path $Context.AttemptRoot 'launch-intent.json'
+    $snapshot = Read-StructuredLogCanonicalJsonFile -Path $path -ExpectedName 'launch-intent.json'
+    $current = $snapshot.value
+    if ([string]$current.schema_version -cne '1' -or [string]$current.attempt_id -cne [string]$Context.AttemptId -or [string]$current.launch_nonce -cne [string]$Intent.launch_nonce -or [string]$current.status -cne 'starting') {
+        throw 'HELD: launch intent changed before it could be cleared'
+    }
+    Remove-Item -LiteralPath $path -Force -ErrorAction Stop
 }
 
 function Write-StructuredLogProvenance {
@@ -512,18 +603,22 @@ function Start-StructuredLogOwnedProcess {
     foreach ($path in @($ProcessSpec.cwd, (Split-Path -Parent $ProcessSpec.stdout_path), (Split-Path -Parent $ProcessSpec.stderr_path))) {
         if (-not (Test-Path -LiteralPath $path)) { New-Item -ItemType Directory -Path $path -Force | Out-Null }
     }
-    $envSnapshot = Set-StructuredLogEnvironment -Values $ProcessSpec.env
+    if (-not (Test-Path -LiteralPath $Context.LeasePath)) { Initialize-StructuredLogRuntimeLease -Context $Context }
+    $envSnapshot = $null
     $process = $null
     $identity = $null
     $leaseEntry = $null
     $lease = $null
+    $launchIntent = $null
     $pidfile = Join-Path $Context.AttemptRoot "$($ProcessSpec.name).pid"
     $leaseLock = $null
     try {
+        $launchIntent = New-StructuredLogLaunchIntent -Context $Context -ProcessSpec $ProcessSpec
+        $envSnapshot = Set-StructuredLogEnvironment -Values $ProcessSpec.env
         try {
             $process = & $StartProcessInvoker $ProcessSpec.file_path @($ProcessSpec.argument_list) $ProcessSpec.cwd $ProcessSpec.stdout_path $ProcessSpec.stderr_path
         } finally {
-            Restore-StructuredLogEnvironment -Snapshot $envSnapshot
+            if ($null -ne $envSnapshot) { Restore-StructuredLogEnvironment -Snapshot $envSnapshot }
         }
         if ($null -eq $process -or [int]$process.Id -le 0) { throw "Start-Process -PassThru did not return a valid PID for $($ProcessSpec.name)" }
         $identity = & $IdentityProvider ([int]$process.Id)
@@ -541,6 +636,7 @@ function Start-StructuredLogOwnedProcess {
             env_keys = @($ProcessSpec.env.Keys | Sort-Object)
             port = [int]$ProcessSpec.port
             pidfile = $pidfile
+            launch_nonce = [string]$launchIntent.launch_nonce
         }
         Write-StructuredLogJsonAtomic -Path $pidfile -Value ([string]$identity.pid)
         $lockPath = "$($Context.LeasePath).lock"
@@ -555,6 +651,7 @@ function Start-StructuredLogOwnedProcess {
         & $LeaseWriter $Context.LeasePath $lease
         $leaseLock.Dispose(); $leaseLock = $null
         Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+        Remove-StructuredLogLaunchIntent -Context $Context -Intent $launchIntent
         Write-StructuredLogProvenance -Context $Context -Phase 'start' -Command "$($ProcessSpec.file_path) $($ProcessSpec.argument_list -join ' ')" -Cwd $ProcessSpec.cwd -Status 'started' -ExitCode $null | Out-Null
         return [pscustomobject]$leaseEntry
     } catch {
@@ -583,7 +680,7 @@ function Start-StructuredLogOwnedProcess {
                 }
             }
             if ($null -eq $leaseEntry -and $null -ne $identity -and -not [string]::IsNullOrWhiteSpace([string]$identity.path) -and -not [string]::IsNullOrWhiteSpace([string]$identity.start_time_utc)) {
-                $leaseEntry = [ordered]@{name=[string]$ProcessSpec.name;pid=[int]$identity.pid;parent_pid=[int]$identity.parent_pid;path=[string]$identity.path;start_time_utc=[string]$identity.start_time_utc;cwd=[string]$ProcessSpec.cwd;argv=@($ProcessSpec.argument_list);env_keys=@($ProcessSpec.env.Keys|Sort-Object);port=[int]$ProcessSpec.port;pidfile=$pidfile}
+                $leaseEntry = [ordered]@{name=[string]$ProcessSpec.name;pid=[int]$identity.pid;parent_pid=[int]$identity.parent_pid;path=[string]$identity.path;start_time_utc=[string]$identity.start_time_utc;cwd=[string]$ProcessSpec.cwd;argv=@($ProcessSpec.argument_list);env_keys=@($ProcessSpec.env.Keys|Sort-Object);port=[int]$ProcessSpec.port;pidfile=$pidfile;launch_nonce=if($null -ne $launchIntent){[string]$launchIntent.launch_nonce}else{$null}}
             }
             $evidencePid = if ($null -ne $process) { [int]$process.Id } elseif ($null -ne $fallbackIdentity) { [int]$fallbackIdentity.pid } else { 0 }
             if ($evidencePid -gt 0) { Write-StructuredLogJsonAtomic -Path $pidfile -Value ([string]$evidencePid) }
@@ -617,6 +714,9 @@ function Start-StructuredLogOwnedProcess {
             Write-StructuredLogProvenance -Context $Context -Phase 'start' -Command "$($ProcessSpec.file_path) $($ProcessSpec.argument_list -join ' ')" -Cwd $ProcessSpec.cwd -Status 'failed' -ExitCode $null | Out-Null
             $identitySuffix = if ($quarantineStatus -eq 'cleanup_failed_identity_unavailable') { '; fallback identity unavailable' } else { '' }
             throw [InvalidOperationException]::new("$($failure.Exception.Message); cleanup failed: $($cleanupFailure.Exception.Message)$identitySuffix", $failure.Exception)
+        }
+        if ($null -ne $launchIntent -and (Test-Path -LiteralPath (Join-Path $Context.AttemptRoot 'launch-intent.json'))) {
+            Remove-StructuredLogLaunchIntent -Context $Context -Intent $launchIntent
         }
         Remove-Item -LiteralPath $pidfile -Force -ErrorAction SilentlyContinue
         Write-StructuredLogProvenance -Context $Context -Phase 'start' -Command "$($ProcessSpec.file_path) $($ProcessSpec.argument_list -join ' ')" -Cwd $ProcessSpec.cwd -Status 'failed' -ExitCode $null | Out-Null
@@ -725,8 +825,46 @@ function Invoke-StructuredLogSupportedSmoke {
     return [pscustomobject]@{ exit_code=[int]$exitCode; evidence_path=$evidencePath }
 }
 
+function Get-StructuredLogValidatedLeaseProcesses {
+    param(
+        [Parameter(Mandatory)] $Context,
+        [switch] $AllowMissing
+    )
+    $expectedLeasePath = Join-Path $Context.AttemptRoot 'runtime-lease.json'
+    if ([string]$Context.LeasePath -cne $expectedLeasePath) { throw 'HELD: runtime lease path is not canonical for the attempt' }
+    if (-not (Test-Path -LiteralPath $expectedLeasePath)) {
+        if ($AllowMissing -and -not (Test-Path -LiteralPath (Join-Path $Context.AttemptRoot 'cleanup-quarantine.json'))) { return @() }
+        throw 'HELD: runtime lease is missing'
+    }
+    try { $lease = (Read-StructuredLogCanonicalJsonFile -Path $expectedLeasePath -ExpectedName 'runtime-lease.json').value } catch {
+        throw "HELD: runtime lease is invalid: $($_.Exception.Message)"
+    }
+    foreach ($name in @('schema_version','attempt_id','processes')) {
+        if ($null -eq $lease.PSObject.Properties[$name]) { throw "HELD: runtime lease is missing $name" }
+    }
+    if ([string]$lease.schema_version -cne '1' -or [string]$lease.attempt_id -cne [string]$Context.AttemptId) {
+        throw 'HELD: runtime lease identity does not match the attempt'
+    }
+    $processes = @($lease.processes)
+    $identityKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $identityPids = [System.Collections.Generic.HashSet[int]]::new()
+    foreach ($entry in $processes) {
+        foreach ($name in @('pid','path','start_time_utc')) {
+            if ($null -eq $entry.PSObject.Properties[$name]) { throw "HELD: runtime lease identity is missing $name" }
+        }
+        $parsedPid = 0
+        $parsedStart = [DateTimeOffset]::MinValue
+        if (-not [int]::TryParse([string]$entry.pid, [ref]$parsedPid) -or $parsedPid -le 0 -or [string]::IsNullOrWhiteSpace([string]$entry.path) -or -not [DateTimeOffset]::TryParse([string]$entry.start_time_utc, [ref]$parsedStart)) {
+            throw 'HELD: runtime lease identity is incomplete or malformed'
+        }
+        $identityKey = "$parsedPid|$([string]$entry.path)|$($parsedStart.UtcTicks)"
+        if (-not $identityPids.Add($parsedPid) -or -not $identityKeys.Add($identityKey)) { throw 'HELD: runtime lease PID or identity is duplicated' }
+    }
+    return @($processes | ForEach-Object { $_ })
+}
+
 function Get-StructuredLogProcessInventory {
-    $items = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+    $items = @(Get-CimInstance Win32_Process -ErrorAction Stop)
     return @($items | ForEach-Object {
         $start = $null
         try { $start = (Get-Process -Id ([int]$_.ProcessId) -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o') } catch {}
@@ -752,24 +890,38 @@ function Stop-StructuredLogOwnedProcesses {
         [Parameter(Mandatory)] $Context,
         [scriptblock] $ProcessInventoryProvider = ${function:Get-StructuredLogProcessInventory},
         [scriptblock] $StopProcessInvoker = {
-            param($processId)
-            $handle = Get-Process -Id $processId -ErrorAction Stop
+            param($expectedIdentity)
+            $handle = Get-Process -Id ([int]$expectedIdentity.pid) -ErrorAction Stop
+            $handleIdentity = [pscustomobject]@{
+                pid = [int]$handle.Id
+                path = [string]$handle.Path
+                start_time_utc = $handle.StartTime.ToUniversalTime().ToString('o')
+            }
+            if (-not (Test-StructuredLogIdentityMatch -Expected $expectedIdentity -Actual $handleIdentity)) {
+                throw "process identity changed before exact-handle stop for PID $($expectedIdentity.pid)"
+            }
             Stop-Process -InputObject $handle -ErrorAction Stop
-            $handle.WaitForExit(10000) | Out-Null
+            if (-not $handle.WaitForExit(10000)) { throw "owned process PID $($expectedIdentity.pid) did not exit within 10000ms" }
         },
         [scriptblock] $ListenerInspector = ${function:Get-StructuredLogPortListeners}
     )
-    $leaseProcesses = @()
-    if (Test-Path -LiteralPath $Context.LeasePath) {
-        try { $leaseProcesses = @((Get-Content -Raw -LiteralPath $Context.LeasePath | ConvertFrom-Json).processes) } catch {}
+    [object[]]$leaseProcesses = @(
+        if ($null -ne $Context.PSObject.Properties['ValidatedLeaseProcesses']) {
+            foreach ($item in @($Context.ValidatedLeaseProcesses)) { if ($null -ne $item) { $item } }
+        } else {
+            Get-StructuredLogValidatedLeaseProcesses -Context $Context
+        }
+    )
+    if ($null -eq $Context.PSObject.Properties['ValidatedLeaseProcesses']) {
+        $Context | Add-Member -NotePropertyName ValidatedLeaseProcesses -NotePropertyValue @($leaseProcesses)
     }
     $entries = [System.Collections.Generic.List[object]]::new()
-    $inventory = @(& $ProcessInventoryProvider)
+    $inventory = if ($leaseProcesses.Count -eq 0) { @() } else { @(& $ProcessInventoryProvider) }
     foreach ($leaseEntry in @($leaseProcesses | Sort-Object -Property pid -Descending)) {
         $current = $inventory | Where-Object { [int]$_.pid -eq [int]$leaseEntry.pid } | Select-Object -First 1
         $match = Test-StructuredLogIdentityMatch -Expected $leaseEntry -Actual $current
         if (-not $match) {
-            $entries.Add([pscustomobject][ordered]@{ pid=[int]$leaseEntry.pid;path=[string]$leaseEntry.path;start_time_utc=[string]$leaseEntry.start_time_utc;identity_match=$false;action='none';result=if($null -eq $current){'not_running'}else{'identity_mismatch'} })
+            $entries.Add([pscustomobject][ordered]@{ lease_pid=[int]$leaseEntry.pid;pid=[int]$leaseEntry.pid;path=[string]$leaseEntry.path;start_time_utc=[string]$leaseEntry.start_time_utc;identity_match=$false;action='none';result=if($null -eq $current){'not_running'}else{'identity_mismatch'} })
             continue
         }
         $tree = [System.Collections.Generic.List[object]]::new()
@@ -795,14 +947,14 @@ function Stop-StructuredLogOwnedProcesses {
             $nodeMatch = Test-StructuredLogIdentityMatch -Expected $node.item -Actual $fresh
             if (-not $nodeMatch) {
                 $result = if ($null -eq $fresh) { 'not_running' } else { 'identity_changed' }
-                $entries.Add([pscustomobject][ordered]@{pid=[int]$node.item.pid;path=[string]$node.item.path;start_time_utc=[string]$node.item.start_time_utc;identity_match=$false;action='none';result=$result})
+                $entries.Add([pscustomobject][ordered]@{lease_pid=[int]$leaseEntry.pid;pid=[int]$node.item.pid;path=[string]$node.item.path;start_time_utc=[string]$node.item.start_time_utc;identity_match=$false;action='none';result=$result})
                 continue
             }
             try {
-                & $StopProcessInvoker ([int]$node.item.pid)
-                $entries.Add([pscustomobject][ordered]@{pid=[int]$node.item.pid;path=[string]$node.item.path;start_time_utc=[string]$node.item.start_time_utc;identity_match=$true;action='stop_owned';result='stopped'})
+                & $StopProcessInvoker $node.item
+                $entries.Add([pscustomobject][ordered]@{lease_pid=[int]$leaseEntry.pid;pid=[int]$node.item.pid;path=[string]$node.item.path;start_time_utc=[string]$node.item.start_time_utc;identity_match=$true;action='stop_owned';result='stopped'})
             } catch {
-                $entries.Add([pscustomobject][ordered]@{pid=[int]$node.item.pid;path=[string]$node.item.path;start_time_utc=[string]$node.item.start_time_utc;identity_match=$true;action='stop_owned';result='failed';error_type=$_.Exception.GetType().FullName})
+                $entries.Add([pscustomobject][ordered]@{lease_pid=[int]$leaseEntry.pid;pid=[int]$node.item.pid;path=[string]$node.item.path;start_time_utc=[string]$node.item.start_time_utc;identity_match=$true;action='stop_owned';result='failed';error_type=$_.Exception.GetType().FullName})
             }
         }
     }
@@ -1578,12 +1730,77 @@ function Write-StructuredLogEvidenceArtifacts {
     return [pscustomobject]$manifest
 }
 
+function Assert-StructuredLogShutdownAccountability {
+    param(
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [object[]] $LeaseProcesses,
+        [Parameter(Mandatory)] $Shutdown,
+        [AllowEmptyCollection()] [object[]] $RequiredIdentities = @()
+    )
+    if ($null -eq $Shutdown -or $null -eq $Shutdown.PSObject.Properties['entries']) {
+        throw 'owned process reconciliation returned no accountable entries'
+    }
+    $accountableResults = @('stopped','not_running')
+    $shutdownEntries = @($Shutdown.entries)
+    if (@($LeaseProcesses).Count -eq 0 -and $shutdownEntries.Count -ne 0) {
+        throw 'shutdown returned identities without a validated lease root'
+    }
+    $shutdownPids = [System.Collections.Generic.HashSet[int]]::new()
+    foreach ($shutdownEntry in $shutdownEntries) {
+        foreach ($name in @('lease_pid','pid','path','start_time_utc','result')) {
+            if ($null -eq $shutdownEntry.PSObject.Properties[$name]) { throw "shutdown identity is missing $name" }
+        }
+        $leasePid = 0
+        $shutdownPid = 0
+        $shutdownStarted = [DateTimeOffset]::MinValue
+        if (-not [int]::TryParse([string]$shutdownEntry.lease_pid, [ref]$leasePid) -or -not [int]::TryParse([string]$shutdownEntry.pid, [ref]$shutdownPid) -or $shutdownPid -le 0 -or [string]::IsNullOrWhiteSpace([string]$shutdownEntry.path) -or -not [DateTimeOffset]::TryParse([string]$shutdownEntry.start_time_utc, [ref]$shutdownStarted) -or -not ($accountableResults -ccontains [string]$shutdownEntry.result)) {
+            throw 'shutdown identity or result is incomplete, unsafe, or malformed'
+        }
+        if (-not $shutdownPids.Add($shutdownPid)) { throw 'shutdown process identity is duplicated' }
+        if (@($LeaseProcesses | Where-Object { [int]$_.pid -eq $leasePid }).Count -ne 1) {
+            throw 'shutdown identity is not attributable to one validated lease root'
+        }
+    }
+    foreach ($expectedLease in @($LeaseProcesses)) {
+        $accountedLease = @($shutdownEntries | Where-Object { [int]$_.lease_pid -eq [int]$expectedLease.pid -and (Test-StructuredLogIdentityMatch -Expected $expectedLease -Actual $_) })
+        if ($accountedLease.Count -ne 1) { throw 'owned process reconciliation did not account exactly once for every validated lease root' }
+    }
+    foreach ($requiredIdentity in @($RequiredIdentities | Where-Object { $null -ne $_ })) {
+        $accountedIdentity = @($shutdownEntries | Where-Object { Test-StructuredLogIdentityMatch -Expected $requiredIdentity -Actual $_ })
+        if ($accountedIdentity.Count -ne 1) { throw 'owned process reconciliation did not account exactly once for every required identity' }
+    }
+    return $true
+}
+
 function Resolve-StructuredLogActiveAttempt {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [string] $RepoRoot,
         [Parameter(Mandatory)] [string] $HeadOid,
         [scriptblock] $ShutdownInvoker = { param($context) Stop-StructuredLogOwnedProcesses -Context $context },
+        [scriptblock] $ConfirmEndedInvoker = { param($context) Confirm-StructuredLogLeasedProcessesEnded -Context $context },
+        [scriptblock] $AtomicStateWriter = { param($repoRoot,$state) Set-StructuredLogActiveAttempt -RepoRoot $repoRoot -State $state },
+        [IO.FileStream] $LifecycleLock = $null
+    )
+    $ownedLifecycleLock = $null
+    try {
+        if ($null -eq $LifecycleLock) {
+            $ownedLifecycleLock = Open-StructuredLogLifecycleLock -RepoRoot $RepoRoot
+            $LifecycleLock = $ownedLifecycleLock
+        }
+        Assert-StructuredLogLifecycleLock -RepoRoot $RepoRoot -LifecycleLock $LifecycleLock
+        return Resolve-StructuredLogActiveAttemptCore -RepoRoot $RepoRoot -HeadOid $HeadOid -ShutdownInvoker $ShutdownInvoker -ConfirmEndedInvoker $ConfirmEndedInvoker -AtomicStateWriter $AtomicStateWriter
+    } finally {
+        if ($null -ne $ownedLifecycleLock) { $ownedLifecycleLock.Dispose() }
+    }
+}
+
+function Resolve-StructuredLogActiveAttemptCore {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $RepoRoot,
+        [Parameter(Mandatory)] [string] $HeadOid,
+        [scriptblock] $ShutdownInvoker = { param($context) Stop-StructuredLogOwnedProcesses -Context $context },
+        [scriptblock] $ConfirmEndedInvoker = { param($context) Confirm-StructuredLogLeasedProcessesEnded -Context $context },
         [scriptblock] $AtomicStateWriter = { param($repoRoot,$state) Set-StructuredLogActiveAttempt -RepoRoot $repoRoot -State $state }
     )
     if (-not (Test-StructuredLogAbsolutePath $RepoRoot)) { throw 'RepoRoot must be absolute' }
@@ -1600,28 +1817,172 @@ function Resolve-StructuredLogActiveAttempt {
     if ([string]$state.schema_version -cne '1' -or [string]$state.status -notin @('running','failed','succeeded','superseded')) {
         return [pscustomobject]@{action='invalid_pointer';attempt_root=[string]$state.attempt_root;lineage=@($state.lineage);detail='invalid schema_version or status'}
     }
+    $stateStartedUtc = [DateTimeOffset]::MinValue
+    if (-not [DateTimeOffset]::TryParse([string]$state.started_utc, [ref]$stateStartedUtc)) {
+        return [pscustomobject]@{action='invalid_pointer';attempt_root=[string]$state.attempt_root;lineage=@($state.lineage);detail='active pointer started_utc is invalid'}
+    }
+    if ([string]$state.status -ne 'running') {
+        $stateFinishedUtc = [DateTimeOffset]::MinValue
+        if ($null -eq $state.PSObject.Properties['finished_utc'] -or -not [DateTimeOffset]::TryParse([string]$state.finished_utc, [ref]$stateFinishedUtc) -or $stateFinishedUtc.UtcTicks -lt $stateStartedUtc.UtcTicks) {
+            return [pscustomobject]@{action='invalid_pointer';attempt_root=[string]$state.attempt_root;lineage=@($state.lineage);detail='terminal active pointer finished_utc is invalid'}
+        }
+    } elseif ($null -ne $state.PSObject.Properties['finished_utc'] -and -not [string]::IsNullOrWhiteSpace([string]$state.finished_utc)) {
+        return [pscustomobject]@{action='invalid_pointer';attempt_root=[string]$state.attempt_root;lineage=@($state.lineage);detail='running active pointer cannot have finished_utc'}
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$state.attempt_id) -or [string]::IsNullOrWhiteSpace([string]$state.head_oid)) {
+        return [pscustomobject]@{action='invalid_pointer';attempt_root=[string]$state.attempt_root;lineage=@();detail='active pointer identity is incomplete'}
+    }
+    $validatedLineage = @($state.lineage)
+    $lineageIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $previousLineageFinished = $null
+    foreach ($lineageEntry in $validatedLineage) {
+        foreach ($name in @('attempt_id','attempt_root','head_oid','status','started_utc','finished_utc')) {
+            if ($null -eq $lineageEntry.PSObject.Properties[$name]) {
+                return [pscustomobject]@{action='invalid_pointer';attempt_root=[string]$state.attempt_root;lineage=@();detail="lineage entry is missing $name"}
+            }
+        }
+        $lineageAttemptId = [string]$lineageEntry.attempt_id
+        $lineageStarted = [DateTimeOffset]::MinValue
+        $lineageFinished = [DateTimeOffset]::MinValue
+        if ([string]::IsNullOrWhiteSpace($lineageAttemptId) -or [string]::IsNullOrWhiteSpace([string]$lineageEntry.attempt_root) -or [string]::IsNullOrWhiteSpace([string]$lineageEntry.head_oid) -or [string]$lineageEntry.status -notin @('failed','succeeded','superseded') -or -not [DateTimeOffset]::TryParse([string]$lineageEntry.started_utc, [ref]$lineageStarted) -or -not [DateTimeOffset]::TryParse([string]$lineageEntry.finished_utc, [ref]$lineageFinished) -or $lineageFinished.UtcTicks -lt $lineageStarted.UtcTicks) {
+            return [pscustomobject]@{action='invalid_pointer';attempt_root=[string]$state.attempt_root;lineage=@();detail='lineage entry is incomplete or malformed'}
+        }
+        if (-not $lineageIds.Add($lineageAttemptId)) {
+            return [pscustomobject]@{action='invalid_pointer';attempt_root=[string]$state.attempt_root;lineage=@();detail='lineage attempt ids are duplicated or case-colliding'}
+        }
+        try {
+            Assert-StructuredLogAttemptRoot -RepoRoot $RepoRoot -AttemptRoot ([string]$lineageEntry.attempt_root) -AttemptId $lineageAttemptId -RequireExisting | Out-Null
+        } catch {
+            return [pscustomobject]@{action='invalid_pointer';attempt_root=[string]$state.attempt_root;lineage=@();detail="lineage attempt root is invalid: $($_.Exception.Message)"}
+        }
+        if ($null -ne $previousLineageFinished -and $lineageStarted.UtcTicks -lt $previousLineageFinished.UtcTicks) {
+            return [pscustomobject]@{action='invalid_pointer';attempt_root=[string]$state.attempt_root;lineage=@();detail='lineage attempts overlap or are out of chronological order'}
+        }
+        $previousLineageFinished = $lineageFinished
+    }
+    $caseCollisions = @($validatedLineage | Where-Object { [string]$_.attempt_id -ieq [string]$state.attempt_id -and [string]$_.attempt_id -cne [string]$state.attempt_id })
+    if ($caseCollisions.Count -gt 0) {
+        return [pscustomobject]@{action='invalid_pointer';attempt_root=[string]$state.attempt_root;lineage=@();detail='current attempt id case-collides with lineage'}
+    }
+    $currentLineage = @($validatedLineage | Where-Object { [string]$_.attempt_id -ceq [string]$state.attempt_id })
+    if ($currentLineage.Count -eq 0 -and $null -ne $previousLineageFinished -and $stateStartedUtc.UtcTicks -lt $previousLineageFinished.UtcTicks) {
+        return [pscustomobject]@{action='invalid_pointer';attempt_root=[string]$state.attempt_root;lineage=@();detail='active attempt starts before its lineage completed'}
+    }
+    if ($currentLineage.Count -eq 1 -and [string]$validatedLineage[-1].attempt_id -cne [string]$state.attempt_id) {
+        return [pscustomobject]@{action='invalid_pointer';attempt_root=[string]$state.attempt_root;lineage=@();detail='current attempt lineage entry must be the latest entry'}
+    }
+    if ($currentLineage.Count -eq 1) {
+        $entry = $currentLineage[0]
+        $statusCompatible = [string]$entry.status -ceq [string]$state.status
+        if ([string]$state.status -eq 'superseded') {
+            if ($null -ne $state.PSObject.Properties['resolved_prior_status']) {
+                $resolvedPriorStatus = [string]$state.resolved_prior_status
+                $expectedResolvedStatus = if ($resolvedPriorStatus -ceq 'running') { 'superseded' } else { $resolvedPriorStatus }
+                $statusCompatible = @('running','failed') -ccontains $resolvedPriorStatus -and [string]$entry.status -ceq $expectedResolvedStatus
+            } else {
+                $statusCompatible = [string]$entry.status -ceq 'superseded'
+            }
+        }
+        $stateStarted = [DateTimeOffset]::MinValue
+        $entryStarted = [DateTimeOffset]::MinValue
+        $startsValid = [DateTimeOffset]::TryParse([string]$state.started_utc, [ref]$stateStarted) -and [DateTimeOffset]::TryParse([string]$entry.started_utc, [ref]$entryStarted)
+        $stateFinished = [DateTimeOffset]::MinValue
+        $entryFinished = [DateTimeOffset]::MinValue
+        $finishesValid = $null -ne $state.PSObject.Properties['finished_utc'] -and [DateTimeOffset]::TryParse([string]$state.finished_utc, [ref]$stateFinished) -and [DateTimeOffset]::TryParse([string]$entry.finished_utc, [ref]$entryFinished)
+        $finishOrderCompatible = if ([string]$state.status -ceq 'superseded') { $entryFinished.UtcTicks -le $stateFinished.UtcTicks } else { $entryFinished.UtcTicks -eq $stateFinished.UtcTicks }
+        $finishCompatible = $finishesValid -and $finishOrderCompatible
+        if ([string]$entry.attempt_root -cne [string]$state.attempt_root -or [string]$entry.head_oid -cne [string]$state.head_oid -or -not $statusCompatible -or -not $startsValid -or $stateStarted.UtcTicks -ne $entryStarted.UtcTicks -or -not $finishCompatible) {
+            return [pscustomobject]@{action='invalid_pointer';attempt_root=[string]$state.attempt_root;lineage=@();detail='current attempt lineage entry conflicts with pointer identity'}
+        }
+    }
     try { $validatedAttemptRoot = Assert-StructuredLogAttemptRoot -RepoRoot $RepoRoot -AttemptRoot ([string]$state.attempt_root) -AttemptId ([string]$state.attempt_id) -RequireExisting } catch {
         return [pscustomobject]@{action='invalid_pointer';attempt_root=[string]$state.attempt_root;lineage=@($state.lineage);detail=$_.Exception.Message}
     }
-    if ([string]$state.status -eq 'succeeded' -and [string]$state.head_oid -ceq $HeadOid) {
-        $check = Test-StructuredLogArtifactManifest -AttemptRoot ([string]$state.attempt_root)
-        if ($check.valid -and [string]$state.attempt_id -cne [string]$check.attempt_id) {
-            return [pscustomobject]@{action='invalid_pointer';attempt_root=[string]$state.attempt_root;lineage=@($state.lineage);detail='pointer attempt_id does not match artifact manifest attempt_id'}
+    $attemptRoot = [string]$state.attempt_root
+    $priorStatus = [string]$state.status
+    $launchIntentPath = Join-Path $attemptRoot 'launch-intent.json'
+    if (Test-Path -LiteralPath $launchIntentPath) {
+        try { $launchIntent = (Read-StructuredLogCanonicalJsonFile -Path $launchIntentPath -ExpectedName 'launch-intent.json').value } catch {
+            return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail='launch intent is invalid and process ownership cannot be proven'}
         }
-        if ($check.valid) { return [pscustomobject]@{action='resume_succeeded';attempt_root=[string]$state.attempt_root;lineage=@($state.lineage);attempt_id=[string]$state.attempt_id} }
-        return [pscustomobject]@{action='invalid_succeeded_artifacts';attempt_root=[string]$state.attempt_root;lineage=@($state.lineage);detail=($check.errors -join ',')}
+        foreach ($name in @('schema_version','attempt_id','process_name','launch_nonce','status','recorded_utc')) {
+            if ($null -eq $launchIntent.PSObject.Properties[$name]) {
+                return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail="launch intent is missing $name"}
+            }
+        }
+        $intentRecorded = [DateTimeOffset]::MinValue
+        if ([string]$launchIntent.schema_version -cne '1' -or [string]$launchIntent.attempt_id -cne [string]$state.attempt_id -or [string]::IsNullOrWhiteSpace([string]$launchIntent.process_name) -or [string]$launchIntent.launch_nonce -notmatch '^[0-9a-f]{32}$' -or [string]$launchIntent.status -cne 'starting' -or -not [DateTimeOffset]::TryParse([string]$launchIntent.recorded_utc, [ref]$intentRecorded)) {
+            return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail='launch intent identity is incomplete or does not match the active attempt'}
+        }
+        return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail='unresolved pre-launch intent cannot prove whether a process was created'}
     }
-    if ([string]$state.status -eq 'running') {
-        $attemptRoot = [string]$state.attempt_root
-        $quarantinePath = Join-Path $attemptRoot 'cleanup-quarantine.json'
-        if (Test-Path -LiteralPath $quarantinePath -PathType Leaf) {
-            try { $quarantine = Get-Content -Raw -LiteralPath $quarantinePath | ConvertFrom-Json } catch {
-                return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail='cleanup quarantine is invalid and ownership cannot be proven'}
-            }
-            if ([string]$quarantine.status -eq 'cleanup_failed_identity_unavailable') {
-                return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail='cleanup failed and complete process identity is unavailable'}
+    $quarantinePath = Join-Path $attemptRoot 'cleanup-quarantine.json'
+    $quarantine = $null
+    $quarantineHash = $null
+    $resolvedQuarantineProof = $false
+    $requiresQuarantineReconcile = $false
+    if (Test-Path -LiteralPath $quarantinePath) {
+        try {
+            $quarantineSnapshot = Read-StructuredLogCanonicalJsonFile -Path $quarantinePath -ExpectedName 'cleanup-quarantine.json'
+            $quarantine = $quarantineSnapshot.value
+            $quarantineHash = [string]$quarantineSnapshot.sha256
+        } catch {
+            return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail='cleanup quarantine is invalid and ownership cannot be proven'}
+        }
+        foreach ($name in @('schema_version','attempt_id','status','entries')) {
+            if ($null -eq $quarantine.PSObject.Properties[$name]) {
+                return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail="cleanup quarantine is missing $name"}
             }
         }
+        if ([string]$quarantine.schema_version -cne '1' -or [string]$quarantine.attempt_id -cne [string]$state.attempt_id -or [string]$quarantine.status -notin @('cleanup_failed','cleanup_failed_identity_unavailable') -or @($quarantine.entries).Count -eq 0) {
+            return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail='cleanup quarantine identity does not match the active attempt'}
+        }
+        if ([string]$quarantine.status -eq 'cleanup_failed_identity_unavailable') {
+            return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail='cleanup failed and complete process identity is unavailable'}
+        }
+        if ($priorStatus -eq 'superseded') {
+            $resolvedHash = if ($null -ne $state.PSObject.Properties['resolved_quarantine_sha256']) { [string]$state.resolved_quarantine_sha256 } else { '' }
+            $resolvedPriorStatus = if ($null -ne $state.PSObject.Properties['resolved_prior_status']) { [string]$state.resolved_prior_status } else { '' }
+            if ($resolvedHash -notmatch '^[0-9a-f]{64}$' -or $resolvedHash -cne $quarantineHash -or -not (@('running','failed') -ccontains $resolvedPriorStatus) -or $currentLineage.Count -ne 1) {
+                return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail='superseded cleanup quarantine is not bound to its resolved pointer proof'}
+            }
+            $resolvedQuarantineProof = $true
+        } elseif ($priorStatus -notin @('running','failed')) {
+            return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail="cleanup quarantine contradicts terminal pointer status '$priorStatus'"}
+        }
+        foreach ($identityGroup in @([pscustomobject]@{name='quarantine';entries=@($quarantine.entries)})) {
+            $identityKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            $identityPids = [System.Collections.Generic.HashSet[int]]::new()
+            foreach ($entry in @($identityGroup.entries)) {
+                foreach ($name in @('pid','path','start_time_utc')) {
+                    if ($null -eq $entry.PSObject.Properties[$name]) {
+                        return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail="cleanup $($identityGroup.name) identity is missing $name"}
+                    }
+                }
+                $parsedPid = 0
+                $parsedStart = [DateTimeOffset]::MinValue
+                $validPid = [int]::TryParse([string]$entry.pid, [ref]$parsedPid)
+                $validStart = [DateTimeOffset]::TryParse([string]$entry.start_time_utc, [ref]$parsedStart)
+                if (-not $validPid -or $parsedPid -le 0 -or [string]::IsNullOrWhiteSpace([string]$entry.path) -or -not $validStart) {
+                    return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail="cleanup $($identityGroup.name) identity is incomplete or malformed"}
+                }
+                $identityKey = "$parsedPid|$([string]$entry.path)|$($parsedStart.UtcTicks)"
+                if (-not $identityPids.Add($parsedPid) -or -not $identityKeys.Add($identityKey)) {
+                    return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail="cleanup $($identityGroup.name) identity is duplicated"}
+                }
+            }
+        }
+        $requiresQuarantineReconcile = -not $resolvedQuarantineProof
+    }
+    if ($priorStatus -eq 'succeeded' -and [string]$state.head_oid -ceq $HeadOid) {
+        $check = Test-StructuredLogArtifactManifest -AttemptRoot $attemptRoot
+        if ($check.valid -and [string]$state.attempt_id -cne [string]$check.attempt_id) {
+            return [pscustomobject]@{action='invalid_pointer';attempt_root=$attemptRoot;lineage=@($state.lineage);detail='pointer attempt_id does not match artifact manifest attempt_id'}
+        }
+        if ($check.valid) { return [pscustomobject]@{action='resume_succeeded';attempt_root=$attemptRoot;lineage=@($state.lineage);attempt_id=[string]$state.attempt_id} }
+        return [pscustomobject]@{action='invalid_succeeded_artifacts';attempt_root=$attemptRoot;lineage=@($state.lineage);detail=($check.errors -join ',')}
+    }
+    if ($priorStatus -eq 'running' -or $requiresQuarantineReconcile) {
         $context = [pscustomobject]@{
             RepoRoot = $RepoRoot
             AttemptRoot = $attemptRoot
@@ -1629,17 +1990,72 @@ function Resolve-StructuredLogActiveAttempt {
             LeasePath = Join-Path $attemptRoot 'runtime-lease.json'
             Ports = [ordered]@{Coordinator=8005;Viewer=5175;Conversion=49104}
         }
-        $shutdown = & $ShutdownInvoker $context
-        $unsafe = @($shutdown.entries | Where-Object { $_.result -in @('identity_mismatch','identity_changed','failed') })
-        if ($unsafe.Count -gt 0) {
-            return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail='owned process identity could not be reconciled'}
+        try { $leaseProcesses = @(Get-StructuredLogValidatedLeaseProcesses -Context $context) } catch {
+            return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail=$_.Exception.Message}
         }
-        $lineage = @($state.lineage) + @([pscustomobject]@{attempt_id=[string]$state.attempt_id;attempt_root=$attemptRoot;head_oid=[string]$state.head_oid;status='superseded';started_utc=$state.started_utc;finished_utc=[DateTimeOffset]::UtcNow.ToString('o')})
+        if ($requiresQuarantineReconcile -and $leaseProcesses.Count -eq 0) {
+            return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail='cleanup failed but its runtime lease has no owned identity'}
+        }
+        if ($requiresQuarantineReconcile) {
+            foreach ($quarantineEntry in @($quarantine.entries)) {
+                $matchingLease = @($leaseProcesses | Where-Object { Test-StructuredLogIdentityMatch -Expected $quarantineEntry -Actual $_ })
+                if ($matchingLease.Count -ne 1) {
+                    return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail='cleanup quarantine identity is not uniquely backed by the runtime lease'}
+                }
+            }
+        }
+        $context | Add-Member -NotePropertyName ValidatedLeaseProcesses -NotePropertyValue @($leaseProcesses)
+        try { $shutdown = & $ShutdownInvoker $context } catch {
+            return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail='owned process inventory or shutdown reconciliation failed'}
+        }
+        try {
+            if ($requiresQuarantineReconcile) {
+                Assert-StructuredLogShutdownAccountability -LeaseProcesses @($leaseProcesses) -Shutdown $shutdown -RequiredIdentities @($quarantine.entries) | Out-Null
+            } else {
+                Assert-StructuredLogShutdownAccountability -LeaseProcesses @($leaseProcesses) -Shutdown $shutdown | Out-Null
+            }
+        } catch {
+            return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail=$_.Exception.Message}
+        }
+        if ($requiresQuarantineReconcile) {
+            try { $currentQuarantineHash = [string](Read-StructuredLogCanonicalJsonFile -Path $quarantinePath -ExpectedName 'cleanup-quarantine.json').sha256 } catch {
+                return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail='cleanup quarantine changed or became unreadable during reconciliation'}
+            }
+            if ($currentQuarantineHash -cne $quarantineHash) {
+                return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail='cleanup quarantine content changed during reconciliation'}
+            }
+        }
+        try { & $ConfirmEndedInvoker $context | Out-Null } catch {
+            return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=@($state.lineage);detail="owned process identities remain after shutdown reconciliation: $($_.Exception.Message)"}
+        }
+        $lineage = @($state.lineage)
+        if (@($lineage | Where-Object { [string]$_.attempt_id -ceq [string]$state.attempt_id }).Count -eq 0) {
+            $priorFinishedUtc = if ($null -ne $state.PSObject.Properties['finished_utc'] -and -not [string]::IsNullOrWhiteSpace([string]$state.finished_utc)) { $state.finished_utc } else { [DateTimeOffset]::UtcNow.ToString('o') }
+            $lineageStatus = if ($priorStatus -eq 'running') { 'superseded' } else { $priorStatus }
+            $lineage += @([pscustomobject]@{attempt_id=[string]$state.attempt_id;attempt_root=$attemptRoot;head_oid=[string]$state.head_oid;status=$lineageStatus;started_utc=$state.started_utc;finished_utc=$priorFinishedUtc})
+        }
         $updated = [ordered]@{schema_version='1';head_oid=[string]$state.head_oid;attempt_id=[string]$state.attempt_id;attempt_root=$attemptRoot;status='superseded';started_utc=$state.started_utc;finished_utc=[DateTimeOffset]::UtcNow.ToString('o');lineage=$lineage}
+        if ($requiresQuarantineReconcile) {
+            $updated.resolved_quarantine_sha256 = $quarantineHash
+            $updated.resolved_prior_status = $priorStatus
+        }
         & $AtomicStateWriter $RepoRoot $updated
+        if ($requiresQuarantineReconcile) {
+            try { $postWriteQuarantineHash = [string](Read-StructuredLogCanonicalJsonFile -Path $quarantinePath -ExpectedName 'cleanup-quarantine.json').sha256 } catch {
+                return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=$lineage;detail='cleanup quarantine changed after resolved pointer write'}
+            }
+            if ($postWriteQuarantineHash -cne $quarantineHash) {
+                return [pscustomobject]@{action='unsafe_running_identity';attempt_root=$attemptRoot;lineage=$lineage;detail='cleanup quarantine proof no longer matches the resolved pointer'}
+            }
+        }
         return [pscustomobject]@{action='superseded_owned_runtime';attempt_root=$attemptRoot;lineage=$lineage;attempt_id=[string]$state.attempt_id}
     }
-    return [pscustomobject]@{action='none';attempt_root=[string]$state.attempt_root;lineage=@($state.lineage);prior_status=[string]$state.status}
+    $terminalLineage = @($state.lineage)
+    if (@($terminalLineage | Where-Object { [string]$_.attempt_id -ceq [string]$state.attempt_id }).Count -eq 0) {
+        $terminalFinishedUtc = if ($null -ne $state.PSObject.Properties['finished_utc']) { $state.finished_utc } else { $null }
+        $terminalLineage += @([pscustomobject]@{attempt_id=[string]$state.attempt_id;attempt_root=$attemptRoot;head_oid=[string]$state.head_oid;status=$priorStatus;started_utc=$state.started_utc;finished_utc=$terminalFinishedUtc})
+    }
+    return [pscustomobject]@{action='none';attempt_root=$attemptRoot;lineage=$terminalLineage;prior_status=$priorStatus}
 }
 
 function Confirm-StructuredLogLeasedProcessesEnded {
@@ -1647,11 +2063,17 @@ function Confirm-StructuredLogLeasedProcessesEnded {
         [Parameter(Mandatory)] $Context,
         [scriptblock] $ProcessInventoryProvider = ${function:Get-StructuredLogProcessInventory}
     )
-    if (-not (Test-Path -LiteralPath $Context.LeasePath -PathType Leaf)) { return $true }
-    $lease = Get-Content -Raw -LiteralPath $Context.LeasePath | ConvertFrom-Json
+    [object[]]$leaseProcesses = @(
+        if ($null -ne $Context.PSObject.Properties['ValidatedLeaseProcesses']) {
+            foreach ($item in @($Context.ValidatedLeaseProcesses)) { if ($null -ne $item) { $item } }
+        } else {
+            Get-StructuredLogValidatedLeaseProcesses -Context $Context
+        }
+    )
+    if (@($leaseProcesses).Count -eq 0) { return $true }
     $inventory = @(& $ProcessInventoryProvider)
     $stillOwned = @()
-    foreach ($entry in @($lease.processes)) {
+    foreach ($entry in $leaseProcesses) {
         $current = $inventory | Where-Object { [int]$_.pid -eq [int]$entry.pid } | Select-Object -First 1
         if (Test-StructuredLogIdentityMatch -Expected $entry -Actual $current) { $stillOwned += @($entry) }
     }
@@ -1721,9 +2143,37 @@ function Invoke-StructuredLogRuntimeEvidence {
         [int] $LivePollSeconds = 180,
         [System.Collections.IDictionary] $Dependencies = @{}
     )
+    $lifecycleLock = Open-StructuredLogLifecycleLock -RepoRoot $RepoRoot
+    try {
+        $arguments = @{} + $PSBoundParameters
+        $arguments.LifecycleLock = $lifecycleLock
+        return Invoke-StructuredLogRuntimeEvidenceUnderLock @arguments
+    } finally {
+        $lifecycleLock.Dispose()
+    }
+}
+
+function Invoke-StructuredLogRuntimeEvidenceUnderLock {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $RepoRoot,
+        [Parameter(Mandatory)] [string] $AttemptRoot,
+        [Parameter(Mandatory)] [string] $FixturePath,
+        [Parameter(Mandatory)] [string] $PythonExe,
+        [int] $CoordinatorPort = 8005,
+        [int] $ViewerPort = 5175,
+        [int] $ConversionPort = 49104,
+        [string] $KitProvisionMode = 'Build',
+        [string] $KitPackagePath = '',
+        [string] $KitPackageSha256 = '',
+        [int] $LivePollSeconds = 180,
+        [System.Collections.IDictionary] $Dependencies = @{},
+        [Parameter(Mandatory)] [IO.FileStream] $LifecycleLock
+    )
+    Assert-StructuredLogLifecycleLock -RepoRoot $RepoRoot -LifecycleLock $LifecycleLock
     $headOid = if ($Dependencies.Contains('GetHeadOid')) { & $Dependencies.GetHeadOid $RepoRoot } else { (& git -C $RepoRoot rev-parse HEAD).Trim() }
     if ([string]::IsNullOrWhiteSpace([string]$headOid)) { throw 'HELD: unable to resolve current HEAD OID' }
-    $reconcile = if ($Dependencies.Contains('Reconcile')) { & $Dependencies.Reconcile $RepoRoot ([string]$headOid) } else { Resolve-StructuredLogActiveAttempt -RepoRoot $RepoRoot -HeadOid ([string]$headOid) }
+    $reconcile = if ($Dependencies.Contains('Reconcile')) { & $Dependencies.Reconcile $RepoRoot ([string]$headOid) } else { Resolve-StructuredLogActiveAttempt -RepoRoot $RepoRoot -HeadOid ([string]$headOid) -LifecycleLock $LifecycleLock }
     if ($null -eq $reconcile) { throw 'HELD: active-attempt reconcile returned no result' }
     switch ([string]$reconcile.action) {
         'resume_succeeded' { return [pscustomobject]@{action='resume_succeeded';attempt_root=[string]$reconcile.attempt_root;attempt_id=[string]$reconcile.attempt_id;lineage=@($reconcile.lineage)} }
@@ -1746,12 +2196,15 @@ function Invoke-StructuredLogRuntimeEvidence {
     $startedUtc = [DateTimeOffset]::UtcNow.ToString('o')
     $lineage = @($reconcile.lineage)
     $runningState = $null
+    $activePointerEstablished = $false
     try {
         $ports = [ordered]@{Coordinator=$CoordinatorPort;Viewer=$ViewerPort;Conversion=$ConversionPort}
         $context = if ($Dependencies.Contains('NewContext')) { & $Dependencies.NewContext $RepoRoot $AttemptRoot $FixturePath $PythonExe $ports } else { New-StructuredLogAttemptContext -RepoRoot $RepoRoot -AttemptRoot $AttemptRoot -FixturePath $FixturePath -PythonExe $PythonExe -Ports $ports }
         Write-StructuredLogJson -Path (Join-Path $context.AttemptRoot 'attempt-manifest.json') -Value ([ordered]@{schema_version='1';attempt_id=$context.AttemptId;status='running';ports=$context.Ports;fixture_sha256=$context.FixtureSha256})
+        Initialize-StructuredLogRuntimeLease -Context $context
         $runningState = [ordered]@{schema_version='1';head_oid=[string]$headOid;attempt_id=$context.AttemptId;attempt_root=$context.AttemptRoot;status='running';started_utc=$startedUtc;finished_utc=$null;lineage=$lineage}
         Set-StructuredLogActiveAttempt -RepoRoot $RepoRoot -State $runningState
+        $activePointerEstablished = $true
         $context.Kit = if ($Dependencies.Contains('ResolveKit')) { & $Dependencies.ResolveKit $context $KitProvisionMode $KitPackagePath $KitPackageSha256 } else { Resolve-StructuredLogKitPrerequisites -Context $context -KitProvisionMode $KitProvisionMode -KitPackagePath $KitPackagePath -KitPackageSha256 $KitPackageSha256 }
         $processSpecs = @(if ($Dependencies.Contains('ProcessSpecs')) { & $Dependencies.ProcessSpecs $context } else { New-StructuredLogProcessSpecs -Context $context })
         foreach ($processSpec in $processSpecs) {
@@ -1764,9 +2217,12 @@ function Invoke-StructuredLogRuntimeEvidence {
     } finally {
         if ($null -ne $context) {
             try {
+                $leaseProcesses = @(Get-StructuredLogValidatedLeaseProcesses -Context $context)
+                if ($null -eq $context.PSObject.Properties['ValidatedLeaseProcesses']) {
+                    $context | Add-Member -NotePropertyName ValidatedLeaseProcesses -NotePropertyValue ([object[]]$leaseProcesses)
+                }
                 $shutdownResult = if ($Dependencies.Contains('Shutdown')) { & $Dependencies.Shutdown $context } else { Stop-StructuredLogOwnedProcesses -Context $context }
-                $unsafeShutdown = @($shutdownResult.entries | Where-Object { $_.result -in @('identity_mismatch','identity_changed','failed') })
-                if ($unsafeShutdown.Count -gt 0) { throw 'owned shutdown could not prove every leased process identity' }
+                Assert-StructuredLogShutdownAccountability -LeaseProcesses @($leaseProcesses) -Shutdown $shutdownResult | Out-Null
                 if ($Dependencies.Contains('ConfirmEnded')) { & $Dependencies.ConfirmEnded $context | Out-Null } else { Confirm-StructuredLogLeasedProcessesEnded -Context $context | Out-Null }
             } catch {
                 $shutdownFailure = $_
@@ -1788,10 +2244,12 @@ function Invoke-StructuredLogRuntimeEvidence {
                 $manifest = [ordered]@{schema_version='1';attempt_id=$context.AttemptId;status=$finalStatus;ports=$context.Ports;fixture_sha256=$context.FixtureSha256;finished_utc=[DateTimeOffset]::UtcNow.ToString('o')}
                 Write-StructuredLogJson -Path $manifestPath -Value $manifest
             }
-            $finishedState = [ordered]@{schema_version='1';head_oid=[string]$headOid;attempt_id=$context.AttemptId;attempt_root=$context.AttemptRoot;status=$finalStatus;started_utc=$startedUtc;finished_utc=[DateTimeOffset]::UtcNow.ToString('o');lineage=$lineage}
-            try {
-                if ($Dependencies.Contains('Finalize')) { & $Dependencies.Finalize $RepoRoot $finishedState } else { Set-StructuredLogActiveAttempt -RepoRoot $RepoRoot -State $finishedState }
-            } catch { $finalizeFailure = $_ }
+            if ($activePointerEstablished) {
+                $finishedState = [ordered]@{schema_version='1';head_oid=[string]$headOid;attempt_id=$context.AttemptId;attempt_root=$context.AttemptRoot;status=$finalStatus;started_utc=$startedUtc;finished_utc=[DateTimeOffset]::UtcNow.ToString('o');lineage=$lineage}
+                try {
+                    if ($Dependencies.Contains('Finalize')) { & $Dependencies.Finalize $RepoRoot $finishedState } else { Set-StructuredLogActiveAttempt -RepoRoot $RepoRoot -State $finishedState }
+                } catch { $finalizeFailure = $_ }
+            }
         } else {
             Restore-StructuredLogEnvironment -Snapshot $outerEnvironment
         }
