@@ -6,7 +6,7 @@ Reference UI 範例：`ornith-vllm-api-examples.html`（主工作區；**勿把 
 
 | Item | Value |
 |---|---|
-| Base URL | `http://192.168.10.248:18080/v1`（可用 env 覆寫） |
+| Base URL | `<operator-provided verified URL>`（只允許 exact loopback tunnel，或明確 allowlist 的 RFC1918 lab 位址） |
 | Chat | `POST {base}/chat/completions` |
 | Model | `Ornith-1.0-35B` |
 | Auth | `Authorization: Bearer <key>` |

@@ -163,17 +163,17 @@ def _canonical_snapshot(snapshot: dict[str, Any]) -> Optional[dict[str, Any]]:
     return json.loads(encoded)
 
 
-def _safe_ttl_seconds() -> float:
+def _safe_ttl_seconds() -> Optional[float]:
     raw = os.getenv("A4_PROOF_TTL_SECONDS", "").strip()
     if not raw:
         return DEFAULT_PROOF_TTL_SECONDS
     try:
         value = float(raw)
     except ValueError:
-        return DEFAULT_PROOF_TTL_SECONDS
-    if not math.isfinite(value) or value <= 0:
-        return DEFAULT_PROOF_TTL_SECONDS
-    return min(value, MAX_PROOF_TTL_SECONDS)
+        return None
+    if not math.isfinite(value) or value <= 0 or value > MAX_PROOF_TTL_SECONDS:
+        return None
+    return value
 
 
 @dataclass(frozen=True)
@@ -283,10 +283,11 @@ class ProofRegistry:
     def issue(self, snapshot: dict[str, Any]) -> Optional[dict[str, str]]:
         keyring = ProofKeyring.from_environment()
         normalized_snapshot = _canonical_snapshot(snapshot)
-        if keyring is None or normalized_snapshot is None:
+        ttl_seconds = _safe_ttl_seconds()
+        if keyring is None or normalized_snapshot is None or ttl_seconds is None:
             return None
         now = time.time()
-        expires_at_epoch = now + _safe_ttl_seconds()
+        expires_at_epoch = now + ttl_seconds
         proof_id = secrets.token_urlsafe(18)
         snapshot_hash = hashlib.sha256(canonical_json(normalized_snapshot)).hexdigest()
         claims = _signature_claims(

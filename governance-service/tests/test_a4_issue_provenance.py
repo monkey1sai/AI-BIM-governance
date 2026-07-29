@@ -23,7 +23,14 @@ def _context(*, principal_ref: str = "a4p_current_principal") -> dict[str, str]:
     }
 
 
-def _snapshot(*, query_id: str = "a4q_issue_provenance_0001", principal_ref: str = "a4p_current_principal") -> dict:
+def _snapshot(
+    *,
+    query_id: str = "a4q_issue_provenance_0001",
+    principal_ref: str = "a4p_current_principal",
+    ifc_guid: str = "0A4DoorLow000000000001",
+    accepted_usd_prim: str = "/World/Doors/Low",
+    mapping_digest: str = "b" * 64,
+) -> dict:
     return {
         "schema_version": "a4-proof-v1",
         "query_id": query_id,
@@ -41,18 +48,18 @@ def _snapshot(*, query_id: str = "a4q_issue_provenance_0001", principal_ref: str
             "unresolved_terms": [],
         },
         "row": {
-            "ifc_guid": "0A4DoorLow000000000001",
+            "ifc_guid": ifc_guid,
             "ifc_class": "IfcDoor",
             "name": "FireDoor-Low",
             "storey": "4F",
             "matched_properties": {"FireRating": "30"},
             "predicate_trace": ["class_match:IfcDoor", "storey_match:4F"],
-            "accepted_usd_prim": "/World/Doors/Low",
+            "accepted_usd_prim": accepted_usd_prim,
             "mapping_observed": True,
         },
         "model_version_id": "a4_fixture_v1",
         "session_binding": _context(principal_ref=principal_ref),
-        "mapping_digest": "b" * 64,
+        "mapping_digest": mapping_digest,
     }
 
 
@@ -221,3 +228,144 @@ def test_a4_issue_concurrent_first_consume_has_one_winner_and_one_exact_replay(a
     a4_issues = [item for item in store.list_issues() if item["source_type"] == "a4_search"]
     assert len(a4_issues) == 1
     assert len(store.get_events(a4_issues[0]["id"])) == 1
+
+
+def test_consumed_replay_survives_key_retirement_but_unconsumed_old_key_fails(a4_client, monkeypatch):
+    client, registry, db_path = a4_client
+    consumed = registry.issue(_snapshot())
+    unconsumed = registry.issue(_snapshot(query_id="a4q_issue_provenance_0002"))
+    assert consumed is not None and unconsumed is not None
+    consumed_payload = _request_body(consumed["evidence_proof"])
+    created = client.post(
+        "/api/internal/a4/issues",
+        headers={"X-A4-Internal-Token": "test-internal-context-token"},
+        json=consumed_payload,
+    )
+    assert created.status_code == 201
+
+    old_kid = "a4_test_kid"
+    old_key = "test-proof-signing-key-material-32bytes"
+    monkeypatch.setenv("A4_PROOF_ACTIVE_KID", "a4_new_kid")
+    monkeypatch.setenv("A4_PROOF_ACTIVE_KEY", "new-test-proof-signing-key-material-32bytes")
+    monkeypatch.setenv("A4_PROOF_PREVIOUS_KID", old_kid)
+    monkeypatch.setenv("A4_PROOF_PREVIOUS_KEY", old_key)
+    assert registry.verify(unconsumed["evidence_proof"]).kid == old_kid
+
+    monkeypatch.delenv("A4_PROOF_PREVIOUS_KID")
+    monkeypatch.delenv("A4_PROOF_PREVIOUS_KEY")
+    replay = client.post(
+        "/api/internal/a4/issues",
+        headers={"X-A4-Internal-Token": "test-internal-context-token"},
+        json=consumed_payload,
+    )
+    rejected = client.post(
+        "/api/internal/a4/issues",
+        headers={"X-A4-Internal-Token": "test-internal-context-token"},
+        json=_request_body(unconsumed["evidence_proof"]),
+    )
+    assert replay.status_code == 200
+    assert replay.json()["replayed"] is True
+    assert replay.json()["issue"]["id"] == created.json()["issue"]["id"]
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"]["code"] == "a4_proof_unavailable"
+
+    from issues.store import IssueStore
+
+    assert len([item for item in IssueStore(db_path).list_issues() if item["source_type"] == "a4_search"]) == 1
+
+
+def test_consumed_replay_rejects_token_byte_mutation_and_cross_principal(a4_client):
+    client, registry, db_path = a4_client
+    issued = registry.issue(_snapshot())
+    assert issued is not None
+    payload = _request_body(issued["evidence_proof"])
+    created = client.post(
+        "/api/internal/a4/issues",
+        headers={"X-A4-Internal-Token": "test-internal-context-token"},
+        json=payload,
+    )
+    assert created.status_code == 201
+    proof = issued["evidence_proof"]
+    mutated_proof = f"{proof[:-1]}{'0' if proof[-1] != '0' else '1'}"
+
+    mutated = client.post(
+        "/api/internal/a4/issues",
+        headers={"X-A4-Internal-Token": "test-internal-context-token"},
+        json=_request_body(mutated_proof),
+    )
+    unauthorized = client.post(
+        "/api/internal/a4/issues",
+        headers={"X-A4-Internal-Token": "test-internal-context-token"},
+        json=_request_body(proof, principal_ref="a4p_other_principal"),
+    )
+    assert mutated.status_code == 409
+    assert mutated.json()["detail"]["code"] == "a4_proof_unavailable"
+    assert unauthorized.status_code == 409
+    assert unauthorized.json()["detail"]["code"] == "a4_proof_unavailable"
+    assert created.json()["issue"]["id"] not in mutated.text
+    assert created.json()["issue"]["id"] not in unauthorized.text
+
+    from issues.store import IssueStore
+
+    store = IssueStore(db_path)
+    assert len([item for item in store.list_issues() if item["source_type"] == "a4_search"]) == 1
+    assert len(store.get_events(created.json()["issue"]["id"])) == 1
+
+
+def test_same_query_different_rows_create_distinct_issues(a4_client):
+    client, registry, db_path = a4_client
+    first = registry.issue(_snapshot())
+    second = registry.issue(_snapshot(
+        ifc_guid="0A4DoorLow000000000002",
+        accepted_usd_prim="/World/Doors/Low2",
+        mapping_digest="c" * 64,
+    ))
+    assert first is not None and second is not None
+
+    responses = [
+        client.post(
+            "/api/internal/a4/issues",
+            headers={"X-A4-Internal-Token": "test-internal-context-token"},
+            json=_request_body(proof["evidence_proof"]),
+        )
+        for proof in (first, second)
+    ]
+    assert [response.status_code for response in responses] == [201, 201]
+    issue_ids = {response.json()["issue"]["id"] for response in responses}
+    assert len(issue_ids) == 2
+    assert {response.json()["issue"]["source_ref"] for response in responses} == {
+        "a4q_issue_provenance_0001"
+    }
+
+    from issues.store import IssueStore
+
+    store = IssueStore(db_path)
+    assert all(len(store.get_events(issue_id)) == 1 for issue_id in issue_ids)
+
+
+def test_unicode_canonical_equivalence_replays_same_issue(a4_client):
+    client, registry, _db_path = a4_client
+    issued = registry.issue(_snapshot())
+    assert issued is not None
+    proof = issued["evidence_proof"]
+    first = client.post(
+        "/api/internal/a4/issues",
+        headers={"X-A4-Internal-Token": "test-internal-context-token"},
+        json=_request_body(proof, title="Cafe\u0301 door"),
+    )
+    replay = client.post(
+        "/api/internal/a4/issues",
+        headers={"X-A4-Internal-Token": "test-internal-context-token"},
+        json=_request_body(proof, title="Caf\u00e9 door"),
+    )
+    altered = client.post(
+        "/api/internal/a4/issues",
+        headers={"X-A4-Internal-Token": "test-internal-context-token"},
+        json=_request_body(proof, title="Cafe door"),
+    )
+    assert first.status_code == 201
+    assert replay.status_code == 200
+    assert replay.json()["replayed"] is True
+    assert replay.json()["issue"]["id"] == first.json()["issue"]["id"]
+    assert altered.status_code == 409
+    assert altered.json()["detail"]["code"] == "a4_proof_unavailable"

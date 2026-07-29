@@ -216,4 +216,28 @@ describe("governanceClient A4 bounded contract", () => {
       expect(safe.message).not.toContain("model.ifc");
     }
   });
+
+  it("preserves an allowlisted nested FastAPI error code without leaking nested detail", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        detail: {
+          code: "a4_authentic_lease_unavailable",
+          message: "C:/internal/model.ifc http://internal.example/token",
+        },
+      }), { status: 503, headers: { "Content-Type": "application/json" } }),
+    );
+
+    await expect(
+      governanceClient.searchModelForSession("review_session_a4", { query: "IfcDoor" }),
+    ).rejects.toMatchObject({
+      status: 503,
+      code: "a4_authentic_lease_unavailable",
+    });
+    try {
+      await governanceClient.searchModelForSession("review_session_a4", { query: "IfcDoor" });
+    } catch (error) {
+      expect((error as Error).message).not.toContain("internal");
+      expect((error as Error).message).not.toContain("model.ifc");
+    }
+  });
 });
