@@ -211,10 +211,7 @@
       "owner": "governance-service",
       "current_slice": null,
       "blocked_by": [
-        "a4-console-convergence",
-        "credential-owner-rotate-1.8",
-        "windows-host-native-kit-and-ornith-lab",
-        "independent-review-8.7"
+        "a4-console-convergence"
       ],
       "last_verified": "2026-07-29T07:00:00Z",
       "task_ledger": {
