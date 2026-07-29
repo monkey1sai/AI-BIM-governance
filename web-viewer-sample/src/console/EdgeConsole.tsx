@@ -50,6 +50,7 @@ import { ConceptPage } from "./unified/ConceptPage";
 import { PipelinePage } from "./unified/PipelinePage";
 import { OpsPage } from "./unified/OpsPage";
 import type { ConceptKey, DockKey } from "./unified/fixtures";
+import { harnessEnabled } from "../harness/harnessConfig";
 
 const A4_SESSION_ID_RE = /^review_session_[A-Za-z0-9_-]+$/;
 const A4_SESSION_STORAGE_KEY = "aibim:a4-session-context";
@@ -81,6 +82,17 @@ function a4SessionContextFromLocation(): string | null {
   ]);
 }
 
+export function isA4DesignHarnessCarrier(search: string, enabled: boolean): boolean {
+  if (!enabled) return false;
+  const params = new URLSearchParams(search);
+  const keys = Array.from(params.keys());
+  return params.getAll("harness").length === 1
+    && params.get("harness") === "1"
+    && params.getAll("trace_id").length === 1
+    && params.get("trace_id") !== ""
+    && keys.every((key) => key === "harness" || key === "trace_id");
+}
+
 function usePageHash(): [string, (k: string) => void] {
   const read = () => {
     const raw = window.location.hash.replace(/^#\/?console\/?/, "").replace(/^#\/?/, "");
@@ -93,7 +105,12 @@ function usePageHash(): [string, (k: string) => void] {
       // review-session selector. Query/proof/prim/handoff material is scrubbed.
       // The coordinator still authenticates and resolves the session; this
       // selector is never authority by itself.
-      return query === "dock=a4" && !window.location.search
+      // Design evidence needs the non-sensitive harness + trace carrier to
+      // exercise the same route. Any session/proof/prim/handoff or unknown
+      // query remains on the scrub path.
+      const canKeepWorkspace = !window.location.search
+        || isA4DesignHarnessCarrier(window.location.search, harnessEnabled());
+      return query === "dock=a4" && canKeepWorkspace
         ? "workspace-a4"
         : "workspace-a4-scrub";
     }
