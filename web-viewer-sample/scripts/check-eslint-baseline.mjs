@@ -54,6 +54,15 @@ export function compareBaseline(baseline, current) {
   };
 }
 
+export function resolveSourceRoot(args, defaultRoot = root) {
+  const indexes = args.reduce((found, value, index) => (value === '--source-root' ? [...found, index] : found), []);
+  if (indexes.length === 0) return defaultRoot;
+  if (indexes.length !== 1 || indexes[0] !== args.length - 2 || args[indexes[0] + 1].startsWith('--')) {
+    throw new Error('--source-root requires exactly one path.');
+  }
+  return path.resolve(args[indexes[0] + 1]);
+}
+
 function loadBaseline(filePath = baselinePath) {
   const item = lstatSync(filePath);
   if (!item.isFile() || item.isSymbolicLink() || item.size > 1024 * 1024) throw new Error('ESLint baseline must be a bounded regular file.');
@@ -73,19 +82,22 @@ function loadBaseline(filePath = baselinePath) {
   return baseline;
 }
 
-function collect() {
-  const eslintCli = path.join(root, 'node_modules', 'eslint', 'bin', 'eslint.js');
+function collect(sourceRoot = root) {
+  const source = path.resolve(sourceRoot);
+  const sourceItem = lstatSync(source);
+  if (!sourceItem.isDirectory() || sourceItem.isSymbolicLink()) throw new Error('ESLint source root must be a regular directory.');
+  const eslintCli = path.join(source, 'node_modules', 'eslint', 'bin', 'eslint.js');
   const result = spawnSync(process.execPath, [eslintCli, '.', '--ext', 'ts,tsx', '--report-unused-disable-directives',
     '--format', 'json'], {
-    cwd: root, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, windowsHide: true,
+    cwd: source, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, windowsHide: true,
   });
   if (result.error || ![0, 1].includes(result.status)) throw new Error('ESLint could not produce a bounded JSON report.');
-  return normalizeEslintResults(JSON.parse(result.stdout));
+  return normalizeEslintResults(JSON.parse(result.stdout), source);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const findings = collect();
+    const findings = collect(resolveSourceRoot(process.argv.slice(2)));
     if (process.argv.includes('--print-baseline')) {
       process.stdout.write(`${JSON.stringify({ schema_version: 'eslint-baseline/v1', policy: 'shrink-only', findings }, null, 2)}\n`);
     } else {

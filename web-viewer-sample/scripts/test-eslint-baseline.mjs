@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { compareBaseline, normalizeEslintResults } from './check-eslint-baseline.mjs';
+import path from 'node:path';
+import { compareBaseline, normalizeEslintResults, resolveSourceRoot } from './check-eslint-baseline.mjs';
 
 const root = process.cwd();
 const sample = [{ filePath: `${root}/src/example.tsx`, messages: [{ ruleId: 'rule-a', severity: 1, message: 'redacted by hash' }] }];
@@ -26,4 +27,12 @@ test('trusted baseline rejects candidate inflation and duplicate fingerprints', 
   inflated[0].count += 1;
   assert.equal(compareBaseline({ findings }, inflated).passed, false);
   assert.throws(() => compareBaseline({ findings: [...findings, ...findings] }, findings));
+});
+
+test('source-root option accepts one path and rejects ambiguous input', () => {
+  assert.equal(resolveSourceRoot([], root), root);
+  assert.equal(resolveSourceRoot(['--source-root', 'fixture'], root), path.resolve('fixture'));
+  assert.throws(() => resolveSourceRoot(['--source-root']));
+  assert.throws(() => resolveSourceRoot(['--source-root', 'a', '--source-root', 'b']));
+  assert.throws(() => resolveSourceRoot(['--source-root', '--unsafe']));
 });

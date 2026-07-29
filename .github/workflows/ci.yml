@@ -285,6 +285,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Node.js
@@ -322,8 +323,27 @@ jobs:
             } else {
               $baseManifest = @(git show "$($env:TRUSTED_BASE_SHA):scripts/verification-manifest.json" 2>$null) -join "`n"
               if ($baseManifest -match 'verification-manifest/v2') { throw 'trusted base ESLint baseline is unavailable' }
-              Write-Warning 'bootstrap baseline is candidate-owned; the existing self-change guard prevents this run from granting merge authority'
-              Copy-Item -LiteralPath 'web-viewer-sample/scripts/eslint-baseline.json' -Destination $target
+              $baseWorktree = Join-Path $env:RUNNER_TEMP 'viewer-eslint-base'
+              if (Test-Path -LiteralPath $baseWorktree) { throw 'trusted base ESLint worktree path already exists' }
+              git worktree add --detach $baseWorktree $env:TRUSTED_BASE_SHA
+              if ($LASTEXITCODE -ne 0) { throw 'unable to materialize trusted base viewer source' }
+              try {
+                $baseViewer = Join-Path $baseWorktree 'web-viewer-sample'
+                Push-Location $baseViewer
+                try {
+                  npm ci --no-audit --no-fund
+                  if ($LASTEXITCODE -ne 0) { throw 'unable to install trusted base viewer dependencies' }
+                } finally {
+                  Pop-Location
+                }
+                $baselineScript = Join-Path $env:GITHUB_WORKSPACE 'web-viewer-sample/scripts/check-eslint-baseline.mjs'
+                $content = @(& node $baselineScript --print-baseline --source-root $baseViewer)
+                if ($LASTEXITCODE -ne 0) { throw 'unable to derive ESLint baseline from trusted base source' }
+                [IO.File]::WriteAllText($target, (($content -join [Environment]::NewLine) + "`n"), [Text.UTF8Encoding]::new($false))
+              } finally {
+                git worktree remove --force $baseWorktree
+                if ($LASTEXITCODE -ne 0) { throw 'unable to remove trusted base ESLint worktree' }
+              }
             }
           } else {
             Copy-Item -LiteralPath 'web-viewer-sample/scripts/eslint-baseline.json' -Destination $target

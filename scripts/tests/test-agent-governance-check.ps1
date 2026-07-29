@@ -295,6 +295,8 @@ try {
     Assert-True ($ci -match [regex]::Escape('web-viewer-sample/package-lock.json')) 'ci.yml caches and installs from the tracked viewer package-lock'
     Assert-True ($ci -match 'TRUSTED_BASE_SHA') 'viewer lint policy resolves a trusted base baseline'
     Assert-True ($ci -match 'git show.*web-viewer-sample/scripts/eslint-baseline\.json') 'viewer lint baseline is read from the trusted base commit'
+    Assert-True ($ci -match 'git worktree add --detach.*TRUSTED_BASE_SHA') 'viewer lint bootstrap materializes the trusted base source when the historical baseline is absent'
+    Assert-True ($ci -match '--source-root \$baseViewer') 'viewer lint bootstrap derives findings from the trusted base viewer source rather than the candidate baseline file'
 
     $governanceWorkflow = Get-Content -LiteralPath '.github/workflows/agent-governance.yml' -Raw
     Assert-True (-not ($governanceWorkflow -match '(?m)^\s+paths:\s*$')) 'agent-governance workflow does not use path filters because it is a required-check candidate'
