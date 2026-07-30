@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import random
 import sqlite3
 import tempfile
 
@@ -121,6 +122,35 @@ def test_type_name_loc_alignment_when_guid_and_tag_differ():
     prop = diff.items_by_type("property_changed")
     assert len(prop) == 1
     assert prop[0].evidence["match"] == "type_name_loc"  # 退到第三級鍵
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_global_id_is_primary_key_across_generated_order_and_fallback_noise(seed):
+    """Property-based invariant: order and fallback-key noise cannot displace GlobalId matching."""
+    rng = random.Random(seed)
+    count = rng.randint(2, 12)
+    guids = [ifcopenshell.guid.compress(f"{seed * 1000 + index + 1:032x}") for index in range(count)]
+    base_order = list(guids)
+    target_order = list(guids)
+    rng.shuffle(base_order)
+    rng.shuffle(target_order)
+
+    base = ifcopenshell.file(schema="IFC4")
+    target = ifcopenshell.file(schema="IFC4")
+    for index, guid in enumerate(base_order):
+        _element(base, "IfcWall", f"base-{index}", (index * 10, 0, 0), guid, tag=f"base-tag-{index}", status="EXISTING")
+    for index, guid in enumerate(target_order):
+        _element(target, "IfcWall", f"target-{index}", (index * 10, 0, 1000), guid, tag=f"target-tag-{index}", status="DEMOLISHED")
+
+    diff = run_diff(base, target, move_tol=1.0)
+
+    assert diff.matched == count
+    assert diff.counts.get("added", 0) == 0
+    assert diff.counts.get("removed", 0) == 0
+    changed = diff.items_by_type("moved") + diff.items_by_type("property_changed")
+    assert changed
+    assert all(item.evidence["match"] == "guid" for item in changed)
+    assert {item.ifc_guid for item in changed} == set(guids)
 
 
 def test_cross_type_same_tag_not_misaligned():

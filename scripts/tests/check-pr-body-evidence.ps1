@@ -16,6 +16,7 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = $scriptRepoRoot }
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 . (Join-Path $scriptRepoRoot 'scripts\lib\pr-review-agent.ps1')
 . (Join-Path $scriptRepoRoot 'scripts\lib\design-system-gate.ps1')
+. (Join-Path $scriptRepoRoot 'scripts\lib\production-boundary-contract.ps1')
 
 function Get-MarkdownTableValue {
     param(
@@ -226,6 +227,7 @@ $designScope = Get-DesignSystemChangeScope -RepoRoot $RepoRoot -ChangedPaths $ch
 if ($designScope.status -like '*_fail_closed') {
     throw "Frontend design scope failed closed with status '$($designScope.status)'; unknown=$($designScope.unknown_paths -join ', '); reference-authority=$($designScope.reference_authority_paths -join ', ')."
 }
+Assert-ProductionBoundaryDiff -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
 
 if ([string]::IsNullOrWhiteSpace($body)) {
     throw 'PR body is empty. Use the repository PR template and fill validation evidence.'

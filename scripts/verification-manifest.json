@@ -122,7 +122,17 @@
       ]
     },
     { "id": "kit-manager-api", "path_globs": ["services/kit-manager-api/**", "tests/contracts/**"] },
-    { "id": "kit-manager-web", "path_globs": ["apps/kit-manager-web/**", "services/kit-manager-api/**"] },
+    {
+      "id": "kit-manager-web",
+      "path_globs": [
+        "apps/kit-manager-web/**", "services/kit-manager-api/**",
+        "web-viewer-sample/e2e/kit-manager-operator.spec.ts",
+        "web-viewer-sample/playwright.kit-manager.config.ts",
+        "web-viewer-sample/package.json", "web-viewer-sample/package-lock.json",
+        "bim-review-coordinator/src/app.ts", "bim-review-coordinator/src/config.ts",
+        "compose.runtime-manager.yml", "infra/docker/kit-manager-web.Dockerfile"
+      ]
+    },
     {
       "id": "agent-governance",
       "path_globs": [
@@ -341,7 +351,15 @@
       "ci_job": "kit-manager-api tests", "result_artifact": null
     },
     {
-      "id": "kit-manager-web", "display_name": "kit-manager-web", "path_globs": ["apps/kit-manager-web/**", "services/kit-manager-api/**"],
+      "id": "kit-manager-web", "display_name": "kit-manager-web",
+      "path_globs": [
+        "apps/kit-manager-web/**", "services/kit-manager-api/**",
+        "web-viewer-sample/e2e/kit-manager-operator.spec.ts",
+        "web-viewer-sample/playwright.kit-manager.config.ts",
+        "web-viewer-sample/package.json", "web-viewer-sample/package-lock.json",
+        "bim-review-coordinator/src/app.ts", "bim-review-coordinator/src/config.ts",
+        "compose.runtime-manager.yml", "infra/docker/kit-manager-web.Dockerfile"
+      ],
       "owner": "kit-manager-web", "fast_gates": ["kit-manager-web-build", "kit-manager-web-lint", "kit-manager-web-changed-lines"], "contract_gates": ["kit-manager-web-unit-contract"], "slow_evidence_gates": [],
       "required_when": { "predicate": "changed_path_class", "any_of": ["kit-manager-web"] }, "skip_reason": "path_not_affected",
       "default_profiles": [], "ci_output": "kit_manager_web",

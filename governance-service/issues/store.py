@@ -11,6 +11,7 @@ import hmac
 import json
 import os
 import sqlite3
+import threading
 import uuid
 from datetime import datetime, timezone
 
@@ -45,7 +46,7 @@ CREATE TABLE IF NOT EXISTS issues(
 CREATE TABLE IF NOT EXISTS issue_events(
   id TEXT PRIMARY KEY,
   issue_id TEXT,
-  event_type TEXT,           -- 'created' | 'transition' | 'comment'
+  event_type TEXT,           -- 'created' | 'transition' | 'comment' | 'binding_migration'
   from_status TEXT,
   to_status TEXT,
   note TEXT,
@@ -71,6 +72,29 @@ CREATE TABLE IF NOT EXISTS a4_issue_evidence(
 CREATE UNIQUE INDEX IF NOT EXISTS idx_a4_issue_evidence_proof ON a4_issue_evidence(proof_id);
 """
 
+_BINDING_TRIGGERS = """
+CREATE TRIGGER IF NOT EXISTS trg_issues_model_version_insert
+BEFORE INSERT ON issues
+WHEN NEW.kind = 'issue' AND (
+  NEW.ifc_guid IS NULL OR trim(NEW.ifc_guid) = '' OR
+  NEW.model_version_id IS NULL OR trim(NEW.model_version_id) = ''
+)
+BEGIN
+  SELECT RAISE(ABORT, 'formal issue requires ifc_guid and model_version_id');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_issues_model_version_update
+BEFORE UPDATE OF kind, ifc_guid, model_version_id ON issues
+WHEN NEW.kind = 'issue' AND (
+  NEW.ifc_guid IS NULL OR trim(NEW.ifc_guid) = '' OR
+  NEW.model_version_id IS NULL OR trim(NEW.model_version_id) = ''
+)
+BEGIN
+  SELECT RAISE(ABORT, 'formal issue requires ifc_guid and model_version_id');
+END;
+"""
+
+_SCHEMA_INIT_LOCK = threading.Lock()
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -80,8 +104,50 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
 
+def _migrate_legacy_unbound_formal_issues(conn: sqlite3.Connection) -> None:
+    """Preserve legacy rows without pretending they satisfy the formal Issue contract."""
+    rows = conn.execute(
+        "SELECT id, status FROM issues WHERE kind='issue' AND "
+        "((ifc_guid IS NULL OR trim(ifc_guid)='') OR "
+        "(model_version_id IS NULL OR trim(model_version_id)=''))"
+    ).fetchall()
+    if not rows:
+        return
+    now = _now()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        for row in rows:
+            conn.execute(
+                "INSERT INTO issue_events(id, issue_id, event_type, from_status, to_status, note, created_at) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (
+                    _new_id("ev"),
+                    row["id"],
+                    "binding_migration",
+                    row["status"],
+                    row["status"],
+                    "reclassified issue->annotation: missing formal binding",
+                    now,
+                ),
+            )
+        conn.execute(
+            "UPDATE issues SET kind='annotation', updated_at=? WHERE kind='issue' AND "
+            "((ifc_guid IS NULL OR trim(ifc_guid)='') OR "
+            "(model_version_id IS NULL OR trim(model_version_id)=''))",
+            (now,),
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
 class TransitionError(ValueError):
     pass
+
+
+class IssueBindingError(ValueError):
+    """A formal issue is missing its immutable model-version binding."""
 
 
 class A4IssueReplayConflict(ValueError):
@@ -98,13 +164,32 @@ class IssueStore:
         parent = os.path.dirname(db_path)
         if parent:
             os.makedirs(parent, exist_ok=True)
-        with self._conn() as conn:
-            conn.executescript(_SCHEMA)
+        # journal_mode changes require an exclusive SQLite lock. Keep that
+        # transition out of the hot _conn() path and serialize lazy store
+        # construction inside this service process.
+        with _SCHEMA_INIT_LOCK:
+            with self._conn() as conn:
+                journal_mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+                if str(journal_mode).lower() != "wal":
+                    raise RuntimeError(f"IssueStore requires WAL mode, got {journal_mode!r}")
+                conn.executescript(_SCHEMA)
+                _migrate_legacy_unbound_formal_issues(conn)
+                conn.executescript(_BINDING_TRIGGERS)
 
     def _conn(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=5.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA foreign_keys=ON")
         return conn
+
+    @staticmethod
+    def _normalize_issue_binding(ifc_guid, model_version_id) -> tuple[str | None, str | None]:
+        normalized_guid = str(ifc_guid).strip() if ifc_guid is not None else ""
+        normalized_version = str(model_version_id).strip() if model_version_id is not None else ""
+        if normalized_guid and not normalized_version:
+            raise IssueBindingError("formal issue requires model_version_id")
+        return normalized_guid or None, normalized_version or None
 
     @staticmethod
     def _attach_a4_evidence(issue: dict, evidence: sqlite3.Row | None) -> dict:
@@ -322,6 +407,7 @@ class IssueStore:
         assignee=None,
     ) -> dict:
         # BCF rule 10：無 ifc_guid → annotation（非正式 issue）。
+        ifc_guid, model_version_id = self._normalize_issue_binding(ifc_guid, model_version_id)
         kind = "issue" if ifc_guid else "annotation"
         issue_id = _new_id("iss")
         now = _now()
@@ -363,7 +449,9 @@ class IssueStore:
                     if existing:
                         skipped += 1
                         continue
-                ifc_guid = it.get("ifc_guid")
+                ifc_guid, model_version_id = self._normalize_issue_binding(
+                    it.get("ifc_guid"), it.get("model_version_id")
+                )
                 kind = "issue" if ifc_guid else "annotation"
                 issue_id = _new_id("iss")
                 conn.execute(
@@ -371,7 +459,7 @@ class IssueStore:
                     " model_version_id, source_type, source_ref, created_at, updated_at)"
                     " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (issue_id, kind, it.get("title"), it.get("description"), "open", it.get("severity", "medium"),
-                     it.get("assignee"), ifc_guid, it.get("usd_prim_path"), it.get("model_version_id"),
+                     it.get("assignee"), ifc_guid, it.get("usd_prim_path"), model_version_id,
                      source_type, source_ref, now, now),
                 )
                 conn.execute(
