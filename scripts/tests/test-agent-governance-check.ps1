@@ -35,7 +35,6 @@ try {
         '.github/workflows/ci.yml',
         '.github/workflows/agent-governance.yml',
         '.github/workflows/pr-review-agent.yml',
-        '.github/workflows/merge-evidence.yml',
         '.github/PULL_REQUEST_TEMPLATE.md',
         'scripts/tests/check-pr-body-evidence.ps1',
         'scripts/tests/test-pr-body-evidence.ps1',
@@ -53,7 +52,6 @@ try {
         'scripts/dev/report-gitnexus-worktree-health.mjs',
         'scripts/lib/task-packet.mjs',
         'scripts/dev/validate-task-packet.mjs',
-        'scripts/lib/GitHubArtifact.psm1',
         'scripts/tests/verify-openspec-machine-truth.mjs',
         'scripts/tests/test-openspec-machine-truth.mjs',
         'scripts/tests/test-openspec-machine-truth-cli.mjs',
@@ -63,7 +61,6 @@ try {
         'scripts/tests/gitnexus-worktree-health-report.schema.json',
         'scripts/tests/task-packet.schema.json',
         'scripts/tests/test-task-packet.mjs',
-        'scripts/tests/test-github-artifact-extractor.ps1',
         'scripts/tests/openspec-github-lifecycle-state.schema.json',
         'scripts/tests/openspec-machine-truth-report.schema.json',
         'scripts/lib/design-system-gate.ps1',
@@ -88,17 +85,13 @@ try {
         'scripts/lib/ai-coding-metrics.mjs',
         'scripts/dev/record-ai-coding-telemetry.mjs',
         'scripts/dev/report-ai-coding-metrics.mjs',
-        'scripts/lib/verification-run-metadata.mjs',
-        'scripts/lib/merge-evidence.mjs',
         'scripts/tests/test-verification-plan.mjs',
-        'scripts/tests/test-verification-run-metadata.mjs',
         'scripts/tests/test-verification-command-policy.mjs',
         'scripts/tests/test-verification-runner.mjs',
         'scripts/tests/test-security-exceptions.mjs',
         'scripts/tests/verify-security-exceptions.ps1',
         'scripts/tests/invoke-powershell-static.ps1',
         'scripts/tests/scan-secret-patterns.ps1',
-        'scripts/tests/test-merge-evidence.mjs',
         'scripts/tests/verification-manifest.schema.json',
         'scripts/tests/verification-plan.schema.json',
         'scripts/tests/verification-outcome.schema.json',
@@ -109,9 +102,6 @@ try {
         'scripts/tests/test-ai-coding-metrics.mjs',
         'scripts/tests/fixtures/ai-coding-telemetry-observation.json',
         'scripts/tests/fixtures/ai-coding-metrics-report.json',
-        'scripts/tests/verification-job-results.schema.json',
-        'scripts/tests/merge-evidence-report.schema.json',
-        'scripts/tests/semantic-validation-results.schema.json',
         'docs/plans/design-system-reference.manifest.json',
         'scripts/tests/fixtures/agent-governance-routing.json',
         '.gitignore',
@@ -244,10 +234,6 @@ try {
     $invalidZeroMetric.value = 0
     $invalidZeroMetric.sample_size = 1
     Assert-True (-not (($invalidZeroReport | ConvertTo-Json -Depth 100) | Test-Json -SchemaFile 'scripts/tests/ai-coding-metrics-report.schema.json' -ErrorAction SilentlyContinue)) 'zero-observation report schema rejects a fabricated zero-percent yield'
-    $mergeEvidenceSource = Get-Content -LiteralPath 'scripts/lib/merge-evidence.mjs' -Raw
-    $mergeEvidenceWorkflow = Get-Content -LiteralPath '.github/workflows/merge-evidence.yml' -Raw
-    Assert-True ($mergeEvidenceSource -notmatch 'artifacts/telemetry|ai-coding-metrics') 'merge evidence library cannot consume AI coding telemetry'
-    Assert-True ($mergeEvidenceWorkflow -notmatch 'artifacts/telemetry|ai-coding-metrics') 'merge evidence workflow cannot consume AI coding telemetry'
     $powershellClass = @($verificationManifest.path_classes | Where-Object id -eq 'powershell-static')[0]
     Assert-True ($powershellClass.path_globs -contains 'scripts/**/*.psm1') 'shared manifest PowerShell class includes script modules'
     $rebuildClass = @($verificationManifest.path_classes | Where-Object id -eq 'rebuild-test-deploy')[0]
@@ -313,7 +299,6 @@ try {
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-design-system-change-scope\.ps1') 'agent-governance workflow runs design-system scope tests'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-functional-runtime-result\.ps1') 'agent-governance workflow runs functional-runtime result gate tests'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-png-preflight\.mjs') 'agent-governance runs dependency-free PNG allocation-bound tests'
-    Assert-True ($governanceWorkflow -match 'scripts/tests/test-github-artifact-extractor\.ps1') 'agent-governance runs bounded archive extraction tests'
     Assert-True (-not ($governanceWorkflow -match 'npm\s+(?:ci|install|run)')) 'agent-governance never executes PR-controlled npm lifecycle or package scripts'
     Assert-True ($governanceWorkflow -match "node-version: '20\.20\.2'") 'agent-governance uses the exact Node.js pin'
     Assert-True (-not ($governanceWorkflow -match '(?m)^\s*run:\s*powershell\b')) 'agent-governance workflow does not re-enter legacy Windows PowerShell from pwsh'
@@ -344,35 +329,6 @@ try {
     Assert-True ($prReviewWorkflow -match 'raw_body_retained\s*=\s*\$false') 'PR metadata artifact explicitly records that raw body is not retained'
     Assert-True (-not ($prReviewWorkflow -match 'artifacts/pr-review-agent/pr-body\.md|path:\s*artifacts/pr-review-agent')) 'PR metadata artifact never uploads the raw body directory'
 
-    $mergeEvidenceWorkflow = Get-Content -LiteralPath '.github/workflows/merge-evidence.yml' -Raw
-    Assert-True ($mergeEvidenceWorkflow -match '(?m)^\s{2}workflow_run:\s*$' -and $mergeEvidenceWorkflow -match '(?m)^\s{2}pull_request_target:\s*$') 'trusted merge workflow separates completed evidence from PR-event invalidation'
-    Assert-True ($mergeEvidenceWorkflow -match '(?ms)^\s{2}pull_request_target:\s*\r?\n\s+branches:\s*\[main\]' -and $mergeEvidenceWorkflow -match 'pull_request\.base\.repo\.full_name == github\.repository') 'pending invalidator is restricted to the default branch in the base repository'
-    Assert-True ($mergeEvidenceWorkflow -match 'cancel-in-progress:\s*true' -and $mergeEvidenceWorkflow -notmatch 'group:.*run_attempt') 'trusted merge workflow cancels stale work by PR/head rather than attempt'
-    Assert-True ($mergeEvidenceWorkflow -match "state='pending'" -and $mergeEvidenceWorkflow -match "context='required merge evidence'") 'base-controlled PR events invalidate the fixed merge context'
-    Assert-True ($mergeEvidenceWorkflow -match '--expected-run-attempt' -and $mergeEvidenceWorkflow -match 'latest_run') 'publisher rejects stale attempts and older same-head CI runs'
-    Assert-True ($mergeEvidenceWorkflow -match 'EXPECTED_BODY_SHA' -and $mergeEvidenceWorkflow -match 'sha256sum') 'publisher rechecks the live PR body hash'
-    Assert-True ($mergeEvidenceWorkflow -match 'EXPECTED_BASE_SHA' -and $mergeEvidenceWorkflow -match 'live_base_sha.*base\.sha' -and $mergeEvidenceWorkflow -match 'live_base_sha.*EXPECTED_BASE_SHA') 'publisher binds success to the exact live PR base commit'
-    Assert-True ($mergeEvidenceWorkflow -match 'commits/\$EXPECTED_HEAD/pulls' -and $mergeEvidenceWorkflow -match "authoritative_pr_count.*'1'") 'publisher rejects one SHA shared by multiple open PRs'
-    Assert-True ($mergeEvidenceWorkflow -match 'associated_pr_total.*length' -and $mergeEvidenceWorkflow -match 'associated_pr_total.*-lt 100') 'publisher fails closed when the same-SHA PR association endpoint may be paginated'
-    Assert-True ($mergeEvidenceWorkflow -match 'Receive-GitHubArtifactSet' -and $mergeEvidenceWorkflow -notmatch 'actions/download-artifact@') 'trusted validator selects and bounded-extracts artifacts before use'
-    Assert-True ($mergeEvidenceWorkflow -match 'check-pr-body-evidence\.ps1' -and $mergeEvidenceWorkflow -match 'ChangedPathsNulDelimited') 'trusted base validator enforces live PR metadata with NUL-safe paths'
-    Assert-True ($mergeEvidenceWorkflow -match 'collect-openspec-github-state\.mjs' -and $mergeEvidenceWorkflow -match 'verify-openspec-machine-truth\.mjs') 'trusted validator executes actual OpenSpec/GitHub machine-truth reconciliation'
-    Assert-True ($mergeEvidenceWorkflow -match 'merge-evidence-prevalidated\.json' -and $mergeEvidenceWorkflow -match 'merge-evidence\.mjs finalize' -and $mergeEvidenceWorkflow -match 'semantic-validation-results\.json') 'merge report cannot become passed before complete base semantic validators'
-    $openSpecToolPackage = Get-Content -Raw -LiteralPath 'scripts/tooling/openspec-observer/package.json' | ConvertFrom-Json
-    $openSpecToolLock = Get-Content -Raw -LiteralPath 'scripts/tooling/openspec-observer/package-lock.json' | ConvertFrom-Json -AsHashtable
-    Assert-True ($openSpecToolPackage.private -eq $true -and $openSpecToolPackage.dependencies.'@fission-ai/openspec' -eq '1.6.0') 'trusted OpenSpec tool manifest pins the exact package version'
-    $lockedPackages = @($openSpecToolLock.packages.GetEnumerator() | Where-Object Key)
-    Assert-True ($openSpecToolLock.lockfileVersion -eq 3 -and $lockedPackages.Count -gt 0 -and @($lockedPackages | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.Value.resolved) -or [string]$_.Value.integrity -notmatch '^sha512-' }).Count -eq 0) 'trusted OpenSpec transitive dependency closure is integrity-locked'
-    Assert-True ($mergeEvidenceWorkflow -match 'scripts/tooling/openspec-observer/package-lock\.json' -and $mergeEvidenceWorkflow -match 'npm ci --ignore-scripts' -and $mergeEvidenceWorkflow -match 'dependency lock changed') 'actual OpenSpec observation installs only the base-owned integrity lock outside the repository'
-    Assert-True ($mergeEvidenceWorkflow -notmatch 'Lifecycle ledger does not bind the exact source-run subject' -and
-        $mergeEvidenceWorkflow -match [regex]::Escape('"subject=$env:SUBJECT_SHA" >> $env:GITHUB_OUTPUT')) 'actual OpenSpec observation keeps the source-run SHA as merge-evidence subject without rewriting historical ledger provenance'
-    $validateBlock = [regex]::Match($mergeEvidenceWorkflow, '(?ms)^\s{2}validate:.*?^\s{2}publish:').Value
-    $publishBlock = [regex]::Match($mergeEvidenceWorkflow, '(?ms)^\s{2}publish:.*\z').Value
-    Assert-True ($validateBlock -notmatch 'statuses:\s*write') 'artifact-consuming trusted validation has no status-write permission'
-    Assert-True ($publishBlock -match 'statuses:\s*write' -and $publishBlock -notmatch 'uses:\s*actions/(?:checkout|download-artifact)@|(?m)^\s+run:\s*npm\b') 'publisher can write status but cannot checkout, download, or execute package tooling'
-    $failurePublishIndex = $publishBlock.IndexOf("-f state='failure'", [StringComparison]::Ordinal)
-    $livePrReadIndex = $publishBlock.IndexOf('pulls/$PR_NUMBER', [StringComparison]::Ordinal)
-    Assert-True ($failurePublishIndex -ge 0 -and $livePrReadIndex -gt $failurePublishIndex) 'publisher invalidates prior success before consuming missing validate outputs or fallible live APIs'
     $localPreflight = Get-Content -LiteralPath 'scripts/dev/check-pr-local-preflight.ps1' -Raw
     Assert-True ($localPreflight -match 'baseRefOid,headRefOid') 'local preflight resolves the selected PR base/head commits'
     Assert-True ($localPreflight -match 'localHead -ne \$headSha') 'local preflight rejects a checkout that is not the selected PR head'
