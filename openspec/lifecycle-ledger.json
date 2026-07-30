@@ -780,7 +780,7 @@
         "openspec/changes/cross-service-structured-log-baseline/proposal.md",
         "openspec/changes/cross-service-structured-log-baseline/tasks.md"
       ],
-      "subject_commit": "3f7a3fe557d4dd4a2d9a699f9ab2206cd23c245e",
+      "subject_commit": "72a0bffc4eca4fa34beabc20a1477769bea3ad05",
       "archive_debt": null
     },
     {
@@ -1376,6 +1376,24 @@
         "owner": "repository-maintainer",
         "review_due": "2026-08-31"
       }
+    },
+    {
+      "id": "introduce-executable-architecture-contracts",
+      "status": "active",
+      "owner": "repository-maintainer",
+      "current_slice": "Phase 1 desired architecture contract, schemas, validator, and verification routing",
+      "blocked_by": [],
+      "last_verified": "2026-07-30T09:05:00Z",
+      "task_ledger": {
+        "completed": 9,
+        "total": 26
+      },
+      "evidence_refs": [
+        "openspec/changes/introduce-executable-architecture-contracts/proposal.md",
+        "openspec/changes/introduce-executable-architecture-contracts/tasks.md"
+      ],
+      "subject_commit": "567c29e9779c7e733135873498fff5798cc901e8",
+      "archive_debt": null
     },
     {
       "id": "introduce-host-native-conversion-authority-service",
