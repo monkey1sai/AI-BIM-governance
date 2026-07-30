@@ -1435,9 +1435,9 @@
       "id": "isolated-branch-stack-browser-e2e",
       "status": "active",
       "owner": "repository-maintainer",
-      "current_slice": "PR #431 code ac2c451；source 0bfa815；origin/main 243d964 已合併於 ba6664a。Final reviewer ACCEPT（P1/P2/P3=0）；補 A3+A4 evidence scope、viewer preflight、cross-process reservation/ABA、strict malformed fail-closed、listener-inventory-listener、deleted-worktree reclaim 與 manifest-first recovery。PowerShell contract/static、viewer 956/956、targeted 60/60、diff-check 通過；GitNexus stale 8b34c8e，detect low/0 process，不宣稱 impact pass。30/33；4.3/5.2/5.3 與無成功 A4 manifest/PNG/runtime ID 維持 gap。",
+      "current_slice": "PR #431 code e3eac6c；source 4f1b78a；origin/main 243d964 merged at ba6664a。Final reviewer ACCEPT（P1/P2/P3=0）；typed PID/creation identity、deterministic wx reclaim claim、worker fail-closed 與 Playwright report ignore 已補。PowerShell contract/static、viewer 960/960、targeted 64/64、targeted ESLint、diff-check 通過；GitNexus stale 8b34c8e，detect critical 23 files/97 symbols/264 processes，reviewer 接受 residual risk，不宣稱 pass。30/33；4.3/5.2/5.3 與無成功 A4 manifest/PNG/runtime ID 維持 gap。",
       "blocked_by": [],
-      "last_verified": "2026-07-30T15:23:32Z",
+      "last_verified": "2026-07-30T16:13:41Z",
       "task_ledger": {
         "completed": 30,
         "total": 33
@@ -1448,7 +1448,7 @@
         "docs/plans/NOW.md",
         "scripts/tests/test-isolated-branch-stack.ps1"
       ],
-      "subject_commit": "0bfa815750440ab436589ff4b7f833b3cc547273",
+      "subject_commit": "4f1b78acc043acda1e3b81dd48d716ea67cb05a0",
       "archive_debt": null
     },
     {
