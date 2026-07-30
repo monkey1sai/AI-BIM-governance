@@ -19,6 +19,10 @@ const ALLOWED_TRANSITIONS = new Map([
   ['archived', new Set(['archived'])],
 ]);
 const LEDGER_KEYS = ['schema_version', 'changes'];
+const SOURCE_OBSERVATION_KEYS = ['change_id', 'subject_commit', 'changed_paths'];
+const MAX_OBSERVED_PATHS = 10_000;
+const MAX_OBSERVED_PATH_BYTES = 2 * 1024 * 1024;
+const MAX_REPORT_MISMATCHES = 10_000;
 const CHANGE_KEYS = [
   'id',
   'status',
@@ -173,8 +177,9 @@ function assertRepositoryPath(repoRoot, candidatePath, field, expectedType) {
 }
 
 function safeRepositoryFile(repoRoot, reference, field) {
-  if (path.isAbsolute(reference) || reference.includes('\0')) {
-    fail('artifact_untrusted', field, 'Evidence references must be repository-relative.');
+  if (typeof reference !== 'string' || path.isAbsolute(reference) || reference.includes('\0') || reference.includes('\\') ||
+      reference.split('/').some((part) => !part || part === '.' || part === '..') || path.posix.normalize(reference) !== reference) {
+    fail('artifact_untrusted', field, 'Evidence references must be canonical forward-slash repository-relative paths.');
   }
   const candidate = path.resolve(repoRoot, reference);
   const rootPrefix = `${path.resolve(repoRoot)}${path.sep}`;
@@ -257,6 +262,9 @@ function parseNow(text) {
 }
 
 function mismatch(list, code, reason, changeId, field, expectedSource, expected, actualSource, actual, message) {
+  if (list.length >= MAX_REPORT_MISMATCHES) {
+    fail('report_too_large', 'mismatches', 'Machine-truth mismatch output exceeds the bounded report budget.');
+  }
   list.push({
     code,
     reason,
@@ -272,6 +280,76 @@ function mismatch(list, code, reason, changeId, field, expectedSource, expected,
 
 function currentLedger(ledgerById) {
   return new Map([...ledgerById].filter(([, change]) => change.status !== 'archived'));
+}
+
+function validateObservedPaths(paths, field) {
+  if (!Array.isArray(paths) || paths.length > MAX_OBSERVED_PATHS ||
+      paths.some((value) => typeof value !== 'string' || !value || value.length > 1_024 || value.includes('\0')) ||
+      new Set(paths).size !== paths.length ||
+      paths.reduce((total, value) => total + Buffer.byteLength(value, 'utf8'), 0) > MAX_OBSERVED_PATH_BYTES) {
+    fail('source_observation_invalid', field, 'Observed source paths exceed the bounded canonical input contract.');
+  }
+}
+
+function trackedEvidenceSet(paths) {
+  if (paths === null) return null;
+  validateObservedPaths(paths, 'tracked_evidence_paths');
+  if (paths.some((value) => value.includes('\\') || value.split('/').some((part) => !part || part === '.' || part === '..') ||
+      path.posix.normalize(value) !== value)) {
+    fail('source_observation_invalid', 'tracked_evidence_paths', 'Tracked evidence paths must be canonical Git paths.');
+  }
+  return new Set(paths);
+}
+
+export function isOwnedOpenSpecSource(changeId, candidate) {
+  const normalized = candidate.replaceAll('\\', '/');
+  if (normalized.startsWith(`openspec/changes/${changeId}/`)) return true;
+  const escapedId = changeId.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  return new RegExp(`^openspec/changes/archive/\\d{4}-\\d{2}-\\d{2}-${escapedId}/`, 'u').test(normalized);
+}
+
+function sourceObservationByChange(ledgerById, sourceObservations, sourceChangedPaths, trustedSubject) {
+  if (sourceObservations === null) {
+    validateObservedPaths(sourceChangedPaths, 'source_changed_paths');
+    if ([...ledgerById.values()].some((change) => change.subject_commit !== trustedSubject)) {
+      fail('source_observation_invalid', 'source_observations',
+        'Historical lifecycle row snapshots require per-row source observations.');
+    }
+    return new Map([...ledgerById.values()].map((change) => [change.id, {
+      change_id: change.id,
+      subject_commit: change.subject_commit,
+      changed_paths: sourceChangedPaths,
+    }]));
+  }
+  if (!Array.isArray(sourceObservations) || sourceObservations.length !== ledgerById.size) {
+    fail('source_observation_invalid', 'source_observations', 'Each lifecycle row requires one bounded source observation.');
+  }
+  const observations = new Map();
+  let observedPathCount = 0;
+  let observedPathBytes = 0;
+  for (const [index, observation] of sourceObservations.entries()) {
+    const field = `source_observations[${index}]`;
+    assertExactKeys(observation, SOURCE_OBSERVATION_KEYS, field);
+    const ledger = ledgerById.get(observation.change_id);
+    if (!ledger || observations.has(observation.change_id) ||
+        typeof observation.subject_commit !== 'string' || !COMMIT.test(observation.subject_commit) ||
+        observation.subject_commit !== ledger.subject_commit || !Array.isArray(observation.changed_paths) ||
+        observation.changed_paths.length > MAX_OBSERVED_PATHS) {
+      fail('source_observation_invalid', field, 'Source observation identity or changed paths are invalid.');
+    }
+    validateObservedPaths(observation.changed_paths, `${field}.changed_paths`);
+    observedPathCount += observation.changed_paths.length;
+    observedPathBytes += observation.changed_paths.reduce((total, value) => total + Buffer.byteLength(value, 'utf8'), 0);
+    if (observedPathCount > MAX_OBSERVED_PATHS || observedPathBytes > MAX_OBSERVED_PATH_BYTES) {
+      fail('source_observation_invalid', 'source_observations', 'Aggregate source observations exceed the bounded path budget.');
+    }
+    observations.set(observation.change_id, {
+      change_id: observation.change_id,
+      subject_commit: observation.subject_commit,
+      changed_paths: observation.changed_paths.map((value) => value.replaceAll('\\', '/')),
+    });
+  }
+  return observations;
 }
 
 function compareNowProjection(document, ledgerById, mismatches) {
@@ -449,6 +527,8 @@ export function evaluateOpenSpecMachineTruth({
   baselineArchiveTasks = null,
   subjectCommit,
   sourceChangedPaths = [],
+  sourceObservations = null,
+  trackedEvidencePaths = null,
   wipLimit = 6,
 }) {
   if (typeof subjectCommit !== 'string' || !COMMIT.test(subjectCommit)) {
@@ -458,16 +538,9 @@ export function evaluateOpenSpecMachineTruth({
   const previousById = previousLedger === null ? null : validateLedgerShape(previousLedger, 'previous_ledger');
   const baselineArchiveById = validateBaselineArchiveTasks(baselineArchiveTasks);
   const mismatches = [];
-  if (!Array.isArray(sourceChangedPaths) || sourceChangedPaths.some((value) => typeof value !== 'string')) {
-    fail('source_observation_invalid', 'source_changed_paths', 'Source-at-subject observation is invalid.');
-  }
-  const changedSources = new Set(sourceChangedPaths.map((value) => value.replaceAll('\\', '/')));
-  for (const change of ledgerById.values()) {
-    if (change.subject_commit !== subjectCommit) {
-      mismatch(mismatches, 'subject', 'subject_mismatch', change.id, 'subject_commit', 'trusted_subject',
-        subjectCommit, 'machine_ledger', change.subject_commit, 'Machine state is stale or belongs to another subject.');
-    }
-  }
+  validateObservedPaths(sourceChangedPaths, 'source_changed_paths');
+  const sourceByChange = sourceObservationByChange(ledgerById, sourceObservations, sourceChangedPaths, subjectCommit);
+  const trackedEvidence = trackedEvidenceSet(trackedEvidencePaths);
   validateBlockers(ledgerById, mismatches);
   if (previousById) comparePrevious(previousById, ledgerById, mismatches);
 
@@ -496,15 +569,14 @@ export function evaluateOpenSpecMachineTruth({
         'archived', 'machine_ledger', ledger?.status ?? 'missing', 'Archive history has no archived machine-ledger row.');
     }
   }
-  for (const changedPath of changedSources) {
-    if (!changedPath.startsWith('openspec/changes/')) continue;
-    const archiveMatch = changedPath.match(/^openspec\/changes\/archive\/\d{4}-\d{2}-\d{2}-([^/]+)\//u);
-    const activeMatch = changedPath.match(/^openspec\/changes\/([^/]+)\//u);
-    const id = archiveMatch?.[1] ?? (activeMatch?.[1] === 'archive' ? null : activeMatch?.[1]) ?? null;
-    mismatch(mismatches, 'subject', 'source_changed_since_subject', id, changedPath, 'trusted_subject',
-      'unchanged source', 'worktree', 'changed', 'OpenSpec source differs from the trusted observed snapshot.');
-  }
   for (const change of ledgerById.values()) {
+    const changedSources = new Set(sourceByChange.get(change.id).changed_paths);
+    for (const changedPath of changedSources) {
+      if (!isOwnedOpenSpecSource(change.id, changedPath)) continue;
+      mismatch(mismatches, 'subject', 'source_changed_since_subject', change.id, 'source_changed_paths', 'trusted_subject',
+        'unchanged source', 'worktree', changedPath.slice(0, 500),
+        'OpenSpec source differs from the lifecycle row snapshot.');
+    }
     const activePath = inventory.active.get(change.id);
     const archiveRecord = inventory.archive.get(change.id);
     const archivePath = archiveRecord?.directory;
@@ -606,6 +678,10 @@ export function evaluateOpenSpecMachineTruth({
     }
     for (const [index, reference] of change.evidence_refs.entries()) {
       const normalizedReference = reference.replaceAll('\\', '/');
+      if (trackedEvidence !== null && !trackedEvidence.has(normalizedReference)) {
+        fail('artifact_untrusted', `changes.${change.id}.evidence_refs[${index}]`,
+          'Evidence references must match a Git-tracked path byte-for-byte.');
+      }
       const observed = safeRepositoryFile(repoRoot, reference, `changes.${change.id}.evidence_refs[${index}]`);
       if (!observed.exists) {
         mismatch(mismatches, 'evidence', 'evidence_target_missing', change.id, `evidence_refs[${index}]`,

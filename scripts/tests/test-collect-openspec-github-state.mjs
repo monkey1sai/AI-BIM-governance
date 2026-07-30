@@ -31,7 +31,40 @@ test('GitHub lifecycle observation uses only canonical same-repository OpenSpec 
   ]);
 });
 
-test('subject mismatch and unbounded pull observations fail closed', () => {
-  assert.throws(() => buildGitHubLifecycleObservation({ ledger, repository: 'example/repository', repositoryInfo, pulls: [], subject: 'f'.repeat(40) }));
+test('malformed repository subject and unbounded pull observations fail closed', () => {
+  assert.throws(() => buildGitHubLifecycleObservation({ ledger, repository: 'example/repository', repositoryInfo, pulls: [], subject: 'f'.repeat(39) }));
   assert.throws(() => buildGitHubLifecycleObservation({ ledger, repository: 'example/repository', repositoryInfo, pulls: Array(1001).fill({}), subject }));
+});
+
+test('repository subject remains the current head while current rows retain historical snapshots', () => {
+  const historical = structuredClone(ledger);
+  historical.changes[0].subject_commit = 'b'.repeat(40);
+  historical.changes[1].subject_commit = 'c'.repeat(40);
+
+  const result = buildGitHubLifecycleObservation({
+    ledger: historical,
+    repository: 'example/repository',
+    repositoryInfo,
+    pulls: [],
+    subject,
+  });
+
+  assert.equal(result.repository_subject, subject);
+  assert.deepEqual(result.changes.map(({ id }) => id), [
+    'alpha-change', 'beta-change', 'completed-change', 'held-change',
+  ]);
+});
+
+test('current row identity rejects duplicate ids and malformed historical subjects', () => {
+  const duplicate = structuredClone(ledger);
+  duplicate.changes[1].id = duplicate.changes[0].id;
+  assert.throws(() => buildGitHubLifecycleObservation({
+    ledger: duplicate, repository: 'example/repository', repositoryInfo, pulls: [], subject,
+  }));
+
+  const malformed = structuredClone(ledger);
+  malformed.changes[0].subject_commit = 'B'.repeat(40);
+  assert.throws(() => buildGitHubLifecycleObservation({
+    ledger: malformed, repository: 'example/repository', repositoryInfo, pulls: [], subject,
+  }));
 });
