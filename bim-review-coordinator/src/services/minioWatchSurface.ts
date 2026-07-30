@@ -21,17 +21,63 @@ import { createS3ObjectStore, type ObjectStorePort } from "./minioObjectStore.js
  * 全部落定——呼叫端可同步斷言，不需輪詢計數器（取代舊 minio-watcher-loop.test.ts 的
  * waitFor「觀測契約」；該競態類別在此介面形狀下結構性不存在）。
  *
- * PR 分段（2026-07-30 grilling 共識）：本檔為 PR1（watcher 核心＋toggle＋status）。
- * folder browse／cache／SSE fan-out／手動 trigger 仍在 app.ts，PR2 收入本 surface；
- * 過渡期間以 onObjectObserved callback 跨 seam 通知 cache invalidation。
+ * PR 分段（2026-07-30 grilling 共識）：PR1（#442）＝watcher 核心＋toggle＋status＋pollNow；
+ * PR2（本階段）＝folder browse／cache／SSE dirty fan-out／手動 trigger 併入本 surface，
+ * 舊 minioClient.ts（free functions＋呼叫端各持 S3Client）退場，S3 存取統一走 ObjectStorePort。
  */
 
 // 最小 structLog 介面（避免 import app 造成循環依賴；只 type-only import AnomalyData）。
 // 與舊 minioWatcher.ts 同款：anomaly fields 用真實 AnomalyData 使真 StructLogger 可賦值。
+// warn 為 optional：browse 的 q3-pipe-guard（跳過含 '|' key）用；unit 測試可傳 spy 或省略。
 export interface WatchSurfaceLogger {
   anomaly: (op: string, msg: string, fields: AnomalyData) => void;
+  warn?: (component: string, msg: string, data?: Record<string, unknown>) => void;
   withTraceId?: (id: string) => { anomaly: WatchSurfaceLogger["anomaly"] };
 }
+
+// ── Browse view 型別（自退役的 minioClient.ts 遷入；route JSON 契約，欄位不可增刪改名）──
+
+export type MinioObjectRole = "source_ifc" | "parsed_usdc" | "other";
+
+export interface MinioObjectView {
+  key: string;
+  etag: string;
+  role: MinioObjectRole;
+  project_id: string | null;
+  project_display_name: string | null;
+  category: string | null;
+  version: string | null;
+  idempotency_key: string;
+}
+
+export interface MinioFolderNode {
+  prefix: string;          // CommonPrefix（資料夾節點絕對 prefix）
+  has_source_ifc: boolean; // 該 prefix（遞迴）下是否有 .ifc 葉物件（spec §2.5 第 5 點 badge）
+}
+
+export interface MinioFolderListing {
+  bucket: string;
+  prefix: string;
+  folders: MinioFolderNode[]; // CommonPrefixes（資料夾節點 + has_source_ifc）
+  objects: MinioObjectView[]; // 當層直屬檔（被 roll-up 的子物件不在此）
+  count: number;              // objects.length（誠實：非遞迴總數）
+}
+
+export interface MinioFolderBrowsePayload extends MinioFolderListing {
+  cache: { hit: boolean; stale: boolean; fetched_at: string };
+}
+
+/** SSE 消費端的最小形狀（Express response 結構相容；surface 不依賴 HTTP 型別）。 */
+export interface MinioEventClient {
+  write: (chunk: string) => boolean;
+  end: () => void;
+}
+
+export type ManualTriggerOutcome =
+  | { kind: "invalid_key"; detail: string }
+  | { kind: "presign_failed"; message: string }
+  | { kind: "upstream"; status: number; body: Record<string, unknown> }
+  | { kind: "fetch_failed"; message: string };
 
 /** 關閉態 status payload（與既有 route JSON 逐位元組一致；欄位順序由物件字面值固定）。 */
 export interface MinioWatchDisabledStatus {
@@ -99,6 +145,14 @@ export interface MinioWatchSurfaceOptions {
   /** production 讀 server.address() 的實際 listen port（config.selfBaseUrl 空時使用）。 */
   resolveSelfBaseUrl: () => string;
   /**
+   * 手動 trigger 的 self-POST base（歷史語意與 watcher 不同：fallback 用 config.port 而非
+   * bound port；且測試會在 app 建構後改寫 config.minioWatchSelfBaseUrl，故必須是「呼叫時」
+   * 求值的 closure，不可在建構時快照）。省略時回落 resolveSelfBaseUrl。
+   */
+  resolveManualTriggerSelfBaseUrl?: () => string;
+  /** 手動 trigger 的 self-POST 逾時（上游 intake 含同步 IFC 下載：下載逾時 + 5s 緩衝）。省略 = 10s。 */
+  manualTriggerTimeoutMs?: number;
+  /**
    * 啟動 fail-fast 守衛（EXTERNAL_INTAKE_IP_ALLOWLIST 缺 loopback → throw）。由 app.ts
    * 注入以重用 authProvider.isIpAllowed，避免判定分歧；surface 在每次冷啟前呼叫。
    */
@@ -126,7 +180,29 @@ export interface MinioWatchSurface {
    * （含 intake 回應解析與 counters 寫入）已落定。與 auto tick 共用序列化鏈，永不並發。
    */
   pollNow(): Promise<TickSummary>;
-  /** 停止 loop 並釋放資源：await in-flight tick settle（2s 上限）後 destroy object store。 */
+  /**
+   * 資料夾語意 browse（delimiter='/'）：cache（hit/stale/forceRefresh）、CommonPrefixes
+   * 的 has_source_ifc probe（序列、命中早停、失敗 propagate）、物件 view（role/badge/
+   * idempotency_key/'|' guard）全在 implementation 內。list 失敗 propagate（route 收斂 502）。
+   */
+  browseFolder(prefix: string, opts: { forceRefresh: boolean }): Promise<MinioFolderBrowsePayload>;
+  /** flat list（無 delimiter 舊路徑）：物件 view 同上，無 cache。 */
+  browseFlat(prefix: string): Promise<{ bucket: string; prefix: string; count: number; objects: MinioObjectView[] }>;
+  /**
+   * A1 手動觸發：server-side presign + 重用 watcher intake 語意 self-POST
+   * /api/external/ifc-ready。冪等鍵以 key 為穩定來源（無 etag）；force retrigger 以
+   * attemptSalt 改變 idempotency/correlation 建立新 attempt。HTTP 映射由 route 負責。
+   */
+  manualTrigger(key: string, opts: { forceRetrigger: boolean; attemptSalt: string }): Promise<ManualTriggerOutcome>;
+  /**
+   * 訂閱 dirty 事件（SSE fan-out）：watcher 觀察到新/變更 object 時，對所有訂閱者送
+   * minio.changed frame 並把對應 prefix 的 folder cache 標 stale。回傳 unsubscribe。
+   */
+  subscribeEvents(client: MinioEventClient): () => void;
+  /**
+   * 停止 loop 並釋放資源：結束全部 SSE 訂閱端 → await in-flight tick settle（2s 上限）
+   * → destroy watch run 與 browse 兩個 object store。
+   */
   dispose(): Promise<void>;
 }
 
@@ -149,6 +225,9 @@ export function createMinioWatchSurface(opts: MinioWatchSurfaceOptions): MinioWa
   // intake POST 逾時：未設或 ≤0 時用 10s 預設（防 watcher 因 app 不回應而凍結）。
   const intakeTimeoutMs = cfg.intakeTimeoutMs && cfg.intakeTimeoutMs > 0 ? cfg.intakeTimeoutMs : 10_000;
   const storeFactory = opts.objectStoreFactory ?? createS3ObjectStore;
+  const resolveManualSelfBase = opts.resolveManualTriggerSelfBaseUrl ?? opts.resolveSelfBaseUrl;
+  const manualTriggerTimeoutMs =
+    opts.manualTriggerTimeoutMs && opts.manualTriggerTimeoutMs > 0 ? opts.manualTriggerTimeoutMs : 10_000;
 
   function configured(): boolean {
     return Boolean(cfg.endpoint && cfg.bucket && cfg.accessKey && cfg.secretKey);
@@ -283,6 +362,9 @@ export function createMinioWatchSurface(opts: MinioWatchSurfaceOptions): MinioWa
         const idkey = idempotencyKeyFor(cfg.bucket, o.key, o.etag);
         if (r.observed.get(o.key) !== o.etag) {
           r.observed.set(o.key, o.etag);
+          // dirty signal：folder cache 標 stale + SSE fan-out（surface 內部擁有）；
+          // opts.onObjectObserved 保留為外部加掛 hook（PR2 起 production 不再需要）。
+          markDirtyForObject(o.key, "minio-watcher-observed-object");
           opts.onObjectObserved?.({
             bucket: cfg.bucket,
             key: o.key,
@@ -336,6 +418,139 @@ export function createMinioWatchSurface(opts: MinioWatchSurfaceOptions): MinioWa
 
   function enqueueAutoTick(r: WatchRun): void {
     void enqueueTick(r);
+  }
+
+  // ── Browse / cache / SSE（自 app.ts 閉包態與 minioClient.ts 遷入）──────────────
+
+  type FolderCacheEntry = { listing: MinioFolderListing; fetchedAt: string; stale: boolean };
+  const folderCache = new Map<string, FolderCacheEntry>();
+  const eventClients = new Set<MinioEventClient>();
+  // browse 用長壽 store（lazy）：與 watch run 的 per-enable store 分離——browse 在 watcher
+  // 關閉時也要可用，且不因 toggle off 被銷毀。dispose 時一併 destroy。
+  let browseStore: ObjectStorePort | null = null;
+
+  function browseStoreOrCreate(): ObjectStorePort {
+    if (!browseStore) {
+      browseStore = storeFactory({
+        endpoint: cfg.endpoint,
+        bucket: cfg.bucket,
+        accessKey: cfg.accessKey,
+        secretKey: cfg.secretKey,
+      });
+    }
+    return browseStore;
+  }
+
+  function folderCacheKey(prefix: string, delimiter: string): string {
+    return `${delimiter}\u0000${prefix}`;
+  }
+
+  function folderPrefixesForObjectKey(key: string): string[] {
+    const out = new Set<string>([""]);
+    const parts = key.split("/");
+    let current = "";
+    for (let i = 0; i < parts.length - 1; i += 1) {
+      current += `${parts[i]}/`;
+      out.add(current);
+    }
+    return [...out];
+  }
+
+  function emitEvent(event: string, data: Record<string, unknown>): void {
+    const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const client of [...eventClients]) {
+      try {
+        client.write(frame);
+      } catch {
+        eventClients.delete(client);
+        client.end();
+      }
+    }
+  }
+
+  function markDirtyForObject(key: string, reason: string): void {
+    const prefixes = folderPrefixesForObjectKey(key);
+    for (const p of prefixes) {
+      const entry = folderCache.get(folderCacheKey(p, "/"));
+      if (entry) entry.stale = true;
+    }
+    emitEvent("minio.changed", {
+      type: "minio.changed",
+      prefixes,
+      reason,
+      at: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * 物件 view（role / badge / idempotency_key）。q3-pipe-guard：key 含 '|' 與
+   * idempotencyKeyFor 的 bucket|key|etag 分隔符衝突（minioWatcher.ts precondition），
+   * 可能撞 hash → idempotent_replay 靜默丟棄——跳過該物件（回 null）+ warn，
+   * 不讓壞 key 進回應誤導前端 chip 對帳。
+   *
+   * badge 解析三路分流：只對 .ifc / .usdc 導到 model.* 才附語意 badge；role='other'
+   * 直接 ok:false 跳過 deriveIntakeFromKey（防未來改 suffix 邏輯時 other 物件意外拿 badge）。
+   * derivePrefix/deriveSuffix 由呼叫端給：folder 視圖用（""、"/model.ifc"）、
+   * flat 視圖用（rawPrefix、config keySuffix）——兩者歷史語意不同，逐字保留。
+   */
+  function buildObjectView(
+    key: string,
+    rawEtag: string,
+    derivePrefix: string,
+    ifcSuffix: string,
+  ): MinioObjectView | null {
+    if (key.includes("|")) {
+      opts.structLog.warn?.("minioClient", "skip object key containing '|' (idempotency key collision risk)", {
+        bucket: cfg.bucket,
+        key,
+      });
+      return null;
+    }
+    const role: MinioObjectRole = key.endsWith(".ifc")
+      ? "source_ifc"
+      : key.endsWith(".usdc")
+        ? "parsed_usdc"
+        : "other";
+    // etag 統一去引號一次，同一值同時供 etag 欄位與 idempotency_key（idempotencyKeyFor 內部
+    // 的 stripEtagQuotes 對已去引號值冪等，hash 不變）。
+    const etag = stripEtagQuotes(rawEtag);
+    const d = role === "source_ifc"
+      ? deriveIntakeFromKey({ key, prefix: derivePrefix, keySuffix: ifcSuffix })
+      : role === "parsed_usdc"
+        ? deriveIntakeFromKey({ key, prefix: derivePrefix, keySuffix: "/model.usdc" })
+        : { ok: false as const };
+    return {
+      key,
+      etag,
+      role,
+      idempotency_key: idempotencyKeyFor(cfg.bucket, key, etag),
+      project_id: d.ok ? d.projectId : null,
+      project_display_name: d.ok ? d.projectDisplayName : null,
+      category: d.ok ? d.category : null,
+      version: d.ok ? d.externalModelVersionId : null,
+    };
+  }
+
+  /**
+   * 資料夾語意 list：CommonPrefixes 為資料夾、Contents 為當層直屬檔；對每個 CommonPrefix
+   * 再 probe has_source_ifc（**序列**：測試 stub 依呼叫順序回頁可預測；真實生產頂層資料夾
+   * 數量小且穩定（實測 ≤7），序列 probe（命中早停）延遲可接受。頂層資料夾數若可能 >10-15
+   * 才改 Promise.all——屆時 stub 須改以 prefix dispatch）。永不回 presigned URL。
+   * probe 失敗 propagate（誠實鐵律：不把「查不到」謊報成「無 source IFC」）。
+   */
+  async function listFolderView(prefix: string, delimiter: string): Promise<MinioFolderListing> {
+    const store = browseStoreOrCreate();
+    const raw = await store.listFolder(prefix, delimiter);
+    const objects: MinioObjectView[] = [];
+    for (const obj of raw.contents) {
+      const view = buildObjectView(obj.key, obj.etag, "", "/model.ifc");
+      if (view) objects.push(view);
+    }
+    const folders: MinioFolderNode[] = [];
+    for (const p of raw.commonPrefixes) {
+      folders.push({ prefix: p, has_source_ifc: await store.hasKeyWithSuffix(p, ".ifc") });
+    }
+    return { bucket: cfg.bucket, prefix, folders, objects, count: objects.length };
   }
 
   function startIfEnabled(): void {
@@ -458,7 +673,94 @@ export function createMinioWatchSurface(opts: MinioWatchSurfaceOptions): MinioWa
       if (!r) return { ran: false, reason: "not_started", listed_count: 0, matched_count: 0, outcomes: [] };
       return enqueueTick(r);
     },
+    async browseFolder(prefix: string, browseOpts: { forceRefresh: boolean }): Promise<MinioFolderBrowsePayload> {
+      const cacheKey = folderCacheKey(prefix, "/");
+      const cached = folderCache.get(cacheKey);
+      if (cached && !cached.stale && !browseOpts.forceRefresh) {
+        return { ...cached.listing, cache: { hit: true, stale: false, fetched_at: cached.fetchedAt } };
+      }
+      const listing = await listFolderView(prefix, "/");
+      const fetchedAt = new Date().toISOString();
+      folderCache.set(cacheKey, { listing, fetchedAt, stale: false });
+      return { ...listing, cache: { hit: false, stale: false, fetched_at: fetchedAt } };
+    },
+    async browseFlat(prefix: string) {
+      const store = browseStoreOrCreate();
+      const listed = await store.listObjects(prefix);
+      const objects: MinioObjectView[] = [];
+      for (const obj of listed) {
+        // flat 視圖歷史語意：derive 用呼叫端 prefix + config keySuffix（與 folder 視圖不同）。
+        const view = buildObjectView(obj.key, obj.etag, prefix, cfg.keySuffix);
+        if (view) objects.push(view);
+      }
+      return { bucket: cfg.bucket, prefix, count: objects.length, objects };
+    },
+    async manualTrigger(key: string, triggerOpts: { forceRetrigger: boolean; attemptSalt: string }): Promise<ManualTriggerOutcome> {
+      const derived = deriveIntakeFromKey({ key, prefix: cfg.prefix, keySuffix: cfg.keySuffix });
+      if (!derived.ok) {
+        return { kind: "invalid_key", detail: `key 不合法：${derived.reason}` };
+      }
+      let presignedRef: string;
+      try {
+        presignedRef = await browseStoreOrCreate().presign(key, 3600);
+      } catch (err) {
+        return { kind: "presign_failed", message: err instanceof Error ? err.message : String(err) };
+      }
+      // etag 在手動觸發無法事先取得，用 key 當穩定 idempotency 來源（同 key 重觸發回既有 job）。
+      // force retrigger 只讓 attempt salt 改變 idempotency/correlation，source key 與 presigned
+      // ref 仍指向同一 IFC。
+      const idempotencyInput = triggerOpts.forceRetrigger ? `${key}#${triggerOpts.attemptSalt}` : key;
+      const idemKey = idempotencyKeyFor(cfg.bucket, key, idempotencyInput);
+      const corrId = correlationIdFor(cfg.bucket, key, idempotencyInput);
+      const selfBase = resolveManualSelfBase();
+      try {
+        const upstream = await fetch(`${selfBase}/api/external/ifc-ready`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Webhook-Secret": opts.webhookSecret,
+            "X-Correlation-Id": corrId,
+            "X-Idempotency-Key": idemKey,
+          },
+          body: JSON.stringify({
+            event: "ifc_ready",
+            tenant_id: cfg.tenantId,
+            project_id: derived.projectId,
+            project_display_name: derived.projectDisplayName,
+            model_category: derived.category,
+            external_model_version_id: derived.externalModelVersionId,
+            external_conversion_task_id: triggerOpts.forceRetrigger
+              ? `${derived.externalModelVersionId}_manual_${triggerOpts.attemptSalt}`
+              : `${derived.externalModelVersionId}_manual`,
+            source_ifc: { ref: presignedRef, etag: key, filename: "model.ifc", format: "ifc" },
+            requested_outputs: ["usdc", "element_mapping", "entity_index", "metadata"],
+          }),
+          // app 死鎖/過載長時不回時逾時中斷，避免前端 A1 按鈕無限等待（對齊 watcher self-POST 保護）。
+          signal: AbortSignal.timeout(manualTriggerTimeoutMs),
+        });
+        const text = await upstream.text();
+        const parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+        return { kind: "upstream", status: upstream.status, body: parsed };
+      } catch (err) {
+        return { kind: "fetch_failed", message: err instanceof Error ? err.message : String(err) };
+      }
+    },
+    subscribeEvents(client: MinioEventClient): () => void {
+      eventClients.add(client);
+      return () => {
+        eventClients.delete(client);
+      };
+    },
     async dispose(): Promise<void> {
+      for (const client of [...eventClients]) {
+        client.end();
+      }
+      eventClients.clear();
+      if (browseStore) {
+        const s = browseStore;
+        browseStore = null;
+        await s.destroy();
+      }
       if (!run) return;
       const r = run;
       run = null;

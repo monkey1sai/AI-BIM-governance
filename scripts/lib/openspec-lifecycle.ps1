@@ -260,6 +260,66 @@ function Get-OpenSpecProposalState {
     }
 }
 
+# Canonical task-checkbox counting. MUST stay behaviourally identical for ALL inputs (including
+# non-ASCII) to `taskLedgerFromText` in scripts/lib/openspec-machine-truth.mjs — the two are
+# implementations of one contract, cross-checked by the golden corpus
+# scripts/tests/fixtures/task-ledger-parity.json. Spec (per line):
+#   1. candidate = ^[ \t]*-[ \t]+\[<mark>\]<after?>
+#   2. mark 長度 != 1        → 非 checkbox（`- []`、`- [WIP] foo`、`- [text](url)`）
+#   3. after 為 `(`          → 非 checkbox（markdown link `- [x](url)`）
+#   4. after 非空且非空白    → 畸形 checkbox（`- [x]done`）→ unsupported（fail-closed，不得靜默消失）
+#   5. 否則 x/X→completed+total、空白→total、其餘單字元→unsupported
+# 逐行解析是必要的：舊版 '(?m)…(?:\s+|$)' 的尾端貪婪 \s+ 會吃掉下一行縮排，使緊接的巢狀
+# checkbox 從 Total 消失——未完成 task 因而可能通過 verify-openspec-lifecycle 的 archive gate。
+# 明確列舉的空白字元集，等值於 JavaScript 的 \s。刻意不用 \s shorthand：.NET 的 \s 含
+# U+0085 (NEL) 而 JS 的不含，用 shorthand 會讓兩套實作在該字元上分歧。全部以 \uXXXX 轉義
+# 書寫，source 內不得出現不可見字元。
+$script:OpenSpecCheckboxAfterWhitespacePattern =
+    '^[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]$'
+
+function Measure-OpenSpecTaskCheckboxes {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string] $Text
+    )
+
+    $completed = 0
+    $total = 0
+    $unsupported = 0
+    foreach ($line in ($Text -split "`r?`n")) {
+        $match = [regex]::Match($line, '^[ \t]*-[ \t]+\[(?<mark>[^\]]*)\](?<after>.?)')
+        if (-not $match.Success) { continue }
+        $mark = $match.Groups['mark'].Value
+        if ($mark.Length -ne 1) {
+            # 長度 >= 2 且僅由空白與單一 x/X 組成者是「真 checkbox 的錯字」（`- [ x]`、`- [x ]`、
+            # `- [  ]`），必須 fail-closed，否則又是一條靜默消失路徑。其餘（`- [ab]`、
+            # `- [WIP] foo`、`- [text](url)`）是 prose，不計。長度 0（`- []`）不計。
+            if ($mark.Length -ge 2 -and $mark -cmatch '^[ \t]*[xX]?[ \t]*$') { $unsupported++ }
+            continue
+        }
+        # 比較一律用 ordinal：PowerShell 的 -eq/-ne 是 culture-sensitive 語言比較，任何
+        # zero-collation-weight 字元（ZWSP U+200B、SOFT HYPHEN U+00AD、ZWJ U+200D、
+        # VARIATION SELECTOR U+FE0F…）都會與空字串「相等」，畸形守衛因此被跳過而誤計為完成；
+        # -cne 也修不了（僅 -ceq 能修 `(` 那條）。同理 -eq '(' 會讓 U+207D 等被當成 markdown link。
+        # 空白類別寫成明確字元集而不用 \s：.NET 的 \s 含 U+0085(NEL)，JS 的 \s 不含，
+        # 用 shorthand 會讓兩套實作在 327 個 BMP code point 上分歧。此集合等於 JS 的 \s。
+        $after = $match.Groups['after'].Value
+        if ($after.Length -ne 0) {
+            if ([string]::Equals($after, '(', [System.StringComparison]::Ordinal)) { continue }
+            if ($after -cnotmatch $script:OpenSpecCheckboxAfterWhitespacePattern) { $unsupported++; continue }
+        }
+        if ($mark -ceq 'x' -or $mark -ceq 'X') { $completed++; $total++ }
+        elseif ($mark -ceq ' ') { $total++ }
+        else { $unsupported++ }
+    }
+
+    return [pscustomobject]@{
+        Completed   = $completed
+        Total       = $total
+        Unsupported = $unsupported
+    }
+}
+
 function Get-OpenSpecTaskLedger {
     [CmdletBinding()]
     param(
@@ -282,25 +342,13 @@ function Get-OpenSpecTaskLedger {
     }
 
     $content = Read-OpenSpecLifecycleFile -Path $tasksPath -TrustedRoot $TrustedRoot
-    $checkboxes = @([regex]::Matches(
-        $content,
-        '(?m)^\s*-\s+\[(?<mark>[ xX])\](?:\s+|$)'
-    ))
-    $completed = @($checkboxes | Where-Object {
-        $_.Groups['mark'].Value -match '[xX]'
-    }).Count
-    $unsupported = @([regex]::Matches(
-        $content,
-        '(?m)^\s*-\s+\[(?<mark>[^\]\r\n]+)\](?:\s+|$)'
-    ) | Where-Object {
-        $_.Groups['mark'].Value -notmatch '^[ xX]$'
-    }).Count
+    $measured = Measure-OpenSpecTaskCheckboxes -Text $content
 
     return [pscustomobject]@{
         Exists                = $true
-        Completed             = $completed
-        Total                 = $checkboxes.Count
-        Unchecked             = $checkboxes.Count - $completed
-        UnsupportedCheckboxes = $unsupported
+        Completed             = $measured.Completed
+        Total                 = $measured.Total
+        Unchecked             = $measured.Total - $measured.Completed
+        UnsupportedCheckboxes = $measured.Unsupported
     }
 }
