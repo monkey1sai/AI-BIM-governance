@@ -1435,9 +1435,9 @@
       "id": "isolated-branch-stack-browser-e2e",
       "status": "active",
       "owner": "repository-maintainer",
-      "current_slice": "PR #431 code 4ee8f3e3b6454d63eb908dba09dba3aaf8e1afae。portable child wrapper 與 role/env port fail-fast、browser evidence default gates、stale artifact prune、malformed/outside fail-closed、isolated A3/A4 scope、browser-response query_id 與合法 empty-result regression均通過 reviewer ACCEPT。clean smoke closeout-20260730-2010-7e99bb1 active，stop 後 8005/49103=0，8004/49102 前後=0；frontend verify 945/945、OpenSpec 71/71。require-real P5 仍因無 downloaded IFC-ready job 而無成功 manifest/PNG/runtime ID；剩 4.3、5.2、5.3。",
+      "current_slice": "PR #431 source 36d4b36、code 4ee8f3e；origin/main c762e4f 已 merge。portable wrapper、port fail-fast、browser evidence fail-closed、isolated A3/A4 scope、query_id/empty regressions獲 reviewer ACCEPT。post-merge coordinator 797/797、Agent Governance 65/65、launcher/static pass；clean smoke closeout-main-20260730-2027-5a77f8d active→stopped，8005/49103=0，8004/49102 前後=0。frontend 945/945、OpenSpec 71/71。P5 無 downloaded IFC-ready job，無成功 manifest/PNG/runtime ID；剩 4.3、5.2、5.3。",
       "blocked_by": [],
-      "last_verified": "2026-07-30T12:19:21Z",
+      "last_verified": "2026-07-30T12:28:35Z",
       "task_ledger": {
         "completed": 30,
         "total": 33
