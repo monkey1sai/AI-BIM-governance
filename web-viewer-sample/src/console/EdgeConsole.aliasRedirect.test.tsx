@@ -74,7 +74,6 @@ describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
     const start = Date.now();
     while (window.location.hash !== expected) {
       if (Date.now() - start > timeout) break;
-      // eslint-disable-next-line no-await-in-loop
       await act(async () => {
         await new Promise((r) => setTimeout(r, 10));
       });
@@ -90,8 +89,7 @@ describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
         return;
       } catch (error) {
         if (Date.now() - start > timeout) throw error;
-        // eslint-disable-next-line no-await-in-loop
-        await act(async () => {
+          await act(async () => {
           await new Promise((resolve) => setTimeout(resolve, 10));
         });
       }
