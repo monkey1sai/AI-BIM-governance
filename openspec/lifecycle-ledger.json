@@ -1435,9 +1435,9 @@
       "id": "isolated-branch-stack-browser-e2e",
       "status": "active",
       "owner": "repository-maintainer",
-      "current_slice": "PR #431 source 36d4b36、code 4ee8f3e；origin/main c762e4f 已 merge。portable wrapper、port fail-fast、browser evidence fail-closed、isolated A3/A4 scope、query_id/empty regressions獲 reviewer ACCEPT。post-merge coordinator 797/797、Agent Governance 65/65、launcher/static pass；clean smoke closeout-main-20260730-2027-5a77f8d active→stopped，8005/49103=0，8004/49102 前後=0。frontend 945/945、OpenSpec 71/71。P5 無 downloaded IFC-ready job，無成功 manifest/PNG/runtime ID；剩 4.3、5.2、5.3。",
+      "current_slice": "PR #431 code 63ba35c；origin/main a443985 已於 6900cac merge。listener lineage/status、relative RepoRoot canonicalization、peer coordinator guard、A4 empty completeness/fixture truth、browser evidence UUID generation lease 與 generation-scoped artifacts獲 reviewer ACCEPT。frontend 950/950、PowerShell launcher contract與 local PR preflight pass；clean smoke closeout-review-20260730-2130-63ba35c active→stopped，owned PIDs消失，8005/49103=0，8004/49102 前後=0。CI machine-truth正確識別 test-isolated-branch-stack.ps1 相對舊 subject 的 source drift；本 row rebind 到合併後 evidence source snapshot。P5 仍無 downloaded IFC-ready job，無成功 manifest/PNG/runtime ID；剩 4.3、5.2、5.3。",
       "blocked_by": [],
-      "last_verified": "2026-07-30T12:28:35Z",
+      "last_verified": "2026-07-30T13:44:36Z",
       "task_ledger": {
         "completed": 30,
         "total": 33
@@ -1448,7 +1448,7 @@
         "docs/plans/NOW.md",
         "scripts/tests/test-isolated-branch-stack.ps1"
       ],
-      "subject_commit": "36d4b36b617610472507fb51bb7c67ea227e2d60",
+      "subject_commit": "6900cacb7e69101862163ab5153100b93796f421",
       "archive_debt": null
     },
     {
