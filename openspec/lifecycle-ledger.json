@@ -16,7 +16,7 @@
         "openspec/changes/archive/2026-06-03-a1-bcf-export/proposal.md",
         "openspec/changes/archive/2026-06-03-a1-bcf-export/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 2,
@@ -40,7 +40,7 @@
         "openspec/changes/archive/2026-06-03-a1-ids-import/proposal.md",
         "openspec/changes/archive/2026-06-03-a1-ids-import/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 4,
@@ -64,7 +64,7 @@
         "openspec/changes/archive/2026-06-15-a1-m1-closeout/proposal.md",
         "openspec/changes/archive/2026-06-15-a1-m1-closeout/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -82,7 +82,7 @@
         "openspec/changes/archive/2026-06-03-a1-rule-engine-honesty/proposal.md",
         "openspec/changes/archive/2026-06-03-a1-rule-engine-honesty/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -100,7 +100,7 @@
         "openspec/changes/archive/2026-06-03-a2-diff-tag-typeguard/proposal.md",
         "openspec/changes/archive/2026-06-03-a2-diff-tag-typeguard/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -118,7 +118,7 @@
         "openspec/changes/archive/2026-06-03-a2-geometry-issue-impact/proposal.md",
         "openspec/changes/archive/2026-06-03-a2-geometry-issue-impact/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 4,
@@ -142,7 +142,7 @@
         "openspec/changes/archive/2026-06-11-a2-version-diff-selector/proposal.md",
         "openspec/changes/archive/2026-06-11-a2-version-diff-selector/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -160,7 +160,7 @@
         "openspec/changes/archive/2026-06-03-a3-federation-trs-coords/proposal.md",
         "openspec/changes/archive/2026-06-03-a3-federation-trs-coords/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -178,7 +178,7 @@
         "openspec/changes/archive/2026-06-03-a3-transform-review-room/proposal.md",
         "openspec/changes/archive/2026-06-03-a3-transform-review-room/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 4,
@@ -240,7 +240,7 @@
         "openspec/changes/archive/2026-05-07-add-dev-ifc-source-selection-flow/proposal.md",
         "openspec/changes/archive/2026-05-07-add-dev-ifc-source-selection-flow/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 3,
@@ -264,7 +264,7 @@
         "openspec/changes/archive/2026-05-27-add-one-click-deploy-hybrid/proposal.md",
         "openspec/changes/archive/2026-05-27-add-one-click-deploy-hybrid/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -282,7 +282,7 @@
         "openspec/changes/archive/2026-05-26-add-pr-review-agent/proposal.md",
         "openspec/changes/archive/2026-05-26-add-pr-review-agent/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -300,7 +300,7 @@
         "openspec/changes/add-single-gpu-session-ai-review-mvp/proposal.md",
         "openspec/changes/add-single-gpu-session-ai-review-mvp/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -318,7 +318,7 @@
         "openspec/changes/archive/2026-05-08-add-worker-original-filename-tracking/proposal.md",
         "openspec/changes/archive/2026-05-08-add-worker-original-filename-tracking/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -336,7 +336,7 @@
         "openspec/changes/archive/2026-06-03-agent-entry-boundaries/proposal.md",
         "openspec/changes/archive/2026-06-03-agent-entry-boundaries/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -354,7 +354,7 @@
         "openspec/changes/archive/2026-06-04-agent-ship-cycle-automation/proposal.md",
         "openspec/changes/archive/2026-06-04-agent-ship-cycle-automation/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -372,7 +372,7 @@
         "openspec/changes/align-frontend-design-system-reference/proposal.md",
         "openspec/changes/align-frontend-design-system-reference/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -390,7 +390,7 @@
         "openspec/changes/archive/2026-05-11-align-workflow-v3-with-saas-roadmap/proposal.md",
         "openspec/changes/archive/2026-05-11-align-workflow-v3-with-saas-roadmap/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -408,7 +408,7 @@
         "openspec/changes/archive/2026-05-14-architecture-rework-2026-05-14/proposal.md",
         "openspec/changes/archive/2026-05-14-architecture-rework-2026-05-14/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -426,7 +426,7 @@
         "openspec/changes/archive/2026-06-02-author-ifc-openusd-identity-paths/proposal.md",
         "openspec/changes/archive/2026-06-02-author-ifc-openusd-identity-paths/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -444,7 +444,7 @@
         "openspec/changes/archive/2026-05-21-backfill-coordinator-webhook-and-auto-session/proposal.md",
         "openspec/changes/archive/2026-05-21-backfill-coordinator-webhook-and-auto-session/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 4,
@@ -468,7 +468,7 @@
         "openspec/changes/archive/2026-07-21-c-m4-runtime-command-bridge/proposal.md",
         "openspec/changes/archive/2026-07-21-c-m4-runtime-command-bridge/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -486,7 +486,7 @@
         "openspec/changes/archive/2026-05-08-complete-spec-runtime-verification/proposal.md",
         "openspec/changes/archive/2026-05-08-complete-spec-runtime-verification/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -504,7 +504,7 @@
         "openspec/changes/archive/2026-06-09-console-live-semantic-coexist/proposal.md",
         "openspec/changes/archive/2026-06-09-console-live-semantic-coexist/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 2,
@@ -528,7 +528,7 @@
         "openspec/changes/archive/2026-06-09-console-mapping-proxy/proposal.md",
         "openspec/changes/archive/2026-06-09-console-mapping-proxy/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 1,
@@ -552,7 +552,7 @@
         "openspec/changes/archive/2026-06-16-conv-coverage-report/proposal.md",
         "openspec/changes/archive/2026-06-16-conv-coverage-report/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -570,7 +570,7 @@
         "openspec/changes/archive/2026-06-17-conv-prioritize-retry/proposal.md",
         "openspec/changes/archive/2026-06-17-conv-prioritize-retry/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -588,7 +588,7 @@
         "openspec/changes/archive/2026-06-17-conv-watch-toggle/proposal.md",
         "openspec/changes/archive/2026-06-17-conv-watch-toggle/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 8,
@@ -612,7 +612,7 @@
         "openspec/changes/archive/2026-06-11-conversion-artifact-id-sanitize/proposal.md",
         "openspec/changes/archive/2026-06-11-conversion-artifact-id-sanitize/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -630,7 +630,7 @@
         "openspec/changes/archive/2026-07-14-conversion-kit-lifecycle-recovery/proposal.md",
         "openspec/changes/archive/2026-07-14-conversion-kit-lifecycle-recovery/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -648,7 +648,7 @@
         "openspec/changes/archive/2026-05-22-coordinator-auto-poll-streaming-conversion/proposal.md",
         "openspec/changes/archive/2026-05-22-coordinator-auto-poll-streaming-conversion/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 45,
@@ -672,7 +672,7 @@
         "openspec/changes/archive/2026-05-26-coordinator-forward-quality-metrics-summary/proposal.md",
         "openspec/changes/archive/2026-05-26-coordinator-forward-quality-metrics-summary/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 21,
@@ -696,7 +696,7 @@
         "openspec/changes/archive/2026-05-21-coordinator-ifc-ready-worker-webhook/proposal.md",
         "openspec/changes/archive/2026-05-21-coordinator-ifc-ready-worker-webhook/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -714,7 +714,7 @@
         "openspec/changes/archive/2026-05-25-coordinator-serial-conversion-dispatch-queue/proposal.md",
         "openspec/changes/archive/2026-05-25-coordinator-serial-conversion-dispatch-queue/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 25,
@@ -738,7 +738,7 @@
         "openspec/changes/archive/2026-05-12-coordinator-session-lifecycle-events-audit/proposal.md",
         "openspec/changes/archive/2026-05-12-coordinator-session-lifecycle-events-audit/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -756,7 +756,7 @@
         "openspec/changes/archive/2026-05-25-coordinator-ui-tri-ready-and-queue/proposal.md",
         "openspec/changes/archive/2026-05-25-coordinator-ui-tri-ready-and-queue/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 16,
@@ -798,7 +798,7 @@
         "openspec/changes/archive/2026-07-28-deepen-ifc-ready-conversion-pipeline/proposal.md",
         "openspec/changes/archive/2026-07-28-deepen-ifc-ready-conversion-pipeline/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -816,7 +816,7 @@
         "openspec/changes/archive/2026-05-14-demo-current-runtime-observation/proposal.md",
         "openspec/changes/archive/2026-05-14-demo-current-runtime-observation/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -834,7 +834,7 @@
         "openspec/changes/archive/2026-06-03-deploy-nullderef-guard/proposal.md",
         "openspec/changes/archive/2026-06-03-deploy-nullderef-guard/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -852,7 +852,7 @@
         "openspec/changes/archive/2026-07-20-doc-first-canon-v2/proposal.md",
         "openspec/changes/archive/2026-07-20-doc-first-canon-v2/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -870,7 +870,7 @@
         "openspec/changes/archive/2026-05-21-docker-web-plane-host-native-kit/proposal.md",
         "openspec/changes/archive/2026-05-21-docker-web-plane-host-native-kit/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -888,7 +888,7 @@
         "openspec/changes/archive/2026-06-09-docs-design-spec-source-of-truth/proposal.md",
         "openspec/changes/archive/2026-06-09-docs-design-spec-source-of-truth/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 2,
@@ -912,7 +912,7 @@
         "openspec/changes/archive/2026-06-03-edge-console-a1a3-interface-completion/proposal.md",
         "openspec/changes/archive/2026-06-03-edge-console-a1a3-interface-completion/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -930,7 +930,7 @@
         "openspec/changes/archive/2026-06-04-edge-console-p2-p4-buildout/proposal.md",
         "openspec/changes/archive/2026-06-04-edge-console-p2-p4-buildout/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 1,
@@ -954,7 +954,7 @@
         "openspec/changes/archive/2026-06-03-edge-console-shell/proposal.md",
         "openspec/changes/archive/2026-06-03-edge-console-shell/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 8,
@@ -978,7 +978,7 @@
         "openspec/changes/archive/2026-06-03-edge-console-type-prov/proposal.md",
         "openspec/changes/archive/2026-06-03-edge-console-type-prov/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -996,7 +996,7 @@
         "openspec/changes/archive/2026-05-21-fast-ifc-link-demo-loop/proposal.md",
         "openspec/changes/archive/2026-05-21-fast-ifc-link-demo-loop/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 80,
@@ -1020,7 +1020,7 @@
         "openspec/changes/archive/2026-06-03-fix-federation-resetxformstack/proposal.md",
         "openspec/changes/archive/2026-06-03-fix-federation-resetxformstack/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1038,7 +1038,7 @@
         "openspec/changes/archive/2026-05-22-fix-ifc-usdc-hoops-load-failure/proposal.md",
         "openspec/changes/archive/2026-05-22-fix-ifc-usdc-hoops-load-failure/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1056,7 +1056,7 @@
         "openspec/changes/archive/2026-05-27-fix-lan-runtime-params-spectator-capacity/proposal.md",
         "openspec/changes/archive/2026-05-27-fix-lan-runtime-params-spectator-capacity/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1074,7 +1074,7 @@
         "openspec/changes/archive/2026-05-27-fix-lan-webrtc-multi-viewer-handoff/proposal.md",
         "openspec/changes/archive/2026-05-27-fix-lan-webrtc-multi-viewer-handoff/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1092,7 +1092,7 @@
         "openspec/changes/archive/2026-05-08-fix-runtime-verification-task-status/proposal.md",
         "openspec/changes/archive/2026-05-08-fix-runtime-verification-task-status/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1110,7 +1110,7 @@
         "openspec/changes/archive/2026-06-03-frontend-coordinator-env/proposal.md",
         "openspec/changes/archive/2026-06-03-frontend-coordinator-env/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1128,7 +1128,7 @@
         "openspec/changes/archive/2026-06-03-governance-adversarial-followups-2/proposal.md",
         "openspec/changes/archive/2026-06-03-governance-adversarial-followups-2/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1146,7 +1146,7 @@
         "openspec/changes/archive/2026-06-03-governance-issue-db/proposal.md",
         "openspec/changes/archive/2026-06-03-governance-issue-db/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 8,
@@ -1170,7 +1170,7 @@
         "openspec/changes/archive/2026-06-03-governance-rule-run-service/proposal.md",
         "openspec/changes/archive/2026-06-03-governance-rule-run-service/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 9,
@@ -1194,7 +1194,7 @@
         "openspec/changes/archive/2026-06-16-governance-service-deploy/proposal.md",
         "openspec/changes/archive/2026-06-16-governance-service-deploy/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1212,7 +1212,7 @@
         "openspec/changes/archive/2026-07-21-governance-throughput-budget/proposal.md",
         "openspec/changes/archive/2026-07-21-governance-throughput-budget/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1230,7 +1230,7 @@
         "openspec/changes/gpu-session-baseline-and-idle-reclaim/proposal.md",
         "openspec/changes/gpu-session-baseline-and-idle-reclaim/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1248,7 +1248,7 @@
         "openspec/changes/archive/2026-06-01-harden-coordinator-ifc-intake/proposal.md",
         "openspec/changes/archive/2026-06-01-harden-coordinator-ifc-intake/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1266,7 +1266,7 @@
         "openspec/changes/archive/2026-06-01-harden-host-native-conversion-service/proposal.md",
         "openspec/changes/archive/2026-06-01-harden-host-native-conversion-service/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1284,7 +1284,7 @@
         "openspec/changes/archive/2026-06-02-harden-internal-auth-and-config-hygiene/proposal.md",
         "openspec/changes/archive/2026-06-02-harden-internal-auth-and-config-hygiene/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 20,
@@ -1308,7 +1308,7 @@
         "openspec/changes/archive/2026-06-02-harden-stage-host-allowlist/proposal.md",
         "openspec/changes/archive/2026-06-02-harden-stage-host-allowlist/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1326,7 +1326,7 @@
         "openspec/changes/archive/2026-06-02-harden-web-viewer-test-resilience/proposal.md",
         "openspec/changes/archive/2026-06-02-harden-web-viewer-test-resilience/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 20,
@@ -1350,7 +1350,7 @@
         "openspec/changes/implement-runtime-command-authority-and-rejection/proposal.md",
         "openspec/changes/implement-runtime-command-authority-and-rejection/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1368,7 +1368,7 @@
         "openspec/changes/archive/2026-05-18-introduce-ai-bim-runtime-manager-docker-kit-mvp/proposal.md",
         "openspec/changes/archive/2026-05-18-introduce-ai-bim-runtime-manager-docker-kit-mvp/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 1,
@@ -1410,7 +1410,7 @@
         "openspec/changes/archive/2026-05-20-introduce-host-native-conversion-authority-service/proposal.md",
         "openspec/changes/archive/2026-05-20-introduce-host-native-conversion-authority-service/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1428,7 +1428,7 @@
         "openspec/changes/archive/2026-05-07-introduce-worker-review-session-lifecycle/proposal.md",
         "openspec/changes/archive/2026-05-07-introduce-worker-review-session-lifecycle/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1448,7 +1448,7 @@
         "docs/plans/NOW.md",
         "scripts/tests/test-isolated-branch-stack.ps1"
       ],
-      "subject_commit": "72fcf5f85ee1460b42b5f57a0709634bbf816c02",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1466,7 +1466,7 @@
         "openspec/changes/archive/2026-06-03-issue-bcf-integrity/proposal.md",
         "openspec/changes/archive/2026-06-03-issue-bcf-integrity/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1484,7 +1484,7 @@
         "openspec/changes/archive/2026-05-18-local-coordinator-ifc-ready-intake-boundary/proposal.md",
         "openspec/changes/archive/2026-05-18-local-coordinator-ifc-ready-intake-boundary/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1502,7 +1502,7 @@
         "openspec/changes/migrate-console-to-hifi-design/proposal.md",
         "openspec/changes/migrate-console-to-hifi-design/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1520,7 +1520,7 @@
         "openspec/changes/archive/2026-06-10-minio-fileserver-source/proposal.md",
         "openspec/changes/archive/2026-06-10-minio-fileserver-source/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1556,7 +1556,7 @@
         "openspec/changes/archive/2026-07-21-minio-trigger-lifecycle-backend/proposal.md",
         "openspec/changes/archive/2026-07-21-minio-trigger-lifecycle-backend/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1574,7 +1574,7 @@
         "openspec/changes/archive/2026-06-15-minio-watch-auto-intake/proposal.md",
         "openspec/changes/archive/2026-06-15-minio-watch-auto-intake/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1592,7 +1592,7 @@
         "openspec/changes/archive/2026-07-21-minio-watch-key-structure/proposal.md",
         "openspec/changes/archive/2026-07-21-minio-watch-key-structure/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1610,7 +1610,7 @@
         "openspec/changes/archive/2026-06-03-model-version-diff-globalid/proposal.md",
         "openspec/changes/archive/2026-06-03-model-version-diff-globalid/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 8,
@@ -1634,7 +1634,7 @@
         "openspec/changes/archive/2026-05-15-optimize-worker-canonical-batch-and-secondary-enumeration/proposal.md",
         "openspec/changes/archive/2026-05-15-optimize-worker-canonical-batch-and-secondary-enumeration/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 7,
@@ -1658,7 +1658,7 @@
         "openspec/changes/archive/2026-05-14-optimize-worker-non-renderable-materialization/proposal.md",
         "openspec/changes/archive/2026-05-14-optimize-worker-non-renderable-materialization/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1676,7 +1676,7 @@
         "openspec/changes/archive/2026-05-13-optimize-worker-source-entity-enumeration/proposal.md",
         "openspec/changes/archive/2026-05-13-optimize-worker-source-entity-enumeration/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1694,7 +1694,7 @@
         "openspec/changes/archive/2026-07-13-plans-ai-coding-docs-redesign/proposal.md",
         "openspec/changes/archive/2026-07-13-plans-ai-coding-docs-redesign/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1712,7 +1712,7 @@
         "openspec/changes/archive/2026-06-09-product-governance-console-integration/proposal.md",
         "openspec/changes/archive/2026-06-09-product-governance-console-integration/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1730,7 +1730,7 @@
         "openspec/changes/archive/2026-05-27-project-risks-mitigation/proposal.md",
         "openspec/changes/archive/2026-05-27-project-risks-mitigation/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 0,
@@ -1754,7 +1754,7 @@
         "openspec/changes/archive/2026-05-15-queue-batch-dispatch-and-post-usdc-artifact-retention/proposal.md",
         "openspec/changes/archive/2026-05-15-queue-batch-dispatch-and-post-usdc-artifact-retention/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 2,
@@ -1778,7 +1778,7 @@
         "openspec/changes/archive/2026-06-10-raise-claude-md-line-budget/proposal.md",
         "openspec/changes/archive/2026-06-10-raise-claude-md-line-budget/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 1,
@@ -1802,7 +1802,7 @@
         "openspec/changes/archive/2026-05-21-recap/proposal.md",
         "openspec/changes/archive/2026-05-21-recap/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1820,7 +1820,7 @@
         "openspec/changes/archive/2026-05-21-remove-conflict-review-from-fast-mvp/proposal.md",
         "openspec/changes/archive/2026-05-21-remove-conflict-review-from-fast-mvp/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 75,
@@ -1844,7 +1844,7 @@
         "openspec/changes/rvt-ifc-usdc-lineage/proposal.md",
         "openspec/changes/rvt-ifc-usdc-lineage/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1862,7 +1862,7 @@
         "openspec/changes/archive/2026-06-17-sessions-terminate/proposal.md",
         "openspec/changes/archive/2026-06-17-sessions-terminate/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1880,7 +1880,7 @@
         "openspec/changes/archive/2026-05-26-slim-agents-md-auto-load/proposal.md",
         "openspec/changes/archive/2026-05-26-slim-agents-md-auto-load/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 33,
@@ -1904,7 +1904,7 @@
         "openspec/changes/archive/2026-06-19-spec-to-done-routing-gate/proposal.md",
         "openspec/changes/archive/2026-06-19-spec-to-done-routing-gate/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1922,7 +1922,7 @@
         "openspec/changes/archive/2026-05-14-stabilize-demo-runtime-readiness/proposal.md",
         "openspec/changes/archive/2026-05-14-stabilize-demo-runtime-readiness/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1940,7 +1940,7 @@
         "openspec/changes/archive/2026-06-16-stop-all-single-pid-cleanup/proposal.md",
         "openspec/changes/archive/2026-06-16-stop-all-single-pid-cleanup/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 1,
@@ -1964,7 +1964,7 @@
         "openspec/changes/archive/2026-05-19-streaming-ifc-ready-intake-contract/proposal.md",
         "openspec/changes/archive/2026-05-19-streaming-ifc-ready-intake-contract/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -1982,7 +1982,7 @@
         "openspec/changes/archive/2026-05-25-streaming-server-capture-kit-conversion-logs/proposal.md",
         "openspec/changes/archive/2026-05-25-streaming-server-capture-kit-conversion-logs/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 8,
@@ -2006,7 +2006,7 @@
         "openspec/changes/archive/2026-05-26-streaming-server-enumeration-semantic-mapping/proposal.md",
         "openspec/changes/archive/2026-05-26-streaming-server-enumeration-semantic-mapping/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 23,
@@ -2030,7 +2030,7 @@
         "openspec/changes/archive/2026-05-25-streaming-server-fallback-semantic-mapping/proposal.md",
         "openspec/changes/archive/2026-05-25-streaming-server-fallback-semantic-mapping/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 33,
@@ -2054,7 +2054,7 @@
         "openspec/changes/archive/2026-05-28-streaming-server-ifcopenshell-semantic-sidecar-pass/proposal.md",
         "openspec/changes/archive/2026-05-28-streaming-server-ifcopenshell-semantic-sidecar-pass/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 26,
@@ -2078,7 +2078,7 @@
         "openspec/changes/archive/2026-05-22-streaming-server-prefer-local-ifc-path/proposal.md",
         "openspec/changes/archive/2026-05-22-streaming-server-prefer-local-ifc-path/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 45,
@@ -2102,7 +2102,7 @@
         "openspec/changes/archive/2026-05-27-subfolder-agent-boundary-coverage/proposal.md",
         "openspec/changes/archive/2026-05-27-subfolder-agent-boundary-coverage/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 25,
@@ -2126,7 +2126,7 @@
         "openspec/changes/archive/2026-06-10-test-deploy-rebuild-workflow/proposal.md",
         "openspec/changes/archive/2026-06-10-test-deploy-rebuild-workflow/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -2144,7 +2144,7 @@
         "openspec/changes/archive/2026-06-02-tidy-repo-scripts-tests-hygiene/proposal.md",
         "openspec/changes/archive/2026-06-02-tidy-repo-scripts-tests-hygiene/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 22,
@@ -2168,7 +2168,7 @@
         "openspec/changes/archive/2026-05-26-trim-docs-and-dedupe-ide-skills/proposal.md",
         "openspec/changes/archive/2026-05-26-trim-docs-and-dedupe-ide-skills/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 41,
@@ -2192,7 +2192,7 @@
         "openspec/changes/archive/2026-06-09-unified-console-fe-redesign/proposal.md",
         "openspec/changes/archive/2026-06-09-unified-console-fe-redesign/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 1,
@@ -2216,7 +2216,7 @@
         "openspec/changes/archive/2026-06-09-unified-console-issues-tab/proposal.md",
         "openspec/changes/archive/2026-06-09-unified-console-issues-tab/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -2234,7 +2234,7 @@
         "openspec/changes/archive/2026-06-09-unified-console-mvp/proposal.md",
         "openspec/changes/archive/2026-06-09-unified-console-mvp/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 1,
@@ -2258,7 +2258,7 @@
         "openspec/changes/archive/2026-06-09-unified-console-semantic-viewer/proposal.md",
         "openspec/changes/archive/2026-06-09-unified-console-semantic-viewer/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 1,
@@ -2282,7 +2282,7 @@
         "openspec/changes/archive/2026-06-04-unified-governance-console/proposal.md",
         "openspec/changes/archive/2026-06-04-unified-governance-console/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 4,
@@ -2306,7 +2306,7 @@
         "openspec/changes/archive/2026-06-03-usd-federation-sublayer-sets/proposal.md",
         "openspec/changes/archive/2026-06-03-usd-federation-sublayer-sets/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 9,
@@ -2330,7 +2330,7 @@
         "openspec/changes/archive/2026-05-25-viewer-edge-bim-server-console/proposal.md",
         "openspec/changes/archive/2026-05-25-viewer-edge-bim-server-console/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 32,
@@ -2354,7 +2354,7 @@
         "openspec/changes/archive/2026-07-21-viewer-embed-a1-highlight/proposal.md",
         "openspec/changes/archive/2026-07-21-viewer-embed-a1-highlight/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -2372,7 +2372,7 @@
         "openspec/changes/archive/2026-07-21-viewer-redesign/proposal.md",
         "openspec/changes/archive/2026-07-21-viewer-redesign/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -2390,7 +2390,7 @@
         "openspec/changes/archive/2026-05-12-worker-canonical-storage-batch-baseline/proposal.md",
         "openspec/changes/archive/2026-05-12-worker-canonical-storage-batch-baseline/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": {
         "reason": "historical_task_ledger_debt",
         "unchecked_tasks": 10,
@@ -2414,7 +2414,7 @@
         "openspec/changes/archive/2026-05-12-worker-mapping-lineage-quality-baseline/proposal.md",
         "openspec/changes/archive/2026-05-12-worker-mapping-lineage-quality-baseline/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     },
     {
@@ -2432,7 +2432,7 @@
         "openspec/changes/archive/2026-05-11-worker-real-conversion-quality/proposal.md",
         "openspec/changes/archive/2026-05-11-worker-real-conversion-quality/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
       "archive_debt": null
     }
   ]
