@@ -479,6 +479,14 @@ try {
     Assert-Equal 1 @($firstRecords.reservation_id | Sort-Object -Unique).Count 'run and offset records share one reservation ID'
     Assert-Equal $firstReservation.reservation_id $firstRecords[0].reservation_id 'acquisition returns the persisted reservation ID'
     $validFirstRecordText = Get-Content -Raw -LiteralPath $firstReservation.paths[0]
+    $legacyTimestampRecord = ConvertFrom-IsolatedReservationJson -RawJson $validFirstRecordText -SupportsDateKind $false
+    Assert-True ($legacyTimestampRecord.owner_creation_identity -is [string]) 'PowerShell 7.0-7.4 fallback preserves owner creation identity as a string'
+    Assert-True ($legacyTimestampRecord.updated_at -is [string]) 'PowerShell 7.0-7.4 fallback preserves updated timestamp as a string'
+    Assert-True (Test-IsolatedCanonicalUtcTimestamp $legacyTimestampRecord.owner_creation_identity) 'PowerShell 7.0-7.4 fallback preserves canonical owner creation identity'
+    Assert-True (Test-IsolatedCanonicalUtcTimestamp $legacyTimestampRecord.updated_at) 'PowerShell 7.0-7.4 fallback preserves canonical updated timestamp'
+    $legacyTimestampTypeConfusion = $validFirstRecordText | ConvertFrom-Json -Depth 12 -DateKind String
+    $legacyTimestampTypeConfusion.updated_at = $true
+    Assert-Throws { ConvertFrom-IsolatedReservationJson -RawJson ($legacyTimestampTypeConfusion | ConvertTo-Json -Depth 12) -SupportsDateKind $false } 'PowerShell 7.0-7.4 fallback rejects a non-string timestamp before reservation validation'
     $recordTypeMutations = @(
         [pscustomobject]@{name='fractional offset';mutate={param($record) $record.offset=2.4}},
         [pscustomobject]@{name='fractional owner PID';mutate={param($record) $record.owner_pid=7001.6}},

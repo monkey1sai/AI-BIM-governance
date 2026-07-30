@@ -211,16 +211,48 @@ function Test-IsolatedCanonicalUtcTimestamp {
     return $parsed.Offset -eq [TimeSpan]::Zero -and $parsed.UtcDateTime.ToString('o') -ceq $Value
 }
 
+function ConvertFrom-IsolatedReservationJson {
+    param(
+        [Parameter(Mandatory=$true)][string]$RawJson,
+        [AllowNull()]$SupportsDateKind=$null
+    )
+    if ($null -eq $SupportsDateKind) {
+        $convertFromJsonCommand = Get-Command ConvertFrom-Json -CommandType Cmdlet -ErrorAction Stop
+        $SupportsDateKind = $convertFromJsonCommand.Parameters.ContainsKey('DateKind')
+    }
+    if ($SupportsDateKind -isnot [bool]) { throw 'ConvertFrom-Json DateKind capability must be Boolean.' }
+    if ($SupportsDateKind) {
+        return $RawJson | ConvertFrom-Json -Depth 12 -DateKind String
+    }
+
+    $record = $RawJson | ConvertFrom-Json -Depth 12
+    $document = $null
+    try {
+        $document = [Text.Json.JsonDocument]::Parse($RawJson)
+        $root = $document.RootElement
+        if ($root.ValueKind -ne [Text.Json.JsonValueKind]::Object) {
+            throw 'Reservation JSON root must be an object.'
+        }
+        foreach ($propertyName in @('owner_creation_identity','updated_at')) {
+            $rawValue = [Text.Json.JsonElement]::new()
+            if (-not $root.TryGetProperty($propertyName, [ref]$rawValue) -or
+                $rawValue.ValueKind -ne [Text.Json.JsonValueKind]::String -or
+                $null -eq $record.PSObject.Properties[$propertyName]) {
+                throw "Reservation JSON property must be a string: $propertyName"
+            }
+            $record.PSObject.Properties[$propertyName].Value = $rawValue.GetString()
+        }
+    } finally {
+        if ($null -ne $document) { $document.Dispose() }
+    }
+    return $record
+}
+
 function Read-IsolatedStackReservationRecord {
     param([string]$Path,[scriptblock]$GitCommonDirectoryFn,[string]$TrustedGitCommonDirectory)
     try {
         $rawRecord = Get-Content -Raw -LiteralPath $Path
-        $convertFromJsonCommand = Get-Command ConvertFrom-Json -CommandType Cmdlet -ErrorAction Stop
-        $record = if ($convertFromJsonCommand.Parameters.ContainsKey('DateKind')) {
-            $rawRecord | ConvertFrom-Json -Depth 12 -DateKind String
-        } else {
-            $rawRecord | ConvertFrom-Json -Depth 12
-        }
+        $record = ConvertFrom-IsolatedReservationJson -RawJson $rawRecord
     } catch {
         throw "Isolated stack reservation record is malformed and cannot be reclaimed: $Path"
     }
