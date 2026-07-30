@@ -347,7 +347,7 @@
       "statement": "No new module or service dependency cycles may be introduced.",
       "severity": "error",
       "enforcement": {
-        "status": "planned",
+        "status": "active",
         "mode": "observed-graph-ratchet",
         "rule": "no-new-dependency-cycles"
       }
