@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai-bim-governance.local/schemas/observed-baseline.schema.json",
+  "title": "AI-BIM approved observed architecture baseline",
+  "description": "Grandfathered dependency edges and cycles. The ratchet allows what is recorded here and fails closed on anything new.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "approved_on",
+    "approved_by",
+    "method",
+    "service_edges",
+    "cycles",
+    "cycle_budgets"
+  ],
+  "definitions": {
+    "debt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "reason", "target_phase"],
+      "properties": {
+        "owner": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "target_phase": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "properties": {
+    "$schema": { "type": "string", "minLength": 1 },
+    "schema_version": { "const": "ai-bim-observed-baseline/v1" },
+    "approved_on": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "approved_by": { "type": "string", "minLength": 1 },
+    "method": { "type": "string", "minLength": 1 },
+    "service_edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["from", "to", "status"],
+        "properties": {
+          "from": { "type": "string", "minLength": 1 },
+          "to": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["declared", "undeclared-edge", "undeclared-node"] },
+          "note": { "type": "string", "minLength": 1 },
+          "debt": { "$ref": "#/definitions/debt" }
+        }
+      }
+    },
+    "cycles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["scope", "members", "debt"],
+        "properties": {
+          "scope": { "type": "string", "minLength": 1 },
+          "members": {
+            "type": "array",
+            "minItems": 2,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "debt": { "$ref": "#/definitions/debt" }
+        }
+      }
+    },
+    "cycle_budgets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["scope", "maximum"],
+        "properties": {
+          "scope": { "type": "string", "minLength": 1 },
+          "maximum": { "type": "integer", "minimum": 0 },
+          "note": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

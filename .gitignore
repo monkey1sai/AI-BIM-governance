@@ -233,6 +233,9 @@ artifacts/spec-to-done-design/
 # AI coding raw telemetry and generated package aggregates are local/hosted artifacts, never source.
 artifacts/telemetry/ai-coding/
 artifacts/metrics/ai-coding/
+# Observed architecture reports are regenerated from source on demand. The approved
+# ratchet baseline (architecture/observed-baseline.json) is the tracked authority.
+artifacts/architecture/
 
 # ----------------------------
 # Session workflow scratch (.workflow/ultracode 執行痕跡,可重生,不入庫)

@@ -83,10 +83,12 @@ Validator 僅用 Python standard library，避免 root contract gate 因 package
 ```text
 desired   = architecture-contract.json
 intended  = architecture/deltas/<change-id>.json
-observed  = implementation + tests + GitNexus + future dependency analyzers
+observed  = implementation + tests + deterministic static dependency scan
 ```
 
-第一版驗證 desired 與 intended。Observed graph diff 是 Phase 2；文件必須明確標示為 planned，不得宣稱已完成。
+第一版驗證 desired 與 intended。Observed graph diff 於 Phase 2 落地。
+
+**Phase 2 更正（2026-07-30）：** 原文把 GitNexus 列為 observed 來源。實測 GitNexus CLI 在本 repo 有 transport 失敗與 stale index（`docs/plans/NOW.md` S4-B closeout 已記錄），不能當 fail-closed gate 的輸入，因此 observed 改由 `scripts/lib/observed_architecture.py` 的純標準函式庫靜態掃描產生，GitNexus 降為 advisory。靜態掃描看不到 runtime 才解析的位址，所以 observed graph 是 **lower bound**，只用來擋新增 edge／cycle，不宣稱窮舉。
 
 ## Decision 4: Reuse canonical root-contract gate
 
@@ -167,7 +169,7 @@ Breaking contract、ownership transfer 或 exception 必須 explicit approval。
 
 ### Risk: Contract drifts from code
 
-Mitigation：Phase 2 導入 GitNexus / dependency analyzer observed graph；在此之前 contract 明確標成 desired architecture，而非 observed truth。
+Mitigation：Phase 2 已導入 deterministic static observed graph 與 baseline ratchet（`architecture/observed-baseline.json`）；contract 仍明確標成 desired architecture，而非 observed truth。已知殘餘：static scan 偵測不到 runtime 才解析的位址。
 
 ### Risk: Agents modify contract to make a bad implementation pass
 
@@ -184,7 +186,7 @@ Mitigation：只接入 `verification-manifest.json` 與 root pytest，不新增 
 ## Rollout
 
 1. Phase 1：desired contract、delta、semantic validator、pytest、manifest dispatch。
-2. Phase 2：GitNexus desired-vs-observed graph report + no-new-edge / no-new-cycle ratchet。
+2. Phase 2（2026-07-30 完成）：deterministic static desired-vs-observed graph report + no-new-edge / no-new-cycle ratchet。GitNexus 改列 advisory，理由見上。
 3. Phase 3：TypeScript dependency-cruiser + Python Import Linter。
 4. Phase 4：review-session / endpoint-lease / stage-binding executable state machines。
 5. Phase 5：將 recurring `$improve-codebase-architecture` findings 編譯成 permanent rules 與 quality grade。

@@ -1,0 +1,127 @@
+{
+  "$schema": "./observed-graph.config.schema.json",
+  "schema_version": "ai-bim-observed-graph-config/v1",
+  "purpose": "Deterministic static-scan configuration for the observed architecture ratchet. It declares how repository directories are mapped onto architecture contract services, which files are in scope, and which ports may be treated as inbound dependency targets.",
+  "extraction_method": "stdlib-static-source-scan",
+  "advisory_only_sources": [
+    {
+      "id": "gitnexus",
+      "reason": "GitNexus is an advisory code-intelligence index. It is not used as a gate input because its CLI has been observed to fail with transport errors and to serve a stale index, which breaks deterministic CI enforcement."
+    }
+  ],
+  "service_roots": [
+    {
+      "id": "bim-review-coordinator",
+      "contract_service": "bim-review-coordinator",
+      "language": "typescript",
+      "roots": ["bim-review-coordinator/src"],
+      "inbound_edge_ports": [8004]
+    },
+    {
+      "id": "bim-streaming-server",
+      "contract_service": "bim-streaming-server",
+      "language": "python",
+      "roots": [
+        "bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging",
+        "bim-streaming-server/source/extensions/ezplus.bim_review_stream.setup"
+      ],
+      "inbound_edge_ports": [49100, 49101, 47998]
+    },
+    {
+      "id": "governance-service",
+      "contract_service": "governance-service",
+      "language": "python",
+      "roots": ["governance-service"],
+      "inbound_edge_ports": [49102]
+    },
+    {
+      "id": "web-viewer-sample",
+      "contract_service": "web-viewer-sample",
+      "language": "typescript",
+      "roots": ["web-viewer-sample/src"],
+      "browser_client": true,
+      "inbound_edge_ports": []
+    },
+    {
+      "id": "kit-manager-api",
+      "contract_service": "kit-manager-api",
+      "language": "python",
+      "roots": ["services/kit-manager-api/app"],
+      "inbound_edge_ports": [8010]
+    },
+    {
+      "id": "kit-manager-web",
+      "contract_service": null,
+      "language": "typescript",
+      "roots": ["apps/kit-manager-web/src"],
+      "browser_client": true,
+      "inbound_edge_ports": []
+    }
+  ],
+  "inbound_edge_port_notes": [
+    "web-viewer-sample and kit-manager-web are browser clients. They expose only a Vite dev-server port, are never called by another service, and therefore declare no inbound edge ports. Without this, every CORS allowlist entry naming the dev-server origin would be misreported as a backend-to-browser dependency edge."
+  ],
+  "edge_suppression_line_patterns": [
+    {
+      "pattern": "(?i)(?<![a-z0-9])(cors|allow(ed)?[_-]?origins?|access[_-]?control[_-]?allow[_-]?origin)(?![a-z0-9])",
+      "reason": "A CORS or allowed-origin declaration names who may call this service inbound. Treating it as an outbound dependency inverts the edge direction and manufactures false cycles, for example KIT_MANAGER_CORS_ORIGINS naming the coordinator origin."
+    },
+    {
+      "pattern": "(?i)(?<![a-z0-9])(referrer|content[_-]?security[_-]?policy|csp)(?![a-z0-9])",
+      "reason": "Browser security headers enumerate origins for policy purposes and are not outbound service calls."
+    }
+  ],
+  "exclude_path_fragments": [
+    "/node_modules/",
+    "/__pycache__/",
+    "/.pytest_cache/",
+    "/.venv/",
+    "/dist/",
+    "/dist-ui/",
+    "/build/",
+    "/_build/",
+    "/_cache/",
+    "/logs/",
+    "/storage/",
+    "/data/",
+    "/coverage/",
+    "/generated/",
+    "/templates/",
+    "/tests/",
+    "/test/",
+    "/e2e/",
+    "/__tests__/",
+    "/__mocks__/",
+    "/fixtures/",
+    "/_fixtures/",
+    "/harness/"
+  ],
+  "exclude_file_suffixes": [
+    ".test.ts",
+    ".test.tsx",
+    ".spec.ts",
+    ".spec.tsx",
+    ".test.js",
+    ".spec.js",
+    ".d.ts",
+    "conftest.py"
+  ],
+  "exclude_file_prefixes": ["test_"],
+  "source_suffixes": {
+    "python": [".py"],
+    "typescript": [".ts", ".tsx"]
+  },
+  "compose_files": ["compose.host-kit.yml", "compose.runtime-manager.yml"],
+  "compose_service_map": [
+    { "compose_service": "coordinator", "service": "bim-review-coordinator" },
+    { "compose_service": "bim-review-coordinator", "service": "bim-review-coordinator" },
+    { "compose_service": "streaming-server", "service": "bim-streaming-server" },
+    { "compose_service": "bim-streaming-server", "service": "bim-streaming-server" },
+    { "compose_service": "governance", "service": "governance-service" },
+    { "compose_service": "governance-service", "service": "governance-service" },
+    { "compose_service": "kit-manager-api", "service": "kit-manager-api" },
+    { "compose_service": "kit-manager-web", "service": "kit-manager-web" },
+    { "compose_service": "web-viewer", "service": "web-viewer-sample" },
+    { "compose_service": "web-viewer-sample", "service": "web-viewer-sample" }
+  ]
+}
