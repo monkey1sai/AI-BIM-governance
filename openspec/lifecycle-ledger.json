@@ -1417,11 +1417,11 @@
       "id": "isolated-branch-stack-browser-e2e",
       "status": "active",
       "owner": "repository-maintainer",
-      "current_slice": "PR #431 evidence subject cb362130d0d51b1d6d1b7e23ccf87343b14286ce；P1 SafeHandle process-handle pinning 與 P5 publication head binding 已通過 source／targeted tests。require-real run p4-final-20260730-115300 在 manifest status/head gate、隔離服務 health 後執行 6 個 Chromium cases；因既有 A4 缺少 downloaded IFC-ready job 而在 UI 前置條件 fail closed，部署區 listeners 前／中／後皆未變。剩餘 2.5／4.3／5.2／5.3／6.5／6.6、最新 CI、trusted merge evidence 與 owner consent。",
+      "current_slice": "PR #431 code subject a6bf2a75b315b17a01c5ac536ee8b0f9540980f2；P1 SafeHandle process-handle pinning、P5 publication head binding 與 CodeRabbit lock-cleanup coverage 已通過。current CI 30513445687（含 design job 90778536788）所有可執行 gates 通過。require-real run p4-final-20260730-115300 在 manifest status/head gate、隔離服務 health 後執行 6 個 Chromium cases；因既有 A4 缺少 downloaded IFC-ready job 而在 UI 前置條件 fail closed，部署區 listeners 前／中／後皆未變。剩餘 2.5／4.3／5.2／5.3、獨立 #433 lifecycle repair、trusted merge evidence 與 owner consent。",
       "blocked_by": [],
-      "last_verified": "2026-07-30T03:58:11Z",
+      "last_verified": "2026-07-30T05:06:52Z",
       "task_ledger": {
-        "completed": 27,
+        "completed": 29,
         "total": 33
       },
       "evidence_refs": [
@@ -1430,7 +1430,7 @@
         "artifacts/e2e/isolated-branch-stack-browser-e2e/p4-final-20260730-115300/consumer-result.json",
         "artifacts/e2e/isolated-branch-stack-browser-e2e/p4-final-20260730-115300/stack-manifest.json"
       ],
-      "subject_commit": "cb362130d0d51b1d6d1b7e23ccf87343b14286ce",
+      "subject_commit": "a6bf2a75b315b17a01c5ac536ee8b0f9540980f2",
       "archive_debt": null
     },
     {
