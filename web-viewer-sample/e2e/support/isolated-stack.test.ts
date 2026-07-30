@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -44,6 +44,7 @@ function fixture() {
   const runDir = path.join(worktreeRoot, "artifacts", "e2e", changeId, runId);
   const manifestPath = path.join(runDir, "stack-manifest.json");
   mkdirSync(runDir, { recursive: true });
+  mkdirSync(path.join(worktreeRoot, "storage"), { recursive: true });
   const manifest = {
     schema_version: "isolated-branch-stack/v1",
     stack_kind: "isolated_branch_stack",
@@ -150,6 +151,8 @@ describe("loadIsolatedStackConfig", () => {
     expect(source).toContain("requireReal");
     expect(source).toContain("watchForbiddenRequests");
     expect(source).toContain('page.goto("/#/federation")');
+    expect(source).toContain('path.join(isolated.readOnlyFixtureRoot, "e2e-a3")');
+    expect(source).not.toMatch(/E2E_A3_USD_DIR|C:\/Repos\/active\/iot\/AI-BIM-governance/);
   });
 
   it("keeps A4 require-real without legacy skip gates", () => {
@@ -211,6 +214,7 @@ describe("loadIsolatedStackConfig", () => {
     expect(config).not.toBeNull();
     expect(config?.coordinatorBaseUrl).toBe("http://127.0.0.1:8005");
     expect(config?.viewerPort).toBe(5180);
+    expect(config?.readOnlyFixtureRoot).toBe(realpathSync(path.join(value.worktreeRoot, "storage")));
   });
 
   it("accepts alternate Windows drive casing for the same worktree and manifest", () => {
@@ -240,6 +244,8 @@ describe("loadIsolatedStackConfig", () => {
     ["lifecycle ownership", (value: ReturnType<typeof fixture>) => ({ ...value.manifest, lifecycle_owners: { ...value.manifest.lifecycle_owners, viewer: "launcher" } }), /lifecycle ownership/],
     ["viewer authority", (value: ReturnType<typeof fixture>) => ({ ...value.manifest, viewer: { ...value.manifest.viewer, managed_by_launcher: true } }), /viewer authority/],
     ["base URL mismatch", (value: ReturnType<typeof fixture>) => ({ ...value.manifest, base_urls: { ...value.manifest.base_urls, coordinator: "http://127.0.0.1:8006" } }), /base URL.*ports/],
+    ["relative fixture root", (value: ReturnType<typeof fixture>) => ({ ...value.manifest, read_only_fixture_root: "storage" }), /fixture root must be absolute/],
+    ["fixture root identity", (value: ReturnType<typeof fixture>) => ({ ...value.manifest, read_only_fixture_root: path.join(value.worktreeRoot, "artifacts") }), /fixture root identity mismatch/],
   ])("rejects %s", (_label, mutate, expected) => {
     const value = fixture();
     writeFileSync(value.manifestPath, JSON.stringify(mutate(value)));
@@ -809,6 +815,80 @@ describe("loadIsolatedStackConfig", () => {
     const finishSetup = beginIsolatedEvidenceInvocation(config, NEXT_EVIDENCE_GENERATION, unitEvidenceLockIdentityLookup);
     expect(existsSync(reclaimClaimPath)).toBe(false);
     finishSetup(true);
+  });
+
+  it("recovers an identity-proven abandoned reclaim claim after its canonical lock is gone", () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
+    const lockPath = path.join(config.runDir, "evidence-manifest.lock.json");
+    const reclaimClaimPath = `${lockPath}.reclaim-${STALE_LOCK_ID}.json`;
+    writeFileSync(reclaimClaimPath, `${JSON.stringify({
+      schema_version: "isolated-branch-evidence-writer-reclaim/v1",
+      stale_lock_id: STALE_LOCK_ID,
+      claimant_pid: 999_999,
+      claimant_creation_identity: "abandoned-claimant-identity",
+      created_at: "2026-07-30T00:00:00.000Z",
+    }, null, 2)}\n`);
+
+    const finishSetup = beginIsolatedEvidenceInvocation(config, NEXT_EVIDENCE_GENERATION, unitEvidenceLockIdentityLookup);
+    expect(existsSync(reclaimClaimPath)).toBe(false);
+    expect(existsSync(lockPath)).toBe(true);
+    finishSetup(true);
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
+  it("retains an abandoned claim when its same-id canonical lock makes recovery ambiguous", () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
+    const lockPath = path.join(config.runDir, "evidence-manifest.lock.json");
+    const reclaimClaimPath = `${lockPath}.reclaim-${STALE_LOCK_ID}.json`;
+    const staleLockBytes = `${JSON.stringify({
+      schema_version: "isolated-branch-evidence-writer-lock/v1",
+      lock_id: STALE_LOCK_ID,
+      owner_pid: 888_888,
+      owner_creation_identity: "abandoned-lock-owner",
+      created_at: "2026-07-30T00:00:00.000Z",
+    }, null, 2)}\n`;
+    const abandonedClaimBytes = `${JSON.stringify({
+      schema_version: "isolated-branch-evidence-writer-reclaim/v1",
+      stale_lock_id: STALE_LOCK_ID,
+      claimant_pid: 999_999,
+      claimant_creation_identity: "abandoned-claimant-identity",
+      created_at: "2026-07-30T00:00:01.000Z",
+    }, null, 2)}\n`;
+    writeFileSync(lockPath, staleLockBytes);
+    writeFileSync(reclaimClaimPath, abandonedClaimBytes);
+
+    expect(() => beginIsolatedEvidenceInvocation(config, NEXT_EVIDENCE_GENERATION, unitEvidenceLockIdentityLookup)).toThrow(/requires manual cleanup/);
+    expect(readFileSync(lockPath, "utf8")).toBe(staleLockBytes);
+    expect(readFileSync(reclaimClaimPath, "utf8")).toBe(abandonedClaimBytes);
+  });
+
+  it("fails closed on malformed or unobservable reclaim claims", () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
+    const lockPath = path.join(config.runDir, "evidence-manifest.lock.json");
+    const reclaimClaimPath = `${lockPath}.reclaim-${STALE_LOCK_ID}.json`;
+    const malformedClaimBytes = "{}\n";
+    writeFileSync(reclaimClaimPath, malformedClaimBytes);
+    expect(() => beginIsolatedEvidenceInvocation(config, NEXT_EVIDENCE_GENERATION, unitEvidenceLockIdentityLookup)).toThrow(/claim is malformed/);
+    expect(readFileSync(reclaimClaimPath, "utf8")).toBe(malformedClaimBytes);
+
+    unlinkSync(reclaimClaimPath);
+    const unobservableClaimBytes = `${JSON.stringify({
+      schema_version: "isolated-branch-evidence-writer-reclaim/v1",
+      stale_lock_id: STALE_LOCK_ID,
+      claimant_pid: 777_777,
+      claimant_creation_identity: "unobservable-claimant-identity",
+      created_at: "2026-07-30T00:00:00.000Z",
+    }, null, 2)}\n`;
+    writeFileSync(reclaimClaimPath, unobservableClaimBytes);
+    const unavailableLookup = (processId: number) => {
+      if (processId === process.pid) return UNIT_EVIDENCE_LOCK_IDENTITY;
+      throw new Error("injected claimant provider failure");
+    };
+    expect(() => beginIsolatedEvidenceInvocation(config, NEXT_EVIDENCE_GENERATION, unavailableLookup)).toThrow(/claimant lookup failed/);
+    expect(readFileSync(reclaimClaimPath, "utf8")).toBe(unobservableClaimBytes);
   });
 
   it("fails closed when stale-lock owner identity cannot be observed", async () => {

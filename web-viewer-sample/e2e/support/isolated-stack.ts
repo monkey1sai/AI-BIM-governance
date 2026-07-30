@@ -89,6 +89,7 @@ export type IsolatedBackendProcessSnapshot = {
 export type IsolatedStackConfig = {
   manifestPath: string;
   runDir: string;
+  readOnlyFixtureRoot: string;
   coordinatorBaseUrl: string;
   governanceBaseUrl: string;
   viewerPort: number;
@@ -275,6 +276,23 @@ export function loadIsolatedStackConfig(options: {
   if (manifest.schema_version !== "isolated-branch-stack/v1" || manifest.stack_kind !== "isolated_branch_stack") {
     throw new Error("unsupported isolated stack manifest");
   }
+  if (typeof manifest.read_only_fixture_root !== "string" || !path.isAbsolute(manifest.read_only_fixture_root)) {
+    throw new Error("manifest read-only fixture root must be absolute");
+  }
+  let readOnlyFixtureRoot: string;
+  let expectedFixtureRoot: string;
+  try {
+    readOnlyFixtureRoot = realpathSync(manifest.read_only_fixture_root);
+    expectedFixtureRoot = realpathSync(path.join(worktreeRoot, "storage"));
+  } catch {
+    throw new Error("manifest read-only fixture root must exist");
+  }
+  if (
+    !statSync(readOnlyFixtureRoot).isDirectory() ||
+    comparablePath(readOnlyFixtureRoot) !== comparablePath(expectedFixtureRoot)
+  ) {
+    throw new Error("manifest read-only fixture root identity mismatch");
+  }
   if (manifest.backend_ready.governance !== true || manifest.backend_ready.coordinator !== true) {
     throw new Error("isolated backends are not ready");
   }
@@ -345,6 +363,7 @@ export function loadIsolatedStackConfig(options: {
   return {
     manifestPath,
     runDir: path.dirname(manifestPath),
+    readOnlyFixtureRoot,
     coordinatorBaseUrl,
     governanceBaseUrl: expectedBaseUrls.governance,
     viewerPort,
@@ -620,11 +639,98 @@ function parseIsolatedEvidenceWriterLock(raw: string, lockPath: string): Isolate
   return record as IsolatedEvidenceWriterLockRecord;
 }
 
+function parseIsolatedEvidenceWriterReclaimClaim(
+  raw: string,
+  claimPath: string,
+  lockPath: string,
+): IsolatedEvidenceWriterReclaimClaim {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw new Error(`evidence writer stale-reclaim claim is malformed: ${claimPath}`);
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`evidence writer stale-reclaim claim is malformed: ${claimPath}`);
+  }
+  const record = value as Partial<IsolatedEvidenceWriterReclaimClaim>;
+  const keys = Object.keys(record).sort();
+  const expectedKeys = ["claimant_creation_identity", "claimant_pid", "created_at", "schema_version", "stale_lock_id"];
+  const createdAt = typeof record.created_at === "string" ? new Date(record.created_at) : null;
+  const expectedClaimPath = typeof record.stale_lock_id === "string"
+    ? `${lockPath}.reclaim-${record.stale_lock_id}.json`
+    : "";
+  if (
+    keys.join("|") !== expectedKeys.join("|") ||
+    record.schema_version !== "isolated-branch-evidence-writer-reclaim/v1" ||
+    typeof record.stale_lock_id !== "string" || !EVIDENCE_GENERATION_PATTERN.test(record.stale_lock_id) ||
+    !Number.isSafeInteger(record.claimant_pid) || record.claimant_pid! <= 0 ||
+    typeof record.claimant_creation_identity !== "string" || !record.claimant_creation_identity || record.claimant_creation_identity.length > 512 ||
+    !createdAt || !Number.isFinite(createdAt.getTime()) || createdAt.toISOString() !== record.created_at ||
+    comparablePath(claimPath) !== comparablePath(expectedClaimPath)
+  ) {
+    throw new Error(`evidence writer stale-reclaim claim is malformed: ${claimPath}`);
+  }
+  return record as IsolatedEvidenceWriterReclaimClaim;
+}
+
 function listIsolatedEvidenceWriterReclaimClaims(lockPath: string): string[] {
   const prefix = `${path.basename(lockPath)}.reclaim-`;
   return readdirSync(path.dirname(lockPath))
     .filter(entry => entry.startsWith(prefix))
     .map(entry => path.join(path.dirname(lockPath), entry));
+}
+
+function clearUnambiguousAbandonedEvidenceWriterReclaimClaims(
+  lockPath: string,
+  identityLookup: IsolatedEvidenceLockIdentityLookup,
+  allowStaleReclaim: boolean,
+  ownedReclaimClaimPath?: string,
+  canonicalLockIdOverride?: string,
+): void {
+  const foreignClaims = listIsolatedEvidenceWriterReclaimClaims(lockPath)
+    .filter(claimPath => claimPath !== ownedReclaimClaimPath);
+  for (const claimPath of foreignClaims) {
+    const claimBytes = readFileSync(claimPath, "utf8");
+    const claim = parseIsolatedEvidenceWriterReclaimClaim(claimBytes, claimPath, lockPath);
+    if (!allowStaleReclaim) {
+      throw new Error(`evidence writer stale-reclaim claim exists: ${claimPath}`);
+    }
+    let liveIdentity: string | null;
+    try {
+      liveIdentity = identityLookup(claim.claimant_pid);
+    } catch (lookupError) {
+      throw new Error(`evidence writer stale-reclaim claimant lookup failed: ${(lookupError as Error).message}`);
+    }
+    if (liveIdentity === claim.claimant_creation_identity) {
+      throw new Error(`evidence writer stale-reclaim claim exists: ${claimPath}`);
+    }
+
+    // A claim whose original canonical lock is still present is ambiguous: a
+    // second setup could otherwise delete a successor claim during handoff.
+    // Recovery is automatic only when the canonical lock is absent or has a
+    // different validated lock id, which makes this claim path obsolete.
+    const canonicalLockMatchesClaim = () => {
+      if (canonicalLockIdOverride) return canonicalLockIdOverride === claim.stale_lock_id;
+      if (!existsSync(lockPath)) return false;
+      const canonical = parseIsolatedEvidenceWriterLock(readFileSync(lockPath, "utf8"), lockPath);
+      return canonical.lock_id === claim.stale_lock_id;
+    };
+    if (canonicalLockMatchesClaim()) {
+      throw new Error(`evidence writer stale-reclaim claim requires manual cleanup while its canonical lock remains: ${claimPath}`);
+    }
+    if (readFileSync(claimPath, "utf8") !== claimBytes) {
+      throw new Error("evidence writer stale-reclaim claim changed during abandoned-claim verification");
+    }
+    if (canonicalLockMatchesClaim()) {
+      throw new Error(`evidence writer stale-reclaim claim requires manual cleanup while its canonical lock remains: ${claimPath}`);
+    }
+    try {
+      unlinkSync(claimPath);
+    } catch (unlinkError) {
+      if ((unlinkError as NodeJS.ErrnoException).code !== "ENOENT") throw unlinkError;
+    }
+  }
 }
 
 function acquireIsolatedEvidenceWriterLock(
@@ -650,19 +756,26 @@ function acquireIsolatedEvidenceWriterLock(
   for (let attempt = 0; attempt < 25; attempt += 1) {
     let descriptor: number | undefined;
     try {
-      const foreignClaims = listIsolatedEvidenceWriterReclaimClaims(lockPath)
-        .filter(claimPath => claimPath !== ownedReclaimClaimPath);
-      if (foreignClaims.length > 0) {
-        throw new Error(`evidence writer stale-reclaim claim exists: ${foreignClaims[0]}`);
-      }
+      clearUnambiguousAbandonedEvidenceWriterReclaimClaims(
+        lockPath,
+        identityLookup,
+        allowStaleReclaim,
+        ownedReclaimClaimPath,
+      );
       descriptor = openSync(lockPath, "wx");
-      const claimsAfterOpen = listIsolatedEvidenceWriterReclaimClaims(lockPath)
-        .filter(claimPath => claimPath !== ownedReclaimClaimPath);
-      if (claimsAfterOpen.length > 0) {
+      try {
+        clearUnambiguousAbandonedEvidenceWriterReclaimClaims(
+          lockPath,
+          identityLookup,
+          allowStaleReclaim,
+          ownedReclaimClaimPath,
+          lockId,
+        );
+      } catch (claimError) {
         closeSync(descriptor);
         descriptor = undefined;
         unlinkSync(lockPath);
-        throw new Error(`evidence writer stale-reclaim claim exists: ${claimsAfterOpen[0]}`);
+        throw claimError;
       }
       writeFileSync(descriptor, serialized, { encoding: "utf8" });
       fsyncSync(descriptor);

@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
+import path from "node:path";
 import { expect, test, type APIRequestContext, type Locator } from "@playwright/test";
 import {
   classifyHarnessUse,
@@ -13,12 +14,24 @@ import {
 // fixtures 建 federated set、驗證、build、review-room，最後建立 Review Session。
 const isolated = loadIsolatedStackConfig();
 const COORDINATOR = isolated?.coordinatorBaseUrl ?? "";
-const A3_USD_DIR = process.env.E2E_A3_USD_DIR || "C:/Repos/active/iot/AI-BIM-governance/storage/e2e-a3";
-const ARCH_USD = `${A3_USD_DIR}/arch.usdc`;
-const STR_USD = `${A3_USD_DIR}/str.usdc`;
+const A3_USD_DIR = isolated ? path.join(isolated.readOnlyFixtureRoot, "e2e-a3") : "";
+const ARCH_USD = path.join(A3_USD_DIR, "arch.usdc");
+const STR_USD = path.join(A3_USD_DIR, "str.usdc");
 
 // member usd_path input 的 zh placeholder（pages.tsx:1560；fresh context 無 localStorage → i18n 預設 zh）。
 const USD_PLACEHOLDER = "member .usd / .usdc 路徑（conversion 產出）";
+
+function requireContainedRegularFixture(candidate: string, label: string): void {
+  requireReal(existsSync(candidate), `A3 ${label} USD fixture is required and must exist`);
+  const physicalRoot = realpathSync(isolated!.readOnlyFixtureRoot);
+  const physicalCandidate = realpathSync(candidate);
+  const relative = path.relative(physicalRoot, physicalCandidate);
+  requireReal(
+    relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative),
+    `A3 ${label} USD fixture must stay inside the manifest read-only fixture root`,
+  );
+  requireReal(statSync(physicalCandidate).isFile(), `A3 ${label} USD fixture must be a regular file`);
+}
 
 async function cleanupCreatedSession(request: APIRequestContext, sessionId: string): Promise<void> {
   try {
@@ -56,8 +69,8 @@ test.describe("A3 federation→session 一鍵鏈（#/federation 真 backend 全�
     tracePath = testInfo.outputPath("a3-federated-session-chain-trace.zip");
     await page.context().tracing.start({ screenshots: true, snapshots: true, sources: true });
     traceActive = true;
-    requireReal(ARCH_USD && existsSync(ARCH_USD), "A3 ARCH USD fixture is required and must exist");
-    requireReal(STR_USD && existsSync(STR_USD), "A3 STR USD fixture is required and must exist");
+    requireContainedRegularFixture(ARCH_USD, "ARCH");
+    requireContainedRegularFixture(STR_USD, "STR");
 
     const health = await request.get(`${COORDINATOR}/health`, { timeout: 10_000 });
     requireReal(health.ok(), `isolated coordinator health failed: HTTP ${health.status()}`);

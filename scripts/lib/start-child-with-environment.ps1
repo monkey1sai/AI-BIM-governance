@@ -25,6 +25,15 @@ if (-not ($childArguments -ccontains $EntrypointMarker)) {
     throw 'Isolated child payload is not bound to the expected entrypoint.'
 }
 
+$payloadEnvironment = @{}
+foreach ($entry in $payload.environment.GetEnumerator()) {
+    $name = [string]$entry.Key
+    if ([string]::IsNullOrWhiteSpace($name) -or $name.Contains('=')) {
+        throw 'Isolated child environment contains an invalid variable name.'
+    }
+    $payloadEnvironment[$name] = [string]$entry.Value
+}
+
 $expectedPortMarker = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($ExpectedPortMarkerBase64))
 $rolePortMarker = if ($Role -eq 'governance') { '--port' } else { '--isolated-stack-port' }
 $forbiddenPortMarker = if ($Role -eq 'governance') { '--isolated-stack-port' } else { '--port' }
@@ -43,12 +52,24 @@ if ($expectedPortMarker -cne $rolePortMarker -or
     throw 'Isolated child payload is not bound to the expected backend port.'
 }
 
-foreach ($entry in $payload.environment.GetEnumerator()) {
-    $name = [string]$entry.Key
-    if ([string]::IsNullOrWhiteSpace($name) -or $name.Contains('=')) {
-        throw 'Isolated child environment contains an invalid variable name.'
+# The wrapper may itself have been launched from a deployment shell. Retain only
+# host values needed to execute a local process; every runtime setting must be
+# supplied explicitly by the isolated-stack payload.
+$hostExecutionAllowlist = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+@(
+    'SystemRoot', 'WINDIR', 'ComSpec', 'SystemDrive', 'OS',
+    'PATH', 'PATHEXT', 'TEMP', 'TMP', 'TMPDIR'
+) | ForEach-Object { [void]$hostExecutionAllowlist.Add($_) }
+foreach ($name in $payloadEnvironment.Keys) {
+    [void]$hostExecutionAllowlist.Add([string]$name)
+}
+foreach ($name in @([Environment]::GetEnvironmentVariables('Process').Keys)) {
+    if (-not $hostExecutionAllowlist.Contains([string]$name)) {
+        [Environment]::SetEnvironmentVariable([string]$name, $null, 'Process')
     }
-    [Environment]::SetEnvironmentVariable($name, [string]$entry.Value, 'Process')
+}
+foreach ($entry in $payloadEnvironment.GetEnumerator()) {
+    [Environment]::SetEnvironmentVariable([string]$entry.Key, [string]$entry.Value, 'Process')
 }
 
 & $Executable @childArguments

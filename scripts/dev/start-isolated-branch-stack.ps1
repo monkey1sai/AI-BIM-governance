@@ -846,7 +846,7 @@ function Start-IsolatedBackend {
             )
             $pwsh = (Get-Command pwsh -CommandType Application -ErrorAction Stop).Source
             Start-Process -FilePath $pwsh -ArgumentList (ConvertTo-IsolatedWindowsArgumentLine -Arguments $wrapperArguments) -WorkingDirectory $cwd `
-              -WindowStyle Hidden -PassThru `
+              -UseNewEnvironment -WindowStyle Hidden -PassThru `
               -RedirectStandardOutput $stdout -RedirectStandardError $stderr
         },
         [scriptblock] $IdentityLookup = { param($processId,$entry) Get-IsolatedProcessIdentity -ProcessId $processId -Entrypoint $entry },

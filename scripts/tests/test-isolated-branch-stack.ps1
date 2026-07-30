@@ -365,18 +365,32 @@ $realIdentity = $null
 $childEnvironmentKey = "AI_BIM_ISOLATED_CHILD_$([Guid]::NewGuid().ToString('N'))"
 $childEnvironmentValue = 'child-scoped-value'
 $parentEnvironmentValue = 'deployment-value'
+$deploymentSentinelKey = "AI_BIM_DEPLOYMENT_SENTINEL_$([Guid]::NewGuid().ToString('N'))"
+$inheritedRuntimeEnvironment = [ordered]@{
+    NoDe_EnV = 'production'
+    USER_AUTH_PROVIDER = 'deployment-sso'
+    KIT_MANAGER_API_BASE = 'https://deployment-kit.invalid'
+    CLOUD_CALLBACK_BASE_URL = 'https://deployment-cloud.invalid'
+    A4_INTERNAL_CONTEXT_TOKEN = 'deployment-only-sentinel'
+    $deploymentSentinelKey = 'deployment-random-sentinel'
+}
+$inheritedRuntimeEnvironmentBackup = @{}
 $childEnvironmentPath = Join-Path $realProcessSandbox 'child-environment.txt'
 $realGovernanceEntrypoint = [IO.Path]::GetFullPath((Join-Path $repoRoot 'governance-service'))
 $realCoordinatorEntrypoint = [IO.Path]::GetFullPath((Join-Path $repoRoot 'bim-review-coordinator\src\index.ts'))
 $failureCleanupHandles = [System.Collections.Generic.List[object]]::new()
 $bodyFailure = $null
 [Environment]::SetEnvironmentVariable($childEnvironmentKey, $parentEnvironmentValue, 'Process')
+foreach ($entry in $inheritedRuntimeEnvironment.GetEnumerator()) {
+    $inheritedRuntimeEnvironmentBackup[[string]$entry.Key] = [Environment]::GetEnvironmentVariable([string]$entry.Key, 'Process')
+    [Environment]::SetEnvironmentVariable([string]$entry.Key, [string]$entry.Value, 'Process')
+}
 try {
     $capturedFailure = $null
     try {
         $realIdentity = Start-IsolatedBackend -Role 'governance' -WorkingDirectory $repoRoot `
             -Executable (Get-Command pwsh -CommandType Application -ErrorAction Stop).Source `
-            -Arguments @('-NoProfile', '-NonInteractive', '-Command', "[IO.File]::WriteAllText('$childEnvironmentPath', [string]`$env:$childEnvironmentKey); Start-Sleep -Seconds 30", $realGovernanceEntrypoint, '--port', '49103') `
+            -Arguments @('-NoProfile', '-NonInteractive', '-Command', "`$pathState = if ([string]::IsNullOrWhiteSpace([string]`$env:PATH)) { 'missing' } else { 'present' }; [IO.File]::WriteAllText('$childEnvironmentPath', ((@([string]`$env:$childEnvironmentKey, [string]`$env:NoDe_EnV, [string]`$env:USER_AUTH_PROVIDER, [string]`$env:KIT_MANAGER_API_BASE, [string]`$env:CLOUD_CALLBACK_BASE_URL, [string]`$env:A4_INTERNAL_CONTEXT_TOKEN, [string]`$env:$deploymentSentinelKey) -join '|') + '|path=' + `$pathState)); Start-Sleep -Seconds 30", $realGovernanceEntrypoint, '--port', '49103') `
             -Environment @{ $childEnvironmentKey=$childEnvironmentValue; GOV_PORT='49103' } -RunDirectory $realProcessSandbox -Entrypoint $realGovernanceEntrypoint `
             -StopSpawnedProcessFn {
                 param($spawnedProcess)
@@ -405,8 +419,11 @@ try {
     while (-not (Test-Path -LiteralPath $childEnvironmentPath -PathType Leaf) -and [DateTime]::UtcNow -lt $childEnvironmentDeadline) {
         Start-Sleep -Milliseconds 50
     }
-    Assert-Equal $childEnvironmentValue (Get-Content -Raw -LiteralPath $childEnvironmentPath) 'portable wrapper injects the requested environment into the child process'
+    Assert-Equal "$childEnvironmentValue|||||||path=present" (Get-Content -Raw -LiteralPath $childEnvironmentPath) 'portable wrapper preserves payload and OS execution values without inheriting deployment runtime configuration'
     Assert-Equal $parentEnvironmentValue ([Environment]::GetEnvironmentVariable($childEnvironmentKey, 'Process')) 'portable wrapper preserves the inherited deployment value in the parent PowerShell process'
+    foreach ($entry in $inheritedRuntimeEnvironment.GetEnumerator()) {
+        Assert-Equal ([string]$entry.Value) ([Environment]::GetEnvironmentVariable([string]$entry.Key, 'Process')) "portable wrapper does not mutate parent environment $($entry.Key)"
+    }
     $wrapperManifest = [pscustomobject]@{
         schema_version='isolated-branch-stack/v1';stack_kind='isolated_branch_stack';change_id='change-wrapper';run_id='run-wrapper'
         worktree_root=$repoRoot;offset=0
@@ -438,6 +455,9 @@ finally {
         if ($null -eq $bodyFailure) { throw }
     } finally {
         [Environment]::SetEnvironmentVariable($childEnvironmentKey, $null, 'Process')
+        foreach ($entry in $inheritedRuntimeEnvironmentBackup.GetEnumerator()) {
+            [Environment]::SetEnvironmentVariable([string]$entry.Key, $entry.Value, 'Process')
+        }
         Remove-TestSandbox -Path $realProcessSandbox
     }
 }
