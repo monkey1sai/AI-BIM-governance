@@ -227,7 +227,7 @@ export function changedPathsSince(repoRoot, subjectCommit, cache, rawBudget) {
   return paths;
 }
 
-function collectSourceObservations(repoRoot, ledger) {
+export function collectSourceObservations(repoRoot, ledger) {
   if (!ledger || !Array.isArray(ledger.changes) || ledger.changes.length > 500) {
     throw new MachineTruthInputError('source_observation_invalid', 'ledger.changes', 'Lifecycle rows are invalid for source observation.');
   }

@@ -77,7 +77,7 @@ test('CLI without arguments fails closed with one machine-readable envelope', ()
 });
 
 function makeRepository() {
-  const trustRoot = process.env.AI_BIM_TEST_TRUST_ROOT || path.dirname(process.cwd());
+  const trustRoot = process.env.AI_BIM_TEST_TRUST_ROOT || path.join(process.cwd(), 'artifacts', 'tmp', 'machine-truth-fixtures');
   mkdirSync(trustRoot, { recursive: true });
   const root = mkdtempSync(path.join(trustRoot, 'machine-truth-cli-'));
   write(path.join(root, 'openspec/changes/archive/.keep'), '');

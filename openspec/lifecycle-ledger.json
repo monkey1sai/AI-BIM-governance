@@ -202,7 +202,7 @@
         "openspec/changes/a4-console-convergence/proposal.md",
         "openspec/changes/a4-console-convergence/tasks.md"
       ],
-      "subject_commit": "04e49f542508f76d23a0c6f39191788a05096b6c",
+      "subject_commit": "57aa968c1b2d5e21213d872732f27392d20da8fc",
       "archive_debt": null
     },
     {
@@ -222,7 +222,7 @@
         "openspec/changes/a4-semantic-search-model-qa/proposal.md",
         "openspec/changes/a4-semantic-search-model-qa/tasks.md"
       ],
-      "subject_commit": "04e49f542508f76d23a0c6f39191788a05096b6c",
+      "subject_commit": "57aa968c1b2d5e21213d872732f27392d20da8fc",
       "archive_debt": null
     },
     {
@@ -1428,7 +1428,7 @@
         "openspec/changes/isolated-branch-stack-browser-e2e/proposal.md",
         "openspec/changes/isolated-branch-stack-browser-e2e/tasks.md"
       ],
-      "subject_commit": "13033cb4331642f6b04dd3ab39f2c6e32787d939",
+      "subject_commit": "deb5af552022c3ee171e3174f59c9f1e3dfb5936",
       "archive_debt": null
     },
     {
@@ -1518,7 +1518,7 @@
         "openspec/changes/archive/2026-07-29-minio-folderview-and-baseline-disclosure/proposal.md",
         "openspec/changes/archive/2026-07-29-minio-folderview-and-baseline-disclosure/tasks.md"
       ],
-      "subject_commit": "fe385d1597679387070c8064f4769eb2597270e0",
+      "subject_commit": "54c55177dd2d8d999461e2928df029815202c956",
       "archive_debt": null
     },
     {

@@ -1,14 +1,21 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { collectSourceObservations } from './verify-openspec-machine-truth.mjs';
 import {
   MachineTruthInputError,
   evaluateOpenSpecMachineTruth,
 } from '../lib/openspec-machine-truth.mjs';
 
 const SUBJECT = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const RECONCILED_SOURCE_IDS = [
+  'a4-console-convergence',
+  'a4-semantic-search-model-qa',
+  'isolated-branch-stack-browser-e2e',
+  'minio-folderview-and-baseline-disclosure',
+];
 
 function write(filePath, value) {
   mkdirSync(path.dirname(filePath), { recursive: true });
@@ -190,6 +197,15 @@ test('row source observations permit historical snapshots and attribute drift on
     assert.ok(drifted.mismatches.some(({ change_id: id, reason }) => id === 'alpha' && reason === 'source_changed_since_subject'));
     assert.ok(!drifted.mismatches.some(({ change_id: id, reason }) => id === 'beta' && reason === 'source_changed_since_subject'));
   }, [alpha, beta]);
+});
+
+test('current ledger keeps reconciled source snapshots clean', () => {
+  const ledger = JSON.parse(readFileSync(path.join(process.cwd(), 'openspec/lifecycle-ledger.json'), 'utf8'));
+  const observed = collectSourceObservations(process.cwd(), ledger).sourceObservations
+    .filter(({ change_id: id }) => RECONCILED_SOURCE_IDS.includes(id));
+
+  assert.deepEqual(observed.map(({ change_id: id }) => id), RECONCILED_SOURCE_IDS);
+  assert.deepEqual(observed.map(({ changed_paths: paths }) => paths), [[], [], [], []]);
 });
 
 test('row source observations fail closed on missing, duplicate, or mismatched identity', () => {
