@@ -85,7 +85,7 @@ Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unch
 - [x] lineage / align-frontend / structured-log 保留 `Status: deferred`、frozen/non-owner，不計 active WIP；minio-folderview 已在 2026-07-29 closeout 後 archive
 - [x] #364 merge + `governance-throughput-budget` archive（OQ-3 出場）
 - [x] 本週 WIP focus 只保留 **A4 + migrate-console**；`implement-runtime-command-authority-and-rejection` 與 `add-single-gpu-session-ai-review-mvp` 的 retain/defer 另案裁決，不在本次 archive 範圍
-- [ ] 過期 worktree 刪到 ≤5（人工／下一切可選）
+- [ ] 過期 worktree 刪到 ≤5（人工／下一切可選） — **2026-07-30 report-only 盤點（未執行刪除）**：主 repo 共 21 個 worktree。in-use 6＝main checkout（PR #436）＋ PR #431／#432／#433／#434 各一 ＋ deployment checkout `D:/Users/deploy/AI-bim-geo`。expired 且 clean 12（6 個 `.codex/worktrees/*` detached、`pr428`、`codex+openspec+isolated-branch-stack-browser-e2e`、`a4-semantic-search-model-qa-main-convergence`、`pr-422-a4-baseline-reapproval`、`pr-422-session-first-contract`、`spec-to-done-cost-guardrails`），可安全移除（只刪 worktree 不刪 branch；軌 2 收斂來源 `codex/openspec/a4-semantic-search-model-qa-convergence` 已保全於 origin）。expired 但 **dirty** 3＝`ci-boundary-guards`（23 檔）、`.worktrees/cross-service-structured-log-baseline`（8 檔）、`.worktrees/pr-422-risk-loop-validation`（8 檔），含未提交工作，未經人工逐一裁決不得刪。清完 12 個 clean 後剩 9；deployment checkout 與 3 個 dirty 不列入「過期 worktree」，故實質門檻為 expired-clean ≤0／in-use ≤6。刪除屬 destructive，維持人工執行，本項保持 unchecked。盤點方式：`git worktree list --porcelain` ＋ 逐一 `git -C <path> status --porcelain`。
 
 ---
 
