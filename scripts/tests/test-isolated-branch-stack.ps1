@@ -160,6 +160,55 @@ foreach ($field in @('pid','entrypoint','command_line','creation_identity')) {
     Assert-True (-not (Test-IsolatedProcessOwnership -Expected $expected -Actual $changed)) "$field mismatch rejected"
 }
 
+$listenerEntrypoint = 'C:\repo\bim-review-coordinator\src\index.ts'
+$listenerExpected = [pscustomobject]@{
+    role='coordinator';pid=4202;entrypoint=$listenerEntrypoint
+    command_line="node tsx.mjs $listenerEntrypoint --isolated-stack-port 8005"
+    creation_identity='2026-07-30T10:00:00Z'
+}
+$listenerLineage = @{
+    4302 = [pscustomobject]@{
+        ProcessId=4302;ParentProcessId=4202
+        CommandLine="node --import tsx $listenerEntrypoint --isolated-stack-port 8005"
+        CreationDate='2026-07-30T10:00:01Z'
+    }
+    4202 = [pscustomobject]@{
+        ProcessId=4202;ParentProcessId=1
+        CommandLine=$listenerExpected.command_line
+        CreationDate=$listenerExpected.creation_identity
+    }
+}
+$listenerLineageLookup = { param($processId) $script:listenerLineage[[int]$processId] }
+Assert-True (Test-IsolatedListenerProcessOwnership -Expected $listenerExpected -ListenerProcessId 4302 -Port 8005 `
+    -ProcessLookup $listenerLineageLookup) 'listener descendant with canonical command, port, ancestry, and creation chronology is owned'
+$wrongListenerCommandLine = @{}
+foreach ($key in $listenerLineage.Keys) { $wrongListenerCommandLine[$key] = $listenerLineage[$key].PSObject.Copy() }
+$wrongListenerCommandLine[4302].CommandLine = 'node unrelated.js --isolated-stack-port 8005'
+Assert-True (-not (Test-IsolatedListenerProcessOwnership -Expected $listenerExpected -ListenerProcessId 4302 -Port 8005 `
+    -ProcessLookup { param($processId) $script:wrongListenerCommandLine[[int]$processId] })) 'descendant listener without canonical entrypoint is rejected'
+$reusedAncestorLineage = @{}
+foreach ($key in $listenerLineage.Keys) { $reusedAncestorLineage[$key] = $listenerLineage[$key].PSObject.Copy() }
+$reusedAncestorLineage[4202].CreationDate = '2026-07-30T10:00:02Z'
+Assert-True (-not (Test-IsolatedListenerProcessOwnership -Expected $listenerExpected -ListenerProcessId 4302 -Port 8005 `
+    -ProcessLookup { param($processId) $script:reusedAncestorLineage[[int]$processId] })) 'listener ancestry rejects a reused manifest root PID'
+$reusedIntermediateLineage = @{
+    4303 = [pscustomobject]@{
+        ProcessId=4303;ParentProcessId=4250
+        CommandLine="node --import tsx $listenerEntrypoint --isolated-stack-port 8005"
+        CreationDate='2026-07-30T10:00:01Z'
+    }
+    4250 = [pscustomobject]@{
+        ProcessId=4250;ParentProcessId=4202
+        CommandLine='node intermediate.js'
+        CreationDate='2026-07-30T10:00:02Z'
+    }
+    4202 = $listenerLineage[4202]
+}
+Assert-True (-not (Test-IsolatedListenerProcessOwnership -Expected $listenerExpected -ListenerProcessId 4303 -Port 8005 `
+    -ProcessLookup { param($processId) $script:reusedIntermediateLineage[[int]$processId] })) 'listener ancestry rejects an intermediate parent created later than its child'
+Assert-True (-not (Test-IsolatedListenerProcessOwnership -Expected $listenerExpected -ListenerProcessId 9999 -Port 8005 `
+    -ProcessLookup { param($processId) [pscustomobject]@{ProcessId=$processId;ParentProcessId=0;CommandLine="node $listenerEntrypoint --isolated-stack-port 8005";CreationDate='2026-07-30T10:00:01Z'} })) 'unrelated listener with a matching command line is rejected'
+
 $stopped = [System.Collections.Generic.List[int]]::new()
 $owned = @(
     [pscustomobject]@{ role='governance';pid=4201;entrypoint='app:app';command_line='gov';creation_identity='c1' },
@@ -244,9 +293,24 @@ $postRecheck = Stop-IsolatedBackends -Processes $owned `
       $script:postRecheckStops.Add($processId)
   }
 Assert-Equal '4202,4201' ($postRecheckStops -join ',') 'a PID reused after immediate identity recheck is stopped only through its previously pinned process handle'
+$treeKillArgument = $null
+$treeKillHandle = [pscustomobject]@{
+    Id=4201;HasExited=$false;SafeHandle=[pscustomobject]@{IsInvalid=$false;IsClosed=$false;process_id=4201}
+}
+$treeKillHandle | Add-Member -MemberType ScriptMethod -Name Kill -Value {
+    param($entireProcessTree)
+    $script:treeKillArgument = $entireProcessTree
+    $this.HasExited = $true
+}
+$treeKillHandle | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { param($timeoutMilliseconds) $true }
+$treeKillResult = Stop-IsolatedBackends -Processes @($owned[0]) `
+    -IdentityLookup { param($expectedProcess) $expectedProcess } `
+    -ProcessHandleLookup { param($processId) $script:treeKillHandle }
+Assert-Equal 'stopped' @($treeKillResult)[0].status 'default stop succeeds through the pinned process handle'
+Assert-True ($treeKillArgument -eq $true) 'default stop requests termination of the owned process tree'
 $launcherSource = Get-Content -Raw -LiteralPath $launcherPath
 Assert-True ($launcherSource -match '\$processHandle\.SafeHandle') 'default stop path pins the process SafeHandle before the immediate identity recheck'
-Assert-True ($launcherSource -match '\$processHandle\.Kill\(\)') 'default stop path terminates through the pinned Process object rather than a PID lookup'
+Assert-True ($launcherSource -match '\$processHandle\.Kill\(\$true\)') 'default stop path terminates the owned process tree through the pinned Process object rather than a PID lookup'
 
 $spawned = [pscustomobject]@{ Id = 4301 }
 $cleanedSpawned = [System.Collections.Generic.List[object]]::new()
@@ -511,6 +575,7 @@ try {
     $derivedOffsetStops = [System.Collections.Generic.List[int]]::new()
     $derivedOffsetStop = Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-status-offset-one' -RepoRoot $dispatcherSandbox `
         -IdentityLookup { param($expectedProcess) $expectedProcess } `
+        -StopListenerLookupFn { param($port) $null } `
         -ProcessHandleLookup $fakeProcessHandleLookup `
         -StopProcessFn { param($processId) $script:derivedOffsetStops.Add($processId) }
     Assert-Equal 'stopped' $derivedOffsetStop.status 'stop derives nonzero offset from manifest when omitted'
@@ -683,6 +748,7 @@ try {
     $recoveryRetryStops = [System.Collections.Generic.List[int]]::new()
     $recoveryStop = Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId $recoveryRunId -RepoRoot $dispatcherSandbox `
         -IdentityLookup { param($expectedProcess) $expectedProcess } `
+        -StopListenerLookupFn { param($port) $null } `
         -ProcessHandleLookup $fakeProcessHandleLookup `
         -StopProcessFn { param($processId) $script:recoveryRetryStops.Add($processId) }
     Assert-Equal 'stopped' $recoveryStop.status 'recovery manifest supports an explicit stop retry'
@@ -701,6 +767,7 @@ try {
     Assert-Throws {
         Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-partial-stop' -RepoRoot $dispatcherSandbox `
             -IdentityLookup { param($expectedProcess) $expectedProcess } `
+            -StopListenerLookupFn { param($port) $null } `
             -ProcessHandleLookup $fakeProcessHandleLookup `
             -StopProcessFn {
                 param($processId)
@@ -760,6 +827,7 @@ try {
     $partialRetryStops = [System.Collections.Generic.List[int]]::new()
     $partialRetry = Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-partial-stop' -RepoRoot $dispatcherSandbox `
         -IdentityLookup { param($expectedProcess) $expectedProcess } `
+        -StopListenerLookupFn { param($port) $null } `
         -ProcessHandleLookup $fakeProcessHandleLookup `
         -StopProcessFn { param($processId) $script:partialRetryStops.Add($processId) }
     Assert-Equal 'stopped' $partialRetry.status 'partial stop can be retried to completion'
@@ -777,6 +845,7 @@ try {
     Assert-Throws {
         Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-stop' -OffsetInput '0' -RepoRoot $dispatcherSandbox `
             -IdentityLookup { param($expectedProcess) if($expectedProcess.pid -eq 4101){$expectedProcess}else{[pscustomobject]@{role='coordinator';pid=4102;entrypoint='wrong';command_line='coord';creation_identity='c2'}} } `
+            -StopListenerLookupFn { param($port) $null } `
             -ProcessHandleLookup $fakeProcessHandleLookup `
             -StopProcessFn { param($processId) $script:mismatchStops.Add($processId) }
     } 'stop ownership mismatch leaves every process running'
@@ -785,6 +854,7 @@ try {
 
     $stoppedRun = Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-stop' -OffsetInput '0' -RepoRoot $dispatcherSandbox `
         -IdentityLookup { param($expectedProcess) $expectedProcess } `
+        -StopListenerLookupFn { param($port) $null } `
         -ProcessHandleLookup $fakeProcessHandleLookup `
         -StopProcessFn { param($processId) $script:mismatchStops.Add($processId) }
     Assert-Equal 'stopped' $stoppedRun.status 'exact ownership stops the stack'
