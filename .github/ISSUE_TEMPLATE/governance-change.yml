@@ -37,6 +37,6 @@ body:
       description: Exact commands or GitHub checks needed before merge.
       placeholder: |
         powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tests/test-agent-governance-check.ps1
-        GitHub Actions: CI, Agent Governance, PR Metadata Contract diagnostic, required merge evidence
+        GitHub Actions: CI, Agent Governance, PR Metadata Contract diagnostic
     validations:
       required: true

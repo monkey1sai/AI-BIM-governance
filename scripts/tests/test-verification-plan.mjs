@@ -90,16 +90,12 @@ test('docs-only paths produce typed skips while the security scan remains explic
 test('workflow and manifest self-changes force every target', () => {
   for (const changedPath of [
     '.github/workflows/ci.yml',
-    '.github/workflows/merge-evidence.yml',
     '.github/CODEOWNERS',
     'scripts/verification-manifest.json',
     'scripts/lib/verification-plan.mjs',
-    'scripts/lib/merge-evidence.mjs',
-    'scripts/lib/verification-run-metadata.mjs',
     'scripts/lib/verification-command-policy.mjs',
     'scripts/lib/verification-outcome.mjs',
     'scripts/security-exceptions.json',
-    'scripts/lib/GitHubArtifact.psm1',
     'scripts/lib/collect-openspec-github-state.mjs',
     'scripts/lib/design-system-gate.ps1',
     'scripts/tests/check-pr-body-evidence.ps1',
