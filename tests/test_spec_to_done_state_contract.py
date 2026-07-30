@@ -108,9 +108,12 @@ def _run(
     return proc.returncode, json.loads(proc.stdout)
 
 
-def test_valid_claude_and_codex_states_and_byte_equivalence(tmp_path):
+def test_valid_claude_and_codex_states_and_single_canonical_validator(tmp_path):
     repo, head = _new_repo(tmp_path)
-    assert CLAUDE_VALIDATOR.read_bytes() == CODEX_VALIDATOR.read_bytes()
+    # 單一正本政策（pr-review-agent generated_tooling_path 規則）：validate-state.mjs 只存在
+    # .claude 側；.codex 鏡像不得放副本（SKILL.md 指向 .claude 路徑）。兩平台 state 都用同一正本驗。
+    assert CLAUDE_VALIDATOR.exists()
+    assert not CODEX_VALIDATOR.exists()
     code, result = _run(tmp_path, repo, _line(repo, head))
     assert code == 0 and result["ok"] is True
     code, result = _run(
