@@ -767,9 +767,9 @@
     },
     {
       "id": "cross-service-structured-log-baseline",
-      "status": "deferred",
+      "status": "active",
       "owner": "cross-service-observability",
-      "current_slice": null,
+      "current_slice": "P5 remediation：補 4-service runtime evidence（tasks 10.1–10.5）；不重套已同步 delta",
       "blocked_by": [],
       "last_verified": "2026-07-29T14:30:00Z",
       "task_ledger": {

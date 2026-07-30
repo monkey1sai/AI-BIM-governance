@@ -8,6 +8,7 @@ import { TextDecoder } from 'node:util';
 import {
   MachineTruthInputError,
   evaluateOpenSpecMachineTruth,
+  isOwnedOpenSpecSource,
   loadOpenSpecMachineTruthInputs,
   taskLedgerFromText,
 } from '../lib/openspec-machine-truth.mjs';
@@ -157,12 +158,6 @@ function decodeNulList(buffer, field) {
   }
 }
 
-function isOwnedOpenSpecSource(changeId, candidate) {
-  if (candidate.startsWith(`openspec/changes/${changeId}/`)) return true;
-  const escapedId = changeId.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-  return new RegExp(`^openspec/changes/archive/\\d{4}-\\d{2}-\\d{2}-${escapedId}/`, 'u').test(candidate);
-}
-
 export function createRawObservationBudget() {
   return { path_count: 0, utf8_bytes: 0 };
 }
@@ -241,9 +236,12 @@ export function collectSourceObservations(repoRoot, ledger) {
   consumeRawObservationPaths(rawBudget, worktreePaths, 'source_worktree');
   consumeRawObservationPaths(rawBudget, untrackedPaths, 'source_untracked');
   const localPaths = [...worktreePaths, ...untrackedPaths];
+  const evidenceReferences = new Set(ledger.changes.flatMap((change) => Array.isArray(change?.evidence_refs)
+    ? change.evidence_refs.filter((reference) => typeof reference === 'string').map((reference) => reference.replaceAll('\\', '/'))
+    : []));
   const tracked = gitOutput(repoRoot, ['-c', 'core.quotepath=false', 'ls-files', '-z'], 'tracked_evidence_paths');
-  const trackedEvidencePaths = decodeNulList(tracked.stdout, 'tracked_evidence_paths');
-  consumeRawObservationPaths(rawBudget, trackedEvidencePaths, 'tracked_evidence_paths');
+  const trackedEvidencePaths = decodeNulList(tracked.stdout, 'tracked_evidence_paths')
+    .filter((candidate) => evidenceReferences.has(candidate));
   const bySubject = new Map();
   const checkedSubjects = new Set();
   const seen = new Set();

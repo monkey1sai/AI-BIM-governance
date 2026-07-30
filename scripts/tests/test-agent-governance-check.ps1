@@ -603,6 +603,8 @@ try {
         Assert-True ($shipSource -match 'preparation') 'ship-item separates preparation from merge authority'
         Assert-True (($shipSource -match 'apex') -and ($shipSource -match 'arbiter|裁決')) 'ship-item requires an independent apex merge verdict'
         Assert-True ($shipSource -match 'headOid') 'ship-item binds the verdict to an exact PR head'
+        Assert-True ($shipSource -match [regex]::Escape('--merge --match-head-commit')) 'ship-item preserves snapshot ancestry with merge commits'
+        Assert-True (-not ($shipSource -match [regex]::Escape('--squash --match-head-commit'))) 'ship-item does not squash away snapshot commits'
     }
 
     $claudeSettingsRaw = Get-Content -LiteralPath '.claude/settings.json' -Raw

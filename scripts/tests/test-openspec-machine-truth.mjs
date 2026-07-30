@@ -204,8 +204,37 @@ test('current ledger keeps reconciled source snapshots clean', () => {
   const observed = collectSourceObservations(process.cwd(), ledger).sourceObservations
     .filter(({ change_id: id }) => RECONCILED_SOURCE_IDS.includes(id));
 
-  assert.deepEqual(observed.map(({ change_id: id }) => id), RECONCILED_SOURCE_IDS);
-  assert.deepEqual(observed.map(({ changed_paths: paths }) => paths), [[], [], [], []]);
+  assert.deepEqual(observed.map(({ change_id: id }) => id).sort(), [...RECONCILED_SOURCE_IDS].sort());
+  for (const { change_id: id, changed_paths: paths } of observed) {
+    assert.deepEqual(paths, [], `${id} must have a clean reconciled snapshot`);
+  }
+});
+
+test('source drift mismatch keeps schema-bounded field and path evidence', () => {
+  withWorkspace((input) => {
+    const changedPath = `openspec/changes/alpha/${'a'.repeat(240)}.md`;
+    input.sourceObservations = [{ change_id: 'alpha', subject_commit: SUBJECT, changed_paths: [changedPath] }];
+
+    const report = evaluateOpenSpecMachineTruth(input);
+    const mismatch = report.mismatches.find(({ reason }) => reason === 'source_changed_since_subject');
+    assert.equal(mismatch?.field, 'source_changed_paths');
+    assert.equal(mismatch?.actual, changedPath);
+  });
+});
+
+test('current cross-service lifecycle status agrees with its proposal and NOW projection', () => {
+  const ledger = JSON.parse(readFileSync(path.join(process.cwd(), 'openspec/lifecycle-ledger.json'), 'utf8'));
+  const change = ledger.changes.find(({ id }) => id === 'cross-service-structured-log-baseline');
+  const nowText = readFileSync(path.join(process.cwd(), 'docs/plans/NOW.md'), 'utf8');
+  const proposal = readFileSync(path.join(process.cwd(), 'openspec/changes/cross-service-structured-log-baseline/proposal.md'), 'utf8');
+
+  assert.equal(change?.status, 'active');
+  assert.ok(change?.current_slice);
+  assert.match(proposal, /^> \*\*Status: active/mu);
+  assert.match(nowText, /"id": "cross-service-structured-log-baseline", "status": "active"/u);
+  const closeoutDoD = nowText.split('### 收口 DoD（軌 1）', 2)[1].split('\n---', 2)[0];
+  assert.match(closeoutDoD, /structured-log.*active P5/iu);
+  assert.doesNotMatch(closeoutDoD, /structured-log.*Status: deferred/iu);
 });
 
 test('row source observations fail closed on missing, duplicate, or mismatched identity', () => {
@@ -276,7 +305,7 @@ test('source observation path budgets fail closed for structured and legacy inpu
 
     input.sourceObservations = [{
       change_id: 'alpha', subject_commit: SUBJECT,
-      changed_paths: Array.from({ length: 2_050 }, (_, index) => `docs/evidence/${index}-${'a'.repeat(1_000)}.json`),
+      changed_paths: Array.from({ length: 4_000 }, (_, index) => `docs/evidence/${index}-${'a'.repeat(1_000)}.json`),
     }];
     assert.throws(() => evaluateOpenSpecMachineTruth(input), MachineTruthInputError);
   });

@@ -301,7 +301,7 @@ function trackedEvidenceSet(paths) {
   return new Set(paths);
 }
 
-function isOwnedOpenSpecSource(changeId, candidate) {
+export function isOwnedOpenSpecSource(changeId, candidate) {
   const normalized = candidate.replaceAll('\\', '/');
   if (normalized.startsWith(`openspec/changes/${changeId}/`)) return true;
   const escapedId = changeId.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
@@ -573,8 +573,9 @@ export function evaluateOpenSpecMachineTruth({
     const changedSources = new Set(sourceByChange.get(change.id).changed_paths);
     for (const changedPath of changedSources) {
       if (!isOwnedOpenSpecSource(change.id, changedPath)) continue;
-      mismatch(mismatches, 'subject', 'source_changed_since_subject', change.id, changedPath, 'trusted_subject',
-        'unchanged source', 'worktree', 'changed', 'OpenSpec source differs from the lifecycle row snapshot.');
+      mismatch(mismatches, 'subject', 'source_changed_since_subject', change.id, 'source_changed_paths', 'trusted_subject',
+        'unchanged source', 'worktree', changedPath.slice(0, 500),
+        'OpenSpec source differs from the lifecycle row snapshot.');
     }
     const activePath = inventory.active.get(change.id);
     const archiveRecord = inventory.archive.get(change.id);
