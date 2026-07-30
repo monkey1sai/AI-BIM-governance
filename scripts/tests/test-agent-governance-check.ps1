@@ -68,6 +68,8 @@ try {
         'scripts/tests/test-task-packet.mjs',
         'scripts/tests/openspec-github-lifecycle-state.schema.json',
         'scripts/tests/openspec-machine-truth-report.schema.json',
+        'scripts/tests/fixtures/task-ledger-parity.json',
+        'scripts/tests/test-task-ledger-parser-parity.mjs',
         'scripts/lib/design-system-gate.ps1',
         'scripts/tests/verify-design-system-reference.ps1',
         'scripts/tests/test-design-system-reference.ps1',
@@ -298,6 +300,7 @@ try {
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-agent-governance-check\.ps1') 'agent-governance workflow runs static check'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-openspec-ledger-reconciliation\.ps1') 'agent-governance workflow runs OpenSpec ledger reconciliation tests'
     Assert-True ($governanceWorkflow -match 'node --test scripts/tests/test-openspec-machine-truth\.mjs scripts/tests/test-openspec-machine-truth-cli\.mjs scripts/tests/test-collect-openspec-github-state\.mjs') 'agent-governance workflow runs machine-truth core, CLI, and GitHub collector tests'
+    Assert-True ($governanceWorkflow -match 'scripts/tests/test-task-ledger-parser-parity\.mjs') 'agent-governance workflow runs the task-ledger parser parity contract'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-verification-runner\.mjs') 'agent-governance workflow runs verification outcome fixtures'
     Assert-True ($governanceWorkflow -match 'scripts/tests/test-security-exceptions\.mjs') 'agent-governance workflow runs security exception lifecycle fixtures'
     Assert-True ($governanceWorkflow -match "github\.event_name == 'pull_request'.*agent-governance.*agent-governance-diagnostic") 'manual dispatch uses a diagnostic check name that cannot satisfy merge authority'

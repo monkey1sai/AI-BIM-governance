@@ -1,0 +1,155 @@
+{
+  "schema_version": "task-ledger-parity/v1",
+  "purpose": "Golden corpus cross-checking the repo's TWO independent task-checkbox parsers: Measure-OpenSpecTaskCheckboxes (scripts/lib/openspec-lifecycle.ps1, PowerShell) and taskLedgerFromText (scripts/lib/openspec-machine-truth.mjs, JS). Both MUST reproduce every expected row. Nothing else in the repo verified that the two agreed; four latent divergences were found and closed on 2026-07-30.",
+  "spec": [
+    "Evaluate line by line (split on \\r?\\n). Cross-line regex is forbidden: the pre-2026-07-30 PowerShell pattern '(?m)^\\s*-\\s+\\[(?<mark>[ xX])\\](?:\\s+|$)' let its trailing greedy \\s+ consume the NEXT line's indentation, dropping the following nested checkbox from Total entirely.",
+    "1. candidate = ^[ \\t]*-[ \\t]+\\[<mark>\\]<after?>  (mark = chars up to the first ']'; after = the single next char, or empty at end of line)",
+    "2. mark length != 1 -> not a checkbox, EXCEPT that a mark of length >= 2 which is only whitespace plus at most one x/X ('- [ x]', '- [x ]', '- [  ]') is a typo of a real checkbox and counts as unsupported. Everything else with length != 1 is prose: '- []', '- [WIP] foo', '- [text](url)'.",
+    "3. after == '(' -> not a checkbox. Covers single-char-text markdown links like '- [x](url)'. The comparison MUST be ordinal: PowerShell's -eq is culture-sensitive and rates U+207D, U+208D, U+FE35 and U+FE59 EQUAL to '(' , which silently skipped those lines.",
+    "4. after non-empty and non-whitespace -> malformed checkbox (e.g. '- [x]done') -> unsupported. Fail-closed on purpose: a malformed box must surface, never silently vanish, because verify-openspec-lifecycle.ps1 gates new archives on Unchecked == 0.",
+    "5. otherwise: 'x'/'X' -> completed and total; ' ' -> total; any other single char (including '~') -> unsupported.",
+    "The emptiness test on 'after' MUST use ordinal length, not -ne ''. PowerShell's -eq/-ne are culture-sensitive linguistic comparisons, so any zero-collation-weight character (ZWSP U+200B, SOFT HYPHEN U+00AD, ZWJ U+200D, VARIATION SELECTOR U+FE0F, all C1 controls, bidi marks, ...) compares EQUAL to the empty string; the malformed guard was skipped and the line was miscounted as completed. -cne does NOT fix this. 327 BMP code points diverged this way (found in code review 2026-07-30).",
+    "The whitespace class for 'after' MUST be an explicit character set equal to JavaScript's \\s, never the \\s shorthand: .NET's \\s matches U+0085 (NEL) and JavaScript's does not.",
+    "Unchecked is always derived as total - completed; it is never counted independently."
+  ],
+  "cases": [
+    {
+      "id": "control-basic",
+      "why": "Baseline sanity: one done, one open.",
+      "text": "- [x] a\n- [ ] b\n",
+      "expected": { "completed": 1, "total": 2, "unsupported": 0 }
+    },
+    {
+      "id": "regression-nested-after-empty-checked",
+      "why": "REGRESSION GUARD (the dangerous one). Pre-fix PowerShell returned total=1, unchecked=0 here: the greedy trailing \\s+ ate the second line's indentation so the nested open task disappeared from the ledger, which could let an incomplete change pass the archive gate. JS returned total=2.",
+      "text": "- [x]\n  - [ ] sub\n",
+      "expected": { "completed": 1, "total": 2, "unsupported": 0 }
+    },
+    {
+      "id": "regression-nested-after-trailing-space-open",
+      "why": "REGRESSION GUARD. Same greedy-whitespace mechanism with an open parent: pre-fix PowerShell returned completed=0, total=1 and lost the nested done task; JS returned completed=1, total=2.",
+      "text": "- [ ] \n  - [x] sub\n",
+      "expected": { "completed": 1, "total": 2, "unsupported": 0 }
+    },
+    {
+      "id": "regression-no-space-after-bracket",
+      "why": "REGRESSION GUARD. Pre-fix PowerShell dropped this line entirely (total=0 -> the task was invisible to the archive gate); JS counted it as a completed task. Now both classify it as malformed/unsupported so a human must fix the typo.",
+      "text": "- [x]done\n",
+      "expected": { "completed": 0, "total": 0, "unsupported": 1 }
+    },
+    {
+      "id": "regression-multichar-mark",
+      "why": "REGRESSION GUARD. Pre-fix PowerShell reported unsupported=1; JS reported 0. A multi-char bracket is prose, not a checkbox, so both now ignore it.",
+      "text": "- [ab] weird\n",
+      "expected": { "completed": 0, "total": 0, "unsupported": 0 }
+    },
+    {
+      "id": "markdown-link-single-char-text",
+      "why": "Pre-fix JS counted this as a COMPLETED task because its mark class matched the single char 'x' and it never inspected what followed ']'. A link is not a checkbox.",
+      "text": "- [x](https://example.com)\n",
+      "expected": { "completed": 0, "total": 0, "unsupported": 0 }
+    },
+    {
+      "id": "markdown-link-multichar-text",
+      "why": "Ordinary bulleted link list must not register at all.",
+      "text": "- [see the design doc](docs/plans/x.md)\n",
+      "expected": { "completed": 0, "total": 0, "unsupported": 0 }
+    },
+    {
+      "id": "prose-bracket-bullet",
+      "why": "A bullet whose text merely starts with bracketed prose must not be mistaken for a malformed checkbox.",
+      "text": "- [WIP] refactor the dispatcher\n",
+      "expected": { "completed": 0, "total": 0, "unsupported": 0 }
+    },
+    {
+      "id": "empty-mark",
+      "why": "'- []' is not a checkbox in any renderer.",
+      "text": "- []\n- [] trailing text\n",
+      "expected": { "completed": 0, "total": 0, "unsupported": 0 }
+    },
+    {
+      "id": "tilde-stays-unsupported",
+      "why": "The repo already contains 10 '- [~]' boxes in three archived changes, and openspec/lifecycle-ledger.json encodes them as typed archive_debt.unsupported_checkboxes. They MUST keep counting as unsupported: legalising '~' would force a ledger migration that trips archive_debt_unproven, and per openspec/AGENTS.md the sanctioned closed-but-not-done notation is a checked box carrying a terminal disposition plus successor, not a new glyph.",
+      "text": "- [~] 4.2 N/A: out of scope for this change\n",
+      "expected": { "completed": 0, "total": 0, "unsupported": 1 }
+    },
+    {
+      "id": "other-single-char-marks-unsupported",
+      "why": "Any unrecognised single-char mark is surfaced rather than ignored.",
+      "text": "- [-] a\n- [!] b\n- [?] c\n",
+      "expected": { "completed": 0, "total": 0, "unsupported": 3 }
+    },
+    {
+      "id": "uppercase-x-counts",
+      "why": "Both '[x]' and '[X]' are done.",
+      "text": "- [X] a\n- [x] b\n",
+      "expected": { "completed": 2, "total": 2, "unsupported": 0 }
+    },
+    {
+      "id": "indentation-and-tabs",
+      "why": "Nested and tab-indented boxes all count; indentation must be [ \\t] only so it can never span lines.",
+      "text": "- [x] parent\n  - [ ] child\n\t- [x] tab child\n    - [ ] deep child\n",
+      "expected": { "completed": 2, "total": 4, "unsupported": 0 }
+    },
+    {
+      "id": "crlf-line-endings",
+      "why": "Windows checkouts are CRLF; counts must not depend on line-ending style.",
+      "text": "- [x] a\r\n- [ ] b\r\n- [~] c\r\n",
+      "expected": { "completed": 1, "total": 2, "unsupported": 1 }
+    },
+    {
+      "id": "non-checkbox-noise",
+      "why": "Headings, prose, code fences, numbered lists and bare brackets must never register.",
+      "text": "# Tasks\n\nSome prose with [x] inline brackets.\n\n1. [ ] numbered list is not a dash bullet\n\n```\n- [ ] inside a fence still parses (parser is line-based, not markdown-aware)\n```\n\n-[x] no space after dash\n--[ ] double dash\n",
+      "expected": { "completed": 0, "total": 1, "unsupported": 0 }
+    },
+    {
+      "id": "empty-input",
+      "why": "Empty and whitespace-only files must yield zeros, not errors.",
+      "text": "",
+      "expected": { "completed": 0, "total": 0, "unsupported": 0 }
+    },
+    {
+      "id": "mixed-realistic",
+      "why": "Shape resembling a real tasks.md: phases, done and open work, and one legacy tilde.",
+      "text": "## Phase 1\n\n- [x] 1.1 land the validator\n- [x] 1.2 wire it into CI\n- [ ] 1.3 collect runtime evidence\n\n## Phase 2\n\n- [ ] 2.1 export observations\n- [~] 2.2 N/A: superseded by phase 3\n",
+      "expected": { "completed": 2, "total": 4, "unsupported": 1 }
+    },
+    {
+      "id": "after-zero-width-and-invisible-is-unsupported",
+      "why": "REGRESSION GUARD (code review 2026-07-30, 327 divergent BMP code points). PowerShell's -eq/-ne are culture-sensitive linguistic comparisons, so every zero-collation-weight character (ZWSP U+200B, SOFT HYPHEN U+00AD, ZWJ U+200D, VARIATION SELECTOR-16 U+FE0F) compared EQUAL to the empty string. The malformed-checkbox guard was therefore skipped and these lines were miscounted as completed, while JS classified them unsupported. -cne does NOT fix this; only ordinal comparison does. These characters are exactly what arrives when task text is pasted out of a browser, Word or a PDF.",
+      "text": "- [x]\u200bfoo\n- [x]\u00adfoo\n- [x]\u200dfoo\n- [x]\ufe0ffoo\n",
+      "expected": { "completed": 0, "total": 0, "unsupported": 4 }
+    },
+    {
+      "id": "after-nel-is-unsupported-not-whitespace",
+      "why": "REGRESSION GUARD. .NET's \\s matches U+0085 (NEL) but JavaScript's \\s does not, so using the \\s shorthand made the two implementations disagree. Both now use an explicit character class equal to JS \\s, which excludes NEL.",
+      "text": "- [x]\u0085foo\n",
+      "expected": { "completed": 0, "total": 0, "unsupported": 1 }
+    },
+    {
+      "id": "after-paren-lookalikes-are-unsupported",
+      "why": "REGRESSION GUARD. Because -eq '(' is culture-sensitive, U+207D SUPERSCRIPT LEFT PARENTHESIS (and U+208D, U+FE35, U+FE59) compared EQUAL to '(' in PowerShell, so those lines were silently treated as markdown links and skipped. Only the ASCII '(' may mean a link.",
+      "text": "- [x]\u207dfoo\n- [x]\u208dfoo\n- [x]\ufe59foo\n",
+      "expected": { "completed": 0, "total": 0, "unsupported": 3 }
+    },
+    {
+      "id": "after-unicode-whitespace-still-counts",
+      "why": "The other half of the same fix: genuine Unicode whitespace in the 'after' position must still be treated as whitespace by BOTH implementations, so these remain ordinary tasks. NBSP U+00A0, IDEOGRAPHIC SPACE U+3000 and BOM/ZWNBSP U+FEFF are all in JS \\s.",
+      "text": "- [x]\u00a0done\n- [ ]\u3000open\n- [x]\ufeffdone\n",
+      "expected": { "completed": 2, "total": 3, "unsupported": 0 }
+    },
+    {
+      "id": "mark-typo-is-unsupported",
+      "why": "REGRESSION GUARD (code review 2026-07-30). A mark of length >= 2 that is only whitespace plus at most one x/X is a TYPO of a real checkbox, not prose. Treating it as prose would silently drop the task from Total, so Unchecked would not see it and verify-openspec-lifecycle.ps1 would wave the archive through — the very bypass class this contract exists to close. The pre-2026-07-30 PowerShell parser flagged these unsupported; that strictness is preserved.",
+      "text": "- [ x] a\n- [x ] b\n- [  ] c\n",
+      "expected": { "completed": 0, "total": 0, "unsupported": 3 }
+    },
+    {
+      "id": "non-dash-bullets-are-invisible-by-convention",
+      "why": "Documents a deliberate, pre-existing limitation rather than a decision made here: GFM also accepts '*' and '+' bullets and ordered lists for task items, but both parsers only recognise '-'. A tasks.md written entirely with '*' would therefore report Total=0 and pass the archive gate with no work done. No tracked tasks.md uses them (verified across all 120), so this is not a regression — but it is now written down instead of implicit.",
+      "text": "* [x] star\n+ [ ] plus\n1. [ ] numbered\n- [x] dash counts\n",
+      "expected": { "completed": 1, "total": 1, "unsupported": 0 }
+    }
+  ]
+}
