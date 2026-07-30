@@ -37,7 +37,7 @@ class FakeSuccessfulConverter:
         metadata_path = output_dir / "metadata.json"
         model_path.write_bytes(b"PXR-USDC-fake-openable\n")
         mapping_path.write_text(
-            '{"mock": false, "summary": {"mapped_count": 2, "fake_mapping_count": 0}, "items": []}',
+            '{"mapping_provenance": "converter_verified", "mock": false, "allow_fake_mapping": false, "summary": {"mapped_count": 2, "fake_mapping_count": 0}, "items": []}',
             encoding="utf-8",
         )
         entity_index_path.write_text('{"entities": []}', encoding="utf-8")
@@ -102,6 +102,16 @@ class FakeFailedConverter:
         raise ConversionAuthorityError("converter_failed", "fixture converter failed")
 
 
+class FakeMissingMappingProvenanceConverter(FakeSuccessfulConverter):
+    def convert(self, *, job: dict, ifc_ready_event: dict, output_dir: Path) -> dict:
+        result = super().convert(job=job, ifc_ready_event=ifc_ready_event, output_dir=output_dir)
+        mapping_path = Path(result["mapping_path"])
+        mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+        del mapping["mapping_provenance"]
+        mapping_path.write_text(json.dumps(mapping), encoding="utf-8")
+        return result
+
+
 class ConcurrencyTrackingConverter(FakeSuccessfulConverter):
     """2026-07-06 conversion-kit-port-race: 記錄 convert() 同時在跑的併發峰值。
 
@@ -126,6 +136,24 @@ class ConcurrencyTrackingConverter(FakeSuccessfulConverter):
         finally:
             with self._lock:
                 self.active -= 1
+
+
+class SameJobBlockingConverter(FakeSuccessfulConverter):
+    """Hold the first conversion open so a second caller observes `running`."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.calls = 0
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def convert(self, *, job: dict, ifc_ready_event: dict, output_dir: Path) -> dict:
+        with self._lock:
+            self.calls += 1
+        self.entered.set()
+        if not self.release.wait(timeout=5):
+            raise RuntimeError("same-job conversion fixture timed out")
+        return super().convert(job=job, ifc_ready_event=ifc_ready_event, output_dir=output_dir)
 
 
 def make_client(tmp_path: Path, converter, run_background: bool = True, internal_conversion_token: str | None = None) -> TestClient:
@@ -366,6 +394,45 @@ def test_persisted_ready_result_downgrades_when_required_artifact_is_missing(tmp
     assert ready_list["count"] == 0
 
 
+def test_persisted_ready_result_downgrades_when_model_usdc_bytes_change(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter())
+
+    response = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+    conversion_job_id = response.json()["conversion_job_id"]
+    initial = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+    original_checksum = initial["artifacts"]["model_usdc"]["checksum_sha256"]
+    assert len(original_checksum) == 64
+
+    model_path = tmp_path / "artifacts" / conversion_job_id / "model.usdc"
+    model_path.write_bytes(model_path.read_bytes() + b"\nmutated-after-publication")
+
+    result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+    assert result["ready"] is False
+    assert result["status"] == "failed"
+    assert result["error"]["code"] == "artifact_integrity_violation"
+    assert result["error"]["missing_artifacts"][0]["reason"] == "artifact_checksum_mismatch"
+    assert client.get(f"/api/conversions/{conversion_job_id}").json()["stage"] == "artifact_integrity_violation"
+
+    ready_list = client.get("/api/conversions?model_version_id=version_demo_001&status=succeeded&ready=true").json()
+    assert ready_list["count"] == 0
+
+
+def test_persisted_ready_result_without_model_checksum_fails_closed(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter())
+
+    response = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+    conversion_job_id = response.json()["conversion_job_id"]
+    job_path = tmp_path / "jobs" / f"{conversion_job_id}.json"
+    job = json.loads(job_path.read_text(encoding="utf-8"))
+    del job["result"]["artifacts"]["model_usdc"]["checksum_sha256"]
+    job_path.write_text(json.dumps(job), encoding="utf-8")
+
+    result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+    assert result["ready"] is False
+    assert result["error"]["code"] == "artifact_integrity_violation"
+    assert result["error"]["missing_artifacts"][0]["reason"] == "artifact_checksum_missing"
+
+
 def test_persisted_ready_result_downgrades_when_requested_sidecar_is_missing_from_metadata(tmp_path: Path):
     client = make_client(tmp_path, converter=FakeSuccessfulConverter())
 
@@ -417,6 +484,18 @@ def test_placeholder_usdc_fails_without_ready_result(tmp_path: Path):
     assert result["ready"] is False
     assert result["error"]["code"] == "placeholder_usdc"
     assert result["model"]["status"] != "ready"
+
+
+def test_missing_mapping_provenance_fails_without_ready_result(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeMissingMappingProvenanceConverter())
+
+    response = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+    conversion_job_id = response.json()["conversion_job_id"]
+    result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+
+    assert result["status"] == "failed"
+    assert result["ready"] is False
+    assert result["error"]["code"] == "mapping_provenance_invalid"
 
 
 # --- harden-host-native-conversion-service CH-1（store 路徑：#10 全檔掃描 / #3 URL 形狀）---
@@ -545,6 +624,58 @@ def test_duplicate_idempotency_key_replays_existing_job(tmp_path: Path):
     assert second.status_code == 202
     assert second.json()["conversion_job_id"] == first.json()["conversion_job_id"]
     assert second.json()["idempotent_replay"] is True
+    assert job_file_count(tmp_path) == 1
+
+
+def test_concurrent_idempotent_create_across_store_instances_is_atomic(tmp_path: Path, monkeypatch):
+    settings = ConversionAuthoritySettings(
+        service_root=tmp_path,
+        artifacts_root=tmp_path / "artifacts",
+        jobs_dir=tmp_path / "jobs",
+        public_artifacts_url="http://testserver/artifacts",
+        bim_control_callback_url=None,
+    )
+    stores = [
+        conversion_authority_module.StreamingConversionStore(settings=settings, converter=FakeSuccessfulConverter())
+        for _ in range(2)
+    ]
+    original_find = conversion_authority_module.StreamingConversionStore._find_job_by_idempotency_key
+
+    def delayed_empty_lookup(store, idempotency_key):
+        found = original_find(store, idempotency_key)
+        if found is None:
+            time.sleep(0.05)
+        return found
+
+    monkeypatch.setattr(
+        conversion_authority_module.StreamingConversionStore,
+        "_find_job_by_idempotency_key",
+        delayed_empty_lookup,
+    )
+    start = threading.Barrier(2)
+    results: list[dict] = []
+
+    def create(store) -> None:
+        start.wait(timeout=5)
+        results.append(
+            store.create_conversion_job(
+                ifc_ready_payload(
+                    event_id="evt_atomic_create",
+                    idempotency_key="idem_atomic_create",
+                )
+            )
+        )
+
+    threads = [threading.Thread(target=create, args=(store,)) for store in stores]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert len(results) == 2
+    assert len({result["conversion_job_id"] for result in results}) == 1
+    assert sum(bool(result.get("idempotent_replay")) for result in results) == 1
     assert job_file_count(tmp_path) == 1
 
 
@@ -811,6 +942,39 @@ def test_concurrent_conversion_requests_do_not_run_kit_conversion_in_parallel(tm
         t.join()
 
     assert converter.max_active == 1
+
+
+def test_concurrent_completion_of_same_job_runs_converter_once(tmp_path: Path):
+    converter = SameJobBlockingConverter()
+    settings = ConversionAuthoritySettings(
+        service_root=tmp_path,
+        artifacts_root=tmp_path / "artifacts",
+        jobs_dir=tmp_path / "jobs",
+        public_artifacts_url="http://testserver/artifacts",
+        bim_control_callback_url=None,
+    )
+    first_store = conversion_authority_module.StreamingConversionStore(settings=settings, converter=converter)
+    second_store = conversion_authority_module.StreamingConversionStore(settings=settings, converter=converter)
+    job = first_store.create_conversion_job(ifc_ready_payload(event_id="evt_same_job_concurrency"))
+    job_id = job["conversion_job_id"]
+    results: list[dict] = []
+
+    first = threading.Thread(target=lambda: results.append(first_store.complete_conversion_job(job_id)))
+    first.start()
+    assert converter.entered.wait(timeout=5)
+
+    second = threading.Thread(target=lambda: results.append(second_store.complete_conversion_job(job_id)))
+    second.start()
+    time.sleep(0.05)
+    converter.release.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert converter.calls == 1
+    assert len(results) == 2
+    assert {result["status"] for result in results} == {"succeeded"}
 
 
 # --- streaming-server-prefer-local-ifc-path:_ifc_artifact propagate local paths ----

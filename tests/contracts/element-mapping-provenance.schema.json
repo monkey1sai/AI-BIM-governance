@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-bim-governance.local/contracts/element-mapping-provenance.schema.json",
+  "title": "Element mapping provenance",
+  "type": "object",
+  "required": ["mapping_provenance", "mock", "allow_fake_mapping", "summary", "items"],
+  "properties": {
+    "mapping_provenance": {
+      "type": "string",
+      "enum": ["converter_verified", "fake_smoke_test"]
+    },
+    "mock": { "type": "boolean" },
+    "allow_fake_mapping": { "type": "boolean" },
+    "summary": {
+      "type": "object",
+      "required": ["fake_mapping_count"],
+      "properties": {
+        "fake_mapping_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "items": { "type": "array" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "mapping_provenance": { "const": "converter_verified" } } },
+      "then": {
+        "properties": {
+          "mock": { "const": false },
+          "allow_fake_mapping": { "const": false },
+          "summary": {
+            "properties": { "fake_mapping_count": { "const": 0 } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "mapping_provenance": { "const": "fake_smoke_test" } } },
+      "then": {
+        "anyOf": [
+          { "properties": { "mock": { "const": true } } },
+          { "properties": { "allow_fake_mapping": { "const": true } } },
+          { "properties": { "summary": { "properties": { "fake_mapping_count": { "minimum": 1 } } } } }
+        ]
+      }
+    }
+  ]
+}

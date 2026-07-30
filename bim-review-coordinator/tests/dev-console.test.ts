@@ -193,6 +193,62 @@ describe("coordinator dev console", () => {
     expect(res.status).toBe(403);
   });
 
+  it("allows the Kit Manager origin and forwards only authenticated allowlisted mutations", async () => {
+    const upstreamRequests: Array<{ method: string; url: string; body: string }> = [];
+    activeConversionServer = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk.toString("utf8");
+      });
+      req.on("end", () => {
+        upstreamRequests.push({ method: req.method || "", url: req.url || "", body });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ message: "opened", instance: { status: "running", artifact_ids: ["artifact_1"] } }));
+      });
+    });
+    await new Promise<void>((resolve) => {
+      activeConversionServer?.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = activeConversionServer.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Expected Kit Manager test server to listen on a TCP port.");
+    }
+    const kitOrigin = "http://127.0.0.1:5174";
+    const app = makeApp({ corsOrigins: [kitOrigin], devAuthToken: "operator-secret" });
+    app.config.kitManagerApiBase = `http://127.0.0.1:${address.port}`;
+
+    const preflight = await request(app.app)
+      .options("/api/kit/instances/current/open")
+      .set("Origin", kitOrigin)
+      .set("Access-Control-Request-Method", "POST")
+      .set("Access-Control-Request-Headers", "content-type,x-operator-token");
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers["access-control-allow-origin"]).toBe(kitOrigin);
+    expect(preflight.headers["access-control-allow-headers"]).toContain("x-operator-token");
+
+    const opened = await request(app.app)
+      .post("/api/kit/instances/current/open")
+      .set("Origin", kitOrigin)
+      .set("x-operator-token", "operator-secret")
+      .send({ artifact_ids: ["artifact_1"], replace_existing: true });
+    expect(opened.status).toBe(200);
+    expect(opened.headers["access-control-allow-origin"]).toBe(kitOrigin);
+    expect(upstreamRequests).toEqual([
+      {
+        method: "POST",
+        url: "/api/kit/instances/current/open",
+        body: JSON.stringify({ artifact_ids: ["artifact_1"], replace_existing: true }),
+      },
+    ]);
+
+    const denied = await request(app.app)
+      .post("/api/kit/admin/restart")
+      .set("x-operator-token", "operator-secret")
+      .send({});
+    expect(denied.status).toBe(404);
+    expect(upstreamRequests).toHaveLength(1);
+  });
+
   it("CH-C: stage-binding 後端角色權威（authenticated primary lease、server-issued pending transaction、缺 primary 400）", async () => {
     const app = makeApp();
     const created = await request(app.app).post("/api/review-sessions").send({

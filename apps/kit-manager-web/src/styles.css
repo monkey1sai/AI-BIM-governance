@@ -33,6 +33,21 @@ h1 {
   flex-wrap: wrap;
 }
 
+.operator-token {
+  display: grid;
+  gap: 4px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.operator-token input {
+  min-width: 220px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 9px 12px;
+}
+
 button,
 .button {
   border: 0;

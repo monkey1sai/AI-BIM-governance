@@ -5,13 +5,16 @@ import { StatusPanel } from "./StatusPanel";
 import { UsdcChecklist } from "./UsdcChecklist";
 
 export function KitManagerPage() {
-  const apiBase = import.meta.env.VITE_KIT_MANAGER_API_BASE || "http://127.0.0.1:8010";
+  // Browser traffic must enter via the coordinator proxy; :8010 remains an
+  // internal kit-manager-api listener and is never a browser-facing fallback.
+  const apiBase = import.meta.env.VITE_COORDINATOR_API_BASE || "http://127.0.0.1:8004";
   const viewerUrl = import.meta.env.VITE_VIEWER_URL || "http://127.0.0.1:5173";
   const client = useMemo(() => new KitManagerClient(apiBase), [apiBase]);
   const [artifacts, setArtifacts] = useState<UsdcArtifact[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [health, setHealth] = useState<HealthResponse>();
   const [state, setState] = useState<KitInstanceState>();
+  const [operatorToken, setOperatorToken] = useState("");
   const [message, setMessage] = useState("尚未連線。");
 
   useEffect(() => {
@@ -45,16 +48,24 @@ export function KitManagerPage() {
       setMessage("請先選擇至少一個 .usdc 檔案。");
       return;
     }
-    const response = await client.openSelected(Array.from(selected));
-    setState(response.instance);
-    setMessage(response.message);
+    try {
+      const response = await client.openSelected(Array.from(selected), operatorToken);
+      setState(response.instance);
+      setMessage(response.message);
+    } catch (error) {
+      setMessage(`Open 失敗：${String(error)}`);
+    }
   }
 
   async function closeInstance() {
-    const response = await client.closeInstance();
-    setState(response.instance);
-    setSelected(new Set());
-    setMessage(response.message);
+    try {
+      const response = await client.closeInstance(operatorToken);
+      setState(response.instance);
+      setSelected(new Set());
+      setMessage(response.message);
+    } catch (error) {
+      setMessage(`Close 失敗：${String(error)}`);
+    }
   }
 
   return (
@@ -66,6 +77,16 @@ export function KitManagerPage() {
       </header>
 
       <section className="actions">
+        <label className="operator-token">
+          Operator token
+          <input
+            type="password"
+            value={operatorToken}
+            onChange={(event) => setOperatorToken(event.target.value)}
+            autoComplete="off"
+            aria-label="Operator token"
+          />
+        </label>
         <button onClick={refresh}>重新整理</button>
         <button onClick={openSelected}>Open selected in Kit</button>
         <button onClick={closeInstance}>Close instance</button>

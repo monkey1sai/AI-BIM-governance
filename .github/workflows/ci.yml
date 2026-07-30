@@ -606,6 +606,21 @@ jobs:
         working-directory: apps/kit-manager-web
         run: npm run build
 
+      - name: Install pinned browser test harness
+        shell: pwsh
+        working-directory: web-viewer-sample
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Install pinned Playwright Chromium
+        shell: pwsh
+        working-directory: web-viewer-sample
+        run: npx playwright install chromium
+
+      - name: Verify Kit Manager operator flow through coordinator boundary
+        shell: pwsh
+        working-directory: web-viewer-sample
+        run: npm run test:e2e:kit-manager
+
   compose-config:
     name: docker compose config
     needs: changes

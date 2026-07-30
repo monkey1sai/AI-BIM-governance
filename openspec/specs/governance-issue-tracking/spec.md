@@ -17,7 +17,7 @@ TBD - created by archiving change governance-issue-db. Update Purpose after arch
 
 ### Requirement: issue SHALL 以 ifc_guid 綁定；無 guid 僅為標註（BCF 對齊）
 
-issue SHALL 以 `ifc_guid` 為跨工具主鍵。版本溯源（`model_version_id`）綁定要求依來源而定，不是無條件：**diff-sourced issue SHALL 綁該 diff 的 target 模型版本（`target_model_version_id`）**，因 diff item 代表 target 模型相對 base 的變更；當該 diff 未帶 `target_model_version_id`（diff API 宣告該欄為 optional）時，from-diff SHALL 拒絕（不得建立無版本綁定 issue）。**rule-run-sourced issue 的版本綁定為 best-effort（`model_version_id` MAY 為空）**：rule-run 可能是對尚未指派版本的臨時 IFC 檢核，此類 issue 仍以 `source_type` / `source_ref` 與 run 提供溯源（詳見下方批次來源 Requirement，與 from-diff 刻意不對稱）。**無 `ifc_guid` 的條目 SHALL 標為 `kind=annotation`（視覺標註），SHALL NOT 視為正式可交換 issue**（BCF 原則 rule 10）。
+issue SHALL 以 `ifc_guid`（IFC GlobalId）為跨工具主鍵。每個 `kind=issue` 的正式 issue SHALL 同時具有非空 `ifc_guid` 與 `model_version_id`，不因來源為 rule-run 或 diff 而例外。diff-sourced issue SHALL 綁該 diff 的 `target_model_version_id`；rule-run-sourced issue SHALL 綁該 run 的 `model_version_id`。來源缺少所需版本時，建立端點 SHALL 以 `422` 拒絕，SHALL NOT 建立無版本綁定的正式 issue。無 `ifc_guid` 的條目 SHALL 標為 `kind=annotation`（視覺標註），SHALL NOT 視為正式可交換 issue（BCF 原則 rule 10）。
 
 #### Scenario: 有/無 guid 的 kind 區分
 
@@ -42,9 +42,9 @@ issue SHALL 以 `ifc_guid` 為跨工具主鍵。版本溯源（`model_version_id
 
 `governance-service` SHALL 能從 A1 rule-run 的失敗構件與 A2 diff 的變更構件批次建立 issue，並保留來源綁定（`source_type` / `source_ref` 與真實 `ifc_guid`）。批次建立 SHALL 在單一交易內完成（全有或全無）。對同一來源（相同 `source_type` 與 `source_ref`）重複呼叫 SHALL 為冪等：已存在者 SHALL NOT 重複建立，並 SHALL 在回應中以 `skipped` 計數揭露。
 
-由來源批次產生的 issue 對 `model_version_id` 的綁定要求刻意不對稱，反映兩種來源的本質差異：
+由來源批次產生的正式 issue 對 `model_version_id` 採相同 fail-closed 原則：
 
-- 從 rule-run 建 issue 時，版本綁定為 best-effort：rule-run 可能是對「尚未指派 model version」的臨時 IFC 檢核（console doRun 只傳 `ifc_source_path` / `ids_path`）。端點 SHALL 仍建出 issue 並以 `source_type=rule_result` + `source_ref` + run 提供溯源，`model_version_id` MAY 為空。
+- 從 rule-run 建 issue 時，每筆正式 issue SHALL 綁該 run 的 `model_version_id`；缺少時端點 SHALL 回 422，且整批不得建立。
 - 從 diff 建 issue 時，diff 天生是兩個 model_version 的比對；若該 diff 缺 `target_model_version_id`，端點 SHALL 回 422 並誠實說明，SHALL NOT 建出無版本綁定的 issue。
 
 #### Scenario: 從 rule-run 失敗構件建 issue
@@ -53,14 +53,21 @@ issue SHALL 以 `ifc_guid` 為跨工具主鍵。版本溯源（`model_version_id
 - **THEN** SHALL 為每個失敗結果建立一個 issue
 - **AND** 帶真實 `ifc_guid` 的失敗結果 SHALL `kind=issue`（正式、可交換）並帶 `source_type=rule_result`
 - **AND** 無 `ifc_guid` 的 spec 級失敗（如 required IDS specification 零適用構件）SHALL `kind=annotation`，SHALL NOT 捏造 `ifc_guid`（誠實；仍以 `source_type` / `source_ref` 溯源）
-- **AND** 若該 rule run 有 `model_version_id` 則綁定之；缺時 `model_version_id` MAY 為空（best-effort）
+- **AND** 每個正式 issue 的 `model_version_id` SHALL 等於該 rule run 的 `model_version_id`
 
-#### Scenario: rule-run 缺 model_version_id 時仍以 best-effort 建 issue
+#### Scenario: rule-run 缺 model_version_id 時拒絕建立
 
 - **WHEN** 對一個缺 `model_version_id` 的 rule-run 呼叫 from-rule-run
-- **THEN** 端點 SHALL 仍回 201 並為每個失敗構件建出 issue
-- **AND** 該 issue 的 `model_version_id` MAY 為空（rule_result 來源可接受，仍以 source_ref + run 溯源）
-- **AND** 此行為 SHALL 與 from-diff 缺 `target_model_version_id` 回 422 刻意不對稱（diff 天生需 target 版本）
+- **THEN** 端點 SHALL 回 422，並 SHALL NOT 建立任何 issue 或 annotation
+- **AND** SHALL NOT 以 `source_ref` 取代正式的 model-version 綁定
+
+#### Scenario: 啟動時處理歷史缺綁定正式 issue
+
+- **GIVEN** 舊版資料庫含 `kind=issue` 且 `ifc_guid` 或 `model_version_id` 為空的歷史列
+- **WHEN** IssueStore 初始化 schema
+- **THEN** 該列 SHALL 原地降級為 `kind=annotation`，保留 ID、`ifc_guid`、來源、狀態與既有 evidence
+- **AND** SHALL 新增一筆 `binding_migration` audit event，不得捏造 `ifc_guid`／`model_version_id` 或刪除資料
+- **AND** 重複初始化 SHALL 為冪等，不得重複新增 migration event
 
 #### Scenario: 重複來源呼叫為冪等
 

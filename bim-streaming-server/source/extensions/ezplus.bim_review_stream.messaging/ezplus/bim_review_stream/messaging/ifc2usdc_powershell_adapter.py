@@ -665,7 +665,9 @@ class Ifc2UsdcPowershellConverterAdapter:
         source_count = shape_count
         coverage_ratio = (mapped_count / source_count) if source_count else 0.0
         mapping_doc = {
+            "mapping_provenance": "converter_verified",
             "mock": False,
+            "allow_fake_mapping": False,
             "summary": {
                 "mapped_count": mapped_count,
                 "fake_mapping_count": 0,
@@ -1052,7 +1054,9 @@ class Ifc2UsdcPowershellConverterAdapter:
             mapping_fidelity = "unmapped"
 
         mapping_doc = {
+            "mapping_provenance": "converter_verified",
             "mock": False,
+            "allow_fake_mapping": False,
             "mapping_fidelity": mapping_fidelity,
             "summary": {
                 "mapped_count": mapped_count,
