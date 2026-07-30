@@ -104,6 +104,7 @@ def _run(
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     return proc.returncode, json.loads(proc.stdout)
 
