@@ -14,7 +14,7 @@
     { "id": "a4-semantic-search-model-qa", "status": "deferred" },
     { "id": "add-single-gpu-session-ai-review-mvp", "status": "deferred" },
     { "id": "align-frontend-design-system-reference", "status": "deferred" },
-    { "id": "cross-service-structured-log-baseline", "status": "active" },
+    { "id": "cross-service-structured-log-baseline", "status": "deferred" },
     { "id": "gpu-session-baseline-and-idle-reclaim", "status": "active" },
     { "id": "implement-runtime-command-authority-and-rejection", "status": "active" },
     { "id": "isolated-branch-stack-browser-e2e", "status": "active" },
@@ -36,7 +36,7 @@
 **並行規則：** 0 可與 1 同天；所有軌與新功能合計不得超過 6 個 active product change；deferred/frozen 不因額度增加自動 thaw。
 **本週不做：** A5–A10 全棧、`rvt-ifc-usdc-lineage` 實作、新 OpenSpec（除 archive/defer 註記）、整 repo 重掃。
 
-> **2026-07-29 例外揭露：** 使用者明確要求開立 `isolated-branch-stack-browser-e2e`（A4 tasks 4.x 所需的隔離 stack browser E2E 契約），依本檔優先序「使用者最新口令 > 本檔」採納，偏離上面「本週不做：新 OpenSpec」。non-deferred active 由 4 增為 5，仍在 ≤6 內。（2026-07-30 更正：`cross-service-structured-log-baseline` 已於 2026-07-28 經使用者核准轉 active，當日實際為 5 增為 6，仍在 ≤6 內；見變更紀錄。）
+> **2026-07-29 例外揭露：** 使用者明確要求開立 `isolated-branch-stack-browser-e2e`（A4 tasks 4.x 所需的隔離 stack browser E2E 契約），依本檔優先序「使用者最新口令 > 本檔」採納，偏離上面「本週不做：新 OpenSpec」。non-deferred active 由 4 增為 5，仍在 ≤6 內。
 
 > **2026-07-29 design gate 時間線＋三層交叉對抗驗證（摘要；完整版見 `openspec/changes/isolated-branch-stack-browser-e2e/proposal.md`）：** design gate 曾於 `13033cb` 因 `#a4` route IA 遷移（非樣式回歸）而紅，**已由 #429（`2b9573e`）就地重核 A4 golden 轉綠**，現 main（`bfcc433`）success；A4 golden 自此改溯**產品面**（manifest `baseline_provenance.authority = canonical_product_surface`），與其餘 12 screens（canon 投影）形成混合權威，衍生事項記 D-15。pinned origin 23/23 hash MATCH 維持成立（該面從不需要設計側核准）。三層驗證（L1→L2 三視角 refute-by-default→L3，基準 `13033cb`；重跑輪 X1/X2/X3 基準 `bfcc433`）推翻並撤回了多項 L1 裁決（A4 回 dock、擴充 capture 腳本、spectator 預算 1、dashboard 殼先做、Kit extension 否決、多項 owner 指派），逐條紀錄與新缺口 D-14～D-17、待裁決清單見 proposal「三層交叉對抗驗證」節。**重跑輪關鍵更正**：`viewer-viewport`／`embedded-viewer-bridge` 兩份 approved spec 已定案 A1–A4 內嵌 primary viewport 半邊（U-9 據此關閉）；canon 指名的承接 change `embedded-viewport` 不存在＝無主債務。剩餘問題 Q1–Q8 依使用者 2026-07-29 委任由 AI 以三層驗證代答，答案標「AI-裁決（使用者委任）」記於 proposal，可被使用者單方推翻（A1–A8 已落地；U-8/U-9 關閉、U-6/U-12 合併，見 proposal Q&A 節）。
 
@@ -54,7 +54,7 @@
 
 - `openspec/changes/align-frontend-design-system-reference/`（與 migrate 的互斥需求完成 crosswalk 前不得 thaw）
 - `openspec/changes/rvt-ifc-usdc-lineage/`（1/48；切片與 shared ownership 調和前不得 coding）
-- `openspec/changes/cross-service-structured-log-baseline/`（只補 tasks 10.1–10.5 runtime evidence；不重套已同步 delta）（2026-07-30 更正：已於 2026-07-28 經使用者核准轉 active P5 remediation，本列僅為 07-24 歷史紀錄；現況以其 proposal.md 為準）
+- `openspec/changes/cross-service-structured-log-baseline/`（只補 tasks 10.1–10.5 runtime evidence；不重套已同步 delta）
 
 Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unchecked checkbox；三層交叉裁決未把它們判為獨立、可繼續執行的 unfinished owner（主要是已落地但 task bookkeeping 過時、已被 successor 承接，或已退役 service 的歷史工作），因此不批次搬移，也不改寫 archive 歷史。這批屬 legacy audit debt；新增 lifecycle gate 只對本次之後的新 archive fail closed，禁止再產生 unchecked/deferred archive。
 
@@ -70,7 +70,7 @@ Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unch
 | `minio-trigger-lifecycle-backend` | ✅ archived `2026-07-21-minio-trigger-lifecycle-backend` | done | #259 |
 | `c-m4-runtime-command-bridge` | ✅ archived `2026-07-21-c-m4-runtime-command-bridge`（新建 capability spec） | done | #309 |
 | `minio-watch-key-structure` | ✅ archived `2026-07-21-minio-watch-key-structure`（`--skip-specs`；主線 scenario 已在 main） | 選 A deferred-evidence | #237 |
-| `cross-service-structured-log-baseline` | ↩ 07-24 restored deferred → **07-28 使用者核准轉 active P5 remediation** | 依其 proposal 限縮 remediation（tasks 12–13；13.11 未完）；完成後重跑 fresh runtime/P4，舊 P4 不可替代 | #126 |
+| `cross-service-structured-log-baseline` | ↩ restored deferred、evidence-only | 只補真 4-service runtime evidence；不改 pipeline/code/canonical spec | #126 |
 | `minio-folderview-and-baseline-disclosure` | ✅ archived `2026-07-29-minio-folderview-and-baseline-disclosure`（7/7 closeout reconciled） | done；archive proposal/tasks 為證據 | #265 |
 | `align-frontend-design-system-reference` | ↩ restored deferred、frozen | 先與 migrate 做 requirement/successor crosswalk；禁止平行 design coding | #363 |
 | `rvt-ifc-usdc-lineage` | ↩ restored deferred、frozen（1/48） | 先切片與調和 shared ownership；禁止直接 apply | #354 |
@@ -81,8 +81,8 @@ Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unch
 
 ### 收口 DoD（軌 1）
 
-- [x] 5 個近期 completed closeout change 維持 archive；unfinished change 維持 deferred／frozen（2026-07-30 更正：structured-log 已於 07-28 轉 active，deferred／frozen 現為 align-frontend 與 lineage 2 個）
-- [x] lineage / align-frontend 保留 `Status: deferred`、frozen/non-owner，不計 active WIP；structured-log 於 2026-07-28 經使用者核准轉 active P5 remediation、計入 active WIP（見變更紀錄）；minio-folderview 已在 2026-07-29 closeout 後 archive
+- [x] 5 個近期 completed closeout change 維持 archive；其餘 3 個 unfinished change 維持 deferred／frozen
+- [x] lineage / align-frontend / structured-log 保留 `Status: deferred`、frozen/non-owner，不計 active WIP；minio-folderview 已在 2026-07-29 closeout 後 archive
 - [x] #364 merge + `governance-throughput-budget` archive（OQ-3 出場）
 - [x] 本週 WIP focus 只保留 **A4 + migrate-console**；`implement-runtime-command-authority-and-rejection` 與 `add-single-gpu-session-ai-review-mvp` 的 retain/defer 另案裁決，不在本次 archive 範圍
 - [ ] 過期 worktree 刪到 ≤5（人工／下一切可選）
@@ -211,4 +211,3 @@ Done: 通過 DoD 所列測試；回報 verified / inferences / risks
 | 2026-07-24 | 使用者將 active OpenSpec WIP 上限由 2 調整為 6；新增額度不自動 thaw deferred/frozen change。 |
 | 2026-07-29 | design gate 時間線收斂：`13033cb` 紅（`#a4` route IA 遷移）→ **#429 就地重核 A4 golden 轉綠**（產品面快照，混合權威記 D-15）；「rebaseline 關不掉」的早期斷言被 #429 實證推翻並在 proposal 誠實更正。三層對抗驗證＋重跑輪（X1/X2/X3）完成：缺口 D-1～D-17、Q1–Q8 依使用者委任由 AI 代答（標 AI-裁決、可推翻），全記於 `isolated-branch-stack-browser-e2e` proposal。 |
 | 2026-07-23 | #382／#383／#386 merged；#386 先收斂 scoped A4 visible caller compatibility，S4-B coordinator session search proxy、安全 transport、host-kit dual-namespace seam 與 cold-scan timeout regression 由 PR #384 交付（狀態以 GitHub machine truth 為準），S4-C/D 仍 pending。 |
-| 2026-07-30 | 三層交叉對抗驗證（docs/plans）發現本檔與 `cross-service-structured-log-baseline/proposal.md` 狀態分裂：proposal 為 **active P5 remediation（2026-07-28 使用者核准）** 而本檔仍標 deferred。依本檔權威順序（使用者最新口令 > 本檔）以 proposal 為準：同步本檔 lifecycle 投影與 `openspec/lifecycle-ledger.json` 機器 ledger、軌 1 表、收口 DoD，non-deferred active 計數更正為 6（仍 ≤6）；07-24／07-29 歷史敘述保留原文並加更正註記。 |

@@ -767,9 +767,9 @@
     },
     {
       "id": "cross-service-structured-log-baseline",
-      "status": "active",
+      "status": "deferred",
       "owner": "cross-service-observability",
-      "current_slice": "P5 remediation（tasks 12–13；13.11 未完，完成後重跑 fresh runtime/P4）",
+      "current_slice": null,
       "blocked_by": [],
       "last_verified": "2026-07-29T14:30:00Z",
       "task_ledger": {
