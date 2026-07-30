@@ -1341,7 +1341,7 @@
       "owner": "bim-review-coordinator",
       "current_slice": "runtime evidence closure",
       "blocked_by": [],
-      "last_verified": "2026-07-30T21:30:55Z",
+      "last_verified": "2026-07-30T22:21:13Z",
       "task_ledger": {
         "completed": 31,
         "total": 35
@@ -1350,7 +1350,7 @@
         "openspec/changes/implement-runtime-command-authority-and-rejection/proposal.md",
         "openspec/changes/implement-runtime-command-authority-and-rejection/tasks.md"
       ],
-      "subject_commit": "92e478de90d1b30c4e1cde2c497a0c7aecafc4f7",
+      "subject_commit": "5a28a7dd178efaf84bec3bb4d80329f016794438",
       "archive_debt": null
     },
     {

@@ -4,7 +4,7 @@
 
 Console內嵌viewport與viewer origin頁 SHALL各自實作下列失敗態，每態 SHALL有穩定測試錨點（`data-uc`／`data-testid`）、i18n文案鍵與明示可行動作；MUST NOT以空白畫面、holder資訊洩漏或假成功呈現任何一態：
 
-> Task 5.6 partial progress（2026-07-31）：viewer origin 的 `runtime-command-rejection` review diagnostics、request-context mismatch、changed-unconfirmed binding reason、rejected stage-load與兩條stage-load-timeout路徑已使用既有zh/en presentation，並由focused DOM與controlled browser regression驗證；其餘完整失敗態矩陣仍未逐態收斂與驗證，因此5.6維持OPEN，且本change不得宣稱production/full completion。
+> Task 5.6 partial progress（2026-07-31）：viewer origin 的 `runtime-command-rejection` review diagnostics、request-context mismatch、changed-unconfirmed binding reason與rejected stage-load已使用既有zh/en presentation，並由focused DOM驗證；既有runtime-command authority流程另由controlled browser回歸驗證。stage-load-timeout與其餘完整失敗態矩陣尚未逐態收斂與驗證，因此5.6維持OPEN，且本change不得宣稱production/full completion。
 
 | 態 | 觸發條件（可判定） | 畫面/文案要點 | 可行動作 |
 |---|---|---|---|
