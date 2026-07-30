@@ -180,6 +180,12 @@
       "role": "agent-tooling",
       "owner": "scripts",
       "notes": "spec-to-done routing codegen: routing.json -> std-*.js '// <routing:gen>' blocks. Pre-session only; never run mid-workflow."
+    },
+    {
+      "path": "scripts/dev/seed-isolated-stack-ifc-ready.ps1",
+      "role": "dev-tool",
+      "owner": "scripts",
+      "notes": "Branch-only: seeds one real-MinIO IFC-ready job into an isolated branch stack coordinator (loopback 8005-8009). Fail-closed against deployment ports. Not a deploy entrypoint; does not own stack lifecycle."
     }
   ]
 }

@@ -38,6 +38,16 @@
 
 root `scripts/` 只保留已登記且有明確 operator / adapter / verifier 角色的檔案。
 
+`scripts/dev/seed-isolated-stack-ifc-ready.ps1`（branch-only dev tool）：對隔離 branch stack 的
+coordinator 灌入一筆來自真實 MinIO 的 IFC-ready job，供 A4 browser E2E preflight 取得
+`download_status=downloaded` 的 job。呼叫邊界：
+
+- 只接受 loopback、port 8005–8009 的 coordinator base；打到測試部署區 `:8004`／governance `:49102`／
+  Kit `:49100`／baked viewer `:5173` 一律 fail closed 拒絕。
+- 不是 canonical operator entrypoint，不得取代 `deploy.ps1`；不啟動、不停止任何服務，
+  stack 生命週期仍屬 `scripts/dev/start-isolated-branch-stack.ps1`。
+- 不執行轉檔，其 evidence 不得用來推論 design gate／deploy path／Kit-WebRTC runtime。
+
 ## Registry Rule
 
 `scripts/script-registry.json` 是目前允許 root-level scripts 的登記表。任何 PR 若新增或重新定位 root-level script，必須同步更新 registry，並在 PR 描述說明：
