@@ -1417,9 +1417,9 @@
       "id": "isolated-branch-stack-browser-e2e",
       "status": "active",
       "owner": "repository-maintainer",
-      "current_slice": "PR #431 code subject a6bf2a75b315b17a01c5ac536ee8b0f9540980f2；P1 SafeHandle process-handle pinning、P5 publication head binding 與 CodeRabbit lock-cleanup coverage 已通過。current CI 30513445687（含 design job 90778536788）所有可執行 gates 通過。CI-pinned PSScriptAnalyzer 1.24.0 安裝後，task 2.5 static 與 isolated launcher tests 通過。require-real run p4-final-20260730-115300 在 manifest status/head gate、隔離服務 health 後執行 6 個 Chromium cases；因既有 A4 缺少 downloaded IFC-ready job 而在 UI 前置條件 fail closed，部署區 listeners 前／中／後皆未變。剩餘 4.3（base-identical GitNexus skill integrity mismatch）與 5.2／5.3（A4 fixture／成功 evidence 缺口）；#433 lifecycle repair 已 merge，Trusted Merge Evidence 已退役。",
+      "current_slice": "PR #431 subject f20a7588fc5a37ad68899dc80283685d81ee792b；code 634e21ba0f358ce9d4c0b3f1664e0b4625257543。launcher hardening 已通過 tests、PSScriptAnalyzer、CRITICAL review。clean launcher smoke：active；stop 後 root/child、:8005/:49103=0，:8004/:49102 全程=0。require-real P5 6/6 因 A4 無 downloaded IFC-ready job fail closed；無成功 manifest/PNG/runtime ID。剩 4.3 GitNexus integrity mismatch、5.2/5.3 A4 fixture/evidence；#433 已 merge，Trusted Merge Evidence 已退役。",
       "blocked_by": [],
-      "last_verified": "2026-07-30T08:24:29Z",
+      "last_verified": "2026-07-30T10:21:54Z",
       "task_ledger": {
         "completed": 30,
         "total": 33
@@ -1427,10 +1427,10 @@
       "evidence_refs": [
         "openspec/changes/isolated-branch-stack-browser-e2e/proposal.md",
         "openspec/changes/isolated-branch-stack-browser-e2e/tasks.md",
-        "artifacts/e2e/isolated-branch-stack-browser-e2e/p4-final-20260730-115300/consumer-result.json",
-        "artifacts/e2e/isolated-branch-stack-browser-e2e/p4-final-20260730-115300/stack-manifest.json"
+        "docs/plans/NOW.md",
+        "scripts/tests/test-isolated-branch-stack.ps1"
       ],
-      "subject_commit": "4aebdda44fbf002935711cfe87e71333a1dfc7eb",
+      "subject_commit": "f20a7588fc5a37ad68899dc80283685d81ee792b",
       "archive_debt": null
     },
     {
