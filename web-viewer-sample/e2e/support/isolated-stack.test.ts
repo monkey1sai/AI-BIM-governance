@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
 import { closeSync, mkdtempSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -441,6 +442,18 @@ describe("loadIsolatedStackConfig", () => {
     expect(setup).toContain("assertIsolatedWorktreeClean(isolated)");
     expect(support).toContain("verifier.assertWorktreeClean(config)");
     expect(support).toContain("await verifier.assertLiveBackendOwnership(config)");
+  });
+
+  it("keeps generated isolated runtime output ignored before the clean-worktree gate", () => {
+    const repoRoot = path.resolve(process.cwd(), "..");
+    const runRoot = "artifacts/e2e/isolated-branch-stack-browser-e2e/ignore-contract";
+    for (const generatedPath of [
+      `${runRoot}/state/governance/governance.db`,
+      `${runRoot}/state/coordinator/logs/coordinator/2026-07-30/coordinator.jsonl`,
+      `${runRoot}/playwright-output/a4-closeout/error-context.md`,
+    ]) {
+      expect(() => execFileSync("git", ["check-ignore", "-q", "--", generatedPath], { cwd: repoRoot, stdio: "ignore" })).not.toThrow();
+    }
   });
 
   it("preserves original bytes on evidence identity mismatch", async () => {
