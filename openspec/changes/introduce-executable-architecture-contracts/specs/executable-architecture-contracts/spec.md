@@ -128,8 +128,24 @@ The change SHALL NOT create a second canonical deploy or verification entrypoint
 
 The repository SHALL distinguish active, delegated, and planned architecture enforcement.
 
-#### Scenario: No-cycle observed-graph gate is not yet implemented
+An invariant SHALL be marked `active` only while an executable gate for it runs in
+canonical verification. An invariant without such a gate SHALL remain `planned`,
+and no report SHALL claim conformance the gate does not actually establish.
 
-- **WHEN** the first version of executable architecture contracts is reported
-- **THEN** `ARCH-GRAPH-001` SHALL remain marked planned
-- **AND** the report SHALL NOT claim source-graph conformance or no-cycle enforcement has been completed.
+#### Scenario: Invariant has no executable gate yet
+
+- **WHEN** an invariant has no executable gate wired into canonical verification
+- **THEN** that invariant SHALL remain marked planned
+- **AND** the report SHALL NOT claim conformance for it has been established.
+
+#### Scenario: No-cycle observed-graph gate becomes executable
+
+- **GIVEN** the observed-architecture ratchet runs in the canonical root-contract gate
+- **WHEN** `ARCH-GRAPH-001` is marked active
+- **THEN** the repository SHALL hold an approved observed baseline recording every
+  grandfathered cycle with an owner, reason, and target phase
+- **AND** the gate SHALL fail closed on any new cycle signature or any increase
+  above the approved cycle budget
+- **AND** the enforcement scope SHALL be documented, including that a static scan
+  cannot observe runtime-resolved dependencies, so the observed graph is a lower
+  bound and SHALL NOT be reported as full source-graph conformance.
