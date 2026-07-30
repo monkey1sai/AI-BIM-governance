@@ -1,12 +1,22 @@
-default_permissions = ":read-only"
+approval_policy = "on-request"
+approvals_reviewer = "auto_review"
+default_permissions = "safe-workspace"
 
-[permissions.safe-workspace.network]
-enabled = true
-mode = "limited"
+[permissions.safe-workspace]
+description = "Allow normal autonomous development inside the active repository."
+extends = ":workspace"
 
 [permissions.safe-workspace.network.domains]
 "api.github.com" = "allow"
 "github.com" = "allow"
+
+[permissions.safe-workspace.network]
+enabled = true
+
+# 依專案實際工具鏈選擇保留
+"registry.npmjs.org" = "allow"
+"pypi.org" = "allow"
+"files.pythonhosted.org" = "allow"
 
 # Plugin enablement is user-scoped in %USERPROFILE%\.codex\config.toml.
 # Repo-local invocation policy lives in AGENTS.md and docs/agents/.
