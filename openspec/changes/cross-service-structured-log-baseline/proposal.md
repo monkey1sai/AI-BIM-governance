@@ -1,6 +1,8 @@
 # cross-service-structured-log-baseline — Proposal
 
-> **Status: active P5 remediation amendment approved 2026-07-28**：初次 adversarial verification 驗出 viewer-log/health trust boundary、四 adapter generic redaction、flush identity、evidence privacy與未完成 trace carriers。使用者要求繼續，且 user-delegated security/impact reviewer 已核准限縮 remediation；完成後必須重跑 fresh runtime/P4，舊 P4 不可替代新 HEAD evidence。
+> **Status: deferred 2026-07-30** — evidence-only，與 `openspec/lifecycle-ledger.json`、`docs/plans/NOW.md` 對齊。#422 的實作已合併，但 task 13.11 的 fresh final runtime/P4 evidence 尚未閉合；因此本 change 不是 active owner，且不得宣稱 full completion。重啟需明確指定 owner 與 fresh four-service runtime/P4 evidence 範圍；重啟時只補該 evidence，不重套既有 code 或 canonical-spec delta。
+
+> **Historical amendment (2026-07-28)**：當時的 active P5 remediation 曾驗出 viewer-log/health trust boundary、四 adapter generic redaction、flush identity、evidence privacy與未完成 trace carriers；使用者與 user-delegated security/impact reviewer 曾核准限縮 remediation，完成後必須重跑 fresh runtime/P4。這段是歷史脈絡，不能覆寫上方 deferred lifecycle 狀態。
 
 > **Historical correction 2026-07-24**：本 change 曾在缺少 runtime evidence 時被 archive；現依嚴格 terminal rule恢復原 change id。既有 adapters/contracts不得重寫；但四單位 production closed loop缺少的 carrier/wiring 已由使用者明確批准補齊。既有 delta 已同步至 `openspec/specs/cross-service-structured-log-baseline/`，本 amendment必須同步維護 canonical spec，最終 archive使用 `--skip-specs` 並以 byte-identical diff作硬 gate，避免重複套用舊 delta。
 
