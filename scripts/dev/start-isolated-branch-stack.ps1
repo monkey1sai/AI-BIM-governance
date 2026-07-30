@@ -115,15 +115,37 @@ function ConvertTo-IsolatedWindowsArgumentLine {
 }
 
 function Resolve-IsolatedStackReservation {
-    param([string] $RepoRoot, [string] $ChangeId, [string] $RunId, [int] $Offset)
+    param(
+        [string] $RepoRoot, [string] $ChangeId, [string] $RunId, [int] $Offset,
+        [scriptblock] $GitCommonDirectoryFn = {
+            param($root)
+            $value = & git -C $root rev-parse --git-common-dir
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($value -join ''))) {
+                throw "Cannot resolve the shared Git directory for isolated stack reservations: $root"
+            }
+            $raw = ($value -join '').Trim()
+            if ([IO.Path]::IsPathRooted($raw)) { return [IO.Path]::GetFullPath($raw) }
+            [IO.Path]::GetFullPath((Join-Path $root $raw))
+        }
+    )
     $runPath = Join-Path $RepoRoot "artifacts\e2e\$ChangeId\$RunId\.stack-reservation.json"
-    $portPath = Join-Path $RepoRoot "artifacts\e2e\_isolated-stack-reservations\offset-$Offset.reservation.json"
+    $gitCommonDirectory = [string](& $GitCommonDirectoryFn $RepoRoot)
+    if ([string]::IsNullOrWhiteSpace($gitCommonDirectory) -or -not [IO.Path]::IsPathRooted($gitCommonDirectory)) {
+        throw 'Shared Git directory resolver must return an absolute path.'
+    }
+    $gitCommonDirectory = [IO.Path]::GetFullPath($gitCommonDirectory)
+    $portPath = Join-Path $gitCommonDirectory "isolated-stack-reservations\offset-$Offset.reservation.json"
     [pscustomobject]@{ paths=@($runPath,$portPath) }
 }
 
 function Acquire-IsolatedStackReservations {
-    param([string] $RepoRoot, [string] $ChangeId, [string] $RunId, [int] $Offset)
-    $reservation = Resolve-IsolatedStackReservation -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Offset $Offset
+    param(
+        [string] $RepoRoot, [string] $ChangeId, [string] $RunId, [int] $Offset,
+        [scriptblock] $GitCommonDirectoryFn
+    )
+    $resolveParameters = @{ RepoRoot=$RepoRoot; ChangeId=$ChangeId; RunId=$RunId; Offset=$Offset }
+    if ($null -ne $GitCommonDirectoryFn) { $resolveParameters.GitCommonDirectoryFn = $GitCommonDirectoryFn }
+    $reservation = Resolve-IsolatedStackReservation @resolveParameters
     $created = [System.Collections.Generic.List[string]]::new()
     try {
         foreach ($path in @($reservation.paths)) {
@@ -367,13 +389,25 @@ function Test-IsolatedListenerProcessOwnership {
 
 function Start-IsolatedBackend {
     param(
-        [string] $Role, [string] $WorkingDirectory, [string] $Executable,
+        [ValidateSet('governance','coordinator')][string] $Role,
+        [string] $WorkingDirectory, [string] $Executable,
         [string[]] $Arguments, [hashtable] $Environment, [string] $RunDirectory,
         [string] $Entrypoint,
         [scriptblock] $StartProcessFn = {
-            param($exe,$argumentList,$cwd,$envMap,$stdout,$stderr)
-            Start-Process -FilePath $exe -ArgumentList (ConvertTo-IsolatedWindowsArgumentLine -Arguments $argumentList) -WorkingDirectory $cwd `
-              -Environment $envMap -WindowStyle Hidden -PassThru `
+            param($exe,$argumentList,$cwd,$envMap,$stdout,$stderr,$role,$entrypoint,$expectedPortMarker,$expectedPort)
+            $wrapperPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\lib\start-child-with-environment.ps1'))
+            $payloadJson = [ordered]@{ environment=$envMap; arguments=@($argumentList) } | ConvertTo-Json -Compress -Depth 8
+            $payloadBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payloadJson))
+            $markerBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$expectedPortMarker))
+            $wrapperArguments = @(
+                '-NoProfile','-NonInteractive','-File',$wrapperPath,
+                '-Executable',$exe,'-PayloadBase64',$payloadBase64,'-EntrypointMarker',$entrypoint,
+                '-Role',$role,'-ExpectedPortMarkerBase64',$markerBase64,'-ExpectedPort',$expectedPort,
+                '-BindingMarker',"isolated-$role-port-$expectedPort $expectedPortMarker $expectedPort"
+            )
+            $pwsh = (Get-Command pwsh -CommandType Application -ErrorAction Stop).Source
+            Start-Process -FilePath $pwsh -ArgumentList (ConvertTo-IsolatedWindowsArgumentLine -Arguments $wrapperArguments) -WorkingDirectory $cwd `
+              -WindowStyle Hidden -PassThru `
               -RedirectStandardOutput $stdout -RedirectStandardError $stderr
         },
         [scriptblock] $IdentityLookup = { param($processId,$entry) Get-IsolatedProcessIdentity -ProcessId $processId -Entrypoint $entry },
@@ -385,10 +419,44 @@ function Start-IsolatedBackend {
             }
         }
     )
+
+    $roleBinding = if ($Role -eq 'governance') {
+        [pscustomobject]@{ marker='--port'; forbidden_marker='--isolated-stack-port'; environment_key='GOV_PORT' }
+    } else {
+        [pscustomobject]@{ marker='--isolated-stack-port'; forbidden_marker='--port'; environment_key='PORT' }
+    }
+    $argumentList = [string[]]@($Arguments)
+    $markerIndexes = @(
+        for ($index = 0; $index -lt $argumentList.Count; $index++) {
+            if ($argumentList[$index] -ceq [string]$roleBinding.marker) { $index }
+        }
+    )
+    $forbiddenMarkerCount = @($argumentList | Where-Object { $_ -ceq [string]$roleBinding.forbidden_marker }).Count
+    if ($markerIndexes.Count -ne 1 -or $forbiddenMarkerCount -ne 0) {
+        throw "Isolated $Role arguments must contain exactly one '$($roleBinding.marker)' marker and no '$($roleBinding.forbidden_marker)' marker."
+    }
+    $portIndex = [int]$markerIndexes[0]
+    if ($portIndex + 1 -ge $argumentList.Count) {
+        throw "Isolated $Role arguments are missing the port value after '$($roleBinding.marker)'."
+    }
+    $expectedPort = 0
+    if (-not [int]::TryParse($argumentList[$portIndex + 1], [ref]$expectedPort) -or $expectedPort -lt 1 -or $expectedPort -gt 65535) {
+        throw "Isolated $Role arguments contain an invalid backend port."
+    }
+    $environmentKey = [string]$roleBinding.environment_key
+    if (-not $Environment.ContainsKey($environmentKey)) {
+        throw "Isolated $Role environment is missing '$environmentKey'."
+    }
+    $environmentPort = 0
+    if (-not [int]::TryParse([string]$Environment[$environmentKey], [ref]$environmentPort) -or $environmentPort -ne $expectedPort) {
+        throw "Isolated $Role argument port must match environment '$environmentKey'."
+    }
+    $expectedPortMarker = [string]$roleBinding.marker
+
     New-Item -ItemType Directory -Force -Path $RunDirectory | Out-Null
     $stdout = Join-Path $RunDirectory "$Role.stdout.log"
     $stderr = Join-Path $RunDirectory "$Role.stderr.log"
-    $process = & $StartProcessFn $Executable $Arguments $WorkingDirectory $Environment $stdout $stderr
+    $process = & $StartProcessFn $Executable $argumentList $WorkingDirectory $Environment $stdout $stderr $Role $Entrypoint $expectedPortMarker $expectedPort
     try {
         $identity = & $IdentityLookup ([int]$process.Id) $Entrypoint
     } catch {
@@ -551,8 +619,10 @@ function Assert-IsolatedStackManifestProcesses {
         $expectedPort = [int]$Manifest.ports.$role
         $commandLine = [string]$process.command_line
         $portMarker = if ($role -eq 'governance') { '--port' } else { '--isolated-stack-port' }
+        $directPortPattern = '(?:^|\s){0}\s+{1}(?:[\s"]|$)' -f [regex]::Escape($portMarker), $expectedPort
+        $directPortBinding = $commandLine -match $directPortPattern
         if (-not $commandLine.Contains($expectedEntrypoint, [StringComparison]::OrdinalIgnoreCase) -or
-            $commandLine -notmatch "(?:^|\s)$([regex]::Escape($portMarker))\s+$expectedPort(?:\s|$)") {
+            -not $directPortBinding) {
             throw "Manifest backend process command line is not bound to the canonical $role entrypoint and resolved port."
         }
     }
@@ -781,7 +851,12 @@ function Start-IsolatedStackRun {
     foreach ($directory in @(
         $stateLayout.state_root,
         $stateLayout.governance_root,
+        (Join-Path $stateLayout.governance_root 'federated'),
+        (Join-Path $stateLayout.governance_root 'logs'),
         $stateLayout.coordinator_root,
+        (Join-Path $stateLayout.coordinator_root 'sessions'),
+        (Join-Path $stateLayout.coordinator_root 'events'),
+        (Join-Path $stateLayout.coordinator_root 'logs'),
         (Join-Path $stateLayout.coordinator_root 'storage'),
         (Join-Path $stateLayout.coordinator_root 'edge-runtime')
     )) {

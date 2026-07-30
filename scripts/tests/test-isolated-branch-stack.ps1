@@ -316,8 +316,8 @@ Assert-True ($launcherSource -match '\$processHandle\.Kill\(\$true\)') 'default 
 $spawned = [pscustomobject]@{ Id = 4301 }
 $cleanedSpawned = [System.Collections.Generic.List[object]]::new()
 Assert-Throws {
-    Start-IsolatedBackend -Role 'governance' -WorkingDirectory $repoRoot -Executable 'python' -Arguments @('--version') `
-        -Environment @{} -RunDirectory (Join-Path $repoRoot 'artifacts\test-spawn-cleanup') -Entrypoint 'app:app' `
+    Start-IsolatedBackend -Role 'governance' -WorkingDirectory $repoRoot -Executable 'python' -Arguments @('--version','app:app','--port','49103') `
+        -Environment @{GOV_PORT='49103'} -RunDirectory (Join-Path $repoRoot 'artifacts\test-spawn-cleanup') -Entrypoint 'app:app' `
         -StartProcessFn { param($exe,$argumentList,$cwd,$envMap,$stdout,$stderr) $script:spawned } `
         -IdentityLookup { param($processId,$entrypoint) throw 'snapshot failed' } `
         -StopSpawnedProcessFn { param($spawnedProcess) $script:cleanedSpawned.Add($spawnedProcess) }
@@ -325,17 +325,42 @@ Assert-Throws {
 Assert-Equal 1 $cleanedSpawned.Count 'snapshot failure cleans exactly one spawned process'
 Assert-True ([object]::ReferenceEquals($spawned, $cleanedSpawned[0])) 'snapshot failure cleans the spawned process object, not a rediscovered PID'
 
+$invalidBackendBindings = @(
+    [pscustomobject]@{name='missing role marker';arguments=@('app:app');environment=@{GOV_PORT='49103'}},
+    [pscustomobject]@{name='duplicate role marker';arguments=@('app:app','--port','49103','--port','49103');environment=@{GOV_PORT='49103'}},
+    [pscustomobject]@{name='wrong role marker';arguments=@('app:app','--isolated-stack-port','49103');environment=@{GOV_PORT='49103'}},
+    [pscustomobject]@{name='argument and environment port mismatch';arguments=@('app:app','--port','49102');environment=@{GOV_PORT='49103'}},
+    [pscustomobject]@{name='missing role port environment';arguments=@('app:app','--port','49103');environment=@{}}
+)
+foreach ($invalidBackendBinding in $invalidBackendBindings) {
+    $script:invalidBackendStartCalls = 0
+    Assert-Throws {
+        Start-IsolatedBackend -Role 'governance' -WorkingDirectory $repoRoot -Executable 'python' `
+            -Arguments $invalidBackendBinding.arguments -Environment $invalidBackendBinding.environment `
+            -RunDirectory (Join-Path $repoRoot 'artifacts\test-invalid-binding') -Entrypoint 'app:app' `
+            -StartProcessFn { $script:invalidBackendStartCalls++ }
+    } "$($invalidBackendBinding.name) fails before process spawn"
+    Assert-Equal 0 $invalidBackendStartCalls "$($invalidBackendBinding.name) starts no process"
+}
+
 $realProcessSandbox = New-TestSandbox -Prefix 'isolated-stack-real-process'
 $realIdentity = $null
+$childEnvironmentKey = "AI_BIM_ISOLATED_CHILD_$([Guid]::NewGuid().ToString('N'))"
+$childEnvironmentValue = 'child-scoped-value'
+$parentEnvironmentValue = 'deployment-value'
+$childEnvironmentPath = Join-Path $realProcessSandbox 'child-environment.txt'
+$realGovernanceEntrypoint = [IO.Path]::GetFullPath((Join-Path $repoRoot 'governance-service'))
+$realCoordinatorEntrypoint = [IO.Path]::GetFullPath((Join-Path $repoRoot 'bim-review-coordinator\src\index.ts'))
 $failureCleanupHandles = [System.Collections.Generic.List[object]]::new()
 $bodyFailure = $null
+[Environment]::SetEnvironmentVariable($childEnvironmentKey, $parentEnvironmentValue, 'Process')
 try {
     $capturedFailure = $null
     try {
-        $realIdentity = Start-IsolatedBackend -Role 'argument-forwarding' -WorkingDirectory $repoRoot `
+        $realIdentity = Start-IsolatedBackend -Role 'governance' -WorkingDirectory $repoRoot `
             -Executable (Get-Command pwsh -CommandType Application -ErrorAction Stop).Source `
-            -Arguments @('-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 30') `
-            -Environment @{} -RunDirectory $realProcessSandbox -Entrypoint 'Start-Sleep' `
+            -Arguments @('-NoProfile', '-NonInteractive', '-Command', "[IO.File]::WriteAllText('$childEnvironmentPath', [string]`$env:$childEnvironmentKey); Start-Sleep -Seconds 30", $realGovernanceEntrypoint, '--port', '49103') `
+            -Environment @{ $childEnvironmentKey=$childEnvironmentValue; GOV_PORT='49103' } -RunDirectory $realProcessSandbox -Entrypoint $realGovernanceEntrypoint `
             -StopSpawnedProcessFn {
                 param($spawnedProcess)
                 $script:failureCleanupHandles.Add($spawnedProcess)
@@ -355,8 +380,29 @@ try {
         throw $capturedFailure
     }
 
-    Assert-Equal 'Start-Sleep' $realIdentity.entrypoint 'real process identity preserves expected entrypoint'
-    Assert-True ($realIdentity.command_line -match [regex]::Escape('Start-Sleep -Seconds 30')) 'real process command line receives Start-IsolatedBackend arguments'
+    Assert-Equal $realGovernanceEntrypoint $realIdentity.entrypoint 'real process identity preserves the canonical governance entrypoint'
+    Assert-True ($realIdentity.command_line -match 'start-child-with-environment\.ps1') 'real process uses the version-controlled child environment wrapper'
+    Assert-True ($realIdentity.command_line -match [regex]::Escape($realGovernanceEntrypoint)) 'wrapper process identity remains bound to the exact backend entrypoint marker'
+    Assert-True ($realIdentity.command_line -match '(?:^|\s)--port\s+49103(?:[\s"]|$)') 'wrapper process identity exposes the exact contiguous backend port binding'
+    $childEnvironmentDeadline = [DateTime]::UtcNow.AddSeconds(10)
+    while (-not (Test-Path -LiteralPath $childEnvironmentPath -PathType Leaf) -and [DateTime]::UtcNow -lt $childEnvironmentDeadline) {
+        Start-Sleep -Milliseconds 50
+    }
+    Assert-Equal $childEnvironmentValue (Get-Content -Raw -LiteralPath $childEnvironmentPath) 'portable wrapper injects the requested environment into the child process'
+    Assert-Equal $parentEnvironmentValue ([Environment]::GetEnvironmentVariable($childEnvironmentKey, 'Process')) 'portable wrapper preserves the inherited deployment value in the parent PowerShell process'
+    $wrapperManifest = [pscustomobject]@{
+        schema_version='isolated-branch-stack/v1';stack_kind='isolated_branch_stack';change_id='change-wrapper';run_id='run-wrapper'
+        worktree_root=$repoRoot;offset=0
+        ports=[pscustomobject]@{coordinator=8005;governance=49103;viewer=5180}
+        base_urls=[pscustomobject]@{coordinator='http://127.0.0.1:8005';governance='http://127.0.0.1:49103';viewer='http://127.0.0.1:5180'}
+        lifecycle_owners=[pscustomobject]@{governance='repo_launcher';coordinator='repo_launcher';viewer='playwright_webserver'}
+        viewer=[pscustomobject]@{expected_port=5180;owner='playwright_webserver';managed_by_launcher=$false}
+        processes=@(
+            $realIdentity,
+            [pscustomobject]@{role='coordinator';pid=([int]$realIdentity.pid + 1);entrypoint=$realCoordinatorEntrypoint;command_line="node tsx.mjs $realCoordinatorEntrypoint --isolated-stack-port 8005";creation_identity='fixture-c2'}
+        )
+    }
+    Assert-IsolatedStackManifestIdentity -Manifest $wrapperManifest -RepoRoot $repoRoot -ChangeId 'change-wrapper' -RunId 'run-wrapper' -OffsetInput '0'
 } catch {
     $bodyFailure = $_
     throw
@@ -365,15 +411,16 @@ finally {
     try {
         if ($null -ne $realIdentity) {
             $cleanupProcess = Get-Process -Id ([int]$realIdentity.pid) -ErrorAction Stop
-            $cleanupIdentity = Get-IsolatedProcessIdentity -ProcessId ([int]$realIdentity.pid) -Entrypoint 'Start-Sleep'
+            $cleanupIdentity = Get-IsolatedProcessIdentity -ProcessId ([int]$realIdentity.pid) -Entrypoint $realGovernanceEntrypoint
             Assert-True (Test-IsolatedProcessOwnership -Expected $realIdentity -Actual $cleanupIdentity) 'cleanup revalidates exact creation identity and command line before stopping the returned process'
-            $cleanupProcess.Kill()
+            $cleanupProcess.Kill($true)
             $cleanupProcess.WaitForExit()
             Assert-True $cleanupProcess.HasExited 'successful argument-forwarding test stops its exact revalidated process handle'
         }
     } catch {
         if ($null -eq $bodyFailure) { throw }
     } finally {
+        [Environment]::SetEnvironmentVariable($childEnvironmentKey, $null, 'Process')
         Remove-TestSandbox -Path $realProcessSandbox
     }
 }
@@ -394,32 +441,38 @@ try {
 finally { Remove-TestSandbox -Path $sandbox }
 
 $reservationSandbox = New-TestSandbox -Prefix 'isolated-stack-reservation'
+$reservationSiblingSandbox = New-TestSandbox -Prefix 'isolated-stack-reservation-sibling'
+$sharedGitCommonDirectory = Join-Path $reservationSandbox 'shared-git-common'
+$sharedGitCommonDirectoryFn = { param($root) $sharedGitCommonDirectory }.GetNewClosure()
 $firstReservation = $null
 $reacquiredReservation = $null
 try {
-    $firstReservation = Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-a' -Offset 2
+    $firstReservation = Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-a' -Offset 2 -GitCommonDirectoryFn $sharedGitCommonDirectoryFn
     Assert-Equal 2 @($firstReservation.paths).Count 'reservation owns both run and offset files'
     foreach ($reservationPath in @($firstReservation.paths)) {
         Assert-True (Test-Path -LiteralPath $reservationPath -PathType Leaf) "reservation file exists: $reservationPath"
     }
     Assert-Throws {
-        Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-a' -Offset 2
+        Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-a' -Offset 2 -GitCommonDirectoryFn $sharedGitCommonDirectoryFn
     } 'same run cannot acquire an active reservation twice'
     Assert-Throws {
-        Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-b' -Offset 2
-    } 'different run cannot acquire the same active offset'
+        Acquire-IsolatedStackReservations -RepoRoot $reservationSiblingSandbox -ChangeId 'change-a' -RunId 'run-b' -Offset 2 -GitCommonDirectoryFn $sharedGitCommonDirectoryFn
+    } 'different worktree cannot acquire the same active offset'
     Release-IsolatedStackReservations -Reservation $firstReservation
     $firstReservation = $null
-    $reacquiredReservation = Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-b' -Offset 2
+    $reacquiredReservation = Acquire-IsolatedStackReservations -RepoRoot $reservationSiblingSandbox -ChangeId 'change-a' -RunId 'run-b' -Offset 2 -GitCommonDirectoryFn $sharedGitCommonDirectoryFn
     Assert-Equal 2 @($reacquiredReservation.paths).Count 'released run and offset reservation can be reacquired'
 }
 finally {
     Release-IsolatedStackReservations -Reservation $firstReservation
     Release-IsolatedStackReservations -Reservation $reacquiredReservation
     Remove-TestSandbox -Path $reservationSandbox
+    Remove-TestSandbox -Path $reservationSiblingSandbox
 }
 
 $dispatcherSandbox = New-TestSandbox -Prefix 'isolated-stack-dispatcher'
+& git -C $dispatcherSandbox init --quiet
+Assert-Equal 0 $LASTEXITCODE 'dispatcher sandbox has a Git common directory for shared reservations'
 try {
     $rejectedRawSegment = '..\sensitive-path'
     Assert-Throws {
@@ -527,6 +580,15 @@ try {
     Assert-Equal $expectedCoordinatorStorage ([string]$coordinatorSpec.Environment.STORAGE_ROOT) 'coordinator mutable storage is per run'
     Assert-Equal $expectedCoordinatorStorage ([string]$coordinatorSpec.Environment.STORAGE_HOST_ROOT) 'coordinator host storage view matches its per-run mutable storage'
     Assert-Equal $expectedCoordinatorStorage ([string]$coordinatorSpec.Environment.RUNTIME_STORAGE_ROOT) 'coordinator runtime storage stays in the same per-run root'
+    foreach ($expectedDirectory in @(
+        (Join-Path $expectedStateRoot 'governance\federated'),
+        (Join-Path $expectedStateRoot 'governance\logs'),
+        (Join-Path $expectedStateRoot 'coordinator\sessions'),
+        (Join-Path $expectedStateRoot 'coordinator\events'),
+        (Join-Path $expectedStateRoot 'coordinator\logs')
+    )) {
+        Assert-True (Test-Path -LiteralPath $expectedDirectory -PathType Container) "launcher pre-creates configured state directory: $expectedDirectory"
+    }
 
     $expectedGovernanceEntrypoint = Join-Path $dispatcherSandbox 'governance-service'
     $expectedCoordinatorEntrypoint = Join-Path $dispatcherSandbox 'bim-review-coordinator\src\index.ts'
