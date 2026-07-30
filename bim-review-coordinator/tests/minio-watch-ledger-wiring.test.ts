@@ -155,8 +155,14 @@ describe("app.ts isLedgered 接線整合測試（review Important #2）", () => 
     expect(persisted!.idempotency_key).toBe(idkey);
     expect(persisted!.project_id).toBe("899");
     // watcher status（經真 status route）反映確有觸發（triggered_total≥1，非 legacy baseline 吸收的 0）。
-    const status = await fetchWatcherStatus(active);
-    expect(status.triggered_total).toBeGreaterThanOrEqual(1);
+    // 注意順序：ledger 落檔由 intake 側 pipeline 寫入（src/services/ifcReadyConversionPipeline.ts:315），
+    // 發生在 intake 回應之前；watcher 的 triggered_total 則要等它收到回應並解析成功才 +1
+    // （src/services/minioWatcher.ts:397）。故上面「ledger 出現紀錄」嚴格先於計數器遞增，同步讀
+    // status 會偶發見 0（與 minio-watcher-loop.test.ts 同一競態類別，僅多一個 HTTP hop 掩蓋機率）。
+    // 以輪詢計數器本身作為斷言（計數器單調不減，收斂後不會回退），比照
+    // minio-watch-intake-integration.test.ts 的 triggered_total 等待先例；此處不再另做同步 re-read，
+    // 因為 gate 已強制同一條件，重讀只會多打一次 status route 而無新資訊。
+    await waitFor(async () => ((await fetchWatcherStatus(active!)).triggered_total ?? 0) >= 1);
   });
 
   it("ledger 已有紀錄物件 → 接線 skip 不重觸發（closure 讀真 ledger 命中；證非繞過 ledger 的盲觸發）", async () => {
