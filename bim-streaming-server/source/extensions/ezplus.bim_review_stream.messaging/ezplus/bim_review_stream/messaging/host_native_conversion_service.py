@@ -23,7 +23,11 @@ _MODULE_DIR = Path(__file__).resolve().parent
 if str(_MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(_MODULE_DIR))
 
-from conversion_authority import ConversionAuthoritySettings, create_conversion_api_app
+from conversion_authority import (
+    ConversionAuthorityError,
+    ConversionAuthoritySettings,
+    create_conversion_api_app,
+)
 from ifc2usdc_powershell_adapter import adapter_from_env
 
 
@@ -152,6 +156,12 @@ def build_app(
             raise HTTPException(status_code=404)
         if not candidate.is_file():
             raise HTTPException(status_code=404)
+        try:
+            app.state.conversion_store.assert_artifact_downloadable(job_id, candidate)
+        except KeyError:
+            raise HTTPException(status_code=404)
+        except ConversionAuthorityError as exc:
+            raise HTTPException(status_code=409, detail=exc.message) from exc
         return FileResponse(str(candidate))
 
     return app

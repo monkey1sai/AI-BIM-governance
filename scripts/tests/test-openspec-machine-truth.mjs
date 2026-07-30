@@ -1,14 +1,21 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { collectSourceObservations } from './verify-openspec-machine-truth.mjs';
 import {
   MachineTruthInputError,
   evaluateOpenSpecMachineTruth,
 } from '../lib/openspec-machine-truth.mjs';
 
 const SUBJECT = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const RECONCILED_SOURCE_IDS = [
+  'a4-console-convergence',
+  'a4-semantic-search-model-qa',
+  'isolated-branch-stack-browser-e2e',
+  'minio-folderview-and-baseline-disclosure',
+];
 
 function write(filePath, value) {
   mkdirSync(path.dirname(filePath), { recursive: true });
@@ -151,17 +158,176 @@ test('blocked_by cycle and missing blocker are exact mismatches', () => {
 test('trusted subject binds ledger and GitHub snapshot without conflating a PR head', () => {
   withWorkspace((input) => {
     input.ledger.changes[0].subject_commit = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
-    input.githubState.repository_subject = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    input.sourceObservations = [{
+      change_id: 'alpha',
+      subject_commit: input.ledger.changes[0].subject_commit,
+      changed_paths: [],
+    }];
     input.githubState.changes[0].prs.push({
       number: 42,
       state: 'open',
       head_sha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
     });
     const report = evaluateOpenSpecMachineTruth(input);
-    assert.ok(report.mismatches.some(({ reason, field }) => reason === 'subject_mismatch' && field === 'subject_commit'));
-    assert.ok(report.mismatches.some(({ reason, field }) => reason === 'subject_mismatch' && field === 'github.repository_subject'));
+    assert.ok(!report.mismatches.some(({ field }) => field === 'subject_commit'));
     assert.ok(!report.mismatches.some(({ field }) => field === 'github.prs.head_sha'));
+
+    input.githubState.repository_subject = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const staleGitHub = evaluateOpenSpecMachineTruth(input);
+    assert.ok(staleGitHub.mismatches.some(({ reason, field }) => reason === 'subject_mismatch' && field === 'github.repository_subject'));
   });
+});
+
+test('row source observations permit historical snapshots and attribute drift only to the owning row', () => {
+  const alpha = machineChange('alpha');
+  const beta = machineChange('beta');
+  alpha.subject_commit = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  beta.subject_commit = 'cccccccccccccccccccccccccccccccccccccccc';
+  withWorkspace((input) => {
+    input.sourceObservations = [
+      { change_id: 'alpha', subject_commit: alpha.subject_commit, changed_paths: ['openspec/changes/beta/proposal.md'] },
+      { change_id: 'beta', subject_commit: beta.subject_commit, changed_paths: [] },
+    ];
+    const accepted = evaluateOpenSpecMachineTruth(input);
+    assert.equal(accepted.result, 'consistent');
+    assert.equal(input.githubState.repository_subject, SUBJECT);
+
+    input.sourceObservations[0].changed_paths = ['openspec/changes/alpha/proposal.md'];
+    const drifted = evaluateOpenSpecMachineTruth(input);
+    assert.ok(drifted.mismatches.some(({ change_id: id, reason }) => id === 'alpha' && reason === 'source_changed_since_subject'));
+    assert.ok(!drifted.mismatches.some(({ change_id: id, reason }) => id === 'beta' && reason === 'source_changed_since_subject'));
+  }, [alpha, beta]);
+});
+
+test('current ledger keeps reconciled source snapshots clean', () => {
+  const ledger = JSON.parse(readFileSync(path.join(process.cwd(), 'openspec/lifecycle-ledger.json'), 'utf8'));
+  const observed = collectSourceObservations(process.cwd(), ledger).sourceObservations
+    .filter(({ change_id: id }) => RECONCILED_SOURCE_IDS.includes(id));
+
+  assert.deepEqual(observed.map(({ change_id: id }) => id).sort(), [...RECONCILED_SOURCE_IDS].sort());
+  for (const { change_id: id, changed_paths: paths } of observed) {
+    assert.deepEqual(paths, [], `${id} must have a clean reconciled snapshot`);
+  }
+});
+
+test('source drift mismatch keeps schema-bounded field and path evidence', () => {
+  withWorkspace((input) => {
+    const changedPath = `openspec/changes/alpha/${'a'.repeat(240)}.md`;
+    input.sourceObservations = [{ change_id: 'alpha', subject_commit: SUBJECT, changed_paths: [changedPath] }];
+
+    const report = evaluateOpenSpecMachineTruth(input);
+    const mismatch = report.mismatches.find(({ reason }) => reason === 'source_changed_since_subject');
+    assert.equal(mismatch?.field, 'source_changed_paths');
+    assert.equal(mismatch?.actual, changedPath);
+  });
+});
+
+test('current cross-service lifecycle status agrees with its proposal and NOW projection', () => {
+  const ledger = JSON.parse(readFileSync(path.join(process.cwd(), 'openspec/lifecycle-ledger.json'), 'utf8'));
+  const change = ledger.changes.find(({ id }) => id === 'cross-service-structured-log-baseline');
+  const nowText = readFileSync(path.join(process.cwd(), 'docs/plans/NOW.md'), 'utf8');
+  const proposal = readFileSync(path.join(process.cwd(), 'openspec/changes/cross-service-structured-log-baseline/proposal.md'), 'utf8');
+
+  assert.equal(change?.status, 'deferred');
+  assert.equal(change?.current_slice, null);
+  assert.match(proposal, /^> \*\*Status: deferred/mu);
+  assert.match(nowText, /"id": "cross-service-structured-log-baseline", "status": "deferred"/u);
+  const closeoutDoD = nowText.split('### 收口 DoD（軌 1）', 2)[1].split('\n---', 2)[0];
+  assert.match(closeoutDoD, /structured-log.*deferred/iu);
+  assert.doesNotMatch(closeoutDoD, /structured-log.*active P5/iu);
+});
+
+test('row source observations fail closed on missing, duplicate, or mismatched identity', () => {
+  const alpha = machineChange('alpha');
+  const beta = machineChange('beta');
+  withWorkspace((input) => {
+    input.sourceObservations = [{ change_id: 'alpha', subject_commit: SUBJECT, changed_paths: [] }];
+    assert.throws(() => evaluateOpenSpecMachineTruth(input), MachineTruthInputError);
+
+    input.sourceObservations = [
+      { change_id: 'alpha', subject_commit: SUBJECT, changed_paths: [] },
+      { change_id: 'alpha', subject_commit: SUBJECT, changed_paths: [] },
+    ];
+    assert.throws(() => evaluateOpenSpecMachineTruth(input), MachineTruthInputError);
+
+    input.sourceObservations = [
+      { change_id: 'alpha', subject_commit: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', changed_paths: [] },
+      { change_id: 'beta', subject_commit: SUBJECT, changed_paths: [] },
+    ];
+    assert.throws(() => evaluateOpenSpecMachineTruth(input), MachineTruthInputError);
+  }, [alpha, beta]);
+});
+
+test('evidence refs require canonical forward-slash paths and exact tracked spelling', () => {
+  withWorkspace((input) => {
+    input.ledger.changes[0].evidence_refs.push('docs/evidence/./shared.json');
+    assert.throws(() => evaluateOpenSpecMachineTruth(input), MachineTruthInputError);
+
+    input.ledger.changes[0].evidence_refs.pop();
+    input.ledger.changes[0].evidence_refs.push('docs/evidence/shared.json');
+    write(path.join(input.repoRoot, 'docs/evidence/shared.json'), '{}\n');
+    input.trackedEvidencePaths = [
+      'openspec/changes/alpha/proposal.md',
+      'openspec/changes/alpha/tasks.md',
+      'docs/evidence/Shared.json',
+    ];
+    assert.throws(() => evaluateOpenSpecMachineTruth(input), MachineTruthInputError);
+  });
+});
+
+test('shared evidence drift is attributed only to rows whose snapshot observed that path', () => {
+  const alpha = machineChange('alpha');
+  const beta = machineChange('beta');
+  withWorkspace((input) => {
+    write(path.join(input.repoRoot, 'docs/evidence/shared.json'), '{}\n');
+    for (const change of input.ledger.changes) change.evidence_refs.push('docs/evidence/shared.json');
+    input.sourceObservations = [
+      { change_id: 'alpha', subject_commit: SUBJECT, changed_paths: ['docs/evidence/shared.json'] },
+      { change_id: 'beta', subject_commit: SUBJECT, changed_paths: [] },
+    ];
+    const report = evaluateOpenSpecMachineTruth(input);
+    assert.ok(report.mismatches.some(({ change_id: id, reason }) => id === 'alpha' && reason === 'evidence_changed_since_subject'));
+    assert.ok(!report.mismatches.some(({ change_id: id, reason }) => id === 'beta' && reason === 'evidence_changed_since_subject'));
+  }, [alpha, beta]);
+});
+
+test('source observation path budgets fail closed for structured and legacy input', () => {
+  withWorkspace((input) => {
+    input.sourceChangedPaths = Array.from({ length: 10_001 }, (_, index) => `docs/evidence/${index}.json`);
+    assert.throws(() => evaluateOpenSpecMachineTruth(input), MachineTruthInputError);
+
+    input.sourceChangedPaths = [];
+    input.sourceObservations = [{
+      change_id: 'alpha', subject_commit: SUBJECT,
+      changed_paths: Array.from({ length: 10_001 }, (_, index) => `docs/evidence/${index}.json`),
+    }];
+    assert.throws(() => evaluateOpenSpecMachineTruth(input), MachineTruthInputError);
+
+    input.sourceObservations = [{
+      change_id: 'alpha', subject_commit: SUBJECT,
+      changed_paths: Array.from({ length: 4_000 }, (_, index) => `docs/evidence/${index}-${'a'.repeat(1_000)}.json`),
+    }];
+    assert.throws(() => evaluateOpenSpecMachineTruth(input), MachineTruthInputError);
+  });
+});
+
+test('mismatch output is bounded at 10,000 records and fails closed at 10,001', () => {
+  const changes = Array.from({ length: 51 }, (_, index) => machineChange(`bounded-${index}`, 'held'));
+  withWorkspace((input) => {
+    for (const [index, change] of input.ledger.changes.entries()) {
+      const missing = index < 50 ? 198 : 100;
+      change.evidence_refs = [
+        `openspec/changes/${change.id}/proposal.md`,
+        `openspec/changes/${change.id}/tasks.md`,
+        ...Array.from({ length: missing }, (_, item) => `docs/evidence/${change.id}-${item}.json`),
+      ];
+    }
+    const bounded = evaluateOpenSpecMachineTruth(input);
+    assert.equal(bounded.mismatches.length, 10_000);
+
+    input.ledger.changes[50].evidence_refs.push('docs/evidence/overflow.json');
+    assert.throws(() => evaluateOpenSpecMachineTruth(input), MachineTruthInputError);
+  }, changes);
 });
 
 test('invalid terminal transition and removed history fail closed', () => {

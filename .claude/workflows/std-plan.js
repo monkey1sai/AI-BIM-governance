@@ -2,10 +2,10 @@
 // 編排權威見 .claude/skills/spec-to-done/SKILL.md(本檔為 spec-to-done P1:plan + 四軸 review + impact 預掃)。
 export const meta = {
   name: 'std-plan',
-  description: 'spec-to-done P1:依 superpowers writing-plans 規格產 plan → 四軸 plan review(自動修 ≤2 輪)→ GitNexus impact 預掃(CRITICAL 早停)。',
+  description: 'spec-to-done P1:依 superpowers writing-plans 規格產 plan → 四軸 plan review(每波最多 2 個 reviewer,自動修 ≤2 輪)→ GitNexus impact 預掃(CRITICAL 早停)。',
   phases: [
     { title: 'Plan', detail: 'fable(arbiter) 作者照 writing-plans 規格寫 plan 檔並 commit', model: 'fable' },
-    { title: 'PlanReview', detail: '四軸平行 review(sonnet;plan-fix 仍 opus,P3/P5 兜底):Completeness / Spec Alignment / Task Decomposition / Buildability', model: 'sonnet' },
+    { title: 'PlanReview', detail: '四軸分波 review(每波最多 2 個;plan-fix 仍 opus,P3/P5 兜底):Completeness / Spec Alignment / Task Decomposition / Buildability', model: 'sonnet' },
     { title: 'Impact', detail: 'sonnet 跑 GitNexus impact 預掃全部 plan symbols', model: 'sonnet' },
   ],
 }
@@ -106,9 +106,25 @@ const ROOT = A.worktreeRoot
 const USER_FACING = A.userFacing === true
 const MAX_FIX = A.maxFixRounds ?? 2
 const ACKED_CRITICAL = A.acknowledgedCriticalSymbols || [] // reviewer sign-off 過的 symbols,gate 放行
+const MAX_PARALLEL_REVIEWERS = 2
+const MAX_AGENT_CALLS = 40
+const REMAINING_AGENT_CALLS = A.remainingAgentCalls
+let agentCallsUsed = 0
+let budgetExhausted = false
+const budgetedAgent = async (prompt, options) => {
+  if (agentCallsUsed >= REMAINING_AGENT_CALLS) {
+    budgetExhausted = true
+    return null
+  }
+  agentCallsUsed += 1
+  return governedAgent(prompt, options)
+}
+
+const runWorkflow = async () => {
 {
   const missing = [['specPath', SPEC_PATH], ['slug', SLUG], ['dateStamp', DATE_STAMP], ['branch', BRANCH], ['worktreeRoot', ROOT]].filter(([, v]) => !v).map(([k]) => k)
-  if (missing.length) return { ok: false, held: 'bad_args', missing }
+  const badBudget = !Number.isInteger(REMAINING_AGENT_CALLS) || REMAINING_AGENT_CALLS < 0 || REMAINING_AGENT_CALLS > MAX_AGENT_CALLS
+  if (missing.length || badBudget) return { ok: false, held: 'bad_args', missing }
 }
 
 const PLAN_SCHEMA = {
@@ -185,7 +201,8 @@ const PLAN_PATH = `docs/superpowers/plans/${DATE_STAMP}-${SLUG}.md`
 phase('Plan')
 log(`std-plan:spec=${SPEC_PATH} → plan=${PLAN_PATH}(branch=${BRANCH})`)
 
-const plan = await governedAgent(`你是 AI-BIM-governance 的 plan 作者,嚴格遵循 superpowers writing-plans 規格。工作目錄(已 checkout ${BRANCH} 的 worktree):${ROOT}
+const plan = await budgetedAgent(`你是 AI-BIM-governance 的 plan 作者,嚴格遵循 superpowers writing-plans 規格。工作目錄(已 checkout ${BRANCH} 的 worktree):${ROOT}
+
 
 任務:讀 spec 全文 ${SPEC_PATH},寫出實作 plan 到 ${ROOT}/${PLAN_PATH},然後 git add + commit(繁中 message,第一行前綴「plan: 」,結尾附「Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>」)。
 冪等:若 ${ROOT}/${PLAN_PATH} 已存在(前次 run 產物),先讀現有 plan,只做增修(保留已合理的 tasks 與 git 歷史),不要整本重寫。
@@ -204,7 +221,7 @@ plan 規格(writing-plans,逐條遵守):
 - tasks[]:每 task 的 index(從 0)、title、files(會動到的路徑)、symbols(會**修改**的既有 function/class/method 名,新建的不算;沒有就空陣列)、mechanical(1-2 檔且步驟完整可機械執行=true)、userFacingTouch(是否動到使用者可見 UI)`,
   { label: 'plan:author', phase: 'Plan', ...ROUTING.planAuthor, schema: PLAN_SCHEMA })
 
-if (!plan) return { ok: false, held: 'plan_author_failed', planPath: PLAN_PATH }
+if (!plan) return { ok: false, held: budgetExhausted ? 'run_budget_exhausted' : 'plan_author_failed', planPath: PLAN_PATH }
 log(`plan 完成:${plan.taskCount} tasks,committed=${plan.committed}`)
 
 phase('PlanReview')
@@ -229,9 +246,19 @@ let reviewRounds = 0
 let axisResults = {}
 let axisNullStreak = 0
 for (let round = 0; round <= MAX_FIX; round++) {
-  const results = await parallel(pendingAxes.map((a) => () =>
-    governedAgent(axisPrompt(a), { label: `plan-review:${a.key}`, phase: 'PlanReview', ...ROUTING.standard, schema: AXIS_SCHEMA })
-  ))
+  const results = []
+  for (let start = 0; start < pendingAxes.length; start += MAX_PARALLEL_REVIEWERS) {
+    const wave = pendingAxes.slice(start, start + MAX_PARALLEL_REVIEWERS)
+    const waveResults = await parallel(wave.map((a) => () =>
+      budgetedAgent(axisPrompt(a), { label: `plan-review:${a.key}`, phase: 'PlanReview', ...ROUTING.standard, schema: AXIS_SCHEMA })
+    ))
+    results.push(...waveResults)
+    if (budgetExhausted) break
+  }
+  while (results.length < pendingAxes.length) results.push(null)
+  if (budgetExhausted) {
+    return { ok: false, held: 'run_budget_exhausted', planPath: plan.planPath, taskCount: plan.taskCount, planReview: axisResults }
+  }
   pendingAxes.forEach((a, i) => { if (results[i]) axisResults[a.key] = results[i] })
   // infra null(reviewer 掛掉)不可與「該軸未過」混為一談:連兩輪有 null → held reviewer_agent_failed
   const nullAxes = pendingAxes.filter((a, i) => !results[i])
@@ -254,7 +281,8 @@ for (let round = 0; round <= MAX_FIX; round++) {
   }
   const failIssues = failed.map((a) => `【${a.key}】\n` + ((axisResults[a.key] && axisResults[a.key].issues) || []).filter((i) => i.severity !== 'minor').map((i) => `- [${i.severity}] ${i.detail}`).join('\n')).join('\n\n')
   log(`plan review 第 ${round + 1} 輪:${failed.length} 軸未過,派 fixer 修 plan`)
-  const fixR = await governedAgent(`你是 plan 修復者。plan:${ROOT}/${PLAN_PATH},spec:${SPEC_PATH},工作目錄:${ROOT}。
+  const fixR = await budgetedAgent(`你是 plan 修復者。plan:${ROOT}/${PLAN_PATH},spec:${SPEC_PATH},工作目錄:${ROOT}。
+
 以下 reviewer 發現(blocker/major)必須逐項修進 plan 檔(直接 Edit 該檔;修完 git add+commit,繁中 message,第一行前綴「plan: fix 」,結尾附「Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>」):
 
 ${failIssues}
@@ -264,7 +292,7 @@ ${failIssues}
     { label: `plan-fix:r${round + 1}`, phase: 'PlanReview', ...ROUTING.judge, schema: FIX_SCHEMA })
   if (!fixR) {
     // fixer infra 失敗不可靜默吞掉續輪(會被誤分類成 plan_not_aligned 硬停)
-    return { ok: false, held: 'reviewer_agent_failed', planPath: plan.planPath, taskCount: plan.taskCount, planReview: axisResults, note: 'plan-fixer 回 null' }
+    return { ok: false, held: budgetExhausted ? 'run_budget_exhausted' : 'reviewer_agent_failed', planPath: plan.planPath, taskCount: plan.taskCount, planReview: axisResults, note: 'plan-fixer 回 null' }
   }
   if (fixR.fixed === false) {
     return {
@@ -284,7 +312,8 @@ let impact = { overallRisk: 'LOW', perSymbol: [], blockers: [], staleHandled: fa
 if (allSymbols.length) {
   log(`impact 預掃 ${allSymbols.length} 個 symbols`)
   for (let attempt = 0; attempt < 2 && impact; attempt++) {
-    const r = await governedAgent(`你是 GitNexus 影響分析員。工作目錄:${ROOT}(repo:AI-BIM-governance)。
+    const r = await budgetedAgent(`你是 GitNexus 影響分析員。工作目錄:${ROOT}(repo:AI-BIM-governance)。
+
 步驟:
 1. 用 ToolSearch 載入 mcp__gitnexus__impact 與 ReadMcpResourceTool。
 2. 先讀 resource gitnexus://repo/AI-BIM-governance/context 看 staleness;若 stale → bash 跑「npx gitnexus analyze --skip-agents-md」後「npx gitnexus status」確認(banner 不算成功,以 status 與 .gitnexus/meta.json 為準),staleHandled=true。
@@ -296,6 +325,9 @@ ${allSymbols.map((s) => `   - ${s}`).join('\n')}
 回傳 StructuredOutput:overallRisk、perSymbol[](symbol/risk/note:直接 callers 數與關鍵 processes)、blockers[](CRITICAL 理由或工具故障描述)、staleHandled。`,
       { label: 'impact:prescan', phase: 'Impact', ...ROUTING.standard, schema: IMPACT_SCHEMA })
     if (r) { impact = r; break }
+    if (budgetExhausted) {
+      return { ok: false, held: 'run_budget_exhausted', planPath: plan.planPath, taskCount: plan.taskCount, tasks: plan.tasks, planReview: axisResults }
+    }
     if (attempt === 1) impact = null
   }
   if (!impact) {
@@ -322,3 +354,7 @@ return {
   ok: true, planPath: plan.planPath, taskCount: plan.taskCount, tasks: plan.tasks,
   planReviewRounds: reviewRounds, planReview: axisResults, impact,
 }
+}
+
+const workflowResult = await runWorkflow()
+return { ...workflowResult, agentCallsUsed }

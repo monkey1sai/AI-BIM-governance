@@ -3,20 +3,12 @@ import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-
-// 假打 presign：trigger 端點呼叫 presignMinioObject 時回固定 URL，不連真 MinIO。
-vi.mock("../src/services/minioClient.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/services/minioClient.js")>();
-  return {
-    ...actual,
-    presignMinioObject: vi.fn().mockResolvedValue(
-      "http://minio.test:9000/bim-control/proj/main/uuid/model.ifc?X-Amz-Signature=fake",
-    ),
-  };
-});
-
+import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
+
+// PR2 註：trigger 端點的 presign 改走 MinioWatchSurface 的 ObjectStorePort（真 S3 adapter）。
+// presign 是本地 SigV4 簽章、不打網路，故對 http://minio.test:9000 這種不可達 endpoint 也能
+// 簽出含 X-Amz-Signature 的 URL——舊版對整個 minioClient 模組的 vi.mock 不再需要。
 
 let active: CoordinatorApp | null = null;
 afterEach(async () => {

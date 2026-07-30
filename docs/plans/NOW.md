@@ -17,6 +17,7 @@
     { "id": "cross-service-structured-log-baseline", "status": "deferred" },
     { "id": "gpu-session-baseline-and-idle-reclaim", "status": "active" },
     { "id": "implement-runtime-command-authority-and-rejection", "status": "active" },
+    { "id": "introduce-executable-architecture-contracts", "status": "active" },
     { "id": "isolated-branch-stack-browser-e2e", "status": "active" },
     { "id": "migrate-console-to-hifi-design", "status": "active" },
     { "id": "rvt-ifc-usdc-lineage", "status": "deferred" }
@@ -30,13 +31,25 @@
 | 序 | 軌 | 目標 | 狀態 |
 |---|---|---|---|
 | **0** | 治理 WIP（#364） | active ≤6；defer 其餘；採納 throughput 預算 | ✅ #364 MERGED；2026-07-24 使用者將上限由 2 調整為 6 |
-| **1** | 收口 | completed 才 archive；deferred 留在 changes 並 frozen | **5 個近期 completed 維持 archive；3 個 unfinished historical correction 維持 deferred** |
+| **1** | 收口 | completed 才 archive；deferred 留在 changes 並 frozen | **5 個近期 completed 維持 archive；4 個 unfinished change 維持 deferred** |
 | **2** | A4 | 只走切片 PR（先 #365，再下一刀） | **#365 + #380 + #382 + #383 + #386 MERGED**；current = S4-B PR #384 final gate，next = S4-C |
 
 **並行規則：** 0 可與 1 同天；所有軌與新功能合計不得超過 6 個 active product change；deferred/frozen 不因額度增加自動 thaw。
 **本週不做：** A5–A10 全棧、`rvt-ifc-usdc-lineage` 實作、新 OpenSpec（除 archive/defer 註記）、整 repo 重掃。
 
 > **2026-07-29 例外揭露：** 使用者明確要求開立 `isolated-branch-stack-browser-e2e`（A4 tasks 4.x 所需的隔離 stack browser E2E 契約），依本檔優先序「使用者最新口令 > 本檔」採納，偏離上面「本週不做：新 OpenSpec」。non-deferred active 由 4 增為 5，仍在 ≤6 內。
+
+> **2026-07-30 isolated stack progress：** PR #431 已對齊 30/33 tasks；latest-main merge commit `2ed4154` 已納入 #433 merge result。CI-pinned `PSScriptAnalyzer 1.24.0` 安裝後，task 2.5 的 static 與 isolated launcher tests 已通過。fresh P5 run `p5-20260730-163713` 綁定 manifest head `eed43c8a17274a573121fc604fa61aae0f408f29`，6 個 require-real Chromium cases 在 manifest identity／isolated health gate 後一致因現有 A4 沒有 downloaded IFC-ready job 而 fail closed；未產生成功 evidence manifest、PNG screenshot 或 observed runtime ID，只產生失敗 `trace.zip`、video 與 error-context Markdown。stop ownership gate 將兩個 backend 停止，`:8004`／`:49102` 前後均無 listener。該 run 另揭露 launcher `status` result 缺頂層狀態、導致 terminal lifecycle logging 例外；RED／GREEN repair 已補上 `active|degraded|stopped` 狀態、嚴格 process record/canonical entrypoint 驗證、停止前 listener ownership 驗證，以及 kill 後 bounded process＋port exit proof，並確認未證明終止時不釋放 recovery reservation。clean-head launcher run `p5-final-launcher-20260730-181500` 綁定 code subject `634e21ba0f358ce9d4c0b3f1664e0b4625257543`，實測 tsx root→listener descendant lineage、PID-reuse chronology gate 與 pinned process-tree stop；停止後 root/child PID、`:8005`／`:49103` listener 均為 0，`:8004`／`:49102` 前中後均為 0。未勾項仍為：4.3（base-identical governance test 的 GitNexus integrity mismatch）、5.2／5.3（A4 fixture／成功 evidence 缺口）。#433 lifecycle repair 已 merge，Trusted Merge Evidence 已退役；main normal required checks 保留。6.3 依 GitNexus `UNKNOWN / target not found` 記錄既有 sign-off，不宣稱 GitNexus pass。
+
+> **2026-07-30 CI hermetic repair：** fresh Agent Governance run `30536369154` 揭露 mock stop 未注入 `ProcessExistsFn`，因 runner PID `4101/4102` 碰撞而 fail；test-only repair 已封閉 fake process lifecycle，production default 不變。
+
+> **2026-07-30 PR #431 review repair：** source subject `4ee8f3e3b6454d63eb908dba09dba3aaf8e1afae` 已補 portable child wrapper、role-specific argument/environment port fail-fast、host-shared reservation、pre-created state directories、browser evidence default verifier、stale artifact pruning與 malformed/outside fail-closed、isolated A3/A4-only discovery、browser POST `query_id` 證據及合法 empty-result regression；三組失敗且未引用的舊 artifact 已移除。reviewer 最終 `ACCEPT`；`npm run verify` 為 78 files／945 tests，OpenSpec strict 71/71。clean-HEAD run `closeout-20260730-2010-7e99bb1` 為 `active`，manifest-owned stop 後 `8005`／`49103` listener=0，`8004`／`49102` 前後皆為 0。4.3、5.2、5.3 維持未勾：目前仍沒有 downloaded IFC-ready A4 fixture、成功 evidence manifest／PNG／runtime ID，不宣稱 full completion。
+
+> **2026-07-30 PR #431 final hardening：** immutable code subject `ff76e22bcb98c19339dcf82612ffb7a317416997` 已含 `origin/main` `243d9647190d2dbd84c60de6282e9bb15815c2f5`（merge `ba6664a`）與前一 hardening `e3eac6c4510d9fab623dd6661a0480e0fb973169`。final reviewer `ACCEPT`（P1/P2/P3=0）；A3+A4 evidence scope、viewer preflight、cross-process reservation/ABA、strict malformed fail-closed、listener→inventory→listener stale proof、deleted-worktree shared residue reclaim、manifest-first recovery、typed evidence-writer PID/creation identity、deterministic per-lock stale-reclaim claim、ignored Playwright HTML report，以及 PowerShell 7.0–7.4 reservation timestamp string preservation均有回歸測試。PowerShell contract/static/production-boundary、targeted Vitest 64/64、targeted ESLint、viewer verify 78 files／960 tests（含 typecheck、production build、struct-log 23/23）、`git diff --check` 通過；repo-wide ESLint 仍被 18 個既有 `src/console/*` warning 的 `--max-warnings 0` 阻擋，實際 PowerShell 7.0–7.4 binary 未在本機執行。GitNexus index stale at `8b34c8e`，compare detect 為 critical／23 files／99 symbols／264 processes；fresh critical reviewer 已明確接受 residual risk，不宣稱 impact pass。30/33 tasks；4.3、5.2、5.3 與無成功 A4 manifest／PNG／runtime ID 維持 known gap，未在此 code subject 後重跑真實 browser/runtime smoke。
+
+> **2026-07-30 PR #431 review convergence：** immutable code subject `0170c8dfb58b011e87f3d84252bafd21d7045afd` 已合入最新 `origin/main` `8f2ff8b4cb840f1258cc36690f8a13f5f9783a9d`（merge `cdd1f2f0449bc0cb61546bd836d7218256d5b0e1`）。修補項目為 child process inherited-environment allowlist／payload override、manifest-derived 且 realpath containment 驗證的 A3 fixture root，以及 identity-proven abandoned reclaim claim recovery（same-ID、malformed、active、provider failure 皆 fail closed，unlink 前重讀與重驗 canonical lock）。fresh reviewer `ACCEPT`（P1=0、P2=0；P3 僅缺不同 canonical lock ID 的獨立分支測試）；PowerShell contract/static/production-boundary、targeted Vitest 69/69、targeted ESLint、viewer verify 78 files／965 tests（含 typecheck、production build、struct-log 23/23）、verification manifest 22/22＋2/2＋7/7、deploy dry-run、secret scan、security exception、`git diff --check` 均通過。GitNexus linked-worktree health 為 unavailable/UNKNOWN，未宣稱 impact/detect pass，fresh reviewer 接受 residual risk。30/33 tasks；4.3、5.2、5.3 與無成功 A4 manifest／PNG／runtime ID 維持 known gap；A3 fixture seed/root availability 由後續 PR #434 持有，本 subject 未重跑真實 browser/runtime smoke，亦不宣稱 full completion。
+
+> **2026-07-30 例外揭露：** 使用者明確要求套用並合併 `introduce-executable-architecture-contracts`；依同一優先序採納為第 6 個 non-deferred active change。Phase 1 contract/validator 已進 PR #439，後續 tasks 仍由該 change 持有；active WIP 維持 6/6，不得再新增未 deferred change。
 
 > **2026-07-29 design gate 時間線＋三層交叉對抗驗證（摘要；完整版見 `openspec/changes/isolated-branch-stack-browser-e2e/proposal.md`）：** design gate 曾於 `13033cb` 因 `#a4` route IA 遷移（非樣式回歸）而紅，**已由 #429（`2b9573e`）就地重核 A4 golden 轉綠**，現 main（`bfcc433`）success；A4 golden 自此改溯**產品面**（manifest `baseline_provenance.authority = canonical_product_surface`），與其餘 12 screens（canon 投影）形成混合權威，衍生事項記 D-15。pinned origin 23/23 hash MATCH 維持成立（該面從不需要設計側核准）。三層驗證（L1→L2 三視角 refute-by-default→L3，基準 `13033cb`；重跑輪 X1/X2/X3 基準 `bfcc433`）推翻並撤回了多項 L1 裁決（A4 回 dock、擴充 capture 腳本、spectator 預算 1、dashboard 殼先做、Kit extension 否決、多項 owner 指派），逐條紀錄與新缺口 D-14～D-17、待裁決清單見 proposal「三層交叉對抗驗證」節。**重跑輪關鍵更正**：`viewer-viewport`／`embedded-viewer-bridge` 兩份 approved spec 已定案 A1–A4 內嵌 primary viewport 半邊（U-9 據此關閉）；canon 指名的承接 change `embedded-viewport` 不存在＝無主債務。剩餘問題 Q1–Q8 依使用者 2026-07-29 委任由 AI 以三層驗證代答，答案標「AI-裁決（使用者委任）」記於 proposal，可被使用者單方推翻（A1–A8 已落地；U-8/U-9 關閉、U-6/U-12 合併，見 proposal Q&A 節）。
 
@@ -54,7 +67,6 @@
 
 - `openspec/changes/align-frontend-design-system-reference/`（與 migrate 的互斥需求完成 crosswalk 前不得 thaw）
 - `openspec/changes/rvt-ifc-usdc-lineage/`（1/48；切片與 shared ownership 調和前不得 coding）
-- `openspec/changes/cross-service-structured-log-baseline/`（只補 tasks 10.1–10.5 runtime evidence；不重套已同步 delta）
 
 Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unchecked checkbox；三層交叉裁決未把它們判為獨立、可繼續執行的 unfinished owner（主要是已落地但 task bookkeeping 過時、已被 successor 承接，或已退役 service 的歷史工作），因此不批次搬移，也不改寫 archive 歷史。這批屬 legacy audit debt；新增 lifecycle gate 只對本次之後的新 archive fail closed，禁止再產生 unchecked/deferred archive。
 
@@ -70,7 +82,7 @@ Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unch
 | `minio-trigger-lifecycle-backend` | ✅ archived `2026-07-21-minio-trigger-lifecycle-backend` | done | #259 |
 | `c-m4-runtime-command-bridge` | ✅ archived `2026-07-21-c-m4-runtime-command-bridge`（新建 capability spec） | done | #309 |
 | `minio-watch-key-structure` | ✅ archived `2026-07-21-minio-watch-key-structure`（`--skip-specs`；主線 scenario 已在 main） | 選 A deferred-evidence | #237 |
-| `cross-service-structured-log-baseline` | ↩ restored deferred、evidence-only | 只補真 4-service runtime evidence；不改 pipeline/code/canonical spec | #126 |
+| `cross-service-structured-log-baseline` | deferred、frozen（92/93；缺 fresh final 4-service runtime/P4 evidence） | 由 `cross-service-observability` 明確重啟後只補該 evidence；不重套 pipeline/code/canonical spec | #126 |
 | `minio-folderview-and-baseline-disclosure` | ✅ archived `2026-07-29-minio-folderview-and-baseline-disclosure`（7/7 closeout reconciled） | done；archive proposal/tasks 為證據 | #265 |
 | `align-frontend-design-system-reference` | ↩ restored deferred、frozen | 先與 migrate 做 requirement/successor crosswalk；禁止平行 design coding | #363 |
 | `rvt-ifc-usdc-lineage` | ↩ restored deferred、frozen（1/48） | 先切片與調和 shared ownership；禁止直接 apply | #354 |
@@ -81,11 +93,11 @@ Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unch
 
 ### 收口 DoD（軌 1）
 
-- [x] 5 個近期 completed closeout change 維持 archive；其餘 3 個 unfinished change 維持 deferred／frozen
-- [x] lineage / align-frontend / structured-log 保留 `Status: deferred`、frozen/non-owner，不計 active WIP；minio-folderview 已在 2026-07-29 closeout 後 archive
+- [x] 5 個近期 completed closeout change 維持 archive；4 個 unfinished change 維持 deferred／frozen；structured-log 等待 fresh final 4-service runtime/P4 evidence 的明確重啟
+- [x] lineage / align-frontend / semantic-search / structured-log 保留 `Status: deferred`、frozen/non-owner；minio-folderview 已在 2026-07-29 closeout 後 archive
 - [x] #364 merge + `governance-throughput-budget` archive（OQ-3 出場）
-- [x] 本週 WIP focus 只保留 **A4 + migrate-console**；`implement-runtime-command-authority-and-rejection` 與 `add-single-gpu-session-ai-review-mvp` 的 retain/defer 另案裁決，不在本次 archive 範圍
-- [ ] 過期 worktree 刪到 ≤5（人工／下一切可選）
+- [x] 本週 WIP focus 保留 **A4 + migrate-console**；structured-log P5 evidence 已 deferred，`implement-runtime-command-authority-and-rejection` 與 `add-single-gpu-session-ai-review-mvp` 的 retain/defer 另案裁決，不在本次 archive 範圍
+- [ ] 過期 worktree 刪到 ≤5（人工／下一切可選）— **2026-07-30 report-only 稽核（未執行刪除）**：主 repo 共 21 個 worktree。稽核方法＝`git worktree list --porcelain` ＋ 逐一 `git status --porcelain --ignored`（含 ignored 產物）＋ `git for-each-ref --contains <HEAD>`（reachability）＋ `.agents/board/sessions/*.json`（session 佔用）。結果：**in-use 6**＝main checkout（PR #436）、PR #431／#432／#433／#434 各一、deployment checkout `D:/Users/deploy/AI-bim-geo`。**可安全移除 7**＝`pr428` ＋ 6 個 `.codex/worktrees/*` detached；六個 detached HEAD 分別可由 22–28 個 ref 觸及，移除 worktree 不會產生 unreachable commit，且三項檢查（ignored 產物 0、board 未佔用、reachable）全過。**需先裁決 5**（porcelain 乾淨但帶 ignored 產物，`git worktree remove` 會連同刪除）＝`a4-semantic-search-model-qa-main-convergence`（29 項，含 `.gitnexus/`、`.workflow/`、`artifacts/e2e/design-system-visual*` 設計視覺證據）、`pr-422-a4-baseline-reapproval`（5 項，含 e2e 視覺證據與 `web-viewer-sample/dist/`）、`spec-to-done-cost-guardrails`（5 項，`.gitnexus/`、`logs/`、caches）、`codex+openspec+isolated-branch-stack-browser-e2e`（1 項 `.claude/settings.local.json`）、`pr-422-session-first-contract`（1 項 `node_modules/`）。**dirty 3**＝`ci-boundary-guards`（23 檔）、`.worktrees/cross-service-structured-log-baseline`（8 檔）、`.worktrees/pr-422-risk-loop-validation`（8 檔），含未提交工作。board 目前唯一 `status: active` 的 session 是 `codex--2a3983`（cwd `sign-main-commit-pr`），不屬上述任何一個。只移除那 7 個後仍有 14 個，達不到 ≤5；deployment checkout 與待裁決／dirty 者不列入「過期 worktree」。刪除屬 destructive 動作，維持人工執行，本項保持 unchecked。
 
 ---
 

@@ -6,10 +6,11 @@
 
 | Workflow | 用途 | 引用處 / 觸發方式 |
 |---|---|---|
-| `std-plan.js` | spec-to-done P1：產 plan → 四軸 plan review → GitNexus impact 預掃 | `.claude/skills/spec-to-done/SKILL.md` 編排 |
+| `std-plan.js` | spec-to-done P1：產 plan → 四軸 plan review（每波最多 2 個）→ GitNexus impact 預掃；回報累計 agent calls | `.claude/skills/spec-to-done/SKILL.md` 編排 |
 | `std-implement.js` | spec-to-done P3：逐 task 序列實作（impact→TDD→雙 review→commit）；mode=fix 修未閉合 findings | `.claude/skills/spec-to-done/SKILL.md` 編排 |
 | `std-evidence.js` | spec-to-done P4：browser E2E 收 evidence → vertical slice 裁決 | `.claude/skills/spec-to-done/SKILL.md` 編排 |
-| `fu-adversarial-verify-generic.js` | 參數化修復對抗複驗：per-finding 懷疑者（refute-by-default）＋ holistic critic | spec-to-done SKILL.md P5；`tests/test_fu_verdict_schema.py`、`tests/test_dacs_findings_contract.py` 硬編名稱/路徑（改名須連動） |
+| `std-evidence-closeout.js` | spec-to-done evidence-closeout：明確 task IDs 的 evidence/docs executor → 獨立 verifier；最多 2 輪且 HEAD/scope fail-closed | `.claude/skills/spec-to-done/SKILL.md` 編排 |
+| `fu-adversarial-verify-generic.js` | 參數化修復對抗複驗：最多 2 批 verifier（refute-by-default）完成後串行 holistic critic；最多 32 findings | spec-to-done SKILL.md P5；`tests/test_fu_verdict_schema.py`、`tests/test_dacs_findings_contract.py`、`tests/test_fu_adversarial_batching.py` 硬編名稱/路徑（改名須連動） |
 | `spec-to-done-adversarial-verify.js` | 對抗驗證 spec-to-done 四個落地檔（規範一致/技術正確/應用測試/防錯覆蓋） | 獨立 slash workflow（維護 spec-to-done 本身時用） |
 | `ship-item.js` | 單一 work item 自動 ship：coordinator evidence→shell-less Fable/max verdict→identity-bound merge→複驗 | spec-to-done P6；權威程序見 `ship-item.md` |
 | `ship-item.md` | ship-item 的權威程序文件（非腳本） | `ship-item.js` 引用 |
@@ -22,6 +23,6 @@
 
 ## 命名備註
 
-- `std-` ＝ spec-to-done 三引擎前綴；`fu-` ＝ 修復對抗複驗（fix-up verify）家族前綴。`fu-` 名稱被 SKILL.md 與兩個 pytest 契約測試硬編，改名成本高於效益，維持現名並在此登錄定義（repo-health 2026-07-07 裁決）。
+- `std-` ＝ spec-to-done phase engine 前綴；`fu-` ＝ 修復對抗複驗（fix-up verify）家族前綴。`fu-` 名稱被 SKILL.md 與契約測試硬編，改名成本高於效益，維持現名並在此登錄定義（repo-health 2026-07-07 裁決）。
 - 「獨立 slash workflow」＝僅靠 `export const meta.name` 被 harness 自動發現、無 skill/command 編排，屬刻意設計，非死碼。
 - `saas-blueprint-tournament` 是歷史例外：保留 `meta.name` 讓舊呼叫得到明確 `retired_workflow`，但不再執行或生成文件；新需求須走 current core docs 與 OpenSpec change。

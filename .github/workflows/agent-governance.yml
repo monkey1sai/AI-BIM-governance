@@ -32,6 +32,14 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
 
+      - name: Run isolated branch stack machine tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-isolated-branch-stack.ps1
+
+      - name: Enforce production provenance and network boundaries
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-production-boundary-contract.ps1
+
       - name: Test GitNexus and worktree health report
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-gitnexus-worktree-health.mjs"
@@ -62,11 +70,7 @@ jobs:
 
       - name: Run OpenSpec machine-truth tests
         shell: pwsh
-        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-openspec-machine-truth.mjs scripts/tests/test-openspec-machine-truth-cli.mjs scripts/tests/test-collect-openspec-github-state.mjs"
-
-      - name: Test bounded GitHub artifact extraction
-        shell: pwsh
-        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-github-artifact-extractor.ps1
+        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-openspec-machine-truth.mjs scripts/tests/test-openspec-machine-truth-cli.mjs scripts/tests/test-collect-openspec-github-state.mjs scripts/tests/test-task-ledger-parser-parity.mjs"
 
       - name: Run PR body evidence tests
         shell: pwsh

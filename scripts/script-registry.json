@@ -86,6 +86,12 @@
       "notes": "Developer health check; not a deploy entrypoint."
     },
     {
+      "path": "scripts/dev/start-isolated-branch-stack.ps1",
+      "role": "isolated-branch-verifier",
+      "owner": "scripts",
+      "notes": "Backend-only branch evidence adapter; Playwright owns viewer lifecycle. Not a canonical operator entrypoint."
+    },
+    {
       "path": "scripts/demo-health-check.ps1",
       "role": "verifier",
       "owner": "scripts",

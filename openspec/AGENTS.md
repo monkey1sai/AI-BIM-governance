@@ -48,7 +48,7 @@ OpenSpec 入口：`npx openspec`（list / validate / show / archive / new）。
 ```powershell
 npx openspec validate <change-id> --strict
 npx openspec validate --all --strict
-node scripts/tests/verify-openspec-machine-truth.mjs --repo-root . --ledger openspec/lifecycle-ledger.json --now docs/plans/NOW.md --github-state <repo-contained-raw-github-json> --openspec-list <repo-contained-openspec-list-json> --subject <observed-source-sha>
+node scripts/tests/verify-openspec-machine-truth.mjs --repo-root . --ledger openspec/lifecycle-ledger.json --now docs/plans/NOW.md --github-state <repo-contained-raw-github-json> --openspec-list <repo-contained-openspec-list-json> --subject <observed-source-sha> --base <trusted-base-sha>
 ```
 
 ## Done Criteria

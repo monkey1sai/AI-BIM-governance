@@ -44,7 +44,7 @@ class FakeSuccessfulConverter:
         metadata_path = output_dir / "metadata.json"
         model_path.write_bytes(b"PXR-USDC-fake-openable\n")
         mapping_path.write_text(
-            '{"mock": false, "summary": {"mapped_count": 2, "fake_mapping_count": 0}, "items": []}',
+            '{"mapping_provenance": "converter_verified", "mock": false, "allow_fake_mapping": false, "summary": {"mapped_count": 2, "fake_mapping_count": 0}, "items": []}',
             encoding="utf-8",
         )
         entity_index_path.write_text('{"entities": []}', encoding="utf-8")
@@ -328,7 +328,9 @@ def test_adapter_builds_powershell_command_and_confirms_usdc(tmp_path: Path, mon
         (out_dir / "element_mapping.json").write_text(
             json.dumps(
                 {
+                    "mapping_provenance": "converter_verified",
                     "mock": False,
+                    "allow_fake_mapping": False,
                     "summary": {"mapped_count": 1, "fake_mapping_count": 0},
                     "items": [
                         {
@@ -662,7 +664,9 @@ def _write_minimal_converter_sidecars(output_dir: Path) -> None:
     (output_dir / "element_mapping.json").write_text(
         json.dumps(
             {
+                "mapping_provenance": "converter_verified",
                 "mock": False,
+                "allow_fake_mapping": False,
                 "summary": {"mapped_count": 1, "fake_mapping_count": 0},
                 "items": [
                     {
@@ -1823,7 +1827,9 @@ def test_adopt_path_supplements_missing_semantic_fields(tmp_path: Path):
     (out_dir / "element_mapping.json").write_text(
         json.dumps(
             {
+                "mapping_provenance": "converter_verified",
                 "mock": False,
+                "allow_fake_mapping": False,
                 "summary": {"mapped_count": 2, "fake_mapping_count": 0},
                 "items": [
                     {"ifc_guid": "GUID_X", "usd_prim_path": "/World/IfcWall/x",
@@ -1871,7 +1877,9 @@ def test_adopt_path_does_not_overwrite_existing_semantic(tmp_path: Path):
     (out_dir / "element_mapping.json").write_text(
         json.dumps(
             {
+                "mapping_provenance": "converter_verified",
                 "mock": False,
+                "allow_fake_mapping": False,
                 "summary": {"mapped_count": 1, "fake_mapping_count": 0},
                 "items": [
                     {"ifc_guid": "GUID_Z", "usd_prim_path": "/World/x",
@@ -2322,7 +2330,9 @@ def test_materialize_runs_sidecar_pass_when_adopt_returns_semantic_falsy(
     (out_dir / "element_mapping.json").write_text(
         json.dumps(
             {
+                "mapping_provenance": "converter_verified",
                 "mock": False,
+                "allow_fake_mapping": False,
                 "summary": {"mapped_count": 2, "fake_mapping_count": 0},
                 "items": [
                     {"ifc_guid": "GUID_NO_SEMANTIC_1", "usd_prim_path": "/World/HoopsMesh_X"},
@@ -2406,6 +2416,21 @@ def test_artifacts_route_serves_completed_job_model_usdc(tmp_path: Path):
     assert response.status_code == 200
     # FakeSuccessfulConverter 寫入的真實 bytes
     assert response.content == b"PXR-USDC-fake-openable\n"
+
+
+def test_artifacts_route_rejects_tampered_model_usdc(tmp_path: Path):
+    client = _client(tmp_path, converter=FakeSuccessfulConverter())
+    create = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+    conversion_job_id = create.json()["conversion_job_id"]
+    result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+    assert result["model"]["status"] == "ready"
+
+    model_path = Path(result["artifacts"]["model_usdc"]["path"])
+    model_path.write_bytes(b"tampered-after-publish")
+
+    response = client.get(f"/artifacts/{conversion_job_id}/model.usdc")
+    assert response.status_code == 409
+    assert response.json()["detail"] == "artifact checksum mismatch"
 
 
 def test_artifacts_route_rejects_path_traversal_with_404(tmp_path: Path):

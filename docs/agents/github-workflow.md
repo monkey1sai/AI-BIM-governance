@@ -40,12 +40,12 @@ Lane F/B 不使用 Superpowers，也不自動 push、開 PR 或 merge。當使�
   ```
 
   此 wrapper 會讀指定 PR 的 `baseRefOid/headRefOid`、要求 local `HEAD` 精確等於 PR head，再用該組 SHA 的 merge-base changed paths 執行 `scripts/tests/check-pr-body-evidence.ps1`，接著在 repo-local `.tmp` 下跑 `scripts/pr-review-agent.ps1`（含 affected sub-repo verify，例如 viewer/coordinator/streaming/scripts）。若只是在診斷 GitHub 上既有 PR body gate，可暫用 `-ChangedPathsSource remote -SkipReviewAgent -SkipViewerVerify`；正式 push / CI watch 前不得跳過受影響的本機等效測試。
-- **PR CI local-first policy**：PR 事件不得無差別重跑本機可重現的 heavy service checks。`.github/workflows/ci.yml` 先跑 `changed path classifier`，只有受影響的 service-level jobs（coordinator / viewer / governance-service / kit-manager / root contracts / compose / static / secret scan）才跑遠端確認；未受影響的 required job 以 job-level `if` skip，保留 check 名稱且避免 workflow-level path skip pending。`.github/workflows/pr-review-agent.yml` 的 `PR Metadata Contract` 只提供 PR-head diagnostic；不保留 raw body、不安裝 sub-repo deps、不重跑 local review agent。唯一 merge authority 是 default-branch `.github/workflows/merge-evidence.yml` 發布的 `required merge evidence` status：它以 base-pinned validator 重驗 live body SHA、NUL-safe changed paths、CI conclusions 與 artifacts。本機 `check-pr-local-preflight.ps1` 仍是 push 前的 PR review agent 與 affected sub-repo verification 硬 gate。
+- **PR CI local-first policy**：PR 事件不得無差別重跑本機可重現的 heavy service checks。`.github/workflows/ci.yml` 先跑 `changed path classifier`，只有受影響的 service-level jobs（coordinator / viewer / governance-service / kit-manager / root contracts / compose / static / secret scan）才跑遠端確認；未受影響的 required job 以 job-level `if` skip，保留 check 名稱且避免 workflow-level path skip pending。`.github/workflows/pr-review-agent.yml` 的 `PR Metadata Contract` 是 branch-protected 的 PR-head metadata check；不保留 raw body、不安裝 sub-repo deps、不重跑 local review agent，也不聚合 artifacts 或發布額外 merge status。本機 `check-pr-local-preflight.ps1` 仍是 push 前的 PR review agent 與 affected sub-repo verification 硬 gate。
 - 每個 PR body 必填 `Change lane: F | B | G | S`、`Behavior contract changed: yes | no`、`Requirement source: issue | docs/plans | superpowers spec | existing contract | not applicable`。behavior=yes 或 Lane G/S 時不得填 not applicable；behavior=no 不得只因 changed path 缺 spec 而 blocker。新增或刪除 route/API/schema 等 contract signal，或 deploy/security/Kit runtime/cross-service 等 Governed trigger，不得自報 F/B 規避 Lane G。
-- User-facing change 的 PR 描述必須包含 Frontend Verification table；machine-required labels 以 `scripts/tests/check-pr-body-evidence.ps1` 為準。除 route/button/fixture/真 backend/runtime ID/visible state/browser evidence 外，還必須填 `Design gate status`、`Design screen(s)`、`Reference-missing route(s) / surface(s)`、`Full completion claimed`、manifest 與 visual result/comparison/artifacts。scope 由 base/head manifest 聯集推導，PR 不得自選 screen；`mixed`／`partial_reference_missing` 一律 full=no。semantic/pixel只接受 CI `design-semantic-visual` output，functional/runtime 只接受 `functional-runtime-conv` output；兩者須由 `required merge evidence` 依 plan 判定 required/typed skip 後才有 merge authority。
+- User-facing change 的 PR 描述必須包含 Frontend Verification table；machine-required labels 以 `scripts/tests/check-pr-body-evidence.ps1` 為準。除 route/button/fixture/真 backend/runtime ID/visible state/browser evidence 外，還必須填 `Design gate status`、`Design screen(s)`、`Reference-missing route(s) / surface(s)`、`Full completion claimed`、manifest 與 visual result/comparison/artifacts。scope 由 base/head manifest 聯集推導，PR 不得自選 screen；`mixed`／`partial_reference_missing` 一律 full=no。semantic/pixel只接受 CI `design-semantic-visual` output，functional/runtime 只接受 `functional-runtime-conv` output；兩者仍是完成證據，但不再由額外 artifact aggregation status 決定 merge authority。
 - Runtime / Docker / Kit / viewer / env / port 相關 PR 描述必須包含 Deploy Path Verification table；若未更新 `scripts/deploy.ps1`，必須明確說明已驗證或不適用。
 - 改動治理面檔案的 PR 描述必須包含 **AI Coding Governance** table，7 個必填 label：`Linked issue`、`Requirement source`、`CODEOWNERS / owner review`、`GitNexus evidence`、`Browser E2E evidence`、`Agent workflow changed?`、`Required checks expected`。machine labels 由 `check-pr-body-evidence.ps1` 逐字比對，值不得為占位。
-- `PR Metadata Contract` 與 CI 都監聽 `pull_request.edited`；default-branch invalidator 會先把 `required merge evidence` 設回 pending，新的 CI 完成後才以 live body hash重新授權。因此 PR body-only 修正流程是：更新 PR body → 等待新的 `edited` CI 與 trusted merge-evidence run → 本機 `check-pr-local-preflight.ps1` 跑綠；不得用 `gh run rerun` 的舊 payload或 `--allow-empty` commit假刷新證據。
+- `PR Metadata Contract` 與 CI 都監聽 `pull_request.edited`。因此 PR body-only 修正流程是：更新 PR body → 等待新的 `edited` CI 與 PR Metadata Contract run → 本機 `check-pr-local-preflight.ps1` 跑綠；不得用 `gh run rerun` 的舊 payload或 `--allow-empty` commit假刷新證據。
 - 完成標準、frontend-operable rule 與誠實鐵律（無 backend 處 UI 標 `DEMO DATA` / `NOT BUILT` / `not observed`，不得只接 mock）見 `AGENTS.md` §0.1 與 `product-operability-and-script-contract.md`。
 
 ## `main` 衛生
@@ -98,11 +98,23 @@ git fetch origin --prune
 
 Lane G/S、修 PR、checkout 不乾淨或並行工作時必須使用 dedicated worktree。Lane F/B 在已確認 checkout 乾淨且使用者未要求隔離時可直接使用 task branch。需要 gitignored fixtures（例如 `storage/` 真實 IFC）時，優先在 worktree 建 junction / symlink。
 
+### Baseline 契約（2026-07-30 使用者裁決納入治理）
+
+當使用者要求「以 origin main 為 baseline 建立隔離區執行」或同義口令時，agent MUST：
+
+1. **先 `git fetch origin --prune`**，再以 `origin/main` 開 worktree：`git worktree add -b <type>/<slug> <sibling-path> origin/main`。
+2. **禁止**以 local `main`、目前 checkout、其他 feature branch 或 **stale `origin/main`** 當 baseline（與 §「測試部署區重建」對 stale `origin/main` 的禁令同一理由：本機 ref 可能落後數個 merge，據此開工會把別人已合併的修正當成未完成而重做，或在過期樹上取得無效證據）。
+3. **開工前實證 baseline**：`git rev-parse HEAD` 必須等於 `git rev-parse origin/main`，且 `git status --porcelain` 為空。兩者任一不成立即停工回報，不得「先做再說」。
+4. **收工後依 Closeout 順序移除 worktree**，不得留下失聯目錄。
+
+此契約對所有 Lane 生效（含 F/B）：使用者明確要求隔離時，Lane F/B 的「可直接切 branch」豁免不適用。
+
 ### 位置與命名
 
 - **權威位置**：repo 的 **sibling 目錄**，例如 `C:\Repos\active\iot\AI-BIM-governance.worktrees\<branch-slug>`（與 repo 同層、repo 外）。
-- **禁用位置**：`.claude/worktrees/` 已被 gitignore，且已有紀錄顯示會被並行 git automation 中途清空（見 `enterworktree-cleaned-by-concurrent-git.md`），`git clean -fdx` 也會把它整個掃掉；不得當作 worktree 的正式落腳點。
+- **禁用位置**：`.claude/worktrees/` 已被 gitignore，且已有紀錄顯示會被並行 git automation 中途清空（見 `enterworktree-cleaned-by-concurrent-git.md`），`git clean -fdx` 也會把它整個掃掉；不得當作 worktree 的正式落腳點。**repo 內的 `.worktrees/` 同屬禁用**：`.gitignore` 已忽略該路徑，因此暴露於同一個 `git clean -fdx` 風險（2026-07-30 實際踩到並就地更正）。
 - **命名**：branch 用 `feat|fix|chore|docs/<slug>`；worktree 目錄名對齊同一個 `<slug>`（不重複前綴）。
+- **工具存取**：sibling 位置在 repo 之外，隔離區內的檔案工具（Read/Write/Edit/Grep）可能尚未授權該目錄。應在開工前一次性取得該 sibling 目錄的存取授權，而不是退回用 shell here-string 編輯關鍵檔案。
 
 ### 何時可直接切 branch
 

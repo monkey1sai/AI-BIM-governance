@@ -29,13 +29,10 @@ import {
 } from "./lib/structLog.js";
 import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
 import {
-  correlationIdFor,
-  deriveIntakeFromKey,
-  idempotencyKeyFor,
-  startMinioWatcher,
-  type MinioWatcherHandle,
-  type MinioWatcherStatus,
-} from "./services/minioWatcher.js";
+  createMinioWatchSurface,
+  type MinioWatchSurface,
+} from "./services/minioWatchSurface.js";
+import { type ObjectStorePort } from "./services/minioObjectStore.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger } from "./services/conversionLedger.js";
 import {
@@ -53,13 +50,6 @@ import { checkSourceIfcPath, probeArtifactHealth } from "./services/artifactHeal
 import { deriveLifecycleStatus } from "./services/lifecycleStatus.js";
 import { deriveFailure } from "./services/failureReason.js";
 import { deriveConversionRecoveryAction } from "./services/conversionRecoveryAction.js";
-import {
-  createMinioS3Client,
-  listMinioFolder,
-  listMinioObjects,
-  presignMinioObject,
-  type MinioFolderListing,
-} from "./services/minioClient.js";
 import { maskPresignedRef } from "./services/presignedRef.js";
 import {
   registerGovernanceProxy,
@@ -564,10 +554,17 @@ export interface CoordinatorApp {
   structLog: StructLogger;
   // coordinator-auto-poll-streaming-conversion §6:cancel 全部 in-process auto-poll
   // timer。process shutdown / 測試 teardown 必呼叫,避免 timer keep-alive 阻 exit。
-  // async（回 Promise）:minioWatcher.dispose() 需 await 其 in-flight tick settle 後才
-  // 銷毀 S3 client（避免 unhandled rejection）;shutdown.ts 已 await，fire-and-forget 的
-  // 測試 teardown 仍因 watcher 內部 promise 鏈得到保護。
+  // async（回 Promise）:minioWatchSurface.dispose() 需 await 其 in-flight tick settle 後才
+  // 銷毀 object store（避免 unhandled rejection）;shutdown.ts 已 await，fire-and-forget 的
+  // 測試 teardown 仍因 surface 內部 promise 鏈得到保護。
   dispose: () => Promise<void>;
+  /**
+   * @internal deterministic 測試驅動：`await minioWatchSurface.pollNow()` 取代對
+   * watcher 計數器的輪詢（waitFor），resolve 時該輪 list／intake／counters 已全部落定。
+   * **不是 production 介面**——production 只經 routes（PUT watch / GET status）與
+   * auto tick 使用 surface；此 accessor 只為整合測試消除觀測競態。
+   */
+  minioWatchSurface: MinioWatchSurface;
   /**
    * @internal test-only read accessor：回報某 jobId 是否仍持有 enqueue 階段暫存的
    * dispatch 脈絡。**不是 production 介面**——production route 經 pipeline 內部判定；
@@ -587,6 +584,17 @@ export interface CreateCoordinatorAppOptions {
    * is controlled by NODE_ENV (suppressed under `test`).
    */
   structLog?: StructLogger;
+  /**
+   * MinIO Watch Surface 的 object store seam（測試注入 in-memory fake；省略 =
+   * production 真 S3 adapter）。取代舊 conversion-watch-toggle.test.ts 對整個
+   * minioWatcher 模組的 vi.mock——啟停編排經真 surface 走，只替換 S3 存取。
+   */
+  minioWatchObjectStoreFactory?: (cfg: {
+    endpoint: string;
+    bucket: string;
+    accessKey: string;
+    secretKey: string;
+  }) => ObjectStorePort;
 }
 
 type RawBodyRequest = express.Request & { rawBody?: string };
@@ -690,117 +698,20 @@ export function createCoordinatorApp(
     config.streamingConversionInternalToken || undefined,
   );
   const startedAt = Date.now();
-  // minio-watch-auto-intake（O4 B 案，env opt-in 預設關）。watcher 自打 loopback
-  // POST /api/external/ifc-ready，既有 intake/去重/dispatch 鏈零變動。selfBase 預設
-  // http://127.0.0.1:${實際 listen port}；測試以 config.minioWatchSelfBaseUrl 注入。
-  let minioWatcher: MinioWatcherHandle | null = null;
   // conversionLedger（minio-closed-loop-phase1 Task 1/3：coordinator-local shadow 持久 ledger）：
-  // 宣告即建構（const），讓 watcher 的 isLedgered closure（startMinioWatcherIfEnabled 內、下方 ~426 行）
-  // 在型別系統層面就靜態保證捕捉到已初始化的 ledger——不靠「賦值早於啟動路徑」的隱性順序假設，故日後
-  // 在啟動路徑前插入新程式碼也不可能重新引入 TDZ。watcher 偵測即寫 queued（Task 2）、GET /api/conversion
-  // /records 讀取（Task 3）；建構只讀持久 JSON 檔（無時序副作用），提早到宣告處安全。
+  // 宣告即建構（const），讓 watch surface 的 isLedgered closure 在型別系統層面就靜態保證捕捉到
+  // 已初始化的 ledger——不靠「賦值早於啟動路徑」的隱性順序假設，故日後在啟動路徑前插入新程式碼
+  // 也不可能重新引入 TDZ。watcher 偵測即寫 queued（Task 2）、GET /api/conversion/records 讀取
+  // （Task 3）；建構只讀持久 JSON 檔（無時序副作用），提早到宣告處安全。
   const conversionLedger = new ConversionLedger(config.conversionLedgerStorePath);
   const artifactHealthLedger = new ArtifactHealthLedger(config.artifactHealthLedgerStorePath);
-  // IX-CV-04：runtime toggle 真相。初值 = env opt-in；PUT /api/conversion/watch 在 runtime 覆寫。
-  let minioWatchRuntimeEnabled = config.minioWatchEnabled;
-  // toggle 同步鎖（CR-B）：dispose() 為 async（2s cap），防並發 PUT 在 await 期間交錯啟兩個 watcher。
-  let minioWatchToggleBusy = false;
-  // 連線參數齊全判斷（CR-C）：未配置時 PUT{enabled:true} 誠實 422，不空轉/不 throw。
-  // endpoint/bucket/accessKey/secretKey 為硬連線必要；keySuffix 有 assert、interval 有預設。
-  function minioWatchConfigured(): boolean {
-    return Boolean(
-      config.minioWatchEndpoint && config.minioWatchBucket &&
-      config.minioWatchAccessKey && config.minioWatchSecretKey,
-    );
-  }
-  type MinioFolderCacheEntry = {
-    listing: MinioFolderListing;
-    fetchedAt: string;
-    stale: boolean;
-  };
-  type MinioEventClient = {
-    write: (chunk: string) => boolean;
-    end: () => void;
-  };
-  const minioFolderCache = new Map<string, MinioFolderCacheEntry>();
-  const minioEventClients = new Set<MinioEventClient>();
-
-  function minioFolderCacheKey(prefix: string, delimiter: string): string {
-    return `${delimiter}\u0000${prefix}`;
-  }
-
-  function folderPrefixesForObjectKey(key: string): string[] {
-    const out = new Set<string>([""]);
-    const parts = key.split("/");
-    let current = "";
-    for (let i = 0; i < parts.length - 1; i += 1) {
-      current += `${parts[i]}/`;
-      out.add(current);
-    }
-    return [...out];
-  }
-
-  function emitMinioEvent(event: string, data: Record<string, unknown>): void {
-    const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-    for (const client of [...minioEventClients]) {
-      try {
-        client.write(frame);
-      } catch {
-        minioEventClients.delete(client);
-        client.end();
-      }
-    }
-  }
-
-  function markMinioFolderCacheDirtyForObject(key: string, reason: string): void {
-    const prefixes = folderPrefixesForObjectKey(key);
-    for (const p of prefixes) {
-      const entry = minioFolderCache.get(minioFolderCacheKey(p, "/"));
-      if (entry) entry.stale = true;
-    }
-    emitMinioEvent("minio.changed", {
-      type: "minio.changed",
-      prefixes,
-      reason,
-      at: nowIso(),
-    });
-  }
-  const minioWatchStartupConfigError =
-    config.minioWatchEnabled && !minioWatchConfigured()
-      ? "MINIO_WATCH_ENABLED=true but endpoint/bucket/credentials are incomplete"
-      : "";
-  if (minioWatchStartupConfigError) {
-    minioWatchRuntimeEnabled = false;
-  }
-  function startMinioWatcherIfEnabled(): void {
-    // 不變式：本函式 idempotent。兩條啟動路徑（下方 "listening" 事件、以及 selfBaseUrl
-    // 已設時的立即啟動）共用 `minioWatcher` 這一個 guard 防重複啟動。即使兩條同時成立
-    // ——minioWatchEnabled=true && selfBaseUrl 已設 && 呼叫端又 listen()——也安全：
-    // 立即路徑會先把 minioWatcher 設好，listen callback 是非同步（Node 事件迴圈），
-    // "listening" 事件到達時 minioWatcher != null，此 guard 直接 return，不會啟第二個。
-    // 舊：if (!config.minioWatchEnabled || minioWatcher) return;
-    if (!minioWatchRuntimeEnabled || minioWatcher) return;
-    // minio-watch review P2 修復：watcher 的 loopback self-POST 同樣經過
-    // /api/external/ifc-ready 的 IP allowlist（authProvider 在 secret 之前先檢查 IP）。
-    // 硬化部署把 EXTERNAL_INTAKE_IP_ALLOWLIST 鎖成 edge CIDR 而漏掉 loopback 時，
-    // watcher 每輪 intake 都 403（列得到物件、永遠建不了 job）。127.0.0.1 與 ::1
-    // 雙雙不在 allowlist ⇒ 必然永久失敗 → 啟動 fail-fast（與 selfBaseUrl loopback
-    // assert 同精神），不靜默空轉。重用 authProvider 的 isIpAllowed 避免判定分歧。
-    if (
-      config.externalIntakeIpAllowlist.length > 0 &&
-      !isIpAllowed("127.0.0.1", config.externalIntakeIpAllowlist) &&
-      !isIpAllowed("::1", config.externalIntakeIpAllowlist)
-    ) {
-      throw new Error(
-        "MINIO_WATCH_ENABLED=true 但 EXTERNAL_INTAKE_IP_ALLOWLIST 不含 loopback（127.0.0.1/::1）：" +
-          "watcher 的 loopback intake 會被 403 拒絕。請將 loopback 加入 allowlist，或關閉 MINIO_WATCH_ENABLED。",
-      );
-    }
-    const address = server.address();
-    const boundPort =
-      address && typeof address !== "string" ? address.port : config.port;
-    const selfBaseUrl = config.minioWatchSelfBaseUrl || `http://127.0.0.1:${boundPort}`;
-    minioWatcher = startMinioWatcher({
+  // minio-watch-auto-intake（O4 B 案，env opt-in 預設關）：MinIO Watch Surface（deep
+  // module，見 CONTEXT.md 詞條與 services/minioWatchSurface.ts）擁有 watcher loop 生命週期、
+  // runtime toggle、status 投影與 pollNow 測試驅動。watcher 自打 loopback
+  // POST /api/external/ifc-ready，既有 intake/去重/dispatch 鏈零變動。
+  const minioWatchSurface = createMinioWatchSurface({
+    config: {
+      enabled: config.minioWatchEnabled,
       endpoint: config.minioWatchEndpoint,
       bucket: config.minioWatchBucket,
       prefix: config.minioWatchPrefix,
@@ -808,26 +719,52 @@ export function createCoordinatorApp(
       secretKey: config.minioWatchSecretKey,
       keySuffix: config.minioWatchKeySuffix,
       intervalSeconds: config.minioWatchIntervalSeconds,
-      selfBaseUrl,
-      webhookSecret: config.externalIntakeWebhookSecret,
+      selfBaseUrl: config.minioWatchSelfBaseUrl,
       tenantId: config.minioWatchTenantId,
-      // §3.4 全自動 auto-enroll：以持久 ledger 當去重水印。無紀錄→觸發 intake、有紀錄→skip。
-      // 既有未轉檔（含原 baseline 3 檔，ledger=0）下一輪 tick 自動補轉；coordinator 重啟後
-      // 持久 ledger 命中 mw_<hash16> 故不重觸發（重啟不風暴）。closure 捕捉的 conversionLedger
-      // 是上方宣告即建構的 const，型別系統靜態保證已初始化，closure 任何時刻被求值都看得到
-      // 已建好的 ledger。watcher tick 對 ledger 唯讀（落帳由 intake route 端負責）。
-      isLedgered: (idkey) => conversionLedger.get(idkey) !== null,
-      onObjectObserved: (event) => markMinioFolderCacheDirtyForObject(event.key, "minio-watcher-observed-object"),
-      structLog,
-    });
-  }
+    },
+    webhookSecret: config.externalIntakeWebhookSecret,
+    // §3.4 全自動 auto-enroll：以持久 ledger 當去重水印。無紀錄→觸發 intake、有紀錄→skip。
+    // closure 捕捉的 conversionLedger 是上方宣告即建構的 const，型別系統靜態保證已初始化。
+    // watcher tick 對 ledger 唯讀（落帳由 intake route 端負責）。
+    isLedgered: (idkey) => conversionLedger.get(idkey) !== null,
+    // production selfBase 預設 http://127.0.0.1:${實際 listen port}；測試以 config.minioWatchSelfBaseUrl 注入。
+    resolveSelfBaseUrl: () => {
+      const address = server.address();
+      const boundPort = address && typeof address !== "string" ? address.port : config.port;
+      return `http://127.0.0.1:${boundPort}`;
+    },
+    // 手動 trigger 的 self-POST loopback：複用 config.minioWatchSelfBaseUrl seam（測試以
+    // listen(0) 的真實 port 於 app 建構後注入，故必須每次呼叫時讀），fallback 用 config.port
+    // （production 預設 8004，process 已 listen 該 port）——與 watcher 的 bound-port 解析
+    // 是兩個歷史語意，不可合併。
+    resolveManualTriggerSelfBaseUrl: () => config.minioWatchSelfBaseUrl || `http://127.0.0.1:${config.port}`,
+    // 上游 intake 含同步 IFC 下載，故逾時 = 下載逾時 + 5s 緩衝。
+    manualTriggerTimeoutMs: config.ifcDownloadTimeoutSeconds * 1000 + 5_000,
+    // minio-watch review P2 修復：watcher 的 loopback self-POST 同樣經過
+    // /api/external/ifc-ready 的 IP allowlist（authProvider 在 secret 之前先檢查 IP）。
+    // 硬化部署把 EXTERNAL_INTAKE_IP_ALLOWLIST 鎖成 edge CIDR 而漏掉 loopback 時，
+    // watcher 每輪 intake 都 403（列得到物件、永遠建不了 job）→ 啟動 fail-fast，
+    // 不靜默空轉。重用 authProvider 的 isIpAllowed 避免判定分歧。
+    assertIntakeReachable: () => {
+      if (
+        config.externalIntakeIpAllowlist.length > 0 &&
+        !isIpAllowed("127.0.0.1", config.externalIntakeIpAllowlist) &&
+        !isIpAllowed("::1", config.externalIntakeIpAllowlist)
+      ) {
+        throw new Error(
+          "MINIO_WATCH_ENABLED=true 但 EXTERNAL_INTAKE_IP_ALLOWLIST 不含 loopback（127.0.0.1/::1）：" +
+            "watcher 的 loopback intake 會被 403 拒絕。請將 loopback 加入 allowlist，或關閉 MINIO_WATCH_ENABLED。",
+        );
+      }
+    },
+    objectStoreFactory: options.minioWatchObjectStoreFactory,
+    structLog,
+  });
   // 已在 listen 上的 server（生產 index.ts / E2E）：listening 後啟動以取得實際 port。
-  // （conversionLedger 已於上方宣告即建構，const 保證 isLedgered closure 一定看到已初始化 ledger。）
-  server.on("listening", () => startMinioWatcherIfEnabled());
+  server.on("listening", () => minioWatchSurface.startIfEnabled());
   // supertest 整合測試不呼叫 listen；用 selfBaseUrl override 時可立即啟動。
-  // 舊：if (config.minioWatchEnabled && config.minioWatchSelfBaseUrl) {
-  if (minioWatchRuntimeEnabled && config.minioWatchSelfBaseUrl) {
-    startMinioWatcherIfEnabled();
+  if (config.minioWatchSelfBaseUrl) {
+    minioWatchSurface.startIfEnabled();
   }
   // coordinator-serial-conversion-dispatch-queue:序列化對 streaming-server 的
   // dispatch。downloaded 後 enqueue;單一 in-flight slot;失敗不卡後續。
@@ -1521,19 +1458,17 @@ export function createCoordinatorApp(
       response.status(400).json({ detail: "Body must include boolean 'enabled'." });
       return;
     }
-    if (minioWatchToggleBusy) {                                          // CR-B：toggle 進行中
-      response.status(409).json({ detail: "Watcher toggle in progress; retry shortly." });
-      return;
-    }
     const reason = parseReason(request);
     const actor = resolveActor(request);
-    minioWatchToggleBusy = true;
-    // double-enable 誠實化（P5 對抗複驗 task1-important2）：對已在跑的 watcher 再 enable 是 no-op
-    //（guard 早返、不起第二個 watcher）；audit 須與真冷啟區分，否則稽核者無法分辨「真啟動」vs「冗餘 no-op」。
-    let enableWasNoop = false;
-    try {
-      if (body.enabled) {
-        if (!minioWatchConfigured()) {                                  // CR-C：未配置誠實拒絕
+    // toggle 語意（busy 鎖 / 未配置 422 / 啟動失敗回滾 / 冷啟 vs no-op 區分）由 surface 擁有；
+    // route 只做 HTTP 映射與 audit（audit 需 request 的 actor/reason，屬 HTTP 層關注）。
+    const outcome = await minioWatchSurface.setEnabled(body.enabled);
+    if (!outcome.ok) {
+      switch (outcome.code) {
+        case "busy": // CR-B：toggle 進行中
+          response.status(409).json({ detail: "Watcher toggle in progress; retry shortly." });
+          return;
+        case "not_configured": // CR-C：未配置誠實拒絕
           // 失敗嘗試也須留 audit trail（review Important #1）：未配置仍嘗試啟動是 security-sensitive
           // 操作面的誤操作/探測訊號，level 降 warn 以與成功 info 區分；outcome 編進 target。
           structLog.withTraceId("minio-watch").audit("conversion-control", "conversion.watch.toggle", {
@@ -1541,41 +1476,26 @@ export function createCoordinatorApp(
           }, "warn");
           response.status(422).json({ detail: "MinIO watch not configured (endpoint/bucket/credentials missing); cannot enable." });
           return;
-        }
-        enableWasNoop = minioWatcher != null;                           // 已在跑 → 本次 enable 為冗餘 no-op
-        minioWatchRuntimeEnabled = true;
-        try {
-          startMinioWatcherIfEnabled();                                 // 重建 handle（含 allowlist fail-fast）
-        } catch (e) {
-          minioWatchRuntimeEnabled = false;                            // 回滾 flag，誠實 500
+        case "start_failed":
           // watcher 啟動失敗同樣留 audit（review Important #1），保留失敗訊息至 reason 供事後追查。
+          // runtime flag 回滾（不留半開狀態）由 surface 內部保證。
           structLog.withTraceId("minio-watch").audit("conversion-control", "conversion.watch.toggle", {
             action: "conversion.watch.toggle", actor, target: "watch:enable:failed-start",
-            reason: `${reason ? `${reason} | ` : ""}error: ${e instanceof Error ? e.message : String(e)}`,
+            reason: `${reason ? `${reason} | ` : ""}error: ${outcome.message}`,
           }, "warn");
-          response.status(500).json({ detail: `Failed to start watcher: ${e instanceof Error ? e.message : String(e)}` });
+          response.status(500).json({ detail: `Failed to start watcher: ${outcome.message}` });
           return;
-        }
-      } else {
-        minioWatchRuntimeEnabled = false;
-        if (minioWatcher) {                                            // 沿用 shutdown 安全模式
-          const w = minioWatcher;
-          minioWatcher = null;
-          await w.dispose();
-        }
       }
-      // spec §4.1：成功 toggle audit 須含獨立 `enabled` 布林（供以 enabled 查 audit 的工具命中）；
-      // 同時保留 target 方向編碼（與 prioritize/retry 用 target:id、以及失敗路徑的 outcome-in-target
-      // 慣例一致，既有以 target 為鍵的查詢不破壞）。`enabled` 已加入 AuditData(optional)。
-      structLog.withTraceId("minio-watch").audit("conversion-control", "conversion.watch.toggle", {
-        action: "conversion.watch.toggle", actor,
-        target: body.enabled ? (enableWasNoop ? "watch:enable:noop" : "watch:enable") : "watch:disable",
-        enabled: body.enabled, reason,
-      }, "info");
-      response.json(currentMinioWatchStatusPayload());                  // 與 GET status 同邏輯的共用 helper
-    } finally {
-      minioWatchToggleBusy = false;
     }
+    // spec §4.1：成功 toggle audit 須含獨立 `enabled` 布林（供以 enabled 查 audit 的工具命中）；
+    // 同時保留 target 方向編碼。double-enable no-op（P5 對抗複驗 task1-important2）須與真冷啟
+    // 區分（target=watch:enable:noop），否則稽核者無法分辨「真啟動」vs「冗餘 no-op」。
+    structLog.withTraceId("minio-watch").audit("conversion-control", "conversion.watch.toggle", {
+      action: "conversion.watch.toggle", actor,
+      target: body.enabled ? (outcome.noop ? "watch:enable:noop" : "watch:enable") : "watch:disable",
+      enabled: body.enabled, reason,
+    }, "info");
+    response.json(minioWatchSurface.status());                          // 與 GET status 同一投影
   });
 
   // A1 手動觸發：前端只送 MinIO object key，coordinator server-side presign + 重用 watcher
@@ -1585,8 +1505,8 @@ export function createCoordinatorApp(
     if (rejectIfIpNotAllowed(request, response)) return;
     // 連線參數須齊全（endpoint/bucket/accessKey/secretKey）。僅檢 endpoint/bucket 會放行空憑證，
     // presign 仍以空憑證簽出 URL、self-POST 過關，IFC 下載卻在 MinIO 認證靜默失敗（job failed）。
-    // 複用既有 minioWatchConfigured()（四欄全檢，與 PUT /api/conversion/watch 422 判斷同一把尺）。
-    if (!minioWatchConfigured()) {
+    // 複用 surface.configured()（四欄全檢，與 PUT /api/conversion/watch 422 判斷同一把尺）。
+    if (!minioWatchSurface.configured()) {
       response.status(503).json({ detail: "MinIO 未設定（endpoint/bucket/credentials 不齊全）" });
       return;
     }
@@ -1608,82 +1528,30 @@ export function createCoordinatorApp(
       response.status(400).json({ detail: "key 過長（S3 object key 上限 1024 bytes）" });
       return;
     }
-    const derived = deriveIntakeFromKey({
-      key,
-      prefix: config.minioWatchPrefix,
-      keySuffix: config.minioWatchKeySuffix,
-    });
-    if (!derived.ok) {
-      response.status(400).json({ detail: `key 不合法：${derived.reason}` });
-      return;
-    }
-    let presignedRef: string;
-    try {
-      presignedRef = await presignMinioObject(
-        {
-          endpoint: config.minioWatchEndpoint,
-          accessKey: config.minioWatchAccessKey,
-          secretKey: config.minioWatchSecretKey,
-        },
-        config.minioWatchBucket,
-        key,
-      );
-    } catch (err) {
-      response.status(502).json({ detail: `presign 失敗：${err instanceof Error ? err.message : String(err)}` });
-      return;
-    }
     const forceRetrigger = request.body?.force_retrigger === true;
-    // etag 在手動觸發無法事先取得，用 key 當穩定 idempotency 來源（同 key 重觸發回既有 job）。
-    // terminal converter failure 的 operator recovery 需要一個明確的新 attempt；此時只讓
-    // idempotency/correlation 的 attempt salt 改變，source key 與 presigned ref 仍指向同一 IFC。
+    // terminal converter failure 的 operator recovery 需要一個明確的新 attempt；attempt salt
+    // 由 route 生成（時鐘/亂數屬 HTTP 層），surface 只做確定性 presign/idempotency/self-POST。
     const attemptSalt = forceRetrigger ? `retrigger_${Date.now()}_${randomWebViewSuffix()}` : "";
-    const idempotencyInput = forceRetrigger ? `${key}#${attemptSalt}` : key;
-    const idemKey = idempotencyKeyFor(config.minioWatchBucket, key, idempotencyInput);
-    const corrId = correlationIdFor(config.minioWatchBucket, key, idempotencyInput);
-    // self-POST loopback：複用既有 watcher seam config.minioWatchSelfBaseUrl（config.ts:101、
-    // app.ts:399 同一條），有值時優先（測試以 listen(0) 的真實 port 注入）；fallback 才用
-    // config.port（production 預設 8004，process 已 listen 該 port）。
-    // ⚠ reviewer blocker：supertest 整合測試 request(app.app) 不呼叫 server.listen()，
-    // 若硬編 http://127.0.0.1:${config.port}（預設 8004，無人 listen）→ fetch ECONNREFUSED → 502，
-    // 合法 key 永遠拿不到 202。故端點必須讀 selfBaseUrl seam，測試端 makeApp 須 listen(0)+注入。
-    const selfBase = config.minioWatchSelfBaseUrl || `http://127.0.0.1:${config.port}`;
-    try {
-      const upstream = await fetch(`${selfBase}/api/external/ifc-ready`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Webhook-Secret": config.externalIntakeWebhookSecret,
-          "X-Correlation-Id": corrId,
-          "X-Idempotency-Key": idemKey,
-        },
-        body: JSON.stringify({
-          event: "ifc_ready",
-          tenant_id: config.minioWatchTenantId,
-          project_id: derived.projectId,
-          project_display_name: derived.projectDisplayName,
-          model_category: derived.category,
-          external_model_version_id: derived.externalModelVersionId,
-          external_conversion_task_id: forceRetrigger
-            ? `${derived.externalModelVersionId}_manual_${attemptSalt}`
-            : `${derived.externalModelVersionId}_manual`,
-          source_ifc: { ref: presignedRef, etag: key, filename: "model.ifc", format: "ifc" },
-          requested_outputs: ["usdc", "element_mapping", "entity_index", "metadata"],
-        }),
-        // app 死鎖/過載長時不回時逾時中斷，避免前端 A1 按鈕無限等待（對齊 minioWatcher.ts:341 self-POST 保護）。
-        // 上游 intake 含同步 IFC 下載，故逾時 = 下載逾時 + 5s 緩衝。
-        signal: AbortSignal.timeout(config.ifcDownloadTimeoutSeconds * 1000 + 5_000),
-      });
-      const text = await upstream.text();
-      const parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {};
-      // 誠實：回應不夾帶 presigned ref（即使上游回了也遮蔽；source_ifc_ref 由上游 summarize 已遮蔽）
-      response.status(upstream.status).json({
-        ...parsed,
-        trigger_source: "manual",
-        force_retrigger: forceRetrigger,
-        recovery_action: forceRetrigger ? "retrigger_submitted" : undefined,
-      });
-    } catch (err) {
-      response.status(502).json({ detail: `trigger 失敗：${err instanceof Error ? err.message : String(err)}` });
+    const outcome = await minioWatchSurface.manualTrigger(key, { forceRetrigger, attemptSalt });
+    switch (outcome.kind) {
+      case "invalid_key":
+        response.status(400).json({ detail: outcome.detail });
+        return;
+      case "presign_failed":
+        response.status(502).json({ detail: `presign 失敗：${outcome.message}` });
+        return;
+      case "fetch_failed":
+        response.status(502).json({ detail: `trigger 失敗：${outcome.message}` });
+        return;
+      case "upstream":
+        // 誠實：回應不夾帶 presigned ref（即使上游回了也遮蔽；source_ifc_ref 由上游 summarize 已遮蔽）
+        response.status(outcome.status).json({
+          ...outcome.body,
+          trigger_source: "manual",
+          force_retrigger: forceRetrigger,
+          recovery_action: forceRetrigger ? "retrigger_submitted" : undefined,
+        });
+        return;
     }
   });
 
@@ -2217,6 +2085,7 @@ export function createCoordinatorApp(
 
   // MinIO folder cache dirty stream：watcher 觀察到新/變更 object 時，通知前端把對應 prefix
   // 視為 stale。只送 prefix metadata，不送物件內容、presigned URL 或 credentials。
+  // fan-out 與 cache 失效由 surface 擁有；route 只負責 SSE headers 與 ready 握手 frame。
   app.get("/api/minio/events", (request, response) => {
     response.status(200);
     response.set({
@@ -2226,10 +2095,8 @@ export function createCoordinatorApp(
       "X-Accel-Buffering": "no",
     });
     response.write(`event: minio.ready\ndata: ${JSON.stringify({ type: "minio.ready", at: nowIso() })}\n\n`);
-    minioEventClients.add(response);
-    request.on("close", () => {
-      minioEventClients.delete(response);
-    });
+    const unsubscribe = minioWatchSurface.subscribeEvents(response);
+    request.on("close", unsubscribe);
   });
 
   // minio-closed-loop-phase1 Task 4：唯讀 S3 list proxy。
@@ -2273,94 +2140,33 @@ export function createCoordinatorApp(
       response.status(400).json({ error: "invalid_prefix", detail: "prefix 不可含換行字元（CR/LF）" });
       return;
     }
-    let client: ReturnType<typeof createMinioS3Client> | null = null;
     try {
-      client = createMinioS3Client({
-        endpoint: config.minioWatchEndpoint,
-        accessKey: config.minioWatchAccessKey,
-        secretKey: config.minioWatchSecretKey,
-      });
       if (rawDelimiter) {
-        const cacheKey = minioFolderCacheKey(rawPrefix, rawDelimiter);
-        const cached = minioFolderCache.get(cacheKey);
-        if (cached && !cached.stale && !forceRefresh) {
-          response.json({
-            ...cached.listing,
-            cache: { hit: true, stale: false, fetched_at: cached.fetchedAt },
-          });
-          return;
-        }
-        // spec §2.1, AC-D2：帶 delimiter 走資料夾語意 list，回 folders[]（CommonPrefixes）。
-        // 傳入 structLog 供 q3-pipe-guard 跳過含 '|' key 時 warn（對齊 watcher precondition）。
-        const listing = await listMinioFolder(
-          client,
-          config.minioWatchBucket,
-          rawPrefix,
-          rawDelimiter,
-          structLog,
-        );
-        const fetchedAt = nowIso();
-        minioFolderCache.set(cacheKey, { listing, fetchedAt, stale: false });
-        response.json({
-          ...listing,
-          cache: { hit: false, stale: false, fetched_at: fetchedAt },
-        });
+        // spec §2.1, AC-D2：帶 delimiter 走資料夾語意 list（folders[]=CommonPrefixes）。
+        // cache（hit/stale/refresh）、has_source_ifc probe、q3-pipe-guard 皆在 surface 內。
+        response.json(await minioWatchSurface.browseFolder(rawPrefix, { forceRefresh }));
       } else {
-        const objects = await listMinioObjects(
-          client,
-          config.minioWatchBucket,
-          rawPrefix,
-          config.minioWatchKeySuffix,
-          structLog,
-        );
-        response.json({ bucket: config.minioWatchBucket, prefix: rawPrefix, count: objects.length, objects });
+        response.json(await minioWatchSurface.browseFlat(rawPrefix));
       }
     } catch (err) {
       // q1-502-leak：AWS SDK 的 err.message 常含 endpoint host:port / bucket / 內部錯誤碼，
       // 直接回 detail 會把 infra 細節洩漏給瀏覽器。改回固定 sanitized 字串；完整 err.message
-      // 只進 structLog 供運維追查。此 catch 同時服務 listMinioObjects 與 listMinioFolder 路徑。
+      // 只進 structLog 供運維追查。此 catch 同時服務 flat 與 folder 兩條路徑。
       structLog.error("minioObjects", "minio list failed", err, {
         bucket: config.minioWatchBucket,
         delimiter: rawDelimiter || null,
       });
       response.status(502).json({ error: "minio_list_failed", detail: "minio list failed" });
-    } finally {
-      client?.destroy();
     }
   });
 
   // minio-watch-auto-intake：watcher 唯讀狀態（無 credentials 洩漏）。關閉時誠實
   // 回 enabled=false（env opt-in）。last_triggered 只含 key，不含 presigned URL。
   // 置於 /:jobId param route 之前，確保此靜態路徑優先匹配。
-  // IX-CV-04：把 status 計算抽成共用 helper，GET status 與 PUT /api/conversion/watch
-  // 共用同一邏輯（避免 GET 與 toggle 回應分歧）。讀 runtime flag（初值=env，可被
-  // PUT /api/conversion/watch 覆寫），不讀 config.minioWatchEnabled 靜態值，否則 toggle
-  // 後 status 會回過時狀態。
-  function currentMinioWatchStatusPayload():
-    | MinioWatcherStatus
-    | { enabled: boolean; note: string; bucket?: string | null; prefix?: string | null; interval_seconds?: number } {
-    if (!minioWatchRuntimeEnabled) {
-      return {
-        enabled: false,
-        bucket: config.minioWatchBucket || null,
-        prefix: config.minioWatchPrefix || null,
-        interval_seconds: config.minioWatchIntervalSeconds,
-        // spec §4.2：誠實區分兩種關閉原因。env 從未 opt-in（config.minioWatchEnabled
-        // = false）vs operator 於 console 用 PUT /api/conversion/watch runtime 關閉
-        // （config.minioWatchEnabled = true，但 runtime flag 被覆寫為 false）。
-        note: minioWatchStartupConfigError
-          ? "未啟用（MINIO_WATCH_ENABLED=true 但 endpoint/bucket/credentials 未完整設定）"
-          : config.minioWatchEnabled
-            ? "已由操作者於 console 關閉（runtime override；coordinator 重啟後回 env 預設）"
-            : "未啟用（env MINIO_WATCH_ENABLED opt-in）",
-      };
-    }
-    return minioWatcher
-      ? minioWatcher.getStatus()
-      : { enabled: true, note: "watcher enabled but not yet started (server not listening)" };
-  }
+  // status 投影由 surface 擁有：GET status 與 PUT /api/conversion/watch 共用同一邏輯
+  // （避免 GET 與 toggle 回應分歧），runtime flag／關閉原因 note 的分歧邏輯在 surface 內。
   app.get("/api/external/minio-watch/status", (_request, response) => {
-    response.json(currentMinioWatchStatusPayload());
+    response.json(minioWatchSurface.status());
   });
 
   function resolveExactIfcReadySessionTrace(sessionId: string, candidateTraceId: string): string {
@@ -4197,17 +4003,9 @@ export function createCoordinatorApp(
     // markDroppedOnRestart/clear 會造成重複 store 寫入,二次起一律 no-op。
     if (disposed) return;
     disposed = true;
-    for (const client of [...minioEventClients]) {
-      client.end();
-    }
-    minioEventClients.clear();
-    if (minioWatcher) {
-      // 先停 intake 並 await in-flight tick settle；其最後一筆 enqueue 必須在
-      // pipeline drain 前完成，否則 shutdown 後仍可能遺留 queued job。
-      const w = minioWatcher;
-      minioWatcher = null;
-      await w.dispose();
-    }
+    // 先結束 SSE 訂閱端、停 intake 並 await in-flight tick settle（皆由 surface 擁有）；
+    // 其最後一筆 enqueue 必須在 pipeline drain 前完成，否則 shutdown 後仍可能遺留 queued job。
+    await minioWatchSurface.dispose();
     // conversion pollers + dispatch drain + pending clear（pipeline 擁有）。
     ifcReadyPipeline.dispose();
   };
@@ -4222,6 +4020,7 @@ export function createCoordinatorApp(
     eventLog,
     structLog,
     dispose,
+    minioWatchSurface,
     // test-only boolean getter：委派 pipeline.hasPendingDispatch（不外洩 pending map）。
     hasPendingDispatch: (jobId: string): boolean => ifcReadyPipeline.hasPendingDispatch(jobId),
   };

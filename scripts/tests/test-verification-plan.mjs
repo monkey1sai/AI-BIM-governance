@@ -66,10 +66,12 @@ const fixtures = [
   ['governance service', ['governance-service/app.py'], ['governance', 'root-contracts', 'secret-pattern-scan']],
   ['kit manager api', ['services/kit-manager-api/app.py'], ['kit-manager-api', 'kit-manager-web', 'root-contracts', 'secret-pattern-scan']],
   ['kit manager web', ['apps/kit-manager-web/src/main.ts'], ['design-semantic-visual', 'kit-manager-web', 'root-contracts', 'secret-pattern-scan']],
+  ['kit manager browser harness', ['web-viewer-sample/e2e/kit-manager-operator.spec.ts'], ['design-semantic-visual', 'functional-runtime-conv', 'kit-manager-web', 'root-contracts', 'secret-pattern-scan', 'viewer', 'viewer-session']],
   ['viewer user surface', ['web-viewer-sample/src/console/pages.tsx'], ['design-semantic-visual', 'functional-runtime-conv', 'root-contracts', 'secret-pattern-scan', 'viewer', 'viewer-session']],
-  ['coordinator source', ['bim-review-coordinator/src/app.ts'], ['coordinator', 'design-semantic-visual', 'functional-runtime-conv', 'root-contracts', 'secret-pattern-scan', 'viewer', 'viewer-session']],
+  ['coordinator source', ['bim-review-coordinator/src/app.ts'], ['coordinator', 'design-semantic-visual', 'functional-runtime-conv', 'kit-manager-web', 'root-contracts', 'secret-pattern-scan', 'viewer', 'viewer-session']],
   ['governance document', ['docs/agents/domain.md'], ['agent-governance', 'powershell-static', 'secret-pattern-scan']],
-  ['compose config', ['compose.runtime-manager.yml'], ['compose-config', 'secret-pattern-scan']],
+  ['compose config', ['compose.runtime-manager.yml'], ['compose-config', 'kit-manager-web', 'secret-pattern-scan']],
+  ['kit manager image', ['infra/docker/kit-manager-web.Dockerfile'], ['compose-config', 'kit-manager-web', 'secret-pattern-scan']],
 ];
 
 for (const [name, changedPaths, expected] of fixtures) {
@@ -90,16 +92,12 @@ test('docs-only paths produce typed skips while the security scan remains explic
 test('workflow and manifest self-changes force every target', () => {
   for (const changedPath of [
     '.github/workflows/ci.yml',
-    '.github/workflows/merge-evidence.yml',
     '.github/CODEOWNERS',
     'scripts/verification-manifest.json',
     'scripts/lib/verification-plan.mjs',
-    'scripts/lib/merge-evidence.mjs',
-    'scripts/lib/verification-run-metadata.mjs',
     'scripts/lib/verification-command-policy.mjs',
     'scripts/lib/verification-outcome.mjs',
     'scripts/security-exceptions.json',
-    'scripts/lib/GitHubArtifact.psm1',
     'scripts/lib/collect-openspec-github-state.mjs',
     'scripts/lib/design-system-gate.ps1',
     'scripts/tests/check-pr-body-evidence.ps1',

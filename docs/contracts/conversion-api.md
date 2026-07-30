@@ -57,6 +57,22 @@ GET  /api/conversions/{conversion_job_id}        -> job state
 GET  /api/conversions/{conversion_job_id}/result -> streaming-owned result
 ```
 
+Published `model.usdc` is immutable per `conversion_job_id`. A successful
+result records `artifacts.model_usdc.checksum_sha256`; every status/result/list
+projection re-hashes the file before claiming `ready`. Missing legacy digests
+or changed bytes fail closed as `artifact_integrity_violation` and are excluded
+from `ready=true` listings. Direct `/artifacts/{job}/{filename}` downloads also
+verify the persisted checksum and reject changed bytes before `FileResponse`.
+A retry must replay the existing idempotent job or
+create a new job/artifact path; it must never overwrite a published model while
+continuing to report the old result as ready.
+
+The host-native launcher is a single-worker process. Store instances sharing a
+`jobs_dir` use process-shared locks for idempotent find-or-create and conversion
+completion, and job JSON is published with atomic replace. This is not a
+multi-process lock contract; deploying multiple Uvicorn workers requires a
+transactional shared store/lock before it is supported.
+
 Start (Windows host-native — use PowerShell, not Git Bash):
 
 ```powershell

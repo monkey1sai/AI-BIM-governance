@@ -31,8 +31,9 @@ EXPECTED = {
         "final-review": "arbiter", "fix:cycle": "judge", "fix:verify": "judge",
     },
     "std-evidence.js": {"probe:engine": "extract", "evidence:": "arbiter"},
+    "std-evidence-closeout.js": {"closeout:execute:": "standard", "closeout:verify:": "judge"},
     "fable5-repo-advisory.js": {"scan:": "scan", "merge-dedup": "reason", "verify:": "reason", "completeness-critic": "arbiter"},
-    "fu-adversarial-verify-generic.js": {"verify:": "judge", "critic:": "arbiter"},
+    "fu-adversarial-verify-generic.js": {"verify-batch:": "judge", "critic:": "arbiter"},
     "plan-next-spec-to-done-aware.js": {
         "plans:phasing-rules": "scan", "plans:boundaries-contracts": "scan", "plans:ia-sequences-data": "scan",
         "repo:frontend-routes": "scan", "repo:backend-capabilities": "scan", "repo:merged-and-inflight": "scan",

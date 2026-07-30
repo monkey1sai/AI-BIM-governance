@@ -3,7 +3,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import request from "supertest";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import { ConversionLedger } from "../src/services/conversionLedger.js";
 import { idempotencyKeyFor, type MinioWatcherStatus } from "../src/services/minioWatcher.js";
@@ -11,17 +11,16 @@ import { idempotencyKeyFor, type MinioWatcherStatus } from "../src/services/mini
 // review Important #2：production 接線整合測試。
 //
 // 既有測試的覆蓋缺口：
-// - conversion-watch-toggle.test.ts 用 selfBaseUrl="http://127.0.0.1:1"，watcher 啟動但
-//   所有 intake 因連不上 port 1 而 fail，只驗 status.enabled=true，無法驗 isLedgered 邏輯。
-// - minio-watcher-loop.test.ts 直接 startMinioWatcher，繞過 app.ts 的 isLedgered closure
+// - conversion-watch-toggle.test.ts 用 fake object store，驗啟停編排但不驗 isLedgered 邏輯。
+// - minio-watch-surface.test.ts 直接建構 surface，繞過 app.ts 的 isLedgered closure
 //   接線層，不驗 closure 是否指向正確的 conversionLedger 實例。
 //
 // 本檔走「真 listening server + 真 S3 stub + 真 ConversionLedger（落地檔）+ 真
 // /api/external/ifc-ready route」的端到端路徑，精確鎖死「app.ts 的 isLedgered closure 確實
-// 指向 production 的 conversionLedger 實例」這條接線。風險：若接線退化（closure 傳 undefined
-// 而非指向真 ledger、或指錯 ledger 實例），watcher 會靜默回落或無法 skip 已落帳物件，但
-// route 層 status 測試仍全綠——本檔以「首輪觸發 ledger 無紀錄物件、ledger 落帳後下輪 skip」
-// 的可觀察行為作偵測。
+// 指向 production 的 conversionLedger 實例」這條接線。驅動方式：`app.minioWatchSurface.pollNow()`
+// （@internal 測試 accessor）——pollNow resolve 時該輪 list／intake／counters 已全部落定，
+// 斷言一律同步。舊版「ledger 落檔嚴格先於 triggered_total 遞增」的觀測競態（需輪詢計數器）
+// 在 pollNow 介面下結構性不存在；production interval floor（10s）也不再需要 env 降檔 seam。
 //
 // 誠實註：S3 list 由本地 stub 提供（非真 MinIO），presign 由 SDK 本地簽不真打；intake 走
 // coordinator 自身 /api/external/ifc-ready（真 route）但 IFC 下載以 fallback 樁化（見 config
@@ -32,19 +31,7 @@ interface S3Obj { key: string; etag: string; }
 let active: CoordinatorApp | null = null;
 let s3Stub: http.Server | null = null;
 
-// production 對 minioWatchIntervalSeconds 有硬下限（loadConfig default floor=10s，防忙迴圈連打
-// MinIO），唯一降檔入口為 MINIO_WATCH_INTERVAL_FLOOR_SECONDS（設計給 E2E spawn coordinator 用）。
-// 本檔走完整 app config 路徑（非 minio-watcher-loop.test.ts 的直接 startMinioWatcher），故須用此
-// 既有降檔 seam 把 floor 降到 1s，watcher 才會每秒 tick 讓「跑過多輪仍 skip」可在合理 timeout 觀察。
-let savedFloorEnv: string | undefined;
-beforeEach(() => {
-  savedFloorEnv = process.env.MINIO_WATCH_INTERVAL_FLOOR_SECONDS;
-  process.env.MINIO_WATCH_INTERVAL_FLOOR_SECONDS = "1";
-});
-
 afterEach(async () => {
-  if (savedFloorEnv === undefined) delete process.env.MINIO_WATCH_INTERVAL_FLOOR_SECONDS;
-  else process.env.MINIO_WATCH_INTERVAL_FLOOR_SECONDS = savedFloorEnv;
   if (active) {
     await active.dispose();
     active.io.close();
@@ -76,16 +63,7 @@ async function startS3Stub(state: { objs: S3Obj[] }): Promise<string> {
   return `http://127.0.0.1:${a.port}`;
 }
 
-async function waitFor(check: () => boolean | Promise<boolean>, ms = 5000): Promise<void> {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    if (await check()) return;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  throw new Error("waitFor timeout");
-}
-
-/** 真 listening server（觸發 server.on("listening") → startMinioWatcherIfEnabled 的 production 接線路徑）。 */
+/** 真 listening server（觸發 server.on("listening") → surface.startIfEnabled 的 production 接線路徑）。 */
 async function listenOnLoopback(app: CoordinatorApp): Promise<number> {
   await new Promise<void>((r) => app.server.listen(0, "127.0.0.1", () => r()));
   const a = app.server.address();
@@ -93,7 +71,7 @@ async function listenOnLoopback(app: CoordinatorApp): Promise<number> {
   return a.port;
 }
 
-/** 經真 status route（production 回 minioWatcher.getStatus()）讀 live watcher 狀態，不用 test seam。 */
+/** 經真 status route（production 回 surface.status()）讀 live watcher 狀態，不用 test seam。 */
 async function fetchWatcherStatus(app: CoordinatorApp): Promise<Partial<MinioWatcherStatus>> {
   const res = await request(app.app).get("/api/external/minio-watch/status");
   return res.body as Partial<MinioWatcherStatus>;
@@ -109,8 +87,7 @@ describe("app.ts isLedgered 接線整合測試（review Important #2）", () => 
       minioWatchAccessKey: "ak",
       minioWatchSecretKey: "sk",
       minioWatchKeySuffix: "/model.ifc",
-      // 1s tick：受 loadConfig floor 夾值（beforeEach 已把 MINIO_WATCH_INTERVAL_FLOOR_SECONDS 降到 1）。
-      minioWatchIntervalSeconds: 1,
+      // production 預設 interval（floor 10s）即可：輪次由 pollNow 確定性驅動，不靠計時器。
       // selfBaseUrl 留空：走 production 預設（http://127.0.0.1:${實際 listen port}），
       // 由 server.on("listening") 路徑啟動 watcher（不是測試 seam 立即啟動路徑）。
       minioWatchSelfBaseUrl: "",
@@ -119,8 +96,7 @@ describe("app.ts isLedgered 接線整合測試（review Important #2）", () => 
       externalIntakeWebhookSecret: "dev-webhook-secret",
       // 真 ConversionLedger 落地檔（production 由此 config 自建 ledger 實例）。
       conversionLedgerStorePath: ledgerStorePath,
-      // intake 同步下載：strict=false（default）→ fallbackOnFetchError=!strict=true，下載失敗時
-      // 樁化不真打外部 IFC（測試聚焦接線，非真實下載）。
+      // intake 同步下載：strict=false（default）→ 下載失敗時樁化不真打外部 IFC。
       ifcDownloadStrict: false,
       conversionPollEnabled: false,
     };
@@ -141,20 +117,19 @@ describe("app.ts isLedgered 接線整合測試（review Important #2）", () => 
     });
     await listenOnLoopback(active);
 
-    // ledger 起手為空 → 首輪即把既有 model.ifc 當「無紀錄」auto-enroll 觸發（移除 baseline 特例）。
-    // intake 成功會把 mw_<hash16> upsert 進真 ledger，故以「ledger 出現該 idkey 紀錄」作可觀察證據——
-    // 這唯有當 watcher 的 isLedgered closure 與 intake 寫入打到「同一個」conversionLedger 實例時才成立。
-    const idkey = idempotencyKeyFor("bim-control", "899/main/xxx/model.ifc", "e1");
-    await waitFor(() => {
-      const ledger = new ConversionLedger(ledgerStorePath);
-      return ledger.get(idkey) !== null;
-    });
+    // ledger 起手為空 → 首輪即把既有 model.ifc 當「無紀錄」auto-enroll 觸發。pollNow 排在
+    // listening 觸發的首輪之後 → resolve 時 intake 已完成、ledger 已由 intake 側 pipeline 寫入、
+    // watcher 計數器已遞增——以下全部同步斷言。
+    await active.minioWatchSurface.pollNow();
 
+    // 「ledger 出現該 idkey 紀錄」唯有當 watcher 的 isLedgered closure 與 intake 寫入打到
+    // 「同一個」conversionLedger 實例時才成立（接線退化 → 靜默回落或無法 skip，此處會抓到）。
+    const idkey = idempotencyKeyFor("bim-control", "899/main/xxx/model.ifc", "e1");
     const persisted = new ConversionLedger(ledgerStorePath).get(idkey);
     expect(persisted).not.toBeNull();
     expect(persisted!.idempotency_key).toBe(idkey);
     expect(persisted!.project_id).toBe("899");
-    // watcher status（經真 status route）反映確有觸發（triggered_total≥1，非 legacy baseline 吸收的 0）。
+    // watcher status（經真 status route）反映確有觸發。
     const status = await fetchWatcherStatus(active);
     expect(status.triggered_total).toBeGreaterThanOrEqual(1);
   });
@@ -192,11 +167,12 @@ describe("app.ts isLedgered 接線整合測試（review Important #2）", () => 
     });
     await listenOnLoopback(active);
 
-    // 等 watcher 確實跑過至少 2 輪 tick（poll_count≥2），證明 loop 活著且已對該物件查過 ledger 多輪。
-    // 1s tick → 給足 8s（首輪 setTimeout(0)、次輪 ~1s 後）。
-    await waitFor(async () => ((await fetchWatcherStatus(active!)).poll_count ?? 0) >= 2, 8000);
-    // ledger 命中 → 全程 skip：triggered_total 維持 0（若接線退化成繞過 ledger 盲觸發，這裡會 ≥1）。
+    // 確定性跑 ≥2 輪（listening 首輪 + 兩次 pollNow），證 loop 活著且對該物件查過 ledger 多輪。
+    await active.minioWatchSurface.pollNow();
+    await active.minioWatchSurface.pollNow();
     const status = await fetchWatcherStatus(active);
+    expect(status.poll_count ?? 0).toBeGreaterThanOrEqual(2);
+    // ledger 命中 → 全程 skip：triggered_total 維持 0（若接線退化成繞過 ledger 盲觸發，這裡會 ≥1）。
     expect(status.triggered_total).toBe(0);
     expect(status.baseline_count).toBe(1); // 診斷欄位仍填（首輪 model.ifc 數）
   });

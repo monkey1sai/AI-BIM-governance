@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib
+import sqlite3
 
 import pytest
 from fastapi.testclient import TestClient
@@ -73,6 +74,32 @@ def test_annotation_without_guid(client_and_db):
     assert created["kind"] == "annotation"
 
 
+def test_formal_issue_without_model_version_is_rejected(client_and_db):
+    client, _ = client_and_db
+    response = client.post("/api/issues", json={"title": "缺版本", "ifc_guid": "G-NO-MV"})
+    assert response.status_code == 422
+    assert client.get("/api/issues").json()["issues"] == []
+
+
+def test_issue_binding_treats_whitespace_as_missing(client_and_db):
+    client, _ = client_and_db
+
+    annotation = client.post(
+        "/api/issues",
+        json={"title": "空白 GUID 標註", "ifc_guid": "   ", "model_version_id": "   "},
+    )
+    assert annotation.status_code == 201
+    assert annotation.json()["kind"] == "annotation"
+    assert annotation.json()["ifc_guid"] is None
+    assert annotation.json()["model_version_id"] is None
+
+    invalid_issue = client.post(
+        "/api/issues",
+        json={"title": "空白版本", "ifc_guid": "G-WHITESPACE-MV", "model_version_id": "   "},
+    )
+    assert invalid_issue.status_code == 422
+
+
 def test_issues_from_rule_run(client_and_db):
     client, db_path = client_and_db
     run_id = _seed_rule_run(db_path)
@@ -103,10 +130,8 @@ def test_from_rule_run_not_found(client_and_db):
     assert client.post("/api/issues/from-rule-run/nope").status_code == 404
 
 
-def test_from_rule_run_allows_none_model_version_id(client_and_db):
-    """rule-run issue 版本綁定為 best-effort：rule run 缺 model_version_id（schema 為 nullable，
-    例如 console 對未指派版本的臨時 IFC 檢核）時，from-rule-run 仍 201 建出 issue，且該 issue
-    model_version_id 為 None（rule_result 來源可接受）。與 from-diff 缺 target 的 422 刻意不對稱。"""
+def test_from_rule_run_rejects_none_model_version_id(client_and_db):
+    """正式 issue 不得由無版本的 rule run 建立。"""
     from db import Store as RuleStore
     from rule_engine.models import RuleResult, RuleRunResult
 
@@ -122,11 +147,9 @@ def test_from_rule_run_allows_none_model_version_id(client_and_db):
     rs.complete_run(run_id, run)
 
     resp = client.post(f"/api/issues/from-rule-run/{run_id}")
-    assert resp.status_code == 201  # best-effort：仍建出
-    assert resp.json()["created"] == 1
+    assert resp.status_code == 422
     rule_issues = [i for i in client.get("/api/issues").json()["issues"] if i["source_type"] == "rule_result"]
-    assert len(rule_issues) == 1
-    assert rule_issues[0]["model_version_id"] is None  # 無版本綁定可接受（rule_result 來源）
+    assert rule_issues == []
 
 
 def test_from_rule_run_idempotent(client_and_db):
@@ -220,10 +243,120 @@ def test_create_issues_batch_atomic_rollback_on_failure(tmp_path):
 
     store = IssueStore(str(tmp_path / "atomic.db"))
     items = [
-        {"title": "good", "ifc_guid": "G1", "source_type": "rule_result", "source_ref": "r1"},
+        {"title": "good", "ifc_guid": "G1", "model_version_id": "mv1", "source_type": "rule_result", "source_ref": "r1"},
         # title=object() 無法繫結 sqlite 參數 → 第二筆 INSERT raise，觸發整批 ROLLBACK
-        {"title": object(), "ifc_guid": "G2", "source_type": "rule_result", "source_ref": "r2"},
+        {"title": object(), "ifc_guid": "G2", "model_version_id": "mv1", "source_type": "rule_result", "source_ref": "r2"},
     ]
     with pytest.raises(Exception):
         store.create_issues_batch(items)
     assert store.list_issues() == []  # 第一筆 good 也不得留存
+
+
+def test_issue_store_uses_wal_and_enforces_binding_for_direct_sql(tmp_path):
+    from issues.store import IssueStore
+
+    store = IssueStore(str(tmp_path / "wal.db"))
+    conn = store._conn()
+    try:
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+        with pytest.raises(Exception, match="formal issue requires"):
+            conn.execute(
+                "INSERT INTO issues(id, kind, title, status, ifc_guid, created_at, updated_at) VALUES(?,?,?,?,?,?,?)",
+                ("iss_direct", "issue", "invalid", "open", "G-DIRECT", "now", "now"),
+            )
+        conn.execute(
+            "INSERT INTO issues(id, kind, title, status, ifc_guid, model_version_id, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)",
+            ("iss_valid", "issue", "valid", "open", "G-VALID", "mv1", "now", "now"),
+        )
+        with pytest.raises(Exception, match="formal issue requires"):
+            conn.execute("UPDATE issues SET model_version_id=NULL WHERE id='iss_valid'")
+    finally:
+        conn.close()
+
+
+def test_issue_store_migrates_legacy_unbound_formal_issue_to_annotation(tmp_path):
+    from issues.store import IssueStore
+
+    db_path = str(tmp_path / "legacy-unbound.db")
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE issues(
+              id TEXT PRIMARY KEY, kind TEXT, title TEXT, description TEXT,
+              status TEXT, severity TEXT, assignee TEXT, ifc_guid TEXT,
+              usd_prim_path TEXT, model_version_id TEXT, source_type TEXT,
+              source_ref TEXT, created_at TEXT, updated_at TEXT
+            );
+            CREATE TABLE issue_events(
+              id TEXT PRIMARY KEY, issue_id TEXT, event_type TEXT,
+              from_status TEXT, to_status TEXT, note TEXT, created_at TEXT
+            );
+            CREATE TABLE a4_issue_evidence(
+              issue_id TEXT PRIMARY KEY, schema_version TEXT NOT NULL,
+              evidence_snapshot TEXT NOT NULL, review_session_id TEXT NOT NULL,
+              principal_ref TEXT NOT NULL, primary_artifact_id TEXT NOT NULL,
+              active_binding_revision TEXT NOT NULL, proof_id TEXT NOT NULL UNIQUE,
+              snapshot_hash TEXT NOT NULL, proof_digest TEXT NOT NULL,
+              creation_request_hash TEXT NOT NULL, created_at TEXT NOT NULL
+            );
+            INSERT INTO issues(
+              id, kind, title, status, ifc_guid, model_version_id,
+              source_type, source_ref, created_at, updated_at
+            ) VALUES(
+              'iss_legacy_unbound', 'issue', 'legacy rule failure', 'open',
+              'LEGACY_GUID', NULL, 'rule_result', 'rule_legacy', 'old', 'old'
+            );
+            INSERT INTO issues(
+              id, kind, title, status, ifc_guid, model_version_id,
+              source_type, source_ref, created_at, updated_at
+            ) VALUES(
+              'iss_legacy_no_guid', 'issue', 'legacy model-only row', 'open',
+              '   ', 'legacy_mv', 'manual', 'manual_legacy', 'old', 'old'
+            );
+            INSERT INTO issue_events(
+              id, issue_id, event_type, from_status, to_status, note, created_at
+            ) VALUES(
+              'ev_legacy_created', 'iss_legacy_unbound', 'created', NULL,
+              'open', 'source=rule_result', 'old'
+            );
+            INSERT INTO a4_issue_evidence(
+              issue_id, schema_version, evidence_snapshot, review_session_id,
+              principal_ref, primary_artifact_id, active_binding_revision,
+              proof_id, snapshot_hash, proof_digest, creation_request_hash, created_at
+            ) VALUES(
+              'iss_legacy_unbound', 'a4/v1', '{"evidence":"preserve-me"}',
+              'review_legacy', 'principal_legacy', 'artifact_legacy', 'rev_legacy',
+              'proof_legacy', 'snapshot_hash_legacy', 'proof_digest_legacy',
+              'request_hash_legacy', 'old'
+            );
+            """
+        )
+
+    store = IssueStore(db_path)
+    migrated = store.get_issue("iss_legacy_unbound")
+    assert migrated is not None
+    assert migrated["kind"] == "annotation"
+    assert migrated["ifc_guid"] == "LEGACY_GUID"
+    assert migrated["model_version_id"] is None
+    assert migrated["source_type"] == "rule_result"
+    migration_events = [event for event in store.get_events("iss_legacy_unbound") if event["event_type"] == "binding_migration"]
+    assert len(migration_events) == 1
+    with store._conn() as conn:
+        evidence = dict(conn.execute("SELECT * FROM a4_issue_evidence WHERE issue_id=?", ("iss_legacy_unbound",)).fetchone())
+    assert evidence["evidence_snapshot"] == '{"evidence":"preserve-me"}'
+    assert evidence["proof_id"] == "proof_legacy"
+    assert evidence["snapshot_hash"] == "snapshot_hash_legacy"
+    assert evidence["proof_digest"] == "proof_digest_legacy"
+
+    missing_guid = store.get_issue("iss_legacy_no_guid")
+    assert missing_guid is not None
+    assert missing_guid["kind"] == "annotation"
+    assert missing_guid["ifc_guid"] == "   "
+    assert missing_guid["model_version_id"] == "legacy_mv"
+    assert len([event for event in store.get_events("iss_legacy_no_guid") if event["event_type"] == "binding_migration"]) == 1
+
+    IssueStore(db_path)
+    migration_events = [event for event in store.get_events("iss_legacy_unbound") if event["event_type"] == "binding_migration"]
+    assert len(migration_events) == 1
+    assert len([event for event in store.get_events("iss_legacy_no_guid") if event["event_type"] == "binding_migration"]) == 1

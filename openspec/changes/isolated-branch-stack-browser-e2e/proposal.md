@@ -22,15 +22,15 @@
 1. **污染唯一測試部署區**：沒有 fail-closed 檢查時，agent 只要少設一個 env 就會把 branch 未 merge 的碼打到部署區 `:8004`／`:49102`，而 `rebuild-test-deploy.ps1` 的契約是「只從 freshly fetched `origin/main` 重建」，被污染的部署區無法代表任何一方。
 2. **conditional skip 假通過**：`a4-closeout.spec.ts` 在缺少前置條件時預設 `test.skip`，只有帶 `A4_E2E_REQUIRE_REAL=1` 才會 hard fail。skip 後 Playwright 仍回報綠燈，PR body 也沒有任何機器可判別的欄位能區分「evidence 來自隔離 stack」「來自部署區」或「其實整批 skip」。
 
-本 change 只做一件事：**把「未 merge branch 的 user-facing runtime evidence 一律在隔離 alt-port stack 取得」從口耳相傳升級為 spec 級、script-backed、machine-checkable 的契約**，讓 `a4-console-convergence` tasks 4.x 以及之後每一個 branch change 有唯一且可驗證的驗證場所。
+本 change 只做一件事：**把「未 merge branch 的 CPU governance／coordinator／browser operability evidence 在隔離 alt-port stack 取得」從口耳相傳升級為 spec 級、script-backed、machine-checkable 的契約**。Kit／WebRTC／GPU evidence 明確不在此總則內，仍由獨立 host-native 契約驗證。
 
 ## What Changes
 
-- **新增 capability `isolated-branch-stack-verification`**：定義未 merge branch 的 runtime evidence 必須在隔離 stack 取得，且隔離 stack 與測試部署區的 port 集合 SHALL 不相交。
-- **canonical port 配置與保留集合**：隔離 stack 固定 coordinator `:8005`／governance `:49103`／viewer dev `:5180`；部署區保留集合（`:8004`、`:49102`、`:49101`、`:8010`、`:5173`、`:5174`）與 Kit 保留 range（`49100`、`49110–49150`）SHALL 由 launcher fail-closed 拒絕。parallel session 允許整數 offset，但 resolved port set 落入任一保留集合即拒絕啟動。
-- **repo-owned launcher**：新增 `scripts/dev/start-isolated-branch-stack.ps1`（`start` / `stop` / `status`），內含啟動前 port 清理 preflight（清理範圍限隔離 port set），並輸出 stack manifest。取代對 `.claude/skills/**` helper 的隱性依賴；登記 `scripts/script-registry.json` 與 `scripts/SCRIPT_CONTRACT.md`，不新增 root-level `scripts/start-*.ps1`。
-- **browser E2E 對接規則**：被引用為 evidence 的 E2E run SHALL 以 require-real 模式執行（缺前置條件即 hard failure，不得 skip 後宣稱通過）；viewer bundle 的 coordinator base SHALL 綁到隔離 coordinator origin；瀏覽器 SHALL NOT 直連 governance internal port；E2E SHALL 斷言整場 zero request 打到保留集合 port。harness fake 控制面（`VITE_VIEWER_HARNESS` ＋ `?harness=1`）之下的 run SHALL 於 evidence 標示 harness 狀態，且 SHALL NOT 被引用為 coordinator review socket／authority ack 真實控制面行為的證據（背景見 D-14）。
-- **evidence 自我標示**：evidence manifest 記 `stack_kind=isolated_branch_stack`、resolved ports、base URLs、head commit sha、啟停時間、observed runtime IDs 與 screenshot/trace 路徑；PR body 引用隔離 stack evidence 時 SHALL 標明 stack kind，且 SHALL NOT 用它推論 design gate（pixel/semantic）或 deploy path verification 已通過。
+- **新增 capability `isolated-branch-stack-verification`**：定義未 merge branch 的 CPU governance／coordinator／browser operability evidence 必須在隔離 stack 取得，且隔離 stack 與測試部署區的 port 集合 SHALL 不相交。
+- **canonical port 配置與保留集合**：隔離 stack 固定 coordinator `:8005`／governance `:49103`／viewer dev `:5180`；parallel session offset 僅允許整數 `0..4`，其他值在 listener/cleanup 前拒絕；通過 domain 後 resolved port set 仍須與部署區及 Kit 保留集合做 fail-closed 交集檢查。
+- **repo-owned backend launcher**：新增 `scripts/dev/start-isolated-branch-stack.ps1`（`start` / `stop` / `status`），只管理 governance／coordinator；viewer lifecycle 由 Playwright `webServer` 管理。caller 必須明示 `ChangeId`／`RunId`，每次 run 使用專屬 manifest 路徑且不得覆寫。backend cleanup 僅可停止 manifest PID、精確 launcher entrypoint、creation identity 全部重驗一致的 repo-owned process；未知 listener fail closed。
+- **browser E2E 對接規則**：被引用為 evidence 的 E2E run SHALL 以 require-real 模式執行，並以必填 `E2E_STACK_MANIFEST` 綁定本 worktree、change/run ID 與 HEAD；manifest 的 coordinator base 與 viewer port 是 authority，對應 env 只能相同、不得指向另一 offset session；瀏覽器不得直連 governance internal port，且整場 zero request 打到保留集合。harness run 須揭露且不得作為真實控制面證據。
+- **evidence 自我標示**：evidence manifest 記 `stack_kind=isolated_branch_stack`、resolved ports、base URLs、head commit sha、啟停時間、observed runtime IDs 與 screenshot/trace 路徑；其證明範圍只限 CPU governance/coordinator/browser operability。PR body SHALL 分開標示 Kit／WebRTC host-native evidence，且不得以隔離 stack 推論 design、deploy、first-frame、stage 或 DataChannel 已通過。
 - **machine check**：新增 `scripts/tests/test-isolated-branch-stack.ps1`（port 集合不相交、offset 越界拒絕、registry 登記、doc section 存在、launcher 拒絕保留 port），接進 `.github/workflows/agent-governance.yml`。
 - **文件落地**：在 `docs/agents/product-operability-and-script-contract.md` 新增「隔離 branch stack 驗證」一節，讓 `a4-console-convergence` task 4.1 的指標真的解析得到。
 
@@ -39,7 +39,7 @@
 - 不承接 `a4-console-convergence` 的 tasks 4.1–4.4 本身，也不改任何 A4 前後端實作。本 change 只提供 harness 與規則；A4 的 runtime evidence 仍由該 change 負責產出與判讀。
 - 不改 `scripts/deploy.ps1` 的部署語意，不改 `scripts/dev/rebuild-test-deploy.ps1`（部署區驗證仍固定 freshly fetched `origin/main`）。
 - 不在隔離 stack 內啟動 Kit / WebRTC / GPU runtime。3D、first frame、DataChannel、stage truth evidence 仍走既有 host-native Kit 契約，且不得由隔離 stack evidence 推論。
-- 不放寬 design gate。隔離 stack 只產 functional / runtime evidence；pixel diff 與 semantic states 仍由既有 design-system 路徑（`verify-design-system-reference.ps1`／`verify-design-system-visual-result.ps1`）判定。
+- 不放寬 design gate。隔離 stack 只產 CPU governance／coordinator／browser functional evidence；pixel diff 與 semantic states 仍由既有 design-system 路徑判定，Kit／WebRTC evidence 另走 host-native 契約。
 - 不觸碰凍結面：`governance-service/app.py`、`bim-streaming-server/conversion_authority.py`、`bim-review-coordinator/src/routes/governanceProxy.ts`。
 
 ## Impact
@@ -53,13 +53,13 @@
 
 ## 相鄰既有缺口：design gate 現況（2026-07-29 唯讀查證；**不在本 change 範圍**）
 
-上面 Non-goals 與 `design.md` §4 都寫「不放寬 design gate；pixel diff 與 semantic states 仍由既有 design-system 路徑判定」。該敘述本身成立，但**不等於那條既有路徑的狀態可被本 change 的 evidence 推論**。時間線（重跑輪更新）：subject `13033cb` 查證時 design gate 為紅燈；後於 `2b9573e`（#429）就地重核 A4 golden 轉綠，現 main（`bfcc433`）為 success。此處揭露三個目的：(a) 避免本 change 產出的 functional evidence 被誤讀為 design 覆蓋；(b) 避免下一個 consumer 不看時間線直接引用任一歷史狀態；(c) 讓每一項缺口有明確歸屬 change，不變成無主債務。**表內每列以【】標注其在新 baseline（`bfcc433`）下的存活狀態**；三層對抗驗證與重跑輪（X1/X2/X3）的逐條判定見「三層交叉對抗驗證」節。
+上面 Non-goals 與 `design.md` §4 都寫「不放寬 design gate」。歷史時間線是 `13033cb` 紅燈、#429 `2b9573e` 重核轉綠、`bfcc433` 為當時 success 快照；本 change 的 fresh baseline 是 `deb5af552022c3ee171e3174f59c9f1e3dfb5936`，current status 必須在 PR 當下由實跑 job 重驗，不能從下表推論。表內【】只描述歷史分析快照；本節目的僅是防止 functional evidence 被誤讀為 design 覆蓋。
 
 本 change **不修復**下列任何一項，也不改動 `docs/plans/design-system-reference.manifest.json`、`docs/plans/design-system-baseline/**` 或任何 R-A1 手寫正本面檔案。
 
 | # | 觀察 | 機器證據（2026-07-29 / `13033cb`） | 歸屬 |
 |---|---|---|---|
-| D-1 | **【已解除，改列歷史】** main 的 `design-semantic-visual` 曾於 `13033cb` 為 FAILURE（唯一失敗項 `workspace.a4.default` 兩 viewport；其餘 12 screens PASS、`semantic_parity = 1`——純 pixel 失效非語意回歸）；**已由 #429（`2b9573e`）就地重核 A4 golden 解除**，現 main（`bfcc433`）為 success | 紅燈期證據：CI run `30440400040`（diff ratio `0.2794`／`0.3186` > `0.01`）。解除證據：CI `design-semantic-visual` 於 `3f1edcf`＝failure → `2b9573e`＝success → `bfcc433`＝success；#429 僅動 2 張 A4 PNG（`619047→227367`／`1080502→246766` bytes）＋ manifest hash/provenance | 已了結（後續衍生事項見 D-15） |
+| D-1 | **【已解除，改列歷史】** `design-semantic-visual` 曾於 `13033cb` 為 FAILURE；#429（`2b9573e`）重核後，歷史快照 `bfcc433` 為 success。本表不宣稱 `deb5af5` 或 PR 當下狀態 | 紅燈期 CI run `30440400040`；歷史序列 `3f1edcf` failure → `2b9573e` success → `bfcc433` success；current status 由 PR job 重驗 | 已了結（後續衍生事項見 D-15） |
 | D-2 | **【成因已了結，code 觀察仍成立】** 失敗成因是 **route IA 遷移**，不是樣式回歸；#429 之後 golden 已改描繪遷移後的產品面，本條由 live gap 轉為歷史成因紀錄。**（2026-07-29 對抗驗證修正）** 初版本欄寫「golden 描繪的 UI 已無任何路由可達」，該敘述不精確：A4 dock tab 與 `A4Dock` 元件**兩者都仍在**，只是面板被掏空為導流卡；不可達的是 golden 描繪的**已填充**的 A4 dock 面板 | `EdgeConsole.tsx` `UNIFIED_WS_KEYS = ["a1","a2","a3"]`（a4 自該陣列移除）；`#a4` → `AliasRedirect to "workspace?dock=a4"` → `<UnifiedShell page="ws" dock="a4"><A4SemanticSearchPage /></UnifiedShell>`。但 `fixtures.ts:178-184` 的 `dockTabs` 仍含 a4、`WorkspacePage.tsx:159` 仍渲染 `{ws.dock === "a4" ? <A4Dock/> : null}`、`docks.tsx:237-249` 之 `A4Dock` 現為 `data-prov="redirect"` 導流卡、`unified.test.tsx:44-50` 測試 pin 住「dockTabs 5 顆」與「A4 語意查詢」。manifest `workspace.a4.default` 仍釘 `production_routes: ["#a4"]` + `reference_action: click_exact_text "A4"`，golden PNG 自 `351ad96`（#340）起未變 | `a4-console-convergence` |
 | D-3 | **【#429 後風險反轉】** `A4SemanticSearchPage` 未套 design token 與版面——此事實不變，但 #429 已把**未套 token 的產品面固化進 approved golden**：pixel gate 現在反過來**保護未設計狀態**，日後套 token（U-11／S4-D 類工作）會使 gate 轉紅，屆時需再走一次明示 rebaseline。原描述：（原生 `<select>`、瀏覽器預設 button、無卡片網格與 typography 階層），且其 IA 與設計正本不一致 | Hi-Fi 正本 `dockTabs = [a1, a2, a3, a4, issues]`——A4 在 canon 是 3D 工作區內的 dock；設計正本記 A4 ＝「NL query · Evidence Trace · 3D 高亮」。依 `docs/plans/docs-plans-README.md` §3 權威順序，前端視覺／互動面以 Hi-Fi ＋ `ai-bim-governance.css` 為最高權威 | IA 分歧＝`a4-console-convergence`。**token/版面套用的 owner 指派已撤回**——`migrate-console-to-hifi-design` 的 tasks 2.1–2.7／3.1–3.6 是列舉式封閉檔案清單，全檔對 `A4SemanticSearchPage` 命中數為 **0**，指派等於擴張該 change 的 scope。**需使用者裁決**：改 code 對齊 canon，或依 R-A1 提案改 canon（見 U-2） |
 | D-4 | **R-A2 對 route IA 變更沒有合法跟隨路徑**（治理缺口）。**（2026-07-29 對抗驗證修正）** 此缺口為 **latent 而非 active**：目前結構性斷言全數仍成立，D-1 只是 pixel 失效；且封鎖不只一道，是**三道牆**。⚠ **「latent」是斷言狀態，不是優先序**。**（#429 後更新）** D-4 的緊急度歸零：#429 走的「就地重核 golden」第四條路（不增刪 `screens[]`、只換 bytes＋hash）**不觸發任何一道牆**，U-2(b) 的 re-scope 需求隨紅燈解除而消失。三道牆的斷言本身仍逐字成立（三檔皆未被 `13033cb..bfcc433` 改動），保留為未來 route IA 再變更時的參考 | (1) `capture-design-system-reference.mjs:331-354` 在 `--rebaseline` 時重算 `source.files` / `snapshot_sha256` / `captured_at_utc`、重截全部 baseline PNG，但**從不寫** `route_inventory` / `routes_without_approved_pixel_reference`（全檔 grep 該二鍵零命中），亦無法增刪 `screens[]` 成員。(2) `scripts/tests/verify-design-system-reference.ps1:280` 將 24 條 canonical route **hard-code** 於 `$expectedRoutes`，`:281` 斷言 count 相等、`:284` 斷言 sorted-join 集合相等（兩者合起來才等於逐字相等）——re-scope 必須同時改這個 gate 的判定邏輯。(3) `.github/workflows/ci.yml:386-390` 對移除 base-approved screen ID **fail-closed**（`Head manifest removed base-approved screen IDs`）。另：`verify-design-system-reference.ps1:279-299` 的 route_inventory 覆蓋與 approved↔screen 對映**目前全部仍成立**；`a4-semantic-search-model-qa/tasks.md:82` 已指名 A4 的合法路徑就是雙旗標 rebaseline。先例 `ca20a9c`（#349，2026-07-16）早於 R-A2 隨 `doc-first-canon-v2` 落地（提案 #360、**採納 #361**、2026-07-20 archive），非乾淨先例 | **需使用者裁決**。**初版指派候選 owner `align-frontend-design-system-reference` 已撤回**——「rebaseline ownership」正是該 change 解凍前必須裁決的四項互斥設計之一，指派 owner 等於預決 crosswalk 結論 |
@@ -107,7 +107,7 @@
 
 ### 對使用者原始問題的回答（v2，2026-07-29 重跑輪改寫）：紅燈已由 #429 解除；本節 v1 的「無合法捷徑」結論**被實證推翻**
 
-起點問題是「design rebaseline 怎麼辦——卡設計側核准（pinned reference 是唯讀權威）」。**最終答案**：卡點從來不在「設計側核准」（pinned `source.files` 23/23 MATCH、rebaseline 對該面是 no-op）；而 pixel 紅燈已於 `2b9573e`（**#429** `test(design): reapprove canonical A4 baseline`，PR body 自述 explicit user-authorized）解除——CI 機器證據：`design-semantic-visual` 在 `3f1edcf`（#430）＝failure → `2b9573e`（#429）＝**success** → `bfcc433`（#422，現 main HEAD）＝success。
+起點問題是「design rebaseline 怎麼辦——卡設計側核准（pinned reference 是唯讀權威）」。**歷史結論**：卡點不在「設計側核准」；pixel 紅燈於 `2b9573e`（#429）解除。當時 CI 序列為 `3f1edcf` failure → `2b9573e` success → `bfcc433` success；`bfcc433` 只代表該輪快照，不是 current main 或本 PR 狀態。
 
 **誠實記錄：本節 v1 曾斷言「沒有『只補 A4 兩張圖就轉綠』的合法捷徑」，該結論錯誤。** #429 做的正是只補 A4 兩張圖。v1 三層論證的失效方式：
 
@@ -156,7 +156,7 @@
 ## 使用者委任 AI 裁決（Q1–Q8 → A1–A8；2026-07-29；三層交叉驗證）
 
 > 本節 A1–A8 為 AI 依使用者 2026-07-29 委任（「指派多 agents＋三層交叉驗證來回復所有問題」，委任紀錄見 `docs/plans/NOW.md` 2026-07-29 變更紀錄）產出之裁決記錄。**非使用者原話；可被使用者單方推翻；不構成 canon／手寫正本；不新增任何 Requirement 或 SHALL。** 效力位階低於使用者任何一句明確指令；與手寫正本或 approved spec 衝突時以後者為準。
-> 驗證方法：L1 提案 → L2 雙視角 refute-by-default（事實/spec 一致性＋治理形式）→ L3 仲裁；baseline origin/main `bfcc433`。A1/A3/A6/A7/A8 照案通過；A2/A4/A5 依 L2 事實攻擊修正後落地。
+> 歷史驗證方法：L1 提案 → L2 雙視角 refute-by-default（事實/spec 一致性＋治理形式）→ L3 仲裁；該輪 baseline origin/main 為 `bfcc433`，不代表目前 baseline。A1/A3/A6/A7/A8 照案通過；A2/A4/A5 依 L2 事實攻擊修正後落地。
 
 ### A1 —「editor」＝ canon 既有的 editor lease（視圖控制權），非 USD 編輯器
 - **問題**：使用者原話「nvidia kit extensions 3d viewer editer」的 editor 指哪一種？
@@ -239,7 +239,7 @@
 | 「可以是 nvidia kit webRTC primary」 | 全域**只有一個 Kit 進程、一個 stage**；spectator 是 primary 視角的鏡像，非獨立視角，且無自己的 GPU slot 或 stage | `bim-streaming-server/SYSTEM_DESIGN.md:443-452`；`start-all.ps1:194-196` 明禁「多 Kit ＋ spectator」組合 |
 | 「或 nvidia kit extensions 3d viewer editor」 | repo **未建置**瀏覽器端非 WebRTC 的 3D viewer 能力 | `web-viewer-sample` 無 `three`／`web-ifc`／`@thatopen`／`xeokit`／`babylon` 相依；唯一非 WebRTC「viewport」是 `MockViewport.tsx` 自陳的「deterministic · no-GPU」資訊面板，非幾何 renderer。`ezplus.bim_review_stream.setup/config/extension.toml` 自述為「the setup extension for the **USD Viewer template**」（Kit 端 viewport setup，非瀏覽器 viewer）；`ezplus.bim_review_stream.messaging` 實為 host-native IFC→USD 轉檔與 runtime authority 宿主 |
 
-### 經三層對抗驗證後仍成立的約束（任何未來實作 SHALL 先滿足）
+### 經三層對抗驗證後仍成立的記錄性限制（非本 change requirement）
 
 | # | 約束 | 機器證據 |
 |---|---|---|
@@ -252,6 +252,6 @@
 
 ### 本節與本 change 的關係
 
-隔離 branch stack **不啟動 Kit／WebRTC／GPU**，因此上述 A1–A10 viewer 面**全部在本 harness 覆蓋範圍外**。本 change 的 evidence manifest 已規定 `stack_kind=isolated_branch_stack` 且「SHALL NOT 用它推論 design gate（pixel/semantic）或 deploy path verification 已通過」；本節再補一條同等強度的邊界：**SHALL NOT 用隔離 stack evidence 推論任何 A1–A10 的 3D／串流／spectator 行為已驗證**。該類 evidence 仍走既有 host-native Kit 契約。
+隔離 branch stack **不啟動 Kit／WebRTC／GPU**，因此上述 A1–A10 viewer 面全部在本 harness 覆蓋範圍外。此處只記錄分析限制，不替 A1–A10 新增 requirement；本 change 唯一相關的規範性邊界已在 delta spec 定義：隔離 stack evidence 不得作為任何 3D／串流／spectator 行為的驗證，該類 evidence 仍走既有 host-native Kit 契約。
 
 實作歸屬：A1–A4 面歸 `a4-console-convergence`（active，0/23）；A5–A10 面在 `NOW.md:37/185` 黑名單內（「A5–A10 全棧」「A5–A10 假後端／新 service」），**未解禁前不得動工**。C-1～C-6 與 D-12 為使用者裁決落地前必須先處理的前提。

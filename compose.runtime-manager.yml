@@ -18,6 +18,9 @@ services:
       # 不再 depends_on 已刪服務，獨立啟動。
       STREAMING_CONVERSION_API_BASE: http://streaming-server:49101
       CONVERSION_API_BASE: http://streaming-server:49101
+      KIT_MANAGER_API_BASE: http://kit-manager-api:8010
+      DEV_AUTH_TOKEN: ${DEV_AUTH_TOKEN:-dev-token}
+      CORS_ORIGINS: "${CORS_ORIGINS:-http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174}"
       INTERNAL_API_AUTH_TOKEN: ${INTERNAL_API_AUTH_TOKEN:-dev-internal-token}
       CALLBACK_OUTBOX_STORE_PATH: /workspace/storage/coordinator/callback-outbox.json
       KIT_INSTANCE_ENDPOINTS: '[{"id":"kit_local_gpu_001","signalingServer":"127.0.0.1","signalingPort":49100,"mediaServer":"127.0.0.1","mediaPort":47998}]'
@@ -63,6 +66,9 @@ services:
       - "127.0.0.1:8004:8004"
     volumes:
       - ${RUNTIME_STORAGE_ROOT:-./storage}:/workspace/storage
+    depends_on:
+      kit-manager-api:
+        condition: service_healthy
 
   viewer:
     build:
@@ -91,9 +97,9 @@ services:
       KIT_SIGNALING_HOST: 127.0.0.1
       KIT_SIGNALING_PORT: ${KIT_SIGNALING_PORT:-49100}
       KIT_MEDIA_PORT: ${KIT_MEDIA_PORT:-47998}
-      KIT_MANAGER_CORS_ORIGINS: ${KIT_MANAGER_CORS_ORIGINS:-*}
+      KIT_MANAGER_CORS_ORIGINS: ${KIT_MANAGER_CORS_ORIGINS:-http://127.0.0.1:8004}
     ports:
-      - "8010:8010"
+      - "127.0.0.1:8010:8010"
     volumes:
       - ${RUNTIME_STORAGE_ROOT:-./storage}:/workspace/storage
     healthcheck:
@@ -106,14 +112,16 @@ services:
     build:
       context: .
       dockerfile: infra/docker/kit-manager-web.Dockerfile
-    environment:
-      VITE_KIT_MANAGER_API_BASE: ${VITE_KIT_MANAGER_API_BASE:-http://127.0.0.1:8010}
-      VITE_VIEWER_URL: ${VITE_VIEWER_URL:-http://127.0.0.1:5173}
+      args:
+        VITE_COORDINATOR_API_BASE: ${VITE_COORDINATOR_API_BASE:-http://127.0.0.1:8004}
+        VITE_VIEWER_URL: ${VITE_VIEWER_URL:-http://127.0.0.1:5173}
     ports:
-      - "5174:80"
+      - "127.0.0.1:5174:80"
     depends_on:
       kit-manager-api:
         condition: service_healthy
+      coordinator:
+        condition: service_started
 
   streaming-server:
     profiles: ["gpu"]
@@ -133,7 +141,7 @@ services:
       - "${KIT_SIGNALING_PORT:-49100}:${KIT_SIGNALING_PORT:-49100}/udp"
       - "${KIT_MEDIA_PORT:-47998}:${KIT_MEDIA_PORT:-47998}/tcp"
       - "${KIT_MEDIA_PORT:-47998}:${KIT_MEDIA_PORT:-47998}/udp"
-      - "${KIT_CONTROL_PORT:-49101}:${KIT_CONTROL_PORT:-49101}/tcp"
+      - "127.0.0.1:${KIT_CONTROL_PORT:-49101}:${KIT_CONTROL_PORT:-49101}/tcp"
     volumes:
       - ${RUNTIME_STORAGE_ROOT:-./storage}:/workspace/storage
     deploy:

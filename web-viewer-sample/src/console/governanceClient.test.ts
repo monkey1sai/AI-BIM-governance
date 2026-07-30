@@ -1,6 +1,6 @@
 // governanceClient.filesTree()：驗證打 /api/governance/files/tree（coordinator proxy）並回傳樹。
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { governanceClient } from "./governanceClient";
+import { A4GovernanceError, governanceClient } from "./governanceClient";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -206,5 +206,55 @@ describe("governanceClient A4 scoped search", () => {
       "",
     )).rejects.toThrow(/principal carrier/i);
     expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+// A4 safe-error allowlist（自 codex/openspec/a4-semantic-search-model-qa-convergence 移植，
+// 2026-07-30 三層對抗裁決第一層 delta）：A4_SAFE_ERROR_CODES／A4GovernanceError 實作已在
+// main（governanceClient.ts）但 nested-detail 洩漏路徑先前零測試。
+describe("governanceClient A4 safe-error allowlist", () => {
+  it("preserves only allowlisted A4 error code and never echoes upstream detail", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        error_code: "a4_authentication_required",
+        detail: "C:/internal/model.ifc http://internal.example/token",
+      }), { status: 401, headers: { "Content-Type": "application/json" } }),
+    );
+
+    try {
+      await governanceClient.searchModelForSession("review_session_a4", { query: "IfcDoor" }, "local_lab_principal");
+      throw new Error("expected A4 request to reject");
+    } catch (error) {
+      expect(error).toBeInstanceOf(A4GovernanceError);
+      const safe = error as A4GovernanceError;
+      expect(safe.status).toBe(401);
+      expect(safe.code).toBe("a4_authentication_required");
+      expect(safe.message).not.toContain("internal");
+      expect(safe.message).not.toContain("model.ifc");
+    }
+  });
+
+  it("preserves an allowlisted nested FastAPI error code without leaking nested detail", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        detail: {
+          code: "a4_authentic_lease_unavailable",
+          message: "C:/internal/model.ifc http://internal.example/token",
+        },
+      }), { status: 503, headers: { "Content-Type": "application/json" } }),
+    );
+
+    await expect(
+      governanceClient.searchModelForSession("review_session_a4", { query: "IfcDoor" }, "local_lab_principal"),
+    ).rejects.toMatchObject({
+      status: 503,
+      code: "a4_authentic_lease_unavailable",
+    });
+    try {
+      await governanceClient.searchModelForSession("review_session_a4", { query: "IfcDoor" }, "local_lab_principal");
+    } catch (error) {
+      expect((error as Error).message).not.toContain("internal");
+      expect((error as Error).message).not.toContain("model.ifc");
+    }
   });
 });

@@ -447,9 +447,10 @@ def test_lifecycle_hides_a4_evidence_and_requires_session_authority(a4_client):
     legacy = client.post(
         "/api/issues",
         json={
-            "title": "legacy manual",
-            "ifc_guid": "LEGACY_GUID",
-            # Generic callers cannot self-assign A4 provenance; legacy extra
+                "title": "legacy manual",
+                "ifc_guid": "LEGACY_GUID",
+                "model_version_id": "legacy_mv_001",
+                # Generic callers cannot self-assign A4 provenance; legacy extra
             # fields remain ignored and the existing manual semantics win.
             "source_type": "a4_search",
             "a4_evidence_snapshot": _snapshot(),

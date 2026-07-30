@@ -1,10 +1,22 @@
 # Kit Manager API Contract
 
-Base URL:
+Internal service base URL (coordinator-only):
 
 ```txt
 http://127.0.0.1:8010
 ```
+
+Browser base URL (the only browser entrypoint):
+
+```txt
+http://127.0.0.1:8004/api/kit
+```
+
+The coordinator forwards the endpoints below to the internal service. Browser
+clients MUST NOT use `:8010` directly. Compose publishes `:8010` on loopback
+only for local health diagnostics; remote/LAN callers cannot bypass the
+coordinator. Mutation requests through `:8004` require `x-operator-token` or
+`x-dev-token`; the operator UI keeps the entered token in memory only.
 
 ## Endpoints
 
