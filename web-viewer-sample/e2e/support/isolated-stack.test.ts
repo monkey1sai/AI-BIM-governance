@@ -392,7 +392,7 @@ describe("loadIsolatedStackConfig", () => {
     expect(evidence.observations[0].visible_states).toContain("retry");
     expect(evidence.execution_window.started_at).toBe(value.manifest.started_at);
     expect(Date.parse(evidence.execution_window.finished_at)).toBeGreaterThanOrEqual(Date.parse(value.manifest.started_at));
-    expect(readdirSync(config.runDir).filter(name => name.includes(".tmp-") || name === "evidence-manifest.lock")).toEqual([]);
+    expect(readdirSync(config.runDir).filter(name => name.includes(".tmp-") || name === "evidence-manifest.lock.json")).toEqual([]);
   });
 
   it("marks A4 browser operability partial until every required viewport observation is published", async () => {
