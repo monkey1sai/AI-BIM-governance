@@ -3,6 +3,7 @@ import { expect, test, type APIRequestContext, type Locator } from "@playwright/
 import {
   classifyHarnessUse,
   loadIsolatedStackConfig,
+  requireIsolatedEvidenceGeneration,
   requireReal,
   watchForbiddenRequests,
   writeIsolatedEvidenceManifest,
@@ -51,7 +52,7 @@ test.describe("A3 federation→session 一鍵鏈（#/federation 真 backend 全�
     createdSessionId = null;
     createdSetId = null;
     completed = false;
-    forbiddenGuard = watchForbiddenRequests(page);
+    forbiddenGuard = watchForbiddenRequests(page, isolated.coordinatorBaseUrl);
     tracePath = testInfo.outputPath("a3-federated-session-chain-trace.zip");
     await page.context().tracing.start({ screenshots: true, snapshots: true, sources: true });
     traceActive = true;
@@ -82,6 +83,7 @@ test.describe("A3 federation→session 一鍵鏈（#/federation 真 backend 全�
       forbiddenGuard?.assertClean();
       if (completed && createdSetId && createdSessionId && screenshotPath) {
         await writeIsolatedEvidenceManifest(isolated, {
+          invocationGeneration: requireIsolatedEvidenceGeneration(testInfo.config.metadata),
           testId: "a3-federated-session-chain",
           route: "#/federation",
           mainButtons: ["準備 + 驗證坐標系", "Build Federated USD", "Open in Review Room", "a3-create-session"],

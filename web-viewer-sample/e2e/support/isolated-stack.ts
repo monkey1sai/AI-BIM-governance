@@ -18,14 +18,19 @@ const BROWSER_FORBIDDEN_PORTS = new Set([
   ...MANIFEST_RESERVED_PORTS,
   ...Array.from({ length: 5 }, (_, index) => 49103 + index),
 ]);
+const ISOLATED_COORDINATOR_PORTS = new Set(
+  Array.from({ length: 5 }, (_, index) => 8005 + index),
+);
 
 export const A4_REQUIRED_OBSERVATION_IDS = [
   "a4-real-loading-1440x900",
   "a4-real-failure-retry-1440x900",
   "a4-real-success-1440x900",
+  "a4-real-empty-1440x900",
   "a4-real-loading-1920x1080",
   "a4-real-failure-retry-1920x1080",
   "a4-real-success-1920x1080",
+  "a4-real-empty-1920x1080",
 ] as const;
 
 export type IsolatedStackManifest = {
@@ -109,13 +114,30 @@ export function parseObservedNetworkUrl(rawUrl: string): URL | null {
   }
 }
 
-export function createForbiddenRequestGuard() {
+export function createForbiddenRequestGuard(allowedCoordinatorBaseUrl?: string) {
+  const allowedCoordinator = allowedCoordinatorBaseUrl
+    ? new URL(allowedCoordinatorBaseUrl)
+    : null;
+  const allowedCoordinatorProtocols = allowedCoordinator?.protocol === "https:"
+    ? new Set(["https:", "wss:"])
+    : new Set(["http:", "ws:"]);
   const violations: string[] = [];
   return {
     observe(rawUrl: string) {
       const url = parseObservedNetworkUrl(rawUrl);
       if (!url) return;
-      if (BROWSER_FORBIDDEN_PORTS.has(Number(url.port))) violations.push(rawUrl);
+      const port = Number(url.port);
+      if (
+        BROWSER_FORBIDDEN_PORTS.has(port) ||
+        (ISOLATED_COORDINATOR_PORTS.has(port) && (
+          !allowedCoordinator ||
+          !allowedCoordinatorProtocols.has(url.protocol) ||
+          url.hostname.toLowerCase() !== allowedCoordinator.hostname.toLowerCase() ||
+          port !== Number(allowedCoordinator.port)
+        ))
+      ) {
+        violations.push(rawUrl);
+      }
     },
     assertClean() {
       if (violations.length) throw new Error(`browser requested reserved ports: ${violations.join(", ")}`);
@@ -124,8 +146,8 @@ export function createForbiddenRequestGuard() {
   };
 }
 
-export function watchForbiddenRequests(page: Page) {
-  const guard = createForbiddenRequestGuard();
+export function watchForbiddenRequests(page: Page, allowedCoordinatorBaseUrl: string) {
+  const guard = createForbiddenRequestGuard(allowedCoordinatorBaseUrl);
   page.on("request", request => guard.observe(request.url()));
   page.on("websocket", websocket => guard.observe(websocket.url()));
   return guard;
@@ -340,6 +362,7 @@ export type HarnessDisclosure = {
 };
 
 export type BrowserEvidenceObservation = {
+  invocationGeneration: string;
   testId: string;
   route: string;
   mainButtons: string[];
@@ -351,6 +374,24 @@ export type BrowserEvidenceObservation = {
   tracePath: string | null;
   harness: HarnessDisclosure;
 };
+
+const EVIDENCE_GENERATION_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function validateIsolatedEvidenceGeneration(value: unknown): string {
+  if (typeof value !== "string" || !EVIDENCE_GENERATION_PATTERN.test(value)) {
+    throw new Error("isolated evidence invocation generation must be a UUID v4");
+  }
+  return value.toLowerCase();
+}
+
+export function requireIsolatedEvidenceGeneration(metadata: unknown): string {
+  if (!metadata || typeof metadata !== "object") {
+    throw new Error("isolated evidence invocation metadata is required");
+  }
+  return validateIsolatedEvidenceGeneration(
+    (metadata as { isolatedEvidenceGeneration?: unknown }).isolatedEvidenceGeneration,
+  );
+}
 
 export type IsolatedEvidencePublicationVerifier = {
   assertWorktreeStatusClean(config: IsolatedStackConfig): void;
@@ -472,12 +513,89 @@ function existingObservationArtifactsExist(runDir: string, candidate: unknown): 
   return [...screenshots, ...(trace ? [trace] : [])].every(item => storedRunArtifactExists(runDir, item));
 }
 
+type IsolatedEvidenceInvocationLease = {
+  schema_version: "isolated-branch-evidence-invocation/v1";
+  invocation_generation: string;
+  head_sha: string;
+  created_at: string;
+};
+
+function readIsolatedEvidenceInvocationLease(config: IsolatedStackConfig): IsolatedEvidenceInvocationLease {
+  const leasePath = path.join(config.runDir, "evidence-invocation.json");
+  if (!existsSync(leasePath)) throw new Error("isolated evidence invocation lease is missing");
+  const lease = JSON.parse(readFileSync(leasePath, "utf8")) as Partial<IsolatedEvidenceInvocationLease>;
+  if (
+    lease.schema_version !== "isolated-branch-evidence-invocation/v1" ||
+    lease.head_sha !== config.manifest.head_sha
+  ) {
+    throw new Error("isolated evidence invocation lease identity mismatch");
+  }
+  validateIsolatedEvidenceGeneration(lease.invocation_generation);
+  return lease as IsolatedEvidenceInvocationLease;
+}
+
+export function beginIsolatedEvidenceInvocation(
+  config: IsolatedStackConfig,
+  requestedGeneration: string,
+): (setupSucceeded: boolean) => void {
+  const invocationGeneration = validateIsolatedEvidenceGeneration(requestedGeneration);
+  const output = path.join(config.runDir, "evidence-manifest.json");
+  const leasePath = path.join(config.runDir, "evidence-invocation.json");
+  const lockPath = path.join(config.runDir, "evidence-manifest.lock.json");
+  let lockDescriptor: number | undefined;
+  let temporary: string | undefined;
+  try {
+    try {
+      lockDescriptor = openSync(lockPath, "wx");
+    } catch (error) {
+      if (existsSync(lockPath)) throw new Error(`evidence writer lock exists: ${lockPath}`);
+      throw error;
+    }
+    if (existsSync(output)) unlinkSync(output);
+    if (existsSync(leasePath)) unlinkSync(leasePath);
+    const lease: IsolatedEvidenceInvocationLease = {
+      schema_version: "isolated-branch-evidence-invocation/v1",
+      invocation_generation: invocationGeneration,
+      head_sha: config.manifest.head_sha,
+      created_at: new Date().toISOString(),
+    };
+    temporary = path.join(config.runDir, `.evidence-invocation.tmp-${process.pid}-${randomUUID()}.json`);
+    writeFileSync(temporary, `${JSON.stringify(lease, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+    renameSync(temporary, leasePath);
+    temporary = undefined;
+  } catch (error) {
+    if (temporary && existsSync(temporary)) unlinkSync(temporary);
+    if (lockDescriptor !== undefined) {
+      closeSync(lockDescriptor);
+      if (existsSync(lockPath)) unlinkSync(lockPath);
+    }
+    throw error;
+  }
+
+  let released = false;
+  return (setupSucceeded: boolean) => {
+    if (released) return;
+    try {
+      const lease = readIsolatedEvidenceInvocationLease(config);
+      if (lease.invocation_generation !== invocationGeneration) {
+        throw new Error("isolated evidence invocation lease changed during setup");
+      }
+      if (!setupSucceeded && existsSync(leasePath)) unlinkSync(leasePath);
+    } finally {
+      released = true;
+      closeSync(lockDescriptor!);
+      if (existsSync(lockPath)) unlinkSync(lockPath);
+    }
+  };
+}
+
 export async function writeIsolatedEvidenceManifest(
   config: IsolatedStackConfig,
   observation: BrowserEvidenceObservation,
   verifier: IsolatedEvidencePublicationVerifier = defaultIsolatedEvidencePublicationVerifier,
 ): Promise<string> {
   const output = path.join(config.runDir, "evidence-manifest.json");
+  const invocationGeneration = validateIsolatedEvidenceGeneration(observation.invocationGeneration);
   if (observation.harness.buildFlag !== config.harnessBuildFlag) {
     throw new Error("evidence harness build flag mismatch");
   }
@@ -494,6 +612,7 @@ export async function writeIsolatedEvidenceManifest(
     change_id: config.manifest.change_id,
     run_id: config.manifest.run_id,
     head_sha: config.manifest.head_sha,
+    invocation_generation: invocationGeneration,
   };
   const lockPath = path.join(config.runDir, "evidence-manifest.lock.json");
   let lockDescriptor: number | undefined;
@@ -505,10 +624,14 @@ export async function writeIsolatedEvidenceManifest(
       if (existsSync(lockPath)) throw new Error(`evidence writer lock exists: ${lockPath}`);
       throw error;
     }
+    const lease = readIsolatedEvidenceInvocationLease(config);
+    if (lease.invocation_generation !== invocationGeneration) {
+      throw new Error("isolated evidence invocation generation is stale");
+    }
     const existing = existsSync(output)
       ? JSON.parse(readFileSync(output, "utf8"))
       : { ...identity, observations: [] };
-    for (const key of ["schema_version", "stack_kind", "change_id", "run_id", "head_sha"] as const) {
+    for (const key of ["schema_version", "stack_kind", "change_id", "run_id", "head_sha", "invocation_generation"] as const) {
       if (existing[key] !== identity[key]) throw new Error(`evidence identity mismatch: ${key}`);
     }
     const existingObservations: unknown = existing.observations;
@@ -559,6 +682,10 @@ export async function writeIsolatedEvidenceManifest(
     verifier.assertWorktreeStatusClean(config);
     await verifier.assertLiveBackendOwnership(config);
     verifier.assertManifestHead(config);
+    const currentLease = readIsolatedEvidenceInvocationLease(config);
+    if (currentLease.invocation_generation !== invocationGeneration) {
+      throw new Error("isolated evidence invocation generation changed before publication");
+    }
     renameSync(temporary, output);
     return output;
   } finally {

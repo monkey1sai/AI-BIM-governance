@@ -1,9 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { request } from "@playwright/test";
+import { request, type FullConfig } from "@playwright/test";
 import {
   assertIsolatedWorktreeClean,
   assertIsolatedBackendProcessSnapshot,
+  beginIsolatedEvidenceInvocation,
   requireIsolatedStackConfig,
+  requireIsolatedEvidenceGeneration,
   requireReal,
   type IsolatedBackendProcessRecord,
   type IsolatedBackendProcessSnapshot,
@@ -110,18 +112,26 @@ export function assertLiveIsolatedBackendOwnership(isolated: IsolatedStackConfig
   }
 }
 
-export default async function isolatedStackGlobalSetup(): Promise<void> {
+export default async function isolatedStackGlobalSetup(fullConfig: FullConfig): Promise<void> {
   if (process.env.E2E_REQUIRE_REAL !== "1") return;
   const isolated = requireIsolatedStackConfig();
-  assertIsolatedWorktreeClean(isolated);
-  const client = await request.newContext();
+  const invocationGeneration = requireIsolatedEvidenceGeneration(fullConfig.metadata);
+  const finishInvocationSetup = beginIsolatedEvidenceInvocation(isolated, invocationGeneration);
+  let setupSucceeded = false;
   try {
-    const coordinator = await client.get(`${isolated.coordinatorBaseUrl}/health`);
-    if (!coordinator.ok()) {
-      throw new Error(`coordinator probe failed: ${coordinator.status()} ${isolated.coordinatorBaseUrl}/health`);
+    assertIsolatedWorktreeClean(isolated);
+    const client = await request.newContext();
+    try {
+      const coordinator = await client.get(`${isolated.coordinatorBaseUrl}/health`);
+      if (!coordinator.ok()) {
+        throw new Error(`coordinator probe failed: ${coordinator.status()} ${isolated.coordinatorBaseUrl}/health`);
+      }
+      assertLiveIsolatedBackendOwnership(isolated);
+    } finally {
+      await client.dispose();
     }
-    assertLiveIsolatedBackendOwnership(isolated);
+    setupSucceeded = true;
   } finally {
-    await client.dispose();
+    finishInvocationSetup(setupSucceeded);
   }
 }

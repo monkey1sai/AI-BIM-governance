@@ -958,6 +958,11 @@ try {
     Assert-True (-not [string]::IsNullOrWhiteSpace([string]$stoppedManifest.stopped_at)) 'successful stop atomically records stopped_at'
     Assert-True (-not $stoppedManifest.backend_ready.governance -and -not $stoppedManifest.backend_ready.coordinator) 'successful stop clears backend readiness'
 
+    $relativeExecutionOutput = (& pwsh -NoProfile -NonInteractive -WorkingDirectory $dispatcherSandbox -File $launcherPath `
+        -Action status -ChangeId 'change-a' -RunId 'run-status' -RepoRoot '.' 2>&1 | Out-String)
+    Assert-Equal 0 $LASTEXITCODE 'direct launcher canonicalizes a relative RepoRoot before manifest validation'
+    Assert-True ($relativeExecutionOutput -match 'degraded') 'relative RepoRoot reaches the existing manifest through its canonical path'
+
     $directExecutionOutput = (& pwsh -NoProfile -NonInteractive -File $launcherPath -Action status -ChangeId '.' -RunId 'run-a' -RepoRoot $dispatcherSandbox 2>&1 | Out-String)
     Assert-True ($LASTEXITCODE -ne 0) 'direct launcher execution dispatches invalid identity failure'
     Assert-True ($directExecutionOutput -match [regex]::Escape('ChangeId must be one safe path segment')) 'direct launcher execution reaches dispatcher validation'

@@ -1,8 +1,10 @@
 import { defineConfig, devices } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { loadIsolatedStackConfig, parseStandaloneViewerPort } from "./e2e/support/isolated-stack";
 
 const isolated = loadIsolatedStackConfig();
+const isolatedEvidenceGeneration = isolated ? randomUUID() : undefined;
 const viewerPortNumber = isolated?.viewerPort ?? parseStandaloneViewerPort(process.env.E2E_VIEWER_PORT ?? "5180");
 const viewerPort = String(viewerPortNumber);
 const viewerOrigin = isolated?.viewerOrigin ?? `http://127.0.0.1:${viewerPort}`;
@@ -48,11 +50,12 @@ const webServer = process.env.E2E_DISABLE_WEBSERVER === "1"
 // - 截圖 / trace / video 落在 repo 根 artifacts/e2e/_output（對齊任務指定路徑）。
 // - harness 模式必須同時有 runner-owned VITE_VIEWER_HARNESS=1 與各測試的 ?harness=1。
 export default defineConfig({
+  metadata: isolated ? { isolatedEvidenceGeneration } : {},
   testDir: "./e2e",
   testIgnore: ["**/support/**/*.test.ts"],
   ...(isolated ? { testMatch: ["**/a3-federated-session-chain.spec.ts", "**/a4-closeout.spec.ts"] } : {}),
   globalSetup: isolated ? "./e2e/support/isolated-stack-global-setup.ts" : undefined,
-  outputDir: isolated ? path.join(isolated.runDir, "playwright-output") : "../artifacts/e2e/_output",
+  outputDir: isolated ? path.join(isolated.runDir, "playwright-output", isolatedEvidenceGeneration!) : "../artifacts/e2e/_output",
   timeout: 60_000,
   expect: { timeout: 15_000 },
   fullyParallel: false,
@@ -60,7 +63,7 @@ export default defineConfig({
   retries: 0,
   reporter: [
     ["list"],
-    ["html", { outputFolder: "../artifacts/e2e/report", open: "never" }],
+    ["html", { outputFolder: isolated ? path.join(isolated.runDir, "playwright-report", isolatedEvidenceGeneration!) : "../artifacts/e2e/report", open: "never" }],
   ],
   use: {
     baseURL: viewerBaseUrl,

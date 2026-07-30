@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { closeSync, mkdtempSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdtempSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -11,6 +11,8 @@ import {
   assertIsolatedWorktreeClean,
   assertIsolatedWorktreeStatusClean,
   assertLiveIsolatedBackendOwnership,
+  A4_REQUIRED_OBSERVATION_IDS,
+  beginIsolatedEvidenceInvocation,
   classifyHarnessUse,
   createForbiddenRequestGuard,
   defaultIsolatedEvidencePublicationVerifier,
@@ -25,6 +27,8 @@ import {
 } from "./isolated-stack";
 
 const roots: string[] = [];
+const UNIT_EVIDENCE_GENERATION = "11111111-1111-4111-8111-111111111111";
+const NEXT_EVIDENCE_GENERATION = "22222222-2222-4222-8222-222222222222";
 
 function fixture() {
   const worktreeRoot = mkdtempSync(path.join(tmpdir(), "isolated-stack-"));
@@ -84,6 +88,12 @@ function fixture() {
     ],
   };
   writeFileSync(manifestPath, JSON.stringify(manifest));
+  writeFileSync(path.join(runDir, "evidence-invocation.json"), JSON.stringify({
+    schema_version: "isolated-branch-evidence-invocation/v1",
+    invocation_generation: UNIT_EVIDENCE_GENERATION,
+    head_sha: headSha,
+    created_at: "2026-07-30T01:00:02.000Z",
+  }));
   return { worktreeRoot, manifestPath, manifest, headSha };
 }
 
@@ -97,6 +107,7 @@ function sampleObservation(config: IsolatedStackConfig): BrowserEvidenceObservat
   writeFileSync(screenshotPath, "png-fixture");
   writeFileSync(tracePath, "trace-fixture");
   return {
+    invocationGeneration: UNIT_EVIDENCE_GENERATION,
     testId: "a4-success",
     route: "#semantic-search",
     mainButtons: ["a4-refresh-sources", "a4-run"],
@@ -291,6 +302,22 @@ describe("loadIsolatedStackConfig", () => {
     })).not.toThrow();
   });
 
+  it("allows only the current manifest coordinator origin across isolated offsets", () => {
+    const guard = createForbiddenRequestGuard("http://127.0.0.1:8005");
+    guard.observe("http://127.0.0.1:8005/health");
+    guard.observe("ws://127.0.0.1:8005/socket.io");
+    const peerHttp = "http://127.0.0.1:8006/health";
+    const peerWebSocket = "ws://127.0.0.1:8009/socket.io";
+    const wrongHost = "http://localhost:8005/health";
+    const wrongProtocol = "https://127.0.0.1:8005/health";
+    guard.observe(peerHttp);
+    guard.observe(peerWebSocket);
+    guard.observe(wrongHost);
+    guard.observe(wrongProtocol);
+    expect(guard.violations).toEqual([peerHttp, peerWebSocket, wrongHost, wrongProtocol]);
+    expect(() => guard.assertClean()).toThrow(/8006.*8009.*localhost:8005.*https:\/\/127\.0\.0\.1:8005/);
+  });
+
   it("maps every default evidence verifier contract key to the intended gate", () => {
     expect(defaultIsolatedEvidencePublicationVerifier).toEqual({
       assertWorktreeStatusClean: assertIsolatedWorktreeStatusClean,
@@ -308,6 +335,15 @@ describe("loadIsolatedStackConfig", () => {
     const source = readFileSync(path.join(process.cwd(), "playwright.config.ts"), "utf8");
     expect(source).toContain('? `npm exec -- vite --host 127.0.0.1 --port ${viewerPort} --strictPort`');
     expect(source).toContain(': `npm run dev -- --host 127.0.0.1 --port ${viewerPort} --strictPort`');
+    expect(source).toContain('metadata: isolated ? { isolatedEvidenceGeneration } : {}');
+    expect(source).toContain('path.join(isolated.runDir, "playwright-output", isolatedEvidenceGeneration!)');
+    expect(source).toContain('path.join(isolated.runDir, "playwright-report", isolatedEvidenceGeneration!)');
+  });
+
+  it("records the query actually exercised by the A4 empty observation", () => {
+    const source = readFileSync(path.join(process.cwd(), "e2e", "a4-closeout.spec.ts"), "utf8");
+    expect(source).toContain("fixture: pendingEvidence.fixture");
+    expect(source).toContain("deterministic query=${emptyQuery}");
   });
 
   it("records reserved-port WebSockets and ignores malformed or non-network URLs", () => {
@@ -440,14 +476,7 @@ describe("loadIsolatedStackConfig", () => {
       headSha: value.headSha,
       env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath },
     })!;
-    const requiredIds = [
-      "a4-real-loading-1440x900",
-      "a4-real-failure-retry-1440x900",
-      "a4-real-success-1440x900",
-      "a4-real-loading-1920x1080",
-      "a4-real-failure-retry-1920x1080",
-      "a4-real-success-1920x1080",
-    ];
+    const requiredIds = [...A4_REQUIRED_OBSERVATION_IDS];
     const output = await writeUnitEvidence(config, { ...sampleObservation(config), testId: requiredIds[0] });
     expect(JSON.parse(readFileSync(output, "utf8")).scope.cpu_browser_operability).toBe("partial");
     for (const testId of requiredIds.slice(1)) {
@@ -462,14 +491,7 @@ describe("loadIsolatedStackConfig", () => {
     const value = fixture();
     const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
     const stale = sampleObservation(config);
-    for (const testId of [
-      "a4-real-loading-1440x900",
-      "a4-real-failure-retry-1440x900",
-      "a4-real-success-1440x900",
-      "a4-real-loading-1920x1080",
-      "a4-real-failure-retry-1920x1080",
-      "a4-real-success-1920x1080",
-    ]) {
+    for (const testId of A4_REQUIRED_OBSERVATION_IDS) {
       await writeUnitEvidence(config, { ...stale, testId });
     }
     rmSync(stale.screenshotPaths[0], { force: true });
@@ -488,6 +510,51 @@ describe("loadIsolatedStackConfig", () => {
     const evidence = JSON.parse(readFileSync(output, "utf8"));
     expect(evidence.observations.map((item: { test_id: string }) => item.test_id)).toEqual(["a3-current"]);
     expect(evidence.scope.cpu_browser_operability).toBe("partial");
+  });
+
+  it("leases each invocation generation and rejects stale concurrent writers", async () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
+    const output = await writeUnitEvidence(config, sampleObservation(config));
+    expect(existsSync(output)).toBe(true);
+
+    const finishSetup = beginIsolatedEvidenceInvocation(config, NEXT_EVIDENCE_GENERATION);
+    const lockPath = path.join(config.runDir, "evidence-manifest.lock.json");
+    expect(existsSync(output)).toBe(false);
+    expect(existsSync(lockPath)).toBe(true);
+    await expect(writeIsolatedEvidenceManifest(config, sampleObservation(config), unitEvidencePublicationVerifier))
+      .rejects.toThrow(/evidence writer lock exists/);
+    finishSetup(true);
+    expect(existsSync(lockPath)).toBe(false);
+    await expect(writeIsolatedEvidenceManifest(config, sampleObservation(config), unitEvidencePublicationVerifier))
+      .rejects.toThrow(/invocation generation is stale/);
+
+    const nextObservation = {
+      ...sampleObservation(config),
+      invocationGeneration: NEXT_EVIDENCE_GENERATION,
+      testId: "next-generation",
+    };
+    await expect(writeIsolatedEvidenceManifest(config, nextObservation, unitEvidencePublicationVerifier)).resolves.toBe(output);
+    expect(JSON.parse(readFileSync(output, "utf8")).invocation_generation).toBe(NEXT_EVIDENCE_GENERATION);
+    const setup = readFileSync(path.join(process.cwd(), "e2e", "support", "isolated-stack-global-setup.ts"), "utf8");
+    expect(setup.indexOf("beginIsolatedEvidenceInvocation(isolated, invocationGeneration)")).toBeLessThan(setup.indexOf("assertIsolatedWorktreeClean(isolated)"));
+    expect(setup).toContain("finishInvocationSetup(setupSucceeded)");
+  });
+
+  it("removes the invocation lease when global setup fails", async () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
+    const output = await writeUnitEvidence(config, sampleObservation(config));
+    const finishSetup = beginIsolatedEvidenceInvocation(config, NEXT_EVIDENCE_GENERATION);
+
+    finishSetup(false);
+
+    expect(existsSync(output)).toBe(false);
+    expect(existsSync(path.join(config.runDir, "evidence-invocation.json"))).toBe(false);
+    await expect(writeIsolatedEvidenceManifest(config, {
+      ...sampleObservation(config),
+      invocationGeneration: NEXT_EVIDENCE_GENERATION,
+    }, unitEvidencePublicationVerifier)).rejects.toThrow(/invocation lease is missing/);
   });
 
   it("fails closed on malformed or outside-run stored artifact references", async () => {

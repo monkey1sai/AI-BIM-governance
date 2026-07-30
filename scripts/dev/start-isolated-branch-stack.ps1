@@ -1022,6 +1022,11 @@ function Invoke-IsolatedBranchStackCli {
         [string]$OffsetInput,
         [string]$RepoRoot=(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
     )
+    $resolvedRepoRoot = Resolve-Path -LiteralPath $RepoRoot -ErrorAction Stop
+    if ([string]$resolvedRepoRoot.Provider.Name -cne 'FileSystem' -or -not (Test-Path -LiteralPath $resolvedRepoRoot.Path -PathType Container)) {
+        throw "RepoRoot must resolve to one filesystem directory: $RepoRoot"
+    }
+    $RepoRoot = [IO.Path]::GetFullPath([string]$resolvedRepoRoot.Path)
     $logRoot = Join-Path $RepoRoot 'artifacts\e2e\_launcher\structured-logs'
     $structRunId = New-StructLogRunId
     $logger = New-StructLogger -Service 'scripts' -Component 'isolated-branch-stack' -RunId $structRunId `
