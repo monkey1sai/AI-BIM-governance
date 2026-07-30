@@ -22,7 +22,7 @@ _Avoid_: callback (confused with cloud callback outbox), event bus
 
 **MinIO Watch Surface**:
 The coordinator-owned deep module over the governed MinIO bucket: watcher loop lifecycle and runtime toggle, object-key → IntakeCommand derivation, idempotency watermark against ConversionLedger, loopback auto-intake dispatch, folder browse/cache, and dirty-event fan-out for operator surfaces. Its deterministic test driver is `pollNow()`; status counters are a read-only projection. It does not own intake acceptance (that is IfcReadyConversionPipeline) or conversion authority. S3 access sits behind the ObjectStorePort seam (real S3 adapter in production, in-memory fake in tests).
-_Avoid_: MinioService, bucket poller, S3 watcher (implementation words), MinioClient (shallow module being retired)
+_Avoid_: MinioService, bucket poller, S3 watcher (implementation words), MinioClient (retired shallow module)
 
 ## Nearby concepts (owned elsewhere)
 
