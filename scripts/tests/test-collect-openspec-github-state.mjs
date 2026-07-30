@@ -31,7 +31,23 @@ test('GitHub lifecycle observation uses only canonical same-repository OpenSpec 
   ]);
 });
 
-test('subject mismatch and unbounded pull observations fail closed', () => {
-  assert.throws(() => buildGitHubLifecycleObservation({ ledger, repository: 'example/repository', repositoryInfo, pulls: [], subject: 'f'.repeat(40) }));
+test('ledger rows may cite historical commits distinct from the merge-evidence subject', () => {
+  const historical = {
+    ...ledger,
+    changes: ledger.changes.map((change) => ({ ...change, subject_commit: 'b'.repeat(40) })),
+  };
+  const result = buildGitHubLifecycleObservation({ ledger: historical, repository: 'example/repository', repositoryInfo, pulls: [], subject });
+  assert.equal(result.repository_subject, subject);
+  assert.deepEqual(result.changes.map(({ id }) => id), ['alpha-change', 'beta-change', 'completed-change', 'held-change']);
+});
+
+test('malformed ledger identity and unbounded pull observations fail closed', () => {
+  const malformed = {
+    ...ledger,
+    changes: ledger.changes.map((change) => (change.id === 'alpha-change' ? { ...change, subject_commit: 'not-a-commit' } : change)),
+  };
+  assert.throws(() => buildGitHubLifecycleObservation({ ledger: malformed, repository: 'example/repository', repositoryInfo, pulls: [], subject }));
+  const missing = { ...ledger, changes: ledger.changes.map(({ subject_commit, ...rest }) => rest) };
+  assert.throws(() => buildGitHubLifecycleObservation({ ledger: missing, repository: 'example/repository', repositoryInfo, pulls: [], subject }));
   assert.throws(() => buildGitHubLifecycleObservation({ ledger, repository: 'example/repository', repositoryInfo, pulls: Array(1001).fill({}), subject }));
 });
