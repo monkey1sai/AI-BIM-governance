@@ -38,6 +38,7 @@ type AppInternals = {
   _resyncStageBindingProof: () => Promise<boolean>;
   _finishStageLoad: () => void;
   _hasRemoteVideoFrame: () => boolean;
+  _scheduleStageLoadTimeout: () => void;
   _applyBinding: (selection: Array<{
     artifact_id: string;
     model_version_id: string;
@@ -77,6 +78,7 @@ type AppInternals = {
   reviewSocketEpoch: number;
   componentMounted: boolean;
   deferredOpenStageId: number | null;
+  loadingStatePollCount: number;
   render: () => React.ReactElement;
 };
 const internals = (app: App): AppInternals => app as unknown as AppInternals;
@@ -718,6 +720,64 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     expect(reviewText).toContain(copy.stageLoadRejected);
     expect(reviewText).not.toContain(copy.unexpected);
     expect(internals(stageLoadApp).state.loadingText).toBe(copy.stageLoadRejected);
+  });
+
+  it.each([
+    {
+      language: "zh" as const,
+      title: "模型載入逾時",
+      target: "目標：stage://timeout.usdc",
+      diagnostic: "診斷：remote-video element not found",
+      missingCompletion: "Kit 已連線但沒有回報模型載入完成",
+      lastState: "最後狀態：stage://timeout.usdc busy",
+      alternateTitle: "Model loading timed out",
+      alternateTarget: "Target: stage://timeout.usdc",
+    },
+    {
+      language: "en" as const,
+      title: "Model loading timed out",
+      target: "Target: stage://timeout.usdc",
+      diagnostic: "Diagnostic: remote-video element not found",
+      missingCompletion: "Kit is connected but did not report model loading as complete.",
+      lastState: "Last state: stage://timeout.usdc busy",
+      alternateTitle: "模型載入逾時",
+      alternateTarget: "目標：stage://timeout.usdc",
+    },
+  ])("$language localizes both stage-load timeout paths without alternate-language leakage", (copy) => {
+    vi.useFakeTimers();
+    setLang(copy.language);
+
+    const timerApp = operableApp();
+    useSynchronousSetState(timerApp);
+    internals(timerApp).pendingStageUrl = "stage://timeout.usdc";
+    vi.spyOn(internals(timerApp), "_completeStageLoadFromVisibleStream").mockReturnValue(false);
+    internals(timerApp)._scheduleStageLoadTimeout();
+    vi.runOnlyPendingTimers();
+
+    expect(internals(timerApp).state.loadingText).toBe(copy.title);
+    expect(internals(timerApp).state.streamDiagnostic).toContain(copy.target);
+    expect(internals(timerApp).state.streamDiagnostic).toContain(copy.diagnostic);
+    expect(internals(timerApp).state.streamDiagnostic).toContain(copy.missingCompletion);
+    expect(internals(timerApp).state.streamDiagnostic).not.toContain(copy.alternateTarget);
+
+    const pollingApp = operableApp();
+    useSynchronousSetState(pollingApp);
+    internals(pollingApp).state = {
+      ...internals(pollingApp).state,
+      isKitReady: true,
+      selectedUSDAsset: { name: "timeout", url: "stage://timeout.usdc" },
+    };
+    internals(pollingApp).pendingStageUrl = "stage://timeout.usdc";
+    internals(pollingApp).loadingStatePollCount = 90;
+    internals(pollingApp)._handleCustomEvent({
+      event_type: "loadingStateResponse",
+      payload: { url: "stage://timeout.usdc", loading_state: "busy" },
+    });
+
+    expect(internals(pollingApp).state.loadingText).toBe(copy.title);
+    expect(internals(pollingApp).state.streamDiagnostic).toContain(copy.target);
+    expect(internals(pollingApp).state.streamDiagnostic).toContain(copy.lastState);
+    expect(internals(pollingApp).state.loadingText).not.toContain(copy.alternateTitle);
   });
 
   it.each([
