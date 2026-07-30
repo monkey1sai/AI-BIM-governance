@@ -181,6 +181,12 @@ $listenerLineage = @{
 $listenerLineageLookup = { param($processId) $script:listenerLineage[[int]$processId] }
 Assert-True (Test-IsolatedListenerProcessOwnership -Expected $listenerExpected -ListenerProcessId 4302 -Port 8005 `
     -ProcessLookup $listenerLineageLookup) 'listener descendant with canonical command, port, ancestry, and creation chronology is owned'
+Assert-True (Test-IsolatedListenerProcessOwnership -Expected $listenerExpected -ListenerProcessId 4202 -Port 8005 `
+    -ProcessLookup $listenerLineageLookup) 'same-PID listener is owned only after its live command and creation identity are revalidated'
+$reusedSamePidListener = $listenerLineage[4202].PSObject.Copy()
+$reusedSamePidListener.CreationDate = '2026-07-30T10:00:02Z'
+Assert-True (-not (Test-IsolatedListenerProcessOwnership -Expected $listenerExpected -ListenerProcessId 4202 -Port 8005 `
+    -ProcessLookup { param($processId) $script:reusedSamePidListener })) 'same-PID replacement listener with a different creation identity is rejected'
 $wrongListenerCommandLine = @{}
 foreach ($key in $listenerLineage.Keys) { $wrongListenerCommandLine[$key] = $listenerLineage[$key].PSObject.Copy() }
 $wrongListenerCommandLine[4302].CommandLine = 'node unrelated.js --isolated-stack-port 8005'
@@ -608,14 +614,31 @@ try {
     }
     $statusPath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-status'
     Write-IsolatedJsonAtomic -Path $statusPath -Value $statusManifest -NoClobber
+    $ownedStatusListenerLookup = {
+        param($port)
+        $listenerPid = if ([int]$port -in @(49103,49104)) { 4101 } else { 4102 }
+        [pscustomobject]@{ OwningProcess = $listenerPid }
+    }
+    $ownedStatusListener = { param($expected,$listenerProcessId,$port) [int]$listenerProcessId -eq [int]$expected.pid }
     $status = Invoke-IsolatedBranchStack -Action status -ChangeId 'change-a' -RunId 'run-status' -OffsetInput '0' -RepoRoot $dispatcherSandbox `
         -IdentityLookup { param($expectedProcess) $expectedProcess } `
+        -StopListenerLookupFn $ownedStatusListenerLookup -ListenerProcessOwnershipFn $ownedStatusListener `
         -HealthFn { param($url) -not $url.EndsWith(':8005/health') }
     $governanceStatus = @($status.backend | Where-Object role -eq 'governance')[0]
     $coordinatorStatus = @($status.backend | Where-Object role -eq 'coordinator')[0]
     Assert-Equal 'degraded' $status.status 'status reports degraded when an owned backend is not ready'
     Assert-True ($governanceStatus.owned -and $governanceStatus.ready) 'owned healthy governance is ready'
     Assert-True ($coordinatorStatus.owned -and -not $coordinatorStatus.ready) 'owned coordinator with failed live health is not ready'
+
+    $replacementHealthCalls = 0
+    $replacementStatus = Invoke-IsolatedBranchStack -Action status -ChangeId 'change-a' -RunId 'run-status' -OffsetInput '0' -RepoRoot $dispatcherSandbox `
+        -IdentityLookup { param($expectedProcess) $expectedProcess } `
+        -StopListenerLookupFn { param($port) [pscustomobject]@{ OwningProcess = 9999 } } `
+        -ListenerProcessOwnershipFn { param($expected,$listenerProcessId,$port) $false } `
+        -HealthFn { param($url) $script:replacementHealthCalls++; $true }
+    Assert-Equal 'degraded' $replacementStatus.status 'status rejects health served by a listener outside the manifest process lineage'
+    Assert-Equal 0 $replacementHealthCalls 'status does not probe health until listener ownership is proven'
+    Assert-Equal 0 @($replacementStatus.backend | Where-Object owned).Count 'replacement listeners are never reported as owned'
 
     $offsetOneManifest = $statusManifest | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
     $offsetOneManifest.run_id = 'run-status-offset-one'
@@ -628,12 +651,14 @@ try {
     $offsetOnePath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-status-offset-one'
     Write-IsolatedJsonAtomic -Path $offsetOnePath -Value $offsetOneManifest -NoClobber
     $derivedOffsetStatus = Invoke-IsolatedBranchStack -Action status -ChangeId 'change-a' -RunId 'run-status-offset-one' -RepoRoot $dispatcherSandbox `
-        -IdentityLookup { param($expectedProcess) $expectedProcess } -HealthFn { param($url) $true }
+        -IdentityLookup { param($expectedProcess) $expectedProcess } -StopListenerLookupFn $ownedStatusListenerLookup `
+        -ListenerProcessOwnershipFn $ownedStatusListener -HealthFn { param($url) $true }
     Assert-Equal 'active' $derivedOffsetStatus.status 'status reports active when every owned backend is ready'
     Assert-Equal 2 @($derivedOffsetStatus.backend).Count 'status derives nonzero offset from manifest when omitted'
     Assert-Throws {
         Invoke-IsolatedBranchStack -Action status -ChangeId 'change-a' -RunId 'run-status-offset-one' -OffsetInput '0' -RepoRoot $dispatcherSandbox `
-            -IdentityLookup { param($expectedProcess) $expectedProcess } -HealthFn { param($url) $true }
+            -IdentityLookup { param($expectedProcess) $expectedProcess } -StopListenerLookupFn $ownedStatusListenerLookup `
+            -ListenerProcessOwnershipFn $ownedStatusListener -HealthFn { param($url) $true }
     } 'explicit mismatching offset is rejected'
     $derivedOffsetStops = [System.Collections.Generic.List[int]]::new()
     $derivedOffsetStop = Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-status-offset-one' -RepoRoot $dispatcherSandbox `
@@ -645,7 +670,8 @@ try {
     Assert-Equal 'stopped' $derivedOffsetStop.status 'stop derives nonzero offset from manifest when omitted'
     Assert-Equal '4102,4101' ($derivedOffsetStops -join ',') 'derived-offset stop uses manifest-owned backend identities'
     $derivedStoppedStatus = Invoke-IsolatedBranchStack -Action status -ChangeId 'change-a' -RunId 'run-status-offset-one' -RepoRoot $dispatcherSandbox `
-        -IdentityLookup { param($expectedProcess) $expectedProcess } -HealthFn { param($url) $true }
+        -IdentityLookup { param($expectedProcess) $expectedProcess } -StopListenerLookupFn $ownedStatusListenerLookup `
+        -ListenerProcessOwnershipFn $ownedStatusListener -HealthFn { param($url) $true }
     Assert-Equal 'stopped' $derivedStoppedStatus.status 'status preserves stopped manifest state even when identity probes are healthy'
 
     $manifestIdentityMutations = @(
@@ -684,7 +710,8 @@ try {
     $recoverySubset | Add-Member -Force -NotePropertyName reservation_held -NotePropertyValue $true
     Assert-IsolatedStackManifestIdentity -Manifest $recoverySubset -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-status' -OffsetInput '0'
     $recoverySubsetStatus = Get-IsolatedStackStatus -Manifest $recoverySubset -ManifestPath 'recovery-subset.json' `
-        -IdentityLookup { param($expectedProcess) $expectedProcess } -HealthFn { param($url) $true }
+        -IdentityLookup { param($expectedProcess) $expectedProcess } -ListenerLookupFn $ownedStatusListenerLookup `
+        -ListenerProcessOwnershipFn $ownedStatusListener -HealthFn { param($url) $true }
     Assert-Equal 'degraded' $recoverySubsetStatus.status 'active recovery subset never reports active even when its surviving backend is healthy'
 
     $emptyRecovery = $recoverySubset | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12

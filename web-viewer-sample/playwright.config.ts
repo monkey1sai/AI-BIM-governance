@@ -22,7 +22,9 @@ const webServer = process.env.E2E_DISABLE_WEBSERVER === "1"
   ? []
   : [
       {
-        command: `npm run dev -- --host 127.0.0.1 --port ${viewerPort} --strictPort`,
+        command: isolated
+          ? `npm exec -- vite --host 127.0.0.1 --port ${viewerPort} --strictPort`
+          : `npm run dev -- --host 127.0.0.1 --port ${viewerPort} --strictPort`,
         url: viewerOrigin,
         reuseExistingServer: false,
         timeout: 120_000,

@@ -332,7 +332,6 @@ function Test-IsolatedListenerProcessOwnership {
         [int] $MaxDepth = 16
     )
     if ($ListenerProcessId -le 0 -or $Port -le 0 -or $MaxDepth -lt 1) { return $false }
-    if ($ListenerProcessId -eq [int]$Expected.pid) { return $true }
 
     $entrypoint = [string]$Expected.entrypoint
     $portMarker = if ([string]$Expected.role -eq 'governance') { '--port' } else { '--isolated-stack-port' }
@@ -714,12 +713,28 @@ function New-IsolatedStackManifest {
 }
 
 function Get-IsolatedStackStatus {
-    param($Manifest,[string]$ManifestPath,[scriptblock]$IdentityLookup,[scriptblock]$HealthFn)
+    param(
+        $Manifest,[string]$ManifestPath,[scriptblock]$IdentityLookup,[scriptblock]$HealthFn,
+        [scriptblock]$ListenerLookupFn,[scriptblock]$ListenerProcessOwnershipFn
+    )
     $backend = foreach ($expected in @($Manifest.processes)) {
         $actual = $null
         try { $actual = & $IdentityLookup $expected } catch {}
-        $owned = Test-IsolatedProcessOwnership -Expected $expected -Actual $actual
+        $processOwned = Test-IsolatedProcessOwnership -Expected $expected -Actual $actual
+        $owned = $false
         $ready = $false
+        if ($processOwned) {
+            $port = [int]$Manifest.ports.([string]$expected.role)
+            $listeners = @()
+            try { $listeners = @(& $ListenerLookupFn $port | Where-Object { $null -ne $_ }) } catch {}
+            if ($listeners.Count -eq 1) {
+                try {
+                    $owned = [bool](& $ListenerProcessOwnershipFn $expected ([int]$listeners[0].OwningProcess) $port)
+                } catch {
+                    $owned = $false
+                }
+            }
+        }
         if ($owned) {
             $healthUrl = "$($Manifest.base_urls.($expected.role))/health"
             try { $ready = [bool](& $HealthFn $healthUrl) } catch { $ready = $false }
@@ -963,7 +978,10 @@ function Invoke-IsolatedBranchStack {
         $manifest=Read-IsolatedStackManifest -Path $manifestPath
         $effectiveOffset = if ([string]::IsNullOrWhiteSpace($OffsetInput)) { [string]$manifest.offset } else { $OffsetInput }
         Assert-IsolatedStackManifestIdentity -Manifest $manifest -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -OffsetInput $effectiveOffset
-        if($Action -eq 'status'){return Get-IsolatedStackStatus -Manifest $manifest -ManifestPath $manifestPath -IdentityLookup $IdentityLookup -HealthFn $HealthFn}
+        if($Action -eq 'status'){
+            return Get-IsolatedStackStatus -Manifest $manifest -ManifestPath $manifestPath -IdentityLookup $IdentityLookup -HealthFn $HealthFn `
+                -ListenerLookupFn $StopListenerLookupFn -ListenerProcessOwnershipFn $ListenerProcessOwnershipFn
+        }
         $stopResult = Stop-IsolatedStackRun -Manifest $manifest -ManifestPath $manifestPath -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn `
             -ProcessExistsFn $ProcessExistsFn -ListenerLookupFn $StopListenerLookupFn -ListenerProcessOwnershipFn $ListenerProcessOwnershipFn `
             -ProcessHandleLookup $ProcessHandleLookup `

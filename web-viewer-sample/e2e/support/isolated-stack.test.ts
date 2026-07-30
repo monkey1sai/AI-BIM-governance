@@ -304,6 +304,12 @@ describe("loadIsolatedStackConfig", () => {
     expect(source).toContain('testMatch: ["**/a3-federated-session-chain.spec.ts", "**/a4-closeout.spec.ts"]');
   });
 
+  it("starts an isolated viewer without rerunning the mutating design-asset sync", () => {
+    const source = readFileSync(path.join(process.cwd(), "playwright.config.ts"), "utf8");
+    expect(source).toContain('? `npm exec -- vite --host 127.0.0.1 --port ${viewerPort} --strictPort`');
+    expect(source).toContain(': `npm run dev -- --host 127.0.0.1 --port ${viewerPort} --strictPort`');
+  });
+
   it("records reserved-port WebSockets and ignores malformed or non-network URLs", () => {
     const guard = createForbiddenRequestGuard();
     guard.observe("ws://127.0.0.1:49100/signaling");
