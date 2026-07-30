@@ -40,7 +40,7 @@
 - [x] 5.1 記錄啟動前 `:8004`／`:49102` 的 listener 狀態快照；用 2.2 的 launcher 起隔離 stack；記錄啟動後同樣快照，證明部署區未被改動。
 - [ ] 5.2 以 require-real 模式對隔離 stack 跑一次既有 A4 browser E2E（`a4-closeout.spec.ts`），證明 harness 能產出 screenshot／trace／console／network 與 observed runtime IDs。
 - [ ] 5.3 evidence 落 `artifacts/e2e/isolated-branch-stack-browser-e2e/<run-id>/`：`stack-manifest.json`、evidence manifest、截圖（依 repo 慣例需 `git add -f`）、trace 路徑；PR body 記錄精確 run ID。
-- [x] 5.4 若 A4 現況在 require-real 模式下未通過，**記為 known gap 並交回 `a4-console-convergence`**；本 change 不修改任何 A4 前後端實作，PR body 誠實標示該紅燈是既有假通過被揭露，而非本 change 造成的回歸。
+- [x] 5.4 若 A4 現況在 require-real 模式下未通過，**記為 known gap 並交回 `a4-console-convergence`**；本 change 不修改任何 A4 前後端實作，PR body 誠實標示該紅燈是既有假通過被揭露，而非本 change 造成的回歸。fresh P5 run `p5-20260730-163713`（manifest head `eed43c8a17274a573121fc604fa61aae0f408f29`）再次由 6 個 Chromium cases 證實相同缺口：`no downloaded IFC-ready job is available`；該 run 未產生成功 evidence manifest、PNG screenshot 或 observed runtime ID，只產生失敗 `trace.zip`、video 與 error-context Markdown，因此 5.2／5.3 仍不得勾選。
 - [x] 5.5 停 stack 後再取一次部署區 listener 快照，確認三次快照一致。
 
 ## 6. 收尾與誠實揭露

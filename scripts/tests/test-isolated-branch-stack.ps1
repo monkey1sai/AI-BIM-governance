@@ -429,7 +429,7 @@ try {
             param($spec)
             $script:successSpecs.Add($spec)
             $backendId = if ($spec.role -eq 'governance') { 4201 } else { 4202 }
-            [pscustomobject]@{role=$spec.role;pid=$backendId;entrypoint=$spec.entrypoint;command_line=$spec.role;creation_identity=$spec.role}
+            [pscustomobject]@{role=$spec.role;pid=$backendId;entrypoint=$spec.entrypoint;command_line=($spec.Arguments -join ' ');creation_identity=$spec.role}
         } `
         -HealthFn { param($url) $true } `
         -IdentityLookup { param($expectedProcess) $expectedProcess } `
@@ -442,6 +442,7 @@ try {
     Assert-Equal 'isolated-branch-stack/v1' $successManifest.schema_version 'successful start writes v1 manifest'
     Assert-Equal 'isolated_branch_stack' $successManifest.stack_kind 'successful start writes isolated stack kind'
     Assert-Equal 2 @($successManifest.processes).Count 'successful start writes both backend identities'
+    Assert-IsolatedStackManifestIdentity -Manifest $successManifest -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-success' -OffsetInput '0'
     $successRunDirectory = Split-Path -Parent $successManifestPath
     $expectedStateRoot = Join-Path $successRunDirectory 'state'
     $expectedFixtureRoot = Join-Path $dispatcherSandbox 'storage'
@@ -462,6 +463,8 @@ try {
     Assert-Equal $expectedCoordinatorStorage ([string]$coordinatorSpec.Environment.STORAGE_HOST_ROOT) 'coordinator host storage view matches its per-run mutable storage'
     Assert-Equal $expectedCoordinatorStorage ([string]$coordinatorSpec.Environment.RUNTIME_STORAGE_ROOT) 'coordinator runtime storage stays in the same per-run root'
 
+    $expectedGovernanceEntrypoint = Join-Path $dispatcherSandbox 'governance-service'
+    $expectedCoordinatorEntrypoint = Join-Path $dispatcherSandbox 'bim-review-coordinator\src\index.ts'
     $statusManifest = [ordered]@{
         schema_version='isolated-branch-stack/v1';stack_kind='isolated_branch_stack';change_id='change-a';run_id='run-status'
         worktree_root=$dispatcherSandbox;offset=0
@@ -472,8 +475,8 @@ try {
         backend_ready=[ordered]@{governance=$true;coordinator=$true}
         stopped_at=$null
         processes=@(
-            [pscustomobject]@{role='governance';pid=4101;entrypoint='app:app';command_line='gov';creation_identity='c1'},
-            [pscustomobject]@{role='coordinator';pid=4102;entrypoint='src/index.ts';command_line='coord';creation_identity='c2'}
+            [pscustomobject]@{role='governance';pid=4101;entrypoint=$expectedGovernanceEntrypoint;command_line="python -m uvicorn --app-dir $expectedGovernanceEntrypoint app:app --host 127.0.0.1 --port 49103";creation_identity='c1'},
+            [pscustomobject]@{role='coordinator';pid=4102;entrypoint=$expectedCoordinatorEntrypoint;command_line="node tsx.mjs $expectedCoordinatorEntrypoint --isolated-stack-port 8005";creation_identity='c2'}
         )
     }
     $statusPath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-status'
@@ -483,6 +486,7 @@ try {
         -HealthFn { param($url) -not $url.EndsWith(':8005/health') }
     $governanceStatus = @($status.backend | Where-Object role -eq 'governance')[0]
     $coordinatorStatus = @($status.backend | Where-Object role -eq 'coordinator')[0]
+    Assert-Equal 'degraded' $status.status 'status reports degraded when an owned backend is not ready'
     Assert-True ($governanceStatus.owned -and $governanceStatus.ready) 'owned healthy governance is ready'
     Assert-True ($coordinatorStatus.owned -and -not $coordinatorStatus.ready) 'owned coordinator with failed live health is not ready'
 
@@ -492,10 +496,13 @@ try {
     $offsetOneManifest.ports.coordinator = 8006; $offsetOneManifest.ports.governance = 49104; $offsetOneManifest.ports.viewer = 5181
     $offsetOneManifest.base_urls.coordinator = 'http://127.0.0.1:8006'; $offsetOneManifest.base_urls.governance = 'http://127.0.0.1:49104'; $offsetOneManifest.base_urls.viewer = 'http://127.0.0.1:5181'
     $offsetOneManifest.viewer.expected_port = 5181
+    $offsetOneManifest.processes[0].command_line = "python -m uvicorn --app-dir $expectedGovernanceEntrypoint app:app --host 127.0.0.1 --port 49104"
+    $offsetOneManifest.processes[1].command_line = "node tsx.mjs $expectedCoordinatorEntrypoint --isolated-stack-port 8006"
     $offsetOnePath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-status-offset-one'
     Write-IsolatedJsonAtomic -Path $offsetOnePath -Value $offsetOneManifest -NoClobber
     $derivedOffsetStatus = Invoke-IsolatedBranchStack -Action status -ChangeId 'change-a' -RunId 'run-status-offset-one' -RepoRoot $dispatcherSandbox `
         -IdentityLookup { param($expectedProcess) $expectedProcess } -HealthFn { param($url) $true }
+    Assert-Equal 'active' $derivedOffsetStatus.status 'status reports active when every owned backend is ready'
     Assert-Equal 2 @($derivedOffsetStatus.backend).Count 'status derives nonzero offset from manifest when omitted'
     Assert-Throws {
         Invoke-IsolatedBranchStack -Action status -ChangeId 'change-a' -RunId 'run-status-offset-one' -OffsetInput '0' -RepoRoot $dispatcherSandbox `
@@ -508,6 +515,9 @@ try {
         -StopProcessFn { param($processId) $script:derivedOffsetStops.Add($processId) }
     Assert-Equal 'stopped' $derivedOffsetStop.status 'stop derives nonzero offset from manifest when omitted'
     Assert-Equal '4102,4101' ($derivedOffsetStops -join ',') 'derived-offset stop uses manifest-owned backend identities'
+    $derivedStoppedStatus = Invoke-IsolatedBranchStack -Action status -ChangeId 'change-a' -RunId 'run-status-offset-one' -RepoRoot $dispatcherSandbox `
+        -IdentityLookup { param($expectedProcess) $expectedProcess } -HealthFn { param($url) $true }
+    Assert-Equal 'stopped' $derivedStoppedStatus.status 'status preserves stopped manifest state even when identity probes are healthy'
 
     $manifestIdentityMutations = @(
         [pscustomobject]@{name='schema';mutate={ param($manifest) $manifest.schema_version='wrong' }},
@@ -522,7 +532,14 @@ try {
         [pscustomobject]@{name='viewer lifecycle owner';mutate={ param($manifest) $manifest.lifecycle_owners.viewer='repo_launcher' }},
         [pscustomobject]@{name='viewer owner';mutate={ param($manifest) $manifest.viewer.owner='repo_launcher' }},
         [pscustomobject]@{name='viewer port';mutate={ param($manifest) $manifest.viewer.expected_port=5173 }},
-        [pscustomobject]@{name='viewer launcher flag';mutate={ param($manifest) $manifest.viewer.managed_by_launcher=$true }}
+        [pscustomobject]@{name='viewer launcher flag';mutate={ param($manifest) $manifest.viewer.managed_by_launcher=$true }},
+        [pscustomobject]@{name='missing processes';mutate={ param($manifest) $manifest.PSObject.Properties.Remove('processes') }},
+        [pscustomobject]@{name='empty processes';mutate={ param($manifest) $manifest.processes=@() }},
+        [pscustomobject]@{name='missing coordinator process';mutate={ param($manifest) $manifest.processes=@($manifest.processes | Where-Object role -eq 'governance') }},
+        [pscustomobject]@{name='duplicate process role';mutate={ param($manifest) $manifest.processes[1].role='governance';$manifest.processes[1].entrypoint=$expectedGovernanceEntrypoint;$manifest.processes[1].command_line="python -m uvicorn --app-dir $expectedGovernanceEntrypoint app:app --host 127.0.0.1 --port 49103" }},
+        [pscustomobject]@{name='unknown process role';mutate={ param($manifest) $manifest.processes[1].role='viewer' }},
+        [pscustomobject]@{name='duplicate process PID';mutate={ param($manifest) $manifest.processes[1].pid=$manifest.processes[0].pid }},
+        [pscustomobject]@{name='wrong coordinator entrypoint';mutate={ param($manifest) $manifest.processes[1].entrypoint='src/index.ts' }}
     )
     foreach ($identityMutation in $manifestIdentityMutations) {
         $candidate = $statusManifest | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
@@ -531,6 +548,60 @@ try {
             Assert-IsolatedStackManifestIdentity -Manifest $candidate -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-status' -OffsetInput '0'
         } "manifest $($identityMutation.name) mismatch rejected"
     }
+
+    $recoverySubset = $statusManifest | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
+    $recoverySubset.processes = @($recoverySubset.processes | Where-Object role -eq 'governance')
+    $recoverySubset | Add-Member -Force -NotePropertyName start_failure -NotePropertyValue ([pscustomobject]@{message='coordinator start failed';occurred_at='2026-07-30T00:00:00Z'})
+    $recoverySubset | Add-Member -Force -NotePropertyName reservation_held -NotePropertyValue $true
+    Assert-IsolatedStackManifestIdentity -Manifest $recoverySubset -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-status' -OffsetInput '0'
+    $recoverySubsetStatus = Get-IsolatedStackStatus -Manifest $recoverySubset -ManifestPath 'recovery-subset.json' `
+        -IdentityLookup { param($expectedProcess) $expectedProcess } -HealthFn { param($url) $true }
+    Assert-Equal 'degraded' $recoverySubsetStatus.status 'active recovery subset never reports active even when its surviving backend is healthy'
+
+    $emptyRecovery = $recoverySubset | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
+    $emptyRecovery.run_id = 'run-empty-recovery'
+    $emptyRecovery.processes = @()
+    $emptyRecoveryPath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-empty-recovery'
+    Write-IsolatedJsonAtomic -Path $emptyRecoveryPath -Value $emptyRecovery -NoClobber
+    $emptyRecoveryReleaseCalls = 0
+    Assert-Throws {
+        Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-empty-recovery' -RepoRoot $dispatcherSandbox `
+            -ReservationReleaseFn { param($reservation) $script:emptyRecoveryReleaseCalls++ }
+    } 'empty recovery manifest fails closed before stop or reservation release'
+    Assert-Equal 0 $emptyRecoveryReleaseCalls 'empty recovery manifest never releases a held reservation'
+
+    $unknownActiveListener = $statusManifest | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
+    $unknownActiveListener.run_id = 'run-unknown-active-listener'
+    $unknownActiveListenerPath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-unknown-active-listener'
+    Write-IsolatedJsonAtomic -Path $unknownActiveListenerPath -Value $unknownActiveListener -NoClobber
+    $unknownActiveListenerStops = [System.Collections.Generic.List[int]]::new()
+    Assert-Throws {
+        Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-unknown-active-listener' -RepoRoot $dispatcherSandbox `
+            -IdentityLookup { param($expectedProcess) $expectedProcess } `
+            -ProcessExistsFn { param($processId) $true } `
+            -StopListenerLookupFn { param($port) if ($port -eq 49103) { [pscustomobject]@{LocalPort=$port;State='Listen';OwningProcess=9999} } else { $null } } `
+            -ProcessHandleLookup $fakeProcessHandleLookup `
+            -StopProcessFn { param($processId) $script:unknownActiveListenerStops.Add($processId) }
+    } 'unknown listener on an active role port fails closed before stopping any backend'
+    Assert-Equal 0 $unknownActiveListenerStops.Count 'unknown active listener stops zero processes'
+
+    $stillAliveManifest = $statusManifest | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
+    $stillAliveManifest.run_id = 'run-kill-request-still-alive'
+    $stillAliveManifest | Add-Member -Force -NotePropertyName reservation_held -NotePropertyValue $true
+    $stillAliveManifest | Add-Member -Force -NotePropertyName start_failure -NotePropertyValue ([pscustomobject]@{message='recovery';occurred_at='2026-07-30T00:00:00Z'})
+    $stillAlivePath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-kill-request-still-alive'
+    Write-IsolatedJsonAtomic -Path $stillAlivePath -Value $stillAliveManifest -NoClobber
+    $stillAliveReleaseCalls = 0
+    Assert-Throws {
+        Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-kill-request-still-alive' -RepoRoot $dispatcherSandbox `
+            -IdentityLookup { param($expectedProcess) $expectedProcess } `
+            -ProcessExistsFn { param($processId) $true } `
+            -StopListenerLookupFn { param($port) $null } `
+            -ProcessHandleLookup $fakeProcessHandleLookup `
+            -StopProcessFn { param($processId) } `
+            -ReservationReleaseFn { param($reservation) $script:stillAliveReleaseCalls++ }
+    } 'kill request that leaves a backend alive cannot complete stop or release reservation'
+    Assert-Equal 0 $stillAliveReleaseCalls 'unproven backend termination retains the recovery reservation'
 
     $failureMatrix = @(
         [pscustomobject]@{runId='run-gov-start';kind='governance_start';expectedStarted='governance';expectedStopped='';preseed=$false},
@@ -592,7 +663,7 @@ try {
             -StartBackendFn {
                 param($spec)
                 if ($spec.role -eq 'coordinator') { throw 'coordinator start failed' }
-                [pscustomobject]@{role='governance';pid=6101;entrypoint='app:app';command_line='gov';creation_identity='recovery-c1'}
+                [pscustomobject]@{role='governance';pid=6101;entrypoint=$spec.entrypoint;command_line=($spec.Arguments -join ' ');creation_identity='recovery-c1'}
             } `
             -HealthFn { param($url) $true } `
             -IdentityLookup { param($expectedProcess) $expectedProcess } `

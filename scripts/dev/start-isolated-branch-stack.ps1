@@ -68,7 +68,9 @@ function Get-IsolatedPortListener {
         [scriptblock] $ConnectionLookup = { Get-NetTCPConnection -ErrorAction Stop }
     )
     $connections = @(& $ConnectionLookup)
-    @($connections | Where-Object { [int]$_.LocalPort -eq $Port -and [string]$_.State -eq 'Listen' }) | Select-Object -First 1
+    $listeners = @($connections | Where-Object { [int]$_.LocalPort -eq $Port -and [string]$_.State -eq 'Listen' })
+    if ($listeners.Count -gt 1) { throw "Multiple listeners were found on isolated port $Port." }
+    $listeners | Select-Object -First 1
 }
 
 function Assert-IsolatedStackStartPreflight {
@@ -358,6 +360,9 @@ function Stop-IsolatedBackends {
             if ($null -eq $processHandle -or $null -eq $safeProcessHandle) { throw "Pinned process handle is required for $processId." }
             if ([bool]$safeProcessHandle.IsInvalid -or [bool]$safeProcessHandle.IsClosed) { throw "Pinned process handle for $processId is no longer valid." }
             $processHandle.Kill()
+            if (-not $processHandle.WaitForExit(5000) -or -not [bool]$processHandle.HasExited) {
+                throw "Process $processId did not exit after the kill request."
+            }
         },
         [scriptblock] $MissingProcessFn,
         [switch] $AllowMissing
@@ -441,6 +446,73 @@ function Read-IsolatedStackManifest {
     Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json -Depth 12
 }
 
+function Assert-IsolatedStackManifestProcesses {
+    param($Manifest,[string]$RepoRoot)
+    $processesProperty = $Manifest.PSObject.Properties['processes']
+    if ($null -eq $processesProperty) { throw 'Manifest process records are missing.' }
+    $processes = @($processesProperty.Value)
+    if ($processes.Count -eq 0) { throw 'Manifest must contain at least one backend process record.' }
+
+    $allowedRoles = @('governance','coordinator')
+    $seenRoles = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $seenProcessIds = [Collections.Generic.HashSet[int]]::new()
+    foreach ($process in $processes) {
+        if ($null -eq $process) { throw 'Manifest backend process record is null.' }
+        foreach ($requiredField in @('role','pid','entrypoint','command_line','creation_identity')) {
+            if ($null -eq $process.PSObject.Properties[$requiredField]) {
+                throw "Manifest backend process record is missing $requiredField."
+            }
+        }
+        $role = [string]$process.role
+        if ($allowedRoles -notcontains $role) { throw "Manifest backend process role is invalid: $role" }
+        if (-not $seenRoles.Add($role)) { throw "Manifest backend process role is duplicated: $role" }
+        $resolvedProcessId = 0
+        if (-not [int]::TryParse([string]$process.pid, [ref]$resolvedProcessId) -or $resolvedProcessId -le 0) {
+            throw "Manifest backend process PID is invalid for role $role."
+        }
+        if (-not $seenProcessIds.Add($resolvedProcessId)) { throw "Manifest backend process PID is duplicated: $resolvedProcessId" }
+        if ([string]::IsNullOrWhiteSpace([string]$process.command_line) -or
+            [string]::IsNullOrWhiteSpace([string]$process.creation_identity)) {
+            throw "Manifest backend process identity is incomplete for role $role."
+        }
+        $expectedEntrypoint = if ($role -eq 'governance') {
+            [IO.Path]::GetFullPath((Join-Path $RepoRoot 'governance-service'))
+        } else {
+            [IO.Path]::GetFullPath((Join-Path $RepoRoot 'bim-review-coordinator\src\index.ts'))
+        }
+        $actualEntrypoint = [string]$process.entrypoint
+        if (-not $actualEntrypoint.Equals($expectedEntrypoint, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Manifest backend process entrypoint is invalid for role $role."
+        }
+        $expectedPort = [int]$Manifest.ports.$role
+        $commandLine = [string]$process.command_line
+        $portMarker = if ($role -eq 'governance') { '--port' } else { '--isolated-stack-port' }
+        if (-not $commandLine.Contains($expectedEntrypoint, [StringComparison]::OrdinalIgnoreCase) -or
+            $commandLine -notmatch "(?:^|\s)$([regex]::Escape($portMarker))\s+$expectedPort(?:\s|$)") {
+            throw "Manifest backend process command line is not bound to the canonical $role entrypoint and resolved port."
+        }
+    }
+
+    $startFailureProperty = $Manifest.PSObject.Properties['start_failure']
+    $reservationProperty = $Manifest.PSObject.Properties['reservation_held']
+    if ($null -ne $startFailureProperty) {
+        if ($null -eq $startFailureProperty.Value -or $null -eq $reservationProperty) {
+            throw 'Recovery manifest start failure/reservation state is incomplete.'
+        }
+        $isStopped = -not [string]::IsNullOrWhiteSpace([string]$Manifest.stopped_at)
+        if (-not $isStopped -and -not [bool]$reservationProperty.Value) {
+            throw 'Active recovery manifest must retain its reservation.'
+        }
+    } else {
+        if (($null -ne $reservationProperty -and [bool]$reservationProperty.Value) -or
+            $processes.Count -ne 2 -or
+            -not $seenRoles.Contains('governance') -or
+            -not $seenRoles.Contains('coordinator')) {
+            throw 'Successful manifest must contain exactly one governance and one coordinator process.'
+        }
+    }
+}
+
 function Assert-IsolatedStackManifestIdentity {
     param($Manifest,[string]$RepoRoot,[string]$ChangeId,[string]$RunId,[string]$OffsetInput)
     if ([string]$Manifest.schema_version -cne 'isolated-branch-stack/v1' -or
@@ -478,6 +550,7 @@ function Assert-IsolatedStackManifestIdentity {
         [bool]$Manifest.viewer.managed_by_launcher) {
         throw 'Manifest viewer identity mismatch.'
     }
+    Assert-IsolatedStackManifestProcesses -Manifest $Manifest -RepoRoot $RepoRoot
 }
 
 function New-IsolatedStackManifest {
@@ -519,7 +592,19 @@ function Get-IsolatedStackStatus {
         }
         [pscustomobject]@{ role=$expected.role;pid=$expected.pid;owned=$owned;ready=$ready }
     }
-    [pscustomobject]@{stack_kind=$Manifest.stack_kind;backend=@($backend);viewer=$Manifest.viewer;manifest_path=$ManifestPath}
+    $backend = @($backend)
+    $isRecovery = $null -ne $Manifest.PSObject.Properties['start_failure']
+    $status = if (-not [string]::IsNullOrWhiteSpace([string]$Manifest.stopped_at)) {
+        'stopped'
+    } elseif (-not $isRecovery -and
+        $backend.Count -eq 2 -and
+        @($backend.role | Sort-Object -Unique).Count -eq 2 -and
+        @($backend | Where-Object { -not $_.owned -or -not $_.ready }).Count -eq 0) {
+        'active'
+    } else {
+        'degraded'
+    }
+    [pscustomobject]@{status=$status;stack_kind=$Manifest.stack_kind;backend=@($backend);viewer=$Manifest.viewer;manifest_path=$ManifestPath}
 }
 
 function New-IsolatedMissingProcessGuard {
@@ -536,17 +621,66 @@ function New-IsolatedMissingProcessGuard {
     }.GetNewClosure()
 }
 
+function Assert-IsolatedStackStopPortOwnership {
+    param($Manifest,[object[]]$Processes,[scriptblock]$ListenerLookupFn)
+    foreach ($expected in $Processes) {
+        $role = [string]$expected.role
+        $port = [int]$Manifest.ports.$role
+        $listeners = @(& $ListenerLookupFn $port | Where-Object { $null -ne $_ })
+        if ($listeners.Count -gt 1) { throw "Multiple listeners were found on isolated $role port $port. No process was stopped." }
+        if ($listeners.Count -eq 0) { continue }
+        $alreadyStopped = $expected.PSObject.Properties['stop_status'] -and [string]$expected.stop_status -eq 'stopped'
+        if ($alreadyStopped -or [int]$listeners[0].OwningProcess -ne [int]$expected.pid) {
+            throw "Listener on isolated $role port $port is not owned by the expected process. No process was stopped."
+        }
+    }
+}
+
+function Wait-IsolatedBackendTermination {
+    param(
+        $Expected,[int]$Port,[scriptblock]$ProcessExistsFn,[scriptblock]$ListenerLookupFn,
+        [int]$TimeoutMilliseconds = 5000
+    )
+    if ($TimeoutMilliseconds -lt 0) { throw 'Termination timeout must be non-negative.' }
+    $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMilliseconds)
+    do {
+        try {
+            $processExists = [bool](& $ProcessExistsFn ([int]$Expected.pid))
+            $listeners = @(& $ListenerLookupFn $Port | Where-Object { $null -ne $_ })
+            if ($listeners.Count -gt 1) { return $false }
+            if (-not $processExists -and $listeners.Count -eq 0) { return $true }
+        } catch {
+            return $false
+        }
+        if ([DateTime]::UtcNow -ge $deadline) { break }
+        Start-Sleep -Milliseconds 50
+    } while ($true)
+    return $false
+}
+
 function Stop-IsolatedStackRun {
     param(
         $Manifest,[string]$ManifestPath,[scriptblock]$IdentityLookup,[scriptblock]$StopProcessFn,
-        [scriptblock]$ProcessExistsFn,[scriptblock]$ListenerLookupFn,[scriptblock]$ProcessHandleLookup
+        [scriptblock]$ProcessExistsFn,[scriptblock]$ListenerLookupFn,[scriptblock]$ProcessHandleLookup,
+        [int]$TerminationTimeoutMilliseconds = 5000
     )
     if ($Manifest.stopped_at) { return [pscustomobject]@{status='already_stopped';manifest_path=$ManifestPath} }
+    $manifestProcesses = @($Manifest.processes)
+    if ($manifestProcesses.Count -eq 0) { throw 'Refusing to stop an isolated stack without backend process records.' }
+    Assert-IsolatedStackStopPortOwnership -Manifest $Manifest -Processes $manifestProcesses -ListenerLookupFn $ListenerLookupFn
     $missingProcessFn = New-IsolatedMissingProcessGuard -Ports $Manifest.ports -ProcessExistsFn $ProcessExistsFn -ListenerLookupFn $ListenerLookupFn
-    $results = @(Stop-IsolatedBackends -Processes @($Manifest.processes) -IdentityLookup $IdentityLookup -ProcessHandleLookup $ProcessHandleLookup -StopProcessFn $StopProcessFn -MissingProcessFn $missingProcessFn)
+    $results = @(Stop-IsolatedBackends -Processes $manifestProcesses -IdentityLookup $IdentityLookup -ProcessHandleLookup $ProcessHandleLookup -StopProcessFn $StopProcessFn -MissingProcessFn $missingProcessFn)
     $Manifest | Add-Member -Force -NotePropertyName stop_state -NotePropertyValue ([ordered]@{ attempted_at=[DateTime]::UtcNow.ToString('o'); entries=$results })
     foreach ($result in $results) {
         $process = @($Manifest.processes | Where-Object { $_.role -eq $result.role -and $_.pid -eq $result.pid }) | Select-Object -First 1
+        if ($process -and $result.status -in @('stopped','already_stopped')) {
+            $port = [int]$Manifest.ports.([string]$process.role)
+            if (-not (Wait-IsolatedBackendTermination -Expected $process -Port $port -ProcessExistsFn $ProcessExistsFn `
+                -ListenerLookupFn $ListenerLookupFn -TimeoutMilliseconds $TerminationTimeoutMilliseconds)) {
+                $result.status = 'stop_failed'
+                $result.reason = 'process_or_listener_remained_after_stop'
+            }
+        }
         if ($process -and $result.status -in @('stopped','already_stopped')) {
             $process | Add-Member -Force -NotePropertyName stop_status -NotePropertyValue 'stopped'
             $Manifest.backend_ready.($result.role) = $false
@@ -584,11 +718,12 @@ function Start-IsolatedStackRun {
         $head=& $HeadShaFn $RepoRoot
         if($head -notmatch '^[0-9a-f]{40}$'){throw 'HEAD identity is not a 40-character commit SHA'}
 
+        $governanceRoot=Join-Path $RepoRoot 'governance-service'
         $governanceSpec=@{
-            Role='governance';WorkingDirectory=(Join-Path $RepoRoot 'governance-service');Executable=$Runtime.python
-            Arguments=@('-m','uvicorn','app:app','--host','127.0.0.1','--port',"$($Preflight.ports.governance)")
+            Role='governance';WorkingDirectory=$governanceRoot;Executable=$Runtime.python
+            Arguments=@('-m','uvicorn','--app-dir',$governanceRoot,'app:app','--host','127.0.0.1','--port',"$($Preflight.ports.governance)")
             Environment=(New-IsolatedBackendEnvironment -Role governance -StateLayout $stateLayout -Ports $Preflight.ports)
-            RunDirectory=$runDirectory;Entrypoint='app:app'
+            RunDirectory=$runDirectory;Entrypoint=$governanceRoot
         }
         $governance=& $StartBackendFn $governanceSpec
         $started.Add($governance)
@@ -597,7 +732,7 @@ function Start-IsolatedStackRun {
         $indexPath=Join-Path $RepoRoot 'bim-review-coordinator\src\index.ts'
         $coordinatorSpec=@{
             Role='coordinator';WorkingDirectory=(Join-Path $RepoRoot 'bim-review-coordinator');Executable=$Runtime.node
-            Arguments=@($Runtime.tsx,$indexPath)
+            Arguments=@($Runtime.tsx,$indexPath,'--isolated-stack-port',"$($Preflight.ports.coordinator)")
             Environment=(New-IsolatedBackendEnvironment -Role coordinator -StateLayout $stateLayout -Ports $Preflight.ports)
             RunDirectory=$runDirectory;Entrypoint=$indexPath
         }
@@ -659,7 +794,7 @@ function Invoke-IsolatedBranchStack {
         [scriptblock]$StartBackendFn={param($spec) Start-IsolatedBackend @spec},
         [scriptblock]$HealthFn={param($url) Wait-IsolatedHealth -Url $url},
         [scriptblock]$IdentityLookup={param($e) Get-IsolatedProcessIdentity -ProcessId ([int]$e.pid) -Entrypoint ([string]$e.entrypoint)},
-        [scriptblock]$StopProcessFn={param($processId,$processHandle,$safeProcessHandle) if ($null -eq $processHandle -or $null -eq $safeProcessHandle) { throw "Pinned process handle is required for $processId." }; if ([bool]$safeProcessHandle.IsInvalid -or [bool]$safeProcessHandle.IsClosed) { throw "Pinned process handle for $processId is no longer valid." }; $processHandle.Kill()},
+        [scriptblock]$StopProcessFn={param($processId,$processHandle,$safeProcessHandle) if ($null -eq $processHandle -or $null -eq $safeProcessHandle) { throw "Pinned process handle is required for $processId." }; if ([bool]$safeProcessHandle.IsInvalid -or [bool]$safeProcessHandle.IsClosed) { throw "Pinned process handle for $processId is no longer valid." }; $processHandle.Kill(); if (-not $processHandle.WaitForExit(5000) -or -not [bool]$processHandle.HasExited) { throw "Process $processId did not exit after the kill request." }},
         [scriptblock]$ProcessHandleLookup={param($processId) Get-Process -Id $processId -ErrorAction Stop},
         [scriptblock]$ProcessExistsFn={param($processId) $null -ne (Get-Process -Id $processId -ErrorAction SilentlyContinue)},
         [scriptblock]$StopListenerLookupFn={param($port) Get-IsolatedPortListener -Port $port},
@@ -667,6 +802,7 @@ function Invoke-IsolatedBranchStack {
         [scriptblock]$WorktreeStatusFn={param($root) & git -C $root status --porcelain --untracked-files=all},
         [scriptblock]$ReservationAcquireFn={param($root,$change,$run,$offset) Acquire-IsolatedStackReservations -RepoRoot $root -ChangeId $change -RunId $run -Offset $offset},
         [scriptblock]$ReservationReleaseFn={param($reservation) Release-IsolatedStackReservations -Reservation $reservation},
+        [int]$TerminationTimeoutMilliseconds=5000,
         $LifecycleLogger=$null
     )
     Assert-SafeStackSegment -Name 'ChangeId' -Value $ChangeId
@@ -679,7 +815,8 @@ function Invoke-IsolatedBranchStack {
         Assert-IsolatedStackManifestIdentity -Manifest $manifest -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -OffsetInput $effectiveOffset
         if($Action -eq 'status'){return Get-IsolatedStackStatus -Manifest $manifest -ManifestPath $manifestPath -IdentityLookup $IdentityLookup -HealthFn $HealthFn}
         $stopResult = Stop-IsolatedStackRun -Manifest $manifest -ManifestPath $manifestPath -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn `
-            -ProcessExistsFn $ProcessExistsFn -ListenerLookupFn $StopListenerLookupFn -ProcessHandleLookup $ProcessHandleLookup
+            -ProcessExistsFn $ProcessExistsFn -ListenerLookupFn $StopListenerLookupFn -ProcessHandleLookup $ProcessHandleLookup `
+            -TerminationTimeoutMilliseconds $TerminationTimeoutMilliseconds
         if ($manifest.PSObject.Properties['reservation_held'] -and [bool]$manifest.reservation_held) {
             $heldReservation = Resolve-IsolatedStackReservation -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Offset ([int]$manifest.offset)
             & $ReservationReleaseFn $heldReservation
