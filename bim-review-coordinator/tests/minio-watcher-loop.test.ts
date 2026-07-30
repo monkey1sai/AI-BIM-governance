@@ -105,6 +105,18 @@ async function startHangingS3Stub(received: Array<{ at: number }>): Promise<stri
   return `http://127.0.0.1:${a.port}`;
 }
 
+// 觀測契約（本檔通用規約，違反者會在 Windows CI 間歇紅）：
+// intake stub 的 `received.push` 發生在「stub 收到請求當下」，而 watcher 的
+// `triggered_total` 只在「收到回應 → resp.text() → JSON.parse 成功」之後才 +1
+// （src/services/minioWatcher.ts:360→372→397）。兩者之間存在確定的 happens-before
+// 間隙，故 triggered_total 對 stub 端觀測而言是 **eventually consistent**。
+// 規約：凡以 stub 端事件（received.length / ledger 落檔）當 gate，之後又要斷言
+// watcher 端計數器者，必須把計數器一併納入 waitFor 述詞，不可同步讀。
+// 反向（先 gate 計數器再斷言 received）就**順序**而言恆安全，因 push 必先於 +1；但這只保證
+// received 已有對應那筆，不保證筆數相等——retry 情境下同一次成功觸發可對應多筆 POST
+// （見「intake 暫時性失敗（5xx）→ 自癒」一測：triggered_total===1 與 received.length>=2 並存），
+// 故該方向的 received 斷言仍須用 >= 而非 toBe。
+// 斷言「計數器維持 0」的負向測試不受此限（不存在性只能靠 wall-time 觀察）。
 async function waitFor(check: () => boolean, ms = 3000): Promise<void> {
   const end = Date.now() + ms;
   while (Date.now() < end) {
@@ -297,7 +309,9 @@ describe("minioWatcher loop", () => {
     });
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
     state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
-    await waitFor(() => received.length === 1);
+    // 依本檔頂部「觀測契約」把計數器納入 gate：否則 300ms 靜默窗會被回應鏈吃掉一部分，
+    // 通過與否取決於 wall-time 夠不夠長，而非真的驗到「後續輪不再觸發」。
+    await waitFor(() => received.length === 1 && watcher!.getStatus().triggered_total === 1);
     await new Promise((r) => setTimeout(r, 300)); // 多跑幾輪
     expect(received.length).toBe(1);
     expect(watcher!.getStatus().triggered_total).toBe(1);
@@ -630,7 +644,10 @@ describe("minioWatcher loop", () => {
     watcher = makeWatcher(s3Base, selfBase, state, { isLedgered: ledgered });
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
     state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
-    await waitFor(() => received.length === 1);
+    // 依本檔頂部「觀測契約」：只等 received 時 triggered_total 必然仍是 0（能過純靠 waitFor
+    // 25ms sleep 的殘餘時間蓋住整段回應鏈，Windows CI 窗口放大即紅：expected +0 to be 1），
+    // 故把計數器一併納入 gate。先例同「新增物件應觸發」一測。
+    await waitFor(() => received.length === 1 && watcher!.getStatus().triggered_total === 1);
     const firstStatus = watcher!.getStatus();
     expect(firstStatus.triggered_total).toBe(1);
     const expectedIdem = received[0].idemKey;
