@@ -1435,7 +1435,7 @@
       "id": "isolated-branch-stack-browser-e2e",
       "status": "active",
       "owner": "repository-maintainer",
-      "current_slice": "PR #431 code 63ba35c；origin/main a443985 已於 6900cac merge。listener lineage/status、relative RepoRoot canonicalization、peer coordinator guard、A4 empty completeness/fixture truth、browser evidence UUID generation lease 與 generation-scoped artifacts獲 reviewer ACCEPT。frontend 950/950、PowerShell launcher contract與 local PR preflight pass；clean smoke closeout-review-20260730-2130-63ba35c active→stopped，owned PIDs消失，8005/49103=0，8004/49102 前後=0。CI machine-truth正確識別 test-isolated-branch-stack.ps1 相對舊 subject 的 source drift；本 row rebind 到合併後 evidence source snapshot。P5 仍無 downloaded IFC-ready job，無成功 manifest/PNG/runtime ID；剩 4.3、5.2、5.3。",
+      "current_slice": "PR #431 code 63ba35c；origin/main a443985 merged as 6900cac。Reviewer ACCEPT：owned listener/status、relative RepoRoot、peer coordinator guard、A4 empty truth、UUID evidence lease及scoped artifacts。frontend 950/950、PowerShell contract、local preflight、machine-truth 65/65、ledger reconciliation、OpenSpec 71/71通過。smoke closeout-review-20260730-2130-63ba35c active→stopped，PIDs消失；8005/49103=0，8004/49102前後=0。source snapshot=6900cac。P5無downloaded job/成功manifest/PNG/runtime ID；剩4.3/5.2/5.3。",
       "blocked_by": [],
       "last_verified": "2026-07-30T13:44:36Z",
       "task_ledger": {
