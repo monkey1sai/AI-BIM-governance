@@ -1,0 +1,463 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:ai-bim-governance:architecture-contract:v1",
+  "title": "AI-BIM executable architecture contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "contract_id",
+    "title",
+    "authority",
+    "external_systems",
+    "services",
+    "browser_access_policy",
+    "data_classes",
+    "readiness_policies",
+    "invariants",
+    "architecture_delta_policy",
+    "exception_policy"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schema_version": {
+      "const": "ai-bim-architecture-contract/v1"
+    },
+    "contract_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "authority": {
+      "$ref": "#/definitions/authority"
+    },
+    "external_systems": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/externalSystem"
+      }
+    },
+    "services": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/service"
+      }
+    },
+    "browser_access_policy": {
+      "$ref": "#/definitions/browserAccessPolicy"
+    },
+    "data_classes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/dataClass"
+      }
+    },
+    "readiness_policies": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/readinessPolicy"
+      }
+    },
+    "invariants": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/invariant"
+      }
+    },
+    "architecture_delta_policy": {
+      "$ref": "#/definitions/deltaPolicy"
+    },
+    "exception_policy": {
+      "$ref": "#/definitions/exceptionPolicy"
+    }
+  },
+  "definitions": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stringArray": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "purpose",
+        "runtime_truth_order",
+        "does_not_override"
+      ],
+      "properties": {
+        "purpose": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "runtime_truth_order": {
+          "$ref": "#/definitions/stringArray"
+        },
+        "does_not_override": {
+          "$ref": "#/definitions/stringArray"
+        }
+      }
+    },
+    "externalSystem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "role",
+        "data_scope"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/identifier"
+        },
+        "role": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "data_scope": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "must_not_receive": {
+          "$ref": "#/definitions/stringArray"
+        },
+        "must_not_be_started_by_repo": {
+          "type": "boolean"
+        }
+      }
+    },
+    "callEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "interfaces"
+      ],
+      "properties": {
+        "target": {
+          "$ref": "#/definitions/identifier"
+        },
+        "interfaces": {
+          "$ref": "#/definitions/stringArray"
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "role",
+        "ports",
+        "owns",
+        "must_not",
+        "may_call"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/identifier"
+        },
+        "role": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "uniqueItems": true
+        },
+        "owns": {
+          "$ref": "#/definitions/stringArray"
+        },
+        "must_not": {
+          "$ref": "#/definitions/stringArray"
+        },
+        "may_call": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/callEdge"
+          }
+        }
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "service",
+        "port"
+      ],
+      "properties": {
+        "service": {
+          "$ref": "#/definitions/identifier"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "scope": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "protocol": {
+          "type": "string"
+        }
+      }
+    },
+    "browserAccessPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frontend_asset_hosts",
+        "http_api_entrypoints",
+        "forbidden_direct_http_services",
+        "realtime_channels"
+      ],
+      "properties": {
+        "frontend_asset_hosts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/endpoint"
+          }
+        },
+        "http_api_entrypoints": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/endpoint"
+          }
+        },
+        "forbidden_direct_http_services": {
+          "$ref": "#/definitions/stringArray"
+        },
+        "realtime_channels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/endpoint"
+          }
+        }
+      }
+    },
+    "dataClass": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "authority",
+        "cloud_transfer",
+        "includes"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/identifier"
+        },
+        "authority": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "cloud_transfer": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "includes": {
+          "$ref": "#/definitions/stringArray"
+        },
+        "cloud_allowed_projection": {
+          "type": "string"
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "source",
+        "side"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/identifier"
+        },
+        "source": {
+          "$ref": "#/definitions/identifier"
+        },
+        "side": {
+          "enum": [
+            "kit",
+            "browser",
+            "control-plane"
+          ]
+        }
+      }
+    },
+    "readinessPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "operator",
+        "statement",
+        "required_evidence",
+        "forbidden_shortcuts"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/identifier"
+        },
+        "operator": {
+          "enum": [
+            "all",
+            "any"
+          ]
+        },
+        "statement": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "required_evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/evidence"
+          }
+        },
+        "forbidden_shortcuts": {
+          "$ref": "#/definitions/stringArray"
+        }
+      }
+    },
+    "enforcement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "mode",
+        "rule"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "active",
+            "delegated",
+            "planned"
+          ]
+        },
+        "mode": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "rule": {
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      }
+    },
+    "invariant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "statement",
+        "severity",
+        "enforcement"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^ARCH-[A-Z]+-[0-9]{3}$"
+        },
+        "statement": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "severity": {
+          "enum": [
+            "error",
+            "warning"
+          ]
+        },
+        "enforcement": {
+          "$ref": "#/definitions/enforcement"
+        }
+      }
+    },
+    "deltaPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "directory",
+        "required_for_lanes",
+        "required_when"
+      ],
+      "properties": {
+        "schema": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "directory": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "required_for_lanes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "F",
+              "B",
+              "G",
+              "S"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "required_when": {
+          "$ref": "#/definitions/stringArray"
+        }
+      }
+    },
+    "exceptionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required_fields",
+        "maximum_days",
+        "expired_exception_policy"
+      ],
+      "properties": {
+        "required_fields": {
+          "$ref": "#/definitions/stringArray"
+        },
+        "maximum_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 365
+        },
+        "expired_exception_policy": {
+          "enum": [
+            "fail"
+          ]
+        }
+      }
+    }
+  }
+}

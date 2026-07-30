@@ -1,0 +1,434 @@
+{
+  "$schema": "./architecture-contract.schema.json",
+  "schema_version": "ai-bim-architecture-contract/v1",
+  "contract_id": "ai-bim-governance",
+  "title": "AI-BIM-governance executable architecture contract",
+  "authority": {
+    "purpose": "Machine-checkable constraints for service boundaries, data residency, browser access, runtime readiness, and architecture change control.",
+    "runtime_truth_order": [
+      "implementation",
+      "executable-tests-and-contracts",
+      "docs-plans-target-behavior",
+      "agent-boundary-documents",
+      "generated-or-historical-artifacts"
+    ],
+    "does_not_override": [
+      "current runtime behavior proven by implementation and executable tests",
+      "approved product intent in docs/plans",
+      "NVIDIA official behavior for Omniverse-specific capabilities"
+    ]
+  },
+  "external_systems": [
+    {
+      "id": "external-company-cloud-bim-control",
+      "role": "company cloud control-plane authority",
+      "data_scope": "metadata-only",
+      "must_not_receive": [
+        "ifc-source-artifact",
+        "rvt-source-artifact",
+        "dwg-source-artifact",
+        "usd-derived-artifact",
+        "usdc-derived-artifact",
+        "element-mapping",
+        "entity-index"
+      ]
+    },
+    {
+      "id": "external-customer-edge-ifc-worker",
+      "role": "customer-edge IFC producer",
+      "data_scope": "customer-edge",
+      "must_not_be_started_by_repo": true
+    }
+  ],
+  "services": [
+    {
+      "id": "bim-review-coordinator",
+      "role": "unique external IFC-ready intake and review-session control plane",
+      "ports": [
+        8004
+      ],
+      "owns": [
+        "review-session",
+        "viewer-lease",
+        "presence",
+        "callback-outbox",
+        "lifecycle-audit",
+        "stage-binding-intent"
+      ],
+      "must_not": [
+        "convert-ifc",
+        "render-viewport",
+        "encode-webrtc-video",
+        "mutate-usd-runtime-internals",
+        "manage-kit-process-directly",
+        "persist-large-bim-artifacts"
+      ],
+      "may_call": [
+        {
+          "target": "bim-streaming-server",
+          "interfaces": [
+            "internal-conversion-request",
+            "internal-runtime-status",
+            "audited-stage-control-intent"
+          ]
+        },
+        {
+          "target": "governance-service",
+          "interfaces": [
+            "coordinator-governance-proxy"
+          ]
+        },
+        {
+          "target": "kit-manager-api",
+          "interfaces": [
+            "audited-runtime-lifecycle-intent"
+          ]
+        },
+        {
+          "target": "external-company-cloud-bim-control",
+          "interfaces": [
+            "metadata-only-callback"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "bim-streaming-server",
+      "role": "internal IFC-to-USDC authority and Omniverse Kit/WebRTC runtime",
+      "ports": [
+        49100,
+        49101,
+        47998
+      ],
+      "owns": [
+        "conversion-job",
+        "usdc-artifact",
+        "element-mapping",
+        "entity-index",
+        "kit-stage-runtime",
+        "webrtc-runtime"
+      ],
+      "must_not": [
+        "own-review-session-policy",
+        "own-viewer-lease-policy",
+        "own-governance-issue",
+        "accept-public-browser-http-api"
+      ],
+      "may_call": []
+    },
+    {
+      "id": "governance-service",
+      "role": "A1/A2/A3 governance, issue, and BCF loopback authority",
+      "ports": [
+        49102
+      ],
+      "owns": [
+        "rule-run",
+        "model-diff",
+        "model-federation",
+        "governance-issue",
+        "bcf-artifact"
+      ],
+      "must_not": [
+        "accept-public-browser-http-api",
+        "control-kit-process",
+        "encode-webrtc-video",
+        "own-review-session"
+      ],
+      "may_call": []
+    },
+    {
+      "id": "web-viewer-sample",
+      "role": "browser client and browser-side runtime evidence producer",
+      "ports": [
+        5173
+      ],
+      "owns": [
+        "browser-session-evidence",
+        "browser-interaction-state"
+      ],
+      "must_not": [
+        "declare-runtime-ready-without-server-evidence",
+        "own-large-bim-artifacts",
+        "call-internal-http-api-directly"
+      ],
+      "may_call": [
+        {
+          "target": "bim-review-coordinator",
+          "interfaces": [
+            "public-rest",
+            "socket-io"
+          ]
+        },
+        {
+          "target": "bim-streaming-server",
+          "interfaces": [
+            "webrtc",
+            "datachannel"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kit-manager-api",
+      "role": "Kit process lifecycle, endpoint pool, restart, and release executor",
+      "ports": [
+        8010
+      ],
+      "owns": [
+        "kit-process-lifecycle",
+        "endpoint-pool",
+        "runtime-restart",
+        "runtime-release"
+      ],
+      "must_not": [
+        "convert-ifc",
+        "render-viewport",
+        "own-review-session-policy",
+        "accept-public-browser-http-api"
+      ],
+      "may_call": [
+        {
+          "target": "bim-streaming-server",
+          "interfaces": [
+            "kit-fleet-operations",
+            "runtime-telemetry"
+          ]
+        }
+      ]
+    }
+  ],
+  "browser_access_policy": {
+    "frontend_asset_hosts": [
+      {
+        "service": "web-viewer-sample",
+        "port": 5173,
+        "environment": "development"
+      }
+    ],
+    "http_api_entrypoints": [
+      {
+        "service": "bim-review-coordinator",
+        "port": 8004,
+        "scope": "public"
+      }
+    ],
+    "forbidden_direct_http_services": [
+      "bim-streaming-server",
+      "governance-service",
+      "kit-manager-api"
+    ],
+    "realtime_channels": [
+      {
+        "service": "bim-streaming-server",
+        "port": 49100,
+        "protocol": "webrtc-signaling-and-datachannel"
+      },
+      {
+        "service": "bim-streaming-server",
+        "port": 47998,
+        "protocol": "webrtc-media"
+      }
+    ]
+  },
+  "data_classes": [
+    {
+      "id": "large-bim-artifacts",
+      "authority": "customer-edge",
+      "cloud_transfer": "forbidden",
+      "includes": [
+        "*.ifc",
+        "*.rvt",
+        "*.dwg",
+        "*.usd",
+        "*.usda",
+        "*.usdc",
+        "element_mapping.json",
+        "entity_index.json"
+      ],
+      "cloud_allowed_projection": "metadata-only"
+    },
+    {
+      "id": "review-control-metadata",
+      "authority": "bim-review-coordinator",
+      "cloud_transfer": "metadata-only",
+      "includes": [
+        "project-id",
+        "model-version-id",
+        "review-session-id",
+        "status",
+        "audit-event",
+        "callback-outbox-record"
+      ]
+    }
+  ],
+  "readiness_policies": [
+    {
+      "id": "review-session-ready",
+      "operator": "all",
+      "statement": "A review session is ready only when Kit-side control evidence and browser-side first-frame/stage evidence both exist.",
+      "required_evidence": [
+        {
+          "id": "kit-process-alive",
+          "source": "kit-manager-api",
+          "side": "kit"
+        },
+        {
+          "id": "opened-stage-result",
+          "source": "bim-streaming-server",
+          "side": "kit"
+        },
+        {
+          "id": "datachannel-ready",
+          "source": "web-viewer-sample",
+          "side": "browser"
+        },
+        {
+          "id": "first-frame-at",
+          "source": "web-viewer-sample",
+          "side": "browser"
+        },
+        {
+          "id": "stage-matched",
+          "source": "web-viewer-sample",
+          "side": "browser"
+        }
+      ],
+      "forbidden_shortcuts": [
+        "kit-process-alive-only",
+        "endpoint-reserved-only",
+        "stage-open-requested-only"
+      ]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "ARCH-DATA-001",
+      "statement": "Large BIM source and derived artifacts remain on the customer edge; company cloud receives metadata only.",
+      "severity": "error",
+      "enforcement": {
+        "status": "active",
+        "mode": "semantic-validator",
+        "rule": "edge-artifact-residency"
+      }
+    },
+    {
+      "id": "ARCH-HTTP-001",
+      "statement": "Browser HTTP API traffic enters through bim-review-coordinator on port 8004; internal services are not direct browser HTTP APIs.",
+      "severity": "error",
+      "enforcement": {
+        "status": "active",
+        "mode": "semantic-validator",
+        "rule": "browser-http-entrypoint"
+      }
+    },
+    {
+      "id": "ARCH-SVC-001",
+      "statement": "Each architectural capability has one declared owning service, and forbidden responsibilities do not overlap ownership.",
+      "severity": "error",
+      "enforcement": {
+        "status": "active",
+        "mode": "semantic-validator",
+        "rule": "unique-capability-owner"
+      }
+    },
+    {
+      "id": "ARCH-CALL-001",
+      "statement": "New service dependency edges must be declared by the desired architecture contract and by the change delta.",
+      "severity": "error",
+      "enforcement": {
+        "status": "active",
+        "mode": "semantic-validator",
+        "rule": "declared-dependency-edge"
+      }
+    },
+    {
+      "id": "ARCH-GRAPH-001",
+      "statement": "No new module or service dependency cycles may be introduced.",
+      "severity": "error",
+      "enforcement": {
+        "status": "planned",
+        "mode": "observed-graph-ratchet",
+        "rule": "no-new-dependency-cycles"
+      }
+    },
+    {
+      "id": "ARCH-READY-001",
+      "statement": "Review-session readiness requires the conjunction of Kit-side and browser-side evidence, including first frame and stage match.",
+      "severity": "error",
+      "enforcement": {
+        "status": "active",
+        "mode": "semantic-validator-and-existing-runtime-evidence",
+        "rule": "readiness-evidence-conjunction"
+      }
+    },
+    {
+      "id": "ARCH-UI-001",
+      "statement": "A user-facing capability is not done until it is frontend-operable and covered by browser E2E evidence.",
+      "severity": "error",
+      "enforcement": {
+        "status": "delegated",
+        "mode": "existing-frontend-operability-gates",
+        "rule": "frontend-operable-done"
+      }
+    },
+    {
+      "id": "ARCH-DELTA-001",
+      "statement": "Every governed architecture change records its intended nodes, edges, contract changes, ownership changes, state-machine changes, and exceptions before implementation is accepted.",
+      "severity": "error",
+      "enforcement": {
+        "status": "active",
+        "mode": "architecture-delta-schema-and-semantic-validator",
+        "rule": "governed-change-delta"
+      }
+    },
+    {
+      "id": "ARCH-EXC-001",
+      "statement": "Architecture exceptions are explicit, owned, ADR-linked, time-bounded, and never silently encoded as permanent drift.",
+      "severity": "error",
+      "enforcement": {
+        "status": "active",
+        "mode": "semantic-validator",
+        "rule": "time-bounded-exception"
+      }
+    },
+    {
+      "id": "ARCH-TRUTH-001",
+      "statement": "Implementation and executable tests/contracts describe current behavior; docs/plans describe target intent and cannot be used alone to claim runtime completion.",
+      "severity": "error",
+      "enforcement": {
+        "status": "active",
+        "mode": "semantic-validator-and-agent-governance",
+        "rule": "runtime-truth-order"
+      }
+    }
+  ],
+  "architecture_delta_policy": {
+    "schema": "./architecture-delta.schema.json",
+    "directory": "architecture/deltas",
+    "required_for_lanes": [
+      "G",
+      "S"
+    ],
+    "required_when": [
+      "service-boundary-change",
+      "new-service-dependency-edge",
+      "public-contract-change",
+      "data-ownership-change",
+      "state-machine-change",
+      "architecture-exception"
+    ]
+  },
+  "exception_policy": {
+    "required_fields": [
+      "invariant_id",
+      "owner",
+      "reason",
+      "adr",
+      "created_on",
+      "expires_on"
+    ],
+    "maximum_days": 90,
+    "expired_exception_policy": "fail"
+  }
+}

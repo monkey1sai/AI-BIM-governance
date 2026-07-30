@@ -1,0 +1,32 @@
+{
+  "$schema": "../architecture-delta.schema.json",
+  "schema_version": "ai-bim-architecture-delta/v1",
+  "change_id": "introduce-executable-architecture-contracts",
+  "lane": "G",
+  "summary": "Introduce the desired architecture contract, semantic validator, architecture delta contract, and canonical verification dispatch without changing product runtime behavior.",
+  "created_on": "2026-07-30",
+  "affected_services": [],
+  "affected_surfaces": [
+    "architecture-governance",
+    "root-contract-verification",
+    "openspec-change-control"
+  ],
+  "added_dependency_edges": [],
+  "removed_dependency_edges": [],
+  "public_contract_changes": [
+    {
+      "contract": "repository architecture governance",
+      "change_type": "additive",
+      "description": "Adds machine-readable desired architecture and change-delta contracts; no product API or event contract changes."
+    }
+  ],
+  "data_ownership_changes": [],
+  "state_machine_changes": [],
+  "exceptions": [],
+  "approval": {
+    "required": false,
+    "status": "not-required",
+    "approved_by": null,
+    "approved_at": null
+  }
+}
