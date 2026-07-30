@@ -228,13 +228,13 @@ test('current cross-service lifecycle status agrees with its proposal and NOW pr
   const nowText = readFileSync(path.join(process.cwd(), 'docs/plans/NOW.md'), 'utf8');
   const proposal = readFileSync(path.join(process.cwd(), 'openspec/changes/cross-service-structured-log-baseline/proposal.md'), 'utf8');
 
-  assert.equal(change?.status, 'active');
-  assert.ok(change?.current_slice);
-  assert.match(proposal, /^> \*\*Status: active/mu);
-  assert.match(nowText, /"id": "cross-service-structured-log-baseline", "status": "active"/u);
+  assert.equal(change?.status, 'deferred');
+  assert.equal(change?.current_slice, null);
+  assert.match(proposal, /^> \*\*Status: deferred/mu);
+  assert.match(nowText, /"id": "cross-service-structured-log-baseline", "status": "deferred"/u);
   const closeoutDoD = nowText.split('### 收口 DoD（軌 1）', 2)[1].split('\n---', 2)[0];
-  assert.match(closeoutDoD, /structured-log.*active P5/iu);
-  assert.doesNotMatch(closeoutDoD, /structured-log.*Status: deferred/iu);
+  assert.match(closeoutDoD, /structured-log.*deferred/iu);
+  assert.doesNotMatch(closeoutDoD, /structured-log.*active P5/iu);
 });
 
 test('row source observations fail closed on missing, duplicate, or mismatched identity', () => {
