@@ -10,8 +10,10 @@ import {
   assertIsolatedManifestHead,
   assertIsolatedWorktreeClean,
   assertIsolatedWorktreeStatusClean,
+  assertLiveIsolatedBackendOwnership,
   classifyHarnessUse,
   createForbiddenRequestGuard,
+  defaultIsolatedEvidencePublicationVerifier,
   loadIsolatedStackConfig,
   parseObservedNetworkUrl,
   parseStandaloneViewerPort,
@@ -140,6 +142,9 @@ describe("loadIsolatedStackConfig", () => {
     expect(source).toContain("watchForbiddenRequests");
     expect(source).toContain("DETERMINISTIC_CLASS_CANDIDATES");
     expect(source).toContain("selectOption(jobId)");
+    expect(source).toContain("SAFE_A4_QUERY_ID");
+    expect(source).toContain("query_id: observedQueryId");
+    expect(source).toContain("empty match stays explicit and does not enable legacy actions");
     expect(source).toContain("finally");
     for (const failClosedAssertion of [
       "ifc_ready_table_only",
@@ -270,6 +275,33 @@ describe("loadIsolatedStackConfig", () => {
     guard.observe("http://127.0.0.1:8004/api/runtime/status");
     guard.observe("http://127.0.0.1:49102/api/search");
     expect(() => guard.assertClean()).toThrow(/8004.*49102/);
+  });
+
+  it("forbids isolated governance ports in the browser while accepting them in the manifest", () => {
+    const guard = createForbiddenRequestGuard();
+    guard.observe("http://127.0.0.1:49103/api/search");
+    guard.observe("http://127.0.0.1:49107/api/search");
+    expect(() => guard.assertClean()).toThrow(/49103.*49107/);
+
+    const value = fixture();
+    expect(() => loadIsolatedStackConfig({
+      cwd: value.worktreeRoot,
+      headSha: value.headSha,
+      env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath },
+    })).not.toThrow();
+  });
+
+  it("maps every default evidence verifier contract key to the intended gate", () => {
+    expect(defaultIsolatedEvidencePublicationVerifier).toEqual({
+      assertWorktreeStatusClean: assertIsolatedWorktreeStatusClean,
+      assertLiveBackendOwnership: assertLiveIsolatedBackendOwnership,
+      assertManifestHead: assertIsolatedManifestHead,
+    });
+  });
+
+  it("limits require-real isolated Playwright discovery to the A3 and A4 specs", () => {
+    const source = readFileSync(path.join(process.cwd(), "playwright.config.ts"), "utf8");
+    expect(source).toContain('testMatch: ["**/a3-federated-session-chain.spec.ts", "**/a4-closeout.spec.ts"]');
   });
 
   it("records reserved-port WebSockets and ignores malformed or non-network URLs", () => {
@@ -418,6 +450,53 @@ describe("loadIsolatedStackConfig", () => {
     const evidence = JSON.parse(readFileSync(output, "utf8"));
     expect(evidence.scope.cpu_browser_operability).toBe("observed");
     expect(evidence.scope.required_observation_ids).toEqual(requiredIds);
+  });
+
+  it("prunes observations whose in-run artifacts were deleted and recomputes partial scope", async () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
+    const stale = sampleObservation(config);
+    for (const testId of [
+      "a4-real-loading-1440x900",
+      "a4-real-failure-retry-1440x900",
+      "a4-real-success-1440x900",
+      "a4-real-loading-1920x1080",
+      "a4-real-failure-retry-1920x1080",
+      "a4-real-success-1920x1080",
+    ]) {
+      await writeUnitEvidence(config, { ...stale, testId });
+    }
+    rmSync(stale.screenshotPaths[0], { force: true });
+    rmSync(stale.tracePath!, { force: true });
+
+    const currentScreenshot = path.join(config.runDir, "current.png");
+    const currentTrace = path.join(config.runDir, "current-trace.zip");
+    writeFileSync(currentScreenshot, "current-png");
+    writeFileSync(currentTrace, "current-trace");
+    const output = await writeUnitEvidence(config, {
+      ...stale,
+      testId: "a3-current",
+      screenshotPaths: [currentScreenshot],
+      tracePath: currentTrace,
+    });
+    const evidence = JSON.parse(readFileSync(output, "utf8"));
+    expect(evidence.observations.map((item: { test_id: string }) => item.test_id)).toEqual(["a3-current"]);
+    expect(evidence.scope.cpu_browser_operability).toBe("partial");
+  });
+
+  it("fails closed on malformed or outside-run stored artifact references", async () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
+    const output = await writeUnitEvidence(config, sampleObservation(config));
+    const evidence = JSON.parse(readFileSync(output, "utf8"));
+
+    evidence.observations[0].artifacts.screenshots = ["../outside.png"];
+    writeFileSync(output, JSON.stringify(evidence));
+    await expect(writeUnitEvidence(config, { ...sampleObservation(config), testId: "replacement" })).rejects.toThrow(/stored artifact path must stay inside current run/);
+
+    evidence.observations[0].artifacts.screenshots = "not-an-array";
+    writeFileSync(output, JSON.stringify(evidence));
+    await expect(writeUnitEvidence(config, { ...sampleObservation(config), testId: "replacement" })).rejects.toThrow(/stored evidence artifact reference is malformed/);
   });
 
   it("requires an unchanged worktree and live backend ownership before publishing evidence", async () => {

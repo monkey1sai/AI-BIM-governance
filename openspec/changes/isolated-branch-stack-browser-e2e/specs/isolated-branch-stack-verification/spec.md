@@ -70,7 +70,7 @@
 - **GIVEN** recovery manifest 記錄某 backend 尚未停止，但 retry 時該 PID 已不存在
 - **WHEN** launcher 重試 `stop`
 - **THEN** 只有在該 PID 確認不存在且其 resolved backend port 也沒有 listener 時，才可記為 `already_stopped`
-- **AND** PID 仍存在、listener lookup 失敗或該 port 出現任何 listener時 SHALL fail closed，不得停止未知 process，也不得釋放 recovery reservation
+- **AND** PID 仍存在、listener lookup 失敗或該 port 出現任何 listener 時 SHALL fail closed，不得停止未知 process，也不得釋放 recovery reservation
 
 #### Scenario: 隔離 stack 啟停不改動部署區
 

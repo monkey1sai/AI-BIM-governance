@@ -48,6 +48,7 @@ const webServer = process.env.E2E_DISABLE_WEBSERVER === "1"
 export default defineConfig({
   testDir: "./e2e",
   testIgnore: ["**/support/**/*.test.ts"],
+  ...(isolated ? { testMatch: ["**/a3-federated-session-chain.spec.ts", "**/a4-closeout.spec.ts"] } : {}),
   globalSetup: isolated ? "./e2e/support/isolated-stack-global-setup.ts" : undefined,
   outputDir: isolated ? path.join(isolated.runDir, "playwright-output") : "../artifacts/e2e/_output",
   timeout: 60_000,

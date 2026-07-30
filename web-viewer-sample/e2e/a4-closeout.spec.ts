@@ -26,6 +26,7 @@ type IfcReadyJob = {
 type ModelSearchResponse = {
   status?: string;
   error_code?: string;
+  query_id?: string;
   results?: unknown[];
 };
 
@@ -44,6 +45,7 @@ const DETERMINISTIC_CLASS_CANDIDATES = [
 ] as const;
 const PREFLIGHT_PRINCIPAL = "a4-e2e-preflight";
 const SAFE_A4_DIAGNOSTIC = /^[a-z0-9_]{1,96}$/i;
+const SAFE_A4_QUERY_ID = /^a4q_[A-Za-z0-9_-]{12,64}$/;
 const MAX_PREFLIGHT_DIAGNOSTICS = 8;
 
 function safeA4Diagnostic(value: unknown): string | null {
@@ -66,7 +68,12 @@ for (const viewport of VIEWPORTS) {
     let searchQuery = "";
     let tracePath = "";
     let traceActive = false;
-    let pendingEvidence: null | { testId: string; visibleStates: string[]; backendApi: string } = null;
+    let pendingEvidence: null | {
+      testId: string;
+      visibleStates: string[];
+      backendApi: string;
+      observedRuntimeIds: Record<string, string>;
+    } = null;
 
     async function finishEvidence(
       page: Page,
@@ -74,9 +81,10 @@ for (const viewport of VIEWPORTS) {
       testId: string,
       visibleStates: string[],
       backendApi: string,
+      observedRuntimeIds: Record<string, string>,
     ): Promise<void> {
       void page; void testInfo;
-      pendingEvidence = { testId, visibleStates, backendApi };
+      pendingEvidence = { testId, visibleStates, backendApi, observedRuntimeIds };
     }
 
     test.beforeEach(async ({ page, request }, testInfo) => {
@@ -177,7 +185,7 @@ for (const viewport of VIEWPORTS) {
           await writeIsolatedEvidenceManifest(isolated, {
             testId: pendingEvidence.testId, route: "#semantic-search", mainButtons: ["a4-refresh-sources", "a4-run"],
             fixture: `downloaded IFC-ready job preflighted against the real coordinator with deterministic query=${searchQuery}`,
-            backendApi: pendingEvidence.backendApi, observedRuntimeIds: { ifc_ready_job_id: jobId },
+            backendApi: pendingEvidence.backendApi, observedRuntimeIds: pendingEvidence.observedRuntimeIds,
             visibleStates: pendingEvidence.visibleStates, screenshotPaths: [screenshotPath], tracePath, harness,
           });
         }
@@ -217,7 +225,7 @@ for (const viewport of VIEWPORTS) {
       }
       await page.getByTestId("a4-job-select").selectOption(jobId);
       await expect(page.getByTestId("a4-job-select")).toHaveValue(jobId);
-      await finishEvidence(page, testInfo, `a4-real-loading-${viewport.label}`, ["loading"], "GET /api/external/ifc-ready?limit=100");
+      await finishEvidence(page, testInfo, `a4-real-loading-${viewport.label}`, ["loading"], "GET /api/external/ifc-ready?limit=100", { ifc_ready_job_id: jobId });
     });
 
     test("shows list failure then retries the real API", async ({ page }, testInfo) => {
@@ -242,7 +250,7 @@ for (const viewport of VIEWPORTS) {
       await page.getByTestId("a4-job-select").selectOption(jobId);
       await expect(page.getByTestId("a4-job-select")).toHaveValue(jobId);
       await expect(page.getByTestId("a4-run")).toBeEnabled();
-      await finishEvidence(page, testInfo, `a4-real-failure-retry-${viewport.label}`, ["failure", "retry"], "GET /api/external/ifc-ready?limit=100");
+      await finishEvidence(page, testInfo, `a4-real-failure-retry-${viewport.label}`, ["failure", "retry"], "GET /api/external/ifc-ready?limit=100", { ifc_ready_job_id: jobId });
     });
 
     test("runs A4 against the real coordinator", async ({ page }, testInfo) => {
@@ -266,6 +274,7 @@ for (const viewport of VIEWPORTS) {
         await route.continue();
       };
       await page.route(searchPattern, waitForRealSearch);
+      let observedQueryId = "";
       try {
         const responsePromise = page.waitForResponse(response =>
           response.request().method() === "POST" &&
@@ -276,6 +285,9 @@ for (const viewport of VIEWPORTS) {
         releaseSearch();
         const response = await responsePromise;
         requireReal(response.ok(), `A4 search failed: ${response.status()}`);
+        const responseBody = await response.json() as ModelSearchResponse;
+        requireReal(SAFE_A4_QUERY_ID.test(responseBody.query_id ?? ""), "A4 browser response did not return a safe query_id");
+        observedQueryId = responseBody.query_id!;
       } finally {
         releaseSearch();
         await page.unroute(searchPattern, waitForRealSearch);
@@ -296,7 +308,31 @@ for (const viewport of VIEWPORTS) {
       await expect(page.getByText("deterministic_grammar").first()).toBeVisible();
       await expect(page.getByTestId("a4-create-issues")).toBeDisabled();
       await expect(page.getByTestId("a4-actions-unavailable")).toContainText("signed-proof");
-      await finishEvidence(page, testInfo, `a4-real-success-${viewport.label}`, ["success"], `POST /api/governance/search/model/for-ifc-ready/${jobId}`);
+      await finishEvidence(
+        page,
+        testInfo,
+        `a4-real-success-${viewport.label}`,
+        ["success"],
+        `POST /api/governance/search/model/for-ifc-ready/${jobId}`,
+        { ifc_ready_job_id: jobId, query_id: observedQueryId },
+      );
+    });
+
+    test("empty match stays explicit and does not enable legacy actions", async ({ page }) => {
+      await page.goto("/#semantic-search");
+      await page.getByTestId("a4-job-select").selectOption(jobId);
+      await page.getByTestId("a4-mode-deterministic").click();
+      await page.getByTestId("a4-query-input").fill("IfcSpaceHeater");
+      const responsePromise = page.waitForResponse(response =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === `/api/governance/search/model/for-ifc-ready/${jobId}`,
+      );
+      await page.getByTestId("a4-run").click();
+      await responsePromise;
+
+      await expect(page.getByTestId("a4-run-err")).toBeVisible({ timeout: 120_000 });
+      await expect(page.getByTestId("a4-results-table")).toContainText("無列");
+      await expect(page.getByTestId("a4-create-issues")).toBeDisabled();
     });
   });
 }

@@ -2012,7 +2012,7 @@ $candidateFiles = @(
     (Join-Path $runDir 'consumer-result.json'),
     (Join-Path $runDir 'deployment-listeners-before.json'),
     (Join-Path $runDir 'deployment-listeners-during.json'),
-    (Join-Path $runDir 'deployment-listeners-after.json')
+    (Join-Path $runDir 'deployment-listeners-after.json'),
     (Join-Path $runDir 'evidence-manifest.json'),
     (Join-Path $runDir 'browser-artifacts.zip')
 )

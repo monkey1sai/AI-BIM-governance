@@ -4,7 +4,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Page } from "@playwright/test";
 
-const RESERVED_PORTS = new Set([
+const MANIFEST_RESERVED_PORTS = new Set([
   8004,
   49102,
   49101,
@@ -13,6 +13,10 @@ const RESERVED_PORTS = new Set([
   5174,
   49100,
   ...Array.from({ length: 41 }, (_, index) => 49110 + index),
+]);
+const BROWSER_FORBIDDEN_PORTS = new Set([
+  ...MANIFEST_RESERVED_PORTS,
+  ...Array.from({ length: 5 }, (_, index) => 49103 + index),
 ]);
 
 export const A4_REQUIRED_OBSERVATION_IDS = [
@@ -111,7 +115,7 @@ export function createForbiddenRequestGuard() {
     observe(rawUrl: string) {
       const url = parseObservedNetworkUrl(rawUrl);
       if (!url) return;
-      if (RESERVED_PORTS.has(Number(url.port))) violations.push(rawUrl);
+      if (BROWSER_FORBIDDEN_PORTS.has(Number(url.port))) violations.push(rawUrl);
     },
     assertClean() {
       if (violations.length) throw new Error(`browser requested reserved ports: ${violations.join(", ")}`);
@@ -261,7 +265,7 @@ export function loadIsolatedStackConfig(options: {
     throw new Error("manifest offset must be an integer from 0 through 4");
   }
   for (const port of Object.values(manifest.ports)) {
-    if (RESERVED_PORTS.has(port)) throw new Error(`manifest resolves to reserved port ${port}`);
+    if (MANIFEST_RESERVED_PORTS.has(port)) throw new Error(`manifest resolves to reserved port ${port}`);
   }
   const expectedPorts = {
     coordinator: 8005 + manifest.offset,
@@ -393,6 +397,12 @@ export async function assertLiveIsolatedBackendOwnership(config: IsolatedStackCo
   assertLive(config);
 }
 
+export const defaultIsolatedEvidencePublicationVerifier: IsolatedEvidencePublicationVerifier = {
+  assertWorktreeStatusClean: assertIsolatedWorktreeStatusClean,
+  assertLiveBackendOwnership: assertLiveIsolatedBackendOwnership,
+  assertManifestHead: assertIsolatedManifestHead,
+};
+
 function relativeRunArtifact(runDir: string, candidate: string): string {
   const absolute = path.resolve(candidate);
   if (!existsSync(absolute)) throw new Error(`evidence artifact does not exist: ${candidate}`);
@@ -410,13 +420,62 @@ function relativeRunArtifact(runDir: string, candidate: string): string {
   return path.relative(physicalRunDir, physicalArtifact).split(path.sep).join("/");
 }
 
+type StoredEvidenceObservation = {
+  test_id: string;
+  artifacts: { screenshots: string[]; trace: string | null };
+  [key: string]: unknown;
+};
+
+function storedRunArtifactExists(runDir: string, candidate: unknown): boolean {
+  if (typeof candidate !== "string" || candidate.length === 0 || path.isAbsolute(candidate)) {
+    throw new Error("stored evidence artifact reference is malformed");
+  }
+  const logicalRunDir = path.resolve(runDir);
+  const absolute = path.resolve(logicalRunDir, candidate);
+  const logicalRelative = path.relative(logicalRunDir, absolute);
+  if (
+    logicalRelative === "" ||
+    logicalRelative === ".." ||
+    logicalRelative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(logicalRelative)
+  ) {
+    throw new Error(`stored artifact path must stay inside current run: ${candidate}`);
+  }
+  if (!existsSync(absolute)) return false;
+
+  const physicalRunDir = realpathSync(logicalRunDir);
+  const physicalArtifact = realpathSync(absolute);
+  const physicalRelative = path.relative(comparablePath(physicalRunDir), comparablePath(physicalArtifact));
+  if (
+    physicalRelative === ".." ||
+    physicalRelative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(physicalRelative)
+  ) {
+    throw new Error(`stored artifact path must stay inside current run: ${candidate}`);
+  }
+  if (!statSync(physicalArtifact).isFile()) {
+    throw new Error(`stored evidence artifact must be a file: ${candidate}`);
+  }
+  return true;
+}
+
+function existingObservationArtifactsExist(runDir: string, candidate: unknown): candidate is StoredEvidenceObservation {
+  if (!candidate || typeof candidate !== "object") throw new Error("stored evidence observation is malformed");
+  const observation = candidate as Partial<StoredEvidenceObservation>;
+  if (typeof observation.test_id !== "string" || !observation.artifacts || typeof observation.artifacts !== "object") {
+    throw new Error("stored evidence observation is malformed");
+  }
+  const { screenshots, trace } = observation.artifacts;
+  if (!Array.isArray(screenshots) || screenshots.some(item => typeof item !== "string") || (trace !== null && typeof trace !== "string")) {
+    throw new Error("stored evidence artifact reference is malformed");
+  }
+  return [...screenshots, ...(trace ? [trace] : [])].every(item => storedRunArtifactExists(runDir, item));
+}
+
 export async function writeIsolatedEvidenceManifest(
   config: IsolatedStackConfig,
   observation: BrowserEvidenceObservation,
-  verifier: IsolatedEvidencePublicationVerifier = {
-    assertWorktreeClean: assertIsolatedWorktreeClean,
-    assertLiveBackendOwnership: assertLiveIsolatedBackendOwnership,
-  },
+  verifier: IsolatedEvidencePublicationVerifier = defaultIsolatedEvidencePublicationVerifier,
 ): Promise<string> {
   const output = path.join(config.runDir, "evidence-manifest.json");
   if (observation.harness.buildFlag !== config.harnessBuildFlag) {
@@ -452,6 +511,11 @@ export async function writeIsolatedEvidenceManifest(
     for (const key of ["schema_version", "stack_kind", "change_id", "run_id", "head_sha"] as const) {
       if (existing[key] !== identity[key]) throw new Error(`evidence identity mismatch: ${key}`);
     }
+    const existingObservations: unknown = existing.observations ?? [];
+    if (!Array.isArray(existingObservations)) throw new Error("stored evidence observations are malformed");
+    const retainedObservations = existingObservations.filter(
+      (item: unknown): item is StoredEvidenceObservation => existingObservationArtifactsExist(config.runDir, item),
+    );
     const normalized = {
       test_id: observation.testId,
       route: observation.route,
@@ -466,7 +530,7 @@ export async function writeIsolatedEvidenceManifest(
         trace: observation.tracePath ? relativeRunArtifact(config.runDir, observation.tracePath) : null,
       },
     };
-    const observations = [...(existing.observations ?? []).filter((item: { test_id: string }) => item.test_id !== normalized.test_id), normalized]
+    const observations = [...retainedObservations.filter(item => item.test_id !== normalized.test_id), normalized]
       .sort((left, right) => left.test_id.localeCompare(right.test_id));
     const hasCompleteA4Observations = A4_REQUIRED_OBSERVATION_IDS.every(testId => observations.some(item => item.test_id === testId));
     const evidence = {
