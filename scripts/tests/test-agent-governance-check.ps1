@@ -482,7 +482,8 @@ try {
     }
 
     $codexConfig = Get-Content -LiteralPath '.codex/config.toml' -Raw
-    Assert-True ($codexConfig -match '(?m)^default_permissions\s*=\s*":read-only"\s*$') '.codex/config.toml defaults Codex to the native read-only permission profile'
+    Assert-True ($codexConfig -match '(?m)^default_permissions\s*=\s*"safe-workspace"\s*$') '.codex/config.toml defaults Codex to the governed safe-workspace permission profile'
+    Assert-True ($codexConfig -match '(?m)^extends\s*=\s*":workspace"\s*$') '.codex/config.toml safe-workspace profile inherits the native workspace boundary'
     Assert-True ($codexConfig -match '\[permissions\.safe-workspace\.network\]') '.codex/config.toml declares safe-workspace network permissions'
     foreach ($domain in @('api.github.com', 'github.com')) {
         Assert-True ($codexConfig -match [regex]::Escape('"' + $domain + '"')) ".codex/config.toml allows $domain"
