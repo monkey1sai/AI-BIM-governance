@@ -53,6 +53,12 @@ POST /api/internal/a4/issues/from-search   coordinator-only；signed row proof -
 
 `element_mapping_path` 可選；提供時 join `ifc_guid -> usd_prim_path`（未對映留 `null`，fake/smoke mapping 一律不視為覆蓋率）。
 
+## 資料模型不變量
+
+- A2 diff 第一級永遠以 IFC `GlobalId` 對齊；Tag 與 type/name/location 只可作未命中時的 fallback。生成式 property test 會打亂兩側順序與 fallback 欄位，鎖住此優先序。
+- `kind=issue` 必須同時綁定非空 `ifc_guid` 與 `model_version_id`；無 `ifc_guid` 的視覺標註仍是 `annotation`。API/store 驗證與 SQLite insert/update trigger 共同 fail closed。
+- Issue store 使用 SQLite WAL、`busy_timeout=5000` 與 `BEGIN IMMEDIATE` 的既有 atomic batch/transition 路徑；多人審查負載超過單機 SQLite 能力時才另案評估換庫，不在此契約內靜默改寫 storage authority。
+
 A4 Issue route 只接受 16–4096 字元 printable-ASCII server-only internal token 與 trusted current
 session/principal context 的單列 request。首次 consume 原子保存 Issue、immutable
 snapshot、unique proof ID 與三個 replay digests；exact replay 回原 Issue，generic

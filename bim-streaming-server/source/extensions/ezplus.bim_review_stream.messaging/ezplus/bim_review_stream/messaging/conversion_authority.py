@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+import hashlib
 import json
 import re
 import threading
@@ -25,6 +26,18 @@ CONVERSION_STAGES = ("queued", "running_headless_converter", "done", "conversion
 # worker adapter (imports `_PLACEHOLDER_MARKERS` from here) so the "looks like a
 # placeholder USDC" rule cannot drift between producer and authority gate.
 _PLACEHOLDER_MARKERS = (b"placeholder",)
+_PROCESS_LOCKS_GUARD = threading.Lock()
+_PROCESS_LOCKS: dict[tuple[str, str], Any] = {}
+
+
+def _process_lock(path: Path, purpose: str):
+    key = (str(path.resolve()).casefold(), purpose)
+    with _PROCESS_LOCKS_GUARD:
+        lock = _PROCESS_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _PROCESS_LOCKS[key] = lock
+        return lock
 
 
 class ConversionAuthorityError(RuntimeError):
@@ -90,6 +103,7 @@ def create_conversion_api_app(
     )
     app = FastAPI(title="BIM Streaming Conversion Authority", version="0.1.0")
     app.state.structured_logger = structured_logger
+    app.state.conversion_store = store
 
     @app.post("/api/conversions/ifc-to-usdc", status_code=202)
     def create_conversion(
@@ -270,9 +284,22 @@ class StreamingConversionStore:
         # launched close together race for that port and the loser crashes. This
         # lock forces actual conversion execution (not just dispatch acceptance)
         # to run one job at a time within this process.
-        self._conversion_lock = threading.Lock()
+        # All store instances in this process that point at the same jobs_dir
+        # share locks. The deployed Uvicorn launcher uses one worker; these
+        # locks deliberately do not claim cross-process coordination.
+        self._job_state_lock = _process_lock(Path(self.settings.jobs_dir), "job-state")
+        self._conversion_lock = _process_lock(Path(self.settings.jobs_dir), "conversion")
 
     def create_conversion_job(
+        self,
+        ifc_ready_event: Mapping[str, Any],
+        *,
+        trace_id: str | None = None,
+    ) -> dict[str, Any]:
+        with self._job_state_lock:
+            return self._create_conversion_job_locked(ifc_ready_event, trace_id=trace_id)
+
+    def _create_conversion_job_locked(
         self,
         ifc_ready_event: Mapping[str, Any],
         *,
@@ -383,17 +410,17 @@ class StreamingConversionStore:
         return [self._conversion_result_list_item(job) for job in jobs[:max_limit]]
 
     def complete_conversion_job(self, conversion_job_id: str) -> dict[str, Any]:
-        job = self._get_conversion_job_raw(conversion_job_id)
-        if job is None:
-            raise KeyError(conversion_job_id)
-        if job.get("status") not in {"queued", "running"}:
-            return job
-
         # conversion-kit-port-race: serialize actual Kit CAD-conversion execution
         # across concurrently-accepted jobs (see lock comment in __init__). Jobs
         # waiting on the lock stay "queued" and only flip to "running" once they
-        # actually start, so status faithfully reflects what's really executing.
+        # actually start. Re-read under the lock so two callers for the same job
+        # cannot both publish into the immutable artifact directory.
         with self._conversion_lock:
+            job = self._get_conversion_job_raw(conversion_job_id)
+            if job is None:
+                raise KeyError(conversion_job_id)
+            if job.get("status") not in {"queued", "running"}:
+                return job
             job = self._update_job(conversion_job_id, status="running", stage="running_headless_converter")
             self._log_conversion_lifecycle(job, status="running", phase="active")
             output_dir = Path(self.settings.artifacts_root) / conversion_job_id
@@ -415,34 +442,34 @@ class StreamingConversionStore:
             except Exception as exc:
                 return self._fail_job(job, code=exc.__class__.__name__, message=str(exc), stage="conversion_failed")
 
-        callback_payload = self._callback_payload(job, result)
-        callback_url = job.get("callback_url")
-        if callback_url:
-            callback_delivery = {
-                "status": "pending",
-                "target_url": callback_url,
-                "reason": "network delivery deferred to coordinator / T5 cloud callback outbox",
-            }
-        else:
-            # B-scheme T4: `_bim-control` removed; with no callback target the
-            # streaming server does NOT post anywhere. The coordinator owns the
-            # external contract — it polls /result and (T5) drives the
-            # metadata-only cloud callback outbox.
-            callback_delivery = {
-                "status": "skipped",
-                "target_url": None,
-                "reason": "no callback_url; coordinator polls /result, cloud callback is T5 outbox",
-            }
-        completed = self._update_job(
-            conversion_job_id,
-            status="succeeded",
-            stage="done",
-            result=result,
-            callback_payload=callback_payload,
-            callback_delivery=callback_delivery,
-        )
-        self._log_conversion_lifecycle(completed, status="succeeded", phase="closed")
-        return completed
+            callback_payload = self._callback_payload(job, result)
+            callback_url = job.get("callback_url")
+            if callback_url:
+                callback_delivery = {
+                    "status": "pending",
+                    "target_url": callback_url,
+                    "reason": "network delivery deferred to coordinator / T5 cloud callback outbox",
+                }
+            else:
+                # B-scheme T4: `_bim-control` removed; with no callback target the
+                # streaming server does NOT post anywhere. The coordinator owns the
+                # external contract — it polls /result and (T5) drives the
+                # metadata-only cloud callback outbox.
+                callback_delivery = {
+                    "status": "skipped",
+                    "target_url": None,
+                    "reason": "no callback_url; coordinator polls /result, cloud callback is T5 outbox",
+                }
+            completed = self._update_job(
+                conversion_job_id,
+                status="succeeded",
+                stage="done",
+                result=result,
+                callback_payload=callback_payload,
+                callback_delivery=callback_delivery,
+            )
+            self._log_conversion_lifecycle(completed, status="succeeded", phase="closed")
+            return completed
 
     def _build_success_result(self, job: Mapping[str, Any], converter_result: Mapping[str, Any]) -> dict[str, Any]:
         output_paths = self._required_output_paths(converter_result)
@@ -587,9 +614,31 @@ class StreamingConversionStore:
         if gates and not gates.get("has_renderable_prims"):
             raise ConversionAuthorityError("missing_renderable_prims", "Generated model.usdc has no renderable prims.")
         mapping = json.loads(output_paths["mapping_path"].read_text(encoding="utf-8"))
+        if not isinstance(mapping, dict):
+            raise ConversionAuthorityError("mapping_provenance_invalid", "Mapping output must be a JSON object.")
         allow_fake_mapping = bool((job.get("ifc_ready_event") or {}).get("allow_fake_mapping"))
-        fake_count = int(((mapping.get("summary") or {}).get("fake_mapping_count") or 0))
-        if (mapping.get("mock") is True or fake_count > 0) and not allow_fake_mapping:
+        summary = mapping.get("summary")
+        required = ("mapping_provenance", "mock", "allow_fake_mapping", "items")
+        if any(key not in mapping for key in required) or not isinstance(summary, dict) or "fake_mapping_count" not in summary:
+            raise ConversionAuthorityError(
+                "mapping_provenance_invalid",
+                "Mapping output is missing required provenance fields.",
+            )
+        if not isinstance(mapping["mock"], bool) or not isinstance(mapping["allow_fake_mapping"], bool):
+            raise ConversionAuthorityError("mapping_provenance_invalid", "Mapping fake flags must be booleans.")
+        if not isinstance(summary["fake_mapping_count"], int) or isinstance(summary["fake_mapping_count"], bool) or summary["fake_mapping_count"] < 0:
+            raise ConversionAuthorityError("mapping_provenance_invalid", "Mapping fake_mapping_count must be a non-negative integer.")
+
+        fake_count = summary["fake_mapping_count"]
+        is_fake = mapping["mock"] or mapping["allow_fake_mapping"] or fake_count > 0
+        provenance = mapping["mapping_provenance"]
+        if provenance not in {"converter_verified", "fake_smoke_test"}:
+            raise ConversionAuthorityError("mapping_provenance_invalid", "Mapping provenance is not recognized.")
+        if is_fake and provenance != "fake_smoke_test":
+            raise ConversionAuthorityError("mapping_provenance_invalid", "Fake mapping must declare fake_smoke_test provenance.")
+        if not is_fake and provenance != "converter_verified":
+            raise ConversionAuthorityError("mapping_provenance_invalid", "Verified mapping must declare converter_verified provenance.")
+        if is_fake and not allow_fake_mapping:
             raise ConversionAuthorityError("fake_mapping_not_allowed", "Mapping output is fake but allow_fake_mapping is not enabled.")
 
     def _normalize_quality_metrics(self, raw: Mapping[str, Any]) -> dict[str, Any]:
@@ -615,7 +664,16 @@ class StreamingConversionStore:
             "format": format_,
             "path": str(path),
             "url": self._artifact_url(path),
+            "checksum_sha256": self._sha256_file(path),
         }
+
+    @staticmethod
+    def _sha256_file(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
     def _artifact_url(self, path: Path) -> str:
         try:
@@ -737,7 +795,37 @@ class StreamingConversionStore:
     def _write_job(self, job: Mapping[str, Any]) -> None:
         path = self._job_path(str(job["conversion_job_id"]))
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(job, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+        temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+        try:
+            temporary.write_text(
+                json.dumps(job, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def assert_artifact_downloadable(self, conversion_job_id: str, candidate: Path) -> None:
+        job = self._get_conversion_job_raw(conversion_job_id)
+        if job is None or job.get("status") not in {"succeeded", "succeeded_with_warnings"}:
+            raise KeyError(conversion_job_id)
+        result = job.get("result") if isinstance(job.get("result"), dict) else {}
+        artifacts = result.get("artifacts") if isinstance(result.get("artifacts"), dict) else {}
+        resolved_candidate = candidate.resolve()
+        for artifact in artifacts.values():
+            if not isinstance(artifact, dict) or not artifact.get("path"):
+                continue
+            artifact_path = Path(str(artifact["path"])).resolve()
+            if artifact_path != resolved_candidate:
+                continue
+            expected_checksum = str(artifact.get("checksum_sha256") or "")
+            if not expected_checksum or self._sha256_file(artifact_path) != expected_checksum:
+                raise ConversionAuthorityError(
+                    "artifact_integrity_violation",
+                    "artifact checksum mismatch",
+                )
+            return
+        raise KeyError(str(candidate))
 
     def _update_job(self, conversion_job_id: str, **updates: Any) -> dict[str, Any]:
         job = self._get_conversion_job_raw(conversion_job_id)
@@ -766,17 +854,25 @@ class StreamingConversionStore:
         projected_result["status"] = "failed"
         model["status"] = "failed"
         projected_result["model"] = model
+        integrity_failure = any(
+            item.get("reason") in {"artifact_checksum_missing", "artifact_checksum_mismatch"}
+            for item in missing
+        )
         error.update(
             {
-                "code": "artifact_missing",
-                "message": "Published conversion result is missing required artifacts.",
+                "code": "artifact_integrity_violation" if integrity_failure else "artifact_missing",
+                "message": (
+                    "Published model.usdc no longer matches its immutable checksum."
+                    if integrity_failure
+                    else "Published conversion result is missing required artifacts."
+                ),
                 "missing_artifacts": missing,
                 "original_status": original_status,
             }
         )
         projected_result["error"] = error
         projected["status"] = "failed"
-        projected["stage"] = "artifact_missing"
+        projected["stage"] = "artifact_integrity_violation" if integrity_failure else "artifact_missing"
         projected["result"] = projected_result
 
         callback_payload = projected.get("callback_payload")
@@ -825,6 +921,13 @@ class StreamingConversionStore:
                 continue
             if not self._artifact_is_serveable(str(job.get("conversion_job_id") or ""), path, entry):
                 missing.append({"role": role, "reason": "artifact_unserveable", "path": str(path)})
+                continue
+            if role == "model_usdc":
+                expected_checksum = str(entry.get("checksum_sha256") or "")
+                if not expected_checksum:
+                    missing.append({"role": role, "reason": "artifact_checksum_missing", "path": str(path)})
+                elif self._sha256_file(path) != expected_checksum:
+                    missing.append({"role": role, "reason": "artifact_checksum_mismatch", "path": str(path)})
         return missing
 
     def _artifact_is_serveable(self, conversion_job_id: str, path: Path, entry: Mapping[str, Any]) -> bool:

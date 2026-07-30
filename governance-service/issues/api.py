@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from .store import ISSUE_STATUSES, IssueStore, TransitionError
+from .store import ISSUE_STATUSES, IssueBindingError, IssueStore, TransitionError
 
 _SERVICE_ROOT = os.path.dirname(os.path.dirname(__file__))
 _DB_PATH = os.environ.get("GOV_DB_PATH", os.path.join(_SERVICE_ROOT, "storage", "governance.db"))
@@ -50,10 +50,13 @@ class TransitionBody(BaseModel):
 
 @router.post("/api/issues", status_code=201)
 def create_issue(req: IssueCreate):
-    return _get_store().create_issue(
-        title=req.title, description=req.description, severity=req.severity, ifc_guid=req.ifc_guid,
-        usd_prim_path=req.usd_prim_path, model_version_id=req.model_version_id, assignee=req.assignee,
-    )
+    try:
+        return _get_store().create_issue(
+            title=req.title, description=req.description, severity=req.severity, ifc_guid=req.ifc_guid,
+            usd_prim_path=req.usd_prim_path, model_version_id=req.model_version_id, assignee=req.assignee,
+        )
+    except IssueBindingError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/api/issues")
@@ -94,11 +97,12 @@ def issues_from_rule_run(run_id: str):
     run = rule_store.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="rule run not found")
-    # rule-run issue 的版本綁定為 best-effort（可為 None）：rule-run 可能是對「尚未指派
-    # model version」的臨時 IFC 檢核（console doRun 只傳 ifc_source_path/ids_path），仍以
-    # source_type=rule_result + source_ref + run 提供溯源。此處刻意不對稱於 from-diff 的 422：
-    # diff 天生是兩個 model_version 的比對，故 from-diff SHALL 要求 target 版本（缺則 422）。
     mv = run.get("model_version_id")
+    if not mv:
+        raise HTTPException(
+            status_code=422,
+            detail="rule run 缺 model_version_id，無法建立版本綁定的 issue",
+        )
     failed = rule_store.get_results(run_id, "fail")
     items = [
         {

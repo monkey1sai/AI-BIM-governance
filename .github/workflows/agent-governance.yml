@@ -36,6 +36,10 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-isolated-branch-stack.ps1
 
+      - name: Enforce production provenance and network boundaries
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-production-boundary-contract.ps1
+
       - name: Test GitNexus and worktree health report
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-gitnexus-worktree-health.mjs"

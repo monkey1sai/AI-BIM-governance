@@ -38,6 +38,11 @@ try {
         '.github/PULL_REQUEST_TEMPLATE.md',
         'scripts/tests/check-pr-body-evidence.ps1',
         'scripts/tests/test-pr-body-evidence.ps1',
+        'scripts/lib/production-boundary-contract.ps1',
+        'scripts/tests/test-production-boundary-contract.ps1',
+        'tests/contracts/element-mapping-provenance.schema.json',
+        'web-viewer-sample/playwright.kit-manager.config.ts',
+        'web-viewer-sample/e2e/kit-manager-operator.spec.ts',
         'scripts/tests/verify-openspec-lifecycle.ps1',
         'scripts/tests/test-openspec-lifecycle-archive-diff.ps1',
         'scripts/lib/openspec-lifecycle.ps1',
@@ -141,6 +146,9 @@ try {
     Assert-FileContains '.github/workflows/agent-governance.yml' 'test-gitnexus-worktree-health\.mjs' 'agent governance runs GitNexus/worktree health fixtures'
     Assert-FileContains '.github/workflows/agent-governance.yml' 'test-task-packet\.mjs' 'agent governance runs task packet routing fixtures'
     Assert-FileContains '.github/workflows/agent-governance.yml' 'test-ai-coding-metrics\.mjs' 'agent governance runs AI coding metrics privacy and truth fixtures'
+    Assert-FileContains '.github/workflows/agent-governance.yml' 'test-production-boundary-contract\.ps1' 'agent governance enforces production provenance and network boundaries'
+    Assert-FileContains 'scripts/tests/check-pr-body-evidence.ps1' 'Assert-ProductionBoundaryDiff' 'PR evidence gate enforces the production boundary diff contract'
+    Assert-FileContains '.github/workflows/ci.yml' 'npm run test:e2e:kit-manager' 'kit-manager-web CI runs the browser operator-flow regression'
     Assert-FileContains 'scripts/tests/verify-openspec-lifecycle.ps1' 'lib\\openspec-lifecycle\.ps1' 'OpenSpec lifecycle verification uses the shared parser'
     Assert-FileContains 'openspec/AGENTS.md' 'deferred change 保留在 `openspec/changes/<change-id>/`' 'OpenSpec instructions keep deferred changes outside completed archive'
     Assert-FileContains 'openspec/AGENTS.md' '--skip-specs.*不是.*deferred state' 'OpenSpec instructions do not treat skip-specs as deferral'

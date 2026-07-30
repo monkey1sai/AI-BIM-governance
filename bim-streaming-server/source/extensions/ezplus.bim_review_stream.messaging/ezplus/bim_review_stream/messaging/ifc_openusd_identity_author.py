@@ -439,7 +439,9 @@ class IfcOpenUsdIdentityAuthor:
         docs = {
             "mapping_path": {
                 "format_version": 2,
+                "mapping_provenance": "converter_verified",
                 "mock": False,
+                "allow_fake_mapping": False,
                 "mapping_fidelity": "guid_exact",
                 "summary": {
                     "mapped_count": mapped_count,

@@ -30,6 +30,7 @@
         "test:tri-ready-states": "node scripts/verify-tri-ready-states.mjs",
         "test:struct-log": "node scripts/verify-struct-log.mjs",
         "test:e2e": "playwright test",
+        "test:e2e:kit-manager": "playwright test --config=playwright.kit-manager.config.ts",
         "test:visual:design-system": "playwright test --config=playwright.design-system.config.ts",
         "test:functional-runtime": "playwright test --config=playwright.functional-runtime.config.ts",
         "test:e2e:headed": "playwright test --headed",

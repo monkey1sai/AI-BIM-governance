@@ -1,0 +1,283 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:ai-bim-governance:architecture-delta:v1",
+  "title": "AI-BIM architecture delta",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "change_id",
+    "lane",
+    "summary",
+    "created_on",
+    "affected_services",
+    "affected_surfaces",
+    "added_dependency_edges",
+    "removed_dependency_edges",
+    "public_contract_changes",
+    "data_ownership_changes",
+    "state_machine_changes",
+    "exceptions",
+    "approval"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schema_version": {
+      "const": "ai-bim-architecture-delta/v1"
+    },
+    "change_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "lane": {
+      "enum": [
+        "F",
+        "B",
+        "G",
+        "S"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_on": {
+      "type": "string",
+      "format": "date"
+    },
+    "affected_services": {
+      "$ref": "#/definitions/stringArray"
+    },
+    "affected_surfaces": {
+      "$ref": "#/definitions/stringArray"
+    },
+    "added_dependency_edges": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/dependencyEdge"
+      }
+    },
+    "removed_dependency_edges": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/dependencyEdge"
+      }
+    },
+    "public_contract_changes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/publicContractChange"
+      }
+    },
+    "data_ownership_changes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/dataOwnershipChange"
+      }
+    },
+    "state_machine_changes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/stateMachineChange"
+      }
+    },
+    "exceptions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/exception"
+      }
+    },
+    "approval": {
+      "$ref": "#/definitions/approval"
+    }
+  },
+  "definitions": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stringArray": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "dependencyEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to",
+        "interface",
+        "reason"
+      ],
+      "properties": {
+        "from": {
+          "$ref": "#/definitions/identifier"
+        },
+        "to": {
+          "$ref": "#/definitions/identifier"
+        },
+        "interface": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "reason": {
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      }
+    },
+    "publicContractChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "change_type",
+        "description"
+      ],
+      "properties": {
+        "contract": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "change_type": {
+          "enum": [
+            "none",
+            "additive",
+            "breaking"
+          ]
+        },
+        "description": {
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      }
+    },
+    "dataOwnershipChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capability",
+        "from_owner",
+        "to_owner",
+        "reason"
+      ],
+      "properties": {
+        "capability": {
+          "$ref": "#/definitions/identifier"
+        },
+        "from_owner": {
+          "$ref": "#/definitions/identifier"
+        },
+        "to_owner": {
+          "$ref": "#/definitions/identifier"
+        },
+        "reason": {
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      }
+    },
+    "stateMachineChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "machine",
+        "change_type",
+        "description"
+      ],
+      "properties": {
+        "machine": {
+          "$ref": "#/definitions/identifier"
+        },
+        "change_type": {
+          "enum": [
+            "additive",
+            "behavioral",
+            "breaking"
+          ]
+        },
+        "description": {
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      }
+    },
+    "exception": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "invariant_id",
+        "owner",
+        "reason",
+        "adr",
+        "created_on",
+        "expires_on"
+      ],
+      "properties": {
+        "invariant_id": {
+          "type": "string",
+          "pattern": "^ARCH-[A-Z]+-[0-9]{3}$"
+        },
+        "owner": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "reason": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "adr": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "created_on": {
+          "type": "string",
+          "format": "date"
+        },
+        "expires_on": {
+          "type": "string",
+          "format": "date"
+        }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required",
+        "status",
+        "approved_by",
+        "approved_at"
+      ],
+      "properties": {
+        "required": {
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "not-required",
+            "pending",
+            "approved",
+            "rejected"
+          ]
+        },
+        "approved_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approved_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}

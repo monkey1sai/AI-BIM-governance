@@ -96,7 +96,8 @@
         ".claude/**", ".codex/**", ".github/**", "apps/**", "artifacts/**",
         "bim-review-coordinator/**", "bim-streaming-server/**", "docs/**", "governance-service/**",
         "infra/**", "openspec/**", "patches/**", "rules/**", "scripts/**", "services/**", "tests/**",
-        "web-viewer-sample/**"
+        "web-viewer-sample/**",
+        "architecture/**"
       ]
     },
     {
@@ -104,7 +105,10 @@
       "path_globs": [
         "tests/**", "scripts/tests/**", "scripts/gen_routing.py", ".claude/workflows/**", "docs/contracts/**",
         "bim-review-coordinator/**", "bim-streaming-server/**", "governance-service/**", "rules/**",
-        "web-viewer-sample/**", "services/kit-manager-api/**", "apps/kit-manager-web/**"
+        "web-viewer-sample/**", "services/kit-manager-api/**", "apps/kit-manager-web/**",
+        "architecture/**",
+        "scripts/lib/architecture_contract.py",
+        "scripts/dev/validate_architecture_contract.py"
       ]
     },
     { "id": "coordinator", "path_globs": ["bim-review-coordinator/**", "tests/contracts/**"] },
@@ -118,12 +122,23 @@
       ]
     },
     { "id": "kit-manager-api", "path_globs": ["services/kit-manager-api/**", "tests/contracts/**"] },
-    { "id": "kit-manager-web", "path_globs": ["apps/kit-manager-web/**", "services/kit-manager-api/**"] },
+    {
+      "id": "kit-manager-web",
+      "path_globs": [
+        "apps/kit-manager-web/**", "services/kit-manager-api/**",
+        "web-viewer-sample/e2e/kit-manager-operator.spec.ts",
+        "web-viewer-sample/playwright.kit-manager.config.ts",
+        "web-viewer-sample/package.json", "web-viewer-sample/package-lock.json",
+        "bim-review-coordinator/src/app.ts", "bim-review-coordinator/src/config.ts",
+        "compose.runtime-manager.yml", "infra/docker/kit-manager-web.Dockerfile"
+      ]
+    },
     {
       "id": "agent-governance",
       "path_globs": [
         "AGENTS.md", "CLAUDE.md", ".claude/**", ".codex/**", ".github/**", "docs/agents/**",
-        "openspec/**", "scripts/**", "agent-skills-manifest.json", "skills-lock.json"
+        "openspec/**", "scripts/**", "agent-skills-manifest.json", "skills-lock.json",
+        "architecture/**"
       ]
     },
     { "id": "compose-config", "path_globs": ["compose.*.yml", ".env*.example", "infra/docker/**"] },
@@ -287,7 +302,7 @@
   ],
   "targets": [
     {
-      "id": "root-contracts", "display_name": "tests (contracts+fakes)", "path_globs": ["tests/**", "scripts/tests/**", "scripts/gen_routing.py", ".claude/workflows/**", "docs/contracts/**", "bim-review-coordinator/**", "bim-streaming-server/**", "governance-service/**", "rules/**", "web-viewer-sample/**", "services/kit-manager-api/**", "apps/kit-manager-web/**"],
+      "id": "root-contracts", "display_name": "tests (contracts+fakes)", "path_globs": ["tests/**", "scripts/tests/**", "scripts/gen_routing.py", ".claude/workflows/**", "docs/contracts/**", "bim-review-coordinator/**", "bim-streaming-server/**", "governance-service/**", "rules/**", "web-viewer-sample/**", "services/kit-manager-api/**", "apps/kit-manager-web/**", "architecture/**", "scripts/lib/architecture_contract.py", "scripts/dev/validate_architecture_contract.py"],
       "owner": "contract-owner", "fast_gates": [], "contract_gates": ["root-contracts"], "slow_evidence_gates": [],
       "required_when": { "predicate": "changed_path_class", "any_of": ["root-contracts"] }, "skip_reason": "path_not_affected",
       "default_profiles": ["developer", "developer-py"], "ci_output": "root_contracts",
@@ -336,14 +351,22 @@
       "ci_job": "kit-manager-api tests", "result_artifact": null
     },
     {
-      "id": "kit-manager-web", "display_name": "kit-manager-web", "path_globs": ["apps/kit-manager-web/**", "services/kit-manager-api/**"],
+      "id": "kit-manager-web", "display_name": "kit-manager-web",
+      "path_globs": [
+        "apps/kit-manager-web/**", "services/kit-manager-api/**",
+        "web-viewer-sample/e2e/kit-manager-operator.spec.ts",
+        "web-viewer-sample/playwright.kit-manager.config.ts",
+        "web-viewer-sample/package.json", "web-viewer-sample/package-lock.json",
+        "bim-review-coordinator/src/app.ts", "bim-review-coordinator/src/config.ts",
+        "compose.runtime-manager.yml", "infra/docker/kit-manager-web.Dockerfile"
+      ],
       "owner": "kit-manager-web", "fast_gates": ["kit-manager-web-build", "kit-manager-web-lint", "kit-manager-web-changed-lines"], "contract_gates": ["kit-manager-web-unit-contract"], "slow_evidence_gates": [],
       "required_when": { "predicate": "changed_path_class", "any_of": ["kit-manager-web"] }, "skip_reason": "path_not_affected",
       "default_profiles": [], "ci_output": "kit_manager_web",
       "ci_job": "kit-manager-web build", "result_artifact": null
     },
     {
-      "id": "agent-governance", "display_name": "agent governance contracts", "path_globs": ["AGENTS.md", "CLAUDE.md", ".claude/**", ".codex/**", ".github/**", "docs/agents/**", "openspec/**", "scripts/**", "agent-skills-manifest.json", "skills-lock.json"],
+      "id": "agent-governance", "display_name": "agent governance contracts", "path_globs": ["AGENTS.md", "CLAUDE.md", ".claude/**", ".codex/**", ".github/**", "docs/agents/**", "openspec/**", "scripts/**", "agent-skills-manifest.json", "skills-lock.json", "architecture/**"],
       "owner": "agent-governance", "fast_gates": [], "contract_gates": ["agent-governance-tests"], "slow_evidence_gates": [],
       "required_when": { "predicate": "changed_path_class", "any_of": ["agent-governance"] }, "skip_reason": "path_not_affected",
       "default_profiles": [], "ci_output": "agent_governance",
@@ -399,7 +422,7 @@
       }
     },
     {
-      "id": "secret-pattern-scan", "display_name": "secret pattern scan", "path_globs": ["AGENTS.md", "CLAUDE.md", "README*.md", "*.json", "*.md", "*.yml", "*.yaml", ".claude/**", ".codex/**", ".github/**", "apps/**", "artifacts/**", "bim-review-coordinator/**", "bim-streaming-server/**", "docs/**", "governance-service/**", "infra/**", "openspec/**", "patches/**", "rules/**", "scripts/**", "services/**", "tests/**", "web-viewer-sample/**"],
+      "id": "secret-pattern-scan", "display_name": "secret pattern scan", "path_globs": ["AGENTS.md", "CLAUDE.md", "README*.md", "*.json", "*.md", "*.yml", "*.yaml", ".claude/**", ".codex/**", ".github/**", "apps/**", "artifacts/**", "bim-review-coordinator/**", "bim-streaming-server/**", "docs/**", "governance-service/**", "infra/**", "openspec/**", "patches/**", "rules/**", "scripts/**", "services/**", "tests/**", "web-viewer-sample/**", "architecture/**"],
       "owner": "security", "fast_gates": ["secret-pattern-scan", "security-exception-policy", "dependency-review", "sast"], "contract_gates": [], "slow_evidence_gates": [],
       "required_when": { "predicate": "changed_path_class", "any_of": ["tracked-repository"] }, "skip_reason": "path_not_affected",
       "default_profiles": [], "ci_output": "secret_pattern_scan",
