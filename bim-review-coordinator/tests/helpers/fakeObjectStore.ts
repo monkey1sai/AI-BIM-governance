@@ -34,6 +34,36 @@ export function createFakeObjectStore(
       if (store.failListWith) throw store.failListWith;
       return store.objs.filter((o) => (prefix ? o.key.startsWith(prefix) : true)).map((o) => ({ ...o }));
     },
+    async listFolder(prefix: string, delimiter: string) {
+      store.listCalls += 1;
+      if (store.failListWith) throw store.failListWith;
+      const inPrefix = store.objs.filter((o) => (prefix ? o.key.startsWith(prefix) : true));
+      if (!delimiter) {
+        return { commonPrefixes: [], contents: inPrefix.map((o) => ({ ...o })) };
+      }
+      // 語意對齊 S3 Delimiter：去 prefix 後含 delimiter 的 key roll-up 成 CommonPrefix。
+      const commonPrefixes: string[] = [];
+      const contents: Array<{ key: string; etag: string }> = [];
+      for (const o of inPrefix) {
+        const rest = o.key.slice(prefix.length);
+        const idx = rest.indexOf(delimiter);
+        if (idx >= 0) {
+          const cp = prefix + rest.slice(0, idx + delimiter.length);
+          if (!commonPrefixes.includes(cp)) commonPrefixes.push(cp);
+        } else {
+          contents.push({ ...o });
+        }
+      }
+      return { commonPrefixes, contents };
+    },
+    async hasKeyWithSuffix(prefix: string, suffix: string) {
+      if (store.failListWith) throw store.failListWith;
+      return store.objs.some((o) => o.key.startsWith(prefix) && o.key.endsWith(suffix));
+    },
+    async headEtag(key: string) {
+      const hit = store.objs.find((o) => o.key === key);
+      return hit ? hit.etag.replace(/^"+|"+$/g, "") : null;
+    },
     async presign(key: string, expiresInSeconds: number) {
       // 形狀對齊真 presigned GET URL：含物件 key 與 X-Amz-Signature query（多個既有
       // 斷言以此判「watcher 真的簽了 URL」）。
