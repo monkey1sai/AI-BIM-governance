@@ -767,7 +767,7 @@
     },
     {
       "id": "cross-service-structured-log-baseline",
-      "status": "deferred",
+      "status": "active",
       "owner": "cross-service-observability",
       "current_slice": null,
       "blocked_by": [],

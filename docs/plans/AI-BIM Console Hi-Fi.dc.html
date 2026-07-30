@@ -267,8 +267,9 @@ input::placeholder{color:#4d6076}
                     <div style="display:flex;flex-direction:column;gap:7px">
                       <div style="display:flex;align-items:center;gap:6px">
                         <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;color:#4d6076;text-transform:uppercase">rule-run #88 · {{ L.fails }} 18</span>
-                        <span style="margin-left:auto;font-size:10px;color:#e8615c;background:rgba(232,97,92,.1);border:1px solid rgba(232,97,92,.3);border-radius:4px;padding:1px 6px">嚴重 18</span>
-                        <span style="font-size:10px;color:#e6b23e;background:rgba(230,178,62,.1);border:1px solid rgba(230,178,62,.3);border-radius:4px;padding:1px 6px">高 32</span>
+                        <span style="margin-left:auto;font-size:10px;color:#e8615c;background:rgba(232,97,92,.1);border:1px solid rgba(232,97,92,.3);border-radius:4px;padding:1px 6px">嚴重 4</span>
+                        <span style="font-size:10px;color:#e6b23e;background:rgba(230,178,62,.1);border:1px solid rgba(230,178,62,.3);border-radius:4px;padding:1px 6px">高 8</span>
+                        <span style="font-size:10px;color:#e8d35c;background:rgba(232,211,92,.1);border:1px solid rgba(232,211,92,.3);border-radius:4px;padding:1px 6px">中 6</span>
                       </div>
                       <sc-for list="{{ a1Results }}" as="f" hint-placeholder-count="4">
                         <div onClick="{{ f.pick }}" style="{{ f.rowStyle }}" style-hover="border-color:rgba(65,199,232,.4)">
@@ -574,7 +575,7 @@ input::placeholder{color:#4d6076}
               <span><span style="color:#4fd68a">INFO</span> 10:53:43 review-session S-240601 first-frame 1840ms</span>
               <span><span style="color:#4fd68a">INFO</span> 10:53:12 viewer-lease claim lease_8812 role=editor</span>
               <span><span style="color:#e6b23e">WARN</span> 10:41:02 callback-outbox retry ×2 OB-201</span>
-              <span><span style="color:#4fd68a">INFO</span> 10:20:19 conversion cj_0117 done → ingest quality-metrics</span>
+              <span><span style="color:#4fd68a">INFO</span> 10:20:19 conversion cj_0115 done → ingest quality-metrics</span>
             </div>
           </div>
         </div>
@@ -898,8 +899,8 @@ class Component extends DCLogic {
     ];
 
     const alerts = [
-      { msg: zh ? "rule-run #88 完成:嚴重 18 項" : "rule-run #88 done: 18 critical", t: "10:53", dot: "width:7px;height:7px;border-radius:50%;background:#e8615c;flex:none" },
-      { msg: zh ? "990_model.ifc 轉檔完成,品質 98%" : "990_model.ifc converted, quality 98%", t: "10:20", dot: "width:7px;height:7px;border-radius:50%;background:#31c56d;flex:none" },
+      { msg: zh ? "rule-run #88 完成:失敗 18 項" : "rule-run #88 done: 18 failures", t: "10:53", dot: "width:7px;height:7px;border-radius:50%;background:#e8615c;flex:none" },
+      { msg: zh ? "許良宇圖書館建築_2026.ifc 轉檔完成,品質 98%" : "許良宇圖書館建築_2026.ifc converted, quality 98%", t: "10:20", dot: "width:7px;height:7px;border-radius:50%;background:#31c56d;flex:none" },
       { msg: zh ? "Outbox OB-201 重試 ×2" : "Outbox OB-201 retry ×2", t: "10:41", dot: "width:7px;height:7px;border-radius:50%;background:#e6b23e;flex:none" },
       { msg: zh ? "S-240601 first-frame 1.84s" : "S-240601 first-frame 1.84s", t: "10:53", dot: "width:7px;height:7px;border-radius:50%;background:#41c7e8;flex:none" },
     ];
