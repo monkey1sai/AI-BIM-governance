@@ -321,6 +321,40 @@ const runtimeRejectionPresentation = {
     },
 } as const satisfies Record<string, LocalizedCopy>;
 
+const runtimeRejectionReviewCopy = {
+    malformed: {
+        zh: "忽略格式錯誤的 commandRejected",
+        en: "Ignored malformed commandRejected.",
+    },
+    duplicate: {
+        zh: "忽略重複的 commandRejected 終態事件",
+        en: "Ignored duplicate commandRejected terminal.",
+    },
+    requestContextMismatch: {
+        zh: "忽略 commandRejected：被拒絕的事件與請求內容不相符",
+        en: "Ignored commandRejected: rejected event does not match the request context.",
+    },
+    changedUnconfirmed: {
+        zh: "執行階段已變更但尚未確認；已阻擋重試與交接",
+        en: "The runtime changed but is unconfirmed; retry and handoff are blocked.",
+    },
+    rejectedVerb: {
+        zh: "已遭拒絕",
+        en: "was rejected",
+    },
+    stageLoadRejected: {
+        zh: "模型載入遭拒",
+        en: "Model loading was rejected",
+    },
+} as const satisfies Record<string, LocalizedCopy>;
+
+function runtimeRejectionReviewEvent(rejectedEventType: string, reason: string): string {
+    return `${rejectedEventType} ${t(
+        runtimeRejectionReviewCopy.rejectedVerb.zh,
+        runtimeRejectionReviewCopy.rejectedVerb.en,
+    )}${t("：", ": ")}${reason}`;
+}
+
 interface RuntimeCommandRejection {
     rejected_event_type: string;
     reason: RuntimeRejectionReason;
@@ -3412,18 +3446,27 @@ export default class App extends React.Component<AppProps, AppState> {
         if (event.event_type === "commandRejected") {
             const parsed = parseRuntimeCommandRejection(payload);
             if (!parsed) {
-                this._appendReviewEvent("忽略 malformed commandRejected");
+                this._appendReviewEvent(t(
+                    runtimeRejectionReviewCopy.malformed.zh,
+                    runtimeRejectionReviewCopy.malformed.en,
+                ));
                 return;
             }
             const context = parsed.request_id
                 ? this.runtimeCommandContexts.get(parsed.request_id)
                 : undefined;
             if (parsed.request_id && this.runtimeCommandTerminalClaims.has(parsed.request_id)) {
-                this._appendReviewEvent("忽略 duplicate commandRejected terminal");
+                this._appendReviewEvent(t(
+                    runtimeRejectionReviewCopy.duplicate.zh,
+                    runtimeRejectionReviewCopy.duplicate.en,
+                ));
                 return;
             }
             if (context && context.eventType !== parsed.rejected_event_type) {
-                this._appendReviewEvent("忽略 commandRejected：rejected event 與 request context 不相符");
+                this._appendReviewEvent(t(
+                    runtimeRejectionReviewCopy.requestContextMismatch.zh,
+                    runtimeRejectionReviewCopy.requestContextMismatch.en,
+                ));
                 return;
             }
             if (parsed.request_id) {
@@ -3461,6 +3504,14 @@ export default class App extends React.Component<AppProps, AppState> {
             if (rejection.runtime_state === "changed_unconfirmed") {
                 const revision = context?.bindingRevisionId || "unknown";
                 const unprovenUrl = context?.stageUrl || this.state.loadedStageUrl || this.pendingStageUrl;
+                const changedUnconfirmedReviewEvent = t(
+                    runtimeRejectionReviewCopy.changedUnconfirmed.zh,
+                    runtimeRejectionReviewCopy.changedUnconfirmed.en,
+                );
+                const changedUnconfirmedBindingReason = t(
+                    runtimeRejectionPresentation.stageUnproven.zh,
+                    runtimeRejectionPresentation.stageUnproven.en,
+                );
                 this.stageProofBlockGeneration += 1;
                 this.stageProofBlockedRevision = revision;
                 this.confirmedStageBindingRevision = null;
@@ -3472,9 +3523,9 @@ export default class App extends React.Component<AppProps, AppState> {
                     stageLoadStatus: "unproven",
                     govBindingApplyState: {
                         status: "failed",
-                        reason: "runtime changed but coordinator confirmation is unproven",
+                        reason: changedUnconfirmedBindingReason,
                     },
-                    reviewEvents: [...state.reviewEvents, "runtime changed_unconfirmed；已阻擋 retry/handoff"].slice(-80),
+                    reviewEvents: [...state.reviewEvents, changedUnconfirmedReviewEvent].slice(-80),
                 }));
                 if (window.parent !== window) {
                     this._postToParent({
@@ -3490,18 +3541,28 @@ export default class App extends React.Component<AppProps, AppState> {
                 return;
             }
 
+            const genericRejectionReviewEvent = runtimeRejectionReviewEvent(
+                rejection.rejected_event_type,
+                rejection.reason,
+            );
             this.setState((state) => ({
                 runtimeCommandRejection: rejection,
                 reviewEvents: [
                     ...state.reviewEvents,
-                    `${rejection.rejected_event_type} rejected：${rejection.reason}`,
+                    genericRejectionReviewEvent,
                 ].slice(-80),
             }));
             if (
                 rejection.rejected_event_type === "openStageRequest"
                 || rejection.rejected_event_type === "loadArtifactGroupRequest"
             ) {
-                this._failStageLoad("模型載入遭拒", rejection.detail_code || rejection.reason);
+                this._failStageLoad(
+                    t(
+                        runtimeRejectionReviewCopy.stageLoadRejected.zh,
+                        runtimeRejectionReviewCopy.stageLoadRejected.en,
+                    ),
+                    rejection.detail_code || rejection.reason,
+                );
             }
             return;
         }
