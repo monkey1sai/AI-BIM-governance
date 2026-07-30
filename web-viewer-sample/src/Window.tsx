@@ -348,6 +348,29 @@ const runtimeRejectionReviewCopy = {
     },
 } as const satisfies Record<string, LocalizedCopy>;
 
+const stageLoadTimeoutPresentation = {
+    title: {
+        zh: "模型載入逾時",
+        en: "Model loading timed out",
+    },
+    target: {
+        zh: "目標",
+        en: "Target",
+    },
+    diagnostic: {
+        zh: "診斷",
+        en: "Diagnostic",
+    },
+    lastState: {
+        zh: "最後狀態",
+        en: "Last state",
+    },
+    missingCompletion: {
+        zh: "Kit 已連線但沒有回報模型載入完成，請檢查該 USDC 是否可由 Kit 開啟。",
+        en: "Kit is connected but did not report model loading as complete. Verify that Kit can open this USDC.",
+    },
+} as const satisfies Record<string, LocalizedCopy>;
+
 function runtimeRejectionReviewEvent(rejectedEventType: string, reason: string): string {
     return `${rejectedEventType} ${t(
         runtimeRejectionReviewCopy.rejectedVerb.zh,
@@ -1460,11 +1483,11 @@ export default class App extends React.Component<AppProps, AppState> {
             if (!this.pendingStageUrl) return;
             if (this._completeStageLoadFromVisibleStream()) return;
             this._failStageLoad(
-                "模型載入逾時",
+                t(stageLoadTimeoutPresentation.title.zh, stageLoadTimeoutPresentation.title.en),
                 [
-                    `目標：${this.pendingStageUrl}`,
-                    `診斷：${this._getVideoDiagnosticText()}`,
-                    "Kit 已連線但沒有回報模型載入完成，請檢查該 USDC 是否可由 Kit 開啟。",
+                    `${t(stageLoadTimeoutPresentation.target.zh, stageLoadTimeoutPresentation.target.en)}${t("：", ": ")}${this.pendingStageUrl}`,
+                    `${t(stageLoadTimeoutPresentation.diagnostic.zh, stageLoadTimeoutPresentation.diagnostic.en)}${t("：", ": ")}${this._getVideoDiagnosticText()}`,
+                    t(stageLoadTimeoutPresentation.missingCompletion.zh, stageLoadTimeoutPresentation.missingCompletion.en),
                 ].join("\n"),
             );
         }, timeoutMs);
@@ -3755,8 +3778,11 @@ export default class App extends React.Component<AppProps, AppState> {
                         this._scheduleLoadingStateQuery(1000);
                     } else {
                         this._failStageLoad(
-                            "模型載入逾時",
-                            [`目標：${this.pendingStageUrl || this.state.selectedUSDAsset?.url || "unknown"}`, `最後狀態：${payloadUrl || "empty"} busy`].join("\n"),
+                            t(stageLoadTimeoutPresentation.title.zh, stageLoadTimeoutPresentation.title.en),
+                            [
+                                `${t(stageLoadTimeoutPresentation.target.zh, stageLoadTimeoutPresentation.target.en)}${t("：", ": ")}${this.pendingStageUrl || this.state.selectedUSDAsset?.url || "unknown"}`,
+                                `${t(stageLoadTimeoutPresentation.lastState.zh, stageLoadTimeoutPresentation.lastState.en)}${t("：", ": ")}${payloadUrl || "empty"} busy`,
+                            ].join("\n"),
                         );
                     }
                     return;
