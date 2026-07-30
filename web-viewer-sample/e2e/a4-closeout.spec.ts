@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route, type TestInfo } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 import {
   classifyHarnessUse,
   loadIsolatedStackConfig,
@@ -322,13 +323,21 @@ for (const viewport of VIEWPORTS) {
       await page.goto("/#semantic-search");
       await page.getByTestId("a4-job-select").selectOption(jobId);
       await page.getByTestId("a4-mode-deterministic").click();
-      await page.getByTestId("a4-query-input").fill("IfcSpaceHeater");
+      const uniqueLetters = [...randomUUID().replaceAll("-", "").slice(0, 16)]
+        .map(character => String.fromCharCode("a".charCodeAt(0) + Number.parseInt(character, 16)))
+        .join("");
+      const emptyQuery = `IfcDoor NoMatch${uniqueLetters}`;
+      await page.getByTestId("a4-query-input").fill(emptyQuery);
       const responsePromise = page.waitForResponse(response =>
         response.request().method() === "POST" &&
         new URL(response.url()).pathname === `/api/governance/search/model/for-ifc-ready/${jobId}`,
       );
       await page.getByTestId("a4-run").click();
-      await responsePromise;
+      const response = await responsePromise;
+      requireReal(response.ok(), `A4 empty search failed: ${response.status()}`);
+      const responseBody = await response.json() as ModelSearchResponse;
+      requireReal(responseBody.status === "ok", `A4 empty search returned status=${safeA4Diagnostic(responseBody.status) ?? "invalid"}`);
+      requireReal(Array.isArray(responseBody.results) && responseBody.results.length === 0, "A4 empty search did not return an empty results array");
 
       await expect(page.getByTestId("a4-run-err")).toBeVisible({ timeout: 120_000 });
       await expect(page.getByTestId("a4-results-table")).toContainText("無列");

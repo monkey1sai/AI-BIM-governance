@@ -511,7 +511,7 @@ export async function writeIsolatedEvidenceManifest(
     for (const key of ["schema_version", "stack_kind", "change_id", "run_id", "head_sha"] as const) {
       if (existing[key] !== identity[key]) throw new Error(`evidence identity mismatch: ${key}`);
     }
-    const existingObservations: unknown = existing.observations ?? [];
+    const existingObservations: unknown = existing.observations;
     if (!Array.isArray(existingObservations)) throw new Error("stored evidence observations are malformed");
     const retainedObservations = existingObservations.filter(
       (item: unknown): item is StoredEvidenceObservation => existingObservationArtifactsExist(config.runDir, item),

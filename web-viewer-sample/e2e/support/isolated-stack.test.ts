@@ -499,6 +499,19 @@ describe("loadIsolatedStackConfig", () => {
     await expect(writeUnitEvidence(config, { ...sampleObservation(config), testId: "replacement" })).rejects.toThrow(/stored evidence artifact reference is malformed/);
   });
 
+  it.each(["missing", "null"])("fails closed when an existing manifest has %s observations", async state => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
+    const output = await writeUnitEvidence(config, sampleObservation(config));
+    const evidence = JSON.parse(readFileSync(output, "utf8"));
+    if (state === "missing") delete evidence.observations;
+    else evidence.observations = null;
+    writeFileSync(output, JSON.stringify(evidence));
+
+    await expect(writeUnitEvidence(config, { ...sampleObservation(config), testId: "replacement" }))
+      .rejects.toThrow(/stored evidence observations are malformed/);
+  });
+
   it("requires an unchanged worktree and live backend ownership before publishing evidence", async () => {
     const value = fixture();
     const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
