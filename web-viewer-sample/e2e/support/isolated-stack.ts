@@ -33,6 +33,11 @@ export const A4_REQUIRED_OBSERVATION_IDS = [
   "a4-real-empty-1920x1080",
 ] as const;
 
+export const ISOLATED_REQUIRED_OBSERVATION_IDS = [
+  "a3-federated-session-chain",
+  ...A4_REQUIRED_OBSERVATION_IDS,
+] as const;
+
 export type IsolatedStackManifest = {
   schema_version: "isolated-branch-stack/v1";
   stack_kind: "isolated_branch_stack";
@@ -655,7 +660,9 @@ export async function writeIsolatedEvidenceManifest(
     };
     const observations = [...retainedObservations.filter(item => item.test_id !== normalized.test_id), normalized]
       .sort((left, right) => left.test_id.localeCompare(right.test_id));
-    const hasCompleteA4Observations = A4_REQUIRED_OBSERVATION_IDS.every(testId => observations.some(item => item.test_id === testId));
+    const hasCompleteRequiredObservations = ISOLATED_REQUIRED_OBSERVATION_IDS.every(
+      testId => observations.some(item => item.test_id === testId),
+    );
     const evidence = {
       ...identity,
       resolved_ports: config.manifest.ports,
@@ -670,8 +677,8 @@ export async function writeIsolatedEvidenceManifest(
       },
       observations,
       scope: {
-        cpu_browser_operability: hasCompleteA4Observations ? "observed" : "partial",
-        required_observation_ids: A4_REQUIRED_OBSERVATION_IDS,
+        cpu_browser_operability: hasCompleteRequiredObservations ? "observed" : "partial",
+        required_observation_ids: ISOLATED_REQUIRED_OBSERVATION_IDS,
         design: "not_claimed",
         deploy: "not_claimed",
         kit_webrtc: "not_claimed",

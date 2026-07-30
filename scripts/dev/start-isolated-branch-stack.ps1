@@ -88,7 +88,7 @@ function Assert-IsolatedStackStartPreflight {
     if (Test-Path -LiteralPath $manifestPath) {
         throw "Manifest collision: $manifestPath"
     }
-    foreach ($port in @($ports.coordinator, $ports.governance)) {
+    foreach ($port in @($ports.coordinator, $ports.governance, $ports.viewer)) {
         $listener = & $ListenerLookup $port
         if ($null -ne $listener) {
             throw "Port $port is occupied; ownership is unknown. No process was stopped."
@@ -117,6 +117,7 @@ function ConvertTo-IsolatedWindowsArgumentLine {
 function Resolve-IsolatedStackReservation {
     param(
         [string] $RepoRoot, [string] $ChangeId, [string] $RunId, [int] $Offset,
+        [string] $TrustedGitCommonDirectory,
         [scriptblock] $GitCommonDirectoryFn = {
             param($root)
             $value = & git -C $root rev-parse --git-common-dir
@@ -128,49 +129,456 @@ function Resolve-IsolatedStackReservation {
             [IO.Path]::GetFullPath((Join-Path $root $raw))
         }
     )
+    Assert-SafeStackSegment -Name 'ChangeId' -Value $ChangeId
+    Assert-SafeStackSegment -Name 'RunId' -Value $RunId
+    $RepoRoot = [IO.Path]::GetFullPath($RepoRoot)
     $runPath = Join-Path $RepoRoot "artifacts\e2e\$ChangeId\$RunId\.stack-reservation.json"
-    $gitCommonDirectory = [string](& $GitCommonDirectoryFn $RepoRoot)
+    $manifestPath = Resolve-IsolatedStackManifestPath -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId
+    $gitCommonDirectory = if ([string]::IsNullOrWhiteSpace($TrustedGitCommonDirectory)) {
+        [string](& $GitCommonDirectoryFn $RepoRoot)
+    } else {
+        $TrustedGitCommonDirectory
+    }
     if ([string]::IsNullOrWhiteSpace($gitCommonDirectory) -or -not [IO.Path]::IsPathRooted($gitCommonDirectory)) {
         throw 'Shared Git directory resolver must return an absolute path.'
     }
     $gitCommonDirectory = [IO.Path]::GetFullPath($gitCommonDirectory)
     $portPath = Join-Path $gitCommonDirectory "isolated-stack-reservations\offset-$Offset.reservation.json"
-    [pscustomobject]@{ paths=@($runPath,$portPath) }
+    [pscustomobject]@{
+        repo_root=$RepoRoot; change_id=$ChangeId; run_id=$RunId; offset=$Offset
+        manifest_path=$manifestPath
+        ports=(Resolve-IsolatedStackPorts -OffsetInput ([string]$Offset))
+        paths=@([IO.Path]::GetFullPath($runPath),[IO.Path]::GetFullPath($portPath))
+        gate_path=[IO.Path]::GetFullPath((Join-Path $gitCommonDirectory 'isolated-stack-reservations\.transaction.lock'))
+        _git_common_directory=$gitCommonDirectory
+        _git_common_directory_fn=$GitCommonDirectoryFn
+    }
+}
+
+function Enter-IsolatedStackReservationTransaction {
+    param([string]$GatePath,[int]$TimeoutMilliseconds=5000)
+    if ($TimeoutMilliseconds -lt 0) { throw 'Reservation transaction timeout must be non-negative.' }
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $GatePath) | Out-Null
+    $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMilliseconds)
+    do {
+        try {
+            return [IO.File]::Open($GatePath,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+        } catch [IO.IOException] {
+            if ([DateTime]::UtcNow -ge $deadline) {
+                throw "Timed out acquiring isolated stack reservation transaction gate: $GatePath"
+            }
+            Start-Sleep -Milliseconds 25
+        }
+    } while ($true)
+}
+
+function Get-IsolatedReservationLauncherIdentity {
+    param([scriptblock]$ProcessLookup={param($processId) Get-Process -Id $processId -ErrorAction Stop})
+    $process = & $ProcessLookup $PID
+    if ($null -eq $process) { throw "Launcher process $PID is not running." }
+    $processIdProperty = if ($process.PSObject.Properties['Id']) { $process.PSObject.Properties['Id'] } else { $process.PSObject.Properties['ProcessId'] }
+    $creationProperty = if ($process.PSObject.Properties['StartTime']) { $process.PSObject.Properties['StartTime'] } else { $process.PSObject.Properties['CreationDate'] }
+    if ($null -eq $processIdProperty -or $null -eq $creationProperty) { throw 'Launcher process identity is incomplete.' }
+    [pscustomobject]@{
+        pid=[int]$processIdProperty.Value
+        creation_identity=(ConvertTo-IsolatedCreationIdentity $creationProperty.Value)
+    }
+}
+
+function Test-IsolatedJsonInteger {
+    param($Value,[long]$Minimum,[long]$Maximum)
+    $isInteger = $Value -is [byte] -or $Value -is [sbyte] -or $Value -is [int16] -or $Value -is [uint16] -or
+        $Value -is [int32] -or $Value -is [uint32] -or $Value -is [int64] -or $Value -is [uint64]
+    if (-not $isInteger) { return $false }
+    try {
+        $integer = [long]$Value
+        return $integer -ge $Minimum -and $integer -le $Maximum
+    } catch {
+        return $false
+    }
+}
+
+function Test-IsolatedCanonicalUtcTimestamp {
+    param($Value)
+    if ($Value -isnot [string] -or $Value -notmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$') { return $false }
+    $parsed = [DateTimeOffset]::MinValue
+    if (-not [DateTimeOffset]::TryParse(
+        $Value,
+        [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::AssumeUniversal,
+        [ref]$parsed
+    )) { return $false }
+    return $parsed.Offset -eq [TimeSpan]::Zero -and $parsed.UtcDateTime.ToString('o') -ceq $Value
+}
+
+function Read-IsolatedStackReservationRecord {
+    param([string]$Path,[scriptblock]$GitCommonDirectoryFn,[string]$TrustedGitCommonDirectory)
+    try {
+        $rawRecord = Get-Content -Raw -LiteralPath $Path
+        $convertFromJsonCommand = Get-Command ConvertFrom-Json -CommandType Cmdlet -ErrorAction Stop
+        $record = if ($convertFromJsonCommand.Parameters.ContainsKey('DateKind')) {
+            $rawRecord | ConvertFrom-Json -Depth 12 -DateKind String
+        } else {
+            $rawRecord | ConvertFrom-Json -Depth 12
+        }
+    } catch {
+        throw "Isolated stack reservation record is malformed and cannot be reclaimed: $Path"
+    }
+    $expectedProperties = @(
+        'change_id','manifest_path','offset','owner','owner_creation_identity','owner_pid','ports',
+        'repo_root','reservation_id','reservation_path','reservation_paths','run_id','schema_version','state','updated_at'
+    ) | Sort-Object
+    $actualProperties = @($record.PSObject.Properties.Name | Sort-Object)
+    $expectedPortProperties = @('coordinator','governance','viewer')
+    $actualPortProperties = if ($null -ne $record.PSObject.Properties['ports']) { @($record.ports.PSObject.Properties.Name | Sort-Object) } else { @() }
+    if (($actualProperties -join '|') -cne ($expectedProperties -join '|') -or
+        ($actualPortProperties -join '|') -cne ($expectedPortProperties -join '|')) {
+        throw "Isolated stack reservation record schema is untrusted: $Path"
+    }
+    $stringProperties = @(
+        'schema_version','owner','state','reservation_id','owner_creation_identity','repo_root','change_id',
+        'run_id','manifest_path','reservation_path','updated_at'
+    )
+    $invalidValueFields = [Collections.Generic.List[string]]::new()
+    foreach ($propertyName in $stringProperties) {
+        if ($record.PSObject.Properties[$propertyName].Value -isnot [string]) { $invalidValueFields.Add($propertyName) }
+    }
+    if ($record.reservation_paths -isnot [Array] -or @($record.reservation_paths).Count -ne 2 -or
+        @($record.reservation_paths | Where-Object { $_ -isnot [string] }).Count -gt 0) { $invalidValueFields.Add('reservation_paths') }
+    if (-not (Test-IsolatedJsonInteger -Value $record.offset -Minimum 0 -Maximum 4)) { $invalidValueFields.Add('offset') }
+    if (-not (Test-IsolatedJsonInteger -Value $record.owner_pid -Minimum 1 -Maximum ([int]::MaxValue))) { $invalidValueFields.Add('owner_pid') }
+    foreach ($portName in @('coordinator','governance','viewer')) {
+        if (-not (Test-IsolatedJsonInteger -Value $record.ports.$portName -Minimum 1 -Maximum 65535)) { $invalidValueFields.Add("ports.$portName") }
+    }
+    if (-not (Test-IsolatedCanonicalUtcTimestamp $record.owner_creation_identity)) { $invalidValueFields.Add('owner_creation_identity') }
+    if (-not (Test-IsolatedCanonicalUtcTimestamp $record.updated_at)) { $invalidValueFields.Add('updated_at') }
+    if ($invalidValueFields.Count -gt 0) {
+        throw "Isolated stack reservation record values are untrusted ($($invalidValueFields -join ', ')): $Path"
+    }
+    $recordResolveParameters = @{
+        RepoRoot=[string]$record.repo_root; ChangeId=[string]$record.change_id; RunId=[string]$record.run_id; Offset=[int]$record.offset
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TrustedGitCommonDirectory)) {
+        $recordRepoRoot = [IO.Path]::GetFullPath([string]$record.repo_root)
+        if (Test-Path -LiteralPath $recordRepoRoot) {
+            if (-not (Test-Path -LiteralPath $recordRepoRoot -PathType Container)) {
+                throw "Isolated stack reservation repo root is not a directory: $Path"
+            }
+            if ($null -ne $GitCommonDirectoryFn) { $recordResolveParameters.GitCommonDirectoryFn = $GitCommonDirectoryFn }
+        } else {
+            $recordResolveParameters.TrustedGitCommonDirectory = $TrustedGitCommonDirectory
+        }
+    } elseif ($null -ne $GitCommonDirectoryFn) {
+        $recordResolveParameters.GitCommonDirectoryFn = $GitCommonDirectoryFn
+    }
+    try { $recordResolution = Resolve-IsolatedStackReservation @recordResolveParameters } catch {
+        throw "Isolated stack reservation tuple cannot be resolved safely: $Path"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TrustedGitCommonDirectory) -and
+        -not [string]::Equals(
+            [IO.Path]::GetFullPath([string]$recordResolution._git_common_directory),
+            [IO.Path]::GetFullPath($TrustedGitCommonDirectory),
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+        throw "Isolated stack reservation belongs to a different Git common directory: $Path"
+    }
+    $reservationGuid = [Guid]::Empty
+    $recordPaths = @($record.reservation_paths)
+    $expectedPaths = @($recordResolution.paths)
+    $pathsMatch = $recordPaths.Count -eq $expectedPaths.Count
+    if ($pathsMatch) {
+        for ($index=0; $index -lt $expectedPaths.Count; $index++) {
+            if (-not [string]::Equals([IO.Path]::GetFullPath([string]$recordPaths[$index]),[IO.Path]::GetFullPath([string]$expectedPaths[$index]),[StringComparison]::OrdinalIgnoreCase)) {
+                $pathsMatch = $false
+                break
+            }
+        }
+    }
+    if ([string]$record.schema_version -cne 'isolated-stack-reservation/v1' -or
+        [string]$record.owner -cne 'isolated-branch-stack' -or
+        -not [Guid]::TryParseExact([string]$record.reservation_id,'D',[ref]$reservationGuid) -or
+        @('active','recovery') -cnotcontains [string]$record.state -or
+        -not [string]::Equals([IO.Path]::GetFullPath([string]$record.repo_root),[string]$recordResolution.repo_root,[StringComparison]::OrdinalIgnoreCase) -or
+        -not [string]::Equals([IO.Path]::GetFullPath([string]$record.manifest_path),[string]$recordResolution.manifest_path,[StringComparison]::OrdinalIgnoreCase) -or
+        -not [string]::Equals([IO.Path]::GetFullPath([string]$record.reservation_path),[IO.Path]::GetFullPath($Path),[StringComparison]::OrdinalIgnoreCase) -or
+        -not $pathsMatch -or
+        [int]$record.ports.coordinator -ne [int]$recordResolution.ports.coordinator -or
+        [int]$record.ports.governance -ne [int]$recordResolution.ports.governance -or
+        [int]$record.ports.viewer -ne [int]$recordResolution.ports.viewer -or
+        [int]$record.owner_pid -le 0 -or
+        [string]::IsNullOrWhiteSpace([string]$record.owner_creation_identity)) {
+        throw "Isolated stack reservation record identity is untrusted: $Path"
+    }
+    $record | Add-Member -Force -NotePropertyName _resolution -NotePropertyValue $recordResolution
+    return $record
+}
+
+function Test-IsolatedStackReservationResolutionMatch {
+    param($Left,$Right)
+    if ($null -eq $Left -or $null -eq $Right) { return $false }
+    if (-not [string]::Equals([string]$Left.repo_root,[string]$Right.repo_root,[StringComparison]::OrdinalIgnoreCase) -or
+        [string]$Left.change_id -cne [string]$Right.change_id -or
+        [string]$Left.run_id -cne [string]$Right.run_id -or
+        [int]$Left.offset -ne [int]$Right.offset -or
+        -not [string]::Equals([string]$Left.manifest_path,[string]$Right.manifest_path,[StringComparison]::OrdinalIgnoreCase) -or
+        -not [string]::Equals([string]$Left.gate_path,[string]$Right.gate_path,[StringComparison]::OrdinalIgnoreCase)) {
+        return $false
+    }
+    $leftPaths = @($Left.paths)
+    $rightPaths = @($Right.paths)
+    if ($leftPaths.Count -ne $rightPaths.Count) { return $false }
+    for ($index=0; $index -lt $leftPaths.Count; $index++) {
+        if (-not [string]::Equals([string]$leftPaths[$index],[string]$rightPaths[$index],[StringComparison]::OrdinalIgnoreCase)) { return $false }
+    }
+    return $true
+}
+
+function Test-IsolatedReservationLauncherActive {
+    param($Record,[scriptblock]$ProcessLookup={param($processId) Get-Process -Id $processId -ErrorAction SilentlyContinue})
+    $process = & $ProcessLookup ([int]$Record.owner_pid)
+    if ($null -eq $process) { return $false }
+    $processIdProperty = if ($process.PSObject.Properties['Id']) { $process.PSObject.Properties['Id'] } else { $process.PSObject.Properties['ProcessId'] }
+    $creationProperty = if ($process.PSObject.Properties['StartTime']) { $process.PSObject.Properties['StartTime'] } else { $process.PSObject.Properties['CreationDate'] }
+    if ($null -eq $processIdProperty -or $null -eq $creationProperty) { throw 'Reservation owner process identity lookup was incomplete.' }
+    [int]$processIdProperty.Value -eq [int]$Record.owner_pid -and
+        (ConvertTo-IsolatedCreationIdentity $creationProperty.Value) -ceq (ConvertTo-IsolatedCreationIdentity $Record.owner_creation_identity)
+}
+
+function Test-IsolatedStackBackendProcessCandidate {
+    param($Resolution,$Process)
+    if ($null -eq $Process -or $null -eq $Process.PSObject.Properties['CommandLine']) { return $false }
+    $commandLine = [string]$Process.CommandLine
+    if ([string]::IsNullOrWhiteSpace($commandLine)) { return $false }
+    $candidates = @(
+        [pscustomobject]@{
+            entrypoint=(Join-Path $Resolution.repo_root 'governance-service')
+            marker='--port'; port=[int]$Resolution.ports.governance
+        },
+        [pscustomobject]@{
+            entrypoint=(Join-Path $Resolution.repo_root 'bim-review-coordinator\src\index.ts')
+            marker='--isolated-stack-port'; port=[int]$Resolution.ports.coordinator
+        }
+    )
+    foreach ($candidate in $candidates) {
+        $portPattern = "(?:^|\s)$([regex]::Escape($candidate.marker))\s+$($candidate.port)(?:\s|`"|$)"
+        if ($commandLine.Contains([string]$candidate.entrypoint,[StringComparison]::OrdinalIgnoreCase) -and
+            $commandLine -match $portPattern) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Test-IsolatedStackReservationReclaimable {
+    param(
+        $Resolution,$Record,
+        [scriptblock]$ListenerLookup={param($port) Get-IsolatedPortListener -Port $port},
+        [scriptblock]$BackendProcessInventoryLookup={Get-CimInstance Win32_Process -ErrorAction Stop}
+    )
+    if (Test-Path -LiteralPath $Resolution.manifest_path -PathType Leaf) {
+        try {
+            $manifest = Read-IsolatedStackManifest -Path $Resolution.manifest_path
+            Assert-IsolatedStackManifestIdentity -Manifest $manifest -RepoRoot $Resolution.repo_root -ChangeId $Resolution.change_id `
+                -RunId $Resolution.run_id -OffsetInput ([string]$Resolution.offset)
+        } catch {
+            throw "Matching stack manifest is invalid; reservation remains held: $($Resolution.manifest_path)"
+        }
+        $manifestReservationId = $manifest.PSObject.Properties['reservation_id']
+        if ($null -eq $manifestReservationId -or [string]$manifestReservationId.Value -cne [string]$Record.reservation_id) {
+            throw 'Stack manifest reservation identity does not match the reservation records.'
+        }
+        $reservationHeld = $manifest.PSObject.Properties['reservation_held']
+        if ($null -ne $reservationHeld -and [bool]$reservationHeld.Value) { return $false }
+        return $true
+    }
+    foreach ($port in @([int]$Resolution.ports.coordinator,[int]$Resolution.ports.governance)) {
+        $listeners = @(& $ListenerLookup $port | Where-Object { $null -ne $_ })
+        if ($listeners.Count -gt 0) { return $false }
+    }
+    $backendCandidates = @(& $BackendProcessInventoryLookup | Where-Object {
+        Test-IsolatedStackBackendProcessCandidate -Resolution $Resolution -Process $_
+    })
+    if ($backendCandidates.Count -gt 0) { return $false }
+    foreach ($port in @([int]$Resolution.ports.coordinator,[int]$Resolution.ports.governance)) {
+        $listeners = @(& $ListenerLookup $port | Where-Object { $null -ne $_ })
+        if ($listeners.Count -gt 0) { return $false }
+    }
+    return $true
+}
+
+function Write-IsolatedStackReservationRecordAtomic {
+    param([string]$Path,$Value)
+    $directory = Split-Path -Parent $Path
+    New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    $temporary = Join-Path $directory ".stack-reservation.$([Guid]::NewGuid().ToString('N')).tmp"
+    try {
+        $Value | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $temporary -Encoding utf8NoBOM
+        [IO.File]::Move($temporary,$Path,$false)
+    } finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+    }
+}
+
+function New-IsolatedStackReservationRecord {
+    param($Resolution,[string]$Path,[string]$ReservationId,$OwnerIdentity,[ValidateSet('active','recovery')][string]$State='active')
+    [ordered]@{
+        schema_version='isolated-stack-reservation/v1'; owner='isolated-branch-stack'; state=$State
+        reservation_id=$ReservationId; owner_pid=[int]$OwnerIdentity.pid
+        owner_creation_identity=(ConvertTo-IsolatedCreationIdentity $OwnerIdentity.creation_identity)
+        repo_root=$Resolution.repo_root; change_id=$Resolution.change_id; run_id=$Resolution.run_id
+        offset=$Resolution.offset; ports=$Resolution.ports; manifest_path=$Resolution.manifest_path
+        reservation_paths=@($Resolution.paths); reservation_path=$Path; updated_at=[DateTime]::UtcNow.ToString('o')
+    }
+}
+
+function Set-IsolatedStackReservationRecoveryHeld {
+    param($Reservation)
+    $reservationIdProperty = $Reservation.PSObject.Properties['reservation_id']
+    $ownerPidProperty = $Reservation.PSObject.Properties['owner_pid']
+    $ownerCreationProperty = $Reservation.PSObject.Properties['owner_creation_identity']
+    if ($null -eq $reservationIdProperty -or $null -eq $ownerPidProperty -or $null -eq $ownerCreationProperty) {
+        throw 'Cannot persist recovery-held state without the exact reservation owner identity.'
+    }
+    $ownerIdentity = [pscustomobject]@{pid=[int]$ownerPidProperty.Value;creation_identity=[string]$ownerCreationProperty.Value}
+    $gate = Enter-IsolatedStackReservationTransaction -GatePath $Reservation.gate_path
+    try {
+        foreach ($path in @($Reservation.paths)) {
+            if (Test-Path -LiteralPath $path -PathType Leaf) {
+                $record = Read-IsolatedStackReservationRecord -Path $path -GitCommonDirectoryFn $Reservation._git_common_directory_fn `
+                    -TrustedGitCommonDirectory $Reservation._git_common_directory
+                if (-not (Test-IsolatedStackReservationResolutionMatch -Left $record._resolution -Right $Reservation) -or
+                    [string]$record.reservation_id -cne [string]$reservationIdProperty.Value) {
+                    throw "Reservation identity changed before recovery persistence; no record was changed: $path"
+                }
+            }
+        }
+        foreach ($path in @($Reservation.paths)) {
+            $record = New-IsolatedStackReservationRecord -Resolution $Reservation -Path $path `
+                -ReservationId ([string]$reservationIdProperty.Value) -OwnerIdentity $ownerIdentity -State recovery
+            if (Test-Path -LiteralPath $path -PathType Leaf) {
+                Write-IsolatedJsonAtomic -Path $path -Value $record
+            } else {
+                Write-IsolatedStackReservationRecordAtomic -Path $path -Value $record
+            }
+        }
+    } finally {
+        $gate.Dispose()
+    }
 }
 
 function Acquire-IsolatedStackReservations {
     param(
         [string] $RepoRoot, [string] $ChangeId, [string] $RunId, [int] $Offset,
-        [scriptblock] $GitCommonDirectoryFn
+        [scriptblock] $GitCommonDirectoryFn,
+        [scriptblock] $OwnerIdentityFn={Get-IsolatedReservationLauncherIdentity},
+        [scriptblock] $ProcessLookup={param($processId) Get-Process -Id $processId -ErrorAction SilentlyContinue},
+        [scriptblock] $ListenerLookup={param($port) Get-IsolatedPortListener -Port $port},
+        [scriptblock] $BackendProcessInventoryLookup={Get-CimInstance Win32_Process -ErrorAction Stop}
     )
     $resolveParameters = @{ RepoRoot=$RepoRoot; ChangeId=$ChangeId; RunId=$RunId; Offset=$Offset }
     if ($null -ne $GitCommonDirectoryFn) { $resolveParameters.GitCommonDirectoryFn = $GitCommonDirectoryFn }
     $reservation = Resolve-IsolatedStackReservation @resolveParameters
+    $reservationId = [Guid]::NewGuid().ToString('D')
+    $ownerIdentity = & $OwnerIdentityFn
+    if ($null -eq $ownerIdentity -or [int]$ownerIdentity.pid -le 0 -or [string]::IsNullOrWhiteSpace([string]$ownerIdentity.creation_identity)) {
+        throw 'Current launcher reservation identity is incomplete.'
+    }
     $created = [System.Collections.Generic.List[string]]::new()
+    $gate = Enter-IsolatedStackReservationTransaction -GatePath $reservation.gate_path
     try {
-        foreach ($path in @($reservation.paths)) {
-            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
-            try {
-                $stream = [IO.File]::Open($path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-                try { [Text.Encoding]::UTF8.GetBytes('{"owner":"isolated-branch-stack"}') | ForEach-Object { $stream.WriteByte($_) } } finally { $stream.Dispose() }
-                $created.Add($path)
-            } catch [IO.IOException] {
-                throw "Isolated stack reservation is already held: $path"
+        $existing = [System.Collections.Generic.List[object]]::new()
+        $pendingPaths = [Collections.Generic.Queue[string]]::new()
+        $seenPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($path in @($reservation.paths)) { if ($seenPaths.Add($path)) { $pendingPaths.Enqueue($path) } }
+        while ($pendingPaths.Count -gt 0) {
+            $path = $pendingPaths.Dequeue()
+            if (Test-Path -LiteralPath $path -PathType Leaf) {
+                $record = Read-IsolatedStackReservationRecord -Path $path -GitCommonDirectoryFn $reservation._git_common_directory_fn `
+                    -TrustedGitCommonDirectory $reservation._git_common_directory
+                $existing.Add($record)
+                foreach ($relatedPath in @($record._resolution.paths)) {
+                    if ($seenPaths.Add($relatedPath)) { $pendingPaths.Enqueue($relatedPath) }
+                }
             }
         }
-        [pscustomobject]@{ paths=@($created) }
+        if ($existing.Count -gt 0) {
+            $existingIds = @($existing | ForEach-Object { [string]$_.reservation_id } | Sort-Object -Unique)
+            $existingOwners = @($existing | ForEach-Object { "$($_.owner_pid)|$($_.owner_creation_identity)" } | Sort-Object -Unique)
+            $existingTuples = @($existing | ForEach-Object {
+                "$($_._resolution.repo_root)|$($_._resolution.change_id)|$($_._resolution.run_id)|$($_._resolution.offset)|$($_._resolution.manifest_path)"
+            } | Sort-Object -Unique)
+            if ($existingIds.Count -ne 1 -or $existingOwners.Count -ne 1 -or $existingTuples.Count -ne 1) {
+                throw 'Isolated stack reservation records disagree; no record was changed.'
+            }
+            if (@($existing | Where-Object { [string]$_.state -ceq 'recovery' }).Count -gt 0) {
+                throw 'Recovery-held reservation cannot be auto-reclaimed.'
+            }
+            $representative = $existing[0]
+            if (Test-IsolatedReservationLauncherActive -Record $representative -ProcessLookup $ProcessLookup) {
+                throw "Isolated stack reservation is already held: $($representative._resolution.paths -join ', ')"
+            }
+            if (-not (Test-IsolatedStackReservationReclaimable -Resolution $representative._resolution -Record $representative `
+                -ListenerLookup $ListenerLookup -BackendProcessInventoryLookup $BackendProcessInventoryLookup)) {
+                throw 'Stale reservation could not be proven safe to reclaim; no process or record was changed.'
+            }
+            $provenStalePaths = @($existing | ForEach-Object { [string]$_.reservation_path } | Sort-Object -Unique)
+            foreach ($path in $provenStalePaths) {
+                if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force }
+                if (Test-Path -LiteralPath $path) { throw "Failed to remove proven-stale reservation record: $path" }
+            }
+        }
+        foreach ($path in @($reservation.paths)) {
+            $record = New-IsolatedStackReservationRecord -Resolution $reservation -Path $path -ReservationId $reservationId -OwnerIdentity $ownerIdentity
+            Write-IsolatedStackReservationRecordAtomic -Path $path -Value $record
+            $created.Add($path)
+        }
+        $reservation | Add-Member -Force -NotePropertyName reservation_id -NotePropertyValue $reservationId
+        $reservation | Add-Member -Force -NotePropertyName owner_pid -NotePropertyValue ([int]$ownerIdentity.pid)
+        $reservation | Add-Member -Force -NotePropertyName owner_creation_identity -NotePropertyValue (ConvertTo-IsolatedCreationIdentity $ownerIdentity.creation_identity)
+        return $reservation
     } catch {
-        foreach ($path in @($created)) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+        foreach ($path in @($created)) {
+            try {
+                $record = Read-IsolatedStackReservationRecord -Path $path -GitCommonDirectoryFn $reservation._git_common_directory_fn `
+                    -TrustedGitCommonDirectory $reservation._git_common_directory
+                if (Test-IsolatedStackReservationResolutionMatch -Left $record._resolution -Right $reservation) {
+                    if ([string]$record.reservation_id -ceq $reservationId) { Remove-Item -LiteralPath $path -Force }
+                }
+            } catch {}
+        }
         throw
+    } finally {
+        $gate.Dispose()
     }
 }
 
 function Release-IsolatedStackReservations {
     param($Reservation)
     if ($null -eq $Reservation) { return }
-    foreach ($path in @($Reservation.paths)) {
-        Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
-        if (Test-Path -LiteralPath $path) { throw "Failed to release isolated stack reservation: $path" }
+    $reservationIdProperty = $Reservation.PSObject.Properties['reservation_id']
+    if ($null -eq $reservationIdProperty -or [string]::IsNullOrWhiteSpace([string]$reservationIdProperty.Value)) {
+        throw 'Reservation release requires the exact reservation_id token.'
+    }
+    $gate = Enter-IsolatedStackReservationTransaction -GatePath $Reservation.gate_path
+    try {
+        $records = [System.Collections.Generic.List[object]]::new()
+        foreach ($path in @($Reservation.paths)) {
+            if (Test-Path -LiteralPath $path -PathType Leaf) {
+                $record = Read-IsolatedStackReservationRecord -Path $path -GitCommonDirectoryFn $Reservation._git_common_directory_fn `
+                    -TrustedGitCommonDirectory $Reservation._git_common_directory
+                if (-not (Test-IsolatedStackReservationResolutionMatch -Left $record._resolution -Right $Reservation) -or
+                    [string]$record.reservation_id -cne [string]$reservationIdProperty.Value) {
+                    throw "Reservation identity changed before release; no record was removed: $path"
+                }
+                $records.Add([pscustomobject]@{path=$path;record=$record})
+            }
+        }
+        foreach ($entry in @($records)) { Remove-Item -LiteralPath $entry.path -Force }
+        foreach ($path in @($Reservation.paths)) {
+            if (Test-Path -LiteralPath $path) { throw "Failed to release isolated stack reservation: $path" }
+        }
+    } finally {
+        $gate.Dispose()
     }
 }
 
@@ -687,10 +1095,11 @@ function Assert-IsolatedStackManifestIdentity {
 }
 
 function New-IsolatedStackManifest {
-    param([string]$RepoRoot,[string]$ChangeId,[string]$RunId,$Preflight,[string]$HeadSha,[object[]]$Processes,$StateLayout)
+    param([string]$RepoRoot,[string]$ChangeId,[string]$RunId,$Preflight,[string]$HeadSha,[object[]]$Processes,$StateLayout,$Reservation)
     [ordered]@{
         schema_version='isolated-branch-stack/v1'; stack_kind='isolated_branch_stack'
         change_id=$ChangeId; run_id=$RunId; worktree_root=$RepoRoot; offset=$Preflight.offset
+        reservation_id=[string]$Reservation.reservation_id
         ports=$Preflight.ports
         base_urls=[ordered]@{
             coordinator="http://127.0.0.1:$($Preflight.ports.coordinator)"
@@ -859,7 +1268,9 @@ function Stop-IsolatedStackRun {
 function Start-IsolatedStackRun {
     param(
         $RepoRoot,$ChangeId,$RunId,$Preflight,$Runtime,$Reservation,$StartBackendFn,$HealthFn,$IdentityLookup,$StopProcessFn,$HeadShaFn,
-        [scriptblock]$ProcessExistsFn,[scriptblock]$ListenerLookupFn,[scriptblock]$ProcessHandleLookup,$LifecycleLogger
+        [scriptblock]$ProcessExistsFn,[scriptblock]$ListenerLookupFn,[scriptblock]$ProcessHandleLookup,
+        [scriptblock]$ReservationRecoveryHoldFn={param($reservation) Set-IsolatedStackReservationRecoveryHeld -Reservation $reservation},
+        $LifecycleLogger
     )
     $runDirectory=Split-Path -Parent $Preflight.manifest_path
     $stateLayout=Resolve-IsolatedStackStateLayout -RepoRoot $RepoRoot -RunDirectory $runDirectory
@@ -904,7 +1315,7 @@ function Start-IsolatedStackRun {
         $started.Add($coordinator)
         if(-not (& $HealthFn "http://127.0.0.1:$($Preflight.ports.coordinator)/health")){throw 'coordinator health failed'}
 
-        $manifest=New-IsolatedStackManifest -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Preflight $Preflight -HeadSha $head -Processes @($started) -StateLayout $stateLayout
+        $manifest=New-IsolatedStackManifest -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Preflight $Preflight -HeadSha $head -Processes @($started) -StateLayout $stateLayout -Reservation $Reservation
         Write-IsolatedJsonAtomic -Path $Preflight.manifest_path -Value $manifest -NoClobber
         [pscustomobject]@{status='started';manifest_path=$Preflight.manifest_path;manifest=$manifest}
     } catch {
@@ -921,7 +1332,7 @@ function Start-IsolatedStackRun {
             }
             if ($rollbackFailures.Count -gt 0) {
                 try {
-                    $recovery = New-IsolatedStackManifest -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Preflight $Preflight -HeadSha $head -Processes @($started) -StateLayout $stateLayout
+                    $recovery = New-IsolatedStackManifest -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Preflight $Preflight -HeadSha $head -Processes @($started) -StateLayout $stateLayout -Reservation $Reservation
                     $recovery.backend_ready.governance = $false
                     $recovery.backend_ready.coordinator = $false
                     $recovery | Add-Member -Force -NotePropertyName reservation_held -NotePropertyValue $true
@@ -934,8 +1345,9 @@ function Start-IsolatedStackRun {
                         }
                     }
                     Write-IsolatedJsonAtomic -Path $Preflight.manifest_path -Value $recovery -NoClobber
+                    & $ReservationRecoveryHoldFn $Reservation
                 } catch {
-                    $recoveryPersistenceError = [InvalidOperationException]::new("Start failed, rollback was incomplete, and the recovery manifest could not be persisted; reservations remain held for manual recovery. Cause: $($startFailure.Exception.Message). Persistence error: $($_.Exception.Message)")
+                    $recoveryPersistenceError = [InvalidOperationException]::new("Start failed, rollback was incomplete, and the recovery handoff could not be completed; reservations remain held for ownership-gated recovery. Cause: $($startFailure.Exception.Message). Persistence error: $($_.Exception.Message)")
                     $recoveryPersistenceError.Data['KeepIsolatedReservation'] = $true
                     throw $recoveryPersistenceError
                 }
@@ -967,6 +1379,7 @@ function Invoke-IsolatedBranchStack {
         [scriptblock]$WorktreeStatusFn={param($root) & git -C $root status --porcelain --untracked-files=all},
         [scriptblock]$ReservationAcquireFn={param($root,$change,$run,$offset) Acquire-IsolatedStackReservations -RepoRoot $root -ChangeId $change -RunId $run -Offset $offset},
         [scriptblock]$ReservationReleaseFn={param($reservation) Release-IsolatedStackReservations -Reservation $reservation},
+        [scriptblock]$ReservationRecoveryHoldFn={param($reservation) Set-IsolatedStackReservationRecoveryHeld -Reservation $reservation},
         [int]$TerminationTimeoutMilliseconds=5000,
         $LifecycleLogger=$null
     )
@@ -988,6 +1401,11 @@ function Invoke-IsolatedBranchStack {
             -TerminationTimeoutMilliseconds $TerminationTimeoutMilliseconds
         if ($manifest.PSObject.Properties['reservation_held'] -and [bool]$manifest.reservation_held) {
             $heldReservation = Resolve-IsolatedStackReservation -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Offset ([int]$manifest.offset)
+            $manifestReservationId = $manifest.PSObject.Properties['reservation_id']
+            if ($null -eq $manifestReservationId -or [string]::IsNullOrWhiteSpace([string]$manifestReservationId.Value)) {
+                throw 'Recovery manifest is missing the reservation_id required for identity-checked release.'
+            }
+            $heldReservation | Add-Member -Force -NotePropertyName reservation_id -NotePropertyValue ([string]$manifestReservationId.Value)
             & $ReservationReleaseFn $heldReservation
             $manifest.reservation_held = $false
             Write-IsolatedJsonAtomic -Path $manifestPath -Value $manifest
@@ -1005,7 +1423,8 @@ function Invoke-IsolatedBranchStack {
         $runtime=& $RuntimeResolver $RepoRoot
         Start-IsolatedStackRun -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Preflight $preflight -Runtime $runtime -Reservation $reservation `
           -StartBackendFn $StartBackendFn -HealthFn $HealthFn -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn -HeadShaFn $HeadShaFn `
-          -ProcessExistsFn $ProcessExistsFn -ListenerLookupFn $StopListenerLookupFn -ProcessHandleLookup $ProcessHandleLookup -LifecycleLogger $LifecycleLogger
+          -ProcessExistsFn $ProcessExistsFn -ListenerLookupFn $StopListenerLookupFn -ProcessHandleLookup $ProcessHandleLookup `
+          -ReservationRecoveryHoldFn $ReservationRecoveryHoldFn -LifecycleLogger $LifecycleLogger
     } catch {
         if ($_.Exception.Data['KeepIsolatedReservation'] -eq $true) { $releaseReservation = $false }
         throw

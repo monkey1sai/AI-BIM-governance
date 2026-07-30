@@ -97,6 +97,17 @@ foreach ($bad in @('-1', '1.5', '5', '48', 'abc')) {
     Assert-Equal 0 $listenerCalls "offset $bad rejected before listener lookup"
 }
 
+$preflightListenerPorts = [System.Collections.Generic.List[int]]::new()
+Assert-Throws {
+    Assert-IsolatedStackStartPreflight -RepoRoot $repoRoot -ChangeId 'change-a' -RunId 'run-viewer-occupied' `
+        -OffsetInput '0' -ListenerLookup {
+            param($port)
+            $script:preflightListenerPorts.Add($port)
+            if ($port -eq 5180) { [pscustomobject]@{ LocalPort=5180; State='Listen'; OwningProcess=9001 } }
+        }
+} 'occupied Playwright viewer port is rejected before startup'
+Assert-Equal '8005,49103,5180' ($preflightListenerPorts -join ',') 'preflight checks coordinator, governance, and viewer ports'
+
 $listener = Get-IsolatedPortListener -Port 8005 -ConnectionLookup {
     @(
         [pscustomobject]@{LocalPort=8005;State='Established';OwningProcess=1},
@@ -451,12 +462,52 @@ $reservationSiblingSandbox = New-TestSandbox -Prefix 'isolated-stack-reservation
 $sharedGitCommonDirectory = Join-Path $reservationSandbox 'shared-git-common'
 $sharedGitCommonDirectoryFn = { param($root) $sharedGitCommonDirectory }.GetNewClosure()
 $firstReservation = $null
+$replacementReservation = $null
+$partialReplacementReservation = $null
+$crossRunSourceReservation = $null
+$crossRunReplacementReservation = $null
+$crossWorktreeSourceReservation = $null
 $reacquiredReservation = $null
 try {
     $firstReservation = Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-a' -Offset 2 -GitCommonDirectoryFn $sharedGitCommonDirectoryFn
     Assert-Equal 2 @($firstReservation.paths).Count 'reservation owns both run and offset files'
+    $firstRecords = @()
     foreach ($reservationPath in @($firstReservation.paths)) {
         Assert-True (Test-Path -LiteralPath $reservationPath -PathType Leaf) "reservation file exists: $reservationPath"
+        $firstRecords += Read-IsolatedStackReservationRecord -Path $reservationPath -GitCommonDirectoryFn $firstReservation._git_common_directory_fn
+    }
+    Assert-Equal 1 @($firstRecords.reservation_id | Sort-Object -Unique).Count 'run and offset records share one reservation ID'
+    Assert-Equal $firstReservation.reservation_id $firstRecords[0].reservation_id 'acquisition returns the persisted reservation ID'
+    $validFirstRecordText = Get-Content -Raw -LiteralPath $firstReservation.paths[0]
+    $recordTypeMutations = @(
+        [pscustomobject]@{name='fractional offset';mutate={param($record) $record.offset=2.4}},
+        [pscustomobject]@{name='fractional owner PID';mutate={param($record) $record.owner_pid=7001.6}},
+        [pscustomobject]@{name='string coordinator port';mutate={param($record) $record.ports.coordinator='8007'}},
+        [pscustomobject]@{name='null governance port';mutate={param($record) $record.ports.governance=$null}},
+        [pscustomobject]@{name='noncanonical creation identity';mutate={param($record) $record.owner_creation_identity='2026-07-30T00:00:01Z'}},
+        [pscustomobject]@{name='invalid updated timestamp';mutate={param($record) $record.updated_at='not-a-timestamp'}},
+        [pscustomobject]@{name='uppercase recovery state';mutate={param($record) $record.state='RECOVERY'}}
+    )
+    foreach ($mutation in $recordTypeMutations) {
+        $candidate = $validFirstRecordText | ConvertFrom-Json -Depth 12 -DateKind String
+        & $mutation.mutate $candidate
+        Write-IsolatedJsonAtomic -Path $firstReservation.paths[0] -Value $candidate
+        $malformedBytes = @($firstReservation.paths | ForEach-Object { Get-Content -Raw -LiteralPath $_ })
+        $malformedProcessLookups = 0
+        $malformedListenerLookups = 0
+        $malformedInventoryLookups = 0
+        Assert-Throws {
+            Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-a' -Offset 2 `
+                -GitCommonDirectoryFn $sharedGitCommonDirectoryFn `
+                -ProcessLookup { param($processId) $script:malformedProcessLookups++; $null } `
+                -ListenerLookup { param($port) $script:malformedListenerLookups++; $null } `
+                -BackendProcessInventoryLookup { $script:malformedInventoryLookups++; @() }
+        } "malformed reservation $($mutation.name) fails closed"
+        Assert-Equal 0 $malformedProcessLookups "malformed $($mutation.name) is rejected before owner lookup"
+        Assert-Equal 0 $malformedListenerLookups "malformed $($mutation.name) is rejected before listener lookup"
+        Assert-Equal 0 $malformedInventoryLookups "malformed $($mutation.name) is rejected before process inventory"
+        Assert-Equal ($malformedBytes -join "`n") ((@($firstReservation.paths | ForEach-Object { Get-Content -Raw -LiteralPath $_ })) -join "`n") "malformed $($mutation.name) preserves both reservation records"
+        Write-IsolatedJsonAtomic -Path $firstReservation.paths[0] -Value ($validFirstRecordText | ConvertFrom-Json -Depth 12 -DateKind String)
     }
     Assert-Throws {
         Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-a' -Offset 2 -GitCommonDirectoryFn $sharedGitCommonDirectoryFn
@@ -464,14 +515,191 @@ try {
     Assert-Throws {
         Acquire-IsolatedStackReservations -RepoRoot $reservationSiblingSandbox -ChangeId 'change-a' -RunId 'run-b' -Offset 2 -GitCommonDirectoryFn $sharedGitCommonDirectoryFn
     } 'different worktree cannot acquire the same active offset'
-    Release-IsolatedStackReservations -Reservation $firstReservation
+    $untrustedRecord = Get-Content -Raw -LiteralPath $firstReservation.paths[0] | ConvertFrom-Json -Depth 12 -DateKind String
+    $untrustedRecord | Add-Member -NotePropertyName unexpected_field -NotePropertyValue 'must-fail-closed'
+    Write-IsolatedJsonAtomic -Path $firstReservation.paths[0] -Value $untrustedRecord
+    $untrustedRecordBytes = @($firstReservation.paths | ForEach-Object { Get-Content -Raw -LiteralPath $_ })
+    Assert-Throws {
+        Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-a' -Offset 2 `
+            -GitCommonDirectoryFn $sharedGitCommonDirectoryFn -ProcessLookup { param($processId) $null } `
+            -ListenerLookup { param($port) $null }
+    } 'reservation record with an unknown schema field fails closed'
+    Assert-Equal ($untrustedRecordBytes -join "`n") ((@($firstReservation.paths | ForEach-Object { Get-Content -Raw -LiteralPath $_ })) -join "`n") 'untrusted schema preserves both records byte-for-byte'
+    $untrustedRecord.PSObject.Properties.Remove('unexpected_field')
+    Write-IsolatedJsonAtomic -Path $firstReservation.paths[0] -Value $untrustedRecord
+    $firstRecordBytes = @($firstReservation.paths | ForEach-Object { Get-Content -Raw -LiteralPath $_ })
+    Assert-Throws {
+        Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-a' -Offset 2 `
+            -GitCommonDirectoryFn $sharedGitCommonDirectoryFn -ProcessLookup { param($processId) throw 'injected process provider failure' }
+    } 'reservation owner lookup failure keeps records held'
+    Assert-Equal ($firstRecordBytes -join "`n") ((@($firstReservation.paths | ForEach-Object { Get-Content -Raw -LiteralPath $_ })) -join "`n") 'owner lookup failure preserves reservation bytes'
+    Assert-Throws {
+        Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-a' -Offset 2 `
+            -GitCommonDirectoryFn $sharedGitCommonDirectoryFn -ProcessLookup { param($processId) $null } `
+            -ListenerLookup { param($port) if ($port -eq 8007) { [pscustomobject]@{LocalPort=$port;State='Listen';OwningProcess=7001} } }
+    } 'dead launcher with an occupied backend port remains held'
+    Assert-Equal ($firstRecordBytes -join "`n") ((@($firstReservation.paths | ForEach-Object { Get-Content -Raw -LiteralPath $_ })) -join "`n") 'listener proof failure preserves reservation bytes'
+    Assert-Throws {
+        Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-a' -Offset 2 `
+            -GitCommonDirectoryFn $sharedGitCommonDirectoryFn -ProcessLookup { param($processId) $null } `
+            -ListenerLookup { param($port) throw 'injected listener provider failure' }
+    } 'listener provider failure keeps a dead-owner reservation held'
+    Assert-Equal ($firstRecordBytes -join "`n") ((@($firstReservation.paths | ForEach-Object { Get-Content -Raw -LiteralPath $_ })) -join "`n") 'listener provider failure preserves reservation bytes'
+    $delayedCoordinatorEntrypoint = Join-Path $reservationSandbox 'bim-review-coordinator\src\index.ts'
+    Assert-Throws {
+        Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-a' -Offset 2 `
+            -GitCommonDirectoryFn $sharedGitCommonDirectoryFn -ProcessLookup { param($processId) $null } `
+            -ListenerLookup { param($port) $null } `
+            -BackendProcessInventoryLookup { [pscustomobject]@{CommandLine="node $delayedCoordinatorEntrypoint --isolated-stack-port 8007"} }
+    } 'dead launcher with a delayed-bind repo backend candidate remains held even before a listener exists'
+    Assert-Equal ($firstRecordBytes -join "`n") ((@($firstReservation.paths | ForEach-Object { Get-Content -Raw -LiteralPath $_ })) -join "`n") 'delayed-bind backend candidate preserves reservation bytes'
+    Assert-Throws {
+        Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-a' -Offset 2 `
+            -GitCommonDirectoryFn $sharedGitCommonDirectoryFn -ProcessLookup { param($processId) $null } `
+            -ListenerLookup { param($port) $null } `
+            -BackendProcessInventoryLookup { throw 'injected backend process inventory failure' }
+    } 'backend process inventory failure keeps a dead-owner reservation held'
+    Assert-Equal ($firstRecordBytes -join "`n") ((@($firstReservation.paths | ForEach-Object { Get-Content -Raw -LiteralPath $_ })) -join "`n") 'backend process inventory failure preserves reservation bytes'
+    $lateListenerProbes = 0
+    Assert-Throws {
+        Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-a' -Offset 2 `
+            -GitCommonDirectoryFn $sharedGitCommonDirectoryFn -ProcessLookup { param($processId) $null } `
+            -ListenerLookup {
+                param($port)
+                $script:lateListenerProbes++
+                if ($script:lateListenerProbes -eq 3) { [pscustomobject]@{LocalPort=$port;State='Listen';OwningProcess=7004} }
+            } `
+            -BackendProcessInventoryLookup { @() }
+    } 'listener that appears after the process scan prevents stale reclaim'
+    Assert-Equal 3 $lateListenerProbes 'stale proof repeats listener observation after process inventory'
+    Assert-Equal ($firstRecordBytes -join "`n") ((@($firstReservation.paths | ForEach-Object { Get-Content -Raw -LiteralPath $_ })) -join "`n") 'late listener preserves reservation bytes'
+    $replacementReservation = Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-a' -Offset 2 `
+        -GitCommonDirectoryFn $sharedGitCommonDirectoryFn -ProcessLookup { param($processId) $null } `
+        -ListenerLookup { param($port) $null } `
+        -BackendProcessInventoryLookup { @() } `
+        -OwnerIdentityFn { [pscustomobject]@{pid=7002;creation_identity='2026-07-30T00:00:02Z'} }
+    Assert-True ($replacementReservation.reservation_id -cne $firstReservation.reservation_id) 'dead listener-free launcher receives a fresh reservation ID'
+    Assert-Throws {
+        Release-IsolatedStackReservations -Reservation $firstReservation
+    } 'delayed old-owner release cannot delete a successor reservation'
+    foreach ($reservationPath in @($replacementReservation.paths)) {
+        $replacementRecord = Read-IsolatedStackReservationRecord -Path $reservationPath -GitCommonDirectoryFn $replacementReservation._git_common_directory_fn
+        Assert-Equal $replacementReservation.reservation_id $replacementRecord.reservation_id 'successor record survives delayed release ABA attempt'
+    }
+    Remove-Item -LiteralPath $replacementReservation.paths[0] -Force
+    $partialReplacementReservation = Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-a' -Offset 2 `
+        -GitCommonDirectoryFn $sharedGitCommonDirectoryFn -ProcessLookup { param($processId) $null } `
+        -ListenerLookup { param($port) $null } `
+        -BackendProcessInventoryLookup { @() } `
+        -OwnerIdentityFn { [pscustomobject]@{pid=7003;creation_identity='2026-07-30T00:00:03Z'} }
+    Assert-Equal 2 @($partialReplacementReservation.paths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count 'single-file crash residue is safely replaced as one transaction'
+    $replacementReservation = $null
+    Release-IsolatedStackReservations -Reservation $partialReplacementReservation
+    $partialReplacementReservation = $null
     $firstReservation = $null
-    $reacquiredReservation = Acquire-IsolatedStackReservations -RepoRoot $reservationSiblingSandbox -ChangeId 'change-a' -RunId 'run-b' -Offset 2 -GitCommonDirectoryFn $sharedGitCommonDirectoryFn
-    Assert-Equal 2 @($reacquiredReservation.paths).Count 'released run and offset reservation can be reacquired'
+    $crossRunSourceReservation = Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-old' -Offset 2 `
+        -GitCommonDirectoryFn $sharedGitCommonDirectoryFn `
+        -OwnerIdentityFn { [pscustomobject]@{pid=7010;creation_identity='2026-07-30T00:00:10Z'} }
+    $crossRunReplacementReservation = Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-new' -Offset 2 `
+        -GitCommonDirectoryFn $sharedGitCommonDirectoryFn -ProcessLookup { param($processId) $null } `
+        -ListenerLookup { param($port) $null } `
+        -BackendProcessInventoryLookup { @() } `
+        -OwnerIdentityFn { [pscustomobject]@{pid=7011;creation_identity='2026-07-30T00:00:11Z'} }
+    Assert-True (-not (Test-Path -LiteralPath $crossRunSourceReservation.paths[0])) 'different RunId stale reclaim removes the old run record'
+    Assert-Equal 2 @($crossRunReplacementReservation.paths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count 'different RunId acquires both replacement records'
+    Release-IsolatedStackReservations -Reservation $crossRunReplacementReservation
+    $crossRunReplacementReservation = $null
+    $crossRunSourceReservation = $null
+    $crossWorktreeSourceReservation = Acquire-IsolatedStackReservations -RepoRoot $reservationSandbox -ChangeId 'change-a' -RunId 'run-worktree-old' -Offset 2 `
+        -GitCommonDirectoryFn $sharedGitCommonDirectoryFn `
+        -OwnerIdentityFn { [pscustomobject]@{pid=7020;creation_identity='2026-07-30T00:00:20Z'} }
+    $reacquiredReservation = Acquire-IsolatedStackReservations -RepoRoot $reservationSiblingSandbox -ChangeId 'change-a' -RunId 'run-worktree-new' -Offset 2 `
+        -GitCommonDirectoryFn $sharedGitCommonDirectoryFn -ProcessLookup { param($processId) $null } `
+        -ListenerLookup { param($port) $null } `
+        -BackendProcessInventoryLookup { @() } `
+        -OwnerIdentityFn { [pscustomobject]@{pid=7021;creation_identity='2026-07-30T00:00:21Z'} }
+    Assert-True (-not (Test-Path -LiteralPath $crossWorktreeSourceReservation.paths[0])) 'different worktree stale reclaim removes the old worktree run record'
+    Assert-Equal 2 @($reacquiredReservation.paths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count 'different worktree acquires both replacement records from the shared Git common directory'
+    $crossWorktreeSourceReservation = $null
+    Release-IsolatedStackReservations -Reservation $reacquiredReservation
+    $reacquiredReservation = $null
+
+    $deletedWorktreeRoot = New-TestSandbox -Prefix 'isolated-stack-reservation-deleted-worktree'
+    $deletedWorktreeCurrentRoot = New-TestSandbox -Prefix 'isolated-stack-reservation-current-worktree'
+    $malformedDeletedWorktreeRoot = $null
+    $deletedWorktreeSourceReservation = $null
+    $deletedWorktreeReplacementReservation = $null
+    try {
+        $existingRootGitCommonDirectoryFn = {
+            param($root)
+            if (-not (Test-Path -LiteralPath $root -PathType Container)) {
+                throw "Cannot resolve the shared Git directory for deleted worktree: $root"
+            }
+            $sharedGitCommonDirectory
+        }.GetNewClosure()
+        $deletedWorktreeSourceReservation = Acquire-IsolatedStackReservations -RepoRoot $deletedWorktreeRoot -ChangeId 'change-a' -RunId 'run-deleted-old' -Offset 3 `
+            -GitCommonDirectoryFn $existingRootGitCommonDirectoryFn `
+            -OwnerIdentityFn { [pscustomobject]@{pid=7030;creation_identity='2026-07-30T00:00:30Z'} }
+        Remove-TestSandbox -Path $deletedWorktreeRoot
+        Assert-Throws { & $existingRootGitCommonDirectoryFn $deletedWorktreeRoot } 'deleted old worktree cannot resolve its Git common directory directly'
+        $deletedWorktreeReplacementReservation = Acquire-IsolatedStackReservations -RepoRoot $deletedWorktreeCurrentRoot -ChangeId 'change-a' -RunId 'run-deleted-new' -Offset 3 `
+            -GitCommonDirectoryFn $existingRootGitCommonDirectoryFn -ProcessLookup { param($processId) $null } `
+            -ListenerLookup { param($port) $null } -BackendProcessInventoryLookup { @() } `
+            -OwnerIdentityFn { [pscustomobject]@{pid=7031;creation_identity='2026-07-30T00:00:31Z'} }
+        Assert-Equal 2 @($deletedWorktreeReplacementReservation.paths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count 'deleted-worktree residue is reclaimed through the current trusted Git common directory'
+        Release-IsolatedStackReservations -Reservation $deletedWorktreeReplacementReservation
+        $deletedWorktreeReplacementReservation = $null
+        $deletedWorktreeSourceReservation = $null
+
+        $malformedDeletedWorktreeRoot = New-TestSandbox -Prefix 'isolated-stack-reservation-malformed-deleted-worktree'
+        $malformedDeletedReservation = Acquire-IsolatedStackReservations -RepoRoot $malformedDeletedWorktreeRoot -ChangeId 'change-a' -RunId 'run-malformed-deleted' -Offset 3 `
+            -GitCommonDirectoryFn $existingRootGitCommonDirectoryFn `
+            -OwnerIdentityFn { [pscustomobject]@{pid=7032;creation_identity='2026-07-30T00:00:32Z'} }
+        $malformedSharedPath = $malformedDeletedReservation.paths[1]
+        $malformedSharedRecord = Get-Content -Raw -LiteralPath $malformedSharedPath | ConvertFrom-Json -Depth 12 -DateKind String
+        $malformedSharedRecord.reservation_paths[1] = Join-Path $sharedGitCommonDirectory 'isolated-stack-reservations\offset-4.reservation.json'
+        Write-IsolatedJsonAtomic -Path $malformedSharedPath -Value $malformedSharedRecord
+        Remove-TestSandbox -Path $malformedDeletedWorktreeRoot
+        $malformedSharedBytes = Get-Content -Raw -LiteralPath $malformedSharedPath
+        $deletedMalformedProcessLookups = 0
+        $deletedMalformedListenerLookups = 0
+        $deletedMalformedInventoryLookups = 0
+        Assert-Throws {
+            Acquire-IsolatedStackReservations -RepoRoot $deletedWorktreeCurrentRoot -ChangeId 'change-a' -RunId 'run-malformed-replacement' -Offset 3 `
+                -GitCommonDirectoryFn $existingRootGitCommonDirectoryFn `
+                -ProcessLookup { param($processId) $script:deletedMalformedProcessLookups++; $null } `
+                -ListenerLookup { param($port) $script:deletedMalformedListenerLookups++; $null } `
+                -BackendProcessInventoryLookup { $script:deletedMalformedInventoryLookups++; @() }
+        } 'deleted-worktree shared record with a malformed declared path fails closed'
+        Assert-Equal 0 $deletedMalformedProcessLookups 'malformed deleted-worktree record is rejected before owner lookup'
+        Assert-Equal 0 $deletedMalformedListenerLookups 'malformed deleted-worktree record is rejected before listener lookup'
+        Assert-Equal 0 $deletedMalformedInventoryLookups 'malformed deleted-worktree record is rejected before process inventory'
+        Assert-Equal $malformedSharedBytes (Get-Content -Raw -LiteralPath $malformedSharedPath) 'malformed deleted-worktree shared record remains byte-for-byte unchanged'
+    }
+    finally {
+        if ($null -ne $deletedWorktreeReplacementReservation) {
+            try { Release-IsolatedStackReservations -Reservation $deletedWorktreeReplacementReservation } catch {}
+        }
+        Remove-Item -LiteralPath (Join-Path $sharedGitCommonDirectory 'isolated-stack-reservations\offset-3.reservation.json') -Force -ErrorAction SilentlyContinue
+        foreach ($path in @($deletedWorktreeRoot,$deletedWorktreeCurrentRoot,$malformedDeletedWorktreeRoot)) {
+            if ($path -and (Test-Path -LiteralPath $path)) { Remove-TestSandbox -Path $path }
+        }
+    }
 }
 finally {
-    Release-IsolatedStackReservations -Reservation $firstReservation
-    Release-IsolatedStackReservations -Reservation $reacquiredReservation
+    foreach ($candidate in @($firstReservation,$replacementReservation,$partialReplacementReservation,$crossRunSourceReservation,$crossRunReplacementReservation,$crossWorktreeSourceReservation,$reacquiredReservation)) {
+        if ($null -ne $candidate) {
+            try { Release-IsolatedStackReservations -Reservation $candidate } catch {}
+        }
+    }
+    foreach ($path in @(
+        (Join-Path $reservationSandbox 'artifacts\e2e\change-a\run-a\.stack-reservation.json'),
+        (Join-Path $reservationSandbox 'artifacts\e2e\change-a\run-old\.stack-reservation.json'),
+        (Join-Path $reservationSandbox 'artifacts\e2e\change-a\run-new\.stack-reservation.json'),
+        (Join-Path $reservationSandbox 'artifacts\e2e\change-a\run-worktree-old\.stack-reservation.json'),
+        (Join-Path $reservationSiblingSandbox 'artifacts\e2e\change-a\run-worktree-new\.stack-reservation.json'),
+        (Join-Path $sharedGitCommonDirectory 'isolated-stack-reservations\offset-2.reservation.json')
+    )) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
     Remove-TestSandbox -Path $reservationSandbox
     Remove-TestSandbox -Path $reservationSiblingSandbox
 }
@@ -566,7 +794,35 @@ try {
     Assert-Equal 'isolated-branch-stack/v1' $successManifest.schema_version 'successful start writes v1 manifest'
     Assert-Equal 'isolated_branch_stack' $successManifest.stack_kind 'successful start writes isolated stack kind'
     Assert-Equal 2 @($successManifest.processes).Count 'successful start writes both backend identities'
+    Assert-True (-not [string]::IsNullOrWhiteSpace([string]$successManifest.reservation_id)) 'successful manifest binds the reservation ID'
     Assert-IsolatedStackManifestIdentity -Manifest $successManifest -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-success' -OffsetInput '0'
+    $staleSuccessReservation = Resolve-IsolatedStackReservation -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-success' -Offset 0
+    foreach ($reservationPath in @($staleSuccessReservation.paths)) {
+        Write-IsolatedStackReservationRecordAtomic -Path $reservationPath -Value ([ordered]@{
+            schema_version='isolated-stack-reservation/v1';owner='isolated-branch-stack';state='active'
+            reservation_id=[string]$successManifest.reservation_id;owner_pid=7201;owner_creation_identity='2026-07-30T00:00:01.0000000Z'
+            repo_root=$staleSuccessReservation.repo_root;change_id=$staleSuccessReservation.change_id;run_id=$staleSuccessReservation.run_id
+            offset=$staleSuccessReservation.offset;ports=$staleSuccessReservation.ports;manifest_path=$staleSuccessReservation.manifest_path
+            reservation_paths=@($staleSuccessReservation.paths);reservation_path=$reservationPath;updated_at='2026-07-30T00:00:01.0000000Z'
+        })
+    }
+    $mismatchedSuccessRecord = Get-Content -Raw -LiteralPath $staleSuccessReservation.paths[1] | ConvertFrom-Json -Depth 12 -DateKind String
+    $mismatchedSuccessRecord.reservation_id = [Guid]::NewGuid().ToString('D')
+    Write-IsolatedJsonAtomic -Path $staleSuccessReservation.paths[1] -Value $mismatchedSuccessRecord
+    $mismatchedSuccessBytes = @($staleSuccessReservation.paths | ForEach-Object { Get-Content -Raw -LiteralPath $_ })
+    Assert-Throws {
+        Acquire-IsolatedStackReservations -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-success' -Offset 0 `
+            -ProcessLookup { param($processId) $null } `
+            -OwnerIdentityFn { [pscustomobject]@{pid=7202;creation_identity='2026-07-30T00:00:02Z'} }
+    } 'manifest and reservation ID mismatch fails closed'
+    Assert-Equal ($mismatchedSuccessBytes -join "`n") ((@($staleSuccessReservation.paths | ForEach-Object { Get-Content -Raw -LiteralPath $_ })) -join "`n") 'ID mismatch preserves both reservation records'
+    $mismatchedSuccessRecord.reservation_id = [string]$successManifest.reservation_id
+    Write-IsolatedJsonAtomic -Path $staleSuccessReservation.paths[1] -Value $mismatchedSuccessRecord
+    $postCommitReplacement = Acquire-IsolatedStackReservations -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId 'run-success' -Offset 0 `
+        -ProcessLookup { param($processId) $null } `
+        -OwnerIdentityFn { [pscustomobject]@{pid=7202;creation_identity='2026-07-30T00:00:02Z'} }
+    Assert-True ($postCommitReplacement.reservation_id -cne [string]$successManifest.reservation_id) 'dead post-commit launcher reservation is replaced without changing its success manifest'
+    Release-IsolatedStackReservations -Reservation $postCommitReplacement
     $successRunDirectory = Split-Path -Parent $successManifestPath
     $expectedStateRoot = Join-Path $successRunDirectory 'state'
     $expectedFixtureRoot = Join-Path $dispatcherSandbox 'storage'
@@ -835,7 +1091,15 @@ try {
     $heldRecoveryReservation = Resolve-IsolatedStackReservation -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId $recoveryRunId -Offset 0
     foreach ($reservationPath in @($heldRecoveryReservation.paths)) {
         Assert-True (Test-Path -LiteralPath $reservationPath -PathType Leaf) "incomplete rollback retains reservation file: $reservationPath"
+        Assert-Equal 'recovery' (Read-IsolatedStackReservationRecord -Path $reservationPath -GitCommonDirectoryFn $heldRecoveryReservation._git_common_directory_fn).state 'incomplete rollback marks each reservation record recovery-held before handoff'
     }
+    $heldRecoveryBytes = @($heldRecoveryReservation.paths | ForEach-Object { Get-Content -Raw -LiteralPath $_ })
+    Assert-Throws {
+        Acquire-IsolatedStackReservations -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId $recoveryRunId -Offset 0 `
+            -ProcessLookup { param($processId) $null } -ListenerLookup { param($port) $null } `
+            -OwnerIdentityFn { [pscustomobject]@{pid=7302;creation_identity='2026-07-30T00:00:02Z'} }
+    } 'matching recovery-held manifest is never auto-reclaimed even when the launcher is dead and ports are free'
+    Assert-Equal ($heldRecoveryBytes -join "`n") ((@($heldRecoveryReservation.paths | ForEach-Object { Get-Content -Raw -LiteralPath $_ })) -join "`n") 'recovery-held auto-reclaim attempt preserves both records byte-for-byte'
     $recoveryRetryStops = [System.Collections.Generic.List[int]]::new()
     $recoveryStop = Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId $recoveryRunId -RepoRoot $dispatcherSandbox `
         -IdentityLookup { param($expectedProcess) $expectedProcess } `
@@ -849,6 +1113,50 @@ try {
     Assert-True (-not [bool]$recoveredManifest.reservation_held) 'successful recovery stop clears held reservation state'
     foreach ($reservationPath in @($heldRecoveryReservation.paths)) {
         Assert-True (-not (Test-Path -LiteralPath $reservationPath)) "successful recovery stop releases reservation file: $reservationPath"
+    }
+
+    $manifestFirstRunId = 'run-recovery-manifest-first'
+    $manifestFirstPath = Resolve-IsolatedStackManifestPath -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId $manifestFirstRunId
+    $manifestVisibleBeforeRecordTransition = $false
+    Assert-Throws {
+        Invoke-IsolatedBranchStack -Action start -ChangeId 'change-a' -RunId $manifestFirstRunId -OffsetInput '0' -RepoRoot $dispatcherSandbox `
+            -WorktreeStatusFn { param($root) @() } `
+            -PreflightFn { param($root,$change,$run,$offset) [pscustomobject]@{offset=0;ports=[pscustomobject]@{coordinator=8005;governance=49103;viewer=5180};manifest_path=$manifestFirstPath} } `
+            -RuntimeResolver { param($root) [pscustomobject]@{python='python';node='node';tsx='tsx.mjs'} } `
+            -StartBackendFn {
+                param($spec)
+                if ($spec.role -eq 'coordinator') { throw 'coordinator start failed before manifest-first recovery' }
+                [pscustomobject]@{role='governance';pid=6201;entrypoint=$spec.entrypoint;command_line=($spec.Arguments -join ' ');creation_identity='manifest-first-c1'}
+            } `
+            -HealthFn { param($url) $true } `
+            -IdentityLookup { param($expectedProcess) $expectedProcess } `
+            -ProcessHandleLookup $fakeProcessHandleLookup `
+            -StopProcessFn { param($processId) throw 'injected manifest-first rollback stop failure' } `
+            -ReservationRecoveryHoldFn {
+                param($reservation)
+                $script:manifestVisibleBeforeRecordTransition = Test-Path -LiteralPath $manifestFirstPath -PathType Leaf
+                throw 'injected crash boundary before reservation record transition'
+            } `
+            -HeadShaFn { param($root) ('e' * 40 -join '') }
+    } 'recovery record transition failure preserves a manifest-first ownership recovery path'
+    Assert-True $manifestVisibleBeforeRecordTransition 'held recovery manifest is durable before reservation records transition'
+    $manifestFirstRecovery = Read-IsolatedStackManifest -Path $manifestFirstPath
+    Assert-True ([bool]$manifestFirstRecovery.reservation_held) 'manifest-first crash boundary remains fail closed'
+    $manifestFirstReservation = Resolve-IsolatedStackReservation -RepoRoot $dispatcherSandbox -ChangeId 'change-a' -RunId $manifestFirstRunId -Offset 0
+    foreach ($reservationPath in @($manifestFirstReservation.paths)) {
+        Assert-Equal 'active' (Read-IsolatedStackReservationRecord -Path $reservationPath -GitCommonDirectoryFn $manifestFirstReservation._git_common_directory_fn).state 'manifest-first crash boundary leaves reclaimable records active rather than unrecoverable recovery-without-manifest state'
+    }
+    $manifestFirstRetryStops = [System.Collections.Generic.List[int]]::new()
+    $manifestFirstStop = Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId $manifestFirstRunId -RepoRoot $dispatcherSandbox `
+        -IdentityLookup { param($expectedProcess) $expectedProcess } `
+        -ProcessExistsFn $fakeStoppedProcessExistsFn `
+        -StopListenerLookupFn { param($port) $null } `
+        -ProcessHandleLookup $fakeProcessHandleLookup `
+        -StopProcessFn { param($processId) $script:manifestFirstRetryStops.Add($processId) }
+    Assert-Equal 'stopped' $manifestFirstStop.status 'manifest-first crash boundary supports ownership-gated stop'
+    Assert-Equal '6201' ($manifestFirstRetryStops -join ',') 'manifest-first recovery stops only the surviving owned backend'
+    foreach ($reservationPath in @($manifestFirstReservation.paths)) {
+        Assert-True (-not (Test-Path -LiteralPath $reservationPath)) "manifest-first recovery releases reservation file: $reservationPath"
     }
 
     $partialStopManifest = $statusManifest | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12

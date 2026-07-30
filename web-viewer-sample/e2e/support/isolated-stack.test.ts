@@ -12,6 +12,7 @@ import {
   assertIsolatedWorktreeStatusClean,
   assertLiveIsolatedBackendOwnership,
   A4_REQUIRED_OBSERVATION_IDS,
+  ISOLATED_REQUIRED_OBSERVATION_IDS,
   beginIsolatedEvidenceInvocation,
   classifyHarnessUse,
   createForbiddenRequestGuard,
@@ -469,29 +470,31 @@ describe("loadIsolatedStackConfig", () => {
     expect(readdirSync(config.runDir).filter(name => name.includes(".tmp-") || name === "evidence-manifest.lock.json")).toEqual([]);
   });
 
-  it("marks A4 browser operability partial until every required viewport observation is published", async () => {
+  it("keeps browser operability partial until A3 and every required A4 viewport observation are published", async () => {
     const value = fixture();
     const config = loadIsolatedStackConfig({
       cwd: value.worktreeRoot,
       headSha: value.headSha,
       env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath },
     })!;
-    const requiredIds = [...A4_REQUIRED_OBSERVATION_IDS];
-    const output = await writeUnitEvidence(config, { ...sampleObservation(config), testId: requiredIds[0] });
+    const a4Ids = [...A4_REQUIRED_OBSERVATION_IDS];
+    const output = await writeUnitEvidence(config, { ...sampleObservation(config), testId: a4Ids[0] });
     expect(JSON.parse(readFileSync(output, "utf8")).scope.cpu_browser_operability).toBe("partial");
-    for (const testId of requiredIds.slice(1)) {
+    for (const testId of a4Ids.slice(1)) {
       await writeUnitEvidence(config, { ...sampleObservation(config), testId });
     }
+    expect(JSON.parse(readFileSync(output, "utf8")).scope.cpu_browser_operability).toBe("partial");
+    await writeUnitEvidence(config, { ...sampleObservation(config), testId: "a3-federated-session-chain" });
     const evidence = JSON.parse(readFileSync(output, "utf8"));
     expect(evidence.scope.cpu_browser_operability).toBe("observed");
-    expect(evidence.scope.required_observation_ids).toEqual(requiredIds);
+    expect(evidence.scope.required_observation_ids).toEqual([...ISOLATED_REQUIRED_OBSERVATION_IDS]);
   });
 
   it("prunes observations whose in-run artifacts were deleted and recomputes partial scope", async () => {
     const value = fixture();
     const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
     const stale = sampleObservation(config);
-    for (const testId of A4_REQUIRED_OBSERVATION_IDS) {
+    for (const testId of ISOLATED_REQUIRED_OBSERVATION_IDS) {
       await writeUnitEvidence(config, { ...stale, testId });
     }
     rmSync(stale.screenshotPaths[0], { force: true });
