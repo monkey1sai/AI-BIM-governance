@@ -4,6 +4,7 @@
 _output/
 _playwright-output/
 playwright-output/
+playwright-report/
 _launcher/
 # Isolated branch launcher mutable state is per-run, regenerated, and must not
 # make the evidence publisher's clean-worktree gate reject its own backend run.

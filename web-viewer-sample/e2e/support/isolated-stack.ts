@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { closeSync, existsSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Page } from "@playwright/test";
@@ -402,6 +402,7 @@ export type IsolatedEvidencePublicationVerifier = {
   assertWorktreeStatusClean(config: IsolatedStackConfig): void;
   assertLiveBackendOwnership(config: IsolatedStackConfig): Promise<void>;
   assertManifestHead(config: IsolatedStackConfig): void;
+  evidenceLockIdentityLookup?: IsolatedEvidenceLockIdentityLookup;
 };
 
 export type IsolatedGitCommandRunner = (args: string[]) => string;
@@ -525,6 +526,231 @@ type IsolatedEvidenceInvocationLease = {
   created_at: string;
 };
 
+type IsolatedEvidenceWriterLockRecord = {
+  schema_version: "isolated-branch-evidence-writer-lock/v1";
+  lock_id: string;
+  owner_pid: number;
+  owner_creation_identity: string;
+  created_at: string;
+};
+
+type IsolatedEvidenceWriterReclaimClaim = {
+  schema_version: "isolated-branch-evidence-writer-reclaim/v1";
+  stale_lock_id: string;
+  claimant_pid: number;
+  claimant_creation_identity: string;
+  created_at: string;
+};
+
+export type IsolatedEvidenceLockIdentityLookup = (processId: number) => string | null;
+
+const WINDOWS_EVIDENCE_LOCK_IDENTITY_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+$targetProcessId = [int]$env:E2E_EVIDENCE_LOCK_PROCESS_ID
+$target = Get-Process -Id $targetProcessId -ErrorAction SilentlyContinue
+if ($null -eq $target) {
+  '__missing__'
+  exit 0
+}
+$target.StartTime.ToUniversalTime().ToString('o')
+`;
+
+export const defaultIsolatedEvidenceLockIdentityLookup: IsolatedEvidenceLockIdentityLookup = processId => {
+  if (!Number.isSafeInteger(processId) || processId <= 0) {
+    throw new Error("evidence writer lock process id is invalid");
+  }
+  if (process.platform === "win32") {
+    const output = execFileSync("pwsh", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      WINDOWS_EVIDENCE_LOCK_IDENTITY_SCRIPT,
+    ], {
+      encoding: "utf8",
+      windowsHide: true,
+      env: { ...process.env, E2E_EVIDENCE_LOCK_PROCESS_ID: String(processId) },
+    }).trim();
+    if (output === "__missing__") return null;
+    if (!output || !Number.isFinite(Date.parse(output))) {
+      throw new Error("evidence writer lock process identity lookup was malformed");
+    }
+    return output;
+  }
+  if (process.platform === "linux") {
+    try {
+      const stat = readFileSync(`/proc/${processId}/stat`, "utf8");
+      const closeParen = stat.lastIndexOf(")");
+      const fields = closeParen >= 0 ? stat.slice(closeParen + 2).trim().split(/\s+/u) : [];
+      const startTicks = fields[19];
+      const bootId = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+      if (!startTicks || !bootId) throw new Error("malformed Linux process identity");
+      return `linux:${bootId}:${startTicks}`;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+  }
+  throw new Error(`evidence writer lock identity lookup is unsupported on ${process.platform}`);
+};
+
+function parseIsolatedEvidenceWriterLock(raw: string, lockPath: string): IsolatedEvidenceWriterLockRecord {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw new Error(`evidence writer lock is malformed: ${lockPath}`);
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`evidence writer lock is malformed: ${lockPath}`);
+  }
+  const record = value as Partial<IsolatedEvidenceWriterLockRecord>;
+  const keys = Object.keys(record).sort();
+  const expectedKeys = ["created_at", "lock_id", "owner_creation_identity", "owner_pid", "schema_version"];
+  const createdAt = typeof record.created_at === "string" ? new Date(record.created_at) : null;
+  if (
+    keys.join("|") !== expectedKeys.join("|") ||
+    record.schema_version !== "isolated-branch-evidence-writer-lock/v1" ||
+    typeof record.lock_id !== "string" || !EVIDENCE_GENERATION_PATTERN.test(record.lock_id) ||
+    !Number.isSafeInteger(record.owner_pid) || record.owner_pid! <= 0 ||
+    typeof record.owner_creation_identity !== "string" || !record.owner_creation_identity || record.owner_creation_identity.length > 512 ||
+    !createdAt || !Number.isFinite(createdAt.getTime()) || createdAt.toISOString() !== record.created_at
+  ) {
+    throw new Error(`evidence writer lock is malformed: ${lockPath}`);
+  }
+  return record as IsolatedEvidenceWriterLockRecord;
+}
+
+function listIsolatedEvidenceWriterReclaimClaims(lockPath: string): string[] {
+  const prefix = `${path.basename(lockPath)}.reclaim-`;
+  return readdirSync(path.dirname(lockPath))
+    .filter(entry => entry.startsWith(prefix))
+    .map(entry => path.join(path.dirname(lockPath), entry));
+}
+
+function acquireIsolatedEvidenceWriterLock(
+  lockPath: string,
+  identityLookup: IsolatedEvidenceLockIdentityLookup = defaultIsolatedEvidenceLockIdentityLookup,
+  allowStaleReclaim = false,
+): () => void {
+  const ownerCreationIdentity = identityLookup(process.pid);
+  if (!ownerCreationIdentity || ownerCreationIdentity.length > 512) {
+    throw new Error("current evidence writer process identity is unavailable");
+  }
+  const lockId = randomUUID().toLowerCase();
+  const record: IsolatedEvidenceWriterLockRecord = {
+    schema_version: "isolated-branch-evidence-writer-lock/v1",
+    lock_id: lockId,
+    owner_pid: process.pid,
+    owner_creation_identity: ownerCreationIdentity,
+    created_at: new Date().toISOString(),
+  };
+  const serialized = `${JSON.stringify(record, null, 2)}\n`;
+  let ownedReclaimClaimPath: string | undefined;
+
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    let descriptor: number | undefined;
+    try {
+      const foreignClaims = listIsolatedEvidenceWriterReclaimClaims(lockPath)
+        .filter(claimPath => claimPath !== ownedReclaimClaimPath);
+      if (foreignClaims.length > 0) {
+        throw new Error(`evidence writer stale-reclaim claim exists: ${foreignClaims[0]}`);
+      }
+      descriptor = openSync(lockPath, "wx");
+      const claimsAfterOpen = listIsolatedEvidenceWriterReclaimClaims(lockPath)
+        .filter(claimPath => claimPath !== ownedReclaimClaimPath);
+      if (claimsAfterOpen.length > 0) {
+        closeSync(descriptor);
+        descriptor = undefined;
+        unlinkSync(lockPath);
+        throw new Error(`evidence writer stale-reclaim claim exists: ${claimsAfterOpen[0]}`);
+      }
+      writeFileSync(descriptor, serialized, { encoding: "utf8" });
+      fsyncSync(descriptor);
+      closeSync(descriptor);
+      descriptor = undefined;
+      if (readFileSync(lockPath, "utf8") !== serialized) {
+        throw new Error("evidence writer lock changed during acquisition");
+      }
+      if (ownedReclaimClaimPath) {
+        unlinkSync(ownedReclaimClaimPath);
+        ownedReclaimClaimPath = undefined;
+      }
+      let released = false;
+      return () => {
+        if (released) return;
+        const current = parseIsolatedEvidenceWriterLock(readFileSync(lockPath, "utf8"), lockPath);
+        if (
+          current.lock_id !== lockId ||
+          current.owner_pid !== process.pid ||
+          current.owner_creation_identity !== ownerCreationIdentity
+        ) {
+          throw new Error("evidence writer lock identity changed before release");
+        }
+        unlinkSync(lockPath);
+        released = true;
+      };
+    } catch (error) {
+      if (descriptor !== undefined) {
+        closeSync(descriptor);
+        if (existsSync(lockPath)) unlinkSync(lockPath);
+      }
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (ownedReclaimClaimPath) {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+        continue;
+      }
+      if (!allowStaleReclaim) {
+        throw new Error(`evidence writer lock exists: ${lockPath}`);
+      }
+      const staleBytes = readFileSync(lockPath, "utf8");
+      const existing = parseIsolatedEvidenceWriterLock(staleBytes, lockPath);
+      let liveIdentity: string | null;
+      try {
+        liveIdentity = identityLookup(existing.owner_pid);
+      } catch (lookupError) {
+        throw new Error(`evidence writer lock owner lookup failed: ${(lookupError as Error).message}`);
+      }
+      if (liveIdentity === existing.owner_creation_identity) {
+        throw new Error(`evidence writer lock exists: ${lockPath}`);
+      }
+      const reclaimClaim: IsolatedEvidenceWriterReclaimClaim = {
+        schema_version: "isolated-branch-evidence-writer-reclaim/v1",
+        stale_lock_id: existing.lock_id,
+        claimant_pid: process.pid,
+        claimant_creation_identity: ownerCreationIdentity,
+        created_at: new Date().toISOString(),
+      };
+      const reclaimClaimPath = `${lockPath}.reclaim-${existing.lock_id}.json`;
+      const reclaimClaimBytes = `${JSON.stringify(reclaimClaim, null, 2)}\n`;
+      let reclaimDescriptor: number | undefined;
+      try {
+        reclaimDescriptor = openSync(reclaimClaimPath, "wx");
+        writeFileSync(reclaimDescriptor, reclaimClaimBytes, { encoding: "utf8" });
+        fsyncSync(reclaimDescriptor);
+        closeSync(reclaimDescriptor);
+        reclaimDescriptor = undefined;
+      } catch (claimError) {
+        if (reclaimDescriptor !== undefined) closeSync(reclaimDescriptor);
+        if ((claimError as NodeJS.ErrnoException).code === "EEXIST") {
+          throw new Error(`evidence writer stale-reclaim claim exists: ${reclaimClaimPath}`);
+        }
+        throw claimError;
+      }
+      if (readFileSync(reclaimClaimPath, "utf8") !== reclaimClaimBytes) {
+        throw new Error("evidence writer stale-reclaim claim changed during acquisition");
+      }
+      ownedReclaimClaimPath = reclaimClaimPath;
+      if (readFileSync(lockPath, "utf8") !== staleBytes) {
+        unlinkSync(reclaimClaimPath);
+        ownedReclaimClaimPath = undefined;
+        throw new Error("evidence writer lock changed during stale-owner verification");
+      }
+      unlinkSync(lockPath);
+    }
+  }
+  throw new Error("evidence writer lock contention did not converge; stale-reclaim claim retained for manual cleanup");
+}
+
 function readIsolatedEvidenceInvocationLease(config: IsolatedStackConfig): IsolatedEvidenceInvocationLease {
   const leasePath = path.join(config.runDir, "evidence-invocation.json");
   if (!existsSync(leasePath)) throw new Error("isolated evidence invocation lease is missing");
@@ -542,20 +768,19 @@ function readIsolatedEvidenceInvocationLease(config: IsolatedStackConfig): Isola
 export function beginIsolatedEvidenceInvocation(
   config: IsolatedStackConfig,
   requestedGeneration: string,
+  identityLookup: IsolatedEvidenceLockIdentityLookup = defaultIsolatedEvidenceLockIdentityLookup,
 ): (setupSucceeded: boolean) => void {
   const invocationGeneration = validateIsolatedEvidenceGeneration(requestedGeneration);
   const output = path.join(config.runDir, "evidence-manifest.json");
   const leasePath = path.join(config.runDir, "evidence-invocation.json");
   const lockPath = path.join(config.runDir, "evidence-manifest.lock.json");
-  let lockDescriptor: number | undefined;
+  let releaseWriterLock: (() => void) | undefined;
   let temporary: string | undefined;
   try {
-    try {
-      lockDescriptor = openSync(lockPath, "wx");
-    } catch (error) {
-      if (existsSync(lockPath)) throw new Error(`evidence writer lock exists: ${lockPath}`);
-      throw error;
-    }
+    // Playwright global setup is the sole stale-lock recovery phase. Worker
+    // publication always fails closed on an existing lock, so two publishers
+    // can never race through compare-and-unlink stale recovery.
+    releaseWriterLock = acquireIsolatedEvidenceWriterLock(lockPath, identityLookup, true);
     if (existsSync(output)) unlinkSync(output);
     if (existsSync(leasePath)) unlinkSync(leasePath);
     const lease: IsolatedEvidenceInvocationLease = {
@@ -570,10 +795,7 @@ export function beginIsolatedEvidenceInvocation(
     temporary = undefined;
   } catch (error) {
     if (temporary && existsSync(temporary)) unlinkSync(temporary);
-    if (lockDescriptor !== undefined) {
-      closeSync(lockDescriptor);
-      if (existsSync(lockPath)) unlinkSync(lockPath);
-    }
+    if (releaseWriterLock) releaseWriterLock();
     throw error;
   }
 
@@ -588,8 +810,7 @@ export function beginIsolatedEvidenceInvocation(
       if (!setupSucceeded && existsSync(leasePath)) unlinkSync(leasePath);
     } finally {
       released = true;
-      closeSync(lockDescriptor!);
-      if (existsSync(lockPath)) unlinkSync(lockPath);
+      releaseWriterLock!();
     }
   };
 }
@@ -620,15 +841,14 @@ export async function writeIsolatedEvidenceManifest(
     invocation_generation: invocationGeneration,
   };
   const lockPath = path.join(config.runDir, "evidence-manifest.lock.json");
-  let lockDescriptor: number | undefined;
+  let releaseWriterLock: (() => void) | undefined;
   let temporary: string | undefined;
   try {
-    try {
-      lockDescriptor = openSync(lockPath, "wx");
-    } catch (error) {
-      if (existsSync(lockPath)) throw new Error(`evidence writer lock exists: ${lockPath}`);
-      throw error;
-    }
+    releaseWriterLock = acquireIsolatedEvidenceWriterLock(
+      lockPath,
+      verifier.evidenceLockIdentityLookup ?? defaultIsolatedEvidenceLockIdentityLookup,
+      false,
+    );
     const lease = readIsolatedEvidenceInvocationLease(config);
     if (lease.invocation_generation !== invocationGeneration) {
       throw new Error("isolated evidence invocation generation is stale");
@@ -697,9 +917,6 @@ export async function writeIsolatedEvidenceManifest(
     return output;
   } finally {
     if (temporary && existsSync(temporary)) unlinkSync(temporary);
-    if (lockDescriptor !== undefined) {
-      closeSync(lockDescriptor);
-      if (existsSync(lockPath)) unlinkSync(lockPath);
-    }
+    if (releaseWriterLock) releaseWriterLock();
   }
 }

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { closeSync, existsSync, mkdtempSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -30,6 +30,10 @@ import {
 const roots: string[] = [];
 const UNIT_EVIDENCE_GENERATION = "11111111-1111-4111-8111-111111111111";
 const NEXT_EVIDENCE_GENERATION = "22222222-2222-4222-8222-222222222222";
+const STALE_LOCK_ID = "33333333-3333-4333-8333-333333333333";
+const UNIT_EVIDENCE_LOCK_IDENTITY = "unit-evidence-writer-process";
+const unitEvidenceLockIdentityLookup = (processId: number) =>
+  processId === process.pid ? UNIT_EVIDENCE_LOCK_IDENTITY : null;
 
 function fixture() {
   const worktreeRoot = mkdtempSync(path.join(tmpdir(), "isolated-stack-"));
@@ -126,6 +130,7 @@ const unitEvidencePublicationVerifier: IsolatedEvidencePublicationVerifier = {
   assertWorktreeStatusClean() {},
   async assertLiveBackendOwnership() {},
   assertManifestHead() {},
+  evidenceLockIdentityLookup: unitEvidenceLockIdentityLookup,
 };
 
 function writeUnitEvidence(config: IsolatedStackConfig, observation: BrowserEvidenceObservation) {
@@ -521,7 +526,7 @@ describe("loadIsolatedStackConfig", () => {
     const output = await writeUnitEvidence(config, sampleObservation(config));
     expect(existsSync(output)).toBe(true);
 
-    const finishSetup = beginIsolatedEvidenceInvocation(config, NEXT_EVIDENCE_GENERATION);
+    const finishSetup = beginIsolatedEvidenceInvocation(config, NEXT_EVIDENCE_GENERATION, unitEvidenceLockIdentityLookup);
     const lockPath = path.join(config.runDir, "evidence-manifest.lock.json");
     expect(existsSync(output)).toBe(false);
     expect(existsSync(lockPath)).toBe(true);
@@ -548,7 +553,7 @@ describe("loadIsolatedStackConfig", () => {
     const value = fixture();
     const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
     const output = await writeUnitEvidence(config, sampleObservation(config));
-    const finishSetup = beginIsolatedEvidenceInvocation(config, NEXT_EVIDENCE_GENERATION);
+    const finishSetup = beginIsolatedEvidenceInvocation(config, NEXT_EVIDENCE_GENERATION, unitEvidenceLockIdentityLookup);
 
     finishSetup(false);
 
@@ -658,6 +663,8 @@ describe("loadIsolatedStackConfig", () => {
       `${runRoot}/state/governance/governance.db`,
       `${runRoot}/state/coordinator/logs/coordinator/2026-07-30/coordinator.jsonl`,
       `${runRoot}/playwright-output/a4-closeout/error-context.md`,
+      `${runRoot}/playwright-report/${UNIT_EVIDENCE_GENERATION}/index.html`,
+      `${runRoot}/evidence-manifest.lock.json.reclaim-${STALE_LOCK_ID}.json`,
     ]) {
       expect(() => execFileSync("git", ["check-ignore", "-q", "--", generatedPath], { cwd: repoRoot, stdio: "ignore" })).not.toThrow();
     }
@@ -713,19 +720,137 @@ describe("loadIsolatedStackConfig", () => {
     })).toThrow(/E2E_DISABLE_WEBSERVER=1 is not permitted/);
   });
 
-  it("fails closed on a pre-existing evidence lock and preserves original bytes", async () => {
+  it("fails closed on an active evidence lock and preserves original bytes", async () => {
     const value = fixture();
     const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
     const output = await writeUnitEvidence(config, sampleObservation(config));
     const original = readFileSync(output, "utf8");
     const lockPath = path.join(config.runDir, "evidence-manifest.lock.json");
-    closeSync(openSync(lockPath, "wx"));
-    try {
-      await expect(writeUnitEvidence(config, { ...sampleObservation(config), visibleStates: ["retry"] })).rejects.toThrow(/evidence writer lock exists/);
-      expect(readFileSync(output, "utf8")).toBe(original);
-    } finally {
-      unlinkSync(lockPath);
-    }
+    const activeBytes = `${JSON.stringify({
+      schema_version: "isolated-branch-evidence-writer-lock/v1",
+      lock_id: STALE_LOCK_ID,
+      owner_pid: process.pid,
+      owner_creation_identity: UNIT_EVIDENCE_LOCK_IDENTITY,
+      created_at: "2026-07-30T00:00:00.000Z",
+    }, null, 2)}\n`;
+    writeFileSync(lockPath, activeBytes);
+
+    await expect(writeUnitEvidence(config, { ...sampleObservation(config), visibleStates: ["retry"] })).rejects.toThrow(/evidence writer lock exists/);
+    expect(readFileSync(lockPath, "utf8")).toBe(activeBytes);
+    expect(readFileSync(output, "utf8")).toBe(original);
+    unlinkSync(lockPath);
+  });
+
+  it("only lets global setup reclaim an identity-proven stale evidence lock", async () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
+    const output = await writeUnitEvidence(config, sampleObservation(config));
+    const originalEvidence = readFileSync(output, "utf8");
+    const lockPath = path.join(config.runDir, "evidence-manifest.lock.json");
+    const staleRecord = {
+      schema_version: "isolated-branch-evidence-writer-lock/v1",
+      lock_id: STALE_LOCK_ID,
+      owner_pid: 999_999,
+      owner_creation_identity: "stale-process-identity",
+      created_at: "2026-07-30T00:00:00.000Z",
+    };
+    const staleBytes = `${JSON.stringify(staleRecord, null, 2)}\n`;
+    writeFileSync(lockPath, staleBytes);
+
+    await expect(writeUnitEvidence(config, { ...sampleObservation(config), visibleStates: ["retry"] })).rejects.toThrow(/evidence writer lock exists/);
+    expect(readFileSync(lockPath, "utf8")).toBe(staleBytes);
+    expect(readFileSync(output, "utf8")).toBe(originalEvidence);
+
+    const finishSetup = beginIsolatedEvidenceInvocation(config, NEXT_EVIDENCE_GENERATION, unitEvidenceLockIdentityLookup);
+    expect(existsSync(output)).toBe(false);
+    finishSetup(true);
+    expect(existsSync(lockPath)).toBe(false);
+    const nextObservation = {
+      ...sampleObservation(config),
+      invocationGeneration: NEXT_EVIDENCE_GENERATION,
+      visibleStates: ["retry"],
+    };
+    await expect(writeUnitEvidence(config, nextObservation)).resolves.toBe(output);
+    expect(JSON.parse(readFileSync(output, "utf8")).observations[0].visible_states).toContain("retry");
+
+    const malformedBytes = "{}\n";
+    writeFileSync(lockPath, malformedBytes);
+    expect(() => beginIsolatedEvidenceInvocation(config, NEXT_EVIDENCE_GENERATION, unitEvidenceLockIdentityLookup)).toThrow(/evidence writer lock is malformed/);
+    expect(readFileSync(lockPath, "utf8")).toBe(malformedBytes);
+    unlinkSync(lockPath);
+  });
+
+  it("serializes competing global-setup reclaimers with a per-lock claim", () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
+    const lockPath = path.join(config.runDir, "evidence-manifest.lock.json");
+    const staleBytes = `${JSON.stringify({
+      schema_version: "isolated-branch-evidence-writer-lock/v1",
+      lock_id: STALE_LOCK_ID,
+      owner_pid: 999_999,
+      owner_creation_identity: "stale-process-identity",
+      created_at: "2026-07-30T00:00:00.000Z",
+    }, null, 2)}\n`;
+    const reclaimClaimPath = `${lockPath}.reclaim-${STALE_LOCK_ID}.json`;
+    writeFileSync(lockPath, staleBytes);
+    writeFileSync(reclaimClaimPath, `${JSON.stringify({
+      schema_version: "isolated-branch-evidence-writer-reclaim/v1",
+      stale_lock_id: STALE_LOCK_ID,
+      claimant_pid: process.pid,
+      claimant_creation_identity: UNIT_EVIDENCE_LOCK_IDENTITY,
+      created_at: "2026-07-30T00:00:00.000Z",
+    }, null, 2)}\n`);
+
+    expect(() => beginIsolatedEvidenceInvocation(config, NEXT_EVIDENCE_GENERATION, unitEvidenceLockIdentityLookup)).toThrow(/stale-reclaim claim exists/);
+    expect(readFileSync(lockPath, "utf8")).toBe(staleBytes);
+    expect(existsSync(reclaimClaimPath)).toBe(true);
+
+    unlinkSync(reclaimClaimPath);
+    const finishSetup = beginIsolatedEvidenceInvocation(config, NEXT_EVIDENCE_GENERATION, unitEvidenceLockIdentityLookup);
+    expect(existsSync(reclaimClaimPath)).toBe(false);
+    finishSetup(true);
+  });
+
+  it("fails closed when stale-lock owner identity cannot be observed", async () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
+    const output = await writeUnitEvidence(config, sampleObservation(config));
+    const originalEvidence = readFileSync(output, "utf8");
+    const lockPath = path.join(config.runDir, "evidence-manifest.lock.json");
+    const lockBytes = `${JSON.stringify({
+      schema_version: "isolated-branch-evidence-writer-lock/v1",
+      lock_id: STALE_LOCK_ID,
+      owner_pid: 888_888,
+      owner_creation_identity: "unobservable-process-identity",
+      created_at: "2026-07-30T00:00:00.000Z",
+    }, null, 2)}\n`;
+    writeFileSync(lockPath, lockBytes);
+    const unavailableLookup = (processId: number) => {
+      if (processId === process.pid) return UNIT_EVIDENCE_LOCK_IDENTITY;
+      throw new Error("injected process provider failure");
+    };
+
+    expect(() => beginIsolatedEvidenceInvocation(config, NEXT_EVIDENCE_GENERATION, unavailableLookup)).toThrow(/owner lookup failed/);
+    expect(readFileSync(lockPath, "utf8")).toBe(lockBytes);
+    expect(readFileSync(output, "utf8")).toBe(originalEvidence);
+    unlinkSync(lockPath);
+  });
+
+  it("prevents a delayed old-owner release from deleting a successor lock", () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
+    const lockPath = path.join(config.runDir, "evidence-manifest.lock.json");
+    const releaseOld = beginIsolatedEvidenceInvocation(config, UNIT_EVIDENCE_GENERATION, unitEvidenceLockIdentityLookup);
+    const oldBytes = readFileSync(lockPath, "utf8");
+    unlinkSync(lockPath);
+    const releaseSuccessor = beginIsolatedEvidenceInvocation(config, NEXT_EVIDENCE_GENERATION, unitEvidenceLockIdentityLookup);
+    const successorBytes = readFileSync(lockPath, "utf8");
+
+    expect(successorBytes).not.toBe(oldBytes);
+    expect(() => releaseOld(true)).toThrow(/identity changed before release/);
+    expect(readFileSync(lockPath, "utf8")).toBe(successorBytes);
+    releaseSuccessor(true);
+    expect(existsSync(lockPath)).toBe(false);
   });
 
   it("rejects directory artifacts and physical symlink or junction escapes", async () => {
