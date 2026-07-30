@@ -122,7 +122,6 @@ try {
         '.codex/skills/repo-health/SKILL.md',
         '.codex/skills/spec-to-done/agents/openai.yaml',
         '.claude/skills/spec-to-done/validate-state.mjs',
-        '.codex/skills/spec-to-done/validate-state.mjs',
         '.claude/skills/spec-to-done/ensure-host-native-ports-free.ps1',
         '.codex/skills/spec-to-done/ensure-host-native-ports-free.ps1',
         '.claude/workflows/std-evidence-closeout.js',
@@ -518,8 +517,10 @@ try {
     Assert-True ($codexSpecToDone -match [regex]::Escape('codex:<actual-session-or-agent-id>')) 'Codex spec-to-done records actual resumable session or agent IDs'
 
     $claudeStateValidator = Get-Content -LiteralPath '.claude/skills/spec-to-done/validate-state.mjs' -Raw -Encoding UTF8
-    $codexStateValidator = Get-Content -LiteralPath '.codex/skills/spec-to-done/validate-state.mjs' -Raw -Encoding UTF8
-    Assert-True ($claudeStateValidator -ceq $codexStateValidator) 'Claude and Codex spec-to-done state validators remain byte-equivalent as text'
+    # 單一正本政策（pr-review-agent generated_tooling_path）：.codex 鏡像不得放 validate-state 副本，
+    # SKILL.md 以路徑引用 .claude 正本。
+    Assert-True (-not (Test-Path -LiteralPath '.codex/skills/spec-to-done/validate-state.mjs')) 'Codex mirror must not carry a validate-state copy (single canonical in .claude)'
+    Assert-True ($codexSpecToDone -match [regex]::Escape('.claude/skills/spec-to-done/validate-state.mjs')) 'Codex spec-to-done references the canonical .claude validate-state path'
     foreach ($stateMarker in @('native-* labels are not resumable run IDs', 'run_budget_exhausted', 'evidence_stale', 'expected-agent-limit', 'expected-worktree', 'production files changed after evidence was captured')) {
         Assert-True ($claudeStateValidator -match [regex]::Escape($stateMarker)) "spec-to-done state validator contains: $stateMarker"
     }
