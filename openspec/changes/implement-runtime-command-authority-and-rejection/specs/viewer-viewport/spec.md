@@ -4,7 +4,7 @@
 
 Console內嵌viewport與viewer origin頁 SHALL各自實作下列失敗態，每態 SHALL有穩定測試錨點（`data-uc`／`data-testid`）、i18n文案鍵與明示可行動作；MUST NOT以空白畫面、holder資訊洩漏或假成功呈現任何一態：
 
-> Implementation gap（2026-07-22）：viewer origin 的 `runtime-command-rejection` 已有persistent aria-live錨點、diagnostic與resync action，但其文案仍為hard-coded中英混合字串，尚未接既有i18n key；因此本Requirement的完整i18n矩陣仍未完成，且本change不得宣稱production/full completion。
+> Task 5.6 closeout（2026-07-30）：viewer origin 的 `runtime-command-rejection` review diagnostics、request-context mismatch、changed-unconfirmed binding reason與stage-load failure已使用既有zh/en presentation，並由focused DOM與controlled browser regression驗證；credential owner gate與Windows host-native Kit/GPU evidence仍OPEN，因此本change仍不得宣稱production/full completion。
 
 | 態 | 觸發條件（可判定） | 畫面/文案要點 | 可行動作 |
 |---|---|---|---|
