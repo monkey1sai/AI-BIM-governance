@@ -767,11 +767,11 @@
     },
     {
       "id": "cross-service-structured-log-baseline",
-      "status": "active",
+      "status": "deferred",
       "owner": "cross-service-observability",
-      "current_slice": "P5 remediation：補 4-service runtime evidence（tasks 10.1–10.5）；不重套已同步 delta",
+      "current_slice": null,
       "blocked_by": [],
-      "last_verified": "2026-07-29T14:30:00Z",
+      "last_verified": "2026-07-30T08:48:00Z",
       "task_ledger": {
         "completed": 92,
         "total": 93
@@ -780,7 +780,7 @@
         "openspec/changes/cross-service-structured-log-baseline/proposal.md",
         "openspec/changes/cross-service-structured-log-baseline/tasks.md"
       ],
-      "subject_commit": "bfcc43361783deaddc14eb542d3fbe31d361866b",
+      "subject_commit": "3f7a3fe557d4dd4a2d9a699f9ab2206cd23c245e",
       "archive_debt": null
     },
     {
