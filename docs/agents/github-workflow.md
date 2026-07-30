@@ -98,11 +98,23 @@ git fetch origin --prune
 
 Lane G/S、修 PR、checkout 不乾淨或並行工作時必須使用 dedicated worktree。Lane F/B 在已確認 checkout 乾淨且使用者未要求隔離時可直接使用 task branch。需要 gitignored fixtures（例如 `storage/` 真實 IFC）時，優先在 worktree 建 junction / symlink。
 
+### Baseline 契約（2026-07-30 使用者裁決納入治理）
+
+當使用者要求「以 origin main 為 baseline 建立隔離區執行」或同義口令時，agent MUST：
+
+1. **先 `git fetch origin --prune`**，再以 `origin/main` 開 worktree：`git worktree add -b <type>/<slug> <sibling-path> origin/main`。
+2. **禁止**以 local `main`、目前 checkout、其他 feature branch 或 **stale `origin/main`** 當 baseline（與 §「測試部署區重建」對 stale `origin/main` 的禁令同一理由：本機 ref 可能落後數個 merge，據此開工會把別人已合併的修正當成未完成而重做，或在過期樹上取得無效證據）。
+3. **開工前實證 baseline**：`git rev-parse HEAD` 必須等於 `git rev-parse origin/main`，且 `git status --porcelain` 為空。兩者任一不成立即停工回報，不得「先做再說」。
+4. **收工後依 Closeout 順序移除 worktree**，不得留下失聯目錄。
+
+此契約對所有 Lane 生效（含 F/B）：使用者明確要求隔離時，Lane F/B 的「可直接切 branch」豁免不適用。
+
 ### 位置與命名
 
 - **權威位置**：repo 的 **sibling 目錄**，例如 `C:\Repos\active\iot\AI-BIM-governance.worktrees\<branch-slug>`（與 repo 同層、repo 外）。
-- **禁用位置**：`.claude/worktrees/` 已被 gitignore，且已有紀錄顯示會被並行 git automation 中途清空（見 `enterworktree-cleaned-by-concurrent-git.md`），`git clean -fdx` 也會把它整個掃掉；不得當作 worktree 的正式落腳點。
+- **禁用位置**：`.claude/worktrees/` 已被 gitignore，且已有紀錄顯示會被並行 git automation 中途清空（見 `enterworktree-cleaned-by-concurrent-git.md`），`git clean -fdx` 也會把它整個掃掉；不得當作 worktree 的正式落腳點。**repo 內的 `.worktrees/` 同屬禁用**：`.gitignore` 已忽略該路徑，因此暴露於同一個 `git clean -fdx` 風險（2026-07-30 實際踩到並就地更正）。
 - **命名**：branch 用 `feat|fix|chore|docs/<slug>`；worktree 目錄名對齊同一個 `<slug>`（不重複前綴）。
+- **工具存取**：sibling 位置在 repo 之外，隔離區內的檔案工具（Read/Write/Edit/Grep）可能尚未授權該目錄。應在開工前一次性取得該 sibling 目錄的存取授權，而不是退回用 shell here-string 編輯關鍵檔案。
 
 ### 何時可直接切 branch
 

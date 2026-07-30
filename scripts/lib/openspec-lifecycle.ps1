@@ -260,6 +260,46 @@ function Get-OpenSpecProposalState {
     }
 }
 
+# Canonical task-checkbox counting. MUST stay byte-for-byte semantically identical to
+# `taskLedgerFromText` in scripts/lib/openspec-machine-truth.mjs — the two are independent
+# implementations of one contract, cross-checked by the golden corpus
+# scripts/tests/fixtures/task-ledger-parity.json. Spec (per line):
+#   1. candidate = ^[ \t]*-[ \t]+\[<mark>\]<after?>
+#   2. mark 長度 != 1        → 非 checkbox（`- []`、`- [WIP] foo`、`- [text](url)`）
+#   3. after 為 `(`          → 非 checkbox（markdown link `- [x](url)`）
+#   4. after 非空且非空白    → 畸形 checkbox（`- [x]done`）→ unsupported（fail-closed，不得靜默消失）
+#   5. 否則 x/X→completed+total、空白→total、其餘單字元→unsupported
+# 逐行解析是必要的：舊版 '(?m)…(?:\s+|$)' 的尾端貪婪 \s+ 會吃掉下一行縮排，使緊接的巢狀
+# checkbox 從 Total 消失——未完成 task 因而可能通過 verify-openspec-lifecycle 的 archive gate。
+function Measure-OpenSpecTaskCheckboxes {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string] $Text
+    )
+
+    $completed = 0
+    $total = 0
+    $unsupported = 0
+    foreach ($line in ($Text -split "`r?`n")) {
+        $match = [regex]::Match($line, '^[ \t]*-[ \t]+\[(?<mark>[^\]]*)\](?<after>.?)')
+        if (-not $match.Success) { continue }
+        $mark = $match.Groups['mark'].Value
+        if ($mark.Length -ne 1) { continue }
+        $after = $match.Groups['after'].Value
+        if ($after -eq '(') { continue }
+        if ($after -ne '' -and $after -notmatch '\s') { $unsupported++; continue }
+        if ($mark -ceq 'x' -or $mark -ceq 'X') { $completed++; $total++ }
+        elseif ($mark -ceq ' ') { $total++ }
+        else { $unsupported++ }
+    }
+
+    return [pscustomobject]@{
+        Completed   = $completed
+        Total       = $total
+        Unsupported = $unsupported
+    }
+}
+
 function Get-OpenSpecTaskLedger {
     [CmdletBinding()]
     param(
@@ -282,25 +322,13 @@ function Get-OpenSpecTaskLedger {
     }
 
     $content = Read-OpenSpecLifecycleFile -Path $tasksPath -TrustedRoot $TrustedRoot
-    $checkboxes = @([regex]::Matches(
-        $content,
-        '(?m)^\s*-\s+\[(?<mark>[ xX])\](?:\s+|$)'
-    ))
-    $completed = @($checkboxes | Where-Object {
-        $_.Groups['mark'].Value -match '[xX]'
-    }).Count
-    $unsupported = @([regex]::Matches(
-        $content,
-        '(?m)^\s*-\s+\[(?<mark>[^\]\r\n]+)\](?:\s+|$)'
-    ) | Where-Object {
-        $_.Groups['mark'].Value -notmatch '^[ xX]$'
-    }).Count
+    $measured = Measure-OpenSpecTaskCheckboxes -Text $content
 
     return [pscustomobject]@{
         Exists                = $true
-        Completed             = $completed
-        Total                 = $checkboxes.Count
-        Unchecked             = $checkboxes.Count - $completed
-        UnsupportedCheckboxes = $unsupported
+        Completed             = $measured.Completed
+        Total                 = $measured.Total
+        Unchecked             = $measured.Total - $measured.Completed
+        UnsupportedCheckboxes = $measured.Unsupported
     }
 }

@@ -18,6 +18,37 @@ $nodeTrustedRoot = Split-Path -Parent $nodePath
 $sourceRepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $subjectCommit = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 
+# --- PowerShell half of the two-implementation task-checkbox parity contract -------------------
+# The JS half is scripts/tests/test-task-ledger-parser-parity.mjs, asserting the SAME corpus
+# against taskLedgerFromText. Neither half alone proves parity; both must pass. Before
+# 2026-07-30 nothing in the repo checked that the two parsers agreed, and four latent
+# divergences existed — including one where the PowerShell pattern's trailing greedy \s+ ate the
+# next line's indentation and dropped a nested unchecked task from Total, which could let an
+# incomplete change slip through the new-archive gate in verify-openspec-lifecycle.ps1.
+$parityCorpusPath = Join-Path $PSScriptRoot 'fixtures\task-ledger-parity.json'
+Assert-True (Test-Path -LiteralPath $parityCorpusPath -PathType Leaf) 'task-ledger parity corpus exists'
+$parityCorpus = Get-Content -LiteralPath $parityCorpusPath -Raw -Encoding utf8 | ConvertFrom-Json
+Assert-Equal 'task-ledger-parity/v1' $parityCorpus.schema_version 'parity corpus schema version'
+# Vacuity guard: a truncated corpus would make every assertion below pass without checking anything.
+Assert-True (@($parityCorpus.cases).Count -ge 15) "parity corpus retains at least 15 cases (actual: $(@($parityCorpus.cases).Count))"
+foreach ($parityRequiredId in @(
+    'regression-nested-after-empty-checked',
+    'regression-nested-after-trailing-space-open',
+    'regression-no-space-after-bracket',
+    'regression-multichar-mark',
+    'tilde-stays-unsupported'
+)) {
+    Assert-True (@($parityCorpus.cases | Where-Object { $_.id -eq $parityRequiredId }).Count -eq 1) "parity corpus keeps regression case '$parityRequiredId'"
+}
+foreach ($parityCase in $parityCorpus.cases) {
+    $measured = Measure-OpenSpecTaskCheckboxes -Text $parityCase.text
+    Assert-Equal ([int]$parityCase.expected.completed)   ([int]$measured.Completed)   "parity[$($parityCase.id)] completed"
+    Assert-Equal ([int]$parityCase.expected.total)       ([int]$measured.Total)       "parity[$($parityCase.id)] total"
+    Assert-Equal ([int]$parityCase.expected.unsupported) ([int]$measured.Unsupported) "parity[$($parityCase.id)] unsupported"
+    Assert-True ($measured.Completed -le $measured.Total) "parity[$($parityCase.id)] completed does not exceed total"
+}
+# ----------------------------------------------------------------------------------------------
+
 function Write-Utf8Text {
     param(
         [Parameter(Mandatory = $true)][string] $Path,

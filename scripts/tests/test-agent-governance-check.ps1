@@ -68,6 +68,8 @@ try {
         'scripts/tests/test-task-packet.mjs',
         'scripts/tests/openspec-github-lifecycle-state.schema.json',
         'scripts/tests/openspec-machine-truth-report.schema.json',
+        'scripts/tests/fixtures/task-ledger-parity.json',
+        'scripts/tests/test-task-ledger-parser-parity.mjs',
         'scripts/lib/design-system-gate.ps1',
         'scripts/tests/verify-design-system-reference.ps1',
         'scripts/tests/test-design-system-reference.ps1',
