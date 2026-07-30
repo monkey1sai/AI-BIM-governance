@@ -14,7 +14,7 @@
     { "id": "a4-semantic-search-model-qa", "status": "deferred" },
     { "id": "add-single-gpu-session-ai-review-mvp", "status": "deferred" },
     { "id": "align-frontend-design-system-reference", "status": "deferred" },
-    { "id": "cross-service-structured-log-baseline", "status": "deferred" },
+    { "id": "cross-service-structured-log-baseline", "status": "active" },
     { "id": "gpu-session-baseline-and-idle-reclaim", "status": "active" },
     { "id": "implement-runtime-command-authority-and-rejection", "status": "active" },
     { "id": "isolated-branch-stack-browser-e2e", "status": "active" },
@@ -54,7 +54,6 @@
 
 - `openspec/changes/align-frontend-design-system-reference/`（與 migrate 的互斥需求完成 crosswalk 前不得 thaw）
 - `openspec/changes/rvt-ifc-usdc-lineage/`（1/48；切片與 shared ownership 調和前不得 coding）
-- `openspec/changes/cross-service-structured-log-baseline/`（只補 tasks 10.1–10.5 runtime evidence；不重套已同步 delta）
 
 Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unchecked checkbox；三層交叉裁決未把它們判為獨立、可繼續執行的 unfinished owner（主要是已落地但 task bookkeeping 過時、已被 successor 承接，或已退役 service 的歷史工作），因此不批次搬移，也不改寫 archive 歷史。這批屬 legacy audit debt；新增 lifecycle gate 只對本次之後的新 archive fail closed，禁止再產生 unchecked/deferred archive。
 
@@ -70,7 +69,7 @@ Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unch
 | `minio-trigger-lifecycle-backend` | ✅ archived `2026-07-21-minio-trigger-lifecycle-backend` | done | #259 |
 | `c-m4-runtime-command-bridge` | ✅ archived `2026-07-21-c-m4-runtime-command-bridge`（新建 capability spec） | done | #309 |
 | `minio-watch-key-structure` | ✅ archived `2026-07-21-minio-watch-key-structure`（`--skip-specs`；主線 scenario 已在 main） | 選 A deferred-evidence | #237 |
-| `cross-service-structured-log-baseline` | ↩ restored deferred、evidence-only | 只補真 4-service runtime evidence；不改 pipeline/code/canonical spec | #126 |
+| `cross-service-structured-log-baseline` | active P5 remediation、evidence-only | 只補真 4-service runtime evidence；不改 pipeline/code/canonical spec | #126 |
 | `minio-folderview-and-baseline-disclosure` | ✅ archived `2026-07-29-minio-folderview-and-baseline-disclosure`（7/7 closeout reconciled） | done；archive proposal/tasks 為證據 | #265 |
 | `align-frontend-design-system-reference` | ↩ restored deferred、frozen | 先與 migrate 做 requirement/successor crosswalk；禁止平行 design coding | #363 |
 | `rvt-ifc-usdc-lineage` | ↩ restored deferred、frozen（1/48） | 先切片與調和 shared ownership；禁止直接 apply | #354 |
@@ -81,10 +80,10 @@ Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unch
 
 ### 收口 DoD（軌 1）
 
-- [x] 5 個近期 completed closeout change 維持 archive；其餘 3 個 unfinished change 維持 deferred／frozen
-- [x] lineage / align-frontend / structured-log 保留 `Status: deferred`、frozen/non-owner，不計 active WIP；minio-folderview 已在 2026-07-29 closeout 後 archive
+- [x] 5 個近期 completed closeout change 維持 archive；3 個 unfinished historical correction 維持 deferred／frozen；structured-log 另以 active P5 remediation 推進 runtime evidence
+- [x] lineage / align-frontend / semantic-search 保留 `Status: deferred`、frozen/non-owner；structured-log 為 active P5 evidence-only remediation，計入 active WIP；minio-folderview 已在 2026-07-29 closeout 後 archive
 - [x] #364 merge + `governance-throughput-budget` archive（OQ-3 出場）
-- [x] 本週 WIP focus 只保留 **A4 + migrate-console**；`implement-runtime-command-authority-and-rejection` 與 `add-single-gpu-session-ai-review-mvp` 的 retain/defer 另案裁決，不在本次 archive 範圍
+- [x] 本週 WIP focus 保留 **A4 + migrate-console + structured-log P5 evidence**；`implement-runtime-command-authority-and-rejection` 與 `add-single-gpu-session-ai-review-mvp` 的 retain/defer 另案裁決，不在本次 archive 範圍
 - [ ] 過期 worktree 刪到 ≤5（人工／下一切可選）— **2026-07-30 report-only 稽核（未執行刪除）**：主 repo 共 21 個 worktree。稽核方法＝`git worktree list --porcelain` ＋ 逐一 `git status --porcelain --ignored`（含 ignored 產物）＋ `git for-each-ref --contains <HEAD>`（reachability）＋ `.agents/board/sessions/*.json`（session 佔用）。結果：**in-use 6**＝main checkout（PR #436）、PR #431／#432／#433／#434 各一、deployment checkout `D:/Users/deploy/AI-bim-geo`。**可安全移除 7**＝`pr428` ＋ 6 個 `.codex/worktrees/*` detached；六個 detached HEAD 分別可由 22–28 個 ref 觸及，移除 worktree 不會產生 unreachable commit，且三項檢查（ignored 產物 0、board 未佔用、reachable）全過。**需先裁決 5**（porcelain 乾淨但帶 ignored 產物，`git worktree remove` 會連同刪除）＝`a4-semantic-search-model-qa-main-convergence`（29 項，含 `.gitnexus/`、`.workflow/`、`artifacts/e2e/design-system-visual*` 設計視覺證據）、`pr-422-a4-baseline-reapproval`（5 項，含 e2e 視覺證據與 `web-viewer-sample/dist/`）、`spec-to-done-cost-guardrails`（5 項，`.gitnexus/`、`logs/`、caches）、`codex+openspec+isolated-branch-stack-browser-e2e`（1 項 `.claude/settings.local.json`）、`pr-422-session-first-contract`（1 項 `node_modules/`）。**dirty 3**＝`ci-boundary-guards`（23 檔）、`.worktrees/cross-service-structured-log-baseline`（8 檔）、`.worktrees/pr-422-risk-loop-validation`（8 檔），含未提交工作。board 目前唯一 `status: active` 的 session 是 `codex--2a3983`（cwd `sign-main-commit-pr`），不屬上述任何一個。只移除那 7 個後仍有 14 個，達不到 ≤5；deployment checkout 與待裁決／dirty 者不列入「過期 worktree」。刪除屬 destructive 動作，維持人工執行，本項保持 unchecked。
 
 ---

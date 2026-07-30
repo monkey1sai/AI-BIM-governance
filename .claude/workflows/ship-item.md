@@ -85,7 +85,7 @@ coordinator 在 verdict 後重新讀取 PR state/draft/number/head/base/mergeSta
 唯一 merge sink 必須把 server operation 綁到已裁決 head：
 
 ```bash
-gh pr merge <n> --repo monkey1sai/AI-BIM-governance --squash --match-head-commit <preparedHead>
+gh pr merge <n> --repo monkey1sai/AI-BIM-governance --merge --match-head-commit <preparedHead>
 ```
 
 命令回非零也不能直接宣稱未 merge；coordinator 必須再讀 GitHub authoritative state。只有重新讀到 `state=MERGED` 與有效 `mergeCommit.oid` 才回 `merged=true`。之後的 `git fetch origin --prune` 失敗只記警告，不得把已發生的 server merge 誤報為 `merged=false`。

@@ -6,7 +6,7 @@
 
 - 基線政策從 `2026-07-28` 起算且禁止補造較早資料，但 v1 的 `observed_at` 是 caller-supplied，capture provenance 仍為 `unattested`。因此即使到 `2026-08-25` 且滿 28 天，也不能自動升格為 baseline ready 或設定改善目標；必須先由 hosted producer 提供可信 capture-time attestation。
 - required merge truth 的 retry 固定為 0。diagnostic telemetry 最多重跑一次；attempt 2 必須晚於 attempt 1、以 `retry_of_sha256` 綁定 exact canonical attempt-1 bytes，且只能重跑同 commit、plan、manifest、package、test 與 environment 下第一次失敗或 timeout 的測試。reporter 只接受 writer 推導出的 canonical artifact path。
-- telemetry 固定 `authority=telemetry_only`。`scripts/lib/merge-evidence.mjs` 與 merge-evidence workflow 不讀 `artifacts/telemetry/**`；重跑通過不能掩蓋第一次失敗。
+- telemetry 固定 `authority=telemetry_only`，不是 merge authority；diagnostic telemetry 的重跑通過不能掩蓋正常必要檢查的失敗。
 - 觀測只接受 policy registry 內的 package/gate/test identity。不得保存 command、argv、env、cwd、prompt、source、log、stack、stdout/stderr、URL、path、repository、actor 或 user。
 - trace 只可保存 SHA-256 與 byte count；不得保存或上傳 raw trace。觀測檔最多 1 MiB、500 records，單次報告累計輸入最多 16 MiB。raw namespace 已由 `.gitignore` 排除；35 天是 hosted retention 目標，目前 enforcement 為 `not_configured/hosted-retention-unverified`，不能宣稱本機已自動刪除。月報只能按 package 聚合，不能提供人員 drill-down。
 
