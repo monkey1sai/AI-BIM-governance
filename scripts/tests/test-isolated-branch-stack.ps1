@@ -165,8 +165,10 @@ $owned = @(
     [pscustomobject]@{ role='governance';pid=4201;entrypoint='app:app';command_line='gov';creation_identity='c1' },
     [pscustomobject]@{ role='coordinator';pid=4202;entrypoint='src/index.ts';command_line='coord';creation_identity='c2' }
 )
+$fakeProcessHandleLookup = { param($processId) [pscustomobject]@{ Id=$processId; HasExited=$false } }
 $mismatchStop = Stop-IsolatedBackends -Processes $owned `
   -IdentityLookup { param($e) if($e.pid -eq 4201){$e}else{[pscustomobject]@{role='coordinator';pid=4202;entrypoint='wrong';command_line='coord';creation_identity='c2'}} } `
+  -ProcessHandleLookup $fakeProcessHandleLookup `
   -StopProcessFn { param($processId) $script:stopped.Add($processId) }
 Assert-Equal 'not_owned' @($mismatchStop | Where-Object role -eq 'coordinator')[0].status 'one mismatch is recorded before stopping'
 Assert-Equal 0 $stopped.Count 'all identities validate before any stop'
@@ -175,6 +177,7 @@ $rollbackStops = [System.Collections.Generic.List[int]]::new()
 $rollback = Stop-IsolatedBackends -Processes $owned -AllowMissing `
   -IdentityLookup { param($e) if ($e.role -eq 'governance') { throw 'already exited' }; $e } `
   -MissingProcessFn { param($e) $e.role -eq 'governance' } `
+  -ProcessHandleLookup $fakeProcessHandleLookup `
   -StopProcessFn { param($processId) $script:rollbackStops.Add($processId) }
 Assert-Equal '4202' ($rollbackStops -join ',') 'rollback skips missing child and stops surviving owned backend'
 Assert-Equal 'already_stopped' @($rollback | Where-Object role -eq 'governance')[0].status 'rollback records missing child as already stopped'
@@ -183,6 +186,7 @@ $unprovenRollbackStops = [System.Collections.Generic.List[int]]::new()
 $unprovenRollback = Stop-IsolatedBackends -Processes $owned -AllowMissing `
   -IdentityLookup { param($e) if ($e.role -eq 'governance') { throw 'identity lookup failed' }; $e } `
   -MissingProcessFn { param($e) $false } `
+  -ProcessHandleLookup $fakeProcessHandleLookup `
   -StopProcessFn { param($processId) $script:unprovenRollbackStops.Add($processId) }
 Assert-Equal 'not_owned' @($unprovenRollback | Where-Object role -eq 'governance')[0].status 'rollback does not equate an unproven identity lookup failure with process exit'
 Assert-Equal 0 $unprovenRollbackStops.Count 'unproven rollback identity fails before stopping any backend'
@@ -190,8 +194,26 @@ Assert-Equal 0 $unprovenRollbackStops.Count 'unproven rollback identity fails be
 $stoppedExactly = [System.Collections.Generic.List[int]]::new()
 Stop-IsolatedBackends -Processes $owned `
   -IdentityLookup { param($expectedProcess) $expectedProcess } `
+  -ProcessHandleLookup $fakeProcessHandleLookup `
   -StopProcessFn { param($processId) $script:stoppedExactly.Add($processId) }
 Assert-Equal '4202,4201' ($stoppedExactly -join ',') 'exact identities stop in reverse manifest order'
+
+$pidReuseStops = [System.Collections.Generic.List[int]]::new()
+$pidReuseIdentityChecks = @{}
+$pidReuse = Stop-IsolatedBackends -Processes $owned `
+  -IdentityLookup {
+      param($expectedProcess)
+      $count = 1 + [int]($script:pidReuseIdentityChecks[$expectedProcess.pid] ?? 0)
+      $script:pidReuseIdentityChecks[$expectedProcess.pid] = $count
+      if ($expectedProcess.role -eq 'coordinator' -and $count -eq 2) {
+          return [pscustomobject]@{ role='coordinator';pid=4202;entrypoint='src/index.ts';command_line='coord';creation_identity='reused-c2' }
+      }
+      $expectedProcess
+  } `
+  -ProcessHandleLookup { param($processId) [pscustomobject]@{ Id=$processId; HasExited=$false } } `
+  -StopProcessFn { param($processId,$processHandle) $script:pidReuseStops.Add($processId) }
+Assert-Equal 'not_owned' @($pidReuse | Where-Object role -eq 'coordinator')[0].status 'immediate stop recheck rejects a reused PID creation identity'
+Assert-Equal 0 $pidReuseStops.Count 'a reused PID after prevalidation stops no backend'
 
 $spawned = [pscustomobject]@{ Id = 4301 }
 $cleanedSpawned = [System.Collections.Generic.List[object]]::new()
@@ -326,6 +348,7 @@ try {
           -StartBackendFn { param($spec) $script:startedRoles.Add($spec.role); if($spec.role -eq 'coordinator'){throw 'coordinator start failed'}; [pscustomobject]@{role='governance';pid=4101;entrypoint='app:app';command_line='gov';creation_identity='c1'} } `
           -HealthFn { param($url) $true } `
           -IdentityLookup { param($e) $e } `
+          -ProcessHandleLookup $fakeProcessHandleLookup `
           -StopProcessFn { param($processId) $script:stoppedPids.Add($processId) } `
           -HeadShaFn { param($root) ('a' * 40 -join '') }
     } 'second backend failure rolls back first backend'
@@ -377,6 +400,7 @@ try {
         } `
         -HealthFn { param($url) $true } `
         -IdentityLookup { param($expectedProcess) $expectedProcess } `
+        -ProcessHandleLookup $fakeProcessHandleLookup `
         -StopProcessFn { param($processId) throw "unexpected success rollback for $processId" } `
         -HeadShaFn { param($root) ('b' * 40 -join '') }
     Assert-Equal 'started' $success.status 'successful start returns started'
@@ -447,6 +471,7 @@ try {
     $derivedOffsetStops = [System.Collections.Generic.List[int]]::new()
     $derivedOffsetStop = Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-status-offset-one' -RepoRoot $dispatcherSandbox `
         -IdentityLookup { param($expectedProcess) $expectedProcess } `
+        -ProcessHandleLookup $fakeProcessHandleLookup `
         -StopProcessFn { param($processId) $script:derivedOffsetStops.Add($processId) }
     Assert-Equal 'stopped' $derivedOffsetStop.status 'stop derives nonzero offset from manifest when omitted'
     Assert-Equal '4102,4101' ($derivedOffsetStops -join ',') 'derived-offset stop uses manifest-owned backend identities'
@@ -511,6 +536,7 @@ try {
                     $true
                 } `
                 -IdentityLookup { param($expectedProcess) $expectedProcess } `
+                -ProcessHandleLookup $fakeProcessHandleLookup `
                 -StopProcessFn { param($processId) $script:failedStopIds.Add($processId) } `
                 -HeadShaFn { param($root) if ($failure.kind -eq 'invalid_head') { 'not-a-sha' } else { ('c' * 40 -join '') } }
         } "start failure $($failure.kind) is reported"
@@ -537,6 +563,7 @@ try {
             } `
             -HealthFn { param($url) $true } `
             -IdentityLookup { param($expectedProcess) $expectedProcess } `
+            -ProcessHandleLookup $fakeProcessHandleLookup `
             -StopProcessFn { param($processId) throw 'injected rollback stop failure' } `
             -HeadShaFn { param($root) ('d' * 40 -join '') }
     } 'incomplete startup rollback writes a recovery manifest and holds reservations'
@@ -552,6 +579,7 @@ try {
     $recoveryRetryStops = [System.Collections.Generic.List[int]]::new()
     $recoveryStop = Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId $recoveryRunId -RepoRoot $dispatcherSandbox `
         -IdentityLookup { param($expectedProcess) $expectedProcess } `
+        -ProcessHandleLookup $fakeProcessHandleLookup `
         -StopProcessFn { param($processId) $script:recoveryRetryStops.Add($processId) }
     Assert-Equal 'stopped' $recoveryStop.status 'recovery manifest supports an explicit stop retry'
     Assert-Equal '6101' ($recoveryRetryStops -join ',') 'recovery retry stops only the surviving owned backend'
@@ -569,6 +597,7 @@ try {
     Assert-Throws {
         Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-partial-stop' -RepoRoot $dispatcherSandbox `
             -IdentityLookup { param($expectedProcess) $expectedProcess } `
+            -ProcessHandleLookup $fakeProcessHandleLookup `
             -StopProcessFn {
                 param($processId)
                 $script:partialStopAttempts.Add($processId)
@@ -590,6 +619,7 @@ try {
         -IdentityLookup { param($expectedProcess) throw 'process missing' } `
         -ProcessExistsFn { param($processId) $false } `
         -StopListenerLookupFn { param($port) $null } `
+        -ProcessHandleLookup $fakeProcessHandleLookup `
         -StopProcessFn { param($processId) $script:missingExitStops.Add($processId) }
     Assert-Equal 'stopped' $missingExitRetry.status 'retry accepts an absent failed process only when its role port is free'
     Assert-Equal 0 $missingExitStops.Count 'already-exited retry stops no rediscovered process'
@@ -602,9 +632,10 @@ try {
     Assert-Throws {
         Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-partial-stop-unknown-listener' -RepoRoot $dispatcherSandbox `
             -IdentityLookup { param($expectedProcess) throw 'process missing' } `
-            -ProcessExistsFn { param($processId) $false } `
-            -StopListenerLookupFn { param($port) [pscustomobject]@{LocalPort=$port;OwningProcess=9999} } `
-            -StopProcessFn { param($processId) throw 'unknown listener must not be stopped' }
+        -ProcessExistsFn { param($processId) $false } `
+        -StopListenerLookupFn { param($port) [pscustomobject]@{LocalPort=$port;OwningProcess=9999} } `
+        -ProcessHandleLookup $fakeProcessHandleLookup `
+        -StopProcessFn { param($processId) throw 'unknown listener must not be stopped' }
     } 'missing process with an unknown listener remains fail closed'
     Assert-True (-not (Read-IsolatedStackManifest -Path $unknownListenerPath).stopped_at) 'unknown-listener retry leaves stopped_at unset'
 
@@ -615,15 +646,17 @@ try {
     Assert-Throws {
         Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-partial-stop-listener-failure' -RepoRoot $dispatcherSandbox `
             -IdentityLookup { param($expectedProcess) throw 'process missing' } `
-            -ProcessExistsFn { param($processId) $false } `
-            -StopListenerLookupFn { param($port) throw 'injected listener provider failure' } `
-            -StopProcessFn { param($processId) throw 'listener lookup failure must not stop a process' }
+        -ProcessExistsFn { param($processId) $false } `
+        -StopListenerLookupFn { param($port) throw 'injected listener provider failure' } `
+        -ProcessHandleLookup $fakeProcessHandleLookup `
+        -StopProcessFn { param($processId) throw 'listener lookup failure must not stop a process' }
     } 'listener provider failure is not treated as a free port'
     Assert-True (-not (Read-IsolatedStackManifest -Path $listenerFailurePath).stopped_at) 'listener-provider failure leaves stopped_at unset'
 
     $partialRetryStops = [System.Collections.Generic.List[int]]::new()
     $partialRetry = Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-partial-stop' -RepoRoot $dispatcherSandbox `
         -IdentityLookup { param($expectedProcess) $expectedProcess } `
+        -ProcessHandleLookup $fakeProcessHandleLookup `
         -StopProcessFn { param($processId) $script:partialRetryStops.Add($processId) }
     Assert-Equal 'stopped' $partialRetry.status 'partial stop can be retried to completion'
     Assert-Equal '4102' ($partialRetryStops -join ',') 'retry skips the backend already recorded as stopped'
@@ -640,6 +673,7 @@ try {
     Assert-Throws {
         Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-stop' -OffsetInput '0' -RepoRoot $dispatcherSandbox `
             -IdentityLookup { param($expectedProcess) if($expectedProcess.pid -eq 4101){$expectedProcess}else{[pscustomobject]@{role='coordinator';pid=4102;entrypoint='wrong';command_line='coord';creation_identity='c2'}} } `
+            -ProcessHandleLookup $fakeProcessHandleLookup `
             -StopProcessFn { param($processId) $script:mismatchStops.Add($processId) }
     } 'stop ownership mismatch leaves every process running'
     Assert-Equal 0 $mismatchStops.Count 'stop validates all identities before any stop'
@@ -647,6 +681,7 @@ try {
 
     $stoppedRun = Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-stop' -OffsetInput '0' -RepoRoot $dispatcherSandbox `
         -IdentityLookup { param($expectedProcess) $expectedProcess } `
+        -ProcessHandleLookup $fakeProcessHandleLookup `
         -StopProcessFn { param($processId) $script:mismatchStops.Add($processId) }
     Assert-Equal 'stopped' $stoppedRun.status 'exact ownership stops the stack'
     Assert-Equal '4102,4101' ($mismatchStops -join ',') 'stop uses reverse manifest order after all identities validate'

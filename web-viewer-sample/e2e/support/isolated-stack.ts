@@ -15,6 +15,15 @@ const RESERVED_PORTS = new Set([
   ...Array.from({ length: 41 }, (_, index) => 49110 + index),
 ]);
 
+export const A4_REQUIRED_OBSERVATION_IDS = [
+  "a4-real-loading-1440x900",
+  "a4-real-failure-retry-1440x900",
+  "a4-real-success-1440x900",
+  "a4-real-loading-1920x1080",
+  "a4-real-failure-retry-1920x1080",
+  "a4-real-success-1920x1080",
+] as const;
+
 export type IsolatedStackManifest = {
   schema_version: "isolated-branch-stack/v1";
   stack_kind: "isolated_branch_stack";
@@ -339,6 +348,25 @@ export type BrowserEvidenceObservation = {
   harness: HarnessDisclosure;
 };
 
+export type IsolatedEvidencePublicationVerifier = {
+  assertWorktreeClean(config: IsolatedStackConfig): void;
+  assertLiveBackendOwnership(config: IsolatedStackConfig): Promise<void>;
+};
+
+export function assertIsolatedWorktreeClean(config: IsolatedStackConfig): void {
+  const status = execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
+    cwd: config.manifest.worktree_root,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (status.trim()) throw new Error("isolated evidence requires an unchanged worktree");
+}
+
+export async function assertLiveIsolatedBackendOwnership(config: IsolatedStackConfig): Promise<void> {
+  const { assertLiveIsolatedBackendOwnership: assertLive } = await import("./isolated-stack-global-setup");
+  assertLive(config);
+}
+
 function relativeRunArtifact(runDir: string, candidate: string): string {
   const absolute = path.resolve(candidate);
   if (!existsSync(absolute)) throw new Error(`evidence artifact does not exist: ${candidate}`);
@@ -359,6 +387,10 @@ function relativeRunArtifact(runDir: string, candidate: string): string {
 export async function writeIsolatedEvidenceManifest(
   config: IsolatedStackConfig,
   observation: BrowserEvidenceObservation,
+  verifier: IsolatedEvidencePublicationVerifier = {
+    assertWorktreeClean: assertIsolatedWorktreeClean,
+    assertLiveBackendOwnership: assertLiveIsolatedBackendOwnership,
+  },
 ): Promise<string> {
   const output = path.join(config.runDir, "evidence-manifest.json");
   if (observation.harness.buildFlag !== config.harnessBuildFlag) {
@@ -378,7 +410,7 @@ export async function writeIsolatedEvidenceManifest(
     run_id: config.manifest.run_id,
     head_sha: config.manifest.head_sha,
   };
-  const lockPath = path.join(config.runDir, "evidence-manifest.lock");
+  const lockPath = path.join(config.runDir, "evidence-manifest.lock.json");
   let lockDescriptor: number | undefined;
   let temporary: string | undefined;
   try {
@@ -410,6 +442,7 @@ export async function writeIsolatedEvidenceManifest(
     };
     const observations = [...(existing.observations ?? []).filter((item: { test_id: string }) => item.test_id !== normalized.test_id), normalized]
       .sort((left, right) => left.test_id.localeCompare(right.test_id));
+    const hasCompleteA4Observations = A4_REQUIRED_OBSERVATION_IDS.every(testId => observations.some(item => item.test_id === testId));
     const evidence = {
       ...identity,
       resolved_ports: config.manifest.ports,
@@ -424,14 +457,17 @@ export async function writeIsolatedEvidenceManifest(
       },
       observations,
       scope: {
-        cpu_browser_operability: "observed",
+        cpu_browser_operability: hasCompleteA4Observations ? "observed" : "partial",
+        required_observation_ids: A4_REQUIRED_OBSERVATION_IDS,
         design: "not_claimed",
         deploy: "not_claimed",
         kit_webrtc: "not_claimed",
       },
     };
-    temporary = `${output}.tmp-${process.pid}-${randomUUID()}`;
+    temporary = path.join(config.runDir, `.evidence-manifest.tmp-${process.pid}-${randomUUID()}.json`);
     writeFileSync(temporary, `${JSON.stringify(evidence, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+    verifier.assertWorktreeClean(config);
+    await verifier.assertLiveBackendOwnership(config);
     renameSync(temporary, output);
     return output;
   } finally {

@@ -352,7 +352,12 @@ function Stop-IsolatedBackends {
     param(
         [object[]] $Processes,
         [scriptblock] $IdentityLookup = { param($e) Get-IsolatedProcessIdentity -ProcessId ([int]$e.pid) -Entrypoint ([string]$e.entrypoint) },
-        [scriptblock] $StopProcessFn = { param($processId) Stop-Process -Id $processId -Force -ErrorAction Stop },
+        [scriptblock] $ProcessHandleLookup = { param($processId) Get-Process -Id $processId -ErrorAction Stop },
+        [scriptblock] $StopProcessFn = {
+            param($processId,$processHandle)
+            if ($null -eq $processHandle) { throw "Fresh process handle is required for $processId." }
+            Stop-Process -InputObject $processHandle -Force -ErrorAction Stop
+        },
         [scriptblock] $MissingProcessFn,
         [switch] $AllowMissing
     )
@@ -383,8 +388,25 @@ function Stop-IsolatedBackends {
     }
     if ($prevalidationFailed) { return @($results) }
     foreach ($process in @($verified | Sort-Object { [array]::IndexOf($Processes, $_) } -Descending)) {
+        $processHandle = $null
         try {
-            & $StopProcessFn ([int]$process.pid)
+            if ($null -ne $ProcessHandleLookup) {
+                $processHandle = & $ProcessHandleLookup ([int]$process.pid)
+                if ($null -eq $processHandle -or [int]$processHandle.Id -ne [int]$process.pid -or [bool]$processHandle.HasExited) {
+                    throw "Fresh process handle for $($process.pid) is unavailable."
+                }
+            }
+            $immediate = & $IdentityLookup $process
+            if (-not (Test-IsolatedProcessOwnership -Expected $process -Actual $immediate)) {
+                $results.Add([pscustomobject]@{role=$process.role;pid=$process.pid;status='not_owned';reason='identity_changed_before_stop'})
+                return @($results)
+            }
+        } catch {
+            $results.Add([pscustomobject]@{role=$process.role;pid=$process.pid;status='not_owned';reason="fresh_revalidation_failed: $($_.Exception.Message)"})
+            return @($results)
+        }
+        try {
+            & $StopProcessFn ([int]$process.pid) $processHandle
             $results.Add([pscustomobject]@{role=$process.role;pid=$process.pid;status='stopped';reason=$null})
         } catch {
             $results.Add([pscustomobject]@{role=$process.role;pid=$process.pid;status='stop_failed';reason=$_.Exception.Message})
@@ -511,11 +533,11 @@ function New-IsolatedMissingProcessGuard {
 function Stop-IsolatedStackRun {
     param(
         $Manifest,[string]$ManifestPath,[scriptblock]$IdentityLookup,[scriptblock]$StopProcessFn,
-        [scriptblock]$ProcessExistsFn,[scriptblock]$ListenerLookupFn
+        [scriptblock]$ProcessExistsFn,[scriptblock]$ListenerLookupFn,[scriptblock]$ProcessHandleLookup
     )
     if ($Manifest.stopped_at) { return [pscustomobject]@{status='already_stopped';manifest_path=$ManifestPath} }
     $missingProcessFn = New-IsolatedMissingProcessGuard -Ports $Manifest.ports -ProcessExistsFn $ProcessExistsFn -ListenerLookupFn $ListenerLookupFn
-    $results = @(Stop-IsolatedBackends -Processes @($Manifest.processes) -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn -MissingProcessFn $missingProcessFn)
+    $results = @(Stop-IsolatedBackends -Processes @($Manifest.processes) -IdentityLookup $IdentityLookup -ProcessHandleLookup $ProcessHandleLookup -StopProcessFn $StopProcessFn -MissingProcessFn $missingProcessFn)
     $Manifest | Add-Member -Force -NotePropertyName stop_state -NotePropertyValue ([ordered]@{ attempted_at=[DateTime]::UtcNow.ToString('o'); entries=$results })
     foreach ($result in $results) {
         $process = @($Manifest.processes | Where-Object { $_.role -eq $result.role -and $_.pid -eq $result.pid }) | Select-Object -First 1
@@ -538,7 +560,7 @@ function Stop-IsolatedStackRun {
 function Start-IsolatedStackRun {
     param(
         $RepoRoot,$ChangeId,$RunId,$Preflight,$Runtime,$Reservation,$StartBackendFn,$HealthFn,$IdentityLookup,$StopProcessFn,$HeadShaFn,
-        [scriptblock]$ProcessExistsFn,[scriptblock]$ListenerLookupFn,$LifecycleLogger
+        [scriptblock]$ProcessExistsFn,[scriptblock]$ListenerLookupFn,[scriptblock]$ProcessHandleLookup,$LifecycleLogger
     )
     $runDirectory=Split-Path -Parent $Preflight.manifest_path
     $stateLayout=Resolve-IsolatedStackStateLayout -RepoRoot $RepoRoot -RunDirectory $runDirectory
@@ -584,7 +606,7 @@ function Start-IsolatedStackRun {
         $startFailure = $_
         if($started.Count -gt 0){
             $rollbackMissingProcessFn = New-IsolatedMissingProcessGuard -Ports $Preflight.ports -ProcessExistsFn $ProcessExistsFn -ListenerLookupFn $ListenerLookupFn
-            $rollbackResults = @(Stop-IsolatedBackends -Processes @($started) -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn -MissingProcessFn $rollbackMissingProcessFn -AllowMissing)
+            $rollbackResults = @(Stop-IsolatedBackends -Processes @($started) -IdentityLookup $IdentityLookup -ProcessHandleLookup $ProcessHandleLookup -StopProcessFn $StopProcessFn -MissingProcessFn $rollbackMissingProcessFn -AllowMissing)
             $rollbackFailures = @($rollbackResults | Where-Object { $_.status -in @('not_owned','stop_failed') })
             if ($null -ne $LifecycleLogger) {
                 $rollbackStatus = if ($rollbackFailures.Count -eq 0) { 'complete' } else { 'incomplete' }
@@ -631,7 +653,8 @@ function Invoke-IsolatedBranchStack {
         [scriptblock]$StartBackendFn={param($spec) Start-IsolatedBackend @spec},
         [scriptblock]$HealthFn={param($url) Wait-IsolatedHealth -Url $url},
         [scriptblock]$IdentityLookup={param($e) Get-IsolatedProcessIdentity -ProcessId ([int]$e.pid) -Entrypoint ([string]$e.entrypoint)},
-        [scriptblock]$StopProcessFn={param($processId) Stop-Process -Id $processId -Force -ErrorAction Stop},
+        [scriptblock]$StopProcessFn={param($processId,$processHandle) if ($null -eq $processHandle) { throw "Fresh process handle is required for $processId." }; Stop-Process -InputObject $processHandle -Force -ErrorAction Stop},
+        [scriptblock]$ProcessHandleLookup={param($processId) Get-Process -Id $processId -ErrorAction Stop},
         [scriptblock]$ProcessExistsFn={param($processId) $null -ne (Get-Process -Id $processId -ErrorAction SilentlyContinue)},
         [scriptblock]$StopListenerLookupFn={param($port) Get-IsolatedPortListener -Port $port},
         [scriptblock]$HeadShaFn={param($root) (& git -C $root rev-parse HEAD).Trim()},
@@ -650,7 +673,7 @@ function Invoke-IsolatedBranchStack {
         Assert-IsolatedStackManifestIdentity -Manifest $manifest -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -OffsetInput $effectiveOffset
         if($Action -eq 'status'){return Get-IsolatedStackStatus -Manifest $manifest -ManifestPath $manifestPath -IdentityLookup $IdentityLookup -HealthFn $HealthFn}
         $stopResult = Stop-IsolatedStackRun -Manifest $manifest -ManifestPath $manifestPath -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn `
-            -ProcessExistsFn $ProcessExistsFn -ListenerLookupFn $StopListenerLookupFn
+            -ProcessExistsFn $ProcessExistsFn -ListenerLookupFn $StopListenerLookupFn -ProcessHandleLookup $ProcessHandleLookup
         if ($manifest.PSObject.Properties['reservation_held'] -and [bool]$manifest.reservation_held) {
             $heldReservation = Resolve-IsolatedStackReservation -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Offset ([int]$manifest.offset)
             & $ReservationReleaseFn $heldReservation
@@ -670,7 +693,7 @@ function Invoke-IsolatedBranchStack {
         $runtime=& $RuntimeResolver $RepoRoot
         Start-IsolatedStackRun -RepoRoot $RepoRoot -ChangeId $ChangeId -RunId $RunId -Preflight $preflight -Runtime $runtime -Reservation $reservation `
           -StartBackendFn $StartBackendFn -HealthFn $HealthFn -IdentityLookup $IdentityLookup -StopProcessFn $StopProcessFn -HeadShaFn $HeadShaFn `
-          -ProcessExistsFn $ProcessExistsFn -ListenerLookupFn $StopListenerLookupFn -LifecycleLogger $LifecycleLogger
+          -ProcessExistsFn $ProcessExistsFn -ListenerLookupFn $StopListenerLookupFn -ProcessHandleLookup $ProcessHandleLookup -LifecycleLogger $LifecycleLogger
     } catch {
         if ($_.Exception.Data['KeepIsolatedReservation'] -eq $true) { $releaseReservation = $false }
         throw

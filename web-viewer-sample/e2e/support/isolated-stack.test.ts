@@ -14,6 +14,7 @@ import {
   requireReal,
   writeIsolatedEvidenceManifest,
   type BrowserEvidenceObservation,
+  type IsolatedEvidencePublicationVerifier,
   type IsolatedStackConfig,
 } from "./isolated-stack";
 
@@ -101,6 +102,15 @@ function sampleObservation(config: IsolatedStackConfig): BrowserEvidenceObservat
     tracePath,
     harness: { buildFlag: false, queryFlag: false, realControlPlaneEligible: true },
   };
+}
+
+const unitEvidencePublicationVerifier: IsolatedEvidencePublicationVerifier = {
+  assertWorktreeClean() {},
+  async assertLiveBackendOwnership() {},
+};
+
+function writeUnitEvidence(config: IsolatedStackConfig, observation: BrowserEvidenceObservation) {
+  return writeIsolatedEvidenceManifest(config, observation, unitEvidencePublicationVerifier);
 }
 
 afterEach(() => {
@@ -370,8 +380,8 @@ describe("loadIsolatedStackConfig", () => {
       env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath },
     })!;
     const observation = sampleObservation(config);
-    const output = await writeIsolatedEvidenceManifest(config, observation);
-    await writeIsolatedEvidenceManifest(config, { ...observation, visibleStates: ["loading", "success", "retry"] });
+    const output = await writeUnitEvidence(config, observation);
+    await writeUnitEvidence(config, { ...observation, visibleStates: ["loading", "success", "retry"] });
     const evidence = JSON.parse(readFileSync(output, "utf8"));
     expect(evidence.observations).toHaveLength(1);
     expect(evidence.observations[0].visible_states).toContain("retry");
@@ -380,13 +390,66 @@ describe("loadIsolatedStackConfig", () => {
     expect(readdirSync(config.runDir).filter(name => name.includes(".tmp-") || name === "evidence-manifest.lock")).toEqual([]);
   });
 
+  it("marks A4 browser operability partial until every required viewport observation is published", async () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({
+      cwd: value.worktreeRoot,
+      headSha: value.headSha,
+      env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath },
+    })!;
+    const requiredIds = [
+      "a4-real-loading-1440x900",
+      "a4-real-failure-retry-1440x900",
+      "a4-real-success-1440x900",
+      "a4-real-loading-1920x1080",
+      "a4-real-failure-retry-1920x1080",
+      "a4-real-success-1920x1080",
+    ];
+    const output = await writeUnitEvidence(config, { ...sampleObservation(config), testId: requiredIds[0] });
+    expect(JSON.parse(readFileSync(output, "utf8")).scope.cpu_browser_operability).toBe("partial");
+    for (const testId of requiredIds.slice(1)) {
+      await writeUnitEvidence(config, { ...sampleObservation(config), testId });
+    }
+    const evidence = JSON.parse(readFileSync(output, "utf8"));
+    expect(evidence.scope.cpu_browser_operability).toBe("observed");
+    expect(evidence.scope.required_observation_ids).toEqual(requiredIds);
+  });
+
+  it("requires an unchanged worktree and live backend ownership before publishing evidence", async () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
+    const output = await writeUnitEvidence(config, sampleObservation(config));
+    const original = readFileSync(output, "utf8");
+    const leftovers = () => readdirSync(config.runDir).filter(name => name.includes(".tmp-") || name === "evidence-manifest.lock.json");
+
+    await expect(writeIsolatedEvidenceManifest(config, { ...sampleObservation(config), visibleStates: ["retry"] }, {
+      assertWorktreeClean() { throw new Error("dirty worktree"); },
+      async assertLiveBackendOwnership() {},
+    })).rejects.toThrow("dirty worktree");
+    expect(readFileSync(output, "utf8")).toBe(original);
+    expect(leftovers()).toEqual([]);
+
+    await expect(writeIsolatedEvidenceManifest(config, { ...sampleObservation(config), visibleStates: ["retry"] }, {
+      assertWorktreeClean() {},
+      async assertLiveBackendOwnership() { throw new Error("backend ownership changed"); },
+    })).rejects.toThrow("backend ownership changed");
+    expect(readFileSync(output, "utf8")).toBe(original);
+    expect(leftovers()).toEqual([]);
+
+    const support = readFileSync(path.join(process.cwd(), "e2e", "support", "isolated-stack.ts"), "utf8");
+    const setup = readFileSync(path.join(process.cwd(), "e2e", "support", "isolated-stack-global-setup.ts"), "utf8");
+    expect(setup).toContain("assertIsolatedWorktreeClean(isolated)");
+    expect(support).toContain("verifier.assertWorktreeClean(config)");
+    expect(support).toContain("await verifier.assertLiveBackendOwnership(config)");
+  });
+
   it("preserves original bytes on evidence identity mismatch", async () => {
     const value = fixture();
     const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
     const output = path.join(config.runDir, "evidence-manifest.json");
     const original = JSON.stringify({ schema_version: "isolated-branch-browser-evidence/v1", stack_kind: "isolated_branch_stack", change_id: "other", run_id: "other", head_sha: "f".repeat(40), observations: [] });
     writeFileSync(output, original);
-    await expect(writeIsolatedEvidenceManifest(config, sampleObservation(config))).rejects.toThrow(/evidence identity mismatch/);
+    await expect(writeUnitEvidence(config, sampleObservation(config))).rejects.toThrow(/evidence identity mismatch/);
     expect(readFileSync(output, "utf8")).toBe(original);
   });
 
@@ -395,7 +458,7 @@ describe("loadIsolatedStackConfig", () => {
     const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
     const outsidePath = path.join(value.worktreeRoot, "outside.png");
     writeFileSync(outsidePath, "outside");
-    await expect(writeIsolatedEvidenceManifest(config, { ...sampleObservation(config), screenshotPaths: [outsidePath] })).rejects.toThrow(/artifact path must stay inside current run/);
+    await expect(writeUnitEvidence(config, { ...sampleObservation(config), screenshotPaths: [outsidePath] })).rejects.toThrow(/artifact path must stay inside current run/);
   });
 
   it("rejects a contained screenshot or trace path that does not exist", async () => {
@@ -403,14 +466,14 @@ describe("loadIsolatedStackConfig", () => {
     const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
     const observation = sampleObservation(config);
     rmSync(observation.tracePath!, { force: true });
-    await expect(writeIsolatedEvidenceManifest(config, observation)).rejects.toThrow(/artifact does not exist/);
+    await expect(writeUnitEvidence(config, observation)).rejects.toThrow(/artifact does not exist/);
   });
 
   it("rejects caller harness build flags that disagree with the manifest authority", async () => {
     const value = fixture();
     const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
     const observation = sampleObservation(config);
-    await expect(writeIsolatedEvidenceManifest(config, {
+    await expect(writeUnitEvidence(config, {
       ...observation,
       harness: { ...observation.harness, buildFlag: true },
     })).rejects.toThrow(/harness build flag mismatch/);
@@ -433,12 +496,12 @@ describe("loadIsolatedStackConfig", () => {
   it("fails closed on a pre-existing evidence lock and preserves original bytes", async () => {
     const value = fixture();
     const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
-    const output = await writeIsolatedEvidenceManifest(config, sampleObservation(config));
+    const output = await writeUnitEvidence(config, sampleObservation(config));
     const original = readFileSync(output, "utf8");
-    const lockPath = path.join(config.runDir, "evidence-manifest.lock");
+    const lockPath = path.join(config.runDir, "evidence-manifest.lock.json");
     closeSync(openSync(lockPath, "wx"));
     try {
-      await expect(writeIsolatedEvidenceManifest(config, { ...sampleObservation(config), visibleStates: ["retry"] })).rejects.toThrow(/evidence writer lock exists/);
+      await expect(writeUnitEvidence(config, { ...sampleObservation(config), visibleStates: ["retry"] })).rejects.toThrow(/evidence writer lock exists/);
       expect(readFileSync(output, "utf8")).toBe(original);
     } finally {
       unlinkSync(lockPath);
@@ -450,7 +513,7 @@ describe("loadIsolatedStackConfig", () => {
     const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
     const artifactDirectory = path.join(config.runDir, "not-a-file");
     mkdirSync(artifactDirectory);
-    await expect(writeIsolatedEvidenceManifest(config, { ...sampleObservation(config), screenshotPaths: [artifactDirectory] })).rejects.toThrow(/artifact must be a file/);
+    await expect(writeUnitEvidence(config, { ...sampleObservation(config), screenshotPaths: [artifactDirectory] })).rejects.toThrow(/artifact must be a file/);
 
     const outsideDirectory = path.join(value.worktreeRoot, "outside-artifacts");
     const outsideFile = path.join(outsideDirectory, "outside.png");
@@ -458,7 +521,7 @@ describe("loadIsolatedStackConfig", () => {
     mkdirSync(outsideDirectory);
     writeFileSync(outsideFile, "outside");
     symlinkSync(outsideDirectory, escape, process.platform === "win32" ? "junction" : "dir");
-    await expect(writeIsolatedEvidenceManifest(config, {
+    await expect(writeUnitEvidence(config, {
       ...sampleObservation(config),
       screenshotPaths: [path.join(escape, "outside.png")],
     })).rejects.toThrow(/artifact path must stay inside current run/);
