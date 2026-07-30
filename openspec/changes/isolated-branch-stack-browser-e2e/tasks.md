@@ -26,7 +26,7 @@
 - [x] 3.4 `playwright.config.ts`：manifest coordinator base 與 resolved viewer port 都是 authority；`E2E_COORDINATOR_BASE_URL`／`E2E_VIEWER_PORT` 只可與 manifest 相同、不得覆寫，任何 mismatch 或保留集合命中即 throw。viewer lifecycle 僅由 Playwright `webServer` 管理；保留 `strictPort` + `reuseExistingServer:false`，require-real evidence 禁止 `E2E_DISABLE_WEBSERVER=1`，因外部 viewer 缺可驗證 build identity 時必須 fail closed。
 - [x] 3.5 跑 `npm run typecheck` 與 `npx vitest run`，結果不得低於改動前 baseline（先記錄 baseline 數字）。
 - [x] 3.6 先寫 failing test（RED）：3.2 的 helper 與 evidence manifest 必須揭露 `VITE_VIEWER_HARNESS` build flag 與 `?harness=1` query flag；harness run 不得被標為 coordinator review socket／authority ack 真實控制面證據。
-- [ ] 3.7 實作 3.6 的 harness 標示與 evidence eligibility 判定，再重跑該測試至 GREEN，並跑 `npm run typecheck`、受影響 Vitest 與適用 browser E2E；保留 RED／GREEN 指令及結果。
+- [x] 3.7 實作 3.6 的 harness 標示與 evidence eligibility 判定，再重跑該測試至 GREEN，並跑 `npm run typecheck`、受影響 Vitest 與適用 browser E2E；保留 RED／GREEN 指令及結果。P4 require-real Chromium 已於 `p4-final-20260730-115300` 執行；它在缺少 downloaded IFC-ready job 的既有 A4 前置條件 fail closed，該 product gap 仍由 5.2／5.3 記錄。
 - [x] 3.8 Review hardening：require-real global setup 在 health 後以 manifest PID/command line/creation identity 重驗 governance/coordinator，resolved listener 必須位於逐節帶 creation identity、拒絕 PID-reuse chronology 且 snapshot 前重驗的 process lineage；reserved-port guard 同時監看 HTTP request/WebSocket 並安全忽略非 network URL；A4 success 保留 table-only、complete-table、signed-proof unavailable 與 issue-disabled assertions。RED：Vitest 43 項中 3 項失敗，另真 `pwsh` snapshot test 證明原 trailing argv 固定失敗；GREEN：targeted Vitest 44/44（含真 `pwsh`/CIM/listener）與 `npm run typecheck` 通過。
 
 ## 4. Machine gate（owner：`.github/`、`scripts/tests/`）
