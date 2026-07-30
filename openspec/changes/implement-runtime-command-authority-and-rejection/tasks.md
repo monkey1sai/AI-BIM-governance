@@ -38,7 +38,7 @@
 - [x] 5.3 新增FakeKit deterministic one-shot rejection replay；證明production build不能只靠query啟用harness
 - [x] 5.4 trusted `viewer_lease_token`晚到時，只在embedded、stage未matched、selected asset仍可開啟時重排既有deferred-open timer
 - [x] 5.5 補visible rejection、retryable outage、changed-unconfirmed resync/block、one-shot replay、late-token單次恢復、timer replacement與matched-stage不重開tests
-- [x] 5.6 將viewer origin的runtime-command-rejection review diagnostics、request-context mismatch、changed-unconfirmed binding reason與stage-load failure接到既有zh/en presentation；保留persistent aria-live錨點、action與terminal語意不變，且因1.5、7.3、7.5仍OPEN，production/full completion維持no
+- [ ] 5.6 將viewer origin完整失敗態矩陣接到既有i18n keys；本切片已收斂runtime-command-rejection diagnostics、changed-unconfirmed binding、rejected stage-load與兩條stage-load-timeout路徑，但其餘失敗態仍須逐態驗證，因此production/full completion維持no
 
 ## 6. Wiring與可自動合併文件
 
@@ -68,11 +68,11 @@
 - Controlled browser：在 `web-viewer-sample/` 以 `E2E_VIEWER_PORT=5181` 執行 `npx playwright test e2e/runtime-command-authority.spec.ts --config=playwright.config.ts`，Chromium 2/2 通過。Standalone FakeKit one-shot rejection期間 outbound count與 mock viewport 均維持 zero mutation，只有 explicit retry 才 focus `/World/Site`；embedded flow 證明 late authority只開一次、binding lifecycle為 `pending → executing → terminal (success)`、changed-unconfirmed 阻擋 focus/handoff直到 authenticated matching-revision status resync。兩個 trace與三張 explicit screenshot位於 ignored `artifacts/e2e/_output/`，CI會以 head-SHA artifact `functional-runtime-conv-<head_sha>`保存；current trace scan為raw user UUID 0、unknown lease UUID 0，唯一distinct lease UUID由committed mock route以`crypto.randomUUID()`產生且只出現在該harness流程，4個`X-User-Token` occurrence均鄰接public `[redacted]` carrier，`X-Viewer-Lease-Token` header-name occurrence 2、`Authorization` 0，未輸出任何值。Design fidelity對viewer-origin diagnostic surface為reference-missing，full frontend completion不宣稱；詳見 `docs/evidence/runtime-command-authority/browser-evidence.md`。
 - 尚未完成且不得當作 pass：7.3 Windows host-native Kit/GPU runtime evidence、7.5 commit/PR/CI/merge。
 
-## 2026-07-30 Task 5.6 verification evidence
+## 2026-07-31 Task 5.6 partial-progress evidence
 
 - Viewer focused regression：`npm test -- --run src/console/windowParentMessage.dom.test.tsx` 通過，82/82 tests；覆蓋zh/en primary rejection diagnostics、request-context mismatch與alternate-language exclusion、production-visible binding failure，以及deferred functional updater的event-time language snapshot。
 - Viewer full gate：`npm run verify` 通過，typecheck、production build、78個test files／970 tests及23個structured-log tests全綠；`git diff --check`通過。
 - Controlled browser：`E2E_VIEWER_PORT=5181 npx playwright test e2e/runtime-command-authority.spec.ts --config=playwright.config.ts` Chromium 2/2通過；兩個trace與三張explicit screenshot位於ignored `artifacts/e2e/_output/`。
 - Design/deploy：`verify-design-system-reference.ps1`通過（13 screens、26 golden files）；`Window.tsx`同時命中approved `edge-console` surface與reference-missing routes，故`design gate status=mixed`、`full completion claimed=no`。Approved screens的subject-bound visual result只能在clean commit上產生，本輪commit前嘗試已依gate正確HELD，不得以structural gate取代；`scripts/deploy.ps1 -DryRun`通過，未執行Phase 2或修改deployment state。
 - 三層修後交叉審查：L1 Luna為no finding，L2 Terra為no surviving P0/P1/P2；L3 Sol初審以design status錯標`partial_reference_missing`而判MUST_FIX，修正為`mixed`並保留clean-subject visual gate後再接受交付。GitNexus indexed exact impact對`App._handleCustomEvent`回報HIGH（23 impacted、2 processes、4 modules）；新worktree未登錄registry，故current delta使用四檔content hash相同的舊隔離index，結果為MEDIUM（10 symbols、4 affected flows），不是新worktree index pass。FTS/BM25 extension不可用，不影響exact impact／detect-changes，且不得把搜尋功能記為pass。
-- 此切片只關閉5.6；credential owner gate 1.5、Windows host-native Kit/GPU evidence 7.3與本change整體closeout 7.5仍OPEN，change保持active且不得宣稱production/full completion。
+- 此切片不關閉5.6；完整失敗態矩陣、credential owner gate 1.5、Windows host-native Kit/GPU evidence 7.3與本change整體closeout 7.5仍OPEN，change保持active且不得宣稱production/full completion。
