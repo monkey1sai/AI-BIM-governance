@@ -84,7 +84,7 @@ describe("EdgeConsole：#conv 獨立頁與 #intake alias", () => {
 
   async function waitForCondition(assertion: () => void, timeout = 1000): Promise<void> {
     const start = Date.now();
-    while (true) {
+    for (;;) {
       try {
         assertion();
         return;
