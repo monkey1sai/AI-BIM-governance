@@ -1,137 +1,121 @@
-import { test, expect, type Locator } from "@playwright/test";
+import { existsSync, realpathSync, statSync } from "node:fs";
+import path from "node:path";
+import { expect, test, type APIRequestContext, type Locator } from "@playwright/test";
+import {
+  classifyHarnessUse,
+  loadIsolatedStackConfig,
+  requireIsolatedEvidenceGeneration,
+  requireReal,
+  watchForbiddenRequests,
+  writeIsolatedEvidenceManifest,
+} from "./support/isolated-stack";
 
-// A3 federation→session 一鍵鏈端到端：#/federation 以真 USD fixtures 建 federated set + 2 members →
-// validate-coords 一致 → Build federated_review.usda → review-room descriptor ready →
-// 「建立 Review Session（federated stage）」→ 斷言 session_id / a3-open-viewer href / spectator URL。
-//
-// *** 服務這頁的是 COORDINATOR 已 build 的 dist-ui（npm run build:ui → dist-ui），
-//     不是 playwright.config.ts 的 fresh viewer（:5180）。前置（乾淨環境必做）：
-//       1. cd web-viewer-sample && npm run build:ui   # 用本 branch 的碼重 build dist-ui
-//       2. 啟動 branch coordinator（預設 :8005）服務新 dist-ui；GOVERNANCE_API_BASE 指向
-//          branch governance（:49103，BIM_FILE_LIBRARY_ROOT=主 worktree storage）。
-//       3. 真 USD fixtures：{A3_USD_DIR}/arch.usdc + str.usdc（Z-up、metersPerUnit=1、World defaultPrim）。
-//          預設 C:/Repos/active/iot/AI-BIM-governance/storage/e2e-a3；用 E2E_A3_USD_DIR 覆寫。
-//       4. coordinator 跑別的 port 用 E2E_COORDINATOR_BASE_URL 覆寫。
-//     跑法（全絕對 COORDINATOR URL，比照 a1-m1 模式，不需 config webServer）：
-//       E2E_DISABLE_WEBSERVER=1 npx playwright test e2e/a3-federated-session-chain.spec.ts
-//
-// *** skip-gate 效力限制（誠實揭露，比照 a1-m1-closeout / a2-version-diff-selector）：
-//     beforeEach 三道是 conditional skip（前置缺失 → skip，Playwright 計 skipped ≠ PASS 斷言）。
-//     本 repo .github/workflows 僅 pr-review-agent.yml、無 Playwright job，故 skip 不會 false-green
-//     任何既有自動化 gate；此 spec 純屬本機/指揮官手動 P4 硬 gate。判讀鐵證：真 PASS 必產出
-//     artifacts/e2e/a3-federated-session-chain.png；走 skip 不會有這張截圖。
-//
-// *** UI 現況 vs 任務期望的誠實差異（以 pages.tsx FederationPage 為準；spec 適應元件、不改元件）：
-//     - set 名稱：prepare 寫死 createFederatedSet("coord-meeting")（pages.tsx:1461），UI 無名稱輸入
-//       → 無法「set 名稱帶時戳」；唯一性由後端產生的 set_id 保證（時戳名只用在守門 (c) 的 probe set）。
-//     - member model_version_id：UI 無 per-member 輸入欄（元件預設 arc_v1 / str_v1，pages.tsx:1428-1429，
-//       兩值相異、隨 addFederatedMember 真實送後端）→「各填」由預設值滿足，不假裝可編輯。
-//     - member_id：後端有回（addFederatedMember → {member_id}）但 UI 不顯示 → runtime IDs 只印 UI 可見的
-//       set_id（session model_version_id 輸入的 placeholder=federated_<set_id>，pages.tsx:1623）與 session_id。
-//     - a3-create-session / a3-session-result / a3-open-viewer / a3-invite-spectator 都在 {room && …} 區塊內
-//       （review-room descriptor 取得後才 render）→ 初載頁面拿不到任何 a3-* testid，branch-gate 改成雙重驗證：
-//       (i) dist-ui bundle 內含 "a3-create-session" 字串（data-testid 是 build-time string literal，minify 不動）、
-//       (ii) #/federation 真的 render（member usd_path input 可見）。
-//     - server path 遮蔽（實測 2026-07-15，coordinator governanceProxy.ts redactServerPaths:82-86,145）：
-//       /api/governance/* proxy 回應中的絕對路徑一律換成 "[server-path]"（防洩漏，coordinator 測試
-//       governance-rule-run-for-session.test.ts:600 明文斷言此行為）→ 瀏覽器看到的 build.usda_path 與
-//       review-room stage_composition.primary.url 都是字面 "[server-path]"。故 usda 斷言接受
-//       「真 .usda 路徑（未遮蔽部署）或 [server-path]（遮蔽後的誠實顯示）」；build 真實成功的硬證改由
-//       member 數=2 + hidden members Field + review-room ready:true 承擔。已知產品缺口（本 spec 如實
-//       記錄、不掩蓋）：UI 建 session 時 artifact_binding.url 帶的就是這個遮蔽字串（pages.tsx:1510/1535，
-//       coordinator createSessionSchema url 欄位 passthrough 接受），session 建立會成功、但該 binding
-//       無法供 Kit 解析真實 federated_review.usda —— 屬元件×proxy 互動缺口，於測試報告回報，非 spec 誤解。
-const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005";
-const A3_USD_DIR = process.env.E2E_A3_USD_DIR || "C:/Repos/active/iot/AI-BIM-governance/storage/e2e-a3";
+// A3 federation→session：manifest-owned viewer 的 #/federation 以兩個真 USD
+// fixtures 建 federated set、驗證、build、review-room，最後建立 Review Session。
+const isolated = loadIsolatedStackConfig();
+const COORDINATOR = isolated?.coordinatorBaseUrl ?? "";
+const A3_USD_DIR = isolated ? path.join(isolated.readOnlyFixtureRoot, "e2e-a3") : "";
+const ARCH_USD = path.join(A3_USD_DIR, "arch.usdc");
+const STR_USD = path.join(A3_USD_DIR, "str.usdc");
 
 // member usd_path input 的 zh placeholder（pages.tsx:1560；fresh context 無 localStorage → i18n 預設 zh）。
 const USD_PLACEHOLDER = "member .usd / .usdc 路徑（conversion 產出）";
 
+function requireContainedRegularFixture(candidate: string, label: string): void {
+  requireReal(existsSync(candidate), `A3 ${label} USD fixture is required and must exist`);
+  const physicalRoot = realpathSync(isolated!.readOnlyFixtureRoot);
+  const physicalCandidate = realpathSync(candidate);
+  const relative = path.relative(physicalRoot, physicalCandidate);
+  requireReal(
+    relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative),
+    `A3 ${label} USD fixture must stay inside the manifest read-only fixture root`,
+  );
+  requireReal(statSync(physicalCandidate).isFile(), `A3 ${label} USD fixture must be a regular file`);
+}
+
+async function cleanupCreatedSession(request: APIRequestContext, sessionId: string): Promise<void> {
+  try {
+    const response = await request.post(
+      `${COORDINATOR}/api/review-sessions/${encodeURIComponent(sessionId)}/close`,
+      { data: { reason: "e2e a3-federated-session-chain cleanup" }, timeout: 15_000 },
+    );
+    if (!response.ok()) {
+      console.log(`[a3-e2e] cleanup session=${sessionId}: HTTP ${response.status()} (manual cleanup required)`);
+    }
+  } catch {
+    console.log(`[a3-e2e] cleanup session=${sessionId}: manual cleanup required`);
+  }
+}
+
 test.describe("A3 federation→session 一鍵鏈（#/federation 真 backend 全鏈）", () => {
+  test.skip(!isolated, "A3 isolated evidence requires E2E_REQUIRE_REAL=1");
+  if (!isolated) return;
   // 預算：守門 ~30s + prepare 30s + build 60s + review-room 30s + create session 60s + 截圖 → 240s 上限。
   test.setTimeout(240_000);
 
   // afterEach 誠實清理只關「本測建立」的 session：test body 拿到 session_id 才填入；其他 session 一律不碰。
   let createdSessionId: string | null = null;
+  let forbiddenGuard: ReturnType<typeof watchForbiddenRequests> | undefined;
+  let createdSetId: string | null = null;
+  let tracePath = "";
+  let traceActive = false;
+  let completed = false;
 
-  test.beforeEach(async ({ request, page }) => {
-    // 守門 (a)：coordinator /health 可達。explicit 10s timeout（fail-fast，不讓慢後端吃整體預算；對齊 a1 慣例）。
-    let healthOk = false;
-    try {
-      const res = await request.get(`${COORDINATOR}/health`, { timeout: 10_000 });
-      healthOk = res.ok();
-    } catch {
-      healthOk = false;
-    }
-    test.skip(!healthOk, `coordinator 未備妥（${COORDINATOR}/health 不可達）`);
+  test.beforeEach(async ({ request, page }, testInfo) => {
+    createdSessionId = null;
+    createdSetId = null;
+    completed = false;
+    forbiddenGuard = watchForbiddenRequests(page, isolated.coordinatorBaseUrl);
+    tracePath = testInfo.outputPath("a3-federated-session-chain-trace.zip");
+    await page.context().tracing.start({ screenshots: true, snapshots: true, sources: true });
+    traceActive = true;
+    requireContainedRegularFixture(ARCH_USD, "ARCH");
+    requireContainedRegularFixture(STR_USD, "STR");
 
-    // 守門 (c)：governance 經 coordinator proxy 可達 —— 真打 POST /api/governance/federated-sets。
-    // probe set 名稱帶時戳避免重複；federated set 是 metadata-only（不 build、不開 session），殘留無害。
-    let govOk = false;
-    try {
-      const res = await request.post(`${COORDINATOR}/api/governance/federated-sets`, {
-        data: { name: `e2e_a3_gate_${Date.now()}` },
-        timeout: 10_000,
-      });
-      if (res.ok()) {
-        const body = (await res.json()) as { set_id?: unknown };
-        govOk = typeof body.set_id === "string" && body.set_id.length > 0;
-      }
-    } catch {
-      govOk = false;
-    }
-    test.skip(
-      !govOk,
-      "governance 經 proxy 不可達（POST /api/governance/federated-sets 失敗）：需 branch governance(:49103) + coordinator GOVERNANCE_API_BASE 指向它。",
-    );
+    const health = await request.get(`${COORDINATOR}/health`, { timeout: 10_000 });
+    requireReal(health.ok(), `isolated coordinator health failed: HTTP ${health.status()}`);
 
-    // 守門 (b)：branch dist-ui 已部署（bundle 含 a3-create-session）且 #/federation 真的 render。
-    // 見檔頭「誠實差異」末條：a3-* testid 初載不可見 → bundle 字串驗 branch、usd_path input 驗頁面。
-    let uiOk = false;
-    try {
-      const html = await (await request.get(`${COORDINATOR}/ui/`, { timeout: 10_000 })).text();
-      const assets = [...html.matchAll(/(?:src|href)="([^"]+\.js)"/g)].map((m) => m[1]);
-      let bundleHasA3 = false;
-      for (const asset of assets) {
-        const url = asset.startsWith("http")
-          ? asset
-          : `${COORDINATOR}${asset.startsWith("/") ? "" : "/"}${asset}`;
-        const js = await (await request.get(url, { timeout: 15_000 })).text();
-        if (js.includes("a3-create-session")) {
-          bundleHasA3 = true;
-          break;
-        }
-      }
-      if (bundleHasA3) {
-        // 此導航同時是 test body 的唯一導航（成功後 page 停在 #/federation、member rows 已 render），
-        // test body 直接複用、不重複 goto（重複導航會 unmount/remount，比照 a2 的理由）。
-        await page.goto(`${COORDINATOR}/ui/#/federation`);
-        await page.getByPlaceholder(USD_PLACEHOLDER).first().waitFor({ state: "visible", timeout: 15_000 });
-        uiOk = true;
-      }
-    } catch {
-      uiOk = false;
-    }
-    test.skip(
-      !uiOk,
-      "coordinator dist-ui 非本 branch 或 #/federation 未 render（bundle 缺 a3-create-session / member usd_path input 未見）：需 npm run build:ui 後重啟 coordinator（見檔頭前置）。",
-    );
+    // Read-only coordinator→governance proxy probe; it must not create a set.
+    const probe = await request.get(`${COORDINATOR}/api/governance/search/llm-status`, { timeout: 10_000 });
+    requireReal(probe.ok(), `isolated governance proxy probe failed: HTTP ${probe.status()}`);
+    const probeBody = await probe.json() as unknown;
+    requireReal(typeof probeBody === "object" && probeBody !== null && !Array.isArray(probeBody), "isolated governance proxy probe returned invalid JSON");
+
+    await page.goto("/#/federation");
+    await page.getByPlaceholder(USD_PLACEHOLDER).first().waitFor({ state: "visible", timeout: 15_000 });
   });
 
-  test.afterEach(async ({ request }) => {
-    // 誠實清理：只關本測建立的那顆 session（POST /api/review-sessions/:id/close）。
-    // UI 無 close 鈕（SS 頁才有）→ 直接 fetch。失敗不吞：印出真實狀態供人工收尾。
-    if (!createdSessionId) return;
-    const sid = createdSessionId;
-    createdSessionId = null;
+  test.afterEach(async ({ request, page }, testInfo) => {
     try {
-      const res = await request.post(
-        `${COORDINATOR}/api/review-sessions/${encodeURIComponent(sid)}/close`,
-        { data: { reason: "e2e a3-federated-session-chain cleanup" }, timeout: 15_000 },
-      );
-      console.log(`[a3-e2e] cleanup: close ${sid} → HTTP ${res.status()}`);
-    } catch (e) {
-      console.log(`[a3-e2e] cleanup: close ${sid} 失敗（需人工收尾）：${String(e)}`);
+      let screenshotPath: string | null = null;
+      if (completed && createdSetId && createdSessionId) {
+        screenshotPath = testInfo.outputPath("a3-federated-session-chain.png");
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+      }
+      if (traceActive) { await page.context().tracing.stop({ path: tracePath }); traceActive = false; }
+      forbiddenGuard?.assertClean();
+      if (completed && createdSetId && createdSessionId && screenshotPath) {
+        await writeIsolatedEvidenceManifest(isolated, {
+          invocationGeneration: requireIsolatedEvidenceGeneration(testInfo.config.metadata),
+          testId: "a3-federated-session-chain",
+          route: "#/federation",
+          mainButtons: ["準備 + 驗證坐標系", "Build Federated USD", "Open in Review Room", "a3-create-session"],
+          fixture: "ARCH/STR real USD fixtures",
+          backendApi: "GET /api/governance/search/llm-status; federation and review-session proxy flow",
+          observedRuntimeIds: { set_id: createdSetId, session_id: createdSessionId },
+          visibleStates: ["coordinate-consistent", "review-room-ready", "session-created"],
+          screenshotPaths: [screenshotPath], tracePath,
+          harness: classifyHarnessUse({ buildFlag: isolated.harnessBuildFlag, queryFlag: new URL(page.url()).searchParams.get("harness") === "1" }),
+        });
+      }
+    } finally {
+      if (traceActive) { await page.context().tracing.stop({ path: tracePath }); traceActive = false; }
+      // 只關本測已確認建立的 session；絕不枚舉或關閉其他 session。
+      const sid = createdSessionId;
+      createdSessionId = null;
+      if (sid) {
+        await cleanupCreatedSession(request, sid);
+      }
     }
   });
 
@@ -145,8 +129,7 @@ test.describe("A3 federation→session 一鍵鏈（#/federation 真 backend 全�
         warnNote.first().waitFor({ state: "visible", timeout }).then(() => "err" as const, () => "timeout" as const),
       ]);
       if (outcome === "err") {
-        const detail = (await warnNote.first().innerText()).slice(0, 400);
-        expect(false, `${what}：後端誠實回報錯誤 → ${detail}`).toBe(true);
+        expect(false, `${what}：後端顯示錯誤狀態`).toBe(true);
       }
       expect(outcome, `${what} 未在 ${timeout / 1000}s 內出現（目標元素與錯誤訊息皆未見）`).toBe("ok");
     };
@@ -163,8 +146,8 @@ test.describe("A3 federation→session 一鍵鏈（#/federation 真 backend 全�
     await row(0).locator("input").nth(0).fill("ARCH");
     await row(1).locator("input").nth(0).fill("STR");
     // usd_path：真 USD fixtures（governance 端讀檔驗證，路徑不存在 → prepare 會誠實失敗）。
-    await usdInputs.nth(0).fill(`${A3_USD_DIR}/arch.usdc`);
-    await usdInputs.nth(1).fill(`${A3_USD_DIR}/str.usdc`);
+    await usdInputs.nth(0).fill(ARCH_USD);
+    await usdInputs.nth(1).fill(STR_USD);
     // layer_order 0/1（小=強；title 屬性是唯一穩定 handle）。
     const layerInputs = page.getByTitle("layer_order（小=強）");
     await layerInputs.nth(0).fill("0");
@@ -195,12 +178,12 @@ test.describe("A3 federation→session 一鍵鏈（#/federation 真 backend 全�
     await page.getByRole("button", { name: /Open in Review Room/ }).click();
     const primaryField = page.locator("main .ec-field", { hasText: "stage_composition.primary" });
     await waitOrExplain(primaryField, "review-room descriptor ready（stage_composition.primary Field）", 30_000);
-    const primaryUrl = (await primaryField.locator(".ec-v").innerText()).trim().split(/\s+/)[0] ?? "";
 
     // set_id（UI 可見形）：session model_version_id 輸入的 placeholder=federated_<set_id>（pages.tsx:1623）。
     const mvInput = page.locator('input[placeholder^="federated_"]');
     const setId = ((await mvInput.getAttribute("placeholder")) ?? "").replace(/^federated_/, "");
     expect(setId, "session 區塊 placeholder 應帶真實 set_id").not.toBe("");
+    createdSetId = setId;
     // model_version_id 留空 → 送出 federated_<set_id>（真實對應後端 set）；project_id 用元件預設 federation-demo。
 
     // Step 4：建立 Review Session（federated stage）。先斷言 enabled（descriptor ready + 必填齊 →
@@ -245,17 +228,9 @@ test.describe("A3 federation→session 一鍵鏈（#/federation 真 backend 全�
       `${COORDINATOR}/api/review-sessions/${sessionId}/stream-config`,
     )).json() as { stage_composition?: { primary?: { url?: string } } };
     const scPrimaryUrl = streamConfig.stage_composition?.primary?.url ?? "";
-    expect(scPrimaryUrl.endsWith("federated_review.usda"), `stream-config primary=${scPrimaryUrl}`).toBe(true);
+    expect(scPrimaryUrl.endsWith("federated_review.usda"), "stream-config primary 必須是 federated_review.usda").toBe(true);
     expect(scPrimaryUrl).not.toContain("[server-path]");
-    console.log(`[a3-chain] stream-config primary url=${scPrimaryUrl}`);
 
-    await page.screenshot({ path: "../artifacts/e2e/a3-federated-session-chain.png", fullPage: true });
-
-    // runtime IDs（UI 可見者如實印出；member_id UI 不顯示 → 誠實不捏造）。
-    console.log(`[a3-e2e] runtime IDs：set_id=${setId} session_id=${sessionId}（member_id UI 不顯示，略）`);
-    console.log(`[a3-e2e] stage_composition.primary=${primaryUrl}`);
-    console.log(`[a3-e2e] usda_path=${usdaPathText}`);
-    console.log(`[a3-e2e] open-viewer href=${href}`);
-    console.log(`[a3-e2e] spectator URL=${spectatorUrl}`);
+    completed = true;
   });
 });

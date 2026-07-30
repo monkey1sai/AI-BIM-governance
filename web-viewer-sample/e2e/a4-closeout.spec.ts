@@ -1,24 +1,18 @@
-import { test, expect } from "@playwright/test";
+import { expect, test, type Page, type Route, type TestInfo } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import {
+  classifyHarnessUse,
+  loadIsolatedStackConfig,
+  parseObservedNetworkUrl,
+  requireIsolatedEvidenceGeneration,
+  requireReal,
+  watchForbiddenRequests,
+  writeIsolatedEvidenceManifest,
+} from "./support/isolated-stack";
 
-// S4-B compatibility evidence for the legacy #semantic-search route.
-// This is intentionally NOT the canonical/full A4 S4-D workflow: the only
-// enabled source is a server-resolved IFC-ready job, and Issue/3D/session
-// actions remain visibly fail-closed.
-//
-// Branch-isolated real stack:
-//   1. build dist-ui with VITE_COORDINATOR_API_BASE=http://127.0.0.1:8005
-//   2. run governance :49103 and coordinator :8005 with at least one downloaded
-//      IFC-ready job whose host path is readable by governance
-//   3. E2E_DISABLE_WEBSERVER=1 E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8005
-//      A4_E2E_REQUIRE_REAL=1 [A4_E2E_IFC_READY_JOB_ID=ifcready_...] \
-//      npx playwright test e2e/a4-closeout.spec.ts
-//
-// A4_E2E_REQUIRE_REAL=1 turns every missing precondition into a hard failure;
-// without it this opt-in host fixture test may skip and MUST NOT be cited as a
-// passing operability gate.
-const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005";
-const REQUIRED_JOB_ID = process.env.A4_E2E_IFC_READY_JOB_ID || "";
-const REQUIRE_REAL = process.env.A4_E2E_REQUIRE_REAL === "1";
+const isolated = loadIsolatedStackConfig();
+const COORDINATOR = isolated?.coordinatorBaseUrl ?? "";
+const REQUIRED_JOB_ID = process.env.A4_E2E_IFC_READY_JOB_ID ?? "";
 const VIEWPORTS = [
   { label: "1440x900", width: 1440, height: 900 },
   { label: "1920x1080", width: 1920, height: 1080 },
@@ -27,131 +21,342 @@ const VIEWPORTS = [
 type IfcReadyJob = {
   ifc_ready_job_id: string;
   download_status?: string | null;
+  status?: string | null;
+  conversion_status?: string | null;
 };
 
-function unavailable(message: string): void {
-  if (REQUIRE_REAL) throw new Error(message);
-  test.skip(true, message);
+type ModelSearchResponse = {
+  status?: string;
+  error_code?: string;
+  query_id?: string;
+  results?: unknown[];
+};
+
+// Keep this in sync with governance-service/search/interpreter.py's supported
+// deterministic IFC classes. No one class is required to be present in every
+// real IFC, so preflight proves an actual job/query pair before browser work.
+const DETERMINISTIC_CLASS_CANDIDATES = [
+  "IfcDoor",
+  "IfcColumn",
+  "IfcWall",
+  "IfcBeam",
+  "IfcSlab",
+  "IfcWindow",
+  "IfcSpace",
+  "IfcBuildingElementProxy",
+] as const;
+const PREFLIGHT_PRINCIPAL = "a4-e2e-preflight";
+const SAFE_A4_DIAGNOSTIC = /^[a-z0-9_]{1,96}$/i;
+const SAFE_A4_QUERY_ID = /^a4q_[A-Za-z0-9_-]{12,64}$/;
+const MAX_PREFLIGHT_DIAGNOSTICS = 8;
+
+function safeA4Diagnostic(value: unknown): string | null {
+  return typeof value === "string" && SAFE_A4_DIAGNOSTIC.test(value) ? value : null;
 }
 
 for (const viewport of VIEWPORTS) {
-test.describe(`A4 S4-B compatibility: scoped IFC-ready table (${viewport.label} DPR1)`, () => {
-  test.setTimeout(180_000);
-  test.use({
-    viewport: { width: viewport.width, height: viewport.height },
-    deviceScaleFactor: 1,
-  });
-  let jobId = "";
+  test.describe(`A4 require-real scoped search (${viewport.label} DPR1)`, () => {
+    test.skip(!isolated, "A4 isolated evidence requires E2E_REQUIRE_REAL=1");
+    if (!isolated) return;
+    test.setTimeout(180_000);
+    test.use({
+      viewport: { width: viewport.width, height: viewport.height },
+      deviceScaleFactor: 1,
+    });
 
-  test.beforeEach(async ({ request, page }) => {
-    let apiOk = false;
-    try {
-      const status = await request.get(`${COORDINATOR}/api/governance/search/llm-status`, { timeout: 10_000 });
-      apiOk = status.ok();
-    } catch {
-      apiOk = false;
-    }
-    if (!apiOk) {
-      unavailable("branch governance search proxy is unavailable on the isolated coordinator");
-      return;
+    let forbiddenGuard: ReturnType<typeof watchForbiddenRequests> | undefined;
+    let genericSearchRequests: string[] = [];
+    let jobId = "";
+    let searchQuery = "";
+    let tracePath = "";
+    let traceActive = false;
+    let pendingEvidence: null | {
+      testId: string;
+      visibleStates: string[];
+      fixture: string;
+      backendApi: string;
+      observedRuntimeIds: Record<string, string>;
+    } = null;
+
+    async function finishEvidence(
+      page: Page,
+      testInfo: TestInfo,
+      testId: string,
+      visibleStates: string[],
+      fixture: string,
+      backendApi: string,
+      observedRuntimeIds: Record<string, string>,
+    ): Promise<void> {
+      void page; void testInfo;
+      pendingEvidence = { testId, visibleStates, fixture, backendApi, observedRuntimeIds };
     }
 
-    const listResponse = await request.get(`${COORDINATOR}/api/external/ifc-ready?limit=50`, { timeout: 10_000 });
-    if (!listResponse.ok()) {
-      unavailable(`IFC-ready list failed with HTTP ${listResponse.status()}`);
-      return;
-    }
-    const list = await listResponse.json() as { items?: IfcReadyJob[] };
-    const downloaded = list.items?.filter((item) => item.download_status === "downloaded") ?? [];
-    const selected = REQUIRED_JOB_ID
-      ? downloaded.find((item) => item.ifc_ready_job_id === REQUIRED_JOB_ID)
-      : downloaded[0];
-    if (!selected) {
-      unavailable(REQUIRED_JOB_ID
-        ? `required downloaded IFC-ready job was not found: ${REQUIRED_JOB_ID}`
-        : "no downloaded IFC-ready job is available for real A4 evidence");
-      return;
-    }
-    jobId = selected.ifc_ready_job_id;
+    test.beforeEach(async ({ page, request }, testInfo) => {
+      forbiddenGuard = watchForbiddenRequests(page, isolated.coordinatorBaseUrl);
+      genericSearchRequests = [];
+      pendingEvidence = null;
+      page.on("request", requestEvent => {
+        if (parseObservedNetworkUrl(requestEvent.url())?.pathname === "/api/governance/search/model") {
+          genericSearchRequests.push(requestEvent.url());
+        }
+      });
+      tracePath = testInfo.outputPath(`${testInfo.title.replace(/[^A-Za-z0-9_-]+/g, "-")}-trace.zip`);
+      await page.context().tracing.start({ screenshots: true, snapshots: true, sources: true });
+      traceActive = true;
 
-    await page.goto(`${COORDINATOR}/ui/#semantic-search`);
-    const pageRoot = page.getByTestId("a4-semantic-search-page");
-    try {
-      await pageRoot.waitFor({ state: "visible", timeout: 15_000 });
+      const health = await request.get(`${COORDINATOR}/health`);
+      requireReal(health.ok(), `coordinator health failed: ${health.status()}`);
+      const proxy = await request.get(`${COORDINATOR}/api/governance/search/llm-status`);
+      requireReal(proxy.ok(), `governance search proxy failed: ${proxy.status()}`);
+      const listResponse = await request.get(`${COORDINATOR}/api/external/ifc-ready?limit=100`);
+      requireReal(listResponse.ok(), `IFC-ready list failed: ${listResponse.status()}`);
+      const list = await listResponse.json() as { items?: IfcReadyJob[] };
+      const downloaded = (list.items ?? []).filter(item => item.download_status === "downloaded");
+      const preferred = downloaded.find(item => item.conversion_status === "ready" || item.status === "ready");
+      const orderedJobs = REQUIRED_JOB_ID
+        ? downloaded.filter(item => item.ifc_ready_job_id === REQUIRED_JOB_ID)
+        : [preferred, ...downloaded.filter(item => item !== preferred)].filter((item): item is IfcReadyJob => Boolean(item));
+      requireReal(
+        orderedJobs.length > 0,
+        REQUIRED_JOB_ID
+          ? `required downloaded job is missing: ${REQUIRED_JOB_ID}`
+          : "no downloaded IFC-ready job is available",
+      );
+
+      jobId = "";
+      searchQuery = "";
+      const preflightDiagnostics: string[] = [];
+      const recordPreflightDiagnostic = (httpStatus: number, body: ModelSearchResponse | null) => {
+        if (preflightDiagnostics.length >= MAX_PREFLIGHT_DIAGNOSTICS) return;
+        const facts = [`HTTP ${httpStatus}`];
+        const status = safeA4Diagnostic(body?.status);
+        const errorCode = safeA4Diagnostic(body?.error_code);
+        if (status) facts.push(`status=${status}`);
+        if (errorCode) facts.push(`error_code=${errorCode}`);
+        if (httpStatus >= 200 && httpStatus < 300 && body?.status === "ok" && Array.isArray(body.results) && body.results.length === 0) {
+          facts.push("empty_results");
+        }
+        preflightDiagnostics.push(facts.join(" "));
+      };
+      for (const job of orderedJobs) {
+        for (const query of DETERMINISTIC_CLASS_CANDIDATES) {
+          const search = await request.post(
+            `${COORDINATOR}/api/governance/search/model/for-ifc-ready/${encodeURIComponent(job.ifc_ready_job_id)}`,
+            {
+              headers: { "X-User-Token": PREFLIGHT_PRINCIPAL },
+              data: { query, interpret_mode: "deterministic" },
+            },
+          );
+          let body: ModelSearchResponse | null = null;
+          try {
+            body = await search.json() as ModelSearchResponse;
+          } catch {
+            // The failure report intentionally records only HTTP status when
+            // the response is not safe structured JSON.
+          }
+          if (!search.ok()) {
+            recordPreflightDiagnostic(search.status(), body);
+            continue;
+          }
+          if (body?.status === "ok" && Array.isArray(body.results) && body.results.length > 0) {
+            jobId = job.ifc_ready_job_id;
+            searchQuery = query;
+            break;
+          }
+          recordPreflightDiagnostic(search.status(), body);
+        }
+        if (jobId) break;
+      }
+      requireReal(
+        jobId && searchQuery,
+        `no downloaded IFC-ready job produced deterministic A4 search results for supported class candidates; diagnostics=${preflightDiagnostics.join("; ") || "none"}`,
+      );
+    });
+
+    test.afterEach(async ({ page }, testInfo) => {
+      try {
+        let screenshotPath: string | null = null;
+        if (pendingEvidence) {
+          screenshotPath = testInfo.outputPath(`${pendingEvidence.testId}.png`);
+          await page.screenshot({ path: screenshotPath, fullPage: true });
+        }
+        if (traceActive) { await page.context().tracing.stop({ path: tracePath }); traceActive = false; }
+        forbiddenGuard?.assertClean();
+        expect(genericSearchRequests, "must not call the generic host-path A4 route").toEqual([]);
+        if (pendingEvidence && screenshotPath) {
+          const harness = classifyHarnessUse({ buildFlag: isolated.harnessBuildFlag, queryFlag: new URL(page.url()).searchParams.get("harness") === "1" });
+          requireReal(harness.realControlPlaneEligible, "harness build+query fake control plane is not real evidence");
+          await writeIsolatedEvidenceManifest(isolated, {
+            invocationGeneration: requireIsolatedEvidenceGeneration(testInfo.config.metadata),
+            testId: pendingEvidence.testId, route: "#semantic-search", mainButtons: ["a4-refresh-sources", "a4-run"],
+            fixture: pendingEvidence.fixture,
+            backendApi: pendingEvidence.backendApi, observedRuntimeIds: pendingEvidence.observedRuntimeIds,
+            visibleStates: pendingEvidence.visibleStates, screenshotPaths: [screenshotPath], tracePath, harness,
+          });
+        }
+      } finally {
+        if (traceActive) {
+          await page.context().tracing.stop({ path: tracePath });
+          traceActive = false;
+        }
+      }
+    });
+
+    test("shows real IFC-ready loading state", async ({ page }, testInfo) => {
+      const listPattern = "**/api/external/ifc-ready**";
+      let released = false;
+      let resolveList!: () => void;
+      const listGate = new Promise<void>(resolve => { resolveList = resolve; });
+      const releaseList = () => {
+        if (!released) {
+          released = true;
+          resolveList();
+        }
+      };
+      const waitForRealList = async (route: Route) => {
+        await listGate;
+        await route.continue();
+      };
+      await page.route(listPattern, waitForRealList);
+      try {
+        await page.goto("/#semantic-search");
+        await expect(page.getByTestId("a4-semantic-search-page")).toBeVisible();
+        await expect(page.getByTestId("a4-source-loading")).toBeVisible();
+        await expect(page.getByTestId("a4-run")).toBeDisabled();
+        releaseList();
+      } finally {
+        releaseList();
+        await page.unroute(listPattern, waitForRealList);
+      }
       await page.getByTestId("a4-job-select").selectOption(jobId);
-    } catch {
-      unavailable("branch dist-ui does not expose the S4-B #semantic-search compatibility surface");
-    }
-    expect(page.viewportSize()).toEqual({ width: viewport.width, height: viewport.height });
-    expect(await page.evaluate(() => window.devicePixelRatio)).toBe(1);
-  });
-
-  test("downloaded job -> scoped deterministic search -> table-only result with actions disabled", async ({ page }) => {
-    const forbiddenCalls: string[] = [];
-    page.on("request", (request) => {
-      const url = new URL(request.url());
-      if (
-        url.port === "49102"
-        || url.port === "8004"
-        || url.pathname === "/api/governance/search/model"
-      ) forbiddenCalls.push(request.url());
+      await expect(page.getByTestId("a4-job-select")).toHaveValue(jobId);
+      await finishEvidence(page, testInfo, `a4-real-loading-${viewport.label}`, ["loading"], `downloaded IFC-ready job preflighted against the real coordinator with deterministic query=${searchQuery}`, "GET /api/external/ifc-ready?limit=100", { ifc_ready_job_id: jobId });
     });
 
-    await expect(page.getByTestId("a4-source-path")).toHaveCount(0);
-    await expect(page.getByTestId("a4-path-input")).toHaveCount(0);
-    await expect(page.getByTestId("a4-source-session")).toBeDisabled();
-    await expect(page.getByTestId("a4-source-scope-note")).toContainText("ifc_ready_table_only");
+    test("shows list failure then retries the real API", async ({ page }, testInfo) => {
+      const listPattern = "**/api/external/ifc-ready**";
+      let firstList = true;
+      const failFirstList = async (route: Route) => {
+        if (firstList) {
+          firstList = false;
+          await route.abort("failed");
+          return;
+        }
+        await route.continue();
+      };
+      await page.route(listPattern, failFirstList);
+      try {
+        await page.goto("/#semantic-search");
+        await expect(page.getByTestId("a4-load-err")).toBeVisible();
+      } finally {
+        await page.unroute(listPattern, failFirstList);
+      }
+      await page.getByTestId("a4-refresh-sources").click();
+      await page.getByTestId("a4-job-select").selectOption(jobId);
+      await expect(page.getByTestId("a4-job-select")).toHaveValue(jobId);
+      await expect(page.getByTestId("a4-run")).toBeEnabled();
+      await finishEvidence(page, testInfo, `a4-real-failure-retry-${viewport.label}`, ["failure", "retry"], `downloaded IFC-ready job preflighted against the real coordinator with deterministic query=${searchQuery}`, "GET /api/external/ifc-ready?limit=100", { ifc_ready_job_id: jobId });
+    });
 
-    await page.getByTestId("a4-mode-deterministic").click();
-    await page.getByTestId("a4-query-input").fill("IfcDoor");
-    const scopedRequest = page.waitForRequest((request) =>
-      request.method() === "POST"
-      && new URL(request.url()).pathname === `/api/governance/search/model/for-ifc-ready/${jobId}`,
-    );
-    await page.getByTestId("a4-run").click();
+    test("runs A4 against the real coordinator", async ({ page }, testInfo) => {
+      await page.goto("/#semantic-search");
+      await page.getByTestId("a4-job-select").selectOption(jobId);
+      await expect(page.getByTestId("a4-job-select")).toHaveValue(jobId);
+      await page.getByTestId("a4-mode-deterministic").click();
+      await page.getByTestId("a4-query-input").fill(searchQuery);
+      const searchPattern = "**/api/governance/search/model/for-ifc-ready/**";
+      let released = false;
+      let resolveSearch!: () => void;
+      const searchGate = new Promise<void>(resolve => { resolveSearch = resolve; });
+      const releaseSearch = () => {
+        if (!released) {
+          released = true;
+          resolveSearch();
+        }
+      };
+      const waitForRealSearch = async (route: Route) => {
+        await searchGate;
+        await route.continue();
+      };
+      await page.route(searchPattern, waitForRealSearch);
+      let observedQueryId = "";
+      try {
+        const responsePromise = page.waitForResponse(response =>
+          response.request().method() === "POST" &&
+          new URL(response.url()).pathname === `/api/governance/search/model/for-ifc-ready/${jobId}`,
+        );
+        await page.getByTestId("a4-run").click();
+        await expect(page.getByTestId("a4-run")).toContainText("執行中");
+        releaseSearch();
+        const response = await responsePromise;
+        requireReal(response.ok(), `A4 search failed: ${response.status()}`);
+        const responseBody = await response.json() as ModelSearchResponse;
+        requireReal(SAFE_A4_QUERY_ID.test(responseBody.query_id ?? ""), "A4 browser response did not return a safe query_id");
+        observedQueryId = responseBody.query_id!;
+      } finally {
+        releaseSearch();
+        await page.unroute(searchPattern, waitForRealSearch);
+      }
+      await expect(page.getByTestId("a4-results-table")).toBeVisible();
+      await expect(page.getByTestId("a4-results-table").locator("tbody tr").first().locator("td").nth(1)).toHaveText(searchQuery);
+      await expect(page.getByTestId("a4-job-select")).toHaveValue(jobId);
+      await expect(page.getByTestId("a4-source-scope-note")).toContainText("ifc_ready_table_only");
+      const scopeField = page.getByText("search_scope", { exact: true }).first().locator("..").locator(".ec-v");
+      await expect.poll(() => scopeField.evaluate(element => element.firstChild?.textContent?.trim()))
+        .toBe("ifc_ready_table_only");
+      const completionField = page.getByText("completion_scope", { exact: true }).first().locator("..").locator(".ec-v");
+      await expect.poll(() => completionField.evaluate(element => element.firstChild?.textContent?.trim()))
+        .toBe("table_only");
+      const resultScanField = page.getByText("result_scan_scope", { exact: true }).first().locator("..").locator(".ec-v");
+      await expect.poll(() => resultScanField.evaluate(element => element.firstChild?.textContent?.trim()))
+        .toBe("complete_table");
+      await expect(page.getByText("deterministic_grammar").first()).toBeVisible();
+      await expect(page.getByTestId("a4-create-issues")).toBeDisabled();
+      await expect(page.getByTestId("a4-actions-unavailable")).toContainText("signed-proof");
+      await finishEvidence(
+        page,
+        testInfo,
+        `a4-real-success-${viewport.label}`,
+        ["success"],
+        `downloaded IFC-ready job exercised against the real coordinator with deterministic query=${searchQuery}`,
+        `POST /api/governance/search/model/for-ifc-ready/${jobId}`,
+        { ifc_ready_job_id: jobId, query_id: observedQueryId },
+      );
+    });
 
-    const request = await scopedRequest;
-    expect(request.headers()["x-user-token"]).toBeTruthy();
-    expect(request.postDataJSON()).toEqual({ query: "IfcDoor", interpret_mode: "deterministic" });
-    expect(request.url()).not.toContain("ifc_source_path");
+    test("empty match stays explicit and does not enable legacy actions", async ({ page }, testInfo) => {
+      await page.goto("/#semantic-search");
+      await page.getByTestId("a4-job-select").selectOption(jobId);
+      await page.getByTestId("a4-mode-deterministic").click();
+      const uniqueLetters = [...randomUUID().replaceAll("-", "").slice(0, 16)]
+        .map(character => String.fromCharCode("a".charCodeAt(0) + Number.parseInt(character, 16)))
+        .join("");
+      const emptyQuery = `IfcDoor NoMatch${uniqueLetters}`;
+      await page.getByTestId("a4-query-input").fill(emptyQuery);
+      const responsePromise = page.waitForResponse(response =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === `/api/governance/search/model/for-ifc-ready/${jobId}`,
+      );
+      await page.getByTestId("a4-run").click();
+      const response = await responsePromise;
+      requireReal(response.ok(), `A4 empty search failed: ${response.status()}`);
+      const responseBody = await response.json() as ModelSearchResponse;
+      requireReal(responseBody.status === "ok", `A4 empty search returned status=${safeA4Diagnostic(responseBody.status) ?? "invalid"}`);
+      requireReal(Array.isArray(responseBody.results) && responseBody.results.length === 0, "A4 empty search did not return an empty results array");
+      requireReal(SAFE_A4_QUERY_ID.test(responseBody.query_id ?? ""), "A4 empty search did not return a safe query_id");
 
-    const resultRows = page.getByTestId("a4-results-table").locator("tbody tr");
-    await expect(resultRows.first().locator("td").nth(1)).toHaveText("IfcDoor", { timeout: 120_000 });
-    await expect(page.getByTestId("a4-results-table").locator("tbody")).not.toContainText("無列");
-    await expect(page.getByTestId("a4-run-err")).toHaveCount(0);
-    const scopeField = page.getByText("search_scope", { exact: true }).first().locator("..").locator(".ec-v");
-    await expect.poll(() => scopeField.evaluate((element) => element.firstChild?.textContent?.trim()))
-      .toBe("ifc_ready_table_only");
-    const completionField = page.getByText("completion_scope", { exact: true }).first().locator("..").locator(".ec-v");
-    await expect.poll(() => completionField.evaluate((element) => element.firstChild?.textContent?.trim()))
-      .toBe("table_only");
-    const resultScanField = page.getByText("result_scan_scope", { exact: true }).first().locator("..").locator(".ec-v");
-    await expect.poll(() => resultScanField.evaluate((element) => element.firstChild?.textContent?.trim()))
-      .toBe("complete_table");
-    await expect(page.getByText("deterministic_grammar").first()).toBeVisible();
-    await expect(page.getByTestId("a4-create-issues")).toBeDisabled();
-    await expect(page.getByTestId("a4-actions-unavailable")).toContainText("signed-proof");
-    expect(forbiddenCalls, "must not call direct/internal ports or the generic host-path route").toEqual([]);
-
-    await page.getByTestId("a4-results-table").scrollIntoViewIfNeeded();
-    await page.screenshot({
-      path: `../artifacts/e2e/a4-trace/a4-s4b-ifc-ready-table-${viewport.label}.png`,
-      fullPage: true,
+      await expect(page.getByTestId("a4-run-err")).toBeVisible({ timeout: 120_000 });
+      await expect(page.getByTestId("a4-results-table")).toContainText("無列");
+      await expect(page.getByTestId("a4-create-issues")).toBeDisabled();
+      await finishEvidence(
+        page,
+        testInfo,
+        `a4-real-empty-${viewport.label}`,
+        ["success", "empty"],
+        `downloaded IFC-ready job exercised against the real coordinator with deterministic query=${emptyQuery}`,
+        `POST /api/governance/search/model/for-ifc-ready/${jobId}`,
+        { ifc_ready_job_id: jobId, query_id: responseBody.query_id! },
+      );
     });
   });
-
-  test("empty match stays explicit and does not enable legacy actions", async ({ page }) => {
-    await page.getByTestId("a4-mode-deterministic").click();
-    await page.getByTestId("a4-query-input").fill("IfcSpaceHeater");
-    await page.getByTestId("a4-run").click();
-
-    await expect(page.getByTestId("a4-run-err")).toBeVisible({ timeout: 120_000 });
-    await expect(page.getByTestId("a4-results-table")).toContainText("無列");
-    await expect(page.getByTestId("a4-create-issues")).toBeDisabled();
-    await page.screenshot({
-      path: `../artifacts/e2e/a4-trace/a4-s4b-empty-honest-${viewport.label}.png`,
-      fullPage: true,
-    });
-  });
-});
 }
