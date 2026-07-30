@@ -215,6 +215,7 @@ $owned = @(
     [pscustomobject]@{ role='coordinator';pid=4202;entrypoint='src/index.ts';command_line='coord';creation_identity='c2' }
 )
 $fakeProcessHandleLookup = { param($processId) [pscustomobject]@{ Id=$processId; HasExited=$false; SafeHandle=[pscustomobject]@{ IsInvalid=$false; IsClosed=$false; process_id=$processId } } }
+$fakeStoppedProcessExistsFn = { param($processId) $false }
 $mismatchStop = Stop-IsolatedBackends -Processes $owned `
   -IdentityLookup { param($e) if($e.pid -eq 4201){$e}else{[pscustomobject]@{role='coordinator';pid=4202;entrypoint='wrong';command_line='coord';creation_identity='c2'}} } `
   -ProcessHandleLookup $fakeProcessHandleLookup `
@@ -575,6 +576,7 @@ try {
     $derivedOffsetStops = [System.Collections.Generic.List[int]]::new()
     $derivedOffsetStop = Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-status-offset-one' -RepoRoot $dispatcherSandbox `
         -IdentityLookup { param($expectedProcess) $expectedProcess } `
+        -ProcessExistsFn $fakeStoppedProcessExistsFn `
         -StopListenerLookupFn { param($port) $null } `
         -ProcessHandleLookup $fakeProcessHandleLookup `
         -StopProcessFn { param($processId) $script:derivedOffsetStops.Add($processId) }
@@ -748,6 +750,7 @@ try {
     $recoveryRetryStops = [System.Collections.Generic.List[int]]::new()
     $recoveryStop = Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId $recoveryRunId -RepoRoot $dispatcherSandbox `
         -IdentityLookup { param($expectedProcess) $expectedProcess } `
+        -ProcessExistsFn $fakeStoppedProcessExistsFn `
         -StopListenerLookupFn { param($port) $null } `
         -ProcessHandleLookup $fakeProcessHandleLookup `
         -StopProcessFn { param($processId) $script:recoveryRetryStops.Add($processId) }
@@ -767,6 +770,7 @@ try {
     Assert-Throws {
         Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-partial-stop' -RepoRoot $dispatcherSandbox `
             -IdentityLookup { param($expectedProcess) $expectedProcess } `
+            -ProcessExistsFn $fakeStoppedProcessExistsFn `
             -StopListenerLookupFn { param($port) $null } `
             -ProcessHandleLookup $fakeProcessHandleLookup `
             -StopProcessFn {
@@ -827,6 +831,7 @@ try {
     $partialRetryStops = [System.Collections.Generic.List[int]]::new()
     $partialRetry = Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-partial-stop' -RepoRoot $dispatcherSandbox `
         -IdentityLookup { param($expectedProcess) $expectedProcess } `
+        -ProcessExistsFn $fakeStoppedProcessExistsFn `
         -StopListenerLookupFn { param($port) $null } `
         -ProcessHandleLookup $fakeProcessHandleLookup `
         -StopProcessFn { param($processId) $script:partialRetryStops.Add($processId) }
@@ -854,6 +859,7 @@ try {
 
     $stoppedRun = Invoke-IsolatedBranchStack -Action stop -ChangeId 'change-a' -RunId 'run-stop' -OffsetInput '0' -RepoRoot $dispatcherSandbox `
         -IdentityLookup { param($expectedProcess) $expectedProcess } `
+        -ProcessExistsFn $fakeStoppedProcessExistsFn `
         -StopListenerLookupFn { param($port) $null } `
         -ProcessHandleLookup $fakeProcessHandleLookup `
         -StopProcessFn { param($processId) $script:mismatchStops.Add($processId) }
