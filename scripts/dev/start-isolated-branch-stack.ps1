@@ -354,9 +354,10 @@ function Stop-IsolatedBackends {
         [scriptblock] $IdentityLookup = { param($e) Get-IsolatedProcessIdentity -ProcessId ([int]$e.pid) -Entrypoint ([string]$e.entrypoint) },
         [scriptblock] $ProcessHandleLookup = { param($processId) Get-Process -Id $processId -ErrorAction Stop },
         [scriptblock] $StopProcessFn = {
-            param($processId,$processHandle)
-            if ($null -eq $processHandle) { throw "Fresh process handle is required for $processId." }
-            Stop-Process -InputObject $processHandle -Force -ErrorAction Stop
+            param($processId,$processHandle,$safeProcessHandle)
+            if ($null -eq $processHandle -or $null -eq $safeProcessHandle) { throw "Pinned process handle is required for $processId." }
+            if ([bool]$safeProcessHandle.IsInvalid -or [bool]$safeProcessHandle.IsClosed) { throw "Pinned process handle for $processId is no longer valid." }
+            $processHandle.Kill()
         },
         [scriptblock] $MissingProcessFn,
         [switch] $AllowMissing
@@ -389,11 +390,16 @@ function Stop-IsolatedBackends {
     if ($prevalidationFailed) { return @($results) }
     foreach ($process in @($verified | Sort-Object { [array]::IndexOf($Processes, $_) } -Descending)) {
         $processHandle = $null
+        $safeProcessHandle = $null
         try {
             if ($null -ne $ProcessHandleLookup) {
                 $processHandle = & $ProcessHandleLookup ([int]$process.pid)
                 if ($null -eq $processHandle -or [int]$processHandle.Id -ne [int]$process.pid -or [bool]$processHandle.HasExited) {
                     throw "Fresh process handle for $($process.pid) is unavailable."
+                }
+                $safeProcessHandle = $processHandle.SafeHandle
+                if ($null -eq $safeProcessHandle -or [bool]$safeProcessHandle.IsInvalid -or [bool]$safeProcessHandle.IsClosed) {
+                    throw "Fresh process handle for $($process.pid) cannot be pinned."
                 }
             }
             $immediate = & $IdentityLookup $process
@@ -406,7 +412,7 @@ function Stop-IsolatedBackends {
             return @($results)
         }
         try {
-            & $StopProcessFn ([int]$process.pid) $processHandle
+            & $StopProcessFn ([int]$process.pid) $processHandle $safeProcessHandle
             $results.Add([pscustomobject]@{role=$process.role;pid=$process.pid;status='stopped';reason=$null})
         } catch {
             $results.Add([pscustomobject]@{role=$process.role;pid=$process.pid;status='stop_failed';reason=$_.Exception.Message})
@@ -653,7 +659,7 @@ function Invoke-IsolatedBranchStack {
         [scriptblock]$StartBackendFn={param($spec) Start-IsolatedBackend @spec},
         [scriptblock]$HealthFn={param($url) Wait-IsolatedHealth -Url $url},
         [scriptblock]$IdentityLookup={param($e) Get-IsolatedProcessIdentity -ProcessId ([int]$e.pid) -Entrypoint ([string]$e.entrypoint)},
-        [scriptblock]$StopProcessFn={param($processId,$processHandle) if ($null -eq $processHandle) { throw "Fresh process handle is required for $processId." }; Stop-Process -InputObject $processHandle -Force -ErrorAction Stop},
+        [scriptblock]$StopProcessFn={param($processId,$processHandle,$safeProcessHandle) if ($null -eq $processHandle -or $null -eq $safeProcessHandle) { throw "Pinned process handle is required for $processId." }; if ([bool]$safeProcessHandle.IsInvalid -or [bool]$safeProcessHandle.IsClosed) { throw "Pinned process handle for $processId is no longer valid." }; $processHandle.Kill()},
         [scriptblock]$ProcessHandleLookup={param($processId) Get-Process -Id $processId -ErrorAction Stop},
         [scriptblock]$ProcessExistsFn={param($processId) $null -ne (Get-Process -Id $processId -ErrorAction SilentlyContinue)},
         [scriptblock]$StopListenerLookupFn={param($port) Get-IsolatedPortListener -Port $port},

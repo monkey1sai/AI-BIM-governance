@@ -165,7 +165,7 @@ $owned = @(
     [pscustomobject]@{ role='governance';pid=4201;entrypoint='app:app';command_line='gov';creation_identity='c1' },
     [pscustomobject]@{ role='coordinator';pid=4202;entrypoint='src/index.ts';command_line='coord';creation_identity='c2' }
 )
-$fakeProcessHandleLookup = { param($processId) [pscustomobject]@{ Id=$processId; HasExited=$false } }
+$fakeProcessHandleLookup = { param($processId) [pscustomobject]@{ Id=$processId; HasExited=$false; SafeHandle=[pscustomobject]@{ IsInvalid=$false; IsClosed=$false; process_id=$processId } } }
 $mismatchStop = Stop-IsolatedBackends -Processes $owned `
   -IdentityLookup { param($e) if($e.pid -eq 4201){$e}else{[pscustomobject]@{role='coordinator';pid=4202;entrypoint='wrong';command_line='coord';creation_identity='c2'}} } `
   -ProcessHandleLookup $fakeProcessHandleLookup `
@@ -210,10 +210,43 @@ $pidReuse = Stop-IsolatedBackends -Processes $owned `
       }
       $expectedProcess
   } `
-  -ProcessHandleLookup { param($processId) [pscustomobject]@{ Id=$processId; HasExited=$false } } `
+  -ProcessHandleLookup { param($processId) [pscustomobject]@{ Id=$processId; HasExited=$false; SafeHandle=[pscustomobject]@{ IsInvalid=$false; IsClosed=$false; process_id=$processId } } } `
   -StopProcessFn { param($processId,$processHandle) $script:pidReuseStops.Add($processId) }
 Assert-Equal 'not_owned' @($pidReuse | Where-Object role -eq 'coordinator')[0].status 'immediate stop recheck rejects a reused PID creation identity'
 Assert-Equal 0 $pidReuseStops.Count 'a reused PID after prevalidation stops no backend'
+
+$postRecheckStops = [System.Collections.Generic.List[int]]::new()
+$postRecheckIdentityChecks = @{}
+$postRecheckPinnedHandles = @{}
+$pidReusedAfterRecheck = $false
+$postRecheck = Stop-IsolatedBackends -Processes $owned `
+  -IdentityLookup {
+      param($expectedProcess)
+      $count = 1 + [int]($script:postRecheckIdentityChecks[$expectedProcess.pid] ?? 0)
+      $script:postRecheckIdentityChecks[$expectedProcess.pid] = $count
+      if ($expectedProcess.role -eq 'coordinator' -and $count -eq 2) {
+          $script:pidReusedAfterRecheck = $true
+      }
+      $expectedProcess
+  } `
+  -ProcessHandleLookup {
+      param($processId)
+      $safeHandle = [pscustomobject]@{ IsInvalid=$false; IsClosed=$false; process_id=$processId; pinned=$true }
+      $script:postRecheckPinnedHandles[$processId] = $safeHandle
+      [pscustomobject]@{ Id=$processId; HasExited=$false; SafeHandle=$safeHandle }
+  } `
+  -StopProcessFn {
+      param($processId,$processHandle,$safeProcessHandle)
+      if ($processId -eq 4202) {
+          Assert-True $script:pidReusedAfterRecheck 'test simulates PID reuse only after immediate identity recheck'
+          Assert-True ([object]::ReferenceEquals($script:postRecheckPinnedHandles[$processId], $safeProcessHandle)) 'stop receives the safe handle pinned before immediate identity recheck'
+      }
+      $script:postRecheckStops.Add($processId)
+  }
+Assert-Equal '4202,4201' ($postRecheckStops -join ',') 'a PID reused after immediate identity recheck is stopped only through its previously pinned process handle'
+$launcherSource = Get-Content -Raw -LiteralPath $launcherPath
+Assert-True ($launcherSource -match '\$processHandle\.SafeHandle') 'default stop path pins the process SafeHandle before the immediate identity recheck'
+Assert-True ($launcherSource -match '\$processHandle\.Kill\(\)') 'default stop path terminates through the pinned Process object rather than a PID lookup'
 
 $spawned = [pscustomobject]@{ Id = 4301 }
 $cleanedSpawned = [System.Collections.Generic.List[object]]::new()
