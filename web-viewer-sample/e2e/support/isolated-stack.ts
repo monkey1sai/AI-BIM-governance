@@ -349,17 +349,43 @@ export type BrowserEvidenceObservation = {
 };
 
 export type IsolatedEvidencePublicationVerifier = {
-  assertWorktreeClean(config: IsolatedStackConfig): void;
+  assertWorktreeStatusClean(config: IsolatedStackConfig): void;
   assertLiveBackendOwnership(config: IsolatedStackConfig): Promise<void>;
+  assertManifestHead(config: IsolatedStackConfig): void;
 };
 
-export function assertIsolatedWorktreeClean(config: IsolatedStackConfig): void {
-  const status = execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
+export type IsolatedGitCommandRunner = (args: string[]) => string;
+
+function defaultIsolatedGitCommandRunner(config: IsolatedStackConfig): IsolatedGitCommandRunner {
+  return args => execFileSync("git", args, {
     cwd: config.manifest.worktree_root,
     encoding: "utf8",
     windowsHide: true,
   });
+}
+
+export function assertIsolatedWorktreeStatusClean(
+  config: IsolatedStackConfig,
+  runGit: IsolatedGitCommandRunner = defaultIsolatedGitCommandRunner(config),
+): void {
+  const status = runGit(["status", "--porcelain=v1", "--untracked-files=all"]);
   if (status.trim()) throw new Error("isolated evidence requires an unchanged worktree");
+}
+
+export function assertIsolatedManifestHead(
+  config: IsolatedStackConfig,
+  runGit: IsolatedGitCommandRunner = defaultIsolatedGitCommandRunner(config),
+): void {
+  const head = runGit(["rev-parse", "HEAD"]).trim();
+  if (head !== config.manifest.head_sha) throw new Error("isolated evidence requires a manifest-matching HEAD");
+}
+
+export function assertIsolatedWorktreeClean(
+  config: IsolatedStackConfig,
+  runGit: IsolatedGitCommandRunner = defaultIsolatedGitCommandRunner(config),
+): void {
+  assertIsolatedWorktreeStatusClean(config, runGit);
+  assertIsolatedManifestHead(config, runGit);
 }
 
 export async function assertLiveIsolatedBackendOwnership(config: IsolatedStackConfig): Promise<void> {
@@ -466,8 +492,9 @@ export async function writeIsolatedEvidenceManifest(
     };
     temporary = path.join(config.runDir, `.evidence-manifest.tmp-${process.pid}-${randomUUID()}.json`);
     writeFileSync(temporary, `${JSON.stringify(evidence, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
-    verifier.assertWorktreeClean(config);
+    verifier.assertWorktreeStatusClean(config);
     await verifier.assertLiveBackendOwnership(config);
+    verifier.assertManifestHead(config);
     renameSync(temporary, output);
     return output;
   } finally {

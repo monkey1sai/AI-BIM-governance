@@ -7,6 +7,9 @@ import path from "node:path";
 import { captureWindowsBackendSnapshot } from "./isolated-stack-global-setup";
 import {
   assertIsolatedBackendProcessSnapshot,
+  assertIsolatedManifestHead,
+  assertIsolatedWorktreeClean,
+  assertIsolatedWorktreeStatusClean,
   classifyHarnessUse,
   createForbiddenRequestGuard,
   loadIsolatedStackConfig,
@@ -106,8 +109,9 @@ function sampleObservation(config: IsolatedStackConfig): BrowserEvidenceObservat
 }
 
 const unitEvidencePublicationVerifier: IsolatedEvidencePublicationVerifier = {
-  assertWorktreeClean() {},
+  assertWorktreeStatusClean() {},
   async assertLiveBackendOwnership() {},
+  assertManifestHead() {},
 };
 
 function writeUnitEvidence(config: IsolatedStackConfig, observation: BrowserEvidenceObservation) {
@@ -424,15 +428,17 @@ describe("loadIsolatedStackConfig", () => {
     const leftovers = () => readdirSync(config.runDir).filter(name => name.includes(".tmp-") || name === "evidence-manifest.lock.json");
 
     await expect(writeIsolatedEvidenceManifest(config, { ...sampleObservation(config), visibleStates: ["retry"] }, {
-      assertWorktreeClean() { throw new Error("dirty worktree"); },
+      assertWorktreeStatusClean() { throw new Error("dirty worktree"); },
       async assertLiveBackendOwnership() {},
+      assertManifestHead() {},
     })).rejects.toThrow("dirty worktree");
     expect(readFileSync(output, "utf8")).toBe(original);
     expect(leftovers()).toEqual([]);
 
     await expect(writeIsolatedEvidenceManifest(config, { ...sampleObservation(config), visibleStates: ["retry"] }, {
-      assertWorktreeClean() {},
+      assertWorktreeStatusClean() {},
       async assertLiveBackendOwnership() { throw new Error("backend ownership changed"); },
+      assertManifestHead() {},
     })).rejects.toThrow("backend ownership changed");
     expect(readFileSync(output, "utf8")).toBe(original);
     expect(leftovers()).toEqual([]);
@@ -440,8 +446,41 @@ describe("loadIsolatedStackConfig", () => {
     const support = readFileSync(path.join(process.cwd(), "e2e", "support", "isolated-stack.ts"), "utf8");
     const setup = readFileSync(path.join(process.cwd(), "e2e", "support", "isolated-stack-global-setup.ts"), "utf8");
     expect(setup).toContain("assertIsolatedWorktreeClean(isolated)");
-    expect(support).toContain("verifier.assertWorktreeClean(config)");
+    expect(support).toContain("verifier.assertWorktreeStatusClean(config)");
     expect(support).toContain("await verifier.assertLiveBackendOwnership(config)");
+    expect(support).toContain("verifier.assertManifestHead(config)");
+  });
+
+  it("rejects a clean worktree that drifted from its manifest HEAD before publishing evidence", async () => {
+    const value = fixture();
+    const config = loadIsolatedStackConfig({ cwd: value.worktreeRoot, headSha: value.headSha, env: { E2E_REQUIRE_REAL: "1", E2E_STACK_MANIFEST: value.manifestPath } })!;
+    const output = await writeUnitEvidence(config, sampleObservation(config));
+    const original = readFileSync(output, "utf8");
+    const driftedHead = "f".repeat(40);
+    const gitCalls: string[] = [];
+    const runGit = (args: string[]) => {
+      gitCalls.push(args[0]);
+      return args[0] === "rev-parse" ? driftedHead : "";
+    };
+
+    expect(() => assertIsolatedWorktreeClean(config, runGit)).toThrow("manifest-matching HEAD");
+    expect(gitCalls).toEqual(["status", "rev-parse"]);
+    gitCalls.splice(0);
+    const publicationCalls: string[] = [];
+    await expect(writeIsolatedEvidenceManifest(config, { ...sampleObservation(config), visibleStates: ["retry"] }, {
+      assertWorktreeStatusClean(current) {
+        publicationCalls.push("status");
+        assertIsolatedWorktreeStatusClean(current, runGit);
+      },
+      async assertLiveBackendOwnership() { publicationCalls.push("live"); },
+      assertManifestHead(current) {
+        publicationCalls.push("rev-parse");
+        assertIsolatedManifestHead(current, runGit);
+      },
+    })).rejects.toThrow("manifest-matching HEAD");
+    expect(gitCalls).toEqual(["status", "rev-parse"]);
+    expect(publicationCalls).toEqual(["status", "live", "rev-parse"]);
+    expect(readFileSync(output, "utf8")).toBe(original);
   });
 
   it("keeps generated isolated runtime output ignored before the clean-worktree gate", () => {
