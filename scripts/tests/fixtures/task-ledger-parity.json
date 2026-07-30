@@ -4,10 +4,12 @@
   "spec": [
     "Evaluate line by line (split on \\r?\\n). Cross-line regex is forbidden: the pre-2026-07-30 PowerShell pattern '(?m)^\\s*-\\s+\\[(?<mark>[ xX])\\](?:\\s+|$)' let its trailing greedy \\s+ consume the NEXT line's indentation, dropping the following nested checkbox from Total entirely.",
     "1. candidate = ^[ \\t]*-[ \\t]+\\[<mark>\\]<after?>  (mark = chars up to the first ']'; after = the single next char, or empty at end of line)",
-    "2. mark length != 1 -> not a checkbox. Covers '- []', prose bullets like '- [WIP] foo', and markdown links like '- [text](url)'.",
-    "3. after == '(' -> not a checkbox. Covers single-char-text markdown links like '- [x](url)'.",
+    "2. mark length != 1 -> not a checkbox, EXCEPT that a mark of length >= 2 which is only whitespace plus at most one x/X ('- [ x]', '- [x ]', '- [  ]') is a typo of a real checkbox and counts as unsupported. Everything else with length != 1 is prose: '- []', '- [WIP] foo', '- [text](url)'.",
+    "3. after == '(' -> not a checkbox. Covers single-char-text markdown links like '- [x](url)'. The comparison MUST be ordinal: PowerShell's -eq is culture-sensitive and rates U+207D, U+208D, U+FE35 and U+FE59 EQUAL to '(' , which silently skipped those lines.",
     "4. after non-empty and non-whitespace -> malformed checkbox (e.g. '- [x]done') -> unsupported. Fail-closed on purpose: a malformed box must surface, never silently vanish, because verify-openspec-lifecycle.ps1 gates new archives on Unchecked == 0.",
     "5. otherwise: 'x'/'X' -> completed and total; ' ' -> total; any other single char (including '~') -> unsupported.",
+    "The emptiness test on 'after' MUST use ordinal length, not -ne ''. PowerShell's -eq/-ne are culture-sensitive linguistic comparisons, so any zero-collation-weight character (ZWSP U+200B, SOFT HYPHEN U+00AD, ZWJ U+200D, VARIATION SELECTOR U+FE0F, all C1 controls, bidi marks, ...) compares EQUAL to the empty string; the malformed guard was skipped and the line was miscounted as completed. -cne does NOT fix this. 327 BMP code points diverged this way (found in code review 2026-07-30).",
+    "The whitespace class for 'after' MUST be an explicit character set equal to JavaScript's \\s, never the \\s shorthand: .NET's \\s matches U+0085 (NEL) and JavaScript's does not.",
     "Unchecked is always derived as total - completed; it is never counted independently."
   ],
   "cases": [
@@ -112,6 +114,42 @@
       "why": "Shape resembling a real tasks.md: phases, done and open work, and one legacy tilde.",
       "text": "## Phase 1\n\n- [x] 1.1 land the validator\n- [x] 1.2 wire it into CI\n- [ ] 1.3 collect runtime evidence\n\n## Phase 2\n\n- [ ] 2.1 export observations\n- [~] 2.2 N/A: superseded by phase 3\n",
       "expected": { "completed": 2, "total": 4, "unsupported": 1 }
+    },
+    {
+      "id": "after-zero-width-and-invisible-is-unsupported",
+      "why": "REGRESSION GUARD (code review 2026-07-30, 327 divergent BMP code points). PowerShell's -eq/-ne are culture-sensitive linguistic comparisons, so every zero-collation-weight character (ZWSP U+200B, SOFT HYPHEN U+00AD, ZWJ U+200D, VARIATION SELECTOR-16 U+FE0F) compared EQUAL to the empty string. The malformed-checkbox guard was therefore skipped and these lines were miscounted as completed, while JS classified them unsupported. -cne does NOT fix this; only ordinal comparison does. These characters are exactly what arrives when task text is pasted out of a browser, Word or a PDF.",
+      "text": "- [x]\u200bfoo\n- [x]\u00adfoo\n- [x]\u200dfoo\n- [x]\ufe0ffoo\n",
+      "expected": { "completed": 0, "total": 0, "unsupported": 4 }
+    },
+    {
+      "id": "after-nel-is-unsupported-not-whitespace",
+      "why": "REGRESSION GUARD. .NET's \\s matches U+0085 (NEL) but JavaScript's \\s does not, so using the \\s shorthand made the two implementations disagree. Both now use an explicit character class equal to JS \\s, which excludes NEL.",
+      "text": "- [x]\u0085foo\n",
+      "expected": { "completed": 0, "total": 0, "unsupported": 1 }
+    },
+    {
+      "id": "after-paren-lookalikes-are-unsupported",
+      "why": "REGRESSION GUARD. Because -eq '(' is culture-sensitive, U+207D SUPERSCRIPT LEFT PARENTHESIS (and U+208D, U+FE35, U+FE59) compared EQUAL to '(' in PowerShell, so those lines were silently treated as markdown links and skipped. Only the ASCII '(' may mean a link.",
+      "text": "- [x]\u207dfoo\n- [x]\u208dfoo\n- [x]\ufe59foo\n",
+      "expected": { "completed": 0, "total": 0, "unsupported": 3 }
+    },
+    {
+      "id": "after-unicode-whitespace-still-counts",
+      "why": "The other half of the same fix: genuine Unicode whitespace in the 'after' position must still be treated as whitespace by BOTH implementations, so these remain ordinary tasks. NBSP U+00A0, IDEOGRAPHIC SPACE U+3000 and BOM/ZWNBSP U+FEFF are all in JS \\s.",
+      "text": "- [x]\u00a0done\n- [ ]\u3000open\n- [x]\ufeffdone\n",
+      "expected": { "completed": 2, "total": 3, "unsupported": 0 }
+    },
+    {
+      "id": "mark-typo-is-unsupported",
+      "why": "REGRESSION GUARD (code review 2026-07-30). A mark of length >= 2 that is only whitespace plus at most one x/X is a TYPO of a real checkbox, not prose. Treating it as prose would silently drop the task from Total, so Unchecked would not see it and verify-openspec-lifecycle.ps1 would wave the archive through — the very bypass class this contract exists to close. The pre-2026-07-30 PowerShell parser flagged these unsupported; that strictness is preserved.",
+      "text": "- [ x] a\n- [x ] b\n- [  ] c\n",
+      "expected": { "completed": 0, "total": 0, "unsupported": 3 }
+    },
+    {
+      "id": "non-dash-bullets-are-invisible-by-convention",
+      "why": "Documents a deliberate, pre-existing limitation rather than a decision made here: GFM also accepts '*' and '+' bullets and ordered lists for task items, but both parsers only recognise '-'. A tasks.md written entirely with '*' would therefore report Total=0 and pass the archive gate with no work done. No tracked tasks.md uses them (verified across all 120), so this is not a regression — but it is now written down instead of implicit.",
+      "text": "* [x] star\n+ [ ] plus\n1. [ ] numbered\n- [x] dash counts\n",
+      "expected": { "completed": 1, "total": 1, "unsupported": 0 }
     }
   ]
 }

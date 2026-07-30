@@ -21,8 +21,8 @@ test('parity corpus is present and non-trivial', () => {
   // pass without checking anything. Keep this floor above the current case count minus a
   // small margin so accidental deletion fails loudly rather than silently going green.
   assert.ok(
-    corpus.cases.length >= 15,
-    `corpus must retain at least 15 cases (found ${corpus.cases.length})`,
+    corpus.cases.length >= 20,
+    `corpus must retain at least 20 cases (found ${corpus.cases.length})`,
   );
   const ids = corpus.cases.map((c) => c.id);
   assert.equal(new Set(ids).size, ids.length, 'case ids must be unique');
@@ -42,6 +42,11 @@ test('regression guards for the four closed divergences are retained', () => {
     'regression-no-space-after-bracket',
     'regression-multichar-mark',
     'tilde-stays-unsupported',
+    'after-zero-width-and-invisible-is-unsupported',
+    'after-nel-is-unsupported-not-whitespace',
+    'after-paren-lookalikes-are-unsupported',
+    'after-unicode-whitespace-still-counts',
+    'mark-typo-is-unsupported',
   ];
   const ids = new Set(corpus.cases.map((c) => c.id));
   for (const id of required) {

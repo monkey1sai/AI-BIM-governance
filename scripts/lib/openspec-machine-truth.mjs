@@ -197,7 +197,14 @@ function safeRepositoryFile(repoRoot, reference, field) {
   return { exists: true, path: real };
 }
 
-// Canonical task-checkbox counting. MUST stay semantically identical to
+// Whitespace class used for the character following `]`. Spelled out explicitly (never `\s`)
+// so the PowerShell twin can match it exactly; see the note in Measure-OpenSpecTaskCheckboxes.
+// This set is exactly JavaScript's \s.
+const CHECKBOX_AFTER_WHITESPACE =
+  /^[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]$/u;
+
+// Canonical task-checkbox counting. MUST stay behaviourally identical for ALL inputs
+// (including non-ASCII) to
 // `Measure-OpenSpecTaskCheckboxes` in scripts/lib/openspec-lifecycle.ps1 — the two are
 // independent implementations of one contract, cross-checked by the golden corpus
 // scripts/tests/fixtures/task-ledger-parity.json. Spec (per line):
@@ -214,12 +221,22 @@ export function taskLedgerFromText(text) {
     const match = line.match(/^[ \t]*-[ \t]+\[([^\]]*)\](.?)/u);
     if (!match) continue;
     const mark = match[1];
-    if (mark.length !== 1) continue;
-    const after = match[2];
-    if (after === '(') continue;
-    if (after !== '' && !/\s/u.test(after)) {
-      unsupported += 1;
+    if (mark.length !== 1) {
+      // length >= 2 consisting only of whitespace plus at most one x/X is a TYPO of a real
+      // checkbox (`- [ x]`, `- [x ]`, `- [  ]`) and must fail closed, otherwise it is another
+      // silent-vanish path. Anything else (`- [ab]`, `- [WIP] foo`, `- [text](url)`) is prose.
+      if (mark.length >= 2 && /^[ \t]*[xX]?[ \t]*$/u.test(mark)) unsupported += 1;
       continue;
+    }
+    const after = match[2];
+    if (after !== '') {
+      if (after === '(') continue;
+      // Explicit class instead of \s: .NET's \s includes U+0085 (NEL) while JS's does not, so
+      // using the shorthand diverges across the two implementations. This set equals JS \s.
+      if (!CHECKBOX_AFTER_WHITESPACE.test(after)) {
+        unsupported += 1;
+        continue;
+      }
     }
     if (mark === 'x' || mark === 'X') {
       completed += 1;

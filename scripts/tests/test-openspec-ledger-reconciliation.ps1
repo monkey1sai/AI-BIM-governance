@@ -30,13 +30,18 @@ Assert-True (Test-Path -LiteralPath $parityCorpusPath -PathType Leaf) 'task-ledg
 $parityCorpus = Get-Content -LiteralPath $parityCorpusPath -Raw -Encoding utf8 | ConvertFrom-Json
 Assert-Equal 'task-ledger-parity/v1' $parityCorpus.schema_version 'parity corpus schema version'
 # Vacuity guard: a truncated corpus would make every assertion below pass without checking anything.
-Assert-True (@($parityCorpus.cases).Count -ge 15) "parity corpus retains at least 15 cases (actual: $(@($parityCorpus.cases).Count))"
+Assert-True (@($parityCorpus.cases).Count -ge 20) "parity corpus retains at least 20 cases (actual: $(@($parityCorpus.cases).Count))"
 foreach ($parityRequiredId in @(
     'regression-nested-after-empty-checked',
     'regression-nested-after-trailing-space-open',
     'regression-no-space-after-bracket',
     'regression-multichar-mark',
-    'tilde-stays-unsupported'
+    'tilde-stays-unsupported',
+    'after-zero-width-and-invisible-is-unsupported',
+    'after-nel-is-unsupported-not-whitespace',
+    'after-paren-lookalikes-are-unsupported',
+    'after-unicode-whitespace-still-counts',
+    'mark-typo-is-unsupported'
 )) {
     Assert-True (@($parityCorpus.cases | Where-Object { $_.id -eq $parityRequiredId }).Count -eq 1) "parity corpus keeps regression case '$parityRequiredId'"
 }
