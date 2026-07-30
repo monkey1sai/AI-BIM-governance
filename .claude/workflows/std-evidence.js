@@ -102,9 +102,27 @@ const ROOT = A.worktreeRoot
 const SLUG = A.slug
 const SPEC_PATH = A.specPath
 const PLAN_PATH = A.planPath
+const MAX_AGENT_CALLS = 40
+const MAX_EVIDENCE_ATTEMPTS = 2
+const REMAINING_AGENT_CALLS = A.remainingAgentCalls
+const EVIDENCE_ATTEMPT = A.evidenceAttempt
+let agentCallsUsed = 0
+let budgetExhausted = false
+const budgetedAgent = async (prompt, options) => {
+  if (agentCallsUsed >= REMAINING_AGENT_CALLS) {
+    budgetExhausted = true
+    return null
+  }
+  agentCallsUsed += 1
+  return governedAgent(prompt, options)
+}
+
+const runWorkflow = async () => {
 {
   const missing = [['worktreeRoot', ROOT], ['slug', SLUG], ['specPath', SPEC_PATH], ['planPath', PLAN_PATH]].filter(([, v]) => !v).map(([k]) => k)
-  if (missing.length) return { ok: false, held: 'bad_args', missing }
+  const badBudget = !Number.isInteger(REMAINING_AGENT_CALLS) || REMAINING_AGENT_CALLS < 0 || REMAINING_AGENT_CALLS > MAX_AGENT_CALLS
+  const badAttempt = !Number.isInteger(EVIDENCE_ATTEMPT) || EVIDENCE_ATTEMPT < 1 || EVIDENCE_ATTEMPT > MAX_EVIDENCE_ATTEMPTS
+  if (missing.length || badBudget || badAttempt) return { ok: false, held: 'bad_args', missing }
 }
 
 const PROBE_SCHEMA = {
@@ -141,7 +159,8 @@ const EVIDENCE_SCHEMA = {
 phase('Probe')
 log(`std-evidence:slug=${SLUG} worktree=${ROOT}`)
 
-const probe = await governedAgent(`你是 browser 引擎可用性偵測員。依序檢查(bash),回報第一個可用引擎:
+const probe = await budgetedAgent(`你是 browser 引擎可用性偵測員。依序檢查(bash),回報第一個可用引擎:
+
 1. gstack browse(NEEDS_SETUP 表示缺 bun 未 build,直接跳下一層,不要嘗試安裝 bun):
    B="$HOME/.claude/skills/gstack/browse/dist/browse"
    [ -x "$B" ] && echo READY || echo NEEDS_SETUP
@@ -160,7 +179,7 @@ const probe = await governedAgent(`你是 browser 引擎可用性偵測員。依
 
 if (!probe || probe.engine === 'none') {
   return {
-    ok: false, held: 'no_browser_engine',
+    ok: false, held: budgetExhausted ? 'run_budget_exhausted' : 'no_browser_engine',
     detail: probe ? probe.detail : 'probe agent 失敗(回 null)',
     note: 'interactive session 時主對話可改用 claude-in-chrome MCP 親自取證(第 3 層 fallback),evidence 落同樣產物與命名後重新裁決;headless/cron 無此層。',
   }
@@ -169,7 +188,8 @@ log(`engine=${probe.engine}(${probe.detail.slice(0, 120)})`)
 
 phase('Evidence')
 
-const ev = await governedAgent(`你是 browser evidence 執行與裁決員。用「${probe.engine}」引擎為本 feature 取得 user-facing 驗收證據,並誠實裁決 vertical slice。
+const ev = await budgetedAgent(`你是 browser evidence 執行與裁決員。用「${probe.engine}」引擎為本 feature 取得 user-facing 驗收證據,並誠實裁決 vertical slice。
+
 工作目錄:${ROOT};spec:${SPEC_PATH};plan:${ROOT}/${PLAN_PATH}
 
 執行:
@@ -188,7 +208,7 @@ UI route 可達 → 明確按鈕可點 → default fixture(不要求使用者手
 回傳 StructuredOutput:verticalSliceOk、engine、screenshots[](絕對路徑)、summaryJson(路徑)、runtimeIds[]、notObserved[]、gaps[](id 用 e1/e2/...,q = 待對抗驗證的疑慮:哪個環節證據薄弱+宣稱的失效模式;沒有就空陣列)。`,
   { label: `evidence:${SLUG}`, phase: 'Evidence', ...ROUTING.arbiter, schema: EVIDENCE_SCHEMA })
 
-if (!ev) return { ok: false, held: 'no_browser_evidence', detail: `evidence agent 失敗(回 null);probe:${probe.detail}` }
+if (!ev) return { ok: false, held: budgetExhausted ? 'run_budget_exhausted' : 'no_browser_evidence', detail: `evidence agent 失敗(回 null);probe:${probe.detail}` }
 
 log(`evidence:engine=${ev.engine} sliceOk=${ev.verticalSliceOk} shots=${ev.screenshots.length} notObserved=${ev.notObserved.length}`)
 
@@ -200,3 +220,7 @@ if (!ev.verticalSliceOk || ev.notObserved.length > 0 || ev.screenshots.length ==
 }
 
 return { ok: true, engine: ev.engine, evidence: ev }
+}
+
+const workflowResult = await runWorkflow()
+return { ...workflowResult, agentCallsUsed, evidenceAttemptsUsed: Number.isInteger(EVIDENCE_ATTEMPT) && EVIDENCE_ATTEMPT >= 1 && EVIDENCE_ATTEMPT <= MAX_EVIDENCE_ATTEMPTS ? 1 : 0 }

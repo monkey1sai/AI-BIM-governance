@@ -1,7 +1,7 @@
 export const meta = {
   name: 'fu-adversarial-verify-generic',
-  description: '參數化修復對抗複驗：per-finding 懷疑者(refute-by-default)+ holistic critic；worktree/findings/critic 由 args 帶入',
-  phases: [{ title: 'Verify', detail: 'Opus/max per-finding 複驗 + Fable/max holistic apex critic' }],
+  description: '參數化修復對抗複驗：最多兩個 finding batches(refute-by-default)+ sequential holistic critic；worktree/findings/critic 由 args 帶入',
+  phases: [{ title: 'Verify', detail: '最多兩個 batch verifier(Opus/max)讀真 code 逐 finding 驗閉合 + Fable/max sequential holistic apex critic' }],
 }
 
 // <routing:gen>
@@ -96,7 +96,18 @@ const ROOT = A.root
 const LABEL = A.label || 'fu'
 const FINDINGS = A.findings || []
 const CRITIC_FOCUS = A.criticFocus || '通讀全 diff 找新誠實違規 / 行為 regression / spec-drift / 空測試。'
-if (!ROOT) return { label: LABEL, held: 'bad_args', missing: ['root'], verdicts: [], not_closed: [], new_issues: [], critic: null }
+const MAX_VERIFIER_BATCHES = 2
+const MAX_FINDINGS = 32
+const MAX_AGENT_CALLS = 40
+const MAX_P5_ROUNDS = 2
+const VERIFIER_BATCHES = A.maxVerifierBatches ?? MAX_VERIFIER_BATCHES
+const REMAINING_AGENT_CALLS = A.remainingAgentCalls
+const P5_ROUND = A.p5Round
+if (!ROOT || !Number.isInteger(VERIFIER_BATCHES) || VERIFIER_BATCHES < 1 || VERIFIER_BATCHES > MAX_VERIFIER_BATCHES ||
+    !Number.isInteger(REMAINING_AGENT_CALLS) || REMAINING_AGENT_CALLS < 0 || REMAINING_AGENT_CALLS > MAX_AGENT_CALLS ||
+    !Number.isInteger(P5_ROUND) || P5_ROUND < 1 || P5_ROUND > MAX_P5_ROUNDS) {
+  return { label: LABEL, held: 'bad_args', missing: !ROOT ? ['root'] : [], verdicts: [], not_closed: [], new_issues: [], critic: null, agentCallsUsed: 0 }
+}
 
 const VERDICT_SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -127,38 +138,85 @@ const CRITIC_SCHEMA = {
     } },
   },
 }
+const BATCH_VERDICT_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  required: ['verdicts'],
+  properties: {
+    verdicts: { type: 'array', items: VERDICT_SCHEMA },
+  },
+}
 
 const MAX_Q = 800 // ≈200 token；超長即非 registry summary，違反 DACS
 const badF = FINDINGS.filter((f) => !f || typeof f.id !== 'string' || typeof f.q !== 'string' || f.q.length > MAX_Q || (f.suspectFile != null && typeof f.suspectFile !== 'string'))
-if (badF.length) return { label: LABEL, held: 'bad_findings', badCount: badF.length, verdicts: [], not_closed: [], new_issues: [], critic: null }
+const findingIds = FINDINGS.map((f) => f && f.id)
+const duplicateIds = findingIds.filter((id, index) => findingIds.indexOf(id) !== index)
+if (badF.length || duplicateIds.length) {
+  return { label: LABEL, held: 'bad_findings', badCount: badF.length + duplicateIds.length, duplicateIds: [...new Set(duplicateIds)], verdicts: [], not_closed: [], new_issues: [], critic: null, agentCallsUsed: 0 }
+}
+if (FINDINGS.length > MAX_FINDINGS) {
+  return { label: LABEL, held: 'run_budget_exhausted', detail: `findings=${FINDINGS.length} exceeds MAX_FINDINGS=${MAX_FINDINGS}; split the change instead of starting another verifier wave`, verdicts: [], not_closed: [], new_issues: [], critic: null, agentCallsUsed: 0 }
+}
 
 const PRE = `你是 AI-BIM-governance governance-service 的對抗式驗證者。worktree(已套用修復)：${ROOT}。
 誠實鐵律：無假數字、未取得不得偽裝成 pass、輸出標真實 provenance。USD 相關以 pxr 26.5 本體為 ground truth（可用 host py312 「/c/Program Files/Python312/python.exe」跑真 pxr probe 算世界座標）。
 用 Read/Grep 打開真實 code 驗。預設立場：修復未真正閉合，除非在 code 找到確鑿證據。「測試綠」不代表閉合——對著 finding 宣稱的失效模式驗。`
 
 phase('Verify')
-log(`${LABEL}：${FINDINGS.length} per-finding 懷疑者 + 1 critic`)
+const verifierBatchCount = Math.min(FINDINGS.length, VERIFIER_BATCHES)
+const batches = Array.from({ length: verifierBatchCount }, () => [])
+FINDINGS.forEach((finding, index) => batches[index % verifierBatchCount].push(finding))
+let agentCallsUsed = 0
+let budgetExhausted = false
+const runAgent = async (prompt, options) => {
+  if (agentCallsUsed >= REMAINING_AGENT_CALLS) {
+    budgetExhausted = true
+    return null
+  }
+  agentCallsUsed += 1
+  return governedAgent(prompt, options)
+}
+const heldForAgentFailure = () => budgetExhausted ? 'run_budget_exhausted' : 'reviewer_agent_failed'
+log(`${LABEL}：${FINDINGS.length} findings → ${verifierBatchCount} verifier batches(max ${MAX_VERIFIER_BATCHES} concurrent)；critic sequential`)
 
-const verdicts = await parallel([
-  ...FINDINGS.map((f) => () =>
-    governedAgent(`${PRE}
+const batchResults = batches.length ? await parallel(batches.map((batch, index) => () =>
+  runAgent(`${PRE}
 
-待驗 finding ${f.id}：
-${f.q}
-${f.suspectFile ? `\n最可疑檔：${f.suspectFile}（先 Read 它再判，細節自取、不靠全文廣播）` : ''}
-回傳 StructuredOutput：finding_id=${f.id}、truly_closed（僅當 code 親見真閉合）、introduced_new_issue、reason（引用真實 code 片段+行號，可附 probe 結果）。**強烈建議**附 evidence \`{file,line,quote}\`＝你判斷所依據的真實 code 位置；找不到確切行就填 \`line:null\` 並在 quote/reason 說明，**嚴禁猜行號**。`,
-      { label: `verify:${f.id}`, phase: 'Verify', ...ROUTING.judge, schema: VERDICT_SCHEMA })
-  ),
-  () => governedAgent(`${PRE}
+待驗 findings（每個 ID 都必須各回一筆 verdict，不得合併或省略）：
+${batch.map((f) => `- [${f.id}] ${f.q}${f.suspectFile ? `；最可疑檔：${f.suspectFile}` : ''}`).join('\n')}
+逐項先 Read suspectFile（若有）再判，細節自取、不靠全文廣播。回傳 StructuredOutput：verdicts[]，每項 finding_id、truly_closed（僅當 code 親見真閉合）、introduced_new_issue、reason（引用真實 code 片段+行號，可附 probe 結果）。**強烈建議**附 evidence \`{file,line,quote}\`；找不到確切行就填 \`line:null\` 並在 quote/reason 說明，**嚴禁猜行號**。`,
+    { label: `verify-batch:${index + 1}`, phase: 'Verify', ...ROUTING.judge, schema: BATCH_VERDICT_SCHEMA })
+)) : []
 
+if (batchResults.some((result) => !result)) {
+  return { label: LABEL, held: heldForAgentFailure(), detail: 'one or more verifier batches returned null or were blocked by the run budget', verdicts: [], not_closed: [], new_issues: [], critic: null, verifierBatchCount, agentCallsUsed }
+}
+
+// critic 刻意在 batch verifiers 後序列執行，使單一 workflow 同時最多只有兩個 agents。
+const critic = await runAgent(`${PRE}
 任務（holistic critic）：${CRITIC_FOCUS}
 回傳 StructuredOutput：overall_safe、issues[]（kind/file/detail）。寧可多報疑慮。`,
-    { label: `critic:${LABEL}`, phase: 'Verify', ...ROUTING.arbiter, schema: CRITIC_SCHEMA }),
-])
+  { label: `critic:${LABEL}`, phase: 'Verify', ...ROUTING.arbiter, schema: CRITIC_SCHEMA })
+if (!critic) {
+  return { label: LABEL, held: heldForAgentFailure(), detail: 'critic returned null or was blocked by the run budget', verdicts: [], not_closed: [], new_issues: [], critic: null, verifierBatchCount, agentCallsUsed }
+}
 
-const fv = verdicts.slice(0, FINDINGS.length).filter(Boolean)
-const critic = verdicts[FINDINGS.length]
+const rawVerdicts = batchResults.flatMap((result) => result.verdicts || [])
+const outputIds = rawVerdicts.map((verdict) => verdict && verdict.finding_id)
+const duplicateOutputIds = outputIds.filter((id, index) => outputIds.indexOf(id) !== index)
+const expectedIds = new Set(findingIds)
+const missingIds = findingIds.filter((id) => !outputIds.includes(id))
+const unexpectedIds = outputIds.filter((id) => !expectedIds.has(id))
+if (rawVerdicts.some((verdict) => !verdict) || duplicateOutputIds.length || missingIds.length || unexpectedIds.length) {
+  return {
+    label: LABEL, held: 'reviewer_agent_failed',
+    detail: 'batch verdict collection was incomplete, duplicated, or contained an unknown finding ID',
+    missingIds, duplicateIds: [...new Set(duplicateOutputIds)], unexpectedIds,
+    verdicts: [], not_closed: [], new_issues: [], critic, verifierBatchCount, agentCallsUsed,
+  }
+}
+const verdictById = new Map(rawVerdicts.map((verdict) => [verdict.finding_id, verdict]))
+const fv = findingIds.map((id) => verdictById.get(id))
 const notClosed = fv.filter((v) => !v.truly_closed)
 const newIssues = fv.filter((v) => v.introduced_new_issue)
 log(`${LABEL} 閉合 ${fv.filter((v) => v.truly_closed).length}/${fv.length}；未閉合 ${notClosed.length}；新問題 ${newIssues.length}；critic safe=${critic ? critic.overall_safe : 'null'}`)
-return { label: LABEL, verdicts: fv, not_closed: notClosed, new_issues: newIssues, critic: critic || null }
+return { label: LABEL, verdicts: fv, not_closed: notClosed, new_issues: newIssues, critic, verifierBatchCount, agentCallsUsed }
