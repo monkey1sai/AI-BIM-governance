@@ -202,7 +202,7 @@
         "openspec/changes/a4-console-convergence/proposal.md",
         "openspec/changes/a4-console-convergence/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "57aa968c1b2d5e21213d872732f27392d20da8fc",
       "archive_debt": null
     },
     {
@@ -222,7 +222,7 @@
         "openspec/changes/a4-semantic-search-model-qa/proposal.md",
         "openspec/changes/a4-semantic-search-model-qa/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "57aa968c1b2d5e21213d872732f27392d20da8fc",
       "archive_debt": null
     },
     {
@@ -767,9 +767,9 @@
     },
     {
       "id": "cross-service-structured-log-baseline",
-      "status": "deferred",
+      "status": "active",
       "owner": "cross-service-observability",
-      "current_slice": null,
+      "current_slice": "P5 remediation：補 4-service runtime evidence（tasks 10.1–10.5）；不重套已同步 delta",
       "blocked_by": [],
       "last_verified": "2026-07-29T14:30:00Z",
       "task_ledger": {
@@ -1430,7 +1430,7 @@
         "artifacts/e2e/isolated-branch-stack-browser-e2e/p4-final-20260730-115300/consumer-result.json",
         "artifacts/e2e/isolated-branch-stack-browser-e2e/p4-final-20260730-115300/stack-manifest.json"
       ],
-      "subject_commit": "a6bf2a75b315b17a01c5ac536ee8b0f9540980f2",
+      "subject_commit": "2da6ed59b2f539cc5013e599e395465f1ba3284f",
       "archive_debt": null
     },
     {
@@ -1520,7 +1520,7 @@
         "openspec/changes/archive/2026-07-29-minio-folderview-and-baseline-disclosure/proposal.md",
         "openspec/changes/archive/2026-07-29-minio-folderview-and-baseline-disclosure/tasks.md"
       ],
-      "subject_commit": "6fc759deed211cce16deab3abd00ff8277c1ff3c",
+      "subject_commit": "54c55177dd2d8d999461e2928df029815202c956",
       "archive_debt": null
     },
     {

@@ -126,7 +126,9 @@ Definition of Done：
 - 每個 skip 都有 enum reason；不存在「job 綠但無法說明為何沒跑」的狀態。
 - 現有 design/functional evidence validators 原封保留，只有 orchestration source 被收斂。
 
-### P0-3 — Required merge evidence
+### P0-3 — Required merge evidence（retired 2026-07-30）
+
+> 此 aggregator 已退役：它增加了一個 base-pinned artifact aggregation status，卻在 hosted Actions 環境形成額外阻塞。保留本節作為歷史設計紀錄；現行 mergeability 只依 main 的一般 branch-protected checks，PR body 仍由 `PR Metadata Contract` 與 local preflight 驗證。
 
 Outcome：branch protection 只接受一個穩定 aggregator；aggregator 驗證適用 gates 的 conclusion、classifier reason、subject commit 與 artifacts，而不是只看 job 名稱存在。
 

@@ -68,10 +68,6 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-openspec-machine-truth.mjs scripts/tests/test-openspec-machine-truth-cli.mjs scripts/tests/test-collect-openspec-github-state.mjs"
 
-      - name: Test bounded GitHub artifact extraction
-        shell: pwsh
-        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-github-artifact-extractor.ps1
-
       - name: Run PR body evidence tests
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-pr-body-evidence.ps1

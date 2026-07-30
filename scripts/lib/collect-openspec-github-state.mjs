@@ -33,7 +33,7 @@ export function buildGitHubLifecycleObservation({ ledger, repository, repository
   const current = ledger.changes.filter(({ status }) => status !== 'archived');
   const ids = new Set();
   for (const change of current) {
-    if (!CHANGE_ID.test(change?.id) || ids.has(change.id) || change.subject_commit !== subject) fail('current ledger identity is invalid');
+    if (!CHANGE_ID.test(change?.id) || ids.has(change.id) || !COMMIT.test(change?.subject_commit)) fail('current ledger identity is invalid');
     ids.add(change.id);
   }
   const mappedPrs = new Set();

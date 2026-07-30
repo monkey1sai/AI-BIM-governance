@@ -400,7 +400,7 @@ if (
 
 let mergeCommandFailed = false
 try {
-  await $`gh pr merge ${prNumber} --repo ${REPO} --squash --match-head-commit ${preparedHead}`.text()
+  await $`gh pr merge ${prNumber} --repo ${REPO} --merge --match-head-commit ${preparedHead}`.text()
 } catch (_) {
   // The server may have accepted the merge even when a later client-side step
   // failed.  Resolve that ambiguity from GitHub's authoritative state below.

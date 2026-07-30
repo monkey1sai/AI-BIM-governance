@@ -14,7 +14,7 @@
     { "id": "a4-semantic-search-model-qa", "status": "deferred" },
     { "id": "add-single-gpu-session-ai-review-mvp", "status": "deferred" },
     { "id": "align-frontend-design-system-reference", "status": "deferred" },
-    { "id": "cross-service-structured-log-baseline", "status": "deferred" },
+    { "id": "cross-service-structured-log-baseline", "status": "active" },
     { "id": "gpu-session-baseline-and-idle-reclaim", "status": "active" },
     { "id": "implement-runtime-command-authority-and-rejection", "status": "active" },
     { "id": "isolated-branch-stack-browser-e2e", "status": "active" },
@@ -56,7 +56,6 @@
 
 - `openspec/changes/align-frontend-design-system-reference/`（與 migrate 的互斥需求完成 crosswalk 前不得 thaw）
 - `openspec/changes/rvt-ifc-usdc-lineage/`（1/48；切片與 shared ownership 調和前不得 coding）
-- `openspec/changes/cross-service-structured-log-baseline/`（只補 tasks 10.1–10.5 runtime evidence；不重套已同步 delta）
 
 Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unchecked checkbox；三層交叉裁決未把它們判為獨立、可繼續執行的 unfinished owner（主要是已落地但 task bookkeeping 過時、已被 successor 承接，或已退役 service 的歷史工作），因此不批次搬移，也不改寫 archive 歷史。這批屬 legacy audit debt；新增 lifecycle gate 只對本次之後的新 archive fail closed，禁止再產生 unchecked/deferred archive。
 
@@ -72,7 +71,7 @@ Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unch
 | `minio-trigger-lifecycle-backend` | ✅ archived `2026-07-21-minio-trigger-lifecycle-backend` | done | #259 |
 | `c-m4-runtime-command-bridge` | ✅ archived `2026-07-21-c-m4-runtime-command-bridge`（新建 capability spec） | done | #309 |
 | `minio-watch-key-structure` | ✅ archived `2026-07-21-minio-watch-key-structure`（`--skip-specs`；主線 scenario 已在 main） | 選 A deferred-evidence | #237 |
-| `cross-service-structured-log-baseline` | ↩ restored deferred、evidence-only | 只補真 4-service runtime evidence；不改 pipeline/code/canonical spec | #126 |
+| `cross-service-structured-log-baseline` | active P5 remediation、evidence-only | 只補真 4-service runtime evidence；不改 pipeline/code/canonical spec | #126 |
 | `minio-folderview-and-baseline-disclosure` | ✅ archived `2026-07-29-minio-folderview-and-baseline-disclosure`（7/7 closeout reconciled） | done；archive proposal/tasks 為證據 | #265 |
 | `align-frontend-design-system-reference` | ↩ restored deferred、frozen | 先與 migrate 做 requirement/successor crosswalk；禁止平行 design coding | #363 |
 | `rvt-ifc-usdc-lineage` | ↩ restored deferred、frozen（1/48） | 先切片與調和 shared ownership；禁止直接 apply | #354 |
@@ -83,10 +82,10 @@ Archive lexical audit 在本次恢復後仍有 44 個歷史目錄、696 個 unch
 
 ### 收口 DoD（軌 1）
 
-- [x] 5 個近期 completed closeout change 維持 archive；其餘 3 個 unfinished change 維持 deferred／frozen
-- [x] lineage / align-frontend / structured-log 保留 `Status: deferred`、frozen/non-owner，不計 active WIP；minio-folderview 已在 2026-07-29 closeout 後 archive
+- [x] 5 個近期 completed closeout change 維持 archive；3 個 unfinished historical correction 維持 deferred／frozen；structured-log 另以 active P5 remediation 推進 runtime evidence
+- [x] lineage / align-frontend / semantic-search 保留 `Status: deferred`、frozen/non-owner；structured-log 為 active P5 evidence-only remediation，計入 active WIP；minio-folderview 已在 2026-07-29 closeout 後 archive
 - [x] #364 merge + `governance-throughput-budget` archive（OQ-3 出場）
-- [x] 本週 WIP focus 只保留 **A4 + migrate-console**；`implement-runtime-command-authority-and-rejection` 與 `add-single-gpu-session-ai-review-mvp` 的 retain/defer 另案裁決，不在本次 archive 範圍
+- [x] 本週 WIP focus 保留 **A4 + migrate-console + structured-log P5 evidence**；`implement-runtime-command-authority-and-rejection` 與 `add-single-gpu-session-ai-review-mvp` 的 retain/defer 另案裁決，不在本次 archive 範圍
 - [ ] 過期 worktree 刪到 ≤5（人工／下一切可選）
 
 ---
