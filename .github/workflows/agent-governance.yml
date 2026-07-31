@@ -88,6 +88,10 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-platform-adapter.ps1
 
+      - name: Run remote deploy transport tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-remote-deploy-transport.ps1
+
       - name: Run browser-evidence hook tests
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-require-gstack-evidence.ps1

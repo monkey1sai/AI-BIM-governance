@@ -257,8 +257,8 @@ PR-B 改的正是**驗證機制本身**（deploy path）。§6 明文禁止測�
 - [ ] B2 — `scripts/lib/platform/` adapter：process tree、listener owner、路徑解析、Kit 啟動參數（含 `--no-window`）
 - [ ] B3 — ownership 語意跨平台等價性論證 ＋ 測試（`CreationDate` ↔ `/proc/<pid>/stat` starttime）
 - [x] B4 — 收斂 4 檔硬編常數到 registry（deploy.ps1、rebuild lib（含第三個常數 TestDeployEdgeSiteId）、run-runtime evidence harness、find-deploy-blockers）；test harness 改注入 sandbox registry 資料而非文字重寫 deploy.ps1。測試 fixture 的 D: 路徑為任意示例值、非漂移源，判定不收斂
-- [ ] B5 — clone 流程含 exec bit 修復（F-2）
-- [ ] B6 — per-target env ＋ SSH 推送（D-14）＋ 部署當下 effective env 快照（D-15）
+- [x] B5 — clone 流程含 exec bit 修復（F-2）：New-RemoteRebuildScript（clone-if-missing、契約 refspec fresh fetch、reset+clean 保留 env、restore-exec-bits）
+- [x] B6 — per-target env ＋ SSH 推送（D-14）＋ effective env 快照（D-15）：base 推送＋遠端 override（runtime_data_root/env.local，git clean 清不到）＋單一 merge 實作（遠端經 pwsh 呼叫同一 lib 函式）＋ secret 遮罩快照（sha256-8 指紋，值不落地）；operator 入口 -TargetId 預設 canonical。live SSH 待 B8 憑證佈建
 - [ ] B7 — MinIO fixture pinning，fail closed（D-16/17）
 - [ ] B8 — 遠端佈建腳本化（§6.6）
 - [ ] B9 — 契約改寫（§6.3，含修掉 §5 既有漂移）
