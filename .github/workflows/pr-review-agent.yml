@@ -34,6 +34,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           $artifactRoot = 'artifacts/pr-metadata-contract'
@@ -48,7 +49,8 @@ jobs:
               -ChangedPathsNulDelimited `
               -RepoRoot '${{ github.workspace }}' `
               -BaseSha $env:BASE_SHA `
-              -HeadSha $env:HEAD_SHA
+              -HeadSha $env:HEAD_SHA `
+              -PrNumber ([int]$env:PR_NUMBER)
             if ($LASTEXITCODE -ne 0) { throw 'PR body metadata contract failed.' }
             $result = 'passed'
           } finally {
