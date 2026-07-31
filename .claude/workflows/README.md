@@ -10,7 +10,7 @@
 | `std-implement.js` | spec-to-done P3：逐 task 序列實作（impact→TDD→雙 review→commit）；mode=fix 修未閉合 findings | `.claude/skills/spec-to-done/SKILL.md` 編排 |
 | `std-evidence.js` | spec-to-done P4：browser E2E 收 evidence → vertical slice 裁決 | `.claude/skills/spec-to-done/SKILL.md` 編排 |
 | `std-evidence-closeout.js` | spec-to-done evidence-closeout：明確 task IDs 的 evidence/docs executor → 獨立 verifier；最多 2 輪且 HEAD/scope fail-closed | `.claude/skills/spec-to-done/SKILL.md` 編排 |
-| `fu-adversarial-verify-generic.js` | 參數化修復對抗複驗：最多 2 批 verifier（refute-by-default）完成後串行 holistic critic；最多 32 findings | spec-to-done SKILL.md P5；`tests/test_fu_verdict_schema.py`、`tests/test_dacs_findings_contract.py`、`tests/test_fu_adversarial_batching.py` 硬編名稱/路徑（改名須連動） |
+| `fu-adversarial-verify-generic.js` | immutable base/head 對抗複驗：最多 2 批 verifier（refute-by-default）＋sequential holistic critic；evidence-required taxonomy，只輸出 in-scope `fix_now`，最多 32 findings | spec-to-done SKILL.md P5；`tests/test_fu_verdict_schema.py`、`tests/test_dacs_findings_contract.py`、`tests/test_fu_adversarial_batching.py`、`tests/test_fu_adversarial_runtime.mjs` 硬編名稱/路徑（改名須連動） |
 | `spec-to-done-adversarial-verify.js` | 對抗驗證 spec-to-done 四個落地檔（規範一致/技術正確/應用測試/防錯覆蓋） | 獨立 slash workflow（維護 spec-to-done 本身時用） |
 | `ship-item.js` | 單一 work item 自動 ship：coordinator evidence→shell-less Fable/max verdict→identity-bound merge→複驗 | spec-to-done P6；權威程序見 `ship-item.md` |
 | `ship-item.md` | ship-item 的權威程序文件（非腳本） | `ship-item.js` 引用 |

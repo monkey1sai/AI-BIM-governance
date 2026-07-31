@@ -19,10 +19,20 @@ def _schema():
         capture_output=True, text=True, check=True).stdout
     return json.loads(out)
 
-def test_evidence_optional_but_well_shaped():
+def test_verdict_taxonomy_requires_evidence():
     s = _schema()
-    assert "evidence" not in s["required"], "evidence 須 optional（向後相容：避免 verifier drop→infra-HELD）"
-    ev = s["properties"]["evidence"]          # 改前無此鍵 → KeyError（乾淨 RED，非 vm crash）
+    assert set(s["required"]) == {
+        "finding_id", "verdict", "disposition", "scope", "reason", "unblock_condition", "evidence"
+    }
+    assert s["properties"]["verdict"]["enum"] == [
+        "confirmed", "adjusted", "refuted", "unverified"
+    ]
+    assert s["properties"]["disposition"]["enum"] == [
+        "fix_now", "external_blocker", "known_gap", "follow_up", "none"
+    ]
+    assert s["properties"]["scope"]["enum"] == ["in_scope", "out_of_scope"]
+    assert set(s["properties"]["unblock_condition"]["type"]) == {"string", "null"}
+    ev = s["properties"]["evidence"]
     assert ev["type"] == "object" and ev.get("additionalProperties") is False
     assert set(ev["required"]) == {"file", "line", "quote"}
     lt = ev["properties"]["line"]["type"]
