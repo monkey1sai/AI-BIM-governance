@@ -181,14 +181,42 @@ const governancePath = (path) => (
   path.startsWith('docs/agents/') ||
   path.startsWith('scripts/')
 )
-const sensitivePath = /(?:^|\/)(?:auth(?:entication|orization)?|permissions?|migrat(?:e|ion)s?|destructive|production|deploy(?:ment)?)(?:[.\/_-]|$)/i
+const authBearingToken = (token) => {
+  const value = token.toLowerCase()
+  if (
+    value.includes('authentication') ||
+    value.includes('authoriz') ||
+    value.startsWith('oauth')
+  ) return true
+
+  let index = value.indexOf('auth')
+  while (index >= 0) {
+    if (!value.slice(index).startsWith('author')) return true
+    index = value.indexOf('auth', index + 4)
+  }
+  return false
+}
+const sensitivePathToken = (token) => (
+  authBearingToken(token) ||
+  /(?:permissions?|migrat(?:e|ions?)|destructive|production|deploy(?:ment)?)/i.test(token)
+)
+const sensitivePath = (path) => path
+  .split('/')
+  .flatMap((segment) => [
+    segment,
+    ...segment
+      .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .split(/[^A-Za-z0-9]+/),
+  ])
+  .some((token) => sensitivePathToken(token))
 const rootComposeManifestPath = /^(?:docker-)?compose(?:[._-][^/]+)?\.ya?ml$/i
 const elevatedApprovalPath = (path) => (
   governancePath(path) ||
   path === 'agent-skills-manifest.json' ||
   rootComposeManifestPath.test(path) ||
   path.startsWith('infra/') ||
-  sensitivePath.test(path)
+  sensitivePath(path)
 )
 const separatelyAuthorizedBranch = (branch) => /(^|\/)(?:revert-|release(?:[\/-]|$)|hotfix(?:[\/-]|$))/i.test(branch)
 const reviewDecisionAllowed = (decision) => decision === 'APPROVED'

@@ -259,9 +259,30 @@ test('governance and sensitive diffs remain held until a trusted authorization b
     '.claude/workflows/self-approval.js',
     'infra/prod/main.tf',
     'src/auth/login.ts',
+    'bim-review-coordinator/src/services/authProvider.ts',
+    'bim-review-coordinator/src/services/authprovider.ts',
+    'bim-review-coordinator/src/services/AUTHPROVIDER.ts',
+    'bim-review-coordinator/src/services/oAuThProvider.ts',
+    'bim-review-coordinator/tests/app/internalAuth.test.ts',
+    'governance-service/search/internal_auth.py',
+    'src/services/OAuthProvider.ts',
+    'src/services/oauth2.ts',
+    'src/services/OaUtH2.ts',
+    'src/services/reauthProvider.ts',
     'src/permissions/check.ts',
+    'src/security/permissionGuard.ts',
+    'src/security/permissionguard.ts',
+    'src/internalpermissionguard.ts',
     'db/migrations/001-add-role.sql',
+    'db/migrationRunner.ts',
+    'db/migrationrunner.ts',
+    'db/schemamigrationrunner.ts',
+    'db/premigrationrunner.ts',
     'src/destructive-cleanup.ts',
+    'src/config/deploymentConfig.ts',
+    'src/config/deploymentconfig.ts',
+    'src/predeploymentconfig.ts',
+    'src/postdeployhook.ts',
     'agent-skills-manifest.json',
     'compose.host-kit.yml',
     'compose.runtime-manager.yml',
@@ -273,6 +294,20 @@ test('governance and sensitive diffs remain held until a trusted authorization b
     assert.equal(result.heldReason, 'trusted_elevated_authorization_unavailable', path)
     assert.equal(run.agents.length, 0, path)
     assert.ok(!run.commands.some((command) => command.startsWith('gh pr merge ')), path)
+  }
+})
+
+test('author and authority words do not impersonate authentication path tokens', async () => {
+  for (const path of [
+    'src/author_grasp_line.py',
+    'src/conversion_authority.py',
+    'src/authoring.ts',
+    'src/authorship.ts',
+    'src/coauthor.ts',
+  ]) {
+    const run = harness({ diffNames: `${path}\n` })
+    const result = await run.run()
+    assert.equal(result.merged, true, `${path}: ${JSON.stringify(result)}`)
   }
 })
 
