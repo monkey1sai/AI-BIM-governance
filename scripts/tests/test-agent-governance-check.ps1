@@ -489,6 +489,32 @@ try {
     foreach ($marker in @('Required checks', 'agent-governance', 'CODEOWNERS', 'branch protection', 'remote-only', 'PR body evidence')) {
         Assert-True ($reviewDoc -match [regex]::Escape($marker)) "PR review doc contains $marker"
     }
+    $singleOwnerProtectionMatch = [regex]::Match(
+        $reviewDoc,
+        '(?s)Remote-only step：.*?(?=\r?\n## 人工審查邊界)'
+    )
+    Assert-True $singleOwnerProtectionMatch.Success 'PR review doc has a bounded single-owner branch-protection section'
+    $singleOwnerProtectionSection = $singleOwnerProtectionMatch.Value
+    $postMergeMarker = '#458 merge 後'
+    $postMergeMarkerIndex = $singleOwnerProtectionSection.IndexOf($postMergeMarker, [System.StringComparison]::Ordinal)
+    Assert-True ($postMergeMarkerIndex -ge 0) 'PR review doc has the #458 post-merge transition marker'
+    Assert-True (
+        $postMergeMarkerIndex -eq $singleOwnerProtectionSection.LastIndexOf($postMergeMarker, [System.StringComparison]::Ordinal)
+    ) 'PR review doc has exactly one #458 post-merge transition marker'
+    $bootstrapProtectionSection = $singleOwnerProtectionSection.Substring(0, $postMergeMarkerIndex)
+    $postMergeProtectionSection = $singleOwnerProtectionSection.Substring($postMergeMarkerIndex)
+    Assert-True ($bootstrapProtectionSection -match 'PR #458') 'PR review doc identifies the #458 bootstrap'
+    Assert-True ($bootstrapProtectionSection -match '\brequired_approving_review_count\s*=\s*1\b') 'PR review doc binds the #458 bootstrap to approvals=1'
+    Assert-True ($bootstrapProtectionSection -match '\brequire_code_owner_reviews\s*=\s*false\b') 'PR review doc binds the #458 bootstrap to code-owner review=false'
+    Assert-True (-not ($bootstrapProtectionSection -match '\brequire_code_owner_reviews\s*=\s*true\b')) 'PR review doc does not mix the post-merge code-owner target into the #458 bootstrap'
+    Assert-True ($postMergeProtectionSection -match '\brequired_approving_review_count\s*=\s*1\b') 'PR review doc binds the post-merge target to approvals=1'
+    Assert-True ($postMergeProtectionSection -match '\brequire_code_owner_reviews\s*=\s*true\b') 'PR review doc binds the post-merge target to code-owner review=true'
+    Assert-True (-not ($postMergeProtectionSection -match '\brequire_code_owner_reviews\s*=\s*false\b')) 'PR review doc does not mix the bootstrap exception into the post-merge target'
+    foreach ($evidenceMarker in @('不是 live state 證明', '重讀 API')) {
+        Assert-True ($singleOwnerProtectionSection -match [regex]::Escape($evidenceMarker)) "PR review doc keeps live-state evidence warning: $evidenceMarker"
+    }
+    Assert-True (-not ($reviewDoc -match '(?i)\brequired_approving_review_count\s*=\s*0\b')) 'PR review doc never restores a canonical zero-approval setting'
+    Assert-True (-not ($reviewDoc -match '(?i)\bapprovals?\s*=\s*0\b')) 'PR review doc never restores a zero-approval shorthand'
 
     # Machine gates for openspec/specs/agent-doc-context-budget/spec.md:
     # line budgets, sub-file index completeness, dead-link liveness, mirror declaration, mirror pairing.
