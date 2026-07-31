@@ -3,6 +3,7 @@ import {
   RESERVED_DEPLOYMENT_PORTS,
   assertIsolatedCoordinatorTarget,
   buildSeedEvidenceRecord,
+  buildSeedIntakeFetchInit,
   buildSeedIntakeRequest,
   parseSeedCliArgs,
   resolveSeedEnv,
@@ -148,6 +149,36 @@ describe("buildSeedIntakeRequest — 與 minioWatcher tick 同構的 intake 契�
       prefix: "",
       keySuffix: KEY_SUFFIX,
     })).toThrow();
+  });
+});
+
+describe("buildSeedIntakeFetchInit — secret-bearing intake transport guard", () => {
+  const intake = buildSeedIntakeRequest({
+    bucket: "bim-control",
+    key: REAL_KEY,
+    etag: REAL_ETAG,
+    presignedRef: "http://192.168.20.234:9000/bim-control/x?X-Amz-Signature=deadbeef",
+    tenantId: "tenant_demo_001",
+    prefix: "",
+    keySuffix: KEY_SUFFIX,
+  });
+
+  it("禁止 redirect 並為同步 intake 設 request timeout，避免 secret／presigned URL 外送或無限等待", () => {
+    const init = buildSeedIntakeFetchInit({ intake, webhookSecret: "local-secret", timeoutMs: 605_000 });
+    const headers = new Headers(init.headers);
+
+    expect(init.method).toBe("POST");
+    expect(init.redirect).toBe("error");
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(headers.get("X-Webhook-Secret")).toBe("local-secret");
+    expect(init.body).toContain("X-Amz-Signature");
+  });
+
+  it("拒絕停用或無效 timeout", () => {
+    expect(() => buildSeedIntakeFetchInit({ intake, webhookSecret: "local-secret", timeoutMs: 0 }))
+      .toThrow(/timeout.*正數/);
+    expect(() => buildSeedIntakeFetchInit({ intake, webhookSecret: "local-secret", timeoutMs: Number.NaN }))
+      .toThrow(/timeout.*正數/);
   });
 });
 

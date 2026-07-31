@@ -387,6 +387,8 @@ export interface SeedRunOptions {
   runId: string;
   requiredKey?: string;
   presignExpiresInSeconds?: number;
+  /** POST intake 含同步 IFC 下載；預設對齊 coordinator 600s download timeout + 5s 緩衝。 */
+  intakeTimeoutMs?: number;
   pollTimeoutMs?: number;
   pollIntervalMs?: number;
   /** 測試注入點；預設用全域 fetch。 */
@@ -403,6 +405,35 @@ interface IntakeResponseShape {
 }
 
 const defaultSleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * 建立 intake request，集中落實 secret-bearing request 的 fail-closed transport 約束。
+ *
+ * `redirect: "error"` 不只是防禦性選項：307/308 會保留 POST body，而 body 含 presigned
+ * MinIO URL、headers 含 webhook secret。即使初始 target 已驗為 loopback，也不能允許 loopback
+ * response 把這些值 redirect 到另一個 origin。
+ */
+export function buildSeedIntakeFetchInit(input: {
+  intake: SeedIntakeRequest;
+  webhookSecret: string;
+  timeoutMs: number;
+}): RequestInit {
+  if (!Number.isFinite(input.timeoutMs) || input.timeoutMs <= 0) {
+    throw new Error(`intake timeout 必須是正數毫秒（收到 ${input.timeoutMs}）`);
+  }
+  return {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Webhook-Secret": input.webhookSecret,
+      "X-Correlation-Id": input.intake.correlationId,
+      "X-Idempotency-Key": input.intake.idempotencyKey,
+    },
+    body: JSON.stringify(input.intake.body),
+    redirect: "error",
+    signal: AbortSignal.timeout(input.timeoutMs),
+  };
+}
 
 async function listAllObjects(client: S3Client, bucket: string, prefix: string): Promise<SeedObject[]> {
   const out: SeedObject[] = [];
@@ -471,16 +502,14 @@ export async function runSeed(options: SeedRunOptions): Promise<SeedEvidenceReco
     keySuffix: options.keySuffix,
   });
 
-  const response = await fetchImpl(new URL("/api/external/ifc-ready", target).toString(), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Webhook-Secret": options.webhookSecret,
-      "X-Correlation-Id": intake.correlationId,
-      "X-Idempotency-Key": intake.idempotencyKey,
-    },
-    body: JSON.stringify(intake.body),
-  });
+  const response = await fetchImpl(
+    new URL("/api/external/ifc-ready", target).toString(),
+    buildSeedIntakeFetchInit({
+      intake,
+      webhookSecret: options.webhookSecret,
+      timeoutMs: options.intakeTimeoutMs ?? 605_000,
+    }),
+  );
   const text = await response.text();
   if (response.status >= 400) {
     // 誠實鐵律：intake 失敗訊息可能夾帶 source_ifc_ref，截斷並不回吐 presigned 簽章。
@@ -503,7 +532,18 @@ export async function runSeed(options: SeedRunOptions): Promise<SeedEvidenceReco
   const deadline = Date.now() + pollTimeoutMs;
   let downloadStatus = parsed.download_status ?? "unknown";
   for (;;) {
-    const detail = await fetchImpl(new URL(`/api/external/ifc-ready/${encodeURIComponent(jobId)}`, target).toString());
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new Error(`等待 download_status=downloaded 逾時（job=${jobId}，最後狀態 ${downloadStatus}）`);
+    }
+    const detail = await fetchImpl(
+      new URL(`/api/external/ifc-ready/${encodeURIComponent(jobId)}`, target).toString(),
+      {
+        redirect: "error",
+        // 單次 GET 也不得超過整體 poll deadline；否則一個掛住的 response 會使 timeout 失效。
+        signal: AbortSignal.timeout(remainingMs),
+      },
+    );
     if (detail.ok) {
       const job = (await detail.json()) as IntakeResponseShape;
       downloadStatus = job.download_status ?? downloadStatus;
@@ -513,7 +553,7 @@ export async function runSeed(options: SeedRunOptions): Promise<SeedEvidenceReco
     if (Date.now() >= deadline) {
       throw new Error(`等待 download_status=downloaded 逾時（job=${jobId}，最後狀態 ${downloadStatus}）`);
     }
-    await sleep(pollIntervalMs);
+    await sleep(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())));
   }
   log(`[seed] job=${jobId} download_status=downloaded`);
 

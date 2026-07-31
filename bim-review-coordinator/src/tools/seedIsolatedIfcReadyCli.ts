@@ -17,7 +17,9 @@ import { parseSeedCliArgs, resolveSeedEnv, runSeed } from "./seedIsolatedIfcRead
 async function main(): Promise<void> {
   const args = parseSeedCliArgs(process.argv.slice(2));
   // worktree 內不存在 untracked 的 .env，故允許明示指向可用設定檔；未指定時沿用 cwd 的 .env。
-  dotenv.config(args.envFile ? { path: args.envFile } : undefined);
+  // 明示 --env-file 時以該檔為權威，避免 shell 內殘留的 MINIO_WATCH_* 靜默蓋過 operator
+  // 指定設定而 seed 到錯誤 bucket；未指定時保留 dotenv 的既有 ambient-env 優先語意。
+  dotenv.config(args.envFile ? { path: args.envFile, override: true } : undefined);
   const seedEnv = resolveSeedEnv(process.env);
 
   const record = await runSeed({
