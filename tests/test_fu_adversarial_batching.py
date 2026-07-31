@@ -21,7 +21,7 @@ const BASE = 'c'.repeat(40)
 const TARGET = 'd'.repeat(40)
 const ROOT = 'C:/repo'
 
-// workflow runtime 沒有 shell helper：git 事實一律由 coordinator 經 args.git 供給。
+// workflow runtime 沒有 shell helper: git 事實一律由 coordinator 經 args.git 供給。
 const NL = String.fromCharCode(10)
 const FILE_CONTENT = [...Array(6).fill('// context'), 'const observed = true', ''].join(NL)
 const gitFacts = {

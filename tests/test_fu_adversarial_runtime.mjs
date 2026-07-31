@@ -318,6 +318,16 @@ test('critic schema caps issues at the remaining finding capacity', async () => 
   assert.equal(critic.schema.properties.issues.maxItems, 31) // 32 - 1 supplied finding
 })
 
+test('only the bounded registry fields reach the verifier prompt', async () => {
+  const run = harness()
+  await run.run({
+    findings: [{ id: 'F1', q: 'Verify F1', suspectFile: 'src/example.js', detail: 'SMUGGLED'.repeat(200) }],
+  })
+  const verifierIndex = run.agents.findIndex((options) => options.label === 'verify-batch:1')
+  assert.ok(run.prompts[verifierIndex])
+  assert.ok(!run.prompts[verifierIndex].includes('SMUGGLED'))
+})
+
 test('an apex-gate denial refunds the undispatched child call', async () => {
   const run = harness({ apexDenies: true })
   const result = await run.run()

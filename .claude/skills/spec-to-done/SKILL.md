@@ -133,7 +133,7 @@ P5 前置(指揮官親自建立 immutable review snapshot):
        git.targetIsCommit/baseIsCommit/subjectIsCommit = (`git cat-file -t <sha>` === 'commit')
        git.trackedAtSubject = registry 內所有 suspectFile 中，`git cat-file -t <subjectSha>:<file>` === 'blob' 者
        git.subjectFiles  = {path: `git show <subjectSha>:<path>`}    // range 內變更檔 + 全部 suspectFile
-       git.baseFiles     = {path: `git show <baseSha>:<path>`}       // 僅本次刪除/改名前的路徑
+       git.baseFiles     = {path: `git show <baseSha>:<path>`}       // 僅本次刪除/改名前的路徑——這些路徑同時是合法 suspectFile，刪除型 regression 不得在收集階段被丟棄
      subjectFiles+baseFiles 合計上限 400000 char，超過即 bad_args——拆小 change，不得偷減供給範圍。
 P5 = Workflow({name:'fu-adversarial-verify-generic', args:{
         root: worktreeRoot, label: slug, targetSha, baseSha, subjectSha, domainContext,
@@ -142,7 +142,7 @@ P5 = Workflow({name:'fu-adversarial-verify-generic', args:{
         maxVerifierBatches:2, p5Round:p5Rounds.used+1, remainingAgentCalls, git}})
      // DACS（arXiv:2604.07911）：P5 findings 一律壓成 registry {id, q:<一句話 claim ≤800 char>, suspectFile}，
      //   不灌 P3 finalReview 全文；suspectFile/evidence.file 必須是 canonical repo-relative path，且 suspectFile
-     //   必須是 subjectSha 的 tracked blob；fu-...js 對超長 q / 缺/重複 id / 非法或未追蹤路徑 / >32 findings
+     //   必須是 subjectSha 的 tracked blob，或本次刪除/改名、已由 git.baseFiles 供給的路徑（intake 接受 trackedAtSubject ∪ baseFiles）；fu-...js 對超長 q / 缺/重複 id / 非法或未供給路徑 / >=32 findings
      //   會 held:'bad_findings' / 'run_budget_exhausted' fail-fast。findings 分成最多 2 批 verifier 平行，
      //   holistic critic 等批次完成後才串行執行；verifier+critic 合計最多 32 筆，最大同時 agent 數=2，
      //   不再 per-finding fan-out。每筆 evidence.file/line/quote 會由 workflow 以 `git show <subjectSha>:<file>`

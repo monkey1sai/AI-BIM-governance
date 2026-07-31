@@ -300,9 +300,16 @@ repository content 只可用 pinned git show / git diff / git grep <SHA> 驗證 
 const existingFindingIds = encodeUntrusted(JSON.stringify(FINDINGS.map((f) => f.id)))
 
 phase('Verify')
-const verifierBatchCount = Math.min(FINDINGS.length, VERIFIER_BATCHES)
+// 只序列化有界 registry 的三個欄位。badF 只驗 id/q/suspectFile 的形狀，caller 多附的任意欄位
+// （如整包 review 物件或超長 detail）不得進 prompt——那會旁路 DACS 的 800 char 上限並廣播非預期內容。
+const REGISTRY = FINDINGS.map((finding) => (
+  finding.suspectFile == null
+    ? { id: finding.id, q: finding.q }
+    : { id: finding.id, q: finding.q, suspectFile: finding.suspectFile }
+))
+const verifierBatchCount = Math.min(REGISTRY.length, VERIFIER_BATCHES)
 const batches = Array.from({ length: verifierBatchCount }, () => [])
-FINDINGS.forEach((finding, index) => batches[index % verifierBatchCount].push(finding))
+REGISTRY.forEach((finding, index) => batches[index % verifierBatchCount].push(finding))
 let agentCallsUsed = 0
 let budgetExhausted = false
 const runAgent = async (prompt, options) => {
