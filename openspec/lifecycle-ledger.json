@@ -1383,7 +1383,7 @@
       "owner": "repository-maintainer",
       "current_slice": "Phase 3 語言專屬結構契約",
       "blocked_by": [],
-      "last_verified": "2026-07-31T14:22:09Z",
+      "last_verified": "2026-07-31T14:54:22Z",
       "task_ledger": {
         "completed": 16,
         "total": 26
@@ -1392,7 +1392,7 @@
         "openspec/changes/introduce-executable-architecture-contracts/proposal.md",
         "openspec/changes/introduce-executable-architecture-contracts/tasks.md"
       ],
-      "subject_commit": "a28a62385ace88c869326bb625686156506f5d44",
+      "subject_commit": "6424a6d6074fa4adff1defe1b6cb7024277ff924",
       "archive_debt": null
     },
     {
