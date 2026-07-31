@@ -49,6 +49,9 @@ const ALLOWED_HELD_REASONS = new Set([
   'human_approval_required',
   'reviewer_permission_not_strict',
   'reviewer_permission_changed_after_verdict',
+  'branch_protection_changed_during_buffer',
+  'branch_protection_changed_after_verdict',
+  'human_approval_changed_after_verdict',
   'trusted_elevated_authorization_unavailable',
   'unexpected_elevated_authorization',
   'branch_protection_single_owner_gate_not_strict',
@@ -410,12 +413,12 @@ const validateAuditChain = (lines, current, limits) => {
     for (const line of lines.slice(0, -1)) {
       historical.push(parseHistoricalCheckpoint(line, limits))
     }
+    for (let index = 1; index < historical.length; index += 1) {
+      validateParsedTransition(historical[index - 1], historical[index])
+    }
   } catch {
     if (isMaxBudgetInvalidRecovery(current)) return
     reject('resume_state_invalid', 'previous checkpoint is invalid; append only a max-budget HELD@... reason=resume_state_invalid checkpoint')
-  }
-  for (let index = 1; index < historical.length; index += 1) {
-    validateParsedTransition(historical[index - 1], historical[index])
   }
   validateParsedTransition(historical.at(-1), current)
 }

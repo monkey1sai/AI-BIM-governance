@@ -224,6 +224,9 @@ P6 = Workflow({name:'ship-item', args:{branch, prNumber:<前置 c 的號碼>, us
          `gh pr merge --admin`，也不得把 required review 當成一般 CI 重試。
        P6.heldReason 屬 `reviewer_permission_not_strict` / `reviewer_permission_changed_after_verdict` → HELD；
          使用者必須恢復固定 reviewer 的 exact `write` permission/role 後才可 resume。
+       P6.heldReason 屬 `branch_protection_changed_during_buffer` / `branch_protection_changed_after_verdict` /
+         `human_approval_changed_after_verdict` → HELD；重讀 live protection 與 exact-head human approval，
+         只有狀態重新穩定且 fresh approval 完整綁定目前 head 後才能 resume，不得自動重試或 merge。
        P6.heldReason === 'trusted_elevated_authorization_unavailable' → HELD；目前沒有 agent-inaccessible、
          一次性、tuple/nonce/expiry-bound broker，任何 caller-supplied `elevatedAuthorization` 都不能
          resume；不得自行合成或降級。`unexpected_elevated_authorization` 則移除 routine PR 的錯誤欄位後 resume。
@@ -268,6 +271,7 @@ P1 內含 plan 四軸 review(Completeness/Spec Alignment/Task Decomposition/Buil
 | `ledger_mismatch` | P7 對帳(指揮官發出,非 workflow 回傳):OpenSpec tasks.md / plan 勾選與 state 檔+`task#N` commits 不一致 | HELD;以 git/code 證據為準做 forensic 調和(單獨 commit/PR 修 ledger),不得單方按 state 檔補勾、也不得按 ledger 否定已有 commit 證據的完成;調和後才可宣告 done |
 | `review_required` / `human_approval_required` | P6 branch protection / canonical review | HELD；使用者以固定 CODEOWNER 帳號完成 exact-head canonical approval 後，以同一 prNumber resume；agent 禁止 `gh pr merge --admin` |
 | `reviewer_permission_not_strict` / `reviewer_permission_changed_after_verdict` | P6 fixed reviewer identity | HELD；使用者恢復固定 reviewer exact `write` permission/role 後 resume，不得降級 identity gate |
+| `branch_protection_changed_during_buffer` / `branch_protection_changed_after_verdict` / `human_approval_changed_after_verdict` | P6 protected-state drift | HELD；重讀 protection 與 exact-head human approval，狀態穩定且 fresh approval 綁定目前 head 後才能 resume；不得自動重試或 merge |
 | `trusted_elevated_authorization_unavailable` | P6 elevated authorization broker | HELD；agent-inaccessible、一次性、tuple/nonce/expiry-bound broker 尚未實作，caller-supplied `elevatedAuthorization` 不得解鎖或 resume |
 | `unexpected_elevated_authorization` | P6 routine caller args | 移除 routine PR 不應出現的 `elevatedAuthorization` 後，以同一 prNumber resume |
 | `branch_protection_single_owner_gate_not_strict` | P6 live protection | HELD；使用者／admin 恢復 approvals=1、dismiss stale、code-owner review、strict checks、conversation resolution、enforce-admins 且無 bypass/force/delete 後 resume |
@@ -297,8 +301,10 @@ HELD@P<n> | reason=<held 值> | spec=<specPath/changePath> | slug=<slug> | userF
   候選行（禁止單行 temp），執行 `node .claude/skills/spec-to-done/validate-state.mjs（單一正本：.claude 側；.codex 不放副本） --state <temp>
   --platform codex --git-exe <(Get-Command git).Source 的絕對路徑> --expected-head <git SHA>
   --expected-worktree <worktreeRoot> --expected-agent-limit 40 --expected-p5-limit 2
-  --expected-evidence-limit 2`；exit 0 才 append durable state。validator 檢查最後兩個 checkpoint、
-  實際 HEAD、dirty/staged/untracked 與 rename source。
+  --expected-evidence-limit 2`；exit 0 才 append durable state。validator 檢查完整 history 的每一行、
+  所有相鄰 transition、實際 HEAD、dirty/staged/untracked 與 rename source。若既有 history 無法通過行或
+  transition 驗證，只能追加 counters 全到上限的 `HELD ... reason=resume_state_invalid` 作終端封存；
+  該行不能用來繼續 progress，必須先修復或正規化歷史。
 - 「繼續 spec-to-done」→ 先對 durable state 跑同一 validator；通過後還原全部 args 與累計計數，只重跑該 phase：
   `Workflow({name:<phase>, args:{...還原,remainingAgentCalls:40-agentCalls.used}, resumeFromRunId:<該 phase 實際 runId>})`。
   state HEAD 與目前 worktree HEAD 不同即 `evidence_stale`；不得靠新 session / 新 agent 跳過。

@@ -9,6 +9,8 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CLAUDE_VALIDATOR = ROOT / ".claude/skills/spec-to-done/validate-state.mjs"
 CODEX_VALIDATOR = ROOT / ".codex/skills/spec-to-done/validate-state.mjs"
+CLAUDE_SKILL = ROOT / ".claude/skills/spec-to-done/SKILL.md"
+CODEX_SKILL = ROOT / ".codex/skills/spec-to-done/SKILL.md"
 GIT = shutil.which("git")
 EXCLUSIONS = (
     "secrets,credentials,billing,production-data,destructive-delete,"
@@ -128,11 +130,35 @@ def test_valid_claude_and_codex_states_and_single_canonical_validator(tmp_path):
 
 def test_documented_p6_hold_reasons_are_durable_and_unknown_reasons_fail_closed(tmp_path):
     repo, head = _new_repo(tmp_path)
+    claude_contract = CLAUDE_SKILL.read_text(encoding="utf-8")
+    codex_contract = CODEX_SKILL.read_text(encoding="utf-8")
+
+    def section(contract, start_marker, end_marker):
+        start = contract.index(start_marker)
+        end = contract.index(end_marker, start)
+        return contract[start:end]
+
+    p6_sections = (
+        section(claude_contract, "P6 = Workflow", "P7 ="),
+        section(codex_contract, "P6 = Workflow", "P7 ="),
+    )
+    held_tables = (
+        section(claude_contract, "## held 對照表", "## 強制停下點"),
+        section(codex_contract, "## held 對照表", "## 強制停下點"),
+    )
+    drift_reasons = {
+        "branch_protection_changed_during_buffer",
+        "branch_protection_changed_after_verdict",
+        "human_approval_changed_after_verdict",
+    }
     documented_reasons = (
         "review_required",
         "human_approval_required",
         "reviewer_permission_not_strict",
         "reviewer_permission_changed_after_verdict",
+        "branch_protection_changed_during_buffer",
+        "branch_protection_changed_after_verdict",
+        "human_approval_changed_after_verdict",
         "trusted_elevated_authorization_unavailable",
         "unexpected_elevated_authorization",
         "branch_protection_single_owner_gate_not_strict",
@@ -145,6 +171,11 @@ def test_documented_p6_hold_reasons_are_durable_and_unknown_reasons_fail_closed(
         )
         assert code == 0 and result["kind"] == "HELD"
         assert result["fields"]["reason"] == reason
+        assert reason in claude_contract
+        assert reason in codex_contract
+        if reason in drift_reasons:
+            assert all(reason in p6_section for p6_section in p6_sections)
+            assert all(reason in held_table for held_table in held_tables)
 
     code, result = _run(
         tmp_path,
@@ -200,6 +231,41 @@ def test_historical_unknown_held_reason_cannot_be_hidden_by_later_checkpoints(tm
     code, result = _run(tmp_path, repo, [unknown_hold, max_budget_recovery])
     assert code == 0 and result["kind"] == "HELD"
     assert result["fields"]["reason"] == "resume_state_invalid"
+
+
+def test_max_budget_recovery_seals_prior_transition_errors_without_enabling_progress(tmp_path):
+    repo, head = _new_repo(tmp_path)
+    p1 = _line(repo, head, "DONE@P1")
+    p5 = _line(repo, head, "DONE@P5")
+    recovery = _line(
+        repo,
+        head,
+        "HELD@P5",
+        reason="resume_state_invalid",
+        agentCalls="40/40",
+        p5Rounds="2/2",
+        evidenceAttempts="2/2",
+    )
+
+    code, result = _run(tmp_path, repo, [p1, p5, recovery])
+    assert code == 0 and result["kind"] == "HELD"
+    assert result["fields"]["reason"] == "resume_state_invalid"
+
+    resumed = _line(
+        repo,
+        head,
+        "RESUMED@P5",
+        decision="operator-resume",
+        agentCalls="40/40",
+        p5Rounds="2/2",
+        evidenceAttempts="2/2",
+    )
+    code, result = _run(tmp_path, repo, [p1, p5, recovery, resumed])
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+    illegal_candidate = recovery.replace("HELD@P5", "HELD@P6", 1)
+    code, result = _run(tmp_path, repo, [p1, illegal_candidate])
+    assert code == 2 and result["held"] == "resume_state_invalid"
 
 
 def test_fixed_limits_and_counter_overflow_fail_closed(tmp_path):
