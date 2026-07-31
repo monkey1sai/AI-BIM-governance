@@ -24,7 +24,8 @@ $script:SelfReferentialMechanismPattern = @(
     '^scripts/lib/(preflight-[a-z-]+|deploy-report|host-native-launcher|rebuild-test-deploy|start-child-with-environment|kit-log-probe|smoke-evidence)\.ps1$'
     '^scripts/lib/platform/'
     '^scripts/lib/(design-system-gate|pr-review-agent|production-boundary-contract)\.ps1$'
-    '^scripts/tests/(check-pr-body-evidence|verify-design-system-reference|verify-design-system-visual-result|verify-openspec-lifecycle)\.ps1$'
+    '^scripts/tests/(check-pr-body-evidence|verify-design-system-reference|verify-design-system-visual-result|verify-functional-runtime-result|verify-security-exceptions|verify-openspec-lifecycle)\.ps1$'
+    '^scripts/tests/verify-openspec-machine-truth\.mjs$'
     '^scripts/lib/self-referential-bootstrap\.ps1$'
     '^scripts/self-referential-bootstrap-ledger\.json$'
     '^\.github/workflows/(agent-governance|pr-review-agent|ci)\.yml$'
@@ -38,6 +39,15 @@ $script:GenericReasonBlocklist = @(
 function Get-SelfReferentialMechanismPaths {
     param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $ChangedPaths)
     return @($ChangedPaths | Where-Object { $_ -match $script:SelfReferentialMechanismPattern })
+}
+
+function ConvertTo-SelfReferentialTimestamp {
+    # Callers must have validated with Test-SelfReferentialIsoTimestamp first.
+    param([Parameter(Mandatory = $true)] $Value)
+    if ($Value -is [System.DateTimeOffset]) { return $Value }
+    if ($Value -is [datetime]) { return [System.DateTimeOffset]::new($Value.ToUniversalTime(), [TimeSpan]::Zero) }
+    return [System.DateTimeOffset]::Parse([string]$Value, [System.Globalization.CultureInfo]::InvariantCulture,
+        [System.Globalization.DateTimeStyles]::AssumeUniversal)
 }
 
 function Test-SelfReferentialIsoTimestamp {
@@ -73,7 +83,10 @@ function Assert-SelfReferentialBootstrapReason {
     if ($trimmed.Length -lt 30) {
         throw "self_referential_bootstrap: $Context reason must concretely explain why the pre-change mechanism cannot produce this evidence (>=30 chars)."
     }
-    $tokens = @($trimmed.ToLowerInvariant() -split '\s+' | Where-Object { $_ })
+    # Strip punctuation before comparing so 'bootstrap, needed.' still hits the
+    # blocklist and repeated words with varied punctuation do not count as distinct.
+    $tokens = @($trimmed.ToLowerInvariant() -split '\s+' |
+        ForEach-Object { $_ -replace '[^a-z0-9-]', '' } | Where-Object { $_ })
     $distinct = @($tokens | Sort-Object -Unique)
     if ($tokens.Count -lt 6 -or $distinct.Count -lt 5) {
         throw "self_referential_bootstrap: $Context reason lacks substance (needs >=6 words, >=5 distinct); padded phrases are rejected."
@@ -108,8 +121,10 @@ function Get-SelfReferentialBootstrapLedger {
     if ([string]$ledger.schema_version -ne 'self-referential-bootstrap-ledger/v1') {
         throw "self_referential_bootstrap: unsupported schema_version '$($ledger.schema_version)'."
     }
-    if ($null -eq $ledger.PSObject.Properties['entries']) {
-        throw 'self_referential_bootstrap: ledger has no entries array.'
+    $entriesProperty = $ledger.PSObject.Properties['entries']
+    if ($null -eq $entriesProperty -or $null -eq $entriesProperty.Value -or
+        -not ($entriesProperty.Value -is [System.Collections.IList])) {
+        throw 'self_referential_bootstrap: ledger entries must be an array (null/object forms are rejected).'
     }
 
     $seen = @{}
@@ -157,6 +172,9 @@ function Get-SelfReferentialBootstrapLedger {
             if (-not (Test-SelfReferentialIsoTimestamp -Value $fp.reverified_at)) {
                 throw "self_referential_bootstrap: entry '$id' fixpoint.reverified_at must be a valid ISO-8601 timestamp."
             }
+            if ((ConvertTo-SelfReferentialTimestamp $fp.reverified_at) -le (ConvertTo-SelfReferentialTimestamp $entry.opened_at)) {
+                throw "self_referential_bootstrap: entry '$id' fixpoint.reverified_at must be after opened_at; a fixpoint cannot predate its debt."
+            }
             if ([string]$fp.mechanism_commit -notmatch '^[0-9a-f]{40}$') {
                 throw "self_referential_bootstrap: entry '$id' fixpoint.mechanism_commit must be a full 40-hex commit of the merged mechanism."
             }
@@ -171,6 +189,21 @@ function Get-SelfReferentialBootstrapLedger {
 function ConvertTo-SelfReferentialCanonicalEntry {
     param([Parameter(Mandatory = $true)] $Entry)
     return ($Entry | ConvertTo-Json -Depth 8 -Compress)
+}
+
+function Assert-SelfReferentialEvidenceBlob {
+    # Evidence must be a COMMITTED file: 'git cat-file -t HEAD:<ref>' must say
+    # blob. Filesystem Test-Path would accept '.', directories, and untracked
+    # workflow artifacts - none of those are reviewable evidence.
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $Ref,
+        [Parameter(Mandatory = $true)][string] $Context
+    )
+    $objectType = (& git -C $RepoRoot cat-file -t "HEAD:$Ref" 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $objectType -ne 'blob') {
+        throw "self_referential_bootstrap: $Context evidence ref '$Ref' is not a committed file in the PR head tree (got '$objectType')."
+    }
 }
 
 function Compare-SelfReferentialLedgerTransition {
@@ -220,9 +253,7 @@ function Compare-SelfReferentialLedgerTransition {
             }
             if (-not [string]::IsNullOrWhiteSpace($RepoRoot)) {
                 foreach ($ref in @($head.bootstrap_evidence_refs)) {
-                    if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot ([string]$ref)))) {
-                        throw "self_referential_bootstrap: new entry '$id' evidence ref '$ref' does not exist in the PR head tree."
-                    }
+                    Assert-SelfReferentialEvidenceBlob -RepoRoot $RepoRoot -Ref ([string]$ref) -Context "new entry '$id'"
                 }
             }
             $newEntries += $head
@@ -265,9 +296,7 @@ function Compare-SelfReferentialLedgerTransition {
             throw "self_referential_bootstrap: entry '$id' fixpoint.mechanism_commit $commit is not an ancestor of the PR base; the fixpoint must run on the MERGED mechanism."
         }
         foreach ($ref in @($fp.evidence_refs)) {
-            if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot ([string]$ref)))) {
-                throw "self_referential_bootstrap: entry '$id' fixpoint evidence ref '$ref' does not exist in the PR head tree."
-            }
+            Assert-SelfReferentialEvidenceBlob -RepoRoot $RepoRoot -Ref ([string]$ref) -Context "entry '$id' fixpoint"
         }
         $closedEntries += $head
     }

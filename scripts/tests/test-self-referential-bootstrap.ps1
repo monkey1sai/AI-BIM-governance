@@ -99,12 +99,16 @@ try {
     & git -C $gitRoot init -q
     & git -C $gitRoot -c user.email=t@t -c user.name=t commit -q --allow-empty -m 'mechanism merged'
     $fixpointCommit = (& git -C $gitRoot rev-parse HEAD).Trim()
-    & git -C $gitRoot -c user.email=t@t -c user.name=t commit -q --allow-empty -m 'base'
-    $baseSha = (& git -C $gitRoot rev-parse HEAD).Trim()
+    # Evidence must be COMMITTED blobs at HEAD (filesystem-only presence is not
+    # reviewable evidence), so the fixture commits them into the base commit.
     New-Item -ItemType Directory -Path (Join-Path $gitRoot 'docs/evidence/remote-linux-deploy/self-referential-bootstrap') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $gitRoot 'docs/evidence/remote-linux-deploy/fixpoint') -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $gitRoot 'docs/evidence/remote-linux-deploy/self-referential-bootstrap/summary.md') -Value 'evidence'
     Set-Content -LiteralPath (Join-Path $gitRoot 'docs/evidence/remote-linux-deploy/fixpoint/summary.md') -Value 'fixpoint evidence'
+    Set-Content -LiteralPath (Join-Path $gitRoot 'untracked-evidence.md') -Value 'untracked'
+    & git -C $gitRoot add docs
+    & git -C $gitRoot -c user.email=t@t -c user.name=t commit -q -m 'base with evidence'
+    $baseSha = (& git -C $gitRoot rev-parse HEAD).Trim()
 
     # --- mechanism path detection (incl. enforcement workflows: review P2) ----------
     $matched = Get-SelfReferentialMechanismPaths -ChangedPaths @(
@@ -113,9 +117,11 @@ try {
         '.github/workflows/agent-governance.yml',
         '.github/workflows/ci.yml',
         'scripts/verification-manifest.json',
+        'scripts/tests/verify-functional-runtime-result.ps1',
+        'scripts/tests/verify-security-exceptions.ps1',
         'web-viewer-sample/src/Window.tsx'
     )
-    Assert-True ($matched.Count -eq 5) "enforcement workflows and the manifest must classify as mechanism (matched: $($matched -join ', '))"
+    Assert-True ($matched.Count -eq 7) "enforcement workflows, the manifest and all adjudicating verifiers must classify as mechanism (matched: $($matched -join ', '))"
 
     # --- real repo ledger: parse-integrity ONLY, no emptiness assumption ------------
     $realLedger = Get-SelfReferentialBootstrapLedger -Path (Join-Path $repoRoot 'scripts/self-referential-bootstrap-ledger.json')
@@ -133,6 +139,9 @@ try {
     Assert-Throws -Context 'generic-vocabulary-dominated reason' -MessagePattern 'generic vocabulary' -Action {
         Assert-SelfReferentialBootstrapReason -Reason 'bootstrap needed required because chicken egg self-referential' -Context 'test'
     }
+    Assert-Throws -Context 'punctuated generic reason' -MessagePattern 'reason' -Action {
+        Assert-SelfReferentialBootstrapReason -Reason 'bootstrap, needed, required, because, chicken, egg.' -Context 'test'
+    }
     Assert-SelfReferentialBootstrapReason -Reason $goodReason -Context 'test'
 
     # --- ledger integrity (structure-level, unchanged rules) ------------------------
@@ -145,6 +154,18 @@ try {
     }
     Assert-Throws -Context 'closed entry without fixpoint' -MessagePattern 'complete fixpoint' -Action {
         Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{ status = 'closed' })))
+    }
+    Assert-Throws -Context 'entries as null' -MessagePattern 'must be an array' -Action {
+        Get-SelfReferentialBootstrapLedger -Json '{"schema_version":"self-referential-bootstrap-ledger/v1","entries":null}'
+    }
+    Assert-Throws -Context 'entries as object' -MessagePattern 'must be an array' -Action {
+        Get-SelfReferentialBootstrapLedger -Json '{"schema_version":"self-referential-bootstrap-ledger/v1","entries":{"id":"x"}}'
+    }
+    Assert-Throws -Context 'fixpoint predating its debt' -MessagePattern 'cannot predate' -Action {
+        Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{
+            status = 'closed'
+            fixpoint = @{ reverified_at = '2026-07-30T08:00:00Z'; mechanism_commit = ('a' * 40); evidence_refs = @('docs/evidence/x/self-referential-bootstrap/f.md') }
+        })))
     }
 
     # --- transition: deletion of open debt (review P1 #1) ---------------------------
@@ -190,8 +211,23 @@ try {
         status = 'closed'
         fixpoint = @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/nope/missing.md') }
     }))
-    Assert-Throws -Context 'fixpoint evidence ref missing from head tree' -MessagePattern 'does not exist in the PR head tree' -Action {
+    Assert-Throws -Context 'fixpoint evidence ref missing from head tree' -MessagePattern 'not a committed file' -Action {
         Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism -HeadJson $missingEvidenceClosed -BaseJson $openBase -GateRepoRoot $gitRoot -BaseSha $baseSha
+    }
+    # filesystem presence without a commit is NOT evidence (review round 2, P1)
+    $untrackedEvidenceClosed = New-LedgerJson -Entries @((New-Entry -Override @{
+        status = 'closed'
+        fixpoint = @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('untracked-evidence.md') }
+    }))
+    Assert-Throws -Context 'fixpoint evidence ref present on disk but untracked' -MessagePattern 'not a committed file' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism -HeadJson $untrackedEvidenceClosed -BaseJson $openBase -GateRepoRoot $gitRoot -BaseSha $baseSha
+    }
+    $dotEvidenceClosed = New-LedgerJson -Entries @((New-Entry -Override @{
+        status = 'closed'
+        fixpoint = @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('.') }
+    }))
+    Assert-Throws -Context 'fixpoint evidence ref pointing at a directory' -MessagePattern 'not a committed file' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism -HeadJson $dotEvidenceClosed -BaseJson $openBase -GateRepoRoot $gitRoot -BaseSha $baseSha
     }
     # legal closure passes
     $legalClosed = New-LedgerJson -Entries @((New-Entry -Override @{
@@ -226,7 +262,7 @@ try {
     }
 
     # --- new entry evidence must exist in the head tree -----------------------------
-    Assert-Throws -Context 'new entry with missing evidence file' -MessagePattern 'does not exist in the PR head tree' -Action {
+    Assert-Throws -Context 'new entry with missing evidence file' -MessagePattern 'not a committed file' -Action {
         Invoke-BodyGate -Rows @{
             'Self-referential bootstrap' = 'yes'
             'Bootstrap ledger entry' = 'remote-linux-deploy-target'
