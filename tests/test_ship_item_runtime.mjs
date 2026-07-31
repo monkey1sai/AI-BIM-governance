@@ -254,7 +254,7 @@ test('happy path uses one shell-less Fable/max arbiter and exact-head merge', as
   assert.ok(run.commands.filter((command) => command.includes('gh api --paginate')).every((command) => command.includes('--slurp')))
 })
 
-test('governance and sensitive diffs use the same exact human approval gate', async () => {
+test('governance and sensitive diffs remain held until a trusted authorization broker exists', async () => {
   for (const path of [
     '.claude/workflows/self-approval.js',
     'infra/prod/main.tf',
@@ -266,26 +266,27 @@ test('governance and sensitive diffs use the same exact human approval gate', as
   ]) {
     const run = harness({ diffNames: `${path}\n` })
     const result = await run.run()
-    assert.equal(result.merged, true, path)
-    assert.equal(run.agents.length, 1, path)
-    assert.ok(run.commands.some((command) => command.startsWith('gh pr merge ')), path)
+    assert.equal(result.heldReason, 'trusted_elevated_authorization_unavailable', path)
+    assert.equal(run.agents.length, 0, path)
+    assert.ok(!run.commands.some((command) => command.startsWith('gh pr merge ')), path)
   }
 })
 
-test('elevated paths require an exact current-turn caller authorization', async () => {
+test('caller-controlled elevated assertions cannot unlock an elevated path', async () => {
   const missing = harness({ diffNames: '.claude/workflows/self-approval.js\n' })
   const missingResult = await missing.runWithArgs({ branch: BRANCH, prNumber: PR })
-  assert.equal(missingResult.heldReason, 'current_turn_authorization_required')
+  assert.equal(missingResult.heldReason, 'trusted_elevated_authorization_unavailable')
   assert.equal(missing.agents.length, 0)
 
-  const wrong = harness({ diffNames: '.claude/workflows/self-approval.js\n' })
-  const wrongResult = await wrong.runWithArgs({
+  const synthesized = harness({ diffNames: '.claude/workflows/self-approval.js\n' })
+  const synthesizedResult = await synthesized.runWithArgs({
     branch: BRANCH,
     prNumber: PR,
-    elevatedAuthorization: approvalBody({ action: 'merge' }),
+    elevatedAuthorization: approvalBody({ action: 'merge-elevated' }),
   })
-  assert.equal(wrongResult.heldReason, 'current_turn_authorization_required')
-  assert.equal(wrong.agents.length, 0)
+  assert.equal(synthesizedResult.heldReason, 'trusted_elevated_authorization_unavailable')
+  assert.equal(synthesized.agents.length, 0)
+  assert.ok(!synthesized.commands.some((command) => command.startsWith('gh pr merge ')))
 })
 
 test('routine paths reject an unexpected elevated authorization', async () => {
@@ -300,14 +301,15 @@ test('routine paths reject an unexpected elevated authorization', async () => {
   assert.ok(!run.commands.some((command) => command.startsWith('gh pr merge ')))
 })
 
-test('elevated paths reject a routine approval action', async () => {
+test('elevated broker hold occurs before review evidence is consumed', async () => {
   const run = harness({
     diffNames: '.claude/workflows/self-approval.js\n',
     reviewPages: JSON.stringify([[humanApproval()]]),
   })
   const result = await run.run()
-  assert.equal(result.heldReason, 'human_approval_required')
+  assert.equal(result.heldReason, 'trusted_elevated_authorization_unavailable')
   assert.equal(run.agents.length, 0)
+  assert.equal(run.commands.filter((command) => command.includes(`/pulls/${PR}/reviews`)).length, 0)
   assert.ok(!run.commands.some((command) => command.startsWith('gh pr merge ')))
 })
 

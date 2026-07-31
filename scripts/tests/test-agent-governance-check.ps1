@@ -29,6 +29,8 @@ function Get-WorkflowPermissionViolations {
     $violations = [System.Collections.Generic.List[string]]::new()
     $permissionHeader = [regex]'^(?<indent>\s*)(?:[''"])?permissions(?:[''"])?\s*:\s*(?<inline>[^#]*?)(?:\s+#.*)?$'
     $headerCount = 0
+    # The dependency-free scanner intentionally accepts only an unambiguous YAML subset:
+    # even comments and literals may not carry a second permissions token.
     $permissionTokenCount = [regex]::Matches(($Lines -join "`n"), '(?i)\bpermissions\b').Count
     if ($permissionTokenCount -ne 1) {
         $violations.Add("workflow must contain exactly one literal permissions token; found $permissionTokenCount")
@@ -404,7 +406,8 @@ try {
     Assert-True ($humanApprovalScript -match "parsed\.permission !== 'write'") 'fixed reviewer permission must remain exactly write'
     Assert-True ($humanApprovalScript -match 'reviewer_permission_changed_after_verdict') 'fixed reviewer permission is re-read before merge'
     Assert-True ($humanApprovalScript -match 'requireCodeOwnerReviews') 'branch protection must require a code-owner review'
-    Assert-True ($humanApprovalScript -match 'current_turn_authorization_required') 'elevated merge paths require explicit current-turn caller authorization'
+    Assert-True ($humanApprovalScript -match "return held\('trusted_elevated_authorization_unavailable'") 'elevated merge paths remain held until a trusted authorization broker exists'
+    Assert-True (-not ($humanApprovalScript -match 'current_turn_authorization_required')) 'caller-controlled JSON is not treated as current-turn authorization'
     Assert-True ($humanApprovalScript -match "expectedApprovalAction = elevatedApprovalPaths \? 'merge-elevated' : 'merge'") 'elevated changes require a distinct approval action'
     $codeownerLines = @(Get-Content -LiteralPath '.github/CODEOWNERS' | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') })
     Assert-True ($codeownerLines -contains '* @monkey1sai-blip') 'CODEOWNERS has a fixed human reviewer wildcard fallback'
@@ -417,6 +420,7 @@ try {
         Assert-True ($permissionViolations.Count -eq 0) "workflow permissions are literal and cannot write comments, reviews, discussions, statuses, or checks: $($workflowFile.Name): $($permissionViolations -join '; ')"
     }
     Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read')).Count -eq 0) 'the exact root contents-read workflow permission is allowed'
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read', '# permissions tokens are forbidden outside the root key')).Count -gt 0) 'extra permissions tokens in comments are rejected by the strict dependency-free grammar'
     Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  "pull-requests": write')).Count -gt 0) 'quoted pull-request write permission is rejected'
     Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  issues: *writer')).Count -gt 0) 'aliased issue permission is rejected fail closed'
     Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions: { checks: write }')).Count -gt 0) 'inline check-write permission map is rejected fail closed'

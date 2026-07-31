@@ -175,7 +175,8 @@ def test_ship_merge_sink_is_fixed_evidence_and_identity_bound():
     assert "reviewerPermissionForIdentity" in ship and "reviewer_permission_changed_after_verdict" in ship
     assert "collaborators/${REVIEWER_LOGIN}/permission" in ship
     assert "merge-elevated" in ship and "expectedApprovalAction" in ship
-    assert "INPUT_ELEVATED_AUTHORIZATION" in ship and "current_turn_authorization_required" in ship
+    assert "INPUT_ELEVATED_AUTHORIZATION" in ship and "trusted_elevated_authorization_unavailable" in ship
+    assert "current_turn_authorization_required" not in ship
     assert "normalizeBranchProtection" in ship and "validSingleOwnerProtection" in ship
     assert "stableProtectionSnapshot" in ship
     assert "requireCodeOwnerReviews" in ship
@@ -189,6 +190,7 @@ def test_ship_merge_sink_is_fixed_evidence_and_identity_bound():
     assert "git diff --no-ext-diff --no-textconv --no-renames --name-only ${preparedBase}...${preparedHead}" in ship
     assert "git diff --no-ext-diff --no-textconv --no-renames ${preparedBase}...${preparedHead}" in ship
 
+    elevated_broker_gate = ship.index("return held('trusted_elevated_authorization_unavailable'")
     human_approval_gate = ship.index("human_approval_required")
     arbiter_call = ship.index("label: `ship:arbiter:${prNumber}`")
     allow_guard = ship.index("decision.allowMerge !== true")
@@ -198,7 +200,7 @@ def test_ship_merge_sink_is_fixed_evidence_and_identity_bound():
     final_head_guard = ship.index("finalState.headRefOid !== preparedHead")
     merge_sink = ship.index("await $`gh pr merge ${prNumber}")
     verify_merge = ship.index("--json state,mergeCommit")
-    assert human_approval_gate < arbiter_call < allow_guard < evidence_guard < identity_guard < reviewer_race_guard < final_head_guard < merge_sink < verify_merge
+    assert elevated_broker_gate < human_approval_gate < arbiter_call < allow_guard < evidence_guard < identity_guard < reviewer_race_guard < final_head_guard < merge_sink < verify_merge
 
     assert ship.count("await $`gh pr merge") == 1
     assert "--match-head-commit ${preparedHead}" in ship
@@ -221,6 +223,7 @@ def test_ship_document_matches_runtime_security_boundary():
         "--match-head-commit", "review_required", "git fetch origin", "git merge-base",
         "git rebase origin/main", "published PR branch", "git merge --no-edit origin/main",
         "cyber_safeguard_payload", "seg/seg/id", "passwd", "SHALL NOT",
+        "trusted_elevated_authorization_unavailable", "agent-inaccessible",
     ):
         assert literal in doc
     assert re.search(r"MUST NOT[^\n]*gh pr merge --admin", doc)

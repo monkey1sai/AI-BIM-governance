@@ -446,11 +446,13 @@ try {
     .filter(Boolean)
   elevatedApprovalPaths = diffNames.some(elevatedApprovalPath)
   expectedApprovalAction = elevatedApprovalPaths ? 'merge-elevated' : 'merge'
-  const expectedElevatedAuthorization = elevatedApprovalPaths
-    ? canonicalApprovalBody(prNumber, preparedHead, preparedBase, expectedApprovalAction)
-    : null
-  if (INPUT_ELEVATED_AUTHORIZATION !== expectedElevatedAuthorization) {
-    return held(elevatedApprovalPaths ? 'current_turn_authorization_required' : 'unexpected_elevated_authorization', prNumber)
+  if (elevatedApprovalPaths) {
+    // Caller-provided JSON cannot prove that an inaccessible human authorized this turn.
+    // Keep elevated automation closed until a one-time trusted broker is implemented.
+    return held('trusted_elevated_authorization_unavailable', prNumber)
+  }
+  if (INPUT_ELEVATED_AUTHORIZATION !== null) {
+    return held('unexpected_elevated_authorization', prNumber)
   }
 
   diffText = await $`git diff --no-ext-diff --no-textconv --no-renames ${preparedBase}...${preparedHead}`.text()
@@ -480,7 +482,6 @@ const evidence = {
   approvalScope: {
     elevatedPath: elevatedApprovalPaths,
     action: expectedApprovalAction,
-    currentTurnAuthorization: INPUT_ELEVATED_AUTHORIZATION,
   },
   diffNames,
   diffText,

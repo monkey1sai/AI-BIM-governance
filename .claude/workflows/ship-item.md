@@ -29,7 +29,7 @@ workflow 與 coordinator 都不得呼叫任何建立、修改、dismiss 或提�
 
 ## 1. Fail-closed 輸入
 
-`args` 必須明確提供且是 object；undefined/null 不是空 args。`prNumber` 只能是 JavaScript safe positive integer 或 null。可選 `branch` 必須通過保守 Git ref 驗證：1–200 字元、無空 segment、`..`、`//`、`@{`、控制字元、前置 dot segment、尾端 dot/slash 或 `.lock`。可選 `elevatedAuthorization` 只能是 null 或 1–1000 字元可列印 ASCII；呼叫者只能在本輪已取得使用者明確授權後傳入。
+`args` 必須明確提供且是 object；undefined/null 不是空 args。`prNumber` 只能是 JavaScript safe positive integer 或 null。可選 `branch` 必須通過保守 Git ref 驗證：1–200 字元、無空 segment、`..`、`//`、`@{`、控制字元、前置 dot segment、尾端 dot/slash 或 `.lock`。legacy 可選 `elevatedAuthorization` 只能是 null 或 1–1000 字元可列印 ASCII，但它是 caller-controlled untrusted assertion，不能證明人類授權，也不能解鎖 elevated path。
 
 不安全輸入在任何 command/agent 前回：`invalid_args_format`、`invalid_branch_arg`、`invalid_pr_number_arg` 或 `invalid_elevated_authorization_arg`。
 
@@ -44,7 +44,7 @@ coordinator 依序執行固定命令並 fail closed：
 5. 只跑 GitHub required checks；不在持有 merge credential 的流程內執行 PR branch 上可被改寫的 script。
 6. required checks 完成後，以三個 30 秒 bounded wait 形成 reviewer buffer，再重讀同一 PR identity。
 7. single-owner branch protection 必須精確為 approvals=1、dismiss stale reviews=true、require code-owner reviews=true、conversation resolution=true、strict required checks 非空、enforce admins=true、禁止 force-push/delete/bypass；完整 protection response 會 canonicalize 成 snapshot，在 reviewer buffer 後與 merge 前都要重讀，任一欄位漂移即 HELD。
-8. `reviewDecision` 必須是 `APPROVED`；空值、`REVIEW_REQUIRED`、`CHANGES_REQUESTED` 或未知值一律回 `review_required`。所有 PR 都必須有唯一 canonical human approval review，精確綁定 repo/PR/base/head；缺漏回 `human_approval_required`。elevated path 另要求 caller 在本輪明確傳入與 canonical review body 完全相同的 `elevatedAuthorization`；缺漏或不同回 `current_turn_authorization_required`，routine path 出現該欄則回 `unexpected_elevated_authorization`。
+8. `reviewDecision` 必須是 `APPROVED`；空值、`REVIEW_REQUIRED`、`CHANGES_REQUESTED` 或未知值一律回 `review_required`。所有可 merge 的 PR 都必須有唯一 canonical human approval review，精確綁定 repo/PR/base/head；缺漏回 `human_approval_required`。elevated path 在可信、agent-inaccessible、一次性 authorization broker 尚未實作前一律回 `trusted_elevated_authorization_unavailable`，任何 caller-supplied `elevatedAuthorization` 都不能解鎖；routine path 出現該欄則回 `unexpected_elevated_authorization`。
 9. 用已固定的 SHA 蒐證，而不是 mutable PR ref：
 
    ```bash
@@ -72,11 +72,11 @@ review metadata 必須同時是 state=`APPROVED`、commit_id=`preparedHead`、lo
 
 GitHub REST metadata 無法以密碼學方式區分「reviewer 在 UI 親手送出」與「持有 reviewer credential 的 API 呼叫」。因此殘餘人工信任邊界是 reviewer credential 與 browser session 的保管、以及 agent 禁止 review-write；runtime 能驗證固定 human identity、PR-bound APPROVED state、exact commit_id 與 canonical body，而不是鍵盤來源。
 
-GitHub 伺服器層的人工 gate 由 approvals=1、`require_code_owner_reviews=true` 與 base branch 的 `.github/CODEOWNERS` 共同強制，因此一般 collaborator 或 GitHub App 不能取代 `monkey1sai-blip` 的 approval。canonical body、exact action、current-turn caller authorization 與 apex verdict 是 `ship-item` coordinator 的額外稽核，不誤稱為 GitHub 原生會驗證的欄位。GitHub 會從 PR base branch 讀取 CODEOWNERS；修改 CODEOWNERS 的後續 PR 仍受舊 base 版本保護。
+GitHub 伺服器層的人工 gate 由 approvals=1、`require_code_owner_reviews=true` 與 base branch 的 `.github/CODEOWNERS` 共同強制，因此一般 collaborator 或 GitHub App 不能取代 `monkey1sai-blip` 的 approval。canonical body、exact action 與 apex verdict 是 `ship-item` coordinator 的額外稽核，不誤稱為 GitHub 原生會驗證的欄位；current-turn authorization 若要成為機械安全邊界，必須來自下述 trusted broker。GitHub 會從 PR base branch 讀取 CODEOWNERS；修改 CODEOWNERS 的後續 PR 仍受舊 base 版本保護。
 
-任何 `.claude/`、`.codex/`、`.github/`、`scripts/`、`docs/agents/`、`AGENTS.md`、`CLAUDE.md`、`agent-skills-manifest.json`、`infra/**`，以及 auth/permission/migration/destructive/production/deployment path 變更，都在 evidence 標記 elevated scope，要求 exact `merge-elevated` human approval，再由 apex 裁決；single-owner 模式沒有 routine auto-merge。
+任何 `.claude/`、`.codex/`、`.github/`、`scripts/`、`docs/agents/`、`AGENTS.md`、`CLAUDE.md`、`agent-skills-manifest.json`、`infra/**`，以及 auth/permission/migration/destructive/production/deployment path 變更，都標記為 elevated scope，要求 exact `merge-elevated` human approval 與 trusted broker assertion；broker 尚未存在時 workflow 必須在 apex 與 merge 前 HELD。single-owner 模式沒有 routine auto-merge。
 
-不得以自製 commit status 取代 GitHub PR review。Commit status 只綁 SHA，且具 write 權限者可發布，無法安全表達本契約的 PR/base/reviewer identity；repo workflows 因此不得宣告 `statuses: write` 作為 merge authority。每個 repo workflow 必須只有一個 literal root `permissions:` block，且唯一內容是 `contents: read`；job-level override 與 YAML flow map、anchor、alias、merge、escaped/complex mapping key 都 fail closed，避免用 YAML 等價寫法藏入 comment/review/status/check write capability。GitHub App 不得提交 approval；它只能在 GitHub 已接受固定 code-owner 的 exact-head review、coordinator 的 immutable-SHA gate 也通過後執行 merge，且 private key 不得暴露給 agent。
+不得以自製 commit status 取代 GitHub PR review。Commit status 只綁 SHA，且具 write 權限者可發布，無法安全表達本契約的 PR/base/reviewer identity；repo workflows 因此不得宣告 `statuses: write` 作為 merge authority。每個 repo workflow 必須只有一個 literal root `permissions:` block，且唯一內容是 `contents: read`；為維持 dependency-free scanner 的單義性，comment、string literal 或其他位置也不得再出現額外 `permissions` token。job-level override 與 YAML flow map、anchor、alias、merge、escaped/complex mapping key 都 fail closed，避免用 YAML 等價寫法藏入 comment/review/status/check write capability。GitHub App 不得提交 approval；它只能在 GitHub 已接受固定 code-owner 的 exact-head review、coordinator 的 immutable-SHA gate 也通過後執行 routine merge，且 private key 不得暴露給 agent；elevated merge 在 trusted broker 上線前仍為 HELD。
 
 ## 3. Fable/max apex prompt contract
 
@@ -113,7 +113,7 @@ gh pr merge <n> --repo monkey1sai/AI-BIM-governance --merge --match-head-commit 
 
 single-owner 模式沒有 routine auto-merge；每個 PR 都必須由固定 reviewer `monkey1sai-blip` 在 GitHub UI 手動提交 exact canonical human approval。以下高風險動作除了 review 外，仍須使用者本輪明確同意：
 
-workflow caller 必須把本輪授權編碼為 exact `elevatedAuthorization`；該欄只是 fail-closed caller assertion，不取代 GitHub 人工 review，也不得由 agent 在沒有本輪使用者同意時自行合成。現有 workflow host 沒有可信的 user-message attestation，因此 runtime 能機械證明的是 assertion 與 exact tuple/body 相同，不能證明它源自哪一個對話 turn；human provenance 仍由固定 GitHub review 與 reviewer credential trust boundary 提供。若未來要把對話 provenance 升為機械安全邊界，必須由 agent 無法存取的 broker 簽發並一次性消耗帶 tuple、nonce 與 expiry 的 assertion。
+caller-controlled `elevatedAuthorization` 無法證明目前對話 turn 的人類授權，即使內容與 canonical tuple/body 完全相同也不得解鎖。elevated automation 只有在 agent 無法存取的 broker 簽發並一次性消耗、同時綁定 repo/PR/base/head/action、nonce 與 expiry 的 assertion 後才能啟用；該 broker 目前不存在，因此 runtime 一律回 `trusted_elevated_authorization_unavailable`。固定 GitHub review 仍提供 code-owner identity gate，但不能取代這個 current-turn provenance boundary。
 
 - 任何 agent/governance/self-approval、infra、auth/permission/migration/destructive/production/deployment 變更。
 - revert、release、hotfix branch。
@@ -123,9 +123,9 @@ workflow caller 必須把本輪授權編碼為 exact `elevatedAuthorization`；�
 
 ## 6. Single-owner bootstrap
 
-本方案保留既有 approvals=1，不降低 required review count，也不製造 bootstrap status。PR #458 是一次性的 CODEOWNERS ownership-transfer bootstrap：其 base branch 已有 `.github/CODEOWNERS`，但唯一 owner 是 PR 作者 `monkey1sai`；GitHub 又從 base branch 讀取 CODEOWNERS，因此在 #458 合併前啟用 `require_code_owner_reviews=true` 會要求作者以舊 owner 身分核准自己的 PR，形成無法滿足的 self-approval deadlock。#458 必須來自 fresh `origin/main`、本機與遠端 checks 綠燈、取得 immutable-head 獨立唯讀 security sign-off，再由已接受 collaborator 邀請的固定 reviewer `monkey1sai-blip` 在 GitHub UI 對 exact head 提交 `APPROVED` 與 exact `merge-elevated` canonical body；任一 head/base/protection/review 漂移即重來，且不得使用 `--admin`。這是唯一一次在 `require_code_owner_reviews=false` 下轉移 CODEOWNERS 的例外，不得泛化到其他 PR。
+本方案保留既有 approvals=1，不降低 required review count，也不製造 bootstrap status。PR #458 是一次性的 CODEOWNERS ownership-transfer bootstrap：其 base branch 已有 `.github/CODEOWNERS`，但唯一 owner 是 PR 作者 `monkey1sai`；GitHub 又從 base branch 讀取 CODEOWNERS，因此在 #458 合併前啟用 `require_code_owner_reviews=true` 會要求作者以舊 owner 身分核准自己的 PR，形成無法滿足的 self-approval deadlock。#458 必須來自 fresh `origin/main`、本機與遠端 checks 綠燈、取得 immutable-head 獨立唯讀 security sign-off，再由已接受 collaborator 邀請的固定 reviewer `monkey1sai-blip` 在 GitHub UI 對 exact head 提交 `APPROVED` 與 exact `merge-elevated` canonical body；任一 head/base/protection/review 漂移即重來，且不得使用 `--admin`。這是唯一一次在 `require_code_owner_reviews=false` 下由已取得本輪授權的 owner coordinator 直接執行 exact-head bootstrap merge 的外部程序；可重用的 `ship-item.js` **不得**硬編碼 #458 例外，避免把一次性 bootstrap 變成 main 上的永久 bypass。
 
-bootstrap merge 後必須先重新 fetch 並證明 merge commit 可由 `origin/main` 取得，然後在任何後續 PR merge 前立即以 live API 啟用 `require_code_owner_reviews=true`，保留 approvals=1、dismiss stale reviews、conversation resolution、strict checks 與 enforce-admins。最後必須重新讀取 protection，並驗證 base branch `.github/CODEOWNERS` 精確指向 `monkey1sai-blip`。GitHub App 只能在這個人類 code-owner gate 已生效且通過後執行 merge，不得成為 approver。
+bootstrap merge 後必須先重新 fetch 並證明 merge commit 可由 `origin/main` 取得，然後在任何後續 PR merge 前立即以 live API 啟用 `require_code_owner_reviews=true`，保留 approvals=1、dismiss stale reviews、conversation resolution、strict checks 與 enforce-admins。最後必須重新讀取 protection，並驗證 base branch `.github/CODEOWNERS` 精確指向 `monkey1sai-blip`。GitHub App 只能在這個人類 code-owner gate 已生效且通過後執行 routine merge，不得成為 approver；elevated merge 必須等 trusted broker 上線。
 
 ## 7. 誠實鐵律
 
