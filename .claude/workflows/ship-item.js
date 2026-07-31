@@ -186,7 +186,7 @@ const authBearingToken = (token) => {
   const value = token.toLowerCase()
   if (
     value.includes('authentication') ||
-    value.includes('authoriz') ||
+    /authori[sz]/.test(value) ||
     value.startsWith('oauth')
   ) return true
 
@@ -199,7 +199,7 @@ const authBearingToken = (token) => {
 }
 const sensitivePathToken = (token) => (
   authBearingToken(token) ||
-  /(?:permissions?|migrat(?:e|ions?)|destructive|production|deploy(?:ment)?)/i.test(token)
+  /(?:permissions?|migrat|destructive|production|deploy(?:ment)?)/i.test(token)
 )
 const sensitivePath = (path) => path
   .split('/')
