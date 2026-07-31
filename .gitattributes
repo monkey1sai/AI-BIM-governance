@@ -1,3 +1,7 @@
 *.sh text eol=lf
 .claude/skills/spec-to-done/** text eol=lf
 .codex/skills/spec-to-done/** text eol=lf
+.claude/skills/token-strategy-tournament/** text eol=lf
+.codex/skills/token-strategy-tournament/** text eol=lf
+.claude/skills/mapping-coverage-loop/** text eol=lf
+.codex/skills/mapping-coverage-loop/** text eol=lf
