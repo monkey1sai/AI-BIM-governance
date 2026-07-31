@@ -16,6 +16,43 @@ const findings = JSON.parse(process.argv[2])
 const mode = process.argv[3]
 const calls = []
 let verifierCall = 0
+const HEAD = 'a'.repeat(40)
+const BASE = 'c'.repeat(40)
+const TARGET = 'd'.repeat(40)
+const ROOT = 'C:/repo'
+
+// workflow runtime 沒有 shell helper: git 事實一律由 coordinator 經 args.git 供給。
+const NL = String.fromCharCode(10)
+const FILE_CONTENT = [...Array(6).fill('// context'), 'const observed = true', ''].join(NL)
+const gitFacts = {
+  originMainSha: TARGET,
+  headSha: HEAD,
+  mergeBase: BASE,
+  cleanBefore: true,
+  targetIsCommit: true,
+  baseIsCommit: true,
+  subjectIsCommit: true,
+  trackedAtSubject: ['src/x.py'],
+  subjectFiles: { 'src/x.py': FILE_CONTENT },
+  baseFiles: {},
+}
+
+const batchFromPrompt = (prompt) => {
+  const match = prompt.match(/<untrusted-findings-json>([\s\S]*?)<\/untrusted-findings-json>/)
+  if (!match) throw new Error('missing encoded findings')
+  return JSON.parse(JSON.parse(match[1]))
+}
+
+const evidence = () => ({ file: 'src/x.py', line: 7, quote: 'const observed = true' })
+const verdict = (id) => ({
+  finding_id: id,
+  verdict: 'refuted',
+  disposition: 'none',
+  scope: 'in_scope',
+  reason: `refuted:${id}`,
+  unblock_condition: null,
+  evidence: evidence(),
+})
 
 const agent = async (prompt, options) => {
   if (options.label.startsWith('governance:apex:')) {
@@ -25,30 +62,29 @@ const agent = async (prompt, options) => {
   if (options.label.startsWith('verify-batch:')) {
     verifierCall += 1
     if (mode === 'null-batch' && verifierCall === 1) return null
-    const ids = [...prompt.matchAll(/^\s*-\s+\[([^\]]+)\]/gm)].map((match) => match[1])
-    const verdicts = ids.map((id) => ({
-      finding_id: id,
-      truly_closed: true,
-      introduced_new_issue: false,
-      reason: `closed:${id}`,
-    }))
+    const verdicts = batchFromPrompt(prompt).map(({ id }) => verdict(id))
     if (mode === 'duplicate-output' && verifierCall === 1 && verdicts.length > 1) {
       verdicts[1].finding_id = verdicts[0].finding_id
     }
     return { verdicts }
   }
-  if (options.label.startsWith('critic:')) return { overall_safe: true, issues: [] }
+  if (options.label.startsWith('critic:')) return { issues: [] }
   throw new Error(`unexpected agent label: ${options.label}`)
 }
 const parallel = async (thunks) => Promise.all(thunks.map((thunk) => thunk()))
 const run = new AsyncFunction('args', 'phase', 'log', 'parallel', 'agent', source)
 run({
-  root: 'C:/repo',
+  root: ROOT,
   label: 'batch-contract',
+  targetSha: TARGET,
+  baseSha: BASE,
+  subjectSha: HEAD,
+  domainContext: 'generic batch verification contract',
   findings,
   maxVerifierBatches: 2,
   remainingAgentCalls: 40,
   p5Round: 1,
+  git: gitFacts,
 }, () => {}, () => {}, parallel, agent)
   .then((out) => process.stdout.write(JSON.stringify({ out, calls })))
   .catch((error) => {
@@ -83,7 +119,7 @@ def test_twenty_two_findings_use_two_batches_then_one_critic():
         "critic:batch-contract",
     ]
     assert result["out"]["verifierBatchCount"] == 2
-    assert result["out"]["agentCallsUsed"] == 3
+    assert result["out"]["agentCallsUsed"] == 4
     assert [item["finding_id"] for item in result["out"]["verdicts"]] == [
         item["id"] for item in _findings(22)
     ]

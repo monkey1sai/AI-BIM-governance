@@ -33,6 +33,7 @@ const ALLOWED_HELD_REASONS = new Set([
   'plan_author_failed',
   'plan_parse_failed',
   'reviewer_agent_failed',
+  'external_blocked',
   'plan_not_aligned',
   'critical_impact',
   'impact_unavailable',
