@@ -129,13 +129,13 @@ PR body evidence is enforced inside the `pr-review-agent` workflow. Every PR req
 
 Workflows that are intended to become required checks must run on every PR and produce a check result. Do not add `paths` / `paths-ignore` filters to `pr-review-agent` or `agent-governance`; if cost control becomes necessary, perform path detection inside the job and emit an explicit no-op success.
 
-Remote-only step：本文件與 `.github/CODEOWNERS` 只能準備 enforcement；真正 required checks、review policy、dismiss stale approvals、禁止 bypass 等規則，仍必須在 GitHub repository settings / rulesets 中啟用並驗證。目前 solo-maintainer 例外保留 Require PR、strict 11 checks、admin enforcement 與無 bypass，但設定 approval=0／CODEOWNER review=false；CODEOWNERS 在此模式只作 ownership／routing，獨立 review trust 仍是公開缺口。
+Remote-only step：本文件與 `.github/CODEOWNERS` 只能準備 enforcement；真正 required checks、review policy、dismiss stale approvals、禁止 bypass 等規則，仍必須在 GitHub repository settings / rulesets 中啟用並以 live API 驗證。PR #458 是一次性 ownership-transfer bootstrap：過渡期 live protection 必須是 `required_approving_review_count=1`、`require_code_owner_reviews=false`，因 base branch 的舊 CODEOWNERS 指向 PR 作者，先開 code-owner gate 會造成不可滿足的 self-review deadlock。#458 merge 後、任何下一個 PR merge 前，目標 enforced state 必須立即切為 `required_approving_review_count=1`、`require_code_owner_reviews=true`，並保留 strict 11 checks、dismiss stale reviews、admin enforcement、conversation resolution、無 bypass/force-push/delete。上述是 runbook 契約與 transition 記錄，不是 live state 證明；每次 merge 前仍須重讀 API。
 
 ## 人工審查邊界
 
 `pr-review-agent` 的 `passed` 只代表自動 gate 通過。PR 仍必須遵守：
 
-- remote settings 實際要求的 human／CODEOWNERS review（solo-maintainer 例外目前不要求，且不算獨立 review trust）；
+- remote settings 實際要求的 human／CODEOWNERS review（PR #458 bootstrap 僅暫時 `require_code_owner_reviews=false`，但仍要求固定 reviewer 的 exact-head canonical approval；#458 merge 後必須是 `require_code_owner_reviews=true`）；
 - branch protection；
 - GitHub Actions 其他 required checks；
 - OpenSpec archive / roadmap sync closeout。
