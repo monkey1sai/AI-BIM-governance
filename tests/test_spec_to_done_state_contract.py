@@ -212,14 +212,30 @@ def test_historical_unknown_held_reason_cannot_be_hidden_by_later_checkpoints(tm
     )
     assert code == 2 and result["held"] == "resume_state_invalid"
 
-    documented_hold = _line(
+    authorization = _line(
         repo,
         head,
-        "HELD@P6",
-        reason="trusted_elevated_authorization_unavailable",
+        "AUTHORIZATION@P6",
+        decision="delegate-repo-workflow-signoff",
+        scope="repo-workflow-signoff",
+        exclusions=(
+            "secrets,credentials,billing,production-data,destructive-delete,"
+            "unproven-process-stop"
+        ),
     )
-    code, result = _run(tmp_path, repo, [documented_hold, resumed])
-    assert code == 0 and result["kind"] == "RESUMED"
+    for terminal_reason in (
+        "trusted_elevated_authorization_unavailable",
+        "branch_requires_separate_authorization",
+    ):
+        terminal_hold = _line(
+            repo,
+            head,
+            "HELD@P6",
+            reason=terminal_reason,
+        )
+        for followup in (resumed, authorization):
+            code, result = _run(tmp_path, repo, [terminal_hold, followup])
+            assert code == 2 and result["held"] == "resume_state_invalid"
 
     max_budget_recovery = _line(
         repo,
@@ -307,6 +323,10 @@ def test_max_budget_recovery_is_terminal_after_valid_history(tmp_path):
         p5Rounds="2/2",
         evidenceAttempts="2/2",
     )
+
+    code, result = _run(tmp_path, repo, [valid, recovery])
+    assert code == 0 and result["kind"] == "HELD"
+    assert result["fields"]["reason"] == "resume_state_invalid"
 
     code, result = _run(tmp_path, repo, [valid, recovery, resumed])
     assert code == 2 and result["held"] == "resume_state_invalid"

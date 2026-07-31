@@ -182,9 +182,11 @@ const governancePath = (path) => (
   path.startsWith('scripts/')
 )
 const sensitivePath = /(?:^|\/)(?:auth(?:entication|orization)?|permissions?|migrat(?:e|ion)s?|destructive|production|deploy(?:ment)?)(?:[.\/_-]|$)/i
+const rootComposeManifestPath = /^(?:docker-)?compose(?:[._-][^/]+)?\.ya?ml$/i
 const elevatedApprovalPath = (path) => (
   governancePath(path) ||
   path === 'agent-skills-manifest.json' ||
+  rootComposeManifestPath.test(path) ||
   path.startsWith('infra/') ||
   sensitivePath.test(path)
 )

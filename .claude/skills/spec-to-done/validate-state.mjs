@@ -64,6 +64,10 @@ const ALLOWED_HELD_REASONS = new Set([
   'evidence_stale',
   'evidence_not_closing',
 ])
+const NON_RESUMABLE_HELD_REASONS = new Set([
+  'branch_requires_separate_authorization',
+  'trusted_elevated_authorization_unavailable',
+])
 
 class ContractError extends Error {
   constructor(held, detail, extra = {}) {
@@ -391,6 +395,9 @@ const isMaxBudgetInvalidRecovery = (checkpoint) =>
 const validateParsedTransition = (previous, current) => {
   if (previous.kind === 'DONE' && previous.phase === 'P7') {
     reject('resume_state_invalid', 'DONE@P7 is terminal and cannot be resumed or extended')
+  }
+  if (previous.kind === 'HELD' && NON_RESUMABLE_HELD_REASONS.has(previous.fields.reason)) {
+    reject('resume_state_invalid', `${previous.fields.reason} is terminal in this audit chain and cannot be extended`)
   }
   if (isMaxBudgetInvalidRecovery(previous)) {
     reject('resume_state_invalid', 'max-budget resume_state_invalid recovery is terminal and cannot be extended')

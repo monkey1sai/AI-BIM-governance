@@ -263,6 +263,10 @@ test('governance and sensitive diffs remain held until a trusted authorization b
     'db/migrations/001-add-role.sql',
     'src/destructive-cleanup.ts',
     'agent-skills-manifest.json',
+    'compose.host-kit.yml',
+    'compose.runtime-manager.yml',
+    'compose.yml',
+    'docker-compose.prod.yaml',
   ]) {
     const run = harness({ diffNames: `${path}\n` })
     const result = await run.run()
