@@ -49,6 +49,7 @@ const ALLOWED_HELD_REASONS = new Set([
   'human_approval_required',
   'reviewer_permission_not_strict',
   'reviewer_permission_changed_after_verdict',
+  'branch_requires_separate_authorization',
   'branch_protection_changed_during_buffer',
   'branch_protection_changed_after_verdict',
   'human_approval_changed_after_verdict',

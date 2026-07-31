@@ -146,7 +146,8 @@ def test_documented_p6_hold_reasons_are_durable_and_unknown_reasons_fail_closed(
         section(claude_contract, "## held 對照表", "## 強制停下點"),
         section(codex_contract, "## held 對照表", "## 強制停下點"),
     )
-    drift_reasons = {
+    p6_scoped_reasons = {
+        "branch_requires_separate_authorization",
         "branch_protection_changed_during_buffer",
         "branch_protection_changed_after_verdict",
         "human_approval_changed_after_verdict",
@@ -156,6 +157,7 @@ def test_documented_p6_hold_reasons_are_durable_and_unknown_reasons_fail_closed(
         "human_approval_required",
         "reviewer_permission_not_strict",
         "reviewer_permission_changed_after_verdict",
+        "branch_requires_separate_authorization",
         "branch_protection_changed_during_buffer",
         "branch_protection_changed_after_verdict",
         "human_approval_changed_after_verdict",
@@ -173,7 +175,7 @@ def test_documented_p6_hold_reasons_are_durable_and_unknown_reasons_fail_closed(
         assert result["fields"]["reason"] == reason
         assert reason in claude_contract
         assert reason in codex_contract
-        if reason in drift_reasons:
+        if reason in p6_scoped_reasons:
             assert all(reason in p6_section for p6_section in p6_sections)
             assert all(reason in held_table for held_table in held_tables)
 
