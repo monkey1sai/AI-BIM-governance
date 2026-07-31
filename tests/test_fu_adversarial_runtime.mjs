@@ -71,6 +71,12 @@ function harness(options = {}) {
         if (command === `git -C ${ROOT} cat-file -t ${TARGET}`) return options.targetIsNotCommit ? 'tree\n' : 'commit\n'
         if (command === `git -C ${ROOT} cat-file -t ${BASE}`) return options.baseIsNotCommit ? 'tree\n' : 'commit\n'
         if (command === `git -C ${ROOT} cat-file -t ${HEAD}`) return 'commit\n'
+        const suspectPrefix = `git -C ${ROOT} cat-file -t ${HEAD}:`
+        if (command.startsWith(suspectPrefix)) {
+          const file = command.slice(suspectPrefix.length)
+          if (file === '.env' || options.untrackedSuspectFiles?.includes(file)) throw new Error('not tracked')
+          return 'blob\n'
+        }
         if (command === `git -C ${ROOT} merge-base ${TARGET} ${HEAD}`) {
           return options.wrongMergeBase ? OTHER_HEAD : BASE
         }
@@ -313,6 +319,15 @@ test('oversized or path-traversing findings fail before commands and agents', as
   }
 })
 
+test('untracked suspect files are rejected before any reviewer dispatch', async () => {
+  const run = harness()
+  const result = await run.run({ findings: [{ id: 'F1', q: 'Inspect env', suspectFile: '.env' }] })
+  assert.equal(result.held, 'bad_findings')
+  assert.equal(result.detail, 'suspect_file_not_tracked_at_subject_sha')
+  assert.deepEqual(result.invalidSuspectFiles, ['.env'])
+  assert.equal(run.agents.length, 0)
+})
+
 test('wrong finding identity is reviewer failure instead of a silent pass', async () => {
   const run = harness({ verdicts: { F1: verdict('OTHER', 'none', 'in_scope', 'refuted') } })
   const result = await run.run()
@@ -354,4 +369,6 @@ test('domain context is generic, immutable, and prompt-boundary encoded', async 
   assert.match(prompt, new RegExp(TARGET))
   assert.match(prompt, new RegExp(BASE))
   assert.match(prompt, new RegExp(HEAD))
+  assert.match(prompt, /git show/)
+  assert.match(prompt, /禁止 Read mutable worktree path/)
 })

@@ -178,12 +178,13 @@ P5 = Workflow({name:'fu-adversarial-verify-generic', args:{
         criticFocus: '通讀 immutable diff 找新誠實違規 / 行為 regression / spec-drift / 空測試 / DEMO DATA 漏標。',
         maxVerifierBatches:2, p5Round:p5Rounds.used+1, remainingAgentCalls}})
      // DACS（arXiv:2604.07911）：P5 findings 一律壓成 registry {id, q:<一句話 claim ≤800 char>, suspectFile}，
-     //   不灌 P3 finalReview 全文；suspectFile/evidence.file 必須是 canonical repo-relative path；fu-...js 對超長 q /
-     //   缺/重複 id / 非法路徑或 >32 findings
+     //   不灌 P3 finalReview 全文；suspectFile/evidence.file 必須是 canonical repo-relative path，且 suspectFile
+     //   必須是 subjectSha 的 tracked blob；fu-...js 對超長 q / 缺/重複 id / 非法或未追蹤路徑 / >32 findings
      //   會 held:'bad_findings' / 'run_budget_exhausted' fail-fast。findings 分成最多 2 批 verifier 平行，
      //   holistic critic 等批次完成後才串行執行；verifier+critic 合計最多 32 筆，最大同時 agent 數=2，
      //   不再 per-finding fan-out。每筆 evidence.file/line/quote 會由 workflow 以 `git show <subjectSha>:<file>`
-     //   機械綁定 exact subject blob；路徑、blob、line 或 quote 任一不符即 reviewer_agent_failed。
+     //   機械綁定 exact subject blob；reviewer 只准 pinned git show/diff/grep，禁止 Read worktree/.env/untracked；
+     //   路徑、blob、line 或 quote 任一不符即 reviewer_agent_failed。
      //   （指揮官真截斷 q 為 doc 紀律；機械只驗入參合規。）
      每次 P5 呼叫(含 bad input 修正、infra retry、evidence stale 後的新 snapshot 與內容修復後複驗)
        都先確認 p5Rounds.used<maxP5Rounds=2 並增加 p5Rounds；回傳後立即累加 P5.agentCallsUsed，

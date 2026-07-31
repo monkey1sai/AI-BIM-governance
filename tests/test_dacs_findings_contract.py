@@ -17,6 +17,8 @@ def test_findings_contract_landed():
     assert "maxItems: MAX_FINDINGS" in src, "缺 critic output 總量上限"
     assert "evidence_not_bound_to_subject_sha" in src, "缺 exact subject evidence 機械綁定"
     assert "repoRelativePath" in src, "缺 reviewer path canonicalization"
+    assert "suspect_file_not_tracked_at_subject_sha" in src, "缺 dispatch 前 subject-tree suspectFile gate"
+    assert "禁止 Read mutable worktree path" in src, "缺 pinned-object-only reviewer read boundary"
     assert "FINDINGS.map((f) => () =>" not in src, "不得維持一 finding 一 agent 的平行扇出"
 
 

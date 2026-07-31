@@ -31,6 +31,7 @@ const dollar = (strings, ...values) => {
     if (command === `git -C ${ROOT} cat-file -t ${TARGET}`) return 'commit\n'
     if (command === `git -C ${ROOT} cat-file -t ${BASE}`) return 'commit\n'
     if (command === `git -C ${ROOT} cat-file -t ${HEAD}`) return 'commit\n'
+    if (command === `git -C ${ROOT} cat-file -t ${HEAD}:src/x.py`) return 'blob\n'
     if (command === `git -C ${ROOT} merge-base ${TARGET} ${HEAD}`) return BASE
     if (command === `git -C ${ROOT} show ${HEAD}:src/x.py`) {
       return `${Array(6).fill('// context').join('\n')}\nconst observed = true\n`
