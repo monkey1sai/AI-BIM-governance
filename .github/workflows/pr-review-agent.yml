@@ -29,6 +29,32 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: git -c core.quotepath=false diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/changed-paths.bin"
 
+      - name: Materialize the base-pinned gate
+        # A PR that edits the checker or its libraries must not get to adjudicate
+        # itself with its own edited copy: the gate scripts are taken from the PR
+        # BASE revision. First-introduction fallback: when the base predates the
+        # gate files, the head copy is the only copy - acceptable exactly once,
+        # because a base without a gate has nothing to weaken.
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          trusted="$RUNNER_TEMP/trusted-gate"
+          mkdir -p "$trusted"
+          if git cat-file -e "$BASE_SHA:scripts/tests/check-pr-body-evidence.ps1" 2>/dev/null; then
+            git archive "$BASE_SHA" scripts docs/plans | tar -x -C "$trusted"
+            echo "GATE_ROOT=$trusted" >> "$GITHUB_ENV"
+            if grep -q 'PrNumber' "$trusted/scripts/tests/check-pr-body-evidence.ps1"; then
+              echo "GATE_HAS_PRNUMBER=1" >> "$GITHUB_ENV"
+            else
+              echo "GATE_HAS_PRNUMBER=0" >> "$GITHUB_ENV"
+            fi
+          else
+            echo "GATE_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+            echo "GATE_HAS_PRNUMBER=1" >> "$GITHUB_ENV"
+          fi
+
       - name: Check PR body metadata without retaining raw body
         shell: pwsh
         env:
@@ -43,14 +69,22 @@ jobs:
           [IO.File]::WriteAllText($bodyPath, [string]$env:PR_BODY, [Text.UTF8Encoding]::new($false))
           $result = 'failed'
           try {
-            pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/tests/check-pr-body-evidence.ps1 `
-              -BodyPath $bodyPath `
-              -ChangedPathsPath (Join-Path $env:RUNNER_TEMP 'changed-paths.bin') `
-              -ChangedPathsNulDelimited `
-              -RepoRoot '${{ github.workspace }}' `
-              -BaseSha $env:BASE_SHA `
-              -HeadSha $env:HEAD_SHA `
-              -PrNumber ([int]$env:PR_NUMBER)
+            # Gate scripts come from the base-pinned copy (GATE_ROOT); data
+            # (RepoRoot, shas, body) still describes the PR under review.
+            $checkerPath = Join-Path $env:GATE_ROOT 'scripts/tests/check-pr-body-evidence.ps1'
+            $checkerArguments = @(
+              '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $checkerPath,
+              '-BodyPath', $bodyPath,
+              '-ChangedPathsPath', (Join-Path $env:RUNNER_TEMP 'changed-paths.bin'),
+              '-ChangedPathsNulDelimited',
+              '-RepoRoot', '${{ github.workspace }}',
+              '-BaseSha', $env:BASE_SHA,
+              '-HeadSha', $env:HEAD_SHA
+            )
+            if ($env:GATE_HAS_PRNUMBER -eq '1') {
+              $checkerArguments += @('-PrNumber', [string][int]$env:PR_NUMBER)
+            }
+            pwsh @checkerArguments
             if ($LASTEXITCODE -ne 0) { throw 'PR body metadata contract failed.' }
             $result = 'passed'
           } finally {

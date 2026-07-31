@@ -119,9 +119,11 @@ try {
         'scripts/verification-manifest.json',
         'scripts/tests/verify-functional-runtime-result.ps1',
         'scripts/tests/verify-security-exceptions.ps1',
+        'scripts/dev/check-pr-local-preflight.ps1',
+        'scripts/hooks/require-gstack-evidence.ps1',
         'web-viewer-sample/src/Window.tsx'
     )
-    Assert-True ($matched.Count -eq 7) "enforcement workflows, the manifest and all adjudicating verifiers must classify as mechanism (matched: $($matched -join ', '))"
+    Assert-True ($matched.Count -eq 9) "enforcement workflows, manifest, verifiers, and local enforcement entrypoints must classify as mechanism (matched: $($matched -join ', '))"
 
     # --- real repo ledger: parse-integrity ONLY, no emptiness assumption ------------
     $realLedger = Get-SelfReferentialBootstrapLedger -Path (Join-Path $repoRoot 'scripts/self-referential-bootstrap-ledger.json')
@@ -143,6 +145,11 @@ try {
         Assert-SelfReferentialBootstrapReason -Reason 'bootstrap, needed, required, because, chicken, egg.' -Context 'test'
     }
     Assert-SelfReferentialBootstrapReason -Reason $goodReason -Context 'test'
+    # CJK prose is first-class in this repository (review round 3)
+    Assert-SelfReferentialBootstrapReason -Reason '部署契約只驗證已合併的 origin/main，因此修改部署路徑本身的 PR 無法在合併前取得部署區證據' -Context 'test'
+    Assert-Throws -Context 'short CJK reason' -MessagePattern 'reason' -Action {
+        Assert-SelfReferentialBootstrapReason -Reason '需要引導程序' -Context 'test'
+    }
 
     # --- ledger integrity (structure-level, unchanged rules) ------------------------
     $null = Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry)))
@@ -167,6 +174,22 @@ try {
             fixpoint = @{ reverified_at = '2026-07-30T08:00:00Z'; mechanism_commit = ('a' * 40); evidence_refs = @('docs/evidence/x/self-referential-bootstrap/f.md') }
         })))
     }
+    # ConvertFrom-Json materializes lenient ISO strings as [datetime]; the raw
+    # JSON tokens must still satisfy the anchored formats (review round 3)
+    Assert-Throws -Context 'timezone-less timestamp in raw JSON' -MessagePattern 'raw-string validation' -Action {
+        Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{ opened_at = '2026-07-31T08:00:00' })))
+    }
+    Assert-Throws -Context 'pr as a JSON string' -MessagePattern 'native integer' -Action {
+        Get-SelfReferentialBootstrapLedger -Json ((New-LedgerJson -Entries @((New-Entry))) -replace '"pr": 500', '"pr": "500"')
+    }
+    Assert-Throws -Context 'pr as a fraction' -MessagePattern 'native integer' -Action {
+        Get-SelfReferentialBootstrapLedger -Json ((New-LedgerJson -Entries @((New-Entry))) -replace '"pr": 500', '"pr": 500.4')
+    }
+    # evidence blobs resolve against the passed head SHA, not ambient HEAD
+    Assert-Throws -Context 'evidence blob absent at the given head revision' -MessagePattern 'not a committed file' -Action {
+        Assert-SelfReferentialEvidenceBlob -RepoRoot $gitRoot -Ref 'docs/evidence/remote-linux-deploy/fixpoint/summary.md' -Context 'test' -HeadSha $fixpointCommit
+    }
+    Assert-SelfReferentialEvidenceBlob -RepoRoot $gitRoot -Ref 'docs/evidence/remote-linux-deploy/fixpoint/summary.md' -Context 'test' -HeadSha $baseSha
 
     # --- transition: deletion of open debt (review P1 #1) ---------------------------
     $openBase = New-LedgerJson -Entries @((New-Entry))

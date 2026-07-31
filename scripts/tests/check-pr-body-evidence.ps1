@@ -314,6 +314,6 @@ Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths `
     -LedgerPath (Join-Path $RepoRoot 'scripts\self-referential-bootstrap-ledger.json') `
     -GetTableValue { param($b, $label) Get-MarkdownTableValue -Body $b -Label $label } `
     -BaseLedgerJson $baseLedgerJson -HasBaseContext $hasBootstrapBaseContext `
-    -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha
+    -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
 
 Write-Host '[check-pr-body-evidence] passed'

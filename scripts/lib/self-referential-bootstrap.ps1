@@ -30,6 +30,8 @@ $script:SelfReferentialMechanismPattern = @(
     '^scripts/self-referential-bootstrap-ledger\.json$'
     '^\.github/workflows/(agent-governance|pr-review-agent|ci)\.yml$'
     '^scripts/verification-manifest\.json$'
+    '^scripts/dev/check-pr-local-preflight\.ps1$'
+    '^scripts/hooks/require-gstack-evidence\.ps1$'
 ) -join '|'
 
 $script:GenericReasonBlocklist = @(
@@ -83,13 +85,18 @@ function Assert-SelfReferentialBootstrapReason {
     if ($trimmed.Length -lt 30) {
         throw "self_referential_bootstrap: $Context reason must concretely explain why the pre-change mechanism cannot produce this evidence (>=30 chars)."
     }
-    # Strip punctuation before comparing so 'bootstrap, needed.' still hits the
-    # blocklist and repeated words with varied punctuation do not count as distinct.
+    # CJK prose is the normal documentation language in this repository and does
+    # not use whitespace word boundaries: substance is judged on ideograph count.
+    $cjkCount = ([regex]::Matches($trimmed, '\p{IsCJKUnifiedIdeographs}')).Count
+    if ($cjkCount -ge 12) { return }
+    # Otherwise: strip punctuation (Unicode-aware, so accented and non-Latin
+    # letters survive) before blocklist/diversity checks, so 'bootstrap, needed.'
+    # still hits the blocklist and padded phrases cannot fake diversity.
     $tokens = @($trimmed.ToLowerInvariant() -split '\s+' |
-        ForEach-Object { $_ -replace '[^a-z0-9-]', '' } | Where-Object { $_ })
+        ForEach-Object { $_ -replace '[^\p{L}\p{Nd}-]', '' } | Where-Object { $_ })
     $distinct = @($tokens | Sort-Object -Unique)
     if ($tokens.Count -lt 6 -or $distinct.Count -lt 5) {
-        throw "self_referential_bootstrap: $Context reason lacks substance (needs >=6 words, >=5 distinct); padded phrases are rejected."
+        throw "self_referential_bootstrap: $Context reason lacks substance (needs >=6 words, >=5 distinct, or >=12 CJK ideographs); padded phrases are rejected."
     }
     $nonGeneric = @($distinct | Where-Object { $_ -notin $script:GenericReasonBlocklist })
     if ($nonGeneric.Count -lt 4) {
@@ -118,6 +125,16 @@ function Get-SelfReferentialBootstrapLedger {
         throw "self_referential_bootstrap: ledger is not valid JSON: $($_.Exception.Message)"
     }
 
+    # ConvertFrom-Json eagerly materializes ISO-looking strings as [datetime],
+    # which would let lenient variants (e.g. missing timezone) bypass the
+    # anchored format check below. Validate the RAW string tokens first.
+    foreach ($match in [regex]::Matches($Json, '"(?:opened_at|reverified_at)"\s*:\s*"([^"]*)"')) {
+        $rawTimestamp = $match.Groups[1].Value
+        if (-not (Test-SelfReferentialIsoTimestamp -Value $rawTimestamp)) {
+            throw "self_referential_bootstrap: timestamp '$rawTimestamp' is not an allowed anchored ISO-8601 form (raw-string validation)."
+        }
+    }
+
     if ([string]$ledger.schema_version -ne 'self-referential-bootstrap-ledger/v1') {
         throw "self_referential_bootstrap: unsupported schema_version '$($ledger.schema_version)'."
     }
@@ -139,8 +156,13 @@ function Get-SelfReferentialBootstrapLedger {
         if ([string]$entry.status -notin @('open', 'closed')) {
             throw "self_referential_bootstrap: entry '$id' status must be open or closed."
         }
-        if (-not ([int]$entry.pr -gt 0)) {
-            throw "self_referential_bootstrap: entry '$id' must record its PR number."
+        # Native integral JSON number only: '"pr": "500"' and 'pr: 500.4' both
+        # coerce to a passing [int] but are not schema-conformant bindings.
+        $prValue = $entry.pr
+        $isIntegral = ($prValue -is [int]) -or ($prValue -is [int64]) -or
+            (($prValue -is [double] -or $prValue -is [decimal]) -and ([math]::Floor([double]$prValue) -eq [double]$prValue))
+        if (-not $isIntegral -or ([int64]$prValue) -le 0) {
+            throw "self_referential_bootstrap: entry '$id' pr must be a positive native integer (strings and fractions are rejected)."
         }
         if (-not (Test-SelfReferentialIsoTimestamp -Value $entry.opened_at)) {
             throw "self_referential_bootstrap: entry '$id' opened_at must be a valid ISO-8601 timestamp."
@@ -192,17 +214,20 @@ function ConvertTo-SelfReferentialCanonicalEntry {
 }
 
 function Assert-SelfReferentialEvidenceBlob {
-    # Evidence must be a COMMITTED file: 'git cat-file -t HEAD:<ref>' must say
-    # blob. Filesystem Test-Path would accept '.', directories, and untracked
-    # workflow artifacts - none of those are reviewable evidence.
+    # Evidence must be a COMMITTED file at the PR HEAD SHA: 'git cat-file -t
+    # <head>:<ref>' must say blob. Filesystem Test-Path would accept '.',
+    # directories, and untracked workflow artifacts; ambient HEAD would accept
+    # blobs that only exist in the synthetic pull-request merge tree.
     param(
         [Parameter(Mandatory = $true)][string] $RepoRoot,
         [Parameter(Mandatory = $true)][string] $Ref,
-        [Parameter(Mandatory = $true)][string] $Context
+        [Parameter(Mandatory = $true)][string] $Context,
+        [string] $HeadSha = ''
     )
-    $objectType = (& git -C $RepoRoot cat-file -t "HEAD:$Ref" 2>$null | Out-String).Trim()
+    $revision = if ([string]::IsNullOrWhiteSpace($HeadSha)) { 'HEAD' } else { $HeadSha }
+    $objectType = (& git -C $RepoRoot cat-file -t "${revision}:$Ref" 2>$null | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $objectType -ne 'blob') {
-        throw "self_referential_bootstrap: $Context evidence ref '$Ref' is not a committed file in the PR head tree (got '$objectType')."
+        throw "self_referential_bootstrap: $Context evidence ref '$Ref' is not a committed file at the PR head revision (got '$objectType')."
     }
 }
 
@@ -222,7 +247,8 @@ function Compare-SelfReferentialLedgerTransition {
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $ChangedPaths,
         [int] $PrNumber = 0,
         [string] $RepoRoot = '',
-        [string] $BaseSha = ''
+        [string] $BaseSha = '',
+        [string] $HeadSha = ''
     )
 
     $baseById = @{}
@@ -253,7 +279,7 @@ function Compare-SelfReferentialLedgerTransition {
             }
             if (-not [string]::IsNullOrWhiteSpace($RepoRoot)) {
                 foreach ($ref in @($head.bootstrap_evidence_refs)) {
-                    Assert-SelfReferentialEvidenceBlob -RepoRoot $RepoRoot -Ref ([string]$ref) -Context "new entry '$id'"
+                    Assert-SelfReferentialEvidenceBlob -RepoRoot $RepoRoot -Ref ([string]$ref) -Context "new entry '$id'" -HeadSha $HeadSha
                 }
             }
             $newEntries += $head
@@ -296,7 +322,7 @@ function Compare-SelfReferentialLedgerTransition {
             throw "self_referential_bootstrap: entry '$id' fixpoint.mechanism_commit $commit is not an ancestor of the PR base; the fixpoint must run on the MERGED mechanism."
         }
         foreach ($ref in @($fp.evidence_refs)) {
-            Assert-SelfReferentialEvidenceBlob -RepoRoot $RepoRoot -Ref ([string]$ref) -Context "entry '$id' fixpoint"
+            Assert-SelfReferentialEvidenceBlob -RepoRoot $RepoRoot -Ref ([string]$ref) -Context "entry '$id' fixpoint" -HeadSha $HeadSha
         }
         $closedEntries += $head
     }
@@ -324,14 +350,26 @@ function Assert-SelfReferentialBootstrapBody {
         [bool] $HasBaseContext = $false,
         [int] $PrNumber = 0,
         [string] $RepoRoot = '',
-        [string] $BaseSha = ''
+        [string] $BaseSha = '',
+        [string] $HeadSha = ''
     )
 
     $mechanismPaths = @(Get-SelfReferentialMechanismPaths -ChangedPaths $ChangedPaths)
     if ($mechanismPaths.Count -eq 0) { return }
 
-    # Integrity first: a malformed head ledger fails closed before any gating decision.
-    $headLedger = Get-SelfReferentialBootstrapLedger -Path $LedgerPath
+    # Integrity first: a malformed head ledger fails closed before any gating
+    # decision. When the head SHA is known, the ledger is read from that exact
+    # revision - never from the ambient checkout, which in a pull_request job is
+    # the synthetic merge tree.
+    if (-not [string]::IsNullOrWhiteSpace($HeadSha) -and -not [string]::IsNullOrWhiteSpace($RepoRoot)) {
+        $headLedgerJson = (& git -C $RepoRoot show "${HeadSha}:scripts/self-referential-bootstrap-ledger.json" 2>$null) -join "`n"
+        if ($LASTEXITCODE -ne 0) {
+            throw "self_referential_bootstrap: ledger missing at the PR head revision $HeadSha."
+        }
+        $headLedger = Get-SelfReferentialBootstrapLedger -Json $headLedgerJson
+    } else {
+        $headLedger = Get-SelfReferentialBootstrapLedger -Path $LedgerPath
+    }
 
     # The transition can only be judged against the base. Without base context the
     # deletion/impersonation/forged-closure checks are blind, so any PR that touches
@@ -354,7 +392,7 @@ function Assert-SelfReferentialBootstrapBody {
 
     $transition = Compare-SelfReferentialLedgerTransition `
         -BaseLedger $baseLedger -HeadLedger $headLedger `
-        -ChangedPaths $ChangedPaths -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha
+        -ChangedPaths $ChangedPaths -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
     $newIds = @($transition.NewEntries | ForEach-Object { [string]$_.id })
 
     $declared = & $GetTableValue $Body 'Self-referential bootstrap'
