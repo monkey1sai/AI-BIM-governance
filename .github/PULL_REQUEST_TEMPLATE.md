@@ -58,6 +58,16 @@ Required for runtime / Docker / Kit / viewer / ports / env / conversion-service 
 | Frontend URL verified |  |
 | Evidence path |  |
 
+## Self-Referential Bootstrap
+
+Required when the PR changes the verification mechanism itself (deploy path / evidence harness / gate script). Rule: `docs/agents/self-referential-bootstrap.md`. Open ledger debt in `scripts/self-referential-bootstrap-ledger.json` blocks further mechanism PRs until fixpoint closure.
+
+| Item | Result |
+|---|---|
+| Self-referential bootstrap | `yes` / `no` |
+| Bootstrap ledger entry | entry id, or `not applicable` when `no` |
+| Bootstrap reason | concrete mechanism gap (>=30 chars), or `not applicable` when `no` |
+
 ## Validation
 
 - _List commands and results._

@@ -1,0 +1,73 @@
+> Loaded lazily by AGENTS.md / CLAUDE.md。Source-of-truth: AGENTS.md。
+>
+> 何時讀本檔：PR 的變更對象包含驗證機制本身（deploy path / evidence harness / gate script），或需要關閉 bootstrap ledger 欠帳時。
+
+# Self-Referential Change Bootstrap
+
+> 本規則刻意以**可攜形式**撰寫：不綁定任何產品專有名詞。規則文字與 ledger **格式**屬治理腳手架（可搬遷）；ledger **內容**屬本 repo（留下）。機器實作：`scripts/lib/self-referential-bootstrap.ps1` ＋ `scripts/self-referential-bootstrap-ledger.json`。
+
+## 1. 問題
+
+當一個 PR 的變更對象**包含驗證機制本身** — deploy path、evidence harness、gate script、或決定 evidence 是否成立的契約 — 該 PR 無法用「變更前的機制」取得代表「變更後行為」的證據：
+
+```txt
+新機制要驗證 → 只能用驗證機制驗 → 驗證機制只認已 merge 的內容 → 得先 merge
+                                                                    ↑
+                                                  但沒驗過就不該 merge ──┘
+```
+
+這不是特定遷移的一次性例外，是驗證機制自我指涉時的**通用形狀**（編譯器 bootstrap 問題）。標準解是 fixpoint：用舊機制建新機制 → merge 後用新機制重建自己 → 兩者一致才算通過。
+
+## 2. 規則
+
+**觸發（通則）**：PR 的 changed paths 命中 `Get-SelfReferentialMechanismPaths` 的機制清單（canonical deploy path、evidence harness、adjudicating gate scripts、本機制自身）。
+
+觸發時允許以 `stack_kind=self_referential_bootstrap` 在該 branch 上取證，並承擔三條義務（**缺一則 evidence 視為未閉合**）：
+
+1. **標示** — evidence 必須標 `stack_kind=self_referential_bootstrap`，不得被引用為 deploy-target evidence 或 `isolated_branch_stack` evidence；三者互不推論。
+2. **理由** — 必須具體說明「為何既有機制取不到此證據」；泛稱（"bootstrap"、"needed"）不通過。
+3. **fixpoint 重驗** — merge 後必須以**變更後的正規機制**重跑同一驗證，並把結果 commit 回 ledger（`fixpoint` 欄位）。
+
+## 3. Ledger 機制
+
+- Ledger：`scripts/self-referential-bootstrap-ledger.json`（schema `self-referential-bootstrap-ledger/v1`）。
+- 使用 bootstrap 取證的 PR **必須在同一個 PR 內新增自己的 open entry**（自我登記），並在 PR body 填：
+
+| Item | Result |
+|---|---|
+| Self-referential bootstrap | `yes` / `no` |
+| Bootstrap ledger entry | entry id（`yes` 時必填） |
+| Bootstrap reason | 具體機制缺口（`yes` 時必填，>=30 字元） |
+
+- **債務閘門**：ledger 存在任何 open entry 時，**下一個**觸發本規則的 PR 被機器擋下（不影響無關 PR）。清除欠帳的唯一方式＝commit 完整 fixpoint 記錄（`reverified_at`、`mechanism_commit`（merge 後 40-hex）、`evidence_refs`），該 commit 本身可被 review。
+- open entry 不得帶 fixpoint；closed entry 必須帶完整 fixpoint — ledger 完整性每次 CI 驗證（`scripts/tests/test-self-referential-bootstrap.ps1`），malformed 一律 fail closed。
+
+## 4. Entry schema
+
+```json
+{
+  "id": "kebab-case-slug",
+  "status": "open | closed",
+  "pr": 123,
+  "opened_at": "2026-07-31T00:00:00Z",
+  "reason": "why the pre-change mechanism cannot produce this evidence",
+  "verification_mechanism_paths": ["scripts/deploy.ps1"],
+  "bootstrap_evidence_refs": ["docs/evidence/<slug>/self-referential-bootstrap/..."],
+  "fixpoint": null
+}
+```
+
+`bootstrap_evidence_refs` 的每個 ref 必須含 `self-referential-bootstrap`（或底線變體）字樣，作為 stack kind 標示。closed 時 `fixpoint`：
+
+```json
+{
+  "reverified_at": "2026-08-01T00:00:00Z",
+  "mechanism_commit": "<merge 後 origin/main 上的 40-hex commit>",
+  "evidence_refs": ["docs/evidence/<slug>/fixpoint/..."]
+}
+```
+
+## 5. 已知實例
+
+- 測試部署區遷移（`docs/plans/remote-linux-test-deploy-target.plan.md` §5）：PR 改 deploy path 本身，部署區依契約只驗 `origin/main`。
+- PR #458 single-owner merge consent：修改 merge 治理的 PR 無法用新治理 merge 自己，需一次性手動 bootstrap — 同模式第二實例。

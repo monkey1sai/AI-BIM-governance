@@ -169,12 +169,12 @@ PR-B 改的正是**驗證機制本身**（deploy path）。§6 明文禁止測�
 
 ### 5.4 PR-A 任務清單
 
-- [ ] A1 — 定義 ledger schema 與檔案落點
-- [ ] A2 — 撰寫規則正文（`docs/agents/` 內；可攜、無產品專有名詞）
-- [ ] A3 — check script：偵測未閉合欠帳並擋同類 PR
-- [ ] A4 — PR body evidence 欄位（逐字 label，比照 `check-pr-body-evidence.ps1` 既有慣例）
-- [ ] A5 — 測試：ledger 開/閉、擋 PR、fixpoint 回貼三條路徑
-- [ ] A6 — 本 plan 文件（本檔）
+- [x] A1 — 定義 ledger schema 與檔案落點（`scripts/self-referential-bootstrap-ledger.json`）
+- [x] A2 — 撰寫規則正文（`docs/agents/self-referential-bootstrap.md`；可攜、無產品專有名詞）
+- [x] A3 — check：`scripts/lib/self-referential-bootstrap.ps1` 接入 `check-pr-body-evidence.ps1`（債務閘門 fail closed）
+- [x] A4 — PR body evidence 欄位（`Self-referential bootstrap` / `Bootstrap ledger entry` / `Bootstrap reason`；template 已更新）
+- [x] A5 — 測試：`scripts/tests/test-self-referential-bootstrap.ps1`（ledger 完整性 ×9、body gate ×10、E2E 接線 ×2）＋ agent-governance workflow step
+- [x] A6 — 本 plan 文件（本檔）
 
 ---
 

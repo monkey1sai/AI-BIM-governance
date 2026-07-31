@@ -17,6 +17,7 @@ $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 . (Join-Path $scriptRepoRoot 'scripts\lib\pr-review-agent.ps1')
 . (Join-Path $scriptRepoRoot 'scripts\lib\design-system-gate.ps1')
 . (Join-Path $scriptRepoRoot 'scripts\lib\production-boundary-contract.ps1')
+. (Join-Path $scriptRepoRoot 'scripts\lib\self-referential-bootstrap.ps1')
 
 function Get-MarkdownTableValue {
     param(
@@ -297,5 +298,12 @@ if (Test-AnyPathMatches -Paths $changedPaths -Pattern $deployPattern) {
         'Verify command'
     )
 }
+
+# Self-referential bootstrap: PRs that change the verification mechanism itself must
+# declare it, and open ledger debt blocks further mechanism PRs until fixpoint closure.
+# Rule: docs/agents/self-referential-bootstrap.md
+Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths `
+    -LedgerPath (Join-Path $RepoRoot 'scripts\self-referential-bootstrap-ledger.json') `
+    -GetTableValue { param($b, $label) Get-MarkdownTableValue -Body $b -Label $label }
 
 Write-Host '[check-pr-body-evidence] passed'
