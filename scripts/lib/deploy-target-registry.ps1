@@ -150,3 +150,45 @@ function Get-DeployTarget {
     }
     return $target[0]
 }
+
+function Get-DeployTargetPlatformKind {
+    # PS 5.1 has no $IsWindows and only runs on Windows.
+    $isWin = $true
+    $flag = Get-Variable -Name IsWindows -Scope Global -ErrorAction SilentlyContinue
+    if ($null -ne $flag) { $isWin = [bool]$flag.Value }
+    if ($isWin) { return 'windows_host_native' }
+    return 'linux_host_native'
+}
+
+function Get-DeployTargetForCurrentPlatform {
+    # Resolves the target profile the CURRENT machine plays. deploy.ps1 always runs
+    # on the target machine itself (from inside a checkout), so platform kind picks
+    # the profile; with several same-platform targets, a deploy_root match on
+    # -RepoRoot wins, then the canonical target, else the choice is ambiguous.
+    param(
+        [string] $RepoRoot = '',
+        [string] $RegistryPath = ''
+    )
+    $registry = Get-DeployTargetRegistry -Path $RegistryPath
+    $kind = Get-DeployTargetPlatformKind
+    $candidates = @($registry.targets | Where-Object { [string]$_.kind -eq $kind })
+    if ($candidates.Count -eq 0) {
+        throw "deploy_target_registry: no target registered for platform kind '$kind'."
+    }
+    if ($candidates.Count -eq 1) { return $candidates[0] }
+
+    if (-not [string]::IsNullOrWhiteSpace($RepoRoot)) {
+        $ignoreCase = ($kind -eq 'windows_host_native')
+        $normalizedRepoRoot = $RepoRoot.TrimEnd('\', '/')
+        foreach ($candidate in $candidates) {
+            $candidateRoot = ([string]$candidate.deploy_root).TrimEnd('\', '/')
+            $equal = if ($ignoreCase) { [string]::Equals($normalizedRepoRoot, $candidateRoot, [StringComparison]::OrdinalIgnoreCase) }
+                     else { [string]::Equals($normalizedRepoRoot, $candidateRoot, [StringComparison]::Ordinal) }
+            if ($equal) { return $candidate }
+        }
+    }
+    $canonicalId = [string]$registry.canonical_target
+    $canonical = @($candidates | Where-Object { [string]$_.id -eq $canonicalId })
+    if ($canonical.Count -eq 1) { return $canonical[0] }
+    throw "deploy_target_registry: multiple '$kind' targets and none matches RepoRoot or canonical; disambiguate explicitly."
+}

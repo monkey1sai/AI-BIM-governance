@@ -42,15 +42,18 @@ function New-DeployEdgeVolumeHarness {
     New-Item -ItemType Directory -Path $libRoot -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $SourceRepoRoot 'scripts\lib\design-assets.ps1') -Destination (Join-Path $libRoot 'design-assets.ps1')
 
-    $deploySourcePath = Join-Path $SourceRepoRoot 'scripts\deploy.ps1'
-    $deployScript = Get-Content -LiteralPath $deploySourcePath -Raw
-    $fixedRootLine = "`$script:FixedTestDeployRoot = 'D:\Users\deploy\AI-bim-geo'"
-    $testRootLine = "`$script:FixedTestDeployRoot = '$DeployRoot'"
-    $deployScript = $deployScript.Replace($fixedRootLine, $testRootLine)
-    if ($deployScript -notmatch [regex]::Escape($testRootLine)) {
-        throw 'New-DeployEdgeVolumeHarness: failed to rewrite FixedTestDeployRoot in deploy.ps1'
+    # deploy.ps1 resolves its target profile from the registry, so the sandbox
+    # overrides DATA instead of rewriting code: copy the script unmodified and
+    # write a sandbox registry whose local-windows deploy_root is $DeployRoot.
+    Copy-Item -LiteralPath (Join-Path $SourceRepoRoot 'scripts\lib\deploy-target-registry.ps1') -Destination (Join-Path $libRoot 'deploy-target-registry.ps1')
+    $sandboxRegistry = Get-Content -LiteralPath (Join-Path $SourceRepoRoot 'scripts\deploy-target-registry.json') -Raw | ConvertFrom-Json
+    $sandboxLocal = @($sandboxRegistry.targets | Where-Object { [string]$_.id -eq 'local-windows' })
+    if ($sandboxLocal.Count -ne 1) {
+        throw 'New-DeployEdgeVolumeHarness: registry must define exactly one local-windows target'
     }
-    Set-Content -LiteralPath (Join-Path $scriptsRoot 'deploy.ps1') -Value $deployScript -Encoding ascii
+    $sandboxLocal[0].deploy_root = $DeployRoot
+    $sandboxRegistry | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $scriptsRoot 'deploy-target-registry.json') -Encoding ascii
+    Copy-Item -LiteralPath (Join-Path $SourceRepoRoot 'scripts\deploy.ps1') -Destination (Join-Path $scriptsRoot 'deploy.ps1')
 
     @'
 function Write-DeployHeader {

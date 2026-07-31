@@ -51,10 +51,18 @@ $script:DeployStart = Get-Date
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $RunDir   = Join-Path $RepoRoot 'scripts\.run'
 $LogPath  = Join-Path $RunDir   'deploy.log'
-$script:DefaultPublicHost = '192.168.10.105'
-$script:FixedTestDeployRoot = 'D:\Users\deploy\AI-bim-geo'
-$script:DefaultEdgeSiteId = 'site_local_deploy'
-$script:DefaultEdgeRuntimeDataRoot = 'D:\Users\deploy\AI-bim-geo-data'
+
+# Deploy-target profile: values come from scripts/deploy-target-registry.json
+# resolved for the platform this script is running on (deploy.ps1 always runs on
+# the target machine itself). On Windows this resolves to 'local-windows' with the
+# exact values the former inline constants carried; on Linux to the canonical
+# 'remote-linux-181' profile. See docs/plans/remote-linux-test-deploy-target.plan.md §6.1.
+. (Join-Path $PSScriptRoot 'lib\deploy-target-registry.ps1')
+$script:DeployTargetProfile = Get-DeployTargetForCurrentPlatform -RepoRoot $RepoRoot
+$script:DefaultPublicHost = [string]$script:DeployTargetProfile.public_host
+$script:FixedTestDeployRoot = [string]$script:DeployTargetProfile.deploy_root
+$script:DefaultEdgeSiteId = [string]$script:DeployTargetProfile.edge_site_id
+$script:DefaultEdgeRuntimeDataRoot = [string]$script:DeployTargetProfile.runtime_data_root
 
 # Import lib modules
 $libDir = Join-Path $PSScriptRoot 'lib'

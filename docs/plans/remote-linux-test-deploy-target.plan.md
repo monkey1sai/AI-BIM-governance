@@ -256,7 +256,7 @@ PR-B 改的正是**驗證機制本身**（deploy path）。§6 明文禁止測�
 - [ ] B1 — deploy target registry schema ＋ 兩個目標定義（容器化留空位不實作）
 - [ ] B2 — `scripts/lib/platform/` adapter：process tree、listener owner、路徑解析、Kit 啟動參數（含 `--no-window`）
 - [ ] B3 — ownership 語意跨平台等價性論證 ＋ 測試（`CreationDate` ↔ `/proc/<pid>/stat` starttime）
-- [ ] B4 — 收斂 §6.1 表列的 5 檔硬編常數 ＋ 17 處測試 fixture 到 registry
+- [x] B4 — 收斂 4 檔硬編常數到 registry（deploy.ps1、rebuild lib（含第三個常數 TestDeployEdgeSiteId）、run-runtime evidence harness、find-deploy-blockers）；test harness 改注入 sandbox registry 資料而非文字重寫 deploy.ps1。測試 fixture 的 D: 路徑為任意示例值、非漂移源，判定不收斂
 - [ ] B5 — clone 流程含 exec bit 修復（F-2）
 - [ ] B6 — per-target env ＋ SSH 推送（D-14）＋ 部署當下 effective env 快照（D-15）
 - [ ] B7 — MinIO fixture pinning，fail closed（D-16/17）
