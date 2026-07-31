@@ -1,7 +1,9 @@
 import type { S3Client } from "@aws-sdk/client-s3";
 import { describe, expect, it, vi } from "vitest";
 import {
+  ISOLATED_INTAKE_WEBHOOK_SECRET,
   RESERVED_DEPLOYMENT_PORTS,
+  assertExplicitSeedEnvLoaded,
   assertIsolatedCoordinatorTarget,
   buildSeedEvidenceRecord,
   buildSeedIntakeFetchInit,
@@ -88,6 +90,11 @@ describe("assertIsolatedCoordinatorTarget — 隔離 stack 專用，硬擋部署
   it("拒絕非 http scheme 與不合法 URL", () => {
     expect(() => assertIsolatedCoordinatorTarget("https://127.0.0.1:8005")).toThrow(/http:/);
     expect(() => assertIsolatedCoordinatorTarget("not-a-url")).toThrow(/URL/);
+  });
+
+  it("拒絕 URL credentials，避免 userinfo 進入 request 或 wrapper evidence", () => {
+    expect(() => assertIsolatedCoordinatorTarget("http://operator:secret@127.0.0.1:8005"))
+      .toThrow(/不得包含 URL credentials/);
   });
 
   it("拒絕未指定 port（避免落到預設 80 而非隔離 stack）", () => {
@@ -243,6 +250,9 @@ describe("runSeed — MinIO intake orchestration", () => {
       return jsonResponse({
         ifc_ready_job_id: "ifc_job_success",
         download_status: pollCount === 1 ? "downloading" : "downloaded",
+        artifact_health: pollCount === 1
+          ? null
+          : { source_ifc_exists: true, source: "edge_health_probe" },
       });
     }) as typeof fetch;
 
@@ -258,6 +268,10 @@ describe("runSeed — MinIO intake orchestration", () => {
     expect(requests[1]?.init?.signal).not.toBe(requests[0]?.init?.signal);
     expect(record.ifc_ready_job_id).toBe("ifc_job_success");
     expect(record.download_status).toBe("downloaded");
+    expect(record.download_verification).toEqual({
+      artifact_health_source: "edge_health_probe",
+      source_ifc_exists: true,
+    });
     expect(JSON.stringify(record)).not.toContain("fake-signature");
     expect(JSON.stringify(record)).not.toContain("local-webhook-secret");
   });
@@ -271,6 +285,21 @@ describe("runSeed — MinIO intake orchestration", () => {
 
     await expect(runSeed(seedRunOptions(fetchImpl)))
       .rejects.toThrow(/ifc_job_failed.*download_status=failed/);
+  });
+
+  it("rejects downloaded state when edge artifact health cannot prove the source IFC exists", async () => {
+    const fetchImpl = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => (
+      init?.method === "POST"
+        ? jsonResponse({ ifc_ready_job_id: "ifc_job_placeholder", download_status: "downloading" }, 202)
+        : jsonResponse({
+          ifc_ready_job_id: "ifc_job_placeholder",
+          download_status: "downloaded",
+          artifact_health: { source_ifc_exists: false, source: "edge_health_probe" },
+        })
+    )) as typeof fetch;
+
+    await expect(runSeed(seedRunOptions(fetchImpl)))
+      .rejects.toThrow(/artifact health.*未證明 source IFC 已落地/);
   });
 
   it("throws on intake HTTP failure without echoing presigned signature material", async () => {
@@ -328,6 +357,8 @@ describe("buildSeedEvidenceRecord — 誠實揭露且不外洩簽章/密鑰", ()
     webhookSecret: "super-secret-value",
     ifcReadyJobId: "ifc_job_123",
     downloadStatus: "downloaded",
+    artifactHealthSource: "edge_health_probe",
+    sourceIfcExists: true,
     idempotencyKey: idempotencyKeyFor("bim-control", REAL_KEY, REAL_ETAG),
     correlationId: correlationIdFor("bim-control", REAL_KEY, REAL_ETAG),
   });
@@ -340,6 +371,10 @@ describe("buildSeedEvidenceRecord — 誠實揭露且不外洩簽章/密鑰", ()
     expect(record.source.etag).toBe("9f2c4a1b7d3e5f60718293a4b5c6d7e8");
     expect(record.ifc_ready_job_id).toBe("ifc_job_123");
     expect(record.download_status).toBe("downloaded");
+    expect(record.download_verification).toEqual({
+      artifact_health_source: "edge_health_probe",
+      source_ifc_exists: true,
+    });
     expect(record.source_chain).toBe("real_minio_presigned_intake");
   });
 
@@ -399,7 +434,23 @@ describe("resolveSeedEnv — 空字串等同缺漏", () => {
     expect(resolved.prefix).toBe("");
     expect(resolved.keySuffix).toBe("/model.ifc");
     expect(resolved.tenantId).toBe("tenant_demo_001");
-    expect(resolved.webhookSecret).toBe("dev-webhook-secret");
+    expect(resolved.webhookSecret).toBe(ISOLATED_INTAKE_WEBHOOK_SECRET);
+  });
+
+  it("prefix 對齊 coordinator config 正規化，非空值一律補 trailing slash", () => {
+    expect(resolveSeedEnv({ ...complete, MINIO_WATCH_PREFIX: "tenant-a" } as NodeJS.ProcessEnv).prefix)
+      .toBe("tenant-a/");
+    expect(resolveSeedEnv({ ...complete, MINIO_WATCH_PREFIX: "tenant-a/" } as NodeJS.ProcessEnv).prefix)
+      .toBe("tenant-a/");
+  });
+
+  it("忽略 ambient webhook secret，固定對齊 clean isolated launcher", () => {
+    const resolved = resolveSeedEnv({
+      ...complete,
+      EXTERNAL_INTAKE_WEBHOOK_SECRET: "unrelated-deployment-secret",
+    } as NodeJS.ProcessEnv);
+    expect(resolved.webhookSecret).toBe(ISOLATED_INTAKE_WEBHOOK_SECRET);
+    expect(resolved.webhookSecret).not.toBe("unrelated-deployment-secret");
   });
 
   it("宣告但為空值的 MinIO 設定必須當成缺漏（本機 .env 的真實形態）", () => {
@@ -411,5 +462,24 @@ describe("resolveSeedEnv — 空字串等同缺漏", () => {
 
   it("錯誤訊息指出 worktree 需要 --env-file（避免重蹈空 bucket 的難解錯誤）", () => {
     expect(() => resolveSeedEnv({} as NodeJS.ProcessEnv)).toThrow(/--env-file/);
+  });
+});
+
+describe("assertExplicitSeedEnvLoaded — 明示 env file fail closed", () => {
+  it("dotenv 回傳 error 時只揭露 error code，不回吐底層訊息", () => {
+    const loadError = Object.assign(new Error("credential-like diagnostic must stay hidden"), { code: "ENOENT" });
+    let message = "";
+    try {
+      assertExplicitSeedEnvLoaded("C:/missing/seed.env", loadError);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toMatch(/--env-file.*C:\/missing\/seed\.env.*ENOENT/);
+    expect(message).not.toContain("credential-like diagnostic");
+  });
+
+  it("未明示 env file 或 dotenv 無 error 時不丟例外", () => {
+    expect(() => assertExplicitSeedEnvLoaded(undefined, new Error("ignored"))).not.toThrow();
+    expect(() => assertExplicitSeedEnvLoaded("C:/seed.env", undefined)).not.toThrow();
   });
 });

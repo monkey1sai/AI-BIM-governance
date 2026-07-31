@@ -686,6 +686,8 @@ function New-IsolatedBackendEnvironment {
         A4_CONVERSION_ARTIFACTS_HOST_ROOT = $fixtureArtifacts
         LOG_ROOT = (Join-Path $coordinatorRoot 'logs')
         MINIO_WATCH_ENABLED = 'false'
+        IFC_DOWNLOAD_STRICT = 'true'
+        EXTERNAL_INTAKE_WEBHOOK_SECRET = 'dev-webhook-secret'
     }
 }
 

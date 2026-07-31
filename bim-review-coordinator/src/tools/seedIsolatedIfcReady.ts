@@ -31,6 +31,14 @@ export const RESERVED_DEPLOYMENT_PORTS: readonly number[] = [5173, 8004, 49100, 
 /** 隔離 stack 的 coordinator port＝8005 + offset，offset 僅允許 0..4。 */
 export const ISOLATED_COORDINATOR_PORTS: readonly number[] = [8005, 8006, 8007, 8008, 8009];
 
+/**
+ * `start-isolated-branch-stack.ps1` 以乾淨環境啟動 coordinator 時使用的 isolated-only secret。
+ *
+ * Seed 的 MinIO env file 只擁有 `MINIO_WATCH_*`，不得讓呼叫端 ambient
+ * `EXTERNAL_INTAKE_WEBHOOK_SECRET` 靜默改變與 isolated launcher 的配對值。
+ */
+export const ISOLATED_INTAKE_WEBHOOK_SECRET = "dev-webhook-secret";
+
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost"]);
 
 /**
@@ -49,6 +57,9 @@ export function assertIsolatedCoordinatorTarget(baseUrl: string): URL {
   }
   if (url.protocol !== "http:") {
     throw new Error(`coordinator base 必須使用 http: scheme（收到 ${url.protocol}）；隔離 stack 只跑 loopback http。`);
+  }
+  if (url.username || url.password) {
+    throw new Error("coordinator base 不得包含 URL credentials；isolated seed 只接受無 userinfo 的 loopback URL。");
   }
   if (!LOOPBACK_HOSTS.has(url.hostname)) {
     throw new Error(
@@ -235,6 +246,10 @@ export interface SeedEvidenceRecord {
   };
   ifc_ready_job_id: string;
   download_status: string;
+  download_verification: {
+    artifact_health_source: "edge_health_probe";
+    source_ifc_exists: true;
+  };
   idempotency_key: string;
   correlation_id: string;
   disclosure: string[];
@@ -260,6 +275,8 @@ export function buildSeedEvidenceRecord(input: {
   webhookSecret: string;
   ifcReadyJobId: string;
   downloadStatus: string;
+  artifactHealthSource: "edge_health_probe";
+  sourceIfcExists: true;
   idempotencyKey: string;
   correlationId: string;
 }): SeedEvidenceRecord {
@@ -278,6 +295,10 @@ export function buildSeedEvidenceRecord(input: {
     },
     ifc_ready_job_id: input.ifcReadyJobId,
     download_status: input.downloadStatus,
+    download_verification: {
+      artifact_health_source: input.artifactHealthSource,
+      source_ifc_exists: input.sourceIfcExists,
+    },
     idempotency_key: input.idempotencyKey,
     correlation_id: input.correlationId,
     disclosure: [
@@ -366,16 +387,32 @@ export function resolveSeedEnv(env: NodeJS.ProcessEnv): ResolvedSeedEnv {
     }
     return value;
   };
+  const rawPrefix = env.MINIO_WATCH_PREFIX ?? "";
   return {
     endpoint: required("MINIO_WATCH_ENDPOINT"),
     bucket: required("MINIO_WATCH_BUCKET"),
-    prefix: env.MINIO_WATCH_PREFIX ?? "",
+    prefix: rawPrefix && !rawPrefix.endsWith("/") ? `${rawPrefix}/` : rawPrefix,
     keySuffix: env.MINIO_WATCH_KEY_SUFFIX || "/model.ifc",
     accessKey: required("MINIO_WATCH_ACCESS_KEY"),
     secretKey: required("MINIO_WATCH_SECRET_KEY"),
     tenantId: env.MINIO_WATCH_TENANT_ID || "tenant_demo_001",
-    webhookSecret: env.EXTERNAL_INTAKE_WEBHOOK_SECRET || "dev-webhook-secret",
+    webhookSecret: ISOLATED_INTAKE_WEBHOOK_SECRET,
   };
+}
+
+/**
+ * dotenv 對不存在／不可讀檔案採回傳 error 而非 throw；明示 `--env-file` 時必須 fail closed，
+ * 否則 CLI 會繼續吃 ambient env，表面成功卻可能 seed 到錯誤 bucket。
+ */
+export function assertExplicitSeedEnvLoaded(envFile: string | undefined, error: unknown): void {
+  if (!envFile || !error) return;
+  const candidate = error as { code?: unknown };
+  const reason = typeof candidate.code === "string"
+    ? candidate.code
+    : error instanceof Error
+      ? error.name
+      : "unknown_error";
+  throw new Error(`無法載入 --env-file：${envFile}（${reason}）`);
 }
 
 export interface SeedRunOptions {
@@ -407,6 +444,10 @@ export interface SeedRunOptions {
 interface IntakeResponseShape {
   ifc_ready_job_id?: string;
   download_status?: string;
+  artifact_health?: {
+    source_ifc_exists?: boolean | null;
+    source?: string;
+  } | null;
 }
 
 const defaultSleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
@@ -552,7 +593,18 @@ export async function runSeed(options: SeedRunOptions): Promise<SeedEvidenceReco
     if (detail.ok) {
       const job = (await detail.json()) as IntakeResponseShape;
       downloadStatus = job.download_status ?? downloadStatus;
-      if (downloadStatus === "downloaded") break;
+      if (downloadStatus === "downloaded") {
+        if (
+          job.artifact_health?.source_ifc_exists !== true
+          || job.artifact_health.source !== "edge_health_probe"
+        ) {
+          throw new Error(
+            `job=${jobId} 回報 downloaded，但 edge artifact health 未證明 source IFC 已落地；` +
+              `拒絕產生真實 MinIO download evidence。`,
+          );
+        }
+        break;
+      }
       if (downloadStatus === "failed") throw new Error(`IFC 下載失敗：job=${jobId} download_status=failed`);
     }
     if (Date.now() >= deadline) {
@@ -574,6 +626,8 @@ export async function runSeed(options: SeedRunOptions): Promise<SeedEvidenceReco
     webhookSecret: options.webhookSecret,
     ifcReadyJobId: jobId,
     downloadStatus,
+    artifactHealthSource: "edge_health_probe",
+    sourceIfcExists: true,
     idempotencyKey: intake.idempotencyKey,
     correlationId: intake.correlationId,
   });

@@ -24,8 +24,27 @@ $registryEntry = $registryEntries[0]
 Assert-Equal 'isolated-branch-verifier' $registryEntry.role 'isolated stack launcher registry role'
 Assert-Equal 'scripts' $registryEntry.owner 'isolated stack launcher registry owner'
 Assert-Equal 'Backend-only branch evidence adapter; Playwright owns viewer lifecycle. Not a canonical operator entrypoint.' $registryEntry.notes 'isolated stack launcher registry notes'
+$seedRegistryEntries = @($scriptRegistry.scripts | Where-Object path -eq 'scripts/dev/seed-isolated-stack-ifc-ready.ps1')
+Assert-Equal 1 $seedRegistryEntries.Count 'isolated stack seed wrapper has exactly one registry entry'
+Assert-Equal 'dev-tool' $seedRegistryEntries[0].role 'isolated stack seed wrapper registry role'
 $governanceWorkflow = Get-Content -Raw -LiteralPath (Join-Path $repoRoot '.github\workflows\agent-governance.yml')
 Assert-True ($governanceWorkflow -match 'pwsh -NoProfile -NonInteractive -File scripts/tests/test-isolated-branch-stack\.ps1') 'agent-governance workflow runs isolated stack machine test'
+
+$seedWrapperPath = Join-Path $repoRoot 'scripts\dev\seed-isolated-stack-ifc-ready.ps1'
+$seedWrapperSource = Get-Content -Raw -LiteralPath $seedWrapperPath
+Assert-True (
+    $seedWrapperSource -match 'StructLog\.psm1' -and $seedWrapperSource -match 'Import-Module -Force \$structLogPath'
+) 'seed wrapper imports the repository StructLog module'
+Assert-True ($seedWrapperSource -match '\[switch\]\s*\$DryRun') 'seed wrapper exposes a side-effect-free DryRun mode'
+Assert-True ($seedWrapperSource -notmatch 'Write-Output') 'seed wrapper does not use bare success output instead of structured lifecycle logging'
+$seedDryRunOutput = (& pwsh -NoProfile -NonInteractive -File $seedWrapperPath `
+    -CoordinatorBaseUrl 'http://127.0.0.1:8005' -ChangeId 'change-a' -RunId 'seed-dry-run' -DryRun 2>&1 | Out-String)
+Assert-Equal 0 $LASTEXITCODE 'seed wrapper DryRun exits successfully without MinIO or coordinator access'
+Assert-True ($seedDryRunOutput -match '"status":"dry_run"') 'seed wrapper DryRun emits a machine-readable invocation summary'
+$unsafeSeedDryRunOutput = (& pwsh -NoProfile -NonInteractive -File $seedWrapperPath `
+    -CoordinatorBaseUrl 'http://127.0.0.1:8004' -ChangeId 'change-a' -RunId 'seed-dry-run' -DryRun 2>&1 | Out-String)
+Assert-True ($LASTEXITCODE -ne 0) 'seed wrapper DryRun rejects deployment coordinator port before any side effect'
+Assert-True ($unsafeSeedDryRunOutput -match '8005\.\.8009') 'seed wrapper DryRun explains the isolated coordinator port boundary'
 
 $launcherPath = Join-Path $repoRoot 'scripts\dev\start-isolated-branch-stack.ps1'
 $launcherSource = Get-Content -Raw -LiteralPath $launcherPath
@@ -34,6 +53,16 @@ $ignoredLauncherLog = & git -C $repoRoot check-ignore --no-index 'artifacts/e2e/
 Assert-Equal 0 $LASTEXITCODE 'fixed-root launcher logs remain outside the clean-worktree gate'
 Assert-True ($ignoredLauncherLog -match 'artifacts/e2e/_launcher/structured-logs/probe\.jsonl') 'git check-ignore identifies the launcher log path'
 . $launcherPath
+
+$isolatedCoordinatorEnv = New-IsolatedBackendEnvironment -Role coordinator `
+    -StateLayout ([pscustomobject]@{
+        coordinator_root = 'C:\isolated\coordinator'
+        fixture_root = 'C:\isolated\fixtures'
+    }) `
+    -Ports ([pscustomobject]@{ coordinator = 8005; governance = 49103; viewer = 5180 })
+Assert-Equal 'false' $isolatedCoordinatorEnv.MINIO_WATCH_ENABLED 'isolated coordinator keeps background MinIO watcher disabled'
+Assert-Equal 'true' $isolatedCoordinatorEnv.IFC_DOWNLOAD_STRICT 'isolated coordinator rejects placeholder download success'
+Assert-Equal 'dev-webhook-secret' $isolatedCoordinatorEnv.EXTERNAL_INTAKE_WEBHOOK_SECRET 'isolated coordinator secret matches seed tool constant'
 
 $capturedLifecycleRecords = [System.Collections.Generic.List[object]]::new()
 $captureLifecycleRecord = ({ param($record) [void]$capturedLifecycleRecords.Add($record) }).GetNewClosure()

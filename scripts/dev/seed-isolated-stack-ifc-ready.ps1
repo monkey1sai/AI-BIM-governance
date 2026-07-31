@@ -33,6 +33,9 @@
     MinIO 連線設定檔（`MINIO_WATCH_*`）。worktree 內沒有 untracked 的 .env，跨 worktree 執行時
     必須明示指向可用設定檔；省略時沿用 coordinator 目錄的 .env。憑證一律不進 tracked 檔。
 
+.PARAMETER DryRun
+    只驗證本機路徑並輸出將執行的安全 invocation 摘要；不載入 env、不連 MinIO、不呼叫 coordinator。
+
 .EXAMPLE
     pwsh -NoProfile -File scripts/dev/seed-isolated-stack-ifc-ready.ps1 `
         -CoordinatorBaseUrl http://127.0.0.1:8005 `
@@ -46,12 +49,58 @@ param(
     [Parameter(Mandatory)][string] $RunId,
     [string] $RequiredKey,
     [string] $OutPath,
-    [string] $EnvFile
+    [string] $EnvFile,
+    [switch] $DryRun
 )
 
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$structLogPath = Join-Path $repoRoot 'scripts\lib\StructLog.psm1'
+Import-Module -Force $structLogPath
+
+function New-IsolatedSeedLifecycleData {
+    param(
+        [string] $StructRunId,
+        [ValidateSet('start','closed')][string] $Phase,
+        [string] $Status
+    )
+    $data = @{
+        phase = $Phase
+        subject_kind = 'script_run'
+        subject_id = $StructRunId
+        change_id = $ChangeId
+        seed_run_id = $RunId
+        dry_run = [bool]$DryRun
+    }
+    if ($Status) { $data.status = $Status }
+    return $data
+}
+
+function Assert-IsolatedSeedWrapperTarget {
+    param([string] $BaseUrl)
+    $target = $null
+    if (-not [Uri]::TryCreate($BaseUrl, [UriKind]::Absolute, [ref]$target)) {
+        throw 'CoordinatorBaseUrl 必須是 absolute URL。'
+    }
+    if ($target.Scheme -cne 'http') { throw 'CoordinatorBaseUrl 必須使用 http scheme。' }
+    if (-not [string]::IsNullOrEmpty($target.UserInfo)) { throw 'CoordinatorBaseUrl 不得包含 URL credentials。' }
+    if (@('127.0.0.1', 'localhost') -notcontains $target.Host.ToLowerInvariant()) {
+        throw 'CoordinatorBaseUrl 必須是 loopback host。'
+    }
+    if ($target.IsDefaultPort -or $target.Port -notin 8005..8009) {
+        throw 'CoordinatorBaseUrl port 必須在 isolated coordinator 範圍 8005..8009。'
+    }
+}
+
+$logRoot = Join-Path $repoRoot 'artifacts\e2e\_launcher\structured-logs'
+$logger = New-StructLogger -Service 'scripts' -Component 'isolated-stack-ifc-ready-seed' `
+    -LogRoot $logRoot -SkipEnvSnapshot
+$startData = New-IsolatedSeedLifecycleData -StructRunId $logger.RunId -Phase start
+$logger | Write-StructLifecycle -Msg 'isolated stack IFC-ready seeding started' -Data $startData | Out-Null
+
+try {
+$null = Assert-IsolatedSeedWrapperTarget -BaseUrl $CoordinatorBaseUrl
 $coordinatorRoot = Join-Path $repoRoot 'bim-review-coordinator'
 if (-not (Test-Path -LiteralPath $coordinatorRoot)) {
     throw "找不到 coordinator 目錄：$coordinatorRoot"
@@ -75,16 +124,41 @@ if ($OutPath) {
     $cliArgs += @('--out', $resolvedOut)
 }
 
-Push-Location $coordinatorRoot
-try {
-    & npx @cliArgs
-    $exitCode = $LASTEXITCODE
+if ($DryRun) {
+    $dryRunRecord = [ordered]@{
+        status = 'dry_run'
+        command = 'npx'
+        arguments = $cliArgs
+        working_directory = $coordinatorRoot
+    }
+    $dryRunRecord | ConvertTo-Json -Depth 4 -Compress
 }
-finally {
-    Pop-Location
+else {
+    Push-Location $coordinatorRoot
+    try {
+        & npx @cliArgs
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        Pop-Location
+    }
+
+    if ($exitCode -ne 0) {
+        throw "seed 失敗（exit $exitCode）"
+    }
 }
 
-if ($exitCode -ne 0) {
-    throw "seed 失敗（exit $exitCode）"
+$completionStatus = if ($DryRun) { 'dry_run' } else { 'completed' }
+$completionData = New-IsolatedSeedLifecycleData -StructRunId $logger.RunId -Phase closed -Status $completionStatus
+$logger | Write-StructLifecycle -Msg 'isolated stack IFC-ready seeding completed' -Data $completionData | Out-Null
 }
-Write-Output 'isolated stack IFC-ready seeding complete'
+catch {
+    $failureData = New-IsolatedSeedLifecycleData -StructRunId $logger.RunId -Phase closed -Status failed
+    $logger | Write-StructLifecycle -Msg 'isolated stack IFC-ready seeding failed' -Data $failureData -Level error | Out-Null
+    $logger | Write-StructError -Msg 'isolated stack IFC-ready seeding failed' -ErrorRecord $_ -Data @{
+        change_id = $ChangeId
+        seed_run_id = $RunId
+        dry_run = [bool]$DryRun
+    } | Out-Null
+    throw
+}

@@ -1,7 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import dotenv from "dotenv";
-import { parseSeedCliArgs, resolveSeedEnv, runSeed } from "./seedIsolatedIfcReady.js";
+import {
+  assertExplicitSeedEnvLoaded,
+  parseSeedCliArgs,
+  resolveSeedEnv,
+  runSeed,
+} from "./seedIsolatedIfcReady.js";
 
 /**
  * `seedIsolatedIfcReady` 的 CLI 外殼。
@@ -19,7 +24,8 @@ async function main(): Promise<void> {
   // worktree 內不存在 untracked 的 .env，故允許明示指向可用設定檔；未指定時沿用 cwd 的 .env。
   // 明示 --env-file 時以該檔為權威，避免 shell 內殘留的 MINIO_WATCH_* 靜默蓋過 operator
   // 指定設定而 seed 到錯誤 bucket；未指定時保留 dotenv 的既有 ambient-env 優先語意。
-  dotenv.config(args.envFile ? { path: args.envFile, override: true } : undefined);
+  const dotenvResult = dotenv.config(args.envFile ? { path: args.envFile, override: true } : undefined);
+  assertExplicitSeedEnvLoaded(args.envFile, dotenvResult.error);
   const seedEnv = resolveSeedEnv(process.env);
 
   const record = await runSeed({
