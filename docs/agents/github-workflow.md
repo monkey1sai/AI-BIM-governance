@@ -151,3 +151,5 @@ main checkout 或 sibling worktree 開發 → branch → PR → CI 綠 → merge
 ## Per-item ship-cycle 自動化（ship-item workflow）
 
 Lane F/B 不自動啟動 ship-cycle。只有使用者明確要求 ship，或 Lane S 的已核准 spec 授權自主推進時，才使用 `.claude/workflows/ship-item.md`（commit→push→PR→local preflight→CI watch→buffered merge→closeout）。Lane G 預設停在 PR ready；是否 merge 仍依使用者授權與 branch protection。完整 gate、reviewer buffer、finding fix 與 consent carve-out 以 `ship-item.md` 為準。
+
+本 repo 採 single-owner merge governance：GitHub approving-review count 固定為 0，因 PR 作者不能自批；這不是取消人工 gate。每個 PR 必須由固定 repository owner 在 GitHub UI 手動張貼 canonical consent，精確綁定 repo、PR、base SHA、head SHA。Agent／GitHub App／bot 不得建立、編輯或刪除該 comment，也不得把 AI review 冒充 human approval。conversation resolution、strict non-empty required checks、enforce-admins、90 秒 reviewer buffer、immutable-SHA diff、apex arbiter、final evidence re-read、`--match-head-commit` 與禁用 `--admin` 全部保留；任一 protection/comment/review/head/base 漂移即 HELD。canonical 格式、owner identity 與一次性 bootstrap 見 `.claude/workflows/ship-item.md`。

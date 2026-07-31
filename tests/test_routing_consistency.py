@@ -168,6 +168,12 @@ def test_ship_merge_sink_is_fixed_evidence_and_identity_bound():
     assert "const ARGS_SAFE" in ship and "invalid_args_format" in ship
     assert "Number.isSafeInteger(INPUT_PR_NUMBER)" in ship
     assert "branch_requires_human_consent" in ship
+    assert "const GOVERNANCE_MODE = 'single-owner'" in ship
+    assert "const OWNER_LOGIN = 'monkey1sai'" in ship and "const OWNER_ID = 26239865" in ship
+    assert "canonicalConsentBody" in ship and "ownerConsentForIdentity" in ship
+    assert "normalizeBranchProtection" in ship and "validSingleOwnerProtection" in ship
+    assert "branch_protection_single_owner_gate_not_strict" in ship
+    assert "reviewDecisionAllowed" in ship and "owner_consent_required" in ship
     assert "path.startsWith('.claude/')" in ship and "path.startsWith('scripts/')" in ship
     assert "path === 'agent-skills-manifest.json'" in ship and "path.startsWith('infra/')" in ship
     assert "gh api --paginate --slurp" in ship
@@ -176,7 +182,7 @@ def test_ship_merge_sink_is_fixed_evidence_and_identity_bound():
     assert "git diff --no-ext-diff --no-textconv --no-renames --name-only ${preparedBase}...${preparedHead}" in ship
     assert "git diff --no-ext-diff --no-textconv --no-renames ${preparedBase}...${preparedHead}" in ship
 
-    governance_gate = ship.index("governance_change_requires_human_consent")
+    owner_consent_gate = ship.index("owner_consent_required")
     arbiter_call = ship.index("label: `ship:arbiter:${prNumber}`")
     allow_guard = ship.index("decision.allowMerge !== true")
     evidence_guard = ship.index("!decision.evidence.trim()")
@@ -185,21 +191,26 @@ def test_ship_merge_sink_is_fixed_evidence_and_identity_bound():
     final_head_guard = ship.index("finalState.headRefOid !== preparedHead")
     merge_sink = ship.index("await $`gh pr merge ${prNumber}")
     verify_merge = ship.index("--json state,mergeCommit")
-    assert governance_gate < arbiter_call < allow_guard < evidence_guard < identity_guard < reviewer_race_guard < final_head_guard < merge_sink < verify_merge
+    assert owner_consent_gate < arbiter_call < allow_guard < evidence_guard < identity_guard < reviewer_race_guard < final_head_guard < merge_sink < verify_merge
 
     assert ship.count("await $`gh pr merge") == 1
     assert "--match-head-commit ${preparedHead}" in ship
+    assert ship.count("branches/main/protection") == 3
     assert ship.count("pulls/${prNumber}/comments") == 2
     assert ship.count("pulls/${prNumber}/reviews") == 2
     assert ship.count("issues/${prNumber}/comments") == 2
     assert "merge_command_failed_unverified" in ship
     assert "GitHub 已確認 merge，但本機 post-merge fetch 失敗" in ship
+    for method in ("POST", "PATCH", "DELETE"):
+        assert not re.search(rf"gh api[^\n]*(?:-X|--method)\s+{method}\b", ship)
+    assert "gh pr comment" not in ship
 
 
 def test_ship_document_matches_runtime_security_boundary():
     doc = _read("ship-item.md")
     for literal in (
-        "coordinator", "fable` + `max", "governance_change_requires_human_consent",
+        "coordinator", "fable` + `max", "owner_consent_required",
+        "single-owner", "canonical owner consent", "approvals=0",
         "--match-head-commit", "review_required", "git fetch origin", "git merge-base",
         "git rebase origin/main", "published PR branch", "git merge --no-edit origin/main",
         "cyber_safeguard_payload", "seg/seg/id", "passwd", "SHALL NOT",
