@@ -34,6 +34,10 @@ EXPECTED = {
     "std-evidence-closeout.js": {"closeout:execute:": "standard", "closeout:verify:": "judge"},
     "fable5-repo-advisory.js": {"scan:": "scan", "merge-dedup": "reason", "verify:": "reason", "completeness-critic": "arbiter"},
     "fu-adversarial-verify-generic.js": {"verify-batch:": "judge", "critic:": "arbiter"},
+    "mapping-coverage-loop.js": {
+        "plan:coverage": "arbiter", "baseline": "standard", "buckets:r": "standard",
+        "measure:r": "standard", "gate:r": "extract", "confirm:": "standard", "report": "standard",
+    },
     "plan-next-spec-to-done-aware.js": {
         "plans:phasing-rules": "scan", "plans:boundaries-contracts": "scan", "plans:ia-sequences-data": "scan",
         "repo:frontend-routes": "scan", "repo:backend-capabilities": "scan", "repo:merged-and-inflight": "scan",
@@ -43,6 +47,10 @@ EXPECTED = {
     "repo-health-scan.js": {"scan:${s.key}": "scan", "scan:progress": "arbiter"},
     "ship-item.js": {"ship:arbiter:${prNumber}": "arbiter"},
     "spec-to-done-adversarial-verify.js": {"verify:compliance": "arbiter", "verify:technical": "judge", "verify:usability": "judge", "verify:resilience": "judge"},
+    "token-strategy-tournament.js": {
+        "plan:tournament": "arbiter", "read:": "standard", "design:": "reason",
+        "judge:": "judge", "synthesize": "reason",
+    },
 }
 
 
@@ -159,7 +167,21 @@ def test_ship_merge_sink_is_fixed_evidence_and_identity_bound():
     assert "agentType: 'code-reviewer'" in ship
     assert "const ARGS_SAFE" in ship and "invalid_args_format" in ship
     assert "Number.isSafeInteger(INPUT_PR_NUMBER)" in ship
-    assert "branch_requires_human_consent" in ship
+    assert "branch_requires_separate_authorization" in ship
+    assert "const GOVERNANCE_MODE = 'single-owner'" in ship
+    assert "const REVIEWER_LOGIN = 'monkey1sai-blip'" in ship and "const REVIEWER_ID = 311287868" in ship
+    assert "canonicalApprovalBody" in ship and "humanApprovalForIdentity" in ship
+    assert "review.state === 'APPROVED'" in ship and "review.commit_id === headOid" in ship
+    assert "reviewerPermissionForIdentity" in ship and "reviewer_permission_changed_after_verdict" in ship
+    assert "collaborators/${REVIEWER_LOGIN}/permission" in ship
+    assert "merge-elevated" in ship and "expectedApprovalAction" in ship
+    assert "INPUT_ELEVATED_AUTHORIZATION" in ship and "trusted_elevated_authorization_unavailable" in ship
+    assert "current_turn_authorization_required" not in ship
+    assert "normalizeBranchProtection" in ship and "validSingleOwnerProtection" in ship
+    assert "stableProtectionSnapshot" in ship
+    assert "requireCodeOwnerReviews" in ship
+    assert "branch_protection_single_owner_gate_not_strict" in ship
+    assert "reviewDecisionAllowed" in ship and "human_approval_required" in ship
     assert "path.startsWith('.claude/')" in ship and "path.startsWith('scripts/')" in ship
     assert "path === 'agent-skills-manifest.json'" in ship and "path.startsWith('infra/')" in ship
     assert "gh api --paginate --slurp" in ship
@@ -168,7 +190,8 @@ def test_ship_merge_sink_is_fixed_evidence_and_identity_bound():
     assert "git diff --no-ext-diff --no-textconv --no-renames --name-only ${preparedBase}...${preparedHead}" in ship
     assert "git diff --no-ext-diff --no-textconv --no-renames ${preparedBase}...${preparedHead}" in ship
 
-    governance_gate = ship.index("governance_change_requires_human_consent")
+    elevated_broker_gate = ship.index("return held('trusted_elevated_authorization_unavailable'")
+    human_approval_gate = ship.index("human_approval_required")
     arbiter_call = ship.index("label: `ship:arbiter:${prNumber}`")
     allow_guard = ship.index("decision.allowMerge !== true")
     evidence_guard = ship.index("!decision.evidence.trim()")
@@ -177,24 +200,30 @@ def test_ship_merge_sink_is_fixed_evidence_and_identity_bound():
     final_head_guard = ship.index("finalState.headRefOid !== preparedHead")
     merge_sink = ship.index("await $`gh pr merge ${prNumber}")
     verify_merge = ship.index("--json state,mergeCommit")
-    assert governance_gate < arbiter_call < allow_guard < evidence_guard < identity_guard < reviewer_race_guard < final_head_guard < merge_sink < verify_merge
+    assert elevated_broker_gate < human_approval_gate < arbiter_call < allow_guard < evidence_guard < identity_guard < reviewer_race_guard < final_head_guard < merge_sink < verify_merge
 
     assert ship.count("await $`gh pr merge") == 1
     assert "--match-head-commit ${preparedHead}" in ship
+    assert ship.count("branches/main/protection") == 3
     assert ship.count("pulls/${prNumber}/comments") == 2
     assert ship.count("pulls/${prNumber}/reviews") == 2
     assert ship.count("issues/${prNumber}/comments") == 2
     assert "merge_command_failed_unverified" in ship
     assert "GitHub 已確認 merge，但本機 post-merge fetch 失敗" in ship
+    for method in ("POST", "PATCH", "DELETE"):
+        assert not re.search(rf"gh api[^\n]*(?:-X\s*|--method(?:\s+|=)){method}\b", ship)
+    assert "gh pr comment" not in ship
 
 
 def test_ship_document_matches_runtime_security_boundary():
     doc = _read("ship-item.md")
     for literal in (
-        "coordinator", "fable` + `max", "governance_change_requires_human_consent",
+        "coordinator", "fable` + `max", "human_approval_required",
+        "single-owner", "canonical human approval", "approvals=1",
         "--match-head-commit", "review_required", "git fetch origin", "git merge-base",
         "git rebase origin/main", "published PR branch", "git merge --no-edit origin/main",
         "cyber_safeguard_payload", "seg/seg/id", "passwd", "SHALL NOT",
+        "trusted_elevated_authorization_unavailable", "agent-inaccessible",
     ):
         assert literal in doc
     assert re.search(r"MUST NOT[^\n]*gh pr merge --admin", doc)

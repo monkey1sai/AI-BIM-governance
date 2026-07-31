@@ -9,6 +9,8 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CLAUDE_VALIDATOR = ROOT / ".claude/skills/spec-to-done/validate-state.mjs"
 CODEX_VALIDATOR = ROOT / ".codex/skills/spec-to-done/validate-state.mjs"
+CLAUDE_SKILL = ROOT / ".claude/skills/spec-to-done/SKILL.md"
+CODEX_SKILL = ROOT / ".codex/skills/spec-to-done/SKILL.md"
 GIT = shutil.which("git")
 EXCLUSIONS = (
     "secrets,credentials,billing,production-data,destructive-delete,"
@@ -38,7 +40,7 @@ def _new_repo(tmp_path, name="repo"):
     return repo, _git(repo, "rev-parse", "HEAD")
 
 
-def _line(repo, head, prefix="DONE@P5", **overrides):
+def _line(repo, commit_head, prefix="DONE@P5", **overrides):
     fields = {
         "spec": (repo / "spec.md").as_posix(),
         "slug": "demo",
@@ -46,7 +48,7 @@ def _line(repo, head, prefix="DONE@P5", **overrides):
         "dateStamp": "2026-07-29",
         "branch": "feat/demo",
         "worktree": repo.as_posix(),
-        "head": head,
+        "head": commit_head,
         "executionMode": "full",
         "closeoutTaskIds": "",
         "planPath": "",
@@ -56,7 +58,7 @@ def _line(repo, head, prefix="DONE@P5", **overrides):
         "agentCalls": "8/40",
         "p5Rounds": "1/2",
         "evidenceAttempts": "1/2",
-        "evidenceHead": head,
+        "evidenceHead": commit_head,
         "診斷": "none",
         "需要使用者決定": "none",
     }
@@ -124,6 +126,210 @@ def test_valid_claude_and_codex_states_and_single_canonical_validator(tmp_path):
         platform="codex",
     )
     assert code == 0 and result["ok"] is True
+
+
+def test_documented_p6_hold_reasons_are_durable_and_unknown_reasons_fail_closed(tmp_path):
+    repo, head = _new_repo(tmp_path)
+    claude_contract = CLAUDE_SKILL.read_text(encoding="utf-8")
+    codex_contract = CODEX_SKILL.read_text(encoding="utf-8")
+
+    def section(contract, start_marker, end_marker):
+        start = contract.index(start_marker)
+        end = contract.index(end_marker, start)
+        return contract[start:end]
+
+    p6_sections = (
+        section(claude_contract, "P6 = Workflow", "P7 ="),
+        section(codex_contract, "P6 = Workflow", "P7 ="),
+    )
+    held_tables = (
+        section(claude_contract, "## held 對照表", "## 強制停下點"),
+        section(codex_contract, "## held 對照表", "## 強制停下點"),
+    )
+    p6_scoped_reasons = {
+        "branch_requires_separate_authorization",
+        "branch_protection_changed_during_buffer",
+        "branch_protection_changed_after_verdict",
+        "human_approval_changed_after_verdict",
+    }
+    documented_reasons = (
+        "review_required",
+        "human_approval_required",
+        "reviewer_permission_not_strict",
+        "reviewer_permission_changed_after_verdict",
+        "branch_requires_separate_authorization",
+        "branch_protection_changed_during_buffer",
+        "branch_protection_changed_after_verdict",
+        "human_approval_changed_after_verdict",
+        "trusted_elevated_authorization_unavailable",
+        "unexpected_elevated_authorization",
+        "branch_protection_single_owner_gate_not_strict",
+    )
+    for reason in documented_reasons:
+        code, result = _run(
+            tmp_path,
+            repo,
+            _line(repo, head, "HELD@P6", reason=reason),
+        )
+        assert code == 0 and result["kind"] == "HELD"
+        assert result["fields"]["reason"] == reason
+        assert reason in claude_contract
+        assert reason in codex_contract
+        if reason in p6_scoped_reasons:
+            assert all(reason in p6_section for p6_section in p6_sections)
+            assert all(reason in held_table for held_table in held_tables)
+
+    code, result = _run(
+        tmp_path,
+        repo,
+        _line(repo, head, "HELD@P6", reason="caller_invented_hold"),
+    )
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+
+def test_historical_unknown_held_reason_cannot_be_hidden_by_later_checkpoints(tmp_path):
+    repo, head = _new_repo(tmp_path)
+    unknown_hold = _line(
+        repo,
+        head,
+        "HELD@P6",
+        reason="caller_invented_hold",
+    )
+    resumed = _line(
+        repo,
+        head,
+        "RESUMED@P6",
+        decision="operator-resume",
+    )
+
+    code, result = _run(tmp_path, repo, [unknown_hold, resumed])
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+    code, result = _run(
+        tmp_path,
+        repo,
+        [unknown_hold, resumed, _line(repo, head, "DONE@P6")],
+    )
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+    authorization = _line(
+        repo,
+        head,
+        "AUTHORIZATION@P6",
+        decision="delegate-repo-workflow-signoff",
+        scope="repo-workflow-signoff",
+        exclusions=(
+            "secrets,credentials,billing,production-data,destructive-delete,"
+            "unproven-process-stop"
+        ),
+    )
+    for terminal_reason in (
+        "trusted_elevated_authorization_unavailable",
+        "branch_requires_separate_authorization",
+    ):
+        terminal_hold = _line(
+            repo,
+            head,
+            "HELD@P6",
+            reason=terminal_reason,
+        )
+        for followup in (resumed, authorization):
+            code, result = _run(tmp_path, repo, [terminal_hold, followup])
+            assert code == 2 and result["held"] == "resume_state_invalid"
+
+    max_budget_recovery = _line(
+        repo,
+        head,
+        "HELD@P6",
+        reason="resume_state_invalid",
+        agentCalls="40/40",
+        p5Rounds="2/2",
+        evidenceAttempts="2/2",
+    )
+    code, result = _run(tmp_path, repo, [unknown_hold, max_budget_recovery])
+    assert code == 0 and result["kind"] == "HELD"
+    assert result["fields"]["reason"] == "resume_state_invalid"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("head", "not-a-sha"),
+        ("runIds", "fake"),
+    ),
+)
+def test_historical_checkpoints_reject_malformed_provenance(tmp_path, field, value):
+    repo, head = _new_repo(tmp_path)
+    historical = _line(repo, head, "DONE@P5", **{field: value})
+    current = _line(repo, head, "DONE@P5")
+
+    code, result = _run(tmp_path, repo, [historical, current])
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+
+def test_max_budget_recovery_seals_prior_transition_errors_without_enabling_progress(tmp_path):
+    repo, head = _new_repo(tmp_path)
+    p1 = _line(repo, head, "DONE@P1")
+    p5 = _line(repo, head, "DONE@P5")
+    recovery = _line(
+        repo,
+        head,
+        "HELD@P5",
+        reason="resume_state_invalid",
+        agentCalls="40/40",
+        p5Rounds="2/2",
+        evidenceAttempts="2/2",
+    )
+
+    code, result = _run(tmp_path, repo, [p1, p5, recovery])
+    assert code == 0 and result["kind"] == "HELD"
+    assert result["fields"]["reason"] == "resume_state_invalid"
+
+    resumed = _line(
+        repo,
+        head,
+        "RESUMED@P5",
+        decision="operator-resume",
+        agentCalls="40/40",
+        p5Rounds="2/2",
+        evidenceAttempts="2/2",
+    )
+    code, result = _run(tmp_path, repo, [p1, p5, recovery, resumed])
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+    illegal_candidate = recovery.replace("HELD@P5", "HELD@P6", 1)
+    code, result = _run(tmp_path, repo, [p1, illegal_candidate])
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+
+def test_max_budget_recovery_is_terminal_after_valid_history(tmp_path):
+    repo, head = _new_repo(tmp_path)
+    valid = _line(repo, head, "DONE@P5")
+    recovery = _line(
+        repo,
+        head,
+        "HELD@P5",
+        reason="resume_state_invalid",
+        agentCalls="40/40",
+        p5Rounds="2/2",
+        evidenceAttempts="2/2",
+    )
+    resumed = _line(
+        repo,
+        head,
+        "RESUMED@P5",
+        decision="operator-resume",
+        agentCalls="40/40",
+        p5Rounds="2/2",
+        evidenceAttempts="2/2",
+    )
+
+    code, result = _run(tmp_path, repo, [valid, recovery])
+    assert code == 0 and result["kind"] == "HELD"
+    assert result["fields"]["reason"] == "resume_state_invalid"
+
+    code, result = _run(tmp_path, repo, [valid, recovery, resumed])
+    assert code == 2 and result["held"] == "resume_state_invalid"
 
 
 def test_fixed_limits_and_counter_overflow_fail_closed(tmp_path):

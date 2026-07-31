@@ -23,6 +23,77 @@ function Assert-FileContains {
     Assert-True ($content -match $Pattern) $Message
 }
 
+function Get-WorkflowPermissionViolations {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]] $Lines)
+
+    $violations = [System.Collections.Generic.List[string]]::new()
+    $permissionHeader = [regex]'^(?<indent>\s*)(?:[''"])?permissions(?:[''"])?\s*:\s*(?<inline>[^#]*?)(?:\s+#.*)?$'
+    $headerCount = 0
+    # The dependency-free scanner intentionally accepts only an unambiguous YAML subset:
+    # even comments and literals may not carry a second permissions token.
+    $permissionTokenCount = [regex]::Matches(($Lines -join "`n"), '(?i)\bpermissions\b').Count
+    if ($permissionTokenCount -ne 1) {
+        $violations.Add("workflow must contain exactly one literal permissions token; found $permissionTokenCount")
+    }
+
+    $blockScalarIndent = -1
+    for ($syntaxIndex = 0; $syntaxIndex -lt $Lines.Count; $syntaxIndex++) {
+        $syntaxLine = $Lines[$syntaxIndex]
+        if ($blockScalarIndent -ge 0) {
+            if (-not $syntaxLine.Trim()) { continue }
+            $syntaxIndent = [regex]::Match($syntaxLine, '^\s*').Value.Length
+            if ($syntaxIndent -gt $blockScalarIndent) { continue }
+            $blockScalarIndent = -1
+        }
+
+        $structuralLine = [regex]::Replace($syntaxLine, '\$\{\{.*?\}\}', '')
+        if ($structuralLine -match '[{}]' -or
+            $structuralLine -match '(?:^|[\s:\[,\-])\s*(?:&(?=[^\s&])|\*(?=\S))' -or
+            $structuralLine -match '<<\s*:' -or
+            $structuralLine -match '^\s*(?:-\s*)?"[^"]*"\s*:' -or
+            $structuralLine -match '^\s*\?' -or
+            $structuralLine -match '\\(?:x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})') {
+            $violations.Add("line $($syntaxIndex + 1): YAML flow maps, anchors, aliases, merges, quoted/complex keys, and escaped keys are forbidden")
+        }
+        $blockHeader = [regex]::Match($syntaxLine, '^(?<indent>\s*)[^#\r\n]+:\s*[|>][+-]?\s*(?:#.*)?$')
+        if ($blockHeader.Success) {
+            $blockScalarIndent = $blockHeader.Groups['indent'].Value.Length
+        }
+    }
+
+    for ($lineIndex = 0; $lineIndex -lt $Lines.Count; $lineIndex++) {
+        $headerMatch = $permissionHeader.Match($Lines[$lineIndex])
+        if (-not $headerMatch.Success) { continue }
+        $headerCount++
+
+        $headerIndent = $headerMatch.Groups['indent'].Value.Length
+        $inlineValue = $headerMatch.Groups['inline'].Value.Trim()
+        if ($headerIndent -ne 0 -or $inlineValue -or $Lines[$lineIndex] -cnotmatch '^permissions:\s*(?:#.*)?$') {
+            $violations.Add("line $($lineIndex + 1): only one literal root permissions block is allowed")
+            continue
+        }
+
+        $entries = [System.Collections.Generic.List[string]]::new()
+        for ($entryIndex = $lineIndex + 1; $entryIndex -lt $Lines.Count; $entryIndex++) {
+            $entryLine = $Lines[$entryIndex]
+            if (-not $entryLine.Trim() -or $entryLine.TrimStart().StartsWith('#')) { continue }
+
+            $entryIndent = [regex]::Match($entryLine, '^\s*').Value.Length
+            if ($entryIndent -le $headerIndent) { break }
+            $entries.Add($entryLine)
+        }
+        if ($entries.Count -ne 1 -or $entries[0] -cnotmatch '^  contents:\s*read\s*(?:#.*)?$') {
+            $violations.Add("line $($lineIndex + 1): permissions must contain exactly literal 'contents: read'")
+        }
+    }
+
+    if ($headerCount -ne 1) {
+        $violations.Add("workflow must contain exactly one root permissions block; found $headerCount")
+    }
+
+    return @($violations)
+}
+
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 Push-Location $repoRoot
 try {
@@ -324,6 +395,42 @@ try {
     Assert-True ($pwshRunCount -ge 5) 'agent-governance workflow runs the governance checks with PowerShell 7'
     Assert-True ($pwshRunCount -eq $totalRunCount) 'agent-governance workflow runs every step with PowerShell 7 (no legacy or non-pwsh shell)'
 
+    $humanApprovalScript = Get-Content -LiteralPath '.claude/workflows/ship-item.js' -Raw
+    Assert-True (-not (Test-Path -LiteralPath '.github/workflows/owner-consent.yml')) 'replayable custom owner-consent status workflow is absent'
+    Assert-True (-not (Test-Path -LiteralPath '.github/scripts/owner-consent.mjs')) 'replayable custom owner-consent status publisher is absent'
+    Assert-True ($humanApprovalScript -match "REVIEWER_LOGIN = 'monkey1sai-blip'") 'single-owner reviewer login is fixed'
+    Assert-True ($humanApprovalScript -match 'REVIEWER_ID = 311287868') 'single-owner reviewer immutable user id is fixed'
+    Assert-True ($humanApprovalScript -match "review\.state === 'APPROVED'") 'merge approval must be a GitHub APPROVED review'
+    Assert-True ($humanApprovalScript -match 'review\.commit_id === headOid') 'merge approval is bound to the exact head commit'
+    Assert-True ($humanApprovalScript -match 'reviewerPermissionForIdentity') 'fixed reviewer live permission is mechanically validated'
+    Assert-True ($humanApprovalScript -match "parsed\.permission !== 'write'") 'fixed reviewer permission must remain exactly write'
+    Assert-True ($humanApprovalScript -match 'reviewer_permission_changed_after_verdict') 'fixed reviewer permission is re-read before merge'
+    Assert-True ($humanApprovalScript -match 'requireCodeOwnerReviews') 'branch protection must require a code-owner review'
+    Assert-True ($humanApprovalScript -match "return held\('trusted_elevated_authorization_unavailable'") 'elevated merge paths remain held until a trusted authorization broker exists'
+    Assert-True (-not ($humanApprovalScript -match 'current_turn_authorization_required')) 'caller-controlled JSON is not treated as current-turn authorization'
+    Assert-True ($humanApprovalScript -match "expectedApprovalAction = elevatedApprovalPaths \? 'merge-elevated' : 'merge'") 'elevated changes require a distinct approval action'
+    $codeownerLines = @(Get-Content -LiteralPath '.github/CODEOWNERS' | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') })
+    Assert-True ($codeownerLines -contains '* @monkey1sai-blip') 'CODEOWNERS has a fixed human reviewer wildcard fallback'
+    foreach ($codeownerLine in $codeownerLines) {
+        $codeownerParts = @($codeownerLine.Trim() -split '\s+')
+        Assert-True ($codeownerParts.Count -eq 2 -and $codeownerParts[1] -ceq '@monkey1sai-blip') "CODEOWNERS rule has exactly one fixed human owner: $codeownerLine"
+    }
+    foreach ($workflowFile in @(Get-ChildItem -LiteralPath '.github/workflows' -File)) {
+        $permissionViolations = @(Get-WorkflowPermissionViolations -Lines @(Get-Content -LiteralPath $workflowFile.FullName))
+        Assert-True ($permissionViolations.Count -eq 0) "workflow permissions are literal and cannot write comments, reviews, discussions, statuses, or checks: $($workflowFile.Name): $($permissionViolations -join '; ')"
+    }
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read')).Count -eq 0) 'the exact root contents-read workflow permission is allowed'
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read', '# permissions tokens are forbidden outside the root key')).Count -gt 0) 'extra permissions tokens in comments are rejected by the strict dependency-free grammar'
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  "pull-requests": write')).Count -gt 0) 'quoted pull-request write permission is rejected'
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  issues: *writer')).Count -gt 0) 'aliased issue permission is rejected fail closed'
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions: { checks: write }')).Count -gt 0) 'inline check-write permission map is rejected fail closed'
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  discussions: write')).Count -gt 0) 'discussion write permission is rejected'
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines @('name: missing-permissions', 'on: push')).Count -gt 0) 'missing workflow permission block is rejected fail closed'
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read', 'jobs: { evil: { runs-on: ubuntu-latest, permissions: { pull-requests: write }, steps: [] } }')).Count -gt 0) 'flow-style job permission override is rejected fail closed'
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read', 'x-job: &danger { permissions: { checks: write } }', 'jobs:', '  evil: *danger')).Count -gt 0) 'anchored flow-style permission override is rejected fail closed'
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read', 'jobs:', '  evil:', '    "permis\x73ions":', '      pull-requests: write')).Count -gt 0) 'hex-escaped job permission key is rejected fail closed'
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read', 'x: &1 "permis\', '  sions"', 'jobs:', '  evil:', '    runs-on: ubuntu-latest', '    *1:', '      pull-requests: write', '    steps: []')).Count -gt 0) 'numeric anchor and aliased multiline permission key are rejected fail closed'
+
     $prReviewWorkflow = Get-Content -LiteralPath '.github/workflows/pr-review-agent.yml' -Raw
     Assert-True ($prReviewWorkflow -match '(?m)^name:\s*PR Metadata Contract\s*$') 'PR metadata diagnostic has a truthful workflow name'
     Assert-True ($prReviewWorkflow -match '(?m)^\s{4}name:\s*pr-metadata-contract-diagnostic\s*$') 'PR metadata job cannot be mistaken for the merge-authority context'
@@ -382,6 +489,32 @@ try {
     foreach ($marker in @('Required checks', 'agent-governance', 'CODEOWNERS', 'branch protection', 'remote-only', 'PR body evidence')) {
         Assert-True ($reviewDoc -match [regex]::Escape($marker)) "PR review doc contains $marker"
     }
+    $singleOwnerProtectionMatch = [regex]::Match(
+        $reviewDoc,
+        '(?s)Remote-only step：.*?(?=\r?\n## 人工審查邊界)'
+    )
+    Assert-True $singleOwnerProtectionMatch.Success 'PR review doc has a bounded single-owner branch-protection section'
+    $singleOwnerProtectionSection = $singleOwnerProtectionMatch.Value
+    $postMergeMarker = '#458 merge 後'
+    $postMergeMarkerIndex = $singleOwnerProtectionSection.IndexOf($postMergeMarker, [System.StringComparison]::Ordinal)
+    Assert-True ($postMergeMarkerIndex -ge 0) 'PR review doc has the #458 post-merge transition marker'
+    Assert-True (
+        $postMergeMarkerIndex -eq $singleOwnerProtectionSection.LastIndexOf($postMergeMarker, [System.StringComparison]::Ordinal)
+    ) 'PR review doc has exactly one #458 post-merge transition marker'
+    $bootstrapProtectionSection = $singleOwnerProtectionSection.Substring(0, $postMergeMarkerIndex)
+    $postMergeProtectionSection = $singleOwnerProtectionSection.Substring($postMergeMarkerIndex)
+    Assert-True ($bootstrapProtectionSection -match 'PR #458') 'PR review doc identifies the #458 bootstrap'
+    Assert-True ($bootstrapProtectionSection -match '\brequired_approving_review_count\s*=\s*1\b') 'PR review doc binds the #458 bootstrap to approvals=1'
+    Assert-True ($bootstrapProtectionSection -match '\brequire_code_owner_reviews\s*=\s*false\b') 'PR review doc binds the #458 bootstrap to code-owner review=false'
+    Assert-True (-not ($bootstrapProtectionSection -match '\brequire_code_owner_reviews\s*=\s*true\b')) 'PR review doc does not mix the post-merge code-owner target into the #458 bootstrap'
+    Assert-True ($postMergeProtectionSection -match '\brequired_approving_review_count\s*=\s*1\b') 'PR review doc binds the post-merge target to approvals=1'
+    Assert-True ($postMergeProtectionSection -match '\brequire_code_owner_reviews\s*=\s*true\b') 'PR review doc binds the post-merge target to code-owner review=true'
+    Assert-True (-not ($postMergeProtectionSection -match '\brequire_code_owner_reviews\s*=\s*false\b')) 'PR review doc does not mix the bootstrap exception into the post-merge target'
+    foreach ($evidenceMarker in @('不是 live state 證明', '重讀 API')) {
+        Assert-True ($singleOwnerProtectionSection -match [regex]::Escape($evidenceMarker)) "PR review doc keeps live-state evidence warning: $evidenceMarker"
+    }
+    Assert-True (-not ($reviewDoc -match '(?i)\brequired_approving_review_count\s*=\s*0\b')) 'PR review doc never restores a canonical zero-approval setting'
+    Assert-True (-not ($reviewDoc -match '(?i)\bapprovals?\s*=\s*0\b')) 'PR review doc never restores a zero-approval shorthand'
 
     # Machine gates for openspec/specs/agent-doc-context-budget/spec.md:
     # line budgets, sub-file index completeness, dead-link liveness, mirror declaration, mirror pairing.
@@ -814,7 +947,10 @@ try {
     }
 
     & node --test tests/test_governed_dispatch_runtime.mjs tests/test_ship_item_runtime.mjs
-    Assert-True ($LASTEXITCODE -eq 0) 'governed dispatch and ship-item runtime tests pass'
+    Assert-True ($LASTEXITCODE -eq 0) 'governed dispatch and exact-head human-approval ship-item runtime tests pass'
+
+    & pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'test-seed-isolated-stack-ifc-ready.ps1')
+    Assert-True ($LASTEXITCODE -eq 0) 'isolated seed wrapper script-level tests pass'
 } finally {
     Pop-Location
 }

@@ -61,6 +61,24 @@ def test_render_block_includes_apex_first_gate_and_semaphore():
     assert block.startswith("// <routing:gen>") and block.rstrip().endswith("// </routing:gen>")
 
 
+def test_apex_gate_schema_property_keys_are_api_safe():
+    # #455 回歸:StructuredOutput property keys 必須符合 ^[a-zA-Z0-9_.-]{1,64}$;
+    # 含空格的 key(如舊 'Next step')會被 API 400 拒收 → synthetic apex gate 永遠失敗。
+    # schema 物件閉括號在第 0 欄,properties 的縮排 '  },' 不會誤中 → 覆蓋整個 schema。
+    import re as _re
+    block = gen.render_block(_valid_data())
+    start = block.index("const APEX_GATE_SCHEMA = {")
+    end = block.index("\n}", start)
+    schema_text = block[start:end]
+    required_line = next(l for l in schema_text.splitlines() if l.strip().startswith("required:"))
+    required_keys = _re.findall(r"'([^']*)'", required_line)
+    prop_keys = [a or b for a, b in _re.findall(r"(?:'([^']+)'|\b([A-Za-z_][A-Za-z0-9_]*))\s*:\s*\{ type:", schema_text)]
+    assert len(required_keys) >= 7, f"required 陣列覆蓋不足: {required_keys}"
+    assert len(prop_keys) >= 7, f"properties 覆蓋不足(僅抓到 {prop_keys};舊版守門只覆蓋第一個 property 即此類問題)"
+    for key in required_keys + prop_keys:
+        assert _re.fullmatch(r"[a-zA-Z0-9_.-]{1,64}", key), f"API-unsafe schema key: {key!r}"
+
+
 def test_render_block_planauthor_flag_only_changes_plan_author():
     data = _valid_data()
     data["flags"]["plan_author_xhigh"] = True
