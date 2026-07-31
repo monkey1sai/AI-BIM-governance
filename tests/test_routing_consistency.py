@@ -34,6 +34,10 @@ EXPECTED = {
     "std-evidence-closeout.js": {"closeout:execute:": "standard", "closeout:verify:": "judge"},
     "fable5-repo-advisory.js": {"scan:": "scan", "merge-dedup": "reason", "verify:": "reason", "completeness-critic": "arbiter"},
     "fu-adversarial-verify-generic.js": {"verify-batch:": "judge", "critic:": "arbiter"},
+    "mapping-coverage-loop.js": {
+        "plan:coverage": "arbiter", "baseline": "standard", "buckets:r": "standard",
+        "measure:r": "standard", "gate:r": "extract", "confirm:": "standard", "report": "standard",
+    },
     "plan-next-spec-to-done-aware.js": {
         "plans:phasing-rules": "scan", "plans:boundaries-contracts": "scan", "plans:ia-sequences-data": "scan",
         "repo:frontend-routes": "scan", "repo:backend-capabilities": "scan", "repo:merged-and-inflight": "scan",
@@ -43,6 +47,10 @@ EXPECTED = {
     "repo-health-scan.js": {"scan:${s.key}": "scan", "scan:progress": "arbiter"},
     "ship-item.js": {"ship:arbiter:${prNumber}": "arbiter"},
     "spec-to-done-adversarial-verify.js": {"verify:compliance": "arbiter", "verify:technical": "judge", "verify:usability": "judge", "verify:resilience": "judge"},
+    "token-strategy-tournament.js": {
+        "plan:tournament": "arbiter", "read:": "standard", "design:": "reason",
+        "judge:": "judge", "synthesize": "reason",
+    },
 }
 
 

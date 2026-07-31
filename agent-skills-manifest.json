@@ -343,6 +343,54 @@
       }
     },
     {
+      "name": "mapping-coverage-loop",
+      "locations": {
+        "claude": ".claude/skills/mapping-coverage-loop",
+        "codex": ".codex/skills/mapping-coverage-loop"
+      },
+      "sync": {
+        "mode": "independent"
+      },
+      "provenance": {
+        "kind": "repo-authored-platform-variants",
+        "source": "AI-BIM-governance",
+        "import_commit": "71cfa3a5ba03058648021a021e6c4f7b4c5f19fc",
+        "notes": "bim-workflows-pack (#454): Claude commander handbook and Codex per-phase SOP intentionally differ; gate/held semantics kept in sync per SKILL.md sync rule."
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "21ba513ad4c419f07778259d05901c4366478d6a3842901c81ac0d59f89c5cb2",
+          "codex": "eacd24b68870070152cd74f0aa42ee4cc13954835bec4c60193bb11f88d5f3d1"
+        }
+      }
+    },
+    {
+      "name": "token-strategy-tournament",
+      "locations": {
+        "claude": ".claude/skills/token-strategy-tournament",
+        "codex": ".codex/skills/token-strategy-tournament"
+      },
+      "sync": {
+        "mode": "independent"
+      },
+      "provenance": {
+        "kind": "repo-authored-platform-variants",
+        "source": "AI-BIM-governance",
+        "import_commit": "71cfa3a5ba03058648021a021e6c4f7b4c5f19fc",
+        "notes": "bim-workflows-pack (#454): Claude commander handbook and Codex per-phase SOP intentionally differ; gate/held semantics kept in sync per SKILL.md sync rule."
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "7858d4e767505539e370ee7c13fb92a92101afd32d61276015e25129d0785756",
+          "codex": "e42d82bc4b22e1780c02ac0fa01519a8a67a1f141ae2b896bf8c4bb063f5f8af"
+        }
+      }
+    },
+    {
       "name": "brainstorming",
       "locations": {
         "claude": ".claude/skills/brainstorming",
