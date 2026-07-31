@@ -93,6 +93,7 @@ Assert-True ($script.Contains('restore exec bits (F-2)')) 'linux target script m
 Assert-True ($script.Contains('scripts/deploy.ps1 -Build')) 'build flag must run deploy.ps1 -Build'
 Assert-True ($script.Contains('/home/bimdeploy/AI-bim-geo-data/env.local') -or $script.Contains('DATA_ROOT=''/home/bimdeploy/AI-bim-geo-data''')) 'override layer must live under the runtime data root, outside git clean reach'
 Assert-True ($script.Contains('Merge-DeployTargetEnvLayers')) 'remote merge must call the shared lib function (single implementation)'
+Assert-True ($script.Contains('/transport-lib.ps1')) 'remote merge must use the operator-shipped lib copy, never assume the checkout has it (pre-merge branches never do)'
 Assert-True (-not $script.Contains("`r")) 'script must be LF-only'
 Assert-True (-not ($script -match '\{\{[A-Z_]+\}\}')) 'no unreplaced template placeholders'
 
@@ -123,6 +124,7 @@ try {
     $dry = Invoke-RemoteTestDeployRebuild -Target $remoteTarget -OperatorRepoRoot $tempRoot -Build -DryRun
     Assert-True ($dry.SshArguments[-1] -eq 'bimdeploy@192.168.20.181') 'dry run must expose the ssh endpoint'
     Assert-True ($dry.PushCommand.Contains('/home/bimdeploy/AI-bim-geo/.env.web-plane.host-kit.base')) 'base env must land beside the effective env with the .base suffix'
+    Assert-True ($dry.LibPushCommand.Contains('/home/bimdeploy/AI-bim-geo-data/transport-lib.ps1')) 'transport lib must be shipped to the runtime data root'
     Assert-True ($dry.Script.Contains('deploy.ps1 -Build')) 'dry run script must include the build step'
 
     Write-Host '[test-remote-deploy-transport] all assertions passed'

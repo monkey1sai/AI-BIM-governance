@@ -183,7 +183,7 @@ Set-Content -LiteralPath $OutPath -Value (ConvertTo-DeployEnvContent -Values $me
 PSEOF
 pwsh -NoProfile -NonInteractive -File "$MERGE_TMP" \
   -BasePath "$BASE_ENV" -LocalPath "$LOCAL_ENV" -OutPath "$EFFECTIVE_ENV" \
-  -LibPath "$DEPLOY_ROOT/scripts/lib/remote-deploy-transport.ps1"
+  -LibPath "$DATA_ROOT/transport-lib.ps1"
 rm -f "$MERGE_TMP"
 
 echo "== effective env begin =="
@@ -241,20 +241,32 @@ function Invoke-RemoteTestDeployRebuild {
     $sshArguments = Get-RemoteDeploySshArguments -Target $Target -IdentityFile $IdentityFile
     $effectiveEnvName = '.env.web-plane.host-kit'
     $pushCommand = "mkdir -p '$([string]$Target.deploy_root)' && cat > '$([string]$Target.deploy_root)/$effectiveEnvName.base'"
+    # The remote merge cannot rely on the lib existing in the remote checkout
+    # (a pre-merge branch is exactly the self-referential bootstrap situation),
+    # so the operator ships THIS file alongside the dispatch - still the single
+    # implementation, delivered rather than assumed.
+    $libPushCommand = "mkdir -p '$([string]$Target.runtime_data_root)' && cat > '$([string]$Target.runtime_data_root)/transport-lib.ps1'"
 
     if ($DryRun) {
         return [pscustomobject]@{
-            SshArguments = $sshArguments
-            PushCommand  = $pushCommand
-            Script       = $rebuildScript
+            SshArguments   = $sshArguments
+            PushCommand    = $pushCommand
+            LibPushCommand = $libPushCommand
+            Script         = $rebuildScript
         }
     }
 
     # PS has no '<' stdin redirection; the pipeline feeds native stdin instead.
+    Get-Content -LiteralPath $PSCommandPath -Raw | & ssh @sshArguments $libPushCommand
+    if ($LASTEXITCODE -ne 0) { throw "remote_deploy_transport: transport lib push failed with exit $LASTEXITCODE." }
+
     Get-Content -LiteralPath $baseEnvPath -Raw | & ssh @sshArguments $pushCommand
     if ($LASTEXITCODE -ne 0) { throw "remote_deploy_transport: base env push failed with exit $LASTEXITCODE." }
 
-    $output = $rebuildScript | & ssh @sshArguments 'bash -s' 2>&1
+    # The PS pipeline appends an OS newline (CRLF on Windows) when feeding native
+    # stdin, which lands a stray \r line in bash. Base64 transport is byte-precise.
+    $scriptB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($rebuildScript))
+    $output = & ssh @sshArguments "echo '$scriptB64' | base64 -d | bash" 2>&1
     $exitCode = $LASTEXITCODE
 
     $outputText = ($output | Out-String)

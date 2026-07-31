@@ -1,0 +1,52 @@
+{
+  "schema_version": "deploy-target-env-snapshot/v1",
+  "target_id": "remote-linux-181",
+  "entries": [
+    {
+      "key": "PUBLIC_HOST",
+      "secret": false,
+      "value": "192.168.20.181"
+    },
+    {
+      "key": "KIT_STREAM_SERVER",
+      "secret": false,
+      "value": "192.168.20.181"
+    },
+    {
+      "key": "KIT_SIGNALING_PORT",
+      "secret": false,
+      "value": "49100"
+    },
+    {
+      "key": "KIT_MEDIA_SERVER",
+      "secret": false,
+      "value": "192.168.20.181"
+    },
+    {
+      "key": "KIT_MEDIA_PORT",
+      "secret": false,
+      "value": "47998"
+    },
+    {
+      "key": "VIEWER_PORT",
+      "secret": false,
+      "value": "5173"
+    },
+    {
+      "key": "VIEWER_BIND_HOST",
+      "secret": false,
+      "value": "0.0.0.0"
+    },
+    {
+      "key": "COORDINATOR_PORT",
+      "secret": false,
+      "value": "8004"
+    },
+    {
+      "key": "IFC_DOWNLOAD_STRICT",
+      "secret": false,
+      "value": "true"
+    }
+  ],
+  "overridden_keys": []
+}
