@@ -284,6 +284,32 @@ def test_max_budget_recovery_seals_prior_transition_errors_without_enabling_prog
     assert code == 2 and result["held"] == "resume_state_invalid"
 
 
+def test_max_budget_recovery_is_terminal_after_valid_history(tmp_path):
+    repo, head = _new_repo(tmp_path)
+    valid = _line(repo, head, "DONE@P5")
+    recovery = _line(
+        repo,
+        head,
+        "HELD@P5",
+        reason="resume_state_invalid",
+        agentCalls="40/40",
+        p5Rounds="2/2",
+        evidenceAttempts="2/2",
+    )
+    resumed = _line(
+        repo,
+        head,
+        "RESUMED@P5",
+        decision="operator-resume",
+        agentCalls="40/40",
+        p5Rounds="2/2",
+        evidenceAttempts="2/2",
+    )
+
+    code, result = _run(tmp_path, repo, [valid, recovery, resumed])
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+
 def test_fixed_limits_and_counter_overflow_fail_closed(tmp_path):
     repo, head = _new_repo(tmp_path)
     code, result = _run(

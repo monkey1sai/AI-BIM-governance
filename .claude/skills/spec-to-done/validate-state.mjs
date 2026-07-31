@@ -382,9 +382,17 @@ const parseHistoricalCheckpoint = (line, limits) => {
   return validateCheckpointSchema(parseStateLine(line), limits)
 }
 
+const isMaxBudgetInvalidRecovery = (checkpoint) =>
+  checkpoint.kind === 'HELD' &&
+  checkpoint.fields.reason === 'resume_state_invalid' &&
+  Object.values(checkpoint.counters).every((counter) => counter.used === counter.limit)
+
 const validateParsedTransition = (previous, current) => {
   if (previous.kind === 'DONE' && previous.phase === 'P7') {
     reject('resume_state_invalid', 'DONE@P7 is terminal and cannot be resumed or extended')
+  }
+  if (isMaxBudgetInvalidRecovery(previous)) {
+    reject('resume_state_invalid', 'max-budget resume_state_invalid recovery is terminal and cannot be extended')
   }
   if (!ALLOWED_PHASE_TRANSITIONS.has(`${previous.phase}>${current.phase}`)) {
     reject('resume_state_invalid', `illegal phase transition: ${previous.phase} -> ${current.phase}`)
@@ -438,11 +446,6 @@ const validateParsedTransition = (previous, current) => {
     reject('resume_state_invalid', 'cross-CLI handoff requires RESUMED with decision=cross-cli-handoff')
   }
 }
-
-const isMaxBudgetInvalidRecovery = (checkpoint) =>
-  checkpoint.kind === 'HELD' &&
-  checkpoint.fields.reason === 'resume_state_invalid' &&
-  Object.values(checkpoint.counters).every((counter) => counter.used === counter.limit)
 
 const validateAuditChain = (lines, current, limits) => {
   if (lines.length < 2) return
