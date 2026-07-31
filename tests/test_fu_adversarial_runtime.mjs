@@ -6,7 +6,11 @@ import test from 'node:test'
 const source = (await readFile(new URL('../.claude/workflows/fu-adversarial-verify-generic.js', import.meta.url), 'utf8'))
   .replace(/^export\s+/gm, '')
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
-const execute = new AsyncFunction('args', 'phase', 'log', 'agent', 'parallel', '$', source)
+// 刻意不提供 `$`：真實 workflow runtime 沒有 shell helper。舊 harness 把 `$` 當參數注入，
+// 於是 374 行測試全綠，而線上每一次執行都在 identity gate 被 catch 成
+// evidence_stale/git_identity_unavailable、agentCallsUsed=0——等於從未複驗過。
+// 這個簽章就是回歸守衛：任何重新引入 `$` 的改動都會在這裡炸掉。
+const execute = new AsyncFunction('args', 'phase', 'log', 'agent', 'parallel', source)
 
 const HEAD = 'a'.repeat(40)
 const OTHER_HEAD = 'b'.repeat(40)
@@ -40,60 +44,33 @@ function findingsFromPrompt(prompt) {
   return JSON.parse(JSON.parse(match[1]))
 }
 
+const DEFAULT_FILE_CONTENT = `${Array(6).fill('// context').join('\n')}\nconst observed = true\n`
+
+// coordinator 供給的 git 事實（真實流程由 SKILL.md P5 用固定指令收集後經 args.git 傳入）。
+function gitFacts(options = {}) {
+  const subjectFiles = { 'src/example.js': DEFAULT_FILE_CONTENT, ...(options.evidenceContentByFile || {}) }
+  if (options.missingEvidence) delete subjectFiles['src/example.js']
+  const tracked = ['src/example.js', ...Object.keys(subjectFiles)]
+    .filter((file) => !(options.untrackedSuspectFiles || []).includes(file))
+  return {
+    originMainSha: options.targetNotTrustedRef ? OTHER_HEAD : TARGET,
+    headSha: options.initialHeadMismatch ? OTHER_HEAD : HEAD,
+    mergeBase: options.wrongMergeBase ? OTHER_HEAD : BASE,
+    cleanBefore: !options.initialDirty,
+    targetIsCommit: !options.targetIsNotCommit,
+    baseIsCommit: !options.baseIsNotCommit,
+    subjectIsCommit: true,
+    trackedAtSubject: [...new Set(tracked)],
+    subjectFiles,
+    baseFiles: options.baseFiles || {},
+  }
+}
+
 function harness(options = {}) {
-  const commands = []
   const agents = []
   const prompts = []
   const phases = []
   const logs = []
-  let statusCount = 0
-  let headCount = 0
-  let evidenceRead = false
-
-  const dollar = (strings, ...values) => {
-    const command = commandText(strings, values)
-    commands.push(command)
-    return {
-      text: async () => {
-        if (command === `git -C ${ROOT} status --porcelain`) {
-          statusCount += 1
-          if (statusCount === 1 && options.initialDirty) return ' M src/example.js\n'
-          if (statusCount > 1 && options.finalDirty) return ' M src/example.js\n'
-          return ''
-        }
-        if (command === `git -C ${ROOT} rev-parse HEAD`) {
-          headCount += 1
-          if (headCount === 1 && options.initialHeadMismatch) return OTHER_HEAD
-          if (headCount > 1 && options.finalHeadChanges) return OTHER_HEAD
-          if (options.driftDuringEvidence && evidenceRead) return OTHER_HEAD
-          return HEAD
-        }
-        if (command === `git -C ${ROOT} cat-file -t ${TARGET}`) return options.targetIsNotCommit ? 'tree\n' : 'commit\n'
-        if (command === `git -C ${ROOT} cat-file -t ${BASE}`) return options.baseIsNotCommit ? 'tree\n' : 'commit\n'
-        if (command === `git -C ${ROOT} cat-file -t ${HEAD}`) return 'commit\n'
-        const suspectPrefix = `git -C ${ROOT} cat-file -t ${HEAD}:`
-        if (command.startsWith(suspectPrefix)) {
-          const file = command.slice(suspectPrefix.length)
-          if (file === '.env' || options.untrackedSuspectFiles?.includes(file)) throw new Error('not tracked')
-          return 'blob\n'
-        }
-        if (command === `git -C ${ROOT} merge-base ${TARGET} ${HEAD}`) {
-          return options.wrongMergeBase ? OTHER_HEAD : BASE
-        }
-        const showPrefix = `git -C ${ROOT} show ${HEAD}:`
-        if (command.startsWith(showPrefix)) {
-          evidenceRead = true
-          const file = command.slice(showPrefix.length)
-          if (options.missingEvidence || file.includes('does-not-exist')) throw new Error('missing blob')
-          if (options.evidenceContentByFile && Object.hasOwn(options.evidenceContentByFile, file)) {
-            return options.evidenceContentByFile[file]
-          }
-          return `${Array(6).fill('// context').join('\n')}\nconst observed = true\n`
-        }
-        throw new Error(`unexpected command: ${command}`)
-      },
-    }
-  }
 
   const agent = async (prompt, callOptions) => {
     prompts.push(prompt)
@@ -126,7 +103,6 @@ function harness(options = {}) {
     (message) => logs.push(message),
     agent,
     parallel,
-    dollar,
   )
   const defaultArgs = {
     root: ROOT,
@@ -140,11 +116,11 @@ function harness(options = {}) {
     maxVerifierBatches: 2,
     remainingAgentCalls: 40,
     p5Round: 1,
+    git: gitFacts(options),
   }
 
   return {
     agents,
-    commands,
     logs,
     phases,
     prompts,
@@ -269,15 +245,53 @@ test('critic output cannot exceed the shared finding registry budget', async () 
   assert.equal(result.critic, null)
 })
 
-test('head or worktree drift after review invalidates all evidence', async () => {
-  for (const options of [{ finalDirty: true }, { finalHeadChanges: true }]) {
-    const run = harness(options)
-    const result = await run.run()
-    assert.equal(result.held, 'evidence_stale')
-    assert.deepEqual(result.verdicts, [])
-    assert.equal(result.critic, null)
-    assert.ok(run.agents.length > 0)
+test('the workflow source performs no shell commands of its own', () => {
+  // 這是本檔的核心回歸守衛。workflow runtime 沒有 `$`；任何重新引入的 shell 呼叫都會讓
+  // identity gate 在線上被 catch 成 git_identity_unavailable，而測試卻可能看起來正常。
+  // 只掃非註解行：說明文字裡提到 `$` 是允許的，實際呼叫不行。
+  const codeOnly = source.split('\n').filter((line) => !/^\s*\/\//.test(line)).join('\n')
+  assert.ok(!/\$`/.test(codeOnly), 'workflow must not call a shell helper; git facts come from args.git')
+  assert.ok(!/readSnapshot/.test(codeOnly), 'post-review snapshots cannot run inside the workflow')
+})
+
+test('post-review immutability is declared as a coordinator obligation, not silently skipped', async () => {
+  const run = harness({ critic: { issues: [] } })
+  const result = await run.run({ findings: [] })
+  assert.equal(result.held, null)
+  assert.deepEqual(result.postReviewCheck, {
+    requiredBy: 'coordinator',
+    expectCleanWorktree: true,
+    expectHeadSha: HEAD,
+    onMismatch: 'evidence_stale:subject_changed_after_review',
+    note: 'workflow runtime has no shell; this check cannot be performed inside the workflow',
+  })
+})
+
+test('target sha must be the coordinator-resolved trusted ref', async () => {
+  const run = harness({ targetNotTrustedRef: true })
+  const result = await run.run()
+  assert.equal(result.held, 'evidence_stale')
+  assert.equal(result.detail, 'target_sha_not_trusted_ref')
+  assert.equal(run.agents.length, 0)
+})
+
+test('missing or malformed coordinator git facts fail before any dispatch', async () => {
+  for (const git of [undefined, null, {}, { ...gitFacts(), originMainSha: 'short' }, { ...gitFacts(), cleanBefore: 'yes' }]) {
+    const run = harness()
+    const result = await run.run({ git })
+    assert.equal(result.held, 'bad_args')
+    assert.equal(result.detail, 'invalid_required_args')
+    assert.equal(run.agents.length, 0)
   }
+})
+
+test('evidence for a path deleted by the subject may be bound to the supplied base blob', async () => {
+  const removed = verdict('F1', 'fix_now')
+  removed.evidence = { file: 'src/removed.js', line: 7, quote: 'const observed = true' }
+  const run = harness({ verdicts: { F1: removed }, baseFiles: { 'src/removed.js': DEFAULT_FILE_CONTENT } })
+  const result = await run.run()
+  assert.equal(result.held, null)
+  assert.deepEqual(result.fix_now.map((item) => item.finding_id), ['F1'])
 })
 
 test('bad immutable args fail before commands and agents', async () => {
@@ -291,18 +305,19 @@ test('bad immutable args fail before commands and agents', async () => {
     const run = harness()
     const result = await run.runRaw(args)
     assert.equal(result.held, 'bad_args')
-    assert.equal(run.commands.length, 0)
     assert.equal(run.agents.length, 0)
   }
 })
 
-test('head drift during subject evidence binding invalidates all evidence', async () => {
-  const run = harness({ driftDuringEvidence: true })
+test('evidence citing a file the coordinator did not supply cannot pass as verified', async () => {
+  const unsupplied = verdict('F1', 'fix_now')
+  unsupplied.evidence = { file: 'src/never-supplied.js', line: 7, quote: 'const observed = true' }
+  const run = harness({ verdicts: { F1: unsupplied } })
   const result = await run.run()
-  assert.equal(result.held, 'evidence_stale')
-  assert.equal(result.detail, 'subject_sha_changed_after_evidence_binding')
-  assert.deepEqual(result.verdicts, [])
-  assert.equal(result.critic, null)
+  assert.deepEqual(result.fix_now, [])
+  assert.equal(result.unverified.length, 1)
+  assert.equal(result.unverified[0].taxonomy_error, 'evidence_file_not_supplied')
+  assert.equal(result.held, 'reviewer_agent_failed')
 })
 
 test('oversized or path-traversing findings fail before commands and agents', async () => {
@@ -314,7 +329,6 @@ test('oversized or path-traversing findings fail before commands and agents', as
     const run = harness()
     const result = await run.run({ findings })
     assert.ok(['run_budget_exhausted', 'bad_findings'].includes(result.held))
-    assert.equal(run.commands.length, 0)
     assert.equal(run.agents.length, 0)
   }
 })
@@ -337,7 +351,7 @@ test('wrong finding identity is reviewer failure instead of a silent pass', asyn
 
 test('reviewer evidence must resolve to the exact subject blob and line', async () => {
   const fabricated = verdict('F1', 'none', 'in_scope', 'refuted')
-  fabricated.evidence = { file: 'does-not-exist.js', line: 999, quote: 'fabricated' }
+  fabricated.evidence = { file: 'src/example.js', line: 999, quote: 'fabricated' }
   const run = harness({ verdicts: { F1: fabricated } })
   const result = await run.run()
   assert.equal(result.held, 'reviewer_agent_failed')

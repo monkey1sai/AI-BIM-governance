@@ -21,23 +21,20 @@ const BASE = 'c'.repeat(40)
 const TARGET = 'd'.repeat(40)
 const ROOT = 'C:/repo'
 
-const commandText = (strings, values) => strings.reduce(
-  (result, part, index) => result + part + (index < values.length ? String(values[index]) : ''), '')
-const dollar = (strings, ...values) => {
-  const command = commandText(strings, values)
-  return { text: async () => {
-    if (command === `git -C ${ROOT} status --porcelain`) return ''
-    if (command === `git -C ${ROOT} rev-parse HEAD`) return HEAD
-    if (command === `git -C ${ROOT} cat-file -t ${TARGET}`) return 'commit\n'
-    if (command === `git -C ${ROOT} cat-file -t ${BASE}`) return 'commit\n'
-    if (command === `git -C ${ROOT} cat-file -t ${HEAD}`) return 'commit\n'
-    if (command === `git -C ${ROOT} cat-file -t ${HEAD}:src/x.py`) return 'blob\n'
-    if (command === `git -C ${ROOT} merge-base ${TARGET} ${HEAD}`) return BASE
-    if (command === `git -C ${ROOT} show ${HEAD}:src/x.py`) {
-      return `${Array(6).fill('// context').join('\n')}\nconst observed = true\n`
-    }
-    throw new Error(`unexpected command: ${command}`)
-  } }
+// workflow runtime 沒有 shell helper：git 事實一律由 coordinator 經 args.git 供給。
+const NL = String.fromCharCode(10)
+const FILE_CONTENT = [...Array(6).fill('// context'), 'const observed = true', ''].join(NL)
+const gitFacts = {
+  originMainSha: TARGET,
+  headSha: HEAD,
+  mergeBase: BASE,
+  cleanBefore: true,
+  targetIsCommit: true,
+  baseIsCommit: true,
+  subjectIsCommit: true,
+  trackedAtSubject: ['src/x.py'],
+  subjectFiles: { 'src/x.py': FILE_CONTENT },
+  baseFiles: {},
 }
 
 const batchFromPrompt = (prompt) => {
@@ -75,7 +72,7 @@ const agent = async (prompt, options) => {
   throw new Error(`unexpected agent label: ${options.label}`)
 }
 const parallel = async (thunks) => Promise.all(thunks.map((thunk) => thunk()))
-const run = new AsyncFunction('args', 'phase', 'log', 'parallel', 'agent', '$', source)
+const run = new AsyncFunction('args', 'phase', 'log', 'parallel', 'agent', source)
 run({
   root: ROOT,
   label: 'batch-contract',
@@ -87,7 +84,8 @@ run({
   maxVerifierBatches: 2,
   remainingAgentCalls: 40,
   p5Round: 1,
-}, () => {}, () => {}, parallel, agent, dollar)
+  git: gitFacts,
+}, () => {}, () => {}, parallel, agent)
   .then((out) => process.stdout.write(JSON.stringify({ out, calls })))
   .catch((error) => {
     process.stderr.write(error.stack || String(error))

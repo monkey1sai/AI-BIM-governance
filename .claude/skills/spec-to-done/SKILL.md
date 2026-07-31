@@ -119,15 +119,27 @@ P4 = userFacing ? Workflow({name:'std-evidence', args:{worktreeRoot, slug, specP
          (勿在 workflow 內自啟)後重跑 P4;否則 HELD(not observed 不得宣告 done)
 P5 前置(指揮官親自建立 immutable review snapshot):
      所有 intended tracked code/tests/evidence 先 commit 完整；`git status --porcelain` 必須空。
+     **先 `git fetch origin +refs/heads/main:refs/remotes/origin/main`**，再
      targetSha=`git rev-parse origin/main`；subjectSha=`git rev-parse HEAD`；
      baseSha=`git merge-base <targetSha> <subjectSha>`(三者皆完整 40-hex，且 baseSha 不得等於 subjectSha)。
      domainContext=從 spec scope 壓成的 owning service/public entrypoint/deployment boundary，≤8000 char；
        不得把某個 service/runtime/tool 版本硬編進 generic workflow。
+     **workflow runtime 沒有 shell(`typeof $ === 'undefined'`)，git 事實一律由指揮官收集後經 args.git 傳入**；
+     以下全部在同一個 clean snapshot 內取得，任一步之後 worktree 有變動就必須整批重取：
+       git.cleanBefore   = (`git status --porcelain` 為空)
+       git.headSha       = `git rev-parse HEAD`                      // 必須 === subjectSha
+       git.originMainSha = `git rev-parse origin/main`               // 必須 === targetSha(trusted-ref 綁定)
+       git.mergeBase     = `git merge-base <targetSha> <subjectSha>` // 必須 === baseSha
+       git.targetIsCommit/baseIsCommit/subjectIsCommit = (`git cat-file -t <sha>` === 'commit')
+       git.trackedAtSubject = registry 內所有 suspectFile 中，`git cat-file -t <subjectSha>:<file>` === 'blob' 者
+       git.subjectFiles  = {path: `git show <subjectSha>:<path>`}    // range 內變更檔 + 全部 suspectFile
+       git.baseFiles     = {path: `git show <baseSha>:<path>`}       // 僅本次刪除/改名前的路徑
+     subjectFiles+baseFiles 合計上限 400000 char，超過即 bad_args——拆小 change，不得偷減供給範圍。
 P5 = Workflow({name:'fu-adversarial-verify-generic', args:{
         root: worktreeRoot, label: slug, targetSha, baseSha, subjectSha, domainContext,
         findings: [...P3.finalReview.findings, ...((P4.evidence && P4.evidence.gaps) || [])],
         criticFocus: '通讀 immutable diff 找新誠實違規 / 行為 regression / spec-drift / 空測試 / DEMO DATA 漏標。',
-        maxVerifierBatches:2, p5Round:p5Rounds.used+1, remainingAgentCalls}})
+        maxVerifierBatches:2, p5Round:p5Rounds.used+1, remainingAgentCalls, git}})
      // DACS（arXiv:2604.07911）：P5 findings 一律壓成 registry {id, q:<一句話 claim ≤800 char>, suspectFile}，
      //   不灌 P3 finalReview 全文；suspectFile/evidence.file 必須是 canonical repo-relative path，且 suspectFile
      //   必須是 subjectSha 的 tracked blob；fu-...js 對超長 q / 缺/重複 id / 非法或未追蹤路徑 / >32 findings
@@ -142,6 +154,13 @@ P5 = Workflow({name:'fu-adversarial-verify-generic', args:{
        retry/resume/新 session 都不得把兩個累計器歸零。額度已滿一律 held='run_budget_exhausted'。
      immutable/infra gate:P5===null、P5.critic===null、P5.verdicts.length !== 送入 findings 數、
        P5.targetSha!==targetSha、P5.baseSha!==baseSha 或 P5.subjectSha!==subjectSha 都不可視為通過。
+     **P5 回傳後立即執行 P5.postReviewCheck(workflow 沒有 shell，這一步只能由指揮官做，不得跳過)**：
+       重跑 `git status --porcelain`(須空)與 `git rev-parse HEAD`(須 === postReviewCheck.expectHeadSha)；
+       任一不符即視同 held='evidence_stale'、丟棄全部 verdict，依 evidence_stale 路徑重取 snapshot。
+       未執行本檢查就引用 P5 結果 = 違反 evidence 契約，等同宣告未取得的 pass。
+     P5.unverified 內 taxonomy_error==='evidence_file_not_supplied' 代表指揮官供給的 git.subjectFiles/
+       baseFiles 沒有涵蓋該 evidence 路徑——補齊供給後在同一 clean subjectSha 重呼(仍消耗額度)，
+       不得因為「工具說 unverified」就把該 finding 當成不存在。
      P5.held==='bad_args'/'bad_findings' → 修正 invocation/registry；只有 P5 round 尚有額度才可重呼。
      P5.held==='evidence_stale' → 丟棄全部舊 verdict；重新 fetch/commit/clean、重取 targetSha+baseSha+subjectSha 後啟動新 P5，
        不得 resume 或沿用舊 SHA evidence；新 snapshot 的 P5 仍消耗下一輪額度，無額度即 HELD。
@@ -151,7 +170,11 @@ P5 = Workflow({name:'fu-adversarial-verify-generic', args:{
        外部條件實現後在新 clean subjectSha 重跑，禁止送進 std-implement 假修。
      gate(內容性):P5.fix_now.length===0 && P5.external_blockers.length===0 && P5.unverified.length===0。
        P5.critic.overall_safe 是 coordinator 計算的摘要，不是 reviewer 自報的獨立放行鍵。
-     P5.known_gaps/P5.follow_ups 不自動修；寫入 PR/final known gaps，且任一非空時 Full completion claimed=false。
+     P5.known_gaps/P5.follow_ups 不自動修；**逐輪併入 deferredAccum(以 finding_id 去重，跨 round/retry/
+       resume 持續累計，重跑 P5 不得歸零、不得只看最後一輪——修復型重跑的 registry 只帶 fix_now，
+       critic 不保證重新發現前一輪的 deferred 項)**。寫入 PR/final known gaps 與 Full completion
+       claimed=false 的判定一律以 deferredAccum 為準；任何 deferred 項要移出 deferredAccum，只能由
+       指揮官在 final report 附上該項已閉合的具體 evidence，不得因新一輪未再回報就視為消失。
      P5.fix_now 非空 → 依 executionMode 走唯一有界修復通道：full 用 `std-implement mode:'fix'`；
        evidence-closeout 只能在剩餘 evidence attempt 內重跑 `std-evidence-closeout`，禁止改 production。
        fixFindings=P5.fix_now.map(x=>({id:x.finding_id,q:x.reason,suspectFile:x.evidence.file}))。

@@ -1,8 +1,14 @@
+// Workflow runtime 沒有 shell helper（實測：`typeof $ === 'undefined'`，globalThis 只有
+// log/phase/console/budget/setTimeout/clearTimeout/Date/agent/parallel/pipeline/workflow/args）。
+// 舊版在 identity gate 直接呼叫 `$`，每一次執行都被 catch 成 evidence_stale/git_identity_unavailable
+// 且 agentCallsUsed=0——形同從未複驗過；單元測試把 `$` 當參數注入才會綠。
+// 因此所有 git 事實改由 coordinator 收集後經 args.git 傳入，本檔只驗證「被傳入的資料」。
+// 收集契約見 `.claude/skills/spec-to-done/SKILL.md` P5，以及本檔 GIT_FACTS 驗證段。
 export const meta = {
   name: 'fu-adversarial-verify-generic',
-  description: 'immutable target/base/subject SHA 對抗複驗：最多兩個 finding batches + sequential holistic critic；只把 subject-bound evidence、in-scope 的 fix_now 送回修復',
+  description: 'immutable target/base/subject SHA 對抗複驗：coordinator 供給 git 事實（含 trusted-ref 綁定與 subject 檔案內容），最多兩個 finding batches + sequential holistic critic；只把 subject-bound evidence、in-scope 的 fix_now 送回修復',
   phases: [
-    { title: 'Validate', detail: 'clean worktree + immutable target/base/subject identity gate' },
+    { title: 'Validate', detail: 'coordinator-supplied clean worktree + trusted-ref-bound target/base/subject identity gate' },
     { title: 'Verify', detail: '最多兩個 Opus/max batch verifier 逐 finding 輸出 taxonomy + Fable/max sequential holistic apex critic' },
   ],
 }
@@ -137,7 +143,24 @@ const MAX_P5_ROUNDS = 2
 const VERIFIER_BATCHES = A.maxVerifierBatches ?? MAX_VERIFIER_BATCHES
 const REMAINING_AGENT_CALLS = A.remainingAgentCalls
 const P5_ROUND = A.p5Round
-const BAD_ARGS = !ARGS_SAFE || typeof ROOT !== 'string' || ROOT.length < 1 || ROOT.length > 4096 || ROOT.includes('\0') ||
+
+// coordinator 供給的 git 事實。本檔不執行任何指令，只驗證這份資料自洽且綁定到 trusted ref。
+const MAX_SUPPLIED_FILE_CHARS = 400000
+const GIT = A.git !== null && typeof A.git === 'object' && !Array.isArray(A.git) ? A.git : null
+const isPathMap = (value) => value !== null && typeof value === 'object' && !Array.isArray(value) &&
+  Object.entries(value).every(([key, content]) => typeof key === 'string' && typeof content === 'string')
+const SUBJECT_FILES = GIT && GIT.subjectFiles != null ? GIT.subjectFiles : {}
+const BASE_FILES = GIT && GIT.baseFiles != null ? GIT.baseFiles : {}
+const suppliedChars = (map) => Object.values(map).reduce((sum, content) => sum + content.length, 0)
+const BAD_GIT = GIT === null ||
+  !isSha(GIT.originMainSha) || !isSha(GIT.headSha) || !isSha(GIT.mergeBase) ||
+  typeof GIT.cleanBefore !== 'boolean' ||
+  typeof GIT.targetIsCommit !== 'boolean' || typeof GIT.baseIsCommit !== 'boolean' || typeof GIT.subjectIsCommit !== 'boolean' ||
+  !Array.isArray(GIT.trackedAtSubject) || !GIT.trackedAtSubject.every((path) => typeof path === 'string') ||
+  !isPathMap(SUBJECT_FILES) || !isPathMap(BASE_FILES) ||
+  suppliedChars(SUBJECT_FILES) + suppliedChars(BASE_FILES) > MAX_SUPPLIED_FILE_CHARS
+
+const BAD_ARGS = !ARGS_SAFE || typeof ROOT !== 'string' || ROOT.length < 1 || ROOT.length > 4096 || ROOT.includes('\0') || BAD_GIT ||
   typeof LABEL !== 'string' || LABEL.length < 1 || LABEL.length > 120 ||
   TARGET_SHA === null || BASE_SHA === null || SUBJECT_SHA === null ||
   typeof DOMAIN_CONTEXT !== 'string' || DOMAIN_CONTEXT.trim().length < 1 || DOMAIN_CONTEXT.length > 8000 ||
@@ -229,36 +252,28 @@ const stale = (detail, extra = {}) => {
   log(`${LABEL} immutable evidence HELD：${detail}`)
   return emptyResult(LABEL, 'evidence_stale', detail, TARGET_SHA, BASE_SHA, SUBJECT_SHA, extra)
 }
-const readSnapshot = async () => ({
-  status: (await $`git -C ${ROOT} status --porcelain`.text()).trim(),
-  head: (await $`git -C ${ROOT} rev-parse HEAD`.text()).trim().toLowerCase(),
-})
-
 phase('Validate')
-try {
-  const before = await readSnapshot()
-  if (before.status) return stale('worktree_dirty_before_review')
-  if (before.head !== SUBJECT_SHA) return stale('subject_sha_not_current_head')
-  if (BASE_SHA === SUBJECT_SHA) return stale('empty_review_range')
-  const targetType = (await $`git -C ${ROOT} cat-file -t ${TARGET_SHA}`.text()).trim()
-  const baseType = (await $`git -C ${ROOT} cat-file -t ${BASE_SHA}`.text()).trim()
-  const subjectType = (await $`git -C ${ROOT} cat-file -t ${SUBJECT_SHA}`.text()).trim()
-  if (targetType !== 'commit' || baseType !== 'commit' || subjectType !== 'commit') return stale('identity_is_not_commit')
-  const expectedBase = (await $`git -C ${ROOT} merge-base ${TARGET_SHA} ${SUBJECT_SHA}`.text()).trim().toLowerCase()
-  if (expectedBase !== BASE_SHA) return stale('base_sha_not_target_subject_merge_base')
-} catch (_) {
-  return stale('git_identity_unavailable')
-}
+// coordinator 必須以下列固定指令收集，且在同一個乾淨 worktree 快照內完成：
+//   git -C <root> status --porcelain            → cleanBefore（空字串才是 true）
+//   git -C <root> rev-parse HEAD                → headSha
+//   git -C <root> rev-parse <trusted target ref>→ originMainSha（例如 origin/main）
+//   git -C <root> cat-file -t <sha>             → targetIsCommit / baseIsCommit / subjectIsCommit
+//   git -C <root> merge-base <target> <subject> → mergeBase
+//   git -C <root> ls-tree -r --name-only <subject> → trackedAtSubject（或逐一 cat-file -t）
+//   git -C <root> show <subject>:<path>         → subjectFiles[path]
+//   git -C <root> show <base>:<path>            → baseFiles[path]（僅本次刪除/改名前的路徑）
+if (!GIT.cleanBefore) return stale('worktree_dirty_before_review')
+if (GIT.headSha.toLowerCase() !== SUBJECT_SHA) return stale('subject_sha_not_current_head')
+if (BASE_SHA === SUBJECT_SHA) return stale('empty_review_range')
+if (!GIT.targetIsCommit || !GIT.baseIsCommit || !GIT.subjectIsCommit) return stale('identity_is_not_commit')
+if (GIT.mergeBase.toLowerCase() !== BASE_SHA) return stale('base_sha_not_target_subject_merge_base')
+// target 必須是 coordinator 解析出的 trusted ref 本身，否則任意 feature 祖先都能冒充 target
+// 而讓整段較早的 commit 逃過複驗。
+if (GIT.originMainSha.toLowerCase() !== TARGET_SHA) return stale('target_sha_not_trusted_ref')
 
-const invalidSuspectFiles = []
-for (const file of [...new Set(FINDINGS.map((finding) => finding.suspectFile).filter(Boolean))]) {
-  try {
-    const objectType = (await $`git -C ${ROOT} cat-file -t ${`${SUBJECT_SHA}:${file}`}`.text()).trim()
-    if (objectType !== 'blob') invalidSuspectFiles.push(file)
-  } catch (_) {
-    invalidSuspectFiles.push(file)
-  }
-}
+const trackedAtSubject = new Set(GIT.trackedAtSubject)
+const invalidSuspectFiles = [...new Set(FINDINGS.map((finding) => finding.suspectFile).filter(Boolean))]
+  .filter((file) => !trackedAtSubject.has(file))
 if (invalidSuspectFiles.length) {
   return emptyResult(LABEL, 'bad_findings', 'suspect_file_not_tracked_at_subject_sha', TARGET_SHA, BASE_SHA, SUBJECT_SHA, {
     badCount: invalidSuspectFiles.length,
@@ -327,12 +342,14 @@ if (Array.isArray(rawCritic.issues) && FINDINGS.length + rawCritic.issues.length
   return emptyResult(LABEL, 'run_budget_exhausted', `reviewer outputs=${FINDINGS.length + rawCritic.issues.length} exceeds MAX_FINDINGS=${MAX_FINDINGS}; split the change instead of accepting an unbounded critic wave`, TARGET_SHA, BASE_SHA, SUBJECT_SHA, { verifierBatchCount, agentCallsUsed })
 }
 
-try {
-  const after = await readSnapshot()
-  if (after.status) return stale('worktree_dirty_after_review', { verifierBatchCount, agentCallsUsed })
-  if (after.head !== SUBJECT_SHA) return stale('subject_sha_changed_after_review', { verifierBatchCount, agentCallsUsed })
-} catch (_) {
-  return stale('git_identity_unavailable_after_review', { verifierBatchCount, agentCallsUsed })
+// 舊版在此處自行重讀 worktree 快照。沒有 shell 就做不到，且不得假裝做過：改為在結果中
+// 宣告 coordinator 必須在收到本結果後立即複驗的條件；未複驗即引用本結果者違反 evidence 契約。
+const postReviewCheck = {
+  requiredBy: 'coordinator',
+  expectCleanWorktree: true,
+  expectHeadSha: SUBJECT_SHA,
+  onMismatch: 'evidence_stale:subject_changed_after_review',
+  note: 'workflow runtime has no shell; this check cannot be performed inside the workflow',
 }
 
 const rawVerdicts = batchResults.flatMap((result) => Array.isArray(result && result.verdicts) ? result.verdicts : [])
@@ -375,17 +392,15 @@ if (!findingResultsValid || !criticValid || !uniqueIds) {
   })
 }
 
-const evidenceFileCache = new Map()
-const subjectFile = async (file) => {
-  if (evidenceFileCache.has(file)) return evidenceFileCache.get(file)
-  let content = null
-  try { content = await $`git -C ${ROOT} show ${`${SUBJECT_SHA}:${file}`}`.text() }
-  catch (_) { content = null }
-  evidenceFileCache.set(file, content)
-  return content
+// 只認 coordinator 在 immutable range 快照下供給的內容：subjectFiles 是 subject 側，
+// baseFiles 供本次刪除/改名前的路徑（否則刪除型 regression 永遠無法舉證）。
+const suppliedContent = (file) => {
+  if (Object.prototype.hasOwnProperty.call(SUBJECT_FILES, file)) return SUBJECT_FILES[file]
+  if (Object.prototype.hasOwnProperty.call(BASE_FILES, file)) return BASE_FILES[file]
+  return null
 }
-const evidenceMatchesSubject = async (evidence) => {
-  const content = await subjectFile(evidence.file)
+const evidenceMatchesSubject = (evidence) => {
+  const content = suppliedContent(evidence.file)
   if (typeof content !== 'string') return false
   const normalizedContent = content.replace(/\r\n/g, '\n')
   const normalizedQuote = evidence.quote.replace(/\r\n/g, '\n')
@@ -395,16 +410,17 @@ const evidenceMatchesSubject = async (evidence) => {
   if (evidence.line > sourceLines.length) return false
   return sourceLines.slice(evidence.line - 1, evidence.line - 1 + quoteLines.length).join('\n').includes(normalizedQuote)
 }
+// 檔案有供給但 quote/line 對不上 → 整批 fail（與舊行為一致，代表 reviewer 捏造證據）。
+// 檔案根本沒被供給 → 本檔無法機器驗證，該筆單獨降級為 unverified（見下方 classify），
+// 不可當成通過；unverified 非空本來就會 held，所以整體仍然 fail-closed。
+const unsuppliedEvidenceIds = new Set()
 const invalidEvidenceIds = []
 for (const value of [...fv, ...rawCritic.issues]) {
-  if (!(await evidenceMatchesSubject(value.evidence))) invalidEvidenceIds.push(value.finding_id)
-}
-try {
-  const afterEvidenceBinding = await readSnapshot()
-  if (afterEvidenceBinding.status) return stale('worktree_dirty_after_evidence_binding', { verifierBatchCount, agentCallsUsed })
-  if (afterEvidenceBinding.head !== SUBJECT_SHA) return stale('subject_sha_changed_after_evidence_binding', { verifierBatchCount, agentCallsUsed })
-} catch (_) {
-  return stale('git_identity_unavailable_after_evidence_binding', { verifierBatchCount, agentCallsUsed })
+  if (suppliedContent(value.evidence.file) === null) {
+    unsuppliedEvidenceIds.add(value.finding_id)
+  } else if (!evidenceMatchesSubject(value.evidence)) {
+    invalidEvidenceIds.push(value.finding_id)
+  }
 }
 if (invalidEvidenceIds.length) {
   return emptyResult(LABEL, 'reviewer_agent_failed', 'evidence_not_bound_to_subject_sha', TARGET_SHA, BASE_SHA, SUBJECT_SHA, {
@@ -424,7 +440,9 @@ const classified = {
 }
 const markUnverified = (value, taxonomyError) => classified.unverified.push({ ...value, taxonomy_error: taxonomyError })
 for (const value of [...fv, ...rawCritic.issues]) {
-  if (value.disposition !== 'external_blocker' && value.unblock_condition !== null) {
+  if (unsuppliedEvidenceIds.has(value.finding_id)) {
+    markUnverified(value, 'evidence_file_not_supplied')
+  } else if (value.disposition !== 'external_blocker' && value.unblock_condition !== null) {
     markUnverified(value, 'unblock_condition_only_for_external_blocker')
   } else if (value.verdict === 'unverified') {
     markUnverified(value, 'evidence_not_verified')
@@ -467,4 +485,5 @@ return {
   critic,
   verifierBatchCount,
   agentCallsUsed,
+  postReviewCheck,
 }
