@@ -21,7 +21,7 @@ $script:SelfReferentialMechanismPattern = @(
     '^scripts/verify-all\.ps1$'
     '^scripts/dev/rebuild-test-deploy\.ps1$'
     '^scripts/dev/start-isolated-branch-stack\.ps1$'
-    '^scripts/lib/(preflight-[a-z-]+|deploy-report|host-native-launcher|rebuild-test-deploy|start-child-with-environment|kit-log-probe|smoke-evidence)\.ps1$'
+    '^scripts/lib/(preflight-[a-z-]+|deploy-report|host-native-launcher|rebuild-test-deploy|start-child-with-environment|kit-log-probe|smoke-evidence|design-assets)\.ps1$'
     '^scripts/lib/platform/'
     '^scripts/lib/(design-system-gate|pr-review-agent|production-boundary-contract)\.ps1$'
     '^scripts/tests/(check-pr-body-evidence|verify-design-system-reference|verify-design-system-visual-result|verify-functional-runtime-result|verify-security-exceptions|verify-openspec-lifecycle)\.ps1$'
@@ -86,9 +86,16 @@ function Assert-SelfReferentialBootstrapReason {
         throw "self_referential_bootstrap: $Context reason must concretely explain why the pre-change mechanism cannot produce this evidence (>=30 chars)."
     }
     # CJK prose is the normal documentation language in this repository and does
-    # not use whitespace word boundaries: substance is judged on ideograph count.
-    $cjkCount = ([regex]::Matches($trimmed, '\p{IsCJKUnifiedIdeographs}')).Count
-    if ($cjkCount -ge 12) { return }
+    # not use whitespace word boundaries: substance is judged on ideograph count
+    # AND distinct-ideograph diversity, so a padded run ('引導引導引導...') still fails.
+    $cjkMatches = [regex]::Matches($trimmed, '\p{IsCJKUnifiedIdeographs}')
+    if ($cjkMatches.Count -ge 12) {
+        $distinctCjk = @($cjkMatches | ForEach-Object { $_.Value } | Sort-Object -Unique).Count
+        if ($distinctCjk -lt 8) {
+            throw "self_referential_bootstrap: $Context reason repeats too few distinct characters ($distinctCjk); padded CJK phrases are rejected."
+        }
+        return
+    }
     # Otherwise: strip punctuation (Unicode-aware, so accented and non-Latin
     # letters survive) before blocklist/diversity checks, so 'bootstrap, needed.'
     # still hits the blocklist and padded phrases cannot fake diversity.
@@ -128,7 +135,7 @@ function Get-SelfReferentialBootstrapLedger {
     # ConvertFrom-Json eagerly materializes ISO-looking strings as [datetime],
     # which would let lenient variants (e.g. missing timezone) bypass the
     # anchored format check below. Validate the RAW string tokens first.
-    foreach ($match in [regex]::Matches($Json, '"(?:opened_at|reverified_at)"\s*:\s*"([^"]*)"')) {
+    foreach ($match in [regex]::Matches($Json, '(?i)"(?:opened_at|reverified_at)"\s*:\s*"([^"]*)"')) {
         $rawTimestamp = $match.Groups[1].Value
         if (-not (Test-SelfReferentialIsoTimestamp -Value $rawTimestamp)) {
             throw "self_referential_bootstrap: timestamp '$rawTimestamp' is not an allowed anchored ISO-8601 form (raw-string validation)."
@@ -321,8 +328,30 @@ function Compare-SelfReferentialLedgerTransition {
         if ($LASTEXITCODE -ne 0) {
             throw "self_referential_bootstrap: entry '$id' fixpoint.mechanism_commit $commit is not an ancestor of the PR base; the fixpoint must run on the MERGED mechanism."
         }
+        # Bind the closure to THIS entry's mechanism (not any ancient ancestor):
+        # the mechanism_commit must actually have touched one of the entry's
+        # declared verification_mechanism_paths.
+        $mechanismTouched = $false
+        foreach ($declaredPath in @($entry.verification_mechanism_paths)) {
+            $touched = @(& git -C $RepoRoot show --name-only --pretty=format: $commit -- ([string]$declaredPath) 2>$null | Where-Object { $_ })
+            if ($touched.Count -gt 0) { $mechanismTouched = $true; break }
+        }
+        if (-not $mechanismTouched) {
+            throw "self_referential_bootstrap: entry '$id' fixpoint.mechanism_commit $commit did not modify any of the entry's declared verification_mechanism_paths; it is not this mechanism's merge."
+        }
         foreach ($ref in @($fp.evidence_refs)) {
             Assert-SelfReferentialEvidenceBlob -RepoRoot $RepoRoot -Ref ([string]$ref) -Context "entry '$id' fixpoint" -HeadSha $HeadSha
+            # Post-merge binding: the evidence blob must have been introduced or
+            # modified at or after the mechanism merged - a pre-existing unrelated
+            # blob cannot stand in for the required post-merge re-verification.
+            $evidenceIntroCommit = (& git -C $RepoRoot log -1 --format=%H -- ([string]$ref) 2>$null | Out-String).Trim()
+            if ([string]::IsNullOrWhiteSpace($evidenceIntroCommit)) {
+                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$ref' has no commit history; cannot bind it to post-merge re-verification."
+            }
+            & git -C $RepoRoot merge-base --is-ancestor $commit $evidenceIntroCommit 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$ref' predates mechanism_commit $commit; it cannot be the post-merge re-verification result."
+            }
         }
         $closedEntries += $head
     }

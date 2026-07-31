@@ -71,6 +71,12 @@
 }
 ```
 
+## 4.1 已知邊界（trusting-trust）
+
+本 gate 是 `pull_request` 觸發的 required check，執行的是 **PR 自己樹上的 workflow YAML**（同 repo PR 的 GitHub 限制）。因此存在一個靜態檢查無法自我封閉的殘餘面：一個 PR 若同時修改 `pr-review-agent.yml`，可保留 required job 名稱、卻刪除「materialize base-pinned gate + 呼叫」步驟，使 check 變綠卻從未跑過 base-pinned checker（round-4 P1）。
+
+現行緩解（非完全封閉）：`pr-review-agent.yml` 已在 mechanism 清單內 → 改它必須宣告 bootstrap 並登記 ledger 欠帳，reviewer 看得到；gate 腳本本身取自 base revision。**完全封閉需 owner 決策**：改用 base-owned 觸發（`pull_request_target`，會把 secrets 暴露給 PR-triggered context，屬安全姿態變更）或 org-level required action。此為分家後腳手架的待決項，不由自動流程擅改。
+
 ## 5. 已知實例
 
 - 測試部署區遷移（`docs/plans/remote-linux-test-deploy-target.plan.md` §5）：PR 改 deploy path 本身，部署區依契約只驗 `origin/main`。

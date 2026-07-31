@@ -93,22 +93,32 @@ try {
     $mechanism = @('scripts/deploy.ps1')
     $emptyJson = New-LedgerJson -Entries @()
 
-    # --- git fixture repo for fixpoint ancestry + evidence existence ----------------
+    # --- git fixture repo: mechanism_commit must touch a declared path, and
+    # fixpoint evidence must be introduced at/after that commit (review round 4) ------
     $gitRoot = Join-Path $tempRoot 'gitfx'
     New-Item -ItemType Directory -Path $gitRoot -Force | Out-Null
     & git -C $gitRoot init -q
-    & git -C $gitRoot -c user.email=t@t -c user.name=t commit -q --allow-empty -m 'mechanism merged'
-    $fixpointCommit = (& git -C $gitRoot rev-parse HEAD).Trim()
-    # Evidence must be COMMITTED blobs at HEAD (filesystem-only presence is not
-    # reviewable evidence), so the fixture commits them into the base commit.
-    New-Item -ItemType Directory -Path (Join-Path $gitRoot 'docs/evidence/remote-linux-deploy/self-referential-bootstrap') -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $gitRoot 'docs/evidence/remote-linux-deploy/fixpoint') -Force | Out-Null
-    Set-Content -LiteralPath (Join-Path $gitRoot 'docs/evidence/remote-linux-deploy/self-referential-bootstrap/summary.md') -Value 'evidence'
-    Set-Content -LiteralPath (Join-Path $gitRoot 'docs/evidence/remote-linux-deploy/fixpoint/summary.md') -Value 'fixpoint evidence'
+    $commit = { param($msg) (& git -C $gitRoot -c user.email=t@t -c user.name=t commit -q -m $msg); (& git -C $gitRoot rev-parse HEAD).Trim() }
+    $write = { param($rel, $val) $full = Join-Path $gitRoot $rel; New-Item -ItemType Directory -Path (Split-Path $full) -Force | Out-Null; Set-Content -LiteralPath $full -Value $val }
+
+    # c0: pre-mechanism evidence blob (labeled, but predates the mechanism merge)
+    & $write 'docs/evidence/old/self-referential-bootstrap/old.md' 'old evidence'
+    & git -C $gitRoot add docs | Out-Null
+    $oldEvidenceCommit = & $commit 'pre-mechanism evidence'
+    # c1: an ancestor that does NOT touch any declared mechanism path
+    & $write 'README.md' 'unrelated'
+    & git -C $gitRoot add README.md | Out-Null
+    $unrelatedAncestor = & $commit 'unrelated ancestor'
+    # c2: the real mechanism merge - modifies scripts/deploy.ps1 (a declared path)
+    & $write 'scripts/deploy.ps1' '# mechanism'
+    & git -C $gitRoot add scripts/deploy.ps1 | Out-Null
+    $fixpointCommit = & $commit 'mechanism merged (touches deploy.ps1)'
+    # c3 (base): post-merge evidence introduced AFTER the mechanism commit
+    & $write 'docs/evidence/remote-linux-deploy/self-referential-bootstrap/summary.md' 'evidence'
+    & $write 'docs/evidence/remote-linux-deploy/fixpoint/summary.md' 'fixpoint evidence'
     Set-Content -LiteralPath (Join-Path $gitRoot 'untracked-evidence.md') -Value 'untracked'
-    & git -C $gitRoot add docs
-    & git -C $gitRoot -c user.email=t@t -c user.name=t commit -q -m 'base with evidence'
-    $baseSha = (& git -C $gitRoot rev-parse HEAD).Trim()
+    & git -C $gitRoot add docs | Out-Null
+    $baseSha = & $commit 'base with post-merge evidence'
 
     # --- mechanism path detection (incl. enforcement workflows: review P2) ----------
     $matched = Get-SelfReferentialMechanismPaths -ChangedPaths @(
@@ -121,9 +131,10 @@ try {
         'scripts/tests/verify-security-exceptions.ps1',
         'scripts/dev/check-pr-local-preflight.ps1',
         'scripts/hooks/require-gstack-evidence.ps1',
+        'scripts/lib/design-assets.ps1',
         'web-viewer-sample/src/Window.tsx'
     )
-    Assert-True ($matched.Count -eq 9) "enforcement workflows, manifest, verifiers, and local enforcement entrypoints must classify as mechanism (matched: $($matched -join ', '))"
+    Assert-True ($matched.Count -eq 10) "enforcement workflows, manifest, verifiers, local entrypoints and the deploy asset helper must classify as mechanism (matched: $($matched -join ', '))"
 
     # --- real repo ledger: parse-integrity ONLY, no emptiness assumption ------------
     $realLedger = Get-SelfReferentialBootstrapLedger -Path (Join-Path $repoRoot 'scripts/self-referential-bootstrap-ledger.json')
@@ -149,6 +160,10 @@ try {
     Assert-SelfReferentialBootstrapReason -Reason '部署契約只驗證已合併的 origin/main，因此修改部署路徑本身的 PR 無法在合併前取得部署區證據' -Context 'test'
     Assert-Throws -Context 'short CJK reason' -MessagePattern 'reason' -Action {
         Assert-SelfReferentialBootstrapReason -Reason '需要引導程序' -Context 'test'
+    }
+    # padded CJK (>=12 ideographs but few distinct) must still fail (round 4)
+    Assert-Throws -Context 'padded CJK reason' -MessagePattern 'distinct characters' -Action {
+        Assert-SelfReferentialBootstrapReason -Reason ('引導' * 15) -Context 'test'
     }
 
     # --- ledger integrity (structure-level, unchanged rules) ------------------------
@@ -178,6 +193,10 @@ try {
     # JSON tokens must still satisfy the anchored formats (review round 3)
     Assert-Throws -Context 'timezone-less timestamp in raw JSON' -MessagePattern 'raw-string validation' -Action {
         Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{ opened_at = '2026-07-31T08:00:00' })))
+    }
+    # a differently-cased timestamp key must not bypass raw validation (round 4)
+    Assert-Throws -Context 'mixed-case timestamp key with bad value' -MessagePattern 'raw-string validation' -Action {
+        Get-SelfReferentialBootstrapLedger -Json ((New-LedgerJson -Entries @((New-Entry))) -replace '"opened_at": "[^"]*"', '"Opened_at": "2026-07-31T08:00:00"')
     }
     Assert-Throws -Context 'pr as a JSON string' -MessagePattern 'native integer' -Action {
         Get-SelfReferentialBootstrapLedger -Json ((New-LedgerJson -Entries @((New-Entry))) -replace '"pr": 500', '"pr": "500"')
@@ -252,7 +271,23 @@ try {
     Assert-Throws -Context 'fixpoint evidence ref pointing at a directory' -MessagePattern 'not a committed file' -Action {
         Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism -HeadJson $dotEvidenceClosed -BaseJson $openBase -GateRepoRoot $gitRoot -BaseSha $baseSha
     }
-    # legal closure passes
+    # mechanism_commit is an ancestor but did not touch a declared path (round 4)
+    $wrongMechanismClosed = New-LedgerJson -Entries @((New-Entry -Override @{
+        status = 'closed'
+        fixpoint = @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $unrelatedAncestor; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') }
+    }))
+    Assert-Throws -Context 'mechanism_commit did not touch a declared path' -MessagePattern 'not this mechanism' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism -HeadJson $wrongMechanismClosed -BaseJson $openBase -GateRepoRoot $gitRoot -BaseSha $baseSha
+    }
+    # fixpoint evidence predates the mechanism merge (round 4)
+    $preMergeEvidenceClosed = New-LedgerJson -Entries @((New-Entry -Override @{
+        status = 'closed'
+        fixpoint = @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/old/self-referential-bootstrap/old.md') }
+    }))
+    Assert-Throws -Context 'fixpoint evidence predating the mechanism merge' -MessagePattern 'predates mechanism_commit' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism -HeadJson $preMergeEvidenceClosed -BaseJson $openBase -GateRepoRoot $gitRoot -BaseSha $baseSha
+    }
+    # legal closure passes: mechanism_commit touched deploy.ps1, evidence is post-merge
     $legalClosed = New-LedgerJson -Entries @((New-Entry -Override @{
         status = 'closed'
         fixpoint = @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') }
