@@ -25,31 +25,40 @@
 - 1.10 invocation follow-up (2026-07-31): the earlier failure mode is now understood. `detect-changes` aborts with `Multiple repositories indexed` unless the checkout is disambiguated, because several worktrees of this repo are indexed under the same label. With `--repo "C:\Repos\active\iot\AI-BIM-governance"` the command completes and reports `Risk level: low`, `Affected processes: 0`. The task stays unchecked: the index still predates the new files, so only Markdown symbols were mapped and the Python modules added by Phase 2 are absent. The result is advisory, not a gate pass.
 - 1.11 passed independent review after schema-instance enforcement was added and its missing-required/additional-property counterexamples were proven fail-closed.
 
-### Closeout completion evidence — 2026-07-31
+### 收口完成證據 — 2026-07-31
 
-- 1.9 closed on Windows from `fix/executable-architecture-contracts-closeout`
-  at `a1f1a1ccc8ff7fa6cd1de28650ec79005c416564`. `verify-all -PlanOnly`
-  selected root contracts, agent governance, secret-pattern scan, and security
-  exception policy. The matching affected run passed all four gates: 294 root
-  tests passed, agent governance passed, secret-pattern scan passed, and the
-  security exception policy reported `valid` with zero exceptions. Hosted
-  dependency review and SAST remained explicitly `not_configured` rather than
-  being reported as passed.
-- 1.10 closed after creating a fresh exact-path GitNexus index for the governed
-  worktree at the same commit. The index contains 14,906 nodes, 31,279 edges,
-  and 300 flows. Exact `context` queries mapped both Phase 1
-  `validate_repository` and Phase 2 `check_observed_architecture`, including
-  their callers and contract tests, resolving the earlier stale-index gap.
-  Because this GitNexus runner does not resolve a linked worktree's `.git` file
-  when spawning `git diff`, the compare was run with that worktree's explicit
-  `GIT_DIR` and `GIT_WORK_TREE`, plus the exact `--repo` path. The clean pre-edit
-  comparison against `origin/main` returned `No changes detected`. FTS remained
-  unavailable, which disables full-text search but not graph context or
-  detect-changes. The unused local `main` ref was then atomically fast-forwarded
-  to `origin/main`, so the task's literal `--base-ref main` command used the same
-  current integration baseline. After this closeout evidence was added, that
-  literal final compare reported 1 changed file, 4 Markdown symbols, 0 affected
-  processes, and `Risk level: low`.
+- 1.9 已在 Windows 的規定隔離 branch
+  `codex/openspec/introduce-executable-architecture-contracts` 與 worktree
+  `C:\Repos\active\iot\AI-BIM-governance\.worktrees\introduce-executable-architecture-contracts`
+  重新執行。`verify-all -PlanOnly` 選出 root contracts、agent governance、
+  secret-pattern scan 與 security exception policy；對應的 affected run 四項皆
+  通過：294 個 root tests 通過、agent governance 通過、secret-pattern scan
+  通過，security exception policy 回報 `valid` 且例外數為 0。Hosted
+  dependency review 與 SAST 維持明確的 `not_configured`，未誤報為通過。
+  PR #462 原有的 `fix/executable-architecture-contracts-closeout` 僅作
+  byte-identical carrier ref；OpenSpec 修復、驗證與後續提交均以本段規定的
+  branch/worktree 為唯一寫入工作面，approval 前須確認兩個 remote refs 指向
+  同一 immutable head SHA。
+- 1.10 先以現行整合基準建立 fresh exact-path GitNexus index（14,906 nodes、
+  31,279 edges、300 flows）；精確 `context` 查詢已映射 Phase 1
+  `validate_repository` 與 Phase 2 `check_observed_architecture` 的 callers 與
+  contract tests。接著另以 disposable detached worktree 對兩個 feature commit
+  建立獨立 fresh index，直接比較其各自的實作前 parent，避免只分析收口文件：
+  - Phase 1 `567c29e9779c7e733135873498fff5798cc901e8` 對
+    `f1c034f47e4bef3675fc3465604eabd95fb54ae9`：13 files、149 symbols、
+    0 affected processes、`Risk level: low`；fresh index 為 14,273 nodes、
+    29,834 edges、300 flows。
+  - Phase 2 `8f2ff8b4cb840f1258cc36690f8a13f5f9783a9d` 對
+    `243d9647190d2dbd84c60de6282e9bb15815c2f5`：15 files、233 symbols、
+    4 affected processes、`Risk level: medium`；fresh index 為 14,663 nodes、
+    30,793 edges、300 flows。受影響 flows 為 `Main → _is_mapping`、
+    `Main → _issue`、`Main → _is_sequence` 與 `Main → To_dict`。
+  以上比較均使用 `detect-changes --scope compare --base-ref <parent>`、linked
+  worktree 的明確 `GIT_DIR` / `GIT_WORK_TREE`，以及 exact `--repo` path。
+  task 原定的 literal `--base-ref main` 亦已在 fresh current index 執行；加入
+  收口文件後回報 1 changed file、4 Markdown symbols、0 affected processes、
+  `Risk level: low`。FTS 仍不可用，僅停用 full-text search，不影響 graph
+  context 或 `detect-changes`。
 
 ## Phase 2 — Observed architecture ratchet
 
