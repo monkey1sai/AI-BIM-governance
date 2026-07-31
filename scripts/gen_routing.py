@@ -13,11 +13,13 @@ TARGETS = [
     "std-evidence-closeout.js",
     "fable5-repo-advisory.js",
     "fu-adversarial-verify-generic.js",
+    "mapping-coverage-loop.js",
     "plan-next-spec-to-done-aware.js",
     "plan-test-deploy-and-tidy.js",
     "repo-health-scan.js",
     "ship-item.js",
     "spec-to-done-adversarial-verify.js",
+    "token-strategy-tournament.js",
 ]
 BEGIN, END = "// <routing:gen>", "// </routing:gen>"
 _MARK = re.compile(re.escape(BEGIN) + r".*?" + re.escape(END), re.DOTALL)
