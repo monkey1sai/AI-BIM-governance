@@ -1,4 +1,7 @@
-import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
+import fs from "node:fs";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {
   correlationIdFor,
@@ -131,6 +134,10 @@ export function selectSeedCandidate(input: {
   const candidates: SeedCandidate[] = [];
 
   for (const object of sortByKey(objects)) {
+    if (!stripEtagQuotes(object.etag)) {
+      skipped.push({ key: object.key, reason: "物件缺少可驗證的 ETag" });
+      continue;
+    }
     const derived = deriveIntakeFromKey({ key: object.key, prefix, keySuffix });
     if (!derived.ok) {
       skipped.push({ key: object.key, reason: derived.reason });
@@ -249,6 +256,7 @@ export interface SeedEvidenceRecord {
   download_verification: {
     artifact_health_source: "edge_health_probe";
     source_ifc_exists: true;
+    object_etag_revalidated_after_download: true;
   };
   idempotency_key: string;
   correlation_id: string;
@@ -298,6 +306,7 @@ export function buildSeedEvidenceRecord(input: {
     download_verification: {
       artifact_health_source: input.artifactHealthSource,
       source_ifc_exists: input.sourceIfcExists,
+      object_etag_revalidated_after_download: true,
     },
     idempotency_key: input.idempotencyKey,
     correlation_id: input.correlationId,
@@ -308,6 +317,65 @@ export function buildSeedEvidenceRecord(input: {
       "本 seed 僅證明 IFC-ready intake 鏈；不得據以推論 design gate／deploy path／Kit-WebRTC runtime。",
     ],
   };
+}
+
+function safeErrorCode(error: unknown): string {
+  const candidate = error as { code?: unknown };
+  if (typeof candidate?.code === "string") return candidate.code;
+  return error instanceof Error ? error.name : "unknown_error";
+}
+
+/**
+ * 在任何 MinIO／coordinator 副作用前，驗證 evidence 目的地可用且支援同目錄原子發布。
+ *
+ * preflight 以 hard-link probe 驗證最終採用的 publish primitive；只做一般 write probe
+ * 會漏掉不支援 atomic no-clobber link 的 volume，讓 seed 完成後才失去 evidence。
+ */
+export function prepareSeedEvidenceDestination(outPath: string): string {
+  const resolved = path.resolve(outPath);
+  if (fs.existsSync(resolved)) {
+    throw new Error(`evidence 目的檔已存在，拒絕覆寫：${resolved}`);
+  }
+
+  const directory = path.dirname(resolved);
+  const probeId = randomUUID();
+  const probeSource = path.join(directory, `.${path.basename(resolved)}.${probeId}.preflight.tmp`);
+  const probeLink = path.join(directory, `.${path.basename(resolved)}.${probeId}.preflight.link`);
+  try {
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(probeSource, "", { encoding: "utf8", flag: "wx" });
+    fs.linkSync(probeSource, probeLink);
+  } catch (error) {
+    throw new Error(`evidence 落點不可用：${resolved}（${safeErrorCode(error)}）`);
+  } finally {
+    if (fs.existsSync(probeLink)) fs.rmSync(probeLink);
+    if (fs.existsSync(probeSource)) fs.rmSync(probeSource);
+  }
+  return resolved;
+}
+
+/**
+ * 將完整 JSON 先寫入同目錄 temp，再用 atomic hard link 發布；目的檔已存在即 fail closed。
+ * 這同時避免 partial JSON 被讀取，以及 preflight 後的競爭條件覆寫既有 evidence。
+ */
+export function writeSeedEvidenceAtomic(resolvedPath: string, record: SeedEvidenceRecord): void {
+  const resolved = path.resolve(resolvedPath);
+  if (fs.existsSync(resolved)) {
+    throw new Error(`evidence 目的檔已存在，拒絕覆寫：${resolved}`);
+  }
+
+  const tempPath = path.join(
+    path.dirname(resolved),
+    `.${path.basename(resolved)}.${randomUUID()}.tmp`,
+  );
+  try {
+    fs.writeFileSync(tempPath, `${JSON.stringify(record, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+    fs.linkSync(tempPath, resolved);
+  } catch (error) {
+    throw new Error(`evidence 原子寫入失敗：${resolved}（${safeErrorCode(error)}）`);
+  } finally {
+    if (fs.existsSync(tempPath)) fs.rmSync(tempPath);
+  }
 }
 
 export interface SeedCliArgs {
@@ -401,18 +469,24 @@ export function resolveSeedEnv(env: NodeJS.ProcessEnv): ResolvedSeedEnv {
 }
 
 /**
+ * 明示 env file 時只信任 dotenv 實際解析出的 keys，不從 ambient process.env 補缺漏。
+ * dotenv 即使使用 override 仍會保留檔案中未宣告的 ambient keys，故必須在解析後切斷來源。
+ */
+export function selectSeedEnvSource(input: {
+  explicitEnvFile?: string;
+  parsedEnv?: Record<string, string>;
+  ambientEnv: NodeJS.ProcessEnv;
+}): NodeJS.ProcessEnv {
+  return input.explicitEnvFile ? { ...(input.parsedEnv ?? {}) } : input.ambientEnv;
+}
+
+/**
  * dotenv 對不存在／不可讀檔案採回傳 error 而非 throw；明示 `--env-file` 時必須 fail closed，
  * 否則 CLI 會繼續吃 ambient env，表面成功卻可能 seed 到錯誤 bucket。
  */
 export function assertExplicitSeedEnvLoaded(envFile: string | undefined, error: unknown): void {
   if (!envFile || !error) return;
-  const candidate = error as { code?: unknown };
-  const reason = typeof candidate.code === "string"
-    ? candidate.code
-    : error instanceof Error
-      ? error.name
-      : "unknown_error";
-  throw new Error(`無法載入 --env-file：${envFile}（${reason}）`);
+  throw new Error(`無法載入 --env-file：${envFile}（${safeErrorCode(error)}）`);
 }
 
 export interface SeedRunOptions {
@@ -613,6 +687,25 @@ export async function runSeed(options: SeedRunOptions): Promise<SeedEvidenceReco
     await sleep(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())));
   }
   log(`[seed] job=${jobId} download_status=downloaded`);
+
+  let observedEtag = "";
+  try {
+    const currentObject = await client.send(
+      new HeadObjectCommand({ Bucket: options.bucket, Key: candidate.key }),
+    );
+    observedEtag = stripEtagQuotes(currentObject.ETag ?? "");
+  } catch (error) {
+    throw new Error(
+      `下載完成後無法重新驗證 MinIO object ETag（key=${candidate.key}，${safeErrorCode(error)}）`,
+    );
+  }
+  const selectedEtag = stripEtagQuotes(candidate.etag);
+  if (!observedEtag || observedEtag !== selectedEtag) {
+    throw new Error(
+      `MinIO object 在 list 與下載完成後已改版（key=${candidate.key}）；拒絕產生版本不一致的 evidence。`,
+    );
+  }
+  log(`[seed] key=${candidate.key} ETag 已於下載完成後重新驗證`);
 
   return buildSeedEvidenceRecord({
     changeId: options.changeId,

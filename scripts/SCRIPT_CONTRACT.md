@@ -50,12 +50,18 @@ root `scripts/` 只保留已登記且有明確 operator / adapter / verifier 角
 coordinator 灌入一筆來自真實 MinIO 的 IFC-ready job，供 A4 browser E2E preflight 取得
 `download_status=downloaded` 的 job。呼叫邊界：
 
-- 只接受 loopback、port 8005–8009 的 coordinator base；打到測試部署區 `:8004`／governance `:49102`／
-  Kit `:49100`／baked viewer `:5173` 一律 fail closed 拒絕。
+- 只接受 `127.0.0.1`、port 8005–8009，且非 DryRun 時必須與指定 ChangeId/RunId 的 active
+  stack manifest 完全一致；launcher status 的 manifest process ownership、listener ownership 與 health
+  任一不成立即 fail closed。打到測試部署區 `:8004`／governance `:49102`／Kit `:49100`／
+  baked viewer `:5173` 一律拒絕。
 - 不是 canonical operator entrypoint，不得取代 `deploy.ps1`；不啟動、不停止任何服務，
   stack 生命週期仍屬 `scripts/dev/start-isolated-branch-stack.ps1`。
 - `-DryRun` 只驗證本機 invocation 與落點，不載入 env、不連 MinIO、不呼叫 coordinator；
   start／success／failure 都寫入 `scripts/lib/StructLog.psm1` lifecycle log。
+- 明示 `-EnvFile` 時該檔是唯一 MinIO 設定來源；evidence 落點在 seeding 前驗證，完成後以
+  atomic no-clobber publish 寫入。下載成功後另以 `HeadObject` 重驗 ETag，物件版本漂移即拒絕 evidence。
+- isolated coordinator 明示把 conversion dispatch 綁到同 run governance listener 的 fail-closed 端點，
+  不得回落測試部署區 streaming `:49101`。
 - 不執行轉檔，其 evidence 不得用來推論 design gate／deploy path／Kit-WebRTC runtime。
 
 ## Registry Rule

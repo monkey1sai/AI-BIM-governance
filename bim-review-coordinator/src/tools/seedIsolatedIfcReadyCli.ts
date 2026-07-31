@@ -1,11 +1,12 @@
-import fs from "node:fs";
-import path from "node:path";
 import dotenv from "dotenv";
 import {
   assertExplicitSeedEnvLoaded,
   parseSeedCliArgs,
+  prepareSeedEvidenceDestination,
   resolveSeedEnv,
   runSeed,
+  selectSeedEnvSource,
+  writeSeedEvidenceAtomic,
 } from "./seedIsolatedIfcReady.js";
 
 /**
@@ -26,7 +27,13 @@ async function main(): Promise<void> {
   // 指定設定而 seed 到錯誤 bucket；未指定時保留 dotenv 的既有 ambient-env 優先語意。
   const dotenvResult = dotenv.config(args.envFile ? { path: args.envFile, override: true } : undefined);
   assertExplicitSeedEnvLoaded(args.envFile, dotenvResult.error);
-  const seedEnv = resolveSeedEnv(process.env);
+  const seedEnv = resolveSeedEnv(selectSeedEnvSource({
+    explicitEnvFile: args.envFile,
+    parsedEnv: dotenvResult.parsed,
+    ambientEnv: process.env,
+  }));
+  // 在 list／presign／intake 之前驗證目的 volume 的 atomic no-clobber publish 能力。
+  const evidencePath = args.outPath ? prepareSeedEvidenceDestination(args.outPath) : undefined;
 
   const record = await runSeed({
     coordinatorBaseUrl: args.coordinatorBaseUrl,
@@ -36,11 +43,9 @@ async function main(): Promise<void> {
     ...seedEnv,
   });
 
-  if (args.outPath) {
-    const resolved = path.resolve(args.outPath);
-    fs.mkdirSync(path.dirname(resolved), { recursive: true });
-    fs.writeFileSync(resolved, `${JSON.stringify(record, null, 2)}\n`, "utf8");
-    console.log(`[seed] evidence 已寫入 ${resolved}`);
+  if (evidencePath) {
+    writeSeedEvidenceAtomic(evidencePath, record);
+    console.log(`[seed] evidence 已寫入 ${evidencePath}`);
   }
   // 供 E2E 直接擷取：a4-closeout.spec.ts 讀 A4_E2E_IFC_READY_JOB_ID 鎖定同一個 job。
   console.log(`A4_E2E_IFC_READY_JOB_ID=${record.ifc_ready_job_id}`);

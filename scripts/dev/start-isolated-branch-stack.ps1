@@ -669,6 +669,9 @@ function New-IsolatedBackendEnvironment {
         PORT = "$($Ports.coordinator)"
         HOST = '127.0.0.1'
         GOVERNANCE_API_BASE = "http://127.0.0.1:$($Ports.governance)"
+        # 隔離 stack 不啟動 conversion authority。明示綁到同 run 的 governance listener，
+        # 讓 async dispatch fail closed（404）而不回落 deployment streaming :49101。
+        STREAMING_CONVERSION_API_BASE = "http://127.0.0.1:$($Ports.governance)"
         COORDINATOR_PUBLIC_BASE_URL = "http://127.0.0.1:$($Ports.coordinator)"
         VIEWER_PUBLIC_BASE_URL = "http://127.0.0.1:$($Ports.viewer)"
         CORS_ORIGINS = "http://127.0.0.1:$($Ports.viewer)"

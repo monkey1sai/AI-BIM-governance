@@ -15,13 +15,14 @@
     stack 生命週期仍由 start-isolated-branch-stack.ps1 擁有。
 
 .PARAMETER CoordinatorBaseUrl
-    隔離 stack 的 coordinator base（loopback，port 8005..8009）。打到部署區 :8004 會被 fail closed 拒絕。
+    隔離 stack manifest 宣告的 coordinator base（127.0.0.1，port 8005..8009）。
+    打到部署區 :8004 或未綁定本 ChangeId/RunId 的 listener 會被 fail closed 拒絕。
 
 .PARAMETER ChangeId
-    evidence 歸屬的 OpenSpec change id。
+    evidence 歸屬且 live isolated stack manifest 宣告的 OpenSpec change id。
 
 .PARAMETER RunId
-    本次 seeding 的 run id；與 evidence 目錄同名。
+    live isolated stack manifest 的 run id；本次 seeding evidence 使用同一目錄身分。
 
 .PARAMETER RequiredKey
     指定要 seed 的 MinIO object key。省略時以字典序挑第一個合規約物件（可重現）。
@@ -85,12 +86,74 @@ function Assert-IsolatedSeedWrapperTarget {
     }
     if ($target.Scheme -cne 'http') { throw 'CoordinatorBaseUrl 必須使用 http scheme。' }
     if (-not [string]::IsNullOrEmpty($target.UserInfo)) { throw 'CoordinatorBaseUrl 不得包含 URL credentials。' }
-    if (@('127.0.0.1', 'localhost') -notcontains $target.Host.ToLowerInvariant()) {
-        throw 'CoordinatorBaseUrl 必須是 loopback host。'
+    if ($target.Host -cne '127.0.0.1') {
+        throw 'CoordinatorBaseUrl host 必須是 isolated manifest 的 canonical 127.0.0.1。'
     }
     if ($target.IsDefaultPort -or $target.Port -notin 8005..8009) {
         throw 'CoordinatorBaseUrl port 必須在 isolated coordinator 範圍 8005..8009。'
     }
+    return $target
+}
+
+function Assert-IsolatedSeedStackBinding {
+    param(
+        [string] $BaseUrl,
+        [string] $RepoRoot,
+        [string] $StackChangeId,
+        [string] $StackRunId,
+        [scriptblock] $BindingResolver
+    )
+
+    $launcherPath = Join-Path $RepoRoot 'scripts\dev\start-isolated-branch-stack.ps1'
+    if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
+        throw "找不到 isolated stack launcher：$launcherPath"
+    }
+    if ($null -eq $BindingResolver) {
+        $BindingResolver = {
+            param($Launcher, $Root, $BoundChange, $BoundRun)
+            & {
+                param($LauncherFile, $RepositoryRoot, $ManifestChange, $ManifestRun)
+                . $LauncherFile
+                $status = Invoke-IsolatedBranchStack -Action status -ChangeId $ManifestChange `
+                    -RunId $ManifestRun -RepoRoot $RepositoryRoot
+                $manifest = Get-Content -Raw -LiteralPath $status.manifest_path | ConvertFrom-Json
+                $coordinators = @($status.backend | Where-Object { [string]$_.role -eq 'coordinator' })
+                if ($coordinators.Count -ne 1) {
+                    throw 'isolated stack status 必須恰有一個 coordinator process。'
+                }
+                [pscustomobject]@{
+                    status = [string]$status.status
+                    coordinator_base_url = [string]$manifest.base_urls.coordinator
+                    coordinator_owned = [bool]$coordinators[0].owned
+                    coordinator_ready = [bool]$coordinators[0].ready
+                    manifest_path = [string]$status.manifest_path
+                }
+            } $Launcher $Root $BoundChange $BoundRun
+        }
+    }
+
+    $bindings = @(& $BindingResolver $launcherPath $RepoRoot $StackChangeId $StackRunId)
+    if ($bindings.Count -ne 1) {
+        throw 'isolated stack binding resolver 必須回傳恰好一筆 manifest status。'
+    }
+    $binding = $bindings[0]
+    if ([string]$binding.status -cne 'active') {
+        throw "isolated stack 不是 active（status=$([string]$binding.status)）。"
+    }
+    if (-not [bool]$binding.coordinator_owned -or -not [bool]$binding.coordinator_ready) {
+        throw 'isolated coordinator listener 未通過 manifest process ownership 與 health gate。'
+    }
+
+    $requestedAuthority = ([Uri]$BaseUrl).GetLeftPart([UriPartial]::Authority)
+    $manifestTarget = $null
+    if (-not [Uri]::TryCreate([string]$binding.coordinator_base_url, [UriKind]::Absolute, [ref]$manifestTarget)) {
+        throw 'isolated stack manifest 的 coordinator base URL 無效。'
+    }
+    $manifestAuthority = $manifestTarget.GetLeftPart([UriPartial]::Authority)
+    if ($requestedAuthority -cne $manifestAuthority) {
+        throw "CoordinatorBaseUrl 未綁定指定 ChangeId/RunId 的 manifest（requested=$requestedAuthority, manifest=$manifestAuthority）。"
+    }
+    return $binding
 }
 
 $logRoot = Join-Path $repoRoot 'artifacts\e2e\_launcher\structured-logs'
@@ -100,7 +163,7 @@ $startData = New-IsolatedSeedLifecycleData -StructRunId $logger.RunId -Phase sta
 $logger | Write-StructLifecycle -Msg 'isolated stack IFC-ready seeding started' -Data $startData | Out-Null
 
 try {
-$null = Assert-IsolatedSeedWrapperTarget -BaseUrl $CoordinatorBaseUrl
+$validatedTarget = Assert-IsolatedSeedWrapperTarget -BaseUrl $CoordinatorBaseUrl
 $coordinatorRoot = Join-Path $repoRoot 'bim-review-coordinator'
 if (-not (Test-Path -LiteralPath $coordinatorRoot)) {
     throw "找不到 coordinator 目錄：$coordinatorRoot"
@@ -134,6 +197,8 @@ if ($DryRun) {
     $dryRunRecord | ConvertTo-Json -Depth 4 -Compress
 }
 else {
+    $null = Assert-IsolatedSeedStackBinding -BaseUrl $validatedTarget.AbsoluteUri -RepoRoot $repoRoot `
+        -StackChangeId $ChangeId -StackRunId $RunId
     Push-Location $coordinatorRoot
     try {
         & npx @cliArgs

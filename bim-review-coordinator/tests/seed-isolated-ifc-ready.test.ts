@@ -1,4 +1,7 @@
 import type { S3Client } from "@aws-sdk/client-s3";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   ISOLATED_INTAKE_WEBHOOK_SECRET,
@@ -9,9 +12,12 @@ import {
   buildSeedIntakeFetchInit,
   buildSeedIntakeRequest,
   parseSeedCliArgs,
+  prepareSeedEvidenceDestination,
   resolveSeedEnv,
   runSeed,
   selectSeedCandidate,
+  selectSeedEnvSource,
+  writeSeedEvidenceAtomic,
 } from "../src/tools/seedIsolatedIfcReady.js";
 import type { SeedRunOptions } from "../src/tools/seedIsolatedIfcReady.js";
 import { correlationIdFor, idempotencyKeyFor } from "../src/services/minioWatcher.js";
@@ -24,12 +30,15 @@ const KEY_SUFFIX = "/model.ifc";
 const REAL_KEY = "東勢區許良宇紀念圖書館/root/main/181b3686-2263-4c53-93d9-ba95a010fc85/model.ifc";
 const REAL_ETAG = "\"9f2c4a1b7d3e5f60718293a4b5c6d7e8\"";
 
-function fakeS3Client(): S3Client {
+function fakeS3Client(headEtag = REAL_ETAG): S3Client {
+  let callCount = 0;
   return {
-    send: vi.fn(async () => ({
-      Contents: [{ Key: REAL_KEY, ETag: REAL_ETAG }],
-      IsTruncated: false,
-    })),
+    send: vi.fn(async () => {
+      callCount += 1;
+      return callCount === 1
+        ? { Contents: [{ Key: REAL_KEY, ETag: REAL_ETAG }], IsTruncated: false }
+        : { ETag: headEtag };
+    }),
   } as unknown as S3Client;
 }
 
@@ -125,6 +134,24 @@ describe("selectSeedCandidate — 確定性挑選真實 MinIO 物件", () => {
     if (!result.ok) return;
     expect(result.skipped).toHaveLength(2);
     expect(result.skipped.map(s => s.key)).toContain("tooshort/model.ifc");
+  });
+
+  it("略過缺少 ETag 的物件，避免產生無法在下載後重驗版本的 seed", () => {
+    const result = selectSeedCandidate({
+      objects: [
+        { key: "aaa/root/main/v1/model.ifc", etag: "" },
+        { key: "bbb/root/main/v2/model.ifc", etag: '"bbb"' },
+      ],
+      prefix: "",
+      keySuffix: KEY_SUFFIX,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.candidate.key).toBe("bbb/root/main/v2/model.ifc");
+    expect(result.skipped).toContainEqual({
+      key: "aaa/root/main/v1/model.ifc",
+      reason: "物件缺少可驗證的 ETag",
+    });
   });
 
   it("requiredKey 命中時只用該 key；未命中即 fail closed（不靜默改挑別的）", () => {
@@ -258,7 +285,7 @@ describe("runSeed — MinIO intake orchestration", () => {
 
     const record = await runSeed(seedRunOptions(fetchImpl, { s3Client }));
 
-    expect(s3Client.send).toHaveBeenCalledTimes(1);
+    expect(s3Client.send).toHaveBeenCalledTimes(2);
     expect(requests).toHaveLength(3);
     expect(requests[0]?.url).toBe("http://127.0.0.1:8005/api/external/ifc-ready");
     expect(requests[0]?.init).toMatchObject({ method: "POST", redirect: "error" });
@@ -271,6 +298,7 @@ describe("runSeed — MinIO intake orchestration", () => {
     expect(record.download_verification).toEqual({
       artifact_health_source: "edge_health_probe",
       source_ifc_exists: true,
+      object_etag_revalidated_after_download: true,
     });
     expect(JSON.stringify(record)).not.toContain("fake-signature");
     expect(JSON.stringify(record)).not.toContain("local-webhook-secret");
@@ -300,6 +328,21 @@ describe("runSeed — MinIO intake orchestration", () => {
 
     await expect(runSeed(seedRunOptions(fetchImpl)))
       .rejects.toThrow(/artifact health.*未證明 source IFC 已落地/);
+  });
+
+  it("rejects evidence when the object ETag changed after coordinator download", async () => {
+    const fetchImpl = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => (
+      init?.method === "POST"
+        ? jsonResponse({ ifc_ready_job_id: "ifc_job_changed", download_status: "downloading" }, 202)
+        : jsonResponse({
+          ifc_ready_job_id: "ifc_job_changed",
+          download_status: "downloaded",
+          artifact_health: { source_ifc_exists: true, source: "edge_health_probe" },
+        })
+    )) as typeof fetch;
+
+    await expect(runSeed(seedRunOptions(fetchImpl, { s3Client: fakeS3Client('"replacement-etag"') })))
+      .rejects.toThrow(/list 與下載完成後已改版/);
   });
 
   it("throws on intake HTTP failure without echoing presigned signature material", async () => {
@@ -374,6 +417,7 @@ describe("buildSeedEvidenceRecord — 誠實揭露且不外洩簽章/密鑰", ()
     expect(record.download_verification).toEqual({
       artifact_health_source: "edge_health_probe",
       source_ifc_exists: true,
+      object_etag_revalidated_after_download: true,
     });
     expect(record.source_chain).toBe("real_minio_presigned_intake");
   });
@@ -481,5 +525,80 @@ describe("assertExplicitSeedEnvLoaded — 明示 env file fail closed", () => {
   it("未明示 env file 或 dotenv 無 error 時不丟例外", () => {
     expect(() => assertExplicitSeedEnvLoaded(undefined, new Error("ignored"))).not.toThrow();
     expect(() => assertExplicitSeedEnvLoaded("C:/seed.env", undefined)).not.toThrow();
+  });
+});
+
+describe("selectSeedEnvSource — explicit env file 是唯一設定權威", () => {
+  it("明示 env file 時不從完整 ambient env 補上檔案缺漏的 keys", () => {
+    const source = selectSeedEnvSource({
+      explicitEnvFile: "C:/seed.env",
+      parsedEnv: { MINIO_WATCH_ENDPOINT: "http://file-minio.test:9000" },
+      ambientEnv: {
+        MINIO_WATCH_ENDPOINT: "http://ambient-minio.test:9000",
+        MINIO_WATCH_BUCKET: "ambient-bucket",
+        MINIO_WATCH_ACCESS_KEY: "ambient-ak",
+        MINIO_WATCH_SECRET_KEY: "ambient-sk",
+      },
+    });
+    expect(source.MINIO_WATCH_ENDPOINT).toBe("http://file-minio.test:9000");
+    expect(source.MINIO_WATCH_BUCKET).toBeUndefined();
+    expect(() => resolveSeedEnv(source)).toThrow(/MINIO_WATCH_BUCKET/);
+  });
+
+  it("未明示 env file 時保留 ambient env 來源", () => {
+    const ambient = { MINIO_WATCH_BUCKET: "ambient-bucket" } as NodeJS.ProcessEnv;
+    expect(selectSeedEnvSource({ ambientEnv: ambient })).toBe(ambient);
+  });
+});
+
+describe("seed evidence destination — side effects 前 preflight 與 atomic no-clobber publish", () => {
+  const evidenceRecord = () => buildSeedEvidenceRecord({
+    changeId: "a4-console-convergence",
+    runId: "seed-atomic-test",
+    coordinatorBaseUrl: "http://127.0.0.1:8005",
+    bucket: "bim-control",
+    endpoint: "http://minio.test:9000",
+    key: REAL_KEY,
+    etag: REAL_ETAG,
+    presignedRef: "http://minio.test/bim-control/x?X-Amz-Signature=redacted-by-builder",
+    webhookSecret: "must-not-be-written",
+    ifcReadyJobId: "ifc_job_atomic",
+    downloadStatus: "downloaded",
+    artifactHealthSource: "edge_health_probe",
+    sourceIfcExists: true,
+    idempotencyKey: idempotencyKeyFor("bim-control", REAL_KEY, REAL_ETAG),
+    correlationId: correlationIdFor("bim-control", REAL_KEY, REAL_ETAG),
+  });
+
+  it("預建含空白的 nested 目錄，並以完整 JSON 原子發布且不殘留 temp", () => {
+    const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "seed-evidence-"));
+    try {
+      const outPath = path.join(sandbox, "nested with spaces", "seed result.json");
+      const resolved = prepareSeedEvidenceDestination(outPath);
+      expect(resolved).toBe(path.resolve(outPath));
+      expect(fs.existsSync(outPath)).toBe(false);
+
+      writeSeedEvidenceAtomic(resolved, evidenceRecord());
+      const written = JSON.parse(fs.readFileSync(outPath, "utf8")) as { ifc_ready_job_id?: string };
+      expect(written.ifc_ready_job_id).toBe("ifc_job_atomic");
+      expect(fs.readdirSync(path.dirname(outPath)).filter(name => name.startsWith(".seed result.json.")))
+        .toEqual([]);
+      expect(() => prepareSeedEvidenceDestination(outPath)).toThrow(/拒絕覆寫/);
+      expect(() => writeSeedEvidenceAtomic(resolved, evidenceRecord())).toThrow(/拒絕覆寫/);
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("目的 parent 不是 directory 時在任何 seeding 前 fail closed", () => {
+    const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "seed-evidence-invalid-"));
+    try {
+      const parentFile = path.join(sandbox, "not-a-directory");
+      fs.writeFileSync(parentFile, "occupied", "utf8");
+      expect(() => prepareSeedEvidenceDestination(path.join(parentFile, "seed.json")))
+        .toThrow(/evidence 落點不可用/);
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true });
+    }
   });
 });

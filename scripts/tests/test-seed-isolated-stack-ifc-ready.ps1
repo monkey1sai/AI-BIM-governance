@@ -17,6 +17,8 @@ Assert-Equal 1 $registryEntries.Count 'isolated stack seed wrapper has exactly o
 Assert-Equal 'dev-tool' $registryEntries[0].role 'isolated stack seed wrapper registry role'
 Assert-True ($scriptContract -match [regex]::Escape('scripts/dev/seed-isolated-stack-ifc-ready.ps1')) 'script contract registers seed wrapper'
 Assert-True ($scriptContract -match [regex]::Escape('-DryRun')) 'script contract documents side-effect-free DryRun'
+Assert-True ($scriptContract -match 'manifest process ownership') 'script contract documents live manifest ownership binding'
+Assert-True ($scriptContract -match 'atomic no-clobber') 'script contract documents evidence publication boundary'
 
 $wrapperSource = Get-Content -Raw -LiteralPath $wrapperPath
 Assert-True (
@@ -24,6 +26,7 @@ Assert-True (
 ) 'seed wrapper imports the repository StructLog module'
 Assert-True ($wrapperSource -match '\[switch\]\s*\$DryRun') 'seed wrapper exposes DryRun'
 Assert-True ($wrapperSource -notmatch 'Write-Output') 'seed wrapper uses structured lifecycle logging instead of bare completion output'
+Assert-True ($wrapperSource -match 'Invoke-IsolatedBranchStack -Action status') 'seed wrapper reuses launcher manifest/process status gate'
 
 $sandbox = New-TestSandbox -Prefix 'isolated-seed-wrapper'
 try {
@@ -55,6 +58,98 @@ try {
         -CoordinatorBaseUrl 'http://127.0.0.1:8004' -ChangeId 'change-a' -RunId 'seed-dry-run' -DryRun 2>&1 | Out-String)
     Assert-True ($LASTEXITCODE -ne 0) 'DryRun rejects deployment coordinator port before any side effect'
     Assert-True ($unsafeOutput -match '8005\.\.8009') 'DryRun explains the isolated coordinator port boundary'
+
+    $localhostOutput = (& pwsh -NoProfile -NonInteractive -File $wrapperPath `
+        -CoordinatorBaseUrl 'http://localhost:8005' -ChangeId 'change-a' -RunId 'seed-dry-run' -DryRun 2>&1 | Out-String)
+    Assert-True ($LASTEXITCODE -ne 0) 'wrapper rejects localhost alias that cannot exactly match canonical manifest authority'
+    Assert-True ($localhostOutput -match 'canonical 127\.0\.0\.1') 'wrapper explains canonical manifest host requirement'
+
+    & {
+        . $wrapperPath -CoordinatorBaseUrl 'http://127.0.0.1:8005' `
+            -ChangeId 'change-a' -RunId 'seed-binding-test' -DryRun | Out-Null
+
+        $activeResolver = {
+            param($Launcher, $Root, $BoundChange, $BoundRun)
+            $null = $Launcher
+            if ($BoundChange -cne 'change-a' -or $BoundRun -cne 'stack-run-a') {
+                throw 'binding resolver received the wrong identity'
+            }
+            [pscustomobject]@{
+                status = 'active'
+                coordinator_base_url = 'http://127.0.0.1:8005'
+                coordinator_owned = $true
+                coordinator_ready = $true
+                manifest_path = (Join-Path $Root 'artifacts\e2e\change-a\stack-run-a\stack-manifest.json')
+            }
+        }
+        $binding = Assert-IsolatedSeedStackBinding -BaseUrl 'http://127.0.0.1:8005' `
+            -RepoRoot $repoRoot -StackChangeId 'change-a' -StackRunId 'stack-run-a' `
+            -BindingResolver $activeResolver
+        Assert-Equal 'active' $binding.status 'active owned manifest binding is accepted'
+
+        $mismatchResolver = {
+            [pscustomobject]@{
+                status = 'active'
+                coordinator_base_url = 'http://127.0.0.1:8006'
+                coordinator_owned = $true
+                coordinator_ready = $true
+                manifest_path = 'stack-manifest.json'
+            }
+        }
+        $mismatchRejected = $false
+        try {
+            $null = Assert-IsolatedSeedStackBinding -BaseUrl 'http://127.0.0.1:8005' `
+                -RepoRoot $repoRoot -StackChangeId 'change-a' -StackRunId 'stack-run-a' `
+                -BindingResolver $mismatchResolver
+        }
+        catch {
+            $mismatchRejected = $true
+            Assert-True ($_.Exception.Message -match '未綁定') 'manifest base mismatch explains binding rejection'
+        }
+        Assert-True $mismatchRejected 'listener in isolated port range is rejected when manifest base differs'
+
+        $degradedResolver = {
+            [pscustomobject]@{
+                status = 'degraded'
+                coordinator_base_url = 'http://127.0.0.1:8005'
+                coordinator_owned = $false
+                coordinator_ready = $false
+                manifest_path = 'stack-manifest.json'
+            }
+        }
+        $degradedRejected = $false
+        try {
+            $null = Assert-IsolatedSeedStackBinding -BaseUrl 'http://127.0.0.1:8005' `
+                -RepoRoot $repoRoot -StackChangeId 'change-a' -StackRunId 'stack-run-a' `
+                -BindingResolver $degradedResolver
+        }
+        catch {
+            $degradedRejected = $true
+            Assert-True ($_.Exception.Message -match '不是 active') 'degraded manifest status explains rejection'
+        }
+        Assert-True $degradedRejected 'degraded or unowned listener is rejected before seeding'
+
+        $unownedResolver = {
+            [pscustomobject]@{
+                status = 'active'
+                coordinator_base_url = 'http://127.0.0.1:8005'
+                coordinator_owned = $false
+                coordinator_ready = $true
+                manifest_path = 'stack-manifest.json'
+            }
+        }
+        $unownedRejected = $false
+        try {
+            $null = Assert-IsolatedSeedStackBinding -BaseUrl 'http://127.0.0.1:8005' `
+                -RepoRoot $repoRoot -StackChangeId 'change-a' -StackRunId 'stack-run-a' `
+                -BindingResolver $unownedResolver
+        }
+        catch {
+            $unownedRejected = $true
+            Assert-True ($_.Exception.Message -match 'ownership') 'unowned active listener explains ownership rejection'
+        }
+        Assert-True $unownedRejected 'active status cannot bypass coordinator listener ownership gate'
+    }
 }
 finally {
     Remove-TestSandbox -Path $sandbox
@@ -70,5 +165,6 @@ $isolatedCoordinatorEnv = New-IsolatedBackendEnvironment -Role coordinator `
 Assert-Equal 'false' $isolatedCoordinatorEnv.MINIO_WATCH_ENABLED 'isolated coordinator keeps background MinIO watcher disabled'
 Assert-Equal 'true' $isolatedCoordinatorEnv.IFC_DOWNLOAD_STRICT 'isolated coordinator rejects placeholder download success'
 Assert-Equal 'dev-webhook-secret' $isolatedCoordinatorEnv.EXTERNAL_INTAKE_WEBHOOK_SECRET 'isolated coordinator secret matches seed tool constant'
+Assert-Equal 'http://127.0.0.1:49103' $isolatedCoordinatorEnv.STREAMING_CONVERSION_API_BASE 'isolated coordinator dispatch cannot fall back to deployment streaming :49101'
 
 $testLogger | Write-StructInfo -Msg 'contract assertions passed' -Data @{ assertions = 'isolated-seed-wrapper' }
