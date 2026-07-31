@@ -10,11 +10,11 @@
 - [x] 1.6 Wire architecture paths into the existing verification manifest's root-contract, agent-governance, and security dispatch.
 - [x] 1.7 Document source-of-truth positioning, agent workflow, exceptions, and ratchet rollout.
 
-## Phase 1 closeout still required in the real checkout
+## Phase 1 closeout in the real checkout
 
 - [x] 1.8 Run `openspec validate introduce-executable-architecture-contracts --strict`.
-- [ ] 1.9 Run canonical `scripts/verify-all` planning and affected gates in the real Windows checkout.
-- [ ] 1.10 Run GitNexus `detect-changes --scope compare --base-ref main` and record the result.
+- [x] 1.9 Run canonical `scripts/verify-all` planning and affected gates in the real Windows checkout.
+- [x] 1.10 Run GitNexus `detect-changes --scope compare --base-ref main` and record the result.
 - [x] 1.11 Independent architecture review confirms the contract preserves current repo boundaries and does not over-claim observed conformance.
 
 ### Closeout evidence — 2026-07-30
@@ -24,6 +24,32 @@
 - 1.10 remains open: the command ran with the current checkout selected explicitly, but the index was stale and untracked payload files were not mapped; `No changes detected` is advisory, not an accepted gate pass.
 - 1.10 invocation follow-up (2026-07-31): the earlier failure mode is now understood. `detect-changes` aborts with `Multiple repositories indexed` unless the checkout is disambiguated, because several worktrees of this repo are indexed under the same label. With `--repo "C:\Repos\active\iot\AI-BIM-governance"` the command completes and reports `Risk level: low`, `Affected processes: 0`. The task stays unchecked: the index still predates the new files, so only Markdown symbols were mapped and the Python modules added by Phase 2 are absent. The result is advisory, not a gate pass.
 - 1.11 passed independent review after schema-instance enforcement was added and its missing-required/additional-property counterexamples were proven fail-closed.
+
+### Closeout completion evidence — 2026-07-31
+
+- 1.9 closed on Windows from `fix/executable-architecture-contracts-closeout`
+  at `a1f1a1ccc8ff7fa6cd1de28650ec79005c416564`. `verify-all -PlanOnly`
+  selected root contracts, agent governance, secret-pattern scan, and security
+  exception policy. The matching affected run passed all four gates: 294 root
+  tests passed, agent governance passed, secret-pattern scan passed, and the
+  security exception policy reported `valid` with zero exceptions. Hosted
+  dependency review and SAST remained explicitly `not_configured` rather than
+  being reported as passed.
+- 1.10 closed after creating a fresh exact-path GitNexus index for the governed
+  worktree at the same commit. The index contains 14,906 nodes, 31,279 edges,
+  and 300 flows. Exact `context` queries mapped both Phase 1
+  `validate_repository` and Phase 2 `check_observed_architecture`, including
+  their callers and contract tests, resolving the earlier stale-index gap.
+  Because this GitNexus runner does not resolve a linked worktree's `.git` file
+  when spawning `git diff`, the compare was run with that worktree's explicit
+  `GIT_DIR` and `GIT_WORK_TREE`, plus the exact `--repo` path. The clean pre-edit
+  comparison against `origin/main` returned `No changes detected`. FTS remained
+  unavailable, which disables full-text search but not graph context or
+  detect-changes. The unused local `main` ref was then atomically fast-forwarded
+  to `origin/main`, so the task's literal `--base-ref main` command used the same
+  current integration baseline. After this closeout evidence was added, that
+  literal final compare reported 1 changed file, 4 Markdown symbols, 0 affected
+  processes, and `Risk level: low`.
 
 ## Phase 2 — Observed architecture ratchet
 
