@@ -383,6 +383,13 @@ const invalidEvidenceIds = []
 for (const value of [...fv, ...rawCritic.issues]) {
   if (!(await evidenceMatchesSubject(value.evidence))) invalidEvidenceIds.push(value.finding_id)
 }
+try {
+  const afterEvidenceBinding = await readSnapshot()
+  if (afterEvidenceBinding.status) return stale('worktree_dirty_after_evidence_binding', { verifierBatchCount, agentCallsUsed })
+  if (afterEvidenceBinding.head !== SUBJECT_SHA) return stale('subject_sha_changed_after_evidence_binding', { verifierBatchCount, agentCallsUsed })
+} catch (_) {
+  return stale('git_identity_unavailable_after_evidence_binding', { verifierBatchCount, agentCallsUsed })
+}
 if (invalidEvidenceIds.length) {
   return emptyResult(LABEL, 'reviewer_agent_failed', 'evidence_not_bound_to_subject_sha', TARGET_SHA, BASE_SHA, SUBJECT_SHA, {
     verifierBatchCount,

@@ -48,6 +48,7 @@ function harness(options = {}) {
   const logs = []
   let statusCount = 0
   let headCount = 0
+  let evidenceRead = false
 
   const dollar = (strings, ...values) => {
     const command = commandText(strings, values)
@@ -64,6 +65,7 @@ function harness(options = {}) {
           headCount += 1
           if (headCount === 1 && options.initialHeadMismatch) return OTHER_HEAD
           if (headCount > 1 && options.finalHeadChanges) return OTHER_HEAD
+          if (options.driftDuringEvidence && evidenceRead) return OTHER_HEAD
           return HEAD
         }
         if (command === `git -C ${ROOT} cat-file -t ${TARGET}`) return options.targetIsNotCommit ? 'tree\n' : 'commit\n'
@@ -74,6 +76,7 @@ function harness(options = {}) {
         }
         const showPrefix = `git -C ${ROOT} show ${HEAD}:`
         if (command.startsWith(showPrefix)) {
+          evidenceRead = true
           const file = command.slice(showPrefix.length)
           if (options.missingEvidence || file.includes('does-not-exist')) throw new Error('missing blob')
           if (options.evidenceContentByFile && Object.hasOwn(options.evidenceContentByFile, file)) {
@@ -285,6 +288,15 @@ test('bad immutable args fail before commands and agents', async () => {
     assert.equal(run.commands.length, 0)
     assert.equal(run.agents.length, 0)
   }
+})
+
+test('head drift during subject evidence binding invalidates all evidence', async () => {
+  const run = harness({ driftDuringEvidence: true })
+  const result = await run.run()
+  assert.equal(result.held, 'evidence_stale')
+  assert.equal(result.detail, 'subject_sha_changed_after_evidence_binding')
+  assert.deepEqual(result.verdicts, [])
+  assert.equal(result.critic, null)
 })
 
 test('oversized or path-traversing findings fail before commands and agents', async () => {
