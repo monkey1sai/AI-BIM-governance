@@ -2,6 +2,9 @@
 
 本文件定義 `pr-review-agent` 的審查規則、報告格式與 rollout 方式。它是 PR gate，不是 merge bot；它幫人先整理風險與驗證證據，但不取代人工審查、CODEOWNERS、branch protection 或 merge 權限。
 
+> **文件性質**：agent boundary、contract、runbook。
+> **優先序**：agent instruction priority 依根目錄 `AGENTS.md` §3；runtime/product behavior truth 以實作為準。本文與舊 evidence 不構成 runtime/API 已完成證據。
+>
 > **名稱現況（2026-07-31）**：CI 端的 PR body 閘已改名——workflow 顯示名為 `PR Metadata Contract`（檔名仍是 `.github/workflows/pr-review-agent.yml`），required check context 為 `pr-metadata-contract-diagnostic`。`scripts/pr-review-agent.ps1` 本體為**本機專用**（經 `scripts/dev/check-pr-local-preflight.ps1` 執行），CI 不重跑它（由 `test-agent-governance-check.ps1` 斷言）。
 
 ## 判定狀態
