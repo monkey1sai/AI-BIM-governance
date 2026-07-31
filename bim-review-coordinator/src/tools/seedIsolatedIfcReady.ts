@@ -1,6 +1,11 @@
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { correlationIdFor, deriveIntakeFromKey, idempotencyKeyFor } from "../services/minioWatcher.js";
+import {
+  correlationIdFor,
+  deriveIntakeFromKey,
+  idempotencyKeyFor,
+  stripEtagQuotes,
+} from "../services/minioWatcher.js";
 
 /**
  * a4-console-convergence Task 4.0：隔離 branch stack 的真實 IFC-ready seeding。
@@ -268,7 +273,7 @@ export function buildSeedEvidenceRecord(input: {
       endpoint: input.endpoint,
       bucket: input.bucket,
       key: input.key,
-      etag: input.etag.replace(/^"+|"+$/g, ""),
+      etag: stripEtagQuotes(input.etag),
       presigned_ref_redacted: true,
     },
     ifc_ready_job_id: input.ifcReadyJobId,

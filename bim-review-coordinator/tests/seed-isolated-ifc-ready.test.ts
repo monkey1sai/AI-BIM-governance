@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import type { S3Client } from "@aws-sdk/client-s3";
+import { describe, expect, it, vi } from "vitest";
 import {
   RESERVED_DEPLOYMENT_PORTS,
   assertIsolatedCoordinatorTarget,
@@ -7,13 +8,59 @@ import {
   buildSeedIntakeRequest,
   parseSeedCliArgs,
   resolveSeedEnv,
+  runSeed,
   selectSeedCandidate,
 } from "../src/tools/seedIsolatedIfcReady.js";
+import type { SeedRunOptions } from "../src/tools/seedIsolatedIfcReady.js";
 import { correlationIdFor, idempotencyKeyFor } from "../src/services/minioWatcher.js";
+
+vi.mock("@aws-sdk/s3-request-presigner", () => ({
+  getSignedUrl: vi.fn(async () => "http://minio.test/bim-control/model.ifc?X-Amz-Signature=fake-signature"),
+}));
 
 const KEY_SUFFIX = "/model.ifc";
 const REAL_KEY = "東勢區許良宇紀念圖書館/root/main/181b3686-2263-4c53-93d9-ba95a010fc85/model.ifc";
 const REAL_ETAG = "\"9f2c4a1b7d3e5f60718293a4b5c6d7e8\"";
+
+function fakeS3Client(): S3Client {
+  return {
+    send: vi.fn(async () => ({
+      Contents: [{ Key: REAL_KEY, ETag: REAL_ETAG }],
+      IsTruncated: false,
+    })),
+  } as unknown as S3Client;
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function seedRunOptions(fetchImpl: typeof fetch, overrides: Partial<SeedRunOptions> = {}): SeedRunOptions {
+  return {
+    coordinatorBaseUrl: "http://127.0.0.1:8005",
+    endpoint: "http://minio.test:9000",
+    bucket: "bim-control",
+    prefix: "",
+    keySuffix: KEY_SUFFIX,
+    accessKey: "test-access-key",
+    secretKey: "test-secret-key",
+    tenantId: "tenant_demo_001",
+    webhookSecret: "local-webhook-secret",
+    changeId: "a4-console-convergence",
+    runId: "seed-orchestration-test",
+    intakeTimeoutMs: 60_000,
+    pollTimeoutMs: 1_000,
+    pollIntervalMs: 1,
+    fetchImpl,
+    s3Client: fakeS3Client(),
+    sleepImpl: async () => undefined,
+    logger: () => undefined,
+    ...overrides,
+  };
+}
 
 describe("assertIsolatedCoordinatorTarget — 隔離 stack 專用，硬擋部署區", () => {
   it("接受 offset 0..4 的隔離 coordinator loopback base", () => {
@@ -179,6 +226,92 @@ describe("buildSeedIntakeFetchInit — secret-bearing intake transport guard", (
       .toThrow(/timeout.*正數/);
     expect(() => buildSeedIntakeFetchInit({ intake, webhookSecret: "local-secret", timeoutMs: Number.NaN }))
       .toThrow(/timeout.*正數/);
+  });
+});
+
+describe("runSeed — MinIO intake orchestration", () => {
+  it("lists once, posts the guarded intake, polls to downloaded, and returns redacted evidence", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const s3Client = fakeS3Client();
+    let pollCount = 0;
+    const fetchImpl = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
+      requests.push({ url: String(input), init });
+      if (init?.method === "POST") {
+        return jsonResponse({ ifc_ready_job_id: "ifc_job_success", download_status: "downloading" }, 202);
+      }
+      pollCount += 1;
+      return jsonResponse({
+        ifc_ready_job_id: "ifc_job_success",
+        download_status: pollCount === 1 ? "downloading" : "downloaded",
+      });
+    }) as typeof fetch;
+
+    const record = await runSeed(seedRunOptions(fetchImpl, { s3Client }));
+
+    expect(s3Client.send).toHaveBeenCalledTimes(1);
+    expect(requests).toHaveLength(3);
+    expect(requests[0]?.url).toBe("http://127.0.0.1:8005/api/external/ifc-ready");
+    expect(requests[0]?.init).toMatchObject({ method: "POST", redirect: "error" });
+    expect(requests[0]?.init?.signal).toBeInstanceOf(AbortSignal);
+    expect(requests[1]?.init).toMatchObject({ redirect: "error" });
+    expect(requests[1]?.init?.signal).toBeInstanceOf(AbortSignal);
+    expect(requests[1]?.init?.signal).not.toBe(requests[0]?.init?.signal);
+    expect(record.ifc_ready_job_id).toBe("ifc_job_success");
+    expect(record.download_status).toBe("downloaded");
+    expect(JSON.stringify(record)).not.toContain("fake-signature");
+    expect(JSON.stringify(record)).not.toContain("local-webhook-secret");
+  });
+
+  it("throws when polling observes download_status=failed", async () => {
+    const fetchImpl = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => (
+      init?.method === "POST"
+        ? jsonResponse({ ifc_ready_job_id: "ifc_job_failed", download_status: "downloading" }, 202)
+        : jsonResponse({ ifc_ready_job_id: "ifc_job_failed", download_status: "failed" })
+    )) as typeof fetch;
+
+    await expect(runSeed(seedRunOptions(fetchImpl)))
+      .rejects.toThrow(/ifc_job_failed.*download_status=failed/);
+  });
+
+  it("throws on intake HTTP failure without echoing presigned signature material", async () => {
+    const responseBody = {
+      detail: "source=http://minio.test/model.ifc?X-Amz-Credential=fake-access&X-Amz-Signature=deadbeef",
+    };
+    const fetchImpl = vi.fn(async () => jsonResponse(responseBody, 503)) as typeof fetch;
+
+    let message = "";
+    try {
+      await runSeed(seedRunOptions(fetchImpl));
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toMatch(/intake 失敗 HTTP 503/);
+    expect(message).not.toContain("fake-access");
+    expect(message).not.toContain("deadbeef");
+    expect(message).toContain("[redacted]");
+  });
+
+  it("enforces the poll deadline independently of the longer intake timeout", async () => {
+    let now = 1_000;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const fetchImpl = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => (
+      init?.method === "POST"
+        ? jsonResponse({ ifc_ready_job_id: "ifc_job_timeout", download_status: "downloading" }, 202)
+        : new Response("busy", { status: 503 })
+    )) as typeof fetch;
+
+    try {
+      await expect(runSeed(seedRunOptions(fetchImpl, {
+        intakeTimeoutMs: 60_000,
+        pollTimeoutMs: 5,
+        pollIntervalMs: 3,
+        sleepImpl: async (ms: number) => { now += ms; },
+      }))).rejects.toThrow(/逾時.*ifc_job_timeout/);
+      expect(fetchImpl).toHaveBeenCalledTimes(3);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 });
 
