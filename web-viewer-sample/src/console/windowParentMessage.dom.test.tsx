@@ -631,6 +631,179 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     expect(internals(app).state.runtimeCommandRejection).toMatchObject({ request_id: "req_outage_001" });
   });
 
+  it.each([
+    {
+      language: "zh" as const,
+      malformed: "忽略格式錯誤的 commandRejected",
+      duplicate: "忽略重複的 commandRejected 終態事件",
+      changedUnconfirmed: "執行階段已變更但尚未確認；已阻擋重試與交接",
+      stageUnproven: "stage 已變更但尚未由 coordinator 證實",
+      bindingFailure: "套用失敗：stage 已變更但尚未由 coordinator 證實",
+      rejected: "focusPrimRequest 已遭拒絕：lease_invalid",
+      stageLoadRejected: "模型載入遭拒",
+      unexpected: "Ignored malformed commandRejected.",
+      unexpectedStageUnproven: "The stage changed but is not yet confirmed.",
+    },
+    {
+      language: "en" as const,
+      malformed: "Ignored malformed commandRejected.",
+      duplicate: "Ignored duplicate commandRejected terminal.",
+      changedUnconfirmed: "The runtime changed but is unconfirmed; retry and handoff are blocked.",
+      stageUnproven: "The stage changed but is not yet confirmed.",
+      bindingFailure: "Apply failed: The stage changed but is not yet confirmed.",
+      rejected: "focusPrimRequest was rejected: lease_invalid",
+      stageLoadRejected: "Model loading was rejected",
+      unexpected: "忽略格式錯誤的 commandRejected",
+      unexpectedStageUnproven: "stage 已變更但尚未由 coordinator 證實",
+    },
+  ])("$language localizes commandRejected review diagnostics without mixing the alternate language", (copy) => {
+    setLang(copy.language);
+
+    const malformedApp = operableApp();
+    useSynchronousSetState(malformedApp);
+    internals(malformedApp)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: { rejected_event_type: "focusPrimRequest", reason: "invalid_reason" },
+    });
+    expect(internals(malformedApp).state.reviewEvents).toContain(copy.malformed);
+
+    const duplicateApp = operableApp();
+    useSynchronousSetState(duplicateApp);
+    const duplicatePayload = {
+      rejected_event_type: "focusPrimRequest",
+      reason: "lease_invalid",
+      request_id: `req_duplicate_${copy.language}`,
+      retryable: false,
+      runtime_state: "unchanged" as const,
+    };
+    internals(duplicateApp)._handleCustomEvent({ event_type: "commandRejected", payload: duplicatePayload });
+    internals(duplicateApp)._handleCustomEvent({ event_type: "commandRejected", payload: duplicatePayload });
+    expect(internals(duplicateApp).state.reviewEvents).toContain(copy.rejected);
+    expect(internals(duplicateApp).state.reviewEvents).toContain(copy.duplicate);
+
+    const changedApp = operableApp();
+    useSynchronousSetState(changedApp);
+    internals(changedApp)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "loadArtifactGroupRequest",
+        reason: "lease_invalid",
+        rejection_id: `rej_changed_${copy.language}`,
+        retryable: false,
+        runtime_state: "changed_unconfirmed",
+      },
+    });
+    expect(internals(changedApp).state.reviewEvents).toContain(copy.changedUnconfirmed);
+    expect(internals(changedApp).state.govBindingApplyState).toEqual({
+      status: "failed",
+      reason: copy.stageUnproven,
+    });
+    const changedHtml = renderToString(internals(changedApp).render());
+    expect(changedHtml).toContain(copy.bindingFailure);
+    expect(changedHtml).not.toContain(copy.unexpectedStageUnproven);
+
+    const stageLoadApp = operableApp();
+    useSynchronousSetState(stageLoadApp);
+    internals(stageLoadApp)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "openStageRequest",
+        reason: "lease_invalid",
+        rejection_id: `rej_stage_${copy.language}`,
+        retryable: false,
+        runtime_state: "unchanged",
+      },
+    });
+    const reviewText = (internals(stageLoadApp).state.reviewEvents as string[]).join("\n");
+    expect(reviewText).toContain(copy.stageLoadRejected);
+    expect(reviewText).not.toContain(copy.unexpected);
+    expect(internals(stageLoadApp).state.loadingText).toBe(copy.stageLoadRejected);
+  });
+
+  it.each([
+    {
+      language: "zh" as const,
+      expected: "忽略 commandRejected：被拒絕的事件與請求內容不相符",
+      alternate: "Ignored commandRejected: rejected event does not match the request context.",
+    },
+    {
+      language: "en" as const,
+      expected: "Ignored commandRejected: rejected event does not match the request context.",
+      alternate: "忽略 commandRejected：被拒絕的事件與請求內容不相符",
+    },
+  ])("$language localizes a tracked request-context mismatch without the alternate language", (copy) => {
+    setLang(copy.language);
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+
+    internals(app)._sendStreamMessage({
+      event_type: "focusPrimRequest",
+      payload: { request_id: `req_context_${copy.language}`, prim_path: "/World/Expected" },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "openStageRequest",
+        reason: "lease_invalid",
+        request_id: `req_context_${copy.language}`,
+        retryable: false,
+        runtime_state: "unchanged",
+      },
+    });
+
+    const reviewText = (internals(app).state.reviewEvents as string[]).join("\n");
+    expect(reviewText).toContain(copy.expected);
+    expect(reviewText).not.toContain(copy.alternate);
+  });
+
+  it("snapshots zh commandRejected review copy before deferred functional updaters run", () => {
+    setLang("zh");
+    const app = operableApp();
+    vi.spyOn(internals(app), "_appendDemoIncoming").mockImplementation(() => {});
+    const deferredUpdaters: Array<(state: Record<string, unknown>) => Record<string, unknown> | null> = [];
+    vi.spyOn(app, "setState").mockImplementation((update: unknown) => {
+      if (typeof update === "function") {
+        deferredUpdaters.push(update as (state: Record<string, unknown>) => Record<string, unknown> | null);
+      }
+    });
+
+    internals(app)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "focusPrimRequest",
+        reason: "lease_invalid",
+        rejection_id: "rej_deferred_generic",
+        retryable: false,
+        runtime_state: "unchanged",
+      },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "loadArtifactGroupRequest",
+        reason: "lease_invalid",
+        rejection_id: "rej_deferred_changed",
+        retryable: false,
+        runtime_state: "changed_unconfirmed",
+      },
+    });
+
+    setLang("en");
+    for (const update of deferredUpdaters) {
+      const patch = update(internals(app).state);
+      if (patch) internals(app).state = { ...internals(app).state, ...patch };
+    }
+
+    const reviewText = (internals(app).state.reviewEvents as string[]).join("\n");
+    expect(reviewText).toContain("focusPrimRequest 已遭拒絕：lease_invalid");
+    expect(reviewText).toContain("執行階段已變更但尚未確認；已阻擋重試與交接");
+    expect(reviewText).not.toContain("focusPrimRequest was rejected: lease_invalid");
+    expect(reviewText).not.toContain("The runtime changed but is unconfirmed; retry and handoff are blocked.");
+  });
+
   const rejectionReasonCases = [
     ["spectator_readonly", "目前為僅檢視模式，無法執行此操作", "This action is unavailable in read-only spectator mode."],
     ["lease_invalid", "檢視者 lease 無效或已過期", "The viewer lease is invalid or has expired."],
