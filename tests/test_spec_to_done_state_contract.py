@@ -126,6 +126,82 @@ def test_valid_claude_and_codex_states_and_single_canonical_validator(tmp_path):
     assert code == 0 and result["ok"] is True
 
 
+def test_documented_p6_hold_reasons_are_durable_and_unknown_reasons_fail_closed(tmp_path):
+    repo, head = _new_repo(tmp_path)
+    documented_reasons = (
+        "review_required",
+        "human_approval_required",
+        "reviewer_permission_not_strict",
+        "reviewer_permission_changed_after_verdict",
+        "trusted_elevated_authorization_unavailable",
+        "unexpected_elevated_authorization",
+        "branch_protection_single_owner_gate_not_strict",
+    )
+    for reason in documented_reasons:
+        code, result = _run(
+            tmp_path,
+            repo,
+            _line(repo, head, "HELD@P6", reason=reason),
+        )
+        assert code == 0 and result["kind"] == "HELD"
+        assert result["fields"]["reason"] == reason
+
+    code, result = _run(
+        tmp_path,
+        repo,
+        _line(repo, head, "HELD@P6", reason="caller_invented_hold"),
+    )
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+
+def test_historical_unknown_held_reason_cannot_be_hidden_by_later_checkpoints(tmp_path):
+    repo, head = _new_repo(tmp_path)
+    unknown_hold = _line(
+        repo,
+        head,
+        "HELD@P6",
+        reason="caller_invented_hold",
+    )
+    resumed = _line(
+        repo,
+        head,
+        "RESUMED@P6",
+        decision="operator-resume",
+    )
+
+    code, result = _run(tmp_path, repo, [unknown_hold, resumed])
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+    code, result = _run(
+        tmp_path,
+        repo,
+        [unknown_hold, resumed, _line(repo, head, "DONE@P6")],
+    )
+    assert code == 2 and result["held"] == "resume_state_invalid"
+
+    documented_hold = _line(
+        repo,
+        head,
+        "HELD@P6",
+        reason="trusted_elevated_authorization_unavailable",
+    )
+    code, result = _run(tmp_path, repo, [documented_hold, resumed])
+    assert code == 0 and result["kind"] == "RESUMED"
+
+    max_budget_recovery = _line(
+        repo,
+        head,
+        "HELD@P6",
+        reason="resume_state_invalid",
+        agentCalls="40/40",
+        p5Rounds="2/2",
+        evidenceAttempts="2/2",
+    )
+    code, result = _run(tmp_path, repo, [unknown_hold, max_budget_recovery])
+    assert code == 0 and result["kind"] == "HELD"
+    assert result["fields"]["reason"] == "resume_state_invalid"
+
+
 def test_fixed_limits_and_counter_overflow_fail_closed(tmp_path):
     repo, head = _new_repo(tmp_path)
     code, result = _run(

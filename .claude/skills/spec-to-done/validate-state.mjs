@@ -46,6 +46,12 @@ const ALLOWED_HELD_REASONS = new Set([
   'host_env_blocked',
   'ledger_mismatch',
   'review_required',
+  'human_approval_required',
+  'reviewer_permission_not_strict',
+  'reviewer_permission_changed_after_verdict',
+  'trusted_elevated_authorization_unavailable',
+  'unexpected_elevated_authorization',
+  'branch_protection_single_owner_gate_not_strict',
   'cyber_safeguard_payload',
   'ship_blocked',
   'run_budget_exhausted',
@@ -296,9 +302,34 @@ const parseOptionalIndex = (value, name) => {
   return Number(value)
 }
 
+const validateCheckpointKind = (checkpoint) => {
+  const { kind, phase, fields } = checkpoint
+  if (kind === 'AUTHORIZATION') {
+    requireFields(fields, ['decision', 'scope', 'exclusions', '診斷'])
+    validateAuthorization(fields)
+  }
+  if (kind === 'HELD') {
+    requireFields(fields, ['reason'])
+    if (!ALLOWED_HELD_REASONS.has(fields.reason)) {
+      reject('resume_state_invalid', `held reason is outside the allowlist: ${fields.reason}`)
+    }
+  }
+  if (kind === 'RESUMED') requireFields(fields, ['decision'])
+  if (kind === 'DONE' && phase === 'P7') {
+    requireFields(fields, ['mergeCommit', 'prHead'])
+    if (!/^[0-9a-f]{7,40}$/i.test(fields.mergeCommit) || fields.mergeCommit.toLowerCase() !== fields.head.toLowerCase()) {
+      reject('resume_state_invalid', 'DONE@P7 mergeCommit must be the current state HEAD')
+    }
+    if (!/^[0-9a-f]{7,40}$/i.test(fields.prHead) || !fields.evidenceHead) {
+      reject('resume_state_invalid', 'DONE@P7 requires a PR head and non-empty evidenceHead')
+    }
+  }
+}
+
 const parseHistoricalCheckpoint = (line, limits) => {
   const checkpoint = parseStateLine(line)
   requireFields(checkpoint.fields, COMMON_FIELDS)
+  validateCheckpointKind(checkpoint)
   checkpoint.counters = {
     agentCalls: parseCounter(checkpoint.fields.agentCalls, 'agentCalls', limits.agentCalls),
     p5Rounds: parseCounter(checkpoint.fields.p5Rounds, 'p5Rounds', limits.p5Rounds),
@@ -310,16 +341,7 @@ const parseHistoricalCheckpoint = (line, limits) => {
   return checkpoint
 }
 
-const validateTransition = (previousLine, current, limits) => {
-  if (!previousLine) return
-  let previous
-  try {
-    previous = parseHistoricalCheckpoint(previousLine, limits)
-  } catch {
-    const exhausted = Object.values(current.counters).every((counter) => counter.used === counter.limit)
-    if (current.kind === 'HELD' && current.fields.reason === 'resume_state_invalid' && exhausted) return
-    reject('resume_state_invalid', 'previous checkpoint is invalid; append only a max-budget HELD@... reason=resume_state_invalid checkpoint')
-  }
+const validateParsedTransition = (previous, current) => {
   if (previous.kind === 'DONE' && previous.phase === 'P7') {
     reject('resume_state_invalid', 'DONE@P7 is terminal and cannot be resumed or extended')
   }
@@ -376,6 +398,28 @@ const validateTransition = (previousLine, current, limits) => {
   }
 }
 
+const isMaxBudgetInvalidRecovery = (checkpoint) =>
+  checkpoint.kind === 'HELD' &&
+  checkpoint.fields.reason === 'resume_state_invalid' &&
+  Object.values(checkpoint.counters).every((counter) => counter.used === counter.limit)
+
+const validateAuditChain = (lines, current, limits) => {
+  if (lines.length < 2) return
+  const historical = []
+  try {
+    for (const line of lines.slice(0, -1)) {
+      historical.push(parseHistoricalCheckpoint(line, limits))
+    }
+  } catch {
+    if (isMaxBudgetInvalidRecovery(current)) return
+    reject('resume_state_invalid', 'previous checkpoint is invalid; append only a max-budget HELD@... reason=resume_state_invalid checkpoint')
+  }
+  for (let index = 1; index < historical.length; index += 1) {
+    validateParsedTransition(historical[index - 1], historical[index])
+  }
+  validateParsedTransition(historical.at(-1), current)
+}
+
 const main = () => {
   const cli = parseCli(process.argv.slice(2))
   const statePath = cli.state
@@ -405,29 +449,10 @@ const main = () => {
   const current = parseStateLine(lines.at(-1))
   const { kind, phase, fields } = current
   requireFields(fields, COMMON_FIELDS)
-  if (kind === 'AUTHORIZATION') {
-    requireFields(fields, ['decision', 'scope', 'exclusions', '診斷'])
-    validateAuthorization(fields)
-  }
+  validateCheckpointKind(current)
   if (!fields.worktree || !fs.existsSync(fields.worktree) || !fs.statSync(fields.worktree).isDirectory() ||
       normalizedPath(fs.realpathSync(fields.worktree)) !== normalizedPath(trusted.resolvedWorktree)) {
     reject('resume_state_invalid', `state worktree ${fields.worktree} does not match expected worktree ${cli['expected-worktree']}`)
-  }
-  if (kind === 'HELD') {
-    requireFields(fields, ['reason'])
-    if (!ALLOWED_HELD_REASONS.has(fields.reason)) {
-      reject('resume_state_invalid', `held reason is outside the allowlist: ${fields.reason}`)
-    }
-  }
-  if (kind === 'RESUMED') requireFields(fields, ['decision'])
-  if (kind === 'DONE' && phase === 'P7') {
-    requireFields(fields, ['mergeCommit', 'prHead'])
-    if (!/^[0-9a-f]{7,40}$/i.test(fields.mergeCommit) || fields.mergeCommit.toLowerCase() !== fields.head.toLowerCase()) {
-      reject('resume_state_invalid', 'DONE@P7 mergeCommit must be the current state HEAD')
-    }
-    if (!/^[0-9a-f]{7,40}$/i.test(fields.prHead) || !fields.evidenceHead) {
-      reject('resume_state_invalid', 'DONE@P7 requires a PR head and non-empty evidenceHead')
-    }
   }
   if (!fields.slug || !fields.spec || !fields.branch || !/^\d{4}-\d{2}-\d{2}$/.test(fields.dateStamp)) {
     reject('resume_state_invalid', 'slug, spec, branch, and ISO dateStamp are required')
@@ -481,7 +506,7 @@ const main = () => {
   } else {
     if (fields.evidenceHead) validateEvidenceAncestry(fields)
   }
-  validateTransition(lines.at(-2), current, limits)
+  validateAuditChain(lines, current, limits)
   process.stdout.write(JSON.stringify({
     ok: true,
     kind,
