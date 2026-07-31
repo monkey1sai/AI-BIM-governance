@@ -40,7 +40,7 @@ def _new_repo(tmp_path, name="repo"):
     return repo, _git(repo, "rev-parse", "HEAD")
 
 
-def _line(repo, head, prefix="DONE@P5", **overrides):
+def _line(repo, commit_head, prefix="DONE@P5", **overrides):
     fields = {
         "spec": (repo / "spec.md").as_posix(),
         "slug": "demo",
@@ -48,7 +48,7 @@ def _line(repo, head, prefix="DONE@P5", **overrides):
         "dateStamp": "2026-07-29",
         "branch": "feat/demo",
         "worktree": repo.as_posix(),
-        "head": head,
+        "head": commit_head,
         "executionMode": "full",
         "closeoutTaskIds": "",
         "planPath": "",
@@ -58,7 +58,7 @@ def _line(repo, head, prefix="DONE@P5", **overrides):
         "agentCalls": "8/40",
         "p5Rounds": "1/2",
         "evidenceAttempts": "1/2",
-        "evidenceHead": head,
+        "evidenceHead": commit_head,
         "診斷": "none",
         "需要使用者決定": "none",
     }
@@ -231,6 +231,22 @@ def test_historical_unknown_held_reason_cannot_be_hidden_by_later_checkpoints(tm
     code, result = _run(tmp_path, repo, [unknown_hold, max_budget_recovery])
     assert code == 0 and result["kind"] == "HELD"
     assert result["fields"]["reason"] == "resume_state_invalid"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("head", "not-a-sha"),
+        ("runIds", "fake"),
+    ),
+)
+def test_historical_checkpoints_reject_malformed_provenance(tmp_path, field, value):
+    repo, head = _new_repo(tmp_path)
+    historical = _line(repo, head, "DONE@P5", **{field: value})
+    current = _line(repo, head, "DONE@P5")
+
+    code, result = _run(tmp_path, repo, [historical, current])
+    assert code == 2 and result["held"] == "resume_state_invalid"
 
 
 def test_max_budget_recovery_seals_prior_transition_errors_without_enabling_progress(tmp_path):

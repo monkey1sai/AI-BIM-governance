@@ -145,6 +145,9 @@ const validateRunIds = (runIds, platform, phase, executionMode) => {
   const canBeNone = phase === 'P0' || (phase === 'P1' && executionMode === 'evidence-closeout')
   if (runIds === 'none' && canBeNone) return
   const ids = extractRunIds(runIds)
+  if (platform === null && ids.claude.size === 0 && ids.codex.size === 0) {
+    reject('resume_state_invalid', 'historical state must contain an actual wf_* or codex:* run ID')
+  }
   if (platform === 'claude' && ids.claude.size === 0) {
     reject('resume_state_invalid', 'Claude state must contain an actual wf_* run ID')
   }
@@ -329,19 +332,54 @@ const validateCheckpointKind = (checkpoint) => {
   }
 }
 
-const parseHistoricalCheckpoint = (line, limits) => {
-  const checkpoint = parseStateLine(line)
-  requireFields(checkpoint.fields, COMMON_FIELDS)
+const validateCheckpointSchema = (checkpoint, limits, platform = null) => {
+  const { phase, fields } = checkpoint
+  requireFields(fields, COMMON_FIELDS)
   validateCheckpointKind(checkpoint)
+  if (!fields.slug || !fields.spec || !fields.branch || !/^\d{4}-\d{2}-\d{2}$/.test(fields.dateStamp)) {
+    reject('resume_state_invalid', 'slug, spec, branch, and ISO dateStamp are required')
+  }
+  if (!['true', 'false'].includes(fields.userFacing)) {
+    reject('resume_state_invalid', 'userFacing must be true or false')
+  }
+  if (!/^[0-9a-f]{7,40}$/i.test(fields.head)) reject('resume_state_invalid', 'head must be a 7-40 character git SHA')
+  if (!['full', 'evidence-closeout'].includes(fields.executionMode)) {
+    reject('resume_state_invalid', `invalid executionMode: ${fields.executionMode}`)
+  }
+  if (fields.executionMode === 'evidence-closeout') {
+    const change = relativeToWorktree(fields.spec, fields.worktree)
+    if (!change || !/^openspec\/changes\/[^/]+$/.test(change.toLowerCase())) {
+      reject('resume_state_invalid', 'evidence-closeout spec must be the named OpenSpec change inside the expected worktree')
+    }
+  }
+  const closeoutTaskIds = fields.closeoutTaskIds.split(',').map((id) => id.trim()).filter(Boolean)
+  if (closeoutTaskIds.length > 16 || new Set(closeoutTaskIds).size !== closeoutTaskIds.length ||
+      closeoutTaskIds.some((id) => !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id))) {
+    reject('resume_state_invalid', 'closeoutTaskIds must be unique explicit IDs (maximum 16)')
+  }
+  if (fields.executionMode === 'evidence-closeout' && closeoutTaskIds.length === 0) {
+    reject('resume_state_invalid', 'evidence-closeout requires explicit closeoutTaskIds')
+  }
+  if (fields.executionMode === 'full' && closeoutTaskIds.length > 0) {
+    reject('resume_state_invalid', 'full execution mode must not carry closeoutTaskIds')
+  }
+  parseOptionalIndex(fields.taskIndex, 'taskIndex')
+  if (fields.prNumber && !/^\d+$/.test(fields.prNumber)) reject('resume_state_invalid', 'prNumber must be empty or numeric')
   checkpoint.counters = {
-    agentCalls: parseCounter(checkpoint.fields.agentCalls, 'agentCalls', limits.agentCalls),
-    p5Rounds: parseCounter(checkpoint.fields.p5Rounds, 'p5Rounds', limits.p5Rounds),
-    evidenceAttempts: parseCounter(checkpoint.fields.evidenceAttempts, 'evidenceAttempts', limits.evidenceAttempts),
+    agentCalls: parseCounter(fields.agentCalls, 'agentCalls', limits.agentCalls),
+    p5Rounds: parseCounter(fields.p5Rounds, 'p5Rounds', limits.p5Rounds),
+    evidenceAttempts: parseCounter(fields.evidenceAttempts, 'evidenceAttempts', limits.evidenceAttempts),
   }
-  if (!['full', 'evidence-closeout'].includes(checkpoint.fields.executionMode)) {
-    reject('resume_state_invalid', 'previous checkpoint has an invalid executionMode')
+  if (fields.evidenceHead && !/^[0-9a-f]{7,40}$/i.test(fields.evidenceHead)) {
+    reject('resume_state_invalid', 'evidenceHead must be empty or a 7-40 character git SHA')
   }
+  validateRunIds(fields.runIds, platform, phase, fields.executionMode)
+  checkpoint.closeoutTaskIds = closeoutTaskIds
   return checkpoint
+}
+
+const parseHistoricalCheckpoint = (line, limits) => {
+  return validateCheckpointSchema(parseStateLine(line), limits)
 }
 
 const validateParsedTransition = (previous, current) => {
@@ -449,59 +487,15 @@ const main = () => {
   const lines = fs.readFileSync(statePath, 'utf8').split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
   if (!lines.length) reject('resume_state_invalid', 'state file has no non-empty lines')
   if (lines.length > 500) reject('resume_state_invalid', 'state file exceeds the 500-checkpoint audit limit')
-  const current = parseStateLine(lines.at(-1))
-  const { kind, phase, fields } = current
-  requireFields(fields, COMMON_FIELDS)
-  validateCheckpointKind(current)
+  const current = validateCheckpointSchema(parseStateLine(lines.at(-1)), limits, platform)
+  const { kind, phase, fields, counters, closeoutTaskIds } = current
   if (!fields.worktree || !fs.existsSync(fields.worktree) || !fs.statSync(fields.worktree).isDirectory() ||
       normalizedPath(fs.realpathSync(fields.worktree)) !== normalizedPath(trusted.resolvedWorktree)) {
     reject('resume_state_invalid', `state worktree ${fields.worktree} does not match expected worktree ${cli['expected-worktree']}`)
   }
-  if (!fields.slug || !fields.spec || !fields.branch || !/^\d{4}-\d{2}-\d{2}$/.test(fields.dateStamp)) {
-    reject('resume_state_invalid', 'slug, spec, branch, and ISO dateStamp are required')
-  }
-  if (!['true', 'false'].includes(fields.userFacing)) {
-    reject('resume_state_invalid', 'userFacing must be true or false')
-  }
-  if (!/^[0-9a-f]{7,40}$/i.test(fields.head)) reject('resume_state_invalid', 'head must be a 7-40 character git SHA')
   if (!/^[0-9a-f]{7,40}$/i.test(cli['expected-head']) || fields.head.toLowerCase() !== cli['expected-head'].toLowerCase()) {
     reject('evidence_stale', `state HEAD ${fields.head} does not match current HEAD ${cli['expected-head']}`)
   }
-
-  if (!['full', 'evidence-closeout'].includes(fields.executionMode)) {
-    reject('resume_state_invalid', `invalid executionMode: ${fields.executionMode}`)
-  }
-  if (fields.executionMode === 'evidence-closeout') {
-    const change = relativeToWorktree(fields.spec, fields.worktree)
-    if (!change || !/^openspec\/changes\/[^/]+$/.test(change.toLowerCase())) {
-      reject('resume_state_invalid', 'evidence-closeout spec must be the named OpenSpec change inside the expected worktree')
-    }
-  }
-  const closeoutTaskIds = fields.closeoutTaskIds.split(',').map((id) => id.trim()).filter(Boolean)
-  if (closeoutTaskIds.length > 16 || new Set(closeoutTaskIds).size !== closeoutTaskIds.length ||
-      closeoutTaskIds.some((id) => !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id))) {
-    reject('resume_state_invalid', 'closeoutTaskIds must be unique explicit IDs (maximum 16)')
-  }
-  if (fields.executionMode === 'evidence-closeout' && closeoutTaskIds.length === 0) {
-    reject('resume_state_invalid', 'evidence-closeout requires explicit closeoutTaskIds')
-  }
-  if (fields.executionMode === 'full' && closeoutTaskIds.length > 0) {
-    reject('resume_state_invalid', 'full execution mode must not carry closeoutTaskIds')
-  }
-  parseOptionalIndex(fields.taskIndex, 'taskIndex')
-  if (fields.prNumber && !/^\d+$/.test(fields.prNumber)) reject('resume_state_invalid', 'prNumber must be empty or numeric')
-  const counters = {
-    agentCalls: parseCounter(fields.agentCalls, 'agentCalls', limits.agentCalls),
-    p5Rounds: parseCounter(fields.p5Rounds, 'p5Rounds', limits.p5Rounds),
-    evidenceAttempts: parseCounter(fields.evidenceAttempts, 'evidenceAttempts', limits.evidenceAttempts),
-  }
-  current.counters = counters
-  if (fields.evidenceHead) {
-    if (!/^[0-9a-f]{7,40}$/i.test(fields.evidenceHead)) {
-      reject('resume_state_invalid', 'evidenceHead must be empty or a 7-40 character git SHA')
-    }
-  }
-  validateRunIds(fields.runIds, platform, phase, fields.executionMode)
   validateActualHead(fields, cli['expected-head'])
   validateWorkingTree(fields)
   if (kind === 'DONE' && phase === 'P7') {
