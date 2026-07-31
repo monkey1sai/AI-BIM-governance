@@ -195,14 +195,14 @@
       "blocked_by": [],
       "last_verified": "2026-07-29T07:00:00Z",
       "task_ledger": {
-        "completed": 0,
-        "total": 23
+        "completed": 3,
+        "total": 29
       },
       "evidence_refs": [
         "openspec/changes/a4-console-convergence/proposal.md",
         "openspec/changes/a4-console-convergence/tasks.md"
       ],
-      "subject_commit": "57aa968c1b2d5e21213d872732f27392d20da8fc",
+      "subject_commit": "66a28c031ec5051f101e173cb1ce3077cbbf4419",
       "archive_debt": null
     },
     {
