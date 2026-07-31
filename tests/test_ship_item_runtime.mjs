@@ -107,15 +107,20 @@ function harness(options = {}) {
             (options.protectionChangesAfterVerdict && protectionReadCount >= 3)
           )
           return JSON.stringify({
-            required_pull_request_reviews: {
-              required_approving_review_count: options.wrongApprovalCount ? 0 : 1,
-              dismiss_stale_reviews: !options.staleReviewsAllowed,
-              bypass_pull_request_allowances: {
-                users: options.bypassAllowances ? [{ login: 'bypass-user' }] : [],
-                teams: [],
-                apps: [],
-              },
-            },
+            ...(options.missingReviewBlock
+              ? {}
+              : {
+                  required_pull_request_reviews: {
+                    required_approving_review_count: options.wrongApprovalCount ? 0 : 1,
+                    dismiss_stale_reviews: !options.staleReviewsAllowed,
+                    require_code_owner_reviews: !options.codeOwnerReviewDisabled,
+                    bypass_pull_request_allowances: {
+                      users: options.bypassAllowances ? [{ login: 'bypass-user' }] : [],
+                      teams: [],
+                      apps: [],
+                    },
+                  },
+                }),
             required_conversation_resolution: { enabled: !options.weakProtection },
             required_status_checks: {
               strict: !options.weakProtection,
@@ -220,7 +225,13 @@ function harness(options = {}) {
     prompts,
     phases,
     logs,
-    run: () => invoke({ branch: BRANCH, prNumber: PR }),
+    run: () => invoke({
+      branch: BRANCH,
+      prNumber: PR,
+      ...(expectedApprovalAction === 'merge-elevated'
+        ? { elevatedAuthorization: approvalBody({ action: expectedApprovalAction }) }
+        : {}),
+    }),
     runWithArgs: (args) => invoke(args),
   }
 }
@@ -259,6 +270,34 @@ test('governance and sensitive diffs use the same exact human approval gate', as
     assert.equal(run.agents.length, 1, path)
     assert.ok(run.commands.some((command) => command.startsWith('gh pr merge ')), path)
   }
+})
+
+test('elevated paths require an exact current-turn caller authorization', async () => {
+  const missing = harness({ diffNames: '.claude/workflows/self-approval.js\n' })
+  const missingResult = await missing.runWithArgs({ branch: BRANCH, prNumber: PR })
+  assert.equal(missingResult.heldReason, 'current_turn_authorization_required')
+  assert.equal(missing.agents.length, 0)
+
+  const wrong = harness({ diffNames: '.claude/workflows/self-approval.js\n' })
+  const wrongResult = await wrong.runWithArgs({
+    branch: BRANCH,
+    prNumber: PR,
+    elevatedAuthorization: approvalBody({ action: 'merge' }),
+  })
+  assert.equal(wrongResult.heldReason, 'current_turn_authorization_required')
+  assert.equal(wrong.agents.length, 0)
+})
+
+test('routine paths reject an unexpected elevated authorization', async () => {
+  const run = harness()
+  const result = await run.runWithArgs({
+    branch: BRANCH,
+    prNumber: PR,
+    elevatedAuthorization: approvalBody({ action: 'merge' }),
+  })
+  assert.equal(result.heldReason, 'unexpected_elevated_authorization')
+  assert.equal(run.agents.length, 0)
+  assert.ok(!run.commands.some((command) => command.startsWith('gh pr merge ')))
 })
 
 test('elevated paths reject a routine approval action', async () => {
@@ -311,6 +350,8 @@ test('single-owner branch protection must be exact and fail closed', async () =>
     { weakProtection: true },
     { wrongApprovalCount: true },
     { staleReviewsAllowed: true },
+    { codeOwnerReviewDisabled: true },
+    { missingReviewBlock: true },
     { emptyRequiredChecks: true },
     { weakForcePushes: true },
     { bypassAllowances: true },
@@ -358,8 +399,8 @@ test('branch-protection drift during buffer or after verdict prevents merge', as
   assert.ok(!untrackedField.commands.some((command) => command.startsWith('gh pr merge ')))
 })
 
-test('review-required states remain blocked in single-owner mode', async () => {
-  for (const reviewDecision of ['REVIEW_REQUIRED', 'CHANGES_REQUESTED']) {
+test('review-required or missing states remain blocked in single-owner mode', async () => {
+  for (const reviewDecision of [null, '', 'REVIEW_REQUIRED', 'CHANGES_REQUESTED']) {
     const run = harness({ reviewDecision })
     const result = await run.run()
     assert.equal(result.heldReason, 'review_required')

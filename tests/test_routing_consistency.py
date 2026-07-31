@@ -175,8 +175,10 @@ def test_ship_merge_sink_is_fixed_evidence_and_identity_bound():
     assert "reviewerPermissionForIdentity" in ship and "reviewer_permission_changed_after_verdict" in ship
     assert "collaborators/${REVIEWER_LOGIN}/permission" in ship
     assert "merge-elevated" in ship and "expectedApprovalAction" in ship
+    assert "INPUT_ELEVATED_AUTHORIZATION" in ship and "current_turn_authorization_required" in ship
     assert "normalizeBranchProtection" in ship and "validSingleOwnerProtection" in ship
     assert "stableProtectionSnapshot" in ship
+    assert "requireCodeOwnerReviews" in ship
     assert "branch_protection_single_owner_gate_not_strict" in ship
     assert "reviewDecisionAllowed" in ship and "human_approval_required" in ship
     assert "path.startsWith('.claude/')" in ship and "path.startsWith('scripts/')" in ship
@@ -207,7 +209,7 @@ def test_ship_merge_sink_is_fixed_evidence_and_identity_bound():
     assert "merge_command_failed_unverified" in ship
     assert "GitHub 已確認 merge，但本機 post-merge fetch 失敗" in ship
     for method in ("POST", "PATCH", "DELETE"):
-        assert not re.search(rf"gh api[^\n]*(?:-X|--method)\s+{method}\b", ship)
+        assert not re.search(rf"gh api[^\n]*(?:-X\s*|--method(?:\s+|=)){method}\b", ship)
     assert "gh pr comment" not in ship
 
 

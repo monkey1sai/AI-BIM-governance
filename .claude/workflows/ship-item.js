@@ -108,6 +108,9 @@ const ARGS_SAFE = args !== undefined && args !== null && typeof args === 'object
 const A = ARGS_SAFE && args ? args : {}
 const BRANCH = A.branch === undefined || A.branch === null ? '' : A.branch
 const INPUT_PR_NUMBER = A.prNumber === undefined || A.prNumber === null ? null : A.prNumber
+const INPUT_ELEVATED_AUTHORIZATION = A.elevatedAuthorization === undefined || A.elevatedAuthorization === null
+  ? null
+  : A.elevatedAuthorization
 const REPO = 'monkey1sai/AI-BIM-governance'
 const GOVERNANCE_MODE = 'single-owner'
 const REVIEWER_LOGIN = 'monkey1sai-blip'
@@ -126,6 +129,10 @@ const BRANCH_SAFE = BRANCH === '' || (
   !branchParts.some((part) => !part || part.startsWith('.') || part.endsWith('.') || part.endsWith('.lock'))
 )
 const PR_NUMBER_SAFE = INPUT_PR_NUMBER === null || (Number.isSafeInteger(INPUT_PR_NUMBER) && INPUT_PR_NUMBER > 0)
+const ELEVATED_AUTHORIZATION_SAFE = INPUT_ELEVATED_AUTHORIZATION === null || (
+  typeof INPUT_ELEVATED_AUTHORIZATION === 'string' &&
+  /^[\x20-\x7e]{1,1000}$/.test(INPUT_ELEVATED_AUTHORIZATION)
+)
 
 const ARBITER_SCHEMA = {
   type: 'object',
@@ -260,7 +267,9 @@ const stableJsonValue = (value) => {
   if (Array.isArray(value)) {
     return value
       .map(stableJsonValue)
-      .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
+      .map((entry) => [JSON.stringify(entry), entry])
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([, entry]) => entry)
   }
   if (value && typeof value === 'object') {
     return Object.keys(value).sort().reduce((result, key) => {
@@ -295,6 +304,7 @@ const normalizeBranchProtection = (raw) => {
     snapshot: stableProtectionSnapshot(raw),
     approvingReviewCount: reviews && reviews.required_approving_review_count,
     dismissStaleReviews: Boolean(reviews && reviews.dismiss_stale_reviews === true),
+    requireCodeOwnerReviews: Boolean(reviews && reviews.require_code_owner_reviews === true),
     conversationResolution: Boolean(conversation && conversation.enabled === true),
     strictStatusChecks: Boolean(statusChecks && statusChecks.strict === true),
     requiredChecks: [...new Set(requiredChecks)].sort(),
@@ -308,9 +318,10 @@ const normalizeBranchProtection = (raw) => {
 }
 const validSingleOwnerProtection = (protection) => (
   protection &&
-  protection.governanceMode === 'single-owner' &&
+  protection.governanceMode === GOVERNANCE_MODE &&
   protection.approvingReviewCount === 1 &&
   protection.dismissStaleReviews === true &&
+  protection.requireCodeOwnerReviews === true &&
   protection.conversationResolution === true &&
   protection.strictStatusChecks === true &&
   protection.requiredChecks.length > 0 &&
@@ -322,8 +333,12 @@ const validSingleOwnerProtection = (protection) => (
 const sameJson = (left, right) => JSON.stringify(left) === JSON.stringify(right)
 
 phase('Validate')
-if (!ARGS_SAFE || !BRANCH_SAFE || !PR_NUMBER_SAFE) {
-  const reason = !ARGS_SAFE ? 'invalid_args_format' : (!BRANCH_SAFE ? 'invalid_branch_arg' : 'invalid_pr_number_arg')
+if (!ARGS_SAFE || !BRANCH_SAFE || !PR_NUMBER_SAFE || !ELEVATED_AUTHORIZATION_SAFE) {
+  const reason = !ARGS_SAFE
+    ? 'invalid_args_format'
+    : (!BRANCH_SAFE
+        ? 'invalid_branch_arg'
+        : (!PR_NUMBER_SAFE ? 'invalid_pr_number_arg' : 'invalid_elevated_authorization_arg'))
   log(`ship-item args HELD：${reason}`)
   return held(reason, PR_NUMBER_SAFE ? INPUT_PR_NUMBER : null)
 }
@@ -431,6 +446,12 @@ try {
     .filter(Boolean)
   elevatedApprovalPaths = diffNames.some(elevatedApprovalPath)
   expectedApprovalAction = elevatedApprovalPaths ? 'merge-elevated' : 'merge'
+  const expectedElevatedAuthorization = elevatedApprovalPaths
+    ? canonicalApprovalBody(prNumber, preparedHead, preparedBase, expectedApprovalAction)
+    : null
+  if (INPUT_ELEVATED_AUTHORIZATION !== expectedElevatedAuthorization) {
+    return held(elevatedApprovalPaths ? 'current_turn_authorization_required' : 'unexpected_elevated_authorization', prNumber)
+  }
 
   diffText = await $`git diff --no-ext-diff --no-textconv --no-renames ${preparedBase}...${preparedHead}`.text()
   diffStat = await $`git diff --no-ext-diff --no-textconv --stat ${preparedBase}...${preparedHead}`.text()
@@ -459,6 +480,7 @@ const evidence = {
   approvalScope: {
     elevatedPath: elevatedApprovalPaths,
     action: expectedApprovalAction,
+    currentTurnAuthorization: INPUT_ELEVATED_AUTHORIZATION,
   },
   diffNames,
   diffText,
