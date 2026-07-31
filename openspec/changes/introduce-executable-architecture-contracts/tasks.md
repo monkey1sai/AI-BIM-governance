@@ -10,11 +10,11 @@
 - [x] 1.6 Wire architecture paths into the existing verification manifest's root-contract, agent-governance, and security dispatch.
 - [x] 1.7 Document source-of-truth positioning, agent workflow, exceptions, and ratchet rollout.
 
-## Phase 1 closeout in the real checkout
+## Phase 1：在真實 checkout 完成收口
 
-- [x] 1.8 Run `openspec validate introduce-executable-architecture-contracts --strict`.
-- [x] 1.9 Run canonical `scripts/verify-all` planning and affected gates in the real Windows checkout.
-- [x] 1.10 Run GitNexus `detect-changes --scope compare --base-ref main` and record the result.
+- [x] 1.8 執行 `openspec validate introduce-executable-architecture-contracts --strict`。
+- [x] 1.9 在真實 Windows checkout 執行 canonical `scripts/verify-all` planning 與 affected gates。
+- [x] 1.10 執行 GitNexus `detect-changes --scope compare --base-ref main` 並記錄結果。
 - [x] 1.11 Independent architecture review confirms the contract preserves current repo boundaries and does not over-claim observed conformance.
 
 ### Closeout evidence — 2026-07-30
@@ -24,6 +24,12 @@
 - 1.10 remains open: the command ran with the current checkout selected explicitly, but the index was stale and untracked payload files were not mapped; `No changes detected` is advisory, not an accepted gate pass.
 - 1.10 invocation follow-up (2026-07-31): the earlier failure mode is now understood. `detect-changes` aborts with `Multiple repositories indexed` unless the checkout is disambiguated, because several worktrees of this repo are indexed under the same label. With `--repo "C:\Repos\active\iot\AI-BIM-governance"` the command completes and reports `Risk level: low`, `Affected processes: 0`. The task stays unchecked: the index still predates the new files, so only Markdown symbols were mapped and the Python modules added by Phase 2 are absent. The result is advisory, not a gate pass.
 - 1.11 passed independent review after schema-instance enforcement was added and its missing-required/additional-property counterexamples were proven fail-closed.
+- 狀態取代說明：上述 1.9 與 1.10 的「仍開放／保持未勾選」是 2026-07-30
+  的歷史結果，已由下方 2026-07-31 的最終重跑證據取代。最終完成條件為
+  1.9 的 canonical affected gates 全部通過，以及 1.10 的 fresh index 能映射
+  implementation symbols，並完成兩個 feature commits 對各自
+  pre-implementation parent 的比較；下方證據已滿足兩項，因此 checklist 與
+  lifecycle ledger 同步為 16/26。
 
 ### 收口完成證據 — 2026-07-31
 
