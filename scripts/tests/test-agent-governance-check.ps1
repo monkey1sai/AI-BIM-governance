@@ -810,6 +810,9 @@ try {
 
     & node --test tests/test_governed_dispatch_runtime.mjs tests/test_ship_item_runtime.mjs
     Assert-True ($LASTEXITCODE -eq 0) 'governed dispatch and ship-item runtime tests pass'
+
+    & pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'test-seed-isolated-stack-ifc-ready.ps1')
+    Assert-True ($LASTEXITCODE -eq 0) 'isolated seed wrapper script-level tests pass'
 } finally {
     Pop-Location
 }
