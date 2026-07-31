@@ -1,0 +1,158 @@
+# scripts/lib/platform/platform-adapter.ps1
+# Cross-platform primitives for the deploy path (decision D-4, plan §6.2).
+# One codebase, per-OS dispatch: the ~10 Windows-only call sites in the canonical
+# deploy path route through these functions instead of calling CIM/NetTCP directly.
+#
+# Ownership-identity equivalence (plan B3): the stop/ownership gates rely on
+# "same PID is still the same process". Both platforms expose a birth token that
+# PID reuse cannot preserve:
+#   windows: Win32_Process.CreationDate  (100ns-resolution creation timestamp)
+#   linux:   /proc/<pid>/stat field 22   (starttime, clock ticks since boot;
+#            monotonic per boot, assigned at fork, immutable for process life)
+# A recycled PID necessarily gets a new birth token on both platforms, so
+# (pid, birth token, executable path) is an equivalent identity triple. The
+# same test suite runs unmodified on both OSes as the executable evidence.
+
+Set-StrictMode -Version Latest
+
+function Get-PlatformName {
+    # PS 5.1 has no automatic $IsWindows and only runs on Windows.
+    $isWin = $true
+    $flag = Get-Variable -Name IsWindows -Scope Global -ErrorAction SilentlyContinue
+    if ($null -ne $flag) { $isWin = [bool]$flag.Value }
+    if ($isWin) { return 'windows' }
+    $flag = Get-Variable -Name IsLinux -Scope Global -ErrorAction SilentlyContinue
+    if ($null -ne $flag -and [bool]$flag.Value) { return 'linux' }
+    throw 'platform_adapter: unsupported platform (only windows and linux are implemented).'
+}
+
+function Get-PlatformChildProcessIds {
+    param([Parameter(Mandatory = $true)][int] $ParentProcessId)
+
+    if ((Get-PlatformName) -eq 'windows') {
+        return @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$ParentProcessId" -ErrorAction SilentlyContinue |
+            ForEach-Object { [int]$_.ProcessId })
+    }
+    $children = [System.Collections.Generic.List[int]]::new()
+    foreach ($dir in Get-ChildItem -LiteralPath '/proc' -Directory -ErrorAction SilentlyContinue) {
+        if ($dir.Name -notmatch '^\d+$') { continue }
+        $stat = Get-PlatformProcStatFields -ProcessId ([int]$dir.Name)
+        if ($null -ne $stat -and $stat.ParentProcessId -eq $ParentProcessId) {
+            $children.Add([int]$dir.Name)
+        }
+    }
+    return @($children)
+}
+
+function Get-PlatformProcStatFields {
+    # Parses /proc/<pid>/stat. comm (field 2) may contain spaces/parens, so split
+    # on the LAST ')' before reading positional fields.
+    param([Parameter(Mandatory = $true)][int] $ProcessId)
+
+    $statPath = "/proc/$ProcessId/stat"
+    if (-not (Test-Path -LiteralPath $statPath)) { return $null }
+    try { $raw = Get-Content -LiteralPath $statPath -Raw -ErrorAction Stop } catch { return $null }
+    $closeIndex = $raw.LastIndexOf(')')
+    if ($closeIndex -lt 0) { return $null }
+    $rest = $raw.Substring($closeIndex + 1).Trim() -split '\s+'
+    # $rest[0] = state (field 3), $rest[1] = ppid (field 4), $rest[19] = starttime (field 22)
+    if ($rest.Count -lt 20) { return $null }
+    return [pscustomobject]@{
+        ParentProcessId = [int]$rest[1]
+        StartTimeTicks  = [string]$rest[19]
+    }
+}
+
+function Get-PlatformProcessIdentity {
+    # Returns $null when the process does not exist. BirthToken is an opaque
+    # string: equal tokens => same process incarnation on this host+boot.
+    param([Parameter(Mandatory = $true)][int] $ProcessId)
+
+    if ((Get-PlatformName) -eq 'windows') {
+        $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
+        if ($null -eq $cim) { return $null }
+        $birth = ''
+        if ($null -ne $cim.CreationDate) { $birth = $cim.CreationDate.ToUniversalTime().ToString('o') }
+        return [pscustomobject]@{
+            ProcessId      = $ProcessId
+            BirthToken     = $birth
+            ExecutablePath = [string]$cim.ExecutablePath
+            CommandLine    = [string]$cim.CommandLine
+        }
+    }
+
+    $stat = Get-PlatformProcStatFields -ProcessId $ProcessId
+    if ($null -eq $stat) { return $null }
+    $exe = ''
+    try { $exe = [string](Get-Item -LiteralPath "/proc/$ProcessId/exe" -ErrorAction Stop).Target } catch { $exe = '' }
+    $cmdline = ''
+    try {
+        $bytes = [IO.File]::ReadAllBytes("/proc/$ProcessId/cmdline")
+        $cmdline = ([Text.Encoding]::UTF8.GetString($bytes)).TrimEnd([char]0).Replace([char]0, ' ')
+    } catch { $cmdline = '' }
+    return [pscustomobject]@{
+        ProcessId      = $ProcessId
+        BirthToken     = $stat.StartTimeTicks
+        ExecutablePath = $exe
+        CommandLine    = $cmdline
+    }
+}
+
+function Test-PlatformProcessIdentityMatch {
+    # The ownership gates take a snapshot before acting and MUST re-verify that the
+    # PID still denotes the same incarnation immediately before any stop.
+    param(
+        [Parameter(Mandatory = $true)][AllowNull()] $Reference,
+        [Parameter(Mandatory = $true)][AllowNull()] $Current
+    )
+    if ($null -eq $Reference -or $null -eq $Current) { return $false }
+    if ([int]$Reference.ProcessId -ne [int]$Current.ProcessId) { return $false }
+    if ([string]::IsNullOrEmpty([string]$Reference.BirthToken) -or ([string]$Reference.BirthToken -ne [string]$Current.BirthToken)) { return $false }
+    $refExe = [string]$Reference.ExecutablePath
+    $curExe = [string]$Current.ExecutablePath
+    if ($refExe -and $curExe -and ($refExe -ne $curExe)) { return $false }
+    return $true
+}
+
+function Get-PlatformTcpListenerPid {
+    # Returns the owning PID of a LISTEN socket on the port, or $null.
+    param([Parameter(Mandatory = $true)][int] $Port)
+
+    if ((Get-PlatformName) -eq 'windows') {
+        $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -eq $conn) { return $null }
+        return [int]$conn.OwningProcess
+    }
+    $lines = @(& ss -ltnpH "sport = :$Port" 2>$null)
+    foreach ($line in $lines) {
+        if ($line -match 'pid=(\d+)') { return [int]$Matches[1] }
+    }
+    return $null
+}
+
+function Resolve-PlatformVenvPython {
+    param([Parameter(Mandatory = $true)][string] $VenvRoot)
+    if ((Get-PlatformName) -eq 'windows') {
+        return Join-Path $VenvRoot 'Scripts/python.exe'
+    }
+    return Join-Path $VenvRoot 'bin/python'
+}
+
+function Resolve-DeployTargetKitLaunch {
+    # Builds the full launch specification for a target object from the registry:
+    # working directory, launcher path, and the platform-mandatory extra args.
+    param(
+        [Parameter(Mandatory = $true)] $Target,
+        [string] $DeployRootOverride = ''
+    )
+    $root = if ([string]::IsNullOrWhiteSpace($DeployRootOverride)) { [string]$Target.deploy_root } else { $DeployRootOverride }
+    $separator = if ([string]$Target.kind -eq 'windows_host_native') { '\' } else { '/' }
+    $launcherRelative = [string]$Target.kit.streaming_launcher_relative
+    $launcherNative = $launcherRelative.Replace('/', $separator).Replace('\', $separator)
+    return [pscustomobject]@{
+        WorkingDirectory = "$root$separator" + 'bim-streaming-server'
+        LauncherPath     = "$root$separator" + 'bim-streaming-server' + $separator + $launcherNative
+        Arguments        = @($Target.kit.extra_launch_args)
+        BuildCommand     = [string]$Target.kit.build_command
+    }
+}

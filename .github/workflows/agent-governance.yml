@@ -80,6 +80,14 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
 
+      - name: Run deploy target registry tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-deploy-target-registry.ps1
+
+      - name: Run platform adapter tests (windows)
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-platform-adapter.ps1
+
       - name: Run browser-evidence hook tests
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-require-gstack-evidence.ps1

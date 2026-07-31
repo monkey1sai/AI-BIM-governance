@@ -1,0 +1,43 @@
+{
+  "schema_version": "deploy-target-registry/v1",
+  "canonical_target": "remote-linux-181",
+  "reserved_kinds": ["linux_container"],
+  "targets": [
+    {
+      "id": "local-windows",
+      "kind": "windows_host_native",
+      "role": "on_demand_platform_verification",
+      "connection": { "type": "local" },
+      "deploy_root": "D:\\Users\\deploy\\AI-bim-geo",
+      "runtime_data_root": "D:\\Users\\deploy\\AI-bim-geo-data",
+      "public_host": "192.168.10.105",
+      "edge_site_id": "site_local_deploy",
+      "env_file": ".env.web-plane.host-kit",
+      "kit": {
+        "build_platform": "windows-x86_64",
+        "build_command": "repo.bat build",
+        "streaming_launcher_relative": "_build/windows-x86_64/release/ezplus.bim_review_stream_streaming.kit.bat",
+        "extra_launch_args": []
+      },
+      "post_clone_steps": []
+    },
+    {
+      "id": "remote-linux-181",
+      "kind": "linux_host_native",
+      "role": "canonical_test_deploy",
+      "connection": { "type": "ssh", "host": "192.168.20.181", "user": "bimdeploy" },
+      "deploy_root": "/home/bimdeploy/AI-bim-geo",
+      "runtime_data_root": "/home/bimdeploy/AI-bim-geo-data",
+      "public_host": "192.168.20.181",
+      "edge_site_id": "site_remote_linux_181",
+      "env_file": ".env.web-plane.host-kit.remote-linux-181",
+      "kit": {
+        "build_platform": "linux-x86_64",
+        "build_command": "./repo.sh build",
+        "streaming_launcher_relative": "_build/linux-x86_64/release/ezplus.bim_review_stream_streaming.kit.sh",
+        "extra_launch_args": ["--no-window"]
+      },
+      "post_clone_steps": ["restore-exec-bits"]
+    }
+  ]
+}
