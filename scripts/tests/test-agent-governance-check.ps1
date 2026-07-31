@@ -324,6 +324,22 @@ try {
     Assert-True ($pwshRunCount -ge 5) 'agent-governance workflow runs the governance checks with PowerShell 7'
     Assert-True ($pwshRunCount -eq $totalRunCount) 'agent-governance workflow runs every step with PowerShell 7 (no legacy or non-pwsh shell)'
 
+    $humanApprovalScript = Get-Content -LiteralPath '.claude/workflows/ship-item.js' -Raw
+    Assert-True (-not (Test-Path -LiteralPath '.github/workflows/owner-consent.yml')) 'replayable custom owner-consent status workflow is absent'
+    Assert-True (-not (Test-Path -LiteralPath '.github/scripts/owner-consent.mjs')) 'replayable custom owner-consent status publisher is absent'
+    Assert-True ($humanApprovalScript -match "REVIEWER_LOGIN = 'monkey1sai-blip'") 'single-owner reviewer login is fixed'
+    Assert-True ($humanApprovalScript -match 'REVIEWER_ID = 311287868') 'single-owner reviewer immutable user id is fixed'
+    Assert-True ($humanApprovalScript -match "review\.state === 'APPROVED'") 'merge approval must be a GitHub APPROVED review'
+    Assert-True ($humanApprovalScript -match 'review\.commit_id === headOid') 'merge approval is bound to the exact head commit'
+    Assert-True ($humanApprovalScript -match 'reviewerPermissionForIdentity') 'fixed reviewer live permission is mechanically validated'
+    Assert-True ($humanApprovalScript -match "parsed\.permission !== 'write'") 'fixed reviewer permission must remain exactly write'
+    Assert-True ($humanApprovalScript -match 'reviewer_permission_changed_after_verdict') 'fixed reviewer permission is re-read before merge'
+    Assert-True ($humanApprovalScript -match "expectedApprovalAction = elevatedApprovalPaths \? 'merge-elevated' : 'merge'") 'elevated changes require a distinct approval action'
+    foreach ($workflowFile in @(Get-ChildItem -LiteralPath '.github/workflows' -File)) {
+        $otherWorkflow = Get-Content -LiteralPath $workflowFile.FullName -Raw
+        Assert-True (-not ($otherWorkflow -match '(?m)^\s+statuses:\s*write\s*$')) "no workflow may publish a replayable merge-authority commit status: $($workflowFile.Name)"
+    }
+
     $prReviewWorkflow = Get-Content -LiteralPath '.github/workflows/pr-review-agent.yml' -Raw
     Assert-True ($prReviewWorkflow -match '(?m)^name:\s*PR Metadata Contract\s*$') 'PR metadata diagnostic has a truthful workflow name'
     Assert-True ($prReviewWorkflow -match '(?m)^\s{4}name:\s*pr-metadata-contract-diagnostic\s*$') 'PR metadata job cannot be mistaken for the merge-authority context'
@@ -809,7 +825,7 @@ try {
     }
 
     & node --test tests/test_governed_dispatch_runtime.mjs tests/test_ship_item_runtime.mjs
-    Assert-True ($LASTEXITCODE -eq 0) 'governed dispatch and ship-item runtime tests pass'
+    Assert-True ($LASTEXITCODE -eq 0) 'governed dispatch and exact-head human-approval ship-item runtime tests pass'
 } finally {
     Pop-Location
 }
