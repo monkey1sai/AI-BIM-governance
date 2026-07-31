@@ -92,6 +92,10 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-remote-deploy-transport.ps1
 
+      - name: Run IFC fixture pin tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-ifc-fixture-pin.mjs"
+
       - name: Run browser-evidence hook tests
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-require-gstack-evidence.ps1
