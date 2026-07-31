@@ -27,6 +27,14 @@
 
 ## 4. 隔離 stack 驗證與修復迴圈
 
+`isolated-branch-stack-browser-e2e`（#431）交回的 known gap：launcher 對 coordinator 明示 `MINIO_WATCH_ENABLED=false`，且 `EXTERNAL_IFC_READY_STORE_PATH`／`STORAGE_ROOT` 綁 per-run 目錄，隔離 stack 因此永遠沒有 `download_status="downloaded"` 的 job，`a4-closeout.spec.ts` 的 preflight 在開瀏覽器前即 fail。4.0 先補這條資料前置，4.1 起才有 A4 可驗。
+
+- [x] 4.0.1 先寫 failing test `bim-review-coordinator/tests/seed-isolated-ifc-ready.test.ts`：seed 目標必須是 loopback 且 port 落在 8005–8009，命中部署區 `:8004`／governance `:49102`／Kit `:49100`／baked viewer `:5173` 即 fail closed；候選物件挑選需確定性（同 bucket 內容 → 同 job）且 `requiredKey` 未命中不得靜默改挑別的；intake payload 與 `minioWatcher` triggerIntake 逐欄同形、idempotency／correlation key 完全一致；evidence record 序列化後不得含 presigned 簽章或 webhook secret。
+- [x] 4.0.2 實作 `bim-review-coordinator/src/tools/seedIsolatedIfcReady.ts`（純函式核心＋`runSeed`）與 `seedIsolatedIfcReadyCli.ts`（CLI 外殼，`dotenv` 副作用不進函式庫）：顯式重放一次 MinIO watcher tick——list 真 bucket → presign → `POST /api/external/ifc-ready` → coordinator 真的自 MinIO 下載 bytes 進 per-run storage。複用 `deriveIntakeFromKey`／`idempotencyKeyFor`／`correlationIdFor`，不自造第二套規則。
+- [x] 4.0.3 新增 operator wrapper `scripts/dev/seed-isolated-stack-ifc-ready.ps1`，並登記 `scripts/script-registry.json` 與 `scripts/SCRIPT_CONTRACT.md`（明示：非 canonical entrypoint、不擁有 stack lifecycle、不得取代 `deploy.ps1`）。
+- [ ] 4.0.4 取得可用的真實 MinIO 唯讀憑證。本機 `bim-review-coordinator/.env` 只宣告 `MINIO_WATCH_*` 而值為空（`MINIO_WATCH_ENDPOINT`／`BUCKET`／`ACCESS_KEY`／`SECRET_KEY` 皆為空字串），bucket 讀取亦未確認允許匿名；`http://192.168.20.234:9000/minio/health/live` 已實測回 200，故阻擋點是憑證而非網路可達性。憑證只經 `--env-file` 提供，不得進 tracked 檔。
+- [ ] 4.0.5 待 #431 merge（launcher 進 main）且 4.0.4 憑證到位後，對真實隔離 stack 實跑 seeding：記錄採用的 MinIO key／etag、產出的 `ifc_ready_job_id`，evidence 落 `artifacts/e2e/a4-console-convergence/<run-id>/seed-result.json`，並以該 job id 設定 `A4_E2E_IFC_READY_JOB_ID` 供 4.2 的 browser E2E 鎖定同一個 job。
+- [ ] 4.0.6 seeding 前後各取一次部署區 `:8004`／`:49102` listener 快照，證明 seeding 未觸及部署區。
 - [ ] 4.1 依 `docs/agents/product-operability-and-script-contract.md` 啟動隔離 alt-port stack（coordinator `:8005`／governance `:49103`），確認啟動前已跑 host-native port 清理，且不影響部署區 `:8004`。
 - [ ] 4.2 對隔離 stack 實跑 A4 canonical route：真實 coordinator API、deterministic fixture、observed `query_id`，逐一驗證 3.5 的每個 visible state；每輪失敗即修復後重跑同一檢查，記錄 before／after。
 - [ ] 4.3 收集 runtime evidence 到 `artifacts/e2e/a4-console-convergence/`：screenshot、console、network、observed runtime IDs；PNG 依 repo 慣例需 `git add -f`。
