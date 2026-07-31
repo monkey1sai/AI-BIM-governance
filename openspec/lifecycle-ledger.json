@@ -1381,18 +1381,18 @@
       "id": "introduce-executable-architecture-contracts",
       "status": "active",
       "owner": "repository-maintainer",
-      "current_slice": "Phase 1 desired architecture contract, schemas, validator, and verification routing",
+      "current_slice": "Phase 3 語言專屬結構契約",
       "blocked_by": [],
-      "last_verified": "2026-07-30T09:05:00Z",
+      "last_verified": "2026-07-31T14:22:09Z",
       "task_ledger": {
-        "completed": 9,
+        "completed": 16,
         "total": 26
       },
       "evidence_refs": [
         "openspec/changes/introduce-executable-architecture-contracts/proposal.md",
         "openspec/changes/introduce-executable-architecture-contracts/tasks.md"
       ],
-      "subject_commit": "567c29e9779c7e733135873498fff5798cc901e8",
+      "subject_commit": "a28a62385ace88c869326bb625686156506f5d44",
       "archive_debt": null
     },
     {
