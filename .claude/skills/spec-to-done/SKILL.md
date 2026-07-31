@@ -170,6 +170,8 @@ P5 = Workflow({name:'fu-adversarial-verify-generic', args:{
        外部條件實現後在新 clean subjectSha 重跑，禁止送進 std-implement 假修。
      gate(內容性):P5.fix_now.length===0 && P5.external_blockers.length===0 && P5.unverified.length===0。
        P5.critic.overall_safe 是 coordinator 計算的摘要，不是 reviewer 自報的獨立放行鍵。
+     P5.refuted = 被對抗複驗駁回(verdict=refuted、disposition=none)的 findings，附駁回理由；
+       不進修復通道也不擋 gate，final report 引用原 finding 時必須標明已駁回、不得當成未處理。
      P5.known_gaps/P5.follow_ups 不自動修；**逐輪併入 deferredAccum(以 finding_id 去重，跨 round/retry/
        resume 持續累計，重跑 P5 不得歸零、不得只看最後一輪——修復型重跑的 registry 只帶 fix_now，
        critic 不保證重新發現前一輪的 deferred 項)**。寫入 PR/final known gaps 與 Full completion
@@ -177,7 +179,10 @@ P5 = Workflow({name:'fu-adversarial-verify-generic', args:{
        指揮官在 final report 附上該項已閉合的具體 evidence，不得因新一輪未再回報就視為消失。
      P5.fix_now 非空 → 依 executionMode 走唯一有界修復通道：full 用 `std-implement mode:'fix'`；
        evidence-closeout 只能在剩餘 evidence attempt 內重跑 `std-evidence-closeout`，禁止改 production。
-       fixFindings=P5.fix_now.map(x=>({id:x.finding_id,q:x.reason,suspectFile:x.evidence.file}))。
+       fixFindings=P5.fix_now.map(x=>({id:<normalize(x.finding_id)>,q:<x.reason 截斷至 ≤800 char>,
+         suspectFile:x.evidence.file}))。normalize：P5 允許的 finding_id 字元集寬於 executor 的
+         ^[A-Za-z0-9][A-Za-z0-9._-]*$——先把非法字元(如':'、空白)替換為'-'，首字元非英數則加前綴'f'，
+         正規化後碰撞再加'-2'/'-3'序號；不得因 id/q 形狀直接把 fix_now 變 bad_findings 燒掉 closeout 額度。
        executor 完成後 commit、確認 clean、重取新 subjectSha；只有尚有 P5 round 額度才重跑 P5，
        第 2 輪仍有 fix_now 或沒有對應 executor 額度 → HELD，不得開新 session 重設。
 P6 前置(指揮官親自做,解決 PR body 資料通道):
@@ -198,7 +203,7 @@ P6 前置(指揮官親自做,解決 PR body 資料通道):
           backend API/E2E command/manual steps)
         - P1.impact HIGH 的補強策略、P3.highRiskNotes
         - P3.detectFallbackTasks / detectFailTasks / fixDetectVerdicts(非 pass 項)的 GitNexus fallback 揭露
-        - P5.known_gaps / follow_ups 與 Full completion claimed=false(任一非空時)
+        - deferredAccum(P5 known_gaps/follow_ups 跨輪累計，非只最後一輪) 與 Full completion claimed=false(accumulator 任一非空時)
         - 若 impact 曾走 codebase-memory fallback(GitNexus UNKNOWN/crash)或有 `[xref]` 雙圖譜分歧 → 揭露「impact 由 codebase-memory 佐證;分歧 symbol(若有):…」(informational,非 gate)
         - 動 runtime/deploy 時附 Deploy Path 表;純 tooling/docs 註明不適用
         記下 prNumber

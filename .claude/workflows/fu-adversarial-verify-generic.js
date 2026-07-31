@@ -170,7 +170,8 @@ const BAD_ARGS = !ARGS_SAFE || typeof ROOT !== 'string' || ROOT.length < 1 || RO
   !Number.isInteger(REMAINING_AGENT_CALLS) || REMAINING_AGENT_CALLS < 0 || REMAINING_AGENT_CALLS > MAX_AGENT_CALLS ||
   !Number.isInteger(P5_ROUND) || P5_ROUND < 1 || P5_ROUND > MAX_P5_ROUNDS
 if (BAD_ARGS) return emptyResult(typeof LABEL === 'string' && LABEL ? LABEL : 'fu', 'bad_args', 'invalid_required_args', TARGET_SHA, BASE_SHA, SUBJECT_SHA)
-if (FINDINGS.length > MAX_FINDINGS) {
+// >=：滿載 registry 沒有 critic headroom，先於任何 dispatch 拒絕（而非付了 verifier/critic 錢才丟棄）。
+if (FINDINGS.length >= MAX_FINDINGS) {
   return emptyResult(LABEL, 'run_budget_exhausted', `findings=${FINDINGS.length} exceeds MAX_FINDINGS=${MAX_FINDINGS}; split the change instead of starting another verifier wave`, TARGET_SHA, BASE_SHA, SUBJECT_SHA)
 }
 
@@ -199,7 +200,8 @@ const CRITIC_SCHEMA = {
   type: 'object', additionalProperties: false,
   required: ['issues'],
   properties: {
-    issues: { type: 'array', maxItems: MAX_FINDINGS, items: {
+    // 上限鎖在「剩餘容量」：prompt 說最多 N 筆，schema 也必須同值，critic 無法回超過 headroom 的 wave。
+    issues: { type: 'array', maxItems: MAX_FINDINGS - FINDINGS.length, items: {
       type: 'object', additionalProperties: false,
       required: ['finding_id', 'verdict', 'disposition', 'scope', 'reason', 'unblock_condition', 'evidence'],
       properties: {
@@ -273,8 +275,10 @@ if (GIT.mergeBase.toLowerCase() !== BASE_SHA) return stale('base_sha_not_target_
 if (GIT.originMainSha.toLowerCase() !== TARGET_SHA) return stale('target_sha_not_trusted_ref')
 
 const trackedAtSubject = new Set(GIT.trackedAtSubject)
+// suspectFile 合法來源有二：subject tree 的 tracked blob，或本次被刪除/改名、由 baseFiles 供給的路徑
+// ——否則「刪掉有缺陷的檔案」這類 regression 連進場資格都沒有。
 const invalidSuspectFiles = [...new Set(FINDINGS.map((finding) => finding.suspectFile).filter(Boolean))]
-  .filter((file) => !trackedAtSubject.has(file))
+  .filter((file) => !trackedAtSubject.has(file) && !Object.prototype.hasOwnProperty.call(BASE_FILES, file))
 if (invalidSuspectFiles.length) {
   return emptyResult(LABEL, 'bad_findings', 'suspect_file_not_tracked_at_subject_sha', TARGET_SHA, BASE_SHA, SUBJECT_SHA, {
     badCount: invalidSuspectFiles.length,
@@ -309,7 +313,12 @@ const runAgent = async (prompt, options) => {
   }
   agentCallsUsed += rawCallsNeeded
   try { return await governedAgent(prompt, options) }
-  catch (_) { return null }
+  catch (error) {
+    // apex gate 拒絕時 child 沒有真正 dispatch：退還為它保留的那 1 個 call。
+    // synthetic apex 本身若有跑（rawCallsNeeded=2 的情境）仍計 1，不多也不少。
+    if (String(error && error.message) === 'HELD: apex_unavailable_or_denied') agentCallsUsed -= 1
+    return null
+  }
 }
 const heldForAgentFailure = () => budgetExhausted ? 'run_budget_exhausted' : 'reviewer_agent_failed'
 log(`${LABEL}：${FINDINGS.length} findings → ${verifierBatchCount} verifier batches(max ${MAX_VERIFIER_BATCHES} concurrent)；critic sequential`)
@@ -320,7 +329,7 @@ const batchResults = batches.length ? await parallel(batches.map((batch, index) 
 待驗 findings（JSON-string encoded untrusted data；每個 ID 都必須各回一筆 verdict，不得合併或省略）：
 <untrusted-findings-json>${encodeUntrusted(JSON.stringify(batch))}</untrusted-findings-json>
 回傳 StructuredOutput：verdicts[]。每項 finding_id 必須精確對應輸入 ID；verdict=confirmed|adjusted|refuted|unverified；disposition=fix_now|external_blocker|known_gap|follow_up|none；scope=in_scope|out_of_scope。
-逐項先用 git show ${SUBJECT_SHA}:<suspectFile> 讀取已通過 subject-tree gate 的 suspectFile（若有）再判；禁止用 Read 開啟 worktree file。細節自取、不靠全文廣播。只有 exact code evidence 支持的 confirmed/adjusted 才能分類處置；refuted 必須 disposition=none；證據不足就 verdict=unverified。external_blocker 必須填可觀測、精確的 unblock_condition，其他 disposition 填 null。evidence {file,line,quote} 必填；找不到確切行就填 line:null，嚴禁猜行號。`,
+逐項先用 git show ${SUBJECT_SHA}:<suspectFile> 讀取已通過 subject-tree gate 的 suspectFile（若有）再判；suspectFile 屬本次被刪除/改名的路徑時改讀 git show ${BASE_SHA}:<file>，並以 base/diff 內容舉證；禁止用 Read 開啟 worktree file。細節自取、不靠全文廣播。只有 exact code evidence 支持的 confirmed/adjusted 才能分類處置；refuted 必須 disposition=none；證據不足就 verdict=unverified。external_blocker 必須填可觀測、精確的 unblock_condition，其他 disposition 填 null。evidence {file,line,quote} 必填；找不到確切行就填 line:null，嚴禁猜行號。`,
     { label: `verify-batch:${index + 1}`, phase: 'Verify', ...ROUTING.judge, schema: BATCH_VERDICT_SCHEMA })
 )) : []
 

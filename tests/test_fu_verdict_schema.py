@@ -11,11 +11,13 @@ def _extract(text, anchor):
             if depth == 0: return text[i:j+1]
     raise AssertionError("unbalanced braces")
 
-def _schema(anchor="const VERDICT_SCHEMA ="):
+def _schema(anchor="const VERDICT_SCHEMA =", findings_count=0):
     lit = _extract(JS.read_text(encoding="utf-8"), anchor)
     # 親驗：裸 {…} vm 會 SyntaxError，必須 paren-wrap '('+lit+')'
+    # CRITIC_SCHEMA 的 maxItems 引用 FINDINGS.length（剩餘容量），vm context 需一併供給。
+    context = json.dumps({"MAX_FINDINGS": 32, "FINDINGS": [{}] * findings_count})
     out = subprocess.run(
-        ["node", "-e", "const vm=require('vm');process.stdout.write(JSON.stringify(vm.runInNewContext('('+process.argv[1]+')',{MAX_FINDINGS:32})))", lit],
+        ["node", "-e", "const vm=require('vm');process.stdout.write(JSON.stringify(vm.runInNewContext('('+process.argv[1]+')',JSON.parse(process.argv[2]))))", lit, context],
         capture_output=True, text=True, check=True).stdout
     return json.loads(out)
 
@@ -40,5 +42,7 @@ def test_verdict_taxonomy_requires_evidence():
 
 
 def test_critic_schema_caps_issue_count():
-    schema = _schema("const CRITIC_SCHEMA =")
-    assert schema["properties"]["issues"]["maxItems"] == 32
+    # maxItems 鎖在剩餘容量（MAX_FINDINGS - FINDINGS.length），與 prompt 的「最多 N 筆」同值。
+    assert _schema("const CRITIC_SCHEMA =")["properties"]["issues"]["maxItems"] == 32
+    assert _schema("const CRITIC_SCHEMA =", findings_count=5)["properties"]["issues"]["maxItems"] == 27
+    assert _schema("const CRITIC_SCHEMA =", findings_count=31)["properties"]["issues"]["maxItems"] == 1

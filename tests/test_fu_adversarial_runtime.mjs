@@ -77,7 +77,7 @@ function harness(options = {}) {
     agents.push(callOptions)
     if (callOptions.label.startsWith('governance:apex:')) {
       return {
-        allowDispatch: true,
+        allowDispatch: !options.apexDenies,
         Scope: 'bounded review',
         Evidence: 'schema and immutable scope present',
         Finding: 'dispatch is bounded',
@@ -292,6 +292,38 @@ test('evidence for a path deleted by the subject may be bound to the supplied ba
   const result = await run.run()
   assert.equal(result.held, null)
   assert.deepEqual(result.fix_now.map((item) => item.finding_id), ['F1'])
+})
+
+test('a deleted path supplied via baseFiles is a valid suspectFile', async () => {
+  const removed = verdict('F1', 'fix_now')
+  removed.evidence = { file: 'src/removed.js', line: 7, quote: 'const observed = true' }
+  const run = harness({ verdicts: { F1: removed }, baseFiles: { 'src/removed.js': DEFAULT_FILE_CONTENT } })
+  const result = await run.run({ findings: [{ id: 'F1', q: 'Deleted-file regression', suspectFile: 'src/removed.js' }] })
+  assert.equal(result.held, null)
+  assert.deepEqual(result.fix_now.map((item) => item.finding_id), ['F1'])
+})
+
+test('a registry at exactly MAX_FINDINGS is rejected before any dispatch (no critic headroom)', async () => {
+  const run = harness()
+  const result = await run.run({ findings: Array.from({ length: 32 }, (_, index) => ({ id: `F${index}`, q: 'bounded' })) })
+  assert.equal(result.held, 'run_budget_exhausted')
+  assert.equal(run.agents.length, 0)
+})
+
+test('critic schema caps issues at the remaining finding capacity', async () => {
+  const run = harness()
+  await run.run()
+  const critic = run.agents.find((options) => options.label.startsWith('critic:'))
+  assert.ok(critic)
+  assert.equal(critic.schema.properties.issues.maxItems, 31) // 32 - 1 supplied finding
+})
+
+test('an apex-gate denial refunds the undispatched child call', async () => {
+  const run = harness({ apexDenies: true })
+  const result = await run.run()
+  assert.equal(result.held, 'reviewer_agent_failed')
+  // synthetic apex itself ran (1 call); the denied verifier batch was never dispatched (refunded).
+  assert.equal(result.agentCallsUsed, 1)
 })
 
 test('bad immutable args fail before commands and agents', async () => {

@@ -26,7 +26,7 @@ def test_p5_contract_binds_immutable_identity_and_taxonomy_in_both_skills():
     required = {
         "targetSha", "baseSha", "subjectSha", "domainContext", "evidence_stale",
         "fix_now", "external_blockers", "known_gaps", "follow_ups",
-        "unverified", "external_blocked", "unblock_condition",
+        "unverified", "refuted", "external_blocked", "unblock_condition",
     }
     for path in SKILLS:
         src = path.read_text(encoding="utf-8")
