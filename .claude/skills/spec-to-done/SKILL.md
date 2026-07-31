@@ -119,26 +119,30 @@ P4 = userFacing ? Workflow({name:'std-evidence', args:{worktreeRoot, slug, specP
          (勿在 workflow 內自啟)後重跑 P4;否則 HELD(not observed 不得宣告 done)
 P5 前置(指揮官親自建立 immutable review snapshot):
      所有 intended tracked code/tests/evidence 先 commit 完整；`git status --porcelain` 必須空。
-     baseSha=`git merge-base HEAD origin/main`；subjectSha=`git rev-parse HEAD`(兩者皆完整 40-hex)。
+     targetSha=`git rev-parse origin/main`；subjectSha=`git rev-parse HEAD`；
+     baseSha=`git merge-base <targetSha> <subjectSha>`(三者皆完整 40-hex，且 baseSha 不得等於 subjectSha)。
      domainContext=從 spec scope 壓成的 owning service/public entrypoint/deployment boundary，≤8000 char；
        不得把某個 service/runtime/tool 版本硬編進 generic workflow。
 P5 = Workflow({name:'fu-adversarial-verify-generic', args:{
-        root: worktreeRoot, label: slug, baseSha, subjectSha, domainContext,
+        root: worktreeRoot, label: slug, targetSha, baseSha, subjectSha, domainContext,
         findings: [...P3.finalReview.findings, ...((P4.evidence && P4.evidence.gaps) || [])],
         criticFocus: '通讀 immutable diff 找新誠實違規 / 行為 regression / spec-drift / 空測試 / DEMO DATA 漏標。',
         maxVerifierBatches:2, p5Round:p5Rounds.used+1, remainingAgentCalls}})
      // DACS（arXiv:2604.07911）：P5 findings 一律壓成 registry {id, q:<一句話 claim ≤800 char>, suspectFile}，
-     //   不灌 P3 finalReview 全文；fu-...js 對超長 q / 缺/重複 id / 非字串 suspectFile 或 >32 findings
+     //   不灌 P3 finalReview 全文；suspectFile/evidence.file 必須是 canonical repo-relative path；fu-...js 對超長 q /
+     //   缺/重複 id / 非法路徑或 >32 findings
      //   會 held:'bad_findings' / 'run_budget_exhausted' fail-fast。findings 分成最多 2 批 verifier 平行，
-     //   holistic critic 等批次完成後才串行執行；最大同時 agent 數=2，不再 per-finding fan-out。
+     //   holistic critic 等批次完成後才串行執行；verifier+critic 合計最多 32 筆，最大同時 agent 數=2，
+     //   不再 per-finding fan-out。每筆 evidence.file/line/quote 會由 workflow 以 `git show <subjectSha>:<file>`
+     //   機械綁定 exact subject blob；路徑、blob、line 或 quote 任一不符即 reviewer_agent_failed。
      //   （指揮官真截斷 q 為 doc 紀律；機械只驗入參合規。）
      每次 P5 呼叫(含 bad input 修正、infra retry、evidence stale 後的新 snapshot 與內容修復後複驗)
        都先確認 p5Rounds.used<maxP5Rounds=2 並增加 p5Rounds；回傳後立即累加 P5.agentCallsUsed，
        retry/resume/新 session 都不得把兩個累計器歸零。額度已滿一律 held='run_budget_exhausted'。
      immutable/infra gate:P5===null、P5.critic===null、P5.verdicts.length !== 送入 findings 數、
-       P5.baseSha!==baseSha 或 P5.subjectSha!==subjectSha 都不可視為通過。
+       P5.targetSha!==targetSha、P5.baseSha!==baseSha 或 P5.subjectSha!==subjectSha 都不可視為通過。
      P5.held==='bad_args'/'bad_findings' → 修正 invocation/registry；只有 P5 round 尚有額度才可重呼。
-     P5.held==='evidence_stale' → 丟棄全部舊 verdict；重新 commit/clean、重取 baseSha+subjectSha 後啟動新 P5，
+     P5.held==='evidence_stale' → 丟棄全部舊 verdict；重新 fetch/commit/clean、重取 targetSha+baseSha+subjectSha 後啟動新 P5，
        不得 resume 或沿用舊 SHA evidence；新 snapshot 的 P5 仍消耗下一輪額度，無額度即 HELD。
      P5.held==='reviewer_agent_failed' 或上述 reviewer infra 失敗 → 只有尚有 P5 round 與 agent call 額度時，
        才可在同一 clean subjectSha 重呼一次；仍失敗或額度用盡 → HELD。
@@ -161,7 +165,7 @@ P6 前置(指揮官親自做,解決 PR body 資料通道):
         與 `git rev-parse origin/main` 比對。不同代表 branch stale：尚無 prNumber 且未發布的 branch MUST
         `git rebase origin/main`；已有 prNumber 或 published PR branch MUST NOT 改寫 history，改用
         `git merge --no-edit origin/main` 以維持 normal push（conflict → HELD）。完成後重跑 affected verify、
-        必要 evidence、以新 baseSha/subjectSha 完整重跑 P5 與 GitNexus detect_changes；不得拿更新 base 前的驗證直接進 P6。
+        必要 evidence、以新 targetSha/baseSha/subjectSha 完整重跑 P5 與 GitNexus detect_changes；不得拿更新 base 前的驗證直接進 P6。
      b. push:git push -u origin <branch>
      c. gh pr create --base main(繁中):body 含 ──
         - Change lane / Behavior contract changed / Requirement source 三個 machine fields
@@ -213,11 +217,11 @@ P1 內含 plan 四軸 review(Completeness/Spec Alignment/Task Decomposition/Buil
 | held | 來源 | 指揮官處置 |
 |---|---|---|
 | `bad_args` | 任一 std-* / fu-generic(必填 args/SHA/domainContext 缺、malformed 或被字串化) | 修正 args 為正確 object；只在對應 run/P5 額度內重呼 |
-| `bad_findings` | P5 registry 缺欄、重複 id、q 過長或型別錯 | 修正 bounded registry；只在 P5 round 尚有額度時重呼，不得丟棄 finding 或灌 review 全文 |
+| `bad_findings` | P5 registry 缺欄、重複 id、q 過長、型別錯或 suspectFile 非 canonical repo-relative path | 修正 bounded registry；只在 P5 round 尚有額度時重呼，不得丟棄 finding 或灌 review 全文 |
 | `run_budget_exhausted` | 任一 phase 的 agentCalls / P5 / evidence 上限已到，或 findings >32 | **HELD**；拆小 change 或由使用者明確啟動新 run，禁止 resume 靜默歸零 |
 | `resume_state_invalid` | state 缺必要欄位、假 run ID、計數器/HEAD 不可信或 schema 漂移 | **HELD**；依 git/artifact 建立新格式 checkpoint，通過 validator 前不啟 agent |
 | `scope_drift` | evidence-closeout 需要 production/UI/contract/config 變更 | **HELD**；改用另一個已核准 full change，不得在 closeout 內擴張 |
-| `evidence_stale` / `evidence_not_closing` | P5 worktree/HEAD/base/subject identity 漂移，或 closeout evidence 未綁目前 HEAD/兩次仍未閉合 | 丟棄舊 verdict；commit/clean 後重取完整 SHA；只在剩餘額度內重跑，禁止第三輪自動重試 |
+| `evidence_stale` / `evidence_not_closing` | P5 worktree/HEAD/target/base/subject identity 漂移、空 review range，或 closeout evidence 未綁目前 HEAD/兩次仍未閉合 | 丟棄舊 verdict；fetch/commit/clean 後重取完整 SHA；只在剩餘額度內重跑，禁止第三輪自動重試 |
 | `external_blocked` | P5 有 confirmed/adjusted external blocker | HELD；回報 evidence＋精確 unblock_condition；條件實現後以新 clean subjectSha 重跑，禁止自動修 |
 | `plan_author_failed` / `plan_parse_failed` / `reviewer_agent_failed` | P1/P3 infra(agent 回 null)；P5 verifier/critic 缺失、identity/taxonomy 不一致或 unverified | 只在剩餘 run/P5 額度內以同一 immutable input 重呼一次；再失敗或額度用盡 → HELD |
 | `plan_not_aligned` | P1 修 2 輪仍不過 | **一律 HELD**(附 spec 矛盾診斷 specConflict;不自動重跑 P1 — 強制停下點,不可自動繞) |

@@ -11,11 +11,11 @@ def _extract(text, anchor):
             if depth == 0: return text[i:j+1]
     raise AssertionError("unbalanced braces")
 
-def _schema():
-    lit = _extract(JS.read_text(encoding="utf-8"), "const VERDICT_SCHEMA =")
+def _schema(anchor="const VERDICT_SCHEMA ="):
+    lit = _extract(JS.read_text(encoding="utf-8"), anchor)
     # 親驗：裸 {…} vm 會 SyntaxError，必須 paren-wrap '('+lit+')'
     out = subprocess.run(
-        ["node", "-e", "const vm=require('vm');process.stdout.write(JSON.stringify(vm.runInNewContext('('+process.argv[1]+')')))", lit],
+        ["node", "-e", "const vm=require('vm');process.stdout.write(JSON.stringify(vm.runInNewContext('('+process.argv[1]+')',{MAX_FINDINGS:32})))", lit],
         capture_output=True, text=True, check=True).stdout
     return json.loads(out)
 
@@ -37,3 +37,8 @@ def test_verdict_taxonomy_requires_evidence():
     assert set(ev["required"]) == {"file", "line", "quote"}
     lt = ev["properties"]["line"]["type"]
     assert "integer" in lt and "null" in lt   # 找不到行填 null，禁猜行號
+
+
+def test_critic_schema_caps_issue_count():
+    schema = _schema("const CRITIC_SCHEMA =")
+    assert schema["properties"]["issues"]["maxItems"] == 32

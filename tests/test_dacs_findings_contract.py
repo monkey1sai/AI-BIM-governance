@@ -14,12 +14,15 @@ def test_findings_contract_landed():
     assert "MAX_Q" in src, "缺 q 長度上限機械化"
     assert "MAX_FINDINGS = 32" in src, "缺 findings registry 總量上限"
     assert "MAX_VERIFIER_BATCHES = 2" in src, "缺 verifier batch 上限"
+    assert "maxItems: MAX_FINDINGS" in src, "缺 critic output 總量上限"
+    assert "evidence_not_bound_to_subject_sha" in src, "缺 exact subject evidence 機械綁定"
+    assert "repoRelativePath" in src, "缺 reviewer path canonicalization"
     assert "FINDINGS.map((f) => () =>" not in src, "不得維持一 finding 一 agent 的平行扇出"
 
 
 def test_p5_contract_binds_immutable_identity_and_taxonomy_in_both_skills():
     required = {
-        "baseSha", "subjectSha", "domainContext", "evidence_stale",
+        "targetSha", "baseSha", "subjectSha", "domainContext", "evidence_stale",
         "fix_now", "external_blockers", "known_gaps", "follow_ups",
         "unverified", "external_blocked", "unblock_condition",
     }

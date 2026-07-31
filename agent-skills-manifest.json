@@ -337,8 +337,8 @@
         "format": "agent-skill-tree/v1",
         "algorithm": "sha256",
         "trees": {
-          "claude": "90540b6ab3128c30dfc4261d2dc1a5665a2f1591a04ef4a79acf8af7dab2488c",
-          "codex": "135d5b22cd70f4d12d5932133e4a972f3a14781fae4da2cbe037aeb5fbd2bb80"
+          "claude": "2d50198b00da1f8c72a5f4807d5d8483d59d479a762d9e11b50e606873f9bc6a",
+          "codex": "9881aa19b03f97a61021f708c8d35f6a9321fe502454fdfb709e91961fdf43f2"
         }
       }
     },

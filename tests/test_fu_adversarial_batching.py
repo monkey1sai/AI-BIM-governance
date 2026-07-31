@@ -18,6 +18,7 @@ const calls = []
 let verifierCall = 0
 const HEAD = 'a'.repeat(40)
 const BASE = 'c'.repeat(40)
+const TARGET = 'd'.repeat(40)
 const ROOT = 'C:/repo'
 
 const commandText = (strings, values) => strings.reduce(
@@ -27,9 +28,13 @@ const dollar = (strings, ...values) => {
   return { text: async () => {
     if (command === `git -C ${ROOT} status --porcelain`) return ''
     if (command === `git -C ${ROOT} rev-parse HEAD`) return HEAD
+    if (command === `git -C ${ROOT} cat-file -t ${TARGET}`) return 'commit\n'
     if (command === `git -C ${ROOT} cat-file -t ${BASE}`) return 'commit\n'
     if (command === `git -C ${ROOT} cat-file -t ${HEAD}`) return 'commit\n'
-    if (command === `git -C ${ROOT} merge-base --is-ancestor ${BASE} ${HEAD}`) return ''
+    if (command === `git -C ${ROOT} merge-base ${TARGET} ${HEAD}`) return BASE
+    if (command === `git -C ${ROOT} show ${HEAD}:src/x.py`) {
+      return `${Array(6).fill('// context').join('\n')}\nconst observed = true\n`
+    }
     throw new Error(`unexpected command: ${command}`)
   } }
 }
@@ -73,6 +78,7 @@ const run = new AsyncFunction('args', 'phase', 'log', 'parallel', 'agent', '$', 
 run({
   root: ROOT,
   label: 'batch-contract',
+  targetSha: TARGET,
   baseSha: BASE,
   subjectSha: HEAD,
   domainContext: 'generic batch verification contract',
@@ -114,7 +120,7 @@ def test_twenty_two_findings_use_two_batches_then_one_critic():
         "critic:batch-contract",
     ]
     assert result["out"]["verifierBatchCount"] == 2
-    assert result["out"]["agentCallsUsed"] == 3
+    assert result["out"]["agentCallsUsed"] == 4
     assert [item["finding_id"] for item in result["out"]["verdicts"]] == [
         item["id"] for item in _findings(22)
     ]
