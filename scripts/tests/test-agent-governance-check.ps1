@@ -673,6 +673,11 @@ try {
     }
     Assert-True ($fuAdversarial -match 'MAX_VERIFIER_BATCHES\s*=\s*2') 'P5 verifier concurrency is capped at two batches'
     Assert-True ($fuAdversarial -match 'MAX_FINDINGS\s*=\s*32') 'P5 rejects unbounded finding registries'
+    foreach ($p5IntegrityMarker in @('targetSha', 'empty_review_range', 'repoRelativePath', 'suspect_file_not_tracked_at_subject_sha', '禁止 Read mutable worktree path', 'evidence_not_bound_to_subject_sha', 'maxItems: MAX_FINDINGS')) {
+        Assert-True ($fuAdversarial -match [regex]::Escape($p5IntegrityMarker)) "P5 preserves immutable evidence integrity marker: $p5IntegrityMarker"
+    }
+    Assert-True ($codexSpecToDone -match [regex]::Escape('targetSha')) 'Codex spec-to-done passes the immutable P5 target SHA'
+    Assert-True ($claudeSpecToDone -match [regex]::Escape('targetSha')) 'Claude spec-to-done passes the immutable P5 target SHA'
     Assert-True ($stdCloseout -match 'MAX_EVIDENCE_ATTEMPTS.*2|MAX_EVIDENCE_ATTEMPTS\).*?>\s*2') 'evidence closeout is capped at two attempts'
     foreach ($closeoutMarker in @('closeoutTaskIds', 'productionFilesChanged', 'scope_drift', 'evidence_stale', 'evidence_not_closing')) {
         Assert-True ($stdCloseout -match [regex]::Escape($closeoutMarker)) "evidence closeout preserves fail-closed marker: $closeoutMarker"

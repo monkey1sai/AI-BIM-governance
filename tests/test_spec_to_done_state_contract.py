@@ -187,6 +187,14 @@ def test_documented_p6_hold_reasons_are_durable_and_unknown_reasons_fail_closed(
     assert code == 2 and result["held"] == "resume_state_invalid"
 
 
+def test_external_blocked_is_a_durable_p5_hold(tmp_path):
+    # P5 confirmed external blocker must be checkpointable, or the taxonomy is non-resumable.
+    repo, head = _new_repo(tmp_path)
+    code, result = _run(tmp_path, repo, _line(repo, head, "HELD@P5", reason="external_blocked"))
+    assert code == 0 and result["kind"] == "HELD"
+    assert result["fields"]["reason"] == "external_blocked"
+
+
 def test_historical_unknown_held_reason_cannot_be_hidden_by_later_checkpoints(tmp_path):
     repo, head = _new_repo(tmp_path)
     unknown_hold = _line(
