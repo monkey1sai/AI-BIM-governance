@@ -15,6 +15,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import AppStream from "../AppStream";
 import App from "../Window";
 import { reviewEnv } from "../config/env";
+import { FakeAppStreamer } from "../harness/fakeStreamer";
+import { HARNESS_REVIEW_AUTHORITY } from "../harness/fixtures/reviewAuthority";
 import { getLang, setLang } from "./i18n";
 
 const PARENT_ORIGIN = "http://127.0.0.1:8004"; // console（coordinator）origin；複用 VITE_ALLOWED_COORDINATOR_ORIGINS 白名單。
@@ -35,6 +37,7 @@ type AppInternals = {
   _appendDemoIncoming: (label: string, payload: unknown) => void;
   _completeStageLoad: (loadedUrl?: string, bindingRevisionId?: string) => void;
   _completeStageLoadFromVisibleStream: () => boolean;
+  _scheduleStageLoadTimeout: () => void;
   _resyncStageBindingProof: () => Promise<boolean>;
   _finishStageLoad: () => void;
   _hasRemoteVideoFrame: () => boolean;
@@ -48,6 +51,7 @@ type AppInternals = {
   }>, revisionId: string) => void;
   _firstFramePosted: boolean;
   pendingStageUrl: string | null;
+  loadingStatePollCount: number;
   _mappingCache: { primPathForGuid: (g: string) => string | null; guidForPrimPathOrAncestor?: (p: string) => string | null } | null;
   _reverseLookupGuid: (path: string) => void;
   _onSelectUSDPrims: (prims: Set<{ path: string; name: string }>) => void;
@@ -718,6 +722,506 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     expect(reviewText).toContain(copy.stageLoadRejected);
     expect(reviewText).not.toContain(copy.unexpected);
     expect(internals(stageLoadApp).state.loadingText).toBe(copy.stageLoadRejected);
+  });
+
+  it.each([
+    {
+      language: "zh" as const,
+      title: "模型載入逾時",
+      target: "目標：stage://timeout.usdc",
+      diagnostic: "診斷：remote-video element not found",
+      lastState: "最後狀態：stage://timeout.usdc busy",
+      guidance: "Kit 已連線但沒有回報模型載入完成，請檢查該 USDC 是否可由 Kit 開啟。",
+      alternateTitle: "Model loading timed out",
+      alternateTarget: "Target: stage://timeout.usdc",
+    },
+    {
+      language: "en" as const,
+      title: "Model loading timed out",
+      target: "Target: stage://timeout.usdc",
+      diagnostic: "Diagnostic: remote-video element not found",
+      lastState: "Last state: stage://timeout.usdc busy",
+      guidance: "Kit is connected but did not report model loading as complete. Verify that Kit can open this USDC.",
+      alternateTitle: "模型載入逾時",
+      alternateTarget: "目標：stage://timeout.usdc",
+    },
+  ])("$language renders both timeout terminals with localized visible diagnostics and guidance", (copy) => {
+    vi.useFakeTimers();
+    setLang(copy.language);
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+
+    const timerApp = operableApp();
+    useSynchronousSetState(timerApp);
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+    internals(timerApp).pendingStageUrl = "stage://timeout.usdc";
+    internals(timerApp)._sendStreamMessage({
+      event_type: "openStageRequest",
+      payload: { request_id: `req_timer_${copy.language}`, url: "stage://timeout.usdc" },
+    });
+    vi.spyOn(internals(timerApp), "_completeStageLoadFromVisibleStream").mockReturnValue(false);
+    internals(timerApp)._scheduleStageLoadTimeout();
+    vi.runOnlyPendingTimers();
+
+    const timerHtml = renderToString(internals(timerApp).render());
+    expect(timerHtml).toContain(copy.title);
+    expect(timerHtml).toContain(copy.target);
+    expect(timerHtml).toContain(copy.diagnostic);
+    expect(timerHtml).toContain(copy.guidance);
+    expect(timerHtml).not.toContain(copy.alternateTitle);
+    expect(timerHtml).not.toContain(copy.alternateTarget);
+
+    const pollingApp = operableApp();
+    useSynchronousSetState(pollingApp);
+    internals(pollingApp).state = {
+      ...internals(pollingApp).state,
+      isKitReady: true,
+      webrtcLifecycleStatus: "started",
+      selectedUSDAsset: { name: "timeout", url: "stage://timeout.usdc" },
+    };
+    internals(pollingApp).pendingStageUrl = "stage://timeout.usdc";
+    internals(pollingApp).loadingStatePollCount = 90;
+    internals(pollingApp)._handleCustomEvent({
+      event_type: "loadingStateResponse",
+      payload: { url: "stage://timeout.usdc", loading_state: "busy" },
+    });
+
+    const pollingHtml = renderToString(internals(pollingApp).render());
+    expect(pollingHtml).toContain(copy.title);
+    expect(pollingHtml).toContain(copy.target);
+    expect(pollingHtml).toContain(copy.lastState);
+    expect(pollingHtml).toContain(copy.guidance);
+    expect(pollingHtml).not.toContain(copy.alternateTitle);
+    expect(pollingHtml).not.toContain(copy.alternateTarget);
+  });
+
+  it("a correlated timeout terminal rejects a late openedStageResult success without clearing its visible failure", () => {
+    vi.useFakeTimers();
+    setLang("en");
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: "stage://timeout.usdc",
+      selectedUSDAsset: { name: "timeout", url: "stage://timeout.usdc" },
+    };
+    internals(app).pendingStageUrl = "stage://timeout.usdc";
+    internals(app)._sendStreamMessage({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_timeout_terminal_001",
+        url: "stage://timeout.usdc",
+        trace_id: DATA_CHANNEL_TRACE_ID,
+      },
+    });
+    vi.spyOn(internals(app), "_completeStageLoadFromVisibleStream").mockReturnValue(false);
+    internals(app)._scheduleStageLoadTimeout();
+    vi.runOnlyPendingTimers();
+    const timeoutHtml = renderToString(internals(app).render());
+
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_timeout_terminal_001",
+        url: "stage://timeout.usdc",
+        trace_id: DATA_CHANNEL_TRACE_ID,
+      },
+    });
+
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual([
+      expect.objectContaining({
+        request_id: "req_timeout_terminal_001",
+        phases: ["pending", "terminal"],
+        outcome: "timed-out",
+      }),
+    ]);
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(renderToString(internals(app).render())).toBe(timeoutHtml);
+  });
+
+  it("claims every command in one attempt, then ignores its late loading-state and progress terminals", () => {
+    vi.useFakeTimers();
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _scheduleStageLoadTimeout: (generation: number) => void;
+      _completeStageLoadFromVisibleStream: () => boolean;
+      activeStageAttempt: { generation: number; status: string } | null;
+      runtimeCommandContexts: Map<string, { eventType: string; stageAttemptGeneration: number }>;
+    };
+    const generation = privateApp._beginStageAttempt("stage://timeout.usdc");
+    internals(app).pendingStageUrl = "stage://timeout.usdc";
+    privateApp.runtimeCommandContexts.set("req_timeout_first", {
+      eventType: "openStageRequest",
+      stageAttemptGeneration: generation,
+    });
+    privateApp.runtimeCommandContexts.set("req_timeout_second", {
+      eventType: "openStageRequest",
+      stageAttemptGeneration: generation,
+    });
+    vi.spyOn(privateApp, "_completeStageLoadFromVisibleStream").mockReturnValue(false);
+    privateApp._scheduleStageLoadTimeout(generation);
+    vi.runOnlyPendingTimers();
+
+    const timeoutText = internals(app).state.loadingText;
+    const timeoutDiagnostic = internals(app).state.streamDiagnostic;
+    internals(app)._handleCustomEvent({
+      event_type: "loadingStateResponse",
+      payload: { url: "stage://timeout.usdc", loading_state: "idle" },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "updateProgressActivity",
+      payload: { text: "None" },
+    });
+
+    expect(privateApp.activeStageAttempt).toEqual({
+      generation,
+      status: "terminal",
+      targetUrl: "stage://timeout.usdc",
+      terminalReason: "stage-load-timeout",
+    });
+    expect(internals(app).pendingStageUrl).toBeNull();
+    expect(internals(app).state.loadingText).toBe(timeoutText);
+    expect(internals(app).state.streamDiagnostic).toBe(timeoutDiagnostic);
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual(expect.arrayContaining([
+      expect.objectContaining({ request_id: "req_timeout_first", outcome: "timed-out" }),
+      expect.objectContaining({ request_id: "req_timeout_second", outcome: "timed-out" }),
+    ]));
+  });
+
+  it("does not let uncorrelated A busy/idle or a direct late None progress mutate superseding attempt B", () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _getChildren: () => void;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      confirmedStageBindingRevision: string | null;
+    };
+    internals(app).state = {
+      ...internals(app).state,
+      isKitReady: true,
+      expectedStageUrl: "stage://b.usdc",
+      selectedUSDAsset: { name: "B", url: "stage://b.usdc" },
+      usdAssets: [
+        { name: "A", url: "stage://a.usdc" },
+        { name: "B", url: "stage://b.usdc" },
+      ],
+    };
+    privateApp._beginStageAttempt("stage://a.usdc");
+    internals(app).pendingStageUrl = "stage://a.usdc";
+    const generationB = privateApp._beginStageAttempt("stage://b.usdc");
+    internals(app).pendingStageUrl = "stage://b.usdc";
+    privateApp.confirmedStageBindingRevision = "revision_b";
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+
+    internals(app)._handleCustomEvent({
+      event_type: "loadingStateResponse",
+      payload: { url: "stage://a.usdc", loading_state: "busy" },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "loadingStateResponse",
+      payload: { url: "stage://a.usdc", loading_state: "idle" },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "loadingStateResponse",
+      payload: { url: "stage://b.usdc", loading_state: "busy" },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "updateProgressActivity",
+      payload: { text: "None" },
+    });
+
+    expect(privateApp.activeStageAttempt).toEqual({
+      generation: generationB,
+      status: "pending",
+      targetUrl: "stage://b.usdc",
+    });
+    expect(internals(app).pendingStageUrl).toBe("stage://b.usdc");
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.stageLoadStatus).not.toBe("matched");
+    expect(internals(app).state.loadingText).toBe("正在載入模型...");
+    expect(internals(app)._firstFramePosted).toBe(false);
+    expect((internals(app).state.runtimeCommandLifecycles as Array<{ outcome?: string }>)
+      .some((entry) => entry.outcome === "success")).toBe(false);
+
+    internals(app)._handleCustomEvent({
+      event_type: "loadingStateResponse",
+      payload: { url: "stage://b.usdc", loading_state: "idle" },
+    });
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      generation: generationB,
+      status: "completed",
+    }));
+    expect(internals(app).state.loadedStageUrl).toBe("stage://b.usdc");
+  });
+
+  it.each([
+    ["stream stop", "_handleStreamStopped"] as const,
+    ["reconnect", "_reconnectStream"] as const,
+  ])("%s invalidates an active attempt so its late openedStageResult cannot overwrite the disconnect UI", (label, method) => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _handleStreamStopped: (kind: "stopped", message: unknown) => void;
+      _reconnectStream: () => void;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      stageAttemptGeneration: number;
+      runtimeCommandContexts: Map<string, { eventType: string; stageAttemptGeneration: number; stageUrl: string }>;
+    };
+    const generation = privateApp._beginStageAttempt("stage://disconnect.usdc");
+    internals(app).pendingStageUrl = "stage://disconnect.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: "stage://disconnect.usdc",
+      selectedUSDAsset: { name: "disconnect", url: "stage://disconnect.usdc" },
+    };
+    privateApp.runtimeCommandContexts.set(`req_${method}`, {
+      eventType: "openStageRequest",
+      stageAttemptGeneration: generation,
+      stageUrl: "stage://disconnect.usdc",
+    });
+    vi.spyOn(AppStream, "stop").mockImplementation(() => undefined);
+
+    if (method === "_handleStreamStopped") privateApp._handleStreamStopped("stopped", { reason: "test" });
+    else privateApp._reconnectStream();
+
+    const terminalLoadingText = internals(app).state.loadingText;
+    const terminalStageStatus = internals(app).state.stageLoadStatus;
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: `req_${method}`,
+        url: "stage://disconnect.usdc",
+      },
+    });
+
+    expect(privateApp.activeStageAttempt).toBeNull();
+    expect(privateApp.stageAttemptGeneration).toBe(generation + 1);
+    expect(internals(app).pendingStageUrl).toBeNull();
+    expect(internals(app).state.loadingText, label).toBe(terminalLoadingText);
+    expect(internals(app).state.stageLoadStatus, label).toBe(terminalStageStatus);
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect((internals(app).state.runtimeCommandLifecycles as Array<{ request_id: string; outcome?: string }>)
+      .some((entry) => entry.request_id === `req_${method}` && entry.outcome === "success")).toBe(false);
+  });
+
+  it("reconnect rejects old readiness and non-None progress until the new stream has started", () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _reconnectStream: () => void;
+      _openSelectedAsset: () => void;
+    };
+    internals(app).state = {
+      ...internals(app).state,
+      isKitReady: false,
+      selectedUSDAsset: { name: "reconnect", url: "stage://reconnect.usdc" },
+    };
+    vi.spyOn(AppStream, "stop").mockImplementation(() => undefined);
+    const open = vi.spyOn(privateApp, "_openSelectedAsset");
+    privateApp._reconnectStream();
+    const reconnectText = internals(app).state.loadingText;
+
+    internals(app)._handleCustomEvent({
+      event_type: "loadingStateResponse",
+      payload: { url: "stage://old.usdc", loading_state: "busy" },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "updateProgressActivity",
+      payload: { text: "Loading old stage" },
+    });
+
+    expect(internals(app).state.webrtcLifecycleStatus).toBe("initializing");
+    expect(internals(app).state.isKitReady).toBe(false);
+    expect(internals(app).state.loadingText).toBe(reconnectText);
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("keeps a pending empty-URL loading-state response on the existing retry/fail-safe path", () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+    };
+    const generation = privateApp._beginStageAttempt("stage://pending.usdc");
+    internals(app).pendingStageUrl = "stage://pending.usdc";
+    internals(app).loadingStatePollCount = 3;
+    internals(app).state = { ...internals(app).state, isKitReady: true };
+
+    internals(app)._handleCustomEvent({
+      event_type: "loadingStateResponse",
+      payload: { url: "", loading_state: "idle" },
+    });
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      generation,
+      status: "terminal",
+    }));
+    expect(internals(app).state.loadingText).toBe("模型載入狀態未回傳 URL");
+  });
+
+  it("allows a matching manual loading-state query for a completed attempt without degrading it", () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      _recordLoadedStageEvidence: (url: string, source: string, state: string) => boolean;
+    };
+    const generation = privateApp._beginStageAttempt("stage://completed.usdc");
+    privateApp.activeStageAttempt!.status = "completed";
+    internals(app).state = {
+      ...internals(app).state,
+      isKitReady: true,
+      expectedStageUrl: "stage://completed.usdc",
+      loadedStageUrl: "stage://completed.usdc",
+      stageLoadStatus: "matched",
+      usdAssets: [{ name: "completed", url: "stage://completed.usdc" }],
+    };
+    const evidence = vi.spyOn(privateApp, "_recordLoadedStageEvidence").mockReturnValue(true);
+
+    internals(app)._handleCustomEvent({
+      event_type: "loadingStateResponse",
+      payload: { url: "stage://completed.usdc", loading_state: "idle" },
+    });
+
+    expect(evidence).toHaveBeenCalledWith("stage://completed.usdc", "loadingStateResponse", "idle");
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ generation, status: "completed" }));
+    expect(internals(app).state.loadedStageUrl).toBe("stage://completed.usdc");
+    expect(internals(app).state.stageLoadStatus).toBe("matched");
+  });
+
+  it("keeps the timeout diagnostic visible over a remote frame", () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _claimStageAttemptTimeout: (generation: number) => void;
+      _failStageLoad: (title: string, diagnostic: string, generation: number) => void;
+    };
+    const generation = privateApp._beginStageAttempt("stage://timeout.usdc");
+    internals(app).pendingStageUrl = "stage://timeout.usdc";
+    vi.spyOn(internals(app), "_hasRemoteVideoFrame").mockReturnValue(true);
+    privateApp._claimStageAttemptTimeout(generation);
+    privateApp._failStageLoad("Model loading timed out", "Target: stage://timeout.usdc", generation);
+
+    expect(internals(app).state.showStream).toBe(true);
+    const html = renderToString(internals(app).render());
+    expect(html).toContain('data-testid="stage-load-failure"');
+    expect(html).toContain("Model loading timed out");
+    expect(html).toContain("Target: stage://timeout.usdc");
+  });
+
+  it("does not expand the timeout-only live-frame overlay to other stage failures", () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _failStageLoad: (title: string, diagnostic: string, generation: number) => void;
+    };
+    const generation = privateApp._beginStageAttempt("stage://rejected.usdc");
+    internals(app).pendingStageUrl = "stage://rejected.usdc";
+    vi.spyOn(internals(app), "_hasRemoteVideoFrame").mockReturnValue(true);
+
+    privateApp._failStageLoad("Model loading failed", "authorization rejected", generation);
+
+    expect(internals(app).state.showStream).toBe(true);
+    const html = renderToString(internals(app).render());
+    expect(html).not.toContain('data-testid="stage-load-failure"');
+    expect(html).not.toContain("authorization rejected");
+  });
+
+  it("does not send an older same-URL preauthorization after a newer attempt takes ownership", async () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    internals(app).state = {
+      ...internals(app).state,
+      selectedUSDAsset: { name: "same", url: "stage://same.usdc" },
+      latestStreamConfig: {
+        ...(internals(app).state.latestStreamConfig as Record<string, unknown>),
+        stage_composition: {
+          primary: { artifact_id: "artifact_same", url: "stage://same.usdc", load_order: 0 },
+          secondary_layers: [],
+        },
+      },
+    };
+    let resolveFirst: ((value: unknown) => void) | undefined;
+    let resolveSecond: ((value: unknown) => void) | undefined;
+    const privateApp = internals(app) as unknown as {
+      _preauthorizeStageBinding: () => Promise<unknown>;
+    };
+    vi.spyOn(privateApp, "_preauthorizeStageBinding")
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve; }));
+    const send = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => undefined);
+    const transaction = {
+      status: "pending",
+      session_id: "review_session_x",
+      stage_binding_authorization_id: "authorization_test",
+      binding_revision_id: "revision_test",
+      pending_expires_at: "2099-01-01T00:00:00Z",
+      stage_composition: {
+        primary: { artifact_id: "artifact_same", role: "primary", load_order: 0, usdc_url: "stage://same.usdc" },
+        secondary_layers: [],
+      },
+    };
+
+    internals(app)._openSelectedAsset();
+    internals(app)._openSelectedAsset();
+    expect(resolveFirst).toBeTypeOf("function");
+    expect(resolveSecond).toBeTypeOf("function");
+
+    resolveFirst?.(transaction);
+    await flushMicrotasks();
+    expect(send).not.toHaveBeenCalled();
+
+    resolveSecond?.(transaction);
+    await flushMicrotasks();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ event_type: "openStageRequest" }));
+  });
+
+  it("reconnect resolves an old stalled harness request without replaying it into the new generation", async () => {
+    vi.useFakeTimers();
+    const firstStart = vi.fn();
+    const firstEvent = vi.fn();
+    const secondStart = vi.fn();
+    const secondEvent = vi.fn();
+    const props = (onStart: (message: unknown) => void, onCustomEvent: (message: unknown) => void) => ({
+      streamConfig: { onStart, onCustomEvent, onStreamStats: vi.fn() },
+    });
+    await FakeAppStreamer.connect(props(firstStart, firstEvent));
+    const controls = globalThis as typeof globalThis & {
+      __AI_BIM_FAKE_KIT__?: { stallNextStageLoad: () => void };
+    };
+    controls.__AI_BIM_FAKE_KIT__?.stallNextStageLoad();
+    const stalled = FakeAppStreamer.sendMessage({
+      event_type: "openStageRequest",
+      payload: {
+        session_id: HARNESS_REVIEW_AUTHORITY.sessionId,
+        trace_id: HARNESS_REVIEW_AUTHORITY.traceId,
+        url: "harness://stage/World/sample-building.usd",
+      },
+    });
+
+    await FakeAppStreamer.connect(props(secondStart, secondEvent));
+    await expect(stalled).resolves.toBeNull();
+    await vi.runAllTimersAsync();
+
+    expect(firstStart).not.toHaveBeenCalled();
+    expect(firstEvent).not.toHaveBeenCalled();
+    expect(secondStart).toHaveBeenCalledTimes(1);
+    expect(secondEvent).not.toHaveBeenCalled();
+    FakeAppStreamer.terminate();
   });
 
   it.each([
@@ -1959,27 +2463,129 @@ describe("Important #4（修訂）：visible-stream 完成路徑不得把 pendin
   // 但「畫面可見」不等於「Kit 已回報該 stage 載入完成」——舊模型殘影 + 新 pendingStageUrl 會被誤判為已對齊，
   // 使 A1 對「未證實的 stage」開放高亮。修正後：frame 可見仍誠實送 first_frame，但 stageUrl 為 null、
   // 且 stageLoadStatus 維持 unproven（有 expected 卻無 Kit loaded URL），高亮鈕保持 disabled 直到 Kit 真回報相符 URL。
-  it("_completeStageLoadFromVisibleStream（Kit 未回 loaded URL）→ first_frame 帶 stageUrl:null、stage 不標 matched", () => {
+  it("visible fallback stays provisional until a same-generation correlated success promotes it", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
-    const app = new App({} as never);
+    const app = operableApp();
+    useSynchronousSetState(app);
     const stageUrl = "stage://visible-stream.usdc";
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _getChildren: () => void;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      confirmedStageBindingRevision: string | null;
+      runtimeCommandContexts: Map<string, { eventType: string; bindingRevisionId: string; stageUrl: string; stageAttemptGeneration: number }>;
+    };
     internals(app).state = {
       ...internals(app).state,
+      isKitReady: true,
       expectedStageUrl: stageUrl,
       loadedStageUrl: null,
+      usdAssets: [{ name: "visible stream", url: stageUrl }],
     };
+    const generation = privateApp._beginStageAttempt(stageUrl);
     internals(app).pendingStageUrl = stageUrl;
+    privateApp.runtimeCommandContexts.set("req_visible_provisional", {
+      eventType: "openStageRequest",
+      bindingRevisionId: "rev_visible_provisional",
+      stageUrl,
+      stageAttemptGeneration: generation,
+    });
     vi.spyOn(internals(app), "_hasRemoteVideoFrame").mockReturnValue(true);
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
 
     expect(internals(app)._completeStageLoadFromVisibleStream()).toBe(true);
 
-    const posted = parent.postMessage.mock.calls.map((c) => c[0] as { type?: string; stageUrl?: string | null });
+    let posted = parent.postMessage.mock.calls.map((c) => c[0] as { type?: string; stageUrl?: string | null; status?: string });
     // frame 可見 → 仍送 first_frame（誠實：有畫面），但不得攜帶未經 Kit 證實的 pendingStageUrl
     // （此處為 P1 修正的核心觀測點：first_frame.stageUrl 必為 null，A1 端 onFirstFrame 不會 setLoadedStageUrl
     //  → isStageMatched 維持 false → 高亮鈕保持 disabled，直到 Kit 真回報相符 URL）。
     expect(posted.find((m) => m.type === "first_frame")).toMatchObject({ stageUrl: null });
     expect(posted.find((m) => m.type === "stage_loaded")).toMatchObject({ stageUrl: null, status: "unproven" });
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ generation, status: "provisional" }));
+    expect(internals(app).pendingStageUrl).toBe(stageUrl);
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_visible_provisional",
+        url: stageUrl,
+        binding_revision_id: "rev_visible_provisional",
+      },
+    });
+
+    posted = parent.postMessage.mock.calls.map((c) => c[0] as { type?: string; stageUrl?: string | null; status?: string });
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ generation, status: "completed" }));
+    expect(internals(app).state.loadedStageUrl).toBe(stageUrl);
+    expect(internals(app).state.stageLoadStatus).toBe("matched");
+    expect(posted.filter((m) => m.type === "first_frame")).toHaveLength(1);
+    expect(posted.filter((m) => m.type === "stage_loaded")).toEqual([
+      expect.objectContaining({ stageUrl: null, status: "unproven" }),
+      expect.objectContaining({ stageUrl, status: "active" }),
+    ]);
+  });
+
+  it("an exact-target idle stays unproven until authenticated revision confirmation promotes it", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const stageUrl = "stage://visible-idle.usdc";
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _getChildren: () => void;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      confirmedStageBindingRevision: string | null;
+      runtimeCommandContexts: Map<string, { eventType: string; bindingRevisionId: string; stageUrl: string; stageAttemptGeneration: number }>;
+    };
+    internals(app).state = {
+      ...internals(app).state,
+      isKitReady: true,
+      expectedStageUrl: stageUrl,
+      loadedStageUrl: null,
+      usdAssets: [{ name: "visible idle", url: stageUrl }],
+    };
+    const generation = privateApp._beginStageAttempt(stageUrl);
+    internals(app).pendingStageUrl = stageUrl;
+    privateApp.runtimeCommandContexts.set("req_visible_idle", {
+      eventType: "openStageRequest",
+      bindingRevisionId: "rev_visible_idle",
+      stageUrl,
+      stageAttemptGeneration: generation,
+    });
+    vi.spyOn(internals(app), "_hasRemoteVideoFrame").mockReturnValue(true);
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+
+    expect(internals(app)._completeStageLoadFromVisibleStream()).toBe(true);
+    internals(app)._handleCustomEvent({
+      event_type: "loadingStateResponse",
+      payload: { url: stageUrl, loading_state: "idle" },
+    });
+
+    let posted = parent.postMessage.mock.calls.map((c) => c[0] as { type?: string; stageUrl?: string | null; status?: string });
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ generation, status: "provisional" }));
+    expect(internals(app).state.loadedStageUrl).toBe(stageUrl);
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+    expect(posted.filter((m) => m.type === "first_frame")).toHaveLength(1);
+    expect(posted.filter((m) => m.type === "stage_loaded")).toEqual([
+      expect.objectContaining({ stageUrl: null, status: "unproven" }),
+    ]);
+
+    privateApp.confirmedStageBindingRevision = "rev_visible_idle";
+    internals(app)._handleCustomEvent({
+      event_type: "loadingStateResponse",
+      payload: { url: stageUrl, loading_state: "idle" },
+    });
+
+    posted = parent.postMessage.mock.calls.map((c) => c[0] as { type?: string; stageUrl?: string | null; status?: string });
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ generation, status: "completed" }));
+    expect(internals(app).state.loadedStageUrl).toBe(stageUrl);
+    expect(internals(app).state.stageLoadStatus).toBe("matched");
+    expect(posted.filter((m) => m.type === "first_frame")).toHaveLength(1);
+    expect(posted.filter((m) => m.type === "stage_loaded").slice(-1)[0]).toMatchObject({ stageUrl, status: "active" });
   });
 
   it("Kit 真回報相符 loaded URL（_completeStageLoad(url)）→ first_frame / stage_loaded 帶該真 url（非 null）", () => {

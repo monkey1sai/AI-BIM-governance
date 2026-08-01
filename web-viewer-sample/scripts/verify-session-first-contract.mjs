@@ -202,10 +202,19 @@ assert.match(
     /event\.event_type == "loadingStateResponse"[\s\S]*?_recordLoadedStageEvidence\(payloadUrl, "loadingStateResponse"/,
     "loadingStateResponse must record and compare loaded stage URL evidence",
 );
+const progressActivityStart = windowSource.indexOf('else if (event.event_type === "updateProgressActivity")');
+const progressActivityEnd = windowSource.indexOf('\n        else if (event.event_type === "highlightPrimsResult")', progressActivityStart);
+assert.ok(progressActivityStart >= 0 && progressActivityEnd > progressActivityStart, "updateProgressActivity handler source slice is missing");
+const progressActivitySource = windowSource.slice(progressActivityStart, progressActivityEnd);
 assert.match(
-    windowSource,
-    /activityText === "None"[\s\S]*?const loadedUrl = this\.pendingStageUrl;[\s\S]*?_recordLoadedStageEvidence\(loadedUrl, "updateProgressActivity", activityText\)[\s\S]*?_completeStageLoad\(loadedUrl\)/,
-    "updateProgressActivity=None must prove the pending stage URL when Kit omits openedStageResult",
+    progressActivitySource,
+    /if \(activityText === "None"\) return;/,
+    "updateProgressActivity=None must be advisory only; completion authority is correlated openedStageResult or exact-target idle loadingStateResponse",
+);
+assert.doesNotMatch(
+    progressActivitySource,
+    /_recordLoadedStageEvidence|_completeStageLoad/,
+    "updateProgressActivity=None must not record stage evidence or complete a stage without correlation",
 );
 assert.match(
     windowSource,

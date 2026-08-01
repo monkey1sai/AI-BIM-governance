@@ -348,6 +348,29 @@ const runtimeRejectionReviewCopy = {
     },
 } as const satisfies Record<string, LocalizedCopy>;
 
+const stageLoadTimeoutPresentation = {
+    title: {
+        zh: "模型載入逾時",
+        en: "Model loading timed out",
+    },
+    target: {
+        zh: "目標",
+        en: "Target",
+    },
+    diagnostic: {
+        zh: "診斷",
+        en: "Diagnostic",
+    },
+    lastState: {
+        zh: "最後狀態",
+        en: "Last state",
+    },
+    missingCompletion: {
+        zh: "Kit 已連線但沒有回報模型載入完成，請檢查該 USDC 是否可由 Kit 開啟。",
+        en: "Kit is connected but did not report model loading as complete. Verify that Kit can open this USDC.",
+    },
+} as const satisfies Record<string, LocalizedCopy>;
+
 function runtimeRejectionReviewEvent(rejectedEventType: string, reason: string): string {
     return `${rejectedEventType} ${t(
         runtimeRejectionReviewCopy.rejectedVerb.zh,
@@ -380,6 +403,16 @@ interface RuntimeCommandContext {
     eventType: string;
     bindingRevisionId?: string;
     stageUrl?: string;
+    stageAttemptGeneration?: number;
+}
+
+type StageAttemptStatus = "pending" | "provisional" | "terminal" | "completed";
+
+interface StageAttempt {
+    generation: number;
+    status: StageAttemptStatus;
+    targetUrl: string;
+    terminalReason?: "stage-load-timeout";
 }
 
 interface RuntimeCommandCorrelation {
@@ -672,6 +705,8 @@ export default class App extends React.Component<AppProps, AppState> {
     private _pollForKitReadyId: number | null = null;
     private loadingStatePollCount = 0;
     private pendingStageUrl: string | null = null;
+    private stageAttemptGeneration = 0;
+    private activeStageAttempt: StageAttempt | null = null;
     // VG-01 M1：first_frame 只送一次的閂（防失敗/斷線/開檔路徑誤觸→偽證據）。
     private _firstFramePosted = false;
     // Important #3：白名單為空導致 _postToParent 全 reject 時，只 warn 一次（_postToParent 在 first_frame/heartbeat 高頻呼叫）。
@@ -1378,6 +1413,7 @@ export default class App extends React.Component<AppProps, AppState> {
         }
         const outgoing = this._withRuntimeAuthority(tracedMessage);
         let runtimeRequestId = "";
+        let runtimeStageAttemptGeneration: number | undefined;
         if (isRuntimeMutator(outgoing.event_type) && isRecord(outgoing.payload)) {
             const requestId = getPayloadString(outgoing.payload, "request_id");
             if (requestId) {
@@ -1392,7 +1428,13 @@ export default class App extends React.Component<AppProps, AppState> {
                     eventType: outgoing.event_type,
                     ...(bindingRevisionId ? { bindingRevisionId } : {}),
                     ...(stageUrl ? { stageUrl } : {}),
+                    ...(outgoing.event_type === "openStageRequest" && this.activeStageAttempt
+                        ? { stageAttemptGeneration: this.activeStageAttempt.generation }
+                        : {}),
                 });
+                runtimeStageAttemptGeneration = outgoing.event_type === "openStageRequest"
+                    ? this.activeStageAttempt?.generation
+                    : undefined;
                 while (this.runtimeCommandContexts.size > 128) {
                     const oldest = this.runtimeCommandContexts.keys().next().value as string | undefined;
                     if (!oldest) break;
@@ -1417,7 +1459,11 @@ export default class App extends React.Component<AppProps, AppState> {
                 }
                 this._appendReviewEvent(`${outgoing.event_type} failed: ${diagnostic}`);
                 if (outgoing.event_type === "openStageRequest") {
-                    this._failStageLoad("模型載入失敗", [`目標：${this.pendingStageUrl || "unknown"}`, `錯誤：${diagnostic}`].join("\n"));
+                    this._failStageLoad(
+                        "模型載入失敗",
+                        [`目標：${this.pendingStageUrl || "unknown"}`, `錯誤：${diagnostic}`].join("\n"),
+                        runtimeStageAttemptGeneration,
+                    );
                 }
             });
         this._appendDemoOutgoing(outgoing.event_type, { ...outgoing, payload: redactStreamPayload(outgoing.payload) });
@@ -1452,19 +1498,29 @@ export default class App extends React.Component<AppProps, AppState> {
         this.loadingStateRetryId = null;
     }
 
-    private _scheduleStageLoadTimeout(): void {
+    private _scheduleStageLoadTimeout(
+        attemptGeneration = this.activeStageAttempt?.generation ?? this._beginStageAttempt(this.pendingStageUrl || ""),
+    ): void {
+        for (const context of this.runtimeCommandContexts.values()) {
+            if (
+                context.eventType === "openStageRequest"
+                && !context.stageAttemptGeneration
+                && context.stageUrl === this.pendingStageUrl
+            ) context.stageAttemptGeneration = attemptGeneration;
+        }
         this._clearStageLoadTimeout();
         const timeoutMs = Math.max(reviewEnv.streamStartTimeoutMs, 45000);
         this.stageLoadTimeoutId = window.setTimeout(() => {
             this.stageLoadTimeoutId = null;
-            if (!this.pendingStageUrl) return;
+            if (!this._isCurrentStageAttempt(attemptGeneration, "pending") || !this.pendingStageUrl) return;
             if (this._completeStageLoadFromVisibleStream()) return;
+            this._claimStageAttemptTimeout(attemptGeneration);
             this._failStageLoad(
-                "模型載入逾時",
+                t(stageLoadTimeoutPresentation.title.zh, stageLoadTimeoutPresentation.title.en),
                 [
-                    `目標：${this.pendingStageUrl}`,
-                    `診斷：${this._getVideoDiagnosticText()}`,
-                    "Kit 已連線但沒有回報模型載入完成，請檢查該 USDC 是否可由 Kit 開啟。",
+                    `${t(stageLoadTimeoutPresentation.target.zh, stageLoadTimeoutPresentation.target.en)}${t("：", ": ")}${this.pendingStageUrl}`,
+                    `${t(stageLoadTimeoutPresentation.diagnostic.zh, stageLoadTimeoutPresentation.diagnostic.en)}${t("：", ": ")}${this._getVideoDiagnosticText()}`,
+                    t(stageLoadTimeoutPresentation.missingCompletion.zh, stageLoadTimeoutPresentation.missingCompletion.en),
                 ].join("\n"),
             );
         }, timeoutMs);
@@ -1498,7 +1554,35 @@ export default class App extends React.Component<AppProps, AppState> {
         this.deferredOpenStageId = null;
     }
 
-    private _finishStageLoad(): void {
+    private _beginStageAttempt(targetUrl: string): number {
+        const generation = ++this.stageAttemptGeneration;
+        this._firstFramePosted = false;
+        this.activeStageAttempt = {
+            generation,
+            status: "pending",
+            targetUrl,
+        };
+        return generation;
+    }
+
+    private _isCurrentStageAttempt(generation: number | undefined, status?: StageAttemptStatus): boolean {
+        return Boolean(
+            generation
+            && this.activeStageAttempt?.generation === generation
+            && (!status || this.activeStageAttempt.status === status),
+        );
+    }
+
+    private _isCurrentStageAttemptAwaitingProof(generation: number | undefined): boolean {
+        return Boolean(
+            generation
+            && this.activeStageAttempt?.generation === generation
+            && (this.activeStageAttempt.status === "pending" || this.activeStageAttempt.status === "provisional"),
+        );
+    }
+
+    private _finishStageLoad(attemptGeneration?: number, preserveFirstFrame = false): void {
+        if (attemptGeneration && !this._isCurrentStageAttempt(attemptGeneration)) return;
         this._clearLoadingStateRetry();
         this._clearStageLoadTimeout();
         this.pendingStageUrl = null;
@@ -1507,7 +1591,48 @@ export default class App extends React.Component<AppProps, AppState> {
         // stage（多模型切換）時第二次完成後 parent 收不到 first_frame / stage_loaded，
         // IX-A1-06 無法重滿足、「在 3D 高亮」鈕保持 disabled。重置後由 _completeStageLoad 的
         // 閂保證「每次真完成」各送一次（_failStageLoad 失敗路徑不送，誠實鐵律不變）。
-        this._firstFramePosted = false;
+        if (!preserveFirstFrame) this._firstFramePosted = false;
+    }
+
+    private _terminalizeStageAttempt(attemptGeneration = this.activeStageAttempt?.generation): void {
+        if (attemptGeneration && !this._isCurrentStageAttemptAwaitingProof(attemptGeneration)) return;
+        if (this.activeStageAttempt && attemptGeneration === this.activeStageAttempt.generation) {
+            this.activeStageAttempt.status = "terminal";
+        }
+        this._finishStageLoad(attemptGeneration);
+    }
+
+    private _invalidateStageAttempt(): void {
+        const attemptGeneration = this.activeStageAttempt?.generation;
+        if (!attemptGeneration) return;
+        this.stageAttemptGeneration = Math.max(this.stageAttemptGeneration, attemptGeneration) + 1;
+        if (this.activeStageAttempt?.status === "pending" || this.activeStageAttempt?.status === "provisional") {
+            this.activeStageAttempt.status = "terminal";
+        }
+        this._finishStageLoad(attemptGeneration);
+        // A reconnect must accept its new no-URL readiness probe. Keeping a
+        // terminal attempt here would reject that probe, while clearing it
+        // still rejects any old correlated result by generation mismatch.
+        this.activeStageAttempt = null;
+    }
+
+    private _canApplyLoadingStateResponse(stageUrl: string): boolean {
+        const attempt = this.activeStageAttempt;
+        if (!attempt) return this.state.webrtcLifecycleStatus === "started";
+        if (attempt.status === "terminal") return false;
+        if (!stageUrl) return attempt.status === "pending";
+        return stageUrl === attempt.targetUrl;
+    }
+
+    private _claimStageAttemptTimeout(attemptGeneration: number): void {
+        if (this._isCurrentStageAttemptAwaitingProof(attemptGeneration) && this.activeStageAttempt) {
+            this.activeStageAttempt.terminalReason = "stage-load-timeout";
+        }
+        for (const [requestId, context] of this.runtimeCommandContexts.entries()) {
+            if (context.stageAttemptGeneration === attemptGeneration) {
+                this._claimRuntimeCommandTerminal(requestId, context.eventType, "timed-out");
+            }
+        }
     }
 
     private _expectedStageAsset(): USDAssetType | null {
@@ -1552,19 +1677,27 @@ export default class App extends React.Component<AppProps, AppState> {
         return matched;
     }
 
-    private _completeStageLoad(loadedUrl?: string, bindingRevisionId?: string): void {
+    private _completeStageLoad(loadedUrl?: string, bindingRevisionId?: string, attemptGeneration?: number): void {
+        const currentAttempt = attemptGeneration ?? this.activeStageAttempt?.generation;
+        if (currentAttempt && !this._isCurrentStageAttemptAwaitingProof(currentAttempt)) return;
+        const promotingProvisional = Boolean(
+            currentAttempt
+            && this._isCurrentStageAttempt(currentAttempt, "provisional"),
+        );
         // ⚠️ 誠實鐵律：finalLoadedUrl 只取「Kit 真回報過的 loaded URL」（呼叫參數或既有 state.loadedStageUrl），
         // 不得 fallback 成 pendingStageUrl。pendingStageUrl 只是「我們請求載入的目標」，不是 Kit 證實已載入的事實。
-        // 當 _completeStageLoadFromVisibleStream 因「畫面可見但 Kit 尚未回 loaded URL」觸發時 loadedUrl 為空，
-        // 此時 finalLoadedUrl 留空 → matched=!hasExpectedStage（有 expected 即 unproven），first_frame 帶 stageUrl:null，
-        // A1 gate 的 stage matched 維持 false、3D 高亮鈕保持 disabled，直到 Kit 真回報相符 URL（防舊模型殘影誤判為已對齊）。
+        // Visible-stream fallback never calls this completion path: it remains provisional
+        // until Kit supplies an exact URL through a correlated result or loading-state proof.
         const finalLoadedUrl = loadedUrl || this.state.loadedStageUrl;
         const hasExpectedStage = Boolean(this.state.expectedStageUrl);
         const matched = finalLoadedUrl ? this._isLoadedStageExpected(finalLoadedUrl) : !hasExpectedStage;
         const activeRevision = bindingRevisionId || this.confirmedStageBindingRevision;
         const stageProven = harnessEnabled() || Boolean(activeRevision);
         const active = matched && stageProven;
-        this._finishStageLoad();
+        if (this.activeStageAttempt && currentAttempt === this.activeStageAttempt.generation) {
+            this.activeStageAttempt.status = "completed";
+        }
+        this._finishStageLoad(currentAttempt, promotingProvisional);
         this._getChildren();
         this.setState({
             showStream: true,
@@ -1579,12 +1712,13 @@ export default class App extends React.Component<AppProps, AppState> {
         // overlay 標示永遠 unmapped）。僅在「有 mapping_url 且該 url 尚未載入」時觸發；無 mapping_url 不做事
         // （overlay 誠實顯示 unmapped / coverage 未知）。不改既有 stage-load 流程與 debug onLoadMapping 路徑。
         this._maybeAutoLoadMapping();
-        // VG-01 M1：真畫面已到達且 stage 完成（此處為唯一真完成點，由 kit handler 1807/1826 與
-        // _completeStageLoadFromVisibleStream（含 _hasRemoteVideoFrame guard）抵達）→ 通知 parent。
-        // _firstFramePosted 閂保證只送一次；不接在 _failStageLoad（失敗）/ 斷線 / 開檔等路徑（防偽證據）。
-        if (!this._firstFramePosted && window.parent !== window) {
-            this._firstFramePosted = true;
-            this._postToParent({ type: "first_frame", stageUrl: finalLoadedUrl ?? null });
+        // VG-01 M1：first_frame 每個 attempt 只送一次；provisional frame 已送過時，
+        // 精確 stage 證據只補送 active stage_loaded，不重送 first_frame。
+        if (window.parent !== window) {
+            if (!this._firstFramePosted) {
+                this._firstFramePosted = true;
+                this._postToParent({ type: "first_frame", stageUrl: finalLoadedUrl ?? null });
+            }
             this._postToParent({
                 type: "stage_loaded",
                 stageUrl: active ? finalLoadedUrl ?? null : null,
@@ -1604,16 +1738,36 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _completeStageLoadFromVisibleStream(): boolean {
-        if (!this.pendingStageUrl || !this._hasRemoteVideoFrame()) return false;
-        this._completeStageLoad();
+        const attemptGeneration = this.activeStageAttempt?.generation
+            ?? this._beginStageAttempt(this.pendingStageUrl || "");
+        if (!attemptGeneration || !this._isCurrentStageAttempt(attemptGeneration, "pending") || !this.pendingStageUrl || !this._hasRemoteVideoFrame()) return false;
+        if (this.activeStageAttempt) this.activeStageAttempt.status = "provisional";
+        this._clearLoadingStateRetry();
+        this._clearStageLoadTimeout();
+        this.loadingStatePollCount = 0;
         this.setState((state) => ({
-            reviewEvents: [...state.reviewEvents, "模型已載入（WebRTC 畫面已可見）"],
+            showStream: true,
+            loadingText: "模型畫面可見，stage authority 尚未證明",
+            showUI: true,
+            isLoading: false,
+            streamDiagnostic: `expected：${this.state.expectedStageUrl || this.pendingStageUrl || "unknown"}\nloaded：not_observed`,
+            loadedStageUrl: null,
+            stageLoadStatus: "unproven",
+            reviewEvents: [...state.reviewEvents, "WebRTC 畫面已可見，等待精確 stage 證據"],
         }));
+        if (window.parent !== window) {
+            if (!this._firstFramePosted) {
+                this._firstFramePosted = true;
+                this._postToParent({ type: "first_frame", stageUrl: null });
+            }
+            this._postToParent({ type: "stage_loaded", stageUrl: null, status: "unproven" });
+        }
         return true;
     }
 
-    private _failStageLoad(loadingText: string, diagnostic?: string): void {
-        this._finishStageLoad();
+    private _failStageLoad(loadingText: string, diagnostic?: string, attemptGeneration = this.activeStageAttempt?.generation): void {
+        if (attemptGeneration && !this._isCurrentStageAttemptAwaitingProof(attemptGeneration)) return;
+        this._terminalizeStageAttempt(attemptGeneration);
         this.setState((state) => ({
             loadingText,
             streamDiagnostic: diagnostic || null,
@@ -2899,6 +3053,7 @@ export default class App extends React.Component<AppProps, AppState> {
     * Send a request to load an asset based on the currently selected asset
     */
     private _handleStreamStopped(kind: "stopped" | "terminated", message: unknown): void {
+        this._invalidateStageAttempt();
         this._clearLoadingStateRetry();
         this._clearStageLoadTimeout();
         this._clearDeferredOpenStage();
@@ -2922,6 +3077,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _reconnectStream(): void {
+        this._invalidateStageAttempt();
         AppStream.stop();
         this.pendingStageUrl = null;
         this.loadingStatePollCount = 0;
@@ -2976,12 +3132,13 @@ export default class App extends React.Component<AppProps, AppState> {
             return;
         }
 
+        const attemptGeneration = this._beginStageAttempt(targetAsset.url);
         this.pendingStageUrl = targetAsset.url;
         this.confirmedStageBindingRevision = null;
         this.unprovenStageUrl = null;
         this.loadingStatePollCount = 0;
         this._clearLoadingStateRetry();
-        this._scheduleStageLoadTimeout();
+        this._scheduleStageLoadTimeout(attemptGeneration);
         this.setState({
             loadingText: "正在載入模型...",
             showStream: this._hasRemoteVideoFrame(),
@@ -3033,14 +3190,18 @@ export default class App extends React.Component<AppProps, AppState> {
                 throw new Error("selected stage has no server-owned artifact binding");
             }
             const transaction = await this._preauthorizeStageBinding(selectedBindings);
+            if (!this._isCurrentStageAttempt(attemptGeneration, "pending")) return;
             this.pendingStageUrl = transaction.stage_composition.primary.usdc_url;
+            if (this.activeStageAttempt) this.activeStageAttempt.targetUrl = this.pendingStageUrl;
             this._sendStreamMessage(buildAuthorizedOpenStageRequest(transaction));
             this._scheduleLoadingStateQuery(1500);
         };
         void openStage().catch(() => {
+            if (!this._isCurrentStageAttempt(attemptGeneration, "pending")) return;
             this._failStageLoad(
                 "模型載入失敗",
                 "無法建立 stage binding authorization，已阻擋 openStageRequest",
+                attemptGeneration,
             );
         });
     }
@@ -3501,6 +3662,10 @@ export default class App extends React.Component<AppProps, AppState> {
                     parsed.retryable,
                 );
             }
+            if (
+                context?.stageAttemptGeneration
+                && !this._isCurrentStageAttemptAwaitingProof(context.stageAttemptGeneration)
+            ) return;
             if (rejection.runtime_state === "changed_unconfirmed") {
                 const revision = context?.bindingRevisionId || "unknown";
                 const unprovenUrl = context?.stageUrl || this.state.loadedStageUrl || this.pendingStageUrl;
@@ -3516,7 +3681,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 this.stageProofBlockedRevision = revision;
                 this.confirmedStageBindingRevision = null;
                 this.unprovenStageUrl = unprovenUrl;
-                this._finishStageLoad();
+                this._terminalizeStageAttempt(context?.stageAttemptGeneration);
                 this.setState((state) => ({
                     runtimeCommandRejection: rejection,
                     loadedStageUrl: null,
@@ -3562,6 +3727,7 @@ export default class App extends React.Component<AppProps, AppState> {
                         runtimeRejectionReviewCopy.stageLoadRejected.en,
                     ),
                     rejection.detail_code || rejection.reason,
+                    context?.stageAttemptGeneration,
                 );
             }
             return;
@@ -3571,7 +3737,13 @@ export default class App extends React.Component<AppProps, AppState> {
 
         // response received once a USD asset is fully loaded
         if (event.event_type === "openedStageResult") {
-            const correlation = this._completeRuntimeCommandEvent(
+            let correlation = this._correlateRuntimeCommandEvent("openedStageResult", payload);
+            if (correlation.disposition !== "matched") return;
+            if (
+                correlation.context?.stageAttemptGeneration
+                && !this._isCurrentStageAttemptAwaitingProof(correlation.context.stageAttemptGeneration)
+            ) return;
+            correlation = this._completeRuntimeCommandEvent(
                 "openedStageResult",
                 payload,
                 payload.result === "success" ? "success" : "error",
@@ -3637,7 +3809,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     }
                 }
                 if (loadedUrl && stageEvidenceMatched) {
-                    this._completeStageLoad(loadedUrl, bindingRevisionId || undefined);
+                    this._completeStageLoad(loadedUrl, bindingRevisionId || undefined, correlation.context?.stageAttemptGeneration);
                 } else {
                     this._scheduleLoadingStateQuery(250);
                 }
@@ -3655,7 +3827,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     this.stageProofBlockedRevision = null;
                     this.confirmedStageBindingRevision = null;
                     this.unprovenStageUrl = null;
-                    this._finishStageLoad();
+                    this._terminalizeStageAttempt(correlation.context?.stageAttemptGeneration);
                     this.setState((state) => ({
                         loadingText: "模型組合僅部分套用",
                         streamDiagnostic: [`目標：${url || "unknown"}`, `錯誤：${error}`].join("\n"),
@@ -3687,6 +3859,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 this._failStageLoad(
                     "模型載入失敗",
                     [`目標：${url || this.pendingStageUrl || "unknown"}`, `錯誤：${error}`].join("\n"),
+                    correlation.context?.stageAttemptGeneration,
                 );
             }
         }
@@ -3722,6 +3895,8 @@ export default class App extends React.Component<AppProps, AppState> {
         
         // response received from the 'loadingStateQuery' request
         else if (event.event_type == "loadingStateResponse") {
+            const payloadUrl = getPayloadString(payload, "url");
+            if (!this._canApplyLoadingStateResponse(payloadUrl)) return;
             // loadingStateRequest is used to poll Kit for proof of life.
             // For the first loadingStateResponse we set isKitReady to true
             // and run one more query to find out what the current loading state
@@ -3740,10 +3915,10 @@ export default class App extends React.Component<AppProps, AppState> {
             else {
                 this._clearLoadingStateRetry();
                 this.loadingStatePollCount += 1;
-                const payloadUrl = getPayloadString(payload, "url");
                 const loadingState = getPayloadString(payload, "loading_state");
                 const usdAsset: USDAssetType = this._getAsset(payloadUrl)
                 const isStageValid: boolean = !!(usdAsset.name && usdAsset.url)
+                const attemptGeneration = this.activeStageAttempt?.generation;
 
                 if (payloadUrl && loadingState === "idle" && !this._recordLoadedStageEvidence(payloadUrl, "loadingStateResponse", loadingState)) {
                     return;
@@ -3754,9 +3929,14 @@ export default class App extends React.Component<AppProps, AppState> {
                         this.setState({ loadingText: "正在載入模型...", isLoading: true });
                         this._scheduleLoadingStateQuery(1000);
                     } else {
+                        if (attemptGeneration) this._claimStageAttemptTimeout(attemptGeneration);
                         this._failStageLoad(
-                            "模型載入逾時",
-                            [`目標：${this.pendingStageUrl || this.state.selectedUSDAsset?.url || "unknown"}`, `最後狀態：${payloadUrl || "empty"} busy`].join("\n"),
+                            t(stageLoadTimeoutPresentation.title.zh, stageLoadTimeoutPresentation.title.en),
+                            [
+                                `${t(stageLoadTimeoutPresentation.target.zh, stageLoadTimeoutPresentation.target.en)}${t("：", ": ")}${this.pendingStageUrl || this.state.selectedUSDAsset?.url || "unknown"}`,
+                                `${t(stageLoadTimeoutPresentation.lastState.zh, stageLoadTimeoutPresentation.lastState.en)}${t("：", ": ")}${payloadUrl || "empty"} busy`,
+                                t(stageLoadTimeoutPresentation.missingCompletion.zh, stageLoadTimeoutPresentation.missingCompletion.en),
+                            ].join("\n"),
                         );
                     }
                     return;
@@ -3789,15 +3969,15 @@ export default class App extends React.Component<AppProps, AppState> {
                 // show stream and populate children if the stage is valid and it's done loading
                 if (isStageValid && loadingState === "idle")
                 {
+                    if (this.activeStageAttempt?.status === "completed") return;
                     if (!harnessEnabled() && !this.confirmedStageBindingRevision) {
                         this.setState({
                             loadingText: "stage 已觀察，等待 coordinator confirmation",
                             stageLoadStatus: "unproven",
                         });
-                        this._scheduleLoadingStateQuery(500);
                         return;
                     }
-                    this._completeStageLoad(payloadUrl)
+                    this._completeStageLoad(payloadUrl, this.confirmedStageBindingRevision || undefined, attemptGeneration)
                 }
             }
         }
@@ -3809,23 +3989,13 @@ export default class App extends React.Component<AppProps, AppState> {
             
         // Loading activity notification.
         else if (event.event_type === "updateProgressActivity") {
+            if (this.activeStageAttempt?.status !== "pending") return;
             console.log('Kit App communicates progress activity.');
             const activityText = getPayloadString(payload, "text");
-            if (this.pendingStageUrl && activityText === "None") {
-                const loadedUrl = this.pendingStageUrl;
-                if (!this._recordLoadedStageEvidence(loadedUrl, "updateProgressActivity", activityText)) {
-                    return;
-                }
-                if (!harnessEnabled() && !this.confirmedStageBindingRevision) {
-                    this.setState({
-                        loadingText: "stage 已觀察，等待 coordinator confirmation",
-                        stageLoadStatus: "unproven",
-                    });
-                    return;
-                }
-                this._completeStageLoad(loadedUrl);
-                return;
-            }
+            // Progress notifications carry no URL or request correlation. `None`
+            // is advisory only; completion requires a correlated openedStageResult
+            // or exact-target idle loading state backed by an authenticated confirmed revision.
+            if (activityText === "None") return;
             if (this.state.loadingText !== "正在載入模型...")
                 this.setState( {loadingText: "正在載入模型...", isLoading: true} )
         }
@@ -4197,8 +4367,25 @@ export default class App extends React.Component<AppProps, AppState> {
                 )}
 
                 {/* Loading text indicator */}
-                {!this.state.showStream &&
-                    <div className="loading-indicator-label">
+                {(!this.state.showStream || (
+                    this.activeStageAttempt?.status === "terminal"
+                    && this.activeStageAttempt.terminalReason === "stage-load-timeout"
+                )) &&
+                    <div
+                        className="loading-indicator-label"
+                        data-testid={this.activeStageAttempt?.terminalReason === "stage-load-timeout" ? "stage-load-failure" : undefined}
+                        role={this.activeStageAttempt?.terminalReason === "stage-load-timeout" ? "alert" : "status"}
+                        aria-live={this.activeStageAttempt?.terminalReason === "stage-load-timeout" ? "assertive" : "polite"}
+                        style={this.activeStageAttempt?.terminalReason === "stage-load-timeout" ? {
+                            position: "absolute",
+                            zIndex: 29,
+                            top: 52,
+                            left: 16,
+                            right: 16,
+                            width: "auto",
+                            marginTop: 0,
+                        } : undefined}
+                    >
                         {this.state.loadingText}
                         {this.state.streamDiagnostic &&
                             <pre className="stream-diagnostic-panel">{this.state.streamDiagnostic}</pre>

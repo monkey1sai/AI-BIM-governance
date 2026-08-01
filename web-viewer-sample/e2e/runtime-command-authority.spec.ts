@@ -18,6 +18,9 @@ type RuntimeRejection = {
 type FakeKitControl = {
   rejectNext(rejection: RuntimeRejection): void;
   eventTypes(): string[];
+  stallNextStageLoad(): void;
+  emitBusyStageResponses(count: number): void;
+  completeStalledStageLoad(): void;
 };
 
 async function viewerFrame(page: Page): Promise<Frame> {
@@ -43,6 +46,21 @@ async function eventCount(frame: Frame, eventType: string): Promise<number> {
     if (!control) throw new Error("FakeKit control is unavailable");
     return control.eventTypes().filter((value) => value === expected).length;
   }, eventType);
+}
+
+async function controlStageLoad(
+  frame: Frame,
+  command: "stall" | "emitBusy" | "complete",
+  count?: number,
+): Promise<void> {
+  await frame.evaluate(({ nextCommand, busyCount }) => {
+    const control = (globalThis as typeof globalThis & { __AI_BIM_FAKE_KIT__?: FakeKitControl })
+      .__AI_BIM_FAKE_KIT__;
+    if (!control) throw new Error("FakeKit control is unavailable");
+    if (nextCommand === "stall") control.stallNextStageLoad();
+    else if (nextCommand === "emitBusy") control.emitBusyStageResponses(busyCount ?? 0);
+    else control.completeStalledStageLoad();
+  }, { nextCommand: command, busyCount: count });
 }
 
 async function installEmbeddedParent(page: Page): Promise<{
@@ -128,6 +146,74 @@ async function installEmbeddedParent(page: Page): Promise<{
 }
 
 test.describe("runtime command authority controlled browser evidence", () => {
+  for (const copy of [
+    {
+      language: "zh",
+      title: "模型載入逾時",
+      target: "目標：harness://stage/World/sample-building.usd",
+      lastState: "最後狀態：harness://stage/World/sample-building.usd busy",
+      guidance: "Kit 已連線但沒有回報模型載入完成，請檢查該 USDC 是否可由 Kit 開啟。",
+      alternateTitle: "Model loading timed out",
+      alternateTarget: "Target: harness://stage/World/sample-building.usd",
+    },
+    {
+      language: "en",
+      title: "Model loading timed out",
+      target: "Target: harness://stage/World/sample-building.usd",
+      lastState: "Last state: harness://stage/World/sample-building.usd busy",
+      guidance: "Kit is connected but did not report model loading as complete. Verify that Kit can open this USDC.",
+      alternateTitle: "模型載入逾時",
+      alternateTarget: "目標：harness://stage/World/sample-building.usd",
+    },
+  ] as const) {
+    test(`embedded stage-load timeout remains terminal after late success (${copy.language})`, async ({ page }, testInfo) => {
+      await page.addInitScript((language) => localStorage.setItem("aibim:ec-lang", language), copy.language);
+      const embedded = await installEmbeddedParent(page);
+
+      // `stream ready` precedes the initial Kit proof-of-life exchange. Wait
+      // for that no-authority bootstrap to settle before arming the next
+      // openStage request; otherwise its first busy response can trigger the
+      // existing readiness callback and create a replacement request.
+      await expect.poll(() => eventCount(embedded.frame, "loadingStateQuery")).toBeGreaterThanOrEqual(2);
+      await expect.poll(() => eventCount(embedded.frame, "openStageRequest")).toBe(0);
+
+      // The control is intentionally command-only: the test cannot inspect or
+      // inject request payloads, lease data, or trace identifiers.
+      await controlStageLoad(embedded.frame, "stall");
+      await page.evaluate(() => {
+        (window as typeof window & { __deliverViewerAuthority?: () => void }).__deliverViewerAuthority?.();
+      });
+      await expect.poll(() => eventCount(embedded.frame, "openStageRequest")).toBe(1);
+      await controlStageLoad(embedded.frame, "emitBusy", 91);
+
+      const failureContainer = embedded.viewer.getByTestId("stage-load-failure");
+      const diagnostic = embedded.viewer.locator(".stream-diagnostic-panel");
+      const timeoutLifecycle = embedded.viewer
+        .getByTestId("runtime-command-lifecycle-entry")
+        .filter({ hasText: "openStageRequest" })
+        .last();
+      await expect(failureContainer).toBeInViewport();
+      await expect(failureContainer).toContainText(copy.title);
+      await expect(diagnostic).toContainText(copy.target);
+      await expect(diagnostic).toContainText(copy.lastState);
+      await expect(diagnostic).toContainText(copy.guidance);
+      await expect(failureContainer).not.toContainText(copy.alternateTitle);
+      await expect(failureContainer).not.toContainText(copy.alternateTarget);
+      await expect(timeoutLifecycle).toContainText("timed-out");
+      await failureContainer.screenshot({ path: testInfo.outputPath(`stage-load-timeout-${copy.language}-failure.png`) });
+      await page.screenshot({ path: testInfo.outputPath(`stage-load-timeout-${copy.language}.png`), fullPage: true });
+
+      await controlStageLoad(embedded.frame, "complete");
+      await page.waitForTimeout(100);
+      await expect(failureContainer).toBeInViewport();
+      await expect(failureContainer).toContainText(copy.title);
+      await expect(diagnostic).toContainText(copy.target);
+      await expect(diagnostic).toContainText(copy.lastState);
+      await expect(diagnostic).toContainText(copy.guidance);
+      await expect(timeoutLifecycle).toContainText("timed-out");
+    });
+  }
+
   test("visible authority rejection is one-shot and only an explicit retry mutates", async ({ page }, testInfo) => {
     await page.goto(harnessRoute());
     const label = page.getByTestId("harness-viewport-label");
