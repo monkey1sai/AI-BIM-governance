@@ -63,6 +63,15 @@ async function controlStageLoad(
   }, { nextCommand: command, busyCount: count });
 }
 
+async function accelerateStageProofDeadline(frame: Frame, timeoutMs = 1_000): Promise<void> {
+  await frame.evaluate((acceleratedTimeoutMs) => {
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    window.setTimeout = ((handler: TimerHandler, delay?: number, ...args: any[]) => (
+      nativeSetTimeout(handler, delay === 45_000 ? acceleratedTimeoutMs : delay, ...args)
+    )) as typeof window.setTimeout;
+  }, timeoutMs);
+}
+
 async function installEmbeddedParent(page: Page): Promise<{
   viewer: FrameLocator;
   frame: Frame;
@@ -151,7 +160,7 @@ test.describe("runtime command authority controlled browser evidence", () => {
       language: "zh",
       title: "模型載入逾時",
       target: "目標：harness://stage/World/sample-building.usd",
-      lastState: "最後狀態：harness://stage/World/sample-building.usd busy",
+      diagnostic: "診斷：readyState=0",
       guidance: "Kit 已連線但沒有回報模型載入完成，請檢查該 USDC 是否可由 Kit 開啟。",
       alternateTitle: "Model loading timed out",
       alternateTarget: "Target: harness://stage/World/sample-building.usd",
@@ -160,7 +169,7 @@ test.describe("runtime command authority controlled browser evidence", () => {
       language: "en",
       title: "Model loading timed out",
       target: "Target: harness://stage/World/sample-building.usd",
-      lastState: "Last state: harness://stage/World/sample-building.usd busy",
+      diagnostic: "Diagnostic: readyState=0",
       guidance: "Kit is connected but did not report model loading as complete. Verify that Kit can open this USDC.",
       alternateTitle: "模型載入逾時",
       alternateTarget: "目標：harness://stage/World/sample-building.usd",
@@ -170,21 +179,15 @@ test.describe("runtime command authority controlled browser evidence", () => {
       await page.addInitScript((language) => localStorage.setItem("aibim:ec-lang", language), copy.language);
       const embedded = await installEmbeddedParent(page);
 
-      // `stream ready` precedes the initial Kit proof-of-life exchange. Wait
-      // for that no-authority bootstrap to settle before arming the next
-      // openStage request; otherwise its first busy response can trigger the
-      // existing readiness callback and create a replacement request.
-      await expect.poll(() => eventCount(embedded.frame, "loadingStateQuery")).toBeGreaterThanOrEqual(2);
-      await expect.poll(() => eventCount(embedded.frame, "openStageRequest")).toBe(0);
-
-      // The control is intentionally command-only: the test cannot inspect or
-      // inject request payloads, lease data, or trace identifiers.
+      // Arm the harness before the no-authority bootstrap can consume the next
+      // stage load. The control remains command-only: it exposes neither
+      // request payloads, lease data, nor trace identifiers.
+      await accelerateStageProofDeadline(embedded.frame);
       await controlStageLoad(embedded.frame, "stall");
       await page.evaluate(() => {
         (window as typeof window & { __deliverViewerAuthority?: () => void }).__deliverViewerAuthority?.();
       });
       await expect.poll(() => eventCount(embedded.frame, "openStageRequest")).toBe(1);
-      await controlStageLoad(embedded.frame, "emitBusy", 91);
 
       const failureContainer = embedded.viewer.getByTestId("stage-load-failure");
       const diagnostic = embedded.viewer.locator(".stream-diagnostic-panel");
@@ -195,7 +198,7 @@ test.describe("runtime command authority controlled browser evidence", () => {
       await expect(failureContainer).toBeInViewport();
       await expect(failureContainer).toContainText(copy.title);
       await expect(diagnostic).toContainText(copy.target);
-      await expect(diagnostic).toContainText(copy.lastState);
+      await expect(diagnostic).toContainText(copy.diagnostic);
       await expect(diagnostic).toContainText(copy.guidance);
       await expect(failureContainer).not.toContainText(copy.alternateTitle);
       await expect(failureContainer).not.toContainText(copy.alternateTarget);
@@ -203,16 +206,66 @@ test.describe("runtime command authority controlled browser evidence", () => {
       await failureContainer.screenshot({ path: testInfo.outputPath(`stage-load-timeout-${copy.language}-failure.png`) });
       await page.screenshot({ path: testInfo.outputPath(`stage-load-timeout-${copy.language}.png`), fullPage: true });
 
+      // The stalled request may still complete late; it must not restore the
+      // terminal failure once its command context has been closed.
       await controlStageLoad(embedded.frame, "complete");
-      await page.waitForTimeout(100);
+      await expect(embedded.viewer.getByTestId("harness-viewport-label"))
+        .toContainText("stage: harness://stage/World/sample-building.usd");
       await expect(failureContainer).toBeInViewport();
       await expect(failureContainer).toContainText(copy.title);
       await expect(diagnostic).toContainText(copy.target);
-      await expect(diagnostic).toContainText(copy.lastState);
+      await expect(diagnostic).toContainText(copy.diagnostic);
       await expect(diagnostic).toContainText(copy.guidance);
       await expect(timeoutLifecycle).toContainText("timed-out");
     });
   }
+
+  test("visible frame remains provisional until the retained proof deadline terminalizes", async ({ page }, testInfo) => {
+    const embedded = await installEmbeddedParent(page);
+    await accelerateStageProofDeadline(embedded.frame);
+
+    await controlStageLoad(embedded.frame, "stall");
+    await page.evaluate(() => {
+      (window as typeof window & { __deliverViewerAuthority?: () => void }).__deliverViewerAuthority?.();
+    });
+    await expect.poll(() => eventCount(embedded.frame, "openStageRequest")).toBe(1);
+    await embedded.frame.evaluate(() => {
+      const existingVideo = document.getElementById("remote-video") as HTMLVideoElement | null;
+      const video = existingVideo ?? document.createElement("video");
+      if (!existingVideo) {
+        video.id = "remote-video";
+        document.body.appendChild(video);
+      }
+      Object.defineProperties(video, {
+        readyState: { configurable: true, get: () => HTMLMediaElement.HAVE_CURRENT_DATA },
+        videoWidth: { configurable: true, get: () => 1280 },
+        videoHeight: { configurable: true, get: () => 720 },
+      });
+    });
+    await expect.poll(() => embedded.frame.evaluate(() => {
+      const video = document.getElementById("remote-video") as HTMLVideoElement | null;
+      return video && [video.readyState, video.videoWidth, video.videoHeight];
+    })).toEqual([2, 1280, 720]);
+
+    await expect.poll(async () => page.evaluate(() => (
+      (window as typeof window & { __vg01Messages?: Array<{ type?: string; stageUrl?: string | null; status?: string }> })
+        .__vg01Messages ?? []
+    ))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "first_frame", stageUrl: null }),
+      expect.objectContaining({ type: "stage_loaded", stageUrl: null, status: "unproven" }),
+    ]));
+    await expect(embedded.viewer.getByTestId("stage-load-failure")).toBeHidden();
+
+    const failureContainer = embedded.viewer.getByTestId("stage-load-failure");
+    const timeoutLifecycle = embedded.viewer
+      .getByTestId("runtime-command-lifecycle-entry")
+      .filter({ hasText: "openStageRequest" })
+      .last();
+    await expect(failureContainer).toBeInViewport();
+    await expect(failureContainer).toContainText("模型載入逾時");
+    await expect(timeoutLifecycle).toContainText("timed-out");
+    await failureContainer.screenshot({ path: testInfo.outputPath("visible-frame-proof-timeout.png") });
+  });
 
   test("visible authority rejection is one-shot and only an explicit retry mutates", async ({ page }, testInfo) => {
     await page.goto(harnessRoute());

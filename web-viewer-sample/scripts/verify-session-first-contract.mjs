@@ -209,7 +209,7 @@ const progressActivitySource = windowSource.slice(progressActivityStart, progres
 assert.match(
     progressActivitySource,
     /if \(activityText === "None"\) return;/,
-    "updateProgressActivity=None must be advisory only; completion authority is correlated openedStageResult or exact-target idle loadingStateResponse",
+    "updateProgressActivity=None must be advisory only; completion authority is correlated openedStageResult",
 );
 assert.doesNotMatch(
     progressActivitySource,

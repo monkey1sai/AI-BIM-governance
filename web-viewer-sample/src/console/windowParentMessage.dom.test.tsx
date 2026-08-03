@@ -509,6 +509,51 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
     expect(internals(app).state.govBindingApplyState).toEqual({ status: "applied" });
   });
 
+  it("fails closed when openedStageResult revision differs from the correlated request", () => {
+    setLang("en");
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      runtimeCommandContexts: Map<string, {
+        eventType: string;
+        bindingRevisionId: string;
+        stageUrl: string;
+        stageAttemptGeneration: number;
+      }>;
+    };
+    const stageUrl = "stage://revision-guard.usdc";
+    const generation = privateApp._beginStageAttempt(stageUrl);
+    internals(app).pendingStageUrl = stageUrl;
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageUrl,
+      loadedStageUrl: null,
+      stageLoadStatus: "pending",
+    };
+    privateApp.runtimeCommandContexts.set("req_revision_guard", {
+      eventType: "loadArtifactGroupRequest",
+      bindingRevisionId: "rev_expected",
+      stageUrl,
+      stageAttemptGeneration: generation,
+    });
+
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_revision_guard",
+        url: stageUrl,
+        binding_revision_id: "rev_stale",
+      },
+    });
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ generation, status: "terminal" }));
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.loadingText).toBe("Stage authorization mismatch");
+  });
+
   it.each([
     ["missing request_id", {}],
     ["unknown request_id", { request_id: "req_unsolicited_001" }],
@@ -905,6 +950,11 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       _getChildren: () => void;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
       confirmedStageBindingRevision: string | null;
+      runtimeCommandContexts: Map<string, {
+        eventType: string;
+        stageAttemptGeneration: number;
+        stageUrl: string;
+      }>;
     };
     internals(app).state = {
       ...internals(app).state,
@@ -915,13 +965,32 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
         { name: "A", url: "stage://a.usdc" },
         { name: "B", url: "stage://b.usdc" },
       ],
+      runtimeCommandLifecycles: [{
+        request_id: "req_a_superseded",
+        event_type: "openStageRequest",
+        phases: ["pending"],
+      }],
     };
-    privateApp._beginStageAttempt("stage://a.usdc");
+    const generationA = privateApp._beginStageAttempt("stage://a.usdc");
     internals(app).pendingStageUrl = "stage://a.usdc";
+    privateApp.runtimeCommandContexts.set("req_a_superseded", {
+      eventType: "openStageRequest",
+      stageAttemptGeneration: generationA,
+      stageUrl: "stage://a.usdc",
+    });
     const generationB = privateApp._beginStageAttempt("stage://b.usdc");
     internals(app).pendingStageUrl = "stage://b.usdc";
     privateApp.confirmedStageBindingRevision = "revision_b";
     vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+
+    expect(privateApp.runtimeCommandContexts.has("req_a_superseded")).toBe(false);
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        request_id: "req_a_superseded",
+        phases: ["pending", "terminal"],
+        outcome: "superseded",
+      }),
+    ]));
 
     internals(app)._handleCustomEvent({
       event_type: "loadingStateResponse",
@@ -931,6 +1000,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       event_type: "loadingStateResponse",
       payload: { url: "stage://a.usdc", loading_state: "idle" },
     });
+    internals(app).loadingStatePollCount = 90;
     internals(app)._handleCustomEvent({
       event_type: "loadingStateResponse",
       payload: { url: "stage://b.usdc", loading_state: "busy" },
@@ -1116,7 +1186,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     expect(open).not.toHaveBeenCalled();
   });
 
-  it("keeps a pending empty-URL loading-state response on the existing retry/fail-safe path", () => {
+  it("ignores an uncorrelated empty-URL loading-state response during an active attempt", () => {
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -1126,7 +1196,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     const generation = privateApp._beginStageAttempt("stage://pending.usdc");
     internals(app).pendingStageUrl = "stage://pending.usdc";
     internals(app).loadingStatePollCount = 3;
-    internals(app).state = { ...internals(app).state, isKitReady: true };
+    internals(app).state = { ...internals(app).state, isKitReady: true, loadingText: "正在載入模型..." };
 
     internals(app)._handleCustomEvent({
       event_type: "loadingStateResponse",
@@ -1135,9 +1205,10 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
 
     expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
       generation,
-      status: "terminal",
+      status: "pending",
     }));
-    expect(internals(app).state.loadingText).toBe("模型載入狀態未回傳 URL");
+    expect(internals(app).loadingStatePollCount).toBe(3);
+    expect(internals(app).state.loadingText).toBe("正在載入模型...");
   });
 
   it("allows a matching manual loading-state query for a completed attempt without degrading it", () => {
@@ -1192,7 +1263,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     expect(html).toContain("Target: stage://timeout.usdc");
   });
 
-  it("does not expand the timeout-only live-frame overlay to other stage failures", () => {
+  it("keeps every terminal stage failure visible over a stale remote frame", () => {
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -1207,8 +1278,10 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
 
     expect(internals(app).state.showStream).toBe(true);
     const html = renderToString(internals(app).render());
-    expect(html).not.toContain('data-testid="stage-load-failure"');
-    expect(html).not.toContain("authorization rejected");
+    expect(html).toContain('data-testid="stage-load-failure"');
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("Model loading failed");
+    expect(html).toContain("authorization rejected");
   });
 
   it("does not send an older same-URL preauthorization after a newer attempt takes ownership", async () => {
@@ -2475,6 +2548,70 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
         },
       },
     });
+  });
+
+  it("starts a fresh binding attempt and correlates the composition load command", async () => {
+    vi.useFakeTimers();
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _applyBinding: AppInternals["_applyBinding"];
+      _preauthorizeStageBinding: () => Promise<Record<string, unknown>>;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      runtimeCommandContexts: Map<string, {
+        eventType: string;
+        stageAttemptGeneration?: number;
+        stageUrl?: string;
+      }>;
+    };
+    const transaction = {
+      status: "pending",
+      session_id: "review_session_x",
+      stage_binding_authorization_id: "stage_auth_retry",
+      binding_revision_id: "rev_binding_retry",
+      pending_expires_at: "2099-01-01T00:00:00Z",
+      stage_composition: {
+        primary: {
+          artifact_id: "artifact_retry",
+          role: "primary",
+          load_order: 0,
+          usdc_url: "stage://binding-retry.usdc",
+        },
+        secondary_layers: [],
+      },
+    };
+    const preauthorize = vi.spyOn(privateApp, "_preauthorizeStageBinding").mockResolvedValue(transaction);
+    const send = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+    const selection = [{
+      artifact_id: "artifact_retry",
+      model_version_id: "version_retry",
+      usdc_url: "stage://binding-retry.usdc",
+      role: "primary" as const,
+      load_order: 0,
+      ready: true,
+    }];
+
+    privateApp._applyBinding(selection, "rev_ui_retry");
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    const firstAttempt = privateApp.activeStageAttempt;
+    expect(firstAttempt).toEqual(expect.objectContaining({
+      status: "pending",
+      targetUrl: "stage://binding-retry.usdc",
+    }));
+    expect(internals(app).pendingStageUrl).toBe("stage://binding-retry.usdc");
+    const firstStageLoadPayload = send.mock.calls
+      .map(([message]) => message as { event_type?: string; payload?: unknown })
+      .find((message) => message.event_type === "loadArtifactGroupRequest")?.payload as { request_id: string };
+    expect(privateApp.runtimeCommandContexts.get(firstStageLoadPayload.request_id)).toEqual(expect.objectContaining({
+      eventType: "loadArtifactGroupRequest",
+      stageAttemptGeneration: firstAttempt!.generation,
+      stageUrl: "stage://binding-retry.usdc",
+    }));
+
+    expect(preauthorize).toHaveBeenCalledTimes(1);
   });
 
   it("heartbeats a fresh standalone lease and clears it before any expired-token mutator", async () => {
