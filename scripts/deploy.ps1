@@ -1026,6 +1026,49 @@ function New-DeployVenv {
     return $venvPython
 }
 
+$script:DeployRequirementsFiles = @(
+    'requirements.txt',
+    'bim-streaming-server\requirements.txt',
+    'governance-service\requirements.txt',
+    'services\kit-manager-api\requirements.txt')
+
+function Get-DeployRequirementsFingerprint {
+    # Content hash of every requirements file that exists. Phase 2 used to decide
+    # whether to install by asking Test-HostNativeEnvironment whether a handful of
+    # named packages imported - so once fastapi/uvicorn/ifcopenshell were present,
+    # pip never ran again. Adding a requirements file (or editing one) then had no
+    # effect on an existing deploy area: the first Linux target reached Phase 4a with
+    # openpyxl still missing and died at import. A fingerprint over the files
+    # themselves has no list to keep in sync.
+    param([Parameter(Mandatory = $true)][string] $RepoRoot)
+
+    $sb = [Text.StringBuilder]::new()
+    foreach ($req in $script:DeployRequirementsFiles) {
+        $reqPath = Join-Path $RepoRoot $req
+        if (-not (Test-Path -LiteralPath $reqPath)) { continue }
+        $null = $sb.AppendLine($req)
+        $null = $sb.AppendLine((Get-Content -LiteralPath $reqPath -Raw))
+    }
+    $bytes = [Text.Encoding]::UTF8.GetBytes($sb.ToString())
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+}
+
+function Get-DeployRequirementsStampPath {
+    param([Parameter(Mandatory = $true)][string] $RepoRoot)
+    return (Join-Path (Join-Path $RepoRoot '.venv') '.deploy-requirements-stamp')
+}
+
+function Test-DeployRequirementsStale {
+    param([Parameter(Mandatory = $true)][string] $RepoRoot)
+    $stampPath = Get-DeployRequirementsStampPath -RepoRoot $RepoRoot
+    if (-not (Test-Path -LiteralPath $stampPath)) { return $true }
+    $recorded = (Get-Content -LiteralPath $stampPath -Raw -ErrorAction SilentlyContinue)
+    if ($null -eq $recorded) { return $true }
+    return ($recorded.Trim() -ne (Get-DeployRequirementsFingerprint -RepoRoot $RepoRoot))
+}
+
 function Install-DeployPythonRequirements {
     param(
         [Parameter(Mandatory = $true)][string] $VenvPython,
@@ -1040,11 +1083,7 @@ function Install-DeployPythonRequirements {
     # "documentation only, the host Python already has everything"), so the gap only
     # appeared on a fresh target - the service started and then died on
     # ModuleNotFoundError: openpyxl, surfacing as a Phase 4a health timeout.
-    foreach ($req in @(
-        'requirements.txt',
-        'bim-streaming-server\requirements.txt',
-        'governance-service\requirements.txt',
-        'services\kit-manager-api\requirements.txt')) {
+    foreach ($req in $script:DeployRequirementsFiles) {
         $reqPath = Join-Path $RepoRoot $req
         if (Test-Path -LiteralPath $reqPath) {
             Write-DeployTag -Tag 'fix' -Message "pip install -r $req" -LogPath $LogPath | Out-Null
@@ -1062,6 +1101,10 @@ function Install-DeployPythonRequirements {
         Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (pip requirements missing)'
         exit 2
     }
+    # Record what was installed, so the next run can tell "already satisfied" from
+    # "never attempted". Written only after every file installed cleanly.
+    Set-Content -LiteralPath (Get-DeployRequirementsStampPath -RepoRoot $RepoRoot) `
+        -Value (Get-DeployRequirementsFingerprint -RepoRoot $RepoRoot) -Encoding ascii
 }
 
 # fix: .venv
@@ -1070,7 +1113,8 @@ if ($hostNative.venv -eq 'MISSING') {
     $fixActions++
 }
 
-if ($hostNative.venv -eq 'MISSING' -or ($hostNative.venv -eq 'OK' -and $hostNative.pythonDependencies -ne 'OK')) {
+$requirementsStale = Test-DeployRequirementsStale -RepoRoot $RepoRoot
+if ($hostNative.venv -eq 'MISSING' -or $requirementsStale -or ($hostNative.venv -eq 'OK' -and $hostNative.pythonDependencies -ne 'OK')) {
     $venvPy = Resolve-PlatformVenvPython -VenvRoot (Join-Path $RepoRoot '.venv')
     Install-DeployPythonRequirements -VenvPython $venvPy -RepoRoot $RepoRoot -LogPath $LogPath
     $hostNative = Test-HostNativeEnvironment -RepoRoot $RepoRoot
