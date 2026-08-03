@@ -25,6 +25,7 @@ try {
     $result = Test-HostNativeEnvironment -RepoRoot $sandbox `
         -PythonVersionProbe { param($exe) '3.12.4' } `
         -PythonDependencyProbe { param($exe) @{ Status = 'OK'; Reason = ''; FastApi = '0.115.6'; Starlette = '0.41.3'; Uvicorn = '0.45.0' } } `
+        -PipProbe { param($exe) $true } `
         -NvidiaSmiProbe { @{ Exists = $true; ExitCode = 0 } }
 
     Assert-Equal 'OK' $result.venv 'venv OK'
@@ -60,6 +61,7 @@ try {
     $result = Test-HostNativeEnvironment -RepoRoot $sandbox `
         -PythonVersionProbe { param($exe) '3.10.5' } `
         -PythonDependencyProbe { param($exe) @{ Status = 'OK'; Reason = ''; FastApi = '0.115.6'; Starlette = '0.41.3'; Uvicorn = '0.45.0' } } `
+        -PipProbe { param($exe) $true } `
         -NvidiaSmiProbe { @{ Exists = $true; ExitCode = 0 } }
     Assert-Equal 'WRONG_VERSION' $result.venv 'venv WRONG_VERSION'
     Write-TestPass 'Python <3.11 flagged'
@@ -86,6 +88,7 @@ try {
     $result = Test-HostNativeEnvironment -RepoRoot $sandbox `
         -PythonVersionProbe { param($exe) '3.12.4' } `
         -PythonDependencyProbe { param($exe) @{ Status = 'OK'; Reason = ''; FastApi = '0.115.6'; Starlette = '0.41.3'; Uvicorn = '0.45.0' } } `
+        -PipProbe { param($exe) $true } `
         -NvidiaSmiProbe { @{ Exists = $true; ExitCode = 0 } }
     Assert-Equal 'MISSING_PATH' $result.kitLauncher 'Kit launcher MISSING_PATH'
     Write-TestPass 'Kit launcher missing flagged'
@@ -105,6 +108,7 @@ try {
     $result = Test-HostNativeEnvironment -RepoRoot $sandbox `
         -PythonVersionProbe { param($exe) '3.12.4' } `
         -PythonDependencyProbe { param($exe) @{ Status = 'OK'; Reason = ''; FastApi = '0.115.6'; Starlette = '0.41.3'; Uvicorn = '0.45.0' } } `
+        -PipProbe { param($exe) $true } `
         -NvidiaSmiProbe { @{ Exists = $true; ExitCode = 0 } }
 
     Assert-Equal 'OK' $result.kitLauncher 'Kit wrapper OK'
@@ -128,6 +132,7 @@ try {
     $result = Test-HostNativeEnvironment -RepoRoot $sandbox `
         -PythonVersionProbe { param($exe) '3.12.4' } `
         -PythonDependencyProbe { param($exe) @{ Status = 'INCOMPATIBLE'; Reason = 'starlette 1.1.0 does not match repo baseline 0.41.3'; FastApi = '0.115.6'; Starlette = '1.1.0'; Uvicorn = '0.45.0' } } `
+        -PipProbe { param($exe) $true } `
         -NvidiaSmiProbe { @{ Exists = $true; ExitCode = 0 } }
 
     Assert-Equal 'INCOMPATIBLE' $result.pythonDependencies 'pythonDependencies INCOMPATIBLE'
@@ -147,6 +152,7 @@ try {
     $result = Test-HostNativeEnvironment -RepoRoot $sandbox `
         -PythonVersionProbe { param($exe) '3.12.4' } `
         -PythonDependencyProbe { param($exe) @{ Status = 'MISSING'; Reason = 'missing fastapi'; FastApi = ''; Starlette = ''; Uvicorn = '' } } `
+        -PipProbe { param($exe) $true } `
         -NvidiaSmiProbe { @{ Exists = $true; ExitCode = 0 } }
 
     Assert-Equal 'MISSING' $result.pythonDependencies 'pythonDependencies MISSING'
@@ -222,3 +228,25 @@ importlib.util.find_spec = _masked_find_spec
 }
 
 Write-Host "`n=== test-preflight-host-native.ps1: ALL PASSED ===" -ForegroundColor Green
+
+# Test 4: .venv 存在且版本正確,但沒有 pip → MISSING(半殘 venv 必須被重建)
+# 迴歸來源:遠端缺 python3-venv 時 `python -m venv` 會先建好 bin/python 才在
+# ensurepip 失敗,留下通過存在性檢查、卻在 pip install 階段才爆的目錄。
+$sandbox = New-TestSandbox -Prefix 'preflight-hn'
+try {
+    $venvDir = Join-Path $sandbox '.venv\Scripts'
+    New-Item -ItemType Directory -Path $venvDir -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $venvDir 'python.exe') -Value 'fake'
+
+    $result = Test-HostNativeEnvironment -RepoRoot $sandbox `
+        -PythonVersionProbe { param($exe) '3.12.4' } `
+        -PythonDependencyProbe { param($exe) @{ Status = 'OK'; Reason = ''; FastApi = '0.115.6'; Starlette = '0.41.3'; Uvicorn = '0.45.0' } } `
+        -PipProbe { param($exe) $false } `
+        -NvidiaSmiProbe { @{ Exists = $true; ExitCode = 0 } }
+
+    Assert-Equal 'MISSING' $result.venv 'pip-less venv must report MISSING, not OK'
+    Assert-True ($result.pythonDependencyReason -match 'no pip') 'reason names the missing pip'
+    Assert-True ($result.ok -eq $false) 'ok=false for a half-built venv'
+    Write-TestPass 'half-built venv (no pip) flagged'
+}
+finally { Remove-TestSandbox -Path $sandbox }

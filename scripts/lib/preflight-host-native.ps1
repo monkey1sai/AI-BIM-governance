@@ -161,6 +161,15 @@ function Test-HostNativeEnvironment {
             param($exe)
             Test-HostNativePythonDependencies -PythonExe $exe
         },
+        [scriptblock] $PipProbe = {
+            param($exe)
+            # try/catch like the sibling probes: an unusable interpreter must
+            # answer "no pip", not throw out of the audit.
+            try {
+                $null = & $exe -m pip --version 2>&1
+                return ($LASTEXITCODE -eq 0)
+            } catch { return $false }
+        },
         [scriptblock] $NvidiaSmiProbe = {
             $cmd = Get-Command nvidia-smi -ErrorAction SilentlyContinue
             if (-not $cmd) { return @{ Exists = $false; ExitCode = -1 } }
@@ -199,13 +208,23 @@ function Test-HostNativeEnvironment {
             $major = [int]$parts[0]
             $minor = [int]$parts[1]
             if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 11)) {
-                $audit.venv = 'OK'
-                $deps = & $PythonDependencyProbe $pyExe
-                $audit.pythonDependencies = [string]$deps.Status
-                $audit.pythonDependencyReason = [string]$deps.Reason
-                $audit.pythonDependencyFastApi = [string]$deps.FastApi
-                $audit.pythonDependencyStarlette = [string]$deps.Starlette
-                $audit.pythonDependencyUvicorn = [string]$deps.Uvicorn
+                # An interpreter alone does not make a usable venv: `python -m venv`
+                # creates bin/python BEFORE bootstrapping pip, so a run that died at
+                # ensurepip (Debian/Ubuntu without python3-venv) leaves a half-built
+                # venv that passes an existence check and then fails at pip install.
+                # Treat a pip-less venv as MISSING so the existing recreate path runs.
+                if (-not (& $PipProbe $pyExe)) {
+                    $audit.venv = 'MISSING'
+                    $audit.pythonDependencyReason = 'venv exists but has no pip (half-built); it will be recreated'
+                } else {
+                    $audit.venv = 'OK'
+                    $deps = & $PythonDependencyProbe $pyExe
+                    $audit.pythonDependencies = [string]$deps.Status
+                    $audit.pythonDependencyReason = [string]$deps.Reason
+                    $audit.pythonDependencyFastApi = [string]$deps.FastApi
+                    $audit.pythonDependencyStarlette = [string]$deps.Starlette
+                    $audit.pythonDependencyUvicorn = [string]$deps.Uvicorn
+                }
             } else {
                 $audit.venv = 'WRONG_VERSION'
             }

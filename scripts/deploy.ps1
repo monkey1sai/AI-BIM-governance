@@ -1001,11 +1001,25 @@ function New-DeployVenv {
         Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (venv create)'
         exit 2
     }
+    # Remove any half-built venv first: `python -m venv` creates bin/python before
+    # bootstrapping pip, so an earlier failure at ensurepip leaves a directory that
+    # passes an existence check and then dies at pip install.
+    if (Test-Path -LiteralPath $venvRoot) {
+        Write-DeployTag -Tag 'fix' -Message 'removing existing .venv before recreate' -LogPath $LogPath | Out-Null
+        Remove-Item -LiteralPath $venvRoot -Recurse -Force
+    }
     Write-DeployTag -Tag 'fix' -Message "creating .venv via $systemPython -m venv" -LogPath $LogPath | Out-Null
     & $systemPython -m venv $venvRoot
     $venvPython = Resolve-PlatformVenvPython -VenvRoot $venvRoot
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $venvPython)) {
         Write-DeployTag -Tag 'fail' -Message "python -m venv did not produce $venvPython" -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (venv create)'
+        exit 2
+    }
+    # A venv without pip is unusable by the very next phase; verify, do not assume.
+    $null = & $venvPython -m pip --version 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-DeployTag -Tag 'fail' -Message 'created .venv has no pip; install the python3-venv package for this interpreter (see scripts/dev/provision-linux-deploy-target.sh)' -LogPath $LogPath | Out-Null
         Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (venv create)'
         exit 2
     }
