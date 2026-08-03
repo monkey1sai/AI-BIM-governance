@@ -1,4 +1,29 @@
 {
   "schema_version": "self-referential-bootstrap-ledger/v1",
-  "entries": []
+  "entries": [
+    {
+      "id": "remote-linux-deploy-target",
+      "status": "open",
+      "pr": 463,
+      "opened_at": "2026-08-03T02:00:00Z",
+      "reason": "the deploy contract rebuilds the test deployment only from a freshly fetched origin/main and forbids verifying an unmerged branch, so a change to the deploy path itself cannot be exercised by any pre-merge run against origin/main",
+      "verification_mechanism_paths": [
+        ".github/workflows/agent-governance.yml",
+        ".github/workflows/ci.yml",
+        ".github/workflows/pr-review-agent.yml",
+        "scripts/deploy.ps1",
+        "scripts/dev/check-pr-local-preflight.ps1",
+        "scripts/dev/rebuild-test-deploy.ps1",
+        "scripts/lib/platform/platform-adapter.ps1",
+        "scripts/lib/rebuild-test-deploy.ps1",
+        "scripts/lib/self-referential-bootstrap.ps1",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/check-pr-body-evidence.ps1"
+      ],
+      "bootstrap_evidence_refs": [
+        "docs/evidence/remote-linux-deploy-target/self-referential-bootstrap/README.md"
+      ],
+      "fixpoint": null
+    }
+  ]
 }

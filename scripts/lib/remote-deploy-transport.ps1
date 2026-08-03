@@ -101,6 +101,39 @@ function New-DeployTargetEnvSnapshot {
     }
 }
 
+function Assert-BootstrapRefAllowed {
+    # A bootstrap ref makes the target check out an UNMERGED revision, which the
+    # deploy contract normally forbids ("不得驗證未 merge branch"). It is legal only
+    # while producing stack_kind=self_referential_bootstrap evidence, so the caller
+    # must name the open ledger entry authorising it, and that entry must exist,
+    # be open, and declare the deploy path among its mechanism paths.
+    # Evidence produced this way is NEVER deploy-target evidence.
+    param(
+        [Parameter(Mandatory = $true)][string] $BootstrapRef,
+        [Parameter(Mandatory = $true)][string] $LedgerEntryId,
+        [Parameter(Mandatory = $true)][string] $OperatorRepoRoot
+    )
+    if ($BootstrapRef -notmatch '^[A-Za-z0-9._\-/]{1,200}$') {
+        throw "remote_deploy_transport: bootstrap ref '$BootstrapRef' contains unsafe characters."
+    }
+    $ledgerPath = Join-Path $OperatorRepoRoot 'scripts/self-referential-bootstrap-ledger.json'
+    if (-not (Test-Path -LiteralPath $ledgerPath)) {
+        throw 'remote_deploy_transport: a bootstrap run requires the bootstrap ledger.'
+    }
+    $ledger = Get-Content -LiteralPath $ledgerPath -Raw | ConvertFrom-Json
+    $entry = @($ledger.entries | Where-Object { [string]$_.id -eq $LedgerEntryId })
+    if ($entry.Count -ne 1) {
+        throw "remote_deploy_transport: ledger entry '$LedgerEntryId' not found; a bootstrap deploy must be authorised by an open ledger entry."
+    }
+    if ([string]$entry[0].status -ne 'open') {
+        throw "remote_deploy_transport: ledger entry '$LedgerEntryId' is not open; its debt is already closed."
+    }
+    if ('scripts/deploy.ps1' -notin @($entry[0].verification_mechanism_paths | ForEach-Object { [string]$_ })) {
+        throw "remote_deploy_transport: ledger entry '$LedgerEntryId' does not declare scripts/deploy.ps1, so it cannot authorise a deploy-path bootstrap run."
+    }
+    return $entry[0]
+}
+
 function New-RemoteRebuildScript {
     # Emits the bash script that runs ON the remote target. LF line endings are
     # mandatory (bash chokes on CRLF). The env merge deliberately calls
@@ -108,7 +141,8 @@ function New-RemoteRebuildScript {
     # checkout via pwsh - one merge implementation, no bash mirror to drift.
     param(
         [Parameter(Mandatory = $true)] $Target,
-        [switch] $Build
+        [switch] $Build,
+        [string] $BootstrapRef = ''
     )
     if ([string]$Target.connection.type -ne 'ssh') {
         throw "remote_deploy_transport: target '$($Target.id)' is not an ssh target."
@@ -126,6 +160,20 @@ for f in "$DEPLOY_ROOT"/bim-streaming-server/tools/packman/packman \
   [ -f "$f" ] && chmod +x "$f" || true
 done
 '@
+    }
+
+    # Default: reset to the freshly fetched origin/main, exactly as the contract
+    # requires. A bootstrap ref additionally fetches that unmerged revision and
+    # resets to it - only reachable through the guarded bootstrap entrypoint, and
+    # the resulting evidence is self_referential_bootstrap, never deploy-target.
+    $bootstrapFetch = ''
+    $resetTarget = 'refs/remotes/origin/main'
+    if (-not [string]::IsNullOrWhiteSpace($BootstrapRef)) {
+        if ($BootstrapRef -notmatch '^[A-Za-z0-9._\-/]{1,200}$') {
+            throw "remote_deploy_transport: bootstrap ref '$BootstrapRef' contains unsafe characters."
+        }
+        $bootstrapFetch = "echo '== BOOTSTRAP: fetching unmerged ref $BootstrapRef (stack_kind=self_referential_bootstrap) =='`ngit fetch origin '+refs/heads/$BootstrapRef`:refs/remotes/origin/$BootstrapRef'"
+        $resetTarget = "refs/remotes/origin/$BootstrapRef"
     }
 
     $buildStep = ''
@@ -153,11 +201,12 @@ cd "$DEPLOY_ROOT"
 
 echo "== freshly fetch origin/main (contract: stop on failure, never stale) =="
 git fetch origin '+refs/heads/main:refs/remotes/origin/main'
+{{BOOTSTRAP_FETCH}}
 
 echo "== local changes before reset =="
 git status --porcelain || true
 
-git reset --hard refs/remotes/origin/main
+git reset --hard {{RESET_TARGET}}
 git clean -fd -e '.env*'
 
 {{EXEC_BITS}}
@@ -199,6 +248,8 @@ echo "== effective env end =="
         Replace('{{REPO_URL}}', $script:RemoteDeployRepoUrl).
         Replace('{{ENV_NAME}}', '.env.web-plane.host-kit').
         Replace('{{EXEC_BITS}}', $execBits).
+        Replace('{{BOOTSTRAP_FETCH}}', $bootstrapFetch).
+        Replace('{{RESET_TARGET}}', $resetTarget).
         Replace('{{BUILD_STEP}}', $buildStep)
     return ($script -replace "`r`n", "`n")
 }
@@ -230,14 +281,25 @@ function Invoke-RemoteTestDeployRebuild {
         [Parameter(Mandatory = $true)][string] $OperatorRepoRoot,
         [switch] $Build,
         [string] $IdentityFile = '',
-        [switch] $DryRun
+        [switch] $DryRun,
+        [string] $BootstrapRef = '',
+        [string] $BootstrapLedgerEntry = ''
     )
+
+    if (-not [string]::IsNullOrWhiteSpace($BootstrapRef)) {
+        if ([string]::IsNullOrWhiteSpace($BootstrapLedgerEntry)) {
+            throw 'remote_deploy_transport: -BootstrapRef requires -BootstrapLedgerEntry naming the open ledger entry that authorises verifying an unmerged revision.'
+        }
+        $null = Assert-BootstrapRefAllowed -BootstrapRef $BootstrapRef -LedgerEntryId $BootstrapLedgerEntry -OperatorRepoRoot $OperatorRepoRoot
+    } elseif (-not [string]::IsNullOrWhiteSpace($BootstrapLedgerEntry)) {
+        throw 'remote_deploy_transport: -BootstrapLedgerEntry is meaningless without -BootstrapRef.'
+    }
 
     $baseEnvPath = Join-Path $OperatorRepoRoot ([string]$Target.env_file)
     if (-not (Test-Path -LiteralPath $baseEnvPath -PathType Leaf)) {
         throw "remote_deploy_transport: operator canonical env file not found: $baseEnvPath (registry env_file for '$($Target.id)')."
     }
-    $rebuildScript = New-RemoteRebuildScript -Target $Target -Build:$Build
+    $rebuildScript = New-RemoteRebuildScript -Target $Target -Build:$Build -BootstrapRef $BootstrapRef
     $sshArguments = Get-RemoteDeploySshArguments -Target $Target -IdentityFile $IdentityFile
     $effectiveEnvName = '.env.web-plane.host-kit'
     $pushCommand = "mkdir -p '$([string]$Target.deploy_root)' && cat > '$([string]$Target.deploy_root)/$effectiveEnvName.base'"
