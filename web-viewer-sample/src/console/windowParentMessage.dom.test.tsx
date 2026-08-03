@@ -1207,7 +1207,11 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       _reconnectStream: () => void;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
       stageAttemptGeneration: number;
-      runtimeCommandContexts: Map<string, { eventType: string; stageAttemptGeneration: number; stageUrl: string }>;
+      runtimeCommandContexts: Map<string, {
+        eventType: string;
+        stageAttemptGeneration?: number;
+        stageUrl?: string;
+      }>;
     };
     const generation = privateApp._beginStageAttempt("stage://disconnect.usdc");
     internals(app).pendingStageUrl = "stage://disconnect.usdc";
@@ -1348,11 +1352,14 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     };
     let resolveOldLoading!: (result: unknown) => void;
     let rejectOldStage!: (reason: unknown) => void;
+    let resolveOldHighlight!: (result: unknown) => void;
     const oldLoading = new Promise<unknown>((resolve) => { resolveOldLoading = resolve; });
     const oldStage = new Promise<unknown>((_resolve, reject) => { rejectOldStage = reject; });
+    const oldHighlight = new Promise<unknown>((resolve) => { resolveOldHighlight = resolve; });
     vi.spyOn(AppStream, "sendMessage")
       .mockReturnValueOnce(oldLoading)
-      .mockReturnValueOnce(oldStage);
+      .mockReturnValueOnce(oldStage)
+      .mockReturnValueOnce(oldHighlight);
     vi.spyOn(AppStream, "stop").mockImplementation(() => undefined);
     vi.spyOn(privateApp, "_scheduleStreamStartTimeout").mockImplementation(() => undefined);
     const streamGuard = vi.spyOn(privateApp, "_isCurrentStreamCallback");
@@ -1367,6 +1374,13 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     })).toBe(true);
     expect(privateApp.runtimeCommandContexts.get("req_old_generation_stage")).toEqual(expect.objectContaining({
       stageAttemptGeneration: oldAttemptGeneration,
+    }));
+    expect(privateApp._sendStreamMessage({
+      event_type: "highlightPrimsRequest",
+      payload: { request_id: "req_old_generation_highlight", mode: "replace", items: [] },
+    })).toBe(true);
+    expect(privateApp.runtimeCommandContexts.get("req_old_generation_highlight")).toEqual(expect.objectContaining({
+      eventType: "highlightPrimsRequest",
     }));
 
     privateApp._reconnectStream();
@@ -1393,6 +1407,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       url: "stage://old-stream.usdc",
     });
     rejectOldStage(new Error("old stage transport closed"));
+    resolveOldHighlight(null);
     await flushMicrotasks();
 
     expect(privateApp.streamGeneration).toBe(oldStreamGeneration + 1);
@@ -1406,6 +1421,11 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     expect(privateApp.runtimeCommandContexts.has("req_new_generation_stage")).toBe(true);
     expect(privateApp.runtimeCommandTerminalClaims.get("req_old_generation_stage")).toEqual({
       eventType: "openStageRequest",
+      outcome: "superseded",
+    });
+    expect(privateApp.runtimeCommandContexts.has("req_old_generation_highlight")).toBe(false);
+    expect(privateApp.runtimeCommandTerminalClaims.get("req_old_generation_highlight")).toEqual({
+      eventType: "highlightPrimsRequest",
       outcome: "superseded",
     });
     expect(internals(app).pendingStageUrl).toBe("stage://new-stream.usdc");

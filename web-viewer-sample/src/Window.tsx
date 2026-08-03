@@ -1599,6 +1599,12 @@ export default class App extends React.Component<AppProps, AppState> {
         // continuations may settle synchronously while React still exposes the old state key.
         this.streamGeneration += 1;
         this._invalidateStageAttempt();
+        // Every outstanding command belongs to the retired stream. Its later
+        // callback is generation-fenced, so terminalize it now instead of
+        // leaving a visible pending lifecycle entry until map eviction.
+        for (const [requestId, context] of this.runtimeCommandContexts.entries()) {
+            this._claimRuntimeCommandTerminal(requestId, context.eventType, "superseded");
+        }
         this.pendingStageUrl = null;
         this.loadingStatePollCount = 0;
         this._clearStreamStartTimeout();
