@@ -2695,6 +2695,93 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
     expect(preauthorize).toHaveBeenCalledTimes(1);
   });
 
+  it("terminalizes a binding attempt when its composition send is rejected and ignores a later success", async () => {
+    vi.useFakeTimers();
+    setLang("en");
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _applyBinding: AppInternals["_applyBinding"];
+      _preauthorizeStageBinding: () => Promise<Record<string, unknown>>;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      runtimeCommandTerminalClaims: Map<string, { eventType: string; outcome: string }>;
+      runtimeCommandContexts: Map<string, { eventType: string }>;
+    };
+    const stageUrl = "stage://binding-send-rejected.usdc";
+    const transaction = {
+      status: "pending",
+      session_id: "review_session_x",
+      stage_binding_authorization_id: "stage_auth_send_rejected",
+      binding_revision_id: "rev_binding_send_rejected",
+      pending_expires_at: "2099-01-01T00:00:00Z",
+      stage_composition: {
+        primary: {
+          artifact_id: "artifact_send_rejected",
+          role: "primary",
+          load_order: 0,
+          usdc_url: stageUrl,
+        },
+        secondary_layers: [],
+      },
+    };
+    vi.spyOn(privateApp, "_preauthorizeStageBinding").mockResolvedValue(transaction);
+    const send = vi.spyOn(AppStream, "sendMessage").mockRejectedValue(new Error("stream transport failed"));
+
+    privateApp._applyBinding([{
+      artifact_id: "artifact_send_rejected",
+      model_version_id: "version_send_rejected",
+      usdc_url: stageUrl,
+      role: "primary",
+      load_order: 0,
+      ready: true,
+    }], "rev_ui_send_rejected");
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+
+    const sent = send.mock.calls.find(([message]) => (
+      (message as { event_type?: string }).event_type === "loadArtifactGroupRequest"
+    ))?.[0] as { payload: { request_id: string } } | undefined;
+    expect(sent).toBeDefined();
+    const requestId = sent!.payload.request_id;
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      status: "terminal",
+      targetUrl: stageUrl,
+    }));
+    expect(internals(app).pendingStageUrl).toBeNull();
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.loadingText).toBe("Model loading failed");
+    expect(internals(app).state.streamDiagnostic).toContain("stream_transport_error");
+    expect(internals(app).state.govBindingApplyState).toEqual({
+      status: "failed",
+      reason: "Model loading failed",
+    });
+    expect(privateApp.runtimeCommandContexts.has(requestId)).toBe(false);
+    expect(privateApp.runtimeCommandTerminalClaims.get(requestId)).toEqual({
+      eventType: "loadArtifactGroupRequest",
+      outcome: "error",
+    });
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        request_id: requestId,
+        phases: ["pending", "terminal"],
+        outcome: "error",
+      }),
+    ]));
+
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: requestId,
+        url: stageUrl,
+        binding_revision_id: transaction.binding_revision_id,
+      },
+    });
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ status: "terminal" }));
+  });
+
   it("ignores a stale binding preauthorization resolution after a newer apply owns the stage", async () => {
     vi.useFakeTimers();
     reviewEnv.sourceClientId = "viewer_lease_primary";
