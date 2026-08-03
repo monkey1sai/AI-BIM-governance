@@ -83,6 +83,30 @@ try {
         Get-DeployTargetRegistry -Path (Write-Mutated 'twocanon.json' { param($r) $r.targets[0].role = 'canonical_test_deploy' })
     }
 
+    # --- Kit launcher resolution: no Windows drift, correct Linux shape ---------
+    # start-streaming-server.ps1 used to hardcode the Windows build tree, so a
+    # Linux run looked for a .bat that could never exist. It now asks the registry.
+    # These pin BOTH ends: the Windows answer must stay byte-identical to the path
+    # that was hardcoded, and the Linux answer must be the .sh in the Linux tree.
+    . (Join-Path $repoRoot 'scripts/lib/platform/platform-adapter.ps1')
+    $registry = Get-DeployTargetRegistry
+    $winTarget = @($registry.targets | Where-Object { [string]$_.kind -eq 'windows_host_native' })[0]
+    $linTarget = @($registry.targets | Where-Object { [string]$_.kind -eq 'linux_host_native' })[0]
+
+    $winLaunch = Resolve-DeployTargetKitLaunch -Target $winTarget -DeployRootOverride 'R:'
+    $expectedWin = 'R:\bim-streaming-server\_build\windows-x86_64\release\ezplus.bim_review_stream_streaming.kit.bat'
+    if ($winLaunch.LauncherPath -ne $expectedWin) {
+        throw "ASSERT FAILED: windows launcher must match the historically hardcoded path exactly (expected='$expectedWin' actual='$($winLaunch.LauncherPath)')"
+    }
+
+    $linLaunch = Resolve-DeployTargetKitLaunch -Target $linTarget -DeployRootOverride '/srv/app'
+    $expectedLin = '/srv/app/bim-streaming-server/_build/linux-x86_64/release/ezplus.bim_review_stream_streaming.kit.sh'
+    if ($linLaunch.LauncherPath -ne $expectedLin) {
+        throw "ASSERT FAILED: linux launcher must be the .sh in the linux-x86_64 tree (expected='$expectedLin' actual='$($linLaunch.LauncherPath)')"
+    }
+    Assert-True (@($linLaunch.Arguments) -contains '--no-window') 'linux target must mandate --no-window (headless, no display)'
+    Assert-True (-not (@($winLaunch.Arguments) -contains '--no-window')) 'windows target must not force --no-window'
+
     Write-Host '[test-deploy-target-registry] all assertions passed'
 } finally {
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
