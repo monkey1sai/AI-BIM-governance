@@ -1658,6 +1658,27 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     expect(html).toContain("Target: stage://timeout.usdc");
   });
 
+  it("redacts credentials and query data from visible stage timeout diagnostics", () => {
+    vi.useFakeTimers();
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _scheduleStageLoadTimeout: (generation: number) => void;
+    };
+    const sensitiveStageUrl = "https://viewer:secret@stage.example/model.usdc?X-Amz-Signature=sentinel#fragment";
+    internals(app).pendingStageUrl = sensitiveStageUrl;
+    const generation = privateApp._beginStageAttempt(sensitiveStageUrl);
+
+    privateApp._scheduleStageLoadTimeout(generation);
+    vi.runOnlyPendingTimers();
+
+    expect(internals(app).state.streamDiagnostic).toContain("https://stage.example/model.usdc");
+    expect(internals(app).state.streamDiagnostic).not.toContain("viewer:secret");
+    expect(internals(app).state.streamDiagnostic).not.toContain("X-Amz-Signature");
+    expect(internals(app).state.streamDiagnostic).not.toContain("fragment");
+  });
+
   it("keeps every terminal stage failure visible over a stale remote frame", () => {
     const app = operableApp();
     useSynchronousSetState(app);
@@ -1727,6 +1748,91 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     await flushMicrotasks();
     expect(send).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ event_type: "openStageRequest" }));
+  });
+
+  it("starts the manual Kit proof deadline only after preauthorization sends the command", async () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const stageUrl = "stage://manual-deadline.usdc";
+    const privateApp = internals(app) as unknown as {
+      _openSelectedAsset: () => void;
+      _preauthorizeStageBinding: () => Promise<unknown>;
+      _sendStreamMessage: (message: unknown) => boolean;
+      _scheduleStageLoadTimeout: (generation: number) => void;
+    };
+    internals(app).state = {
+      ...internals(app).state,
+      selectedUSDAsset: { name: "manual deadline", url: stageUrl },
+      expectedStageUrl: stageUrl,
+      usdAssets: [{ name: "manual deadline", url: stageUrl }],
+      latestStreamConfig: {
+        ...(internals(app).state.latestStreamConfig as Record<string, unknown>),
+        model: { status: "ready", url: stageUrl },
+        artifact_bindings: [{ artifact_id: "artifact_manual_deadline", url: stageUrl, load_order: 0 }],
+      },
+    };
+    let resolvePreauthorization: ((value: unknown) => void) | undefined;
+    vi.spyOn(privateApp, "_preauthorizeStageBinding")
+      .mockImplementation(() => new Promise((resolve) => { resolvePreauthorization = resolve; }));
+    const send = vi.spyOn(privateApp, "_sendStreamMessage").mockReturnValue(true);
+    const schedule = vi.spyOn(privateApp, "_scheduleStageLoadTimeout").mockImplementation(() => undefined);
+
+    privateApp._openSelectedAsset();
+    expect(send).not.toHaveBeenCalled();
+    expect(schedule).not.toHaveBeenCalled();
+
+    resolvePreauthorization?.({
+      status: "pending",
+      session_id: "review_session_x",
+      stage_binding_authorization_id: "authorization_manual_deadline",
+      binding_revision_id: "revision_manual_deadline",
+      pending_expires_at: "2099-01-01T00:00:00Z",
+      stage_composition: {
+        primary: { artifact_id: "artifact_manual_deadline", role: "primary", load_order: 0, usdc_url: stageUrl },
+        secondary_layers: [],
+      },
+    });
+    await flushMicrotasks();
+
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ event_type: "openStageRequest" }));
+    expect(schedule).toHaveBeenCalledTimes(1);
+  });
+
+  it("times out manual preauthorization separately without claiming a Kit stage timeout", async () => {
+    vi.useFakeTimers();
+    setLang("en");
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const stageUrl = "stage://manual-authorization-timeout.usdc";
+    const privateApp = internals(app) as unknown as {
+      _openSelectedAsset: () => void;
+      _preauthorizeStageBinding: () => Promise<unknown>;
+      _sendStreamMessage: (message: unknown) => boolean;
+      activeStageAttempt: { status: string; terminalReason?: string } | null;
+    };
+    internals(app).state = {
+      ...internals(app).state,
+      selectedUSDAsset: { name: "manual authorization timeout", url: stageUrl },
+      expectedStageUrl: stageUrl,
+      usdAssets: [{ name: "manual authorization timeout", url: stageUrl }],
+      latestStreamConfig: {
+        ...(internals(app).state.latestStreamConfig as Record<string, unknown>),
+        model: { status: "ready", url: stageUrl },
+        artifact_bindings: [{ artifact_id: "artifact_manual_authorization_timeout", url: stageUrl, load_order: 0 }],
+      },
+    };
+    vi.spyOn(privateApp, "_preauthorizeStageBinding").mockImplementation(() => new Promise(() => {}));
+    const send = vi.spyOn(privateApp, "_sendStreamMessage").mockReturnValue(true);
+
+    privateApp._openSelectedAsset();
+    await vi.advanceTimersByTimeAsync(45_000);
+
+    expect(send).not.toHaveBeenCalled();
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ status: "terminal" }));
+    expect(privateApp.activeStageAttempt?.terminalReason).toBeUndefined();
+    expect(internals(app).state.streamDiagnostic).toContain(
+      "Stage binding authorization timed out before a load command was sent to Kit.",
+    );
   });
 
   it("does not let an older binding preauthorization overwrite a newer manual open", async () => {
@@ -4409,12 +4515,17 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
 
   it("openedStageResult success 但缺 loaded URL（無 stage-match 證據）→ failed(missing_stage_evidence)，不偽宣告 applied", () => {
     const app = bindingApplyApp();
+    const privateApp = internals(app) as unknown as {
+      _failStageLoad: (loadingText: string, diagnostic?: string, attemptGeneration?: number | null, bindingFailureReason?: string) => void;
+    };
+    const failStageLoad = vi.spyOn(privateApp, "_failStageLoad");
     trackBindingRequest(app, "openStageRequest", "req_binding_003", "rev_binding_003");
     internals(app)._handleCustomEvent({
       event_type: "openedStageResult",
       payload: { result: "success", request_id: "req_binding_003", binding_revision_id: "rev_binding_003" },
     });
     expect(internals(app).state.govBindingApplyState).toEqual({ status: "failed", reason: "missing_stage_evidence" });
+    expect(failStageLoad.mock.calls[failStageLoad.mock.calls.length - 1]?.[3]).toBe("missing_stage_evidence");
     expect(internals(app).state.govBindingActiveRevision).toBeUndefined();
   });
 
@@ -4426,6 +4537,22 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
       payload: { result: "error", request_id: "req_binding_004", binding_revision_id: "rev_binding_004", error: "kit_compose_failed" },
     });
     expect(internals(app).state.govBindingApplyState).toEqual({ status: "failed", reason: "kit_compose_failed" });
+  });
+
+  it("ignores an untracked composition error instead of overwriting the active binding state", () => {
+    const app = bindingApplyApp();
+
+    internals(app)._handleCustomEvent({
+      event_type: "loadArtifactGroupResult",
+      payload: {
+        result: "error",
+        request_id: "req_retired_composition_error",
+        binding_revision_id: "rev_retired",
+        error: "late_kit_compose_failed",
+      },
+    });
+
+    expect(internals(app).state.govBindingApplyState).toEqual({ status: "applying" });
   });
 
   it("changing the binding primary replaces the selected mapping target before Kit completion", async () => {

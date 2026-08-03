@@ -382,6 +382,10 @@ const stageLoadFailurePresentation = {
         zh: "無法建立 stage binding authorization，已阻擋載入指令",
         en: "Could not create stage binding authorization; the stage-load command was blocked.",
     },
+    authorizationTimedOut: {
+        zh: "等待 stage binding authorization 逾時；尚未向 Kit 送出載入指令",
+        en: "Stage binding authorization timed out before a load command was sent to Kit.",
+    },
     commandNotSent: {
         zh: "Kit 尚未接受載入指令；本次模型載入已終止",
         en: "Kit did not accept the load command; this model load was terminated.",
@@ -440,6 +444,7 @@ interface StageAttempt {
     terminalReason?: "stage-load-timeout";
 }
 
+const STAGE_AUTHORIZATION_TIMEOUT_MS = 45_000;
 const STAGE_LOAD_TIMEOUT_MS = 45_000;
 
 interface RuntimeCommandCorrelation {
@@ -716,6 +721,21 @@ function expectedStageUrlFromStreamConfig(streamConfig: ReviewStreamConfig | nul
 function displayNameFromStageUrl(url: string): string {
     const tail = url.split(/[\\/]/).pop() || "model.usdc";
     return tail.includes("?") ? tail.split("?")[0] : tail;
+}
+
+function redactStageUrlForDiagnostic(url: string | null | undefined): string {
+    const value = url || "unknown";
+    try {
+        const parsed = new URL(value);
+        if (!parsed.username && !parsed.password && !parsed.search && !parsed.hash) return value;
+        return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+    } catch {
+        return value.replace(/[?#].*$/, "");
+    }
+}
+
+function isStageAuthorizationTimeout(error: unknown): boolean {
+    return error instanceof Error && error.message === "stage_binding_authorization_timeout";
 }
 
 export default class App extends React.Component<AppProps, AppState> {
@@ -1511,7 +1531,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     this._failStageLoad(
                         t(stageLoadFailurePresentation.title.zh, stageLoadFailurePresentation.title.en),
                         [
-                            `${t(stageLoadFailurePresentation.target.zh, stageLoadFailurePresentation.target.en)}${t("：", ": ")}${this.pendingStageUrl || "unknown"}`,
+                            `${t(stageLoadFailurePresentation.target.zh, stageLoadFailurePresentation.target.en)}${t("：", ": ")}${redactStageUrlForDiagnostic(this.pendingStageUrl)}`,
                             `${t(stageLoadFailurePresentation.error.zh, stageLoadFailurePresentation.error.en)}${t("：", ": ")}${diagnostic}`,
                         ].join("\n"),
                         runtimeStageAttemptGeneration,
@@ -1566,7 +1586,7 @@ export default class App extends React.Component<AppProps, AppState> {
             this._failStageLoad(
                 t(stageLoadTimeoutPresentation.title.zh, stageLoadTimeoutPresentation.title.en),
                 [
-                    `${t(stageLoadTimeoutPresentation.target.zh, stageLoadTimeoutPresentation.target.en)}${t("：", ": ")}${this.pendingStageUrl}`,
+                    `${t(stageLoadTimeoutPresentation.target.zh, stageLoadTimeoutPresentation.target.en)}${t("：", ": ")}${redactStageUrlForDiagnostic(this.pendingStageUrl)}`,
                     `${t(stageLoadTimeoutPresentation.diagnostic.zh, stageLoadTimeoutPresentation.diagnostic.en)}${t("：", ": ")}${this._getVideoDiagnosticText()}`,
                     t(stageLoadTimeoutPresentation.missingCompletion.zh, stageLoadTimeoutPresentation.missingCompletion.en),
                 ].join("\n"),
@@ -1773,8 +1793,8 @@ export default class App extends React.Component<AppProps, AppState> {
             this._failStageLoad(
                 "stale_stage_or_mismatch",
                 [
-                    `expected：${this.state.expectedStageUrl || this.pendingStageUrl || "unknown"}`,
-                    `loaded：${loadedUrl}`,
+                    `expected：${redactStageUrlForDiagnostic(this.state.expectedStageUrl || this.pendingStageUrl)}`,
+                    `loaded：${redactStageUrlForDiagnostic(loadedUrl)}`,
                     `state：${loadingState || "unknown"}`,
                 ].join("\n"),
             );
@@ -1810,7 +1830,7 @@ export default class App extends React.Component<AppProps, AppState> {
             loadingText: active ? "模型已載入" : "模型畫面可見，stage authority 尚未證明",
             showUI: true,
             isLoading: false,
-            streamDiagnostic: active ? null : `expected：${this.state.expectedStageUrl || "unknown"}\nloaded：${finalLoadedUrl || "not_observed"}`,
+            streamDiagnostic: active ? null : `expected：${redactStageUrlForDiagnostic(this.state.expectedStageUrl)}\nloaded：${finalLoadedUrl ? redactStageUrlForDiagnostic(finalLoadedUrl) : "not_observed"}`,
             loadedStageUrl: finalLoadedUrl || null,
             stageLoadStatus: active ? "matched" : "unproven",
         });
@@ -1858,7 +1878,7 @@ export default class App extends React.Component<AppProps, AppState> {
             loadingText: "模型畫面可見，stage authority 尚未證明",
             showUI: true,
             isLoading: false,
-            streamDiagnostic: `expected：${this.state.expectedStageUrl || this.pendingStageUrl || "unknown"}\nloaded：not_observed`,
+            streamDiagnostic: `expected：${redactStageUrlForDiagnostic(this.state.expectedStageUrl || this.pendingStageUrl)}\nloaded：not_observed`,
             loadedStageUrl: null,
             stageLoadStatus: "unproven",
             reviewEvents: [...state.reviewEvents, "WebRTC 畫面已可見，等待精確 stage 證據"],
@@ -1877,6 +1897,7 @@ export default class App extends React.Component<AppProps, AppState> {
         loadingText: string,
         diagnostic?: string,
         attemptGeneration: number | null | undefined = this.activeStageAttempt?.generation,
+        bindingFailureReason = loadingText,
     ): void {
         if (attemptGeneration !== null) {
             if (attemptGeneration && !this._isCurrentStageAttemptAwaitingProof(attemptGeneration)) return;
@@ -1891,7 +1912,7 @@ export default class App extends React.Component<AppProps, AppState> {
             stageLoadStatus: loadingText === "stale_stage_or_mismatch" ? "mismatch" : state.stageLoadStatus,
             reviewEvents: [...state.reviewEvents, loadingText],
             ...(state.govBindingApplyState?.status === "applying"
-                ? { govBindingApplyState: { status: "failed" as const, reason: loadingText } }
+                ? { govBindingApplyState: { status: "failed" as const, reason: bindingFailureReason } }
                 : {}),
         }));
         if (window.parent !== window) {
@@ -2449,6 +2470,23 @@ export default class App extends React.Component<AppProps, AppState> {
         return raw as unknown as StageBindingPreauthorization;
     }
 
+    private async _preauthorizeStageBindingWithinDeadline(
+        artifacts: Array<{ artifact_id: string; role: "primary" | "secondary"; load_order: number }>,
+    ): Promise<StageBindingPreauthorization> {
+        let timeoutId: number | null = null;
+        try {
+            return await new Promise<StageBindingPreauthorization>((resolve, reject) => {
+                timeoutId = window.setTimeout(
+                    () => reject(new Error("stage_binding_authorization_timeout")),
+                    STAGE_AUTHORIZATION_TIMEOUT_MS,
+                );
+                void this._preauthorizeStageBinding(artifacts).then(resolve, reject);
+            });
+        } finally {
+            if (timeoutId !== null) window.clearTimeout(timeoutId);
+        }
+    }
+
     private _releaseStandaloneViewerLease(): void {
         const lease = this.standaloneViewerLease;
         const sessionId = this.state.reviewSessionId;
@@ -2706,7 +2744,7 @@ export default class App extends React.Component<AppProps, AppState> {
         this.pendingBindingPreauthorizationIntent = applyStageIntentGeneration;
         this._supersedeActiveStageAttempt();
         const applyThroughCoordinator = async () => {
-            const transaction = await this._preauthorizeStageBinding(
+            const transaction = await this._preauthorizeStageBindingWithinDeadline(
                 selection.map((artifact) => ({
                     artifact_id: artifact.artifact_id,
                     role: artifact.role,
@@ -2734,7 +2772,6 @@ export default class App extends React.Component<AppProps, AppState> {
             this.unprovenStageUrl = null;
             this.loadingStatePollCount = 0;
             this._clearLoadingStateRetry();
-            this._scheduleStageLoadTimeout(attemptGeneration);
             this.setState({
                 loadingText: t("正在載入模型...", "Loading model..."),
                 showStream: this._hasRemoteVideoFrame(),
@@ -2775,24 +2812,31 @@ export default class App extends React.Component<AppProps, AppState> {
                 );
                 return;
             }
+            this._scheduleStageLoadTimeout(attemptGeneration);
             this._scheduleLoadingStateQuery(1500);
         };
-        void applyThroughCoordinator().catch(() => {
+        void applyThroughCoordinator().catch((error) => {
             if (
                 applyGeneration !== this.bindingApplyGeneration
                 || applyStageIntentGeneration !== this.stageIntentGeneration
             ) return;
             this.pendingBindingPreauthorizationIntent = null;
+            const authorizationTimedOut = isStageAuthorizationTimeout(error);
             this.setState({
                 govBindingApplyState: {
                     status: "failed",
-                    reason: "coordinator stage binding preauthorization 失敗",
+                    reason: authorizationTimedOut
+                        ? "stage_binding_authorization_timeout"
+                        : "coordinator stage binding preauthorization 失敗",
                 },
             });
             this._failStageLoad(
                 t(stageLoadFailurePresentation.title.zh, stageLoadFailurePresentation.title.en),
-                t(stageLoadFailurePresentation.authorizationFailed.zh, stageLoadFailurePresentation.authorizationFailed.en),
+                authorizationTimedOut
+                    ? t(stageLoadFailurePresentation.authorizationTimedOut.zh, stageLoadFailurePresentation.authorizationTimedOut.en)
+                    : t(stageLoadFailurePresentation.authorizationFailed.zh, stageLoadFailurePresentation.authorizationFailed.en),
                 null,
+                authorizationTimedOut ? "stage_binding_authorization_timeout" : undefined,
             );
         });
     }
@@ -3341,7 +3385,6 @@ export default class App extends React.Component<AppProps, AppState> {
         this.unprovenStageUrl = null;
         this.loadingStatePollCount = 0;
         this._clearLoadingStateRetry();
-        this._scheduleStageLoadTimeout(attemptGeneration);
         this.setState({
             loadingText: "正在載入模型...",
             showStream: this._hasRemoteVideoFrame(),
@@ -3360,13 +3403,22 @@ export default class App extends React.Component<AppProps, AppState> {
         const selectedIsPrimary = composition?.primary?.url === targetAsset.url;
         const openStage = async () => {
             if (harnessEnabled()) {
-                this._sendStreamMessage(
+                const commandSent = this._sendStreamMessage(
                     buildOpenStageRequest(
                         targetAsset.url,
                         artifactBindings,
                         selectedIsPrimary ? { primary: composition.primary, secondary_layers: composition.secondary_layers || [] } : null,
                     ),
                 );
+                if (!commandSent) {
+                    this._failStageLoad(
+                        t(stageLoadFailurePresentation.title.zh, stageLoadFailurePresentation.title.en),
+                        t(stageLoadFailurePresentation.commandNotSent.zh, stageLoadFailurePresentation.commandNotSent.en),
+                        attemptGeneration,
+                    );
+                    return;
+                }
+                this._scheduleStageLoadTimeout(attemptGeneration);
                 this._scheduleLoadingStateQuery(1500);
                 return;
             }
@@ -3392,7 +3444,7 @@ export default class App extends React.Component<AppProps, AppState> {
             if (selectedBindings.length === 0) {
                 throw new Error("selected stage has no server-owned artifact binding");
             }
-            const transaction = await this._preauthorizeStageBinding(selectedBindings);
+            const transaction = await this._preauthorizeStageBindingWithinDeadline(selectedBindings);
             if (!this._isCurrentStageAttempt(attemptGeneration, "pending")) return;
             this.pendingStageUrl = transaction.stage_composition.primary.usdc_url;
             if (this.activeStageAttempt) this.activeStageAttempt.targetUrl = this.pendingStageUrl;
@@ -3405,14 +3457,19 @@ export default class App extends React.Component<AppProps, AppState> {
                 );
                 return;
             }
+            this._scheduleStageLoadTimeout(attemptGeneration);
             this._scheduleLoadingStateQuery(1500);
         };
-        void openStage().catch(() => {
+        void openStage().catch((error) => {
             if (!this._isCurrentStageAttempt(attemptGeneration, "pending")) return;
+            const authorizationTimedOut = isStageAuthorizationTimeout(error);
             this._failStageLoad(
                 t(stageLoadFailurePresentation.title.zh, stageLoadFailurePresentation.title.en),
-                t(stageLoadFailurePresentation.authorizationFailed.zh, stageLoadFailurePresentation.authorizationFailed.en),
+                authorizationTimedOut
+                    ? t(stageLoadFailurePresentation.authorizationTimedOut.zh, stageLoadFailurePresentation.authorizationTimedOut.en)
+                    : t(stageLoadFailurePresentation.authorizationFailed.zh, stageLoadFailurePresentation.authorizationFailed.en),
                 attemptGeneration,
+                authorizationTimedOut ? "stage_binding_authorization_timeout" : undefined,
             );
         });
     }
@@ -4044,10 +4101,11 @@ export default class App extends React.Component<AppProps, AppState> {
                     this._failStageLoad(
                         t(stageLoadFailurePresentation.missingStageEvidence.zh, stageLoadFailurePresentation.missingStageEvidence.en),
                         [
-                            `${t(stageLoadFailurePresentation.target.zh, stageLoadFailurePresentation.target.en)}${t("：", ": ")}${this.pendingStageUrl || this.state.expectedStageUrl || "unknown"}`,
+                            `${t(stageLoadFailurePresentation.target.zh, stageLoadFailurePresentation.target.en)}${t("：", ": ")}${redactStageUrlForDiagnostic(this.pendingStageUrl || this.state.expectedStageUrl)}`,
                             `${t(stageLoadFailurePresentation.error.zh, stageLoadFailurePresentation.error.en)}${t("：", ": ")}${t(stageLoadFailurePresentation.missingStageEvidence.zh, stageLoadFailurePresentation.missingStageEvidence.en)}`,
                         ].join("\n"),
                         correlation.context?.stageAttemptGeneration,
+                        "missing_stage_evidence",
                     );
                 }
             }
@@ -4067,7 +4125,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     this._terminalizeStageAttempt(correlation.context?.stageAttemptGeneration);
                     this.setState((state) => ({
                         loadingText: "模型組合僅部分套用",
-                        streamDiagnostic: [`目標：${url || "unknown"}`, `錯誤：${error}`].join("\n"),
+                        streamDiagnostic: [`目標：${redactStageUrlForDiagnostic(url)}`, `錯誤：${error}`].join("\n"),
                         showStream: this._hasRemoteVideoFrame(),
                         isLoading: false,
                         loadedStageUrl: null,
@@ -4096,7 +4154,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 this._failStageLoad(
                     t(stageLoadFailurePresentation.title.zh, stageLoadFailurePresentation.title.en),
                     [
-                        `${t(stageLoadFailurePresentation.target.zh, stageLoadFailurePresentation.target.en)}${t("：", ": ")}${url || this.pendingStageUrl || "unknown"}`,
+                        `${t(stageLoadFailurePresentation.target.zh, stageLoadFailurePresentation.target.en)}${t("：", ": ")}${redactStageUrlForDiagnostic(url || this.pendingStageUrl)}`,
                         `${t(stageLoadFailurePresentation.error.zh, stageLoadFailurePresentation.error.en)}${t("：", ": ")}${error}`,
                     ].join("\n"),
                     correlation.context?.stageAttemptGeneration,
@@ -4133,7 +4191,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     this._failStageLoad(
                         t(stageLoadFailurePresentation.title.zh, stageLoadFailurePresentation.title.en),
                         [
-                            `${t(stageLoadFailurePresentation.target.zh, stageLoadFailurePresentation.target.en)}${t("：", ": ")}${context.stageUrl || this.pendingStageUrl || "unknown"}`,
+                            `${t(stageLoadFailurePresentation.target.zh, stageLoadFailurePresentation.target.en)}${t("：", ": ")}${redactStageUrlForDiagnostic(context.stageUrl || this.pendingStageUrl)}`,
                             `${t(stageLoadFailurePresentation.error.zh, stageLoadFailurePresentation.error.en)}${t("：", ": ")}${error}`,
                         ].join("\n"),
                         context.stageAttemptGeneration,
@@ -4181,8 +4239,8 @@ export default class App extends React.Component<AppProps, AppState> {
                 }
                 this._clearLoadingStateRetry();
                 this.loadingStatePollCount += 1;
-                const usdAsset: USDAssetType = this._getAsset(payloadUrl)
-                const isStageValid: boolean = !!(usdAsset.name && usdAsset.url)
+                const usdAsset: USDAssetType = this._getAsset(payloadUrl);
+                const isStageValid: boolean = !!(usdAsset.name && usdAsset.url);
                 const attemptGeneration = this.activeStageAttempt?.generation;
 
                 if (payloadUrl && loadingState === "idle") {
@@ -4227,7 +4285,7 @@ export default class App extends React.Component<AppProps, AppState> {
                         this._failStageLoad(
                             t(stageLoadTimeoutPresentation.title.zh, stageLoadTimeoutPresentation.title.en),
                             [
-                                `${t(stageLoadTimeoutPresentation.target.zh, stageLoadTimeoutPresentation.target.en)}${t("：", ": ")}${this.pendingStageUrl || this.state.selectedUSDAsset?.url || "unknown"}`,
+                                `${t(stageLoadTimeoutPresentation.target.zh, stageLoadTimeoutPresentation.target.en)}${t("：", ": ")}${redactStageUrlForDiagnostic(this.pendingStageUrl || this.state.selectedUSDAsset?.url)}`,
                                 `${t(stageLoadTimeoutPresentation.lastState.zh, stageLoadTimeoutPresentation.lastState.en)}${t("：", ": ")}${payloadUrl || "empty"} busy`,
                                 t(stageLoadTimeoutPresentation.missingCompletion.zh, stageLoadTimeoutPresentation.missingCompletion.en),
                             ].join("\n"),
@@ -4247,7 +4305,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     } else {
                         this._failStageLoad(
                             t(stageLoadFailurePresentation.missingUrl.zh, stageLoadFailurePresentation.missingUrl.en),
-                            `${t(stageLoadFailurePresentation.target.zh, stageLoadFailurePresentation.target.en)}${t("：", ": ")}${this.pendingStageUrl || this.state.selectedUSDAsset?.url || "unknown"}`,
+                            `${t(stageLoadFailurePresentation.target.zh, stageLoadFailurePresentation.target.en)}${t("：", ": ")}${redactStageUrlForDiagnostic(this.pendingStageUrl || this.state.selectedUSDAsset?.url)}`,
                         );
                     }
                     return;
