@@ -1334,6 +1334,121 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     expect(deferredOpen).not.toHaveBeenCalled();
   });
 
+  it("bootstrap endpoint replacement resets the ready stream and opens only after the replacement readiness reply", async () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _bootstrapReview: () => Promise<void>;
+      _connectReviewSocket: (sessionId: string, traceId: string) => void;
+      _scheduleStreamStartTimeout: () => void;
+      _beginA4Handoff: (sessionId: string) => Promise<void>;
+      _onStreamStarted: (streamGeneration?: number) => void;
+      _pollForKitReady: () => void;
+      _openSelectedAsset: () => void;
+      coordinatorClient: {
+        getReviewSession: (sessionId: string) => Promise<unknown>;
+        getStreamConfig: (sessionId: string) => Promise<unknown>;
+      };
+      streamGeneration: number;
+    };
+    const previousReviewEnv = {
+      defaultSessionId: reviewEnv.defaultSessionId,
+      defaultReviewRequestId: reviewEnv.defaultReviewRequestId,
+      autoCreateSession: reviewEnv.autoCreateSession,
+      hasExplicitEmptySessionId: reviewEnv.hasExplicitEmptySessionId,
+    };
+    const streamConfig = (signalingPort: number, stageUrl: string) => ({
+      session_id: "review_session_x",
+      trace_id: DATA_CHANNEL_TRACE_ID,
+      lifecycle_status: "active",
+      source: "local_fixed",
+      webrtc: {
+        signalingServer: "127.0.0.1",
+        signalingPort,
+        mediaServer: "127.0.0.1",
+        mediaPort: null,
+      },
+      model: {
+        status: "ready",
+        artifact_id: `artifact_${signalingPort}`,
+        url: stageUrl,
+        mapping_url: null,
+        conversion_job_id: null,
+      },
+      artifacts: [],
+      artifact_bindings: [{
+        binding_id: `binding_${signalingPort}`,
+        artifact_group_id: "group_x",
+        model_version_id: "version_x",
+        artifact_id: `artifact_${signalingPort}`,
+        display_name: `Stage ${signalingPort}`,
+        source_ifc_filename: "sample.ifc",
+        artifact_role: "derived",
+        url: stageUrl,
+        mapping_url: null,
+        load_order: 0,
+        routing_policy: "same_instance",
+        ready_status: "ready",
+      }],
+      kit_instance_bindings: [],
+    });
+
+    try {
+      reviewEnv.defaultSessionId = "review_session_x";
+      reviewEnv.defaultReviewRequestId = "";
+      reviewEnv.autoCreateSession = true;
+      reviewEnv.hasExplicitEmptySessionId = false;
+      vi.spyOn(privateApp.coordinatorClient, "getReviewSession").mockResolvedValue({
+        session_id: "review_session_x",
+        project_id: "project_x",
+        model_version_id: "version_x",
+      } as never);
+      vi.spyOn(privateApp.coordinatorClient, "getStreamConfig")
+        .mockResolvedValueOnce(streamConfig(49100, "stage://old-endpoint.usdc") as never)
+        .mockResolvedValueOnce(streamConfig(49101, "stage://replacement-endpoint.usdc") as never);
+      vi.spyOn(privateApp, "_connectReviewSocket").mockImplementation(() => undefined);
+      vi.spyOn(privateApp, "_scheduleStreamStartTimeout").mockImplementation(() => undefined);
+      vi.spyOn(privateApp, "_beginA4Handoff").mockResolvedValue(undefined);
+
+      await privateApp._bootstrapReview();
+      const oldGeneration = privateApp.streamGeneration;
+      internals(app).state = {
+        ...internals(app).state,
+        isKitReady: true,
+        showStream: true,
+        webrtcLifecycleStatus: "started",
+      };
+      const openSelectedAsset = vi.spyOn(privateApp, "_openSelectedAsset").mockImplementation(() => undefined);
+      const pollForKitReady = vi.spyOn(privateApp, "_pollForKitReady").mockImplementation(() => undefined);
+
+      await privateApp._bootstrapReview();
+
+      expect(privateApp.streamGeneration).toBe(oldGeneration + 1);
+      expect(internals(app).state).toMatchObject({
+        isKitReady: false,
+        showStream: false,
+        webrtcLifecycleStatus: "initializing",
+        streamMountKey: oldGeneration + 1,
+      });
+      expect(openSelectedAsset).not.toHaveBeenCalled();
+
+      privateApp._onStreamStarted(privateApp.streamGeneration);
+      expect(pollForKitReady).toHaveBeenCalledTimes(1);
+      expect(openSelectedAsset).not.toHaveBeenCalled();
+
+      internals(app)._handleCustomEvent({
+        event_type: "loadingStateResponse",
+        payload: {
+          url: "stage://replacement-endpoint.usdc",
+          loading_state: "idle",
+        },
+      });
+      expect(openSelectedAsset).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.assign(reviewEnv, previousReviewEnv);
+    }
+  });
+
   it("keeps a new stage attempt intact when old sendMessage resolve and rejection settle after reconnect", async () => {
     reviewEnv.sourceClientId = "viewer_lease_primary";
     reviewEnv.viewerLeaseToken = "lease_token_primary";
@@ -1586,7 +1701,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     vi.spyOn(privateApp, "_preauthorizeStageBinding")
       .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
       .mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve; }));
-    const send = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => undefined);
+    const send = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => true);
     const transaction = {
       status: "pending",
       session_id: "review_session_x",
@@ -1642,7 +1757,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     vi.spyOn(privateApp, "_preauthorizeStageBinding")
       .mockImplementationOnce(() => new Promise((resolve) => { resolveBinding = resolve; }))
       .mockImplementationOnce(() => new Promise((resolve) => { resolveManualOpen = resolve; }));
-    const send = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => undefined);
+    const send = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => true);
     const bindingTransaction = {
       status: "pending",
       session_id: "review_session_x",
@@ -1721,7 +1836,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     };
     vi.spyOn(privateApp, "_preauthorizeStageBinding")
       .mockImplementation(() => new Promise((resolve) => { resolvePreauthorization = resolve; }));
-    const send = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => undefined);
+    const send = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => true);
 
     privateApp._applyBinding([{
       artifact_id: "artifact_binding_pending",
@@ -1892,7 +2007,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     vi.spyOn(privateApp, "_preauthorizeStageBinding")
       .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectBinding = reject; }))
       .mockImplementationOnce(() => new Promise((resolve) => { resolveManualOpen = resolve; }));
-    const send = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => undefined);
+    const send = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => true);
 
     privateApp._applyBinding([{
       artifact_id: "artifact_binding_reject_pending",
@@ -1990,29 +2105,68 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     const props = (onStart: (message: unknown) => void, onCustomEvent: (message: unknown) => void) => ({
       streamConfig: { onStart, onCustomEvent, onStreamStats: vi.fn() },
     });
-    await FakeAppStreamer.connect(props(firstStart, firstEvent));
-    const controls = globalThis as typeof globalThis & {
-      __AI_BIM_FAKE_KIT__?: { stallNextStageLoad: () => void };
-    };
-    controls.__AI_BIM_FAKE_KIT__?.stallNextStageLoad();
-    const stalled = FakeAppStreamer.sendMessage({
-      event_type: "openStageRequest",
-      payload: {
-        session_id: HARNESS_REVIEW_AUTHORITY.sessionId,
-        trace_id: HARNESS_REVIEW_AUTHORITY.traceId,
-        url: "harness://stage/World/sample-building.usd",
-      },
-    });
+    try {
+      await FakeAppStreamer.connect(props(firstStart, firstEvent));
+      const controls = globalThis as typeof globalThis & {
+        __AI_BIM_FAKE_KIT__?: { stallNextStageLoad: () => void };
+      };
+      expect(controls.__AI_BIM_FAKE_KIT__?.stallNextStageLoad).toBeTypeOf("function");
+      controls.__AI_BIM_FAKE_KIT__!.stallNextStageLoad();
+      const stalled = FakeAppStreamer.sendMessage({
+        event_type: "openStageRequest",
+        payload: {
+          session_id: HARNESS_REVIEW_AUTHORITY.sessionId,
+          trace_id: HARNESS_REVIEW_AUTHORITY.traceId,
+          url: "harness://stage/World/sample-building.usd",
+        },
+      });
 
-    await FakeAppStreamer.connect(props(secondStart, secondEvent));
-    await expect(stalled).resolves.toBeNull();
-    await vi.runAllTimersAsync();
+      await FakeAppStreamer.connect(props(secondStart, secondEvent));
+      await expect(stalled).resolves.toBeNull();
+      await vi.runAllTimersAsync();
 
-    expect(firstStart).not.toHaveBeenCalled();
-    expect(firstEvent).not.toHaveBeenCalled();
-    expect(secondStart).toHaveBeenCalledTimes(1);
-    expect(secondEvent).not.toHaveBeenCalled();
-    FakeAppStreamer.terminate();
+      expect(firstStart).not.toHaveBeenCalled();
+      expect(firstEvent).not.toHaveBeenCalled();
+      expect(secondStart).toHaveBeenCalledTimes(1);
+      expect(secondEvent).not.toHaveBeenCalled();
+    } finally {
+      FakeAppStreamer.terminate();
+    }
+  });
+
+  it("stalled harness busy events use the same default stage URL as the completion response", async () => {
+    vi.useFakeTimers();
+    const onCustomEvent = vi.fn();
+    try {
+      await FakeAppStreamer.connect({
+        streamConfig: { onStart: vi.fn(), onCustomEvent, onStreamStats: vi.fn() },
+      });
+      const controls = globalThis as typeof globalThis & {
+        __AI_BIM_FAKE_KIT__?: {
+          stallNextStageLoad: () => void;
+          emitBusyStageResponses: (count: number) => void;
+        };
+      };
+      expect(controls.__AI_BIM_FAKE_KIT__?.stallNextStageLoad).toBeTypeOf("function");
+      expect(controls.__AI_BIM_FAKE_KIT__?.emitBusyStageResponses).toBeTypeOf("function");
+      controls.__AI_BIM_FAKE_KIT__!.stallNextStageLoad();
+      void FakeAppStreamer.sendMessage({
+        event_type: "openStageRequest",
+        payload: {
+          session_id: HARNESS_REVIEW_AUTHORITY.sessionId,
+          trace_id: HARNESS_REVIEW_AUTHORITY.traceId,
+        },
+      });
+      controls.__AI_BIM_FAKE_KIT__!.emitBusyStageResponses(1);
+      await vi.runAllTimersAsync();
+
+      expect(onCustomEvent).toHaveBeenCalledWith(expect.objectContaining({
+        event_type: "loadingStateResponse",
+        payload: expect.objectContaining({ url: "harness://stage/World/sample-building.usd" }),
+      }));
+    } finally {
+      FakeAppStreamer.terminate();
+    }
   });
 
   it.each([
@@ -4272,5 +4426,265 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
       payload: { result: "error", request_id: "req_binding_004", binding_revision_id: "rev_binding_004", error: "kit_compose_failed" },
     });
     expect(internals(app).state.govBindingApplyState).toEqual({ status: "failed", reason: "kit_compose_failed" });
+  });
+
+  it("changing the binding primary replaces the selected mapping target before Kit completion", async () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = bindingApplyApp();
+    const privateApp = internals(app) as unknown as {
+      _applyBinding: (selection: Array<{
+        artifact_id: string;
+        model_version_id: string;
+        usdc_url?: string;
+        role: "primary" | "secondary";
+        load_order: number;
+        ready: boolean;
+      }>, revisionId: string) => void;
+      _preauthorizeStageBinding: (selection: unknown[]) => Promise<unknown>;
+      _sendStreamMessage: (message: unknown) => boolean;
+      _clearStageLoadTimeout: () => void;
+      _mappingCache: unknown;
+      _mappingCacheUrl: string | null;
+    };
+    const oldAsset = { name: "old primary", url: "stage://old-primary.usdc" };
+    const newAsset = { name: "new primary", url: "stage://new-primary.usdc" };
+    internals(app).state = {
+      ...internals(app).state,
+      usdAssets: [oldAsset, newAsset],
+      selectedUSDAsset: oldAsset,
+      expectedStageUrl: oldAsset.url,
+      mappingUrl: "mapping://old-primary.json",
+      mappingStatus: "已載入 old mapping",
+      mappingSummary: { mapped_count: 1 },
+      mappingItems: [{ usd_prim_path: "/World/Old" }],
+      latestStreamConfig: {
+        ...(internals(app).state.latestStreamConfig as Record<string, unknown>),
+        artifact_bindings: [
+          { url: oldAsset.url, mapping_url: "mapping://old-primary.json" },
+          { url: newAsset.url, mapping_url: "mapping://new-primary.json" },
+        ],
+      },
+    };
+    privateApp._mappingCache = { stale: true };
+    privateApp._mappingCacheUrl = "mapping://old-primary.json";
+    vi.spyOn(privateApp, "_preauthorizeStageBinding").mockResolvedValue({
+      binding_revision_id: "rev_new_primary",
+      stage_binding_authorization_id: "stage_auth_new_primary",
+      stage_composition: {
+        primary: { usdc_url: newAsset.url },
+        secondary_layers: [],
+      },
+    } as never);
+    vi.spyOn(privateApp, "_sendStreamMessage").mockReturnValue(true);
+
+    try {
+      privateApp._applyBinding([{
+        artifact_id: "artifact_new_primary",
+        model_version_id: "version_x",
+        usdc_url: newAsset.url,
+        role: "primary",
+        load_order: 0,
+        ready: true,
+      }], "rev_new_primary");
+      await flushMicrotasks();
+
+      expect(internals(app).state).toMatchObject({
+        selectedUSDAsset: newAsset,
+        expectedStageUrl: newAsset.url,
+        mappingUrl: "mapping://new-primary.json",
+        mappingStatus: "尚未載入 mapping",
+        mappingItems: [],
+      });
+      expect(privateApp._mappingCache).toBeNull();
+      expect(privateApp._mappingCacheUrl).toBeNull();
+    } finally {
+      privateApp._clearStageLoadTimeout();
+    }
+  });
+
+  it("binding composition terminalizes immediately when its authorized command is not sent", async () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = bindingApplyApp();
+    const privateApp = internals(app) as unknown as {
+      _applyBinding: AppInternals["_applyBinding"];
+      _preauthorizeStageBinding: (selection: unknown[]) => Promise<unknown>;
+      _sendStreamMessage: (message: unknown) => boolean;
+      _clearStageLoadTimeout: () => void;
+      activeStageAttempt: { status: string } | null;
+      pendingStageUrl: string | null;
+    };
+    vi.spyOn(privateApp, "_preauthorizeStageBinding").mockResolvedValue({
+      binding_revision_id: "rev_unsent_binding",
+      stage_binding_authorization_id: "stage_auth_unsent_binding",
+      stage_composition: {
+        primary: { usdc_url: "stage://unsent-binding.usdc" },
+        secondary_layers: [],
+      },
+    } as never);
+    vi.spyOn(privateApp, "_sendStreamMessage").mockReturnValue(false);
+
+    try {
+      privateApp._applyBinding([{
+        artifact_id: "artifact_unsent_binding",
+        model_version_id: "version_x",
+        usdc_url: "stage://unsent-binding.usdc",
+        role: "primary",
+        load_order: 0,
+        ready: true,
+      }], "rev_unsent_binding");
+      await flushMicrotasks();
+
+      expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ status: "terminal" }));
+      expect(privateApp.pendingStageUrl).toBeNull();
+      expect(internals(app).state).toMatchObject({
+        isLoading: false,
+        govBindingApplyState: { status: "failed" },
+      });
+    } finally {
+      privateApp._clearStageLoadTimeout();
+    }
+  });
+
+  it("ordinary stage open terminalizes immediately when its authorized command is not sent", async () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _openSelectedAsset: () => void;
+      _preauthorizeStageBinding: (selection: unknown[]) => Promise<unknown>;
+      _sendStreamMessage: (message: unknown) => boolean;
+      _clearStageLoadTimeout: () => void;
+      activeStageAttempt: { status: string } | null;
+      pendingStageUrl: string | null;
+    };
+    const asset = { name: "ordinary stage", url: "stage://ordinary-unsent.usdc" };
+    internals(app).state = {
+      ...internals(app).state,
+      selectedUSDAsset: asset,
+      expectedStageUrl: asset.url,
+      usdAssets: [asset],
+      latestStreamConfig: {
+        ...(internals(app).state.latestStreamConfig as Record<string, unknown>),
+        model: { status: "ready", url: asset.url },
+        artifact_bindings: [{ artifact_id: "artifact_ordinary", url: asset.url, load_order: 0 }],
+      },
+    };
+    vi.spyOn(privateApp, "_preauthorizeStageBinding").mockResolvedValue({
+      binding_revision_id: "rev_unsent_open",
+      stage_binding_authorization_id: "stage_auth_unsent_open",
+      stage_composition: {
+        primary: { usdc_url: asset.url },
+        secondary_layers: [],
+      },
+    } as never);
+    vi.spyOn(privateApp, "_sendStreamMessage").mockReturnValue(false);
+
+    try {
+      privateApp._openSelectedAsset();
+      await flushMicrotasks();
+
+      expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ status: "terminal" }));
+      expect(privateApp.pendingStageUrl).toBeNull();
+      expect(internals(app).state.isLoading).toBe(false);
+    } finally {
+      privateApp._clearStageLoadTimeout();
+    }
+  });
+
+  it("composition error acknowledgement terminalizes its owning stage attempt", () => {
+    const app = bindingApplyApp();
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      activeStageAttempt: { generation: number; status: string } | null;
+      pendingStageUrl: string | null;
+      runtimeCommandContexts: Map<string, Record<string, unknown>>;
+    };
+    const generation = privateApp._beginStageAttempt("stage://composition-error.usdc");
+    privateApp.pendingStageUrl = "stage://composition-error.usdc";
+    privateApp.runtimeCommandContexts.set("req_composition_error", {
+      eventType: "loadArtifactGroupRequest",
+      bindingRevisionId: "rev_composition_error",
+      stageAttemptGeneration: generation,
+      stageUrl: "stage://composition-error.usdc",
+    });
+
+    internals(app)._handleCustomEvent({
+      event_type: "loadArtifactGroupResult",
+      payload: {
+        result: "error",
+        request_id: "req_composition_error",
+        binding_revision_id: "rev_composition_error",
+        error: "kit_compose_failed",
+      },
+    });
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ status: "terminal" }));
+    expect(privateApp.pendingStageUrl).toBeNull();
+    expect(internals(app).state).toMatchObject({
+      isLoading: false,
+      govBindingApplyState: { status: "failed", reason: "kit_compose_failed" },
+    });
+  });
+
+  it("success without a loaded URL terminalizes its owning stage attempt instead of polling", () => {
+    const app = bindingApplyApp();
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _clearLoadingStateRetry: () => void;
+      activeStageAttempt: { generation: number; status: string } | null;
+      pendingStageUrl: string | null;
+      runtimeCommandContexts: Map<string, Record<string, unknown>>;
+    };
+    const generation = privateApp._beginStageAttempt("stage://missing-url.usdc");
+    privateApp.pendingStageUrl = "stage://missing-url.usdc";
+    privateApp.runtimeCommandContexts.set("req_missing_url", {
+      eventType: "openStageRequest",
+      bindingRevisionId: "rev_missing_url",
+      stageAttemptGeneration: generation,
+      stageUrl: "stage://missing-url.usdc",
+    });
+
+    try {
+      internals(app)._handleCustomEvent({
+        event_type: "openedStageResult",
+        payload: {
+          result: "success",
+          request_id: "req_missing_url",
+          binding_revision_id: "rev_missing_url",
+        },
+      });
+
+      expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ status: "terminal" }));
+      expect(privateApp.pendingStageUrl).toBeNull();
+      expect(internals(app).state).toMatchObject({
+        isLoading: false,
+        govBindingApplyState: { status: "failed", reason: "missing_stage_evidence" },
+      });
+    } finally {
+      privateApp._clearLoadingStateRetry();
+    }
+  });
+
+  it("terminal stage failure clears the parent stage proof", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = bindingApplyApp();
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _failStageLoad: (loadingText: string, diagnostic?: string, attemptGeneration?: number | null) => void;
+      pendingStageUrl: string | null;
+    };
+    const generation = privateApp._beginStageAttempt("stage://parent-proof.usdc");
+    privateApp.pendingStageUrl = "stage://parent-proof.usdc";
+
+    privateApp._failStageLoad("stage timeout", "no correlated completion", generation);
+
+    expect(parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "stage_loaded", stageUrl: null, status: "unproven" }),
+      PARENT_ORIGIN,
+    );
   });
 });

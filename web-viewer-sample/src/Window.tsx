@@ -382,7 +382,15 @@ const stageLoadFailurePresentation = {
         zh: "無法建立 stage binding authorization，已阻擋載入指令",
         en: "Could not create stage binding authorization; the stage-load command was blocked.",
     },
+    commandNotSent: {
+        zh: "Kit 尚未接受載入指令；本次模型載入已終止",
+        en: "Kit did not accept the load command; this model load was terminated.",
+    },
     missingUrl: { zh: "模型載入狀態未回傳 URL", en: "Stage loading state did not report a URL" },
+    missingStageEvidence: {
+        zh: "Kit 成功回應未附載入 URL；缺少 stage 完成證據",
+        en: "Kit reported success without a loaded URL; stage completion evidence is missing.",
+    },
     invalidStage: { zh: "模型載入狀態不符合目前清單", en: "Stage loading state does not match the current artifact list" },
     kitReported: { zh: "Kit 回報", en: "Kit reported" },
     currentSelection: { zh: "目前選擇", en: "Current selection" },
@@ -1886,6 +1894,9 @@ export default class App extends React.Component<AppProps, AppState> {
                 ? { govBindingApplyState: { status: "failed" as const, reason: loadingText } }
                 : {}),
         }));
+        if (window.parent !== window) {
+            this._postToParent({ type: "stage_loaded", stageUrl: null, status: "unproven" });
+        }
     }
 
     private _getVideoDiagnosticText(): string {
@@ -2709,6 +2720,14 @@ export default class App extends React.Component<AppProps, AppState> {
             this.pendingBindingPreauthorizationIntent = null;
             this._appendReviewEvent(`coordinator 已建立 pending binding：${transaction.binding_revision_id}`);
             const targetUrl = transaction.stage_composition.primary.usdc_url;
+            const targetAsset = this.state.usdAssets.find((asset) => asset.url === targetUrl)
+                || { name: displayNameFromStageUrl(targetUrl), url: targetUrl };
+            const mappingTargetChanged = this.state.selectedUSDAsset?.url !== targetUrl;
+            const mappingUrl = this._resolveMappingUrlForAsset(targetAsset);
+            if (mappingTargetChanged) {
+                this._mappingCache = null;
+                this._mappingCacheUrl = null;
+            }
             const attemptGeneration = this._beginStageAttempt(targetUrl);
             this.pendingStageUrl = targetUrl;
             this.confirmedStageBindingRevision = null;
@@ -2720,12 +2739,25 @@ export default class App extends React.Component<AppProps, AppState> {
                 loadingText: t("正在載入模型...", "Loading model..."),
                 showStream: this._hasRemoteVideoFrame(),
                 streamDiagnostic: null,
+                usdAssets: this._mergeAssets(this.state.usdAssets, [targetAsset]),
+                selectedUSDAsset: targetAsset,
+                mappingUrl: mappingTargetChanged ? mappingUrl : this.state.mappingUrl,
+                mappingStatus: mappingTargetChanged
+                    ? (mappingUrl ? "尚未載入 mapping" : "此成果檔沒有 mapping URL")
+                    : this.state.mappingStatus,
+                mappingSummary: mappingTargetChanged ? null : this.state.mappingSummary,
+                mappingItems: mappingTargetChanged ? [] : this.state.mappingItems,
+                selectedMappingIndex: mappingTargetChanged ? 0 : this.state.selectedMappingIndex,
+                lastMappingVerification: mappingTargetChanged ? null : this.state.lastMappingVerification,
+                mappingVerificationBlockedReason: mappingTargetChanged
+                    ? null
+                    : this.state.mappingVerificationBlockedReason,
                 expectedStageUrl: targetUrl,
                 loadedStageUrl: null,
                 stageLoadStatus: "pending",
                 isLoading: true,
             });
-            this._sendStreamMessage({
+            const commandSent = this._sendStreamMessage({
                 event_type: "loadArtifactGroupRequest",
                 payload: {
                     url: transaction.stage_composition.primary.usdc_url,
@@ -2735,6 +2767,14 @@ export default class App extends React.Component<AppProps, AppState> {
                     stage_composition: transaction.stage_composition,
                 },
             });
+            if (!commandSent) {
+                this._failStageLoad(
+                    t(stageLoadFailurePresentation.title.zh, stageLoadFailurePresentation.title.en),
+                    t(stageLoadFailurePresentation.commandNotSent.zh, stageLoadFailurePresentation.commandNotSent.en),
+                    attemptGeneration,
+                );
+                return;
+            }
             this._scheduleLoadingStateQuery(1500);
         };
         void applyThroughCoordinator().catch(() => {
@@ -3356,7 +3396,15 @@ export default class App extends React.Component<AppProps, AppState> {
             if (!this._isCurrentStageAttempt(attemptGeneration, "pending")) return;
             this.pendingStageUrl = transaction.stage_composition.primary.usdc_url;
             if (this.activeStageAttempt) this.activeStageAttempt.targetUrl = this.pendingStageUrl;
-            this._sendStreamMessage(buildAuthorizedOpenStageRequest(transaction));
+            const commandSent = this._sendStreamMessage(buildAuthorizedOpenStageRequest(transaction));
+            if (!commandSent) {
+                this._failStageLoad(
+                    t(stageLoadFailurePresentation.title.zh, stageLoadFailurePresentation.title.en),
+                    t(stageLoadFailurePresentation.commandNotSent.zh, stageLoadFailurePresentation.commandNotSent.en),
+                    attemptGeneration,
+                );
+                return;
+            }
             this._scheduleLoadingStateQuery(1500);
         };
         void openStage().catch(() => {
@@ -3993,7 +4041,14 @@ export default class App extends React.Component<AppProps, AppState> {
                 if (loadedUrl && stageEvidenceMatched) {
                     this._completeStageLoad(loadedUrl, bindingRevisionId || undefined, correlation.context?.stageAttemptGeneration);
                 } else {
-                    this._scheduleLoadingStateQuery(250);
+                    this._failStageLoad(
+                        t(stageLoadFailurePresentation.missingStageEvidence.zh, stageLoadFailurePresentation.missingStageEvidence.en),
+                        [
+                            `${t(stageLoadFailurePresentation.target.zh, stageLoadFailurePresentation.target.en)}${t("：", ": ")}${this.pendingStageUrl || this.state.expectedStageUrl || "unknown"}`,
+                            `${t(stageLoadFailurePresentation.error.zh, stageLoadFailurePresentation.error.en)}${t("：", ": ")}${t(stageLoadFailurePresentation.missingStageEvidence.zh, stageLoadFailurePresentation.missingStageEvidence.en)}`,
+                        ].join("\n"),
+                        correlation.context?.stageAttemptGeneration,
+                    );
                 }
             }
             else {
@@ -4051,7 +4106,6 @@ export default class App extends React.Component<AppProps, AppState> {
 
         else if (event.event_type === "loadArtifactGroupResult") {
             const result = getPayloadString(payload, "result") || "unknown";
-            const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
             const requestId = getPayloadString(payload, "request_id");
             const correlation = result === "error"
                 ? this._completeRuntimeCommandEvent("loadArtifactGroupResult", payload, "error")
@@ -4067,13 +4121,24 @@ export default class App extends React.Component<AppProps, AppState> {
                     );
                 }
             }
-            if (result === "error" && bindingRevisionId) {
+            if (result === "error") {
+                const error = getPayloadString(payload, "error") || "loadArtifactGroupResult error";
                 this.setState({
                     govBindingApplyState: {
                         status: "failed",
-                        reason: getPayloadString(payload, "error") || "loadArtifactGroupResult error",
+                        reason: error,
                     },
                 });
+                if (context?.stageAttemptGeneration) {
+                    this._failStageLoad(
+                        t(stageLoadFailurePresentation.title.zh, stageLoadFailurePresentation.title.en),
+                        [
+                            `${t(stageLoadFailurePresentation.target.zh, stageLoadFailurePresentation.target.en)}${t("：", ": ")}${context.stageUrl || this.pendingStageUrl || "unknown"}`,
+                            `${t(stageLoadFailurePresentation.error.zh, stageLoadFailurePresentation.error.en)}${t("：", ": ")}${error}`,
+                        ].join("\n"),
+                        context.stageAttemptGeneration,
+                    );
+                }
             }
             this._appendReviewEvent(`artifact group load result：${result}`);
         }

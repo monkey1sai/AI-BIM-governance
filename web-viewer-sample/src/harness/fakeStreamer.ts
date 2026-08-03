@@ -10,6 +10,7 @@ import {
   type FakeKitState,
 } from "./fakeKit";
 import { HARNESS_REVIEW_AUTHORITY } from "./fixtures/reviewAuthority";
+import { HARNESS_STAGE_URL } from "./fixtures/usdStageTree";
 
 type EventCallback = (message: unknown) => void;
 
@@ -96,7 +97,7 @@ function stageUrlFromMessage(message: StreamMessage): string {
     ? payload.url
     : typeof payload.requested_stage_url === "string"
       ? payload.requested_stage_url
-      : "";
+      : HARNESS_STAGE_URL;
 }
 
 function emitBusyStageResponses(count: number): void {
