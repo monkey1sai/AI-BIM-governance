@@ -1823,6 +1823,67 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     expect(schedule).toHaveBeenCalledTimes(1);
   });
 
+  it("ignores a stale busy probe until manual preauthorization dispatches the command", async () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const stageUrl = "stage://manual-authorization-fence.usdc";
+    const privateApp = internals(app) as unknown as {
+      _openSelectedAsset: () => void;
+      _preauthorizeStageBinding: () => Promise<unknown>;
+      _sendStreamMessage: (message: unknown) => boolean;
+      _scheduleStageLoadTimeout: (generation: number) => void;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+    };
+    internals(app).state = {
+      ...internals(app).state,
+      isKitReady: true,
+      webrtcLifecycleStatus: "started",
+      selectedUSDAsset: { name: "manual authorization fence", url: stageUrl },
+      expectedStageUrl: stageUrl,
+      usdAssets: [{ name: "manual authorization fence", url: stageUrl }],
+      latestStreamConfig: {
+        ...(internals(app).state.latestStreamConfig as Record<string, unknown>),
+        model: { status: "ready", url: stageUrl },
+        artifact_bindings: [{ artifact_id: "artifact_manual_authorization_fence", url: stageUrl, load_order: 0 }],
+      },
+    };
+    let resolvePreauthorization: ((value: unknown) => void) | undefined;
+    vi.spyOn(privateApp, "_preauthorizeStageBinding")
+      .mockImplementation(() => new Promise((resolve) => { resolvePreauthorization = resolve; }));
+    const send = vi.spyOn(privateApp, "_sendStreamMessage").mockReturnValue(true);
+    const schedule = vi.spyOn(privateApp, "_scheduleStageLoadTimeout").mockImplementation(() => undefined);
+    vi.spyOn(internals(app), "_hasRemoteVideoFrame").mockReturnValue(true);
+
+    privateApp._openSelectedAsset();
+    internals(app)._handleCustomEvent({
+      event_type: "loadingStateResponse",
+      payload: { url: stageUrl, loading_state: "busy" },
+    });
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      status: "pending",
+      targetUrl: stageUrl,
+    }));
+    expect(internals(app).state.stageLoadStatus).toBe("pending");
+    expect(send).not.toHaveBeenCalled();
+
+    resolvePreauthorization?.({
+      status: "pending",
+      session_id: "review_session_x",
+      stage_binding_authorization_id: "authorization_manual_fence",
+      binding_revision_id: "revision_manual_fence",
+      pending_expires_at: "2099-01-01T00:00:00Z",
+      stage_composition: {
+        primary: { artifact_id: "artifact_manual_authorization_fence", role: "primary", load_order: 0, usdc_url: stageUrl },
+        secondary_layers: [],
+      },
+    });
+    await flushMicrotasks();
+
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ event_type: "openStageRequest" }));
+    expect(schedule).toHaveBeenCalledTimes(1);
+  });
+
   it("times out manual preauthorization separately without claiming a Kit stage timeout", async () => {
     vi.useFakeTimers();
     setLang("en");
@@ -2993,6 +3054,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     };
     vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
     vi.spyOn(internals(app), "_appendDemoIncoming").mockImplementation(() => {});
+    vi.spyOn(internals(app), "_hasRemoteVideoFrame").mockReturnValue(true);
 
     internals(app)._sendStreamMessage({
       event_type: "openStageRequest",
@@ -3044,6 +3106,10 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       status: "failed",
       reason: "runtime_changed_transaction_failed",
     });
+    expect(internals(app).state.showStream).toBe(true);
+    const html = renderToString(internals(app).render());
+    expect(html).toContain('data-testid="stage-load-failure"');
+    expect(html).toContain("模型組合僅部分套用");
     expect(parent.postMessage.mock.calls.map((call) => call[0])).toContainEqual(expect.objectContaining({
       protocol: "vg01",
       type: "stage_loaded",
@@ -4777,6 +4843,50 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
     expect(internals(app).state.streamDiagnostic).toContain(
       "Stage binding authorization timed out before a load command was sent to Kit.",
     );
+  });
+
+  it("does not let a stale busy probe overwrite a binding authorization timeout", async () => {
+    vi.useFakeTimers();
+    setLang("en");
+    const app = bindingApplyApp();
+    const privateApp = internals(app) as unknown as {
+      _applyBinding: AppInternals["_applyBinding"];
+      _preauthorizeStageBinding: (selection: unknown[]) => Promise<unknown>;
+      _sendStreamMessage: (message: unknown) => boolean;
+      stageLoadFailureActive: boolean;
+    };
+    internals(app).state = {
+      ...internals(app).state,
+      isKitReady: true,
+      webrtcLifecycleStatus: "started",
+      selectedUSDAsset: { name: "stale probe", url: "stage://stale-probe.usdc" },
+    };
+    vi.spyOn(privateApp, "_preauthorizeStageBinding").mockImplementation(() => new Promise(() => {}));
+    const send = vi.spyOn(privateApp, "_sendStreamMessage").mockReturnValue(true);
+
+    privateApp._applyBinding([{
+      artifact_id: "artifact_binding_authorization_stale_probe",
+      model_version_id: "version_x",
+      usdc_url: "stage://stale-probe.usdc",
+      role: "primary",
+      load_order: 0,
+      ready: true,
+    }], "rev_binding_authorization_stale_probe");
+    await vi.advanceTimersByTimeAsync(45_000);
+    const failureText = internals(app).state.loadingText;
+    const failureDiagnostic = internals(app).state.streamDiagnostic;
+
+    internals(app)._handleCustomEvent({
+      event_type: "loadingStateResponse",
+      payload: { url: "stage://stale-probe.usdc", loading_state: "busy" },
+    });
+
+    expect(send).not.toHaveBeenCalled();
+    expect(privateApp.stageLoadFailureActive).toBe(true);
+    expect(internals(app).loadingStatePollCount).toBe(0);
+    expect(internals(app).state.loadingText).toBe(failureText);
+    expect(internals(app).state.streamDiagnostic).toBe(failureDiagnostic);
+    expect(renderToString(internals(app).render())).toContain('data-testid="stage-load-failure"');
   });
 
   it("ordinary stage open terminalizes immediately when its authorized command is not sent", async () => {

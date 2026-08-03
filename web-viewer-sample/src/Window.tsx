@@ -759,7 +759,7 @@ export default class App extends React.Component<AppProps, AppState> {
     // open/reconnect must revoke an older binding transaction before it can
     // create a new stage attempt.
     private stageIntentGeneration = 0;
-    private pendingBindingPreauthorizationIntent: number | null = null;
+    private pendingStagePreauthorizationIntent: number | null = null;
     private activeStageAttempt: StageAttempt | null = null;
     // React state remounts <AppStream>, but callbacks can run before React commits that state.
     // Keep the lifetime authority outside React so a retired stream is fenced synchronously.
@@ -1659,7 +1659,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _beginStageAttempt(targetUrl: string): number {
-        this.pendingBindingPreauthorizationIntent = null;
+        this.pendingStagePreauthorizationIntent = null;
         this.stageIntentGeneration += 1;
         this._supersedeActiveStageAttempt();
         const generation = ++this.stageAttemptGeneration;
@@ -1711,7 +1711,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _invalidateStageAttempt(): void {
-        this.pendingBindingPreauthorizationIntent = null;
+        this.pendingStagePreauthorizationIntent = null;
         this.stageIntentGeneration += 1;
         const attemptGeneration = this.activeStageAttempt?.generation;
         if (!attemptGeneration) {
@@ -1736,12 +1736,14 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _canApplyLoadingStateResponse(stageUrl: string): boolean {
+        // An uncorrelated loading-state probe must not consume an attempt while
+        // coordinator preauthorization still owns whether a Kit command exists.
+        if (this.pendingStagePreauthorizationIntent === this.stageIntentGeneration) return false;
         const attempt = this.activeStageAttempt;
         if (!attempt) {
-            // A coordinator binding transaction has claimed the next stage but has
-            // not yet produced a correlatable attempt. Ignore old Kit probes until
-            // it resolves, rather than allowing them to mutate or fail that intent.
-            return this.pendingBindingPreauthorizationIntent !== this.stageIntentGeneration
+            // A terminal preauthorization failure has no command/attempt to
+            // correlate. Keep it terminal until an explicit new stage intent.
+            return !this.stageLoadFailureActive
                 && this.state.webrtcLifecycleStatus === "started";
         }
         if (attempt.status === "terminal") return false;
@@ -2741,7 +2743,7 @@ export default class App extends React.Component<AppProps, AppState> {
         // A newer user selection revokes completion authority from every prior
         // stage attempt before its coordinator preauthorization resolves.
         const applyStageIntentGeneration = ++this.stageIntentGeneration;
-        this.pendingBindingPreauthorizationIntent = applyStageIntentGeneration;
+        this.pendingStagePreauthorizationIntent = applyStageIntentGeneration;
         this._supersedeActiveStageAttempt();
         const applyThroughCoordinator = async () => {
             const transaction = await this._preauthorizeStageBindingWithinDeadline(
@@ -2755,7 +2757,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 applyGeneration !== this.bindingApplyGeneration
                 || applyStageIntentGeneration !== this.stageIntentGeneration
             ) return;
-            this.pendingBindingPreauthorizationIntent = null;
+            this.pendingStagePreauthorizationIntent = null;
             this._appendReviewEvent(`coordinator 已建立 pending binding：${transaction.binding_revision_id}`);
             const targetUrl = transaction.stage_composition.primary.usdc_url;
             const targetAsset = this.state.usdAssets.find((asset) => asset.url === targetUrl)
@@ -2820,7 +2822,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 applyGeneration !== this.bindingApplyGeneration
                 || applyStageIntentGeneration !== this.stageIntentGeneration
             ) return;
-            this.pendingBindingPreauthorizationIntent = null;
+            this.pendingStagePreauthorizationIntent = null;
             const authorizationTimedOut = isStageAuthorizationTimeout(error);
             this.setState({
                 govBindingApplyState: {
@@ -3444,8 +3446,10 @@ export default class App extends React.Component<AppProps, AppState> {
             if (selectedBindings.length === 0) {
                 throw new Error("selected stage has no server-owned artifact binding");
             }
+            this.pendingStagePreauthorizationIntent = this.stageIntentGeneration;
             const transaction = await this._preauthorizeStageBindingWithinDeadline(selectedBindings);
             if (!this._isCurrentStageAttempt(attemptGeneration, "pending")) return;
+            this.pendingStagePreauthorizationIntent = null;
             this.pendingStageUrl = transaction.stage_composition.primary.usdc_url;
             if (this.activeStageAttempt) this.activeStageAttempt.targetUrl = this.pendingStageUrl;
             const commandSent = this._sendStreamMessage(buildAuthorizedOpenStageRequest(transaction));
@@ -3462,6 +3466,7 @@ export default class App extends React.Component<AppProps, AppState> {
         };
         void openStage().catch((error) => {
             if (!this._isCurrentStageAttempt(attemptGeneration, "pending")) return;
+            this.pendingStagePreauthorizationIntent = null;
             const authorizationTimedOut = isStageAuthorizationTimeout(error);
             this._failStageLoad(
                 t(stageLoadFailurePresentation.title.zh, stageLoadFailurePresentation.title.en),
@@ -4123,6 +4128,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     this.confirmedStageBindingRevision = null;
                     this.unprovenStageUrl = null;
                     this._terminalizeStageAttempt(correlation.context?.stageAttemptGeneration);
+                    this.stageLoadFailureActive = true;
                     this.setState((state) => ({
                         loadingText: "模型組合僅部分套用",
                         streamDiagnostic: [`目標：${redactStageUrlForDiagnostic(url)}`, `錯誤：${error}`].join("\n"),
