@@ -2749,12 +2749,8 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
       ready: true,
     }], "rev_ui_next_before_preaut");
 
-    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
-      generation: expect.any(Number),
-      status: "pending",
-      targetUrl: nextStageUrl,
-    }));
-    expect(privateApp.activeStageAttempt?.generation).not.toBe(priorGeneration);
+    expect(privateApp.activeStageAttempt).toBeNull();
+    expect(internals(app).pendingStageUrl).toBeNull();
     expect(privateApp.runtimeCommandContexts.has("req_prior_before_preaut")).toBe(false);
     expect(privateApp.runtimeCommandTerminalClaims.get("req_prior_before_preaut")).toEqual({
       eventType: "loadArtifactGroupRequest",

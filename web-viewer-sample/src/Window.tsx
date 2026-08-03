@@ -1583,8 +1583,9 @@ export default class App extends React.Component<AppProps, AppState> {
         this.deferredOpenStageId = null;
     }
 
-    private _beginStageAttempt(targetUrl: string): number {
+    private _supersedeActiveStageAttempt(): void {
         const supersededAttempt = this.activeStageAttempt;
+        if (!supersededAttempt) return;
         if (supersededAttempt && this._isCurrentStageAttemptAwaitingProof(supersededAttempt.generation)) {
             supersededAttempt.status = "terminal";
             this._finishStageLoad(supersededAttempt.generation);
@@ -1594,6 +1595,11 @@ export default class App extends React.Component<AppProps, AppState> {
                 }
             }
         }
+        this.activeStageAttempt = null;
+    }
+
+    private _beginStageAttempt(targetUrl: string): number {
+        this._supersedeActiveStageAttempt();
         const generation = ++this.stageAttemptGeneration;
         this._firstFramePosted = false;
         this.stageLoadFailureActive = false;
@@ -2640,7 +2646,7 @@ export default class App extends React.Component<AppProps, AppState> {
 
         // A newer user selection revokes completion authority from every prior
         // stage attempt before its coordinator preauthorization resolves.
-        const preauthorizationFenceGeneration = this._beginStageAttempt(primary.usdc_url || "");
+        this._supersedeActiveStageAttempt();
         const applyThroughCoordinator = async () => {
             const transaction = await this._preauthorizeStageBinding(
                 selection.map((artifact) => ({
@@ -2691,7 +2697,7 @@ export default class App extends React.Component<AppProps, AppState> {
             this._failStageLoad(
                 t(stageLoadFailurePresentation.title.zh, stageLoadFailurePresentation.title.en),
                 t(stageLoadFailurePresentation.authorizationFailed.zh, stageLoadFailurePresentation.authorizationFailed.en),
-                preauthorizationFenceGeneration,
+                null,
             );
         });
     }
