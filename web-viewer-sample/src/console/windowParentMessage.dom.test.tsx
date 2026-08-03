@@ -2098,6 +2098,10 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     }], "rev_binding_reconnect_pending");
     privateApp._reconnectStream();
     expect(internals(app).state.webrtcLifecycleStatus).toBe("initializing");
+    expect(internals(app).state.govBindingApplyState).toEqual({
+      status: "failed",
+      reason: "stage_binding_apply_superseded",
+    });
 
     resolvePreauthorization?.({
       status: "pending",
@@ -2234,7 +2238,10 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       status: "pending",
       targetUrl: manualStageUrl,
     }));
-    expect(internals(app).state.govBindingApplyState).toEqual({ status: "applying" });
+    expect(internals(app).state.govBindingApplyState).toEqual({
+      status: "failed",
+      reason: "stage_binding_apply_superseded",
+    });
     expect(renderToString(internals(app).render())).not.toContain('data-testid="stage-load-failure"');
   });
 
@@ -4688,6 +4695,26 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
         request_id: "req_retired_composition_error",
         binding_revision_id: "rev_retired",
         error: "late_kit_compose_failed",
+      },
+    });
+
+    expect(internals(app).state.govBindingApplyState).toEqual({ status: "applying" });
+  });
+
+  it.each([
+    ["missing binding revision", {}],
+    ["mismatched binding revision", { binding_revision_id: "rev_binding_wrong" }],
+  ])("ignores a composition error with %s instead of overwriting the active binding state", (_label, revisionPayload) => {
+    const app = bindingApplyApp();
+    trackBindingRequest(app, "loadArtifactGroupRequest", "req_binding_guarded_error", "rev_binding_guarded");
+
+    internals(app)._handleCustomEvent({
+      event_type: "loadArtifactGroupResult",
+      payload: {
+        result: "error",
+        request_id: "req_binding_guarded_error",
+        error: "untrusted_kit_compose_failed",
+        ...revisionPayload,
       },
     });
 

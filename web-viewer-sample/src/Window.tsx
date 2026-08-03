@@ -765,6 +765,7 @@ export default class App extends React.Component<AppProps, AppState> {
     // Keep the lifetime authority outside React so a retired stream is fenced synchronously.
     private streamGeneration = 0;
     private bindingApplyGeneration = 0;
+    private pendingBindingApplyGeneration: number | null = null;
     private stageLoadFailureActive = false;
     // VG-01 M1：first_frame 只送一次的閂（防失敗/斷線/開檔路徑誤觸→偽證據）。
     private _firstFramePosted = false;
@@ -1659,6 +1660,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _beginStageAttempt(targetUrl: string): number {
+        this._failPendingBindingApplyAsSuperseded();
         this.pendingStagePreauthorizationIntent = null;
         this.stageIntentGeneration += 1;
         this._supersedeActiveStageAttempt();
@@ -1711,6 +1713,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _invalidateStageAttempt(): void {
+        this._failPendingBindingApplyAsSuperseded();
         this.pendingStagePreauthorizationIntent = null;
         this.stageIntentGeneration += 1;
         const attemptGeneration = this.activeStageAttempt?.generation;
@@ -1733,6 +1736,27 @@ export default class App extends React.Component<AppProps, AppState> {
         // still rejects any old correlated result by generation mismatch.
         this.activeStageAttempt = null;
         this.stageLoadFailureActive = false;
+    }
+
+    private _failPendingBindingApplyAsSuperseded(): void {
+        const pendingApplyGeneration = this.pendingBindingApplyGeneration;
+        if (!pendingApplyGeneration) return;
+        this.pendingBindingApplyGeneration = null;
+        if (this.bindingApplyGeneration !== pendingApplyGeneration) return;
+        this.setState((state) => (
+            state.govBindingApplyState?.status === "applying"
+                ? {
+                    govBindingApplyState: {
+                        status: "failed" as const,
+                        reason: "stage_binding_apply_superseded",
+                    },
+                    reviewEvents: [
+                        ...state.reviewEvents,
+                        "binding apply superseded before coordinator preauthorization completed",
+                    ].slice(-80),
+                }
+                : null
+        ));
     }
 
     private _canApplyLoadingStateResponse(stageUrl: string): boolean {
@@ -2743,6 +2767,7 @@ export default class App extends React.Component<AppProps, AppState> {
         // A newer user selection revokes completion authority from every prior
         // stage attempt before its coordinator preauthorization resolves.
         const applyStageIntentGeneration = ++this.stageIntentGeneration;
+        this.pendingBindingApplyGeneration = applyGeneration;
         this.pendingStagePreauthorizationIntent = applyStageIntentGeneration;
         this._supersedeActiveStageAttempt();
         const applyThroughCoordinator = async () => {
@@ -2758,6 +2783,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 || applyStageIntentGeneration !== this.stageIntentGeneration
             ) return;
             this.pendingStagePreauthorizationIntent = null;
+            this.pendingBindingApplyGeneration = null;
             this._appendReviewEvent(`coordinator 已建立 pending binding：${transaction.binding_revision_id}`);
             const targetUrl = transaction.stage_composition.primary.usdc_url;
             const targetAsset = this.state.usdAssets.find((asset) => asset.url === targetUrl)
@@ -2823,6 +2849,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 || applyStageIntentGeneration !== this.stageIntentGeneration
             ) return;
             this.pendingStagePreauthorizationIntent = null;
+            this.pendingBindingApplyGeneration = null;
             const authorizationTimedOut = isStageAuthorizationTimeout(error);
             this.setState({
                 govBindingApplyState: {
