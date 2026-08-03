@@ -185,9 +185,121 @@ PASSED (205 files, 7 edges, 3 cycles, 0 errors, 0 warnings).
 
 ## Phase 3 — Language-specific structural contracts
 
-- [ ] 3.1 Add TypeScript dependency-cruiser rules for UI/application/client/domain boundaries.
-- [ ] 3.2 Add Python Import Linter contracts for API/application/domain/infrastructure layers.
-- [ ] 3.3 Route the new structural checks through `verification-manifest.json`.
+- [x] 3.1 Add TypeScript ~~dependency-cruiser~~ layer rules for UI/application/client/domain boundaries. **Deviation: dependency-cruiser replaced by a standard-library layer checker — see delivery note below.**
+- [x] 3.2 Add Python ~~Import Linter~~ layer contracts for API/application/domain/infrastructure layers. **Deviation: import-linter replaced by the same standard-library layer checker — see delivery note below.**
+- [x] 3.3 Route the new structural checks through `verification-manifest.json`.
+
+### Phase 3 交付紀錄
+
+**已宣告的偏離（3.1／3.2）。** 任務原文指名 `dependency-cruiser`（npm）與
+`import-linter`（pip）作為 enforcement 工具，兩者皆未採用。canonical root-contract
+CI job 在 `windows-latest` 上只安裝 `pytest` 與 `jsonschema`，導入 import-linter 必須
+修改 `.github/workflows/ci.yml`；`apps/kit-manager-web` 沒有 `package-lock.json`，
+無法把 dependency-cruiser 釘在可重現版本；且兩者都不保證本 repo 對 architecture
+產物所要求的 Windows／Linux byte-identical 輸出。分層邊界改由
+`scripts/lib/layered_architecture.py` 這個純標準函式庫 checker 執行，重用 Phase 2
+已經過九項對抗修補的 module graph extractor，並沿用同一套 ratchet／baseline 紀律。
+這與已宣告的 2.1 GitNexus 偏離同型：任務**產出**（可執行的
+UI/application/client/domain 與 API/application/domain/infrastructure 邊界契約，
+在 canonical verification 中 fail closed）不變，**工具**不同。偏離同時以機器可讀形式
+記於 `architecture/layer-contract.json` 的 `tooling_deviation`，並由
+`tests/test_layered_architecture.py::test_canonical_contract_discloses_the_tooling_deviation`
+斷言，因此只能被後續 change **supersede，不得刪除**。日後真的導入這兩個工具仍然可行，
+屬 additive。
+
+**落地內容。** `architecture/layer-contract.json` 以有序、first-match-wins 的規則，把
+六個 service 共 207 個被掃描的 module 全數指派到層；每個 service 另外宣告自己的語言與
+「由哪些層組成」，每個語言宣告窮舉的 allowed 依賴矩陣——某層若沒有 `allowed` 列會直接
+報錯，而不是預設為寬鬆。`architecture/layer-baseline.json` grandfather 兩筆真實違規：
+`bim-streaming-server` 的 `kit_struct_log → messaging`（logging adapter 經由
+`from . import` 連帶把 Kit extension 進入點拉進來），以及 `web-viewer-sample` 的
+`lib/structLogBootstrap.ts → config/env.ts`，各自帶 owner、reason 與 target phase，
+且 gate 會強制 per-service budget 等於 grandfather 的數量。
+`architecture/architecture-contract.json` 把 `ARCH-LAYER-001` 標為 active，本 change 的
+delta 以 additive `public_contract_changes` 宣告 layer ratchet，
+`scripts/verification-manifest.json` 把兩個新 script 路徑同時納入 `root-contracts`
+的 path class 與 target，因此只改 checker 的變更現在會 dispatch 到它自己的測試。
+
+**驗證（Windows governed worktree，Python 3.12.7／pytest 8.2.2／jsonschema 4.25.1）：**
+
+- `python -m pytest tests -q -p no:cacheprovider` — **373 passed**（本 change 之前為 294，新增 79）。
+- `python scripts/dev/check_layered_architecture.py --repo-root . --strict` — PASSED；207 個掃描檔、6 個 layered service、2 筆 grandfathered 違規、0 error、0 warning，exit 0。
+- `python scripts/dev/export_observed_architecture.py --repo-root . --strict` — PASSED；0 error、0 warning（Phase 2 ratchet 未受影響）。
+- `python scripts/dev/validate_architecture_contract.py --repo-root . --strict` — PASSED；0 error、0 warning。
+- `npx openspec validate introduce-executable-architecture-contracts --strict` — passed。
+- `npx openspec validate --all --strict` — **71 passed, 0 failed**。
+- `node scripts/tests/test-openspec-machine-truth.mjs` — 24/24。
+- `node scripts/tests/test-verification-plan.mjs` — 22/22；只改 `scripts/lib/layered_architecture.py` 會選中 `root-contracts` target，指令與 CI 相同。
+- `git diff --check` — clean。
+
+**跨平台 byte 一致性（實測，非宣稱）。** `check_layered_architecture.py --report-only`
+在同一棵樹上於 **Windows 與 Linux** 都產生 MD5 `9e94d7996dee11baff7aa1a38d3627c9`
+（24423 bytes）。Phase 2 只以程式紀律加上同 OS 重跑來主張這個性質，這是第一次跨作業系統
+實際量測。
+
+**三層交叉對抗驗證（三輪，refute-by-default）。** 第一輪在六個 service 各植入真實的
+禁止 import，全部被準確攔下；接著找出五種在真實劣化下仍能讓測試全綠的路徑。修補：
+`layer_sets` 同語言重複列或 `services` 同 id 重複現在報錯而非靜默覆蓋
+（`layer_contract.duplicate_language`／`duplicate_service`）；每個 service 宣告自己的層集合，
+把 service 壓成單層的寬規則會報錯（`layer.service.layer_set_drift`）；`suffix` 規則一律
+禁止、`prefix` 值必須以 `/` 或 `.` 收尾，因此新增的頂層 `.tsx` 會觸發
+`layer.module.unassigned` 而不是預設成 `ui`；budget 高於 grandfather 數量由 gate 擋下，
+而不是靠一條可被刪掉的測試（`layer.budget_slack`）；schema 檔被換成 `{}` 或其他無約束
+stub 會被拒絕（`*.schema_vacuous`）。
+
+第二輪確認其中五項成立，並攻破兩項。兩者失敗形狀相同：**gate 在拿 contract 跟自己比對**。
+把某 service 宣告的 `layers` 改成與被壓平的規則集合一致，或把 `allowed` 矩陣其中一列放寬，
+都能在測試全綠的情況下洗掉一筆真實違規。由於「policy 被改鬆」不是一個對**observed 狀態**
+做 ratchet 的機制能偵測的事，修法是加上獨立的 pin：`PINNED_SERVICE_LAYERS`、
+`PINNED_ALLOWED_MATRIX`、寫死的 per-service 語言、寫死的 layered service id 集合，以及兩份
+schema 檔的關鍵約束鍵，全部以字面值放在 `tests/test_layered_architecture.py`。放寬 contract
+因此必須在同一個 diff 裡改測試檔，這正是讓它在 review 中現形的手段。第二輪另外產出
+`layer_contract.service_layers_missing`（在 Python 端重複把關，避免被 stub 過的 schema 關掉
+drift 檢查）、rule 與 declared layer 改以該 service 自己的語言（而非所有語言的聯集）驗證，
+以及 layer contract 與 observed-graph config 之間的 `layer_contract.language_mismatch`。
+
+第三輪為 PR 上三個獨立 reviewer（CodeRabbit、Copilot、Codex connector）提出的意見，全部採納：
+baseline 的 `entry_incomplete` 先前以 `str(entry.get(...))` 取值，`str(None)` 是非空字串，
+使該守衛對缺欄位／`null` 完全失效，現改為先檢查原始值；同一 `from` 層出現兩列 `allowed`
+會被拒絕（`layer_contract.duplicate_allowed_row`）；`--report-only` 在有無法讀取或無法解析的
+來源檔時改為 exit 1（局部掃描產出的報告不得被當成 baseline 提交），並在 `--help` 中明寫
+`--report-only` 會忽略 `--format` 與 `--strict`；`openspec/lifecycle-ledger.json` 的
+`subject_commit` 由已不可達的 `6424a6d…` 改綁到本 change 內含最終 `tasks.md` 的 commit。
+
+**已由測試覆蓋的 fail-closed 行為。** contract／baseline 缺檔或非物件；schema 檔被換成
+`null`、`{}`、`{"properties":{}}`、`{"required":[]}` 或 `{"type":"object"}`；`schema_version`
+不符；出現未宣告屬性；`allowed` 矩陣少一層或指到未宣告的層；同語言重複列；同 service 重複項；
+同一 `from` 重複的 `allowed` 列；rule 指到不屬於該 service 語言或未被該 service 宣告的層；
+重複 rule；`suffix` 規則；未錨定的 `prefix`；重複 baseline 項；baseline 缺欄位或欄位為 `null`；
+baseline debt 被拿掉（在 Python 端重複把關，corrupt schema 關不掉）；沒有任何 rule 命中的
+module；掃不到 module 的 service；observed layer 集合與宣告不符的 service；被掃描但既未 layer
+也未 exclude 的 service；沒有理由的 exclusion 或針對未被掃描 service 的 exclusion；budget 缺漏、
+有寬鬆額度或指向未 layer 的 service；以及數量不變的違規對調。違規身分是
+`(service, from, to)`、不含層名，因此重新貼標籤無法把已 grandfather 的違規變成新違規。
+`compared` 在每一條提早返回的路徑上都維持 false，所以沒跑到比對的執行永遠不會回報 `passed`。
+
+**未宣稱解決的已知界線。** 完整清單見 `architecture/README.md`
+§「Phase 3 的已知偏離與界線」；其中最關鍵的幾項：
+
+- **放寬 `layer-contract.json` 是 review-enforced，不是 gate-enforced。** ratchet 判的是
+  observed 狀態相對於已核准 baseline，不判 policy 有沒有被改鬆。測試檔裡寫死的 pin 是唯一的
+  機械防線，它的作用方式是逼放寬動作出現在 diff 裡。
+- **Python 絕對 intra-service import 看不到。** `services/kit-manager-api` 裡的
+  `from app.x import y` 不產生 edge 也不產生 diagnostic，因為 Phase 2 的 extractor 只解析
+  相對 scan root 的 module id；相對寫法會被抓到。目前樹上沒有這種寫法，所以是**現存的洞、
+  不是現存的債**；要修得動 Phase 2 的 `_resolve_python_target`，不在本 phase 範圍。
+- **大小寫不符的 TypeScript 相對 import 會被靜默丟掉。** canonical runner 是
+  `windows-latest`，而 `web-viewer-sample/tsconfig.json` 未開
+  `forceConsistentCasingInFileNames`，這種 import 在執行期可用卻對 gate 隱形。
+- 本 gate 只判方向，module-level cycle 仍由 `ARCH-GRAPH-001` 持有；同層 edge 一律放行，
+  這不等於該設計健康。
+- 被 `architecture/observed-graph.config.json` 排除的檔案不會被 layer 化，因此改
+  `exclude_file_suffixes` 可以把 module 移出 enforcement。
+- `violation_budgets` 目前是需人工同步的交叉檢查，不是獨立防線；warning 不會讓 `status`
+  變 failed，只有 `--strict` 與 `test_canonical_repository_layer_ratchet_passes` 把它當紅燈。
+- `bim-streaming-server` 與 `kit-manager-api` 只有 `exact` 規則，因此在其中新增任何 Python
+  module 都必須同時改 contract。這個成本是刻意的。
+- `observed-baseline.json` 持有的 `apps/kit-manager-web` undeclared-node 債務未被本 change 觸動。
 
 ## Phase 4 — Executable lifecycle contracts
 

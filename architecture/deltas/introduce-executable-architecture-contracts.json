@@ -24,6 +24,11 @@
       "contract": "observed architecture ratchet",
       "change_type": "additive",
       "description": "Adds a deterministic static observed dependency scan and an approved baseline. New statically detectable service edges must be declared by both the contract and a delta, and cycle identity and count must not grow. No product API or event contract changes."
+    },
+    {
+      "contract": "layer boundary ratchet",
+      "change_type": "additive",
+      "description": "Adds a per-service module-to-layer contract and an approved layer baseline. New cross-layer violations are rejected, grandfathered ones carry attributed debt, and per-service budgets carry no slack. The named third-party tools (dependency-cruiser, import-linter) were evaluated and not adopted; the deviation is recorded in architecture/layer-contract.json under tooling_deviation. No product API or event contract changes."
     }
   ],
   "data_ownership_changes": [],

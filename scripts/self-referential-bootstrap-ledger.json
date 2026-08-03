@@ -2,6 +2,27 @@
   "schema_version": "self-referential-bootstrap-ledger/v1",
   "entries": [
     {
+      "id": "self-referential-bootstrap-gate",
+      "status": "open",
+      "pr": 459,
+      "opened_at": "2026-08-03T04:00:00Z",
+      "reason": "This PR introduces the bootstrap gate itself. The PR Metadata Contract job materialises the body checker pinned at the base SHA so that a PR cannot adjudicate itself with its own edited gate; the base here has no scripts/lib/self-referential-bootstrap.ps1 and no gate wiring, so the base-pinned checker has no gate to run at all. Any PR that adds a gate has a base without that gate, so no ordering avoids this.",
+      "verification_mechanism_paths": [
+        ".github/workflows/agent-governance.yml",
+        ".github/workflows/pr-review-agent.yml",
+        "scripts/dev/check-pr-local-preflight.ps1",
+        "scripts/lib/detect-base-gate-capability.sh",
+        "scripts/lib/self-referential-bootstrap.ps1",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/check-pr-body-evidence.ps1"
+      ],
+      "bootstrap_evidence_refs": [
+        "docs/evidence/self-referential-bootstrap-gate/self-referential-bootstrap/README.md",
+        "docs/evidence/self-referential-bootstrap-gate/self-referential-bootstrap/gate-suites.txt"
+      ],
+      "fixpoint": null
+    },
+    {
       "id": "remote-linux-deploy-target",
       "status": "open",
       "pr": 463,
@@ -10,18 +31,21 @@
       "verification_mechanism_paths": [
         ".github/workflows/agent-governance.yml",
         ".github/workflows/ci.yml",
-        ".github/workflows/pr-review-agent.yml",
         "scripts/deploy.ps1",
-        "scripts/dev/check-pr-local-preflight.ps1",
         "scripts/dev/rebuild-test-deploy.ps1",
+        "scripts/lib/host-native-launcher.ps1",
+        "scripts/lib/kit-log-probe.ps1",
         "scripts/lib/platform/platform-adapter.ps1",
+        "scripts/lib/preflight-host-native.ps1",
+        "scripts/lib/preflight-ports.ps1",
         "scripts/lib/rebuild-test-deploy.ps1",
-        "scripts/lib/self-referential-bootstrap.ps1",
+        "scripts/lib/smoke-evidence.ps1",
         "scripts/self-referential-bootstrap-ledger.json",
         "scripts/tests/check-pr-body-evidence.ps1"
       ],
       "bootstrap_evidence_refs": [
-        "docs/evidence/remote-linux-deploy-target/self-referential-bootstrap/README.md"
+        "docs/evidence/remote-linux-deploy-target/self-referential-bootstrap/README.md",
+        "docs/evidence/remote-linux-deploy-target/self-referential-bootstrap/deploy-verified.txt"
       ],
       "fixpoint": null
     }
