@@ -261,7 +261,7 @@ PR-B 改的正是**驗證機制本身**（deploy path）。§6 明文禁止測�
 - [x] B6 — per-target env ＋ SSH 推送（D-14）＋ effective env 快照（D-15）：base 推送＋遠端 override（runtime_data_root/env.local，git clean 清不到）＋單一 merge 實作（遠端經 pwsh 呼叫同一 lib 函式）＋ secret 遮罩快照（sha256-8 指紋，值不落地）；operator 入口 -TargetId 預設 canonical。live SSH 待 B8 憑證佈建
 - [x] B7 — MinIO fixture pinning（D-16/17）：manifest schema＋comparePin fail-closed＋cache sidecar 判定（multipart ETag 不可本地重算，靠下載時 sidecar）；live HEAD 重用 coordinator @aws-sdk/client-s3（createRequire，無第二 S3 實作）。manifest 初生為空，enrol 需 MinIO 憑證
 - [ ] B8 — 遠端佈建腳本化（§6.6）
-- [ ] B9 — 契約改寫（§6.3，含修掉 §5 既有漂移）
+- [x] B9 — 契約改寫：§1 viewer 302 handoff 原則、§3 design-gate/runtime-evidence 兩機器切分、§5 fixture 權威改 MinIO pinned（並修掉指向不存在檔案的漂移）、§6 部署目標改 registry（operator 入口與 fresh-fetch 契約逐字保留）、§8 三種 stack kind 互不推論邊界表
 - [ ] B10 — Windows 三級觸發 changed-path classifier（D-20）
 - [ ] B11 — 取得 `stack_kind=self_referential_bootstrap` evidence（依 PR-A 規則）
 - [ ] B12 — merge 後 fixpoint 重驗並回貼（PR-A 義務三）

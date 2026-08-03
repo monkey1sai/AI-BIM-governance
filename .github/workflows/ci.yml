@@ -141,7 +141,11 @@ jobs:
     # branch protection is a separate decision).
     name: platform adapter (linux)
     needs: changes
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.agent_governance == 'true' || needs.changes.outputs.rebuild_test_deploy == 'true')
+    # NOT a required check, so it deliberately omits the always()+classifier-failure
+    # pattern: the skipped-success hazard only exists for required checks, where a
+    # skip would satisfy branch protection. A non-required job simply skips when the
+    # classifier fails, which is why it carries no "Require classifier success" guard.
+    if: needs.changes.outputs.agent_governance == 'true' || needs.changes.outputs.rebuild_test_deploy == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
