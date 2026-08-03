@@ -129,6 +129,25 @@ video element（符合既有 healthy 判準：readyState=4 ＋ 影像尺寸 ＋ 
 | **F-5** | Kit 警告 `CPU performance profile is set to powersave` 與 `IOMMU is enabled` | 部署時應評估 CPU governor 設為 `performance` |
 | **F-6** | crashreporter 自動上傳 minidump 至 NVIDIA（`code:200`） | 資料離開機器；評估 `/crashreporter/enabled=false` |
 
+### 4.4.1 實作階段（2026-08-03）新增發現 — 每一條都由一次真實部署失敗揭露
+
+靜態測試全綠、Windows 全綠，這些仍全部存在。共同形狀：**Windows 語意較寬鬆，於是相同程式碼在 Windows 上「看起來能動」**。
+
+| 編號 | 發現 | 為何 Windows 看不到 |
+|---|---|---|
+| **F-7** | `python3 -m venv` 先建 `bin/python` 才跑 ensurepip，缺 `python3-venv` 時留下通過存在性檢查、卻在 `pip install` 才爆的半殘 venv | Windows venv 不分離 ensurepip |
+| **F-8** | 三個 launcher 各自硬編 `.venv\Scripts\python.exe`，Linux 永不命中 → 落到裸 `python`（目標只有 `python3`） | Windows 路徑正好是硬編值 |
+| **F-9** | pip 安裝與否由「五個固定套件」的 import 探測決定，新增 requirements 檔完全無效 → 改用 requirements **內容 sha256 指紋** | Windows 部署區歷史上手動裝過，缺口不會浮現 |
+| **F-10** | `powershell.exe`／`-ExecutionPolicy`／`-WindowStyle` 皆為 Windows-only | 同上 |
+| **F-11** | PowerShell 單元素陣列回傳時會解包 → `'-NoProfile' + @(...)` 變字串串接 → `-NoProfile-File`。**而用 `,@()` 修正會造成巢狀陣列，`Start-Process -ArgumentList` 直接拒絕** | Windows 前綴有三元素，永不解包 |
+| **F-12** | 所有 TCP/UDP listener 探測用 `Get-NetTCPConnection`／`Get-NetUDPEndpoint` → Linux 一律回答「沒人在聽」。**port preflight 因此把每個埠都判為 FREE，從來不可能偵測衝突** | 這兩個 cmdlet 只有 Windows 有 |
+| **F-13** | Kit launcher 內 `WindowsIdentity::GetCurrent`（Linux 直接丟例外）、`Get-NetTCPConnection`、以及硬編 `windows-x86_64` 的 `.bat` launcher | 同上 |
+| **F-14** | hybrid compose 經 coordinator 的 `depends_on` 連帶啟動**容器版** kit-manager-api，與 host-native 版搶同一個 `127.0.0.1:8010` | Windows `SO_REUSEADDR` 允許第二個 socket 綁同一 addr:port，兩邊都「成功」，誰在回應未定義 |
+| **F-15** | **host-native 服務在 SSH 斷線後全滅。** 真因不是 SIGHUP：pwsh 由 snap 安裝，子行程落在 `user@<uid>.service` 底下的 scope，systemd 在最後一個 session 結束時停掉該 unit。`setsid` 改的是 POSIX session、不是 cgroup，擋不住。解法＝`loginctl enable-linger`（已納入 provisioning，且 deploy 對其缺席 hard fail） | 本機部署的 session 不會結束 |
+| **F-16** | governance／kit-manager-api 硬編 `--host 127.0.0.1`，dockerised coordinator 經 bridge 連不到（`/api/governance/files/tree` → 502）。conversion 綁 `0.0.0.0` 所以一直正常 | Docker Desktop 經 VM 把 `host.docker.internal` 代理進 loopback |
+
+**方法論教訓**：F-16 診斷過程中，容器內以 `wget` 探測回報三個端點全不可達，差點導向「跨 bridge 網段不通」的錯誤結論——實際上該 image 沒有 `wget`。改用 `node` 實測才得到真相（`172.17.0.1:49101` → HTTP 200）。**探測工具本身不存在時的失敗，與「服務不可達」在輸出上無法區分。**
+
 ### 4.5 風險登記修正
 
 - **R8 撤銷**：先前判定「ufw active、port 全被擋」為**誤判** — 混淆了 `systemctl is-active ufw`（unit 在跑）與 `ufw status`（實際 `inactive`）。遠端目前無任何 port 被擋。
