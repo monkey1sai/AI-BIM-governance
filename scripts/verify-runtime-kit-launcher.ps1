@@ -120,11 +120,10 @@ while ((Get-Date) -lt $deadline) {
     $logs = (& docker logs $container 2>&1) -join "`n"
     if ($logs -match '\[runtime\] launching Linux Kit streaming app') { $reachedLaunch = $true }
     try {
-        $tcp = Get-NetTCPConnection -LocalPort $SignalingPort -State Listen -ErrorAction SilentlyContinue
-        if ($tcp) { $portListening = $true }
+        $portListening = Test-PlatformTcpListening -Port $SignalingPort
     } catch {
         $portListening = $false
-        Write-Verbose "Get-NetTCPConnection failed for port ${SignalingPort}: $PSItem"
+        Write-Verbose "listener probe failed for port ${SignalingPort}: $PSItem"
     }
 
     $parts = "$state" -split '\|'

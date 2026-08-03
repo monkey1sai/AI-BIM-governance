@@ -5,6 +5,11 @@
 
 Set-StrictMode -Version Latest
 
+# Per-OS listener primitives. Guarded so this lib stays dot-sourceable standalone.
+if (-not (Get-Command -Name 'Get-PlatformTcpListenerPid' -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'platform/platform-adapter.ps1')
+}
+
 function Get-PidsFromRunDir {
     param(
         [Parameter(Mandatory = $true)][string] $RunDir,
@@ -57,15 +62,16 @@ function Test-PortAvailability {
         [int] $ConversionPort = 49101,
         [int[]] $ExtraHostNativePorts = @(),
         [int[]] $ExtraHostNativeUdpPorts = @(),
+        # Both defaults used Windows-only cmdlets, so every port read as FREE on
+        # Linux - a preflight that could never detect a conflict on the canonical
+        # deploy target.
         [scriptblock] $PortLookup = {
             param($port)
-            $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($conn) { return $conn.OwningProcess } else { return $null }
+            Get-PlatformTcpListenerPid -Port ([int]$port)
         },
         [scriptblock] $UdpPortLookup = {
             param($port)
-            $conn = Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($conn) { return $conn.OwningProcess } else { return $null }
+            Get-PlatformUdpListenerPid -Port ([int]$port)
         },
         [scriptblock] $ProcessNameLookup = {
             param($procId)

@@ -3,6 +3,11 @@
 
 Set-StrictMode -Version Latest
 
+# Per-OS listener primitives. Guarded so this lib stays dot-sourceable standalone.
+if (-not (Get-Command -Name 'Get-PlatformTcpListenerPid' -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'platform/platform-adapter.ps1')
+}
+
 $script:KitReadyKeywords = @(
     'app ready',
     'Application started',
@@ -37,7 +42,11 @@ function Wait-KitReady {
         [int] $TimeoutSec = 90,
         [scriptblock] $PortListenProbe = {
             param($port)
-            $null -ne (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1)
+            # Get-NetTCPConnection is Windows-only. On Linux it produced no result,
+            # so this probe answered "not listening" forever: attempt 11 timed out
+            # with listen=False even though Kit had logged 'app ready' and ss showed
+            # the signalling port in LISTEN.
+            Test-PlatformTcpListening -Port ([int]$port)
         }
     )
 

@@ -123,10 +123,40 @@ function Get-PlatformTcpListenerPid {
         if ($null -eq $conn) { return $null }
         return [int]$conn.OwningProcess
     }
-    $lines = @(& ss -ltnpH "sport = :$Port" 2>$null)
+    $lines = @(& ss -ltnpH "sport = :$Port" 2>$null | Where-Object { $_ })
     foreach ($line in $lines) {
         if ($line -match 'pid=(\d+)') { return [int]$Matches[1] }
     }
+    # A LISTEN line with no visible pid means the socket belongs to another user:
+    # ss only reveals process info for sockets you own, or to root. Returning
+    # $null there would report the port FREE - a fail-open on exactly the case
+    # that matters. -1 means "occupied, owner not visible"; it matches no PID we
+    # track, so callers treat it as a foreign holder.
+    if ($lines.Count -gt 0) { return -1 }
+    return $null
+}
+
+function Test-PlatformTcpListening {
+    # "Is anything listening here", regardless of owner. Readiness probes want
+    # this; ownership decisions want Get-PlatformTcpListenerPid.
+    param([Parameter(Mandatory = $true)][int] $Port)
+    return ($null -ne (Get-PlatformTcpListenerPid -Port $Port))
+}
+
+function Get-PlatformUdpListenerPid {
+    # UDP peer of Get-PlatformTcpListenerPid, same -1 convention.
+    param([Parameter(Mandatory = $true)][int] $Port)
+
+    if ((Get-PlatformName) -eq 'windows') {
+        $conn = Get-NetUDPEndpoint -LocalPort $Port -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -eq $conn) { return $null }
+        return [int]$conn.OwningProcess
+    }
+    $lines = @(& ss -lunpH "sport = :$Port" 2>$null | Where-Object { $_ })
+    foreach ($line in $lines) {
+        if ($line -match 'pid=(\d+)') { return [int]$Matches[1] }
+    }
+    if ($lines.Count -gt 0) { return -1 }
     return $null
 }
 

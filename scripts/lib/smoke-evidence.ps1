@@ -16,6 +16,11 @@
 
 Set-StrictMode -Version Latest
 
+# Per-OS listener primitives. Guarded so this lib stays dot-sourceable standalone.
+if (-not (Get-Command -Name 'Get-PlatformTcpListenerPid' -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'platform/platform-adapter.ps1')
+}
+
 $Script:SmokeTierStatuses = @('passed', 'failed', 'blocked', 'deferred', 'not_observed')
 $Script:SmokeKnownOwners = @(
     'bim-review-coordinator',
@@ -141,8 +146,11 @@ function Test-KitSignalingPortListening {
         [int] $Port = 49100
     )
 
+    # Windows-only cmdlet: off Windows this recorded "no listener" in the evidence
+    # regardless of reality, which is worse than recording nothing.
     try {
-        $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+        $owner = Get-PlatformTcpListenerPid -Port $Port
+        $listeners = if ($null -eq $owner) { @() } else { @($owner) }
     } catch {
         $listeners = @()
     }
