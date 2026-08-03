@@ -572,6 +572,69 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
     ]));
   });
 
+  it("fails closed when a correlated openedStageResult omits the required binding revision", () => {
+    setLang("en");
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      runtimeCommandTerminalClaims: Map<string, { eventType: string; outcome: string }>;
+      runtimeCommandContexts: Map<string, {
+        eventType: string;
+        bindingRevisionId: string;
+        stageUrl: string;
+        stageAttemptGeneration: number;
+      }>;
+    };
+    const stageUrl = "stage://revision-missing.usdc";
+    const generation = privateApp._beginStageAttempt(stageUrl);
+    internals(app).pendingStageUrl = stageUrl;
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageUrl,
+      loadedStageUrl: null,
+      stageLoadStatus: "pending",
+      runtimeCommandLifecycles: [{
+        request_id: "req_revision_missing",
+        event_type: "loadArtifactGroupRequest",
+        phases: ["pending"],
+      }],
+    };
+    privateApp.runtimeCommandContexts.set("req_revision_missing", {
+      eventType: "loadArtifactGroupRequest",
+      bindingRevisionId: "rev_expected",
+      stageUrl,
+      stageAttemptGeneration: generation,
+    });
+
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_revision_missing",
+        url: stageUrl,
+      },
+    });
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ generation, status: "terminal" }));
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.loadingText).toBe("Stage authorization mismatch");
+    expect(internals(app).state.streamDiagnostic).toContain("Received revision: missing");
+    expect(privateApp.runtimeCommandContexts.has("req_revision_missing")).toBe(false);
+    expect(privateApp.runtimeCommandTerminalClaims.get("req_revision_missing")).toEqual({
+      eventType: "loadArtifactGroupRequest",
+      outcome: "error",
+    });
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        request_id: "req_revision_missing",
+        phases: ["pending", "terminal"],
+        outcome: "error",
+      }),
+    ]));
+  });
+
   it.each([
     ["missing request_id", {}],
     ["unknown request_id", { request_id: "req_unsolicited_001" }],
