@@ -1,0 +1,15 @@
+stack_kind=self_referential_bootstrap
+branch=feat/self-referential-bootstrap-ledger  head=80a92cac32151ebc5e667793f786c88188565e22
+captured on the PR branch because the PR base has no bootstrap gate to run (see reason in the ledger entry)
+
+### scripts/tests/test-self-referential-bootstrap.ps1
+[test-self-referential-bootstrap] all assertions passed
+EXIT=0
+
+### scripts/tests/test-base-gate-capability.ps1
+[test-base-gate-capability] all assertions passed
+EXIT=0
+
+### scripts/tests/test-preflight-prnumber-forwarding.ps1
+[test-preflight-prnumber-forwarding] all assertions passed
+EXIT=0

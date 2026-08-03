@@ -32,6 +32,65 @@ function Assert-Throws {
     Assert-True $failed "$Context was expected to throw."
 }
 
+function New-FixtureLedgerRevision {
+    # Writes a commit into the object store whose tree holds ONLY the ledger, and
+    # returns its sha. No ref is created, so the object stays unreachable and is
+    # collected like any other dangling object. This exists so wire-up tests can
+    # exercise the real checker against a ledger they control: the gate reads both
+    # ledgers with `git show <sha>:...`, so a fixture revision is the only way to
+    # test it without depending on whatever debt the live repo carries.
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $TempRoot,
+        [Parameter(Mandatory = $true)][string] $LedgerJson
+    )
+
+    $blob = (($LedgerJson | & git -C $RepoRoot hash-object -w --stdin 2>&1) | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) { throw "fixture ledger: hash-object failed ($blob)." }
+
+    $indexFile = Join-Path $TempRoot "fixture-index-$([Guid]::NewGuid().ToString('N'))"
+    $hadIndex = Test-Path Env:\GIT_INDEX_FILE
+    $previousIndex = if ($hadIndex) { $env:GIT_INDEX_FILE } else { $null }
+    try {
+        $env:GIT_INDEX_FILE = $indexFile
+        # Start from the real HEAD tree, not an empty one: the checker reads other
+        # paths out of the head revision too (the design-system manifest, for one),
+        # so the fixture must be "the repo at HEAD with this ledger swapped in".
+        $null = & git -C $RepoRoot read-tree HEAD 2>&1
+        if ($LASTEXITCODE -ne 0) { throw 'fixture ledger: read-tree HEAD failed.' }
+        $null = & git -C $RepoRoot update-index --add --cacheinfo "100644,$blob,scripts/self-referential-bootstrap-ledger.json" 2>&1
+        if ($LASTEXITCODE -ne 0) { throw 'fixture ledger: update-index failed.' }
+        $tree = ((& git -C $RepoRoot write-tree 2>&1) | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0) { throw "fixture ledger: write-tree failed ($tree)." }
+    } finally {
+        if ($hadIndex) { $env:GIT_INDEX_FILE = $previousIndex }
+        else { Remove-Item Env:\GIT_INDEX_FILE -ErrorAction SilentlyContinue }
+        Remove-Item -LiteralPath $indexFile -Force -ErrorAction SilentlyContinue
+    }
+
+    # Pinned ident and dates: commit-tree needs an author, and pinning both keeps the
+    # fixture sha reproducible on a machine with no user.name configured.
+    $stamp = '1700000000 +0000'
+    $hadAuthorDate = Test-Path Env:\GIT_AUTHOR_DATE
+    $hadCommitterDate = Test-Path Env:\GIT_COMMITTER_DATE
+    $previousAuthorDate = if ($hadAuthorDate) { $env:GIT_AUTHOR_DATE } else { $null }
+    $previousCommitterDate = if ($hadCommitterDate) { $env:GIT_COMMITTER_DATE } else { $null }
+    try {
+        $env:GIT_AUTHOR_DATE = $stamp
+        $env:GIT_COMMITTER_DATE = $stamp
+        $commit = ((& git -C $RepoRoot `
+            -c 'user.name=fixture' -c 'user.email=fixture@invalid' `
+            commit-tree $tree -m 'fixture: empty self-referential bootstrap ledger' 2>&1) | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0) { throw "fixture ledger: commit-tree failed ($commit)." }
+    } finally {
+        if ($hadAuthorDate) { $env:GIT_AUTHOR_DATE = $previousAuthorDate }
+        else { Remove-Item Env:\GIT_AUTHOR_DATE -ErrorAction SilentlyContinue }
+        if ($hadCommitterDate) { $env:GIT_COMMITTER_DATE = $previousCommitterDate }
+        else { Remove-Item Env:\GIT_COMMITTER_DATE -ErrorAction SilentlyContinue }
+    }
+    return $commit
+}
+
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../..')).Path
 . (Join-Path $repoRoot 'scripts/lib/self-referential-bootstrap.ps1')
 
@@ -422,11 +481,24 @@ try {
     # --- non-mechanism PRs are untouched by all of this -----------------------------
     Invoke-BodyGate -Rows @{} -ChangedPaths @('web-viewer-sample/src/Window.tsx') -HeadJson $openBase -BaseJson $openBase
 
-    # --- wire-up through the real PR body checker (base context = HEAD) -------------
+    # --- wire-up through the real PR body checker (fixture ledger revision) ---------
+    # This file's contract is "gate tests use fixture ledgers ONLY". Pointing base and
+    # head at the live HEAD broke it: the gate reads both ledgers with
+    # `git show <sha>:scripts/self-referential-bootstrap-ledger.json`, so the moment a
+    # real open entry landed in the repo ledger this case silently changed meaning
+    # from "clean transition" to "inherited open debt" and failed for a reason that
+    # has nothing to do with wire-up. Build a synthetic commit whose tree holds an
+    # empty ledger and read the gate through that, so the assertion stays about the
+    # checker's wiring and not about whatever debt the repo currently carries.
     $checker = Join-Path $repoRoot 'scripts/tests/check-pr-body-evidence.ps1'
     $pathsPath = Join-Path $tempRoot 'paths.txt'
     Set-Content -LiteralPath $pathsPath -Value 'scripts/dev/rebuild-test-deploy.ps1' -Encoding utf8
-    $headSha = (& git -C $repoRoot rev-parse HEAD).Trim()
+    $headSha = New-FixtureLedgerRevision -RepoRoot $repoRoot -TempRoot $tempRoot -LedgerJson @'
+{
+  "schema_version": "self-referential-bootstrap-ledger/v1",
+  "entries": []
+}
+'@
 
     $baseBody = @'
 | Item | Result |

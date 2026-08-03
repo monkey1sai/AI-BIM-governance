@@ -1,4 +1,25 @@
 {
   "schema_version": "self-referential-bootstrap-ledger/v1",
-  "entries": []
+  "entries": [
+    {
+      "id": "self-referential-bootstrap-gate",
+      "status": "open",
+      "pr": 459,
+      "opened_at": "2026-08-03T04:00:00Z",
+      "reason": "This PR introduces the bootstrap gate itself. The PR Metadata Contract job materialises the body checker pinned at the base SHA so that a PR cannot adjudicate itself with its own edited gate; the base here has no scripts/lib/self-referential-bootstrap.ps1 and no gate wiring, so the base-pinned checker has no gate to run at all. Any PR that adds a gate has a base without that gate, so no ordering avoids this.",
+      "verification_mechanism_paths": [
+        ".github/workflows/agent-governance.yml",
+        ".github/workflows/pr-review-agent.yml",
+        "scripts/dev/check-pr-local-preflight.ps1",
+        "scripts/lib/self-referential-bootstrap.ps1",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/check-pr-body-evidence.ps1"
+      ],
+      "bootstrap_evidence_refs": [
+        "docs/evidence/self-referential-bootstrap-gate/self-referential-bootstrap/README.md",
+        "docs/evidence/self-referential-bootstrap-gate/self-referential-bootstrap/gate-suites.txt"
+      ],
+      "fixpoint": null
+    }
+  ]
 }
