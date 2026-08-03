@@ -729,6 +729,7 @@ export default class App extends React.Component<AppProps, AppState> {
     // open/reconnect must revoke an older binding transaction before it can
     // create a new stage attempt.
     private stageIntentGeneration = 0;
+    private pendingBindingPreauthorizationIntent: number | null = null;
     private activeStageAttempt: StageAttempt | null = null;
     private bindingApplyGeneration = 0;
     private stageLoadFailureActive = false;
@@ -1604,6 +1605,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _beginStageAttempt(targetUrl: string): number {
+        this.pendingBindingPreauthorizationIntent = null;
         this.stageIntentGeneration += 1;
         this._supersedeActiveStageAttempt();
         const generation = ++this.stageAttemptGeneration;
@@ -1655,6 +1657,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _invalidateStageAttempt(): void {
+        this.pendingBindingPreauthorizationIntent = null;
         this.stageIntentGeneration += 1;
         const attemptGeneration = this.activeStageAttempt?.generation;
         if (!attemptGeneration) {
@@ -1675,7 +1678,13 @@ export default class App extends React.Component<AppProps, AppState> {
 
     private _canApplyLoadingStateResponse(stageUrl: string): boolean {
         const attempt = this.activeStageAttempt;
-        if (!attempt) return this.state.webrtcLifecycleStatus === "started";
+        if (!attempt) {
+            // A coordinator binding transaction has claimed the next stage but has
+            // not yet produced a correlatable attempt. Ignore old Kit probes until
+            // it resolves, rather than allowing them to mutate or fail that intent.
+            return this.pendingBindingPreauthorizationIntent !== this.stageIntentGeneration
+                && this.state.webrtcLifecycleStatus === "started";
+        }
         if (attempt.status === "terminal") return false;
         if (!stageUrl) return false;
         return stageUrl === attempt.targetUrl;
@@ -2654,6 +2663,7 @@ export default class App extends React.Component<AppProps, AppState> {
         // A newer user selection revokes completion authority from every prior
         // stage attempt before its coordinator preauthorization resolves.
         const applyStageIntentGeneration = ++this.stageIntentGeneration;
+        this.pendingBindingPreauthorizationIntent = applyStageIntentGeneration;
         this._supersedeActiveStageAttempt();
         const applyThroughCoordinator = async () => {
             const transaction = await this._preauthorizeStageBinding(
@@ -2667,6 +2677,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 applyGeneration !== this.bindingApplyGeneration
                 || applyStageIntentGeneration !== this.stageIntentGeneration
             ) return;
+            this.pendingBindingPreauthorizationIntent = null;
             this._appendReviewEvent(`coordinator 已建立 pending binding：${transaction.binding_revision_id}`);
             const targetUrl = transaction.stage_composition.primary.usdc_url;
             const attemptGeneration = this._beginStageAttempt(targetUrl);
@@ -2702,6 +2713,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 applyGeneration !== this.bindingApplyGeneration
                 || applyStageIntentGeneration !== this.stageIntentGeneration
             ) return;
+            this.pendingBindingPreauthorizationIntent = null;
             this.setState({
                 govBindingApplyState: {
                     status: "failed",
@@ -4055,6 +4067,18 @@ export default class App extends React.Component<AppProps, AppState> {
                 const attemptGeneration = this.activeStageAttempt?.generation;
 
                 if (payloadUrl && loadingState === "idle") {
+                    if (!isStageValid && attemptGeneration) {
+                        console.log(`The loaded asset ${payloadUrl} is invalid.`);
+                        this._failStageLoad(
+                            t(stageLoadFailurePresentation.invalidStage.zh, stageLoadFailurePresentation.invalidStage.en),
+                            [
+                                `${t(stageLoadFailurePresentation.kitReported.zh, stageLoadFailurePresentation.kitReported.en)}${t("：", ": ")}${payloadUrl}`,
+                                `${t(stageLoadFailurePresentation.currentSelection.zh, stageLoadFailurePresentation.currentSelection.en)}${t("：", ": ")}${this.state.selectedUSDAsset?.url || "none"}`,
+                            ].join("\n"),
+                            attemptGeneration,
+                        );
+                        return;
+                    }
                     if (!this._isLoadedStageExpected(payloadUrl)) {
                         this._recordLoadedStageEvidence(payloadUrl, "loadingStateResponse", loadingState);
                         return;
@@ -4118,19 +4142,6 @@ export default class App extends React.Component<AppProps, AppState> {
                             `${t(stageLoadFailurePresentation.target.zh, stageLoadFailurePresentation.target.en)}${t("：", ": ")}${this.pendingStageUrl || this.state.selectedUSDAsset?.url || "unknown"}`,
                         );
                     }
-                    return;
-                }
-                
-                // if a stage has been fully loaded and isn't a part of this application, force-load the selected stage
-                else if (!isStageValid && loadingState === "idle"){
-                    console.log(`The loaded asset ${payloadUrl} is invalid.`)
-                    this._failStageLoad(
-                        t(stageLoadFailurePresentation.invalidStage.zh, stageLoadFailurePresentation.invalidStage.en),
-                        [
-                            `${t(stageLoadFailurePresentation.kitReported.zh, stageLoadFailurePresentation.kitReported.en)}${t("：", ": ")}${payloadUrl}`,
-                            `${t(stageLoadFailurePresentation.currentSelection.zh, stageLoadFailurePresentation.currentSelection.en)}${t("：", ": ")}${this.state.selectedUSDAsset?.url || "none"}`,
-                        ].join("\n"),
-                    )
                     return;
                 }
                 

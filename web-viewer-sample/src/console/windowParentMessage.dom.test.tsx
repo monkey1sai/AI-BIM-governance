@@ -1498,6 +1498,277 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     }));
   });
 
+  it("ignores stale loading-state probes while binding preauthorization is pending", async () => {
+    vi.useFakeTimers();
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const knownStageUrl = "stage://known.usdc";
+    const bindingStageUrl = "stage://binding-pending.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      isKitReady: true,
+      webrtcLifecycleStatus: "started",
+      selectedUSDAsset: { name: "known", url: knownStageUrl },
+      usdAssets: [{ name: "known", url: knownStageUrl }],
+      loadingText: "等待 binding authorization",
+      stageLoadStatus: "unproven",
+      isLoading: false,
+    };
+    let resolvePreauthorization: ((value: unknown) => void) | undefined;
+    const privateApp = internals(app) as unknown as {
+      _applyBinding: AppInternals["_applyBinding"];
+      _preauthorizeStageBinding: () => Promise<unknown>;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+    };
+    vi.spyOn(privateApp, "_preauthorizeStageBinding")
+      .mockImplementation(() => new Promise((resolve) => { resolvePreauthorization = resolve; }));
+    const send = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => undefined);
+
+    privateApp._applyBinding([{
+      artifact_id: "artifact_binding_pending",
+      model_version_id: "version_binding_pending",
+      usdc_url: bindingStageUrl,
+      role: "primary",
+      load_order: 0,
+      ready: true,
+    }], "rev_binding_pending");
+    for (let i = 0; i < 91; i++) {
+      internals(app)._handleCustomEvent({
+        event_type: "loadingStateResponse",
+        payload: { url: knownStageUrl, loading_state: "busy" },
+      });
+    }
+
+    expect(privateApp.activeStageAttempt).toBeNull();
+    expect(internals(app).loadingStatePollCount).toBe(0);
+    expect(internals(app).state.loadingText).toBe("等待 binding authorization");
+    expect(internals(app).state.govBindingApplyState).toEqual({ status: "applying" });
+    expect(send).not.toHaveBeenCalled();
+
+    resolvePreauthorization?.({
+      status: "pending",
+      session_id: "review_session_x",
+      stage_binding_authorization_id: "authorization_binding_pending",
+      binding_revision_id: "revision_binding_pending",
+      pending_expires_at: "2099-01-01T00:00:00Z",
+      stage_composition: {
+        primary: { artifact_id: "artifact_binding_pending", role: "primary", load_order: 0, usdc_url: bindingStageUrl },
+        secondary_layers: [],
+      },
+    });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      status: "pending",
+      targetUrl: bindingStageUrl,
+    }));
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ event_type: "loadArtifactGroupRequest" }));
+  });
+
+  it("does not send a pending binding after reconnect invalidates its stage intent", async () => {
+    vi.useFakeTimers();
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const bindingStageUrl = "stage://binding-reconnect-pending.usdc";
+    let resolvePreauthorization: ((value: unknown) => void) | undefined;
+    const privateApp = internals(app) as unknown as {
+      _applyBinding: AppInternals["_applyBinding"];
+      _reconnectStream: () => void;
+      _preauthorizeStageBinding: () => Promise<unknown>;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+    };
+    vi.spyOn(privateApp, "_preauthorizeStageBinding")
+      .mockImplementation(() => new Promise((resolve) => { resolvePreauthorization = resolve; }));
+    vi.spyOn(AppStream, "stop").mockImplementation(() => undefined);
+    const send = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => undefined);
+
+    privateApp._applyBinding([{
+      artifact_id: "artifact_binding_reconnect_pending",
+      model_version_id: "version_binding_reconnect_pending",
+      usdc_url: bindingStageUrl,
+      role: "primary",
+      load_order: 0,
+      ready: true,
+    }], "rev_binding_reconnect_pending");
+    privateApp._reconnectStream();
+    expect(internals(app).state.webrtcLifecycleStatus).toBe("initializing");
+
+    resolvePreauthorization?.({
+      status: "pending",
+      session_id: "review_session_x",
+      stage_binding_authorization_id: "authorization_binding_reconnect_pending",
+      binding_revision_id: "revision_binding_reconnect_pending",
+      pending_expires_at: "2099-01-01T00:00:00Z",
+      stage_composition: {
+        primary: { artifact_id: "artifact_binding_reconnect_pending", role: "primary", load_order: 0, usdc_url: bindingStageUrl },
+        secondary_layers: [],
+      },
+    });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    expect(privateApp.activeStageAttempt).toBeNull();
+    expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ event_type: "loadArtifactGroupRequest" }));
+    expect(internals(app).state.webrtcLifecycleStatus).toBe("initializing");
+  });
+
+  it("renders the current binding preauthorization rejection as a visible terminal failure", async () => {
+    setLang("en");
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _applyBinding: AppInternals["_applyBinding"];
+      _preauthorizeStageBinding: () => Promise<unknown>;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      stageLoadFailureActive: boolean;
+    };
+    vi.spyOn(privateApp, "_preauthorizeStageBinding").mockRejectedValue(new Error("coordinator unavailable"));
+    const send = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => undefined);
+
+    privateApp._applyBinding([{
+      artifact_id: "artifact_binding_rejected",
+      model_version_id: "version_binding_rejected",
+      usdc_url: "stage://binding-rejected.usdc",
+      role: "primary",
+      load_order: 0,
+      ready: true,
+    }], "rev_binding_rejected");
+    await flushMicrotasks();
+
+    expect(send).not.toHaveBeenCalled();
+    expect(privateApp.activeStageAttempt).toBeNull();
+    expect(privateApp.stageLoadFailureActive).toBe(true);
+    expect(internals(app).state.govBindingApplyState).toEqual({
+      status: "failed",
+      reason: "coordinator stage binding preauthorization 失敗",
+    });
+    const html = renderToString(internals(app).render());
+    expect(html).toContain('data-testid="stage-load-failure"');
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("Model loading failed");
+    expect(html).toContain("Could not create stage binding authorization; the stage-load command was blocked.");
+  });
+
+  it("ignores an older binding preauthorization rejection after a newer manual open", async () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const bindingStageUrl = "stage://binding-reject-pending.usdc";
+    const manualStageUrl = "stage://manual-reject-open.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: null,
+      selectedUSDAsset: { name: "manual", url: manualStageUrl },
+      latestStreamConfig: {
+        ...(internals(app).state.latestStreamConfig as Record<string, unknown>),
+        stage_composition: {
+          primary: { artifact_id: "artifact_manual_reject", url: manualStageUrl, load_order: 0 },
+          secondary_layers: [],
+        },
+      },
+    };
+    let rejectBinding: ((reason?: unknown) => void) | undefined;
+    let resolveManualOpen: ((value: unknown) => void) | undefined;
+    const privateApp = internals(app) as unknown as {
+      _applyBinding: AppInternals["_applyBinding"];
+      _openSelectedAsset: AppInternals["_openSelectedAsset"];
+      _preauthorizeStageBinding: () => Promise<unknown>;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+    };
+    vi.spyOn(privateApp, "_preauthorizeStageBinding")
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectBinding = reject; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveManualOpen = resolve; }));
+    const send = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => undefined);
+
+    privateApp._applyBinding([{
+      artifact_id: "artifact_binding_reject_pending",
+      model_version_id: "version_binding_reject_pending",
+      usdc_url: bindingStageUrl,
+      role: "primary",
+      load_order: 0,
+      ready: true,
+    }], "rev_binding_reject_pending");
+    privateApp._openSelectedAsset();
+    expect(rejectBinding).toBeTypeOf("function");
+    expect(resolveManualOpen).toBeTypeOf("function");
+
+    resolveManualOpen?.({
+      status: "pending",
+      session_id: "review_session_x",
+      stage_binding_authorization_id: "authorization_manual_reject",
+      binding_revision_id: "revision_manual_reject",
+      pending_expires_at: "2099-01-01T00:00:00Z",
+      stage_composition: {
+        primary: { artifact_id: "artifact_manual_reject", role: "primary", load_order: 0, usdc_url: manualStageUrl },
+        secondary_layers: [],
+      },
+    });
+    await flushMicrotasks();
+    rejectBinding?.(new Error("older binding rejected"));
+    await flushMicrotasks();
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ event_type: "openStageRequest" }));
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      status: "pending",
+      targetUrl: manualStageUrl,
+    }));
+    expect(internals(app).state.govBindingApplyState).toEqual({ status: "applying" });
+    expect(renderToString(internals(app).render())).not.toContain('data-testid="stage-load-failure"');
+  });
+
+  it.each([
+    {
+      language: "zh" as const,
+      title: "模型載入狀態不符合目前清單",
+      kitReported: "Kit 回報：stage://unknown-idle.usdc",
+      currentSelection: "目前選擇：stage://selected-idle.usdc",
+      alternateTitle: "Stage loading state does not match the current artifact list",
+    },
+    {
+      language: "en" as const,
+      title: "Stage loading state does not match the current artifact list",
+      kitReported: "Kit reported: stage://unknown-idle.usdc",
+      currentSelection: "Current selection: stage://selected-idle.usdc",
+      alternateTitle: "模型載入狀態不符合目前清單",
+    },
+  ])("$language makes an invalid idle URL a localized terminal for the current attempt", (copy) => {
+    setLang(copy.language);
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      stageLoadFailureActive: boolean;
+    };
+    internals(app).state = {
+      ...internals(app).state,
+      isKitReady: true,
+      webrtcLifecycleStatus: "started",
+      selectedUSDAsset: { name: "selected", url: "stage://selected-idle.usdc" },
+      usdAssets: [{ name: "selected", url: "stage://selected-idle.usdc" }],
+    };
+    const generation = privateApp._beginStageAttempt("stage://unknown-idle.usdc");
+    internals(app).pendingStageUrl = "stage://unknown-idle.usdc";
+
+    internals(app)._handleCustomEvent({
+      event_type: "loadingStateResponse",
+      payload: { url: "stage://unknown-idle.usdc", loading_state: "idle" },
+    });
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      generation,
+      status: "terminal",
+      targetUrl: "stage://unknown-idle.usdc",
+    }));
+    expect(privateApp.stageLoadFailureActive).toBe(true);
+    expect(internals(app).state.loadingText).toBe(copy.title);
+    expect(internals(app).state.streamDiagnostic).toContain(copy.kitReported);
+    expect(internals(app).state.streamDiagnostic).toContain(copy.currentSelection);
+    const html = renderToString(internals(app).render());
+    expect(html).toContain('data-testid="stage-load-failure"');
+    expect(html).toContain(copy.title);
+    expect(html).not.toContain(copy.alternateTitle);
+  });
+
   it("reconnect resolves an old stalled harness request without replaying it into the new generation", async () => {
     vi.useFakeTimers();
     const firstStart = vi.fn();
