@@ -260,7 +260,7 @@ PR-B 改的正是**驗證機制本身**（deploy path）。§6 明文禁止測�
 - [x] B5 — clone 流程含 exec bit 修復（F-2）：New-RemoteRebuildScript（clone-if-missing、契約 refspec fresh fetch、reset+clean 保留 env、restore-exec-bits）
 - [x] B6 — per-target env ＋ SSH 推送（D-14）＋ effective env 快照（D-15）：base 推送＋遠端 override（runtime_data_root/env.local，git clean 清不到）＋單一 merge 實作（遠端經 pwsh 呼叫同一 lib 函式）＋ secret 遮罩快照（sha256-8 指紋，值不落地）；operator 入口 -TargetId 預設 canonical。live SSH 待 B8 憑證佈建
 - [x] B7 — MinIO fixture pinning（D-16/17）：manifest schema＋comparePin fail-closed＋cache sidecar 判定（multipart ETag 不可本地重算，靠下載時 sidecar）；live HEAD 重用 coordinator @aws-sdk/client-s3（createRequire，無第二 S3 實作）。manifest 初生為空，enrol 需 MinIO 憑證
-- [ ] B8 — 遠端佈建腳本化（§6.6）
+- [x] B8 — 遠端佈建腳本化：`scripts/dev/provision-linux-deploy-target.sh`（idempotent；每個套件都對應一次真實部署失敗，含 python3-venv/ensurepip；NVIDIA driver 與 ufw 啟用刻意不含，理由寫在腳本內）
 - [x] B9 — 契約改寫：§1 viewer 302 handoff 原則、§3 design-gate/runtime-evidence 兩機器切分、§5 fixture 權威改 MinIO pinned（並修掉指向不存在檔案的漂移）、§6 部署目標改 registry（operator 入口與 fresh-fetch 契約逐字保留）、§8 三種 stack kind 互不推論邊界表
 - [x] B10 — Windows 三級觸發 changed-path classifier（D-20）：`scripts/lib/windows-verification-scope.ps1`（highest-tier-wins ＋ 明確豁免 docs/tests）＋ 接進 PR body 檢查＋template＋CI；自檢 PR-B 欠 tier `deploy_dryrun`，已實跑 `deploy.ps1 -DryRun` exit 0（解析到 Windows profile，佐證 B4 零行為漂移）
 - [x] B11 — bootstrap 取證能力＋ledger 欠帳：`-BootstrapRef` 由 `Assert-BootstrapRefAllowed` 把關（entry 必須存在／open／宣告 deploy.ps1）；ledger entry `remote-linux-deploy-target` 已開（涵蓋全部 11 條 mechanism paths）；無 ref 時 script 與先前 byte-identical。首次 bootstrap 派工 EXIT=0，遠端 checkout 至 10e8068、exec bits 恢復、effective env 9 keys
