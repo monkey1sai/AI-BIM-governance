@@ -1790,8 +1790,23 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     expect(internals(app).state.webrtcLifecycleStatus).toBe("initializing");
   });
 
-  it("renders the current binding preauthorization rejection as a visible terminal failure", async () => {
-    setLang("en");
+  it.each([
+    {
+      language: "zh" as const,
+      title: "模型載入失敗",
+      diagnostic: "無法建立 stage binding authorization，已阻擋載入指令",
+      alternateTitle: "Model loading failed",
+      alternateDiagnostic: "Could not create stage binding authorization; the stage-load command was blocked.",
+    },
+    {
+      language: "en" as const,
+      title: "Model loading failed",
+      diagnostic: "Could not create stage binding authorization; the stage-load command was blocked.",
+      alternateTitle: "模型載入失敗",
+      alternateDiagnostic: "無法建立 stage binding authorization，已阻擋載入指令",
+    },
+  ])("$language renders the current binding preauthorization rejection as a visible terminal failure", async (copy) => {
+    setLang(copy.language);
     const app = operableApp();
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
@@ -1823,8 +1838,10 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     const html = renderToString(internals(app).render());
     expect(html).toContain('data-testid="stage-load-failure"');
     expect(html).toContain('role="alert"');
-    expect(html).toContain("Model loading failed");
-    expect(html).toContain("Could not create stage binding authorization; the stage-load command was blocked.");
+    expect(html).toContain(copy.title);
+    expect(html).toContain(copy.diagnostic);
+    expect(html).not.toContain(copy.alternateTitle);
+    expect(html).not.toContain(copy.alternateDiagnostic);
   });
 
   it("ignores an older binding preauthorization rejection after a newer manual open", async () => {
@@ -3331,9 +3348,28 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
       .toHaveLength(1);
   });
 
-  it("terminalizes a binding attempt when its composition send is rejected and ignores a later success", async () => {
+  it.each([
+    {
+      language: "zh" as const,
+      title: "模型載入失敗",
+      target: "目標：stage://binding-send-rejected.usdc",
+      error: "錯誤：stream_transport_error",
+      alternateTitle: "Model loading failed",
+      alternateTarget: "Target: stage://binding-send-rejected.usdc",
+      alternateError: "Error: stream_transport_error",
+    },
+    {
+      language: "en" as const,
+      title: "Model loading failed",
+      target: "Target: stage://binding-send-rejected.usdc",
+      error: "Error: stream_transport_error",
+      alternateTitle: "模型載入失敗",
+      alternateTarget: "目標：stage://binding-send-rejected.usdc",
+      alternateError: "錯誤：stream_transport_error",
+    },
+  ])("$language terminalizes a binding attempt when its composition send is rejected and ignores a later success", async (copy) => {
     vi.useFakeTimers();
-    setLang("en");
+    setLang(copy.language);
     reviewEnv.sourceClientId = "viewer_lease_primary";
     reviewEnv.viewerLeaseToken = "lease_token_primary";
     const app = operableApp();
@@ -3386,11 +3422,12 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
     }));
     expect(internals(app).pendingStageUrl).toBeNull();
     expect(internals(app).state.loadedStageUrl).toBeNull();
-    expect(internals(app).state.loadingText).toBe("Model loading failed");
-    expect(internals(app).state.streamDiagnostic).toContain("stream_transport_error");
+    expect(internals(app).state.loadingText).toBe(copy.title);
+    expect(internals(app).state.streamDiagnostic).toContain(copy.target);
+    expect(internals(app).state.streamDiagnostic).toContain(copy.error);
     expect(internals(app).state.govBindingApplyState).toEqual({
       status: "failed",
-      reason: "Model loading failed",
+      reason: copy.title,
     });
     expect(privateApp.runtimeCommandContexts.has(requestId)).toBe(false);
     expect(privateApp.runtimeCommandTerminalClaims.get(requestId)).toEqual({
@@ -3404,6 +3441,14 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
         outcome: "error",
       }),
     ]));
+    const html = renderToString(internals(app).render());
+    expect(html).toContain('data-testid="stage-load-failure"');
+    expect(html).toContain(copy.title);
+    expect(html).toContain(copy.target);
+    expect(html).toContain(copy.error);
+    expect(html).not.toContain(copy.alternateTitle);
+    expect(html).not.toContain(copy.alternateTarget);
+    expect(html).not.toContain(copy.alternateError);
 
     internals(app)._handleCustomEvent({
       event_type: "openedStageResult",
