@@ -25,7 +25,7 @@
     {
       "id": "remote-linux-deploy-target",
       "status": "open",
-      "pr": 463,
+      "pr": 467,
       "opened_at": "2026-08-03T02:00:00Z",
       "reason": "the deploy contract rebuilds the test deployment only from a freshly fetched origin/main and forbids verifying an unmerged branch, so a change to the deploy path itself cannot be exercised by any pre-merge run against origin/main",
       "verification_mechanism_paths": [
