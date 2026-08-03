@@ -38,18 +38,28 @@ function Resolve-HostNativePython {
 
 function Get-HostNativePowerShellExe {
     # powershell.exe is Windows-only; the cross-platform executable is pwsh.
-    if ((Get-PlatformName) -eq 'windows') { return 'powershell.exe' }
+    # -Platform is injectable so both branches are testable from either OS.
+    param([string] $Platform = (Get-PlatformName))
+    if ($Platform -eq 'windows') { return 'powershell.exe' }
     return 'pwsh'
 }
 
 function Get-HostNativePowerShellArgumentPrefix {
+    param([string] $Platform = (Get-PlatformName))
     # Standard prefix for launching one of our .ps1 files as a child process.
     # -ExecutionPolicy is a Windows-only concept and pwsh rejects it elsewhere, so
     # it is only emitted there. Callers append -File <script> and their own args.
-    if ((Get-PlatformName) -eq 'windows') {
-        return @('-NoProfile', '-ExecutionPolicy', 'Bypass')
+    #
+    # The leading comma matters. Off Windows this array has a single element, and a
+    # bare `return @('-NoProfile')` gets unrolled to a plain string on the way out;
+    # the caller's `<prefix> + @('-File', ...)` then becomes string concatenation and
+    # the child is launched with the argument '-NoProfile-File'. The comma keeps it
+    # an array on both platforms, so the Windows path (3 elements, never unrolled)
+    # and the Linux path behave the same.
+    if ($Platform -eq 'windows') {
+        return ,@('-NoProfile', '-ExecutionPolicy', 'Bypass')
     }
-    return @('-NoProfile')
+    return ,@('-NoProfile')
 }
 
 function Test-AlreadyRunning {
@@ -304,7 +314,7 @@ function Start-HostNativeConversion {
         -Name 'bim-streaming-conversion-service' `
         -WorkingDirectory (Join-Path $RepoRoot 'bim-streaming-server') `
         -FilePath (Get-HostNativePowerShellExe) `
-        -ArgumentList ((Get-HostNativePowerShellArgumentPrefix) + @('-File', $launcher, '-PythonExe', $pythonExe)) `
+        -ArgumentList (@(Get-HostNativePowerShellArgumentPrefix) + @('-File', $launcher, '-PythonExe', $pythonExe)) `
         -RunDir $runDir)
 }
 
