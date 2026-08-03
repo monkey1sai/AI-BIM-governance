@@ -30,28 +30,53 @@ jobs:
         run: git -c core.quotepath=false diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/changed-paths.bin"
 
       - name: Materialize the base-pinned gate
-        # A PR that edits the checker or its libraries must not get to adjudicate
-        # itself with its own edited copy: the gate scripts are taken from the PR
-        # BASE revision. First-introduction fallback: when the base predates the
-        # gate files, the head copy is the only copy - acceptable exactly once,
-        # because a base without a gate has nothing to weaken.
+        # A PR that edits the checker or its libraries must not adjudicate itself
+        # with its own edited copy, so gate scripts come from the PR BASE revision.
+        #
+        # Capability detection must test the WHOLE capability, not one file. The
+        # earlier version only checked that check-pr-body-evidence.ps1 existed at
+        # base - but a PR that ADDS the bootstrap gate modifies that file rather
+        # than creating it, so the check passed, the old base checker ran, and the
+        # PR was evaluated without the very gate it introduced (Codex review
+        # L1-correctness-2). Detection now requires every part to be present at
+        # base: the library, the checker's dot-source of it, and the assertion
+        # call site.
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           set -euo pipefail
           trusted="$RUNNER_TEMP/trusted-gate"
           mkdir -p "$trusted"
-          if git cat-file -e "$BASE_SHA:scripts/tests/check-pr-body-evidence.ps1" 2>/dev/null; then
+
+          # Detection lives in a script so it is executable in tests rather than
+          # replicated by them (Codex TG-2). Detection failure fails closed.
+          capability="$(bash scripts/lib/detect-base-gate-capability.sh "$BASE_SHA" .)"
+          echo "base gate capability: $capability"
+
+          if [ "$capability" = "complete" ]; then
             git archive "$BASE_SHA" scripts docs/plans | tar -x -C "$trusted"
             echo "GATE_ROOT=$trusted" >> "$GITHUB_ENV"
+            echo "GATE_SOURCE=base-pinned" >> "$GITHUB_ENV"
             if grep -q 'PrNumber' "$trusted/scripts/tests/check-pr-body-evidence.ps1"; then
               echo "GATE_HAS_PRNUMBER=1" >> "$GITHUB_ENV"
             else
               echo "GATE_HAS_PRNUMBER=0" >> "$GITHUB_ENV"
             fi
           else
+            # The base cannot adjudicate a gate it does not have. Rather than
+            # silently trusting head, require the PR to declare the bootstrap
+            # itself. This inline check is intentionally tiny and dependency-free
+            # so it stays reviewable and cannot be disabled by editing the very
+            # library under review.
+            if ! printf '%s' "$PR_BODY" | grep -qiE '^\|[[:space:]]*Self-referential bootstrap[[:space:]]*\|[[:space:]]*`?yes`?[[:space:]]*\|'; then
+              echo "::error::The PR base lacks the complete bootstrap gate, so base-pinned adjudication is impossible. Such a PR MUST declare 'Self-referential bootstrap | yes' with a ledger entry (docs/agents/self-referential-bootstrap.md)."
+              exit 1
+            fi
+            echo "::warning::Base lacks the complete gate capability; running the head copy under a declared self_referential_bootstrap. Fixpoint re-verification after merge is mandatory."
             echo "GATE_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+            echo "GATE_SOURCE=head-bootstrap" >> "$GITHUB_ENV"
             echo "GATE_HAS_PRNUMBER=1" >> "$GITHUB_ENV"
           fi
 
