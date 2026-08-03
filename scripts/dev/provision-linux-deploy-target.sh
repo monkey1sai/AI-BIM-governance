@@ -66,6 +66,16 @@ else
 fi
 usermod -aG docker "$SERVICE_USER"
 
+say "enable lingering for $SERVICE_USER"
+# Without this, systemd stops user@<uid>.service when the account's last session
+# ends and kills everything under it. pwsh comes from snap, so the host-native
+# services live in a scope beneath that unit: an SSH-driven deploy reported all
+# four services healthy and every one was gone minutes after the transport
+# disconnected. setsid does not help - it changes the POSIX session, not the
+# systemd cgroup. Measured both ways on the target before adding this.
+loginctl enable-linger "$SERVICE_USER"
+loginctl show-user "$SERVICE_USER" -p Linger
+
 say "powershell + node (snap)"
 command -v pwsh >/dev/null 2>&1 || snap install powershell --classic
 command -v node >/dev/null 2>&1 || snap install node --classic --channel=20

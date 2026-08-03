@@ -83,6 +83,25 @@ function Test-PlatformProcessDetached {
     return ([int]$stat.SessionId -eq $ProcessId)
 }
 
+function Test-PlatformServiceLingerEnabled {
+    # Will this account's processes survive its last logout?
+    #
+    # Windows has no equivalent and the deploy runs in a session that stays, so it
+    # is always true there. On Linux with systemd, a snap-installed pwsh puts its
+    # children under user@<uid>.service, which systemd stops on last logout unless
+    # the account has lingering enabled - so an SSH-driven deploy reported four
+    # healthy host-native services and every one of them was gone minutes later,
+    # with only stale PID files left. Measured, not assumed: two probes started
+    # through the real launcher died without lingering and survived with it.
+    param([string] $UserName = '')
+
+    if ((Get-PlatformName) -eq 'windows') { return $true }
+    $target = if ([string]::IsNullOrWhiteSpace($UserName)) { (& id -un 2>$null | Out-String).Trim() } else { $UserName }
+    if ([string]::IsNullOrWhiteSpace($target)) { return $false }
+    $out = (& loginctl show-user $target -p Linger 2>$null | Out-String).Trim()
+    return ($out -match 'Linger\s*=\s*yes')
+}
+
 function Get-PlatformProcessIdentity {
     # Returns $null when the process does not exist. BirthToken is an opaque
     # string: equal tokens => same process incarnation on this host+boot.

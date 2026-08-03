@@ -957,6 +957,15 @@ if (-not $docker.envFile)       { $hardFails += 'env_file_missing_entirely' }
 if ($hostNative.nvidiaDriver -eq 'MISSING')   { $hardFails += 'nvidia_smi_missing' }
 if ($hostNative.kitLauncher -eq 'MISSING_PATH'){ $hardFails += 'kit_launcher_missing' }
 if ($volume.status -eq 'WRONG_LEAF')          { $hardFails += 'runtime_storage_root_wrong_leaf' }
+# Without lingering, systemd stops user@<uid>.service at last logout and takes the
+# host-native services with it. This is a HARD fail rather than a warning because
+# the alternative is the failure we actually shipped: a deploy that reports four
+# healthy services, exits 0, and leaves nothing running once the operator's session
+# closes. Nothing later in the deploy can detect that.
+if (-not (Test-PlatformServiceLingerEnabled)) {
+    $hardFails += 'user_lingering_disabled'
+    Write-DeployTag -Tag 'fail' -Message "host-native services would not survive logout: lingering is disabled for this account. Fix once with: loginctl enable-linger $(& id -un 2>`$null)" -LogPath $LogPath | Out-Null
+}
 if ($DryRun) {
     Write-DeployHeader -Title 'Phase 2: Auto-fix (safe actions)'
     if ($hardFails.Count -gt 0) {

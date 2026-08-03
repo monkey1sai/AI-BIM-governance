@@ -174,13 +174,19 @@ function Start-HostNativeService {
     $errFile = "$logFile.err"
     $pidFile = Join-Path $RunDir "$Name.pid"
 
-    # Off Windows the service must OUTLIVE the session that started it. A remote
-    # deploy runs over SSH, and every service started as a plain child of that
-    # session got SIGHUP the moment the transport disconnected: the deploy reported
-    # all four host-native services healthy, and minutes later they were gone with
-    # only stale PID files left. `setsid` makes the child its own session leader,
-    # so the hangup never reaches it. It execs in place when the caller is not
-    # already a process-group leader, which preserves the PID we record.
+    # Off Windows the service must OUTLIVE the session that started it: a remote
+    # deploy runs over SSH, and a service that dies at disconnect makes the whole
+    # "persistent deploy area" idea false. `setsid` makes the child its own session
+    # leader so a terminal hangup cannot reach it, and it execs in place when the
+    # caller is not already a process-group leader, preserving the PID we record.
+    #
+    # setsid alone is NOT sufficient here, and measuring beat assuming: with it in
+    # place the services still died at disconnect. pwsh is installed from snap, so
+    # its children land in
+    #   /user.slice/user-<uid>.slice/user@<uid>.service/app.slice/snap.powershell...scope
+    # and systemd stops user@<uid>.service on last logout unless the account has
+    # lingering enabled - taking the whole scope with it. The deploy therefore also
+    # requires `loginctl enable-linger`, which the Linux preflight checks.
     $launchExe = $FilePath
     $launchArgs = @($ArgumentList)
     if ((Get-PlatformName) -ne 'windows') {
