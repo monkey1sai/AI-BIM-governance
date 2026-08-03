@@ -1,0 +1,30 @@
+stack_kind=self_referential_bootstrap
+target=remote-linux-181 host=192.168.20.181 user=bimdeploy
+commit=51cf19ba516fdecdd96e1a85ef50632f5a559925
+captured_after_deploy_session_closed=yes
+
+## host-native services (deploy session already closed)
+  bim-streaming-conversion-service pid=77838 ALIVE sid=77838
+  bim-streaming-server pid=77867 ALIVE sid=77867
+  governance-service pid=77805 ALIVE sid=77805
+  kit-manager-api pid=78199 ALIVE sid=78199
+
+## endpoints
+  http://127.0.0.1:49102/health -> 200
+  http://127.0.0.1:49101/health -> 200
+  http://192.168.20.181:49101/health -> 200
+  http://127.0.0.1:8010/health -> 200
+  http://127.0.0.1:8004/health -> 200
+  http://192.168.20.181:8004/ui -> 200
+  http://127.0.0.1:5173 -> 200
+  http://192.168.20.181:5173 -> 200
+  http://127.0.0.1:8004/api/governance/files/tree -> 200
+
+## kit streaming
+LISTEN 0      64           0.0.0.0:49100      0.0.0.0:*
+NVIDIA GeForce RTX 5080, 595.84
+
+## cross-platform equivalence suite, run ON the linux target (plan B3)
+  test-platform-adapter EXIT=0 :: [test-platform-adapter] all assertions passed on linux
+  test-host-native-child-launch EXIT=0 :: === test-host-native-child-launch.ps1: ALL PASSED ===
+  test-deploy-target-registry EXIT=0 :: [test-deploy-target-registry] all assertions passed
