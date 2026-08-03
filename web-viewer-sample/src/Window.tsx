@@ -1498,9 +1498,7 @@ export default class App extends React.Component<AppProps, AppState> {
         this.loadingStateRetryId = null;
     }
 
-    private _scheduleStageLoadTimeout(
-        attemptGeneration = this.activeStageAttempt?.generation ?? this._beginStageAttempt(this.pendingStageUrl || ""),
-    ): void {
+    private _scheduleStageLoadTimeout(attemptGeneration: number): void {
         for (const context of this.runtimeCommandContexts.values()) {
             if (
                 context.eventType === "openStageRequest"
@@ -3932,7 +3930,28 @@ export default class App extends React.Component<AppProps, AppState> {
                 const isStageValid: boolean = !!(usdAsset.name && usdAsset.url)
                 const attemptGeneration = this.activeStageAttempt?.generation;
 
-                if (payloadUrl && loadingState === "idle" && !this._recordLoadedStageEvidence(payloadUrl, "loadingStateResponse", loadingState)) {
+                if (payloadUrl && loadingState === "idle") {
+                    if (!this._isLoadedStageExpected(payloadUrl)) {
+                        this._recordLoadedStageEvidence(payloadUrl, "loadingStateResponse", loadingState);
+                        return;
+                    }
+                    // loadingStateResponse has no request / attempt correlation. Even an exact
+                    // URL can be a delayed response from an older same-URL attempt, so it may
+                    // inform the UI but cannot complete or prove the active attempt.
+                    this.setState((state) => ({
+                        loadingText: t(
+                            "stage 已觀察，等待已關聯的完成證據",
+                            "Stage observed; awaiting correlated completion evidence.",
+                        ),
+                        stageLoadStatus: "unproven",
+                        reviewEvents: [
+                            ...state.reviewEvents,
+                            t(
+                                "忽略未關聯的 idle loadingStateResponse 完成宣告",
+                                "Ignored uncorrelated idle loadingStateResponse completion claim.",
+                            ),
+                        ].slice(-80),
+                    }));
                     return;
                 }
 
@@ -3979,17 +3998,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 }
                 
                 // show stream and populate children if the stage is valid and it's done loading
-                if (isStageValid && loadingState === "idle")
-                {
-                    if (!harnessEnabled() && !this.confirmedStageBindingRevision) {
-                        this.setState({
-                            loadingText: "stage 已觀察，等待 coordinator confirmation",
-                            stageLoadStatus: "unproven",
-                        });
-                        return;
-                    }
-                    this._completeStageLoad(payloadUrl, this.confirmedStageBindingRevision || undefined, attemptGeneration)
-                }
+                if (isStageValid && loadingState === "idle") return;
             }
         }
         

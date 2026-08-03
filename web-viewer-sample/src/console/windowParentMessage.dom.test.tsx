@@ -37,7 +37,8 @@ type AppInternals = {
   _appendDemoIncoming: (label: string, payload: unknown) => void;
   _completeStageLoad: (loadedUrl?: string, bindingRevisionId?: string) => void;
   _completeStageLoadFromVisibleStream: () => boolean;
-  _scheduleStageLoadTimeout: () => void;
+  _beginStageAttempt: (url: string) => number;
+  _scheduleStageLoadTimeout: (generation: number) => void;
   _resyncStageBindingProof: () => Promise<boolean>;
   _finishStageLoad: () => void;
   _hasRemoteVideoFrame: () => boolean;
@@ -755,12 +756,13 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     useSynchronousSetState(timerApp);
     vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
     internals(timerApp).pendingStageUrl = "stage://timeout.usdc";
+    const timerGeneration = internals(timerApp)._beginStageAttempt("stage://timeout.usdc");
     internals(timerApp)._sendStreamMessage({
       event_type: "openStageRequest",
       payload: { request_id: `req_timer_${copy.language}`, url: "stage://timeout.usdc" },
     });
     vi.spyOn(internals(timerApp), "_completeStageLoadFromVisibleStream").mockReturnValue(false);
-    internals(timerApp)._scheduleStageLoadTimeout();
+    internals(timerApp)._scheduleStageLoadTimeout(timerGeneration);
     vi.runOnlyPendingTimers();
 
     const timerHtml = renderToString(internals(timerApp).render());
@@ -809,6 +811,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       selectedUSDAsset: { name: "timeout", url: "stage://timeout.usdc" },
     };
     internals(app).pendingStageUrl = "stage://timeout.usdc";
+    const attemptGeneration = internals(app)._beginStageAttempt("stage://timeout.usdc");
     internals(app)._sendStreamMessage({
       event_type: "openStageRequest",
       payload: {
@@ -818,7 +821,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       },
     });
     vi.spyOn(internals(app), "_completeStageLoadFromVisibleStream").mockReturnValue(false);
-    internals(app)._scheduleStageLoadTimeout();
+    internals(app)._scheduleStageLoadTimeout(attemptGeneration);
     vi.runOnlyPendingTimers();
     const timeoutHtml = renderToString(internals(app).render());
 
@@ -956,9 +959,77 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     });
     expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
       generation: generationB,
+      status: "pending",
+    }));
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+  });
+
+  it("requires correlated completion when a stale idle response can share the superseding attempt URL", () => {
+    setLang("en");
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _getChildren: () => void;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      confirmedStageBindingRevision: string | null;
+      runtimeCommandContexts: Map<string, {
+        eventType: string;
+        stageAttemptGeneration: number;
+        stageUrl: string;
+      }>;
+    };
+    const sharedUrl = "stage://same-url.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      isKitReady: true,
+      expectedStageUrl: sharedUrl,
+      selectedUSDAsset: { name: "same-url", url: sharedUrl },
+      usdAssets: [{ name: "same-url", url: sharedUrl }],
+    };
+    privateApp._beginStageAttempt(sharedUrl);
+    internals(app).pendingStageUrl = sharedUrl;
+    const generationB = privateApp._beginStageAttempt(sharedUrl);
+    internals(app).pendingStageUrl = sharedUrl;
+    privateApp.confirmedStageBindingRevision = "revision_same_url_b";
+    privateApp.runtimeCommandContexts.set("req_same_url_b", {
+      eventType: "openStageRequest",
+      stageAttemptGeneration: generationB,
+      stageUrl: sharedUrl,
+    });
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+
+    internals(app)._handleCustomEvent({
+      event_type: "loadingStateResponse",
+      payload: { url: sharedUrl, loading_state: "idle" },
+    });
+
+    expect(privateApp.activeStageAttempt).toEqual({
+      generation: generationB,
+      status: "pending",
+      targetUrl: sharedUrl,
+    });
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+    expect(internals(app).state.loadingText).toBe("Stage observed; awaiting correlated completion evidence.");
+
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_same_url_b",
+        url: sharedUrl,
+        binding_revision_id: "revision_same_url_b",
+      },
+    });
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      generation: generationB,
       status: "completed",
     }));
-    expect(internals(app).state.loadedStageUrl).toBe("stage://b.usdc");
+    expect(internals(app).state.loadedStageUrl).toBe(sharedUrl);
+    expect(internals(app).state.stageLoadStatus).toBe("matched");
   });
 
   it.each([
@@ -2619,7 +2690,7 @@ describe("Important #4（修訂）：visible-stream 完成路徑不得把 pendin
     expect(sendSpy).not.toHaveBeenCalled();
   });
 
-  it("an exact-target idle stays unproven until authenticated revision confirmation promotes it", () => {
+  it("an exact-target idle stays unproven until correlated authenticated completion promotes it", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
     const app = operableApp();
@@ -2658,7 +2729,7 @@ describe("Important #4（修訂）：visible-stream 完成路徑不得把 pendin
 
     let posted = parent.postMessage.mock.calls.map((c) => c[0] as { type?: string; stageUrl?: string | null; status?: string });
     expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ generation, status: "provisional" }));
-    expect(internals(app).state.loadedStageUrl).toBe(stageUrl);
+    expect(internals(app).state.loadedStageUrl).toBeNull();
     expect(internals(app).state.stageLoadStatus).toBe("unproven");
     expect(posted.filter((m) => m.type === "first_frame")).toHaveLength(1);
     expect(posted.filter((m) => m.type === "stage_loaded")).toEqual([
@@ -2669,6 +2740,25 @@ describe("Important #4（修訂）：visible-stream 完成路徑不得把 pendin
     internals(app)._handleCustomEvent({
       event_type: "loadingStateResponse",
       payload: { url: stageUrl, loading_state: "idle" },
+    });
+
+    posted = parent.postMessage.mock.calls.map((c) => c[0] as { type?: string; stageUrl?: string | null; status?: string });
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ generation, status: "provisional" }));
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+    expect(posted.filter((m) => m.type === "first_frame")).toHaveLength(1);
+    expect(posted.filter((m) => m.type === "stage_loaded")).toEqual([
+      expect.objectContaining({ stageUrl: null, status: "unproven" }),
+    ]);
+
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_visible_idle",
+        url: stageUrl,
+        binding_revision_id: "rev_visible_idle",
+      },
     });
 
     posted = parent.postMessage.mock.calls.map((c) => c[0] as { type?: string; stageUrl?: string | null; status?: string });
