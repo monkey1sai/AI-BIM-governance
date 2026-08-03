@@ -19,6 +19,7 @@ $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 . (Join-Path $scriptRepoRoot 'scripts\lib\design-system-gate.ps1')
 . (Join-Path $scriptRepoRoot 'scripts\lib\production-boundary-contract.ps1')
 . (Join-Path $scriptRepoRoot 'scripts\lib\self-referential-bootstrap.ps1')
+. (Join-Path $scriptRepoRoot 'scripts\lib\windows-verification-scope.ps1')
 
 function Get-MarkdownTableValue {
     param(
@@ -310,6 +311,12 @@ if ($hasBootstrapBaseContext) {
     $baseLedgerJson = (& git -C $RepoRoot show "${BaseSha}:scripts/self-referential-bootstrap-ledger.json" 2>$null) -join "`n"
     if ($LASTEXITCODE -ne 0) { $baseLedgerJson = '' }  # ledger absent at base = first introduction
 }
+# Windows on-demand verification tier (D-20): the canonical deploy target is Linux,
+# so the Windows path only stays alive if changed-path scope machine-derives which
+# tier of Windows evidence a PR owes. Highest matched tier wins; docs/tests exempt.
+$null = Assert-WindowsVerificationEvidence -Body $body -ChangedPaths $changedPaths `
+    -GetTableValue { param($b, $label) Get-MarkdownTableValue -Body $b -Label $label }
+
 Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths `
     -LedgerPath (Join-Path $RepoRoot 'scripts\self-referential-bootstrap-ledger.json') `
     -GetTableValue { param($b, $label) Get-MarkdownTableValue -Body $b -Label $label } `

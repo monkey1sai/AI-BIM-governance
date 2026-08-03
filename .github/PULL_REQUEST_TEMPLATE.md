@@ -58,6 +58,15 @@ Required for runtime / Docker / Kit / viewer / ports / env / conversion-service 
 | Frontend URL verified |  |
 | Evidence path |  |
 
+## Windows On-Demand Verification
+
+Required when changed paths can alter Windows platform behavior. The tier is machine-derived from changed paths (`scripts/lib/windows-verification-scope.ps1`); the highest match wins and the PR body cannot select an easier one. Docs and tests-only changes owe nothing.
+
+| Item | Result |
+|---|---|
+| Windows verification tier | `platform_unit` / `deploy_dryrun` / `kit_gpu`, or omit when not applicable |
+| Windows verification evidence | the actual Windows run and its result |
+
 ## Self-Referential Bootstrap
 
 Required when the PR changes the verification mechanism itself (deploy path / evidence harness / gate script). Rule: `docs/agents/self-referential-bootstrap.md`. Open ledger debt in `scripts/self-referential-bootstrap-ledger.json` blocks further mechanism PRs until fixpoint closure.

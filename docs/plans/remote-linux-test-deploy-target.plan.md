@@ -262,7 +262,7 @@ PR-B 改的正是**驗證機制本身**（deploy path）。§6 明文禁止測�
 - [x] B7 — MinIO fixture pinning（D-16/17）：manifest schema＋comparePin fail-closed＋cache sidecar 判定（multipart ETag 不可本地重算，靠下載時 sidecar）；live HEAD 重用 coordinator @aws-sdk/client-s3（createRequire，無第二 S3 實作）。manifest 初生為空，enrol 需 MinIO 憑證
 - [ ] B8 — 遠端佈建腳本化（§6.6）
 - [x] B9 — 契約改寫：§1 viewer 302 handoff 原則、§3 design-gate/runtime-evidence 兩機器切分、§5 fixture 權威改 MinIO pinned（並修掉指向不存在檔案的漂移）、§6 部署目標改 registry（operator 入口與 fresh-fetch 契約逐字保留）、§8 三種 stack kind 互不推論邊界表
-- [ ] B10 — Windows 三級觸發 changed-path classifier（D-20）
+- [x] B10 — Windows 三級觸發 changed-path classifier（D-20）：`scripts/lib/windows-verification-scope.ps1`（highest-tier-wins ＋ 明確豁免 docs/tests）＋ 接進 PR body 檢查＋template＋CI；自檢 PR-B 欠 tier `deploy_dryrun`，已實跑 `deploy.ps1 -DryRun` exit 0（解析到 Windows profile，佐證 B4 零行為漂移）
 - [ ] B11 — 取得 `stack_kind=self_referential_bootstrap` evidence（依 PR-A 規則）
 - [ ] B12 — merge 後 fixpoint 重驗並回貼（PR-A 義務三）
 
