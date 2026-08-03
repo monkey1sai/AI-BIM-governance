@@ -1381,18 +1381,18 @@
       "id": "introduce-executable-architecture-contracts",
       "status": "active",
       "owner": "repository-maintainer",
-      "current_slice": "Phase 3 語言專屬結構契約",
+      "current_slice": "Phase 4 可執行生命週期契約",
       "blocked_by": [],
-      "last_verified": "2026-07-31T14:54:22Z",
+      "last_verified": "2026-08-03T02:00:00Z",
       "task_ledger": {
-        "completed": 16,
+        "completed": 19,
         "total": 26
       },
       "evidence_refs": [
         "openspec/changes/introduce-executable-architecture-contracts/proposal.md",
         "openspec/changes/introduce-executable-architecture-contracts/tasks.md"
       ],
-      "subject_commit": "6424a6d6074fa4adff1defe1b6cb7024277ff924",
+      "subject_commit": "eab7692570aaa796c9be6fc1cf79f89dad7f63b0",
       "archive_debt": null
     },
     {

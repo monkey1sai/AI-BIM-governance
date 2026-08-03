@@ -187,6 +187,6 @@ Mitigation：只接入 `verification-manifest.json` 與 root pytest，不新增 
 
 1. Phase 1：desired contract、delta、semantic validator、pytest、manifest dispatch。
 2. Phase 2（2026-07-30 完成）：deterministic static desired-vs-observed graph report + no-new-edge / no-new-cycle ratchet。GitNexus 改列 advisory，理由見上。
-3. Phase 3：TypeScript dependency-cruiser + Python Import Linter。
+3. Phase 3（2026-08-03 完成）：~~TypeScript dependency-cruiser + Python Import Linter~~ → 純標準函式庫的 layer boundary ratchet（`scripts/lib/layered_architecture.py`）。**Phase 3 更正：** 原文指名的兩個第三方工具未採用——canonical root-contract CI job 只裝 `pytest`／`jsonschema`，`apps/kit-manager-web` 沒有 lockfile 可釘版本，且兩者都不保證本 repo 要求的 Windows／Linux byte-identical 輸出。改為重用 Phase 2 已對抗硬化的 module graph extractor，沿用同一套 baseline ratchet。任務產出（可執行的分層邊界契約）不變，工具不同；偏離記於 `architecture/layer-contract.json` 的 `tooling_deviation` 並由測試斷言，只能 supersede 不能刪除。
 4. Phase 4：review-session / endpoint-lease / stage-binding executable state machines。
 5. Phase 5：將 recurring `$improve-codebase-architecture` findings 編譯成 permanent rules 與 quality grade。
