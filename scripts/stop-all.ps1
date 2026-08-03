@@ -99,9 +99,14 @@ function Test-IsExpectedServiceName {
 }
 
 function Get-ProcessInfo {
+    # Win32_Process is Windows-only. On Linux the call threw, Get-ProcessInfo
+    # returned nothing, Test-IsWorkspaceProcess therefore said "not ours", and the
+    # sweep skipped every leftover with "不屬於此 workspace，未停止" - the second
+    # half of the same false success. The adapter reads /proc there and returns the
+    # same two fields this decision needs (CommandLine, ExecutablePath).
     param([int] $ProcId)
 
-    Get-CimInstance Win32_Process -Filter "ProcessId = $ProcId" -ErrorAction SilentlyContinue
+    return (Get-PlatformProcessIdentity -ProcessId $ProcId)
 }
 
 function Test-IsWorkspaceProcess {
