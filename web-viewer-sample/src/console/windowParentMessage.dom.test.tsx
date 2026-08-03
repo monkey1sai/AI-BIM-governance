@@ -1718,19 +1718,15 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
   it.each([
     {
       language: "zh" as const,
-      title: "模型載入狀態不符合目前清單",
-      kitReported: "Kit 回報：stage://unknown-idle.usdc",
-      currentSelection: "目前選擇：stage://selected-idle.usdc",
-      alternateTitle: "Stage loading state does not match the current artifact list",
+      advisory: "stage 已觀察，等待已關聯的完成證據",
+      alternateAdvisory: "Stage observed; awaiting correlated completion evidence.",
     },
     {
       language: "en" as const,
-      title: "Stage loading state does not match the current artifact list",
-      kitReported: "Kit reported: stage://unknown-idle.usdc",
-      currentSelection: "Current selection: stage://selected-idle.usdc",
-      alternateTitle: "模型載入狀態不符合目前清單",
+      advisory: "Stage observed; awaiting correlated completion evidence.",
+      alternateAdvisory: "stage 已觀察，等待已關聯的完成證據",
     },
-  ])("$language makes an invalid idle URL a localized terminal for the current attempt", (copy) => {
+  ])("$language keeps an uncorrelated same-target idle response advisory", (copy) => {
     setLang(copy.language);
     const app = operableApp();
     useSynchronousSetState(app);
@@ -1756,17 +1752,17 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
 
     expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
       generation,
-      status: "terminal",
+      status: "pending",
       targetUrl: "stage://unknown-idle.usdc",
     }));
-    expect(privateApp.stageLoadFailureActive).toBe(true);
-    expect(internals(app).state.loadingText).toBe(copy.title);
-    expect(internals(app).state.streamDiagnostic).toContain(copy.kitReported);
-    expect(internals(app).state.streamDiagnostic).toContain(copy.currentSelection);
+    expect(privateApp.stageLoadFailureActive).toBe(false);
+    expect(internals(app).state.loadingText).toBe(copy.advisory);
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+    expect(internals(app).state.loadedStageUrl).toBeNull();
     const html = renderToString(internals(app).render());
-    expect(html).toContain('data-testid="stage-load-failure"');
-    expect(html).toContain(copy.title);
-    expect(html).not.toContain(copy.alternateTitle);
+    expect(html).not.toContain('data-testid="stage-load-failure"');
+    expect(html).toContain(copy.advisory);
+    expect(html).not.toContain(copy.alternateAdvisory);
   });
 
   it("reconnect resolves an old stalled harness request without replaying it into the new generation", async () => {

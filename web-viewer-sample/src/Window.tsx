@@ -4067,18 +4067,6 @@ export default class App extends React.Component<AppProps, AppState> {
                 const attemptGeneration = this.activeStageAttempt?.generation;
 
                 if (payloadUrl && loadingState === "idle") {
-                    if (!isStageValid && attemptGeneration) {
-                        console.log(`The loaded asset ${payloadUrl} is invalid.`);
-                        this._failStageLoad(
-                            t(stageLoadFailurePresentation.invalidStage.zh, stageLoadFailurePresentation.invalidStage.en),
-                            [
-                                `${t(stageLoadFailurePresentation.kitReported.zh, stageLoadFailurePresentation.kitReported.en)}${t("：", ": ")}${payloadUrl}`,
-                                `${t(stageLoadFailurePresentation.currentSelection.zh, stageLoadFailurePresentation.currentSelection.en)}${t("：", ": ")}${this.state.selectedUSDAsset?.url || "none"}`,
-                            ].join("\n"),
-                            attemptGeneration,
-                        );
-                        return;
-                    }
                     if (!this._isLoadedStageExpected(payloadUrl)) {
                         this._recordLoadedStageEvidence(payloadUrl, "loadingStateResponse", loadingState);
                         return;
