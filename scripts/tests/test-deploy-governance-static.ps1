@@ -70,6 +70,20 @@ if ($dockerFailureIndex -lt 0 -or $webPlaneSignatureSaveIndex -le $dockerFailure
     throw 'web-plane signature must be persisted only after docker compose succeeds'
 }
 
+# Hybrid mode must not start a CONTAINERISED kit-manager-api. `compose up
+# coordinator viewer` used to pull it in through coordinator's depends_on, and
+# that service publishes 127.0.0.1:8010 - the same port deploy.ps1 Phase 4c-2
+# gives the host-native kit-manager. Linux refuses the second bind (Phase 4d died
+# with "address already in use"); Windows only tolerated it because SO_REUSEADDR
+# lets a second socket take the same addr:port, leaving it undefined which one
+# actually answered :8010.
+if ($hostKitCompose -notmatch 'depends_on:\s*!override\s*\[\]') {
+    throw 'compose.host-kit.yml must clear coordinator depends_on (!override []) so hybrid mode does not start the containerised kit-manager-api on the host-native :8010'
+}
+if ($hostKitCompose -notmatch 'KIT_MANAGER_API_BASE:\s*\$\{HOST_KIT_MANAGER_API_BASE:-http://host\.docker\.internal:8010\}') {
+    throw 'compose.host-kit.yml must route the coordinator to the HOST-NATIVE kit-manager (host.docker.internal:8010); clearing depends_on without this would leave it with no kit-manager at all'
+}
+
 [scriptblock]::Create($deploy) | Out-Null
 [scriptblock]::Create($launcher) | Out-Null
 [scriptblock]::Create($stopAll) | Out-Null
