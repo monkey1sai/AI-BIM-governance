@@ -249,8 +249,18 @@ function Get-SelfReferentialBootstrapLedger {
             if ([string]$fp.mechanism_commit -notmatch '^[0-9a-f]{40}$') {
                 throw "self_referential_bootstrap: entry '$id' fixpoint.mechanism_commit must be a full 40-hex commit of the merged mechanism."
             }
-            $null = Assert-SelfReferentialStringList -Value $fp.evidence_refs `
+            $fpRefs = Assert-SelfReferentialStringList -Value $fp.evidence_refs `
                 -Context "entry '$id' fixpoint.evidence_refs"
+            # Same rule as bootstrap_evidence_refs: the mechanism cannot be its own
+            # evidence. Applying it only to the opening refs left the CLOSING side -
+            # the one that actually clears debt - able to cite the gate library or the
+            # ledger as the post-merge re-verification result (Codex: "Reject
+            # mechanism files as fixpoint evidence").
+            foreach ($fpRef in $fpRefs) {
+                if (@(Get-SelfReferentialMechanismPaths -ChangedPaths @([string]$fpRef)).Count -gt 0) {
+                    throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$fpRef' is a verification-mechanism file; the mechanism cannot be its own re-verification result."
+                }
+            }
         }
     }
     return $ledger
@@ -323,7 +333,11 @@ function Compare-SelfReferentialLedgerTransition {
                 throw "self_referential_bootstrap: new entry '$id' records pr=$($head.pr) but this is PR #$PrNumber; entries must bind to their originating PR."
             }
             $declaredPaths = @($head.verification_mechanism_paths | ForEach-Object { [string]$_ })
-            $undeclaredPaths = @($declaredPaths | Where-Object { $_ -notin $ChangedPaths })
+            # -notin is CASE-INSENSITIVE in PowerShell, but git paths are not: an
+            # entry declaring 'Scripts/Deploy.ps1' would have matched the real
+            # 'scripts/deploy.ps1' and bound the debt to a path that does not exist
+            # (Codex: "Compare declared mechanism paths case-sensitively").
+            $undeclaredPaths = @($declaredPaths | Where-Object { -not (@($ChangedPaths) -ccontains $_) })
             if ($undeclaredPaths.Count -gt 0) {
                 throw "self_referential_bootstrap: new entry '$id' claims mechanism paths this PR does not change: $($undeclaredPaths -join ', ')."
             }
@@ -334,11 +348,11 @@ function Compare-SelfReferentialLedgerTransition {
             # touching that unrelated path - leaving the change that actually
             # triggered the gate outside the ledger binding (Codex L1-correctness-3).
             if (@($MechanismPaths).Count -gt 0) {
-                $nonMechanism = @($declaredPaths | Where-Object { $_ -notin $MechanismPaths })
+                $nonMechanism = @($declaredPaths | Where-Object { -not (@($MechanismPaths) -ccontains $_) })
                 if ($nonMechanism.Count -gt 0) {
                     throw "self_referential_bootstrap: new entry '$id' declares paths that are not classified verification-mechanism paths: $($nonMechanism -join ', ')."
                 }
-                $uncovered = @($MechanismPaths | Where-Object { $_ -notin $declaredPaths })
+                $uncovered = @($MechanismPaths | Where-Object { -not (@($declaredPaths) -ccontains $_) })
                 if ($uncovered.Count -gt 0) {
                     throw "self_referential_bootstrap: new entry '$id' does not cover every mechanism path this PR changes; missing: $($uncovered -join ', ')."
                 }

@@ -252,6 +252,16 @@ try {
         bootstrap_evidence_refs = @('docs/evidence/slug/self-referential-bootstrap/README.md')
     })))
 
+    # --- the closing side obeys the same self-evidence rule (Codex round-7) --------
+    foreach ($selfRef in @('scripts/self-referential-bootstrap-ledger.json', 'scripts/lib/self-referential-bootstrap.ps1')) {
+        Assert-Throws -Context "fixpoint evidence ref '$selfRef'" -MessagePattern 'cannot be its own re-verification result' -Action {
+            Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{
+                status = 'closed'
+                fixpoint = @{ reverified_at = '2026-08-02T00:00:00Z'; mechanism_commit = ('a' * 40); evidence_refs = @($selfRef) }
+            })))
+        }
+    }
+
     # --- real repo ledger: parse-integrity ONLY, no emptiness assumption ------------
     $realLedger = Get-SelfReferentialBootstrapLedger -Path (Join-Path $repoRoot 'scripts/self-referential-bootstrap-ledger.json')
     Assert-True ($null -ne $realLedger) 'repo ledger must parse and validate'
@@ -471,6 +481,21 @@ try {
             'Bootstrap ledger entry' = 'remote-linux-deploy-target'
             'Bootstrap reason' = $goodReason
         } -ChangedPaths @('scripts/deploy.ps1', 'scripts/verify-all.ps1') -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $gitRoot
+    }
+
+    # Path comparison must be CASE-SENSITIVE. PowerShell's -in/-notin are not, and
+    # git paths are, so 'Scripts/Deploy.ps1' used to satisfy a declaration for the
+    # real 'scripts/deploy.ps1' - binding the debt to a path that does not exist
+    # (Codex round-7: "Compare declared mechanism paths case-sensitively").
+    $wrongCaseDecl = New-LedgerJson -Entries @((New-Entry -Override @{
+        verification_mechanism_paths = @('Scripts/Deploy.ps1')
+    }))
+    Assert-Throws -Context 'declared path differing only in case' -MessagePattern 'claims mechanism paths this PR does not change' -Action {
+        Invoke-BodyGate -Rows @{
+            'Self-referential bootstrap' = 'yes'
+            'Bootstrap ledger entry' = 'remote-linux-deploy-target'
+            'Bootstrap reason' = $goodReason
+        } -ChangedPaths @('scripts/deploy.ps1') -HeadJson $wrongCaseDecl -BaseJson $emptyJson -GateRepoRoot $gitRoot
     }
 
     # --- multi-entry ledger must bind each closure to its OWN entry -----------------
