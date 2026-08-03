@@ -418,6 +418,14 @@ function Compare-SelfReferentialLedgerTransition {
             if ([string]::IsNullOrWhiteSpace($evidenceIntroCommit)) {
                 throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$ref' has no commit history reachable from the PR head; cannot bind it to post-merge re-verification."
             }
+            # STRICT descendant. `--is-ancestor X X` succeeds, so an evidence file
+            # committed IN the mechanism commit itself passed this check - letting
+            # the original bootstrap artefact stand in for the post-merge rerun it
+            # is supposed to prove happened afterwards (Codex: "Require fixpoint
+            # evidence to postdate the mechanism commit").
+            if ($evidenceIntroCommit -eq $commit) {
+                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$ref' was committed by mechanism_commit $commit itself; the post-merge re-verification must produce NEW evidence, not cite the bootstrap artefact."
+            }
             & git -C $RepoRoot merge-base --is-ancestor $commit $evidenceIntroCommit 2>$null
             if ($LASTEXITCODE -ne 0) {
                 throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$ref' predates mechanism_commit $commit; it cannot be the post-merge re-verification result."

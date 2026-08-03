@@ -171,7 +171,11 @@ try {
     $unrelatedAncestor = & $commit 'unrelated ancestor'
     # c2: the real mechanism merge - modifies scripts/deploy.ps1 (a declared path)
     & $write 'scripts/deploy.ps1' '# mechanism'
-    & git -C $gitRoot add scripts/deploy.ps1 | Out-Null
+    # ...carrying an evidence file in the SAME commit, so the strict-descendant
+    # rule below has a case to reject (Codex: the bootstrap artefact must not be
+    # able to stand in for the post-merge rerun).
+    & $write 'docs/evidence/remote-linux-deploy/fixpoint/born-with-mechanism.md' 'committed by the mechanism commit itself'
+    & git -C $gitRoot add scripts/deploy.ps1 docs | Out-Null
     $fixpointCommit = & $commit 'mechanism merged (touches deploy.ps1)'
     # c3 (base): post-merge evidence introduced AFTER the mechanism commit
     & $write 'docs/evidence/remote-linux-deploy/self-referential-bootstrap/summary.md' 'evidence'
@@ -401,6 +405,13 @@ try {
     # fixpoint evidence predates the mechanism merge (round 4)
     Assert-Throws -Context 'fixpoint evidence predating the mechanism merge' -MessagePattern 'predates mechanism_commit' -Action {
         Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/old/self-referential-bootstrap/old.md') }
+    }
+    # evidence born IN the mechanism commit is not post-merge re-verification:
+    # `merge-base --is-ancestor X X` succeeds, so equality had to be rejected
+    # explicitly (Codex: "Require fixpoint evidence to postdate the mechanism
+    # commit").
+    Assert-Throws -Context 'fixpoint evidence committed by the mechanism commit itself' -MessagePattern 'committed by mechanism_commit' -Action {
+        Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/born-with-mechanism.md') }
     }
     # legal closure passes: mechanism_commit touched deploy.ps1, evidence is post-merge
     Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') }

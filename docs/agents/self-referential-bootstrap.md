@@ -1,3 +1,7 @@
+> 文件性質：**contract**。本檔是機器強制的閘門契約，實作為
+> `scripts/lib/self-referential-bootstrap.ps1` ＋ `scripts/self-referential-bootstrap-ledger.json`，
+> 於 PR 時由 `scripts/tests/check-pr-body-evidence.ps1` 裁決。不是 working note，也不是完成證據。
+>
 > Loaded lazily by AGENTS.md / CLAUDE.md。Source-of-truth: AGENTS.md。
 >
 > 何時讀本檔：PR 的變更對象包含驗證機制本身（deploy path / evidence harness / gate script），或需要關閉 bootstrap ledger 欠帳時。
