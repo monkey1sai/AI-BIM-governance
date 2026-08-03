@@ -1512,7 +1512,7 @@ export default class App extends React.Component<AppProps, AppState> {
         const timeoutMs = Math.max(reviewEnv.streamStartTimeoutMs, 45000);
         this.stageLoadTimeoutId = window.setTimeout(() => {
             this.stageLoadTimeoutId = null;
-            if (!this._isCurrentStageAttempt(attemptGeneration, "pending") || !this.pendingStageUrl) return;
+            if (!this._isCurrentStageAttemptAwaitingProof(attemptGeneration) || !this.pendingStageUrl) return;
             if (this._completeStageLoadFromVisibleStream()) return;
             this._claimStageAttemptTimeout(attemptGeneration);
             this._failStageLoad(
@@ -1745,6 +1745,10 @@ export default class App extends React.Component<AppProps, AppState> {
         this._clearLoadingStateRetry();
         this._clearStageLoadTimeout();
         this.loadingStatePollCount = 0;
+        // A visible frame is only provisional evidence. Keep probing and retain a
+        // bounded deadline so an uncorrelated stream cannot wait forever.
+        this._scheduleLoadingStateQuery(1000);
+        this._scheduleStageLoadTimeout(attemptGeneration);
         this.setState((state) => ({
             showStream: true,
             loadingText: "模型畫面可見，stage authority 尚未證明",

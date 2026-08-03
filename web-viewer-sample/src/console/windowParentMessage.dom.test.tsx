@@ -2528,6 +2528,47 @@ describe("Important #4（修訂）：visible-stream 完成路徑不得把 pendin
     ]);
   });
 
+  it("visible fallback keeps a bounded proof deadline and terminalizes when no proof arrives", () => {
+    vi.useFakeTimers();
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const stageUrl = "stage://visible-without-proof.usdc";
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _scheduleStageLoadTimeout: (generation: number) => void;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string; terminalReason?: string } | null;
+    };
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageUrl,
+      loadedStageUrl: null,
+    };
+    const generation = privateApp._beginStageAttempt(stageUrl);
+    internals(app).pendingStageUrl = stageUrl;
+    vi.spyOn(internals(app), "_hasRemoteVideoFrame").mockReturnValue(true);
+
+    privateApp._scheduleStageLoadTimeout(generation);
+    vi.advanceTimersByTime(45_000);
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      generation,
+      status: "provisional",
+      targetUrl: stageUrl,
+    }));
+    expect(internals(app).pendingStageUrl).toBe(stageUrl);
+
+    vi.advanceTimersByTime(45_000);
+
+    expect(privateApp.activeStageAttempt).toEqual({
+      generation,
+      status: "terminal",
+      targetUrl: stageUrl,
+      terminalReason: "stage-load-timeout",
+    });
+    expect(internals(app).pendingStageUrl).toBeNull();
+    expect(internals(app).state.loadingText).toBe("模型載入逾時");
+  });
+
   it("an exact-target idle stays unproven until authenticated revision confirmation promotes it", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
