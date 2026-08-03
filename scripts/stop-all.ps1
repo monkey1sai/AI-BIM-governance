@@ -11,6 +11,27 @@ param(
 # 對每個 PID 做 tree-kill：taskkill /F /T，連子行程 (例如 Kit) 一起終結。
 
 Set-StrictMode -Version Latest
+
+# Per-OS listener lookup. Guarded so this script stays runnable standalone.
+if (-not (Get-Command -Name 'Get-PlatformTcpListenerPid' -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'lib/platform/platform-adapter.ps1')
+}
+
+function Get-ExpectedPortListeners {
+    # Windows-only Get-NetTCPConnection made this script a FALSE SUCCESS on Linux:
+    # the sweep found nothing, "全部服務已停止" printed, and the final verification
+    # used the same call so it could never notice the leftovers. A surviving Kit
+    # then held :49100 and the next deploy's Kit died on bind.
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][int[]] $Ports)
+
+    $found = @()
+    foreach ($port in $Ports) {
+        $owner = Get-PlatformTcpListenerPid -Port ([int]$port)
+        if ($null -eq $owner) { continue }
+        $found += [pscustomobject]@{ LocalPort = [int]$port; OwningProcess = [int]$owner }
+    }
+    return @($found)
+}
 $ErrorActionPreference = "Continue"
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -158,8 +179,7 @@ if (-not (Test-Path $RunDir)) {
     }
 }
 
-$listening = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
-    Where-Object { $ExpectedPorts -contains $_.LocalPort }
+$listening = @(Get-ExpectedPortListeners -Ports $ExpectedPorts)
 
 foreach ($conn in $listening) {
     $procId = [int] $conn.OwningProcess
@@ -180,8 +200,7 @@ foreach ($conn in $listening) {
 }
 
 Start-Sleep -Milliseconds 500
-$remaining = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
-    Where-Object { $ExpectedPorts -contains $_.LocalPort }
+$remaining = @(Get-ExpectedPortListeners -Ports $ExpectedPorts)
 
 $workspaceRemaining = @()
 foreach ($conn in $remaining) {
