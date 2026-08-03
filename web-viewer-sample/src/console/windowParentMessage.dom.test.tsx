@@ -516,6 +516,7 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
     const privateApp = internals(app) as unknown as {
       _beginStageAttempt: (url: string) => number;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      runtimeCommandTerminalClaims: Map<string, { eventType: string; outcome: string }>;
       runtimeCommandContexts: Map<string, {
         eventType: string;
         bindingRevisionId: string;
@@ -531,6 +532,11 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
       expectedStageUrl: stageUrl,
       loadedStageUrl: null,
       stageLoadStatus: "pending",
+      runtimeCommandLifecycles: [{
+        request_id: "req_revision_guard",
+        event_type: "loadArtifactGroupRequest",
+        phases: ["pending"],
+      }],
     };
     privateApp.runtimeCommandContexts.set("req_revision_guard", {
       eventType: "loadArtifactGroupRequest",
@@ -552,6 +558,18 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
     expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ generation, status: "terminal" }));
     expect(internals(app).state.loadedStageUrl).toBeNull();
     expect(internals(app).state.loadingText).toBe("Stage authorization mismatch");
+    expect(privateApp.runtimeCommandContexts.has("req_revision_guard")).toBe(false);
+    expect(privateApp.runtimeCommandTerminalClaims.get("req_revision_guard")).toEqual({
+      eventType: "loadArtifactGroupRequest",
+      outcome: "error",
+    });
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        request_id: "req_revision_guard",
+        phases: ["pending", "terminal"],
+        outcome: "error",
+      }),
+    ]));
   });
 
   it.each([
@@ -2612,6 +2630,125 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
     }));
 
     expect(preauthorize).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a stale binding preauthorization resolution after a newer apply owns the stage", async () => {
+    vi.useFakeTimers();
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _applyBinding: AppInternals["_applyBinding"];
+      _preauthorizeStageBinding: () => Promise<Record<string, unknown>>;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+    };
+    let resolveA!: (value: Record<string, unknown>) => void;
+    let resolveB!: (value: Record<string, unknown>) => void;
+    const authorizationA = new Promise<Record<string, unknown>>((resolve) => { resolveA = resolve; });
+    const authorizationB = new Promise<Record<string, unknown>>((resolve) => { resolveB = resolve; });
+    const preauthorize = vi.spyOn(privateApp, "_preauthorizeStageBinding")
+      .mockImplementationOnce(() => authorizationA)
+      .mockImplementationOnce(() => authorizationB);
+    const send = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+    const selection = (artifactId: string, usdcUrl: string) => [{
+      artifact_id: artifactId,
+      model_version_id: `version_${artifactId}`,
+      usdc_url: usdcUrl,
+      role: "primary" as const,
+      load_order: 0,
+      ready: true,
+    }];
+    const transaction = (artifactId: string, usdcUrl: string) => ({
+      status: "pending",
+      session_id: "review_session_x",
+      stage_binding_authorization_id: `stage_auth_${artifactId}`,
+      binding_revision_id: `rev_${artifactId}`,
+      pending_expires_at: "2099-01-01T00:00:00Z",
+      stage_composition: {
+        primary: { artifact_id: artifactId, role: "primary", load_order: 0, usdc_url: usdcUrl },
+        secondary_layers: [],
+      },
+    });
+
+    privateApp._applyBinding(selection("artifact_a", "stage://a.usdc"), "rev_ui_a");
+    privateApp._applyBinding(selection("artifact_b", "stage://b.usdc"), "rev_ui_b");
+    resolveB(transaction("artifact_b", "stage://b.usdc"));
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      status: "pending",
+      targetUrl: "stage://b.usdc",
+    }));
+    expect(send.mock.calls.filter(([message]) => (message as { event_type?: string }).event_type === "loadArtifactGroupRequest"))
+      .toHaveLength(1);
+
+    resolveA(transaction("artifact_a", "stage://a.usdc"));
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    expect(preauthorize).toHaveBeenCalledTimes(2);
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      status: "pending",
+      targetUrl: "stage://b.usdc",
+    }));
+    expect(send.mock.calls.filter(([message]) => (message as { event_type?: string }).event_type === "loadArtifactGroupRequest"))
+      .toHaveLength(1);
+  });
+
+  it("ignores a stale binding preauthorization rejection after a newer apply owns the stage", async () => {
+    vi.useFakeTimers();
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _applyBinding: AppInternals["_applyBinding"];
+      _preauthorizeStageBinding: () => Promise<Record<string, unknown>>;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+    };
+    let rejectA!: (reason?: unknown) => void;
+    let resolveB!: (value: Record<string, unknown>) => void;
+    const authorizationA = new Promise<Record<string, unknown>>((_resolve, reject) => { rejectA = reject; });
+    const authorizationB = new Promise<Record<string, unknown>>((resolve) => { resolveB = resolve; });
+    const preauthorize = vi.spyOn(privateApp, "_preauthorizeStageBinding")
+      .mockImplementationOnce(() => authorizationA)
+      .mockImplementationOnce(() => authorizationB);
+    const send = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+    const selection = (artifactId: string, usdcUrl: string) => [{
+      artifact_id: artifactId,
+      model_version_id: `version_${artifactId}`,
+      usdc_url: usdcUrl,
+      role: "primary" as const,
+      load_order: 0,
+      ready: true,
+    }];
+    const transactionB = {
+      status: "pending",
+      session_id: "review_session_x",
+      stage_binding_authorization_id: "stage_auth_b",
+      binding_revision_id: "rev_b",
+      pending_expires_at: "2099-01-01T00:00:00Z",
+      stage_composition: {
+        primary: { artifact_id: "artifact_b", role: "primary", load_order: 0, usdc_url: "stage://b.usdc" },
+        secondary_layers: [],
+      },
+    };
+
+    privateApp._applyBinding(selection("artifact_a", "stage://a.usdc"), "rev_ui_a");
+    privateApp._applyBinding(selection("artifact_b", "stage://b.usdc"), "rev_ui_b");
+    resolveB(transactionB);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    rejectA(new Error("stale authorization failed"));
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    expect(preauthorize).toHaveBeenCalledTimes(2);
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      status: "pending",
+      targetUrl: "stage://b.usdc",
+    }));
+    expect(internals(app).state.govBindingApplyState).toEqual({ status: "applying" });
+    expect(send.mock.calls.filter(([message]) => (message as { event_type?: string }).event_type === "loadArtifactGroupRequest"))
+      .toHaveLength(1);
   });
 
   it("heartbeats a fresh standalone lease and clears it before any expired-token mutator", async () => {

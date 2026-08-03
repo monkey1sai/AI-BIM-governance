@@ -725,6 +725,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private pendingStageUrl: string | null = null;
     private stageAttemptGeneration = 0;
     private activeStageAttempt: StageAttempt | null = null;
+    private bindingApplyGeneration = 0;
     private stageLoadFailureActive = false;
     // VG-01 M1：first_frame 只送一次的閂（防失敗/斷線/開檔路徑誤觸→偽證據）。
     private _firstFramePosted = false;
@@ -2603,6 +2604,7 @@ export default class App extends React.Component<AppProps, AppState> {
     // CH-F：交易式套用 Stage / Artifact Binding。spectator / 未就緒不送 mutating 指令（前端 gate 僅 UX）。
     // Production 走既有 Kit loadArtifactGroupRequest + stage_composition handler；harness 仍保留 fakeKit compose ack。
     private _applyBinding(selection: StageArtifactBinding[], revisionId: string): void {
+        const applyGeneration = ++this.bindingApplyGeneration;
         if (isSpectatorStreamMode()) {
             this._appendReviewEvent(`spectator（view-only）：略過 binding 套用（${revisionId}）`);
             return;
@@ -2644,6 +2646,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     load_order: artifact.load_order,
                 })),
             );
+            if (applyGeneration !== this.bindingApplyGeneration) return;
             this._appendReviewEvent(`coordinator 已建立 pending binding：${transaction.binding_revision_id}`);
             const targetUrl = transaction.stage_composition.primary.usdc_url;
             const attemptGeneration = this._beginStageAttempt(targetUrl);
@@ -2675,6 +2678,7 @@ export default class App extends React.Component<AppProps, AppState> {
             this._scheduleLoadingStateQuery(1500);
         };
         void applyThroughCoordinator().catch(() => {
+            if (applyGeneration !== this.bindingApplyGeneration) return;
             this.setState({
                 govBindingApplyState: {
                     status: "failed",
@@ -3820,15 +3824,18 @@ export default class App extends React.Component<AppProps, AppState> {
         if (event.event_type === "openedStageResult") {
             let correlation = this._correlateRuntimeCommandEvent("openedStageResult", payload);
             if (correlation.disposition !== "matched") {
-                if (correlation.mismatchReason === "binding_revision" && correlation.context?.stageAttemptGeneration) {
-                    this._failStageLoad(
-                        t(stageLoadFailurePresentation.revisionMismatch.zh, stageLoadFailurePresentation.revisionMismatch.en),
-                        [
-                            `${t(stageLoadFailurePresentation.expectedRevision.zh, stageLoadFailurePresentation.expectedRevision.en)}${t("：", ": ")}${correlation.context.bindingRevisionId}`,
-                            `${t(stageLoadFailurePresentation.receivedRevision.zh, stageLoadFailurePresentation.receivedRevision.en)}${t("：", ": ")}${getPayloadString(payload, "binding_revision_id") || "missing"}`,
-                        ].join("\n"),
-                        correlation.context.stageAttemptGeneration,
-                    );
+                if (correlation.mismatchReason === "binding_revision" && correlation.context) {
+                    this._claimRuntimeCommandTerminal(correlation.requestId, correlation.context.eventType, "error");
+                    if (correlation.context.stageAttemptGeneration) {
+                        this._failStageLoad(
+                            t(stageLoadFailurePresentation.revisionMismatch.zh, stageLoadFailurePresentation.revisionMismatch.en),
+                            [
+                                `${t(stageLoadFailurePresentation.expectedRevision.zh, stageLoadFailurePresentation.expectedRevision.en)}${t("：", ": ")}${correlation.context.bindingRevisionId}`,
+                                `${t(stageLoadFailurePresentation.receivedRevision.zh, stageLoadFailurePresentation.receivedRevision.en)}${t("：", ": ")}${getPayloadString(payload, "binding_revision_id") || "missing"}`,
+                            ].join("\n"),
+                            correlation.context.stageAttemptGeneration,
+                        );
+                    }
                 }
                 return;
             }
