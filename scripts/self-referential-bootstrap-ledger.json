@@ -11,6 +11,7 @@
         ".github/workflows/agent-governance.yml",
         ".github/workflows/pr-review-agent.yml",
         "scripts/dev/check-pr-local-preflight.ps1",
+        "scripts/lib/detect-base-gate-capability.sh",
         "scripts/lib/self-referential-bootstrap.ps1",
         "scripts/self-referential-bootstrap-ledger.json",
         "scripts/tests/check-pr-body-evidence.ps1"
