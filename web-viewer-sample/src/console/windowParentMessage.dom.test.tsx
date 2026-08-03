@@ -1415,6 +1415,89 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ event_type: "openStageRequest" }));
   });
 
+  it("does not let an older binding preauthorization overwrite a newer manual open", async () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const bindingStageUrl = "stage://binding-pending.usdc";
+    const manualStageUrl = "stage://manual-open.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: null,
+      selectedUSDAsset: { name: "manual", url: manualStageUrl },
+      latestStreamConfig: {
+        ...(internals(app).state.latestStreamConfig as Record<string, unknown>),
+        stage_composition: {
+          primary: { artifact_id: "artifact_manual", url: manualStageUrl, load_order: 0 },
+          secondary_layers: [],
+        },
+      },
+    };
+    let resolveBinding: ((value: unknown) => void) | undefined;
+    let resolveManualOpen: ((value: unknown) => void) | undefined;
+    const privateApp = internals(app) as unknown as {
+      _applyBinding: AppInternals["_applyBinding"];
+      _openSelectedAsset: AppInternals["_openSelectedAsset"];
+      _preauthorizeStageBinding: () => Promise<unknown>;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+    };
+    vi.spyOn(privateApp, "_preauthorizeStageBinding")
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveBinding = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveManualOpen = resolve; }));
+    const send = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => undefined);
+    const bindingTransaction = {
+      status: "pending",
+      session_id: "review_session_x",
+      stage_binding_authorization_id: "authorization_binding",
+      binding_revision_id: "revision_binding",
+      pending_expires_at: "2099-01-01T00:00:00Z",
+      stage_composition: {
+        primary: { artifact_id: "artifact_binding", role: "primary", load_order: 0, usdc_url: bindingStageUrl },
+        secondary_layers: [],
+      },
+    };
+    const manualOpenTransaction = {
+      status: "pending",
+      session_id: "review_session_x",
+      stage_binding_authorization_id: "authorization_manual",
+      binding_revision_id: "revision_manual",
+      pending_expires_at: "2099-01-01T00:00:00Z",
+      stage_composition: {
+        primary: { artifact_id: "artifact_manual", role: "primary", load_order: 0, usdc_url: manualStageUrl },
+        secondary_layers: [],
+      },
+    };
+
+    privateApp._applyBinding([{
+      artifact_id: "artifact_binding",
+      model_version_id: "version_binding",
+      usdc_url: bindingStageUrl,
+      role: "primary",
+      load_order: 0,
+      ready: true,
+    }], "rev_binding");
+    privateApp._openSelectedAsset();
+    expect(resolveBinding).toBeTypeOf("function");
+    expect(resolveManualOpen).toBeTypeOf("function");
+
+    resolveManualOpen?.(manualOpenTransaction);
+    await flushMicrotasks();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ event_type: "openStageRequest" }));
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      status: "pending",
+      targetUrl: manualStageUrl,
+    }));
+
+    resolveBinding?.(bindingTransaction);
+    await flushMicrotasks();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ event_type: "loadArtifactGroupRequest" }));
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      status: "pending",
+      targetUrl: manualStageUrl,
+    }));
+  });
+
   it("reconnect resolves an old stalled harness request without replaying it into the new generation", async () => {
     vi.useFakeTimers();
     const firstStart = vi.fn();

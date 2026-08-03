@@ -724,6 +724,11 @@ export default class App extends React.Component<AppProps, AppState> {
     private loadingStatePollCount = 0;
     private pendingStageUrl: string | null = null;
     private stageAttemptGeneration = 0;
+    // Tracks user/runtime intent while coordinator preauthorization is pending.
+    // It is deliberately separate from request correlation generation: a new
+    // open/reconnect must revoke an older binding transaction before it can
+    // create a new stage attempt.
+    private stageIntentGeneration = 0;
     private activeStageAttempt: StageAttempt | null = null;
     private bindingApplyGeneration = 0;
     private stageLoadFailureActive = false;
@@ -1599,6 +1604,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _beginStageAttempt(targetUrl: string): number {
+        this.stageIntentGeneration += 1;
         this._supersedeActiveStageAttempt();
         const generation = ++this.stageAttemptGeneration;
         this._firstFramePosted = false;
@@ -1649,6 +1655,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _invalidateStageAttempt(): void {
+        this.stageIntentGeneration += 1;
         const attemptGeneration = this.activeStageAttempt?.generation;
         if (!attemptGeneration) {
             this.stageLoadFailureActive = false;
@@ -2646,6 +2653,7 @@ export default class App extends React.Component<AppProps, AppState> {
 
         // A newer user selection revokes completion authority from every prior
         // stage attempt before its coordinator preauthorization resolves.
+        const applyStageIntentGeneration = ++this.stageIntentGeneration;
         this._supersedeActiveStageAttempt();
         const applyThroughCoordinator = async () => {
             const transaction = await this._preauthorizeStageBinding(
@@ -2655,7 +2663,10 @@ export default class App extends React.Component<AppProps, AppState> {
                     load_order: artifact.load_order,
                 })),
             );
-            if (applyGeneration !== this.bindingApplyGeneration) return;
+            if (
+                applyGeneration !== this.bindingApplyGeneration
+                || applyStageIntentGeneration !== this.stageIntentGeneration
+            ) return;
             this._appendReviewEvent(`coordinator 已建立 pending binding：${transaction.binding_revision_id}`);
             const targetUrl = transaction.stage_composition.primary.usdc_url;
             const attemptGeneration = this._beginStageAttempt(targetUrl);
@@ -2687,7 +2698,10 @@ export default class App extends React.Component<AppProps, AppState> {
             this._scheduleLoadingStateQuery(1500);
         };
         void applyThroughCoordinator().catch(() => {
-            if (applyGeneration !== this.bindingApplyGeneration) return;
+            if (
+                applyGeneration !== this.bindingApplyGeneration
+                || applyStageIntentGeneration !== this.stageIntentGeneration
+            ) return;
             this.setState({
                 govBindingApplyState: {
                     status: "failed",
