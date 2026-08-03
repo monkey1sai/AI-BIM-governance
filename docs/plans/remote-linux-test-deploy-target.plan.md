@@ -253,9 +253,9 @@ PR-B 改的正是**驗證機制本身**（deploy path）。§6 明文禁止測�
 
 ### 6.7 PR-B 任務清單
 
-- [ ] B1 — deploy target registry schema ＋ 兩個目標定義（容器化留空位不實作）
-- [ ] B2 — `scripts/lib/platform/` adapter：process tree、listener owner、路徑解析、Kit 啟動參數（含 `--no-window`）
-- [ ] B3 — ownership 語意跨平台等價性論證 ＋ 測試（`CreationDate` ↔ `/proc/<pid>/stat` starttime）
+- [x] B1 — deploy target registry schema ＋ 兩個目標定義（`scripts/deploy-target-registry.json`，schema `deploy-target-registry/v1`；`canonical_target=remote-linux-181`；`reserved_kinds=[linux_container]` 留空位不實作）。`local-windows.build_command` 保留 `.\repo.bat` 形式：既有測試斷言此形，裸檔名有 PATHEXT 失敗史，因此改 registry 而非改測試
+- [x] B2 — `scripts/lib/platform/platform-adapter.ps1`：單一程式碼庫以 `$IsWindows`/`$IsLinux` 分派 process tree、listener owner、路徑解析、Kit 啟動參數（`--no-window` 由 registry 的 `extra_launch_args` 提供）。另含 `Resolve-PlatformSystemPython`——遠端只有 `python3`，裸 `& python` 在首次真實 Linux 部署靜默 no-op，故此函式必須只回傳 shell 真的叫得動的名稱
+- [x] B3 — ownership 語意跨平台等價性論證 ＋ 測試：論證見 §5「ownership 語意」段（Windows `Win32_Process.CreationDate`＋PID ↔ Linux `/proc/<pid>/stat` field 22 starttime＋`/proc/<pid>/exe`）；可執行證據為 `scripts/tests/test-platform-adapter.ps1`（23 斷言，同一套斷言兩平台皆須通過）。Windows 側已實跑通過；Linux 側待於 192.168.20.181 實跑後回填（未跑完前不得視為等價性已證）
 - [x] B4 — 收斂 4 檔硬編常數到 registry（deploy.ps1、rebuild lib（含第三個常數 TestDeployEdgeSiteId）、run-runtime evidence harness、find-deploy-blockers）；test harness 改注入 sandbox registry 資料而非文字重寫 deploy.ps1。測試 fixture 的 D: 路徑為任意示例值、非漂移源，判定不收斂
 - [x] B5 — clone 流程含 exec bit 修復（F-2）：New-RemoteRebuildScript（clone-if-missing、契約 refspec fresh fetch、reset+clean 保留 env、restore-exec-bits）
 - [x] B6 — per-target env ＋ SSH 推送（D-14）＋ effective env 快照（D-15）：base 推送＋遠端 override（runtime_data_root/env.local，git clean 清不到）＋單一 merge 實作（遠端經 pwsh 呼叫同一 lib 函式）＋ secret 遮罩快照（sha256-8 指紋，值不落地）；operator 入口 -TargetId 預設 canonical。live SSH 待 B8 憑證佈建

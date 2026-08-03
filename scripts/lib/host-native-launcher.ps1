@@ -5,6 +5,43 @@
 
 Set-StrictMode -Version Latest
 
+# Per-OS primitives (venv layout, system interpreter, platform name). Guarded so
+# this lib stays dot-sourceable standalone in tests.
+if (-not (Get-Command -Name 'Resolve-PlatformVenvPython' -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'platform/platform-adapter.ps1')
+}
+
+function Resolve-HostNativePython {
+    # Single interpreter-selection rule for every host-native service. The three
+    # launchers each had their own copy hardcoding the Windows venv layout
+    # (.venv\Scripts\python.exe), which never matches on Linux (.venv/bin/python),
+    # so they all fell through to the bare name 'python' - which the Linux target
+    # does not have. Start-Process then produced no process and the failure only
+    # surfaced as a health-check timeout 30 seconds later.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $ServiceName
+    )
+    $venvPython = Resolve-PlatformVenvPython -VenvRoot (Join-Path $RepoRoot '.venv')
+    if ((Get-PlatformName) -eq 'windows') {
+        # Windows keeps preferring the system 3.12 install: the host-native Kit
+        # toolchain is built against it.
+        $python312 = 'C:\Program Files\Python312\python.exe'
+        if (Test-Path -LiteralPath $python312 -PathType Leaf) { return $python312 }
+    }
+    if (Test-Path -LiteralPath $venvPython -PathType Leaf) { return $venvPython }
+    $systemPython = Resolve-PlatformSystemPython
+    if ($systemPython) { return $systemPython }
+    throw "${ServiceName}: no usable Python interpreter (looked for the repo venv at $venvPython and a system python on PATH)."
+}
+
+function Get-HostNativePowerShellExe {
+    # powershell.exe is Windows-only; the cross-platform executable is pwsh.
+    if ((Get-PlatformName) -eq 'windows') { return 'powershell.exe' }
+    return 'pwsh'
+}
+
 function Test-AlreadyRunning {
     [CmdletBinding()]
     param(
@@ -56,12 +93,13 @@ function Stop-HostNativeService {
     param(
         [Parameter(Mandatory = $true)][string] $Name,
         [Parameter(Mandatory = $true)][string] $RunDir,
+        # Win32_Process is Windows-only: on Linux the CIM call threw, the catch
+        # returned an empty list, and the tree walk silently degraded to killing
+        # only the wrapper - leaving uvicorn/Kit children holding their ports.
+        # The adapter reads /proc there and CIM here.
         [scriptblock] $ChildPidLookup = {
             param($parentId)
-            try {
-                Get-CimInstance Win32_Process -Filter "ParentProcessId=$parentId" -ErrorAction Stop |
-                    ForEach-Object { [int]$_.ProcessId }
-            } catch { @() }
+            @(Get-PlatformChildProcessIds -ParentProcessId ([int]$parentId))
         },
         [scriptblock] $StopProcessFn = {
             param($procId)
@@ -112,14 +150,25 @@ function Start-HostNativeService {
     $errFile = "$logFile.err"
     $pidFile = Join-Path $RunDir "$Name.pid"
 
-    $proc = Start-Process `
-        -FilePath $FilePath `
-        -ArgumentList $ArgumentList `
-        -WorkingDirectory $WorkingDirectory `
-        -WindowStyle $WindowStyle `
-        -RedirectStandardOutput $logFile `
-        -RedirectStandardError $errFile `
-        -PassThru
+    $startArgs = @{
+        FilePath               = $FilePath
+        ArgumentList           = $ArgumentList
+        WorkingDirectory       = $WorkingDirectory
+        RedirectStandardOutput = $logFile
+        RedirectStandardError  = $errFile
+        PassThru               = $true
+    }
+    # -WindowStyle is a Windows-only concept; PowerShell rejects it on Linux/macOS.
+    if ((Get-PlatformName) -eq 'windows') { $startArgs.WindowStyle = $WindowStyle }
+
+    $proc = Start-Process @startArgs
+    # Fail closed on a start that produced no process. Start-Process can come back
+    # empty (bad interpreter name, missing working directory) and the old code then
+    # returned an object whose Pid was silently absent - the caller logged
+    # "PID=" as [ok] and only the health probe noticed, 30 seconds later.
+    if (-not $proc -or -not $proc.Id) {
+        throw "$Name did not start: '$FilePath' produced no process (workdir=$WorkingDirectory, stderr=$errFile)."
+    }
     $proc.Id | Set-Content -LiteralPath $pidFile -Encoding ascii
     return [pscustomobject]@{ Name = $Name; Pid = $proc.Id; LogPath = $logFile; ErrPath = $errFile }
 }
@@ -240,12 +289,11 @@ function Start-HostNativeConversion {
     $env:PYTHONNOUSERSITE = '1'
 
     $launcher = Join-Path $RepoRoot 'bim-streaming-server\scripts\start-host-native-conversion-service.ps1'
-    $venvPython = Join-Path $RepoRoot '.venv\Scripts\python.exe'
-    $pythonExe = if (Test-Path -LiteralPath $venvPython -PathType Leaf) { $venvPython } else { 'python' }
+    $pythonExe = Resolve-HostNativePython -RepoRoot $RepoRoot -ServiceName 'bim-streaming-conversion-service'
     return (Start-HostNativeService `
         -Name 'bim-streaming-conversion-service' `
         -WorkingDirectory (Join-Path $RepoRoot 'bim-streaming-server') `
-        -FilePath 'powershell.exe' `
+        -FilePath (Get-HostNativePowerShellExe) `
         -ArgumentList @('-ExecutionPolicy','Bypass','-NoProfile','-File',$launcher,'-PythonExe',$pythonExe) `
         -RunDir $runDir)
 }
@@ -258,21 +306,19 @@ function Start-HostNativeGovernance {
         [string] $DbPath = '',
         [string] $FileLibraryRoot = ''
     )
+    # NOTE: 'scripts\.run' is a literal, and on Linux the backslash is part of the
+    # directory NAME rather than a separator. It is left as-is deliberately: every
+    # other site that writes or reads these PID files (deploy.ps1, preflight-ports,
+    # the other launchers) uses the same literal, so they agree. Normalising this one
+    # site would split the PID directory in two on Linux. Fixing it means changing
+    # all of them together - tracked as a follow-up, not smuggled in here.
     $runDir = Join-Path $RepoRoot 'scripts\.run'
     if (-not (Test-Path -LiteralPath $runDir)) {
         New-Item -ItemType Directory -Path $runDir -Force | Out-Null
     }
 
     $serviceRoot = Join-Path $RepoRoot 'governance-service'
-    $python312 = 'C:\Program Files\Python312\python.exe'
-    $repoVenvPython = Join-Path $RepoRoot '.venv\Scripts\python.exe'
-    $pythonExe = if (Test-Path -LiteralPath $python312 -PathType Leaf) {
-        $python312
-    } elseif (Test-Path -LiteralPath $repoVenvPython -PathType Leaf) {
-        $repoVenvPython
-    } else {
-        'python'
-    }
+    $pythonExe = Resolve-HostNativePython -RepoRoot $RepoRoot -ServiceName 'governance-service'
 
     Remove-Item Env:PYTHONNOUSERSITE -ErrorAction SilentlyContinue
     & $pythonExe -c "import ifcopenshell, fastapi, uvicorn" *> $null
@@ -311,15 +357,7 @@ function Start-HostNativeKitManager {
     }
 
     $serviceRoot = Join-Path $RepoRoot 'services\kit-manager-api'
-    $python312 = 'C:\Program Files\Python312\python.exe'
-    $repoVenvPython = Join-Path $RepoRoot '.venv\Scripts\python.exe'
-    $pythonExe = if (Test-Path -LiteralPath $python312 -PathType Leaf) {
-        $python312
-    } elseif (Test-Path -LiteralPath $repoVenvPython -PathType Leaf) {
-        $repoVenvPython
-    } else {
-        'python'
-    }
+    $pythonExe = Resolve-HostNativePython -RepoRoot $RepoRoot -ServiceName 'kit-manager-api'
 
     Remove-Item Env:PYTHONNOUSERSITE -ErrorAction SilentlyContinue
     & $pythonExe -c "import fastapi, uvicorn" *> $null
