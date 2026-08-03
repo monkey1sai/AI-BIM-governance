@@ -8,7 +8,7 @@ param(
 )
 
 # 一鍵關閉 Phase B current demo services（與 start-all.ps1 對應）。
-# 對每個 PID 做 tree-kill：taskkill /F /T，連子行程 (例如 Kit) 一起終結。
+# 對每個 PID 做 tree-kill（跨平台：adapter 取子行程後由深至淺終結），連子行程 (例如 Kit) 一起終結。
 
 Set-StrictMode -Version Latest
 
@@ -134,13 +134,35 @@ function Stop-ProcessTree {
 
     try {
         $null = Get-Process -Id $ProcId -ErrorAction Stop
-        Write-Host "[stop ] $Name (PID=$ProcId, source=$Source) ..." -ForegroundColor Cyan
-        & taskkill.exe /F /T /PID $ProcId 2>&1 | Out-Null
-        $StoppedPids[$ProcId] = $true
     } catch {
         Write-Host "[skip ] $Name (PID=$ProcId) 已不存在" -ForegroundColor DarkGray
         $StoppedPids[$ProcId] = $true
+        return
     }
+
+    Write-Host "[stop ] $Name (PID=$ProcId, source=$Source) ..." -ForegroundColor Cyan
+    # taskkill.exe is Windows-only. Off Windows the call threw CommandNotFound,
+    # the surrounding catch printed "已不存在" and marked the PID stopped - so a
+    # live process was recorded as already gone. That is the third instance of the
+    # same shape in this one script, and the reason a surviving Kit kept :49100
+    # while stop-all reported success.
+    #
+    # Portable equivalent: walk the tree with the adapter and kill deepest-first,
+    # the same order Stop-HostNativeService uses, so parents cannot respawn.
+    $ids = @()
+    $stack = @([int]$ProcId)
+    while ($stack.Count -gt 0) {
+        $current = [int]$stack[0]
+        $stack = @($stack | Select-Object -Skip 1)
+        if ($ids -notcontains $current) {
+            $ids += $current
+            $stack += @(Get-PlatformChildProcessIds -ParentProcessId $current)
+        }
+    }
+    for ($i = $ids.Count - 1; $i -ge 0; $i--) {
+        Stop-Process -Id ([int]$ids[$i]) -Force -ErrorAction SilentlyContinue
+    }
+    $StoppedPids[$ProcId] = $true
 }
 
 if (-not (Test-Path $RunDir)) {
