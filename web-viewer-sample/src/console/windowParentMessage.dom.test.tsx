@@ -42,6 +42,7 @@ type AppInternals = {
   _completeStageLoadFromVisibleStream: () => boolean;
   _beginStageAttempt: (url: string) => number;
   _scheduleStageLoadTimeout: (generation: number) => void;
+  _scheduleLoadingStateQuery: (delayMs?: number) => void;
   _resyncStageBindingProof: () => Promise<boolean>;
   _finishStageLoad: () => void;
   _hasRemoteVideoFrame: () => boolean;
@@ -1836,8 +1837,8 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     const privateApp = internals(app) as unknown as {
       _openSelectedAsset: () => void;
       _preauthorizeStageBinding: () => Promise<unknown>;
-      _sendStreamMessage: (message: unknown) => boolean;
       _scheduleStageLoadTimeout: (generation: number) => void;
+      _scheduleLoadingStateQuery: (delayMs?: number) => void;
     };
     internals(app).state = {
       ...internals(app).state,
@@ -1853,8 +1854,11 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     let resolvePreauthorization: ((value: unknown) => void) | undefined;
     vi.spyOn(privateApp, "_preauthorizeStageBinding")
       .mockImplementation(() => new Promise((resolve) => { resolvePreauthorization = resolve; }));
-    const send = vi.spyOn(privateApp, "_sendStreamMessage").mockReturnValue(true);
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const send = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({} as never);
     const schedule = vi.spyOn(privateApp, "_scheduleStageLoadTimeout").mockImplementation(() => undefined);
+    vi.spyOn(privateApp, "_scheduleLoadingStateQuery").mockImplementation(() => undefined);
 
     privateApp._openSelectedAsset();
     expect(send).not.toHaveBeenCalled();
@@ -1886,6 +1890,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       _preauthorizeStageBinding: () => Promise<unknown>;
       _sendStreamMessage: (message: unknown) => boolean;
       _scheduleStageLoadTimeout: (generation: number) => void;
+      stageDispatchCallbacks: WeakMap<object, () => void>;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
     };
     internals(app).state = {
@@ -1904,7 +1909,10 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     let resolvePreauthorization: ((value: unknown) => void) | undefined;
     vi.spyOn(privateApp, "_preauthorizeStageBinding")
       .mockImplementation(() => new Promise((resolve) => { resolvePreauthorization = resolve; }));
-    const send = vi.spyOn(privateApp, "_sendStreamMessage").mockReturnValue(true);
+    const send = vi.spyOn(privateApp, "_sendStreamMessage").mockImplementation((message) => {
+      privateApp.stageDispatchCallbacks.get(message as object)?.();
+      return true;
+    });
     const schedule = vi.spyOn(privateApp, "_scheduleStageLoadTimeout").mockImplementation(() => undefined);
     vi.spyOn(internals(app), "_hasRemoteVideoFrame").mockReturnValue(true);
 
@@ -3008,6 +3016,364 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     expect(JSON.stringify(parent.postMessage.mock.calls)).not.toContain("local_user_token_primary");
   });
 
+  it("stale same-URL changed_unconfirmed resync 不得把 A 升級給 B，且 B 的 exact proof 可恢復", async () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    reviewEnv.userToken = "local_user_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _applyChangedUnconfirmedStageSafety: (
+        bindingRevisionId: string | undefined,
+        stageUrl: string | null | undefined,
+        stageAttemptGeneration: number | null | undefined,
+      ) => void;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      stageProofBlockedRevision: string | null;
+      runtimeCommandContexts: Map<string, {
+        eventType: string;
+        bindingRevisionId?: string;
+        stageUrl?: string;
+        stageAttemptGeneration?: number;
+      }>;
+      _getChildren: () => void;
+    };
+    const stageUrl = "stage://same-url-resync.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageUrl,
+      loadedStageUrl: null,
+      stageLoadStatus: "pending",
+      selectedUSDAsset: { name: "same-url", url: stageUrl },
+    };
+    const bindingResponse = (revision: string) => new Response(JSON.stringify({
+      stage_binding: {
+        active_binding_revision: revision,
+        last_good_binding_revision: revision,
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+    const fetchSpy = vi.fn()
+      .mockResolvedValueOnce(bindingResponse("rev_a"))
+      .mockResolvedValueOnce(bindingResponse("rev_b"));
+    vi.stubGlobal("fetch", fetchSpy);
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+
+    const attemptA = privateApp._beginStageAttempt(stageUrl);
+    const attemptB = privateApp._beginStageAttempt(stageUrl);
+    parent.postMessage.mockClear();
+
+    privateApp._applyChangedUnconfirmedStageSafety("rev_a", stageUrl, attemptA);
+    await flushMicrotasks();
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      generation: attemptB,
+      status: "pending",
+      targetUrl: stageUrl,
+    }));
+    expect(privateApp.stageProofBlockedRevision).toBe("rev_a");
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+    expect(parent.postMessage.mock.calls.map((call) => call[0])).not.toContainEqual(expect.objectContaining({
+      protocol: "vg01",
+      type: "stage_loaded",
+      stageUrl,
+      status: "active",
+      binding_revision_id: "rev_a",
+    }));
+
+    privateApp.runtimeCommandContexts.set("req_b", {
+      eventType: "openStageRequest",
+      bindingRevisionId: "rev_b",
+      stageUrl,
+      stageAttemptGeneration: attemptB,
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_b",
+        url: stageUrl,
+        binding_revision_id: "rev_b",
+      },
+    });
+    await flushMicrotasks();
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      generation: attemptB,
+      status: "completed",
+      targetUrl: stageUrl,
+    }));
+    expect(privateApp.stageProofBlockedRevision).toBeNull();
+    expect(internals(app).state.loadedStageUrl).toBe(stageUrl);
+    expect(internals(app).state.stageLoadStatus).toBe("matched");
+    expect(parent.postMessage.mock.calls.map((call) => call[0])).toContainEqual(expect.objectContaining({
+      protocol: "vg01",
+      type: "stage_loaded",
+      stageUrl,
+      status: "active",
+      binding_revision_id: "rev_b",
+    }));
+  });
+
+  it("late non-stage changed_unconfirmed 不得用舊 B status 跨 revision 恢復 proof", async () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    reviewEnv.userToken = "local_user_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _applyChangedUnconfirmedStageSafety: (
+        bindingRevisionId: string | undefined,
+        stageUrl: string | null | undefined,
+        stageAttemptGeneration: number | null | undefined,
+      ) => void;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      stageProofBlockedRevision: string | null;
+      runtimeCommandContexts: Map<string, {
+        eventType: string;
+        bindingRevisionId?: string;
+        stageUrl?: string;
+        stageAttemptGeneration?: number;
+      }>;
+      _getChildren: () => void;
+    };
+    const stageB = "stage://completed-b.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageB,
+      loadedStageUrl: null,
+      stageLoadStatus: "pending",
+      selectedUSDAsset: { name: "completed-b", url: stageB },
+    };
+    const fetchSpy = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      stage_binding: {
+        active_binding_revision: "rev_b",
+        last_good_binding_revision: "rev_b",
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchSpy);
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+
+    const attemptB = privateApp._beginStageAttempt(stageB);
+    privateApp.runtimeCommandContexts.set("req_completed_b", {
+      eventType: "openStageRequest",
+      bindingRevisionId: "rev_b",
+      stageUrl: stageB,
+      stageAttemptGeneration: attemptB,
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_completed_b",
+        url: stageB,
+        binding_revision_id: "rev_b",
+      },
+    });
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      generation: attemptB,
+      status: "completed",
+    }));
+    parent.postMessage.mockClear();
+
+    privateApp._applyChangedUnconfirmedStageSafety(
+      "rev_a",
+      "stage://late-compose-a.usdc",
+      undefined,
+    );
+    await flushMicrotasks();
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(privateApp.stageProofBlockedRevision).toBe("rev_a");
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+    const stagePosts = parent.postMessage.mock.calls
+      .map((call) => call[0] as { type?: string; stageUrl?: string | null; status?: string; binding_revision_id?: string })
+      .filter((message) => message.type === "stage_loaded");
+    expect(stagePosts).toContainEqual(expect.objectContaining({ stageUrl: null, status: "unproven" }));
+    expect(stagePosts).not.toContainEqual(expect.objectContaining({
+      stageUrl: stageB,
+      status: "active",
+      binding_revision_id: "rev_b",
+    }));
+  });
+
+  it("B status resync 在 B proof timeout 後不得覆寫 terminal failure", async () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    reviewEnv.userToken = "local_user_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _applyChangedUnconfirmedStageSafety: (
+        bindingRevisionId: string | undefined,
+        stageUrl: string | null | undefined,
+        stageAttemptGeneration: number | null | undefined,
+      ) => void;
+      _failStageLoad: (loadingText: string, diagnostic: string, attemptGeneration: number) => void;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      stageProofBlockedRevision: string | null;
+      runtimeCommandContexts: Map<string, {
+        eventType: string;
+        bindingRevisionId?: string;
+        stageUrl?: string;
+        stageAttemptGeneration?: number;
+      }>;
+      _getChildren: () => void;
+    };
+    const stageUrl = "stage://timeout-resync-b.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageUrl,
+      loadedStageUrl: null,
+      stageLoadStatus: "pending",
+      selectedUSDAsset: { name: "timeout-resync-b", url: stageUrl },
+    };
+    const bindingResponse = (revision: string) => new Response(JSON.stringify({
+      stage_binding: {
+        active_binding_revision: revision,
+        last_good_binding_revision: revision,
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+    let resolveBStatus: (response: Response) => void = () => {};
+    const pendingBStatus = new Promise<Response>((resolve) => { resolveBStatus = resolve; });
+    const fetchSpy = vi.fn()
+      .mockResolvedValueOnce(bindingResponse("rev_a"))
+      .mockImplementationOnce(() => pendingBStatus);
+    vi.stubGlobal("fetch", fetchSpy);
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+
+    const attemptA = privateApp._beginStageAttempt(stageUrl);
+    const attemptB = privateApp._beginStageAttempt(stageUrl);
+    privateApp._applyChangedUnconfirmedStageSafety("rev_a", stageUrl, attemptA);
+    await flushMicrotasks();
+    parent.postMessage.mockClear();
+
+    privateApp.runtimeCommandContexts.set("req_timeout_b", {
+      eventType: "openStageRequest",
+      bindingRevisionId: "rev_b",
+      stageUrl,
+      stageAttemptGeneration: attemptB,
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_timeout_b",
+        url: stageUrl,
+        binding_revision_id: "rev_b",
+      },
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    privateApp._failStageLoad("stage-load-timeout", "test-timeout", attemptB);
+    resolveBStatus(bindingResponse("rev_b"));
+    await flushMicrotasks();
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      generation: attemptB,
+      status: "terminal",
+    }));
+    expect(privateApp.stageProofBlockedRevision).toBe("rev_b");
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+    expect(parent.postMessage.mock.calls.map((call) => call[0])).not.toContainEqual(expect.objectContaining({
+      type: "stage_loaded",
+      stageUrl,
+      status: "active",
+      binding_revision_id: "rev_b",
+    }));
+  });
+
+  it("B status resync 在 lifecycle invalidation 後不得跨 attempt 升級", async () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    reviewEnv.userToken = "local_user_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _applyChangedUnconfirmedStageSafety: (
+        bindingRevisionId: string | undefined,
+        stageUrl: string | null | undefined,
+        stageAttemptGeneration: number | null | undefined,
+      ) => void;
+      _invalidateStageAttempt: () => void;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      stageProofBlockedRevision: string | null;
+      runtimeCommandContexts: Map<string, {
+        eventType: string;
+        bindingRevisionId?: string;
+        stageUrl?: string;
+        stageAttemptGeneration?: number;
+      }>;
+      _getChildren: () => void;
+    };
+    const stageUrl = "stage://invalidated-resync-b.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageUrl,
+      loadedStageUrl: null,
+      stageLoadStatus: "pending",
+      selectedUSDAsset: { name: "invalidated-resync-b", url: stageUrl },
+    };
+    const bindingResponse = (revision: string) => new Response(JSON.stringify({
+      stage_binding: {
+        active_binding_revision: revision,
+        last_good_binding_revision: revision,
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+    let resolveBStatus: (response: Response) => void = () => {};
+    const pendingBStatus = new Promise<Response>((resolve) => { resolveBStatus = resolve; });
+    const fetchSpy = vi.fn()
+      .mockResolvedValueOnce(bindingResponse("rev_a"))
+      .mockImplementationOnce(() => pendingBStatus);
+    vi.stubGlobal("fetch", fetchSpy);
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+
+    const attemptA = privateApp._beginStageAttempt(stageUrl);
+    const attemptB = privateApp._beginStageAttempt(stageUrl);
+    privateApp._applyChangedUnconfirmedStageSafety("rev_a", stageUrl, attemptA);
+    await flushMicrotasks();
+    parent.postMessage.mockClear();
+
+    privateApp.runtimeCommandContexts.set("req_invalidated_b", {
+      eventType: "openStageRequest",
+      bindingRevisionId: "rev_b",
+      stageUrl,
+      stageAttemptGeneration: attemptB,
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_invalidated_b",
+        url: stageUrl,
+        binding_revision_id: "rev_b",
+      },
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    privateApp._invalidateStageAttempt();
+    resolveBStatus(bindingResponse("rev_b"));
+    await flushMicrotasks();
+
+    expect(privateApp.activeStageAttempt).toBeNull();
+    expect(privateApp.stageProofBlockedRevision).toBe("rev_b");
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+    expect(parent.postMessage.mock.calls.map((call) => call[0])).not.toContainEqual(expect.objectContaining({
+      type: "stage_loaded",
+      stageUrl,
+      status: "active",
+      binding_revision_id: "rev_b",
+    }));
+  });
+
   it("舊 revision 的延遲 resync 不得解除較新的 changed_unconfirmed gate", async () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
@@ -3178,6 +3544,76 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       status: "unproven",
       binding_revision_id: "rev_b",
     }));
+    const unprovenPosts = parent.postMessage.mock.calls
+      .map((call) => call[0] as { type?: string; stageUrl?: string | null; status?: string; binding_revision_id?: string })
+      .filter((message) => (
+        message.type === "stage_loaded"
+        && message.stageUrl === null
+        && message.status === "unproven"
+        && message.binding_revision_id === "rev_b"
+      ));
+    expect(unprovenPosts).toHaveLength(1);
+  });
+
+  it("晚到的 superseded A changed_failed 不得使 pending B 失敗或通知 parent", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      runtimeCommandContexts: Map<string, {
+        eventType: string;
+        bindingRevisionId: string;
+        stageUrl: string;
+        stageAttemptGeneration: number;
+      }>;
+      stageLoadFailureActive: boolean;
+    };
+    const stageA = "stage://late-changed-failed-a.usdc";
+    const stageB = "stage://pending-b.usdc";
+    const attemptA = privateApp._beginStageAttempt(stageA);
+    privateApp.runtimeCommandContexts.set("req_late_changed_failed_a", {
+      eventType: "openStageRequest",
+      bindingRevisionId: "rev_late_changed_failed_a",
+      stageUrl: stageA,
+      stageAttemptGeneration: attemptA,
+    });
+    const attemptB = privateApp._beginStageAttempt(stageB);
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageB,
+      selectedUSDAsset: { name: "pending B", url: stageB },
+      loadedStageUrl: null,
+      stageLoadStatus: "pending",
+    };
+    parent.postMessage.mockClear();
+
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "error",
+        request_id: "req_late_changed_failed_a",
+        url: stageA,
+        error: "late partial failure",
+        binding_revision_id: "rev_late_changed_failed_a",
+        runtime_state: "changed_failed",
+        partial_load: true,
+      },
+    });
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      generation: attemptB,
+      status: "pending",
+      targetUrl: stageB,
+    }));
+    expect(privateApp.stageLoadFailureActive).toBe(false);
+    expect(internals(app).state.stageLoadStatus).toBe("pending");
+    expect(parent.postMessage.mock.calls
+      .map((call) => call[0] as { type?: string })
+      .filter((message) => message.type === "stage_loaded"))
+      .toHaveLength(0);
   });
 });
 
@@ -5122,5 +5558,965 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
       expect.objectContaining({ type: "stage_loaded", stageUrl: null, status: "unproven" }),
       PARENT_ORIGIN,
     );
+  });
+});
+
+describe("P1：production stage completion correlation 與 parent proof 撤銷", () => {
+  it("NVIDIA OpenStageEvent 未 echo correlation 時，使用同一筆已送 request 的 verified fields 完成 stage", async () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(PARENT_ORIGIN + "/ui");
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _getChildren: () => void;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+    };
+    const stageUrl = "stage://sdk-open-stage.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageUrl,
+      stageLoadStatus: "pending",
+    };
+    const generation = privateApp._beginStageAttempt(stageUrl);
+    internals(app).pendingStageUrl = stageUrl;
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+    vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+      action: "message",
+      status: "success",
+      info: "",
+      url: stageUrl,
+    });
+
+    internals(app)._sendStreamMessage({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_sdk_open_stage",
+        binding_revision_id: "rev_sdk_open_stage",
+        url: stageUrl,
+      },
+    });
+    await flushMicrotasks();
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      generation,
+      status: "completed",
+      targetUrl: stageUrl,
+    }));
+    expect(internals(app).state.loadedStageUrl).toBe(stageUrl);
+    expect(internals(app).state.stageLoadStatus).toBe("matched");
+    const stagePosts = parent.postMessage.mock.calls
+      .map((call) => call[0] as { type?: string; stageUrl?: string | null; status?: string })
+      .filter((message) => message.type === "stage_loaded");
+    expect(stagePosts).toEqual([
+      expect.objectContaining({
+        stageUrl,
+        status: "active",
+        binding_revision_id: "rev_sdk_open_stage",
+      }),
+    ]);
+  });
+
+  it("A 已 active 後同 URL 的 B terminal failure 會撤銷 parent 的 A proof", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(PARENT_ORIGIN + "/ui");
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _completeStageLoad: (loadedUrl?: string, bindingRevisionId?: string, attemptGeneration?: number) => void;
+      _failStageLoad: (loadingText: string, diagnostic?: string, attemptGeneration?: number) => void;
+      _getChildren: () => void;
+    };
+    const stageA = "stage://proof-same-url.usdc";
+    const stageB = stageA;
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageA,
+      stageLoadStatus: "pending",
+    };
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+    const attemptA = privateApp._beginStageAttempt(stageA);
+    internals(app).pendingStageUrl = stageA;
+    privateApp._completeStageLoad(stageA, "rev_proof_a", attemptA);
+
+    const attemptB = privateApp._beginStageAttempt(stageB);
+    internals(app).pendingStageUrl = stageB;
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageB,
+      stageLoadStatus: "pending",
+    };
+    privateApp._failStageLoad("Model loading failed", "authorization rejected", attemptB);
+
+    const stagePosts = parent.postMessage.mock.calls
+      .map((call) => call[0] as { type?: string; stageUrl?: string | null; status?: string })
+      .filter((message) => message.type === "stage_loaded");
+    expect(stagePosts).toEqual([
+      expect.objectContaining({ stageUrl: stageA, status: "active" }),
+      // Selecting B immediately revokes A; B's terminal failure repeats the
+      // idempotent unproven state after it becomes terminal.
+      expect.objectContaining({ stageUrl: null, status: "unproven" }),
+      expect.objectContaining({ stageUrl: null, status: "unproven" }),
+    ]);
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+  });
+
+  it("已完成 stage 後的 compose changed_unconfirmed 會以 binding revision 撤銷 parent proof", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(PARENT_ORIGIN + "/ui");
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _completeStageLoad: (loadedUrl?: string, bindingRevisionId?: string, attemptGeneration?: number) => void;
+      _getChildren: () => void;
+    };
+    const stageUrl = "stage://completed-compose-proof.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageUrl,
+      stageLoadStatus: "pending",
+    };
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => undefined));
+    const attempt = privateApp._beginStageAttempt(stageUrl);
+    internals(app).pendingStageUrl = stageUrl;
+    privateApp._completeStageLoad(stageUrl, "rev_completed_stage", attempt);
+
+    internals(app)._sendStreamMessage({
+      event_type: "composeStageRequest",
+      payload: {
+        request_id: "req_completed_compose",
+        binding_revision_id: "rev_changed_compose",
+      },
+    });
+    internals(app)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "composeStageRequest",
+        reason: "lease_invalid",
+        request_id: "req_completed_compose",
+        retryable: false,
+        runtime_state: "changed_unconfirmed",
+      },
+    });
+
+    const stagePosts = parent.postMessage.mock.calls
+      .map((call) => call[0] as { type?: string; stageUrl?: string | null; status?: string; binding_revision_id?: string })
+      .filter((message) => message.type === "stage_loaded");
+    expect(stagePosts).toEqual([
+      expect.objectContaining({ stageUrl, status: "active", binding_revision_id: "rev_completed_stage" }),
+      expect.objectContaining({ stageUrl: null, status: "unproven", binding_revision_id: "rev_changed_compose" }),
+    ]);
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+  });
+
+  it("延遲的舊 compose changed_unconfirmed 不得 terminalize 較新的 pending stage", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(PARENT_ORIGIN + "/ui");
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _completeStageLoad: (loadedUrl?: string, bindingRevisionId?: string, attemptGeneration?: number) => void;
+      _getChildren: () => void;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+    };
+    const stageA = "stage://completed-compose-a.usdc";
+    const stageB = "stage://newer-pending-b.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageA,
+      stageLoadStatus: "pending",
+    };
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => undefined));
+    const attemptA = privateApp._beginStageAttempt(stageA);
+    internals(app).pendingStageUrl = stageA;
+    privateApp._completeStageLoad(stageA, "rev_completed_a", attemptA);
+    internals(app)._sendStreamMessage({
+      event_type: "composeStageRequest",
+      payload: {
+        request_id: "req_old_compose",
+        binding_revision_id: "rev_old_compose",
+      },
+    });
+
+    const attemptB = privateApp._beginStageAttempt(stageB);
+    internals(app).pendingStageUrl = stageB;
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageB,
+      stageLoadStatus: "pending",
+      loadedStageUrl: null,
+    };
+    parent.postMessage.mockClear();
+
+    internals(app)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "composeStageRequest",
+        reason: "lease_invalid",
+        request_id: "req_old_compose",
+        retryable: false,
+        runtime_state: "changed_unconfirmed",
+      },
+    });
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      generation: attemptB,
+      status: "pending",
+      targetUrl: stageB,
+    }));
+    // The stale transaction still establishes the global proof block; it may
+    // not, however, turn B itself terminal or revoke a new parent proof.
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+    internals(app)._sendStreamMessage({
+      event_type: "focusPrimRequest",
+      payload: { prim_path: "/World/BlockedUntilResync" },
+    });
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(parent.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+      type: "stage_loaded",
+      stageUrl: null,
+      status: "unproven",
+      binding_revision_id: "rev_old_compose",
+    }), PARENT_ORIGIN);
+  });
+
+  it("same-URL native opens stay single-flight and start B proof timing only after B dispatches", async () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _dispatchStageRequest: (message: { event_type: string; payload: Record<string, unknown> }, attemptGeneration: number) => boolean;
+      _getChildren: () => void;
+    };
+    const stageUrl = "stage://same-url-native-queue.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageUrl,
+      stageLoadStatus: "pending",
+    };
+    const timeoutSpy = vi.spyOn(internals(app), "_scheduleStageLoadTimeout").mockImplementation(() => undefined);
+    const pollSpy = vi.spyOn(internals(app), "_scheduleLoadingStateQuery").mockImplementation(() => undefined);
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+    let resolveA!: (value: unknown) => void;
+    let resolveB!: (value: unknown) => void;
+    const first = new Promise<unknown>((resolve) => { resolveA = resolve; });
+    const second = new Promise<unknown>((resolve) => { resolveB = resolve; });
+    const sendSpy = vi.spyOn(AppStream, "sendMessage")
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(second);
+
+    const attemptA = privateApp._beginStageAttempt(stageUrl);
+    internals(app).pendingStageUrl = stageUrl;
+    expect(privateApp._dispatchStageRequest({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_native_a",
+        binding_revision_id: "rev_native_a",
+        url: stageUrl,
+      },
+    }, attemptA)).toBe(true);
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(timeoutSpy).toHaveBeenCalledWith(attemptA);
+
+    const attemptB = privateApp._beginStageAttempt(stageUrl);
+    internals(app).pendingStageUrl = stageUrl;
+    expect(privateApp._dispatchStageRequest({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_native_b",
+        binding_revision_id: "rev_native_b",
+        url: stageUrl,
+      },
+    }, attemptB)).toBe(true);
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(timeoutSpy).toHaveBeenCalledTimes(1);
+    expect(pollSpy).toHaveBeenCalledTimes(1);
+
+    resolveA({
+      action: "message",
+      status: "success",
+      info: "A completed",
+      url: stageUrl,
+    });
+    await flushMicrotasks();
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+    expect(timeoutSpy).toHaveBeenCalledWith(attemptB);
+    expect(pollSpy).toHaveBeenCalledTimes(2);
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+
+    resolveB({
+      action: "message",
+      status: "success",
+      info: "B completed",
+      url: stageUrl,
+    });
+    await flushMicrotasks();
+
+    expect(internals(app).state.govBindingActiveRevision).toBe("rev_native_b");
+    expect(internals(app).state.stageLoadStatus).toBe("matched");
+    expect(internals(app).state.loadedStageUrl).toBe(stageUrl);
+  });
+
+  it("manual loadArtifactGroup waits for its correlated DataChannel terminal before dispatching a queued native open", async () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _dispatchStageRequest: (message: { event_type: string; payload: Record<string, unknown> }, attemptGeneration: number) => boolean;
+      _getChildren: () => void;
+    };
+    const stageA = "stage://native-open-a.usdc";
+    const stageB = "stage://native-binding-b.usdc";
+    const stageC = "stage://native-open-c.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageA,
+      stageLoadStatus: "pending",
+    };
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+    let resolveA!: (value: unknown) => void;
+    let resolveC!: (value: unknown) => void;
+    const first = new Promise<unknown>((resolve) => { resolveA = resolve; });
+    // SDK 5.18.2 treats loadArtifactGroupRequest as an unknown command: its
+    // send Promise resolves to a generic ACK instead of openedStageResult.
+    const second = Promise.resolve({ action: "message", status: "success", info: "SDK accepted" });
+    const third = new Promise<unknown>((resolve) => { resolveC = resolve; });
+    const sendSpy = vi.spyOn(AppStream, "sendMessage")
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(second)
+      .mockReturnValueOnce(third);
+
+    const attemptA = privateApp._beginStageAttempt(stageA);
+    internals(app).pendingStageUrl = stageA;
+    expect(privateApp._dispatchStageRequest({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_open_a",
+        binding_revision_id: "rev_open_a",
+        url: stageA,
+      },
+    }, attemptA)).toBe(true);
+
+    const attemptB = privateApp._beginStageAttempt(stageB);
+    internals(app).pendingStageUrl = stageB;
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageB,
+      stageLoadStatus: "pending",
+      loadedStageUrl: null,
+    };
+    expect(privateApp._dispatchStageRequest({
+      event_type: "loadArtifactGroupRequest",
+      payload: {
+        request_id: "req_binding_b",
+        binding_revision_id: "rev_binding_b",
+        url: stageB,
+      },
+    }, attemptB)).toBe(true);
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+
+    resolveA({ action: "message", status: "success", info: "A completed", url: stageA });
+    await flushMicrotasks();
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+
+    const attemptC = privateApp._beginStageAttempt(stageC);
+    internals(app).pendingStageUrl = stageC;
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageC,
+      stageLoadStatus: "pending",
+      loadedStageUrl: null,
+    };
+    expect(privateApp._dispatchStageRequest({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_open_c",
+        binding_revision_id: "rev_open_c",
+        url: stageC,
+      },
+    }, attemptC)).toBe(true);
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+
+    internals(app)._handleCustomEvent({
+      event_type: "loadArtifactGroupResult",
+      payload: {
+        result: "accepted",
+        request_id: "req_binding_b",
+        binding_revision_id: "rev_binding_b",
+        url: stageB,
+      },
+    });
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_binding_b",
+        binding_revision_id: "rev_binding_b",
+        url: stageB,
+      },
+    });
+    expect(sendSpy).toHaveBeenCalledTimes(3);
+
+    resolveC({ action: "message", status: "success", info: "C completed", url: stageC });
+    await flushMicrotasks();
+
+    expect(internals(app).state.govBindingActiveRevision).toBe("rev_open_c");
+    expect(internals(app).state.stageLoadStatus).toBe("matched");
+    expect(internals(app).state.loadedStageUrl).toBe(stageC);
+  });
+
+  it("manual loadArtifactGroup transport rejection releases its queued native open", async () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _dispatchStageRequest: (message: { event_type: string; payload: Record<string, unknown> }, attemptGeneration: number) => boolean;
+      _getChildren: () => void;
+    };
+    const stageB = "stage://manual-transport-b.usdc";
+    const stageC = "stage://manual-transport-c.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageB,
+      stageLoadStatus: "pending",
+    };
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+    let rejectB!: (reason?: unknown) => void;
+    let resolveC!: (value: unknown) => void;
+    const first = new Promise<unknown>((_resolve, reject) => { rejectB = reject; });
+    const second = new Promise<unknown>((resolve) => { resolveC = resolve; });
+    const sendSpy = vi.spyOn(AppStream, "sendMessage")
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(second);
+
+    const attemptB = privateApp._beginStageAttempt(stageB);
+    internals(app).pendingStageUrl = stageB;
+    expect(privateApp._dispatchStageRequest({
+      event_type: "loadArtifactGroupRequest",
+      payload: {
+        request_id: "req_transport_b",
+        binding_revision_id: "rev_transport_b",
+        url: stageB,
+      },
+    }, attemptB)).toBe(true);
+
+    const attemptC = privateApp._beginStageAttempt(stageC);
+    internals(app).pendingStageUrl = stageC;
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageC,
+      stageLoadStatus: "pending",
+      loadedStageUrl: null,
+    };
+    expect(privateApp._dispatchStageRequest({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_transport_c",
+        binding_revision_id: "rev_transport_c",
+        url: stageC,
+      },
+    }, attemptC)).toBe(true);
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+
+    rejectB(new Error("transport failed"));
+    await flushMicrotasks();
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+
+    resolveC({ action: "message", status: "success", info: "C completed", url: stageC });
+    await flushMicrotasks();
+    expect(internals(app).state.stageLoadStatus).toBe("matched");
+    expect(internals(app).state.loadedStageUrl).toBe(stageC);
+  });
+
+  it("a stale manual changed_unconfirmed terminal fences its queued native open before slot release", async () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _dispatchStageRequest: (message: { event_type: string; payload: Record<string, unknown> }, attemptGeneration: number) => boolean;
+      _getChildren: () => void;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      stageProofBlockedRevision: string | null;
+    };
+    const stageB = "stage://native-manual-b.usdc";
+    const stageC = "stage://queued-after-manual-c.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageB,
+      stageLoadStatus: "pending",
+    };
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+      action: "message",
+      status: "success",
+      info: "SDK accepted",
+    });
+
+    const attemptB = privateApp._beginStageAttempt(stageB);
+    internals(app).pendingStageUrl = stageB;
+    expect(privateApp._dispatchStageRequest({
+      event_type: "loadArtifactGroupRequest",
+      payload: {
+        request_id: "req_manual_b",
+        binding_revision_id: "rev_manual_b",
+        url: stageB,
+      },
+    }, attemptB)).toBe(true);
+    await flushMicrotasks();
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+
+    const attemptC = privateApp._beginStageAttempt(stageC);
+    internals(app).pendingStageUrl = stageC;
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageC,
+      stageLoadStatus: "pending",
+      loadedStageUrl: null,
+    };
+    expect(privateApp._dispatchStageRequest({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_queued_c",
+        binding_revision_id: "rev_queued_c",
+        url: stageC,
+      },
+    }, attemptC)).toBe(true);
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+
+    internals(app)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "loadArtifactGroupRequest",
+        reason: "lease_invalid",
+        request_id: "req_manual_b",
+        retryable: false,
+        runtime_state: "changed_unconfirmed",
+      },
+    });
+
+    expect(privateApp.stageProofBlockedRevision).toBe("rev_manual_b");
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      generation: attemptC,
+      status: "terminal",
+    }));
+  });
+
+  it("a superseded openStage changed_unconfirmed terminal fences B before A's native callback releases it", async () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _dispatchStageRequest: (message: { event_type: string; payload: Record<string, unknown> }, attemptGeneration: number) => boolean;
+      _getChildren: () => void;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      stageProofBlockedRevision: string | null;
+    };
+    const stageA = "stage://superseded-open-a.usdc";
+    const stageB = "stage://fenced-open-b.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageA,
+      stageLoadStatus: "pending",
+    };
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+    let resolveA!: (value: unknown) => void;
+    const first = new Promise<unknown>((resolve) => { resolveA = resolve; });
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockReturnValueOnce(first);
+
+    const attemptA = privateApp._beginStageAttempt(stageA);
+    internals(app).pendingStageUrl = stageA;
+    expect(privateApp._dispatchStageRequest({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_superseded_open_a",
+        binding_revision_id: "rev_superseded_open_a",
+        url: stageA,
+      },
+    }, attemptA)).toBe(true);
+
+    const attemptB = privateApp._beginStageAttempt(stageB);
+    internals(app).pendingStageUrl = stageB;
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageB,
+      stageLoadStatus: "pending",
+      loadedStageUrl: null,
+    };
+    expect(privateApp._dispatchStageRequest({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_fenced_open_b",
+        binding_revision_id: "rev_fenced_open_b",
+        url: stageB,
+      },
+    }, attemptB)).toBe(true);
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+
+    internals(app)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "openStageRequest",
+        reason: "lease_invalid",
+        request_id: "req_superseded_open_a",
+        retryable: false,
+        runtime_state: "changed_unconfirmed",
+      },
+    });
+    expect(privateApp.stageProofBlockedRevision).toBe("rev_superseded_open_a");
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      generation: attemptB,
+      status: "pending",
+    }));
+
+    resolveA({ action: "message", status: "success", info: "late A", url: stageA });
+    await flushMicrotasks();
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      generation: attemptB,
+      status: "terminal",
+    }));
+  });
+
+  it("a timed-out openStage changed_unconfirmed terminal still fences the next lifecycle", async () => {
+    vi.useFakeTimers();
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _dispatchStageRequest: (message: { event_type: string; payload: Record<string, unknown> }, attemptGeneration: number) => boolean;
+      _replaceStreamLifecycle: () => number;
+      _onStreamStarted: (streamGeneration?: number) => void;
+      _queryLoadingState: () => void;
+      _pollForKitReady: () => void;
+      stageProofBlockedRevision: string | null;
+      runtimeCommandTerminalClaims: Map<string, { eventType: string; outcome: string }>;
+    };
+    const stageA = "stage://timed-out-open-a.usdc";
+    const stageB = "stage://after-timed-out-b.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageA,
+      stageLoadStatus: "pending",
+    };
+    vi.spyOn(privateApp, "_queryLoadingState").mockImplementation(() => undefined);
+    vi.spyOn(privateApp, "_pollForKitReady").mockImplementation(() => undefined);
+    const pending = new Promise<unknown>(() => undefined);
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockReturnValue(pending);
+
+    const attemptA = privateApp._beginStageAttempt(stageA);
+    internals(app).pendingStageUrl = stageA;
+    expect(privateApp._dispatchStageRequest({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_timed_out_open_a",
+        binding_revision_id: "rev_timed_out_open_a",
+        url: stageA,
+      },
+    }, attemptA)).toBe(true);
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(privateApp.runtimeCommandTerminalClaims.get("req_timed_out_open_a")).toEqual({
+      eventType: "openStageRequest",
+      outcome: "timed-out",
+    });
+
+    internals(app)._handleCustomEvent({
+      event_type: "commandRejected",
+      payload: {
+        rejected_event_type: "openStageRequest",
+        reason: "lease_invalid",
+        request_id: "req_timed_out_open_a",
+        retryable: false,
+        runtime_state: "changed_unconfirmed",
+      },
+    });
+    expect(privateApp.stageProofBlockedRevision).toBe("rev_timed_out_open_a");
+
+    const replacementGeneration = privateApp._replaceStreamLifecycle();
+    privateApp._onStreamStarted(replacementGeneration);
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageB,
+      stageLoadStatus: "pending",
+      loadedStageUrl: null,
+      webrtcLifecycleStatus: "started",
+    };
+    const attemptB = privateApp._beginStageAttempt(stageB);
+    internals(app).pendingStageUrl = stageB;
+    expect(privateApp._dispatchStageRequest({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_after_timed_out_b",
+        binding_revision_id: "rev_after_timed_out_b",
+        url: stageB,
+      },
+    }, attemptB)).toBe(false);
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("hung native SDK slot fails the latest intent and fences retry until lifecycle replacement", async () => {
+    vi.useFakeTimers();
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _dispatchStageRequest: (message: { event_type: string; payload: Record<string, unknown> }, attemptGeneration: number) => boolean;
+      _replaceStreamLifecycle: () => number;
+      _onStreamStarted: (streamGeneration?: number) => void;
+      _queryLoadingState: () => void;
+      _pollForKitReady: () => void;
+      _getChildren: () => void;
+    };
+    const stageUrl = "stage://hung-native-slot.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageUrl,
+      stageLoadStatus: "pending",
+    };
+    let resolveA!: (value: unknown) => void;
+    let resolveD!: (value: unknown) => void;
+    const hung = new Promise<unknown>((resolve) => { resolveA = resolve; });
+    const replacement = new Promise<unknown>((resolve) => { resolveD = resolve; });
+    const sendSpy = vi.spyOn(AppStream, "sendMessage")
+      .mockReturnValueOnce(hung)
+      .mockReturnValueOnce(replacement);
+    vi.spyOn(privateApp, "_queryLoadingState").mockImplementation(() => undefined);
+    vi.spyOn(privateApp, "_pollForKitReady").mockImplementation(() => undefined);
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+
+    const attemptA = privateApp._beginStageAttempt(stageUrl);
+    internals(app).pendingStageUrl = stageUrl;
+    expect(privateApp._dispatchStageRequest({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_hung_native_a",
+        binding_revision_id: "rev_hung_native_a",
+        url: stageUrl,
+      },
+    }, attemptA)).toBe(true);
+
+    const attemptB = privateApp._beginStageAttempt(stageUrl);
+    internals(app).pendingStageUrl = stageUrl;
+    expect(privateApp._dispatchStageRequest({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_hung_native_b",
+        binding_revision_id: "rev_hung_native_b",
+        url: stageUrl,
+      },
+    }, attemptB)).toBe(true);
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(45_001);
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+    const attemptC = privateApp._beginStageAttempt(stageUrl);
+    internals(app).pendingStageUrl = stageUrl;
+    expect(privateApp._dispatchStageRequest({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_hung_native_c",
+        binding_revision_id: "rev_hung_native_c",
+        url: stageUrl,
+      },
+    }, attemptC)).toBe(false);
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+
+    const replacementGeneration = privateApp._replaceStreamLifecycle();
+    privateApp._onStreamStarted(replacementGeneration);
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageUrl,
+      stageLoadStatus: "pending",
+      loadedStageUrl: null,
+      webrtcLifecycleStatus: "started",
+    };
+    const attemptD = privateApp._beginStageAttempt(stageUrl);
+    internals(app).pendingStageUrl = stageUrl;
+    expect(privateApp._dispatchStageRequest({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_hung_native_d",
+        binding_revision_id: "rev_hung_native_d",
+        url: stageUrl,
+      },
+    }, attemptD)).toBe(true);
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+
+    resolveA({ action: "message", status: "success", info: "late old slot", url: stageUrl });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+    expect(internals(app).state.stageLoadStatus).toBe("pending");
+
+    resolveD({ action: "message", status: "success", info: "replacement slot", url: stageUrl });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(internals(app).state.stageLoadStatus).toBe("matched");
+  });
+
+  it("stream stop keeps same-generation starts fenced until a replacement lifecycle starts, then ignores the old callback", async () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _dispatchStageRequest: (message: { event_type: string; payload: Record<string, unknown> }, attemptGeneration: number) => boolean;
+      _handleStreamStopped: (kind: "stopped", message: unknown) => void;
+      _reconnectStream: () => void;
+      _onStreamStarted: (streamGeneration?: number) => void;
+      _getChildren: () => void;
+      _queryLoadingState: () => void;
+      _pollForKitReady: () => void;
+      streamGeneration: number;
+    };
+    const stageA = "stage://stopped-native-a.usdc";
+    const stageB = "stage://reconnected-native-b.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageA,
+      stageLoadStatus: "pending",
+      webrtcLifecycleStatus: "started",
+    };
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+    vi.spyOn(privateApp, "_queryLoadingState").mockImplementation(() => undefined);
+    vi.spyOn(privateApp, "_pollForKitReady").mockImplementation(() => undefined);
+    let resolveA!: (value: unknown) => void;
+    let resolveB!: (value: unknown) => void;
+    const first = new Promise<unknown>((resolve) => { resolveA = resolve; });
+    const second = new Promise<unknown>((resolve) => { resolveB = resolve; });
+    const sendSpy = vi.spyOn(AppStream, "sendMessage")
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(second);
+    vi.spyOn(AppStream, "stop").mockImplementation(() => undefined);
+
+    const attemptA = privateApp._beginStageAttempt(stageA);
+    internals(app).pendingStageUrl = stageA;
+    expect(privateApp._dispatchStageRequest({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_stopped_a",
+        binding_revision_id: "rev_stopped_a",
+        url: stageA,
+      },
+    }, attemptA)).toBe(true);
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+
+    privateApp._handleStreamStopped("stopped", { reason: "test" });
+    const stoppedGeneration = privateApp.streamGeneration;
+    privateApp._onStreamStarted(stoppedGeneration);
+    expect(internals(app).state.webrtcLifecycleStatus).toBe("stopped");
+    const blockedAttempt = privateApp._beginStageAttempt(stageB);
+    internals(app).pendingStageUrl = stageB;
+    expect(privateApp._dispatchStageRequest({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_blocked_b",
+        binding_revision_id: "rev_blocked_b",
+        url: stageB,
+      },
+    }, blockedAttempt)).toBe(false);
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+
+    privateApp._reconnectStream();
+    const replacementGeneration = privateApp.streamGeneration;
+    privateApp._onStreamStarted(replacementGeneration);
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageB,
+      stageLoadStatus: "pending",
+      loadedStageUrl: null,
+      webrtcLifecycleStatus: "started",
+    };
+    const retryAttempt = privateApp._beginStageAttempt(stageB);
+    internals(app).pendingStageUrl = stageB;
+    expect(privateApp._dispatchStageRequest({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: "req_reconnected_b",
+        binding_revision_id: "rev_reconnected_b",
+        url: stageB,
+      },
+    }, retryAttempt)).toBe(true);
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+
+    resolveA({ action: "message", status: "success", info: "old A", url: stageA });
+    await flushMicrotasks();
+    expect(internals(app).state.stageLoadStatus).toBe("pending");
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+
+    resolveB({ action: "message", status: "success", info: "new B", url: stageB });
+    await flushMicrotasks();
+    expect(internals(app).state.stageLoadStatus).toBe("matched");
+    expect(internals(app).state.loadedStageUrl).toBe(stageB);
+  });
+
+  it("stream lifecycle invalidation revokes an already active parent stage proof", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(PARENT_ORIGIN + "/ui");
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _completeStageLoad: (loadedUrl?: string, bindingRevisionId?: string, attemptGeneration?: number) => void;
+      _replaceStreamLifecycle: () => number;
+      _getChildren: () => void;
+    };
+    const stageUrl = "stage://disconnect-proof.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageUrl,
+      stageLoadStatus: "pending",
+    };
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+    const attempt = privateApp._beginStageAttempt(stageUrl);
+    internals(app).pendingStageUrl = stageUrl;
+    privateApp._completeStageLoad(stageUrl, "rev_disconnect", attempt);
+
+    privateApp._replaceStreamLifecycle();
+
+    const stagePosts = parent.postMessage.mock.calls
+      .map((call) => call[0] as { type?: string; stageUrl?: string | null; status?: string })
+      .filter((message) => message.type === "stage_loaded");
+    expect(stagePosts).toEqual([
+      expect.objectContaining({ stageUrl, status: "active" }),
+      expect.objectContaining({ stageUrl: null, status: "unproven" }),
+    ]);
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
   });
 });

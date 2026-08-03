@@ -11,12 +11,95 @@
  */
 import React, { Component } from 'react';
 import PropTypes from 'prop-types';
-import { StreamEvent, StreamProps, DirectConfig, GFNConfig, StreamStats, StreamType } from '@nvidia/omniverse-webrtc-streaming-library';
+import { StreamEvent, StreamProps, DirectConfig, GFNConfig, StreamStats, StreamStatus, StreamType } from '@nvidia/omniverse-webrtc-streaming-library';
 import StreamConfig from '../stream.config.json';
 // 串流引擎一律經 getStreamer()：harness 關閉時 === 真實 AppStreamer（prod 行為零變更），
 // harness 開啟時為可決定性 FakeAppStreamer（只換 transport + 假 Kit 大腦，不碰前端狀態機）。
 import { getStreamer } from './harness/streamer';
 import { harnessEnabled } from './harness/harnessConfig';
+
+// NVIDIA's singleton streamer clears its callback map only after a successful
+// terminate result. A fulfilled inProgress/error result can retain _stream,
+// so serialize the next connect behind proven physical teardown rather than
+// treating every fulfilled Promise as a completed lifecycle.
+let pendingStreamerTeardown: Promise<boolean> | null = null;
+const STREAMER_TEARDOWN_POLL_MS = 25;
+const STREAMER_TEARDOWN_TIMEOUT_MS = 5_000;
+
+function hasCompletedStreamerTeardown(result: unknown): boolean {
+    // The deterministic harness terminates synchronously and deliberately
+    // returns void after it clears its own callback/timer state. Production
+    // AppStreamer must return the documented terminate/success event.
+    if (harnessEnabled() && result === undefined) return true;
+    if (!result || typeof result !== "object") return false;
+    const event = result as { action?: unknown; status?: unknown };
+    return event.action === "terminate" && event.status === "success";
+}
+
+function isStreamerPhysicallyTerminated(): boolean {
+    if (harnessEnabled()) return true;
+    return (getStreamer() as { streamStatus?: unknown }).streamStatus === StreamStatus.none;
+}
+
+function waitsForStreamerTeardown(result: unknown): boolean {
+    if (!result || typeof result !== "object") return false;
+    const event = result as { action?: unknown; status?: unknown };
+    return event.action === "terminate" && event.status === "inProgress";
+}
+
+function waitForPhysicalStreamerTeardown(): Promise<boolean> {
+    if (isStreamerPhysicallyTerminated()) return Promise.resolve(true);
+    const deadline = Date.now() + STREAMER_TEARDOWN_TIMEOUT_MS;
+    return new Promise((resolve) => {
+        const poll = () => {
+            if (isStreamerPhysicallyTerminated()) {
+                resolve(true);
+                return;
+            }
+            if (Date.now() >= deadline) {
+                resolve(false);
+                return;
+            }
+            setTimeout(poll, STREAMER_TEARDOWN_POLL_MS);
+        };
+        poll();
+    });
+}
+
+function terminateStreamer(): Promise<boolean> {
+    if (pendingStreamerTeardown) return pendingStreamerTeardown;
+    try {
+        const teardown = Promise.resolve(getStreamer().terminate(false))
+            .then(
+                (result) => {
+                    if (hasCompletedStreamerTeardown(result)) return true;
+                    if (waitsForStreamerTeardown(result)) return waitForPhysicalStreamerTeardown();
+                    // A fulfilled error/warning is not a terminal cleanup
+                    // acknowledgement. It must fail this lifecycle even when
+                    // a snapshot happens to report none; a later fresh mount
+                    // may independently observe none and reconnect safely.
+                    console.error("AppStream streamer teardown did not complete");
+                    return false;
+                },
+                (error) => {
+                    console.error(error);
+                    return false;
+                },
+            );
+        pendingStreamerTeardown = teardown;
+        void teardown.finally(() => {
+            if (pendingStreamerTeardown === teardown) pendingStreamerTeardown = null;
+        });
+        return teardown;
+    } catch (error) {
+        console.error(error);
+        return Promise.resolve(false);
+    }
+}
+
+function waitForStreamerTeardown(): Promise<boolean> {
+    return pendingStreamerTeardown || Promise.resolve(isStreamerPhysicallyTerminated());
+}
 
 type StreamPayload = StreamEvent & {
     action?: string;
@@ -58,6 +141,7 @@ interface AppStreamState {
 export default class AppStream extends Component<AppStreamProps, AppStreamState> {
     private _requested: boolean;
     private _negotiatedSize: { w: number; h: number } | null;
+    private _disposed: boolean;
 
     static defaultProps = {
         style: {}
@@ -74,12 +158,14 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
 
         this._requested = false;
         this._negotiatedSize = null;
+        this._disposed = false;
         this.state = {
             streamReady: false
         };
     }
 
     componentDidMount() {
+        this._disposed = false;
         if (!this._requested) {
             this._requested = true;
 
@@ -118,7 +204,7 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
         }
     }
 
-    _initStream() {
+    async _initStream() {
         let streamProps: StreamProps;
         let streamConfig: DirectConfig | GFNConfig;
         let streamSource: StreamType.DIRECT | StreamType.GFN;
@@ -220,6 +306,12 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
         }
 
         try {
+            const teardownSucceeded = await waitForStreamerTeardown();
+            if (this._disposed) return;
+            if (!teardownSucceeded) {
+                this.props.onStreamFailed();
+                return;
+            }
             streamProps = {streamConfig, streamSource}
             getStreamer().connect(streamProps)
             .then((result: StreamEvent) => {
@@ -235,7 +327,8 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
     }
 
     componentWillUnmount() {
-        getStreamer().terminate(false);
+        this._disposed = true;
+        void terminateStreamer();
     }
 
     componentDidUpdate(_prevProps: AppStreamProps, prevState: AppStreamState) {
@@ -255,7 +348,7 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
     }
 
     static stop() {
-        getStreamer().terminate(false);
+        void terminateStreamer();
     }
 
     _onStart(message: StreamPayload) {

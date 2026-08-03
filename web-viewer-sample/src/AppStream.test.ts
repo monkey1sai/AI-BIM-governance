@@ -1,5 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const streamer = vi.hoisted(() => ({
+    connect: vi.fn(() => Promise.resolve({})),
+    sendMessage: vi.fn(() => Promise.resolve({})),
+    terminate: vi.fn(() => Promise.resolve({
+        action: "terminate",
+        status: "success",
+        info: "stream terminated",
+    })),
+    streamStatus: 0,
+    resize: vi.fn(() => Promise.resolve({})),
+}));
+
+vi.mock('./harness/streamer', () => ({
+    getStreamer: () => streamer,
+}));
+
 import AppStream from './AppStream';
 
 function makeProps(onLoggedIn = vi.fn()) {
@@ -23,6 +39,16 @@ function makeProps(onLoggedIn = vi.fn()) {
 describe('AppStream auth updates', () => {
     afterEach(() => {
         vi.restoreAllMocks();
+        vi.useRealTimers();
+        streamer.connect.mockReset().mockResolvedValue({});
+        streamer.sendMessage.mockReset().mockResolvedValue({});
+        streamer.terminate.mockReset().mockResolvedValue({
+            action: "terminate",
+            status: "success",
+            info: "stream terminated",
+        });
+        streamer.streamStatus = 0;
+        streamer.resize.mockReset().mockResolvedValue({});
     });
 
     it('forwards a string user id after successful authentication', () => {
@@ -74,5 +100,127 @@ describe('AppStream auth updates', () => {
         expect(errorSpy).toHaveBeenCalledWith('AppStream authUser callback failed');
         expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('operator-sensitive-id');
         expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('callback-sensitive-detail');
+    });
+
+    it('waits for physical streamer teardown before a remounted instance connects', async () => {
+        let releaseTerminate!: () => void;
+        streamer.terminate.mockReturnValueOnce(new Promise((resolve) => {
+            releaseTerminate = () => resolve({
+                action: "terminate",
+                status: "success",
+                info: "stream terminated",
+            });
+        }));
+        const oldStream = new AppStream(makeProps());
+        oldStream.componentWillUnmount();
+
+        const replacement = new AppStream(makeProps());
+        replacement.componentDidMount();
+        await Promise.resolve();
+        expect(streamer.connect).not.toHaveBeenCalled();
+
+        releaseTerminate();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(streamer.connect).toHaveBeenCalledOnce();
+
+        replacement.componentWillUnmount();
+    });
+
+    it('waits for an in-progress SDK teardown until the singleton reports none', async () => {
+        vi.useFakeTimers();
+        streamer.streamStatus = 3;
+        streamer.terminate.mockResolvedValueOnce({
+            action: "terminate",
+            status: "inProgress",
+            info: "stream is still connecting",
+        });
+        const oldStream = new AppStream(makeProps());
+        oldStream.componentWillUnmount();
+
+        const props = makeProps();
+        const replacement = new AppStream(props);
+        replacement.componentDidMount();
+        await Promise.resolve();
+        expect(streamer.connect).not.toHaveBeenCalled();
+        expect(props.onStreamFailed).not.toHaveBeenCalled();
+
+        streamer.streamStatus = 0;
+        await vi.advanceTimersByTimeAsync(25);
+
+        expect(streamer.connect).toHaveBeenCalledOnce();
+        expect(props.onStreamFailed).not.toHaveBeenCalled();
+        replacement.componentWillUnmount();
+    });
+
+    it('fails closed when physical streamer teardown fulfills with error', async () => {
+        streamer.streamStatus = 0;
+        streamer.terminate.mockResolvedValueOnce({
+            action: "terminate",
+            status: "error",
+            info: "stream termination failed",
+        });
+        const oldStream = new AppStream(makeProps());
+        oldStream.componentWillUnmount();
+
+        const props = makeProps();
+        const replacement = new AppStream(props);
+        replacement.componentDidMount();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(streamer.connect).not.toHaveBeenCalled();
+        expect(props.onStreamFailed).toHaveBeenCalledOnce();
+
+        replacement.componentWillUnmount();
+    });
+
+    it('fails closed when physical streamer teardown rejects', async () => {
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        streamer.streamStatus = 0;
+        streamer.terminate.mockRejectedValueOnce(new Error('terminate failed'));
+        const oldStream = new AppStream(makeProps());
+        oldStream.componentWillUnmount();
+
+        const props = makeProps();
+        const replacement = new AppStream(props);
+        replacement.componentDidMount();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(streamer.connect).not.toHaveBeenCalled();
+        expect(props.onStreamFailed).toHaveBeenCalledOnce();
+        expect(errorSpy).toHaveBeenCalledOnce();
+
+        replacement.componentWillUnmount();
+    });
+
+    it('allows a later fresh mount after a failed teardown once the singleton is none', async () => {
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        streamer.streamStatus = 0;
+        streamer.terminate.mockRejectedValueOnce(new Error('terminate failed'));
+        const oldStream = new AppStream(makeProps());
+        oldStream.componentWillUnmount();
+
+        const failedProps = makeProps();
+        const failedReplacement = new AppStream(failedProps);
+        failedReplacement.componentDidMount();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(streamer.connect).not.toHaveBeenCalled();
+        expect(failedProps.onStreamFailed).toHaveBeenCalledOnce();
+        expect(errorSpy).toHaveBeenCalledOnce();
+
+        const retryProps = makeProps();
+        const retry = new AppStream(retryProps);
+        retry.componentDidMount();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(streamer.connect).toHaveBeenCalledOnce();
+        expect(retryProps.onStreamFailed).not.toHaveBeenCalled();
+        failedReplacement.componentWillUnmount();
+        retry.componentWillUnmount();
     });
 });
