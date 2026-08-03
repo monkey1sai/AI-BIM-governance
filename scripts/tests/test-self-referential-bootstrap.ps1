@@ -204,9 +204,49 @@ try {
         'scripts/dev/check-pr-local-preflight.ps1',
         'scripts/hooks/require-gstack-evidence.ps1',
         'scripts/lib/design-assets.ps1',
+        # Codex round-6: three adjudicating surfaces the classifier used to miss.
+        # A PR touching only one of these could change what "verified" means, or
+        # declare every base gate-capable, without ever triggering this rule.
+        'scripts/lib/detect-base-gate-capability.sh',
+        'scripts/verify-all.sh',
+        'scripts/lib/verification-plan.mjs',
         'web-viewer-sample/src/Window.tsx'
     )
-    Assert-True ($matched.Count -eq 10) "enforcement workflows, manifest, verifiers, local entrypoints and the deploy asset helper must classify as mechanism (matched: $($matched -join ', '))"
+    Assert-True ($matched.Count -eq 13) "enforcement workflows, manifest, verifiers, local entrypoints, the deploy asset helper, the base-capability detector, the POSIX verify entrypoint and the verification planner must classify as mechanism (matched: $($matched -join ', '))"
+    Assert-True ($matched -notcontains 'web-viewer-sample/src/Window.tsx') 'ordinary product code must NOT classify as mechanism'
+
+    # --- list-typed fields reject scalars (Codex round-6) ---------------------------
+    # `@($value).Count` wraps a bare string into a one-element array, so a scalar
+    # passed every emptiness check even though the schema says array.
+    foreach ($field in @('verification_mechanism_paths', 'bootstrap_evidence_refs')) {
+        $scalar = if ($field -eq 'verification_mechanism_paths') { 'scripts/deploy.ps1' }
+                  else { 'docs/evidence/x/self-referential-bootstrap/e.md' }
+        Assert-Throws -Context "scalar $field" -MessagePattern 'must be a JSON array of strings' -Action {
+            Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{ $field = $scalar })))
+        }
+    }
+    Assert-Throws -Context 'scalar fixpoint.evidence_refs' -MessagePattern 'must be a JSON array of strings' -Action {
+        Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{
+            status = 'closed'
+            fixpoint = @{ reverified_at = '2026-08-02T00:00:00Z'; mechanism_commit = ('a' * 40); evidence_refs = 'docs/evidence/x/fixpoint/e.md' }
+        })))
+    }
+    Assert-Throws -Context 'non-string list member' -MessagePattern 'only non-empty strings' -Action {
+        Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{ verification_mechanism_paths = @('scripts/deploy.ps1', '') })))
+    }
+
+    # --- the mechanism cannot be its own evidence (Codex round-6) -------------------
+    # The stack-kind label is a substring test and the mechanism files are named
+    # after the stack kind, so the ledger itself satisfied it.
+    foreach ($selfRef in @('scripts/self-referential-bootstrap-ledger.json', 'scripts/lib/self-referential-bootstrap.ps1')) {
+        Assert-Throws -Context "evidence ref '$selfRef'" -MessagePattern 'cannot be its own evidence' -Action {
+            Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{ bootstrap_evidence_refs = @($selfRef) })))
+        }
+    }
+    # A genuine artefact ABOUT the mechanism still passes.
+    $null = Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{
+        bootstrap_evidence_refs = @('docs/evidence/slug/self-referential-bootstrap/README.md')
+    })))
 
     # --- real repo ledger: parse-integrity ONLY, no emptiness assumption ------------
     $realLedger = Get-SelfReferentialBootstrapLedger -Path (Join-Path $repoRoot 'scripts/self-referential-bootstrap-ledger.json')

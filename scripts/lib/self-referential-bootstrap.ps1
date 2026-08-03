@@ -32,11 +32,47 @@ $script:SelfReferentialMechanismPattern = @(
     '^scripts/verification-manifest\.json$'
     '^scripts/dev/check-pr-local-preflight\.ps1$'
     '^scripts/hooks/require-gstack-evidence\.ps1$'
+    # Deciding whether the BASE has a usable gate is itself an adjudicating
+    # decision: a PR editing only this file could report every base as capable
+    # and skip the gate entirely (Codex: "Classify the capability detector").
+    '^scripts/lib/detect-base-gate-capability\.sh$'
+    # The POSIX verification entrypoint is the peer of verify-all.ps1, and on the
+    # Linux deploy target it IS the entrypoint (Codex: "Classify the POSIX
+    # verification entrypoint").
+    '^scripts/verify-all\.sh$'
+    # The planner and runner decide WHICH verifications run, so editing them
+    # changes what "verified" means (Codex: "Classify the verification planner").
+    '^scripts/lib/verification-(plan|runner)\.mjs$'
 ) -join '|'
 
 $script:GenericReasonBlocklist = @(
     'bootstrap', 'needed', 'required', 'self-referential', 'chicken', 'egg', 'because', 'necessary'
 )
+
+function Assert-SelfReferentialStringList {
+    # The schema says these fields are LISTS. `@($value).Count` cannot enforce that:
+    # it wraps a bare string into a one-element array, so a scalar passed every
+    # emptiness check (Codex: "Reject scalar values for ledger list fields").
+    # ConvertFrom-Json gives Object[] for a JSON array and String for a scalar, so
+    # the array test is the honest one.
+    param(
+        [Parameter(Mandatory = $true)] $Value,
+        [Parameter(Mandatory = $true)][string] $Context
+    )
+    if ($Value -isnot [System.Collections.IEnumerable] -or $Value -is [string]) {
+        throw "self_referential_bootstrap: $Context must be a JSON array of strings, not a scalar."
+    }
+    $items = @($Value)
+    if ($items.Count -eq 0) {
+        throw "self_referential_bootstrap: $Context must not be empty."
+    }
+    foreach ($item in $items) {
+        if ($item -isnot [string] -or [string]::IsNullOrWhiteSpace($item)) {
+            throw "self_referential_bootstrap: $Context must contain only non-empty strings."
+        }
+    }
+    return $items
+}
 
 function Get-SelfReferentialMechanismPaths {
     param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $ChangedPaths)
@@ -175,16 +211,22 @@ function Get-SelfReferentialBootstrapLedger {
             throw "self_referential_bootstrap: entry '$id' opened_at must be a valid ISO-8601 timestamp."
         }
         Assert-SelfReferentialBootstrapReason -Reason ([string]$entry.reason) -Context "ledger entry '$id'"
-        if (@($entry.verification_mechanism_paths).Count -eq 0) {
-            throw "self_referential_bootstrap: entry '$id' must list the verification_mechanism_paths it changes."
-        }
-        $refs = @($entry.bootstrap_evidence_refs)
-        if ($refs.Count -eq 0) {
-            throw "self_referential_bootstrap: entry '$id' must list bootstrap_evidence_refs."
-        }
+        $null = Assert-SelfReferentialStringList -Value $entry.verification_mechanism_paths `
+            -Context "entry '$id' verification_mechanism_paths"
+        $refs = Assert-SelfReferentialStringList -Value $entry.bootstrap_evidence_refs `
+            -Context "entry '$id' bootstrap_evidence_refs"
         foreach ($ref in $refs) {
             if ([string]$ref -notmatch 'self[-_]referential[-_]bootstrap') {
                 throw "self_referential_bootstrap: entry '$id' evidence ref '$ref' is not labeled with the self_referential_bootstrap stack kind."
+            }
+            # The stack-kind label is a substring test, and the mechanism files are
+            # themselves named after the stack kind - so scripts/self-referential-
+            # bootstrap-ledger.json passed it, letting an entry cite the ledger (or
+            # the gate library) as its own evidence (Codex: "Reject governance files
+            # masquerading as bootstrap evidence"). Evidence must be an artefact
+            # ABOUT the mechanism, never a file that IS the mechanism.
+            if (@(Get-SelfReferentialMechanismPaths -ChangedPaths @([string]$ref)).Count -gt 0) {
+                throw "self_referential_bootstrap: entry '$id' evidence ref '$ref' is a verification-mechanism file; the mechanism cannot be its own evidence."
             }
         }
 
@@ -207,9 +249,8 @@ function Get-SelfReferentialBootstrapLedger {
             if ([string]$fp.mechanism_commit -notmatch '^[0-9a-f]{40}$') {
                 throw "self_referential_bootstrap: entry '$id' fixpoint.mechanism_commit must be a full 40-hex commit of the merged mechanism."
             }
-            if (@($fp.evidence_refs).Count -eq 0) {
-                throw "self_referential_bootstrap: entry '$id' fixpoint.evidence_refs must not be empty."
-            }
+            $null = Assert-SelfReferentialStringList -Value $fp.evidence_refs `
+                -Context "entry '$id' fixpoint.evidence_refs"
         }
     }
     return $ledger
