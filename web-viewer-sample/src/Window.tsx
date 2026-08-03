@@ -2638,6 +2638,9 @@ export default class App extends React.Component<AppProps, AppState> {
             return;
         }
 
+        // A newer user selection revokes completion authority from every prior
+        // stage attempt before its coordinator preauthorization resolves.
+        const preauthorizationFenceGeneration = this._beginStageAttempt(primary.usdc_url || "");
         const applyThroughCoordinator = async () => {
             const transaction = await this._preauthorizeStageBinding(
                 selection.map((artifact) => ({
@@ -2688,7 +2691,7 @@ export default class App extends React.Component<AppProps, AppState> {
             this._failStageLoad(
                 t(stageLoadFailurePresentation.title.zh, stageLoadFailurePresentation.title.en),
                 t(stageLoadFailurePresentation.authorizationFailed.zh, stageLoadFailurePresentation.authorizationFailed.en),
-                null,
+                preauthorizationFenceGeneration,
             );
         });
     }

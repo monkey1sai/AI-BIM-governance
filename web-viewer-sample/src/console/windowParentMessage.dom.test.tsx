@@ -2695,6 +2695,117 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
     expect(preauthorize).toHaveBeenCalledTimes(1);
   });
 
+  it("fences a prior stage attempt before newer binding preauthorization resolves", async () => {
+    vi.useFakeTimers();
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _applyBinding: AppInternals["_applyBinding"];
+      _beginStageAttempt: (url: string) => number;
+      _preauthorizeStageBinding: () => Promise<Record<string, unknown>>;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      runtimeCommandTerminalClaims: Map<string, { eventType: string; outcome: string }>;
+      runtimeCommandContexts: Map<string, {
+        eventType: string;
+        bindingRevisionId: string;
+        stageUrl: string;
+        stageAttemptGeneration: number;
+      }>;
+    };
+    const priorStageUrl = "stage://prior-before-preauth.usdc";
+    const nextStageUrl = "stage://next-before-preauth.usdc";
+    const priorGeneration = privateApp._beginStageAttempt(priorStageUrl);
+    internals(app).pendingStageUrl = priorStageUrl;
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: priorStageUrl,
+      loadedStageUrl: null,
+      stageLoadStatus: "pending",
+      runtimeCommandLifecycles: [{
+        request_id: "req_prior_before_preaut",
+        event_type: "loadArtifactGroupRequest",
+        phases: ["pending"],
+      }],
+    };
+    privateApp.runtimeCommandContexts.set("req_prior_before_preaut", {
+      eventType: "loadArtifactGroupRequest",
+      bindingRevisionId: "rev_prior_before_preaut",
+      stageUrl: priorStageUrl,
+      stageAttemptGeneration: priorGeneration,
+    });
+    let resolvePreauthorization!: (value: Record<string, unknown>) => void;
+    const preauthorization = new Promise<Record<string, unknown>>((resolve) => { resolvePreauthorization = resolve; });
+    vi.spyOn(privateApp, "_preauthorizeStageBinding").mockImplementation(() => preauthorization);
+    const send = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+
+    privateApp._applyBinding([{
+      artifact_id: "artifact_next_before_preaut",
+      model_version_id: "version_next_before_preaut",
+      usdc_url: nextStageUrl,
+      role: "primary",
+      load_order: 0,
+      ready: true,
+    }], "rev_ui_next_before_preaut");
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      generation: expect.any(Number),
+      status: "pending",
+      targetUrl: nextStageUrl,
+    }));
+    expect(privateApp.activeStageAttempt?.generation).not.toBe(priorGeneration);
+    expect(privateApp.runtimeCommandContexts.has("req_prior_before_preaut")).toBe(false);
+    expect(privateApp.runtimeCommandTerminalClaims.get("req_prior_before_preaut")).toEqual({
+      eventType: "loadArtifactGroupRequest",
+      outcome: "superseded",
+    });
+
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_prior_before_preaut",
+        url: priorStageUrl,
+        binding_revision_id: "rev_prior_before_preaut",
+      },
+    });
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.govBindingApplyState).toEqual({ status: "applying" });
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        request_id: "req_prior_before_preaut",
+        phases: ["pending", "terminal"],
+        outcome: "superseded",
+      }),
+    ]));
+
+    resolvePreauthorization({
+      status: "pending",
+      session_id: "review_session_x",
+      stage_binding_authorization_id: "stage_auth_next_before_preaut",
+      binding_revision_id: "rev_next_before_preaut",
+      pending_expires_at: "2099-01-01T00:00:00Z",
+      stage_composition: {
+        primary: {
+          artifact_id: "artifact_next_before_preaut",
+          role: "primary",
+          load_order: 0,
+          usdc_url: nextStageUrl,
+        },
+        secondary_layers: [],
+      },
+    });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      status: "pending",
+      targetUrl: nextStageUrl,
+    }));
+    expect(send.mock.calls.filter(([message]) => (message as { event_type?: string }).event_type === "loadArtifactGroupRequest"))
+      .toHaveLength(1);
+  });
+
   it("terminalizes a binding attempt when its composition send is rejected and ignores a later success", async () => {
     vi.useFakeTimers();
     setLang("en");
