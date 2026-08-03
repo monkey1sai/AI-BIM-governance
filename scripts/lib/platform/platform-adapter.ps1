@@ -55,12 +55,32 @@ function Get-PlatformProcStatFields {
     $closeIndex = $raw.LastIndexOf(')')
     if ($closeIndex -lt 0) { return $null }
     $rest = $raw.Substring($closeIndex + 1).Trim() -split '\s+'
-    # $rest[0] = state (field 3), $rest[1] = ppid (field 4), $rest[19] = starttime (field 22)
+    # $rest[0] = state (field 3), $rest[1] = ppid (field 4), $rest[3] = session
+    # (field 6), $rest[19] = starttime (field 22)
     if ($rest.Count -lt 20) { return $null }
     return [pscustomobject]@{
         ParentProcessId = [int]$rest[1]
+        SessionId       = [int]$rest[3]
         StartTimeTicks  = [string]$rest[19]
     }
+}
+
+function Test-PlatformProcessDetached {
+    # Is this process free of the launching terminal/SSH session? A process that
+    # is its own session leader (sid == pid) no longer receives the SIGHUP sent
+    # when the session's controlling terminal goes away.
+    #
+    # This is the whole difference between a local deploy and a remote one: on
+    # Windows the deploy runs in a session that stays, so nothing hangs up. Over
+    # SSH, every host-native service started as a child of the session died the
+    # moment the transport disconnected - the deploy reported them healthy and
+    # they were gone minutes later, leaving stale PID files behind.
+    param([Parameter(Mandatory = $true)][int] $ProcessId)
+
+    if ((Get-PlatformName) -eq 'windows') { return $true }
+    $stat = Get-PlatformProcStatFields -ProcessId $ProcessId
+    if ($null -eq $stat) { return $false }
+    return ([int]$stat.SessionId -eq $ProcessId)
 }
 
 function Get-PlatformProcessIdentity {

@@ -174,9 +174,23 @@ function Start-HostNativeService {
     $errFile = "$logFile.err"
     $pidFile = Join-Path $RunDir "$Name.pid"
 
+    # Off Windows the service must OUTLIVE the session that started it. A remote
+    # deploy runs over SSH, and every service started as a plain child of that
+    # session got SIGHUP the moment the transport disconnected: the deploy reported
+    # all four host-native services healthy, and minutes later they were gone with
+    # only stale PID files left. `setsid` makes the child its own session leader,
+    # so the hangup never reaches it. It execs in place when the caller is not
+    # already a process-group leader, which preserves the PID we record.
+    $launchExe = $FilePath
+    $launchArgs = @($ArgumentList)
+    if ((Get-PlatformName) -ne 'windows') {
+        $launchArgs = @($FilePath) + @($ArgumentList)
+        $launchExe = 'setsid'
+    }
+
     $startArgs = @{
-        FilePath               = $FilePath
-        ArgumentList           = $ArgumentList
+        FilePath               = $launchExe
+        ArgumentList           = $launchArgs
         WorkingDirectory       = $WorkingDirectory
         RedirectStandardOutput = $logFile
         RedirectStandardError  = $errFile
@@ -191,7 +205,14 @@ function Start-HostNativeService {
     # returned an object whose Pid was silently absent - the caller logged
     # "PID=" as [ok] and only the health probe noticed, 30 seconds later.
     if (-not $proc -or -not $proc.Id) {
-        throw "$Name did not start: '$FilePath' produced no process (workdir=$WorkingDirectory, stderr=$errFile)."
+        throw "$Name did not start: '$launchExe' produced no process (workdir=$WorkingDirectory, stderr=$errFile)."
+    }
+    # Verify the detachment actually happened rather than assuming it. If setsid
+    # forked instead of exec'ing, the PID we are about to record is not the
+    # service, and the service would die with the session anyway - both silent
+    # failures that only show up long after the deploy reports success.
+    if (-not (Test-PlatformProcessDetached -ProcessId ([int]$proc.Id))) {
+        throw "$Name started as PID $($proc.Id) but is not a session leader; it would die when the deploy session ends (stderr=$errFile)."
     }
     $proc.Id | Set-Content -LiteralPath $pidFile -Encoding ascii
     return [pscustomobject]@{ Name = $Name; Pid = $proc.Id; LogPath = $logFile; ErrPath = $errFile }
