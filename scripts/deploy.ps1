@@ -1553,20 +1553,27 @@ if ($SkipDocker) {
     # 成 NativeCommandError。隔離成 new process 把它的 stderr 寫進 .err.log,不污染父流程。
     $upLog  = Join-Path $RunDir 'docker-compose-up.log'
     $upErr  = Join-Path $RunDir 'docker-compose-up.err.log'
-    $childArgs = @(
-        '-NoProfile','-ExecutionPolicy','Bypass','-File',
+    $childArgs = @(Get-HostNativePowerShellArgumentPrefix) + @(
+        '-File',
         (Join-Path $PSScriptRoot 'start-web-plane-docker.ps1'),
         '-EnvFile', $resolvedEnvFile
     )
     if ($Build) {
         $childArgs += '-Build'
     }
-    $proc = Start-Process -FilePath 'powershell.exe' `
-        -ArgumentList $childArgs `
-        -WorkingDirectory $RepoRoot `
-        -RedirectStandardOutput $upLog `
-        -RedirectStandardError $upErr `
-        -Wait -PassThru -WindowStyle Hidden
+    # powershell.exe and -WindowStyle are both Windows-only; off Windows this is
+    # pwsh with no window style at all.
+    $startArgs = @{
+        FilePath               = (Get-HostNativePowerShellExe)
+        ArgumentList           = $childArgs
+        WorkingDirectory       = $RepoRoot
+        RedirectStandardOutput = $upLog
+        RedirectStandardError  = $upErr
+        Wait                   = $true
+        PassThru               = $true
+    }
+    if ((Get-PlatformName) -eq 'windows') { $startArgs.WindowStyle = 'Hidden' }
+    $proc = Start-Process @startArgs
     $dockerExit = $proc.ExitCode
     if ($dockerExit -ne 0) {
         Write-DeployTag -Tag 'fail' -Message "stage=4d Phase 4d docker compose up failed (exit=$dockerExit; see scripts\.run\docker-compose-up.log + .err.log)" -LogPath $LogPath | Out-Null

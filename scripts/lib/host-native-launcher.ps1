@@ -42,6 +42,16 @@ function Get-HostNativePowerShellExe {
     return 'pwsh'
 }
 
+function Get-HostNativePowerShellArgumentPrefix {
+    # Standard prefix for launching one of our .ps1 files as a child process.
+    # -ExecutionPolicy is a Windows-only concept and pwsh rejects it elsewhere, so
+    # it is only emitted there. Callers append -File <script> and their own args.
+    if ((Get-PlatformName) -eq 'windows') {
+        return @('-NoProfile', '-ExecutionPolicy', 'Bypass')
+    }
+    return @('-NoProfile')
+}
+
 function Test-AlreadyRunning {
     [CmdletBinding()]
     param(
@@ -294,7 +304,7 @@ function Start-HostNativeConversion {
         -Name 'bim-streaming-conversion-service' `
         -WorkingDirectory (Join-Path $RepoRoot 'bim-streaming-server') `
         -FilePath (Get-HostNativePowerShellExe) `
-        -ArgumentList @('-ExecutionPolicy','Bypass','-NoProfile','-File',$launcher,'-PythonExe',$pythonExe) `
+        -ArgumentList ((Get-HostNativePowerShellArgumentPrefix) + @('-File', $launcher, '-PythonExe', $pythonExe)) `
         -RunDir $runDir)
 }
 
@@ -390,8 +400,8 @@ function Start-HostNativeKit {
         New-Item -ItemType Directory -Path $runDir -Force | Out-Null
     }
     $launcher = Join-Path $RepoRoot 'bim-streaming-server\scripts\start-streaming-server.ps1'
-    $arguments = @(
-        '-ExecutionPolicy','Bypass','-NoProfile','-File', $launcher,
+    $arguments = @(Get-HostNativePowerShellArgumentPrefix) + @(
+        '-File', $launcher,
         '-InstanceId','kit_local_001',
         '-SignalPort',"$SignalPort",
         '-StreamPort',"$StreamPort",
@@ -409,7 +419,7 @@ function Start-HostNativeKit {
     return (Start-HostNativeService `
         -Name 'bim-streaming-server' `
         -WorkingDirectory (Join-Path $RepoRoot 'bim-streaming-server') `
-        -FilePath 'powershell.exe' `
+        -FilePath (Get-HostNativePowerShellExe) `
         -ArgumentList $arguments `
         -RunDir $runDir)
 }
