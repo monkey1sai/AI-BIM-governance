@@ -3774,8 +3774,6 @@ export default class App extends React.Component<AppProps, AppState> {
         streamGeneration = this.streamGeneration,
     ): void {
         if (!this._isCurrentStreamCallback(streamGeneration, kind)) return;
-        const hadActiveStageEvidence = this.state.stageLoadStatus === "matched"
-            && Boolean(this.state.loadedStageUrl);
         // AppStreamer keeps response callbacks in the old lifecycle. A later
         // stage request must remount before it can safely reuse this slot.
         this.nativeOpenStagePoisonedGeneration = this.streamGeneration;
@@ -3803,9 +3801,6 @@ export default class App extends React.Component<AppProps, AppState> {
             webrtcLifecycleStatus: kind,
             reviewEvents: [...state.reviewEvents, `WebRTC ${kind}`].slice(-80),
         }));
-        if (hadActiveStageEvidence) {
-            this._postToParent({ type: "stage_loaded", stageUrl: null, status: "unproven" });
-        }
     }
 
     private _reconnectStream(): void {

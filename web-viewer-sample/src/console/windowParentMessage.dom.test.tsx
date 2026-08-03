@@ -1274,10 +1274,14 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
 
     expect(internals(app).state.loadedStageUrl).toBeNull();
     expect(internals(app).state.stageLoadStatus).toBe("disconnected");
-    expect(parent.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "stage_loaded", stageUrl: null, status: "unproven" }),
-      PARENT_ORIGIN,
-    );
+    const unprovenPosts = parent.postMessage.mock.calls
+      .map((call) => call[0] as { type?: string; stageUrl?: string | null; status?: string })
+      .filter((message) => (
+        message.type === "stage_loaded"
+        && message.stageUrl === null
+        && message.status === "unproven"
+      ));
+    expect(unprovenPosts).toHaveLength(1);
   });
 
   it("advances the stream generation before a deferred React reconnect remount can receive an old stop callback", () => {
