@@ -252,6 +252,7 @@ function Compare-SelfReferentialLedgerTransition {
         [Parameter(Mandatory = $true)] $BaseLedger,
         [Parameter(Mandatory = $true)] $HeadLedger,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $ChangedPaths,
+        [AllowEmptyCollection()][string[]] $MechanismPaths = @(),
         [int] $PrNumber = 0,
         [string] $RepoRoot = '',
         [string] $BaseSha = '',
@@ -280,9 +281,26 @@ function Compare-SelfReferentialLedgerTransition {
             if ($PrNumber -gt 0 -and [int]$head.pr -ne $PrNumber) {
                 throw "self_referential_bootstrap: new entry '$id' records pr=$($head.pr) but this is PR #$PrNumber; entries must bind to their originating PR."
             }
-            $undeclaredPaths = @(@($head.verification_mechanism_paths) | Where-Object { $_ -notin $ChangedPaths })
+            $declaredPaths = @($head.verification_mechanism_paths | ForEach-Object { [string]$_ })
+            $undeclaredPaths = @($declaredPaths | Where-Object { $_ -notin $ChangedPaths })
             if ($undeclaredPaths.Count -gt 0) {
                 throw "self_referential_bootstrap: new entry '$id' claims mechanism paths this PR does not change: $($undeclaredPaths -join ', ')."
+            }
+            # Declared paths must be CLASSIFIED mechanism paths, and must cover
+            # every mechanism path that triggered the obligation. Otherwise a PR
+            # could change a real mechanism file plus an unrelated file, declare
+            # only the unrelated one, and later close the debt against a commit
+            # touching that unrelated path - leaving the change that actually
+            # triggered the gate outside the ledger binding (Codex L1-correctness-3).
+            if (@($MechanismPaths).Count -gt 0) {
+                $nonMechanism = @($declaredPaths | Where-Object { $_ -notin $MechanismPaths })
+                if ($nonMechanism.Count -gt 0) {
+                    throw "self_referential_bootstrap: new entry '$id' declares paths that are not classified verification-mechanism paths: $($nonMechanism -join ', ')."
+                }
+                $uncovered = @($MechanismPaths | Where-Object { $_ -notin $declaredPaths })
+                if ($uncovered.Count -gt 0) {
+                    throw "self_referential_bootstrap: new entry '$id' does not cover every mechanism path this PR changes; missing: $($uncovered -join ', ')."
+                }
             }
             if (-not [string]::IsNullOrWhiteSpace($RepoRoot)) {
                 foreach ($ref in @($head.bootstrap_evidence_refs)) {
@@ -331,8 +349,12 @@ function Compare-SelfReferentialLedgerTransition {
         # Bind the closure to THIS entry's mechanism (not any ancient ancestor):
         # the mechanism_commit must actually have touched one of the entry's
         # declared verification_mechanism_paths.
+        # NOTE: use $head, not $entry. $entry is still bound by the earlier
+        # foreach loops in this function and would silently refer to the LAST
+        # head entry, mis-binding closures whenever the ledger has >1 entry
+        # (narrower bug surfaced by the Codex apex while refuting L1-correctness-1).
         $mechanismTouched = $false
-        foreach ($declaredPath in @($entry.verification_mechanism_paths)) {
+        foreach ($declaredPath in @($head.verification_mechanism_paths)) {
             $touched = @(& git -C $RepoRoot show --name-only --pretty=format: $commit -- ([string]$declaredPath) 2>$null | Where-Object { $_ })
             if ($touched.Count -gt 0) { $mechanismTouched = $true; break }
         }
@@ -344,9 +366,16 @@ function Compare-SelfReferentialLedgerTransition {
             # Post-merge binding: the evidence blob must have been introduced or
             # modified at or after the mechanism merged - a pre-existing unrelated
             # blob cannot stand in for the required post-merge re-verification.
-            $evidenceIntroCommit = (& git -C $RepoRoot log -1 --format=%H -- ([string]$ref) 2>$null | Out-String).Trim()
+            # The walk MUST start at the supplied head revision: bare `git log`
+            # starts at ambient HEAD, which in a pull_request checkout is the
+            # synthetic merge ref, so a base-side commit could supply the
+            # chronology for a blob validated at head (Codex L1-correctness-4).
+            if ([string]::IsNullOrWhiteSpace($HeadSha)) {
+                throw "self_referential_bootstrap: closing entry '$id' requires HeadSha to bind evidence chronology; refusing ambient-HEAD resolution."
+            }
+            $evidenceIntroCommit = (& git -C $RepoRoot log -1 --format=%H $HeadSha -- ([string]$ref) 2>$null | Out-String).Trim()
             if ([string]::IsNullOrWhiteSpace($evidenceIntroCommit)) {
-                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$ref' has no commit history; cannot bind it to post-merge re-verification."
+                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$ref' has no commit history reachable from the PR head; cannot bind it to post-merge re-verification."
             }
             & git -C $RepoRoot merge-base --is-ancestor $commit $evidenceIntroCommit 2>$null
             if ($LASTEXITCODE -ne 0) {
@@ -421,7 +450,8 @@ function Assert-SelfReferentialBootstrapBody {
 
     $transition = Compare-SelfReferentialLedgerTransition `
         -BaseLedger $baseLedger -HeadLedger $headLedger `
-        -ChangedPaths $ChangedPaths -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
+        -ChangedPaths $ChangedPaths -MechanismPaths $mechanismPaths `
+        -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
     $newIds = @($transition.NewEntries | ForEach-Object { [string]$_.id })
 
     $declared = & $GetTableValue $Body 'Self-referential bootstrap'

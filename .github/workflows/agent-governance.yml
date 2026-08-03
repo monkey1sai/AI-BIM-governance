@@ -80,6 +80,14 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
 
+      - name: Run base-gate capability detection tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-base-gate-capability.ps1
+
+      - name: Run local preflight PrNumber forwarding tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-preflight-prnumber-forwarding.ps1
+
       - name: Run deploy target registry tests
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-deploy-target-registry.ps1
