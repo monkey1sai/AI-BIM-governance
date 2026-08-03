@@ -306,12 +306,10 @@ function Start-HostNativeGovernance {
         [string] $DbPath = '',
         [string] $FileLibraryRoot = ''
     )
-    # NOTE: 'scripts\.run' is a literal, and on Linux the backslash is part of the
-    # directory NAME rather than a separator. It is left as-is deliberately: every
-    # other site that writes or reads these PID files (deploy.ps1, preflight-ports,
-    # the other launchers) uses the same literal, so they agree. Normalising this one
-    # site would split the PID directory in two on Linux. Fixing it means changing
-    # all of them together - tracked as a follow-up, not smuggled in here.
+    # 'scripts\.run' is safe on both platforms: PowerShell's Join-Path normalises the
+    # backslash to the native separator, verified on the Linux target (the run
+    # directory materialised as /home/bimdeploy/AI-bim-geo/scripts/.run). Kept in the
+    # Windows spelling to match every other site that reads or writes these PID files.
     $runDir = Join-Path $RepoRoot 'scripts\.run'
     if (-not (Test-Path -LiteralPath $runDir)) {
         New-Item -ItemType Directory -Path $runDir -Force | Out-Null

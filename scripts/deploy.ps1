@@ -1033,7 +1033,18 @@ function Install-DeployPythonRequirements {
         [Parameter(Mandatory = $true)][string] $LogPath
     )
     $installed = $false
-    foreach ($req in @('requirements.txt','bim-streaming-server\requirements.txt')) {
+    # Every host-native service started by Phase 4 runs out of THIS venv, so every
+    # one of their requirements files belongs here. governance-service and
+    # kit-manager-api were missing: the Windows deploy area had their deps installed
+    # historically (governance-service/requirements.txt still calls itself
+    # "documentation only, the host Python already has everything"), so the gap only
+    # appeared on a fresh target - the service started and then died on
+    # ModuleNotFoundError: openpyxl, surfacing as a Phase 4a health timeout.
+    foreach ($req in @(
+        'requirements.txt',
+        'bim-streaming-server\requirements.txt',
+        'governance-service\requirements.txt',
+        'services\kit-manager-api\requirements.txt')) {
         $reqPath = Join-Path $RepoRoot $req
         if (Test-Path -LiteralPath $reqPath) {
             Write-DeployTag -Tag 'fix' -Message "pip install -r $req" -LogPath $LogPath | Out-Null
