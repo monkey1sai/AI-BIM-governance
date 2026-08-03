@@ -107,6 +107,26 @@ try {
     Assert-True (@($linLaunch.Arguments) -contains '--no-window') 'linux target must mandate --no-window (headless, no display)'
     Assert-True (-not (@($winLaunch.Arguments) -contains '--no-window')) 'windows target must not force --no-window'
 
+    # Host-native bind address per target: loopback on Windows, bridge-reachable on
+    # Linux. Governance and kit-manager-api bound 127.0.0.1 there, so the dockerised
+    # coordinator could not reach them (/api/governance/files/tree -> 502) even
+    # though the same services answered fine on the host itself.
+    if ([string]$winTarget.host_native_bind_host -ne '127.0.0.1') {
+        throw "ASSERT FAILED: windows target must keep host-native services on loopback (actual='$($winTarget.host_native_bind_host)')"
+    }
+    if ([string]$linTarget.host_native_bind_host -eq '127.0.0.1') {
+        throw 'ASSERT FAILED: linux target must not bind host-native services to loopback only; the dockerised coordinator reaches them over the bridge'
+    }
+    # Exercise the real consumer, not a re-implementation of it: the launcher must
+    # read the value for THIS platform out of the registry.
+    . (Join-Path $repoRoot 'scripts/lib/host-native-launcher.ps1')
+    $currentBind = Get-HostNativeBindHost -RepoRoot $repoRoot
+    $expectedBind = if ((Get-PlatformName) -eq 'windows') { [string]$winTarget.host_native_bind_host }
+                    else { [string]$linTarget.host_native_bind_host }
+    if ($currentBind -ne $expectedBind) {
+        throw "ASSERT FAILED: Get-HostNativeBindHost must return this platform's registry value (expected='$expectedBind' actual='$currentBind')"
+    }
+
     Write-Host '[test-deploy-target-registry] all assertions passed'
 } finally {
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

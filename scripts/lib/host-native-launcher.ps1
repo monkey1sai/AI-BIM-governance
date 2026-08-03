@@ -66,6 +66,26 @@ function Get-HostNativePowerShellArgumentPrefix {
     return @('-NoProfile')
 }
 
+function Get-HostNativeBindHost {
+    # Which address host-native services listen on. Windows keeps loopback; on a
+    # Linux target the dockerised coordinator reaches them over the bridge, and a
+    # 127.0.0.1-only socket refuses that connection - governance and
+    # kit-manager-api were unreachable from the container (coordinator
+    # /api/governance/files/tree returned 502) while the conversion service, which
+    # already bound 0.0.0.0, answered on every address including the LAN IP.
+    # Measured from inside the container: 172.17.0.1:49101 -> HTTP 200,
+    # 192.168.20.181:49102 -> ECONNREFUSED.
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string] $RepoRoot)
+
+    $target = Get-DeployTargetForCurrentPlatform -RepoRoot $RepoRoot
+    $bind = [string]$target.host_native_bind_host
+    if ([string]::IsNullOrWhiteSpace($bind)) {
+        throw "deploy target '$($target.id)' does not declare host_native_bind_host."
+    }
+    return $bind
+}
+
 function Test-AlreadyRunning {
     [CmdletBinding()]
     param(
@@ -387,7 +407,7 @@ function Start-HostNativeGovernance {
         -Name 'governance-service' `
         -WorkingDirectory $serviceRoot `
         -FilePath $pythonExe `
-        -ArgumentList @('-m','uvicorn','app:app','--host','127.0.0.1','--port',"$Port") `
+        -ArgumentList @('-m','uvicorn','app:app','--host',(Get-HostNativeBindHost -RepoRoot $RepoRoot),'--port',"$Port") `
         -RunDir $runDir)
 }
 
@@ -418,7 +438,7 @@ function Start-HostNativeKitManager {
         -Name 'kit-manager-api' `
         -WorkingDirectory $serviceRoot `
         -FilePath $pythonExe `
-        -ArgumentList @('-m','uvicorn','app.main:app','--host','127.0.0.1','--port',"$Port") `
+        -ArgumentList @('-m','uvicorn','app.main:app','--host',(Get-HostNativeBindHost -RepoRoot $RepoRoot),'--port',"$Port") `
         -RunDir $runDir)
 }
 
