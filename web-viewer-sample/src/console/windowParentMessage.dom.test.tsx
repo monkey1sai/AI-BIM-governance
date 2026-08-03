@@ -11,7 +11,7 @@
 // _bootstrapReview 網路副作用（jsdom 無對應後端，亦守誠實鐵律不接 mock 後端）。state 以實例 state 物件覆寫需要的欄位。
 import React from "react";
 import { renderToString } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AppStream from "../AppStream";
 import App from "../Window";
 import { reviewEnv } from "../config/env";
@@ -1251,6 +1251,34 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       .some((entry) => entry.request_id === `req_${method}` && entry.outcome === "success")).toBe(false);
   });
 
+  it("clears active parent stage proof when the current stream stops", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _handleStreamStopped: (kind: "stopped", message: unknown) => void;
+    };
+    const stageUrl = "stage://stopped-active.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageUrl,
+      loadedStageUrl: stageUrl,
+      stageLoadStatus: "matched",
+      isKitReady: true,
+      webrtcLifecycleStatus: "started",
+    };
+
+    privateApp._handleStreamStopped("stopped", { reason: "runtime stopped" });
+
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.stageLoadStatus).toBe("disconnected");
+    expect(parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "stage_loaded", stageUrl: null, status: "unproven" }),
+      PARENT_ORIGIN,
+    );
+  });
+
   it("advances the stream generation before a deferred React reconnect remount can receive an old stop callback", () => {
     const app = operableApp();
     const privateApp = internals(app) as unknown as {
@@ -1579,6 +1607,32 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     expect(internals(app).state.isKitReady).toBe(false);
     expect(internals(app).state.loadingText).toBe(reconnectText);
     expect(open).not.toHaveBeenCalled();
+  });
+
+  it("accepts an empty first readiness response and opens the selected stage", () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _openSelectedAsset: () => void;
+    };
+    const asset = { name: "fresh runtime", url: "stage://fresh-runtime.usdc" };
+    internals(app).state = {
+      ...internals(app).state,
+      isKitReady: false,
+      webrtcLifecycleStatus: "started",
+      selectedUSDAsset: asset,
+      expectedStageUrl: asset.url,
+      usdAssets: [asset],
+    };
+    const open = vi.spyOn(privateApp, "_openSelectedAsset").mockImplementation(() => undefined);
+
+    internals(app)._handleCustomEvent({
+      event_type: "loadingStateResponse",
+      payload: { url: "", loading_state: "idle" },
+    });
+
+    expect(internals(app).state.isKitReady).toBe(true);
+    expect(open).toHaveBeenCalledTimes(1);
   });
 
   it("ignores an uncorrelated empty-URL loading-state response during an active attempt", () => {
@@ -4566,6 +4620,19 @@ describe("Important #1（task2 fix）：spectator 不驅動 openStageRequest / �
 // 補：(a) url 不符 → failed(stale_stage_or_mismatch)；(b) success 但缺 loaded URL（無 stage-match 證據）
 // → 不得偽宣告 applied，須標 failed(missing_stage_evidence)；(c) loadArtifactGroupResult result=error → failed。
 describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支（不偽宣告成功）", () => {
+  let previousLeaseEnv: { sourceClientId: string; viewerLeaseToken: string };
+
+  beforeEach(() => {
+    previousLeaseEnv = {
+      sourceClientId: reviewEnv.sourceClientId,
+      viewerLeaseToken: reviewEnv.viewerLeaseToken,
+    };
+  });
+
+  afterEach(() => {
+    Object.assign(reviewEnv, previousLeaseEnv);
+  });
+
   function bindingApplyApp(): App {
     const app = operableApp();
     // Test helper name predates hooks lint; this patches class setState and is not a React hook.

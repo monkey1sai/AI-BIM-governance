@@ -1628,11 +1628,23 @@ export default class App extends React.Component<AppProps, AppState> {
         // continuations may settle synchronously while React still exposes the old state key.
         this.streamGeneration += 1;
         this._invalidateStageAttempt();
+        const pendingA4HandoffRequestId = this.a4HandoffPendingRequestId;
         // Every outstanding command belongs to the retired stream. Its later
         // callback is generation-fenced, so terminalize it now instead of
         // leaving a visible pending lifecycle entry until map eviction.
         for (const [requestId, context] of this.runtimeCommandContexts.entries()) {
             this._claimRuntimeCommandTerminal(requestId, context.eventType, "superseded");
+        }
+        // The A4 command timeout only completes a request it can terminal-claim.
+        // A stream replacement claims the runtime command first, so retire its
+        // visible handoff explicitly and expose the existing retry path.
+        if (pendingA4HandoffRequestId) {
+            this._finishA4HandoffCommand(
+                pendingA4HandoffRequestId,
+                "rejected",
+                "stream_lifecycle_superseded",
+                true,
+            );
         }
         this.pendingStageUrl = null;
         this.loadingStatePollCount = 0;
@@ -3334,6 +3346,8 @@ export default class App extends React.Component<AppProps, AppState> {
         streamGeneration = this.streamGeneration,
     ): void {
         if (!this._isCurrentStreamCallback(streamGeneration, kind)) return;
+        const hadActiveStageEvidence = this.state.stageLoadStatus === "matched"
+            && Boolean(this.state.loadedStageUrl);
         this._invalidateStageAttempt();
         this._clearLoadingStateRetry();
         this._clearStageLoadTimeout();
@@ -3351,10 +3365,14 @@ export default class App extends React.Component<AppProps, AppState> {
             streamDiagnostic: diagnostic,
             showStream: this._hasRemoteVideoFrame(),
             isLoading: false,
+            loadedStageUrl: null,
             stageLoadStatus: "disconnected",
             webrtcLifecycleStatus: kind,
             reviewEvents: [...state.reviewEvents, `WebRTC ${kind}`].slice(-80),
         }));
+        if (hadActiveStageEvidence) {
+            this._postToParent({ type: "stage_loaded", stageUrl: null, status: "unproven" });
+        }
     }
 
     private _reconnectStream(): void {
