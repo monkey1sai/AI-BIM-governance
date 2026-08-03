@@ -66,7 +66,7 @@ async function controlStageLoad(
 async function accelerateStageProofDeadline(frame: Frame, timeoutMs = 1_000): Promise<void> {
   await frame.evaluate((acceleratedTimeoutMs) => {
     const nativeSetTimeout = window.setTimeout.bind(window);
-    window.setTimeout = ((handler: TimerHandler, delay?: number, ...args: any[]) => (
+    window.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) => (
       nativeSetTimeout(handler, delay === 45_000 ? acceleratedTimeoutMs : delay, ...args)
     )) as typeof window.setTimeout;
   }, timeoutMs);
@@ -222,7 +222,8 @@ test.describe("runtime command authority controlled browser evidence", () => {
 
   test("visible frame remains provisional until the retained proof deadline terminalizes", async ({ page }, testInfo) => {
     const embedded = await installEmbeddedParent(page);
-    await accelerateStageProofDeadline(embedded.frame);
+    const proofDeadlineMs = 2_000;
+    await accelerateStageProofDeadline(embedded.frame, proofDeadlineMs);
 
     await controlStageLoad(embedded.frame, "stall");
     await page.evaluate(() => {
@@ -246,6 +247,11 @@ test.describe("runtime command authority controlled browser evidence", () => {
       const video = document.getElementById("remote-video") as HTMLVideoElement | null;
       return video && [video.readyState, video.videoWidth, video.videoHeight];
     })).toEqual([2, 1280, 720]);
+    // Drive the same correlated busy response that a real Kit sends after a
+    // stage-open request. A visible frame becomes provisional, but must not
+    // replace the fixed terminal deadline.
+    await controlStageLoad(embedded.frame, "emitBusy", 1);
+    await expect.poll(() => eventCount(embedded.frame, "openStageRequest")).toBe(1);
 
     await expect.poll(async () => page.evaluate(() => (
       (window as typeof window & { __vg01Messages?: Array<{ type?: string; stageUrl?: string | null; status?: string }> })
@@ -261,6 +267,10 @@ test.describe("runtime command authority controlled browser evidence", () => {
       .getByTestId("runtime-command-lifecycle-entry")
       .filter({ hasText: "openStageRequest" })
       .last();
+    // The former implementation restarted this deadline after the provisional
+    // visible-frame event. Give the original deadline a modest runner margin;
+    // an extra full deadline would exceed this window.
+    await expect(failureContainer).toBeVisible({ timeout: proofDeadlineMs + 1_000 });
     await expect(failureContainer).toBeInViewport();
     await expect(failureContainer).toContainText("模型載入逾時");
     await expect(timeoutLifecycle).toContainText("timed-out");

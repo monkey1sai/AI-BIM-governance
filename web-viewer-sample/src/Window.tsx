@@ -432,6 +432,8 @@ interface StageAttempt {
     terminalReason?: "stage-load-timeout";
 }
 
+const STAGE_LOAD_TIMEOUT_MS = 45_000;
+
 interface RuntimeCommandCorrelation {
     requestId: string;
     context?: RuntimeCommandContext;
@@ -731,6 +733,9 @@ export default class App extends React.Component<AppProps, AppState> {
     private stageIntentGeneration = 0;
     private pendingBindingPreauthorizationIntent: number | null = null;
     private activeStageAttempt: StageAttempt | null = null;
+    // React state remounts <AppStream>, but callbacks can run before React commits that state.
+    // Keep the lifetime authority outside React so a retired stream is fenced synchronously.
+    private streamGeneration = 0;
     private bindingApplyGeneration = 0;
     private stageLoadFailureActive = false;
     // VG-01 M1：first_frame 只送一次的閂（防失敗/斷線/開檔路徑誤觸→偽證據）。
@@ -1478,14 +1483,16 @@ export default class App extends React.Component<AppProps, AppState> {
             }
             this.setState({ runtimeCommandRejection: null });
         }
+        const streamGenerationAtSend = this.streamGeneration;
         void AppStream.sendMessage(outgoing)
             .then((result) => {
                 const responseEvent = appStreamResultToAppEvent(outgoing.event_type, result);
                 if (responseEvent) {
-                    this._handleCustomEvent(responseEvent);
+                    this._handleCustomEvent(responseEvent, streamGenerationAtSend);
                 }
             })
             .catch(() => {
+                if (!this._isCurrentStreamCallback(streamGenerationAtSend, `${outgoing.event_type}-error`)) return;
                 const diagnostic = "stream_transport_error";
                 if (runtimeRequestId) {
                     if (!this._claimRuntimeCommandTerminal(runtimeRequestId, outgoing.event_type, "error")) return;
@@ -1544,11 +1551,9 @@ export default class App extends React.Component<AppProps, AppState> {
             ) context.stageAttemptGeneration = attemptGeneration;
         }
         this._clearStageLoadTimeout();
-        const timeoutMs = Math.max(reviewEnv.streamStartTimeoutMs, 45000);
         this.stageLoadTimeoutId = window.setTimeout(() => {
             this.stageLoadTimeoutId = null;
             if (!this._isCurrentStageAttemptAwaitingProof(attemptGeneration) || !this.pendingStageUrl) return;
-            if (this._completeStageLoadFromVisibleStream()) return;
             this._claimStageAttemptTimeout(attemptGeneration);
             this._failStageLoad(
                 t(stageLoadTimeoutPresentation.title.zh, stageLoadTimeoutPresentation.title.en),
@@ -1558,7 +1563,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     t(stageLoadTimeoutPresentation.missingCompletion.zh, stageLoadTimeoutPresentation.missingCompletion.en),
                 ].join("\n"),
             );
-        }, timeoutMs);
+        }, STAGE_LOAD_TIMEOUT_MS);
     }
 
     private _clearStageLoadTimeout(): void {
@@ -1587,6 +1592,21 @@ export default class App extends React.Component<AppProps, AppState> {
         if (this.deferredOpenStageId === null) return;
         window.clearTimeout(this.deferredOpenStageId);
         this.deferredOpenStageId = null;
+    }
+
+    private _replaceStreamLifecycle(): number {
+        // Advance before stopping or remounting AppStream: its callbacks and sendMessage
+        // continuations may settle synchronously while React still exposes the old state key.
+        this.streamGeneration += 1;
+        this._invalidateStageAttempt();
+        this.pendingStageUrl = null;
+        this.loadingStatePollCount = 0;
+        this._clearStreamStartTimeout();
+        this._clearPollForKitReady();
+        this._clearLoadingStateRetry();
+        this._clearStageLoadTimeout();
+        this._clearDeferredOpenStage();
+        return this.streamGeneration;
     }
 
     private _supersedeActiveStageAttempt(): void {
@@ -1669,6 +1689,11 @@ export default class App extends React.Component<AppProps, AppState> {
             this.activeStageAttempt.status = "terminal";
         }
         this._finishStageLoad(attemptGeneration);
+        for (const [requestId, context] of this.runtimeCommandContexts.entries()) {
+            if (context.stageAttemptGeneration === attemptGeneration) {
+                this._claimRuntimeCommandTerminal(requestId, context.eventType, "superseded");
+            }
+        }
         // A reconnect must accept its new no-URL readiness probe. Keeping a
         // terminal attempt here would reject that probe, while clearing it
         // still rejects any old correlated result by generation mismatch.
@@ -1810,12 +1835,10 @@ export default class App extends React.Component<AppProps, AppState> {
         if (!attemptGeneration || !this._isCurrentStageAttempt(attemptGeneration, "pending") || !this.pendingStageUrl || !this._hasRemoteVideoFrame()) return false;
         if (this.activeStageAttempt) this.activeStageAttempt.status = "provisional";
         this._clearLoadingStateRetry();
-        this._clearStageLoadTimeout();
         this.loadingStatePollCount = 0;
-        // A visible frame is only provisional evidence. Keep probing and retain a
-        // bounded deadline so an uncorrelated stream cannot wait forever.
+        // A visible frame is provisional evidence. Keep polling for correlated stage
+        // proof, but do not replace or extend the original hard terminal deadline.
         this._scheduleLoadingStateQuery(1000);
-        this._scheduleStageLoadTimeout(attemptGeneration);
         this.setState((state) => ({
             showStream: true,
             loadingText: "模型畫面可見，stage authority 尚未證明",
@@ -2904,6 +2927,9 @@ export default class App extends React.Component<AppProps, AppState> {
             const activeStreamEndpoint = this._resolveStreamEndpoint(streamConfig);
             const streamEndpointChanged = !sameStreamEndpoint(this.state.activeStreamEndpoint, activeStreamEndpoint);
             const endpointEvent = `Kit endpoint：${streamEndpointLabel(activeStreamEndpoint)}`;
+            const streamMountKey = streamEndpointChanged
+                ? this._replaceStreamLifecycle()
+                : this.streamGeneration;
 
             // viewer-edge-bim-server-console:TopBar 顯示 project / version identity。
             // 來源優先序:ReviewSession → ReviewSessionRequest → reviewEnv defaults。
@@ -2934,8 +2960,15 @@ export default class App extends React.Component<AppProps, AppState> {
                 loadedStageUrl: null,
                 stageLoadStatus: expectedStageUrl ? "pending" : "unproven",
                 showUI: this.state.showUI || shouldShowReviewUI,
+                // A replacement AppStream must establish readiness itself. Carrying this
+                // flag across endpoints can make bootstrap open once before onStarted
+                // schedules a second open for the same stage.
+                isKitReady: streamEndpointChanged ? false : this.state.isKitReady,
+                showStream: streamEndpointChanged ? false : this.state.showStream,
+                webrtcLifecycleStatus: streamEndpointChanged ? "initializing" : this.state.webrtcLifecycleStatus,
+                streamDiagnostic: streamEndpointChanged ? null : this.state.streamDiagnostic,
                 activeStreamEndpoint,
-                streamMountKey: streamEndpointChanged ? this.state.streamMountKey + 1 : this.state.streamMountKey,
+                streamMountKey,
                 reviewEvents: [
                     ...this.state.reviewEvents,
                     reviewEnv.defaultSessionId || reviewRequest?.session_id ? "已載入 review session" : "已建立 review session",
@@ -2944,7 +2977,7 @@ export default class App extends React.Component<AppProps, AppState> {
             }, () => {
                 this._connectReviewSocket(sessionId, streamConfig.trace_id);
                 this._scheduleStreamStartTimeout();
-                if (this.state.isKitReady && this.state.selectedUSDAsset && streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
+                if (!streamEndpointChanged && this.state.isKitReady && this.state.selectedUSDAsset && streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
                     this._openSelectedAsset();
                 }
                 void this._beginA4Handoff(sessionId);
@@ -3077,7 +3110,8 @@ export default class App extends React.Component<AppProps, AppState> {
      * is not sent. Instead, we wait for the streamed application to send a
      * openedStageResult message.
      */
-        private _onStreamStarted(): void {
+        private _onStreamStarted(streamGeneration = this.streamGeneration): void {
+            if (!this._isCurrentStreamCallback(streamGeneration, "started")) return;
             this.setState({ streamDiagnostic: null, webrtcLifecycleStatus: "started" });
             this._clearStreamStartTimeout();
             if (isSpectatorStreamMode()) {
@@ -3102,7 +3136,9 @@ export default class App extends React.Component<AppProps, AppState> {
                 loadingText: "串流已連線，等待 Kit 狀態回應",
                 reviewEvents: [...state.reviewEvents, "WebRTC stream 已連線，正在確認 Kit stage state"],
             }), () => {
-                if (this._canOpenSelectedAsset()) {
+                // A replacement stream cannot inherit the previous endpoint's
+                // readiness. Wait for this generation's probe before it can open.
+                if (this.state.isKitReady && this._canOpenSelectedAsset()) {
                     this._scheduleDeferredOpenStage();
                     return;
                 }
@@ -3160,7 +3196,8 @@ export default class App extends React.Component<AppProps, AppState> {
     *
     * Runs when the user logs in
     */
-    private _onLoggedIn(userId: string): void {
+    private _onLoggedIn(userId: string, streamGeneration = this.streamGeneration): void {
+        if (!this._isCurrentStreamCallback(streamGeneration, "logged-in")) return;
         if (StreamConfig.source === "gfn"){
             console.info(`Logged in to GeForce NOW as ${userId}`)
             this.setState({ loadingText: "等待串流開始", isLoading: false})
@@ -3172,7 +3209,12 @@ export default class App extends React.Component<AppProps, AppState> {
     *
     * Send a request to load an asset based on the currently selected asset
     */
-    private _handleStreamStopped(kind: "stopped" | "terminated", message: unknown): void {
+    private _handleStreamStopped(
+        kind: "stopped" | "terminated",
+        message: unknown,
+        streamGeneration = this.streamGeneration,
+    ): void {
+        if (!this._isCurrentStreamCallback(streamGeneration, kind)) return;
         this._invalidateStageAttempt();
         this._clearLoadingStateRetry();
         this._clearStageLoadTimeout();
@@ -3197,13 +3239,8 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _reconnectStream(): void {
-        this._invalidateStageAttempt();
+        const streamMountKey = this._replaceStreamLifecycle();
         AppStream.stop();
-        this.pendingStageUrl = null;
-        this.loadingStatePollCount = 0;
-        this._clearLoadingStateRetry();
-        this._clearStageLoadTimeout();
-        this._clearDeferredOpenStage();
         this.setState((state) => ({
             isKitReady: false,
             showStream: false,
@@ -3213,7 +3250,7 @@ export default class App extends React.Component<AppProps, AppState> {
             loadedStageUrl: null,
             stageLoadStatus: state.expectedStageUrl ? "pending" : "unproven",
             webrtcLifecycleStatus: "initializing",
-            streamMountKey: state.streamMountKey + 1,
+            streamMountKey,
             reviewEvents: [...state.reviewEvents, "重新建立 AppStreamer lifecycle"].slice(-80),
         }), () => this._scheduleStreamStartTimeout());
     }
@@ -3699,10 +3736,14 @@ export default class App extends React.Component<AppProps, AppState> {
     *
     * Handle message from stream.
     */
-    private _handleCustomEvent (event: AppStreamEventType | null): void {
+    private _handleCustomEvent(
+        event: AppStreamEventType | null,
+        streamGeneration = this.streamGeneration,
+    ): void {
         if (!event) {
             return;
         }
+        if (!this._isCurrentStreamCallback(streamGeneration, "custom-event")) return;
         if (!event.event_type && event.messageRecipient === "kit" && typeof event.data === "string") {
             try {
                 const parsed = JSON.parse(event.data);
@@ -4035,6 +4076,7 @@ export default class App extends React.Component<AppProps, AppState> {
         else if (event.event_type == "loadingStateResponse") {
             const payloadUrl = getPayloadString(payload, "url");
             if (!this._canApplyLoadingStateResponse(payloadUrl)) return;
+            const loadingState = getPayloadString(payload, "loading_state");
             // loadingStateRequest is used to poll Kit for proof of life.
             // For the first loadingStateResponse we set isKitReady to true
             // and run one more query to find out what the current loading state
@@ -4042,6 +4084,13 @@ export default class App extends React.Component<AppProps, AppState> {
             if (this.state.isKitReady === false) {
                 console.info("Kit is ready to load assets")
                 this.setState({ isKitReady: true }, () => {
+                    // The response can belong to an already-authorized stage load.
+                    // Do not issue a duplicate open while that attempt owns the URL.
+                    if (this.activeStageAttempt) {
+                        if (loadingState === "busy" && this._completeStageLoadFromVisibleStream()) return;
+                        this._queryLoadingState();
+                        return;
+                    }
                     if (this._canOpenSelectedAsset()) {
                         this._openSelectedAsset();
                     } else {
@@ -4051,7 +4100,6 @@ export default class App extends React.Component<AppProps, AppState> {
             }
             
             else {
-                const loadingState = getPayloadString(payload, "loading_state");
                 if (this.activeStageAttempt?.status === "completed") {
                     // A completed attempt may still receive a late matching idle probe that
                     // contributes evidence, but it must never reopen loading or polling.
@@ -4096,6 +4144,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     // same-URL busy response must not terminalize the active attempt; its
                     // viewer-owned deadline remains the sole timeout authority.
                     if (attemptGeneration) {
+                        if (this._completeStageLoadFromVisibleStream()) return;
                         this.setState({ loadingText: "正在載入模型...", isLoading: true });
                         this._scheduleLoadingStateQuery(1000);
                         return;
@@ -4355,6 +4404,12 @@ export default class App extends React.Component<AppProps, AppState> {
     private _handleAppStreamBlur (): void {
         console.log('User is not interacting in streamed viewer');
     }
+
+    private _isCurrentStreamCallback(streamGeneration: number, kind: string): boolean {
+        if (streamGeneration === this.streamGeneration) return true;
+        this._appendReviewEvent(`忽略舊 AppStreamer ${kind} 回呼（generation=${streamGeneration}）`);
+        return false;
+    }
     
     render() {
 
@@ -4369,9 +4424,10 @@ export default class App extends React.Component<AppProps, AppState> {
             && !reviewEnv.hasExplicitEmptySessionId;
         const demoPanelRight = showDebugAssetPanel ? sidebarWidth : 0;
         const streamReservedWidth = (showDebugAssetPanel ? sidebarWidth : 0) + (showDemoPanel ? demoPanelWidth : 0);
-        const shouldRenderAppStream = !reviewEnv.hasExplicitEmptySessionId && Boolean(this.state.reviewSessionId);
-        const streamRole = isSpectatorStreamMode() ? "spectator" : "primary";
-        const liveFrameObserved = this._hasRemoteVideoFrame();
+            const shouldRenderAppStream = !reviewEnv.hasExplicitEmptySessionId && Boolean(this.state.reviewSessionId);
+            const streamRole = isSpectatorStreamMode() ? "spectator" : "primary";
+            const renderedStreamGeneration = this.state.streamMountKey;
+            const liveFrameObserved = this._hasRemoteVideoFrame();
         const runtimeCommandRejection = this.state.runtimeCommandRejection;
         const runtimeAuthorityUnavailable = runtimeCommandRejection?.detail_code === "authority_unavailable";
         const runtimeCommandRejectionReason = runtimeCommandRejection
@@ -4548,7 +4604,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 {/* Streamed app */}
                 {shouldRenderAppStream &&
                 <AppStream
-                    key={this.state.streamMountKey}
+                    key={renderedStreamGeneration}
                     sessionId={this.props.sessionId}
                     backendUrl={this.props.backendUrl}
                     signalingserver={this.state.activeStreamEndpoint.signalingserver}
@@ -4556,18 +4612,21 @@ export default class App extends React.Component<AppProps, AppState> {
                     mediaserver={this.state.activeStreamEndpoint.mediaserver}
                     mediaport={this.state.activeStreamEndpoint.mediaport}
                     accessToken={this.props.accessToken}
-                    onStarted={() => this._onStreamStarted()}
+                    onStarted={() => this._onStreamStarted(renderedStreamGeneration)}
                     onFocus={() => this._handleAppStreamFocus()}
                     onBlur={() => this._handleAppStreamBlur()}
                     style={{
                         position: 'relative',
                         visibility: this.state.showStream? 'visible' : 'hidden'
                     }}
-                    onLoggedIn={(userId) => this._onLoggedIn(userId)}
-                    handleCustomEvent={(event) => this._handleCustomEvent(event)}
-                    onStreamFailed={this.props.onStreamFailed}
-                    onStopped={(message) => this._handleStreamStopped("stopped", message)}
-                    onTerminated={(message) => this._handleStreamStopped("terminated", message)}
+                    onLoggedIn={(userId) => this._onLoggedIn(userId, renderedStreamGeneration)}
+                    handleCustomEvent={(event) => this._handleCustomEvent(event, renderedStreamGeneration)}
+                    onStreamFailed={() => {
+                        if (!this._isCurrentStreamCallback(renderedStreamGeneration, "failed")) return;
+                        this.props.onStreamFailed();
+                    }}
+                    onStopped={(message) => this._handleStreamStopped("stopped", message, renderedStreamGeneration)}
+                    onTerminated={(message) => this._handleStreamStopped("terminated", message, renderedStreamGeneration)}
                     />}
                 </div>
 
