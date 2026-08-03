@@ -2,6 +2,11 @@
 
 本文件定義 `pr-review-agent` 的審查規則、報告格式與 rollout 方式。它是 PR gate，不是 merge bot；它幫人先整理風險與驗證證據，但不取代人工審查、CODEOWNERS、branch protection 或 merge 權限。
 
+> **文件性質**：agent boundary、contract、runbook。
+> **優先序**：agent instruction priority 依根目錄 `AGENTS.md` §3；runtime/product behavior truth 以實作為準。本文與舊 evidence 不構成 runtime/API 已完成證據。
+>
+> **名稱現況（2026-07-31）**：CI 端的 PR body 閘已改名——workflow 顯示名為 `PR Metadata Contract`（檔名仍是 `.github/workflows/pr-review-agent.yml`），required check context 為 `pr-metadata-contract-diagnostic`。`scripts/pr-review-agent.ps1` 本體為**本機專用**（經 `scripts/dev/check-pr-local-preflight.ps1` 執行），CI 不重跑它（由 `test-agent-governance-check.ps1` 斷言）。
+
 ## 判定狀態
 
 | Status | 意義 | Merge 影響 |
@@ -99,7 +104,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pr-review-agent.ps1 
 ## GitHub Actions rollout
 
 1. 先讓 workflow 在 PR 上產生 report 與 comment，觀察 false positive / false negative。
-2. 確認審查訊號穩定後，再把 `pr-review-agent` status check 加到 branch protection required checks。
+2. 確認審查訊號穩定後，再把對應 status check 加到 branch protection required checks（現行 context 為 `pr-metadata-contract-diagnostic`）。
 3. GitHub-hosted runner provision OpenSpec、pytest 與 coordinator/viewer dependencies；CI 預設跳過 GitNexus install / analyze，避免每個 PR 長時間 bootstrap。GitNexus 仍由本機 agent / MCP 在改 symbol 前與 commit 前提供 evidence；CI 的 skip 只降級為 warning，GitNexus execution failed（若實際執行）不可降級。
 4. 若 workflow 造成阻塞，可停用 `.github/workflows/pr-review-agent.yml` 或讓 job 只跑 report-only；不影響 product runtime。
 
@@ -109,7 +114,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pr-review-agent.ps1 
 
 | Check | Purpose |
 |---|---|
-| `pr-review-agent` | PR lane/behavior/source、GitNexus/path guard、validation plan、report artifact |
+| `pr-metadata-contract-diagnostic` | PR body evidence／metadata contract（`PR Metadata Contract` workflow：lane/behavior/source 與各 evidence 表格的機器驗證） |
 | `agent-governance` | Agent-readable issue template, CODEOWNERS, workflow, PR template, and governance-doc drift check |
 | `root contracts and fakes` | External platform contracts plus test-only fakes |
 | `coordinator build and tests` | TypeScript build and Vitest for coordinator control plane |
@@ -121,21 +126,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pr-review-agent.ps1 
 | `powershell static analysis` | PSScriptAnalyzer `Error` severity gate for scripts |
 | `secret pattern scan` | High-signal private key/token pattern smoke |
 
-PR body evidence is enforced inside the `pr-review-agent` workflow. Every PR requires `Change lane`、`Behavior contract changed`、`Requirement source`; the checker reads added/deleted diff lines to catch obvious declaration mismatches and rejects F/B metadata for Governed triggers。其他表格依範圍條件觸發：
+PR body evidence is enforced inside the `PR Metadata Contract` workflow（check context `pr-metadata-contract-diagnostic`）. Every PR requires `Change lane`、`Behavior contract changed`、`Requirement source`; the checker reads added/deleted diff lines to catch obvious declaration mismatches and rejects F/B metadata for Governed triggers。其他表格依範圍條件觸發：
 
 - governance paths require the `AI Coding Governance` rows;
 - user-facing/frontend paths require the `Frontend Verification` rows;
 - runtime/deploy paths require the `Deploy Path Verification` rows.
 
-Workflows that are intended to become required checks must run on every PR and produce a check result. Do not add `paths` / `paths-ignore` filters to `pr-review-agent` or `agent-governance`; if cost control becomes necessary, perform path detection inside the job and emit an explicit no-op success.
+Workflows that are intended to become required checks must run on every PR and produce a check result. Do not add `paths` / `paths-ignore` filters to `PR Metadata Contract`（`pr-review-agent.yml`）or `agent-governance`; if cost control becomes necessary, perform path detection inside the job and emit an explicit no-op success.
 
-Remote-only step：本文件與 `.github/CODEOWNERS` 只能準備 enforcement；真正 required checks、review policy、dismiss stale approvals、禁止 bypass 等規則，仍必須在 GitHub repository settings / rulesets 中啟用並驗證。目前 solo-maintainer 例外保留 Require PR、strict 11 checks、admin enforcement 與無 bypass，但設定 approval=0／CODEOWNER review=false；CODEOWNERS 在此模式只作 ownership／routing，獨立 review trust 仍是公開缺口。
+Remote-only step：本文件與 `.github/CODEOWNERS` 只能準備 enforcement；真正 required checks、review policy、dismiss stale approvals、禁止 bypass 等規則，仍必須在 GitHub repository settings / rulesets 中啟用並以 live API 驗證。PR #458 是一次性 ownership-transfer bootstrap：過渡期 live protection 必須是 `required_approving_review_count=1`、`require_code_owner_reviews=false`，因 base branch 的舊 CODEOWNERS 指向 PR 作者，先開 code-owner gate 會造成不可滿足的 self-review deadlock。#458 merge 後、任何下一個 PR merge 前，目標 enforced state 必須立即切為 `required_approving_review_count=1`、`require_code_owner_reviews=true`，並保留 strict 11 checks、dismiss stale reviews、admin enforcement、conversation resolution、無 bypass/force-push/delete。上述是 runbook 契約與 transition 記錄，不是 live state 證明；每次 merge 前仍須重讀 API。
 
 ## 人工審查邊界
 
 `pr-review-agent` 的 `passed` 只代表自動 gate 通過。PR 仍必須遵守：
 
-- remote settings 實際要求的 human／CODEOWNERS review（solo-maintainer 例外目前不要求，且不算獨立 review trust）；
+- remote settings 實際要求的 human／CODEOWNERS review（PR #458 bootstrap 僅暫時 `require_code_owner_reviews=false`，但仍要求固定 reviewer 的 exact-head canonical approval；#458 merge 後必須是 `require_code_owner_reviews=true`）；
 - branch protection；
 - GitHub Actions 其他 required checks；
 - OpenSpec archive / roadmap sync closeout。

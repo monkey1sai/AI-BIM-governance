@@ -5,7 +5,8 @@ param(
     [switch] $ChangedPathsNulDelimited,
     [string] $RepoRoot = '',
     [string] $BaseSha = '',
-    [string] $HeadSha = ''
+    [string] $HeadSha = '',
+    [int] $PrNumber = 0
 )
 
 Set-StrictMode -Version Latest
@@ -300,10 +301,19 @@ if (Test-AnyPathMatches -Paths $changedPaths -Pattern $deployPattern) {
 }
 
 # Self-referential bootstrap: PRs that change the verification mechanism itself must
-# declare it, and open ledger debt blocks further mechanism PRs until fixpoint closure.
+# declare it, and the ledger transition is judged base-vs-head so debt cannot be
+# deleted, impersonated, or closed with a fabricated fixpoint.
 # Rule: docs/agents/self-referential-bootstrap.md
+$hasBootstrapBaseContext = -not [string]::IsNullOrWhiteSpace($BaseSha)
+$baseLedgerJson = ''
+if ($hasBootstrapBaseContext) {
+    $baseLedgerJson = (& git -C $RepoRoot show "${BaseSha}:scripts/self-referential-bootstrap-ledger.json" 2>$null) -join "`n"
+    if ($LASTEXITCODE -ne 0) { $baseLedgerJson = '' }  # ledger absent at base = first introduction
+}
 Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths `
     -LedgerPath (Join-Path $RepoRoot 'scripts\self-referential-bootstrap-ledger.json') `
-    -GetTableValue { param($b, $label) Get-MarkdownTableValue -Body $b -Label $label }
+    -GetTableValue { param($b, $label) Get-MarkdownTableValue -Body $b -Label $label } `
+    -BaseLedgerJson $baseLedgerJson -HasBaseContext $hasBootstrapBaseContext `
+    -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
 
 Write-Host '[check-pr-body-evidence] passed'

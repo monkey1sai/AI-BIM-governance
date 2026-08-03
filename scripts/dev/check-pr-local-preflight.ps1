@@ -96,7 +96,9 @@ try {
         '-BaseSha',
         $baseSha,
         '-HeadSha',
-        $headSha
+        $headSha,
+        '-PrNumber',
+        [string]$PrNumber
     ) -FailureMessage 'PR body evidence preflight failed.'
 
     $tempDir = Join-Path $repoRootPath '.tmp'
