@@ -983,6 +983,35 @@ if ($null -ne $edgeRuntimeContract) {
     $fixActions += Ensure-DeployEdgeRuntimeContractDirectories -Contract $edgeRuntimeContract
 }
 
+function New-DeployVenv {
+    # Creating a venv needs a SYSTEM interpreter, which is not the venv one and is
+    # not always called `python`. `& python -m venv` under ErrorActionPreference
+    # 'Continue' merely prints when the name does not resolve and leaves
+    # $LASTEXITCODE stale, so creation silently no-ops and the next phase fails
+    # with a confusing "venv python not recognized" (first real Linux deploy).
+    # Resolve explicitly, then VERIFY the interpreter exists afterwards.
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $LogPath
+    )
+    $venvRoot = Join-Path $RepoRoot '.venv'
+    $systemPython = Resolve-PlatformSystemPython
+    if (-not $systemPython) {
+        Write-DeployTag -Tag 'fail' -Message 'no usable system python found (tried python / python3)' -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (venv create)'
+        exit 2
+    }
+    Write-DeployTag -Tag 'fix' -Message "creating .venv via $systemPython -m venv" -LogPath $LogPath | Out-Null
+    & $systemPython -m venv $venvRoot
+    $venvPython = Resolve-PlatformVenvPython -VenvRoot $venvRoot
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $venvPython)) {
+        Write-DeployTag -Tag 'fail' -Message "python -m venv did not produce $venvPython" -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (venv create)'
+        exit 2
+    }
+    return $venvPython
+}
+
 function Install-DeployPythonRequirements {
     param(
         [Parameter(Mandatory = $true)][string] $VenvPython,
@@ -1012,13 +1041,7 @@ function Install-DeployPythonRequirements {
 
 # fix: .venv
 if ($hostNative.venv -eq 'MISSING') {
-    Write-DeployTag -Tag 'fix' -Message 'creating .venv via python -m venv' -LogPath $LogPath | Out-Null
-    & python -m venv (Join-Path $RepoRoot '.venv')
-    if ($LASTEXITCODE -ne 0) {
-        Write-DeployTag -Tag 'fail' -Message 'python -m venv failed' -LogPath $LogPath | Out-Null
-        Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (venv create)'
-        exit 2
-    }
+    $null = New-DeployVenv -RepoRoot $RepoRoot -LogPath $LogPath
     $fixActions++
 }
 
@@ -1257,12 +1280,7 @@ if ($hostNative.venv -eq 'WRONG_VERSION') {
     if ($Force) {
         Write-DeployTag -Tag 'fix' -Message "$prompt -> y (--Force)" -LogPath $LogPath | Out-Null
         Remove-Item -LiteralPath (Join-Path $RepoRoot '.venv') -Recurse -Force
-        & python -m venv (Join-Path $RepoRoot '.venv')
-        if ($LASTEXITCODE -ne 0) {
-            Write-DeployTag -Tag 'fail' -Message 'python -m venv failed' -LogPath $LogPath | Out-Null
-            Print-FinalSummary -ExitCode 3 -FailedPhase 'Phase 3 (venv recreate)'
-            exit 3
-        }
+        $null = New-DeployVenv -RepoRoot $RepoRoot -LogPath $LogPath
         $venvPy = Resolve-PlatformVenvPython -VenvRoot (Join-Path $RepoRoot '.venv')
         Install-DeployPythonRequirements -VenvPython $venvPy -RepoRoot $RepoRoot -LogPath $LogPath
         $hostNative = Test-HostNativeEnvironment -RepoRoot $RepoRoot
@@ -1271,12 +1289,7 @@ if ($hostNative.venv -eq 'WRONG_VERSION') {
         $response = Read-Host 'y/N'
         if ($response -match '^[Yy]') {
             Remove-Item -LiteralPath (Join-Path $RepoRoot '.venv') -Recurse -Force
-            & python -m venv (Join-Path $RepoRoot '.venv')
-            if ($LASTEXITCODE -ne 0) {
-                Write-DeployTag -Tag 'fail' -Message 'python -m venv failed' -LogPath $LogPath | Out-Null
-                Print-FinalSummary -ExitCode 3 -FailedPhase 'Phase 3 (venv recreate)'
-                exit 3
-            }
+            $null = New-DeployVenv -RepoRoot $RepoRoot -LogPath $LogPath
             $venvPy = Resolve-PlatformVenvPython -VenvRoot (Join-Path $RepoRoot '.venv')
             Install-DeployPythonRequirements -VenvPython $venvPy -RepoRoot $RepoRoot -LogPath $LogPath
             $hostNative = Test-HostNativeEnvironment -RepoRoot $RepoRoot

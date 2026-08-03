@@ -66,6 +66,16 @@ try {
 Start-Sleep -Milliseconds 300
 Assert-True ($null -eq (Get-PlatformTcpListenerPid -Port $port)) 'closed listener port must resolve to null owner'
 
+# --- system interpreter used to CREATE a venv --------------------------------------
+# Distinct from the interpreter inside it. The remote had python3 only, and a bare
+# `& python` silently no-opped venv creation on the first real Linux deploy, so this
+# must never return a name the shell cannot actually run.
+$systemPython = Resolve-PlatformSystemPython
+Assert-True ($null -ne $systemPython) 'a usable system python must resolve on this platform'
+Assert-True ($null -ne (Get-Command -Name $systemPython -ErrorAction SilentlyContinue)) "resolved system python '$systemPython' must be a resolvable command"
+Assert-True (((& $systemPython --version 2>&1 | Out-String)) -match '\d+\.\d+') 'resolved system python must report a version'
+Assert-True ($systemPython -in @('python', 'python3')) "system python must be one of the probed candidates (got: $systemPython)"
+
 # --- path/launch resolution driven by the real registry ----------------------------
 $venvPython = Resolve-PlatformVenvPython -VenvRoot '/repo/.venv'
 if ($platform -eq 'windows') {

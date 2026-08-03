@@ -138,6 +138,25 @@ function Resolve-PlatformVenvPython {
     return Join-Path $VenvRoot 'bin/python'
 }
 
+function Resolve-PlatformSystemPython {
+    # The interpreter used to CREATE a venv - a different question from the one
+    # inside it. Distros commonly ship only `python3` with no `python`, while
+    # Windows ships `python` plus a `python3` Store-alias stub that exits without
+    # doing anything. Probing candidates in platform order and requiring one that
+    # actually reports a version avoids both traps.
+    # Returns $null when none works; callers MUST fail closed rather than run a
+    # name that does not resolve - a bare `& python` under ErrorActionPreference
+    # 'Continue' merely prints and leaves $LASTEXITCODE stale, which silently
+    # skipped venv creation on the first real Linux deploy.
+    $candidates = if ((Get-PlatformName) -eq 'windows') { @('python', 'python3') } else { @('python3', 'python') }
+    foreach ($candidate in $candidates) {
+        if ($null -eq (Get-Command -Name $candidate -ErrorAction SilentlyContinue)) { continue }
+        $version = (& $candidate --version 2>&1 | Out-String)
+        if ($LASTEXITCODE -eq 0 -and $version -match '\d+\.\d+') { return $candidate }
+    }
+    return $null
+}
+
 function Resolve-DeployTargetKitLaunch {
     # Builds the full launch specification for a target object from the registry:
     # working directory, launcher path, and the platform-mandatory extra args.
