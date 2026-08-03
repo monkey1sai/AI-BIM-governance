@@ -50,16 +50,20 @@ function Get-HostNativePowerShellArgumentPrefix {
     # -ExecutionPolicy is a Windows-only concept and pwsh rejects it elsewhere, so
     # it is only emitted there. Callers append -File <script> and their own args.
     #
-    # The leading comma matters. Off Windows this array has a single element, and a
-    # bare `return @('-NoProfile')` gets unrolled to a plain string on the way out;
-    # the caller's `<prefix> + @('-File', ...)` then becomes string concatenation and
-    # the child is launched with the argument '-NoProfile-File'. The comma keeps it
-    # an array on both platforms, so the Windows path (3 elements, never unrolled)
-    # and the Linux path behave the same.
+    # CONTRACT: callers MUST wrap the call in @() - `@(Get-...Prefix) + @('-File', ...)`.
+    # Two failure modes bracket this, and both have shipped:
+    #   - a bare call without @(): off Windows the single-element result unrolls to a
+    #     string, `+` becomes string concatenation, and the child gets '-NoProfile-File'.
+    #   - returning `,@(...)` to defeat that: @() around it then yields a NESTED array,
+    #     and Start-Process rejects it with "Cannot convert 'System.Object[]' to the
+    #     type 'System.String' required by parameter 'ArgumentList'".
+    # So: emit a plain array here, and let the caller's @() do the normalising.
+    # test-host-native-child-launch.ps1 asserts the composed argv is FLAT, which is
+    # the property that actually matters and which catches both shapes.
     if ($Platform -eq 'windows') {
-        return ,@('-NoProfile', '-ExecutionPolicy', 'Bypass')
+        return @('-NoProfile', '-ExecutionPolicy', 'Bypass')
     }
-    return ,@('-NoProfile')
+    return @('-NoProfile')
 }
 
 function Test-AlreadyRunning {

@@ -1573,7 +1573,18 @@ if ($SkipDocker) {
         PassThru               = $true
     }
     if ((Get-PlatformName) -eq 'windows') { $startArgs.WindowStyle = 'Hidden' }
+    # Fail closed when Start-Process produced nothing. It threw here on the Linux
+    # target (nested ArgumentList), left $proc holding an EARLIER phase's process
+    # object, and $proc.ExitCode read 0 off that corpse - so the deploy announced
+    # "docker compose up complete" 42ms later with no containers, no log files, and
+    # exit 0. Clearing it first means a failed start cannot borrow a stale success.
+    $proc = $null
     $proc = Start-Process @startArgs
+    if (-not $proc) {
+        Write-DeployTag -Tag 'fail' -Message "stage=4d Phase 4d could not start $(Get-HostNativePowerShellExe) for start-web-plane-docker.ps1" -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4d (docker)'
+        exit 4
+    }
     $dockerExit = $proc.ExitCode
     if ($dockerExit -ne 0) {
         Write-DeployTag -Tag 'fail' -Message "stage=4d Phase 4d docker compose up failed (exit=$dockerExit; see scripts\.run\docker-compose-up.log + .err.log)" -LogPath $LogPath | Out-Null
