@@ -187,6 +187,22 @@ function useSynchronousSetState(app: App): void {
   });
 }
 
+function renderedAppStreamProps(app: App): { onStreamFailed: () => void } {
+  const find = (node: React.ReactNode): { onStreamFailed: () => void } | null => {
+    if (!React.isValidElement(node)) return null;
+    if (node.type === AppStream) return node.props as { onStreamFailed: () => void };
+    const children = React.Children.toArray((node.props as { children?: React.ReactNode }).children);
+    for (const child of children) {
+      const found = find(child);
+      if (found) return found;
+    }
+    return null;
+  };
+  const props = find(internals(app).render());
+  if (!props) throw new Error("expected rendered AppStream");
+  return props;
+}
+
 async function flushMicrotasks(): Promise<void> {
   for (let i = 0; i < 5; i++) await Promise.resolve();
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1268,12 +1284,16 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       stageLoadStatus: "matched",
       isKitReady: true,
       webrtcLifecycleStatus: "started",
+      showStream: true,
     };
+    vi.spyOn(internals(app), "_hasRemoteVideoFrame").mockReturnValue(true);
 
     privateApp._handleStreamStopped("stopped", { reason: "runtime stopped" });
 
     expect(internals(app).state.loadedStageUrl).toBeNull();
     expect(internals(app).state.stageLoadStatus).toBe("disconnected");
+    expect(internals(app).state.showStream).toBe(false);
+    expect(renderToString(internals(app).render())).toContain("webrtc_disconnected");
     const unprovenPosts = parent.postMessage.mock.calls
       .map((call) => call[0] as { type?: string; stageUrl?: string | null; status?: string })
       .filter((message) => (
@@ -1311,6 +1331,28 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       targetUrl: "stage://new-generation.usdc",
     });
     expect(internals(app).pendingStageUrl).toBe("stage://new-generation.usdc");
+  });
+
+  it("fences a stale AppStream failed callback while forwarding the current generation", () => {
+    const onStreamFailed = vi.fn();
+    const app = new App({ onStreamFailed } as never);
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _reconnectStream: () => void;
+    };
+    internals(app).state = {
+      ...internals(app).state,
+      reviewSessionId: "review_session_stream_failed",
+    };
+    vi.spyOn(AppStream, "stop").mockImplementation(() => undefined);
+    const staleOnStreamFailed = renderedAppStreamProps(app).onStreamFailed;
+
+    privateApp._reconnectStream();
+    staleOnStreamFailed();
+
+    expect(onStreamFailed).not.toHaveBeenCalled();
+    renderedAppStreamProps(app).onStreamFailed();
+    expect(onStreamFailed).toHaveBeenCalledTimes(1);
   });
 
   it("endpoint lifecycle replacement cancels the old attempt timer before a new AppStream mounts", () => {
@@ -5161,17 +5203,24 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
 
   it("loadArtifactGroupResult result=error → failed 帶 Kit error reason", () => {
     const app = bindingApplyApp();
+    const sensitiveError = "kit_compose_failed https://viewer:secret@stage.example/compose.usdc?X-Amz-Signature=sentinel authorization=BearerSentinel";
     trackBindingRequest(app, "loadArtifactGroupRequest", "req_binding_004", "rev_binding_004");
     internals(app)._handleCustomEvent({
       event_type: "loadArtifactGroupResult",
-      payload: { result: "error", request_id: "req_binding_004", binding_revision_id: "rev_binding_004", error: "kit_compose_failed" },
+      payload: { result: "error", request_id: "req_binding_004", binding_revision_id: "rev_binding_004", error: sensitiveError },
     });
-    expect(internals(app).state.govBindingApplyState).toEqual({ status: "failed", reason: "kit_compose_failed" });
+    const reason = String((internals(app).state.govBindingApplyState as { reason: string }).reason);
+    expect(reason).toContain("https://stage.example/compose.usdc");
+    expect(reason).not.toContain("viewer:secret");
+    expect(reason).not.toContain("X-Amz-Signature");
+    expect(reason).not.toContain("BearerSentinel");
   });
 
   it("redacts a Kit-reported stage URL in a non-timeout error diagnostic", () => {
     const app = bindingApplyApp();
     const sensitiveStageUrl = "https://viewer:secret@stage.example/error.usdc?X-Amz-Signature=sentinel#fragment";
+    const sensitiveError = `kit_open_failed ${sensitiveStageUrl} authorization: Bearer HeaderSentinel token=RuntimeSentinel`;
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     trackBindingRequest(app, "openStageRequest", "req_binding_redacted_error", "rev_binding_redacted_error");
 
     internals(app)._handleCustomEvent({
@@ -5181,15 +5230,21 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
         request_id: "req_binding_redacted_error",
         binding_revision_id: "rev_binding_redacted_error",
         url: sensitiveStageUrl,
-        error: "kit_open_failed",
+        error: sensitiveError,
       },
     });
 
     const html = renderToString(internals(app).render());
+    const diagnostic = String(internals(app).state.streamDiagnostic);
+    const logged = consoleError.mock.calls.map((call) => call.join(" ")).join(" ");
     expect(html).toContain("https://stage.example/error.usdc");
     expect(html).not.toContain("viewer:secret");
     expect(html).not.toContain("X-Amz-Signature");
     expect(html).not.toContain("fragment");
+    expect(diagnostic).not.toContain("RuntimeSentinel");
+    expect(diagnostic).not.toContain("HeaderSentinel");
+    expect(logged).not.toContain("RuntimeSentinel");
+    expect(logged).not.toContain("HeaderSentinel");
   });
 
   it("ignores an untracked composition error instead of overwriting the active binding state", () => {
@@ -5341,6 +5396,48 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
       expect(internals(app).state).toMatchObject({
         isLoading: false,
         govBindingApplyState: { status: "failed" },
+      });
+    } finally {
+      privateApp._clearStageLoadTimeout();
+    }
+  });
+
+  it("a sent binding apply becomes superseded when a later stage intent replaces its attempt", async () => {
+    const app = bindingApplyApp();
+    const privateApp = internals(app) as unknown as {
+      _applyBinding: AppInternals["_applyBinding"];
+      _preauthorizeStageBinding: (selection: unknown[]) => Promise<unknown>;
+      _sendStreamMessage: (message: unknown) => boolean;
+      _beginStageAttempt: (url: string) => number;
+      _clearStageLoadTimeout: () => void;
+    };
+    vi.spyOn(privateApp, "_preauthorizeStageBinding").mockResolvedValue({
+      binding_revision_id: "rev_sent_binding",
+      stage_binding_authorization_id: "stage_auth_sent_binding",
+      stage_composition: {
+        primary: { usdc_url: "stage://sent-binding.usdc" },
+        secondary_layers: [],
+      },
+    } as never);
+    vi.spyOn(privateApp, "_sendStreamMessage").mockReturnValue(true);
+
+    try {
+      privateApp._applyBinding([{
+        artifact_id: "artifact_sent_binding",
+        model_version_id: "version_x",
+        usdc_url: "stage://sent-binding.usdc",
+        role: "primary",
+        load_order: 0,
+        ready: true,
+      }], "rev_sent_binding");
+      await flushMicrotasks();
+      expect(internals(app).state.govBindingApplyState).toEqual({ status: "applying" });
+
+      privateApp._beginStageAttempt("stage://manual-replacement.usdc");
+
+      expect(internals(app).state.govBindingApplyState).toEqual({
+        status: "failed",
+        reason: "stage_binding_apply_superseded",
       });
     } finally {
       privateApp._clearStageLoadTimeout();

@@ -539,6 +539,7 @@ function redactDiagnosticValue(
     seen: WeakSet<object> = new WeakSet<object>(),
 ): unknown {
     if (depth > 8) return "[truncated]";
+    if (typeof value === "string") return redactRuntimeDiagnosticText(value);
     if (Array.isArray(value)) {
         if (seen.has(value)) return "[circular]";
         seen.add(value);
@@ -817,6 +818,23 @@ function redactStageUrlForDiagnostic(url: string | null | undefined): string {
     }
 }
 
+function redactRuntimeDiagnosticText(value: string): string {
+    const withoutUrls = value.replace(
+        /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi,
+        (candidate) => redactStageUrlForDiagnostic(candidate),
+    );
+    const withoutSensitiveAssignments = withoutUrls
+        .replace(
+            /\b(access[_-]?token|authorization|cookie|password|secret|token|x-amz-(?:signature|credential|security-token))\s*=\s*(?:(?:bearer|basic|token)\s+)?(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+            (_match, key: string) => `${key}=[redacted]`,
+        );
+    return withoutSensitiveAssignments
+        .replace(
+            /\b(access[_-]?token|authorization|cookie|password|secret|token|x-amz-(?:signature|credential|security-token))\s*:\s*[^\r\n]+/gi,
+            (_match, key: string) => `${key}:[redacted]`,
+        );
+}
+
 function isStageAuthorizationTimeout(error: unknown): boolean {
     return error instanceof Error && error.message === "stage_binding_authorization_timeout";
 }
@@ -863,6 +881,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private stageDispatchCallbacks = new WeakMap<AppStreamMessageType | StreamMessage, () => void>();
     private bindingApplyGeneration = 0;
     private pendingBindingApplyGeneration: number | null = null;
+    private pendingBindingApplyStageAttemptGeneration: number | null = null;
     private stageLoadFailureActive = false;
     // VG-01 M1：first_frame 只送一次的閂（防失敗/斷線/開檔路徑誤觸→偽證據）。
     private _firstFramePosted = false;
@@ -2175,6 +2194,7 @@ export default class App extends React.Component<AppProps, AppState> {
         const pendingApplyGeneration = this.pendingBindingApplyGeneration;
         if (!pendingApplyGeneration) return;
         this.pendingBindingApplyGeneration = null;
+        this.pendingBindingApplyStageAttemptGeneration = null;
         if (this.bindingApplyGeneration !== pendingApplyGeneration) return;
         this.setState((state) => (
             state.govBindingApplyState?.status === "applying"
@@ -2190,6 +2210,12 @@ export default class App extends React.Component<AppProps, AppState> {
                 }
                 : null
         ));
+    }
+
+    private _clearPendingBindingApplyForAttempt(attemptGeneration: number | null | undefined): void {
+        if (!attemptGeneration || this.pendingBindingApplyStageAttemptGeneration !== attemptGeneration) return;
+        this.pendingBindingApplyGeneration = null;
+        this.pendingBindingApplyStageAttemptGeneration = null;
     }
 
     private _canApplyLoadingStateResponse(stageUrl: string): boolean {
@@ -2361,9 +2387,13 @@ export default class App extends React.Component<AppProps, AppState> {
         const invalidatesStageProof = Boolean(
             attemptGeneration && this._isCurrentStageAttemptAwaitingProof(attemptGeneration),
         );
+        const failedAttemptGeneration = attemptGeneration === null
+            ? null
+            : attemptGeneration ?? this.activeStageAttempt?.generation;
         if (attemptGeneration !== null) {
             if (attemptGeneration && !this._isCurrentStageAttemptAwaitingProof(attemptGeneration)) return;
             this._terminalizeStageAttempt(attemptGeneration);
+            this._clearPendingBindingApplyForAttempt(failedAttemptGeneration);
         }
         this.stageLoadFailureActive = true;
         this.setState((state) => ({
@@ -3234,6 +3264,8 @@ export default class App extends React.Component<AppProps, AppState> {
                 this._mappingCacheUrl = null;
             }
             const attemptGeneration = this._beginStageAttempt(targetUrl);
+            this.pendingBindingApplyGeneration = applyGeneration;
+            this.pendingBindingApplyStageAttemptGeneration = attemptGeneration;
             this.pendingStageUrl = targetUrl;
             this.confirmedStageBindingRevision = null;
             this.unprovenStageUrl = null;
@@ -3282,6 +3314,7 @@ export default class App extends React.Component<AppProps, AppState> {
             ) return;
             this.pendingStagePreauthorizationIntent = null;
             this.pendingBindingApplyGeneration = null;
+            this.pendingBindingApplyStageAttemptGeneration = null;
             const authorizationTimedOut = isStageAuthorizationTimeout(error);
             this.setState({
                 govBindingApplyState: {
@@ -3794,7 +3827,7 @@ export default class App extends React.Component<AppProps, AppState> {
         this.setState((state) => ({
             loadingText: "webrtc_disconnected",
             streamDiagnostic: diagnostic,
-            showStream: this._hasRemoteVideoFrame(),
+            showStream: false,
             isLoading: false,
             loadedStageUrl: null,
             stageLoadStatus: "disconnected",
@@ -4620,6 +4653,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 const stageEvidenceMatched = loadedUrl ? this._recordLoadedStageEvidence(loadedUrl, "openedStageResult") : false;
                 if (loadedUrl && !stageEvidenceMatched) {
                     if (bindingRevisionId) {
+                        this._clearPendingBindingApplyForAttempt(correlation.context?.stageAttemptGeneration);
                         this.setState({
                             govBindingApplyState: {
                                 status: "failed",
@@ -4640,6 +4674,7 @@ export default class App extends React.Component<AppProps, AppState> {
                         });
                         this._appendReviewEvent(`binding 未確認：openedStageResult success 但缺 loaded URL 證據（${bindingRevisionId}）`);
                     } else {
+                        this._clearPendingBindingApplyForAttempt(correlation.context?.stageAttemptGeneration);
                         this.setState({
                             govBindingActiveRevision: bindingRevisionId,
                             govBindingLastGoodRevision: bindingRevisionId,
@@ -4664,7 +4699,7 @@ export default class App extends React.Component<AppProps, AppState> {
             }
             else {
                 const url = getPayloadString(payload, "url");
-                const error = getPayloadString(payload, "error") || "unknown error";
+                const error = redactRuntimeDiagnosticText(getPayloadString(payload, "error") || "unknown error");
                 const runtimeState = getPayloadString(payload, "runtime_state");
                 const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
                 const requestId = getPayloadString(payload, "request_id");
@@ -4694,6 +4729,7 @@ export default class App extends React.Component<AppProps, AppState> {
                         failureOwnsVisibleStage = true;
                     }
                     if (!failureOwnsVisibleStage) return;
+                    this._clearPendingBindingApplyForAttempt(attemptGeneration);
                     this.stageLoadFailureActive = true;
                     this.setState((state) => ({
                         loadingText: "模型組合僅部分套用",
@@ -4745,7 +4781,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 }
             }
             if (result === "error") {
-                const error = getPayloadString(payload, "error") || "loadArtifactGroupResult error";
+                const error = redactRuntimeDiagnosticText(getPayloadString(payload, "error") || "loadArtifactGroupResult error");
                 this.setState({
                     govBindingApplyState: {
                         status: "failed",
