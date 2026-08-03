@@ -15,7 +15,7 @@
       "env_file": ".env.web-plane.host-kit",
       "kit": {
         "build_platform": "windows-x86_64",
-        "build_command": "repo.bat build",
+        "build_command": ".\\repo.bat build",
         "streaming_launcher_relative": "_build/windows-x86_64/release/ezplus.bim_review_stream_streaming.kit.bat",
         "extra_launch_args": []
       },

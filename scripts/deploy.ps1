@@ -66,6 +66,9 @@ $script:DefaultEdgeRuntimeDataRoot = [string]$script:DeployTargetProfile.runtime
 
 # Import lib modules
 $libDir = Join-Path $PSScriptRoot 'lib'
+# Platform adapter first: preflight and the deploy phases resolve platform-specific
+# paths (venv interpreter, Kit launcher) through it.
+. (Join-Path $libDir 'platform\platform-adapter.ps1')
 . (Join-Path $libDir 'deploy-report.ps1')
 . (Join-Path $libDir 'preflight-docker.ps1')
 . (Join-Path $libDir 'preflight-host-native.ps1')
@@ -1020,7 +1023,7 @@ if ($hostNative.venv -eq 'MISSING') {
 }
 
 if ($hostNative.venv -eq 'MISSING' -or ($hostNative.venv -eq 'OK' -and $hostNative.pythonDependencies -ne 'OK')) {
-    $venvPy = Join-Path $RepoRoot '.venv\Scripts\python.exe'
+    $venvPy = Resolve-PlatformVenvPython -VenvRoot (Join-Path $RepoRoot '.venv')
     Install-DeployPythonRequirements -VenvPython $venvPy -RepoRoot $RepoRoot -LogPath $LogPath
     $hostNative = Test-HostNativeEnvironment -RepoRoot $RepoRoot
     if ($hostNative.pythonDependencies -ne 'OK') {
@@ -1036,7 +1039,7 @@ if ($hostNative.venv -eq 'MISSING' -or ($hostNative.venv -eq 'OK' -and $hostNati
 # would otherwise fail later and deploy.ps1 would wait for Phase 4b timeout.
 if (-not $SkipKit -and $hostNative.kitBuildRequired) {
     $kitBuildLog = Join-Path $RunDir 'kit-repo-build.log'
-    Write-DeployTag -Tag 'fix' -Message "running bim-streaming-server repo.bat build ($($hostNative.kitBuildReason)) — may take several minutes" -LogPath $LogPath | Out-Null
+    Write-DeployTag -Tag 'fix' -Message "running bim-streaming-server Kit build ($($hostNative.kitBuildReason)) — may take several minutes" -LogPath $LogPath | Out-Null
     $kitBuildResult = Invoke-KitRepoBuild -WorkingDirectory (Join-Path $RepoRoot 'bim-streaming-server') -LogPath $kitBuildLog -RunDir $RunDir
     if ($kitBuildResult.TimedOut) {
         Write-DeployTag -Tag 'fail' -Message "Kit repo.bat build timed out and was force-stopped (see scripts\.run\kit-repo-build.log)" -LogPath $LogPath | Out-Null
@@ -1260,7 +1263,7 @@ if ($hostNative.venv -eq 'WRONG_VERSION') {
             Print-FinalSummary -ExitCode 3 -FailedPhase 'Phase 3 (venv recreate)'
             exit 3
         }
-        $venvPy = Join-Path $RepoRoot '.venv\Scripts\python.exe'
+        $venvPy = Resolve-PlatformVenvPython -VenvRoot (Join-Path $RepoRoot '.venv')
         Install-DeployPythonRequirements -VenvPython $venvPy -RepoRoot $RepoRoot -LogPath $LogPath
         $hostNative = Test-HostNativeEnvironment -RepoRoot $RepoRoot
     } else {
@@ -1274,7 +1277,7 @@ if ($hostNative.venv -eq 'WRONG_VERSION') {
                 Print-FinalSummary -ExitCode 3 -FailedPhase 'Phase 3 (venv recreate)'
                 exit 3
             }
-            $venvPy = Join-Path $RepoRoot '.venv\Scripts\python.exe'
+            $venvPy = Resolve-PlatformVenvPython -VenvRoot (Join-Path $RepoRoot '.venv')
             Install-DeployPythonRequirements -VenvPython $venvPy -RepoRoot $RepoRoot -LogPath $LogPath
             $hostNative = Test-HostNativeEnvironment -RepoRoot $RepoRoot
         } else {

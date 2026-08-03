@@ -263,7 +263,7 @@ PR-B 改的正是**驗證機制本身**（deploy path）。§6 明文禁止測�
 - [ ] B8 — 遠端佈建腳本化（§6.6）
 - [x] B9 — 契約改寫：§1 viewer 302 handoff 原則、§3 design-gate/runtime-evidence 兩機器切分、§5 fixture 權威改 MinIO pinned（並修掉指向不存在檔案的漂移）、§6 部署目標改 registry（operator 入口與 fresh-fetch 契約逐字保留）、§8 三種 stack kind 互不推論邊界表
 - [x] B10 — Windows 三級觸發 changed-path classifier（D-20）：`scripts/lib/windows-verification-scope.ps1`（highest-tier-wins ＋ 明確豁免 docs/tests）＋ 接進 PR body 檢查＋template＋CI；自檢 PR-B 欠 tier `deploy_dryrun`，已實跑 `deploy.ps1 -DryRun` exit 0（解析到 Windows profile，佐證 B4 零行為漂移）
-- [ ] B11 — 取得 `stack_kind=self_referential_bootstrap` evidence（依 PR-A 規則）
+- [x] B11 — bootstrap 取證能力＋ledger 欠帳：`-BootstrapRef` 由 `Assert-BootstrapRefAllowed` 把關（entry 必須存在／open／宣告 deploy.ps1）；ledger entry `remote-linux-deploy-target` 已開（涵蓋全部 11 條 mechanism paths）；無 ref 時 script 與先前 byte-identical。首次 bootstrap 派工 EXIT=0，遠端 checkout 至 10e8068、exec bits 恢復、effective env 9 keys
 - [ ] B12 — merge 後 fixpoint 重驗並回貼（PR-A 義務三）
 
 ---

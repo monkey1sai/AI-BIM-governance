@@ -3,12 +3,31 @@
 
 Set-StrictMode -Version Latest
 
+# Platform-specific path resolution (the venv interpreter differs by OS).
+# Guarded so this lib stays dot-sourceable standalone in tests.
+if (-not (Get-Command -Name 'Resolve-PlatformVenvPython' -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'platform/platform-adapter.ps1')
+}
+if (-not (Get-Command -Name 'Get-DeployTargetForCurrentPlatform' -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'deploy-target-registry.ps1')
+}
+
 function Get-KitRuntimeBuildArtifacts {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string] $RepoRoot)
 
-    $launcher = Join-Path $RepoRoot 'bim-streaming-server\_build\windows-x86_64\release\ezplus.bim_review_stream_streaming.kit.bat'
-    $kitExe = Join-Path $RepoRoot 'bim-streaming-server\_build\windows-x86_64\release\kit\kit.exe'
+    # Launcher/binary/build-command all come from the deploy-target registry for
+    # the current platform: the Windows build tree is windows-x86_64 with a .bat
+    # launcher and kit.exe, the Linux tree is linux-x86_64 with a .sh launcher and
+    # a kit binary. Hardcoding the Windows shapes made every Linux preflight report
+    # NEEDS_BUILD forever (found by the first real remote deploy).
+    $target = Get-DeployTargetForCurrentPlatform -RepoRoot $RepoRoot
+    $launch = Resolve-DeployTargetKitLaunch -Target $target -DeployRootOverride $RepoRoot
+    $launcher = $launch.LauncherPath
+    $buildPlatform = [string]$target.kit.build_platform
+    $kitBinaryName = if ([string]$target.kind -eq 'windows_host_native') { 'kit.exe' } else { 'kit' }
+    $kitExe = Join-Path $RepoRoot (Join-Path 'bim-streaming-server' (Join-Path '_build' (Join-Path $buildPlatform (Join-Path 'release' (Join-Path 'kit' $kitBinaryName)))))
+
     $missing = @()
     if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) { $missing += 'streaming_launcher' }
     if (-not (Test-Path -LiteralPath $kitExe -PathType Leaf)) { $missing += 'kit_exe' }
@@ -22,7 +41,7 @@ function Get-KitRuntimeBuildArtifacts {
         missing      = @($missing)
         launcherPath = $launcher
         kitExePath   = $kitExe
-        buildCommand = 'cd bim-streaming-server; .\repo.bat build'
+        buildCommand = "cd bim-streaming-server; $($launch.BuildCommand)"
     }
 }
 
@@ -165,13 +184,13 @@ function Test-HostNativeEnvironment {
         kitBuildReason          = ''
         kitRuntimeLauncherPath  = ''
         kitRuntimeBinaryPath    = ''
-        kitBuildCommand         = 'cd bim-streaming-server; .\repo.bat build'
+        kitBuildCommand         = ''
         nvidiaDriver            = 'MISSING'
         ok                      = $false
     }
 
     # .venv
-    $pyExe = Join-Path $RepoRoot '.venv\Scripts\python.exe'
+    $pyExe = Resolve-PlatformVenvPython -VenvRoot (Join-Path $RepoRoot '.venv')
     if (Test-Path -LiteralPath $pyExe) {
         $audit.pythonExe = $pyExe
         $ver = & $PythonVersionProbe $pyExe
