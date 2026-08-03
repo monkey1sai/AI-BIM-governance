@@ -353,6 +353,16 @@
       }
     },
     {
+      "id": "ARCH-LAYER-001",
+      "statement": "Inside a service, a module may only depend on layers its language layer set permits; new cross-layer violations are rejected and grandfathered ones carry attributed debt.",
+      "severity": "error",
+      "enforcement": {
+        "status": "active",
+        "mode": "layer-boundary-ratchet",
+        "rule": "no-new-layer-violations"
+      }
+    },
+    {
       "id": "ARCH-READY-001",
       "statement": "Review-session readiness requires the conjunction of Kit-side and browser-side evidence, including first frame and stage match.",
       "severity": "error",

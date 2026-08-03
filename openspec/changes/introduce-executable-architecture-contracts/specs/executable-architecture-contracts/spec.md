@@ -149,3 +149,33 @@ and no report SHALL claim conformance the gate does not actually establish.
 - **AND** the enforcement scope SHALL be documented, including that a static scan
   cannot observe runtime-resolved dependencies, so the observed graph is a lower
   bound and SHALL NOT be reported as full source-graph conformance.
+
+#### Scenario: Layer boundary gate becomes executable
+
+- **GIVEN** the layer boundary ratchet runs in the canonical root-contract gate
+- **WHEN** `ARCH-LAYER-001` is marked active
+- **THEN** every service scanned by the observed-graph configuration SHALL be either
+  covered by layer assignment rules or explicitly excluded with a reason, and every
+  scanned module SHALL resolve to exactly one declared layer
+- **AND** the repository SHALL hold an approved layer baseline recording every
+  grandfathered cross-layer violation with an owner, reason, and target phase, under
+  per-service budgets that grant no slack above the recorded count
+- **AND** the gate SHALL fail closed on any violation that is not baselined, on any
+  service whose violation count exceeds its budget, and on any module that no rule
+  classifies
+- **AND** baseline identity SHALL exclude layer names, so relabelling a layer cannot
+  convert a grandfathered violation into a new one or launder a new one as existing
+- **AND** because a ratchet over observed state cannot detect a widened policy, the
+  per-service layer sets, the allowed layer matrix, the per-service languages, the set
+  of layered services, and the load-bearing constraints of the schema files SHALL be
+  pinned independently in the test suite, so loosening the contract requires an
+  edit that is visible in the same diff
+- **AND** the documentation SHALL state plainly that this policy layer is
+  review-enforced rather than gate-enforced, and SHALL NOT claim that relabelling a
+  layer cannot remove a violation from the observed set
+- **AND** the enforcement scope SHALL be documented, including that the gate judges
+  direction only and not cycles, judges intra-service statically resolvable imports
+  only, and SHALL NOT be reported as full structural conformance
+- **AND** where the originating task named a third-party tool that was not adopted,
+  the substitution SHALL be recorded machine-readably alongside the contract and
+  SHALL NOT be deleted, only superseded.

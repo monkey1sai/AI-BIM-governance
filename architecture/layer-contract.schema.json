@@ -1,0 +1,227 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai-bim-governance.local/schemas/layer-contract.schema.json",
+  "title": "AI-BIM language-level layer contract",
+  "description": "Per-service module-to-layer assignment rules and the allowed layer dependency matrix enforced by scripts/lib/layered_architecture.py.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "purpose",
+    "layer_sets",
+    "services",
+    "excluded_services"
+  ],
+  "definitions": {
+    "layerId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "match",
+        "value",
+        "layer"
+      ],
+      "properties": {
+        "match": {
+          "enum": [
+            "exact",
+            "prefix",
+            "suffix"
+          ]
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1
+        },
+        "layer": {
+          "$ref": "#/definitions/layerId"
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schema_version": {
+      "const": "ai-bim-layer-contract/v1"
+    },
+    "purpose": {
+      "type": "string",
+      "minLength": 1
+    },
+    "enforcement_note": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tooling_deviation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "named_tools",
+        "adopted",
+        "reason"
+      ],
+      "properties": {
+        "named_tools": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "adopted": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope_limits": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "layer_sets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "language",
+          "layers",
+          "allowed"
+        ],
+        "properties": {
+          "language": {
+            "enum": [
+              "python",
+              "typescript"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "layers": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+              "$ref": "#/definitions/layerId"
+            }
+          },
+          "allowed": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "from",
+                "to"
+              ],
+              "properties": {
+                "from": {
+                  "$ref": "#/definitions/layerId"
+                },
+                "to": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/definitions/layerId"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "uniqueItems": true
+    },
+    "excluded_services": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "reason"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "services": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "language",
+          "layers",
+          "rules"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1
+          },
+          "rules": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/definitions/rule"
+            }
+          },
+          "layers": {
+            "type": "array",
+            "minItems": 2,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/definitions/layerId"
+            }
+          },
+          "language": {
+            "enum": [
+              "python",
+              "typescript"
+            ]
+          }
+        }
+      },
+      "uniqueItems": true
+    },
+    "excluded_services_note": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}
