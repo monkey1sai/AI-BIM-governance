@@ -1304,6 +1304,51 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     expect(unprovenPosts).toHaveLength(1);
   });
 
+  it("terminalizes same-generation focus/A4 work when the stream stops before a late result", () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const requestId = "req_focus_after_stream_stop";
+    const privateApp = internals(app) as unknown as {
+      _handleStreamStopped: (kind: "stopped", message: unknown) => void;
+      runtimeCommandContexts: Map<string, { eventType: string }>;
+      runtimeCommandTerminalClaims: Map<string, { eventType: string; outcome: string }>;
+      a4HandoffPendingRequestId: string | null;
+      streamGeneration: number;
+    };
+    privateApp.runtimeCommandContexts.set(requestId, { eventType: "focusPrimRequest" });
+    privateApp.a4HandoffPendingRequestId = requestId;
+    internals(app).state = {
+      ...internals(app).state,
+      a4Handoff: {
+        ...(internals(app).state.a4Handoff as Record<string, unknown>),
+        status: "pending",
+        phase: "executing",
+        request_id: requestId,
+      },
+    };
+
+    privateApp._handleStreamStopped("stopped", { reason: "runtime stopped" });
+    const stoppedGeneration = privateApp.streamGeneration;
+    internals(app)._handleCustomEvent({
+      event_type: "focusPrimResult",
+      payload: { request_id: requestId, result: "success" },
+    });
+
+    expect(privateApp.streamGeneration).toBe(stoppedGeneration);
+    expect(privateApp.runtimeCommandContexts.has(requestId)).toBe(false);
+    expect(privateApp.runtimeCommandTerminalClaims.get(requestId)).toEqual({
+      eventType: "focusPrimRequest",
+      outcome: "superseded",
+    });
+    expect(internals(app).state.a4Handoff).toEqual(expect.objectContaining({
+      status: "rejected",
+      phase: "terminal",
+      detail: "stream_lifecycle_superseded",
+    }));
+    expect((internals(app).state.runtimeCommandLifecycles as Array<{ request_id: string; outcome?: string }>)
+      .some((entry) => entry.request_id === requestId && entry.outcome === "success")).toBe(false);
+  });
+
   it("advances the stream generation before a deferred React reconnect remount can receive an old stop callback", () => {
     const app = operableApp();
     const privateApp = internals(app) as unknown as {
@@ -2000,7 +2045,12 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     const stageUrl = "stage://manual-authorization-timeout.usdc";
     const privateApp = internals(app) as unknown as {
       _openSelectedAsset: () => void;
-      _preauthorizeStageBinding: () => Promise<unknown>;
+      _preauthorizeStageBinding: (
+        artifacts: unknown,
+        clientRequestId: string,
+        signal?: AbortSignal,
+      ) => Promise<unknown>;
+      _cancelStageBindingPreauthorization: (clientRequestId: string) => Promise<void>;
       _sendStreamMessage: (message: unknown) => boolean;
       activeStageAttempt: { status: string; terminalReason?: string } | null;
     };
@@ -2015,7 +2065,12 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
         artifact_bindings: [{ artifact_id: "artifact_manual_authorization_timeout", url: stageUrl, load_order: 0 }],
       },
     };
-    vi.spyOn(privateApp, "_preauthorizeStageBinding").mockImplementation(() => new Promise(() => {}));
+    let preauthorizationSignal: AbortSignal | undefined;
+    vi.spyOn(privateApp, "_preauthorizeStageBinding").mockImplementation((_artifacts, _clientRequestId, signal) => {
+      preauthorizationSignal = signal;
+      return new Promise(() => {});
+    });
+    const cancel = vi.spyOn(privateApp, "_cancelStageBindingPreauthorization").mockResolvedValue(undefined);
     const send = vi.spyOn(privateApp, "_sendStreamMessage").mockReturnValue(true);
 
     privateApp._openSelectedAsset();
@@ -2024,6 +2079,8 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     expect(send).not.toHaveBeenCalled();
     expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ status: "terminal" }));
     expect(privateApp.activeStageAttempt?.terminalReason).toBeUndefined();
+    expect(preauthorizationSignal?.aborted).toBe(true);
+    expect(cancel).toHaveBeenCalledWith(expect.stringMatching(/^stage_preauth_/));
     expect(internals(app).state.streamDiagnostic).toContain(
       "Stage binding authorization timed out before a load command was sent to Kit.",
     );
@@ -4067,11 +4124,13 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
         "X-Viewer-Lease-Token": "lease_token_primary",
       }),
     });
-    expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body))).toEqual({
+    const preauthorizationBody = JSON.parse(String(fetchSpy.mock.calls[1][1]?.body));
+    expect(preauthorizationBody).toMatchObject({
       source_client_id: "viewer_lease_primary",
       role: "primary",
       artifacts: [{ artifact_id: "artifact_primary", role: "primary", load_order: 0 }],
     });
+    expect(preauthorizationBody.client_request_id).toMatch(/^stage_preauth_/);
     expect(sendSpy).toHaveBeenCalledWith({
       event_type: "loadArtifactGroupRequest",
       payload: {
@@ -5203,7 +5262,7 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
 
   it("loadArtifactGroupResult result=error → failed 帶 Kit error reason", () => {
     const app = bindingApplyApp();
-    const sensitiveError = "kit_compose_failed https://viewer:secret@stage.example/compose.usdc?X-Amz-Signature=sentinel authorization=BearerSentinel";
+    const sensitiveError = "kit_compose_failed https://viewer:secret@stage.example/compose.usdc?X-Amz-Signature=sentinel authorization=BearerSentinel Bearer BareBearerSentinel Basic BareBasicSentinel Authorization Bearer HeaderBearerSentinel";
     trackBindingRequest(app, "loadArtifactGroupRequest", "req_binding_004", "rev_binding_004");
     internals(app)._handleCustomEvent({
       event_type: "loadArtifactGroupResult",
@@ -5214,6 +5273,9 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
     expect(reason).not.toContain("viewer:secret");
     expect(reason).not.toContain("X-Amz-Signature");
     expect(reason).not.toContain("BearerSentinel");
+    expect(reason).not.toContain("BareBearerSentinel");
+    expect(reason).not.toContain("BareBasicSentinel");
+    expect(reason).not.toContain("HeaderBearerSentinel");
   });
 
   it("redacts a Kit-reported stage URL in a non-timeout error diagnostic", () => {
@@ -5718,6 +5780,76 @@ describe("P1：production stage completion correlation 與 parent proof 撤銷",
         binding_revision_id: "rev_sdk_open_stage",
       }),
     ]);
+  });
+
+  it("keeps a native loadArtifactGroup error non-terminal until its changed_failed DataChannel result arrives", async () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _sendStreamMessage: (message: { event_type: string; payload: Record<string, unknown> }) => boolean;
+      runtimeCommandContexts: Map<string, unknown>;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+    };
+    const stageUrl = "stage://native-partial-load.usdc";
+    const requestId = "req_native_partial_load";
+    const bindingRevisionId = "rev_native_partial_load";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageUrl,
+      stageLoadStatus: "pending",
+      govBindingActiveRevision: "rev_last_good",
+      govBindingApplyState: { status: "applying" },
+    };
+    const generation = privateApp._beginStageAttempt(stageUrl);
+    internals(app).pendingStageUrl = stageUrl;
+    vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+      action: "message",
+      status: "error",
+      info: "generic SDK acknowledgement",
+      url: stageUrl,
+    });
+
+    expect(privateApp._sendStreamMessage({
+      event_type: "loadArtifactGroupRequest",
+      payload: {
+        request_id: requestId,
+        binding_revision_id: bindingRevisionId,
+        url: stageUrl,
+      },
+    })).toBe(true);
+    await flushMicrotasks();
+
+    // The SDK wrapper has no protocol correlation/runtime_state and therefore
+    // must not consume the transaction before Kit's authenticated terminal.
+    expect(privateApp.runtimeCommandContexts.has(requestId)).toBe(true);
+    expect(internals(app).state.govBindingActiveRevision).toBe("rev_last_good");
+
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "error",
+        request_id: requestId,
+        binding_revision_id: bindingRevisionId,
+        url: stageUrl,
+        error: "secondary layer failed",
+        runtime_state: "changed_failed",
+        partial_load: true,
+        failed_bindings: [{ artifact_id: "artifact_secondary" }],
+      },
+    });
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      generation,
+      status: "terminal",
+    }));
+    expect(internals(app).state.govBindingActiveRevision).toBeNull();
+    expect(internals(app).state.govBindingApplyState).toEqual({
+      status: "failed",
+      reason: "runtime_changed_transaction_failed",
+    });
   });
 
   it("A 已 active 後同 URL 的 B terminal failure 會撤銷 parent 的 A proof", () => {

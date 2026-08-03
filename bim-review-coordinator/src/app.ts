@@ -217,7 +217,12 @@ const stageArtifactSelectionSchema = z.object({
 const stageBindingPreauthorizationSchema = z.object({
   source_client_id: z.string().trim().min(1).max(200),
   role: z.literal("primary"),
+  client_request_id: safeCommandIdSchema.optional(),
   artifacts: z.array(stageArtifactSelectionSchema).min(1).max(64),
+}).strict();
+const stageBindingPreauthorizationCancellationSchema = z.object({
+  source_client_id: z.string().trim().min(1).max(200),
+  client_request_id: safeCommandIdSchema,
 }).strict();
 const stageCompositionArtifactSchema = z.object({
   artifact_id: z.string().trim().min(1).max(200),
@@ -1937,6 +1942,7 @@ export function createCoordinatorApp(
         principal: user.userId,
         sourceClientId: input.source_client_id,
         credential: request.header("X-Viewer-Lease-Token") ?? "",
+        clientRequestId: input.client_request_id,
         artifacts: input.artifacts.map((artifact) => ({
           artifactId: artifact.artifact_id,
           role: artifact.role,
@@ -1968,6 +1974,9 @@ export function createCoordinatorApp(
           case "transaction_executing":
             response.status(409).json({ detail: "stage_binding_transaction_executing" });
             break;
+          case "request_cancelled":
+            response.status(409).json({ detail: "stage_binding_request_cancelled" });
+            break;
           default: {
             const unhandledReason: never = created.reason;
             throw new Error(`Unhandled stage-binding preauthorization outcome: ${unhandledReason}`);
@@ -1984,6 +1993,73 @@ export function createCoordinatorApp(
         binding_revision_id: created.bindingRevisionId,
         stage_composition: toWireStageComposition(created.composition),
         pending_expires_at: created.pendingExpiresAt,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // A browser deadline must be able to fence an in-flight POST before it
+  // creates a stale pending transaction. This route is lease-authenticated;
+  // it cancels only the caller's opaque client intent and never touches Kit.
+  app.post("/api/review-sessions/:sessionId/stage-binding-cancellations", (request, response, next) => {
+    try {
+      const user = userAuthProvider.authenticate({ headers: headersToMap(request.headers) });
+      if (process.env.NODE_ENV === "production" && user.ssoBinding === "pending_oq5") {
+        response.status(503).json({ detail: "production_identity_unavailable" });
+        return;
+      }
+      if (!isSafeSessionId(request.params.sessionId)) {
+        response.status(400).json({ detail: "Invalid review session id." });
+        return;
+      }
+      const session = store.get(request.params.sessionId);
+      if (!session) {
+        response.status(404).json({ detail: "Review session not found." });
+        return;
+      }
+      if (!isSessionMutable(session)) {
+        response.status(409).json({ detail: "Review session is not active." });
+        return;
+      }
+
+      const input = stageBindingPreauthorizationCancellationSchema.parse(request.body);
+      const cancelled = runtimeMutationAuthority.cancelStageBindingPreauthorization({
+        sessionId: session.session_id,
+        principal: user.userId,
+        sourceClientId: input.source_client_id,
+        credential: request.header("X-Viewer-Lease-Token") ?? "",
+        clientRequestId: input.client_request_id,
+      });
+      if (!cancelled.cancelled) {
+        switch (cancelled.reason) {
+          case "session_not_found":
+            response.status(404).json({ detail: "Review session not found." });
+            break;
+          case "session_lifecycle_blocked":
+            response.status(409).json({ detail: "Review session is not active." });
+            break;
+          case "primary_lease_required":
+            response.status(403).json({ detail: "stage binding requires caller's active primary viewer lease" });
+            break;
+          case "transaction_not_abortable":
+            response.status(409).json({
+              cancelled: false,
+              client_request_id: input.client_request_id,
+              detail: "stage_binding_transaction_not_abortable",
+            });
+            break;
+          default: {
+            const unhandledReason: never = cancelled.reason;
+            throw new Error(`Unhandled stage-binding cancellation outcome: ${unhandledReason}`);
+          }
+        }
+        return;
+      }
+      response.json({
+        cancelled: true,
+        client_request_id: input.client_request_id,
+        idempotent_replay: cancelled.idempotentReplay,
       });
     } catch (error) {
       next(error);

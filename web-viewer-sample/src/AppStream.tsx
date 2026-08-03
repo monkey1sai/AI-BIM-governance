@@ -26,6 +26,14 @@ let pendingStreamerTeardown: Promise<boolean> | null = null;
 const STREAMER_TEARDOWN_POLL_MS = 25;
 const STREAMER_TEARDOWN_TIMEOUT_MS = 5_000;
 
+function usesGfnManagedLifecycle(): boolean {
+    // GFN owns stream teardown in its SDK. NVIDIA's AppStreamer terminate()
+    // rejects there, so treating that unsupported operation as a failed
+    // physical teardown would permanently prevent a remounted GFN viewer from
+    // reconnecting.
+    return StreamConfig.source === "gfn";
+}
+
 function hasCompletedStreamerTeardown(result: unknown): boolean {
     // The deterministic harness terminates synchronously and deliberately
     // returns void after it clears its own callback/timer state. Production
@@ -67,6 +75,7 @@ function waitForPhysicalStreamerTeardown(): Promise<boolean> {
 }
 
 function terminateStreamer(): Promise<boolean> {
+    if (usesGfnManagedLifecycle()) return Promise.resolve(true);
     if (pendingStreamerTeardown) return pendingStreamerTeardown;
     try {
         const teardown = Promise.resolve(getStreamer().terminate(false))
@@ -98,6 +107,7 @@ function terminateStreamer(): Promise<boolean> {
 }
 
 function waitForStreamerTeardown(): Promise<boolean> {
+    if (usesGfnManagedLifecycle()) return Promise.resolve(true);
     return pendingStreamerTeardown || Promise.resolve(isStreamerPhysicallyTerminated());
 }
 

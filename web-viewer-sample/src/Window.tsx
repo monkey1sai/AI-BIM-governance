@@ -589,12 +589,20 @@ function getPayloadObjectArray(payload: Record<string, unknown>, key: string): R
 }
 
 let runtimeRequestSequence = 0;
+let stageBindingPreauthorizationSequence = 0;
 
 function createRuntimeRequestId(): string {
     const uuid = globalThis.crypto?.randomUUID?.();
     if (uuid) return `cmd_${uuid}`;
     runtimeRequestSequence += 1;
     return `cmd_${Date.now().toString(36)}_${runtimeRequestSequence.toString(36)}`;
+}
+
+function createStageBindingPreauthorizationRequestId(): string {
+    const uuid = globalThis.crypto?.randomUUID?.();
+    if (uuid) return `stage_preauth_${uuid}`;
+    stageBindingPreauthorizationSequence += 1;
+    return `stage_preauth_${Date.now().toString(36)}_${stageBindingPreauthorizationSequence.toString(36)}`;
 }
 
 function parseRuntimeCommandRejection(payload: Record<string, unknown>): RuntimeCommandRejection | null {
@@ -697,6 +705,12 @@ function appStreamResultToAppEvent(
 
         const status = getPayloadString(result, "status");
         const info = getPayloadString(result, "info");
+        // The SDK treats loadArtifactGroupRequest as an unknown custom
+        // command. Its returned wrapper is only an immediate transport ACK;
+        // the authenticated DataChannel terminal carries changed_failed and
+        // must remain the sole completion authority for this transaction.
+        if (nativeOpenStageResponse && requestEventType === "loadArtifactGroupRequest") return null;
+
         const responseResult = status === "success" ? "success" : "error";
         return {
             event_type: "openedStageResult",
@@ -828,7 +842,13 @@ function redactRuntimeDiagnosticText(value: string): string {
             /\b(access[_-]?token|authorization|cookie|password|secret|token|x-amz-(?:signature|credential|security-token))\s*=\s*(?:(?:bearer|basic|token)\s+)?(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
             (_match, key: string) => `${key}=[redacted]`,
         );
-    return withoutSensitiveAssignments
+    const withoutStandaloneCredentials = withoutSensitiveAssignments.replace(
+        /\b(?:(authorization)\s+)?(bearer|basic)\s+(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+        (_match, authorization: string | undefined, scheme: string) => (
+            authorization ? `${authorization} ${scheme} [redacted]` : `${scheme} [redacted]`
+        ),
+    );
+    return withoutStandaloneCredentials
         .replace(
             /\b(access[_-]?token|authorization|cookie|password|secret|token|x-amz-(?:signature|credential|security-token))\s*:\s*[^\r\n]+/gi,
             (_match, key: string) => `${key}:[redacted]`,
@@ -2902,6 +2922,8 @@ export default class App extends React.Component<AppProps, AppState> {
 
     private async _preauthorizeStageBinding(
         artifacts: Array<{ artifact_id: string; role: "primary" | "secondary"; load_order: number }>,
+        clientRequestId: string,
+        signal?: AbortSignal,
     ): Promise<StageBindingPreauthorization> {
         if (this.stageProofBlockedRevision) {
             throw new Error("stage binding proof resync required");
@@ -2925,12 +2947,14 @@ export default class App extends React.Component<AppProps, AppState> {
                 body: JSON.stringify({
                     source_client_id: reviewEnv.sourceClientId,
                     role: "primary",
+                    client_request_id: clientRequestId,
                     artifacts: artifacts.map((artifact) => ({
                         artifact_id: artifact.artifact_id,
                         role: artifact.role,
                         load_order: artifact.load_order,
                     })),
                 }),
+                signal,
             },
         );
         if (!response.ok) {
@@ -2965,17 +2989,53 @@ export default class App extends React.Component<AppProps, AppState> {
         return raw as unknown as StageBindingPreauthorization;
     }
 
+    private async _cancelStageBindingPreauthorization(clientRequestId: string): Promise<void> {
+        const sessionId = this.state.reviewSessionId;
+        if (!sessionId) return;
+        const userToken = this._ensureStandaloneLabUserToken();
+        if (!userToken) return;
+        try {
+            const leaseToken = await this._ensurePrimaryViewerLease();
+            if (!leaseToken) return;
+            await fetch(
+                `${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(sessionId)}/stage-binding-cancellations`,
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-User-Token": userToken,
+                        "X-Viewer-Lease-Token": leaseToken,
+                    },
+                    body: JSON.stringify({
+                        source_client_id: reviewEnv.sourceClientId,
+                        client_request_id: clientRequestId,
+                    }),
+                },
+            );
+        } catch {
+            // The visible deadline remains terminal even when the best-effort
+            // cancellation cannot reach the coordinator. A later request is
+            // still client-fenced and can never dispatch to Kit from here.
+        }
+    }
+
     private async _preauthorizeStageBindingWithinDeadline(
         artifacts: Array<{ artifact_id: string; role: "primary" | "secondary"; load_order: number }>,
     ): Promise<StageBindingPreauthorization> {
         let timeoutId: number | null = null;
+        const controller = new AbortController();
+        const clientRequestId = createStageBindingPreauthorizationRequestId();
         try {
             return await new Promise<StageBindingPreauthorization>((resolve, reject) => {
                 timeoutId = window.setTimeout(
-                    () => reject(new Error("stage_binding_authorization_timeout")),
+                    () => {
+                        controller.abort();
+                        void this._cancelStageBindingPreauthorization(clientRequestId);
+                        reject(new Error("stage_binding_authorization_timeout"));
+                    },
                     STAGE_AUTHORIZATION_TIMEOUT_MS,
                 );
-                void this._preauthorizeStageBinding(artifacts).then(resolve, reject);
+                void this._preauthorizeStageBinding(artifacts, clientRequestId, controller.signal).then(resolve, reject);
             });
         } finally {
             if (timeoutId !== null) window.clearTimeout(timeoutId);
@@ -3807,12 +3867,28 @@ export default class App extends React.Component<AppProps, AppState> {
         streamGeneration = this.streamGeneration,
     ): void {
         if (!this._isCurrentStreamCallback(streamGeneration, kind)) return;
+        // A stopped AppStreamer lifecycle can still deliver a late callback.
+        // Advance synchronously before React remounts so focus/highlight/A4
+        // results cannot mutate the terminal disconnect state.
+        this.streamGeneration += 1;
+        const pendingA4HandoffRequestId = this.a4HandoffPendingRequestId;
         // AppStreamer keeps response callbacks in the old lifecycle. A later
         // stage request must remount before it can safely reuse this slot.
         this.nativeOpenStagePoisonedGeneration = this.streamGeneration;
         this.nativeOpenStageReplacementStartGeneration = null;
         this._retireNativeOpenStageDispatches();
         this._invalidateStageAttempt();
+        for (const [requestId, context] of this.runtimeCommandContexts.entries()) {
+            this._claimRuntimeCommandTerminal(requestId, context.eventType, "superseded");
+        }
+        if (pendingA4HandoffRequestId) {
+            this._finishA4HandoffCommand(
+                pendingA4HandoffRequestId,
+                "rejected",
+                "stream_lifecycle_superseded",
+                true,
+            );
+        }
         this._clearLoadingStateRetry();
         this._clearStageLoadTimeout();
         this._clearDeferredOpenStage();

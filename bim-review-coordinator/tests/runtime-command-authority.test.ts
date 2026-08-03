@@ -138,6 +138,7 @@ async function preauthorize(
   lease: { lease_id: string; lease_token: string },
   user: string,
   suffix = "a",
+  clientRequestId?: string,
 ) {
   return request(app.app)
     .post(`/api/review-sessions/${sessionId}/stage-binding`)
@@ -146,6 +147,7 @@ async function preauthorize(
     .send({
       source_client_id: lease.lease_id,
       role: "primary",
+      ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
       artifacts: stageSelection(suffix),
     });
 }
@@ -545,6 +547,164 @@ describe("coordinator runtime command authority", () => {
       binding_revision_id: pending.body.binding_revision_id,
       active_binding_revision: null,
     });
+  });
+
+  it("fences a timed-out browser preauthorization before its delayed POST can replace newer intent", async () => {
+    const app = makeApp();
+    const sessionId = await createSession(app, "preauthorization-cancel");
+    const lease = await claim(app, sessionId, "stage-owner");
+    const staleIntentId = "stage_preauth_timeout_001";
+
+    const cancellation = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/stage-binding-cancellations`)
+      .set("X-User-Token", "stage-owner")
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send({
+        source_client_id: lease.lease_id,
+        client_request_id: staleIntentId,
+      });
+    expect(cancellation.status).toBe(200);
+    expect(cancellation.body).toEqual({
+      cancelled: true,
+      client_request_id: staleIntentId,
+      idempotent_replay: false,
+    });
+
+    const fresh = await preauthorize(
+      app,
+      sessionId,
+      lease,
+      "stage-owner",
+      "preauthorization-cancel",
+      "stage_preauth_fresh_001",
+    );
+    expect(fresh.status).toBe(200);
+
+    const delayedStaleRequest = await preauthorize(
+      app,
+      sessionId,
+      lease,
+      "stage-owner",
+      "preauthorization-cancel",
+      staleIntentId,
+    );
+    expect(delayedStaleRequest.status).toBe(409);
+    expect(delayedStaleRequest.body).toEqual({ detail: "stage_binding_request_cancelled" });
+
+    const status = await request(app.app)
+      .get(`/api/review-sessions/${sessionId}/viewer-leases/status`)
+      .set("X-User-Token", "stage-owner");
+    expect(status.body.stage_binding).toMatchObject({
+      transaction_status: "pending",
+      binding_revision_id: fresh.body.binding_revision_id,
+    });
+  });
+
+  it("cancels a pending timed-out browser preauthorization before Kit can consume it", async () => {
+    const app = makeApp();
+    const sessionId = await createSession(app, "preauthorization-pending-cancel");
+    const lease = await claim(app, sessionId, "stage-owner");
+    const clientRequestId = "stage_preauth_pending_001";
+    const pending = await preauthorize(
+      app,
+      sessionId,
+      lease,
+      "stage-owner",
+      "preauthorization-pending-cancel",
+      clientRequestId,
+    );
+    expect(pending.status).toBe(200);
+
+    const cancellation = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/stage-binding-cancellations`)
+      .set("X-User-Token", "stage-owner")
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send({ source_client_id: lease.lease_id, client_request_id: clientRequestId });
+    expect(cancellation.status).toBe(200);
+    expect(cancellation.body).toEqual({
+      cancelled: true,
+      client_request_id: clientRequestId,
+      idempotent_replay: false,
+    });
+
+    const authorization = await request(app.app)
+      .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
+      .set(internalHeaders(sessionId))
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send(runtimeBody(lease, {
+        requested_event_type: "openStageRequest",
+        request_id: "cmd_preauth_pending_001",
+        command_context: {},
+        stage_binding_authorization_id: pending.body.stage_binding_authorization_id,
+        binding_revision_id: pending.body.binding_revision_id,
+        stage_composition: pending.body.stage_composition,
+      }));
+    expect(authorization.body).toMatchObject({ authorized: false });
+
+    const repeatedCancellation = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/stage-binding-cancellations`)
+      .set("X-User-Token", "stage-owner")
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send({ source_client_id: lease.lease_id, client_request_id: clientRequestId });
+    expect(repeatedCancellation.status).toBe(200);
+    expect(repeatedCancellation.body).toEqual({
+      cancelled: true,
+      client_request_id: clientRequestId,
+      idempotent_replay: true,
+    });
+  });
+
+  it("does not claim a late browser cancellation can abort a binding that Kit already consumed", async () => {
+    const app = makeApp();
+    const sessionId = await createSession(app, "preauthorization-not-abortable");
+    const lease = await claim(app, sessionId, "stage-owner");
+    const clientRequestId = "stage_preauth_consumed_001";
+    const pending = await preauthorize(
+      app,
+      sessionId,
+      lease,
+      "stage-owner",
+      "preauthorization-not-abortable",
+      clientRequestId,
+    );
+    expect(pending.status).toBe(200);
+
+    const authorization = await request(app.app)
+      .post(`/api/internal/review-sessions/${sessionId}/runtime-command-authorizations`)
+      .set(internalHeaders(sessionId))
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send(runtimeBody(lease, {
+        requested_event_type: "openStageRequest",
+        request_id: "cmd_preauth_consumed_001",
+        command_context: {},
+        stage_binding_authorization_id: pending.body.stage_binding_authorization_id,
+        binding_revision_id: pending.body.binding_revision_id,
+        stage_composition: pending.body.stage_composition,
+      }));
+    expect(authorization.body).toMatchObject({ authorized: true });
+
+    const cancellation = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/stage-binding-cancellations`)
+      .set("X-User-Token", "stage-owner")
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send({ source_client_id: lease.lease_id, client_request_id: clientRequestId });
+    expect(cancellation.status).toBe(409);
+    expect(cancellation.body).toEqual({
+      cancelled: false,
+      client_request_id: clientRequestId,
+      detail: "stage_binding_transaction_not_abortable",
+    });
+
+    const duplicate = await preauthorize(
+      app,
+      sessionId,
+      lease,
+      "stage-owner",
+      "preauthorization-not-abortable",
+      clientRequestId,
+    );
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.body).toEqual({ detail: "stage_binding_request_cancelled" });
   });
 
   it("rejects browser-supplied stage URL or revision authority", async () => {

@@ -17,6 +17,7 @@ vi.mock('./harness/streamer', () => ({
 }));
 
 import AppStream from './AppStream';
+import StreamConfig from '../stream.config.json';
 
 function makeProps(onLoggedIn = vi.fn()) {
     return {
@@ -151,6 +152,53 @@ describe('AppStream auth updates', () => {
         expect(streamer.connect).toHaveBeenCalledOnce();
         expect(props.onStreamFailed).not.toHaveBeenCalled();
         replacement.componentWillUnmount();
+    });
+
+    it('fails closed when an in-progress SDK teardown never reaches none before its deadline', async () => {
+        vi.useFakeTimers();
+        streamer.streamStatus = 3;
+        streamer.terminate.mockResolvedValueOnce({
+            action: "terminate",
+            status: "inProgress",
+            info: "stream teardown stalled",
+        });
+        const oldStream = new AppStream(makeProps());
+        oldStream.componentWillUnmount();
+
+        const props = makeProps();
+        const replacement = new AppStream(props);
+        replacement.componentDidMount();
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(5_000);
+
+        expect(streamer.connect).not.toHaveBeenCalled();
+        expect(props.onStreamFailed).toHaveBeenCalledOnce();
+        replacement.componentWillUnmount();
+    });
+
+    it('allows GFN remounts to reconnect without invoking unsupported AppStreamer teardown', async () => {
+        const mutableConfig = StreamConfig as { source: string };
+        const previousSource = mutableConfig.source;
+        const previousGfn = Object.getOwnPropertyDescriptor(globalThis, 'GFN');
+        mutableConfig.source = 'gfn';
+        Object.defineProperty(globalThis, 'GFN', { configurable: true, value: {} });
+        try {
+            const oldStream = new AppStream(makeProps());
+            oldStream.componentWillUnmount();
+
+            const props = makeProps();
+            const replacement = new AppStream(props);
+            await replacement._initStream();
+
+            expect(streamer.terminate).not.toHaveBeenCalled();
+            expect(streamer.connect).toHaveBeenCalledOnce();
+            expect(props.onStreamFailed).not.toHaveBeenCalled();
+            replacement.componentWillUnmount();
+        } finally {
+            mutableConfig.source = previousSource;
+            if (previousGfn) Object.defineProperty(globalThis, 'GFN', previousGfn);
+            else delete (globalThis as { GFN?: unknown }).GFN;
+        }
     });
 
     it('fails closed when physical streamer teardown fulfills with error', async () => {
