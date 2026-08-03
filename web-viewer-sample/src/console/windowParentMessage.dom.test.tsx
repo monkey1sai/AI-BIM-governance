@@ -1679,6 +1679,31 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     expect(internals(app).state.streamDiagnostic).not.toContain("fragment");
   });
 
+  it("redacts a busy-state URL before its polling timeout becomes visible", () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const sensitiveStageUrl = "https://viewer:secret@stage.example/busy.usdc?X-Amz-Signature=sentinel#fragment";
+    internals(app).state = {
+      ...internals(app).state,
+      isKitReady: true,
+      webrtcLifecycleStatus: "started",
+      selectedUSDAsset: { name: "busy", url: sensitiveStageUrl },
+    };
+    internals(app).pendingStageUrl = sensitiveStageUrl;
+    internals(app).loadingStatePollCount = 90;
+
+    internals(app)._handleCustomEvent({
+      event_type: "loadingStateResponse",
+      payload: { url: sensitiveStageUrl, loading_state: "busy" },
+    });
+
+    const html = renderToString(internals(app).render());
+    expect(html).toContain("https://stage.example/busy.usdc busy");
+    expect(html).not.toContain("viewer:secret");
+    expect(html).not.toContain("X-Amz-Signature");
+    expect(html).not.toContain("fragment");
+  });
+
   it("keeps every terminal stage failure visible over a stale remote frame", () => {
     const app = operableApp();
     useSynchronousSetState(app);
@@ -4529,6 +4554,31 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
     expect(internals(app).state.govBindingActiveRevision).toBeUndefined();
   });
 
+  it("redacts the expected stage URL in a missing-evidence failure", () => {
+    const app = bindingApplyApp();
+    const sensitiveStageUrl = "https://viewer:secret@stage.example/missing.usdc?X-Amz-Signature=sentinel#fragment";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: sensitiveStageUrl,
+    };
+    trackBindingRequest(app, "openStageRequest", "req_binding_redacted_missing", "rev_binding_redacted_missing");
+
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        request_id: "req_binding_redacted_missing",
+        binding_revision_id: "rev_binding_redacted_missing",
+      },
+    });
+
+    const html = renderToString(internals(app).render());
+    expect(html).toContain("https://stage.example/missing.usdc");
+    expect(html).not.toContain("viewer:secret");
+    expect(html).not.toContain("X-Amz-Signature");
+    expect(html).not.toContain("fragment");
+  });
+
   it("loadArtifactGroupResult result=error → failed 帶 Kit error reason", () => {
     const app = bindingApplyApp();
     trackBindingRequest(app, "loadArtifactGroupRequest", "req_binding_004", "rev_binding_004");
@@ -4537,6 +4587,29 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
       payload: { result: "error", request_id: "req_binding_004", binding_revision_id: "rev_binding_004", error: "kit_compose_failed" },
     });
     expect(internals(app).state.govBindingApplyState).toEqual({ status: "failed", reason: "kit_compose_failed" });
+  });
+
+  it("redacts a Kit-reported stage URL in a non-timeout error diagnostic", () => {
+    const app = bindingApplyApp();
+    const sensitiveStageUrl = "https://viewer:secret@stage.example/error.usdc?X-Amz-Signature=sentinel#fragment";
+    trackBindingRequest(app, "openStageRequest", "req_binding_redacted_error", "rev_binding_redacted_error");
+
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "error",
+        request_id: "req_binding_redacted_error",
+        binding_revision_id: "rev_binding_redacted_error",
+        url: sensitiveStageUrl,
+        error: "kit_open_failed",
+      },
+    });
+
+    const html = renderToString(internals(app).render());
+    expect(html).toContain("https://stage.example/error.usdc");
+    expect(html).not.toContain("viewer:secret");
+    expect(html).not.toContain("X-Amz-Signature");
+    expect(html).not.toContain("fragment");
   });
 
   it("ignores an untracked composition error instead of overwriting the active binding state", () => {
@@ -4672,6 +4745,38 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
     } finally {
       privateApp._clearStageLoadTimeout();
     }
+  });
+
+  it("binding apply authorization times out visibly without sending a Kit composition command", async () => {
+    vi.useFakeTimers();
+    setLang("en");
+    const app = bindingApplyApp();
+    const privateApp = internals(app) as unknown as {
+      _applyBinding: AppInternals["_applyBinding"];
+      _preauthorizeStageBinding: (selection: unknown[]) => Promise<unknown>;
+      _sendStreamMessage: (message: unknown) => boolean;
+    };
+    vi.spyOn(privateApp, "_preauthorizeStageBinding").mockImplementation(() => new Promise(() => {}));
+    const send = vi.spyOn(privateApp, "_sendStreamMessage").mockReturnValue(true);
+
+    privateApp._applyBinding([{
+      artifact_id: "artifact_binding_authorization_timeout",
+      model_version_id: "version_x",
+      usdc_url: "stage://binding-authorization-timeout.usdc",
+      role: "primary",
+      load_order: 0,
+      ready: true,
+    }], "rev_binding_authorization_timeout");
+    await vi.advanceTimersByTimeAsync(45_000);
+
+    expect(send).not.toHaveBeenCalled();
+    expect(internals(app).state.govBindingApplyState).toEqual({
+      status: "failed",
+      reason: "stage_binding_authorization_timeout",
+    });
+    expect(internals(app).state.streamDiagnostic).toContain(
+      "Stage binding authorization timed out before a load command was sent to Kit.",
+    );
   });
 
   it("ordinary stage open terminalizes immediately when its authorized command is not sent", async () => {

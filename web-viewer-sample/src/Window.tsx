@@ -3397,7 +3397,7 @@ export default class App extends React.Component<AppProps, AppState> {
         })
         this.setState({ usdPrims: [], selectedUSDPrims: new Set<USDPrimType>() });
         this.usdStageRef.current?.resetExpandedIds();
-        console.log(`Sending request to open asset: ${targetAsset.url}.`);
+        console.log(`Sending request to open asset: ${redactStageUrlForDiagnostic(targetAsset.url)}.`);
         const artifactBindings = this.state.latestStreamConfig?.artifact_bindings?.filter((binding) => binding.url === targetAsset.url) || [];
         const composition = this.state.latestStreamConfig?.stage_composition;
         const selectedIsPrimary = composition?.primary?.url === targetAsset.url;
@@ -4116,7 +4116,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
                 const requestId = getPayloadString(payload, "request_id");
                 if (requestId) this.runtimeCommandContexts.delete(requestId);
-                console.error(`Kit App communicates there was an error loading: ${url} (${error})`);
+                console.error(`Kit App communicates there was an error loading: ${redactStageUrlForDiagnostic(url)} (${error})`);
                 if (runtimeState === "changed_failed") {
                     this.stageProofBlockGeneration += 1;
                     this.stageProofBlockedRevision = null;
@@ -4286,7 +4286,7 @@ export default class App extends React.Component<AppProps, AppState> {
                             t(stageLoadTimeoutPresentation.title.zh, stageLoadTimeoutPresentation.title.en),
                             [
                                 `${t(stageLoadTimeoutPresentation.target.zh, stageLoadTimeoutPresentation.target.en)}${t("：", ": ")}${redactStageUrlForDiagnostic(this.pendingStageUrl || this.state.selectedUSDAsset?.url)}`,
-                                `${t(stageLoadTimeoutPresentation.lastState.zh, stageLoadTimeoutPresentation.lastState.en)}${t("：", ": ")}${payloadUrl || "empty"} busy`,
+                                `${t(stageLoadTimeoutPresentation.lastState.zh, stageLoadTimeoutPresentation.lastState.en)}${t("：", ": ")}${payloadUrl ? redactStageUrlForDiagnostic(payloadUrl) : "empty"} busy`,
                                 t(stageLoadTimeoutPresentation.missingCompletion.zh, stageLoadTimeoutPresentation.missingCompletion.en),
                             ].join("\n"),
                         );
