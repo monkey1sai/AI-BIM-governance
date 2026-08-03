@@ -3917,9 +3917,17 @@ export default class App extends React.Component<AppProps, AppState> {
             }
             
             else {
+                const loadingState = getPayloadString(payload, "loading_state");
+                if (this.activeStageAttempt?.status === "completed") {
+                    // A completed attempt may still receive a late matching idle probe that
+                    // contributes evidence, but it must never reopen loading or polling.
+                    if (payloadUrl && loadingState === "idle") {
+                        this._recordLoadedStageEvidence(payloadUrl, "loadingStateResponse", loadingState);
+                    }
+                    return;
+                }
                 this._clearLoadingStateRetry();
                 this.loadingStatePollCount += 1;
-                const loadingState = getPayloadString(payload, "loading_state");
                 const usdAsset: USDAssetType = this._getAsset(payloadUrl)
                 const isStageValid: boolean = !!(usdAsset.name && usdAsset.url)
                 const attemptGeneration = this.activeStageAttempt?.generation;
@@ -3973,7 +3981,6 @@ export default class App extends React.Component<AppProps, AppState> {
                 // show stream and populate children if the stage is valid and it's done loading
                 if (isStageValid && loadingState === "idle")
                 {
-                    if (this.activeStageAttempt?.status === "completed") return;
                     if (!harnessEnabled() && !this.confirmedStageBindingRevision) {
                         this.setState({
                             loadingText: "stage 已觀察，等待 coordinator confirmation",

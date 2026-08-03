@@ -2546,6 +2546,7 @@ describe("Important #4（修訂）：visible-stream 完成路徑不得把 pendin
     const generation = privateApp._beginStageAttempt(stageUrl);
     internals(app).pendingStageUrl = stageUrl;
     vi.spyOn(internals(app), "_hasRemoteVideoFrame").mockReturnValue(true);
+    const sendSpy = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => undefined);
 
     privateApp._scheduleStageLoadTimeout(generation);
     vi.advanceTimersByTime(45_000);
@@ -2557,7 +2558,10 @@ describe("Important #4（修訂）：visible-stream 完成路徑不得把 pendin
     }));
     expect(internals(app).pendingStageUrl).toBe(stageUrl);
 
-    vi.advanceTimersByTime(45_000);
+    vi.advanceTimersByTime(1_000);
+    expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({ event_type: "loadingStateQuery" }));
+
+    vi.advanceTimersByTime(44_000);
 
     expect(privateApp.activeStageAttempt).toEqual({
       generation,
@@ -2567,6 +2571,52 @@ describe("Important #4（修訂）：visible-stream 完成路徑不得把 pendin
     });
     expect(internals(app).pendingStageUrl).toBeNull();
     expect(internals(app).state.loadingText).toBe("模型載入逾時");
+  });
+
+  it("ignores a late same-target busy response after the stage attempt is completed", () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const stageUrl = "stage://completed-busy.usdc";
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      _completeStageLoad: (loadedUrl?: string, bindingRevisionId?: string, attemptGeneration?: number) => void;
+      _getChildren: () => void;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      confirmedStageBindingRevision: string | null;
+      loadingStatePollCount: number;
+    };
+    internals(app).state = {
+      ...internals(app).state,
+      isKitReady: true,
+      expectedStageUrl: stageUrl,
+      loadedStageUrl: null,
+      usdAssets: [{ name: "completed busy", url: stageUrl }],
+    };
+    const generation = privateApp._beginStageAttempt(stageUrl);
+    internals(app).pendingStageUrl = stageUrl;
+    privateApp.confirmedStageBindingRevision = "rev_completed_busy";
+    vi.spyOn(privateApp, "_getChildren").mockImplementation(() => undefined);
+    const sendSpy = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => undefined);
+
+    privateApp._completeStageLoad(stageUrl, "rev_completed_busy", generation);
+    sendSpy.mockClear();
+    const stableState = {
+      loadingText: internals(app).state.loadingText,
+      isLoading: internals(app).state.isLoading,
+      loadedStageUrl: internals(app).state.loadedStageUrl,
+      stageLoadStatus: internals(app).state.stageLoadStatus,
+    };
+    const stablePollCount = privateApp.loadingStatePollCount;
+
+    internals(app)._handleCustomEvent({
+      event_type: "loadingStateResponse",
+      payload: { url: stageUrl, loading_state: "busy" },
+    });
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({ generation, status: "completed" }));
+    expect(internals(app).state).toMatchObject(stableState);
+    expect(privateApp.loadingStatePollCount).toBe(stablePollCount);
+    expect(sendSpy).not.toHaveBeenCalled();
   });
 
   it("an exact-target idle stays unproven until authenticated revision confirmation promotes it", () => {
