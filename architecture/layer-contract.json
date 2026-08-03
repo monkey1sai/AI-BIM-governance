@@ -1,0 +1,758 @@
+{
+  "$schema": "./layer-contract.schema.json",
+  "schema_version": "ai-bim-layer-contract/v1",
+  "purpose": "Executable language-level layer boundaries. It declares, per scanned service, which module belongs to which layer and which layer may depend on which other layer. The observed module graph produced by the Phase 2 static scan is judged against this contract by scripts/lib/layered_architecture.py.",
+  "enforcement_note": "Module-level cycles remain owned by ARCH-GRAPH-001 (architecture/observed-baseline.json). This contract judges direction across layers only. Same-layer edges are always permitted here and are not evidence that the design is healthy.",
+  "tooling_deviation": {
+    "named_tools": [
+      "dependency-cruiser",
+      "import-linter"
+    ],
+    "adopted": false,
+    "reason": "The canonical root-contract CI job installs only pytest and jsonschema on windows-latest, apps/kit-manager-web has no package-lock.json to pin an npm dev tool against, and neither tool guarantees the byte-identical Windows/Linux report output this repository asserts for architecture artifacts. Layer boundaries are enforced instead by a standard-library checker that reuses the Phase 2 module-graph extractors and the same ratchet discipline, matching the declared Phase 2 GitNexus deviation. Adopting the named tools later remains possible and would be additive; this disclosure must be superseded rather than deleted.",
+    "scope_limits": [
+      "Only statically resolvable intra-service module imports are judged. Dynamic imports, runtime-resolved module names, and cross-service calls are out of scope.",
+      "Files excluded by architecture/observed-graph.config.json (tests, fixtures, harness, generated, dist) are not scanned and therefore not layered."
+    ]
+  },
+  "layer_sets": [
+    {
+      "language": "typescript",
+      "layers": [
+        "ui",
+        "application",
+        "client",
+        "domain"
+      ],
+      "description": "ui renders and handles user interaction; application holds orchestration, routing and state machines; client owns outbound transport adapters; domain holds pure types, helpers and shared primitives.",
+      "allowed": [
+        {
+          "from": "ui",
+          "to": [
+            "application",
+            "client",
+            "domain"
+          ]
+        },
+        {
+          "from": "application",
+          "to": [
+            "client",
+            "domain"
+          ]
+        },
+        {
+          "from": "client",
+          "to": [
+            "domain"
+          ]
+        },
+        {
+          "from": "domain",
+          "to": []
+        }
+      ]
+    },
+    {
+      "language": "python",
+      "layers": [
+        "api",
+        "application",
+        "domain",
+        "infrastructure"
+      ],
+      "description": "api is the inbound HTTP or host entry-point surface; application holds use-case orchestration and package facades; domain holds pure models and rules; infrastructure holds outbound adapters, stores and process-level side effects.",
+      "allowed": [
+        {
+          "from": "api",
+          "to": [
+            "application",
+            "domain",
+            "infrastructure"
+          ]
+        },
+        {
+          "from": "application",
+          "to": [
+            "domain",
+            "infrastructure"
+          ]
+        },
+        {
+          "from": "infrastructure",
+          "to": [
+            "domain"
+          ]
+        },
+        {
+          "from": "domain",
+          "to": []
+        }
+      ]
+    }
+  ],
+  "excluded_services": [],
+  "services": [
+    {
+      "id": "bim-review-coordinator",
+      "language": "typescript",
+      "note": "Headless Node service. It has no ui layer; an empty layer is legal and is not treated as a missing declaration.",
+      "layers": [
+        "application",
+        "client",
+        "domain"
+      ],
+      "rules": [
+        {
+          "match": "prefix",
+          "value": "services/",
+          "layer": "client"
+        },
+        {
+          "match": "exact",
+          "value": "types.ts",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "config.ts",
+          "layer": "domain"
+        },
+        {
+          "match": "prefix",
+          "value": "lib/",
+          "layer": "domain"
+        },
+        {
+          "match": "prefix",
+          "value": "utils/",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "index.ts",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "app.ts",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "shutdown.ts",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "runtimeStatus.ts",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "streamConfig.ts",
+          "layer": "application"
+        },
+        {
+          "match": "prefix",
+          "value": "routes/",
+          "layer": "application"
+        },
+        {
+          "match": "prefix",
+          "value": "socket/",
+          "layer": "application"
+        },
+        {
+          "match": "prefix",
+          "value": "tools/",
+          "layer": "application"
+        }
+      ]
+    },
+    {
+      "id": "bim-streaming-server",
+      "language": "python",
+      "note": "Omniverse Kit extensions. The package __init__ modules are Kit entry-point facades (from .extension import *, from .setup import *) and are therefore api, not application.",
+      "layers": [
+        "api",
+        "application",
+        "domain",
+        "infrastructure"
+      ],
+      "rules": [
+        {
+          "match": "exact",
+          "value": "ezplus.bim_review_stream.messaging",
+          "layer": "api"
+        },
+        {
+          "match": "exact",
+          "value": "ezplus.bim_review_stream.messaging.extension",
+          "layer": "api"
+        },
+        {
+          "match": "exact",
+          "value": "ezplus.bim_review_stream.setup",
+          "layer": "api"
+        },
+        {
+          "match": "exact",
+          "value": "ezplus.bim_review_stream.setup.setup",
+          "layer": "api"
+        },
+        {
+          "match": "exact",
+          "value": "ezplus.bim_review_stream.messaging.conversion_authority",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "ezplus.bim_review_stream.messaging.runtime_authority",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "ezplus.bim_review_stream.messaging.host_native_conversion_service",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "ezplus.bim_review_stream.messaging.stage_management",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "ezplus.bim_review_stream.messaging.stage_loading",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "ezplus.bim_review_stream.messaging.ifc_openusd_identity_author",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "ezplus.bim_review_stream.messaging.ifc2usdc_powershell_adapter",
+          "layer": "infrastructure"
+        },
+        {
+          "match": "exact",
+          "value": "ezplus.bim_review_stream.messaging.kit_struct_log",
+          "layer": "infrastructure"
+        },
+        {
+          "match": "exact",
+          "value": "ezplus.bim_review_stream.messaging.struct_log",
+          "layer": "infrastructure"
+        }
+      ]
+    },
+    {
+      "id": "governance-service",
+      "language": "python",
+      "note": "app and the *.api routers are the inbound HTTP surface. Package __init__ modules re-export the package use-case surface and are therefore application facades, not api.",
+      "layers": [
+        "api",
+        "application",
+        "domain",
+        "infrastructure"
+      ],
+      "rules": [
+        {
+          "match": "exact",
+          "value": "app",
+          "layer": "api"
+        },
+        {
+          "match": "exact",
+          "value": "bcf.api",
+          "layer": "api"
+        },
+        {
+          "match": "exact",
+          "value": "diff_engine.api",
+          "layer": "api"
+        },
+        {
+          "match": "exact",
+          "value": "federation.api",
+          "layer": "api"
+        },
+        {
+          "match": "exact",
+          "value": "file_library.api",
+          "layer": "api"
+        },
+        {
+          "match": "exact",
+          "value": "issues.api",
+          "layer": "api"
+        },
+        {
+          "match": "exact",
+          "value": "issues.a4_api",
+          "layer": "api"
+        },
+        {
+          "match": "exact",
+          "value": "search.api",
+          "layer": "api"
+        },
+        {
+          "match": "exact",
+          "value": "bcf",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "diff_engine",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "federation",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "file_library",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "issues",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "rule_engine",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "search",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "diff_engine.engine",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "federation.builder",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "rule_engine.engine",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "rule_engine.ids_runner",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "rule_engine.mapping_join",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "search.engine",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "search.handoff",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "search.interpreter",
+          "layer": "application"
+        },
+        {
+          "match": "prefix",
+          "value": "scripts.",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "bcf.bcf_writer",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "diff_engine.geometry",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "diff_engine.keys",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "diff_engine.models",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "federation.coords",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "rule_engine.models",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "rule_engine.predicates",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "search.proofs",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "db",
+          "layer": "infrastructure"
+        },
+        {
+          "match": "exact",
+          "value": "diff_engine.store",
+          "layer": "infrastructure"
+        },
+        {
+          "match": "exact",
+          "value": "federation.store",
+          "layer": "infrastructure"
+        },
+        {
+          "match": "exact",
+          "value": "issues.store",
+          "layer": "infrastructure"
+        },
+        {
+          "match": "exact",
+          "value": "rule_engine.excel_export",
+          "layer": "infrastructure"
+        },
+        {
+          "match": "exact",
+          "value": "search.internal_auth",
+          "layer": "infrastructure"
+        },
+        {
+          "match": "exact",
+          "value": "search.llm_client",
+          "layer": "infrastructure"
+        }
+      ]
+    },
+    {
+      "id": "kit-manager-api",
+      "language": "python",
+      "layers": [
+        "api",
+        "application",
+        "domain",
+        "infrastructure"
+      ],
+      "rules": [
+        {
+          "match": "exact",
+          "value": "main",
+          "layer": "api"
+        },
+        {
+          "match": "exact",
+          "value": "kit_service",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "models",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "kit_gateway",
+          "layer": "infrastructure"
+        },
+        {
+          "match": "exact",
+          "value": "settings",
+          "layer": "infrastructure"
+        },
+        {
+          "match": "exact",
+          "value": "usdc_repository",
+          "layer": "infrastructure"
+        }
+      ]
+    },
+    {
+      "id": "kit-manager-web",
+      "language": "typescript",
+      "note": "Operator console. It is still an undeclared contract node in architecture/observed-baseline.json; layering its internals here neither declares the node nor resolves that debt.",
+      "layers": [
+        "client",
+        "domain",
+        "ui"
+      ],
+      "rules": [
+        {
+          "match": "prefix",
+          "value": "api/",
+          "layer": "client"
+        },
+        {
+          "match": "exact",
+          "value": "models.ts",
+          "layer": "domain"
+        },
+        {
+          "match": "prefix",
+          "value": "components/",
+          "layer": "ui"
+        },
+        {
+          "match": "exact",
+          "value": "App.tsx",
+          "layer": "ui"
+        },
+        {
+          "match": "exact",
+          "value": "main.tsx",
+          "layer": "ui"
+        }
+      ]
+    },
+    {
+      "id": "web-viewer-sample",
+      "language": "typescript",
+      "note": "Rules are ordered and first-match wins. The client and domain modules that physically live under console/ are listed before the console/ ui prefix so that a transport adapter is not reclassified as ui by its directory.",
+      "layers": [
+        "application",
+        "client",
+        "domain",
+        "ui"
+      ],
+      "rules": [
+        {
+          "match": "prefix",
+          "value": "clients/",
+          "layer": "client"
+        },
+        {
+          "match": "exact",
+          "value": "assetsApi.ts",
+          "layer": "client"
+        },
+        {
+          "match": "exact",
+          "value": "http.ts",
+          "layer": "client"
+        },
+        {
+          "match": "exact",
+          "value": "console/coordinatorBase.ts",
+          "layer": "client"
+        },
+        {
+          "match": "exact",
+          "value": "console/coordinatorClient.ts",
+          "layer": "client"
+        },
+        {
+          "match": "exact",
+          "value": "console/governanceClient.ts",
+          "layer": "client"
+        },
+        {
+          "match": "exact",
+          "value": "console/governance/govEndpoints.ts",
+          "layer": "client"
+        },
+        {
+          "match": "prefix",
+          "value": "types/",
+          "layer": "domain"
+        },
+        {
+          "match": "prefix",
+          "value": "utils/",
+          "layer": "domain"
+        },
+        {
+          "match": "prefix",
+          "value": "lib/",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "parentMessageGuard.ts",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "console/data.ts",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "console/i18n.ts",
+          "layer": "domain"
+        },
+        {
+          "match": "exact",
+          "value": "console/unified/fixtures.ts",
+          "layer": "domain"
+        },
+        {
+          "match": "prefix",
+          "value": "config/",
+          "layer": "application"
+        },
+        {
+          "match": "prefix",
+          "value": "console/hooks/",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "console/a1Machine.ts",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "console/handoff.ts",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "console/localDevPrincipal.ts",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "console/routing.ts",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "console/usePolledResource.ts",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "console/useSharedStatus.ts",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "console/coordinator/runtimeGovernance.ts",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "console/governance/govPanelState.ts",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "console/governance/highlightBridge.ts",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "console/governance/mappingCache.ts",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "console/governance/windowOverlayGlue.ts",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "console/modelData/useConversionActions.ts",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "console/modelData/useConversionData.ts",
+          "layer": "application"
+        },
+        {
+          "match": "exact",
+          "value": "console/modelData/useMinioFolder.ts",
+          "layer": "application"
+        },
+        {
+          "match": "prefix",
+          "value": "components/",
+          "layer": "ui"
+        },
+        {
+          "match": "prefix",
+          "value": "console/",
+          "layer": "ui"
+        },
+        {
+          "match": "exact",
+          "value": "App.tsx",
+          "layer": "ui"
+        },
+        {
+          "match": "exact",
+          "value": "AppStream.tsx",
+          "layer": "ui"
+        },
+        {
+          "match": "exact",
+          "value": "Endpoints.tsx",
+          "layer": "ui"
+        },
+        {
+          "match": "exact",
+          "value": "Forms.tsx",
+          "layer": "ui"
+        },
+        {
+          "match": "exact",
+          "value": "StreamOnlyWindow.tsx",
+          "layer": "ui"
+        },
+        {
+          "match": "exact",
+          "value": "USDAsset.tsx",
+          "layer": "ui"
+        },
+        {
+          "match": "exact",
+          "value": "USDStage.tsx",
+          "layer": "ui"
+        },
+        {
+          "match": "exact",
+          "value": "Window.tsx",
+          "layer": "ui"
+        },
+        {
+          "match": "exact",
+          "value": "main.tsx",
+          "layer": "ui"
+        }
+      ]
+    }
+  ],
+  "excluded_services_note": "Excluding a service removes it from layer enforcement entirely. It is a reviewed policy decision, not a repair: tests/test_layered_architecture.py pins the exact set of layered service ids, so moving a service here fails the canonical gate until the pin is updated deliberately."
+}

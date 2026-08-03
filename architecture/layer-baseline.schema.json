@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai-bim-governance.local/schemas/layer-baseline.schema.json",
+  "title": "AI-BIM approved layer boundary baseline",
+  "description": "Grandfathered cross-layer violations. The ratchet allows exactly what is recorded here and fails closed on anything new.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "approved_on",
+    "approved_by",
+    "method",
+    "violations",
+    "violation_budgets"
+  ],
+  "definitions": {
+    "debt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "reason", "target_phase"],
+      "properties": {
+        "owner": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "target_phase": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "properties": {
+    "$schema": { "type": "string", "minLength": 1 },
+    "schema_version": { "const": "ai-bim-layer-baseline/v1" },
+    "approved_on": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "approved_by": { "type": "string", "minLength": 1 },
+    "method": { "type": "string", "minLength": 1 },
+    "violations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["service", "from", "to", "debt"],
+        "properties": {
+          "service": { "type": "string", "minLength": 1 },
+          "from": { "type": "string", "minLength": 1 },
+          "to": { "type": "string", "minLength": 1 },
+          "from_layer": { "type": "string", "minLength": 1 },
+          "to_layer": { "type": "string", "minLength": 1 },
+          "debt": { "$ref": "#/definitions/debt" }
+        }
+      }
+    },
+    "violation_budgets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["service", "maximum"],
+        "properties": {
+          "service": { "type": "string", "minLength": 1 },
+          "maximum": { "type": "integer", "minimum": 0 },
+          "note": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}
