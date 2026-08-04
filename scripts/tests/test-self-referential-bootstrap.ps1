@@ -290,8 +290,12 @@ try {
     Assert-True ($wrongCaseMechanismPaths.Count -eq 0) `
         "wrong-case git paths must not classify as mechanisms (matched: $($wrongCaseMechanismPaths -join ', '))"
     $prTemplate = Get-Content -LiteralPath (Join-Path $repoRoot '.github/PULL_REQUEST_TEMPLATE.md') -Raw
-    Assert-True ($prTemplate -match '(?m)^\| Self-referential bootstrap \| yes / no \|$') `
+    $prTemplateBooleanPattern = '(?m)^\| Self-referential bootstrap \| yes / no \|\r?$'
+    Assert-True ($prTemplate -match $prTemplateBooleanPattern) `
         'PR template shows bare yes/no values accepted by the checker, not backticked literals'
+    $prTemplateCrlf = $prTemplate -replace '\r?\n', "`r`n"
+    Assert-True ($prTemplateCrlf -match $prTemplateBooleanPattern) `
+        'PR template boolean assertion accepts the CRLF checkout used by Windows CI'
 
     # --- list-typed fields reject scalars (Codex round-6) ---------------------------
     # `@($value).Count` wraps a bare string into a one-element array, so a scalar
