@@ -28,14 +28,14 @@ without that gate. That is the compiler-bootstrap fixpoint, not a defect.
 
 Captured output: [`gate-suites.txt`](gate-suites.txt) — the three suites that
 adjudicate this mechanism plus three surrounding governance regression suites,
-run against `tested_head=c656e4e07c92e04988db8a7ad551d871912a94e6`
+run against `tested_head=9f60ef9745f91be375835e3629258a65449b828d`
 with their real exit codes. The follow-up evidence commit changes only files in
 this evidence directory; it does not claim that an untested code tree passed.
 
 | Suite | Covers |
 |---|---|
 | `test-self-referential-bootstrap.ps1` | ledger integrity, base-vs-head transition, deletion / impersonation / forged-fixpoint refusals, and wire-up through the real `check-pr-body-evidence.ps1` |
-| `test-base-gate-capability.ps1` | the capability detection above — that "base has the gate" means the library exists AND the checker dot-sources it AND invokes it, not merely that a file with the right name is present |
+| `test-base-gate-capability.ps1` | the capability detection above — that "base has the gate" means the library exists, the checker dot-sources it, invokes it with all load-bearing inputs, and does not statically shadow the assertion command |
 | `test-preflight-prnumber-forwarding.ps1` | the PR number reaching the gate, without which entry-to-PR binding cannot be enforced |
 | `test-agent-governance-check.ps1` | the aggregate governance contracts, including the review-agent and supporting script tests |
 | `test-pr-body-evidence.ps1` | PR metadata/body validation and bootstrap-gate integration |
