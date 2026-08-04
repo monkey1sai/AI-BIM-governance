@@ -22,13 +22,75 @@ $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../..')).Path
 $preflight = Join-Path $repoRoot 'scripts/dev/check-pr-local-preflight.ps1'
 Assert-True (Test-Path -LiteralPath $preflight) 'local preflight script exists'
 
-# 1. The preflight must actually pass -PrNumber through to the checker. Parse the
-#    AST so a commented-out or string-only occurrence cannot satisfy this.
+# 1. The preflight must pass -PrNumber in the SAME Invoke-External -Arguments
+#    array that invokes the body checker. Global string searches let an unrelated
+#    later invocation satisfy one half of the assertion.
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($preflight, [ref]$null, [ref]$null)
-$argStrings = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) |
-    ForEach-Object { $_.Value })
-Assert-True ('-PrNumber' -in $argStrings) 'preflight passes -PrNumber as a real argument (not a comment)'
-Assert-True ('check-pr-body-evidence.ps1' -in @($argStrings | ForEach-Object { Split-Path -Leaf $_ })) 'preflight invokes the body checker'
+$bodyCheckerInvocations = @($ast.FindAll({
+    param($node)
+    if ($node -isnot [System.Management.Automation.Language.CommandAst] -or
+        $node.GetCommandName() -cne 'Invoke-External') { return $false }
+    $strings = @($node.FindAll({
+        param($child) $child -is [System.Management.Automation.Language.StringConstantExpressionAst]
+    }, $true) | ForEach-Object { $_.Value })
+    return @($strings | Where-Object { $_ -match '(^|[\\/])scripts[\\/]tests[\\/]check-pr-body-evidence\.ps1$' }).Count -gt 0
+}, $true))
+Assert-True ($bodyCheckerInvocations.Count -eq 1) "preflight has exactly one body-checker Invoke-External call (got $($bodyCheckerInvocations.Count))"
+
+$commandElements = @($bodyCheckerInvocations[0].CommandElements)
+$argumentsIndex = -1
+for ($i = 0; $i -lt $commandElements.Count; $i++) {
+    if ($commandElements[$i] -is [System.Management.Automation.Language.CommandParameterAst] -and
+        $commandElements[$i].ParameterName -ceq 'Arguments') {
+        $argumentsIndex = $i
+        break
+    }
+}
+Assert-True ($argumentsIndex -ge 0 -and $argumentsIndex -lt ($commandElements.Count - 1)) 'body-checker invocation has an -Arguments value'
+$argumentsAst = $commandElements[$argumentsIndex + 1]
+Assert-True ($argumentsAst -is [System.Management.Automation.Language.ArrayExpressionAst]) 'body-checker -Arguments value is an explicit array'
+$argumentLiterals = @($argumentsAst.FindAll({
+    param($node) $node -is [System.Management.Automation.Language.ArrayLiteralAst]
+}, $true))
+Assert-True ($argumentLiterals.Count -eq 1) 'body-checker -Arguments contains one literal argument sequence'
+$argumentLiteral = $argumentLiterals[0]
+$forwardedStrings = @($argumentLiteral.FindAll({
+    param($node) $node -is [System.Management.Automation.Language.StringConstantExpressionAst]
+}, $true) | ForEach-Object { $_.Value })
+Assert-True (@($forwardedStrings | Where-Object {
+    $_ -match '(^|[\\/])scripts[\\/]tests[\\/]check-pr-body-evidence\.ps1$'
+}).Count -eq 1) 'body-checker path is inside this same -Arguments array'
+
+function Test-PrNumberArgumentBinding {
+    param([Parameter(Mandatory = $true)][System.Management.Automation.Language.ArrayLiteralAst] $ArrayLiteral)
+    $elements = @($ArrayLiteral.Elements)
+    for ($i = 0; $i -lt ($elements.Count - 1); $i++) {
+        if ($elements[$i] -isnot [System.Management.Automation.Language.StringConstantExpressionAst] -or
+            $elements[$i].Value -cne '-PrNumber') { continue }
+        $value = $elements[$i + 1]
+        if ($value -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            $value.VariablePath.UserPath -ceq 'PrNumber') { return $true }
+        if ($value -is [System.Management.Automation.Language.ConvertExpressionAst] -and
+            $value.Child -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            $value.Child.VariablePath.UserPath -ceq 'PrNumber') { return $true }
+    }
+    return $false
+}
+Assert-True (Test-PrNumberArgumentBinding -ArrayLiteral $argumentLiteral) `
+    'body-checker -PrNumber is directly followed by $PrNumber (optionally cast)'
+
+# Mutation guard: both tokens may exist in one array while the flag is bound to
+# another value. Set membership alone must not accept this shape.
+$mutantTokens = $null
+$mutantErrors = $null
+$mutantAst = [System.Management.Automation.Language.Parser]::ParseInput(
+    "@('-PrNumber', 0, '-Other', `$PrNumber)", [ref]$mutantTokens, [ref]$mutantErrors)
+Assert-True ($mutantErrors.Count -eq 0) 'wrong-binding mutant parses'
+$mutantLiteral = @($mutantAst.FindAll({
+    param($node) $node -is [System.Management.Automation.Language.ArrayLiteralAst]
+}, $true))[0]
+Assert-True (-not (Test-PrNumberArgumentBinding -ArrayLiteral $mutantLiteral)) `
+    'wrong-binding mutant is rejected even though both tokens exist in the array'
 
 # 2. Behavioral proof: the checker's PR binding only fires when -PrNumber arrives.
 . (Join-Path $repoRoot 'scripts/lib/self-referential-bootstrap.ps1')
@@ -38,13 +100,23 @@ New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 try {
     $fx = Join-Path $tempRoot 'fx'
     New-Item -ItemType Directory -Path $fx -Force | Out-Null
-    & git -C $fx init -q
+    function Invoke-FixtureGit {
+        param([Parameter(Mandatory = $true)][string[]] $Arguments)
+        $output = @(& git -C $fx -c commit.gpgsign=false @Arguments 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            throw "fixture git failed: git $($Arguments -join ' '): $($output -join [Environment]::NewLine)"
+        }
+        return $output
+    }
+    $null = Invoke-FixtureGit -Arguments @('init', '-q')
     $evidenceRel = 'docs/evidence/x/self-referential-bootstrap/summary.md'
     $evidenceFull = Join-Path $fx $evidenceRel
     New-Item -ItemType Directory -Path (Split-Path $evidenceFull) -Force | Out-Null
     Set-Content -LiteralPath $evidenceFull -Value 'evidence' -Encoding utf8
-    & git -C $fx add -A | Out-Null
-    & git -C $fx -c user.email=t@t -c user.name=t commit -q -m 'evidence'
+    $null = Invoke-FixtureGit -Arguments @('add', '-A')
+    $null = Invoke-FixtureGit -Arguments @(
+        '-c', 'user.email=t@t', '-c', 'user.name=t',
+        'commit', '--no-gpg-sign', '-q', '-m', 'evidence')
 
     $entryJson = @{
         schema_version = 'self-referential-bootstrap-ledger/v1'

@@ -136,6 +136,7 @@ function Invoke-BodyGate {
         [string[]] $ChangedPaths,
         [string] $HeadJson,
         [AllowEmptyString()][string] $BaseJson = '',
+        [Nullable[bool]] $BaseLedgerExists = $null,
         [bool] $HasBase = $true,
         [int] $PrNumber = 500,
         [string] $GateRepoRoot = '',
@@ -145,7 +146,8 @@ function Invoke-BodyGate {
     $headPath = Write-LedgerFile "head-$([Guid]::NewGuid().ToString('N')).json" $HeadJson
     Assert-SelfReferentialBootstrapBody -Body 'body' -ChangedPaths $ChangedPaths -LedgerPath $headPath `
         -GetTableValue { param($b, $label) $Rows[$label] }.GetNewClosure() `
-        -BaseLedgerJson $BaseJson -HasBaseContext $HasBase -PrNumber $PrNumber `
+        -BaseLedgerJson $BaseJson -BaseLedgerExists $BaseLedgerExists `
+        -HasBaseContext $HasBase -PrNumber $PrNumber `
         -RepoRoot $GateRepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
 }
 
@@ -157,32 +159,71 @@ try {
     # fixpoint evidence must be introduced at/after that commit (review round 4) ------
     $gitRoot = Join-Path $tempRoot 'gitfx'
     New-Item -ItemType Directory -Path $gitRoot -Force | Out-Null
-    & git -C $gitRoot init -q
-    $commit = { param($msg) (& git -C $gitRoot -c user.email=t@t -c user.name=t commit -q -m $msg); (& git -C $gitRoot rev-parse HEAD).Trim() }
+    function Invoke-FixtureGit {
+        param([Parameter(Mandatory = $true)][string[]] $Arguments)
+        $output = @(& git -C $gitRoot -c commit.gpgsign=false @Arguments 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            throw "fixture git failed: git $($Arguments -join ' '): $($output -join [Environment]::NewLine)"
+        }
+        return $output
+    }
+    $null = Invoke-FixtureGit -Arguments @('init', '-q')
+    $mainBranch = ((Invoke-FixtureGit -Arguments @('branch', '--show-current')) | Out-String).Trim()
+    $commit = {
+        param($msg, [bool] $AllowEmpty = $false)
+        $commitArguments = @(
+            '-c', 'user.email=t@t', '-c', 'user.name=t',
+            'commit', '--no-gpg-sign', '-q')
+        if ($AllowEmpty) { $commitArguments += '--allow-empty' }
+        $commitArguments += @('-m', $msg)
+        $null = Invoke-FixtureGit -Arguments $commitArguments
+        return ((Invoke-FixtureGit -Arguments @('rev-parse', 'HEAD')) | Out-String).Trim()
+    }
     $write = { param($rel, $val) $full = Join-Path $gitRoot $rel; New-Item -ItemType Directory -Path (Split-Path $full) -Force | Out-Null; Set-Content -LiteralPath $full -Value $val }
 
     # c0: pre-mechanism evidence blob (labeled, but predates the mechanism merge)
     & $write 'docs/evidence/old/self-referential-bootstrap/old.md' 'old evidence'
-    & git -C $gitRoot add docs | Out-Null
+    $null = Invoke-FixtureGit -Arguments @('add', 'docs')
     $oldEvidenceCommit = & $commit 'pre-mechanism evidence'
     # c1: an ancestor that does NOT touch any declared mechanism path
     & $write 'README.md' 'unrelated'
-    & git -C $gitRoot add README.md | Out-Null
+    $null = Invoke-FixtureGit -Arguments @('add', 'README.md')
     $unrelatedAncestor = & $commit 'unrelated ancestor'
-    # c2: the real mechanism merge - modifies scripts/deploy.ps1 (a declared path)
+
+    # c2: make a real two-parent mechanism merge. The old `git show --name-only`
+    # logic emitted no paths for this commit; first-parent diff must see deploy.ps1.
+    $null = Invoke-FixtureGit -Arguments @('checkout', '-q', '-b', 'mechanism-pr')
     & $write 'scripts/deploy.ps1' '# mechanism'
-    # ...carrying an evidence file in the SAME commit, so the strict-descendant
-    # rule below has a case to reject (Codex: the bootstrap artefact must not be
-    # able to stand in for the post-merge rerun).
+    $null = Invoke-FixtureGit -Arguments @('add', 'scripts/deploy.ps1')
+    $branchMechanismCommit = & $commit 'mechanism branch change (#500)'
+    $null = Invoke-FixtureGit -Arguments @('checkout', '-q', $mainBranch)
+    $null = Invoke-FixtureGit -Arguments @('merge', '--no-ff', '--no-commit', 'mechanism-pr')
+
+    # Carry an evidence file in the merge commit itself so strict chronology has
+    # an equality case to reject.
     & $write 'docs/evidence/remote-linux-deploy/fixpoint/born-with-mechanism.md' 'committed by the mechanism commit itself'
-    & git -C $gitRoot add scripts/deploy.ps1 docs | Out-Null
-    $fixpointCommit = & $commit 'mechanism merged (touches deploy.ps1)'
+    $null = Invoke-FixtureGit -Arguments @('add', 'docs')
+    $fixpointCommit = & $commit 'Merge pull request #500 from fixture/mechanism-pr'
+    $mergeParents = @(((Invoke-FixtureGit -Arguments @('rev-list', '--parents', '-n', '1', $fixpointCommit)) | Out-String).Trim() -split '\s+')
+    Assert-True ($mergeParents.Count -eq 3) 'mechanism fixture must be a real two-parent merge commit'
+
+    # A path-touching ancestor from a different PR must not close this entry.
+    & $write 'scripts/deploy.ps1' '# mechanism from another PR'
+    $null = Invoke-FixtureGit -Arguments @('add', 'scripts/deploy.ps1')
+    $wrongPrMechanismCommit = & $commit 'other mechanism update (#499)'
+
+    # A foreign squash subject can mention this PR while ending in its own PR
+    # number. Matching the marker anywhere would accept it.
+    & $write 'scripts/deploy.ps1' '# spoofed cross-reference'
+    $null = Invoke-FixtureGit -Arguments @('add', 'scripts/deploy.ps1')
+    $spoofedPrMechanismCommit = & $commit 'cross-reference (#500) from another PR (#498)'
+
     # c3 (base): post-merge evidence introduced AFTER the mechanism commit
     & $write 'docs/evidence/remote-linux-deploy/self-referential-bootstrap/summary.md' 'evidence'
     & $write 'docs/evidence/remote-linux-deploy/fixpoint/summary.md' 'fixpoint evidence'
     Set-Content -LiteralPath (Join-Path $gitRoot 'untracked-evidence.md') -Value 'untracked'
     & $write 'scripts/self-referential-bootstrap-ledger.json' (New-LedgerJson -Entries @())
-    & git -C $gitRoot add docs scripts | Out-Null
+    $null = Invoke-FixtureGit -Arguments @('add', 'docs', 'scripts')
     $baseSha = & $commit 'base with post-merge evidence'
 
     # Commits a head ledger into the fixture and returns that SHA, so the body
@@ -192,12 +233,12 @@ try {
     function New-FixtureHeadCommit {
         param([Parameter(Mandatory = $true)][string] $Json, [string] $Message = 'head ledger')
         & $write 'scripts/self-referential-bootstrap-ledger.json' $Json
-        & git -C $gitRoot add scripts | Out-Null
-        return (& $commit $Message)
+        $null = Invoke-FixtureGit -Arguments @('add', 'scripts')
+        return (& $commit $Message $true)
     }
 
     # --- mechanism path detection (incl. enforcement workflows: review P2) ----------
-    $matched = Get-SelfReferentialMechanismPaths -ChangedPaths @(
+    $expectedMechanismPaths = @(
         'scripts/deploy.ps1',
         '.github/workflows/pr-review-agent.yml',
         '.github/workflows/agent-governance.yml',
@@ -214,9 +255,18 @@ try {
         'scripts/lib/detect-base-gate-capability.sh',
         'scripts/verify-all.sh',
         'scripts/lib/verification-plan.mjs',
-        'web-viewer-sample/src/Window.tsx'
+        'scripts/lib/verification-runner.mjs',
+        'scripts/lib/security-exceptions-cli.mjs',
+        'scripts/tests/verification-plan.schema.json',
+        'scripts/tests/invoke-powershell-static.ps1',
+        'scripts/tests/scan-secret-patterns.ps1',
+        'docs/agents/self-referential-bootstrap.md'
     )
-    Assert-True ($matched.Count -eq 13) "enforcement workflows, manifest, verifiers, local entrypoints, the deploy asset helper, the base-capability detector, the POSIX verify entrypoint and the verification planner must classify as mechanism (matched: $($matched -join ', '))"
+    $matched = Get-SelfReferentialMechanismPaths -ChangedPaths @($expectedMechanismPaths + 'web-viewer-sample/src/Window.tsx')
+    Assert-True ($matched.Count -eq $expectedMechanismPaths.Count) "every direct adjudicator and contract path must classify as mechanism (matched: $($matched -join ', '))"
+    foreach ($expectedPath in $expectedMechanismPaths) {
+        Assert-True ($matched -ccontains $expectedPath) "mechanism classifier includes $expectedPath"
+    }
     Assert-True ($matched -notcontains 'web-viewer-sample/src/Window.tsx') 'ordinary product code must NOT classify as mechanism'
 
     # --- list-typed fields reject scalars (Codex round-6) ---------------------------
@@ -324,6 +374,13 @@ try {
     Assert-Throws -Context 'mixed-case timestamp key with bad value' -MessagePattern 'raw-string validation' -Action {
         Get-SelfReferentialBootstrapLedger -Json ((New-LedgerJson -Entries @((New-Entry))) -replace '"opened_at": "[^"]*"', '"Opened_at": "2026-07-31T08:00:00"')
     }
+    Assert-Throws -Context 'escaped timestamp key with bad value' -MessagePattern 'raw-string validation' -Action {
+        Get-SelfReferentialBootstrapLedger -Json ((New-LedgerJson -Entries @((New-Entry))) `
+            -replace '"opened_at": "[^"]*"', '"opene\u0064_at": "2026-07-31T08:00:00"')
+    }
+    Assert-Throws -Context 'explicit empty ledger JSON' -MessagePattern 'ledger is empty' -Action {
+        Get-SelfReferentialBootstrapLedger -Json ''
+    }
     Assert-Throws -Context 'pr as a JSON string' -MessagePattern 'native integer' -Action {
         Get-SelfReferentialBootstrapLedger -Json ((New-LedgerJson -Entries @((New-Entry))) -replace '"pr": 500', '"pr": "500"')
     }
@@ -400,17 +457,30 @@ try {
     # Closure tests run against the git fixture with the ledger committed at an
     # exact head revision (differential fixture, Codex TG-3).
     function Invoke-Closure {
-        param([hashtable] $Fixpoint, [hashtable] $EntryOverride = @{})
+        param(
+            [hashtable] $Fixpoint,
+            [hashtable] $EntryOverride = @{},
+            [string[]] $ChangedPaths = @('scripts/self-referential-bootstrap-ledger.json')
+        )
         $override = @{ status = 'closed'; fixpoint = $Fixpoint } + $EntryOverride
         $json = New-LedgerJson -Entries @((New-Entry -Override $override))
         $headSha = New-FixtureHeadCommit -Json $json
-        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism `
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $ChangedPaths `
             -HeadJson $json -BaseJson $openBase -GateRepoRoot $gitRoot -BaseSha $baseSha -HeadSha $headSha
     }
 
     # mechanism_commit is an ancestor but did not touch a declared path (round 4)
     Assert-Throws -Context 'mechanism_commit did not touch a declared path' -MessagePattern 'not this mechanism' -Action {
         Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $unrelatedAncestor; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') }
+    }
+    Assert-Throws -Context 'side-branch mechanism commit is not the mainline merge' -MessagePattern 'first-parent history' -Action {
+        Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $branchMechanismCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') }
+    }
+    Assert-Throws -Context 'mechanism_commit belongs to another PR' -MessagePattern 'originating PR #500' -Action {
+        Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $wrongPrMechanismCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') }
+    }
+    Assert-Throws -Context 'foreign squash subject only cross-references this PR' -MessagePattern 'originating PR #500' -Action {
+        Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $spoofedPrMechanismCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') }
     }
     # fixpoint evidence predates the mechanism merge (round 4)
     Assert-Throws -Context 'fixpoint evidence predating the mechanism merge' -MessagePattern 'predates mechanism_commit' -Action {
@@ -425,6 +495,10 @@ try {
     }
     # legal closure passes: mechanism_commit touched deploy.ps1, evidence is post-merge
     Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') }
+    Assert-Throws -Context 'closure PR also edits another mechanism path' -MessagePattern 'may only change the ledger' -Action {
+        Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') } `
+            -ChangedPaths @('scripts/self-referential-bootstrap-ledger.json', 'scripts/deploy.ps1')
+    }
 
     # closure without HeadSha must refuse rather than resolve chronology from
     # ambient HEAD, which in a pull_request checkout is the synthetic merge ref
@@ -444,7 +518,7 @@ try {
     & $write 'scripts/self-referential-bootstrap-ledger.json' $openBase   # dirty worktree disagrees
     Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism `
         -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $gitRoot -BaseSha $baseSha -HeadSha $cleanHeadSha
-    & git -C $gitRoot checkout -- scripts 2>&1 | Out-Null
+    $null = Invoke-FixtureGit -Arguments @('checkout', '--', 'scripts')
 
     # --- base context is mandatory when the ledger is in play (review P1 #4) --------
     Assert-Throws -Context 'head-only evaluation with ledger entries' -MessagePattern 'base context' -Action {
@@ -452,6 +526,15 @@ try {
     }
     # mechanism PR with an empty untouched ledger still passes without base context
     Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism -HeadJson $emptyJson -HasBase $false
+
+    Assert-Throws -Context 'existing but empty base ledger' -MessagePattern 'ledger is empty' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism `
+            -HeadJson $emptyJson -BaseJson '' -BaseLedgerExists $true
+    }
+    Assert-Throws -Context 'existing but corrupt base ledger' -MessagePattern 'not valid JSON' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism `
+            -HeadJson $emptyJson -BaseJson '{' -BaseLedgerExists $true
+    }
 
     # --- pr binding for new entries (review P2) -------------------------------------
     Assert-Throws -Context 'new entry bound to a different PR number' -MessagePattern 'must bind to their originating PR' -Action {
@@ -547,6 +630,12 @@ try {
     # --- silently adding debt while declaring no ------------------------------------
     Assert-Throws -Context 'ledger gains entries under bootstrap=no' -MessagePattern 'requires declaring yes' -Action {
         Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $gitRoot
+    }
+
+    Assert-Throws -Context 'self-adjudicator edit under bootstrap=no' -MessagePattern 'must declare bootstrap=yes' -Action {
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } `
+            -ChangedPaths @('scripts/lib/self-referential-bootstrap.ps1') `
+            -HeadJson $emptyJson -BaseJson $emptyJson
     }
 
     # --- inherited open debt blocks (declared no, entry untouched) ------------------
