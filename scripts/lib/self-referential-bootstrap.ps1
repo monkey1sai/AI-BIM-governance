@@ -43,7 +43,27 @@ $script:SelfReferentialMechanismPattern = @(
     # The planner and runner decide WHICH verifications run, so editing them
     # changes what "verified" means (Codex: "Classify the verification planner").
     '^scripts/lib/verification-(plan|runner)\.mjs$'
+    # Direct adjudicator dependencies are as load-bearing as the manifest that
+    # invokes them. Contract prose also changes what reviewers and fixpoint PRs
+    # are required to prove, so it is part of the mechanism surface.
+    '^scripts/lib/security-exceptions-cli\.mjs$'
+    '^scripts/tests/(invoke-powershell-static|scan-secret-patterns)\.ps1$'
+    '^scripts/tests/verification-plan\.schema\.json$'
+    '^docs/agents/self-referential-bootstrap\.md$'
 ) -join '|'
+
+# These files define or dispatch this gate's own adjudication. Unlike an
+# ordinary verification-mechanism edit, a change here cannot be accepted under
+# bootstrap=no because that would let the changed rule validate itself without
+# registering fixpoint debt. The ledger is intentionally excluded so a later
+# ledger-only closure remains possible.
+$script:SelfReferentialAdjudicatorPaths = @(
+    '.github/workflows/pr-review-agent.yml'
+    'scripts/lib/detect-base-gate-capability.sh'
+    'scripts/lib/self-referential-bootstrap.ps1'
+    'scripts/tests/check-pr-body-evidence.ps1'
+    'docs/agents/self-referential-bootstrap.md'
+)
 
 $script:GenericReasonBlocklist = @(
     'bootstrap', 'needed', 'required', 'self-referential', 'chicken', 'egg', 'because', 'necessary'
@@ -147,6 +167,43 @@ function Assert-SelfReferentialBootstrapReason {
     }
 }
 
+function Assert-SelfReferentialRawTimestampTokens {
+    # JsonDocument decodes escaped property names before exposing Name, so a key
+    # such as "opene\u0064_at" cannot bypass validation. Regex over raw JSON
+    # cannot provide that guarantee.
+    param([Parameter(Mandatory = $true)][string] $Json)
+
+    $document = [System.Text.Json.JsonDocument]::Parse($Json)
+    try {
+        $pending = [System.Collections.Generic.Stack[System.Text.Json.JsonElement]]::new()
+        $pending.Push($document.RootElement)
+        while ($pending.Count -gt 0) {
+            $element = $pending.Pop()
+            if ($element.ValueKind -eq [System.Text.Json.JsonValueKind]::Object) {
+                foreach ($property in $element.EnumerateObject()) {
+                    if ($property.Name -ieq 'opened_at' -or $property.Name -ieq 'reverified_at') {
+                        if ($property.Value.ValueKind -eq [System.Text.Json.JsonValueKind]::String) {
+                            $rawTimestamp = $property.Value.GetString()
+                            if (-not (Test-SelfReferentialIsoTimestamp -Value $rawTimestamp)) {
+                                throw "self_referential_bootstrap: timestamp '$rawTimestamp' is not an allowed anchored ISO-8601 form (raw-string validation after key decoding)."
+                            }
+                        }
+                    }
+                    if ($property.Value.ValueKind -in @(
+                        [System.Text.Json.JsonValueKind]::Object,
+                        [System.Text.Json.JsonValueKind]::Array)) {
+                        $pending.Push($property.Value)
+                    }
+                }
+            } elseif ($element.ValueKind -eq [System.Text.Json.JsonValueKind]::Array) {
+                foreach ($item in $element.EnumerateArray()) { $pending.Push($item) }
+            }
+        }
+    } finally {
+        $document.Dispose()
+    }
+}
+
 function Get-SelfReferentialBootstrapLedger {
     # Single-ledger integrity validation (fail closed on malformed input).
     # Accepts a -Json string or a -Path; transition rules live in
@@ -156,11 +213,15 @@ function Get-SelfReferentialBootstrapLedger {
         [AllowEmptyString()][string] $Json = ''
     )
 
-    if ([string]::IsNullOrWhiteSpace($Json)) {
+    $jsonWasSupplied = $PSBoundParameters.ContainsKey('Json')
+    if (-not $jsonWasSupplied) {
         if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
             throw "self_referential_bootstrap: ledger not found at $Path"
         }
         $Json = Get-Content -LiteralPath $Path -Raw
+    }
+    if ([string]::IsNullOrWhiteSpace($Json)) {
+        throw 'self_referential_bootstrap: ledger is empty; an existing base ledger must contain valid JSON.'
     }
     try {
         $ledger = $Json | ConvertFrom-Json
@@ -168,15 +229,9 @@ function Get-SelfReferentialBootstrapLedger {
         throw "self_referential_bootstrap: ledger is not valid JSON: $($_.Exception.Message)"
     }
 
-    # ConvertFrom-Json eagerly materializes ISO-looking strings as [datetime],
-    # which would let lenient variants (e.g. missing timezone) bypass the
-    # anchored format check below. Validate the RAW string tokens first.
-    foreach ($match in [regex]::Matches($Json, '(?i)"(?:opened_at|reverified_at)"\s*:\s*"([^"]*)"')) {
-        $rawTimestamp = $match.Groups[1].Value
-        if (-not (Test-SelfReferentialIsoTimestamp -Value $rawTimestamp)) {
-            throw "self_referential_bootstrap: timestamp '$rawTimestamp' is not an allowed anchored ISO-8601 form (raw-string validation)."
-        }
-    }
+    # ConvertFrom-Json eagerly materializes ISO-looking strings as [datetime].
+    # Validate decoded raw string tokens first, including escaped property names.
+    Assert-SelfReferentialRawTimestampTokens -Json $Json
 
     if ([string]$ledger.schema_version -ne 'self-referential-bootstrap-ledger/v1') {
         throw "self_referential_bootstrap: unsupported schema_version '$($ledger.schema_version)'."
@@ -401,6 +456,10 @@ function Compare-SelfReferentialLedgerTransition {
         if ($LASTEXITCODE -ne 0) {
             throw "self_referential_bootstrap: entry '$id' fixpoint.mechanism_commit $commit is not an ancestor of the PR base; the fixpoint must run on the MERGED mechanism."
         }
+        $firstParentHistory = @(& git -C $RepoRoot rev-list --first-parent $BaseSha 2>$null)
+        if ($LASTEXITCODE -ne 0 -or -not ($firstParentHistory -ccontains $commit)) {
+            throw "self_referential_bootstrap: entry '$id' fixpoint.mechanism_commit $commit is not on the PR base first-parent history; bind closure to the mainline merge/squash commit, not a side-branch ancestor."
+        }
         # Bind the closure to THIS entry's mechanism (not any ancient ancestor):
         # the mechanism_commit must actually have touched one of the entry's
         # declared verification_mechanism_paths.
@@ -410,11 +469,34 @@ function Compare-SelfReferentialLedgerTransition {
         # (narrower bug surfaced by the Codex apex while refuting L1-correctness-1).
         $mechanismTouched = $false
         foreach ($declaredPath in @($head.verification_mechanism_paths)) {
-            $touched = @(& git -C $RepoRoot show --name-only --pretty=format: $commit -- ([string]$declaredPath) 2>$null | Where-Object { $_ })
+            $parentLine = (& git -C $RepoRoot rev-list --parents -n 1 $commit 2>$null | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($parentLine)) {
+                throw "self_referential_bootstrap: cannot inspect parents of mechanism_commit $commit."
+            }
+            $parents = @($parentLine -split '\s+')
+            if ($parents.Count -gt 1) {
+                # Compare a merge to its first parent so branch-side mechanism
+                # changes are visible. `git show --name-only <merge>` emits no
+                # ordinary diff by default and falsely rejected legitimate merges.
+                $touched = @(& git -C $RepoRoot diff-tree --no-commit-id -r --name-only `
+                    $parents[1] $commit -- ([string]$declaredPath) 2>$null | Where-Object { $_ })
+            } else {
+                $touched = @(& git -C $RepoRoot diff-tree --root --no-commit-id -r --name-only `
+                    $commit -- ([string]$declaredPath) 2>$null | Where-Object { $_ })
+            }
             if ($touched.Count -gt 0) { $mechanismTouched = $true; break }
         }
         if (-not $mechanismTouched) {
             throw "self_referential_bootstrap: entry '$id' fixpoint.mechanism_commit $commit did not modify any of the entry's declared verification_mechanism_paths; it is not this mechanism's merge."
+        }
+        $commitMessage = (& git -C $RepoRoot log -1 --format=%B $commit 2>$null | Out-String).Trim()
+        $originatingPr = [int]$head.pr
+        $commitSubject = @($commitMessage -split "\r?\n")[0]
+        $mergeSubject = "^Merge pull request #$originatingPr from .+"
+        $squashSubject = "\(#$originatingPr\)$"
+        if ($LASTEXITCODE -ne 0 -or
+            ($commitSubject -notmatch $mergeSubject -and $commitSubject -notmatch $squashSubject)) {
+            throw "self_referential_bootstrap: entry '$id' mechanism_commit $commit is not bound to originating PR #$originatingPr in its merge/squash message."
         }
         foreach ($ref in @($fp.evidence_refs)) {
             Assert-SelfReferentialEvidenceBlob -RepoRoot $RepoRoot -Ref ([string]$ref) -Context "entry '$id' fixpoint" -HeadSha $HeadSha
@@ -468,6 +550,7 @@ function Assert-SelfReferentialBootstrapBody {
         [Parameter(Mandatory = $true)][string] $LedgerPath,
         [Parameter(Mandatory = $true)][scriptblock] $GetTableValue,
         [AllowEmptyString()][string] $BaseLedgerJson = '',
+        [Nullable[bool]] $BaseLedgerExists = $null,
         [bool] $HasBaseContext = $false,
         [int] $PrNumber = 0,
         [string] $RepoRoot = '',
@@ -501,14 +584,23 @@ function Assert-SelfReferentialBootstrapBody {
             throw 'self_referential_bootstrap: base context (BaseSha) is required to evaluate the ledger transition; refusing head-only evaluation.'
         }
         $baseLedger = $headLedger
-    } elseif ([string]::IsNullOrWhiteSpace($BaseLedgerJson)) {
-        # Ledger did not exist at base: every head entry is new.
-        $baseLedger = [pscustomobject]@{
-            schema_version = 'self-referential-bootstrap-ledger/v1'
-            entries        = @()
-        }
     } else {
-        $baseLedger = Get-SelfReferentialBootstrapLedger -Json $BaseLedgerJson
+        $baseLedgerPresent = if ($null -eq $BaseLedgerExists) {
+            -not [string]::IsNullOrWhiteSpace($BaseLedgerJson)
+        } else {
+            [bool]$BaseLedgerExists
+        }
+        if (-not $baseLedgerPresent) {
+            # Ledger did not exist at base: every head entry is new.
+            $baseLedger = [pscustomobject]@{
+                schema_version = 'self-referential-bootstrap-ledger/v1'
+                entries        = @()
+            }
+        } else {
+            # An existing-but-empty or corrupt base ledger is not equivalent to a
+            # missing first-introduction ledger. Parse it and fail closed.
+            $baseLedger = Get-SelfReferentialBootstrapLedger -Json $BaseLedgerJson
+        }
     }
 
     $transition = Compare-SelfReferentialLedgerTransition `
@@ -516,6 +608,15 @@ function Assert-SelfReferentialBootstrapBody {
         -ChangedPaths $ChangedPaths -MechanismPaths $mechanismPaths `
         -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
     $newIds = @($transition.NewEntries | ForEach-Object { [string]$_.id })
+
+    if (@($transition.ClosedEntries).Count -gt 0) {
+        $nonLedgerMechanismEdits = @($mechanismPaths | Where-Object {
+            $_ -cne 'scripts/self-referential-bootstrap-ledger.json'
+        })
+        if ($nonLedgerMechanismEdits.Count -gt 0) {
+            throw "self_referential_bootstrap: a fixpoint closure PR may only change the ledger within the mechanism surface; separate these edits: $($nonLedgerMechanismEdits -join ', ')."
+        }
+    }
 
     $declared = & $GetTableValue $Body 'Self-referential bootstrap'
     if ([string]::IsNullOrWhiteSpace($declared)) {
@@ -527,6 +628,12 @@ function Assert-SelfReferentialBootstrapBody {
     }
 
     if ($declared -eq 'no') {
+        $selfAdjudicatingChanges = @($mechanismPaths | Where-Object {
+            $script:SelfReferentialAdjudicatorPaths -ccontains $_
+        })
+        if ($selfAdjudicatingChanges.Count -gt 0) {
+            throw "self_referential_bootstrap: changes to this gate's own adjudicators must declare bootstrap=yes and register new fixpoint debt: $($selfAdjudicatingChanges -join ', ')."
+        }
         if ($newIds.Count -gt 0) {
             throw "self_referential_bootstrap: the ledger gains entries ($($newIds -join ', ')) but the PR body declares bootstrap=no; adding debt requires declaring yes."
         }

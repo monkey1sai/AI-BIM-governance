@@ -10,6 +10,7 @@
       "verification_mechanism_paths": [
         ".github/workflows/agent-governance.yml",
         ".github/workflows/pr-review-agent.yml",
+        "docs/agents/self-referential-bootstrap.md",
         "scripts/dev/check-pr-local-preflight.ps1",
         "scripts/lib/detect-base-gate-capability.sh",
         "scripts/lib/self-referential-bootstrap.ps1",

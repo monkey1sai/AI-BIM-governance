@@ -307,9 +307,16 @@ if (Test-AnyPathMatches -Paths $changedPaths -Pattern $deployPattern) {
 # Rule: docs/agents/self-referential-bootstrap.md
 $hasBootstrapBaseContext = -not [string]::IsNullOrWhiteSpace($BaseSha)
 $baseLedgerJson = ''
+$baseLedgerExists = $false
 if ($hasBootstrapBaseContext) {
-    $baseLedgerJson = (& git -C $RepoRoot show "${BaseSha}:scripts/self-referential-bootstrap-ledger.json" 2>$null) -join "`n"
-    if ($LASTEXITCODE -ne 0) { $baseLedgerJson = '' }  # ledger absent at base = first introduction
+    & git -C $RepoRoot cat-file -e "$BaseSha^{commit}" 2>$null
+    if ($LASTEXITCODE -ne 0) { throw "Self-referential bootstrap base SHA does not resolve to a commit: $BaseSha" }
+    & git -C $RepoRoot cat-file -e "${BaseSha}:scripts/self-referential-bootstrap-ledger.json" 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        $baseLedgerExists = $true
+        $baseLedgerJson = (& git -C $RepoRoot show "${BaseSha}:scripts/self-referential-bootstrap-ledger.json" 2>$null) -join "`n"
+        if ($LASTEXITCODE -ne 0) { throw "Unable to read the bootstrap ledger that exists at base $BaseSha." }
+    }
 }
 # Windows on-demand verification tier (D-20): the canonical deploy target is Linux,
 # so the Windows path only stays alive if changed-path scope machine-derives which
@@ -320,7 +327,8 @@ $null = Assert-WindowsVerificationEvidence -Body $body -ChangedPaths $changedPat
 Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths `
     -LedgerPath (Join-Path $RepoRoot 'scripts\self-referential-bootstrap-ledger.json') `
     -GetTableValue { param($b, $label) Get-MarkdownTableValue -Body $b -Label $label } `
-    -BaseLedgerJson $baseLedgerJson -HasBaseContext $hasBootstrapBaseContext `
+    -BaseLedgerJson $baseLedgerJson -BaseLedgerExists $baseLedgerExists `
+    -HasBaseContext $hasBootstrapBaseContext `
     -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
 
 Write-Host '[check-pr-body-evidence] passed'

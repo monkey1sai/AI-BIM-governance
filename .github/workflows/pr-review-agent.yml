@@ -50,20 +50,25 @@ jobs:
           trusted="$RUNNER_TEMP/trusted-gate"
           mkdir -p "$trusted"
 
-          # Detection lives in a script so it is executable in tests rather than
-          # replicated by them (Codex TG-2). Detection failure fails closed.
-          capability="$(bash scripts/lib/detect-base-gate-capability.sh "$BASE_SHA" .)"
+          # The trust decision must not execute the PR-head detector. Materialize
+          # the detector from BASE when it exists; a base that predates the
+          # detector is incomplete by definition and enters the explicit bootstrap
+          # path below. Detection failure fails closed.
+          detector="$RUNNER_TEMP/detect-base-gate-capability.sh"
+          if git cat-file -e "$BASE_SHA:scripts/lib/detect-base-gate-capability.sh" 2>/dev/null; then
+            git show "$BASE_SHA:scripts/lib/detect-base-gate-capability.sh" > "$detector"
+            capability="$(bash "$detector" "$BASE_SHA" .)"
+          else
+            capability="incomplete: base has no scripts/lib/detect-base-gate-capability.sh"
+          fi
           echo "base gate capability: $capability"
 
           if [ "$capability" = "complete" ]; then
             git archive "$BASE_SHA" scripts docs/plans | tar -x -C "$trusted"
             echo "GATE_ROOT=$trusted" >> "$GITHUB_ENV"
             echo "GATE_SOURCE=base-pinned" >> "$GITHUB_ENV"
-            if grep -q 'PrNumber' "$trusted/scripts/tests/check-pr-body-evidence.ps1"; then
-              echo "GATE_HAS_PRNUMBER=1" >> "$GITHUB_ENV"
-            else
-              echo "GATE_HAS_PRNUMBER=0" >> "$GITHUB_ENV"
-            fi
+            # A complete detector verdict includes AST-verified PrNumber binding.
+            echo "GATE_HAS_PRNUMBER=1" >> "$GITHUB_ENV"
           else
             # The base cannot adjudicate a gate it does not have. Rather than
             # silently trusting head, require the PR to declare the bootstrap

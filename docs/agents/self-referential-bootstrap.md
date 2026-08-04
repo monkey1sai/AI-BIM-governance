@@ -36,7 +36,7 @@
 
 - Ledger：`scripts/self-referential-bootstrap-ledger.json`（schema `self-referential-bootstrap-ledger/v1`）。
 - **Gate 以 base-vs-head 轉移判定**（非只看 head）：ledger 為 append-only，entry 除唯一合法轉移 `open → closed` 外不可變。刪除 entry、修改既有 entry、或宣告一個「base 已存在」的 entry 一律 fail closed；宣告的 entry 必須是**本 PR 新增**（自我登記的機器證明）。
-- **Fixpoint 實質驗證**：`mechanism_commit` 必須真實存在且為 PR base 的 ancestor（即已 merge 進 main），`evidence_refs` 必須存在於 PR head tree；格式正確但查無實體者拒絕。缺 base context 時拒絕任何閉合（refusing format-only closure）。
+- **Fixpoint 實質驗證**：`mechanism_commit` 必須真實存在、位於 PR base 的 first-parent mainline（即該機制的 merge/squash commit）、以 first-parent diff 真正修改 entry 宣告的機制 path，且 merge/squash subject 必須綁定該 entry 的原始 PR number；`evidence_refs` 必須存在於 PR head tree。格式正確但查無實體者拒絕。缺 base context 時拒絕任何閉合（refusing format-only closure）。
 - 新 entry 綁定：`pr` 必須等於當前 PR number（live check 傳入）；`verification_mechanism_paths` 必須是本 PR changed paths 的子集；`bootstrap_evidence_refs` 必須存在於 head tree。
 - 觸發清單含 **enforcement 面本身**：`agent-governance.yml`、`pr-review-agent.yml`、`ci.yml`、`scripts/verification-manifest.json` — 改掉執法者也是改機制。
 - 使用 bootstrap 取證的 PR **必須在同一個 PR 內新增自己的 open entry**（自我登記），並在 PR body 填：
@@ -48,7 +48,10 @@
 | Bootstrap reason | 具體機制缺口（`yes` 時必填，>=30 字元） |
 
 - **債務閘門**：open debt 以 **base ∪ head** 計算 — head 刪掉也照樣算帳。存在任何 open entry 時，下一個觸發本規則的 PR 被機器擋下（不影響無關 PR）。清除欠帳的唯一方式＝commit 通過實質驗證的 fixpoint 記錄，該 commit 本身可被 review。
+- **Closure 單一目的**：關閉 entry 的 PR 在 mechanism surface 內只能修改 ledger；不得同時修改其他驗證機制。修改本 gate 自己的 adjudicator 或本 contract 一律要宣告 `bootstrap=yes` 並新增 debt，不能用 `no` 讓新規則自證。
 - open entry 不得帶 fixpoint；closed entry 必須帶完整 fixpoint — ledger 完整性每次 CI 驗證（`scripts/tests/test-self-referential-bootstrap.ps1`），malformed 一律 fail closed。
+
+本 contract 檔本身也由 `Get-SelfReferentialMechanismPaths` 分類為 mechanism surface；修改契約文字不能繞過同一份 ledger 義務。
 
 ## 4. Entry schema
 
@@ -84,7 +87,7 @@
 現行緩解（**明確不是封閉**）：
 
 1. `pr-review-agent.yml`、`ci.yml`、`agent-governance.yml`、`verification-manifest.json` 都在 mechanism 清單內 → 改它們必須宣告 bootstrap 並登記 ledger 欠帳。
-2. gate 腳本取自 base revision，且 capability detection 檢查**完整能力**（library 存在＋checker dot-source 它＋實際呼叫斷言），不只檢查單一檔案存在 —— 只檢查後者曾讓一個「修改 checker、新增 library」的 PR 被舊 base checker 評估、新 gate 從未執行（`L1-correctness-2`）。detection 抽成 `scripts/lib/detect-base-gate-capability.sh`，由 `test-base-gate-capability.ps1` 以真實 base/head fixture 執行同一段邏輯驗證。
+2. gate 腳本取自 base revision，且 capability detection 檢查**完整能力**（library 存在＋checker 具真實 dot-source AST＋具真實 assertion invocation AST＋該 invocation 真實轉送 `PrNumber`），不只檢查單一檔案存在 —— 只檢查後者曾讓一個「修改 checker、新增 library」的 PR 被舊 base checker 評估、新 gate 從未執行（`L1-correctness-2`）。workflow 只在 base 已有 detector 時 materialize 並執行 base 版本；base 沒有 detector 就直接判定 incomplete，不執行 head detector。detection 由 `test-base-gate-capability.ps1` 以真實 base/head fixture 執行同一段邏輯驗證。
 3. base 不具完整能力時，workflow 以一段**極小、無相依**的 inline 檢查要求 PR body 宣告 `Self-referential bootstrap | yes`，再跑 head 副本並標記 `GATE_SOURCE=head-bootstrap`。
 
 **完全封閉需 owner 的 infra 決策**，兩條路各有代價：
