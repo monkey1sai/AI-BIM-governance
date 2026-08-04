@@ -88,10 +88,11 @@ function Get-WorkflowPermissionViolations {
         $normalizedEntries = @($entries | ForEach-Object { $_.Trim() })
         $normalizedWorkflowPath = $WorkflowPath.Replace('\', '/')
         $allowsPullRequestRead = $normalizedWorkflowPath -match '(?:^|/)\.github/workflows/governance-trust-root\.yml$'
-        $allowedEntries = if ($allowsPullRequestRead) {
-            @('contents: read', 'pull-requests: read')
-        } else {
-            @('contents: read')
+        # Avoid PowerShell's pipeline unrolling: under StrictMode a one-item
+        # branch result becomes a scalar string and has no reliable .Count.
+        $allowedEntries = @('contents: read')
+        if ($allowsPullRequestRead) {
+            $allowedEntries += 'pull-requests: read'
         }
         $invalidEntries = @($entries | Where-Object { $_ -cnotmatch '^  (?:contents|pull-requests): read$' })
         if (
