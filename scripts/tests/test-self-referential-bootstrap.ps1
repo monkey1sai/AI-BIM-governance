@@ -625,16 +625,27 @@ try {
         } -ChangedPaths $mechanism -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $tempRoot
     }
 
+    $bootstrapEvidenceRef = 'docs/evidence/remote-linux-deploy/self-referential-bootstrap/summary.md'
+    Assert-Throws -Context 'new entry reusing unchanged base evidence' -MessagePattern 'added or modified by this PR' -Action {
+        Invoke-BodyGate -Rows @{
+            'Self-referential bootstrap' = 'yes'
+            'Bootstrap ledger entry' = 'remote-linux-deploy-target'
+            'Bootstrap reason' = $goodReason
+        } -ChangedPaths $mechanism -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $gitRoot
+    }
+
     # --- legal self-registration passes ---------------------------------------------
     Invoke-BodyGate -Rows @{
         'Self-referential bootstrap' = 'yes'
         'Bootstrap ledger entry' = 'remote-linux-deploy-target'
         'Bootstrap reason' = $goodReason
-    } -ChangedPaths $mechanism -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $gitRoot
+    } -ChangedPaths @($mechanism + $bootstrapEvidenceRef) -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $gitRoot
 
     # --- silently adding debt while declaring no ------------------------------------
     Assert-Throws -Context 'ledger gains entries under bootstrap=no' -MessagePattern 'requires declaring yes' -Action {
-        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $gitRoot
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } `
+            -ChangedPaths @($mechanism + $bootstrapEvidenceRef) `
+            -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $gitRoot
     }
 
     Assert-Throws -Context 'self-adjudicator edit under bootstrap=no' -MessagePattern 'must declare bootstrap=yes' -Action {

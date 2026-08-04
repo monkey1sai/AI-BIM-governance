@@ -106,6 +106,79 @@ function Get-RootStatement {
     return $null
 }
 
+function Get-DirectParameterArgument {
+    param(
+        [Parameter(Mandatory = $true)][System.Management.Automation.Language.CommandAst] $Command,
+        [Parameter(Mandatory = $true)][string] $Name
+    )
+    $elements = @($Command.CommandElements)
+    for ($i = 0; $i -lt ($elements.Count - 1); $i++) {
+        if ($elements[$i] -is [System.Management.Automation.Language.CommandParameterAst] -and
+            $elements[$i].ParameterName -ieq $Name) {
+            if ($null -ne $elements[$i].Argument) {
+                return $elements[$i].Argument
+            }
+            if ($elements[$i + 1] -isnot [System.Management.Automation.Language.CommandParameterAst]) {
+                return $elements[$i + 1]
+            }
+        }
+    }
+    return $null
+}
+
+function Get-DirectCommandTargetArgument {
+    param(
+        [Parameter(Mandatory = $true)][System.Management.Automation.Language.CommandAst] $Command,
+        [Parameter(Mandatory = $true)][string] $NamedParameter
+    )
+    $named = Get-DirectParameterArgument -Command $Command -Name $NamedParameter
+    if ($null -ne $named) { return $named }
+
+    $elements = @($Command.CommandElements)
+    if ($elements.Count -gt 1 -and
+        $elements[1] -isnot [System.Management.Automation.Language.CommandParameterAst]) {
+        return $elements[1]
+    }
+    return $null
+}
+
+function Test-IsAssertionAliasMutation {
+    param([Parameter(Mandatory = $true)][System.Management.Automation.Language.CommandAst] $Command)
+    $commandName = $Command.GetCommandName() -replace '^.*\\', ''
+    if ($commandName -inotmatch '^(Set-Alias|New-Alias|sal|nal)$') { return $false }
+    $target = Get-DirectCommandTargetArgument -Command $Command -NamedParameter 'Name'
+    if ($target -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) {
+        # A dynamic alias target cannot be proven unrelated, so capability
+        # detection fails closed rather than evaluating PowerShell.
+        return $true
+    }
+    $targetName = $target.Value -replace '^(global|local|script|private):', ''
+    return $targetName -ieq 'Assert-SelfReferentialBootstrapBody'
+}
+
+function Test-IsAssertionProviderMutation {
+    param([Parameter(Mandatory = $true)][System.Management.Automation.Language.CommandAst] $Command)
+    $commandName = $Command.GetCommandName() -replace '^.*\\', ''
+    if ($commandName -imatch '^(New-Item|ni|Copy-Item|cpi|cp|copy|Rename-Item|rni|ren)$') {
+        # New-Item can split a provider target across -Path/-Name, while copy
+        # and rename target position 1 or a command-specific named parameter.
+        # The trusted checker has no need for these commands, so any direct
+        # root use before the assertion fails closed instead of implementing a
+        # general PowerShell parameter binder.
+        return $true
+    }
+    if ($commandName -inotmatch '^(Set-Item|Set-Content|si|sc)$') { return $false }
+    $target = Get-DirectCommandTargetArgument -Command $Command -NamedParameter 'Path'
+    if ($null -eq $target) {
+        $target = Get-DirectCommandTargetArgument -Command $Command -NamedParameter 'LiteralPath'
+    }
+    if ($target -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) {
+        # As above, a dynamic provider path is not safe to classify as unrelated.
+        return $true
+    }
+    return $target.Value -imatch '^(?:function|alias):[\\/]*(?:(?:global|local|script|private):)?Assert-SelfReferentialBootstrapBody$'
+}
+
 $dotSources = @($ast.FindAll({
     param($node)
     $node -is [System.Management.Automation.Language.CommandAst] -and
@@ -151,6 +224,18 @@ $assertionDefinitions = @($ast.FindAll({
         (($node.Name -replace '^(global|local|script|private):', '') -ieq 'Assert-SelfReferentialBootstrapBody') -and
         ((Get-RootStatement -Node $node) -eq $node)
 }, $true))
+$assertionAliasMutations = @($ast.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.CommandAst] -and
+        (Test-IsRootExecutableCommand -Command $node) -and
+        (Test-IsAssertionAliasMutation -Command $node)
+}, $true))
+$assertionProviderMutations = @($ast.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.CommandAst] -and
+        (Test-IsRootExecutableCommand -Command $node) -and
+        (Test-IsAssertionProviderMutation -Command $node)
+}, $true))
 $unshadowedAssertions = @($orderedAssertions | Where-Object {
     $assertion = $_
     $latestDotSourceOffset = @($dotSources | Where-Object {
@@ -159,7 +244,13 @@ $unshadowedAssertions = @($orderedAssertions | Where-Object {
     @($assertionDefinitions | Where-Object {
         $_.Extent.StartOffset -gt $latestDotSourceOffset -and
             $_.Extent.StartOffset -lt $assertion.Extent.StartOffset
-    }).Count -eq 0
+    }).Count -eq 0 -and
+        @($assertionAliasMutations | Where-Object {
+            $_.Extent.StartOffset -lt $assertion.Extent.StartOffset
+        }).Count -eq 0 -and
+        @($assertionProviderMutations | Where-Object {
+            $_.Extent.StartOffset -lt $assertion.Extent.StartOffset
+        }).Count -eq 0
 })
 if ($unshadowedAssertions.Count -eq 0) {
     Write-Output 'assertion-shadowed'
@@ -195,6 +286,44 @@ if ($prBoundAssertions.Count -eq 0) {
     Write-Output 'missing-prnumber-binding'
     exit 0
 }
+
+$fullyBoundAssertions = @($prBoundAssertions | Where-Object {
+    $command = $_
+    $bodyArg = Get-DirectParameterArgument -Command $command -Name 'Body'
+    $changedPathsArg = Get-DirectParameterArgument -Command $command -Name 'ChangedPaths'
+    $ledgerPathArg = Get-DirectParameterArgument -Command $command -Name 'LedgerPath'
+    $getTableValueArg = Get-DirectParameterArgument -Command $command -Name 'GetTableValue'
+    $baseLedgerJsonArg = Get-DirectParameterArgument -Command $command -Name 'BaseLedgerJson'
+    $baseLedgerExistsArg = Get-DirectParameterArgument -Command $command -Name 'BaseLedgerExists'
+    $hasBaseContextArg = Get-DirectParameterArgument -Command $command -Name 'HasBaseContext'
+    $repoRootArg = Get-DirectParameterArgument -Command $command -Name 'RepoRoot'
+    $baseShaArg = Get-DirectParameterArgument -Command $command -Name 'BaseSha'
+    $headShaArg = Get-DirectParameterArgument -Command $command -Name 'HeadSha'
+
+    $bodyArg -is [System.Management.Automation.Language.VariableExpressionAst] -and
+        $bodyArg.VariablePath.UserPath -ieq 'body' -and
+        $changedPathsArg -is [System.Management.Automation.Language.VariableExpressionAst] -and
+        $changedPathsArg.VariablePath.UserPath -ieq 'changedPaths' -and
+        $null -ne $ledgerPathArg -and
+        $getTableValueArg -is [System.Management.Automation.Language.ScriptBlockExpressionAst] -and
+        $baseLedgerJsonArg -is [System.Management.Automation.Language.VariableExpressionAst] -and
+        $baseLedgerJsonArg.VariablePath.UserPath -ieq 'baseLedgerJson' -and
+        $baseLedgerExistsArg -is [System.Management.Automation.Language.VariableExpressionAst] -and
+        $baseLedgerExistsArg.VariablePath.UserPath -ieq 'baseLedgerExists' -and
+        $hasBaseContextArg -is [System.Management.Automation.Language.VariableExpressionAst] -and
+        $hasBaseContextArg.VariablePath.UserPath -ieq 'hasBootstrapBaseContext' -and
+        $repoRootArg -is [System.Management.Automation.Language.VariableExpressionAst] -and
+        $repoRootArg.VariablePath.UserPath -ieq 'RepoRoot' -and
+        $baseShaArg -is [System.Management.Automation.Language.VariableExpressionAst] -and
+        $baseShaArg.VariablePath.UserPath -ieq 'BaseSha' -and
+        $headShaArg -is [System.Management.Automation.Language.VariableExpressionAst] -and
+        $headShaArg.VariablePath.UserPath -ieq 'HeadSha'
+})
+if ($fullyBoundAssertions.Count -eq 0) {
+    Write-Output 'missing-required-assertion-bindings'
+    exit 0
+}
+$prBoundAssertions = $fullyBoundAssertions
 
 # Reachability is measured against the earliest assertion that is BOTH ordered
 # after the library and correctly PR-bound. An earlier unbound assertion must not
@@ -302,6 +431,10 @@ case "$ast_result" in
     ;;
   missing-prnumber-parameter)
     echo "incomplete: base checker does not accept a root PrNumber parameter"
+    exit 0
+    ;;
+  missing-required-assertion-bindings)
+    echo "incomplete: base checker lacks required bootstrap assertion argument bindings"
     exit 0
     ;;
   prnumber-reassigned)

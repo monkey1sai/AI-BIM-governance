@@ -414,7 +414,11 @@ function Compare-SelfReferentialLedgerTransition {
             }
             if (-not [string]::IsNullOrWhiteSpace($RepoRoot)) {
                 foreach ($ref in @($head.bootstrap_evidence_refs)) {
-                    Assert-SelfReferentialEvidenceBlob -RepoRoot $RepoRoot -Ref ([string]$ref) -Context "new entry '$id'" -HeadSha $HeadSha
+                    $evidenceRef = [string]$ref
+                    Assert-SelfReferentialEvidenceBlob -RepoRoot $RepoRoot -Ref $evidenceRef -Context "new entry '$id'" -HeadSha $HeadSha
+                    if (-not (@($ChangedPaths) -ccontains $evidenceRef)) {
+                        throw "self_referential_bootstrap: new entry '$id' bootstrap evidence '$evidenceRef' must be added or modified by this PR; reusing an unchanged base artefact is not branch-specific evidence."
+                    }
                 }
             }
             $newEntries += $head

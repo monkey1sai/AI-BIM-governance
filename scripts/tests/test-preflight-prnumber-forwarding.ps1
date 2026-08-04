@@ -141,15 +141,16 @@ try {
     }
     $getValue = { param($b, $label) $rows[$label] }.GetNewClosure()
     $emptyBase = '{"schema_version":"self-referential-bootstrap-ledger/v1","entries":[]}'
+    $changedPaths = @('scripts/deploy.ps1', $evidenceRel)
 
     # Without PrNumber the binding cannot be checked - the entry's pr=500 is unverified.
-    Assert-SelfReferentialBootstrapBody -Body 'b' -ChangedPaths @('scripts/deploy.ps1') -LedgerPath $ledgerPath `
+    Assert-SelfReferentialBootstrapBody -Body 'b' -ChangedPaths $changedPaths -LedgerPath $ledgerPath `
         -GetTableValue $getValue -BaseLedgerJson $emptyBase -HasBaseContext $true -RepoRoot $fx
 
     # With a mismatched PrNumber the binding must fail - proving the argument is load-bearing.
     $bound = $false
     try {
-        Assert-SelfReferentialBootstrapBody -Body 'b' -ChangedPaths @('scripts/deploy.ps1') -LedgerPath $ledgerPath `
+        Assert-SelfReferentialBootstrapBody -Body 'b' -ChangedPaths $changedPaths -LedgerPath $ledgerPath `
             -GetTableValue $getValue -BaseLedgerJson $emptyBase -HasBaseContext $true -RepoRoot $fx -PrNumber 501
     } catch {
         $bound = $true
