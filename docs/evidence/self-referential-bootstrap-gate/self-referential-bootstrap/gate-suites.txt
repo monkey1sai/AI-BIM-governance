@@ -1,10 +1,14 @@
 stack_kind=self_referential_bootstrap
 branch=feat/self-referential-bootstrap-ledger
-tested_head=d52beadffa992a0a3a7cfc1b445daaabaa863e30
-captured_at_utc=2026-08-04T04:39:27Z
+tested_head=c656e4e07c92e04988db8a7ad551d871912a94e6
+captured_at_utc=2026-08-04T04:47:27Z
 captured on the PR branch because the PR base has no bootstrap gate to run (see reason in the ledger entry)
 
 ### pwsh -NoProfile -NonInteractive -File .\scripts\tests\test-self-referential-bootstrap.ps1
+[test-self-referential-bootstrap] all assertions passed
+EXIT=0
+
+### fixture identity regression with process-local global/system Git config disabled
 [test-self-referential-bootstrap] all assertions passed
 EXIT=0
 
