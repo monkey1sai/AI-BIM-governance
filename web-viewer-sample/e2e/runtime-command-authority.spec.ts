@@ -21,6 +21,7 @@ type FakeKitControl = {
   stallNextStageLoad(): void;
   emitBusyStageResponses(count: number): void;
   completeStalledStageLoad(): void;
+  failStalledStageLoadChangedFailed(): void;
 };
 
 async function viewerFrame(page: Page): Promise<Frame> {
@@ -50,7 +51,7 @@ async function eventCount(frame: Frame, eventType: string): Promise<number> {
 
 async function controlStageLoad(
   frame: Frame,
-  command: "stall" | "emitBusy" | "complete",
+  command: "stall" | "emitBusy" | "complete" | "failChanged",
   count?: number,
 ): Promise<void> {
   await frame.evaluate(({ nextCommand, busyCount }) => {
@@ -59,6 +60,7 @@ async function controlStageLoad(
     if (!control) throw new Error("FakeKit control is unavailable");
     if (nextCommand === "stall") control.stallNextStageLoad();
     else if (nextCommand === "emitBusy") control.emitBusyStageResponses(busyCount ?? 0);
+    else if (nextCommand === "failChanged") control.failStalledStageLoadChangedFailed();
     else control.completeStalledStageLoad();
   }, { nextCommand: command, busyCount: count });
 }
@@ -72,7 +74,10 @@ async function accelerateStageProofDeadline(frame: Frame, timeoutMs = 1_000): Pr
   }, timeoutMs);
 }
 
-async function installEmbeddedParent(page: Page): Promise<{
+async function installEmbeddedParent(
+  page: Page,
+  viewerQuery: Readonly<Record<string, string>> = {},
+): Promise<{
   viewer: FrameLocator;
   frame: Frame;
   setActiveRevision: (revision: string) => void;
@@ -131,6 +136,7 @@ async function installEmbeddedParent(page: Page): Promise<{
             title="runtime-authority-viewer"
             style="width:1440px;height:900px;border:0"
             src="${VIEWER_ORIGIN}${harnessRoute({
+              ...viewerQuery,
               harnessAuthority: "1",
               coordinatorApiBase: PARENT_ORIGIN,
             })}"
@@ -382,5 +388,75 @@ test.describe("runtime command authority controlled browser evidence", () => {
     await expect(label).toContainText("focus: /World/Site");
     expect(await eventCount(embedded.frame, "focusPrimRequest")).toBe(1);
     await page.screenshot({ path: testInfo.outputPath("changed-unconfirmed-resync.png"), fullPage: true });
+  });
+
+  test("late changed_failed from superseded A leaves replacement B pending", async ({ page }, testInfo) => {
+    await page.addInitScript(() => localStorage.setItem("aibim:ec-lang", "zh"));
+    const embedded = await installEmbeddedParent(page, { debug: "1" });
+    const firstStageUrl = "harness://stage/World/sample-building.usd";
+
+    await controlStageLoad(embedded.frame, "stall");
+    await page.evaluate(() => {
+      (window as typeof window & { __deliverViewerAuthority?: () => void }).__deliverViewerAuthority?.();
+    });
+    await expect.poll(() => eventCount(embedded.frame, "openStageRequest")).toBe(1);
+    const firstPendingLifecycle = embedded.frame
+      .getByTestId("runtime-command-lifecycle-entry")
+      .filter({ hasText: /^openStageRequest: pending$/ });
+    await expect(firstPendingLifecycle).toHaveCount(1);
+    const firstRequestId = await firstPendingLifecycle.getAttribute("data-request-id");
+    if (!firstRequestId) throw new Error("first stalled stage request id is unavailable");
+
+    await controlStageLoad(embedded.frame, "stall");
+    await embedded.viewer.getByTestId("nav-model").click();
+    const stageSelector = embedded.viewer.locator("select.nvidia-dropdown");
+    await expect(stageSelector).toBeVisible();
+    await expect(stageSelector.locator("option", { hasText: "Levels Overlay (harness)" })).toHaveCount(1);
+    await stageSelector.selectOption({ label: "Levels Overlay (harness)" });
+    await expect.poll(() => eventCount(embedded.frame, "openStageRequest"), { timeout: 10_000 }).toBe(2);
+
+    const lifecycleText = (requestId: string) => embedded.frame
+      .getByTestId("runtime-command-lifecycle-entry")
+      .evaluateAll(
+        (entries, expectedRequestId) => (
+          entries.find((entry) => entry.getAttribute("data-request-id") === expectedRequestId)?.textContent ?? null
+        ),
+        requestId,
+      );
+    await expect.poll(() => lifecycleText(firstRequestId))
+      .toBe("openStageRequest: pending → terminal (superseded)");
+    const pendingLifecycles = embedded.frame
+      .getByTestId("runtime-command-lifecycle-entry")
+      .filter({ hasText: /^openStageRequest: pending$/ });
+    await expect(pendingLifecycles).toHaveCount(1);
+    const replacementRequestId = await pendingLifecycles.getAttribute("data-request-id");
+    if (!replacementRequestId) throw new Error("replacement stalled stage request id is unavailable");
+    await expect.poll(() => lifecycleText(replacementRequestId)).toBe("openStageRequest: pending");
+    const stageLoadedBeforeLate = await page.evaluate(() => (
+      (window as typeof window & {
+        __vg01Messages?: Array<{ type?: string; stageUrl?: string | null; status?: string }>;
+      }).__vg01Messages ?? []
+    ).filter((message) => message.type === "stage_loaded"));
+
+    await controlStageLoad(embedded.frame, "failChanged");
+    await page.waitForTimeout(100);
+
+    const failureContainer = embedded.viewer.getByTestId("stage-load-failure");
+    await expect(failureContainer).toBeHidden();
+    expect(await page.evaluate(() => (
+      (window as typeof window & {
+        __vg01Messages?: Array<{ type?: string; stageUrl?: string | null; status?: string }>;
+      }).__vg01Messages ?? []
+    ).filter((message) => message.type === "stage_loaded"))).toEqual(stageLoadedBeforeLate);
+    expect(await page.evaluate((staleStageUrl) => (
+      (window as typeof window & {
+        __vg01Messages?: Array<{ type?: string; stageUrl?: string | null }>;
+      }).__vg01Messages ?? []
+    ).filter((message) => message.type === "stage_loaded" && message.stageUrl === staleStageUrl).length, firstStageUrl)).toBe(0);
+    await expect.poll(() => lifecycleText(firstRequestId))
+      .toBe("openStageRequest: pending → terminal (superseded)");
+    await expect.poll(() => lifecycleText(replacementRequestId)).toBe("openStageRequest: pending");
+    await embedded.frame.locator("body").screenshot({ path: testInfo.outputPath("late-changed-failed-stale-a-ignored.png") });
+    await page.screenshot({ path: testInfo.outputPath("late-changed-failed-stale-a-ignored-parent.png"), fullPage: true });
   });
 });
