@@ -203,6 +203,33 @@ function Assert-SelfReferentialBootstrapBody {
     Assert-True ($verdict -like 'incomplete:*') "wired no-op library must be incomplete (got: $verdict)"
     Assert-True ($verdict -match 'behavioral fail-closed canary') "wired no-op reason names behavior canary (got: $verdict)"
 
+    # Throwing for the self-adjudicator path alone does not prove that the base
+    # library enforces inherited debt for later, ordinary mechanism changes.
+    Write-File 'scripts/lib/self-referential-bootstrap.ps1' @'
+function Assert-SelfReferentialBootstrapBody {
+    param(
+        [string] $Body,
+        [string[]] $ChangedPaths,
+        [string] $LedgerPath,
+        [scriptblock] $GetTableValue,
+        [string] $BaseLedgerJson,
+        [Nullable[bool]] $BaseLedgerExists,
+        [bool] $HasBaseContext,
+        [int] $PrNumber,
+        [string] $RepoRoot,
+        [string] $BaseSha,
+        [string] $HeadSha
+    )
+    if (@($ChangedPaths) -ccontains 'scripts/lib/self-referential-bootstrap.ps1') {
+        throw 'self-adjudicator blocked'
+    }
+}
+'@
+    $revInheritedDebtBypass = Commit-All 'bootstrap library ignores inherited open debt'
+    $verdict = Detect $revInheritedDebtBypass
+    Assert-True ($verdict -like 'incomplete:*') "library that ignores inherited debt must be incomplete (got: $verdict)"
+    Assert-True ($verdict -match 'inherited open debt') "inherited-debt bypass reason names the missing behavior (got: $verdict)"
+
     # From here onward use the real library so the detector can prove that none
     # of the assertion's transitive helper functions are rebound by the checker.
     Write-File 'scripts/lib/self-referential-bootstrap.ps1' $realBootstrapLibrarySource

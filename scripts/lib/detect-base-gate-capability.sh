@@ -855,6 +855,39 @@ try {
         Write-Output 'library-noop'
         exit 0
     }
+
+    $inheritedDebtJson = @'
+{"schema_version":"self-referential-bootstrap-ledger/v1","entries":[{"id":"behavioral-inherited-debt","status":"open","pr":1,"opened_at":"2026-08-01T00:00:00Z","reason":"the detector must prove that an inherited open ledger entry blocks every later verification-mechanism change until post-merge fixpoint evidence closes the debt","verification_mechanism_paths":["scripts/deploy.ps1"],"verification_contract":{"id":"behavioral-inherited-debt/v1","command_ids":["behavioral-inherited-debt"],"contract_sha256":"55cf16ff73022c262dc488d966e133abc976e50562888d553ab9a7c0a81c2430"},"bootstrap_evidence_refs":["docs/evidence/canary/self-referential-bootstrap/summary.md"],"fixpoint":null}]}
+'@
+    [IO.File]::WriteAllText($ledgerPath, $inheritedDebtJson, [Text.UTF8Encoding]::new($false))
+    $inheritedDebtArguments = @{
+        Body = 'behavioral inherited debt canary'
+        ChangedPaths = @('scripts/deploy.ps1')
+        LedgerPath = $ledgerPath
+        GetTableValue = {
+            param($body, $label)
+            if ($label -ceq 'Self-referential bootstrap') { return 'no' }
+            return ''
+        }
+        BaseLedgerJson = $inheritedDebtJson
+        BaseLedgerExists = $true
+        HasBaseContext = $true
+        PrNumber = 1
+    }
+    $debtBlocked = $false
+    try {
+        Assert-SelfReferentialBootstrapBody @inheritedDebtArguments
+    } catch {
+        if ([string]$_.Exception.Message -cnotmatch 'open ledger debt \(behavioral-inherited-debt\)') {
+            Write-Output 'library-inherited-debt-canary-invalid'
+            exit 0
+        }
+        $debtBlocked = $true
+    }
+    if (-not $debtBlocked) {
+        Write-Output 'library-inherited-debt-bypass'
+        exit 0
+    }
     Write-Output 'complete'
 } finally {
     Remove-Item -LiteralPath $ledgerPath -Force -ErrorAction SilentlyContinue
@@ -937,6 +970,14 @@ case "$behavior_result" in
   complete) ;;
   library-noop)
     echo "incomplete: base bootstrap library does not enforce the behavioral fail-closed canary"
+    exit 0
+    ;;
+  library-inherited-debt-bypass)
+    echo "incomplete: base bootstrap library does not enforce inherited open debt"
+    exit 0
+    ;;
+  library-inherited-debt-canary-invalid)
+    echo "incomplete: base bootstrap library failed the inherited open debt canary for an unexpected reason"
     exit 0
     ;;
   *)
