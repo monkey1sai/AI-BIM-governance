@@ -146,6 +146,45 @@ describe("RuntimeMutationAuthority", () => {
     });
   });
 
+  it("bounds cancellation tombstones and preserves a recently repeated cancellation", () => {
+    const { authority } = testAuthority({ maxCancelledPreauthorizationIntents: 2 });
+    const cancel = (clientRequestId: string) => authority.cancelStageBindingPreauthorization({
+      sessionId: "review_session_a",
+      principal: "lab_principal_a",
+      sourceClientId: "viewer_lease_a",
+      credential: "lease-token-sentinel",
+      clientRequestId,
+    });
+
+    expect(cancel("stage_preauth_cancelled_1")).toMatchObject({ cancelled: true });
+    expect(cancel("stage_preauth_cancelled_2")).toMatchObject({ cancelled: true });
+    expect(cancel("stage_preauth_cancelled_1")).toMatchObject({
+      cancelled: true,
+      idempotentReplay: true,
+    });
+    expect(cancel("stage_preauth_cancelled_3")).toMatchObject({ cancelled: true });
+
+    expect(mustPreauthorize(authority, "artifact_primary", {
+      clientRequestId: "stage_preauth_cancelled_2",
+    }).transactionStatus).toBe("pending");
+    expect(authority.preauthorizeStageBinding({
+      sessionId: "review_session_a",
+      principal: "lab_principal_a",
+      sourceClientId: "viewer_lease_a",
+      credential: "lease-token-sentinel",
+      clientRequestId: "stage_preauth_cancelled_1",
+      artifacts: [{ artifactId: "artifact_primary", role: "primary", loadOrder: 0 }],
+    })).toEqual({ ok: false, reason: "request_cancelled" });
+    expect(authority.preauthorizeStageBinding({
+      sessionId: "review_session_a",
+      principal: "lab_principal_a",
+      sourceClientId: "viewer_lease_a",
+      credential: "lease-token-sentinel",
+      clientRequestId: "stage_preauth_cancelled_3",
+      artifacts: [{ artifactId: "artifact_primary", role: "primary", loadOrder: 0 }],
+    })).toEqual({ ok: false, reason: "request_cancelled" });
+  });
+
   it("supersedes pending authority and blocks replacement while the latest attempt executes", () => {
     const { authority } = testAuthority();
     const first = mustPreauthorize(authority);

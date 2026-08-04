@@ -78,6 +78,7 @@ type AppInternals = {
     runtimeCommandTerminalClaims: Map<string, unknown>;
     _connectReviewSocket: (sessionId: string, traceId: string) => void;
     _bootstrapHarnessSession: () => void;
+    _beginStageAttempt: (url: string) => number;
     _sendStreamMessage: (message: { event_type: string; payload: unknown }) => boolean;
     _handleCustomEvent: (event: {
         event_type?: string;
@@ -582,7 +583,6 @@ describe("Window Socket canonical trace authority", () => {
     });
 
     it.each([
-        "openStageRequest",
         "loadingStateQuery",
         "getChildrenRequest",
     ])("copies only the real AppStream result trace into synthetic %s responses", async (eventType) => {
@@ -617,6 +617,127 @@ describe("Window Socket canonical trace authority", () => {
             expect(inboundSpy).not.toHaveBeenCalled();
         },
     );
+
+    it("uses outbound correlation only for the concrete NVIDIA OpenStageEvent shape", async () => {
+        const app = authorizedApp({ synchronousSetState: true });
+        const target = internals(app);
+        const stageUrl = "stage://native-open-stage.usdc";
+        const inboundSpy = vi.spyOn(target, "_handleCustomEvent").mockImplementation(() => {});
+        vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+            action: "message",
+            status: "success",
+            info: "StageOpenedEvent result received",
+            url: stageUrl,
+        });
+        target._beginStageAttempt(stageUrl);
+
+        expect(target._sendStreamMessage({
+            event_type: "openStageRequest",
+            payload: {
+                request_id: "req_native_open_stage",
+                binding_revision_id: "rev_native_open_stage",
+                url: stageUrl,
+            },
+        })).toBe(true);
+        await Promise.resolve();
+
+        expect(inboundSpy).toHaveBeenCalledWith(expect.objectContaining({
+            event_type: "openedStageResult",
+            payload: expect.objectContaining({
+                trace_id: TRACE_ID,
+                request_id: "req_native_open_stage",
+                binding_revision_id: "rev_native_open_stage",
+                url: "stage://native-open-stage.usdc",
+                result: "success",
+            }),
+        }), expect.any(Number));
+    });
+
+    it("maps a trace-less NVIDIA warning to a terminal error, never a success proof", async () => {
+        const app = authorizedApp({ synchronousSetState: true });
+        const target = internals(app);
+        const stageUrl = "stage://native-warning.usdc";
+        const inboundSpy = vi.spyOn(target, "_handleCustomEvent").mockImplementation(() => {});
+        vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+            action: "message",
+            status: "warning",
+            info: "StageOpenedEvent payload was not authoritative",
+            url: stageUrl,
+        });
+        target._beginStageAttempt(stageUrl);
+
+        expect(target._sendStreamMessage({
+            event_type: "openStageRequest",
+            payload: {
+                request_id: "req_native_warning",
+                binding_revision_id: "rev_native_warning",
+                url: stageUrl,
+            },
+        })).toBe(true);
+        await Promise.resolve();
+
+        expect(inboundSpy).toHaveBeenCalledWith(expect.objectContaining({
+            event_type: "openedStageResult",
+            payload: expect.objectContaining({
+                request_id: "req_native_warning",
+                binding_revision_id: "rev_native_warning",
+                result: "error",
+                error: "StageOpenedEvent payload was not authoritative",
+            }),
+        }), expect.any(Number));
+    });
+
+    it("rejects a partial native correlation instead of mixing it with outbound fields", async () => {
+        const app = authorizedApp({ synchronousSetState: true });
+        const target = internals(app);
+        const stageUrl = "stage://partial-native.usdc";
+        const inboundSpy = vi.spyOn(target, "_handleCustomEvent").mockImplementation(() => {});
+        vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+            status: "success",
+            trace_id: TRACE_ID,
+            request_id: "req_partial_native",
+        });
+        target._beginStageAttempt(stageUrl);
+
+        expect(target._sendStreamMessage({
+            event_type: "openStageRequest",
+            payload: {
+                request_id: "req_partial_native",
+                binding_revision_id: "rev_partial_native",
+                url: stageUrl,
+            },
+        })).toBe(true);
+        await Promise.resolve();
+
+        expect(inboundSpy).not.toHaveBeenCalled();
+    });
+
+    it("does not replace a malformed native-looking result trace with outbound correlation", async () => {
+        const app = authorizedApp({ synchronousSetState: true });
+        const target = internals(app);
+        const stageUrl = "stage://native-open-stage.usdc";
+        const inboundSpy = vi.spyOn(target, "_handleCustomEvent").mockImplementation(() => {});
+        vi.spyOn(AppStream, "sendMessage").mockResolvedValue({
+            action: "message",
+            status: "success",
+            info: "StageOpenedEvent result received",
+            url: stageUrl,
+            trace_id: null,
+        });
+        target._beginStageAttempt(stageUrl);
+
+        expect(target._sendStreamMessage({
+            event_type: "openStageRequest",
+            payload: {
+                request_id: "req_malformed_native",
+                binding_revision_id: "rev_malformed_native",
+                url: stageUrl,
+            },
+        })).toBe(true);
+        await Promise.resolve();
+
+        expect(inboundSpy).not.toHaveBeenCalled();
+    });
 
     it("does not inspect synthetic result status or info before validating the trace carrier", async () => {
         const app = authorizedApp({ synchronousSetState: true });

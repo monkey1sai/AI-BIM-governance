@@ -348,6 +348,58 @@ const runtimeRejectionReviewCopy = {
     },
 } as const satisfies Record<string, LocalizedCopy>;
 
+const stageLoadTimeoutPresentation = {
+    title: {
+        zh: "模型載入逾時",
+        en: "Model loading timed out",
+    },
+    target: {
+        zh: "目標",
+        en: "Target",
+    },
+    diagnostic: {
+        zh: "診斷",
+        en: "Diagnostic",
+    },
+    lastState: {
+        zh: "最後狀態",
+        en: "Last state",
+    },
+    missingCompletion: {
+        zh: "Kit 已連線但沒有回報模型載入完成，請檢查該 USDC 是否可由 Kit 開啟。",
+        en: "Kit is connected but did not report model loading as complete. Verify that Kit can open this USDC.",
+    },
+} as const satisfies Record<string, LocalizedCopy>;
+
+const stageLoadFailurePresentation = {
+    title: { zh: "模型載入失敗", en: "Model loading failed" },
+    target: { zh: "目標", en: "Target" },
+    error: { zh: "錯誤", en: "Error" },
+    revisionMismatch: { zh: "Stage authorization 不符", en: "Stage authorization mismatch" },
+    expectedRevision: { zh: "預期 revision", en: "Expected revision" },
+    receivedRevision: { zh: "收到 revision", en: "Received revision" },
+    authorizationFailed: {
+        zh: "無法建立 stage binding authorization，已阻擋載入指令",
+        en: "Could not create stage binding authorization; the stage-load command was blocked.",
+    },
+    authorizationTimedOut: {
+        zh: "等待 stage binding authorization 逾時；尚未向 Kit 送出載入指令",
+        en: "Stage binding authorization timed out before a load command was sent to Kit.",
+    },
+    commandNotSent: {
+        zh: "Kit 尚未接受載入指令；本次模型載入已終止",
+        en: "Kit did not accept the load command; this model load was terminated.",
+    },
+    missingUrl: { zh: "模型載入狀態未回傳 URL", en: "Stage loading state did not report a URL" },
+    missingStageEvidence: {
+        zh: "Kit 成功回應未附載入 URL；缺少 stage 完成證據",
+        en: "Kit reported success without a loaded URL; stage completion evidence is missing.",
+    },
+    invalidStage: { zh: "模型載入狀態不符合目前清單", en: "Stage loading state does not match the current artifact list" },
+    kitReported: { zh: "Kit 回報", en: "Kit reported" },
+    currentSelection: { zh: "目前選擇", en: "Current selection" },
+} as const satisfies Record<string, LocalizedCopy>;
+
 function runtimeRejectionReviewEvent(rejectedEventType: string, reason: string): string {
     return `${rejectedEventType} ${t(
         runtimeRejectionReviewCopy.rejectedVerb.zh,
@@ -367,7 +419,7 @@ interface RuntimeCommandRejection {
 }
 
 type RuntimeCommandPhase = "pending" | "executing" | "terminal";
-type RuntimeCommandOutcome = "success" | "rejected" | "error" | "timed-out";
+type RuntimeCommandOutcome = "success" | "rejected" | "error" | "timed-out" | "superseded";
 
 interface RuntimeCommandLifecycle {
     request_id: string;
@@ -380,12 +432,49 @@ interface RuntimeCommandContext {
     eventType: string;
     bindingRevisionId?: string;
     stageUrl?: string;
+    stageAttemptGeneration?: number;
+}
+
+type StageAttemptStatus = "pending" | "provisional" | "terminal" | "completed";
+
+interface StageAttempt {
+    generation: number;
+    status: StageAttemptStatus;
+    targetUrl: string;
+    terminalReason?: "stage-load-timeout";
+    // An exact current openedStageResult may re-key an older blocked revision
+    // for one authenticated status recovery; URL equality alone never does.
+    statusResyncRevision?: string;
+}
+
+const STAGE_AUTHORIZATION_TIMEOUT_MS = 45_000;
+const STAGE_AUTHORIZATION_CANCEL_TIMEOUT_MS = 5_000;
+const STAGE_LOAD_TIMEOUT_MS = 45_000;
+// Let the user-facing proof deadline claim the terminal result first. The
+// SDK slot watchdog runs immediately after it and only fences lifecycle reuse.
+const NATIVE_OPEN_STAGE_SLOT_TIMEOUT_MS = STAGE_LOAD_TIMEOUT_MS + 1;
+
+interface NativeOpenStageDispatch {
+    token: number;
+    outgoing: AppStreamMessageType | StreamMessage;
+    streamGeneration: number;
+    stageAttemptGeneration?: number;
+    targetUrl: string;
+    requestId: string;
+    bindingRevisionId: string;
+    // openStageRequest resolves through the SDK Promise callback. The SDK
+    // treats loadArtifactGroupRequest as an unknown command and acknowledges
+    // its send immediately, so that slot is released only by its correlated
+    // DataChannel terminal (openedStageResult / commandRejected).
+    settlesFromDataChannel: boolean;
+    onDispatched?: () => void;
 }
 
 interface RuntimeCommandCorrelation {
     requestId: string;
     context?: RuntimeCommandContext;
     disposition: "matched" | "untracked" | "uncorrelated" | "duplicate" | "mismatch";
+    mismatchReason?: "event_type" | "binding_revision";
 }
 
 type A4HandoffStatus = "idle" | "pending" | "succeeded" | "rejected" | "timed-out";
@@ -421,6 +510,19 @@ interface StageBindingPreauthorization {
     pending_expires_at: string;
 }
 
+interface ActiveStagePreauthorization {
+    clientRequestId: string;
+    controller: AbortController;
+    postStarted: boolean;
+    cancellationPromise: Promise<boolean> | null;
+}
+
+interface StagePreauthorizationCancellationBarrier {
+    request: ActiveStagePreauthorization;
+    promise: Promise<boolean>;
+    status: "pending" | "failed";
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
 }
@@ -451,6 +553,7 @@ function redactDiagnosticValue(
     seen: WeakSet<object> = new WeakSet<object>(),
 ): unknown {
     if (depth > 8) return "[truncated]";
+    if (typeof value === "string") return redactRuntimeDiagnosticText(value);
     if (Array.isArray(value)) {
         if (seen.has(value)) return "[circular]";
         seen.add(value);
@@ -500,12 +603,20 @@ function getPayloadObjectArray(payload: Record<string, unknown>, key: string): R
 }
 
 let runtimeRequestSequence = 0;
+let stageBindingPreauthorizationSequence = 0;
 
 function createRuntimeRequestId(): string {
     const uuid = globalThis.crypto?.randomUUID?.();
     if (uuid) return `cmd_${uuid}`;
     runtimeRequestSequence += 1;
     return `cmd_${Date.now().toString(36)}_${runtimeRequestSequence.toString(36)}`;
+}
+
+function createStageBindingPreauthorizationRequestId(): string {
+    const uuid = globalThis.crypto?.randomUUID?.();
+    if (uuid) return `stage_preauth_${uuid}`;
+    stageBindingPreauthorizationSequence += 1;
+    return `stage_preauth_${Date.now().toString(36)}_${stageBindingPreauthorizationSequence.toString(36)}`;
 }
 
 function parseRuntimeCommandRejection(payload: Record<string, unknown>): RuntimeCommandRejection | null {
@@ -538,31 +649,98 @@ function parseRuntimeCommandRejection(payload: Record<string, unknown>): Runtime
     };
 }
 
-function appStreamResultToAppEvent(requestEventType: string, result: unknown): AppStreamEventType | null {
-    if (!isRecord(result)) return null;
-    const traceId = result.trace_id;
-    if (typeof traceId !== "string" || traceId.length === 0) return null;
-    const status = getPayloadString(result, "status");
-    const info = getPayloadString(result, "info");
-    const responseResult = status === "error" ? "error" : "success";
+function isNvidiaOpenStageEvent(result: Record<string, unknown>): boolean {
+    // SDK 5.18.2 fromStageOpenedEvent() maps Kit's StageOpenedEvent to this
+    // concrete wrapper shape. Requiring every stable field keeps arbitrary
+    // trace-less AppStream results fail-closed. Only success is promoted to
+    // success below; every other concrete status is a terminal failure.
+    return result.action === "message"
+        && typeof result.url === "string"
+        && result.url.length > 0
+        && typeof result.info === "string"
+        && typeof result.status === "string";
+}
 
-    if (requestEventType === "openStageRequest") {
+function requestUsesNativeOpenedStageResult(requestEventType: string): boolean {
+    // Both stage commands can produce Kit's openedStageResult. NVIDIA SDK
+    // resolves openStageRequest from its callback map, while its unknown
+    // loadArtifactGroupRequest gets only an immediate generic ACK; they still
+    // share one per-lifecycle slot so neither result can be misattributed.
+    return requestEventType === "openStageRequest"
+        || requestEventType === "loadArtifactGroupRequest";
+}
+
+function appStreamResultToAppEvent(
+    requestEventType: string,
+    result: unknown,
+    requestPayload?: unknown,
+    allowNativeOpenStageFallback = false,
+): AppStreamEventType | null {
+    if (!isRecord(result)) return null;
+    const requestPayloadRecord: Record<string, unknown> = isRecord(requestPayload) ? requestPayload : {};
+
+    if (requestUsesNativeOpenedStageResult(requestEventType)) {
+        // A production AppStreamer OpenStageEvent has no data-channel
+        // correlation at all. Any partial native correlation is ambiguous and
+        // must not be completed by mixing in outbound fields. A trace-less
+        // fallback is only safe while the per-lifecycle single-flight slot is
+        // current, and only when the complete native wrapper matches the
+        // exact outbound target and authority tuple.
+        const outboundTraceId = getPayloadString(requestPayloadRecord, "trace_id");
+        const outboundRequestId = getPayloadString(requestPayloadRecord, "request_id");
+        const outboundBindingRevisionId = getPayloadString(requestPayloadRecord, "binding_revision_id");
+        const hasInboundCorrelation = ["trace_id", "request_id", "binding_revision_id"]
+            .some((key) => Object.prototype.hasOwnProperty.call(result, key));
+        const nativeOpenStageResponse = !hasInboundCorrelation
+            && allowNativeOpenStageFallback
+            && isNvidiaOpenStageEvent(result);
+
+        if (hasInboundCorrelation) {
+            if (
+                !outboundTraceId
+                || !outboundRequestId
+                || getPayloadString(result, "trace_id") !== outboundTraceId
+                || getPayloadString(result, "request_id") !== outboundRequestId
+                || (
+                    outboundBindingRevisionId
+                        ? getPayloadString(result, "binding_revision_id") !== outboundBindingRevisionId
+                        : Object.prototype.hasOwnProperty.call(result, "binding_revision_id")
+                )
+            ) return null;
+        } else if (
+            !nativeOpenStageResponse
+            || !outboundTraceId
+            || !outboundRequestId
+            || !outboundBindingRevisionId
+            || getPayloadString(result, "url") !== getPayloadString(requestPayloadRecord, "url")
+        ) {
+            return null;
+        }
+
+        const status = getPayloadString(result, "status");
+        const info = getPayloadString(result, "info");
+        // The SDK treats loadArtifactGroupRequest as an unknown custom
+        // command. Its returned wrapper is only an immediate transport ACK;
+        // the authenticated DataChannel terminal carries changed_failed and
+        // must remain the sole completion authority for this transaction.
+        if (nativeOpenStageResponse && requestEventType === "loadArtifactGroupRequest") return null;
+
+        const responseResult = status === "success" ? "success" : "error";
         return {
             event_type: "openedStageResult",
             payload: {
-                trace_id: traceId,
+                trace_id: outboundTraceId,
                 result: responseResult,
                 url: getPayloadString(result, "url"),
-                error: responseResult === "error" ? info || "openStageRequest failed" : "",
-                ...(getPayloadString(result, "request_id")
-                    ? { request_id: getPayloadString(result, "request_id") }
-                    : {}),
-                ...(getPayloadString(result, "binding_revision_id")
-                    ? { binding_revision_id: getPayloadString(result, "binding_revision_id") }
-                    : {}),
+                error: responseResult === "error" ? info || [requestEventType, status || "failed"].join(" ") : "",
+                request_id: outboundRequestId,
+                ...(outboundBindingRevisionId ? { binding_revision_id: outboundBindingRevisionId } : {}),
             },
         };
     }
+
+    const traceId = getPayloadString(result, "trace_id");
+    if (!traceId) return null;
 
     if (requestEventType === "loadingStateQuery") {
         return {
@@ -657,6 +835,44 @@ function displayNameFromStageUrl(url: string): string {
     return tail.includes("?") ? tail.split("?")[0] : tail;
 }
 
+function redactStageUrlForDiagnostic(url: string | null | undefined): string {
+    const value = url || "unknown";
+    try {
+        const parsed = new URL(value);
+        if (!parsed.username && !parsed.password && !parsed.search && !parsed.hash) return value;
+        return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+    } catch {
+        return value.replace(/[?#].*$/, "");
+    }
+}
+
+function redactRuntimeDiagnosticText(value: string): string {
+    const withoutUrls = value.replace(
+        /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi,
+        (candidate) => redactStageUrlForDiagnostic(candidate),
+    );
+    const withoutSensitiveAssignments = withoutUrls
+        .replace(
+            /\b(access[_-]?token|authorization|cookie|password|secret|token|x-amz-(?:signature|credential|security-token))\s*=\s*(?:(?:bearer|basic|token)\s+)?(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+            (_match, key: string) => `${key}=[redacted]`,
+        );
+    const withoutStandaloneCredentials = withoutSensitiveAssignments.replace(
+        /\b(?:(authorization)\s+)?(bearer|basic)\s+(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+        (_match, authorization: string | undefined, scheme: string) => (
+            authorization ? `${authorization} ${scheme} [redacted]` : `${scheme} [redacted]`
+        ),
+    );
+    return withoutStandaloneCredentials
+        .replace(
+            /\b(access[_-]?token|authorization|cookie|password|secret|token|x-amz-(?:signature|credential|security-token))\s*:\s*[^\r\n]+/gi,
+            (_match, key: string) => `${key}:[redacted]`,
+        );
+}
+
+function isStageAuthorizationTimeout(error: unknown): boolean {
+    return error instanceof Error && error.message === "stage_binding_authorization_timeout";
+}
+
 export default class App extends React.Component<AppProps, AppState> {
     
     private usdStageRef = React.createRef<USDStage>();
@@ -672,6 +888,37 @@ export default class App extends React.Component<AppProps, AppState> {
     private _pollForKitReadyId: number | null = null;
     private loadingStatePollCount = 0;
     private pendingStageUrl: string | null = null;
+    private stageAttemptGeneration = 0;
+    // Tracks user/runtime intent while coordinator preauthorization is pending.
+    // It is deliberately separate from request correlation generation: a new
+    // open/reconnect must revoke an older binding transaction before it can
+    // create a new stage attempt.
+    private stageIntentGeneration = 0;
+    private pendingStagePreauthorizationIntent: number | null = null;
+    private activeStagePreauthorization: ActiveStagePreauthorization | null = null;
+    private stagePreauthorizationCancellationBarrier: StagePreauthorizationCancellationBarrier | null = null;
+    private activeStageAttempt: StageAttempt | null = null;
+    // React state remounts <AppStream>, but callbacks can run before React commits that state.
+    // Keep the lifetime authority outside React so a retired stream is fenced synchronously.
+    private streamGeneration = 0;
+    // NVIDIA SDK 5.18.2 registers openStageRequest callbacks by response event
+    // type rather than request id, while loadArtifactGroupRequest's immediate
+    // generic ACK must wait for its DataChannel terminal. Never issue either
+    // native stage command on the same AppStreamer lifecycle until the prior
+    // opened-stage slot settles.
+    private nativeOpenStageSlot: NativeOpenStageDispatch | null = null;
+    private queuedNativeOpenStage: NativeOpenStageDispatch | null = null;
+    private nativeOpenStageSlotTimeoutId: number | null = null;
+    private nativeOpenStageSlotSequence = 0;
+    private nativeOpenStagePoisonedGeneration: number | null = null;
+    // Only a fresh React-keyed AppStream lifecycle may clear a poison fence.
+    // AppStream waits for the prior physical teardown before it reports started.
+    private nativeOpenStageReplacementStartGeneration: number | null = null;
+    private stageDispatchCallbacks = new WeakMap<AppStreamMessageType | StreamMessage, () => void>();
+    private bindingApplyGeneration = 0;
+    private pendingBindingApplyGeneration: number | null = null;
+    private pendingBindingApplyStageAttemptGeneration: number | null = null;
+    private stageLoadFailureActive = false;
     // VG-01 M1：first_frame 只送一次的閂（防失敗/斷線/開檔路徑誤觸→偽證據）。
     private _firstFramePosted = false;
     // Important #3：白名單為空導致 _postToParent 全 reject 時，只 warn 一次（_postToParent 在 first_frame/heartbeat 高頻呼叫）。
@@ -683,6 +930,10 @@ export default class App extends React.Component<AppProps, AppState> {
     private pendingMappingPrimPath: string | null = null;
     private runtimeCommandContexts = new Map<string, RuntimeCommandContext>();
     private runtimeCommandTerminalClaims = new Map<string, { eventType: string; outcome: RuntimeCommandOutcome }>();
+    // Terminal claims deliberately retain their minimal established shape.
+    // Keep only the safety metadata needed to process a later authenticated
+    // physical-change terminal after an intent was superseded or timed out.
+    private runtimeCommandTerminalSafetyContexts = new Map<string, RuntimeCommandContext>();
     private a4HandoffIntent: A4HandoffIntent | null = null;
     private a4HandoffStarted = false;
     private a4HandoffAttemptInFlight = false;
@@ -811,6 +1062,7 @@ export default class App extends React.Component<AppProps, AppState> {
         this._clearLoadingStateRetry();
         this._clearStageLoadTimeout();
         this._clearDeferredOpenStage();
+        this._retireNativeOpenStageDispatches();
         this._clearPollForKitReady();
         this._clearA4HandoffReadinessTimer();
         this._clearA4HandoffCommandTimeout();
@@ -1231,7 +1483,13 @@ export default class App extends React.Component<AppProps, AppState> {
         const allowedRequests = runtimeResponseRequestTypes.get(responseEventType);
         if (!allowedRequests?.has(context.eventType)) {
             this._appendReviewEvent(`忽略 ${responseEventType}：terminal 與 ${context.eventType} 不相符`);
-            return { requestId, context, disposition: "mismatch" };
+            return { requestId, context, disposition: "mismatch", mismatchReason: "event_type" };
+        }
+        const expectedRevision = context.bindingRevisionId;
+        const receivedRevision = getPayloadString(payload, "binding_revision_id");
+        if (expectedRevision && receivedRevision !== expectedRevision) {
+            this._appendReviewEvent(`忽略 ${responseEventType}：binding revision 與 request context 不相符`);
+            return { requestId, context, disposition: "mismatch", mismatchReason: "binding_revision" };
         }
         return { requestId, context, disposition: "matched" };
     }
@@ -1242,11 +1500,14 @@ export default class App extends React.Component<AppProps, AppState> {
         outcome: RuntimeCommandOutcome,
     ): boolean {
         if (!requestId || this.runtimeCommandTerminalClaims.has(requestId)) return false;
+        const context = this.runtimeCommandContexts.get(requestId);
         this.runtimeCommandTerminalClaims.set(requestId, { eventType, outcome });
+        if (context) this.runtimeCommandTerminalSafetyContexts.set(requestId, context);
         while (this.runtimeCommandTerminalClaims.size > 128) {
             const oldest = this.runtimeCommandTerminalClaims.keys().next().value as string | undefined;
             if (!oldest) break;
             this.runtimeCommandTerminalClaims.delete(oldest);
+            this.runtimeCommandTerminalSafetyContexts.delete(oldest);
         }
         this._recordRuntimeCommandPhase(requestId, eventType, "terminal", outcome);
         this.runtimeCommandContexts.delete(requestId);
@@ -1270,6 +1531,12 @@ export default class App extends React.Component<AppProps, AppState> {
 
     private _runtimeMutatorBlockReason(eventType: string): string | null {
         if (!isRuntimeMutator(eventType)) return null;
+        if (
+            requestUsesNativeOpenedStageResult(eventType)
+            && (this.state.webrtcLifecycleStatus === "stopped" || this.state.webrtcLifecycleStatus === "terminated")
+        ) {
+            return `webrtc lifecycle=${this.state.webrtcLifecycleStatus}; reconnect required`;
+        }
         if (this.stageProofBlockedRevision) return "stage binding proof resync required";
         if (isSpectatorStreamMode()) return "spectator view-only";
         if (isBlockedLifecycle(this.state.reviewLifecycleStatus)) {
@@ -1368,7 +1635,180 @@ export default class App extends React.Component<AppProps, AppState> {
         };
     }
 
-    private _sendStreamMessage(message: AppStreamMessageType | StreamMessage): boolean {
+    private _isCurrentNativeOpenStageDispatch(dispatch: NativeOpenStageDispatch): boolean {
+        return this.nativeOpenStageSlot?.token === dispatch.token
+            && dispatch.streamGeneration === this.streamGeneration;
+    }
+
+    private _canDispatchNativeOpenStage(dispatch: NativeOpenStageDispatch): boolean {
+        if (dispatch.streamGeneration !== this.streamGeneration) return false;
+        if (!dispatch.stageAttemptGeneration) return true;
+        return this._isCurrentStageAttemptAwaitingProof(dispatch.stageAttemptGeneration)
+            && this.activeStageAttempt?.targetUrl === dispatch.targetUrl;
+    }
+
+    private _clearNativeOpenStageSlotTimeout(): void {
+        if (this.nativeOpenStageSlotTimeoutId === null) return;
+        window.clearTimeout(this.nativeOpenStageSlotTimeoutId);
+        this.nativeOpenStageSlotTimeoutId = null;
+    }
+
+    private _failNativeOpenStageDispatch(
+        dispatch: NativeOpenStageDispatch,
+        diagnostic: string,
+    ): void {
+        if (
+            dispatch.stageAttemptGeneration
+            && this._isCurrentStageAttemptAwaitingProof(dispatch.stageAttemptGeneration)
+        ) {
+            this._failStageLoad(
+                t(stageLoadFailurePresentation.title.zh, stageLoadFailurePresentation.title.en),
+                diagnostic,
+                dispatch.stageAttemptGeneration,
+            );
+        }
+    }
+
+    private _scheduleNativeOpenStageSlotTimeout(dispatch: NativeOpenStageDispatch): void {
+        this._clearNativeOpenStageSlotTimeout();
+        this.nativeOpenStageSlotTimeoutId = window.setTimeout(() => {
+            if (!this._isCurrentNativeOpenStageDispatch(dispatch)) return;
+            const queued = this.queuedNativeOpenStage;
+            this.nativeOpenStageSlot = null;
+            this.queuedNativeOpenStage = null;
+            this.nativeOpenStageSlotTimeoutId = null;
+            // The SDK callback map may still retain this response type. Do not
+            // reuse this AppStreamer lifecycle until it is remounted.
+            this.nativeOpenStagePoisonedGeneration = this.streamGeneration;
+            this.nativeOpenStageReplacementStartGeneration = null;
+            this._appendReviewEvent("openedStageResult SDK callback timed out; reconnect AppStreamer before retry");
+            const latest = queued && this._canDispatchNativeOpenStage(queued) ? queued : dispatch;
+            this._failNativeOpenStageDispatch(latest, "sdk_open_stage_slot_stuck; reconnect stream before retry");
+        }, NATIVE_OPEN_STAGE_SLOT_TIMEOUT_MS);
+    }
+
+    private _retireNativeOpenStageDispatches(): void {
+        this._clearNativeOpenStageSlotTimeout();
+        this.nativeOpenStageSlot = null;
+        this.queuedNativeOpenStage = null;
+    }
+
+    private _settleNativeOpenStageDispatch(dispatch: NativeOpenStageDispatch): void {
+        if (!this._isCurrentNativeOpenStageDispatch(dispatch)) return;
+        this._clearNativeOpenStageSlotTimeout();
+        this.nativeOpenStageSlot = null;
+        const queued = this.queuedNativeOpenStage;
+        this.queuedNativeOpenStage = null;
+        if (!queued || !this._canDispatchNativeOpenStage(queued)) return;
+        if (!this._dispatchNativeOpenStage(queued)) {
+            this._failNativeOpenStageDispatch(queued, "runtime_command_blocked");
+        }
+    }
+
+    private _matchingNativeOpenStageDataChannelTerminal(
+        responseEventType: string,
+        payload: Record<string, unknown>,
+    ): NativeOpenStageDispatch | null {
+        const dispatch = this.nativeOpenStageSlot;
+        if (
+            !dispatch
+            || !dispatch.settlesFromDataChannel
+            || dispatch.outgoing.event_type !== "loadArtifactGroupRequest"
+            || getPayloadString(payload, "request_id") !== dispatch.requestId
+        ) return null;
+        if (responseEventType === "commandRejected") {
+            // commandRejected is a validated protocol terminal but intentionally
+            // does not carry binding_revision_id. The current DataChannel trace,
+            // exact request_id, and rejected event type are its correlation tuple.
+            return getPayloadString(payload, "rejected_event_type") === dispatch.outgoing.event_type
+                ? dispatch
+                : null;
+        }
+        if (
+            !dispatch.bindingRevisionId
+            || getPayloadString(payload, "binding_revision_id") !== dispatch.bindingRevisionId
+        ) return null;
+        if (responseEventType === "openedStageResult") {
+            const result = getPayloadString(payload, "result");
+            return result === "success" || result === "error" ? dispatch : null;
+        } else if (
+            responseEventType !== "loadArtifactGroupResult"
+            || getPayloadString(payload, "result") !== "error"
+        ) {
+            return null;
+        }
+        return dispatch;
+    }
+
+    private _settleNativeOpenStageDispatchFromDataChannel(
+        responseEventType: string,
+        payload: Record<string, unknown>,
+    ): NativeOpenStageDispatch | null {
+        const dispatch = this._matchingNativeOpenStageDataChannelTerminal(responseEventType, payload);
+        if (!dispatch) return null;
+        this._settleNativeOpenStageDispatch(dispatch);
+        return dispatch;
+    }
+
+    private _dispatchNativeOpenStage(dispatch: NativeOpenStageDispatch): boolean {
+        if (
+            this.nativeOpenStageSlot
+            || this.nativeOpenStagePoisonedGeneration === this.streamGeneration
+            || !this._canDispatchNativeOpenStage(dispatch)
+        ) return false;
+        this.nativeOpenStageSlot = dispatch;
+        this._scheduleNativeOpenStageSlotTimeout(dispatch);
+        const dispatched = this._sendStreamMessage(
+            dispatch.outgoing,
+            dispatch,
+        );
+        if (!dispatched && this._isCurrentNativeOpenStageDispatch(dispatch)) {
+            this._clearNativeOpenStageSlotTimeout();
+            this.nativeOpenStageSlot = null;
+        }
+        return dispatched;
+    }
+
+    private _enqueueNativeOpenStage(
+        outgoing: AppStreamMessageType | StreamMessage,
+        onDispatched?: () => void,
+    ): boolean {
+        const payload = isRecord(outgoing.payload) ? outgoing.payload : {};
+        const requestId = getPayloadString(payload, "request_id");
+        if (!requestId) return false;
+        const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
+        if (outgoing.event_type === "loadArtifactGroupRequest" && !bindingRevisionId) return false;
+        const dispatch: NativeOpenStageDispatch = {
+            token: ++this.nativeOpenStageSlotSequence,
+            outgoing,
+            streamGeneration: this.streamGeneration,
+            stageAttemptGeneration: this.activeStageAttempt?.generation,
+            targetUrl: getPayloadString(payload, "url"),
+            requestId,
+            bindingRevisionId,
+            settlesFromDataChannel: outgoing.event_type === "loadArtifactGroupRequest",
+            onDispatched,
+        };
+        if (this.nativeOpenStagePoisonedGeneration === this.streamGeneration) {
+            this._appendReviewEvent("略過 stage request：AppStreamer callback lifecycle requires reconnect");
+            return false;
+        }
+        if (this.nativeOpenStageSlot) {
+            // Latest intent wins while retaining the in-flight SDK callback as
+            // the sole completion authority for this lifecycle.
+            this.queuedNativeOpenStage = dispatch;
+            this._appendReviewEvent(`${outgoing.event_type} queued behind native openedStageResult SDK callback`);
+            return true;
+        }
+        return this._dispatchNativeOpenStage(dispatch);
+    }
+
+    private _sendStreamMessage(
+        message: AppStreamMessageType | StreamMessage,
+        nativeOpenStageDispatch?: NativeOpenStageDispatch,
+    ): boolean {
+        const onDispatched = nativeOpenStageDispatch?.onDispatched
+            || this.stageDispatchCallbacks.get(message);
         const tracedMessage = this._withVerifiedDataChannelTrace(message);
         if (!tracedMessage) return false;
         const blockReason = this._runtimeMutatorBlockReason(tracedMessage.event_type);
@@ -1377,7 +1817,18 @@ export default class App extends React.Component<AppProps, AppState> {
             return false;
         }
         const outgoing = this._withRuntimeAuthority(tracedMessage);
+        if (
+            requestUsesNativeOpenedStageResult(outgoing.event_type)
+            && !harnessEnabled()
+            && !nativeOpenStageDispatch
+            && this.activeStageAttempt
+        ) {
+            return this._enqueueNativeOpenStage(outgoing, onDispatched);
+        }
         let runtimeRequestId = "";
+        let runtimeStageAttemptGeneration: number | undefined;
+        const isStageLoadRequest = outgoing.event_type === "openStageRequest"
+            || outgoing.event_type === "loadArtifactGroupRequest";
         if (isRuntimeMutator(outgoing.event_type) && isRecord(outgoing.payload)) {
             const requestId = getPayloadString(outgoing.payload, "request_id");
             if (requestId) {
@@ -1392,7 +1843,13 @@ export default class App extends React.Component<AppProps, AppState> {
                     eventType: outgoing.event_type,
                     ...(bindingRevisionId ? { bindingRevisionId } : {}),
                     ...(stageUrl ? { stageUrl } : {}),
+                    ...(isStageLoadRequest && this.activeStageAttempt
+                        ? { stageAttemptGeneration: this.activeStageAttempt.generation }
+                        : {}),
                 });
+                runtimeStageAttemptGeneration = isStageLoadRequest
+                    ? this.activeStageAttempt?.generation
+                    : undefined;
                 while (this.runtimeCommandContexts.size > 128) {
                     const oldest = this.runtimeCommandContexts.keys().next().value as string | undefined;
                     if (!oldest) break;
@@ -1402,26 +1859,78 @@ export default class App extends React.Component<AppProps, AppState> {
             }
             this.setState({ runtimeCommandRejection: null });
         }
+        const streamGenerationAtSend = this.streamGeneration;
+        let nativeTransportFailed = false;
         void AppStream.sendMessage(outgoing)
             .then((result) => {
-                const responseEvent = appStreamResultToAppEvent(outgoing.event_type, result);
+                const responseEvent = appStreamResultToAppEvent(
+                    outgoing.event_type,
+                    result,
+                    outgoing.payload,
+                    Boolean(nativeOpenStageDispatch),
+                );
                 if (responseEvent) {
-                    this._handleCustomEvent(responseEvent);
+                    this._handleCustomEvent(responseEvent, streamGenerationAtSend);
                 }
             })
             .catch(() => {
+                nativeTransportFailed = true;
+                if (!this._isCurrentStreamCallback(streamGenerationAtSend, `${outgoing.event_type}-error`)) return;
                 const diagnostic = "stream_transport_error";
                 if (runtimeRequestId) {
                     if (!this._claimRuntimeCommandTerminal(runtimeRequestId, outgoing.event_type, "error")) return;
                     this._finishA4HandoffCommand(runtimeRequestId, "rejected", diagnostic, true);
                 }
                 this._appendReviewEvent(`${outgoing.event_type} failed: ${diagnostic}`);
-                if (outgoing.event_type === "openStageRequest") {
-                    this._failStageLoad("模型載入失敗", [`目標：${this.pendingStageUrl || "unknown"}`, `錯誤：${diagnostic}`].join("\n"));
+                if (isStageLoadRequest) {
+                    this._failStageLoad(
+                        t(stageLoadFailurePresentation.title.zh, stageLoadFailurePresentation.title.en),
+                        [
+                            `${t(stageLoadFailurePresentation.target.zh, stageLoadFailurePresentation.target.en)}${t("：", ": ")}${redactStageUrlForDiagnostic(this.pendingStageUrl)}`,
+                            `${t(stageLoadFailurePresentation.error.zh, stageLoadFailurePresentation.error.en)}${t("：", ": ")}${diagnostic}`,
+                        ].join("\n"),
+                        runtimeStageAttemptGeneration,
+                    );
+                }
+            })
+            .finally(() => {
+                if (
+                    nativeOpenStageDispatch
+                    && (!nativeOpenStageDispatch.settlesFromDataChannel || nativeTransportFailed)
+                ) {
+                    this._settleNativeOpenStageDispatch(nativeOpenStageDispatch);
                 }
             });
+        onDispatched?.();
         this._appendDemoOutgoing(outgoing.event_type, { ...outgoing, payload: redactStreamPayload(outgoing.payload) });
         return true;
+    }
+
+    private _dispatchStageRequest(
+        message: AppStreamMessageType | StreamMessage,
+        attemptGeneration: number,
+        blockDiagnostic = "runtime_command_blocked",
+    ): boolean {
+        const onDispatched = () => {
+            if (!this._isCurrentStageAttemptAwaitingProof(attemptGeneration)) return;
+            this._scheduleStageLoadTimeout(attemptGeneration);
+            this._scheduleLoadingStateQuery(1500);
+        };
+        this.stageDispatchCallbacks.set(message, onDispatched);
+        let dispatched: boolean;
+        try {
+            dispatched = this._sendStreamMessage(message);
+        } finally {
+            this.stageDispatchCallbacks.delete(message);
+        }
+        if (dispatched === false && this._isCurrentStageAttemptAwaitingProof(attemptGeneration)) {
+            this._failStageLoad(
+                t(stageLoadFailurePresentation.title.zh, stageLoadFailurePresentation.title.en),
+                blockDiagnostic,
+                attemptGeneration,
+            );
+        }
+        return dispatched;
     }
 
     private _scheduleStreamStartTimeout(): void {
@@ -1452,22 +1961,28 @@ export default class App extends React.Component<AppProps, AppState> {
         this.loadingStateRetryId = null;
     }
 
-    private _scheduleStageLoadTimeout(): void {
+    private _scheduleStageLoadTimeout(attemptGeneration: number): void {
+        for (const context of this.runtimeCommandContexts.values()) {
+            if (
+                (context.eventType === "openStageRequest" || context.eventType === "loadArtifactGroupRequest")
+                && !context.stageAttemptGeneration
+                && context.stageUrl === this.pendingStageUrl
+            ) context.stageAttemptGeneration = attemptGeneration;
+        }
         this._clearStageLoadTimeout();
-        const timeoutMs = Math.max(reviewEnv.streamStartTimeoutMs, 45000);
         this.stageLoadTimeoutId = window.setTimeout(() => {
             this.stageLoadTimeoutId = null;
-            if (!this.pendingStageUrl) return;
-            if (this._completeStageLoadFromVisibleStream()) return;
+            if (!this._isCurrentStageAttemptAwaitingProof(attemptGeneration) || !this.pendingStageUrl) return;
+            this._claimStageAttemptTimeout(attemptGeneration);
             this._failStageLoad(
-                "模型載入逾時",
+                t(stageLoadTimeoutPresentation.title.zh, stageLoadTimeoutPresentation.title.en),
                 [
-                    `目標：${this.pendingStageUrl}`,
-                    `診斷：${this._getVideoDiagnosticText()}`,
-                    "Kit 已連線但沒有回報模型載入完成，請檢查該 USDC 是否可由 Kit 開啟。",
+                    `${t(stageLoadTimeoutPresentation.target.zh, stageLoadTimeoutPresentation.target.en)}${t("：", ": ")}${redactStageUrlForDiagnostic(this.pendingStageUrl)}`,
+                    `${t(stageLoadTimeoutPresentation.diagnostic.zh, stageLoadTimeoutPresentation.diagnostic.en)}${t("：", ": ")}${this._getVideoDiagnosticText()}`,
+                    t(stageLoadTimeoutPresentation.missingCompletion.zh, stageLoadTimeoutPresentation.missingCompletion.en),
                 ].join("\n"),
             );
-        }, timeoutMs);
+        }, STAGE_LOAD_TIMEOUT_MS);
     }
 
     private _clearStageLoadTimeout(): void {
@@ -1498,7 +2013,97 @@ export default class App extends React.Component<AppProps, AppState> {
         this.deferredOpenStageId = null;
     }
 
-    private _finishStageLoad(): void {
+    private _replaceStreamLifecycle(): number {
+        // Advance before stopping or remounting AppStream: its callbacks and sendMessage
+        // continuations may settle synchronously while React still exposes the old state key.
+        this.streamGeneration += 1;
+        // The adapter serializes connect behind physical teardown. Keep native
+        // stage dispatch fenced until the replacement lifecycle reports started.
+        this.nativeOpenStagePoisonedGeneration = this.streamGeneration;
+        this.nativeOpenStageReplacementStartGeneration = this.streamGeneration;
+        this._retireNativeOpenStageDispatches();
+        this._invalidateStageAttempt();
+        const pendingA4HandoffRequestId = this.a4HandoffPendingRequestId;
+        // Every outstanding command belongs to the retired stream. Its later
+        // callback is generation-fenced, so terminalize it now instead of
+        // leaving a visible pending lifecycle entry until map eviction.
+        for (const [requestId, context] of this.runtimeCommandContexts.entries()) {
+            this._claimRuntimeCommandTerminal(requestId, context.eventType, "superseded");
+        }
+        // The A4 command timeout only completes a request it can terminal-claim.
+        // A stream replacement claims the runtime command first, so retire its
+        // visible handoff explicitly and expose the existing retry path.
+        if (pendingA4HandoffRequestId) {
+            this._finishA4HandoffCommand(
+                pendingA4HandoffRequestId,
+                "rejected",
+                "stream_lifecycle_superseded",
+                true,
+            );
+        }
+        this.pendingStageUrl = null;
+        this.loadingStatePollCount = 0;
+        this._clearStreamStartTimeout();
+        this._clearPollForKitReady();
+        this._clearLoadingStateRetry();
+        this._clearStageLoadTimeout();
+        this._clearDeferredOpenStage();
+        return this.streamGeneration;
+    }
+
+    private _supersedeActiveStageAttempt(): void {
+        const supersededAttempt = this.activeStageAttempt;
+        if (!supersededAttempt) return;
+        if (supersededAttempt && this._isCurrentStageAttemptAwaitingProof(supersededAttempt.generation)) {
+            supersededAttempt.status = "terminal";
+            this._finishStageLoad(supersededAttempt.generation);
+            for (const [requestId, context] of this.runtimeCommandContexts.entries()) {
+                if (context.stageAttemptGeneration === supersededAttempt.generation) {
+                    this._claimRuntimeCommandTerminal(requestId, context.eventType, "superseded");
+                }
+            }
+        }
+        if (this.queuedNativeOpenStage?.stageAttemptGeneration === supersededAttempt.generation) {
+            this.queuedNativeOpenStage = null;
+        }
+        this._revokeStageProof();
+        this.activeStageAttempt = null;
+    }
+
+    private _beginStageAttempt(targetUrl: string): number {
+        this._failPendingBindingApplyAsSuperseded();
+        this.pendingStagePreauthorizationIntent = null;
+        this.stageIntentGeneration += 1;
+        this._supersedeActiveStageAttempt();
+        const generation = ++this.stageAttemptGeneration;
+        this._firstFramePosted = false;
+        this.stageLoadFailureActive = false;
+        this.activeStageAttempt = {
+            generation,
+            status: "pending",
+            targetUrl,
+        };
+        return generation;
+    }
+
+    private _isCurrentStageAttempt(generation: number | undefined, status?: StageAttemptStatus): boolean {
+        return Boolean(
+            generation
+            && this.activeStageAttempt?.generation === generation
+            && (!status || this.activeStageAttempt.status === status),
+        );
+    }
+
+    private _isCurrentStageAttemptAwaitingProof(generation: number | undefined): boolean {
+        return Boolean(
+            generation
+            && this.activeStageAttempt?.generation === generation
+            && (this.activeStageAttempt.status === "pending" || this.activeStageAttempt.status === "provisional"),
+        );
+    }
+
+    private _finishStageLoad(attemptGeneration?: number, preserveFirstFrame = false): void {
+        if (attemptGeneration && !this._isCurrentStageAttempt(attemptGeneration)) return;
         this._clearLoadingStateRetry();
         this._clearStageLoadTimeout();
         this.pendingStageUrl = null;
@@ -1507,7 +2112,227 @@ export default class App extends React.Component<AppProps, AppState> {
         // stage（多模型切換）時第二次完成後 parent 收不到 first_frame / stage_loaded，
         // IX-A1-06 無法重滿足、「在 3D 高亮」鈕保持 disabled。重置後由 _completeStageLoad 的
         // 閂保證「每次真完成」各送一次（_failStageLoad 失敗路徑不送，誠實鐵律不變）。
-        this._firstFramePosted = false;
+        if (!preserveFirstFrame) this._firstFramePosted = false;
+    }
+
+    private _revokeStageProof(bindingRevisionId?: string): void {
+        this.confirmedStageBindingRevision = null;
+        this.setState({
+            loadedStageUrl: null,
+            stageLoadStatus: "unproven",
+        });
+        if (window.parent !== window) {
+            this._postToParent({
+                type: "stage_loaded",
+                stageUrl: null,
+                status: "unproven",
+                ...(bindingRevisionId ? { binding_revision_id: bindingRevisionId } : {}),
+            });
+        }
+    }
+
+    private _applyChangedUnconfirmedStageSafety(
+        bindingRevisionId: string | undefined,
+        stageUrl: string | null | undefined,
+        stageAttemptGeneration: number | null | undefined,
+    ): void {
+        const revision = bindingRevisionId || "unknown";
+        const unprovenUrl = stageUrl || this.state.loadedStageUrl || this.pendingStageUrl;
+        const changedUnconfirmedReviewEvent = t(
+            runtimeRejectionReviewCopy.changedUnconfirmed.zh,
+            runtimeRejectionReviewCopy.changedUnconfirmed.en,
+        );
+        const changedUnconfirmedBindingReason = t(
+            runtimeRejectionPresentation.stageUnproven.zh,
+            runtimeRejectionPresentation.stageUnproven.en,
+        );
+        this.stageProofBlockGeneration += 1;
+        this.stageProofBlockedRevision = revision;
+        this.confirmedStageBindingRevision = null;
+        this.unprovenStageUrl = unprovenUrl;
+        if (this.activeStageAttempt) this.activeStageAttempt.statusResyncRevision = undefined;
+        if (stageAttemptGeneration) {
+            this._terminalizeStageAttempt(stageAttemptGeneration, bindingRevisionId);
+        } else if (!this.activeStageAttempt || this.activeStageAttempt.status === "completed") {
+            // A correlated non-stage mutation can invalidate the current
+            // completed proof, but it has no authority to terminalize a newer
+            // pending/provisional stage attempt.
+            this._revokeStageProof(bindingRevisionId);
+        }
+        this.setState((state) => ({
+            loadedStageUrl: null,
+            stageLoadStatus: "unproven",
+            govBindingApplyState: {
+                status: "failed",
+                reason: changedUnconfirmedBindingReason,
+            },
+            reviewEvents: [...state.reviewEvents, changedUnconfirmedReviewEvent].slice(-80),
+        }));
+        if (bindingRevisionId) void this._resyncStageBindingProof();
+    }
+
+    private _applyChangedFailedStageSafety(
+        context: RuntimeCommandContext | undefined,
+        bindingRevisionId: string | undefined,
+        stageUrl: string,
+        error: string,
+    ): boolean {
+        if (!context) return false;
+        const attemptGeneration = context.stageAttemptGeneration;
+        const activeAttempt = this.activeStageAttempt;
+        if (
+            attemptGeneration
+            && activeAttempt
+            && (
+                activeAttempt.generation !== attemptGeneration
+                || activeAttempt.status === "completed"
+            )
+        ) return false;
+        if (!attemptGeneration && activeAttempt && activeAttempt.status !== "completed") return false;
+
+        this.stageProofBlockGeneration += 1;
+        this.stageProofBlockedRevision = null;
+        this.confirmedStageBindingRevision = null;
+        this.unprovenStageUrl = null;
+        if (attemptGeneration && this._isCurrentStageAttemptAwaitingProof(attemptGeneration)) {
+            this._terminalizeStageAttempt(attemptGeneration, bindingRevisionId);
+        } else {
+            this._revokeStageProof(bindingRevisionId);
+        }
+        this._clearPendingBindingApplyForAttempt(attemptGeneration);
+        this.stageLoadFailureActive = true;
+        this.setState((state) => ({
+            loadingText: "模型組合僅部分套用",
+            streamDiagnostic: [
+                `目標：${redactStageUrlForDiagnostic(stageUrl || context.stageUrl)}`,
+                `錯誤：${error}`,
+            ].join("\n"),
+            showStream: this._hasRemoteVideoFrame(),
+            isLoading: false,
+            loadedStageUrl: null,
+            stageLoadStatus: "unproven",
+            runtimeCommandRejection: null,
+            govBindingActiveRevision: null,
+            govBindingApplyState: {
+                status: "failed",
+                reason: "runtime_changed_transaction_failed",
+            },
+            reviewEvents: [
+                ...state.reviewEvents,
+                "runtime changed_failed；已清除active evidence並阻擋handoff",
+            ].slice(-80),
+        }));
+        return true;
+    }
+
+    private _terminalizeStageAttempt(
+        attemptGeneration: number | null | undefined,
+        bindingRevisionId?: string,
+    ): void {
+        if (!attemptGeneration) return;
+        if (attemptGeneration && !this._isCurrentStageAttemptAwaitingProof(attemptGeneration)) {
+            // A post-completion binding transaction (composeStageRequest) has
+            // no stageAttemptGeneration of its own. Its changed terminal must
+            // still withdraw the current completed stage proof, but must never
+            // revoke a newer attempt that superseded this one.
+            if (this._isCurrentStageAttempt(attemptGeneration, "completed")) {
+                this._revokeStageProof(bindingRevisionId);
+            }
+            return;
+        }
+        if (this.activeStageAttempt && attemptGeneration === this.activeStageAttempt.generation) {
+            this.activeStageAttempt.status = "terminal";
+        }
+        this._finishStageLoad(attemptGeneration);
+        this._revokeStageProof(bindingRevisionId);
+    }
+
+    private _invalidateStageAttempt(): void {
+        this._failPendingBindingApplyAsSuperseded();
+        this.pendingStagePreauthorizationIntent = null;
+        this.stageIntentGeneration += 1;
+        const attemptGeneration = this.activeStageAttempt?.generation;
+        if (
+            !attemptGeneration
+            || this.queuedNativeOpenStage?.stageAttemptGeneration === attemptGeneration
+        ) {
+            this.queuedNativeOpenStage = null;
+        }
+        this._revokeStageProof();
+        if (!attemptGeneration) {
+            this.stageLoadFailureActive = false;
+            return;
+        }
+        this.stageAttemptGeneration = Math.max(this.stageAttemptGeneration, attemptGeneration) + 1;
+        if (this.activeStageAttempt?.status === "pending" || this.activeStageAttempt?.status === "provisional") {
+            this.activeStageAttempt.status = "terminal";
+        }
+        this._finishStageLoad(attemptGeneration);
+        for (const [requestId, context] of this.runtimeCommandContexts.entries()) {
+            if (context.stageAttemptGeneration === attemptGeneration) {
+                this._claimRuntimeCommandTerminal(requestId, context.eventType, "superseded");
+            }
+        }
+        // A reconnect must accept its new no-URL readiness probe. Keeping a
+        // terminal attempt here would reject that probe, while clearing it
+        // still rejects any old correlated result by generation mismatch.
+        this.activeStageAttempt = null;
+        this.stageLoadFailureActive = false;
+    }
+
+    private _failPendingBindingApplyAsSuperseded(): void {
+        const pendingApplyGeneration = this.pendingBindingApplyGeneration;
+        if (!pendingApplyGeneration) return;
+        this.pendingBindingApplyGeneration = null;
+        this.pendingBindingApplyStageAttemptGeneration = null;
+        if (this.bindingApplyGeneration !== pendingApplyGeneration) return;
+        this.setState((state) => (
+            state.govBindingApplyState?.status === "applying"
+                ? {
+                    govBindingApplyState: {
+                        status: "failed" as const,
+                        reason: "stage_binding_apply_superseded",
+                    },
+                    reviewEvents: [
+                        ...state.reviewEvents,
+                        "binding apply superseded before coordinator preauthorization completed",
+                    ].slice(-80),
+                }
+                : null
+        ));
+    }
+
+    private _clearPendingBindingApplyForAttempt(attemptGeneration: number | null | undefined): void {
+        if (!attemptGeneration || this.pendingBindingApplyStageAttemptGeneration !== attemptGeneration) return;
+        this.pendingBindingApplyGeneration = null;
+        this.pendingBindingApplyStageAttemptGeneration = null;
+    }
+
+    private _canApplyLoadingStateResponse(stageUrl: string): boolean {
+        // An uncorrelated loading-state probe must not consume an attempt while
+        // coordinator preauthorization still owns whether a Kit command exists.
+        if (this.pendingStagePreauthorizationIntent === this.stageIntentGeneration) return false;
+        const attempt = this.activeStageAttempt;
+        if (!attempt) {
+            // A terminal preauthorization failure has no command/attempt to
+            // correlate. Keep it terminal until an explicit new stage intent.
+            return !this.stageLoadFailureActive
+                && this.state.webrtcLifecycleStatus === "started";
+        }
+        if (attempt.status === "terminal") return false;
+        if (!stageUrl) return false;
+        return stageUrl === attempt.targetUrl;
+    }
+
+    private _claimStageAttemptTimeout(attemptGeneration: number): void {
+        if (this._isCurrentStageAttemptAwaitingProof(attemptGeneration) && this.activeStageAttempt) {
+            this.activeStageAttempt.terminalReason = "stage-load-timeout";
+        }
+        for (const [requestId, context] of this.runtimeCommandContexts.entries()) {
+            if (context.stageAttemptGeneration === attemptGeneration) {
+                this._claimRuntimeCommandTerminal(requestId, context.eventType, "timed-out");
+            }
+        }
     }
 
     private _expectedStageAsset(): USDAssetType | null {
@@ -1543,8 +2368,8 @@ export default class App extends React.Component<AppProps, AppState> {
             this._failStageLoad(
                 "stale_stage_or_mismatch",
                 [
-                    `expected：${this.state.expectedStageUrl || this.pendingStageUrl || "unknown"}`,
-                    `loaded：${loadedUrl}`,
+                    `expected：${redactStageUrlForDiagnostic(this.state.expectedStageUrl || this.pendingStageUrl)}`,
+                    `loaded：${redactStageUrlForDiagnostic(loadedUrl)}`,
                     `state：${loadingState || "unknown"}`,
                 ].join("\n"),
             );
@@ -1552,26 +2377,35 @@ export default class App extends React.Component<AppProps, AppState> {
         return matched;
     }
 
-    private _completeStageLoad(loadedUrl?: string, bindingRevisionId?: string): void {
+    private _completeStageLoad(loadedUrl?: string, bindingRevisionId?: string, attemptGeneration?: number): void {
+        const currentAttempt = attemptGeneration ?? this.activeStageAttempt?.generation;
+        if (currentAttempt && !this._isCurrentStageAttemptAwaitingProof(currentAttempt)) return;
+        const promotingProvisional = Boolean(
+            currentAttempt
+            && this._isCurrentStageAttempt(currentAttempt, "provisional"),
+        );
         // ⚠️ 誠實鐵律：finalLoadedUrl 只取「Kit 真回報過的 loaded URL」（呼叫參數或既有 state.loadedStageUrl），
         // 不得 fallback 成 pendingStageUrl。pendingStageUrl 只是「我們請求載入的目標」，不是 Kit 證實已載入的事實。
-        // 當 _completeStageLoadFromVisibleStream 因「畫面可見但 Kit 尚未回 loaded URL」觸發時 loadedUrl 為空，
-        // 此時 finalLoadedUrl 留空 → matched=!hasExpectedStage（有 expected 即 unproven），first_frame 帶 stageUrl:null，
-        // A1 gate 的 stage matched 維持 false、3D 高亮鈕保持 disabled，直到 Kit 真回報相符 URL（防舊模型殘影誤判為已對齊）。
+        // Visible-stream fallback never calls this completion path: it remains provisional
+        // until Kit supplies an exact URL through a correlated openedStageResult.
         const finalLoadedUrl = loadedUrl || this.state.loadedStageUrl;
         const hasExpectedStage = Boolean(this.state.expectedStageUrl);
         const matched = finalLoadedUrl ? this._isLoadedStageExpected(finalLoadedUrl) : !hasExpectedStage;
         const activeRevision = bindingRevisionId || this.confirmedStageBindingRevision;
         const stageProven = harnessEnabled() || Boolean(activeRevision);
         const active = matched && stageProven;
-        this._finishStageLoad();
+        if (this.activeStageAttempt && currentAttempt === this.activeStageAttempt.generation) {
+            this.activeStageAttempt.status = "completed";
+        }
+        this.stageLoadFailureActive = false;
+        this._finishStageLoad(currentAttempt, promotingProvisional);
         this._getChildren();
         this.setState({
             showStream: true,
             loadingText: active ? "模型已載入" : "模型畫面可見，stage authority 尚未證明",
             showUI: true,
             isLoading: false,
-            streamDiagnostic: active ? null : `expected：${this.state.expectedStageUrl || "unknown"}\nloaded：${finalLoadedUrl || "not_observed"}`,
+            streamDiagnostic: active ? null : `expected：${redactStageUrlForDiagnostic(this.state.expectedStageUrl)}\nloaded：${finalLoadedUrl ? redactStageUrlForDiagnostic(finalLoadedUrl) : "not_observed"}`,
             loadedStageUrl: finalLoadedUrl || null,
             stageLoadStatus: active ? "matched" : "unproven",
         });
@@ -1579,12 +2413,13 @@ export default class App extends React.Component<AppProps, AppState> {
         // overlay 標示永遠 unmapped）。僅在「有 mapping_url 且該 url 尚未載入」時觸發；無 mapping_url 不做事
         // （overlay 誠實顯示 unmapped / coverage 未知）。不改既有 stage-load 流程與 debug onLoadMapping 路徑。
         this._maybeAutoLoadMapping();
-        // VG-01 M1：真畫面已到達且 stage 完成（此處為唯一真完成點，由 kit handler 1807/1826 與
-        // _completeStageLoadFromVisibleStream（含 _hasRemoteVideoFrame guard）抵達）→ 通知 parent。
-        // _firstFramePosted 閂保證只送一次；不接在 _failStageLoad（失敗）/ 斷線 / 開檔等路徑（防偽證據）。
-        if (!this._firstFramePosted && window.parent !== window) {
-            this._firstFramePosted = true;
-            this._postToParent({ type: "first_frame", stageUrl: finalLoadedUrl ?? null });
+        // VG-01 M1：first_frame 每個 attempt 只送一次；provisional frame 已送過時，
+        // 精確 stage 證據只補送 active stage_loaded，不重送 first_frame。
+        if (window.parent !== window) {
+            if (!this._firstFramePosted) {
+                this._firstFramePosted = true;
+                this._postToParent({ type: "first_frame", stageUrl: finalLoadedUrl ?? null });
+            }
             this._postToParent({
                 type: "stage_loaded",
                 stageUrl: active ? finalLoadedUrl ?? null : null,
@@ -1604,24 +2439,70 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _completeStageLoadFromVisibleStream(): boolean {
-        if (!this.pendingStageUrl || !this._hasRemoteVideoFrame()) return false;
-        this._completeStageLoad();
+        const attemptGeneration = this.activeStageAttempt?.generation
+            ?? this._beginStageAttempt(this.pendingStageUrl || "");
+        if (!attemptGeneration || !this._isCurrentStageAttempt(attemptGeneration, "pending") || !this.pendingStageUrl || !this._hasRemoteVideoFrame()) return false;
+        if (this.activeStageAttempt) this.activeStageAttempt.status = "provisional";
+        this._clearLoadingStateRetry();
+        this.loadingStatePollCount = 0;
+        // A visible frame is provisional evidence. Keep polling for correlated stage
+        // proof, but do not replace or extend the original hard terminal deadline.
+        this._scheduleLoadingStateQuery(1000);
         this.setState((state) => ({
-            reviewEvents: [...state.reviewEvents, "模型已載入（WebRTC 畫面已可見）"],
+            showStream: true,
+            loadingText: "模型畫面可見，stage authority 尚未證明",
+            showUI: true,
+            isLoading: false,
+            streamDiagnostic: `expected：${redactStageUrlForDiagnostic(this.state.expectedStageUrl || this.pendingStageUrl)}\nloaded：not_observed`,
+            loadedStageUrl: null,
+            stageLoadStatus: "unproven",
+            reviewEvents: [...state.reviewEvents, "WebRTC 畫面已可見，等待精確 stage 證據"],
         }));
+        if (window.parent !== window) {
+            if (!this._firstFramePosted) {
+                this._firstFramePosted = true;
+                this._postToParent({ type: "first_frame", stageUrl: null });
+            }
+            this._postToParent({ type: "stage_loaded", stageUrl: null, status: "unproven" });
+        }
         return true;
     }
 
-    private _failStageLoad(loadingText: string, diagnostic?: string): void {
-        this._finishStageLoad();
+    private _failStageLoad(
+        loadingText: string,
+        diagnostic?: string,
+        attemptGeneration: number | null | undefined = this.activeStageAttempt?.generation,
+        bindingFailureReason = loadingText,
+    ): void {
+        const invalidatesStageProof = Boolean(
+            attemptGeneration && this._isCurrentStageAttemptAwaitingProof(attemptGeneration),
+        );
+        const failedAttemptGeneration = attemptGeneration === null
+            ? null
+            : attemptGeneration ?? this.activeStageAttempt?.generation;
+        if (attemptGeneration !== null) {
+            if (attemptGeneration && !this._isCurrentStageAttemptAwaitingProof(attemptGeneration)) return;
+            this._terminalizeStageAttempt(attemptGeneration);
+            this._clearPendingBindingApplyForAttempt(failedAttemptGeneration);
+        }
+        this.stageLoadFailureActive = true;
         this.setState((state) => ({
             loadingText,
             streamDiagnostic: diagnostic || null,
             showStream: this._hasRemoteVideoFrame(),
             isLoading: false,
-            stageLoadStatus: loadingText === "stale_stage_or_mismatch" ? "mismatch" : state.stageLoadStatus,
+            loadedStageUrl: invalidatesStageProof ? null : state.loadedStageUrl,
+            stageLoadStatus: loadingText === "stale_stage_or_mismatch"
+                ? "mismatch"
+                : (invalidatesStageProof ? "unproven" : state.stageLoadStatus),
             reviewEvents: [...state.reviewEvents, loadingText],
+            ...(state.govBindingApplyState?.status === "applying"
+                ? { govBindingApplyState: { status: "failed" as const, reason: bindingFailureReason } }
+                : {}),
         }));
+        if (window.parent !== window && !invalidatesStageProof) {
+            this._postToParent({ type: "stage_loaded", stageUrl: null, status: "unproven" });
+        }
     }
 
     private _getVideoDiagnosticText(): string {
@@ -2111,6 +2992,8 @@ export default class App extends React.Component<AppProps, AppState> {
 
     private async _preauthorizeStageBinding(
         artifacts: Array<{ artifact_id: string; role: "primary" | "secondary"; load_order: number }>,
+        clientRequestId: string,
+        signal?: AbortSignal,
     ): Promise<StageBindingPreauthorization> {
         if (this.stageProofBlockedRevision) {
             throw new Error("stage binding proof resync required");
@@ -2134,12 +3017,14 @@ export default class App extends React.Component<AppProps, AppState> {
                 body: JSON.stringify({
                     source_client_id: reviewEnv.sourceClientId,
                     role: "primary",
+                    client_request_id: clientRequestId,
                     artifacts: artifacts.map((artifact) => ({
                         artifact_id: artifact.artifact_id,
                         role: artifact.role,
                         load_order: artifact.load_order,
                     })),
                 }),
+                signal,
             },
         );
         if (!response.ok) {
@@ -2172,6 +3057,132 @@ export default class App extends React.Component<AppProps, AppState> {
             throw new Error("stage binding preauthorization response is malformed");
         }
         return raw as unknown as StageBindingPreauthorization;
+    }
+
+    private async _cancelStageBindingPreauthorization(clientRequestId: string): Promise<boolean> {
+        const sessionId = this.state.reviewSessionId;
+        if (!sessionId) return false;
+        const userToken = this._ensureStandaloneLabUserToken();
+        if (!userToken) return false;
+        const controller = new AbortController();
+        let timeoutId: number | null = null;
+        const cancellationAttempt = (async (): Promise<boolean> => {
+            const leaseToken = await this._ensurePrimaryViewerLease();
+            if (!leaseToken || controller.signal.aborted) return false;
+            const response = await fetch(
+                `${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(sessionId)}/stage-binding-cancellations`,
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-User-Token": userToken,
+                        "X-Viewer-Lease-Token": leaseToken,
+                    },
+                    body: JSON.stringify({
+                        source_client_id: reviewEnv.sourceClientId,
+                        client_request_id: clientRequestId,
+                    }),
+                    signal: controller.signal,
+                },
+            );
+            return response.ok;
+        })().catch(() => false);
+        const deadline = new Promise<boolean>((resolve) => {
+            timeoutId = window.setTimeout(() => {
+                controller.abort();
+                resolve(false);
+            }, STAGE_AUTHORIZATION_CANCEL_TIMEOUT_MS);
+        });
+        try {
+            return await Promise.race([cancellationAttempt, deadline]);
+        } finally {
+            if (timeoutId !== null) window.clearTimeout(timeoutId);
+        }
+    }
+
+    private _cancelActiveStagePreauthorization(
+        request: ActiveStagePreauthorization,
+        retryFailed = false,
+    ): Promise<boolean> {
+        request.controller.abort();
+        const currentBarrier = this.stagePreauthorizationCancellationBarrier;
+        if (retryFailed && currentBarrier?.request === request && currentBarrier.status === "failed") {
+            request.cancellationPromise = null;
+        }
+        if (request.cancellationPromise) return request.cancellationPromise;
+        const barrier: StagePreauthorizationCancellationBarrier = {
+            request,
+            promise: Promise.resolve(false),
+            status: "pending",
+        };
+        barrier.promise = this._cancelStageBindingPreauthorization(request.clientRequestId).then((confirmed) => {
+            if (this.stagePreauthorizationCancellationBarrier === barrier) {
+                if (confirmed) {
+                    this.stagePreauthorizationCancellationBarrier = null;
+                } else {
+                    barrier.status = "failed";
+                }
+            }
+            return confirmed;
+        });
+        request.cancellationPromise = barrier.promise;
+        this.stagePreauthorizationCancellationBarrier = barrier;
+        return barrier.promise;
+    }
+
+    private async _preauthorizeStageBindingWithinDeadline(
+        artifacts: Array<{ artifact_id: string; role: "primary" | "secondary"; load_order: number }>,
+    ): Promise<StageBindingPreauthorization> {
+        let timeoutId: number | null = null;
+        const controller = new AbortController();
+        const clientRequestId = createStageBindingPreauthorizationRequestId();
+        const request: ActiveStagePreauthorization = {
+            clientRequestId,
+            controller,
+            postStarted: false,
+            cancellationPromise: null,
+        };
+        const supersededRequest = this.activeStagePreauthorization;
+        this.activeStagePreauthorization = request;
+        try {
+            if (supersededRequest) {
+                supersededRequest.controller.abort();
+                if (supersededRequest.postStarted) {
+                    const cancellationConfirmed = await this._cancelActiveStagePreauthorization(supersededRequest);
+                    if (!cancellationConfirmed || this.activeStagePreauthorization !== request) {
+                        throw new DOMException("stage binding preauthorization superseded", "AbortError");
+                    }
+                }
+            }
+            const cancellationBarrier = this.stagePreauthorizationCancellationBarrier;
+            if (cancellationBarrier) {
+                const cancellationConfirmed = cancellationBarrier.status === "failed"
+                    ? await this._cancelActiveStagePreauthorization(cancellationBarrier.request, true)
+                    : await cancellationBarrier.promise;
+                if (!cancellationConfirmed || this.activeStagePreauthorization !== request) {
+                    throw new DOMException("stage binding preauthorization superseded", "AbortError");
+                }
+            }
+            if (this.activeStagePreauthorization !== request) {
+                throw new DOMException("stage binding preauthorization superseded", "AbortError");
+            }
+            request.postStarted = true;
+            return await new Promise<StageBindingPreauthorization>((resolve, reject) => {
+                timeoutId = window.setTimeout(
+                    () => {
+                        void this._cancelActiveStagePreauthorization(request);
+                        reject(new Error("stage_binding_authorization_timeout"));
+                    },
+                    STAGE_AUTHORIZATION_TIMEOUT_MS,
+                );
+                void this._preauthorizeStageBinding(artifacts, clientRequestId, controller.signal).then(resolve, reject);
+            });
+        } finally {
+            if (timeoutId !== null) window.clearTimeout(timeoutId);
+            if (this.activeStagePreauthorization === request) {
+                this.activeStagePreauthorization = null;
+            }
+        }
     }
 
     private _releaseStandaloneViewerLease(): void {
@@ -2391,6 +3402,7 @@ export default class App extends React.Component<AppProps, AppState> {
     // CH-F：交易式套用 Stage / Artifact Binding。spectator / 未就緒不送 mutating 指令（前端 gate 僅 UX）。
     // Production 走既有 Kit loadArtifactGroupRequest + stage_composition handler；harness 仍保留 fakeKit compose ack。
     private _applyBinding(selection: StageArtifactBinding[], revisionId: string): void {
+        const applyGeneration = ++this.bindingApplyGeneration;
         if (isSpectatorStreamMode()) {
             this._appendReviewEvent(`spectator（view-only）：略過 binding 套用（${revisionId}）`);
             return;
@@ -2424,16 +3436,67 @@ export default class App extends React.Component<AppProps, AppState> {
             return;
         }
 
+        // A newer user selection revokes completion authority from every prior
+        // stage attempt before its coordinator preauthorization resolves.
+        const applyStageIntentGeneration = ++this.stageIntentGeneration;
+        this.pendingBindingApplyGeneration = applyGeneration;
+        this.pendingStagePreauthorizationIntent = applyStageIntentGeneration;
+        this._supersedeActiveStageAttempt();
         const applyThroughCoordinator = async () => {
-            const transaction = await this._preauthorizeStageBinding(
+            const transaction = await this._preauthorizeStageBindingWithinDeadline(
                 selection.map((artifact) => ({
                     artifact_id: artifact.artifact_id,
                     role: artifact.role,
                     load_order: artifact.load_order,
                 })),
             );
+            if (
+                applyGeneration !== this.bindingApplyGeneration
+                || applyStageIntentGeneration !== this.stageIntentGeneration
+            ) return;
+            this.pendingStagePreauthorizationIntent = null;
+            this.pendingBindingApplyGeneration = null;
             this._appendReviewEvent(`coordinator 已建立 pending binding：${transaction.binding_revision_id}`);
-            this._sendStreamMessage({
+            const targetUrl = transaction.stage_composition.primary.usdc_url;
+            const targetAsset = this.state.usdAssets.find((asset) => asset.url === targetUrl)
+                || { name: displayNameFromStageUrl(targetUrl), url: targetUrl };
+            const mappingTargetChanged = this.state.selectedUSDAsset?.url !== targetUrl;
+            const mappingUrl = this._resolveMappingUrlForAsset(targetAsset);
+            if (mappingTargetChanged) {
+                this._mappingCache = null;
+                this._mappingCacheUrl = null;
+            }
+            const attemptGeneration = this._beginStageAttempt(targetUrl);
+            this.pendingBindingApplyGeneration = applyGeneration;
+            this.pendingBindingApplyStageAttemptGeneration = attemptGeneration;
+            this.pendingStageUrl = targetUrl;
+            this.confirmedStageBindingRevision = null;
+            this.unprovenStageUrl = null;
+            this.loadingStatePollCount = 0;
+            this._clearLoadingStateRetry();
+            this.setState({
+                loadingText: t("正在載入模型...", "Loading model..."),
+                showStream: this._hasRemoteVideoFrame(),
+                streamDiagnostic: null,
+                usdAssets: this._mergeAssets(this.state.usdAssets, [targetAsset]),
+                selectedUSDAsset: targetAsset,
+                mappingUrl: mappingTargetChanged ? mappingUrl : this.state.mappingUrl,
+                mappingStatus: mappingTargetChanged
+                    ? (mappingUrl ? "尚未載入 mapping" : "此成果檔沒有 mapping URL")
+                    : this.state.mappingStatus,
+                mappingSummary: mappingTargetChanged ? null : this.state.mappingSummary,
+                mappingItems: mappingTargetChanged ? [] : this.state.mappingItems,
+                selectedMappingIndex: mappingTargetChanged ? 0 : this.state.selectedMappingIndex,
+                lastMappingVerification: mappingTargetChanged ? null : this.state.lastMappingVerification,
+                mappingVerificationBlockedReason: mappingTargetChanged
+                    ? null
+                    : this.state.mappingVerificationBlockedReason,
+                expectedStageUrl: targetUrl,
+                loadedStageUrl: null,
+                stageLoadStatus: "pending",
+                isLoading: true,
+            });
+            this._dispatchStageRequest({
                 event_type: "loadArtifactGroupRequest",
                 payload: {
                     url: transaction.stage_composition.primary.usdc_url,
@@ -2442,15 +3505,36 @@ export default class App extends React.Component<AppProps, AppState> {
                     binding_revision_id: transaction.binding_revision_id,
                     stage_composition: transaction.stage_composition,
                 },
-            });
+            }, attemptGeneration, t(
+                stageLoadFailurePresentation.commandNotSent.zh,
+                stageLoadFailurePresentation.commandNotSent.en,
+            ));
         };
-        void applyThroughCoordinator().catch(() => {
+        void applyThroughCoordinator().catch((error) => {
+            if (
+                applyGeneration !== this.bindingApplyGeneration
+                || applyStageIntentGeneration !== this.stageIntentGeneration
+            ) return;
+            this.pendingStagePreauthorizationIntent = null;
+            this.pendingBindingApplyGeneration = null;
+            this.pendingBindingApplyStageAttemptGeneration = null;
+            const authorizationTimedOut = isStageAuthorizationTimeout(error);
             this.setState({
                 govBindingApplyState: {
                     status: "failed",
-                    reason: "coordinator stage binding preauthorization 失敗",
+                    reason: authorizationTimedOut
+                        ? "stage_binding_authorization_timeout"
+                        : "coordinator stage binding preauthorization 失敗",
                 },
             });
+            this._failStageLoad(
+                t(stageLoadFailurePresentation.title.zh, stageLoadFailurePresentation.title.en),
+                authorizationTimedOut
+                    ? t(stageLoadFailurePresentation.authorizationTimedOut.zh, stageLoadFailurePresentation.authorizationTimedOut.en)
+                    : t(stageLoadFailurePresentation.authorizationFailed.zh, stageLoadFailurePresentation.authorizationFailed.en),
+                null,
+                authorizationTimedOut ? "stage_binding_authorization_timeout" : undefined,
+            );
         });
     }
 
@@ -2630,6 +3714,9 @@ export default class App extends React.Component<AppProps, AppState> {
             const activeStreamEndpoint = this._resolveStreamEndpoint(streamConfig);
             const streamEndpointChanged = !sameStreamEndpoint(this.state.activeStreamEndpoint, activeStreamEndpoint);
             const endpointEvent = `Kit endpoint：${streamEndpointLabel(activeStreamEndpoint)}`;
+            const streamMountKey = streamEndpointChanged
+                ? this._replaceStreamLifecycle()
+                : this.streamGeneration;
 
             // viewer-edge-bim-server-console:TopBar 顯示 project / version identity。
             // 來源優先序:ReviewSession → ReviewSessionRequest → reviewEnv defaults。
@@ -2660,8 +3747,15 @@ export default class App extends React.Component<AppProps, AppState> {
                 loadedStageUrl: null,
                 stageLoadStatus: expectedStageUrl ? "pending" : "unproven",
                 showUI: this.state.showUI || shouldShowReviewUI,
+                // A replacement AppStream must establish readiness itself. Carrying this
+                // flag across endpoints can make bootstrap open once before onStarted
+                // schedules a second open for the same stage.
+                isKitReady: streamEndpointChanged ? false : this.state.isKitReady,
+                showStream: streamEndpointChanged ? false : this.state.showStream,
+                webrtcLifecycleStatus: streamEndpointChanged ? "initializing" : this.state.webrtcLifecycleStatus,
+                streamDiagnostic: streamEndpointChanged ? null : this.state.streamDiagnostic,
                 activeStreamEndpoint,
-                streamMountKey: streamEndpointChanged ? this.state.streamMountKey + 1 : this.state.streamMountKey,
+                streamMountKey,
                 reviewEvents: [
                     ...this.state.reviewEvents,
                     reviewEnv.defaultSessionId || reviewRequest?.session_id ? "已載入 review session" : "已建立 review session",
@@ -2670,7 +3764,7 @@ export default class App extends React.Component<AppProps, AppState> {
             }, () => {
                 this._connectReviewSocket(sessionId, streamConfig.trace_id);
                 this._scheduleStreamStartTimeout();
-                if (this.state.isKitReady && this.state.selectedUSDAsset && streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
+                if (!streamEndpointChanged && this.state.isKitReady && this.state.selectedUSDAsset && streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
                     this._openSelectedAsset();
                 }
                 void this._beginA4Handoff(sessionId);
@@ -2803,8 +3897,17 @@ export default class App extends React.Component<AppProps, AppState> {
      * is not sent. Instead, we wait for the streamed application to send a
      * openedStageResult message.
      */
-        private _onStreamStarted(): void {
-            this.setState({ streamDiagnostic: null, webrtcLifecycleStatus: "started" });
+        private _onStreamStarted(streamGeneration = this.streamGeneration): void {
+            if (!this._isCurrentStreamCallback(streamGeneration, "started")) return;
+        if (this.nativeOpenStagePoisonedGeneration === streamGeneration) {
+            if (this.nativeOpenStageReplacementStartGeneration !== streamGeneration) {
+                this._appendReviewEvent("ignored same-lifecycle AppStreamer start; reconnect is required before native stage retry");
+                return;
+            }
+            this.nativeOpenStagePoisonedGeneration = null;
+            this.nativeOpenStageReplacementStartGeneration = null;
+        }
+        this.setState({ streamDiagnostic: null, webrtcLifecycleStatus: "started" });
             this._clearStreamStartTimeout();
             if (isSpectatorStreamMode()) {
                 // viewer-edge-bim-server-console:spectator 沿用 primary 已載入的 Kit stage,
@@ -2828,7 +3931,9 @@ export default class App extends React.Component<AppProps, AppState> {
                 loadingText: "串流已連線，等待 Kit 狀態回應",
                 reviewEvents: [...state.reviewEvents, "WebRTC stream 已連線，正在確認 Kit stage state"],
             }), () => {
-                if (this._canOpenSelectedAsset()) {
+                // A replacement stream cannot inherit the previous endpoint's
+                // readiness. Wait for this generation's probe before it can open.
+                if (this.state.isKitReady && this._canOpenSelectedAsset()) {
                     this._scheduleDeferredOpenStage();
                     return;
                 }
@@ -2886,7 +3991,8 @@ export default class App extends React.Component<AppProps, AppState> {
     *
     * Runs when the user logs in
     */
-    private _onLoggedIn(userId: string): void {
+    private _onLoggedIn(userId: string, streamGeneration = this.streamGeneration): void {
+        if (!this._isCurrentStreamCallback(streamGeneration, "logged-in")) return;
         if (StreamConfig.source === "gfn"){
             console.info(`Logged in to GeForce NOW as ${userId}`)
             this.setState({ loadingText: "等待串流開始", isLoading: false})
@@ -2898,7 +4004,34 @@ export default class App extends React.Component<AppProps, AppState> {
     *
     * Send a request to load an asset based on the currently selected asset
     */
-    private _handleStreamStopped(kind: "stopped" | "terminated", message: unknown): void {
+    private _handleStreamStopped(
+        kind: "stopped" | "terminated",
+        message: unknown,
+        streamGeneration = this.streamGeneration,
+    ): void {
+        if (!this._isCurrentStreamCallback(streamGeneration, kind)) return;
+        // A stopped AppStreamer lifecycle can still deliver a late callback.
+        // Advance synchronously before React remounts so focus/highlight/A4
+        // results cannot mutate the terminal disconnect state.
+        this.streamGeneration += 1;
+        const pendingA4HandoffRequestId = this.a4HandoffPendingRequestId;
+        // AppStreamer keeps response callbacks in the old lifecycle. A later
+        // stage request must remount before it can safely reuse this slot.
+        this.nativeOpenStagePoisonedGeneration = this.streamGeneration;
+        this.nativeOpenStageReplacementStartGeneration = null;
+        this._retireNativeOpenStageDispatches();
+        this._invalidateStageAttempt();
+        for (const [requestId, context] of this.runtimeCommandContexts.entries()) {
+            this._claimRuntimeCommandTerminal(requestId, context.eventType, "superseded");
+        }
+        if (pendingA4HandoffRequestId) {
+            this._finishA4HandoffCommand(
+                pendingA4HandoffRequestId,
+                "rejected",
+                "stream_lifecycle_superseded",
+                true,
+            );
+        }
         this._clearLoadingStateRetry();
         this._clearStageLoadTimeout();
         this._clearDeferredOpenStage();
@@ -2913,8 +4046,9 @@ export default class App extends React.Component<AppProps, AppState> {
         this.setState((state) => ({
             loadingText: "webrtc_disconnected",
             streamDiagnostic: diagnostic,
-            showStream: this._hasRemoteVideoFrame(),
+            showStream: false,
             isLoading: false,
+            loadedStageUrl: null,
             stageLoadStatus: "disconnected",
             webrtcLifecycleStatus: kind,
             reviewEvents: [...state.reviewEvents, `WebRTC ${kind}`].slice(-80),
@@ -2922,12 +4056,8 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _reconnectStream(): void {
+        const streamMountKey = this._replaceStreamLifecycle();
         AppStream.stop();
-        this.pendingStageUrl = null;
-        this.loadingStatePollCount = 0;
-        this._clearLoadingStateRetry();
-        this._clearStageLoadTimeout();
-        this._clearDeferredOpenStage();
         this.setState((state) => ({
             isKitReady: false,
             showStream: false,
@@ -2937,7 +4067,7 @@ export default class App extends React.Component<AppProps, AppState> {
             loadedStageUrl: null,
             stageLoadStatus: state.expectedStageUrl ? "pending" : "unproven",
             webrtcLifecycleStatus: "initializing",
-            streamMountKey: state.streamMountKey + 1,
+            streamMountKey,
             reviewEvents: [...state.reviewEvents, "重新建立 AppStreamer lifecycle"].slice(-80),
         }), () => this._scheduleStreamStartTimeout());
     }
@@ -2976,12 +4106,12 @@ export default class App extends React.Component<AppProps, AppState> {
             return;
         }
 
+        const attemptGeneration = this._beginStageAttempt(targetAsset.url);
         this.pendingStageUrl = targetAsset.url;
         this.confirmedStageBindingRevision = null;
         this.unprovenStageUrl = null;
         this.loadingStatePollCount = 0;
         this._clearLoadingStateRetry();
-        this._scheduleStageLoadTimeout();
         this.setState({
             loadingText: "正在載入模型...",
             showStream: this._hasRemoteVideoFrame(),
@@ -2994,20 +4124,24 @@ export default class App extends React.Component<AppProps, AppState> {
         })
         this.setState({ usdPrims: [], selectedUSDPrims: new Set<USDPrimType>() });
         this.usdStageRef.current?.resetExpandedIds();
-        console.log(`Sending request to open asset: ${targetAsset.url}.`);
+        console.log(`Sending request to open asset: ${redactStageUrlForDiagnostic(targetAsset.url)}.`);
         const artifactBindings = this.state.latestStreamConfig?.artifact_bindings?.filter((binding) => binding.url === targetAsset.url) || [];
         const composition = this.state.latestStreamConfig?.stage_composition;
-        const selectedIsPrimary = composition?.primary?.url === targetAsset.url;
-        const openStage = async () => {
-            if (harnessEnabled()) {
-                this._sendStreamMessage(
+            const selectedIsPrimary = composition?.primary?.url === targetAsset.url;
+            const openStage = async () => {
+                if (harnessEnabled()) {
+                this._dispatchStageRequest(
                     buildOpenStageRequest(
                         targetAsset.url,
                         artifactBindings,
                         selectedIsPrimary ? { primary: composition.primary, secondary_layers: composition.secondary_layers || [] } : null,
                     ),
+                    attemptGeneration,
+                    t(
+                        stageLoadFailurePresentation.commandNotSent.zh,
+                        stageLoadFailurePresentation.commandNotSent.en,
+                    ),
                 );
-                this._scheduleLoadingStateQuery(1500);
                 return;
             }
 
@@ -3032,15 +4166,32 @@ export default class App extends React.Component<AppProps, AppState> {
             if (selectedBindings.length === 0) {
                 throw new Error("selected stage has no server-owned artifact binding");
             }
-            const transaction = await this._preauthorizeStageBinding(selectedBindings);
+            this.pendingStagePreauthorizationIntent = this.stageIntentGeneration;
+            const transaction = await this._preauthorizeStageBindingWithinDeadline(selectedBindings);
+            if (!this._isCurrentStageAttempt(attemptGeneration, "pending")) return;
+            this.pendingStagePreauthorizationIntent = null;
             this.pendingStageUrl = transaction.stage_composition.primary.usdc_url;
-            this._sendStreamMessage(buildAuthorizedOpenStageRequest(transaction));
-            this._scheduleLoadingStateQuery(1500);
+            if (this.activeStageAttempt) this.activeStageAttempt.targetUrl = this.pendingStageUrl;
+            this._dispatchStageRequest(
+                buildAuthorizedOpenStageRequest(transaction),
+                attemptGeneration,
+                t(
+                    stageLoadFailurePresentation.commandNotSent.zh,
+                    stageLoadFailurePresentation.commandNotSent.en,
+                ),
+            );
         };
-        void openStage().catch(() => {
+        void openStage().catch((error) => {
+            if (!this._isCurrentStageAttempt(attemptGeneration, "pending")) return;
+            this.pendingStagePreauthorizationIntent = null;
+            const authorizationTimedOut = isStageAuthorizationTimeout(error);
             this._failStageLoad(
-                "模型載入失敗",
-                "無法建立 stage binding authorization，已阻擋 openStageRequest",
+                t(stageLoadFailurePresentation.title.zh, stageLoadFailurePresentation.title.en),
+                authorizationTimedOut
+                    ? t(stageLoadFailurePresentation.authorizationTimedOut.zh, stageLoadFailurePresentation.authorizationTimedOut.en)
+                    : t(stageLoadFailurePresentation.authorizationFailed.zh, stageLoadFailurePresentation.authorizationFailed.en),
+                attemptGeneration,
+                authorizationTimedOut ? "stage_binding_authorization_timeout" : undefined,
             );
         });
     }
@@ -3363,6 +4514,11 @@ export default class App extends React.Component<AppProps, AppState> {
         const generation = this.stageProofBlockGeneration;
         const loadedUrl = this.unprovenStageUrl;
         const sessionId = this.state.reviewSessionId;
+        // A status response must not survive the StageAttempt that requested it.
+        // Reconnect/stop invalidates the object even if the proof block itself
+        // remains pending for an explicit, fresh recovery.
+        const resyncAttempt = this.activeStageAttempt;
+        const resyncAttemptGeneration = resyncAttempt?.generation;
         if (!revision || revision === "unknown" || !sessionId || !reviewEnv.userToken) return false;
         try {
             const response = await fetch(
@@ -3379,18 +4535,57 @@ export default class App extends React.Component<AppProps, AppState> {
             if (!isRecord(raw) || !isRecord(raw.stage_binding)) return false;
             const stageBinding = raw.stage_binding;
             const activeRevision = getPayloadString(stageBinding, "active_binding_revision");
+            const activeAttempt = this.activeStageAttempt;
+            // changed_unconfirmed is only released by the same revision. A
+            // retained prior completion cannot prove that a later unconfirmed
+            // Kit mutation did not change the physical stage.
             if (activeRevision !== revision) return false;
             if (
                 this.stageProofBlockGeneration !== generation
                 || this.stageProofBlockedRevision !== revision
                 || this.unprovenStageUrl !== loadedUrl
             ) return false;
+            if (
+                resyncAttemptGeneration
+                && (
+                    this.activeStageAttempt !== resyncAttempt
+                    || this.activeStageAttempt?.generation !== resyncAttemptGeneration
+                )
+            ) return false;
+
+            // A status confirmation for an older rejected revision must not
+            // promote a newer same-URL attempt while it is still awaiting its
+            // own correlated terminal. URL equality alone is not proof of B;
+            // only B's exact openedStageResult may re-key this recovery.
+            const recoveringActiveAttempt = Boolean(
+                activeAttempt
+                && this._isCurrentStageAttemptAwaitingProof(activeAttempt.generation)
+            );
+            if (recoveringActiveAttempt && activeAttempt?.statusResyncRevision !== revision) return false;
+            if (
+                activeAttempt?.statusResyncRevision === revision
+                && !recoveringActiveAttempt
+            ) return false;
+            const recoveryAttemptGeneration = recoveringActiveAttempt
+                ? activeAttempt?.generation
+                : undefined;
 
             const matched = Boolean(loadedUrl && this._isLoadedStageExpected(loadedUrl));
             this.stageProofBlockGeneration += 1;
             this.stageProofBlockedRevision = null;
             this.confirmedStageBindingRevision = revision;
             this.unprovenStageUrl = null;
+            if (activeAttempt) activeAttempt.statusResyncRevision = undefined;
+            if (recoveryAttemptGeneration && matched) {
+                this._completeStageLoad(loadedUrl || undefined, revision, recoveryAttemptGeneration);
+                this.setState((state) => ({
+                    runtimeCommandRejection: null,
+                    govBindingActiveRevision: revision,
+                    govBindingLastGoodRevision: getPayloadString(stageBinding, "last_good_binding_revision") || revision,
+                    reviewEvents: [...state.reviewEvents, "stage binding resync：active"].slice(-80),
+                }));
+                return true;
+            }
             this.setState((state) => ({
                 loadedStageUrl: matched ? loadedUrl : null,
                 stageLoadStatus: matched ? "matched" : "unproven",
@@ -3418,10 +4613,14 @@ export default class App extends React.Component<AppProps, AppState> {
     *
     * Handle message from stream.
     */
-    private _handleCustomEvent (event: AppStreamEventType | null): void {
+    private _handleCustomEvent(
+        event: AppStreamEventType | null,
+        streamGeneration = this.streamGeneration,
+    ): void {
         if (!event) {
             return;
         }
+        if (!this._isCurrentStreamCallback(streamGeneration, "custom-event")) return;
         if (!event.event_type && event.messageRecipient === "kit" && typeof event.data === "string") {
             try {
                 const parsed = JSON.parse(event.data);
@@ -3452,16 +4651,62 @@ export default class App extends React.Component<AppProps, AppState> {
                 ));
                 return;
             }
-            const context = parsed.request_id
-                ? this.runtimeCommandContexts.get(parsed.request_id)
+            const terminalClaim = parsed.request_id
+                ? this.runtimeCommandTerminalClaims.get(parsed.request_id)
                 : undefined;
-            if (parsed.request_id && this.runtimeCommandTerminalClaims.has(parsed.request_id)) {
+            const terminalSafetyContext = parsed.request_id
+                ? this.runtimeCommandTerminalSafetyContexts.get(parsed.request_id)
+                : undefined;
+            const nativeDataChannelDispatch = this._matchingNativeOpenStageDataChannelTerminal(
+                "commandRejected",
+                payload,
+            );
+            const nativeChangedUnconfirmed = Boolean(
+                nativeDataChannelDispatch
+                && parsed.runtime_state === "changed_unconfirmed",
+            );
+            if (nativeChangedUnconfirmed && nativeDataChannelDispatch) {
+                // A superseded manual load may already have lost its logical
+                // request context. Its authenticated physical terminal still
+                // proves that Kit changed state without confirmation, so fence
+                // the queued intent before releasing the native SDK slot.
+                this._applyChangedUnconfirmedStageSafety(
+                    nativeDataChannelDispatch.bindingRevisionId,
+                    nativeDataChannelDispatch.targetUrl,
+                    nativeDataChannelDispatch.stageAttemptGeneration,
+                );
+            }
+            // This must precede duplicate/current-attempt guards: a manual
+            // loadArtifactGroupRequest receives only an immediate SDK ACK, and
+            // its later DataChannel terminal owns physical slot release.
+            this._settleNativeOpenStageDispatchFromDataChannel("commandRejected", payload);
+            if (terminalClaim) {
+                if (
+                    !nativeChangedUnconfirmed
+                    && (terminalClaim.outcome === "superseded" || terminalClaim.outcome === "timed-out")
+                    && terminalClaim.eventType === parsed.rejected_event_type
+                    && parsed.runtime_state === "changed_unconfirmed"
+                ) {
+                    // A superseded or timed-out stage retires its logical
+                    // context, but a late authenticated changed_unconfirmed
+                    // still means Kit may have changed state. Preserve exactly
+                    // the metadata required to fence a later intent before
+                    // this duplicate is discarded.
+                    this._applyChangedUnconfirmedStageSafety(
+                        terminalSafetyContext?.bindingRevisionId,
+                        terminalSafetyContext?.stageUrl,
+                        terminalSafetyContext?.stageAttemptGeneration,
+                    );
+                }
                 this._appendReviewEvent(t(
                     runtimeRejectionReviewCopy.duplicate.zh,
                     runtimeRejectionReviewCopy.duplicate.en,
                 ));
                 return;
             }
+            const context = parsed.request_id
+                ? this.runtimeCommandContexts.get(parsed.request_id)
+                : undefined;
             if (context && context.eventType !== parsed.rejected_event_type) {
                 this._appendReviewEvent(t(
                     runtimeRejectionReviewCopy.requestContextMismatch.zh,
@@ -3502,44 +4747,25 @@ export default class App extends React.Component<AppProps, AppState> {
                 );
             }
             if (rejection.runtime_state === "changed_unconfirmed") {
-                const revision = context?.bindingRevisionId || "unknown";
-                const unprovenUrl = context?.stageUrl || this.state.loadedStageUrl || this.pendingStageUrl;
-                const changedUnconfirmedReviewEvent = t(
-                    runtimeRejectionReviewCopy.changedUnconfirmed.zh,
-                    runtimeRejectionReviewCopy.changedUnconfirmed.en,
-                );
-                const changedUnconfirmedBindingReason = t(
-                    runtimeRejectionPresentation.stageUnproven.zh,
-                    runtimeRejectionPresentation.stageUnproven.en,
-                );
-                this.stageProofBlockGeneration += 1;
-                this.stageProofBlockedRevision = revision;
-                this.confirmedStageBindingRevision = null;
-                this.unprovenStageUrl = unprovenUrl;
-                this._finishStageLoad();
-                this.setState((state) => ({
-                    runtimeCommandRejection: rejection,
-                    loadedStageUrl: null,
-                    stageLoadStatus: "unproven",
-                    govBindingApplyState: {
-                        status: "failed",
-                        reason: changedUnconfirmedBindingReason,
-                    },
-                    reviewEvents: [...state.reviewEvents, changedUnconfirmedReviewEvent].slice(-80),
-                }));
-                if (window.parent !== window) {
-                    this._postToParent({
-                        type: "stage_loaded",
-                        stageUrl: null,
-                        status: "unproven",
-                        ...(context?.bindingRevisionId
-                            ? { binding_revision_id: context.bindingRevisionId }
-                            : {}),
-                    });
+                if (!nativeChangedUnconfirmed) {
+                    this._applyChangedUnconfirmedStageSafety(
+                        context?.bindingRevisionId,
+                        context?.stageUrl,
+                        context?.stageAttemptGeneration,
+                    );
                 }
-                if (context?.bindingRevisionId) void this._resyncStageBindingProof();
+                if (
+                    context?.stageAttemptGeneration
+                    && !this._isCurrentStageAttemptAwaitingProof(context.stageAttemptGeneration)
+                ) return;
+                this.setState({ runtimeCommandRejection: rejection });
                 return;
             }
+
+            if (
+                context?.stageAttemptGeneration
+                && !this._isCurrentStageAttemptAwaitingProof(context.stageAttemptGeneration)
+            ) return;
 
             const genericRejectionReviewEvent = runtimeRejectionReviewEvent(
                 rejection.rejected_event_type,
@@ -3562,6 +4788,7 @@ export default class App extends React.Component<AppProps, AppState> {
                         runtimeRejectionReviewCopy.stageLoadRejected.en,
                     ),
                     rejection.detail_code || rejection.reason,
+                    context?.stageAttemptGeneration,
                 );
             }
             return;
@@ -3571,7 +4798,54 @@ export default class App extends React.Component<AppProps, AppState> {
 
         // response received once a USD asset is fully loaded
         if (event.event_type === "openedStageResult") {
-            const correlation = this._completeRuntimeCommandEvent(
+            this._settleNativeOpenStageDispatchFromDataChannel("openedStageResult", payload);
+            let correlation = this._correlateRuntimeCommandEvent("openedStageResult", payload);
+            if (correlation.disposition !== "matched") {
+                if (correlation.disposition === "duplicate") {
+                    const requestId = getPayloadString(payload, "request_id");
+                    const terminalClaim = this.runtimeCommandTerminalClaims.get(requestId);
+                    const terminalSafetyContext = this.runtimeCommandTerminalSafetyContexts.get(requestId);
+                    const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
+                    if (
+                        terminalClaim
+                        && terminalSafetyContext
+                        && (terminalClaim.outcome === "superseded" || terminalClaim.outcome === "timed-out")
+                        && runtimeResponseRequestTypes.get("openedStageResult")?.has(terminalClaim.eventType)
+                        && getPayloadString(payload, "result") !== "success"
+                        && getPayloadString(payload, "runtime_state") === "changed_failed"
+                        && (
+                            !terminalSafetyContext.bindingRevisionId
+                            || terminalSafetyContext.bindingRevisionId === bindingRevisionId
+                        )
+                    ) {
+                        this._applyChangedFailedStageSafety(
+                            terminalSafetyContext,
+                            bindingRevisionId || terminalSafetyContext.bindingRevisionId,
+                            getPayloadString(payload, "url") || terminalSafetyContext.stageUrl || "",
+                            redactRuntimeDiagnosticText(getPayloadString(payload, "error") || "unknown error"),
+                        );
+                    }
+                }
+                if (correlation.mismatchReason === "binding_revision" && correlation.context) {
+                    this._claimRuntimeCommandTerminal(correlation.requestId, correlation.context.eventType, "error");
+                    if (correlation.context.stageAttemptGeneration) {
+                        this._failStageLoad(
+                            t(stageLoadFailurePresentation.revisionMismatch.zh, stageLoadFailurePresentation.revisionMismatch.en),
+                            [
+                                `${t(stageLoadFailurePresentation.expectedRevision.zh, stageLoadFailurePresentation.expectedRevision.en)}${t("：", ": ")}${correlation.context.bindingRevisionId}`,
+                                `${t(stageLoadFailurePresentation.receivedRevision.zh, stageLoadFailurePresentation.receivedRevision.en)}${t("：", ": ")}${getPayloadString(payload, "binding_revision_id") || "missing"}`,
+                            ].join("\n"),
+                            correlation.context.stageAttemptGeneration,
+                        );
+                    }
+                }
+                return;
+            }
+            if (
+                correlation.context?.stageAttemptGeneration
+                && !this._isCurrentStageAttemptAwaitingProof(correlation.context.stageAttemptGeneration)
+            ) return;
+            correlation = this._completeRuntimeCommandEvent(
                 "openedStageResult",
                 payload,
                 payload.result === "success" ? "success" : "error",
@@ -3581,7 +4855,22 @@ export default class App extends React.Component<AppProps, AppState> {
                 const loadedUrl = getPayloadString(payload, "url");
                 const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
                 if (this.stageProofBlockedRevision) {
-                    if (
+                    const stageAttemptGeneration = correlation.context?.stageAttemptGeneration;
+                    const currentAttemptCanRecover = Boolean(
+                        bindingRevisionId
+                        && loadedUrl
+                        && this._isLoadedStageExpected(loadedUrl)
+                        && stageAttemptGeneration
+                        && this._isCurrentStageAttemptAwaitingProof(stageAttemptGeneration)
+                    );
+                    if (currentAttemptCanRecover && this.activeStageAttempt) {
+                        // This is B's exact correlated terminal. Re-key status
+                        // recovery to B so an older A block cannot strand B.
+                        this.stageProofBlockedRevision = bindingRevisionId;
+                        this.activeStageAttempt.statusResyncRevision = bindingRevisionId;
+                        this.unprovenStageUrl = loadedUrl;
+                        this.stageProofBlockGeneration += 1;
+                    } else if (
                         bindingRevisionId === this.stageProofBlockedRevision
                         && loadedUrl
                         && this._isLoadedStageExpected(loadedUrl)
@@ -3608,6 +4897,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 const stageEvidenceMatched = loadedUrl ? this._recordLoadedStageEvidence(loadedUrl, "openedStageResult") : false;
                 if (loadedUrl && !stageEvidenceMatched) {
                     if (bindingRevisionId) {
+                        this._clearPendingBindingApplyForAttempt(correlation.context?.stageAttemptGeneration);
                         this.setState({
                             govBindingApplyState: {
                                 status: "failed",
@@ -3628,6 +4918,7 @@ export default class App extends React.Component<AppProps, AppState> {
                         });
                         this._appendReviewEvent(`binding 未確認：openedStageResult success 但缺 loaded URL 證據（${bindingRevisionId}）`);
                     } else {
+                        this._clearPendingBindingApplyForAttempt(correlation.context?.stageAttemptGeneration);
                         this.setState({
                             govBindingActiveRevision: bindingRevisionId,
                             govBindingLastGoodRevision: bindingRevisionId,
@@ -3637,63 +4928,50 @@ export default class App extends React.Component<AppProps, AppState> {
                     }
                 }
                 if (loadedUrl && stageEvidenceMatched) {
-                    this._completeStageLoad(loadedUrl, bindingRevisionId || undefined);
+                    this._completeStageLoad(loadedUrl, bindingRevisionId || undefined, correlation.context?.stageAttemptGeneration);
                 } else {
-                    this._scheduleLoadingStateQuery(250);
+                    this._failStageLoad(
+                        t(stageLoadFailurePresentation.missingStageEvidence.zh, stageLoadFailurePresentation.missingStageEvidence.en),
+                        [
+                            `${t(stageLoadFailurePresentation.target.zh, stageLoadFailurePresentation.target.en)}${t("：", ": ")}${redactStageUrlForDiagnostic(this.pendingStageUrl || this.state.expectedStageUrl)}`,
+                            `${t(stageLoadFailurePresentation.error.zh, stageLoadFailurePresentation.error.en)}${t("：", ": ")}${t(stageLoadFailurePresentation.missingStageEvidence.zh, stageLoadFailurePresentation.missingStageEvidence.en)}`,
+                        ].join("\n"),
+                        correlation.context?.stageAttemptGeneration,
+                        "missing_stage_evidence",
+                    );
                 }
             }
             else {
                 const url = getPayloadString(payload, "url");
-                const error = getPayloadString(payload, "error") || "unknown error";
+                const error = redactRuntimeDiagnosticText(getPayloadString(payload, "error") || "unknown error");
                 const runtimeState = getPayloadString(payload, "runtime_state");
                 const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
                 const requestId = getPayloadString(payload, "request_id");
                 if (requestId) this.runtimeCommandContexts.delete(requestId);
-                console.error(`Kit App communicates there was an error loading: ${url} (${error})`);
+                console.error(`Kit App communicates there was an error loading: ${redactStageUrlForDiagnostic(url)} (${error})`);
                 if (runtimeState === "changed_failed") {
-                    this.stageProofBlockGeneration += 1;
-                    this.stageProofBlockedRevision = null;
-                    this.confirmedStageBindingRevision = null;
-                    this.unprovenStageUrl = null;
-                    this._finishStageLoad();
-                    this.setState((state) => ({
-                        loadingText: "模型組合僅部分套用",
-                        streamDiagnostic: [`目標：${url || "unknown"}`, `錯誤：${error}`].join("\n"),
-                        showStream: this._hasRemoteVideoFrame(),
-                        isLoading: false,
-                        loadedStageUrl: null,
-                        stageLoadStatus: "unproven",
-                        runtimeCommandRejection: null,
-                        govBindingActiveRevision: null,
-                        govBindingApplyState: {
-                            status: "failed",
-                            reason: "runtime_changed_transaction_failed",
-                        },
-                        reviewEvents: [
-                            ...state.reviewEvents,
-                            "runtime changed_failed；已清除active evidence並阻擋handoff",
-                        ].slice(-80),
-                    }));
-                    if (window.parent !== window) {
-                        this._postToParent({
-                            type: "stage_loaded",
-                            stageUrl: null,
-                            status: "unproven",
-                            ...(bindingRevisionId ? { binding_revision_id: bindingRevisionId } : {}),
-                        });
-                    }
+                    this._applyChangedFailedStageSafety(
+                        correlation.context,
+                        bindingRevisionId || undefined,
+                        url,
+                        error,
+                    );
                     return;
                 }
                 this._failStageLoad(
-                    "模型載入失敗",
-                    [`目標：${url || this.pendingStageUrl || "unknown"}`, `錯誤：${error}`].join("\n"),
+                    t(stageLoadFailurePresentation.title.zh, stageLoadFailurePresentation.title.en),
+                    [
+                        `${t(stageLoadFailurePresentation.target.zh, stageLoadFailurePresentation.target.en)}${t("：", ": ")}${redactStageUrlForDiagnostic(url || this.pendingStageUrl)}`,
+                        `${t(stageLoadFailurePresentation.error.zh, stageLoadFailurePresentation.error.en)}${t("：", ": ")}${error}`,
+                    ].join("\n"),
+                    correlation.context?.stageAttemptGeneration,
                 );
             }
         }
 
         else if (event.event_type === "loadArtifactGroupResult") {
+            this._settleNativeOpenStageDispatchFromDataChannel("loadArtifactGroupResult", payload);
             const result = getPayloadString(payload, "result") || "unknown";
-            const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
             const requestId = getPayloadString(payload, "request_id");
             const correlation = result === "error"
                 ? this._completeRuntimeCommandEvent("loadArtifactGroupResult", payload, "error")
@@ -3709,19 +4987,33 @@ export default class App extends React.Component<AppProps, AppState> {
                     );
                 }
             }
-            if (result === "error" && bindingRevisionId) {
+            if (result === "error") {
+                const error = redactRuntimeDiagnosticText(getPayloadString(payload, "error") || "loadArtifactGroupResult error");
                 this.setState({
                     govBindingApplyState: {
                         status: "failed",
-                        reason: getPayloadString(payload, "error") || "loadArtifactGroupResult error",
+                        reason: error,
                     },
                 });
+                if (context?.stageAttemptGeneration) {
+                    this._failStageLoad(
+                        t(stageLoadFailurePresentation.title.zh, stageLoadFailurePresentation.title.en),
+                        [
+                            `${t(stageLoadFailurePresentation.target.zh, stageLoadFailurePresentation.target.en)}${t("：", ": ")}${redactStageUrlForDiagnostic(context.stageUrl || this.pendingStageUrl)}`,
+                            `${t(stageLoadFailurePresentation.error.zh, stageLoadFailurePresentation.error.en)}${t("：", ": ")}${error}`,
+                        ].join("\n"),
+                        context.stageAttemptGeneration,
+                    );
+                }
             }
             this._appendReviewEvent(`artifact group load result：${result}`);
         }
         
         // response received from the 'loadingStateQuery' request
         else if (event.event_type == "loadingStateResponse") {
+            const payloadUrl = getPayloadString(payload, "url");
+            if (!this._canApplyLoadingStateResponse(payloadUrl)) return;
+            const loadingState = getPayloadString(payload, "loading_state");
             // loadingStateRequest is used to poll Kit for proof of life.
             // For the first loadingStateResponse we set isKitReady to true
             // and run one more query to find out what the current loading state
@@ -3729,6 +5021,13 @@ export default class App extends React.Component<AppProps, AppState> {
             if (this.state.isKitReady === false) {
                 console.info("Kit is ready to load assets")
                 this.setState({ isKitReady: true }, () => {
+                    // The response can belong to an already-authorized stage load.
+                    // Do not issue a duplicate open while that attempt owns the URL.
+                    if (this.activeStageAttempt) {
+                        if (loadingState === "busy" && this._completeStageLoadFromVisibleStream()) return;
+                        this._queryLoadingState();
+                        return;
+                    }
                     if (this._canOpenSelectedAsset()) {
                         this._openSelectedAsset();
                     } else {
@@ -3738,25 +5037,66 @@ export default class App extends React.Component<AppProps, AppState> {
             }
             
             else {
+                if (this.activeStageAttempt?.status === "completed") {
+                    // A completed attempt may still receive a late matching idle probe that
+                    // contributes evidence, but it must never reopen loading or polling.
+                    if (payloadUrl && loadingState === "idle") {
+                        this._recordLoadedStageEvidence(payloadUrl, "loadingStateResponse", loadingState);
+                    }
+                    return;
+                }
                 this._clearLoadingStateRetry();
                 this.loadingStatePollCount += 1;
-                const payloadUrl = getPayloadString(payload, "url");
-                const loadingState = getPayloadString(payload, "loading_state");
-                const usdAsset: USDAssetType = this._getAsset(payloadUrl)
-                const isStageValid: boolean = !!(usdAsset.name && usdAsset.url)
+                const usdAsset: USDAssetType = this._getAsset(payloadUrl);
+                const isStageValid: boolean = !!(usdAsset.name && usdAsset.url);
+                const attemptGeneration = this.activeStageAttempt?.generation;
 
-                if (payloadUrl && loadingState === "idle" && !this._recordLoadedStageEvidence(payloadUrl, "loadingStateResponse", loadingState)) {
+                if (payloadUrl && loadingState === "idle") {
+                    if (!this._isLoadedStageExpected(payloadUrl)) {
+                        this._recordLoadedStageEvidence(payloadUrl, "loadingStateResponse", loadingState);
+                        return;
+                    }
+                    // loadingStateResponse has no request / attempt correlation. Even an exact
+                    // URL can be a delayed response from an older same-URL attempt, so it may
+                    // inform the UI but cannot complete or prove the active attempt.
+                    this.setState((state) => ({
+                        loadingText: t(
+                            "stage 已觀察，等待已關聯的完成證據",
+                            "Stage observed; awaiting correlated completion evidence.",
+                        ),
+                        stageLoadStatus: "unproven",
+                        reviewEvents: [
+                            ...state.reviewEvents,
+                            t(
+                                "忽略未關聯的 idle loadingStateResponse 完成宣告",
+                                "Ignored uncorrelated idle loadingStateResponse completion claim.",
+                            ),
+                        ].slice(-80),
+                    }));
                     return;
                 }
 
                 if (loadingState === "busy") {
+                    // loadingStateResponse has no request / attempt correlation. A delayed
+                    // same-URL busy response must not terminalize the active attempt; its
+                    // viewer-owned deadline remains the sole timeout authority.
+                    if (attemptGeneration) {
+                        if (this._completeStageLoadFromVisibleStream()) return;
+                        this.setState({ loadingText: "正在載入模型...", isLoading: true });
+                        this._scheduleLoadingStateQuery(1000);
+                        return;
+                    }
                     if (this.loadingStatePollCount <= 90) {
                         this.setState({ loadingText: "正在載入模型...", isLoading: true });
                         this._scheduleLoadingStateQuery(1000);
                     } else {
                         this._failStageLoad(
-                            "模型載入逾時",
-                            [`目標：${this.pendingStageUrl || this.state.selectedUSDAsset?.url || "unknown"}`, `最後狀態：${payloadUrl || "empty"} busy`].join("\n"),
+                            t(stageLoadTimeoutPresentation.title.zh, stageLoadTimeoutPresentation.title.en),
+                            [
+                                `${t(stageLoadTimeoutPresentation.target.zh, stageLoadTimeoutPresentation.target.en)}${t("：", ": ")}${redactStageUrlForDiagnostic(this.pendingStageUrl || this.state.selectedUSDAsset?.url)}`,
+                                `${t(stageLoadTimeoutPresentation.lastState.zh, stageLoadTimeoutPresentation.lastState.en)}${t("：", ": ")}${payloadUrl ? redactStageUrlForDiagnostic(payloadUrl) : "empty"} busy`,
+                                t(stageLoadTimeoutPresentation.missingCompletion.zh, stageLoadTimeoutPresentation.missingCompletion.en),
+                            ].join("\n"),
                         );
                     }
                     return;
@@ -3771,34 +5111,14 @@ export default class App extends React.Component<AppProps, AppState> {
                     if (this.pendingStageUrl && this.loadingStatePollCount <= 3) {
                         this._scheduleLoadingStateQuery(1000);
                     } else {
-                        this._failStageLoad("模型載入狀態未回傳 URL", `目標：${this.pendingStageUrl || this.state.selectedUSDAsset?.url || "unknown"}`);
+                        this._failStageLoad(
+                            t(stageLoadFailurePresentation.missingUrl.zh, stageLoadFailurePresentation.missingUrl.en),
+                            `${t(stageLoadFailurePresentation.target.zh, stageLoadFailurePresentation.target.en)}${t("：", ": ")}${redactStageUrlForDiagnostic(this.pendingStageUrl || this.state.selectedUSDAsset?.url)}`,
+                        );
                     }
                     return;
                 }
                 
-                // if a stage has been fully loaded and isn't a part of this application, force-load the selected stage
-                else if (!isStageValid && loadingState === "idle"){
-                    console.log(`The loaded asset ${payloadUrl} is invalid.`)
-                    this._failStageLoad(
-                        "模型載入狀態不符合目前清單",
-                        [`Kit 回報：${payloadUrl}`, `目前選擇：${this.state.selectedUSDAsset?.url || "none"}`].join("\n"),
-                    )
-                    return;
-                }
-                
-                // show stream and populate children if the stage is valid and it's done loading
-                if (isStageValid && loadingState === "idle")
-                {
-                    if (!harnessEnabled() && !this.confirmedStageBindingRevision) {
-                        this.setState({
-                            loadingText: "stage 已觀察，等待 coordinator confirmation",
-                            stageLoadStatus: "unproven",
-                        });
-                        this._scheduleLoadingStateQuery(500);
-                        return;
-                    }
-                    this._completeStageLoad(payloadUrl)
-                }
             }
         }
         
@@ -3809,23 +5129,13 @@ export default class App extends React.Component<AppProps, AppState> {
             
         // Loading activity notification.
         else if (event.event_type === "updateProgressActivity") {
+            if (this.activeStageAttempt?.status !== "pending") return;
             console.log('Kit App communicates progress activity.');
             const activityText = getPayloadString(payload, "text");
-            if (this.pendingStageUrl && activityText === "None") {
-                const loadedUrl = this.pendingStageUrl;
-                if (!this._recordLoadedStageEvidence(loadedUrl, "updateProgressActivity", activityText)) {
-                    return;
-                }
-                if (!harnessEnabled() && !this.confirmedStageBindingRevision) {
-                    this.setState({
-                        loadingText: "stage 已觀察，等待 coordinator confirmation",
-                        stageLoadStatus: "unproven",
-                    });
-                    return;
-                }
-                this._completeStageLoad(loadedUrl);
-                return;
-            }
+            // Progress notifications carry no URL or request correlation. `None`
+            // is advisory only; completion requires a correlated openedStageResult
+            // or exact-target idle loading state backed by an authenticated confirmed revision.
+            if (activityText === "None") return;
             if (this.state.loadingText !== "正在載入模型...")
                 this.setState( {loadingText: "正在載入模型...", isLoading: true} )
         }
@@ -4031,6 +5341,12 @@ export default class App extends React.Component<AppProps, AppState> {
     private _handleAppStreamBlur (): void {
         console.log('User is not interacting in streamed viewer');
     }
+
+    private _isCurrentStreamCallback(streamGeneration: number, kind: string): boolean {
+        if (streamGeneration === this.streamGeneration) return true;
+        this._appendReviewEvent(`忽略舊 AppStreamer ${kind} 回呼（generation=${streamGeneration}）`);
+        return false;
+    }
     
     render() {
 
@@ -4045,9 +5361,10 @@ export default class App extends React.Component<AppProps, AppState> {
             && !reviewEnv.hasExplicitEmptySessionId;
         const demoPanelRight = showDebugAssetPanel ? sidebarWidth : 0;
         const streamReservedWidth = (showDebugAssetPanel ? sidebarWidth : 0) + (showDemoPanel ? demoPanelWidth : 0);
-        const shouldRenderAppStream = !reviewEnv.hasExplicitEmptySessionId && Boolean(this.state.reviewSessionId);
-        const streamRole = isSpectatorStreamMode() ? "spectator" : "primary";
-        const liveFrameObserved = this._hasRemoteVideoFrame();
+            const shouldRenderAppStream = !reviewEnv.hasExplicitEmptySessionId && Boolean(this.state.reviewSessionId);
+            const streamRole = isSpectatorStreamMode() ? "spectator" : "primary";
+            const renderedStreamGeneration = this.state.streamMountKey;
+            const liveFrameObserved = this._hasRemoteVideoFrame();
         const runtimeCommandRejection = this.state.runtimeCommandRejection;
         const runtimeAuthorityUnavailable = runtimeCommandRejection?.detail_code === "authority_unavailable";
         const runtimeCommandRejectionReason = runtimeCommandRejection
@@ -4197,8 +5514,22 @@ export default class App extends React.Component<AppProps, AppState> {
                 )}
 
                 {/* Loading text indicator */}
-                {!this.state.showStream &&
-                    <div className="loading-indicator-label">
+                {(!this.state.showStream || this.stageLoadFailureActive) &&
+                    <div
+                        className="loading-indicator-label"
+                        data-testid={this.stageLoadFailureActive ? "stage-load-failure" : undefined}
+                        role={this.stageLoadFailureActive ? "alert" : "status"}
+                        aria-live={this.stageLoadFailureActive ? "assertive" : "polite"}
+                        style={this.stageLoadFailureActive ? {
+                            position: "absolute",
+                            zIndex: 29,
+                            top: 52,
+                            left: 16,
+                            right: 16,
+                            width: "auto",
+                            marginTop: 0,
+                        } : undefined}
+                    >
                         {this.state.loadingText}
                         {this.state.streamDiagnostic &&
                             <pre className="stream-diagnostic-panel">{this.state.streamDiagnostic}</pre>
@@ -4210,7 +5541,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 {/* Streamed app */}
                 {shouldRenderAppStream &&
                 <AppStream
-                    key={this.state.streamMountKey}
+                    key={renderedStreamGeneration}
                     sessionId={this.props.sessionId}
                     backendUrl={this.props.backendUrl}
                     signalingserver={this.state.activeStreamEndpoint.signalingserver}
@@ -4218,18 +5549,21 @@ export default class App extends React.Component<AppProps, AppState> {
                     mediaserver={this.state.activeStreamEndpoint.mediaserver}
                     mediaport={this.state.activeStreamEndpoint.mediaport}
                     accessToken={this.props.accessToken}
-                    onStarted={() => this._onStreamStarted()}
+                    onStarted={() => this._onStreamStarted(renderedStreamGeneration)}
                     onFocus={() => this._handleAppStreamFocus()}
                     onBlur={() => this._handleAppStreamBlur()}
                     style={{
                         position: 'relative',
                         visibility: this.state.showStream? 'visible' : 'hidden'
                     }}
-                    onLoggedIn={(userId) => this._onLoggedIn(userId)}
-                    handleCustomEvent={(event) => this._handleCustomEvent(event)}
-                    onStreamFailed={this.props.onStreamFailed}
-                    onStopped={(message) => this._handleStreamStopped("stopped", message)}
-                    onTerminated={(message) => this._handleStreamStopped("terminated", message)}
+                    onLoggedIn={(userId) => this._onLoggedIn(userId, renderedStreamGeneration)}
+                    handleCustomEvent={(event) => this._handleCustomEvent(event, renderedStreamGeneration)}
+                    onStreamFailed={() => {
+                        if (!this._isCurrentStreamCallback(renderedStreamGeneration, "failed")) return;
+                        this.props.onStreamFailed();
+                    }}
+                    onStopped={(message) => this._handleStreamStopped("stopped", message, renderedStreamGeneration)}
+                    onTerminated={(message) => this._handleStreamStopped("terminated", message, renderedStreamGeneration)}
                     />}
                 </div>
 
