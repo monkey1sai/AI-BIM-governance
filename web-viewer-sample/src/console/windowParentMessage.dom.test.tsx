@@ -5501,6 +5501,81 @@ describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支�
     expect(internals(app).state.govBindingApplyState).toEqual({ status: "applying" });
   });
 
+  it("consumes a superseded artifact-group error once without mutating B", () => {
+    const app = bindingApplyApp();
+    const privateApp = internals(app) as unknown as {
+      _beginStageAttempt: (url: string) => number;
+      activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
+      runtimeCommandContexts: Map<string, {
+        eventType: string;
+        bindingRevisionId: string;
+        stageAttemptGeneration: number;
+        stageUrl: string;
+      }>;
+      runtimeCommandTerminalClaims: Map<string, { eventType: string; outcome: string }>;
+    };
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: "stage://b.usdc",
+      loadedStageUrl: null,
+      stageLoadStatus: "pending",
+      govBindingApplyState: { status: "applying" },
+      runtimeCommandLifecycles: [{
+        request_id: "req_a_artifact_error",
+        event_type: "loadArtifactGroupRequest",
+        phases: ["pending"],
+      }],
+    };
+    const generationA = privateApp._beginStageAttempt("stage://a.usdc");
+    internals(app).pendingStageUrl = "stage://a.usdc";
+    privateApp.runtimeCommandContexts.set("req_a_artifact_error", {
+      eventType: "loadArtifactGroupRequest",
+      bindingRevisionId: "rev_a",
+      stageAttemptGeneration: generationA,
+      stageUrl: "stage://a.usdc",
+    });
+    const generationB = privateApp._beginStageAttempt("stage://b.usdc");
+    internals(app).pendingStageUrl = "stage://b.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: "stage://b.usdc",
+      loadedStageUrl: null,
+      stageLoadStatus: "pending",
+      govBindingApplyState: { status: "applying" },
+    };
+    const lateError = {
+      event_type: "loadArtifactGroupResult",
+      payload: {
+        result: "error",
+        request_id: "req_a_artifact_error",
+        binding_revision_id: "rev_a",
+        error: "late artifact group failure",
+      },
+    };
+
+    internals(app)._handleCustomEvent(lateError);
+    internals(app)._handleCustomEvent(lateError);
+
+    expect(privateApp.runtimeCommandTerminalClaims.get("req_a_artifact_error")).toEqual({
+      eventType: "loadArtifactGroupRequest",
+      outcome: "superseded",
+    });
+    expect(privateApp.runtimeCommandContexts.has("req_a_artifact_error")).toBe(false);
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        request_id: "req_a_artifact_error",
+        phases: ["pending", "terminal"],
+        outcome: "superseded",
+      }),
+    ]));
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      generation: generationB,
+      status: "pending",
+    }));
+    expect(internals(app).state.govBindingApplyState).toEqual({ status: "applying" });
+    expect(internals(app).state.stageLoadStatus).toBe("pending");
+  });
+
   it.each([
     ["missing binding revision", {}],
     ["mismatched binding revision", { binding_revision_id: "rev_binding_wrong" }],

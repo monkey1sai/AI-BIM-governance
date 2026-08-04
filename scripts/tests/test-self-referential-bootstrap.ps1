@@ -168,6 +168,11 @@ try {
         return $output
     }
     $null = Invoke-FixtureGit -Arguments @('init', '-q')
+    # `git merge --no-commit` still prepares merge metadata and requires an
+    # identity on a clean CI runner. Keep the fixture self-contained: configure
+    # only this disposable repository, never the caller's global Git config.
+    $null = Invoke-FixtureGit -Arguments @('config', 'user.email', 'fixture@invalid')
+    $null = Invoke-FixtureGit -Arguments @('config', 'user.name', 'fixture')
     $mainBranch = ((Invoke-FixtureGit -Arguments @('branch', '--show-current')) | Out-String).Trim()
     $commit = {
         param($msg, [bool] $AllowEmpty = $false)
