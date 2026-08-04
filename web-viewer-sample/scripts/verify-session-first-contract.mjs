@@ -144,8 +144,35 @@ assert.match(
     // C M4：_sendStreamMessage 先經 _withRuntimeAuthority(message) 包成授權後的 `outgoing` 再送出，
     // 故送出物件與後續 result 映射/logging 皆針對 `outgoing`（原契約硬編 `message`，於 runtime authority
     // 閘門落地後更新為 `outgoing`；send-object→map-Promise-reply→handle→log 的結構意圖不變）。
-    /private _sendStreamMessage[\s\S]*?AppStream\.sendMessage\(outgoing\)[\s\S]*?appStreamResultToAppEvent\(outgoing\.event_type, result\)[\s\S]*?this\._handleCustomEvent\(responseEvent\)[\s\S]*?this\._appendDemoOutgoing/,
-    "_sendStreamMessage must send the runtime-authority-wrapped object payload through AppStream, handle built-in Promise replies, and log outgoing messages",
+    /private _sendStreamMessage[\s\S]*?AppStream\.sendMessage\(outgoing\)[\s\S]*?appStreamResultToAppEvent\(\s*outgoing\.event_type,\s*result,\s*outgoing\.payload,\s*Boolean\(nativeOpenStageDispatch\),?\s*\)[\s\S]*?this\._handleCustomEvent\(responseEvent, streamGenerationAtSend\)[\s\S]*?this\._appendDemoOutgoing/,
+    "_sendStreamMessage must preserve the verified outbound payload while handling built-in Promise replies and logging outgoing messages",
+);
+assert.ok(
+    windowSource.includes("const streamGenerationAtSend = this.streamGeneration;"),
+    "_sendStreamMessage must capture the stream generation before sending a runtime message",
+);
+assert.ok(
+    windowSource.includes("this._handleCustomEvent(responseEvent, streamGenerationAtSend)"),
+    "_sendStreamMessage must ignore Promise replies from a superseded stream generation",
+);
+assert.ok(
+    windowSource.includes("this._isCurrentStreamCallback(streamGenerationAtSend, `${outgoing.event_type}-error`)"),
+    "_sendStreamMessage must ignore Promise rejections from a superseded stream generation",
+);
+assert.match(
+    windowSource,
+    /private _settleNativeOpenStageDispatch[\s\S]*?private _dispatchNativeOpenStage[\s\S]*?private _enqueueNativeOpenStage[\s\S]*?queuedNativeOpenStage/,
+    "production native opened-stage requests must be single-flight with a latest-wins queued successor",
+);
+assert.match(
+    windowSource,
+    /function requestUsesNativeOpenedStageResult\(requestEventType: string\)[\s\S]*?openStageRequest[\s\S]*?loadArtifactGroupRequest[\s\S]*?requestUsesNativeOpenedStageResult\(outgoing\.event_type\)/,
+    "all stage mutators sharing NVIDIA's openedStageResult callback must use the same native completion slot",
+);
+assert.match(
+    windowSource,
+    /private _dispatchStageRequest[\s\S]*?const onDispatched = \(\) => \{[\s\S]*?this\._scheduleStageLoadTimeout\(attemptGeneration\)[\s\S]*?this\._scheduleLoadingStateQuery\(1500\)[\s\S]*?this\.stageDispatchCallbacks\.set\(message, onDispatched\)[\s\S]*?this\._sendStreamMessage\(message\)/,
+    "stage proof timing must begin only after a stage request actually dispatches",
 );
 assert.doesNotMatch(
     windowSource,
@@ -154,8 +181,8 @@ assert.doesNotMatch(
 );
 assert.match(
     windowSource,
-    /function appStreamResultToAppEvent[\s\S]*?requestEventType === "openStageRequest"[\s\S]*?event_type: "openedStageResult"[\s\S]*?requestEventType === "loadingStateQuery"[\s\S]*?event_type: "loadingStateResponse"[\s\S]*?requestEventType === "getChildrenRequest"[\s\S]*?event_type: "getChildrenResponse"/,
-    "viewer must map AppStreamer built-in Promise replies back into existing DataChannel handlers",
+    /function appStreamResultToAppEvent[\s\S]*?requestUsesNativeOpenedStageResult\(requestEventType\)[\s\S]*?event_type: "openedStageResult"[\s\S]*?requestEventType === "loadingStateQuery"[\s\S]*?event_type: "loadingStateResponse"[\s\S]*?requestEventType === "getChildrenRequest"[\s\S]*?event_type: "getChildrenResponse"/,
+    "viewer must map built-in Promise replies for every native opened-stage request back into existing DataChannel handlers",
 );
 assert.doesNotMatch(
     windowSource,
@@ -202,21 +229,79 @@ assert.match(
     /event\.event_type == "loadingStateResponse"[\s\S]*?_recordLoadedStageEvidence\(payloadUrl, "loadingStateResponse"/,
     "loadingStateResponse must record and compare loaded stage URL evidence",
 );
+const progressActivityStart = windowSource.indexOf('else if (event.event_type === "updateProgressActivity")');
+const progressActivityTail = windowSource.slice(progressActivityStart);
+const progressActivityEndMatch = /\n\s*else if \(event\.event_type === "highlightPrimsResult"\)/.exec(progressActivityTail);
+const progressActivityEnd = progressActivityEndMatch === null ? -1 : progressActivityStart + progressActivityEndMatch.index;
+assert.ok(progressActivityStart >= 0 && progressActivityEnd > progressActivityStart, "updateProgressActivity handler source slice is missing");
+const progressActivitySource = windowSource.slice(progressActivityStart, progressActivityEnd);
 assert.match(
-    windowSource,
-    /activityText === "None"[\s\S]*?const loadedUrl = this\.pendingStageUrl;[\s\S]*?_recordLoadedStageEvidence\(loadedUrl, "updateProgressActivity", activityText\)[\s\S]*?_completeStageLoad\(loadedUrl\)/,
-    "updateProgressActivity=None must prove the pending stage URL when Kit omits openedStageResult",
+    progressActivitySource,
+    /if \(activityText === "None"\) return;/,
+    "updateProgressActivity=None must be advisory only; completion authority is correlated openedStageResult",
+);
+assert.doesNotMatch(
+    progressActivitySource,
+    /_recordLoadedStageEvidence|_completeStageLoad/,
+    "updateProgressActivity=None must not record stage evidence or complete a stage without correlation",
 );
 assert.match(
     windowSource,
-    /onStopped=\{\(message\) => this\._handleStreamStopped\("stopped", message\)\}/,
+    /onStopped=\{\(message\) => this\._handleStreamStopped\("stopped", message, renderedStreamGeneration\)\}/,
     "AppStream onStop must surface visible WebRTC disconnect state",
 );
 assert.match(
     windowSource,
-    /onTerminated=\{\(message\) => this\._handleStreamStopped\("terminated", message\)\}/,
+    /onTerminated=\{\(message\) => this\._handleStreamStopped\("terminated", message, renderedStreamGeneration\)\}/,
     "AppStream onTerminate must surface visible WebRTC disconnect state",
 );
+assert.ok(
+    windowSource.includes("private streamGeneration = 0;"),
+    "Window.tsx must own a synchronous stream lifecycle generation",
+);
+assert.match(
+    windowSource,
+    /private _replaceStreamLifecycle\(\): number \{[\s\S]*?this\.streamGeneration \+= 1;[\s\S]*?this\._invalidateStageAttempt\(\);[\s\S]*?this\._clearStageLoadTimeout\(\);/,
+    "stream lifecycle replacement must invalidate callbacks and stage timers synchronously before React remounts",
+);
+assert.match(
+    windowSource,
+    /const streamMountKey = streamEndpointChanged[\s\S]*?this\._replaceStreamLifecycle\(\)/,
+    "a changed endpoint must replace the stream lifecycle before AppStream receives the new endpoint",
+);
+assert.ok(
+    windowSource.includes("isKitReady: streamEndpointChanged ? false : this.state.isKitReady"),
+    "a changed endpoint must not carry Kit readiness into the replacement AppStream lifecycle",
+);
+assert.ok(
+    windowSource.includes("if (!streamEndpointChanged && this.state.isKitReady"),
+    "bootstrap must not open a stage before a replacement AppStream generation reports ready",
+);
+assert.ok(
+    windowSource.includes("if (this.state.isKitReady && this._canOpenSelectedAsset())"),
+    "onStarted must not schedule an open until its own stream generation reports Kit ready",
+);
+const stageLoadTimeoutStart = windowSource.indexOf("private _scheduleStageLoadTimeout");
+const stageLoadTimeoutEnd = windowSource.indexOf("private _clearStageLoadTimeout", stageLoadTimeoutStart);
+assert.ok(stageLoadTimeoutStart >= 0 && stageLoadTimeoutEnd > stageLoadTimeoutStart, "stage timeout source slice is missing");
+const stageLoadTimeoutSource = windowSource.slice(stageLoadTimeoutStart, stageLoadTimeoutEnd);
+assert.ok(
+    stageLoadTimeoutSource.includes("STAGE_LOAD_TIMEOUT_MS"),
+    "stage loading must use the fixed 45-second terminal deadline",
+);
+assert.ok(
+    !stageLoadTimeoutSource.includes("_completeStageLoadFromVisibleStream"),
+    "the stage timeout must not extend itself when a provisional stream is visible",
+);
+for (const callback of [
+    "this._onStreamStarted(renderedStreamGeneration)",
+    "this._onLoggedIn(userId, renderedStreamGeneration)",
+    "this._handleCustomEvent(event, renderedStreamGeneration)",
+    "this._handleStreamStopped(\"stopped\", message, renderedStreamGeneration)",
+    "this._handleStreamStopped(\"terminated\", message, renderedStreamGeneration)",
+]) {
+    assert.ok(windowSource.includes(callback), `AppStream must bind ${callback} to the rendered stream generation`);
+}
 // remove-conflict-review-from-fast-mvp:review-bootstrap 已退役,改驗 session-first 順序到 stream-config 的鏈
 assert.match(
     windowSource,

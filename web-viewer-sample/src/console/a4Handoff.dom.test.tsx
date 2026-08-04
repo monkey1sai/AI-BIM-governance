@@ -54,6 +54,7 @@ type AppInternals = {
   _ensurePrimaryViewerLease: () => Promise<string | null>;
   _beginA4Handoff: (sessionId: string) => Promise<void>;
   _retryA4Handoff: () => void;
+  _reconnectStream: () => void;
   _handleCustomEvent: (event: { event_type: string; payload: Record<string, unknown> }) => void;
   render: () => React.ReactElement;
 };
@@ -314,6 +315,38 @@ describe("A4 S3 trusted handoff viewer", () => {
       request_id: retry.payload.request_id,
       retry_of_request_id: first.payload.request_id,
     });
+  });
+
+  it("terminalizes a pending handoff when reconnect supersedes its runtime command", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW_MS);
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+    vi.spyOn(AppStream, "stop").mockImplementation(() => undefined);
+    const { target } = readyApp("focus");
+    const sent = await beginAndSend(target);
+
+    target._reconnectStream();
+
+    expect(target.state.a4Handoff).toMatchObject({
+      status: "rejected",
+      phase: "terminal",
+      request_id: sent.payload.request_id,
+      detail: "stream_lifecycle_superseded",
+      retryable: true,
+    });
+    expect(renderToString(target.render())).toContain('data-testid="a4-handoff-retry"');
+
+    target._handleCustomEvent({
+      event_type: "focusPrimResult",
+      payload: {
+        trace_id: TRACE_ID,
+        result: "success",
+        request_id: sent.payload.request_id,
+        prim_path: "/World/Door_001",
+      },
+    });
+
+    expect(target.state.a4Handoff.status).toBe("rejected");
   });
 
   it("zero-sends when the shared authentic lease authority is unavailable", async () => {
