@@ -375,6 +375,11 @@ try {
     Assert-Throws -Context 'garbage opened_at in ledger' -MessagePattern 'ISO-8601' -Action {
         Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{ opened_at = '2026-99-99T99:99:99garbage' })))
     }
+    Assert-Throws -Context 'opened_at with no valid successor' -MessagePattern 'no valid later fixpoint' -Action {
+        Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{
+            opened_at = '9999-12-31T23:59:59.999Z'
+        })))
+    }
     Assert-Throws -Context 'open entry with fixpoint' -MessagePattern 'must not carry a fixpoint' -Action {
         Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{ fixpoint = @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = ('a' * 40); evidence_refs = @('x') } })))
     }
@@ -420,6 +425,30 @@ try {
         Assert-SelfReferentialEvidenceBlob -RepoRoot $gitRoot -Ref 'docs/evidence/remote-linux-deploy/fixpoint/summary.md' -Context 'test' -HeadSha $fixpointCommit
     }
     Assert-SelfReferentialEvidenceBlob -RepoRoot $gitRoot -Ref 'docs/evidence/remote-linux-deploy/fixpoint/summary.md' -Context 'test' -HeadSha $baseSha
+
+    # Git symlinks are blobs (mode 120000). A dangling symlink must not count as
+    # re-verification evidence even though cat-file -t would report "blob".
+    $symlinkRepo = Join-Path $tempRoot 'symlink-evidence-repo'
+    New-Item -ItemType Directory -Path $symlinkRepo -Force | Out-Null
+    Push-Location -LiteralPath $symlinkRepo
+    try {
+        $null = & git -c init.defaultBranch=main init -q
+        $null = & git -c user.email=t@t -c user.name=t config user.email t@t
+        $null = & git -c user.email=t@t -c user.name=t config user.name t
+        # Create a symlink via git update-index so the fixture works on Windows
+        # without requiring elevated symlink privileges.
+        $emptyBlob = (('target' | & git hash-object -w --stdin) | Out-String).Trim()
+        $null = & git update-index --add --cacheinfo "120000,$emptyBlob,docs/evidence/x/self-referential-bootstrap/link.md"
+        $null = & git -c user.email=t@t -c user.name=t commit --no-gpg-sign -q -m 'symlink evidence'
+        $symlinkHead = ((& git rev-parse HEAD) | Out-String).Trim()
+        Assert-Throws -Context 'symlink evidence blob' -MessagePattern 'regular committed file|mode=120000' -Action {
+            Assert-SelfReferentialEvidenceBlob -RepoRoot $symlinkRepo `
+                -Ref 'docs/evidence/x/self-referential-bootstrap/link.md' `
+                -Context 'test' -HeadSha $symlinkHead
+        }
+    } finally {
+        Pop-Location
+    }
 
     # --- transition: deletion of open debt (review P1 #1) ---------------------------
     $openBase = New-LedgerJson -Entries @((New-Entry))

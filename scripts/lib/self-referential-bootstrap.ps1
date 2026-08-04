@@ -265,6 +265,19 @@ function Get-SelfReferentialBootstrapLedger {
         if (-not (Test-SelfReferentialIsoTimestamp -Value $entry.opened_at)) {
             throw "self_referential_bootstrap: entry '$id' opened_at must be a valid ISO-8601 timestamp."
         }
+        # Open entries are immutable and block later mechanism PRs until closed.
+        # An opened_at with no representable later fixpoint (e.g. the last
+        # millisecond of year 9999) permanently poisons the ledger, so reject
+        # any opening time that cannot host a strictly later reverified_at in
+        # the same anchored ISO formats.
+        $openedAt = ConvertTo-SelfReferentialTimestamp $entry.opened_at
+        $latestRepresentable = [DateTimeOffset]::Parse(
+            '9999-12-31T23:59:58.998Z',
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::AssumeUniversal)
+        if ($openedAt -ge $latestRepresentable) {
+            throw "self_referential_bootstrap: entry '$id' opened_at leaves no valid later fixpoint.reverified_at under the allowed ISO-8601 formats."
+        }
         Assert-SelfReferentialBootstrapReason -Reason ([string]$entry.reason) -Context "ledger entry '$id'"
         $null = Assert-SelfReferentialStringList -Value $entry.verification_mechanism_paths `
             -Context "entry '$id' verification_mechanism_paths"
@@ -327,10 +340,12 @@ function ConvertTo-SelfReferentialCanonicalEntry {
 }
 
 function Assert-SelfReferentialEvidenceBlob {
-    # Evidence must be a COMMITTED file at the PR HEAD SHA: 'git cat-file -t
-    # <head>:<ref>' must say blob. Filesystem Test-Path would accept '.',
-    # directories, and untracked workflow artifacts; ambient HEAD would accept
-    # blobs that only exist in the synthetic pull-request merge tree.
+    # Evidence must be a COMMITTED regular file at the PR HEAD SHA. Use ls-tree
+    # mode rather than cat-file -t alone: Git stores symlinks as blobs (mode
+    # 120000), so a dangling symlink would otherwise pass as "evidence".
+    # Filesystem Test-Path would also accept '.', directories, and untracked
+    # workflow artifacts; ambient HEAD would accept blobs that only exist in
+    # the synthetic pull-request merge tree.
     param(
         [Parameter(Mandatory = $true)][string] $RepoRoot,
         [Parameter(Mandatory = $true)][string] $Ref,
@@ -338,9 +353,26 @@ function Assert-SelfReferentialEvidenceBlob {
         [string] $HeadSha = ''
     )
     $revision = if ([string]::IsNullOrWhiteSpace($HeadSha)) { 'HEAD' } else { $HeadSha }
-    $objectType = (& git -C $RepoRoot cat-file -t "${revision}:$Ref" 2>$null | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or $objectType -ne 'blob') {
-        throw "self_referential_bootstrap: $Context evidence ref '$Ref' is not a committed file at the PR head revision (got '$objectType')."
+    # -z is not used: a single path should yield at most one record. Reject
+    # multi-line results so path '.' cannot accidentally match a child blob.
+    $treeLines = @(& git -C $RepoRoot ls-tree --full-tree $revision -- $Ref 2>$null |
+        ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+    if ($LASTEXITCODE -ne 0 -or $treeLines.Count -ne 1) {
+        throw "self_referential_bootstrap: $Context evidence ref '$Ref' is not a committed file at the PR head revision."
+    }
+    $treeEntry = $treeLines[0]
+    if ($treeEntry -notmatch '^([0-7]{6})\s+(\S+)\s+([0-9a-fA-F]{40,64})\t(.+)$') {
+        throw "self_referential_bootstrap: $Context cannot parse the head tree entry for evidence '$Ref'."
+    }
+    $mode = $Matches[1]
+    $objectType = $Matches[2]
+    $entryPath = $Matches[4] -replace '\\', '/'
+    $normalizedRef = $Ref -replace '\\', '/'
+    if ($entryPath -cne $normalizedRef) {
+        throw "self_referential_bootstrap: $Context evidence ref '$Ref' is not a committed file at the PR head revision (resolved path '$entryPath')."
+    }
+    if ($objectType -cne 'blob' -or $mode -notin @('100644', '100755')) {
+        throw "self_referential_bootstrap: $Context evidence ref '$Ref' must be a regular committed file (mode 100644/100755 blob); got mode=$mode type=$objectType."
     }
 }
 

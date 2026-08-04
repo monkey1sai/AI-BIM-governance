@@ -345,6 +345,16 @@ Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths -Led
     Assert-True ($verdict -like 'incomplete:*') "root early-exit wiring must be incomplete (got: $verdict)"
     Assert-True ($verdict -match 'terminate at root') "root early-exit reason names termination (got: $verdict)"
 
+    # [Environment]::Exit is not ExitStatementAst; it still ends the process
+    # before the assertion while leaving every other wiring shape intact.
+    $envExitSource = Insert-BeforeBootstrapAssertion -Source $realCheckerSource -Insertion `
+        '[System.Environment]::Exit(0)'
+    Write-File 'scripts/tests/check-pr-body-evidence.ps1' $envExitSource
+    $revEnvExit = Commit-All 'Environment.Exit before bootstrap assertion'
+    $verdict = Detect $revEnvExit
+    Assert-True ($verdict -like 'incomplete:*') "Environment.Exit must be incomplete (got: $verdict)"
+    Assert-True ($verdict -match 'terminate') "Environment.Exit reason names early termination (got: $verdict)"
+
     # rev11: a directly invoked nested script block can terminate the process.
     Write-File 'scripts/tests/check-pr-body-evidence.ps1' @'
 param([int] $PrNumber)

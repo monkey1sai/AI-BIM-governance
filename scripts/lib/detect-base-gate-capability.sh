@@ -564,6 +564,26 @@ if ($prNumberReassignments.Count -gt 0) {
     Write-Output 'prnumber-reassigned'
     exit 0
 }
+# Process-exit APIs are not ExitStatementAst. [Environment]::Exit(0) and
+# FailFast end the checker successfully before the assertion while retaining
+# every other expected wiring shape (Codex: Reject process-terminating calls).
+$processExitMemberCalls = @($ast.FindAll({
+    param($node)
+    if ($node -isnot [System.Management.Automation.Language.InvokeMemberExpressionAst] -or
+        $node.Extent.StartOffset -ge $firstAssertionOffset) {
+        return $false
+    }
+    if ($node.Member -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) {
+        return $false
+    }
+    $member = [string]$node.Member.Value
+    return $member -imatch '^(Exit|FailFast|Kill)$'
+}, $true))
+if ($processExitMemberCalls.Count -gt 0) {
+    Write-Output 'early-root-termination'
+    exit 0
+}
+
 $earlyRootTerminators = @($ast.FindAll({
     param($node)
     $isSuccessfulTerminator = (
