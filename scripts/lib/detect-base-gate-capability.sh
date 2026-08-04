@@ -168,6 +168,35 @@ function Test-IsCanonicalLedgerPathArgument {
     return $childPath -ceq 'scripts/self-referential-bootstrap-ledger.json'
 }
 
+function Test-IsCanonicalBootstrapDotSource {
+    param([Parameter(Mandatory = $true)][System.Management.Automation.Language.CommandAst] $Command)
+    if ($Command.InvocationOperator -ne [System.Management.Automation.Language.TokenKind]::Dot -or
+        $Command.CommandElements.Count -ne 1 -or
+        $Command.CommandElements[0] -isnot [System.Management.Automation.Language.ParenExpressionAst]) {
+        return $false
+    }
+    $target = $Command.CommandElements[0]
+    $commands = @($target.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.CommandAst]
+    }, $true))
+    if ($commands.Count -ne 1) { return $false }
+
+    $joinPath = $commands[0]
+    $elements = @($joinPath.CommandElements)
+    if ($joinPath.GetCommandName() -cne 'Join-Path' -or $elements.Count -ne 3 -or
+        $elements[1] -isnot [System.Management.Automation.Language.VariableExpressionAst] -or
+        $elements[2] -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) {
+        return $false
+    }
+    $rootName = $elements[1].VariablePath.UserPath
+    $childPath = $elements[2].Value -replace '\\', '/'
+    return ($rootName -ceq 'scriptRepoRoot' -and
+            $childPath -ceq 'scripts/lib/self-referential-bootstrap.ps1') -or
+        ($rootName -ceq 'PSScriptRoot' -and
+            $childPath -ceq '../lib/self-referential-bootstrap.ps1')
+}
+
 function Test-IsCanonicalTableAccessorArgument {
     param([AllowNull()][System.Management.Automation.Language.Ast] $Argument)
     if ($Argument -isnot [System.Management.Automation.Language.ScriptBlockExpressionAst]) {
@@ -289,9 +318,7 @@ $dotSources = @($ast.FindAll({
     param($node)
     $node -is [System.Management.Automation.Language.CommandAst] -and
         (Test-IsRootExecutableCommand -Command $node) -and
-        $node.InvocationOperator -eq [System.Management.Automation.Language.TokenKind]::Dot -and
-        $node.CommandElements.Count -gt 0 -and
-        $node.CommandElements[0].Extent.Text -match 'self-referential-bootstrap\.ps1'
+        (Test-IsCanonicalBootstrapDotSource -Command $node)
 }, $true))
 if ($dotSources.Count -eq 0) {
     Write-Output 'missing-dot-source'

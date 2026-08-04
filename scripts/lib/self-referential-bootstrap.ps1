@@ -344,6 +344,34 @@ function Assert-SelfReferentialEvidenceBlob {
     }
 }
 
+function Assert-SelfReferentialLedgerEvidenceBlobs {
+    param(
+        [Parameter(Mandatory = $true)] $Ledger,
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $HeadSha,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $ChangedPaths
+    )
+    foreach ($entry in @($Ledger.entries)) {
+        $id = [string]$entry.id
+        foreach ($ref in @($entry.bootstrap_evidence_refs)) {
+            $evidenceRef = [string]$ref
+            if (@($ChangedPaths) -ccontains $evidenceRef) {
+                Assert-SelfReferentialEvidenceBlob -RepoRoot $RepoRoot -Ref $evidenceRef `
+                    -Context "entry '$id' bootstrap" -HeadSha $HeadSha
+            }
+        }
+        if ([string]$entry.status -eq 'closed') {
+            foreach ($ref in @($entry.fixpoint.evidence_refs)) {
+                $evidenceRef = [string]$ref
+                if (@($ChangedPaths) -ccontains $evidenceRef) {
+                    Assert-SelfReferentialEvidenceBlob -RepoRoot $RepoRoot -Ref $evidenceRef `
+                        -Context "entry '$id' fixpoint" -HeadSha $HeadSha
+                }
+            }
+        }
+    }
+}
+
 function Compare-SelfReferentialLedgerTransition {
     # Evaluates the base -> head ledger transition. The ledger is append-only and
     # entries are immutable except for the single legal open -> closed transition:
@@ -506,7 +534,22 @@ function Compare-SelfReferentialLedgerTransition {
             throw "self_referential_bootstrap: entry '$id' mechanism_commit $commit is not bound to originating PR #$originatingPr in its merge/squash message."
         }
         foreach ($ref in @($fp.evidence_refs)) {
-            Assert-SelfReferentialEvidenceBlob -RepoRoot $RepoRoot -Ref ([string]$ref) -Context "entry '$id' fixpoint" -HeadSha $HeadSha
+            $evidenceRef = [string]$ref
+            Assert-SelfReferentialEvidenceBlob -RepoRoot $RepoRoot -Ref $evidenceRef -Context "entry '$id' fixpoint" -HeadSha $HeadSha
+            if ([string]::IsNullOrWhiteSpace($HeadSha)) {
+                throw "self_referential_bootstrap: closing entry '$id' requires HeadSha to bind evidence chronology; refusing ambient-HEAD resolution."
+            }
+            if (-not (@($ChangedPaths) -ccontains $evidenceRef)) {
+                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$evidenceRef' must be added or modified by this closure PR; unchanged base evidence is not closure-specific re-verification."
+            }
+            & git -C $RepoRoot diff --quiet --no-ext-diff $BaseSha $HeadSha -- $evidenceRef 2>$null
+            $evidenceDiffExit = $LASTEXITCODE
+            if ($evidenceDiffExit -eq 0) {
+                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$evidenceRef' is unchanged between BaseSha and HeadSha; closure requires new re-verification evidence."
+            }
+            if ($evidenceDiffExit -ne 1) {
+                throw "self_referential_bootstrap: cannot determine whether entry '$id' fixpoint evidence '$evidenceRef' changed between BaseSha and HeadSha."
+            }
             # Post-merge binding: the evidence blob must have been introduced or
             # modified at or after the mechanism merged - a pre-existing unrelated
             # blob cannot stand in for the required post-merge re-verification.
@@ -514,12 +557,17 @@ function Compare-SelfReferentialLedgerTransition {
             # starts at ambient HEAD, which in a pull_request checkout is the
             # synthetic merge ref, so a base-side commit could supply the
             # chronology for a blob validated at head (Codex L1-correctness-4).
-            if ([string]::IsNullOrWhiteSpace($HeadSha)) {
-                throw "self_referential_bootstrap: closing entry '$id' requires HeadSha to bind evidence chronology; refusing ambient-HEAD resolution."
-            }
-            $evidenceIntroCommit = (& git -C $RepoRoot log -1 --format=%H $HeadSha -- ([string]$ref) 2>$null | Out-String).Trim()
+            $evidenceIntroCommit = (& git -C $RepoRoot log -1 --format=%H $HeadSha -- $evidenceRef 2>$null | Out-String).Trim()
             if ([string]::IsNullOrWhiteSpace($evidenceIntroCommit)) {
-                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$ref' has no commit history reachable from the PR head; cannot bind it to post-merge re-verification."
+                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$evidenceRef' has no commit history reachable from the PR head; cannot bind it to post-merge re-verification."
+            }
+            & git -C $RepoRoot merge-base --is-ancestor $evidenceIntroCommit $BaseSha 2>$null
+            $evidenceInBaseExit = $LASTEXITCODE
+            if ($evidenceInBaseExit -eq 0) {
+                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$evidenceRef' latest commit is already in BaseSha; closure must commit a new re-verification result."
+            }
+            if ($evidenceInBaseExit -ne 1) {
+                throw "self_referential_bootstrap: cannot compare fixpoint evidence '$evidenceRef' history with BaseSha."
             }
             # STRICT descendant. `--is-ancestor X X` succeeds, so an evidence file
             # committed IN the mechanism commit itself passed this check - letting
@@ -527,11 +575,11 @@ function Compare-SelfReferentialLedgerTransition {
             # is supposed to prove happened afterwards (Codex: "Require fixpoint
             # evidence to postdate the mechanism commit").
             if ($evidenceIntroCommit -eq $commit) {
-                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$ref' was committed by mechanism_commit $commit itself; the post-merge re-verification must produce NEW evidence, not cite the bootstrap artefact."
+                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$evidenceRef' was committed by mechanism_commit $commit itself; the post-merge re-verification must produce NEW evidence, not cite the bootstrap artefact."
             }
             & git -C $RepoRoot merge-base --is-ancestor $commit $evidenceIntroCommit 2>$null
             if ($LASTEXITCODE -ne 0) {
-                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$ref' predates mechanism_commit $commit; it cannot be the post-merge re-verification result."
+                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$evidenceRef' predates mechanism_commit $commit; it cannot be the post-merge re-verification result."
             }
         }
         $closedEntries += $head
@@ -566,13 +614,15 @@ function Assert-SelfReferentialBootstrapBody {
     )
 
     $mechanismPaths = @(Get-SelfReferentialMechanismPaths -ChangedPaths $ChangedPaths)
-    if ($mechanismPaths.Count -eq 0) { return }
+    $hasExactHeadContext = -not [string]::IsNullOrWhiteSpace($HeadSha) -and
+        -not [string]::IsNullOrWhiteSpace($RepoRoot)
+    if ($mechanismPaths.Count -eq 0 -and -not $hasExactHeadContext) { return }
 
     # Integrity first: a malformed head ledger fails closed before any gating
     # decision. When the head SHA is known, the ledger is read from that exact
     # revision - never from the ambient checkout, which in a pull_request job is
     # the synthetic merge tree.
-    if (-not [string]::IsNullOrWhiteSpace($HeadSha) -and -not [string]::IsNullOrWhiteSpace($RepoRoot)) {
+    if ($hasExactHeadContext) {
         $headLedgerJson = (& git -C $RepoRoot show "${HeadSha}:scripts/self-referential-bootstrap-ledger.json" 2>$null) -join "`n"
         if ($LASTEXITCODE -ne 0) {
             throw "self_referential_bootstrap: ledger missing at the PR head revision $HeadSha."
@@ -581,6 +631,11 @@ function Assert-SelfReferentialBootstrapBody {
     } else {
         $headLedger = Get-SelfReferentialBootstrapLedger -Path $LedgerPath
     }
+    if ($hasExactHeadContext) {
+        Assert-SelfReferentialLedgerEvidenceBlobs -Ledger $headLedger -RepoRoot $RepoRoot `
+            -HeadSha $HeadSha -ChangedPaths $ChangedPaths
+    }
+    if ($mechanismPaths.Count -eq 0) { return }
 
     # The transition can only be judged against the base. Without base context the
     # deletion/impersonation/forged-closure checks are blind, so any PR that touches

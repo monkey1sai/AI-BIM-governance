@@ -43,7 +43,7 @@
 
 | Item | Result |
 |---|---|
-| Self-referential bootstrap | `yes` / `no` |
+| Self-referential bootstrap | yes / no |
 | Bootstrap ledger entry | entry id（`yes` 時必填） |
 | Bootstrap reason | 具體機制缺口（`yes` 時必填，>=30 字元） |
 

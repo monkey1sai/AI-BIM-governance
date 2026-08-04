@@ -143,6 +143,18 @@ Assert-SelfReferentialBootstrapBody -Body $b -PrNumber $PrNumber
     Assert-True ($verdict -like 'incomplete:*') "wrong dot-source target must be incomplete (got: $verdict)"
     Assert-True ($verdict -match 'dot-source') "wrong dot-source reason names the missing target (got: $verdict)"
 
+    # A same-named decoy is not the trusted bootstrap library. Filename-only
+    # matching accepted this shape even though the canonical library was unused.
+    Write-File 'scripts/tests/check-pr-body-evidence.ps1' @'
+param([int] $PrNumber)
+. (Join-Path $PSScriptRoot '..\decoy\self-referential-bootstrap.ps1')
+Assert-SelfReferentialBootstrapBody -Body $body -PrNumber $PrNumber
+'@
+    $revDecoyDotSource = Commit-All 'checker dot-sources a same-named decoy library'
+    $verdict = Detect $revDecoyDotSource
+    Assert-True ($verdict -like 'incomplete:*') "same-named decoy dot-source must be incomplete (got: $verdict)"
+    Assert-True ($verdict -match 'dot-source') "decoy dot-source reason names the missing trusted target (got: $verdict)"
+
     # rev7: the library is really sourced, but the assertion name is still only
     # inert text; this isolates the second AST requirement.
     Write-File 'scripts/tests/check-pr-body-evidence.ps1' @'
