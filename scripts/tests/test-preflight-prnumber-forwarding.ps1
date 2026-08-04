@@ -117,6 +117,7 @@ try {
     $null = Invoke-FixtureGit -Arguments @(
         '-c', 'user.email=t@t', '-c', 'user.name=t',
         'commit', '--no-gpg-sign', '-q', '-m', 'evidence')
+    $baseSha = ((Invoke-FixtureGit -Arguments @('rev-parse', 'HEAD')) | Out-String).Trim()
 
     $entryJson = @{
         schema_version = 'self-referential-bootstrap-ledger/v1'
@@ -131,8 +132,19 @@ try {
             fixpoint = $null
         })
     } | ConvertTo-Json -Depth 8
-    $ledgerPath = Join-Path $tempRoot 'ledger.json'
+    # The current gate requires immutable base/head content proof for bootstrap
+    # evidence. Keep this test focused on PrNumber forwarding, but supply a
+    # complete fixture so its new-entry assertion is independently valid.
+    $ledgerRel = 'scripts/self-referential-bootstrap-ledger.json'
+    $ledgerPath = Join-Path $fx $ledgerRel
+    New-Item -ItemType Directory -Path (Split-Path $ledgerPath) -Force | Out-Null
     Set-Content -LiteralPath $ledgerPath -Value $entryJson -Encoding utf8
+    Set-Content -LiteralPath $evidenceFull -Value 'fresh evidence' -Encoding utf8
+    $null = Invoke-FixtureGit -Arguments @('add', '-A')
+    $null = Invoke-FixtureGit -Arguments @(
+        '-c', 'user.email=t@t', '-c', 'user.name=t',
+        'commit', '--no-gpg-sign', '-q', '-m', 'fresh bootstrap evidence')
+    $headSha = ((Invoke-FixtureGit -Arguments @('rev-parse', 'HEAD')) | Out-String).Trim()
 
     $rows = @{
         'Self-referential bootstrap' = 'yes'
@@ -145,13 +157,15 @@ try {
 
     # Without PrNumber the binding cannot be checked - the entry's pr=500 is unverified.
     Assert-SelfReferentialBootstrapBody -Body 'b' -ChangedPaths $changedPaths -LedgerPath $ledgerPath `
-        -GetTableValue $getValue -BaseLedgerJson $emptyBase -HasBaseContext $true -RepoRoot $fx
+        -GetTableValue $getValue -BaseLedgerJson $emptyBase -HasBaseContext $true -RepoRoot $fx `
+        -BaseSha $baseSha -HeadSha $headSha
 
     # With a mismatched PrNumber the binding must fail - proving the argument is load-bearing.
     $bound = $false
     try {
         Assert-SelfReferentialBootstrapBody -Body 'b' -ChangedPaths $changedPaths -LedgerPath $ledgerPath `
-            -GetTableValue $getValue -BaseLedgerJson $emptyBase -HasBaseContext $true -RepoRoot $fx -PrNumber 501
+            -GetTableValue $getValue -BaseLedgerJson $emptyBase -HasBaseContext $true -RepoRoot $fx `
+            -BaseSha $baseSha -HeadSha $headSha -PrNumber 501
     } catch {
         $bound = $true
         Assert-True ($_.Exception.Message -match 'must bind to their originating PR') "mismatch names the PR binding (got: $($_.Exception.Message))"
