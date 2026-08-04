@@ -137,6 +137,7 @@ export interface StageBindingStateOptions {
   maxCompleted?: number;
   maxCompletedPerSession?: number;
   maxActiveSessions?: number;
+  maxCancelledPreauthorizationIntents?: number;
 }
 
 export interface CreatePendingStageBindingInput {
@@ -235,6 +236,7 @@ const DEFAULT_MAX_NON_TERMINAL = 256;
 const DEFAULT_MAX_COMPLETED = 1_024;
 const DEFAULT_MAX_COMPLETED_PER_SESSION = 4;
 const DEFAULT_MAX_ACTIVE_SESSIONS = 256;
+const DEFAULT_MAX_CANCELLED_PREAUTHORIZATION_INTENTS = 1_024;
 
 /** Private process-local stage-binding state. Public callers use RuntimeMutationAuthority. */
 export class StageBindingState {
@@ -253,6 +255,7 @@ export class StageBindingState {
   private readonly maxCompleted: number;
   private readonly maxCompletedPerSession: number;
   private readonly maxActiveSessions: number;
+  private readonly maxCancelledPreauthorizationIntents: number;
 
   constructor(options: StageBindingStateOptions) {
     this.clock = options.clock;
@@ -267,6 +270,10 @@ export class StageBindingState {
       DEFAULT_MAX_COMPLETED_PER_SESSION,
     );
     this.maxActiveSessions = positiveBound(options.maxActiveSessions, DEFAULT_MAX_ACTIVE_SESSIONS);
+    this.maxCancelledPreauthorizationIntents = positiveBound(
+      options.maxCancelledPreauthorizationIntents,
+      DEFAULT_MAX_CANCELLED_PREAUTHORIZATION_INTENTS,
+    );
   }
 
   createPending(input: CreatePendingStageBindingInput): CreatePendingStageBindingResult {
@@ -330,7 +337,9 @@ export class StageBindingState {
     this.sweep(now);
     const key = preauthorizationIntentKey(input);
     const alreadyCancelled = this.cancelledPreauthorizationIntents.has(key);
+    if (alreadyCancelled) this.cancelledPreauthorizationIntents.delete(key);
     this.cancelledPreauthorizationIntents.set(key, now);
+    this.evictCancelledPreauthorizationIntents();
 
     const matchingTransactions = [...this.transactions.values()].filter((candidate) => (
       matchesPreauthorizationIntent(candidate, input)
@@ -580,6 +589,14 @@ export class StageBindingState {
       transaction.sessionId === sessionId
       && (transaction.phase === "pending" || transaction.phase === "executing"),
     ) as PendingStageBinding | ExecutingStageBinding | undefined ?? null;
+  }
+
+  private evictCancelledPreauthorizationIntents(): void {
+    while (this.cancelledPreauthorizationIntents.size > this.maxCancelledPreauthorizationIntents) {
+      const oldestKey = this.cancelledPreauthorizationIntents.keys().next().value as string | undefined;
+      if (!oldestKey) break;
+      this.cancelledPreauthorizationIntents.delete(oldestKey);
+    }
   }
 
   private nonTerminalCount(): number {

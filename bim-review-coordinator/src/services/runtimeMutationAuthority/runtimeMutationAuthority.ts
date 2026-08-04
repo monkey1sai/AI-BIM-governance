@@ -84,6 +84,7 @@ export interface RuntimeMutationAuthorityOptions {
   maxCompleted?: number;
   maxCompletedPerSession?: number;
   maxActiveSessions?: number;
+  maxCancelledPreauthorizationIntents?: number;
 }
 
 export interface StageBindingSelection {

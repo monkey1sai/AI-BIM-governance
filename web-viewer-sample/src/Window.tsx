@@ -448,6 +448,7 @@ interface StageAttempt {
 }
 
 const STAGE_AUTHORIZATION_TIMEOUT_MS = 45_000;
+const STAGE_AUTHORIZATION_CANCEL_TIMEOUT_MS = 5_000;
 const STAGE_LOAD_TIMEOUT_MS = 45_000;
 // Let the user-facing proof deadline claim the terminal result first. The
 // SDK slot watchdog runs immediately after it and only fences lifecycle reuse.
@@ -507,6 +508,19 @@ interface StageBindingPreauthorization {
         secondary_layers: Array<StageBindingArtifact & { role: "secondary" }>;
     };
     pending_expires_at: string;
+}
+
+interface ActiveStagePreauthorization {
+    clientRequestId: string;
+    controller: AbortController;
+    postStarted: boolean;
+    cancellationPromise: Promise<boolean> | null;
+}
+
+interface StagePreauthorizationCancellationBarrier {
+    request: ActiveStagePreauthorization;
+    promise: Promise<boolean>;
+    status: "pending" | "failed";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -881,6 +895,8 @@ export default class App extends React.Component<AppProps, AppState> {
     // create a new stage attempt.
     private stageIntentGeneration = 0;
     private pendingStagePreauthorizationIntent: number | null = null;
+    private activeStagePreauthorization: ActiveStagePreauthorization | null = null;
+    private stagePreauthorizationCancellationBarrier: StagePreauthorizationCancellationBarrier | null = null;
     private activeStageAttempt: StageAttempt | null = null;
     // React state remounts <AppStream>, but callbacks can run before React commits that state.
     // Keep the lifetime authority outside React so a retired stream is fenced synchronously.
@@ -916,7 +932,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private runtimeCommandTerminalClaims = new Map<string, { eventType: string; outcome: RuntimeCommandOutcome }>();
     // Terminal claims deliberately retain their minimal established shape.
     // Keep only the safety metadata needed to process a later authenticated
-    // changed_unconfirmed after an intent was superseded.
+    // physical-change terminal after an intent was superseded or timed out.
     private runtimeCommandTerminalSafetyContexts = new Map<string, RuntimeCommandContext>();
     private a4HandoffIntent: A4HandoffIntent | null = null;
     private a4HandoffStarted = false;
@@ -2155,6 +2171,60 @@ export default class App extends React.Component<AppProps, AppState> {
         if (bindingRevisionId) void this._resyncStageBindingProof();
     }
 
+    private _applyChangedFailedStageSafety(
+        context: RuntimeCommandContext | undefined,
+        bindingRevisionId: string | undefined,
+        stageUrl: string,
+        error: string,
+    ): boolean {
+        if (!context) return false;
+        const attemptGeneration = context.stageAttemptGeneration;
+        const activeAttempt = this.activeStageAttempt;
+        if (
+            attemptGeneration
+            && activeAttempt
+            && (
+                activeAttempt.generation !== attemptGeneration
+                || activeAttempt.status === "completed"
+            )
+        ) return false;
+        if (!attemptGeneration && activeAttempt && activeAttempt.status !== "completed") return false;
+
+        this.stageProofBlockGeneration += 1;
+        this.stageProofBlockedRevision = null;
+        this.confirmedStageBindingRevision = null;
+        this.unprovenStageUrl = null;
+        if (attemptGeneration && this._isCurrentStageAttemptAwaitingProof(attemptGeneration)) {
+            this._terminalizeStageAttempt(attemptGeneration, bindingRevisionId);
+        } else {
+            this._revokeStageProof(bindingRevisionId);
+        }
+        this._clearPendingBindingApplyForAttempt(attemptGeneration);
+        this.stageLoadFailureActive = true;
+        this.setState((state) => ({
+            loadingText: "模型組合僅部分套用",
+            streamDiagnostic: [
+                `目標：${redactStageUrlForDiagnostic(stageUrl || context.stageUrl)}`,
+                `錯誤：${error}`,
+            ].join("\n"),
+            showStream: this._hasRemoteVideoFrame(),
+            isLoading: false,
+            loadedStageUrl: null,
+            stageLoadStatus: "unproven",
+            runtimeCommandRejection: null,
+            govBindingActiveRevision: null,
+            govBindingApplyState: {
+                status: "failed",
+                reason: "runtime_changed_transaction_failed",
+            },
+            reviewEvents: [
+                ...state.reviewEvents,
+                "runtime changed_failed；已清除active evidence並阻擋handoff",
+            ].slice(-80),
+        }));
+        return true;
+    }
+
     private _terminalizeStageAttempt(
         attemptGeneration: number | null | undefined,
         bindingRevisionId?: string,
@@ -2989,15 +3059,17 @@ export default class App extends React.Component<AppProps, AppState> {
         return raw as unknown as StageBindingPreauthorization;
     }
 
-    private async _cancelStageBindingPreauthorization(clientRequestId: string): Promise<void> {
+    private async _cancelStageBindingPreauthorization(clientRequestId: string): Promise<boolean> {
         const sessionId = this.state.reviewSessionId;
-        if (!sessionId) return;
+        if (!sessionId) return false;
         const userToken = this._ensureStandaloneLabUserToken();
-        if (!userToken) return;
-        try {
+        if (!userToken) return false;
+        const controller = new AbortController();
+        let timeoutId: number | null = null;
+        const cancellationAttempt = (async (): Promise<boolean> => {
             const leaseToken = await this._ensurePrimaryViewerLease();
-            if (!leaseToken) return;
-            await fetch(
+            if (!leaseToken || controller.signal.aborted) return false;
+            const response = await fetch(
                 `${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(sessionId)}/stage-binding-cancellations`,
                 {
                     method: "POST",
@@ -3010,13 +3082,52 @@ export default class App extends React.Component<AppProps, AppState> {
                         source_client_id: reviewEnv.sourceClientId,
                         client_request_id: clientRequestId,
                     }),
+                    signal: controller.signal,
                 },
             );
-        } catch {
-            // The visible deadline remains terminal even when the best-effort
-            // cancellation cannot reach the coordinator. A later request is
-            // still client-fenced and can never dispatch to Kit from here.
+            return response.ok;
+        })().catch(() => false);
+        const deadline = new Promise<boolean>((resolve) => {
+            timeoutId = window.setTimeout(() => {
+                controller.abort();
+                resolve(false);
+            }, STAGE_AUTHORIZATION_CANCEL_TIMEOUT_MS);
+        });
+        try {
+            return await Promise.race([cancellationAttempt, deadline]);
+        } finally {
+            if (timeoutId !== null) window.clearTimeout(timeoutId);
         }
+    }
+
+    private _cancelActiveStagePreauthorization(
+        request: ActiveStagePreauthorization,
+        retryFailed = false,
+    ): Promise<boolean> {
+        request.controller.abort();
+        const currentBarrier = this.stagePreauthorizationCancellationBarrier;
+        if (retryFailed && currentBarrier?.request === request && currentBarrier.status === "failed") {
+            request.cancellationPromise = null;
+        }
+        if (request.cancellationPromise) return request.cancellationPromise;
+        const barrier: StagePreauthorizationCancellationBarrier = {
+            request,
+            promise: Promise.resolve(false),
+            status: "pending",
+        };
+        barrier.promise = this._cancelStageBindingPreauthorization(request.clientRequestId).then((confirmed) => {
+            if (this.stagePreauthorizationCancellationBarrier === barrier) {
+                if (confirmed) {
+                    this.stagePreauthorizationCancellationBarrier = null;
+                } else {
+                    barrier.status = "failed";
+                }
+            }
+            return confirmed;
+        });
+        request.cancellationPromise = barrier.promise;
+        this.stagePreauthorizationCancellationBarrier = barrier;
+        return barrier.promise;
     }
 
     private async _preauthorizeStageBindingWithinDeadline(
@@ -3025,12 +3136,41 @@ export default class App extends React.Component<AppProps, AppState> {
         let timeoutId: number | null = null;
         const controller = new AbortController();
         const clientRequestId = createStageBindingPreauthorizationRequestId();
+        const request: ActiveStagePreauthorization = {
+            clientRequestId,
+            controller,
+            postStarted: false,
+            cancellationPromise: null,
+        };
+        const supersededRequest = this.activeStagePreauthorization;
+        this.activeStagePreauthorization = request;
         try {
+            if (supersededRequest) {
+                supersededRequest.controller.abort();
+                if (supersededRequest.postStarted) {
+                    const cancellationConfirmed = await this._cancelActiveStagePreauthorization(supersededRequest);
+                    if (!cancellationConfirmed || this.activeStagePreauthorization !== request) {
+                        throw new DOMException("stage binding preauthorization superseded", "AbortError");
+                    }
+                }
+            }
+            const cancellationBarrier = this.stagePreauthorizationCancellationBarrier;
+            if (cancellationBarrier) {
+                const cancellationConfirmed = cancellationBarrier.status === "failed"
+                    ? await this._cancelActiveStagePreauthorization(cancellationBarrier.request, true)
+                    : await cancellationBarrier.promise;
+                if (!cancellationConfirmed || this.activeStagePreauthorization !== request) {
+                    throw new DOMException("stage binding preauthorization superseded", "AbortError");
+                }
+            }
+            if (this.activeStagePreauthorization !== request) {
+                throw new DOMException("stage binding preauthorization superseded", "AbortError");
+            }
+            request.postStarted = true;
             return await new Promise<StageBindingPreauthorization>((resolve, reject) => {
                 timeoutId = window.setTimeout(
                     () => {
-                        controller.abort();
-                        void this._cancelStageBindingPreauthorization(clientRequestId);
+                        void this._cancelActiveStagePreauthorization(request);
                         reject(new Error("stage_binding_authorization_timeout"));
                     },
                     STAGE_AUTHORIZATION_TIMEOUT_MS,
@@ -3039,6 +3179,9 @@ export default class App extends React.Component<AppProps, AppState> {
             });
         } finally {
             if (timeoutId !== null) window.clearTimeout(timeoutId);
+            if (this.activeStagePreauthorization === request) {
+                this.activeStagePreauthorization = null;
+            }
         }
     }
 
@@ -4658,6 +4801,31 @@ export default class App extends React.Component<AppProps, AppState> {
             this._settleNativeOpenStageDispatchFromDataChannel("openedStageResult", payload);
             let correlation = this._correlateRuntimeCommandEvent("openedStageResult", payload);
             if (correlation.disposition !== "matched") {
+                if (correlation.disposition === "duplicate") {
+                    const requestId = getPayloadString(payload, "request_id");
+                    const terminalClaim = this.runtimeCommandTerminalClaims.get(requestId);
+                    const terminalSafetyContext = this.runtimeCommandTerminalSafetyContexts.get(requestId);
+                    const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
+                    if (
+                        terminalClaim
+                        && terminalSafetyContext
+                        && (terminalClaim.outcome === "superseded" || terminalClaim.outcome === "timed-out")
+                        && runtimeResponseRequestTypes.get("openedStageResult")?.has(terminalClaim.eventType)
+                        && getPayloadString(payload, "result") !== "success"
+                        && getPayloadString(payload, "runtime_state") === "changed_failed"
+                        && (
+                            !terminalSafetyContext.bindingRevisionId
+                            || terminalSafetyContext.bindingRevisionId === bindingRevisionId
+                        )
+                    ) {
+                        this._applyChangedFailedStageSafety(
+                            terminalSafetyContext,
+                            bindingRevisionId || terminalSafetyContext.bindingRevisionId,
+                            getPayloadString(payload, "url") || terminalSafetyContext.stageUrl || "",
+                            redactRuntimeDiagnosticText(getPayloadString(payload, "error") || "unknown error"),
+                        );
+                    }
+                }
                 if (correlation.mismatchReason === "binding_revision" && correlation.context) {
                     this._claimRuntimeCommandTerminal(correlation.requestId, correlation.context.eventType, "error");
                     if (correlation.context.stageAttemptGeneration) {
@@ -4782,49 +4950,12 @@ export default class App extends React.Component<AppProps, AppState> {
                 if (requestId) this.runtimeCommandContexts.delete(requestId);
                 console.error(`Kit App communicates there was an error loading: ${redactStageUrlForDiagnostic(url)} (${error})`);
                 if (runtimeState === "changed_failed") {
-                    this.stageProofBlockGeneration += 1;
-                    this.stageProofBlockedRevision = null;
-                    this.confirmedStageBindingRevision = null;
-                    this.unprovenStageUrl = null;
-                    let failureOwnsVisibleStage = false;
-                    const attemptGeneration = correlation.context?.stageAttemptGeneration;
-                    if (
-                        attemptGeneration
-                        && this._isCurrentStageAttemptAwaitingProof(attemptGeneration)
-                    ) {
-                        this._terminalizeStageAttempt(
-                            attemptGeneration,
-                            bindingRevisionId || undefined,
-                        );
-                        failureOwnsVisibleStage = true;
-                    } else if (
-                        !this.activeStageAttempt
-                        || this.activeStageAttempt.status === "completed"
-                    ) {
-                        this._revokeStageProof(bindingRevisionId || undefined);
-                        failureOwnsVisibleStage = true;
-                    }
-                    if (!failureOwnsVisibleStage) return;
-                    this._clearPendingBindingApplyForAttempt(attemptGeneration);
-                    this.stageLoadFailureActive = true;
-                    this.setState((state) => ({
-                        loadingText: "模型組合僅部分套用",
-                        streamDiagnostic: [`目標：${redactStageUrlForDiagnostic(url)}`, `錯誤：${error}`].join("\n"),
-                        showStream: this._hasRemoteVideoFrame(),
-                        isLoading: false,
-                        loadedStageUrl: null,
-                        stageLoadStatus: "unproven",
-                        runtimeCommandRejection: null,
-                        govBindingActiveRevision: null,
-                        govBindingApplyState: {
-                            status: "failed",
-                            reason: "runtime_changed_transaction_failed",
-                        },
-                        reviewEvents: [
-                            ...state.reviewEvents,
-                            "runtime changed_failed；已清除active evidence並阻擋handoff",
-                        ].slice(-80),
-                    }));
+                    this._applyChangedFailedStageSafety(
+                        correlation.context,
+                        bindingRevisionId || undefined,
+                        url,
+                        error,
+                    );
                     return;
                 }
                 this._failStageLoad(

@@ -25,13 +25,62 @@ import { harnessEnabled } from './harness/harnessConfig';
 let pendingStreamerTeardown: Promise<boolean> | null = null;
 const STREAMER_TEARDOWN_POLL_MS = 25;
 const STREAMER_TEARDOWN_TIMEOUT_MS = 5_000;
+const GFN_STREAMER_IDLE_STATES = new Set([0, 7]); // Unknown / Finished in GFN client SDK 1.x.
+
+interface GfnStreamerLifecycle {
+    state?: number;
+    stop?: () => unknown;
+}
 
 function usesGfnManagedLifecycle(): boolean {
-    // GFN owns stream teardown in its SDK. NVIDIA's AppStreamer terminate()
-    // rejects there, so treating that unsupported operation as a failed
-    // physical teardown would permanently prevent a remounted GFN viewer from
-    // reconnecting.
+    // NVIDIA AppStreamer 5.18.2 does not implement its GFN adapter's
+    // terminate(), so GFN must be stopped through the client SDK global.
     return StreamConfig.source === "gfn";
+}
+
+function getGfnStreamerLifecycle(): GfnStreamerLifecycle | null {
+    const gfn = (globalThis as typeof globalThis & {
+        GFN?: { streamer?: GfnStreamerLifecycle };
+    }).GFN;
+    return gfn?.streamer || null;
+}
+
+function isGfnStreamerPhysicallyTerminated(): boolean {
+    const state = getGfnStreamerLifecycle()?.state;
+    return typeof state === "number" && GFN_STREAMER_IDLE_STATES.has(state);
+}
+
+function waitForPhysicalGfnTeardown(): Promise<boolean> {
+    if (isGfnStreamerPhysicallyTerminated()) return Promise.resolve(true);
+    const deadline = Date.now() + STREAMER_TEARDOWN_TIMEOUT_MS;
+    return new Promise((resolve) => {
+        const poll = () => {
+            if (isGfnStreamerPhysicallyTerminated()) {
+                resolve(true);
+                return;
+            }
+            if (Date.now() >= deadline) {
+                resolve(false);
+                return;
+            }
+            setTimeout(poll, STREAMER_TEARDOWN_POLL_MS);
+        };
+        poll();
+    });
+}
+
+async function terminateGfnStreamer(): Promise<boolean> {
+    const streamer = getGfnStreamerLifecycle();
+    if (!streamer) return false;
+    if (isGfnStreamerPhysicallyTerminated()) return true;
+    if (typeof streamer.stop !== "function") return false;
+    try {
+        await Promise.resolve(streamer.stop());
+        return waitForPhysicalGfnTeardown();
+    } catch (error) {
+        console.error(error);
+        return false;
+    }
 }
 
 function hasCompletedStreamerTeardown(result: unknown): boolean {
@@ -74,9 +123,18 @@ function waitForPhysicalStreamerTeardown(): Promise<boolean> {
     });
 }
 
+function trackStreamerTeardown(teardown: Promise<boolean>): Promise<boolean> {
+    pendingStreamerTeardown = teardown;
+    void teardown.finally(() => {
+        if (pendingStreamerTeardown === teardown) pendingStreamerTeardown = null;
+    });
+    return teardown;
+}
+
 function terminateStreamer(): Promise<boolean> {
-    if (usesGfnManagedLifecycle()) return Promise.resolve(true);
     if (pendingStreamerTeardown) return pendingStreamerTeardown;
+    if (usesGfnManagedLifecycle()) return trackStreamerTeardown(terminateGfnStreamer());
+    if (isStreamerPhysicallyTerminated()) return Promise.resolve(true);
     try {
         const teardown = Promise.resolve(getStreamer().terminate(false))
             .then(
@@ -95,11 +153,7 @@ function terminateStreamer(): Promise<boolean> {
                     return false;
                 },
             );
-        pendingStreamerTeardown = teardown;
-        void teardown.finally(() => {
-            if (pendingStreamerTeardown === teardown) pendingStreamerTeardown = null;
-        });
-        return teardown;
+        return trackStreamerTeardown(teardown);
     } catch (error) {
         console.error(error);
         return Promise.resolve(false);
@@ -107,8 +161,9 @@ function terminateStreamer(): Promise<boolean> {
 }
 
 function waitForStreamerTeardown(): Promise<boolean> {
-    if (usesGfnManagedLifecycle()) return Promise.resolve(true);
-    return pendingStreamerTeardown || Promise.resolve(isStreamerPhysicallyTerminated());
+    if (pendingStreamerTeardown) return pendingStreamerTeardown;
+    if (usesGfnManagedLifecycle()) return Promise.resolve(isGfnStreamerPhysicallyTerminated());
+    return Promise.resolve(isStreamerPhysicallyTerminated());
 }
 
 type StreamPayload = StreamEvent & {

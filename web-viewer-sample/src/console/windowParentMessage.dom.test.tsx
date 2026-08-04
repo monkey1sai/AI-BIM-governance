@@ -1001,6 +1001,71 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     expect(renderToString(internals(app).render())).toBe(timeoutHtml);
   });
 
+  it("applies a late changed_failed terminal to its timed-out stage without reviving it", () => {
+    vi.useFakeTimers();
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const privateApp = internals(app) as unknown as {
+      activeStageAttempt: { generation: number; status: string } | null;
+    };
+    vi.spyOn(AppStream, "sendMessage").mockImplementation(() => new Promise(() => {}));
+    const stageUrl = "stage://timeout-changed-failed.usdc";
+    const bindingRevisionId = "rev_timeout_changed_failed";
+    const requestId = "req_timeout_changed_failed";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageUrl,
+      selectedUSDAsset: { name: "timeout changed failed", url: stageUrl },
+      govBindingActiveRevision: "rev_last_good",
+      govBindingLastGoodRevision: "rev_last_good",
+    };
+    internals(app).pendingStageUrl = stageUrl;
+    const attemptGeneration = internals(app)._beginStageAttempt(stageUrl);
+    internals(app)._sendStreamMessage({
+      event_type: "openStageRequest",
+      payload: {
+        request_id: requestId,
+        url: stageUrl,
+        binding_revision_id: bindingRevisionId,
+        trace_id: DATA_CHANNEL_TRACE_ID,
+      },
+    });
+    vi.spyOn(internals(app), "_completeStageLoadFromVisibleStream").mockReturnValue(false);
+    internals(app)._scheduleStageLoadTimeout(attemptGeneration);
+    vi.runOnlyPendingTimers();
+
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "error",
+        request_id: requestId,
+        url: stageUrl,
+        binding_revision_id: bindingRevisionId,
+        runtime_state: "changed_failed",
+        error: "secondary layer failed after deadline",
+        trace_id: DATA_CHANNEL_TRACE_ID,
+      },
+    });
+
+    expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
+      generation: attemptGeneration,
+      status: "terminal",
+    }));
+    expect(internals(app).state.runtimeCommandLifecycles).toEqual(expect.arrayContaining([
+      expect.objectContaining({ request_id: requestId, outcome: "timed-out" }),
+    ]));
+    expect(internals(app).state.loadedStageUrl).toBeNull();
+    expect(internals(app).state.stageLoadStatus).toBe("unproven");
+    expect(internals(app).state.govBindingActiveRevision).toBeNull();
+    expect(internals(app).state.govBindingLastGoodRevision).toBe("rev_last_good");
+    expect(internals(app).state.govBindingApplyState).toEqual({
+      status: "failed",
+      reason: "runtime_changed_transaction_failed",
+    });
+  });
+
   it("claims every command in one attempt, then ignores its late loading-state and progress terminals", () => {
     vi.useFakeTimers();
     const app = operableApp();
@@ -1889,10 +1954,12 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     let resolveSecond: ((value: unknown) => void) | undefined;
     const privateApp = internals(app) as unknown as {
       _preauthorizeStageBinding: () => Promise<unknown>;
+      _cancelStageBindingPreauthorization: (clientRequestId: string) => Promise<boolean>;
     };
     vi.spyOn(privateApp, "_preauthorizeStageBinding")
       .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
       .mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve; }));
+    const cancel = vi.spyOn(privateApp, "_cancelStageBindingPreauthorization").mockResolvedValue(true);
     const send = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => true);
     const transaction = {
       status: "pending",
@@ -1908,8 +1975,10 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
 
     internals(app)._openSelectedAsset();
     internals(app)._openSelectedAsset();
+    await flushMicrotasks();
     expect(resolveFirst).toBeTypeOf("function");
     expect(resolveSecond).toBeTypeOf("function");
+    expect(cancel).toHaveBeenCalledTimes(1);
 
     resolveFirst?.(transaction);
     await flushMicrotasks();
@@ -1919,6 +1988,66 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     await flushMicrotasks();
     expect(send).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ event_type: "openStageRequest" }));
+  });
+
+  it("keeps later preauthorization retries fenced when superseded cancellation is not confirmed", async () => {
+    const app = operableApp();
+    const privateApp = internals(app) as unknown as {
+      _preauthorizeStageBindingWithinDeadline: (
+        artifacts: Array<{ artifact_id: string; role: "primary" | "secondary"; load_order: number }>,
+      ) => Promise<unknown>;
+      _preauthorizeStageBinding: (
+        artifacts: unknown,
+        clientRequestId: string,
+        signal?: AbortSignal,
+      ) => Promise<unknown>;
+      _cancelStageBindingPreauthorization: (clientRequestId: string) => Promise<boolean>;
+    };
+    const artifacts = [{ artifact_id: "artifact_primary", role: "primary" as const, load_order: 0 }];
+    const preauthorize = vi.spyOn(privateApp, "_preauthorizeStageBinding")
+      .mockImplementation((_artifacts, _clientRequestId, signal) => {
+        if (!signal) throw new Error("expected preauthorization abort signal");
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => reject(new DOMException("superseded", "AbortError")),
+            { once: true },
+          );
+        });
+      });
+    const cancel = vi.spyOn(privateApp, "_cancelStageBindingPreauthorization").mockResolvedValue(false);
+
+    const firstFailure = privateApp._preauthorizeStageBindingWithinDeadline(artifacts).catch((error) => error);
+    const secondFailure = privateApp._preauthorizeStageBindingWithinDeadline(artifacts).catch((error) => error);
+    expect((await secondFailure as DOMException).name).toBe("AbortError");
+    expect((await firstFailure as DOMException).name).toBe("AbortError");
+
+    const thirdFailure = await privateApp._preauthorizeStageBindingWithinDeadline(artifacts).catch((error) => error);
+    expect((thirdFailure as DOMException).name).toBe("AbortError");
+    expect(cancel).toHaveBeenCalledTimes(2);
+    expect(cancel.mock.calls[1]?.[0]).toBe(cancel.mock.calls[0]?.[0]);
+    expect(preauthorize).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds preauthorization cancellation while primary lease acquisition stalls", async () => {
+    vi.useFakeTimers();
+    const app = operableApp();
+    internals(app).state = { ...internals(app).state, reviewSessionId: "review_session_x" };
+    const privateApp = internals(app) as unknown as {
+      _cancelStageBindingPreauthorization: (clientRequestId: string) => Promise<boolean>;
+      _ensureStandaloneLabUserToken: () => string;
+      _ensurePrimaryViewerLease: () => Promise<string | null>;
+    };
+    vi.spyOn(privateApp, "_ensureStandaloneLabUserToken").mockReturnValue("test-user-token");
+    vi.spyOn(privateApp, "_ensurePrimaryViewerLease").mockImplementation(() => new Promise(() => {}));
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const cancellation = privateApp._cancelStageBindingPreauthorization("stage_preauth_stalled_lease");
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    await expect(cancellation).resolves.toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("starts the manual Kit proof deadline only after preauthorization sends the command", async () => {
@@ -2050,7 +2179,7 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
         clientRequestId: string,
         signal?: AbortSignal,
       ) => Promise<unknown>;
-      _cancelStageBindingPreauthorization: (clientRequestId: string) => Promise<void>;
+      _cancelStageBindingPreauthorization: (clientRequestId: string) => Promise<boolean>;
       _sendStreamMessage: (message: unknown) => boolean;
       activeStageAttempt: { status: string; terminalReason?: string } | null;
     };
@@ -2066,11 +2195,13 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       },
     };
     let preauthorizationSignal: AbortSignal | undefined;
-    vi.spyOn(privateApp, "_preauthorizeStageBinding").mockImplementation((_artifacts, _clientRequestId, signal) => {
+    const preauthorize = vi.spyOn(privateApp, "_preauthorizeStageBinding").mockImplementation((_artifacts, _clientRequestId, signal) => {
       preauthorizationSignal = signal;
       return new Promise(() => {});
     });
-    const cancel = vi.spyOn(privateApp, "_cancelStageBindingPreauthorization").mockResolvedValue(undefined);
+    let confirmCancellation!: (confirmed: boolean) => void;
+    const cancellation = new Promise<boolean>((resolve) => { confirmCancellation = resolve; });
+    const cancel = vi.spyOn(privateApp, "_cancelStageBindingPreauthorization").mockReturnValue(cancellation);
     const send = vi.spyOn(privateApp, "_sendStreamMessage").mockReturnValue(true);
 
     privateApp._openSelectedAsset();
@@ -2084,6 +2215,14 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
     expect(internals(app).state.streamDiagnostic).toContain(
       "Stage binding authorization timed out before a load command was sent to Kit.",
     );
+
+    privateApp._openSelectedAsset();
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(preauthorize).toHaveBeenCalledTimes(1);
+
+    confirmCancellation(true);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(preauthorize).toHaveBeenCalledTimes(2);
   });
 
   it("does not let an older binding preauthorization overwrite a newer manual open", async () => {
@@ -2109,11 +2248,13 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       _applyBinding: AppInternals["_applyBinding"];
       _openSelectedAsset: AppInternals["_openSelectedAsset"];
       _preauthorizeStageBinding: () => Promise<unknown>;
+      _cancelStageBindingPreauthorization: (clientRequestId: string) => Promise<boolean>;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
     };
     vi.spyOn(privateApp, "_preauthorizeStageBinding")
       .mockImplementationOnce(() => new Promise((resolve) => { resolveBinding = resolve; }))
       .mockImplementationOnce(() => new Promise((resolve) => { resolveManualOpen = resolve; }));
+    const cancel = vi.spyOn(privateApp, "_cancelStageBindingPreauthorization").mockResolvedValue(true);
     const send = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => true);
     const bindingTransaction = {
       status: "pending",
@@ -2147,8 +2288,10 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       ready: true,
     }], "rev_binding");
     privateApp._openSelectedAsset();
+    await flushMicrotasks();
     expect(resolveBinding).toBeTypeOf("function");
     expect(resolveManualOpen).toBeTypeOf("function");
+    expect(cancel).toHaveBeenCalledTimes(1);
 
     resolveManualOpen?.(manualOpenTransaction);
     await flushMicrotasks();
@@ -2363,11 +2506,13 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       _applyBinding: AppInternals["_applyBinding"];
       _openSelectedAsset: AppInternals["_openSelectedAsset"];
       _preauthorizeStageBinding: () => Promise<unknown>;
+      _cancelStageBindingPreauthorization: (clientRequestId: string) => Promise<boolean>;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
     };
     vi.spyOn(privateApp, "_preauthorizeStageBinding")
       .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectBinding = reject; }))
       .mockImplementationOnce(() => new Promise((resolve) => { resolveManualOpen = resolve; }));
+    const cancel = vi.spyOn(privateApp, "_cancelStageBindingPreauthorization").mockResolvedValue(true);
     const send = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => true);
 
     privateApp._applyBinding([{
@@ -2379,8 +2524,10 @@ describe("Runtime command rejection consumer：visible terminal、changed-unconf
       ready: true,
     }], "rev_binding_reject_pending");
     privateApp._openSelectedAsset();
+    await flushMicrotasks();
     expect(rejectBinding).toBeTypeOf("function");
     expect(resolveManualOpen).toBeTypeOf("function");
+    expect(cancel).toHaveBeenCalledTimes(1);
 
     resolveManualOpen?.({
       status: "pending",
@@ -4444,16 +4591,32 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
     useSynchronousSetState(app);
     const privateApp = internals(app) as unknown as {
       _applyBinding: AppInternals["_applyBinding"];
-      _preauthorizeStageBinding: () => Promise<Record<string, unknown>>;
+      _preauthorizeStageBinding: (
+        artifacts: unknown,
+        clientRequestId: string,
+      ) => Promise<Record<string, unknown>>;
+      _cancelStageBindingPreauthorization: (clientRequestId: string) => Promise<boolean>;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
     };
     let resolveA!: (value: Record<string, unknown>) => void;
     let resolveB!: (value: Record<string, unknown>) => void;
     const authorizationA = new Promise<Record<string, unknown>>((resolve) => { resolveA = resolve; });
     const authorizationB = new Promise<Record<string, unknown>>((resolve) => { resolveB = resolve; });
+    let requestA = "";
+    let requestB = "";
+    let confirmCancellation!: (cancelled: boolean) => void;
+    const cancellation = new Promise<boolean>((resolve) => { confirmCancellation = resolve; });
+    const cancel = vi.spyOn(privateApp, "_cancelStageBindingPreauthorization")
+      .mockReturnValue(cancellation);
     const preauthorize = vi.spyOn(privateApp, "_preauthorizeStageBinding")
-      .mockImplementationOnce(() => authorizationA)
-      .mockImplementationOnce(() => authorizationB);
+      .mockImplementationOnce((_artifacts, clientRequestId) => {
+        requestA = clientRequestId;
+        return authorizationA;
+      })
+      .mockImplementationOnce((_artifacts, clientRequestId) => {
+        requestB = clientRequestId;
+        return authorizationB;
+      });
     const send = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
     const selection = (artifactId: string, usdcUrl: string) => [{
       artifact_id: artifactId,
@@ -4477,6 +4640,15 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
 
     privateApp._applyBinding(selection("artifact_a", "stage://a.usdc"), "rev_ui_a");
     privateApp._applyBinding(selection("artifact_b", "stage://b.usdc"), "rev_ui_b");
+    expect(requestA).toMatch(/^stage_preauth_/);
+    expect(cancel).toHaveBeenCalledWith(requestA);
+    expect(preauthorize).toHaveBeenCalledTimes(1);
+
+    confirmCancellation(true);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(requestB).toMatch(/^stage_preauth_/);
+    expect(requestB).not.toBe(requestA);
+    expect(preauthorize).toHaveBeenCalledTimes(2);
     resolveB(transaction("artifact_b", "stage://b.usdc"));
     for (let i = 0; i < 10; i++) await Promise.resolve();
 
@@ -4490,7 +4662,7 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
     resolveA(transaction("artifact_a", "stage://a.usdc"));
     for (let i = 0; i < 10; i++) await Promise.resolve();
 
-    expect(preauthorize).toHaveBeenCalledTimes(2);
+    expect(cancel).toHaveBeenCalledTimes(1);
     expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
       status: "pending",
       targetUrl: "stage://b.usdc",
@@ -4508,6 +4680,7 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
     const privateApp = internals(app) as unknown as {
       _applyBinding: AppInternals["_applyBinding"];
       _preauthorizeStageBinding: () => Promise<Record<string, unknown>>;
+      _cancelStageBindingPreauthorization: (clientRequestId: string) => Promise<boolean>;
       activeStageAttempt: { generation: number; status: string; targetUrl: string } | null;
     };
     let rejectA!: (reason?: unknown) => void;
@@ -4517,6 +4690,7 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
     const preauthorize = vi.spyOn(privateApp, "_preauthorizeStageBinding")
       .mockImplementationOnce(() => authorizationA)
       .mockImplementationOnce(() => authorizationB);
+    const cancel = vi.spyOn(privateApp, "_cancelStageBindingPreauthorization").mockResolvedValue(true);
     const send = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
     const selection = (artifactId: string, usdcUrl: string) => [{
       artifact_id: artifactId,
@@ -4540,12 +4714,14 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
 
     privateApp._applyBinding(selection("artifact_a", "stage://a.usdc"), "rev_ui_a");
     privateApp._applyBinding(selection("artifact_b", "stage://b.usdc"), "rev_ui_b");
+    for (let i = 0; i < 10; i++) await Promise.resolve();
     resolveB(transactionB);
     for (let i = 0; i < 10; i++) await Promise.resolve();
     rejectA(new Error("stale authorization failed"));
     for (let i = 0; i < 10; i++) await Promise.resolve();
 
     expect(preauthorize).toHaveBeenCalledTimes(2);
+    expect(cancel).toHaveBeenCalledTimes(1);
     expect(privateApp.activeStageAttempt).toEqual(expect.objectContaining({
       status: "pending",
       targetUrl: "stage://b.usdc",

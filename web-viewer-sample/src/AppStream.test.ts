@@ -105,6 +105,7 @@ describe('AppStream auth updates', () => {
 
     it('waits for physical streamer teardown before a remounted instance connects', async () => {
         let releaseTerminate!: () => void;
+        streamer.streamStatus = 2;
         streamer.terminate.mockReturnValueOnce(new Promise((resolve) => {
             releaseTerminate = () => resolve({
                 action: "terminate",
@@ -176,12 +177,22 @@ describe('AppStream auth updates', () => {
         replacement.componentWillUnmount();
     });
 
-    it('allows GFN remounts to reconnect without invoking unsupported AppStreamer teardown', async () => {
+    it('stops the GFN client SDK before a remounted instance reconnects', async () => {
         const mutableConfig = StreamConfig as { source: string };
         const previousSource = mutableConfig.source;
         const previousGfn = Object.getOwnPropertyDescriptor(globalThis, 'GFN');
+        let gfnState = 3;
+        const stopGfn = vi.fn(() => { gfnState = 7; });
         mutableConfig.source = 'gfn';
-        Object.defineProperty(globalThis, 'GFN', { configurable: true, value: {} });
+        Object.defineProperty(globalThis, 'GFN', {
+            configurable: true,
+            value: {
+                streamer: {
+                    get state() { return gfnState; },
+                    stop: stopGfn,
+                },
+            },
+        });
         try {
             const oldStream = new AppStream(makeProps());
             oldStream.componentWillUnmount();
@@ -190,6 +201,7 @@ describe('AppStream auth updates', () => {
             const replacement = new AppStream(props);
             await replacement._initStream();
 
+            expect(stopGfn).toHaveBeenCalledOnce();
             expect(streamer.terminate).not.toHaveBeenCalled();
             expect(streamer.connect).toHaveBeenCalledOnce();
             expect(props.onStreamFailed).not.toHaveBeenCalled();
@@ -201,8 +213,25 @@ describe('AppStream auth updates', () => {
         }
     });
 
-    it('fails closed when physical streamer teardown fulfills with error', async () => {
+    it('does not call AppStreamer terminate when the singleton is already idle', async () => {
         streamer.streamStatus = 0;
+        const oldStream = new AppStream(makeProps());
+        oldStream.componentWillUnmount();
+
+        const props = makeProps();
+        const replacement = new AppStream(props);
+        replacement.componentDidMount();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(streamer.terminate).not.toHaveBeenCalled();
+        expect(streamer.connect).toHaveBeenCalledOnce();
+        expect(props.onStreamFailed).not.toHaveBeenCalled();
+        replacement.componentWillUnmount();
+    });
+
+    it('fails closed when physical streamer teardown fulfills with error', async () => {
+        streamer.streamStatus = 2;
         streamer.terminate.mockResolvedValueOnce({
             action: "terminate",
             status: "error",
@@ -225,7 +254,7 @@ describe('AppStream auth updates', () => {
 
     it('fails closed when physical streamer teardown rejects', async () => {
         const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-        streamer.streamStatus = 0;
+        streamer.streamStatus = 2;
         streamer.terminate.mockRejectedValueOnce(new Error('terminate failed'));
         const oldStream = new AppStream(makeProps());
         oldStream.componentWillUnmount();
@@ -245,7 +274,7 @@ describe('AppStream auth updates', () => {
 
     it('allows a later fresh mount after a failed teardown once the singleton is none', async () => {
         const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-        streamer.streamStatus = 0;
+        streamer.streamStatus = 2;
         streamer.terminate.mockRejectedValueOnce(new Error('terminate failed'));
         const oldStream = new AppStream(makeProps());
         oldStream.componentWillUnmount();
@@ -260,6 +289,7 @@ describe('AppStream auth updates', () => {
         expect(failedProps.onStreamFailed).toHaveBeenCalledOnce();
         expect(errorSpy).toHaveBeenCalledOnce();
 
+        streamer.streamStatus = 0;
         const retryProps = makeProps();
         const retry = new AppStream(retryProps);
         retry.componentDidMount();
