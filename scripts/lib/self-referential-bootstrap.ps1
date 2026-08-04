@@ -96,7 +96,7 @@ function Assert-SelfReferentialStringList {
 
 function Get-SelfReferentialMechanismPaths {
     param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $ChangedPaths)
-    return @($ChangedPaths | Where-Object { $_ -match $script:SelfReferentialMechanismPattern })
+    return @($ChangedPaths | Where-Object { $_ -cmatch $script:SelfReferentialMechanismPattern })
 }
 
 function ConvertTo-SelfReferentialTimestamp {
@@ -464,20 +464,21 @@ function Compare-SelfReferentialLedgerTransition {
         if ($LASTEXITCODE -ne 0 -or -not ($firstParentHistory -ccontains $commit)) {
             throw "self_referential_bootstrap: entry '$id' fixpoint.mechanism_commit $commit is not on the PR base first-parent history; bind closure to the mainline merge/squash commit, not a side-branch ancestor."
         }
-        # Bind the closure to THIS entry's mechanism (not any ancient ancestor):
-        # the mechanism_commit must actually have touched one of the entry's
-        # declared verification_mechanism_paths.
+        # Bind the closure to THIS entry's complete mechanism (not any ancient
+        # ancestor): the mechanism_commit must have touched every declared
+        # verification_mechanism_path. Requiring only one path would let a
+        # multi-surface gate close without merging the rest of its mechanism.
         # NOTE: use $head, not $entry. $entry is still bound by the earlier
         # foreach loops in this function and would silently refer to the LAST
         # head entry, mis-binding closures whenever the ledger has >1 entry
         # (narrower bug surfaced by the Codex apex while refuting L1-correctness-1).
-        $mechanismTouched = $false
+        $parentLine = (& git -C $RepoRoot rev-list --parents -n 1 $commit 2>$null | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($parentLine)) {
+            throw "self_referential_bootstrap: cannot inspect parents of mechanism_commit $commit."
+        }
+        $parents = @($parentLine -split '\s+')
+        $untouchedDeclaredPaths = @()
         foreach ($declaredPath in @($head.verification_mechanism_paths)) {
-            $parentLine = (& git -C $RepoRoot rev-list --parents -n 1 $commit 2>$null | Out-String).Trim()
-            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($parentLine)) {
-                throw "self_referential_bootstrap: cannot inspect parents of mechanism_commit $commit."
-            }
-            $parents = @($parentLine -split '\s+')
             if ($parents.Count -gt 1) {
                 # Compare a merge to its first parent so branch-side mechanism
                 # changes are visible. `git show --name-only <merge>` emits no
@@ -488,10 +489,12 @@ function Compare-SelfReferentialLedgerTransition {
                 $touched = @(& git -C $RepoRoot diff-tree --root --no-commit-id -r --name-only `
                     $commit -- ([string]$declaredPath) 2>$null | Where-Object { $_ })
             }
-            if ($touched.Count -gt 0) { $mechanismTouched = $true; break }
+            if ($touched.Count -eq 0) {
+                $untouchedDeclaredPaths += [string]$declaredPath
+            }
         }
-        if (-not $mechanismTouched) {
-            throw "self_referential_bootstrap: entry '$id' fixpoint.mechanism_commit $commit did not modify any of the entry's declared verification_mechanism_paths; it is not this mechanism's merge."
+        if ($untouchedDeclaredPaths.Count -gt 0) {
+            throw "self_referential_bootstrap: entry '$id' fixpoint.mechanism_commit $commit did not modify every declared verification_mechanism_path; missing: $($untouchedDeclaredPaths -join ', ')."
         }
         $commitMessage = (& git -C $RepoRoot log -1 --format=%B $commit 2>$null | Out-String).Trim()
         $originatingPr = [int]$head.pr

@@ -421,6 +421,47 @@ Assert-SelfReferentialBootstrapBody -Body $b -PrNumber $PrNumber
     Assert-True ($verdict -like 'incomplete:*') "dummy ledger/accessor must be incomplete (got: $verdict)"
     Assert-True ($verdict -match 'required bootstrap assertion argument bindings') "dummy binding reason names required arguments (got: $verdict)"
 
+    # Regression for TG-004: canonical argument names do not help if the checker
+    # rebinds those variables, their input paths, or their base/head context
+    # before the assertion. Start from the complete real checker so every mutant
+    # isolates provenance rather than failing an earlier wiring requirement.
+    $inputProvenanceMutations = @(
+        '$body = ''forged body''',
+        '$changedPaths = @()',
+        '$ChangedPathsPath = ''forged-paths.txt''',
+        '$pathText = ''''',
+        '$RepoRoot = $PSScriptRoot',
+        '$BaseSha = ''deadbeef''',
+        '$HeadSha = ''''',
+        '$hasBootstrapBaseContext = $false',
+        '$baseLedgerJson = ''{}''',
+        '$baseLedgerExists = $false',
+        'if ($true) { $baseLedgerJson = ''{}'' }',
+        'Set-Variable -Name changedPaths -Value @()',
+        'Set-Item -LiteralPath Variable:baseLedgerExists -Value $false',
+        'if ($true) { Copy-Item -LiteralPath Variable:source -Destination Variable:changedPaths -Force }',
+        'if ($true) { New-Item -Path Variable:changedPaths -Value @() -Force }',
+        'if ($true) { Rename-Item -Path Variable:source -NewName changedPaths }',
+        '(Get-Variable -Name changedPaths).Value = @()',
+        '$ExecutionContext.SessionState.PSVariable.Set(''changedPaths'', @())',
+        '($ExecutionContext.SessionState.PSVariable).Set(''changedPaths'', @())',
+        '($ExecutionContext.SessionState.PSVariable).Remove(''changedPaths'')',
+        '$ExecutionContext.SessionState.(''PSVariable'').Set(''changedPaths'', @())',
+        '$psv = $ExecutionContext.SessionState.PSVariable; $psv.Set(''changedPaths'', @())',
+        '$psv = $ExecutionContext.SessionState.PSVariable; $psv.(''S'' + ''et'')(''changedPaths'', @())',
+        '$PrNumber++'
+    )
+    foreach ($mutation in $inputProvenanceMutations) {
+        $mutantSource = Insert-BeforeBootstrapAssertion -Source $realCheckerSource -Insertion $mutation
+        Write-File 'scripts/tests/check-pr-body-evidence.ps1' $mutantSource
+        $revInputRebind = Commit-All 'checker rebinds a load-bearing bootstrap input'
+        $verdict = Detect $revInputRebind
+        Assert-True ($verdict -like 'incomplete:*') `
+            "load-bearing input mutation must be incomplete (got: $verdict; mutation: $mutation)"
+        Assert-True ($verdict -match 'trusted provenance') `
+            "input mutation reason names trusted provenance (got: $verdict; mutation: $mutation)"
+    }
+
     # Run the detector against the repository's real checker source inside the
     # standalone fixture. WSL Git cannot follow this linked worktree's Windows
     # absolute .git pointer, so a direct `detect HEAD .` smoke is not portable.

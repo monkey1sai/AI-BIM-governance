@@ -243,6 +243,48 @@ function Test-IsAssertionProviderMutation {
     return $target.Value -imatch '^(?:function|alias):[\\/]*(?:(?:global|local|script|private):)?Assert-SelfReferentialBootstrapBody$'
 }
 
+function ConvertTo-NormalizedSourceText {
+    param([Parameter(Mandatory = $true)][string] $Text)
+    return (($Text -replace '\s+', ' ').Trim())
+}
+
+function Get-AssignmentParentShape {
+    param([Parameter(Mandatory = $true)][System.Management.Automation.Language.AssignmentStatementAst] $Assignment)
+    $types = @()
+    for ($parent = $Assignment.Parent; $null -ne $parent; $parent = $parent.Parent) {
+        $types += $parent.GetType().Name
+    }
+    return ($types -join '>')
+}
+
+function Get-AssignmentIfShape {
+    param([Parameter(Mandatory = $true)][System.Management.Automation.Language.AssignmentStatementAst] $Assignment)
+    $parts = @()
+    for ($parent = $Assignment.Parent; $null -ne $parent; $parent = $parent.Parent) {
+        if ($parent -isnot [System.Management.Automation.Language.StatementBlockAst] -or
+            $parent.Parent -isnot [System.Management.Automation.Language.IfStatementAst]) {
+            continue
+        }
+        $ifAst = $parent.Parent
+        $role = 'unknown'
+        $condition = ''
+        foreach ($clause in $ifAst.Clauses) {
+            if ([object]::ReferenceEquals($clause.Item2, $parent)) {
+                $role = 'if'
+                $condition = ConvertTo-NormalizedSourceText -Text $clause.Item1.Extent.Text
+                break
+            }
+        }
+        if ([object]::ReferenceEquals($ifAst.ElseClause, $parent)) {
+            $role = 'else'
+            $condition = ConvertTo-NormalizedSourceText -Text $ifAst.Clauses[0].Item1.Extent.Text
+        }
+        $parts += ('{0}:{1}' -f $role, $condition)
+    }
+    if ($parts.Count -eq 0) { return '<none>' }
+    return ($parts -join '>')
+}
+
 $dotSources = @($ast.FindAll({
     param($node)
     $node -is [System.Management.Automation.Language.CommandAst] -and
@@ -460,6 +502,131 @@ if ($earlyRootTerminators.Count -gt 0) {
     exit 0
 }
 
+# Binding the assertion to variables is insufficient if the checker can replace
+# those variables (or their file-input provenance) before invocation. Require
+# the exact, ordered root-script dataflow carried by this detector/checker pair.
+# This deliberately fails closed when that dataflow is refactored: the base
+# capability and its regression fixtures must be updated together.
+$requiredRootParameters = @(
+    'BodyPath', 'ChangedPathsPath', 'ChangedPathsNulDelimited',
+    'RepoRoot', 'BaseSha', 'HeadSha', 'PrNumber'
+)
+$rootParameters = if ($null -eq $ast.ParamBlock) { @() } else {
+    @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+}
+$missingRootParameters = @($requiredRootParameters | Where-Object {
+    -not ($rootParameters -ccontains $_)
+})
+
+$loadBearingVariables = @(
+    'BodyPath', 'ChangedPathsPath', 'ChangedPathsNulDelimited',
+    'scriptRepoRoot', 'RepoRoot', 'BaseSha', 'HeadSha', 'PrNumber',
+    'body', 'pathBytes', 'pathText', 'changedPaths',
+    'hasBootstrapBaseContext', 'baseLedgerJson', 'baseLedgerExists'
+)
+$loadBearingAssignments = @($ast.FindAll({
+    param($node)
+    if ($node -isnot [System.Management.Automation.Language.AssignmentStatementAst] -or
+        $node.Extent.StartOffset -ge $firstAssertionOffset) {
+        return $false
+    }
+    return @($node.Left.FindAll({
+        param($target)
+        $target -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            $loadBearingVariables -ccontains (
+                $target.VariablePath.UserPath -replace '^(global|local|script|private):', '')
+    }, $true)).Count -gt 0
+}, $true) | Sort-Object { $_.Extent.StartOffset })
+
+$expectedAssignmentText = @'
+$scriptRepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path|||NamedBlockAst>ScriptBlockAst|||<none>
+$RepoRoot = $scriptRepoRoot|||StatementBlockAst>IfStatementAst>NamedBlockAst>ScriptBlockAst|||if:[string]::IsNullOrWhiteSpace($RepoRoot)
+$RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path|||NamedBlockAst>ScriptBlockAst|||<none>
+$body = Get-Content -LiteralPath $BodyPath -Raw|||NamedBlockAst>ScriptBlockAst|||<none>
+$pathBytes = [IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $ChangedPathsPath).Path)|||StatementBlockAst>IfStatementAst>NamedBlockAst>ScriptBlockAst|||if:$ChangedPathsNulDelimited
+$pathText = [Text.UTF8Encoding]::new($false, $true).GetString($pathBytes, 0, $pathBytes.Length - 1)|||StatementBlockAst>TryStatementAst>StatementBlockAst>IfStatementAst>NamedBlockAst>ScriptBlockAst|||if:$ChangedPathsNulDelimited
+$changedPaths = @($pathText.Split([char]0))|||StatementBlockAst>IfStatementAst>NamedBlockAst>ScriptBlockAst|||if:$ChangedPathsNulDelimited
+$changedPaths = @(Get-Content -LiteralPath $ChangedPathsPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })|||StatementBlockAst>IfStatementAst>NamedBlockAst>ScriptBlockAst|||else:$ChangedPathsNulDelimited
+$hasBootstrapBaseContext = -not [string]::IsNullOrWhiteSpace($BaseSha)|||NamedBlockAst>ScriptBlockAst|||<none>
+$baseLedgerJson = ''|||NamedBlockAst>ScriptBlockAst|||<none>
+$baseLedgerExists = $false|||NamedBlockAst>ScriptBlockAst|||<none>
+$baseLedgerExists = $true|||StatementBlockAst>IfStatementAst>StatementBlockAst>IfStatementAst>NamedBlockAst>ScriptBlockAst|||if:$LASTEXITCODE -eq 0>if:$hasBootstrapBaseContext
+$baseLedgerJson = (& git -C $RepoRoot show "${BaseSha}:scripts/self-referential-bootstrap-ledger.json" 2>$null) -join "`n"|||StatementBlockAst>IfStatementAst>StatementBlockAst>IfStatementAst>NamedBlockAst>ScriptBlockAst|||if:$LASTEXITCODE -eq 0>if:$hasBootstrapBaseContext
+'@
+$expectedAssignmentSignatures = @($expectedAssignmentText -split "\r?\n" | Where-Object { $_ })
+$actualAssignmentSignatures = @($loadBearingAssignments | ForEach-Object {
+    '{0}|||{1}|||{2}' -f `
+        (ConvertTo-NormalizedSourceText -Text $_.Extent.Text), `
+        (Get-AssignmentParentShape -Assignment $_), `
+        (Get-AssignmentIfShape -Assignment $_)
+})
+
+$assignmentProvenanceValid = $actualAssignmentSignatures.Count -eq $expectedAssignmentSignatures.Count
+if ($assignmentProvenanceValid) {
+    for ($i = 0; $i -lt $expectedAssignmentSignatures.Count; $i++) {
+        if ($actualAssignmentSignatures[$i] -cne $expectedAssignmentSignatures[$i]) {
+            $assignmentProvenanceValid = $false
+            break
+        }
+    }
+}
+
+# Direct variable/provider mutators and ++/-- bypass AssignmentStatementAst.
+# The trusted checker has no use for these before the bootstrap assertion, so
+# reject the bounded mutation family rather than emulate PowerShell binding.
+$inputMutationCommands = @($ast.FindAll({
+    param($node)
+    if ($node -isnot [System.Management.Automation.Language.CommandAst] -or
+        $node.Extent.StartOffset -ge $firstAssertionOffset) {
+        return $false
+    }
+    $commandName = $node.GetCommandName() -replace '^.*\\', ''
+    return $commandName -imatch '^(Set-Variable|sv|set|New-Variable|nv|Clear-Variable|clv|Remove-Variable|rv|Set-Item|si|Set-Content|sc|Clear-Item|cli|Remove-Item|ri|rm|del|erase|rd|rmdir|New-Item|ni|Copy-Item|cpi|cp|copy|Rename-Item|rni|ren|Move-Item|mi|mv|move|Invoke-Expression|iex)$'
+}, $true))
+$inputUnaryMutations = @($ast.FindAll({
+    param($node)
+    if ($node -isnot [System.Management.Automation.Language.UnaryExpressionAst] -or
+        $node.Extent.StartOffset -ge $firstAssertionOffset -or
+        $node.TokenKind -notin @('PlusPlus', 'MinusMinus', 'PostfixPlusPlus', 'PostfixMinusMinus')) {
+        return $false
+    }
+    return @($node.FindAll({
+        param($target)
+        $target -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            $loadBearingVariables -ccontains (
+                $target.VariablePath.UserPath -replace '^(global|local|script|private):', '')
+    }, $true)).Count -gt 0
+}, $true))
+$inputIndirectAssignments = @($ast.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+        $node.Extent.StartOffset -lt $firstAssertionOffset -and
+        $node.Left -isnot [System.Management.Automation.Language.VariableExpressionAst]
+}, $true))
+$inputMemberMutations = @($ast.FindAll({
+    param($node)
+    if ($node -isnot [System.Management.Automation.Language.InvokeMemberExpressionAst] -or
+        $node.Extent.StartOffset -ge $firstAssertionOffset) {
+        return $false
+    }
+    if ($node.Member -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) {
+        # A computed method name cannot be proven non-mutating without running
+        # PR-controlled PowerShell, so the capability fails closed.
+        return $true
+    }
+    return ([string]$node.Member.Value) -imatch '^(Set|SetValue|Remove|RemoveAt|Clear|Add|Insert)$'
+}, $true))
+
+if ($missingRootParameters.Count -gt 0 -or
+    -not $assignmentProvenanceValid -or
+    $inputMutationCommands.Count -gt 0 -or
+    $inputUnaryMutations.Count -gt 0 -or
+    $inputIndirectAssignments.Count -gt 0 -or
+    $inputMemberMutations.Count -gt 0) {
+    Write-Output 'load-bearing-variable-provenance-invalid'
+    exit 0
+}
+
 Write-Output 'complete'
 POWERSHELL
 
@@ -507,6 +674,10 @@ case "$ast_result" in
     ;;
   early-root-termination)
     echo "incomplete: base checker can terminate at root before invoking the bootstrap assertion"
+    exit 0
+    ;;
+  load-bearing-variable-provenance-invalid)
+    echo "incomplete: base checker rebinds or lacks trusted provenance for bootstrap inputs"
     exit 0
     ;;
   wrong-wiring-order)

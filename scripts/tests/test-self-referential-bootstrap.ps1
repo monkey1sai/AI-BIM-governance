@@ -231,6 +231,16 @@ try {
     $null = Invoke-FixtureGit -Arguments @('add', 'docs', 'scripts')
     $baseSha = & $commit 'base with post-merge evidence'
 
+    # Independent squash-style fixture whose mechanism commit changes two
+    # declared surfaces, followed by evidence from a later revision.
+    & $write 'scripts/deploy.ps1' '# multi-path mechanism'
+    & $write 'scripts/verify-all.ps1' '# multi-path mechanism'
+    $null = Invoke-FixtureGit -Arguments @('add', 'scripts/deploy.ps1', 'scripts/verify-all.ps1')
+    $twoPathFixpointCommit = & $commit 'multi-path mechanism (#500)'
+    & $write 'docs/evidence/multi-path/fixpoint/summary.md' 'multi-path fixpoint evidence'
+    $null = Invoke-FixtureGit -Arguments @('add', 'docs/evidence/multi-path/fixpoint/summary.md')
+    $twoPathBaseSha = & $commit 'base with multi-path fixpoint evidence'
+
     # Commits a head ledger into the fixture and returns that SHA, so the body
     # gate can load the ledger from an exact revision instead of ambient HEAD.
     # This is the differential fixture the Codex review asked for (TG-3): the
@@ -273,6 +283,12 @@ try {
         Assert-True ($matched -ccontains $expectedPath) "mechanism classifier includes $expectedPath"
     }
     Assert-True ($matched -notcontains 'web-viewer-sample/src/Window.tsx') 'ordinary product code must NOT classify as mechanism'
+    $wrongCaseMechanismPaths = @(Get-SelfReferentialMechanismPaths -ChangedPaths @(
+        'Scripts/Deploy.ps1',
+        '.github/workflows/CI.yml'
+    ))
+    Assert-True ($wrongCaseMechanismPaths.Count -eq 0) `
+        "wrong-case git paths must not classify as mechanisms (matched: $($wrongCaseMechanismPaths -join ', '))"
 
     # --- list-typed fields reject scalars (Codex round-6) ---------------------------
     # `@($value).Count` wraps a bare string into a one-element array, so a scalar
@@ -465,17 +481,19 @@ try {
         param(
             [hashtable] $Fixpoint,
             [hashtable] $EntryOverride = @{},
-            [string[]] $ChangedPaths = @('scripts/self-referential-bootstrap-ledger.json')
+            [string[]] $ChangedPaths = @('scripts/self-referential-bootstrap-ledger.json'),
+            [string] $BaseLedgerJson = $openBase,
+            [string] $ClosureBaseSha = $baseSha
         )
         $override = @{ status = 'closed'; fixpoint = $Fixpoint } + $EntryOverride
         $json = New-LedgerJson -Entries @((New-Entry -Override $override))
         $headSha = New-FixtureHeadCommit -Json $json
         Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $ChangedPaths `
-            -HeadJson $json -BaseJson $openBase -GateRepoRoot $gitRoot -BaseSha $baseSha -HeadSha $headSha
+            -HeadJson $json -BaseJson $BaseLedgerJson -GateRepoRoot $gitRoot -BaseSha $ClosureBaseSha -HeadSha $headSha
     }
 
     # mechanism_commit is an ancestor but did not touch a declared path (round 4)
-    Assert-Throws -Context 'mechanism_commit did not touch a declared path' -MessagePattern 'not this mechanism' -Action {
+    Assert-Throws -Context 'mechanism_commit did not touch a declared path' -MessagePattern 'did not modify every declared verification_mechanism_path' -Action {
         Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $unrelatedAncestor; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') }
     }
     Assert-Throws -Context 'side-branch mechanism commit is not the mainline merge' -MessagePattern 'first-parent history' -Action {
@@ -500,6 +518,25 @@ try {
     }
     # legal closure passes: mechanism_commit touched deploy.ps1, evidence is post-merge
     Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') }
+
+    # A multi-surface mechanism cannot close when its merge touched only one of
+    # the declared paths (Codex L1-COR-003). The singleton positive above remains
+    # the control proving ordinary one-path closures still pass.
+    $twoPathOpenBase = New-LedgerJson -Entries @((New-Entry -Override @{
+        verification_mechanism_paths = @('scripts/deploy.ps1', 'scripts/verify-all.ps1')
+    }))
+    Assert-Throws -Context 'multi-path closure whose commit touched only one declared path' `
+        -MessagePattern 'did not modify every declared verification_mechanism_path' -Action {
+        Invoke-Closure `
+            -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') } `
+            -EntryOverride @{ verification_mechanism_paths = @('scripts/deploy.ps1', 'scripts/verify-all.ps1') } `
+            -BaseLedgerJson $twoPathOpenBase
+    }
+    Invoke-Closure `
+        -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $twoPathFixpointCommit; evidence_refs = @('docs/evidence/multi-path/fixpoint/summary.md') } `
+        -EntryOverride @{ verification_mechanism_paths = @('scripts/deploy.ps1', 'scripts/verify-all.ps1') } `
+        -BaseLedgerJson $twoPathOpenBase `
+        -ClosureBaseSha $twoPathBaseSha
     Assert-Throws -Context 'closure PR also edits another mechanism path' -MessagePattern 'may only change the ledger' -Action {
         Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') } `
             -ChangedPaths @('scripts/self-referential-bootstrap-ledger.json', 'scripts/deploy.ps1')
@@ -602,7 +639,7 @@ try {
         $secondEntry
     )
     $twoHeadSha = New-FixtureHeadCommit -Json $firstClosedJson 'two entries, first closed'
-    Assert-Throws -Context 'multi-entry closure binds to its own entry paths' -MessagePattern 'not this mechanism' -Action {
+    Assert-Throws -Context 'multi-entry closure binds to its own entry paths' -MessagePattern 'did not modify every declared verification_mechanism_path' -Action {
         Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism `
             -HeadJson $firstClosedJson -BaseJson $twoOpenBase -GateRepoRoot $gitRoot -BaseSha $baseSha -HeadSha $twoHeadSha
     }
