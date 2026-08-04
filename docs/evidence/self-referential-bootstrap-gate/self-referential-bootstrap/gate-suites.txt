@@ -1,14 +1,10 @@
 stack_kind=self_referential_bootstrap
 branch=feat/self-referential-bootstrap-ledger
-tested_head=de2358a193023a24b5a4549d35e3c76a869aa4ae
-captured_at_utc=2026-08-04T10:19:34Z
+tested_head=c7e02c855919cee36003d149b158ebb897404b2e
+captured_at_utc=2026-08-04T12:15:18Z
 captured on the PR branch because the PR base has no bootstrap gate to run (see reason in the ledger entry)
 
 ### pwsh -NoProfile -NonInteractive -File .\scripts\tests\test-self-referential-bootstrap.ps1
-[test-self-referential-bootstrap] all assertions passed
-EXIT=0
-
-### $env:GIT_CONFIG_GLOBAL='NUL'; $env:GIT_CONFIG_NOSYSTEM='1'; pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
 [test-self-referential-bootstrap] all assertions passed
 EXIT=0
 
@@ -20,21 +16,3 @@ EXIT=0
 [test-preflight-prnumber-forwarding] all assertions passed
 EXIT=0
 
-### pwsh -NoProfile -NonInteractive -File .\scripts\tests\test-agent-governance-check.ps1
-[test-agent-governance-check] all assertions passed
-EXIT=0
-
-### pwsh -NoProfile -NonInteractive -File .\scripts\tests\test-pr-body-evidence.ps1
-[test-pr-body-evidence] all assertions passed
-EXIT=0
-
-### pwsh -NoProfile -NonInteractive -File .\scripts\tests\test-pr-review-agent.ps1
-[test-pr-review-agent] all assertions passed
-EXIT=0
-
-### pwsh -NoProfile -NonInteractive -File scripts/tests/invoke-powershell-static.ps1
-[invoke-powershell-static] passed
-EXIT=0
-
-### bash -n scripts/lib/detect-base-gate-capability.sh
-EXIT=0

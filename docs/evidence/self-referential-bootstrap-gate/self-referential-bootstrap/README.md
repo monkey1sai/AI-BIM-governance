@@ -29,7 +29,7 @@ without that gate. That is the compiler-bootstrap fixpoint, not a defect.
 Captured output: [`gate-suites.txt`](gate-suites.txt) — the three suites that
 adjudicate this mechanism, four surrounding governance/static regression
 suites, and the detector's Bash syntax check, run against
-`tested_head=de2358a193023a24b5a4549d35e3c76a869aa4ae` with their real exit codes.
+`tested_head=c7e02c855919cee36003d149b158ebb897404b2e` with their real exit codes.
 The follow-up evidence commit changes only files in this evidence directory; it
 does not claim that an untested code tree passed.
 
