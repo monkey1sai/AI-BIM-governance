@@ -24,7 +24,10 @@ function Assert-FileContains {
 }
 
 function Get-WorkflowPermissionViolations {
-    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]] $Lines)
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]] $Lines,
+        [string] $WorkflowPath = ''
+    )
 
     $violations = [System.Collections.Generic.List[string]]::new()
     $permissionHeader = [regex]'^(?<indent>\s*)(?:[''"])?permissions(?:[''"])?\s*:\s*(?<inline>[^#]*?)(?:\s+#.*)?$'
@@ -82,8 +85,23 @@ function Get-WorkflowPermissionViolations {
             if ($entryIndent -le $headerIndent) { break }
             $entries.Add($entryLine)
         }
-        if ($entries.Count -ne 1 -or $entries[0] -cnotmatch '^  contents:\s*read\s*(?:#.*)?$') {
-            $violations.Add("line $($lineIndex + 1): permissions must contain exactly literal 'contents: read'")
+        $normalizedEntries = @($entries | ForEach-Object { $_.Trim() })
+        $normalizedWorkflowPath = $WorkflowPath.Replace('\', '/')
+        $allowsPullRequestRead = $normalizedWorkflowPath -match '(?:^|/)\.github/workflows/governance-trust-root\.yml$'
+        $allowedEntries = if ($allowsPullRequestRead) {
+            @('contents: read', 'pull-requests: read')
+        } else {
+            @('contents: read')
+        }
+        $invalidEntries = @($entries | Where-Object { $_ -cnotmatch '^  (?:contents|pull-requests): read$' })
+        if (
+            $entries.Count -lt 1 -or $entries.Count -gt $allowedEntries.Count -or
+            $normalizedEntries -notcontains 'contents: read' -or
+            @($normalizedEntries | Sort-Object -Unique).Count -ne $normalizedEntries.Count -or
+            @($normalizedEntries | Where-Object { $allowedEntries -notcontains $_ }).Count -gt 0 -or
+            $invalidEntries.Count -gt 0
+        ) {
+            $violations.Add("line $($lineIndex + 1): root permissions require literal 'contents: read'; only governance-trust-root.yml may add literal 'pull-requests: read'")
         }
     }
 
@@ -105,6 +123,7 @@ try {
         '.github/CODEOWNERS',
         '.github/workflows/ci.yml',
         '.github/workflows/agent-governance.yml',
+        '.github/workflows/governance-trust-root.yml',
         '.github/workflows/pr-review-agent.yml',
         '.github/PULL_REQUEST_TEMPLATE.md',
         'scripts/tests/check-pr-body-evidence.ps1',
@@ -192,6 +211,8 @@ try {
         '.codex/skills/ai-bim-bounded-change/SKILL.md',
         '.codex/skills/repo-health/SKILL.md',
         '.codex/skills/spec-to-done/agents/openai.yaml',
+        'agent-contracts/spec-to-done.contract.json',
+        'agent-contracts/spec-to-done.contract.schema.json',
         '.claude/skills/spec-to-done/validate-state.mjs',
         '.claude/skills/spec-to-done/ensure-host-native-ports-free.ps1',
         '.codex/skills/spec-to-done/ensure-host-native-ports-free.ps1',
@@ -395,20 +416,16 @@ try {
     Assert-True ($pwshRunCount -ge 5) 'agent-governance workflow runs the governance checks with PowerShell 7'
     Assert-True ($pwshRunCount -eq $totalRunCount) 'agent-governance workflow runs every step with PowerShell 7 (no legacy or non-pwsh shell)'
 
-    $humanApprovalScript = Get-Content -LiteralPath '.claude/workflows/ship-item.js' -Raw
+    $shipWorkflowScript = Get-Content -LiteralPath '.claude/workflows/ship-item.js' -Raw
     Assert-True (-not (Test-Path -LiteralPath '.github/workflows/owner-consent.yml')) 'replayable custom owner-consent status workflow is absent'
     Assert-True (-not (Test-Path -LiteralPath '.github/scripts/owner-consent.mjs')) 'replayable custom owner-consent status publisher is absent'
-    Assert-True ($humanApprovalScript -match "REVIEWER_LOGIN = 'monkey1sai-blip'") 'single-owner reviewer login is fixed'
-    Assert-True ($humanApprovalScript -match 'REVIEWER_ID = 311287868') 'single-owner reviewer immutable user id is fixed'
-    Assert-True ($humanApprovalScript -match "review\.state === 'APPROVED'") 'merge approval must be a GitHub APPROVED review'
-    Assert-True ($humanApprovalScript -match 'review\.commit_id === headOid') 'merge approval is bound to the exact head commit'
-    Assert-True ($humanApprovalScript -match 'reviewerPermissionForIdentity') 'fixed reviewer live permission is mechanically validated'
-    Assert-True ($humanApprovalScript -match "parsed\.permission !== 'write'") 'fixed reviewer permission must remain exactly write'
-    Assert-True ($humanApprovalScript -match 'reviewer_permission_changed_after_verdict') 'fixed reviewer permission is re-read before merge'
-    Assert-True ($humanApprovalScript -match 'requireCodeOwnerReviews') 'branch protection must require a code-owner review'
-    Assert-True ($humanApprovalScript -match "return held\('trusted_elevated_authorization_unavailable'") 'elevated merge paths remain held until a trusted authorization broker exists'
-    Assert-True (-not ($humanApprovalScript -match 'current_turn_authorization_required')) 'caller-controlled JSON is not treated as current-turn authorization'
-    Assert-True ($humanApprovalScript -match "expectedApprovalAction = elevatedApprovalPaths \? 'merge-elevated' : 'merge'") 'elevated changes require a distinct approval action'
+    foreach ($p6FailClosedMarker in @('ARG_KEYS_SAFE', 'USER_FACING_SAFE', 'SHIP_HELD_REASON_VALUES', 'host_env_blocked', 'ship_workflow_shell_unavailable')) {
+        Assert-True ($shipWorkflowScript -match [regex]::Escape($p6FailClosedMarker)) "P6 validation-only workflow preserves fail-closed marker: $p6FailClosedMarker"
+    }
+    Assert-True (-not ($shipWorkflowScript -match [regex]::Escape('$`'))) 'P6 production workflow contains no shell-command template'
+    Assert-True (-not ($shipWorkflowScript -match '(?m)\b(?:RAW_AGENT|governedAgent)\b|\bagent\s*\(')) 'P6 production workflow cannot dispatch an agent'
+    Assert-True (-not ($shipWorkflowScript -match [regex]::Escape('gh pr merge'))) 'P6 production workflow contains no merge command'
+    Assert-True (-not ($shipWorkflowScript -match 'merged\s*:\s*true')) 'P6 production workflow contains no successful merge result path'
     $codeownerLines = @(Get-Content -LiteralPath '.github/CODEOWNERS' | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') })
     Assert-True ($codeownerLines -contains '* @monkey1sai-blip') 'CODEOWNERS has a fixed human reviewer wildcard fallback'
     foreach ($codeownerLine in $codeownerLines) {
@@ -416,10 +433,14 @@ try {
         Assert-True ($codeownerParts.Count -eq 2 -and $codeownerParts[1] -ceq '@monkey1sai-blip') "CODEOWNERS rule has exactly one fixed human owner: $codeownerLine"
     }
     foreach ($workflowFile in @(Get-ChildItem -LiteralPath '.github/workflows' -File)) {
-        $permissionViolations = @(Get-WorkflowPermissionViolations -Lines @(Get-Content -LiteralPath $workflowFile.FullName))
+        $permissionViolations = @(Get-WorkflowPermissionViolations -Lines @(Get-Content -LiteralPath $workflowFile.FullName) -WorkflowPath $workflowFile.FullName)
         Assert-True ($permissionViolations.Count -eq 0) "workflow permissions are literal and cannot write comments, reviews, discussions, statuses, or checks: $($workflowFile.Name): $($permissionViolations -join '; ')"
     }
     Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read')).Count -eq 0) 'the exact root contents-read workflow permission is allowed'
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read', '  pull-requests: read') -WorkflowPath '.github/workflows/governance-trust-root.yml').Count -eq 0) 'base-owned governance trust root may read pull requests alongside contents'
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read', '  pull-requests: read') -WorkflowPath '.github/workflows/ci.yml').Count -gt 0) 'pull-request read is rejected outside the base-owned governance trust root'
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  pull-requests: read')).Count -gt 0) 'pull-request read without contents read is rejected'
+    Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read', '  pull-requests: write')).Count -gt 0) 'pull-request write is rejected'
     Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  contents: read', '# permissions tokens are forbidden outside the root key')).Count -gt 0) 'extra permissions tokens in comments are rejected by the strict dependency-free grammar'
     Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  "pull-requests": write')).Count -gt 0) 'quoted pull-request write permission is rejected'
     Assert-True (@(Get-WorkflowPermissionViolations -Lines @('permissions:', '  issues: *writer')).Count -gt 0) 'aliased issue permission is rejected fail closed'
@@ -563,7 +584,7 @@ try {
     Assert-True ($rebuildEntrypointBody -match 'test deployment rebuild failed') 'rebuild dev entrypoint distinguishes nonzero deployment failure from completion'
 
     foreach ($overlayPath in @('docs/agents/advanced-agent-reasoning-contract.md', 'docs/agents/codex-loop-workflows.md')) {
-        Assert-FileContains $overlayPath ([regex]::Escape('C:\Users\IOT\.codex\docs\agents\task-routing.md')) "$overlayPath points to global task-routing source of truth"
+        Assert-FileContains $overlayPath 'task-routing\.md' "$overlayPath points to the global runtime task-routing policy"
         $overlayBody = Get-Content -LiteralPath $overlayPath -Raw
         foreach ($genericHeading in @('Task Complexity Tiers', 'Reasoning Effort Routing', 'Codex Model / Effort Lane Routing')) {
             Assert-True (-not ($overlayBody -match [regex]::Escape($genericHeading))) "$overlayPath does not duplicate generic heading $genericHeading"
@@ -621,6 +642,46 @@ try {
 
     $codexSpecToDone = Get-Content -LiteralPath '.codex/skills/spec-to-done/SKILL.md' -Raw -Encoding UTF8
     $claudeSpecToDone = Get-Content -LiteralPath '.claude/skills/spec-to-done/SKILL.md' -Raw -Encoding UTF8
+    Assert-True (-not ($codexSpecToDone -match '(?i)[A-Z]:\\Users\\[^\\]+\\\.codex\\')) 'Codex spec-to-done stores no machine-specific user-home Codex path'
+    $specToDoneContractPath = 'agent-contracts/spec-to-done.contract.json'
+    $specToDoneContract = Get-Content -LiteralPath $specToDoneContractPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $expectedSpecToDonePhases = @('P0', 'P1', 'P3', 'P4', 'P5', 'P6', 'P7')
+    $contractPhases = @($specToDoneContract.phases)
+    $contractHeldReasons = @($specToDoneContract.durable_state.held_reasons)
+    Assert-True ($specToDoneContract.schema_version -ceq 'spec-to-done-contract/v1') 'spec-to-done machine contract has the pinned schema version'
+    Assert-True (($contractPhases -join ',') -ceq ($expectedSpecToDonePhases -join ',')) 'spec-to-done machine contract preserves the P0/P1/P3-P7 phase sequence'
+    Assert-True ($specToDoneContract.durable_state.canonical_relative_path -ceq 'artifacts/spec-to-done/{slug}-state.md') 'spec-to-done machine contract owns the canonical durable state path'
+    Assert-True ($contractHeldReasons.Count -gt 0 -and @($contractHeldReasons | Sort-Object -Unique).Count -eq $contractHeldReasons.Count) 'spec-to-done machine contract held reasons form a nonempty closed set'
+    Assert-True (@($contractHeldReasons | Where-Object { $_ -cnotmatch '^[a-z][a-z0-9_]*$' }).Count -eq 0) 'spec-to-done machine contract held reasons use canonical tokens'
+    foreach ($requiredHeldReason in @('host_env_blocked', 'evidence_stale', 'resume_state_invalid', 'review_unverified', 'ship_blocked')) {
+        Assert-True ($contractHeldReasons -contains $requiredHeldReason) "spec-to-done machine contract includes durable reason $requiredHeldReason"
+    }
+    Assert-True ($specToDoneContract.ship.workflow_shell_capability -ceq 'not_available_in_measured_runtime') 'spec-to-done machine contract records measured Workflow shell absence'
+    Assert-True ($specToDoneContract.ship.trusted_host_executor -ceq 'required') 'spec-to-done machine contract requires a trusted host executor'
+    Assert-True ($specToDoneContract.ship.unavailable_reason -ceq 'host_env_blocked') 'spec-to-done machine contract maps unavailable P6 to a durable host hold'
+    Assert-True ($specToDoneContract.terminal_evidence.owner_phase -ceq 'P7') 'spec-to-done machine contract owns terminal evidence at P7'
+    Assert-True ($specToDoneContract.terminal_evidence.trusted_remote_url -ceq 'https://github.com/monkey1sai/AI-BIM-governance.git') 'P7 pins the trusted HTTPS remote'
+    Assert-True ($specToDoneContract.terminal_evidence.remote_main_ref -ceq 'refs/heads/main') 'P7 pins the remote main ref instead of a local tracking ref'
+    foreach ($terminalRequirement in @('live_remote_resolution', 'pr_head_ancestor_of_merge_commit', 'merge_commit_equals_remote_main', 'pr_head_and_merge_commit_same_tree')) {
+        Assert-True ($specToDoneContract.terminal_evidence.$terminalRequirement -ceq 'required') "P7 machine contract requires $terminalRequirement"
+    }
+    foreach ($skillBody in @($claudeSpecToDone, $codexSpecToDone)) {
+        foreach ($machineMarker in @(
+            'agent-contracts/spec-to-done.contract.json',
+            'artifacts/spec-to-done/{slug}-state.md',
+            'P0,P1,P3,P4,P5,P6,P7',
+            'closed enum',
+            '--trusted-main-ref refs/heads/main',
+            'git ls-remote',
+            'local tracking ref',
+            'ship_workflow_shell_unavailable',
+            'base-pinned trusted host executor',
+            'git merge-base --is-ancestor <prHead> <mergeCommit>',
+            'git diff --quiet <prHead> <mergeCommit> --'
+        )) {
+            Assert-True ($skillBody -match [regex]::Escape($machineMarker)) "spec-to-done skill preserves machine/runtime marker: $machineMarker"
+        }
+    }
     $implicitTriggers = @(
         ([string][char]0x5BE6 + [char]0x4F5C + ' spec'),
         ([string][char]0x5B8C + [char]0x6210 + [char]0x9700 + [char]0x6C42),
@@ -655,6 +716,18 @@ try {
     # SKILL.md 以路徑引用 .claude 正本。
     Assert-True (-not (Test-Path -LiteralPath '.codex/skills/spec-to-done/validate-state.mjs')) 'Codex mirror must not carry a validate-state copy (single canonical in .claude)'
     Assert-True ($codexSpecToDone -match [regex]::Escape('.claude/skills/spec-to-done/validate-state.mjs')) 'Codex spec-to-done references the canonical .claude validate-state path'
+    foreach ($machineValidatorMarker in @(
+        '../../../agent-contracts/spec-to-done.contract.json',
+        'loadMachineContract()',
+        'ALLOWED_PHASES = new Set(phases)',
+        'ALLOWED_HELD_REASONS = new Set(reasons)',
+        'artifacts/spec-to-done/{slug}-state.md',
+        'trusted-main-ref',
+        'merge-base',
+        '--is-ancestor'
+    )) {
+        Assert-True ($claudeStateValidator -match [regex]::Escape($machineValidatorMarker)) "state validator consumes machine/P7 contract marker: $machineValidatorMarker"
+    }
     foreach ($stateMarker in @('native-* labels are not resumable run IDs', 'run_budget_exhausted', 'evidence_stale', 'expected-agent-limit', 'expected-worktree', 'production files changed after evidence was captured')) {
         Assert-True ($claudeStateValidator -match [regex]::Escape($stateMarker)) "spec-to-done state validator contains: $stateMarker"
     }
@@ -673,8 +746,22 @@ try {
     }
     Assert-True ($fuAdversarial -match 'MAX_VERIFIER_BATCHES\s*=\s*2') 'P5 verifier concurrency is capped at two batches'
     Assert-True ($fuAdversarial -match 'MAX_FINDINGS\s*=\s*32') 'P5 rejects unbounded finding registries'
-    foreach ($p5IntegrityMarker in @('targetSha', 'empty_review_range', 'repoRelativePath', 'suspect_file_not_tracked_at_subject_sha', '禁止 Read mutable worktree path', 'evidence_not_bound_to_subject_sha', 'maxItems: MAX_FINDINGS')) {
+    foreach ($p5IntegrityMarker in @('targetSha', 'empty_review_range', 'repoRelativePath', 'suspect_file_not_tracked_at_subject_sha', '禁止 Read mutable worktree path', 'evidence_not_bound_to_supplied_content', 'maxItems: MAX_FINDINGS')) {
         Assert-True ($fuAdversarial -match [regex]::Escape($p5IntegrityMarker)) "P5 preserves immutable evidence integrity marker: $p5IntegrityMarker"
+    }
+    foreach ($p5MachineMarker in @('coordinator-attested', 'acceptanceDigest', 'acceptanceSummary', 'REQUIREMENT_REF_KEYS', 'review_unverified', 'reviewer_agent_failed')) {
+        Assert-True ($fuAdversarial -match [regex]::Escape($p5MachineMarker)) "P5 preserves bounded attestation/held marker: $p5MachineMarker"
+    }
+    foreach ($skillBody in @($claudeSpecToDone, $codexSpecToDone)) {
+        foreach ($p5SkillMarker in @(
+            "git.attestation   = 'coordinator-attested'",
+            '{path,commitSha,blobOid,sha256}',
+            '不得宣稱 machine-bound',
+            "P5.held==='review_unverified'",
+            'null/agent infra'
+        )) {
+            Assert-True ($skillBody -match [regex]::Escape($p5SkillMarker)) "spec-to-done skill preserves P5 machine semantics: $p5SkillMarker"
+        }
     }
     Assert-True ($codexSpecToDone -match [regex]::Escape('targetSha')) 'Codex spec-to-done passes the immutable P5 target SHA'
     Assert-True ($claudeSpecToDone -match [regex]::Escape('targetSha')) 'Claude spec-to-done passes the immutable P5 target SHA'
@@ -747,17 +834,27 @@ try {
 
     $shipItemMarkdown = Get-Content -LiteralPath '.claude/workflows/ship-item.md' -Raw -Encoding UTF8
     $shipItemPrompt = Get-Content -LiteralPath '.claude/workflows/ship-item.js' -Raw -Encoding UTF8
-    foreach ($shipSource in @($shipItemMarkdown, $shipItemPrompt)) {
-        foreach ($shipSafetyMarker in @('review_required', 'cyber_safeguard_payload', 'git fetch origin', 'git merge-base', 'git rebase origin/main', 'published PR branch', 'git merge --no-edit origin/main', 'seg/seg/id', 'passwd')) {
-            Assert-True ($shipSource -match [regex]::Escape($shipSafetyMarker)) "ship-item dual-maintained source preserves safety marker: $shipSafetyMarker"
-        }
-        Assert-True ($shipSource -match 'MUST NOT[^\r\n]*gh pr merge --admin') 'ship-item forbids the agent from using the admin merge override'
-        Assert-True ($shipSource -match 'preparation') 'ship-item separates preparation from merge authority'
-        Assert-True (($shipSource -match 'apex') -and ($shipSource -match 'arbiter|裁決')) 'ship-item requires an independent apex merge verdict'
-        Assert-True ($shipSource -match 'headOid') 'ship-item binds the verdict to an exact PR head'
-        Assert-True ($shipSource -match [regex]::Escape('--merge --match-head-commit')) 'ship-item preserves snapshot ancestry with merge commits'
-        Assert-True (-not ($shipSource -match [regex]::Escape('--squash --match-head-commit'))) 'ship-item does not squash away snapshot commits'
+    foreach ($runtimeTruthMarker in @(
+        "typeof `$ === 'undefined'",
+        'ship_workflow_shell_unavailable',
+        '不 dispatch apex',
+        'base-pinned trusted host executor',
+        'synthetic',
+        'production script 已移除 legacy coordinator',
+        'pull-requests: read'
+    )) {
+        Assert-True ($shipItemMarkdown -match [regex]::Escape($runtimeTruthMarker)) "ship-item procedure preserves current runtime truth: $runtimeTruthMarker"
     }
+    foreach ($shipSafetyMarker in @('review_required', 'cyber_safeguard_payload', 'git fetch origin', 'git merge-base', 'git rebase origin/main', 'published PR branch', 'git merge --no-edit origin/main', 'seg/seg/id', 'passwd')) {
+        Assert-True ($shipItemMarkdown -match [regex]::Escape($shipSafetyMarker)) "future trusted-host procedure preserves safety marker: $shipSafetyMarker"
+    }
+    Assert-True ($shipItemMarkdown -match 'MUST NOT[^\r\n]*gh pr merge --admin') 'future trusted host forbids the admin merge override'
+    Assert-True (($shipItemMarkdown -match 'apex') -and ($shipItemMarkdown -match 'arbiter|裁決')) 'future trusted-host procedure requires an independent apex verdict'
+    Assert-True ($shipItemMarkdown -match 'headOid') 'future trusted-host verdict binds to an exact PR head'
+    Assert-True ($shipItemMarkdown -match [regex]::Escape('--merge --match-head-commit')) 'future trusted-host procedure preserves snapshot ancestry with merge commits'
+    Assert-True (-not ($shipItemMarkdown -match [regex]::Escape('--squash --match-head-commit'))) 'future trusted-host procedure does not squash away snapshot commits'
+    Assert-True ($shipItemPrompt -match [regex]::Escape("return held('host_env_blocked', INPUT_PR_NUMBER, 'ship_workflow_shell_unavailable')")) 'production P6 always returns the canonical host hold after validation'
+    Assert-True (-not ($shipItemPrompt -match [regex]::Escape('$`')) -and -not ($shipItemPrompt -match [regex]::Escape('gh pr merge')) -and -not ($shipItemPrompt -match 'merged\s*:\s*true')) 'production P6 has no shell or merge sink'
 
     $claudeSettingsRaw = Get-Content -LiteralPath '.claude/settings.json' -Raw
     $claudeSettings = $claudeSettingsRaw | ConvertFrom-Json
@@ -947,7 +1044,7 @@ try {
     }
 
     & node --test tests/test_governed_dispatch_runtime.mjs tests/test_ship_item_runtime.mjs
-    Assert-True ($LASTEXITCODE -eq 0) 'governed dispatch and exact-head human-approval ship-item runtime tests pass'
+    Assert-True ($LASTEXITCODE -eq 0) 'governed dispatch and validation-only fail-closed ship-item runtime tests pass'
 
     & pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'test-seed-isolated-stack-ifc-ready.ps1')
     Assert-True ($LASTEXITCODE -eq 0) 'isolated seed wrapper script-level tests pass'

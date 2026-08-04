@@ -46,10 +46,10 @@ architecture/
 - `architecture-delta.schema.json`：每次變更的 machine-readable delta schema。
 - `deltas/<change-id>.json`：新增／刪除 dependency edge、public contract、ownership、state machine 與 exception 的聲明。
 - `observed-graph.config.json`：observed 靜態掃描設定（目錄→service 對映、掃描排除、可視為 inbound target 的 port、誤報抑制樣式）。
-- `observed-baseline.json`：**已核准的 observed baseline**（grandfathered edge 與 cycle）。ratchet 只放行這裡有的東西，其餘 fail closed。
+- `observed-baseline.json`：**已核准的 observed baseline**（grandfathered edge 與 cycle）。ratchet 只放行這裡有的東西，其餘 fail closed；在 GitHub PR 上，candidate baseline 只能相對 PR base 單調縮減，不能新增 grandfathered edge/cycle 或提高 budget。
 - `layer-contract.json`：**每個 service 的 module→layer 指派規則與允許的跨層依賴矩陣**（Phase 3）。規則有序、first-match-wins。
 - `layer-contract.schema.json`：layer contract 的結構 schema。
-- `layer-baseline.json`：**已核准的 layer baseline**（grandfathered 跨層違規＋每 service 零寬鬆的 violation budget）。
+- `layer-baseline.json`：**已核准的 layer baseline**（grandfathered 跨層違規＋每 service 零寬鬆的 violation budget）；在 GitHub PR 上同樣只能相對 PR base 單調縮減，不能用 candidate 自己擴張的 baseline 替新違規開脫。
 - `layer-baseline.schema.json`：layer baseline 的結構 schema。
 
 ## 3. 第一版硬規則
@@ -128,6 +128,8 @@ Canonical dispatch：
 .\scripts\verify-all.ps1 -ChangedPath architecture/architecture-contract.json
 ```
 
+`observed-graph.config.json` 的 `compose_files` 是 architecture scanner 的正式輸入，不只是部署設定。`scripts/verification-manifest.json` 必須讓其中每一個 compose path 都觸發 `root-contracts`；新增 compose scanner input 時，routing closure test 也必須同步證明它不會只跑 `docker compose config` 而漏掉 observed/layer architecture checks。
+
 OpenSpec：
 
 ```powershell
@@ -143,6 +145,8 @@ openspec validate --all --strict
 existing violations <= recorded baseline
 new violations == 0
 ```
+
+`observed-baseline.json` 與 `layer-baseline.json` 是 **grandfathered debt 清單，不是一般 architecture registry**。PR 的信任基準是 GitHub 事件提供的 base commit；base-owned audit checker 只允許 candidate 刪除既有 edge/cycle/layer violation、降低既有 budget，或為新 scope 建立零 budget。新增合法 dependency edge 應透過 desired contract＋architecture delta 表達，不得把它塞進 baseline。這個 base-aware 單調性也避免同一個 PR 一面製造違規、一面 re-baseline 後自行宣稱通過；merge enforcement 仍須由 distinct external GitHub App 將同一結果綁到 PR head。
 
 具體規則（`scripts/lib/observed_architecture.py`）：
 

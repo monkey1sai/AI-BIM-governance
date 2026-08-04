@@ -29,6 +29,7 @@
     "scripts/tests/task-packet.schema.json",
     "scripts/tests/fixtures/agent-governance-routing.json",
     "scripts/tests/test-task-packet.mjs",
+    "agent-contracts/**",
     "skills-lock.json",
     "scripts/lib/design-system-gate.ps1",
     "scripts/verify-all.ps1",
@@ -93,7 +94,7 @@
       "id": "tracked-repository",
       "path_globs": [
         "AGENTS.md", "CLAUDE.md", "README*.md", "*.json", "*.md", "*.yml", "*.yaml",
-        ".claude/**", ".codex/**", ".github/**", "apps/**", "artifacts/**",
+        ".claude/**", ".codex/**", ".github/**", "agent-contracts/**", "apps/**", "artifacts/**",
         "bim-review-coordinator/**", "bim-streaming-server/**", "docs/**", "governance-service/**",
         "infra/**", "openspec/**", "patches/**", "rules/**", "scripts/**", "services/**", "tests/**",
         "web-viewer-sample/**",
@@ -106,13 +107,15 @@
         "tests/**", "scripts/tests/**", "scripts/gen_routing.py", ".claude/workflows/**", "docs/contracts/**",
         "bim-review-coordinator/**", "bim-streaming-server/**", "governance-service/**", "rules/**",
         "web-viewer-sample/**", "services/kit-manager-api/**", "apps/kit-manager-web/**",
+        "compose.*.yml",
         "architecture/**",
         "scripts/lib/architecture_contract.py",
         "scripts/dev/validate_architecture_contract.py",
         "scripts/lib/observed_architecture.py",
         "scripts/dev/export_observed_architecture.py",
         "scripts/lib/layered_architecture.py",
-        "scripts/dev/check_layered_architecture.py"
+        "scripts/dev/check_layered_architecture.py",
+        "scripts/dev/check_governance_trust_root.py"
       ]
     },
     { "id": "coordinator", "path_globs": ["bim-review-coordinator/**", "tests/contracts/**"] },
@@ -140,7 +143,7 @@
     {
       "id": "agent-governance",
       "path_globs": [
-        "AGENTS.md", "CLAUDE.md", ".claude/**", ".codex/**", ".github/**", "docs/agents/**",
+        "AGENTS.md", "CLAUDE.md", ".claude/**", ".codex/**", ".github/**", "agent-contracts/**", "docs/agents/**",
         "openspec/**", "scripts/**", "agent-skills-manifest.json", "skills-lock.json",
         "architecture/**"
       ]
@@ -306,7 +309,7 @@
   ],
   "targets": [
     {
-      "id": "root-contracts", "display_name": "tests (contracts+fakes)", "path_globs": ["tests/**", "scripts/tests/**", "scripts/gen_routing.py", ".claude/workflows/**", "docs/contracts/**", "bim-review-coordinator/**", "bim-streaming-server/**", "governance-service/**", "rules/**", "web-viewer-sample/**", "services/kit-manager-api/**", "apps/kit-manager-web/**", "architecture/**", "scripts/lib/architecture_contract.py", "scripts/dev/validate_architecture_contract.py", "scripts/lib/observed_architecture.py", "scripts/dev/export_observed_architecture.py", "scripts/lib/layered_architecture.py", "scripts/dev/check_layered_architecture.py"],
+      "id": "root-contracts", "display_name": "tests (contracts+fakes)", "path_globs": ["tests/**", "scripts/tests/**", "scripts/gen_routing.py", ".claude/workflows/**", "docs/contracts/**", "bim-review-coordinator/**", "bim-streaming-server/**", "governance-service/**", "rules/**", "web-viewer-sample/**", "services/kit-manager-api/**", "apps/kit-manager-web/**", "compose.*.yml", "architecture/**", "scripts/lib/architecture_contract.py", "scripts/dev/validate_architecture_contract.py", "scripts/lib/observed_architecture.py", "scripts/dev/export_observed_architecture.py", "scripts/lib/layered_architecture.py", "scripts/dev/check_layered_architecture.py", "scripts/dev/check_governance_trust_root.py"],
       "owner": "contract-owner", "fast_gates": [], "contract_gates": ["root-contracts"], "slow_evidence_gates": [],
       "required_when": { "predicate": "changed_path_class", "any_of": ["root-contracts"] }, "skip_reason": "path_not_affected",
       "default_profiles": ["developer", "developer-py"], "ci_output": "root_contracts",
@@ -370,7 +373,7 @@
       "ci_job": "kit-manager-web build", "result_artifact": null
     },
     {
-      "id": "agent-governance", "display_name": "agent governance contracts", "path_globs": ["AGENTS.md", "CLAUDE.md", ".claude/**", ".codex/**", ".github/**", "docs/agents/**", "openspec/**", "scripts/**", "agent-skills-manifest.json", "skills-lock.json", "architecture/**"],
+      "id": "agent-governance", "display_name": "agent governance contracts", "path_globs": ["AGENTS.md", "CLAUDE.md", ".claude/**", ".codex/**", ".github/**", "agent-contracts/**", "docs/agents/**", "openspec/**", "scripts/**", "agent-skills-manifest.json", "skills-lock.json", "architecture/**"],
       "owner": "agent-governance", "fast_gates": [], "contract_gates": ["agent-governance-tests"], "slow_evidence_gates": [],
       "required_when": { "predicate": "changed_path_class", "any_of": ["agent-governance"] }, "skip_reason": "path_not_affected",
       "default_profiles": [], "ci_output": "agent_governance",
@@ -426,7 +429,7 @@
       }
     },
     {
-      "id": "secret-pattern-scan", "display_name": "secret pattern scan", "path_globs": ["AGENTS.md", "CLAUDE.md", "README*.md", "*.json", "*.md", "*.yml", "*.yaml", ".claude/**", ".codex/**", ".github/**", "apps/**", "artifacts/**", "bim-review-coordinator/**", "bim-streaming-server/**", "docs/**", "governance-service/**", "infra/**", "openspec/**", "patches/**", "rules/**", "scripts/**", "services/**", "tests/**", "web-viewer-sample/**", "architecture/**"],
+      "id": "secret-pattern-scan", "display_name": "secret pattern scan", "path_globs": ["AGENTS.md", "CLAUDE.md", "README*.md", "*.json", "*.md", "*.yml", "*.yaml", ".claude/**", ".codex/**", ".github/**", "agent-contracts/**", "apps/**", "artifacts/**", "bim-review-coordinator/**", "bim-streaming-server/**", "docs/**", "governance-service/**", "infra/**", "openspec/**", "patches/**", "rules/**", "scripts/**", "services/**", "tests/**", "web-viewer-sample/**", "architecture/**"],
       "owner": "security", "fast_gates": ["secret-pattern-scan", "security-exception-policy", "dependency-review", "sast"], "contract_gates": [], "slow_evidence_gates": [],
       "required_when": { "predicate": "changed_path_class", "any_of": ["tracked-repository"] }, "skip_reason": "path_not_affected",
       "default_profiles": [], "ci_output": "secret_pattern_scan",

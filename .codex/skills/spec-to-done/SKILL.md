@@ -10,7 +10,14 @@ description: Use only when the user explicitly invokes spec-to-done (or explicit
 
 本技能是 Lane S 的明確 opt-in 流程；`agents/openai.yaml` 已禁止 implicit invocation。不得因任務非平凡、文字含「完成」、changed path 位於 code/tests，或模型主觀判斷而自行啟動。
 
-**Source of truth 聲明**:本檔是 spec-to-done 的 Codex copy;phase / gate / HELD / resume / evidence / ship 語義必須精準對齊 `.claude/skills/spec-to-done/SKILL.md`。`std-*.js` 與 `ship-item` 的 canonical runtime 仍在 `.claude/workflows/`(compose,不重造);Codex 只能做 executor / model / path 配接,不得改寫成較弱的 parent-only 流程。
+**Source of truth 聲明**:本檔是 spec-to-done 的 Codex adapter copy；程序 gate / resume / evidence / ship 語義必須精準對齊 `.claude/skills/spec-to-done/SKILL.md`。phase 集合、durable state canonical path 與完整 closed held enum 的 machine source of truth 是 `agent-contracts/spec-to-done.contract.json`；本檔不複製完整 raw enum。`std-*.js` 與 `ship-item` 的 canonical runtime 仍在 `.claude/workflows/`(compose,不重造)，但 P6 目前依量測 runtime capability fail closed，Codex 不得假裝它已可 merge。
+
+## Machine contract（Claude/Codex 共用）
+
+- phases 必須逐字等於 contract 的 `P0,P1,P3,P4,P5,P6,P7`；不存在 P2。
+- durable state 唯一路徑是 contract 的 `artifacts/spec-to-done/{slug}-state.md`。
+- `reason=` 只能取 contract `durable_state.held_reasons` 的 closed enum；低階補充只能寫 `heldDetail`／`診斷=`，不得創造新 reason 或複合 reason。
+- `.claude/skills/spec-to-done/validate-state.mjs` 是兩平台共用 validator，直接載入 machine contract；contract 缺失、malformed 或 state 值不在 closed enum 都 fail closed。
 
 ## Codex 對齊補充(只配接,不改 gate)
 
@@ -27,7 +34,7 @@ description: Use only when the user explicitly invokes spec-to-done (or explicit
 
 ## Claude/Codex 對齊契約(防 drift)
 
-`.claude/skills/spec-to-done/SKILL.md` 是 phase / gate / HELD / resume / evidence / ship 語義 canonical;`.codex/skills/spec-to-done/SKILL.md` 只能作為 Codex adapter copy。兩份檔案可有差異,但差異必須落在下列白名單。
+`.claude/skills/spec-to-done/SKILL.md` 是程序 gate / resume / evidence / ship 語義 canonical；machine phases、durable path 與 closed held enum 以 `agent-contracts/spec-to-done.contract.json` 為準。`.codex/skills/spec-to-done/SKILL.md` 只能作為 Codex adapter copy。兩份檔案可有差異,但差異必須落在下列白名單。
 
 允許差異:
 
@@ -49,7 +56,7 @@ description: Use only when the user explicitly invokes spec-to-done (or explicit
 - 不得加入「需要另行授權 commit / push / PR / merge」來覆蓋本檔既有 spec-to-done ship 語義;只有 consent carve-out 類別可再停。
 - 不得移除 P5 adversarial review、P6 ship-item、OpenSpec / pr-review-agent / GitNexus fallback 揭露等 gate。
 - 不得在 Codex copy 自行創造與 `.claude/workflows/*.js` 不相容的欄位或 StructuredOutput 名稱。
-- 不得使用 held 對照表以外的 held 值或複合值;環境阻斷一律 `host_env_blocked`。
+- 不得使用 machine contract closed enum 以外的 held 值或複合值；環境阻斷一律 `host_env_blocked`。
 - 不得在 state 行使用「State 行詞彙」白名單外的行首 token、英文 schema 欄位(`diagnosis=` / `need=` / `stateSchema=`)或 P2 phase 編號。
 
 改任何一份 spec-to-done skill 時,同一 PR 必須跑 drift check:
@@ -173,8 +180,14 @@ P5 前置(指揮官親自建立 immutable review snapshot):
      baseSha=`git merge-base <targetSha> <subjectSha>`(三者皆完整 40-hex，且 baseSha 不得等於 subjectSha)。
      domainContext=從 spec scope 壓成的 owning service/public entrypoint/deployment boundary，≤8000 char；
        不得把某個 service/runtime/tool 版本硬編進 generic workflow。
+     requirements 是必填的 bounded acceptance context：`acceptanceDigest` 為 64-hex SHA-256、
+       `acceptanceSummary` 為非空且 ≤8000 字元、`refs` 為 1..16 個 path 唯一的
+       `{path,commitSha,blobOid,sha256}`（path 是 canonical repo-relative；兩個 Git OID 為 full 40-hex，
+       sha256 為 64-hex）。它與下列 git facts 都只是 `coordinator-attested`；Workflow 只驗 shape/界限並
+       傳給 reviewer，沒有 host shell/hash 能力可獨立重算，因此不得宣稱 machine-bound。
      **workflow runtime 沒有 shell(`typeof $ === 'undefined'`)，git 事實一律由指揮官收集後經 args.git 傳入**；
      以下全部在同一個 clean snapshot 內取得，任一步之後 worktree 有變動就必須整批重取：
+       git.attestation   = 'coordinator-attested'
        git.cleanBefore   = (`git status --porcelain` 為空)
        git.headSha       = `git rev-parse HEAD`                      // 必須 === subjectSha
        git.originMainSha = `git rev-parse origin/main`               // 必須 === targetSha(trusted-ref 綁定)
@@ -188,15 +201,16 @@ P5 = Workflow({name:'fu-adversarial-verify-generic', args:{
         root: worktreeRoot, label: slug, targetSha, baseSha, subjectSha, domainContext,
         findings: [...P3.finalReview.findings, ...((P4.evidence && P4.evidence.gaps) || [])],
         criticFocus: '通讀 immutable diff 找新誠實違規 / 行為 regression / spec-drift / 空測試 / DEMO DATA 漏標。',
-        maxVerifierBatches:2, p5Round:p5Rounds.used+1, remainingAgentCalls, git}})
+        maxVerifierBatches:2, p5Round:p5Rounds.used+1, remainingAgentCalls, requirements, git}})
      // DACS（arXiv:2604.07911）：P5 findings 一律壓成 registry {id, q:<一句話 claim ≤800 char>, suspectFile}，
      //   不灌 P3 finalReview 全文；suspectFile/evidence.file 必須是 canonical repo-relative path，且 suspectFile
      //   必須是 subjectSha 的 tracked blob，或本次刪除/改名、已由 git.baseFiles 供給的路徑（intake 接受 trackedAtSubject ∪ baseFiles）；fu-...js 對超長 q / 缺/重複 id / 非法或未供給路徑 / >=32 findings
      //   會 held:'bad_findings' / 'run_budget_exhausted' fail-fast。findings 分成最多 2 批 verifier 平行，
      //   holistic critic 等批次完成後才串行執行；verifier+critic 合計最多 32 筆，最大同時 agent 數=2，
      //   不再 per-finding fan-out。每筆 evidence.file/line/quote 會由 workflow 以 `git show <subjectSha>:<file>`
-     //   機械綁定 exact subject blob；reviewer 只准 pinned git show/diff/grep，禁止 Read worktree/.env/untracked；
-     //   路徑、blob、line 或 quote 任一不符即 reviewer_agent_failed。
+     //   機械綁定 coordinator 供給的 exact subject/base content；reviewer 只准 pinned git show/diff/grep，
+     //   禁止 Read worktree/.env/untracked。合法 output 但 evidence content 未能驗證時是 durable
+     //   review_unverified；null/agent infra、缺失或 invalid schema/identity 仍是 reviewer_agent_failed。
      //   （指揮官真截斷 q 為 doc 紀律；機械只驗入參合規。）
      每次 P5 呼叫(含 bad input 修正、infra retry、evidence stale 後的新 snapshot 與內容修復後複驗)
        都先確認 p5Rounds.used<maxP5Rounds=2 並增加 p5Rounds；回傳後立即累加 P5.agentCallsUsed，
@@ -213,6 +227,8 @@ P5 = Workflow({name:'fu-adversarial-verify-generic', args:{
      P5.held==='bad_args'/'bad_findings' → 修正 invocation/registry；只有 P5 round 尚有額度才可重呼。
      P5.held==='evidence_stale' → 丟棄全部舊 verdict；重新 fetch/commit/clean、重取 targetSha+baseSha+subjectSha 後啟動新 P5，
        不得 resume 或沿用舊 SHA evidence；新 snapshot 的 P5 仍消耗下一輪額度，無額度即 HELD。
+     P5.held==='review_unverified' → durable HELD；逐項保存 P5.unverified taxonomy/evidence。只有補齊同一
+       immutable snapshot 的 supplied content 或修正實際內容後，才可在剩餘 P5 round 內重跑；不得當成 infra retry 或 pass。
      P5.held==='reviewer_agent_failed' 或上述 reviewer infra 失敗 → 只有尚有 P5 round 與 agent call 額度時，
        才可在同一 clean subjectSha 重呼一次；仍失敗或額度用盡 → HELD。
      P5.held==='external_blocked' → HELD；逐項回報 evidence 與 external_blockers[].unblock_condition，
@@ -261,46 +277,37 @@ P6 前置(指揮官親自做,解決 PR body 資料通道):
         `git rev-parse HEAD` 與 `gh pr view <prNumber> --json headRefOid --jq .headRefOid` 完全相同。
         任一失敗或 head 改變都 HELD；不得把舊 head 的 preflight 當成 P6 證據。
 P6 = Workflow({name:'ship-item', args:{branch, prNumber:<前置 c 的號碼>, userFacing}})
-     P6 內部由 workflow coordinator 用固定命令收集即時 diff/checks/三處 reviews 與精確 base/head；唯一 child 是
-       無 shell/write capability 的 apex arbiter。只有 identity-bound allow verdict 才能 merge；治理 gate 自我修改、
-       缺 verdict、base/head 改變一律 HELD，merge command 必須帶 --match-head-commit。
-     consume:
-       P6===null → 對話回報 ship agent 失敗,重呼一次;仍 null → HELD
-       P6.merged===true → P7
-       P6.heldReason 屬 production P1/P2 → fix 迴圈(同 P5 的 mode:'fix',fixFindings=該 P1/P2)
-         → 重呼 ship-item 帶同一 prNumber(沿用 PR 重跑 buffer cycle)
-       P6.heldReason 屬 `review_required` / `human_approval_required` → HELD；使用者須以固定
-         CODEOWNER 帳號完成 exact-head canonical approval，再以同一 prNumber resume。agent MUST NOT run
-         `gh pr merge --admin`，也不得把 required review 當成一般 CI 重試。
-       P6.heldReason 屬 `reviewer_permission_not_strict` / `reviewer_permission_changed_after_verdict` → HELD；
-         使用者必須恢復固定 reviewer 的 exact `write` permission/role 後才可 resume。
-       P6.heldReason 屬 `branch_protection_changed_during_buffer` / `branch_protection_changed_after_verdict` /
-         `human_approval_changed_after_verdict` → HELD；重讀 live protection 與 exact-head human approval，
-         只有狀態重新穩定且 fresh approval 完整綁定目前 head 後才能 resume，不得自動重試或 merge。
-       P6.heldReason === 'trusted_elevated_authorization_unavailable' → HELD；目前沒有 agent-inaccessible、
-         一次性、tuple/nonce/expiry-bound broker，任何 caller-supplied `elevatedAuthorization` 都不能
-         resume；不得自行合成或降級。`unexpected_elevated_authorization` 則移除 routine PR 的錯誤欄位後 resume。
-       P6.heldReason === 'cyber_safeguard_payload' → 僅當 reviewer/test 的目的只需階層 separator、
-         不依賴 traversal/exploit 語意時，將 test-only payload 改成安全等價 `a/b` 或 `seg/seg/id`；
-         對本次 payload-bearing test/fixture paths 跑 `rg -n 'passwd' <paths>`，必須無輸出才 resume
-         原 P5/P6 phase。若替換會削弱 security regression，維持 HELD 並請使用者裁決。
-       P6.heldReason === 'branch_requires_separate_authorization' → HELD；revert-* / release / hotfix branch
-         須使用者明確同意後改走另行授權流程，不得以同一 ship-item 自動重試、resume 或 merge。
-       P6 其他 consent carve-out(破壞性對外) → HELD(須使用者明確同意)
-       其他(CI 持續紅、merge conflict、report generation failed 類工具故障)→ 對話回報 +
-         依 ship-item.md 判斷層次處置;不可只看 check 狀態 merge
+     **目前實際狀態**：已量測 Workflow runtime 沒有 `$` shell helper。`ship-item` 在 Validate 完成 args 檢查後
+       回 `heldReason='host_env_blocked'`、`heldDetail='ship_workflow_shell_unavailable'`；不 dispatch apex、
+       不讀 git/gh、不 merge。production `ship-item.js` 已移除 legacy coordinator 與 merge sink；注入 synthetic
+       `$`／`agent` 的測試只證明 caller capability 無法解鎖這個 durable hold，不是 deployability evidence。
+     **恢復條件**：必須先實作 base-pinned trusted host executor，由 freshly fetched trusted base 執行固定
+       preparation、shell-free apex 裁決後的 final reads，以及唯一 exact-head merge sink
+       `gh pr merge --merge --match-head-commit <preparedHead>`；不得執行 PR branch 可修改的 merge script。
+       executor 上線前，這個 `host_env_blocked` 是 durable HELD，不得 retry 成成功、手填 `merged=true` 或進 P7。
+     future executor consume：所有 `heldReason` 必須先通過 machine contract closed enum；raw 細節寫
+       `heldDetail`／`診斷=`。review／approval／protection／elevated／consent carve-out 依下方處置表停下；
+       常用 protection/branch checkpoint 是 `branch_requires_separate_authorization`、
+       `branch_protection_changed_during_buffer`、`branch_protection_changed_after_verdict` 與
+       `human_approval_changed_after_verdict`；
+       只有 trusted host 已重新驗證 exact repo/PR/base/head、required checks、三處 review evidence、branch
+       protection 與 shell-free apex verdict，且 authoritative GitHub state 證明 merge 後，才可進 P7。
 P7 = 主對話回報四項:改了哪些 tracked files / 跑了哪些最小驗證 / 哪些測試沒跑及原因 / 已知風險
      + mergeCommit + evidence 路徑 + AGENTS.md 7 欄 Frontend 表(回報用;PR body 已用 10 列表)
      宣告前先對帳:OpenSpec/plan 的 task 勾選 ↔ state 檔 + task#N commits;不一致 → held='ledger_mismatch'
-     DONE@P7 是 terminal audit checkpoint：ship-item 已移除 linked worktree 時，worktree/branch/head 改記目前
-     main checkout/main/mergeCommit，另加 prHead=<合併前 PR head>、mergeCommit=<同 head>；evidenceHead
-     保留原取證起點。validator 驗 evidenceHead..prHead 僅含 evidence allowlist，且 prHead 與
-     mergeCommit tree 完全相同；不存在 P7 ancestry 豁免，terminal 行不得 resume。
+     DONE@P7 前仍須 freshly fetch `origin/main`，但用途只限讓 merge commit object 在本機可供 ancestry/tree
+     檢查；local tracking ref 不構成信任證據。machine contract 的 `terminal_evidence` 固定 trusted HTTPS remote
+     與 `refs/heads/main`；validator 使用已驗證、worktree 外的絕對 Git executable，清除 local/global Git config
+     與不安全 CA override 後同步執行 `git ls-remote`。live remote SHA 必須等於 full 40-char `mergeCommit` 與
+     terminal `head`；`git merge-base --is-ancestor <prHead> <mergeCommit>` 必須成功，且
+     `git diff --quiet <prHead> <mergeCommit> --` 證明 same tree；`evidenceHead..prHead` 仍只含 evidence
+     allowlist。state 另記 prHead=<合併前 PR head>、mergeCommit=<live remote refs/heads/main commit>。任一 live
+     resolution、ancestry 或 tree 證據失敗都 `evidence_stale`；terminal 行不得 resume 任何 agent phase。
 ```
 
 P1 內含 plan 四軸 review(Completeness/Spec Alignment/Task Decomposition/Buildability);P3 內含每 task 兩階段 review(spec 先 quality 後)— 都在 workflow 內自動修迴圈,不回主對話。
 
-## held 對照表(workflow 回傳的全部 held 值與處置)
+## held 對照表（常用處置；完整 closed enum 以 machine contract 為準）
 
 | held | 來源 | 指揮官處置 |
 |---|---|---|
@@ -311,7 +318,8 @@ P1 內含 plan 四軸 review(Completeness/Spec Alignment/Task Decomposition/Buil
 | `scope_drift` | evidence-closeout 需要 production/UI/contract/config 變更 | **HELD**；改用另一個已核准 full change，不得在 closeout 內擴張 |
 | `evidence_stale` / `evidence_not_closing` | P5 worktree/HEAD/target/base/subject identity 漂移、空 review range，或 closeout evidence 未綁目前 HEAD/兩次仍未閉合 | 丟棄舊 verdict；fetch/commit/clean 後重取完整 SHA；只在剩餘額度內重跑，禁止第三輪自動重試 |
 | `external_blocked` | P5 有 confirmed/adjusted external blocker | HELD；回報 evidence＋精確 unblock_condition；條件實現後以新 clean subjectSha 重跑，禁止自動修 |
-| `plan_author_failed` / `plan_parse_failed` / `reviewer_agent_failed` | P1/P3 infra(agent 回 null)；P5 verifier/critic 缺失、identity/taxonomy 不一致或 unverified | 只在剩餘 run/P5 額度內以同一 immutable input 重呼一次；再失敗或額度用盡 → HELD |
+| `plan_author_failed` / `plan_parse_failed` / `reviewer_agent_failed` | P1/P3 infra；P5 agent null、verifier/critic 缺失或 output schema/identity 不合法 | 只在剩餘 run/P5 額度內以同一 immutable input 重呼一次；再失敗或額度用盡 → HELD |
+| `review_unverified` | P5 output 合法但 supplied immutable content 無法支持 evidence/taxonomy | durable HELD；保存 unverified 細節，補齊 pinned content 或修正實際內容後才可在剩餘額度內重跑，不得當 pass |
 | `plan_not_aligned` | P1 修 2 輪仍不過 | **一律 HELD**(附 spec 矛盾診斷 specConflict;不自動重跑 P1 — 強制停下點,不可自動繞) |
 | `critical_impact` | P1 預掃 / P3 per-task | HELD(CRITICAL 阻擋)。使用者選:(a) 拆 change → 修 spec/plan 後重跑;(b) reviewer sign-off → resume 時把該 symbols 放進 `acknowledgedCriticalSymbols`,gate 對已 ack 的 symbol 放行(這是唯一解鎖通道;sign-off 由使用者親自給,或經「State 行詞彙與簽核委派」節的委派通道由受委派 agent 代行) |
 | `impact_unavailable` | P1/P3 GitNexus 整體故障(含 overallRisk=UNKNOWN) | HELD;按 memory 復原 LadybugDB(`gitnexus status`+meta.json 為準)後 resume;復原前可用 codebase-memory trace_path 取暫時 blast-radius 寫 note 供 resume 判斷,**held 不因此解除** |
@@ -351,12 +359,16 @@ HELD@P<n> | reason=<held 值> | spec=<specPath/changePath> | slug=<slug> | userF
 
 ## Resume(使用者一句話重入;支援跨 session)
 
-- **State 檔(durable,跨 session 唯一座標)**:先把 durable history 完整複製到 sibling temp，再 append
+- **State 檔(durable,跨 session 唯一座標)**:`agent-contracts/spec-to-done.contract.json` 固定 canonical path
+  `artifacts/spec-to-done/{slug}-state.md`。先把 durable history 完整複製到 sibling temp，再 append
   候選行（禁止單行 temp），執行 `node .claude/skills/spec-to-done/validate-state.mjs（單一正本：.claude 側；.codex 不放副本） --state <temp>
   --platform codex --git-exe <(Get-Command git).Source 的絕對路徑> --expected-head <git SHA>
   --expected-worktree <worktreeRoot> --expected-agent-limit 40 --expected-p5-limit 2
-  --expected-evidence-limit 2`；exit 0 才 append durable state。validator 檢查完整 history 的每一行、
-  所有相鄰 transition、實際 HEAD、dirty/staged/untracked 與 rename source。若既有 history 無法通過行或
+  --expected-evidence-limit 2 --trusted-main-ref refs/heads/main`；exit 0 才 append canonical durable state。
+  `--trusted-main-ref` 只是 machine contract 所定 remote ref 的固定 marker，不接受 local tracking ref。validator
+  會載入 machine contract，檢查完整 history 的每一行、所有相鄰 transition、實際 HEAD、dirty/staged/untracked
+  與 rename source，並只在 DONE@P7 獨立 live-resolve 固定 trusted remote、驗 remote main SHA、prHead ancestry
+  與 same tree。若既有 history 無法通過行或
   transition 驗證，只能追加 counters 全到上限的 `HELD ... reason=resume_state_invalid` 作終端封存；
   該行不能用來繼續 progress，必須先修復或正規化歷史。
 - 「繼續 spec-to-done」→ 先對 durable state 跑同一 validator；通過後還原全部 args 與累計計數，只重跑該 phase：
@@ -376,10 +388,10 @@ state 檔是跨 session / 跨 CLI 的唯一 resume 座標；新寫入的行一�
 但必須先正規化並通過 validator，禁止直接「盡力解析」後啟 agent：
 
 - **行首 token 只允許四種**:`HELD@P<n>`(hold block 格式)、`DONE@P<n>`(phase 完成;task 級進度寫進 `taskIndex=`/`commit=` 欄位,不另創行首)、`RESUMED@P<n>`(使用者重入,附 `decision=`)、`AUTHORIZATION@P<n>`(簽核委派,見下)。
-- **`reason=` 的 held 值 MUST 取自本檔「held 對照表」**;不得發明表外值、不得把多個值併成複合值(一行一個主因,其餘寫診斷欄)。host/環境層阻斷一律用 `host_env_blocked`。
+- **`reason=` 的 held 值 MUST 取自 `agent-contracts/spec-to-done.contract.json` 的 closed enum**；本檔處置表不是完整名單。不得發明表外值、不得把多個值併成複合值（一行一個主因，其餘寫 `heldDetail`／診斷欄）。host/環境層阻斷一律用 `host_env_blocked`。
 - **欄位鍵固定 hold block 契約**，包含 `head/executionMode/closeoutTaskIds/runIds/agentCalls/p5Rounds/evidenceAttempts/evidenceHead` 與中文鍵
   (`診斷=`、`需要使用者決定=`)；不得混入同義欄位(`diagnosis=` / `need=` / `stateSchema=`)。
-- **phase 編號固定 P0/P1/P3–P7 跳號,不存在 P2**;任何 state 行不得出現 `P2`(全域或他處 skill 的「P2 Test Design」詞彙不得滲入本 repo 的 run;測項設計屬 P1 plan 範圍)。
+- **phase 編號取自 machine contract，固定 P0/P1/P3–P7 跳號，不存在 P2**；任何 state 行不得出現 `P2`(全域或他處 skill 的「P2 Test Design」詞彙不得滲入本 repo 的 run;測項設計屬 P1 plan 範圍)。
 - **跨 CLI handoff**：原平台先驗 durable state；新平台不得 reattach 異平台 ID，只能啟 bounded 新 agent
   （Codex `fork_turns:"none"` 或最小 turns），append `RESUMED@P<n> | decision=cross-cli-handoff`，
   `runIds` 保留所有舊、新真實 `wf_*`/`codex:*` ID；新 call 照實增加 agentCalls，其餘 counters 不重設。
@@ -442,9 +454,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .claude\skills\spec-to-done\
 
 ## 模型預算與角色路由（Codex）
 
-模型與 reasoning effort 不在本 adapter 內固定。依全域 `C:\Users\IOT\.codex\docs\agents\task-routing.md` 的 task tier 與 capability routing，指揮官使用目前 session 選定的 global profile，並依工作內容派發角色 lane：`explorer` 負責 source discovery，`debugger` 負責 root-cause isolation，`reviewer` 負責 correctness / regression review，`security_auditor` 負責 auth、權限、破壞性操作與部署風險。各 lane 的 effort 由 global task tier 決定，不得在此文件寫死模型 slug。
+模型與 reasoning effort 不在本 adapter 內固定。依目前 Codex host 已載入的 global runtime task-routing policy 選 task tier 與 capability routing；repo 不保存使用者名稱或機器專屬絕對路徑。若 host 未提供 global policy，退回 repo-relative `docs/agents/advanced-agent-reasoning-contract.md`，不得臆造外部路徑。指揮官使用目前 session 選定的 profile，並依工作內容派發角色 lane：`explorer` 負責 source discovery，`debugger` 負責 root-cause isolation，`reviewer` 負責 correctness / regression review，`security_auditor` 負責 auth、權限、破壞性操作與部署風險。各 lane 的 effort 由 task tier 決定，不得在此文件寫死模型 slug。
 
-角色路由不改變本流程的 gate 或升級語意：P4 evidence、P5 verifier/critic 與 P6 ship-item 一律使用 Codex 可用的完整 lane；P6 由 workflow coordinator 用固定命令收集 evidence 並獨占 merge sink，唯一 child 是無 shell/write capability 的獨立 apex arbiter。因為 adapter 運行於 Codex，不得以模型差異刪減、降級或放寬 P4/P5/P6、HELD、resume 或 evidence 條件。P1 reviewer 分波、P5 batch verifier 都最多同時 2 個，critic 串行；P3 implementer 維持單一協調流程。
+角色路由不改變本流程的 gate 或升級語意：P4 evidence、P5 verifier/critic 與 P6 ship-item 一律使用 Codex 可用的完整 lane。P6 production workflow 是 validation-only，無論 caller 是否注入 `$`／`agent` 都以 `host_env_blocked` fail closed，且不 dispatch apex；未來 base-pinned trusted host executor 獨占 evidence collection 與 merge sink，唯一 apex 始終無 shell/write capability。因為 adapter 運行於 Codex，不得以模型差異刪減、降級或放寬 P4/P5/P6、HELD、resume 或 evidence 條件。P1 reviewer 分波、P5 batch verifier 都最多同時 2 個，critic 串行；P3 implementer 維持單一協調流程。
 
 ## 誠實鐵律(本流程的落實)
 

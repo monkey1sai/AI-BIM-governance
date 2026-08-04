@@ -45,7 +45,6 @@ EXPECTED = {
     },
     "plan-test-deploy-and-tidy.js": {"deploy-path": "arbiter", "features-enabled-gap": "reason", "param-config-inventory": "scan", "scattered-files": "extract"},
     "repo-health-scan.js": {"scan:${s.key}": "scan", "scan:progress": "arbiter"},
-    "ship-item.js": {"ship:arbiter:${prNumber}": "arbiter"},
     "spec-to-done-adversarial-verify.js": {"verify:compliance": "arbiter", "verify:technical": "judge", "verify:usability": "judge", "verify:resilience": "judge"},
     "token-strategy-tournament.js": {
         "plan:tournament": "arbiter", "read:": "standard", "design:": "reason",
@@ -116,7 +115,7 @@ def test_prompt_contract_is_machine_readable_and_complete():
     assert data["tiers"]["arbiter"]["fallback"] == []
     assert data["tiers"]["arbiter"]["on_unavailable"] == "HELD"
     for field in contract["required_input_fields"]:
-        assert f"{field}:" in _read("ship-item.js")
+        assert f"{field}:" in _read("std-implement.js")
 
 
 def test_repo_personas_route_apex_reviewers_and_secondary_test_engineer():
@@ -161,69 +160,42 @@ def test_no_conflicting_routing_invariant_in_tracked_workflows():
     assert not bad, f"衝突 routing 不變量殘留於 tracked workflow: {bad}"
 
 
-def test_ship_merge_sink_is_fixed_evidence_and_identity_bound():
+def test_ship_runtime_is_validation_only_until_trusted_host_exists():
     ship = _read("ship-item.js")
-    assert ship.count("await governedAgent(") == 1
-    assert "agentType: 'code-reviewer'" in ship
     assert "const ARGS_SAFE" in ship and "invalid_args_format" in ship
+    assert "const ALLOWED_ARG_KEYS" in ship
     assert "Number.isSafeInteger(INPUT_PR_NUMBER)" in ship
-    assert "branch_requires_separate_authorization" in ship
-    assert "const GOVERNANCE_MODE = 'single-owner'" in ship
-    assert "const REVIEWER_LOGIN = 'monkey1sai-blip'" in ship and "const REVIEWER_ID = 311287868" in ship
-    assert "canonicalApprovalBody" in ship and "humanApprovalForIdentity" in ship
-    assert "review.state === 'APPROVED'" in ship and "review.commit_id === headOid" in ship
-    assert "reviewerPermissionForIdentity" in ship and "reviewer_permission_changed_after_verdict" in ship
-    assert "collaborators/${REVIEWER_LOGIN}/permission" in ship
-    assert "merge-elevated" in ship and "expectedApprovalAction" in ship
-    assert "INPUT_ELEVATED_AUTHORIZATION" in ship and "trusted_elevated_authorization_unavailable" in ship
-    assert "current_turn_authorization_required" not in ship
-    assert "normalizeBranchProtection" in ship and "validSingleOwnerProtection" in ship
-    assert "stableProtectionSnapshot" in ship
-    assert "requireCodeOwnerReviews" in ship
-    assert "branch_protection_single_owner_gate_not_strict" in ship
-    assert "reviewDecisionAllowed" in ship and "human_approval_required" in ship
-    assert "path.startsWith('.claude/')" in ship and "path.startsWith('scripts/')" in ship
-    assert "path === 'agent-skills-manifest.json'" in ship and "path.startsWith('infra/')" in ship
-    assert "gh api --paginate --slurp" in ship
-    assert "check-pr-local-preflight.ps1" not in ship
-    assert "gh pr diff" not in ship
-    assert "git diff --no-ext-diff --no-textconv --no-renames --name-only ${preparedBase}...${preparedHead}" in ship
-    assert "git diff --no-ext-diff --no-textconv --no-renames ${preparedBase}...${preparedHead}" in ship
+    assert "invalid_branch_arg" in ship
+    assert "invalid_pr_number_arg" in ship
+    assert "invalid_elevated_authorization_arg" in ship
+    runtime_hold = ship.index("return held('host_env_blocked', INPUT_PR_NUMBER, 'ship_workflow_shell_unavailable')")
+    assert ship.index("phase('Validate')") < runtime_hold
+    assert ship.index("invalid_elevated_authorization_arg") < runtime_hold
+    assert ship.index("phase('Hold')") < runtime_hold
 
-    elevated_broker_gate = ship.index("return held('trusted_elevated_authorization_unavailable'")
-    human_approval_gate = ship.index("human_approval_required")
-    arbiter_call = ship.index("label: `ship:arbiter:${prNumber}`")
-    allow_guard = ship.index("decision.allowMerge !== true")
-    evidence_guard = ship.index("!decision.evidence.trim()")
-    identity_guard = ship.index("decision.prNumber !== prNumber")
-    reviewer_race_guard = ship.index("review_evidence_changed_after_verdict")
-    final_head_guard = ship.index("finalState.headRefOid !== preparedHead")
-    merge_sink = ship.index("await $`gh pr merge ${prNumber}")
-    verify_merge = ship.index("--json state,mergeCommit")
-    assert elevated_broker_gate < human_approval_gate < arbiter_call < allow_guard < evidence_guard < identity_guard < reviewer_race_guard < final_head_guard < merge_sink < verify_merge
-
-    assert ship.count("await $`gh pr merge") == 1
-    assert "--match-head-commit ${preparedHead}" in ship
-    assert ship.count("branches/main/protection") == 3
-    assert ship.count("pulls/${prNumber}/comments") == 2
-    assert ship.count("pulls/${prNumber}/reviews") == 2
-    assert ship.count("issues/${prNumber}/comments") == 2
-    assert "merge_command_failed_unverified" in ship
-    assert "GitHub 已確認 merge，但本機 post-merge fetch 失敗" in ship
-    for method in ("POST", "PATCH", "DELETE"):
-        assert not re.search(rf"gh api[^\n]*(?:-X\s*|--method(?:\s+|=)){method}\b", ship)
-    assert "gh pr comment" not in ship
+    assert "// <routing:gen>" not in ship
+    assert "const RAW_AGENT" not in ship
+    assert "governedAgent" not in ship
+    assert not re.search(r"\bagent\s*\(", ship)
+    assert "$`" not in ship
+    assert "gh pr merge" not in ship
+    assert "merged: true" not in ship
+    assert "phase('Prepare')" not in ship
+    assert "phase('Arbitrate')" not in ship
+    assert "phase('Merge')" not in ship
 
 
 def test_ship_document_matches_runtime_security_boundary():
     doc = _read("ship-item.md")
     for literal in (
-        "coordinator", "fable` + `max", "human_approval_required",
+        "coordinator", "Fable/max", "human_approval_required",
         "single-owner", "canonical human approval", "approvals=1",
         "--match-head-commit", "review_required", "git fetch origin", "git merge-base",
         "git rebase origin/main", "published PR branch", "git merge --no-edit origin/main",
         "cyber_safeguard_payload", "seg/seg/id", "passwd", "SHALL NOT",
         "trusted_elevated_authorization_unavailable", "agent-inaccessible",
+        "host_env_blocked", "ship_workflow_shell_unavailable",
+        "base-pinned trusted host executor", "synthetic",
     ):
         assert literal in doc
     assert re.search(r"MUST NOT[^\n]*gh pr merge --admin", doc)
