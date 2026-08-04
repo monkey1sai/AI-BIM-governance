@@ -211,6 +211,57 @@ Assert-SelfReferentialBootstrapBody -Body $b -PrNumber $PrNumber
         Assert-True ($verdict -match 'shadows the bootstrap assertion') "assertion rebinding reason names shadowing (got: $verdict)"
     }
 
+    # Shadowing inside control flow, an immediately executed scriptblock, or a
+    # called helper is still executable before the canonical assertion. The
+    # detector treats the exact security-sensitive target lexically and
+    # fail-closed; it does not attempt to execute or build a call graph for the
+    # untrusted checker.
+    $nestedAssertionShadows = @(
+        'if ($true) { function script:Assert-SelfReferentialBootstrapBody { } }',
+        'if ($true) { Set-Alias -Scope Script -Name Assert-SelfReferentialBootstrapBody -Value Invoke-Fake }',
+        'if ($true) { if ($true) { Set-Item -LiteralPath Alias:\script:Assert-SelfReferentialBootstrapBody -Value Invoke-Fake } }',
+        '& { Set-Alias -Scope Script -Name Assert-SelfReferentialBootstrapBody -Value Invoke-Fake }',
+        'function Invoke-RebindBeforeAssertion { Set-Alias -Scope Script -Name Assert-SelfReferentialBootstrapBody -Value Invoke-Fake }; Invoke-RebindBeforeAssertion',
+        'function Invoke-DefineBeforeAssertion { function script:Assert-SelfReferentialBootstrapBody { } }; Invoke-DefineBeforeAssertion',
+        '. { function Assert-SelfReferentialBootstrapBody { } }',
+        ('$cmd = ''Set-Alias''' + "`n" + '& $cmd -Scope Script -Name Assert-SelfReferentialBootstrapBody -Value Invoke-Fake'),
+        '& ([scriptblock]::Create(''function script:Assert-SelfReferentialBootstrapBody { }''))'
+    )
+    foreach ($mutation in $nestedAssertionShadows) {
+        $mutantSource = Insert-BeforeBootstrapAssertion -Source $realCheckerSource -Insertion $mutation
+        Write-File 'scripts/tests/check-pr-body-evidence.ps1' $mutantSource
+        $revNestedShadow = Commit-All 'bootstrap assertion shadowed from nested executable scope'
+        $verdict = Detect $revNestedShadow
+        Assert-True ($verdict -like 'incomplete:*') `
+            "nested assertion shadow must be incomplete (got: $verdict; mutation: $mutation)"
+        Assert-True ($verdict -match 'shadows the bootstrap assertion') `
+            "nested assertion shadow reason names shadowing (got: $verdict)"
+    }
+
+    # A direct root function defined before the canonical library load is
+    # deterministically replaced by that load. Preserve this one proven-safe
+    # ordering while keeping nested definitions fail-closed.
+    $canonicalDotSource = ". (Join-Path `$scriptRepoRoot 'scripts\lib\self-referential-bootstrap.ps1')"
+    $dotSourceOffset = $realCheckerSource.IndexOf($canonicalDotSource, [System.StringComparison]::Ordinal)
+    Assert-True ($dotSourceOffset -ge 0) 'real checker contains the canonical bootstrap dot-source'
+    $preDotFunctionSource = $realCheckerSource.Insert(
+        $dotSourceOffset,
+        "function script:Assert-SelfReferentialBootstrapBody { }`n")
+    Write-File 'scripts/tests/check-pr-body-evidence.ps1' $preDotFunctionSource
+    $revPreDotFunction = Commit-All 'root assertion function precedes trusted library load'
+    Assert-True ((Detect $revPreDotFunction) -eq 'complete') `
+        "direct root function before dot-source is replaced by the library (got: $(Detect $revPreDotFunction))"
+
+    # A mutation after the canonical assertion cannot change the invocation that
+    # already ran. This locks the lexical scanner to the security-relevant
+    # ordering boundary instead of banning the command everywhere in the file.
+    $postAssertionMutationSource = $realCheckerSource + `
+        "`nif (`$true) { Set-Alias -Scope Script -Name Assert-SelfReferentialBootstrapBody -Value Invoke-Fake }`n"
+    Write-File 'scripts/tests/check-pr-body-evidence.ps1' $postAssertionMutationSource
+    $revPostAssertionMutation = Commit-All 'assertion alias changes only after canonical invocation'
+    Assert-True ((Detect $revPostAssertionMutation) -eq 'complete') `
+        "post-assertion mutation must not invalidate an earlier trusted invocation (got: $(Detect $revPostAssertionMutation))"
+
     Write-File 'scripts/tests/check-pr-body-evidence.ps1' "param([int] `$PrNumber)`nSet-Alias Assert-SelfReferentialBootstrapBody Invoke-Fake`n. (Join-Path `$PSScriptRoot '..\lib\self-referential-bootstrap.ps1')`n$canonicalAssertionLine`n"
     $revAliasBeforeDotSource = Commit-All 'assertion alias precedes library load'
     $verdict = Detect $revAliasBeforeDotSource

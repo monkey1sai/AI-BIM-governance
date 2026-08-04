@@ -252,13 +252,56 @@ function Test-IsAssertionAliasMutation {
 function Test-IsAssertionProviderMutation {
     param([Parameter(Mandatory = $true)][System.Management.Automation.Language.CommandAst] $Command)
     $commandName = $Command.GetCommandName() -replace '^.*\\', ''
-    if ($commandName -imatch '^(New-Item|ni|Copy-Item|cpi|cp|copy|Rename-Item|rni|ren)$') {
-        # New-Item can split a provider target across -Path/-Name, while copy
-        # and rename target position 1 or a command-specific named parameter.
-        # The trusted checker has no need for these commands, so any direct
-        # root use before the assertion fails closed instead of implementing a
-        # general PowerShell parameter binder.
-        return $true
+    $providerTargetPattern = '^(?:function|alias):[\\/]*(?:(?:global|local|script|private):)?Assert-SelfReferentialBootstrapBody$'
+    if ($commandName -imatch '^(New-Item|ni)$') {
+        $path = Get-DirectCommandTargetArgument -Command $Command -NamedParameter 'Path'
+        if ($null -eq $path) {
+            $path = Get-DirectCommandTargetArgument -Command $Command -NamedParameter 'LiteralPath'
+        }
+        if ($path -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) {
+            return $true
+        }
+        if ($path.Value -imatch $providerTargetPattern) { return $true }
+        if ($path.Value -inotmatch '^(?:function|alias):[\\/]*$') { return $false }
+
+        $name = Get-DirectParameterArgument -Command $Command -Name 'Name'
+        if ($name -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) {
+            return $true
+        }
+        return ($name.Value -replace '^(global|local|script|private):', '') -ieq 'Assert-SelfReferentialBootstrapBody'
+    }
+    if ($commandName -imatch '^(Copy-Item|cpi|cp|copy)$') {
+        $destination = Get-DirectParameterArgument -Command $Command -Name 'Destination'
+        if ($null -eq $destination) {
+            $positionals = @($Command.CommandElements | Select-Object -Skip 1 | Where-Object {
+                $_ -isnot [System.Management.Automation.Language.CommandParameterAst]
+            })
+            if ($positionals.Count -ge 2) { $destination = $positionals[1] }
+        }
+        if ($destination -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) {
+            return $true
+        }
+        return $destination.Value -imatch $providerTargetPattern
+    }
+    if ($commandName -imatch '^(Rename-Item|rni|ren)$') {
+        $source = Get-DirectCommandTargetArgument -Command $Command -NamedParameter 'Path'
+        if ($null -eq $source) {
+            $source = Get-DirectCommandTargetArgument -Command $Command -NamedParameter 'LiteralPath'
+        }
+        $newName = Get-DirectParameterArgument -Command $Command -Name 'NewName'
+        if ($null -eq $newName) {
+            $positionals = @($Command.CommandElements | Select-Object -Skip 1 | Where-Object {
+                $_ -isnot [System.Management.Automation.Language.CommandParameterAst]
+            })
+            if ($positionals.Count -ge 2) { $newName = $positionals[1] }
+        }
+        if ($source -isnot [System.Management.Automation.Language.StringConstantExpressionAst] -or
+            $newName -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) {
+            return $true
+        }
+        if ($newName.Value -imatch $providerTargetPattern) { return $true }
+        if ($source.Value -inotmatch '^(?:function|alias):') { return $false }
+        return ($newName.Value -replace '^(global|local|script|private):', '') -ieq 'Assert-SelfReferentialBootstrapBody'
     }
     if ($commandName -inotmatch '^(Set-Item|Set-Content|si|sc)$') { return $false }
     $target = Get-DirectCommandTargetArgument -Command $Command -NamedParameter 'Path'
@@ -269,7 +312,7 @@ function Test-IsAssertionProviderMutation {
         # As above, a dynamic provider path is not safe to classify as unrelated.
         return $true
     }
-    return $target.Value -imatch '^(?:function|alias):[\\/]*(?:(?:global|local|script|private):)?Assert-SelfReferentialBootstrapBody$'
+    return $target.Value -imatch $providerTargetPattern
 }
 
 function ConvertTo-NormalizedSourceText {
@@ -347,27 +390,36 @@ if ($orderedAssertions.Count -eq 0) {
     exit 0
 }
 
-# A same-scope function definition after the library load can shadow the real
-# assertion while preserving the expected command spelling. Accept a candidate
-# only when no root definition with that name occurs after its latest preceding
-# bootstrap dot-source.
+# A function definition, provider/alias mutation, or dynamic command dispatch can
+# shadow the real assertion while preserving the expected command spelling.
+# Mutation detection is
+# deliberately lexical and fail-closed: proving that a nested helper or
+# scriptblock is never invoked would require executing untrusted checker code or
+# building a complete PowerShell call graph. The sole function-definition
+# exception is a direct root definition before the latest canonical dot-source;
+# that definition is deterministically replaced by the imported library.
 $assertionDefinitions = @($ast.FindAll({
     param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-        (($node.Name -replace '^(global|local|script|private):', '') -ieq 'Assert-SelfReferentialBootstrapBody') -and
-        ((Get-RootStatement -Node $node) -eq $node)
+        (($node.Name -replace '^(global|local|script|private):', '') -ieq 'Assert-SelfReferentialBootstrapBody')
 }, $true))
 $assertionAliasMutations = @($ast.FindAll({
     param($node)
     $node -is [System.Management.Automation.Language.CommandAst] -and
-        (Test-IsRootExecutableCommand -Command $node) -and
         (Test-IsAssertionAliasMutation -Command $node)
 }, $true))
 $assertionProviderMutations = @($ast.FindAll({
     param($node)
     $node -is [System.Management.Automation.Language.CommandAst] -and
-        (Test-IsRootExecutableCommand -Command $node) -and
         (Test-IsAssertionProviderMutation -Command $node)
+}, $true))
+$indeterminateCommandInvocations = @($ast.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.CommandAst] -and
+        $node.InvocationOperator -eq [System.Management.Automation.Language.TokenKind]::Ampersand -and
+        ($node.CommandElements.Count -eq 0 -or
+            ($node.CommandElements[0] -isnot [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                $node.CommandElements[0] -isnot [System.Management.Automation.Language.ScriptBlockExpressionAst]))
 }, $true))
 $unshadowedAssertions = @($orderedAssertions | Where-Object {
     $assertion = $_
@@ -375,13 +427,20 @@ $unshadowedAssertions = @($orderedAssertions | Where-Object {
         $_.Extent.StartOffset -lt $assertion.Extent.StartOffset
     } | ForEach-Object { $_.Extent.StartOffset } | Measure-Object -Maximum)[0].Maximum
     @($assertionDefinitions | Where-Object {
-        $_.Extent.StartOffset -gt $latestDotSourceOffset -and
-            $_.Extent.StartOffset -lt $assertion.Extent.StartOffset
+        $definition = $_
+        $isDirectRootDefinitionReplacedByLibrary =
+            (Get-RootStatement -Node $definition) -eq $definition -and
+            $definition.Extent.StartOffset -lt $latestDotSourceOffset
+        $definition.Extent.StartOffset -lt $assertion.Extent.StartOffset -and
+            -not $isDirectRootDefinitionReplacedByLibrary
     }).Count -eq 0 -and
         @($assertionAliasMutations | Where-Object {
             $_.Extent.StartOffset -lt $assertion.Extent.StartOffset
         }).Count -eq 0 -and
         @($assertionProviderMutations | Where-Object {
+            $_.Extent.StartOffset -lt $assertion.Extent.StartOffset
+        }).Count -eq 0 -and
+        @($indeterminateCommandInvocations | Where-Object {
             $_.Extent.StartOffset -lt $assertion.Extent.StartOffset
         }).Count -eq 0
 })
