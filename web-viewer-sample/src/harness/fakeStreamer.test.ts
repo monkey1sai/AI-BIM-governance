@@ -3,6 +3,11 @@ import type { StreamMessage } from "../types/streamMessages";
 import { FakeAppStreamer } from "./fakeStreamer";
 import { HARNESS_REVIEW_AUTHORITY } from "./fixtures/reviewAuthority";
 
+type FakeKitControl = {
+  stallNextStageLoad(): void;
+  failStalledStageLoadChangedFailed(): void;
+};
+
 function streamProps(onStart: (message: unknown) => void, onCustomEvent: (message: unknown) => void) {
   return {
     streamConfig: {
@@ -21,6 +26,18 @@ function focusRequest(requestId: string): StreamMessage {
       trace_id: HARNESS_REVIEW_AUTHORITY.traceId,
       request_id: requestId,
       prim_path: "/World/Door",
+    },
+  };
+}
+
+function openStageRequest(requestId: string, url: string): StreamMessage {
+  return {
+    event_type: "openStageRequest",
+    payload: {
+      session_id: HARNESS_REVIEW_AUTHORITY.sessionId,
+      trace_id: HARNESS_REVIEW_AUTHORITY.traceId,
+      request_id: requestId,
+      url,
     },
   };
 }
@@ -76,5 +93,39 @@ describe("FakeAppStreamer connection generations", () => {
         trace_id: HARNESS_REVIEW_AUTHORITY.traceId,
       }),
     }));
+  });
+
+  it("keeps a replacement stage request stalled while failing the older request", async () => {
+    const onStart = vi.fn();
+    const onCustomEvent = vi.fn();
+    await FakeAppStreamer.connect(streamProps(onStart, onCustomEvent));
+    const control = (globalThis as typeof globalThis & { __AI_BIM_FAKE_KIT__?: FakeKitControl })
+      .__AI_BIM_FAKE_KIT__;
+    if (!control) throw new Error("FakeKit control is unavailable");
+
+    control.stallNextStageLoad();
+    const first = FakeAppStreamer.sendMessage(openStageRequest("request_a", "harness://stage/a.usd"));
+    control.stallNextStageLoad();
+    const replacement = FakeAppStreamer.sendMessage(openStageRequest("request_b", "harness://stage/b.usd"));
+
+    control.failStalledStageLoadChangedFailed();
+    await vi.runAllTimersAsync();
+
+    await expect(first).resolves.toBeNull();
+    expect(onCustomEvent).toHaveBeenCalledWith(expect.objectContaining({
+      event_type: "openedStageResult",
+      payload: expect.objectContaining({
+        request_id: "request_a",
+        runtime_state: "changed_failed",
+      }),
+    }));
+
+    let replacementSettled = false;
+    void replacement.then(() => { replacementSettled = true; });
+    await Promise.resolve();
+    expect(replacementSettled).toBe(false);
+
+    FakeAppStreamer.terminate();
+    await expect(replacement).resolves.toBeNull();
   });
 });
