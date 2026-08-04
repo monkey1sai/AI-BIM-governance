@@ -31,7 +31,21 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: git -c core.quotepath=false diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/changed-paths.bin"
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # The checkout is intentionally base-only. Materialize the candidate
+          # as data through GitHub's base-repository pull ref so fork heads do
+          # not depend on the contributor remote being available to this job.
+          # Do not make the candidate commit a shallow boundary: the three-dot
+          # diff below must be able to discover its merge base with BASE_SHA.
+          git fetch --no-tags origin "refs/pull/$PR_NUMBER/head"
+          fetched_head="$(git rev-parse FETCH_HEAD)"
+          if [ "$fetched_head" != "$HEAD_SHA" ]; then
+            echo "::error::pull_ref_head_mismatch: fetched $fetched_head; expected event head $HEAD_SHA."
+            exit 1
+          fi
+          git -c core.quotepath=false diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/changed-paths.bin"
 
       - name: Materialize the base-pinned gate
         # A PR that edits the checker or its libraries must not adjudicate itself

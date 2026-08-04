@@ -55,15 +55,21 @@ fi
 probe_dir="$(mktemp -d)"
 trap 'rm -rf "$probe_dir"' EXIT
 base_checker_path="$probe_dir/check-pr-body-evidence.ps1"
+base_library_path="$probe_dir/self-referential-bootstrap.ps1"
 ast_probe_path="$probe_dir/probe-base-checker.ps1"
+behavior_probe_path="$probe_dir/probe-base-library-behavior.ps1"
 git -C "$repo_root" show "$base_sha:scripts/tests/check-pr-body-evidence.ps1" > "$base_checker_path"
+git -C "$repo_root" show "$base_sha:scripts/lib/self-referential-bootstrap.ps1" > "$base_library_path"
 
 # Text grep is not a capability check: comments and string literals can contain
 # both required names without wiring either one. Parse the exact BASE checker and
 # require executable PowerShell command ASTs for the dot-source and assertion.
 cat > "$ast_probe_path" <<'POWERSHELL'
 [CmdletBinding()]
-param([Parameter(Mandatory = $true)][string] $CheckerPath)
+param(
+    [Parameter(Mandatory = $true)][string] $CheckerPath,
+    [Parameter(Mandatory = $true)][string] $LibraryPath
+)
 
 $tokens = $null
 $errors = $null
@@ -104,6 +110,20 @@ function Get-RootStatement {
         $candidate = $candidate.Parent
     }
     return $null
+}
+
+function Test-IsBootstrapFunctionName {
+    param([Parameter(Mandatory = $true)][string] $Name)
+    $normalizedName = $Name -replace '^(global|local|script|private):', ''
+    return $script:BootstrapFunctionNames -icontains $normalizedName
+}
+
+function Test-IsBootstrapProviderTarget {
+    param([Parameter(Mandatory = $true)][string] $Target)
+    if ($Target -inotmatch '^(?:function|alias):[\\/]*(?:(?:global|local|script|private):)?(?<name>[^\\/]+)$') {
+        return $false
+    }
+    return Test-IsBootstrapFunctionName -Name $Matches['name']
 }
 
 function Get-DirectParameterArgument {
@@ -262,13 +282,12 @@ function Test-IsAssertionAliasMutation {
         return $true
     }
     $targetName = $target.Value -replace '^(global|local|script|private):', ''
-    return $targetName -ieq 'Assert-SelfReferentialBootstrapBody'
+    return Test-IsBootstrapFunctionName -Name $targetName
 }
 
 function Test-IsAssertionProviderMutation {
     param([Parameter(Mandatory = $true)][System.Management.Automation.Language.CommandAst] $Command)
     $commandName = $Command.GetCommandName() -replace '^.*\\', ''
-    $providerTargetPattern = '^(?:function|alias):[\\/]*(?:(?:global|local|script|private):)?Assert-SelfReferentialBootstrapBody$'
     if ($commandName -imatch '^(New-Item|ni)$') {
         $path = Get-DirectCommandTargetArgument -Command $Command -NamedParameter 'Path'
         if ($null -eq $path) {
@@ -277,14 +296,14 @@ function Test-IsAssertionProviderMutation {
         if ($path -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) {
             return $true
         }
-        if ($path.Value -imatch $providerTargetPattern) { return $true }
+        if (Test-IsBootstrapProviderTarget -Target $path.Value) { return $true }
         if ($path.Value -inotmatch '^(?:function|alias):[\\/]*$') { return $false }
 
         $name = Get-DirectParameterArgument -Command $Command -Name 'Name'
         if ($name -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) {
             return $true
         }
-        return ($name.Value -replace '^(global|local|script|private):', '') -ieq 'Assert-SelfReferentialBootstrapBody'
+        return Test-IsBootstrapFunctionName -Name $name.Value
     }
     if ($commandName -imatch '^(Copy-Item|cpi|cp|copy)$') {
         $destination = Get-DirectParameterArgument -Command $Command -Name 'Destination'
@@ -297,7 +316,7 @@ function Test-IsAssertionProviderMutation {
         if ($destination -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) {
             return $true
         }
-        return $destination.Value -imatch $providerTargetPattern
+        return Test-IsBootstrapProviderTarget -Target $destination.Value
     }
     if ($commandName -imatch '^(Rename-Item|rni|ren)$') {
         $source = Get-DirectCommandTargetArgument -Command $Command -NamedParameter 'Path'
@@ -315,9 +334,9 @@ function Test-IsAssertionProviderMutation {
             $newName -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) {
             return $true
         }
-        if ($newName.Value -imatch $providerTargetPattern) { return $true }
+        if (Test-IsBootstrapProviderTarget -Target $newName.Value) { return $true }
         if ($source.Value -inotmatch '^(?:function|alias):') { return $false }
-        return ($newName.Value -replace '^(global|local|script|private):', '') -ieq 'Assert-SelfReferentialBootstrapBody'
+        return Test-IsBootstrapFunctionName -Name $newName.Value
     }
     if ($commandName -inotmatch '^(Set-Item|Set-Content|si|sc)$') { return $false }
     $target = Get-DirectCommandTargetArgument -Command $Command -NamedParameter 'Path'
@@ -328,7 +347,7 @@ function Test-IsAssertionProviderMutation {
         # As above, a dynamic provider path is not safe to classify as unrelated.
         return $true
     }
-    return $target.Value -imatch $providerTargetPattern
+    return Test-IsBootstrapProviderTarget -Target $target.Value
 }
 
 function ConvertTo-NormalizedSourceText {
@@ -373,6 +392,24 @@ function Get-AssignmentIfShape {
     return ($parts -join '>')
 }
 
+$libraryTokens = $null
+$libraryErrors = $null
+$libraryAst = [System.Management.Automation.Language.Parser]::ParseFile(
+    $LibraryPath, [ref]$libraryTokens, [ref]$libraryErrors)
+if ($libraryErrors.Count -gt 0) {
+    throw "base bootstrap library has PowerShell parse errors: $($libraryErrors[0].Message)"
+}
+$script:BootstrapFunctionNames = @($libraryAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        (Get-RootStatement -Node $node) -eq $node
+}, $true) | ForEach-Object {
+    $_.Name -replace '^(global|local|script|private):', ''
+} | Sort-Object -Unique)
+if ($script:BootstrapFunctionNames -cnotcontains 'Assert-SelfReferentialBootstrapBody') {
+    throw 'base bootstrap library does not define the canonical assertion'
+}
+
 $dotSources = @($ast.FindAll({
     param($node)
     $node -is [System.Management.Automation.Language.CommandAst] -and
@@ -406,18 +443,19 @@ if ($orderedAssertions.Count -eq 0) {
     exit 0
 }
 
-# A function definition, provider/alias mutation, or dynamic command dispatch can
-# shadow the real assertion while preserving the expected command spelling.
+# A bootstrap-library function definition, provider/alias mutation, or dynamic
+# command dispatch can shadow the real assertion or one of its transitive
+# helpers while preserving the expected assertion command spelling.
 # Mutation detection is
 # deliberately lexical and fail-closed: proving that a nested helper or
 # scriptblock is never invoked would require executing untrusted checker code or
 # building a complete PowerShell call graph. The sole function-definition
 # exception is a direct root definition before the latest canonical dot-source;
 # that definition is deterministically replaced by the imported library.
-$assertionDefinitions = @($ast.FindAll({
+$bootstrapFunctionDefinitions = @($ast.FindAll({
     param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-        (($node.Name -replace '^(global|local|script|private):', '') -ieq 'Assert-SelfReferentialBootstrapBody')
+        (Test-IsBootstrapFunctionName -Name $node.Name)
 }, $true))
 $assertionAliasMutations = @($ast.FindAll({
     param($node)
@@ -448,7 +486,7 @@ $unshadowedAssertions = @($orderedAssertions | Where-Object {
     $latestDotSourceOffset = @($dotSources | Where-Object {
         $_.Extent.StartOffset -lt $assertion.Extent.StartOffset
     } | ForEach-Object { $_.Extent.StartOffset } | Measure-Object -Maximum)[0].Maximum
-    @($assertionDefinitions | Where-Object {
+    @($bootstrapFunctionDefinitions | Where-Object {
         $definition = $_
         $isDirectRootDefinitionReplacedByLibrary =
             (Get-RootStatement -Node $definition) -eq $definition -and
@@ -474,6 +512,19 @@ if ($unshadowedAssertions.Count -eq 0) {
     exit 0
 }
 $assertions = $unshadowedAssertions
+
+# A root trap is active for its whole script scope regardless of textual order.
+# It can swallow a terminating error from the assertion and let the checker
+# return success, so a base checker containing one is not a proven capability.
+$rootErrorTraps = @($ast.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.TrapStatementAst] -and
+        (Get-RootStatement -Node $node) -eq $node
+}, $true))
+if ($rootErrorTraps.Count -gt 0) {
+    Write-Output 'assertion-error-trap'
+    exit 0
+}
 
 $hasPrNumberParameter = $null -ne $ast.ParamBlock -and
     @($ast.ParamBlock.Parameters | Where-Object {
@@ -653,7 +704,13 @@ $loadBearingVariables = @(
     'BodyPath', 'ChangedPathsPath', 'ChangedPathsNulDelimited',
     'scriptRepoRoot', 'RepoRoot', 'BaseSha', 'HeadSha', 'PrNumber',
     'body', 'pathBytes', 'pathText', 'changedPaths',
-    'hasBootstrapBaseContext', 'baseLedgerJson', 'baseLedgerExists'
+    'hasBootstrapBaseContext', 'baseLedgerJson', 'baseLedgerExists',
+    # These values are imported from the trusted base library and drive the
+    # classifier, self-adjudicator boundary, and reason validation. Rebinding
+    # script scope after dot-source is equivalent to replacing a helper.
+    'SelfReferentialMechanismPattern',
+    'SelfReferentialAdjudicatorPaths',
+    'GenericReasonBlocklist'
 )
 $loadBearingAssignments = @($ast.FindAll({
     param($node)
@@ -664,7 +721,9 @@ $loadBearingAssignments = @($ast.FindAll({
     return @($node.Left.FindAll({
         param($target)
         $target -is [System.Management.Automation.Language.VariableExpressionAst] -and
-            $loadBearingVariables -ccontains (
+            # PowerShell variable identity is case-insensitive, so mutation
+            # detection must be case-insensitive even though git paths are not.
+            $loadBearingVariables -contains (
                 $target.VariablePath.UserPath -replace '^(global|local|script|private):', '')
     }, $true)).Count -gt 0
 }, $true) | Sort-Object { $_.Extent.StartOffset })
@@ -724,7 +783,7 @@ $inputUnaryMutations = @($ast.FindAll({
     return @($node.FindAll({
         param($target)
         $target -is [System.Management.Automation.Language.VariableExpressionAst] -and
-            $loadBearingVariables -ccontains (
+            $loadBearingVariables -contains (
                 $target.VariablePath.UserPath -replace '^(global|local|script|private):', '')
     }, $true)).Count -gt 0
 }, $true))
@@ -761,17 +820,64 @@ if ($missingRootParameters.Count -gt 0 -or
 Write-Output 'complete'
 POWERSHELL
 
+cat > "$behavior_probe_path" <<'POWERSHELL'
+[CmdletBinding()]
+param([Parameter(Mandatory = $true)][string] $LibraryPath)
+
+$ErrorActionPreference = 'Stop'
+. $LibraryPath
+$ledgerPath = [IO.Path]::GetTempFileName()
+try {
+    [IO.File]::WriteAllText(
+        $ledgerPath,
+        '{"schema_version":"self-referential-bootstrap-ledger/v1","entries":[]}',
+        [Text.UTF8Encoding]::new($false))
+    $canaryArguments = @{
+        Body = 'behavioral canary'
+        ChangedPaths = @('scripts/lib/self-referential-bootstrap.ps1')
+        LedgerPath = $ledgerPath
+        GetTableValue = {
+            param($body, $label)
+            if ($label -ceq 'Self-referential bootstrap') { return 'no' }
+            return ''
+        }
+        BaseLedgerExists = $false
+        HasBaseContext = $false
+        PrNumber = 1
+    }
+    $blocked = $false
+    try {
+        Assert-SelfReferentialBootstrapBody @canaryArguments
+    } catch {
+        $blocked = $true
+    }
+    if (-not $blocked) {
+        Write-Output 'library-noop'
+        exit 0
+    }
+    Write-Output 'complete'
+} finally {
+    Remove-Item -LiteralPath $ledgerPath -Force -ErrorAction SilentlyContinue
+}
+POWERSHELL
+
 native_ast_probe_path="$ast_probe_path"
 native_base_checker_path="$base_checker_path"
+native_base_library_path="$base_library_path"
+native_behavior_probe_path="$behavior_probe_path"
 if [[ "$pwsh_exe" == *.exe ]] && command -v wslpath >/dev/null 2>&1; then
   native_ast_probe_path="$(wslpath -w "$ast_probe_path")"
   native_base_checker_path="$(wslpath -w "$base_checker_path")"
+  native_base_library_path="$(wslpath -w "$base_library_path")"
+  native_behavior_probe_path="$(wslpath -w "$behavior_probe_path")"
 elif [[ "$pwsh_exe" == *.exe ]] && command -v cygpath >/dev/null 2>&1; then
   native_ast_probe_path="$(cygpath -w "$ast_probe_path")"
   native_base_checker_path="$(cygpath -w "$base_checker_path")"
+  native_base_library_path="$(cygpath -w "$base_library_path")"
+  native_behavior_probe_path="$(cygpath -w "$behavior_probe_path")"
 fi
 
-ast_result="$("$pwsh_exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$native_ast_probe_path" -CheckerPath "$native_base_checker_path")"
+ast_result="$("$pwsh_exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$native_ast_probe_path" -CheckerPath "$native_base_checker_path" -LibraryPath "$native_base_library_path")"
 ast_result="${ast_result//$'\r'/}"
 case "$ast_result" in
   complete) ;;
@@ -785,6 +891,10 @@ case "$ast_result" in
     ;;
   assertion-shadowed)
     echo "incomplete: base checker shadows the bootstrap assertion after dot-sourcing its library"
+    exit 0
+    ;;
+  assertion-error-trap)
+    echo "incomplete: base checker declares a root trap that can swallow bootstrap assertion failures"
     exit 0
     ;;
   missing-prnumber-binding)
@@ -817,6 +927,20 @@ case "$ast_result" in
     ;;
   *)
     echo "base gate capability detection failed: unexpected AST result '$ast_result'" >&2
+    exit 1
+    ;;
+esac
+
+behavior_result="$("$pwsh_exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$native_behavior_probe_path" -LibraryPath "$native_base_library_path")"
+behavior_result="$(printf '%s' "$behavior_result" | tr -d '\r')"
+case "$behavior_result" in
+  complete) ;;
+  library-noop)
+    echo "incomplete: base bootstrap library does not enforce the behavioral fail-closed canary"
+    exit 0
+    ;;
+  *)
+    echo "base gate capability detection failed: unexpected library behavior result '$behavior_result'" >&2
     exit 1
     ;;
 esac

@@ -128,6 +128,11 @@ try {
             opened_at = '2026-08-03T08:00:00Z'
             reason = 'the deploy contract only verifies merged origin main so pre-merge deploy-path evidence is unobtainable here'
             verification_mechanism_paths = @('scripts/deploy.ps1')
+            verification_contract = @{
+                id = 'preflight-prnumber-forwarding/v1'
+                command_ids = @('test-preflight-prnumber-forwarding')
+                contract_sha256 = 'f2a8a0ee8cf604ee34036db2d3a3b29bc15bebaab4f16f24a092eb84d4b38a78'
+            }
             bootstrap_evidence_refs = @($evidenceRel)
             fixpoint = $null
         })

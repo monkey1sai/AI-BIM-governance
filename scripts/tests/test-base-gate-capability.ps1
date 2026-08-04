@@ -80,6 +80,7 @@ try {
     }
     $canonicalAssertionLine = 'Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths -LedgerPath (Join-Path $RepoRoot "scripts\self-referential-bootstrap-ledger.json") -GetTableValue { param($b, $label) Get-MarkdownTableValue -Body $b -Label $label } -BaseLedgerJson $baseLedgerJson -BaseLedgerExists $baseLedgerExists -HasBaseContext $hasBootstrapBaseContext -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha'
     $realCheckerSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/tests/check-pr-body-evidence.ps1') -Raw
+    $realBootstrapLibrarySource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/lib/self-referential-bootstrap.ps1') -Raw
     function Insert-BeforeBootstrapAssertion {
         param(
             [Parameter(Mandatory = $true)][string] $Source,
@@ -177,6 +178,35 @@ Write-Host $bait
     Assert-True ($verdict -like 'incomplete:*') "string-only assertion must be incomplete (got: $verdict)"
     Assert-True ($verdict -match 'invoke') "string-only assertion reason names the missing invocation (got: $verdict)"
 
+    # Canonical checker wiring is not enough when the base library retains the
+    # expected name and parameter surface but implements a no-op assertion.
+    Write-File 'scripts/lib/self-referential-bootstrap.ps1' @'
+function Assert-SelfReferentialBootstrapBody {
+    param(
+        [string] $Body,
+        [string[]] $ChangedPaths,
+        [string] $LedgerPath,
+        [scriptblock] $GetTableValue,
+        [string] $BaseLedgerJson,
+        [Nullable[bool]] $BaseLedgerExists,
+        [bool] $HasBaseContext,
+        [int] $PrNumber,
+        [string] $RepoRoot,
+        [string] $BaseSha,
+        [string] $HeadSha
+    )
+}
+'@
+    Write-File 'scripts/tests/check-pr-body-evidence.ps1' $realCheckerSource
+    $revWiredNoOpLibrary = Commit-All 'canonical checker wired to no-op bootstrap library'
+    $verdict = Detect $revWiredNoOpLibrary
+    Assert-True ($verdict -like 'incomplete:*') "wired no-op library must be incomplete (got: $verdict)"
+    Assert-True ($verdict -match 'behavioral fail-closed canary') "wired no-op reason names behavior canary (got: $verdict)"
+
+    # From here onward use the real library so the detector can prove that none
+    # of the assertion's transitive helper functions are rebound by the checker.
+    Write-File 'scripts/lib/self-referential-bootstrap.ps1' $realBootstrapLibrarySource
+
     # A root function definition after the real library load can shadow the
     # imported assertion while retaining the expected command spelling.
     Write-File 'scripts/tests/check-pr-body-evidence.ps1' @'
@@ -189,6 +219,20 @@ Assert-SelfReferentialBootstrapBody -Body $b -PrNumber $PrNumber
     $verdict = Detect $revShadowedAssertion
     Assert-True ($verdict -like 'incomplete:*') "shadowed assertion must be incomplete (got: $verdict)"
     Assert-True ($verdict -match 'shadows the bootstrap assertion') "shadowed assertion reason names shadowing (got: $verdict)"
+
+    # Rebinding a helper called by the canonical assertion is equivalent to
+    # replacing the assertion itself. This previously returned complete.
+    $helperShadowSource = Insert-BeforeBootstrapAssertion -Source $realCheckerSource -Insertion @'
+function script:Get-SelfReferentialMechanismPaths {
+    param([string[]] $ChangedPaths)
+    return @()
+}
+'@
+    Write-File 'scripts/tests/check-pr-body-evidence.ps1' $helperShadowSource
+    $revShadowedHelper = Commit-All 'bootstrap helper shadowed after library load'
+    $verdict = Detect $revShadowedHelper
+    Assert-True ($verdict -like 'incomplete:*') "shadowed bootstrap helper must be incomplete (got: $verdict)"
+    Assert-True ($verdict -match 'shadows the bootstrap assertion') "shadowed helper reason names assertion shadowing (got: $verdict)"
 
     $assertionMutations = @(
         'Set-Alias Assert-SelfReferentialBootstrapBody Invoke-Fake',
@@ -303,6 +347,15 @@ $path = Join-Path $PSScriptRoot 'attacker-controlled.ps1'
     Write-File 'scripts/tests/check-pr-body-evidence.ps1' $unrelatedAliasSource
     $revUnrelatedAlias = Commit-All 'unrelated alias does not shadow gate'
     Assert-True ((Detect $revUnrelatedAlias) -eq 'complete') "unrelated literal alias remains complete (got: $(Detect $revUnrelatedAlias))"
+
+    # A root trap can swallow a terminating error from the canonical assertion
+    # and let the checker exit successfully.
+    $rootTrapSource = Insert-BeforeBootstrapAssertion -Source $realCheckerSource -Insertion 'trap { continue }'
+    Write-File 'scripts/tests/check-pr-body-evidence.ps1' $rootTrapSource
+    $revRootTrap = Commit-All 'root trap can swallow bootstrap assertion failure'
+    $verdict = Detect $revRootTrap
+    Assert-True ($verdict -like 'incomplete:*') "root error trap must be incomplete (got: $verdict)"
+    Assert-True ($verdict -match 'trap') "root error trap reason names the swallowing boundary (got: $verdict)"
 
     # rev8: syntactically real commands in an unreachable branch or uncalled
     # function are not executable checker wiring.
@@ -534,6 +587,9 @@ Assert-SelfReferentialBootstrapBody -Body $b -PrNumber $PrNumber
         '$hasBootstrapBaseContext = $false',
         '$baseLedgerJson = ''{}''',
         '$baseLedgerExists = $false',
+        '$script:SelfReferentialMechanismPattern = ''a^''',
+        '$SCRIPT:selfreferentialadjudicatorpaths = @()',
+        '$script:GENERICREASONBLOCKLIST = @()',
         'if ($true) { $baseLedgerJson = ''{}'' }',
         'Set-Variable -Name changedPaths -Value @()',
         'Set-Item -LiteralPath Variable:baseLedgerExists -Value $false',
