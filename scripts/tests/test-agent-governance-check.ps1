@@ -434,6 +434,11 @@ try {
     $prReviewWorkflow = Get-Content -LiteralPath '.github/workflows/pr-review-agent.yml' -Raw
     Assert-True ($prReviewWorkflow -match '(?m)^name:\s*PR Metadata Contract\s*$') 'PR metadata diagnostic has a truthful workflow name'
     Assert-True ($prReviewWorkflow -match '(?m)^\s{4}name:\s*pr-metadata-contract-diagnostic\s*$') 'PR metadata job cannot be mistaken for the merge-authority context'
+    Assert-True ($prReviewWorkflow -match '(?m)^\s{2}pull_request_target:\s*$') 'PR metadata diagnostic is loaded from the protected base branch'
+    Assert-True (-not ($prReviewWorkflow -match '(?m)^\s{2}pull_request:\s*$')) 'PR metadata diagnostic never uses the PR-head workflow definition'
+    Assert-True ($prReviewWorkflow -match 'ref:\s*\$\{\{ github\.event\.pull_request\.base\.sha \}\}') 'PR metadata diagnostic checks out only the immutable base SHA'
+    Assert-True ($prReviewWorkflow -notmatch 'head-bootstrap|GATE_ROOT=\$GITHUB_WORKSPACE') 'base-incomplete bootstrap cannot execute or trust a head checker'
+    Assert-True ($prReviewWorkflow -match 'base_gate_incomplete_external_approval_required') 'base-incomplete bootstrap fails closed pending external approval'
     Assert-True (-not ($prReviewWorkflow -match '(?m)^\s+paths-ignore:\s*$')) 'PR metadata workflow does not use paths-ignore'
     Assert-True ($prReviewWorkflow -match '(?m)^\s+runs-on:\s+ubuntu-latest\s*$') 'PR review workflow uses lightweight ubuntu runner'
     Assert-True ($prReviewWorkflow -match 'check-pr-body-evidence\.ps1') 'PR review workflow enforces PR body evidence'

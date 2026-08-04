@@ -281,7 +281,7 @@ PR-B 改的正是**驗證機制本身**（deploy path）。§6 明文禁止測�
 
 ## 8. 待使用者決定的殘留項
 
-1. **legacy privileged credential 是否輪替** — spike 的 credential-handling incident 已完成檔案清除與 residue scan；精確 account、path、時間線與 rotation 決策只留 private incident record。既已改用專屬服務角色與 key auth，rotation 是低成本收尾。
+1. **BLOCKING — legacy privileged credential remediation** — 該 credential 視為已 compromise；刪檔、residue scan 與改用專屬服務角色／key auth 都不構成撤銷。依目前核准範圍，PR-B 部署與 shared-host cutover 必須維持 HELD，直到 credential owner 在 repo 外完成 **credential-only rotate/revoke**（不得藉此停用 legacy account），並提交不含 secret／account／host raw value 的 attestation。attestation 最少記錄 `schema_version`、`private_incident_record_id`、`private_record_digest_sha256`、`target_role`、`credential_role`、`credential_kind`、optional `credential_fingerprint_sha256`、`remediation_action=rotated|revoked`、`legacy_account_state`、`performed_by_role`、UTC `performed_at_utc`、`old_credential_rejected=true`、`active_sessions_disposition`、`replacement_service_account_auth_verified=true`、`replacement_privilege_scope_verified=true`、`shared_host_impact_verified=true`、`lockout_guard_verified=true`、`rollback_channel_verified=true`、`verification_method`、`attestor`、UTC `attested_at_utc`、`status` 與 `secret_values_recorded=false`。舊 credential 不得作 rollback；僅可使用已驗證的 out-of-band recovery channel 簽發另一份新 credential。未具 attestation 不得勾選完成或宣告安全收尾。
 2. **host firewall 是否啟用** — required allowlist 與 lockout guard 已設計；live state 與 shared-host impact 由 owner 在 private runbook 決定。
 3. **憑證持久化位置** — operator credential store 受本機權限限制；禁止放入任何會被 repository 或 tooling backup 收集的路徑。精確位置只留 private inventory。
 4. **F-3 儀表落差是否為 bug** — 需查證。

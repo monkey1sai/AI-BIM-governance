@@ -168,33 +168,49 @@ function Test-IsCanonicalLedgerPathArgument {
     return $childPath -ceq 'scripts/self-referential-bootstrap-ledger.json'
 }
 
-function Test-IsCanonicalBootstrapDotSource {
+function Get-StaticJoinPathDotSourceKey {
     param([Parameter(Mandatory = $true)][System.Management.Automation.Language.CommandAst] $Command)
     if ($Command.InvocationOperator -ne [System.Management.Automation.Language.TokenKind]::Dot -or
         $Command.CommandElements.Count -ne 1 -or
         $Command.CommandElements[0] -isnot [System.Management.Automation.Language.ParenExpressionAst]) {
-        return $false
+        return ''
     }
     $target = $Command.CommandElements[0]
     $commands = @($target.FindAll({
         param($node)
         $node -is [System.Management.Automation.Language.CommandAst]
     }, $true))
-    if ($commands.Count -ne 1) { return $false }
+    if ($commands.Count -ne 1) { return '' }
 
     $joinPath = $commands[0]
     $elements = @($joinPath.CommandElements)
     if ($joinPath.GetCommandName() -cne 'Join-Path' -or $elements.Count -ne 3 -or
         $elements[1] -isnot [System.Management.Automation.Language.VariableExpressionAst] -or
         $elements[2] -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) {
-        return $false
+        return ''
     }
     $rootName = $elements[1].VariablePath.UserPath
     $childPath = $elements[2].Value -replace '\\', '/'
-    return ($rootName -ceq 'scriptRepoRoot' -and
-            $childPath -ceq 'scripts/lib/self-referential-bootstrap.ps1') -or
-        ($rootName -ceq 'PSScriptRoot' -and
-            $childPath -ceq '../lib/self-referential-bootstrap.ps1')
+    return "$rootName|$childPath"
+}
+
+function Test-IsCanonicalBootstrapDotSource {
+    param([Parameter(Mandatory = $true)][System.Management.Automation.Language.CommandAst] $Command)
+    $key = Get-StaticJoinPathDotSourceKey -Command $Command
+    return $key -ceq 'scriptRepoRoot|scripts/lib/self-referential-bootstrap.ps1' -or
+        $key -ceq 'PSScriptRoot|../lib/self-referential-bootstrap.ps1'
+}
+
+function Test-IsTrustedCheckerDotSource {
+    param([Parameter(Mandatory = $true)][System.Management.Automation.Language.CommandAst] $Command)
+    $key = Get-StaticJoinPathDotSourceKey -Command $Command
+    return @(
+        'scriptRepoRoot|scripts/lib/pr-review-agent.ps1',
+        'scriptRepoRoot|scripts/lib/design-system-gate.ps1',
+        'scriptRepoRoot|scripts/lib/production-boundary-contract.ps1',
+        'scriptRepoRoot|scripts/lib/self-referential-bootstrap.ps1',
+        'PSScriptRoot|../lib/self-referential-bootstrap.ps1'
+    ) -ccontains $key
 }
 
 function Test-IsCanonicalTableAccessorArgument {
@@ -421,6 +437,12 @@ $indeterminateCommandInvocations = @($ast.FindAll({
             ($node.CommandElements[0] -isnot [System.Management.Automation.Language.StringConstantExpressionAst] -and
                 $node.CommandElements[0] -isnot [System.Management.Automation.Language.ScriptBlockExpressionAst]))
 }, $true))
+$untrustedDotSources = @($ast.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.CommandAst] -and
+        $node.InvocationOperator -eq [System.Management.Automation.Language.TokenKind]::Dot -and
+        -not (Test-IsTrustedCheckerDotSource -Command $node)
+}, $true))
 $unshadowedAssertions = @($orderedAssertions | Where-Object {
     $assertion = $_
     $latestDotSourceOffset = @($dotSources | Where-Object {
@@ -441,6 +463,9 @@ $unshadowedAssertions = @($orderedAssertions | Where-Object {
             $_.Extent.StartOffset -lt $assertion.Extent.StartOffset
         }).Count -eq 0 -and
         @($indeterminateCommandInvocations | Where-Object {
+            $_.Extent.StartOffset -lt $assertion.Extent.StartOffset
+        }).Count -eq 0 -and
+        @($untrustedDotSources | Where-Object {
             $_.Extent.StartOffset -lt $assertion.Extent.StartOffset
         }).Count -eq 0
 })

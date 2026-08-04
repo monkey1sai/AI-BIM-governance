@@ -491,7 +491,8 @@ try {
             [string[]] $ChangedPaths = @('scripts/self-referential-bootstrap-ledger.json'),
             [string] $BaseLedgerJson = $openBase,
             [string] $ClosureBaseSha = $baseSha,
-            [AllowEmptyString()][string] $RefreshEvidenceRef = ''
+            [AllowEmptyString()][string] $RefreshEvidenceRef = '',
+            [AllowEmptyString()][string] $ModeOnlyEvidenceRef = ''
         )
         $override = @{ status = 'closed'; fixpoint = $Fixpoint } + $EntryOverride
         $json = New-LedgerJson -Entries @((New-Entry -Override $override))
@@ -500,6 +501,10 @@ try {
             & $write $RefreshEvidenceRef "closure re-verification $([Guid]::NewGuid().ToString('N'))"
             $null = Invoke-FixtureGit -Arguments @('add', '--', $RefreshEvidenceRef)
             $effectiveChangedPaths += $RefreshEvidenceRef
+        }
+        if (-not [string]::IsNullOrWhiteSpace($ModeOnlyEvidenceRef)) {
+            $null = Invoke-FixtureGit -Arguments @('update-index', '--chmod=+x', '--', $ModeOnlyEvidenceRef)
+            $effectiveChangedPaths += $ModeOnlyEvidenceRef
         }
         $headSha = New-FixtureHeadCommit -Json $json
         Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $effectiveChangedPaths `
@@ -539,6 +544,12 @@ try {
                 'scripts/self-referential-bootstrap-ledger.json',
                 'docs/evidence/remote-linux-deploy/fixpoint/summary.md'
             )
+    }
+    Assert-Throws -Context 'closure claims a mode-only evidence change as fresh content' `
+        -MessagePattern 'unchanged between BaseSha and HeadSha' -Action {
+        Invoke-Closure `
+            -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') } `
+            -ModeOnlyEvidenceRef 'docs/evidence/remote-linux-deploy/fixpoint/summary.md'
     }
     # Legal closure passes only when this PR refreshes the referenced evidence.
     Invoke-Closure `
@@ -699,18 +710,39 @@ try {
         } -ChangedPaths $mechanism -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $gitRoot
     }
 
+    $modeOnlyOpeningBaseSha = ((Invoke-FixtureGit -Arguments @('rev-parse', 'HEAD')) | Out-String).Trim()
+    $null = Invoke-FixtureGit -Arguments @('update-index', '--chmod=+x', '--', $bootstrapEvidenceRef)
+    $modeOnlyOpeningHeadSha = New-FixtureHeadCommit -Json $openBase 'mode-only bootstrap evidence change'
+    Assert-Throws -Context 'new entry claims a mode-only evidence change as fresh content' `
+        -MessagePattern 'unchanged between BaseSha and HeadSha' -Action {
+        Invoke-BodyGate -Rows @{
+            'Self-referential bootstrap' = 'yes'
+            'Bootstrap ledger entry' = 'remote-linux-deploy-target'
+            'Bootstrap reason' = $goodReason
+        } -ChangedPaths @($mechanism + $bootstrapEvidenceRef) `
+            -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $gitRoot `
+            -BaseSha $modeOnlyOpeningBaseSha -HeadSha $modeOnlyOpeningHeadSha
+    }
+
     # --- legal self-registration passes ---------------------------------------------
+    $legalOpeningBaseSha = ((Invoke-FixtureGit -Arguments @('rev-parse', 'HEAD')) | Out-String).Trim()
+    & $write $bootstrapEvidenceRef "fresh bootstrap evidence $([Guid]::NewGuid().ToString('N'))"
+    $null = Invoke-FixtureGit -Arguments @('add', '--', $bootstrapEvidenceRef)
+    $legalOpeningHeadSha = New-FixtureHeadCommit -Json $openBase 'content-fresh bootstrap evidence'
     Invoke-BodyGate -Rows @{
         'Self-referential bootstrap' = 'yes'
         'Bootstrap ledger entry' = 'remote-linux-deploy-target'
         'Bootstrap reason' = $goodReason
-    } -ChangedPaths @($mechanism + $bootstrapEvidenceRef) -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $gitRoot
+    } -ChangedPaths @($mechanism + $bootstrapEvidenceRef) `
+        -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $gitRoot `
+        -BaseSha $legalOpeningBaseSha -HeadSha $legalOpeningHeadSha
 
     # --- silently adding debt while declaring no ------------------------------------
     Assert-Throws -Context 'ledger gains entries under bootstrap=no' -MessagePattern 'requires declaring yes' -Action {
         Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } `
             -ChangedPaths @($mechanism + $bootstrapEvidenceRef) `
-            -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $gitRoot
+            -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $gitRoot `
+            -BaseSha $legalOpeningBaseSha -HeadSha $legalOpeningHeadSha
     }
 
     Assert-Throws -Context 'self-adjudicator edit under bootstrap=no' -MessagePattern 'must declare bootstrap=yes' -Action {

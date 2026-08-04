@@ -1,14 +1,17 @@
 name: PR Metadata Contract
 
 on:
-  pull_request:
+  # The workflow definition must come from the protected base branch. Head
+  # content is parsed only as data; this workflow never checks out or executes
+  # PR-head code.
+  pull_request_target:
     types: [opened, edited, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -19,6 +22,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -44,7 +48,6 @@ jobs:
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           set -euo pipefail
           trusted="$RUNNER_TEMP/trusted-gate"
@@ -70,19 +73,11 @@ jobs:
             # A complete detector verdict includes AST-verified PrNumber binding.
             echo "GATE_HAS_PRNUMBER=1" >> "$GITHUB_ENV"
           else
-            # The base cannot adjudicate a gate it does not have. Rather than
-            # silently trusting head, require the PR to declare the bootstrap
-            # itself. This inline check is intentionally tiny and dependency-free
-            # so it stays reviewable and cannot be disabled by editing the very
-            # library under review.
-            if ! printf '%s' "$PR_BODY" | grep -qiE '^\|[[:space:]]*Self-referential bootstrap[[:space:]]*\|[[:space:]]*`?yes`?[[:space:]]*\|'; then
-              echo "::error::The PR base lacks the complete bootstrap gate, so base-pinned adjudication is impossible. Such a PR MUST declare 'Self-referential bootstrap | yes' with a ledger entry (docs/agents/self-referential-bootstrap.md)."
-              exit 1
-            fi
-            echo "::warning::Base lacks the complete gate capability; running the head copy under a declared self_referential_bootstrap. Fixpoint re-verification after merge is mandatory."
-            echo "GATE_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
-            echo "GATE_SOURCE=head-bootstrap" >> "$GITHUB_ENV"
-            echo "GATE_HAS_PRNUMBER=1" >> "$GITHUB_ENV"
+            # A base that cannot validate the complete contract is never allowed
+            # to delegate adjudication to the PR head. Bootstrap requires an
+            # exact-head CODEOWNER/external approval outside this workflow.
+            echo "::error::base_gate_incomplete_external_approval_required: protected base cannot adjudicate this PR; refusing to execute or trust the head checker."
+            exit 1
           fi
 
       - name: Check PR body metadata without retaining raw body
@@ -135,12 +130,12 @@ jobs:
           $summary = @'
           # PR Metadata Contract (diagnostic)
 
-          Required PR validation is split by authority:
+          PR validation is split by authority:
 
           - PR body metadata is present and non-placeholder; the raw body is never retained in the artifact.
           - Changed-path scope is derived from the base/head design manifests; the PR body cannot self-select an easier screen.
           - The `design-semantic-visual` CI job is the only semantic/pixel producer for approved or mixed frontend product changes. PR-provided JSON is never gate input.
-          - `PR Metadata Contract` is the branch-protected PR-head metadata check; it does not aggregate artifacts or publish a separate merge status.
+          - `PR Metadata Contract` is a base-owned diagnostic and is not merge authority. Base-incomplete bootstrap requires an exact-head CODEOWNER/external approval; PR-head workflow output cannot satisfy that boundary.
           - `scripts/dev/check-pr-local-preflight.ps1 -PrNumber <n>` is the authoritative local gate for PR review agent and affected sub-repo verification before push.
           - Functional/runtime operability evidence remains an independent requirement and cannot be replaced by the design job. Until its machine producer/validator and required check exist, full-completion claims remain forbidden.
           '@

@@ -21,10 +21,20 @@ $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../..')).Path
 $detector = Join-Path $repoRoot 'scripts/lib/detect-base-gate-capability.sh'
 Assert-True (Test-Path -LiteralPath $detector) 'detection script exists'
 $workflow = Get-Content -LiteralPath (Join-Path $repoRoot '.github/workflows/pr-review-agent.yml') -Raw
+Assert-True ($workflow -match '(?m)^\s{2}pull_request_target:\s*$') `
+    'metadata diagnostic is defined by the protected base workflow'
+Assert-True (-not ($workflow -match '(?m)^\s{2}pull_request:\s*$')) `
+    'metadata diagnostic never executes a PR-head workflow definition'
+Assert-True ($workflow -match 'ref:\s*\$\{\{ github\.event\.pull_request\.base\.sha \}\}') `
+    'workflow checkout is pinned to the immutable PR base SHA'
 Assert-True ($workflow -match 'git show "\$BASE_SHA:scripts/lib/detect-base-gate-capability\.sh" > "\$detector"') `
     'workflow materializes the capability detector from BASE'
 Assert-True ($workflow -notmatch 'bash scripts/lib/detect-base-gate-capability\.sh') `
     'workflow never executes the checkout/head detector directly'
+Assert-True ($workflow -notmatch 'GATE_SOURCE=head-bootstrap|GATE_ROOT=\$GITHUB_WORKSPACE') `
+    'base-incomplete bootstrap never selects or executes the PR-head checker'
+Assert-True ($workflow -match 'base_gate_incomplete_external_approval_required') `
+    'base-incomplete bootstrap fails closed pending an external exact-head approval'
 
 $tempRoot = Join-Path $repoRoot "artifacts/tmp/base-gate-capability-$([Guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
@@ -237,6 +247,21 @@ Assert-SelfReferentialBootstrapBody -Body $b -PrNumber $PrNumber
         Assert-True ($verdict -match 'shadows the bootstrap assertion') `
             "nested assertion shadow reason names shadowing (got: $verdict)"
     }
+
+    # An opaque dot-source can import a replacement assertion immediately
+    # before the canonical call. Only statically proven checker libraries may
+    # be dot-sourced before that boundary.
+    $opaqueDotSource = Insert-BeforeBootstrapAssertion -Source $realCheckerSource -Insertion @'
+$path = Join-Path $PSScriptRoot 'attacker-controlled.ps1'
+. $path
+'@
+    Write-File 'scripts/tests/check-pr-body-evidence.ps1' $opaqueDotSource
+    $revOpaqueDotSource = Commit-All 'opaque dot-source precedes bootstrap assertion'
+    $verdict = Detect $revOpaqueDotSource
+    Assert-True ($verdict -like 'incomplete:*') `
+        "opaque dot-source must be incomplete (got: $verdict)"
+    Assert-True ($verdict -match 'shadows the bootstrap assertion') `
+        "opaque dot-source reason names shadowing (got: $verdict)"
 
     # A direct root function defined before the canonical library load is
     # deterministically replaced by that load. Preserve this one proven-safe

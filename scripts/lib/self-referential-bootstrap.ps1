@@ -344,6 +344,53 @@ function Assert-SelfReferentialEvidenceBlob {
     }
 }
 
+function Assert-SelfReferentialEvidenceContentFreshness {
+    # Changed-path metadata is not content evidence: chmod-only changes alter a
+    # tree entry and satisfy `git diff`, while retaining the exact same blob.
+    # Resolve both immutable revisions and require either no base object (new
+    # evidence) or a different base/head object id.
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $Ref,
+        [Parameter(Mandatory = $true)][string] $Context,
+        [Parameter(Mandatory = $true)][string] $BaseSha,
+        [Parameter(Mandatory = $true)][string] $HeadSha
+    )
+    if ([string]::IsNullOrWhiteSpace($BaseSha) -or [string]::IsNullOrWhiteSpace($HeadSha)) {
+        throw "self_referential_bootstrap: $Context evidence '$Ref' requires exact BaseSha and HeadSha to verify content freshness."
+    }
+
+    & git -C $RepoRoot cat-file -e "$BaseSha^{commit}" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "self_referential_bootstrap: $Context cannot resolve BaseSha '$BaseSha' while verifying evidence '$Ref'."
+    }
+    & git -C $RepoRoot cat-file -e "$HeadSha^{commit}" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "self_referential_bootstrap: $Context cannot resolve HeadSha '$HeadSha' while verifying evidence '$Ref'."
+    }
+    $headOid = (& git -C $RepoRoot rev-parse --verify "${HeadSha}:$Ref" 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($headOid)) {
+        throw "self_referential_bootstrap: $Context cannot resolve evidence '$Ref' at HeadSha '$HeadSha'."
+    }
+    $baseTreeEntry = (& git -C $RepoRoot ls-tree --full-tree $BaseSha -- $Ref 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw "self_referential_bootstrap: $Context cannot inspect evidence '$Ref' at BaseSha '$BaseSha'."
+    }
+    if ([string]::IsNullOrWhiteSpace($baseTreeEntry)) {
+        return
+    }
+    if ($baseTreeEntry -notmatch '^([0-7]{6})\s+(\S+)\s+([0-9a-fA-F]{40,64})\t') {
+        throw "self_referential_bootstrap: $Context cannot parse the base tree entry for evidence '$Ref'."
+    }
+    if ($Matches[2] -cne 'blob') {
+        return
+    }
+    $baseOid = $Matches[3].ToLowerInvariant()
+    if ($baseOid -ceq $headOid) {
+        throw "self_referential_bootstrap: $Context evidence '$Ref' is unchanged between BaseSha and HeadSha (identical blob OID); metadata-only or mode-only changes are not fresh evidence."
+    }
+}
+
 function Assert-SelfReferentialLedgerEvidenceBlobs {
     param(
         [Parameter(Mandatory = $true)] $Ledger,
@@ -447,6 +494,9 @@ function Compare-SelfReferentialLedgerTransition {
                     if (-not (@($ChangedPaths) -ccontains $evidenceRef)) {
                         throw "self_referential_bootstrap: new entry '$id' bootstrap evidence '$evidenceRef' must be added or modified by this PR; reusing an unchanged base artefact is not branch-specific evidence."
                     }
+                    Assert-SelfReferentialEvidenceContentFreshness -RepoRoot $RepoRoot `
+                        -Ref $evidenceRef -Context "new entry '$id' bootstrap" `
+                        -BaseSha $BaseSha -HeadSha $HeadSha
                 }
             }
             $newEntries += $head
@@ -542,14 +592,9 @@ function Compare-SelfReferentialLedgerTransition {
             if (-not (@($ChangedPaths) -ccontains $evidenceRef)) {
                 throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$evidenceRef' must be added or modified by this closure PR; unchanged base evidence is not closure-specific re-verification."
             }
-            & git -C $RepoRoot diff --quiet --no-ext-diff $BaseSha $HeadSha -- $evidenceRef 2>$null
-            $evidenceDiffExit = $LASTEXITCODE
-            if ($evidenceDiffExit -eq 0) {
-                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$evidenceRef' is unchanged between BaseSha and HeadSha; closure requires new re-verification evidence."
-            }
-            if ($evidenceDiffExit -ne 1) {
-                throw "self_referential_bootstrap: cannot determine whether entry '$id' fixpoint evidence '$evidenceRef' changed between BaseSha and HeadSha."
-            }
+            Assert-SelfReferentialEvidenceContentFreshness -RepoRoot $RepoRoot `
+                -Ref $evidenceRef -Context "entry '$id' fixpoint" `
+                -BaseSha $BaseSha -HeadSha $HeadSha
             # Post-merge binding: the evidence blob must have been introduced or
             # modified at or after the mechanism merged - a pre-existing unrelated
             # blob cannot stand in for the required post-merge re-verification.
