@@ -1,7 +1,7 @@
 stack_kind=self_referential_bootstrap
 branch=feat/self-referential-bootstrap-ledger
-tested_head=4d10fdc863ba8acf2357cfb9d83a8f2541bb42b9
-captured_at_utc=2026-08-04T09:15:11Z
+tested_head=4505eef73b9fcce1dfda97865bd9875c5dba46f6
+captured_at_utc=2026-08-04T09:25:05Z
 captured on the PR branch because the PR base has no bootstrap gate to run (see reason in the ledger entry)
 
 ### pwsh -NoProfile -NonInteractive -File .\scripts\tests\test-self-referential-bootstrap.ps1
