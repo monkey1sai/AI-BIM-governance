@@ -29,14 +29,14 @@ without that gate. That is the compiler-bootstrap fixpoint, not a defect.
 Captured output: [`gate-suites.txt`](gate-suites.txt) — the three suites that
 adjudicate this mechanism, four surrounding governance/static regression
 suites, and the detector's Bash syntax check, run against
-`tested_head=374033d3801bb37da4f90f7e3c954619323c257c` with their real exit codes.
+`tested_head=4d10fdc863ba8acf2357cfb9d83a8f2541bb42b9` with their real exit codes.
 The follow-up evidence commit changes only files in this evidence directory; it
 does not claim that an untested code tree passed.
 
 | Suite | Covers |
 |---|---|
-| `test-self-referential-bootstrap.ps1` | ledger integrity, base-vs-head transition, exact-case mechanism classification, deletion / impersonation / forged-fixpoint refusals, ALL-declared-path fixpoint closure, and wire-up through the real `check-pr-body-evidence.ps1` |
-| `test-base-gate-capability.ps1` | the capability detection above — that "base has the gate" means the library exists, the checker dot-sources it, invokes it with exact ordered provenance for every load-bearing input, and rejects assignment, provider, unary, indirect, and member-mutation bypasses |
+| `test-self-referential-bootstrap.ps1` | ledger integrity, base-vs-head transition, exact-case mechanism classification, deletion / impersonation / forged-fixpoint refusals, closure-PR evidence freshness, referenced-evidence deletion protection, ALL-declared-path fixpoint closure, and wire-up through the real `check-pr-body-evidence.ps1` |
+| `test-base-gate-capability.ps1` | the capability detection above — that "base has the gate" means the library exists, the checker dot-sources the canonical path rather than a same-named decoy, invokes it with exact ordered provenance for every load-bearing input, and rejects assignment, provider, unary, indirect, and member-mutation bypasses |
 | `test-preflight-prnumber-forwarding.ps1` | the PR number reaching the gate, without which entry-to-PR binding cannot be enforced |
 | `test-agent-governance-check.ps1` | the aggregate governance contracts, including the review-agent and supporting script tests |
 | `test-pr-body-evidence.ps1` | PR metadata/body validation and bootstrap-gate integration |
