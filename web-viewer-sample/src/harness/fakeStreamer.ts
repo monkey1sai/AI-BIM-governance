@@ -36,6 +36,7 @@ interface FakeKitControl {
   stallNextStageLoad: () => void;
   emitBusyStageResponses: (count: number) => void;
   completeStalledStageLoad: () => void;
+  failStalledStageLoadChangedFailed: () => void;
 }
 
 // 模組級單例（鏡像真實 AppStreamer 的全域 singleton 性質）。
@@ -45,7 +46,9 @@ let connected = false;
 let sentEventTypes: string[] = [];
 let connectionGeneration = 0;
 let stallNextStageLoad = false;
-let stalledStageLoad: StalledStageLoad | null = null;
+// Queue instead of a singleton so a browser race test can keep both the
+// superseded request and its replacement pending without exposing request data.
+let stalledStageLoads: StalledStageLoad[] = [];
 const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
 
 function clearPendingTimers(): void {
@@ -100,8 +103,14 @@ function stageUrlFromMessage(message: StreamMessage): string {
       : HARNESS_STAGE_URL;
 }
 
+function drainStalledStageLoads(): void {
+  const pending = stalledStageLoads;
+  stalledStageLoads = [];
+  pending.forEach((stalled) => stalled.resolve(null));
+}
+
 function emitBusyStageResponses(count: number): void {
-  const stalled = stalledStageLoad;
+  const stalled = stalledStageLoads[0];
   if (!stalled) return;
   const boundedCount = Number.isFinite(count)
     ? Math.min(Math.max(Math.floor(count), 0), 128)
@@ -121,13 +130,44 @@ function emitBusyStageResponses(count: number): void {
 }
 
 function completeStalledStageLoad(): void {
-  const stalled = stalledStageLoad;
+  const stalled = stalledStageLoads.shift();
   if (!stalled) return;
-  stalledStageLoad = null;
   const { result, asyncEvents } = computeFakeKitResponse(stalled.message, kit);
   updateViewportLabel(`stage: ${kit.currentStageUrl ?? ""}`);
   scheduleEmit(asyncEvents, stalled.generation, stalled.callback);
   stalled.resolve(result);
+}
+
+function failStalledStageLoadChangedFailed(): void {
+  const stalled = stalledStageLoads.shift();
+  if (!stalled) return;
+  const payload = stalled.message.payload && typeof stalled.message.payload === "object"
+    ? stalled.message.payload as Record<string, unknown>
+    : {};
+  const requestId = typeof payload.request_id === "string" ? payload.request_id : undefined;
+  const bindingRevisionId = typeof payload.binding_revision_id === "string"
+    ? payload.binding_revision_id
+    : undefined;
+
+  // The browser harness can request a deterministic failure, but never inspect
+  // or supply runtime authority/request values. The event still travels through
+  // the same onCustomEvent path as a Kit terminal response.
+  scheduleForGeneration(stalled.generation, () => {
+    stalled.callback?.({
+      event_type: "openedStageResult",
+      payload: {
+        trace_id: kit.authority.traceId,
+        result: "error",
+        ...(requestId ? { request_id: requestId } : {}),
+        ...(stalled.stageUrl ? { url: stalled.stageUrl } : {}),
+        ...(bindingRevisionId ? { binding_revision_id: bindingRevisionId } : {}),
+        error: "harness_changed_failed",
+        runtime_state: "changed_failed",
+        partial_load: true,
+      },
+    });
+  });
+  stalled.resolve(null);
 }
 
 export const FakeAppStreamer = {
@@ -138,7 +178,7 @@ export const FakeAppStreamer = {
     >;
     connectionGeneration += 1;
     clearPendingTimers();
-    stalledStageLoad?.resolve(null);
+    drainStalledStageLoads();
     const generation = connectionGeneration;
     const callbacks: CapturedCallbacks = {
       onStart: config.onStart as CapturedCallbacks["onStart"],
@@ -149,7 +189,6 @@ export const FakeAppStreamer = {
     kit = createFakeKitState(HARNESS_REVIEW_AUTHORITY);
     sentEventTypes = [];
     stallNextStageLoad = false;
-    stalledStageLoad = null;
     connected = true;
     (globalThis as typeof globalThis & { __AI_BIM_FAKE_KIT__?: FakeKitControl }).__AI_BIM_FAKE_KIT__ = {
       rejectNext: (rejection) => queueFakeKitRejection(kit, rejection),
@@ -159,6 +198,7 @@ export const FakeAppStreamer = {
       stallNextStageLoad: () => { stallNextStageLoad = true; },
       emitBusyStageResponses,
       completeStalledStageLoad,
+      failStalledStageLoadChangedFailed,
     };
     // 下一 tick 觸發 stream start success → AppStream.setState(streamReady) → props.onStarted()。
     scheduleForGeneration(generation, () => {
@@ -176,13 +216,13 @@ export const FakeAppStreamer = {
     if (message.event_type === "openStageRequest" && stallNextStageLoad) {
       stallNextStageLoad = false;
       return new Promise((resolve) => {
-        stalledStageLoad = {
+        stalledStageLoads.push({
           generation,
           callback,
           message,
           stageUrl: stageUrlFromMessage(message),
           resolve,
-        };
+        });
       });
     }
     const { result, asyncEvents } = computeFakeKitResponse(message, kit);
@@ -197,8 +237,7 @@ export const FakeAppStreamer = {
     connectionGeneration += 1;
     connected = false;
     clearPendingTimers();
-    stalledStageLoad?.resolve(null);
-    stalledStageLoad = null;
+    drainStalledStageLoads();
     stallNextStageLoad = false;
     captured = {};
     delete (globalThis as typeof globalThis & { __AI_BIM_FAKE_KIT__?: FakeKitControl }).__AI_BIM_FAKE_KIT__;
