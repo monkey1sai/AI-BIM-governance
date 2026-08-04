@@ -29,7 +29,7 @@ without that gate. That is the compiler-bootstrap fixpoint, not a defect.
 Captured command results: [`gate-suites.txt`](gate-suites.txt) — the three
 suites that adjudicate this mechanism, four surrounding governance/static
 regression suites, and the detector's Bash syntax check, run against
-`tested_head=c6324789144976a5379288b1fa6a03cbc3e9cb51` with their observed
+`tested_head=9ee9cc931fbc80df6db5b84e880d91d596db2f17` with their observed
 terminal result and real exit code.
 The follow-up evidence commit changes only files in this evidence directory; it
 does not claim that an untested code tree passed.
@@ -37,7 +37,7 @@ does not claim that an untested code tree passed.
 | Suite | Covers |
 |---|---|
 | `test-self-referential-bootstrap.ps1` | strict ledger schema, immutable verification contract, base-vs-head transition, fixpoint attestation binding, content freshness, unconditional exact-tree immutability for base evidence (including rename-source omission), and real checker wire-up |
-| `test-base-gate-capability.ps1` | the capability detection above — canonical dot-source and ordered input provenance, transitive helper and script-state protection, root-trap rejection, wired no-op behavioral canary, and opaque dynamic-dispatch refusal |
+| `test-base-gate-capability.ps1` | the capability detection above — canonical dot-source and ordered input provenance, transitive helper and script-state protection, root-trap rejection, wired no-op and inherited-open-debt behavioral canaries, and opaque dynamic-dispatch refusal |
 | `test-preflight-prnumber-forwarding.ps1` | the PR number reaching the gate, without which entry-to-PR binding cannot be enforced |
 | `test-agent-governance-check.ps1` | aggregate governance contracts, including base-only checkout, fork-compatible full pull-ref fetch, exact event-head binding, non-shallow merge-base diff, and no head checkout |
 | `test-pr-body-evidence.ps1` | PR metadata/body validation and bootstrap-gate integration |
