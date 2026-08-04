@@ -142,6 +142,70 @@ function Get-DirectCommandTargetArgument {
     return $null
 }
 
+function Test-IsCanonicalLedgerPathArgument {
+    param([AllowNull()][System.Management.Automation.Language.Ast] $Argument)
+    if ($Argument -isnot [System.Management.Automation.Language.ParenExpressionAst]) {
+        return $false
+    }
+    $commands = @($Argument.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.CommandAst]
+    }, $true))
+    if ($commands.Count -ne 1) { return $false }
+
+    $command = $commands[0]
+    $commandName = $command.GetCommandName()
+    $elements = @($command.CommandElements)
+    if ($commandName -cne 'Join-Path' -or $elements.Count -ne 3) {
+        return $false
+    }
+    if ($elements[1] -isnot [System.Management.Automation.Language.VariableExpressionAst] -or
+        $elements[1].VariablePath.UserPath -cne 'RepoRoot' -or
+        $elements[2] -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) {
+        return $false
+    }
+    $childPath = $elements[2].Value -replace '\\', '/'
+    return $childPath -ceq 'scripts/self-referential-bootstrap-ledger.json'
+}
+
+function Test-IsCanonicalTableAccessorArgument {
+    param([AllowNull()][System.Management.Automation.Language.Ast] $Argument)
+    if ($Argument -isnot [System.Management.Automation.Language.ScriptBlockExpressionAst]) {
+        return $false
+    }
+    $scriptBlock = $Argument.ScriptBlock
+    if ($null -eq $scriptBlock.ParamBlock -or
+        $scriptBlock.ParamBlock.Parameters.Count -ne 2 -or
+        $scriptBlock.ParamBlock.Parameters[0].Name.VariablePath.UserPath -cne 'b' -or
+        $scriptBlock.ParamBlock.Parameters[1].Name.VariablePath.UserPath -cne 'label' -or
+        $null -ne $scriptBlock.DynamicParamBlock -or
+        $null -ne $scriptBlock.BeginBlock -or
+        $null -ne $scriptBlock.ProcessBlock -or
+        $null -eq $scriptBlock.EndBlock -or
+        $scriptBlock.EndBlock.Statements.Count -ne 1 -or
+        $scriptBlock.EndBlock.Traps.Count -ne 0) {
+        return $false
+    }
+
+    $pipeline = $scriptBlock.EndBlock.Statements[0]
+    if ($pipeline -isnot [System.Management.Automation.Language.PipelineAst] -or
+        $pipeline.PipelineElements.Count -ne 1 -or
+        $pipeline.PipelineElements[0] -isnot [System.Management.Automation.Language.CommandAst]) {
+        return $false
+    }
+    $command = $pipeline.PipelineElements[0]
+    $commandName = $command.GetCommandName()
+    $bodyArg = Get-DirectParameterArgument -Command $command -Name 'Body'
+    $labelArg = Get-DirectParameterArgument -Command $command -Name 'Label'
+    return $commandName -ceq 'Get-MarkdownTableValue' -and
+        $command.InvocationOperator -eq [System.Management.Automation.Language.TokenKind]::Unknown -and
+        $command.CommandElements.Count -eq 5 -and
+        $bodyArg -is [System.Management.Automation.Language.VariableExpressionAst] -and
+        $bodyArg.VariablePath.UserPath -ceq 'b' -and
+        $labelArg -is [System.Management.Automation.Language.VariableExpressionAst] -and
+        $labelArg.VariablePath.UserPath -ceq 'label'
+}
+
 function Test-IsAssertionAliasMutation {
     param([Parameter(Mandatory = $true)][System.Management.Automation.Language.CommandAst] $Command)
     $commandName = $Command.GetCommandName() -replace '^.*\\', ''
@@ -304,8 +368,8 @@ $fullyBoundAssertions = @($prBoundAssertions | Where-Object {
         $bodyArg.VariablePath.UserPath -ieq 'body' -and
         $changedPathsArg -is [System.Management.Automation.Language.VariableExpressionAst] -and
         $changedPathsArg.VariablePath.UserPath -ieq 'changedPaths' -and
-        $null -ne $ledgerPathArg -and
-        $getTableValueArg -is [System.Management.Automation.Language.ScriptBlockExpressionAst] -and
+        (Test-IsCanonicalLedgerPathArgument -Argument $ledgerPathArg) -and
+        (Test-IsCanonicalTableAccessorArgument -Argument $getTableValueArg) -and
         $baseLedgerJsonArg -is [System.Management.Automation.Language.VariableExpressionAst] -and
         $baseLedgerJsonArg.VariablePath.UserPath -ieq 'baseLedgerJson' -and
         $baseLedgerExistsArg -is [System.Management.Automation.Language.VariableExpressionAst] -and

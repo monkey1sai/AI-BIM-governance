@@ -53,7 +53,7 @@ object storage  OBJECT_STORE_ENDPOINT 由 runtime private config 提供並已驗
 | D-11 | 遠端帳號 | 建**專屬服務角色帳號** `DEPLOY_SERVICE_ACCOUNT`，不共用 legacy interactive account |
 | D-12/13 | 單一擁有者 merge 授權 | **擱置** — 由 Codex PR #458 處理，本計畫不介入 |
 | D-14 | env 組織 | **per-target env**，本機 canonical，重建時經 SSH 推送 |
-| D-15 | 遠端 override | 全部可 override、**不設白名單**；但部署＋驗證當下**快照 effective env**（secret 只留 key 名與指紋） |
+| D-15 | 遠端 override | 僅允許 target registry 明確列出的 override allowlist；未知 key 一律拒絕。每個允許 key 必須經 type／enum／range／host-or-path schema 驗證。涉及 public host、listen/bind、port、CORS、credential/token、deployment/data root 或 runtime command 的 sensitive override，必須取得每次明確 owner approval；evidence 只記已驗證 effective config 與 secret key 名／指紋，不記 secret value。 |
 | D-16/17 | IFC fixture 權威 | **MinIO `bim-control` 為雙方共同權威**；pin by key＋ETag＋size（＋versionId 若 bucket 有 versioning）；**mismatch fail closed**；本機 `storage/` 降為 ETag 驗證的 cache |
 | D-18 | runtime evidence 來源 | **本機 Windows 瀏覽器打遠端**（真實跨網段路徑）；design gate 本就綁 Windows，零改動 |
 | D-19 | lane ＋ PR 切分 | **Lane G ＋ 兩個 PR**（PR-A bootstrap 規則 → PR-B 遷移本體） |
@@ -254,7 +254,7 @@ PR-B 改的正是**驗證機制本身**（deploy path）。§6 明文禁止測�
 - [ ] B3 — ownership 語意跨平台等價性論證 ＋ 測試（`CreationDate` ↔ `/proc/<pid>/stat` starttime）
 - [ ] B4 — 收斂 §6.1 表列的 5 檔硬編常數 ＋ 17 處測試 fixture 到 registry
 - [ ] B5 — clone 流程含 exec bit 修復（F-2）
-- [ ] B6 — per-target env ＋ SSH 推送（D-14）＋ 部署當下 effective env 快照（D-15）
+- [ ] B6 — per-target env ＋ SSH 推送（D-14）；實作 registry-derived override allowlist、unknown-key fail-closed、per-key type／enum／range／schema validation，以及 sensitive override 的 explicit owner approval 與 redacted effective-config evidence（D-15）
 - [ ] B7 — MinIO fixture pinning，fail closed（D-16/17）
 - [ ] B8 — 遠端佈建腳本化（§6.6）
 - [ ] B9 — 契約改寫（§6.3，含修掉 §5 既有漂移）

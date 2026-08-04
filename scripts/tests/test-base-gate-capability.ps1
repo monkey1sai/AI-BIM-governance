@@ -68,7 +68,28 @@ try {
             Pop-Location
         }
     }
-    $canonicalAssertionLine = 'Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths -LedgerPath (Join-Path $PSScriptRoot "ledger.json") -GetTableValue { param($body, $label) $null } -BaseLedgerJson $baseLedgerJson -BaseLedgerExists $baseLedgerExists -HasBaseContext $hasBootstrapBaseContext -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha'
+    $canonicalAssertionLine = 'Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths -LedgerPath (Join-Path $RepoRoot "scripts\self-referential-bootstrap-ledger.json") -GetTableValue { param($b, $label) Get-MarkdownTableValue -Body $b -Label $label } -BaseLedgerJson $baseLedgerJson -BaseLedgerExists $baseLedgerExists -HasBaseContext $hasBootstrapBaseContext -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha'
+    $realCheckerSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/tests/check-pr-body-evidence.ps1') -Raw
+    function Insert-BeforeBootstrapAssertion {
+        param(
+            [Parameter(Mandatory = $true)][string] $Source,
+            [Parameter(Mandatory = $true)][string] $Insertion
+        )
+        $tokens = $null
+        $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput(
+            $Source, [ref]$tokens, [ref]$errors)
+        if ($errors.Count -gt 0) { throw "real checker parse failed: $($errors[0].Message)" }
+        $assertions = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.CommandAst] -and
+                $node.GetCommandName() -eq 'Assert-SelfReferentialBootstrapBody'
+        }, $true))
+        if ($assertions.Count -ne 1) {
+            throw "expected one real bootstrap assertion, found $($assertions.Count)"
+        }
+        return $Source.Insert($assertions[0].Extent.StartOffset, "$Insertion`n")
+    }
 
     # rev1: no gate at all (a base predating the mechanism)
     Write-File 'README.md' 'x'
@@ -190,7 +211,8 @@ Assert-SelfReferentialBootstrapBody -Body $b -PrNumber $PrNumber
     Assert-True ($verdict -like 'incomplete:*') "provider alias before dot-source must remain incomplete (got: $verdict)"
     Assert-True ($verdict -match 'shadows the bootstrap assertion') "provider-alias-before-dot-source reason names shadowing (got: $verdict)"
 
-    Write-File 'scripts/tests/check-pr-body-evidence.ps1' "param([int] `$PrNumber)`n. (Join-Path `$PSScriptRoot '..\lib\self-referential-bootstrap.ps1')`nSet-Alias UnrelatedAlias Invoke-Fake`n$canonicalAssertionLine`n"
+    $unrelatedAliasSource = Insert-BeforeBootstrapAssertion -Source $realCheckerSource -Insertion 'Set-Alias UnrelatedAlias Invoke-Fake'
+    Write-File 'scripts/tests/check-pr-body-evidence.ps1' $unrelatedAliasSource
     $revUnrelatedAlias = Commit-All 'unrelated alias does not shadow gate'
     Assert-True ((Detect $revUnrelatedAlias) -eq 'complete') "unrelated literal alias remains complete (got: $(Detect $revUnrelatedAlias))"
 
@@ -228,7 +250,7 @@ Assert-SelfReferentialBootstrapBody -Body $b -PrNumber $PrNumber
 param([int] $PrNumber)
 exit 0
 . (Join-Path $PSScriptRoot '..\lib\self-referential-bootstrap.ps1')
-Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths -LedgerPath (Join-Path $PSScriptRoot "ledger.json") -GetTableValue { param($body, $label) $null } -BaseLedgerJson $baseLedgerJson -BaseLedgerExists $baseLedgerExists -HasBaseContext $hasBootstrapBaseContext -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
+Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths -LedgerPath (Join-Path $RepoRoot "scripts\self-referential-bootstrap-ledger.json") -GetTableValue { param($b, $label) Get-MarkdownTableValue -Body $b -Label $label } -BaseLedgerJson $baseLedgerJson -BaseLedgerExists $baseLedgerExists -HasBaseContext $hasBootstrapBaseContext -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
 '@
     $revEarlyExit = Commit-All 'checker exits before invoking gate'
     $verdict = Detect $revEarlyExit
@@ -240,7 +262,7 @@ Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths -Led
 param([int] $PrNumber)
 & { exit 0 }
 . (Join-Path $PSScriptRoot '..\lib\self-referential-bootstrap.ps1')
-Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths -LedgerPath (Join-Path $PSScriptRoot "ledger.json") -GetTableValue { param($body, $label) $null } -BaseLedgerJson $baseLedgerJson -BaseLedgerExists $baseLedgerExists -HasBaseContext $hasBootstrapBaseContext -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
+Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths -LedgerPath (Join-Path $RepoRoot "scripts\self-referential-bootstrap-ledger.json") -GetTableValue { param($b, $label) Get-MarkdownTableValue -Body $b -Label $label } -BaseLedgerJson $baseLedgerJson -BaseLedgerExists $baseLedgerExists -HasBaseContext $hasBootstrapBaseContext -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
 '@
     $revInvokedExit = Commit-All 'invoked scriptblock exits before gate'
     $verdict = Detect $revInvokedExit
@@ -300,7 +322,7 @@ param([int] $PrNumber)
 . (Join-Path $PSScriptRoot '..\lib\self-referential-bootstrap.ps1')
 Assert-SelfReferentialBootstrapBody -Body $b -PrNumber 0
 exit 0
-Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths -LedgerPath (Join-Path $PSScriptRoot "ledger.json") -GetTableValue { param($body, $label) $null } -BaseLedgerJson $baseLedgerJson -BaseLedgerExists $baseLedgerExists -HasBaseContext $hasBootstrapBaseContext -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
+Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths -LedgerPath (Join-Path $RepoRoot "scripts\self-referential-bootstrap-ledger.json") -GetTableValue { param($b, $label) Get-MarkdownTableValue -Body $b -Label $label } -BaseLedgerJson $baseLedgerJson -BaseLedgerExists $baseLedgerExists -HasBaseContext $hasBootstrapBaseContext -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
 '@
     $revBoundAfterExit = Commit-All 'bound assertion follows early exit'
     $verdict = Detect $revBoundAfterExit
@@ -325,7 +347,7 @@ Assert-SelfReferentialBootstrapBody -Body $b -PrNumber 0 -GetTableValue { $PrNum
 param([int] $PrNumber)
 $PrNumber = 0
 . (Join-Path $PSScriptRoot '..\lib\self-referential-bootstrap.ps1')
-Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths -LedgerPath (Join-Path $PSScriptRoot "ledger.json") -GetTableValue { param($body, $label) $null } -BaseLedgerJson $baseLedgerJson -BaseLedgerExists $baseLedgerExists -HasBaseContext $hasBootstrapBaseContext -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
+Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths -LedgerPath (Join-Path $RepoRoot "scripts\self-referential-bootstrap-ledger.json") -GetTableValue { param($b, $label) Get-MarkdownTableValue -Body $b -Label $label } -BaseLedgerJson $baseLedgerJson -BaseLedgerExists $baseLedgerExists -HasBaseContext $hasBootstrapBaseContext -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
 '@
     $revReassignedPrNumber = Commit-All 'PrNumber parameter reassigned before gate'
     $verdict = Detect $revReassignedPrNumber
@@ -355,8 +377,8 @@ Assert-SelfReferentialBootstrapBody -Body $b -PrNumber $PrNumber
     $requiredBindingFragments = @(
         ' -Body $body',
         ' -ChangedPaths $changedPaths',
-        ' -LedgerPath (Join-Path $PSScriptRoot "ledger.json")',
-        ' -GetTableValue { param($body, $label) $null }',
+        ' -LedgerPath (Join-Path $RepoRoot "scripts\self-referential-bootstrap-ledger.json")',
+        ' -GetTableValue { param($b, $label) Get-MarkdownTableValue -Body $b -Label $label }',
         ' -BaseLedgerJson $baseLedgerJson',
         ' -BaseLedgerExists $baseLedgerExists',
         ' -HasBaseContext $hasBootstrapBaseContext',
@@ -375,7 +397,13 @@ Assert-SelfReferentialBootstrapBody -Body $b -PrNumber $PrNumber
 
     foreach ($mutantAssertion in @(
         $canonicalAssertionLine.Replace('-ChangedPaths $changedPaths', '-Other $changedPaths'),
-        $canonicalAssertionLine.Replace('-GetTableValue { param($body, $label) $null }', '-GetTableValue $null')
+        $canonicalAssertionLine.Replace('(Join-Path $RepoRoot "scripts\self-referential-bootstrap-ledger.json")', '(Join-Path $PSScriptRoot "scripts\self-referential-bootstrap-ledger.json")'),
+        $canonicalAssertionLine.Replace('(Join-Path $RepoRoot "scripts\self-referential-bootstrap-ledger.json")', '(Join-Path $RepoRoot "ledger.json")'),
+        $canonicalAssertionLine.Replace('Join-Path $RepoRoot', 'Evil.Module\Join-Path $RepoRoot'),
+        $canonicalAssertionLine.Replace('-GetTableValue { param($b, $label) Get-MarkdownTableValue -Body $b -Label $label }', '-GetTableValue $null'),
+        $canonicalAssertionLine.Replace('{ param($b, $label) Get-MarkdownTableValue -Body $b -Label $label }', '{ param($b, $label) ''no'' }'),
+        $canonicalAssertionLine.Replace('{ param($b, $label) Get-MarkdownTableValue -Body $b -Label $label }', '{ param($b, $label) Get-MarkdownTableValue -Body $label -Label $b }'),
+        $canonicalAssertionLine.Replace('Get-MarkdownTableValue -Body $b', 'Evil.Module\Get-MarkdownTableValue -Body $b')
     )) {
         Write-File 'scripts/tests/check-pr-body-evidence.ps1' "param([int] `$PrNumber)`n. (Join-Path `$PSScriptRoot '..\lib\self-referential-bootstrap.ps1')`n$mutantAssertion`n"
         $revWrongRequiredBinding = Commit-All 'assertion required binding has wrong shape'
@@ -384,15 +412,18 @@ Assert-SelfReferentialBootstrapBody -Body $b -PrNumber $PrNumber
         Assert-True ($verdict -match 'required bootstrap assertion argument bindings') "wrong binding reason names required arguments (got: $verdict)"
     }
 
-    # rev20: complete capability
-    Write-File 'scripts/tests/check-pr-body-evidence.ps1' "param([int] `$PrNumber)`n. (Join-Path `$PSScriptRoot '..\lib\self-referential-bootstrap.ps1')`n$canonicalAssertionLine`n"
-    $revComplete = Commit-All 'complete capability'
-    Assert-True ((Detect $revComplete) -eq 'complete') "complete capability detected (got: $(Detect $revComplete))"
+    # Regression for L1-COR-002: named arguments alone are insufficient when
+    # the checker reads a dummy ledger and never forwards the real body table.
+    $dummyAssertionLine = 'Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths -LedgerPath (Join-Path $PSScriptRoot "ledger.json") -GetTableValue { param($body, $label) $null } -BaseLedgerJson $baseLedgerJson -BaseLedgerExists $baseLedgerExists -HasBaseContext $hasBootstrapBaseContext -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha'
+    Write-File 'scripts/tests/check-pr-body-evidence.ps1' "param([int] `$PrNumber)`n. (Join-Path `$PSScriptRoot '..\lib\self-referential-bootstrap.ps1')`n$dummyAssertionLine`n"
+    $revDummyBindings = Commit-All 'checker uses dummy ledger and table accessor'
+    $verdict = Detect $revDummyBindings
+    Assert-True ($verdict -like 'incomplete:*') "dummy ledger/accessor must be incomplete (got: $verdict)"
+    Assert-True ($verdict -match 'required bootstrap assertion argument bindings') "dummy binding reason names required arguments (got: $verdict)"
 
     # Run the detector against the repository's real checker source inside the
     # standalone fixture. WSL Git cannot follow this linked worktree's Windows
     # absolute .git pointer, so a direct `detect HEAD .` smoke is not portable.
-    $realCheckerSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/tests/check-pr-body-evidence.ps1') -Raw
     Write-File 'scripts/tests/check-pr-body-evidence.ps1' $realCheckerSource
     $revRealChecker = Commit-All 'real checker capability'
     Assert-True ((Detect $revRealChecker) -eq 'complete') "real repository checker detected as complete (got: $(Detect $revRealChecker))"
