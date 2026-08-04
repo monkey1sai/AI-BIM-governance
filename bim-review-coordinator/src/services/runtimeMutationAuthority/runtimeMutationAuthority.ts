@@ -84,6 +84,7 @@ export interface RuntimeMutationAuthorityOptions {
   maxCompleted?: number;
   maxCompletedPerSession?: number;
   maxActiveSessions?: number;
+  maxCancelledPreauthorizationIntents?: number;
 }
 
 export interface StageBindingSelection {
@@ -97,6 +98,7 @@ export interface PreauthorizeStageBindingInput {
   principal: string;
   sourceClientId: string;
   credential: string;
+  clientRequestId?: string;
   artifacts: StageBindingSelection[];
 }
 
@@ -118,7 +120,27 @@ export type PreauthorizeStageBindingResult =
         | "artifact_selection_invalid"
         | "artifact_unavailable"
         | "transaction_executing"
-        | "capacity_exceeded";
+        | "capacity_exceeded"
+        | "request_cancelled";
+    };
+
+export interface CancelStageBindingPreauthorizationInput {
+  sessionId: string;
+  principal: string;
+  sourceClientId: string;
+  credential: string;
+  clientRequestId: string;
+}
+
+export type CancelStageBindingPreauthorizationResult =
+  | { cancelled: true; idempotentReplay: boolean }
+  | {
+      cancelled: false;
+      reason:
+        | "session_not_found"
+        | "session_lifecycle_blocked"
+        | "primary_lease_required"
+        | "transaction_not_abortable";
     };
 
 export interface AuthorizeRuntimeCommandInput {
@@ -327,10 +349,36 @@ export class RuntimeMutationAuthority {
       principal: input.principal,
       leaseId: leaseDecision.lease.leaseId,
       sourceClientId: input.sourceClientId,
+      ...(input.clientRequestId ? { clientRequestId: input.clientRequestId } : {}),
       composition,
     });
     if (!created.ok) return created;
     return { ok: true, ...created.transaction };
+  }
+
+  cancelStageBindingPreauthorization(
+    input: CancelStageBindingPreauthorizationInput,
+  ): CancelStageBindingPreauthorizationResult {
+    const session = this.ports.getSessionContext(input.sessionId);
+    if (!session) return { cancelled: false, reason: "session_not_found" };
+    if (session.status !== "created" && session.status !== "active") {
+      return { cancelled: false, reason: "session_lifecycle_blocked" };
+    }
+    const leaseDecision = this.ports.inspectPrimaryLease({
+      sessionId: session.sessionId,
+      sourceClientId: input.sourceClientId,
+      credential: input.credential,
+    });
+    if (!leaseDecision.authorized || leaseDecision.lease.principal !== input.principal) {
+      return { cancelled: false, reason: "primary_lease_required" };
+    }
+    return this.state.cancelPendingByIntent({
+      sessionId: session.sessionId,
+      principal: input.principal,
+      leaseId: leaseDecision.lease.leaseId,
+      sourceClientId: input.sourceClientId,
+      clientRequestId: input.clientRequestId,
+    });
   }
 
   authorizeRuntimeCommand(input: AuthorizeRuntimeCommandInput): AuthorizeRuntimeCommandResult {

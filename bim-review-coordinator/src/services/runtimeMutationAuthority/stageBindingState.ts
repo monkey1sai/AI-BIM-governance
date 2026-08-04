@@ -21,6 +21,10 @@ interface StageBindingBase {
   principal: string;
   leaseId: string;
   sourceClientId: string;
+  // The browser creates this opaque ID before sending a preauthorization
+  // request.  It lets a timeout cancellation arrive before the delayed POST
+  // without allowing that stale request to replace a newer pending binding.
+  clientRequestId?: string;
   composition: StageComposition;
   createdAtMs: number;
   pendingExpiresAtMs: number;
@@ -84,6 +88,12 @@ interface PendingExpiredStageBinding extends StageBindingBase {
   failureCode: "pending_expired";
 }
 
+interface PreauthorizationCancelledStageBinding extends StageBindingBase {
+  phase: "failed";
+  completedAtMs: number;
+  failureCode: "preauthorization_cancelled";
+}
+
 interface ExecutingExpiredStageBinding extends StageBindingBase {
   phase: "failed";
   attempt: StageBindingAttempt;
@@ -100,6 +110,7 @@ type StageBindingRecord =
   | ActiveStageBinding
   | RuntimeFailedStageBinding
   | PendingExpiredStageBinding
+  | PreauthorizationCancelledStageBinding
   | ExecutingExpiredStageBinding;
 
 export interface ActiveStageBindingSnapshot {
@@ -126,6 +137,7 @@ export interface StageBindingStateOptions {
   maxCompleted?: number;
   maxCompletedPerSession?: number;
   maxActiveSessions?: number;
+  maxCancelledPreauthorizationIntents?: number;
 }
 
 export interface CreatePendingStageBindingInput {
@@ -133,6 +145,7 @@ export interface CreatePendingStageBindingInput {
   principal: string;
   leaseId: string;
   sourceClientId: string;
+  clientRequestId?: string;
   composition: StageComposition;
 }
 
@@ -146,7 +159,19 @@ export interface PendingStageBindingView {
 
 export type CreatePendingStageBindingResult =
   | { ok: true; transaction: PendingStageBindingView; supersededAuthorizationId: string | null }
-  | { ok: false; reason: "transaction_executing" | "capacity_exceeded" };
+  | { ok: false; reason: "transaction_executing" | "capacity_exceeded" | "request_cancelled" };
+
+export interface CancelPendingStageBindingInput {
+  sessionId: string;
+  principal: string;
+  leaseId: string;
+  sourceClientId: string;
+  clientRequestId: string;
+}
+
+export type CancelPendingStageBindingResult =
+  | { cancelled: true; idempotentReplay: boolean }
+  | { cancelled: false; reason: "transaction_not_abortable" };
 
 export type ConsumeStageBindingResult =
   | { authorized: true; transactionStatus: "executing" }
@@ -211,10 +236,15 @@ const DEFAULT_MAX_NON_TERMINAL = 256;
 const DEFAULT_MAX_COMPLETED = 1_024;
 const DEFAULT_MAX_COMPLETED_PER_SESSION = 4;
 const DEFAULT_MAX_ACTIVE_SESSIONS = 256;
+const DEFAULT_MAX_CANCELLED_PREAUTHORIZATION_INTENTS = 1_024;
 
 /** Private process-local stage-binding state. Public callers use RuntimeMutationAuthority. */
 export class StageBindingState {
   private readonly transactions = new Map<string, StageBindingRecord>();
+  // Tombstones are intentionally independent of a transaction record.  A
+  // cancellation can reach the coordinator before the timed-out browser POST
+  // does, so there is not necessarily an authorization ID to roll back yet.
+  private readonly cancelledPreauthorizationIntents = new Map<string, number>();
   private readonly activeBySession = new Map<string, ActiveBindingSummary>();
   private readonly clock: () => number;
   private readonly idFactory: (prefix: "stage_auth" | "binding_rev") => string;
@@ -225,6 +255,7 @@ export class StageBindingState {
   private readonly maxCompleted: number;
   private readonly maxCompletedPerSession: number;
   private readonly maxActiveSessions: number;
+  private readonly maxCancelledPreauthorizationIntents: number;
 
   constructor(options: StageBindingStateOptions) {
     this.clock = options.clock;
@@ -239,11 +270,22 @@ export class StageBindingState {
       DEFAULT_MAX_COMPLETED_PER_SESSION,
     );
     this.maxActiveSessions = positiveBound(options.maxActiveSessions, DEFAULT_MAX_ACTIVE_SESSIONS);
+    this.maxCancelledPreauthorizationIntents = positiveBound(
+      options.maxCancelledPreauthorizationIntents,
+      DEFAULT_MAX_CANCELLED_PREAUTHORIZATION_INTENTS,
+    );
   }
 
   createPending(input: CreatePendingStageBindingInput): CreatePendingStageBindingResult {
     const now = this.clock();
     this.sweep(now);
+    const clientRequestId = input.clientRequestId;
+    if (
+      clientRequestId
+      && this.cancelledPreauthorizationIntents.has(preauthorizationIntentKey({ ...input, clientRequestId }))
+    ) {
+      return { ok: false, reason: "request_cancelled" };
+    }
     const current = this.nonTerminalForSession(input.sessionId);
     if (current?.phase === "executing") {
       return { ok: false, reason: "transaction_executing" };
@@ -264,6 +306,7 @@ export class StageBindingState {
       principal: input.principal,
       leaseId: input.leaseId,
       sourceClientId: input.sourceClientId,
+      ...(input.clientRequestId ? { clientRequestId: input.clientRequestId } : {}),
       composition: cloneComposition(input.composition),
       createdAtMs: now,
       pendingExpiresAtMs,
@@ -287,6 +330,46 @@ export class StageBindingState {
       transaction: pendingView(record),
       supersededAuthorizationId: superseded?.stageBindingAuthorizationId ?? null,
     };
+  }
+
+  cancelPendingByIntent(input: CancelPendingStageBindingInput): CancelPendingStageBindingResult {
+    const now = this.clock();
+    this.sweep(now);
+    const key = preauthorizationIntentKey(input);
+    const alreadyCancelled = this.cancelledPreauthorizationIntents.has(key);
+    if (alreadyCancelled) this.cancelledPreauthorizationIntents.delete(key);
+    this.cancelledPreauthorizationIntents.set(key, now);
+    this.evictCancelledPreauthorizationIntents();
+
+    const matchingTransactions = [...this.transactions.values()].filter((candidate) => (
+      matchesPreauthorizationIntent(candidate, input)
+    ));
+    const transaction = matchingTransactions.find((candidate) => candidate.phase === "pending");
+    if (!transaction) {
+      const priorCancellation = matchingTransactions.find((candidate) => (
+        candidate.phase === "failed" && candidate.failureCode === "preauthorization_cancelled"
+      ));
+      if (priorCancellation) return { cancelled: true, idempotentReplay: true };
+      if (matchingTransactions.length > 0) {
+        // The browser cannot safely roll back a request once Kit has consumed
+        // it (or it has otherwise reached a non-pending terminal state).  Keep
+        // the tombstone so a duplicate late POST is still fenced, but expose
+        // that the existing transaction was not abortable.
+        return { cancelled: false, reason: "transaction_not_abortable" };
+      }
+      return { cancelled: true, idempotentReplay: alreadyCancelled };
+    }
+
+    const cancelled: PreauthorizationCancelledStageBinding = {
+      ...transaction,
+      phase: "failed",
+      completedAtMs: now,
+      failureCode: "preauthorization_cancelled",
+    };
+    this.transactions.set(transaction.stageBindingAuthorizationId, cancelled);
+    this.evictCompletedForSession(transaction.sessionId, transaction.stageBindingAuthorizationId);
+    this.evictCompletedGlobal(transaction.stageBindingAuthorizationId);
+    return { cancelled: true, idempotentReplay: false };
   }
 
   consume(input: StageBindingAttempt): ConsumeStageBindingResult {
@@ -489,6 +572,12 @@ export class StageBindingState {
       }
     }
 
+    for (const [key, cancelledAtMs] of this.cancelledPreauthorizationIntents.entries()) {
+      if (now - cancelledAtMs >= this.completedRetentionMs) {
+        this.cancelledPreauthorizationIntents.delete(key);
+      }
+    }
+
     const sessionIds = new Set([...this.transactions.values()].map((transaction) => transaction.sessionId));
     for (const sessionId of sessionIds) this.evictCompletedForSession(sessionId);
     this.evictCompletedGlobal();
@@ -500,6 +589,14 @@ export class StageBindingState {
       transaction.sessionId === sessionId
       && (transaction.phase === "pending" || transaction.phase === "executing"),
     ) as PendingStageBinding | ExecutingStageBinding | undefined ?? null;
+  }
+
+  private evictCancelledPreauthorizationIntents(): void {
+    while (this.cancelledPreauthorizationIntents.size > this.maxCancelledPreauthorizationIntents) {
+      const oldestKey = this.cancelledPreauthorizationIntents.keys().next().value as string | undefined;
+      if (!oldestKey) break;
+      this.cancelledPreauthorizationIntents.delete(oldestKey);
+    }
   }
 
   private nonTerminalCount(): number {
@@ -579,6 +676,17 @@ function matchesBase(transaction: StageBindingBase, attempt: StageBindingAttempt
     && compositionsEqual(transaction.composition, attempt.composition);
 }
 
+function matchesPreauthorizationIntent(
+  transaction: StageBindingBase,
+  input: CancelPendingStageBindingInput,
+): boolean {
+  return transaction.sessionId === input.sessionId
+    && transaction.principal === input.principal
+    && transaction.leaseId === input.leaseId
+    && transaction.sourceClientId === input.sourceClientId
+    && transaction.clientRequestId === input.clientRequestId;
+}
+
 function matchesAttempt(left: StageBindingAttempt, right: StageBindingAttempt): boolean {
   return left.sessionId === right.sessionId
     && left.stageBindingAuthorizationId === right.stageBindingAuthorizationId
@@ -633,10 +741,27 @@ function baseRecord(transaction: StageBindingRecord): StageBindingBase {
     principal: transaction.principal,
     leaseId: transaction.leaseId,
     sourceClientId: transaction.sourceClientId,
+    ...(transaction.clientRequestId ? { clientRequestId: transaction.clientRequestId } : {}),
     composition: transaction.composition,
     createdAtMs: transaction.createdAtMs,
     pendingExpiresAtMs: transaction.pendingExpiresAtMs,
   };
+}
+
+function preauthorizationIntentKey(input: {
+  sessionId: string;
+  principal: string;
+  leaseId: string;
+  sourceClientId: string;
+  clientRequestId: string;
+}): string {
+  return [
+    input.sessionId,
+    input.principal,
+    input.leaseId,
+    input.sourceClientId,
+    input.clientRequestId,
+  ].join("\u0000");
 }
 
 function cloneComposition(composition: StageComposition): StageComposition {
