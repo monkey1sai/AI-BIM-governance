@@ -26,23 +26,20 @@ without that gate. That is the compiler-bootstrap fixpoint, not a defect.
 
 ## What was run
 
-Captured command results: [`gate-suites.txt`](gate-suites.txt) — the three
-suites that adjudicate this mechanism, four surrounding governance/static
-regression suites, and the detector's Bash syntax check, run against
-`tested_head=9ee9cc931fbc80df6db5b84e880d91d596db2f17` with their observed
-terminal result and real exit code.
-The follow-up evidence commit changes only files in this evidence directory; it
-does not claim that an untested code tree passed.
+Captured output: [`gate-suites.txt`](gate-suites.txt) — the three suites that
+adjudicate this mechanism plus three surrounding governance regression suites,
+run against `tested_head=c656e4e07c92e04988db8a7ad551d871912a94e6`
+with their real exit codes. The follow-up evidence commit changes only files in
+this evidence directory; it does not claim that an untested code tree passed.
 
 | Suite | Covers |
 |---|---|
-| `test-self-referential-bootstrap.ps1` | strict ledger schema, immutable verification contract, base-vs-head transition, fixpoint attestation binding, content freshness, unconditional exact-tree immutability for base evidence (including rename-source omission), and real checker wire-up |
-| `test-base-gate-capability.ps1` | the capability detection above — canonical dot-source and ordered input provenance, transitive helper and script-state protection, root-trap rejection, wired no-op and inherited-open-debt behavioral canaries, and opaque dynamic-dispatch refusal |
+| `test-self-referential-bootstrap.ps1` | ledger integrity, base-vs-head transition, deletion / impersonation / forged-fixpoint refusals, and wire-up through the real `check-pr-body-evidence.ps1` |
+| `test-base-gate-capability.ps1` | the capability detection above — that "base has the gate" means the library exists AND the checker dot-sources it AND invokes it, not merely that a file with the right name is present |
 | `test-preflight-prnumber-forwarding.ps1` | the PR number reaching the gate, without which entry-to-PR binding cannot be enforced |
-| `test-agent-governance-check.ps1` | aggregate governance contracts, including base-only checkout, fork-compatible full pull-ref fetch, exact event-head binding, non-shallow merge-base diff, and no head checkout |
+| `test-agent-governance-check.ps1` | the aggregate governance contracts, including the review-agent and supporting script tests |
 | `test-pr-body-evidence.ps1` | PR metadata/body validation and bootstrap-gate integration |
 | `test-pr-review-agent.ps1` | review-agent workflow and trust-boundary regression checks |
-| `invoke-powershell-static.ps1` / `bash -n` | PowerShell Error-severity static analysis and detector shell syntax |
 
 ## What is still owed
 
