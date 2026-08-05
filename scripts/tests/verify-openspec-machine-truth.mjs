@@ -194,22 +194,92 @@ function assertGitBase(repoRoot, baseCommit) {
   }
 }
 
-export function assertRowSubjectAncestor(repoRoot, change, cache) {
-  if (cache.has(change.subject_commit)) return false;
-  const available = gitOutput(repoRoot, ['cat-file', '-e', `${change.subject_commit}^{commit}`],
-    `source_observations.${change.id}.subject_commit`, true);
-  if (available.status !== 0) {
-    throw new MachineTruthInputError('subject_unavailable', `source_observations.${change.id}.subject_commit`,
-      'Lifecycle row subject is not a local commit.');
+export function resolveRowSubjectWatermark(repoRoot, change, cache, baseCommit) {
+  const cacheKey = `${change.id}\n${change.subject_commit}`;
+  if (cache.has(cacheKey)) return cache.get(cacheKey);
+  const field = `source_observations.${change.id}.subject_commit`;
+  const available = gitOutput(repoRoot, ['cat-file', '-e', `${change.subject_commit}^{commit}`], field, true);
+  let effective;
+  if (available.status === 0) {
+    const ancestor = gitOutput(repoRoot, ['merge-base', '--is-ancestor', change.subject_commit, 'HEAD'], field, true);
+    if (ancestor.status !== 0) {
+      // A subject that still exists as a commit but sits outside HEAD's history
+      // is a row bound to untrusted work. Squash recovery must never run for
+      // it: only a subject that no longer exists at all can have been discarded
+      // by a squash merge.
+      throw new MachineTruthInputError('subject_not_ancestor', field,
+        'Lifecycle row subject must be an ancestor of the checked-out HEAD.');
+    }
+    effective = change.subject_commit;
+  } else {
+    effective = ledgerIntroductionCommit(repoRoot, change, field, baseCommit,
+      new MachineTruthInputError('subject_unavailable', field, 'Lifecycle row subject is not a local commit.'));
   }
-  const ancestor = gitOutput(repoRoot, ['merge-base', '--is-ancestor', change.subject_commit, 'HEAD'],
-    `source_observations.${change.id}.subject_commit`, true);
-  if (ancestor.status !== 0) {
-    throw new MachineTruthInputError('subject_not_ancestor', `source_observations.${change.id}.subject_commit`,
-      'Lifecycle row subject must be an ancestor of the checked-out HEAD.');
+  cache.set(cacheKey, effective);
+  return effective;
+}
+
+const MAX_INTRODUCTION_CANDIDATES = 32;
+
+function ledgerRowBinding(repoRoot, revision, changeId, field) {
+  // The row's committed subject_commit at that revision, or null when the
+  // revision, the ledger file, its JSON, or the row itself is absent.
+  const shown = gitOutput(repoRoot, ['show', `${revision}:openspec/lifecycle-ledger.json`], field, true);
+  if (shown.status !== 0) return null;
+  try {
+    const ledger = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(shown.stdout));
+    const row = Array.isArray(ledger?.changes) ? ledger.changes.find((entry) => entry?.id === changeId) : undefined;
+    return typeof row?.subject_commit === 'string' ? row.subject_commit : null;
+  } catch {
+    return null;
   }
-  cache.add(change.subject_commit);
-  return true;
+}
+
+function ledgerIntroductionCommit(repoRoot, change, field, baseCommit, failure) {
+  // A squash merge discards the pre-merge commit a row was reconciled at, so a
+  // recorded subject can stop existing without the row being wrong: the row and
+  // the sources it reconciled against land atomically in the squash commit.
+  // The newest HEAD-history commit that introduced THIS row's binding - the
+  // {id, subject_commit} pair is present in its ledger and absent in its
+  // parent's - is the staleness watermark: source edits after it still diff
+  // against it and surface as source_changed_since_subject. Deliberate residual
+  // limit: edits folded into the same squash unit are guarded only by that PR's
+  // own pre-merge gate run (where the recorded subject still resolved) and by
+  // the live task-count comparison; they cannot be re-derived once the
+  // pre-merge history is discarded. Anything not provably introduced for this
+  // exact row fails closed with the original error.
+  const listed = gitOutput(repoRoot, ['log', '--format=%H', `-S${change.subject_commit}`, 'HEAD', '--',
+    'openspec/lifecycle-ledger.json'], field, true);
+  if (listed.status !== 0) throw failure;
+  let candidates;
+  try {
+    candidates = new TextDecoder('utf-8', { fatal: true }).decode(listed.stdout)
+      .split('\n').map((value) => value.trim()).filter(Boolean);
+  } catch {
+    throw failure;
+  }
+  if (candidates.length > MAX_INTRODUCTION_CANDIDATES) throw failure;
+  // Every candidate is checked: a binding that was introduced, rebound away,
+  // and reintroduced has more than one introduction commit, and picking any of
+  // them could hide source drift between the introductions - ambiguity fails
+  // closed.
+  let introduction = null;
+  for (const candidate of candidates) {
+    if (!/^[0-9a-f]{40}$/u.test(candidate)) throw failure;
+    if (ledgerRowBinding(repoRoot, candidate, change.id, field) !== change.subject_commit) continue;
+    if (ledgerRowBinding(repoRoot, `${candidate}^`, change.id, field) === change.subject_commit) continue;
+    if (introduction !== null) throw failure;
+    introduction = candidate;
+  }
+  if (introduction === null) throw failure;
+  // The introduction must already be landed history: an introduction reachable
+  // only from the candidate would let the current PR mint an arbitrary row
+  // binding and have this very fallback bless it. Trusted-base ancestry keeps
+  // recovery to squash commits that main already accepted.
+  if (typeof baseCommit !== 'string' || !/^[0-9a-f]{40}$/u.test(baseCommit)) throw failure;
+  const landed = gitOutput(repoRoot, ['merge-base', '--is-ancestor', introduction, baseCommit], field, true);
+  if (landed.status !== 0) throw failure;
+  return introduction;
 }
 
 export function changedPathsSince(repoRoot, subjectCommit, cache, rawBudget) {
@@ -222,7 +292,7 @@ export function changedPathsSince(repoRoot, subjectCommit, cache, rawBudget) {
   return paths;
 }
 
-export function collectSourceObservations(repoRoot, ledger) {
+export function collectSourceObservations(repoRoot, ledger, baseCommit) {
   if (!ledger || !Array.isArray(ledger.changes) || ledger.changes.length > 500) {
     throw new MachineTruthInputError('source_observation_invalid', 'ledger.changes', 'Lifecycle rows are invalid for source observation.');
   }
@@ -243,7 +313,7 @@ export function collectSourceObservations(repoRoot, ledger) {
   const trackedEvidencePaths = decodeNulList(tracked.stdout, 'tracked_evidence_paths')
     .filter((candidate) => evidenceReferences.has(candidate));
   const bySubject = new Map();
-  const checkedSubjects = new Set();
+  const checkedSubjects = new Map();
   const seen = new Set();
   const subjects = new Set(ledger.changes.map((change) => change?.subject_commit));
   if (subjects.size > MAX_UNIQUE_SUBJECTS) {
@@ -258,11 +328,11 @@ export function collectSourceObservations(repoRoot, ledger) {
       throw new MachineTruthInputError('source_observation_invalid', 'ledger.changes', 'Lifecycle row identity is invalid for source observation.');
     }
     seen.add(change.id);
-    assertRowSubjectAncestor(repoRoot, change, checkedSubjects);
+    const watermark = resolveRowSubjectWatermark(repoRoot, change, checkedSubjects, baseCommit);
     const evidence = new Set(change.evidence_refs.filter((reference) => typeof reference === 'string')
       .map((reference) => reference.replaceAll('\\', '/')));
     const changedPaths = [...new Set([
-      ...changedPathsSince(repoRoot, change.subject_commit, bySubject, rawBudget),
+      ...changedPathsSince(repoRoot, watermark, bySubject, rawBudget),
       ...localPaths,
     ])].filter((candidate) => isOwnedOpenSpecSource(change.id, candidate) || evidence.has(candidate));
     aggregatePaths += changedPaths.length;
@@ -365,7 +435,7 @@ if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === imp
     input.baselineArchiveTasks = input.previousLedger === null
       ? baselineArchiveTasksAtSubject(repoRoot, subjectCommit, input.ledger)
       : null;
-    const source = collectSourceObservations(repoRoot, input.ledger);
+    const source = collectSourceObservations(repoRoot, input.ledger, baseCommit);
     const report = evaluateOpenSpecMachineTruth({
       repoRoot,
       ...input,
