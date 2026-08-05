@@ -279,6 +279,7 @@ PR-B 改的正是**驗證機制本身**（deploy path）。§6 明文禁止測�
 - [ ] B10 — Windows 三級觸發 changed-path classifier（D-20）
 - [x] B11 — 取得 `stack_kind=self_referential_bootstrap` evidence（依 PR-A 規則）：PR #467 的 bootstrap evidence 位於 `docs/evidence/remote-linux-deploy-target/self-referential-bootstrap/`；formal preflight 的 inherited-open-ledger 自鎖由使用者核准一次性例外，例外不涵蓋 review、CI、approval 或 merge
 - [x] B12 — merge 後 fixpoint 重驗並回貼（PR-A 義務三）：#459 squash `ad7a50cf` 為 mechanism_commit，8 個 verification_contract command 於 main 實跑 EXIT=0，attestation 依 `self-referential-fixpoint-attestation/v1` 產出，entry 經 #470 關閉
+- [x] B13 — 部署 tag（owner 追加，2026-08-05）：每次對 canonical 目標**成功**部署後，operator dispatch 在「target 實際 checkout 的 commit」上打 annotated tag 並推送 origin，命名 `deploy-<yyyyMMdd>-<UtcTicks>-<NNN>`（日期＋timer ticker＋當日序號）。純函式 `Get-DeployTagName` 可測；序號以當日既有 tag 計數、碰撞自動遞增重試；push 失敗為硬錯誤（不留只在本機的 tag）；DryRun 與失敗部署不打 tag；tag 名與訊息不含 host/account/network（政策 A）
 
 ---
 

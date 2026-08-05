@@ -237,6 +237,51 @@ LOCAL_ONLY_FLAG=1
         Remove-Item -LiteralPath Function:\ssh -Force -ErrorAction SilentlyContinue
     }
 
+    # --- B13 deploy tags: 日期+timer ticker+序號 -----------------------------------
+    $ts = [DateTimeOffset]::new(2026, 8, 5, 1, 2, 3, [TimeSpan]::Zero)
+    $expected = 'deploy-20260805-{0}-007' -f $ts.UtcTicks
+    if ((Get-DeployTagName -TimestampUtc $ts -Sequence 7) -cne $expected) {
+        throw "ASSERT FAILED: tag name must be deploy-<yyyyMMdd>-<UtcTicks>-<NNN> (expected $expected)"
+    }
+    foreach ($bad in @(0, 1000)) {
+        $threw = $false
+        try { $null = Get-DeployTagName -TimestampUtc $ts -Sequence $bad } catch { $threw = $true }
+        if (-not $threw) { throw "ASSERT FAILED: sequence $bad must be rejected" }
+    }
+
+    # New-RemoteDeployTag drives git only through the injectable runner: the
+    # sequence counts the day's existing tags, a name collision retries with the
+    # next number, and a failed push is a hard error (a local-only tag would
+    # silently lie about what origin knows).
+    $script:tagCalls = [System.Collections.Generic.List[string]]::new()
+    $runner = {
+        param([string[]] $GitArgs)
+        $script:tagCalls.Add(($GitArgs -join ' '))
+        $joined = $GitArgs -join ' '
+        if ($joined -match '^tag --list') { return [pscustomobject]@{ ExitCode = 0; Output = "deploy-20260805-1-001`ndeploy-20260805-2-002" } }
+        if ($joined -match '^tag -a \S+-003 ') { return [pscustomobject]@{ ExitCode = 1; Output = 'already exists' } }
+        return [pscustomobject]@{ ExitCode = 0; Output = '' }
+    }
+    $sha = 'a' * 40
+    $name = New-RemoteDeployTag -OperatorRepoRoot 'X:/nowhere' -TargetId 'canonical-linux' -DeployedSha $sha -SnapshotName 'snap.json' -TimestampUtc $ts -GitRunner $runner
+    if ($name -notmatch '-004$') { throw "ASSERT FAILED: collision on -003 must retry to -004 (got $name)" }
+    if (-not ($script:tagCalls | Where-Object { $_ -eq "push origin refs/tags/$name" })) { throw 'ASSERT FAILED: the tag must be pushed to origin' }
+
+    $threw = $false
+    try {
+        $null = New-RemoteDeployTag -OperatorRepoRoot 'X:/nowhere' -TargetId 't' -DeployedSha $sha -SnapshotName 's' -TimestampUtc $ts -GitRunner {
+            param([string[]] $GitArgs)
+            if (($GitArgs -join ' ') -match '^push ') { return [pscustomobject]@{ ExitCode = 1; Output = 'denied' } }
+            return [pscustomobject]@{ ExitCode = 0; Output = '' }
+        }
+    } catch { $threw = $true }
+    if (-not $threw) { throw 'ASSERT FAILED: a failed push must be a hard error, not a silent local tag' }
+
+    $threw = $false
+    try { $null = New-RemoteDeployTag -OperatorRepoRoot 'X:' -TargetId 't' -DeployedSha 'not-a-sha' -SnapshotName 's' -TimestampUtc $ts } catch { $threw = $true }
+    if (-not $threw) { throw 'ASSERT FAILED: a non-sha deployed ref must be rejected' }
+    Write-Host '[PASS] B13 deploy tag naming, sequencing, collision retry, push discipline'
+
     Write-Host '[test-remote-deploy-transport] all assertions passed'
 } finally {
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

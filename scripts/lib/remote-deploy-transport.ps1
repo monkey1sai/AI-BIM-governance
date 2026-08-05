@@ -349,6 +349,70 @@ function Get-RemoteDeploySshArguments {
     return $arguments
 }
 
+
+function Get-DeployTagName {
+    # B13 (owner directive 2026-08-05): every successful deployment to the
+    # canonical target is tagged. Name format = date + timer ticker + number:
+    #   deploy-<yyyyMMdd>-<UtcTicks>-<NNN>
+    # UtcTicks is the 100ns tick count of the dispatch timestamp (the "timer
+    # ticker"); NNN is the 1-based sequence of deployments that UTC day.
+    # Pure and deterministic so the format is testable without a clock.
+    param(
+        [Parameter(Mandatory = $true)][DateTimeOffset] $TimestampUtc,
+        [Parameter(Mandatory = $true)][int] $Sequence
+    )
+    if ($Sequence -lt 1 -or $Sequence -gt 999) {
+        throw "remote_deploy_transport: deploy tag sequence must be 1..999 (got $Sequence)."
+    }
+    return ('deploy-{0:yyyyMMdd}-{1}-{2:000}' -f $TimestampUtc.UtcDateTime, $TimestampUtc.UtcTicks, $Sequence)
+}
+
+function New-RemoteDeployTag {
+    # Creates and pushes the B13 annotated tag for a deployment that EXITed 0.
+    # Binds to the commit the TARGET actually checked out (parsed from the remote
+    # transcript), not to whatever the operator happens to have locally. The tag
+    # name and message carry no host/account/network detail (policy A).
+    param(
+        [Parameter(Mandatory = $true)][string] $OperatorRepoRoot,
+        [Parameter(Mandatory = $true)][string] $TargetId,
+        [Parameter(Mandatory = $true)][string] $DeployedSha,
+        [Parameter(Mandatory = $true)][string] $SnapshotName,
+        [DateTimeOffset] $TimestampUtc = [DateTimeOffset]::UtcNow,
+        [scriptblock] $GitRunner = {
+            param([string[]] $GitArgs)
+            $out = & git -C $OperatorRepoRoot @GitArgs 2>&1
+            [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($out | Out-String) }
+        }
+    )
+    if ($DeployedSha -notmatch '^[0-9a-f]{7,40}$') {
+        throw "remote_deploy_transport: deploy tag requires the deployed commit sha (got '$DeployedSha')."
+    }
+    $dateToken = '{0:yyyyMMdd}' -f $TimestampUtc.UtcDateTime
+    # Sequence counts existing tags for the day; fetch first so parallel operators
+    # converge. A fetch failure downgrades to local-only counting (offline dispatch
+    # is still a deployment worth recording).
+    $null = & $GitRunner @('fetch', '--tags', '--quiet', 'origin')
+    $tagName = ''
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+        $existing = & $GitRunner @('tag', '--list', "deploy-$dateToken-*")
+        $count = @(($existing.Output -split "
+?
+") | Where-Object { $_ }).Count
+        $candidate = Get-DeployTagName -TimestampUtc $TimestampUtc -Sequence ($count + 1 + $attempt)
+        $message = "deploy target=$TargetId exit=0 snapshot=$SnapshotName deployed=$DeployedSha"
+        $created = & $GitRunner @('tag', '-a', $candidate, '-m', $message, $DeployedSha)
+        if ($created.ExitCode -eq 0) { $tagName = $candidate; break }
+    }
+    if ([string]::IsNullOrWhiteSpace($tagName)) {
+        throw 'remote_deploy_transport: could not create a unique deploy tag after 3 attempts.'
+    }
+    $pushed = & $GitRunner @('push', 'origin', "refs/tags/$tagName")
+    if ($pushed.ExitCode -ne 0) {
+        throw "remote_deploy_transport: deploy tag '$tagName' was created locally but could not be pushed: $($pushed.Output)"
+    }
+    return $tagName
+}
+
 function Invoke-RemoteTestDeployRebuild {
     # Remote counterpart of Invoke-TestDeployRebuild. Pushes the base env layer,
     # streams the rebuild script over ssh stdin, captures the effective-env
@@ -436,10 +500,31 @@ function Invoke-RemoteTestDeployRebuild {
         $snapshotPath = ''
     }
 
+    # B13: a successful non-dry-run deployment is tagged. The deployed sha comes
+    # from the remote transcript ("HEAD is now at <sha>"), i.e. what the target
+    # really checked out, resolved to the full sha operator-side.
+    $deployTag = ''
+    if ($exitCode -eq 0 -and -not $DryRun) {
+        $shaMatch = [regex]::Match($outputText, 'HEAD is now at ([0-9a-f]{7,40})')
+        if ($shaMatch.Success) {
+            $fullSha = (& git -C $OperatorRepoRoot rev-parse ($shaMatch.Groups[1].Value + '^{commit}') 2>$null | Out-String).Trim()
+            if ($LASTEXITCODE -eq 0 -and $fullSha) {
+                $deployTag = New-RemoteDeployTag -OperatorRepoRoot $OperatorRepoRoot -TargetId ([string]$Target.id) `
+                    -DeployedSha $fullSha -SnapshotName ([IO.Path]::GetFileName([string]$snapshotPath))
+                Write-Host "[deploy-tag] $deployTag -> $fullSha"
+            } else {
+                Write-Warning 'deploy tag skipped: deployed sha not resolvable operator-side (fetch first).'
+            }
+        } else {
+            Write-Warning 'deploy tag skipped: remote transcript did not report the checked-out sha.'
+        }
+    }
+
     return [pscustomobject]@{
         ExitCode      = $exitCode
         Output        = $outputText
         SnapshotPath  = $snapshotPath
         EffectiveKeys = if ($null -ne $snapshot) { @($snapshot.entries | ForEach-Object { [string]$_.key }) } else { @() }
+        DeployTag     = $deployTag
     }
 }
