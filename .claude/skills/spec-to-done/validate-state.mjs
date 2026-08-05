@@ -3,11 +3,21 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 
-const ALLOWED_PHASES = new Set(['P0', 'P1', 'P3', 'P4', 'P5', 'P6', 'P7'])
-const STATE_PREFIX = /^(HELD|DONE|RESUMED|AUTHORIZATION)@(P0|P1|P3|P4|P5|P6|P7)$/
+const MACHINE_CONTRACT_URL = new URL('../../../agent-contracts/spec-to-done.contract.json', import.meta.url)
+const STATE_PREFIX = /^(HELD|DONE|RESUMED|AUTHORIZATION)@(P\d+)$/
 const MAX_AGENT_CALLS = 40
 const MAX_P5_ROUNDS = 2
 const MAX_EVIDENCE_ATTEMPTS = 2
+const CONTRACT_V1_PHASES = ['P0', 'P1', 'P3', 'P4', 'P5', 'P6', 'P7']
+const CONTRACT_V1_TERMINAL_EVIDENCE = {
+  owner_phase: 'P7',
+  trusted_remote_url: 'https://github.com/monkey1sai/AI-BIM-governance.git',
+  remote_main_ref: 'refs/heads/main',
+  live_remote_resolution: 'required',
+  pr_head_ancestor_of_merge_commit: 'required',
+  merge_commit_equals_remote_main: 'required',
+  pr_head_and_merge_commit_same_tree: 'required',
+}
 const COMMON_FIELDS = [
   'spec', 'slug', 'userFacing', 'dateStamp', 'branch', 'worktree', 'head', 'executionMode',
   'closeoutTaskIds', 'planPath', 'taskIndex', 'prNumber', 'runIds', 'agentCalls', 'p5Rounds',
@@ -27,44 +37,9 @@ const ALLOWED_PHASE_TRANSITIONS = new Set([
   'P7>P7',
 ])
 let TRUSTED_GIT_EXE = null
-const ALLOWED_HELD_REASONS = new Set([
-  'bad_args',
-  'bad_findings',
-  'plan_author_failed',
-  'plan_parse_failed',
-  'reviewer_agent_failed',
-  'external_blocked',
-  'plan_not_aligned',
-  'critical_impact',
-  'impact_unavailable',
-  'plan_error_at_task',
-  'spec_review_not_closing',
-  'quality_review_not_closing',
-  'detect_changes_repeatedly_failing',
-  'no_browser_engine',
-  'no_browser_evidence',
-  'test_deploy_process_unproven',
-  'host_env_blocked',
-  'ledger_mismatch',
-  'review_required',
-  'human_approval_required',
-  'reviewer_permission_not_strict',
-  'reviewer_permission_changed_after_verdict',
-  'branch_requires_separate_authorization',
-  'branch_protection_changed_during_buffer',
-  'branch_protection_changed_after_verdict',
-  'human_approval_changed_after_verdict',
-  'trusted_elevated_authorization_unavailable',
-  'unexpected_elevated_authorization',
-  'branch_protection_single_owner_gate_not_strict',
-  'cyber_safeguard_payload',
-  'ship_blocked',
-  'run_budget_exhausted',
-  'resume_state_invalid',
-  'scope_drift',
-  'evidence_stale',
-  'evidence_not_closing',
-])
+let ALLOWED_PHASES = null
+let ALLOWED_HELD_REASONS = null
+let TERMINAL_EVIDENCE = null
 const NON_RESUMABLE_HELD_REASONS = new Set([
   'branch_requires_separate_authorization',
   'trusted_elevated_authorization_unavailable',
@@ -80,6 +55,34 @@ class ContractError extends Error {
 
 const reject = (held, detail, extra) => {
   throw new ContractError(held, detail, extra)
+}
+
+const loadMachineContract = () => {
+  let contract
+  try {
+    contract = JSON.parse(fs.readFileSync(MACHINE_CONTRACT_URL, 'utf8'))
+  } catch (error) {
+    reject('resume_state_invalid', `could not load the spec-to-done machine contract: ${error.message}`)
+  }
+  const durableState = contract && typeof contract === 'object' ? contract.durable_state : null
+  const phases = contract && contract.phases
+  const reasons = durableState && durableState.held_reasons
+  const terminalEvidence = contract && contract.terminal_evidence
+  if (
+    !contract || typeof contract !== 'object' ||
+    contract.schema_version !== 'spec-to-done-contract/v1' ||
+    !durableState || durableState.canonical_relative_path !== 'artifacts/spec-to-done/{slug}-state.md' ||
+    !Array.isArray(phases) || JSON.stringify(phases) !== JSON.stringify(CONTRACT_V1_PHASES) ||
+    !Array.isArray(reasons) || reasons.length === 0 || new Set(reasons).size !== reasons.length ||
+    reasons.some((reason) => !/^[a-z][a-z0-9_]*$/.test(reason)) ||
+    !terminalEvidence ||
+    JSON.stringify(terminalEvidence) !== JSON.stringify(CONTRACT_V1_TERMINAL_EVIDENCE)
+  ) {
+    reject('resume_state_invalid', 'spec-to-done machine contract is malformed')
+  }
+  ALLOWED_PHASES = new Set(phases)
+  ALLOWED_HELD_REASONS = new Set(reasons)
+  TERMINAL_EVIDENCE = terminalEvidence
 }
 
 const parseCli = (argv) => {
@@ -189,9 +192,15 @@ const isEvidenceOnlyPath = (value, fields) => {
   const file = normalized.toLowerCase()
   if (file.startsWith('docs/evidence/') || file.startsWith('artifacts/e2e/')) return true
   if (!/^openspec\/changes\/[^/]+\/tasks\.md$/.test(file)) return false
-  if (fields.executionMode !== 'evidence-closeout') return true
-  const change = relativeToWorktree(fields.spec, fields.worktree)
-  return Boolean(change && file === `${change.toLowerCase()}/tasks.md`)
+  const specChange = relativeToWorktree(fields.spec, fields.worktree)
+  const change = specChange && /^openspec\/changes\/[^/]+$/.test(specChange.toLowerCase())
+    ? specChange
+    : (fields.executionMode === 'full' ? `openspec/changes/${fields.slug}` : null)
+  return Boolean(
+    change &&
+    /^openspec\/changes\/[^/]+$/.test(change.toLowerCase()) &&
+    file === `${change.toLowerCase()}/tasks.md`,
+  )
 }
 
 const validateTrustedGit = (gitExe, expectedWorktree) => {
@@ -218,6 +227,56 @@ const runGit = (worktree, gitArgs) => spawnSync(TRUSTED_GIT_EXE, gitArgs, {
   windowsHide: true,
   maxBuffer: 1024 * 1024,
 })
+
+const sanitizedRemoteGitEnvironment = () => {
+  const env = { ...process.env }
+  const unsafeExactKeys = new Set([
+    'CURL_CA_BUNDLE',
+    'SSL_CERT_FILE',
+    'SSL_CERT_DIR',
+  ])
+  for (const key of Object.keys(env)) {
+    const normalizedKey = key.toUpperCase()
+    if (normalizedKey.startsWith('GIT_') || unsafeExactKeys.has(normalizedKey)) delete env[key]
+  }
+  const gitDirectory = path.dirname(TRUSTED_GIT_EXE)
+  env.GIT_CONFIG_GLOBAL = process.platform === 'win32' ? 'NUL' : '/dev/null'
+  env.GIT_CONFIG_SYSTEM = process.platform === 'win32' ? 'NUL' : '/dev/null'
+  env.GIT_CONFIG_NOSYSTEM = '1'
+  env.GIT_CEILING_DIRECTORIES = gitDirectory
+  env.GIT_DISCOVERY_ACROSS_FILESYSTEM = '0'
+  env.GIT_TERMINAL_PROMPT = '0'
+  return env
+}
+
+const resolveTrustedRemoteMain = () => {
+  const gitDirectory = path.dirname(TRUSTED_GIT_EXE)
+  const result = spawnSync(TRUSTED_GIT_EXE, [
+    '-c', 'http.sslVerify=true',
+    'ls-remote', '--exit-code', '--refs',
+    TERMINAL_EVIDENCE.trusted_remote_url,
+    TERMINAL_EVIDENCE.remote_main_ref,
+  ], {
+    cwd: gitDirectory,
+    env: sanitizedRemoteGitEnvironment(),
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 30_000,
+    maxBuffer: 16 * 1024,
+  })
+  if (result.error || result.status !== 0) {
+    reject('evidence_stale', `could not resolve live remote ${TERMINAL_EVIDENCE.remote_main_ref} from the fixed trusted remote`)
+  }
+  const lines = result.stdout.split(/\r?\n/).filter((line) => line.length > 0)
+  if (lines.length !== 1) {
+    reject('evidence_stale', 'live trusted remote resolution returned malformed or multiple refs')
+  }
+  const match = /^([0-9a-f]{40})\t(refs\/heads\/main)$/i.exec(lines[0])
+  if (!match || match[2] !== TERMINAL_EVIDENCE.remote_main_ref) {
+    reject('evidence_stale', 'live trusted remote resolution did not return the exact remote main ref')
+  }
+  return match[1].toLowerCase()
+}
 
 const gitPathList = (fields, gitArgs, held, detail) => {
   const result = runGit(fields.worktree, gitArgs)
@@ -275,6 +334,14 @@ const validateEvidenceAncestry = (fields, subjectHead = fields.head) => {
 
 const validateTerminalP7 = (fields) => {
   validateEvidenceAncestry(fields, fields.prHead)
+  const ancestor = runGit(fields.worktree, ['merge-base', '--is-ancestor', fields.prHead, fields.mergeCommit])
+  if (ancestor.error || ancestor.status !== 0) {
+    reject('evidence_stale', 'P7 merge commit is not a proven descendant of the independently evidenced PR head')
+  }
+  const remoteMain = resolveTrustedRemoteMain()
+  if (remoteMain !== fields.mergeCommit.toLowerCase()) {
+    reject('evidence_stale', `P7 merge commit does not equal live remote ${TERMINAL_EVIDENCE.remote_main_ref}`)
+  }
   const sameTree = runGit(fields.worktree, ['diff', '--quiet', '--no-ext-diff', fields.prHead, fields.mergeCommit, '--'])
   if (sameTree.error || sameTree.status !== 0) {
     reject('evidence_stale', 'P7 merge commit tree differs from the independently evidenced PR head')
@@ -329,11 +396,11 @@ const validateCheckpointKind = (checkpoint) => {
   if (kind === 'RESUMED') requireFields(fields, ['decision'])
   if (kind === 'DONE' && phase === 'P7') {
     requireFields(fields, ['mergeCommit', 'prHead'])
-    if (!/^[0-9a-f]{7,40}$/i.test(fields.mergeCommit) || fields.mergeCommit.toLowerCase() !== fields.head.toLowerCase()) {
-      reject('resume_state_invalid', 'DONE@P7 mergeCommit must be the current state HEAD')
+    if (!/^[0-9a-f]{40}$/i.test(fields.mergeCommit) || fields.mergeCommit.toLowerCase() !== fields.head.toLowerCase()) {
+      reject('resume_state_invalid', 'DONE@P7 mergeCommit must be the full current state HEAD')
     }
-    if (!/^[0-9a-f]{7,40}$/i.test(fields.prHead) || !fields.evidenceHead) {
-      reject('resume_state_invalid', 'DONE@P7 requires a PR head and non-empty evidenceHead')
+    if (!/^[0-9a-f]{40}$/i.test(fields.prHead) || !fields.evidenceHead) {
+      reject('resume_state_invalid', 'DONE@P7 requires a full PR head and non-empty evidenceHead')
     }
   }
 }
@@ -342,8 +409,8 @@ const validateCheckpointSchema = (checkpoint, limits, platform = null) => {
   const { phase, fields } = checkpoint
   requireFields(fields, COMMON_FIELDS)
   validateCheckpointKind(checkpoint)
-  if (!fields.slug || !fields.spec || !fields.branch || !/^\d{4}-\d{2}-\d{2}$/.test(fields.dateStamp)) {
-    reject('resume_state_invalid', 'slug, spec, branch, and ISO dateStamp are required')
+  if (!/^[a-z0-9][a-z0-9._-]{0,119}$/.test(fields.slug) || !fields.spec || !fields.branch || !/^\d{4}-\d{2}-\d{2}$/.test(fields.dateStamp)) {
+    reject('resume_state_invalid', 'bounded lowercase slug, spec, branch, and ISO dateStamp are required')
   }
   if (!['true', 'false'].includes(fields.userFacing)) {
     reject('resume_state_invalid', 'userFacing must be true or false')
@@ -474,13 +541,17 @@ const validateAuditChain = (lines, current, limits) => {
 }
 
 const main = () => {
+  loadMachineContract()
   const cli = parseCli(process.argv.slice(2))
   const statePath = cli.state
   const platform = cli.platform
-  const requiredCli = ['state', 'platform', 'git-exe', 'expected-head', 'expected-worktree', 'expected-agent-limit', 'expected-p5-limit', 'expected-evidence-limit']
+  const requiredCli = ['state', 'platform', 'git-exe', 'expected-head', 'expected-worktree', 'expected-agent-limit', 'expected-p5-limit', 'expected-evidence-limit', 'trusted-main-ref']
   const missingCli = requiredCli.filter((key) => !cli[key])
   if (missingCli.length || !['claude', 'codex'].includes(platform)) {
     reject('resume_state_invalid', `missing or invalid validator arguments: ${missingCli.join(',') || 'platform'}`)
+  }
+  if (cli['trusted-main-ref'] !== TERMINAL_EVIDENCE.remote_main_ref) {
+    reject('resume_state_invalid', `--trusted-main-ref must be ${TERMINAL_EVIDENCE.remote_main_ref}`)
   }
   const limits = {
     agentCalls: parsePositiveInteger(cli['expected-agent-limit'], 'expected-agent-limit'),

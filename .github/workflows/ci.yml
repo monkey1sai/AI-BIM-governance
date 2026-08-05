@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.action == 'edited' && github.event.changes.base == null && 'metadata-only' || 'verification' }}
   cancel-in-progress: true
 
 jobs:
@@ -42,18 +42,21 @@ jobs:
       plan_sha256: ${{ steps.paths.outputs.plan_sha256 }}
     steps:
       - name: Checkout
+        if: ${{ github.event.action != 'edited' || github.event.changes.base != null }}
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Node.js for the shared classifier
+        if: ${{ github.event.action != 'edited' || github.event.changes.base != null }}
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '20.20.2'
 
       - name: Classify changed paths
         id: paths
+        if: ${{ github.event.action != 'edited' || github.event.changes.base != null }}
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -84,6 +87,7 @@ jobs:
           node scripts/lib/verification-plan.mjs "${planner_args[@]}"
 
       - name: Upload commit-bound verification plan
+        if: ${{ github.event.action != 'edited' || github.event.changes.base != null }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: verification-plan-${{ steps.paths.outputs.head_sha }}-attempt-${{ github.run_attempt }}
@@ -93,6 +97,7 @@ jobs:
 
       - name: Classify frontend design scope from base and head manifests
         id: design_scope
+        if: ${{ github.event.action != 'edited' || github.event.changes.base != null }}
         shell: pwsh
         run: |
           $verificationPlan = Get-Content -LiteralPath verification-plan.json -Raw | ConvertFrom-Json -Depth 100

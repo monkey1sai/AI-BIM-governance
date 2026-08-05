@@ -15,7 +15,7 @@ def test_findings_contract_landed():
     assert "MAX_FINDINGS = 32" in src, "缺 findings registry 總量上限"
     assert "MAX_VERIFIER_BATCHES = 2" in src, "缺 verifier batch 上限"
     assert "maxItems: MAX_FINDINGS" in src, "缺 critic output 總量上限"
-    assert "evidence_not_bound_to_subject_sha" in src, "缺 exact subject evidence 機械綁定"
+    assert "evidence_not_bound_to_supplied_content" in src, "缺 supplied immutable content 證據綁定"
     assert "repoRelativePath" in src, "缺 reviewer path canonicalization"
     assert "suspect_file_not_tracked_at_subject_sha" in src, "缺 dispatch 前 subject-tree suspectFile gate"
     assert "禁止 Read mutable worktree path" in src, "缺 pinned-object-only reviewer read boundary"

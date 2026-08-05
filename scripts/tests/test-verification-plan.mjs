@@ -70,7 +70,7 @@ const fixtures = [
   ['viewer user surface', ['web-viewer-sample/src/console/pages.tsx'], ['design-semantic-visual', 'functional-runtime-conv', 'root-contracts', 'secret-pattern-scan', 'viewer', 'viewer-session']],
   ['coordinator source', ['bim-review-coordinator/src/app.ts'], ['coordinator', 'design-semantic-visual', 'functional-runtime-conv', 'kit-manager-web', 'root-contracts', 'secret-pattern-scan', 'viewer', 'viewer-session']],
   ['governance document', ['docs/agents/domain.md'], ['agent-governance', 'powershell-static', 'secret-pattern-scan']],
-  ['compose config', ['compose.runtime-manager.yml'], ['compose-config', 'kit-manager-web', 'secret-pattern-scan']],
+  ['compose config', ['compose.runtime-manager.yml'], ['compose-config', 'kit-manager-web', 'root-contracts', 'secret-pattern-scan']],
   ['kit manager image', ['infra/docker/kit-manager-web.Dockerfile'], ['compose-config', 'kit-manager-web', 'secret-pattern-scan']],
 ];
 
@@ -82,6 +82,21 @@ for (const [name, changedPaths, expected] of fixtures) {
     assert.ok(plan.targets.filter(({ required }) => required).every(({ reason }) => reason === 'affected_path'));
   });
 }
+
+test('every compose input consumed by the architecture scanner triggers root contracts', () => {
+  const observedConfig = JSON.parse(readFileSync(
+    path.join(repoRoot, 'architecture', 'observed-graph.config.json'),
+    'utf8',
+  ));
+  assert.ok(observedConfig.compose_files.length > 0);
+  for (const composePath of observedConfig.compose_files) {
+    const plan = createVerificationPlan(manifest, { changedPaths: [composePath] });
+    assert.ok(
+      requiredIds(plan).includes('root-contracts'),
+      `${composePath} is a scanner input but does not trigger root-contracts`,
+    );
+  }
+});
 
 test('docs-only paths produce typed skips while the security scan remains explicit', () => {
   const plan = createVerificationPlan(manifest, { changedPaths: ['docs/architecture/overview.md'] });

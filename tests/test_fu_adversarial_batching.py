@@ -20,11 +20,15 @@ const HEAD = 'a'.repeat(40)
 const BASE = 'c'.repeat(40)
 const TARGET = 'd'.repeat(40)
 const ROOT = 'C:/repo'
+const ACCEPTANCE_DIGEST = 'e'.repeat(64)
+const REQUIREMENT_BLOB = 'f'.repeat(40)
+const REQUIREMENT_SHA256 = '1'.repeat(64)
 
 // workflow runtime 沒有 shell helper: git 事實一律由 coordinator 經 args.git 供給。
 const NL = String.fromCharCode(10)
 const FILE_CONTENT = [...Array(6).fill('// context'), 'const observed = true', ''].join(NL)
 const gitFacts = {
+  attestation: 'coordinator-attested',
   originMainSha: TARGET,
   headSha: HEAD,
   mergeBase: BASE,
@@ -85,6 +89,16 @@ run({
   remainingAgentCalls: 40,
   p5Round: 1,
   git: gitFacts,
+  requirements: {
+    acceptanceDigest: ACCEPTANCE_DIGEST,
+    acceptanceSummary: 'Verify every supplied finding against the accepted behavior.',
+    refs: [{
+      path: 'docs/requirements/p5.md',
+      commitSha: BASE,
+      blobOid: REQUIREMENT_BLOB,
+      sha256: REQUIREMENT_SHA256,
+    }],
+  },
 }, () => {}, () => {}, parallel, agent)
   .then((out) => process.stdout.write(JSON.stringify({ out, calls })))
   .catch((error) => {
