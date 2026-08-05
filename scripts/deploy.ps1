@@ -891,6 +891,7 @@ if (-not $SkipGovernance) {
 }
 $extraHostNativePorts = @($resolvedSpectatorSignalPorts)
 if (-not $SkipGovernance) { $extraHostNativePorts += $resolvedGovernancePort }
+if (-not $SkipKitManager) { $extraHostNativePorts += 8010 }
 $ports = Test-PortAvailability -RepoRoot $RepoRoot -CoordinatorPort $resolvedCoordinatorPort -ViewerPort $resolvedViewerPort -KitSignalPort $resolvedKitSignalPort -KitMediaPort $resolvedKitMediaPort -ExtraHostNativePorts $extraHostNativePorts -ExtraHostNativeUdpPorts $resolvedSpectatorMediaPorts
 
 # Audit summary 印出
@@ -1400,6 +1401,7 @@ Write-DeployHeader -Title 'Phase 3: Interactive guard (dangerous actions)'
 # 狀態可能變動。Re-audit ports 避免用 Phase 1 的 stale 資料問互動。
 $extraHostNativePorts = @($resolvedSpectatorSignalPorts)
 if (-not $SkipGovernance) { $extraHostNativePorts += $resolvedGovernancePort }
+if (-not $SkipKitManager) { $extraHostNativePorts += 8010 }
 $ports = Test-PortAvailability -RepoRoot $RepoRoot -CoordinatorPort $resolvedCoordinatorPort -ViewerPort $resolvedViewerPort -KitSignalPort $resolvedKitSignalPort -KitMediaPort $resolvedKitMediaPort -ExtraHostNativePorts $extraHostNativePorts -ExtraHostNativeUdpPorts $resolvedSpectatorMediaPorts
 
 $strangerPortPids = @($ports.docker + $ports.hostNative |

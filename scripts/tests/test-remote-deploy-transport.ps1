@@ -222,6 +222,21 @@ LOCAL_ONLY_FLAG=1
     }
     Assert-True (@($live.EffectiveKeys) -contains 'AUTHORIZATION') 'parsed effective keys come from the redacted snapshot'
 
+    $script:fakeSshCallCount = 0
+    function ssh {
+        $null = @($input)
+        $script:fakeSshCallCount++
+        $global:LASTEXITCODE = 0
+        if ($script:fakeSshCallCount -eq 4) { 'synthetic-success-without-snapshot' }
+    }
+    try {
+        Assert-Throws -Context 'successful rebuild without snapshot' -MessagePattern 'reported success but emitted no effective env snapshot' -Action {
+            Invoke-RemoteTestDeployRebuild -Target $remoteTarget -OperatorRepoRoot $tempRoot -Build
+        }
+    } finally {
+        Remove-Item -LiteralPath Function:\ssh -Force -ErrorAction SilentlyContinue
+    }
+
     Write-Host '[test-remote-deploy-transport] all assertions passed'
 } finally {
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

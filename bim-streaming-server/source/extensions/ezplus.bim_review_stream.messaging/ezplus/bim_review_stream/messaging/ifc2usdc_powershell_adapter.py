@@ -49,7 +49,7 @@ class Ifc2UsdcPowershellConverterAdapter:
         self,
         *,
         repo_root: Path,
-        powershell_exe: str = "powershell.exe",
+        powershell_exe: str | None = None,
         kit_exe_path: Path | None = None,
         hoops_main_path: Path | None = None,
         config_path: Path | None = None,
@@ -58,7 +58,7 @@ class Ifc2UsdcPowershellConverterAdapter:
         storage_root: Path | None = None,
     ) -> None:
         self.repo_root = Path(repo_root)
-        self.powershell_exe = powershell_exe
+        self.powershell_exe = _default_powershell_exe() if powershell_exe is None else powershell_exe
         self.kit_exe_path = Path(kit_exe_path) if kit_exe_path else None
         self.hoops_main_path = Path(hoops_main_path) if hoops_main_path else None
         self.config_path = Path(config_path) if config_path else None

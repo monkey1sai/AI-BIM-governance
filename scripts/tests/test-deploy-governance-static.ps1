@@ -105,6 +105,10 @@ Assert-Contains $legacyCleanup "'rm','-f','-s','kit-manager-api'" 'legacy cleanu
 if ($legacyCleanup -match "'down'|--remove-orphans") {
     throw 'legacy kit-manager cleanup must not broaden into compose down or orphan removal'
 }
+$kitManagerPreflightWiring = [regex]::Matches($deploy, 'if \(-not \$SkipKitManager\) \{ \$extraHostNativePorts \+= 8010 \}')
+if ($kitManagerPreflightWiring.Count -ne 2) {
+    throw 'deploy.ps1 must include host-native kit-manager port 8010 in both the initial and Phase 3 port audits'
+}
 
 [scriptblock]::Create($deploy) | Out-Null
 [scriptblock]::Create($launcher) | Out-Null

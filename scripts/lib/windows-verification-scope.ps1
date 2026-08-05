@@ -23,23 +23,24 @@ $script:WindowsVerificationTiers = @(
     [pscustomobject]@{
         Tier      = 3
         Id        = 'kit_gpu'
-        # Kit sources, app definitions and the Kit build toolchain: only these can
-        # break the Windows host-native Kit launch path.
+        # Kit sources, app definitions, conversion launchers, and the Kit build
+        # toolchain can break the Windows host-native Kit/conversion path.
         Patterns  = @(
             '^bim-streaming-server/source/',
             '^bim-streaming-server/repo\.(toml|bat|sh)$',
             '^bim-streaming-server/premake5\.lua$',
             '^bim-streaming-server/tools/',
-            '^bim-streaming-server/scripts/start-streaming-server\.ps1$'
+            '^bim-streaming-server/scripts/(start-streaming-server|start-host-native-conversion-service|convert-ifc-to-usdc)\.ps1$'
         )
-        Evidence  = 'Full Windows host-native Kit launch with GPU/WebRTC evidence'
-        Rationale = 'Kit source or build toolchain changed; only a real Windows host-native launch proves that path still works.'
+        Evidence  = 'Applicable full Windows host-native Kit GPU/WebRTC or conversion execution evidence'
+        Rationale = 'Kit source, conversion launcher, or build toolchain changed; only an applicable real Windows host-native execution proves that path still works.'
     },
     [pscustomobject]@{
         Tier      = 2
         Id        = 'deploy_dryrun'
         Patterns  = @(
             '^scripts/deploy\.ps1$',
+            '^scripts/deploy-target-registry\.json$',
             '^scripts/dev/rebuild-test-deploy\.ps1$',
             '^scripts/stop-all\.ps1$',
             '^scripts/lib/(?!platform/)[^/]+\.ps1$',

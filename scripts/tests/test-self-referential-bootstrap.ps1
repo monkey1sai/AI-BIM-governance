@@ -292,6 +292,7 @@ try {
         'scripts/deploy-target-registry.json',
         'scripts/lib/deploy-target-registry.ps1',
         'scripts/lib/remote-deploy-transport.ps1',
+        'scripts/lib/windows-verification-scope.ps1',
         '.github/workflows/pr-review-agent.yml',
         '.github/workflows/agent-governance.yml',
         '.github/workflows/ci.yml',
@@ -973,10 +974,12 @@ try {
             -BaseSha $legalOpeningBaseSha -HeadSha $legalOpeningHeadSha
     }
 
-    Assert-Throws -Context 'self-adjudicator edit under bootstrap=no' -MessagePattern 'must declare bootstrap=yes' -Action {
-        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } `
-            -ChangedPaths @('scripts/lib/self-referential-bootstrap.ps1') `
-            -HeadJson $emptyJson -BaseJson $emptyJson
+    foreach ($selfAdjudicator in @('scripts/lib/self-referential-bootstrap.ps1', 'scripts/lib/windows-verification-scope.ps1')) {
+        Assert-Throws -Context "self-adjudicator edit under bootstrap=no: $selfAdjudicator" -MessagePattern 'must declare bootstrap=yes' -Action {
+            Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } `
+                -ChangedPaths @($selfAdjudicator) `
+                -HeadJson $emptyJson -BaseJson $emptyJson
+        }
     }
 
     # --- inherited open debt blocks (declared no, entry untouched) ------------------

@@ -402,6 +402,20 @@ def test_adapter_from_env_prefers_pwsh_when_available(tmp_path: Path, monkeypatc
     assert adapter.powershell_exe == "C:/Program Files/PowerShell/7/pwsh.exe"
 
 
+def test_direct_adapter_prefers_pwsh_when_available(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda name: "/usr/bin/pwsh" if name == "pwsh" else None,
+    )
+
+    adapter = Ifc2UsdcPowershellConverterAdapter(
+        repo_root=tmp_path,
+        storage_root=tmp_path,
+    )
+
+    assert adapter.powershell_exe == "/usr/bin/pwsh"
+
+
 def test_adapter_from_env_explicit_powershell_wins(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         "shutil.which",

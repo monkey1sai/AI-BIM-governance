@@ -422,6 +422,9 @@ function Invoke-RemoteTestDeployRebuild {
             throw "remote_deploy_transport: remote redacted env snapshot is invalid JSON: $($_.Exception.Message)"
         }
     }
+    if ($null -eq $snapshot -and $exitCode -eq 0) {
+        throw 'remote_deploy_transport: remote rebuild reported success but emitted no effective env snapshot section.'
+    }
 
     $reportDir = Join-Path $OperatorRepoRoot "artifacts/deploy-reports/$([string]$Target.id)"
     New-Item -ItemType Directory -Path $reportDir -Force | Out-Null

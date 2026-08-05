@@ -49,10 +49,16 @@ $t2d = Get-Tier @('scripts/stop-all.ps1')
 Assert-True ($t2d.Tier -eq 2) "stop-all.ps1 -> tier 2 (got $($t2d.Tier))"
 $t2e = Get-Tier @('scripts/dev/rebuild-test-deploy.ps1')
 Assert-True ($t2e.Tier -eq 2) "rebuild-test-deploy entrypoint -> tier 2 (got $($t2e.Tier))"
+$t2f = Get-Tier @('scripts/deploy-target-registry.json')
+Assert-True ($t2f.Tier -eq 2) "deploy target registry -> tier 2 (got $($t2f.Tier))"
 
 foreach ($kitPath in @('bim-streaming-server/source/apps/ezplus.bim_review_stream.kit', 'bim-streaming-server/repo.toml', 'bim-streaming-server/tools/packman/python.sh', 'bim-streaming-server/premake5.lua', 'bim-streaming-server/scripts/start-streaming-server.ps1')) {
     $t3 = Get-Tier @($kitPath)
     Assert-True ($t3.Tier -eq 3 -and $t3.Id -eq 'kit_gpu') "$kitPath -> tier 3 (got $($t3.Id))"
+}
+foreach ($conversionPath in @('bim-streaming-server/scripts/start-host-native-conversion-service.ps1', 'bim-streaming-server/scripts/convert-ifc-to-usdc.ps1')) {
+    $t3 = Get-Tier @($conversionPath)
+    Assert-True ($t3.Tier -eq 3 -and $t3.Id -eq 'kit_gpu') "$conversionPath -> tier 3 (got $($t3.Id))"
 }
 
 # --- subsumption: only the highest tier is owed ---------------------------------
