@@ -1,0 +1,434 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:ai-bim-governance:lifecycle-contract:v1",
+  "title": "AI-BIM lifecycle contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "purpose",
+    "enforcement_note",
+    "machines",
+    "cross_machine_rules",
+    "readiness_binding"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schema_version": {
+      "const": "ai-bim-lifecycle-contract/v1"
+    },
+    "purpose": {
+      "$ref": "#/definitions/nonEmptyString"
+    },
+    "enforcement_note": {
+      "$ref": "#/definitions/nonEmptyString"
+    },
+    "machines": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/machine"
+      }
+    },
+    "cross_machine_rules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/crossMachineRule"
+      }
+    },
+    "readiness_binding": {
+      "$ref": "#/definitions/readinessBinding"
+    }
+  },
+  "definitions": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "snakeCode": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:_[a-z0-9]+)*$"
+    },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "identifierArray": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/identifier"
+      },
+      "uniqueItems": true
+    },
+    "repoRelativePath": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$"
+    },
+    "machine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "owner_service",
+        "source_binding",
+        "states",
+        "transitions",
+        "forbidden_shortcuts",
+        "evidence",
+        "notes"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/identifier"
+        },
+        "title": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "owner_service": {
+          "$ref": "#/definitions/identifier"
+        },
+        "source_binding": {
+          "$ref": "#/definitions/sourceBinding"
+        },
+        "states": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/state"
+          }
+        },
+        "transitions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/transition"
+          }
+        },
+        "forbidden_shortcuts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/forbiddenShortcut"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/evidenceDeclaration"
+          }
+        },
+        "reentry_rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/reentryRule"
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/nonEmptyString"
+          }
+        }
+      }
+    },
+    "sourceBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "type_name"
+      ],
+      "properties": {
+        "file": {
+          "$ref": "#/definitions/repoRelativePath"
+        },
+        "type_name": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9]*$"
+        }
+      }
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "description"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/identifier"
+        },
+        "kind": {
+          "enum": [
+            "initial",
+            "intermediate",
+            "terminal"
+          ]
+        },
+        "runtime_write_path": {
+          "enum": [
+            "observed",
+            "declared_only"
+          ]
+        },
+        "description": {
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      }
+    },
+    "transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "from",
+        "to",
+        "trigger",
+        "evidence_required",
+        "description"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/identifier"
+        },
+        "from": {
+          "$ref": "#/definitions/identifier"
+        },
+        "to": {
+          "$ref": "#/definitions/identifier"
+        },
+        "trigger": {
+          "$ref": "#/definitions/identifier"
+        },
+        "evidence_required": {
+          "$ref": "#/definitions/identifierArray"
+        },
+        "effects": {
+          "$ref": "#/definitions/identifierArray"
+        },
+        "failure_code": {
+          "$ref": "#/definitions/snakeCode"
+        },
+        "description": {
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      }
+    },
+    "forbiddenShortcut": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "from",
+        "to",
+        "reason",
+        "enforced_by"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/identifier"
+        },
+        "from": {
+          "$ref": "#/definitions/identifier"
+        },
+        "to": {
+          "$ref": "#/definitions/identifier"
+        },
+        "reason": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "enforced_by": {
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      }
+    },
+    "evidenceDeclaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "description",
+        "source"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/identifier"
+        },
+        "description": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "source": {
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      }
+    },
+    "reentryRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "states",
+        "trigger",
+        "behavior",
+        "description"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/identifier"
+        },
+        "states": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/identifier"
+          },
+          "uniqueItems": true
+        },
+        "trigger": {
+          "$ref": "#/definitions/identifier"
+        },
+        "behavior": {
+          "enum": [
+            "no-op-return-current-state",
+            "idempotent-replay"
+          ]
+        },
+        "description": {
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      }
+    },
+    "crossMachineRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "statement",
+        "machines"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/identifier"
+        },
+        "statement": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "machines": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/definitions/identifier"
+          },
+          "uniqueItems": true
+        },
+        "required_states": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/requiredStates"
+          }
+        },
+        "cascade": {
+          "$ref": "#/definitions/cascade"
+        },
+        "runtime_rejections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/snakeCode"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "requiredStates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "machine",
+        "any_of"
+      ],
+      "properties": {
+        "machine": {
+          "$ref": "#/definitions/identifier"
+        },
+        "any_of": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/identifier"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "cascade": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from_machine",
+        "on_trigger",
+        "to_machine",
+        "applies_transition"
+      ],
+      "properties": {
+        "from_machine": {
+          "$ref": "#/definitions/identifier"
+        },
+        "on_trigger": {
+          "$ref": "#/definitions/identifier"
+        },
+        "to_machine": {
+          "$ref": "#/definitions/identifier"
+        },
+        "applies_transition": {
+          "$ref": "#/definitions/identifier"
+        }
+      }
+    },
+    "readinessBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy_id",
+        "evidence_bindings"
+      ],
+      "properties": {
+        "policy_id": {
+          "$ref": "#/definitions/identifier"
+        },
+        "evidence_bindings": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/evidenceBinding"
+          }
+        }
+      }
+    },
+    "evidenceBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_id",
+        "provider",
+        "surface"
+      ],
+      "properties": {
+        "evidence_id": {
+          "$ref": "#/definitions/identifier"
+        },
+        "provider": {
+          "$ref": "#/definitions/identifier"
+        },
+        "surface": {
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      }
+    }
+  }
+}
