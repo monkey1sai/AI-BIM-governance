@@ -194,7 +194,7 @@ function assertGitBase(repoRoot, baseCommit) {
   }
 }
 
-export function resolveRowSubjectWatermark(repoRoot, change, cache) {
+export function resolveRowSubjectWatermark(repoRoot, change, cache, baseCommit) {
   const cacheKey = `${change.id}\n${change.subject_commit}`;
   if (cache.has(cacheKey)) return cache.get(cacheKey);
   const field = `source_observations.${change.id}.subject_commit`;
@@ -212,7 +212,7 @@ export function resolveRowSubjectWatermark(repoRoot, change, cache) {
     }
     effective = change.subject_commit;
   } else {
-    effective = ledgerIntroductionCommit(repoRoot, change, field,
+    effective = ledgerIntroductionCommit(repoRoot, change, field, baseCommit,
       new MachineTruthInputError('subject_unavailable', field, 'Lifecycle row subject is not a local commit.'));
   }
   cache.set(cacheKey, effective);
@@ -235,7 +235,7 @@ function ledgerRowBinding(repoRoot, revision, changeId, field) {
   }
 }
 
-function ledgerIntroductionCommit(repoRoot, change, field, failure) {
+function ledgerIntroductionCommit(repoRoot, change, field, baseCommit, failure) {
   // A squash merge discards the pre-merge commit a row was reconciled at, so a
   // recorded subject can stop existing without the row being wrong: the row and
   // the sources it reconciled against land atomically in the squash commit.
@@ -272,6 +272,13 @@ function ledgerIntroductionCommit(repoRoot, change, field, failure) {
     introduction = candidate;
   }
   if (introduction === null) throw failure;
+  // The introduction must already be landed history: an introduction reachable
+  // only from the candidate would let the current PR mint an arbitrary row
+  // binding and have this very fallback bless it. Trusted-base ancestry keeps
+  // recovery to squash commits that main already accepted.
+  if (typeof baseCommit !== 'string' || !/^[0-9a-f]{40}$/u.test(baseCommit)) throw failure;
+  const landed = gitOutput(repoRoot, ['merge-base', '--is-ancestor', introduction, baseCommit], field, true);
+  if (landed.status !== 0) throw failure;
   return introduction;
 }
 
@@ -285,7 +292,7 @@ export function changedPathsSince(repoRoot, subjectCommit, cache, rawBudget) {
   return paths;
 }
 
-export function collectSourceObservations(repoRoot, ledger) {
+export function collectSourceObservations(repoRoot, ledger, baseCommit) {
   if (!ledger || !Array.isArray(ledger.changes) || ledger.changes.length > 500) {
     throw new MachineTruthInputError('source_observation_invalid', 'ledger.changes', 'Lifecycle rows are invalid for source observation.');
   }
@@ -321,7 +328,7 @@ export function collectSourceObservations(repoRoot, ledger) {
       throw new MachineTruthInputError('source_observation_invalid', 'ledger.changes', 'Lifecycle row identity is invalid for source observation.');
     }
     seen.add(change.id);
-    const watermark = resolveRowSubjectWatermark(repoRoot, change, checkedSubjects);
+    const watermark = resolveRowSubjectWatermark(repoRoot, change, checkedSubjects, baseCommit);
     const evidence = new Set(change.evidence_refs.filter((reference) => typeof reference === 'string')
       .map((reference) => reference.replaceAll('\\', '/')));
     const changedPaths = [...new Set([
@@ -428,7 +435,7 @@ if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === imp
     input.baselineArchiveTasks = input.previousLedger === null
       ? baselineArchiveTasksAtSubject(repoRoot, subjectCommit, input.ledger)
       : null;
-    const source = collectSourceObservations(repoRoot, input.ledger);
+    const source = collectSourceObservations(repoRoot, input.ledger, baseCommit);
     const report = evaluateOpenSpecMachineTruth({
       repoRoot,
       ...input,

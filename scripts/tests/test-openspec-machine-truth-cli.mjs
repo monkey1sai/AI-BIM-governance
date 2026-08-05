@@ -360,6 +360,28 @@ test('CLI fails closed when the same discarded row binding was introduced more t
   }
 });
 
+test('CLI rejects a candidate-minted fake row binding: recovery only accepts introductions landed at the trusted base', () => {
+  const fixture = makeHistoricalRowRepository();
+  try {
+    const base = commitLifecycleSnapshot(fixture);
+    const ledger = JSON.parse(readFileSync(fixture.ledgerPath, 'utf8'));
+    ledger.changes[0].subject_commit = 'f'.repeat(40);
+    write(fixture.ledgerPath, `${JSON.stringify(ledger)}\n`);
+    runGit(fixture.root, ['add', 'openspec/lifecycle-ledger.json']);
+    runGit(fixture.root, ['commit', '--quiet', '-m', 'candidate mints a fake binding']);
+    const head = runGit(fixture.root, ['rev-parse', 'HEAD']);
+    const githubPath = path.join(fixture.root, 'artifacts/github.json');
+    const githubState = JSON.parse(readFileSync(githubPath, 'utf8'));
+    githubState.repository_subject = head;
+    write(githubPath, `${JSON.stringify(githubState)}\n`);
+    const result = runVerifier(fixture.root, head, base);
+    assert.equal(result.status, 3);
+    assert.equal(result.document.errors[0].code, 'subject_unavailable');
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test('CLI compares against the explicit base and rejects a committed candidate that removes a lifecycle row and its sources', () => {
   const fixture = makeRepository();
   try {
@@ -431,8 +453,8 @@ test('repeated row subject reuses actual Git ancestor and diff caches without co
     runGit(fixture.root, ['add', '--all']);
     runGit(fixture.root, ['commit', '--quiet', '-m', 'unrelated change']);
     const subjects = new Map();
-    assert.equal(resolveRowSubjectWatermark(fixture.root, { subject_commit: fixture.subject, id: 'alpha' }, subjects), fixture.subject);
-    assert.equal(resolveRowSubjectWatermark(fixture.root, { subject_commit: fixture.subject, id: 'alpha' }, subjects), fixture.subject);
+    assert.equal(resolveRowSubjectWatermark(fixture.root, { subject_commit: fixture.subject, id: 'alpha' }, subjects, fixture.subject), fixture.subject);
+    assert.equal(resolveRowSubjectWatermark(fixture.root, { subject_commit: fixture.subject, id: 'alpha' }, subjects, fixture.subject), fixture.subject);
     assert.equal(subjects.size, 1);
     const cache = new Map();
     const budget = createRawObservationBudget();
