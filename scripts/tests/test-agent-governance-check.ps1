@@ -267,6 +267,9 @@ try {
     Assert-True (
         [regex]::Matches($ci, [regex]::Escape($ciEditedGate)).Count -eq 5
     ) 'all changed-path classifier steps skip body/title-only edits but run for base edits'
+    Assert-True (
+        $ci -match [regex]::Escape("`${{ github.workflow }}-`${{ github.ref }}-`${{ github.event.action == 'edited' && github.event.changes.base == null && 'metadata-only' || 'verification' }}")
+    ) 'body/title-only CI uses an isolated concurrency group and cannot cancel exact-head verification'
     foreach ($output in @('root_contracts', 'coordinator', 'streaming', 'governance_service', 'viewer', 'agent_governance', 'conv_functional', 'kit_manager_api', 'kit_manager_web', 'compose_config', 'powershell_static', 'rebuild_test_deploy', 'secret_pattern_scan', 'plan_result', 'plan_sha256')) {
         $expectedOutput = $output + ': ${{ steps.paths.outputs.' + $output + ' }}'
         Assert-True ($ci -match [regex]::Escape($expectedOutput)) "changes job exposes $output output"
