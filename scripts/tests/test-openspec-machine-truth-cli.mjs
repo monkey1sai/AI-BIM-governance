@@ -13,9 +13,9 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  assertRowSubjectAncestor,
   changedPathsSince,
   createRawObservationBudget,
+  resolveRowSubjectWatermark,
 } from './verify-openspec-machine-truth.mjs';
 
 const commandPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'verify-openspec-machine-truth.mjs');
@@ -240,6 +240,39 @@ test('CLI fails closed when a row subject is unavailable or not a HEAD ancestor'
   }
 });
 
+test('CLI derives the squash-introduced watermark when a recorded row subject was discarded by a squash merge', () => {
+  const fixture = makeHistoricalRowRepository();
+  try {
+    // Squash shape: the row lands in history carrying a pre-merge subject SHA
+    // that no longer exists as a commit. The commit that introduced the binding
+    // is the correct staleness watermark.
+    const squashed = JSON.parse(readFileSync(fixture.ledgerPath, 'utf8'));
+    squashed.changes[0].subject_commit = 'f'.repeat(40);
+    write(fixture.ledgerPath, `${JSON.stringify(squashed)}\n`);
+    runGit(fixture.root, ['add', 'openspec/lifecycle-ledger.json']);
+    runGit(fixture.root, ['commit', '--quiet', '-m', 'squash: land row with its discarded pre-merge subject']);
+    const head = runGit(fixture.root, ['rev-parse', 'HEAD']);
+    const githubPath = path.join(fixture.root, 'artifacts/github.json');
+    const githubState = JSON.parse(readFileSync(githubPath, 'utf8'));
+    githubState.repository_subject = head;
+    write(githubPath, `${JSON.stringify(githubState)}\n`);
+
+    const accepted = runVerifier(fixture.root, head);
+    assert.equal(accepted.status, 0);
+    assert.equal(accepted.document.result, 'consistent');
+
+    // Staleness detection must survive the derived watermark: a source edit
+    // after the introduction commit still red-flags exactly that row.
+    write(path.join(fixture.root, 'openspec/changes/alpha/proposal.md'), '# drift after squash\n');
+    const drifted = runVerifier(fixture.root, head);
+    assert.equal(drifted.status, 2);
+    assert.ok(drifted.document.mismatches.some(({ change_id: id, reason }) => id === 'alpha' && reason === 'source_changed_since_subject'));
+    assert.ok(!drifted.document.mismatches.some(({ change_id: id, reason }) => id === 'beta' && reason === 'source_changed_since_subject'));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test('CLI compares against the explicit base and rejects a committed candidate that removes a lifecycle row and its sources', () => {
   const fixture = makeRepository();
   try {
@@ -310,9 +343,10 @@ test('repeated row subject reuses actual Git ancestor and diff caches without co
     write(path.join(fixture.root, 'unrelated/changed.json'), '{}\n');
     runGit(fixture.root, ['add', '--all']);
     runGit(fixture.root, ['commit', '--quiet', '-m', 'unrelated change']);
-    const subjects = new Set();
-    assert.equal(assertRowSubjectAncestor(fixture.root, { subject_commit: fixture.subject, id: 'alpha' }, subjects), true);
-    assert.equal(assertRowSubjectAncestor(fixture.root, { subject_commit: fixture.subject, id: 'alpha' }, subjects), false);
+    const subjects = new Map();
+    assert.equal(resolveRowSubjectWatermark(fixture.root, { subject_commit: fixture.subject, id: 'alpha' }, subjects), fixture.subject);
+    assert.equal(resolveRowSubjectWatermark(fixture.root, { subject_commit: fixture.subject, id: 'alpha' }, subjects), fixture.subject);
+    assert.equal(subjects.size, 1);
     const cache = new Map();
     const budget = createRawObservationBudget();
     const first = changedPathsSince(fixture.root, fixture.subject, cache, budget);

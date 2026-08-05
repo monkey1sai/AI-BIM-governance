@@ -194,22 +194,57 @@ function assertGitBase(repoRoot, baseCommit) {
   }
 }
 
-export function assertRowSubjectAncestor(repoRoot, change, cache) {
-  if (cache.has(change.subject_commit)) return false;
-  const available = gitOutput(repoRoot, ['cat-file', '-e', `${change.subject_commit}^{commit}`],
-    `source_observations.${change.id}.subject_commit`, true);
+export function resolveRowSubjectWatermark(repoRoot, change, cache) {
+  if (cache.has(change.subject_commit)) return cache.get(change.subject_commit);
+  const field = `source_observations.${change.id}.subject_commit`;
+  let failure = null;
+  const available = gitOutput(repoRoot, ['cat-file', '-e', `${change.subject_commit}^{commit}`], field, true);
   if (available.status !== 0) {
-    throw new MachineTruthInputError('subject_unavailable', `source_observations.${change.id}.subject_commit`,
-      'Lifecycle row subject is not a local commit.');
+    failure = new MachineTruthInputError('subject_unavailable', field, 'Lifecycle row subject is not a local commit.');
+  } else {
+    const ancestor = gitOutput(repoRoot, ['merge-base', '--is-ancestor', change.subject_commit, 'HEAD'], field, true);
+    if (ancestor.status !== 0) {
+      failure = new MachineTruthInputError('subject_not_ancestor', field,
+        'Lifecycle row subject must be an ancestor of the checked-out HEAD.');
+    }
   }
-  const ancestor = gitOutput(repoRoot, ['merge-base', '--is-ancestor', change.subject_commit, 'HEAD'],
-    `source_observations.${change.id}.subject_commit`, true);
-  if (ancestor.status !== 0) {
-    throw new MachineTruthInputError('subject_not_ancestor', `source_observations.${change.id}.subject_commit`,
-      'Lifecycle row subject must be an ancestor of the checked-out HEAD.');
+  const effective = failure === null
+    ? change.subject_commit
+    : ledgerIntroductionCommit(repoRoot, change.subject_commit, field, failure);
+  cache.set(change.subject_commit, effective);
+  return effective;
+}
+
+function ledgerIntroductionCommit(repoRoot, subjectCommit, field, failure) {
+  // A squash merge discards the pre-merge commit a row was reconciled at, so a
+  // recorded subject can stop existing without the row being wrong: the row and
+  // the sources it reconciled against land atomically in the squash commit.
+  // That commit - the newest one on HEAD's history that introduced this binding
+  // into openspec/lifecycle-ledger.json - is the semantically correct staleness
+  // watermark: source edits made after it still diff against it and surface as
+  // source_changed_since_subject. When no such commit is derivable, the
+  // original fail-closed error stands.
+  const listed = gitOutput(repoRoot, ['log', '--format=%H', `-S${subjectCommit}`, 'HEAD', '--',
+    'openspec/lifecycle-ledger.json'], field, true);
+  if (listed.status !== 0) throw failure;
+  let introduction;
+  try {
+    introduction = new TextDecoder('utf-8', { fatal: true }).decode(listed.stdout)
+      .split('\n').map((value) => value.trim()).filter(Boolean)[0];
+  } catch {
+    throw failure;
   }
-  cache.add(change.subject_commit);
-  return true;
+  if (!introduction || !/^[0-9a-f]{40}$/u.test(introduction)) throw failure;
+  const shown = gitOutput(repoRoot, ['show', `${introduction}:openspec/lifecycle-ledger.json`], field, true);
+  if (shown.status !== 0) throw failure;
+  let ledgerText;
+  try {
+    ledgerText = new TextDecoder('utf-8', { fatal: true }).decode(shown.stdout);
+  } catch {
+    throw failure;
+  }
+  if (!ledgerText.includes(subjectCommit)) throw failure;
+  return introduction;
 }
 
 export function changedPathsSince(repoRoot, subjectCommit, cache, rawBudget) {
@@ -243,7 +278,7 @@ export function collectSourceObservations(repoRoot, ledger) {
   const trackedEvidencePaths = decodeNulList(tracked.stdout, 'tracked_evidence_paths')
     .filter((candidate) => evidenceReferences.has(candidate));
   const bySubject = new Map();
-  const checkedSubjects = new Set();
+  const checkedSubjects = new Map();
   const seen = new Set();
   const subjects = new Set(ledger.changes.map((change) => change?.subject_commit));
   if (subjects.size > MAX_UNIQUE_SUBJECTS) {
@@ -258,11 +293,11 @@ export function collectSourceObservations(repoRoot, ledger) {
       throw new MachineTruthInputError('source_observation_invalid', 'ledger.changes', 'Lifecycle row identity is invalid for source observation.');
     }
     seen.add(change.id);
-    assertRowSubjectAncestor(repoRoot, change, checkedSubjects);
+    const watermark = resolveRowSubjectWatermark(repoRoot, change, checkedSubjects);
     const evidence = new Set(change.evidence_refs.filter((reference) => typeof reference === 'string')
       .map((reference) => reference.replaceAll('\\', '/')));
     const changedPaths = [...new Set([
-      ...changedPathsSince(repoRoot, change.subject_commit, bySubject, rawBudget),
+      ...changedPathsSince(repoRoot, watermark, bySubject, rawBudget),
       ...localPaths,
     ])].filter((candidate) => isOwnedOpenSpecSource(change.id, candidate) || evidence.has(candidate));
     aggregatePaths += changedPaths.length;
