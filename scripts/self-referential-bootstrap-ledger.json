@@ -3,7 +3,7 @@
   "entries": [
     {
       "id": "self-referential-bootstrap-gate",
-      "status": "open",
+      "status": "closed",
       "pr": 459,
       "opened_at": "2026-08-03T04:00:00Z",
       "reason": "This PR introduces the bootstrap gate itself. The PR Metadata Contract job materialises the body checker pinned at the base SHA so that a PR cannot adjudicate itself with its own edited gate; the base here has no scripts/lib/self-referential-bootstrap.ps1 and no gate wiring, so the base-pinned checker has no gate to run at all. Any PR that adds a gate has a base without that gate, so no ordering avoids this.",
@@ -39,7 +39,14 @@
         "docs/evidence/self-referential-bootstrap-gate/self-referential-bootstrap/README.md",
         "docs/evidence/self-referential-bootstrap-gate/self-referential-bootstrap/gate-suites.txt"
       ],
-      "fixpoint": null
+      "fixpoint": {
+        "reverified_at": "2026-08-04T14:47:51Z",
+        "mechanism_commit": "ad7a50cf9ebb056c26411547df6e4d7aa0703a8b",
+        "evidence_refs": [
+          "docs/evidence/self-referential-bootstrap-gate/fixpoint/attestation.json",
+          "docs/evidence/self-referential-bootstrap-gate/fixpoint/gate-suites-on-main.txt"
+        ]
+      }
     }
   ]
 }
