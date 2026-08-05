@@ -1,0 +1,30 @@
+stack_kind=self_referential_bootstrap
+target=canonical-linux host=<owner-controlled-private-inventory> user=<owner-controlled-private-inventory>
+commit=51cf19ba516fdecdd96e1a85ef50632f5a559925
+captured_after_deploy_session_closed=yes
+
+## host-native services (deploy session already closed)
+  bim-streaming-conversion-service pid=<redacted> ALIVE
+  bim-streaming-server pid=<redacted> ALIVE
+  governance-service pid=<redacted> ALIVE
+  kit-manager-api pid=<redacted> ALIVE
+
+## endpoints (exact topology retained only in owner-controlled evidence)
+  governance health -> 200
+  conversion loopback health -> 200
+  conversion private-host health -> 200
+  kit-manager health -> 200
+  coordinator loopback health -> 200
+  coordinator private-host UI -> 200
+  viewer loopback -> 200
+  viewer private-host -> 200
+  coordinator governance proxy -> 200
+
+## kit streaming
+  signaling listener -> LISTEN
+  GPU/runtime observation -> retained in owner-controlled evidence
+
+## cross-platform equivalence suite, run ON the linux target (plan B3)
+  test-platform-adapter EXIT=0 :: [test-platform-adapter] all assertions passed on linux
+  test-host-native-child-launch EXIT=0 :: === test-host-native-child-launch.ps1: ALL PASSED ===
+  test-deploy-target-registry EXIT=0 :: [test-deploy-target-registry] all assertions passed

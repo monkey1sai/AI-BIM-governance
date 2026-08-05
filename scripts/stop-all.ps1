@@ -8,9 +8,30 @@ param(
 )
 
 # 一鍵關閉 Phase B current demo services（與 start-all.ps1 對應）。
-# 對每個 PID 做 tree-kill：taskkill /F /T，連子行程 (例如 Kit) 一起終結。
+# 對每個 PID 做 tree-kill（跨平台：adapter 取子行程後由深至淺終結），連子行程 (例如 Kit) 一起終結。
 
 Set-StrictMode -Version Latest
+
+# Per-OS listener lookup. Guarded so this script stays runnable standalone.
+if (-not (Get-Command -Name 'Get-PlatformTcpListenerPid' -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'lib/platform/platform-adapter.ps1')
+}
+
+function Get-ExpectedPortListeners {
+    # Windows-only Get-NetTCPConnection made this script a FALSE SUCCESS on Linux:
+    # the sweep found nothing, "全部服務已停止" printed, and the final verification
+    # used the same call so it could never notice the leftovers. A surviving Kit
+    # then held :49100 and the next deploy's Kit died on bind.
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][int[]] $Ports)
+
+    $found = @()
+    foreach ($port in $Ports) {
+        $owner = Get-PlatformTcpListenerPid -Port ([int]$port)
+        if ($null -eq $owner) { continue }
+        $found += [pscustomobject]@{ LocalPort = [int]$port; OwningProcess = [int]$owner }
+    }
+    return @($found)
+}
 $ErrorActionPreference = "Continue"
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -78,9 +99,14 @@ function Test-IsExpectedServiceName {
 }
 
 function Get-ProcessInfo {
+    # Win32_Process is Windows-only. On Linux the call threw, Get-ProcessInfo
+    # returned nothing, Test-IsWorkspaceProcess therefore said "not ours", and the
+    # sweep skipped every leftover with "不屬於此 workspace，未停止" - the second
+    # half of the same false success. The adapter reads /proc there and returns the
+    # same two fields this decision needs (CommandLine, ExecutablePath).
     param([int] $ProcId)
 
-    Get-CimInstance Win32_Process -Filter "ProcessId = $ProcId" -ErrorAction SilentlyContinue
+    return (Get-PlatformProcessIdentity -ProcessId $ProcId)
 }
 
 function Test-IsWorkspaceProcess {
@@ -108,13 +134,35 @@ function Stop-ProcessTree {
 
     try {
         $null = Get-Process -Id $ProcId -ErrorAction Stop
-        Write-Host "[stop ] $Name (PID=$ProcId, source=$Source) ..." -ForegroundColor Cyan
-        & taskkill.exe /F /T /PID $ProcId 2>&1 | Out-Null
-        $StoppedPids[$ProcId] = $true
     } catch {
         Write-Host "[skip ] $Name (PID=$ProcId) 已不存在" -ForegroundColor DarkGray
         $StoppedPids[$ProcId] = $true
+        return
     }
+
+    Write-Host "[stop ] $Name (PID=$ProcId, source=$Source) ..." -ForegroundColor Cyan
+    # taskkill.exe is Windows-only. Off Windows the call threw CommandNotFound,
+    # the surrounding catch printed "已不存在" and marked the PID stopped - so a
+    # live process was recorded as already gone. That is the third instance of the
+    # same shape in this one script, and the reason a surviving Kit kept :49100
+    # while stop-all reported success.
+    #
+    # Portable equivalent: walk the tree with the adapter and kill deepest-first,
+    # the same order Stop-HostNativeService uses, so parents cannot respawn.
+    $ids = @()
+    $stack = @([int]$ProcId)
+    while ($stack.Count -gt 0) {
+        $current = [int]$stack[0]
+        $stack = @($stack | Select-Object -Skip 1)
+        if ($ids -notcontains $current) {
+            $ids += $current
+            $stack += @(Get-PlatformChildProcessIds -ParentProcessId $current)
+        }
+    }
+    for ($i = $ids.Count - 1; $i -ge 0; $i--) {
+        Stop-Process -Id ([int]$ids[$i]) -Force -ErrorAction SilentlyContinue
+    }
+    $StoppedPids[$ProcId] = $true
 }
 
 if (-not (Test-Path $RunDir)) {
@@ -158,8 +206,7 @@ if (-not (Test-Path $RunDir)) {
     }
 }
 
-$listening = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
-    Where-Object { $ExpectedPorts -contains $_.LocalPort }
+$listening = @(Get-ExpectedPortListeners -Ports $ExpectedPorts)
 
 foreach ($conn in $listening) {
     $procId = [int] $conn.OwningProcess
@@ -180,23 +227,16 @@ foreach ($conn in $listening) {
 }
 
 Start-Sleep -Milliseconds 500
-$remaining = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
-    Where-Object { $ExpectedPorts -contains $_.LocalPort }
-
-$workspaceRemaining = @()
-foreach ($conn in $remaining) {
-    $processInfo = Get-ProcessInfo -ProcId ([int] $conn.OwningProcess)
-    if (Test-IsWorkspaceProcess -ProcessInfo $processInfo) {
-        $workspaceRemaining += $conn
-    }
-}
+$remaining = @(Get-ExpectedPortListeners -Ports $ExpectedPorts)
 
 Write-Host ""
-if ($workspaceRemaining.Count -gt 0) {
-    Write-Host "[warn ] 部分 workspace 服務仍在 listen：" -ForegroundColor Yellow
-    foreach ($conn in $workspaceRemaining) {
-        Write-Host "       port $($conn.LocalPort), PID=$($conn.OwningProcess)" -ForegroundColor Yellow
+if ($remaining.Count -gt 0) {
+    Write-Host "[warn ] 部分預期服務 port 仍在 listen；未知或非 workspace owner 未被停止：" -ForegroundColor Yellow
+    foreach ($conn in $remaining) {
+        $owner = if ([int]$conn.OwningProcess -le 0) { 'owner-not-visible' } else { "PID=$($conn.OwningProcess)" }
+        Write-Host "       port $($conn.LocalPort), $owner" -ForegroundColor Yellow
     }
+    exit 2
 } else {
     Write-Host "[done ] 全部服務已停止" -ForegroundColor Green
 }

@@ -30,6 +30,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 
 from conversion_authority import ConversionAuthorityError, _PLACEHOLDER_MARKERS
 from ifc_openusd_identity_author import IDENTITY_PROFILE, IfcOpenUsdIdentityAuthor
@@ -48,7 +49,7 @@ class Ifc2UsdcPowershellConverterAdapter:
         self,
         *,
         repo_root: Path,
-        powershell_exe: str = "powershell.exe",
+        powershell_exe: str | None = None,
         kit_exe_path: Path | None = None,
         hoops_main_path: Path | None = None,
         config_path: Path | None = None,
@@ -57,7 +58,7 @@ class Ifc2UsdcPowershellConverterAdapter:
         storage_root: Path | None = None,
     ) -> None:
         self.repo_root = Path(repo_root)
-        self.powershell_exe = powershell_exe
+        self.powershell_exe = _default_powershell_exe() if powershell_exe is None else powershell_exe
         self.kit_exe_path = Path(kit_exe_path) if kit_exe_path else None
         self.hoops_main_path = Path(hoops_main_path) if hoops_main_path else None
         self.config_path = Path(config_path) if config_path else None
@@ -86,6 +87,26 @@ class Ifc2UsdcPowershellConverterAdapter:
 
     # -- preflight -----------------------------------------------------------
 
+    def _default_release_root(self) -> Path:
+        platform_dir = "windows-x86_64" if sys.platform == "win32" else "linux-x86_64"
+        return self.repo_root / "_build" / platform_dir / "release"
+
+    def _default_kit_exe(self) -> Path:
+        executable = "kit.exe" if sys.platform == "win32" else "kit"
+        return self._default_release_root() / "kit" / executable
+
+    def _default_hoops_main(self) -> Path | None:
+        release_root = self._default_release_root()
+        suffix = ("omni", "services", "convert", "cad", "services", "process", "hoops_main.py")
+        for root_name in ("extscache", "exts", "extsbuild"):
+            root = release_root / root_name
+            if not root.is_dir():
+                continue
+            for candidate in sorted(root.rglob("hoops_main.py")):
+                if candidate.parts[-len(suffix) :] == suffix:
+                    return candidate
+        return None
+
     def preflight(self) -> None:
         """Fail fast (and honestly) when any real converter prerequisite is missing."""
         missing: list[str] = []
@@ -99,13 +120,20 @@ class Ifc2UsdcPowershellConverterAdapter:
                 f"PowerShell executable not resolvable: {self.powershell_exe} "
                 "(host-native conversion must launch the .ps1 from PowerShell, not Git Bash)"
             )
-        # kit.exe / hoops_main: when NOT explicitly configured, convert-ifc-to-usdc.ps1
-        # resolves its own repo defaults — do not pre-block an otherwise valid
-        # default build. Only fail when an explicitly configured path is missing.
-        if self.kit_exe_path is not None and not self.kit_exe_path.is_file():
-            missing.append(f"configured Kit executable not found: {self.kit_exe_path}")
-        if self.hoops_main_path is not None and not self.hoops_main_path.exists():
-            missing.append(f"configured HOOPS entrypoint not found: {self.hoops_main_path}")
+        # The health/preflight gate must validate the same platform-specific
+        # defaults the PowerShell wrapper will use. Otherwise Linux can report a
+        # healthy conversion authority and fail only when the first real job asks
+        # the wrapper for a Windows-only Kit tree.
+        effective_kit = self.kit_exe_path or self._default_kit_exe()
+        if not effective_kit.is_file():
+            missing.append(f"Kit executable not found: {effective_kit}")
+        effective_hoops = self.hoops_main_path or self._default_hoops_main()
+        if effective_hoops is None or not effective_hoops.is_file():
+            missing.append(
+                f"HOOPS entrypoint not found under: {self._default_release_root()}"
+                if self.hoops_main_path is None
+                else f"configured HOOPS entrypoint not found: {self.hoops_main_path}"
+            )
         if self.config_path is not None and not self.config_path.exists():
             missing.append(f"converter config not found: {self.config_path}")
         # USD runtime is only needed on the enumeration fallback (no converter
@@ -127,13 +155,22 @@ class Ifc2UsdcPowershellConverterAdapter:
         ifc_ready_event: Mapping[str, Any],
         output_dir: Path,
     ) -> Mapping[str, Any]:
-        self.preflight()
+        conversion_profile = self._conversion_profile(job=job, ifc_ready_event=ifc_ready_event)
+        if conversion_profile and conversion_profile != IDENTITY_PROFILE:
+            raise ConversionAuthorityError(
+                "invalid_conversion_profile",
+                f"Unsupported conversion_profile: {conversion_profile}",
+            )
+        if conversion_profile != IDENTITY_PROFILE:
+            # Preserve the default converter's fail-fast prerequisite contract.
+            # The identity profile is IFC-first and intentionally does not use
+            # PowerShell, Kit, or HOOPS.
+            self.preflight()
 
         ifc_path = self._resolve_local_ifc(ifc_ready_event)
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         model_path = output_dir / "model.usdc"
-        conversion_profile = self._conversion_profile(job=job, ifc_ready_event=ifc_ready_event)
         if conversion_profile == IDENTITY_PROFILE:
             authored = IfcOpenUsdIdentityAuthor(
                 ifc_path=ifc_path,
@@ -158,12 +195,6 @@ class Ifc2UsdcPowershellConverterAdapter:
                 "geo_reference_path": paths["geo_reference_path"],
                 "quality_metrics": authored["quality_metrics"],
             }
-        if conversion_profile:
-            raise ConversionAuthorityError(
-                "invalid_conversion_profile",
-                f"Unsupported conversion_profile: {conversion_profile}",
-            )
-
         trace_id = str(job.get("trace_id") or job["conversion_job_id"])
         try:
             self._run_powershell_conversion(

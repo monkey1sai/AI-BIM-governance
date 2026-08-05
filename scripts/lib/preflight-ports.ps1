@@ -5,15 +5,17 @@
 
 Set-StrictMode -Version Latest
 
+# Per-OS listener primitives. Guarded so this lib stays dot-sourceable standalone.
+if (-not (Get-Command -Name 'Get-PlatformTcpListenerPid' -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'platform/platform-adapter.ps1')
+}
+
 function Get-PidsFromRunDir {
     param(
         [Parameter(Mandatory = $true)][string] $RunDir,
         [scriptblock] $ChildPidLookup = {
             param($parentId)
-            try {
-                Get-CimInstance Win32_Process -Filter "ParentProcessId=$parentId" -ErrorAction Stop |
-                    ForEach-Object { [int]$_.ProcessId }
-            } catch { @() }
+            @(Get-PlatformChildProcessIds -ParentProcessId ([int]$parentId))
         }
     )
     $set = @{}
@@ -52,20 +54,23 @@ function Test-PortAvailability {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [int] $CoordinatorPort = 8004,
+        [int] $ViewerPort = 5173,
         [int] $KitSignalPort = 49100,
         [int] $KitMediaPort = 47998,
         [int] $ConversionPort = 49101,
         [int[]] $ExtraHostNativePorts = @(),
         [int[]] $ExtraHostNativeUdpPorts = @(),
+        # Both defaults used Windows-only cmdlets, so every port read as FREE on
+        # Linux - a preflight that could never detect a conflict on the canonical
+        # deploy target.
         [scriptblock] $PortLookup = {
             param($port)
-            $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($conn) { return $conn.OwningProcess } else { return $null }
+            Get-PlatformTcpListenerPid -Port ([int]$port)
         },
         [scriptblock] $UdpPortLookup = {
             param($port)
-            $conn = Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($conn) { return $conn.OwningProcess } else { return $null }
+            Get-PlatformUdpListenerPid -Port ([int]$port)
         },
         [scriptblock] $ProcessNameLookup = {
             param($procId)
@@ -76,7 +81,7 @@ function Test-PortAvailability {
         }
     )
 
-    $dockerPorts     = @(8004, 5173)
+    $dockerPorts     = @($CoordinatorPort, $ViewerPort)
     $hostNativeTcpPorts = @(@($KitSignalPort, $ConversionPort) + $ExtraHostNativePorts | Sort-Object -Unique)
     $hostNativeUdpPorts = @(@($KitMediaPort) + $ExtraHostNativeUdpPorts | Sort-Object -Unique)
     $runDir          = Join-Path $RepoRoot 'scripts\.run'

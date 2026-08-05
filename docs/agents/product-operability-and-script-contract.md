@@ -27,6 +27,7 @@ Repo-local 產品功能需求主來源：
 EdgeConsole product shell contract（對齊 `feat/edge-console-product-shell`）：
 
 - 正式產品殼層入口是 coordinator `/ui`；目標 IA 見設計文件 §03（home＝總覽 Mission Control：KPI·生產線快照·警示·A1–A10 啟動器）。
+- viewer `:5173` **不得作為初始入口**（使用者一律經 `/ui` 進入並取得 session）；但它**必須是 `/ui/open` 302 handoff 的可達目標** —— `consoleRoutes.ts` 的 handoff 是 server-side 302 到 `viewerPublicBaseUrl`，跨機器部署時瀏覽器必須跟得上。因此 remote 目標的 `VIEWER_BIND_HOST` 綁 LAN，暴露面改由**來源網段白名單**（防火牆）控制，而非以 bind 位址控制。此為第一階段；第二階段改由 coordinator 反向代理 viewer，恢復單一暴露面。
 - Route map 以設計文件 §03（`#/home`、`#/workspace?dock=a1..a4|issues`、`#/pipeline`、`#/ops`、`#/app/:slug`）＋舊路由收斂表（CH-G：`#coordinator`→`#/home`、`#intake`·`#conv`·`#minio`→`#/pipeline` 等）為唯一來源，本檔不另行維護清單。
 - Operator-tool route `#kit`、`#demo-control` 必須保留，不得 silently 移除。
 - A1 rule-run / Issue / BCF 可由 API / 表格完成；3D highlight、first frame、stage truth 必須有 GPU-backed review session，不得宣稱零 GPU 完成 3D。
@@ -52,20 +53,25 @@ Repo 定位：先做可賣、可驗收的 CORE governance flow；Omniverse / Kit
 
 凡是 user-facing capability，完成標準不是 API 完成，也不是像素或 runtime 單閘完成；必須同時具備 design fidelity 與可在瀏覽器驗收的 operability/runtime vertical slice：
 
+兩個閘門由**不同機器**產出，不得互相代替、也不得互相推論：
+
 ```txt
-UI route
-→ approved design screen/state
-→ Windows runner / Chromium DPR1 1440x900 + 1920x1080
-→ pixel diff <= 1% + semantic states 100%
-→ visible button
-→ default fixture
-→ frontend request
-→ real backend API
-→ worker/runtime result
-→ frontend status/result
-→ viewer/console visible evidence
-→ Playwright / gstack / supported browser engine screenshot or trace
+[design fidelity — 永遠在 Windows runner]
+UI route → approved design screen/state
+        → Windows runner / Chromium DPR1 1440x900 + 1920x1080
+        → pixel diff <= 1% + semantic states 100%
+
+[operability / runtime — 瀏覽器在 Windows，服務在部署目標]
+visible button → default fixture → frontend request
+        → real backend API（部署目標上的服務）
+        → worker/runtime result → frontend status/result
+        → viewer/console visible evidence
+        → Playwright / gstack / supported browser engine screenshot or trace
 ```
+
+**Design gate 綁 Windows 是結構性的，與部署目標遷移無關**：pixel baseline 在 Windows Chromium 拍攝（字型渲染跨 OS 必然不同），`verify-design-system-visual-result.ps1` 的 runner label 白名單只認 CI 的 `windows-latest` 與 `local-windows`。它從來不在部署區跑，因此 canonical 目標改為 Linux 不影響它。
+
+**Runtime evidence 的瀏覽器端也在 Windows**：由本機瀏覽器連部署目標（canonical 目標為跨網段），走的是真實使用者路徑。不得改以目標機自身 localhost 取證 —— 那會系統性繞過跨網段 WebRTC（`KIT_STREAM_SERVER` 解析、ICE candidate、防火牆、`/ui/open` 302 到 viewer）這段最脆弱的環節。
 
 ### MUST
 
@@ -119,19 +125,16 @@ Visual comparison 必須列兩 viewport 的 diff ratio（各自 `<=1%`）與 sem
 
 ## 5. Real IFC Semantic Viewer E2E
 
-真實 IFC semantic viewer E2E 的核心輸入是主工作區 local `storage/` 內 IFC，不是 git-tracked fixture。New worktree 只帶 git-tracked files；`storage/` 這類 ignored/local artifact 不會自動出現在新 worktree。
+真實 IFC semantic viewer E2E 的 fixture 權威是**共用 MinIO 的 `bim-control` bucket 內指定物件**，不是 git-tracked fixture、也不再是某台機器的 local `storage/`。權威改為 MinIO 的理由：測試部署目標已不只一台（Windows 按需驗證點 ＋ Linux canonical，見 §6），以單一機器的本機路徑當權威會讓不同目標各自漂移。
 
-目前指定的主工作區 IFC：
+Fixture 以 `scripts/ifc-fixture-manifest.json`（schema `ifc-fixture-manifest/v1`）**pin**，每筆記錄 `bucket` / `key` / `etag` / `size_bytes`（bucket 有 versioning 時另記 `version_id`）。機器實作見 `scripts/lib/ifc-fixture-pin.mjs`。
 
-```txt
-C:\Repos\active\iot\AI-BIM-governance\storage\270_0dac5239-a2aa-4257-9946-c2b6da6bd24d_model.ifc
-C:\Repos\active\iot\AI-BIM-governance\storage\許良宇圖書館建築_2026.ifc
-```
+各機器的 local `storage/` 降級為 **cache**：取用前必須以下載時寫下的 sidecar（`<file>.pin.json`）比對 pin；**無 sidecar 即視為不可驗證，不得使用**（89MB 級 fixture 多為 multipart upload，S3 ETag 不是可本地重算的 content MD5）。
 
 ### MUST
 
-- 在新 worktree / branch 內跑真實 IFC semantic viewer E2E 時，直接讀主工作區 IFC 絕對路徑，或建立 gitignored local fixture folder / junction / symlink。
-- 使用上述 IFC 跑 identity conversion profile，並保留 source IFC path、size、hash 或等價可追溯資訊。
+- 取用 fixture 前必須以 manifest 比對 `etag` / `size_bytes`（＋ pinned `version_id`）；**任何不符一律 fail closed**，明確報 fixture drift 並停止，不得以不同資料續跑。
+- 使用 pinned fixture 跑 identity conversion profile，並保留 `bucket/key`、`etag`、size、hash 或等價可追溯資訊。
 - 驗證 stage truth：`expected artifact URL`、`loaded artifact URL`、`matched = true`。
 - 透過 coordinator / web UI 開 browser viewer，保存 browser screenshot、WebRTC frame visible evidence、console log、Kit host/session id。
 - Evidence 預設放在 `docs/evidence/viewer-validate-ifc-semantics-real-ifc/`，或對應該批變更的 `docs/evidence/<slug>/`（PR / feature slug）。
@@ -141,7 +144,9 @@ C:\Repos\active\iot\AI-BIM-governance\storage\許良宇圖書館建築_2026.ifc
 
 ### MUST NOT
 
-- 不得把上述 IFC commit 進 git。
+- 不得把 IFC 本體 commit 進 git（manifest 只記 pin metadata，不含檔案）。
+- 不得在 pin 不符時「順手更新 manifest」讓它通過；更新 pin 是獨立、可 review 的變更。
+- 不得以無 sidecar 的 local cache 充當已驗證 fixture。
 - 不得複製大型 IFC / `model.usdc` / 巨大 artifact 到 repo tracked path。
 - 不得用 fake mapping、placeholder USDC、或只有 CPU/backend semantic result 宣稱 viewer/runtime E2E passed。
 - 不得在缺少 Kit WebRTC visual/runtime evidence 時宣告 full-system E2E complete。
@@ -152,14 +157,20 @@ C:\Repos\active\iot\AI-BIM-governance\storage\許良宇圖書館建築_2026.ifc
 
 測試驗證部署環境：
 
-- Deployment checkout 固定為 `D:\Users\deploy\AI-bim-geo`。
-- 當使用者要求「請測試部署區重建」或同義口令時，MUST 從目前 repo 執行 `.\scripts\dev\rebuild-test-deploy.ps1 -Build`。
-- Helper MUST freshly fetch `origin` with `+refs/heads/main:refs/remotes/origin/main`；fetch 失敗時停止，不得使用 stale `origin/main`。
+- **部署行為由 `scripts/deploy-target-registry.json`（schema `deploy-target-registry/v1`）決定；實際 host/account/network/path mapping 不進 public repo。** registry 有且只能有一個 `role=canonical_test_deploy` 的目標；其餘為 `on_demand_platform_verification`。目前：
+  - `canonical-linux`（canonical）＝公開 descriptor 只保留 Linux host-native Kit ＋ web plane Docker 行為；SSH host/user、deploy/runtime roots、public host、site 與 target-scoped bind address 由 owner-controlled、repo-external `target.local.json` 注入。
+  - `local-windows`（按需）＝ `D:\Users\deploy\AI-bim-geo`，僅在需要證明 Windows 平台路徑仍可用時手動啟停，**不常駐、不作為 canonical evidence 來源**。
+  - `linux_container` 為 reserved kind（第二階段官方容器化的 schema 空位）；目標實際使用該 kind 會驗證失敗。
+- 當使用者要求「請測試部署區重建」或同義口令時，MUST 從目前 repo 執行 `.\scripts\dev\rebuild-test-deploy.ps1 -Build`（**operator 入口不變**）。canonical Linux 另須由 process env `AI_BIM_DEPLOY_TARGET_INVENTORY` 或 `-InventoryPath` 指向 repo 外 owner inventory；不帶 `-TargetId` 即 canonical 目標，`-TargetId local-windows` 選按需 Windows 目標。
+- Helper MUST freshly fetch `origin` with `+refs/heads/main:refs/remotes/origin/main`；fetch 失敗時停止，不得使用 stale `origin/main`。（ssh 目標在遠端 checkout 內執行同一條，語意逐字不變。）
+- ssh 目標的 rebuild 由 `scripts/lib/remote-deploy-transport.ps1` 派工：operator 端推送 per-target base env（registry `env_file`），但**不會上傳、讀出或覆寫 private inventory**。owner/provisioning 必須先在 `<runtime_data_root>/target.local.json` 建立同 schema inventory 並設 mode `0600`；transport 只檢查存在並把路徑傳給 remote `deploy.ps1`。遠端 override 位於 `<runtime_data_root>/env.local`，effective env 為 per-key 合併且 **override 勝**。
+- **部署＋驗證當下 MUST 快照 effective env**：所有 key 的 value 一律只留 sha256-8 指紋與長度，credential 與 topology/location 分類僅供辨識；任何 raw env value 都不得進 stdout 或 deploy report。`artifacts/deploy-reports/` 亦為 ignored local artifact。快照是時點證據，不是閘門。
+- Linux 目標的平台差異由 `scripts/lib/platform/platform-adapter.ps1` 吸收，其中兩項**非可選**：Kit 啟動必須帶 `--no-window`（headless 缺此參數會在 `carb.windowing-glfw` → `IAppWindow::startup` 崩潰）；clone 後必須恢復 `*.sh` 執行位元（Windows 開發的 checkout `core.fileMode=false`，且 `repo.sh` 內部 `exec` 另一支 `.sh`）。兩者已編碼為 registry schema 不變量，違反即驗證失敗。
 - Helper MUST 在 reset 前回報 deployment checkout local changes 摘要；重建口令代表部署區可被 reset / clean。
 - Helper MUST 排除所有層級 `AGENTS.md` / `CLAUDE.md`，以及 root `.codex/`、`.agents/`、`.agent/`、`.claude/`、`.cursor/`、`.windsurf/`、`.github/skills/`、`.github/prompts/`、`docs/`、`openspec/`、`patches/`；MUST 保留 `.github/workflows/`。
-- Helper 完成清理後 MUST 從 `D:\Users\deploy\AI-bim-geo` 執行 `.\scripts\deploy.ps1 -Build` 並回報 exit code / log path。
-- 禁止 `-DryRun`；若 sandbox 需要寫入 `D:\Users\deploy\AI-bim-geo` 的 approval，agent 必須針對 build-only rebuild command 申請，不得改用其他路徑或 dry-run 替代。
-- `spec-to-done` 在目前 spec PR 已 merge、commit 可由 freshly fetched `origin/main` 取得後，可於測試部署區真實驗證前執行 ownership-gated preflight。helper 無參數預設只偵測；只有明確傳入 `-StopOwnedRuntime -DeploymentRoot 'D:\Users\deploy\AI-bim-geo'`，且 listener 符合 per-port service role、deployment pidfile ancestor 與精確 launcher entrypoint、creation identity 經完整雙快照與每次 stop 前重驗一致，才可用 exact process handle 停止。pidfile 僅供 lineage 佐證，不能單獨授權；port topology 由 deployment env 的 immutable snapshot 推導，不接受 caller parameter/process-environment override，且每次 stop 前重驗 hash。MUST 記錄 port / PID / process name / ownership kind，且同一 port 的全部 busy owners 都通過後才可進入 cleanup。
+- Helper 完成清理後 MUST 從**該目標的 `deploy_root`** 執行 `.\scripts\deploy.ps1 -Build` 並回報 exit code / log path（ssh 目標即在遠端 checkout 內執行同一條）。
+- 禁止 `-DryRun`；若 sandbox 需要寫入目標 `deploy_root` 的 approval，agent 必須針對 build-only rebuild command 申請，不得改用其他路徑或 dry-run 替代。
+- `spec-to-done` 在目前 spec PR 已 merge、commit 可由 freshly fetched `origin/main` 取得後，可於測試部署區真實驗證前執行 ownership-gated preflight。helper 無參數預設只偵測；只有明確傳入 `-StopOwnedRuntime -DeploymentRoot '<該目標的 deploy_root>'`，且 listener 符合 per-port service role、deployment pidfile ancestor 與精確 launcher entrypoint、creation identity 經完整雙快照與每次 stop 前重驗一致，才可用 exact process handle 停止。pidfile 僅供 lineage 佐證，不能單獨授權；port topology 由 deployment env 的 immutable snapshot 推導，不接受 caller parameter/process-environment override，且每次 stop 前重驗 hash。MUST 記錄 port / PID / process name / ownership kind，且同一 port 的全部 busy owners 都通過後才可進入 cleanup。
 - 既有一般 Phase 3 重試能力不變，但所有自動停止（無論是否走 `spec-to-done`）也 MUST 使用同一 hardened helper 與相同閘門，再重跑同一條 `.\scripts\deploy.ps1 -Build`。helper 無法證明 ownership 時必須 HELD；只有使用者逐次確認明確 PID 與 ownership evidence 後才可人工例外。不得停止無關 process、驗證未 merge branch，或改用 `-Force` / `-DryRun`。
 
 正式 operator entrypoints：
@@ -234,3 +245,13 @@ base URLs、observed runtime IDs 與 screenshot/trace 路徑。
 
 隔離 stack evidence 不得推論 design gate；不得推論 deploy path；不得推論 Kit/WebRTC、GPU、
 first-frame、stage truth 或 DataChannel。這些 gate 仍各自由既有契約產生 evidence。
+
+### 三種 stack kind 的互不推論邊界
+
+| stack kind | 產出者 | 涵蓋 | 明確不涵蓋 |
+|---|---|---|---|
+| `isolated_branch_stack` | 本機 repo-owned 隔離切片（§8） | 未 merge branch 的 CPU governance／coordinator／browser operability | design gate、deploy path、Kit/WebRTC/GPU |
+| deploy-target evidence | canonical 目標，只從 `origin/main` 重建（§6） | 已 merge 內容的真實部署行為、Kit/WebRTC/GPU runtime | 未 merge branch（契約明文禁止） |
+| `self_referential_bootstrap` | 變更驗證機制本身的 PR，於該 branch 取證 | 僅該 PR 宣告的機制缺口，見 `docs/agents/self-referential-bootstrap.md` | 上述兩者皆不可由它推論 |
+
+三者**互不推論、互不代替**。`self_referential_bootstrap` 是有到期義務的暫時性 kind：merge 後必須以變更後的正規機制重跑同一驗證（fixpoint），欠帳未清會機器擋下一個同類 PR。

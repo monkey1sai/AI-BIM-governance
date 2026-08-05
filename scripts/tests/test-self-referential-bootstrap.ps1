@@ -289,6 +289,10 @@ try {
     # --- mechanism path detection (incl. enforcement workflows: review P2) ----------
     $expectedMechanismPaths = @(
         'scripts/deploy.ps1',
+        'scripts/deploy-target-registry.json',
+        'scripts/lib/deploy-target-registry.ps1',
+        'scripts/lib/remote-deploy-transport.ps1',
+        'scripts/lib/windows-verification-scope.ps1',
         '.github/workflows/pr-review-agent.yml',
         '.github/workflows/agent-governance.yml',
         '.github/workflows/ci.yml',
@@ -389,9 +393,37 @@ try {
         }
     }
 
-    # --- real repo ledger: parse-integrity ONLY, no emptiness assumption ------------
+    # --- real repo ledger: integrity + command resolvability, no emptiness assumption
     $realLedger = Get-SelfReferentialBootstrapLedger -Path (Join-Path $repoRoot 'scripts/self-referential-bootstrap-ledger.json')
     Assert-True ($null -ne $realLedger) 'repo ledger must parse and validate'
+    $commandPathById = @{
+        'detect-base-gate-capability-bash-syntax' = 'scripts/lib/detect-base-gate-capability.sh'
+        'invoke-powershell-static' = 'scripts/tests/invoke-powershell-static.ps1'
+        'test-agent-governance-check' = 'scripts/tests/test-agent-governance-check.ps1'
+        'test-base-gate-capability' = 'scripts/tests/test-base-gate-capability.ps1'
+        'test-deploy-governance-static' = 'scripts/tests/test-deploy-governance-static.ps1'
+        'test-deploy-target-registry' = 'scripts/tests/test-deploy-target-registry.ps1'
+        'test-host-native-child-launch' = 'scripts/tests/test-host-native-child-launch.ps1'
+        'test-host-native-launcher' = 'scripts/tests/test-host-native-launcher.ps1'
+        'test-kit-log-probe' = 'scripts/tests/test-kit-log-probe.ps1'
+        'test-platform-adapter' = 'scripts/tests/test-platform-adapter.ps1'
+        'test-pr-body-evidence' = 'scripts/tests/test-pr-body-evidence.ps1'
+        'test-pr-review-agent' = 'scripts/tests/test-pr-review-agent.ps1'
+        'test-preflight-host-native' = 'scripts/tests/test-preflight-host-native.ps1'
+        'test-preflight-ports' = 'scripts/tests/test-preflight-ports.ps1'
+        'test-preflight-prnumber-forwarding' = 'scripts/tests/test-preflight-prnumber-forwarding.ps1'
+        'test-rebuild-test-deploy' = 'scripts/tests/test-rebuild-test-deploy.ps1'
+        'test-remote-deploy-transport' = 'scripts/tests/test-remote-deploy-transport.ps1'
+        'test-self-referential-bootstrap' = 'scripts/tests/test-self-referential-bootstrap.ps1'
+        'test-windows-verification-scope' = 'scripts/tests/test-windows-verification-scope.ps1'
+    }
+    foreach ($entry in @($realLedger.entries)) {
+        foreach ($commandId in @($entry.verification_contract.command_ids)) {
+            Assert-True ($commandPathById.ContainsKey([string]$commandId)) "ledger command id '$commandId' resolves through the executable command map"
+            $commandPath = Join-Path $repoRoot $commandPathById[[string]$commandId]
+            Assert-True (Test-Path -LiteralPath $commandPath -PathType Leaf) "ledger command id '$commandId' resolves to an existing executable source path"
+        }
+    }
 
     # --- timestamp: real parse, not prefix match (review P2) ------------------------
     Assert-True (Test-SelfReferentialIsoTimestamp -Value '2026-07-31T08:00:00Z') 'valid ISO timestamp accepted'
@@ -942,10 +974,12 @@ try {
             -BaseSha $legalOpeningBaseSha -HeadSha $legalOpeningHeadSha
     }
 
-    Assert-Throws -Context 'self-adjudicator edit under bootstrap=no' -MessagePattern 'must declare bootstrap=yes' -Action {
-        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } `
-            -ChangedPaths @('scripts/lib/self-referential-bootstrap.ps1') `
-            -HeadJson $emptyJson -BaseJson $emptyJson
+    foreach ($selfAdjudicator in @('scripts/lib/self-referential-bootstrap.ps1', 'scripts/lib/windows-verification-scope.ps1')) {
+        Assert-Throws -Context "self-adjudicator edit under bootstrap=no: $selfAdjudicator" -MessagePattern 'must declare bootstrap=yes' -Action {
+            Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } `
+                -ChangedPaths @($selfAdjudicator) `
+                -HeadJson $emptyJson -BaseJson $emptyJson
+        }
     }
 
     # --- inherited open debt blocks (declared no, entry untouched) ------------------
@@ -1057,12 +1091,13 @@ try {
 | Deploy dry-run command | .\scripts\deploy.ps1 -DryRun |
 | Verify command | .\scripts\verify-all.ps1 |
 '@
+    $baseBody += "`n| Windows verification tier | deploy_dryrun |`n| Windows verification evidence | head $headSha; synthetic fixture run; https://github.com/monkey1sai/AI-BIM-governance/actions/runs/123456789 |"
 
     $bodyMissing = Join-Path $tempRoot 'body-missing.md'
     Set-Content -LiteralPath $bodyMissing -Value $baseBody -Encoding utf8
-    $output = & pwsh -NoProfile -NonInteractive -File $checker -BodyPath $bodyMissing -ChangedPathsPath $pathsPath -BaseSha $headSha -HeadSha $headSha 2>&1 | Out-String
+    $output = & pwsh -NoProfile -NonInteractive -File $checker -BodyPath $bodyMissing -ChangedPathsPath $pathsPath -BaseSha $headSha -HeadSha $headSha 2>&1 | Out-String -Width 4096
     Assert-True ($LASTEXITCODE -ne 0) 'checker must fail when a mechanism PR omits the bootstrap declaration'
-    Assert-True ($output -match 'Self-referential bootstrap') "checker failure must name the missing label (got: $output)"
+    Assert-True ($output -match '(?s)Self-referential.{0,200}bootstrap') "checker failure must name the missing label even when the host inserts formatted error prefixes (got: $output)"
 
     $bodyOk = Join-Path $tempRoot 'body-ok.md'
     Set-Content -LiteralPath $bodyOk -Value ($baseBody + "`n" + '| Self-referential bootstrap | no |') -Encoding utf8

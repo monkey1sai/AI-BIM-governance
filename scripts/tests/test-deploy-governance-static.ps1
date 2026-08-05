@@ -2,7 +2,12 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
-$deploy = Get-Content -Raw (Join-Path $RepoRoot 'scripts\deploy.ps1')
+$deployPath = Join-Path $RepoRoot 'scripts\deploy.ps1'
+$deployBytes = [System.IO.File]::ReadAllBytes($deployPath)
+if ($deployBytes.Count -lt 3 -or $deployBytes[0] -ne 0xEF -or $deployBytes[1] -ne 0xBB -or $deployBytes[2] -ne 0xBF) {
+    throw 'deploy.ps1 must use a UTF-8 BOM so Windows PowerShell 5.1 does not decode non-ASCII strings through the active ANSI code page'
+}
+$deploy = Get-Content -Raw $deployPath
 $launcher = Get-Content -Raw (Join-Path $RepoRoot 'scripts\lib\host-native-launcher.ps1')
 $stopAll = Get-Content -Raw (Join-Path $RepoRoot 'scripts\stop-all.ps1')
 $hostKitCompose = Get-Content -Raw (Join-Path $RepoRoot 'compose.host-kit.yml')
@@ -33,6 +38,12 @@ Assert-Contains $deploy 'coordinator-governance-files-tree' 'deploy.ps1 must ver
 Assert-Contains $launcher 'function Start-HostNativeGovernance' 'launcher must define Start-HostNativeGovernance'
 Assert-Contains $launcher "-Name 'governance-service'" 'launcher must use governance-service PID/log name'
 Assert-Contains $stopAll 'governance-service' 'stop-all.ps1 must know governance-service'
+Assert-Contains $stopAll 'if ($remaining.Count -gt 0)' 'stop-all.ps1 must fail closed when any expected listener remains'
+Assert-Contains $stopAll 'owner-not-visible' 'stop-all.ps1 must report a listener whose PID is hidden'
+Assert-Contains $stopAll 'exit 2' 'stop-all.ps1 must return nonzero when an expected listener remains'
+Assert-Contains $deploy "'port','coordinator','8004'" 'deploy.ps1 must prove the current Compose coordinator publication before treating :8004 as owned'
+Assert-Contains $deploy "'port','viewer','5173'" 'deploy.ps1 must prove the current Compose viewer publication before treating :5173 as owned'
+Assert-Contains $deploy 'refusing an ownership-blind stop' 'deploy.ps1 must fail closed when an occupied listener PID is hidden'
 Assert-Contains $hostKitCompose 'A4_TRUSTED_GOVERNANCE_ORIGINS: ${HOST_GOVERNANCE_API_BASE:-http://host.docker.internal:49102}' 'host-kit must explicitly allow only its configured governance bridge origin'
 Assert-Contains $hostKitCompose 'A4_INTERNAL_CONTEXT_TOKEN: ${A4_INTERNAL_CONTEXT_TOKEN:-}' 'host-kit must pass the A4 token through environment substitution'
 Assert-Contains $hostKitCompose ':/workspace/a4-conversion-artifacts:ro' 'host-kit must mount conversion artifacts read-only for mapping provenance'
@@ -68,6 +79,35 @@ $dockerFailureIndex = $deploy.IndexOf('if ($dockerExit -ne 0)')
 $webPlaneSignatureSaveIndex = $deploy.IndexOf('Set-KitRuntimeSignature -Path $script:webPlaneRuntimeSignaturePath')
 if ($dockerFailureIndex -lt 0 -or $webPlaneSignatureSaveIndex -le $dockerFailureIndex) {
     throw 'web-plane signature must be persisted only after docker compose succeeds'
+}
+
+# Hybrid mode must not start a CONTAINERISED kit-manager-api. `compose up
+# coordinator viewer` used to pull it in through coordinator's depends_on, and
+# that service publishes 127.0.0.1:8010 - the same port deploy.ps1 Phase 4c-2
+# gives the host-native kit-manager. Linux refuses the second bind (Phase 4d died
+# with "address already in use"); Windows only tolerated it because SO_REUSEADDR
+# lets a second socket take the same addr:port, leaving it undefined which one
+# actually answered :8010.
+if ($hostKitCompose -notmatch 'depends_on:\s*!override\s*\[\]') {
+    throw 'compose.host-kit.yml must clear coordinator depends_on (!override []) so hybrid mode does not start the containerised kit-manager-api on the host-native :8010'
+}
+if ($hostKitCompose -notmatch 'KIT_MANAGER_API_BASE:\s*\$\{HOST_KIT_MANAGER_API_BASE:-http://host\.docker\.internal:8010\}') {
+    throw 'compose.host-kit.yml must route the coordinator to the HOST-NATIVE kit-manager (host.docker.internal:8010); clearing depends_on without this would leave it with no kit-manager at all'
+}
+
+$legacyCleanupStart = $deploy.IndexOf('$legacyKitManagerRmArgs')
+$legacyCleanupEnd = $deploy.IndexOf('# fix: 第一次 docker compose build', $legacyCleanupStart)
+if ($legacyCleanupStart -lt 0 -or $legacyCleanupEnd -le $legacyCleanupStart) {
+    throw 'deploy.ps1 must retain the bounded legacy kit-manager cleanup block'
+}
+$legacyCleanup = $deploy.Substring($legacyCleanupStart, $legacyCleanupEnd - $legacyCleanupStart)
+Assert-Contains $legacyCleanup "'rm','-f','-s','kit-manager-api'" 'legacy cleanup must remove only the precise Compose kit-manager-api service'
+if ($legacyCleanup -match "'down'|--remove-orphans") {
+    throw 'legacy kit-manager cleanup must not broaden into compose down or orphan removal'
+}
+$kitManagerPreflightWiring = [regex]::Matches($deploy, 'if \(-not \$SkipKitManager\) \{ \$extraHostNativePorts \+= 8010 \}')
+if ($kitManagerPreflightWiring.Count -ne 2) {
+    throw 'deploy.ps1 must include host-native kit-manager port 8010 in both the initial and Phase 3 port audits'
 }
 
 [scriptblock]::Create($deploy) | Out-Null

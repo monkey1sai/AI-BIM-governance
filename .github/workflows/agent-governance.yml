@@ -88,6 +88,34 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-preflight-prnumber-forwarding.ps1
 
+      - name: Run deploy target registry tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-deploy-target-registry.ps1
+
+      - name: Run platform adapter tests (windows)
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-platform-adapter.ps1
+
+      - name: Run host-native child-launch regression
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-host-native-child-launch.ps1
+
+      - name: Run remote deploy transport tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-remote-deploy-transport.ps1
+
+      - name: Run host-native preflight regression tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-preflight-host-native.ps1
+
+      - name: Run Windows verification scope tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-windows-verification-scope.ps1
+
+      - name: Run IFC fixture pin tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -Command "node --test scripts/tests/test-ifc-fixture-pin.mjs"
+
       - name: Run browser-evidence hook tests
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-require-gstack-evidence.ps1

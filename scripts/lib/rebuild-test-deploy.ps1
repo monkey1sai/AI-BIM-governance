@@ -2,6 +2,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'design-assets.ps1')
+. (Join-Path $PSScriptRoot 'deploy-target-registry.ps1')
 Import-Module -Force (Join-Path $PSScriptRoot 'StructLog.psm1')
 
 $script:TestDeployStructLogger = $null
@@ -31,7 +32,11 @@ function Write-TestDeployLifecycleLog {
         Write-StructLifecycle -Msg $Message -Data $Data -Level $Level
 }
 
-$script:TestDeployFixedPath = 'D:\Users\deploy\AI-bim-geo'
+# This local rebuild routine only knows how to rebuild the local Windows
+# deployment; it resolves that target explicitly by id. Dispatch by canonical
+# target (SSH transport to the canonical Linux descriptor) lands with plan tasks B6/B8.
+$script:TestDeployTargetProfile = Get-DeployTarget -Id 'local-windows'
+$script:TestDeployFixedPath = [string]$script:TestDeployTargetProfile.deploy_root
 $script:TestDeployRootToolingDirNames = @(
     '.codex',
     '.agents',
@@ -56,8 +61,8 @@ $script:TestDeployPreservedEnvFiles = @(
 $script:TestDeployPreservedProductionFiles = @(
     'docs\plans\ai-bim-governance.css'
 )
-$script:TestDeployEdgeSiteId = 'site_local_deploy'
-$script:TestDeployEdgeRuntimeDataRoot = 'D:\Users\deploy\AI-bim-geo-data'
+$script:TestDeployEdgeSiteId = [string]$script:TestDeployTargetProfile.edge_site_id
+$script:TestDeployEdgeRuntimeDataRoot = [string]$script:TestDeployTargetProfile.runtime_data_root
 
 function Get-TestDeployGitCleanArguments {
     [CmdletBinding()]

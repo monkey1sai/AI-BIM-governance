@@ -11,6 +11,15 @@ $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $testName = 'rebuild-test-deploy'
 $sandbox = New-TestSandbox -Prefix $testName
 
+function Initialize-TestGitHead {
+    param([Parameter(Mandatory = $true)][string] $Root)
+
+    & git -C $Root init --quiet
+    if ($LASTEXITCODE -ne 0) { throw 'Initialize-TestGitHead: git init failed.' }
+    & git -C $Root -c user.name=fixture -c user.email=fixture@example.invalid commit --allow-empty --quiet -m 'fixture revision'
+    if ($LASTEXITCODE -ne 0) { throw 'Initialize-TestGitHead: empty fixture commit failed.' }
+}
+
 function Resolve-TestReparseTargetPath {
     param([Parameter(Mandatory = $true)] $LinkItem)
 
@@ -39,18 +48,32 @@ function New-DeployEdgeVolumeHarness {
 
     $scriptsRoot = Join-Path $DeployRoot 'scripts'
     $libRoot = Join-Path $scriptsRoot 'lib'
+    $platformLibRoot = Join-Path $libRoot 'platform'
     New-Item -ItemType Directory -Path $libRoot -Force | Out-Null
+    New-Item -ItemType Directory -Path $platformLibRoot -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $SourceRepoRoot 'scripts\lib\design-assets.ps1') -Destination (Join-Path $libRoot 'design-assets.ps1')
+    Copy-Item -LiteralPath (Join-Path $SourceRepoRoot 'scripts\lib\platform\platform-adapter.ps1') -Destination (Join-Path $platformLibRoot 'platform-adapter.ps1')
 
-    $deploySourcePath = Join-Path $SourceRepoRoot 'scripts\deploy.ps1'
-    $deployScript = Get-Content -LiteralPath $deploySourcePath -Raw
-    $fixedRootLine = "`$script:FixedTestDeployRoot = 'D:\Users\deploy\AI-bim-geo'"
-    $testRootLine = "`$script:FixedTestDeployRoot = '$DeployRoot'"
-    $deployScript = $deployScript.Replace($fixedRootLine, $testRootLine)
-    if ($deployScript -notmatch [regex]::Escape($testRootLine)) {
-        throw 'New-DeployEdgeVolumeHarness: failed to rewrite FixedTestDeployRoot in deploy.ps1'
+    # deploy.ps1 resolves its target profile from the registry, so the sandbox
+    # overrides DATA instead of rewriting code: copy the script unmodified and
+    # write a sandbox registry whose local-windows deploy_root is $DeployRoot.
+    Copy-Item -LiteralPath (Join-Path $SourceRepoRoot 'scripts\lib\deploy-target-registry.ps1') -Destination (Join-Path $libRoot 'deploy-target-registry.ps1')
+    $sandboxRegistry = Get-Content -LiteralPath (Join-Path $SourceRepoRoot 'scripts\deploy-target-registry.json') -Raw | ConvertFrom-Json
+    $sandboxLocal = @($sandboxRegistry.targets | Where-Object { [string]$_.id -eq 'local-windows' })
+    if ($sandboxLocal.Count -ne 1) {
+        throw 'New-DeployEdgeVolumeHarness: registry must define exactly one local-windows target'
     }
-    Set-Content -LiteralPath (Join-Path $scriptsRoot 'deploy.ps1') -Value $deployScript -Encoding ascii
+    $sandboxLocal[0].deploy_root = $DeployRoot
+    $sandboxRegistry | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $scriptsRoot 'deploy-target-registry.json') -Encoding utf8
+    Copy-Item -LiteralPath (Join-Path $SourceRepoRoot 'scripts\deploy.ps1') -Destination (Join-Path $scriptsRoot 'deploy.ps1')
+
+    # The harness intentionally has no requirements files and its host-native
+    # preflight stub reports dependencies as already satisfied. Bind that empty
+    # inventory to the same SHA-256 stamp contract used by deploy.ps1.
+    $venvRoot = Join-Path $DeployRoot '.venv'
+    New-Item -ItemType Directory -Path $venvRoot -Force | Out-Null
+    $emptyRequirementsFingerprint = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+    Set-Content -LiteralPath (Join-Path $venvRoot '.deploy-requirements-stamp') -Value $emptyRequirementsFingerprint -Encoding ascii
 
     @'
 function Write-DeployHeader {
@@ -201,6 +224,11 @@ function Test-VolumeAlignment {
 '@ | Set-Content -LiteralPath (Join-Path $libRoot 'preflight-volume-alignment.ps1') -Encoding ascii
 
     @'
+function Get-HostNativeBindHost {
+    param([string] $RepoRoot)
+    return '127.0.0.1'
+}
+
 function Start-HostNativeConversion {
     param(
         [string] $RepoRoot,
@@ -224,7 +252,7 @@ function Start-HostNativeConversion {
 }
 
 function Start-HostNativeGovernance {
-    param([string] $RepoRoot, [int] $Port, [string] $DbPath, [string] $FileLibraryRoot)
+    param([string] $RepoRoot, [int] $Port, [string] $DbPath, [string] $FileLibraryRoot, [string] $BindHost)
     return [pscustomobject]@{ Pid = 4343; LogPath = (Join-Path $RepoRoot 'scripts\.run\mock-governance.log') }
 }
 
@@ -234,7 +262,7 @@ function Start-HostNativeKit {
 }
 
 function Start-HostNativeKitManager {
-    param([string] $RepoRoot, [int] $Port)
+    param([string] $RepoRoot, [int] $Port, [string] $BindHost)
     return [pscustomobject]@{ Pid = 4545; LogPath = (Join-Path $RepoRoot 'scripts\.run\mock-kit-manager.log') }
 }
 
@@ -1219,6 +1247,7 @@ param([string] $First, [string] $Second, [string] $Third)
     $dryRunDeployRoot = Join-Path $sandbox 'dry-run-artifact-contract-root'
     New-Item -ItemType Directory -Path (Join-Path $dryRunDeployRoot '.git') -Force | Out-Null
     New-DeployEdgeVolumeHarness -DeployRoot $dryRunDeployRoot -SourceRepoRoot $repoRoot
+    Initialize-TestGitHead -Root $dryRunDeployRoot
     @(
         'RUNTIME_STORAGE_ROOT=./storage',
         'MINIO_WATCH_ENABLED=true'
@@ -1245,6 +1274,7 @@ param([string] $First, [string] $Second, [string] $Third)
     New-Item -ItemType Directory -Path (Join-Path $artifactDeployRoot '.git') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $artifactDeployRoot 'web-viewer-sample\public') -Force | Out-Null
     New-DeployEdgeVolumeHarness -DeployRoot $artifactDeployRoot -SourceRepoRoot $repoRoot
+    Initialize-TestGitHead -Root $artifactDeployRoot
     @(
         'RUNTIME_STORAGE_ROOT=./storage',
         'MINIO_WATCH_ENABLED=true'

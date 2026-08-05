@@ -34,6 +34,32 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 
+function Resolve-KitPlatformLayout {
+    param(
+        [ValidateSet('windows','linux')]
+        [string] $Platform = $(if ($env:OS -eq 'Windows_NT') { 'windows' } else { 'linux' })
+    )
+
+    if ($Platform -eq 'windows') {
+        return [pscustomobject]@{
+            BuildPlatform = 'windows-x86_64'
+            Executable    = 'kit.exe'
+            BuildCommand  = '.\repo.bat build'
+        }
+    }
+    return [pscustomobject]@{
+        BuildPlatform = 'linux-x86_64'
+        Executable    = 'kit'
+        BuildCommand  = './repo.sh build'
+    }
+}
+
+$script:KitPlatformLayout = Resolve-KitPlatformLayout
+
+function Get-KitReleaseRoot {
+    return (Join-Path $RepoRoot "_build/$($script:KitPlatformLayout.BuildPlatform)/release")
+}
+
 function ConvertTo-AbsolutePath {
     param(
         [Parameter(Mandatory = $true)]
@@ -159,9 +185,9 @@ function Find-KitExe {
         return $resolved
     }
 
-    $default = Join-Path $RepoRoot "_build\windows-x86_64\release\kit\kit.exe"
+    $default = Join-Path (Get-KitReleaseRoot) "kit/$($script:KitPlatformLayout.Executable)"
     if (-not (Test-Path -LiteralPath $default -PathType Leaf)) {
-        throw "Kit executable not found: $default. Run .\repo.bat build first."
+        throw "Kit executable not found: $default. Run '$($script:KitPlatformLayout.BuildCommand)' first."
     }
     return (Resolve-Path -LiteralPath $default).Path
 }
@@ -175,10 +201,11 @@ function Find-HoopsMain {
         return $resolved
     }
 
+    $releaseRoot = Get-KitReleaseRoot
     $searchRoots = @(
-        (Join-Path $RepoRoot "_build\windows-x86_64\release\extscache"),
-        (Join-Path $RepoRoot "_build\windows-x86_64\release\exts"),
-        (Join-Path $RepoRoot "_build\windows-x86_64\release\extsbuild")
+        (Join-Path $releaseRoot 'extscache'),
+        (Join-Path $releaseRoot 'exts'),
+        (Join-Path $releaseRoot 'extsbuild')
     ) | Where-Object { Test-Path -LiteralPath $_ -PathType Container }
 
     foreach ($root in $searchRoots) {
@@ -206,7 +233,7 @@ NVIDIA CAD Converter service entrypoint was not found.
 Expected: omni/services/convert/cad/services/process/hoops_main.py
 
 Run a build/precache after this change so the official converter extensions are downloaded:
-    .\repo.bat build
+    $($script:KitPlatformLayout.BuildCommand)
 
 If the extension already exists outside this repo, pass:
     -HoopsMainPath <path-to-hoops_main.py>
@@ -287,7 +314,7 @@ function Invoke-KitConversion {
     $kitExe = Find-KitExe
     $hoopsMain = Find-HoopsMain
     $resolvedConfigPath = Resolve-ConverterConfigPath
-    $buildRoot = Join-Path $RepoRoot "_build\windows-x86_64\release"
+    $buildRoot = Get-KitReleaseRoot
     $wrapperScript = Join-Path $RepoRoot "scripts\kit-cad-convert-and-quit.py"
     if (-not (Test-Path -LiteralPath $wrapperScript -PathType Leaf)) {
         throw "Kit converter wrapper not found: $wrapperScript"

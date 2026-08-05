@@ -47,6 +47,51 @@
           "docs/evidence/self-referential-bootstrap-gate/fixpoint/gate-suites-on-main.txt"
         ]
       }
+    },
+    {
+      "id": "remote-linux-deploy-target",
+      "status": "open",
+      "pr": 467,
+      "opened_at": "2026-08-03T02:00:00Z",
+      "reason": "the deploy contract rebuilds the test deployment only from a freshly fetched origin/main and forbids verifying an unmerged branch, so a change to the deploy path itself cannot be exercised by any pre-merge run against origin/main",
+      "verification_mechanism_paths": [
+        ".github/workflows/agent-governance.yml",
+        ".github/workflows/ci.yml",
+        "scripts/deploy.ps1",
+        "scripts/dev/rebuild-test-deploy.ps1",
+        "scripts/lib/host-native-launcher.ps1",
+        "scripts/lib/kit-log-probe.ps1",
+        "scripts/lib/platform/platform-adapter.ps1",
+        "scripts/lib/preflight-host-native.ps1",
+        "scripts/lib/preflight-ports.ps1",
+        "scripts/lib/rebuild-test-deploy.ps1",
+        "scripts/lib/smoke-evidence.ps1",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/check-pr-body-evidence.ps1"
+      ],
+      "verification_contract": {
+        "id": "remote-linux-deploy-target/v1",
+        "command_ids": [
+          "test-deploy-target-registry",
+          "test-platform-adapter",
+          "test-host-native-launcher",
+          "test-host-native-child-launch",
+          "test-preflight-host-native",
+          "test-preflight-ports",
+          "test-kit-log-probe",
+          "test-rebuild-test-deploy",
+          "test-remote-deploy-transport",
+          "test-windows-verification-scope",
+          "test-deploy-governance-static",
+          "invoke-powershell-static"
+        ],
+        "contract_sha256": "44dec1d887f2f815b359eefdeb56459226881c045c76ab3c3406bfccf48dbd0c"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/remote-linux-deploy-target/self-referential-bootstrap/README.md",
+        "docs/evidence/remote-linux-deploy-target/self-referential-bootstrap/deploy-verified.txt"
+      ],
+      "fixpoint": null
     }
   ]
 }

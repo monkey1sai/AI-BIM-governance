@@ -139,6 +139,39 @@ jobs:
           "frontend_design_status=$status" >> $env:GITHUB_OUTPUT
           "frontend_required_screen_ids=$($screenIds -join ',')" >> $env:GITHUB_OUTPUT
 
+  platform-adapter-linux:
+    # Dual-platform equivalence evidence for the deploy-path ownership primitives
+    # (plan B3): the same suite that agent-governance runs on windows-latest runs
+    # here on ubuntu-latest. Deliberately NOT a required check (adding names to
+    # branch protection is a separate decision).
+    name: platform adapter (linux)
+    needs: changes
+    # NOT a required check, so it deliberately omits the always()+classifier-failure
+    # pattern: the skipped-success hazard only exists for required checks, where a
+    # skip would satisfy branch protection. A non-required job simply skips when the
+    # classifier fails, which is why it carries no "Require classifier success" guard.
+    if: needs.changes.outputs.agent_governance == 'true' || needs.changes.outputs.rebuild_test_deploy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Run platform adapter tests (linux)
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-platform-adapter.ps1
+
+      - name: Parse and dry-run Linux target provisioner
+        shell: bash
+        run: |
+          bash -n scripts/dev/provision-linux-deploy-target.sh
+          bash scripts/dev/provision-linux-deploy-target.sh --dry-run deploy-fixture
+
+      - name: Run deploy target registry tests (linux)
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-deploy-target-registry.ps1
+
   root-contracts:
     name: root contracts and fakes
     needs: changes

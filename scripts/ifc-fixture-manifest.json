@@ -1,0 +1,9 @@
+{
+  "schema_version": "ifc-fixture-manifest/v1",
+  "authority": {
+    "endpoint": "https://minio.example.invalid",
+    "bucket": "bim-control",
+    "note": "Placeholder authority only. This scaffold is not evidence authority until owner-enrolled entries exist and an evidence-producing consumer verifies them with credentials supplied via env."
+  },
+  "entries": []
+}

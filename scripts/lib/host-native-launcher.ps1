@@ -5,6 +5,84 @@
 
 Set-StrictMode -Version Latest
 
+# Per-OS primitives (venv layout, system interpreter, platform name). Guarded so
+# this lib stays dot-sourceable standalone in tests.
+if (-not (Get-Command -Name 'Resolve-PlatformVenvPython' -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'platform/platform-adapter.ps1')
+}
+if (-not (Get-Command -Name 'Get-DeployTargetForCurrentPlatform' -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'deploy-target-registry.ps1')
+}
+
+function Resolve-HostNativePython {
+    # Single interpreter-selection rule for every host-native service. The three
+    # launchers each had their own copy hardcoding the Windows venv layout
+    # (.venv\Scripts\python.exe), which never matches on Linux (.venv/bin/python),
+    # so they all fell through to the bare name 'python' - which the Linux target
+    # does not have. Start-Process then produced no process and the failure only
+    # surfaced as a health-check timeout 30 seconds later.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $ServiceName
+    )
+    $venvPython = Resolve-PlatformVenvPython -VenvRoot (Join-Path $RepoRoot '.venv')
+    if (Test-Path -LiteralPath $venvPython -PathType Leaf) { return $venvPython }
+    $systemPython = Resolve-PlatformSystemPython
+    if ($systemPython) { return $systemPython }
+    throw "${ServiceName}: no usable Python interpreter (looked for the repo venv at $venvPython and a system python on PATH)."
+}
+
+function Get-HostNativePowerShellExe {
+    # powershell.exe is Windows-only; the cross-platform executable is pwsh.
+    # -Platform is injectable so both branches are testable from either OS.
+    param([string] $Platform = (Get-PlatformName))
+    if ($Platform -eq 'windows') { return 'powershell.exe' }
+    return 'pwsh'
+}
+
+function Get-HostNativePowerShellArgumentPrefix {
+    param([string] $Platform = (Get-PlatformName))
+    # Standard prefix for launching one of our .ps1 files as a child process.
+    # -ExecutionPolicy is a Windows-only concept and pwsh rejects it elsewhere, so
+    # it is only emitted there. Callers append -File <script> and their own args.
+    #
+    # CONTRACT: callers MUST wrap the call in @() - `@(Get-...Prefix) + @('-File', ...)`.
+    # Two failure modes bracket this, and both have shipped:
+    #   - a bare call without @(): off Windows the single-element result unrolls to a
+    #     string, `+` becomes string concatenation, and the child gets '-NoProfile-File'.
+    #   - returning `,@(...)` to defeat that: @() around it then yields a NESTED array,
+    #     and Start-Process rejects it with "Cannot convert 'System.Object[]' to the
+    #     type 'System.String' required by parameter 'ArgumentList'".
+    # So: emit a plain array here, and let the caller's @() do the normalising.
+    # test-host-native-child-launch.ps1 asserts the composed argv is FLAT, which is
+    # the property that actually matters and which catches both shapes.
+    if ($Platform -eq 'windows') {
+        return @('-NoProfile', '-ExecutionPolicy', 'Bypass')
+    }
+    return @('-NoProfile')
+}
+
+function Get-HostNativeBindHost {
+    # Which address host-native services listen on. Windows keeps loopback; on a
+    # Linux target the dockerised coordinator reaches them over the bridge, and a
+    # 127.0.0.1-only socket refuses that connection - governance and
+    # kit-manager-api were unreachable from the container (coordinator
+    # /api/governance/files/tree returned 502) while the conversion service, which
+    # already bound a reachable address, answered from the Docker bridge.
+    # Measured from inside the container: the target-scoped bridge address was
+    # reachable while the owner-private host address refused the loopback bind.
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string] $RepoRoot)
+
+    $target = Get-DeployTargetForCurrentPlatform -RepoRoot $RepoRoot
+    $bind = [string]$target.host_native_bind_host
+    if ([string]::IsNullOrWhiteSpace($bind)) {
+        throw "deploy target '$($target.id)' does not declare host_native_bind_host."
+    }
+    return $bind
+}
+
 function Test-AlreadyRunning {
     [CmdletBinding()]
     param(
@@ -56,12 +134,13 @@ function Stop-HostNativeService {
     param(
         [Parameter(Mandatory = $true)][string] $Name,
         [Parameter(Mandatory = $true)][string] $RunDir,
+        # Win32_Process is Windows-only: on Linux the CIM call threw, the catch
+        # returned an empty list, and the tree walk silently degraded to killing
+        # only the wrapper - leaving uvicorn/Kit children holding their ports.
+        # The adapter reads /proc there and CIM here.
         [scriptblock] $ChildPidLookup = {
             param($parentId)
-            try {
-                Get-CimInstance Win32_Process -Filter "ParentProcessId=$parentId" -ErrorAction Stop |
-                    ForEach-Object { [int]$_.ProcessId }
-            } catch { @() }
+            @(Get-PlatformChildProcessIds -ParentProcessId ([int]$parentId))
         },
         [scriptblock] $StopProcessFn = {
             param($procId)
@@ -102,7 +181,16 @@ function Start-HostNativeService {
         [Parameter(Mandatory = $true)][string] $FilePath,
         [string[]] $ArgumentList = @(),
         [Parameter(Mandatory = $true)][string] $RunDir,
-        [ValidateSet('Hidden','Normal')] [string] $WindowStyle = 'Hidden'
+        [ValidateSet('Hidden','Normal')] [string] $WindowStyle = 'Hidden',
+        [ValidateRange(0, 30000)][int] $DetachTimeoutMs = 5000,
+        [scriptblock] $DetachProbeFn = {
+            param($processId)
+            Test-PlatformProcessDetached -ProcessId ([int]$processId)
+        },
+        [scriptblock] $SleepFn = {
+            param($milliseconds)
+            Start-Sleep -Milliseconds $milliseconds
+        }
     )
 
     if (-not (Test-Path -LiteralPath $RunDir)) {
@@ -112,14 +200,62 @@ function Start-HostNativeService {
     $errFile = "$logFile.err"
     $pidFile = Join-Path $RunDir "$Name.pid"
 
-    $proc = Start-Process `
-        -FilePath $FilePath `
-        -ArgumentList $ArgumentList `
-        -WorkingDirectory $WorkingDirectory `
-        -WindowStyle $WindowStyle `
-        -RedirectStandardOutput $logFile `
-        -RedirectStandardError $errFile `
-        -PassThru
+    # Off Windows the service must OUTLIVE the session that started it: a remote
+    # deploy runs over SSH, and a service that dies at disconnect makes the whole
+    # "persistent deploy area" idea false. `setsid` makes the child its own session
+    # leader so a terminal hangup cannot reach it, and it execs in place when the
+    # caller is not already a process-group leader, preserving the PID we record.
+    #
+    # setsid alone is NOT sufficient here, and measuring beat assuming: with it in
+    # place the services still died at disconnect. pwsh is installed from snap, so
+    # its children land in
+    #   /user.slice/user-<uid>.slice/user@<uid>.service/app.slice/snap.powershell...scope
+    # and systemd stops user@<uid>.service on last logout unless the account has
+    # lingering enabled - taking the whole scope with it. The deploy therefore also
+    # requires `loginctl enable-linger`, which the Linux preflight checks.
+    $launchExe = $FilePath
+    $launchArgs = @($ArgumentList)
+    if ((Get-PlatformName) -ne 'windows') {
+        $launchArgs = @($FilePath) + @($ArgumentList)
+        $launchExe = 'setsid'
+    }
+
+    $startArgs = @{
+        FilePath               = $launchExe
+        ArgumentList           = $launchArgs
+        WorkingDirectory       = $WorkingDirectory
+        RedirectStandardOutput = $logFile
+        RedirectStandardError  = $errFile
+        PassThru               = $true
+    }
+    # -WindowStyle is a Windows-only concept; PowerShell rejects it on Linux/macOS.
+    if ((Get-PlatformName) -eq 'windows') { $startArgs.WindowStyle = $WindowStyle }
+
+    $proc = Start-Process @startArgs
+    # Fail closed on a start that produced no process. Start-Process can come back
+    # empty (bad interpreter name, missing working directory) and the old code then
+    # returned an object whose Pid was silently absent - the caller logged
+    # "PID=" as [ok] and only the health probe noticed, 30 seconds later.
+    if (-not $proc -or -not $proc.Id) {
+        throw "$Name did not start: '$launchExe' produced no process (workdir=$WorkingDirectory, stderr=$errFile)."
+    }
+    # Verify the detachment actually happened rather than assuming it. If setsid
+    # forked instead of exec'ing, the PID we are about to record is not the
+    # service, and the service would die with the session anyway - both silent
+    # failures that only show up long after the deploy reports success.
+    $detached = $false
+    $detachDeadline = [DateTime]::UtcNow.AddMilliseconds($DetachTimeoutMs)
+    do {
+        if (& $DetachProbeFn ([int]$proc.Id)) {
+            $detached = $true
+            break
+        }
+        if ([DateTime]::UtcNow -ge $detachDeadline) { break }
+        & $SleepFn 100
+    } while ($true)
+    if (-not $detached) {
+        throw "$Name started as PID $($proc.Id) but is not a session leader; it would die when the deploy session ends (stderr=$errFile)."
+    }
     $proc.Id | Set-Content -LiteralPath $pidFile -Encoding ascii
     return [pscustomobject]@{ Name = $Name; Pid = $proc.Id; LogPath = $logFile; ErrPath = $errFile }
 }
@@ -154,6 +290,7 @@ function Invoke-KitRepoBuild {
         [Parameter(Mandatory = $true)][string] $WorkingDirectory,
         [Parameter(Mandatory = $true)][string] $LogPath,
         [Parameter(Mandatory = $true)][string] $RunDir,
+        [string] $BuildCommand = '',
         # repo.bat 底下的 Kit precache 工具鏈偶爾會留下未釋放 stdout/stderr handle
         # 的背景分支程序,讓 native process 的 stream redirect 卡住等 EOF 而非只等
         # repo.bat 本身結束(2026-07-01 實測:build 早已成功,但外層卡死 20+ 分鐘)。
@@ -161,7 +298,7 @@ function Invoke-KitRepoBuild {
         # build,又能在真的卡住時及時失敗而非無限期掛住整條 deploy pipeline。
         [int] $TimeoutSec = 1200,
         [scriptblock] $StartProcessFn = {
-            param($workingDirectory, $logPath)
+            param($workingDirectory, $logPath, $buildCommand)
             # cmd.exe 自己做 `>` 檔案重導向(真實 Win32 file handle,不是
             # pipe),deploy.ps1 只用 WaitForExit(timeout) 等「process 本身」
             # 結束,不受孫行程持有的 handle 影響。
@@ -171,10 +308,22 @@ function Invoke-KitRepoBuild {
             # as an internal or external command"(即使 `where repo.bat`、
             # `dir`、`call repo.bat` 都找得到/看得到檔案)。完整路徑不經過
             # 這條關聯查找路徑,兩種主機狀態下都能正常執行(2026-07-06 實測)。
-            $repoBatPath = Join-Path $workingDirectory 'repo.bat'
-            $cmdLine = "call `"$repoBatPath`" build > `"$logPath`" 2>&1"
-            Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $cmdLine) `
-                -WorkingDirectory $workingDirectory -NoNewWindow -PassThru
+            $effectiveCommand = if ([string]::IsNullOrWhiteSpace($buildCommand)) {
+                if ((Get-PlatformName) -eq 'windows') { '.\repo.bat build' } else { './repo.sh build' }
+            } else { $buildCommand.Trim() }
+            if ($effectiveCommand -eq '.\repo.bat build') {
+                $repoBatPath = Join-Path $workingDirectory 'repo.bat'
+                $cmdLine = "call `"$repoBatPath`" build > `"$logPath`" 2>&1"
+                return Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $cmdLine) `
+                    -WorkingDirectory $workingDirectory -NoNewWindow -PassThru
+            }
+            if ($effectiveCommand -eq './repo.sh build') {
+                $repoShPath = Join-Path $workingDirectory 'repo.sh'
+                $bashCommand = "`"$repoShPath`" build > `"$logPath`" 2>&1"
+                return Start-Process -FilePath 'bash' -ArgumentList @('-c', $bashCommand) `
+                    -WorkingDirectory $workingDirectory -NoNewWindow -PassThru
+            }
+            throw "Unsupported Kit build command '$effectiveCommand'; expected the validated registry command for this platform."
         },
         [scriptblock] $WaitForExitFn = {
             param($proc, $timeoutMs)
@@ -187,7 +336,7 @@ function Invoke-KitRepoBuild {
     )
 
     $pidFile = Join-Path $RunDir 'kit-repo-build.pid'
-    $proc = & $StartProcessFn $WorkingDirectory $LogPath
+    $proc = & $StartProcessFn $WorkingDirectory $LogPath $BuildCommand
     $proc.Id | Set-Content -LiteralPath $pidFile -Encoding ascii
 
     $exited = & $WaitForExitFn $proc ($TimeoutSec * 1000)
@@ -240,13 +389,12 @@ function Start-HostNativeConversion {
     $env:PYTHONNOUSERSITE = '1'
 
     $launcher = Join-Path $RepoRoot 'bim-streaming-server\scripts\start-host-native-conversion-service.ps1'
-    $venvPython = Join-Path $RepoRoot '.venv\Scripts\python.exe'
-    $pythonExe = if (Test-Path -LiteralPath $venvPython -PathType Leaf) { $venvPython } else { 'python' }
+    $pythonExe = Resolve-HostNativePython -RepoRoot $RepoRoot -ServiceName 'bim-streaming-conversion-service'
     return (Start-HostNativeService `
         -Name 'bim-streaming-conversion-service' `
         -WorkingDirectory (Join-Path $RepoRoot 'bim-streaming-server') `
-        -FilePath 'powershell.exe' `
-        -ArgumentList @('-ExecutionPolicy','Bypass','-NoProfile','-File',$launcher,'-PythonExe',$pythonExe) `
+        -FilePath (Get-HostNativePowerShellExe) `
+        -ArgumentList (@(Get-HostNativePowerShellArgumentPrefix) + @('-File', $launcher, '-PythonExe', $pythonExe)) `
         -RunDir $runDir)
 }
 
@@ -258,21 +406,17 @@ function Start-HostNativeGovernance {
         [string] $DbPath = '',
         [string] $FileLibraryRoot = ''
     )
+    # 'scripts\.run' is safe on both platforms: PowerShell's Join-Path normalises the
+    # backslash to the native separator, verified on the Linux target (the run
+    # directory materialised under <private-deploy-root>/scripts/.run). Kept in the
+    # Windows spelling to match every other site that reads or writes these PID files.
     $runDir = Join-Path $RepoRoot 'scripts\.run'
     if (-not (Test-Path -LiteralPath $runDir)) {
         New-Item -ItemType Directory -Path $runDir -Force | Out-Null
     }
 
     $serviceRoot = Join-Path $RepoRoot 'governance-service'
-    $python312 = 'C:\Program Files\Python312\python.exe'
-    $repoVenvPython = Join-Path $RepoRoot '.venv\Scripts\python.exe'
-    $pythonExe = if (Test-Path -LiteralPath $python312 -PathType Leaf) {
-        $python312
-    } elseif (Test-Path -LiteralPath $repoVenvPython -PathType Leaf) {
-        $repoVenvPython
-    } else {
-        'python'
-    }
+    $pythonExe = Resolve-HostNativePython -RepoRoot $RepoRoot -ServiceName 'governance-service'
 
     Remove-Item Env:PYTHONNOUSERSITE -ErrorAction SilentlyContinue
     & $pythonExe -c "import ifcopenshell, fastapi, uvicorn" *> $null
@@ -292,7 +436,7 @@ function Start-HostNativeGovernance {
         -Name 'governance-service' `
         -WorkingDirectory $serviceRoot `
         -FilePath $pythonExe `
-        -ArgumentList @('-m','uvicorn','app:app','--host','127.0.0.1','--port',"$Port") `
+        -ArgumentList @('-m','uvicorn','app:app','--host',(Get-HostNativeBindHost -RepoRoot $RepoRoot),'--port',"$Port") `
         -RunDir $runDir)
 }
 
@@ -311,15 +455,7 @@ function Start-HostNativeKitManager {
     }
 
     $serviceRoot = Join-Path $RepoRoot 'services\kit-manager-api'
-    $python312 = 'C:\Program Files\Python312\python.exe'
-    $repoVenvPython = Join-Path $RepoRoot '.venv\Scripts\python.exe'
-    $pythonExe = if (Test-Path -LiteralPath $python312 -PathType Leaf) {
-        $python312
-    } elseif (Test-Path -LiteralPath $repoVenvPython -PathType Leaf) {
-        $repoVenvPython
-    } else {
-        'python'
-    }
+    $pythonExe = Resolve-HostNativePython -RepoRoot $RepoRoot -ServiceName 'kit-manager-api'
 
     Remove-Item Env:PYTHONNOUSERSITE -ErrorAction SilentlyContinue
     & $pythonExe -c "import fastapi, uvicorn" *> $null
@@ -331,7 +467,7 @@ function Start-HostNativeKitManager {
         -Name 'kit-manager-api' `
         -WorkingDirectory $serviceRoot `
         -FilePath $pythonExe `
-        -ArgumentList @('-m','uvicorn','app.main:app','--host','127.0.0.1','--port',"$Port") `
+        -ArgumentList @('-m','uvicorn','app.main:app','--host',(Get-HostNativeBindHost -RepoRoot $RepoRoot),'--port',"$Port") `
         -RunDir $runDir)
 }
 
@@ -354,8 +490,8 @@ function Start-HostNativeKit {
         New-Item -ItemType Directory -Path $runDir -Force | Out-Null
     }
     $launcher = Join-Path $RepoRoot 'bim-streaming-server\scripts\start-streaming-server.ps1'
-    $arguments = @(
-        '-ExecutionPolicy','Bypass','-NoProfile','-File', $launcher,
+    $arguments = @(Get-HostNativePowerShellArgumentPrefix) + @(
+        '-File', $launcher,
         '-InstanceId','kit_local_001',
         '-SignalPort',"$SignalPort",
         '-StreamPort',"$StreamPort",
@@ -373,7 +509,7 @@ function Start-HostNativeKit {
     return (Start-HostNativeService `
         -Name 'bim-streaming-server' `
         -WorkingDirectory (Join-Path $RepoRoot 'bim-streaming-server') `
-        -FilePath 'powershell.exe' `
+        -FilePath (Get-HostNativePowerShellExe) `
         -ArgumentList $arguments `
         -RunDir $runDir)
 }

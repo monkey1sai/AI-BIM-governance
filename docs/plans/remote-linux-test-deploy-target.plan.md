@@ -126,6 +126,24 @@ video element（符合既有 healthy 判準：readyState=4 ＋ 影像尺寸 ＋ 
 | **F-5** | Kit 警告 `CPU performance profile is set to powersave` 與 `IOMMU is enabled` | 部署時應評估 CPU governor 設為 `performance` |
 | **F-6** | crashreporter 自動上傳 minidump 至 NVIDIA（`code:200`） | 資料離開機器；評估 `/crashreporter/enabled=false` |
 
+### 4.4.1 實作階段（2026-08-03）新增發現 — 每一條都由一次真實部署失敗揭露
+
+靜態測試全綠、Windows 全綠，這些仍全部存在。共同形狀：**Windows 語意較寬鬆，於是相同程式碼在 Windows 上「看起來能動」**。
+
+| 編號 | 發現 | 為何 Windows 看不到 |
+|---|---|---|
+| **F-7** | `python3 -m venv` 先建 `bin/python` 才跑 ensurepip，缺 `python3-venv` 時留下通過存在性檢查、卻在 `pip install` 才爆的半殘 venv | Windows venv 不分離 ensurepip |
+| **F-8** | 三個 launcher 各自硬編 `.venv\Scripts\python.exe`，Linux 永不命中 → 落到裸 `python`（目標只有 `python3`） | Windows 路徑正好是硬編值 |
+| **F-9** | pip 安裝與否由「五個固定套件」的 import 探測決定，新增 requirements 檔完全無效 → 改用 requirements **內容 sha256 指紋** | Windows 部署區歷史上手動裝過，缺口不會浮現 |
+| **F-10** | `powershell.exe`／`-ExecutionPolicy`／`-WindowStyle` 皆為 Windows-only | 同上 |
+| **F-11** | PowerShell 單元素陣列回傳時會解包 → `'-NoProfile' + @(...)` 變字串串接 → `-NoProfile-File`。**而用 `,@()` 修正會造成巢狀陣列，`Start-Process -ArgumentList` 直接拒絕** | Windows 前綴有三元素，永不解包 |
+| **F-12** | 所有 TCP/UDP listener 探測用 `Get-NetTCPConnection`／`Get-NetUDPEndpoint` → Linux 一律回答「沒人在聽」。**port preflight 因此把每個埠都判為 FREE，從來不可能偵測衝突** | 這兩個 cmdlet 只有 Windows 有 |
+| **F-13** | Kit launcher 內 `WindowsIdentity::GetCurrent`（Linux 直接丟例外）、`Get-NetTCPConnection`、以及硬編 `windows-x86_64` 的 `.bat` launcher | 同上 |
+| **F-14** | hybrid compose 經 coordinator 的 `depends_on` 連帶啟動**容器版** kit-manager-api，與 host-native 版搶同一個 `127.0.0.1:8010` | Windows `SO_REUSEADDR` 允許第二個 socket 綁同一 addr:port，兩邊都「成功」，誰在回應未定義 |
+| **F-15** | **host-native 服務在 SSH 斷線後全滅。** 真因不是 SIGHUP：pwsh 由 snap 安裝，子行程落在 `user@<uid>.service` 底下的 scope，systemd 在最後一個 session 結束時停掉該 unit。`setsid` 改的是 POSIX session、不是 cgroup，擋不住。解法＝`loginctl enable-linger`（已納入 provisioning，且 deploy 對其缺席 hard fail） | 本機部署的 session 不會結束 |
+| **F-16** | governance／kit-manager-api 硬編 `--host 127.0.0.1`，dockerised coordinator 經 bridge 連不到（`/api/governance/files/tree` → 502）。conversion 綁 `0.0.0.0` 所以一直正常 | Docker Desktop 經 VM 把 `host.docker.internal` 代理進 loopback |
+
+**方法論教訓**：F-16 診斷過程中，容器內以 `wget` 探測回報三個端點全不可達，差點導向「跨 bridge 網段不通」的錯誤結論——實際上該 image 沒有 `wget`。改用 `node` 對 owner-private target-scoped bridge 實測才得到 HTTP 200。**探測工具本身不存在時的失敗，與「服務不可達」在輸出上無法區分。**
 ### 4.5 風險登記修正
 
 - **R8 撤銷**：service-manager unit state 不等於 effective firewall policy；spike 已改以 effective policy 與實際連線測量裁決。live host policy/state 只記錄於 private operations record。
@@ -249,9 +267,9 @@ PR-B 改的正是**驗證機制本身**（deploy path）。§6 明文禁止測�
 
 ### 6.7 PR-B 任務清單
 
-- [ ] B1 — deploy target registry schema ＋ 兩個目標定義（容器化留空位不實作）
-- [ ] B2 — `scripts/lib/platform/` adapter：process tree、listener owner、路徑解析、Kit 啟動參數（含 `--no-window`）
-- [ ] B3 — ownership 語意跨平台等價性論證 ＋ 測試（`CreationDate` ↔ `/proc/<pid>/stat` starttime）
+- [x] B1 — deploy target registry schema ＋兩個行為 descriptor（`scripts/deploy-target-registry.json`，schema `deploy-target-registry/v1`；`canonical_target=canonical-linux`；`reserved_kinds=[linux_container]` 留空位不實作）。canonical Linux 的 exact host/account/network/path mapping 僅由 repo-external owner inventory 注入；公開 registry 不保留實值。`local-windows.build_command` 保留 `.\repo.bat` 形式：既有測試斷言此形，裸檔名有 PATHEXT 失敗史，因此改 registry 而非改測試
+- [x] B2 — `scripts/lib/platform/platform-adapter.ps1`：單一程式碼庫以 `$IsWindows`/`$IsLinux` 分派 process tree、listener owner、路徑解析、Kit 啟動參數（`--no-window` 由 registry 的 `extra_launch_args` 提供）。另含 `Resolve-PlatformSystemPython`——遠端只有 `python3`，裸 `& python` 在首次真實 Linux 部署靜默 no-op，故此函式必須只回傳 shell 真的叫得動的名稱
+- [x] B3 — ownership 語意跨平台等價性論證 ＋ 測試：論證見 §5「ownership 語意」段（Windows `Win32_Process.CreationDate`＋PID ↔ Linux `/proc/<pid>/stat` field 22 starttime＋`/proc/<pid>/exe`）；可執行證據為 `scripts/tests/test-platform-adapter.ps1`（同一套斷言兩平台皆須通過）。Windows 與 Linux owner-private target 均已實跑通過，公開證據只保留去識別化結果。
 - [ ] B4 — 收斂 §6.1 表列的 5 檔硬編常數 ＋ 17 處測試 fixture 到 registry
 - [ ] B5 — clone 流程含 exec bit 修復（F-2）
 - [ ] B6 — per-target env ＋ SSH 推送（D-14）；實作 registry-derived override allowlist、unknown-key fail-closed、per-key type／enum／range／schema validation，以及 sensitive override 的 explicit owner approval 與 redacted effective-config evidence（D-15）
@@ -259,8 +277,8 @@ PR-B 改的正是**驗證機制本身**（deploy path）。§6 明文禁止測�
 - [ ] B8 — 遠端佈建腳本化（§6.6）
 - [ ] B9 — 契約改寫（§6.3，含修掉 §5 既有漂移）
 - [ ] B10 — Windows 三級觸發 changed-path classifier（D-20）
-- [ ] B11 — 取得 `stack_kind=self_referential_bootstrap` evidence（依 PR-A 規則）
-- [ ] B12 — merge 後 fixpoint 重驗並回貼（PR-A 義務三）
+- [x] B11 — 取得 `stack_kind=self_referential_bootstrap` evidence（依 PR-A 規則）：PR #467 的 bootstrap evidence 位於 `docs/evidence/remote-linux-deploy-target/self-referential-bootstrap/`；formal preflight 的 inherited-open-ledger 自鎖由使用者核准一次性例外，例外不涵蓋 review、CI、approval 或 merge
+- [x] B12 — merge 後 fixpoint 重驗並回貼（PR-A 義務三）：#459 squash `ad7a50cf` 為 mechanism_commit，8 個 verification_contract command 於 main 實跑 EXIT=0，attestation 依 `self-referential-fixpoint-attestation/v1` 產出，entry 經 #470 關閉
 
 ---
 
@@ -268,14 +286,14 @@ PR-B 改的正是**驗證機制本身**（deploy path）。§6 明文禁止測�
 
 ```txt
 ① spike                                    ✅ 已完成（R1/W1/W2 全 PASS）
-② Codex PR #458 單一擁有者 merge 治理       🔴 進行中 — 阻塞 ③④
-③ PR-A  bootstrap 規則 ＋ ledger ＋ check   ⏸
-④ PR-B  遷移本體                           ⏸
-⑤ merge 後首次以 canonical 身分             ⏸ ← PR-A 義務三的 fixpoint
+② PR #458 單一擁有者 merge 治理             ✅ 已完成
+③ PR-A #459 ＋ fixpoint #470                ✅ 已完成
+④ PR-B #467 遷移本體                        🔵 review/repair 中
+⑤ #467 merge 後首次以 canonical 身分         ⏸ ← 緊接正常 merge 的 fixpoint
     從 origin/main 重建
 ```
 
-**阻塞說明**：`main` 目前 `required_approving_review_count=1` ＋ `enforce_admins=true`，而 repo 實質只有一位人類擁有者，GitHub 禁止 approve 自己的 PR → 死鎖。Codex 正以 PR #458「single-owner merge consent」處理。本計畫**不介入該決策**。
+**目前收斂規則**：#467 只取得 orphan-ledger formal-preflight 的一次性例外；仍須通過 exact-head review、CI、正常 approval 與受保護分支 merge，且 merge 後立即由 freshly fetched `origin/main` 建立 fixpoint closure PR。
 
 ---
 

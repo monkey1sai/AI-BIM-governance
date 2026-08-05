@@ -20,6 +20,10 @@ $script:SelfReferentialMechanismPattern = @(
     '^scripts/deploy\.ps1$'
     '^scripts/verify-all\.ps1$'
     '^scripts/dev/rebuild-test-deploy\.ps1$'
+    '^scripts/deploy-target-registry\.json$'
+    '^scripts/lib/deploy-target-registry\.ps1$'
+    '^scripts/lib/remote-deploy-transport\.ps1$'
+    '^scripts/lib/windows-verification-scope\.ps1$'
     '^scripts/dev/start-isolated-branch-stack\.ps1$'
     '^scripts/start-web-plane-docker\.ps1$'
     '^scripts/lib/(preflight-[a-z-]+|deploy-report|host-native-launcher|rebuild-test-deploy|start-child-with-environment|kit-log-probe|smoke-evidence|design-assets)\.ps1$'
@@ -74,6 +78,7 @@ $script:SelfReferentialAdjudicatorPaths = @(
     '.github/workflows/pr-review-agent.yml'
     'scripts/lib/detect-base-gate-capability.sh'
     'scripts/lib/self-referential-bootstrap.ps1'
+    'scripts/lib/windows-verification-scope.ps1'
     'scripts/tests/check-pr-body-evidence.ps1'
     'docs/agents/self-referential-bootstrap.md'
 )

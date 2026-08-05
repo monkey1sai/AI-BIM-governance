@@ -4,8 +4,12 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:FixedTestDeploymentRoot = 'D:\Users\deploy\AI-bim-geo'
-$script:FixedTestDeploymentDataRoot = 'D:\Users\deploy\AI-bim-geo-data'
+# Windows host-native evidence harness (plan D-20 tier 3): explicitly bound to
+# the 'local-windows' target profile in scripts/deploy-target-registry.json.
+. (Join-Path $PSScriptRoot '..\lib\deploy-target-registry.ps1')
+$script:HostNativeEvidenceTarget = Get-DeployTarget -Id 'local-windows'
+$script:FixedTestDeploymentRoot = [string]$script:HostNativeEvidenceTarget.deploy_root
+$script:FixedTestDeploymentDataRoot = [string]$script:HostNativeEvidenceTarget.runtime_data_root
 $script:CoordinatorHealthUrl = 'http://127.0.0.1:8004/health'
 $script:ConversionHealthUrl = 'http://127.0.0.1:49101/health'
 $script:ComposeFiles = @('compose.runtime-manager.yml', 'compose.host-kit.yml')

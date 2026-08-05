@@ -37,7 +37,33 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 
+# Per-OS primitives (platform name, TCP listener owner) and the deploy-target
+# registry that says where this platform's Kit build tree lives. Guarded so the
+# script stays runnable if a caller already sourced them.
+$RepoParent = (Resolve-Path -LiteralPath (Join-Path $RepoRoot "..")).Path
+if (-not (Get-Command -Name 'Get-PlatformName' -ErrorAction SilentlyContinue)) {
+    $platformAdapter = Join-Path $RepoParent 'scripts/lib/platform/platform-adapter.ps1'
+    if (-not (Test-Path -LiteralPath $platformAdapter -PathType Leaf)) {
+        throw "Streaming launcher requires the parent workspace helper: $platformAdapter. Run this script from the full AI-BIM-governance checkout."
+    }
+    . $platformAdapter
+}
+if (-not (Get-Command -Name 'Get-DeployTargetForCurrentPlatform' -ErrorAction SilentlyContinue)) {
+    $targetRegistry = Join-Path $RepoParent 'scripts/lib/deploy-target-registry.ps1'
+    if (-not (Test-Path -LiteralPath $targetRegistry -PathType Leaf)) {
+        throw "Streaming launcher requires the parent workspace helper: $targetRegistry. Run this script from the full AI-BIM-governance checkout."
+    }
+    . $targetRegistry
+}
+
 function Initialize-WindowsRuntimeEnvironment {
+    # Repairs a Windows service-account environment (USERDOMAIN, APPDATA,
+    # ProgramData, ComSpec...). Every value it sets is a Windows concept, and
+    # WindowsIdentity::GetCurrent throws "Windows Principal functionality is not
+    # supported on this platform" elsewhere - which is what killed Kit on the
+    # Linux target before it ever opened its signalling port.
+    if ((Get-PlatformName) -ne 'windows') { return }
+
     $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     $parts = $identity.Split("\", 2)
     if ($parts.Count -eq 2) {
@@ -88,12 +114,10 @@ function ConvertTo-AbsolutePath {
 function Test-PortFree {
     param([Parameter(Mandatory = $true)][int] $Port)
 
-    $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
-    if ($listeners.Count -gt 0) {
-        $details = $listeners | ForEach-Object {
-            "TCP $($_.LocalAddress):$($_.LocalPort) LISTENING $($_.OwningProcess)"
-        }
-        throw "Port $Port is already listening:`n$($details -join "`n")"
+    # Get-NetTCPConnection is Windows-only; the adapter reads /proc/net elsewhere.
+    $owner = Get-PlatformTcpListenerPid -Port $Port
+    if ($null -ne $owner) {
+        throw "Port $Port is already listening: TCP/$Port LISTENING $owner"
     }
 }
 
@@ -229,9 +253,15 @@ if (-not $SkipAutoLoad) {
     }
 }
 
-$launcher = Join-Path $RepoRoot "_build\windows-x86_64\release\ezplus.bim_review_stream_streaming.kit.bat"
+# Build tree and launcher come from the deploy-target registry for this platform:
+# windows-x86_64 with a .bat launcher here, linux-x86_64 with a .sh launcher on
+# the Linux target. The path used to be hardcoded to the Windows tree, so a Linux
+# run looked for a .bat that could never exist.
+$kitTarget = Get-DeployTargetForCurrentPlatform -RepoRoot $RepoParent
+$kitLaunch = Resolve-DeployTargetKitLaunch -Target $kitTarget -DeployRootOverride $RepoParent
+$launcher = $kitLaunch.LauncherPath
 if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
-    throw "Streaming launcher not found: $launcher. Run .\repo.bat build first."
+    throw "Streaming launcher not found: $launcher. Run '$($kitLaunch.BuildCommand)' in bim-streaming-server first."
 }
 
 Test-PortFree -Port $SignalPort
@@ -315,6 +345,15 @@ foreach ($endpoint in $SpectatorEndpointSpecs) {
 if (-not $SkipAutoLoad) {
     $kitPath = $resolvedUsd.Replace("\", "/")
     $args += "--/app/auto_load_usd=$kitPath"
+}
+
+# Platform-mandatory launch args from the registry (headless Linux needs
+# --no-window). Merged rather than assumed: -NoWindow defaults to $true, but a
+# caller passing -NoWindow:$false must not be able to switch off something the
+# target declares as mandatory. De-duplicated so the common case adds nothing.
+foreach ($extra in @($kitLaunch.Arguments)) {
+    if ([string]::IsNullOrWhiteSpace($extra)) { continue }
+    if ($args -notcontains $extra) { $args += $extra }
 }
 
 Write-Host "[streaming] launcher: $launcher"

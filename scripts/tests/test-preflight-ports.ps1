@@ -73,7 +73,19 @@ try {
     $spectatorMedia = $result.hostNative | Where-Object { $_.protocol -eq 'UDP' -and $_.port -eq 48008 } | Select-Object -First 1
     Assert-Equal 'OCCUPIED' $spectatorMedia.status 'spectator UDP media port occupied'
     Assert-Equal 13579 $spectatorMedia.pid 'spectator UDP media port pid'
-    Write-TestPass 'spectator ports included in preflight'
+Write-TestPass 'spectator ports included in preflight'
+
+# Custom published web-plane ports remain first-class preflight inputs.
+$custom = Test-PortAvailability -RepoRoot $sandbox -CoordinatorPort 18004 -ViewerPort 15173 -PortLookup {
+    param($port)
+    if ($port -eq 18004) { return 4101 }
+    if ($port -eq 15173) { return 4102 }
+    return $null
+} -UdpPortLookup { param($port) return $null } -ProcessNameLookup { param($procId) return "fixture-$procId" }
+Assert-True (@($custom.docker | Where-Object { $_.port -eq 18004 -and $_.status -eq 'OCCUPIED' }).Count -eq 1) 'custom coordinator port included in preflight'
+Assert-True (@($custom.docker | Where-Object { $_.port -eq 15173 -and $_.status -eq 'OCCUPIED' }).Count -eq 1) 'custom viewer port included in preflight'
+Assert-True (@($custom.docker | Where-Object { $_.port -in @(8004, 5173) }).Count -eq 0) 'default web-plane ports are not probed when custom values are supplied'
+Write-TestPass 'custom web-plane ports included in preflight'
 }
 finally { Remove-TestSandbox -Path $sandbox }
 
