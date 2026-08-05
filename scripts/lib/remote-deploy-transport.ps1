@@ -313,6 +313,7 @@ chmod 600 "$EFFECTIVE_ENV" "$SNAPSHOT_TMP"
 
 echo "== effective env snapshot begin =="
 cat "$SNAPSHOT_TMP"
+echo # F-17: the snapshot JSON has no trailing newline; keep the end marker on its own line
 echo "== effective env snapshot end =="
 
 {{BUILD_STEP}}
@@ -395,9 +396,7 @@ function New-RemoteDeployTag {
     $tagName = ''
     for ($attempt = 0; $attempt -lt 3; $attempt++) {
         $existing = & $GitRunner @('tag', '--list', "deploy-$dateToken-*")
-        $count = @(($existing.Output -split "
-?
-") | Where-Object { $_ }).Count
+        $count = @(($existing.Output -split "`r?`n") | Where-Object { $_ }).Count
         $candidate = Get-DeployTagName -TimestampUtc $TimestampUtc -Sequence ($count + 1 + $attempt)
         $message = "deploy target=$TargetId exit=0 snapshot=$SnapshotName deployed=$DeployedSha"
         $created = & $GitRunner @('tag', '-a', $candidate, '-m', $message, $DeployedSha)
@@ -411,6 +410,20 @@ function New-RemoteDeployTag {
         throw "remote_deploy_transport: deploy tag '$tagName' was created locally but could not be pushed: $($pushed.Output)"
     }
     return $tagName
+}
+
+function ConvertFrom-DeployEnvSnapshotTranscript {
+    # Extracts the redacted env snapshot from a remote rebuild transcript. The
+    # snapshot JSON is written without a trailing newline, so the remote template
+    # must emit a bare echo after `cat` (F-17) for the end marker to start its
+    # own line; this parser is the single implementation live dispatch uses.
+    param([AllowEmptyString()][string] $OutputText)
+    if ($OutputText -match '(?s)== effective env snapshot begin ==\r?\n(.*?)\r?\n== effective env snapshot end ==') {
+        try { return $Matches[1] | ConvertFrom-Json } catch {
+            throw "remote_deploy_transport: remote redacted env snapshot is invalid JSON: $($_.Exception.Message)"
+        }
+    }
+    return $null
 }
 
 function Invoke-RemoteTestDeployRebuild {
@@ -480,12 +493,7 @@ function Invoke-RemoteTestDeployRebuild {
     $exitCode = $LASTEXITCODE
 
     $outputText = ($output | Out-String)
-    $snapshot = $null
-    if ($outputText -match '(?s)== effective env snapshot begin ==\r?\n(.*?)\r?\n== effective env snapshot end ==') {
-        try { $snapshot = $Matches[1] | ConvertFrom-Json } catch {
-            throw "remote_deploy_transport: remote redacted env snapshot is invalid JSON: $($_.Exception.Message)"
-        }
-    }
+    $snapshot = ConvertFrom-DeployEnvSnapshotTranscript -OutputText $outputText
     if ($null -eq $snapshot -and $exitCode -eq 0) {
         throw 'remote_deploy_transport: remote rebuild reported success but emitted no effective env snapshot section.'
     }

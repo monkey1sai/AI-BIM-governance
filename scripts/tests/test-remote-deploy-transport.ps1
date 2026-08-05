@@ -237,6 +237,22 @@ LOCAL_ONLY_FLAG=1
         Remove-Item -LiteralPath Function:\ssh -Force -ErrorAction SilentlyContinue
     }
 
+    # --- F-17: snapshot end marker must start its own line --------------------------
+    # The compressed snapshot JSON is written WITHOUT a trailing newline, so real
+    # bash `cat` ends mid-line. Before F-17 the end marker was glued onto the JSON
+    # line, the operator-side parser never matched, and a SUCCESSFUL real rebuild
+    # was rejected as "no effective env snapshot section". The fake ssh above emits
+    # PS objects that Out-String newline-joins, which can never reproduce that
+    # shape - these assertions pin the real byte semantics.
+    Assert-True ($dry.Script -match '(?m)^cat "\$SNAPSHOT_TMP"\necho\s*(#[^\n]*)?\necho "== effective env snapshot end =="') 'template emits a bare echo between cat and the end marker (F-17)'
+    $compressedJson = '{"schema_version":"deploy-target-env-snapshot/v1","target_id":"canonical-linux","entries":[],"overridden_keys":[]}'
+    $postFixTranscript = "== effective env snapshot begin ==`n" + $compressedJson + "`n== effective env snapshot end ==`n"
+    $parsedTranscript = ConvertFrom-DeployEnvSnapshotTranscript -OutputText $postFixTranscript
+    Assert-True ($null -ne $parsedTranscript -and [string]$parsedTranscript.target_id -eq 'canonical-linux') 'parser accepts the fixed transcript shape (newline-terminated cat)'
+    $preFixTranscript = "== effective env snapshot begin ==`n" + $compressedJson + '== effective env snapshot end ==' + "`n"
+    Assert-True ($null -eq (ConvertFrom-DeployEnvSnapshotTranscript -OutputText $preFixTranscript)) 'the pre-F-17 glued shape must not parse - this is the failure the echo prevents'
+    Write-Host '[PASS] F-17 snapshot terminator newline'
+
     # --- B13 deploy tags: 日期+timer ticker+序號 -----------------------------------
     $ts = [DateTimeOffset]::new(2026, 8, 5, 1, 2, 3, [TimeSpan]::Zero)
     $expected = 'deploy-20260805-{0}-007' -f $ts.UtcTicks
