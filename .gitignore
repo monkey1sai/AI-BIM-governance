@@ -22,6 +22,12 @@ Thumbs.db
 # Real secret env files (untracked 2026-06-17; *.example variants stay tracked)
 /.env
 /bim-review-coordinator/.env
+# Per-target deploy env family (decision D-14): real values never tracked,
+# *.example variants stay tracked (ignore rules do not affect tracked files).
+/.env.web-plane.host-kit
+/.env.web-plane.host-kit.*
+!/.env.web-plane.host-kit.example
+!/.env.web-plane.host-kit.*.example
 .agents/
 .claude/*
 !.claude/skills/

@@ -5,7 +5,8 @@ param(
     [switch] $ChangedPathsNulDelimited,
     [string] $RepoRoot = '',
     [string] $BaseSha = '',
-    [string] $HeadSha = ''
+    [string] $HeadSha = '',
+    [int] $PrNumber = 0
 )
 
 Set-StrictMode -Version Latest
@@ -17,6 +18,7 @@ $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 . (Join-Path $scriptRepoRoot 'scripts\lib\pr-review-agent.ps1')
 . (Join-Path $scriptRepoRoot 'scripts\lib\design-system-gate.ps1')
 . (Join-Path $scriptRepoRoot 'scripts\lib\production-boundary-contract.ps1')
+. (Join-Path $scriptRepoRoot 'scripts\lib\self-referential-bootstrap.ps1')
 
 function Get-MarkdownTableValue {
     param(
@@ -297,5 +299,29 @@ if (Test-AnyPathMatches -Paths $changedPaths -Pattern $deployPattern) {
         'Verify command'
     )
 }
+
+# Self-referential bootstrap: PRs that change the verification mechanism itself must
+# declare it, and the ledger transition is judged base-vs-head so debt cannot be
+# deleted, impersonated, or closed with a fabricated fixpoint.
+# Rule: docs/agents/self-referential-bootstrap.md
+$hasBootstrapBaseContext = -not [string]::IsNullOrWhiteSpace($BaseSha)
+$baseLedgerJson = ''
+$baseLedgerExists = $false
+if ($hasBootstrapBaseContext) {
+    & git -C $RepoRoot cat-file -e "$BaseSha^{commit}" 2>$null
+    if ($LASTEXITCODE -ne 0) { throw "Self-referential bootstrap base SHA does not resolve to a commit: $BaseSha" }
+    & git -C $RepoRoot cat-file -e "${BaseSha}:scripts/self-referential-bootstrap-ledger.json" 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        $baseLedgerExists = $true
+        $baseLedgerJson = (& git -C $RepoRoot show "${BaseSha}:scripts/self-referential-bootstrap-ledger.json" 2>$null) -join "`n"
+        if ($LASTEXITCODE -ne 0) { throw "Unable to read the bootstrap ledger that exists at base $BaseSha." }
+    }
+}
+Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths `
+    -LedgerPath (Join-Path $RepoRoot 'scripts\self-referential-bootstrap-ledger.json') `
+    -GetTableValue { param($b, $label) Get-MarkdownTableValue -Body $b -Label $label } `
+    -BaseLedgerJson $baseLedgerJson -BaseLedgerExists $baseLedgerExists `
+    -HasBaseContext $hasBootstrapBaseContext `
+    -PrNumber $PrNumber -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
 
 Write-Host '[check-pr-body-evidence] passed'

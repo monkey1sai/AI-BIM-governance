@@ -1,0 +1,52 @@
+{
+  "schema_version": "self-referential-bootstrap-ledger/v1",
+  "entries": [
+    {
+      "id": "self-referential-bootstrap-gate",
+      "status": "closed",
+      "pr": 459,
+      "opened_at": "2026-08-03T04:00:00Z",
+      "reason": "This PR introduces the bootstrap gate itself. The PR Metadata Contract job materialises the body checker pinned at the base SHA so that a PR cannot adjudicate itself with its own edited gate; the base here has no scripts/lib/self-referential-bootstrap.ps1 and no gate wiring, so the base-pinned checker has no gate to run at all. Any PR that adds a gate has a base without that gate, so no ordering avoids this.",
+      "verification_mechanism_paths": [
+        ".github/workflows/agent-governance.yml",
+        ".github/workflows/pr-review-agent.yml",
+        "docs/agents/self-referential-bootstrap.md",
+        "scripts/dev/check-pr-local-preflight.ps1",
+        "scripts/lib/detect-base-gate-capability.sh",
+        "scripts/lib/self-referential-bootstrap.ps1",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/check-pr-body-evidence.ps1",
+        "scripts/tests/test-agent-governance-check.ps1",
+        "scripts/tests/test-self-referential-bootstrap.ps1",
+        "scripts/tests/test-base-gate-capability.ps1",
+        "scripts/tests/test-preflight-prnumber-forwarding.ps1"
+      ],
+      "verification_contract": {
+        "id": "self-referential-bootstrap-gate/v1",
+        "command_ids": [
+          "test-self-referential-bootstrap",
+          "test-base-gate-capability",
+          "test-preflight-prnumber-forwarding",
+          "test-agent-governance-check",
+          "test-pr-body-evidence",
+          "test-pr-review-agent",
+          "invoke-powershell-static",
+          "detect-base-gate-capability-bash-syntax"
+        ],
+        "contract_sha256": "0f37135086c5b61af8246ba89ac584287ab57749c6b0ff9e7eabd7a6a4351367"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/self-referential-bootstrap-gate/self-referential-bootstrap/README.md",
+        "docs/evidence/self-referential-bootstrap-gate/self-referential-bootstrap/gate-suites.txt"
+      ],
+      "fixpoint": {
+        "reverified_at": "2026-08-04T14:47:51Z",
+        "mechanism_commit": "ad7a50cf9ebb056c26411547df6e4d7aa0703a8b",
+        "evidence_refs": [
+          "docs/evidence/self-referential-bootstrap-gate/fixpoint/attestation.json",
+          "docs/evidence/self-referential-bootstrap-gate/fixpoint/gate-suites-on-main.txt"
+        ]
+      }
+    }
+  ]
+}

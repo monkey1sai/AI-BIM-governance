@@ -1,0 +1,41 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "self-referential-bootstrap-gate",
+  "mechanism_commit": "ad7a50cf9ebb056c26411547df6e4d7aa0703a8b",
+  "verification_contract_sha256": "0f37135086c5b61af8246ba89ac584287ab57749c6b0ff9e7eabd7a6a4351367",
+  "result": "pass",
+  "commands": [
+    {
+      "id": "test-self-referential-bootstrap",
+      "exit_code": 0
+    },
+    {
+      "id": "test-base-gate-capability",
+      "exit_code": 0
+    },
+    {
+      "id": "test-preflight-prnumber-forwarding",
+      "exit_code": 0
+    },
+    {
+      "id": "test-agent-governance-check",
+      "exit_code": 0
+    },
+    {
+      "id": "test-pr-body-evidence",
+      "exit_code": 0
+    },
+    {
+      "id": "test-pr-review-agent",
+      "exit_code": 0
+    },
+    {
+      "id": "invoke-powershell-static",
+      "exit_code": 0
+    },
+    {
+      "id": "detect-base-gate-capability-bash-syntax",
+      "exit_code": 0
+    }
+  ]
+}
