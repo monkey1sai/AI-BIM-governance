@@ -1,5 +1,7 @@
 # remote-linux-deploy-target — fixpoint summary
 
+> 文件性質：**evidence**（fixpoint 完成證據）。本檔記錄已執行之驗證與其結果，不是 contract、不是 working note；ledger entry 閉合後受閘門的證據不可變規則保護。
+
 Closes the `remote-linux-deploy-target` ledger entry per
 `docs/agents/self-referential-bootstrap.md` §2 obligation 3 and the
 owner-directed closure procedure (plan task B14; agents-board handoff
@@ -27,7 +29,9 @@ codex→claude, 2026-08-05).
    - governance `:49102` and kit-manager `:8010` 200 **on the private-inventory
      bind host** (the deploy's own Phase 5 verify shows the same)
    - effective env present with mode 600; snapshot semantics re-derived through
-     the shipped `transport-lib.ps1`: valid JSON, **34 entries**, matching the
+     the transport-pushed runtime copy at `<runtime_data_root>/transport-lib.ps1`
+     (the operator dispatch ships `scripts/lib/remote-deploy-transport.ps1`
+     there so both sides share one merge implementation): valid JSON, **34 entries**, matching the
      canonical env contract.
 3. **The ordered 12-command `verification_contract`**, run exactly as recorded
    in the ledger — no reordering, no substitution — every command `EXIT=0`
