@@ -8,8 +8,10 @@
 `log/phase/console/budget/setTimeout/clearTimeout/Date/agent/parallel/pipeline/workflow/args`，沒有 shell、Git 或 GitHub CLI capability。因而目前 `ship-item.js` 在 Validate 完成 args 檢查後，必定回：
 
 ```json
-{"merged":false,"mergeCommit":null,"heldReason":"host_env_blocked","heldDetail":"ship_workflow_shell_unavailable"}
+{"merged":false,"prNumber":42,"mergeCommit":null,"heldReason":"host_env_blocked","heldDetail":"ship_workflow_shell_unavailable"}
 ```
+
+其中 `prNumber` 原樣保留 validated input；caller 傳入 `null` 時回傳值也為 `null`。
 
 這個分支不 dispatch apex、不執行 preparation/final reads，也不執行 merge。production script 已移除 legacy coordinator、shell／agent dispatch 與 merge sink；即使 caller 注入 synthetic `$` 或 `agent` 也只能得到同一個 durable HELD。不存在 synthetic injected-`$` happy path 可作為 deployability 或真實 runtime pass 證據，測試只證明注入能力無法解鎖 production workflow。
 

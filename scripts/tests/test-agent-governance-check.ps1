@@ -262,6 +262,11 @@ try {
         Assert-True ($ci -match "(?m)^\s{2}$([regex]::Escape($job)):\s*$") "ci.yml contains job $job"
     }
     Assert-True ($ci -match 'changed path classifier') 'ci.yml contains changed path classifier'
+    Assert-True ($ci -match 'types:\s*\[opened, edited, synchronize, reopened, ready_for_review\]') 'CI listens for PR base edits as well as head lifecycle events'
+    $ciEditedGate = '${{ github.event.action != ''edited'' || github.event.changes.base != null }}'
+    Assert-True (
+        [regex]::Matches($ci, [regex]::Escape($ciEditedGate)).Count -eq 5
+    ) 'all changed-path classifier steps skip body/title-only edits but run for base edits'
     foreach ($output in @('root_contracts', 'coordinator', 'streaming', 'governance_service', 'viewer', 'agent_governance', 'conv_functional', 'kit_manager_api', 'kit_manager_web', 'compose_config', 'powershell_static', 'rebuild_test_deploy', 'secret_pattern_scan', 'plan_result', 'plan_sha256')) {
         $expectedOutput = $output + ': ${{ steps.paths.outputs.' + $output + ' }}'
         Assert-True ($ci -match [regex]::Escape($expectedOutput)) "changes job exposes $output output"

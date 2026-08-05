@@ -26,6 +26,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Refuse non-default PR bases
+        shell: bash
+        env:
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ "$PR_BASE_REF" != "$DEFAULT_BRANCH" ]; then
+            echo "::error::Governance Base Audit only trusts the repository default branch."
+            exit 1
+          fi
+
       - name: Checkout trusted base policy
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:

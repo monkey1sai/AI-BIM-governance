@@ -360,8 +360,9 @@ HELD@P<n> | reason=<held 值> | spec=<specPath/changePath> | slug=<slug> | userF
 ## Resume(使用者一句話重入;支援跨 session)
 
 - **State 檔(durable,跨 session 唯一座標)**:`agent-contracts/spec-to-done.contract.json` 固定 canonical path
-  `artifacts/spec-to-done/{slug}-state.md`。先把 durable history 完整複製到 sibling temp，再 append
-  候選行（禁止單行 temp），執行 `node .claude/skills/spec-to-done/validate-state.mjs（單一正本：.claude 側；.codex 不放副本） --state <temp>
+  `artifacts/spec-to-done/{slug}-state.md`。validator 單一正本位於 `.claude` 側，`.codex` 不放副本。
+  先把 durable history 完整複製到 sibling temp，再 append 候選行（禁止單行 temp），執行
+  `node .claude/skills/spec-to-done/validate-state.mjs --state <temp>
   --platform codex --git-exe <(Get-Command git).Source 的絕對路徑> --expected-head <git SHA>
   --expected-worktree <worktreeRoot> --expected-agent-limit 40 --expected-p5-limit 2
   --expected-evidence-limit 2 --trusted-main-ref refs/heads/main`；exit 0 才 append canonical durable state。

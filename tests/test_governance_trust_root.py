@@ -332,6 +332,9 @@ def test_governance_enforcement_tests_are_policy_bearing_paths(tmp_path: Path) -
         "tests/test_observed_architecture.py",
         "tests/test_layered_architecture.py",
         "tests/test_governance_trust_root.py",
+        "tests/test_governed_dispatch_runtime.mjs",
+        "tests/test_ship_item_runtime.mjs",
+        "tests/test_spec_to_done_state_contract.py",
         "tests/conftest.py",
     }
     for relative in protected_tests:
@@ -394,6 +397,10 @@ def test_malformed_or_missing_candidate_baseline_fails_closed(tmp_path: Path) ->
     assert missing.returncode == 1
     assert _codes(malformed) == {"trust_root.input_invalid"}
     assert _codes(missing) == {"trust_root.input_invalid"}
+    for result in (malformed, missing):
+        payload = _payload(result)
+        assert payload["base_path_fingerprint"] is None
+        assert payload["candidate_path_fingerprint"] is None
 
 
 def test_trust_root_workflow_runs_only_the_base_owned_checker() -> None:
@@ -411,6 +418,13 @@ def test_trust_root_workflow_runs_only_the_base_owned_checker() -> None:
     assert "statuses: write" not in workflow
     assert "checks: write" not in workflow
     assert "repository: ${{ github.event.pull_request.head.repo.full_name }}" in workflow
+    guard_index = workflow.index("- name: Refuse non-default PR bases")
+    checkout_index = workflow.index("- name: Checkout trusted base policy")
+    assert guard_index < checkout_index
+    assert "PR_BASE_REF: ${{ github.event.pull_request.base.ref }}" in workflow
+    assert "DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}" in workflow
+    assert 'if [ "$PR_BASE_REF" != "$DEFAULT_BRANCH" ]; then' in workflow
+    assert "exit 1" in workflow[guard_index:checkout_index]
     assert re.search(r"(?m)^\s*uses:\s*\./candidate(?:/|\s*$)", workflow) is None
     assert re.search(r"(?m)^\s*working-directory:\s*candidate(?:/|\s*$)", workflow) is None
 

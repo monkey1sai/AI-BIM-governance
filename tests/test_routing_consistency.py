@@ -198,5 +198,11 @@ def test_ship_document_matches_runtime_security_boundary():
         "base-pinned trusted host executor", "synthetic",
     ):
         assert literal in doc
+    assert (
+        '{"merged":false,"prNumber":42,"mergeCommit":null,'
+        '"heldReason":"host_env_blocked",'
+        '"heldDetail":"ship_workflow_shell_unavailable"}'
+    ) in doc
+    assert "prNumber` 原樣保留 validated input" in doc
     assert re.search(r"MUST NOT[^\n]*gh pr merge --admin", doc)
     assert "preparation child" in doc and "沒有 preparation child" in doc

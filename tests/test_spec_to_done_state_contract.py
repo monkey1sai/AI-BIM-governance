@@ -191,6 +191,11 @@ def test_valid_claude_and_codex_states_and_single_canonical_validator(tmp_path):
     # .claude 側；.codex 鏡像不得放副本（SKILL.md 指向 .claude 路徑）。兩平台 state 都用同一正本驗。
     assert CLAUDE_VALIDATOR.exists()
     assert not CODEX_VALIDATOR.exists()
+    claude_skill = CLAUDE_SKILL.read_text(encoding="utf-8")
+    codex_skill = CODEX_SKILL.read_text(encoding="utf-8")
+    assert "validate-state.mjs --state <temp> --platform claude" in claude_skill
+    assert "validate-state.mjs --state <temp>\n  --platform codex" in codex_skill
+    assert "validate-state.mjs（" not in codex_skill
     code, result = _run(tmp_path, repo, _line(repo, head))
     assert code == 0 and result["ok"] is True
     code, result = _run(
