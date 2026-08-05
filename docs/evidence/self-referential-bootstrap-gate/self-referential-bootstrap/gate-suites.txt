@@ -1,14 +1,10 @@
 stack_kind=self_referential_bootstrap
 branch=feat/self-referential-bootstrap-ledger
-tested_head=c656e4e07c92e04988db8a7ad551d871912a94e6
-captured_at_utc=2026-08-04T04:47:27Z
+tested_head=9ee9cc931fbc80df6db5b84e880d91d596db2f17
+captured_at_utc=2026-08-04T14:33:26Z
 captured on the PR branch because the PR base has no bootstrap gate to run (see reason in the ledger entry)
 
 ### pwsh -NoProfile -NonInteractive -File .\scripts\tests\test-self-referential-bootstrap.ps1
-[test-self-referential-bootstrap] all assertions passed
-EXIT=0
-
-### fixture identity regression with process-local global/system Git config disabled
 [test-self-referential-bootstrap] all assertions passed
 EXIT=0
 
@@ -21,6 +17,9 @@ EXIT=0
 EXIT=0
 
 ### pwsh -NoProfile -NonInteractive -File .\scripts\tests\test-agent-governance-check.ps1
+# tests 27
+# pass 27
+# fail 0
 [test-agent-governance-check] all assertions passed
 EXIT=0
 
@@ -30,4 +29,12 @@ EXIT=0
 
 ### pwsh -NoProfile -NonInteractive -File .\scripts\tests\test-pr-review-agent.ps1
 [test-pr-review-agent] all assertions passed
+EXIT=0
+
+### pwsh -NoProfile -NonInteractive -File .\scripts\tests\invoke-powershell-static.ps1
+[invoke-powershell-static] passed
+EXIT=0
+
+### bash -n scripts/lib/detect-base-gate-capability.sh
+OUTPUT=<empty>
 EXIT=0
