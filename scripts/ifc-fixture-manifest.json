@@ -1,7 +1,7 @@
 {
   "schema_version": "ifc-fixture-manifest/v1",
   "authority": {
-    "endpoint": "http://192.168.20.234:9000",
+    "endpoint": "https://192.168.20.234:9000",
     "bucket": "bim-control",
     "note": "Pins are added when real fixture objects are enrolled; enrolment requires MinIO credentials via env (bucket rejects anonymous access)."
   },

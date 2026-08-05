@@ -28,6 +28,10 @@ Thumbs.db
 /.env.web-plane.host-kit.*
 !/.env.web-plane.host-kit.example
 !/.env.web-plane.host-kit.*.example
+# Owner-controlled topology stays outside the repository. The tracked
+# target.local.example.json contains documentation-only values.
+**/target.local.json
+**/*.target.local.json
 .agents/
 .claude/*
 !.claude/skills/
@@ -259,5 +263,6 @@ artifacts/architecture/
 # ----------------------------
 artifacts/tmp/
 artifacts/verification-outcomes/
+/artifacts/deploy-reports/
 bim-review-coordinator/track.txt
 .aider*

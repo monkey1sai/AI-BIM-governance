@@ -73,7 +73,7 @@ Assert-True ($null -eq (Get-PlatformTcpListenerPid -Port $port)) 'closed listene
 $systemPython = Resolve-PlatformSystemPython
 Assert-True ($null -ne $systemPython) 'a usable system python must resolve on this platform'
 Assert-True ($null -ne (Get-Command -Name $systemPython -ErrorAction SilentlyContinue)) "resolved system python '$systemPython' must be a resolvable command"
-Assert-True (((& $systemPython --version 2>&1 | Out-String)) -match '\d+\.\d+') 'resolved system python must report a version'
+Assert-True (((& $systemPython -c 'import sys; print(sys.version_info >= (3, 11))' 2>&1 | Out-String).Trim()) -eq 'True') 'resolved system python must be 3.11+'
 Assert-True ($systemPython -in @('python', 'python3')) "system python must be one of the probed candidates (got: $systemPython)"
 
 # --- path/launch resolution driven by the real registry ----------------------------
@@ -84,10 +84,29 @@ if ($platform -eq 'windows') {
     Assert-True ($venvPython -match 'bin/python$') 'linux venv python shape'
 }
 
-$linuxTarget = Get-DeployTarget -Id 'remote-linux-181'
-$linuxLaunch = Resolve-DeployTargetKitLaunch -Target $linuxTarget
-Assert-True ($linuxLaunch.LauncherPath -eq '/home/bimdeploy/AI-bim-geo/bim-streaming-server/_build/linux-x86_64/release/ezplus.bim_review_stream_streaming.kit.sh') "linux launcher path (got: $($linuxLaunch.LauncherPath))"
-Assert-True ('--no-window' -in @($linuxLaunch.Arguments)) 'linux launch must carry --no-window (F-1)'
+$privateTempRoot = Join-Path ([IO.Path]::GetTempPath()) "ai-bim-platform-inventory-$([Guid]::NewGuid().ToString('N'))"
+New-Item -ItemType Directory -Path $privateTempRoot -Force | Out-Null
+try {
+    $inventoryPath = Join-Path $privateTempRoot 'target.local.json'
+    @{
+        schema_version = 'deploy-target-private-inventory/v1'
+        targets = @(@{
+            id = 'canonical-linux'
+            connection = @{ host = 'deploy.example.invalid'; user = 'deploy-fixture' }
+            deploy_root = '/srv/ai-bim/example-deploy'
+            runtime_data_root = '/srv/ai-bim/example-runtime-data'
+            public_host = '192.0.2.10'
+            edge_site_id = 'site-example'
+            host_native_bind_host = '192.0.2.1'
+        })
+    } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $inventoryPath -Encoding utf8
+    $linuxTarget = Get-DeployTarget -Id 'canonical-linux' -InventoryPath $inventoryPath
+    $linuxLaunch = Resolve-DeployTargetKitLaunch -Target $linuxTarget
+    Assert-True ($linuxLaunch.LauncherPath -eq '/srv/ai-bim/example-deploy/bim-streaming-server/_build/linux-x86_64/release/ezplus.bim_review_stream_streaming.kit.sh') "linux launcher path (got: $($linuxLaunch.LauncherPath))"
+    Assert-True ('--no-window' -in @($linuxLaunch.Arguments)) 'linux launch must carry --no-window (F-1)'
+} finally {
+    Remove-Item -LiteralPath $privateTempRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 $windowsTarget = Get-DeployTarget -Id 'local-windows'
 $windowsLaunch = Resolve-DeployTargetKitLaunch -Target $windowsTarget

@@ -287,6 +287,7 @@ $signatureCommon = @{
     SpectatorStreamPorts = @(48008)
     AllowedStageHosts = '127.0.0.1:49101'
     CoordinatorInternalApiBase = 'http://127.0.0.1:8004'
+    Revision = '1111111111111111111111111111111111111111'
 }
 $signatureA = New-KitRuntimeSignature @signatureCommon -RuntimeAuthorityTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenA)
 $signatureB = New-KitRuntimeSignature @signatureCommon -RuntimeAuthorityTokenFingerprint (Get-DeploySecretFingerprint -Value $signatureTokenB)
@@ -329,13 +330,15 @@ $conversionSignatureA = New-ConversionRuntimeSignature `
     -Port 49101 `
     -HealthHost '127.0.0.1' `
     -PublicArtifactsUrl 'http://127.0.0.1:49101/artifacts' `
-    -ArtifactsRoot $webPlaneSignatureRootA
+    -ArtifactsRoot $webPlaneSignatureRootA `
+    -Revision '1111111111111111111111111111111111111111'
 $conversionSignatureRootChanged = New-ConversionRuntimeSignature `
     -BindHost '127.0.0.1' `
     -Port 49101 `
     -HealthHost '127.0.0.1' `
     -PublicArtifactsUrl 'http://127.0.0.1:49101/artifacts' `
-    -ArtifactsRoot $webPlaneSignatureRootB
+    -ArtifactsRoot $webPlaneSignatureRootB `
+    -Revision '1111111111111111111111111111111111111111'
 Assert-True ($conversionSignatureA -ne $conversionSignatureRootChanged) 'artifacts root change updates host-native conversion signature'
 Write-TestPass 'conversion signature tracks effective artifacts root'
 
@@ -349,9 +352,11 @@ Assert-Equal 1 $governanceSignatureHelper.Count 'governance signature helper fou
 $a4SignatureTokenA = "a4-context-$([guid]::NewGuid().ToString('N'))"
 $a4SignatureTokenB = "a4-context-$([guid]::NewGuid().ToString('N'))"
 $governanceSignatureCommon = @{
+    BindHost = '127.0.0.1'
     Port = 49102
     DbPath = 'C:\edge\governance.db'
     FileLibraryRoot = 'C:\edge\storage'
+    Revision = '1111111111111111111111111111111111111111'
 }
 $governanceSignatureA = New-GovernanceRuntimeSignature @governanceSignatureCommon -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $a4SignatureTokenA)
 $governanceSignatureB = New-GovernanceRuntimeSignature @governanceSignatureCommon -A4InternalContextTokenFingerprint (Get-DeploySecretFingerprint -Value $a4SignatureTokenB)

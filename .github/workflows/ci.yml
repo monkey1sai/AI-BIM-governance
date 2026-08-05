@@ -162,6 +162,10 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-platform-adapter.ps1
 
+      - name: Parse Linux target provisioner
+        shell: bash
+        run: bash -n scripts/dev/provision-linux-deploy-target.sh
+
       - name: Run deploy target registry tests (linux)
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-deploy-target-registry.ps1

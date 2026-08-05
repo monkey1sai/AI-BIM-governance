@@ -11,13 +11,14 @@
 #   override layer <runtime_data_root>/env.local, remote-maintained, never
 #                  touched by the operator, wins per key
 #   effective      merged base+override written to <deploy_root>/<effective name>
-# The effective env is snapshotted at deploy time: non-secret values in the
-# clear, secret-looking keys reduced to a sha256-8 fingerprint (never the value).
+# The effective env is snapshotted at deploy time: every value is reduced to a
+# sha256-8 fingerprint plus length. Key classification is informational only.
 
 Set-StrictMode -Version Latest
 
 $script:RemoteDeployRepoUrl = 'https://github.com/monkey1sai/AI-BIM-governance.git'
-$script:RemoteEnvSecretKeyPattern = '(?i)(token|secret|password|passwd|api[_-]?key|private[_-]?key|credential)'
+$script:RemoteEnvSecretKeyPattern = '(?i)(token|secret|password|passwd|api[_-]?key|access[_-]?key|private[_-]?key|credential)'
+$script:RemoteEnvTopologyKeyPattern = '(?i)(host|server|url|uri|endpoint|root|path|site|cidr|address|network)'
 
 function ConvertFrom-DeployEnvContent {
     # dotenv-subset parser: KEY=VALUE lines, '#' comments, blanks ignored.
@@ -70,8 +71,8 @@ function ConvertTo-DeployEnvContent {
 
 function New-DeployTargetEnvSnapshot {
     # Point-in-time attestation of the effective env (decision D-15): the record
-    # proves what was in force when evidence was taken. Secret-looking keys keep
-    # only a fingerprint; the value never enters the snapshot (the repo is public).
+    # proves what was in force when evidence was taken. Every value keeps only a
+    # fingerprint and length; no env value enters stdout or local reports.
     param(
         [Parameter(Mandatory = $true)] $Values,
         [Parameter(Mandatory = $true)][string] $TargetId,
@@ -79,18 +80,22 @@ function New-DeployTargetEnvSnapshot {
     )
     $entries = foreach ($key in $Values.Keys) {
         $value = [string]$Values[$key]
-        if ($key -match $script:RemoteEnvSecretKeyPattern) {
-            $fingerprint = ''
-            if ($value.Length -gt 0) {
-                $sha = [System.Security.Cryptography.SHA256]::Create()
-                try {
-                    $hash = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($value))
-                    $fingerprint = ([BitConverter]::ToString($hash) -replace '-', '').Substring(0, 8).ToLowerInvariant()
-                } finally { $sha.Dispose() }
-            }
-            [pscustomobject]@{ key = $key; secret = $true; fingerprint = $fingerprint; length = $value.Length }
-        } else {
-            [pscustomobject]@{ key = $key; secret = $false; value = $value }
+        $isSecret = ($key -match $script:RemoteEnvSecretKeyPattern)
+        $isTopology = ($key -match $script:RemoteEnvTopologyKeyPattern)
+        $fingerprint = ''
+        if ($value.Length -gt 0) {
+            $sha = [System.Security.Cryptography.SHA256]::Create()
+            try {
+                $hash = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($value))
+                $fingerprint = ([BitConverter]::ToString($hash) -replace '-', '').Substring(0, 8).ToLowerInvariant()
+            } finally { $sha.Dispose() }
+        }
+        [pscustomobject]@{
+            key = $key
+            secret = $isSecret
+            topology = $isTopology
+            fingerprint = $fingerprint
+            length = $value.Length
         }
     }
     return [pscustomobject]@{
@@ -189,9 +194,21 @@ echo "DEPLOY_EXIT=$?"
     $template = @'
 #!/bin/bash
 set -euo pipefail
+umask 077
 DEPLOY_ROOT='{{DEPLOY_ROOT}}'
 DATA_ROOT='{{DATA_ROOT}}'
 REPO_URL='{{REPO_URL}}'
+TARGET_ID='{{TARGET_ID}}'
+TARGET_INVENTORY="$DATA_ROOT/target.local.json"
+
+# The owner provisions this file out-of-band. Transport deliberately never
+# uploads or overwrites private topology.
+if [ ! -f "$TARGET_INVENTORY" ]; then
+  echo "missing owner-controlled target inventory" >&2
+  exit 3
+fi
+chmod 600 "$TARGET_INVENTORY"
+export AI_BIM_DEPLOY_TARGET_INVENTORY="$TARGET_INVENTORY"
 
 echo "== ensure checkout =="
 if [ ! -d "$DEPLOY_ROOT/.git" ]; then
@@ -199,20 +216,37 @@ if [ ! -d "$DEPLOY_ROOT/.git" ]; then
 fi
 cd "$DEPLOY_ROOT"
 
+OLD_REV="$(git rev-parse HEAD 2>/dev/null || true)"
+
 echo "== freshly fetch origin/main (contract: stop on failure, never stale) =="
 git fetch origin '+refs/heads/main:refs/remotes/origin/main'
 {{BOOTSTRAP_FETCH}}
+NEW_REV="$(git rev-parse {{RESET_TARGET}})"
+KIT_INPUTS_CHANGED=0
+if [ -z "$OLD_REV" ] || ! git diff --quiet "$OLD_REV" "$NEW_REV" -- \
+  bim-streaming-server/source \
+  bim-streaming-server/repo.toml \
+  bim-streaming-server/repo.sh \
+  bim-streaming-server/repo.bat \
+  bim-streaming-server/premake5.lua \
+  bim-streaming-server/tools; then
+  KIT_INPUTS_CHANGED=1
+fi
 
 echo "== local changes before reset =="
 git status --porcelain || true
 
 git reset --hard {{RESET_TARGET}}
 git clean -fd -e '.env*'
+if [ "$KIT_INPUTS_CHANGED" -eq 1 ]; then
+  echo "== invalidate stale Kit build outputs =="
+  rm -rf "$DEPLOY_ROOT/bim-streaming-server/_build"
+fi
 
 {{EXEC_BITS}}
 
 echo "== place effective env =="
-BASE_ENV="$DEPLOY_ROOT/{{ENV_NAME}}.base"
+BASE_ENV="$DATA_ROOT/{{ENV_NAME}}.base"
 LOCAL_ENV="$DATA_ROOT/env.local"
 EFFECTIVE_ENV="$DEPLOY_ROOT/{{ENV_NAME}}"
 if [ ! -f "$BASE_ENV" ]; then
@@ -221,23 +255,28 @@ if [ ! -f "$BASE_ENV" ]; then
 fi
 mkdir -p "$DATA_ROOT"
 [ -f "$LOCAL_ENV" ] || : > "$LOCAL_ENV"
+chmod 600 "$BASE_ENV" "$LOCAL_ENV"
 MERGE_TMP="$(mktemp --suffix .ps1)"
+SNAPSHOT_TMP="$(mktemp --suffix .json)"
+trap 'rm -f "$MERGE_TMP" "$SNAPSHOT_TMP"' EXIT
 cat > "$MERGE_TMP" <<'PSEOF'
-param($BasePath, $LocalPath, $OutPath, $LibPath)
+param($BasePath, $LocalPath, $OutPath, $SnapshotPath, $LibPath, $TargetId)
 . $LibPath
 $base = if (Test-Path -LiteralPath $BasePath) { [string](Get-Content -LiteralPath $BasePath -Raw) } else { '' }
 $local = if (Test-Path -LiteralPath $LocalPath) { [string](Get-Content -LiteralPath $LocalPath -Raw) } else { '' }
 $merge = Merge-DeployTargetEnvLayers -BaseContent $base -OverrideContent $local
 Set-Content -LiteralPath $OutPath -Value (ConvertTo-DeployEnvContent -Values $merge.Values) -NoNewline -Encoding utf8
+$snapshot = New-DeployTargetEnvSnapshot -Values $merge.Values -TargetId $TargetId -OverriddenKeys $merge.OverriddenKeys
+[System.IO.File]::WriteAllText($SnapshotPath, ($snapshot | ConvertTo-Json -Depth 6 -Compress), [System.Text.UTF8Encoding]::new($false))
 PSEOF
 pwsh -NoProfile -NonInteractive -File "$MERGE_TMP" \
   -BasePath "$BASE_ENV" -LocalPath "$LOCAL_ENV" -OutPath "$EFFECTIVE_ENV" \
-  -LibPath "$DATA_ROOT/transport-lib.ps1"
-rm -f "$MERGE_TMP"
+  -SnapshotPath "$SNAPSHOT_TMP" -LibPath "$DATA_ROOT/transport-lib.ps1" -TargetId "$TARGET_ID"
+chmod 600 "$EFFECTIVE_ENV" "$SNAPSHOT_TMP"
 
-echo "== effective env begin =="
-cat "$EFFECTIVE_ENV"
-echo "== effective env end =="
+echo "== effective env snapshot begin =="
+cat "$SNAPSHOT_TMP"
+echo "== effective env snapshot end =="
 
 {{BUILD_STEP}}
 '@
@@ -246,6 +285,7 @@ echo "== effective env end =="
         Replace('{{DEPLOY_ROOT}}', [string]$Target.deploy_root).
         Replace('{{DATA_ROOT}}', [string]$Target.runtime_data_root).
         Replace('{{REPO_URL}}', $script:RemoteDeployRepoUrl).
+        Replace('{{TARGET_ID}}', [string]$Target.id).
         Replace('{{ENV_NAME}}', '.env.web-plane.host-kit').
         Replace('{{EXEC_BITS}}', $execBits).
         Replace('{{BOOTSTRAP_FETCH}}', $bootstrapFetch).
@@ -302,7 +342,8 @@ function Invoke-RemoteTestDeployRebuild {
     $rebuildScript = New-RemoteRebuildScript -Target $Target -Build:$Build -BootstrapRef $BootstrapRef
     $sshArguments = Get-RemoteDeploySshArguments -Target $Target -IdentityFile $IdentityFile
     $effectiveEnvName = '.env.web-plane.host-kit'
-    $pushCommand = "mkdir -p '$([string]$Target.deploy_root)' && cat > '$([string]$Target.deploy_root)/$effectiveEnvName.base'"
+    $inventoryCheckCommand = "test -f '$([string]$Target.runtime_data_root)/target.local.json' && chmod 600 '$([string]$Target.runtime_data_root)/target.local.json'"
+    $pushCommand = "umask 077 && mkdir -p '$([string]$Target.runtime_data_root)' && cat > '$([string]$Target.runtime_data_root)/$effectiveEnvName.base' && chmod 600 '$([string]$Target.runtime_data_root)/$effectiveEnvName.base'"
     # The remote merge cannot rely on the lib existing in the remote checkout
     # (a pre-merge branch is exactly the self-referential bootstrap situation),
     # so the operator ships THIS file alongside the dispatch - still the single
@@ -312,11 +353,17 @@ function Invoke-RemoteTestDeployRebuild {
     if ($DryRun) {
         return [pscustomobject]@{
             SshArguments   = $sshArguments
+            InventoryCheckCommand = $inventoryCheckCommand
             PushCommand    = $pushCommand
             LibPushCommand = $libPushCommand
             Script         = $rebuildScript
         }
     }
+
+    # Fail before uploading the base env or helper library. The remote script
+    # checks again immediately before use to close the check/use race.
+    & ssh @sshArguments $inventoryCheckCommand | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'remote_deploy_transport: owner-controlled private inventory preflight failed.' }
 
     # PS has no '<' stdin redirection; the pipeline feeds native stdin instead.
     Get-Content -LiteralPath $PSCommandPath -Raw | & ssh @sshArguments $libPushCommand
@@ -332,23 +379,27 @@ function Invoke-RemoteTestDeployRebuild {
     $exitCode = $LASTEXITCODE
 
     $outputText = ($output | Out-String)
-    $effectiveContent = ''
-    if ($outputText -match '(?s)== effective env begin ==\r?\n(.*?)\r?\n== effective env end ==') {
-        $effectiveContent = $Matches[1]
+    $snapshot = $null
+    if ($outputText -match '(?s)== effective env snapshot begin ==\r?\n(.*?)\r?\n== effective env snapshot end ==') {
+        try { $snapshot = $Matches[1] | ConvertFrom-Json } catch {
+            throw "remote_deploy_transport: remote redacted env snapshot is invalid JSON: $($_.Exception.Message)"
+        }
     }
-    $values = ConvertFrom-DeployEnvContent -Content $effectiveContent
-    $snapshot = New-DeployTargetEnvSnapshot -Values $values -TargetId ([string]$Target.id)
 
     $reportDir = Join-Path $OperatorRepoRoot "artifacts/deploy-reports/$([string]$Target.id)"
     New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
     $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
     $snapshotPath = Join-Path $reportDir "$stamp-effective-env.json"
-    $snapshot | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $snapshotPath -Encoding utf8
+    if ($null -ne $snapshot) {
+        $snapshot | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $snapshotPath -Encoding utf8
+    } else {
+        $snapshotPath = ''
+    }
 
     return [pscustomobject]@{
         ExitCode      = $exitCode
         Output        = $outputText
         SnapshotPath  = $snapshotPath
-        EffectiveKeys = @($values.Keys)
+        EffectiveKeys = if ($null -ne $snapshot) { @($snapshot.entries | ForEach-Object { [string]$_.key }) } else { @() }
     }
 }

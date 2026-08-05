@@ -29,9 +29,30 @@ $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../..')).Path
 . (Join-Path $repoRoot 'scripts/lib/deploy-target-registry.ps1')
 
 $tempRoot = Join-Path $repoRoot "artifacts/tmp/deploy-target-registry-$([Guid]::NewGuid().ToString('N'))"
+$privateTempRoot = Join-Path ([IO.Path]::GetTempPath()) "ai-bim-target-inventory-$([Guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $privateTempRoot -Force | Out-Null
+$previousInventoryEnv = [Environment]::GetEnvironmentVariable('AI_BIM_DEPLOY_TARGET_INVENTORY', 'Process')
 
-function Write-Mutated {
+$privateDeployRoot = if ((Get-DeployTargetPlatformKind) -eq 'linux_host_native') {
+    $repoRoot -replace '\\', '/'
+} else {
+    '/srv/ai-bim/example-deploy'
+}
+$baseInventory = [pscustomobject]@{
+    schema_version = 'deploy-target-private-inventory/v1'
+    targets = @([pscustomobject]@{
+        id = 'canonical-linux'
+        connection = [pscustomobject]@{ host = 'deploy.example.invalid'; user = 'deploy-fixture' }
+        deploy_root = $privateDeployRoot
+        runtime_data_root = '/srv/ai-bim/example-runtime-data'
+        public_host = '192.0.2.10'
+        edge_site_id = 'site-example'
+        host_native_bind_host = '192.0.2.1'
+    })
+}
+
+function Write-MutatedRegistry {
     param([Parameter(Mandatory = $true)][string] $Name, [Parameter(Mandatory = $true)][scriptblock] $Mutate)
     $registry = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/deploy-target-registry.json') -Raw | ConvertFrom-Json
     & $Mutate $registry
@@ -40,94 +61,137 @@ function Write-Mutated {
     return $path
 }
 
+function Write-MutatedInventory {
+    param(
+        [Parameter(Mandatory = $true)][string] $Name,
+        [Parameter(Mandatory = $true)][scriptblock] $Mutate,
+        [string] $Root = $privateTempRoot
+    )
+    $inventory = $baseInventory | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    & $Mutate $inventory
+    $path = Join-Path $Root $Name
+    $inventory | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $path -Encoding utf8
+    return $path
+}
+
 try {
-    # real registry validates and resolves
+    $inventoryPath = Write-MutatedInventory 'target.local.json' { param($i) }
+    [Environment]::SetEnvironmentVariable('AI_BIM_DEPLOY_TARGET_INVENTORY', $inventoryPath, 'Process')
+
+    # Public registry carries behaviour only; the resolved target receives the
+    # synthetic location mapping from the repo-external private inventory.
     $registry = Get-DeployTargetRegistry
-    Assert-True ([string]$registry.canonical_target -eq 'remote-linux-181') 'canonical target must be remote-linux-181'
-    $canonical = Get-DeployTarget -Canonical
+    Assert-True ([string]$registry.canonical_target -eq 'canonical-linux') 'canonical target id is de-identified'
+    $descriptor = @($registry.targets | Where-Object { [string]$_.id -eq 'canonical-linux' })[0]
+    Assert-True (Test-DeployTargetPrivateInventoryRequired -Target $descriptor) 'canonical target requires private inventory'
+    Assert-True ($null -eq $descriptor.connection.PSObject.Properties['host']) 'public registry must not publish ssh host'
+    foreach ($field in $script:DeployTargetPrivateLocationFields) {
+        Assert-True ($null -eq $descriptor.PSObject.Properties[$field]) "public registry must not publish $field"
+    }
+    Assert-Throws -Context 'canonical target without private inventory' -MessagePattern 'requires owner-controlled private inventory' -Action {
+        [Environment]::SetEnvironmentVariable('AI_BIM_DEPLOY_TARGET_INVENTORY', $null, 'Process')
+        Get-DeployTarget -Canonical
+    }
+    [Environment]::SetEnvironmentVariable('AI_BIM_DEPLOY_TARGET_INVENTORY', $inventoryPath, 'Process')
+
+    $canonical = Get-DeployTarget -Canonical -InventoryPath $inventoryPath
     Assert-True ([string]$canonical.kind -eq 'linux_host_native') 'canonical target must be linux_host_native'
-    Assert-True ([string]$canonical.connection.host -eq '192.168.20.181') 'canonical target host'
+    Assert-True ([string]$canonical.connection.host -eq 'deploy.example.invalid') 'private host resolves from synthetic inventory'
+    Assert-True ([string]$canonical.deploy_root -eq $privateDeployRoot) 'private deploy root resolves from synthetic inventory'
     $windows = Get-DeployTarget -Id 'local-windows'
-    Assert-True ([string]$windows.role -eq 'on_demand_platform_verification') 'windows target is on-demand only (decision D-3)'
+    Assert-True ([string]$windows.role -eq 'on_demand_platform_verification') 'windows target is on-demand only'
 
     Assert-Throws -Context 'unknown target id' -MessagePattern 'not found' -Action { Get-DeployTarget -Id 'nope-nope' }
-
     Assert-Throws -Context 'wrong schema version' -MessagePattern 'unsupported schema_version' -Action {
-        Get-DeployTargetRegistry -Path (Write-Mutated 'ver.json' { param($r) $r.schema_version = 'deploy-target-registry/v9' })
+        Get-DeployTargetRegistry -Path (Write-MutatedRegistry 'ver.json' { param($r) $r.schema_version = 'deploy-target-registry/v9' })
     }
     Assert-Throws -Context 'duplicate target ids' -MessagePattern 'duplicate' -Action {
-        Get-DeployTargetRegistry -Path (Write-Mutated 'dup.json' { param($r) $r.targets[1].id = $r.targets[0].id })
+        Get-DeployTargetRegistry -Path (Write-MutatedRegistry 'dup.json' { param($r) $r.targets[1].id = $r.targets[0].id })
     }
     Assert-Throws -Context 'canonical target missing' -MessagePattern 'not a defined target' -Action {
-        Get-DeployTargetRegistry -Path (Write-Mutated 'canon.json' { param($r) $r.canonical_target = 'ghost' })
+        Get-DeployTargetRegistry -Path (Write-MutatedRegistry 'canon.json' { param($r) $r.canonical_target = 'ghost' })
     }
     Assert-Throws -Context 'reserved kind used by a target' -MessagePattern 'reserved kind' -Action {
-        Get-DeployTargetRegistry -Path (Write-Mutated 'reserved.json' { param($r) $r.targets[1].kind = 'linux_container' })
+        Get-DeployTargetRegistry -Path (Write-MutatedRegistry 'reserved.json' { param($r) $r.targets[1].kind = 'linux_container' })
     }
     Assert-Throws -Context 'linux target without --no-window' -MessagePattern 'F-1' -Action {
-        Get-DeployTargetRegistry -Path (Write-Mutated 'nowindow.json' { param($r) $r.targets[1].kit.extra_launch_args = @() })
+        Get-DeployTargetRegistry -Path (Write-MutatedRegistry 'nowindow.json' { param($r) $r.targets[1].kit.extra_launch_args = @() })
     }
     Assert-Throws -Context 'linux target without restore-exec-bits' -MessagePattern 'F-2' -Action {
-        Get-DeployTargetRegistry -Path (Write-Mutated 'execbits.json' { param($r) $r.targets[1].post_clone_steps = @() })
+        Get-DeployTargetRegistry -Path (Write-MutatedRegistry 'execbits.json' { param($r) $r.targets[1].post_clone_steps = @() })
     }
-    Assert-Throws -Context 'ssh connection without user' -MessagePattern 'requires host and user' -Action {
-        Get-DeployTargetRegistry -Path (Write-Mutated 'sshuser.json' { param($r) $r.targets[1].connection.user = '' })
+    Assert-Throws -Context 'private descriptor publishing user' -MessagePattern 'must not publish connection.user' -Action {
+        Get-DeployTargetRegistry -Path (Write-MutatedRegistry 'published-user.json' { param($r) $r.targets[1].connection | Add-Member -NotePropertyName user -NotePropertyValue 'fixture' })
     }
     Assert-Throws -Context 'windows root not absolute' -MessagePattern 'absolute Windows path' -Action {
-        Get-DeployTargetRegistry -Path (Write-Mutated 'winroot.json' { param($r) $r.targets[0].deploy_root = 'relative\path' })
-    }
-    Assert-Throws -Context 'linux root not absolute' -MessagePattern 'absolute POSIX path' -Action {
-        Get-DeployTargetRegistry -Path (Write-Mutated 'linroot.json' { param($r) $r.targets[1].deploy_root = 'home/bimdeploy/x' })
+        Get-DeployTargetRegistry -Path (Write-MutatedRegistry 'winroot.json' { param($r) $r.targets[0].deploy_root = 'relative\path' })
     }
     Assert-Throws -Context 'two canonical roles' -MessagePattern 'exactly one target' -Action {
-        Get-DeployTargetRegistry -Path (Write-Mutated 'twocanon.json' { param($r) $r.targets[0].role = 'canonical_test_deploy' })
+        Get-DeployTargetRegistry -Path (Write-MutatedRegistry 'twocanon.json' { param($r) $r.targets[0].role = 'canonical_test_deploy' })
     }
 
-    # --- Kit launcher resolution: no Windows drift, correct Linux shape ---------
-    # start-streaming-server.ps1 used to hardcode the Windows build tree, so a
-    # Linux run looked for a .bat that could never exist. It now asks the registry.
-    # These pin BOTH ends: the Windows answer must stay byte-identical to the path
-    # that was hardcoded, and the Linux answer must be the .sh in the Linux tree.
+    $insideRepoInventory = Write-MutatedInventory 'inside.target.local.json' { param($i) } -Root $tempRoot
+    Assert-Throws -Context 'private inventory inside repository' -MessagePattern 'outside the repository' -Action {
+        Get-DeployTarget -Canonical -InventoryPath $insideRepoInventory
+    }
+    $relativeRootInventory = Write-MutatedInventory 'relative-root.json' { param($i) $i.targets[0].deploy_root = 'srv/not-absolute' }
+    Assert-Throws -Context 'relative private deploy root' -MessagePattern 'absolute POSIX path' -Action {
+        Get-DeployTarget -Canonical -InventoryPath $relativeRootInventory
+    }
+    $wildcardInventory = Write-MutatedInventory 'wildcard.json' { param($i) $i.targets[0].host_native_bind_host = '0.0.0.0' }
+    Assert-Throws -Context 'wildcard private bind' -MessagePattern 'non-wildcard' -Action {
+        Get-DeployTarget -Canonical -InventoryPath $wildcardInventory
+    }
+    $policyOverrideInventory = Write-MutatedInventory 'policy-override.json' { param($i) $i.targets[0] | Add-Member -NotePropertyName kit -NotePropertyValue @{ build_command = 'unsafe' } }
+    Assert-Throws -Context 'private policy override' -MessagePattern 'non-location field' -Action {
+        Get-DeployTarget -Canonical -InventoryPath $policyOverrideInventory
+    }
+    $insideDeployInventory = Write-MutatedInventory 'inside-deploy.json' { param($i) $i.targets[0].runtime_data_root = "$($i.targets[0].deploy_root)/runtime-data" }
+    Assert-Throws -Context 'runtime data inside deploy root' -MessagePattern 'outside deploy_root' -Action {
+        Get-DeployTarget -Canonical -InventoryPath $insideDeployInventory
+    }
+    $dotDotInventory = Write-MutatedInventory 'dot-dot.json' { param($i) $i.targets[0].runtime_data_root = '/srv/ai-bim/../private-data' }
+    Assert-Throws -Context 'dot-dot private path' -MessagePattern 'normalized' -Action {
+        Get-DeployTarget -Canonical -InventoryPath $dotDotInventory
+    }
+    $quoteInventory = Write-MutatedInventory 'quote.json' { param($i) $i.targets[0].connection.user = "deploy'fixture" }
+    Assert-Throws -Context 'quoted private value' -MessagePattern 'unsafe characters' -Action {
+        Get-DeployTarget -Canonical -InventoryPath $quoteInventory
+    }
+    $newlineInventory = Write-MutatedInventory 'newline.json' { param($i) $i.targets[0].edge_site_id = "site`nfixture" }
+    Assert-Throws -Context 'newline private value' -MessagePattern 'unsafe characters' -Action {
+        Get-DeployTarget -Canonical -InventoryPath $newlineInventory
+    }
+
+    $examplePath = Join-Path $repoRoot 'scripts/target.local.example.json'
+    Assert-True (Test-Path -LiteralPath $examplePath -PathType Leaf) 'tracked private inventory schema example exists'
+    $example = Get-Content -LiteralPath $examplePath -Raw | ConvertFrom-Json
+    Assert-True ([string]$example.schema_version -eq 'deploy-target-private-inventory/v1') 'private inventory example schema is current'
+    Assert-True (@($example.targets).Count -eq 1 -and [string]$example.targets[0].id -eq 'canonical-linux') 'private inventory example joins the public descriptor'
+
+    # Launcher behaviour remains public and reviewable; location is private.
     . (Join-Path $repoRoot 'scripts/lib/platform/platform-adapter.ps1')
-    $registry = Get-DeployTargetRegistry
     $winTarget = @($registry.targets | Where-Object { [string]$_.kind -eq 'windows_host_native' })[0]
-    $linTarget = @($registry.targets | Where-Object { [string]$_.kind -eq 'linux_host_native' })[0]
-
     $winLaunch = Resolve-DeployTargetKitLaunch -Target $winTarget -DeployRootOverride 'R:'
-    $expectedWin = 'R:\bim-streaming-server\_build\windows-x86_64\release\ezplus.bim_review_stream_streaming.kit.bat'
-    if ($winLaunch.LauncherPath -ne $expectedWin) {
-        throw "ASSERT FAILED: windows launcher must match the historically hardcoded path exactly (expected='$expectedWin' actual='$($winLaunch.LauncherPath)')"
-    }
+    Assert-True ($winLaunch.LauncherPath -eq 'R:\bim-streaming-server\_build\windows-x86_64\release\ezplus.bim_review_stream_streaming.kit.bat') 'windows launcher remains byte-identical'
 
-    $linLaunch = Resolve-DeployTargetKitLaunch -Target $linTarget -DeployRootOverride '/srv/app'
-    $expectedLin = '/srv/app/bim-streaming-server/_build/linux-x86_64/release/ezplus.bim_review_stream_streaming.kit.sh'
-    if ($linLaunch.LauncherPath -ne $expectedLin) {
-        throw "ASSERT FAILED: linux launcher must be the .sh in the linux-x86_64 tree (expected='$expectedLin' actual='$($linLaunch.LauncherPath)')"
-    }
-    Assert-True (@($linLaunch.Arguments) -contains '--no-window') 'linux target must mandate --no-window (headless, no display)'
-    Assert-True (-not (@($winLaunch.Arguments) -contains '--no-window')) 'windows target must not force --no-window'
+    $linLaunch = Resolve-DeployTargetKitLaunch -Target $canonical -DeployRootOverride '/srv/app'
+    Assert-True ($linLaunch.LauncherPath -eq '/srv/app/bim-streaming-server/_build/linux-x86_64/release/ezplus.bim_review_stream_streaming.kit.sh') 'linux launcher uses reviewed public template'
+    Assert-True (@($linLaunch.Arguments) -contains '--no-window') 'linux target mandates --no-window'
+    Assert-True (-not (@($winLaunch.Arguments) -contains '--no-window')) 'windows target does not force --no-window'
+    Assert-True ([string]$windows.host_native_bind_host -eq '127.0.0.1') 'windows target keeps loopback'
+    Assert-True ([string]$canonical.host_native_bind_host -eq '192.0.2.1') 'linux bind resolves from synthetic inventory'
+    Assert-True ([string]$canonical.host_native_bind_host -notin @('0.0.0.0', '::', '[::]')) 'linux bind is not wildcard'
+    Assert-True (Test-Path -LiteralPath (Join-Path $repoRoot "$([string]$canonical.env_file).example") -PathType Leaf) 'canonical Linux target provides a secret-free env example'
 
-    # Host-native bind address per target: loopback on Windows, bridge-reachable on
-    # Linux. Governance and kit-manager-api bound 127.0.0.1 there, so the dockerised
-    # coordinator could not reach them (/api/governance/files/tree -> 502) even
-    # though the same services answered fine on the host itself.
-    if ([string]$winTarget.host_native_bind_host -ne '127.0.0.1') {
-        throw "ASSERT FAILED: windows target must keep host-native services on loopback (actual='$($winTarget.host_native_bind_host)')"
-    }
-    if ([string]$linTarget.host_native_bind_host -eq '127.0.0.1') {
-        throw 'ASSERT FAILED: linux target must not bind host-native services to loopback only; the dockerised coordinator reaches them over the bridge'
-    }
-    # Exercise the real consumer, not a re-implementation of it: the launcher must
-    # read the value for THIS platform out of the registry.
     . (Join-Path $repoRoot 'scripts/lib/host-native-launcher.ps1')
     $currentBind = Get-HostNativeBindHost -RepoRoot $repoRoot
-    $expectedBind = if ((Get-PlatformName) -eq 'windows') { [string]$winTarget.host_native_bind_host }
-                    else { [string]$linTarget.host_native_bind_host }
-    if ($currentBind -ne $expectedBind) {
-        throw "ASSERT FAILED: Get-HostNativeBindHost must return this platform's registry value (expected='$expectedBind' actual='$currentBind')"
-    }
+    $expectedBind = if ((Get-PlatformName) -eq 'windows') { [string]$windows.host_native_bind_host } else { [string]$canonical.host_native_bind_host }
+    Assert-True ($currentBind -eq $expectedBind) 'real consumer resolves the platform bind through the inventory seam'
 
     Write-Host '[test-deploy-target-registry] all assertions passed'
 } finally {
+    [Environment]::SetEnvironmentVariable('AI_BIM_DEPLOY_TARGET_INVENTORY', $previousInventoryEnv, 'Process')
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $privateTempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

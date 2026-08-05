@@ -15,10 +15,7 @@ function Get-PidsFromRunDir {
         [Parameter(Mandatory = $true)][string] $RunDir,
         [scriptblock] $ChildPidLookup = {
             param($parentId)
-            try {
-                Get-CimInstance Win32_Process -Filter "ParentProcessId=$parentId" -ErrorAction Stop |
-                    ForEach-Object { [int]$_.ProcessId }
-            } catch { @() }
+            @(Get-PlatformChildProcessIds -ParentProcessId ([int]$parentId))
         }
     )
     $set = @{}
@@ -57,6 +54,8 @@ function Test-PortAvailability {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [int] $CoordinatorPort = 8004,
+        [int] $ViewerPort = 5173,
         [int] $KitSignalPort = 49100,
         [int] $KitMediaPort = 47998,
         [int] $ConversionPort = 49101,
@@ -82,7 +81,7 @@ function Test-PortAvailability {
         }
     )
 
-    $dockerPorts     = @(8004, 5173)
+    $dockerPorts     = @($CoordinatorPort, $ViewerPort)
     $hostNativeTcpPorts = @(@($KitSignalPort, $ConversionPort) + $ExtraHostNativePorts | Sort-Object -Unique)
     $hostNativeUdpPorts = @(@($KitMediaPort) + $ExtraHostNativeUdpPorts | Sort-Object -Unique)
     $runDir          = Join-Path $RepoRoot 'scripts\.run'

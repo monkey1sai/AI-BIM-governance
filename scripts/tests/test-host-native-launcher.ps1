@@ -219,4 +219,14 @@ try {
 }
 finally { Remove-TestSandbox -Path $sb }
 
+# Test 19: registry-selected Linux Kit builds use repo.sh through bash, never cmd.exe.
+Assert-True ($moduleContent -match "effectiveCommand -eq '\./repo\.sh build'") 'Linux build command has an explicit structured branch'
+Assert-True ($moduleContent -match "Start-Process -FilePath 'bash'") 'Linux build branch launches bash'
+Write-TestPass 'Invoke-KitRepoBuild supports validated Linux repo.sh command'
+
+# Test 20: detachment is polled so a short setsid scheduling race can settle.
+Assert-True ($moduleContent -match 'detachDeadline') 'detachment check has a bounded deadline'
+Assert-True ($moduleContent -match '& \$SleepFn 100') 'detachment check retries between probes'
+Write-TestPass 'host-native detachment check is bounded and retried'
+
 Write-Host "`n=== test-host-native-launcher.ps1: ALL PASSED ===" -ForegroundColor Green

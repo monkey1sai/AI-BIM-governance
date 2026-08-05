@@ -45,8 +45,10 @@ $t2b = Get-Tier @('scripts/lib/rebuild-test-deploy.ps1')
 Assert-True ($t2b.Tier -eq 2) "scripts/lib top-level ps1 -> tier 2 (got $($t2b.Tier))"
 $t2c = Get-Tier @('compose.host-kit.yml')
 Assert-True ($t2c.Tier -eq 2) "compose file -> tier 2 (got $($t2c.Tier))"
+$t2d = Get-Tier @('scripts/stop-all.ps1')
+Assert-True ($t2d.Tier -eq 2) "stop-all.ps1 -> tier 2 (got $($t2d.Tier))"
 
-foreach ($kitPath in @('bim-streaming-server/source/apps/ezplus.bim_review_stream.kit', 'bim-streaming-server/repo.toml', 'bim-streaming-server/tools/packman/python.sh', 'bim-streaming-server/premake5.lua')) {
+foreach ($kitPath in @('bim-streaming-server/source/apps/ezplus.bim_review_stream.kit', 'bim-streaming-server/repo.toml', 'bim-streaming-server/tools/packman/python.sh', 'bim-streaming-server/premake5.lua', 'bim-streaming-server/scripts/start-streaming-server.ps1')) {
     $t3 = Get-Tier @($kitPath)
     Assert-True ($t3.Tier -eq 3 -and $t3.Id -eq 'kit_gpu') "$kitPath -> tier 3 (got $($t3.Id))"
 }

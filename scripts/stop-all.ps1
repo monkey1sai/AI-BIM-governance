@@ -229,20 +229,14 @@ foreach ($conn in $listening) {
 Start-Sleep -Milliseconds 500
 $remaining = @(Get-ExpectedPortListeners -Ports $ExpectedPorts)
 
-$workspaceRemaining = @()
-foreach ($conn in $remaining) {
-    $processInfo = Get-ProcessInfo -ProcId ([int] $conn.OwningProcess)
-    if (Test-IsWorkspaceProcess -ProcessInfo $processInfo) {
-        $workspaceRemaining += $conn
-    }
-}
-
 Write-Host ""
-if ($workspaceRemaining.Count -gt 0) {
-    Write-Host "[warn ] 部分 workspace 服務仍在 listen：" -ForegroundColor Yellow
-    foreach ($conn in $workspaceRemaining) {
-        Write-Host "       port $($conn.LocalPort), PID=$($conn.OwningProcess)" -ForegroundColor Yellow
+if ($remaining.Count -gt 0) {
+    Write-Host "[warn ] 部分預期服務 port 仍在 listen；未知或非 workspace owner 未被停止：" -ForegroundColor Yellow
+    foreach ($conn in $remaining) {
+        $owner = if ([int]$conn.OwningProcess -le 0) { 'owner-not-visible' } else { "PID=$($conn.OwningProcess)" }
+        Write-Host "       port $($conn.LocalPort), $owner" -ForegroundColor Yellow
     }
+    exit 2
 } else {
     Write-Host "[done ] 全部服務已停止" -ForegroundColor Green
 }

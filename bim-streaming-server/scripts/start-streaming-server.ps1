@@ -42,10 +42,18 @@ $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 # script stays runnable if a caller already sourced them.
 $RepoParent = (Resolve-Path -LiteralPath (Join-Path $RepoRoot "..")).Path
 if (-not (Get-Command -Name 'Get-PlatformName' -ErrorAction SilentlyContinue)) {
-    . (Join-Path $RepoParent 'scripts/lib/platform/platform-adapter.ps1')
+    $platformAdapter = Join-Path $RepoParent 'scripts/lib/platform/platform-adapter.ps1'
+    if (-not (Test-Path -LiteralPath $platformAdapter -PathType Leaf)) {
+        throw "Streaming launcher requires the parent workspace helper: $platformAdapter. Run this script from the full AI-BIM-governance checkout."
+    }
+    . $platformAdapter
 }
 if (-not (Get-Command -Name 'Get-DeployTargetForCurrentPlatform' -ErrorAction SilentlyContinue)) {
-    . (Join-Path $RepoParent 'scripts/lib/deploy-target-registry.ps1')
+    $targetRegistry = Join-Path $RepoParent 'scripts/lib/deploy-target-registry.ps1'
+    if (-not (Test-Path -LiteralPath $targetRegistry -PathType Leaf)) {
+        throw "Streaming launcher requires the parent workspace helper: $targetRegistry. Run this script from the full AI-BIM-governance checkout."
+    }
+    . $targetRegistry
 }
 
 function Initialize-WindowsRuntimeEnvironment {

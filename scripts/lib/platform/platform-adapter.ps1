@@ -220,8 +220,11 @@ function Resolve-PlatformSystemPython {
     $candidates = if ((Get-PlatformName) -eq 'windows') { @('python', 'python3') } else { @('python3', 'python') }
     foreach ($candidate in $candidates) {
         if ($null -eq (Get-Command -Name $candidate -ErrorAction SilentlyContinue)) { continue }
-        $version = (& $candidate --version 2>&1 | Out-String)
-        if ($LASTEXITCODE -eq 0 -and $version -match '\d+\.\d+') { return $candidate }
+        $version = (& $candidate -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>&1 | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or $version -notmatch '^(\d+)\.(\d+)$') { continue }
+        $major = [int]$Matches[1]
+        $minor = [int]$Matches[2]
+        if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 11)) { return $candidate }
     }
     return $null
 }

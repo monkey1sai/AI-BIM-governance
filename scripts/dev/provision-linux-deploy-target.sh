@@ -2,7 +2,7 @@
 # One-time provisioning for a linux_host_native deploy target (plan task B8).
 #
 # Run ON the target as a user with sudo, BEFORE the service account is used:
-#   sudo bash scripts/dev/provision-linux-deploy-target.sh [service_user]
+#   sudo bash scripts/dev/provision-linux-deploy-target.sh <owner-supplied-service-user>
 #
 # Idempotent: every step is safe to re-run. Decision D-21 keeps steady-state
 # operation at zero sudo, so everything needing root happens here, once.
@@ -23,8 +23,34 @@
 
 set -euo pipefail
 
-SERVICE_USER="${1:-bimdeploy}"
 say() { printf '\n== %s ==\n' "$*"; }
+
+if [ "${1:-}" = "--check" ]; then
+  missing=0
+  for command_name in git curl python3 pwsh node docker; do
+    if command -v "$command_name" >/dev/null 2>&1; then
+      printf '[ok] %s\n' "$command_name"
+    else
+      printf '[missing] %s\n' "$command_name" >&2
+      missing=1
+    fi
+  done
+  python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' || {
+    echo '[missing] Python 3.11+ is required' >&2
+    missing=1
+  }
+  docker compose version >/dev/null 2>&1 || {
+    echo '[missing] Docker Compose v2 plugin is required' >&2
+    missing=1
+  }
+  exit "$missing"
+fi
+
+if [ "$#" -ne 1 ] || ! [[ "$1" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+  echo "usage: sudo bash $0 <owner-supplied-service-user>" >&2
+  exit 2
+fi
+SERVICE_USER="$1"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "must run as root (sudo bash $0)" >&2
@@ -45,14 +71,16 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 # python3-venv provides ensurepip; the versioned package matches the default
 # interpreter and is what `python3 -m venv` actually asks for.
+apt-get install -y git curl ca-certificates python3 python3-pip
+python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else "Python 3.11+ is required; install a supported interpreter before provisioning")'
 py_minor="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-apt-get install -y git curl ca-certificates "python${py_minor}-venv" python3-pip
+apt-get install -y "python${py_minor}-venv"
 
 say "verify ensurepip"
 python3 -c 'import ensurepip' && echo "ensurepip OK"
 
 say "docker engine"
-if ! command -v docker >/dev/null 2>&1; then
+if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /tmp/docker.gpg
   install -m 0644 -o root -g root /tmp/docker.gpg /etc/apt/keyrings/docker.asc
@@ -62,7 +90,7 @@ if ! command -v docker >/dev/null 2>&1; then
   apt-get update
   apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 else
-  echo "docker already installed"
+  echo "docker + Compose v2 already installed"
 fi
 usermod -aG docker "$SERVICE_USER"
 
@@ -103,6 +131,10 @@ cat <<'NOTE'
   `modprobe nvidia` avoids a reboot when nouveau's refcount is 0.
 - Service-account SSH key: append the operator public key to
   ~SERVICE_USER/.ssh/authorized_keys (mode 600, owned by the service user).
+- Private target inventory: the owner must create
+  <runtime_data_root>/target.local.json outside the checkout, mode 600, using
+  scripts/target.local.example.json only as a schema example. This script does
+  not create, upload, print, or overwrite private topology.
 - ufw: rules are staged separately; enabling the firewall changes the
   posture of a shared host and is an owner decision.
 NOTE

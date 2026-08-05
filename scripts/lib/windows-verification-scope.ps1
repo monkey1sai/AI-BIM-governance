@@ -29,7 +29,8 @@ $script:WindowsVerificationTiers = @(
             '^bim-streaming-server/source/',
             '^bim-streaming-server/repo\.(toml|bat|sh)$',
             '^bim-streaming-server/premake5\.lua$',
-            '^bim-streaming-server/tools/'
+            '^bim-streaming-server/tools/',
+            '^bim-streaming-server/scripts/start-streaming-server\.ps1$'
         )
         Evidence  = 'Full Windows host-native Kit launch with GPU/WebRTC evidence'
         Rationale = 'Kit source or build toolchain changed; only a real Windows host-native launch proves that path still works.'
@@ -39,6 +40,7 @@ $script:WindowsVerificationTiers = @(
         Id        = 'deploy_dryrun'
         Patterns  = @(
             '^scripts/deploy\.ps1$',
+            '^scripts/stop-all\.ps1$',
             '^scripts/lib/(?!platform/)[^/]+\.ps1$',
             '^compose\.[^/]+\.yml$'
         )

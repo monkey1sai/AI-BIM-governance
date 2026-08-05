@@ -157,14 +157,14 @@ Fixture 以 `scripts/ifc-fixture-manifest.json`（schema `ifc-fixture-manifest/v
 
 測試驗證部署環境：
 
-- **部署目標由 `scripts/deploy-target-registry.json`（schema `deploy-target-registry/v1`）決定，不再是單一硬編路徑。** registry 有且只能有一個 `role=canonical_test_deploy` 的目標；其餘為 `on_demand_platform_verification`。目前：
-  - `remote-linux-181`（canonical）＝ `bimdeploy@192.168.20.181:/home/bimdeploy/AI-bim-geo`，Linux host-native Kit ＋ web plane Docker。
+- **部署行為由 `scripts/deploy-target-registry.json`（schema `deploy-target-registry/v1`）決定；實際 host/account/network/path mapping 不進 public repo。** registry 有且只能有一個 `role=canonical_test_deploy` 的目標；其餘為 `on_demand_platform_verification`。目前：
+  - `canonical-linux`（canonical）＝公開 descriptor 只保留 Linux host-native Kit ＋ web plane Docker 行為；SSH host/user、deploy/runtime roots、public host、site 與 target-scoped bind address 由 owner-controlled、repo-external `target.local.json` 注入。
   - `local-windows`（按需）＝ `D:\Users\deploy\AI-bim-geo`，僅在需要證明 Windows 平台路徑仍可用時手動啟停，**不常駐、不作為 canonical evidence 來源**。
   - `linux_container` 為 reserved kind（第二階段官方容器化的 schema 空位）；目標實際使用該 kind 會驗證失敗。
-- 當使用者要求「請測試部署區重建」或同義口令時，MUST 從目前 repo 執行 `.\scripts\dev\rebuild-test-deploy.ps1 -Build`（**operator 入口不變**）。不帶 `-TargetId` 即 canonical 目標；`-TargetId local-windows` 選按需 Windows 目標。
+- 當使用者要求「請測試部署區重建」或同義口令時，MUST 從目前 repo 執行 `.\scripts\dev\rebuild-test-deploy.ps1 -Build`（**operator 入口不變**）。canonical Linux 另須由 process env `AI_BIM_DEPLOY_TARGET_INVENTORY` 或 `-InventoryPath` 指向 repo 外 owner inventory；不帶 `-TargetId` 即 canonical 目標，`-TargetId local-windows` 選按需 Windows 目標。
 - Helper MUST freshly fetch `origin` with `+refs/heads/main:refs/remotes/origin/main`；fetch 失敗時停止，不得使用 stale `origin/main`。（ssh 目標在遠端 checkout 內執行同一條，語意逐字不變。）
-- ssh 目標的 rebuild 由 `scripts/lib/remote-deploy-transport.ps1` 派工：operator 端推送 per-target base env（registry `env_file`），遠端 override 位於 `<runtime_data_root>/env.local`（在 checkout 外，`git clean` 清不到），effective env 為 per-key 合併且 **override 勝**。合併只有一份實作（遠端經 pwsh 呼叫同一個 lib 函式）。
-- **部署＋驗證當下 MUST 快照 effective env**：非 secret 明文、secret 只留 key 名與 sha256-8 指紋與長度，**值一律不落地**（repo 為 public）。快照是時點證據，用於事後判斷「驗證當下的系統狀態」，不是閘門。
+- ssh 目標的 rebuild 由 `scripts/lib/remote-deploy-transport.ps1` 派工：operator 端推送 per-target base env（registry `env_file`），但**不會上傳、讀出或覆寫 private inventory**。owner/provisioning 必須先在 `<runtime_data_root>/target.local.json` 建立同 schema inventory 並設 mode `0600`；transport 只檢查存在並把路徑傳給 remote `deploy.ps1`。遠端 override 位於 `<runtime_data_root>/env.local`，effective env 為 per-key 合併且 **override 勝**。
+- **部署＋驗證當下 MUST 快照 effective env**：所有 key 的 value 一律只留 sha256-8 指紋與長度，credential 與 topology/location 分類僅供辨識；任何 raw env value 都不得進 stdout 或 deploy report。`artifacts/deploy-reports/` 亦為 ignored local artifact。快照是時點證據，不是閘門。
 - Linux 目標的平台差異由 `scripts/lib/platform/platform-adapter.ps1` 吸收，其中兩項**非可選**：Kit 啟動必須帶 `--no-window`（headless 缺此參數會在 `carb.windowing-glfw` → `IAppWindow::startup` 崩潰）；clone 後必須恢復 `*.sh` 執行位元（Windows 開發的 checkout `core.fileMode=false`，且 `repo.sh` 內部 `exec` 另一支 `.sh`）。兩者已編碼為 registry schema 不變量，違反即驗證失敗。
 - Helper MUST 在 reset 前回報 deployment checkout local changes 摘要；重建口令代表部署區可被 reset / clean。
 - Helper MUST 排除所有層級 `AGENTS.md` / `CLAUDE.md`，以及 root `.codex/`、`.agents/`、`.agent/`、`.claude/`、`.cursor/`、`.windsurf/`、`.github/skills/`、`.github/prompts/`、`docs/`、`openspec/`、`patches/`；MUST 保留 `.github/workflows/`。

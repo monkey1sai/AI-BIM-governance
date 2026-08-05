@@ -1,27 +1,33 @@
 # scripts\dev\rebuild-test-deploy.ps1
 # Single operator entrypoint for test-deployment rebuilds (decision D-10).
-# The target defaults to the registry's canonical_target (remote-linux-181);
+# The target defaults to the registry's canonical target; private topology is
+# loaded from an owner-controlled inventory outside the repository.
 # -TargetId local-windows selects the on-demand Windows verification target (D-3).
 
 [CmdletBinding()]
 param(
     [switch] $Build,
     [string] $TargetId = '',
-    [string] $IdentityFile = ''
+    [string] $IdentityFile = '',
+    [string] $InventoryPath = ''
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 if (-not $Build) {
-    throw 'Usage: .\scripts\dev\rebuild-test-deploy.ps1 -Build [-TargetId <registry id>] [-IdentityFile <ssh key>]'
+    throw 'Usage: .\scripts\dev\rebuild-test-deploy.ps1 -Build [-TargetId <registry id>] [-IdentityFile <ssh key>] [-InventoryPath <repo-external target.local.json>]'
 }
 
 . (Join-Path $PSScriptRoot '..\lib\rebuild-test-deploy.ps1')
 . (Join-Path $PSScriptRoot '..\lib\remote-deploy-transport.ps1')
 
 $operatorRepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
-$target = if ([string]::IsNullOrWhiteSpace($TargetId)) { Get-DeployTarget -Canonical } else { Get-DeployTarget -Id $TargetId }
+$target = if ([string]::IsNullOrWhiteSpace($TargetId)) {
+    Get-DeployTarget -Canonical -InventoryPath $InventoryPath
+} else {
+    Get-DeployTarget -Id $TargetId -InventoryPath $InventoryPath
+}
 
 if ([string]$target.connection.type -eq 'ssh') {
     $result = Invoke-RemoteTestDeployRebuild -Target $target -OperatorRepoRoot $operatorRepoRoot -Build:$Build -IdentityFile $IdentityFile

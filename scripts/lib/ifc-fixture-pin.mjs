@@ -42,6 +42,17 @@ export function validateManifest(manifest) {
   if (!Array.isArray(manifest.entries)) {
     throw new Error('ifc_fixture_pin: manifest.entries must be an array.');
   }
+  if (manifest.authority?.endpoint) {
+    let endpoint;
+    try {
+      endpoint = new URL(String(manifest.authority.endpoint));
+    } catch {
+      throw new Error('ifc_fixture_pin: authority.endpoint must be an absolute URL.');
+    }
+    if (endpoint.protocol !== 'https:') {
+      throw new Error('ifc_fixture_pin: authority.endpoint must use HTTPS.');
+    }
+  }
   const seen = new Set();
   for (const entry of manifest.entries) {
     const name = String(entry?.logical_name ?? '');
@@ -97,7 +108,7 @@ export function comparePin(expected, observed) {
 
 // Cache verdicts: a local file is only trustworthy through its sidecar, written
 // at download time. No sidecar => unverifiable => the cache MUST NOT be used.
-export function evaluateCacheSidecar(expected, sidecar) {
+export function evaluateCacheSidecar(expected, sidecar, observedSha256) {
   if (!sidecar || typeof sidecar !== 'object') {
     return { verdict: 'unverifiable_no_sidecar', reasons: ['sidecar_missing'] };
   }
@@ -107,6 +118,15 @@ export function evaluateCacheSidecar(expected, sidecar) {
   const pin = comparePin(expected, sidecar);
   if (pin.verdict !== 'match') {
     return { verdict: 'stale_cache', reasons: pin.reasons };
+  }
+  if (!/^[0-9a-f]{64}$/.test(String(sidecar.sha256 ?? ''))) {
+    return { verdict: 'stale_cache', reasons: ['sidecar_sha256_invalid'] };
+  }
+  if (!/^[0-9a-f]{64}$/.test(String(observedSha256 ?? ''))) {
+    return { verdict: 'stale_cache', reasons: ['observed_sha256_missing_or_invalid'] };
+  }
+  if (sidecar.sha256 !== observedSha256) {
+    return { verdict: 'stale_cache', reasons: [`sha256_mismatch expected=${sidecar.sha256} observed=${observedSha256}`] };
   }
   return { verdict: 'cache_valid', reasons: [] };
 }
@@ -151,7 +171,11 @@ export async function headPin(entry, options) {
     credentials: { accessKeyId, secretAccessKey },
   });
   try {
-    const head = await client.send(new HeadObjectCommand({ Bucket: entry.bucket, Key: entry.key }));
+    const input = { Bucket: entry.bucket, Key: entry.key };
+    if (entry.version_id !== null && entry.version_id !== undefined) {
+      input.VersionId = entry.version_id;
+    }
+    const head = await client.send(new HeadObjectCommand(input));
     return {
       etag: normalizeEtag(head.ETag),
       size_bytes: Number(head.ContentLength),

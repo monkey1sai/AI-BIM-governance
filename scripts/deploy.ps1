@@ -28,6 +28,7 @@ param(
     [switch] $SkipDocker,
     [string] $PublicHost = '',
     [string] $ConversionBindHost = '',
+    [string] $InventoryPath = '',
     [int]    $GovernancePort = 49102,
     [int]    $KitSignalPort = 49100,
     [int]    $KitMediaPort  = 47998,
@@ -52,13 +53,13 @@ $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $RunDir   = Join-Path $RepoRoot 'scripts\.run'
 $LogPath  = Join-Path $RunDir   'deploy.log'
 
-# Deploy-target profile: values come from scripts/deploy-target-registry.json
-# resolved for the platform this script is running on (deploy.ps1 always runs on
-# the target machine itself). On Windows this resolves to 'local-windows' with the
-# exact values the former inline constants carried; on Linux to the canonical
-# 'remote-linux-181' profile. See docs/plans/remote-linux-test-deploy-target.plan.md §6.1.
+# Deploy-target behaviour comes from the public registry. Canonical Linux
+# location/topology comes from an owner-controlled repo-external inventory.
 . (Join-Path $PSScriptRoot 'lib\deploy-target-registry.ps1')
-$script:DeployTargetProfile = Get-DeployTargetForCurrentPlatform -RepoRoot $RepoRoot
+if (-not [string]::IsNullOrWhiteSpace($InventoryPath)) {
+    [Environment]::SetEnvironmentVariable('AI_BIM_DEPLOY_TARGET_INVENTORY', $InventoryPath, 'Process')
+}
+$script:DeployTargetProfile = Get-DeployTargetForCurrentPlatform -RepoRoot $RepoRoot -InventoryPath $InventoryPath
 $script:DefaultPublicHost = [string]$script:DeployTargetProfile.public_host
 $script:FixedTestDeployRoot = [string]$script:DeployTargetProfile.deploy_root
 $script:DefaultEdgeSiteId = [string]$script:DeployTargetProfile.edge_site_id
@@ -92,6 +93,7 @@ $script:conversionRuntimeSignaturePath = Join-Path $RunDir 'bim-streaming-conver
 $script:governanceRuntimeSignaturePath = Join-Path $RunDir 'governance-service.params.json'
 $script:kitRuntimeSignaturePath = Join-Path $RunDir 'bim-streaming-server.params.json'
 $script:webPlaneRuntimeSignaturePath = Join-Path $RunDir 'web-plane.params.json'
+$script:kitManagerRuntimeSignaturePath = Join-Path $RunDir 'kit-manager-api.params.json'
 
 # ============================================================
 # Helper: Print-FinalSummary(在 Phase 1 之前定義,讓任何階段都可呼叫)
@@ -448,7 +450,8 @@ function New-KitRuntimeSignature {
         [Parameter(Mandatory = $true)][int[]] $SpectatorStreamPorts,
         [Parameter(Mandatory = $true)][string] $AllowedStageHosts,
         [Parameter(Mandatory = $true)][string] $CoordinatorInternalApiBase,
-        [Parameter(Mandatory = $true)][string] $RuntimeAuthorityTokenFingerprint
+        [Parameter(Mandatory = $true)][string] $RuntimeAuthorityTokenFingerprint,
+        [Parameter(Mandatory = $true)][string] $Revision
     )
     return ([pscustomobject]@{
         publicHost           = $PublicHost
@@ -459,6 +462,7 @@ function New-KitRuntimeSignature {
         allowedStageHosts    = $AllowedStageHosts
         coordinatorInternalApiBase = $CoordinatorInternalApiBase
         runtimeAuthorityTokenFingerprint = $RuntimeAuthorityTokenFingerprint
+        revision             = $Revision
     } | ConvertTo-Json -Compress)
 }
 
@@ -468,7 +472,8 @@ function New-ConversionRuntimeSignature {
         [Parameter(Mandatory = $true)][int] $Port,
         [Parameter(Mandatory = $true)][string] $HealthHost,
         [string] $PublicArtifactsUrl = '',
-        [Parameter(Mandatory = $true)][string] $ArtifactsRoot
+        [Parameter(Mandatory = $true)][string] $ArtifactsRoot,
+        [Parameter(Mandatory = $true)][string] $Revision
     )
     return ([pscustomobject]@{
         bindHost           = $BindHost
@@ -476,6 +481,7 @@ function New-ConversionRuntimeSignature {
         healthHost         = $HealthHost
         publicArtifactsUrl = $PublicArtifactsUrl
         artifactsRoot      = $ArtifactsRoot
+        revision           = $Revision
     } | ConvertTo-Json -Compress)
 }
 
@@ -492,18 +498,48 @@ function New-WebPlaneRuntimeSignature {
 
 function New-GovernanceRuntimeSignature {
     param(
+        [Parameter(Mandatory = $true)][string] $BindHost,
         [Parameter(Mandatory = $true)][int] $Port,
         [Parameter(Mandatory = $true)][string] $DbPath,
         [Parameter(Mandatory = $true)][string] $FileLibraryRoot,
-        [Parameter(Mandatory = $true)][string] $A4InternalContextTokenFingerprint
+        [Parameter(Mandatory = $true)][string] $A4InternalContextTokenFingerprint,
+        [Parameter(Mandatory = $true)][string] $Revision
     )
     return ([pscustomobject]@{
-        host            = '127.0.0.1'
+        host            = $BindHost
         port            = $Port
         dbPath          = $DbPath
         fileLibraryRoot = $FileLibraryRoot
         a4InternalContextTokenFingerprint = $A4InternalContextTokenFingerprint
+        revision        = $Revision
     } | ConvertTo-Json -Compress)
+}
+
+function New-KitManagerRuntimeSignature {
+    param(
+        [Parameter(Mandatory = $true)][string] $BindHost,
+        [Parameter(Mandatory = $true)][int] $Port,
+        [Parameter(Mandatory = $true)][string] $Revision
+    )
+    return ([pscustomobject]@{
+        host     = $BindHost
+        port     = $Port
+        revision = $Revision
+    } | ConvertTo-Json -Compress)
+}
+
+function Resolve-DeployRevision {
+    param([Parameter(Mandatory = $true)][string] $RepoRoot)
+
+    $gitOutput = @(& git -C $RepoRoot rev-parse --verify HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $gitOutput.Count -eq 0) {
+        throw "deploy_revision_unavailable: git rev-parse HEAD failed for $RepoRoot"
+    }
+    $revision = ([string]$gitOutput[0]).Trim().ToLowerInvariant()
+    if ($revision -notmatch '^[0-9a-f]{40,64}$') {
+        throw "deploy_revision_invalid: expected a git object id, got '$revision'"
+    }
+    return $revision
 }
 
 function Test-KitRuntimeSignatureMatches {
@@ -744,6 +780,9 @@ Assert-NoSpectatorPortCollisions `
     -PrimarySignalPort $resolvedKitSignalPort `
     -PrimaryMediaPort $resolvedKitMediaPort
 $isPublicHostExplicit = -not [string]::IsNullOrWhiteSpace($PublicHost)
+$resolvedDeployRevision = Resolve-DeployRevision -RepoRoot $RepoRoot
+$resolvedHostNativeBindHost = Get-HostNativeBindHost -RepoRoot $RepoRoot
+$resolvedHostNativeHealthHost = Resolve-HealthProbeHost -BindHost $resolvedHostNativeBindHost
 $resolvedConversionBindHost = if (-not [string]::IsNullOrWhiteSpace($ConversionBindHost)) {
     $ConversionBindHost.Trim()
 } elseif (Test-LoopbackHost -HostName $resolvedPublicHost) {
@@ -775,7 +814,8 @@ $kitRuntimeSignature = New-KitRuntimeSignature `
     -SpectatorStreamPorts $resolvedSpectatorMediaPorts `
     -AllowedStageHosts $resolvedAllowedStageHosts `
     -CoordinatorInternalApiBase $resolvedCoordinatorInternalApiBase `
-    -RuntimeAuthorityTokenFingerprint $runtimeAuthorityTokenFingerprint
+    -RuntimeAuthorityTokenFingerprint $runtimeAuthorityTokenFingerprint `
+    -Revision $resolvedDeployRevision
 $runtimeAuthorityConfigurationChanged = -not (Test-KitRuntimeSignatureMatches -Path $script:kitRuntimeSignaturePath -Expected $kitRuntimeSignature)
 if ($runtimeAuthorityConfigurationChanged) {
     # Keep the Docker coordinator and host-native Kit on the same token/base when
@@ -812,7 +852,8 @@ $conversionRuntimeSignature = New-ConversionRuntimeSignature `
     -Port 49101 `
     -HealthHost $resolvedConversionHealthHost `
     -PublicArtifactsUrl $resolvedConversionPublicArtifactsUrl `
-    -ArtifactsRoot $resolvedConversionArtifactsRoot
+    -ArtifactsRoot $resolvedConversionArtifactsRoot `
+    -Revision $resolvedDeployRevision
 
 $volume = Resolve-DeployVolumeState -Volume (Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile) -EdgeRuntimeContract $edgeRuntimeContract
 $script:volume = $volume
@@ -831,10 +872,16 @@ $resolvedGovernanceFileLibraryRoot = if ($volume -and $volume.runtimeStorageRoot
     Join-Path $RepoRoot 'storage'
 }
 $governanceRuntimeSignature = New-GovernanceRuntimeSignature `
+    -BindHost $resolvedHostNativeBindHost `
     -Port $resolvedGovernancePort `
     -DbPath $resolvedGovernanceDbPath `
     -FileLibraryRoot $resolvedGovernanceFileLibraryRoot `
-    -A4InternalContextTokenFingerprint $a4InternalContextTokenFingerprint
+    -A4InternalContextTokenFingerprint $a4InternalContextTokenFingerprint `
+    -Revision $resolvedDeployRevision
+$kitManagerRuntimeSignature = New-KitManagerRuntimeSignature `
+    -BindHost $resolvedHostNativeBindHost `
+    -Port 8010 `
+    -Revision $resolvedDeployRevision
 $resolvedGovernanceApiBaseForDocker = if ($SkipGovernance) { '' } else { "http://host.docker.internal:$resolvedGovernancePort" }
 if (-not $SkipGovernance) {
     [Environment]::SetEnvironmentVariable('HOST_GOVERNANCE_API_BASE', $resolvedGovernanceApiBaseForDocker, 'Process')
@@ -844,7 +891,7 @@ if (-not $SkipGovernance) {
 }
 $extraHostNativePorts = @($resolvedSpectatorSignalPorts)
 if (-not $SkipGovernance) { $extraHostNativePorts += $resolvedGovernancePort }
-$ports = Test-PortAvailability -RepoRoot $RepoRoot -KitSignalPort $resolvedKitSignalPort -KitMediaPort $resolvedKitMediaPort -ExtraHostNativePorts $extraHostNativePorts -ExtraHostNativeUdpPorts $resolvedSpectatorMediaPorts
+$ports = Test-PortAvailability -RepoRoot $RepoRoot -CoordinatorPort $resolvedCoordinatorPort -ViewerPort $resolvedViewerPort -KitSignalPort $resolvedKitSignalPort -KitMediaPort $resolvedKitMediaPort -ExtraHostNativePorts $extraHostNativePorts -ExtraHostNativeUdpPorts $resolvedSpectatorMediaPorts
 
 # Audit summary 印出
 function Report-Audit {
@@ -931,6 +978,8 @@ $auditObj = [pscustomobject]@{
         runtimeAuthorityConfigurationChanged = [bool]$runtimeAuthorityConfigurationChanged
         conversionBindHost  = $resolvedConversionBindHost
         conversionHealthHost = $resolvedConversionHealthHost
+        hostNativeBindHost  = $resolvedHostNativeBindHost
+        deployRevision      = $resolvedDeployRevision
         conversionPublicArtifactsUrl = $resolvedConversionPublicArtifactsUrl
         governanceSkipped    = [bool]$SkipGovernance
         governancePort       = $resolvedGovernancePort
@@ -1141,7 +1190,7 @@ if ($hostNative.venv -eq 'MISSING' -or $requirementsStale -or ($hostNative.venv 
 if (-not $SkipKit -and $hostNative.kitBuildRequired) {
     $kitBuildLog = Join-Path $RunDir 'kit-repo-build.log'
     Write-DeployTag -Tag 'fix' -Message "running bim-streaming-server Kit build ($($hostNative.kitBuildReason)) — may take several minutes" -LogPath $LogPath | Out-Null
-    $kitBuildResult = Invoke-KitRepoBuild -WorkingDirectory (Join-Path $RepoRoot 'bim-streaming-server') -LogPath $kitBuildLog -RunDir $RunDir
+    $kitBuildResult = Invoke-KitRepoBuild -WorkingDirectory (Join-Path $RepoRoot 'bim-streaming-server') -LogPath $kitBuildLog -RunDir $RunDir -BuildCommand $hostNative.kitBuildCommand
     if ($kitBuildResult.TimedOut) {
         Write-DeployTag -Tag 'fail' -Message "Kit repo.bat build timed out and was force-stopped (see scripts\.run\kit-repo-build.log)" -LogPath $LogPath | Out-Null
         Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (kit build timeout)'
@@ -1232,16 +1281,31 @@ foreach ($d in @('scripts\.run', 'logs\nvstreamer', 'storage\ifc-cache')) {
 
 # 先查 coordinator + viewer 是不是已經 running(idempotent 重跑要避免破壞正常 container)
 $webPlaneRunning = $false
+$ownedComposePorts = @{}
 if (-not $SkipDocker) {
-    $psProbe = @('compose','-f','compose.runtime-manager.yml','-f','compose.host-kit.yml','--env-file',$resolvedEnvFile,'ps','--status','running','-q','coordinator','viewer')
+    $composePrefix = @('compose','-f','compose.runtime-manager.yml','-f','compose.host-kit.yml','--env-file',$resolvedEnvFile)
     Push-Location $RepoRoot
-    $runningIds = @()  # strict-mode fail-safe:確保失敗路徑仍走到 Final Summary
+    $coordinatorRunningId = ''
+    $viewerRunningId = ''
+    $coordinatorPortProof = @()
+    $viewerPortProof = @()
     try {
-        $runningIds = docker @psProbe 2>$null
+        $coordinatorRunningId = ((docker @($composePrefix + @('ps','--status','running','-q','coordinator')) 2>$null | Out-String).Trim())
+        $viewerRunningId = ((docker @($composePrefix + @('ps','--status','running','-q','viewer')) 2>$null | Out-String).Trim())
+        if ($coordinatorRunningId -and $viewerRunningId) {
+            $coordinatorPortProof = @(docker @($composePrefix + @('port','coordinator','8004')) 2>$null)
+            $viewerPortProof = @(docker @($composePrefix + @('port','viewer','5173')) 2>$null)
+        }
     } finally { Pop-Location }
-    # 兩個 service 都各回一個 container id → 兩行 = web-plane 全 running
-    $runningCount = @(($runningIds | Out-String).Trim() -split "`n" | Where-Object { $_.Trim() }).Count
-    $webPlaneRunning = $runningCount -ge 2
+    $coordinatorHostPortPattern = ':' + [regex]::Escape([string]$resolvedCoordinatorPort) + '\s*$'
+    $viewerHostPortPattern = ':' + [regex]::Escape([string]$resolvedViewerPort) + '\s*$'
+    $coordinatorPortMatches = @($coordinatorPortProof | Where-Object { [string]$_ -match $coordinatorHostPortPattern }).Count -gt 0
+    $viewerPortMatches = @($viewerPortProof | Where-Object { [string]$_ -match $viewerHostPortPattern }).Count -gt 0
+    $webPlaneRunning = [bool]($coordinatorRunningId -and $viewerRunningId -and $coordinatorPortMatches -and $viewerPortMatches)
+    if ($webPlaneRunning) {
+        $ownedComposePorts[$resolvedCoordinatorPort] = $coordinatorRunningId
+        $ownedComposePorts[$resolvedViewerPort] = $viewerRunningId
+    }
 }
 
 # fix: 容器衝突自動 rm(spec §7.1)— 但 idempotent re-run 時 skip
@@ -1255,6 +1319,25 @@ if (-not $SkipDocker) {
         try { docker @rmArgs *> (Join-Path $RunDir 'docker-compose-rm.log') } finally { Pop-Location }
         $fixActions++
     }
+}
+
+# The hybrid profile owns kit-manager-api as a host-native service. Remove only
+# the same-project legacy Compose service so it cannot retain :8010 across an
+# upgrade and mask the new host-native revision.
+if (-not $SkipDocker) {
+    $legacyKitManagerRmArgs = @('compose','-f','compose.runtime-manager.yml','-f','compose.host-kit.yml','--env-file',$resolvedEnvFile,'rm','-f','-s','kit-manager-api')
+    Push-Location $RepoRoot
+    $legacyKitManagerRmExit = -1
+    try {
+        docker @legacyKitManagerRmArgs *> (Join-Path $RunDir 'docker-compose-rm-kit-manager-api.log')
+        $legacyKitManagerRmExit = $LASTEXITCODE
+    } finally { Pop-Location }
+    if ($legacyKitManagerRmExit -ne 0) {
+        Write-DeployTag -Tag 'fail' -Message "failed to remove legacy Compose kit-manager-api (exit=$legacyKitManagerRmExit)" -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (legacy kit-manager cleanup)'
+        exit 2
+    }
+    $fixActions++
 }
 
 # fix: 第一次 docker compose build(image 不存在時自動)
@@ -1317,16 +1400,13 @@ Write-DeployHeader -Title 'Phase 3: Interactive guard (dangerous actions)'
 # 狀態可能變動。Re-audit ports 避免用 Phase 1 的 stale 資料問互動。
 $extraHostNativePorts = @($resolvedSpectatorSignalPorts)
 if (-not $SkipGovernance) { $extraHostNativePorts += $resolvedGovernancePort }
-$ports = Test-PortAvailability -RepoRoot $RepoRoot -KitSignalPort $resolvedKitSignalPort -KitMediaPort $resolvedKitMediaPort -ExtraHostNativePorts $extraHostNativePorts -ExtraHostNativeUdpPorts $resolvedSpectatorMediaPorts
-
-# Docker Desktop 在 Windows 用以下 process 做 container port forward,不是「陌生 PID」:
-$dockerForwarderNames = @('wslrelay.exe','com.docker.backend.exe','docker.exe','vpnkit.exe','vpnkit-bridge.exe')
+$ports = Test-PortAvailability -RepoRoot $RepoRoot -CoordinatorPort $resolvedCoordinatorPort -ViewerPort $resolvedViewerPort -KitSignalPort $resolvedKitSignalPort -KitMediaPort $resolvedKitMediaPort -ExtraHostNativePorts $extraHostNativePorts -ExtraHostNativeUdpPorts $resolvedSpectatorMediaPorts
 
 $strangerPortPids = @($ports.docker + $ports.hostNative |
     Where-Object {
         $_.status -eq 'OCCUPIED' `
         -and -not $_.ourPidFile `
-        -and ($_.name -notin $dockerForwarderNames)
+        -and -not $ownedComposePorts.ContainsKey([int]$_.port)
     })
 
 if ($strangerPortPids.Count -eq 0 -and $hostNative.venv -ne 'WRONG_VERSION') {
@@ -1335,6 +1415,11 @@ if ($strangerPortPids.Count -eq 0 -and $hostNative.venv -ne 'WRONG_VERSION') {
 
 foreach ($sp in $strangerPortPids) {
     $portLabel = if ($sp.protocol) { "$($sp.protocol)/$($sp.port)" } else { "port $($sp.port)" }
+    if ([int]$sp.pid -le 0) {
+        Write-DeployTag -Tag 'fail' -Message "port $portLabel is occupied but its owner PID is not visible; refusing an ownership-blind stop" -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 3 -FailedPhase 'Phase 3 (listener owner unavailable)'
+        exit 3
+    }
     $prompt = "port $portLabel occupied by PID $($sp.pid) ($($sp.name)). Stop-Process? (y/N)"
     if ($Force) {
         Write-DeployTag -Tag 'fix' -Message "$prompt -> y (--Force)" -LogPath $LogPath | Out-Null
@@ -1393,7 +1478,7 @@ Write-DeployHeader -Title 'Phase 4: Start services'
 if ($SkipGovernance) {
     Write-DeployTag -Tag 'skip' -Message 'Phase 4a host-native governance (--SkipGovernance)' -LogPath $LogPath | Out-Null
 } else {
-    $governanceHealthUrl = "http://127.0.0.1:$resolvedGovernancePort/health"
+    $governanceHealthUrl = "http://${resolvedHostNativeHealthHost}:$resolvedGovernancePort/health"
     $governanceAlreadyRunning = Test-AlreadyRunning -Name 'governance-service' -RunDir $RunDir
     if ($governanceAlreadyRunning -and -not (Test-KitRuntimeSignatureMatches -Path $script:governanceRuntimeSignaturePath -Expected $governanceRuntimeSignature)) {
         Write-DeployTag -Tag 'fix' -Message 'Phase 4a restarting host-native governance because runtime parameters changed' -LogPath $LogPath | Out-Null
@@ -1522,8 +1607,13 @@ if ($SkipKit) {
 if ($SkipKitManager) {
     Write-DeployTag -Tag 'skip' -Message 'Phase 4c-2 host-native kit-manager-api (--SkipKitManager)' -LogPath $LogPath | Out-Null
 } else {
-    $kitManagerHealthUrl = 'http://127.0.0.1:8010/health'
+    $kitManagerHealthUrl = "http://${resolvedHostNativeHealthHost}:8010/health"
     $kitManagerAlreadyRunning = Test-AlreadyRunning -Name 'kit-manager-api' -RunDir $RunDir
+    if ($kitManagerAlreadyRunning -and -not (Test-KitRuntimeSignatureMatches -Path $script:kitManagerRuntimeSignaturePath -Expected $kitManagerRuntimeSignature)) {
+        Write-DeployTag -Tag 'fix' -Message 'Phase 4c-2 restarting kit-manager-api because runtime parameters or deployed revision changed' -LogPath $LogPath | Out-Null
+        Stop-HostNativeService -Name 'kit-manager-api' -RunDir $RunDir | Out-Null
+        $kitManagerAlreadyRunning = $false
+    }
     if ($kitManagerAlreadyRunning) {
         if (Wait-HostNativeHealth -Name 'kit-manager-api' -Url $kitManagerHealthUrl -TimeoutSec 5) {
             Write-DeployTag -Tag 'skip' -Message "Phase 4c-2 kit-manager-api already running ($kitManagerHealthUrl 200)" -LogPath $LogPath | Out-Null
@@ -1543,6 +1633,7 @@ if ($SkipKitManager) {
             Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4c-2 (kit-manager-api)'
             exit 4
         }
+        Set-KitRuntimeSignature -Path $script:kitManagerRuntimeSignaturePath -Value $kitManagerRuntimeSignature
         Write-DeployTag -Tag 'ok' -Message "Phase 4c-2 kit-manager-api ready ($kitManagerHealthUrl 200)" -LogPath $LogPath | Out-Null
     }
 }
@@ -1673,7 +1764,10 @@ if (-not $SkipDocker) {
     }
 }
 if (-not $SkipGovernance) {
-    if (-not (Probe-Url -Name 'governance' -Url "http://127.0.0.1:$resolvedGovernancePort/health")) { $verifyFails += 'governance' }
+    if (-not (Probe-Url -Name 'governance' -Url "http://${resolvedHostNativeHealthHost}:$resolvedGovernancePort/health")) { $verifyFails += 'governance' }
+}
+if (-not $SkipKitManager) {
+    if (-not (Probe-Url -Name 'kit-manager-api' -Url "http://${resolvedHostNativeHealthHost}:8010/health")) { $verifyFails += 'kit-manager-api' }
 }
 if (-not $SkipConversion) {
     if (-not (Probe-Url -Name 'conversion'  -Url 'http://127.0.0.1:49101/health')) { $verifyFails += 'conversion' }

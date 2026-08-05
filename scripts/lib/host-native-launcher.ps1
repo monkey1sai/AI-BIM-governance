@@ -10,6 +10,9 @@ Set-StrictMode -Version Latest
 if (-not (Get-Command -Name 'Resolve-PlatformVenvPython' -ErrorAction SilentlyContinue)) {
     . (Join-Path $PSScriptRoot 'platform/platform-adapter.ps1')
 }
+if (-not (Get-Command -Name 'Get-DeployTargetForCurrentPlatform' -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'deploy-target-registry.ps1')
+}
 
 function Resolve-HostNativePython {
     # Single interpreter-selection rule for every host-native service. The three
@@ -24,12 +27,6 @@ function Resolve-HostNativePython {
         [Parameter(Mandatory = $true)][string] $ServiceName
     )
     $venvPython = Resolve-PlatformVenvPython -VenvRoot (Join-Path $RepoRoot '.venv')
-    if ((Get-PlatformName) -eq 'windows') {
-        # Windows keeps preferring the system 3.12 install: the host-native Kit
-        # toolchain is built against it.
-        $python312 = 'C:\Program Files\Python312\python.exe'
-        if (Test-Path -LiteralPath $python312 -PathType Leaf) { return $python312 }
-    }
     if (Test-Path -LiteralPath $venvPython -PathType Leaf) { return $venvPython }
     $systemPython = Resolve-PlatformSystemPython
     if ($systemPython) { return $systemPython }
@@ -72,9 +69,9 @@ function Get-HostNativeBindHost {
     # 127.0.0.1-only socket refuses that connection - governance and
     # kit-manager-api were unreachable from the container (coordinator
     # /api/governance/files/tree returned 502) while the conversion service, which
-    # already bound 0.0.0.0, answered on every address including the LAN IP.
-    # Measured from inside the container: 172.17.0.1:49101 -> HTTP 200,
-    # 192.168.20.181:49102 -> ECONNREFUSED.
+    # already bound a reachable address, answered from the Docker bridge.
+    # Measured from inside the container: the target-scoped bridge address was
+    # reachable while the owner-private host address refused the loopback bind.
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string] $RepoRoot)
 
@@ -184,7 +181,16 @@ function Start-HostNativeService {
         [Parameter(Mandatory = $true)][string] $FilePath,
         [string[]] $ArgumentList = @(),
         [Parameter(Mandatory = $true)][string] $RunDir,
-        [ValidateSet('Hidden','Normal')] [string] $WindowStyle = 'Hidden'
+        [ValidateSet('Hidden','Normal')] [string] $WindowStyle = 'Hidden',
+        [ValidateRange(0, 30000)][int] $DetachTimeoutMs = 5000,
+        [scriptblock] $DetachProbeFn = {
+            param($processId)
+            Test-PlatformProcessDetached -ProcessId ([int]$processId)
+        },
+        [scriptblock] $SleepFn = {
+            param($milliseconds)
+            Start-Sleep -Milliseconds $milliseconds
+        }
     )
 
     if (-not (Test-Path -LiteralPath $RunDir)) {
@@ -237,7 +243,17 @@ function Start-HostNativeService {
     # forked instead of exec'ing, the PID we are about to record is not the
     # service, and the service would die with the session anyway - both silent
     # failures that only show up long after the deploy reports success.
-    if (-not (Test-PlatformProcessDetached -ProcessId ([int]$proc.Id))) {
+    $detached = $false
+    $detachDeadline = [DateTime]::UtcNow.AddMilliseconds($DetachTimeoutMs)
+    do {
+        if (& $DetachProbeFn ([int]$proc.Id)) {
+            $detached = $true
+            break
+        }
+        if ([DateTime]::UtcNow -ge $detachDeadline) { break }
+        & $SleepFn 100
+    } while ($true)
+    if (-not $detached) {
         throw "$Name started as PID $($proc.Id) but is not a session leader; it would die when the deploy session ends (stderr=$errFile)."
     }
     $proc.Id | Set-Content -LiteralPath $pidFile -Encoding ascii
@@ -274,6 +290,7 @@ function Invoke-KitRepoBuild {
         [Parameter(Mandatory = $true)][string] $WorkingDirectory,
         [Parameter(Mandatory = $true)][string] $LogPath,
         [Parameter(Mandatory = $true)][string] $RunDir,
+        [string] $BuildCommand = '',
         # repo.bat 底下的 Kit precache 工具鏈偶爾會留下未釋放 stdout/stderr handle
         # 的背景分支程序,讓 native process 的 stream redirect 卡住等 EOF 而非只等
         # repo.bat 本身結束(2026-07-01 實測:build 早已成功,但外層卡死 20+ 分鐘)。
@@ -281,7 +298,7 @@ function Invoke-KitRepoBuild {
         # build,又能在真的卡住時及時失敗而非無限期掛住整條 deploy pipeline。
         [int] $TimeoutSec = 1200,
         [scriptblock] $StartProcessFn = {
-            param($workingDirectory, $logPath)
+            param($workingDirectory, $logPath, $buildCommand)
             # cmd.exe 自己做 `>` 檔案重導向(真實 Win32 file handle,不是
             # pipe),deploy.ps1 只用 WaitForExit(timeout) 等「process 本身」
             # 結束,不受孫行程持有的 handle 影響。
@@ -291,10 +308,22 @@ function Invoke-KitRepoBuild {
             # as an internal or external command"(即使 `where repo.bat`、
             # `dir`、`call repo.bat` 都找得到/看得到檔案)。完整路徑不經過
             # 這條關聯查找路徑,兩種主機狀態下都能正常執行(2026-07-06 實測)。
-            $repoBatPath = Join-Path $workingDirectory 'repo.bat'
-            $cmdLine = "call `"$repoBatPath`" build > `"$logPath`" 2>&1"
-            Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $cmdLine) `
-                -WorkingDirectory $workingDirectory -NoNewWindow -PassThru
+            $effectiveCommand = if ([string]::IsNullOrWhiteSpace($buildCommand)) {
+                if ((Get-PlatformName) -eq 'windows') { '.\repo.bat build' } else { './repo.sh build' }
+            } else { $buildCommand.Trim() }
+            if ($effectiveCommand -eq '.\repo.bat build') {
+                $repoBatPath = Join-Path $workingDirectory 'repo.bat'
+                $cmdLine = "call `"$repoBatPath`" build > `"$logPath`" 2>&1"
+                return Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $cmdLine) `
+                    -WorkingDirectory $workingDirectory -NoNewWindow -PassThru
+            }
+            if ($effectiveCommand -eq './repo.sh build') {
+                $repoShPath = Join-Path $workingDirectory 'repo.sh'
+                $bashCommand = "`"$repoShPath`" build > `"$logPath`" 2>&1"
+                return Start-Process -FilePath 'bash' -ArgumentList @('-c', $bashCommand) `
+                    -WorkingDirectory $workingDirectory -NoNewWindow -PassThru
+            }
+            throw "Unsupported Kit build command '$effectiveCommand'; expected the validated registry command for this platform."
         },
         [scriptblock] $WaitForExitFn = {
             param($proc, $timeoutMs)
@@ -307,7 +336,7 @@ function Invoke-KitRepoBuild {
     )
 
     $pidFile = Join-Path $RunDir 'kit-repo-build.pid'
-    $proc = & $StartProcessFn $WorkingDirectory $LogPath
+    $proc = & $StartProcessFn $WorkingDirectory $LogPath $BuildCommand
     $proc.Id | Set-Content -LiteralPath $pidFile -Encoding ascii
 
     $exited = & $WaitForExitFn $proc ($TimeoutSec * 1000)
@@ -379,7 +408,7 @@ function Start-HostNativeGovernance {
     )
     # 'scripts\.run' is safe on both platforms: PowerShell's Join-Path normalises the
     # backslash to the native separator, verified on the Linux target (the run
-    # directory materialised as /home/bimdeploy/AI-bim-geo/scripts/.run). Kept in the
+    # directory materialised under <private-deploy-root>/scripts/.run). Kept in the
     # Windows spelling to match every other site that reads or writes these PID files.
     $runDir = Join-Path $RepoRoot 'scripts\.run'
     if (-not (Test-Path -LiteralPath $runDir)) {

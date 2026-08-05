@@ -1,6 +1,6 @@
 {
   "schema_version": "deploy-target-registry/v1",
-  "canonical_target": "remote-linux-181",
+  "canonical_target": "canonical-linux",
   "reserved_kinds": [
     "linux_container"
   ],
@@ -27,19 +27,14 @@
       "host_native_bind_host": "127.0.0.1"
     },
     {
-      "id": "remote-linux-181",
+      "id": "canonical-linux",
       "kind": "linux_host_native",
       "role": "canonical_test_deploy",
+      "private_inventory_required": true,
       "connection": {
-        "type": "ssh",
-        "host": "192.168.20.181",
-        "user": "bimdeploy"
+        "type": "ssh"
       },
-      "deploy_root": "/home/bimdeploy/AI-bim-geo",
-      "runtime_data_root": "/home/bimdeploy/AI-bim-geo-data",
-      "public_host": "192.168.20.181",
-      "edge_site_id": "site_remote_linux_181",
-      "env_file": ".env.web-plane.host-kit.remote-linux-181",
+      "env_file": ".env.web-plane.host-kit.canonical-linux",
       "kit": {
         "build_platform": "linux-x86_64",
         "build_command": "./repo.sh build",
@@ -50,8 +45,7 @@
       },
       "post_clone_steps": [
         "restore-exec-bits"
-      ],
-      "host_native_bind_host": "0.0.0.0"
+      ]
     }
   ]
 }

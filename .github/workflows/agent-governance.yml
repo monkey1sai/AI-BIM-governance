@@ -96,9 +96,17 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-platform-adapter.ps1
 
+      - name: Run host-native child-launch regression
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-host-native-child-launch.ps1
+
       - name: Run remote deploy transport tests
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-remote-deploy-transport.ps1
+
+      - name: Run host-native preflight regression tests
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -File scripts/tests/test-preflight-host-native.ps1
 
       - name: Run Windows verification scope tests
         shell: pwsh

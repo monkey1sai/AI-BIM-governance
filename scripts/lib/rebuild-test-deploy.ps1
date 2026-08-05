@@ -34,7 +34,7 @@ function Write-TestDeployLifecycleLog {
 
 # This local rebuild routine only knows how to rebuild the local Windows
 # deployment; it resolves that target explicitly by id. Dispatch by canonical
-# target (SSH transport to remote-linux-181) lands with plan tasks B6/B8.
+# target (SSH transport to the canonical Linux descriptor) lands with plan tasks B6/B8.
 $script:TestDeployTargetProfile = Get-DeployTarget -Id 'local-windows'
 $script:TestDeployFixedPath = [string]$script:TestDeployTargetProfile.deploy_root
 $script:TestDeployRootToolingDirNames = @(

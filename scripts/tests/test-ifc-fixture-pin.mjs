@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   MANIFEST_SCHEMA,
   SIDECAR_SCHEMA,
@@ -30,7 +31,7 @@ test('valid manifest passes and returns itself', () => {
 });
 
 test('real repo manifest loads (mechanism ships before pins exist)', () => {
-  const real = loadManifest(new URL('../ifc-fixture-manifest.json', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
+  const real = loadManifest(fileURLToPath(new URL('../ifc-fixture-manifest.json', import.meta.url)));
   assert.equal(real.schema_version, MANIFEST_SCHEMA);
   assert.ok(Array.isArray(real.entries));
 });
@@ -103,9 +104,17 @@ test('cache without sidecar is unverifiable, not valid', () => {
 
 test('sidecar with drifted pin marks the cache stale', () => {
   const sidecar = buildSidecar(entry, 'a'.repeat(64));
-  assert.equal(evaluateCacheSidecar(entry, sidecar).verdict, 'cache_valid');
+  assert.equal(evaluateCacheSidecar(entry, sidecar, 'a'.repeat(64)).verdict, 'cache_valid');
   const drifted = { ...sidecar, etag: 'other' };
-  assert.equal(evaluateCacheSidecar(entry, drifted).verdict, 'stale_cache');
+  assert.equal(evaluateCacheSidecar(entry, drifted, 'a'.repeat(64)).verdict, 'stale_cache');
+});
+
+test('cache bytes must still match the downloaded sidecar hash', () => {
+  const sidecar = buildSidecar(entry, 'a'.repeat(64));
+  const changed = evaluateCacheSidecar(entry, sidecar, 'b'.repeat(64));
+  assert.equal(changed.verdict, 'stale_cache');
+  assert.match(changed.reasons.join(' '), /sha256_mismatch/);
+  assert.equal(evaluateCacheSidecar(entry, { ...sidecar, sha256: 'bad' }, 'a'.repeat(64)).verdict, 'stale_cache');
 });
 
 test('sidecar requires a real sha256', () => {

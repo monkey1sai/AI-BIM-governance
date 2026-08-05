@@ -48,6 +48,11 @@ function Invoke-JsonPlan {
 }
 
 Assert-True (Test-Path -LiteralPath $ScriptPath -PathType Leaf) "Expected converter script to exist: $ScriptPath"
+$scriptContent = Get-Content -LiteralPath $ScriptPath -Raw
+Assert-True ($scriptContent -match "BuildPlatform = 'linux-x86_64'") 'converter declares the Linux Kit build root'
+Assert-True ($scriptContent -match "Executable\s+= 'kit'") 'converter declares the Linux Kit executable name'
+Assert-True ($scriptContent -match "BuildCommand\s+= '\./repo\.sh build'") 'converter gives the Linux build remediation command'
+Assert-True (-not ($scriptContent -match 'Get-KitReleaseRoot[\s\S]{0,160}windows-x86_64')) 'runtime release-root resolution is not Windows-only'
 
 try {
     if (-not (Test-Path -LiteralPath $FixtureDir -PathType Container)) {

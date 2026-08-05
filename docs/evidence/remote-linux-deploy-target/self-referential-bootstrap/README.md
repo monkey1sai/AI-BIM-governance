@@ -16,8 +16,8 @@ new deploy path is only possible from the branch that contains it.
 
 ## What is being verified
 
-`Invoke-RemoteTestDeployRebuild` against the canonical target
-`remote-linux-181` with `-BootstrapRef`, exercising: zero-credential HTTPS
+`Invoke-RemoteTestDeployRebuild` against the de-identified canonical target
+`canonical-linux` with owner-controlled private inventory and `-BootstrapRef`, exercising: zero-credential HTTPS
 clone, the verbatim contract refspec fetch, reset, `git clean` preserving env,
 `restore-exec-bits` (F-2), single-implementation env merge, and the masked
 effective-env snapshot.

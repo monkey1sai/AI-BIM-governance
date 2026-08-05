@@ -41,7 +41,10 @@ function Get-KitRuntimeBuildArtifacts {
         missing      = @($missing)
         launcherPath = $launcher
         kitExePath   = $kitExe
-        buildCommand = "cd bim-streaming-server; $($launch.BuildCommand)"
+        # Keep this structured value executable-selectable. The caller already
+        # supplies bim-streaming-server as WorkingDirectory; embedding `cd ...;`
+        # would turn a validated registry command into shell text and fail closed.
+        buildCommand = [string]$launch.BuildCommand
     }
 }
 

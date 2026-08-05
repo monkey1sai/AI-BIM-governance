@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import types
 from pathlib import Path
@@ -264,6 +265,9 @@ def test_adapter_preflight_missing_prereqs_raises_converter_unavailable(tmp_path
     assert raised.code == "converter_unavailable"
     # Honest blocker message must name what is missing (script + kit prereqs).
     assert "converter script not found" in raised.message
+    expected_platform = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
+    assert expected_platform in raised.message
+    assert "HOOPS entrypoint not found" in raised.message
 
 
 def test_adapter_convert_blocks_instead_of_faking_when_prereqs_missing(tmp_path: Path):
@@ -710,6 +714,30 @@ def _write_minimal_converter_sidecars(output_dir: Path) -> None:
     )
 
 
+def _write_default_converter_prereqs(repo_root: Path) -> None:
+    """Materialize the platform defaults so downstream convert tests reach their subject."""
+    platform_dir = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
+    kit_name = "kit.exe" if os.name == "nt" else "kit"
+    release_root = repo_root / "_build" / platform_dir / "release"
+    kit_path = release_root / "kit" / kit_name
+    kit_path.parent.mkdir(parents=True, exist_ok=True)
+    kit_path.write_bytes(b"fixture")
+    hoops_path = (
+        release_root
+        / "exts"
+        / "omni.services.convert.cad"
+        / "omni"
+        / "services"
+        / "convert"
+        / "cad"
+        / "services"
+        / "process"
+        / "hoops_main.py"
+    )
+    hoops_path.parent.mkdir(parents=True, exist_ok=True)
+    hoops_path.write_text("# fixture", encoding="utf-8")
+
+
 def _clear_pxr_test_stubs(monkeypatch) -> None:
     for name in ("pxr", "pxr.Gf", "pxr.Sdf", "pxr.Usd", "pxr.UsdGeom", "pxr.UsdLux"):
         monkeypatch.delitem(sys.modules, name, raising=False)
@@ -1065,6 +1093,7 @@ def test_adapter_falls_back_when_hoops_cannot_load_parseable_ifc(tmp_path: Path,
     repo_root = tmp_path / "repo"
     (repo_root / "scripts").mkdir(parents=True)
     (repo_root / "scripts" / "convert-ifc-to-usdc.ps1").write_text("# fake", encoding="utf-8")
+    _write_default_converter_prereqs(repo_root)
     ifc_file = repo_root / "fixtures" / "source.ifc"
     ifc_file.parent.mkdir(parents=True)
     ifc_file.write_text("ISO-10303-21;", encoding="utf-8")
@@ -1114,6 +1143,7 @@ def test_adapter_does_not_fallback_for_non_import_converter_failure(tmp_path: Pa
     repo_root = tmp_path / "repo"
     (repo_root / "scripts").mkdir(parents=True)
     (repo_root / "scripts" / "convert-ifc-to-usdc.ps1").write_text("# fake", encoding="utf-8")
+    _write_default_converter_prereqs(repo_root)
     ifc_file = repo_root / "fixtures" / "source.ifc"
     ifc_file.parent.mkdir(parents=True)
     ifc_file.write_text("ISO-10303-21;", encoding="utf-8")
@@ -1158,6 +1188,7 @@ def test_adapter_rejects_placeholder_written_by_fallback(tmp_path: Path, monkeyp
     repo_root = tmp_path / "repo"
     (repo_root / "scripts").mkdir(parents=True)
     (repo_root / "scripts" / "convert-ifc-to-usdc.ps1").write_text("# fake", encoding="utf-8")
+    _write_default_converter_prereqs(repo_root)
     ifc_file = repo_root / "fixtures" / "source.ifc"
     ifc_file.parent.mkdir(parents=True)
     ifc_file.write_text("ISO-10303-21;", encoding="utf-8")
@@ -2583,6 +2614,7 @@ def _adapter_with_ps1(tmp_path: Path) -> Ifc2UsdcPowershellConverterAdapter:
     repo_root = tmp_path / "repo"
     (repo_root / "scripts").mkdir(parents=True)
     (repo_root / "scripts" / "convert-ifc-to-usdc.ps1").write_text("# fake", encoding="utf-8")
+    _write_default_converter_prereqs(repo_root)
     ifc_file = repo_root / "fixtures" / "demo-model.ifc"
     ifc_file.parent.mkdir(parents=True)
     ifc_file.write_text("ISO-10303-21;", encoding="utf-8")

@@ -1,0 +1,17 @@
+{
+  "schema_version": "deploy-target-private-inventory/v1",
+  "targets": [
+    {
+      "id": "canonical-linux",
+      "connection": {
+        "host": "deploy.example.invalid",
+        "user": "deploy-fixture"
+      },
+      "deploy_root": "/srv/ai-bim/example-deploy",
+      "runtime_data_root": "/srv/ai-bim/example-runtime-data",
+      "public_host": "192.0.2.10",
+      "edge_site_id": "site-example",
+      "host_native_bind_host": "192.0.2.1"
+    }
+  ]
+}

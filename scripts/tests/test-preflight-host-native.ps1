@@ -116,7 +116,7 @@ try {
     Assert-True ($result.kitBuildRequired -eq $true) 'kit build required'
     Assert-True ($result.kitBuildReason -match 'streaming_launcher') 'missing launcher reason included'
     Assert-True ($result.kitBuildReason -match 'kit_exe') 'missing kit.exe reason included'
-    Assert-Equal 'cd bim-streaming-server; .\repo.bat build' $result.kitBuildCommand 'build command hint'
+    Assert-Equal '.\repo.bat build' $result.kitBuildCommand 'build command remains structured for launcher execution'
     Assert-True ($result.ok -eq $false) 'overall false until build artifacts exist'
     Write-TestPass 'Kit runtime build requirement flagged'
 }
@@ -227,9 +227,7 @@ importlib.util.find_spec = _masked_find_spec
     Write-TestPass 'sidecar runtime import probe skipped (.venv missing)'
 }
 
-Write-Host "`n=== test-preflight-host-native.ps1: ALL PASSED ===" -ForegroundColor Green
-
-# Test 4: .venv 存在且版本正確,但沒有 pip → MISSING(半殘 venv 必須被重建)
+# Test 11: .venv 存在且版本正確,但沒有 pip → MISSING(半殘 venv 必須被重建)
 # 迴歸來源:遠端缺 python3-venv 時 `python -m venv` 會先建好 bin/python 才在
 # ensurepip 失敗,留下通過存在性檢查、卻在 pip install 階段才爆的目錄。
 $sandbox = New-TestSandbox -Prefix 'preflight-hn'
@@ -250,3 +248,5 @@ try {
     Write-TestPass 'half-built venv (no pip) flagged'
 }
 finally { Remove-TestSandbox -Path $sandbox }
+
+Write-Host "`n=== test-preflight-host-native.ps1: ALL PASSED ===" -ForegroundColor Green
