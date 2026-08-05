@@ -313,6 +313,7 @@ chmod 600 "$EFFECTIVE_ENV" "$SNAPSHOT_TMP"
 
 echo "== effective env snapshot begin =="
 cat "$SNAPSHOT_TMP"
+echo # F-17: the snapshot JSON has no trailing newline; keep the end marker on its own line
 echo "== effective env snapshot end =="
 
 {{BUILD_STEP}}
@@ -347,6 +348,86 @@ function Get-RemoteDeploySshArguments {
     }
     $arguments += "$([string]$Target.connection.user)@$([string]$Target.connection.host)"
     return $arguments
+}
+
+
+function Get-DeployTagName {
+    # B13 (owner directive 2026-08-05): every successful deployment to the
+    # canonical target is tagged. Name format = date + timer ticker + number:
+    #   deploy-<yyyyMMdd>-<UtcTicks>-<NNN>
+    # UtcTicks is the 100ns tick count of the dispatch timestamp (the "timer
+    # ticker"); NNN is the 1-based sequence of deployments that UTC day.
+    # Pure and deterministic so the format is testable without a clock.
+    param(
+        [Parameter(Mandatory = $true)][DateTimeOffset] $TimestampUtc,
+        [Parameter(Mandatory = $true)][int] $Sequence
+    )
+    if ($Sequence -lt 1 -or $Sequence -gt 999) {
+        throw "remote_deploy_transport: deploy tag sequence must be 1..999 (got $Sequence)."
+    }
+    return ('deploy-{0:yyyyMMdd}-{1}-{2:000}' -f $TimestampUtc.UtcDateTime, $TimestampUtc.UtcTicks, $Sequence)
+}
+
+function New-RemoteDeployTag {
+    # Creates and pushes the B13 annotated tag for a deployment that EXITed 0.
+    # Binds to the commit the TARGET actually checked out (parsed from the remote
+    # transcript), not to whatever the operator happens to have locally. The tag
+    # name and message carry no host/account/network detail (policy A).
+    param(
+        [Parameter(Mandatory = $true)][string] $OperatorRepoRoot,
+        [Parameter(Mandatory = $true)][string] $TargetId,
+        [Parameter(Mandatory = $true)][string] $DeployedSha,
+        [Parameter(Mandatory = $true)][string] $SnapshotName,
+        [DateTimeOffset] $TimestampUtc = [DateTimeOffset]::UtcNow,
+        [scriptblock] $GitRunner = {
+            param([string[]] $GitArgs)
+            $out = & git -C $OperatorRepoRoot @GitArgs 2>&1
+            [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($out | Out-String) }
+        }
+    )
+    if ($DeployedSha -notmatch '^[0-9a-f]{7,40}$') {
+        throw "remote_deploy_transport: deploy tag requires the deployed commit sha (got '$DeployedSha')."
+    }
+    $dateToken = '{0:yyyyMMdd}' -f $TimestampUtc.UtcDateTime
+    # Sequence counts existing tags for the day; fetch first so parallel operators
+    # converge. A fetch failure downgrades to local-only counting (offline dispatch
+    # is still a deployment worth recording).
+    $null = & $GitRunner @('fetch', '--tags', '--quiet', 'origin')
+    $tagName = ''
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+        $existing = & $GitRunner @('tag', '--list', "deploy-$dateToken-*")
+        $count = @(($existing.Output -split "`r?`n") | Where-Object { $_ }).Count
+        $candidate = Get-DeployTagName -TimestampUtc $TimestampUtc -Sequence ($count + 1 + $attempt)
+        $message = "deploy target=$TargetId exit=0 snapshot=$SnapshotName deployed=$DeployedSha"
+        $created = & $GitRunner @('tag', '-a', $candidate, '-m', $message, $DeployedSha)
+        if ($created.ExitCode -eq 0) { $tagName = $candidate; break }
+    }
+    if ([string]::IsNullOrWhiteSpace($tagName)) {
+        throw 'remote_deploy_transport: could not create a unique deploy tag after 3 attempts.'
+    }
+    $pushed = & $GitRunner @('push', 'origin', "refs/tags/$tagName")
+    if ($pushed.ExitCode -ne 0) {
+        # B13: a push failure must never leave a local-only tag - a later
+        # sequence count would treat a record origin never accepted as existing.
+        $deleted = & $GitRunner @('tag', '-d', $tagName)
+        $cleanup = if ($deleted.ExitCode -eq 0) { 'local tag deleted' } else { "local tag cleanup ALSO failed: $($deleted.Output)" }
+        throw "remote_deploy_transport: deploy tag '$tagName' could not be pushed ($cleanup): $($pushed.Output)"
+    }
+    return $tagName
+}
+
+function ConvertFrom-DeployEnvSnapshotTranscript {
+    # Extracts the redacted env snapshot from a remote rebuild transcript. The
+    # snapshot JSON is written without a trailing newline, so the remote template
+    # must emit a bare echo after `cat` (F-17) for the end marker to start its
+    # own line; this parser is the single implementation live dispatch uses.
+    param([AllowEmptyString()][string] $OutputText)
+    if ($OutputText -match '(?s)== effective env snapshot begin ==\r?\n(.*?)\r?\n== effective env snapshot end ==') {
+        try { return $Matches[1] | ConvertFrom-Json } catch {
+            throw "remote_deploy_transport: remote redacted env snapshot is invalid JSON: $($_.Exception.Message)"
+        }
+    }
+    return $null
 }
 
 function Invoke-RemoteTestDeployRebuild {
@@ -416,12 +497,7 @@ function Invoke-RemoteTestDeployRebuild {
     $exitCode = $LASTEXITCODE
 
     $outputText = ($output | Out-String)
-    $snapshot = $null
-    if ($outputText -match '(?s)== effective env snapshot begin ==\r?\n(.*?)\r?\n== effective env snapshot end ==') {
-        try { $snapshot = $Matches[1] | ConvertFrom-Json } catch {
-            throw "remote_deploy_transport: remote redacted env snapshot is invalid JSON: $($_.Exception.Message)"
-        }
-    }
+    $snapshot = ConvertFrom-DeployEnvSnapshotTranscript -OutputText $outputText
     if ($null -eq $snapshot -and $exitCode -eq 0) {
         throw 'remote_deploy_transport: remote rebuild reported success but emitted no effective env snapshot section.'
     }
@@ -436,10 +512,46 @@ function Invoke-RemoteTestDeployRebuild {
         $snapshotPath = ''
     }
 
+    # B13: a successful, non-dry-run, non-bootstrap deployment of the canonical
+    # target is tagged on the commit the TARGET actually checked out ("HEAD is
+    # now at <sha>" in its transcript), resolved to the full sha operator-side.
+    # A bootstrap rebuild verifies an unmerged revision and its evidence is
+    # never deploy-target evidence, so it is never tagged. Once eligible, the
+    # tag is mandatory: an unresolvable sha is a hard error, not a skipped
+    # record, because B13 requires every successful canonical deployment tagged.
+    $deployTag = ''
+    $tagEligible = ($exitCode -eq 0 -and -not $DryRun -and
+        [string]::IsNullOrWhiteSpace($BootstrapRef) -and
+        $null -ne $Target.PSObject.Properties['role'] -and
+        [string]$Target.role -ceq 'canonical_test_deploy')
+    if ($tagEligible) {
+        $shaMatch = [regex]::Match($outputText, 'HEAD is now at ([0-9a-f]{7,40})')
+        if (-not $shaMatch.Success) {
+            throw 'remote_deploy_transport: successful canonical deployment reported no checked-out sha, so its required B13 deploy tag cannot be created.'
+        }
+        $shortSha = $shaMatch.Groups[1].Value
+        $fullSha = (& git -C $OperatorRepoRoot rev-parse ($shortSha + '^{commit}') 2>$null | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $fullSha) {
+            # The remote resets to a freshly fetched origin/main that a stale
+            # operator checkout may not have yet - fetch once and retry.
+            $null = & git -C $OperatorRepoRoot fetch --quiet origin 2>$null
+            $fullSha = (& git -C $OperatorRepoRoot rev-parse ($shortSha + '^{commit}') 2>$null | Out-String).Trim()
+        }
+        if ($LASTEXITCODE -ne 0 -or -not $fullSha) {
+            throw "remote_deploy_transport: deployed commit '$shortSha' is not resolvable operator-side even after fetching origin, so the required B13 deploy tag cannot be created."
+        }
+        $deployTag = New-RemoteDeployTag -OperatorRepoRoot $OperatorRepoRoot -TargetId ([string]$Target.id) `
+            -DeployedSha $fullSha -SnapshotName ([IO.Path]::GetFileName([string]$snapshotPath))
+        Write-Host "[deploy-tag] $deployTag -> $fullSha"
+    } elseif ($exitCode -eq 0 -and -not $DryRun -and -not [string]::IsNullOrWhiteSpace($BootstrapRef)) {
+        Write-Host '[deploy-tag] skipped: bootstrap rebuild evidence is never deploy-target evidence.'
+    }
+
     return [pscustomobject]@{
         ExitCode      = $exitCode
         Output        = $outputText
         SnapshotPath  = $snapshotPath
         EffectiveKeys = if ($null -ne $snapshot) { @($snapshot.entries | ForEach-Object { [string]$_.key }) } else { @() }
+        DeployTag     = $deployTag
     }
 }

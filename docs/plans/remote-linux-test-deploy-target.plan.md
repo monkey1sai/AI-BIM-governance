@@ -144,6 +144,12 @@ video element（符合既有 healthy 判準：readyState=4 ＋ 影像尺寸 ＋ 
 | **F-16** | governance／kit-manager-api 硬編 `--host 127.0.0.1`，dockerised coordinator 經 bridge 連不到（`/api/governance/files/tree` → 502）。conversion 綁 `0.0.0.0` 所以一直正常 | Docker Desktop 經 VM 把 `host.docker.internal` 代理進 loopback |
 
 **方法論教訓**：F-16 診斷過程中，容器內以 `wget` 探測回報三個端點全不可達，差點導向「跨 bridge 網段不通」的錯誤結論——實際上該 image 沒有 `wget`。改用 `node` 對 owner-private target-scoped bridge 實測才得到 HTTP 200。**探測工具本身不存在時的失敗，與「服務不可達」在輸出上無法區分。**
+### 4.4.2 fixpoint closure 階段（2026-08-05）新增發現
+
+| 編號 | 發現 | 為何先前測不到 |
+|---|---|---|
+| **F-17** | effective-env snapshot JSON 以 `-Compress`＋`WriteAllText` 寫出、**無結尾換行**；remote 模板 `cat` 後直接 echo end-marker → marker 與 JSON 併在同一行，operator 端 `\r?\n== end ==` regex 永不命中 → 成功的真實 rebuild 被誤判「no effective env snapshot section」拋錯。修法＝模板 `cat` 後補 bare `echo` 換行，parser 抽成 `ConvertFrom-DeployEnvSnapshotTranscript` 單一實作＋真實 byte 形狀 regression 測試 | 測試 fake ssh 以 PS 物件逐一輸出、`Out-String` 自動補換行，重現不了「cat 不補換行」的真實 bash 形狀；dry-run 不執行 remote script |
+
 ### 4.5 風險登記修正
 
 - **R8 撤銷**：service-manager unit state 不等於 effective firewall policy；spike 已改以 effective policy 與實際連線測量裁決。live host policy/state 只記錄於 private operations record。
@@ -279,6 +285,8 @@ PR-B 改的正是**驗證機制本身**（deploy path）。§6 明文禁止測�
 - [ ] B10 — Windows 三級觸發 changed-path classifier（D-20）
 - [x] B11 — 取得 `stack_kind=self_referential_bootstrap` evidence（依 PR-A 規則）：PR #467 的 bootstrap evidence 位於 `docs/evidence/remote-linux-deploy-target/self-referential-bootstrap/`；formal preflight 的 inherited-open-ledger 自鎖由使用者核准一次性例外，例外不涵蓋 review、CI、approval 或 merge
 - [x] B12 — merge 後 fixpoint 重驗並回貼（PR-A 義務三）：#459 squash `ad7a50cf` 為 mechanism_commit，8 個 verification_contract command 於 main 實跑 EXIT=0，attestation 依 `self-referential-fixpoint-attestation/v1` 產出，entry 經 #470 關閉
+- [x] B13 — 部署 tag（owner 追加，2026-08-05）：每次對 canonical 目標**成功**部署後，operator dispatch 在「target 實際 checkout 的 commit」上打 annotated tag 並推送 origin，命名 `deploy-<yyyyMMdd>-<UtcTicks>-<NNN>`（日期＋timer ticker＋當日序號）。純函式 `Get-DeployTagName` 可測；序號以當日既有 tag 計數、碰撞自動遞增重試；push 失敗為硬錯誤（不留只在本機的 tag）；DryRun 與失敗部署不打 tag；tag 名與訊息不含 host/account/network（政策 A）
+- [x] B14 — fixpoint closure 接手程序（已完成 2026-08-05：#472 squash `902f3a4` 落地，ledger 兩 entry closed、零 open；owner 追加，2026-08-05；取代 #471 的 suites-only 關帳）：(1) private-input root 齊備（InventoryPath／CanonicalEnvPath／IdentityFile 於 owner 私有目錄，ACL 限縮，schema/resolver/SSH 驗證 PASS）；(2) 遠端 `<runtime_data_root>/target.local.json` 由 **owner 明示授權後**另行 provision（transport 依契約絕不上傳/覆寫私有 topology）、chmod 600、不回顯任何 topology/帳號/token/env/key；(3) 以 **無 BootstrapRef** 的正規 rebuild 實跑部署；(4) 依 ledger `verification_contract` **原序執行全部 12 個 command**，不得重排或替換；(5) 全數通過後恰好三檔關帳：ledger open→closed、fixpoint/summary.md、fixpoint/attestation.json，保留 mechanism_commit `591f930b` 與不可變 contract digest；(6) PR body bootstrap 三列填 no/not applicable，exact-PR local preflight，正常 push（禁 force），CI/review/merge 後驗證 main 已含 closure。Ledger 在所有 gate 通過前保持 OPEN；經 agents-board 協調（codex→claude handoff 08-05）
 
 ---
 
@@ -288,8 +296,8 @@ PR-B 改的正是**驗證機制本身**（deploy path）。§6 明文禁止測�
 ① spike                                    ✅ 已完成（R1/W1/W2 全 PASS）
 ② PR #458 單一擁有者 merge 治理             ✅ 已完成
 ③ PR-A #459 ＋ fixpoint #470                ✅ 已完成
-④ PR-B #467 遷移本體                        🔵 review/repair 中
-⑤ #467 merge 後首次以 canonical 身分         ⏸ ← 緊接正常 merge 的 fixpoint
+④ PR-B #467 遷移本體                        ✅ 已完成（merged）
+⑤ #467 merge 後首次以 canonical 身分         ✅ 已完成（#472 squash 902f3a4）
     從 origin/main 重建
 ```
 
