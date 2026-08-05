@@ -3,7 +3,9 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 
-const workflowUrl = new URL('../.claude/workflows/ship-item.js', import.meta.url)
+// Exercise the shared generated routing block from an active dispatching
+// workflow. ship-item is intentionally validation-only and must not contain it.
+const workflowUrl = new URL('../.claude/workflows/std-plan.js', import.meta.url)
 const source = await readFile(workflowUrl, 'utf8')
 const block = source.match(/\/\/ <routing:gen>[\s\S]*?\/\/ <\/routing:gen>/)?.[0]
 assert.ok(block, 'generated routing block must exist')

@@ -331,14 +331,14 @@
         "kind": "repo-authored-platform-variants",
         "source": "AI-BIM-governance",
         "import_commit": "c414e1cd4ca46ae3443db76a1a43a5334695db01",
-        "notes": "Claude and Codex entrypoints intentionally differ; shared P0-P7 gates are checked by agent-governance tests instead of byte mirroring."
+        "notes": "Claude and Codex adapter prose intentionally differs; agent-contracts/spec-to-done.contract.json owns the shared phases, canonical state path, durable HELD reasons, and terminal evidence constraints, with agent-governance tests enforcing adapter parity."
       },
       "integrity": {
         "format": "agent-skill-tree/v1",
         "algorithm": "sha256",
         "trees": {
-          "claude": "8f313724e8043593252aeed997f8d55b15cd9be662b2d6ff247a13a81c7037af",
-          "codex": "01d5cc292ef14cedb8f90254d54c9a522a91105fe953f63bb5ebc6fd19dc2fef"
+          "claude": "85fd5bc7d28c21b258b84b0d737069b814f1e76b4b143649de2ba74ddfea25a5",
+          "codex": "8467a18a91416c19b0047642965afe83b81601e6a043e59bc62f69ed960c6962"
         }
       }
     },

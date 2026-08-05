@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "spec-to-done.contract.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "phases", "durable_state", "terminal_evidence", "ship"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "const": "spec-to-done-contract/v1" },
+    "phases": {
+      "const": ["P0", "P1", "P3", "P4", "P5", "P6", "P7"]
+    },
+    "durable_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["canonical_relative_path", "held_reasons"],
+      "properties": {
+        "canonical_relative_path": {
+          "const": "artifacts/spec-to-done/{slug}-state.md"
+        },
+        "held_reasons": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }
+        }
+      }
+    },
+    "terminal_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "owner_phase",
+        "trusted_remote_url",
+        "remote_main_ref",
+        "live_remote_resolution",
+        "pr_head_ancestor_of_merge_commit",
+        "merge_commit_equals_remote_main",
+        "pr_head_and_merge_commit_same_tree"
+      ],
+      "properties": {
+        "owner_phase": { "const": "P7" },
+        "trusted_remote_url": {
+          "const": "https://github.com/monkey1sai/AI-BIM-governance.git"
+        },
+        "remote_main_ref": { "const": "refs/heads/main" },
+        "live_remote_resolution": { "const": "required" },
+        "pr_head_ancestor_of_merge_commit": { "const": "required" },
+        "merge_commit_equals_remote_main": { "const": "required" },
+        "pr_head_and_merge_commit_same_tree": { "const": "required" }
+      }
+    },
+    "ship": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workflow_shell_capability",
+        "trusted_host_executor",
+        "unavailable_reason",
+        "arbiter_held_reasons"
+      ],
+      "properties": {
+        "workflow_shell_capability": {
+          "const": "not_available_in_measured_runtime"
+        },
+        "trusted_host_executor": { "const": "required" },
+        "unavailable_reason": { "const": "host_env_blocked" },
+        "arbiter_held_reasons": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}
