@@ -46,8 +46,25 @@ if [ "${1:-}" = "--check" ]; then
   exit "$missing"
 fi
 
+if [ "${1:-}" = "--dry-run" ]; then
+  if [ "$#" -ne 2 ] || ! [[ "$2" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+    echo "usage: bash $0 --dry-run <owner-supplied-service-user>" >&2
+    exit 2
+  fi
+  printf '[dry-run] target kind: linux_host_native\n'
+  printf '[dry-run] validated owner-supplied service-user syntax\n'
+  printf '[dry-run] ensure service account and owner-only SSH directory\n'
+  printf '[dry-run] install apt prerequisites and Python 3.11+ venv support\n'
+  printf '[dry-run] configure Docker repository, engine, Compose v2, and group membership\n'
+  printf '[dry-run] enable systemd user lingering\n'
+  printf '[dry-run] install PowerShell and Node.js when absent\n'
+  printf '[dry-run] persist nouveau blacklist and refresh initramfs when needed\n'
+  printf '[dry-run] report versions and owner-only follow-up actions\n'
+  exit 0
+fi
+
 if [ "$#" -ne 1 ] || ! [[ "$1" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
-  echo "usage: sudo bash $0 <owner-supplied-service-user>" >&2
+  echo "usage: sudo bash $0 <owner-supplied-service-user> | bash $0 --check | bash $0 --dry-run <owner-supplied-service-user>" >&2
   exit 2
 fi
 SERVICE_USER="$1"

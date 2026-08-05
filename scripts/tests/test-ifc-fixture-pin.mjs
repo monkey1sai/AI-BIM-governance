@@ -34,6 +34,9 @@ test('real repo manifest loads (mechanism ships before pins exist)', () => {
   const real = loadManifest(fileURLToPath(new URL('../ifc-fixture-manifest.json', import.meta.url)));
   assert.equal(real.schema_version, MANIFEST_SCHEMA);
   assert.ok(Array.isArray(real.entries));
+  assert.equal(real.entries.length, 0);
+  assert.equal(new URL(real.authority.endpoint).hostname, 'minio.example.invalid');
+  assert.match(real.authority.note, /not evidence authority/i);
 });
 
 test('schema version fails closed', () => {

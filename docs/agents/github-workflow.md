@@ -141,10 +141,10 @@ worktree closeout 是 branch closeout 的前置步驟，不是獨立可省略的
 
 ```txt
 main checkout 或 sibling worktree 開發 → branch → PR → CI 綠 → merge 進 origin/main
-                                                              → 只有 merge 後的 origin/main 才會被重建進 D:\Users\deploy\AI-bim-geo
+                                                              → 只有 merge 後的 origin/main 才會重建到 owner-resolved target
 ```
 
-- 未 merge 的 branch **不得**拿部署區當驗證場所：`.\scripts\dev\rebuild-test-deploy.ps1 -Build` 這條 helper 的定義就是每次強制從 freshly fetched `origin/main` 重建，不會、也不應該去讀未 merge 的 worktree 或 branch 內容。
+- 未 merge 的 branch **不得**拿部署區當驗證場所：`.\scripts\dev\rebuild-test-deploy.ps1 -Build -InventoryPath '<repo-external target.local.json>'` 預設選 canonical Linux descriptor，並每次強制從 freshly fetched `origin/main` 重建 owner-resolved checkout；它不會、也不應該讀未 merge 的 worktree 或 branch 內容。`local-windows` 只在明確傳入 `-TargetId local-windows` 時作 on-demand verification。
 - merge 前需要 browser E2E 證據時，用「隔離 alt-port branch stack」（本 checkout 或 sibling worktree + coordinator `:8005` / governance `:49103`），對照 `docs/agents/product-operability-and-script-contract.md` 的 script contract，不要為了搶先驗證去動部署區的 golden path。
 
 ---

@@ -53,6 +53,7 @@ PUBLIC_HOST=192.0.2.10
 KIT_STREAM_SERVER=192.0.2.10
 A4_INTERNAL_CONTEXT_TOKEN=super-secret-value
 EMPTY_OK=
+LOCAL_ONLY_FLAG=0
 
 not-a-valid-line
 1BAD_KEY=nope
@@ -65,12 +66,15 @@ LOCAL_ONLY_FLAG=1
     $merge = Merge-DeployTargetEnvLayers -BaseContent $base -OverrideContent $override
     Assert-True ($merge.Values['KIT_STREAM_SERVER'] -eq '198.51.100.9') 'override must win per key'
     Assert-True ($merge.Values['PUBLIC_HOST'] -eq '192.0.2.10') 'base-only keys must survive'
-    Assert-True ($merge.Values['LOCAL_ONLY_FLAG'] -eq '1') 'override-only keys must be appended'
+    Assert-True ($merge.Values['LOCAL_ONLY_FLAG'] -eq '1') 'declared local override keys may replace base values'
     Assert-True ($merge.Values['EMPTY_OK'] -eq '') 'empty values are legal'
     Assert-True (-not $merge.Values.Contains('1BAD_KEY')) 'invalid key names are ignored'
     Assert-True (@($merge.OverriddenKeys) -contains 'KIT_STREAM_SERVER') 'overridden keys are reported'
-    Assert-True (@($merge.OverrideOnlyKeys) -contains 'LOCAL_ONLY_FLAG') 'override-only keys are reported'
+    Assert-True (@($merge.OverrideOnlyKeys).Count -eq 0) 'override-only keys are impossible after allowlist validation'
     Assert-True (@($merge.Values.Keys)[0] -eq 'PUBLIC_HOST') 'base key order is preserved'
+    Assert-Throws -Context 'unknown override key' -MessagePattern 'not declared by the base env' -Action {
+        Merge-DeployTargetEnvLayers -BaseContent $base -OverrideContent "UNDECLARED_REMOTE_KEY=1`n"
+    }
 
     $emptyMerge = Merge-DeployTargetEnvLayers -BaseContent '' -OverrideContent ''
     Assert-True (@($emptyMerge.Values.Keys).Count -eq 0) 'empty layers merge to empty'
@@ -128,6 +132,13 @@ LOCAL_ONLY_FLAG=1
     Assert-True ($script.Contains('https://github.com/monkey1sai/AI-BIM-governance.git')) 'clone uses zero-credential HTTPS'
     Assert-True ($script.Contains('git reset --hard refs/remotes/origin/main')) 'script resets to fresh origin/main'
     Assert-True ($script.Contains("git clean -fd -e '.env*'")) 'clean preserves env files'
+    Assert-True ($script.Contains('find "$DEPLOY_ROOT" -type f \(') -and $script.Contains("-name 'AGENTS.md' -o -name 'CLAUDE.md'")) 'remote cleanup removes nested agent instruction files'
+    foreach ($toolingPath in @('.codex', '.agents', '.agent', '.claude', '.cursor', '.windsurf', '.github/skills', '.github/prompts', 'docs', 'openspec', 'patches')) {
+        Assert-True ($script.Contains("`$DEPLOY_ROOT/$toolingPath")) "remote cleanup removes tracked tooling path $toolingPath"
+    }
+    Assert-True (-not $script.Contains('"$DEPLOY_ROOT/.github/workflows"')) 'remote cleanup preserves GitHub workflows'
+    Assert-True ($script.Contains('cp -- "$DEPLOY_ROOT/docs/plans/ai-bim-governance.css"')) 'remote cleanup snapshots the production CSS dependency'
+    Assert-True ($script.Contains('cp -- "$TOOLING_PRESERVE_DIR/ai-bim-governance.css" "$DEPLOY_ROOT/docs/plans/ai-bim-governance.css"')) 'remote cleanup restores the production CSS dependency'
     Assert-True ($script.Contains('KIT_INPUTS_CHANGED=1')) 'source revision changes invalidate stale Kit outputs'
     Assert-True ($script.Contains('rm -rf "$DEPLOY_ROOT/bim-streaming-server/_build"')) 'only ignored Kit output is invalidated'
     Assert-True ($script.Contains('restore exec bits (F-2)')) 'linux target restores exec bits'

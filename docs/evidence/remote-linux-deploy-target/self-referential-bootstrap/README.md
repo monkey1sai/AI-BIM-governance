@@ -1,5 +1,7 @@
 # self_referential_bootstrap evidence — remote Linux test-deploy target
 
+Document nature: working note / bootstrap evidence. It is not deploy-target evidence and does not close the post-merge fixpoint debt.
+
 `stack_kind=self_referential_bootstrap`.
 
 **This is NOT deploy-target evidence and NOT isolated_branch_stack evidence.**

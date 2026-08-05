@@ -138,6 +138,40 @@ function Resolve-DeployTargetPrivateInventory {
         [string]$resolved.host_native_bind_host -in @('0.0.0.0', '::', '[::]')) {
         throw 'deploy_target_registry: private inventory host_native_bind_host must be a non-wildcard host address.'
     }
+    $bindAddress = $null
+    if (-not [Net.IPAddress]::TryParse([string]$resolved.host_native_bind_host, [ref]$bindAddress)) {
+        throw 'deploy_target_registry: private inventory host_native_bind_host must be an IP address on a non-public interface.'
+    }
+    $bindBytes = $bindAddress.GetAddressBytes()
+    $isAllowedBind = if ($bindAddress.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork) {
+        ($bindBytes[0] -eq 10) -or
+        ($bindBytes[0] -eq 127) -or
+        ($bindBytes[0] -eq 169 -and $bindBytes[1] -eq 254) -or
+        ($bindBytes[0] -eq 172 -and $bindBytes[1] -ge 16 -and $bindBytes[1] -le 31) -or
+        ($bindBytes[0] -eq 192 -and $bindBytes[1] -eq 168) -or
+        ($bindBytes[0] -eq 192 -and $bindBytes[1] -eq 0 -and $bindBytes[2] -eq 2) -or
+        ($bindBytes[0] -eq 198 -and $bindBytes[1] -eq 51 -and $bindBytes[2] -eq 100) -or
+        ($bindBytes[0] -eq 203 -and $bindBytes[1] -eq 0 -and $bindBytes[2] -eq 113)
+    } elseif ($bindAddress.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetworkV6) {
+        $bindAddress.Equals([Net.IPAddress]::IPv6Loopback) -or
+        (($bindBytes[0] -band 0xFE) -eq 0xFC) -or
+        ($bindBytes[0] -eq 0xFE -and ($bindBytes[1] -band 0xC0) -eq 0x80) -or
+        ($bindBytes[0] -eq 0x20 -and $bindBytes[1] -eq 0x01 -and $bindBytes[2] -eq 0x0D -and $bindBytes[3] -eq 0xB8)
+    } else {
+        $false
+    }
+    if (-not $isAllowedBind) {
+        throw 'deploy_target_registry: private inventory host_native_bind_host must be private, loopback, link-local, or a documentation-only test address.'
+    }
+    foreach ($publishedEndpoint in @([string]$resolved.public_host, [string]$resolved.connection.host)) {
+        if ([string]::Equals([string]$resolved.host_native_bind_host, $publishedEndpoint, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'deploy_target_registry: private inventory host_native_bind_host must differ from public_host and connection.host.'
+        }
+        $publishedAddress = $null
+        if ([Net.IPAddress]::TryParse($publishedEndpoint, [ref]$publishedAddress) -and $bindAddress.Equals($publishedAddress)) {
+            throw 'deploy_target_registry: private inventory host_native_bind_host must differ from public_host and connection.host.'
+        }
+    }
     $deployRoot = ConvertTo-NormalizedDeployTargetPosixRoot -Value ([string]$resolved.deploy_root) -Field 'deploy_root'
     $runtimeDataRoot = ConvertTo-NormalizedDeployTargetPosixRoot -Value ([string]$resolved.runtime_data_root) -Field 'runtime_data_root'
     if ($runtimeDataRoot -eq $deployRoot -or $runtimeDataRoot.StartsWith("$deployRoot/", [StringComparison]::Ordinal)) {

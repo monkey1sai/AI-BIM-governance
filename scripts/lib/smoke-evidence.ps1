@@ -20,6 +20,9 @@ Set-StrictMode -Version Latest
 if (-not (Get-Command -Name 'Get-PlatformTcpListenerPid' -ErrorAction SilentlyContinue)) {
     . (Join-Path $PSScriptRoot 'platform/platform-adapter.ps1')
 }
+if (-not (Get-Command -Name 'Get-DeployTargetRegistry' -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'deploy-target-registry.ps1')
+}
 
 $Script:SmokeTierStatuses = @('passed', 'failed', 'blocked', 'deferred', 'not_observed')
 $Script:SmokeKnownOwners = @(
@@ -124,7 +127,14 @@ function Get-KitLauncherPreflight {
     if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
         $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
     }
-    $launcher = Join-Path $RepoRoot 'bim-streaming-server\_build\windows-x86_64\release\ezplus.bim_review_stream_streaming.kit.bat'
+    $platformKind = "$(Get-PlatformName)_host_native"
+    $registry = Get-DeployTargetRegistry
+    $descriptors = @($registry.targets | Where-Object { [string]$_.kind -eq $platformKind })
+    if ($descriptors.Count -ne 1) {
+        throw "smoke_evidence: expected exactly one public deploy descriptor for '$platformKind' (found $($descriptors.Count))."
+    }
+    $launch = Resolve-DeployTargetKitLaunch -Target $descriptors[0] -DeployRootOverride $RepoRoot
+    $launcher = [string]$launch.LauncherPath
     $present = Test-Path -LiteralPath $launcher -PathType Leaf
     $rerun = Join-Path $RepoRoot 'bim-streaming-server\scripts\start-streaming-server.ps1'
     [pscustomobject]@{
@@ -133,9 +143,10 @@ function Get-KitLauncherPreflight {
         next_command      = if ($present) {
             "& '$rerun' -SkipAutoLoad -PreflightOnly"
         } else {
-            "Run '.\\repo.bat build' in bim-streaming-server, then rerun '$rerun -PreflightOnly'"
+            "Run '$([string]$launch.BuildCommand)' in bim-streaming-server, then rerun '$rerun -PreflightOnly'"
         }
         preflight_script  = $rerun
+        build_command     = [string]$launch.BuildCommand
     }
 }
 
@@ -143,22 +154,42 @@ function Test-KitSignalingPortListening {
     [CmdletBinding()]
     param(
         [string] $BindAddress = '127.0.0.1',
-        [int] $Port = 49100
+        [int] $Port = 49100,
+        [ValidateRange(1, 10000)][int] $ConnectTimeoutMs = 500,
+        [scriptblock] $ListenerPidProbe = { param($candidatePort) Get-PlatformTcpListenerPid -Port $candidatePort }
     )
 
     # Windows-only cmdlet: off Windows this recorded "no listener" in the evidence
     # regardless of reality, which is worse than recording nothing.
     try {
-        $owner = Get-PlatformTcpListenerPid -Port $Port
-        $listeners = if ($null -eq $owner) { @() } else { @($owner) }
+        $owner = & $ListenerPidProbe $Port
+        $hasListener = ($null -ne $owner)
     } catch {
-        $listeners = @()
+        $hasListener = $false
+    }
+
+    $endpointReachable = $false
+    if ($hasListener) {
+        $client = [Net.Sockets.TcpClient]::new()
+        $async = $null
+        try {
+            $async = $client.BeginConnect($BindAddress, $Port, $null, $null)
+            if ($async.AsyncWaitHandle.WaitOne($ConnectTimeoutMs)) {
+                $client.EndConnect($async)
+                $endpointReachable = [bool]$client.Connected
+            }
+        } catch {
+            $endpointReachable = $false
+        } finally {
+            if ($null -ne $async) { $async.AsyncWaitHandle.Close() }
+            $client.Dispose()
+        }
     }
 
     [pscustomobject]@{
         host       = $BindAddress
         port       = $Port
-        listening  = [bool]($listeners.Count -gt 0)
+        listening  = [bool]$endpointReachable
     }
 }
 

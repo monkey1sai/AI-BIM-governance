@@ -12,6 +12,7 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 . (Join-Path $PSScriptRoot '..\lib\smoke-evidence.ps1')
 
 function Assert-True {
@@ -193,6 +194,29 @@ try {
     Assert-True ($root3 -eq 'D:\env\path') 'env var path honored when no override'
 } finally {
     if ($prior) { $env:WORKER_DEV_STORAGE_ROOT = $prior } else { Remove-Item -Path Env:WORKER_DEV_STORAGE_ROOT -ErrorAction SilentlyContinue }
+}
+
+# --- Test 8: Kit preflight derives launcher and build command from the public registry ---
+$kitPreflight = Get-KitLauncherPreflight -RepoRoot $repoRoot
+$platformKind = "$(Get-PlatformName)_host_native"
+$registry = Get-DeployTargetRegistry
+$descriptor = @($registry.targets | Where-Object { [string]$_.kind -eq $platformKind })[0]
+$expectedLaunch = Resolve-DeployTargetKitLaunch -Target $descriptor -DeployRootOverride $repoRoot
+Assert-True ($kitPreflight.launcher_path -eq $expectedLaunch.LauncherPath) 'Kit preflight uses the platform registry launcher'
+Assert-True ($kitPreflight.build_command -eq $expectedLaunch.BuildCommand) 'Kit preflight exposes the platform registry build command'
+
+# --- Test 9: bind evidence requires the requested endpoint to accept a TCP connection ---
+$tcpListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+$tcpListener.Start()
+try {
+    $listenerPort = [int]$tcpListener.LocalEndpoint.Port
+    $probe = { param($candidatePort) if ($candidatePort -eq $listenerPort) { return $PID }; return $null }.GetNewClosure()
+    $correctBind = Test-KitSignalingPortListening -BindAddress '127.0.0.1' -Port $listenerPort -ListenerPidProbe $probe
+    Assert-True $correctBind.listening 'matching loopback endpoint is verified as listening'
+    $wrongBind = Test-KitSignalingPortListening -BindAddress '127.0.0.2' -Port $listenerPort -ConnectTimeoutMs 100 -ListenerPidProbe $probe
+    Assert-True (-not $wrongBind.listening) 'a listener on the port must not validate a different bind address'
+} finally {
+    $tcpListener.Stop()
 }
 
 Write-Host "[test-smoke-evidence] all assertions passed"

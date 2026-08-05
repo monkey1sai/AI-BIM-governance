@@ -95,6 +95,17 @@ if ($hostKitCompose -notmatch 'KIT_MANAGER_API_BASE:\s*\$\{HOST_KIT_MANAGER_API_
     throw 'compose.host-kit.yml must route the coordinator to the HOST-NATIVE kit-manager (host.docker.internal:8010); clearing depends_on without this would leave it with no kit-manager at all'
 }
 
+$legacyCleanupStart = $deploy.IndexOf('$legacyKitManagerRmArgs')
+$legacyCleanupEnd = $deploy.IndexOf('# fix: 第一次 docker compose build', $legacyCleanupStart)
+if ($legacyCleanupStart -lt 0 -or $legacyCleanupEnd -le $legacyCleanupStart) {
+    throw 'deploy.ps1 must retain the bounded legacy kit-manager cleanup block'
+}
+$legacyCleanup = $deploy.Substring($legacyCleanupStart, $legacyCleanupEnd - $legacyCleanupStart)
+Assert-Contains $legacyCleanup "'rm','-f','-s','kit-manager-api'" 'legacy cleanup must remove only the precise Compose kit-manager-api service'
+if ($legacyCleanup -match "'down'|--remove-orphans") {
+    throw 'legacy kit-manager cleanup must not broaden into compose down or orphan removal'
+}
+
 [scriptblock]::Create($deploy) | Out-Null
 [scriptblock]::Create($launcher) | Out-Null
 [scriptblock]::Create($stopAll) | Out-Null

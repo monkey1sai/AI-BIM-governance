@@ -335,6 +335,7 @@ Assert-SelfReferentialBootstrapBody -Body $body -ChangedPaths $changedPaths `
 # call site.
 . (Join-Path $scriptRepoRoot 'scripts\lib\windows-verification-scope.ps1')
 $null = Assert-WindowsVerificationEvidence -Body $body -ChangedPaths $changedPaths `
-    -GetTableValue { param($b, $label) Get-MarkdownTableValue -Body $b -Label $label }
+    -GetTableValue { param($b, $label) Get-MarkdownTableValue -Body $b -Label $label } `
+    -ExpectedHeadSha $HeadSha
 
 Write-Host '[check-pr-body-evidence] passed'

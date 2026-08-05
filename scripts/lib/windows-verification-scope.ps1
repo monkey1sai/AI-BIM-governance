@@ -40,6 +40,7 @@ $script:WindowsVerificationTiers = @(
         Id        = 'deploy_dryrun'
         Patterns  = @(
             '^scripts/deploy\.ps1$',
+            '^scripts/dev/rebuild-test-deploy\.ps1$',
             '^scripts/stop-all\.ps1$',
             '^scripts/lib/(?!platform/)[^/]+\.ps1$',
             '^compose\.[^/]+\.yml$'
@@ -108,7 +109,8 @@ function Assert-WindowsVerificationEvidence {
     param(
         [Parameter(Mandatory = $true)][string] $Body,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $ChangedPaths,
-        [Parameter(Mandatory = $true)][scriptblock] $GetTableValue
+        [Parameter(Mandatory = $true)][scriptblock] $GetTableValue,
+        [string] $ExpectedHeadSha = ''
     )
 
     $scope = Get-WindowsVerificationScope -ChangedPaths $ChangedPaths
@@ -129,6 +131,18 @@ function Assert-WindowsVerificationEvidence {
     $prohibited = @('none', 'n/a', 'not applicable', 'not needed', 'unavailable', 'not tested', 'tbd', 'todo')
     if ($evidence.ToLowerInvariant() -in $prohibited) {
         throw "PR body 'Windows verification evidence' must record a real Windows run, not '$evidence'. Required: $($scope.Evidence)."
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedHeadSha)) {
+        if ($ExpectedHeadSha -cnotmatch '^[0-9a-f]{40}$') {
+            throw "Windows verification expected head SHA must be 40 lowercase hexadecimal characters; actual='$ExpectedHeadSha'."
+        }
+        $escapedHead = [regex]::Escape($ExpectedHeadSha)
+        if ($evidence -notmatch "(?i)(?<![0-9a-f])$escapedHead(?![0-9a-f])") {
+            throw "PR body 'Windows verification evidence' must include the exact reviewed head SHA '$ExpectedHeadSha'."
+        }
+        if ($evidence -notmatch 'https://github\.com/monkey1sai/AI-BIM-governance/actions/runs/[0-9]+(?:/job/[0-9]+)?') {
+            throw "PR body 'Windows verification evidence' must include a machine-checkable GitHub Actions run URL for the reviewed head."
+        }
     }
     return $scope
 }

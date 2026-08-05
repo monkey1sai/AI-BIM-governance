@@ -68,22 +68,27 @@ Runtime / Docker / Kit / viewer / env / port / conversion-service 改動必須�
 .\scripts\verify-all.ps1
 ```
 
-測試部署區重建固定使用 build-only helper：
+測試部署區重建固定使用 build-only helper；預設 target 是 public registry 的 canonical Linux descriptor，private topology 由 repo 外 inventory 注入：
 
 ```powershell
-.\scripts\dev\rebuild-test-deploy.ps1 -Build
+.\scripts\dev\rebuild-test-deploy.ps1 -Build -InventoryPath '<repo-external target.local.json>'
 ```
 
-Helper 會重建 `D:\Users\deploy\AI-bim-geo` 並在部署區執行：
+也可先設定 process-level `AI_BIM_DEPLOY_TARGET_INVENTORY` 再省略 `-InventoryPath`。owner/provisioning 必須預先建立 inventory；transport 只檢查並讀取，不上傳、不覆寫。Helper 會用 freshly fetched `origin/main` 重建 inventory 所解析的 target-scoped deployment checkout，並在該 checkout 執行：
+
+```text
+pwsh -NoProfile -NonInteractive -File scripts/deploy.ps1 -Build
+```
+
+Windows deployment 不是預設 canonical path，只能明確按需選擇：
 
 ```powershell
-cd D:\Users\deploy\AI-bim-geo
-.\scripts\deploy.ps1 -Build
+.\scripts\dev\rebuild-test-deploy.ps1 -Build -TargetId local-windows
 ```
 
 禁止 `-DryRun`。若 fetch `origin` explicit main refspec 失敗、approval 被拒、或清理後缺少 `scripts\deploy.ps1`，回報 blocker 並停止；不得部署 stale code。
-清理規則會移除 agent/tooling docs、`.github\skills` / `.github\prompts`、root `docs` / `openspec` / `patches`，但保留 `.github\workflows`。
-明確啟動的 `spec-to-done` 在目前 spec PR 已 merge、commit 可由 freshly fetched `origin/main` 取得後，可於真實測試部署前先用 skill helper 的 `-StopOwnedRuntime -DeploymentRoot 'D:\Users\deploy\AI-bim-geo'` 模式處理 blocker。只有 listener 符合 per-port service role、deployment pidfile ancestor 與精確 launcher entrypoint、creation identity 經雙快照與 stop 前重驗一致時，才可用 exact process handle 停止；pidfile 僅供 lineage 佐證，port topology 由 deployment env immutable snapshot 推導，不接受 caller parameter/process-environment override，且每次 stop 前重驗 hash。MUST 記錄 port / PID / process name / ownership kind，同一 port 的全部 busy owners 通過後才可進入 cleanup。既有一般 Phase 3 重試能力不變，但所有自動停止也 MUST 使用同一 hardened helper 與相同閘門，再重跑同一條 `-Build`；helper 無法證明 ownership 時必須 HELD，只有使用者逐次確認明確 PID 與 evidence 後才可人工例外。不得驗證未 merge branch或改用 `-Force` / `-DryRun`。
+清理規則會移除所有層級的 agent instruction files、root agent tooling dirs、`.github\skills` / `.github\prompts`、root `docs` / `openspec` / `patches`，但保留 `.github\workflows` 與 tracked production dependency `docs/plans/ai-bim-governance.css`。
+明確啟動的 `spec-to-done` 在目前 spec PR 已 merge、commit 可由 freshly fetched `origin/main` 取得後，只能對明確選擇的 `local-windows` target 先用 skill helper 的 `-StopOwnedRuntime -DeploymentRoot '<resolved local-windows deploy root>'` 模式處理 blocker。只有 listener 符合 per-port service role、deployment pidfile ancestor 與精確 launcher entrypoint、creation identity 經雙快照與 stop 前重驗一致時，才可用 exact process handle 停止；pidfile 僅供 lineage 佐證，port topology 由 deployment env immutable snapshot 推導，不接受 caller parameter/process-environment override，且每次 stop 前重驗 hash。canonical Linux target 的 inventory/runtime 由 owner 控制，transport 不自動停止或改寫。MUST 記錄 port / PID / process name / ownership kind，同一 port 的全部 busy owners通過後才可進入 cleanup。既有一般 Phase 3 重試能力不變，但所有自動停止也 MUST 使用同一 hardened helper 與相同閘門，再重跑同一條 target-scoped `-Build`；helper 無法證明 ownership 時必須 HELD，只有使用者逐次確認明確 PID 與 evidence 後才可人工例外。不得驗證未 merge branch或改用 `-Force` / `-DryRun`。
 
 本機 runtime 可用時優先補：
 

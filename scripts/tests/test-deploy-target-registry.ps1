@@ -142,6 +142,22 @@ try {
     Assert-Throws -Context 'wildcard private bind' -MessagePattern 'non-wildcard' -Action {
         Get-DeployTarget -Canonical -InventoryPath $wildcardInventory
     }
+    $publicBindInventory = Write-MutatedInventory 'public-bind.json' { param($i) $i.targets[0].host_native_bind_host = '8.8.8.8' }
+    Assert-Throws -Context 'public private bind' -MessagePattern 'private, loopback, link-local' -Action {
+        Get-DeployTarget -Canonical -InventoryPath $publicBindInventory
+    }
+    $publicHostBindInventory = Write-MutatedInventory 'public-host-bind.json' { param($i) $i.targets[0].host_native_bind_host = $i.targets[0].public_host }
+    Assert-Throws -Context 'bind equal to public host' -MessagePattern 'must differ from public_host' -Action {
+        Get-DeployTarget -Canonical -InventoryPath $publicHostBindInventory
+    }
+    $connectionHostBindInventory = Write-MutatedInventory 'connection-host-bind.json' {
+        param($i)
+        $i.targets[0].connection.host = '192.0.2.1'
+        $i.targets[0].host_native_bind_host = '192.0.2.1'
+    }
+    Assert-Throws -Context 'bind equal to connection host' -MessagePattern 'must differ from public_host' -Action {
+        Get-DeployTarget -Canonical -InventoryPath $connectionHostBindInventory
+    }
     $policyOverrideInventory = Write-MutatedInventory 'policy-override.json' { param($i) $i.targets[0] | Add-Member -NotePropertyName kit -NotePropertyValue @{ build_command = 'unsafe' } }
     Assert-Throws -Context 'private policy override' -MessagePattern 'non-location field' -Action {
         Get-DeployTarget -Canonical -InventoryPath $policyOverrideInventory

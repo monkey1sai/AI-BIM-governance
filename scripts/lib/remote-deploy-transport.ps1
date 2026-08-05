@@ -40,26 +40,28 @@ function ConvertFrom-DeployEnvContent {
 }
 
 function Merge-DeployTargetEnvLayers {
-    # Deterministic per-key merge: override wins, base-only keys survive,
-    # override-only keys are appended after base keys.
+    # Deterministic per-key merge: override wins only for keys declared by the
+    # reviewed base layer. A remote-only key would otherwise bypass the tracked
+    # env contract, so unknown override keys fail closed.
     param(
         [AllowEmptyString()][string] $BaseContent,
         [AllowEmptyString()][string] $OverrideContent
     )
     $base = ConvertFrom-DeployEnvContent -Content $BaseContent
     $override = ConvertFrom-DeployEnvContent -Content $OverrideContent
+    $unknownOverrideKeys = @($override.Keys | Where-Object { -not $base.Contains($_) })
+    if ($unknownOverrideKeys.Count -gt 0) {
+        throw "remote_deploy_transport: override contains keys not declared by the base env: $($unknownOverrideKeys -join ', ')."
+    }
     $merged = [ordered]@{}
     foreach ($key in $base.Keys) {
         $merged[$key] = if ($override.Contains($key)) { $override[$key] } else { $base[$key] }
-    }
-    foreach ($key in $override.Keys) {
-        if (-not $merged.Contains($key)) { $merged[$key] = $override[$key] }
     }
     $overriddenKeys = @($override.Keys | Where-Object { $base.Contains($_) })
     return [pscustomobject]@{
         Values         = $merged
         OverriddenKeys = $overriddenKeys
-        OverrideOnlyKeys = @($override.Keys | Where-Object { -not $base.Contains($_) })
+        OverrideOnlyKeys = @()
     }
 }
 
@@ -200,6 +202,15 @@ DATA_ROOT='{{DATA_ROOT}}'
 REPO_URL='{{REPO_URL}}'
 TARGET_ID='{{TARGET_ID}}'
 TARGET_INVENTORY="$DATA_ROOT/target.local.json"
+TOOLING_PRESERVE_DIR=''
+MERGE_TMP=''
+SNAPSHOT_TMP=''
+cleanup() {
+  [ -z "${TOOLING_PRESERVE_DIR:-}" ] || rm -rf -- "$TOOLING_PRESERVE_DIR"
+  [ -z "${MERGE_TMP:-}" ] || rm -f -- "$MERGE_TMP"
+  [ -z "${SNAPSHOT_TMP:-}" ] || rm -f -- "$SNAPSHOT_TMP"
+}
+trap cleanup EXIT
 
 # The owner provisions this file out-of-band. Transport deliberately never
 # uploads or overwrites private topology.
@@ -238,6 +249,33 @@ git status --porcelain || true
 
 git reset --hard {{RESET_TARGET}}
 git clean -fd -e '.env*'
+
+echo "== remove tracked agent tooling from deployment checkout =="
+TOOLING_PRESERVE_DIR="$DATA_ROOT/.deploy-preserve.$$"
+mkdir -p -m 700 "$TOOLING_PRESERVE_DIR"
+if [ -f "$DEPLOY_ROOT/docs/plans/ai-bim-governance.css" ]; then
+  cp -- "$DEPLOY_ROOT/docs/plans/ai-bim-governance.css" "$TOOLING_PRESERVE_DIR/ai-bim-governance.css"
+fi
+find "$DEPLOY_ROOT" -type f \( -name 'AGENTS.md' -o -name 'CLAUDE.md' \) -delete
+rm -rf -- \
+  "$DEPLOY_ROOT/.codex" \
+  "$DEPLOY_ROOT/.agents" \
+  "$DEPLOY_ROOT/.agent" \
+  "$DEPLOY_ROOT/.claude" \
+  "$DEPLOY_ROOT/.cursor" \
+  "$DEPLOY_ROOT/.windsurf" \
+  "$DEPLOY_ROOT/.github/skills" \
+  "$DEPLOY_ROOT/.github/prompts" \
+  "$DEPLOY_ROOT/docs" \
+  "$DEPLOY_ROOT/openspec" \
+  "$DEPLOY_ROOT/patches"
+if [ -f "$TOOLING_PRESERVE_DIR/ai-bim-governance.css" ]; then
+  mkdir -p "$DEPLOY_ROOT/docs/plans"
+  cp -- "$TOOLING_PRESERVE_DIR/ai-bim-governance.css" "$DEPLOY_ROOT/docs/plans/ai-bim-governance.css"
+fi
+rm -rf -- "$TOOLING_PRESERVE_DIR"
+TOOLING_PRESERVE_DIR=''
+
 if [ "$KIT_INPUTS_CHANGED" -eq 1 ]; then
   echo "== invalidate stale Kit build outputs =="
   rm -rf "$DEPLOY_ROOT/bim-streaming-server/_build"
@@ -258,7 +296,6 @@ mkdir -p "$DATA_ROOT"
 chmod 600 "$BASE_ENV" "$LOCAL_ENV"
 MERGE_TMP="$(mktemp --suffix .ps1)"
 SNAPSHOT_TMP="$(mktemp --suffix .json)"
-trap 'rm -f "$MERGE_TMP" "$SNAPSHOT_TMP"' EXIT
 cat > "$MERGE_TMP" <<'PSEOF'
 param($BasePath, $LocalPath, $OutPath, $SnapshotPath, $LibPath, $TargetId)
 . $LibPath

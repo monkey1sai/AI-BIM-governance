@@ -842,7 +842,9 @@ try {
     foreach ($testDeployContractPath in @('AGENTS.md', 'docs/agents/product-operability-and-script-contract.md', 'docs/agents/sub-repo-verify-commands.md')) {
         $testDeployContract = Get-Content -LiteralPath $testDeployContractPath -Raw -Encoding UTF8
         Assert-True ($testDeployContract -match [regex]::Escape('-StopOwnedRuntime')) "$testDeployContractPath documents the explicit ownership-gated stop"
-        Assert-True ($testDeployContract -match [regex]::Escape("D:\Users\deploy\AI-bim-geo")) "$testDeployContractPath pins the canonical test deployment root"
+        Assert-True ($testDeployContract -match 'canonical[- ]linux|canonical Linux') "$testDeployContractPath identifies the canonical Linux target"
+        Assert-True ($testDeployContract -match [regex]::Escape('AI_BIM_DEPLOY_TARGET_INVENTORY')) "$testDeployContractPath routes private topology through the repo-external inventory seam"
+        Assert-True ($testDeployContract -match [regex]::Escape('local-windows')) "$testDeployContractPath keeps Windows as an explicit on-demand target"
         Assert-True ($testDeployContract -match 'helper 無法證明 ownership 時必須 HELD') "$testDeployContractPath keeps unproven ownership non-destructive"
     }
     foreach ($shipSafetyMarker in @('review_required', 'cyber_safeguard_payload', 'git merge-base', 'git rebase origin/main', 'published PR branch', 'git merge --no-edit origin/main', 'seg/seg/id', 'passwd')) {

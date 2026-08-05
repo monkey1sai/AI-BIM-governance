@@ -47,6 +47,8 @@ $t2c = Get-Tier @('compose.host-kit.yml')
 Assert-True ($t2c.Tier -eq 2) "compose file -> tier 2 (got $($t2c.Tier))"
 $t2d = Get-Tier @('scripts/stop-all.ps1')
 Assert-True ($t2d.Tier -eq 2) "stop-all.ps1 -> tier 2 (got $($t2d.Tier))"
+$t2e = Get-Tier @('scripts/dev/rebuild-test-deploy.ps1')
+Assert-True ($t2e.Tier -eq 2) "rebuild-test-deploy entrypoint -> tier 2 (got $($t2e.Tier))"
 
 foreach ($kitPath in @('bim-streaming-server/source/apps/ezplus.bim_review_stream.kit', 'bim-streaming-server/repo.toml', 'bim-streaming-server/tools/packman/python.sh', 'bim-streaming-server/premake5.lua', 'bim-streaming-server/scripts/start-streaming-server.ps1')) {
     $t3 = Get-Tier @($kitPath)
@@ -79,9 +81,14 @@ Assert-True ((Get-Tier @('./scripts/deploy.ps1')).Tier -eq 2) 'leading ./ normal
 
 # --- PR body enforcement --------------------------------------------------------
 function Invoke-Gate {
-    param([hashtable] $Rows, [string[]] $Paths)
+    param(
+        [hashtable] $Rows,
+        [string[]] $Paths,
+        [string] $ExpectedHeadSha = '0123456789abcdef0123456789abcdef01234567'
+    )
     return Assert-WindowsVerificationEvidence -Body 'body' -ChangedPaths $Paths `
-        -GetTableValue { param($b, $label) $Rows[$label] }.GetNewClosure()
+        -GetTableValue { param($b, $label) $Rows[$label] }.GetNewClosure() `
+        -ExpectedHeadSha $ExpectedHeadSha
 }
 
 # exempt PR: no rows needed at all
@@ -114,9 +121,28 @@ foreach ($weasel in @('none', 'N/A', 'not needed', 'TBD')) {
     }
 }
 
+Assert-Throws -Context 'descriptive prose is not commit-bound evidence' -MessagePattern 'exact reviewed head SHA' -Action {
+    Invoke-Gate -Rows @{
+        'Windows verification tier' = 'deploy_dryrun'
+        'Windows verification evidence' = '.\scripts\deploy.ps1 -DryRun -> exit 0 on win11 host'
+    } -Paths @('scripts/deploy.ps1')
+}
+Assert-Throws -Context 'head-bound evidence without actions URL' -MessagePattern 'GitHub Actions run URL' -Action {
+    Invoke-Gate -Rows @{
+        'Windows verification tier' = 'deploy_dryrun'
+        'Windows verification evidence' = 'head 0123456789abcdef0123456789abcdef01234567: deploy dry-run passed'
+    } -Paths @('scripts/deploy.ps1')
+}
+Assert-Throws -Context 'evidence for a different head' -MessagePattern 'exact reviewed head SHA' -Action {
+    Invoke-Gate -Rows @{
+        'Windows verification tier' = 'deploy_dryrun'
+        'Windows verification evidence' = 'head fedcba9876543210fedcba9876543210fedcba98; https://github.com/monkey1sai/AI-BIM-governance/actions/runs/123456789'
+    } -Paths @('scripts/deploy.ps1')
+}
+
 $ok = Invoke-Gate -Rows @{
     'Windows verification tier' = 'deploy_dryrun'
-    'Windows verification evidence' = '.\scripts\deploy.ps1 -DryRun -> exit 0 on win11 host'
+    'Windows verification evidence' = 'head 0123456789abcdef0123456789abcdef01234567; .\scripts\deploy.ps1 -DryRun -> exit 0; https://github.com/monkey1sai/AI-BIM-governance/actions/runs/123456789'
 } -Paths @('scripts/deploy.ps1')
 Assert-True ($ok.Id -eq 'deploy_dryrun') 'correct declaration passes and returns the scope'
 
