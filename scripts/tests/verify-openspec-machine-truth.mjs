@@ -259,13 +259,20 @@ function ledgerIntroductionCommit(repoRoot, change, field, failure) {
     throw failure;
   }
   if (candidates.length > MAX_INTRODUCTION_CANDIDATES) throw failure;
+  // Every candidate is checked: a binding that was introduced, rebound away,
+  // and reintroduced has more than one introduction commit, and picking any of
+  // them could hide source drift between the introductions - ambiguity fails
+  // closed.
+  let introduction = null;
   for (const candidate of candidates) {
     if (!/^[0-9a-f]{40}$/u.test(candidate)) throw failure;
     if (ledgerRowBinding(repoRoot, candidate, change.id, field) !== change.subject_commit) continue;
     if (ledgerRowBinding(repoRoot, `${candidate}^`, change.id, field) === change.subject_commit) continue;
-    return candidate;
+    if (introduction !== null) throw failure;
+    introduction = candidate;
   }
-  throw failure;
+  if (introduction === null) throw failure;
+  return introduction;
 }
 
 export function changedPathsSince(repoRoot, subjectCommit, cache, rawBudget) {

@@ -329,6 +329,37 @@ test('CLI resolves a shared discarded subject per row and still flags the older 
   }
 });
 
+test('CLI fails closed when the same discarded row binding was introduced more than once', () => {
+  const fixture = makeHistoricalRowRepository();
+  try {
+    const discarded = 'f'.repeat(40);
+    const reachable = JSON.parse(readFileSync(fixture.ledgerPath, 'utf8')).changes[0].subject_commit;
+    const bindAlphaTo = (value, message) => {
+      const ledger = JSON.parse(readFileSync(fixture.ledgerPath, 'utf8'));
+      ledger.changes[0].subject_commit = value;
+      write(fixture.ledgerPath, `${JSON.stringify(ledger)}\n`);
+      runGit(fixture.root, ['add', 'openspec/lifecycle-ledger.json']);
+      runGit(fixture.root, ['commit', '--quiet', '-m', message]);
+    };
+    bindAlphaTo(discarded, 'squash: first introduction');
+    write(path.join(fixture.root, 'openspec/changes/alpha/proposal.md'), '# drift hidden by reintroduction\n');
+    runGit(fixture.root, ['add', 'openspec/changes/alpha/proposal.md']);
+    runGit(fixture.root, ['commit', '--quiet', '-m', 'alpha drifts between introductions']);
+    bindAlphaTo(reachable, 'rebind away');
+    bindAlphaTo(discarded, 'reintroduce the same discarded binding');
+    const head = runGit(fixture.root, ['rev-parse', 'HEAD']);
+    const githubPath = path.join(fixture.root, 'artifacts/github.json');
+    const githubState = JSON.parse(readFileSync(githubPath, 'utf8'));
+    githubState.repository_subject = head;
+    write(githubPath, `${JSON.stringify(githubState)}\n`);
+    const result = runVerifier(fixture.root, head);
+    assert.equal(result.status, 3);
+    assert.equal(result.document.errors[0].code, 'subject_unavailable');
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test('CLI compares against the explicit base and rejects a committed candidate that removes a lifecycle row and its sources', () => {
   const fixture = makeRepository();
   try {
