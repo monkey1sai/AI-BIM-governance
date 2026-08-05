@@ -1,5 +1,7 @@
 > Loaded lazily by AGENTS.md / CLAUDE.md。Source-of-truth: AGENTS.md（§0.1 AI Coding Governance Lanes）。
 >
+> Document type: runbook。這是 agent 操作指引，不建立 runtime/product behavior；後者以程式碼與可執行 tests/contracts 為準。
+>
 > 何時讀本檔：開 PR、處理 GitHub Actions failure、PR merge 後本地分支收斂時。
 
 # GitHub Workflow（Lane-aware git 段）

@@ -1,5 +1,7 @@
 > Loaded lazily by AGENTS.md / CLAUDE.md。Source-of-truth: AGENTS.md。
 >
+> Document type: runbook。這是 agent 操作指引，不建立 runtime/product behavior；後者以程式碼與可執行 tests/contracts 為準。
+>
 > 何時讀本檔：要跑 sub-repo 驗證指令、Cursor Cloud / Linux 環境設定、查 lint / build / health 入口時。
 
 # Sub-repo 驗證入口
