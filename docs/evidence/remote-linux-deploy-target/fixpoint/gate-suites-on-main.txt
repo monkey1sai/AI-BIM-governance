@@ -1,0 +1,54 @@
+fixpoint re-verification through the POST-MERGE canonical mechanism
+entry=remote-linux-deploy-target  mechanism_commit=591f930b04026a796e570fc943c95f80a54c3337 (#467 squash, first-parent mainline)
+tree=591f930b04026a796e570fc943c95f80a54c3337
+reverified_at=2026-08-05T07:18:43Z
+
+### scripts/tests/test-deploy-target-registry.ps1
+[test-deploy-target-registry] all assertions passed
+EXIT=0
+
+### scripts/tests/test-platform-adapter.ps1
+[test-platform-adapter] all assertions passed on windows
+EXIT=0
+
+### scripts/tests/test-host-native-launcher.ps1
+=== test-host-native-launcher.ps1: ALL PASSED ===
+EXIT=0
+
+### scripts/tests/test-host-native-child-launch.ps1
+=== test-host-native-child-launch.ps1: ALL PASSED ===
+EXIT=0
+
+### scripts/tests/test-preflight-host-native.ps1
+=== test-preflight-host-native.ps1: ALL PASSED ===
+EXIT=0
+
+### scripts/tests/test-preflight-ports.ps1
+=== test-preflight-ports.ps1: ALL PASSED ===
+EXIT=0
+
+### scripts/tests/test-kit-log-probe.ps1
+=== test-kit-log-probe.ps1: ALL PASSED ===
+EXIT=0
+
+### scripts/tests/test-rebuild-test-deploy.ps1
+[PASS] rebuild-test-deploy
+EXIT=0
+
+### scripts/tests/test-remote-deploy-transport.ps1
+[test-remote-deploy-transport] all assertions passed
+EXIT=0
+
+### scripts/tests/test-windows-verification-scope.ps1
+[test-windows-verification-scope] all assertions passed
+EXIT=0
+
+### scripts/tests/test-deploy-governance-static.ps1
+PASS deploy governance static checks
+EXIT=0
+
+### scripts/tests/invoke-powershell-static.ps1
+[invoke-powershell-static] passed
+EXIT=0
+
+ALL_PASS=yes

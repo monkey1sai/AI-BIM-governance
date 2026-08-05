@@ -50,7 +50,7 @@
     },
     {
       "id": "remote-linux-deploy-target",
-      "status": "open",
+      "status": "closed",
       "pr": 467,
       "opened_at": "2026-08-03T02:00:00Z",
       "reason": "the deploy contract rebuilds the test deployment only from a freshly fetched origin/main and forbids verifying an unmerged branch, so a change to the deploy path itself cannot be exercised by any pre-merge run against origin/main",
@@ -91,7 +91,14 @@
         "docs/evidence/remote-linux-deploy-target/self-referential-bootstrap/README.md",
         "docs/evidence/remote-linux-deploy-target/self-referential-bootstrap/deploy-verified.txt"
       ],
-      "fixpoint": null
+      "fixpoint": {
+        "reverified_at": "2026-08-05T07:18:43Z",
+        "mechanism_commit": "591f930b04026a796e570fc943c95f80a54c3337",
+        "evidence_refs": [
+          "docs/evidence/remote-linux-deploy-target/fixpoint/attestation.json",
+          "docs/evidence/remote-linux-deploy-target/fixpoint/gate-suites-on-main.txt"
+        ]
+      }
     }
   ]
 }
