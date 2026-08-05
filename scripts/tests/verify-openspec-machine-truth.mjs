@@ -195,56 +195,77 @@ function assertGitBase(repoRoot, baseCommit) {
 }
 
 export function resolveRowSubjectWatermark(repoRoot, change, cache) {
-  if (cache.has(change.subject_commit)) return cache.get(change.subject_commit);
+  const cacheKey = `${change.id}\n${change.subject_commit}`;
+  if (cache.has(cacheKey)) return cache.get(cacheKey);
   const field = `source_observations.${change.id}.subject_commit`;
-  let failure = null;
   const available = gitOutput(repoRoot, ['cat-file', '-e', `${change.subject_commit}^{commit}`], field, true);
-  if (available.status !== 0) {
-    failure = new MachineTruthInputError('subject_unavailable', field, 'Lifecycle row subject is not a local commit.');
-  } else {
+  let effective;
+  if (available.status === 0) {
     const ancestor = gitOutput(repoRoot, ['merge-base', '--is-ancestor', change.subject_commit, 'HEAD'], field, true);
     if (ancestor.status !== 0) {
-      failure = new MachineTruthInputError('subject_not_ancestor', field,
+      // A subject that still exists as a commit but sits outside HEAD's history
+      // is a row bound to untrusted work. Squash recovery must never run for
+      // it: only a subject that no longer exists at all can have been discarded
+      // by a squash merge.
+      throw new MachineTruthInputError('subject_not_ancestor', field,
         'Lifecycle row subject must be an ancestor of the checked-out HEAD.');
     }
+    effective = change.subject_commit;
+  } else {
+    effective = ledgerIntroductionCommit(repoRoot, change, field,
+      new MachineTruthInputError('subject_unavailable', field, 'Lifecycle row subject is not a local commit.'));
   }
-  const effective = failure === null
-    ? change.subject_commit
-    : ledgerIntroductionCommit(repoRoot, change.subject_commit, field, failure);
-  cache.set(change.subject_commit, effective);
+  cache.set(cacheKey, effective);
   return effective;
 }
 
-function ledgerIntroductionCommit(repoRoot, subjectCommit, field, failure) {
+const MAX_INTRODUCTION_CANDIDATES = 32;
+
+function ledgerRowBinding(repoRoot, revision, changeId, field) {
+  // The row's committed subject_commit at that revision, or null when the
+  // revision, the ledger file, its JSON, or the row itself is absent.
+  const shown = gitOutput(repoRoot, ['show', `${revision}:openspec/lifecycle-ledger.json`], field, true);
+  if (shown.status !== 0) return null;
+  try {
+    const ledger = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(shown.stdout));
+    const row = Array.isArray(ledger?.changes) ? ledger.changes.find((entry) => entry?.id === changeId) : undefined;
+    return typeof row?.subject_commit === 'string' ? row.subject_commit : null;
+  } catch {
+    return null;
+  }
+}
+
+function ledgerIntroductionCommit(repoRoot, change, field, failure) {
   // A squash merge discards the pre-merge commit a row was reconciled at, so a
   // recorded subject can stop existing without the row being wrong: the row and
   // the sources it reconciled against land atomically in the squash commit.
-  // That commit - the newest one on HEAD's history that introduced this binding
-  // into openspec/lifecycle-ledger.json - is the semantically correct staleness
-  // watermark: source edits made after it still diff against it and surface as
-  // source_changed_since_subject. When no such commit is derivable, the
-  // original fail-closed error stands.
-  const listed = gitOutput(repoRoot, ['log', '--format=%H', `-S${subjectCommit}`, 'HEAD', '--',
+  // The newest HEAD-history commit that introduced THIS row's binding - the
+  // {id, subject_commit} pair is present in its ledger and absent in its
+  // parent's - is the staleness watermark: source edits after it still diff
+  // against it and surface as source_changed_since_subject. Deliberate residual
+  // limit: edits folded into the same squash unit are guarded only by that PR's
+  // own pre-merge gate run (where the recorded subject still resolved) and by
+  // the live task-count comparison; they cannot be re-derived once the
+  // pre-merge history is discarded. Anything not provably introduced for this
+  // exact row fails closed with the original error.
+  const listed = gitOutput(repoRoot, ['log', '--format=%H', `-S${change.subject_commit}`, 'HEAD', '--',
     'openspec/lifecycle-ledger.json'], field, true);
   if (listed.status !== 0) throw failure;
-  let introduction;
+  let candidates;
   try {
-    introduction = new TextDecoder('utf-8', { fatal: true }).decode(listed.stdout)
-      .split('\n').map((value) => value.trim()).filter(Boolean)[0];
+    candidates = new TextDecoder('utf-8', { fatal: true }).decode(listed.stdout)
+      .split('\n').map((value) => value.trim()).filter(Boolean);
   } catch {
     throw failure;
   }
-  if (!introduction || !/^[0-9a-f]{40}$/u.test(introduction)) throw failure;
-  const shown = gitOutput(repoRoot, ['show', `${introduction}:openspec/lifecycle-ledger.json`], field, true);
-  if (shown.status !== 0) throw failure;
-  let ledgerText;
-  try {
-    ledgerText = new TextDecoder('utf-8', { fatal: true }).decode(shown.stdout);
-  } catch {
-    throw failure;
+  if (candidates.length > MAX_INTRODUCTION_CANDIDATES) throw failure;
+  for (const candidate of candidates) {
+    if (!/^[0-9a-f]{40}$/u.test(candidate)) throw failure;
+    if (ledgerRowBinding(repoRoot, candidate, change.id, field) !== change.subject_commit) continue;
+    if (ledgerRowBinding(repoRoot, `${candidate}^`, change.id, field) === change.subject_commit) continue;
+    return candidate;
   }
-  if (!ledgerText.includes(subjectCommit)) throw failure;
-  return introduction;
+  throw failure;
 }
 
 export function changedPathsSince(repoRoot, subjectCommit, cache, rawBudget) {

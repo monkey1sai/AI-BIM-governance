@@ -273,6 +273,62 @@ test('CLI derives the squash-introduced watermark when a recorded row subject wa
   }
 });
 
+test('CLI keeps a committed non-ancestor row subject fail-closed instead of recovering a watermark', () => {
+  const fixture = makeHistoricalRowRepository();
+  try {
+    const orphan = runGit(fixture.root, ['commit-tree', 'HEAD^{tree}', '-m', 'orphan reachable object']);
+    const ledger = JSON.parse(readFileSync(fixture.ledgerPath, 'utf8'));
+    ledger.changes[0].subject_commit = orphan;
+    write(fixture.ledgerPath, `${JSON.stringify(ledger)}\n`);
+    runGit(fixture.root, ['add', 'openspec/lifecycle-ledger.json']);
+    runGit(fixture.root, ['commit', '--quiet', '-m', 'land orphan-bound row']);
+    const head = runGit(fixture.root, ['rev-parse', 'HEAD']);
+    const githubPath = path.join(fixture.root, 'artifacts/github.json');
+    const githubState = JSON.parse(readFileSync(githubPath, 'utf8'));
+    githubState.repository_subject = head;
+    write(githubPath, `${JSON.stringify(githubState)}\n`);
+    const result = runVerifier(fixture.root, head);
+    assert.equal(result.status, 3);
+    assert.equal(result.document.errors[0].code, 'subject_not_ancestor');
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('CLI resolves a shared discarded subject per row and still flags the older row source drift', () => {
+  const fixture = makeHistoricalRowRepository();
+  try {
+    const discarded = 'f'.repeat(40);
+    const first = JSON.parse(readFileSync(fixture.ledgerPath, 'utf8'));
+    first.changes[0].subject_commit = discarded;
+    write(fixture.ledgerPath, `${JSON.stringify(first)}\n`);
+    runGit(fixture.root, ['add', 'openspec/lifecycle-ledger.json']);
+    runGit(fixture.root, ['commit', '--quiet', '-m', 'squash: land alpha binding']);
+
+    write(path.join(fixture.root, 'openspec/changes/alpha/proposal.md'), '# alpha drifted between the two introductions\n');
+    runGit(fixture.root, ['add', 'openspec/changes/alpha/proposal.md']);
+    runGit(fixture.root, ['commit', '--quiet', '-m', 'alpha source edit after its binding landed']);
+
+    const second = JSON.parse(readFileSync(fixture.ledgerPath, 'utf8'));
+    second.changes[1].subject_commit = discarded;
+    write(fixture.ledgerPath, `${JSON.stringify(second)}\n`);
+    runGit(fixture.root, ['add', 'openspec/lifecycle-ledger.json']);
+    runGit(fixture.root, ['commit', '--quiet', '-m', 'squash: land beta binding with the same discarded value']);
+    const head = runGit(fixture.root, ['rev-parse', 'HEAD']);
+    const githubPath = path.join(fixture.root, 'artifacts/github.json');
+    const githubState = JSON.parse(readFileSync(githubPath, 'utf8'));
+    githubState.repository_subject = head;
+    write(githubPath, `${JSON.stringify(githubState)}\n`);
+
+    const result = runVerifier(fixture.root, head);
+    assert.equal(result.status, 2);
+    assert.ok(result.document.mismatches.some(({ change_id: id, reason }) => id === 'alpha' && reason === 'source_changed_since_subject'));
+    assert.ok(!result.document.mismatches.some(({ change_id: id, reason }) => id === 'beta' && reason === 'source_changed_since_subject'));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test('CLI compares against the explicit base and rejects a committed candidate that removes a lifecycle row and its sources', () => {
   const fixture = makeRepository();
   try {
