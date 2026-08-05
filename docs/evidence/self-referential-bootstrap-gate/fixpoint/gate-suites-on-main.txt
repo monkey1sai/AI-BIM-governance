@@ -1,0 +1,36 @@
+fixpoint re-verification through the POST-MERGE canonical mechanism
+mechanism_commit=ad7a50cf9ebb056c26411547df6e4d7aa0703a8b (#459 squash, first-parent mainline)
+tree=ad7a50cf9ebb056c26411547df6e4d7aa0703a8b (= mechanism_commit: main immediately after the merge)
+reverified_at=2026-08-04T14:47:51Z
+
+### scripts/tests/test-self-referential-bootstrap.ps1
+[test-self-referential-bootstrap] all assertions passed
+EXIT=0
+
+### scripts/tests/test-base-gate-capability.ps1
+[test-base-gate-capability] all assertions passed
+EXIT=0
+
+### scripts/tests/test-preflight-prnumber-forwarding.ps1
+[test-preflight-prnumber-forwarding] all assertions passed
+EXIT=0
+
+### scripts/tests/test-agent-governance-check.ps1
+{"ts":"2026-08-04T14:51:14.363Z","level":"info","event_type":"general","service":"scripts","component":"test-isolated-stack-ifc-ready-seed","run_id":"run_20260804_145111_1a2b49","trace_id":"script_run_20260804_145111_1a2b49","msg":"contract assertions passed","data":{"assertions":"isolated-seed-wrapper"},"seq":1}
+[test-agent-governance-check] all assertions passed
+EXIT=0
+
+### scripts/tests/test-pr-body-evidence.ps1
+[test-pr-body-evidence] all assertions passed
+EXIT=0
+
+### scripts/tests/test-pr-review-agent.ps1
+[test-pr-review-agent] all assertions passed
+EXIT=0
+
+### pwsh -NoProfile -NonInteractive -File scripts/tests/invoke-powershell-static.ps1
+[invoke-powershell-static] passed
+EXIT=0
+
+### bash -n scripts/lib/detect-base-gate-capability.sh
+EXIT=0

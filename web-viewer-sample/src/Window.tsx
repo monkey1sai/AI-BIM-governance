@@ -1047,7 +1047,7 @@ export default class App extends React.Component<AppProps, AppState> {
             return;
         }
 
-        void this._loadUSDAssets();
+        if (!harnessEnabled()) void this._loadUSDAssets();
         void this._bootstrapReview();
     }
 
@@ -3545,6 +3545,13 @@ export default class App extends React.Component<AppProps, AppState> {
         this.reviewSocket = null;
         const stageUrl = HARNESS_STAGE_URL;
         const harnessAsset: USDAssetType = { name: "Sample Building (harness)", url: stageUrl };
+        // The alternate assets let the controlled browser harness exercise a real
+        // A -> B stage replacement without changing production asset selection.
+        const harnessAssets: USDAssetType[] = [
+            harnessAsset,
+            { name: "Levels Overlay (harness)", url: "harness://stage/World/levels.usdc" },
+            { name: "MEP Overlay (harness)", url: "harness://stage/World/mep.usdc" },
+        ];
         // CH-F：harness 提供多個 ready derived USDC artifact，供 BindingComposer 選 1..N / 指定 primary / 調 load_order。
         const harnessBindings: ArtifactBinding[] = [
             { binding_id: "b_h_building", artifact_group_id: "ag_harness", model_version_id: "version_harness_demo", artifact_id: "artifact_h_building", display_name: "Building Shell", source_ifc_filename: "sample-building.ifc", artifact_role: "derived", url: stageUrl, mapping_url: null, load_order: 0, routing_policy: "same_instance", ready_status: "ready" },
@@ -3572,7 +3579,7 @@ export default class App extends React.Component<AppProps, AppState> {
             reviewArtifacts: [],
             latestStreamConfig: streamConfig,
             mappingUrl: null,
-            usdAssets: [harnessAsset],
+            usdAssets: harnessAssets,
             selectedUSDAsset: harnessAsset,
             expectedStageUrl: stageUrl,
             loadedStageUrl: null,
@@ -4092,7 +4099,9 @@ export default class App extends React.Component<AppProps, AppState> {
             });
             return;
         }
-        const targetAsset = this._expectedStageAsset() || this.state.selectedUSDAsset;
+        const targetAsset = harnessEnabled()
+            ? this.state.selectedUSDAsset
+            : this._expectedStageAsset() || this.state.selectedUSDAsset;
         if (!targetAsset) {
             console.warn("No USD asset is selected.");
             this.setState({ loadingText: "沒有可用的 USD / USDC 成果檔", isLoading: false });
@@ -4117,7 +4126,9 @@ export default class App extends React.Component<AppProps, AppState> {
             showStream: this._hasRemoteVideoFrame(),
             streamDiagnostic: null,
             selectedUSDAsset: targetAsset,
-            expectedStageUrl: this.state.expectedStageUrl || targetAsset.url,
+            expectedStageUrl: harnessEnabled()
+                ? targetAsset.url
+                : this.state.expectedStageUrl || targetAsset.url,
             loadedStageUrl: null,
             stageLoadStatus: "pending",
             isLoading: true

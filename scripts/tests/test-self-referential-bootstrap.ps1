@@ -108,6 +108,20 @@ function New-Entry {
         opened_at = '2026-07-31T08:00:00Z'
         reason = $goodReason
         verification_mechanism_paths = @('scripts/deploy.ps1')
+        verification_contract = [ordered]@{
+            id = 'self-referential-bootstrap-gate/v1'
+            command_ids = @(
+                'test-self-referential-bootstrap',
+                'test-base-gate-capability',
+                'test-preflight-prnumber-forwarding',
+                'test-agent-governance-check',
+                'test-pr-body-evidence',
+                'test-pr-review-agent',
+                'invoke-powershell-static',
+                'detect-base-gate-capability-bash-syntax'
+            )
+            contract_sha256 = '0f37135086c5b61af8246ba89ac584287ab57749c6b0ff9e7eabd7a6a4351367'
+        }
         bootstrap_evidence_refs = @('docs/evidence/remote-linux-deploy/self-referential-bootstrap/summary.md')
         fixpoint = $null
     }
@@ -121,6 +135,26 @@ function New-LedgerJson {
         schema_version = 'self-referential-bootstrap-ledger/v1'
         entries = $Entries
     } | ConvertTo-Json -Depth 8)
+}
+
+function New-FixpointAttestationJson {
+    param(
+        [Parameter(Mandatory = $true)] $Entry,
+        [Parameter(Mandatory = $true)][string] $MechanismCommit,
+        [hashtable] $Override = @{}
+    )
+    $attestation = [ordered]@{
+        schema_version = 'self-referential-fixpoint-attestation/v1'
+        entry_id = [string]$Entry.id
+        mechanism_commit = $MechanismCommit
+        verification_contract_sha256 = [string]$Entry.verification_contract.contract_sha256
+        result = 'pass'
+        commands = @($Entry.verification_contract.command_ids | ForEach-Object {
+            [ordered]@{ id = [string]$_; exit_code = 0 }
+        })
+    }
+    foreach ($key in $Override.Keys) { $attestation[$key] = $Override[$key] }
+    return ($attestation | ConvertTo-Json -Depth 8)
 }
 
 function Write-LedgerFile {
@@ -168,6 +202,11 @@ try {
         return $output
     }
     $null = Invoke-FixtureGit -Arguments @('init', '-q')
+    # `git merge --no-commit` still prepares merge metadata and requires an
+    # identity on a clean CI runner. Keep the fixture self-contained: configure
+    # only this disposable repository, never the caller's global Git config.
+    $null = Invoke-FixtureGit -Arguments @('config', 'user.email', 'fixture@invalid')
+    $null = Invoke-FixtureGit -Arguments @('config', 'user.name', 'fixture')
     $mainBranch = ((Invoke-FixtureGit -Arguments @('branch', '--show-current')) | Out-String).Trim()
     $commit = {
         param($msg, [bool] $AllowEmpty = $false)
@@ -226,6 +265,16 @@ try {
     $null = Invoke-FixtureGit -Arguments @('add', 'docs', 'scripts')
     $baseSha = & $commit 'base with post-merge evidence'
 
+    # Independent squash-style fixture whose mechanism commit changes two
+    # declared surfaces, followed by evidence from a later revision.
+    & $write 'scripts/deploy.ps1' '# multi-path mechanism'
+    & $write 'scripts/verify-all.ps1' '# multi-path mechanism'
+    $null = Invoke-FixtureGit -Arguments @('add', 'scripts/deploy.ps1', 'scripts/verify-all.ps1')
+    $twoPathFixpointCommit = & $commit 'multi-path mechanism (#500)'
+    & $write 'docs/evidence/multi-path/fixpoint/summary.md' 'multi-path fixpoint evidence'
+    $null = Invoke-FixtureGit -Arguments @('add', 'docs/evidence/multi-path/fixpoint/summary.md')
+    $twoPathBaseSha = & $commit 'base with multi-path fixpoint evidence'
+
     # Commits a head ledger into the fixture and returns that SHA, so the body
     # gate can load the ledger from an exact revision instead of ambient HEAD.
     # This is the differential fixture the Codex review asked for (TG-3): the
@@ -256,10 +305,25 @@ try {
         'scripts/verify-all.sh',
         'scripts/lib/verification-plan.mjs',
         'scripts/lib/verification-runner.mjs',
+        'scripts/lib/verification-command-policy.mjs',
+        'scripts/lib/verification-outcome.mjs',
         'scripts/lib/security-exceptions-cli.mjs',
+        'scripts/lib/security-exceptions.mjs',
+        'scripts/security-exceptions.json',
+        'scripts/lib/openspec-lifecycle.ps1',
+        'scripts/lib/openspec-machine-truth.mjs',
         'scripts/tests/verification-plan.schema.json',
         'scripts/tests/invoke-powershell-static.ps1',
         'scripts/tests/scan-secret-patterns.ps1',
+        'scripts/tests/test-self-referential-bootstrap.ps1',
+        'scripts/tests/test-base-gate-capability.ps1',
+        'scripts/tests/test-preflight-prnumber-forwarding.ps1',
+        'web-viewer-sample/scripts/verify-design-system-pixels.mjs',
+        'web-viewer-sample/scripts/lib/png-preflight.mjs',
+        'scripts/tests/test-png-preflight.mjs',
+        'scripts/start-web-plane-docker.ps1',
+        '.github/CODEOWNERS',
+        'scripts/tests/test-agent-governance-check.ps1',
         'docs/agents/self-referential-bootstrap.md'
     )
     $matched = Get-SelfReferentialMechanismPaths -ChangedPaths @($expectedMechanismPaths + 'web-viewer-sample/src/Window.tsx')
@@ -268,6 +332,19 @@ try {
         Assert-True ($matched -ccontains $expectedPath) "mechanism classifier includes $expectedPath"
     }
     Assert-True ($matched -notcontains 'web-viewer-sample/src/Window.tsx') 'ordinary product code must NOT classify as mechanism'
+    $wrongCaseMechanismPaths = @(Get-SelfReferentialMechanismPaths -ChangedPaths @(
+        'Scripts/Deploy.ps1',
+        '.github/workflows/CI.yml'
+    ))
+    Assert-True ($wrongCaseMechanismPaths.Count -eq 0) `
+        "wrong-case git paths must not classify as mechanisms (matched: $($wrongCaseMechanismPaths -join ', '))"
+    $prTemplate = Get-Content -LiteralPath (Join-Path $repoRoot '.github/PULL_REQUEST_TEMPLATE.md') -Raw
+    $prTemplateBooleanPattern = '(?m)^\| Self-referential bootstrap \| yes / no \|\r?$'
+    Assert-True ($prTemplate -match $prTemplateBooleanPattern) `
+        'PR template shows bare yes/no values accepted by the checker, not backticked literals'
+    $prTemplateCrlf = $prTemplate -replace '\r?\n', "`r`n"
+    Assert-True ($prTemplateCrlf -match $prTemplateBooleanPattern) `
+        'PR template boolean assertion accepts the CRLF checkout used by Windows CI'
 
     # --- list-typed fields reject scalars (Codex round-6) ---------------------------
     # `@($value).Count` wraps a bare string into a one-element array, so a scalar
@@ -344,8 +421,54 @@ try {
 
     # --- ledger integrity (structure-level, unchanged rules) ------------------------
     $null = Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry)))
+    Assert-Throws -Context 'top-level ledger array' -MessagePattern 'top-level JSON object' -Action {
+        Get-SelfReferentialBootstrapLedger -Json "[$(New-LedgerJson -Entries @((New-Entry)))]"
+    }
+    Assert-Throws -Context 'duplicate top-level entries property' -MessagePattern 'duplicate JSON property' -Action {
+        Get-SelfReferentialBootstrapLedger -Json '{"schema_version":"self-referential-bootstrap-ledger/v1","entries":[],"entries":[]}'
+    }
+    Assert-Throws -Context 'numeric ledger entry id' -MessagePattern 'id must be a JSON string' -Action {
+        Get-SelfReferentialBootstrapLedger -Json ((New-LedgerJson -Entries @((New-Entry))) -replace '"id": "remote-linux-deploy-target"', '"id": 123')
+    }
+    Assert-Throws -Context 'mixed-case ledger entry id' -MessagePattern 'kebab-case' -Action {
+        Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{ id = 'Remote-linux-deploy-target' })))
+    }
+    Assert-Throws -Context 'mixed-case ledger entry status' -MessagePattern 'status must be exactly' -Action {
+        Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{ status = 'OPEN' })))
+    }
+    $missingFixpointEntry = New-Entry
+    $missingFixpointEntry.Remove('fixpoint')
+    Assert-Throws -Context 'open entry missing fixpoint property' -MessagePattern 'missing required JSON property.*fixpoint' -Action {
+        Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @($missingFixpointEntry))
+    }
+    $missingContractEntry = New-Entry
+    $missingContractEntry.Remove('verification_contract')
+    Assert-Throws -Context 'entry missing verification contract' -MessagePattern 'missing required JSON property.*verification_contract' -Action {
+        Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @($missingContractEntry))
+    }
+    $wrongContractDigestEntry = New-Entry
+    $wrongContractDigestEntry.verification_contract.contract_sha256 = ('0' * 64)
+    Assert-Throws -Context 'verification contract digest mismatch' -MessagePattern 'contract_sha256 does not match' -Action {
+        Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @($wrongContractDigestEntry))
+    }
+    $duplicateContractCommandEntry = New-Entry
+    $duplicateContractCommandEntry.verification_contract.command_ids = @(
+        'test-self-referential-bootstrap',
+        'test-self-referential-bootstrap'
+    )
+    Assert-Throws -Context 'verification contract duplicate command id' -MessagePattern 'duplicate command id' -Action {
+        Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @($duplicateContractCommandEntry))
+    }
     Assert-Throws -Context 'garbage opened_at in ledger' -MessagePattern 'ISO-8601' -Action {
         Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{ opened_at = '2026-99-99T99:99:99garbage' })))
+    }
+    $null = Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{
+        opened_at = '9999-12-31T23:59:59.998Z'
+    })))
+    Assert-Throws -Context 'opened_at with no valid successor' -MessagePattern 'no valid later fixpoint' -Action {
+        Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{
+            opened_at = '9999-12-31T23:59:59.999Z'
+        })))
     }
     Assert-Throws -Context 'open entry with fixpoint' -MessagePattern 'must not carry a fixpoint' -Action {
         Get-SelfReferentialBootstrapLedger -Json (New-LedgerJson -Entries @((New-Entry -Override @{ fixpoint = @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = ('a' * 40); evidence_refs = @('x') } })))
@@ -392,6 +515,30 @@ try {
         Assert-SelfReferentialEvidenceBlob -RepoRoot $gitRoot -Ref 'docs/evidence/remote-linux-deploy/fixpoint/summary.md' -Context 'test' -HeadSha $fixpointCommit
     }
     Assert-SelfReferentialEvidenceBlob -RepoRoot $gitRoot -Ref 'docs/evidence/remote-linux-deploy/fixpoint/summary.md' -Context 'test' -HeadSha $baseSha
+
+    # Git symlinks are blobs (mode 120000). A dangling symlink must not count as
+    # re-verification evidence even though cat-file -t would report "blob".
+    $symlinkRepo = Join-Path $tempRoot 'symlink-evidence-repo'
+    New-Item -ItemType Directory -Path $symlinkRepo -Force | Out-Null
+    Push-Location -LiteralPath $symlinkRepo
+    try {
+        $null = & git -c init.defaultBranch=main init -q
+        $null = & git -c user.email=t@t -c user.name=t config user.email t@t
+        $null = & git -c user.email=t@t -c user.name=t config user.name t
+        # Create a symlink via git update-index so the fixture works on Windows
+        # without requiring elevated symlink privileges.
+        $emptyBlob = (('target' | & git hash-object -w --stdin) | Out-String).Trim()
+        $null = & git update-index --add --cacheinfo "120000,$emptyBlob,docs/evidence/x/self-referential-bootstrap/link.md"
+        $null = & git -c user.email=t@t -c user.name=t commit --no-gpg-sign -q -m 'symlink evidence'
+        $symlinkHead = ((& git rev-parse HEAD) | Out-String).Trim()
+        Assert-Throws -Context 'symlink evidence blob' -MessagePattern 'regular committed file|mode=120000' -Action {
+            Assert-SelfReferentialEvidenceBlob -RepoRoot $symlinkRepo `
+                -Ref 'docs/evidence/x/self-referential-bootstrap/link.md' `
+                -Context 'test' -HeadSha $symlinkHead
+        }
+    } finally {
+        Pop-Location
+    }
 
     # --- transition: deletion of open debt (review P1 #1) ---------------------------
     $openBase = New-LedgerJson -Entries @((New-Entry))
@@ -460,17 +607,48 @@ try {
         param(
             [hashtable] $Fixpoint,
             [hashtable] $EntryOverride = @{},
-            [string[]] $ChangedPaths = @('scripts/self-referential-bootstrap-ledger.json')
+            [string[]] $ChangedPaths = @('scripts/self-referential-bootstrap-ledger.json'),
+            [string] $BaseLedgerJson = $openBase,
+            [string] $ClosureBaseSha = $baseSha,
+            [AllowEmptyString()][string] $RefreshEvidenceRef = '',
+            [AllowEmptyString()][string] $ModeOnlyEvidenceRef = '',
+            [hashtable] $AttestationOverride = @{},
+            [switch] $OmitAttestation
         )
         $override = @{ status = 'closed'; fixpoint = $Fixpoint } + $EntryOverride
-        $json = New-LedgerJson -Entries @((New-Entry -Override $override))
+        $closedEntry = New-Entry -Override $override
+        $effectiveChangedPaths = @($ChangedPaths)
+        if (-not [string]::IsNullOrWhiteSpace($RefreshEvidenceRef)) {
+            & $write $RefreshEvidenceRef "closure re-verification $([Guid]::NewGuid().ToString('N'))"
+            $evidenceFiles = @($RefreshEvidenceRef)
+            if (-not $OmitAttestation) {
+                $attestationRootMatch = [regex]::Match(
+                    $RefreshEvidenceRef, '^(docs/evidence/[^/]+)/fixpoint/')
+                if (-not $attestationRootMatch.Success) {
+                    throw "test fixture refresh evidence must use docs/evidence/<slug>/fixpoint/: $RefreshEvidenceRef"
+                }
+                $attestationRef = $attestationRootMatch.Groups[1].Value + '/fixpoint/attestation.json'
+                if (-not (@($closedEntry.fixpoint.evidence_refs) -ccontains $attestationRef)) {
+                    $closedEntry.fixpoint.evidence_refs = @($closedEntry.fixpoint.evidence_refs) + $attestationRef
+                }
+                & $write $attestationRef (New-FixpointAttestationJson -Entry $closedEntry -MechanismCommit ([string]$closedEntry.fixpoint.mechanism_commit) -Override $AttestationOverride)
+                $evidenceFiles += $attestationRef
+            }
+            $null = Invoke-FixtureGit -Arguments (@('add', '--') + $evidenceFiles)
+            $effectiveChangedPaths += $evidenceFiles
+        }
+        if (-not [string]::IsNullOrWhiteSpace($ModeOnlyEvidenceRef)) {
+            $null = Invoke-FixtureGit -Arguments @('update-index', '--chmod=+x', '--', $ModeOnlyEvidenceRef)
+            $effectiveChangedPaths += $ModeOnlyEvidenceRef
+        }
+        $json = New-LedgerJson -Entries @($closedEntry)
         $headSha = New-FixtureHeadCommit -Json $json
-        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $ChangedPaths `
-            -HeadJson $json -BaseJson $openBase -GateRepoRoot $gitRoot -BaseSha $baseSha -HeadSha $headSha
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $effectiveChangedPaths `
+            -HeadJson $json -BaseJson $BaseLedgerJson -GateRepoRoot $gitRoot -BaseSha $ClosureBaseSha -HeadSha $headSha
     }
 
     # mechanism_commit is an ancestor but did not touch a declared path (round 4)
-    Assert-Throws -Context 'mechanism_commit did not touch a declared path' -MessagePattern 'not this mechanism' -Action {
+    Assert-Throws -Context 'mechanism_commit did not touch a declared path' -MessagePattern 'did not modify every declared verification_mechanism_path' -Action {
         Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $unrelatedAncestor; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') }
     }
     Assert-Throws -Context 'side-branch mechanism commit is not the mainline merge' -MessagePattern 'first-parent history' -Action {
@@ -482,22 +660,119 @@ try {
     Assert-Throws -Context 'foreign squash subject only cross-references this PR' -MessagePattern 'originating PR #500' -Action {
         Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $spoofedPrMechanismCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') }
     }
-    # fixpoint evidence predates the mechanism merge (round 4)
-    Assert-Throws -Context 'fixpoint evidence predating the mechanism merge' -MessagePattern 'predates mechanism_commit' -Action {
+    # Pre-existing evidence cannot be reused by a ledger-only closure, whether it
+    # predates the mechanism or was committed by the mechanism itself.
+    Assert-Throws -Context 'unchanged pre-mechanism evidence reused by closure' -MessagePattern 'added or modified by this closure PR' -Action {
         Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/old/self-referential-bootstrap/old.md') }
     }
-    # evidence born IN the mechanism commit is not post-merge re-verification:
-    # `merge-base --is-ancestor X X` succeeds, so equality had to be rejected
-    # explicitly (Codex: "Require fixpoint evidence to postdate the mechanism
-    # commit").
-    Assert-Throws -Context 'fixpoint evidence committed by the mechanism commit itself' -MessagePattern 'committed by mechanism_commit' -Action {
+    Assert-Throws -Context 'unchanged mechanism-commit evidence reused by closure' -MessagePattern 'added or modified by this closure PR' -Action {
         Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/born-with-mechanism.md') }
     }
-    # legal closure passes: mechanism_commit touched deploy.ps1, evidence is post-merge
-    Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') }
+    Assert-Throws -Context 'closure reuses post-mechanism evidence already present at base' `
+        -MessagePattern 'added or modified by this closure PR' -Action {
+        Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') }
+    }
+    Assert-Throws -Context 'closure claims unchanged base evidence as changed' `
+        -MessagePattern 'unchanged between BaseSha and HeadSha' -Action {
+        Invoke-Closure `
+            -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') } `
+            -ChangedPaths @(
+                'scripts/self-referential-bootstrap-ledger.json',
+                'docs/evidence/remote-linux-deploy/fixpoint/summary.md'
+            )
+    }
+    Assert-Throws -Context 'closure claims a mode-only evidence change as fresh content' `
+        -MessagePattern 'unchanged between BaseSha and HeadSha' -Action {
+        Invoke-Closure `
+            -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') } `
+            -ModeOnlyEvidenceRef 'docs/evidence/remote-linux-deploy/fixpoint/summary.md'
+    }
+    Assert-Throws -Context 'fresh arbitrary text without fixpoint attestation' -MessagePattern 'fixpoint.*attestation' -Action {
+        Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') } -RefreshEvidenceRef 'docs/evidence/remote-linux-deploy/fixpoint/summary.md' -OmitAttestation
+    }
+    $badCommands = @((New-Entry).verification_contract.command_ids | ForEach-Object {
+        [ordered]@{ id = [string]$_; exit_code = 0 }
+    })
+    $badCommands[0].exit_code = 1
+    $attestationMutations = @(
+        @{ Name = 'wrong entry id'; Override = @{ entry_id = 'another-ledger-entry' } },
+        @{ Name = 'wrong mechanism commit'; Override = @{ mechanism_commit = ('b' * 40) } },
+        @{ Name = 'wrong verification contract digest'; Override = @{ verification_contract_sha256 = ('0' * 64) } },
+        @{ Name = 'failed aggregate result'; Override = @{ result = 'fail' } },
+        @{ Name = 'nonzero command exit'; Override = @{ commands = $badCommands } }
+    )
+    foreach ($mutation in $attestationMutations) {
+        Assert-Throws -Context "fixpoint attestation rejects $($mutation.Name)" -MessagePattern 'fixpoint attestation' -Action {
+            Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') } -RefreshEvidenceRef 'docs/evidence/remote-linux-deploy/fixpoint/summary.md' -AttestationOverride $mutation.Override
+        }
+    }
+
+    # Legal closure passes only when this PR refreshes the referenced evidence
+    # and supplies an exact entry/commit/contract-bound passing attestation.
+    Invoke-Closure `
+        -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') } `
+        -RefreshEvidenceRef 'docs/evidence/remote-linux-deploy/fixpoint/summary.md'
+
+    # A closure cannot use bootstrap=yes to close the old debt and appoint a
+    # fresh open entry in the same transition.
+    $nextEvidenceRef = 'docs/evidence/next-gate/self-referential-bootstrap/summary.md'
+    $nextEntry = New-Entry -Override @{
+        id = 'next-gate-debt'
+        opened_at = '2026-08-02T08:00:00Z'
+        verification_mechanism_paths = @('scripts/self-referential-bootstrap-ledger.json')
+        bootstrap_evidence_refs = @($nextEvidenceRef)
+    }
+    $closedAndNewJson = New-LedgerJson -Entries @(
+        (New-Entry -Override @{
+            status = 'closed'
+            fixpoint = @{
+                reverified_at = '2026-08-01T08:00:00Z'
+                mechanism_commit = $fixpointCommit
+                evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md')
+            }
+        }),
+        $nextEntry
+    )
+    & $write 'docs/evidence/remote-linux-deploy/fixpoint/summary.md' "closure re-verification $([Guid]::NewGuid().ToString('N'))"
+    & $write $nextEvidenceRef 'next mechanism bootstrap evidence'
+    $null = Invoke-FixtureGit -Arguments @('add', '--',
+        'docs/evidence/remote-linux-deploy/fixpoint/summary.md', $nextEvidenceRef)
+    $closedAndNewHead = New-FixtureHeadCommit -Json $closedAndNewJson 'closure cannot open successor debt'
+    Assert-Throws -Context 'closure PR also opens new debt' -MessagePattern 'cannot also open new debt' -Action {
+        Invoke-BodyGate -Rows @{
+            'Self-referential bootstrap' = 'yes'
+            'Bootstrap ledger entry' = 'next-gate-debt'
+            'Bootstrap reason' = $goodReason
+        } -ChangedPaths @(
+            'scripts/self-referential-bootstrap-ledger.json',
+            'docs/evidence/remote-linux-deploy/fixpoint/summary.md',
+            $nextEvidenceRef
+        ) -HeadJson $closedAndNewJson -BaseJson $openBase -GateRepoRoot $gitRoot -BaseSha $baseSha -HeadSha $closedAndNewHead
+    }
+
+    # A multi-surface mechanism cannot close when its merge touched only one of
+    # the declared paths (Codex L1-COR-003). The singleton positive above remains
+    # the control proving ordinary one-path closures still pass.
+    $twoPathOpenBase = New-LedgerJson -Entries @((New-Entry -Override @{
+        verification_mechanism_paths = @('scripts/deploy.ps1', 'scripts/verify-all.ps1')
+    }))
+    Assert-Throws -Context 'multi-path closure whose commit touched only one declared path' `
+        -MessagePattern 'did not modify every declared verification_mechanism_path' -Action {
+        Invoke-Closure `
+            -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') } `
+            -EntryOverride @{ verification_mechanism_paths = @('scripts/deploy.ps1', 'scripts/verify-all.ps1') } `
+            -BaseLedgerJson $twoPathOpenBase
+    }
+    Invoke-Closure `
+        -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $twoPathFixpointCommit; evidence_refs = @('docs/evidence/multi-path/fixpoint/summary.md') } `
+        -EntryOverride @{ verification_mechanism_paths = @('scripts/deploy.ps1', 'scripts/verify-all.ps1') } `
+        -BaseLedgerJson $twoPathOpenBase `
+        -ClosureBaseSha $twoPathBaseSha `
+        -RefreshEvidenceRef 'docs/evidence/multi-path/fixpoint/summary.md'
     Assert-Throws -Context 'closure PR also edits another mechanism path' -MessagePattern 'may only change the ledger' -Action {
         Invoke-Closure -Fixpoint @{ reverified_at = '2026-08-01T08:00:00Z'; mechanism_commit = $fixpointCommit; evidence_refs = @('docs/evidence/remote-linux-deploy/fixpoint/summary.md') } `
-            -ChangedPaths @('scripts/self-referential-bootstrap-ledger.json', 'scripts/deploy.ps1')
+            -ChangedPaths @('scripts/self-referential-bootstrap-ledger.json', 'scripts/deploy.ps1') `
+            -RefreshEvidenceRef 'docs/evidence/remote-linux-deploy/fixpoint/summary.md'
     }
 
     # closure without HeadSha must refuse rather than resolve chronology from
@@ -589,6 +864,9 @@ try {
         bootstrap_evidence_refs = @('docs/evidence/second/self-referential-bootstrap/summary.md')
     }
     $twoOpenBase = New-LedgerJson -Entries @((New-Entry), $secondEntry)
+    & $write 'docs/evidence/second/self-referential-bootstrap/summary.md' 'second entry bootstrap evidence'
+    $null = Invoke-FixtureGit -Arguments @('add', '--', 'docs/evidence/second/self-referential-bootstrap/summary.md')
+    $twoEntryBaseSha = New-FixtureHeadCommit -Json $twoOpenBase 'two open entries with complete base evidence'
     $firstClosedJson = New-LedgerJson -Entries @(
         (New-Entry -Override @{
             status = 'closed'
@@ -597,9 +875,9 @@ try {
         $secondEntry
     )
     $twoHeadSha = New-FixtureHeadCommit -Json $firstClosedJson 'two entries, first closed'
-    Assert-Throws -Context 'multi-entry closure binds to its own entry paths' -MessagePattern 'not this mechanism' -Action {
+    Assert-Throws -Context 'multi-entry closure binds to its own entry paths' -MessagePattern 'did not modify every declared verification_mechanism_path' -Action {
         Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism `
-            -HeadJson $firstClosedJson -BaseJson $twoOpenBase -GateRepoRoot $gitRoot -BaseSha $baseSha -HeadSha $twoHeadSha
+            -HeadJson $firstClosedJson -BaseJson $twoOpenBase -GateRepoRoot $gitRoot -BaseSha $twoEntryBaseSha -HeadSha $twoHeadSha
     }
 
     # --- new entry must scope to this PR's changed paths (review P2) ----------------
@@ -620,16 +898,48 @@ try {
         } -ChangedPaths $mechanism -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $tempRoot
     }
 
+    $bootstrapEvidenceRef = 'docs/evidence/remote-linux-deploy/self-referential-bootstrap/summary.md'
+    Assert-Throws -Context 'new entry reusing unchanged base evidence' -MessagePattern 'added or modified by this PR' -Action {
+        Invoke-BodyGate -Rows @{
+            'Self-referential bootstrap' = 'yes'
+            'Bootstrap ledger entry' = 'remote-linux-deploy-target'
+            'Bootstrap reason' = $goodReason
+        } -ChangedPaths $mechanism -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $gitRoot
+    }
+
+    $modeOnlyOpeningBaseSha = ((Invoke-FixtureGit -Arguments @('rev-parse', 'HEAD')) | Out-String).Trim()
+    $null = Invoke-FixtureGit -Arguments @('update-index', '--chmod=+x', '--', $bootstrapEvidenceRef)
+    $modeOnlyOpeningHeadSha = New-FixtureHeadCommit -Json $openBase 'mode-only bootstrap evidence change'
+    Assert-Throws -Context 'new entry claims a mode-only evidence change as fresh content' `
+        -MessagePattern 'unchanged between BaseSha and HeadSha' -Action {
+        Invoke-BodyGate -Rows @{
+            'Self-referential bootstrap' = 'yes'
+            'Bootstrap ledger entry' = 'remote-linux-deploy-target'
+            'Bootstrap reason' = $goodReason
+        } -ChangedPaths @($mechanism + $bootstrapEvidenceRef) `
+            -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $gitRoot `
+            -BaseSha $modeOnlyOpeningBaseSha -HeadSha $modeOnlyOpeningHeadSha
+    }
+
     # --- legal self-registration passes ---------------------------------------------
+    $legalOpeningBaseSha = ((Invoke-FixtureGit -Arguments @('rev-parse', 'HEAD')) | Out-String).Trim()
+    & $write $bootstrapEvidenceRef "fresh bootstrap evidence $([Guid]::NewGuid().ToString('N'))"
+    $null = Invoke-FixtureGit -Arguments @('add', '--', $bootstrapEvidenceRef)
+    $legalOpeningHeadSha = New-FixtureHeadCommit -Json $openBase 'content-fresh bootstrap evidence'
     Invoke-BodyGate -Rows @{
         'Self-referential bootstrap' = 'yes'
         'Bootstrap ledger entry' = 'remote-linux-deploy-target'
         'Bootstrap reason' = $goodReason
-    } -ChangedPaths $mechanism -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $gitRoot
+    } -ChangedPaths @($mechanism + $bootstrapEvidenceRef) `
+        -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $gitRoot `
+        -BaseSha $legalOpeningBaseSha -HeadSha $legalOpeningHeadSha
 
     # --- silently adding debt while declaring no ------------------------------------
     Assert-Throws -Context 'ledger gains entries under bootstrap=no' -MessagePattern 'requires declaring yes' -Action {
-        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $gitRoot
+        Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } `
+            -ChangedPaths @($mechanism + $bootstrapEvidenceRef) `
+            -HeadJson $openBase -BaseJson $emptyJson -GateRepoRoot $gitRoot `
+            -BaseSha $legalOpeningBaseSha -HeadSha $legalOpeningHeadSha
     }
 
     Assert-Throws -Context 'self-adjudicator edit under bootstrap=no' -MessagePattern 'must declare bootstrap=yes' -Action {
@@ -643,8 +953,73 @@ try {
         Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths $mechanism -HeadJson $openBase -BaseJson $openBase
     }
 
+    foreach ($classifiedPath in $expectedMechanismPaths) {
+        Assert-Throws -Context "classified path reaches debt gate: $classifiedPath" -MessagePattern 'open ledger debt|must declare bootstrap=yes' -Action {
+            Invoke-BodyGate -Rows @{ 'Self-referential bootstrap' = 'no' } -ChangedPaths @($classifiedPath) -HeadJson $openBase -BaseJson $openBase
+        }
+    }
+
     # --- non-mechanism PRs are untouched by all of this -----------------------------
     Invoke-BodyGate -Rows @{} -ChangedPaths @('web-viewer-sample/src/Window.tsx') -HeadJson $openBase -BaseJson $openBase
+
+    # With exact head context, unrelated PRs still load the ledger only to protect
+    # referenced evidence from deletion; ordinary product changes remain allowed.
+    $openLedgerHead = New-FixtureHeadCommit -Json $openBase 'open ledger before unrelated change'
+    Invoke-BodyGate -Rows @{} -ChangedPaths @('web-viewer-sample/src/Window.tsx') `
+        -HeadJson $openBase -BaseJson $openBase -GateRepoRoot $gitRoot `
+        -BaseSha $openLedgerHead -HeadSha $openLedgerHead
+
+    $bootstrapEvidencePath = 'docs/evidence/remote-linux-deploy/self-referential-bootstrap/summary.md'
+    $renamedBootstrapEvidencePath = 'docs/evidence/remote-linux-deploy/self-referential-bootstrap/renamed-summary.md'
+    Move-Item -LiteralPath (Join-Path $gitRoot $bootstrapEvidencePath) -Destination (Join-Path $gitRoot $renamedBootstrapEvidencePath)
+    $null = Invoke-FixtureGit -Arguments @('add', '-A')
+    $openEvidenceRenamedHead = & $commit 'unrelated PR renames referenced bootstrap evidence'
+    Assert-Throws -Context 'rename destination list cannot hide removed bootstrap evidence source' -MessagePattern 'immutable referenced evidence' -Action {
+        Invoke-BodyGate -Rows @{} -ChangedPaths @($renamedBootstrapEvidencePath) -HeadJson $openBase -BaseJson $openBase -GateRepoRoot $gitRoot -BaseSha $openLedgerHead -HeadSha $openEvidenceRenamedHead
+    }
+    Move-Item -LiteralPath (Join-Path $gitRoot $renamedBootstrapEvidencePath) -Destination (Join-Path $gitRoot $bootstrapEvidencePath)
+    $null = Invoke-FixtureGit -Arguments @('add', '-A')
+    $null = & $commit 'restore referenced bootstrap evidence after rename probe'
+
+    & $write $bootstrapEvidencePath 'substituted bootstrap evidence'
+    $null = Invoke-FixtureGit -Arguments @('add', '--', $bootstrapEvidencePath)
+    $openEvidenceRewrittenHead = & $commit 'unrelated PR rewrites referenced bootstrap evidence'
+    Assert-Throws -Context 'unrelated PR rewrites open-entry bootstrap evidence' -MessagePattern 'immutable referenced evidence' -Action {
+        Invoke-BodyGate -Rows @{} -ChangedPaths @($bootstrapEvidencePath) -HeadJson $openBase -BaseJson $openBase -GateRepoRoot $gitRoot -BaseSha $openLedgerHead -HeadSha $openEvidenceRewrittenHead
+    }
+
+    Remove-Item -LiteralPath (Join-Path $gitRoot $bootstrapEvidencePath) -Force
+    $null = Invoke-FixtureGit -Arguments @('add', '-u', '--', $bootstrapEvidencePath)
+    $openEvidenceDeletedHead = & $commit 'unrelated PR deletes referenced bootstrap evidence'
+    Assert-Throws -Context 'unrelated PR deletes open-entry bootstrap evidence' -MessagePattern 'not a committed file' -Action {
+        Invoke-BodyGate -Rows @{} -ChangedPaths @($bootstrapEvidencePath) `
+            -HeadJson $openBase -BaseJson $openBase -GateRepoRoot $gitRoot `
+            -BaseSha $openLedgerHead -HeadSha $openEvidenceDeletedHead
+    }
+
+    # Restore the opening evidence while committing a valid closed ledger, then
+    # prove the same protection applies to the closed entry's fixpoint evidence.
+    & $write $bootstrapEvidencePath 'restored bootstrap evidence'
+    $null = Invoke-FixtureGit -Arguments @('add', '--', $bootstrapEvidencePath)
+    $closedLedgerHead = New-FixtureHeadCommit -Json $legalClosedJson 'closed ledger with intact evidence'
+    $fixpointEvidencePath = 'docs/evidence/remote-linux-deploy/fixpoint/summary.md'
+    & $write $fixpointEvidencePath 'substituted fixpoint evidence'
+    $null = Invoke-FixtureGit -Arguments @('add', '--', $fixpointEvidencePath)
+    $closedEvidenceRewrittenHead = & $commit 'unrelated PR rewrites referenced fixpoint evidence'
+    Assert-Throws -Context 'unrelated PR rewrites closed-entry fixpoint evidence' -MessagePattern 'immutable referenced evidence' -Action {
+        Invoke-BodyGate -Rows @{} -ChangedPaths @($fixpointEvidencePath) `
+            -HeadJson $legalClosedJson -BaseJson $legalClosedJson -GateRepoRoot $gitRoot `
+            -BaseSha $closedLedgerHead -HeadSha $closedEvidenceRewrittenHead
+    }
+
+    Remove-Item -LiteralPath (Join-Path $gitRoot $fixpointEvidencePath) -Force
+    $null = Invoke-FixtureGit -Arguments @('add', '-u', '--', $fixpointEvidencePath)
+    $closedEvidenceDeletedHead = & $commit 'unrelated PR deletes referenced fixpoint evidence'
+    Assert-Throws -Context 'unrelated PR deletes closed-entry fixpoint evidence' -MessagePattern 'not a committed file' -Action {
+        Invoke-BodyGate -Rows @{} -ChangedPaths @($fixpointEvidencePath) `
+            -HeadJson $legalClosedJson -BaseJson $legalClosedJson -GateRepoRoot $gitRoot `
+            -BaseSha $closedLedgerHead -HeadSha $closedEvidenceDeletedHead
+    }
 
     # --- wire-up through the real PR body checker (fixture ledger revision) ---------
     # This file's contract is "gate tests use fixture ledgers ONLY". Pointing base and

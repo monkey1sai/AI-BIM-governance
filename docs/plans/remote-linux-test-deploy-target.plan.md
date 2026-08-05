@@ -8,7 +8,7 @@
 
 ## 1. 目標與非目標
 
-**目標**：把 `product-operability-and-script-contract.md` §6 的**持久化測試部署環境**從本機 Windows（`D:\Users\deploy\AI-bim-geo`）遷移到遠端 Ubuntu 主機，使本機 dev box 不再因部署區常駐而被佔用 GPU 與 port。
+**目標**：把 `product-operability-and-script-contract.md` §6 的**持久化測試部署環境**從本機 Windows（`<WINDOWS_TEST_DEPLOY_ROOT>`）遷移到遠端 Ubuntu 主機，使本機 dev box 不再因部署區常駐而被佔用 GPU 與 port。精確 host、account、network 與 filesystem mapping 僅存 owner-controlled private inventory，不進 public repo。
 
 **非目標（本輪不做）**：
 
@@ -19,23 +19,20 @@
 
 ---
 
-## 2. 目標主機事實（實測，非假設）
+## 2. 目標主機事實（實測、public-safe 摘要）
 
 ```txt
-host            192.168.20.181  (hostname: ez)
+host            REMOTE_TEST_HOST（精確 hostname / address 見 private inventory）
 OS              Ubuntu 24.04.4 LTS, kernel 6.8.0-136-generic
-board           Gigabyte Z890 EAGLE WIFI7 (chassis type 3 = desktop)
-CPU             Intel Core Ultra 7 265K, 20 cores
-RAM             96 GB
-disk            1.8 TB NVMe
-GPU             NVIDIA GeForce RTX 5080 (GB203, PCI 10DE:2C02), 16303 MiB
-NIC             enp130s0 單一介面 192.168.20.181/24
-Secure Boot     disabled
-routing         192.168.10.0/24 → 192.168.20.0/24 為 2-hop、單一 L3 gateway、無 NAT
-MinIO           192.168.20.234:9000 同網段可達（remote 10ms / local TCP 可達）
+capacity        20-core CPU、96 GB RAM、1.8 TB NVMe（精確 hardware inventory 不公開）
+GPU             Blackwell-class NVIDIA GPU、約 16 GiB VRAM
+NIC             單一 private interface（名稱、address 與 CIDR 見 private inventory）
+boot security   driver spike 所需狀態已驗證；精確 posture 見 private inventory
+routing         PRIVATE_CLIENT_SUBNET → PRIVATE_RUNTIME_SUBNET 經受控 L3 route
+object storage  OBJECT_STORE_ENDPOINT 由 runtime private config 提供並已驗證可達
 ```
 
-**共用性警告**：這台機器有其他使用者（實測期間有來自 `192.168.10.190` 的 session 與 tty1 實體 console 登入），且原本共用同一個 `ubuntu` 帳號。本計畫因此建立專屬服務帳號（見 D-11）。
+**共用性警告**：這是 shared host；session、console 與 legacy account 細節留在 private operations record。本計畫只要求專屬服務角色帳號（見 D-11）。
 
 ---
 
@@ -43,25 +40,25 @@ MinIO           192.168.20.234:9000 同網段可達（remote 10ms / local TCP �
 
 | # | 議題 | 決議 |
 |---|---|---|
-| D-1 | 遷移範圍 | §6 持久化測試部署環境 → `192.168.20.181`（非 §8 隔離 stack） |
+| D-1 | 遷移範圍 | §6 持久化測試部署環境 → `REMOTE_TEST_HOST`（非 §8 隔離 stack） |
 | D-2 | Linux Kit runtime 形態 | **第一階段** host-native Kit ＋ web plane Docker（與現行同構）；官方容器化＝第二階段 |
-| D-3 | 本機 `D:\Users\deploy\AI-bim-geo` | 降級為 Windows 平台**按需**驗證點：不常駐、不 canonical |
+| D-3 | 本機 `<WINDOWS_TEST_DEPLOY_ROOT>` | 降級為 Windows 平台**按需**驗證點：不常駐、不 canonical |
 | D-4 | 跨平台腳本策略 | pwsh 7 **單一 codebase** ＋ platform adapter（`scripts/lib/platform/`） |
 | D-5 | 執行序列 | 先 spike、通過才開工（**已完成，見 §4**） |
-| D-6 | `:5173` 暴露 | 第一階段 `VIEWER_BIND_HOST=0.0.0.0` ＋ ufw 來源網段白名單；反代＝第二階段 |
+| D-6 | `:5173` 暴露 | 第一階段 `VIEWER_BIND_HOST=0.0.0.0` ＋ host-firewall approved-source allowlist；反代＝第二階段 |
 | D-7 | self-referential bootstrap | 升級為**通用能力** ＋ fixpoint 重驗義務；以 **ledger ＋ 機器檢查**強制；規則須寫成**可攜形式** |
 | D-8 | PR 邊界 | **部署目標抽象化**；實作兩個目標，容器化留 schema 空位（不實作） |
 | D-9 | 與腳手架分家的關係 | 分家**後置**為獨立專案；新 repo ＝腳手架的家 ＋ 首個示範專案 |
 | D-10 | repo 送達 ＋ 觸發 | 遠端 **HTTPS 零憑證 clone**（repo 為 public）＋ 本機**單一 operator 入口** dispatch |
-| D-11 | 遠端帳號 | 建**專屬服務帳號** `bimdeploy`，不共用 `ubuntu` |
+| D-11 | 遠端帳號 | 建**專屬服務角色帳號** `DEPLOY_SERVICE_ACCOUNT`，不共用 legacy interactive account |
 | D-12/13 | 單一擁有者 merge 授權 | **擱置** — 由 Codex PR #458 處理，本計畫不介入 |
 | D-14 | env 組織 | **per-target env**，本機 canonical，重建時經 SSH 推送 |
-| D-15 | 遠端 override | 全部可 override、**不設白名單**；但部署＋驗證當下**快照 effective env**（secret 只留 key 名與指紋） |
+| D-15 | 遠端 override | 僅允許 target registry 明確列出的 override allowlist；未知 key 一律拒絕。每個允許 key 必須經 type／enum／range／host-or-path schema 驗證。涉及 public host、listen/bind、port、CORS、credential/token、deployment/data root 或 runtime command 的 sensitive override，必須取得每次明確 owner approval；evidence 只記已驗證 effective config 與 secret key 名／指紋，不記 secret value。 |
 | D-16/17 | IFC fixture 權威 | **MinIO `bim-control` 為雙方共同權威**；pin by key＋ETag＋size（＋versionId 若 bucket 有 versioning）；**mismatch fail closed**；本機 `storage/` 降為 ETag 驗證的 cache |
 | D-18 | runtime evidence 來源 | **本機 Windows 瀏覽器打遠端**（真實跨網段路徑）；design gate 本就綁 Windows，零改動 |
 | D-19 | lane ＋ PR 切分 | **Lane G ＋ 兩個 PR**（PR-A bootstrap 規則 → PR-B 遷移本體） |
 | D-20 | Windows 驗證觸發 | **機器判定，三級**（見 §6.3） |
-| D-21 | 遠端 sudo | **常態零 sudo**；佈建一次性人工、`bimdeploy` 入 `docker` group、ufw 一次設定 |
+| D-21 | 遠端 sudo | **常態零 sudo**；佈建一次性人工、服務角色取得最小 container-runtime 權限、host firewall 一次設定 |
 
 ---
 
@@ -95,13 +92,13 @@ Kit build：BUILD (RELEASE) SUCCEEDED (163.58s)，_build/linux-x86_64/ 完整
 
 `bim-review-coordinator/src/config.ts:228` 的 `kitHostFromEnv()` 遇到 `"auto"` 會呼叫 `localIpv4ForStreaming()`，解析**coordinator 自己的** IPv4。coordinator 在容器內時會得到 bridge 網段 `172.x`，對瀏覽器無用；症狀為 signaling 通、畫面全黑。
 
-**對策（必須寫入 per-target env）**：遠端目標一律顯式釘 `KIT_STREAM_SERVER=192.168.20.181`，禁用 `auto`。
+**對策（必須寫入 per-target env）**：遠端目標一律顯式釘 `KIT_STREAM_SERVER=<REMOTE_TEST_HOST>`，禁用 `auto`；實值只由 private target config 提供。
 
 ### 4.3 W2 — 跨網段 WebRTC：**PASS，不需要 STUN/TURN**
 
 ```txt
 Kit 側 socket：
-  ESTAB  192.168.20.181:49100  ←  192.168.10.105:49825   users:(("kit",pid=30313))
+  ESTAB  <REMOTE_TEST_HOST>:<KIT_STREAM_PORT>  ←  <WINDOWS_TEST_CLIENT>:<EPHEMERAL_PORT>
 
 瀏覽器 console（@nvidia_omniverse-webrtc-streaming-library）：
   streamReady
@@ -147,10 +144,9 @@ video element（符合既有 healthy 判準：readyState=4 ＋ 影像尺寸 ＋ 
 | **F-16** | governance／kit-manager-api 硬編 `--host 127.0.0.1`，dockerised coordinator 經 bridge 連不到（`/api/governance/files/tree` → 502）。conversion 綁 `0.0.0.0` 所以一直正常 | Docker Desktop 經 VM 把 `host.docker.internal` 代理進 loopback |
 
 **方法論教訓**：F-16 診斷過程中，容器內以 `wget` 探測回報三個端點全不可達，差點導向「跨 bridge 網段不通」的錯誤結論——實際上該 image 沒有 `wget`。改用 `node` 實測才得到真相（`172.17.0.1:49101` → HTTP 200）。**探測工具本身不存在時的失敗，與「服務不可達」在輸出上無法區分。**
-
 ### 4.5 風險登記修正
 
-- **R8 撤銷**：先前判定「ufw active、port 全被擋」為**誤判** — 混淆了 `systemctl is-active ufw`（unit 在跑）與 `ufw status`（實際 `inactive`）。遠端目前無任何 port 被擋。
+- **R8 撤銷**：service-manager unit state 不等於 effective firewall policy；spike 已改以 effective policy 與實際連線測量裁決。live host policy/state 只記錄於 private operations record。
 - **R20 新增**：見 F-2（exec bit）。
 
 ---
@@ -205,7 +201,7 @@ PR-B 改的正是**驗證機制本身**（deploy path）。§6 明文禁止測�
 
 | 位置 | 硬編內容 |
 |---|---|
-| `scripts/deploy.ps1:54-57` | `DefaultPublicHost='192.168.10.105'`（**本機 IP**）、`FixedTestDeployRoot`、`DefaultEdgeSiteId='site_local_deploy'`、`DefaultEdgeRuntimeDataRoot` |
+| `scripts/deploy.ps1:54-57` | legacy local-host literal（實值不在 public plan 重複）、`FixedTestDeployRoot`、`DefaultEdgeSiteId`、`DefaultEdgeRuntimeDataRoot` |
 | `scripts/dev/run-runtime-command-authority-host-native-evidence.ps1:7-8` | `FixedTestDeploymentRoot` ＋ DataRoot |
 | `scripts/dev/find-deploy-blockers.ps1:1-2` | 路徑過濾字串 |
 | `scripts/dev/rebuild-test-deploy.ps1:3`、`docs/plans/NOW.md`、`.claude/workflows/plan-test-deploy-and-tidy.js` | 文件與 workflow |
@@ -257,33 +253,32 @@ PR-B 改的正是**驗證機制本身**（deploy path）。§6 明文禁止測�
 ### 6.6 遠端佈建（已於 spike 完成，PR-B 需腳本化）
 
 ```txt
-✅ 專屬帳號 bimdeploy (uid 1001, groups: bimdeploy, docker)
+✅ 專屬服務角色帳號（exact name / uid / groups 見 private inventory）
 ✅ NVIDIA nvidia-driver-595-open（ubuntu-drivers 推薦值）
    — nouveau refcount=0 可直接 rmmod，無需 reboot、不影響其他使用者
    — nouveau 黑名單已存在，reboot 後不復返
 ✅ Docker CE 29.7.0 ＋ Compose v5.3.1
 ✅ PowerShell 7.6.4（snap）
 ✅ Node 20.20.2 ＋ npm 10.8.2（snap，符合 viewer engines ^20/^10）
-✅ repo HTTPS 零憑證 clone → ~bimdeploy/AI-bim-geo
-✅ ufw 13 條規則已暫存（8004/5173/49100/49110-49150 tcp、47998/48008-48048 udp
-   × 192.168.10.0/24 ＋ 192.168.20.0/24，加 22/tcp lockout guard）
-   ⚠️ 防火牆維持 inactive — 啟用會改變共用機器安全態勢，屬獨立決策
+✅ repo HTTPS 零憑證 clone → <REMOTE_DEPLOY_ROOT>
+✅ host-firewall 規則已按 required service roles 與 approved private source ranges 準備
+   ⚠️ exact ports, source CIDRs, activation state 與 shared-host impact 由 owner-controlled private runbook 管理
 ```
 
 ### 6.7 PR-B 任務清單
 
 - [x] B1 — deploy target registry schema ＋ 兩個目標定義（`scripts/deploy-target-registry.json`，schema `deploy-target-registry/v1`；`canonical_target=remote-linux-181`；`reserved_kinds=[linux_container]` 留空位不實作）。`local-windows.build_command` 保留 `.\repo.bat` 形式：既有測試斷言此形，裸檔名有 PATHEXT 失敗史，因此改 registry 而非改測試
 - [x] B2 — `scripts/lib/platform/platform-adapter.ps1`：單一程式碼庫以 `$IsWindows`/`$IsLinux` 分派 process tree、listener owner、路徑解析、Kit 啟動參數（`--no-window` 由 registry 的 `extra_launch_args` 提供）。另含 `Resolve-PlatformSystemPython`——遠端只有 `python3`，裸 `& python` 在首次真實 Linux 部署靜默 no-op，故此函式必須只回傳 shell 真的叫得動的名稱
-- [x] B3 — ownership 語意跨平台等價性論證 ＋ 測試：論證見 §5「ownership 語意」段（Windows `Win32_Process.CreationDate`＋PID ↔ Linux `/proc/<pid>/stat` field 22 starttime＋`/proc/<pid>/exe`）；可執行證據為 `scripts/tests/test-platform-adapter.ps1`（23 斷言，同一套斷言兩平台皆須通過）。Windows 側與 Linux 側**皆已實跑通過**（Linux 於 192.168.20.181，`[test-platform-adapter] all assertions passed on linux`，證據見 `docs/evidence/remote-linux-deploy-target/self-referential-bootstrap/deploy-verified.txt`）
-- [x] B4 — 收斂 4 檔硬編常數到 registry（deploy.ps1、rebuild lib（含第三個常數 TestDeployEdgeSiteId）、run-runtime evidence harness、find-deploy-blockers）；test harness 改注入 sandbox registry 資料而非文字重寫 deploy.ps1。測試 fixture 的 D: 路徑為任意示例值、非漂移源，判定不收斂
-- [x] B5 — clone 流程含 exec bit 修復（F-2）：New-RemoteRebuildScript（clone-if-missing、契約 refspec fresh fetch、reset+clean 保留 env、restore-exec-bits）
-- [x] B6 — per-target env ＋ SSH 推送（D-14）＋ effective env 快照（D-15）：base 推送＋遠端 override（runtime_data_root/env.local，git clean 清不到）＋單一 merge 實作（遠端經 pwsh 呼叫同一 lib 函式）＋ secret 遮罩快照（sha256-8 指紋，值不落地）；operator 入口 -TargetId 預設 canonical。live SSH 待 B8 憑證佈建
-- [x] B7 — MinIO fixture pinning（D-16/17）：manifest schema＋comparePin fail-closed＋cache sidecar 判定（multipart ETag 不可本地重算，靠下載時 sidecar）；live HEAD 重用 coordinator @aws-sdk/client-s3（createRequire，無第二 S3 實作）。manifest 初生為空，enrol 需 MinIO 憑證
-- [x] B8 — 遠端佈建腳本化：`scripts/dev/provision-linux-deploy-target.sh`（idempotent；每個套件都對應一次真實部署失敗，含 python3-venv/ensurepip；NVIDIA driver 與 ufw 啟用刻意不含，理由寫在腳本內）
-- [x] B9 — 契約改寫：§1 viewer 302 handoff 原則、§3 design-gate/runtime-evidence 兩機器切分、§5 fixture 權威改 MinIO pinned（並修掉指向不存在檔案的漂移）、§6 部署目標改 registry（operator 入口與 fresh-fetch 契約逐字保留）、§8 三種 stack kind 互不推論邊界表
-- [x] B10 — Windows 三級觸發 changed-path classifier（D-20）：`scripts/lib/windows-verification-scope.ps1`（highest-tier-wins ＋ 明確豁免 docs/tests）＋ 接進 PR body 檢查＋template＋CI；自檢 PR-B 欠 tier `deploy_dryrun`，已實跑 `deploy.ps1 -DryRun` exit 0（解析到 Windows profile，佐證 B4 零行為漂移）
-- [x] B11 — bootstrap 取證能力＋ledger 欠帳：`-BootstrapRef` 由 `Assert-BootstrapRefAllowed` 把關（entry 必須存在／open／宣告 deploy.ps1）；ledger entry `remote-linux-deploy-target` 已開（涵蓋全部 11 條 mechanism paths）；無 ref 時 script 與先前 byte-identical。首次 bootstrap 派工 EXIT=0，遠端 checkout 至 10e8068、exec bits 恢復、effective env 9 keys
-- [ ] B12 — merge 後 fixpoint 重驗並回貼（PR-A 義務三）
+- [x] B3 — ownership 語意跨平台等價性論證 ＋ 測試：論證見 §5「ownership 語意」段（Windows `Win32_Process.CreationDate`＋PID ↔ Linux `/proc/<pid>/stat` field 22 starttime＋`/proc/<pid>/exe`）；可執行證據為 `scripts/tests/test-platform-adapter.ps1`（23 斷言，同一套斷言兩平台皆須通過）。Windows 側與 Linux 側**皆已實跑通過**（Linux 於 REMOTE_TEST_HOST，`[test-platform-adapter] all assertions passed on linux`，證據見 `docs/evidence/remote-linux-deploy-target/self-referential-bootstrap/deploy-verified.txt`）
+- [ ] B4 — 收斂 §6.1 表列的 5 檔硬編常數 ＋ 17 處測試 fixture 到 registry
+- [ ] B5 — clone 流程含 exec bit 修復（F-2）
+- [ ] B6 — per-target env ＋ SSH 推送（D-14）；實作 registry-derived override allowlist、unknown-key fail-closed、per-key type／enum／range／schema validation，以及 sensitive override 的 explicit owner approval 與 redacted effective-config evidence（D-15）
+- [ ] B7 — MinIO fixture pinning，fail closed（D-16/17）
+- [ ] B8 — 遠端佈建腳本化（§6.6）
+- [ ] B9 — 契約改寫（§6.3，含修掉 §5 既有漂移）
+- [ ] B10 — Windows 三級觸發 changed-path classifier（D-20）
+- [ ] B11 — 取得 `stack_kind=self_referential_bootstrap` evidence（依 PR-A 規則）
+- [x] B12 — merge 後 fixpoint 重驗並回貼（PR-A 義務三）：#459 squash `ad7a50cf` 為 mechanism_commit，8 個 verification_contract command 於 main 實跑 EXIT=0，attestation 依 `self-referential-fixpoint-attestation/v1` 產出，entry 經 #470 關閉
 
 ---
 
@@ -304,7 +299,7 @@ PR-B 改的正是**驗證機制本身**（deploy path）。§6 明文禁止測�
 
 ## 8. 待使用者決定的殘留項
 
-1. **`ubuntu` 密碼是否輪替** — spike 期間因 sudo helper 的 stdin 覆蓋缺陷，密碼曾被寫入兩個 `644` 檔案約 3 分鐘（`/etc/apt/sources.list.d/docker.list`、`/etc/apt/keyrings/docker.asc`），已刪除且 `/etc` 全域掃描無殘留。既然已改用 `bimdeploy` ＋ 金鑰，輪替是低成本收尾。
-2. **ufw 是否啟用** — 規則已暫存含 SSH lockout guard，但啟用會影響共用機器上的其他使用者。
-3. **憑證持久化位置** — `C:\Users\IOT\.ssh\` 被本機權限設定擋住（Write 與 `ssh-keygen` 皆 denied）。`~/.claude` 不可用（在 claude-toolbox 備份範圍內，會被 commit）。
+1. **BLOCKING — legacy privileged credential remediation** — 該 credential 視為已 compromise；刪檔、residue scan 與改用專屬服務角色／key auth 都不構成撤銷。依目前核准範圍，PR-B 部署與 shared-host cutover 必須維持 HELD，直到 credential owner 在 repo 外完成 **credential-only rotate/revoke**（不得藉此停用 legacy account），並提交不含 secret／account／host raw value 的 attestation。attestation 最少記錄 `schema_version`、`private_incident_record_id`、`private_record_digest_sha256`、`target_role`、`credential_role`、`credential_kind`、optional `credential_fingerprint_sha256`、`remediation_action=rotated|revoked`、`legacy_account_state`、`performed_by_role`、UTC `performed_at_utc`、`old_credential_rejected=true`、`active_sessions_disposition`、`replacement_service_account_auth_verified=true`、`replacement_privilege_scope_verified=true`、`shared_host_impact_verified=true`、`lockout_guard_verified=true`、`rollback_channel_verified=true`、`verification_method`、`attestor`、UTC `attested_at_utc`、`status` 與 `secret_values_recorded=false`。舊 credential 不得作 rollback；僅可使用已驗證的 out-of-band recovery channel 簽發另一份新 credential。未具 attestation 不得勾選完成或宣告安全收尾。
+2. **host firewall 是否啟用** — required allowlist 與 lockout guard 已設計；live state 與 shared-host impact 由 owner 在 private runbook 決定。
+3. **憑證持久化位置** — operator credential store 受本機權限限制；禁止放入任何會被 repository 或 tooling backup 收集的路徑。精確位置只留 private inventory。
 4. **F-3 儀表落差是否為 bug** — 需查證。

@@ -1,7 +1,7 @@
 stack_kind=self_referential_bootstrap
 branch=feat/self-referential-bootstrap-ledger
-tested_head=d52beadffa992a0a3a7cfc1b445daaabaa863e30
-captured_at_utc=2026-08-04T04:39:27Z
+tested_head=9ee9cc931fbc80df6db5b84e880d91d596db2f17
+captured_at_utc=2026-08-04T14:33:26Z
 captured on the PR branch because the PR base has no bootstrap gate to run (see reason in the ledger entry)
 
 ### pwsh -NoProfile -NonInteractive -File .\scripts\tests\test-self-referential-bootstrap.ps1
@@ -17,6 +17,9 @@ EXIT=0
 EXIT=0
 
 ### pwsh -NoProfile -NonInteractive -File .\scripts\tests\test-agent-governance-check.ps1
+# tests 27
+# pass 27
+# fail 0
 [test-agent-governance-check] all assertions passed
 EXIT=0
 
@@ -26,4 +29,12 @@ EXIT=0
 
 ### pwsh -NoProfile -NonInteractive -File .\scripts\tests\test-pr-review-agent.ps1
 [test-pr-review-agent] all assertions passed
+EXIT=0
+
+### pwsh -NoProfile -NonInteractive -File .\scripts\tests\invoke-powershell-static.ps1
+[invoke-powershell-static] passed
+EXIT=0
+
+### bash -n scripts/lib/detect-base-gate-capability.sh
+OUTPUT=<empty>
 EXIT=0

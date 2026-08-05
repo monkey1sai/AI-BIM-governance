@@ -1,14 +1,17 @@
 name: PR Metadata Contract
 
 on:
-  pull_request:
+  # The workflow definition must come from the protected base branch. Head
+  # content is parsed only as data; this workflow never checks out or executes
+  # PR-head code.
+  pull_request_target:
     types: [opened, edited, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -19,6 +22,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -27,7 +31,68 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: git -c core.quotepath=false diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/changed-paths.bin"
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # The checkout is intentionally base-only. Materialize the candidate
+          # as data through GitHub's base-repository pull ref so fork heads do
+          # not depend on the contributor remote being available to this job.
+          # Do not make the candidate commit a shallow boundary: the three-dot
+          # diff below must be able to discover its merge base with BASE_SHA.
+          git fetch --no-tags origin "refs/pull/$PR_NUMBER/head"
+          fetched_head="$(git rev-parse FETCH_HEAD)"
+          if [ "$fetched_head" != "$HEAD_SHA" ]; then
+            echo "::error::pull_ref_head_mismatch: fetched $fetched_head; expected event head $HEAD_SHA."
+            exit 1
+          fi
+          git -c core.quotepath=false diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/changed-paths.bin"
+
+      - name: Materialize the base-pinned gate
+        # A PR that edits the checker or its libraries must not adjudicate itself
+        # with its own edited copy, so gate scripts come from the PR BASE revision.
+        #
+        # Capability detection must test the WHOLE capability, not one file. The
+        # earlier version only checked that check-pr-body-evidence.ps1 existed at
+        # base - but a PR that ADDS the bootstrap gate modifies that file rather
+        # than creating it, so the check passed, the old base checker ran, and the
+        # PR was evaluated without the very gate it introduced (Codex review
+        # L1-correctness-2). Detection now requires every part to be present at
+        # base: the library, the checker's dot-source of it, and the assertion
+        # call site.
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          trusted="$RUNNER_TEMP/trusted-gate"
+          mkdir -p "$trusted"
+
+          # The trust decision must not execute the PR-head detector. Materialize
+          # the detector from BASE when it exists; a base that predates the
+          # detector is incomplete by definition and enters the explicit bootstrap
+          # path below. Detection failure fails closed.
+          detector="$RUNNER_TEMP/detect-base-gate-capability.sh"
+          if git cat-file -e "$BASE_SHA:scripts/lib/detect-base-gate-capability.sh" 2>/dev/null; then
+            git show "$BASE_SHA:scripts/lib/detect-base-gate-capability.sh" > "$detector"
+            capability="$(bash "$detector" "$BASE_SHA" .)"
+          else
+            capability="incomplete: base has no scripts/lib/detect-base-gate-capability.sh"
+          fi
+          echo "base gate capability: $capability"
+
+          if [ "$capability" = "complete" ]; then
+            git archive "$BASE_SHA" scripts docs/plans | tar -x -C "$trusted"
+            echo "GATE_ROOT=$trusted" >> "$GITHUB_ENV"
+            echo "GATE_SOURCE=base-pinned" >> "$GITHUB_ENV"
+            # A complete detector verdict includes AST-verified PrNumber binding.
+            echo "GATE_HAS_PRNUMBER=1" >> "$GITHUB_ENV"
+          else
+            # A base that cannot validate the complete contract is never allowed
+            # to delegate adjudication to the PR head. Bootstrap requires an
+            # exact-head CODEOWNER/external approval outside this workflow.
+            echo "::error::base_gate_incomplete_external_approval_required: protected base cannot adjudicate this PR; refusing to execute or trust the head checker."
+            exit 1
+          fi
 
       - name: Materialize the base-pinned gate
         # A PR that edits the checker or its libraries must not adjudicate itself
@@ -135,12 +200,12 @@ jobs:
           $summary = @'
           # PR Metadata Contract (diagnostic)
 
-          Required PR validation is split by authority:
+          PR validation is split by authority:
 
           - PR body metadata is present and non-placeholder; the raw body is never retained in the artifact.
           - Changed-path scope is derived from the base/head design manifests; the PR body cannot self-select an easier screen.
           - The `design-semantic-visual` CI job is the only semantic/pixel producer for approved or mixed frontend product changes. PR-provided JSON is never gate input.
-          - `PR Metadata Contract` is the branch-protected PR-head metadata check; it does not aggregate artifacts or publish a separate merge status.
+          - `PR Metadata Contract` is a base-owned diagnostic and is not merge authority. Base-incomplete bootstrap requires an exact-head CODEOWNER/external approval; PR-head workflow output cannot satisfy that boundary.
           - `scripts/dev/check-pr-local-preflight.ps1 -PrNumber <n>` is the authoritative local gate for PR review agent and affected sub-repo verification before push.
           - Functional/runtime operability evidence remains an independent requirement and cannot be replaced by the design job. Until its machine producer/validator and required check exist, full-completion claims remain forbidden.
           '@

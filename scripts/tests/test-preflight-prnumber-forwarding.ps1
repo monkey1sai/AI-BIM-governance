@@ -117,6 +117,7 @@ try {
     $null = Invoke-FixtureGit -Arguments @(
         '-c', 'user.email=t@t', '-c', 'user.name=t',
         'commit', '--no-gpg-sign', '-q', '-m', 'evidence')
+    $baseSha = ((Invoke-FixtureGit -Arguments @('rev-parse', 'HEAD')) | Out-String).Trim()
 
     $entryJson = @{
         schema_version = 'self-referential-bootstrap-ledger/v1'
@@ -127,12 +128,28 @@ try {
             opened_at = '2026-08-03T08:00:00Z'
             reason = 'the deploy contract only verifies merged origin main so pre-merge deploy-path evidence is unobtainable here'
             verification_mechanism_paths = @('scripts/deploy.ps1')
+            verification_contract = @{
+                id = 'preflight-prnumber-forwarding/v1'
+                command_ids = @('test-preflight-prnumber-forwarding')
+                contract_sha256 = 'f2a8a0ee8cf604ee34036db2d3a3b29bc15bebaab4f16f24a092eb84d4b38a78'
+            }
             bootstrap_evidence_refs = @($evidenceRel)
             fixpoint = $null
         })
     } | ConvertTo-Json -Depth 8
-    $ledgerPath = Join-Path $tempRoot 'ledger.json'
+    # The current gate requires immutable base/head content proof for bootstrap
+    # evidence. Keep this test focused on PrNumber forwarding, but supply a
+    # complete fixture so its new-entry assertion is independently valid.
+    $ledgerRel = 'scripts/self-referential-bootstrap-ledger.json'
+    $ledgerPath = Join-Path $fx $ledgerRel
+    New-Item -ItemType Directory -Path (Split-Path $ledgerPath) -Force | Out-Null
     Set-Content -LiteralPath $ledgerPath -Value $entryJson -Encoding utf8
+    Set-Content -LiteralPath $evidenceFull -Value 'fresh evidence' -Encoding utf8
+    $null = Invoke-FixtureGit -Arguments @('add', '-A')
+    $null = Invoke-FixtureGit -Arguments @(
+        '-c', 'user.email=t@t', '-c', 'user.name=t',
+        'commit', '--no-gpg-sign', '-q', '-m', 'fresh bootstrap evidence')
+    $headSha = ((Invoke-FixtureGit -Arguments @('rev-parse', 'HEAD')) | Out-String).Trim()
 
     $rows = @{
         'Self-referential bootstrap' = 'yes'
@@ -141,16 +158,19 @@ try {
     }
     $getValue = { param($b, $label) $rows[$label] }.GetNewClosure()
     $emptyBase = '{"schema_version":"self-referential-bootstrap-ledger/v1","entries":[]}'
+    $changedPaths = @('scripts/deploy.ps1', $evidenceRel)
 
     # Without PrNumber the binding cannot be checked - the entry's pr=500 is unverified.
-    Assert-SelfReferentialBootstrapBody -Body 'b' -ChangedPaths @('scripts/deploy.ps1') -LedgerPath $ledgerPath `
-        -GetTableValue $getValue -BaseLedgerJson $emptyBase -HasBaseContext $true -RepoRoot $fx
+    Assert-SelfReferentialBootstrapBody -Body 'b' -ChangedPaths $changedPaths -LedgerPath $ledgerPath `
+        -GetTableValue $getValue -BaseLedgerJson $emptyBase -HasBaseContext $true -RepoRoot $fx `
+        -BaseSha $baseSha -HeadSha $headSha
 
     # With a mismatched PrNumber the binding must fail - proving the argument is load-bearing.
     $bound = $false
     try {
-        Assert-SelfReferentialBootstrapBody -Body 'b' -ChangedPaths @('scripts/deploy.ps1') -LedgerPath $ledgerPath `
-            -GetTableValue $getValue -BaseLedgerJson $emptyBase -HasBaseContext $true -RepoRoot $fx -PrNumber 501
+        Assert-SelfReferentialBootstrapBody -Body 'b' -ChangedPaths $changedPaths -LedgerPath $ledgerPath `
+            -GetTableValue $getValue -BaseLedgerJson $emptyBase -HasBaseContext $true -RepoRoot $fx `
+            -BaseSha $baseSha -HeadSha $headSha -PrNumber 501
     } catch {
         $bound = $true
         Assert-True ($_.Exception.Message -match 'must bind to their originating PR') "mismatch names the PR binding (got: $($_.Exception.Message))"

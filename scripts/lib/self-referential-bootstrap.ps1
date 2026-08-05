@@ -21,6 +21,7 @@ $script:SelfReferentialMechanismPattern = @(
     '^scripts/verify-all\.ps1$'
     '^scripts/dev/rebuild-test-deploy\.ps1$'
     '^scripts/dev/start-isolated-branch-stack\.ps1$'
+    '^scripts/start-web-plane-docker\.ps1$'
     '^scripts/lib/(preflight-[a-z-]+|deploy-report|host-native-launcher|rebuild-test-deploy|start-child-with-environment|kit-log-probe|smoke-evidence|design-assets)\.ps1$'
     '^scripts/lib/platform/'
     '^scripts/lib/(design-system-gate|pr-review-agent|production-boundary-contract)\.ps1$'
@@ -42,13 +43,25 @@ $script:SelfReferentialMechanismPattern = @(
     '^scripts/verify-all\.sh$'
     # The planner and runner decide WHICH verifications run, so editing them
     # changes what "verified" means (Codex: "Classify the verification planner").
-    '^scripts/lib/verification-(plan|runner)\.mjs$'
+    '^scripts/lib/verification-(plan|runner|command-policy|outcome)\.mjs$'
     # Direct adjudicator dependencies are as load-bearing as the manifest that
     # invokes them. Contract prose also changes what reviewers and fixpoint PRs
     # are required to prove, so it is part of the mechanism surface.
     '^scripts/lib/security-exceptions-cli\.mjs$'
+    '^scripts/lib/security-exceptions\.mjs$'
+    '^scripts/security-exceptions\.json$'
+    '^scripts/lib/openspec-lifecycle\.ps1$'
+    '^scripts/lib/openspec-machine-truth\.mjs$'
     '^scripts/tests/(invoke-powershell-static|scan-secret-patterns)\.ps1$'
     '^scripts/tests/verification-plan\.schema\.json$'
+    '^scripts/tests/test-(self-referential-bootstrap|base-gate-capability|preflight-prnumber-forwarding)\.ps1$'
+    '^web-viewer-sample/scripts/verify-design-system-pixels\.mjs$'
+    '^web-viewer-sample/scripts/lib/png-preflight\.mjs$'
+    '^scripts/tests/test-png-preflight\.mjs$'
+    # CODEOWNERS and its executable invariant decide whether the fixed human
+    # owner gate exists, so changing either changes what "reviewed" means.
+    '^\.github/CODEOWNERS$'
+    '^scripts/tests/test-agent-governance-check\.ps1$'
     '^docs/agents/self-referential-bootstrap\.md$'
 ) -join '|'
 
@@ -94,9 +107,48 @@ function Assert-SelfReferentialStringList {
     return $items
 }
 
+function Assert-SelfReferentialVerificationContract {
+    param(
+        [Parameter(Mandatory = $true)] $Contract,
+        [Parameter(Mandatory = $true)][string] $Context
+    )
+    $contractId = [string]$Contract.id
+    if ($contractId -cnotmatch '^[a-z0-9][a-z0-9-]{2,63}/v[1-9][0-9]*$') {
+        throw "self_referential_bootstrap: $Context id must be a lowercase versioned identifier such as gate-name/v1."
+    }
+    $commandIds = Assert-SelfReferentialStringList -Value $Contract.command_ids -Context "$Context command_ids"
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($commandId in $commandIds) {
+        if ($commandId -cnotmatch '^[a-z0-9][a-z0-9-]{2,127}$') {
+            throw "self_referential_bootstrap: $Context command id '$commandId' must be lowercase kebab-case."
+        }
+        if (-not $seen.Add($commandId)) {
+            throw "self_referential_bootstrap: $Context has duplicate command id '$commandId'."
+        }
+    }
+    $declaredDigest = [string]$Contract.contract_sha256
+    if ($declaredDigest -cnotmatch '^[0-9a-f]{64}$') {
+        throw "self_referential_bootstrap: $Context contract_sha256 must be 64 lowercase hex characters."
+    }
+    $separator = [string][char]10
+    $canonical = (@($contractId) + @($commandIds)) -join $separator
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $actualDigest = ([BitConverter]::ToString(
+            $sha256.ComputeHash([Text.UTF8Encoding]::new($false).GetBytes($canonical))
+        )).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+    }
+    if ($declaredDigest -cne $actualDigest) {
+        throw "self_referential_bootstrap: $Context contract_sha256 does not match its id and ordered command_ids."
+    }
+    return @($commandIds)
+}
+
 function Get-SelfReferentialMechanismPaths {
     param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $ChangedPaths)
-    return @($ChangedPaths | Where-Object { $_ -match $script:SelfReferentialMechanismPattern })
+    return @($ChangedPaths | Where-Object { $_ -cmatch $script:SelfReferentialMechanismPattern })
 }
 
 function ConvertTo-SelfReferentialTimestamp {
@@ -167,37 +219,122 @@ function Assert-SelfReferentialBootstrapReason {
     }
 }
 
-function Assert-SelfReferentialRawTimestampTokens {
-    # JsonDocument decodes escaped property names before exposing Name, so a key
-    # such as "opene\u0064_at" cannot bypass validation. Regex over raw JSON
-    # cannot provide that guarantee.
+function Assert-SelfReferentialJsonObjectShape {
+    param(
+        [Parameter(Mandatory = $true)][System.Text.Json.JsonElement] $Element,
+        [Parameter(Mandatory = $true)][string] $Context,
+        [Parameter(Mandatory = $true)][string[]] $RequiredProperties
+    )
+    if ($Element.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) {
+        throw "self_referential_bootstrap: $Context must be a JSON object."
+    }
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($property in $Element.EnumerateObject()) {
+        if (-not $seen.Add($property.Name)) {
+            throw "self_referential_bootstrap: $Context has duplicate JSON property '$($property.Name)'."
+        }
+        if (-not ($RequiredProperties -ccontains $property.Name)) {
+            throw "self_referential_bootstrap: $Context has unknown JSON property '$($property.Name)' (raw-string validation requires exact property names)."
+        }
+    }
+    foreach ($required in $RequiredProperties) {
+        if (-not $seen.Contains($required)) {
+            throw "self_referential_bootstrap: $Context is missing required JSON property '$required'."
+        }
+    }
+}
+
+function Assert-SelfReferentialJsonStringArray {
+    param(
+        [Parameter(Mandatory = $true)][System.Text.Json.JsonElement] $Element,
+        [Parameter(Mandatory = $true)][string] $Context
+    )
+    if ($Element.ValueKind -ne [System.Text.Json.JsonValueKind]::Array) {
+        throw "self_referential_bootstrap: $Context must be a JSON array of strings."
+    }
+    foreach ($item in $Element.EnumerateArray()) {
+        if ($item.ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
+            throw "self_referential_bootstrap: $Context must be a JSON array of strings."
+        }
+    }
+}
+
+function Assert-SelfReferentialRawLedgerShape {
+    # JsonDocument preserves JSON types, duplicate properties, and decoded
+    # property names. ConvertFrom-Json alone silently coerces or collapses those
+    # distinctions, so validate the exact v1 shape before using its objects.
     param([Parameter(Mandatory = $true)][string] $Json)
 
     $document = [System.Text.Json.JsonDocument]::Parse($Json)
     try {
-        $pending = [System.Collections.Generic.Stack[System.Text.Json.JsonElement]]::new()
-        $pending.Push($document.RootElement)
-        while ($pending.Count -gt 0) {
-            $element = $pending.Pop()
-            if ($element.ValueKind -eq [System.Text.Json.JsonValueKind]::Object) {
-                foreach ($property in $element.EnumerateObject()) {
-                    if ($property.Name -ieq 'opened_at' -or $property.Name -ieq 'reverified_at') {
-                        if ($property.Value.ValueKind -eq [System.Text.Json.JsonValueKind]::String) {
-                            $rawTimestamp = $property.Value.GetString()
-                            if (-not (Test-SelfReferentialIsoTimestamp -Value $rawTimestamp)) {
-                                throw "self_referential_bootstrap: timestamp '$rawTimestamp' is not an allowed anchored ISO-8601 form (raw-string validation after key decoding)."
-                            }
-                        }
-                    }
-                    if ($property.Value.ValueKind -in @(
-                        [System.Text.Json.JsonValueKind]::Object,
-                        [System.Text.Json.JsonValueKind]::Array)) {
-                        $pending.Push($property.Value)
+        $root = $document.RootElement
+        if ($root.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) {
+            throw 'self_referential_bootstrap: ledger must be a top-level JSON object.'
+        }
+        Assert-SelfReferentialJsonObjectShape -Element $root -Context 'ledger' -RequiredProperties @('schema_version', 'entries')
+        if ($root.GetProperty('schema_version').ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
+            throw 'self_referential_bootstrap: ledger schema_version must be a JSON string.'
+        }
+        $rawEntries = $root.GetProperty('entries')
+        if ($rawEntries.ValueKind -ne [System.Text.Json.JsonValueKind]::Array) {
+            throw 'self_referential_bootstrap: ledger entries must be an array (JSON array required).'
+        }
+        $entryIndex = 0
+        foreach ($entry in $rawEntries.EnumerateArray()) {
+            $context = "ledger entry[$entryIndex]"
+            Assert-SelfReferentialJsonObjectShape -Element $entry -Context $context -RequiredProperties @(
+                'id', 'status', 'pr', 'opened_at', 'reason',
+                'verification_mechanism_paths', 'verification_contract',
+                'bootstrap_evidence_refs', 'fixpoint')
+            foreach ($stringProperty in @('id', 'status', 'opened_at', 'reason')) {
+                if ($entry.GetProperty($stringProperty).ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
+                    throw "self_referential_bootstrap: $context $stringProperty must be a JSON string."
+                }
+            }
+            if ($entry.GetProperty('pr').ValueKind -ne [System.Text.Json.JsonValueKind]::Number) {
+                throw "self_referential_bootstrap: $context pr must be a positive native integer JSON number."
+            }
+            Assert-SelfReferentialJsonStringArray -Element $entry.GetProperty('verification_mechanism_paths') -Context "$context verification_mechanism_paths"
+            $verificationContract = $entry.GetProperty('verification_contract')
+            Assert-SelfReferentialJsonObjectShape -Element $verificationContract -Context "$context verification_contract" -RequiredProperties @('id', 'command_ids', 'contract_sha256')
+            foreach ($stringProperty in @('id', 'contract_sha256')) {
+                if ($verificationContract.GetProperty($stringProperty).ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
+                    throw "self_referential_bootstrap: $context verification_contract.$stringProperty must be a JSON string."
+                }
+            }
+            Assert-SelfReferentialJsonStringArray -Element $verificationContract.GetProperty('command_ids') -Context "$context verification_contract.command_ids"
+            Assert-SelfReferentialJsonStringArray -Element $entry.GetProperty('bootstrap_evidence_refs') -Context "$context bootstrap_evidence_refs"
+
+            $openedAt = $entry.GetProperty('opened_at').GetString()
+            if (-not (Test-SelfReferentialIsoTimestamp -Value $openedAt)) {
+                throw "self_referential_bootstrap: timestamp '$openedAt' is not an allowed anchored ISO-8601 form (raw-string validation after key decoding)."
+            }
+            $status = $entry.GetProperty('status').GetString()
+            if ($status -cnotin @('open', 'closed')) {
+                throw "self_referential_bootstrap: $context status must be exactly open or closed."
+            }
+            $fixpoint = $entry.GetProperty('fixpoint')
+            if ($status -ceq 'open') {
+                if ($fixpoint.ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
+                    throw "self_referential_bootstrap: $context with status open must not carry a fixpoint; fixpoint must be null."
+                }
+            } else {
+                if ($fixpoint.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) {
+                    throw "self_referential_bootstrap: $context with status closed must carry a complete fixpoint record."
+                }
+                Assert-SelfReferentialJsonObjectShape -Element $fixpoint -Context "$context fixpoint" -RequiredProperties @('reverified_at', 'mechanism_commit', 'evidence_refs')
+                foreach ($stringProperty in @('reverified_at', 'mechanism_commit')) {
+                    if ($fixpoint.GetProperty($stringProperty).ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
+                        throw "self_referential_bootstrap: $context fixpoint.$stringProperty must be a JSON string."
                     }
                 }
-            } elseif ($element.ValueKind -eq [System.Text.Json.JsonValueKind]::Array) {
-                foreach ($item in $element.EnumerateArray()) { $pending.Push($item) }
+                Assert-SelfReferentialJsonStringArray -Element $fixpoint.GetProperty('evidence_refs') -Context "$context fixpoint.evidence_refs"
+                $reverifiedAt = $fixpoint.GetProperty('reverified_at').GetString()
+                if (-not (Test-SelfReferentialIsoTimestamp -Value $reverifiedAt)) {
+                    throw "self_referential_bootstrap: timestamp '$reverifiedAt' is not an allowed anchored ISO-8601 form (raw-string validation after key decoding)."
+                }
             }
+            $entryIndex++
         }
     } finally {
         $document.Dispose()
@@ -231,9 +368,9 @@ function Get-SelfReferentialBootstrapLedger {
 
     # ConvertFrom-Json eagerly materializes ISO-looking strings as [datetime].
     # Validate decoded raw string tokens first, including escaped property names.
-    Assert-SelfReferentialRawTimestampTokens -Json $Json
+    Assert-SelfReferentialRawLedgerShape -Json $Json
 
-    if ([string]$ledger.schema_version -ne 'self-referential-bootstrap-ledger/v1') {
+    if ([string]$ledger.schema_version -cne 'self-referential-bootstrap-ledger/v1') {
         throw "self_referential_bootstrap: unsupported schema_version '$($ledger.schema_version)'."
     }
     $entriesProperty = $ledger.PSObject.Properties['entries']
@@ -245,13 +382,13 @@ function Get-SelfReferentialBootstrapLedger {
     $seen = @{}
     foreach ($entry in @($ledger.entries)) {
         $id = [string]$entry.id
-        if ($id -notmatch '^[a-z0-9][a-z0-9-]{2,63}$') {
+        if ($id -cnotmatch '^[a-z0-9][a-z0-9-]{2,63}$') {
             throw "self_referential_bootstrap: entry id '$id' must be kebab-case (3-64 chars)."
         }
         if ($seen.ContainsKey($id)) { throw "self_referential_bootstrap: duplicate entry id '$id'." }
         $seen[$id] = $true
 
-        if ([string]$entry.status -notin @('open', 'closed')) {
+        if ([string]$entry.status -cnotin @('open', 'closed')) {
             throw "self_referential_bootstrap: entry '$id' status must be open or closed."
         }
         # Native integral JSON number only: '"pr": "500"' and 'pr: 500.4' both
@@ -265,9 +402,23 @@ function Get-SelfReferentialBootstrapLedger {
         if (-not (Test-SelfReferentialIsoTimestamp -Value $entry.opened_at)) {
             throw "self_referential_bootstrap: entry '$id' opened_at must be a valid ISO-8601 timestamp."
         }
+        # Open entries are immutable and block later mechanism PRs until closed.
+        # An opened_at with no representable later fixpoint (e.g. the last
+        # millisecond of year 9999) permanently poisons the ledger, so reject
+        # any opening time that cannot host a strictly later reverified_at in
+        # the same anchored ISO formats.
+        $openedAt = ConvertTo-SelfReferentialTimestamp $entry.opened_at
+        $latestRepresentable = [DateTimeOffset]::Parse(
+            '9999-12-31T23:59:59.999Z',
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::AssumeUniversal)
+        if ($openedAt -ge $latestRepresentable) {
+            throw "self_referential_bootstrap: entry '$id' opened_at leaves no valid later fixpoint.reverified_at under the allowed ISO-8601 formats."
+        }
         Assert-SelfReferentialBootstrapReason -Reason ([string]$entry.reason) -Context "ledger entry '$id'"
         $null = Assert-SelfReferentialStringList -Value $entry.verification_mechanism_paths `
             -Context "entry '$id' verification_mechanism_paths"
+        $null = Assert-SelfReferentialVerificationContract -Contract $entry.verification_contract -Context "entry '$id' verification_contract"
         $refs = Assert-SelfReferentialStringList -Value $entry.bootstrap_evidence_refs `
             -Context "entry '$id' bootstrap_evidence_refs"
         foreach ($ref in $refs) {
@@ -327,10 +478,12 @@ function ConvertTo-SelfReferentialCanonicalEntry {
 }
 
 function Assert-SelfReferentialEvidenceBlob {
-    # Evidence must be a COMMITTED file at the PR HEAD SHA: 'git cat-file -t
-    # <head>:<ref>' must say blob. Filesystem Test-Path would accept '.',
-    # directories, and untracked workflow artifacts; ambient HEAD would accept
-    # blobs that only exist in the synthetic pull-request merge tree.
+    # Evidence must be a COMMITTED regular file at the PR HEAD SHA. Use ls-tree
+    # mode rather than cat-file -t alone: Git stores symlinks as blobs (mode
+    # 120000), so a dangling symlink would otherwise pass as "evidence".
+    # Filesystem Test-Path would also accept '.', directories, and untracked
+    # workflow artifacts; ambient HEAD would accept blobs that only exist in
+    # the synthetic pull-request merge tree.
     param(
         [Parameter(Mandatory = $true)][string] $RepoRoot,
         [Parameter(Mandatory = $true)][string] $Ref,
@@ -338,9 +491,266 @@ function Assert-SelfReferentialEvidenceBlob {
         [string] $HeadSha = ''
     )
     $revision = if ([string]::IsNullOrWhiteSpace($HeadSha)) { 'HEAD' } else { $HeadSha }
-    $objectType = (& git -C $RepoRoot cat-file -t "${revision}:$Ref" 2>$null | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or $objectType -ne 'blob') {
-        throw "self_referential_bootstrap: $Context evidence ref '$Ref' is not a committed file at the PR head revision (got '$objectType')."
+    # -z is not used: a single path should yield at most one record. Reject
+    # multi-line results so path '.' cannot accidentally match a child blob.
+    $treeLines = @(& git -C $RepoRoot ls-tree --full-tree $revision -- $Ref 2>$null |
+        ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+    if ($LASTEXITCODE -ne 0 -or $treeLines.Count -ne 1) {
+        throw "self_referential_bootstrap: $Context evidence ref '$Ref' is not a committed file at the PR head revision."
+    }
+    $treeEntry = $treeLines[0]
+    if ($treeEntry -notmatch '^([0-7]{6})\s+(\S+)\s+([0-9a-fA-F]{40,64})\t(.+)$') {
+        throw "self_referential_bootstrap: $Context cannot parse the head tree entry for evidence '$Ref'."
+    }
+    $mode = $Matches[1]
+    $objectType = $Matches[2]
+    $entryPath = $Matches[4] -replace '\\', '/'
+    $normalizedRef = $Ref -replace '\\', '/'
+    if ($entryPath -cne $normalizedRef) {
+        throw "self_referential_bootstrap: $Context evidence ref '$Ref' is not a committed file at the PR head revision (resolved path '$entryPath')."
+    }
+    if ($objectType -cne 'blob' -or $mode -notin @('100644', '100755')) {
+        throw "self_referential_bootstrap: $Context evidence ref '$Ref' must be a regular committed file (mode 100644/100755 blob); got mode=$mode type=$objectType."
+    }
+}
+
+function Assert-SelfReferentialEvidenceContentFreshness {
+    # Changed-path metadata is not content evidence: chmod-only changes alter a
+    # tree entry and satisfy `git diff`, while retaining the exact same blob.
+    # Resolve both immutable revisions and require either no base object (new
+    # evidence) or a different base/head object id.
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $Ref,
+        [Parameter(Mandatory = $true)][string] $Context,
+        [Parameter(Mandatory = $true)][string] $BaseSha,
+        [Parameter(Mandatory = $true)][string] $HeadSha
+    )
+    if ([string]::IsNullOrWhiteSpace($BaseSha) -or [string]::IsNullOrWhiteSpace($HeadSha)) {
+        throw "self_referential_bootstrap: $Context evidence '$Ref' requires exact BaseSha and HeadSha to verify content freshness."
+    }
+
+    & git -C $RepoRoot cat-file -e "$BaseSha^{commit}" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "self_referential_bootstrap: $Context cannot resolve BaseSha '$BaseSha' while verifying evidence '$Ref'."
+    }
+    & git -C $RepoRoot cat-file -e "$HeadSha^{commit}" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "self_referential_bootstrap: $Context cannot resolve HeadSha '$HeadSha' while verifying evidence '$Ref'."
+    }
+    $headOid = (& git -C $RepoRoot rev-parse --verify "${HeadSha}:$Ref" 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($headOid)) {
+        throw "self_referential_bootstrap: $Context cannot resolve evidence '$Ref' at HeadSha '$HeadSha'."
+    }
+    $baseTreeEntry = (& git -C $RepoRoot ls-tree --full-tree $BaseSha -- $Ref 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw "self_referential_bootstrap: $Context cannot inspect evidence '$Ref' at BaseSha '$BaseSha'."
+    }
+    if ([string]::IsNullOrWhiteSpace($baseTreeEntry)) {
+        return
+    }
+    if ($baseTreeEntry -notmatch '^([0-7]{6})\s+(\S+)\s+([0-9a-fA-F]{40,64})\t') {
+        throw "self_referential_bootstrap: $Context cannot parse the base tree entry for evidence '$Ref'."
+    }
+    if ($Matches[2] -cne 'blob') {
+        return
+    }
+    $baseOid = $Matches[3].ToLowerInvariant()
+    if ($baseOid -ceq $headOid) {
+        throw "self_referential_bootstrap: $Context evidence '$Ref' is unchanged between BaseSha and HeadSha (identical blob OID); metadata-only or mode-only changes are not fresh evidence."
+    }
+}
+
+function Assert-SelfReferentialLedgerEvidenceBlobs {
+    param(
+        [Parameter(Mandatory = $true)] $Ledger,
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $HeadSha,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $ChangedPaths
+    )
+    foreach ($entry in @($Ledger.entries)) {
+        $id = [string]$entry.id
+        foreach ($ref in @($entry.bootstrap_evidence_refs)) {
+            $evidenceRef = [string]$ref
+            if (@($ChangedPaths) -ccontains $evidenceRef) {
+                Assert-SelfReferentialEvidenceBlob -RepoRoot $RepoRoot -Ref $evidenceRef `
+                    -Context "entry '$id' bootstrap" -HeadSha $HeadSha
+            }
+        }
+        if ([string]$entry.status -eq 'closed') {
+            foreach ($ref in @($entry.fixpoint.evidence_refs)) {
+                $evidenceRef = [string]$ref
+                if (@($ChangedPaths) -ccontains $evidenceRef) {
+                    Assert-SelfReferentialEvidenceBlob -RepoRoot $RepoRoot -Ref $evidenceRef `
+                        -Context "entry '$id' fixpoint" -HeadSha $HeadSha
+                }
+            }
+        }
+    }
+}
+
+function Assert-SelfReferentialBaseEvidenceImmutable {
+    param(
+        [Parameter(Mandatory = $true)] $BaseLedger,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]] $ChangedPaths,
+        [string] $RepoRoot = '',
+        [string] $BaseSha = '',
+        [string] $HeadSha = ''
+    )
+    $recordedRefs = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($entry in @($BaseLedger.entries)) {
+        foreach ($ref in @($entry.bootstrap_evidence_refs)) {
+            $null = $recordedRefs.Add([string]$ref)
+        }
+        if ([string]$entry.status -ceq 'closed') {
+            foreach ($ref in @($entry.fixpoint.evidence_refs)) {
+                $null = $recordedRefs.Add([string]$ref)
+            }
+        }
+    }
+    if ($recordedRefs.Count -eq 0) { return }
+
+    $exactValues = @($RepoRoot, $BaseSha, $HeadSha)
+    $hasExactContext = @($exactValues | Where-Object {
+        [string]::IsNullOrWhiteSpace([string]$_)
+    }).Count -eq 0
+
+    if ($hasExactContext) {
+        foreach ($ref in $recordedRefs) {
+            $entries = @()
+            foreach ($revision in @($BaseSha, $HeadSha)) {
+                $treeLines = @(& git -C $RepoRoot ls-tree --full-tree $revision -- $ref 2>$null |
+                    ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+                if ($LASTEXITCODE -ne 0 -or $treeLines.Count -ne 1) {
+                    throw "self_referential_bootstrap: immutable referenced evidence '$ref' is missing or ambiguous at revision '$revision'."
+                }
+                $treeMatch = [regex]::Match(
+                    $treeLines[0],
+                    '^([0-7]{6})\s+(\S+)\s+([0-9a-fA-F]{40,64})\t(.+)$')
+                if (-not $treeMatch.Success) {
+                    throw "self_referential_bootstrap: immutable referenced evidence '$ref' has an unparsable tree entry at revision '$revision'."
+                }
+                $entryPath = $treeMatch.Groups[4].Value -replace '\\', '/'
+                $normalizedRef = ([string]$ref) -replace '\\', '/'
+                if ($entryPath -cne $normalizedRef) {
+                    throw "self_referential_bootstrap: immutable referenced evidence '$ref' resolves as '$entryPath' at revision '$revision'."
+                }
+                $entries += [pscustomobject]@{
+                    Mode = $treeMatch.Groups[1].Value
+                    Type = $treeMatch.Groups[2].Value
+                    Oid = $treeMatch.Groups[3].Value.ToLowerInvariant()
+                }
+            }
+            $baseEntry = $entries[0]
+            $headEntry = $entries[1]
+            if ($baseEntry.Type -cne 'blob' -or $headEntry.Type -cne 'blob' -or
+                $baseEntry.Mode -notin @('100644', '100755') -or
+                $headEntry.Mode -notin @('100644', '100755') -or
+                $baseEntry.Mode -cne $headEntry.Mode -or
+                $baseEntry.Oid -cne $headEntry.Oid) {
+                throw "self_referential_bootstrap: immutable referenced evidence '$ref' changed between BaseSha and HeadSha; preserve its exact regular-file tree entry and add a new governed evidence ref instead."
+            }
+        }
+        return
+    }
+
+    # Headless transition unit tests retain the legacy path-list guard. Every
+    # merge-authority caller supplies exact RepoRoot/BaseSha/HeadSha and therefore
+    # takes the unconditional tree-entry comparison above.
+    foreach ($ref in $recordedRefs) {
+        if (@($ChangedPaths) -ccontains $ref) {
+            throw "self_referential_bootstrap: immutable referenced evidence '$ref' was changed; preserve the original audit artifact and add a new governed evidence ref instead."
+        }
+    }
+}
+
+function Assert-SelfReferentialFixpointAttestation {
+    param(
+        [Parameter(Mandatory = $true)] $Entry,
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $HeadSha
+    )
+    $entryId = [string]$Entry.id
+    $mechanismCommit = [string]$Entry.fixpoint.mechanism_commit
+    $contractDigest = [string]$Entry.verification_contract.contract_sha256
+    $expectedCommandIds = @(Assert-SelfReferentialVerificationContract -Contract $Entry.verification_contract -Context "entry '$entryId' verification_contract")
+    $fixpointRefs = @($Entry.fixpoint.evidence_refs | ForEach-Object { [string]$_ })
+    $invalidNamespaceRefs = @($fixpointRefs | Where-Object {
+        $_ -cnotmatch '^docs/evidence/[^/]+/fixpoint/.+'
+    })
+    if ($invalidNamespaceRefs.Count -gt 0) {
+        throw "self_referential_bootstrap: entry '$entryId' fixpoint evidence must live under docs/evidence/<slug>/fixpoint/: $($invalidNamespaceRefs -join ', ')."
+    }
+    $attestationRefs = @($fixpointRefs | Where-Object {
+        $_ -cmatch '^docs/evidence/[^/]+/fixpoint/attestation\.json$'
+    })
+    if ($attestationRefs.Count -ne 1) {
+        throw "self_referential_bootstrap: entry '$entryId' fixpoint must reference exactly one docs/evidence/<slug>/fixpoint/attestation.json."
+    }
+    $attestationRef = $attestationRefs[0]
+    $revisionRef = $HeadSha + ':' + $attestationRef
+    $attestationJson = (& git -C $RepoRoot show $revisionRef 2>$null) -join ([string][char]10)
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($attestationJson)) {
+        throw "self_referential_bootstrap: entry '$entryId' fixpoint attestation '$attestationRef' cannot be read from the exact PR head."
+    }
+    try {
+        $document = [System.Text.Json.JsonDocument]::Parse($attestationJson)
+    } catch {
+        throw "self_referential_bootstrap: entry '$entryId' fixpoint attestation is not valid JSON: $($_.Exception.Message)"
+    }
+    try {
+        $root = $document.RootElement
+        Assert-SelfReferentialJsonObjectShape -Element $root -Context "entry '$entryId' fixpoint attestation" -RequiredProperties @(
+            'schema_version', 'entry_id', 'mechanism_commit',
+            'verification_contract_sha256', 'result', 'commands')
+        foreach ($propertyName in @(
+            'schema_version', 'entry_id', 'mechanism_commit',
+            'verification_contract_sha256', 'result')) {
+            if ($root.GetProperty($propertyName).ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
+                throw "self_referential_bootstrap: entry '$entryId' fixpoint attestation $propertyName must be a JSON string."
+            }
+        }
+        if ($root.GetProperty('schema_version').GetString() -cne 'self-referential-fixpoint-attestation/v1') {
+            throw "self_referential_bootstrap: entry '$entryId' fixpoint attestation has an unsupported schema_version."
+        }
+        if ($root.GetProperty('entry_id').GetString() -cne $entryId) {
+            throw "self_referential_bootstrap: entry '$entryId' fixpoint attestation entry_id does not match the ledger entry."
+        }
+        if ($root.GetProperty('mechanism_commit').GetString() -cne $mechanismCommit) {
+            throw "self_referential_bootstrap: entry '$entryId' fixpoint attestation mechanism_commit does not match the ledger fixpoint."
+        }
+        if ($root.GetProperty('verification_contract_sha256').GetString() -cne $contractDigest) {
+            throw "self_referential_bootstrap: entry '$entryId' fixpoint attestation verification_contract_sha256 does not match the immutable opening contract."
+        }
+        if ($root.GetProperty('result').GetString() -cne 'pass') {
+            throw "self_referential_bootstrap: entry '$entryId' fixpoint attestation result must be exactly pass."
+        }
+        $commands = $root.GetProperty('commands')
+        if ($commands.ValueKind -ne [System.Text.Json.JsonValueKind]::Array) {
+            throw "self_referential_bootstrap: entry '$entryId' fixpoint attestation commands must be a JSON array."
+        }
+        $commandElements = @($commands.EnumerateArray())
+        if ($commandElements.Count -ne $expectedCommandIds.Count) {
+            throw "self_referential_bootstrap: entry '$entryId' fixpoint attestation must report every verification_contract command exactly once."
+        }
+        for ($index = 0; $index -lt $expectedCommandIds.Count; $index++) {
+            $command = $commandElements[$index]
+            Assert-SelfReferentialJsonObjectShape -Element $command -Context "entry '$entryId' fixpoint attestation command[$index]" -RequiredProperties @('id', 'exit_code')
+            if ($command.GetProperty('id').ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
+                throw "self_referential_bootstrap: entry '$entryId' fixpoint attestation command[$index].id must be a JSON string."
+            }
+            if ($command.GetProperty('id').GetString() -cne $expectedCommandIds[$index]) {
+                throw "self_referential_bootstrap: entry '$entryId' fixpoint attestation command[$index] does not match the ordered verification_contract."
+            }
+            $exitCodeElement = $command.GetProperty('exit_code')
+            $exitCode = 0
+            if ($exitCodeElement.ValueKind -ne [System.Text.Json.JsonValueKind]::Number -or
+                -not $exitCodeElement.TryGetInt32([ref]$exitCode) -or $exitCode -ne 0) {
+                throw "self_referential_bootstrap: entry '$entryId' fixpoint attestation command '$($expectedCommandIds[$index])' must have integer exit_code 0."
+            }
+        }
+    } finally {
+        $document.Dispose()
     }
 }
 
@@ -414,7 +824,14 @@ function Compare-SelfReferentialLedgerTransition {
             }
             if (-not [string]::IsNullOrWhiteSpace($RepoRoot)) {
                 foreach ($ref in @($head.bootstrap_evidence_refs)) {
-                    Assert-SelfReferentialEvidenceBlob -RepoRoot $RepoRoot -Ref ([string]$ref) -Context "new entry '$id'" -HeadSha $HeadSha
+                    $evidenceRef = [string]$ref
+                    Assert-SelfReferentialEvidenceBlob -RepoRoot $RepoRoot -Ref $evidenceRef -Context "new entry '$id'" -HeadSha $HeadSha
+                    if (-not (@($ChangedPaths) -ccontains $evidenceRef)) {
+                        throw "self_referential_bootstrap: new entry '$id' bootstrap evidence '$evidenceRef' must be added or modified by this PR; reusing an unchanged base artefact is not branch-specific evidence."
+                    }
+                    Assert-SelfReferentialEvidenceContentFreshness -RepoRoot $RepoRoot `
+                        -Ref $evidenceRef -Context "new entry '$id' bootstrap" `
+                        -BaseSha $BaseSha -HeadSha $HeadSha
                 }
             }
             $newEntries += $head
@@ -460,20 +877,21 @@ function Compare-SelfReferentialLedgerTransition {
         if ($LASTEXITCODE -ne 0 -or -not ($firstParentHistory -ccontains $commit)) {
             throw "self_referential_bootstrap: entry '$id' fixpoint.mechanism_commit $commit is not on the PR base first-parent history; bind closure to the mainline merge/squash commit, not a side-branch ancestor."
         }
-        # Bind the closure to THIS entry's mechanism (not any ancient ancestor):
-        # the mechanism_commit must actually have touched one of the entry's
-        # declared verification_mechanism_paths.
+        # Bind the closure to THIS entry's complete mechanism (not any ancient
+        # ancestor): the mechanism_commit must have touched every declared
+        # verification_mechanism_path. Requiring only one path would let a
+        # multi-surface gate close without merging the rest of its mechanism.
         # NOTE: use $head, not $entry. $entry is still bound by the earlier
         # foreach loops in this function and would silently refer to the LAST
         # head entry, mis-binding closures whenever the ledger has >1 entry
         # (narrower bug surfaced by the Codex apex while refuting L1-correctness-1).
-        $mechanismTouched = $false
+        $parentLine = (& git -C $RepoRoot rev-list --parents -n 1 $commit 2>$null | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($parentLine)) {
+            throw "self_referential_bootstrap: cannot inspect parents of mechanism_commit $commit."
+        }
+        $parents = @($parentLine -split '\s+')
+        $untouchedDeclaredPaths = @()
         foreach ($declaredPath in @($head.verification_mechanism_paths)) {
-            $parentLine = (& git -C $RepoRoot rev-list --parents -n 1 $commit 2>$null | Out-String).Trim()
-            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($parentLine)) {
-                throw "self_referential_bootstrap: cannot inspect parents of mechanism_commit $commit."
-            }
-            $parents = @($parentLine -split '\s+')
             if ($parents.Count -gt 1) {
                 # Compare a merge to its first parent so branch-side mechanism
                 # changes are visible. `git show --name-only <merge>` emits no
@@ -484,10 +902,12 @@ function Compare-SelfReferentialLedgerTransition {
                 $touched = @(& git -C $RepoRoot diff-tree --root --no-commit-id -r --name-only `
                     $commit -- ([string]$declaredPath) 2>$null | Where-Object { $_ })
             }
-            if ($touched.Count -gt 0) { $mechanismTouched = $true; break }
+            if ($touched.Count -eq 0) {
+                $untouchedDeclaredPaths += [string]$declaredPath
+            }
         }
-        if (-not $mechanismTouched) {
-            throw "self_referential_bootstrap: entry '$id' fixpoint.mechanism_commit $commit did not modify any of the entry's declared verification_mechanism_paths; it is not this mechanism's merge."
+        if ($untouchedDeclaredPaths.Count -gt 0) {
+            throw "self_referential_bootstrap: entry '$id' fixpoint.mechanism_commit $commit did not modify every declared verification_mechanism_path; missing: $($untouchedDeclaredPaths -join ', ')."
         }
         $commitMessage = (& git -C $RepoRoot log -1 --format=%B $commit 2>$null | Out-String).Trim()
         $originatingPr = [int]$head.pr
@@ -499,7 +919,17 @@ function Compare-SelfReferentialLedgerTransition {
             throw "self_referential_bootstrap: entry '$id' mechanism_commit $commit is not bound to originating PR #$originatingPr in its merge/squash message."
         }
         foreach ($ref in @($fp.evidence_refs)) {
-            Assert-SelfReferentialEvidenceBlob -RepoRoot $RepoRoot -Ref ([string]$ref) -Context "entry '$id' fixpoint" -HeadSha $HeadSha
+            $evidenceRef = [string]$ref
+            Assert-SelfReferentialEvidenceBlob -RepoRoot $RepoRoot -Ref $evidenceRef -Context "entry '$id' fixpoint" -HeadSha $HeadSha
+            if ([string]::IsNullOrWhiteSpace($HeadSha)) {
+                throw "self_referential_bootstrap: closing entry '$id' requires HeadSha to bind evidence chronology; refusing ambient-HEAD resolution."
+            }
+            if (-not (@($ChangedPaths) -ccontains $evidenceRef)) {
+                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$evidenceRef' must be added or modified by this closure PR; unchanged base evidence is not closure-specific re-verification."
+            }
+            Assert-SelfReferentialEvidenceContentFreshness -RepoRoot $RepoRoot `
+                -Ref $evidenceRef -Context "entry '$id' fixpoint" `
+                -BaseSha $BaseSha -HeadSha $HeadSha
             # Post-merge binding: the evidence blob must have been introduced or
             # modified at or after the mechanism merged - a pre-existing unrelated
             # blob cannot stand in for the required post-merge re-verification.
@@ -507,12 +937,17 @@ function Compare-SelfReferentialLedgerTransition {
             # starts at ambient HEAD, which in a pull_request checkout is the
             # synthetic merge ref, so a base-side commit could supply the
             # chronology for a blob validated at head (Codex L1-correctness-4).
-            if ([string]::IsNullOrWhiteSpace($HeadSha)) {
-                throw "self_referential_bootstrap: closing entry '$id' requires HeadSha to bind evidence chronology; refusing ambient-HEAD resolution."
-            }
-            $evidenceIntroCommit = (& git -C $RepoRoot log -1 --format=%H $HeadSha -- ([string]$ref) 2>$null | Out-String).Trim()
+            $evidenceIntroCommit = (& git -C $RepoRoot log -1 --format=%H $HeadSha -- $evidenceRef 2>$null | Out-String).Trim()
             if ([string]::IsNullOrWhiteSpace($evidenceIntroCommit)) {
-                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$ref' has no commit history reachable from the PR head; cannot bind it to post-merge re-verification."
+                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$evidenceRef' has no commit history reachable from the PR head; cannot bind it to post-merge re-verification."
+            }
+            & git -C $RepoRoot merge-base --is-ancestor $evidenceIntroCommit $BaseSha 2>$null
+            $evidenceInBaseExit = $LASTEXITCODE
+            if ($evidenceInBaseExit -eq 0) {
+                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$evidenceRef' latest commit is already in BaseSha; closure must commit a new re-verification result."
+            }
+            if ($evidenceInBaseExit -ne 1) {
+                throw "self_referential_bootstrap: cannot compare fixpoint evidence '$evidenceRef' history with BaseSha."
             }
             # STRICT descendant. `--is-ancestor X X` succeeds, so an evidence file
             # committed IN the mechanism commit itself passed this check - letting
@@ -520,11 +955,11 @@ function Compare-SelfReferentialLedgerTransition {
             # is supposed to prove happened afterwards (Codex: "Require fixpoint
             # evidence to postdate the mechanism commit").
             if ($evidenceIntroCommit -eq $commit) {
-                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$ref' was committed by mechanism_commit $commit itself; the post-merge re-verification must produce NEW evidence, not cite the bootstrap artefact."
+                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$evidenceRef' was committed by mechanism_commit $commit itself; the post-merge re-verification must produce NEW evidence, not cite the bootstrap artefact."
             }
             & git -C $RepoRoot merge-base --is-ancestor $commit $evidenceIntroCommit 2>$null
             if ($LASTEXITCODE -ne 0) {
-                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$ref' predates mechanism_commit $commit; it cannot be the post-merge re-verification result."
+                throw "self_referential_bootstrap: entry '$id' fixpoint evidence '$evidenceRef' predates mechanism_commit $commit; it cannot be the post-merge re-verification result."
             }
         }
         $closedEntries += $head
@@ -559,13 +994,15 @@ function Assert-SelfReferentialBootstrapBody {
     )
 
     $mechanismPaths = @(Get-SelfReferentialMechanismPaths -ChangedPaths $ChangedPaths)
-    if ($mechanismPaths.Count -eq 0) { return }
+    $hasExactHeadContext = -not [string]::IsNullOrWhiteSpace($HeadSha) -and
+        -not [string]::IsNullOrWhiteSpace($RepoRoot)
+    if ($mechanismPaths.Count -eq 0 -and -not $hasExactHeadContext) { return }
 
     # Integrity first: a malformed head ledger fails closed before any gating
     # decision. When the head SHA is known, the ledger is read from that exact
     # revision - never from the ambient checkout, which in a pull_request job is
     # the synthetic merge tree.
-    if (-not [string]::IsNullOrWhiteSpace($HeadSha) -and -not [string]::IsNullOrWhiteSpace($RepoRoot)) {
+    if ($hasExactHeadContext) {
         $headLedgerJson = (& git -C $RepoRoot show "${HeadSha}:scripts/self-referential-bootstrap-ledger.json" 2>$null) -join "`n"
         if ($LASTEXITCODE -ne 0) {
             throw "self_referential_bootstrap: ledger missing at the PR head revision $HeadSha."
@@ -573,6 +1010,30 @@ function Assert-SelfReferentialBootstrapBody {
         $headLedger = Get-SelfReferentialBootstrapLedger -Json $headLedgerJson
     } else {
         $headLedger = Get-SelfReferentialBootstrapLedger -Path $LedgerPath
+    }
+    if ($hasExactHeadContext) {
+        Assert-SelfReferentialLedgerEvidenceBlobs -Ledger $headLedger -RepoRoot $RepoRoot `
+            -HeadSha $HeadSha -ChangedPaths $ChangedPaths
+    }
+    if ($mechanismPaths.Count -eq 0) {
+        if (-not $HasBaseContext) {
+            throw 'self_referential_bootstrap: exact base context is required to protect immutable referenced evidence.'
+        }
+        $evidenceBaseLedgerPresent = if ($null -eq $BaseLedgerExists) {
+            -not [string]::IsNullOrWhiteSpace($BaseLedgerJson)
+        } else {
+            [bool]$BaseLedgerExists
+        }
+        $evidenceBaseLedger = if ($evidenceBaseLedgerPresent) {
+            Get-SelfReferentialBootstrapLedger -Json $BaseLedgerJson
+        } else {
+            [pscustomobject]@{
+                schema_version = 'self-referential-bootstrap-ledger/v1'
+                entries = @()
+            }
+        }
+        Assert-SelfReferentialBaseEvidenceImmutable -BaseLedger $evidenceBaseLedger -ChangedPaths $ChangedPaths -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
+        return
     }
 
     # The transition can only be judged against the base. Without base context the
@@ -596,10 +1057,12 @@ function Assert-SelfReferentialBootstrapBody {
                 schema_version = 'self-referential-bootstrap-ledger/v1'
                 entries        = @()
             }
+            Assert-SelfReferentialBaseEvidenceImmutable -BaseLedger $baseLedger -ChangedPaths $ChangedPaths -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
         } else {
             # An existing-but-empty or corrupt base ledger is not equivalent to a
             # missing first-introduction ledger. Parse it and fail closed.
             $baseLedger = Get-SelfReferentialBootstrapLedger -Json $BaseLedgerJson
+            Assert-SelfReferentialBaseEvidenceImmutable -BaseLedger $baseLedger -ChangedPaths $ChangedPaths -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
         }
     }
 
@@ -610,6 +1073,12 @@ function Assert-SelfReferentialBootstrapBody {
     $newIds = @($transition.NewEntries | ForEach-Object { [string]$_.id })
 
     if (@($transition.ClosedEntries).Count -gt 0) {
+        if (@($transition.NewEntries).Count -gt 0) {
+            throw "self_referential_bootstrap: a fixpoint closure PR cannot also open new debt; close the existing entry and introduce the next mechanism change in separate PRs."
+        }
+        foreach ($closedEntry in @($transition.ClosedEntries)) {
+            Assert-SelfReferentialFixpointAttestation -Entry $closedEntry -RepoRoot $RepoRoot -HeadSha $HeadSha
+        }
         $nonLedgerMechanismEdits = @($mechanismPaths | Where-Object {
             $_ -cne 'scripts/self-referential-bootstrap-ledger.json'
         })
