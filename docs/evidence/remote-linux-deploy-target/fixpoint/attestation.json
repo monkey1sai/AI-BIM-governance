@@ -1,0 +1,57 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "remote-linux-deploy-target",
+  "mechanism_commit": "591f930b04026a796e570fc943c95f80a54c3337",
+  "verification_contract_sha256": "44dec1d887f2f815b359eefdeb56459226881c045c76ab3c3406bfccf48dbd0c",
+  "result": "pass",
+  "commands": [
+    {
+      "id": "test-deploy-target-registry",
+      "exit_code": 0
+    },
+    {
+      "id": "test-platform-adapter",
+      "exit_code": 0
+    },
+    {
+      "id": "test-host-native-launcher",
+      "exit_code": 0
+    },
+    {
+      "id": "test-host-native-child-launch",
+      "exit_code": 0
+    },
+    {
+      "id": "test-preflight-host-native",
+      "exit_code": 0
+    },
+    {
+      "id": "test-preflight-ports",
+      "exit_code": 0
+    },
+    {
+      "id": "test-kit-log-probe",
+      "exit_code": 0
+    },
+    {
+      "id": "test-rebuild-test-deploy",
+      "exit_code": 0
+    },
+    {
+      "id": "test-remote-deploy-transport",
+      "exit_code": 0
+    },
+    {
+      "id": "test-windows-verification-scope",
+      "exit_code": 0
+    },
+    {
+      "id": "test-deploy-governance-static",
+      "exit_code": 0
+    },
+    {
+      "id": "invoke-powershell-static",
+      "exit_code": 0
+    }
+  ]
+}
