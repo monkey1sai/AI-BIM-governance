@@ -69,6 +69,24 @@
         "scripts/self-referential-bootstrap-ledger.json",
         "scripts/tests/check-pr-body-evidence.ps1"
       ],
+      "verification_contract": {
+        "id": "remote-linux-deploy-target/v1",
+        "command_ids": [
+          "test-deploy-target-registry",
+          "test-platform-adapter",
+          "test-host-native-launcher",
+          "test-host-native-child-launch",
+          "test-preflight-host-native",
+          "test-preflight-ports",
+          "test-kit-log-probe",
+          "test-rebuild-test-deploy",
+          "test-remote-deploy-transport",
+          "test-windows-verification-scope",
+          "test-deploy-governance-static",
+          "invoke-powershell-static"
+        ],
+        "contract_sha256": "44dec1d887f2f815b359eefdeb56459226881c045c76ab3c3406bfccf48dbd0c"
+      },
       "bootstrap_evidence_refs": [
         "docs/evidence/remote-linux-deploy-target/self-referential-bootstrap/README.md",
         "docs/evidence/remote-linux-deploy-target/self-referential-bootstrap/deploy-verified.txt"

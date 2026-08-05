@@ -73,7 +73,7 @@ Required when the PR changes the verification mechanism itself (deploy path / ev
 
 | Item | Result |
 |---|---|
-| Self-referential bootstrap | `yes` / `no` |
+| Self-referential bootstrap | yes / no |
 | Bootstrap ledger entry | entry id, or `not applicable` when `no` |
 | Bootstrap reason | concrete mechanism gap (>=30 chars), or `not applicable` when `no` |
 
