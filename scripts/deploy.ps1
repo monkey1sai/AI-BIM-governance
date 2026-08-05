@@ -1,4 +1,4 @@
-# scripts\deploy.ps1
+﻿# scripts\deploy.ps1
 # Mode C(hybrid)一鍵部屬入口。
 # 對應 docs/superpowers/specs/2026-05-26-one-click-deploy-design.md。
 #

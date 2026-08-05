@@ -2,7 +2,12 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
-$deploy = Get-Content -Raw (Join-Path $RepoRoot 'scripts\deploy.ps1')
+$deployPath = Join-Path $RepoRoot 'scripts\deploy.ps1'
+$deployBytes = [System.IO.File]::ReadAllBytes($deployPath)
+if ($deployBytes.Count -lt 3 -or $deployBytes[0] -ne 0xEF -or $deployBytes[1] -ne 0xBB -or $deployBytes[2] -ne 0xBF) {
+    throw 'deploy.ps1 must use a UTF-8 BOM so Windows PowerShell 5.1 does not decode non-ASCII strings through the active ANSI code page'
+}
+$deploy = Get-Content -Raw $deployPath
 $launcher = Get-Content -Raw (Join-Path $RepoRoot 'scripts\lib\host-native-launcher.ps1')
 $stopAll = Get-Content -Raw (Join-Path $RepoRoot 'scripts\stop-all.ps1')
 $hostKitCompose = Get-Content -Raw (Join-Path $RepoRoot 'compose.host-kit.yml')

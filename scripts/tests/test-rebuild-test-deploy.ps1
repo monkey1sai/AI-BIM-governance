@@ -39,8 +39,11 @@ function New-DeployEdgeVolumeHarness {
 
     $scriptsRoot = Join-Path $DeployRoot 'scripts'
     $libRoot = Join-Path $scriptsRoot 'lib'
+    $platformLibRoot = Join-Path $libRoot 'platform'
     New-Item -ItemType Directory -Path $libRoot -Force | Out-Null
+    New-Item -ItemType Directory -Path $platformLibRoot -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $SourceRepoRoot 'scripts\lib\design-assets.ps1') -Destination (Join-Path $libRoot 'design-assets.ps1')
+    Copy-Item -LiteralPath (Join-Path $SourceRepoRoot 'scripts\lib\platform\platform-adapter.ps1') -Destination (Join-Path $platformLibRoot 'platform-adapter.ps1')
 
     # deploy.ps1 resolves its target profile from the registry, so the sandbox
     # overrides DATA instead of rewriting code: copy the script unmodified and
@@ -54,6 +57,14 @@ function New-DeployEdgeVolumeHarness {
     $sandboxLocal[0].deploy_root = $DeployRoot
     $sandboxRegistry | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $scriptsRoot 'deploy-target-registry.json') -Encoding ascii
     Copy-Item -LiteralPath (Join-Path $SourceRepoRoot 'scripts\deploy.ps1') -Destination (Join-Path $scriptsRoot 'deploy.ps1')
+
+    # The harness intentionally has no requirements files and its host-native
+    # preflight stub reports dependencies as already satisfied. Bind that empty
+    # inventory to the same SHA-256 stamp contract used by deploy.ps1.
+    $venvRoot = Join-Path $DeployRoot '.venv'
+    New-Item -ItemType Directory -Path $venvRoot -Force | Out-Null
+    $emptyRequirementsFingerprint = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+    Set-Content -LiteralPath (Join-Path $venvRoot '.deploy-requirements-stamp') -Value $emptyRequirementsFingerprint -Encoding ascii
 
     @'
 function Write-DeployHeader {
