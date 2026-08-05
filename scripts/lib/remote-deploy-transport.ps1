@@ -407,7 +407,11 @@ function New-RemoteDeployTag {
     }
     $pushed = & $GitRunner @('push', 'origin', "refs/tags/$tagName")
     if ($pushed.ExitCode -ne 0) {
-        throw "remote_deploy_transport: deploy tag '$tagName' was created locally but could not be pushed: $($pushed.Output)"
+        # B13: a push failure must never leave a local-only tag - a later
+        # sequence count would treat a record origin never accepted as existing.
+        $deleted = & $GitRunner @('tag', '-d', $tagName)
+        $cleanup = if ($deleted.ExitCode -eq 0) { 'local tag deleted' } else { "local tag cleanup ALSO failed: $($deleted.Output)" }
+        throw "remote_deploy_transport: deploy tag '$tagName' could not be pushed ($cleanup): $($pushed.Output)"
     }
     return $tagName
 }
@@ -508,24 +512,39 @@ function Invoke-RemoteTestDeployRebuild {
         $snapshotPath = ''
     }
 
-    # B13: a successful non-dry-run deployment is tagged. The deployed sha comes
-    # from the remote transcript ("HEAD is now at <sha>"), i.e. what the target
-    # really checked out, resolved to the full sha operator-side.
+    # B13: a successful, non-dry-run, non-bootstrap deployment of the canonical
+    # target is tagged on the commit the TARGET actually checked out ("HEAD is
+    # now at <sha>" in its transcript), resolved to the full sha operator-side.
+    # A bootstrap rebuild verifies an unmerged revision and its evidence is
+    # never deploy-target evidence, so it is never tagged. Once eligible, the
+    # tag is mandatory: an unresolvable sha is a hard error, not a skipped
+    # record, because B13 requires every successful canonical deployment tagged.
     $deployTag = ''
-    if ($exitCode -eq 0 -and -not $DryRun) {
+    $tagEligible = ($exitCode -eq 0 -and -not $DryRun -and
+        [string]::IsNullOrWhiteSpace($BootstrapRef) -and
+        $null -ne $Target.PSObject.Properties['role'] -and
+        [string]$Target.role -ceq 'canonical_test_deploy')
+    if ($tagEligible) {
         $shaMatch = [regex]::Match($outputText, 'HEAD is now at ([0-9a-f]{7,40})')
-        if ($shaMatch.Success) {
-            $fullSha = (& git -C $OperatorRepoRoot rev-parse ($shaMatch.Groups[1].Value + '^{commit}') 2>$null | Out-String).Trim()
-            if ($LASTEXITCODE -eq 0 -and $fullSha) {
-                $deployTag = New-RemoteDeployTag -OperatorRepoRoot $OperatorRepoRoot -TargetId ([string]$Target.id) `
-                    -DeployedSha $fullSha -SnapshotName ([IO.Path]::GetFileName([string]$snapshotPath))
-                Write-Host "[deploy-tag] $deployTag -> $fullSha"
-            } else {
-                Write-Warning 'deploy tag skipped: deployed sha not resolvable operator-side (fetch first).'
-            }
-        } else {
-            Write-Warning 'deploy tag skipped: remote transcript did not report the checked-out sha.'
+        if (-not $shaMatch.Success) {
+            throw 'remote_deploy_transport: successful canonical deployment reported no checked-out sha, so its required B13 deploy tag cannot be created.'
         }
+        $shortSha = $shaMatch.Groups[1].Value
+        $fullSha = (& git -C $OperatorRepoRoot rev-parse ($shortSha + '^{commit}') 2>$null | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $fullSha) {
+            # The remote resets to a freshly fetched origin/main that a stale
+            # operator checkout may not have yet - fetch once and retry.
+            $null = & git -C $OperatorRepoRoot fetch --quiet origin 2>$null
+            $fullSha = (& git -C $OperatorRepoRoot rev-parse ($shortSha + '^{commit}') 2>$null | Out-String).Trim()
+        }
+        if ($LASTEXITCODE -ne 0 -or -not $fullSha) {
+            throw "remote_deploy_transport: deployed commit '$shortSha' is not resolvable operator-side even after fetching origin, so the required B13 deploy tag cannot be created."
+        }
+        $deployTag = New-RemoteDeployTag -OperatorRepoRoot $OperatorRepoRoot -TargetId ([string]$Target.id) `
+            -DeployedSha $fullSha -SnapshotName ([IO.Path]::GetFileName([string]$snapshotPath))
+        Write-Host "[deploy-tag] $deployTag -> $fullSha"
+    } elseif ($exitCode -eq 0 -and -not $DryRun -and -not [string]::IsNullOrWhiteSpace($BootstrapRef)) {
+        Write-Host '[deploy-tag] skipped: bootstrap rebuild evidence is never deploy-target evidence.'
     }
 
     return [pscustomobject]@{

@@ -192,6 +192,7 @@ LOCAL_ONLY_FLAG=1
     # plus the ignored local report write (the dry-run assertions above do not).
     $script:fakeSshCallCount = 0
     $script:fakeSshSnapshotJson = $aliasSnapshot | ConvertTo-Json -Depth 6 -Compress
+    $script:fakeDeployedSha = 'f' * 40
     function ssh {
         $null = @($input)
         $script:fakeSshCallCount++
@@ -200,15 +201,30 @@ LOCAL_ONLY_FLAG=1
             '== effective env snapshot begin =='
             $script:fakeSshSnapshotJson
             '== effective env snapshot end =='
+            "HEAD is now at $($script:fakeDeployedSha.Substring(0, 9)) synthetic"
             'synthetic-non-snapshot-output'
         }
+    }
+    # Copilot review: cover the successful B13 tag path end-to-end by shadowing
+    # git the same way ssh is shadowed - rev-parse resolves the transcript sha,
+    # tag --list is empty (sequence 001), tag creation and push succeed.
+    $script:fakeGitCalls = [System.Collections.Generic.List[string]]::new()
+    function git {
+        $joined = ($args | ForEach-Object { [string]$_ }) -join ' '
+        $script:fakeGitCalls.Add($joined)
+        $global:LASTEXITCODE = 0
+        if ($joined -match 'rev-parse') { return $script:fakeDeployedSha }
+        return ''
     }
     try {
         $live = Invoke-RemoteTestDeployRebuild -Target $remoteTarget -OperatorRepoRoot $tempRoot -Build
     } finally {
         Remove-Item -LiteralPath Function:\ssh -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath Function:\git -Force -ErrorAction SilentlyContinue
     }
     Assert-True ($script:fakeSshCallCount -eq 4) 'live dispatch performs inventory check, library push, base push, then rebuild'
+    Assert-True ($live.DeployTag -match '^deploy-\d{8}-\d+-001$') "successful canonical deployment must return its B13 tag (got '$($live.DeployTag)')"
+    Assert-True (@(@($script:fakeGitCalls) -match 'push origin refs/tags/deploy-').Count -eq 1) 'the B13 tag must be pushed to origin exactly once'
     Assert-True ([int]$live.ExitCode -eq 0) 'fake live dispatch succeeds'
     Assert-True (Test-Path -LiteralPath $live.SnapshotPath -PathType Leaf) 'redacted snapshot report is persisted'
     $persistedSnapshotJson = Get-Content -LiteralPath $live.SnapshotPath -Raw
@@ -236,6 +252,30 @@ LOCAL_ONLY_FLAG=1
     } finally {
         Remove-Item -LiteralPath Function:\ssh -Force -ErrorAction SilentlyContinue
     }
+
+    # --- B13 x bootstrap: unmerged-revision rebuilds are never tagged ---------------
+    New-Item -ItemType Directory -Path (Join-Path $tempRoot 'scripts') -Force | Out-Null
+    @{ entries = @(@{ id = 'bootstrap-tag-fixture'; status = 'open'; verification_mechanism_paths = @('scripts/deploy.ps1') }) } |
+        ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $tempRoot 'scripts/self-referential-bootstrap-ledger.json') -Encoding utf8
+    $script:fakeSshCallCount = 0
+    function ssh {
+        $null = @($input)
+        $script:fakeSshCallCount++
+        $global:LASTEXITCODE = 0
+        if ($script:fakeSshCallCount -eq 4) {
+            '== effective env snapshot begin =='
+            $script:fakeSshSnapshotJson
+            '== effective env snapshot end =='
+            'HEAD is now at abcdef12345'
+        }
+    }
+    try {
+        $bootstrapLive = Invoke-RemoteTestDeployRebuild -Target $remoteTarget -OperatorRepoRoot $tempRoot -Build -BootstrapRef 'feat/unmerged-fixture' -BootstrapLedgerEntry 'bootstrap-tag-fixture'
+    } finally {
+        Remove-Item -LiteralPath Function:\ssh -Force -ErrorAction SilentlyContinue
+    }
+    Assert-True ([int]$bootstrapLive.ExitCode -eq 0) 'bootstrap fake dispatch succeeds'
+    Assert-True ([string]$bootstrapLive.DeployTag -eq '') 'a bootstrap rebuild must never create a deploy tag'
 
     # --- F-17: snapshot end marker must start its own line --------------------------
     # The compressed snapshot JSON is written WITHOUT a trailing newline, so real
@@ -283,15 +323,19 @@ LOCAL_ONLY_FLAG=1
     if ($name -notmatch '-004$') { throw "ASSERT FAILED: collision on -003 must retry to -004 (got $name)" }
     if (-not ($script:tagCalls | Where-Object { $_ -eq "push origin refs/tags/$name" })) { throw 'ASSERT FAILED: the tag must be pushed to origin' }
 
+    $script:pushFailCalls = [System.Collections.Generic.List[string]]::new()
     $threw = $false
     try {
         $null = New-RemoteDeployTag -OperatorRepoRoot 'X:/nowhere' -TargetId 't' -DeployedSha $sha -SnapshotName 's' -TimestampUtc $ts -GitRunner {
             param([string[]] $GitArgs)
-            if (($GitArgs -join ' ') -match '^push ') { return [pscustomobject]@{ ExitCode = 1; Output = 'denied' } }
+            $joined = ($GitArgs -join ' ')
+            $script:pushFailCalls.Add($joined)
+            if ($joined -match '^push ') { return [pscustomobject]@{ ExitCode = 1; Output = 'denied' } }
             return [pscustomobject]@{ ExitCode = 0; Output = '' }
         }
     } catch { $threw = $true }
     if (-not $threw) { throw 'ASSERT FAILED: a failed push must be a hard error, not a silent local tag' }
+    if (-not (@($script:pushFailCalls) -match '^tag -d deploy-')) { throw 'ASSERT FAILED: a failed push must delete the local tag (B13: never leave a local-only tag)' }
 
     $threw = $false
     try { $null = New-RemoteDeployTag -OperatorRepoRoot 'X:' -TargetId 't' -DeployedSha 'not-a-sha' -SnapshotName 's' -TimestampUtc $ts } catch { $threw = $true }
