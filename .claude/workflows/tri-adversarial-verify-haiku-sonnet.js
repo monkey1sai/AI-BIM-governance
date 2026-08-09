@@ -219,7 +219,12 @@ if (suppliedDiff !== null) {
   // 的 allowlist 會靜默排除 diff 的一部分,回傳 held: null 的空結果假裝全審。
   // header 數量與可解析數量必須一致:引號檔名或 normalize 失敗的 header 不是
   // 「跳過」而是「packet 無法自證一致」,一律 held。
-  if (/^(?:old mode|new mode|new file mode|deleted file mode) (?:120000|160000)/m.test(suppliedDiff)) {
+  // mode 行與 index 行都要看:內容變更但 mode 不變的 symlink/gitlink diff 只有
+  // `index <old>..<new> 120000` 行,沒有任何 old/new mode 行。
+  if (
+    /^(?:old mode|new mode|new file mode|deleted file mode) (?:120000|160000)/m.test(suppliedDiff) ||
+    /^index [0-9a-f]+\.\.[0-9a-f]+ (?:120000|160000)$/m.test(suppliedDiff)
+  ) {
     return emptyResult('special_mode_in_diff', baseLabel, 'symlink or gitlink mode present in the supplied diff; text-only review cannot verify special entries')
   }
   const headerLineCount = (suppliedDiff.match(/^diff --git /gm) || []).length
@@ -414,13 +419,22 @@ for (let i = 0; i < LENSES.length; i += 1) {
       continue
     }
     // id 只在單一 finder 回應內保證唯一;兩個 lens 都回 "F1" 時,killed/復活
-    // 對帳會誤傷不相干的 finding。前綴 lens 讓 id 全域唯一。
-    layer1Findings.push({ ...finding, id: `${slot.lens}:${finding.id}`, finder_model: slot.tier })
+    // 對帳會誤傷不相干的 finding。前綴 lens 讓 id 全域唯一;原 id 截到 100 字元,
+    // 讓前綴後仍在 FINDING_ITEM 的 120 上限內(最長 lens 14+1+100=115),否則
+    // apex 回傳這個 id 會被 schema 拒絕、合成整段失敗。
+    layer1Findings.push({ ...finding, id: `${slot.lens}:${String(finding.id).slice(0, 100)}`, finder_model: slot.tier })
   }
 }
-if (findersFailed === LENSES.length) {
+if (findersFailed > 0) {
+  // 每個 lens 只由一個 finder 獨佔負責且互不越界,任何一個失敗都表示該 lens
+  // 完全沒被審過;把缺覆蓋的結果標成 success 是假完整,一律 held 讓
+  // coordinator 重跑,而不是靠 notes 裡一行字自首。
   return {
-    ...emptyResult('all_finders_failed', diffData.base_ref, runNotes.join('; ')),
+    ...emptyResult(
+      findersFailed === LENSES.length ? 'all_finders_failed' : 'lens_coverage_incomplete',
+      diffData.base_ref,
+      runNotes.join('; '),
+    ),
     files_changed: diffData.files_changed,
     difficulty: { overall, source: triageSource, lens_tiers: resolvedTiers },
   }
