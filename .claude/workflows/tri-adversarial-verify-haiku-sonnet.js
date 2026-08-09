@@ -248,6 +248,10 @@ if (suppliedDiff !== null) {
   if (uncovered.length) {
     return emptyResult('files_changed_missing_diff_paths', baseLabel, `diff touches ${uncovered.length} path(s) absent from files_changed (e.g. ${uncovered[0]}); the supplied packet is not self-consistent`)
   }
+  // 反向也要成立:allowlist 用 diff 實際觸及的路徑,而不是 files_changed 宣稱的
+  // 超集,否則 finder/apex 可以對一條沒有任何 patch 證據的路徑報 finding 並通過
+  // 驗證。files_changed 多列的路徑仍保留在回報欄位,但不具可審資格。
+  const reviewableSet = suppliedDiff.trim() ? diffHeaderPaths : allowedSet
   const untracked = Array.isArray(ARGS.untracked_paths)
     ? ARGS.untracked_paths.filter((path) => typeof path === 'string' && path)
     : []
@@ -257,7 +261,7 @@ if (suppliedDiff !== null) {
   diffData = {
     base_ref: baseLabel,
     files_changed: [...new Set([...names, ...untracked])],
-    allowed_paths: new Set(normalizedTracked),
+    allowed_paths: reviewableSet,
     diff: suppliedDiff,
     has_changes: Boolean(suppliedDiff.trim() || untracked.length),
     untracked_paths: untracked,
@@ -394,6 +398,7 @@ ${evidencePayload}
 }))
 
 const layer1Findings = []
+const usedNamespacedIds = new Set()
 let findersFailed = 0
 for (let i = 0; i < LENSES.length; i += 1) {
   const slot = finderResults[i]
@@ -413,6 +418,14 @@ for (let i = 0; i < LENSES.length; i += 1) {
   if (typeof slot.review.coverage === 'string' && slot.review.coverage.trim()) {
     runNotes.push(`finder ${slot.lens} coverage: ${slot.review.coverage.trim()}`)
   }
+  // finder 回了 findings 卻全部 out-of-lens = 它沒有審自己的 lens;空手而回
+  // (真的沒問題)才是合法的成功。
+  const inLensCount = validated.filter((finding) => finding.dimension === slot.lens).length
+  if (validated.length > 0 && inLensCount === 0) {
+    findersFailed += 1
+    runNotes.push(`finder ${slot.lens} returned only out-of-lens findings; its lens is uncovered`)
+    continue
+  }
   for (const finding of validated) {
     if (finding.dimension !== slot.lens) {
       runNotes.push(`finder ${slot.lens} out-of-lens finding ${finding.id} dropped`)
@@ -421,8 +434,16 @@ for (let i = 0; i < LENSES.length; i += 1) {
     // id 只在單一 finder 回應內保證唯一;兩個 lens 都回 "F1" 時,killed/復活
     // 對帳會誤傷不相干的 finding。前綴 lens 讓 id 全域唯一;原 id 截到 100 字元,
     // 讓前綴後仍在 FINDING_ITEM 的 120 上限內(最長 lens 14+1+100=115),否則
-    // apex 回傳這個 id 會被 schema 拒絕、合成整段失敗。
-    layer1Findings.push({ ...finding, id: `${slot.lens}:${String(finding.id).slice(0, 100)}`, finder_model: slot.tier })
+    // apex 回傳這個 id 會被 schema 拒絕、合成整段失敗。截斷可能撞名(前 100 字元
+    // 相同的兩個超長 id),撞到時附序數保持唯一。
+    let namespacedId = `${slot.lens}:${String(finding.id).slice(0, 100)}`
+    let collisionOrdinal = 2
+    while (usedNamespacedIds.has(namespacedId)) {
+      namespacedId = `${slot.lens}:${String(finding.id).slice(0, 96)}~${collisionOrdinal}`
+      collisionOrdinal += 1
+    }
+    usedNamespacedIds.add(namespacedId)
+    layer1Findings.push({ ...finding, id: namespacedId, finder_model: slot.tier })
   }
 }
 if (findersFailed > 0) {
