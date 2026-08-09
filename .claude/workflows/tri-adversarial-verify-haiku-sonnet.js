@@ -217,12 +217,26 @@ if (suppliedDiff !== null) {
   }
   // 供給的 files_changed 必須涵蓋 diff header 實際觸及的每個路徑;否則 finder
   // 的 allowlist 會靜默排除 diff 的一部分,回傳 held: null 的空結果假裝全審。
+  // header 數量與可解析數量必須一致:引號檔名或 normalize 失敗的 header 不是
+  // 「跳過」而是「packet 無法自證一致」,一律 held。
+  if (/^(?:old mode|new mode|new file mode|deleted file mode) (?:120000|160000)/m.test(suppliedDiff)) {
+    return emptyResult('special_mode_in_diff', baseLabel, 'symlink or gitlink mode present in the supplied diff; text-only review cannot verify special entries')
+  }
+  const headerLineCount = (suppliedDiff.match(/^diff --git /gm) || []).length
   const diffHeaderPaths = new Set()
+  let parsedHeaders = 0
   for (const match of suppliedDiff.matchAll(/^diff --git a\/(.+?) b\/(.+)$/gm)) {
+    parsedHeaders += 1
     const oldNormalized = normalizePath(match[1])
     const newNormalized = normalizePath(match[2])
-    if (oldNormalized) diffHeaderPaths.add(oldNormalized)
-    if (newNormalized) diffHeaderPaths.add(newNormalized)
+    if (!oldNormalized || !newNormalized) {
+      return emptyResult('diff_header_path_unparseable', baseLabel, `a diff --git header path failed normalization (${match[1]}); the packet cannot be proven self-consistent`)
+    }
+    diffHeaderPaths.add(oldNormalized)
+    diffHeaderPaths.add(newNormalized)
+  }
+  if (parsedHeaders !== headerLineCount) {
+    return emptyResult('diff_header_unparseable', baseLabel, `${headerLineCount - parsedHeaders} diff --git header(s) did not parse (quoted or unusual paths); the packet cannot be proven self-consistent`)
   }
   const allowedSet = new Set(normalizedTracked)
   const uncovered = [...diffHeaderPaths].filter((path) => !allowedSet.has(path))
@@ -335,7 +349,7 @@ Evidence: rationale 需引用具體訊號(檔案類型、變更規模、安全�
 Stop: 資訊不足時往低分類，不要猜高；分錯往下可被 escalation 補救。
 Output: 只回 TRIAGE_SCHEMA。
 <untrusted-triage-json>${triagePayload}</untrusted-triage-json>`,
-  { label: 'triage:haiku-difficulty', phase: 'Triage', model: 'haiku', effort: 'low', schema: TRIAGE_SCHEMA })
+  { label: 'triage:haiku-difficulty', phase: 'Triage', agentType: 'code-reviewer', model: 'haiku', effort: 'low', schema: TRIAGE_SCHEMA })
 
 let overall = difficultyOverride
 let triageSource = difficultyOverride ? 'args-override' : 'haiku-triage'
