@@ -592,13 +592,15 @@ def _python_module_edges(
                     # `from . import sibling` at the scan root: the names are modules.
                     targets.extend(alias.name for alias in node.names if alias.name != "*")
             for target in targets:
-                resolved = _resolve_python_target(target, index)
+                resolved = _resolve_python_target(target, index, root_package=root.name)
                 if resolved is not None and resolved != current:
                     edges.add((current, resolved))
     return edges
 
 
-def _resolve_python_target(dotted: str, index: set[str]) -> str | None:
+def _resolve_python_target(
+    dotted: str, index: set[str], root_package: str | None = None
+) -> str | None:
     if not dotted or dotted.startswith("."):
         return None
     parts = dotted.split(".")
@@ -607,6 +609,15 @@ def _resolve_python_target(dotted: str, index: set[str]) -> str | None:
         if candidate and candidate in index:
             return candidate
         parts.pop()
+    # An absolute intra-service import may be rooted at the scan-root package
+    # name: services/kit-manager-api/app is imported in production form as
+    # `from app.x import y`, while the index holds module ids relative to the
+    # scan root (`x`). Retry with that single leading segment stripped so the
+    # edge is observed instead of silently dropped. Roots whose directory name
+    # is not a plain identifier (extension dirs with dots, hyphenated service
+    # dirs) can never match a dotted first segment, so they are unaffected.
+    if root_package and "." in dotted and dotted.split(".", 1)[0] == root_package:
+        return _resolve_python_target(dotted.split(".", 1)[1], index)
     return None
 
 
@@ -617,6 +628,13 @@ def _typescript_module_edges(
     diagnostics: ScanDiagnostics,
 ) -> set[tuple[str, str]]:
     known = {path.relative_to(root).as_posix() for path in files}
+    # Case-insensitive view for imports whose casing does not match the file on
+    # disk: runnable on the case-insensitive canonical Windows runner, invisible
+    # to an exact-match lookup. A repository checkout cannot hold two paths that
+    # differ only by case on that runner, so first-wins is deterministic.
+    known_case_insensitive: dict[str, str] = {}
+    for name in sorted(known):
+        known_case_insensitive.setdefault(name.lower(), name)
     edges: set[tuple[str, str]] = set()
     for path in files:
         relative = path.relative_to(repo_root).as_posix()
@@ -633,14 +651,20 @@ def _typescript_module_edges(
                     spec = match.group("spec")
                     if not spec.startswith("."):
                         continue
-                    resolved = _resolve_typescript_target(path.parent, spec, root, known)
+                    resolved = _resolve_typescript_target(
+                        path.parent, spec, root, known, known_case_insensitive
+                    )
                     if resolved is not None and resolved != current:
                         edges.add((current, resolved))
     return edges
 
 
 def _resolve_typescript_target(
-    from_dir: Path, spec: str, root: Path, known: set[str]
+    from_dir: Path,
+    spec: str,
+    root: Path,
+    known: set[str],
+    known_case_insensitive: Mapping[str, str] | None = None,
 ) -> str | None:
     raw = (from_dir / spec).resolve()
     try:
@@ -657,6 +681,14 @@ def _resolve_typescript_target(
     for candidate in candidates:
         if candidate in known:
             return candidate
+    if known_case_insensitive:
+        # A casing mismatch still resolves at runtime on the case-insensitive
+        # canonical runner; dropping the edge would hide a real dependency from
+        # the ratchet. The edge points at the on-disk casing.
+        for candidate in candidates:
+            resolved = known_case_insensitive.get(candidate.lower())
+            if resolved is not None:
+                return resolved
     return None
 
 
