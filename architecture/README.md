@@ -36,6 +36,8 @@ architecture/
 ├── layer-contract.schema.json
 ├── layer-baseline.json
 ├── layer-baseline.schema.json
+├── lifecycle-contract.json
+├── lifecycle-contract.schema.json
 ├── deltas/
 │   └── <change-id>.json
 └── README.md
@@ -51,6 +53,8 @@ architecture/
 - `layer-contract.schema.json`：layer contract 的結構 schema。
 - `layer-baseline.json`：**已核准的 layer baseline**（grandfathered 跨層違規＋每 service 零寬鬆的 violation budget）；在 GitHub PR 上同樣只能相對 PR base 單調縮減，不能用 candidate 自己擴張的 baseline 替新違規開脫。
 - `layer-baseline.schema.json`：layer baseline 的結構 schema。
+- `lifecycle-contract.json`：**review-session / endpoint-lease / stage-binding 三個 coordinator 端狀態機的機器定義**（Phase 4）：states、observed transitions、forbidden shortcuts、evidence gates、reentry 規則、cross-machine 規則與 readiness evidence binding。
+- `lifecycle-contract.schema.json`：lifecycle contract 的結構 schema。
 
 ## 3. 第一版硬規則
 
@@ -62,6 +66,7 @@ architecture/
 | `ARCH-CALL-001` | 新 service edge 必須同時存在於 desired contract 與 change delta | semantic validator |
 | `ARCH-GRAPH-001` | 不得新增 dependency cycle | observed-graph ratchet（已 active） |
 | `ARCH-LAYER-001` | service 內部 module 只能依賴 layer set 允許的層；新跨層違規一律擋下 | layer-boundary ratchet（已 active） |
+| `ARCH-LIFECYCLE-001` | 三個 lifecycle 機器必須 well-formed、state 集與 TS union 同步、forbidden shortcut 無直達邊、readiness binding 與 policy 一致 | lifecycle-contract gate（已 active） |
 | `ARCH-READY-001` | `ready` 必須同時有 Kit-side 與 browser-side evidence，包括 first frame 與 stage match | semantic validator + existing runtime evidence |
 | `ARCH-UI-001` | user-facing capability 必須前端可操作並有 browser E2E evidence | delegated to existing frontend operability gates |
 | `ARCH-DELTA-001` | Lane G / S 架構變更必須提交 architecture delta | delta schema + semantic validator |
@@ -117,6 +122,10 @@ python -m pytest tests/test_observed_architecture.py -q -p no:cacheprovider
 python scripts/dev/check_layered_architecture.py --repo-root . --strict
 python scripts/dev/check_layered_architecture.py --repo-root . --report-only --output artifacts/architecture/layer-report.json
 python -m pytest tests/test_layered_architecture.py -q -p no:cacheprovider
+
+# lifecycle contracts（Phase 4）
+python scripts/dev/check_lifecycle_contracts.py --repo-root . --strict
+python -m pytest tests/test_lifecycle_contracts.py -q -p no:cacheprovider
 ```
 
 `--report-only` 產出的 report 是 **可重生的本機產物**（`artifacts/architecture/` 已 gitignore），同一份 source tree 在 Windows 與 Linux 會得到 byte-identical 輸出。入庫的權威是 `observed-baseline.json`。
@@ -189,10 +198,10 @@ finding
 
 以下仍是後續 phase，不應被目前文件或 PR 誤報為已完成：
 
-- `review-session`、`endpoint-lease`、`stage-binding` executable state machines（Phase 4）。
 - architecture quality grade 與定期 architecture garbage collection（Phase 5）。
 - 跨 service 的 module-level layer 比對；目前只在 service 內部判定。
 - 動態 import 與執行期才決定的 module 名稱；靜態掃描看不到，因此不宣稱涵蓋。
+- lifecycle contract 對 transition **行為**的執行期驗證；Phase 4 的 gate 只驗 contract 一致性與 state 集同步，行為由各 service 自己的 runtime 與測試持有（見 Phase 4 界線）。
 
 ### Phase 2 的已知偏離與界線（誠實揭露）
 
@@ -215,3 +224,13 @@ finding
 - **warning 不會讓 `status` 變 failed。** 與 Phase 2 相同：`layer.baseline_stale`、`layer.rule.unused`、`layer.budget_unknown_service` 都是 warning，CLI 不加 `--strict` 時 exit 0。真正把 warning 當紅燈的是 `tests/test_layered_architecture.py::test_canonical_repository_layer_ratchet_passes` 的 `warning_count == 0` 斷言，那才是 CI 的 oracle。
 - **`bim-streaming-server` 與 `kit-manager-api` 只有 `exact` 規則。** 因為 suffix 規則已被禁止、這兩個 service 也沒有可用的 anchored prefix，所以在它們裡面**新增任何 Python module 都必須同時改 contract**，否則 `layer.module.unassigned` 會紅。這是刻意的成本。
 - **`apps/kit-manager-web` 的 undeclared-node debt 未被解決。** 本 gate 只約束它內部的分層；contract node 宣告仍是 `observed-baseline.json` 持有的既有債務。
+
+### Phase 4 的已知偏離與界線（誠實揭露）
+
+- **gate 驗的是 contract 一致性與 state 集同步，不是 runtime 行為。** `scripts/lib/lifecycle_contracts.py` 證明三件事：(1) contract 是 well-formed machine（initial 可達性、terminal 封閉、forbidden pair 無直達邊、evidence 引用可解析、同 `(from, trigger)` 唯一目標）；(2) 每個 machine 宣告的 state 集與擁有它的 TypeScript union（`SessionStatus`／`ViewerLeaseStatus`／`StageBindingStatus`）**字面完全一致**——單獨改任一側都會紅；(3) readiness binding 與 architecture contract 的 `review-session-ready` policy 的 evidence 集雙向相等。transition 在執行期是否真的照 contract 走，由 `bim-review-coordinator` 自己的測試持有（`stageBindingState` 等），本 gate 不執行 runtime、也不宣稱行為已被證明。
+- **state 集同步只支援純字面 TS union。** source 掃描認的是 `export type X = "a" | "b";` 這種單純形狀；union 一旦引用別的 type alias、換成單引號、或摻入註解，掃描**整個 fail closed**（`lifecycle.source_sync.union_unparsed`），不會部分解析。這是刻意的：寧可紅燈逼人來改 contract 或 checker，也不默默漏抓。
+- **Kit 側狀態面不在 gate 範圍。** `bim-streaming-server` 的 `loading_state`（idle|busy）與 `runtime_state`（unchanged|changed_failed|changed_unconfirmed）是 streaming 端的 observed 面，記在 contract 的 notes；kit-manager-api 的 KitInstance 生命週期同樣未被機器化。Phase 4 的三個 machine 是任務指名的 coordinator 端權威。
+- **`review-session.failed` 是 declared-only。** `SessionStatus` union 宣告了 `failed`，但目前 runtime **沒有任何寫入路徑**（`sessionStore.setStatus` 存在但零呼叫者）。contract 以 `runtime_write_path: "declared_only"` 誠實記錄，該 state 不參與任何 transition；哪天真的接上失敗路徑，屬 behavioral state-machine change，必須在 delta 申報並更新 contract 與 pin。
+- **`created → active` 不存在 runtime 轉移。** activation 是建立時決定的（有 kit binding 即 active），不是事後轉移；contract 因此把兩者都標成 initial，而不是虛構一條沒有 runtime 對應的 transition。
+- **放寬 lifecycle contract 本身，gate 不會抓。** 與 Phase 3 同型的界線：刪一條 forbidden shortcut、放寬某個 transition 的 `evidence_required`、或改 `source_binding` 指向別的檔案，對 checker 而言都是合法輸入。防線是 `tests/test_lifecycle_contracts.py` 裡 `PINNED_STATES`／`PINNED_FORBIDDEN`／`PINNED_EVIDENCE_GATED_TRANSITIONS`／`PINNED_SOURCE_BINDINGS`／`PINNED_READINESS_EVIDENCE` 這幾組**寫死的 pin**：放寬 contract 必須連同改測試，才會在 review diff 裡看得見。這一層是 **review-enforced，不是 gate-enforced**。
+- **cross-machine 規則只驗引用完整性。** 「stage-binding 需要 open session＋active primary lease」與「session close 級聯釋放 lease」在 contract 中宣告並由 checker 驗證引用的 machine／state／trigger／transition 都存在，但**跨機器的執行期時序**（例如 close 是否真的先釋放 lease 再改 status）由 coordinator 的實作與測試持有，本 gate 不模擬多機器組合狀態空間。

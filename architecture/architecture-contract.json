@@ -363,6 +363,16 @@
       }
     },
     {
+      "id": "ARCH-LIFECYCLE-001",
+      "statement": "The review-session, endpoint-lease, and stage-binding lifecycles are declared in architecture/lifecycle-contract.json as well-formed machines whose state sets stay synchronized with the owning TypeScript unions, whose forbidden shortcuts have no direct edge, and whose readiness binding matches the review-session-ready policy.",
+      "severity": "error",
+      "enforcement": {
+        "status": "active",
+        "mode": "lifecycle-contract-gate",
+        "rule": "lifecycle-machines-consistent-and-source-synced"
+      }
+    },
+    {
       "id": "ARCH-READY-001",
       "statement": "Review-session readiness requires the conjunction of Kit-side and browser-side evidence, including first frame and stage match.",
       "severity": "error",
