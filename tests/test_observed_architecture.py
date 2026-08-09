@@ -523,7 +523,7 @@ def test_absolute_root_package_imports_resolve_to_edges(tmp_path: Path) -> None:
     assert graph["edge_count"] == 2, graph
 
 
-def test_root_qualified_form_wins_over_a_same_named_nested_module(tmp_path: Path) -> None:
+def test_root_qualified_form_wins_over_a_same_named_nested_module() -> None:
     """`from app.settings import y` means the relative id `settings` at runtime;
     a nested app/app/settings.py (relative id `app.settings`) must not capture it."""
 
