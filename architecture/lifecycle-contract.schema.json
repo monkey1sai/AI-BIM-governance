@@ -36,6 +36,7 @@
     },
     "cross_machine_rules": {
       "type": "array",
+      "minItems": 1,
       "items": {
         "$ref": "#/definitions/crossMachineRule"
       }
@@ -80,6 +81,7 @@
         "transitions",
         "forbidden_shortcuts",
         "evidence",
+        "reentry_rules",
         "notes"
       ],
       "properties": {

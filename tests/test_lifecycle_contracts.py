@@ -81,7 +81,18 @@ PINNED_EVIDENCE_GATED_TRANSITIONS: dict[tuple[str, str], frozenset[str]] = {
     ("stage-binding", "confirm-load-failure"): frozenset(
         {"attempt-binding-match", "runtime-load-outcome"}
     ),
+    ("stage-binding", "authorization-unavailable-pending"): frozenset({"attempt-binding-match"}),
+    ("stage-binding", "authorization-unavailable-executing"): frozenset({"attempt-binding-match"}),
 }
+
+# The two canonical cross-machine rules, pinned so emptying or renaming them
+# requires an edit visible in the same diff.
+PINNED_CROSS_MACHINE_RULE_IDS = frozenset(
+    {
+        "stage-binding-requires-open-session-and-primary-lease",
+        "session-close-cascades-lease-release",
+    }
+)
 
 PINNED_READINESS_EVIDENCE = frozenset(
     {"kit-process-alive", "opened-stage-result", "datachannel-ready", "first-frame-at", "stage-matched"}
@@ -124,6 +135,7 @@ PINNED_SCHEMA_MACHINE_REQUIRED = frozenset(
         "transitions",
         "forbidden_shortcuts",
         "evidence",
+        "reentry_rules",
         "notes",
     }
 )
@@ -312,6 +324,68 @@ def test_lifecycle_invariant_is_pinned_in_the_architecture_validator() -> None:
 
     assert "ARCH-LIFECYCLE-001" in REQUIRED_INVARIANT_IDS
     assert "ARCH-LAYER-001" in REQUIRED_INVARIANT_IDS
+
+
+def test_canonical_cross_machine_rules_are_pinned() -> None:
+    contract = load_contract()
+    rules = {rule["id"]: rule for rule in contract["cross_machine_rules"]}
+    assert set(rules) == set(PINNED_CROSS_MACHINE_RULE_IDS)
+    gate_rule = rules["stage-binding-requires-open-session-and-primary-lease"]
+    required = {
+        requirement["machine"]: frozenset(requirement["any_of"])
+        for requirement in gate_rule["required_states"]
+    }
+    assert required == {
+        "review-session": frozenset({"created", "active"}),
+        "endpoint-lease": frozenset({"active"}),
+    }
+    cascade_rule = rules["session-close-cascades-lease-release"]
+    assert cascade_rule["cascade"] == {
+        "from_machine": "review-session",
+        "on_trigger": "close-session",
+        "to_machine": "endpoint-lease",
+        "applies_transition": "session-close-release",
+    }
+    # Emptying the rule list is now also a schema violation (minItems 1).
+    schema = load_schema()
+    assert schema["properties"]["cross_machine_rules"]["minItems"] == 1
+
+
+def test_failure_code_on_nonterminal_target_rejected(tmp_path) -> None:
+    contract = load_contract()
+    machine_by_id(contract, "stage-binding")["transitions"].append(
+        {
+            "id": "coded-into-live-state",
+            "from": "pending",
+            "to": "executing",
+            "trigger": "coded-live-trigger",
+            "evidence_required": [],
+            "failure_code": "not_a_terminal_entry",
+            "description": "failure_code on a non-terminal target as a counterexample.",
+        }
+    )
+    repo = build_tmp_repo(tmp_path, contract=contract)
+    result = check_lifecycle_contracts(repo)
+    assert result.status == "failed"
+    assert "lifecycle.transition.failure_code_nonterminal" in issue_codes(result)
+
+
+def test_unattributed_entry_into_a_coded_failure_target_rejected(tmp_path) -> None:
+    contract = load_contract()
+    machine_by_id(contract, "stage-binding")["transitions"].append(
+        {
+            "id": "uncoded-failure-entry",
+            "from": "pending",
+            "to": "failed",
+            "trigger": "uncoded-failure-trigger",
+            "evidence_required": [],
+            "description": "Entry into failed without a failure_code as a counterexample.",
+        }
+    )
+    repo = build_tmp_repo(tmp_path, contract=contract)
+    result = check_lifecycle_contracts(repo)
+    assert result.status == "failed"
+    assert "lifecycle.transition.failure_code_inconsistent" in issue_codes(result)
 
 
 def test_schema_files_keep_their_load_bearing_constraints() -> None:

@@ -68,6 +68,7 @@ class TransitionModel:
     to_state: str
     trigger: str
     evidence_required: tuple[str, ...]
+    failure_code: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -76,6 +77,7 @@ class TransitionModel:
             "to": self.to_state,
             "trigger": self.trigger,
             "evidence_required": list(self.evidence_required),
+            "failure_code": self.failure_code,
         }
 
 
@@ -420,6 +422,7 @@ def _build_machine(
                         "with no runtime write path cannot participate in transitions.",
                     )
                 )
+        raw_failure_code = transition.get("failure_code")
         transition_models.append(
             TransitionModel(
                 id=transition_id,
@@ -427,6 +430,7 @@ def _build_machine(
                 to_state=to_state,
                 trigger=trigger,
                 evidence_required=tuple(_string_items(transition.get("evidence_required"))),
+                failure_code=raw_failure_code if _non_empty_string(raw_failure_code) else None,
             )
         )
     for duplicate in _duplicates(transition_ids):
@@ -585,6 +589,34 @@ def _build_machine(
                     "and is not marked declared_only.",
                 )
             )
+
+    # Failure attribution: a failure_code names why a machine reached a failure
+    # terminal, so it may only appear on transitions into a terminal state, and
+    # every entry into the same target must agree on whether it is attributed.
+    # Without this, a new unattributed edge into `failed` (or an attributed edge
+    # into a live state) would silently blur the failure taxonomy.
+    coded_targets: dict[str, bool] = {}
+    for item in transition_models:
+        has_code = item.failure_code is not None
+        if has_code and kinds.get(item.to_state) != "terminal":
+            issues.append(
+                _issue(
+                    "lifecycle.transition.failure_code_nonterminal",
+                    f"{path}/transitions/{item.id}",
+                    f"Transition {item.id!r} carries failure_code {item.failure_code!r} but its target "
+                    f"{item.to_state!r} is not terminal; failure attribution belongs to terminal entries only.",
+                )
+            )
+        if item.to_state in coded_targets and coded_targets[item.to_state] != has_code:
+            issues.append(
+                _issue(
+                    "lifecycle.transition.failure_code_inconsistent",
+                    f"{path}/transitions/{item.id}",
+                    f"Transitions into {item.to_state!r} in machine {machine_id!r} disagree on failure "
+                    "attribution; every entry into the same target must either carry a failure_code or none.",
+                )
+            )
+        coded_targets.setdefault(item.to_state, has_code)
 
     # A non-terminal state with no outgoing transition is a dead end: it claims
     # the machine can continue but declares no way out. Without this check,

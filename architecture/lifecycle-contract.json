@@ -208,7 +208,7 @@
           ],
           "trigger": "claim-lease",
           "behavior": "idempotent-replay",
-          "description": "A claim carrying the same session, viewer, user, and client nonce as an active lease returns that lease as an idempotent replay instead of allocating a second one."
+          "description": "A claim carrying the same session, viewer, user, and client nonce as an active lease returns that lease as an idempotent replay instead of allocating a second one. When the claim names an explicit role, only an active lease holding that same role replays; a changed explicit role is not a replay and goes through normal claim arbitration (auto matches any active role)."
         }
       ],
       "notes": [
@@ -327,20 +327,24 @@
           "from": "pending",
           "to": "failed",
           "trigger": "authorization-unavailable",
-          "evidence_required": [],
+          "evidence_required": [
+            "attempt-binding-match"
+          ],
           "failure_code": "authorization_unavailable",
           "effects": [],
-          "description": "failBeforeMutation() records that the coordinator could not uphold the authorization before any runtime mutation happened."
+          "description": "failBeforeMutation() records that the coordinator could not uphold the authorization before any runtime mutation happened; the attempt must match the pending transaction's base identity fields or the call is rejected with transaction_mismatch."
         },
         {
           "id": "authorization-unavailable-executing",
           "from": "executing",
           "to": "failed",
           "trigger": "authorization-unavailable",
-          "evidence_required": [],
+          "evidence_required": [
+            "attempt-binding-match"
+          ],
           "failure_code": "authorization_unavailable",
           "effects": [],
-          "description": "failBeforeMutation() on a matching executing attempt records the same terminal failure; non-matching attempts are rejected instead of clobbering the transaction."
+          "description": "failBeforeMutation() on a matching executing attempt records the same terminal failure; non-matching attempts are rejected with transaction_mismatch instead of clobbering the transaction."
         },
         {
           "id": "supersede-pending",
