@@ -53,6 +53,14 @@ EXPECTED = {
 }
 
 
+# User-directed cost variants: the user's explicit model directive (haiku/sonnet
+# only) is the routing authority for these files, so they are deliberately NOT
+# wired into the apex-first ROUTING codegen. They stay in the inventory so a new
+# agent workflow cannot appear unlisted, and a dedicated test pins the directive
+# so the file cannot silently regain apex-tier models or fake the governed shape.
+USER_DIRECTED_COST_VARIANTS = {"tri-adversarial-verify-haiku-sonnet.js"}
+
+
 def test_every_active_agent_workflow_is_in_routing_inventory():
     retired = {"saas-blueprint-tournament.js"}
     workflows = list(WF.glob("*.js"))
@@ -61,7 +69,25 @@ def test_every_active_agent_workflow_is_in_routing_inventory():
         p.name for p in workflows
         if p.name not in retired and re.search(r"\b(?:agent|governedAgent)\s*\(", p.read_text(encoding="utf-8"))
     }
-    assert active == set(EXPECTED), f"active workflow routing inventory drift: active={sorted(active)} expected={sorted(EXPECTED)}"
+    expected = set(EXPECTED) | USER_DIRECTED_COST_VARIANTS
+    assert active == expected, f"active workflow routing inventory drift: active={sorted(active)} expected={sorted(expected)}"
+
+
+def test_user_directed_cost_variants_declare_their_directive():
+    assert not USER_DIRECTED_COST_VARIANTS & set(EXPECTED), "a workflow cannot be both governed and user-directed"
+    for name in USER_DIRECTED_COST_VARIANTS:
+        content = _read(name)
+        # The exemption exists only for an explicit user model directive; the file
+        # must carry it where the next reader (and this pin) can see it.
+        assert "user-directed" in content, f"{name}: missing the user-directed directive marker"
+        # It is not part of the governed codegen family and must not pretend to be.
+        assert "governedAgent" not in content, f"{name}: user-directed variant must not fake the governed shape"
+        assert "// <routing:gen>" not in content, f"{name}: user-directed variant must not carry codegen markers"
+        # The directive is haiku/sonnet only; apex-tier model literals would mean
+        # the file outgrew its exemption and belongs in EXPECTED instead.
+        assert not re.search(r"model:\s*['\"](?:opus|fable)['\"]", content), (
+            f"{name}: apex-tier model literal found; the cost-variant exemption no longer applies"
+        )
 
 
 def test_every_execution_path_is_apex_first_and_concurrency_bounded():
