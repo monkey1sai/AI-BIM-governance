@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -886,5 +887,110 @@ def test_check_script_passes_on_canonical_repository() -> None:
     assert completed.returncode == 0, completed.stdout + completed.stderr
     payload = json.loads(completed.stdout)
     assert payload["status"] == "passed"
+    assert payload["cli_status"] == "passed"
+    assert payload["strict"] is True
     assert payload["compared"] is True
+    assert payload["summary"]["machines"] == len(PINNED_MACHINE_IDS)
+
+
+def test_check_script_strict_fails_on_warning_only_repository(tmp_path) -> None:
+    """--strict must exit 1 AND render a failed verdict on a warning-only run.
+
+    The library keeps its error-only `status`; the CLI's rendered verdict and
+    `cli_status` must agree with the process outcome, otherwise a strict CI log
+    reads PASSED while the step fails.
+    """
+
+    contract = load_contract()
+    machine_by_id(contract, "stage-binding")["evidence"].append(
+        {
+            "id": "dangling-evidence",
+            "description": "Declared but consumed by nothing.",
+            "source": "nowhere",
+        }
+    )
+    repo = build_tmp_repo(tmp_path, contract=contract)
+    # The scratch repo carries data only; the checker code under test comes from
+    # this checkout via PYTHONPATH.
+    env = {**os.environ, "PYTHONPATH": str(ROOT)}
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "dev" / "check_lifecycle_contracts.py"),
+            "--repo-root",
+            str(repo),
+            "--format",
+            "json",
+            "--strict",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert completed.returncode == 1, completed.stdout + completed.stderr
+    payload = json.loads(completed.stdout)
+    assert payload["status"] == "passed"
+    assert payload["cli_status"] == "failed"
+    assert payload["strict"] is True
+    assert any(issue["code"] == "lifecycle.evidence.unused" for issue in payload["issues"])
+
+    human = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "dev" / "check_lifecycle_contracts.py"),
+            "--repo-root",
+            str(repo),
+            "--strict",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert human.returncode == 1
+    assert human.stdout.startswith("Lifecycle contracts: FAILED"), human.stdout
+    # Without --strict the same run passes, and the rendered verdict says so.
+    lenient = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "dev" / "check_lifecycle_contracts.py"),
+            "--repo-root",
+            str(repo),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert lenient.returncode == 0
+    assert lenient.stdout.startswith("Lifecycle contracts: PASSED"), lenient.stdout
+
+
+def test_check_script_output_writes_relative_path_under_repo_root(tmp_path) -> None:
+    repo = build_tmp_repo(tmp_path)
+    env = {**os.environ, "PYTHONPATH": str(ROOT)}
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "dev" / "check_lifecycle_contracts.py"),
+            "--repo-root",
+            str(repo),
+            "--format",
+            "json",
+            "--strict",
+            "--output",
+            "artifacts/lifecycle/report.json",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert completed.stdout == ""
+    report_path = repo / "artifacts" / "lifecycle" / "report.json"
+    assert report_path.is_file()
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["cli_status"] == "passed"
     assert payload["summary"]["machines"] == len(PINNED_MACHINE_IDS)

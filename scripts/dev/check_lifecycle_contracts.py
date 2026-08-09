@@ -56,11 +56,20 @@ def main() -> int:
         return 2
 
     result = check_lifecycle_contracts(repo_root)
+    # The rendered verdict must agree with the process outcome: under --strict a
+    # warning-only run exits 1, so it must not be labelled PASSED. The library's
+    # error-only `status` is preserved in the JSON payload; `cli_status` carries
+    # the strict-aware verdict this process actually returns.
+    failed = result.error_count > 0 or (args.strict and result.warning_count > 0)
+    cli_status = "failed" if failed else result.status
     if args.format == "json":
-        rendered = json.dumps(result.to_dict(), indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+        payload = result.to_dict()
+        payload["strict"] = args.strict
+        payload["cli_status"] = cli_status
+        rendered = json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
     else:
         lines = [
-            f"Lifecycle contracts: {result.status.upper()}",
+            f"Lifecycle contracts: {cli_status.upper()}",
             f"Repository: {result.repo_root}",
             f"Machines: {result.machine_count}; states: {result.state_count}; "
             f"transitions: {result.transition_count}",
@@ -73,7 +82,6 @@ def main() -> int:
         rendered = "\n".join(lines) + "\n"
 
     _emit(rendered, args.output, repo_root)
-    failed = result.error_count > 0 or (args.strict and result.warning_count > 0)
     return 1 if failed else 0
 
 
