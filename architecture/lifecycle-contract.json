@@ -390,7 +390,7 @@
           ],
           "trigger": "runtime-load-confirmation",
           "behavior": "idempotent-replay",
-          "description": "A completion identical to the recorded attempt and outcome replays the stored result; any mismatch is rejected with completion_mismatch instead of rewriting history."
+          "description": "A completion identical to the recorded attempt and outcome replays the stored result, but only on terminal records that carry a completion outcome: active, runtime_stage_load_failed, and authorization_unavailable. Failed records without a completion outcome (pending_expired, preauthorization_cancelled, executing_expired) and superseded records are not replayable; the runtime rejects them with transaction_not_executing or transaction_not_abortable. Any attempt or outcome mismatch is rejected with completion_mismatch instead of rewriting history."
         }
       ],
       "notes": [
@@ -451,27 +451,32 @@
       {
         "evidence_id": "kit-process-alive",
         "provider": "kit-manager-api",
+        "policy_source": "kit-manager-api",
         "surface": "Kit process supervision reports the managed Kit process alive."
       },
       {
         "evidence_id": "opened-stage-result",
         "provider": "bim-streaming-server",
+        "policy_source": "bim-streaming-server",
         "surface": "Kit-side stage load confirmation for the opened stage."
       },
       {
         "evidence_id": "datachannel-ready",
         "provider": "endpoint-lease",
-        "surface": "Lease heartbeat field datachannel_ready."
+        "policy_source": "web-viewer-sample",
+        "surface": "Lease heartbeat field datachannel_ready, produced by the browser viewer."
       },
       {
         "evidence_id": "first-frame-at",
         "provider": "endpoint-lease",
-        "surface": "Lease heartbeat field first_frame_at (set-once)."
+        "policy_source": "web-viewer-sample",
+        "surface": "Lease heartbeat field first_frame_at (set-once), produced by the browser viewer."
       },
       {
         "evidence_id": "stage-matched",
         "provider": "endpoint-lease",
-        "surface": "Lease heartbeat field stage_match."
+        "policy_source": "web-viewer-sample",
+        "surface": "Lease heartbeat field stage_match, produced by the browser viewer."
       }
     ]
   }

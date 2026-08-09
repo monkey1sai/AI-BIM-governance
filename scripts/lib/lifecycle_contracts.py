@@ -586,6 +586,24 @@ def _build_machine(
                 )
             )
 
+    # A non-terminal state with no outgoing transition is a dead end: it claims
+    # the machine can continue but declares no way out. Without this check,
+    # demoting a terminal state to intermediate would silently weaken the
+    # closed-state semantics while every other assertion stays green.
+    outgoing_sources = {item.from_state for item in transition_models}
+    for state_id in sorted(state_set):
+        if kinds.get(state_id) == "terminal" or state_id in declared_only:
+            continue
+        if state_id not in outgoing_sources:
+            issues.append(
+                _issue(
+                    "lifecycle.state.dead_end",
+                    f"{path}/states/{state_id}",
+                    f"State {state_id!r} in machine {machine_id!r} is neither terminal nor declared_only "
+                    "but has no outgoing transition; declare it terminal or wire its exit.",
+                )
+            )
+
     return model, issues
 
 
@@ -603,11 +621,18 @@ def _extract_union_literals(text: str, type_name: str) -> tuple[list[str] | None
     alias, a comment, or single-quoted literals all leave residue.
     """
 
-    pattern = re.compile(r"export\s+type\s+" + re.escape(type_name) + r"\s*=\s*(?P<body>[^;]*);")
-    match = pattern.search(text)
-    if match is None:
+    # Line-anchored so a commented-out stale declaration (`// export type ...`)
+    # is never read as source; more than one anchored declaration (for example a
+    # block-commented copy at column zero) is ambiguous and fails closed.
+    pattern = re.compile(
+        r"(?m)^[ \t]*export\s+type\s+" + re.escape(type_name) + r"\s*=\s*(?P<body>[^;]*);"
+    )
+    matches = list(pattern.finditer(text))
+    if not matches:
         return None, "type_not_found"
-    body = match.group("body")
+    if len(matches) > 1:
+        return None, "ambiguous_declaration"
+    body = matches[0].group("body")
     literals = re.findall(r'"([^"\\]*)"', body)
     residue = re.sub(r'"[^"\\]*"', "", body).replace("|", " ").strip()
     if residue:
@@ -901,11 +926,12 @@ def _check_readiness_binding(
             )
         )
         return issues
-    required = {
-        rid
+    policy_sources = {
+        rid: item.get("source")
         for item in _list_of_mappings(policy.get("required_evidence"))
         if _non_empty_string(rid := item.get("id"))
     }
+    required = set(policy_sources)
     bound = set(bound_ids)
     for missing in sorted(required - bound):
         issues.append(
@@ -923,6 +949,40 @@ def _check_readiness_binding(
                 f"Evidence {extra!r} is bound but the readiness policy does not require it.",
             )
         )
+
+    # ID-set equality alone would let a binding keep the evidence id but move it
+    # to another provider, hiding readiness-source drift. Each binding must
+    # restate the policy's declared source, and a service provider must BE that
+    # source; machine providers hold evidence produced elsewhere (for example
+    # the lease carries browser-produced fields), so only their declared
+    # policy_source is pinned against the policy.
+    for index, item in enumerate(bindings):
+        evidence_id = item.get("evidence_id")
+        if evidence_id not in policy_sources:
+            continue
+        item_path = f"$.readiness_binding.evidence_bindings[{index}]"
+        declared_source = item.get("policy_source")
+        expected_source = policy_sources[evidence_id]
+        if not _non_empty_string(declared_source) or declared_source != expected_source:
+            issues.append(
+                _issue(
+                    "lifecycle.readiness.source_mismatch",
+                    item_path,
+                    f"Evidence {evidence_id!r} declares policy_source {declared_source!r} but the "
+                    f"readiness policy declares source {expected_source!r}.",
+                )
+            )
+        provider = item.get("provider")
+        if _non_empty_string(provider) and provider in known_services and provider != expected_source:
+            issues.append(
+                _issue(
+                    "lifecycle.readiness.provider_source_mismatch",
+                    item_path,
+                    f"Evidence {evidence_id!r} is bound to service provider {provider!r} but the "
+                    f"readiness policy declares source {expected_source!r}; a service provider must "
+                    "be the policy's declared source.",
+                )
+            )
     return issues
 
 

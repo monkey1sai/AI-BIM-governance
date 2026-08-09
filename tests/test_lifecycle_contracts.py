@@ -87,6 +87,18 @@ PINNED_READINESS_EVIDENCE = frozenset(
     {"kit-process-alive", "opened-stage-result", "datachannel-ready", "first-frame-at", "stage-matched"}
 )
 
+# (evidence_id, provider, policy_source): the full readiness wiring is pinned so
+# neither the provider nor the declared policy source can drift silently.
+PINNED_READINESS_BINDINGS = frozenset(
+    {
+        ("kit-process-alive", "kit-manager-api", "kit-manager-api"),
+        ("opened-stage-result", "bim-streaming-server", "bim-streaming-server"),
+        ("datachannel-ready", "endpoint-lease", "web-viewer-sample"),
+        ("first-frame-at", "endpoint-lease", "web-viewer-sample"),
+        ("stage-matched", "endpoint-lease", "web-viewer-sample"),
+    }
+)
+
 PINNED_DECLARED_ONLY: frozenset[tuple[str, str]] = frozenset({("review-session", "failed")})
 
 # Load-bearing constraints of the schema file. Replacing the schema with a stub
@@ -278,6 +290,11 @@ def test_canonical_readiness_binding_matches_architecture_policy_and_pins() -> N
     assert binding["policy_id"] == "review-session-ready"
     bound = {item["evidence_id"] for item in binding["evidence_bindings"]}
     assert bound == set(PINNED_READINESS_EVIDENCE)
+    wiring = {
+        (item["evidence_id"], item["provider"], item["policy_source"])
+        for item in binding["evidence_bindings"]
+    }
+    assert wiring == set(PINNED_READINESS_BINDINGS)
     policy = next(
         policy
         for policy in architecture["readiness_policies"]
@@ -285,6 +302,16 @@ def test_canonical_readiness_binding_matches_architecture_policy_and_pins() -> N
     )
     required = {item["id"] for item in policy["required_evidence"]}
     assert bound == required
+    policy_sources = {item["id"]: item["source"] for item in policy["required_evidence"]}
+    for item in binding["evidence_bindings"]:
+        assert item["policy_source"] == policy_sources[item["evidence_id"]], item["evidence_id"]
+
+
+def test_lifecycle_invariant_is_pinned_in_the_architecture_validator() -> None:
+    from scripts.lib.architecture_contract import REQUIRED_INVARIANT_IDS
+
+    assert "ARCH-LIFECYCLE-001" in REQUIRED_INVARIANT_IDS
+    assert "ARCH-LAYER-001" in REQUIRED_INVARIANT_IDS
 
 
 def test_schema_files_keep_their_load_bearing_constraints() -> None:
@@ -689,6 +716,7 @@ def test_readiness_extra_evidence_rejected(tmp_path) -> None:
         {
             "evidence_id": "extra-evidence",
             "provider": "kit-manager-api",
+            "policy_source": "kit-manager-api",
             "surface": "Invented evidence as a counterexample.",
         }
     )
@@ -696,6 +724,53 @@ def test_readiness_extra_evidence_rejected(tmp_path) -> None:
     result = check_lifecycle_contracts(repo)
     assert result.status == "failed"
     assert "lifecycle.readiness.evidence_undeclared" in issue_codes(result)
+
+
+def test_readiness_service_provider_drift_rejected(tmp_path) -> None:
+    """Moving an evidence binding to another known service must fail.
+
+    ID-set equality alone accepted this (the codex ship-gate counterexample):
+    kit-process-alive re-bound to web-viewer-sample kept the same ids.
+    """
+
+    contract = load_contract()
+    binding = next(
+        item
+        for item in contract["readiness_binding"]["evidence_bindings"]
+        if item["evidence_id"] == "kit-process-alive"
+    )
+    binding["provider"] = "web-viewer-sample"
+    repo = build_tmp_repo(tmp_path, contract=contract)
+    result = check_lifecycle_contracts(repo)
+    assert result.status == "failed"
+    assert "lifecycle.readiness.provider_source_mismatch" in issue_codes(result)
+
+
+def test_readiness_policy_source_mismatch_rejected(tmp_path) -> None:
+    contract = load_contract()
+    binding = next(
+        item
+        for item in contract["readiness_binding"]["evidence_bindings"]
+        if item["evidence_id"] == "first-frame-at"
+    )
+    binding["policy_source"] = "bim-review-coordinator"
+    repo = build_tmp_repo(tmp_path, contract=contract)
+    result = check_lifecycle_contracts(repo)
+    assert result.status == "failed"
+    assert "lifecycle.readiness.source_mismatch" in issue_codes(result)
+
+
+def test_demoting_a_terminal_state_to_intermediate_is_a_dead_end(tmp_path) -> None:
+    """The codex ship-gate counterexample: released -> intermediate passed."""
+
+    contract = load_contract()
+    machine = machine_by_id(contract, "endpoint-lease")
+    released = next(state for state in machine["states"] if state["id"] == "released")
+    released["kind"] = "intermediate"
+    repo = build_tmp_repo(tmp_path, contract=contract)
+    result = check_lifecycle_contracts(repo)
+    assert result.status == "failed"
+    assert "lifecycle.state.dead_end" in issue_codes(result)
 
 
 def test_readiness_unknown_policy_rejected(tmp_path) -> None:
@@ -810,6 +885,34 @@ def test_source_sync_missing_file_rejected(tmp_path) -> None:
     assert "lifecycle.source_sync.file_unreadable" in issue_codes(result)
 
 
+def test_source_sync_ignores_commented_out_stale_union(tmp_path) -> None:
+    """A dead comment carrying the old literals must not mask real drift.
+
+    The codex ship-gate counterexample: a preceding `// export type ...` with
+    the stale union let a real `"paused"` addition go unnoticed.
+    """
+
+    source_file, type_name = PINNED_SOURCE_BINDINGS["review-session"]
+    text = (ROOT / source_file).read_text(encoding="utf-8")
+    stale = f'// export type {type_name} = "created" | "active" | "closing" | "closed" | "failed";\n'
+    mutated = stale + text.replace('"failed";', '"failed" | "paused";', 1)
+    assert mutated != stale + text
+    repo = build_tmp_repo(tmp_path, source_overrides={source_file: mutated})
+    result = check_lifecycle_contracts(repo)
+    assert result.status == "failed"
+    assert "lifecycle.source_sync.state_missing_in_contract" in issue_codes(result)
+
+
+def test_source_sync_duplicate_declarations_fail_closed(tmp_path) -> None:
+    source_file, type_name = PINNED_SOURCE_BINDINGS["endpoint-lease"]
+    text = (ROOT / source_file).read_text(encoding="utf-8")
+    mutated = text + f'\nexport type {type_name} = "active" | "released" | "expired";\n'
+    repo = build_tmp_repo(tmp_path, source_overrides={source_file: mutated})
+    result = check_lifecycle_contracts(repo)
+    assert result.status == "failed"
+    assert "lifecycle.source_sync.union_unparsed" in issue_codes(result)
+
+
 def test_source_binding_path_escape_rejected(tmp_path) -> None:
     contract = load_contract()
     machine_by_id(contract, "review-session")["source_binding"]["file"] = (
@@ -846,6 +949,21 @@ def test_extract_union_literals_behaviors() -> None:
 
     hollow, reason = _extract_union_literals('export type S = "" | "a";', "S")
     assert hollow is None and reason == "empty_literal"
+
+    # A commented-out stale declaration is not source; the anchored match reads
+    # only the real one.
+    commented, reason = _extract_union_literals(
+        '// export type S = "a";\nexport type S = "a" | "b";', "S"
+    )
+    assert reason is None and commented == ["a", "b"]
+
+    only_comment, reason = _extract_union_literals('// export type S = "a";', "S")
+    assert only_comment is None and reason == "type_not_found"
+
+    twice, reason = _extract_union_literals(
+        'export type S = "a";\nexport type S = "a" | "b";', "S"
+    )
+    assert twice is None and reason == "ambiguous_declaration"
 
 
 # --------------------------------------------------------------------------- #

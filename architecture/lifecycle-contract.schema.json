@@ -416,6 +416,7 @@
       "required": [
         "evidence_id",
         "provider",
+        "policy_source",
         "surface"
       ],
       "properties": {
@@ -423,6 +424,9 @@
           "$ref": "#/definitions/identifier"
         },
         "provider": {
+          "$ref": "#/definitions/identifier"
+        },
+        "policy_source": {
           "$ref": "#/definitions/identifier"
         },
         "surface": {
