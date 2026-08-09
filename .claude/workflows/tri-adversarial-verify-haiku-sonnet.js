@@ -206,13 +206,35 @@ if (suppliedDiff !== null) {
   if (!names || !names.length) {
     return emptyResult('missing_files_changed', baseLabel, 'coordinator-supplied mode requires a non-empty files_changed array')
   }
+  // 上限:惡意或壞掉的 packet 可以配一個小 diff 塞進海量路徑,把成本上限
+  // 與 context 撐爆;超量 fail-closed 而不是照單全收。
+  if (names.length > 500) {
+    return emptyResult('files_changed_over_limit', baseLabel, `files_changed has ${names.length} entries (limit 500); split the change before review`)
+  }
   const normalizedTracked = names.map(normalizePath)
   if (normalizedTracked.some((path) => !path)) {
     return emptyResult('unsafe_or_malformed_supplied_path', baseLabel, 'symlink, special, malformed, or absolute path rejected before agents')
   }
+  // 供給的 files_changed 必須涵蓋 diff header 實際觸及的每個路徑;否則 finder
+  // 的 allowlist 會靜默排除 diff 的一部分,回傳 held: null 的空結果假裝全審。
+  const diffHeaderPaths = new Set()
+  for (const match of suppliedDiff.matchAll(/^diff --git a\/(.+?) b\/(.+)$/gm)) {
+    const oldNormalized = normalizePath(match[1])
+    const newNormalized = normalizePath(match[2])
+    if (oldNormalized) diffHeaderPaths.add(oldNormalized)
+    if (newNormalized) diffHeaderPaths.add(newNormalized)
+  }
+  const allowedSet = new Set(normalizedTracked)
+  const uncovered = [...diffHeaderPaths].filter((path) => !allowedSet.has(path))
+  if (uncovered.length) {
+    return emptyResult('files_changed_missing_diff_paths', baseLabel, `diff touches ${uncovered.length} path(s) absent from files_changed (e.g. ${uncovered[0]}); the supplied packet is not self-consistent`)
+  }
   const untracked = Array.isArray(ARGS.untracked_paths)
     ? ARGS.untracked_paths.filter((path) => typeof path === 'string' && path)
     : []
+  if (untracked.length > 500) {
+    return emptyResult('untracked_paths_over_limit', baseLabel, `untracked_paths has ${untracked.length} entries (limit 500)`)
+  }
   diffData = {
     base_ref: baseLabel,
     files_changed: [...new Set([...names, ...untracked])],
@@ -377,7 +399,9 @@ for (let i = 0; i < LENSES.length; i += 1) {
       runNotes.push(`finder ${slot.lens} out-of-lens finding ${finding.id} dropped`)
       continue
     }
-    layer1Findings.push({ ...finding, finder_model: slot.tier })
+    // id 只在單一 finder 回應內保證唯一;兩個 lens 都回 "F1" 時,killed/復活
+    // 對帳會誤傷不相干的 finding。前綴 lens 讓 id 全域唯一。
+    layer1Findings.push({ ...finding, id: `${slot.lens}:${finding.id}`, finder_model: slot.tier })
   }
 }
 if (findersFailed === LENSES.length) {
@@ -476,8 +500,11 @@ if (!finalFindings) {
 }
 
 const provenanceByKey = new Map(verified.map((finding) => [dedupKey(finding), finding]))
+const provenanceById = new Map(verified.map((finding) => [finding.id, finding]))
 const findings = finalFindings.map((finding) => {
-  const origin = provenanceByKey.get(dedupKey(finding))
+  // 先以 dedupKey(檔案+行+標題)對,apex 改寫標題/行但保留 id 時退回以 id 對,
+  // 避免真實走過 L1/L2 的 finding 被誤標成 apex-new。
+  const origin = provenanceByKey.get(dedupKey(finding)) || provenanceById.get(finding.id)
   return {
     ...finding,
     provenance: origin
