@@ -29,10 +29,31 @@
       "contract": "layer boundary ratchet",
       "change_type": "additive",
       "description": "Adds a per-service module-to-layer contract and an approved layer baseline. New cross-layer violations are rejected, grandfathered ones carry attributed debt, and per-service budgets carry no slack. The named third-party tools (dependency-cruiser, import-linter) were evaluated and not adopted; the deviation is recorded in architecture/layer-contract.json under tooling_deviation. No product API or event contract changes."
+    },
+    {
+      "contract": "lifecycle contract gate",
+      "change_type": "additive",
+      "description": "Adds architecture/lifecycle-contract.json plus a standard-library checker that validates machine well-formedness, keeps declared state sets synchronized with the owning TypeScript unions, and cross-checks the readiness binding against the review-session-ready policy. Declaration of existing runtime behavior only; no product API, event contract, or runtime behavior changes."
     }
   ],
   "data_ownership_changes": [],
-  "state_machine_changes": [],
+  "state_machine_changes": [
+    {
+      "machine": "review-session",
+      "change_type": "additive",
+      "description": "First machine-readable declaration of the existing SessionStatus lifecycle (created/active/closing/closed, failed recorded as declared-only) with close-path forbidden shortcuts and idempotent close reentry. No runtime behavior change."
+    },
+    {
+      "machine": "endpoint-lease",
+      "change_type": "additive",
+      "description": "First machine-readable declaration of the existing ViewerLeaseStatus lifecycle (active/released/expired) with resurrection forbidden shortcuts, nonce-replay reentry, and the lease-held readiness evidence fields. No runtime behavior change."
+    },
+    {
+      "machine": "stage-binding",
+      "change_type": "additive",
+      "description": "First machine-readable declaration of the existing StageBindingStatus transaction lifecycle (pending/executing/active/failed/superseded) with attributed failure codes, evidence-gated consume/confirm transitions, and the pending-to-active forbidden shortcut. No runtime behavior change."
+    }
+  ],
   "exceptions": [],
   "approval": {
     "required": false,

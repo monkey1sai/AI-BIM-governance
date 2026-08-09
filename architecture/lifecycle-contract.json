@@ -1,0 +1,494 @@
+{
+  "$schema": "./lifecycle-contract.schema.json",
+  "schema_version": "ai-bim-lifecycle-contract/v1",
+  "purpose": "Executable lifecycle contracts for the three coordinator-owned runtime state machines: review-session, endpoint-lease, and stage-binding. Each machine records the states, the observed runtime transitions, the shortcuts the runtime forbids, and the evidence a transition demands. scripts/lib/lifecycle_contracts.py validates the contract's internal consistency and keeps the declared state sets synchronized with the TypeScript source unions that own them.",
+  "enforcement_note": "This contract describes the current coordinator-side runtime truth, not target intent. The gate proves three things only: the contract is a well-formed machine (reachable states, closed terminals, forbidden pairs have no direct edge, evidence references resolve), the declared state sets are byte-equal to the owning TypeScript union literals, and the readiness binding matches the architecture contract's review-session-ready policy. Transition behavior itself is enforced by each service's own runtime and tests; this gate does not execute the runtime. Kit-side stage loading states (loading_state idle|busy, runtime_state unchanged|changed_failed|changed_unconfirmed in bim-streaming-server stage_loading.py) are an observed surface and are out of this gate's scope.",
+  "machines": [
+    {
+      "id": "review-session",
+      "title": "Review session lifecycle",
+      "owner_service": "bim-review-coordinator",
+      "source_binding": {
+        "file": "bim-review-coordinator/src/types.ts",
+        "type_name": "SessionStatus"
+      },
+      "states": [
+        {
+          "id": "created",
+          "kind": "initial",
+          "description": "Session record exists without kit instance bindings. Entered at creation time when no kit capacity was bound."
+        },
+        {
+          "id": "active",
+          "kind": "initial",
+          "description": "Session with kit instance bindings. Entered at creation time when bindings were allocated; there is no observed runtime transition from created to active, activation is decided when the record is created (sessionStore.create)."
+        },
+        {
+          "id": "closing",
+          "kind": "intermediate",
+          "description": "Close has been accepted: viewer leases released and kit bindings marked draining. The close handler moves the session synchronously through closing to closed within one request; closing is not a resting state that outlives the handler."
+        },
+        {
+          "id": "closed",
+          "kind": "terminal",
+          "description": "Kit bindings released, participants cleared, sessionClosed and kitInstanceReleased appended to the audit log."
+        },
+        {
+          "id": "failed",
+          "kind": "terminal",
+          "runtime_write_path": "declared_only",
+          "description": "Declared by the SessionStatus union but no runtime code path writes it: sessionStore.setStatus exists with zero callers. Recorded honestly as declared-only; wiring a real failure path is a future behavioral change that must be declared in a delta."
+        }
+      ],
+      "transitions": [
+        {
+          "id": "close-from-created",
+          "from": "created",
+          "to": "closing",
+          "trigger": "close-session",
+          "evidence_required": [],
+          "effects": [
+            "release-viewer-leases",
+            "drain-kit-bindings"
+          ],
+          "description": "POST close on a created session releases every active viewer lease and marks kit bindings draining before the status moves."
+        },
+        {
+          "id": "close-from-active",
+          "from": "active",
+          "to": "closing",
+          "trigger": "close-session",
+          "evidence_required": [],
+          "effects": [
+            "release-viewer-leases",
+            "drain-kit-bindings"
+          ],
+          "description": "POST close on an active session releases every active viewer lease and marks kit bindings draining before the status moves."
+        },
+        {
+          "id": "finalize-close",
+          "from": "closing",
+          "to": "closed",
+          "trigger": "close-session-finalize",
+          "evidence_required": [],
+          "effects": [
+            "release-kit-bindings",
+            "clear-participants"
+          ],
+          "description": "The same close handler synchronously releases kit bindings, clears participants, and appends sessionClosed plus kitInstanceReleased."
+        }
+      ],
+      "forbidden_shortcuts": [
+        {
+          "id": "no-direct-close-from-created",
+          "from": "created",
+          "to": "closed",
+          "reason": "A session must pass through closing so viewer leases are released and kit bindings are drained before release; skipping closing would leak leases and bindings.",
+          "enforced_by": "The close handler is the only writer of closed and always writes closing first within the same request."
+        },
+        {
+          "id": "no-direct-close-from-active",
+          "from": "active",
+          "to": "closed",
+          "reason": "Same lease-release and binding-drain ordering as from created; closed may only follow closing.",
+          "enforced_by": "The close handler is the only writer of closed and always writes closing first within the same request."
+        }
+      ],
+      "evidence": [],
+      "reentry_rules": [
+        {
+          "id": "close-idempotent",
+          "states": [
+            "closing",
+            "closed"
+          ],
+          "trigger": "close-session",
+          "behavior": "no-op-return-current-state",
+          "description": "Repeated close on a closing or closed session returns the current record without appending duplicate audit events (append-only ledger cannot be cleaned afterwards)."
+        }
+      ],
+      "notes": [
+        "Session mutability gate: stage-binding and other runtime mutations require status in {created, active} (isSessionMutable); the runtime rejects others with session_lifecycle_blocked.",
+        "There is no observed created-to-active transition: kit binding allocation happens at creation (store.create decides created vs active). A later activation path would be a behavioral state-machine change requiring a delta.",
+        "failed is declared-only: the SessionStatus union declares it, but no caller writes it today."
+      ]
+    },
+    {
+      "id": "endpoint-lease",
+      "title": "Viewer endpoint lease lifecycle",
+      "owner_service": "bim-review-coordinator",
+      "source_binding": {
+        "file": "bim-review-coordinator/src/services/viewerLeaseStore.ts",
+        "type_name": "ViewerLeaseStatus"
+      },
+      "states": [
+        {
+          "id": "active",
+          "kind": "initial",
+          "description": "Claimed lease bound to a kit instance endpoint. Claim enforces at most one active primary lease per session and replays idempotently on the same client nonce."
+        },
+        {
+          "id": "released",
+          "kind": "terminal",
+          "description": "Explicitly released by the caller or cascaded from session close (releaseSession). Runtime authorization rejects it with lease_released."
+        },
+        {
+          "id": "expired",
+          "kind": "terminal",
+          "description": "TTL elapsed without heartbeat; the sweep marks the lease expired lazily on the next store access. Runtime authorization rejects it with lease_expired."
+        }
+      ],
+      "transitions": [
+        {
+          "id": "release-lease",
+          "from": "active",
+          "to": "released",
+          "trigger": "release-lease",
+          "evidence_required": [],
+          "effects": [],
+          "description": "Caller-initiated release; expires_at is clamped to the release instant."
+        },
+        {
+          "id": "session-close-release",
+          "from": "active",
+          "to": "released",
+          "trigger": "session-close-cascade",
+          "evidence_required": [],
+          "effects": [],
+          "description": "Session close releases every active lease of that session before the session status moves to closing."
+        },
+        {
+          "id": "ttl-expire",
+          "from": "active",
+          "to": "expired",
+          "trigger": "ttl-sweep",
+          "evidence_required": [],
+          "effects": [],
+          "description": "Lazy sweep on store access marks leases whose expires_at has passed; heartbeats extend expires_at and are not a state transition."
+        }
+      ],
+      "forbidden_shortcuts": [
+        {
+          "id": "no-released-resurrection",
+          "from": "released",
+          "to": "active",
+          "reason": "A released lease must never regain streaming authority; a new claim creates a new lease with a new token instead.",
+          "enforced_by": "No store API writes active onto an existing lease; authorization rejects released leases with lease_released."
+        },
+        {
+          "id": "no-expired-resurrection",
+          "from": "expired",
+          "to": "active",
+          "reason": "An expired lease must never regain streaming authority; a new claim creates a new lease with a new token instead.",
+          "enforced_by": "No store API writes active onto an existing lease; authorization rejects expired leases with lease_expired."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "datachannel-ready",
+          "description": "Browser reported the Kit DataChannel is open, recorded on the lease by heartbeat.",
+          "source": "viewerLeaseStore heartbeat field datachannel_ready"
+        },
+        {
+          "id": "first-frame-at",
+          "description": "First decoded video frame timestamp, set once by heartbeat and never overwritten.",
+          "source": "viewerLeaseStore heartbeat field first_frame_at (monotonic set-once)"
+        },
+        {
+          "id": "stage-matched",
+          "description": "Loaded stage URL equals the expected stage URL for the session's composition.",
+          "source": "viewerLeaseStore heartbeat field stage_match (loaded vs expected URL equivalence)"
+        }
+      ],
+      "reentry_rules": [
+        {
+          "id": "claim-nonce-replay",
+          "states": [
+            "active"
+          ],
+          "trigger": "claim-lease",
+          "behavior": "idempotent-replay",
+          "description": "A claim carrying the same session, viewer, user, and client nonce as an active lease returns that lease as an idempotent replay instead of allocating a second one. When the claim names an explicit role, only an active lease holding that same role replays; a changed explicit role is not a replay and goes through normal claim arbitration (auto matches any active role)."
+        }
+      ],
+      "notes": [
+        "The lease carries readiness evidence fields (datachannel_ready, first_frame_at, stage_match); they gate review-session readiness, not the lease's own transitions.",
+        "Runtime mutation authority requires an active primary lease and rejects otherwise with reasons lease_invalid (lease_not_found, lease_expired, lease_released, lease_inactive), spectator_readonly (spectator_lease), or unauthorized_source_client (source_client_mismatch, cross_session_lease).",
+        "Heartbeat extends expires_at and updates evidence fields; it is deliberately not modeled as a transition because the status does not change."
+      ]
+    },
+    {
+      "id": "stage-binding",
+      "title": "Stage binding preauthorization transaction lifecycle",
+      "owner_service": "bim-review-coordinator",
+      "source_binding": {
+        "file": "bim-review-coordinator/src/services/runtimeMutationAuthority/stageBindingState.ts",
+        "type_name": "StageBindingStatus"
+      },
+      "states": [
+        {
+          "id": "pending",
+          "kind": "initial",
+          "description": "Browser preauthorized a stage composition. Creation is refused while another transaction is executing (transaction_executing), when the client intent was already cancelled (request_cancelled), or when capacity is exceeded."
+        },
+        {
+          "id": "executing",
+          "kind": "intermediate",
+          "description": "Kit consumed the authorization: the attempt matched the pending transaction on every identity field, so the runtime stage mutation is in flight."
+        },
+        {
+          "id": "active",
+          "kind": "terminal",
+          "description": "Kit confirmed the runtime load succeeded. The session's active binding snapshot is replaced and the previous one is retained as last-good. Terminal per transaction: a later revision is a new transaction, not a transition of this one."
+        },
+        {
+          "id": "failed",
+          "kind": "terminal",
+          "description": "Terminal failure with an attributed failure_code: pending_expired, preauthorization_cancelled, authorization_unavailable, runtime_stage_load_failed, or executing_expired."
+        },
+        {
+          "id": "superseded",
+          "kind": "terminal",
+          "description": "A newer pending preauthorization for the same session replaced this pending transaction (failure code superseded_by_new_pending)."
+        }
+      ],
+      "transitions": [
+        {
+          "id": "kit-consume",
+          "from": "pending",
+          "to": "executing",
+          "trigger": "kit-consume-authorization",
+          "evidence_required": [
+            "attempt-binding-match"
+          ],
+          "effects": [],
+          "description": "consume() moves pending to executing only when the attempt matches the transaction's authorization id, session, revision, lease, source client, and full composition."
+        },
+        {
+          "id": "confirm-load-success",
+          "from": "executing",
+          "to": "active",
+          "trigger": "runtime-load-success-confirmation",
+          "evidence_required": [
+            "attempt-binding-match",
+            "runtime-load-outcome"
+          ],
+          "effects": [
+            "replace-active-binding-snapshot",
+            "retain-last-good-binding"
+          ],
+          "description": "complete(outcome=success) requires the executing attempt to match on every field including requestId and eventType; repeated identical confirmations replay idempotently, mismatches are rejected with completion_mismatch."
+        },
+        {
+          "id": "confirm-load-failure",
+          "from": "executing",
+          "to": "failed",
+          "trigger": "runtime-load-failure-confirmation",
+          "evidence_required": [
+            "attempt-binding-match",
+            "runtime-load-outcome"
+          ],
+          "failure_code": "runtime_stage_load_failed",
+          "effects": [],
+          "description": "complete(outcome=failed) records the runtime load failure against the matching executing attempt."
+        },
+        {
+          "id": "pending-expire",
+          "from": "pending",
+          "to": "failed",
+          "trigger": "pending-ttl-sweep",
+          "evidence_required": [],
+          "failure_code": "pending_expired",
+          "effects": [],
+          "description": "Sweep fails a pending transaction whose pending TTL elapsed before Kit consumed it."
+        },
+        {
+          "id": "executing-expire",
+          "from": "executing",
+          "to": "failed",
+          "trigger": "executing-ttl-sweep",
+          "evidence_required": [],
+          "failure_code": "executing_expired",
+          "effects": [],
+          "description": "Sweep fails an executing transaction whose executing TTL elapsed without a completion confirmation."
+        },
+        {
+          "id": "cancel-pending",
+          "from": "pending",
+          "to": "failed",
+          "trigger": "browser-cancel-intent",
+          "evidence_required": [
+            "cancellation-intent-match"
+          ],
+          "failure_code": "preauthorization_cancelled",
+          "effects": [],
+          "description": "The browser's deadline cancellation fences the pending transaction by client intent; only a cancellation matching the transaction's preauthorization intent identity cancels it, and the tombstone also fences a late duplicate POST that has not created a transaction yet."
+        },
+        {
+          "id": "authorization-unavailable-pending",
+          "from": "pending",
+          "to": "failed",
+          "trigger": "authorization-unavailable",
+          "evidence_required": [
+            "attempt-binding-match"
+          ],
+          "failure_code": "authorization_unavailable",
+          "effects": [],
+          "description": "failBeforeMutation() records that the coordinator could not uphold the authorization before any runtime mutation happened; the attempt must match the pending transaction's base identity fields or the call is rejected with transaction_mismatch."
+        },
+        {
+          "id": "authorization-unavailable-executing",
+          "from": "executing",
+          "to": "failed",
+          "trigger": "authorization-unavailable",
+          "evidence_required": [
+            "attempt-binding-match"
+          ],
+          "failure_code": "authorization_unavailable",
+          "effects": [],
+          "description": "failBeforeMutation() on a matching executing attempt records the same terminal failure; non-matching attempts are rejected with transaction_mismatch instead of clobbering the transaction."
+        },
+        {
+          "id": "supersede-pending",
+          "from": "pending",
+          "to": "superseded",
+          "trigger": "new-pending-preauthorization",
+          "evidence_required": [],
+          "failure_code": "superseded_by_new_pending",
+          "effects": [],
+          "description": "A newer preauthorization for the same session replaces the existing pending transaction; executing transactions are never superseded."
+        }
+      ],
+      "forbidden_shortcuts": [
+        {
+          "id": "no-pending-direct-active",
+          "from": "pending",
+          "to": "active",
+          "reason": "A binding may only become active after Kit actually consumed the authorization (executing) and confirmed the runtime load outcome; activating a never-executed binding would assert a stage state Kit never reported.",
+          "enforced_by": "complete() rejects non-executing transactions with transaction_not_executing; consume() is the only writer of executing."
+        },
+        {
+          "id": "no-executing-supersede",
+          "from": "executing",
+          "to": "superseded",
+          "reason": "Once Kit consumed the authorization the browser cannot roll it back by starting a new preauthorization; createPending refuses with transaction_executing instead.",
+          "enforced_by": "createPending() returns transaction_executing while a non-terminal executing transaction exists; only pending transactions are superseded."
+        }
+      ],
+      "evidence": [
+        {
+          "id": "attempt-binding-match",
+          "description": "The attempt matches the transaction on authorization id, session, binding revision, lease, source client, and the full stage composition (and on requestId plus eventType at completion).",
+          "source": "stageBindingState matchesBase/matchesAttempt field-by-field comparison"
+        },
+        {
+          "id": "cancellation-intent-match",
+          "description": "The cancellation names the same session, principal, lease, source client, and client request id the pending transaction was created with; non-matching intents leave the transaction untouched (transaction_not_abortable for non-pending matches).",
+          "source": "stageBindingState cancelPendingByIntent preauthorization intent key comparison"
+        },
+        {
+          "id": "runtime-load-outcome",
+          "description": "Kit's reported outcome for the runtime stage load; success is required for active, failure records runtime_stage_load_failed.",
+          "source": "complete() outcome parameter reported by the Kit-side stage load confirmation"
+        }
+      ],
+      "reentry_rules": [
+        {
+          "id": "complete-idempotent-replay",
+          "states": [
+            "active",
+            "failed"
+          ],
+          "trigger": "runtime-load-confirmation",
+          "behavior": "idempotent-replay",
+          "description": "A completion identical to the recorded attempt and outcome replays the stored result, but only on terminal records that carry a completion outcome: active, runtime_stage_load_failed, and authorization_unavailable. Failed records without a completion outcome (pending_expired, preauthorization_cancelled, executing_expired) and superseded records are not replayable; the runtime rejects them with transaction_not_executing or transaction_not_abortable. Any attempt or outcome mismatch is rejected with completion_mismatch instead of rewriting history."
+        }
+      ],
+      "notes": [
+        "Preauthorization requires an open review session and the caller's active primary viewer lease; the runtime rejects otherwise with session_lifecycle_blocked and primary_lease_required (see cross-machine rules).",
+        "The per-session active/last-good binding summary is a projection maintained at confirmation time, not a state of the transaction machine.",
+        "Kit-side loading_state (idle|busy) and runtime_state (unchanged|changed_failed|changed_unconfirmed) are the streaming server's observed surface and are out of this gate's scope.",
+        "Completed transactions are retained for a bounded window and then evicted; eviction is storage hygiene, not a transition."
+      ]
+    }
+  ],
+  "cross_machine_rules": [
+    {
+      "id": "stage-binding-requires-open-session-and-primary-lease",
+      "statement": "Creating a stage-binding preauthorization requires the review session to be mutable (created or active) and the caller to hold the session's active primary endpoint lease; the runtime rejects violations with session_lifecycle_blocked and primary_lease_required.",
+      "machines": [
+        "review-session",
+        "endpoint-lease",
+        "stage-binding"
+      ],
+      "required_states": [
+        {
+          "machine": "review-session",
+          "any_of": [
+            "created",
+            "active"
+          ]
+        },
+        {
+          "machine": "endpoint-lease",
+          "any_of": [
+            "active"
+          ]
+        }
+      ],
+      "runtime_rejections": [
+        "session_lifecycle_blocked",
+        "primary_lease_required"
+      ]
+    },
+    {
+      "id": "session-close-cascades-lease-release",
+      "statement": "Entering the review session close path releases every active viewer lease of that session before the session status leaves the open set; the lease machine records this as the session-close-cascade transition.",
+      "machines": [
+        "review-session",
+        "endpoint-lease"
+      ],
+      "cascade": {
+        "from_machine": "review-session",
+        "on_trigger": "close-session",
+        "to_machine": "endpoint-lease",
+        "applies_transition": "session-close-release"
+      }
+    }
+  ],
+  "readiness_binding": {
+    "policy_id": "review-session-ready",
+    "evidence_bindings": [
+      {
+        "evidence_id": "kit-process-alive",
+        "provider": "kit-manager-api",
+        "policy_source": "kit-manager-api",
+        "surface": "Kit process supervision reports the managed Kit process alive."
+      },
+      {
+        "evidence_id": "opened-stage-result",
+        "provider": "bim-streaming-server",
+        "policy_source": "bim-streaming-server",
+        "surface": "Kit-side stage load confirmation for the opened stage."
+      },
+      {
+        "evidence_id": "datachannel-ready",
+        "provider": "endpoint-lease",
+        "policy_source": "web-viewer-sample",
+        "surface": "Lease heartbeat field datachannel_ready, produced by the browser viewer."
+      },
+      {
+        "evidence_id": "first-frame-at",
+        "provider": "endpoint-lease",
+        "policy_source": "web-viewer-sample",
+        "surface": "Lease heartbeat field first_frame_at (set-once), produced by the browser viewer."
+      },
+      {
+        "evidence_id": "stage-matched",
+        "provider": "endpoint-lease",
+        "policy_source": "web-viewer-sample",
+        "surface": "Lease heartbeat field stage_match, produced by the browser viewer."
+      }
+    ]
+  }
+}

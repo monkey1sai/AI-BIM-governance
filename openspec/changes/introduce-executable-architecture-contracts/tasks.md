@@ -303,10 +303,75 @@ module；掃不到 module 的 service；observed layer 集合與宣告不符的 
 
 ## Phase 4 — Executable lifecycle contracts
 
-- [ ] 4.1 Define `review-session` state machine.
-- [ ] 4.2 Define `endpoint-lease` state machine.
-- [ ] 4.3 Define `stage-binding` state machine.
-- [ ] 4.4 Add model-based tests for forbidden shortcuts and evidence-gated transitions.
+- [x] 4.1 Define `review-session` state machine.
+- [x] 4.2 Define `endpoint-lease` state machine.
+- [x] 4.3 Define `stage-binding` state machine.
+- [x] 4.4 Add model-based tests for forbidden shortcuts and evidence-gated transitions.
+
+### Phase 4 交付紀錄 — 2026-08-05
+
+**落地內容。** `architecture/lifecycle-contract.json`（＋ Draft-07 schema）以機器可讀形式宣告三個
+coordinator 端狀態機的 current runtime truth：states（含 kind 與 declared-only 標記）、observed
+transitions（含 trigger、evidence_required、failure_code、effects）、forbidden shortcuts（附
+enforced_by）、evidence 宣告、reentry 規則、兩條 cross-machine 規則（stage-binding 需 open
+session＋active primary lease；session close 級聯釋放 lease）與 readiness binding（五個
+evidence 綁到 provider）。`scripts/lib/lifecycle_contracts.py`（純標準函式庫，重用 Phase 1/3 的
+`_load_document`／`validate_schema_instance`）驗證：machine well-formedness（initial 可達性
+BFS、terminal 封閉、forbidden pair 無直達邊、同 `(from, trigger)` 唯一目標、evidence／
+cross-machine／readiness 引用完整性、duplicate 偵測、declared-only state 不得接線）、**TS union
+state 集同步**（`SessionStatus`／`ViewerLeaseStatus`／`StageBindingStatus` 的字面 union 與
+contract 雙向相等；非純字面 union 整個 fail closed）、readiness binding 與
+`review-session-ready` policy 的 evidence 集雙向相等。`ARCH-LIFECYCLE-001` 因 gate 實際跑在
+canonical root-contract dispatch 而標 `active`；delta 以 additive `state_machine_changes`
+申報三個 machine（首次機器化宣告，無 runtime 行為變更）。
+
+**Runtime 真相的兩個誠實記錄。** `review-session.failed` 由 union 宣告但零 runtime 寫入路徑
+（`sessionStore.setStatus` 存在、零呼叫者），contract 記為 `runtime_write_path: "declared_only"`
+且不參與 transition；`created → active` 不存在 runtime 轉移（activation 於建立時由 kit binding
+有無決定），contract 把兩者都標 initial 而非虛構轉移。接上任一路徑都屬 behavioral
+state-machine change，須申報 delta。
+
+**4.4 model-based tests。** `tests/test_lifecycle_contracts.py`（52 項）從 canonical contract
+載入 transition system 後**枚舉全部 simple paths** 斷言性質，而非手寫個案：每條 forbidden pair
+無單步邊；`pending → active` 的每條路徑必經 `executing` 且 evidence 聯集恰為
+`{attempt-binding-match, runtime-load-outcome}`；每條 forbidden-pair 繞行路徑必經 intermediate
+state；terminal 全封閉；全 state 可達或 declared-only；`(from, trigger)` 決定性；lease terminal
+不可達 `active`（復活禁止）。Pin 防線與 Phase 3 同型：`PINNED_STATES`／`PINNED_FORBIDDEN`／
+`PINNED_EVIDENCE_GATED_TRANSITIONS`／`PINNED_SOURCE_BINDINGS`／`PINNED_READINESS_EVIDENCE`／
+schema load-bearing keys 全部寫死在測試檔，放寬 contract 必須連同改測試。負例覆蓋：缺檔／
+非物件／vacuous schema（`{}`、`{"type":"object"}` 等四型）／schema_version 錯／terminal 出邊／
+forbidden 直達邊矛盾／未宣告 evidence／不可達 state／declared-only 接線或標 initial／
+duplicate（machine、state、transition、self-loop）／nondeterministic／unknown owner service／
+cross-machine 與 cascade 的 unknown machine･state･trigger･transition／readiness 缺綁･多綁･
+unknown policy･unknown provider･machine evidence 不符／source 刪 state･加 state･type 改名･
+union 引用他型･檔案缺失／`..` path escape／unused evidence 降 warning 不 fail。另有獨立於
+checker 的 `test_runtime_source_unions_match_pinned_states` 直接讀三個 TS 檔比對 pin。
+
+**驗證（Windows governed worktree，Python 3.12.7／pytest 8.2.2／jsonschema 4.25.1）：**
+
+- `python -m pytest tests -q -p no:cacheprovider` — **445 passed, 9 skipped**（本 change 之前
+  乾淨樹為 393 passed，新增 52）。
+- `python scripts/dev/check_lifecycle_contracts.py --repo-root . --strict` — PASSED；3 machines、
+  13 states、15 transitions、0 error、0 warning，exit 0。
+- `python scripts/dev/check_layered_architecture.py --repo-root . --strict` — PASSED（Phase 3
+  ratchet 未受影響）。
+- `python scripts/dev/export_observed_architecture.py --repo-root . --strict` — PASSED（Phase 2
+  ratchet 未受影響）。
+- `python scripts/dev/validate_architecture_contract.py --repo-root . --strict` — PASSED
+  （`ARCH-LIFECYCLE-001` 與 delta 的 `state_machine_changes` 均通過 Phase 1 semantic validator）。
+- `node scripts/tests/test-verification-plan.mjs` — 23/23；`root-contracts` path class 與 target
+  已含 `scripts/lib/lifecycle_contracts.py` 與 `scripts/dev/check_lifecycle_contracts.py`。
+- `node scripts/tests/test-openspec-machine-truth.mjs` — 24/24。
+- `npx openspec validate introduce-executable-architecture-contracts --strict` — passed。
+- `npx openspec validate --all --strict` — **71 passed, 0 failed**。
+- `git diff --check` — clean。
+
+**未宣稱解決的已知界線**（完整清單見 `architecture/README.md` §「Phase 4 的已知偏離與界線」）：
+gate 驗 contract 一致性與 state 集同步，**不驗 transition 的執行期行為**（由各 service 測試持
+有）；source 掃描只支援純字面 TS union（其他形狀 fail closed）；Kit 側 `loading_state`／
+`runtime_state` 與 kit-manager-api 的 KitInstance 生命週期不在本 gate；放寬 contract 屬
+review-enforced（pin 逼 diff 現形），非 gate-enforced；cross-machine 規則只驗引用完整性，
+不模擬多機器組合時序。
 
 ## Phase 5 — Continuous architecture learning
 
