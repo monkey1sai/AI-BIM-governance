@@ -523,6 +523,22 @@ def test_absolute_root_package_imports_resolve_to_edges(tmp_path: Path) -> None:
     assert graph["edge_count"] == 2, graph
 
 
+def test_root_qualified_form_wins_over_a_same_named_nested_module(tmp_path: Path) -> None:
+    """`from app.settings import y` means the relative id `settings` at runtime;
+    a nested app/app/settings.py (relative id `app.settings`) must not capture it."""
+
+    from scripts.lib.observed_architecture import _resolve_python_target
+
+    index = {"main", "settings", "app.settings"}
+    assert _resolve_python_target("app.settings", index, root_package="app") == "settings"
+    # Without the root-package context the unstripped relative id still resolves.
+    assert _resolve_python_target("app.settings", index) == "app.settings"
+    # Stripping only applies to the exact root name, and a stripped miss stays
+    # unresolved (external) rather than falling back to the wrong module.
+    assert _resolve_python_target("app.missing", index, root_package="app") is None
+    assert _resolve_python_target("application.settings", index, root_package="app") is None
+
+
 def test_case_mismatched_relative_import_still_yields_the_edge(tmp_path: Path) -> None:
     """Regression: a casing mismatch resolved at runtime on the canonical
     case-insensitive runner but was silently dropped by the exact-match scan."""

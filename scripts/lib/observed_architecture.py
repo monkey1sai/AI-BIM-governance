@@ -603,21 +603,23 @@ def _resolve_python_target(
 ) -> str | None:
     if not dotted or dotted.startswith("."):
         return None
+    # A dotted path whose first segment is the scan-root package name is the
+    # production root-qualified form: with scan root services/kit-manager-api/app,
+    # `from app.settings import y` means the relative id `settings` at runtime.
+    # That interpretation must win BEFORE the unstripped search, otherwise a
+    # nested module that happens to carry the relative id `app.settings`
+    # (app/app/settings.py, runtime name app.app.settings) would capture the
+    # import and record the wrong dependency. Roots whose directory name is not
+    # a plain identifier (extension dirs with dots, hyphenated service dirs) can
+    # never match a dotted first segment, so they are unaffected.
+    if root_package and "." in dotted and dotted.split(".", 1)[0] == root_package:
+        return _resolve_python_target(dotted.split(".", 1)[1], index)
     parts = dotted.split(".")
     while parts:
         candidate = ".".join(parts)
         if candidate and candidate in index:
             return candidate
         parts.pop()
-    # An absolute intra-service import may be rooted at the scan-root package
-    # name: services/kit-manager-api/app is imported in production form as
-    # `from app.x import y`, while the index holds module ids relative to the
-    # scan root (`x`). Retry with that single leading segment stripped so the
-    # edge is observed instead of silently dropped. Roots whose directory name
-    # is not a plain identifier (extension dirs with dots, hyphenated service
-    # dirs) can never match a dotted first segment, so they are unaffected.
-    if root_package and "." in dotted and dotted.split(".", 1)[0] == root_package:
-        return _resolve_python_target(dotted.split(".", 1)[1], index)
     return None
 
 
