@@ -323,7 +323,7 @@ if (!overall) {
   } else {
     overall = 'high'
     triageSource = 'fail-safe-default'
-    runNotes.push('overall fail-safe default high (min sonnet, security opus)')
+    runNotes.push('overall fail-safe default high (min sonnet; security floor sonnet in this user-directed variant)')
   }
 }
 const resolvedTiers = {}
@@ -365,6 +365,11 @@ for (let i = 0; i < LENSES.length; i += 1) {
     findersFailed += 1
     runNotes.push(`finder ${slot.lens} returned unsafe/invalid findings; contribution dropped`)
     continue
+  }
+  // 每個 finder 被要求申報 coverage 限制(截斷、無法定位);把它保留進 run notes,
+  // 否則 L1 的誠實申報在合成層被靜默丟棄。
+  if (typeof slot.review.coverage === 'string' && slot.review.coverage.trim()) {
+    runNotes.push(`finder ${slot.lens} coverage: ${slot.review.coverage.trim()}`)
   }
   for (const finding of validated) {
     if (finding.dimension !== slot.lens) {
@@ -480,6 +485,11 @@ const findings = finalFindings.map((finding) => {
   }
 })
 
+// Apex 可以在提出新證據時復活被 refute 的 finding;復活者不得同時留在 killed
+// 清單,否則同一 finding 既是 final 又是 killed,輸出自相矛盾。
+const finalKeys = new Set(findings.map((finding) => dedupKey(finding)))
+const killedFinal = refuted.filter((finding) => !finalKeys.has(dedupKey(finding)))
+
 return {
   held: null,
   base_ref: diffData.base_ref,
@@ -489,7 +499,7 @@ return {
   layer2: layer2Stats,
   final_count: findings.length,
   findings,
-  killed: refuted.map((finding) => ({ id: finding.id, file: finding.file, title: finding.title, reason: finding.layer2.reason })),
+  killed: killedFinal.map((finding) => ({ id: finding.id, file: finding.file, title: finding.title, reason: finding.layer2.reason })),
   summary: finalReview.summary,
   notes: [...runNotes, finalReview.coverage].filter(Boolean).join('; '),
 }
