@@ -317,10 +317,12 @@
           "from": "pending",
           "to": "failed",
           "trigger": "browser-cancel-intent",
-          "evidence_required": [],
+          "evidence_required": [
+            "cancellation-intent-match"
+          ],
           "failure_code": "preauthorization_cancelled",
           "effects": [],
-          "description": "The browser's deadline cancellation fences the pending transaction by client intent; the tombstone also fences a late duplicate POST that has not created a transaction yet."
+          "description": "The browser's deadline cancellation fences the pending transaction by client intent; only a cancellation matching the transaction's preauthorization intent identity cancels it, and the tombstone also fences a late duplicate POST that has not created a transaction yet."
         },
         {
           "id": "authorization-unavailable-pending",
@@ -378,6 +380,11 @@
           "id": "attempt-binding-match",
           "description": "The attempt matches the transaction on authorization id, session, binding revision, lease, source client, and the full stage composition (and on requestId plus eventType at completion).",
           "source": "stageBindingState matchesBase/matchesAttempt field-by-field comparison"
+        },
+        {
+          "id": "cancellation-intent-match",
+          "description": "The cancellation names the same session, principal, lease, source client, and client request id the pending transaction was created with; non-matching intents leave the transaction untouched (transaction_not_abortable for non-pending matches).",
+          "source": "stageBindingState cancelPendingByIntent preauthorization intent key comparison"
         },
         {
           "id": "runtime-load-outcome",

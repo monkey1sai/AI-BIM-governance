@@ -644,6 +644,55 @@ def _build_machine(
 # --------------------------------------------------------------------------- #
 
 
+def _strip_ts_comments(text: str) -> tuple[str | None, str | None]:
+    """Blank out ``//`` and ``/* */`` comments, string-aware.
+
+    Quoted content (including template literals) is left untouched so a
+    ``"http://..."`` literal never opens a comment. An unterminated block
+    comment fails closed: silently keeping the tail would let commented-out
+    code be read as source.
+    """
+
+    out: list[str] = []
+    index = 0
+    length = len(text)
+    quote: str | None = None
+    while index < length:
+        char = text[index]
+        if quote is not None:
+            out.append(char)
+            if char == "\\" and index + 1 < length:
+                out.append(text[index + 1])
+                index += 2
+                continue
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in ('"', "'", "`"):
+            quote = char
+            out.append(char)
+            index += 1
+            continue
+        if char == "/" and index + 1 < length and text[index + 1] == "/":
+            newline = text.find("\n", index)
+            if newline == -1:
+                break
+            index = newline
+            continue
+        if char == "/" and index + 1 < length and text[index + 1] == "*":
+            closing = text.find("*/", index + 2)
+            if closing == -1:
+                return None, "unterminated_block_comment"
+            # Preserve the newlines so line anchoring stays meaningful.
+            out.append(text.count("\n", index, closing) * "\n" or " ")
+            index = closing + 2
+            continue
+        out.append(char)
+        index += 1
+    return "".join(out), None
+
+
 def _extract_union_literals(text: str, type_name: str) -> tuple[list[str] | None, str | None]:
     """Extract the string literals of ``export type <name> = "a" | "b";``.
 
@@ -653,13 +702,17 @@ def _extract_union_literals(text: str, type_name: str) -> tuple[list[str] | None
     alias, a comment, or single-quoted literals all leave residue.
     """
 
-    # Line-anchored so a commented-out stale declaration (`// export type ...`)
-    # is never read as source; more than one anchored declaration (for example a
-    # block-commented copy at column zero) is ambiguous and fails closed.
+    # Comments are stripped first (string-aware), so neither a `// export type`
+    # line nor a block-commented copy is ever read as source; the anchored match
+    # then requires the declaration to be real code, and more than one anchored
+    # declaration is ambiguous and fails closed.
+    stripped, comment_error = _strip_ts_comments(text)
+    if stripped is None:
+        return None, comment_error
     pattern = re.compile(
         r"(?m)^[ \t]*export\s+type\s+" + re.escape(type_name) + r"\s*=\s*(?P<body>[^;]*);"
     )
-    matches = list(pattern.finditer(text))
+    matches = list(pattern.finditer(stripped))
     if not matches:
         return None, "type_not_found"
     if len(matches) > 1:
@@ -913,6 +966,8 @@ def _check_readiness_binding(
             continue
         if provider in machines:
             evidence_id = item.get("evidence_id")
+            if not _non_empty_string(evidence_id):
+                continue
             if evidence_id not in set(machines[provider].evidence_ids):
                 issues.append(
                     _issue(
@@ -943,9 +998,25 @@ def _check_readiness_binding(
         )
         return issues
 
+    policy_rows = _list_of_mappings(architecture.get("readiness_policies"))
+    policy_ids = [pid for row in policy_rows if _non_empty_string(pid := row.get("id"))]
+    duplicate_policies = set(_duplicates(policy_ids))
+    for duplicate in sorted(duplicate_policies):
+        issues.append(
+            _issue(
+                "lifecycle.readiness.duplicate_policy",
+                "$.readiness_binding.policy_id",
+                f"Readiness policy {duplicate!r} is declared more than once in the architecture "
+                "contract; the binding cannot be verified against an ambiguous policy.",
+            )
+        )
+    if isinstance(policy_id, str) and policy_id in duplicate_policies:
+        # Selecting either copy would silently endorse one of two conflicting
+        # readiness semantics; fail closed instead.
+        return issues
     policies = {
         pid: policy
-        for policy in _list_of_mappings(architecture.get("readiness_policies"))
+        for policy in policy_rows
         if _non_empty_string(pid := policy.get("id"))
     }
     policy = policies.get(policy_id) if isinstance(policy_id, str) else None
@@ -990,7 +1061,10 @@ def _check_readiness_binding(
     # policy_source is pinned against the policy.
     for index, item in enumerate(bindings):
         evidence_id = item.get("evidence_id")
-        if evidence_id not in policy_sources:
+        # A non-string id (e.g. a list) is a schema violation already reported;
+        # guard here so the dictionary lookup cannot raise on an unhashable
+        # value and abort the structured result.
+        if not _non_empty_string(evidence_id) or evidence_id not in policy_sources:
             continue
         item_path = f"$.readiness_binding.evidence_bindings[{index}]"
         declared_source = item.get("policy_source")

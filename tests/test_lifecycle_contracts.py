@@ -83,6 +83,7 @@ PINNED_EVIDENCE_GATED_TRANSITIONS: dict[tuple[str, str], frozenset[str]] = {
     ),
     ("stage-binding", "authorization-unavailable-pending"): frozenset({"attempt-binding-match"}),
     ("stage-binding", "authorization-unavailable-executing"): frozenset({"attempt-binding-match"}),
+    ("stage-binding", "cancel-pending"): frozenset({"cancellation-intent-match"}),
 }
 
 # The two canonical cross-machine rules, pinned so emptying or renaming them
@@ -985,6 +986,64 @@ def test_source_sync_duplicate_declarations_fail_closed(tmp_path) -> None:
     result = check_lifecycle_contracts(repo)
     assert result.status == "failed"
     assert "lifecycle.source_sync.union_unparsed" in issue_codes(result)
+
+
+def test_source_sync_block_commented_union_is_not_source(tmp_path) -> None:
+    """The codex counterexample: live declaration replaced by a re-export while
+    the old union survives inside a block comment must not report passed."""
+
+    source_file, type_name = PINNED_SOURCE_BINDINGS["review-session"]
+    text = (ROOT / source_file).read_text(encoding="utf-8")
+    live = 'export type SessionStatus = "created" | "active" | "closing" | "closed" | "failed";'
+    assert live in text
+    mutated = text.replace(
+        live,
+        f'/*\n{live}\n*/\nexport type {type_name}X = "unrelated";',
+        1,
+    )
+    repo = build_tmp_repo(tmp_path, source_overrides={source_file: mutated})
+    result = check_lifecycle_contracts(repo)
+    assert result.status == "failed"
+    assert "lifecycle.source_sync.union_unparsed" in issue_codes(result)
+
+
+def test_strip_ts_comments_behaviors() -> None:
+    from scripts.lib.lifecycle_contracts import _strip_ts_comments
+
+    stripped, error = _strip_ts_comments('const url = "http://x/*y*/z"; // tail\ncode();')
+    assert error is None
+    assert stripped is not None
+    assert '"http://x/*y*/z"' in stripped
+    assert "tail" not in stripped
+    assert "code();" in stripped
+
+    blocked, error = _strip_ts_comments("before /* comment */ after")
+    assert error is None and blocked is not None
+    assert "comment" not in blocked and "before" in blocked and "after" in blocked
+
+    unterminated, error = _strip_ts_comments("code /* never closed")
+    assert unterminated is None and error == "unterminated_block_comment"
+
+
+def test_duplicate_readiness_policy_rejected(tmp_path) -> None:
+    architecture = load_architecture()
+    architecture["readiness_policies"].append(
+        deepcopy(architecture["readiness_policies"][0])
+    )
+    architecture["readiness_policies"][-1]["operator"] = "any"
+    repo = build_tmp_repo(tmp_path, architecture=architecture)
+    result = check_lifecycle_contracts(repo)
+    assert result.status == "failed"
+    assert "lifecycle.readiness.duplicate_policy" in issue_codes(result)
+
+
+def test_unhashable_evidence_id_fails_closed_without_crashing(tmp_path) -> None:
+    contract = load_contract()
+    contract["readiness_binding"]["evidence_bindings"][0]["evidence_id"] = []
+    repo = build_tmp_repo(tmp_path, contract=contract)
+    result = check_lifecycle_contracts(repo)
+    assert result.status == "failed"
+    assert result.compared is True
 
 
 def test_source_binding_path_escape_rejected(tmp_path) -> None:
