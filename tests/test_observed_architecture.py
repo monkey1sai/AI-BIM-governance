@@ -486,6 +486,89 @@ def test_canonical_kit_manager_api_module_graph_is_not_empty() -> None:
     assert graph["edge_count"] > 0, graph
 
 
+def test_absolute_root_package_imports_resolve_to_edges(tmp_path: Path) -> None:
+    """Regression: `from app.x import y` produced no edge and no diagnostic.
+
+    The production import form is rooted at the scan-root package name; the
+    index holds module ids relative to that root. An unrelated prefix that
+    merely resembles the root name must not be stripped.
+    """
+
+    config = deepcopy(load_config())
+    config["service_roots"] = [
+        {
+            "id": "kit-manager-api",
+            "contract_service": "kit-manager-api",
+            "language": "python",
+            "roots": ["app"],
+            "inbound_edge_ports": [8010],
+        }
+    ]
+    config["compose_files"] = []
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "main.py").write_text(
+        "from app.settings import Settings\n"
+        "import app.models\n"
+        "from application.settings import Other\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "app" / "settings.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "app" / "models.py").write_text("VALUE = 2\n", encoding="utf-8")
+
+    report = build_observed_report(tmp_path, config)
+    graph = report.module_graphs[0]
+
+    # settings + models via the root-package form; the `application.*` import
+    # resolves to nothing and stays external.
+    assert graph["edge_count"] == 2, graph
+
+
+def test_root_qualified_form_wins_over_a_same_named_nested_module() -> None:
+    """`from app.settings import y` means the relative id `settings` at runtime;
+    a nested app/app/settings.py (relative id `app.settings`) must not capture it."""
+
+    from scripts.lib.observed_architecture import _resolve_python_target
+
+    index = {"main", "settings", "app.settings"}
+    assert _resolve_python_target("app.settings", index, root_package="app") == "settings"
+    # Without the root-package context the unstripped relative id still resolves.
+    assert _resolve_python_target("app.settings", index) == "app.settings"
+    # Stripping only applies to the exact root name, and a stripped miss stays
+    # unresolved (external) rather than falling back to the wrong module.
+    assert _resolve_python_target("app.missing", index, root_package="app") is None
+    assert _resolve_python_target("application.settings", index, root_package="app") is None
+
+
+def test_case_mismatched_relative_import_still_yields_the_edge(tmp_path: Path) -> None:
+    """Regression: a casing mismatch resolved at runtime on the canonical
+    case-insensitive runner but was silently dropped by the exact-match scan."""
+
+    config = deepcopy(load_config())
+    config["service_roots"] = [
+        {
+            "id": "web-viewer-sample",
+            "contract_service": "web-viewer-sample",
+            "language": "typescript",
+            "roots": ["src"],
+            "browser_client": True,
+            "inbound_edge_ports": [],
+        }
+    ]
+    config["compose_files"] = []
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "App.ts").write_text(
+        'import { conf } from "./StreamConfig.js";\n', encoding="utf-8"
+    )
+    (tmp_path / "src" / "streamConfig.ts").write_text(
+        "export const conf = 1;\n", encoding="utf-8"
+    )
+
+    report = build_observed_report(tmp_path, config)
+    graph = report.module_graphs[0]
+
+    assert graph["edge_count"] == 1, graph
+
+
 @pytest.mark.parametrize(
     "schema_file",
     ["observed-baseline.schema.json", "observed-graph.config.schema.json"],
