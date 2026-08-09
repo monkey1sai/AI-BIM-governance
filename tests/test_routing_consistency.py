@@ -88,6 +88,15 @@ def test_user_directed_cost_variants_declare_their_directive():
         assert not re.search(r"model:\s*['\"](?:opus|fable)['\"]", content), (
             f"{name}: apex-tier model literal found; the cost-variant exemption no longer applies"
         )
+        # Model routing flows through variables, so the literal check above alone
+        # could be bypassed by editing the tier tables. Pin the dynamic sources
+        # too: the tier list, the effort table, the refuter, and the apex line.
+        assert "const TIERS = ['haiku', 'sonnet']" in content, f"{name}: tier table drifted"
+        assert "const TIER_EFFORT = { haiku: 'low', sonnet: 'high' }" in content, (
+            f"{name}: tier effort table drifted"
+        )
+        assert "const refuterModel = 'sonnet'" in content, f"{name}: refuter model drifted"
+        assert "model: 'sonnet', effort: 'max'" in content, f"{name}: apex routing drifted"
 
 
 def test_every_execution_path_is_apex_first_and_concurrency_bounded():

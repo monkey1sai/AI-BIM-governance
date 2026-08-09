@@ -159,7 +159,8 @@ const parseRegularIndexPaths = (text) => {
   const paths = new Set()
   for (const entry of String(text || '').split(NUL)) {
     if (!entry) continue
-    const match = /^(100644|100755) [0-9a-fA-F]+ [0-3]\t([\s\S]+)$/.exec(entry)
+    // stage 0 only:未解衝突的 index 會出現 stage 1-3,不得被當成可審的一般檔案。
+    const match = /^(100644|100755) [0-9a-fA-F]+ 0\t([\s\S]+)$/.exec(entry)
     if (!match) continue
     const path = normalizePath(match[2])
     if (path) paths.add(path)
@@ -487,8 +488,13 @@ const findings = finalFindings.map((finding) => {
 
 // Apex 可以在提出新證據時復活被 refute 的 finding;復活者不得同時留在 killed
 // 清單,否則同一 finding 既是 final 又是 killed,輸出自相矛盾。
+// 同時以 dedupKey(檔案+行+標題)與 stable id 比對:apex 改寫 title/line 時
+// id 仍能對上,避免同一缺陷雙列。
 const finalKeys = new Set(findings.map((finding) => dedupKey(finding)))
-const killedFinal = refuted.filter((finding) => !finalKeys.has(dedupKey(finding)))
+const finalIds = new Set(findings.map((finding) => finding.id))
+const killedFinal = refuted.filter(
+  (finding) => !finalKeys.has(dedupKey(finding)) && !finalIds.has(finding.id),
+)
 
 return {
   held: null,
