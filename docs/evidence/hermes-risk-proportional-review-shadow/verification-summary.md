@@ -51,7 +51,7 @@
 - Every Lane B review requires exact-head impact evidence even when the semantic reviewer remains optional.
 - Renames bind both source and destination paths, including protected and self-referential surfaces.
 - Actual repository auth module names such as `authProvider.ts` and `internal_auth.py` retain the protected-boundary floor without matching `author` or `authority` substrings.
-- Production service paths require runtime and integration evidence; two distinct production roots infer at least distributed topology, and frontend paths additionally require separate browser-operability and design-fidelity evidence.
+- Production service paths require runtime and integration evidence; two distinct production roots cause the classifier to derive at least distributed topology, and frontend paths additionally require separate browser-operability and design-fidelity evidence.
 - A packet is bounded by bytes, changed paths, evidence references, and questions.
 - Packet content, final byte count, and packet hash are independently revalidated.
 - Evidence refs are canonical `artifacts/.../file.ext` identifiers and cannot inject URLs, traversal, or free-form instructions.

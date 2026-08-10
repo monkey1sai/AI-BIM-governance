@@ -164,7 +164,7 @@ It never includes a full chat, prompt, repository, diff, log stream, or session 
 
 Evidence `ref` values are inert repository-local artifact identifiers with the form `artifacts/<path>/<file.ext>`. They are not URLs, command arguments, free-form instructions, or permission to dereference a path. The adapter owns artifact lookup and provenance verification before it marks evidence as passed.
 
-Production service paths require exact-head integration and runtime evidence. Two or more distinct production service roots deterministically raise topology to at least `distributed`, even when submitter-provided impact counts claim a local change. Frontend paths additionally require independent `browser_artifacts` operability proof and `design_fidelity_result` visual-fidelity proof; neither substitutes for the other. A renamed path carries `previous_path`, and both source and destination participate in risk classification.
+Production service paths require exact-head integration and runtime evidence. Two or more distinct production service roots deterministically raise the topology classification to at least `distributed`, even when submitter-provided impact counts claim a local change. Frontend paths additionally require independent `browser_artifacts` operability proof and `design_fidelity_result` visual-fidelity proof; neither substitutes for the other. A renamed path carries `previous_path`, and both source and destination participate in risk classification.
 
 ## 9. Reviewer contract
 
