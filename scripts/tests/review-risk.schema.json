@@ -1,0 +1,1333 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "review-risk.schema.json",
+  "title": "Risk-proportional review shadow inputs and outputs",
+  "oneOf": [
+    {
+      "$ref": "#/definitions/input"
+    },
+    {
+      "$ref": "#/definitions/decision"
+    },
+    {
+      "$ref": "#/definitions/packet"
+    },
+    {
+      "$ref": "#/definitions/review_result"
+    },
+    {
+      "$ref": "#/definitions/loop_input"
+    },
+    {
+      "$ref": "#/definitions/loop_output"
+    },
+    {
+      "$ref": "#/definitions/corpus"
+    }
+  ],
+  "definitions": {
+    "git_sha": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "bounded_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!\\s)(?!.*\\s$)(?![\\\\/])(?![A-Za-z]:[\\\\/])(?!\\.{1,2}(?:[\\\\/]|$))(?!.*[\\\\/]\\.{1,2}(?:[\\\\/]|$))(?!.*[\\\\/]{2})(?!.*[\\u0000-\\u001f\\u007f])[^\\r\\n]*[^\\r\\n\\\\/]$"
+    },
+    "changed_path": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "status",
+        "additions",
+        "deletions"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/definitions/path"
+        },
+        "previous_path": {
+          "$ref": "#/definitions/path"
+        },
+        "status": {
+          "enum": [
+            "added",
+            "modified",
+            "deleted",
+            "renamed"
+          ]
+        },
+        "additions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "deletions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {"const": "renamed"}
+            },
+            "required": ["status"]
+          },
+          "then": {"required": ["previous_path"]},
+          "else": {"not": {"required": ["previous_path"]}}
+        }
+      ]
+    },
+    "detection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "detector",
+        "observed",
+        "horizon"
+      ],
+      "properties": {
+        "detector": {
+          "enum": [
+            "ci",
+            "local",
+            "qa",
+            "monitor",
+            "operator",
+            "customer",
+            "none",
+            "unknown"
+          ]
+        },
+        "observed": {
+          "type": "boolean"
+        },
+        "horizon": {
+          "enum": [
+            "immediate",
+            "hours",
+            "days",
+            "weeks",
+            "months",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "persistent_write",
+        "rollback",
+        "external_side_effects",
+        "regulated_data",
+        "post_fix_actions",
+        "runtime_or_deploy",
+        "public_contract_changed",
+        "architecture_authority_changed",
+        "duplicated_rule_risk",
+        "self_referential"
+      ],
+      "properties": {
+        "persistent_write": {
+          "enum": [
+            "none",
+            "transactional",
+            "reversible",
+            "irreversible",
+            "unknown"
+          ]
+        },
+        "rollback": {
+          "enum": [
+            "automatic",
+            "manual",
+            "partial",
+            "none",
+            "unknown"
+          ]
+        },
+        "external_side_effects": {
+          "type": "boolean"
+        },
+        "regulated_data": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "pii",
+              "payment",
+              "health",
+              "credentials",
+              "audit",
+              "customer_model",
+              "other_regulated"
+            ]
+          }
+        },
+        "post_fix_actions": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "data_cleanup",
+              "manual_reconciliation",
+              "user_notification",
+              "refund",
+              "regulatory_report",
+              "artifact_rebuild",
+              "index_rebuild",
+              "none"
+            ]
+          },
+          "allOf": [
+            {
+              "not": {
+                "allOf": [
+                  {
+                    "contains": {
+                      "const": "none"
+                    }
+                  },
+                  {
+                    "minItems": 2
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "runtime_or_deploy": {
+          "type": "boolean"
+        },
+        "public_contract_changed": {
+          "type": "boolean"
+        },
+        "architecture_authority_changed": {
+          "type": "boolean"
+        },
+        "duplicated_rule_risk": {
+          "type": "boolean"
+        },
+        "self_referential": {
+          "type": "boolean"
+        }
+      }
+    },
+    "impact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "topology",
+        "affected_services",
+        "callers",
+        "users"
+      ],
+      "properties": {
+        "topology": {
+          "enum": [
+            "local",
+            "distributed",
+            "contractual",
+            "architectural",
+            "unknown"
+          ]
+        },
+        "affected_services": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "callers": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "users": {
+          "enum": [
+            "none",
+            "bounded",
+            "many",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "status",
+        "ref",
+        "head_sha"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "test_result",
+            "impact_result",
+            "contract_result",
+            "integration_result",
+            "browser_artifacts",
+            "design_fidelity_result",
+            "runtime_log",
+            "security_review",
+            "mutation_result",
+            "historical_replay"
+          ]
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "missing",
+            "not_configured",
+            "not_observed",
+            "unverified"
+          ]
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^artifacts/(?:[A-Za-z0-9][A-Za-z0-9._@#-]*/)*[A-Za-z0-9][A-Za-z0-9._@#-]*\\.[A-Za-z0-9][A-Za-z0-9-]*$"
+        },
+        "head_sha": {
+          "$ref": "#/definitions/git_sha"
+        }
+      }
+    },
+    "advisory_claims": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "q1",
+        "q2",
+        "q3",
+        "summary"
+      ],
+      "properties": {
+        "q1": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "q2": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "q3": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 512
+        }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "repository",
+        "base_sha",
+        "head_sha",
+        "verification_manifest_sha256",
+        "lane",
+        "changed_paths",
+        "detection",
+        "change",
+        "impact",
+        "evidence",
+        "advisory_claims"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "review-risk-input/v1"
+        },
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "maxLength": 200
+        },
+        "base_sha": {
+          "$ref": "#/definitions/git_sha"
+        },
+        "head_sha": {
+          "$ref": "#/definitions/git_sha"
+        },
+        "verification_manifest_sha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "lane": {
+          "enum": [
+            "F",
+            "B",
+            "G",
+            "S"
+          ]
+        },
+        "changed_paths": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1000,
+          "items": {
+            "$ref": "#/definitions/changed_path"
+          }
+        },
+        "detection": {
+          "$ref": "#/definitions/detection"
+        },
+        "change": {
+          "$ref": "#/definitions/change"
+        },
+        "impact": {
+          "$ref": "#/definitions/impact"
+        },
+        "evidence": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "$ref": "#/definitions/evidence"
+          }
+        },
+        "advisory_claims": {
+          "$ref": "#/definitions/advisory_claims"
+        }
+      }
+    },
+    "risk_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "detectability",
+        "horizon",
+        "consequence",
+        "topology",
+        "evidence_strength",
+        "trust_surface"
+      ],
+      "properties": {
+        "detectability": {
+          "enum": [
+            "strong",
+            "moderate",
+            "weak",
+            "unknown"
+          ]
+        },
+        "horizon": {
+          "enum": [
+            "immediate",
+            "hours",
+            "days",
+            "weeks",
+            "months",
+            "unknown"
+          ]
+        },
+        "consequence": {
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        "topology": {
+          "enum": [
+            "local",
+            "distributed",
+            "contractual",
+            "architectural",
+            "unknown"
+          ]
+        },
+        "evidence_strength": {
+          "enum": [
+            "strong",
+            "partial",
+            "missing",
+            "stale",
+            "failed"
+          ]
+        },
+        "trust_surface": {
+          "enum": [
+            "normal",
+            "protected_boundary",
+            "critical_authority"
+          ]
+        }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "authority",
+        "merge_authority",
+        "repository",
+        "base_sha",
+        "head_sha",
+        "policy_sha256",
+        "input_sha256",
+        "verification_manifest_sha256",
+        "lane",
+        "risk",
+        "review_mode",
+        "model_reviewer_budget",
+        "specialists",
+        "questions",
+        "required_evidence",
+        "evidence_gaps",
+        "signals",
+        "advisory_claim_escalation",
+        "verdict",
+        "reasons"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "review-risk-decision/v1"
+        },
+        "authority": {
+          "const": "advisory_shadow"
+        },
+        "merge_authority": {
+          "const": false
+        },
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "maxLength": 200
+        },
+        "base_sha": {
+          "$ref": "#/definitions/git_sha"
+        },
+        "head_sha": {
+          "$ref": "#/definitions/git_sha"
+        },
+        "policy_sha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "input_sha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "verification_manifest_sha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "lane": {
+          "enum": [
+            "F",
+            "B",
+            "G",
+            "S"
+          ]
+        },
+        "risk": {
+          "$ref": "#/definitions/risk_summary"
+        },
+        "review_mode": {
+          "enum": [
+            "mechanical_only",
+            "focused_semantic",
+            "risk_scoped_specialists",
+            "human_critical"
+          ]
+        },
+        "model_reviewer_budget": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "specialists": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "security",
+              "governance",
+              "architecture",
+              "data_recovery",
+              "runtime",
+              "evidence"
+            ]
+          }
+        },
+        "questions": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/bounded_text"
+          }
+        },
+        "required_evidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "test_result",
+              "impact_result",
+              "contract_result",
+              "integration_result",
+              "browser_artifacts",
+              "design_fidelity_result",
+              "runtime_log",
+              "security_review",
+              "mutation_result",
+              "historical_replay"
+            ]
+          }
+        },
+        "evidence_gaps": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/bounded_text"
+          }
+        },
+        "signals": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/bounded_text"
+          }
+        },
+        "advisory_claim_escalation": {
+          "type": "boolean"
+        },
+        "verdict": {
+          "enum": [
+            "advisory_pass",
+            "advisory_review",
+            "human_required",
+            "held",
+            "blocked"
+          ]
+        },
+        "reasons": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/bounded_text"
+          }
+        }
+      }
+    },
+    "packet_budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_bytes",
+        "actual_bytes",
+        "max_changed_paths",
+        "selected_changed_paths",
+        "max_evidence_refs",
+        "selected_evidence_refs",
+        "max_questions",
+        "selected_questions",
+        "exceeded"
+      ],
+      "properties": {
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 4096,
+          "maximum": 65536
+        },
+        "actual_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "max_changed_paths": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "selected_changed_paths": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64
+        },
+        "max_evidence_refs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "selected_evidence_refs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32
+        },
+        "max_questions": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
+        "selected_questions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8
+        },
+        "exceeded": {
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "bytes",
+              "changed_paths",
+              "evidence_refs",
+              "questions"
+            ]
+          }
+        }
+      }
+    },
+    "packet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "authority",
+        "merge_authority",
+        "repository",
+        "base_sha",
+        "head_sha",
+        "policy_sha256",
+        "input_sha256",
+        "verification_manifest_sha256",
+        "status",
+        "review_mode",
+        "specialists",
+        "selected_paths",
+        "omitted_path_count",
+        "risk",
+        "evidence_refs",
+        "evidence_gaps",
+        "questions",
+        "budget",
+        "packet_sha256"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "review-packet/v1"
+        },
+        "authority": {
+          "const": "advisory_shadow"
+        },
+        "merge_authority": {
+          "const": false
+        },
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "maxLength": 200
+        },
+        "base_sha": {
+          "$ref": "#/definitions/git_sha"
+        },
+        "head_sha": {
+          "$ref": "#/definitions/git_sha"
+        },
+        "policy_sha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "input_sha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "verification_manifest_sha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "status": {
+          "enum": [
+            "ready",
+            "budget_exceeded",
+            "held"
+          ]
+        },
+        "review_mode": {
+          "enum": [
+            "mechanical_only",
+            "focused_semantic",
+            "risk_scoped_specialists",
+            "human_critical"
+          ]
+        },
+        "specialists": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "security",
+              "governance",
+              "architecture",
+              "data_recovery",
+              "runtime",
+              "evidence"
+            ]
+          }
+        },
+        "selected_paths": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/definitions/changed_path"
+          },
+          "uniqueItems": true
+        },
+        "omitted_path_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "risk": {
+          "$ref": "#/definitions/risk_summary"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/evidence"
+          }
+        },
+        "evidence_gaps": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/bounded_text"
+          }
+        },
+        "questions": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/bounded_text"
+          }
+        },
+        "budget": {
+          "$ref": "#/definitions/packet_budget"
+        },
+        "packet_sha256": {
+          "$ref": "#/definitions/sha256"
+        }
+      }
+    },
+    "loop_attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempt",
+        "head_sha",
+        "policy_sha256",
+        "input_sha256",
+        "verification_manifest_sha256",
+        "evidence_fingerprint",
+        "action",
+        "expected_new_evidence",
+        "observed_new_evidence",
+        "decision"
+      ],
+      "properties": {
+        "attempt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2
+        },
+        "head_sha": {
+          "$ref": "#/definitions/git_sha"
+        },
+        "policy_sha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "input_sha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "verification_manifest_sha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "evidence_fingerprint": {
+          "$ref": "#/definitions/sha256"
+        },
+        "action": {
+          "enum": [
+            "deterministic_verify",
+            "evidence_request",
+            "model_review",
+            "human_review"
+          ]
+        },
+        "expected_new_evidence": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "observed_new_evidence": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "decision": {
+          "enum": [
+            "continue",
+            "advisory_pass",
+            "advisory_review",
+            "human_required",
+            "held",
+            "blocked"
+          ]
+        }
+      }
+    },
+    "loop_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "max_attempts",
+        "max_evidence_delta_requests",
+        "attempts"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "review-loop-input/v1"
+        },
+        "max_attempts": {
+          "const": 2
+        },
+        "max_evidence_delta_requests": {
+          "const": 1
+        },
+        "attempts": {
+          "type": "array",
+          "maxItems": 2,
+          "items": {
+            "$ref": "#/definitions/loop_attempt"
+          }
+        }
+      }
+    },
+    "loop_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "state",
+        "reason",
+        "attempts_used",
+        "remaining_attempts",
+        "evidence_delta_requests_used"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "review-loop-decision/v1"
+        },
+        "state": {
+          "enum": [
+            "continue",
+            "complete",
+            "held"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "attempts_used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "remaining_attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evidence_delta_requests_used": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "corpus_case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "input",
+        "expected"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,63}$"
+        },
+        "input": {
+          "$ref": "#/definitions/input"
+        },
+        "expected": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "review_mode",
+            "verdict",
+            "topology",
+            "consequence",
+            "specialists_include"
+          ],
+          "properties": {
+            "review_mode": {
+              "enum": [
+                "mechanical_only",
+                "focused_semantic",
+                "risk_scoped_specialists",
+                "human_critical"
+              ]
+            },
+            "verdict": {
+              "enum": [
+                "advisory_pass",
+                "advisory_review",
+                "human_required",
+                "held",
+                "blocked"
+              ]
+            },
+            "topology": {
+              "enum": [
+                "local",
+                "distributed",
+                "contractual",
+                "architectural",
+                "unknown"
+              ]
+            },
+            "consequence": {
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            },
+            "specialists_include": {
+              "type": "array",
+              "maxItems": 2,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "security",
+                  "governance",
+                  "architecture",
+                  "data_recovery",
+                  "runtime",
+                  "evidence"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "corpus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "cases"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "review-risk-corpus/v1"
+        },
+        "cases": {
+          "type": "array",
+          "minItems": 20,
+          "maxItems": 40,
+          "items": {
+            "$ref": "#/definitions/corpus_case"
+          }
+        }
+      }
+    },
+    "review_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "packet_sha256",
+        "head_sha",
+        "reviewer_role",
+        "verdict",
+        "question_coverage",
+        "findings",
+        "evidence_request",
+        "implementation_modified",
+        "policy_override_attempted"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "review-result/v1"
+        },
+        "packet_sha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "head_sha": {
+          "$ref": "#/definitions/git_sha"
+        },
+        "reviewer_role": {
+          "enum": [
+            "focused_semantic",
+            "security",
+            "governance",
+            "architecture",
+            "data_recovery",
+            "runtime",
+            "evidence",
+            "human"
+          ]
+        },
+        "verdict": {
+          "enum": [
+            "advisory_clear",
+            "fix_required",
+            "held",
+            "unverified"
+          ]
+        },
+        "question_coverage": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "question",
+              "conclusion",
+              "evidence_refs"
+            ],
+            "properties": {
+              "question": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "conclusion": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "evidence_refs": {
+                "type": "array",
+                "maxItems": 4,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                }
+              }
+            }
+          }
+        },
+        "findings": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "severity",
+              "category",
+              "status",
+              "disposition",
+              "in_scope",
+              "path",
+              "line",
+              "summary",
+              "evidence_refs"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,63}$"
+              },
+              "severity": {
+                "enum": [
+                  "info",
+                  "low",
+                  "medium",
+                  "high",
+                  "blocker"
+                ]
+              },
+              "category": {
+                "enum": [
+                  "correctness",
+                  "security",
+                  "architecture",
+                  "data_recovery",
+                  "runtime",
+                  "evidence"
+                ]
+              },
+              "status": {
+                "enum": [
+                  "confirmed",
+                  "unverified",
+                  "refuted"
+                ]
+              },
+              "disposition": {
+                "enum": [
+                  "fix_now",
+                  "external_blocker",
+                  "known_gap",
+                  "follow_up",
+                  "refuted",
+                  "unverified"
+                ]
+              },
+              "in_scope": {
+                "type": "boolean"
+              },
+              "path": {
+                "oneOf": [
+                  {
+                    "$ref": "#/definitions/path"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "line": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 1,
+                "maximum": 10000000
+              },
+              "summary": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "evidence_refs": {
+                "type": "array",
+                "maxItems": 4,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                }
+              }
+            }
+          }
+        },
+        "evidence_request": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "items",
+                "reason",
+                "expected_information_gain"
+              ],
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 4,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "expected_information_gain": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                }
+              }
+            }
+          ]
+        },
+        "implementation_modified": {
+          "const": false
+        },
+        "policy_override_attempted": {
+          "const": false
+        }
+      }
+    }
+  }
+}

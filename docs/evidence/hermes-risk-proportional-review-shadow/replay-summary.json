@@ -1,0 +1,199 @@
+{
+  "schema_version": "review-risk-replay-summary/v1",
+  "generated_at": "2026-08-10",
+  "authority": "advisory_shadow",
+  "merge_authority": false,
+  "policy_sha256": "db2950c2751f26e26f3079e17b8e21926bc3fdee07196d1510400afcd52ab10e",
+  "corpus_kind": "golden_risk_shapes",
+  "total": 20,
+  "passed": 20,
+  "failed": 0,
+  "cases": [
+    {
+      "id": "docs-typo-mechanical",
+      "passed": true,
+      "review_mode": "mechanical_only",
+      "verdict": "advisory_pass",
+      "topology": "local",
+      "consequence": "low",
+      "mismatches": []
+    },
+    {
+      "id": "ui-style-visible-low-risk",
+      "passed": true,
+      "review_mode": "focused_semantic",
+      "verdict": "advisory_review",
+      "topology": "local",
+      "consequence": "medium",
+      "mismatches": []
+    },
+    {
+      "id": "bounded-local-bug-fix",
+      "passed": true,
+      "review_mode": "focused_semantic",
+      "verdict": "advisory_review",
+      "topology": "local",
+      "consequence": "medium",
+      "mismatches": []
+    },
+    {
+      "id": "bounded-semantic-edge-case",
+      "passed": true,
+      "review_mode": "focused_semantic",
+      "verdict": "advisory_review",
+      "topology": "local",
+      "consequence": "medium",
+      "mismatches": []
+    },
+    {
+      "id": "shared-utility-many-callers",
+      "passed": true,
+      "review_mode": "risk_scoped_specialists",
+      "verdict": "advisory_review",
+      "topology": "distributed",
+      "consequence": "medium",
+      "mismatches": []
+    },
+    {
+      "id": "duplicated-business-rule",
+      "passed": true,
+      "review_mode": "risk_scoped_specialists",
+      "verdict": "advisory_review",
+      "topology": "distributed",
+      "consequence": "medium",
+      "mismatches": []
+    },
+    {
+      "id": "public-api-contract-change",
+      "passed": true,
+      "review_mode": "risk_scoped_specialists",
+      "verdict": "advisory_review",
+      "topology": "contractual",
+      "consequence": "medium",
+      "mismatches": []
+    },
+    {
+      "id": "task-packet-contract-change",
+      "passed": true,
+      "review_mode": "risk_scoped_specialists",
+      "verdict": "advisory_review",
+      "topology": "contractual",
+      "consequence": "medium",
+      "mismatches": []
+    },
+    {
+      "id": "database-migration-no-rollback",
+      "passed": true,
+      "review_mode": "human_critical",
+      "verdict": "human_required",
+      "topology": "contractual",
+      "consequence": "critical",
+      "mismatches": []
+    },
+    {
+      "id": "one-line-persistent-data-residue",
+      "passed": true,
+      "review_mode": "human_critical",
+      "verdict": "human_required",
+      "topology": "local",
+      "consequence": "critical",
+      "mismatches": []
+    },
+    {
+      "id": "authentication-token-verification",
+      "passed": true,
+      "review_mode": "human_critical",
+      "verdict": "human_required",
+      "topology": "distributed",
+      "consequence": "critical",
+      "mismatches": []
+    },
+    {
+      "id": "runtime-deployment-change",
+      "passed": true,
+      "review_mode": "risk_scoped_specialists",
+      "verdict": "advisory_review",
+      "topology": "local",
+      "consequence": "medium",
+      "mismatches": []
+    },
+    {
+      "id": "self-referential-gate-change",
+      "passed": true,
+      "review_mode": "human_critical",
+      "verdict": "human_required",
+      "topology": "architectural",
+      "consequence": "low",
+      "mismatches": []
+    },
+    {
+      "id": "large-generated-local-diff",
+      "passed": true,
+      "review_mode": "focused_semantic",
+      "verdict": "advisory_review",
+      "topology": "local",
+      "consequence": "medium",
+      "mismatches": []
+    },
+    {
+      "id": "high-agent-claim-escalates-only",
+      "passed": true,
+      "review_mode": "human_critical",
+      "verdict": "human_required",
+      "topology": "local",
+      "consequence": "low",
+      "mismatches": []
+    },
+    {
+      "id": "low-agent-claim-cannot-downgrade",
+      "passed": true,
+      "review_mode": "human_critical",
+      "verdict": "human_required",
+      "topology": "distributed",
+      "consequence": "critical",
+      "mismatches": []
+    },
+    {
+      "id": "missing-required-verifier",
+      "passed": true,
+      "review_mode": "focused_semantic",
+      "verdict": "held",
+      "topology": "local",
+      "consequence": "low",
+      "mismatches": []
+    },
+    {
+      "id": "stale-exact-head-evidence",
+      "passed": true,
+      "review_mode": "focused_semantic",
+      "verdict": "held",
+      "topology": "local",
+      "consequence": "low",
+      "mismatches": []
+    },
+    {
+      "id": "unknown-topology-held",
+      "passed": true,
+      "review_mode": "focused_semantic",
+      "verdict": "held",
+      "topology": "unknown",
+      "consequence": "medium",
+      "mismatches": []
+    },
+    {
+      "id": "ninety-day-latent-audit-defect",
+      "passed": true,
+      "review_mode": "risk_scoped_specialists",
+      "verdict": "advisory_review",
+      "topology": "distributed",
+      "consequence": "high",
+      "mismatches": []
+    }
+  ],
+  "non_claims": [
+    "not_a_historical_pull_request_replay",
+    "not_measured_token_savings",
+    "not_merge_authority",
+    "not_hosted_ci_provenance"
+  ]
+}
