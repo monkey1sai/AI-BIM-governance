@@ -298,7 +298,8 @@
         "ref": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 512
+          "maxLength": 512,
+          "pattern": "^artifacts/(?:[A-Za-z0-9][A-Za-z0-9._@#-]*/)*[A-Za-z0-9][A-Za-z0-9._@#-]*\\.[A-Za-z0-9][A-Za-z0-9-]*$"
         },
         "head_sha": {
           "$ref": "#/definitions/git_sha"

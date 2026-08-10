@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { lstat, mkdir, open, realpath } from 'node:fs/promises';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   advanceReviewLoop,
@@ -15,7 +15,48 @@ import {
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..', '..');
+const repoRootReal = await realpath(repoRoot);
+const artifactsRoot = resolve(repoRoot, 'artifacts');
 const defaultPolicyPath = resolve(repoRoot, 'agent-contracts', 'risk-proportional-review.contract.json');
+
+function assertContained(absolute, root, name) {
+  const relativePath = relative(root, absolute);
+  const outside = relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath);
+  if (outside) throw new Error(`--${name} must resolve inside ${root}`);
+  return absolute;
+}
+
+async function resolveReadPath(value, name) {
+  const lexicalPath = assertContained(resolve(process.cwd(), value), repoRoot, name);
+  const realPath = await realpath(lexicalPath);
+  return assertContained(realPath, repoRootReal, name);
+}
+
+async function ensureSafeOutputParent(absolute) {
+  await mkdir(artifactsRoot, { recursive: true });
+  const rootStat = await lstat(artifactsRoot);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new Error('--output artifacts root must be a real directory, not a symlink or junction');
+  }
+  const artifactsRootReal = assertContained(await realpath(artifactsRoot), repoRootReal, 'output');
+  const parent = dirname(absolute);
+  const parentRelative = relative(artifactsRoot, parent);
+  let current = artifactsRoot;
+  for (const segment of parentRelative.split(sep).filter(Boolean)) {
+    current = join(current, segment);
+    try {
+      const stat = await lstat(current);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) {
+        throw new Error(`--output parent must be a real directory: ${current}`);
+      }
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      await mkdir(current);
+    }
+    assertContained(await realpath(current), artifactsRootReal, 'output');
+  }
+  assertContained(await realpath(parent), artifactsRootReal, 'output');
+}
 
 function usage() {
   return `Usage:
@@ -47,10 +88,10 @@ function parseArgs(argv) {
   return { command, options };
 }
 
-function requireOption(options, name) {
+async function requireOption(options, name) {
   const value = options[name];
   if (!value) throw new Error(`--${name} is required`);
-  return resolve(process.cwd(), value);
+  return resolveReadPath(value, name);
 }
 
 function rejectUnknownOptions(options, allowed) {
@@ -60,7 +101,7 @@ function rejectUnknownOptions(options, allowed) {
 }
 
 async function loadPolicy(options) {
-  const path = options.policy ? resolve(process.cwd(), options.policy) : defaultPolicyPath;
+  const path = await resolveReadPath(options.policy ?? defaultPolicyPath, 'policy');
   return validatePolicy(await readJson(path));
 }
 
@@ -70,9 +111,18 @@ async function emit(value, outputPath) {
     process.stdout.write(text);
     return;
   }
-  const absolute = resolve(process.cwd(), outputPath);
-  await mkdir(dirname(absolute), { recursive: true });
-  await writeFile(absolute, text, 'utf8');
+  const absolute = assertContained(resolve(process.cwd(), outputPath), artifactsRoot, 'output');
+  await ensureSafeOutputParent(absolute);
+  let handle;
+  try {
+    handle = await open(absolute, 'wx');
+    await handle.writeFile(text, 'utf8');
+  } catch (error) {
+    if (error.code === 'EEXIST') throw new Error(`--output already exists: ${absolute}`);
+    throw error;
+  } finally {
+    await handle?.close();
+  }
   process.stderr.write(`[review-risk-shadow] wrote ${absolute}\n`);
 }
 
@@ -85,7 +135,7 @@ async function main() {
 
   if (command === 'evaluate') {
     rejectUnknownOptions(options, ['input', 'policy', 'output']);
-    const input = await readJson(requireOption(options, 'input'));
+    const input = await readJson(await requireOption(options, 'input'));
     const policy = await loadPolicy(options);
     await emit(classifyReview(input, policy), options.output);
     return;
@@ -93,7 +143,7 @@ async function main() {
 
   if (command === 'packet') {
     rejectUnknownOptions(options, ['input', 'policy', 'output']);
-    const input = await readJson(requireOption(options, 'input'));
+    const input = await readJson(await requireOption(options, 'input'));
     const policy = await loadPolicy(options);
     const decision = classifyReview(input, policy);
     await emit(buildReviewPacket(input, decision, policy), options.output);
@@ -102,22 +152,22 @@ async function main() {
 
   if (command === 'loop') {
     rejectUnknownOptions(options, ['input', 'output']);
-    const input = await readJson(requireOption(options, 'input'));
+    const input = await readJson(await requireOption(options, 'input'));
     await emit(advanceReviewLoop(input), options.output);
     return;
   }
 
   if (command === 'validate-result') {
     rejectUnknownOptions(options, ['packet', 'result', 'output']);
-    const packet = await readJson(requireOption(options, 'packet'));
-    const result = await readJson(requireOption(options, 'result'));
+    const packet = await readJson(await requireOption(options, 'packet'));
+    const result = await readJson(await requireOption(options, 'result'));
     await emit(validateReviewResult(result, packet), options.output);
     return;
   }
 
   if (command === 'replay') {
     rejectUnknownOptions(options, ['corpus', 'policy', 'output']);
-    const corpus = await readJson(requireOption(options, 'corpus'));
+    const corpus = await readJson(await requireOption(options, 'corpus'));
     const policy = await loadPolicy(options);
     const report = replayCorpus(corpus, policy);
     await emit(report, options.output);

@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import test from 'node:test';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   advanceReviewLoop,
@@ -22,11 +34,62 @@ const testDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(testDir, '..', '..');
 const policyPath = resolve(repoRoot, 'agent-contracts', 'risk-proportional-review.contract.json');
 const corpusPath = resolve(testDir, 'fixtures', 'review-risk-golden.json');
+const samplePath = resolve(testDir, 'fixtures', 'review-risk-sample.json');
+const cliPath = resolve(repoRoot, 'scripts', 'dev', 'review-risk-shadow.mjs');
+const artifactsRoot = resolve(repoRoot, 'artifacts');
 const policy = await readJson(policyPath);
 const corpus = await readJson(corpusPath);
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function runShadowCli(args) {
+  return spawnSync(process.execPath, [cliPath, ...args], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+}
+
+function rehashPacket(candidate) {
+  const packet = clone(candidate);
+  packet.packet_sha256 = '';
+  let converged = false;
+  for (let iteration = 0; iteration < 16; iteration += 1) {
+    const material = clone(packet);
+    delete material.packet_sha256;
+    const next = Buffer.byteLength(stableStringify(material), 'utf8');
+    if (next === packet.budget.actual_bytes) {
+      converged = true;
+      break;
+    }
+    packet.budget.actual_bytes = next;
+  }
+  assert.equal(converged, true, 'test packet byte accounting converges');
+  const material = clone(packet);
+  delete material.packet_sha256;
+  packet.packet_sha256 = sha256Value(material);
+  return packet;
+}
+
+function heldReviewResult(packet, reviewerRole) {
+  return {
+    schema_version: 'review-result/v1',
+    packet_sha256: packet.packet_sha256,
+    head_sha: packet.head_sha,
+    reviewer_role: reviewerRole,
+    verdict: 'held',
+    question_coverage: [],
+    findings: [],
+    evidence_request: {
+      items: ['consumer trace'],
+      reason: 'need deployed behavior',
+      expected_information_gain: 'reachability',
+    },
+    implementation_modified: false,
+    policy_override_attempted: false,
+  };
 }
 
 function caseInput(id) {
@@ -498,4 +561,313 @@ test('bounded loop contract rejects more attempts than the declared maximum', ()
 test('stable hashing is independent of object insertion order', () => {
   assert.equal(stableStringify({ b: 2, a: 1 }), stableStringify({ a: 1, b: 2 }));
   assert.equal(sha256Value({ b: 2, a: 1 }), sha256Value({ a: 1, b: 2 }));
+});
+
+test('normalizeRepositoryPath rejects non-canonical segments, whitespace, and controls', () => {
+  assert.throws(() => normalizeRepositoryPath('scripts/./lib/risk-proportional-review.mjs'), /path traversal or empty segment/);
+  assert.throws(() => normalizeRepositoryPath(' scripts/lib/x.mjs'), /whitespace/);
+  assert.throws(() => normalizeRepositoryPath('scripts/lib/x.mjs '), /whitespace/);
+  assert.throws(() => normalizeRepositoryPath(`scripts/lib/x${String.fromCharCode(0)}.mjs`), /control characters/);
+});
+
+test('self-referential and secret floors resist path spelling and case evasion', () => {
+  const selfReferential = caseInput('docs-typo-mechanical');
+  selfReferential.changed_paths[0].path = 'SCRIPTS/LIB/RISK-PROPORTIONAL-REVIEW.MJS';
+  const selfDecision = classifyReview(selfReferential, policy);
+  assert.equal(selfDecision.risk.trust_surface, 'critical_authority');
+  assert.equal(selfDecision.review_mode, 'human_critical');
+
+  const uppercaseSecret = caseInput('docs-typo-mechanical');
+  uppercaseSecret.changed_paths[0].path = 'service/config/Secrets/token.json';
+  const secretDecision = classifyReview(uppercaseSecret, policy);
+  assert.equal(secretDecision.risk.trust_surface, 'protected_boundary');
+  assert.ok(secretDecision.required_evidence.includes('security_review'));
+});
+
+test('all path risk categories classify case-insensitively and reject case-only duplicates', () => {
+  const paths = [
+    'contracts/api.json',
+    'common/util.js',
+    'migrations/001.sql',
+    'bim-streaming-server/src/app.py',
+    'docs/architecture/system.md',
+    'agent-contracts/task-packet.contract.json',
+  ];
+  const classifyPath = (path) => {
+    const input = caseInput('docs-typo-mechanical');
+    input.changed_paths[0].path = path;
+    const decision = classifyReview(input, policy);
+    return {
+      review_mode: decision.review_mode,
+      verdict: decision.verdict,
+      risk: decision.risk,
+      required_evidence: decision.required_evidence,
+      specialists: decision.specialists,
+    };
+  };
+  for (const path of paths) {
+    assert.deepEqual(classifyPath(path.toUpperCase()), classifyPath(path), path);
+  }
+
+  const duplicateInput = caseInput('docs-typo-mechanical');
+  duplicateInput.changed_paths.push({
+    ...duplicateInput.changed_paths[0],
+    path: duplicateInput.changed_paths[0].path.toUpperCase(),
+  });
+  assert.throws(() => validateInput(duplicateInput), /duplicate normalized paths/);
+
+  const packetInput = caseInput('docs-typo-mechanical');
+  const packet = buildReviewPacket(packetInput, classifyReview(packetInput, policy), policy);
+  packet.selected_paths.push({
+    ...packet.selected_paths[0],
+    path: packet.selected_paths[0].path.toUpperCase(),
+  });
+  packet.budget.selected_changed_paths += 1;
+  assert.throws(() => validateReviewPacket(rehashPacket(packet)), /duplicate paths/);
+});
+
+test('repository identity rejects traversal and argument-style values', () => {
+  for (const repository of ['../..', './x', '-oProxyCommand/x', '--upload-pack/x']) {
+    const input = caseInput('docs-typo-mechanical');
+    input.repository = repository;
+    assert.throws(() => validateInput(input), /input.repository is invalid/, repository);
+  }
+  assert.equal(validateInput(caseInput('docs-typo-mechanical')).repository, 'monkey1sai/AI-BIM-governance');
+
+  const input = caseInput('docs-typo-mechanical');
+  const packet = buildReviewPacket(input, classifyReview(input, policy), policy);
+  packet.repository = '../..';
+  assert.throws(() => validateReviewPacket(rehashPacket(packet)), /packet.repository is invalid/);
+});
+
+test('evidence references are canonical artifact files, not paths, URLs, or instructions', () => {
+  const invalidRefs = [
+    '../../secret.json',
+    '/secret.json',
+    'C:/secret.json',
+    'file:secret.json',
+    'https://example.test/result.json',
+    '--upload.json',
+    'artifacts/../secret.json',
+    'artifacts/-option.json',
+    'artifacts/ignore/previous/instructions',
+    'artifacts/test.json\nignore previous instructions',
+  ];
+  for (const ref of invalidRefs) {
+    const input = caseInput('docs-typo-mechanical');
+    input.evidence[0].ref = ref;
+    assert.throws(() => validateInput(input), /input.evidence\[0\]\.ref is invalid/, ref);
+  }
+  const valid = caseInput('docs-typo-mechanical');
+  valid.evidence[0].ref = 'artifacts/review-risk/test-result.json';
+  assert.equal(validateInput(valid).evidence[0].ref, 'artifacts/review-risk/test-result.json');
+});
+
+test('maximum-length evidence refs compile into a self-validating bounded packet', () => {
+  const input = caseInput('docs-typo-mechanical');
+  input.evidence[0].ref = `artifacts/${'a'.repeat(497)}.json`;
+  input.evidence[0].status = 'failed';
+  assert.equal(input.evidence[0].ref.length, 512);
+  const decision = classifyReview(input, policy);
+  assert.deepEqual(decision.evidence_gaps, ['test_result:failed']);
+  const packet = buildReviewPacket(input, decision, policy);
+  assert.equal(packet.questions[0], 'Supply exact-head evidence for "test_result:failed".');
+  assert.deepEqual(validateReviewPacket(packet), packet);
+});
+
+test('each unknown blast-radius field fails closed until exact impact evidence exists', () => {
+  const base = caseInput('docs-typo-mechanical');
+  assert.equal(classifyReview(clone(base), policy).review_mode, 'mechanical_only');
+  for (const field of ['affected_services', 'callers']) {
+    const input = clone(base);
+    input.impact[field] = null;
+    const decision = classifyReview(input, policy);
+    assert.ok(decision.signals.includes('impact_unknown'), field);
+    assert.ok(decision.required_evidence.includes('impact_result'), field);
+    assert.equal(decision.review_mode, 'focused_semantic', field);
+    assert.equal(decision.verdict, 'held', field);
+    assert.equal(buildReviewPacket(input, decision, policy).status, 'held', field);
+  }
+
+  const evidenced = clone(base);
+  evidenced.impact.affected_services = null;
+  evidenced.impact.callers = null;
+  evidenced.evidence.push({
+    kind: 'impact_result',
+    status: 'passed',
+    ref: 'artifacts/impact_result.json',
+    head_sha: evidenced.head_sha,
+  });
+  const decision = classifyReview(evidenced, policy);
+  assert.equal(decision.review_mode, 'focused_semantic');
+  assert.equal(decision.verdict, 'advisory_review');
+  assert.equal(buildReviewPacket(evidenced, decision, policy).status, 'ready');
+});
+
+test('advisory claim escalation honors every score threshold boundary', () => {
+  const base = caseInput('docs-typo-mechanical');
+  const cases = [
+    [2, 2, 1, 'mechanical_only'],
+    [2, 2, 2, 'focused_semantic'],
+    [3, 3, 2, 'focused_semantic'],
+    [3, 3, 3, 'risk_scoped_specialists'],
+    [1, 1, 3, 'mechanical_only'],
+    [1, 1, 4, 'risk_scoped_specialists'],
+    [4, 4, 3, 'risk_scoped_specialists'],
+    [4, 4, 4, 'human_critical'],
+    [1, 1, 5, 'human_critical'],
+  ];
+  for (const [q1, q2, q3, expected] of cases) {
+    const input = clone(base);
+    input.advisory_claims = { q1, q2, q3, summary: 'boundary probe' };
+    assert.equal(classifyReview(input, policy).review_mode, expected, `${q1}/${q2}/${q3}`);
+  }
+});
+
+test('a mechanical-only packet refuses to invoke any reviewer', () => {
+  const input = caseInput('docs-typo-mechanical');
+  const packet = buildReviewPacket(input, classifyReview(input, policy), policy);
+  assert.equal(packet.review_mode, 'mechanical_only');
+  assert.throws(() => validateReviewResult(heldReviewResult(packet, 'human'), packet), /must not invoke a reviewer/);
+});
+
+test('focused semantic packets reject unrelated and unknown reviewer roles', () => {
+  const input = caseInput('docs-typo-mechanical');
+  input.advisory_claims = { q1: 2, q2: 2, q3: 2, summary: 'focused review' };
+  const packet = buildReviewPacket(input, classifyReview(input, policy), policy);
+  assert.equal(packet.review_mode, 'focused_semantic');
+  assert.equal(validateReviewResult(heldReviewResult(packet, 'focused_semantic'), packet).reviewer_role, 'focused_semantic');
+  assert.equal(validateReviewResult(heldReviewResult(packet, 'human'), packet).reviewer_role, 'human');
+  assert.throws(() => validateReviewResult(heldReviewResult(packet, 'architecture'), packet), /only allows the focused_semantic reviewer or a human/);
+  assert.throws(() => validateReviewResult(heldReviewResult(packet, 'unknown-role'), packet), /review_result.reviewer_role is not recognized/);
+});
+
+test('risk-scoped packets reject a specialist the classifier did not select', () => {
+  const input = caseInput('public-api-contract-change');
+  const packet = buildReviewPacket(input, classifyReview(input, policy), policy);
+  assert.equal(packet.review_mode, 'risk_scoped_specialists');
+  assert.ok(packet.specialists.includes('architecture'));
+  assert.equal(validateReviewResult(heldReviewResult(packet, 'architecture'), packet).reviewer_role, 'architecture');
+  assert.equal(validateReviewResult(heldReviewResult(packet, 'human'), packet).reviewer_role, 'human');
+  assert.throws(() => validateReviewResult(heldReviewResult(packet, 'security'), packet), /was not selected by the risk-scoped packet/);
+});
+
+test('review results reject non-ready packets and questionless non-human review', () => {
+  const input = caseInput('public-api-contract-change');
+  const packet = buildReviewPacket(input, classifyReview(input, policy), policy);
+  const heldPacket = rehashPacket({ ...packet, status: 'held' });
+  assert.throws(() => validateReviewResult(heldReviewResult(heldPacket, 'human'), heldPacket), /review result is forbidden for packet status held/);
+
+  const focusedInput = caseInput('docs-typo-mechanical');
+  focusedInput.advisory_claims = { q1: 2, q2: 2, q3: 2, summary: 'focused review' };
+  const focusedPacket = buildReviewPacket(focusedInput, classifyReview(focusedInput, policy), policy);
+  const questionless = rehashPacket({
+    ...focusedPacket,
+    questions: [],
+    budget: { ...focusedPacket.budget, selected_questions: 0 },
+  });
+  assert.throws(() => validateReviewResult(heldReviewResult(questionless, 'focused_semantic'), questionless), /requires bounded questions/);
+  assert.equal(validateReviewResult(heldReviewResult(questionless, 'human'), questionless).reviewer_role, 'human');
+});
+
+test('bounded loop covers every terminal safety branch', () => {
+  const attempt = (number, fingerprint, overrides = {}) => ({
+    attempt: number,
+    head_sha: HEAD,
+    policy_sha256: POLICY_HASH,
+    input_sha256: INPUT_HASH,
+    verification_manifest_sha256: MANIFEST_HASH,
+    evidence_fingerprint: fingerprint,
+    action: 'deterministic_verify',
+    expected_new_evidence: ['test_result'],
+    observed_new_evidence: ['test_result'],
+    decision: 'continue',
+    ...overrides,
+  });
+  const decide = (attempts) => advanceReviewLoop({
+    schema_version: 'review-loop-input/v1',
+    max_attempts: 2,
+    max_evidence_delta_requests: 1,
+    attempts,
+  });
+
+  const complete = decide([attempt(1, FINGERPRINT_A, { decision: 'advisory_pass' })]);
+  assert.deepEqual(
+    { state: complete.state, reason: complete.reason },
+    { state: 'complete', reason: 'terminal_decision_advisory_pass' },
+  );
+  assert.equal(decide([attempt(1, FINGERPRINT_A, { decision: 'held' })]).reason, 'attempt_reported_held');
+  assert.equal(decide([
+    attempt(1, FINGERPRINT_A),
+    attempt(2, FINGERPRINT_B, { observed_new_evidence: [] }),
+  ]).reason, 'no_new_evidence_observed');
+  assert.equal(decide([
+    attempt(1, FINGERPRINT_A),
+    attempt(2, FINGERPRINT_B, { observed_new_evidence: ['contract_result'] }),
+  ]).reason, 'attempt_budget_exhausted');
+  assert.equal(decide([
+    attempt(1, FINGERPRINT_A, { action: 'evidence_request' }),
+    attempt(2, FINGERPRINT_B, { action: 'evidence_request' }),
+  ]).reason, 'evidence_delta_request_budget_exhausted');
+});
+
+test('sample fixture is executable through the shadow CLI', () => {
+  const result = runShadowCli(['evaluate', '--input', samplePath]);
+  assert.equal(result.status, 0, result.stderr);
+  const decision = JSON.parse(result.stdout);
+  assert.equal(decision.authority, 'advisory_shadow');
+  assert.equal(decision.repository, 'monkey1sai/AI-BIM-governance');
+});
+
+test('shadow CLI rejects malformed options and output paths outside artifacts', () => {
+  const missing = runShadowCli(['evaluate']);
+  assert.equal(missing.status, 2);
+  assert.match(missing.stderr, /--input is required/);
+
+  const unknown = runShadowCli(['evaluate', '--input', samplePath, '--unexpected', 'value']);
+  assert.equal(unknown.status, 2);
+  assert.match(unknown.stderr, /unknown option --unexpected/);
+
+  const temp = mkdtempSync(join(tmpdir(), 'review-risk-cli-'));
+  try {
+    const outside = runShadowCli(['evaluate', '--input', samplePath, '--output', join(temp, 'outside.json')]);
+    assert.equal(outside.status, 2);
+    assert.match(outside.stderr, /--output must resolve inside/);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test('shadow CLI rejects symlink escapes and refuses to overwrite output', () => {
+  mkdirSync(artifactsRoot, { recursive: true });
+  const container = mkdtempSync(join(artifactsRoot, 'review-risk-link-'));
+  const external = mkdtempSync(join(tmpdir(), 'review-risk-external-'));
+  const linkPath = join(container, 'outside-link');
+  const externalInput = join(external, 'input.json');
+  const escapedOutput = join(external, 'escaped.json');
+  let linkCreated = false;
+  try {
+    copyFileSync(samplePath, externalInput);
+    symlinkSync(external, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
+    linkCreated = true;
+
+    const readEscape = runShadowCli(['evaluate', '--input', join(linkPath, 'input.json')]);
+    assert.equal(readEscape.status, 2);
+    assert.match(readEscape.stderr, /--input must resolve inside/);
+
+    const writeEscape = runShadowCli(['evaluate', '--input', samplePath, '--output', join(linkPath, 'escaped.json')]);
+    assert.equal(writeEscape.status, 2);
+    assert.match(writeEscape.stderr, /--output parent must be a real directory/);
+    assert.equal(existsSync(escapedOutput), false);
+
+    const existingOutput = join(container, 'existing.json');
+    writeFileSync(existingOutput, '{}\n', 'utf8');
+    const overwrite = runShadowCli(['evaluate', '--input', samplePath, '--output', existingOutput]);
+    assert.equal(overwrite.status, 2);
+    assert.match(overwrite.stderr, /--output already exists/);
+  } finally {
+    if (linkCreated) unlinkSync(linkPath);
+    rmSync(container, { recursive: true, force: true });
+    rmSync(external, { recursive: true, force: true });
+  }
 });

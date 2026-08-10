@@ -79,7 +79,10 @@ const SELF_REFERENTIAL_PATTERNS = [
   /^scripts\/tests\/fixtures\/review-risk-[^/]+\.json$/,
   /^docs\/agent-tooling\/hermes-risk-proportional-review\.md$/,
 ];
-const PROTECTED_BOUNDARY_PATTERN = /(^|\/)(?:auth|oauth|sso|security|permissions?|payment|billing|checkout|crypto|encrypt|keys?|audit|compliance|gdpr|secrets?)(?:\/|$|\.)/;
+const PROTECTED_BOUNDARY_PATTERN = /(^|\/)(?:auth|oauth|sso|security|permissions?|payment|billing|checkout|crypto|encrypt|keys?|audit|compliance|gdpr|secrets?)(?:\/|$|\.)/i;
+const ENV_OR_SECRET_PATTERN = /(^|\/)\.env(?:\.|$)|(^|\/)(?:secrets?|credentials?)(?:\/|$|\.)/i;
+const REPOSITORY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+const EVIDENCE_REF_PATTERN = /^artifacts\/(?:[A-Za-z0-9][A-Za-z0-9._@#-]*\/)*[A-Za-z0-9][A-Za-z0-9._@#-]*\.[A-Za-z0-9][A-Za-z0-9-]*$/;
 const CONTRACT_PATTERN = /(^|\/)(?:contracts?|schemas?|openapi|events?|protocols?)(?:\/|$|\.)/;
 const SHARED_PATTERN = /(^|\/)(?:utils?|common|shared|middleware|core)(?:\/|$|\.)/;
 const MIGRATION_PATTERN = /(^|\/)(?:migrations?)(?:\/|$|\.)/;
@@ -170,11 +173,13 @@ export async function readJson(path) {
 
 export function normalizeRepositoryPath(value) {
   assertString(value, 'path', { max: 512 });
+  if (value !== value.trim()) fail('surrounding whitespace in a path is forbidden');
+  if (/[\u0000-\u001f\u007f]/.test(value)) fail('control characters in a path are forbidden');
   let normalized = value.replaceAll('\\', '/');
   while (normalized.startsWith('./')) normalized = normalized.slice(2);
   if (!normalized || normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) fail(`absolute path is forbidden: ${value}`);
   const segments = normalized.split('/');
-  if (segments.some((segment) => segment === '..' || segment === '')) fail(`path traversal or empty segment is forbidden: ${value}`);
+  if (segments.some((segment) => segment === '..' || segment === '.' || segment === '')) fail(`path traversal or empty segment is forbidden: ${value}`);
   return normalized;
 }
 
@@ -248,7 +253,7 @@ function validateEvidence(entry, index) {
   assertExactKeys(entry, ['kind', 'status', 'ref', 'head_sha'], ['kind', 'status', 'ref', 'head_sha'], label);
   assertEnum(entry.kind, EVIDENCE_KINDS, `${label}.kind`);
   assertEnum(entry.status, EVIDENCE_STATUSES, `${label}.status`);
-  assertString(entry.ref, `${label}.ref`, { max: 512 });
+  assertString(entry.ref, `${label}.ref`, { max: 512, pattern: EVIDENCE_REF_PATTERN });
   assertGitSha(entry.head_sha, `${label}.head_sha`);
 }
 
@@ -256,7 +261,7 @@ export function validateInput(candidate) {
   const input = cloneJson(candidate);
   assertExactKeys(input, INPUT_KEYS, INPUT_KEYS, 'input');
   if (input.schema_version !== INPUT_VERSION) fail(`unsupported input schema_version ${input.schema_version}`);
-  assertString(input.repository, 'input.repository', { max: 200, pattern: /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/ });
+  assertString(input.repository, 'input.repository', { max: 200, pattern: REPOSITORY_PATTERN });
   assertGitSha(input.base_sha, 'input.base_sha');
   assertGitSha(input.head_sha, 'input.head_sha');
   if (input.base_sha === input.head_sha) fail('input.base_sha and input.head_sha must differ');
@@ -267,7 +272,7 @@ export function validateInput(candidate) {
     fail('input.changed_paths must contain 1-1000 entries');
   }
   input.changed_paths.forEach(validateChangedPath);
-  const normalizedPaths = input.changed_paths.map((entry) => entry.path);
+  const normalizedPaths = input.changed_paths.map((entry) => entry.path.toLowerCase());
   if (new Set(normalizedPaths).size !== normalizedPaths.length) fail('input.changed_paths must not contain duplicate normalized paths');
 
   assertExactKeys(input.detection, ['detector', 'observed', 'horizon'], ['detector', 'observed', 'horizon'], 'input.detection');
@@ -325,35 +330,36 @@ function pathFacts(paths) {
     signals: new Set(),
   };
   for (const { path } of paths) {
-    if (SELF_REFERENTIAL_PATTERNS.some((pattern) => pattern.test(path))) {
+    const classificationPath = path.toLowerCase();
+    if (SELF_REFERENTIAL_PATTERNS.some((pattern) => pattern.test(classificationPath))) {
       result.selfReferential = true;
       result.signals.add(`self_referential_path:${path}`);
     }
-    if (PROTECTED_BOUNDARY_PATTERN.test(path)) {
+    if (PROTECTED_BOUNDARY_PATTERN.test(classificationPath)) {
       result.protectedBoundary = true;
       result.signals.add(`protected_boundary_path:${path}`);
     }
-    if (CONTRACT_PATTERN.test(path) || path.startsWith('agent-contracts/') || /task-packet/.test(path)) {
+    if (CONTRACT_PATTERN.test(classificationPath) || classificationPath.startsWith('agent-contracts/') || /task-packet/.test(classificationPath)) {
       result.contract = true;
       result.signals.add(`contract_path:${path}`);
     }
-    if (SHARED_PATTERN.test(path)) {
+    if (SHARED_PATTERN.test(classificationPath)) {
       result.shared = true;
       result.signals.add(`shared_path:${path}`);
     }
-    if (MIGRATION_PATTERN.test(path)) {
+    if (MIGRATION_PATTERN.test(classificationPath)) {
       result.migration = true;
       result.signals.add(`migration_path:${path}`);
     }
-    if (RUNTIME_PATTERN.test(path)) {
+    if (RUNTIME_PATTERN.test(classificationPath)) {
       result.runtime = true;
       result.signals.add(`runtime_path:${path}`);
     }
-    if (ARCHITECTURE_PATTERN.test(path)) {
+    if (ARCHITECTURE_PATTERN.test(classificationPath)) {
       result.architecture = true;
       result.signals.add(`architecture_path:${path}`);
     }
-    if (/(^|\/)\.env(?:\.|$)|(^|\/)(?:secrets?|credentials?)(?:\/|$|\.)/.test(path)) {
+    if (ENV_OR_SECRET_PATTERN.test(classificationPath)) {
       result.envOrSecret = true;
       result.signals.add(`secret_or_env_path:${path}`);
     }
@@ -462,6 +468,7 @@ function requiredEvidenceKinds(input, topology, trustSurface, paths) {
   if (input.change.runtime_or_deploy || paths.runtime) kinds.add('runtime_log');
   if (trustSurface !== 'normal') kinds.add('security_review');
   if (input.change.duplicated_rule_risk) kinds.add('impact_result');
+  if (input.impact.affected_services === null || input.impact.callers === null) kinds.add('impact_result');
   return [...kinds].sort();
 }
 
@@ -476,7 +483,7 @@ function evaluateEvidence(input, requiredKinds, signals) {
     const failed = exactItems.find((entry) => entry.status === 'failed');
     if (failed) {
       exactFailed = true;
-      gaps.push(`${kind}:failed:${failed.ref}`);
+      gaps.push(`${kind}:failed`);
       continue;
     }
     if (exactItems.some((entry) => entry.status === 'passed')) {
@@ -544,7 +551,8 @@ function chooseReviewMode(input, policy, risk, evidence, signals) {
     mode = raiseMode(policy, mode, 'risk_scoped_specialists');
   } else if (
     risk.topology === 'unknown' || risk.consequence === 'medium' || risk.detectability !== 'strong' ||
-    !['immediate', 'hours'].includes(risk.horizon) || evidence.strength !== 'strong'
+    !['immediate', 'hours'].includes(risk.horizon) || evidence.strength !== 'strong' ||
+    input.impact.affected_services === null || input.impact.callers === null
   ) {
     mode = raiseMode(policy, mode, 'focused_semantic');
   }
@@ -585,7 +593,7 @@ function buildQuestions(input, mode, risk, evidenceGaps, paths, maxQuestions) {
   if (risk.topology === 'distributed' || input.change.duplicated_rule_risk || paths.shared) add('Is one business rule now duplicated or inconsistently owned across callers, services, or adapters?');
   if (input.change.persistent_write !== 'none') add('If the defect runs for 30 days, what persisted state remains after the code fix and how is it reconciled?');
   if (input.change.runtime_or_deploy || paths.runtime) add('Which runtime observation proves the intended process, endpoint, stage, or deployment authority actually changed?');
-  for (const gap of evidenceGaps) add(`Supply exact-head evidence for ${gap}.`);
+  for (const gap of evidenceGaps) add(`Supply exact-head evidence for ${JSON.stringify(gap)}.`);
   if (questions.length === 0) add('Which semantic invariant is not already proven by deterministic exact-head evidence?');
   return questions;
 }
@@ -625,6 +633,7 @@ export function classifyReview(candidateInput, candidatePolicy) {
   if (input.change.architecture_authority_changed) signals.add('declared_architecture_authority_change');
   if (input.change.duplicated_rule_risk) signals.add('declared_duplicated_rule_risk');
   if (input.change.runtime_or_deploy) signals.add('declared_runtime_or_deploy');
+  if (input.impact.affected_services === null || input.impact.callers === null) signals.add('impact_unknown');
 
   const topology = deriveTopology(input, paths, signals);
   const trustSurface = deriveTrustSurface(input, paths, signals);
@@ -785,7 +794,7 @@ export function buildReviewPacket(candidateInput, decision, candidatePolicy) {
     refreshPacketActualBytes(packet);
   }
   packet.packet_sha256 = sha256Value(packetHashMaterial(packet));
-  return packet;
+  return validateReviewPacket(packet);
 }
 
 export function validateReviewPacket(candidate) {
@@ -798,7 +807,7 @@ export function validateReviewPacket(candidate) {
   assertExactKeys(packet, keys, keys, 'packet');
   if (packet.schema_version !== PACKET_VERSION) fail(`unsupported packet schema_version ${packet.schema_version}`);
   if (packet.authority !== 'advisory_shadow' || packet.merge_authority !== false) fail('packet must remain advisory-only');
-  assertString(packet.repository, 'packet.repository', { max: 200, pattern: /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/ });
+  assertString(packet.repository, 'packet.repository', { max: 200, pattern: REPOSITORY_PATTERN });
   assertGitSha(packet.base_sha, 'packet.base_sha');
   assertGitSha(packet.head_sha, 'packet.head_sha');
   assertSha256(packet.policy_sha256, 'packet.policy_sha256');
@@ -817,7 +826,7 @@ export function validateReviewPacket(candidate) {
     assertInteger(entry.additions, `${label}.additions`, 0, 1_000_000);
     assertInteger(entry.deletions, `${label}.deletions`, 0, 1_000_000);
   });
-  if (new Set(packet.selected_paths.map((entry) => entry.path)).size !== packet.selected_paths.length) fail('packet.selected_paths contains duplicate paths');
+  if (new Set(packet.selected_paths.map((entry) => entry.path.toLowerCase())).size !== packet.selected_paths.length) fail('packet.selected_paths contains duplicate paths');
   assertInteger(packet.omitted_path_count, 'packet.omitted_path_count', 0, 1_000_000);
 
   assertExactKeys(packet.risk, ['detectability', 'horizon', 'consequence', 'topology', 'evidence_strength', 'trust_surface'], ['detectability', 'horizon', 'consequence', 'topology', 'evidence_strength', 'trust_surface'], 'packet.risk');

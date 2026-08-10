@@ -136,6 +136,8 @@ input_sha256
 
 A packet adds `packet_sha256`. Before accepting a reviewer result, the adapter revalidates the packet's closed shape, final serialized byte count, and content hash. A reviewer result must match both the packet hash and head SHA. New head, policy, normalized input, or verification-manifest identity requires a new cycle; evidence from another head is `stale`, not passed.
 
+PR-A validates `repository` as a closed `owner/name` slug, but does not authenticate that slug against a hosting provider. Before invoking this library, a trusted adapter must compare the provider-supplied repository identity with its configured scope. Hosted identity and artifact-provenance binding remain PR-B work; a caller-supplied slug or digest is not proof by itself.
+
 ## 8. Bounded review packet
 
 Default caps:
@@ -159,6 +161,8 @@ The packet contains only:
 - explicit budget accounting.
 
 It never includes a full chat, prompt, repository, diff, log stream, or session history. A cap violation returns `budget_exceeded`; the adapter must not silently widen the packet.
+
+Evidence `ref` values are inert repository-local artifact identifiers with the form `artifacts/<path>/<file.ext>`. They are not URLs, command arguments, free-form instructions, or permission to dereference a path. The adapter owns artifact lookup and provenance verification before it marks evidence as passed.
 
 ## 9. Reviewer contract
 
@@ -223,7 +227,7 @@ A larger model, repeated reviewer, or more context is not accepted as “new evi
 
 ## 11. CLI
 
-All commands are local, read-only, and use Node standard library only.
+All commands are local, advisory, and use Node standard library only. Input paths must resolve inside the repository. Optional file output is restricted to real directories under `artifacts/`, uses exclusive creation, and never overwrites an existing file.
 
 ```powershell
 # Classify a bounded fact input
@@ -273,6 +277,8 @@ The CLI exits non-zero only for malformed input/contract or a failed golden repl
 10. Return advisory output to the existing PR review flow.
 ```
 
+Before step 1, the adapter must bind the provider-supplied repository identity, policy, verification manifest, and artifact provenance to its configured run. PR-A's local hashes detect internal inconsistency; they do not authenticate caller-supplied files across a process boundary.
+
 ### Hermes
 
 Hermes may act as the outer execution adapter, but it receives no repository-wide prompt and owns no policy semantics.
@@ -305,7 +311,7 @@ Codex and Claude use the same JSON contracts. Their project skills should be thi
 - policy, schemas, deterministic classifier;
 - packet/result/loop contracts;
 - 20-case golden corpus plus a standalone sample input;
-- local CLI and 32 focused tests;
+- local CLI and 48 focused tests;
 - evidence/design documentation;
 - no workflow or merge-authority change.
 
@@ -314,6 +320,7 @@ Codex and Claude use the same JSON contracts. Their project skills should be thi
 - collect representative historical PR facts;
 - compare legacy and shadow decisions;
 - record false-positive/false-negative concerns;
+- bind hosted repository identity, policy/manifest digests, packet origin, and artifact provenance in the trusted adapter;
 - no PR comments or labels.
 
 ### PR-C — base-owned advisory integration
@@ -342,7 +349,7 @@ node scripts/dev/review-risk-shadow.mjs replay `
 Expected local baseline for PR-A:
 
 - 20/20 golden cases pass;
-- 32/32 focused Node tests pass;
+- 48/48 focused Node tests pass;
 - schemas validate as Draft-07;
 - `git diff --check` passes;
 - no workflow, current gate, ledger, CODEOWNERS, or verification manifest is modified.
