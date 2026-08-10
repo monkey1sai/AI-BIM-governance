@@ -64,6 +64,10 @@ const MARKER_INVALID = 'invalid';
 // Bounds keep a malformed or hostile tree from turning the gate into a denial of service.
 const MAX_FILE_BYTES = 4 * 1024 * 1024;
 const MAX_CURRENT_CHANGES = 512;
+// Raw namespace entries are capped higher than the canonical change budget so the mandatory
+// `archive` namespace and a bounded number of malformed entries still reach the comparator
+// as targeted mismatches instead of collapsing into one generic budget error.
+const MAX_CHANGE_NAMESPACE_ENTRIES = MAX_CURRENT_CHANGES + 65;
 const MAX_ARCHIVE_DIRECTORIES = 4096;
 const MAX_LEDGER_ROWS = 8192;
 const PROLOGUE_LINES = 40;
@@ -326,13 +330,18 @@ export function parseNowProjection(text) {
  */
 export function proposalLifecycleStatus(text) {
   const prologue = text.split(/\r?\n/u).slice(0, PROLOGUE_LINES).join('\n');
-  const markers = [...prologue.matchAll(/^>\s*\*\*Status:\s*([a-z-]+)/gimu)].map((match) => match[1].toLowerCase());
-  if (markers.length > 1) return MARKER_INVALID;
-  if (markers.length === 0) {
-    return /^[^\S\n]{0,3}>[^\n]*\*\*\s*Status\b/imu.test(prologue) ? MARKER_NEAR_MISS : 'active';
-  }
-  if (markers[0] === 'adopted') return 'completed';
-  return STATUS.has(markers[0]) ? markers[0] : MARKER_INVALID;
+  // The status token must end at a canonical delimiter. Without the boundary,
+  // `> **Status: active123**` captures `active` and reads as a clean active row.
+  const canonical = [...prologue.matchAll(/^>[^\S\n]*\*\*Status:[^\S\n]*([a-z-]+)(?=\*\*|[^\S\n]|$)/gimu)]
+    .map((match) => match[1].toLowerCase());
+  // Every bolded status-like line in the prologue is inventoried, so a near-miss beside a
+  // canonical marker is never ignored: two disagreeing declarations must not resolve to one.
+  const statusLike = [...prologue.matchAll(/^[^\S\n]{0,3}>[^\n]*\*\*[^\S\n]*Status\b/gimu)].length;
+  if (canonical.length > 1) return MARKER_INVALID;
+  if (statusLike > canonical.length) return MARKER_NEAR_MISS;
+  if (canonical.length === 0) return 'active';
+  if (canonical[0] === 'adopted') return 'completed';
+  return STATUS.has(canonical[0]) ? canonical[0] : MARKER_INVALID;
 }
 
 /**
@@ -354,12 +363,11 @@ export function collectRepositoryObservation(repoRoot) {
   const now = parseNowProjection(
     readBoundedText(root, path.join(root, 'docs', 'plans', 'NOW.md'), 'docs/plans/NOW.md'));
 
-  // One raw slot is reserved for the mandatory `archive` namespace so the filesystem
-  // observation can represent exactly the same MAX_CURRENT_CHANGES boundary the NOW parser
-  // accepts, instead of refusing one legitimate change short of it.
-  const changeEntries = listChildEntries(root, changesRoot, 'openspec/changes', MAX_CURRENT_CHANGES + 1)
+  const changeEntries = listChildEntries(root, changesRoot, 'openspec/changes', MAX_CHANGE_NAMESPACE_ENTRIES)
     .filter((entry) => entry.name !== 'archive');
-  if (changeEntries.length > MAX_CURRENT_CHANGES) {
+  const canonicalChangeCount = changeEntries
+    .filter((entry) => entry.isDirectory && CHANGE_ID.test(entry.name)).length;
+  if (canonicalChangeCount > MAX_CURRENT_CHANGES) {
     fail('input_too_large', 'openspec/changes',
       'Lifecycle directory exceeds the bounded entry budget: openspec/changes');
   }

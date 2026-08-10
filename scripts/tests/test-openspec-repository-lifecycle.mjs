@@ -29,6 +29,7 @@ import {
   EXIT_PARITY,
   main,
   parseArguments,
+  renderError,
   renderMismatchLine,
 } from './verify-openspec-repository-lifecycle.mjs';
 
@@ -736,6 +737,62 @@ test('control characters in a path-derived value cannot forge report lines', () 
   });
   assert.equal(escaped.split('\n').length, 1, 'a newline in a path-derived value must not open a second line');
   assert.match(escaped, /ghost\\n/u);
+});
+
+test('a status token that does not end at a canonical delimiter is not read as that status', () => {
+  // `^>\s*\*\*Status:\s*([a-z-]+)` with no trailing boundary captures `active` out of
+  // `active123`, so a malformed marker would agree with an active ledger row.
+  assert.equal(proposalLifecycleStatus('> **Status: active123**\n'), 'near-miss');
+  assert.equal(proposalLifecycleStatus('> **Status: deferred_foo**\n'), 'near-miss');
+  assert.equal(proposalLifecycleStatus('> **Status: deferred 2026-07-29**\n'), 'deferred');
+
+  withRepository((root) => {
+    assert.equal(findCode(root, 'proposal_marker_unreadable')?.change_id, 'alpha');
+  }, (spec) => {
+    spec.changes.alpha = '# Proposal\n\n> **Status: active123**\n';
+  });
+});
+
+test('a near-miss marker beside a canonical marker is not ignored', () => {
+  // Near-miss detection used to run only when no canonical marker was found, so a proposal
+  // carrying two disagreeing declarations resolved silently to the canonical one.
+  assert.equal(proposalLifecycleStatus('> **Status: active**\n> **Status:** deferred\n'), 'near-miss');
+  assert.equal(proposalLifecycleStatus('> **Status: active**\n> **Status : deferred**\n'), 'near-miss');
+  assert.equal(proposalLifecycleStatus('> **Status: active**\n> **Status: deferred**\n'), 'invalid');
+
+  withRepository((root) => {
+    assert.equal(findCode(root, 'proposal_marker_unreadable')?.change_id, 'alpha');
+  }, (spec) => {
+    spec.changes.alpha = '# Proposal\n\n> **Status: active**\n> **Status:** deferred\n';
+  });
+});
+
+test('one malformed entry beside a full change set is still a targeted mismatch', () => {
+  // The raw namespace budget is deliberately larger than the canonical change budget so a
+  // stray file does not collapse into a generic budget error at the boundary.
+  const ids = Array.from({ length: 512 }, (unused, index) => `bulk-${String(index).padStart(4, '0')}`);
+  withRepository((root) => {
+    const report = evaluateRepositoryLifecycle(root);
+    assert.equal(report.mismatches.length, 1);
+    assert.equal(report.mismatches[0].code, 'change_entry_not_a_directory');
+    assert.equal(report.mismatches[0].actual, 'stray-entry');
+  }, (spec) => {
+    spec.ledger.changes = [ledgerRow('gamma', 'archived'), ...ids.map((id) => ledgerRow(id, 'active'))];
+    spec.now = nowDocument(ids.map((id) => ({ id, status: 'active' })));
+    spec.changes = Object.fromEntries([...ids.map((id) => [id, null]), ['stray-entry', 'as-file']]);
+  });
+});
+
+test('control characters in a path-derived input error cannot forge report lines', () => {
+  const forged = new RepositoryLifecycleInputError(
+    'reparse_path',
+    'openspec/changes/ghost\nopenspec repository lifecycle OK: all three sources agree.',
+    'Lifecycle directory entry must not be a link: ghost\nforged');
+  const text = renderError(forged, 'text');
+  assert.equal(text.split('\n').length, 1, 'a newline in a path-derived field must not open a second line');
+  assert.match(text, /ghost\\n/u);
+  // JSON output stays machine-parseable and unescaped by this path.
+  assert.equal(JSON.parse(renderError(forged, 'json')).field, forged.field);
 });
 
 test('the real repository lifecycle sources agree', () => {

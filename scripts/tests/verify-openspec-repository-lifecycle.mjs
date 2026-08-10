@@ -70,7 +70,7 @@ function renderValue(value) {
   return /[\u0000-\u001f\u007f]/u.test(text) ? JSON.stringify(text) : text;
 }
 
-function renderError(error, format) {
+export function renderError(error, format) {
   if (format === 'json') {
     return JSON.stringify({
       schema_version: 'openspec-repository-lifecycle-error/v1',
