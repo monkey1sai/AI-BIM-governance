@@ -253,6 +253,7 @@ try {
     Assert-FileContains 'scripts/tests/verify-openspec-lifecycle.ps1' '\$wipLimit\s*=\s*6' 'OpenSpec lifecycle verifier enforces the canonical WIP limit'
     Assert-FileContains 'docs/plans/NOW.md' '禁止同時推進 >6 個 active OpenSpec product change' 'NOW reflects the canonical OpenSpec WIP limit'
     Assert-FileContains 'docs/plans/NOW.md' '<!-- lifecycle-ledger:start -->' 'NOW contains the bounded machine-ledger projection'
+    Assert-FileContains 'openspec/AGENTS.md' 'verify-openspec-repository-lifecycle\.mjs' 'OpenSpec instructions document the repository-scoped lifecycle parity gate'
     foreach ($ownedPath in @('/AGENTS.md', '/docs/agents/', '/docs/plans/', '/.github/', '/scripts/')) {
         Assert-FileContains '.github/CODEOWNERS' ([regex]::Escape($ownedPath)) "CODEOWNERS covers $ownedPath"
     }
@@ -1068,6 +1069,20 @@ try {
 
     & pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'test-seed-isolated-stack-ifc-ready.ps1')
     Assert-True ($LASTEXITCODE -eq 0) 'isolated seed wrapper script-level tests pass'
+
+    # Repository-scoped OpenSpec lifecycle parity. scripts/lib/openspec-machine-truth.mjs
+    # owns the full comparator, but its CLI needs a GitHub observation and a pinned openspec
+    # binary, so CI could only ever exercise it against synthetic temporary fixtures. Nothing
+    # pointed a comparator at the tree it governs, so drift between openspec/changes, the
+    # machine ledger and the NOW projection was corrected by hand after landing instead of
+    # being refused at PR time. These two commands close that hole without network or git.
+    & node --test (Join-Path $PSScriptRoot 'test-openspec-repository-lifecycle.mjs')
+    Assert-True ($LASTEXITCODE -eq 0) 'repository-scoped OpenSpec lifecycle parity fixtures pass'
+
+    $repositoryLifecycleReport = @(& node (Join-Path $PSScriptRoot 'verify-openspec-repository-lifecycle.mjs') --repo-root $repoRoot)
+    Assert-True ($LASTEXITCODE -eq 0) 'openspec/changes, openspec/lifecycle-ledger.json and the docs/plans/NOW.md projection agree'
+    # Exit 0 alone is not proof the gate ran: assert it actually produced its report.
+    Assert-True ((($repositoryLifecycleReport -join "`n")) -match 'openspec repository lifecycle OK') 'repository-scoped lifecycle gate emitted its parity report'
 } finally {
     Pop-Location
 }

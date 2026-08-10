@@ -30,6 +30,7 @@ OpenSpec 入口：`npx openspec`（list / validate / show / archive / new）。
 - MUST 將 deferred change 保留在 `openspec/changes/<change-id>/`，並在 `proposal.md` 頂部使用 canonical `Status: deferred <日期>` 標記、理由與重啟條件；deferred 不構成 active capability owner，也不得為了 WIP 計數移入 archive。`--skip-specs` 只會跳過 canonical spec 同步，**不是** deferred state。
 - MUST 僅 archive 已完成的 change：所有 task checkbox 均已結案；若原工作由明確、非重疊且已接受的 successor 完整承接，須先把原 checkbox 改成已勾選的 terminal disposition 並記錄 successor，不得留下 unchecked task。delta specs 已同步 canonical specs，或已由 successor 明確 supersede。單純 warning、known gap、使用者確認繼續或 `--skip-specs` 均不得把 unfinished/deferred change 重新分類為 completed。
 - MUST 先更新 `lifecycle-ledger.json` 再更新 NOW projection；不得由 unchecked checkbox 推論 active。`subject_commit` 表示 proposal/tasks/evidence 被觀察的 source snapshot，full verifier 會要求這些 source 自該 commit 起未改動。
+- MUST 讓三個 repository-local lifecycle 來源保持一致：`openspec/changes/<id>/` 目錄與其 `> **Status:` 標記、`openspec/lifecycle-ledger.json`、以及 `docs/plans/NOW.md` 的 `scope: current` projection。任一處漂移由 `scripts/tests/verify-openspec-repository-lifecycle.mjs` 在 required `agent-governance` check 內 fail closed（exit 2）；該 gate 不需要 network、git 或 pinned `openspec` binary，因此每個 PR 都跑得起，不再靠事後人工修正。
 - MUST 將既有歷史 archive 的 unchecked／unsupported checkbox 只記為 typed `archive_debt`（owner + review due）；這是 migration debt disclosure，不是完成證據，也不得用於新的 archive。
 - MUST 用繁體中文撰寫 proposal / design / tasks / spec；保留 OpenSpec parser 必要標頭（`## ADDED Requirements` / `## MODIFIED Requirements` / `### Requirement:` / `#### Scenario:` 等）為原文。
 - MUST NOT 修改 `openspec/changes/archive/` 內任何檔案；歷史 correction 需獨立 PR 並在 PR 描述標示。
@@ -48,6 +49,7 @@ OpenSpec 入口：`npx openspec`（list / validate / show / archive / new）。
 ```powershell
 npx openspec validate <change-id> --strict
 npx openspec validate --all --strict
+node scripts/tests/verify-openspec-repository-lifecycle.mjs
 node scripts/tests/verify-openspec-machine-truth.mjs --repo-root . --ledger openspec/lifecycle-ledger.json --now docs/plans/NOW.md --github-state <repo-contained-raw-github-json> --openspec-list <repo-contained-openspec-list-json> --subject <observed-source-sha> --base <trusted-base-sha>
 ```
 
