@@ -32,7 +32,7 @@
 | `scripts/tests/test-self-referential-bootstrap.ps1` | passed |
 | `scripts/tests/test-agent-governance-check.ps1` | passed |
 | PR #483 local preflight | previous head `3fb6b28` passed; follow-up exact-head rerun is a post-push gate |
-| GitNexus branch compare against `origin/main` | reported critical: 12 files, 205 symbols, 264 flows; exact symbol context contained unrelated React/Python callers, while raw imports bound the module to its CLI/tests; independent pre-edit reviewer signed off this as an index-collision artifact |
+| GitNexus full rebuild and branch compare against `origin/main` | index exact at `4efa0aa`; high: 12 files, 208 symbols, 10 relevant flows. The earlier 264-flow critical result was eliminated by `--repair-fts` plus `--force --index-only`, confirming stale/corrupt index collisions |
 | Canonical self-referential path classification | 12 changed paths, 0 mechanism paths; bootstrap ledger not applicable to PR-A |
 | Patch whitespace check (`git diff --check`) | passed |
 | Independent final Codex read-only review | Initial diff review found a changed-fingerprint/no-evidence terminal bypass; the follow-up fix and cross-root rename regression were reviewed, with no residual P0/P1/P2 and `recommendation=accept` |
