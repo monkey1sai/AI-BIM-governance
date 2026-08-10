@@ -1,4 +1,5 @@
 import type {
+  GovernanceLibraryDiffBody,
   GovernanceLibraryPort,
   GovernanceLibraryRuleRunBody,
   GovernanceLibraryTree,
@@ -25,6 +26,19 @@ export class GovernanceLibraryHttpAdapter implements GovernanceLibraryPort {
 
   async postRuleRun(body: GovernanceLibraryRuleRunBody): Promise<OpaqueGovernanceReply> {
     const response = await fetch(resolveGovernanceApiBase() + "/api/rule-runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return {
+      status: response.status,
+      contentType: response.headers.get("content-type") ?? "application/json",
+      bodyText: await response.text(),
+    };
+  }
+
+  async postDiff(body: GovernanceLibraryDiffBody): Promise<OpaqueGovernanceReply> {
+    const response = await fetch(resolveGovernanceApiBase() + "/api/diffs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
