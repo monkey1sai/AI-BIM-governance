@@ -34,6 +34,11 @@
       "contract": "lifecycle contract gate",
       "change_type": "additive",
       "description": "Adds architecture/lifecycle-contract.json plus a standard-library checker that validates machine well-formedness, keeps declared state sets synchronized with the owning TypeScript unions, and cross-checks the readiness binding against the review-session-ready policy. Declaration of existing runtime behavior only; no product API, event contract, or runtime behavior changes."
+    },
+    {
+      "contract": "architecture learning ledger",
+      "change_type": "additive",
+      "description": "Adds architecture/learning-ledger.json classifying recurring improve-codebase-architecture findings into erosion patterns with a machine-verified promotion record, plus a read-only quality report aggregating every architecture gate into a graded snapshot. Inventory and reporting only; nothing is auto-repaired and no product contract changes."
     }
   ],
   "data_ownership_changes": [],

@@ -38,6 +38,8 @@ architecture/
 ├── layer-baseline.schema.json
 ├── lifecycle-contract.json
 ├── lifecycle-contract.schema.json
+├── learning-ledger.json
+├── learning-ledger.schema.json
 ├── deltas/
 │   └── <change-id>.json
 └── README.md
@@ -55,6 +57,8 @@ architecture/
 - `layer-baseline.schema.json`：layer baseline 的結構 schema。
 - `lifecycle-contract.json`：**review-session / endpoint-lease / stage-binding 三個 coordinator 端狀態機的機器定義**（Phase 4）：states、observed transitions、forbidden shortcuts、evidence gates、reentry 規則、cross-machine 規則與 readiness evidence binding。
 - `lifecycle-contract.schema.json`：lifecycle contract 的結構 schema。
+- `learning-ledger.json`：**recurring `$improve-codebase-architecture` findings 的分類帳**（Phase 5）：erosion pattern classes、findings（open/refactored/promoted/retired）、machine-verified promotion 記錄（pattern → 真實 invariant gate）。
+- `learning-ledger.schema.json`：learning ledger 的結構 schema。
 
 ## 3. 第一版硬規則
 
@@ -126,6 +130,10 @@ python -m pytest tests/test_layered_architecture.py -q -p no:cacheprovider
 # lifecycle contracts（Phase 4）
 python scripts/dev/check_lifecycle_contracts.py --repo-root . --strict
 python -m pytest tests/test_lifecycle_contracts.py -q -p no:cacheprovider
+
+# learning ledger + quality grade（Phase 5）
+python scripts/dev/report_architecture_quality.py --repo-root . --strict
+python -m pytest tests/test_architecture_learning.py -q -p no:cacheprovider
 ```
 
 `--report-only` 產出的 report 是 **可重生的本機產物**（`artifacts/architecture/` 已 gitignore），同一份 source tree 在 Windows 與 Linux 會得到 byte-identical 輸出。入庫的權威是 `observed-baseline.json`。
@@ -196,12 +204,13 @@ finding
 
 ## 7. 尚未宣稱完成的能力
 
-以下仍是後續 phase，不應被目前文件或 PR 誤報為已完成：
+以下不在目前 gates 的宣稱範圍，不應被文件或 PR 誤報為已完成：
 
-- architecture quality grade 與定期 architecture garbage collection（Phase 5）。
 - 跨 service 的 module-level layer 比對；目前只在 service 內部判定。
 - 動態 import 與執行期才決定的 module 名稱；靜態掃描看不到，因此不宣稱涵蓋。
 - lifecycle contract 對 transition **行為**的執行期驗證；Phase 4 的 gate 只驗 contract 一致性與 state 集同步，行為由各 service 自己的 runtime 與測試持有（見 Phase 4 界線）。
+- learning ledger 的 C2–F5 開放項的逐項修復／promotion（Phase 5 交付的是分類帳＋promotion 機制＋graded 快照；backlog 由後續輪次逐項關閉）。
+- quality report 的歷史 trend：報告是當前快照，shallow CI clone 無法重建時間序列；「trend」以 attributed debt inventory 表述。定期 architecture garbage collection 仍屬人工節奏。
 
 ### Phase 2 的已知偏離與界線（誠實揭露）
 
