@@ -101,6 +101,9 @@ async function startGovernanceStub(
     ruleRunStatus?: number;
     ruleRunContentType?: string;
     ruleRunBody?: string;
+    diffStatus?: number;
+    diffContentType?: string;
+    diffBody?: string;
   } = {},
 ): Promise<{
   baseUrl: string;
@@ -135,8 +138,12 @@ async function startGovernanceStub(
             ?? JSON.stringify({ rule_run_id: "rr_lib_001", status: "queued", ifc_source_path: body.ifc_source_path }));
         } else {
           diffBodies.push(body);
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ diff_id: "diff_lib_001", status: "queued", base_ifc_path: body.base_ifc_path }));
+          res.writeHead(
+            options.diffStatus ?? 200,
+            { "Content-Type": options.diffContentType ?? "application/json" },
+          );
+          res.end(options.diffBody
+            ?? JSON.stringify({ diff_id: "diff_lib_001", status: "queued", base_ifc_path: body.base_ifc_path }));
         }
       });
       return;
@@ -144,6 +151,7 @@ async function startGovernanceStub(
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ detail: "not found" }));
   });
+
   await new Promise<void>((resolve) => governanceStub?.listen(0, "127.0.0.1", () => resolve()));
   const address = governanceStub.address() as AddressInfo;
   return { baseUrl: `http://127.0.0.1:${address.port}`, urls, ruleRunBodies, diffBodies };
@@ -303,7 +311,50 @@ describe("POST /api/governance-library/diffs", () => {
     expect(raw).toContain("[server-path]");
   });
 
-  it("target version 不存在 → 404 {error:'library_version_not_found'}，不打 diffs", async () => {
+  it.each([202, 400, 404, 500])(
+    "透傳 upstream %i/custom content-type/opaque text，且先遮蔽 Windows/POSIX 路徑",
+    async (status) => {
+      const gov = await startGovernanceStub({
+        diffStatus: status,
+        diffContentType: "text/plain",
+        diffBody: `windows=\"${BASE_PATH}\" posix=\"/var/data/model.ifc\"`,
+      });
+      process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+      const app = makeApp();
+
+      const res = await request(app.app)
+        .post("/api/governance-library/diffs")
+        .send({
+          base: { project_id: "270", model_id: "機電", version_name: "ver 000001.ifc" },
+          target: { project_id: "270", model_id: "機電", version_name: "ver 竣工.ifc" },
+        });
+
+      expect(res.status).toBe(status);
+      expect(res.headers["content-type"]).toMatch(/^text\/plain/);
+      expect(res.text).toBe("windows=\"[server-path]\" posix=\"[server-path]\"");
+    },
+  );
+
+  it.each([
+    {
+      label: "omits every optional field",
+      optional: {},
+      expected: {},
+    },
+    {
+      label: "preserves false and exact model version IDs",
+      optional: {
+        include_geometry: false,
+        base_model_version_id: "base-id",
+        target_model_version_id: "target-id",
+      },
+      expected: {
+        include_geometry: false,
+        base_model_version_id: "base-id",
+        target_model_version_id: "target-id",
+      },
+    },
+  ])("$label", async ({ optional, expected }) => {
     const gov = await startGovernanceStub();
     process.env.GOVERNANCE_API_BASE = gov.baseUrl;
     const app = makeApp();
@@ -312,13 +363,45 @@ describe("POST /api/governance-library/diffs", () => {
       .post("/api/governance-library/diffs")
       .send({
         base: { project_id: "270", model_id: "機電", version_name: "ver 000001.ifc" },
-        target: { project_id: "270", model_id: "機電", version_name: "no-such.ifc" },
+        target: { project_id: "270", model_id: "機電", version_name: "ver 竣工.ifc" },
+        ...optional,
       });
 
-    expect(res.status).toBe(404);
-    expect(res.body).toEqual({ error: "library_version_not_found" });
-    expect(gov.urls).toEqual(["GET /api/files/tree"]);
+    expect(res.status).toBe(200);
+    expect(gov.diffBodies).toEqual([{
+      base_ifc_path: BASE_PATH,
+      target_ifc_path: TARGET_PATH,
+      ...expected,
+    }]);
   });
+
+  it.each(["base", "target"] as const)(
+    "%s version 不存在 → 404 {error:'library_version_not_found'}，不打 diffs",
+    async (missingSide) => {
+      const gov = await startGovernanceStub();
+      process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+      const app = makeApp();
+
+      const res = await request(app.app)
+        .post("/api/governance-library/diffs")
+        .send({
+          base: {
+            project_id: "270",
+            model_id: "機電",
+            version_name: missingSide === "base" ? "no-such.ifc" : "ver 000001.ifc",
+          },
+          target: {
+            project_id: "270",
+            model_id: "機電",
+            version_name: missingSide === "target" ? "no-such.ifc" : "ver 竣工.ifc",
+          },
+        });
+
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({ error: "library_version_not_found" });
+      expect(gov.urls).toEqual(["GET /api/files/tree"]);
+    },
+  );
 
   it("governance 不可達 → 502 {error:'governance_unreachable'}", async () => {
     process.env.GOVERNANCE_API_BASE = "http://127.0.0.1:1";

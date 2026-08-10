@@ -25,6 +25,10 @@ describe("GovernanceLibraryHttpAdapter", () => {
       .mockResolvedValueOnce(new Response(
         "upstream failure at /var/data/model.ifc",
         { status: 500, headers: { "Content-Type": "text/plain; charset=utf-8" } },
+      ))
+      .mockResolvedValueOnce(new Response(
+        "diff accepted",
+        { status: 202, headers: { "Content-Type": "text/custom" } },
       ));
     vi.stubGlobal("fetch", fetchMock);
     const adapter = new GovernanceLibraryHttpAdapter();
@@ -35,12 +39,26 @@ describe("GovernanceLibraryHttpAdapter", () => {
     process.env.GOVERNANCE_API_BASE = "http://127.0.0.1:49002";
     const reply = await adapter.postRuleRun({ ifc_source_path: "C:\\srv\\model.ifc" });
 
+    process.env.GOVERNANCE_API_BASE = "http://127.0.0.1:49003/";
+    const diffReply = await adapter.postDiff({
+      base_ifc_path: "C:\\srv\\base.ifc",
+      target_ifc_path: "C:\\srv\\target.ifc",
+      include_geometry: false,
+      base_model_version_id: "base-id",
+      target_model_version_id: "target-id",
+    });
+
     expect(reply).toEqual({
       status: 500,
       contentType: "text/plain; charset=utf-8",
       bodyText: "upstream failure at /var/data/model.ifc",
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(diffReply).toEqual({
+      status: 202,
+      contentType: "text/custom",
+      bodyText: "diff accepted",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:49001/api/files/tree");
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
       headers: { Accept: "application/json" },
@@ -55,6 +73,19 @@ describe("GovernanceLibraryHttpAdapter", () => {
       body: JSON.stringify({ ifc_source_path: "C:\\srv\\model.ifc" }),
     });
     expect(fetchMock.mock.calls[1]?.[1]).not.toHaveProperty("signal");
+    expect(fetchMock.mock.calls[2]?.[0]).toBe("http://127.0.0.1:49003/api/diffs");
+    expect(fetchMock.mock.calls[2]?.[1]).toMatchObject({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        base_ifc_path: "C:\\srv\\base.ifc",
+        target_ifc_path: "C:\\srv\\target.ifc",
+        include_geometry: false,
+        base_model_version_id: "base-id",
+        target_model_version_id: "target-id",
+      }),
+    });
+    expect(fetchMock.mock.calls[2]?.[1]).not.toHaveProperty("signal");
   });
 
   it.each([

@@ -390,38 +390,6 @@ const libraryDiffSchema = z.object({
   target_model_version_id: z.string().min(1).max(300).optional(),
 });
 
-type LibraryVersionRef = z.infer<typeof libraryVersionRefSchema>;
-
-/** governance GET /api/files/tree 回應（只描述解析需要的欄位；其餘忽略）。 */
-interface LibraryTreeShape {
-  projects?: Array<{
-    project_id?: unknown;
-    models?: Array<{
-      model_id?: unknown;
-      versions?: Array<{ name?: unknown; path?: unknown }>;
-    }>;
-  }>;
-}
-
-/** 在 files/tree 內找對應 version 的 governance host 真實絕對路徑；找不到回 null。 */
-export function findLibraryVersionPath(tree: LibraryTreeShape, ref: LibraryVersionRef): string | null {
-  const projects = Array.isArray(tree.projects) ? tree.projects : [];
-  const project = projects.find((p) => p && p.project_id === ref.project_id);
-  const models = Array.isArray(project?.models) ? project.models : [];
-  const model = models.find((m) => m && m.model_id === ref.model_id);
-  const versions = Array.isArray(model?.versions) ? model.versions : [];
-  const version = versions.find((v) => v && v.name === ref.version_name);
-  return typeof version?.path === "string" && version.path.length > 0 ? version.path : null;
-}
-
-// 瀏覽器回應遮蔽：與 routes/governanceProxy.ts redactServerPaths 同兩條 regex。
-// 該函式為凍結檔私有（未 export），依加性慣例在 app.ts 內部複刻，不改凍結檔。
-function redactServerPathsForBrowser(text: string): string {
-  return text
-    .replace(/[A-Za-z]:(?:\\\\|\\|\/)[^"'\r\n<>]*/g, "[server-path]")
-    .replace(/\/(?:workspace|storage|data|mnt|home|tmp|var|Users)\/[^"'\s<>]*/g, "[server-path]");
-}
-
 // B-scheme（local-coordinator-ifc-ready-intake-boundary T3 §4.1）。
 // 契約權威：tests/contracts/ifc_ready_payload.json。correlation_id /
 // idempotency_key 的權威來源是 AuthProvider（X-Correlation-Id /
@@ -3130,39 +3098,6 @@ export function createCoordinatorApp(
   // governance 回應原樣透傳 status/json（僅以與 proxy 同語意遮蔽絕對路徑）。
   // ---------------------------------------------------------------------------
 
-  /** server-side 取 governance files/tree（3s timeout）。失敗（不可達 / 非 2xx / 壞 JSON）即 throw。 */
-  async function fetchGovernanceLibraryTree(): Promise<LibraryTreeShape> {
-    const res = await fetch(`${governanceApiBaseForSnapshot()}/api/files/tree`, {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(3000),
-    });
-    if (!res.ok) throw new Error(`governance files/tree HTTP ${res.status}`);
-    return (await res.json()) as LibraryTreeShape;
-  }
-
-  /** POST 轉發 governance 並以 proxy 同語意遮蔽回應中的絕對路徑；不可達回 502。 */
-  async function forwardLibraryPostToGovernance(
-    response: express.Response,
-    path: string,
-    body: Record<string, unknown>,
-  ): Promise<void> {
-    const govBase = governanceApiBaseForSnapshot();
-    try {
-      const upstream = await fetch(`${govBase}${path}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const text = await upstream.text();
-      response.status(upstream.status);
-      response.setHeader("Content-Type", upstream.headers.get("content-type") ?? "application/json");
-      response.send(redactServerPathsForBrowser(text));
-    } catch {
-      // 誠實：governance 離線不偽造成功（語意對齊 issue-snapshot 502）。
-      response.status(502).json({ error: "governance_unreachable" });
-    }
-  }
-
   // A1 local_fs：邏輯三段 → server-side 解析真 IFC path → governance POST /api/rule-runs。
   app.post("/api/governance-library/rule-runs", async (request, response, next) => {
     try {
@@ -3205,27 +3140,41 @@ export function createCoordinatorApp(
   app.post("/api/governance-library/diffs", async (request, response, next) => {
     try {
       const input = libraryDiffSchema.parse(request.body);
-      let tree: LibraryTreeShape;
-      try {
-        tree = await fetchGovernanceLibraryTree();
-      } catch {
-        response.status(502).json({ error: "governance_unreachable" });
-        return;
+      const outcome = await governanceLibraryWorkflow.runLibraryDiff({
+        base: {
+          projectId: input.base.project_id,
+          modelId: input.base.model_id,
+          versionName: input.base.version_name,
+        },
+        target: {
+          projectId: input.target.project_id,
+          modelId: input.target.model_id,
+          versionName: input.target.version_name,
+        },
+        includeGeometry: input.include_geometry,
+        baseModelVersionId: input.base_model_version_id,
+        targetModelVersionId: input.target_model_version_id,
+      });
+      switch (outcome.kind) {
+        case "invalid_ids":
+          response.status(400).json({
+            error_code: "invalid_ids_path",
+            detail: outcome.detail,
+          });
+          return;
+        case "version_not_found":
+          response.status(404).json({ error: "library_version_not_found" });
+          return;
+        case "unavailable":
+          response.status(502).json({ error: "governance_unreachable" });
+          return;
+        case "forwarded":
+          response.status(outcome.status);
+          response.setHeader("Content-Type", outcome.contentType);
+          response.send(outcome.bodyText);
+          return;
       }
-      const baseIfcPath = findLibraryVersionPath(tree, input.base);
-      const targetIfcPath = findLibraryVersionPath(tree, input.target);
-      if (!baseIfcPath || !targetIfcPath) {
-        response.status(404).json({ error: "library_version_not_found" });
-        return;
-      }
-      const forwardBody: Record<string, unknown> = {
-        base_ifc_path: baseIfcPath,
-        target_ifc_path: targetIfcPath,
-      };
-      if (typeof input.include_geometry === "boolean") forwardBody.include_geometry = input.include_geometry;
-      if (input.base_model_version_id) forwardBody.base_model_version_id = input.base_model_version_id;
-      if (input.target_model_version_id) forwardBody.target_model_version_id = input.target_model_version_id;
-      await forwardLibraryPostToGovernance(response, "/api/diffs", forwardBody);
+      outcome satisfies never;
     } catch (error) {
       next(error);
     }
