@@ -81,11 +81,11 @@ Write-TestPass 'conversion launcher uses isolated repo Python'
 foreach ($expectedKitManagerSetting in @(
     "RUNTIME_MODE = 'hybrid-web-plane-host-native-kit'",
     "HOST_LOCAL_RUNTIME_ALLOWED = 'true'",
-    "KIT_INSTANCE_ID = 'kit_local_001'",
-    "KIT_CONTROL_URL = 'http://127.0.0.1:49101'"
+    "KIT_INSTANCE_ID = 'kit_local_001'"
 )) {
     Assert-True ($moduleContent.Contains($expectedKitManagerSetting)) "Kit Manager child env includes $expectedKitManagerSetting"
 }
+Assert-True ($moduleContent -match 'KIT_CONTROL_URL\s*=\s*\$normalizedKitControlUrl') 'Kit Manager child env uses the validated caller-supplied control URL'
 Assert-True ($moduleContent -match 'finally\s*\{\s*foreach \(\$name in \$kitManagerEnvironment\.Keys\)') 'Kit Manager child env is restored in finally'
 Write-TestPass 'host-native Kit Manager receives exact child authority identity'
 
@@ -252,7 +252,7 @@ try {
         $originalKitManagerEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
         [Environment]::SetEnvironmentVariable($name, "parent-$name", 'Process')
     }
-    function Resolve-HostNativePython { param($RepoRoot, $ServiceName) return (Get-Command python -ErrorAction Stop).Source }
+    function Resolve-HostNativePython { param($RepoRoot, $ServiceName) return 'fixture-python' }
     function Get-HostNativeBindHost { param($RepoRoot) return '127.0.0.1' }
     function Start-HostNativeService {
         param($Name, $WorkingDirectory, $FilePath, $ArgumentList, $RunDir)
@@ -265,16 +265,42 @@ try {
         return [pscustomobject]@{ Pid = 4246; LogPath = 'fixture.log' }
     }
 
-    Start-HostNativeKitManager -RepoRoot $sb -Port 8010 | Out-Null
+    Start-HostNativeKitManager -RepoRoot $sb -Port 8010 `
+        -KitControlUrl 'HTTP://LOCALHOST:49101/' `
+        -ImportProbeFn { param($PythonExe) return 0 } `
+        -LocalAddressProbeFn { param($HostName) return ($HostName -eq 'localhost') } | Out-Null
 
     Assert-Equal 'hybrid-web-plane-host-native-kit' $capturedKitManagerEnvironment.RUNTIME_MODE 'child receives hybrid runtime mode'
     Assert-Equal 'true' $capturedKitManagerEnvironment.HOST_LOCAL_RUNTIME_ALLOWED 'child receives host-local authority flag'
     Assert-Equal 'kit_local_001' $capturedKitManagerEnvironment.KIT_INSTANCE_ID 'child receives launched Kit instance id'
-    Assert-Equal 'http://127.0.0.1:49101' $capturedKitManagerEnvironment.KIT_CONTROL_URL 'child receives loopback conversion authority URL'
+    Assert-Equal 'http://localhost:49101' $capturedKitManagerEnvironment.KIT_CONTROL_URL 'child receives the canonical explicit operator-configured control authority URL'
     foreach ($name in $kitManagerEnvironmentNames) {
         Assert-Equal "parent-$name" ([Environment]::GetEnvironmentVariable($name, 'Process')) "parent env restores $name"
     }
     Write-TestPass 'host-native Kit Manager child env is exact and parent env is restored'
+
+    Start-HostNativeKitManager -RepoRoot $sb -Port 8010 `
+        -KitControlUrl '' `
+        -ImportProbeFn { param($PythonExe) return 0 } `
+        -LocalAddressProbeFn { param($HostName) throw 'empty control URL must not probe an address' } | Out-Null
+    Assert-Equal '' $capturedKitManagerEnvironment.KIT_CONTROL_URL 'unconfigured Kit control remains an honest empty child value'
+    foreach ($name in $kitManagerEnvironmentNames) {
+        Assert-Equal "parent-$name" ([Environment]::GetEnvironmentVariable($name, 'Process')) "parent env restores $name after empty control authority"
+    }
+    Write-TestPass 'host-native Kit Manager preserves unconfigured control as blocked state'
+
+    $nonLocalError = ''
+    try {
+        Start-HostNativeKitManager -RepoRoot $sb -Port 8010 `
+            -KitControlUrl 'http://192.0.2.51:49101' `
+            -ImportProbeFn { param($PythonExe) return 0 } `
+            -LocalAddressProbeFn { param($HostName) return $false } | Out-Null
+    }
+    catch {
+        $nonLocalError = $_.Exception.Message
+    }
+    Assert-True ($nonLocalError -match 'loopback or an address assigned to this host') 'Kit Manager rejects a non-local conversion authority URL'
+    Write-TestPass 'host-native Kit Manager rejects non-local Kit control URL'
 }
 finally {
     foreach ($name in $kitManagerEnvironmentNames) {

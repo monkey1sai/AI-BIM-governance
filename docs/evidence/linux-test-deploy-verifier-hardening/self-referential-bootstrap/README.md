@@ -1,3 +1,5 @@
+> Document nature: **working note**. This file is bootstrap evidence, not an authoritative runtime, API, or deployment specification.
+
 # Linux test deploy verifier hardening bootstrap
 
 - `stack_kind=self_referential_bootstrap`
@@ -11,9 +13,10 @@ The canonical Linux deployment transport consumes only freshly fetched `origin/m
 
 ## Observations
 
-- The canonical baseline rebuild completed from the recorded `origin/main` commit and created deployment tag `deploy-20260810-639219377529672976-002`.
+- `git fetch origin --prune` captured the recorded `origin/main` commit. A fresh sibling worktree was created from that exact SHA; `git rev-parse HEAD` matched it and `git status --porcelain` was empty before the baseline rebuild.
+- The baseline-only canonical rebuild used `pwsh -NoProfile -NonInteractive -File scripts/dev/rebuild-test-deploy.ps1 -Build -TargetId canonical-linux -InventoryPath '<owner-private-inventory>'` with the owner-controlled private inventory and created deployment tag `deploy-20260810-639219377529672976-002`. This is bootstrap evidence pending the post-merge fixpoint, not canonical post-change proof.
 - The owner-provided temporary environment staging was removed after use.
-- The canonical remote checkout had 2,205 pre-reset changes; the explicitly authorized reset/clean completed as part of the rebuild.
+- The canonical remote checkout had 2,205 pre-reset changes; the explicitly authorized reset/clean completed as part of the rebuild. That remote cleanup is an operational observation, not evidence that the local source baseline was isolated.
 - The branch hardener and strict adapter preflight completed in the isolated bootstrap run.
 - The verified native CAD entrypoint matched its pinned digest and size and had mode `0400` after hardening.
 - The currently deployed baseline runtime still reports `hoops_entrypoint_missing` because the pre-change resolver cannot traverse the approved top-level cache link. This is expected to remain open until the fixpoint rebuild deploys merged code.

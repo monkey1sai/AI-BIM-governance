@@ -1,9 +1,11 @@
+document_nature=working_note_bootstrap_evidence_not_runtime_spec
 stack_kind=self_referential_bootstrap
 pull_request=484
 base_commit=89ff9c8b773da9a3c0c44990e2267f70f4e8007d
 gitnexus=UNKNOWN (accepted by owner; direct source, executable tests, and independent review used)
-PASS test-host-native-conversion-service (84 passed, 1 skipped)
+PASS test-host-native-conversion-service (87 passed, 5 skipped; all five are POSIX-only cases skipped on Windows and separately covered by the WSL POSIX trust smoke)
 PASS test-host-native-launcher
+PASS test-kit-manager-api
 PASS test-verify-all
 PASS test-deploy-target-registry
 PASS test-remote-deploy-transport
@@ -12,10 +14,15 @@ PASS test-rebuild-test-deploy
 PASS test-self-referential-bootstrap
 PASS test-agent-governance-check
 PASS invoke-powershell-static
+PASS python-syntax-check (affected hardener, adapter, and conversion test compiled)
+NOT_RUN python-static-type-check (the loaded repository verification sources define no Python type-check command for these files)
+NOT_RUN python-lint (the loaded repository verification sources define no Python lint command for these files)
+PASS powershell-parse-and-static-analysis (invoke-powershell-static plus deploy AST assertions)
 PASS sync-agent-skills-check
 PASS skill-quick-validate
 PASS scan-secret-patterns
-PASS canonical-linux-rebuild (tag deploy-20260810-639219377529672976-002)
+PASS wsl-posix-cad-trust-smoke (group-write fail-closed, gid cache, and bounded inode read)
+BOOTSTRAP_BASELINE canonical-linux-rebuild command="pwsh -NoProfile -NonInteractive -File scripts/dev/rebuild-test-deploy.ps1 -Build -TargetId canonical-linux -InventoryPath '<owner-private-inventory>'" target=canonical-linux inventory_source=owner-controlled-private source_commit=89ff9c8b773da9a3c0c44990e2267f70f4e8007d tag=deploy-20260810-639219377529672976-002 post_change=pending-fixpoint
 PASS isolated-bootstrap-hardening-and-strict-adapter-preflight
 PASS owner-private-acl-restoration-verified
 LIMIT canonical-post-change-verification=pending merge and mainline fixpoint rebuild

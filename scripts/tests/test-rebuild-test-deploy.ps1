@@ -229,6 +229,13 @@ function Get-HostNativeBindHost {
     return '127.0.0.1'
 }
 
+function Resolve-HostNativeKitControlUrl {
+    param([AllowEmptyString()][string] $KitControlUrl)
+    if ([string]::IsNullOrWhiteSpace($KitControlUrl)) { return '' }
+    $uri = [uri]$KitControlUrl
+    return $uri.GetLeftPart([System.UriPartial]::Authority).TrimEnd('/')
+}
+
 function Start-HostNativeConversion {
     param(
         [string] $RepoRoot,
@@ -262,7 +269,7 @@ function Start-HostNativeKit {
 }
 
 function Start-HostNativeKitManager {
-    param([string] $RepoRoot, [int] $Port, [string] $BindHost)
+    param([string] $RepoRoot, [int] $Port, [string] $KitControlUrl)
     return [pscustomobject]@{ Pid = 4545; LogPath = (Join-Path $RepoRoot 'scripts\.run\mock-kit-manager.log') }
 }
 

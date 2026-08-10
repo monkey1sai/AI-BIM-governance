@@ -83,6 +83,55 @@ function Get-HostNativeBindHost {
     return $bind
 }
 
+function Test-HostNativeLocalAddress {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string] $HostName)
+
+    $normalized = $HostName.Trim().Trim([char[]]'[]').ToLowerInvariant()
+    if ($normalized -eq 'localhost') { return $true }
+    $address = $null
+    if (-not [System.Net.IPAddress]::TryParse($normalized, [ref]$address)) {
+        # Do not resolve arbitrary DNS here: a DNS answer is not proof that the
+        # conversion authority is bound to this host and can introduce rebinding.
+        return $false
+    }
+    if ([System.Net.IPAddress]::IsLoopback($address)) { return $true }
+    foreach ($networkInterface in [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
+        foreach ($unicast in $networkInterface.GetIPProperties().UnicastAddresses) {
+            if ($unicast.Address.Equals($address)) { return $true }
+        }
+    }
+    return $false
+}
+
+function Resolve-HostNativeKitControlUrl {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string] $KitControlUrl,
+        [scriptblock] $LocalAddressProbeFn = {
+            param($HostName)
+            return (Test-HostNativeLocalAddress -HostName $HostName)
+        }
+    )
+
+    if ([string]::IsNullOrWhiteSpace($KitControlUrl)) { return '' }
+
+    $kitControlUri = $null
+    if (-not [uri]::TryCreate($KitControlUrl, [System.UriKind]::Absolute, [ref]$kitControlUri) -or
+        $kitControlUri.Scheme -ne 'http' -or
+        [string]::IsNullOrWhiteSpace($kitControlUri.Host) -or
+        -not [string]::IsNullOrWhiteSpace($kitControlUri.UserInfo) -or
+        -not [string]::IsNullOrWhiteSpace($kitControlUri.Query) -or
+        -not [string]::IsNullOrWhiteSpace($kitControlUri.Fragment) -or
+        -not ($kitControlUri.AbsolutePath -eq '' -or $kitControlUri.AbsolutePath -eq '/')) {
+        throw 'KitControlUrl must be an origin-only absolute HTTP URL without credentials, path, query, or fragment.'
+    }
+    if (-not (& $LocalAddressProbeFn $kitControlUri.Host)) {
+        throw 'KitControlUrl host must be loopback or an address assigned to this host.'
+    }
+    return $kitControlUri.GetLeftPart([System.UriPartial]::Authority).TrimEnd('/')
+}
+
 function Test-AlreadyRunning {
     [CmdletBinding()]
     param(
@@ -447,7 +496,40 @@ function Start-HostNativeKitManager {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string] $RepoRoot,
-        [int] $Port = 8010
+        [int] $Port = 8010,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string] $KitControlUrl,
+        [scriptblock] $ImportProbeFn = {
+            param($PythonExe)
+            $importProcess = $null
+            try {
+                $importStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+                $importStartInfo.FileName = $PythonExe
+                $importStartInfo.UseShellExecute = $false
+                $importStartInfo.RedirectStandardOutput = $true
+                $importStartInfo.RedirectStandardError = $true
+                [void]$importStartInfo.ArgumentList.Add('-c')
+                [void]$importStartInfo.ArgumentList.Add('import fastapi, uvicorn')
+                $importProcess = [System.Diagnostics.Process]::new()
+                $importProcess.StartInfo = $importStartInfo
+                if (-not $importProcess.Start()) { return -1 }
+                $stdoutTask = $importProcess.StandardOutput.ReadToEndAsync()
+                $stderrTask = $importProcess.StandardError.ReadToEndAsync()
+                $importProcess.WaitForExit()
+                $null = $stdoutTask.GetAwaiter().GetResult()
+                $null = $stderrTask.GetAwaiter().GetResult()
+                return $importProcess.ExitCode
+            }
+            catch {
+                return -1
+            }
+            finally {
+                if ($null -ne $importProcess) { $importProcess.Dispose() }
+            }
+        },
+        [scriptblock] $LocalAddressProbeFn = {
+            param($HostName)
+            return (Test-HostNativeLocalAddress -HostName $HostName)
+        }
     )
     $runDir = Join-Path $RepoRoot 'scripts\.run'
     if (-not (Test-Path -LiteralPath $runDir)) {
@@ -458,10 +540,14 @@ function Start-HostNativeKitManager {
     $pythonExe = Resolve-HostNativePython -RepoRoot $RepoRoot -ServiceName 'kit-manager-api'
 
     Remove-Item Env:PYTHONNOUSERSITE -ErrorAction SilentlyContinue
-    & $pythonExe -c "import fastapi, uvicorn" *> $null
-    if ($LASTEXITCODE -ne 0) {
+    $pythonImportExit = & $ImportProbeFn $pythonExe
+    if ([int]$pythonImportExit -ne 0) {
         throw "kit-manager-api Python cannot import fastapi and uvicorn: $pythonExe"
     }
+
+    $normalizedKitControlUrl = Resolve-HostNativeKitControlUrl `
+        -KitControlUrl $KitControlUrl `
+        -LocalAddressProbeFn $LocalAddressProbeFn
 
     # This service runs on the host even though the web plane is containerized.
     # Set its child-only authority identity explicitly; container defaults would
@@ -470,7 +556,7 @@ function Start-HostNativeKitManager {
         RUNTIME_MODE = 'hybrid-web-plane-host-native-kit'
         HOST_LOCAL_RUNTIME_ALLOWED = 'true'
         KIT_INSTANCE_ID = 'kit_local_001'
-        KIT_CONTROL_URL = 'http://127.0.0.1:49101'
+        KIT_CONTROL_URL = $normalizedKitControlUrl
     }
     $previousEnvironment = @{}
     foreach ($name in $kitManagerEnvironment.Keys) {

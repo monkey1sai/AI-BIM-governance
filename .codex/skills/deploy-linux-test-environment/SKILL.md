@@ -1,6 +1,6 @@
 ---
 name: deploy-linux-test-environment
-description: Rebuild and verify the AI-BIM-governance canonical Linux test deployment through the repository's owner-inventory SSH path. Use when the user asks to deploy or rebuild the Linux test area, requests "測試部署區重建", or needs a read-only preflight/status explanation for canonical-linux. Do not use for local-windows, isolated branch stacks, unmerged revisions, or production deployment.
+description: Rebuild and verify the AI-BIM-governance canonical Linux test deployment from the owner-approved Windows workstation through the repository's owner-inventory SSH path. Use when the user asks to deploy or rebuild the Linux test area, requests "測試部署區重建", or needs a read-only preflight/status explanation for canonical-linux. Do not use from POSIX operator hosts, for local-windows, isolated branch stacks, unmerged revisions, or production deployment.
 ---
 
 # Deploy Linux Test Environment
@@ -24,11 +24,39 @@ Read these files before acting; runtime code and executable tests outrank old ev
 5. `scripts/deploy-target-registry.json`
 6. For failures only: `scripts/lib/deploy-target-registry.ps1` and `scripts/lib/remote-deploy-transport.ps1`
 
+Before any remote reset, rebuild, restart, staging write, or other mutation, run the affected type-check, lint/static-analysis, unit, and integration gates named by the loaded verification sources. Any failure is `HELD`. List every skipped or unrun gate with its concrete reason; absence of a tool or fixture is not a pass.
+
 ## Preflight without exposing secrets
 
-Run from the repository root with PowerShell 7. Record the exact cwd, branch, worktree status, and freshly fetched `origin/main` SHA.
+Run from the repository root with PowerShell 7 on the owner-approved Windows workstation. This workflow intentionally binds owner-private inputs to Windows SID, protected-DACL, and non-reparse-handle guarantees. A POSIX operator host is `HELD`; do not reinterpret POSIX uid/mode checks as equivalent authority or silently skip the Windows controls.
 
-Before resolving or opening any owner-private input, run `git fetch origin --prune`. Build the deployment-critical local code set from the freshly fetched `origin/main`: `scripts/dev/rebuild-test-deploy.ps1`, `scripts/deploy-target-registry.json`, and every tracked file under `scripts/lib/`. Reject reparse paths and untracked files that shadow an exact import. Open the worktree path components and every critical file using non-inheritable handles that deny share-write and share-delete, verify each live Git blob and mode equals `origin/main`, and keep the handles open through helper completion. Any mismatch, missing blob, conflicting pre-existing handle, or identity drift is `HELD`; never run the branch's modified deployment transport against private inputs.
+```powershell
+if (-not $IsWindows) {
+    throw 'canonical Linux deployment requires the owner-approved Windows operator workstation; deployment is HELD'
+}
+```
+
+Record the exact cwd, branch, worktree status, and freshly fetched `origin/main` SHA. Then create a fresh sibling worktree and task branch from that captured SHA; never execute the deployment wrapper from the caller's current branch worktree:
+
+```powershell
+$sourceRepoRoot = (git rev-parse --show-toplevel).Trim()
+git fetch origin --prune
+if ($LASTEXITCODE -ne 0) { throw 'git fetch failed; deployment is HELD' }
+$originMainSha = (git rev-parse origin/main).Trim()
+$sessionId = Get-Date -Format 'yyyyMMddHHmmss'
+$isolatedWorktree = Join-Path (Split-Path $sourceRepoRoot -Parent) "AI-BIM-governance.deploy-canonical-$sessionId"
+$isolatedBranch = "chore/canonical-linux-deploy-$sessionId"
+git worktree add -b $isolatedBranch $isolatedWorktree $originMainSha
+if ($LASTEXITCODE -ne 0) { throw 'isolated origin/main worktree creation failed; deployment is HELD' }
+Set-Location $isolatedWorktree
+if ((git rev-parse HEAD).Trim() -ne $originMainSha -or (git status --porcelain)) {
+    throw 'isolated deployment worktree does not match clean origin/main; deployment is HELD'
+}
+```
+
+Run the pre-deploy verification gate from this isolated worktree. Do not open owner-private inputs until the gate passes.
+
+Build the deployment-critical local code set from the isolated, freshly fetched `origin/main` worktree: `scripts/dev/rebuild-test-deploy.ps1`, `scripts/deploy-target-registry.json`, and every tracked file under `scripts/lib/`. Reject reparse paths and untracked files that shadow an exact import. Open the worktree path components and every critical file using non-inheritable handles that deny share-write and share-delete, verify each live Git blob and mode equals the captured `origin/main` SHA, and keep the handles open through helper completion. Any mismatch, missing blob, conflicting pre-existing handle, or identity drift is `HELD`; never run the caller branch's modified deployment transport against private inputs.
 
 Resolve each private input independently. Use a path explicitly supplied and approved by the user in the current session first; for inventory only, use process-level `AI_BIM_DEPLOY_TARGET_INVENTORY` second; otherwise use the matching owner-profile candidate below. Never scan other profiles or directories. If a selected input is absent or the owner mapping is uncertain, stop and ask for its exact path.
 
@@ -100,7 +128,7 @@ Before reset/clean, use the validated batch-mode SSH connection to capture `git 
 Run the canonical wrapper with only its approved parameters:
 
 ```powershell
-Set-Location (git rev-parse --show-toplevel).Trim()
+Set-Location $isolatedWorktree
 $rebuildParameters = @{
     Build = $true
     InventoryPath = $inventoryPath
@@ -137,11 +165,11 @@ Do not claim full-system E2E unless separate current-session evidence proves gov
 
 Separate `Verified facts`, `Inferences`, `Unverified risks`, and `Next actions`. Include:
 
-- cwd, branch, fresh `origin/main` SHA, target id/kind, and exact rebuild command
+- cwd, isolated branch, fresh `origin/main` SHA, target id/kind, and this redacted command template: `pwsh -NoProfile -NonInteractive -File scripts/dev/rebuild-test-deploy.ps1 -Build -TargetId canonical-linux -InventoryPath '<owner-private-inventory>' [-IdentityFile '<owner-private-identity>']`; keep the expanded command only in protected local evidence
 - private-input/schema/ACL results without private values or absolute paths
 - canonical env staging result: `created and removed`, `reused`, or `HELD`
 - remote checkout pre-reset change count and relative-path summary
-- deploy exit code, health results, deploy tag, snapshot/log paths, and whether ACL restoration was performed
+- deploy exit code, health results, deploy tag, repository-relative snapshot/log paths, and whether ACL restoration was performed and verified
 - changed files, skipped gates, known risks, and `Full-system E2E claimed: yes/no`
 
 Do not automatically push code, open a PR, merge, alter ACLs, rotate keys, stop unrelated processes, or change production state.

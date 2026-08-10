@@ -68,8 +68,7 @@ class Ifc2UsdcPowershellConverterAdapter:
         self.timeout_seconds = int(timeout_seconds)
         self.work_dir = Path(work_dir) if work_dir else self.repo_root
         self.ps1_path = self.repo_root / "scripts" / "convert-ifc-to-usdc.ps1"
-        self._validated_hoops_main_path: Path | None = None
-        self._validated_hoops_main_identity: tuple[int, int, int, int, str] | None = None
+        self._group_privacy_cache: dict[int, bool] = {}
         # streaming-server-prefer-local-ifc-path: shared volume sandbox base for
         # dispatch payload host_local_path / local_path. Source = 顯式 storage_root
         # 參數,否則 env STORAGE_ROOT(compose 對齊)。兩者皆缺時不得 fallback
@@ -194,25 +193,17 @@ class Ifc2UsdcPowershellConverterAdapter:
             return (Path(local_app_data) / "ov" / "data" / "exts",) if local_app_data else ()
         return (Path.home() / ".local" / "share" / "ov" / "data" / "exts",)
 
-    @staticmethod
-    def _group_is_private_to_process(group_id: int) -> bool:
-        if os.name == "nt":
-            return True
-        try:
-            import grp
-            import pwd
-
-            current_uid = os.geteuid()
-            current_name = pwd.getpwuid(current_uid).pw_name
-            group = grp.getgrgid(group_id)
-            if any(
-                entry.pw_gid == group_id and entry.pw_uid != current_uid
-                for entry in pwd.getpwall()
-            ):
-                return False
-            return all(member == current_name for member in group.gr_mem)
-        except (KeyError, OSError):
-            return False
+    def _group_is_private_to_process(self, group_id: int) -> bool:
+        if group_id in self._group_privacy_cache:
+            return self._group_privacy_cache[group_id]
+        # POSIX NSS/SSSD enumeration is not guaranteed to be complete.  A
+        # non-empty passwd result therefore cannot prove that a group has no
+        # other primary members.  Treat every group-writable directory as
+        # shared on POSIX; only the Windows path (which is governed by its DACL
+        # checks) can regard the synthetic group bit as private.
+        result = os.name == "nt"
+        self._group_privacy_cache[group_id] = result
+        return result
 
     def _path_components_are_owner_private(
         self,
@@ -377,7 +368,7 @@ class Ifc2UsdcPowershellConverterAdapter:
                         "converter_unavailable",
                         "CAD extension candidate does not match the trusted package build.",
                     )
-                if extension_root.is_symlink():
+                if self._path_is_directory_link(extension_root):
                     resolved_candidate = self._resolve_symlinked_cad_entrypoint(
                         release_root=release_root,
                         extension_root=extension_root,
@@ -535,9 +526,14 @@ class Ifc2UsdcPowershellConverterAdapter:
                     "converter_unavailable",
                     "Pinned CAD extension entrypoint is not a service-owned regular file.",
                 )
+            if source_stat.st_size != expected_size:
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Pinned CAD extension entrypoint size changed before atomic hardening.",
+                )
             trusted_bytes = bytearray()
-            while True:
-                chunk = os.read(source_descriptor, 1024 * 1024)
+            while len(trusted_bytes) < expected_size:
+                chunk = os.read(source_descriptor, min(1024 * 1024, expected_size - len(trusted_bytes)))
                 if not chunk:
                     break
                 trusted_bytes.extend(chunk)
@@ -638,26 +634,30 @@ class Ifc2UsdcPowershellConverterAdapter:
             Ifc2UsdcPowershellConverterAdapter._sha256_file(path),
         )
 
-    def _validated_hoops_main_for_execution(self) -> Path | None:
-        validated = self._validated_hoops_main_path
-        identity = self._validated_hoops_main_identity
-        if validated is None or identity is None:
-            if self.hoops_main_path is None:
-                return None
-            try:
-                return self.hoops_main_path.resolve(strict=True)
-            except OSError as exc:
-                raise ConversionAuthorityError(
-                    "converter_unavailable",
-                    "Configured HOOPS entrypoint is unavailable.",
-                ) from exc
-
+    def _validated_hoops_main_for_execution(
+        self,
+        validated: Path,
+        identity: tuple[int, int, int, int, str],
+    ) -> Path:
         if self.hoops_main_path is None:
             current = self._default_hoops_main()
             if current is None or current != validated:
                 raise ConversionAuthorityError(
                     "converter_unavailable",
                     "CAD extension entrypoint changed after preflight.",
+                )
+        else:
+            try:
+                current = self.hoops_main_path.resolve(strict=True)
+            except OSError as exc:
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Configured HOOPS entrypoint is unavailable.",
+                ) from exc
+            if current != validated:
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Configured HOOPS entrypoint changed after preflight.",
                 )
         try:
             current_identity = self._hoops_file_identity(validated)
@@ -673,11 +673,13 @@ class Ifc2UsdcPowershellConverterAdapter:
             )
         return validated
 
-    def preflight(self) -> None:
+    def _preflight_with_hoops_validation(
+        self,
+    ) -> tuple[Path, tuple[int, int, int, int, str]]:
         """Fail fast (and honestly) when any real converter prerequisite is missing."""
         missing: list[str] = []
-        self._validated_hoops_main_path = None
-        self._validated_hoops_main_identity = None
+        validated_hoops_main: Path | None = None
+        validated_hoops_identity: tuple[int, int, int, int, str] | None = None
         # storage sandbox base 已由 __init__ 強制(顯式 storage_root 或 env
         # STORAGE_ROOT,空白/缺失即 raise converter_unavailable),self.storage_root
         # 因此恆為非空 Path;不在此重複檢查一個永遠 truthy 的屬性(死碼會給假安全感)。
@@ -719,8 +721,8 @@ class Ifc2UsdcPowershellConverterAdapter:
                 except OSError:
                     missing.append("HOOPS entrypoint changed while preflight was validating it")
                 else:
-                    self._validated_hoops_main_path = resolved_hoops
-                    self._validated_hoops_main_identity = hoops_identity
+                    validated_hoops_main = resolved_hoops
+                    validated_hoops_identity = hoops_identity
         if self.config_path is not None and not self.config_path.exists():
             missing.append(f"converter config not found: {self.config_path}")
         # USD runtime is only needed on the enumeration fallback (no converter
@@ -732,6 +734,15 @@ class Ifc2UsdcPowershellConverterAdapter:
                 "Host-native IFC->USDC converter prerequisites missing: "
                 + "; ".join(missing),
             )
+        if validated_hoops_main is None or validated_hoops_identity is None:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "HOOPS entrypoint validation did not produce an execution identity.",
+            )
+        return validated_hoops_main, validated_hoops_identity
+
+    def preflight(self) -> None:
+        self._preflight_with_hoops_validation()
 
     # -- convert -------------------------------------------------------------
 
@@ -748,11 +759,13 @@ class Ifc2UsdcPowershellConverterAdapter:
                 "invalid_conversion_profile",
                 f"Unsupported conversion_profile: {conversion_profile}",
             )
+        validated_hoops_main: Path | None = None
+        validated_hoops_identity: tuple[int, int, int, int, str] | None = None
         if conversion_profile != IDENTITY_PROFILE:
             # Preserve the default converter's fail-fast prerequisite contract.
             # The identity profile is IFC-first and intentionally does not use
             # PowerShell, Kit, or HOOPS.
-            self.preflight()
+            validated_hoops_main, validated_hoops_identity = self._preflight_with_hoops_validation()
 
         ifc_path = self._resolve_local_ifc(ifc_ready_event)
         output_dir = Path(output_dir)
@@ -783,11 +796,18 @@ class Ifc2UsdcPowershellConverterAdapter:
                 "quality_metrics": authored["quality_metrics"],
             }
         trace_id = str(job.get("trace_id") or job["conversion_job_id"])
+        if validated_hoops_main is None or validated_hoops_identity is None:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Conversion execution is missing a validated HOOPS entrypoint identity.",
+            )
         try:
             self._run_powershell_conversion(
                 ifc_path=ifc_path,
                 output_dir=output_dir,
                 trace_id=trace_id,
+                validated_hoops_main=validated_hoops_main,
+                validated_hoops_identity=validated_hoops_identity,
             )
         except ConversionAuthorityError as exc:
             if not self._is_primary_ifc_import_failure(exc):
@@ -956,8 +976,13 @@ class Ifc2UsdcPowershellConverterAdapter:
         ifc_path: Path,
         output_dir: Path,
         trace_id: str | None = None,
+        validated_hoops_main: Path,
+        validated_hoops_identity: tuple[int, int, int, int, str],
     ) -> None:
-        validated_hoops_main = self._validated_hoops_main_for_execution()
+        validated_hoops_main = self._validated_hoops_main_for_execution(
+            validated_hoops_main,
+            validated_hoops_identity,
+        )
         cmd: list[str] = [
             self.powershell_exe,
             "-NoProfile",
@@ -981,8 +1006,7 @@ class Ifc2UsdcPowershellConverterAdapter:
             cmd += ["-ConfigPath", str(self.config_path.resolve())]
         if self.kit_exe_path is not None:
             cmd += ["-KitExePath", str(self.kit_exe_path.resolve())]
-        if validated_hoops_main is not None:
-            cmd += ["-HoopsMainPath", str(validated_hoops_main)]
+        cmd += ["-HoopsMainPath", str(validated_hoops_main)]
         try:
             completed = subprocess.run(
                 cmd,

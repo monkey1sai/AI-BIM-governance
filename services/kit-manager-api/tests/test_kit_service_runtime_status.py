@@ -1,4 +1,7 @@
+import socket
+
 from app.kit_service import KitInstanceService
+from app.kit_gateway import KitRuntimeGateway
 from app.models import UsdcArtifact
 
 
@@ -101,3 +104,31 @@ def test_unknown_control_status_records_only():
 
     assert response.instance.status == "recorded_only"
     assert service.get_state().status == "recorded_only"
+
+
+def test_unconfigured_gateway_blocks_without_constructing_a_runtime_request():
+    gateway = KitRuntimeGateway("")
+
+    assert gateway.open_stage({"type": "openStageRequest"}) == "blocked_runtime_control_unconfigured"
+    assert gateway.close_stage({"instance_id": "kit_test"}) == "blocked_runtime_control_unconfigured"
+
+
+def test_configured_gateway_ignores_inherited_http_proxy(monkeypatch):
+    proxy_url = "http://203.0.113.10:8080"
+    monkeypatch.setenv("HTTP_PROXY", proxy_url)
+    monkeypatch.setenv("http_proxy", proxy_url)
+    monkeypatch.setenv("NO_PROXY", "")
+    monkeypatch.setenv("no_proxy", "")
+    destinations = []
+
+    def capture_destination(address, *args, **kwargs):
+        destinations.append(address)
+        raise OSError("stop before network access")
+
+    monkeypatch.setattr(socket, "create_connection", capture_destination)
+    gateway = KitRuntimeGateway("http://192.0.2.50:49101")
+
+    status = gateway.open_stage({"type": "openStageRequest"})
+
+    assert status == "blocked_runtime_control_unavailable"
+    assert destinations == [("192.0.2.50", 49101)]

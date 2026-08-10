@@ -10,6 +10,7 @@ if ($deployBytes.Count -lt 3 -or $deployBytes[0] -ne 0xEF -or $deployBytes[1] -n
 $deploy = Get-Content -Raw $deployPath
 $launcher = Get-Content -Raw (Join-Path $RepoRoot 'scripts\lib\host-native-launcher.ps1')
 $cadHardener = Get-Content -Raw (Join-Path $RepoRoot 'bim-streaming-server\scripts\harden-cad-extension-cache.py')
+$kitGateway = Get-Content -Raw (Join-Path $RepoRoot 'services\kit-manager-api\app\kit_gateway.py')
 $stopAll = Get-Content -Raw (Join-Path $RepoRoot 'scripts\stop-all.ps1')
 $hostKitCompose = Get-Content -Raw (Join-Path $RepoRoot 'compose.host-kit.yml')
 $hostKitExample = Get-Content -Raw (Join-Path $RepoRoot '.env.web-plane.host-kit.example')
@@ -37,6 +38,11 @@ Assert-Contains $deploy '-ArtifactsRoot $resolvedConversionArtifactsRoot' 'conve
 Assert-Contains $deploy '$shouldRefreshWebPlane = $true' 'deploy.ps1 must force web-plane refresh for custom governance port'
 Assert-Contains $deploy "if (-not `$SkipConversion -and (Get-PlatformName) -eq 'linux')" 'deploy.ps1 must harden the CAD entrypoint only on the Linux conversion path'
 Assert-Contains $deploy 'harden-cad-extension-cache.py' 'deploy.ps1 must invoke the checked-in CAD cache hardener'
+Assert-Contains $deploy "Get-DeployEnvValue -Name 'STREAMING_CONVERSION_HOOPS_MAIN'" 'Linux deploy must reject an unpinned explicit HOOPS override'
+Assert-Contains $deploy '[System.IO.File]::GetUnixFileMode($hardenerPython)' 'Linux deploy must prove the hardener interpreter is executable'
+Assert-Contains $deploy '[System.Diagnostics.ProcessStartInfo]::new()' 'Linux deploy must launch the hardener through a process with a reliable ExitCode'
+Assert-Contains $deploy '$process.ExitCode' 'Linux deploy must read the hardener process ExitCode directly'
+Assert-Contains $deploy "[string]`$status.status -ceq 'passed'" 'Linux deploy must require the hardener passed JSON contract'
 Assert-Contains $cadHardener 'harden_default_hoops_main_permissions' 'CAD cache hardener must reuse the adapter trust-boundary implementation'
 Assert-Contains $cadHardener 'cad-extension-cache-hardening/v1' 'CAD cache hardener must emit the stable redacted result schema'
 Assert-Contains $deploy 'coordinator-governance-files-tree' 'deploy.ps1 must verify coordinator to governance proxy'
@@ -45,7 +51,15 @@ Assert-Contains $launcher "-Name 'governance-service'" 'launcher must use govern
 Assert-Contains $launcher "RUNTIME_MODE = 'hybrid-web-plane-host-native-kit'" 'host-native Kit Manager must publish the hybrid runtime identity'
 Assert-Contains $launcher "HOST_LOCAL_RUNTIME_ALLOWED = 'true'" 'host-native Kit Manager must allow the host-local runtime authority'
 Assert-Contains $launcher "KIT_INSTANCE_ID = 'kit_local_001'" 'host-native Kit Manager must target the launched Kit instance'
-Assert-Contains $launcher "KIT_CONTROL_URL = 'http://127.0.0.1:49101'" 'host-native Kit Manager must control the loopback conversion authority'
+Assert-Contains $launcher 'KIT_CONTROL_URL = $normalizedKitControlUrl' 'host-native Kit Manager must use only a validated explicit control authority or the empty blocked state'
+Assert-Contains $launcher 'function Test-HostNativeLocalAddress' 'host-native Kit Manager must verify that its conversion authority is local'
+Assert-Contains $launcher 'KitControlUrl host must be loopback or an address assigned to this host.' 'host-native Kit Manager must reject remote Kit control targets'
+Assert-Contains $launcher 'return $importProcess.ExitCode' 'host-native Kit Manager import probe must read a real process ExitCode'
+Assert-Contains $deploy "Get-DeployEnvValue -Name 'KIT_CONTROL_URL'" 'deploy.ps1 must preserve an explicit Kit control authority instead of inventing conversion runtime routes'
+Assert-Contains $deploy 'Resolve-HostNativeKitControlUrl' 'deploy.ps1 must canonicalize and validate Kit control identity before writing its runtime signature'
+Assert-Contains $deploy '-KitControlUrl $resolvedKitControlUrl' 'deploy.ps1 must pass the explicit or empty Kit control authority to the child'
+Assert-Contains $kitGateway 'blocked_runtime_control_unconfigured' 'an empty Kit control authority must produce an honest blocked state without network access'
+Assert-Contains $deploy 'http://${resolvedConversionHealthHost}:49101/health' 'strict post-verify must probe the effective conversion health host'
 Assert-Contains $stopAll 'governance-service' 'stop-all.ps1 must know governance-service'
 Assert-Contains $stopAll 'if ($remaining.Count -gt 0)' 'stop-all.ps1 must fail closed when any expected listener remains'
 Assert-Contains $stopAll 'owner-not-visible' 'stop-all.ps1 must report a listener whose PID is hidden'
@@ -70,6 +84,35 @@ $parserErrors = $null
 $deployAst = [System.Management.Automation.Language.Parser]::ParseInput($deploy, [ref]$parserTokens, [ref]$parserErrors)
 if (@($parserErrors).Count -ne 0) {
     throw 'deploy.ps1 must parse before governance static inspection'
+}
+$hardenerFunction = @($deployAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Invoke-CadExtensionCacheHardener'
+}, $true))
+if ($hardenerFunction.Count -ne 1) {
+    throw 'deploy.ps1 must define exactly one Invoke-CadExtensionCacheHardener helper'
+}
+. ([scriptblock]::Create($hardenerFunction[0].Extent.Text))
+$hardenerSandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("ai-bim-invalid-hardener-{0}" -f [guid]::NewGuid().ToString('N'))
+try {
+    New-Item -ItemType Directory -Path $hardenerSandbox -Force | Out-Null
+    $invalidInterpreter = Join-Path $hardenerSandbox ($(if ($IsWindows) { 'invalid.exe' } else { 'invalid-python' }))
+    $fixtureScript = Join-Path $hardenerSandbox 'fixture.py'
+    [System.IO.File]::WriteAllText($invalidInterpreter, 'not an executable image')
+    [System.IO.File]::WriteAllText($fixtureScript, 'print("unexpected")')
+    $invalidResult = Invoke-CadExtensionCacheHardener `
+        -PythonPath $invalidInterpreter `
+        -ScriptPath $fixtureScript `
+        -StreamingRepoRoot $hardenerSandbox
+    if ($invalidResult.ExitCode -ne -1 -or $invalidResult.StatusValid) {
+        throw 'invalid or non-executable hardener interpreter must fail closed'
+    }
+}
+finally {
+    if (Test-Path -LiteralPath $hardenerSandbox) {
+        Remove-Item -LiteralPath $hardenerSandbox -Recurse -Force
+    }
 }
 $refreshFunction = @($deployAst.FindAll({
     param($node)

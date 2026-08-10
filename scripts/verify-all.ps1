@@ -106,13 +106,13 @@ function Test-DeploymentHttpEndpoint {
                 }
                 $actualValue = $body.PSObject.Properties[$propertyName].Value
                 $expectedValue = $ExpectedJsonProperties[$propertyName]
-                $matches = if ($expectedValue -is [bool]) {
+                $propertyMatches = if ($expectedValue -is [bool]) {
                     $actualValue -is [bool] -and $actualValue -eq $expectedValue
                 }
                 else {
                     [string]$actualValue -ceq [string]$expectedValue
                 }
-                if (-not $matches) {
+                if (-not $propertyMatches) {
                     throw "response identity property '$propertyName' did not match the expected value"
                 }
             }
@@ -125,6 +125,34 @@ function Test-DeploymentHttpEndpoint {
         }
         throw "deployment $Name check failed at ${DisplayUri}: $safeMessage"
     }
+}
+
+function Get-DeploymentRuntimeSignature {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $Root,
+        [Parameter(Mandatory = $true)][string] $FileName,
+        [Parameter(Mandatory = $true)][string[]] $RequiredProperties,
+        [switch] $AllowMissing
+    )
+
+    $path = Join-Path $Root ("scripts\.run\{0}" -f $FileName)
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        if ($AllowMissing) { return $null }
+        throw "deployment runtime signature is missing: $FileName"
+    }
+    try {
+        $signature = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        throw "deployment runtime signature is invalid: $FileName"
+    }
+    foreach ($propertyName in $RequiredProperties) {
+        if ($null -eq $signature.PSObject.Properties[$propertyName]) {
+            throw "deployment runtime signature '$FileName' is missing property '$propertyName'"
+        }
+    }
+    return $signature
 }
 
 function New-DeploymentHealthTarget {
@@ -268,8 +296,39 @@ if ($VerifyProfile -eq 'Deployment') {
     $hostNativeUriHost = ConvertTo-DeploymentUriHost -HostName ([string]$deploymentTarget.host_native_bind_host)
     $privateTarget = Test-DeployTargetPrivateInventoryRequired -Target $deploymentTarget
     $hostNativeDisplayHost = if ($privateTarget) { '<host-native-bind>' } else { $hostNativeUriHost }
+    $conversionRuntimeSignature = Get-DeploymentRuntimeSignature `
+        -Root $RepoRoot `
+        -FileName 'bim-streaming-conversion-service.params.json' `
+        -RequiredProperties @('healthHost', 'port') `
+        -AllowMissing:$PlanOnly
+    $conversionHealthHost = if ($null -ne $conversionRuntimeSignature) {
+        [string]$conversionRuntimeSignature.healthHost
+    }
+    else {
+        '127.0.0.1'
+    }
+    if ($null -ne $conversionRuntimeSignature -and [int]$conversionRuntimeSignature.port -ne 49101) {
+        throw 'deployment conversion runtime signature has an unexpected port.'
+    }
+    $conversionUriHost = ConvertTo-DeploymentUriHost -HostName $conversionHealthHost
+    $conversionDisplayHost = if ($privateTarget) { '<conversion-health>' } else { $conversionUriHost }
+    $kitManagerRuntimeSignature = Get-DeploymentRuntimeSignature `
+        -Root $RepoRoot `
+        -FileName 'kit-manager-api.params.json' `
+        -RequiredProperties @('kitControlUrl', 'port') `
+        -AllowMissing:$PlanOnly
+    if ($null -ne $kitManagerRuntimeSignature -and [int]$kitManagerRuntimeSignature.port -ne 8010) {
+        throw 'deployment Kit Manager runtime signature has an unexpected port.'
+    }
+    $expectedKitControlUrl = if ($null -ne $kitManagerRuntimeSignature) {
+        ([string]$kitManagerRuntimeSignature.kitControlUrl).TrimEnd('/')
+    }
+    else {
+        ''
+    }
     if (-not $PlanOnly) {
         Assert-DeploymentHostNativeBindIsLocal -HostName ([string]$deploymentTarget.host_native_bind_host)
+        Assert-DeploymentHostNativeBindIsLocal -HostName $conversionHealthHost
     }
 
     $Targets += @{
@@ -285,14 +344,14 @@ if ($VerifyProfile -eq 'Deployment') {
         -ExpectJson -ExpectedService 'bim-review-coordinator'
     $Targets += New-DeploymentHealthTarget -Name 'governance health' -Uri "http://${hostNativeUriHost}:49102/health" `
         -DisplayUri "http://${hostNativeDisplayHost}:49102/health" -ExpectJson -ExpectedService 'governance-service'
-    $Targets += New-DeploymentHealthTarget -Name 'conversion health' -Uri 'http://127.0.0.1:49101/health' `
-        -ExpectJson -ExpectedService 'host-native-conversion-authority'
+    $Targets += New-DeploymentHealthTarget -Name 'conversion health' -Uri "http://${conversionUriHost}:49101/health" `
+        -DisplayUri "http://${conversionDisplayHost}:49101/health" -ExpectJson -ExpectedService 'host-native-conversion-authority'
     $Targets += New-DeploymentHealthTarget -Name 'kit manager health' -Uri "http://${hostNativeUriHost}:8010/health" `
         -DisplayUri "http://${hostNativeDisplayHost}:8010/health" -ExpectJson -ExpectedJsonProperties @{
             runtime_mode = 'hybrid-web-plane-host-native-kit'
             host_local_runtime_allowed = $true
             kit_instance_id = 'kit_local_001'
-            kit_control_url = 'http://127.0.0.1:49101'
+            kit_control_url = $expectedKitControlUrl
         }
     $Targets += New-DeploymentHealthTarget -Name 'viewer endpoint' -Uri 'http://127.0.0.1:5173/'
     $OmittedTargets += @(

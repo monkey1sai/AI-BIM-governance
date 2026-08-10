@@ -101,10 +101,12 @@ try {
     'retained production design token' | Set-Content -LiteralPath (Join-Path $deploymentRoot 'docs\plans\ai-bim-governance.css') -Encoding ascii
     'streaming contract entrypoint' | Set-Content -LiteralPath (Join-Path $deploymentRoot 'bim-streaming-server\scripts\tests\test-stage-loading-contract.ps1') -Encoding ascii
 
-    $localDeploymentPlan = Invoke-VerificationPlan -Profile 'Deployment' -RepoRoot $deploymentRoot
-    Assert-Equal 0 $localDeploymentPlan.ExitCode 'default deployment profile still resolves the current platform target'
-    Assert-True ($localDeploymentPlan.Output -match 'governance health — GET http://127\.0\.0\.1:49102/health') 'local Windows governance verification remains on loopback'
-    Assert-True ($localDeploymentPlan.Output -match 'kit manager health — GET http://127\.0\.0\.1:8010/health') 'local Windows Kit Manager verification remains on loopback'
+    if ($IsWindows) {
+        $localDeploymentPlan = Invoke-VerificationPlan -Profile 'Deployment' -RepoRoot $deploymentRoot
+        Assert-Equal 0 $localDeploymentPlan.ExitCode 'default deployment profile still resolves the current platform target'
+        Assert-True ($localDeploymentPlan.Output -match 'governance health — GET http://127\.0\.0\.1:49102/health') 'local Windows governance verification remains on loopback'
+        Assert-True ($localDeploymentPlan.Output -match 'kit manager health — GET http://127\.0\.0\.1:8010/health') 'local Windows Kit Manager verification remains on loopback'
+    }
 
     $inventoryPath = Join-Path $sandbox 'target.local.json'
     [pscustomobject]@{
@@ -119,6 +121,21 @@ try {
             host_native_bind_host = '192.0.2.1'
         })
     } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $inventoryPath -Encoding utf8
+
+    $runtimeSignatureRoot = Join-Path $deploymentRoot 'scripts\.run'
+    New-Item -ItemType Directory -Path $runtimeSignatureRoot -Force | Out-Null
+    [pscustomobject]@{
+        bindHost = '192.0.2.1'
+        port = 49101
+        healthHost = '192.0.2.1'
+        revision = ('a' * 40)
+    } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $runtimeSignatureRoot 'bim-streaming-conversion-service.params.json') -Encoding utf8
+    [pscustomobject]@{
+        host = '192.0.2.1'
+        port = 8010
+        kitControlUrl = ''
+        revision = ('a' * 40)
+    } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $runtimeSignatureRoot 'kit-manager-api.params.json') -Encoding utf8
 
     $deploymentArguments = @('-TargetId', 'canonical-linux', '-InventoryPath', $inventoryPath)
     $deploymentPlan = Invoke-VerificationPlan -Profile 'Deployment' -RepoRoot $deploymentRoot `
@@ -145,18 +162,18 @@ try {
     }
     foreach ($loopbackTarget in @(
         'coordinator health — GET http://127.0.0.1:8004/health',
-        'conversion health — GET http://127.0.0.1:49101/health',
         'viewer endpoint — GET http://127.0.0.1:5173/'
     )) {
         Assert-True ($deploymentPlan.Output -match [regex]::Escape($loopbackTarget)) "deployment profile keeps '$loopbackTarget' on loopback"
     }
     foreach ($hostNativeTarget in @(
         'governance health — GET http://<host-native-bind>:49102/health',
+        'conversion health — GET http://<conversion-health>:49101/health',
         'kit manager health — GET http://<host-native-bind>:8010/health'
     )) {
         Assert-True ($deploymentPlan.Output -match [regex]::Escape($hostNativeTarget)) "deployment profile redacts '$hostNativeTarget' from private inventory"
     }
-    Assert-True ($deploymentPlan.Output -notmatch '192\.0\.2\.1') 'deployment profile never publishes the private host-native bind address'
+    Assert-True ($deploymentPlan.Output -notmatch '192\.0\.2\.1(?!\d)') 'deployment profile never publishes the private host-native bind address'
     Assert-True ($deploymentPlan.Output -notmatch 'governance health — GET http://127\.0\.0\.1:49102/health') 'governance verification never assumes loopback on canonical Linux'
     Assert-True ($deploymentPlan.Output -notmatch 'kit manager health — GET http://127\.0\.0\.1:8010/health') 'Kit Manager verification never assumes loopback on canonical Linux'
     $verifySource = Get-Content -LiteralPath $verifyScript -Raw
@@ -164,11 +181,14 @@ try {
         "runtime_mode = 'hybrid-web-plane-host-native-kit'",
         'host_local_runtime_allowed = $true',
         "kit_instance_id = 'kit_local_001'",
-        "kit_control_url = 'http://127.0.0.1:49101'"
+        'kit_control_url = $expectedKitControlUrl'
     )) {
         Assert-True ($verifySource.Contains($expectedKitManagerIdentity)) "deployment verifier pins Kit Manager identity '$expectedKitManagerIdentity'"
     }
     Assert-True ($verifySource -match '\$actualValue -is \[bool\] -and \$actualValue -eq \$expectedValue') 'deployment verifier type-checks expected boolean identity values'
+    Assert-True ($verifySource -match 'bim-streaming-conversion-service\.params\.json') 'deployment verifier consumes the effective conversion health host from the runtime signature'
+    Assert-True ($verifySource -match 'kit-manager-api\.params\.json') 'deployment verifier consumes the effective Kit Manager control identity from the runtime signature'
+    Assert-True ($verifySource -match 'kitControlUrl\)\.TrimEnd\(''\/''\)') 'deployment verifier compares the normalized child Kit control origin recorded by service settings'
 
     $verifyShell = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts\verify-all.sh') -Raw
     Assert-True ($verifyShell -match '--profile') 'POSIX verifier mirror accepts an explicit deployment profile'

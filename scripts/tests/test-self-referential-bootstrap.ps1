@@ -396,39 +396,54 @@ try {
     # --- real repo ledger: integrity + command resolvability, no emptiness assumption
     $realLedger = Get-SelfReferentialBootstrapLedger -Path (Join-Path $repoRoot 'scripts/self-referential-bootstrap-ledger.json')
     Assert-True ($null -ne $realLedger) 'repo ledger must parse and validate'
-    $commandPathById = @{
-        'canonical-linux-deployment-verify' = 'scripts/verify-all.ps1'
-        'canonical-linux-rebuild' = 'scripts/dev/rebuild-test-deploy.ps1'
-        'detect-base-gate-capability-bash-syntax' = 'scripts/lib/detect-base-gate-capability.sh'
-        'harden-cad-extension-cache' = 'bim-streaming-server/scripts/harden-cad-extension-cache.py'
-        'invoke-powershell-static' = 'scripts/tests/invoke-powershell-static.ps1'
-        'test-agent-governance-check' = 'scripts/tests/test-agent-governance-check.ps1'
-        'test-base-gate-capability' = 'scripts/tests/test-base-gate-capability.ps1'
-        'test-deploy-governance-static' = 'scripts/tests/test-deploy-governance-static.ps1'
-        'test-deploy-target-registry' = 'scripts/tests/test-deploy-target-registry.ps1'
-        'test-host-native-child-launch' = 'scripts/tests/test-host-native-child-launch.ps1'
-        'test-host-native-conversion-service' = 'bim-streaming-server/tests/test_host_native_conversion_service.py'
-        'test-host-native-launcher' = 'scripts/tests/test-host-native-launcher.ps1'
-        'test-kit-log-probe' = 'scripts/tests/test-kit-log-probe.ps1'
-        'test-platform-adapter' = 'scripts/tests/test-platform-adapter.ps1'
-        'test-pr-body-evidence' = 'scripts/tests/test-pr-body-evidence.ps1'
-        'test-pr-review-agent' = 'scripts/tests/test-pr-review-agent.ps1'
-        'test-preflight-host-native' = 'scripts/tests/test-preflight-host-native.ps1'
-        'test-preflight-ports' = 'scripts/tests/test-preflight-ports.ps1'
-        'test-preflight-prnumber-forwarding' = 'scripts/tests/test-preflight-prnumber-forwarding.ps1'
-        'test-rebuild-test-deploy' = 'scripts/tests/test-rebuild-test-deploy.ps1'
-        'test-remote-deploy-transport' = 'scripts/tests/test-remote-deploy-transport.ps1'
-        'test-self-referential-bootstrap' = 'scripts/tests/test-self-referential-bootstrap.ps1'
-        'test-verify-all' = 'scripts/tests/test-verify-all.ps1'
-        'test-windows-verification-scope' = 'scripts/tests/test-windows-verification-scope.ps1'
+    $pwshPrefix = @('pwsh', '-NoProfile', '-NonInteractive', '-File')
+    $commandSpecById = @{
+        'canonical-linux-deployment-verify' = @{
+            Path = 'scripts/verify-all.ps1'
+            Invocation = @($pwshPrefix + @('scripts/verify-all.ps1', '-Profile', 'Deployment', '-InventoryPath', '<owner-private-inventory>'))
+        }
+        'canonical-linux-rebuild' = @{
+            Path = 'scripts/dev/rebuild-test-deploy.ps1'
+            Invocation = @($pwshPrefix + @('scripts/dev/rebuild-test-deploy.ps1', '-Build', '-TargetId', 'canonical-linux', '-InventoryPath', '<owner-private-inventory>'))
+        }
+        'detect-base-gate-capability-bash-syntax' = @{ Path = 'scripts/lib/detect-base-gate-capability.sh'; Invocation = @('bash', '-n', 'scripts/lib/detect-base-gate-capability.sh') }
+        'harden-cad-extension-cache' = @{ Path = 'bim-streaming-server/scripts/harden-cad-extension-cache.py'; Invocation = @('python', 'bim-streaming-server/scripts/harden-cad-extension-cache.py', '--repo-root', 'bim-streaming-server') }
+        'invoke-powershell-static' = @{ Path = 'scripts/tests/invoke-powershell-static.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/invoke-powershell-static.ps1') }
+        'test-agent-governance-check' = @{ Path = 'scripts/tests/test-agent-governance-check.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-agent-governance-check.ps1') }
+        'test-base-gate-capability' = @{ Path = 'scripts/tests/test-base-gate-capability.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-base-gate-capability.ps1') }
+        'test-deploy-governance-static' = @{ Path = 'scripts/tests/test-deploy-governance-static.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-deploy-governance-static.ps1') }
+        'test-deploy-target-registry' = @{ Path = 'scripts/tests/test-deploy-target-registry.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-deploy-target-registry.ps1') }
+        'test-host-native-child-launch' = @{ Path = 'scripts/tests/test-host-native-child-launch.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-host-native-child-launch.ps1') }
+        'test-host-native-conversion-service' = @{ Path = 'bim-streaming-server/tests/test_host_native_conversion_service.py'; Invocation = @('python', '-m', 'pytest', 'bim-streaming-server/tests/test_host_native_conversion_service.py', '-q') }
+        'test-host-native-launcher' = @{ Path = 'scripts/tests/test-host-native-launcher.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-host-native-launcher.ps1') }
+        'test-kit-manager-api' = @{ Path = 'services/kit-manager-api/tests/test_kit_service_runtime_status.py'; Invocation = @('python', '-m', 'pytest', 'services/kit-manager-api/tests', '-q') }
+        'test-kit-log-probe' = @{ Path = 'scripts/tests/test-kit-log-probe.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-kit-log-probe.ps1') }
+        'test-platform-adapter' = @{ Path = 'scripts/tests/test-platform-adapter.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-platform-adapter.ps1') }
+        'test-pr-body-evidence' = @{ Path = 'scripts/tests/test-pr-body-evidence.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-pr-body-evidence.ps1') }
+        'test-pr-review-agent' = @{ Path = 'scripts/tests/test-pr-review-agent.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-pr-review-agent.ps1') }
+        'test-preflight-host-native' = @{ Path = 'scripts/tests/test-preflight-host-native.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-preflight-host-native.ps1') }
+        'test-preflight-ports' = @{ Path = 'scripts/tests/test-preflight-ports.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-preflight-ports.ps1') }
+        'test-preflight-prnumber-forwarding' = @{ Path = 'scripts/tests/test-preflight-prnumber-forwarding.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-preflight-prnumber-forwarding.ps1') }
+        'test-rebuild-test-deploy' = @{ Path = 'scripts/tests/test-rebuild-test-deploy.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-rebuild-test-deploy.ps1') }
+        'test-remote-deploy-transport' = @{ Path = 'scripts/tests/test-remote-deploy-transport.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-remote-deploy-transport.ps1') }
+        'test-self-referential-bootstrap' = @{ Path = 'scripts/tests/test-self-referential-bootstrap.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-self-referential-bootstrap.ps1') }
+        'test-verify-all' = @{ Path = 'scripts/tests/test-verify-all.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-verify-all.ps1') }
+        'test-windows-verification-scope' = @{ Path = 'scripts/tests/test-windows-verification-scope.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-windows-verification-scope.ps1') }
     }
     foreach ($entry in @($realLedger.entries)) {
         foreach ($commandId in @($entry.verification_contract.command_ids)) {
-            Assert-True ($commandPathById.ContainsKey([string]$commandId)) "ledger command id '$commandId' resolves through the executable command map"
-            $commandPath = Join-Path $repoRoot $commandPathById[[string]$commandId]
+            Assert-True ($commandSpecById.ContainsKey([string]$commandId)) "ledger command id '$commandId' resolves through the immutable command map"
+            $commandSpec = $commandSpecById[[string]$commandId]
+            Assert-True (@($commandSpec.Invocation).Count -gt 0) "ledger command id '$commandId' preserves a non-empty invocation"
+            $commandPath = Join-Path $repoRoot ([string]$commandSpec.Path)
             Assert-True (Test-Path -LiteralPath $commandPath -PathType Leaf) "ledger command id '$commandId' resolves to an existing executable source path"
         }
     }
+    $expectedCanonicalRebuild = @($pwshPrefix + @('scripts/dev/rebuild-test-deploy.ps1', '-Build', '-TargetId', 'canonical-linux', '-InventoryPath', '<owner-private-inventory>'))
+    $expectedCanonicalVerify = @($pwshPrefix + @('scripts/verify-all.ps1', '-Profile', 'Deployment', '-InventoryPath', '<owner-private-inventory>'))
+    Assert-True ((@($commandSpecById['canonical-linux-rebuild'].Invocation) -join "`n") -ceq ($expectedCanonicalRebuild -join "`n")) 'canonical rebuild invocation preserves -Build, target, and owner-private inventory metadata'
+    Assert-True ((@($commandSpecById['canonical-linux-deployment-verify'].Invocation) -join "`n") -ceq ($expectedCanonicalVerify -join "`n")) 'canonical deployment verification preserves the executable Deployment profile and owner-private inventory metadata'
+    Assert-True (-not (@($commandSpecById['canonical-linux-deployment-verify'].Invocation) -ccontains '-TargetId')) 'executing Deployment verification must resolve the Linux target from the platform instead of using the PlanOnly-only TargetId parameter'
 
     # --- timestamp: real parse, not prefix match (review P2) ------------------------
     Assert-True (Test-SelfReferentialIsoTimestamp -Value '2026-07-31T08:00:00Z') 'valid ISO timestamp accepted'
