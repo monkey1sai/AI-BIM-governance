@@ -1,182 +1,162 @@
 # executable-architecture-contracts Specification
 
 ## Purpose
-TBD - created by archiving change introduce-executable-architecture-contracts. Update Purpose after archive.
+
+把最高價值的架構鐵律變成 machine-readable contract 與 fail-closed 驗證:desired 架構(服務責任、依賴邊、browser 邊界、資料落地、readiness evidence)、每個 governed change 的 intended delta、以及 observed 狀態的 ratchet(graph/layer/lifecycle/learning),全部接入既有 canonical verification dispatch,不建立第二條驗證管線。由 change `introduce-executable-architecture-contracts`(2026-08-10 archived)落地。
+
 ## Requirements
+
 ### Requirement: Desired architecture contract
 
-The repository SHALL maintain a machine-readable desired architecture contract at `architecture/architecture-contract.json`.
+Repository SHALL 在 `architecture/architecture-contract.json` 維護 machine-readable 的 desired architecture contract。
 
-The contract SHALL identify internal services, external systems, owned capabilities, forbidden responsibilities, allowed service calls, browser access boundaries, data residency policy, runtime readiness evidence, architecture invariants, delta policy, and exception policy.
+該 contract SHALL 識別 internal services、external systems、owned capabilities、forbidden responsibilities、allowed service calls、browser access boundaries、data residency policy、runtime readiness evidence、architecture invariants、delta policy 與 exception policy。
 
 #### Scenario: Agent plans a governed service-boundary change
 
-- **GIVEN** a Lane G or Lane S change may alter a service boundary
-- **WHEN** the agent prepares the change
-- **THEN** it SHALL read the desired architecture contract
-- **AND** it SHALL NOT infer permission from narrative documentation alone
-- **AND** any new dependency edge SHALL be present in both the desired contract and the change delta before acceptance.
+- **GIVEN** 某個 Lane G 或 Lane S change 可能改動 service boundary
+- **WHEN** agent 準備該 change
+- **THEN** 它 SHALL 先讀 desired architecture contract
+- **AND** 它 SHALL NOT 只憑敘述性文件推論權限
+- **AND** 任何新的 dependency edge SHALL 在被接受前同時存在於 desired contract 與該 change 的 delta。
 
 ### Requirement: Runtime truth hierarchy
 
-The architecture contract SHALL preserve the repository runtime truth hierarchy.
+Architecture contract SHALL 保持 repository 的 runtime truth hierarchy。
 
 #### Scenario: Documentation describes target behavior that code does not implement
 
-- **GIVEN** `docs/plans` describes a target capability
-- **AND** implementation or executable tests do not prove that capability exists
-- **WHEN** an agent reports status
-- **THEN** it SHALL report an implementation gap
-- **AND** it SHALL NOT use the architecture contract or narrative spec to claim runtime completion.
+- **GIVEN** `docs/plans` 描述了某個目標能力
+- **AND** 實作或可執行測試無法證明該能力存在
+- **WHEN** agent 回報狀態
+- **THEN** 它 SHALL 回報 implementation gap
+- **AND** 它 SHALL NOT 用 architecture contract 或敘述性 spec 宣稱 runtime 已完成。
 
 ### Requirement: Unique capability ownership
 
-Every declared architectural capability SHALL have no more than one internal owning service.
+每個宣告的 architectural capability SHALL 至多有一個 internal owning service。
 
-A service SHALL NOT list the same capability under both `owns` and `must_not`.
+Service SHALL NOT 把同一個 capability 同時列在 `owns` 與 `must_not`。
 
 #### Scenario: Two services claim review-session ownership
 
 - **GIVEN** `bim-review-coordinator` owns `review-session`
-- **WHEN** another internal service also declares ownership of `review-session`
+- **WHEN** 另一個 internal service 也宣告擁有 `review-session`
 - **THEN** semantic validation SHALL fail
-- **AND** the failure SHALL identify both owners and the duplicated capability.
+- **AND** 失敗訊息 SHALL 指出兩個 owner 與重複的 capability。
 
 ### Requirement: Browser access boundary
 
-The only public browser HTTP API entrypoint SHALL be `bim-review-coordinator` on port `8004`.
+唯一的 public browser HTTP API entrypoint SHALL 是 `bim-review-coordinator` 的 port `8004`。
 
-`bim-streaming-server`, `governance-service`, and `kit-manager-api` SHALL NOT be declared as direct public browser HTTP APIs.
+`bim-streaming-server`、`governance-service`、`kit-manager-api` SHALL NOT 被宣告為 browser 直連的 public HTTP API。
 
-The browser MAY use declared WebRTC and DataChannel channels to `bim-streaming-server`.
+Browser MAY 使用宣告的 WebRTC 與 DataChannel channels 直連 `bim-streaming-server`。
 
 #### Scenario: Viewer attempts to bypass coordinator
 
-- **WHEN** an architecture contract or delta declares direct browser HTTP access to governance or streaming internal APIs
-- **THEN** validation SHALL fail.
+- **WHEN** architecture contract 或 delta 宣告 browser 直連 governance 或 streaming internal API
+- **THEN** validation SHALL fail。
 
 ### Requirement: Customer-edge artifact residency
 
-Large BIM source and derived artifacts SHALL remain customer-edge authoritative.
+大型 BIM source 與 derived artifacts SHALL 維持 customer-edge authoritative。
 
-The external company cloud control plane SHALL receive metadata only and SHALL NOT receive IFC, RVT, DWG, USD, USDC, element mapping, or entity index artifacts.
+External company cloud control plane SHALL 只接收 metadata,SHALL NOT 接收 IFC、RVT、DWG、USD、USDC、element mapping 或 entity index artifacts。
 
 #### Scenario: Cloud data policy permits USDC upload
 
-- **WHEN** the architecture contract removes USDC from the cloud deny-list or marks large artifacts cloud-transferable
-- **THEN** validation SHALL fail.
+- **WHEN** architecture contract 把 USDC 從 cloud deny-list 移除,或把大型 artifacts 標成可傳雲
+- **THEN** validation SHALL fail。
 
 ### Requirement: Evidence-gated review readiness
 
-A review session SHALL NOT be considered ready unless all required Kit-side and browser-side evidence exists.
+Review session SHALL NOT 在缺少任何必要 Kit-side 或 browser-side evidence 時被視為 ready。
 
-The required evidence SHALL include at least:
+必要 evidence SHALL 至少包含:
 
 - `kit-process-alive`;
 - `opened-stage-result`;
 - `datachannel-ready`;
 - `first-frame-at`;
-- `stage-matched`.
+- `stage-matched`。
 
 #### Scenario: Kit process exists but browser has no first frame
 
-- **GIVEN** Kit process evidence exists
-- **AND** `first-frame-at` is absent
-- **WHEN** readiness is evaluated
-- **THEN** the session SHALL NOT be ready.
+- **GIVEN** Kit process evidence 存在
+- **AND** `first-frame-at` 不存在
+- **WHEN** 評估 readiness
+- **THEN** 該 session SHALL NOT 為 ready。
 
 ### Requirement: Architecture delta
 
-A governed architecture change SHALL include `architecture/deltas/<change-id>.json`.
+Governed architecture change SHALL 附帶 `architecture/deltas/<change-id>.json`。
 
-The delta SHALL declare affected services and surfaces, dependency edges, public contract changes, data ownership changes, state-machine changes, exceptions, and approval state.
+Delta SHALL 宣告 affected services 與 surfaces、dependency edges、public contract changes、data ownership changes、state-machine changes、exceptions 與 approval state。
 
 #### Scenario: Lane B carries architecture-affecting changes
 
-- **GIVEN** a delta contains a dependency edge, public contract change, ownership change, state-machine change, or exception
-- **WHEN** its lane is `F` or `B`
+- **GIVEN** 某 delta 含有 dependency edge、public contract change、ownership change、state-machine change 或 exception
+- **WHEN** 其 lane 為 `F` 或 `B`
 - **THEN** validation SHALL fail
-- **AND** the change SHALL be promoted to Lane G or Lane S.
+- **AND** 該 change SHALL 升級為 Lane G 或 Lane S。
 
 ### Requirement: Time-bounded architecture exceptions
 
-An architecture exception SHALL include invariant ID, owner, reason, ADR, creation date, and expiration date.
+Architecture exception SHALL 含 invariant ID、owner、reason、ADR、creation date 與 expiration date。
 
-An exception SHALL NOT exceed 90 days and SHALL fail validation after expiration.
+Exception SHALL NOT 超過 90 天,過期後 SHALL fail validation。
 
-Breaking contract changes, ownership transfers, and architecture exceptions SHALL require explicit approved status before acceptance.
+Breaking contract changes、ownership transfers 與 architecture exceptions SHALL 在接受前取得 explicit approved status。
 
 #### Scenario: Exception expires
 
-- **GIVEN** an exception expiration date is earlier than the validation date
-- **WHEN** semantic validation runs
-- **THEN** validation SHALL fail closed.
+- **GIVEN** exception 的 expiration date 早於 validation date
+- **WHEN** semantic validation 執行
+- **THEN** validation SHALL fail closed。
 
 ### Requirement: Canonical verification dispatch
 
-Architecture contract, delta, validator, and architecture-test changes SHALL be routed through the repository's existing verification manifest.
+Architecture contract、delta、validator 與 architecture-test 變更 SHALL 經由 repository 既有的 verification manifest 路由。
 
-The change SHALL NOT create a second canonical deploy or verification entrypoint.
+本 change SHALL NOT 建立第二條 canonical deploy 或 verification entrypoint。
 
 #### Scenario: Architecture-only change is planned
 
-- **GIVEN** `architecture/architecture-contract.json` changes
-- **WHEN** `scripts/verify-all` computes affected targets
-- **THEN** root contracts SHALL be selected
-- **AND** agent-governance and secret-pattern scanning SHALL remain applicable.
+- **GIVEN** `architecture/architecture-contract.json` 變更
+- **WHEN** `scripts/verify-all` 計算 affected targets
+- **THEN** root contracts SHALL 被選中
+- **AND** agent-governance 與 secret-pattern scanning SHALL 維持適用。
 
 ### Requirement: Honest phased enforcement
 
-The repository SHALL distinguish active, delegated, and planned architecture enforcement.
+Repository SHALL 區分 active、delegated 與 planned 的 architecture enforcement。
 
-An invariant SHALL be marked `active` only while an executable gate for it runs in
-canonical verification. An invariant without such a gate SHALL remain `planned`,
-and no report SHALL claim conformance the gate does not actually establish.
+Invariant SHALL 只在其可執行 gate 於 canonical verification 中運行時標為 `active`。沒有這種 gate 的 invariant SHALL 維持 `planned`,且任何報告 SHALL NOT 宣稱該 gate 未實際建立的 conformance。
 
 #### Scenario: Invariant has no executable gate yet
 
-- **WHEN** an invariant has no executable gate wired into canonical verification
-- **THEN** that invariant SHALL remain marked planned
-- **AND** the report SHALL NOT claim conformance for it has been established.
+- **WHEN** 某 invariant 尚無接入 canonical verification 的可執行 gate
+- **THEN** 該 invariant SHALL 維持標為 planned
+- **AND** 報告 SHALL NOT 宣稱其 conformance 已建立。
 
 #### Scenario: No-cycle observed-graph gate becomes executable
 
-- **GIVEN** the observed-architecture ratchet runs in the canonical root-contract gate
-- **WHEN** `ARCH-GRAPH-001` is marked active
-- **THEN** the repository SHALL hold an approved observed baseline recording every
-  grandfathered cycle with an owner, reason, and target phase
-- **AND** the gate SHALL fail closed on any new cycle signature or any increase
-  above the approved cycle budget
-- **AND** the enforcement scope SHALL be documented, including that a static scan
-  cannot observe runtime-resolved dependencies, so the observed graph is a lower
-  bound and SHALL NOT be reported as full source-graph conformance.
+- **GIVEN** observed-architecture ratchet 在 canonical root-contract gate 中運行
+- **WHEN** `ARCH-GRAPH-001` 標為 active
+- **THEN** repository SHALL 持有經核准的 observed baseline,記錄每個 grandfathered cycle 及其 owner、reason 與 target phase
+- **AND** 該 gate SHALL 對任何新的 cycle signature 或超出核准 cycle budget 的增量 fail closed
+- **AND** enforcement scope SHALL 被文件化,包括 static scan 無法觀察 runtime-resolved dependencies,因此 observed graph 是 lower bound,SHALL NOT 被報告為完整的 source-graph conformance。
 
 #### Scenario: Layer boundary gate becomes executable
 
-- **GIVEN** the layer boundary ratchet runs in the canonical root-contract gate
-- **WHEN** `ARCH-LAYER-001` is marked active
-- **THEN** every service scanned by the observed-graph configuration SHALL be either
-  covered by layer assignment rules or explicitly excluded with a reason, and every
-  scanned module SHALL resolve to exactly one declared layer
-- **AND** the repository SHALL hold an approved layer baseline recording every
-  grandfathered cross-layer violation with an owner, reason, and target phase, under
-  per-service budgets that grant no slack above the recorded count
-- **AND** the gate SHALL fail closed on any violation that is not baselined, on any
-  service whose violation count exceeds its budget, and on any module that no rule
-  classifies
-- **AND** baseline identity SHALL exclude layer names, so relabelling a layer cannot
-  convert a grandfathered violation into a new one or launder a new one as existing
-- **AND** because a ratchet over observed state cannot detect a widened policy, the
-  per-service layer sets, the allowed layer matrix, the per-service languages, the set
-  of layered services, and the load-bearing constraints of the schema files SHALL be
-  pinned independently in the test suite, so loosening the contract requires an
-  edit that is visible in the same diff
-- **AND** the documentation SHALL state plainly that this policy layer is
-  review-enforced rather than gate-enforced, and SHALL NOT claim that relabelling a
-  layer cannot remove a violation from the observed set
-- **AND** the enforcement scope SHALL be documented, including that the gate judges
-  direction only and not cycles, judges intra-service statically resolvable imports
-  only, and SHALL NOT be reported as full structural conformance
-- **AND** where the originating task named a third-party tool that was not adopted,
-  the substitution SHALL be recorded machine-readably alongside the contract and
-  SHALL NOT be deleted, only superseded.
+- **GIVEN** layer boundary ratchet 在 canonical root-contract gate 中運行
+- **WHEN** `ARCH-LAYER-001` 標為 active
+- **THEN** observed-graph configuration 掃描的每個 service SHALL 要嘛被 layer assignment rules 覆蓋、要嘛附理由明確排除,且每個被掃描的 module SHALL 解析到恰好一個宣告的 layer
+- **AND** repository SHALL 持有經核准的 layer baseline,記錄每筆 grandfathered cross-layer violation 及其 owner、reason 與 target phase,並以不留寬鬆額度的 per-service budgets 約束
+- **AND** 該 gate SHALL 對未 baseline 的 violation、超出 budget 的 service、以及無 rule 可分類的 module fail closed
+- **AND** baseline identity SHALL 排除 layer 名稱,使重新貼標籤無法把 grandfathered violation 變成新 violation,也無法把新 violation 洗白為既有
+- **AND** 因為對 observed 狀態的 ratchet 無法偵測被放寬的 policy,per-service layer sets、allowed layer matrix、per-service languages、layered service id 集合、以及 schema 檔的 load-bearing constraints SHALL 獨立 pin 在測試套件中,使放寬 contract 必須出現在同一個 diff 的可見編輯
+- **AND** 文件 SHALL 明白陳述這個 policy 層是 review-enforced 而非 gate-enforced,且 SHALL NOT 宣稱重新貼標籤無法把 violation 移出 observed 集合
+- **AND** enforcement scope SHALL 被文件化,包括該 gate 只判方向不判 cycle、只判 intra-service 靜態可解析的 imports,且 SHALL NOT 被報告為完整的 structural conformance
+- **AND** 當原始任務指名的第三方工具未被採用時,該替代 SHALL 以 machine-readable 形式與 contract 一同記錄,SHALL NOT 被刪除、只能被 supersede。
