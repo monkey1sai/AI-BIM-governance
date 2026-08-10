@@ -1,0 +1,76 @@
+{
+  "schema_version": "risk-proportional-review-policy/v1",
+  "authority": "advisory_shadow",
+  "merge_authority": false,
+  "claims_policy": "escalation_only",
+  "identity_binding": [
+    "repository",
+    "base_sha",
+    "head_sha",
+    "policy_sha256",
+    "verification_manifest_sha256"
+  ],
+  "review_modes": [
+    {
+      "id": "mechanical_only",
+      "rank": 0,
+      "max_model_reviewers": 0,
+      "human_required": false
+    },
+    {
+      "id": "focused_semantic",
+      "rank": 1,
+      "max_model_reviewers": 1,
+      "human_required": false
+    },
+    {
+      "id": "risk_scoped_specialists",
+      "rank": 2,
+      "max_model_reviewers": 2,
+      "human_required": false
+    },
+    {
+      "id": "human_critical",
+      "rank": 3,
+      "max_model_reviewers": 2,
+      "human_required": true
+    }
+  ],
+  "lane_floors": {
+    "F": "mechanical_only",
+    "B": "mechanical_only",
+    "G": "risk_scoped_specialists",
+    "S": "risk_scoped_specialists"
+  },
+  "packet_budget": {
+    "max_bytes": 16384,
+    "max_changed_paths": 24,
+    "max_evidence_refs": 16,
+    "max_questions": 6
+  },
+  "loop_budget": {
+    "max_attempts": 2,
+    "max_evidence_delta_requests": 1,
+    "required_check_retries": 0
+  },
+  "fail_closed_statuses": [
+    "missing",
+    "not_configured",
+    "not_observed",
+    "unverified",
+    "stale"
+  ],
+  "self_referential_floor": "human_critical",
+  "required_invariants": [
+    "deterministic_checks_before_model_review",
+    "existing_lane_may_not_be_downgraded",
+    "agent_claims_may_only_escalate",
+    "exact_head_evidence_only",
+    "missing_evidence_fails_closed",
+    "same_evidence_fingerprint_may_not_retry",
+    "reviewer_may_not_modify_implementation",
+    "adapters_may_not_change_policy_or_verdict_semantics",
+    "self_referential_changes_require_existing_base_verification_and_human_approval",
+    "shadow_output_is_not_merge_authority"
+  ]
+}

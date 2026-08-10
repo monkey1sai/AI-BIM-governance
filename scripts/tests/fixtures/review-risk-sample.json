@@ -1,0 +1,68 @@
+{
+  "schema_version": "review-risk-input/v1",
+  "repository": "monkey1sai/AI-BIM-governance",
+  "base_sha": "1111111111111111111111111111111111111111",
+  "head_sha": "2222222222222222222222222222222222222222",
+  "verification_manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "lane": "G",
+  "changed_paths": [
+    {
+      "path": "docs/contracts/review-session.schema.json",
+      "status": "modified",
+      "additions": 45,
+      "deletions": 11
+    }
+  ],
+  "detection": {
+    "detector": "ci",
+    "observed": true,
+    "horizon": "immediate"
+  },
+  "change": {
+    "persistent_write": "none",
+    "rollback": "automatic",
+    "external_side_effects": false,
+    "regulated_data": [],
+    "post_fix_actions": [
+      "none"
+    ],
+    "runtime_or_deploy": false,
+    "public_contract_changed": true,
+    "architecture_authority_changed": false,
+    "duplicated_rule_risk": false,
+    "self_referential": false
+  },
+  "impact": {
+    "topology": "contractual",
+    "affected_services": 2,
+    "callers": 5,
+    "users": "bounded"
+  },
+  "evidence": [
+    {
+      "kind": "test_result",
+      "status": "passed",
+      "ref": "artifacts/test_result.json",
+      "head_sha": "2222222222222222222222222222222222222222"
+    },
+    {
+      "kind": "impact_result",
+      "status": "passed",
+      "ref": "artifacts/impact_result.json",
+      "head_sha": "2222222222222222222222222222222222222222"
+    },
+    {
+      "kind": "contract_result",
+      "status": "passed",
+      "ref": "artifacts/contract_result.json",
+      "head_sha": "2222222222222222222222222222222222222222"
+    },
+    {
+      "kind": "integration_result",
+      "status": "passed",
+      "ref": "artifacts/integration_result.json",
+      "head_sha": "2222222222222222222222222222222222222222"
+    }
+  ],
+  "advisory_claims": null
+}
