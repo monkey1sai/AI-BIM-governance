@@ -60,21 +60,27 @@
     {
       "name": "deploy-linux-test-environment",
       "locations": {
+        "claude": ".claude/skills/deploy-linux-test-environment",
         "codex": ".codex/skills/deploy-linux-test-environment"
       },
       "sync": {
-        "mode": "single"
+        "mode": "mirror",
+        "source": "claude",
+        "targets": [
+          "codex"
+        ]
       },
       "provenance": {
         "kind": "repo-authored",
         "source": "AI-BIM-governance",
-        "notes": "Introduced by the commit containing this manifest entry. Codex operator workflow only; canonical deployment behavior remains owned by scripts/dev/rebuild-test-deploy.ps1."
+        "notes": "Introduced by the commit containing this manifest entry. Claude is the canonical repo-authored source and Codex is a byte-identical mirror; deployment behavior remains owned by scripts/dev/rebuild-test-deploy.ps1."
       },
       "integrity": {
         "format": "agent-skill-tree/v1",
         "algorithm": "sha256",
         "trees": {
-          "codex": "44954af0e8c8eed50b8259518ef749f917612a94530a509047e4f83a9cf91d62"
+          "claude": "3bf92368d8c66ca7cd3ec3752d5c22e0a656ff5178cb435dc99769dc6e838343",
+          "codex": "3bf92368d8c66ca7cd3ec3752d5c22e0a656ff5178cb435dc99769dc6e838343"
         }
       }
     },

@@ -397,13 +397,17 @@ try {
     $realLedger = Get-SelfReferentialBootstrapLedger -Path (Join-Path $repoRoot 'scripts/self-referential-bootstrap-ledger.json')
     Assert-True ($null -ne $realLedger) 'repo ledger must parse and validate'
     $commandPathById = @{
+        'canonical-linux-deployment-verify' = 'scripts/verify-all.ps1'
+        'canonical-linux-rebuild' = 'scripts/dev/rebuild-test-deploy.ps1'
         'detect-base-gate-capability-bash-syntax' = 'scripts/lib/detect-base-gate-capability.sh'
+        'harden-cad-extension-cache' = 'bim-streaming-server/scripts/harden-cad-extension-cache.py'
         'invoke-powershell-static' = 'scripts/tests/invoke-powershell-static.ps1'
         'test-agent-governance-check' = 'scripts/tests/test-agent-governance-check.ps1'
         'test-base-gate-capability' = 'scripts/tests/test-base-gate-capability.ps1'
         'test-deploy-governance-static' = 'scripts/tests/test-deploy-governance-static.ps1'
         'test-deploy-target-registry' = 'scripts/tests/test-deploy-target-registry.ps1'
         'test-host-native-child-launch' = 'scripts/tests/test-host-native-child-launch.ps1'
+        'test-host-native-conversion-service' = 'bim-streaming-server/tests/test_host_native_conversion_service.py'
         'test-host-native-launcher' = 'scripts/tests/test-host-native-launcher.ps1'
         'test-kit-log-probe' = 'scripts/tests/test-kit-log-probe.ps1'
         'test-platform-adapter' = 'scripts/tests/test-platform-adapter.ps1'
@@ -415,6 +419,7 @@ try {
         'test-rebuild-test-deploy' = 'scripts/tests/test-rebuild-test-deploy.ps1'
         'test-remote-deploy-transport' = 'scripts/tests/test-remote-deploy-transport.ps1'
         'test-self-referential-bootstrap' = 'scripts/tests/test-self-referential-bootstrap.ps1'
+        'test-verify-all' = 'scripts/tests/test-verify-all.ps1'
         'test-windows-verification-scope' = 'scripts/tests/test-windows-verification-scope.ps1'
     }
     foreach ($entry in @($realLedger.entries)) {
