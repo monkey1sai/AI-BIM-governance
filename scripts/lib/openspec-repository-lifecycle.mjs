@@ -336,7 +336,9 @@ export function proposalLifecycleStatus(text) {
     .map((match) => match[1].toLowerCase());
   // Every bolded status-like line in the prologue is inventoried, so a near-miss beside a
   // canonical marker is never ignored: two disagreeing declarations must not resolve to one.
-  const statusLike = [...prologue.matchAll(/^[^\S\n]{0,3}>[^\n]*\*\*[^\S\n]*Status\b/gimu)].length;
+  const statusLike = prologue.split('\n')
+    .filter((line) => /^[^\S\n]{0,3}>/u.test(line))
+    .reduce((total, line) => total + [...line.matchAll(/\*\*[^\S\n]*Status\b/giu)].length, 0);
   if (canonical.length > 1) return MARKER_INVALID;
   if (statusLike > canonical.length) return MARKER_NEAR_MISS;
   if (canonical.length === 0) return 'active';
@@ -479,8 +481,8 @@ export function compareRepositoryLifecycle(observation) {
       continue;
     }
     if (!currentLedger.has(entry.name)) {
-      mismatches.push(mismatch('directory_without_ledger_row', entry.name, 'lifecycle_ledger.current', 'present',
-        'openspec_changes', 'absent',
+      mismatches.push(mismatch('directory_without_ledger_row', entry.name, 'lifecycle_ledger.current', 'absent',
+        'openspec_changes', entry.name,
         'An openspec/changes directory has no current machine-ledger row.'));
     }
   }

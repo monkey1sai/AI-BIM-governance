@@ -257,6 +257,29 @@ test('a current ledger row without a change directory is refused', () => {
   });
 });
 
+test('the orphan-directory record names which source observed what', () => {
+  // The directory is present in openspec/changes and absent from the ledger; reporting it
+  // the other way round tells a reader to look in the wrong place.
+  withRepository((root) => {
+    const found = findCode(root, 'directory_without_ledger_row');
+    assert.equal(found?.expected_source, 'lifecycle_ledger.current');
+    assert.equal(found?.expected, 'absent');
+    assert.equal(found?.actual_source, 'openspec_changes');
+    assert.equal(found?.actual, 'delta');
+  }, (spec) => {
+    spec.changes.delta = null;
+  });
+});
+
+test('two status declarations sharing one blockquote line are not read as one', () => {
+  assert.equal(proposalLifecycleStatus('> **Status: active** **Status: deferred**\\n'), 'near-miss');
+  withRepository((root) => {
+    assert.equal(findCode(root, 'proposal_marker_unreadable')?.change_id, 'alpha');
+  }, (spec) => {
+    spec.changes.alpha = '# Proposal\\n\\n> **Status: active** **Status: deferred**\\n';
+  });
+});
+
 test('a change directory without a current ledger row is refused', () => {
   withRepository((root) => {
     assert.equal(findCode(root, 'directory_without_ledger_row')?.change_id, 'delta');
