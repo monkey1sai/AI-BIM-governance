@@ -86,7 +86,7 @@ G → risk_scoped_specialists floor
 S → risk_scoped_specialists floor
 ```
 
-A Lane B task is not forced to call a reviewer when exact-head deterministic evidence is complete and no semantic risk signal exists. This is intentional token control and remains compatible with the existing optional B reviewer.
+A Lane B task is not forced to call a reviewer when exact-head deterministic evidence is complete and no semantic risk signal exists. It still requires an exact-head `impact_result`; optional semantic review does not waive the repository's deterministic impact-analysis floor. This is intentional token control and remains compatible with the existing optional B reviewer.
 
 ## 6. Machine contracts
 
@@ -119,7 +119,7 @@ Covered objects:
 - `review-loop-decision/v1`
 - `review-risk-corpus/v1`
 
-Unknown fields fail validation. Absolute paths and path traversal are rejected. Prompts, sessions, environment variables, stdout/stderr, and raw repository content are not part of the input contract.
+Unknown fields fail validation. Absolute paths, dot segments, empty segments, surrounding whitespace, controls, and trailing separators are rejected; relative Windows separators remain valid and normalize before classification. Prompts, sessions, environment variables, stdout/stderr, and raw repository content are not part of the input contract.
 
 ## 7. Exact-head identity
 
@@ -164,7 +164,7 @@ It never includes a full chat, prompt, repository, diff, log stream, or session 
 
 Evidence `ref` values are inert repository-local artifact identifiers with the form `artifacts/<path>/<file.ext>`. They are not URLs, command arguments, free-form instructions, or permission to dereference a path. The adapter owns artifact lookup and provenance verification before it marks evidence as passed.
 
-Production service paths require exact-head integration and runtime evidence. Frontend paths additionally require independent `browser_artifacts` operability proof and `design_fidelity_result` visual-fidelity proof; neither substitutes for the other. A renamed path carries `previous_path`, and both source and destination participate in risk classification.
+Production service paths require exact-head integration and runtime evidence. Two or more distinct production service roots deterministically raise topology to at least `distributed`, even when submitter-provided impact counts claim a local change. Frontend paths additionally require independent `browser_artifacts` operability proof and `design_fidelity_result` visual-fidelity proof; neither substitutes for the other. A renamed path carries `previous_path`, and both source and destination participate in risk classification.
 
 ## 9. Reviewer contract
 
@@ -218,12 +218,12 @@ An attempt records:
 
 Stop rules:
 
-- identical evidence fingerprint → `held`;
-- no observed new evidence → `held`;
+- an evidence-collection or continuing attempt with an identical evidence fingerprint → `held`;
+- an evidence-collection or continuing attempt with no observed new evidence → `held`;
 - a first action other than deterministic verification, an attempt appended after any terminal decision, or more than one evidence-delta request → rejected as malformed;
 - two attempts exhausted → `held`;
 - changed head, policy, normalized input, or verification manifest inside one cycle → `held`, start a new exact-identity cycle;
-- terminal advisory/human/block decision → complete.
+- terminal advisory/human/block decision → complete; a terminal model/human review may reuse the exact deterministic evidence fingerprint and report no new evidence because its verdict is not itself evidence.
 
 A larger model, repeated reviewer, or more context is not accepted as “new evidence.”
 
@@ -310,7 +310,7 @@ Codex and Claude use the same JSON contracts. Their project skills should be thi
 - policy, schemas, deterministic classifier;
 - packet/result/loop contracts;
 - 20-case golden corpus plus a standalone sample input;
-- local CLI and 62 focused tests;
+- local CLI and 64 focused tests;
 - evidence/design documentation;
 - no workflow or merge-authority change.
 
@@ -348,7 +348,7 @@ node scripts/dev/review-risk-shadow.mjs replay `
 Expected local baseline for PR-A:
 
 - 20/20 golden cases pass;
-- 62/62 focused Node tests pass;
+- 64/64 focused Node tests pass;
 - schemas validate as Draft-07;
 - `git diff --check` passes;
 - no workflow, current gate, ledger, CODEOWNERS, or verification manifest is modified.

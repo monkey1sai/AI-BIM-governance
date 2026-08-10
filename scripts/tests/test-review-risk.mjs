@@ -130,6 +130,16 @@ test('policy rejects attempts to become merge authority or expand retry budgets'
   const retries = clone(policy);
   retries.loop_budget.max_attempts = 3;
   assert.throws(() => validatePolicy(retries), /bounded-loop safety values/);
+
+  for (const [index, mode] of policy.review_modes.entries()) {
+    const reviewerBudget = clone(policy);
+    reviewerBudget.review_modes[index].max_model_reviewers = (mode.max_model_reviewers + 1) % 3;
+    assert.throws(() => validatePolicy(reviewerBudget), /canonical review mode contract/, `${mode.id} reviewer budget`);
+
+    const humanFloor = clone(policy);
+    humanFloor.review_modes[index].human_required = !mode.human_required;
+    assert.throws(() => validatePolicy(humanFloor), /canonical review mode contract/, `${mode.id} human floor`);
+  }
 });
 
 test('Draft-07 policy schema pins canonical mode identities, ranks, budgets, and human floor', () => {
@@ -161,6 +171,21 @@ test('consolidated schema matches runtime repository and packet maxima', () => {
   assert.deepEqual(budgetBounds.selected_evidence_refs, { type: 'integer', minimum: 0, maximum: 32 });
   assert.deepEqual(budgetBounds.max_questions, { type: 'integer', minimum: 1, maximum: 8 });
   assert.deepEqual(budgetBounds.selected_questions, { type: 'integer', minimum: 0, maximum: 8 });
+
+  const pathPattern = new RegExp(reviewSchema.definitions.path.pattern);
+  for (const invalidPath of [
+    'scripts/./lib/x.mjs',
+    './scripts/lib/x.mjs',
+    ' scripts/lib/x.mjs',
+    'scripts/lib/x.mjs ',
+    'scripts/lib/',
+    '\\scripts\\lib\\x.mjs',
+    `scripts/lib/x${String.fromCharCode(0)}.mjs`,
+  ]) {
+    assert.equal(pathPattern.test(invalidPath), false, invalidPath);
+  }
+  assert.equal(pathPattern.test('scripts\\lib\\x.mjs'), true);
+  assert.equal(pathPattern.test('docs/design notes/x.md'), true);
 });
 
 test('golden corpus covers twenty risk shapes with no mismatch', () => {
@@ -868,6 +893,24 @@ test('self-referential and secret floors resist path spelling and case evasion',
   const secretDecision = classifyReview(uppercaseSecret, policy);
   assert.equal(secretDecision.risk.trust_surface, 'protected_boundary');
   assert.ok(secretDecision.required_evidence.includes('security_review'));
+
+  for (const path of [
+    'bim-review-coordinator/src/services/authProvider.ts',
+    'governance-service/search/internal_auth.py',
+  ]) {
+    const authModule = caseInput('docs-typo-mechanical');
+    authModule.changed_paths[0].path = path;
+    const authDecision = classifyReview(authModule, policy);
+    assert.equal(authDecision.risk.trust_surface, 'protected_boundary', path);
+    assert.equal(authDecision.review_mode, 'human_critical', path);
+    assert.ok(authDecision.required_evidence.includes('security_review'), path);
+  }
+
+  for (const path of ['docs/authority-model.md', 'docs/author-guide.md']) {
+    const nonAuth = caseInput('docs-typo-mechanical');
+    nonAuth.changed_paths[0].path = path;
+    assert.equal(classifyReview(nonAuth, policy).risk.trust_surface, 'normal', path);
+  }
 });
 
 test('all path risk categories classify case-insensitively and reject case-only duplicates', () => {
@@ -1014,6 +1057,41 @@ test('every production root requires runtime and integration evidence, with dual
   }
 });
 
+test('Lane B requires exact-head impact evidence even when semantic review remains optional', () => {
+  const input = caseInput('bounded-local-bug-fix');
+  input.evidence = input.evidence.filter((entry) => entry.kind !== 'impact_result');
+  const missingImpact = classifyReview(input, policy);
+  assert.ok(missingImpact.required_evidence.includes('impact_result'));
+  assert.equal(missingImpact.verdict, 'held');
+
+  addExactEvidence(input, 'impact_result');
+  const evidenced = classifyReview(input, policy);
+  assert.equal(evidenced.risk.evidence_strength, 'strong');
+  assert.equal(evidenced.review_mode, 'focused_semantic');
+  assert.equal(evidenced.verdict, 'advisory_review');
+});
+
+test('distinct production service roots override understated local impact claims', () => {
+  const input = caseInput('docs-typo-mechanical');
+  input.changed_paths = [{
+    path: 'governance-service/src/rules.py',
+    previous_path: 'bim-review-coordinator/src/session.ts',
+    status: 'renamed',
+    additions: 1,
+    deletions: 1,
+  }];
+  input.impact.topology = 'local';
+  input.impact.affected_services = 1;
+  addExactEvidence(input, 'impact_result');
+  addExactEvidence(input, 'integration_result');
+  addExactEvidence(input, 'runtime_log');
+
+  const decision = classifyReview(input, policy);
+  assert.equal(decision.risk.topology, 'distributed');
+  assert.equal(decision.review_mode, 'risk_scoped_specialists');
+  assert.ok(decision.signals.includes('distinct_production_service_roots:bim-review-coordinator,governance-service'));
+});
+
 test('a generic evidence-complete Lane G change always receives a bounded specialist', () => {
   const input = caseInput('docs-typo-mechanical');
   input.lane = 'G';
@@ -1123,10 +1201,25 @@ test('bounded loop covers every terminal safety branch', () => {
       attempt(2, FINGERPRINT_B, { action: 'model_review', decision: 'advisory_pass' }),
     ]), /may not continue after a terminal decision/, terminal);
   }
+  for (const [action, decision] of [['model_review', 'advisory_pass'], ['human_review', 'human_required']]) {
+    const terminalReview = decide([
+      attempt(1, FINGERPRINT_A),
+      attempt(2, FINGERPRINT_A, { action, observed_new_evidence: [], decision }),
+    ]);
+    assert.deepEqual(
+      { state: terminalReview.state, reason: terminalReview.reason },
+      { state: 'complete', reason: `terminal_decision_${decision}` },
+      action,
+    );
+  }
   assert.equal(decide([
     attempt(1, FINGERPRINT_A),
-    attempt(2, FINGERPRINT_A, { action: 'model_review', decision: 'advisory_pass' }),
+    attempt(2, FINGERPRINT_A, { action: 'model_review', decision: 'continue' }),
   ]).reason, 'same_evidence_fingerprint_no_retry');
+  assert.equal(decide([
+    attempt(1, FINGERPRINT_A),
+    attempt(2, FINGERPRINT_B, { action: 'model_review', observed_new_evidence: [], decision: 'continue' }),
+  ]).reason, 'no_new_evidence_observed');
   assert.equal(decide([
     attempt(1, FINGERPRINT_A),
     attempt(2, FINGERPRINT_B, { action: 'model_review', observed_new_evidence: [], decision: 'advisory_pass' }),

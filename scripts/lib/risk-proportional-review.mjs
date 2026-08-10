@@ -10,7 +10,13 @@ const LOOP_INPUT_VERSION = 'review-loop-input/v1';
 const LOOP_DECISION_VERSION = 'review-loop-decision/v1';
 const CORPUS_VERSION = 'review-risk-corpus/v1';
 
-const MODE_IDS = ['mechanical_only', 'focused_semantic', 'risk_scoped_specialists', 'human_critical'];
+const CANONICAL_REVIEW_MODES = [
+  { id: 'mechanical_only', rank: 0, max_model_reviewers: 0, human_required: false },
+  { id: 'focused_semantic', rank: 1, max_model_reviewers: 1, human_required: false },
+  { id: 'risk_scoped_specialists', rank: 2, max_model_reviewers: 2, human_required: false },
+  { id: 'human_critical', rank: 3, max_model_reviewers: 2, human_required: true },
+];
+const MODE_IDS = CANONICAL_REVIEW_MODES.map((entry) => entry.id);
 const MODE_SET = new Set(MODE_IDS);
 const LANES = new Set(['F', 'B', 'G', 'S']);
 const TOPOLOGIES = new Set(['local', 'distributed', 'contractual', 'architectural', 'unknown']);
@@ -105,6 +111,7 @@ const SELF_REFERENTIAL_PATTERNS = [
   /^docs\/agent-tooling\/hermes-risk-proportional-review\.md$/,
 ];
 const PROTECTED_BOUNDARY_PATTERN = /(^|\/)(?:auth|oauth|sso|security|permissions?|payment|billing|checkout|crypto|encrypt|keys?|audit|compliance|gdpr|secrets?)(?:\/|$|\.)/i;
+const AUTH_MODULE_PATTERN = /(^|[\/_.-])auth(?:entication|orization|provider|service|client|middleware|guard|token|session)?(?=[\/_.-]|$)/i;
 const ENV_OR_SECRET_PATTERN = /(^|\/)\.env(?:\.|$)|(^|\/)(?:secrets?|credentials?)(?:\/|$|\.)/i;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 const EVIDENCE_REF_PATTERN = /^artifacts\/(?:[A-Za-z0-9][A-Za-z0-9._@#-]*\/)*[A-Za-z0-9][A-Za-z0-9._@#-]*\.[A-Za-z0-9][A-Za-z0-9-]*$/;
@@ -112,6 +119,14 @@ const CONTRACT_PATTERN = /(^|\/)(?:contracts?|schemas?|openapi|events?|protocols
 const SHARED_PATTERN = /(^|\/)(?:utils?|common|shared|middleware|core)(?:\/|$|\.)/;
 const MIGRATION_PATTERN = /(^|\/)(?:migrations?)(?:\/|$|\.)/;
 const RUNTIME_PATTERN = /^(?:bim-review-coordinator\/|bim-streaming-server\/|governance-service\/|web-viewer-sample\/|apps\/kit-manager-web\/|services\/kit-manager-api\/|infra\/docker\/|compose[^/]*\.ya?ml$|scripts\/(?:deploy|stop-all)\.ps1$)/;
+const PRODUCTION_SERVICE_ROOTS = [
+  'bim-review-coordinator',
+  'bim-streaming-server',
+  'governance-service',
+  'web-viewer-sample',
+  'apps/kit-manager-web',
+  'services/kit-manager-api',
+];
 const FRONTEND_PATTERN = /^(?:web-viewer-sample\/|apps\/kit-manager-web\/)/;
 const ARCHITECTURE_PATTERN = /^(?:architecture\/|docs\/architecture\/)/;
 
@@ -233,14 +248,19 @@ export function validatePolicy(candidate) {
 
   if (!Array.isArray(candidate.review_modes) || candidate.review_modes.length !== MODE_IDS.length) fail('policy.review_modes must contain exactly four modes');
   candidate.review_modes.forEach((entry, index) => {
+    const canonical = CANONICAL_REVIEW_MODES[index];
     assertExactKeys(entry, ['id', 'rank', 'max_model_reviewers', 'human_required'], ['id', 'rank', 'max_model_reviewers', 'human_required'], `policy.review_modes[${index}]`);
-    if (entry.id !== MODE_IDS[index] || entry.rank !== index) fail('policy.review_modes must preserve canonical order and ranks');
     assertInteger(entry.max_model_reviewers, `policy.review_modes[${index}].max_model_reviewers`, 0, 2);
     assertBoolean(entry.human_required, `policy.review_modes[${index}].human_required`);
+    if (
+      entry.id !== canonical.id ||
+      entry.rank !== canonical.rank ||
+      entry.max_model_reviewers !== canonical.max_model_reviewers ||
+      entry.human_required !== canonical.human_required
+    ) {
+      fail(`policy.review_modes[${index}] violates the canonical review mode contract`);
+    }
   });
-  if (candidate.review_modes[0].max_model_reviewers !== 0 || candidate.review_modes[3].human_required !== true) {
-    fail('policy review mode safety floors are invalid');
-  }
 
   assertExactKeys(candidate.lane_floors, ['F', 'B', 'G', 'S'], ['F', 'B', 'G', 'S'], 'policy.lane_floors');
   const expectedFloors = { F: 'mechanical_only', B: 'mechanical_only', G: 'risk_scoped_specialists', S: 'risk_scoped_specialists' };
@@ -364,6 +384,7 @@ function pathFacts(paths) {
     frontend: false,
     architecture: false,
     envOrSecret: false,
+    serviceRoots: new Set(),
     signals: new Set(),
   };
   for (const entry of paths) {
@@ -373,7 +394,7 @@ function pathFacts(paths) {
         result.selfReferential = true;
         result.signals.add(`self_referential_path:${path}`);
       }
-      if (PROTECTED_BOUNDARY_PATTERN.test(classificationPath)) {
+      if (PROTECTED_BOUNDARY_PATTERN.test(classificationPath) || AUTH_MODULE_PATTERN.test(classificationPath)) {
         result.protectedBoundary = true;
         result.signals.add(`protected_boundary_path:${path}`);
       }
@@ -405,6 +426,8 @@ function pathFacts(paths) {
         result.envOrSecret = true;
         result.signals.add(`secret_or_env_path:${path}`);
       }
+      const serviceRoot = PRODUCTION_SERVICE_ROOTS.find((root) => classificationPath === root || classificationPath.startsWith(`${root}/`));
+      if (serviceRoot) result.serviceRoots.add(serviceRoot);
     }
   }
   return result;
@@ -420,6 +443,7 @@ function maxTopology(current, candidate) {
 
 function deriveTopology(input, paths, signals) {
   let topology = input.impact.topology;
+  const distinctServiceRoots = [...paths.serviceRoots].sort(compareUtf8);
   if (input.change.self_referential || paths.selfReferential || input.change.architecture_authority_changed || paths.architecture) {
     topology = maxTopology(topology, 'architectural');
   }
@@ -427,10 +451,12 @@ function deriveTopology(input, paths, signals) {
   if (
     input.change.duplicated_rule_risk || paths.shared ||
     (input.impact.affected_services !== null && input.impact.affected_services >= 2) ||
-    (input.impact.callers !== null && input.impact.callers >= 3)
+    (input.impact.callers !== null && input.impact.callers >= 3) ||
+    distinctServiceRoots.length >= 2
   ) {
     topology = maxTopology(topology, 'distributed');
   }
+  if (distinctServiceRoots.length >= 2) signals.add(`distinct_production_service_roots:${distinctServiceRoots.join(',')}`);
   if (topology === 'unknown') signals.add('topology_unknown');
   else signals.add(`topology:${topology}`);
   return topology;
@@ -491,6 +517,7 @@ function deriveConsequence(input, paths, signals) {
 
 function requiredEvidenceKinds(input, topology, trustSurface, paths) {
   const kinds = new Set(['test_result']);
+  if (input.lane === 'B') kinds.add('impact_result');
   if (input.lane === 'G' || input.lane === 'S') {
     kinds.add('impact_result');
     kinds.add('integration_result');
@@ -1111,10 +1138,16 @@ export function advanceReviewLoop(candidateLoop) {
     attempt.verification_manifest_sha256,
   ].join(':')));
   if (identities.size > 1) return output('held', 'exact_identity_changed_restart_cycle');
-  if (used >= 2) {
-    const previous = loop.attempts.at(-2);
-    if (previous.evidence_fingerprint === latest.evidence_fingerprint) return output('held', 'same_evidence_fingerprint_no_retry');
+  const previous = used >= 2 ? loop.attempts.at(-2) : null;
+  const reusedEvidenceFingerprint = previous?.evidence_fingerprint === latest.evidence_fingerprint;
+  const latestIsTerminalReview =
+    ['model_review', 'human_review'].includes(latest.action) &&
+    ['advisory_pass', 'advisory_review', 'human_required', 'held', 'blocked'].includes(latest.decision);
+  if (latestIsTerminalReview && (reusedEvidenceFingerprint || latest.observed_new_evidence.length > 0)) {
+    if (latest.decision === 'held') return output('held', 'attempt_reported_held');
+    return output('complete', `terminal_decision_${latest.decision}`);
   }
+  if (reusedEvidenceFingerprint) return output('held', 'same_evidence_fingerprint_no_retry');
   if (latest.observed_new_evidence.length === 0) return output('held', 'no_new_evidence_observed');
   if (latest.decision === 'held') return output('held', 'attempt_reported_held');
   if (['advisory_pass', 'advisory_review', 'human_required', 'blocked'].includes(latest.decision)) {

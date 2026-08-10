@@ -197,6 +197,12 @@
             "head_sha": "2222222222222222222222222222222222222222"
           },
           {
+            "kind": "impact_result",
+            "status": "passed",
+            "ref": "artifacts/impact_result.json",
+            "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
             "kind": "integration_result",
             "status": "passed",
             "ref": "artifacts/integration_result.json",
@@ -268,6 +274,12 @@
             "kind": "test_result",
             "status": "passed",
             "ref": "artifacts/test_result.json",
+            "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "impact_result",
+            "status": "passed",
+            "ref": "artifacts/impact_result.json",
             "head_sha": "2222222222222222222222222222222222222222"
           },
           {
@@ -753,6 +765,12 @@
             "kind": "test_result",
             "status": "passed",
             "ref": "artifacts/test_result.json",
+            "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "impact_result",
+            "status": "passed",
+            "ref": "artifacts/impact_result.json",
             "head_sha": "2222222222222222222222222222222222222222"
           },
           {
