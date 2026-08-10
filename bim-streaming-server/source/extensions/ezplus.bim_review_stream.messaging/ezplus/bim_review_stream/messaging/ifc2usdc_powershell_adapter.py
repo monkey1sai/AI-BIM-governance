@@ -124,6 +124,7 @@ class Ifc2UsdcPowershellConverterAdapter:
 
     def _trusted_cad_entrypoint(self) -> tuple[str, str, int]:
         platform_key = "windows-x86_64" if sys.platform == "win32" else "linux-x86_64"
+        expected_platform_marker = "wx64" if sys.platform == "win32" else "lx64"
         manifest_path = self.repo_root / "config" / "trusted-cad-entrypoints.json"
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -150,6 +151,13 @@ class Ifc2UsdcPowershellConverterAdapter:
             raise ConversionAuthorityError(
                 "converter_unavailable",
                 "Trusted CAD package build does not match the tracked version lock.",
+            )
+        build_metadata = package_name.split("+", 1)[1]
+        platform_markers = {"lx64", "wx64"}.intersection(build_metadata.split("."))
+        if platform_markers != {expected_platform_marker}:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Trusted CAD package build does not match the selected platform.",
             )
         if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256) or expected_size <= 0:
             raise ConversionAuthorityError(

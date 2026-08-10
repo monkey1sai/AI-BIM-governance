@@ -309,4 +309,39 @@ finally {
     Remove-TestSandbox -Path $sb
 }
 
+$canonicalControlUrl = Resolve-HostNativeKitControlUrl `
+    -KitControlUrl 'HTTP://LOCALHOST:49101/' `
+    -LocalAddressProbeFn { param($HostName) return ($HostName -eq 'localhost') }
+Assert-Equal 'http://localhost:49101' $canonicalControlUrl 'resolver canonicalizes an explicit localhost authority'
+
+$ipv6ControlUrl = Resolve-HostNativeKitControlUrl `
+    -KitControlUrl 'HTTP://[::1]:49101/' `
+    -LocalAddressProbeFn {
+        param($HostName)
+        return ($HostName.Trim([char[]]'[]') -eq '::1')
+    }
+Assert-Equal 'http://[::1]:49101' $ipv6ControlUrl 'resolver canonicalizes a bracketed IPv6 loopback authority'
+
+$rejectedControlUrls = @(
+    @{ Name = 'HTTPS'; Url = 'https://localhost:49101' },
+    @{ Name = 'credentials'; Url = 'http://user:pass@localhost:49101' },
+    @{ Name = 'path'; Url = 'http://localhost:49101/control' },
+    @{ Name = 'query'; Url = 'http://localhost:49101/?mode=control' },
+    @{ Name = 'fragment'; Url = 'http://localhost:49101/#control' },
+    @{ Name = 'empty authority'; Url = 'http:///' }
+)
+foreach ($controlCase in $rejectedControlUrls) {
+    $rejectionMessage = ''
+    try {
+        Resolve-HostNativeKitControlUrl `
+            -KitControlUrl $controlCase.Url `
+            -LocalAddressProbeFn { param($HostName) return $true } | Out-Null
+    }
+    catch {
+        $rejectionMessage = $_.Exception.Message
+    }
+    Assert-True ($rejectionMessage -match 'origin-only absolute HTTP URL') "resolver rejects $($controlCase.Name) control URL shape"
+}
+Write-TestPass 'Kit control URL authority shape matrix'
+
 Write-Host "`n=== test-host-native-launcher.ps1: ALL PASSED ===" -ForegroundColor Green

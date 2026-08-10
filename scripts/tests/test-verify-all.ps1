@@ -7,6 +7,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $verifyScript = Join-Path $repoRoot 'scripts\verify-all.ps1'
 . (Join-Path $PSScriptRoot 'test-helpers.ps1')
+. (Join-Path $repoRoot 'scripts\lib\deploy-target-registry.ps1')
 
 function Invoke-VerificationPlan {
     param(
@@ -17,6 +18,20 @@ function Invoke-VerificationPlan {
 
     $output = @(& (Get-Command pwsh -ErrorAction Stop).Source -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $verifyScript `
         -Profile $Profile -PlanOnly -RepoRoot $RepoRoot @AdditionalArguments 2>&1)
+    return [pscustomobject]@{
+        ExitCode = $LASTEXITCODE
+        Output = ($output -join "`n")
+    }
+}
+
+function Invoke-VerificationExecution {
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [string[]] $AdditionalArguments = @()
+    )
+
+    $output = @(& (Get-Command pwsh -ErrorAction Stop).Source -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $verifyScript `
+        -Profile 'Deployment' -RepoRoot $RepoRoot @AdditionalArguments 2>&1)
     return [pscustomobject]@{
         ExitCode = $LASTEXITCODE
         Output = ($output -join "`n")
@@ -124,18 +139,23 @@ try {
 
     $runtimeSignatureRoot = Join-Path $deploymentRoot 'scripts\.run'
     New-Item -ItemType Directory -Path $runtimeSignatureRoot -Force | Out-Null
-    [pscustomobject]@{
-        bindHost = '192.0.2.1'
-        port = 49101
-        healthHost = '192.0.2.1'
-        revision = ('a' * 40)
-    } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $runtimeSignatureRoot 'bim-streaming-conversion-service.params.json') -Encoding utf8
-    [pscustomobject]@{
-        host = '192.0.2.1'
-        port = 8010
-        kitControlUrl = ''
-        revision = ('a' * 40)
-    } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $runtimeSignatureRoot 'kit-manager-api.params.json') -Encoding utf8
+    function Set-ValidDeploymentRuntimeSignatures {
+        param([Parameter(Mandatory = $true)][string] $Root)
+
+        [pscustomobject]@{
+            bindHost = '127.0.0.1'
+            port = 49101
+            healthHost = '127.0.0.1'
+            revision = ('a' * 40)
+        } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $Root 'bim-streaming-conversion-service.params.json') -Encoding utf8
+        [pscustomobject]@{
+            host = '127.0.0.1'
+            port = 8010
+            kitControlUrl = ''
+            revision = ('a' * 40)
+        } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $Root 'kit-manager-api.params.json') -Encoding utf8
+    }
+    Set-ValidDeploymentRuntimeSignatures -Root $runtimeSignatureRoot
 
     $deploymentArguments = @('-TargetId', 'canonical-linux', '-InventoryPath', $inventoryPath)
     $deploymentPlan = Invoke-VerificationPlan -Profile 'Deployment' -RepoRoot $deploymentRoot `
@@ -189,6 +209,98 @@ try {
     Assert-True ($verifySource -match 'bim-streaming-conversion-service\.params\.json') 'deployment verifier consumes the effective conversion health host from the runtime signature'
     Assert-True ($verifySource -match 'kit-manager-api\.params\.json') 'deployment verifier consumes the effective Kit Manager control identity from the runtime signature'
     Assert-True ($verifySource -match 'kitControlUrl\)\.TrimEnd\(''\/''\)') 'deployment verifier compares the normalized child Kit control origin recorded by service settings'
+
+    $executionInventoryPath = Join-Path $sandbox 'execution-target.local.json'
+    $executionDeployRoot = if ($IsWindows) { '/tmp/ai-bim-verify-execution-deploy' } else { $deploymentRoot }
+    $executionRuntimeDataRoot = if ($IsWindows) {
+        '/tmp/ai-bim-verify-execution-runtime'
+    } else {
+        Join-Path (Split-Path -Parent $deploymentRoot) 'execution-runtime-data'
+    }
+    [pscustomobject]@{
+        schema_version = 'deploy-target-private-inventory/v1'
+        targets = @([pscustomobject]@{
+            id = 'canonical-linux'
+            connection = [pscustomobject]@{ host = 'localhost'; user = 'deploy-fixture' }
+            deploy_root = $executionDeployRoot
+            runtime_data_root = $executionRuntimeDataRoot
+            public_host = '127.0.0.2'
+            edge_site_id = 'site-example'
+            host_native_bind_host = '127.0.0.1'
+        })
+    } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $executionInventoryPath -Encoding utf8
+    $validatedExecutionTarget = Get-DeployTarget -Id 'canonical-linux' -InventoryPath $executionInventoryPath
+    Assert-Equal $executionDeployRoot ([string]$validatedExecutionTarget.deploy_root) 'execution fixture uses a valid canonical Linux deploy root'
+    Assert-Equal $executionRuntimeDataRoot ([string]$validatedExecutionTarget.runtime_data_root) 'execution fixture keeps runtime data outside the deploy root'
+    Assert-Equal '127.0.0.1' ([string]$validatedExecutionTarget.host_native_bind_host) 'execution fixture keeps the host-native bind address distinct from published endpoints'
+
+    $executionArguments = @()
+    if (-not $IsWindows) {
+        $executionArguments = @('-InventoryPath', $executionInventoryPath)
+    }
+
+    $runtimeSignatureCases = @(
+        @{
+            Name = 'missing conversion signature'
+            Expected = 'runtime signature is missing: bim-streaming-conversion-service\.params\.json'
+            Mutate = { param($root) Remove-Item -LiteralPath (Join-Path $root 'bim-streaming-conversion-service.params.json') -Force }
+        },
+        @{
+            Name = 'malformed conversion signature'
+            Expected = 'runtime signature is invalid: bim-streaming-conversion-service\.params\.json'
+            Mutate = { param($root) '{' | Set-Content -LiteralPath (Join-Path $root 'bim-streaming-conversion-service.params.json') -Encoding utf8 }
+        },
+        @{
+            Name = 'wrong conversion port'
+            Expected = 'conversion runtime signature has an unexpected port'
+            Mutate = {
+                param($root)
+                [pscustomobject]@{ healthHost = '127.0.0.1'; port = 49102 } |
+                    ConvertTo-Json -Compress |
+                    Set-Content -LiteralPath (Join-Path $root 'bim-streaming-conversion-service.params.json') -Encoding utf8
+            }
+        },
+        @{
+            Name = 'non-local conversion health host'
+            Expected = 'not assigned to a local network interface'
+            Mutate = {
+                param($root)
+                [pscustomobject]@{ healthHost = '192.0.2.99'; port = 49101 } |
+                    ConvertTo-Json -Compress |
+                    Set-Content -LiteralPath (Join-Path $root 'bim-streaming-conversion-service.params.json') -Encoding utf8
+            }
+        },
+        @{
+            Name = 'missing Kit Manager signature'
+            Expected = 'runtime signature is missing: kit-manager-api\.params\.json'
+            Mutate = { param($root) Remove-Item -LiteralPath (Join-Path $root 'kit-manager-api.params.json') -Force }
+        },
+        @{
+            Name = 'malformed Kit Manager signature'
+            Expected = 'runtime signature is invalid: kit-manager-api\.params\.json'
+            Mutate = { param($root) '{' | Set-Content -LiteralPath (Join-Path $root 'kit-manager-api.params.json') -Encoding utf8 }
+        },
+        @{
+            Name = 'wrong Kit Manager port'
+            Expected = 'Kit Manager runtime signature has an unexpected port'
+            Mutate = {
+                param($root)
+                [pscustomobject]@{ kitControlUrl = ''; port = 8011 } |
+                    ConvertTo-Json -Compress |
+                    Set-Content -LiteralPath (Join-Path $root 'kit-manager-api.params.json') -Encoding utf8
+            }
+        }
+    )
+    foreach ($signatureCase in $runtimeSignatureCases) {
+        Set-ValidDeploymentRuntimeSignatures -Root $runtimeSignatureRoot
+        $mutateSignature = [scriptblock]$signatureCase.Mutate
+        & $mutateSignature $runtimeSignatureRoot
+        $executionResult = Invoke-VerificationExecution -RepoRoot $deploymentRoot -AdditionalArguments $executionArguments
+        Assert-True ($executionResult.ExitCode -ne 0) "deployment execution rejects $($signatureCase.Name)"
+        Assert-True ($executionResult.Output -match [string]$signatureCase.Expected) "deployment execution reports $($signatureCase.Name)"
+    }
+    Set-ValidDeploymentRuntimeSignatures -Root $runtimeSignatureRoot
+    Write-TestPass 'deployment runtime signature rejection matrix'
 
     $verifyShell = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts\verify-all.sh') -Raw
     Assert-True ($verifyShell -match '--profile') 'POSIX verifier mirror accepts an explicit deployment profile'

@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $deployPath = Join-Path $RepoRoot 'scripts\deploy.ps1'
+. (Join-Path $RepoRoot 'scripts\lib\platform\platform-adapter.ps1')
 $deployBytes = [System.IO.File]::ReadAllBytes($deployPath)
 if ($deployBytes.Count -lt 3 -or $deployBytes[0] -ne 0xEF -or $deployBytes[1] -ne 0xBB -or $deployBytes[2] -ne 0xBF) {
     throw 'deploy.ps1 must use a UTF-8 BOM so Windows PowerShell 5.1 does not decode non-ASCII strings through the active ANSI code page'
@@ -85,6 +86,29 @@ $deployAst = [System.Management.Automation.Language.Parser]::ParseInput($deploy,
 if (@($parserErrors).Count -ne 0) {
     throw 'deploy.ps1 must parse before governance static inspection'
 }
+$kitControlAssignments = @($deployAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+        $node.Left.Extent.Text -eq '$resolvedKitControlUrl'
+}, $true))
+if ($kitControlAssignments.Count -ne 1) {
+    throw 'deploy.ps1 must assign resolvedKitControlUrl exactly once'
+}
+function Get-DeployEnvValue {
+    param($Name, $EnvFile, $Default)
+    return 'malformed-manager-only-url'
+}
+function Resolve-HostNativeKitControlUrl {
+    param($KitControlUrl)
+    throw 'Kit control resolver must not run when Kit Manager is skipped.'
+}
+$SkipKitManager = $true
+$resolvedEnvFile = ''
+$resolvedKitControlUrl = $null
+. ([scriptblock]::Create($kitControlAssignments[0].Extent.Text))
+if ($resolvedKitControlUrl -cne '') {
+    throw 'SkipKitManager must bypass manager-only URL resolution and use an empty runtime identity'
+}
 $hardenerFunction = @($deployAst.FindAll({
     param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -107,6 +131,48 @@ try {
         -StreamingRepoRoot $hardenerSandbox
     if ($invalidResult.ExitCode -ne -1 -or $invalidResult.StatusValid) {
         throw 'invalid or non-executable hardener interpreter must fail closed'
+    }
+
+    $fixturePython = Resolve-PlatformSystemPython
+    if ([string]::IsNullOrWhiteSpace($fixturePython)) {
+        throw 'hardener wrapper regression fixtures require a working Python 3.11+ interpreter'
+    }
+    $validStatus = '{"schema_version":"cad-extension-cache-hardening/v1","status":"passed"}'
+    $validFixture = Join-Path $hardenerSandbox 'valid.py'
+    [System.IO.File]::WriteAllText($validFixture, "print('$validStatus')`n")
+    $validResult = Invoke-CadExtensionCacheHardener `
+        -PythonPath $fixturePython `
+        -ScriptPath $validFixture `
+        -StreamingRepoRoot $hardenerSandbox
+    if ($validResult.ExitCode -ne 0 -or -not $validResult.StatusValid) {
+        throw 'exact hardener success contract must be accepted'
+    }
+
+    $wrongSchemaStatus = '{"schema_version":"wrong","status":"passed"}'
+    $failedStatus = '{"schema_version":"cad-extension-cache-hardening/v1","status":"failed"}'
+    $malformedSuccessCases = @(
+        @{
+            Name = 'stderr'
+            Source = "import sys`nprint('$validStatus')`nprint('unexpected stderr', file=sys.stderr)`n"
+        },
+        @{
+            Name = 'multiple stdout lines'
+            Source = "print('$validStatus')`nprint('unexpected second line')`n"
+        },
+        @{ Name = 'invalid JSON'; Source = "print('not-json')`n" },
+        @{ Name = 'wrong schema'; Source = "print('$wrongSchemaStatus')`n" },
+        @{ Name = 'failed status'; Source = "print('$failedStatus')`n" }
+    )
+    foreach ($fixtureCase in $malformedSuccessCases) {
+        $caseScript = Join-Path $hardenerSandbox (([string]$fixtureCase.Name -replace '[^A-Za-z0-9]+', '-') + '.py')
+        [System.IO.File]::WriteAllText($caseScript, [string]$fixtureCase.Source)
+        $caseResult = Invoke-CadExtensionCacheHardener `
+            -PythonPath $fixturePython `
+            -ScriptPath $caseScript `
+            -StreamingRepoRoot $hardenerSandbox
+        if ($caseResult.ExitCode -ne 0 -or $caseResult.StatusValid) {
+            throw "hardener wrapper must reject exit-zero $($fixtureCase.Name) output"
+        }
     }
 }
 finally {

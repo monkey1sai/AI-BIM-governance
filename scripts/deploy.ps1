@@ -874,8 +874,12 @@ if (-not (Test-KitRuntimeSignatureMatches -Path $script:webPlaneRuntimeSignature
     $shouldRefreshWebPlane = $true
 }
 $resolvedConversionHealthHost = Resolve-HealthProbeHost -BindHost $resolvedConversionBindHost
-$resolvedKitControlUrl = Resolve-HostNativeKitControlUrl `
-    -KitControlUrl (Get-DeployEnvValue -Name 'KIT_CONTROL_URL' -EnvFile $resolvedEnvFile -Default '').Trim()
+$resolvedKitControlUrl = if ($SkipKitManager) {
+    ''
+} else {
+    Resolve-HostNativeKitControlUrl `
+        -KitControlUrl (Get-DeployEnvValue -Name 'KIT_CONTROL_URL' -EnvFile $resolvedEnvFile -Default '').Trim()
+}
 $resolvedAllowedStageHosts = Resolve-AllowedStageHosts -EnvFile $resolvedEnvFile -PublicHost $resolvedPublicHost -ConversionPort 49101
 $kitRuntimeSignature = New-KitRuntimeSignature `
     -PublicHost $resolvedPublicHost `

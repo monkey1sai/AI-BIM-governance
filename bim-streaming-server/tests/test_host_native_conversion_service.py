@@ -405,6 +405,16 @@ def _write_cad_converter_lock(repo_root: Path, version: str = "508.0.3") -> None
     )
 
 
+def _cad_package_name(
+    label: str,
+    *,
+    version: str = "508.0.3",
+    platform_marker: str | None = None,
+) -> str:
+    marker = platform_marker or ("wx64" if sys.platform == "win32" else "lx64")
+    return f"omni.services.convert.cad-{version}+110.0.0.{marker}.r.cp312.{label}"
+
+
 def _write_trusted_cad_manifest(
     repo_root: Path,
     *,
@@ -430,6 +440,25 @@ def _write_trusted_cad_manifest(
         ),
         encoding="utf-8",
     )
+
+
+def test_trusted_cad_entrypoint_rejects_opposite_platform_package(tmp_path: Path):
+    _write_cad_converter_lock(tmp_path)
+    hoops_main = tmp_path / "hoops_main.py"
+    hoops_main.write_text("# fixture", encoding="utf-8")
+    opposite_marker = "lx64" if sys.platform == "win32" else "wx64"
+    _write_trusted_cad_manifest(
+        tmp_path,
+        package_name=_cad_package_name("wrong-platform", platform_marker=opposite_marker),
+        hoops_main=hoops_main,
+    )
+    adapter = Ifc2UsdcPowershellConverterAdapter(
+        repo_root=tmp_path,
+        storage_root=tmp_path / "storage",
+    )
+
+    with pytest.raises(ConversionAuthorityError, match="selected platform"):
+        adapter._trusted_cad_entrypoint()
 
 
 def _validated_explicit_hoops(
@@ -526,7 +555,7 @@ def test_default_hoops_entrypoint_resolves_pinned_owner_cache_symlink(
     release_root = tmp_path / "_build" / platform_dir / "release"
     package_cache = tmp_path / "official-cache"
     _write_cad_converter_lock(tmp_path)
-    package_name = "omni.services.convert.cad-508.0.3+110.0.0.lx64.r.cp312.fixture"
+    package_name = _cad_package_name("fixture")
     _, hoops_main = _write_symlinked_cad_package(
         release_root=release_root,
         package_cache=package_cache,
@@ -548,7 +577,7 @@ def test_default_hoops_entrypoint_treats_junction_like_a_link(tmp_path: Path, mo
     release_root = tmp_path / "_build" / platform_dir / "release"
     package_cache = tmp_path / "official-cache"
     _write_cad_converter_lock(tmp_path)
-    package_name = "omni.services.convert.cad-508.0.3+110.0.0.lx64.r.cp312.junction"
+    package_name = _cad_package_name("junction")
     extension_link, hoops_main = _write_symlinked_cad_package(
         release_root=release_root,
         package_cache=package_cache,
@@ -584,7 +613,7 @@ def test_default_hoops_entrypoint_rejects_symlink_outside_trusted_cache(
     trusted_cache = tmp_path / "official-cache"
     trusted_cache.mkdir()
     _write_cad_converter_lock(tmp_path)
-    package_name = "omni.services.convert.cad-508.0.3+110.0.0.lx64.r.cp312.escape"
+    package_name = _cad_package_name("escape")
     _, hoops_main = _write_symlinked_cad_package(
         release_root=release_root,
         package_cache=tmp_path / "untrusted-cache",
@@ -608,11 +637,11 @@ def test_default_hoops_entrypoint_rejects_unpinned_package_version(
     _, hoops_main = _write_symlinked_cad_package(
         release_root=release_root,
         package_cache=package_cache,
-        package_name="omni.services.convert.cad-508.0.4+110.0.0.lx64.r.cp312.unpinned",
+        package_name=_cad_package_name("unpinned", version="508.0.4"),
     )
     _write_trusted_cad_manifest(
         tmp_path,
-        package_name="omni.services.convert.cad-508.0.3+110.0.0.lx64.r.cp312.trusted",
+        package_name=_cad_package_name("trusted"),
         hoops_main=hoops_main,
     )
     adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
@@ -625,7 +654,7 @@ def test_default_hoops_entrypoint_rejects_unpinned_package_version(
 def test_default_hoops_entrypoint_rejects_unpinned_real_directory(tmp_path: Path):
     platform_dir = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
     release_root = tmp_path / "_build" / platform_dir / "release"
-    package_name = "omni.services.convert.cad-508.0.4+110.0.0.lx64.r.cp312.unpinned"
+    package_name = _cad_package_name("unpinned", version="508.0.4")
     hoops_main = (
         release_root
         / "exts"
@@ -643,7 +672,7 @@ def test_default_hoops_entrypoint_rejects_unpinned_real_directory(tmp_path: Path
     _write_cad_converter_lock(tmp_path, version="508.0.3")
     _write_trusted_cad_manifest(
         tmp_path,
-        package_name="omni.services.convert.cad-508.0.3+110.0.0.lx64.r.cp312.trusted",
+        package_name=_cad_package_name("trusted"),
         hoops_main=hoops_main,
     )
     adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
@@ -656,7 +685,7 @@ def test_default_hoops_entrypoint_rejects_linked_search_root(tmp_path: Path):
     platform_dir = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
     release_root = tmp_path / "_build" / platform_dir / "release"
     external_root = tmp_path / "external-exts"
-    package_name = "omni.services.convert.cad-508.0.3+110.0.0.lx64.r.cp312.linked-root"
+    package_name = _cad_package_name("linked-root")
     hoops_main = (
         external_root
         / package_name
@@ -690,7 +719,7 @@ def test_default_hoops_entrypoint_rejects_ambiguous_pinned_candidates(
     release_root = tmp_path / "_build" / platform_dir / "release"
     package_cache = tmp_path / "official-cache"
     _write_cad_converter_lock(tmp_path)
-    package_name = "omni.services.convert.cad-508.0.3+110.0.0.lx64.r.cp312.ambiguous"
+    package_name = _cad_package_name("ambiguous")
     _, hoops_main = _write_symlinked_cad_package(
         release_root=release_root,
         package_cache=package_cache,
@@ -718,7 +747,7 @@ def test_powershell_conversion_rejects_hoops_path_swap_after_preflight(
     release_root = tmp_path / "_build" / platform_dir / "release"
     package_cache = tmp_path / "official-cache"
     _write_cad_converter_lock(tmp_path)
-    package_name = "omni.services.convert.cad-508.0.3+110.0.0.lx64.r.cp312.swap"
+    package_name = _cad_package_name("swap")
     _, hoops_main = _write_symlinked_cad_package(
         release_root=release_root,
         package_cache=package_cache,
@@ -765,7 +794,7 @@ def test_hardener_atomically_replaces_pinned_entrypoint_with_private_inode(
     release_root = tmp_path / "_build" / "linux-x86_64" / "release"
     package_cache = tmp_path / "official-cache"
     _write_cad_converter_lock(tmp_path)
-    package_name = "omni.services.convert.cad-508.0.3+110.0.0.lx64.r.cp312.permissions"
+    package_name = _cad_package_name("permissions")
     _, hoops_main = _write_symlinked_cad_package(
         release_root=release_root,
         package_cache=package_cache,
@@ -1204,11 +1233,7 @@ def _write_default_converter_prereqs(repo_root: Path) -> None:
     kit_path = release_root / "kit" / kit_name
     kit_path.parent.mkdir(parents=True, exist_ok=True)
     kit_path.write_bytes(b"fixture")
-    package_name = (
-        "omni.services.convert.cad-508.0.1+110.0.0.wx64.r.cp312.u7f4"
-        if os.name == "nt"
-        else "omni.services.convert.cad-508.0.1+110.0.0.lx64.r.cp312.u7f4"
-    )
+    package_name = _cad_package_name("u7f4", version="508.0.1")
     hoops_path = (
         release_root
         / "exts"

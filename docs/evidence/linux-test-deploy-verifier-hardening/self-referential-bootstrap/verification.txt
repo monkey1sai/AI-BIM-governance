@@ -3,7 +3,7 @@ stack_kind=self_referential_bootstrap
 pull_request=484
 base_commit=89ff9c8b773da9a3c0c44990e2267f70f4e8007d
 gitnexus=UNKNOWN (accepted by owner; direct source, executable tests, and independent review used)
-PASS test-host-native-conversion-service (87 passed, 5 skipped; all five are POSIX-only cases skipped on Windows and separately covered by the WSL POSIX trust smoke)
+PASS test-host-native-conversion-service (88 passed, 5 skipped; all five are POSIX-only cases skipped on Windows and separately covered by the WSL POSIX trust smoke)
 PASS test-host-native-launcher
 PASS test-kit-manager-api
 PASS test-verify-all
