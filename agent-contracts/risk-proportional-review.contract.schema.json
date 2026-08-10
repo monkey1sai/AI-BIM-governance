@@ -1,0 +1,132 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "risk-proportional-review.contract.schema.json",
+  "title": "Risk-proportional review shadow policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "authority",
+    "merge_authority",
+    "claims_policy",
+    "identity_binding",
+    "review_modes",
+    "lane_floors",
+    "packet_budget",
+    "loop_budget",
+    "fail_closed_statuses",
+    "self_referential_floor",
+    "required_invariants"
+  ],
+  "properties": {
+    "schema_version": {"const": "risk-proportional-review-policy/v1"},
+    "authority": {"const": "advisory_shadow"},
+    "merge_authority": {"const": false},
+    "claims_policy": {"const": "escalation_only"},
+    "identity_binding": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "repository",
+          "base_sha",
+          "head_sha",
+          "policy_sha256",
+          "verification_manifest_sha256"
+        ]
+      },
+      "allOf": [
+        {"contains": {"const": "repository"}},
+        {"contains": {"const": "base_sha"}},
+        {"contains": {"const": "head_sha"}},
+        {"contains": {"const": "policy_sha256"}},
+        {"contains": {"const": "verification_manifest_sha256"}}
+      ]
+    },
+    "review_modes": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "rank", "max_model_reviewers", "human_required"],
+        "properties": {
+          "id": {"enum": ["mechanical_only", "focused_semantic", "risk_scoped_specialists", "human_critical"]},
+          "rank": {"type": "integer", "minimum": 0, "maximum": 3},
+          "max_model_reviewers": {"type": "integer", "minimum": 0, "maximum": 2},
+          "human_required": {"type": "boolean"}
+        }
+      }
+    },
+    "lane_floors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["F", "B", "G", "S"],
+      "properties": {
+        "F": {"const": "mechanical_only"},
+        "B": {"const": "mechanical_only"},
+        "G": {"const": "risk_scoped_specialists"},
+        "S": {"const": "risk_scoped_specialists"}
+      }
+    },
+    "packet_budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_bytes", "max_changed_paths", "max_evidence_refs", "max_questions"],
+      "properties": {
+        "max_bytes": {"type": "integer", "minimum": 4096, "maximum": 65536},
+        "max_changed_paths": {"type": "integer", "minimum": 1, "maximum": 64},
+        "max_evidence_refs": {"type": "integer", "minimum": 1, "maximum": 32},
+        "max_questions": {"type": "integer", "minimum": 1, "maximum": 8}
+      }
+    },
+    "loop_budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_attempts", "max_evidence_delta_requests", "required_check_retries"],
+      "properties": {
+        "max_attempts": {"const": 2},
+        "max_evidence_delta_requests": {"const": 1},
+        "required_check_retries": {"const": 0}
+      }
+    },
+    "fail_closed_statuses": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": {"enum": ["missing", "not_configured", "not_observed", "unverified", "stale"]},
+      "allOf": [
+        {"contains": {"const": "missing"}},
+        {"contains": {"const": "not_configured"}},
+        {"contains": {"const": "not_observed"}},
+        {"contains": {"const": "unverified"}},
+        {"contains": {"const": "stale"}}
+      ]
+    },
+    "self_referential_floor": {"const": "human_critical"},
+    "required_invariants": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "deterministic_checks_before_model_review",
+          "existing_lane_may_not_be_downgraded",
+          "agent_claims_may_only_escalate",
+          "exact_head_evidence_only",
+          "missing_evidence_fails_closed",
+          "same_evidence_fingerprint_may_not_retry",
+          "reviewer_may_not_modify_implementation",
+          "adapters_may_not_change_policy_or_verdict_semantics",
+          "self_referential_changes_require_existing_base_verification_and_human_approval",
+          "shadow_output_is_not_merge_authority"
+        ]
+      }
+    }
+  }
+}
