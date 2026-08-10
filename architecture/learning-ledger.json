@@ -1,0 +1,152 @@
+{
+  "$schema": "./learning-ledger.schema.json",
+  "schema_version": "ai-bim-learning-ledger/v1",
+  "purpose": "Machine-readable classification of recurring $improve-codebase-architecture findings (Phase 5). Findings are grouped into named erosion patterns; a pattern that recurs can be promoted to an invariant, a validator, or a structural test, and that promotion is recorded here with its mechanism. The ledger is an inventory and a promotion record - it never triggers automatic repairs.",
+  "pattern_classes": [
+    {
+      "id": "duplicate-capability-implementations",
+      "title": "Same truth implemented more than once",
+      "description": "One capability or constant is implemented in several places and the copies drift apart (duplicate readiness computations, repeated redaction helpers, forked polling defaults). The erosion is invisible until the copies disagree in production."
+    },
+    {
+      "id": "god-file-accretion",
+      "title": "Orchestration accretes into one oversized file",
+      "description": "Route handling, orchestration, and domain authority accumulate in a single large file instead of a deep module with a small interface, making every later change a wide edit with unrelated blast radius."
+    },
+    {
+      "id": "unregistered-literal-fanout",
+      "title": "Literals declared in many places with no single source",
+      "description": "Route keys, status unions, and similar literals are hand-written at many sites; adding or renaming one requires finding every copy, and a missed copy fails silently."
+    },
+    {
+      "id": "test-fixture-monolith",
+      "title": "Shared test fixtures fused into one file",
+      "description": "Unrelated test concerns share one fixture monolith, so fixture edits ripple across suites and honesty markers get lost in the fusion."
+    },
+    {
+      "id": "deep-module-consolidation",
+      "title": "Deep-module consolidation (positive template)",
+      "description": "The proven repair shape for the patterns above: one deep module with a small typed surface absorbs the scattered implementations (usePolledResource, useRuleRun, a1Machine, ifcReadyConversionPipeline, minioWatchSurface are landed examples)."
+    },
+    {
+      "id": "structural-erosion-classes",
+      "title": "Repository-level structural erosion",
+      "description": "Cross-cutting erosion the per-file patterns roll up into: new undeclared dependency edges, dependency cycles, cross-layer reaches, and state-machine drift between contract and code. These are the classes the executable architecture gates were built from."
+    }
+  ],
+  "promoted_patterns": [
+    {
+      "pattern": "structural-erosion-classes",
+      "promoted_to": "ARCH-GRAPH-001",
+      "mechanism": "observed-graph ratchet (scripts/lib/observed_architecture.py): no new statically detectable dependency edges or cycles beyond the approved baseline",
+      "evidence": "Phase 2 delivery (tasks.md) - recurring post-hoc cycle and edge findings became a fail-closed canonical gate"
+    },
+    {
+      "pattern": "structural-erosion-classes",
+      "promoted_to": "ARCH-LAYER-001",
+      "mechanism": "layer-boundary ratchet (scripts/lib/layered_architecture.py): intra-service cross-layer reaches are rejected beyond the grandfathered baseline",
+      "evidence": "Phase 3 delivery (tasks.md) - recurring layering erosion became a fail-closed canonical gate"
+    },
+    {
+      "pattern": "structural-erosion-classes",
+      "promoted_to": "ARCH-LIFECYCLE-001",
+      "mechanism": "lifecycle contract gate (scripts/lib/lifecycle_contracts.py): machine well-formedness plus TS-union state-set synchronization keeps declared lifecycles equal to runtime unions",
+      "evidence": "Phase 4 delivery (tasks.md) - state-machine drift between docs and code became a fail-closed canonical gate"
+    }
+  ],
+  "findings": [
+    {
+      "id": "c1-minio-watch-surface",
+      "recorded_on": "2026-07-30",
+      "pattern": "deep-module-consolidation",
+      "area": "bim-review-coordinator MinIO watch/browse/trigger surface",
+      "summary": "Watcher loop, toggle, status, browse, manual trigger, and SSE were scattered across app.ts and a raw client; consolidated into minioWatchSurface + an ObjectStorePort adapter, root-causing the watcher-observation flaky class.",
+      "status": "refactored",
+      "resolution": {
+        "kind": "refactor",
+        "reference": "PR #442 + PR #444 (2026-07-30 round)"
+      }
+    },
+    {
+      "id": "c2-edge-artifact-health",
+      "recorded_on": "2026-07-30",
+      "pattern": "god-file-accretion",
+      "area": "bim-review-coordinator artifact health orchestration",
+      "summary": "As recorded in the 2026-07-30 round: ~275 lines of orphan orchestration in app.ts with all_required_ready computed by two implementations (also duplicate-capability-implementations).",
+      "status": "open",
+      "resolution": null
+    },
+    {
+      "id": "c3-governance-egress-redaction",
+      "recorded_on": "2026-07-30",
+      "pattern": "duplicate-capability-implementations",
+      "area": "bim-review-coordinator governance egress",
+      "summary": "As recorded in the 2026-07-30 round: redactServerPaths existed as three copies and the diffs route bypassed the governed egress workflow.",
+      "status": "open",
+      "resolution": null
+    },
+    {
+      "id": "c4-session-artifact-authority",
+      "recorded_on": "2026-07-30",
+      "pattern": "god-file-accretion",
+      "area": "bim-review-coordinator A4 session-artifact authority",
+      "summary": "As recorded in the 2026-07-30 round: the A4 authority logic was spread across app.ts with all-optional route dependencies; largest blast radius of the candidate set.",
+      "status": "open",
+      "resolution": null
+    },
+    {
+      "id": "c5-job-projection-fusion",
+      "recorded_on": "2026-07-30",
+      "pattern": "duplicate-capability-implementations",
+      "area": "bim-review-coordinator job projections",
+      "summary": "As recorded in the 2026-07-30 round: five small job-projection files carrying near-identical shapes, candidates for one projection module.",
+      "status": "open",
+      "resolution": null
+    },
+    {
+      "id": "f1-page-registry",
+      "recorded_on": "2026-07-30",
+      "pattern": "unregistered-literal-fanout",
+      "area": "web-viewer-sample console routing",
+      "summary": "As recorded in the 2026-07-30 round: route keys declared at five sites; pages.tsx changed 43 times in six weeks.",
+      "status": "open",
+      "resolution": null
+    },
+    {
+      "id": "f2-session-view-read-model",
+      "recorded_on": "2026-07-30",
+      "pattern": "unregistered-literal-fanout",
+      "area": "web-viewer-sample session view",
+      "summary": "As recorded in the 2026-07-30 round: seventeen files hand-wrote RuntimeStatus literals instead of a typed read model with typed errors.",
+      "status": "open",
+      "resolution": null
+    },
+    {
+      "id": "f3-rule-run-triplication",
+      "recorded_on": "2026-07-30",
+      "pattern": "duplicate-capability-implementations",
+      "area": "web-viewer-sample rule-run flow",
+      "summary": "As recorded in the 2026-07-30 round: the rule-run flow existed as three copies; extracting the non-React core of useRuleRun was assessed lowest-risk.",
+      "status": "open",
+      "resolution": null
+    },
+    {
+      "id": "f4-viewer-lease-fork",
+      "recorded_on": "2026-07-30",
+      "pattern": "duplicate-capability-implementations",
+      "area": "web-viewer-sample viewer lease client",
+      "summary": "As recorded in the 2026-07-30 round: two lease client implementations diverged (heartbeat floor 1000 vs 5000); assessed highest-risk of the frontend set. The server-side lease lifecycle is now pinned by ARCH-LIFECYCLE-001; the client fork remains open.",
+      "status": "open",
+      "resolution": null
+    },
+    {
+      "id": "f5-unified-fixtures",
+      "recorded_on": "2026-07-30",
+      "pattern": "test-fixture-monolith",
+      "area": "web-viewer-sample unified console fixtures",
+      "summary": "As recorded in the 2026-07-30 round: fixture monolith needing a split, with the PaneSource provenance honesty marker to be restored explicitly (a product decision that must stay visible).",
+      "status": "open",
+      "resolution": null
+    }
+  ]
+}

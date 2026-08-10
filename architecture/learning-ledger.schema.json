@@ -1,0 +1,168 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:ai-bim-governance:learning-ledger:v1",
+  "title": "AI-BIM architecture learning ledger",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "purpose",
+    "pattern_classes",
+    "promoted_patterns",
+    "findings"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schema_version": {
+      "const": "ai-bim-learning-ledger/v1"
+    },
+    "purpose": {
+      "$ref": "#/definitions/nonEmptyString"
+    },
+    "pattern_classes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/patternClass"
+      }
+    },
+    "promoted_patterns": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/promotedPattern"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/finding"
+      }
+    }
+  },
+  "definitions": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "patternClass": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "description"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/identifier"
+        },
+        "title": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "description": {
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      }
+    },
+    "promotedPattern": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pattern",
+        "promoted_to",
+        "mechanism",
+        "evidence"
+      ],
+      "properties": {
+        "pattern": {
+          "$ref": "#/definitions/identifier"
+        },
+        "promoted_to": {
+          "type": "string",
+          "pattern": "^ARCH-[A-Z]+-[0-9]{3}$"
+        },
+        "mechanism": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "evidence": {
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "recorded_on",
+        "pattern",
+        "area",
+        "summary",
+        "status",
+        "resolution"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/identifier"
+        },
+        "recorded_on": {
+          "type": "string",
+          "format": "date"
+        },
+        "pattern": {
+          "$ref": "#/definitions/identifier"
+        },
+        "area": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "summary": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "status": {
+          "enum": [
+            "open",
+            "refactored",
+            "promoted",
+            "retired"
+          ]
+        },
+        "resolution": {
+          "$ref": "#/definitions/resolution"
+        }
+      }
+    },
+    "resolution": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "reference"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "refactor",
+            "promotion",
+            "retirement"
+          ]
+        },
+        "reference": {
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      }
+    }
+  }
+}

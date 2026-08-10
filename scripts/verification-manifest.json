@@ -117,6 +117,8 @@
         "scripts/dev/check_layered_architecture.py",
         "scripts/lib/lifecycle_contracts.py",
         "scripts/dev/check_lifecycle_contracts.py",
+        "scripts/lib/architecture_learning.py",
+        "scripts/dev/report_architecture_quality.py",
         "scripts/dev/check_governance_trust_root.py"
       ]
     },
@@ -311,7 +313,7 @@
   ],
   "targets": [
     {
-      "id": "root-contracts", "display_name": "tests (contracts+fakes)", "path_globs": ["tests/**", "scripts/tests/**", "scripts/gen_routing.py", ".claude/workflows/**", "docs/contracts/**", "bim-review-coordinator/**", "bim-streaming-server/**", "governance-service/**", "rules/**", "web-viewer-sample/**", "services/kit-manager-api/**", "apps/kit-manager-web/**", "compose.*.yml", "architecture/**", "scripts/lib/architecture_contract.py", "scripts/dev/validate_architecture_contract.py", "scripts/lib/observed_architecture.py", "scripts/dev/export_observed_architecture.py", "scripts/lib/layered_architecture.py", "scripts/dev/check_layered_architecture.py", "scripts/lib/lifecycle_contracts.py", "scripts/dev/check_lifecycle_contracts.py", "scripts/dev/check_governance_trust_root.py"],
+      "id": "root-contracts", "display_name": "tests (contracts+fakes)", "path_globs": ["tests/**", "scripts/tests/**", "scripts/gen_routing.py", ".claude/workflows/**", "docs/contracts/**", "bim-review-coordinator/**", "bim-streaming-server/**", "governance-service/**", "rules/**", "web-viewer-sample/**", "services/kit-manager-api/**", "apps/kit-manager-web/**", "compose.*.yml", "architecture/**", "scripts/lib/architecture_contract.py", "scripts/dev/validate_architecture_contract.py", "scripts/lib/observed_architecture.py", "scripts/dev/export_observed_architecture.py", "scripts/lib/layered_architecture.py", "scripts/dev/check_layered_architecture.py", "scripts/lib/lifecycle_contracts.py", "scripts/dev/check_lifecycle_contracts.py", "scripts/lib/architecture_learning.py", "scripts/dev/report_architecture_quality.py", "scripts/dev/check_governance_trust_root.py"],
       "owner": "contract-owner", "fast_gates": [], "contract_gates": ["root-contracts"], "slow_evidence_gates": [],
       "required_when": { "predicate": "changed_path_class", "any_of": ["root-contracts"] }, "skip_reason": "path_not_affected",
       "default_profiles": ["developer", "developer-py"], "ci_output": "root_contracts",

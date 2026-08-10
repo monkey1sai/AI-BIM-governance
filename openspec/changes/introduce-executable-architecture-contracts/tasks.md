@@ -375,6 +375,53 @@ review-enforced（pin 逼 diff 現形），非 gate-enforced；cross-machine 規
 
 ## Phase 5 — Continuous architecture learning
 
-- [ ] 5.1 Classify recurring `$improve-codebase-architecture` findings.
-- [ ] 5.2 Promote recurring findings to invariants, validators, or structural tests.
-- [ ] 5.3 Publish architecture quality grade and baseline trend without auto-merging repairs.
+- [x] 5.1 Classify recurring `$improve-codebase-architecture` findings.
+- [x] 5.2 Promote recurring findings to invariants, validators, or structural tests.
+- [x] 5.3 Publish architecture quality grade and baseline trend without auto-merging repairs.
+
+### Phase 5 交付紀錄 — 2026-08-10
+
+**5.1 分類。** `architecture/learning-ledger.json`（＋ Draft-07 schema）把 2026-07-30
+`$improve-codebase-architecture` 輪的十個 findings（C1–C5／F1–F5）分類進六個具名
+erosion pattern：`duplicate-capability-implementations`、`god-file-accretion`、
+`unregistered-literal-fanout`、`test-fixture-monolith`、`deep-module-consolidation`
+（正向範本）、`structural-erosion-classes`（repo 級侵蝕類）。C1 記為 `refactored`
+（PR #442/#444），其餘九項誠實記為 `open` backlog；finding 描述標明為該輪的歷史觀察
+（"as recorded in the 2026-07-30 round"），不宣稱現況行號。
+
+**5.2 Promotion 機制＋歷史回填。** ledger 的 `promoted_patterns` 以機器可讀形式記錄
+「pattern → 真實 gate」的 promotion：`structural-erosion-classes` 已三度固化為
+`ARCH-GRAPH-001`（Phase 2 observed ratchet）、`ARCH-LAYER-001`（Phase 3 layer
+ratchet）、`ARCH-LIFECYCLE-001`（Phase 4 lifecycle gate）。
+`scripts/lib/architecture_learning.py` 驗證：promotion 必須指向 architecture
+contract 實際宣告的 invariant（`learning.promotion.unknown_invariant` fail-closed）、
+pattern 引用完整性、duplicate 偵測、status↔resolution kind 一致（open 不得帶
+resolution、refactored/promoted/retired 各對應其 kind）、未被引用的 pattern 報
+warning。C2–F5 的逐項 promotion 留給後續輪次——機制已就緒，每輪關一項時把
+status 翻成 `promoted`/`refactored` 並附 reference，pin 測試逼 diff 現形。
+
+**5.3 Quality grade。** `scripts/dev/report_architecture_quality.py` 彙總四個 gate
+（observed／layer／lifecycle／learning-ledger）的機器輸出與 attributed debt
+inventory（undeclared edges、grandfathered cycles、grandfathered layer violations、
+open findings）成單一決定性快照：grade **A**＝全綠且零 debt、**B**＝全綠但留有
+attributed debt、**C**＝任一 gate 紅。canonical 現況＝**grade B**（四 gate 全綠；
+debt＝2 undeclared edges＋3 cycles＋2 layer violations＋9 open findings＝16，全部
+有 owner 歸屬）。報告唯讀——「without auto-merging repairs」是契約，工具本身
+不改任何檔案。**誠實界線：** 報告是當前快照；shallow CI clone 無法重建歷史軌跡，
+所以「trend」以 debt inventory（各 baseline 的 grandfather 計數）表述，不宣稱
+時間序列。
+
+**驗證（Windows governed worktree，Python 3.12.7／pytest 8.2.2）：**
+
+- `python -m pytest tests -q -p no:cacheprovider` — 全套通過（新增
+  `tests/test_architecture_learning.py` 14 項：canonical＋pins＋8 個 fail-closed
+  反例＋quality aggregation）。
+- `python scripts/dev/report_architecture_quality.py --repo-root . --strict` —
+  grade B、exit 0、四 gate passed、16 筆 attributed debt。
+- 既有四個 checker（validate／export_observed／check_layered／check_lifecycle）
+  全部 PASSED，未受影響。
+- `scripts/verification-manifest.json` 把兩個新路徑納入 `root-contracts` path
+  class 與 target。
+- Pins：`PINNED_PATTERN_IDS`／`PINNED_FINDING_STATUS`（含 open 計數 9）／
+  `PINNED_PROMOTIONS` 全部寫死在測試檔；關閉 debt 或改 promotion 必須連同改
+  pin，review diff 可見。
