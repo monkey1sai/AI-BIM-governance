@@ -164,6 +164,26 @@ def test_promotion_must_point_at_a_declared_invariant(tmp_path: Path) -> None:
     assert "learning.promotion.unknown_invariant" in issue_codes(result)
 
 
+def test_promotion_must_point_at_an_active_invariant(tmp_path: Path) -> None:
+    """ARCH-UI-001 is declared but delegated, not active: a promotion claiming
+    it would assert a gate canonical verification does not run."""
+
+    ledger = load_ledger()
+    ledger["promoted_patterns"][0]["promoted_to"] = "ARCH-UI-001"
+    result = check_learning_ledger(write_tmp_repo(tmp_path, ledger))
+    assert result.status == "failed"
+    assert "learning.promotion.invariant_not_active" in issue_codes(result)
+
+
+def test_whitespace_only_strings_fail_the_schema() -> None:
+    from scripts.lib.architecture_learning import LEDGER_SCHEMA_RELATIVE_PATH
+
+    schema = json.loads((ROOT / LEDGER_SCHEMA_RELATIVE_PATH).read_text(encoding="utf-8"))
+    ledger = load_ledger()
+    ledger["promoted_patterns"][0]["evidence"] = "   "
+    assert validate_schema_instance(ledger, schema) != []
+
+
 def test_duplicate_finding_rejected(tmp_path: Path) -> None:
     ledger = load_ledger()
     ledger["findings"].append(deepcopy(ledger["findings"][0]))

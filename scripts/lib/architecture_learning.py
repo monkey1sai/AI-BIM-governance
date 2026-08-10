@@ -161,12 +161,16 @@ def check_learning_ledger(repo_root: Path | str) -> LedgerCheckResult:
 
     contract_loaded = contract is not None
     invariant_ids: set[str] = set()
+    active_invariant_ids: set[str] = set()
     if contract_loaded:
-        invariant_ids = {
-            iid
-            for invariant in _list_of_mappings(contract.get("invariants"))
-            if _non_empty_string(iid := invariant.get("id"))
-        }
+        for invariant in _list_of_mappings(contract.get("invariants")):
+            iid = invariant.get("id")
+            if not _non_empty_string(iid):
+                continue
+            invariant_ids.add(iid)
+            enforcement = invariant.get("enforcement")
+            if isinstance(enforcement, Mapping) and enforcement.get("status") == "active":
+                active_invariant_ids.add(iid)
     else:
         issues.append(
             _issue(
@@ -201,6 +205,19 @@ def check_learning_ledger(repo_root: Path | str) -> LedgerCheckResult:
                     entry_path,
                     f"promoted_to {promoted_to!r} is not an invariant declared by the architecture "
                     "contract; a promotion must point at a real gate.",
+                )
+            )
+        elif contract_loaded and promoted_to not in active_invariant_ids:
+            # A promotion claims the pattern is now held by an executable gate;
+            # an invariant whose enforcement is planned or delegated is not that
+            # gate, and recording it would let the ledger claim protection the
+            # canonical verification does not run.
+            issues.append(
+                _issue(
+                    "learning.promotion.invariant_not_active",
+                    entry_path,
+                    f"promoted_to {promoted_to!r} is declared but its enforcement status is not "
+                    "'active'; a promotion must point at a gate that actually runs.",
                 )
             )
 
