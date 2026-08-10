@@ -63,7 +63,7 @@ const REQUIRED_INVARIANTS = [
 ];
 
 const SELF_REFERENTIAL_PATTERNS = [
-  /^\.github\/CODEOWNERS$/,
+  /^\.github\/codeowners$/,
   /^\.github\/workflows\/(?:agent-governance|pr-review-agent|governance-trust-root|ci)\.ya?ml$/,
   /^scripts\/verification-manifest\.json$/,
   /^scripts\/self-referential-bootstrap-ledger\.json$/,

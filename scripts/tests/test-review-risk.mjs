@@ -571,11 +571,18 @@ test('normalizeRepositoryPath rejects non-canonical segments, whitespace, and co
 });
 
 test('self-referential and secret floors resist path spelling and case evasion', () => {
-  const selfReferential = caseInput('docs-typo-mechanical');
-  selfReferential.changed_paths[0].path = 'SCRIPTS/LIB/RISK-PROPORTIONAL-REVIEW.MJS';
-  const selfDecision = classifyReview(selfReferential, policy);
-  assert.equal(selfDecision.risk.trust_surface, 'critical_authority');
-  assert.equal(selfDecision.review_mode, 'human_critical');
+  for (const path of [
+    'SCRIPTS/LIB/RISK-PROPORTIONAL-REVIEW.MJS',
+    '.github/CODEOWNERS',
+    '.GITHUB/CODEOWNERS',
+  ]) {
+    const selfReferential = caseInput('docs-typo-mechanical');
+    selfReferential.changed_paths[0].path = path;
+    const selfDecision = classifyReview(selfReferential, policy);
+    assert.equal(selfDecision.risk.trust_surface, 'critical_authority', path);
+    assert.equal(selfDecision.review_mode, 'human_critical', path);
+    assert.ok(selfDecision.specialists.includes('governance'), path);
+  }
 
   const uppercaseSecret = caseInput('docs-typo-mechanical');
   uppercaseSecret.changed_paths[0].path = 'service/config/Secrets/token.json';
