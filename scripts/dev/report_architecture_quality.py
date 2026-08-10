@@ -58,10 +58,13 @@ def main() -> int:
         return 2
 
     report, aggregation_issues = build_quality_report(repo_root)
+    # Strict aggregates every constituent gate's warnings, matching what the
+    # sibling checkers do individually - otherwise a warning that fails
+    # `export_observed_architecture.py --strict` would pass here.
     failed = (
         not report.all_gates_passed
         or bool(aggregation_issues)
-        or (args.strict and report.ledger.warning_count > 0)
+        or (args.strict and report.total_gate_warnings > 0)
     )
 
     if args.format == "json":

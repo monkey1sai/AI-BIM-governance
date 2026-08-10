@@ -182,8 +182,20 @@ def check_learning_ledger(repo_root: Path | str) -> LedgerCheckResult:
         )
 
     promoted = _list_of_mappings(ledger.get("promoted_patterns"))
+    seen_promotion_pairs: set[tuple[Any, Any]] = set()
     for index, entry in enumerate(promoted):
         entry_path = f"$.promoted_patterns[{index}]"
+        pair = (entry.get("pattern"), entry.get("promoted_to"))
+        if pair in seen_promotion_pairs:
+            issues.append(
+                _issue(
+                    "learning.promotion.duplicate",
+                    entry_path,
+                    f"Promotion pair {pair!r} is declared more than once; duplicates inflate the "
+                    "promotion history and its counts.",
+                )
+            )
+        seen_promotion_pairs.add(pair)
         pattern = entry.get("pattern")
         if pattern not in pattern_set:
             issues.append(
@@ -272,6 +284,19 @@ def check_learning_ledger(repo_root: Path | str) -> LedgerCheckResult:
                         f"{kind!r}; expected {expected_kind!r}.",
                     )
                 )
+            if status == "promoted" and not any(
+                promoted_pattern == pattern for promoted_pattern, _ in seen_promotion_pairs
+            ):
+                # A promoted finding leaves the debt count, so the promised
+                # pattern-to-gate promotion must actually be on record.
+                issues.append(
+                    _issue(
+                        "learning.finding.promotion_unrecorded",
+                        finding_path,
+                        f"Finding {finding.get('id')!r} is promoted but its pattern {pattern!r} has "
+                        "no entry in promoted_patterns; the promotion it claims is not on record.",
+                    )
+                )
 
     for entry in promoted:
         pattern = entry.get("pattern")
@@ -309,12 +334,17 @@ class QualityReport:
 
     repo_root: str
     gates: tuple[tuple[str, str], ...]
+    gate_warnings: tuple[tuple[str, int], ...]
     debt: tuple[tuple[str, int], ...]
     ledger: LedgerCheckResult
 
     @property
     def all_gates_passed(self) -> bool:
         return all(status == "passed" for _, status in self.gates)
+
+    @property
+    def total_gate_warnings(self) -> int:
+        return sum(count for _, count in self.gate_warnings)
 
     @property
     def total_debt(self) -> int:
@@ -333,6 +363,8 @@ class QualityReport:
             "grade": self.grade,
             "all_gates_passed": self.all_gates_passed,
             "gates": {name: status for name, status in self.gates},
+            "gate_warnings": {name: count for name, count in self.gate_warnings},
+            "total_gate_warnings": self.total_gate_warnings,
             "debt_inventory": {name: count for name, count in self.debt},
             "total_debt": self.total_debt,
             "learning_ledger": self.ledger.to_dict(),
@@ -422,10 +454,17 @@ def build_quality_report(repo_root: Path | str) -> tuple[QualityReport, list[Val
         ("lifecycle_contracts", lifecycle.status),
         ("learning_ledger", ledger.status),
     )
+    gate_warnings = (
+        ("observed_graph_ratchet", observed.warning_count),
+        ("layer_boundary_ratchet", layered.warning_count),
+        ("lifecycle_contracts", lifecycle.warning_count),
+        ("learning_ledger", ledger.warning_count),
+    )
     debt = tuple(debt_counts + [("learning_open_findings", ledger.open_count)])
     report = QualityReport(
         repo_root=str(repo_root),
         gates=gates,
+        gate_warnings=gate_warnings,
         debt=debt,
         ledger=ledger,
     )

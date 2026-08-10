@@ -175,6 +175,38 @@ def test_promotion_must_point_at_an_active_invariant(tmp_path: Path) -> None:
     assert "learning.promotion.invariant_not_active" in issue_codes(result)
 
 
+def test_duplicate_promotion_pair_rejected(tmp_path: Path) -> None:
+    ledger = load_ledger()
+    ledger["promoted_patterns"].append(deepcopy(ledger["promoted_patterns"][0]))
+    result = check_learning_ledger(write_tmp_repo(tmp_path, ledger))
+    assert result.status == "failed"
+    assert "learning.promotion.duplicate" in issue_codes(result)
+
+
+def test_promoted_finding_requires_a_promotion_record(tmp_path: Path) -> None:
+    """Flipping a finding to promoted improves the grade; the promised
+    pattern-to-gate promotion must actually be on record."""
+
+    ledger = load_ledger()
+    finding = next(item for item in ledger["findings"] if item["id"] == "c3-governance-egress-redaction")
+    finding["status"] = "promoted"
+    finding["resolution"] = {"kind": "promotion", "reference": "invented"}
+    result = check_learning_ledger(write_tmp_repo(tmp_path, ledger))
+    assert result.status == "failed"
+    assert "learning.finding.promotion_unrecorded" in issue_codes(result)
+
+
+def test_strict_verdict_aggregates_every_gate_warning() -> None:
+    report, _ = build_quality_report(ROOT)
+    assert dict(report.gate_warnings) == {
+        "observed_graph_ratchet": 0,
+        "layer_boundary_ratchet": 0,
+        "lifecycle_contracts": 0,
+        "learning_ledger": 0,
+    }
+    assert report.total_gate_warnings == 0
+
+
 def test_whitespace_only_strings_fail_the_schema() -> None:
     from scripts.lib.architecture_learning import LEDGER_SCHEMA_RELATIVE_PATH
 
