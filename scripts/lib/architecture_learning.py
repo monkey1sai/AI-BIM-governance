@@ -159,8 +159,9 @@ def check_learning_ledger(repo_root: Path | str) -> LedgerCheckResult:
         )
     pattern_set = set(pattern_ids)
 
+    contract_loaded = contract is not None
     invariant_ids: set[str] = set()
-    if contract is not None:
+    if contract_loaded:
         invariant_ids = {
             iid
             for invariant in _list_of_mappings(contract.get("invariants"))
@@ -189,7 +190,11 @@ def check_learning_ledger(repo_root: Path | str) -> LedgerCheckResult:
                 )
             )
         promoted_to = entry.get("promoted_to")
-        if invariant_ids and promoted_to not in invariant_ids:
+        # A loaded contract with an empty (or fully malformed) invariant list
+        # must still reject every promotion reference - `if invariant_ids and`
+        # would silently skip verification exactly when the contract lost its
+        # invariants.
+        if contract_loaded and promoted_to not in invariant_ids:
             issues.append(
                 _issue(
                     "learning.promotion.unknown_invariant",
@@ -333,12 +338,24 @@ def _count_baseline_debt(repo_root: Path) -> tuple[list[tuple[str, int]], list[V
     layer_path = repo_root / LAYER_BASELINE_RELATIVE_PATH
     try:
         observed = json.loads(observed_path.read_text(encoding="utf-8"))
-        edges = _list_of_mappings(observed.get("service_edges")) if _is_mapping(observed) else []
         cycles = observed.get("cycles") if _is_mapping(observed) else None
-        undeclared = [edge for edge in edges if edge.get("status") != "declared"]
-        cycle_count = len(cycles) if isinstance(cycles, (list, tuple)) else 0
-        counts.append(("observed_undeclared_edges", len(undeclared)))
-        counts.append(("observed_grandfathered_cycles", cycle_count))
+        # A baseline that is not an object, or whose lists are not lists, must
+        # not be counted as zero debt - that would report an inventory the file
+        # does not actually carry.
+        if not _is_mapping(observed) or not isinstance(observed.get("service_edges"), (list, tuple)) or not isinstance(cycles, (list, tuple)):
+            issues.append(
+                _issue(
+                    "learning.quality.baseline_unreadable",
+                    OBSERVED_BASELINE_RELATIVE_PATH,
+                    "Observed baseline is not the expected object shape; the debt inventory "
+                    "cannot be derived from it.",
+                )
+            )
+        else:
+            edges = _list_of_mappings(observed.get("service_edges"))
+            undeclared = [edge for edge in edges if edge.get("status") != "declared"]
+            counts.append(("observed_undeclared_edges", len(undeclared)))
+            counts.append(("observed_grandfathered_cycles", len(cycles)))
     except (OSError, ValueError) as exc:
         issues.append(
             _issue(
@@ -350,8 +367,17 @@ def _count_baseline_debt(repo_root: Path) -> tuple[list[tuple[str, int]], list[V
     try:
         layer = json.loads(layer_path.read_text(encoding="utf-8"))
         violations = layer.get("violations") if _is_mapping(layer) else None
-        violation_count = len(violations) if isinstance(violations, (list, tuple)) else 0
-        counts.append(("layer_grandfathered_violations", violation_count))
+        if not _is_mapping(layer) or not isinstance(violations, (list, tuple)):
+            issues.append(
+                _issue(
+                    "learning.quality.baseline_unreadable",
+                    LAYER_BASELINE_RELATIVE_PATH,
+                    "Layer baseline is not the expected object shape; the debt inventory "
+                    "cannot be derived from it.",
+                )
+            )
+        else:
+            counts.append(("layer_grandfathered_violations", len(violations)))
     except (OSError, ValueError) as exc:
         issues.append(
             _issue(

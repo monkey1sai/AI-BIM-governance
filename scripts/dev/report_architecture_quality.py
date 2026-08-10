@@ -36,8 +36,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="Also fail (exit 1) when the grade is below A? No - strict here means ledger "
-        "warnings count as a failing result, matching the sibling checkers.",
+        help="Treat learning-ledger warnings as a failing result in addition to errors, "
+        "matching the sibling checkers. The grade itself never fails the run; only a "
+        "failing gate or an unreadable baseline does.",
     )
     return parser.parse_args()
 
