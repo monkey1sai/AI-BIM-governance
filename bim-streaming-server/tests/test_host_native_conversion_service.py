@@ -1,5 +1,7 @@
+import hashlib
 import json
 import os
+import stat
 import sys
 import types
 from pathlib import Path
@@ -391,6 +393,299 @@ def test_adapter_from_env_keeps_unset_paths_none(tmp_path: Path):
     assert adapter.timeout_seconds == 600
 
 
+def _write_cad_converter_lock(repo_root: Path, version: str = "508.0.3") -> None:
+    app_path = repo_root / "source" / "apps" / "ezplus.bim_ifc_usd_converter.kit"
+    app_path.parent.mkdir(parents=True, exist_ok=True)
+    app_path.write_text(
+        '[settings.app.exts]\nenabled = [\n'
+        f'    "omni.services.convert.cad-{version}",\n'
+        ']\n',
+        encoding="utf-8",
+    )
+
+
+def _write_trusted_cad_manifest(
+    repo_root: Path,
+    *,
+    package_name: str,
+    hoops_main: Path,
+) -> None:
+    platform_key = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
+    manifest_path = repo_root / "config" / "trusted-cad-entrypoints.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    body = hoops_main.read_bytes()
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "trusted-cad-entrypoints/v1",
+                "packages": {
+                    platform_key: {
+                        "extension_package": package_name,
+                        "hoops_main_sha256": hashlib.sha256(body).hexdigest(),
+                        "hoops_main_size": len(body),
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_symlinked_cad_package(
+    *,
+    release_root: Path,
+    package_cache: Path,
+    package_name: str,
+    root_name: str = "extscache",
+) -> tuple[Path, Path]:
+    package_root = package_cache / package_name
+    hoops_main = (
+        package_root
+        / "omni"
+        / "services"
+        / "convert"
+        / "cad"
+        / "services"
+        / "process"
+        / "hoops_main.py"
+    )
+    hoops_main.parent.mkdir(parents=True, exist_ok=True)
+    hoops_main.write_text("# fixture", encoding="utf-8")
+    extension_cache = release_root / root_name
+    extension_cache.mkdir(parents=True, exist_ok=True)
+    extension_link = extension_cache / package_name
+    try:
+        extension_link.symlink_to(package_root, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlinks are unavailable on this test host: {exc}")
+    return extension_link, hoops_main
+
+
+def test_default_hoops_entrypoint_resolves_pinned_owner_cache_symlink(
+    tmp_path: Path, monkeypatch
+):
+    platform_dir = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
+    release_root = tmp_path / "_build" / platform_dir / "release"
+    package_cache = tmp_path / "official-cache"
+    _write_cad_converter_lock(tmp_path)
+    package_name = "omni.services.convert.cad-508.0.3+110.0.0.lx64.r.cp312.fixture"
+    _, hoops_main = _write_symlinked_cad_package(
+        release_root=release_root,
+        package_cache=package_cache,
+        package_name=package_name,
+    )
+    _write_trusted_cad_manifest(tmp_path, package_name=package_name, hoops_main=hoops_main)
+
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    monkeypatch.setattr(adapter, "_trusted_extension_cache_roots", lambda: (package_cache,))
+
+    resolved_hoops_main = adapter._default_hoops_main()
+
+    assert resolved_hoops_main is not None
+    assert resolved_hoops_main.resolve() == hoops_main.resolve()
+
+
+def test_default_hoops_entrypoint_rejects_symlink_outside_trusted_cache(
+    tmp_path: Path, monkeypatch
+):
+    platform_dir = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
+    release_root = tmp_path / "_build" / platform_dir / "release"
+    trusted_cache = tmp_path / "official-cache"
+    trusted_cache.mkdir()
+    _write_cad_converter_lock(tmp_path)
+    package_name = "omni.services.convert.cad-508.0.3+110.0.0.lx64.r.cp312.escape"
+    _, hoops_main = _write_symlinked_cad_package(
+        release_root=release_root,
+        package_cache=tmp_path / "untrusted-cache",
+        package_name=package_name,
+    )
+    _write_trusted_cad_manifest(tmp_path, package_name=package_name, hoops_main=hoops_main)
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    monkeypatch.setattr(adapter, "_trusted_extension_cache_roots", lambda: (trusted_cache,))
+
+    with pytest.raises(ConversionAuthorityError, match="outside an owner-approved cache root"):
+        adapter._default_hoops_main()
+
+
+def test_default_hoops_entrypoint_rejects_unpinned_package_version(
+    tmp_path: Path, monkeypatch
+):
+    platform_dir = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
+    release_root = tmp_path / "_build" / platform_dir / "release"
+    package_cache = tmp_path / "official-cache"
+    _write_cad_converter_lock(tmp_path, version="508.0.3")
+    _, hoops_main = _write_symlinked_cad_package(
+        release_root=release_root,
+        package_cache=package_cache,
+        package_name="omni.services.convert.cad-508.0.4+110.0.0.lx64.r.cp312.unpinned",
+    )
+    _write_trusted_cad_manifest(
+        tmp_path,
+        package_name="omni.services.convert.cad-508.0.3+110.0.0.lx64.r.cp312.trusted",
+        hoops_main=hoops_main,
+    )
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    monkeypatch.setattr(adapter, "_trusted_extension_cache_roots", lambda: (package_cache,))
+
+    with pytest.raises(ConversionAuthorityError, match="does not match the trusted package build"):
+        adapter._default_hoops_main()
+
+
+def test_default_hoops_entrypoint_rejects_unpinned_real_directory(tmp_path: Path):
+    platform_dir = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
+    release_root = tmp_path / "_build" / platform_dir / "release"
+    package_name = "omni.services.convert.cad-508.0.4+110.0.0.lx64.r.cp312.unpinned"
+    hoops_main = (
+        release_root
+        / "exts"
+        / package_name
+        / "omni"
+        / "services"
+        / "convert"
+        / "cad"
+        / "services"
+        / "process"
+        / "hoops_main.py"
+    )
+    hoops_main.parent.mkdir(parents=True)
+    hoops_main.write_text("# fixture", encoding="utf-8")
+    _write_cad_converter_lock(tmp_path, version="508.0.3")
+    _write_trusted_cad_manifest(
+        tmp_path,
+        package_name="omni.services.convert.cad-508.0.3+110.0.0.lx64.r.cp312.trusted",
+        hoops_main=hoops_main,
+    )
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+
+    with pytest.raises(ConversionAuthorityError, match="does not match the trusted package build"):
+        adapter._default_hoops_main()
+
+
+def test_default_hoops_entrypoint_rejects_linked_search_root(tmp_path: Path):
+    platform_dir = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
+    release_root = tmp_path / "_build" / platform_dir / "release"
+    external_root = tmp_path / "external-exts"
+    package_name = "omni.services.convert.cad-508.0.3+110.0.0.lx64.r.cp312.linked-root"
+    hoops_main = (
+        external_root
+        / package_name
+        / "omni"
+        / "services"
+        / "convert"
+        / "cad"
+        / "services"
+        / "process"
+        / "hoops_main.py"
+    )
+    hoops_main.parent.mkdir(parents=True)
+    hoops_main.write_text("# fixture", encoding="utf-8")
+    release_root.mkdir(parents=True)
+    try:
+        (release_root / "exts").symlink_to(external_root, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlinks are unavailable on this test host: {exc}")
+    _write_cad_converter_lock(tmp_path)
+    _write_trusted_cad_manifest(tmp_path, package_name=package_name, hoops_main=hoops_main)
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+
+    with pytest.raises(ConversionAuthorityError, match="search root must not be a link or junction"):
+        adapter._default_hoops_main()
+
+
+def test_default_hoops_entrypoint_rejects_ambiguous_pinned_candidates(
+    tmp_path: Path, monkeypatch
+):
+    platform_dir = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
+    release_root = tmp_path / "_build" / platform_dir / "release"
+    package_cache = tmp_path / "official-cache"
+    _write_cad_converter_lock(tmp_path)
+    package_name = "omni.services.convert.cad-508.0.3+110.0.0.lx64.r.cp312.ambiguous"
+    _, hoops_main = _write_symlinked_cad_package(
+        release_root=release_root,
+        package_cache=package_cache,
+        package_name=package_name,
+        root_name="extscache",
+    )
+    _write_symlinked_cad_package(
+        release_root=release_root,
+        package_cache=package_cache,
+        package_name=package_name,
+        root_name="extsbuild",
+    )
+    _write_trusted_cad_manifest(tmp_path, package_name=package_name, hoops_main=hoops_main)
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    monkeypatch.setattr(adapter, "_trusted_extension_cache_roots", lambda: (package_cache,))
+
+    with pytest.raises(ConversionAuthorityError, match="Multiple CAD extension entrypoints"):
+        adapter._default_hoops_main()
+
+
+def test_powershell_conversion_rejects_hoops_path_swap_after_preflight(
+    tmp_path: Path, monkeypatch
+):
+    platform_dir = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
+    release_root = tmp_path / "_build" / platform_dir / "release"
+    package_cache = tmp_path / "official-cache"
+    _write_cad_converter_lock(tmp_path)
+    package_name = "omni.services.convert.cad-508.0.3+110.0.0.lx64.r.cp312.swap"
+    _, hoops_main = _write_symlinked_cad_package(
+        release_root=release_root,
+        package_cache=package_cache,
+        package_name=package_name,
+    )
+    _write_trusted_cad_manifest(tmp_path, package_name=package_name, hoops_main=hoops_main)
+    kit_name = "kit.exe" if os.name == "nt" else "kit"
+    kit_path = release_root / "kit" / kit_name
+    kit_path.parent.mkdir(parents=True)
+    kit_path.write_bytes(b"kit")
+    ps1_path = tmp_path / "scripts" / "convert-ifc-to-usdc.ps1"
+    ps1_path.parent.mkdir(parents=True)
+    ps1_path.write_text("# fixture", encoding="utf-8")
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    monkeypatch.setattr(adapter, "_trusted_extension_cache_roots", lambda: (package_cache,))
+    monkeypatch.setattr(adapter, "_powershell_resolvable", lambda: True)
+    adapter.preflight()
+
+    hoops_main.write_text("# swapped fixture with a different identity", encoding="utf-8")
+    subprocess_called = False
+
+    def _unexpected_subprocess(*args, **kwargs):
+        nonlocal subprocess_called
+        subprocess_called = True
+        raise AssertionError("subprocess must not run after a HOOPS path identity change")
+
+    monkeypatch.setattr("subprocess.run", _unexpected_subprocess)
+    with pytest.raises(ConversionAuthorityError, match="content digest does not match"):
+        adapter._run_powershell_conversion(ifc_path=tmp_path / "input.ifc", output_dir=tmp_path / "out")
+    assert subprocess_called is False
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX atomic replacement contract")
+def test_hardener_atomically_replaces_pinned_entrypoint_with_private_inode(
+    tmp_path: Path, monkeypatch
+):
+    release_root = tmp_path / "_build" / "linux-x86_64" / "release"
+    package_cache = tmp_path / "official-cache"
+    _write_cad_converter_lock(tmp_path)
+    package_name = "omni.services.convert.cad-508.0.3+110.0.0.lx64.r.cp312.permissions"
+    _, hoops_main = _write_symlinked_cad_package(
+        release_root=release_root,
+        package_cache=package_cache,
+        package_name=package_name,
+    )
+    _write_trusted_cad_manifest(tmp_path, package_name=package_name, hoops_main=hoops_main)
+    hoops_main.chmod(0o777)
+    original_identity = (hoops_main.stat().st_dev, hoops_main.stat().st_ino)
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    monkeypatch.setattr(adapter, "_trusted_extension_cache_roots", lambda: (package_cache,))
+
+    hardened = adapter.harden_default_hoops_main_permissions()
+
+    assert hardened == hoops_main.resolve()
+    assert (hardened.stat().st_dev, hardened.stat().st_ino) != original_identity
+    assert stat.S_IMODE(hardened.stat().st_mode) & (stat.S_IWGRP | stat.S_IWOTH) == 0
+
+
 def test_adapter_from_env_prefers_pwsh_when_available(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         "shutil.which",
@@ -736,10 +1031,15 @@ def _write_default_converter_prereqs(repo_root: Path) -> None:
     kit_path = release_root / "kit" / kit_name
     kit_path.parent.mkdir(parents=True, exist_ok=True)
     kit_path.write_bytes(b"fixture")
+    package_name = (
+        "omni.services.convert.cad-508.0.1+110.0.0.wx64.r.cp312.u7f4"
+        if os.name == "nt"
+        else "omni.services.convert.cad-508.0.1+110.0.0.lx64.r.cp312.u7f4"
+    )
     hoops_path = (
         release_root
         / "exts"
-        / "omni.services.convert.cad"
+        / package_name
         / "omni"
         / "services"
         / "convert"
@@ -750,6 +1050,8 @@ def _write_default_converter_prereqs(repo_root: Path) -> None:
     )
     hoops_path.parent.mkdir(parents=True, exist_ok=True)
     hoops_path.write_text("# fixture", encoding="utf-8")
+    _write_cad_converter_lock(repo_root, version="508.0.1")
+    _write_trusted_cad_manifest(repo_root, package_name=package_name, hoops_main=hoops_path)
 
 
 def _clear_pxr_test_stubs(monkeypatch) -> None:

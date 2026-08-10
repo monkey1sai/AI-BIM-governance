@@ -25,10 +25,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import unquote, urlparse
+import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
+import stat
 import subprocess
 import sys
 
@@ -65,6 +68,8 @@ class Ifc2UsdcPowershellConverterAdapter:
         self.timeout_seconds = int(timeout_seconds)
         self.work_dir = Path(work_dir) if work_dir else self.repo_root
         self.ps1_path = self.repo_root / "scripts" / "convert-ifc-to-usdc.ps1"
+        self._validated_hoops_main_path: Path | None = None
+        self._validated_hoops_main_identity: tuple[int, int, int, int, str] | None = None
         # streaming-server-prefer-local-ifc-path: shared volume sandbox base for
         # dispatch payload host_local_path / local_path. Source = 顯式 storage_root
         # 參數,否則 env STORAGE_ROOT(compose 對齊)。兩者皆缺時不得 fallback
@@ -95,21 +100,584 @@ class Ifc2UsdcPowershellConverterAdapter:
         executable = "kit.exe" if sys.platform == "win32" else "kit"
         return self._default_release_root() / "kit" / executable
 
-    def _default_hoops_main(self) -> Path | None:
+    def _locked_cad_extension_version(self) -> str:
+        app_path = self.repo_root / "source" / "apps" / "ezplus.bim_ifc_usd_converter.kit"
+        try:
+            app_source = app_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD converter version lock is unavailable.",
+            ) from exc
+        versions = set(
+            re.findall(
+                r'^\s*"omni\.services\.convert\.cad-(\d+\.\d+\.\d+)"\s*,?\s*$',
+                app_source,
+                re.MULTILINE,
+            )
+        )
+        if len(versions) != 1:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD converter version lock must contain exactly one pinned version.",
+            )
+        return next(iter(versions))
+
+    def _trusted_cad_entrypoint(self) -> tuple[str, str, int]:
+        platform_key = "windows-x86_64" if sys.platform == "win32" else "linux-x86_64"
+        manifest_path = self.repo_root / "config" / "trusted-cad-entrypoints.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            entry = manifest["packages"][platform_key]
+            package_name = str(entry["extension_package"])
+            expected_sha256 = str(entry["hoops_main_sha256"]).lower()
+            expected_size = int(entry["hoops_main_size"])
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Trusted CAD entrypoint manifest is missing or invalid for this platform.",
+            ) from exc
+        if manifest.get("schema_version") != "trusted-cad-entrypoints/v1":
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Trusted CAD entrypoint manifest schema is unsupported.",
+            )
+        locked_version = self._locked_cad_extension_version()
+        package_pattern = re.compile(
+            rf"^omni\.services\.convert\.cad-{re.escape(locked_version)}"
+            r"\+[A-Za-z0-9._-]+$"
+        )
+        if not package_pattern.fullmatch(package_name):
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Trusted CAD package build does not match the tracked version lock.",
+            )
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256) or expected_size <= 0:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Trusted CAD entrypoint digest metadata is invalid.",
+            )
+        return package_name, expected_sha256, expected_size
+
+    @staticmethod
+    def _sha256_file(path: Path) -> str:
+        hasher = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+
+    def _verify_cad_entrypoint_digest(
+        self,
+        path: Path,
+        *,
+        expected_sha256: str,
+        expected_size: int,
+    ) -> None:
+        try:
+            actual_size = path.stat().st_size
+            actual_sha256 = self._sha256_file(path)
+        except OSError as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Trusted CAD entrypoint could not be read for digest verification.",
+            ) from exc
+        if actual_size != expected_size or actual_sha256 != expected_sha256:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Trusted CAD entrypoint content digest does not match the tracked manifest.",
+            )
+
+    def _trusted_extension_cache_roots(self) -> tuple[Path, ...]:
+        if sys.platform == "win32":
+            local_app_data = (os.environ.get("LOCALAPPDATA") or "").strip()
+            return (Path(local_app_data) / "ov" / "data" / "exts",) if local_app_data else ()
+        return (Path.home() / ".local" / "share" / "ov" / "data" / "exts",)
+
+    @staticmethod
+    def _group_is_private_to_process(group_id: int) -> bool:
+        if os.name == "nt":
+            return True
+        try:
+            import grp
+            import pwd
+
+            current_uid = os.geteuid()
+            current_name = pwd.getpwuid(current_uid).pw_name
+            group = grp.getgrgid(group_id)
+            if any(
+                entry.pw_gid == group_id and entry.pw_uid != current_uid
+                for entry in pwd.getpwall()
+            ):
+                return False
+            return all(member == current_name for member in group.gr_mem)
+        except (KeyError, OSError):
+            return False
+
+    def _path_components_are_owner_private(
+        self,
+        root: Path,
+        leaf: Path,
+        *,
+        allow_leaf_world_write: bool = False,
+    ) -> bool:
+        try:
+            relative = leaf.relative_to(root)
+        except ValueError:
+            return False
+        if os.name == "nt":
+            return True
+
+        current_uid = os.geteuid()
+        components = [root]
+        current = root
+        for part in relative.parts:
+            current = current / part
+            components.append(current)
+        for component in components:
+            try:
+                component_stat = component.stat()
+            except OSError:
+                return False
+            if component_stat.st_uid != current_uid:
+                return False
+            if component_stat.st_mode & stat.S_IWOTH and not (
+                allow_leaf_world_write and component == leaf
+            ):
+                return False
+            if (
+                component_stat.st_mode & stat.S_IWGRP
+                and not self._group_is_private_to_process(component_stat.st_gid)
+            ):
+                return False
+        return True
+
+    def _resolve_symlinked_cad_entrypoint(
+        self,
+        *,
+        release_root: Path,
+        extension_root: Path,
+        candidate: Path,
+        expected_package_name: str,
+        allow_leaf_world_write: bool = False,
+    ) -> Path:
+        if extension_root.name != expected_package_name:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension cache candidate does not match the trusted package build.",
+            )
+        try:
+            resolved_release_root = release_root.resolve(strict=True)
+            resolved_link_parent = extension_root.parent.resolve(strict=True)
+            resolved_extension_root = extension_root.resolve(strict=True)
+            resolved_candidate = candidate.resolve(strict=True)
+        except OSError as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension cache candidate could not be resolved.",
+            ) from exc
+        if resolved_extension_root.name != extension_root.name:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension cache link target does not match its pinned package name.",
+            )
+        try:
+            resolved_candidate.relative_to(resolved_extension_root)
+        except ValueError as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension entrypoint escapes its package root.",
+            ) from exc
+        if not self._path_components_are_owner_private(resolved_release_root, resolved_link_parent):
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension cache link parent is not owner-private.",
+            )
+        if os.name != "nt" and extension_root.lstat().st_uid != os.geteuid():
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension cache link is not owned by the service account.",
+            )
+
+        contained_by_trusted_root = False
+        for trusted_root in self._trusted_extension_cache_roots():
+            try:
+                resolved_trusted_root = trusted_root.resolve(strict=True)
+            except OSError:
+                continue
+            try:
+                resolved_candidate.relative_to(resolved_trusted_root)
+            except ValueError:
+                continue
+            contained_by_trusted_root = True
+            if self._path_components_are_owner_private(
+                resolved_trusted_root,
+                resolved_candidate,
+                allow_leaf_world_write=allow_leaf_world_write,
+            ):
+                return resolved_candidate
+        if contained_by_trusted_root:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension cache path failed owner-private permission validation.",
+            )
+        raise ConversionAuthorityError(
+            "converter_unavailable",
+            "CAD extension cache link resolves outside an owner-approved cache root.",
+        )
+
+    @staticmethod
+    def _path_is_directory_link(path: Path) -> bool:
+        if path.is_symlink():
+            return True
+        is_junction = getattr(path, "is_junction", None)
+        return bool(is_junction and is_junction())
+
+    def _discover_default_hoops_main(self, *, allow_leaf_world_write: bool = False) -> Path | None:
         release_root = self._default_release_root()
         suffix = ("omni", "services", "convert", "cad", "services", "process", "hoops_main.py")
+        expected_package_name, expected_sha256, expected_size = self._trusted_cad_entrypoint()
+        try:
+            resolved_release_root = release_root.resolve(strict=True)
+        except OSError:
+            return None
+        matches: list[Path] = []
         for root_name in ("extscache", "exts", "extsbuild"):
             root = release_root / root_name
-            if not root.is_dir():
+            try:
+                root_stat = root.lstat()
+            except FileNotFoundError:
                 continue
-            for candidate in sorted(root.rglob("hoops_main.py")):
-                if candidate.parts[-len(suffix) :] == suffix:
-                    return candidate
-        return None
+            except OSError as exc:
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "CAD extension search root could not be inspected safely.",
+                ) from exc
+            if self._path_is_directory_link(root):
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "CAD extension search root must not be a link or junction.",
+                )
+            if not stat.S_ISDIR(root_stat.st_mode):
+                continue
+            try:
+                resolved_root = root.resolve(strict=True)
+                resolved_root.relative_to(resolved_release_root)
+            except (OSError, ValueError) as exc:
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "CAD extension search root escapes the Kit release root.",
+                ) from exc
+            for extension_root in sorted(root.glob("omni.services.convert.cad*")):
+                candidate = extension_root.joinpath(*suffix)
+                if not candidate.is_file():
+                    continue
+                if extension_root.name != expected_package_name:
+                    raise ConversionAuthorityError(
+                        "converter_unavailable",
+                        "CAD extension candidate does not match the trusted package build.",
+                    )
+                if extension_root.is_symlink():
+                    resolved_candidate = self._resolve_symlinked_cad_entrypoint(
+                        release_root=release_root,
+                        extension_root=extension_root,
+                        candidate=candidate,
+                        expected_package_name=expected_package_name,
+                        allow_leaf_world_write=allow_leaf_world_write,
+                    )
+                else:
+                    try:
+                        resolved_extension_root = extension_root.resolve(strict=True)
+                        resolved_candidate = candidate.resolve(strict=True)
+                        resolved_extension_root.relative_to(resolved_root)
+                        resolved_candidate.relative_to(resolved_extension_root)
+                    except (OSError, ValueError) as exc:
+                        raise ConversionAuthorityError(
+                            "converter_unavailable",
+                            "CAD extension entrypoint escapes the Kit release root.",
+                        ) from exc
+                    if not self._path_components_are_owner_private(
+                        resolved_release_root,
+                        resolved_candidate,
+                        allow_leaf_world_write=allow_leaf_world_write,
+                    ):
+                        raise ConversionAuthorityError(
+                            "converter_unavailable",
+                            "CAD extension directory failed owner-private permission validation.",
+                        )
+                self._verify_cad_entrypoint_digest(
+                    resolved_candidate,
+                    expected_sha256=expected_sha256,
+                    expected_size=expected_size,
+                )
+                matches.append(resolved_candidate)
+        if len(matches) > 1:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Multiple CAD extension entrypoints were found; refusing an ambiguous selection.",
+            )
+        return matches[0] if matches else None
+
+    def _default_hoops_main(self) -> Path | None:
+        return self._discover_default_hoops_main()
+
+    def _trusted_directory_anchor(self, candidate: Path) -> Path:
+        anchors: list[Path] = []
+        for anchor in (self._default_release_root(), *self._trusted_extension_cache_roots()):
+            try:
+                resolved_anchor = anchor.resolve(strict=True)
+                candidate.parent.relative_to(resolved_anchor)
+            except (OSError, ValueError):
+                continue
+            if self._path_components_are_owner_private(resolved_anchor, candidate.parent):
+                anchors.append(resolved_anchor)
+        if not anchors:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Pinned CAD entrypoint parent has no owner-private trusted directory anchor.",
+            )
+        return max(anchors, key=lambda path: len(path.parts))
+
+    def _open_owner_private_parent_descriptor(self, candidate: Path) -> int:
+        anchor = self._trusted_directory_anchor(candidate)
+        try:
+            relative_parent = candidate.parent.relative_to(anchor)
+        except ValueError as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Pinned CAD entrypoint parent escapes its trusted directory anchor.",
+            ) from exc
+
+        directory_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+        opened: list[int] = []
+        current_path = anchor
+
+        def validate_opened_directory(descriptor: int, expected: os.stat_result) -> None:
+            actual = os.fstat(descriptor)
+            if (
+                (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino)
+                or not stat.S_ISDIR(actual.st_mode)
+            ):
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Trusted CAD directory identity changed while it was opened.",
+                )
+            if (
+                actual.st_uid != os.geteuid()
+                or actual.st_mode & stat.S_IWOTH
+                or (
+                    actual.st_mode & stat.S_IWGRP
+                    and not self._group_is_private_to_process(actual.st_gid)
+                )
+            ):
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Trusted CAD directory path is not owner-private.",
+                )
+
+        try:
+            expected = anchor.lstat()
+            if stat.S_ISLNK(expected.st_mode) or not stat.S_ISDIR(expected.st_mode):
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Trusted CAD directory anchor changed before it could be opened.",
+                )
+            opened.append(os.open(anchor, directory_flags))
+            validate_opened_directory(opened[-1], expected)
+            for part in relative_parent.parts:
+                current_path = current_path / part
+                expected = current_path.lstat()
+                if stat.S_ISLNK(expected.st_mode) or not stat.S_ISDIR(expected.st_mode):
+                    raise ConversionAuthorityError(
+                        "converter_unavailable",
+                        "Trusted CAD directory path contains a link or non-directory component.",
+                    )
+                opened.append(os.open(part, directory_flags, dir_fd=opened[-1]))
+                validate_opened_directory(opened[-1], expected)
+
+            parent_descriptor = opened.pop()
+            return parent_descriptor
+        finally:
+            for descriptor in reversed(opened):
+                os.close(descriptor)
+
+    def harden_default_hoops_main_permissions(self) -> Path:
+        """Atomically replace the pinned Linux entrypoint with a private inode.
+
+        NVIDIA's extension package can arrive with a world-writable Python leaf.
+        Deployment verifies tracked package/build/size/SHA-256, copies those exact
+        bytes to a new 0400 inode through a validated directory descriptor, fsyncs,
+        and atomically replaces the old directory entry. Existing writers remain
+        attached to the retired inode. Runtime discovery never accepts the unsafe
+        mode or an unpinned digest.
+        """
+        candidate = self._discover_default_hoops_main(allow_leaf_world_write=True)
+        if candidate is None:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Pinned CAD extension entrypoint is unavailable for permission hardening.",
+            )
+        if os.name == "nt":
+            return candidate
+
+        _, expected_sha256, expected_size = self._trusted_cad_entrypoint()
+        read_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+        parent_descriptor = -1
+        source_descriptor = -1
+        replacement_descriptor = -1
+        replacement_name = ""
+        try:
+            parent_descriptor = self._open_owner_private_parent_descriptor(candidate)
+            source_descriptor = os.open(candidate.name, read_flags, dir_fd=parent_descriptor)
+            source_stat = os.fstat(source_descriptor)
+            if source_stat.st_uid != os.geteuid() or not stat.S_ISREG(source_stat.st_mode):
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Pinned CAD extension entrypoint is not a service-owned regular file.",
+                )
+            trusted_bytes = bytearray()
+            while True:
+                chunk = os.read(source_descriptor, 1024 * 1024)
+                if not chunk:
+                    break
+                trusted_bytes.extend(chunk)
+            if len(trusted_bytes) != expected_size or hashlib.sha256(trusted_bytes).hexdigest() != expected_sha256:
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Pinned CAD extension entrypoint content changed before atomic hardening.",
+                )
+
+            create_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
+            for _ in range(16):
+                replacement_name = f".hoops_main.{secrets.token_hex(12)}.tmp"
+                try:
+                    replacement_descriptor = os.open(
+                        replacement_name,
+                        create_flags,
+                        0o400,
+                        dir_fd=parent_descriptor,
+                    )
+                    break
+                except FileExistsError:
+                    replacement_name = ""
+            if replacement_descriptor < 0:
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Could not create a private replacement for the CAD entrypoint.",
+                )
+            view = memoryview(trusted_bytes)
+            written = 0
+            while written < len(view):
+                write_count = os.write(replacement_descriptor, view[written:])
+                if write_count <= 0:
+                    raise ConversionAuthorityError(
+                        "converter_unavailable",
+                        "Private CAD entrypoint replacement could not be written completely.",
+                    )
+                written += write_count
+            os.fchmod(replacement_descriptor, 0o400)
+            os.fsync(replacement_descriptor)
+            replacement_stat = os.fstat(replacement_descriptor)
+            if (
+                replacement_stat.st_uid != os.geteuid()
+                or stat.S_IMODE(replacement_stat.st_mode) != 0o400
+            ):
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Private CAD entrypoint replacement did not retain owner-only read access.",
+                )
+
+            current_stat = os.stat(candidate.name, dir_fd=parent_descriptor, follow_symlinks=False)
+            if (source_stat.st_dev, source_stat.st_ino) != (current_stat.st_dev, current_stat.st_ino):
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Pinned CAD extension entrypoint path changed before atomic replacement.",
+                )
+            os.replace(
+                replacement_name,
+                candidate.name,
+                src_dir_fd=parent_descriptor,
+                dst_dir_fd=parent_descriptor,
+            )
+            replacement_name = ""
+            os.fsync(parent_descriptor)
+        except OSError as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Pinned CAD extension entrypoint atomic hardening failed.",
+            ) from exc
+        finally:
+            if replacement_descriptor >= 0:
+                os.close(replacement_descriptor)
+            if source_descriptor >= 0:
+                os.close(source_descriptor)
+            if replacement_name and parent_descriptor >= 0:
+                try:
+                    os.unlink(replacement_name, dir_fd=parent_descriptor)
+                except FileNotFoundError:
+                    pass
+            if parent_descriptor >= 0:
+                os.close(parent_descriptor)
+
+        hardened = self._default_hoops_main()
+        if hardened is None or hardened != candidate:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Pinned CAD extension entrypoint changed after permission hardening.",
+            )
+        return hardened
+
+    @staticmethod
+    def _hoops_file_identity(path: Path) -> tuple[int, int, int, int, str]:
+        file_stat = path.stat()
+        return (
+            file_stat.st_dev,
+            file_stat.st_ino,
+            file_stat.st_size,
+            file_stat.st_mtime_ns,
+            Ifc2UsdcPowershellConverterAdapter._sha256_file(path),
+        )
+
+    def _validated_hoops_main_for_execution(self) -> Path | None:
+        validated = self._validated_hoops_main_path
+        identity = self._validated_hoops_main_identity
+        if validated is None or identity is None:
+            if self.hoops_main_path is None:
+                return None
+            try:
+                return self.hoops_main_path.resolve(strict=True)
+            except OSError as exc:
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Configured HOOPS entrypoint is unavailable.",
+                ) from exc
+
+        if self.hoops_main_path is None:
+            current = self._default_hoops_main()
+            if current is None or current != validated:
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "CAD extension entrypoint changed after preflight.",
+                )
+        try:
+            current_identity = self._hoops_file_identity(validated)
+        except OSError as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension entrypoint disappeared after preflight.",
+            ) from exc
+        if current_identity != identity:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension entrypoint identity changed after preflight.",
+            )
+        return validated
 
     def preflight(self) -> None:
         """Fail fast (and honestly) when any real converter prerequisite is missing."""
         missing: list[str] = []
+        self._validated_hoops_main_path = None
+        self._validated_hoops_main_identity = None
         # storage sandbox base 已由 __init__ 強制(顯式 storage_root 或 env
         # STORAGE_ROOT,空白/缺失即 raise converter_unavailable),self.storage_root
         # 因此恆為非空 Path;不在此重複檢查一個永遠 truthy 的屬性(死碼會給假安全感)。
@@ -127,13 +695,32 @@ class Ifc2UsdcPowershellConverterAdapter:
         effective_kit = self.kit_exe_path or self._default_kit_exe()
         if not effective_kit.is_file():
             missing.append(f"Kit executable not found: {effective_kit}")
-        effective_hoops = self.hoops_main_path or self._default_hoops_main()
-        if effective_hoops is None or not effective_hoops.is_file():
-            missing.append(
-                f"HOOPS entrypoint not found under: {self._default_release_root()}"
-                if self.hoops_main_path is None
-                else f"configured HOOPS entrypoint not found: {self.hoops_main_path}"
-            )
+        hoops_validation_failed = False
+        if self.hoops_main_path is None:
+            try:
+                effective_hoops = self._default_hoops_main()
+            except ConversionAuthorityError as exc:
+                missing.append(f"HOOPS entrypoint not found or validation failed: {exc.message}")
+                effective_hoops = None
+                hoops_validation_failed = True
+        else:
+            effective_hoops = self.hoops_main_path
+        if not hoops_validation_failed:
+            if effective_hoops is None or not effective_hoops.is_file():
+                missing.append(
+                    f"HOOPS entrypoint not found under: {self._default_release_root()}"
+                    if self.hoops_main_path is None
+                    else f"configured HOOPS entrypoint not found: {self.hoops_main_path}"
+                )
+            else:
+                try:
+                    resolved_hoops = effective_hoops.resolve(strict=True)
+                    hoops_identity = self._hoops_file_identity(resolved_hoops)
+                except OSError:
+                    missing.append("HOOPS entrypoint changed while preflight was validating it")
+                else:
+                    self._validated_hoops_main_path = resolved_hoops
+                    self._validated_hoops_main_identity = hoops_identity
         if self.config_path is not None and not self.config_path.exists():
             missing.append(f"converter config not found: {self.config_path}")
         # USD runtime is only needed on the enumeration fallback (no converter
@@ -370,6 +957,7 @@ class Ifc2UsdcPowershellConverterAdapter:
         output_dir: Path,
         trace_id: str | None = None,
     ) -> None:
+        validated_hoops_main = self._validated_hoops_main_for_execution()
         cmd: list[str] = [
             self.powershell_exe,
             "-NoProfile",
@@ -393,8 +981,8 @@ class Ifc2UsdcPowershellConverterAdapter:
             cmd += ["-ConfigPath", str(self.config_path.resolve())]
         if self.kit_exe_path is not None:
             cmd += ["-KitExePath", str(self.kit_exe_path.resolve())]
-        if self.hoops_main_path is not None:
-            cmd += ["-HoopsMainPath", str(self.hoops_main_path.resolve())]
+        if validated_hoops_main is not None:
+            cmd += ["-HoopsMainPath", str(validated_hoops_main)]
         try:
             completed = subprocess.run(
                 cmd,

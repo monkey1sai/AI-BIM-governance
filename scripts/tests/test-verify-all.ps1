@@ -101,7 +101,28 @@ try {
     'retained production design token' | Set-Content -LiteralPath (Join-Path $deploymentRoot 'docs\plans\ai-bim-governance.css') -Encoding ascii
     'streaming contract entrypoint' | Set-Content -LiteralPath (Join-Path $deploymentRoot 'bim-streaming-server\scripts\tests\test-stage-loading-contract.ps1') -Encoding ascii
 
-    $deploymentPlan = Invoke-VerificationPlan -Profile 'Deployment' -RepoRoot $deploymentRoot
+    $localDeploymentPlan = Invoke-VerificationPlan -Profile 'Deployment' -RepoRoot $deploymentRoot
+    Assert-Equal 0 $localDeploymentPlan.ExitCode 'default deployment profile still resolves the current platform target'
+    Assert-True ($localDeploymentPlan.Output -match 'governance health — GET http://127\.0\.0\.1:49102/health') 'local Windows governance verification remains on loopback'
+    Assert-True ($localDeploymentPlan.Output -match 'kit manager health — GET http://127\.0\.0\.1:8010/health') 'local Windows Kit Manager verification remains on loopback'
+
+    $inventoryPath = Join-Path $sandbox 'target.local.json'
+    [pscustomobject]@{
+        schema_version = 'deploy-target-private-inventory/v1'
+        targets = @([pscustomobject]@{
+            id = 'canonical-linux'
+            connection = [pscustomobject]@{ host = 'deploy.example.invalid'; user = 'deploy-fixture' }
+            deploy_root = '/srv/ai-bim/example-deploy'
+            runtime_data_root = '/srv/ai-bim/example-runtime-data'
+            public_host = '192.0.2.10'
+            edge_site_id = 'site-example'
+            host_native_bind_host = '192.0.2.1'
+        })
+    } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $inventoryPath -Encoding utf8
+
+    $deploymentArguments = @('-TargetId', 'canonical-linux', '-InventoryPath', $inventoryPath)
+    $deploymentPlan = Invoke-VerificationPlan -Profile 'Deployment' -RepoRoot $deploymentRoot `
+        -AdditionalArguments $deploymentArguments
     Assert-Equal 0 $deploymentPlan.ExitCode 'deployment profile accepts the intentionally pruned fixture inventory'
     Assert-True ($deploymentPlan.Output -match '\[PLAN\] profile=deployment') 'deployment profile identifies itself explicitly'
     foreach ($target in @(
@@ -122,6 +143,32 @@ try {
     )) {
         Assert-True ($deploymentPlan.Output -match "\[OMIT\] $target") "deployment profile explicitly records authoring-only omission '$target'"
     }
+    foreach ($loopbackTarget in @(
+        'coordinator health — GET http://127.0.0.1:8004/health',
+        'conversion health — GET http://127.0.0.1:49101/health',
+        'viewer endpoint — GET http://127.0.0.1:5173/'
+    )) {
+        Assert-True ($deploymentPlan.Output -match [regex]::Escape($loopbackTarget)) "deployment profile keeps '$loopbackTarget' on loopback"
+    }
+    foreach ($hostNativeTarget in @(
+        'governance health — GET http://<host-native-bind>:49102/health',
+        'kit manager health — GET http://<host-native-bind>:8010/health'
+    )) {
+        Assert-True ($deploymentPlan.Output -match [regex]::Escape($hostNativeTarget)) "deployment profile redacts '$hostNativeTarget' from private inventory"
+    }
+    Assert-True ($deploymentPlan.Output -notmatch '192\.0\.2\.1') 'deployment profile never publishes the private host-native bind address'
+    Assert-True ($deploymentPlan.Output -notmatch 'governance health — GET http://127\.0\.0\.1:49102/health') 'governance verification never assumes loopback on canonical Linux'
+    Assert-True ($deploymentPlan.Output -notmatch 'kit manager health — GET http://127\.0\.0\.1:8010/health') 'Kit Manager verification never assumes loopback on canonical Linux'
+    $verifySource = Get-Content -LiteralPath $verifyScript -Raw
+    foreach ($expectedKitManagerIdentity in @(
+        "runtime_mode = 'hybrid-web-plane-host-native-kit'",
+        'host_local_runtime_allowed = $true',
+        "kit_instance_id = 'kit_local_001'",
+        "kit_control_url = 'http://127.0.0.1:49101'"
+    )) {
+        Assert-True ($verifySource.Contains($expectedKitManagerIdentity)) "deployment verifier pins Kit Manager identity '$expectedKitManagerIdentity'"
+    }
+    Assert-True ($verifySource -match '\$actualValue -is \[bool\] -and \$actualValue -eq \$expectedValue') 'deployment verifier type-checks expected boolean identity values'
 
     $verifyShell = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts\verify-all.sh') -Raw
     Assert-True ($verifyShell -match '--profile') 'POSIX verifier mirror accepts an explicit deployment profile'
@@ -134,7 +181,8 @@ try {
     Assert-True ($runnerSource -match 'shell:\s*false') 'shared runner executes argv without a shell'
 
     Remove-Item -LiteralPath (Join-Path $deploymentRoot 'docs\plans\ai-bim-governance.css') -Force
-    $missingArtifactPlan = Invoke-VerificationPlan -Profile 'Deployment' -RepoRoot $deploymentRoot
+    $missingArtifactPlan = Invoke-VerificationPlan -Profile 'Deployment' -RepoRoot $deploymentRoot `
+        -AdditionalArguments $deploymentArguments
     Assert-True ($missingArtifactPlan.ExitCode -ne 0) 'deployment profile fails when a production-required retained artifact is missing'
     Assert-True ($missingArtifactPlan.Output -match 'deployment required artifact missing') 'deployment profile reports the missing production-required artifact'
 

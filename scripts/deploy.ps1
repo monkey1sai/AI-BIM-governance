@@ -1212,6 +1212,30 @@ if (-not $SkipKit -and $hostNative.kitBuildRequired) {
     $fixActions++
 }
 
+# NVIDIA's Linux CAD extension package can mark hoops_main.py world-writable.
+# Harden the exact pinned, unique, owner-cache candidate before conversion starts;
+# the runtime adapter independently revalidates the same trust boundary.
+if (-not $SkipConversion -and (Get-PlatformName) -eq 'linux') {
+    $cadHardener = Join-Path $RepoRoot 'bim-streaming-server\scripts\harden-cad-extension-cache.py'
+    if (-not (Test-Path -LiteralPath $cadHardener -PathType Leaf)) {
+        Write-DeployTag -Tag 'fail' -Message 'CAD extension cache hardener is missing' -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (CAD extension cache hardening)'
+        exit 2
+    }
+    $hardenerPython = Resolve-PlatformVenvPython -VenvRoot (Join-Path $RepoRoot '.venv')
+    $hardenerOutput = @(& $hardenerPython $cadHardener '--repo-root' (Join-Path $RepoRoot 'bim-streaming-server') 2>&1)
+    $hardenerExit = $LASTEXITCODE
+    if ($hardenerOutput.Count -gt 0) {
+        Add-Content -LiteralPath $LogPath -Value ($hardenerOutput -join [Environment]::NewLine)
+    }
+    if ($hardenerExit -ne 0) {
+        Write-DeployTag -Tag 'fail' -Message 'CAD extension cache permission hardening failed' -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (CAD extension cache hardening)'
+        exit 2
+    }
+    Write-DeployTag -Tag 'ok' -Message 'CAD extension cache entrypoint permissions hardened' -LogPath $LogPath | Out-Null
+}
+
 # fix: .env / .env.example missing-key merge
 foreach ($ef in $envFiles) {
     $envPath     = Join-Path $RepoRoot $ef.file

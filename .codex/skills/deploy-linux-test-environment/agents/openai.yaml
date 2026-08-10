@@ -1,0 +1,4 @@
+interface:
+  display_name: "Deploy Linux Test Environment"
+  short_description: "Safely rebuild the canonical Linux test deployment"
+  default_prompt: "Use $deploy-linux-test-environment to rebuild and verify the canonical Linux test deployment from fresh origin/main."

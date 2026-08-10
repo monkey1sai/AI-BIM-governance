@@ -463,12 +463,33 @@ function Start-HostNativeKitManager {
         throw "kit-manager-api Python cannot import fastapi and uvicorn: $pythonExe"
     }
 
-    return (Start-HostNativeService `
-        -Name 'kit-manager-api' `
-        -WorkingDirectory $serviceRoot `
-        -FilePath $pythonExe `
-        -ArgumentList @('-m','uvicorn','app.main:app','--host',(Get-HostNativeBindHost -RepoRoot $RepoRoot),'--port',"$Port") `
-        -RunDir $runDir)
+    # This service runs on the host even though the web plane is containerized.
+    # Set its child-only authority identity explicitly; container defaults would
+    # otherwise return status=ok while routing Kit control to an invalid DNS name.
+    $kitManagerEnvironment = [ordered]@{
+        RUNTIME_MODE = 'hybrid-web-plane-host-native-kit'
+        HOST_LOCAL_RUNTIME_ALLOWED = 'true'
+        KIT_INSTANCE_ID = 'kit_local_001'
+        KIT_CONTROL_URL = 'http://127.0.0.1:49101'
+    }
+    $previousEnvironment = @{}
+    foreach ($name in $kitManagerEnvironment.Keys) {
+        $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        [Environment]::SetEnvironmentVariable($name, [string]$kitManagerEnvironment[$name], 'Process')
+    }
+    try {
+        return (Start-HostNativeService `
+            -Name 'kit-manager-api' `
+            -WorkingDirectory $serviceRoot `
+            -FilePath $pythonExe `
+            -ArgumentList @('-m','uvicorn','app.main:app','--host',(Get-HostNativeBindHost -RepoRoot $RepoRoot),'--port',"$Port") `
+            -RunDir $runDir)
+    }
+    finally {
+        foreach ($name in $kitManagerEnvironment.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], 'Process')
+        }
+    }
 }
 
 function Start-HostNativeKit {

@@ -76,6 +76,19 @@ Assert-True ($moduleContent -match "'-PythonExe'") 'conversion launcher passes -
 Assert-True ($moduleContent -match 'PYTHONNOUSERSITE') 'conversion launcher disables user-site packages'
 Write-TestPass 'conversion launcher uses isolated repo Python'
 
+# Host-native Kit Manager must never inherit its container defaults. The parent
+# deployment process environment is restored after Start-Process snapshots it.
+foreach ($expectedKitManagerSetting in @(
+    "RUNTIME_MODE = 'hybrid-web-plane-host-native-kit'",
+    "HOST_LOCAL_RUNTIME_ALLOWED = 'true'",
+    "KIT_INSTANCE_ID = 'kit_local_001'",
+    "KIT_CONTROL_URL = 'http://127.0.0.1:49101'"
+)) {
+    Assert-True ($moduleContent.Contains($expectedKitManagerSetting)) "Kit Manager child env includes $expectedKitManagerSetting"
+}
+Assert-True ($moduleContent -match 'finally\s*\{\s*foreach \(\$name in \$kitManagerEnvironment\.Keys\)') 'Kit Manager child env is restored in finally'
+Write-TestPass 'host-native Kit Manager receives exact child authority identity'
+
 # Test 11: Stop-HostNativeService stops child processes before wrapper PID
 $sb = New-TestSandbox -Prefix 'hn-launcher-stop'
 try {
@@ -228,5 +241,46 @@ Write-TestPass 'Invoke-KitRepoBuild supports validated Linux repo.sh command'
 Assert-True ($moduleContent -match 'detachDeadline') 'detachment check has a bounded deadline'
 Assert-True ($moduleContent -match '& \$SleepFn 100') 'detachment check retries between probes'
 Write-TestPass 'host-native detachment check is bounded and retried'
+
+# Test 21: Kit Manager receives its exact host-native child environment while
+# the deployment process recovers its previous values after Start-Process.
+$sb = New-TestSandbox -Prefix 'kit-manager-child-env'
+$kitManagerEnvironmentNames = @('RUNTIME_MODE', 'HOST_LOCAL_RUNTIME_ALLOWED', 'KIT_INSTANCE_ID', 'KIT_CONTROL_URL')
+$originalKitManagerEnvironment = @{}
+try {
+    foreach ($name in $kitManagerEnvironmentNames) {
+        $originalKitManagerEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        [Environment]::SetEnvironmentVariable($name, "parent-$name", 'Process')
+    }
+    function Resolve-HostNativePython { param($RepoRoot, $ServiceName) return (Get-Command python -ErrorAction Stop).Source }
+    function Get-HostNativeBindHost { param($RepoRoot) return '127.0.0.1' }
+    function Start-HostNativeService {
+        param($Name, $WorkingDirectory, $FilePath, $ArgumentList, $RunDir)
+        $script:capturedKitManagerEnvironment = [ordered]@{
+            RUNTIME_MODE = [Environment]::GetEnvironmentVariable('RUNTIME_MODE', 'Process')
+            HOST_LOCAL_RUNTIME_ALLOWED = [Environment]::GetEnvironmentVariable('HOST_LOCAL_RUNTIME_ALLOWED', 'Process')
+            KIT_INSTANCE_ID = [Environment]::GetEnvironmentVariable('KIT_INSTANCE_ID', 'Process')
+            KIT_CONTROL_URL = [Environment]::GetEnvironmentVariable('KIT_CONTROL_URL', 'Process')
+        }
+        return [pscustomobject]@{ Pid = 4246; LogPath = 'fixture.log' }
+    }
+
+    Start-HostNativeKitManager -RepoRoot $sb -Port 8010 | Out-Null
+
+    Assert-Equal 'hybrid-web-plane-host-native-kit' $capturedKitManagerEnvironment.RUNTIME_MODE 'child receives hybrid runtime mode'
+    Assert-Equal 'true' $capturedKitManagerEnvironment.HOST_LOCAL_RUNTIME_ALLOWED 'child receives host-local authority flag'
+    Assert-Equal 'kit_local_001' $capturedKitManagerEnvironment.KIT_INSTANCE_ID 'child receives launched Kit instance id'
+    Assert-Equal 'http://127.0.0.1:49101' $capturedKitManagerEnvironment.KIT_CONTROL_URL 'child receives loopback conversion authority URL'
+    foreach ($name in $kitManagerEnvironmentNames) {
+        Assert-Equal "parent-$name" ([Environment]::GetEnvironmentVariable($name, 'Process')) "parent env restores $name"
+    }
+    Write-TestPass 'host-native Kit Manager child env is exact and parent env is restored'
+}
+finally {
+    foreach ($name in $kitManagerEnvironmentNames) {
+        [Environment]::SetEnvironmentVariable($name, $originalKitManagerEnvironment[$name], 'Process')
+    }
+    Remove-TestSandbox -Path $sb
+}
 
 Write-Host "`n=== test-host-native-launcher.ps1: ALL PASSED ===" -ForegroundColor Green

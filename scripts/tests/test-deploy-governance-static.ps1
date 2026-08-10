@@ -9,6 +9,7 @@ if ($deployBytes.Count -lt 3 -or $deployBytes[0] -ne 0xEF -or $deployBytes[1] -n
 }
 $deploy = Get-Content -Raw $deployPath
 $launcher = Get-Content -Raw (Join-Path $RepoRoot 'scripts\lib\host-native-launcher.ps1')
+$cadHardener = Get-Content -Raw (Join-Path $RepoRoot 'bim-streaming-server\scripts\harden-cad-extension-cache.py')
 $stopAll = Get-Content -Raw (Join-Path $RepoRoot 'scripts\stop-all.ps1')
 $hostKitCompose = Get-Content -Raw (Join-Path $RepoRoot 'compose.host-kit.yml')
 $hostKitExample = Get-Content -Raw (Join-Path $RepoRoot '.env.web-plane.host-kit.example')
@@ -34,9 +35,17 @@ Assert-Contains $deploy 'Test-KitRuntimeSignatureMatches -Path $script:webPlaneR
 Assert-Contains $deploy 'Set-KitRuntimeSignature -Path $script:webPlaneRuntimeSignaturePath' 'deploy.ps1 must persist the web-plane signature after reconcile'
 Assert-Contains $deploy '-ArtifactsRoot $resolvedConversionArtifactsRoot' 'conversion runtime signature must track its effective output root'
 Assert-Contains $deploy '$shouldRefreshWebPlane = $true' 'deploy.ps1 must force web-plane refresh for custom governance port'
+Assert-Contains $deploy "if (-not `$SkipConversion -and (Get-PlatformName) -eq 'linux')" 'deploy.ps1 must harden the CAD entrypoint only on the Linux conversion path'
+Assert-Contains $deploy 'harden-cad-extension-cache.py' 'deploy.ps1 must invoke the checked-in CAD cache hardener'
+Assert-Contains $cadHardener 'harden_default_hoops_main_permissions' 'CAD cache hardener must reuse the adapter trust-boundary implementation'
+Assert-Contains $cadHardener 'cad-extension-cache-hardening/v1' 'CAD cache hardener must emit the stable redacted result schema'
 Assert-Contains $deploy 'coordinator-governance-files-tree' 'deploy.ps1 must verify coordinator to governance proxy'
 Assert-Contains $launcher 'function Start-HostNativeGovernance' 'launcher must define Start-HostNativeGovernance'
 Assert-Contains $launcher "-Name 'governance-service'" 'launcher must use governance-service PID/log name'
+Assert-Contains $launcher "RUNTIME_MODE = 'hybrid-web-plane-host-native-kit'" 'host-native Kit Manager must publish the hybrid runtime identity'
+Assert-Contains $launcher "HOST_LOCAL_RUNTIME_ALLOWED = 'true'" 'host-native Kit Manager must allow the host-local runtime authority'
+Assert-Contains $launcher "KIT_INSTANCE_ID = 'kit_local_001'" 'host-native Kit Manager must target the launched Kit instance'
+Assert-Contains $launcher "KIT_CONTROL_URL = 'http://127.0.0.1:49101'" 'host-native Kit Manager must control the loopback conversion authority'
 Assert-Contains $stopAll 'governance-service' 'stop-all.ps1 must know governance-service'
 Assert-Contains $stopAll 'if ($remaining.Count -gt 0)' 'stop-all.ps1 must fail closed when any expected listener remains'
 Assert-Contains $stopAll 'owner-not-visible' 'stop-all.ps1 must report a listener whose PID is hidden'
@@ -79,6 +88,13 @@ $dockerFailureIndex = $deploy.IndexOf('if ($dockerExit -ne 0)')
 $webPlaneSignatureSaveIndex = $deploy.IndexOf('Set-KitRuntimeSignature -Path $script:webPlaneRuntimeSignaturePath')
 if ($dockerFailureIndex -lt 0 -or $webPlaneSignatureSaveIndex -le $dockerFailureIndex) {
     throw 'web-plane signature must be persisted only after docker compose succeeds'
+}
+
+$kitBuildIndex = $deploy.IndexOf('Invoke-KitRepoBuild')
+$cadHardeningIndex = $deploy.IndexOf('harden-cad-extension-cache.py')
+$envMergeIndex = $deploy.IndexOf('# fix: .env / .env.example missing-key merge')
+if ($kitBuildIndex -lt 0 -or $cadHardeningIndex -le $kitBuildIndex -or $envMergeIndex -le $cadHardeningIndex) {
+    throw 'CAD cache hardening must run after the Kit build gate and before later deployment phases'
 }
 
 # Hybrid mode must not start a CONTAINERISED kit-manager-api. `compose up
