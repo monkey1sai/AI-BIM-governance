@@ -354,8 +354,15 @@ export function collectRepositoryObservation(repoRoot) {
   const now = parseNowProjection(
     readBoundedText(root, path.join(root, 'docs', 'plans', 'NOW.md'), 'docs/plans/NOW.md'));
 
-  const changeEntries = listChildEntries(root, changesRoot, 'openspec/changes', MAX_CURRENT_CHANGES)
+  // One raw slot is reserved for the mandatory `archive` namespace so the filesystem
+  // observation can represent exactly the same MAX_CURRENT_CHANGES boundary the NOW parser
+  // accepts, instead of refusing one legitimate change short of it.
+  const changeEntries = listChildEntries(root, changesRoot, 'openspec/changes', MAX_CURRENT_CHANGES + 1)
     .filter((entry) => entry.name !== 'archive');
+  if (changeEntries.length > MAX_CURRENT_CHANGES) {
+    fail('input_too_large', 'openspec/changes',
+      'Lifecycle directory exceeds the bounded entry budget: openspec/changes');
+  }
   const archiveEntries = listChildEntries(root, archiveRoot, 'openspec/changes/archive', MAX_ARCHIVE_DIRECTORIES);
 
   const proposalStatuses = new Map();

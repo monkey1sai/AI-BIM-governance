@@ -60,6 +60,16 @@ function requestedFormat(argv) {
   return index >= 0 && argv[index + 1] === 'json' ? 'json' : 'text';
 }
 
+// Path-derived values reach the text renderers verbatim. A directory name containing a
+// newline or an ESC byte could otherwise forge extra terminal or CI-log lines, so any
+// value carrying a control character is emitted JSON-quoted. JSON output is unaffected.
+function renderValue(value) {
+  if (value === null || value === undefined) return '<null>';
+  const text = String(value);
+  // eslint-disable-next-line no-control-regex
+  return /[\u0000-\u001f\u007f]/u.test(text) ? JSON.stringify(text) : text;
+}
+
 function renderError(error, format) {
   if (format === 'json') {
     return JSON.stringify({
@@ -69,7 +79,13 @@ function renderError(error, format) {
       message: error.message,
     });
   }
-  return `${error.code} (${error.field}): ${error.message}`;
+  return `${renderValue(error.code)} (${renderValue(error.field)}): ${renderValue(error.message)}`;
+}
+
+export function renderMismatchLine(item) {
+  return `MISMATCH ${renderValue(item.code)} change=${item.change_id === null ? '<none>' : renderValue(item.change_id)} ` +
+    `expected(${renderValue(item.expected_source)})=${renderValue(item.expected)} ` +
+    `actual(${renderValue(item.actual_source)})=${renderValue(item.actual)} :: ${renderValue(item.message)}`;
 }
 
 function renderText(report) {
@@ -78,10 +94,7 @@ function renderText(report) {
     `now=${report.now_rows} change_dirs=${report.change_directories} archive_dirs=${report.archive_directories}`,
   ];
   for (const item of report.mismatches) {
-    lines.push(
-      `MISMATCH ${item.code} change=${item.change_id ?? '<none>'} ` +
-      `expected(${item.expected_source})=${item.expected ?? '<null>'} ` +
-      `actual(${item.actual_source})=${item.actual ?? '<null>'} :: ${item.message}`);
+    lines.push(renderMismatchLine(item));
   }
   lines.push(report.mismatch_count === 0
     ? 'openspec repository lifecycle OK: all three sources agree.'

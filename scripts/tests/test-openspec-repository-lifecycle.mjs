@@ -29,6 +29,7 @@ import {
   EXIT_PARITY,
   main,
   parseArguments,
+  renderMismatchLine,
 } from './verify-openspec-repository-lifecycle.mjs';
 
 const NOW_START = '<!-- lifecycle-ledger:start -->';
@@ -120,6 +121,10 @@ function withRepository(run, mutate = () => {}) {
     for (const [id, status] of Object.entries(spec.changes)) {
       if (status === 'as-file') {
         write(path.join(root, 'openspec', 'changes', id), 'not a change directory\n');
+        continue;
+      }
+      if (status === 'proposal-as-directory') {
+        mkdirSync(path.join(root, 'openspec', 'changes', id, 'proposal.md'), { recursive: true });
         continue;
       }
       if (status === 'no-proposal') {
@@ -667,6 +672,70 @@ test('the command actually runs when spawned as a process, including through a l
   } finally {
     removeTree(linkRoot);
   }
+});
+
+test('a directory standing in for proposal.md is one mismatch, not a dead gate', () => {
+  // Portable companion to the symlink fixture: a symlink satisfies the first predicate and
+  // short-circuits, so only this case exercises the non-regular-file predicate.
+  withRepository((root) => {
+    const report = evaluateRepositoryLifecycle(root);
+    assert.equal(report.mismatches.find((item) => item.code === 'proposal_unreadable')?.change_id, 'beta');
+    assert.equal(report.mismatch_count, 1, 'the other rows must still be compared');
+  }, (spec) => {
+    spec.changes.beta = 'proposal-as-directory';
+  });
+});
+
+test('bounded input budgets are enforced as input_too_large', () => {
+  const bulk = (count, statusOf = () => 'active') => {
+    const ids = Array.from({ length: count }, (unused, index) => `bulk-${String(index).padStart(4, '0')}`);
+    return ids.map((id) => ({ id, status: statusOf(id) }));
+  };
+
+  // The accepted boundary: MAX_CURRENT_CHANGES current directories plus the mandatory
+  // `archive` namespace must still be evaluated, not refused one change short of the limit.
+  const atLimit = bulk(512);
+  withRepository((root) => {
+    assert.equal(evaluateRepositoryLifecycle(root).mismatch_count, 0);
+  }, (spec) => {
+    spec.ledger.changes = [ledgerRow('gamma', 'archived'), ...atLimit.map(({ id }) => ledgerRow(id, 'active'))];
+    spec.now = nowDocument(atLimit);
+    spec.changes = Object.fromEntries(atLimit.map(({ id }) => [id, null]));
+  });
+
+  // One past it.
+  const overLimit = bulk(513);
+  withRepository((root) => expectInputError(root, 'input_too_large'), (spec) => {
+    spec.ledger.changes = [ledgerRow('gamma', 'archived'), ...overLimit.map(({ id }) => ledgerRow(id, 'active'))];
+    spec.now = nowDocument(overLimit.slice(0, 512));
+    spec.changes = Object.fromEntries(overLimit.map(({ id }) => [id, null]));
+  });
+
+  withRepository((root) => expectInputError(root, 'input_too_large'), (spec) => {
+    spec.now = nowDocument(bulk(513));
+  });
+
+  withRepository((root) => expectInputError(root, 'input_too_large'), (spec) => {
+    spec.ledger.changes = bulk(8193).map(({ id }) => ledgerRow(id, 'archived'));
+  });
+
+  withRepository((root) => expectInputError(root, 'input_too_large'), (spec) => {
+    spec.now = `${nowMarkdown(spec.now)}\n${'x'.repeat(4 * 1024 * 1024)}\n`;
+  });
+});
+
+test('control characters in a path-derived value cannot forge report lines', () => {
+  const escaped = renderMismatchLine({
+    code: 'change_entry_not_a_directory',
+    change_id: null,
+    expected_source: 'openspec_changes_contract',
+    expected: 'directory',
+    actual_source: 'openspec_changes',
+    actual: 'ghost\nopenspec repository lifecycle OK: all three sources agree.',
+    message: 'forged',
+  });
+  assert.equal(escaped.split('\n').length, 1, 'a newline in a path-derived value must not open a second line');
+  assert.match(escaped, /ghost\\n/u);
 });
 
 test('the real repository lifecycle sources agree', () => {
