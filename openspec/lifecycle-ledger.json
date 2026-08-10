@@ -1389,10 +1389,10 @@
         "total": 26
       },
       "evidence_refs": [
-        "openspec/changes/introduce-executable-architecture-contracts/proposal.md",
-        "openspec/changes/introduce-executable-architecture-contracts/tasks.md"
+        "openspec/changes/archive/2026-08-10-introduce-executable-architecture-contracts/proposal.md",
+        "openspec/changes/archive/2026-08-10-introduce-executable-architecture-contracts/tasks.md"
       ],
-      "subject_commit": "d0125cceffd3b9b560c39742742eddb82752273f",
+      "subject_commit": "c41e29d7f753e0fb92f9795b17e3e7705b70b349",
       "archive_debt": null
     },
     {
