@@ -1379,11 +1379,11 @@
     },
     {
       "id": "introduce-executable-architecture-contracts",
-      "status": "active",
+      "status": "archived",
       "owner": "repository-maintainer",
-      "current_slice": "全五 phase 交付完成,待 archive",
+      "current_slice": "全五 phase 交付並 archived(2026-08-10)",
       "blocked_by": [],
-      "last_verified": "2026-08-10T00:00:00Z",
+      "last_verified": "2026-08-10T02:50:00Z",
       "task_ledger": {
         "completed": 26,
         "total": 26
@@ -1392,7 +1392,7 @@
         "openspec/changes/introduce-executable-architecture-contracts/proposal.md",
         "openspec/changes/introduce-executable-architecture-contracts/tasks.md"
       ],
-      "subject_commit": "584314158cd87342cc5808d3f9bf090abfbc6919",
+      "subject_commit": "d0125cceffd3b9b560c39742742eddb82752273f",
       "archive_debt": null
     },
     {
