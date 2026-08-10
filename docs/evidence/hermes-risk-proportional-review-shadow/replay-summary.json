@@ -1,6 +1,6 @@
 {
   "schema_version": "review-risk-replay-summary/v1",
-  "generated_at": "2026-08-06",
+  "generated_at": "2026-08-10",
   "authority": "advisory_shadow",
   "merge_authority": false,
   "policy_sha256": "db2950c2751f26e26f3079e17b8e21926bc3fdee07196d1510400afcd52ab10e",
@@ -21,19 +21,19 @@
     {
       "id": "ui-style-visible-low-risk",
       "passed": true,
-      "review_mode": "mechanical_only",
-      "verdict": "advisory_pass",
+      "review_mode": "focused_semantic",
+      "verdict": "advisory_review",
       "topology": "local",
-      "consequence": "low",
+      "consequence": "medium",
       "mismatches": []
     },
     {
       "id": "bounded-local-bug-fix",
       "passed": true,
-      "review_mode": "mechanical_only",
-      "verdict": "advisory_pass",
+      "review_mode": "focused_semantic",
+      "verdict": "advisory_review",
       "topology": "local",
-      "consequence": "low",
+      "consequence": "medium",
       "mismatches": []
     },
     {
@@ -51,7 +51,7 @@
       "review_mode": "risk_scoped_specialists",
       "verdict": "advisory_review",
       "topology": "distributed",
-      "consequence": "low",
+      "consequence": "medium",
       "mismatches": []
     },
     {
@@ -129,10 +129,10 @@
     {
       "id": "large-generated-local-diff",
       "passed": true,
-      "review_mode": "mechanical_only",
-      "verdict": "advisory_pass",
+      "review_mode": "focused_semantic",
+      "verdict": "advisory_review",
       "topology": "local",
-      "consequence": "low",
+      "consequence": "medium",
       "mismatches": []
     },
     {
@@ -177,7 +177,7 @@
       "review_mode": "focused_semantic",
       "verdict": "held",
       "topology": "unknown",
-      "consequence": "low",
+      "consequence": "medium",
       "mismatches": []
     },
     {

@@ -2,13 +2,10 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
   copyFileSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
   symlinkSync,
-  unlinkSync,
-  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
@@ -35,10 +32,16 @@ const repoRoot = resolve(testDir, '..', '..');
 const policyPath = resolve(repoRoot, 'agent-contracts', 'risk-proportional-review.contract.json');
 const corpusPath = resolve(testDir, 'fixtures', 'review-risk-golden.json');
 const samplePath = resolve(testDir, 'fixtures', 'review-risk-sample.json');
+const policySchemaPath = resolve(repoRoot, 'agent-contracts', 'risk-proportional-review.contract.schema.json');
+const reviewSchemaPath = resolve(testDir, 'review-risk.schema.json');
+const replaySummaryPath = resolve(repoRoot, 'docs', 'evidence', 'hermes-risk-proportional-review-shadow', 'replay-summary.json');
 const cliPath = resolve(repoRoot, 'scripts', 'dev', 'review-risk-shadow.mjs');
 const artifactsRoot = resolve(repoRoot, 'artifacts');
 const policy = await readJson(policyPath);
 const corpus = await readJson(corpusPath);
+const policySchema = await readJson(policySchemaPath);
+const reviewSchema = await readJson(reviewSchemaPath);
+const replaySummary = await readJson(replaySummaryPath);
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -54,12 +57,10 @@ function runShadowCli(args) {
 
 function rehashPacket(candidate) {
   const packet = clone(candidate);
-  packet.packet_sha256 = '';
+  packet.packet_sha256 = '0'.repeat(64);
   let converged = false;
   for (let iteration = 0; iteration < 16; iteration += 1) {
-    const material = clone(packet);
-    delete material.packet_sha256;
-    const next = Buffer.byteLength(stableStringify(material), 'utf8');
+    const next = Buffer.byteLength(`${JSON.stringify(packet, null, 2)}\n`, 'utf8');
     if (next === packet.budget.actual_bytes) {
       converged = true;
       break;
@@ -70,7 +71,12 @@ function rehashPacket(candidate) {
   const material = clone(packet);
   delete material.packet_sha256;
   packet.packet_sha256 = sha256Value(material);
+  assert.equal(Buffer.byteLength(`${JSON.stringify(packet, null, 2)}\n`, 'utf8'), packet.budget.actual_bytes);
   return packet;
+}
+
+function addExactEvidence(input, kind, ref = `artifacts/${kind}.json`) {
+  input.evidence.push({ kind, status: 'passed', ref, head_sha: input.head_sha });
 }
 
 function heldReviewResult(packet, reviewerRole) {
@@ -126,11 +132,60 @@ test('policy rejects attempts to become merge authority or expand retry budgets'
   assert.throws(() => validatePolicy(retries), /bounded-loop safety values/);
 });
 
+test('Draft-07 policy schema pins canonical mode identities, ranks, budgets, and human floor', () => {
+  const modeSchema = policySchema.properties.review_modes;
+  assert.equal(modeSchema.additionalItems, false);
+  assert.deepEqual(modeSchema.items.map((entry) => ({
+    id: entry.properties.id.const,
+    rank: entry.properties.rank.const,
+    max_model_reviewers: entry.properties.max_model_reviewers.const,
+    human_required: entry.properties.human_required.const,
+  })), policy.review_modes);
+});
+
+test('consolidated schema matches runtime repository and packet maxima', () => {
+  const strictRepositoryPattern = '^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$';
+  assert.equal(reviewSchema.definitions.input.properties.repository.pattern, strictRepositoryPattern);
+  assert.equal(reviewSchema.definitions.decision.properties.repository.pattern, strictRepositoryPattern);
+  assert.equal(reviewSchema.definitions.packet.properties.repository.pattern, strictRepositoryPattern);
+  assert.equal(reviewSchema.definitions.packet.properties.selected_paths.maxItems, 64);
+  assert.equal(reviewSchema.definitions.packet.properties.evidence_refs.maxItems, 32);
+  assert.equal(reviewSchema.definitions.packet.properties.questions.maxItems, 8);
+  assert.equal(reviewSchema.definitions.review_result.properties.question_coverage.maxItems, 8);
+  const budgetBounds = reviewSchema.definitions.packet_budget.properties;
+  assert.deepEqual(budgetBounds.max_bytes, { type: 'integer', minimum: 4096, maximum: 65536 });
+  assert.deepEqual(budgetBounds.actual_bytes, { type: 'integer', minimum: 1, maximum: 1_000_000 });
+  assert.deepEqual(budgetBounds.max_changed_paths, { type: 'integer', minimum: 1, maximum: 64 });
+  assert.deepEqual(budgetBounds.selected_changed_paths, { type: 'integer', minimum: 0, maximum: 64 });
+  assert.deepEqual(budgetBounds.max_evidence_refs, { type: 'integer', minimum: 1, maximum: 32 });
+  assert.deepEqual(budgetBounds.selected_evidence_refs, { type: 'integer', minimum: 0, maximum: 32 });
+  assert.deepEqual(budgetBounds.max_questions, { type: 'integer', minimum: 1, maximum: 8 });
+  assert.deepEqual(budgetBounds.selected_questions, { type: 'integer', minimum: 0, maximum: 8 });
+});
+
 test('golden corpus covers twenty risk shapes with no mismatch', () => {
   const report = replayCorpus(clone(corpus), clone(policy));
   assert.equal(report.total, 20);
   assert.equal(report.passed, 20);
   assert.equal(report.failed, 0);
+});
+
+test('tracked replay summary is an exact projection of executable golden replay', () => {
+  const report = replayCorpus(clone(corpus), clone(policy));
+  const projectedCases = report.results.map(({ id, passed, mismatches, decision }) => ({
+    id,
+    passed,
+    review_mode: decision.review_mode,
+    verdict: decision.verdict,
+    topology: decision.risk.topology,
+    consequence: decision.risk.consequence,
+    mismatches,
+  }));
+  assert.equal(replaySummary.policy_sha256, report.policy_sha256);
+  assert.deepEqual(
+    { total: replaySummary.total, passed: replaySummary.passed, failed: replaySummary.failed, cases: replaySummary.cases },
+    { total: report.total, passed: report.passed, failed: report.failed, cases: projectedCases },
+  );
 });
 
 test('low submitter claims cannot downgrade deterministic high-risk facts', () => {
@@ -165,6 +220,23 @@ test('self-referential mechanism changes require human review and governance spe
 
 test('all review-router implementation surfaces classify as self-referential', () => {
   for (const path of [
+    'scripts/deploy.ps1',
+    'scripts/verify-all.ps1',
+    'scripts/verify-all.sh',
+    'scripts/dev/rebuild-test-deploy.ps1',
+    'scripts/deploy-target-registry.json',
+    'scripts/lib/windows-verification-scope.ps1',
+    'scripts/lib/platform/process-identity.ps1',
+    'scripts/lib/design-system-gate.ps1',
+    'scripts/tests/verify-functional-runtime-result.ps1',
+    'scripts/tests/verify-openspec-machine-truth.mjs',
+    'scripts/hooks/require-gstack-evidence.ps1',
+    'scripts/lib/detect-base-gate-capability.sh',
+    'scripts/pr-review-agent.ps1',
+    'scripts/lib/security-exceptions-cli.mjs',
+    'scripts/tests/verification-plan.schema.json',
+    'web-viewer-sample/scripts/verify-design-system-pixels.mjs',
+    'web-viewer-sample/scripts/lib/png-preflight.mjs',
     'scripts/dev/review-risk-shadow.mjs',
     'scripts/tests/review-risk.schema.json',
     'scripts/tests/test-review-risk.mjs',
@@ -196,8 +268,24 @@ test('failed deterministic evidence blocks rather than asking a model to overrul
   assert.notEqual(decision.verdict, 'advisory_pass');
 });
 
+test('any supplied exact-head failed evidence blocks even when its kind is not required', () => {
+  const input = caseInput('docs-typo-mechanical');
+  input.evidence.push({
+    kind: 'historical_replay',
+    status: 'failed',
+    ref: 'artifacts/failed-historical-replay.json',
+    head_sha: input.head_sha,
+  });
+  const decision = classifyReview(input, policy);
+  assert.equal(decision.risk.evidence_strength, 'failed');
+  assert.equal(decision.verdict, 'blocked');
+  assert.ok(decision.evidence_gaps.includes('historical_replay:failed'));
+});
+
 test('large line count alone does not force semantic review', () => {
-  const decision = classifyReview(caseInput('large-generated-local-diff'), policy);
+  const input = caseInput('large-generated-local-diff');
+  input.changed_paths[0].path = 'docs/generated/theme.css';
+  const decision = classifyReview(input, policy);
   assert.equal(decision.review_mode, 'mechanical_only');
   assert.equal(decision.risk.consequence, 'low');
   assert.equal(decision.model_reviewer_budget, 0);
@@ -222,6 +310,7 @@ test('packet compiler is exact-head bound, deterministic, and bounded', () => {
   assert.equal(first.head_sha, HEAD);
   assert.equal(first.status, 'ready');
   assert.ok(first.budget.actual_bytes <= first.budget.max_bytes);
+  assert.equal(Buffer.byteLength(`${JSON.stringify(first, null, 2)}\n`, 'utf8'), first.budget.actual_bytes);
   assert.equal(first.merge_authority, false);
 });
 
@@ -242,6 +331,29 @@ test('packet content, byte count, and hash are independently revalidated', () =>
     return value;
   })());
   assert.throws(() => validateReviewPacket(falseAccounting), /actual byte count does not match/);
+
+  for (const [field, invalid] of [
+    ['max_bytes', 4095],
+    ['max_bytes', 65537],
+    ['actual_bytes', 0],
+    ['actual_bytes', 1_000_001],
+    ['max_changed_paths', 0],
+    ['max_changed_paths', 65],
+    ['selected_changed_paths', -1],
+    ['selected_changed_paths', 65],
+    ['max_evidence_refs', 0],
+    ['max_evidence_refs', 33],
+    ['selected_evidence_refs', -1],
+    ['selected_evidence_refs', 33],
+    ['max_questions', 0],
+    ['max_questions', 9],
+    ['selected_questions', -1],
+    ['selected_questions', 9],
+  ]) {
+    const invalidBudget = clone(packet);
+    invalidBudget.budget[field] = invalid;
+    assert.throws(() => validateReviewPacket(invalidBudget), new RegExp(`packet\\.budget\\.${field}`), `${field}=${invalid}`);
+  }
 });
 
 test('packet compiler reports path-budget overflow instead of silently widening context', () => {
@@ -258,6 +370,77 @@ test('packet compiler reports path-budget overflow instead of silently widening 
   assert.equal(packet.selected_paths.length, 24);
   assert.equal(packet.omitted_path_count, 6);
   assert.ok(packet.budget.exceeded.includes('changed_paths'));
+});
+
+test('question candidates remain visible so packet question overflow fails closed', () => {
+  const constrainedPolicy = clone(policy);
+  constrainedPolicy.packet_budget.max_questions = 1;
+  const input = caseInput('self-referential-gate-change');
+  const decision = classifyReview(input, constrainedPolicy);
+  assert.ok(decision.questions.length > constrainedPolicy.packet_budget.max_questions);
+  const packet = buildReviewPacket(input, decision, constrainedPolicy);
+  assert.equal(packet.questions.length, 1);
+  assert.equal(packet.status, 'budget_exceeded');
+  assert.ok(packet.budget.exceeded.includes('questions'));
+});
+
+test('evidence overflow counts unique refs using the same unit as packet selection', () => {
+  const constrainedPolicy = clone(policy);
+  constrainedPolicy.packet_budget.max_evidence_refs = 1;
+  const input = caseInput('docs-typo-mechanical');
+  input.evidence.push({
+    kind: 'historical_replay',
+    status: 'passed',
+    ref: input.evidence[0].ref,
+    head_sha: input.head_sha,
+  });
+  const packet = buildReviewPacket(input, classifyReview(input, constrainedPolicy), constrainedPolicy);
+  assert.equal(packet.evidence_refs.length, 1);
+  assert.equal(packet.status, 'ready');
+  assert.equal(packet.budget.exceeded.includes('evidence_refs'), false);
+});
+
+test('packet validator supports every legal policy maximum instead of default hard caps', () => {
+  const widePolicy = clone(policy);
+  widePolicy.packet_budget.max_changed_paths = 25;
+  widePolicy.packet_budget.max_evidence_refs = 17;
+  widePolicy.packet_budget.max_questions = 8;
+  const input = caseInput('docs-typo-mechanical');
+  input.changed_paths = Array.from({ length: 25 }, (_, index) => ({
+    path: `docs/wide/file-${String(index).padStart(2, '0')}.md`,
+    status: 'modified',
+    additions: 1,
+    deletions: 1,
+  }));
+  input.evidence = Array.from({ length: 17 }, (_, index) => ({
+    kind: 'test_result',
+    status: 'passed',
+    ref: `artifacts/test-${String(index).padStart(2, '0')}.json`,
+    head_sha: input.head_sha,
+  }));
+  const packet = buildReviewPacket(input, classifyReview(input, widePolicy), widePolicy);
+  assert.equal(packet.selected_paths.length, 25);
+  assert.equal(packet.evidence_refs.length, 17);
+  assert.deepEqual(validateReviewPacket(packet), packet);
+
+  const questionInput = caseInput('authentication-token-verification');
+  questionInput.changed_paths.push(
+    { path: 'scripts/verification-manifest.json', status: 'modified', additions: 1, deletions: 1 },
+    { path: 'contracts/public-api.json', status: 'modified', additions: 1, deletions: 1 },
+    { path: 'shared/rules.ts', status: 'modified', additions: 1, deletions: 1 },
+  );
+  questionInput.evidence = [];
+  questionInput.change.persistent_write = 'transactional';
+  const questionPacket = buildReviewPacket(questionInput, classifyReview(questionInput, widePolicy), widePolicy);
+  assert.equal(questionPacket.questions.length, 8);
+  assert.deepEqual(validateReviewPacket(questionPacket), questionPacket);
+});
+
+test('packet validator rejects an identity with no base-to-head change', () => {
+  const input = caseInput('docs-typo-mechanical');
+  const packet = buildReviewPacket(input, classifyReview(input, policy), policy);
+  packet.base_sha = packet.head_sha;
+  assert.throws(() => validateReviewPacket(rehashPacket(packet)), /base_sha and packet.head_sha must differ/);
 });
 
 test('packet compiler rejects a decision bound to another input', () => {
@@ -288,6 +471,31 @@ test('input contract rejects unknown fields and absolute paths', () => {
   assert.throws(() => validateInput(absolute), /absolute path is forbidden/);
 });
 
+test('renames bind and classify both previous and destination paths', () => {
+  const input = caseInput('docs-typo-mechanical');
+  input.changed_paths[0] = {
+    path: 'docs/archive/codeowners.md',
+    previous_path: '.github/CODEOWNERS',
+    status: 'renamed',
+    additions: 0,
+    deletions: 0,
+  };
+  const validated = validateInput(input);
+  assert.equal(validated.changed_paths[0].previous_path, '.github/CODEOWNERS');
+  const decision = classifyReview(input, policy);
+  assert.equal(decision.risk.trust_surface, 'critical_authority');
+  assert.equal(decision.review_mode, 'human_critical');
+  assert.ok(decision.signals.includes('self_referential_path:.github/CODEOWNERS'));
+
+  const nonRename = caseInput('docs-typo-mechanical');
+  nonRename.changed_paths[0].previous_path = 'docs/old.md';
+  assert.throws(() => validateInput(nonRename), /previous_path is allowed only for renamed paths/);
+
+  const missingSource = caseInput('docs-typo-mechanical');
+  missingSource.changed_paths[0].status = 'renamed';
+  assert.throws(() => validateInput(missingSource), /previous_path is required for renamed paths/);
+});
+
 test('Windows separators normalize to portable repository paths', () => {
   assert.equal(normalizeRepositoryPath('scripts\\tests\\fixture.json'), 'scripts/tests/fixture.json');
   const input = caseInput('authentication-token-verification');
@@ -305,6 +513,21 @@ test('evidence fingerprints are stable and change when exact evidence changes', 
   assert.equal(first, evidenceFingerprint(reordered));
   reordered.evidence[0].ref = 'artifacts/changed-ref.json';
   assert.notEqual(first, evidenceFingerprint(reordered));
+});
+
+test('packet ordering and evidence fingerprints never consult host locale', () => {
+  const originalLocaleCompare = String.prototype.localeCompare;
+  String.prototype.localeCompare = () => { throw new Error('localeCompare must not be used'); };
+  try {
+    const input = caseInput('docs-typo-mechanical');
+    input.changed_paths.push({ path: 'docs/ä.md', status: 'modified', additions: 1, deletions: 1 });
+    input.changed_paths.push({ path: 'docs/z.md', status: 'modified', additions: 1, deletions: 1 });
+    const packet = buildReviewPacket(input, classifyReview(input, policy), policy);
+    assert.deepEqual(packet.selected_paths.map((entry) => entry.path), ['docs/runbooks/typo.md', 'docs/z.md', 'docs/ä.md']);
+    assert.equal(evidenceFingerprint(input).length, 64);
+  } finally {
+    String.prototype.localeCompare = originalLocaleCompare;
+  }
 });
 
 
@@ -422,6 +645,40 @@ test('fix_required requires confirmed in-scope fix_now evidence', () => {
   invalid.findings[0].status = 'unverified';
   invalid.findings[0].disposition = 'unverified';
   assert.throws(() => validateReviewResult(invalid, packet), /requires at least one confirmed in-scope fix_now/);
+
+  const outsidePath = clone(result);
+  outsidePath.findings[0].path = 'docs/contracts/not-selected.json';
+  assert.throws(() => validateReviewResult(outsidePath, packet), /requires one selected packet path and packet evidence/);
+
+  const evidenceFree = clone(result);
+  evidenceFree.findings[0].evidence_refs = [];
+  assert.throws(() => validateReviewResult(evidenceFree, packet), /requires one selected packet path and packet evidence/);
+});
+
+test('human-critical review is human-only and incomplete evidence keeps the packet held', () => {
+  const input = caseInput('self-referential-gate-change');
+  const required = classifyReview(input, policy).required_evidence;
+  input.evidence = required.map((kind) => ({
+    kind,
+    status: 'passed',
+    ref: `artifacts/${kind}.json`,
+    head_sha: input.head_sha,
+  }));
+  const decision = classifyReview(input, policy);
+  assert.equal(decision.review_mode, 'human_critical');
+  assert.equal(decision.verdict, 'human_required');
+  const packet = buildReviewPacket(input, decision, policy);
+  assert.equal(packet.status, 'ready');
+  assert.throws(() => validateReviewResult(heldReviewResult(packet, 'governance'), packet), /requires a human reviewer/);
+  assert.equal(validateReviewResult(heldReviewResult(packet, 'human'), packet).reviewer_role, 'human');
+
+  const incomplete = clone(input);
+  incomplete.evidence = incomplete.evidence.filter((entry) => entry.kind !== 'security_review');
+  const incompleteDecision = classifyReview(incomplete, policy);
+  assert.equal(incompleteDecision.verdict, 'held');
+  const incompletePacket = buildReviewPacket(incomplete, incompleteDecision, policy);
+  assert.equal(incompletePacket.status, 'held');
+  assert.throws(() => validateReviewResult(heldReviewResult(incompletePacket, 'human'), incompletePacket), /forbidden for packet status held/);
 });
 
 test('held reviewer result carries only one bounded evidence request', () => {
@@ -481,13 +738,35 @@ test('bounded loop continues only when new evidence exists inside the budget', (
     attempts: [
       {
         attempt: 1, head_sha: HEAD, policy_sha256: POLICY_HASH, input_sha256: INPUT_HASH, verification_manifest_sha256: MANIFEST_HASH, evidence_fingerprint: FINGERPRINT_B,
-        action: 'evidence_request', expected_new_evidence: ['contract_result'], observed_new_evidence: ['contract_result'], decision: 'continue',
+        action: 'deterministic_verify', expected_new_evidence: ['contract_result'], observed_new_evidence: ['contract_result'], decision: 'continue',
       },
     ],
   });
   assert.equal(result.state, 'continue');
   assert.equal(result.reason, 'new_evidence_observed_within_budget');
   assert.equal(result.remaining_attempts, 1);
+});
+
+test('bounded loop rejects model or human review before deterministic verification', () => {
+  for (const action of ['model_review', 'human_review', 'evidence_request']) {
+    assert.throws(() => advanceReviewLoop({
+      schema_version: 'review-loop-input/v1',
+      max_attempts: 2,
+      max_evidence_delta_requests: 1,
+      attempts: [{
+        attempt: 1,
+        head_sha: HEAD,
+        policy_sha256: POLICY_HASH,
+        input_sha256: INPUT_HASH,
+        verification_manifest_sha256: MANIFEST_HASH,
+        evidence_fingerprint: FINGERPRINT_A,
+        action,
+        expected_new_evidence: ['review_verdict'],
+        observed_new_evidence: ['review_verdict'],
+        decision: 'advisory_pass',
+      }],
+    }), /must be deterministic_verify before model or human review/, action);
+  }
 });
 
 test('bounded loop refuses to mix head or policy identities', () => {
@@ -685,9 +964,9 @@ test('maximum-length evidence refs compile into a self-validating bounded packet
 test('each unknown blast-radius field fails closed until exact impact evidence exists', () => {
   const base = caseInput('docs-typo-mechanical');
   assert.equal(classifyReview(clone(base), policy).review_mode, 'mechanical_only');
-  for (const field of ['affected_services', 'callers']) {
+  for (const [field, unknownValue] of [['affected_services', null], ['callers', null], ['users', 'unknown']]) {
     const input = clone(base);
-    input.impact[field] = null;
+    input.impact[field] = unknownValue;
     const decision = classifyReview(input, policy);
     assert.ok(decision.signals.includes('impact_unknown'), field);
     assert.ok(decision.required_evidence.includes('impact_result'), field);
@@ -699,6 +978,7 @@ test('each unknown blast-radius field fails closed until exact impact evidence e
   const evidenced = clone(base);
   evidenced.impact.affected_services = null;
   evidenced.impact.callers = null;
+  evidenced.impact.users = 'unknown';
   evidenced.evidence.push({
     kind: 'impact_result',
     status: 'passed',
@@ -709,6 +989,39 @@ test('each unknown blast-radius field fails closed until exact impact evidence e
   assert.equal(decision.review_mode, 'focused_semantic');
   assert.equal(decision.verdict, 'advisory_review');
   assert.equal(buildReviewPacket(evidenced, decision, policy).status, 'ready');
+});
+
+test('every production root requires runtime and integration evidence, with dual frontend proof', () => {
+  const productionPaths = [
+    'bim-review-coordinator/src/session.ts',
+    'bim-streaming-server/source/runtime.py',
+    'governance-service/src/rules.py',
+    'web-viewer-sample/src/Window.tsx',
+    'apps/kit-manager-web/src/App.tsx',
+    'services/kit-manager-api/src/server.ts',
+  ];
+  for (const path of productionPaths) {
+    const input = caseInput('docs-typo-mechanical');
+    input.changed_paths[0].path = path;
+    const decision = classifyReview(input, policy);
+    assert.ok(decision.required_evidence.includes('runtime_log'), path);
+    assert.ok(decision.required_evidence.includes('integration_result'), path);
+    assert.equal(decision.verdict, 'held', path);
+    if (path.startsWith('web-viewer-sample/') || path.startsWith('apps/kit-manager-web/')) {
+      assert.ok(decision.required_evidence.includes('browser_artifacts'), path);
+      assert.ok(decision.required_evidence.includes('design_fidelity_result'), path);
+    }
+  }
+});
+
+test('a generic evidence-complete Lane G change always receives a bounded specialist', () => {
+  const input = caseInput('docs-typo-mechanical');
+  input.lane = 'G';
+  addExactEvidence(input, 'impact_result');
+  addExactEvidence(input, 'integration_result');
+  const decision = classifyReview(input, policy);
+  assert.equal(decision.review_mode, 'risk_scoped_specialists');
+  assert.deepEqual(decision.specialists, ['evidence']);
 });
 
 test('advisory claim escalation honors every score threshold boundary', () => {
@@ -804,6 +1117,20 @@ test('bounded loop covers every terminal safety branch', () => {
     { state: 'complete', reason: 'terminal_decision_advisory_pass' },
   );
   assert.equal(decide([attempt(1, FINGERPRINT_A, { decision: 'held' })]).reason, 'attempt_reported_held');
+  for (const terminal of ['advisory_pass', 'advisory_review', 'human_required', 'held', 'blocked']) {
+    assert.throws(() => decide([
+      attempt(1, FINGERPRINT_A, { decision: terminal }),
+      attempt(2, FINGERPRINT_B, { action: 'model_review', decision: 'advisory_pass' }),
+    ]), /may not continue after a terminal decision/, terminal);
+  }
+  assert.equal(decide([
+    attempt(1, FINGERPRINT_A),
+    attempt(2, FINGERPRINT_A, { action: 'model_review', decision: 'advisory_pass' }),
+  ]).reason, 'same_evidence_fingerprint_no_retry');
+  assert.equal(decide([
+    attempt(1, FINGERPRINT_A),
+    attempt(2, FINGERPRINT_B, { action: 'model_review', observed_new_evidence: [], decision: 'advisory_pass' }),
+  ]).reason, 'no_new_evidence_observed');
   assert.equal(decide([
     attempt(1, FINGERPRINT_A),
     attempt(2, FINGERPRINT_B, { observed_new_evidence: [] }),
@@ -812,10 +1139,10 @@ test('bounded loop covers every terminal safety branch', () => {
     attempt(1, FINGERPRINT_A),
     attempt(2, FINGERPRINT_B, { observed_new_evidence: ['contract_result'] }),
   ]).reason, 'attempt_budget_exhausted');
-  assert.equal(decide([
+  assert.throws(() => decide([
     attempt(1, FINGERPRINT_A, { action: 'evidence_request' }),
     attempt(2, FINGERPRINT_B, { action: 'evidence_request' }),
-  ]).reason, 'evidence_delta_request_budget_exhausted');
+  ]), /must be deterministic_verify before model or human review/);
 });
 
 test('sample fixture is executable through the shadow CLI', () => {
@@ -826,7 +1153,7 @@ test('sample fixture is executable through the shadow CLI', () => {
   assert.equal(decision.repository, 'monkey1sai/AI-BIM-governance');
 });
 
-test('shadow CLI rejects malformed options and output paths outside artifacts', () => {
+test('shadow CLI rejects malformed options and all filesystem write flags', () => {
   const missing = runShadowCli(['evaluate']);
   assert.equal(missing.status, 2);
   assert.match(missing.stderr, /--input is required/);
@@ -835,23 +1162,17 @@ test('shadow CLI rejects malformed options and output paths outside artifacts', 
   assert.equal(unknown.status, 2);
   assert.match(unknown.stderr, /unknown option --unexpected/);
 
-  const temp = mkdtempSync(join(tmpdir(), 'review-risk-cli-'));
-  try {
-    const outside = runShadowCli(['evaluate', '--input', samplePath, '--output', join(temp, 'outside.json')]);
-    assert.equal(outside.status, 2);
-    assert.match(outside.stderr, /--output must resolve inside/);
-  } finally {
-    rmSync(temp, { recursive: true, force: true });
-  }
+  const output = runShadowCli(['evaluate', '--input', samplePath, '--output', join(artifactsRoot, 'forbidden.json')]);
+  assert.equal(output.status, 2);
+  assert.match(output.stderr, /unknown option --output/);
 });
 
-test('shadow CLI rejects symlink escapes and refuses to overwrite output', () => {
+test('shadow CLI rejects symlink escapes for repository-contained reads', () => {
   mkdirSync(artifactsRoot, { recursive: true });
   const container = mkdtempSync(join(artifactsRoot, 'review-risk-link-'));
   const external = mkdtempSync(join(tmpdir(), 'review-risk-external-'));
   const linkPath = join(container, 'outside-link');
   const externalInput = join(external, 'input.json');
-  const escapedOutput = join(external, 'escaped.json');
   let linkCreated = false;
   try {
     copyFileSync(samplePath, externalInput);
@@ -862,18 +1183,8 @@ test('shadow CLI rejects symlink escapes and refuses to overwrite output', () =>
     assert.equal(readEscape.status, 2);
     assert.match(readEscape.stderr, /--input must resolve inside/);
 
-    const writeEscape = runShadowCli(['evaluate', '--input', samplePath, '--output', join(linkPath, 'escaped.json')]);
-    assert.equal(writeEscape.status, 2);
-    assert.match(writeEscape.stderr, /--output parent must be a real directory/);
-    assert.equal(existsSync(escapedOutput), false);
-
-    const existingOutput = join(container, 'existing.json');
-    writeFileSync(existingOutput, '{}\n', 'utf8');
-    const overwrite = runShadowCli(['evaluate', '--input', samplePath, '--output', existingOutput]);
-    assert.equal(overwrite.status, 2);
-    assert.match(overwrite.stderr, /--output already exists/);
   } finally {
-    if (linkCreated) unlinkSync(linkPath);
+    if (linkCreated) rmSync(linkPath, { recursive: true, force: true });
     rmSync(container, { recursive: true, force: true });
     rmSync(external, { recursive: true, force: true });
   }

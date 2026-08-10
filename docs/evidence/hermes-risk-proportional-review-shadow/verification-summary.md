@@ -2,6 +2,8 @@
 
 > Verification date: 2026-08-10 (Asia/Taipei)
 >
+> Document nature: working verification note; not a contract or runtime authority.
+>
 > Authority: `advisory_shadow`; this evidence does not grant merge authority and does not prove hosted GitHub enforcement.
 
 ## Baseline
@@ -17,23 +19,23 @@
 |---|---|
 | `node --check scripts/lib/risk-proportional-review.mjs` | passed |
 | `node --check scripts/dev/review-risk-shadow.mjs` | passed |
-| `node --test scripts/tests/test-review-risk.mjs` | 48 passed, 0 failed |
-| `node --test --experimental-test-coverage scripts/tests/test-review-risk.mjs` | 48 passed; all files line 95.65%, branch 85.98%, functions 99.00% |
+| `node --test scripts/tests/test-review-risk.mjs` | 62 passed, 0 failed |
+| `node --test --experimental-test-coverage scripts/tests/test-review-risk.mjs` | 62 passed; all files line 96.43%, branch 88.76%, functions 98.77%; core classifier line 97.29%, branch 86.34% |
 | Golden risk-shape replay | 20 passed, 0 failed |
 | Draft-07 policy schema validation | passed |
 | Draft-07 input/decision/packet/result/loop/corpus validation | passed |
+| Negative schema case: packet `max_bytes = -1` | rejected as expected |
 | Negative schema case: path traversal | rejected as expected |
 | Negative schema case: more than two loop attempts | rejected as expected |
 | Maximum 512-byte evidence ref round trip | packet self-validation passed |
-| Windows junction read/write escape and output overwrite probes | rejected as expected |
+| Windows junction read escape and filesystem-output option probes | rejected as expected; CLI is stdout-only |
 | `scripts/tests/test-self-referential-bootstrap.ps1` | passed |
 | `scripts/tests/test-agent-governance-check.ps1` | passed |
 | PR #483 local preflight | passed; no blockers, advisory GitNexus warning only |
-| GitNexus security-hardening staged detect-changes | medium: 5 files, 32 symbols, 3 flows |
-| GitNexus CODEOWNERS follow-up staged detect-changes | low: 3 files, 6 symbols, 0 flows |
-| GitNexus branch compare against `origin/main` | high: 12 files, 182 symbols, 7 flows |
-| Patch whitespace check (`git diff --cached --check`) | passed |
-| Independent security follow-up | `recommendation=accept` |
+| GitNexus branch compare against `origin/main` | high: 12 files, 198 symbols, 10 flows; no critical result |
+| Canonical self-referential path classification | 12 changed paths, 0 mechanism paths; bootstrap ledger not applicable to PR-A |
+| Patch whitespace check (`git diff --check`) | passed |
+| Independent final Codex read-only review | 3 findings fixed; closure found no residual P0/P1/P2 and returned `recommendation=accept` |
 
 ## Behaviors established by tests
 
@@ -45,14 +47,19 @@
 - `.github/CODEOWNERS` and case variants retain the `critical_authority` / `human_critical` floor.
 - Failed or stale deterministic evidence cannot be overridden by a reviewer.
 - Unknown service/caller blast radius requires impact evidence and cannot remain `mechanical_only`.
+- Unknown affected-user blast radius also fails closed until exact-head impact evidence exists.
+- Renames bind both source and destination paths, including protected and self-referential surfaces.
+- Production service paths require runtime and integration evidence; frontend paths additionally require separate browser-operability and design-fidelity evidence.
 - A packet is bounded by bytes, changed paths, evidence references, and questions.
 - Packet content, final byte count, and packet hash are independently revalidated.
 - Evidence refs are canonical `artifacts/.../file.ext` identifiers and cannot inject URLs, traversal, or free-form instructions.
-- CLI reads are realpath-contained and outputs reject symlink/junction escapes and overwrite attempts.
+- CLI reads are realpath-contained; filesystem-output flags are rejected and results are emitted to stdout only.
 - A reviewer cannot cite evidence that was not included in the packet.
 - `advisory_clear` can cite only exact-head passed packet evidence.
+- A `human_critical` packet can only be cleared by the human reviewer role.
 - Reviewer output cannot modify implementation or override policy semantics.
 - A loop cannot mix head, policy, normalized input, or verification-manifest identities.
+- A loop rejects attempts appended after a terminal decision and checks repeated/no-new evidence before accepting a later terminal verdict.
 - Identical evidence, no new evidence, or exhausted attempt budget produces `held`.
 
 ## Files intentionally not changed

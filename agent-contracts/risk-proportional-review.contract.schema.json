@@ -49,17 +49,53 @@
       "type": "array",
       "minItems": 4,
       "maxItems": 4,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["id", "rank", "max_model_reviewers", "human_required"],
-        "properties": {
-          "id": {"enum": ["mechanical_only", "focused_semantic", "risk_scoped_specialists", "human_critical"]},
-          "rank": {"type": "integer", "minimum": 0, "maximum": 3},
-          "max_model_reviewers": {"type": "integer", "minimum": 0, "maximum": 2},
-          "human_required": {"type": "boolean"}
+      "items": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "rank", "max_model_reviewers", "human_required"],
+          "properties": {
+            "id": {"const": "mechanical_only"},
+            "rank": {"const": 0},
+            "max_model_reviewers": {"const": 0},
+            "human_required": {"const": false}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "rank", "max_model_reviewers", "human_required"],
+          "properties": {
+            "id": {"const": "focused_semantic"},
+            "rank": {"const": 1},
+            "max_model_reviewers": {"const": 1},
+            "human_required": {"const": false}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "rank", "max_model_reviewers", "human_required"],
+          "properties": {
+            "id": {"const": "risk_scoped_specialists"},
+            "rank": {"const": 2},
+            "max_model_reviewers": {"const": 2},
+            "human_required": {"const": false}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "rank", "max_model_reviewers", "human_required"],
+          "properties": {
+            "id": {"const": "human_critical"},
+            "rank": {"const": 3},
+            "max_model_reviewers": {"const": 2},
+            "human_required": {"const": true}
+          }
         }
-      }
+      ],
+      "additionalItems": false
     },
     "lane_floors": {
       "type": "object",

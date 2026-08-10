@@ -58,6 +58,9 @@
         "path": {
           "$ref": "#/definitions/path"
         },
+        "previous_path": {
+          "$ref": "#/definitions/path"
+        },
         "status": {
           "enum": [
             "added",
@@ -76,7 +79,19 @@
           "minimum": 0,
           "maximum": 1000000
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {"const": "renamed"}
+            },
+            "required": ["status"]
+          },
+          "then": {"required": ["previous_path"]},
+          "else": {"not": {"required": ["previous_path"]}}
+        }
+      ]
     },
     "detection": {
       "type": "object",
@@ -279,6 +294,7 @@
             "contract_result",
             "integration_result",
             "browser_artifacts",
+            "design_fidelity_result",
             "runtime_log",
             "security_review",
             "mutation_result",
@@ -363,7 +379,7 @@
         },
         "repository": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$",
           "maxLength": 200
         },
         "base_sha": {
@@ -514,7 +530,9 @@
           "const": false
         },
         "repository": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "maxLength": 200
         },
         "base_sha": {
           "$ref": "#/definitions/git_sha"
@@ -572,7 +590,7 @@
         },
         "questions": {
           "type": "array",
-          "maxItems": 6,
+          "maxItems": 32,
           "uniqueItems": true,
           "items": {
             "$ref": "#/definitions/bounded_text"
@@ -590,6 +608,7 @@
               "contract_result",
               "integration_result",
               "browser_artifacts",
+              "design_fidelity_result",
               "runtime_log",
               "security_review",
               "mutation_result",
@@ -652,28 +671,44 @@
       ],
       "properties": {
         "max_bytes": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 4096,
+          "maximum": 65536
         },
         "actual_bytes": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
         },
         "max_changed_paths": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
         },
         "selected_changed_paths": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64
         },
         "max_evidence_refs": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
         },
         "selected_evidence_refs": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32
         },
         "max_questions": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
         },
         "selected_questions": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8
         },
         "exceeded": {
           "type": "array",
@@ -727,7 +762,7 @@
         },
         "repository": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$",
           "maxLength": 200
         },
         "base_sha": {
@@ -777,7 +812,7 @@
         },
         "selected_paths": {
           "type": "array",
-          "maxItems": 24,
+          "maxItems": 64,
           "items": {
             "$ref": "#/definitions/changed_path"
           },
@@ -792,7 +827,7 @@
         },
         "evidence_refs": {
           "type": "array",
-          "maxItems": 16,
+          "maxItems": 32,
           "uniqueItems": true,
           "items": {
             "$ref": "#/definitions/evidence"
@@ -808,7 +843,7 @@
         },
         "questions": {
           "type": "array",
-          "maxItems": 6,
+          "maxItems": 8,
           "uniqueItems": true,
           "items": {
             "$ref": "#/definitions/bounded_text"
@@ -1115,7 +1150,7 @@
         },
         "question_coverage": {
           "type": "array",
-          "maxItems": 6,
+          "maxItems": 8,
           "uniqueItems": true,
           "items": {
             "type": "object",

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { lstat, mkdir, open, realpath } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { realpath } from 'node:fs/promises';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   advanceReviewLoop,
@@ -16,7 +16,6 @@ import {
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..', '..');
 const repoRootReal = await realpath(repoRoot);
-const artifactsRoot = resolve(repoRoot, 'artifacts');
 const defaultPolicyPath = resolve(repoRoot, 'agent-contracts', 'risk-proportional-review.contract.json');
 
 function assertContained(absolute, root, name) {
@@ -32,39 +31,13 @@ async function resolveReadPath(value, name) {
   return assertContained(realPath, repoRootReal, name);
 }
 
-async function ensureSafeOutputParent(absolute) {
-  await mkdir(artifactsRoot, { recursive: true });
-  const rootStat = await lstat(artifactsRoot);
-  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
-    throw new Error('--output artifacts root must be a real directory, not a symlink or junction');
-  }
-  const artifactsRootReal = assertContained(await realpath(artifactsRoot), repoRootReal, 'output');
-  const parent = dirname(absolute);
-  const parentRelative = relative(artifactsRoot, parent);
-  let current = artifactsRoot;
-  for (const segment of parentRelative.split(sep).filter(Boolean)) {
-    current = join(current, segment);
-    try {
-      const stat = await lstat(current);
-      if (stat.isSymbolicLink() || !stat.isDirectory()) {
-        throw new Error(`--output parent must be a real directory: ${current}`);
-      }
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-      await mkdir(current);
-    }
-    assertContained(await realpath(current), artifactsRootReal, 'output');
-  }
-  assertContained(await realpath(parent), artifactsRootReal, 'output');
-}
-
 function usage() {
   return `Usage:
-  node scripts/dev/review-risk-shadow.mjs evaluate --input <json> [--policy <json>] [--output <json>]
-  node scripts/dev/review-risk-shadow.mjs packet   --input <json> [--policy <json>] [--output <json>]
-  node scripts/dev/review-risk-shadow.mjs loop     --input <json> [--output <json>]
-  node scripts/dev/review-risk-shadow.mjs validate-result --packet <json> --result <json> [--output <json>]
-  node scripts/dev/review-risk-shadow.mjs replay   --corpus <json> [--policy <json>] [--output <json>]
+  node scripts/dev/review-risk-shadow.mjs evaluate --input <json> [--policy <json>]
+  node scripts/dev/review-risk-shadow.mjs packet   --input <json> [--policy <json>]
+  node scripts/dev/review-risk-shadow.mjs loop     --input <json>
+  node scripts/dev/review-risk-shadow.mjs validate-result --packet <json> --result <json>
+  node scripts/dev/review-risk-shadow.mjs replay   --corpus <json> [--policy <json>]
   node scripts/dev/review-risk-shadow.mjs policy-hash [--policy <json>]
 
 This command is read-only and advisory. It never calls GitHub, starts an agent,
@@ -105,25 +78,9 @@ async function loadPolicy(options) {
   return validatePolicy(await readJson(path));
 }
 
-async function emit(value, outputPath) {
+function emit(value) {
   const text = `${JSON.stringify(value, null, 2)}\n`;
-  if (!outputPath || outputPath === '-') {
-    process.stdout.write(text);
-    return;
-  }
-  const absolute = assertContained(resolve(process.cwd(), outputPath), artifactsRoot, 'output');
-  await ensureSafeOutputParent(absolute);
-  let handle;
-  try {
-    handle = await open(absolute, 'wx');
-    await handle.writeFile(text, 'utf8');
-  } catch (error) {
-    if (error.code === 'EEXIST') throw new Error(`--output already exists: ${absolute}`);
-    throw error;
-  } finally {
-    await handle?.close();
-  }
-  process.stderr.write(`[review-risk-shadow] wrote ${absolute}\n`);
+  process.stdout.write(text);
 }
 
 async function main() {
@@ -134,43 +91,43 @@ async function main() {
   }
 
   if (command === 'evaluate') {
-    rejectUnknownOptions(options, ['input', 'policy', 'output']);
+    rejectUnknownOptions(options, ['input', 'policy']);
     const input = await readJson(await requireOption(options, 'input'));
     const policy = await loadPolicy(options);
-    await emit(classifyReview(input, policy), options.output);
+    emit(classifyReview(input, policy));
     return;
   }
 
   if (command === 'packet') {
-    rejectUnknownOptions(options, ['input', 'policy', 'output']);
+    rejectUnknownOptions(options, ['input', 'policy']);
     const input = await readJson(await requireOption(options, 'input'));
     const policy = await loadPolicy(options);
     const decision = classifyReview(input, policy);
-    await emit(buildReviewPacket(input, decision, policy), options.output);
+    emit(buildReviewPacket(input, decision, policy));
     return;
   }
 
   if (command === 'loop') {
-    rejectUnknownOptions(options, ['input', 'output']);
+    rejectUnknownOptions(options, ['input']);
     const input = await readJson(await requireOption(options, 'input'));
-    await emit(advanceReviewLoop(input), options.output);
+    emit(advanceReviewLoop(input));
     return;
   }
 
   if (command === 'validate-result') {
-    rejectUnknownOptions(options, ['packet', 'result', 'output']);
+    rejectUnknownOptions(options, ['packet', 'result']);
     const packet = await readJson(await requireOption(options, 'packet'));
     const result = await readJson(await requireOption(options, 'result'));
-    await emit(validateReviewResult(result, packet), options.output);
+    emit(validateReviewResult(result, packet));
     return;
   }
 
   if (command === 'replay') {
-    rejectUnknownOptions(options, ['corpus', 'policy', 'output']);
+    rejectUnknownOptions(options, ['corpus', 'policy']);
     const corpus = await readJson(await requireOption(options, 'corpus'));
     const policy = await loadPolicy(options);
     const report = replayCorpus(corpus, policy);
-    await emit(report, options.output);
+    emit(report);
     if (report.failed > 0) process.exitCode = 1;
     return;
   }

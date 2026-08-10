@@ -164,6 +164,8 @@ It never includes a full chat, prompt, repository, diff, log stream, or session 
 
 Evidence `ref` values are inert repository-local artifact identifiers with the form `artifacts/<path>/<file.ext>`. They are not URLs, command arguments, free-form instructions, or permission to dereference a path. The adapter owns artifact lookup and provenance verification before it marks evidence as passed.
 
+Production service paths require exact-head integration and runtime evidence. Frontend paths additionally require independent `browser_artifacts` operability proof and `design_fidelity_result` visual-fidelity proof; neither substitutes for the other. A renamed path carries `previous_path`, and both source and destination participate in risk classification.
+
 ## 9. Reviewer contract
 
 A reviewer is read-only. `review-result/v1` enforces:
@@ -218,7 +220,7 @@ Stop rules:
 
 - identical evidence fingerprint → `held`;
 - no observed new evidence → `held`;
-- more than one evidence-delta request → `held`;
+- a first action other than deterministic verification, an attempt appended after any terminal decision, or more than one evidence-delta request → rejected as malformed;
 - two attempts exhausted → `held`;
 - changed head, policy, normalized input, or verification manifest inside one cycle → `held`, start a new exact-identity cycle;
 - terminal advisory/human/block decision → complete.
@@ -227,7 +229,7 @@ A larger model, repeated reviewer, or more context is not accepted as “new evi
 
 ## 11. CLI
 
-All commands are local, advisory, and use Node standard library only. Input paths must resolve inside the repository. Optional file output is restricted to real directories under `artifacts/`, uses exclusive creation, and never overwrites an existing file.
+All commands are local, advisory, and use Node standard library only. Input paths must resolve inside the repository. The CLI is stdout-only and exposes no filesystem write option; adapters that persist checkpoints own that separate, trusted write boundary.
 
 ```powershell
 # Classify a bounded fact input
@@ -236,14 +238,12 @@ node scripts/dev/review-risk-shadow.mjs evaluate `
 
 # Build a bounded packet
 node scripts/dev/review-risk-shadow.mjs packet `
-  --input artifacts/review-risk/input.json `
-  --output artifacts/review-risk/packet.json
+  --input artifacts/review-risk/input.json
 
 # Validate a reviewer response
 node scripts/dev/review-risk-shadow.mjs validate-result `
   --packet artifacts/review-risk/packet.json `
-  --result artifacts/review-risk/result.json `
-  --output artifacts/review-risk/validated-result.json
+  --result artifacts/review-risk/result.json
 
 # Advance the bounded loop
 node scripts/dev/review-risk-shadow.mjs loop `
@@ -251,8 +251,7 @@ node scripts/dev/review-risk-shadow.mjs loop `
 
 # Replay the golden corpus
 node scripts/dev/review-risk-shadow.mjs replay `
-  --corpus scripts/tests/fixtures/review-risk-golden.json `
-  --output artifacts/review-risk/replay.json
+  --corpus scripts/tests/fixtures/review-risk-golden.json
 
 # Verify policy identity
 node scripts/dev/review-risk-shadow.mjs policy-hash
@@ -311,7 +310,7 @@ Codex and Claude use the same JSON contracts. Their project skills should be thi
 - policy, schemas, deterministic classifier;
 - packet/result/loop contracts;
 - 20-case golden corpus plus a standalone sample input;
-- local CLI and 48 focused tests;
+- local CLI and 62 focused tests;
 - evidence/design documentation;
 - no workflow or merge-authority change.
 
@@ -349,7 +348,7 @@ node scripts/dev/review-risk-shadow.mjs replay `
 Expected local baseline for PR-A:
 
 - 20/20 golden cases pass;
-- 48/48 focused Node tests pass;
+- 62/62 focused Node tests pass;
 - schemas validate as Draft-07;
 - `git diff --check` passes;
 - no workflow, current gate, ledger, CODEOWNERS, or verification manifest is modified.

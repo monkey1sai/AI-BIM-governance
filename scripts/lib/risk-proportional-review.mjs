@@ -22,7 +22,7 @@ const USERS = new Set(['none', 'bounded', 'many', 'unknown']);
 const PATH_STATUSES = new Set(['added', 'modified', 'deleted', 'renamed']);
 const EVIDENCE_KINDS = new Set([
   'test_result', 'impact_result', 'contract_result', 'integration_result', 'browser_artifacts',
-  'runtime_log', 'security_review', 'mutation_result', 'historical_replay',
+  'design_fidelity_result', 'runtime_log', 'security_review', 'mutation_result', 'historical_replay',
 ]);
 const EVIDENCE_STATUSES = new Set(['passed', 'failed', 'missing', 'not_configured', 'not_observed', 'unverified']);
 const REGULATED_DATA = new Set(['pii', 'payment', 'health', 'credentials', 'audit', 'customer_model', 'other_regulated']);
@@ -63,13 +63,38 @@ const REQUIRED_INVARIANTS = [
 ];
 
 const SELF_REFERENTIAL_PATTERNS = [
+  /^scripts\/deploy\.ps1$/,
+  /^scripts\/verify-all\.(?:ps1|sh)$/,
+  /^scripts\/dev\/(?:rebuild-test-deploy|start-isolated-branch-stack|check-pr-local-preflight)\.ps1$/,
+  /^scripts\/deploy-target-registry\.json$/,
+  /^scripts\/lib\/(?:deploy-target-registry|remote-deploy-transport|windows-verification-scope)\.ps1$/,
+  /^scripts\/start-web-plane-docker\.ps1$/,
+  /^scripts\/lib\/(?:preflight-[a-z-]+|deploy-report|host-native-launcher|rebuild-test-deploy|start-child-with-environment|kit-log-probe|smoke-evidence|design-assets)\.ps1$/,
+  /^scripts\/lib\/platform\//,
+  /^scripts\/lib\/(?:design-system-gate|pr-review-agent|production-boundary-contract)\.ps1$/,
+  /^scripts\/pr-review-agent\.ps1$/,
+  /^scripts\/tests\/(?:check-pr-body-evidence|verify-design-system-reference|verify-design-system-visual-result|verify-functional-runtime-result|verify-security-exceptions|verify-openspec-lifecycle)\.ps1$/,
+  /^scripts\/tests\/verify-openspec-machine-truth\.mjs$/,
+  /^scripts\/dev\/check-pr-local-preflight\.ps1$/,
+  /^scripts\/hooks\/require-gstack-evidence\.ps1$/,
+  /^scripts\/lib\/detect-base-gate-capability\.sh$/,
+  /^scripts\/lib\/security-exceptions(?:-cli)?\.mjs$/,
+  /^scripts\/security-exceptions\.json$/,
+  /^scripts\/lib\/openspec-lifecycle\.ps1$/,
+  /^scripts\/lib\/openspec-machine-truth\.mjs$/,
+  /^scripts\/tests\/(?:invoke-powershell-static|scan-secret-patterns)\.ps1$/,
+  /^scripts\/tests\/verification-plan\.schema\.json$/,
+  /^scripts\/tests\/test-(?:self-referential-bootstrap|base-gate-capability|preflight-prnumber-forwarding)\.ps1$/,
+  /^web-viewer-sample\/scripts\/verify-design-system-pixels\.mjs$/,
+  /^web-viewer-sample\/scripts\/lib\/png-preflight\.mjs$/,
+  /^scripts\/tests\/test-png-preflight\.mjs$/,
   /^\.github\/codeowners$/,
-  /^\.github\/workflows\/(?:agent-governance|pr-review-agent|governance-trust-root|ci)\.ya?ml$/,
+  /^\.github\/workflows\/(?:agent-governance|pr-review-agent|ci)\.ya?ml$/,
   /^scripts\/verification-manifest\.json$/,
   /^scripts\/self-referential-bootstrap-ledger\.json$/,
-  /^scripts\/lib\/(?:pr-review-agent|self-referential-bootstrap)\.ps1$/,
+  /^scripts\/lib\/self-referential-bootstrap\.ps1$/,
   /^scripts\/lib\/verification-(?:plan|runner|outcome|command-policy)\.mjs$/,
-  /^scripts\/tests\/(?:test-agent-governance-check|check-pr-body-evidence|test-self-referential-bootstrap|test-base-gate-capability)\.ps1$/,
+  /^scripts\/tests\/test-agent-governance-check\.ps1$/,
   /^docs\/agents\/self-referential-bootstrap\.md$/,
   /^agent-contracts\/risk-proportional-review\.contract(?:\.schema)?\.json$/,
   /^scripts\/lib\/risk-proportional-review\.mjs$/,
@@ -86,7 +111,8 @@ const EVIDENCE_REF_PATTERN = /^artifacts\/(?:[A-Za-z0-9][A-Za-z0-9._@#-]*\/)*[A-
 const CONTRACT_PATTERN = /(^|\/)(?:contracts?|schemas?|openapi|events?|protocols?)(?:\/|$|\.)/;
 const SHARED_PATTERN = /(^|\/)(?:utils?|common|shared|middleware|core)(?:\/|$|\.)/;
 const MIGRATION_PATTERN = /(^|\/)(?:migrations?)(?:\/|$|\.)/;
-const RUNTIME_PATTERN = /^(?:bim-streaming-server\/|services\/kit-manager-api\/|infra\/docker\/|compose[^/]*\.ya?ml$|scripts\/(?:deploy|stop-all)\.ps1$)/;
+const RUNTIME_PATTERN = /^(?:bim-review-coordinator\/|bim-streaming-server\/|governance-service\/|web-viewer-sample\/|apps\/kit-manager-web\/|services\/kit-manager-api\/|infra\/docker\/|compose[^/]*\.ya?ml$|scripts\/(?:deploy|stop-all)\.ps1$)/;
+const FRONTEND_PATTERN = /^(?:web-viewer-sample\/|apps\/kit-manager-web\/)/;
 const ARCHITECTURE_PATTERN = /^(?:architecture\/|docs\/architecture\/)/;
 
 function fail(message) {
@@ -183,6 +209,10 @@ export function normalizeRepositoryPath(value) {
   return normalized;
 }
 
+function compareUtf8(left, right) {
+  return Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'));
+}
+
 function modeMap(policy) {
   return new Map(policy.review_modes.map((entry) => [entry.id, entry]));
 }
@@ -239,11 +269,17 @@ export function validatePolicy(candidate) {
   return candidate;
 }
 
-function validateChangedPath(entry, index) {
-  const label = `input.changed_paths[${index}]`;
-  assertExactKeys(entry, ['path', 'status', 'additions', 'deletions'], ['path', 'status', 'additions', 'deletions'], label);
+function validateChangedPath(entry, index, collection = 'input.changed_paths') {
+  const label = `${collection}[${index}]`;
+  assertExactKeys(entry, ['path', 'previous_path', 'status', 'additions', 'deletions'], ['path', 'status', 'additions', 'deletions'], label);
   entry.path = normalizeRepositoryPath(entry.path);
   assertEnum(entry.status, PATH_STATUSES, `${label}.status`);
+  if (entry.status === 'renamed') {
+    if (!Object.hasOwn(entry, 'previous_path')) fail(`${label}.previous_path is required for renamed paths`);
+    entry.previous_path = normalizeRepositoryPath(entry.previous_path);
+  } else if (Object.hasOwn(entry, 'previous_path')) {
+    fail(`${label}.previous_path is allowed only for renamed paths`);
+  }
   assertInteger(entry.additions, `${label}.additions`, 0, 1_000_000);
   assertInteger(entry.deletions, `${label}.deletions`, 0, 1_000_000);
 }
@@ -272,7 +308,7 @@ export function validateInput(candidate) {
     fail('input.changed_paths must contain 1-1000 entries');
   }
   input.changed_paths.forEach(validateChangedPath);
-  const normalizedPaths = input.changed_paths.map((entry) => entry.path.toLowerCase());
+  const normalizedPaths = input.changed_paths.flatMap((entry) => [entry.path, entry.previous_path].filter(Boolean)).map((path) => path.toLowerCase());
   if (new Set(normalizedPaths).size !== normalizedPaths.length) fail('input.changed_paths must not contain duplicate normalized paths');
 
   assertExactKeys(input.detection, ['detector', 'observed', 'horizon'], ['detector', 'observed', 'horizon'], 'input.detection');
@@ -325,43 +361,50 @@ function pathFacts(paths) {
     shared: false,
     migration: false,
     runtime: false,
+    frontend: false,
     architecture: false,
     envOrSecret: false,
     signals: new Set(),
   };
-  for (const { path } of paths) {
-    const classificationPath = path.toLowerCase();
-    if (SELF_REFERENTIAL_PATTERNS.some((pattern) => pattern.test(classificationPath))) {
-      result.selfReferential = true;
-      result.signals.add(`self_referential_path:${path}`);
-    }
-    if (PROTECTED_BOUNDARY_PATTERN.test(classificationPath)) {
-      result.protectedBoundary = true;
-      result.signals.add(`protected_boundary_path:${path}`);
-    }
-    if (CONTRACT_PATTERN.test(classificationPath) || classificationPath.startsWith('agent-contracts/') || /task-packet/.test(classificationPath)) {
-      result.contract = true;
-      result.signals.add(`contract_path:${path}`);
-    }
-    if (SHARED_PATTERN.test(classificationPath)) {
-      result.shared = true;
-      result.signals.add(`shared_path:${path}`);
-    }
-    if (MIGRATION_PATTERN.test(classificationPath)) {
-      result.migration = true;
-      result.signals.add(`migration_path:${path}`);
-    }
-    if (RUNTIME_PATTERN.test(classificationPath)) {
-      result.runtime = true;
-      result.signals.add(`runtime_path:${path}`);
-    }
-    if (ARCHITECTURE_PATTERN.test(classificationPath)) {
-      result.architecture = true;
-      result.signals.add(`architecture_path:${path}`);
-    }
-    if (ENV_OR_SECRET_PATTERN.test(classificationPath)) {
-      result.envOrSecret = true;
-      result.signals.add(`secret_or_env_path:${path}`);
+  for (const entry of paths) {
+    for (const path of [entry.path, entry.previous_path].filter(Boolean)) {
+      const classificationPath = path.toLowerCase();
+      if (SELF_REFERENTIAL_PATTERNS.some((pattern) => pattern.test(classificationPath))) {
+        result.selfReferential = true;
+        result.signals.add(`self_referential_path:${path}`);
+      }
+      if (PROTECTED_BOUNDARY_PATTERN.test(classificationPath)) {
+        result.protectedBoundary = true;
+        result.signals.add(`protected_boundary_path:${path}`);
+      }
+      if (CONTRACT_PATTERN.test(classificationPath) || classificationPath.startsWith('agent-contracts/') || /task-packet/.test(classificationPath)) {
+        result.contract = true;
+        result.signals.add(`contract_path:${path}`);
+      }
+      if (SHARED_PATTERN.test(classificationPath)) {
+        result.shared = true;
+        result.signals.add(`shared_path:${path}`);
+      }
+      if (MIGRATION_PATTERN.test(classificationPath)) {
+        result.migration = true;
+        result.signals.add(`migration_path:${path}`);
+      }
+      if (RUNTIME_PATTERN.test(classificationPath)) {
+        result.runtime = true;
+        result.signals.add(`runtime_path:${path}`);
+      }
+      if (FRONTEND_PATTERN.test(classificationPath)) {
+        result.frontend = true;
+        result.signals.add(`frontend_path:${path}`);
+      }
+      if (ARCHITECTURE_PATTERN.test(classificationPath)) {
+        result.architecture = true;
+        result.signals.add(`architecture_path:${path}`);
+      }
+      if (ENV_OR_SECRET_PATTERN.test(classificationPath)) {
+        result.envOrSecret = true;
+        result.signals.add(`secret_or_env_path:${path}`);
+      }
     }
   }
   return result;
@@ -466,26 +509,30 @@ function requiredEvidenceKinds(input, topology, trustSurface, paths) {
     kinds.add('integration_result');
   }
   if (input.change.runtime_or_deploy || paths.runtime) kinds.add('runtime_log');
+  if (paths.runtime) kinds.add('integration_result');
+  if (paths.frontend) {
+    kinds.add('browser_artifacts');
+    kinds.add('design_fidelity_result');
+  }
   if (trustSurface !== 'normal') kinds.add('security_review');
   if (input.change.duplicated_rule_risk) kinds.add('impact_result');
-  if (input.impact.affected_services === null || input.impact.callers === null) kinds.add('impact_result');
-  return [...kinds].sort();
+  if (input.impact.affected_services === null || input.impact.callers === null || input.impact.users === 'unknown') kinds.add('impact_result');
+  return [...kinds].sort(compareUtf8);
 }
 
 function evaluateEvidence(input, requiredKinds, signals) {
   const gaps = [];
-  let exactFailed = false;
+  const failedKinds = [...new Set(input.evidence
+    .filter((entry) => entry.head_sha === input.head_sha && entry.status === 'failed')
+    .map((entry) => entry.kind))].sort(compareUtf8);
+  const exactFailed = failedKinds.length > 0;
+  for (const kind of failedKinds) gaps.push(`${kind}:failed`);
   let exactPassedCount = 0;
   let staleRequired = false;
   for (const kind of requiredKinds) {
     const items = input.evidence.filter((entry) => entry.kind === kind);
     const exactItems = items.filter((entry) => entry.head_sha === input.head_sha);
-    const failed = exactItems.find((entry) => entry.status === 'failed');
-    if (failed) {
-      exactFailed = true;
-      gaps.push(`${kind}:failed`);
-      continue;
-    }
+    if (failedKinds.includes(kind)) continue;
     if (exactItems.some((entry) => entry.status === 'passed')) {
       exactPassedCount += 1;
       continue;
@@ -552,7 +599,7 @@ function chooseReviewMode(input, policy, risk, evidence, signals) {
   } else if (
     risk.topology === 'unknown' || risk.consequence === 'medium' || risk.detectability !== 'strong' ||
     !['immediate', 'hours'].includes(risk.horizon) || evidence.strength !== 'strong' ||
-    input.impact.affected_services === null || input.impact.callers === null
+    input.impact.affected_services === null || input.impact.callers === null || input.impact.users === 'unknown'
   ) {
     mode = raiseMode(policy, mode, 'focused_semantic');
   }
@@ -578,14 +625,15 @@ function selectSpecialists(input, policy, mode, risk, paths, evidenceGaps) {
   if (input.change.persistent_write !== 'none' || input.change.post_fix_actions.some((entry) => entry !== 'none')) add('data_recovery');
   if (input.change.runtime_or_deploy || paths.runtime) add('runtime');
   if (evidenceGaps.length > 0) add('evidence');
+  if (mode === 'risk_scoped_specialists' && candidates.length === 0) add('evidence');
   const budget = modeMap(policy).get(mode).max_model_reviewers;
   return candidates.filter((entry) => SPECIALISTS.has(entry)).slice(0, budget);
 }
 
-function buildQuestions(input, mode, risk, evidenceGaps, paths, maxQuestions) {
+function buildQuestions(input, mode, risk, evidenceGaps, paths) {
   if (mode === 'mechanical_only') return [];
   const questions = [];
-  const add = (value) => { if (!questions.includes(value) && questions.length < maxQuestions) questions.push(value); };
+  const add = (value) => { if (!questions.includes(value)) questions.push(value); };
   if (risk.trust_surface === 'critical_authority') add('Does the existing base-owned mechanism independently verify this self-referential change, and is explicit human approval recorded?');
   if (risk.trust_surface === 'protected_boundary') add('What concrete authorization, secret, regulated-data, and abuse-path invariants can this change violate?');
   if (risk.topology === 'architectural') add('Does this change move service ownership, trust boundaries, control-plane authority, or execution-plane authority?');
@@ -600,8 +648,8 @@ function buildQuestions(input, mode, risk, evidenceGaps, paths, maxQuestions) {
 
 function decideVerdict(mode, evidence) {
   if (evidence.exactFailed) return 'blocked';
-  if (mode === 'human_critical') return 'human_required';
   if (evidence.strength !== 'strong') return 'held';
+  if (mode === 'human_critical') return 'human_required';
   if (mode === 'mechanical_only') return 'advisory_pass';
   return 'advisory_review';
 }
@@ -633,7 +681,7 @@ export function classifyReview(candidateInput, candidatePolicy) {
   if (input.change.architecture_authority_changed) signals.add('declared_architecture_authority_change');
   if (input.change.duplicated_rule_risk) signals.add('declared_duplicated_rule_risk');
   if (input.change.runtime_or_deploy) signals.add('declared_runtime_or_deploy');
-  if (input.impact.affected_services === null || input.impact.callers === null) signals.add('impact_unknown');
+  if (input.impact.affected_services === null || input.impact.callers === null || input.impact.users === 'unknown') signals.add('impact_unknown');
 
   const topology = deriveTopology(input, paths, signals);
   const trustSurface = deriveTrustSurface(input, paths, signals);
@@ -651,7 +699,7 @@ export function classifyReview(candidateInput, candidatePolicy) {
   };
   const { mode, advisoryClaimEscalation } = chooseReviewMode(input, policy, risk, evidence, signals);
   const specialists = selectSpecialists(input, policy, mode, risk, paths, evidence.gaps);
-  const questions = buildQuestions(input, mode, risk, evidence.gaps, paths, policy.packet_budget.max_questions);
+  const questions = buildQuestions(input, mode, risk, evidence.gaps, paths);
   const verdict = decideVerdict(mode, evidence);
   const decision = {
     schema_version: DECISION_VERSION,
@@ -695,17 +743,22 @@ function packetHashMaterial(packet) {
   return material;
 }
 
-function computePacketBytes(packetWithoutHash) {
-  return Buffer.byteLength(stableStringify(packetWithoutHash), 'utf8');
+function computePacketBytes(packet) {
+  return Buffer.byteLength(`${JSON.stringify(packet, null, 2)}\n`, 'utf8');
 }
 
-function refreshPacketActualBytes(packet) {
+function refreshPacketIntegrity(packet) {
+  packet.packet_sha256 = '0'.repeat(64);
   for (let iteration = 0; iteration < 16; iteration += 1) {
-    const next = computePacketBytes(packetHashMaterial(packet));
-    if (next === packet.budget.actual_bytes) return next;
+    const next = computePacketBytes(packet);
+    if (next === packet.budget.actual_bytes) {
+      packet.packet_sha256 = sha256Value(packetHashMaterial(packet));
+      if (computePacketBytes(packet) !== next) fail('packet emitted byte count changed after hashing');
+      return next;
+    }
     packet.budget.actual_bytes = next;
   }
-  fail('packet byte accounting did not converge');
+  fail('packet integrity accounting did not converge');
 }
 
 export function buildReviewPacket(candidateInput, decision, candidatePolicy) {
@@ -724,7 +777,7 @@ export function buildReviewPacket(candidateInput, decision, candidatePolicy) {
 
   const budgetPolicy = policy.packet_budget;
   const selectedPaths = [...input.changed_paths]
-    .sort((a, b) => pathPriority(a) - pathPriority(b) || a.path.localeCompare(b.path))
+    .sort((a, b) => pathPriority(a) - pathPriority(b) || compareUtf8(a.path, b.path))
     .slice(0, budgetPolicy.max_changed_paths);
   const prioritizedEvidence = [...input.evidence]
     .sort((a, b) => {
@@ -734,7 +787,7 @@ export function buildReviewPacket(candidateInput, decision, candidatePolicy) {
       const bExact = b.head_sha === input.head_sha ? 0 : 1;
       const aPassed = a.status === 'passed' ? 0 : 1;
       const bPassed = b.status === 'passed' ? 0 : 1;
-      return aRequired - bRequired || aExact - bExact || aPassed - bPassed || a.kind.localeCompare(b.kind) || a.ref.localeCompare(b.ref);
+      return aRequired - bRequired || aExact - bExact || aPassed - bPassed || compareUtf8(a.kind, b.kind) || compareUtf8(a.ref, b.ref);
     });
   const selectedEvidence = [];
   const selectedEvidenceRefs = new Set();
@@ -747,7 +800,7 @@ export function buildReviewPacket(candidateInput, decision, candidatePolicy) {
   const selectedQuestions = decision.questions.slice(0, budgetPolicy.max_questions);
   const exceeded = [];
   if (input.changed_paths.length > budgetPolicy.max_changed_paths) exceeded.push('changed_paths');
-  if (input.evidence.length > budgetPolicy.max_evidence_refs) exceeded.push('evidence_refs');
+  if (new Set(input.evidence.map((entry) => entry.ref)).size > budgetPolicy.max_evidence_refs) exceeded.push('evidence_refs');
   if (decision.questions.length > budgetPolicy.max_questions) exceeded.push('questions');
 
   const packet = {
@@ -780,20 +833,19 @@ export function buildReviewPacket(candidateInput, decision, candidatePolicy) {
       selected_questions: selectedQuestions.length,
       exceeded,
     },
-    packet_sha256: '',
+    packet_sha256: '0'.repeat(64),
   };
 
   if (['held', 'blocked'].includes(decision.verdict)) packet.status = 'held';
   packet.budget.exceeded = [...new Set(packet.budget.exceeded)].sort();
   if (packet.budget.exceeded.length > 0) packet.status = 'budget_exceeded';
-  refreshPacketActualBytes(packet);
+  refreshPacketIntegrity(packet);
   if (packet.budget.actual_bytes > budgetPolicy.max_bytes && !packet.budget.exceeded.includes('bytes')) {
     packet.budget.exceeded.push('bytes');
     packet.budget.exceeded.sort();
     packet.status = 'budget_exceeded';
-    refreshPacketActualBytes(packet);
+    refreshPacketIntegrity(packet);
   }
-  packet.packet_sha256 = sha256Value(packetHashMaterial(packet));
   return validateReviewPacket(packet);
 }
 
@@ -810,6 +862,7 @@ export function validateReviewPacket(candidate) {
   assertString(packet.repository, 'packet.repository', { max: 200, pattern: REPOSITORY_PATTERN });
   assertGitSha(packet.base_sha, 'packet.base_sha');
   assertGitSha(packet.head_sha, 'packet.head_sha');
+  if (packet.base_sha === packet.head_sha) fail('packet.base_sha and packet.head_sha must differ');
   assertSha256(packet.policy_sha256, 'packet.policy_sha256');
   assertSha256(packet.input_sha256, 'packet.input_sha256');
   assertSha256(packet.verification_manifest_sha256, 'packet.verification_manifest_sha256');
@@ -817,16 +870,10 @@ export function validateReviewPacket(candidate) {
   if (!['ready', 'budget_exceeded', 'held'].includes(packet.status)) fail('packet.status is not recognized');
   assertUniqueEnumArray(packet.specialists, SPECIALISTS, 'packet.specialists', { max: 2 });
 
-  if (!Array.isArray(packet.selected_paths) || packet.selected_paths.length > 24) fail('packet.selected_paths must contain at most 24 entries');
-  packet.selected_paths.forEach((entry, index) => {
-    const label = `packet.selected_paths[${index}]`;
-    assertExactKeys(entry, ['path', 'status', 'additions', 'deletions'], ['path', 'status', 'additions', 'deletions'], label);
-    entry.path = normalizeRepositoryPath(entry.path);
-    assertEnum(entry.status, PATH_STATUSES, `${label}.status`);
-    assertInteger(entry.additions, `${label}.additions`, 0, 1_000_000);
-    assertInteger(entry.deletions, `${label}.deletions`, 0, 1_000_000);
-  });
-  if (new Set(packet.selected_paths.map((entry) => entry.path.toLowerCase())).size !== packet.selected_paths.length) fail('packet.selected_paths contains duplicate paths');
+  if (!Array.isArray(packet.selected_paths) || packet.selected_paths.length > 64) fail('packet.selected_paths must contain at most 64 entries');
+  packet.selected_paths.forEach((entry, index) => validateChangedPath(entry, index, 'packet.selected_paths'));
+  const packetPaths = packet.selected_paths.flatMap((entry) => [entry.path, entry.previous_path].filter(Boolean)).map((path) => path.toLowerCase());
+  if (new Set(packetPaths).size !== packetPaths.length) fail('packet.selected_paths contains duplicate paths');
   assertInteger(packet.omitted_path_count, 'packet.omitted_path_count', 0, 1_000_000);
 
   assertExactKeys(packet.risk, ['detectability', 'horizon', 'consequence', 'topology', 'evidence_strength', 'trust_surface'], ['detectability', 'horizon', 'consequence', 'topology', 'evidence_strength', 'trust_surface'], 'packet.risk');
@@ -837,11 +884,11 @@ export function validateReviewPacket(candidate) {
   assertEnum(packet.risk.evidence_strength, new Set(['strong', 'partial', 'missing', 'stale', 'failed']), 'packet.risk.evidence_strength');
   assertEnum(packet.risk.trust_surface, new Set(['normal', 'protected_boundary', 'critical_authority']), 'packet.risk.trust_surface');
 
-  if (!Array.isArray(packet.evidence_refs) || packet.evidence_refs.length > 16) fail('packet.evidence_refs must contain at most 16 entries');
+  if (!Array.isArray(packet.evidence_refs) || packet.evidence_refs.length > 32) fail('packet.evidence_refs must contain at most 32 entries');
   packet.evidence_refs.forEach((entry, index) => validateEvidence(entry, index));
   if (new Set(packet.evidence_refs.map((entry) => entry.ref)).size !== packet.evidence_refs.length) fail('packet.evidence_refs must have unique refs');
   assertUniqueStringArray(packet.evidence_gaps, 'packet.evidence_gaps', { max: 16, itemMax: 512 });
-  assertUniqueStringArray(packet.questions, 'packet.questions', { max: 6, itemMax: 512 });
+  assertUniqueStringArray(packet.questions, 'packet.questions', { max: 8, itemMax: 512 });
 
   const budgetKeys = ['max_bytes', 'actual_bytes', 'max_changed_paths', 'selected_changed_paths', 'max_evidence_refs', 'selected_evidence_refs', 'max_questions', 'selected_questions', 'exceeded'];
   assertExactKeys(packet.budget, budgetKeys, budgetKeys, 'packet.budget');
@@ -863,7 +910,7 @@ export function validateReviewPacket(candidate) {
   }
   assertSha256(packet.packet_sha256, 'packet.packet_sha256');
   if (sha256Value(packetHashMaterial(packet)) !== packet.packet_sha256) fail('packet hash does not match packet content');
-  const computedBytes = computePacketBytes(packetHashMaterial(packet));
+  const computedBytes = computePacketBytes(packet);
   if (computedBytes !== packet.budget.actual_bytes) fail('packet actual byte count does not match serialized content');
   if (computedBytes > packet.budget.max_bytes && !packet.budget.exceeded.includes('bytes')) fail('packet byte overflow is not declared');
   if (packet.budget.exceeded.length > 0 && packet.status !== 'budget_exceeded') fail('packet with exceeded budget must use budget_exceeded status');
@@ -887,10 +934,13 @@ export function validateReviewResult(candidate, candidatePacket) {
   assertGitSha(result.head_sha, 'review_result.head_sha');
   if (result.head_sha !== packet.head_sha) fail('review result is stale for the packet head');
   assertEnum(result.reviewer_role, REVIEWER_ROLES, 'review_result.reviewer_role');
+  if (packet.review_mode === 'human_critical' && result.reviewer_role !== 'human') {
+    fail('human_critical packet requires a human reviewer');
+  }
   if (packet.review_mode === 'focused_semantic' && !['focused_semantic', 'human'].includes(result.reviewer_role)) {
     fail('focused_semantic packet only allows the focused_semantic reviewer or a human');
   }
-  if (['risk_scoped_specialists', 'human_critical'].includes(packet.review_mode) && result.reviewer_role !== 'human' && !packet.specialists.includes(result.reviewer_role)) {
+  if (packet.review_mode === 'risk_scoped_specialists' && result.reviewer_role !== 'human' && !packet.specialists.includes(result.reviewer_role)) {
     fail('reviewer role was not selected by the risk-scoped packet');
   }
   if (result.reviewer_role !== 'human' && !packet.questions.length) {
@@ -902,8 +952,8 @@ export function validateReviewResult(candidate, candidatePacket) {
   if (result.implementation_modified) fail('reviewer may not modify implementation');
   if (result.policy_override_attempted) fail('reviewer may not override policy or verdict semantics');
 
-  if (!Array.isArray(result.question_coverage) || result.question_coverage.length > 6) {
-    fail('review_result.question_coverage must contain at most 6 entries');
+  if (!Array.isArray(result.question_coverage) || result.question_coverage.length > 8) {
+    fail('review_result.question_coverage must contain at most 8 entries');
   }
   const packetEvidenceByRef = new Map(packet.evidence_refs.map((entry) => [entry.ref, entry]));
   const assertPacketEvidenceRefs = (refs, label) => {
@@ -927,6 +977,9 @@ export function validateReviewResult(candidate, candidatePacket) {
   }
 
   if (!Array.isArray(result.findings) || result.findings.length > 8) fail('review_result.findings must contain at most 8 entries');
+  const selectedFindingPaths = new Set(packet.selected_paths
+    .flatMap((entry) => [entry.path, entry.previous_path].filter(Boolean))
+    .map((path) => path.toLowerCase()));
   const findingIds = new Set();
   for (const [index, finding] of result.findings.entries()) {
     const label = `review_result.findings[${index}]`;
@@ -952,6 +1005,11 @@ export function validateReviewResult(candidate, candidatePacket) {
     if (finding.disposition === 'unverified' && finding.status !== 'unverified') fail(`${label} unverified disposition requires unverified status`);
     if (finding.disposition === 'fix_now' && (!finding.in_scope || finding.status !== 'confirmed')) {
       fail(`${label} fix_now requires confirmed and in_scope`);
+    }
+    if (finding.disposition === 'fix_now' && (
+      finding.path === null || !selectedFindingPaths.has(finding.path.toLowerCase()) || finding.evidence_refs.length === 0
+    )) {
+      fail(`${label} fix_now requires one selected packet path and packet evidence`);
     }
   }
 
@@ -994,7 +1052,7 @@ export function evidenceFingerprint(candidateInput) {
   const input = validateInput(candidateInput);
   const normalized = input.evidence
     .map((entry) => ({ ...entry }))
-    .sort((a, b) => a.kind.localeCompare(b.kind) || a.ref.localeCompare(b.ref) || a.head_sha.localeCompare(b.head_sha));
+    .sort((a, b) => compareUtf8(a.kind, b.kind) || compareUtf8(a.ref, b.ref) || compareUtf8(a.head_sha, b.head_sha));
   return sha256Value({ head_sha: input.head_sha, evidence: normalized });
 }
 
@@ -1019,6 +1077,15 @@ export function validateLoopInput(candidate) {
     assertUniqueStringArray(attempt.observed_new_evidence, `${label}.observed_new_evidence`, { max: 8, itemMax: 128 });
     assertEnum(attempt.decision, LOOP_RESULTS, `${label}.decision`);
   });
+  if (loop.attempts.length > 0 && loop.attempts[0].action !== 'deterministic_verify') {
+    fail('loop.attempts[0].action must be deterministic_verify before model or human review');
+  }
+  if (loop.attempts.slice(0, -1).some((attempt) => attempt.decision !== 'continue')) {
+    fail('loop attempts may not continue after a terminal decision');
+  }
+  if (loop.attempts.filter((attempt) => attempt.action === 'evidence_request').length > loop.max_evidence_delta_requests) {
+    fail('loop evidence requests exceed max_evidence_delta_requests');
+  }
   return loop;
 }
 
@@ -1044,16 +1111,15 @@ export function advanceReviewLoop(candidateLoop) {
     attempt.verification_manifest_sha256,
   ].join(':')));
   if (identities.size > 1) return output('held', 'exact_identity_changed_restart_cycle');
-  if (latest.decision === 'held') return output('held', 'attempt_reported_held');
-  if (['advisory_pass', 'advisory_review', 'human_required', 'blocked'].includes(latest.decision)) {
-    return output('complete', `terminal_decision_${latest.decision}`);
-  }
-  if (deltaRequests > loop.max_evidence_delta_requests) return output('held', 'evidence_delta_request_budget_exhausted');
   if (used >= 2) {
     const previous = loop.attempts.at(-2);
     if (previous.evidence_fingerprint === latest.evidence_fingerprint) return output('held', 'same_evidence_fingerprint_no_retry');
   }
   if (latest.observed_new_evidence.length === 0) return output('held', 'no_new_evidence_observed');
+  if (latest.decision === 'held') return output('held', 'attempt_reported_held');
+  if (['advisory_pass', 'advisory_review', 'human_required', 'blocked'].includes(latest.decision)) {
+    return output('complete', `terminal_decision_${latest.decision}`);
+  }
   if (used >= loop.max_attempts) return output('held', 'attempt_budget_exhausted');
   return output('continue', 'new_evidence_observed_within_budget');
 }

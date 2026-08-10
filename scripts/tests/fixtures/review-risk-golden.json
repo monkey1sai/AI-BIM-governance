@@ -115,16 +115,36 @@
             "status": "passed",
             "ref": "artifacts/browser_artifacts.json",
             "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "design_fidelity_result",
+            "status": "passed",
+            "ref": "artifacts/design_fidelity_result.json",
+            "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "integration_result",
+            "status": "passed",
+            "ref": "artifacts/integration_result.json",
+            "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "runtime_log",
+            "status": "passed",
+            "ref": "artifacts/runtime_log.json",
+            "head_sha": "2222222222222222222222222222222222222222"
           }
         ],
         "advisory_claims": null
       },
       "expected": {
-        "review_mode": "mechanical_only",
-        "verdict": "advisory_pass",
+        "review_mode": "focused_semantic",
+        "verdict": "advisory_review",
         "topology": "local",
-        "consequence": "low",
-        "specialists_include": []
+        "consequence": "medium",
+        "specialists_include": [
+          "runtime"
+        ]
       }
     },
     {
@@ -175,16 +195,30 @@
             "status": "passed",
             "ref": "artifacts/test_result.json",
             "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "integration_result",
+            "status": "passed",
+            "ref": "artifacts/integration_result.json",
+            "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "runtime_log",
+            "status": "passed",
+            "ref": "artifacts/runtime_log.json",
+            "head_sha": "2222222222222222222222222222222222222222"
           }
         ],
         "advisory_claims": null
       },
       "expected": {
-        "review_mode": "mechanical_only",
-        "verdict": "advisory_pass",
+        "review_mode": "focused_semantic",
+        "verdict": "advisory_review",
         "topology": "local",
-        "consequence": "low",
-        "specialists_include": []
+        "consequence": "medium",
+        "specialists_include": [
+          "runtime"
+        ]
       }
     },
     {
@@ -235,6 +269,18 @@
             "status": "passed",
             "ref": "artifacts/test_result.json",
             "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "integration_result",
+            "status": "passed",
+            "ref": "artifacts/integration_result.json",
+            "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "runtime_log",
+            "status": "passed",
+            "ref": "artifacts/runtime_log.json",
+            "head_sha": "2222222222222222222222222222222222222222"
           }
         ],
         "advisory_claims": null
@@ -244,7 +290,9 @@
         "verdict": "advisory_review",
         "topology": "local",
         "consequence": "medium",
-        "specialists_include": []
+        "specialists_include": [
+          "runtime"
+        ]
       }
     },
     {
@@ -307,6 +355,12 @@
             "status": "passed",
             "ref": "artifacts/integration_result.json",
             "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "runtime_log",
+            "status": "passed",
+            "ref": "artifacts/runtime_log.json",
+            "head_sha": "2222222222222222222222222222222222222222"
           }
         ],
         "advisory_claims": null
@@ -315,9 +369,10 @@
         "review_mode": "risk_scoped_specialists",
         "verdict": "advisory_review",
         "topology": "distributed",
-        "consequence": "low",
+        "consequence": "medium",
         "specialists_include": [
-          "architecture"
+          "architecture",
+          "runtime"
         ]
       }
     },
@@ -381,6 +436,12 @@
             "status": "passed",
             "ref": "artifacts/integration_result.json",
             "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "runtime_log",
+            "status": "passed",
+            "ref": "artifacts/runtime_log.json",
+            "head_sha": "2222222222222222222222222222222222222222"
           }
         ],
         "advisory_claims": null
@@ -391,7 +452,8 @@
         "topology": "distributed",
         "consequence": "medium",
         "specialists_include": [
-          "architecture"
+          "architecture",
+          "runtime"
         ]
       }
     },
@@ -622,6 +684,12 @@
             "status": "passed",
             "ref": "artifacts/integration_result.json",
             "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "runtime_log",
+            "status": "passed",
+            "ref": "artifacts/runtime_log.json",
+            "head_sha": "2222222222222222222222222222222222222222"
           }
         ],
         "advisory_claims": null
@@ -686,6 +754,18 @@
             "status": "passed",
             "ref": "artifacts/test_result.json",
             "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "integration_result",
+            "status": "passed",
+            "ref": "artifacts/integration_result.json",
+            "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "runtime_log",
+            "status": "passed",
+            "ref": "artifacts/runtime_log.json",
+            "head_sha": "2222222222222222222222222222222222222222"
           }
         ],
         "advisory_claims": null
@@ -696,7 +776,8 @@
         "topology": "local",
         "consequence": "critical",
         "specialists_include": [
-          "data_recovery"
+          "data_recovery",
+          "runtime"
         ]
       }
     },
@@ -767,6 +848,12 @@
             "kind": "security_review",
             "status": "passed",
             "ref": "artifacts/security_review.json",
+            "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "runtime_log",
+            "status": "passed",
+            "ref": "artifacts/runtime_log.json",
             "head_sha": "2222222222222222222222222222222222222222"
           }
         ],
@@ -998,16 +1085,42 @@
             "status": "passed",
             "ref": "artifacts/test_result.json",
             "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "browser_artifacts",
+            "status": "passed",
+            "ref": "artifacts/browser_artifacts.json",
+            "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "design_fidelity_result",
+            "status": "passed",
+            "ref": "artifacts/design_fidelity_result.json",
+            "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "integration_result",
+            "status": "passed",
+            "ref": "artifacts/integration_result.json",
+            "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "runtime_log",
+            "status": "passed",
+            "ref": "artifacts/runtime_log.json",
+            "head_sha": "2222222222222222222222222222222222222222"
           }
         ],
         "advisory_claims": null
       },
       "expected": {
-        "review_mode": "mechanical_only",
-        "verdict": "advisory_pass",
+        "review_mode": "focused_semantic",
+        "verdict": "advisory_review",
         "topology": "local",
-        "consequence": "low",
-        "specialists_include": []
+        "consequence": "medium",
+        "specialists_include": [
+          "runtime"
+        ]
       }
     },
     {
@@ -1142,6 +1255,12 @@
             "kind": "security_review",
             "status": "passed",
             "ref": "artifacts/security_review.json",
+            "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "runtime_log",
+            "status": "passed",
+            "ref": "artifacts/runtime_log.json",
             "head_sha": "2222222222222222222222222222222222222222"
           }
         ],
@@ -1336,9 +1455,9 @@
         "review_mode": "focused_semantic",
         "verdict": "held",
         "topology": "unknown",
-        "consequence": "low",
+        "consequence": "medium",
         "specialists_include": [
-          "evidence"
+          "runtime"
         ]
       }
     },
@@ -1402,6 +1521,12 @@
             "kind": "integration_result",
             "status": "passed",
             "ref": "artifacts/integration_result.json",
+            "head_sha": "2222222222222222222222222222222222222222"
+          },
+          {
+            "kind": "runtime_log",
+            "status": "passed",
+            "ref": "artifacts/runtime_log.json",
             "head_sha": "2222222222222222222222222222222222222222"
           }
         ],
