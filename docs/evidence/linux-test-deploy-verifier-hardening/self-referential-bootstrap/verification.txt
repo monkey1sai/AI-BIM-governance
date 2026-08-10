@@ -1,0 +1,22 @@
+stack_kind=self_referential_bootstrap
+pull_request=484
+base_commit=89ff9c8b773da9a3c0c44990e2267f70f4e8007d
+gitnexus=UNKNOWN (accepted by owner; direct source, executable tests, and independent review used)
+PASS test-host-native-conversion-service (84 passed, 1 skipped)
+PASS test-host-native-launcher
+PASS test-verify-all
+PASS test-deploy-target-registry
+PASS test-remote-deploy-transport
+PASS test-deploy-governance-static
+PASS test-rebuild-test-deploy
+PASS test-self-referential-bootstrap
+PASS test-agent-governance-check
+PASS invoke-powershell-static
+PASS sync-agent-skills-check
+PASS skill-quick-validate
+PASS scan-secret-patterns
+PASS canonical-linux-rebuild (tag deploy-20260810-639219377529672976-002)
+PASS isolated-bootstrap-hardening-and-strict-adapter-preflight
+PASS owner-private-acl-restoration-verified
+LIMIT canonical-post-change-verification=pending merge and mainline fixpoint rebuild
+LIMIT full-system-e2e=not claimed
