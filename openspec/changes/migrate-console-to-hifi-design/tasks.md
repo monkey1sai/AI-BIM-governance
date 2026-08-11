@@ -57,7 +57,7 @@
 ## 7. Rebaseline 與驗證
 
 - [ ] 7.1 執行 `node web-viewer-sample/scripts/capture-design-system-reference.mjs --rebaseline --confirm-rebaseline`，重新擷取 13 screens × 2 viewports golden baseline
-- [x] 7.2 執行 `pwsh scripts/tests/verify-design-system-reference.ps1 -VerifyOrigin`，確認通過。2026-08-11 於 HEAD `7929d74`（== origin/main）實跑：`[design-reference-gate] passed — 13 screens, 26 golden files, source=2f414d9d4bd96adbd3102e417f2465eb4aa609b0c3a12d118f41c1ccff30c9c8`。
+- [ ] 7.2 執行 `pwsh scripts/tests/verify-design-system-reference.ps1 -VerifyOrigin`，確認通過。2026-08-12 corrective review：7.1 尚未重新擷取 golden baseline；既有 13 screens／26 golden 驗證只證明舊 snapshot 完整，不能預先驗證 7.1 未來產物，因此須於 7.1 完成後重跑再勾。
 - [ ] 7.3 跑 `web-viewer-sample` 既有測試套件（`npm run verify`），確認無 regression
 - [ ] 7.4 逐條核對 `edge-console-operator-frontend` 與 `unified-governance-console` 兩份既有 spec 的相關 Scenario 仍成立（依 design.md Risk 項，行為層面的不確定 SHALL 停下澄清，不視為理所當然通過）
 
