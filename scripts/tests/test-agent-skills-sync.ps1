@@ -482,6 +482,7 @@ $claudeBlastRadius = Get-Content -Raw -LiteralPath (Join-Path (Join-Path $repoRo
 $codexBlastRadius = Get-Content -Raw -LiteralPath (Join-Path (Join-Path $repoRoot $blastRadiusEntry[0].locations.codex) 'SKILL.md')
 Assert-True ([regex]::Matches($claudeBlastRadius, 'gitnexus analyze --index-only --embeddings').Count -eq 3) 'every GitNexus blast-radius index refresh is injection-free'
 Assert-True ($codexBlastRadius -ceq $claudeBlastRadius) 'Codex mirrors the injection-free GitNexus blast-radius workflow byte-for-byte'
+Assert-True ($claudeBlastRadius -notmatch 'gitnexus impact\s+--target|--direction\b') 'GitNexus blast-radius uses the executable 1.6.9 positional impact syntax'
 $activeIndexRefreshFiles = @(
     'AGENTS.md',
     'CLAUDE.md',

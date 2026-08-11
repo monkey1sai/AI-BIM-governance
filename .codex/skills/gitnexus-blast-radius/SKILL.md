@@ -29,7 +29,7 @@ gitnexus analyze --index-only --embeddings
 對使用者指定 / 從 `tasks.md` 解析出的每個 symbol：
 
 ```
-gitnexus impact --target <symbol> --direction upstream
+gitnexus impact <symbol> -d upstream -r AI-BIM-governance
 ```
 
 蒐集：
@@ -135,7 +135,7 @@ verdict: <pass|drift|critical>
 當 PR reviewer 提出風險評論：
 
 1. 把 comment 文字摘要成 `debug_target`（例如：「callback retry 靜默丟棄」→ `bim-review-coordinator/src/services/callbackOutbox.ts` 的 `deliverPending`）
-2. 對該 symbol 跑 `gitnexus impact --target <symbol>` 找實際 blast radius
+2. 對該 symbol 跑 `gitnexus impact <symbol> -d upstream -r AI-BIM-governance` 找實際 blast radius
 3. 補 focused tests，再回 Phase D 重跑 verify
 
 ## 邊界與限制
