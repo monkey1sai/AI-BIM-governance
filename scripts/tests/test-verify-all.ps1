@@ -449,6 +449,34 @@ try {
     Assert-True ($verifyShell -match '--inventory-path') 'POSIX verifier mirror accepts the private inventory path selector'
     Assert-True ($verifyShell -match 'DEPLOYMENT_ARGS\+=\(-TargetId "\$TARGET_ID"\)') 'POSIX verifier mirror forwards the deployment target selector without eval'
     Assert-True ($verifyShell -match 'DEPLOYMENT_ARGS\+=\(-InventoryPath "\$INVENTORY_PATH"\)') 'POSIX verifier mirror forwards the private inventory path without eval'
+    Assert-True ($verifyShell -match '--target-id requires a non-empty value') 'POSIX verifier rejects an explicitly empty target selector'
+    Assert-True ($verifyShell -match '--inventory-path requires a non-empty value') 'POSIX verifier rejects an explicitly empty inventory selector'
+    $bashPath = if ($IsWindows) {
+        @(
+            'C:\Program Files\Git\bin\bash.exe',
+            'C:\Program Files\Git\usr\bin\bash.exe'
+        ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+    }
+    else {
+        (Get-Command bash -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$bashPath)) {
+        throw 'POSIX verifier empty-selector regressions require bash'
+    }
+    $verifyShellPath = Join-Path $repoRoot 'scripts\verify-all.sh'
+    $emptySelectorCases = @(
+        @{ Name = 'target spaced'; Arguments = @('--profile', 'Deployment', '--plan-only', '--target-id', ''); Expected = '--target-id requires a non-empty value' },
+        @{ Name = 'target equals'; Arguments = @('--profile', 'Deployment', '--plan-only', '--target-id='); Expected = '--target-id requires a non-empty value' },
+        @{ Name = 'inventory spaced'; Arguments = @('--profile', 'Deployment', '--plan-only', '--inventory-path', ''); Expected = '--inventory-path requires a non-empty value' },
+        @{ Name = 'inventory equals'; Arguments = @('--profile', 'Deployment', '--plan-only', '--inventory-path='); Expected = '--inventory-path requires a non-empty value' }
+    )
+    foreach ($emptySelectorCase in $emptySelectorCases) {
+        $caseArguments = [string[]]$emptySelectorCase.Arguments
+        $caseOutput = @(& $bashPath $verifyShellPath @caseArguments 2>&1)
+        $caseExitCode = $LASTEXITCODE
+        Assert-Equal 2 $caseExitCode "POSIX verifier rejects $($emptySelectorCase.Name) empty selector"
+        Assert-True (($caseOutput -join [Environment]::NewLine) -match [regex]::Escape([string]$emptySelectorCase.Expected)) "POSIX verifier reports $($emptySelectorCase.Name) empty selector"
+    }
     Assert-True ($verifyShell -match 'verification-runner\.mjs') 'POSIX verifier consumes the shared manifest runner'
     Assert-True ($verifyShell -notmatch '\beval\b') 'POSIX verifier never reconstructs manifest argv through eval'
     Assert-True ($verifyShell -match '\[ -n "\$SUBJECT" \] \|\| \[ -n "\$OUTCOME_OUT" \]') 'POSIX Deployment adapter rejects execution-outcome arguments it cannot forward'

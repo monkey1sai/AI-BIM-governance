@@ -41,8 +41,14 @@ for arg in "$@"; do
     fi
     if [ "$SUBJECT_ARG_PENDING" -eq 1 ]; then SUBJECT="$arg"; SUBJECT_ARG_PENDING=0; continue; fi
     if [ "$OUTCOME_ARG_PENDING" -eq 1 ]; then OUTCOME_OUT="$arg"; OUTCOME_ARG_PENDING=0; continue; fi
-    if [ "$TARGET_ID_ARG_PENDING" -eq 1 ]; then TARGET_ID="$arg"; TARGET_ID_ARG_PENDING=0; continue; fi
-    if [ "$INVENTORY_PATH_ARG_PENDING" -eq 1 ]; then INVENTORY_PATH="$arg"; INVENTORY_PATH_ARG_PENDING=0; continue; fi
+    if [ "$TARGET_ID_ARG_PENDING" -eq 1 ]; then
+        if [ -z "$arg" ]; then echo "--target-id requires a non-empty value" >&2; exit 2; fi
+        TARGET_ID="$arg"; TARGET_ID_ARG_PENDING=0; continue
+    fi
+    if [ "$INVENTORY_PATH_ARG_PENDING" -eq 1 ]; then
+        if [ -z "$arg" ]; then echo "--inventory-path requires a non-empty value" >&2; exit 2; fi
+        INVENTORY_PATH="$arg"; INVENTORY_PATH_ARG_PENDING=0; continue
+    fi
     case "$arg" in
         --continue-on-error) CONTINUE=1 ;;
         --ts-only) TS_ONLY=1 ;;
@@ -60,9 +66,15 @@ for arg in "$@"; do
         --outcome-out) OUTCOME_ARG_PENDING=1 ;;
         --outcome-out=*) OUTCOME_OUT="${arg#*=}" ;;
         --target-id) TARGET_ID_ARG_PENDING=1 ;;
-        --target-id=*) TARGET_ID="${arg#*=}" ;;
+        --target-id=*)
+            TARGET_ID="${arg#*=}"
+            if [ -z "$TARGET_ID" ]; then echo "--target-id requires a non-empty value" >&2; exit 2; fi
+            ;;
         --inventory-path) INVENTORY_PATH_ARG_PENDING=1 ;;
-        --inventory-path=*) INVENTORY_PATH="${arg#*=}" ;;
+        --inventory-path=*)
+            INVENTORY_PATH="${arg#*=}"
+            if [ -z "$INVENTORY_PATH" ]; then echo "--inventory-path requires a non-empty value" >&2; exit 2; fi
+            ;;
         *) echo "unknown arg: $arg" >&2; exit 2 ;;
     esac
 done
