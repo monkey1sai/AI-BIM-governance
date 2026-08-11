@@ -240,12 +240,12 @@ class Ifc2UsdcPowershellConverterAdapter:
                 return False
             if component_stat.st_uid != current_uid:
                 return False
-            if component_stat.st_mode & stat.S_IWOTH and not (
-                allow_leaf_world_write and component == leaf
-            ):
+            permitted_writable_leaf = allow_leaf_world_write and component == leaf
+            if component_stat.st_mode & stat.S_IWOTH and not permitted_writable_leaf:
                 return False
             if (
                 component_stat.st_mode & stat.S_IWGRP
+                and not permitted_writable_leaf
                 and not self._group_is_private_to_process(component_stat.st_gid)
             ):
                 return False

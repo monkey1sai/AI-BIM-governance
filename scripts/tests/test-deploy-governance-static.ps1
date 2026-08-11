@@ -180,6 +180,168 @@ finally {
         Remove-Item -LiteralPath $hardenerSandbox -Recurse -Force
     }
 }
+
+$cadHardeningPhases = @($deployAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.IfStatementAst] -and
+        $node.Extent.Text.TrimStart().StartsWith("if (-not `$SkipConversion -and (Get-PlatformName) -eq 'linux')", [System.StringComparison]::Ordinal)
+}, $true))
+if ($cadHardeningPhases.Count -ne 1) {
+    throw 'deploy.ps1 must expose exactly one Linux CAD hardening phase block'
+}
+if (-not $IsWindows) {
+    $cadPhaseSandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("ai-bim-cad-phase-{0}" -f [guid]::NewGuid().ToString('N'))
+    try {
+        $streamingScripts = Join-Path $cadPhaseSandbox 'bim-streaming-server/scripts'
+        New-Item -ItemType Directory -Path $streamingScripts -Force | Out-Null
+        $fixtureHardener = Join-Path $streamingScripts 'harden-cad-extension-cache.py'
+        [System.IO.File]::WriteAllText($fixtureHardener, '# fixture hardener')
+        $phaseSourcePath = Join-Path $cadPhaseSandbox 'cad-hardening-phase.ps1'
+        [System.IO.File]::WriteAllText($phaseSourcePath, $cadHardeningPhases[0].Extent.Text)
+        $fixtureRunnerPath = Join-Path $cadPhaseSandbox 'invoke-cad-hardening-phase.ps1'
+        $fixtureRunnerSource = @'
+param(
+    [Parameter(Mandatory = $true)][string] $RepoRoot,
+    [Parameter(Mandatory = $true)][string] $PhaseSourcePath,
+    [Parameter(Mandatory = $true)][string] $PythonPath,
+    [AllowEmptyString()][string] $ConfiguredHoopsMain = '',
+    [int] $HardenerExitCode = 0,
+    [ValidateSet('true', 'false')][string] $HardenerStatusValid = 'true'
+)
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$SkipConversion = $false
+$resolvedEnvFile = ''
+$LogPath = Join-Path $RepoRoot 'phase.log'
+$script:fixturePythonPath = $PythonPath
+$script:fixtureConfiguredHoopsMain = $ConfiguredHoopsMain
+$script:fixtureHardenerExitCode = $HardenerExitCode
+$script:fixtureHardenerStatusValid = $HardenerStatusValid -ceq 'true'
+function Get-PlatformName { return 'linux' }
+function Get-DeployEnvValue {
+    param($Name, $EnvFile, $Default)
+    return $script:fixtureConfiguredHoopsMain
+}
+function Resolve-PlatformVenvPython {
+    param($VenvRoot)
+    return $script:fixturePythonPath
+}
+function Invoke-CadExtensionCacheHardener {
+    param($PythonPath, $ScriptPath, $StreamingRepoRoot)
+    [pscustomobject]@{
+        PythonPath = $PythonPath
+        ScriptPath = $ScriptPath
+        StreamingRepoRoot = $StreamingRepoRoot
+    } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $RepoRoot 'hardener-call.json') -Encoding utf8
+    return [pscustomobject]@{
+        ExitCode = $script:fixtureHardenerExitCode
+        StatusValid = $script:fixtureHardenerStatusValid
+        StatusJson = '{"schema_version":"cad-extension-cache-hardening/v1","status":"passed"}'
+    }
+}
+function Write-DeployTag {
+    param($Tag, $Message, $LogPath)
+    "$Tag|$Message" | Add-Content -LiteralPath (Join-Path $RepoRoot 'phase-trace.txt')
+}
+function Print-FinalSummary {
+    param($ExitCode, $FailedPhase)
+    Write-Output "SUMMARY_EXIT=$ExitCode PHASE=$FailedPhase"
+}
+. ([scriptblock]::Create([System.IO.File]::ReadAllText($PhaseSourcePath)))
+Write-Output 'PHASE_CONTINUED'
+'@
+        [System.IO.File]::WriteAllText($fixtureRunnerPath, $fixtureRunnerSource)
+        $fixturePython = Resolve-PlatformSystemPython
+        if ([string]::IsNullOrWhiteSpace($fixturePython)) {
+            throw 'Linux CAD phase regression fixtures require a working Python 3.11+ interpreter'
+        }
+        $phaseCases = @(
+            @{
+                Name = 'explicit HOOPS override'
+                ConfiguredHoopsMain = '/tmp/unpinned-hoops-main.py'
+                HardenerExitCode = 0
+                HardenerStatusValid = 'true'
+                ExpectedExitCode = 2
+                ExpectedTrace = 'Explicit STREAMING_CONVERSION_HOOPS_MAIN is not supported'
+                ExpectHardenerCall = $false
+                ExpectContinuation = $false
+            },
+            @{
+                Name = 'malformed hardener result'
+                ConfiguredHoopsMain = ''
+                HardenerExitCode = 0
+                HardenerStatusValid = 'false'
+                ExpectedExitCode = 2
+                ExpectedTrace = 'CAD extension cache permission hardening failed'
+                ExpectHardenerCall = $true
+                ExpectContinuation = $false
+            },
+            @{
+                Name = 'exact hardener success'
+                ConfiguredHoopsMain = ''
+                HardenerExitCode = 0
+                HardenerStatusValid = 'true'
+                ExpectedExitCode = 0
+                ExpectedTrace = 'CAD extension cache entrypoint permissions hardened'
+                ExpectHardenerCall = $true
+                ExpectContinuation = $true
+            }
+        )
+        foreach ($phaseCase in $phaseCases) {
+            foreach ($artifactName in @('hardener-call.json', 'phase-trace.txt', 'phase.log')) {
+                Remove-Item -LiteralPath (Join-Path $cadPhaseSandbox $artifactName) -Force -ErrorAction SilentlyContinue
+            }
+            $phaseOutput = @(& (Get-Process -Id $PID).Path -NoProfile -NonInteractive -File $fixtureRunnerPath `
+                -RepoRoot $cadPhaseSandbox `
+                -PhaseSourcePath $phaseSourcePath `
+                -PythonPath $fixturePython `
+                -ConfiguredHoopsMain ([string]$phaseCase.ConfiguredHoopsMain) `
+                -HardenerExitCode ([int]$phaseCase.HardenerExitCode) `
+                -HardenerStatusValid ([string]$phaseCase.HardenerStatusValid) 2>&1)
+            $phaseExitCode = $LASTEXITCODE
+            $phaseOutputText = $phaseOutput -join "`n"
+            if ($phaseExitCode -ne [int]$phaseCase.ExpectedExitCode) {
+                throw "Linux CAD phase '$($phaseCase.Name)' exit code mismatch: expected=$($phaseCase.ExpectedExitCode) actual=$phaseExitCode output=$phaseOutputText"
+            }
+            $tracePath = Join-Path $cadPhaseSandbox 'phase-trace.txt'
+            $traceText = if (Test-Path -LiteralPath $tracePath) { Get-Content -LiteralPath $tracePath -Raw } else { '' }
+            if ($traceText -notmatch [regex]::Escape([string]$phaseCase.ExpectedTrace)) {
+                throw "Linux CAD phase '$($phaseCase.Name)' did not report its expected phase result"
+            }
+            $continued = $phaseOutputText -match 'PHASE_CONTINUED'
+            if ($continued -ne [bool]$phaseCase.ExpectContinuation) {
+                throw "Linux CAD phase '$($phaseCase.Name)' continuation mismatch"
+            }
+            $hardenerCallPath = Join-Path $cadPhaseSandbox 'hardener-call.json'
+            if ((Test-Path -LiteralPath $hardenerCallPath -PathType Leaf) -ne [bool]$phaseCase.ExpectHardenerCall) {
+                throw "Linux CAD phase '$($phaseCase.Name)' hardener call mismatch"
+            }
+            if ($phaseCase.ExpectHardenerCall) {
+                $hardenerCall = Get-Content -LiteralPath $hardenerCallPath -Raw | ConvertFrom-Json -ErrorAction Stop
+                if ([string]$hardenerCall.PythonPath -cne $fixturePython -or
+                    [string]$hardenerCall.ScriptPath -cne $fixtureHardener -or
+                    [string]$hardenerCall.StreamingRepoRoot -cne (Join-Path $cadPhaseSandbox 'bim-streaming-server')) {
+                    throw "Linux CAD phase '$($phaseCase.Name)' did not preserve exact helper arguments"
+                }
+            }
+            if ($phaseCase.ExpectContinuation) {
+                $phaseLog = Get-Content -LiteralPath (Join-Path $cadPhaseSandbox 'phase.log') -Raw
+                if ($phaseLog -notmatch 'cad-extension-cache-hardening/v1') {
+                    throw 'Linux CAD phase success did not retain the structured hardener status'
+                }
+            }
+            elseif ($phaseOutputText -notmatch 'SUMMARY_EXIT=2 PHASE=Phase 2 \(CAD extension cache hardening\)') {
+                throw "Linux CAD phase '$($phaseCase.Name)' did not preserve exit-2 phase reporting"
+            }
+        }
+        Write-Host 'PASS Linux CAD hardening deploy-phase execution matrix'
+    }
+    finally {
+        if (Test-Path -LiteralPath $cadPhaseSandbox) {
+            Remove-Item -LiteralPath $cadPhaseSandbox -Recurse -Force
+        }
+    }
+}
 $refreshFunction = @($deployAst.FindAll({
     param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and

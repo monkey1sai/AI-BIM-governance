@@ -439,6 +439,12 @@ try {
             Assert-True (Test-Path -LiteralPath $commandPath -PathType Leaf) "ledger command id '$commandId' resolves to an existing executable source path"
         }
     }
+    $linuxHardeningEntries = @($realLedger.entries | Where-Object { [string]$_.id -ceq 'linux-test-deploy-verifier-hardening' })
+    Assert-True ($linuxHardeningEntries.Count -eq 1) 'repo ledger retains exactly one linux-test-deploy-verifier-hardening entry'
+    $linuxHardeningCommandIds = @($linuxHardeningEntries[0].verification_contract.command_ids | ForEach-Object { [string]$_ })
+    foreach ($requiredCanonicalCommandId in @('canonical-linux-rebuild', 'canonical-linux-deployment-verify')) {
+        Assert-True ($linuxHardeningCommandIds -ccontains $requiredCanonicalCommandId) "linux-test-deploy-verifier-hardening retains required command id '$requiredCanonicalCommandId'"
+    }
     $expectedCanonicalRebuild = @($pwshPrefix + @('scripts/dev/rebuild-test-deploy.ps1', '-Build', '-TargetId', 'canonical-linux', '-InventoryPath', '<owner-private-inventory>'))
     $expectedCanonicalVerify = @($pwshPrefix + @('scripts/verify-all.ps1', '-Profile', 'Deployment', '-InventoryPath', '<owner-private-inventory>'))
     Assert-True ((@($commandSpecById['canonical-linux-rebuild'].Invocation) -join "`n") -ceq ($expectedCanonicalRebuild -join "`n")) 'canonical rebuild invocation preserves -Build, target, and owner-private inventory metadata'

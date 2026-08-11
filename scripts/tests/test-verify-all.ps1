@@ -210,6 +210,114 @@ try {
     Assert-True ($verifySource -match 'kit-manager-api\.params\.json') 'deployment verifier consumes the effective Kit Manager control identity from the runtime signature'
     Assert-True ($verifySource -match 'kitControlUrl\)\.TrimEnd\(''\/''\)') 'deployment verifier compares the normalized child Kit control origin recorded by service settings'
 
+    $verifyTokens = $null
+    $verifyParseErrors = $null
+    $verifyAst = [System.Management.Automation.Language.Parser]::ParseInput(
+        $verifySource,
+        [ref]$verifyTokens,
+        [ref]$verifyParseErrors
+    )
+    Assert-Equal 0 @($verifyParseErrors).Count 'deployment verifier parses before HTTP identity execution tests'
+    $httpEndpointFunctions = @($verifyAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Test-DeploymentHttpEndpoint'
+    }, $true))
+    Assert-Equal 1 $httpEndpointFunctions.Count 'deployment verifier exposes exactly one HTTP identity function'
+    . ([scriptblock]::Create($httpEndpointFunctions[0].Extent.Text))
+
+    $script:deploymentHttpFixture = $null
+    function Invoke-WebRequest {
+        [CmdletBinding()]
+        param(
+            [Parameter(Mandatory = $true)][string] $Uri,
+            [int] $TimeoutSec,
+            [int] $MaximumRedirection,
+            [switch] $NoProxy,
+            [switch] $UseBasicParsing
+        )
+        if (-not [string]::IsNullOrWhiteSpace([string]$script:deploymentHttpFixture.ThrowMessage)) {
+            throw [string]$script:deploymentHttpFixture.ThrowMessage
+        }
+        return [pscustomobject]@{
+            StatusCode = [int]$script:deploymentHttpFixture.StatusCode
+            Content = [string]$script:deploymentHttpFixture.Content
+        }
+    }
+
+    $httpIdentityCases = @(
+        @{
+            Name = 'invalid JSON'
+            Fixture = @{ StatusCode = 200; Content = 'not-json'; ThrowMessage = '' }
+            ExpectedService = 'governance-service'
+            ExpectedProperties = @{}
+            ExpectedMessage = 'response was not valid JSON'
+        },
+        @{
+            Name = 'non-ok status'
+            Fixture = @{ StatusCode = 200; Content = '{"status":"degraded","service":"governance-service"}'; ThrowMessage = '' }
+            ExpectedService = 'governance-service'
+            ExpectedProperties = @{}
+            ExpectedMessage = 'response status was not ok'
+        },
+        @{
+            Name = 'wrong service identity'
+            Fixture = @{ StatusCode = 200; Content = '{"status":"ok","service":"wrong-service"}'; ThrowMessage = '' }
+            ExpectedService = 'governance-service'
+            ExpectedProperties = @{}
+            ExpectedMessage = 'response service identity did not match the expected role'
+        },
+        @{
+            Name = 'mismatched Kit Manager identity'
+            Fixture = @{
+                StatusCode = 200
+                Content = '{"status":"ok","runtime_mode":"hybrid-web-plane-host-native-kit","host_local_runtime_allowed":true,"kit_instance_id":"wrong-kit","kit_control_url":"http://localhost:49101"}'
+                ThrowMessage = ''
+            }
+            ExpectedService = ''
+            ExpectedProperties = @{
+                runtime_mode = 'hybrid-web-plane-host-native-kit'
+                host_local_runtime_allowed = $true
+                kit_instance_id = 'kit_local_001'
+                kit_control_url = 'http://localhost:49101'
+            }
+            ExpectedMessage = "response identity property 'kit_instance_id' did not match the expected value"
+        }
+    )
+    foreach ($httpCase in $httpIdentityCases) {
+        $script:deploymentHttpFixture = $httpCase.Fixture
+        $httpFailure = ''
+        try {
+            Test-DeploymentHttpEndpoint -Name 'fixture health' -Uri 'http://127.0.0.1:49102/health' `
+                -DisplayUri 'http://127.0.0.1:49102/health' -ExpectJson `
+                -ExpectedService ([string]$httpCase.ExpectedService) `
+                -ExpectedJsonProperties ([hashtable]$httpCase.ExpectedProperties)
+        }
+        catch {
+            $httpFailure = $_.Exception.Message
+        }
+        Assert-True ($httpFailure -match [regex]::Escape([string]$httpCase.ExpectedMessage)) "deployment HTTP verifier rejects $($httpCase.Name)"
+    }
+
+    $privateHost = '192.0.2.123'
+    $script:deploymentHttpFixture = @{
+        StatusCode = 0
+        Content = ''
+        ThrowMessage = "connection to ${privateHost} refused"
+    }
+    $redactedFailure = ''
+    try {
+        Test-DeploymentHttpEndpoint -Name 'governance health' -Uri "http://${privateHost}:49102/health" `
+            -DisplayUri 'http://<host-native-bind>:49102/health' -ExpectJson -ExpectedService 'governance-service'
+    }
+    catch {
+        $redactedFailure = $_.Exception.Message
+    }
+    Assert-True ($redactedFailure -match [regex]::Escape('<host-native-bind>')) 'deployment HTTP failure uses the redacted display host'
+    Assert-True (-not $redactedFailure.Contains($privateHost)) 'deployment HTTP failure never retains the private inventory host'
+    Remove-Item Function:Invoke-WebRequest -Force
+    Write-TestPass 'deployment HTTP JSON identity and redaction rejection matrix'
+
     $executionInventoryPath = Join-Path $sandbox 'execution-target.local.json'
     $executionDeployRoot = if ($IsWindows) { '/tmp/ai-bim-verify-execution-deploy' } else { $deploymentRoot }
     $executionRuntimeDataRoot = if ($IsWindows) {

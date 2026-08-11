@@ -289,6 +289,34 @@ try {
     }
     Write-TestPass 'host-native Kit Manager preserves unconfigured control as blocked state'
 
+    function Start-HostNativeService {
+        param($Name, $WorkingDirectory, $FilePath, $ArgumentList, $RunDir)
+        $script:capturedKitManagerEnvironment = [ordered]@{
+            RUNTIME_MODE = [Environment]::GetEnvironmentVariable('RUNTIME_MODE', 'Process')
+            HOST_LOCAL_RUNTIME_ALLOWED = [Environment]::GetEnvironmentVariable('HOST_LOCAL_RUNTIME_ALLOWED', 'Process')
+            KIT_INSTANCE_ID = [Environment]::GetEnvironmentVariable('KIT_INSTANCE_ID', 'Process')
+            KIT_CONTROL_URL = [Environment]::GetEnvironmentVariable('KIT_CONTROL_URL', 'Process')
+        }
+        throw 'fixture launch failure'
+    }
+    $launchFailure = ''
+    try {
+        Start-HostNativeKitManager -RepoRoot $sb -Port 8010 `
+            -KitControlUrl 'http://localhost:49101' `
+            -ImportProbeFn { param($PythonExe) return 0 } `
+            -LocalAddressProbeFn { param($HostName) return ($HostName -eq 'localhost') } | Out-Null
+    }
+    catch {
+        $launchFailure = $_.Exception.Message
+    }
+    Assert-True ($launchFailure -match 'fixture launch failure') 'Kit Manager surfaces a child launch failure'
+    Assert-Equal 'hybrid-web-plane-host-native-kit' $capturedKitManagerEnvironment.RUNTIME_MODE 'throwing child observes exact runtime mode before launch'
+    Assert-Equal 'http://localhost:49101' $capturedKitManagerEnvironment.KIT_CONTROL_URL 'throwing child observes canonical control URL before launch'
+    foreach ($name in $kitManagerEnvironmentNames) {
+        Assert-Equal "parent-$name" ([Environment]::GetEnvironmentVariable($name, 'Process')) "parent env restores $name after child launch failure"
+    }
+    Write-TestPass 'host-native Kit Manager restores parent env after launch failure'
+
     $nonLocalError = ''
     try {
         Start-HostNativeKitManager -RepoRoot $sb -Port 8010 `
