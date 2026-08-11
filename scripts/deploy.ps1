@@ -535,7 +535,8 @@ function Invoke-CadExtensionCacheHardener {
     param(
         [Parameter(Mandatory = $true)][string] $PythonPath,
         [Parameter(Mandatory = $true)][string] $ScriptPath,
-        [Parameter(Mandatory = $true)][string] $StreamingRepoRoot
+        [Parameter(Mandatory = $true)][string] $StreamingRepoRoot,
+        [ValidateRange(1, 3600)][int] $TimeoutSec = 60
     )
 
     $exitCode = -1
@@ -558,10 +559,15 @@ function Invoke-CadExtensionCacheHardener {
         }
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
-        $process.WaitForExit()
-        $stdout = $stdoutTask.GetAwaiter().GetResult()
-        $stderr = $stderrTask.GetAwaiter().GetResult()
-        $exitCode = $process.ExitCode
+        if (-not $process.WaitForExit($TimeoutSec * 1000)) {
+            try { $process.Kill($true) } catch {}
+            [void]$process.WaitForExit(5000)
+        }
+        else {
+            $stdout = $stdoutTask.GetAwaiter().GetResult()
+            $stderr = $stderrTask.GetAwaiter().GetResult()
+            $exitCode = $process.ExitCode
+        }
     }
     catch {
         $exitCode = -1
@@ -1305,18 +1311,8 @@ if (-not $SkipConversion -and (Get-PlatformName) -eq 'linux') {
         exit 2
     }
     $hardenerPython = Resolve-PlatformVenvPython -VenvRoot (Join-Path $RepoRoot '.venv')
-    $hardenerPythonReady = Test-Path -LiteralPath $hardenerPython -PathType Leaf
-    if ($hardenerPythonReady) {
-        try {
-            $executeMask = [System.IO.UnixFileMode]::UserExecute -bor [System.IO.UnixFileMode]::GroupExecute -bor [System.IO.UnixFileMode]::OtherExecute
-            $hardenerPythonReady = (([System.IO.File]::GetUnixFileMode($hardenerPython) -band $executeMask) -ne 0)
-        }
-        catch {
-            $hardenerPythonReady = $false
-        }
-    }
-    if (-not $hardenerPythonReady) {
-        Write-DeployTag -Tag 'fail' -Message 'CAD extension cache hardener interpreter is missing or not executable' -LogPath $LogPath | Out-Null
+    if (-not (Test-Path -LiteralPath $hardenerPython -PathType Leaf)) {
+        Write-DeployTag -Tag 'fail' -Message 'CAD extension cache hardener interpreter is missing' -LogPath $LogPath | Out-Null
         Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (CAD extension cache hardening)'
         exit 2
     }

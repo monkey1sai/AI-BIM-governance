@@ -498,8 +498,9 @@ function Start-HostNativeKitManager {
         [Parameter(Mandatory = $true)][string] $RepoRoot,
         [int] $Port = 8010,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string] $KitControlUrl,
+        [ValidateRange(1, 300)][int] $ImportProbeTimeoutSec = 30,
         [scriptblock] $ImportProbeFn = {
-            param($PythonExe)
+            param($PythonExe, $TimeoutSec)
             $importProcess = $null
             try {
                 $importStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
@@ -514,7 +515,11 @@ function Start-HostNativeKitManager {
                 if (-not $importProcess.Start()) { return -1 }
                 $stdoutTask = $importProcess.StandardOutput.ReadToEndAsync()
                 $stderrTask = $importProcess.StandardError.ReadToEndAsync()
-                $importProcess.WaitForExit()
+                if (-not $importProcess.WaitForExit($TimeoutSec * 1000)) {
+                    try { $importProcess.Kill($true) } catch {}
+                    [void]$importProcess.WaitForExit(5000)
+                    return -1
+                }
                 $null = $stdoutTask.GetAwaiter().GetResult()
                 $null = $stderrTask.GetAwaiter().GetResult()
                 return $importProcess.ExitCode
@@ -540,7 +545,7 @@ function Start-HostNativeKitManager {
     $pythonExe = Resolve-HostNativePython -RepoRoot $RepoRoot -ServiceName 'kit-manager-api'
 
     Remove-Item Env:PYTHONNOUSERSITE -ErrorAction SilentlyContinue
-    $pythonImportExit = & $ImportProbeFn $pythonExe
+    $pythonImportExit = & $ImportProbeFn $pythonExe $ImportProbeTimeoutSec
     if ([int]$pythonImportExit -ne 0) {
         throw "kit-manager-api Python cannot import fastapi and uvicorn: $pythonExe"
     }

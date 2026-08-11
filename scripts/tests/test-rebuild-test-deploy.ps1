@@ -270,6 +270,10 @@ function Start-HostNativeKit {
 
 function Start-HostNativeKitManager {
     param([string] $RepoRoot, [int] $Port, [string] $KitControlUrl)
+    $capturePath = [Environment]::GetEnvironmentVariable('TEST_CAPTURE_KIT_CONTROL_URL_PATH', 'Process')
+    if (-not [string]::IsNullOrWhiteSpace($capturePath)) {
+        Set-Content -LiteralPath $capturePath -Value $KitControlUrl -Encoding ascii
+    }
     return [pscustomobject]@{ Pid = 4545; LogPath = (Join-Path $RepoRoot 'scripts\.run\mock-kit-manager.log') }
 }
 
@@ -1284,7 +1288,8 @@ param([string] $First, [string] $Second, [string] $Third)
     Initialize-TestGitHead -Root $artifactDeployRoot
     @(
         'RUNTIME_STORAGE_ROOT=./storage',
-        'MINIO_WATCH_ENABLED=true'
+        'MINIO_WATCH_ENABLED=true',
+        'KIT_CONTROL_URL=HTTP://LOCALHOST:49101/'
     ) | Set-Content -LiteralPath (Join-Path $artifactDeployRoot '.env.web-plane.host-kit.example') -Encoding ascii
 
     $artifactEnvNames = @(
@@ -1294,7 +1299,8 @@ param([string] $First, [string] $Second, [string] $Third)
         'STORAGE_HOST_ROOT',
         'STREAMING_CONVERSION_ARTIFACTS_ROOT',
         'CONVERSION_LEDGER_STORE_PATH',
-        'ARTIFACT_HEALTH_LEDGER_STORE_PATH'
+        'ARTIFACT_HEALTH_LEDGER_STORE_PATH',
+        'TEST_CAPTURE_KIT_CONTROL_URL_PATH'
     )
     $artifactEnvBackup = @{}
     foreach ($name in $artifactEnvNames) {
@@ -1309,7 +1315,9 @@ param([string] $First, [string] $Second, [string] $Third)
         [Environment]::SetEnvironmentVariable('CONVERSION_LEDGER_STORE_PATH', (Join-Path $artifactDeployRoot 'ledgers\conversion-ledger.json'), 'Process')
         [Environment]::SetEnvironmentVariable('ARTIFACT_HEALTH_LEDGER_STORE_PATH', (Join-Path $artifactDeployRoot 'ledgers\artifact-health-ledger.json'), 'Process')
         $capturedVolumePath = Join-Path $sandbox 'captured-conversion-volume.txt'
+        $capturedKitControlUrlPath = Join-Path $sandbox 'captured-kit-control-url.txt'
         [Environment]::SetEnvironmentVariable('TEST_CAPTURE_VOLUME_PATH', $capturedVolumePath, 'Process')
+        [Environment]::SetEnvironmentVariable('TEST_CAPTURE_KIT_CONTROL_URL_PATH', $capturedKitControlUrlPath, 'Process')
 
         $artifactRunner = {
             param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
@@ -1343,6 +1351,9 @@ param([string] $First, [string] $Second, [string] $Third)
             $capturedVolume = (Get-Content -LiteralPath $capturedVolumePath -Raw).Trim()
             Assert-Equal (Join-Path $artifactRoot 'storage') $capturedVolume 'host-native conversion keeps edge runtime storage root after env repair'
             Assert-True ($capturedVolume -ne (Join-Path $DeployRoot 'storage')) 'host-native conversion does not fall back to deploy checkout storage'
+            Assert-True (Test-Path -LiteralPath $capturedKitControlUrlPath -PathType Leaf) 'Kit Manager harness captures the resolved control URL'
+            $capturedKitControlUrl = (Get-Content -LiteralPath $capturedKitControlUrlPath -Raw).Trim()
+            Assert-Equal 'http://localhost:49101' $capturedKitControlUrl 'rebuild forwards the canonical Kit control origin into the runtime child'
             return [pscustomobject]@{ ExitCode = $deployProcess.ExitCode }
         }.GetNewClosure()
 

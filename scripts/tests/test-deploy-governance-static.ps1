@@ -40,8 +40,12 @@ Assert-Contains $deploy '$shouldRefreshWebPlane = $true' 'deploy.ps1 must force 
 Assert-Contains $deploy "if (-not `$SkipConversion -and (Get-PlatformName) -eq 'linux')" 'deploy.ps1 must harden the CAD entrypoint only on the Linux conversion path'
 Assert-Contains $deploy 'harden-cad-extension-cache.py' 'deploy.ps1 must invoke the checked-in CAD cache hardener'
 Assert-Contains $deploy "Get-DeployEnvValue -Name 'STREAMING_CONVERSION_HOOPS_MAIN'" 'Linux deploy must reject an unpinned explicit HOOPS override'
-Assert-Contains $deploy '[System.IO.File]::GetUnixFileMode($hardenerPython)' 'Linux deploy must prove the hardener interpreter is executable'
+if ($deploy -match 'GetUnixFileMode') {
+    throw 'Linux deploy must remain compatible with the repository PowerShell 7 baseline'
+}
 Assert-Contains $deploy '[System.Diagnostics.ProcessStartInfo]::new()' 'Linux deploy must launch the hardener through a process with a reliable ExitCode'
+Assert-Contains $deploy '$process.WaitForExit($TimeoutSec * 1000)' 'Linux deploy must bound the CAD hardener process wait'
+Assert-Contains $deploy '$process.Kill($true)' 'Linux deploy must terminate a timed-out CAD hardener process tree'
 Assert-Contains $deploy '$process.ExitCode' 'Linux deploy must read the hardener process ExitCode directly'
 Assert-Contains $deploy "[string]`$status.status -ceq 'passed'" 'Linux deploy must require the hardener passed JSON contract'
 Assert-Contains $cadHardener 'harden_default_hoops_main_permissions' 'CAD cache hardener must reuse the adapter trust-boundary implementation'
@@ -146,6 +150,22 @@ try {
         -StreamingRepoRoot $hardenerSandbox
     if ($validResult.ExitCode -ne 0 -or -not $validResult.StatusValid) {
         throw 'exact hardener success contract must be accepted'
+    }
+
+    $hungFixture = Join-Path $hardenerSandbox 'hung.py'
+    [System.IO.File]::WriteAllText($hungFixture, "import time`ntime.sleep(30)`n")
+    $hungStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $hungResult = Invoke-CadExtensionCacheHardener `
+        -PythonPath $fixturePython `
+        -ScriptPath $hungFixture `
+        -StreamingRepoRoot $hardenerSandbox `
+        -TimeoutSec 1
+    $hungStopwatch.Stop()
+    if ($hungResult.ExitCode -ne -1 -or $hungResult.StatusValid) {
+        throw 'timed-out hardener process must fail closed'
+    }
+    if ($hungStopwatch.Elapsed.TotalSeconds -ge 10) {
+        throw 'timed-out hardener process must return within the bounded cleanup window'
     }
 
     $wrongSchemaStatus = '{"schema_version":"wrong","status":"passed"}'

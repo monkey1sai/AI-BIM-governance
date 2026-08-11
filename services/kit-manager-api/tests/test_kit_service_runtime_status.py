@@ -1,4 +1,6 @@
 import socket
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
 
 from app.kit_service import KitInstanceService
 from app.kit_gateway import KitRuntimeGateway
@@ -132,3 +134,51 @@ def test_configured_gateway_ignores_inherited_http_proxy(monkeypatch):
 
     assert status == "blocked_runtime_control_unavailable"
     assert destinations == [("192.0.2.50", 49101)]
+
+
+def test_configured_gateway_rejects_redirects_without_contacting_the_destination():
+    request_counts = {"redirect": 0, "destination": 0}
+
+    class DestinationHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            request_counts["destination"] += 1
+            self.send_response(200)
+            self.end_headers()
+
+        do_POST = do_GET
+
+        def log_message(self, format, *args):
+            return
+
+    destination_server = ThreadingHTTPServer(("127.0.0.1", 0), DestinationHandler)
+    destination_thread = Thread(target=destination_server.serve_forever, daemon=True)
+    destination_thread.start()
+    destination_url = f"http://127.0.0.1:{destination_server.server_port}/capture"
+
+    class RedirectHandler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            request_counts["redirect"] += 1
+            self.send_response(302)
+            self.send_header("Location", destination_url)
+            self.end_headers()
+
+        def log_message(self, format, *args):
+            return
+
+    redirect_server = ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
+    redirect_thread = Thread(target=redirect_server.serve_forever, daemon=True)
+    redirect_thread.start()
+    try:
+        gateway = KitRuntimeGateway(f"http://127.0.0.1:{redirect_server.server_port}")
+
+        status = gateway.open_stage({"type": "openStageRequest"})
+
+        assert status == "blocked_runtime_control_unavailable"
+        assert request_counts == {"redirect": 1, "destination": 0}
+    finally:
+        redirect_server.shutdown()
+        redirect_server.server_close()
+        destination_server.shutdown()
+        destination_server.server_close()
+        redirect_thread.join(timeout=2)
+        destination_thread.join(timeout=2)

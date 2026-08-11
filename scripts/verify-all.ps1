@@ -155,6 +155,21 @@ function Get-DeploymentRuntimeSignature {
     return $signature
 }
 
+function Get-DeploymentCheckoutRevision {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string] $Root)
+
+    $revisionOutput = @(& git -C $Root rev-parse --verify HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $revisionOutput.Count -ne 1) {
+        throw 'deployment checkout revision is unavailable.'
+    }
+    $revision = ([string]$revisionOutput[0]).Trim().ToLowerInvariant()
+    if ($revision -notmatch '^[0-9a-f]{40,64}$') {
+        throw 'deployment checkout revision is invalid.'
+    }
+    return $revision
+}
+
 function New-DeploymentHealthTarget {
     [CmdletBinding()]
     param(
@@ -286,6 +301,7 @@ if ($VerifyProfile -eq 'Deployment') {
     $pruningContract = Get-TestDeployPruningContract
     $requiredArtifacts = @('scripts\deploy.ps1') + @($pruningContract.PreservedProductionFiles)
     Test-DeploymentRequiredArtifacts -Root $RepoRoot -RequiredRelativePaths $requiredArtifacts
+    $deploymentCheckoutRevision = Get-DeploymentCheckoutRevision -Root $RepoRoot
 
     $deploymentTarget = if (-not [string]::IsNullOrWhiteSpace($TargetId)) {
         Get-DeployTarget -Id $TargetId -InventoryPath $InventoryPath
@@ -299,7 +315,7 @@ if ($VerifyProfile -eq 'Deployment') {
     $conversionRuntimeSignature = Get-DeploymentRuntimeSignature `
         -Root $RepoRoot `
         -FileName 'bim-streaming-conversion-service.params.json' `
-        -RequiredProperties @('healthHost', 'port') `
+        -RequiredProperties @('healthHost', 'port', 'revision') `
         -AllowMissing:$PlanOnly
     $conversionHealthHost = if ($null -ne $conversionRuntimeSignature) {
         [string]$conversionRuntimeSignature.healthHost
@@ -310,15 +326,21 @@ if ($VerifyProfile -eq 'Deployment') {
     if ($null -ne $conversionRuntimeSignature -and [int]$conversionRuntimeSignature.port -ne 49101) {
         throw 'deployment conversion runtime signature has an unexpected port.'
     }
+    if ($null -ne $conversionRuntimeSignature -and [string]$conversionRuntimeSignature.revision -cne $deploymentCheckoutRevision) {
+        throw 'deployment conversion runtime signature revision does not match the deployment checkout.'
+    }
     $conversionUriHost = ConvertTo-DeploymentUriHost -HostName $conversionHealthHost
     $conversionDisplayHost = if ($privateTarget) { '<conversion-health>' } else { $conversionUriHost }
     $kitManagerRuntimeSignature = Get-DeploymentRuntimeSignature `
         -Root $RepoRoot `
         -FileName 'kit-manager-api.params.json' `
-        -RequiredProperties @('kitControlUrl', 'port') `
+        -RequiredProperties @('kitControlUrl', 'port', 'revision') `
         -AllowMissing:$PlanOnly
     if ($null -ne $kitManagerRuntimeSignature -and [int]$kitManagerRuntimeSignature.port -ne 8010) {
         throw 'deployment Kit Manager runtime signature has an unexpected port.'
+    }
+    if ($null -ne $kitManagerRuntimeSignature -and [string]$kitManagerRuntimeSignature.revision -cne $deploymentCheckoutRevision) {
+        throw 'deployment Kit Manager runtime signature revision does not match the deployment checkout.'
     }
     $expectedKitControlUrl = if ($null -ne $kitManagerRuntimeSignature) {
         ([string]$kitManagerRuntimeSignature.kitControlUrl).TrimEnd('/')

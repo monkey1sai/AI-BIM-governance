@@ -39,17 +39,35 @@ if (-not $IsWindows) {
 Record the exact cwd, branch, worktree status, and freshly fetched `origin/main` SHA. Then create a fresh sibling worktree and task branch from that captured SHA; never execute the deployment wrapper from the caller's current branch worktree:
 
 ```powershell
-$sourceRepoRoot = (git rev-parse --show-toplevel).Trim()
-git fetch origin --prune
+$callerCwd = (Get-Location).Path
+$sourceRepoRoot = (& git rev-parse --show-toplevel).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sourceRepoRoot)) {
+    throw 'caller repository root cannot be proven; deployment is HELD'
+}
+$callerBranch = (& git -C $sourceRepoRoot branch --show-current).Trim()
+if ($LASTEXITCODE -ne 0) { throw 'caller branch cannot be recorded; deployment is HELD' }
+if ([string]::IsNullOrWhiteSpace($callerBranch)) { $callerBranch = '<detached>' }
+$callerStatus = @(& git -C $sourceRepoRoot status --porcelain)
+if ($LASTEXITCODE -ne 0) { throw 'caller worktree status cannot be recorded; deployment is HELD' }
+git -C $sourceRepoRoot fetch origin --prune
 if ($LASTEXITCODE -ne 0) { throw 'git fetch failed; deployment is HELD' }
-$originMainSha = (git rev-parse origin/main).Trim()
+$originMainSha = (& git -C $sourceRepoRoot rev-parse --verify origin/main).Trim()
+if ($LASTEXITCODE -ne 0 -or $originMainSha -notmatch '^[0-9a-f]{40,64}$') {
+    throw 'fresh origin/main revision cannot be proven; deployment is HELD'
+}
 $sessionId = Get-Date -Format 'yyyyMMddHHmmss'
 $isolatedWorktree = Join-Path (Split-Path $sourceRepoRoot -Parent) "AI-BIM-governance.deploy-canonical-$sessionId"
 $isolatedBranch = "chore/canonical-linux-deploy-$sessionId"
-git worktree add -b $isolatedBranch $isolatedWorktree $originMainSha
+$isolatedWorktreeCreated = $false
+git -C $sourceRepoRoot worktree add -b $isolatedBranch $isolatedWorktree $originMainSha
 if ($LASTEXITCODE -ne 0) { throw 'isolated origin/main worktree creation failed; deployment is HELD' }
+$isolatedWorktreeCreated = $true
 Set-Location $isolatedWorktree
-if ((git rev-parse HEAD).Trim() -ne $originMainSha -or (git status --porcelain)) {
+$isolatedHead = (& git rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0) { throw 'isolated deployment revision cannot be read; deployment is HELD' }
+$isolatedStatus = @(& git status --porcelain)
+if ($LASTEXITCODE -ne 0) { throw 'isolated deployment status cannot be read; deployment is HELD' }
+if ($isolatedHead -cne $originMainSha -or $isolatedStatus.Count -ne 0) {
     throw 'isolated deployment worktree does not match clean origin/main; deployment is HELD'
 }
 ```
@@ -89,7 +107,7 @@ $identityFile = if ($approvedIdentityFile) {
     $identityCandidate = Join-Path $ownerPrivateRootCandidate 'id_ed25519_bimdeploy'
     if (Test-Path -LiteralPath $identityCandidate -PathType Leaf) { $identityCandidate } else { '' }
 }
-$canonicalEnvDestination = Join-Path (git rev-parse --show-toplevel).Trim() '.env.web-plane.host-kit.canonical-linux'
+$canonicalEnvDestination = Join-Path $isolatedWorktree '.env.web-plane.host-kit.canonical-linux'
 ```
 
 Fail closed unless all of the following hold:
@@ -161,11 +179,63 @@ Then use the resolved target without printing its private host to verify and rec
 
 Do not claim full-system E2E unless separate current-session evidence proves governance semantic E2E, Kit/WebRTC first frame, USD stage, DataChannel acknowledgement, and applicable design fidelity gates.
 
+## Close the isolated worktree
+
+Wrap the whole workflow in the structure below. After the helper, independent verification, protected evidence writes, private handles, SSH consumers, and temporary env cleanup are all complete, remove the generated worktree and branch in the outer `finally`. Run this closeout after both success and `HELD`; capture cleanup failure separately so it cannot mask the primary failure. Write the redacted report before rethrowing either failure. Never use `-Force` to hide a dirty worktree or delete a branch whose identity changed.
+
+```powershell
+$primaryFailure = $null
+$cleanupFailure = $null
+$cleanupStatus = 'HELD: cleanup not completed'
+try {
+    # Run every preflight, private-input handle, staging, rebuild, and verification step above here.
+}
+catch {
+    $primaryFailure = $_
+}
+finally {
+    try {
+        if (-not $isolatedWorktreeCreated) {
+            $cleanupStatus = 'isolated worktree was not created'
+        }
+        else {
+            Set-Location $callerCwd
+            $cleanupHead = (& git -C $isolatedWorktree rev-parse HEAD).Trim()
+            if ($LASTEXITCODE -ne 0) { throw 'isolated worktree revision cannot be proven during cleanup; retain it for owner inspection' }
+            $cleanupWorktreeStatus = @(& git -C $isolatedWorktree status --porcelain)
+            if ($LASTEXITCODE -ne 0) { throw 'isolated worktree status cannot be proven during cleanup; retain it for owner inspection' }
+            if ($cleanupHead -cne $originMainSha -or $cleanupWorktreeStatus.Count -ne 0) {
+                throw 'isolated worktree changed during deployment; retain it for owner inspection'
+            }
+            $cleanupBranchSha = (& git -C $sourceRepoRoot rev-parse --verify "refs/heads/$isolatedBranch").Trim()
+            if ($LASTEXITCODE -ne 0 -or $cleanupBranchSha -cne $originMainSha) {
+                throw 'isolated branch identity changed; retain it for owner inspection'
+            }
+            git -C $sourceRepoRoot worktree remove -- $isolatedWorktree
+            if ($LASTEXITCODE -ne 0) { throw 'isolated worktree removal failed; retain the branch for owner inspection' }
+            git -C $sourceRepoRoot worktree prune
+            if ($LASTEXITCODE -ne 0) { throw 'worktree metadata pruning failed; deployment closeout is HELD' }
+            git -C $sourceRepoRoot branch -d -- $isolatedBranch
+            if ($LASTEXITCODE -ne 0) { throw 'verified generated deployment branch cleanup failed; deployment closeout is HELD' }
+            $cleanupStatus = 'isolated worktree and generated branch removed'
+        }
+    }
+    catch {
+        $cleanupFailure = $_
+        $cleanupStatus = 'HELD: cleanup failed; generated resources retained for owner inspection'
+    }
+}
+
+# Write the redacted final report here, including $cleanupStatus and both failure categories.
+if ($null -ne $primaryFailure) { throw $primaryFailure }
+if ($null -ne $cleanupFailure) { throw $cleanupFailure }
+```
+
 ## Report and stop
 
 Separate `Verified facts`, `Inferences`, `Unverified risks`, and `Next actions`. Include:
 
-- cwd, isolated branch, fresh `origin/main` SHA, target id/kind, and this redacted command template: `pwsh -NoProfile -NonInteractive -File scripts/dev/rebuild-test-deploy.ps1 -Build -TargetId canonical-linux -InventoryPath '<owner-private-inventory>' [-IdentityFile '<owner-private-identity>']`; keep the expanded command only in protected local evidence
+- caller cwd/branch/status, isolated branch, fresh `origin/main` SHA, cleanup status, target id/kind, and this redacted command template matching the actual invocation: `pwsh -NoProfile -NonInteractive -File scripts/dev/rebuild-test-deploy.ps1 -Build -InventoryPath '<owner-private-inventory>' [-IdentityFile '<owner-private-identity>']`; keep the expanded command only in protected local evidence
 - private-input/schema/ACL results without private values or absolute paths
 - canonical env staging result: `created and removed`, `reused`, or `HELD`
 - remote checkout pre-reset change count and relative-path summary

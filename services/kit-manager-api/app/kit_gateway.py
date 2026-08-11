@@ -1,6 +1,11 @@
 import json
 from urllib.error import URLError
-from urllib.request import ProxyHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+
+
+class _RejectRedirects(HTTPRedirectHandler):
+    def redirect_request(self, request, file_pointer, code, message, headers, new_url):
+        return None
 
 
 class KitRuntimeGateway:
@@ -9,7 +14,7 @@ class KitRuntimeGateway:
         self.timeout_seconds = timeout_seconds
         # The launcher admits only loopback or an address assigned to this host.
         # Do not let inherited HTTP_PROXY settings change the actual TCP peer.
-        self._opener = build_opener(ProxyHandler({}))
+        self._opener = build_opener(ProxyHandler({}), _RejectRedirects())
 
     def open_stage(self, payload: dict) -> str:
         return self._post("/api/runtime/open-stage", payload)

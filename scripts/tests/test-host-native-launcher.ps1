@@ -265,11 +265,14 @@ try {
         return [pscustomobject]@{ Pid = 4246; LogPath = 'fixture.log' }
     }
 
+    $script:capturedImportProbeTimeoutSec = $null
     Start-HostNativeKitManager -RepoRoot $sb -Port 8010 `
         -KitControlUrl 'HTTP://LOCALHOST:49101/' `
-        -ImportProbeFn { param($PythonExe) return 0 } `
+        -ImportProbeTimeoutSec 17 `
+        -ImportProbeFn { param($PythonExe, $TimeoutSec) $script:capturedImportProbeTimeoutSec = $TimeoutSec; return 0 } `
         -LocalAddressProbeFn { param($HostName) return ($HostName -eq 'localhost') } | Out-Null
 
+    Assert-Equal 17 $script:capturedImportProbeTimeoutSec 'Kit Manager import probe receives the configured bounded timeout'
     Assert-Equal 'hybrid-web-plane-host-native-kit' $capturedKitManagerEnvironment.RUNTIME_MODE 'child receives hybrid runtime mode'
     Assert-Equal 'true' $capturedKitManagerEnvironment.HOST_LOCAL_RUNTIME_ALLOWED 'child receives host-local authority flag'
     Assert-Equal 'kit_local_001' $capturedKitManagerEnvironment.KIT_INSTANCE_ID 'child receives launched Kit instance id'
@@ -341,6 +344,9 @@ $canonicalControlUrl = Resolve-HostNativeKitControlUrl `
     -KitControlUrl 'HTTP://LOCALHOST:49101/' `
     -LocalAddressProbeFn { param($HostName) return ($HostName -eq 'localhost') }
 Assert-Equal 'http://localhost:49101' $canonicalControlUrl 'resolver canonicalizes an explicit localhost authority'
+
+Assert-True ($moduleContent -match '\$importProcess\.WaitForExit\(\$TimeoutSec \* 1000\)') 'Kit Manager import probe wait is bounded'
+Assert-True ($moduleContent -match '\$importProcess\.Kill\(\$true\)') 'Kit Manager import probe kills a timed-out child process tree'
 
 $ipv6ControlUrl = Resolve-HostNativeKitControlUrl `
     -KitControlUrl 'HTTP://[::1]:49101/' `

@@ -115,6 +115,15 @@ try {
     'deploy entrypoint' | Set-Content -LiteralPath (Join-Path $deploymentRoot 'scripts\deploy.ps1') -Encoding ascii
     'retained production design token' | Set-Content -LiteralPath (Join-Path $deploymentRoot 'docs\plans\ai-bim-governance.css') -Encoding ascii
     'streaming contract entrypoint' | Set-Content -LiteralPath (Join-Path $deploymentRoot 'bim-streaming-server\scripts\tests\test-stage-loading-contract.ps1') -Encoding ascii
+    & git -C $deploymentRoot init --quiet
+    Assert-Equal 0 $LASTEXITCODE 'deployment fixture initializes a Git checkout'
+    & git -C $deploymentRoot config user.name 'AI BIM Verification Fixture'
+    & git -C $deploymentRoot config user.email 'fixture@example.invalid'
+    & git -C $deploymentRoot add --all
+    & git -C $deploymentRoot -c commit.gpgsign=false commit --quiet -m 'verification fixture'
+    Assert-Equal 0 $LASTEXITCODE 'deployment fixture records an exact checkout revision'
+    $deploymentRevision = (& git -C $deploymentRoot rev-parse HEAD).Trim()
+    Assert-True ($deploymentRevision -match '^[0-9a-f]{40,64}$') 'deployment fixture exposes a full checkout revision'
 
     if ($IsWindows) {
         $localDeploymentPlan = Invoke-VerificationPlan -Profile 'Deployment' -RepoRoot $deploymentRoot
@@ -146,13 +155,13 @@ try {
             bindHost = '127.0.0.1'
             port = 49101
             healthHost = '127.0.0.1'
-            revision = ('a' * 40)
+            revision = $deploymentRevision
         } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $Root 'bim-streaming-conversion-service.params.json') -Encoding utf8
         [pscustomobject]@{
             host = '127.0.0.1'
             port = 8010
             kitControlUrl = ''
-            revision = ('a' * 40)
+            revision = $deploymentRevision
         } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $Root 'kit-manager-api.params.json') -Encoding utf8
     }
     Set-ValidDeploymentRuntimeSignatures -Root $runtimeSignatureRoot
@@ -208,6 +217,9 @@ try {
     Assert-True ($verifySource -match '\$actualValue -is \[bool\] -and \$actualValue -eq \$expectedValue') 'deployment verifier type-checks expected boolean identity values'
     Assert-True ($verifySource -match 'bim-streaming-conversion-service\.params\.json') 'deployment verifier consumes the effective conversion health host from the runtime signature'
     Assert-True ($verifySource -match 'kit-manager-api\.params\.json') 'deployment verifier consumes the effective Kit Manager control identity from the runtime signature'
+    Assert-True ($verifySource -match 'Get-DeploymentCheckoutRevision') 'deployment verifier resolves the exact deployment checkout revision'
+    Assert-True ($verifySource -match 'conversionRuntimeSignature\.revision -cne \$deploymentCheckoutRevision') 'deployment verifier rejects a conversion runtime from another revision'
+    Assert-True ($verifySource -match 'kitManagerRuntimeSignature\.revision -cne \$deploymentCheckoutRevision') 'deployment verifier rejects a Kit Manager runtime from another revision'
     Assert-True ($verifySource -match 'kitControlUrl\)\.TrimEnd\(''\/''\)') 'deployment verifier compares the normalized child Kit control origin recorded by service settings'
 
     $verifyTokens = $null
@@ -363,7 +375,7 @@ try {
             Expected = 'conversion runtime signature has an unexpected port'
             Mutate = {
                 param($root)
-                [pscustomobject]@{ healthHost = '127.0.0.1'; port = 49102 } |
+                [pscustomobject]@{ healthHost = '127.0.0.1'; port = 49102; revision = $deploymentRevision } |
                     ConvertTo-Json -Compress |
                     Set-Content -LiteralPath (Join-Path $root 'bim-streaming-conversion-service.params.json') -Encoding utf8
             }
@@ -373,7 +385,17 @@ try {
             Expected = 'not assigned to a local network interface'
             Mutate = {
                 param($root)
-                [pscustomobject]@{ healthHost = '192.0.2.99'; port = 49101 } |
+                [pscustomobject]@{ healthHost = '192.0.2.99'; port = 49101; revision = $deploymentRevision } |
+                    ConvertTo-Json -Compress |
+                    Set-Content -LiteralPath (Join-Path $root 'bim-streaming-conversion-service.params.json') -Encoding utf8
+            }
+        },
+        @{
+            Name = 'wrong conversion revision'
+            Expected = 'conversion runtime signature revision does not match the deployment checkout'
+            Mutate = {
+                param($root)
+                [pscustomobject]@{ healthHost = '127.0.0.1'; port = 49101; revision = ('b' * 40) } |
                     ConvertTo-Json -Compress |
                     Set-Content -LiteralPath (Join-Path $root 'bim-streaming-conversion-service.params.json') -Encoding utf8
             }
@@ -393,7 +415,17 @@ try {
             Expected = 'Kit Manager runtime signature has an unexpected port'
             Mutate = {
                 param($root)
-                [pscustomobject]@{ kitControlUrl = ''; port = 8011 } |
+                [pscustomobject]@{ kitControlUrl = ''; port = 8011; revision = $deploymentRevision } |
+                    ConvertTo-Json -Compress |
+                    Set-Content -LiteralPath (Join-Path $root 'kit-manager-api.params.json') -Encoding utf8
+            }
+        },
+        @{
+            Name = 'wrong Kit Manager revision'
+            Expected = 'Kit Manager runtime signature revision does not match the deployment checkout'
+            Mutate = {
+                param($root)
+                [pscustomobject]@{ kitControlUrl = ''; port = 8010; revision = ('b' * 40) } |
                     ConvertTo-Json -Compress |
                     Set-Content -LiteralPath (Join-Path $root 'kit-manager-api.params.json') -Encoding utf8
             }
@@ -413,6 +445,10 @@ try {
     $verifyShell = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts\verify-all.sh') -Raw
     Assert-True ($verifyShell -match '--profile') 'POSIX verifier mirror accepts an explicit deployment profile'
     Assert-True ($verifyShell -match '--plan-only') 'POSIX verifier mirror publishes the same profile inventory without executing it'
+    Assert-True ($verifyShell -match '--target-id') 'POSIX verifier mirror accepts the deployment target selector'
+    Assert-True ($verifyShell -match '--inventory-path') 'POSIX verifier mirror accepts the private inventory path selector'
+    Assert-True ($verifyShell -match 'DEPLOYMENT_ARGS\+=\(-TargetId "\$TARGET_ID"\)') 'POSIX verifier mirror forwards the deployment target selector without eval'
+    Assert-True ($verifyShell -match 'DEPLOYMENT_ARGS\+=\(-InventoryPath "\$INVENTORY_PATH"\)') 'POSIX verifier mirror forwards the private inventory path without eval'
     Assert-True ($verifyShell -match 'verification-runner\.mjs') 'POSIX verifier consumes the shared manifest runner'
     Assert-True ($verifyShell -notmatch '\beval\b') 'POSIX verifier never reconstructs manifest argv through eval'
     Assert-True ($verifyShell -match '\[ -n "\$SUBJECT" \] \|\| \[ -n "\$OUTCOME_OUT" \]') 'POSIX Deployment adapter rejects execution-outcome arguments it cannot forward'

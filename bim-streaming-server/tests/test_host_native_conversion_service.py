@@ -605,6 +605,60 @@ def test_default_hoops_entrypoint_treats_junction_like_a_link(tmp_path: Path, mo
     assert resolved_hoops_main.resolve() == hoops_main.resolve()
 
 
+def test_directory_link_probe_uses_reparse_attributes_without_path_is_junction():
+    class LegacyJunctionPath:
+        def is_symlink(self):
+            return False
+
+        def lstat(self):
+            return type("LegacyWindowsStat", (), {"st_file_attributes": 0x400})()
+
+    assert Ifc2UsdcPowershellConverterAdapter._path_is_directory_link(LegacyJunctionPath())
+
+
+def test_windows_acl_policy_rejects_untrusted_owner_or_writer():
+    current_user = "S-1-5-21-1000"
+    trusted_admin = "S-1-5-32-544"
+    everyone = "S-1-1-0"
+
+    assert Ifc2UsdcPowershellConverterAdapter._windows_acl_has_only_trusted_writers(
+        current_user,
+        current_user,
+        ((current_user, 0x40000000, False), (trusted_admin, 0x10000000, False)),
+    )
+    assert Ifc2UsdcPowershellConverterAdapter._windows_acl_has_only_trusted_writers(
+        current_user,
+        current_user,
+        (("S-1-3-4", 0x10000000, False),),
+    )
+    assert not Ifc2UsdcPowershellConverterAdapter._windows_acl_has_only_trusted_writers(
+        everyone,
+        current_user,
+        ((current_user, 0x40000000, False),),
+    )
+    assert not Ifc2UsdcPowershellConverterAdapter._windows_acl_has_only_trusted_writers(
+        current_user,
+        current_user,
+        ((everyone, 0x40000000, False),),
+    )
+    assert Ifc2UsdcPowershellConverterAdapter._windows_acl_has_only_trusted_writers(
+        current_user,
+        current_user,
+        ((everyone, 0x40000000, True),),
+    )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows security descriptor contract")
+def test_windows_acl_snapshot_reads_current_temp_path(tmp_path: Path):
+    owner_sid, current_user_sid, allow_aces = (
+        Ifc2UsdcPowershellConverterAdapter._windows_path_security_snapshot(tmp_path)
+    )
+
+    assert owner_sid.startswith("S-1-")
+    assert current_user_sid.startswith("S-1-")
+    assert isinstance(allow_aces, tuple)
+
+
 def test_default_hoops_entrypoint_rejects_symlink_outside_trusted_cache(
     tmp_path: Path, monkeypatch
 ):
@@ -811,6 +865,33 @@ def test_hardener_atomically_replaces_pinned_entrypoint_with_private_inode(
     assert hardened.resolve() == hoops_main.resolve()
     assert (hardened.stat().st_dev, hardened.stat().st_ino) != original_identity
     assert stat.S_IMODE(hardened.stat().st_mode) & (stat.S_IWGRP | stat.S_IWOTH) == 0
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX private-inode idempotency contract")
+def test_hardener_preserves_already_private_pinned_entrypoint_inode(
+    tmp_path: Path, monkeypatch
+):
+    release_root = tmp_path / "_build" / "linux-x86_64" / "release"
+    package_cache = tmp_path / "official-cache"
+    _write_cad_converter_lock(tmp_path)
+    package_name = _cad_package_name("already-private")
+    _, hoops_main = _write_symlinked_cad_package(
+        release_root=release_root,
+        package_cache=package_cache,
+        package_name=package_name,
+    )
+    _write_trusted_cad_manifest(tmp_path, package_name=package_name, hoops_main=hoops_main)
+    hoops_main.chmod(0o400)
+    original_identity = (hoops_main.stat().st_dev, hoops_main.stat().st_ino)
+    adapter = Ifc2UsdcPowershellConverterAdapter(
+        repo_root=tmp_path, storage_root=tmp_path / "storage"
+    )
+    monkeypatch.setattr(adapter, "_trusted_extension_cache_roots", lambda: (package_cache,))
+
+    hardened = adapter.harden_default_hoops_main_permissions()
+
+    assert (hardened.stat().st_dev, hardened.stat().st_ino) == original_identity
+    assert stat.S_IMODE(hardened.stat().st_mode) == 0o400
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX descriptor hardening contract")

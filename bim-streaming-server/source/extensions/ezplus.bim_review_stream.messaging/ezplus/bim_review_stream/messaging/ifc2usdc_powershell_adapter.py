@@ -22,8 +22,9 @@ Honesty contract (design.md D7 / OQ2, host-native-conversion-authority-service s
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 from urllib.parse import unquote, urlparse
 import hashlib
 import json
@@ -213,6 +214,254 @@ class Ifc2UsdcPowershellConverterAdapter:
         self._group_privacy_cache[group_id] = result
         return result
 
+    @staticmethod
+    def _windows_acl_has_only_trusted_writers(
+        owner_sid: str,
+        current_user_sid: str,
+        allow_aces: tuple[tuple[str, int, bool], ...],
+    ) -> bool:
+        trusted_writers = {
+            current_user_sid.upper(),
+            "S-1-3-4",  # OWNER RIGHTS resolves to the already-validated object owner
+            "S-1-5-18",  # LocalSystem
+            "S-1-5-32-544",  # Builtin Administrators
+        }
+        if owner_sid.upper() not in trusted_writers:
+            return False
+        write_mask = (
+            0x00000002  # FILE_WRITE_DATA / FILE_ADD_FILE
+            | 0x00000004  # FILE_APPEND_DATA / FILE_ADD_SUBDIRECTORY
+            | 0x00000010  # FILE_WRITE_EA
+            | 0x00000040  # FILE_DELETE_CHILD
+            | 0x00000100  # FILE_WRITE_ATTRIBUTES
+            | 0x00010000  # DELETE
+            | 0x00040000  # WRITE_DAC
+            | 0x00080000  # WRITE_OWNER
+            | 0x02000000  # MAXIMUM_ALLOWED (fail closed in an allow ACE)
+            | 0x10000000  # GENERIC_ALL
+            | 0x40000000  # GENERIC_WRITE
+        )
+        return all(
+            inherit_only or not (access_mask & write_mask) or sid.upper() in trusted_writers
+            for sid, access_mask, inherit_only in allow_aces
+        )
+
+    @staticmethod
+    def _windows_path_security_snapshot(
+        path: Path,
+        *,
+        handle: int | None = None,
+    ) -> tuple[str, str, tuple[tuple[str, int, bool], ...]]:
+        """Read owner and effective allow ACEs through a path or pinned handle."""
+
+        if os.name != "nt":
+            raise OSError("Windows ACL inspection is unavailable on this platform.")
+
+        import ctypes
+        from ctypes import wintypes
+
+        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        advapi32.GetNamedSecurityInfoW.argtypes = (
+            wintypes.LPWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+        )
+        advapi32.GetNamedSecurityInfoW.restype = wintypes.DWORD
+        advapi32.GetSecurityInfo.argtypes = (
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+        )
+        advapi32.GetSecurityInfo.restype = wintypes.DWORD
+        advapi32.ConvertSidToStringSidW.argtypes = (
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+        )
+        advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+        advapi32.OpenProcessToken.argtypes = (
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.HANDLE),
+        )
+        advapi32.OpenProcessToken.restype = wintypes.BOOL
+        advapi32.GetTokenInformation.argtypes = (
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        )
+        advapi32.GetTokenInformation.restype = wintypes.BOOL
+        advapi32.GetAclInformation.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.c_int,
+        )
+        advapi32.GetAclInformation.restype = wintypes.BOOL
+        advapi32.GetAce.argtypes = (
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.POINTER(ctypes.c_void_p),
+        )
+        advapi32.GetAce.restype = wintypes.BOOL
+        advapi32.IsValidSid.argtypes = (ctypes.c_void_p,)
+        advapi32.IsValidSid.restype = wintypes.BOOL
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        kernel32.LocalFree.argtypes = (ctypes.c_void_p,)
+        kernel32.LocalFree.restype = ctypes.c_void_p
+
+        def sid_to_string(sid_pointer: int) -> str:
+            if not sid_pointer or not advapi32.IsValidSid(ctypes.c_void_p(sid_pointer)):
+                raise OSError("Windows security descriptor contains an invalid SID.")
+            sid_text_pointer = ctypes.c_void_p()
+            if not advapi32.ConvertSidToStringSidW(
+                ctypes.c_void_p(sid_pointer), ctypes.byref(sid_text_pointer)
+            ):
+                raise ctypes.WinError(ctypes.get_last_error())
+            try:
+                return ctypes.wstring_at(sid_text_pointer.value)
+            finally:
+                kernel32.LocalFree(sid_text_pointer)
+
+        token_handle = wintypes.HANDLE()
+        if not advapi32.OpenProcessToken(
+            kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token_handle)
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            token_size = wintypes.DWORD()
+            advapi32.GetTokenInformation(token_handle, 1, None, 0, ctypes.byref(token_size))
+            if token_size.value == 0:
+                raise ctypes.WinError(ctypes.get_last_error())
+            token_buffer = ctypes.create_string_buffer(token_size.value)
+            if not advapi32.GetTokenInformation(
+                token_handle,
+                1,
+                token_buffer,
+                token_size,
+                ctypes.byref(token_size),
+            ):
+                raise ctypes.WinError(ctypes.get_last_error())
+            current_sid_pointer = ctypes.cast(
+                token_buffer, ctypes.POINTER(ctypes.c_void_p)
+            ).contents.value
+            current_user_sid = sid_to_string(current_sid_pointer)
+        finally:
+            kernel32.CloseHandle(token_handle)
+
+        owner_pointer = ctypes.c_void_p()
+        dacl_pointer = ctypes.c_void_p()
+        descriptor_pointer = ctypes.c_void_p()
+        security_information = 0x00000001 | 0x00000004
+        if handle is None:
+            result = advapi32.GetNamedSecurityInfoW(
+                str(path),
+                1,  # SE_FILE_OBJECT
+                security_information,
+                ctypes.byref(owner_pointer),
+                None,
+                ctypes.byref(dacl_pointer),
+                None,
+                ctypes.byref(descriptor_pointer),
+            )
+        else:
+            result = advapi32.GetSecurityInfo(
+                wintypes.HANDLE(handle),
+                1,  # SE_FILE_OBJECT
+                security_information,
+                ctypes.byref(owner_pointer),
+                None,
+                ctypes.byref(dacl_pointer),
+                None,
+                ctypes.byref(descriptor_pointer),
+            )
+        if result != 0:
+            raise ctypes.WinError(result)
+        try:
+            if not owner_pointer.value or not dacl_pointer.value:
+                raise OSError("Windows path has no enforceable owner/DACL.")
+            owner_sid = sid_to_string(owner_pointer.value)
+
+            class AclSizeInformation(ctypes.Structure):
+                _fields_ = (
+                    ("AceCount", wintypes.DWORD),
+                    ("AclBytesInUse", wintypes.DWORD),
+                    ("AclBytesFree", wintypes.DWORD),
+                )
+
+            class AceHeader(ctypes.Structure):
+                _fields_ = (
+                    ("AceType", ctypes.c_ubyte),
+                    ("AceFlags", ctypes.c_ubyte),
+                    ("AceSize", ctypes.c_ushort),
+                )
+
+            acl_info = AclSizeInformation()
+            if not advapi32.GetAclInformation(
+                dacl_pointer,
+                ctypes.byref(acl_info),
+                ctypes.sizeof(acl_info),
+                2,  # AclSizeInformation
+            ):
+                raise ctypes.WinError(ctypes.get_last_error())
+
+            allow_aces: list[tuple[str, int, bool]] = []
+            for index in range(acl_info.AceCount):
+                ace_pointer = ctypes.c_void_p()
+                if not advapi32.GetAce(dacl_pointer, index, ctypes.byref(ace_pointer)):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                header = ctypes.cast(ace_pointer, ctypes.POINTER(AceHeader)).contents
+                if header.AceType not in (0, 4, 5, 9, 11):
+                    continue
+                if header.AceSize < 12:
+                    raise OSError("Windows DACL contains a malformed allow ACE.")
+                access_mask = ctypes.c_uint32.from_address(ace_pointer.value + 4).value
+                if header.AceType in (0, 9):
+                    sid_offset = 8
+                elif header.AceType == 4:
+                    sid_offset = 12
+                else:
+                    object_flags = ctypes.c_uint32.from_address(ace_pointer.value + 8).value
+                    sid_offset = 12
+                    if object_flags & 0x1:
+                        sid_offset += 16
+                    if object_flags & 0x2:
+                        sid_offset += 16
+                if sid_offset >= header.AceSize:
+                    raise OSError("Windows DACL allow ACE has no SID payload.")
+                allow_aces.append(
+                    (
+                        sid_to_string(ace_pointer.value + sid_offset),
+                        access_mask,
+                        bool(header.AceFlags & 0x08),  # INHERIT_ONLY_ACE
+                    )
+                )
+            return owner_sid, current_user_sid, tuple(allow_aces)
+        finally:
+            kernel32.LocalFree(descriptor_pointer)
+
+    def _windows_path_component_is_owner_private(self, path: Path) -> bool:
+        try:
+            owner_sid, current_user_sid, allow_aces = self._windows_path_security_snapshot(path)
+        except (OSError, ValueError):
+            return False
+        return self._windows_acl_has_only_trusted_writers(owner_sid, current_user_sid, allow_aces)
+
     def _path_components_are_owner_private(
         self,
         root: Path,
@@ -224,15 +473,18 @@ class Ifc2UsdcPowershellConverterAdapter:
             relative = leaf.relative_to(root)
         except ValueError:
             return False
-        if os.name == "nt":
-            return True
-
-        current_uid = os.geteuid()
         components = [root]
         current = root
         for part in relative.parts:
             current = current / part
             components.append(current)
+        if os.name == "nt":
+            return all(
+                self._windows_path_component_is_owner_private(component)
+                for component in components
+            )
+
+        current_uid = os.geteuid()
         for component in components:
             try:
                 component_stat = component.stat()
@@ -327,10 +579,19 @@ class Ifc2UsdcPowershellConverterAdapter:
 
     @staticmethod
     def _path_is_directory_link(path: Path) -> bool:
-        if path.is_symlink():
-            return True
-        is_junction = getattr(path, "is_junction", None)
-        return bool(is_junction and is_junction())
+        try:
+            if path.is_symlink():
+                return True
+            is_junction = getattr(path, "is_junction", None)
+            if is_junction and is_junction():
+                return True
+            file_attributes = getattr(path.lstat(), "st_file_attributes", 0)
+        except OSError as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension path link state could not be inspected safely.",
+            ) from exc
+        return bool(file_attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
 
     def _discover_default_hoops_main(self, *, allow_leaf_world_write: bool = False) -> Path | None:
         release_root = self._default_release_root()
@@ -551,6 +812,15 @@ class Ifc2UsdcPowershellConverterAdapter:
                     "Pinned CAD extension entrypoint content changed before atomic hardening.",
                 )
 
+            current_stat = os.stat(candidate.name, dir_fd=parent_descriptor, follow_symlinks=False)
+            if (source_stat.st_dev, source_stat.st_ino) != (current_stat.st_dev, current_stat.st_ino):
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Pinned CAD extension entrypoint path changed before atomic replacement.",
+                )
+            if stat.S_IMODE(source_stat.st_mode) == 0o400:
+                return candidate
+
             create_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
             for _ in range(16):
                 replacement_name = f".hoops_main.{secrets.token_hex(12)}.tmp"
@@ -591,12 +861,6 @@ class Ifc2UsdcPowershellConverterAdapter:
                     "Private CAD entrypoint replacement did not retain owner-only read access.",
                 )
 
-            current_stat = os.stat(candidate.name, dir_fd=parent_descriptor, follow_symlinks=False)
-            if (source_stat.st_dev, source_stat.st_ino) != (current_stat.st_dev, current_stat.st_ino):
-                raise ConversionAuthorityError(
-                    "converter_unavailable",
-                    "Pinned CAD extension entrypoint path changed before atomic replacement.",
-                )
             os.replace(
                 replacement_name,
                 candidate.name,
@@ -680,6 +944,221 @@ class Ifc2UsdcPowershellConverterAdapter:
                 "CAD extension entrypoint identity changed after preflight.",
             )
         return validated
+
+    @contextmanager
+    def _hold_windows_hoops_entrypoint_for_execution(
+        self,
+        candidate: Path,
+        identity: tuple[int, int, int, int, str],
+    ) -> Iterator[None]:
+        """Pin every trusted Windows path component until the converter exits."""
+
+        if os.name != "nt":
+            yield
+            return
+
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateFileW.argtypes = (
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        )
+        kernel32.CreateFileW.restype = wintypes.HANDLE
+        kernel32.GetFileInformationByHandle.argtypes = (
+            wintypes.HANDLE,
+            ctypes.c_void_p,
+        )
+        kernel32.GetFileInformationByHandle.restype = wintypes.BOOL
+        kernel32.GetFinalPathNameByHandleW.argtypes = (
+            wintypes.HANDLE,
+            wintypes.LPWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+        )
+        kernel32.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.DuplicateHandle.argtypes = (
+            wintypes.HANDLE,
+            wintypes.HANDLE,
+            wintypes.HANDLE,
+            ctypes.POINTER(wintypes.HANDLE),
+            wintypes.DWORD,
+            wintypes.BOOL,
+            wintypes.DWORD,
+        )
+        kernel32.DuplicateHandle.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        class ByHandleFileInformation(ctypes.Structure):
+            _fields_ = (
+                ("dwFileAttributes", wintypes.DWORD),
+                ("ftCreationTime", wintypes.FILETIME),
+                ("ftLastAccessTime", wintypes.FILETIME),
+                ("ftLastWriteTime", wintypes.FILETIME),
+                ("dwVolumeSerialNumber", wintypes.DWORD),
+                ("nFileSizeHigh", wintypes.DWORD),
+                ("nFileSizeLow", wintypes.DWORD),
+                ("nNumberOfLinks", wintypes.DWORD),
+                ("nFileIndexHigh", wintypes.DWORD),
+                ("nFileIndexLow", wintypes.DWORD),
+            )
+
+        def normalized_handle_path(raw_path: str) -> str:
+            if raw_path.startswith("\\\\?\\UNC\\"):
+                raw_path = "\\\\" + raw_path[8:]
+            elif raw_path.startswith("\\\\?\\"):
+                raw_path = raw_path[4:]
+            return os.path.normcase(os.path.abspath(os.path.normpath(raw_path)))
+
+        try:
+            anchor = self._trusted_directory_anchor(candidate)
+        except ConversionAuthorityError:
+            if self.hoops_main_path is None:
+                raise
+            try:
+                anchor = candidate.parent.resolve(strict=True)
+            except OSError as exc:
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Configured HOOPS entrypoint parent could not be resolved safely.",
+                ) from exc
+            if not self._path_components_are_owner_private(anchor, anchor):
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Configured HOOPS entrypoint parent is not owner-private.",
+                )
+
+        try:
+            relative = candidate.relative_to(anchor)
+        except ValueError as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension entrypoint escapes its trusted execution anchor.",
+            ) from exc
+
+        components = [anchor]
+        current = anchor
+        for part in relative.parts:
+            current = current / part
+            components.append(current)
+
+        handles: list[int] = []
+        duplicate_handle_value = 0
+        duplicate_fd = -1
+        invalid_handle_value = ctypes.c_void_p(-1).value
+        try:
+            for index, component in enumerate(components):
+                is_leaf = index == len(components) - 1
+                desired_access = 0x00020000 | (0x80000000 if is_leaf else 0x00000080)
+                raw_handle = kernel32.CreateFileW(
+                    str(component),
+                    desired_access,
+                    0x00000001,  # FILE_SHARE_READ only: deny pre-existing/new write or delete handles
+                    None,
+                    3,  # OPEN_EXISTING
+                    0x02000000 | 0x00200000,  # BACKUP_SEMANTICS | OPEN_REPARSE_POINT
+                    None,
+                )
+                handle_value = int(raw_handle) if raw_handle is not None else 0
+                if not handle_value or handle_value == invalid_handle_value:
+                    raise ctypes.WinError(ctypes.get_last_error())
+                handles.append(handle_value)
+
+                file_information = ByHandleFileInformation()
+                if not kernel32.GetFileInformationByHandle(
+                    wintypes.HANDLE(handle_value), ctypes.byref(file_information)
+                ):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                if file_information.dwFileAttributes & 0x00000400:
+                    raise OSError("Pinned CAD execution path contains a reparse point.")
+                is_directory = bool(file_information.dwFileAttributes & 0x00000010)
+                if is_directory == is_leaf:
+                    raise OSError("Pinned CAD execution path component has the wrong type.")
+
+                final_path_buffer = ctypes.create_unicode_buffer(32768)
+                final_path_size = kernel32.GetFinalPathNameByHandleW(
+                    wintypes.HANDLE(handle_value),
+                    final_path_buffer,
+                    len(final_path_buffer),
+                    0,
+                )
+                if final_path_size == 0 or final_path_size >= len(final_path_buffer):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                if normalized_handle_path(final_path_buffer.value) != normalized_handle_path(
+                    str(component)
+                ):
+                    raise OSError("Pinned CAD execution path identity changed during traversal.")
+
+                owner_sid, current_user_sid, allow_aces = self._windows_path_security_snapshot(
+                    component,
+                    handle=handle_value,
+                )
+                if not self._windows_acl_has_only_trusted_writers(
+                    owner_sid,
+                    current_user_sid,
+                    allow_aces,
+                ):
+                    raise OSError("Pinned CAD execution path has an untrusted Windows writer.")
+
+            current_process = kernel32.GetCurrentProcess()
+            duplicate_handle = wintypes.HANDLE()
+            if not kernel32.DuplicateHandle(
+                current_process,
+                wintypes.HANDLE(handles[-1]),
+                current_process,
+                ctypes.byref(duplicate_handle),
+                0,
+                False,
+                0x00000002,  # DUPLICATE_SAME_ACCESS
+            ):
+                raise ctypes.WinError(ctypes.get_last_error())
+            duplicate_handle_value = int(duplicate_handle.value or 0)
+            duplicate_fd = msvcrt.open_osfhandle(
+                duplicate_handle_value,
+                os.O_RDONLY | getattr(os, "O_BINARY", 0),
+            )
+            duplicate_handle_value = 0  # the CRT descriptor now owns the duplicate
+            file_stat = os.fstat(duplicate_fd)
+            digest = hashlib.sha256()
+            while True:
+                chunk = os.read(duplicate_fd, 1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+            handle_identity = (
+                file_stat.st_dev,
+                file_stat.st_ino,
+                file_stat.st_size,
+                file_stat.st_mtime_ns,
+                digest.hexdigest(),
+            )
+            if handle_identity != identity:
+                raise OSError("Pinned CAD entrypoint handle identity changed after preflight.")
+
+            yield
+        except ConversionAuthorityError:
+            raise
+        except (OSError, ValueError) as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension entrypoint could not be pinned safely for execution.",
+            ) from exc
+        finally:
+            if duplicate_fd >= 0:
+                os.close(duplicate_fd)
+            elif duplicate_handle_value:
+                kernel32.CloseHandle(wintypes.HANDLE(duplicate_handle_value))
+            for handle_value in reversed(handles):
+                kernel32.CloseHandle(wintypes.HANDLE(handle_value))
 
     def _preflight_with_hoops_validation(
         self,
@@ -1016,15 +1495,19 @@ class Ifc2UsdcPowershellConverterAdapter:
             cmd += ["-KitExePath", str(self.kit_exe_path.resolve())]
         cmd += ["-HoopsMainPath", str(validated_hoops_main)]
         try:
-            completed = subprocess.run(
-                cmd,
-                cwd=str(self.repo_root),
-                capture_output=True,
-                text=True,
-                timeout=self.timeout_seconds,
-                shell=False,
-                check=False,
-            )
+            with self._hold_windows_hoops_entrypoint_for_execution(
+                validated_hoops_main,
+                validated_hoops_identity,
+            ):
+                completed = subprocess.run(
+                    cmd,
+                    cwd=str(self.repo_root),
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout_seconds,
+                    shell=False,
+                    check=False,
+                )
         except subprocess.TimeoutExpired as exc:
             raise ConversionAuthorityError(
                 "converter_timeout",
