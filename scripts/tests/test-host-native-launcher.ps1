@@ -199,7 +199,24 @@ finally { Remove-TestSandbox -Path $sb }
 # 字元,空白證明引號重組碰不到 stdin wrapper,$ 與 backtick 證明 wrapper 內插
 # 的路徑有跳脫、不會被 sh 做參數/命令替換)
 $sbRoot = New-TestSandbox -Prefix 'kit-repo-build-bash'
+$originalPath = $env:PATH
 try {
+    # Windows 的裸 `bash` 可能先解析到 System32\bash.exe (WSL)。WSL 需要
+    # /mnt/c/... 路徑，無法直接執行這個 Win32 sandbox 裡的 C:/... wrapper；
+    # production 的 Linux 路徑則由 native bash 執行。Windows regression 優先
+    # 使用隨 Git 安裝的 MSYS bash，讓測試真的覆蓋 production 的 argv/stdin
+    # 行為，而不是因 host path dialect 不相容而誤判 launcher。
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        $gitCommand = Get-Command git -ErrorAction SilentlyContinue
+        if ($null -ne $gitCommand) {
+            $gitRoot = Split-Path -Parent (Split-Path -Parent $gitCommand.Source)
+            $gitBash = Join-Path $gitRoot 'bin\bash.exe'
+            if (Test-Path -LiteralPath $gitBash -PathType Leaf) {
+                $env:PATH = "$(Split-Path -Parent $gitBash)$([IO.Path]::PathSeparator)$originalPath"
+            }
+        }
+    }
+    $bashCommand = Get-Command bash -ErrorAction SilentlyContinue
     $sb = (Join-Path $sbRoot 'deploy root with $paces and `tick') -replace '\\', '/'
     $runDir = Join-Path $sb 'scripts/.run'
     New-Item -ItemType Directory -Path $runDir -Force | Out-Null
@@ -207,12 +224,12 @@ try {
     $argsPath = (Join-Path $sb 'seen-args.txt') -replace '\\', '/'
     $fakeRepoSh = Join-Path $sb 'repo.sh'
     [IO.File]::WriteAllText($fakeRepoSh, "#!/bin/sh`nprintf '%s\n' `"`$@`" > '$argsPath'`necho build-ran`nexit 0`n")
-    if ($null -eq (Get-Command bash -ErrorAction SilentlyContinue)) {
+    if ($null -eq $bashCommand) {
         Write-TestPass 'Invoke-KitRepoBuild real bash launch (skipped: no bash on this host)'
     } else {
         # POSIX 上 WriteAllText 不帶 exec bit,exec "$0" 會 Permission denied;
         # MSYS bash 忽略 exec bit 所以 Windows 不需要,但兩邊都補上才是同一條路。
-        & bash -c "chmod +x '$($fakeRepoSh -replace '\\', '/')'"
+        & $bashCommand.Source -c "chmod +x '$($fakeRepoSh -replace '\\', '/')'"
         $result = Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir `
             -BuildCommand './repo.sh build' -TimeoutSec 60
         Assert-True ($result.TimedOut -eq $false) 'real bash launch is not TimedOut'
@@ -223,7 +240,10 @@ try {
         Assert-True ((Get-Content -LiteralPath $logPath -Raw) -match 'build-ran') 'repo.sh stdout reached the log file'
     }
 }
-finally { Remove-TestSandbox -Path $sbRoot }
+finally {
+    $env:PATH = $originalPath
+    Remove-TestSandbox -Path $sbRoot
+}
 
 # Test 15d: a stale log from a previous build is removed before the launch
 # (otherwise the exit-0-must-have-a-log guard would accept the previous run's
@@ -356,7 +376,10 @@ try {
         -KitControlUrl '' `
         -ImportProbeFn { param($PythonExe) return 0 } `
         -LocalAddressProbeFn { param($HostName) throw 'empty control URL must not probe an address' } | Out-Null
-    Assert-Equal '' $capturedKitManagerEnvironment.KIT_CONTROL_URL 'unconfigured Kit control remains an honest empty child value'
+    # .NET Framework removes a process env var when it is set to '', while modern
+    # .NET preserves the empty string. Both represent the same unconfigured child
+    # authority, so normalize the host-specific null/empty representation.
+    Assert-Equal '' ([string]$capturedKitManagerEnvironment.KIT_CONTROL_URL) 'unconfigured Kit control remains an honest empty child value'
     foreach ($name in $kitManagerEnvironmentNames) {
         Assert-Equal "parent-$name" ([Environment]::GetEnvironmentVariable($name, 'Process')) "parent env restores $name after empty control authority"
     }
@@ -426,9 +449,18 @@ $ipv6ControlUrl = Resolve-HostNativeKitControlUrl `
     -KitControlUrl 'HTTP://[::1]:49101/' `
     -LocalAddressProbeFn {
         param($HostName)
-        return ($HostName.Trim([char[]]'[]') -eq '::1')
+        # .NET Framework expands ::1 to 0000:...:0001 while modern .NET keeps
+        # the compressed form. Check the address semantics, not its rendering.
+        return [System.Net.IPAddress]::IsLoopback(
+            [System.Net.IPAddress]::Parse($HostName.Trim([char[]]'[]'))
+        )
     }
-Assert-Equal 'http://[::1]:49101' $ipv6ControlUrl 'resolver canonicalizes a bracketed IPv6 loopback authority'
+$ipv6ControlUri = [Uri]$ipv6ControlUrl
+Assert-Equal 'http' $ipv6ControlUri.Scheme 'resolver preserves the HTTP scheme for IPv6 loopback authority'
+Assert-Equal 49101 $ipv6ControlUri.Port 'resolver preserves the IPv6 loopback authority port'
+Assert-True ([System.Net.IPAddress]::IsLoopback(
+    [System.Net.IPAddress]::Parse($ipv6ControlUri.Host.Trim([char[]]'[]'))
+)) 'resolver preserves the IPv6 loopback authority address semantics'
 
 $rejectedControlUrls = @(
     @{ Name = 'HTTPS'; Url = 'https://localhost:49101' },
