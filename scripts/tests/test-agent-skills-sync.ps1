@@ -489,6 +489,8 @@ $activeIndexRefreshFiles = @(
     '.claude/skills/README.md',
     '.claude/skills/gitnexus-blast-radius/SKILL.md',
     '.codex/skills/gitnexus-blast-radius/SKILL.md',
+    '.claude/workflows/fable5-repo-advisory.js',
+    '.claude/workflows/spec-to-done-adversarial-verify.js',
     '.claude/workflows/std-plan.js',
     '.claude/workflows/std-implement.js',
     'openspec/changes/a4-console-convergence/tasks.md'
@@ -500,7 +502,26 @@ foreach ($relative in @($activeIndexRefreshFiles | Sort-Object -Unique)) {
     Assert-True ($content -notmatch 'node \.gitnexus/run\.cjs analyze(?! --index-only\b)') "$relative has no bare, path-form, or flag-before-index-only wrapper analyze command"
     Assert-True ($content -notmatch '(?<![A-Za-z0-9@./-])gitnexus(?:@[A-Za-z0-9._-]+)? analyze(?! --index-only\b)') "$relative has no bare, path-form, or version-pinned context-injecting analyze command"
     Assert-True ($content -notmatch '--skip-agents-md|--skills') "$relative never requests partial or community-skill injection"
+    Assert-True ($content -notmatch 'node \.gitnexus/run\.cjs') "$relative never delegates to the generated runner whose package fallback is not repository-pinned"
+    Assert-True ($content -notmatch '(?<![A-Za-z0-9@./-])npx\s+gitnexus(?!@1\.6\.9\b)') "$relative pins every npx GitNexus installation path to 1.6.9"
+    Assert-True ($content -notmatch '(?<![A-Za-z0-9@./-])npm\s+(?:i|install)\s+-g\s+gitnexus(?!@1\.6\.9\b)') "$relative pins every global GitNexus installation path to 1.6.9"
+    Assert-True ($content -notmatch '(?<![A-Za-z0-9@./-])gitnexus@latest\b') "$relative never installs GitNexus from the moving latest tag"
 }
+$activeGitnexusInstructionFiles = @(
+    '.claude/workflows/fable5-repo-advisory.js',
+    '.claude/workflows/spec-to-done-adversarial-verify.js',
+    '.claude/workflows/std-plan.js',
+    '.claude/workflows/std-implement.js'
+) + @(Get-ChildItem -Recurse -File -Filter 'SKILL.md' -LiteralPath (Join-Path $repoRoot '.claude\skills\gitnexus') | ForEach-Object {
+    [IO.Path]::GetRelativePath($repoRoot, $_.FullName).Replace('\', '/')
+})
+foreach ($relative in @($activeGitnexusInstructionFiles | Sort-Object -Unique)) {
+    $content = Get-Content -Raw -LiteralPath (Join-Path $repoRoot $relative)
+    Assert-True ($content -notmatch 'gitnexus://|mcp__gitnexus__') "$relative uses only the GitNexus shell CLI, never MCP tools or resources"
+    Assert-True ($content -notmatch 'ReadMcpResourceTool') "$relative never routes GitNexus through an MCP resource reader"
+}
+$gitnexusUsage = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'docs\agents\gitnexus-usage.md')
+Assert-True ($gitnexusUsage -match '(?im)^> 文件性質：\*\*agent boundary\*\*') 'the GitNexus lazy-load explicitly declares its docs nature'
 $repoHealth = @($repoManifest.skills | Where-Object { $_.name -eq 'repo-health' })
 Assert-True ($repoHealth.Count -eq 1) 'repo-health has one manifest entry'
 Assert-True ($repoHealth[0].sync.mode -eq 'independent') 'repo-health declares Claude and Codex platform variants'

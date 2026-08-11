@@ -149,7 +149,7 @@ Runtime/product 行為真相優先順序：
 
 ### 政策：CLI-only（Grok / Claude / Codex 共用）
 
-本 workspace **不啟動** `gitnexus mcp`，也 **禁止** 依賴 `mcp__gitnexus__*` / MCP resources（`gitnexus://…`）。三端 agent 仍 **必須** 使用 GitNexus 圖譜能力，但一律經 **shell CLI**（全域 `gitnexus` 或 `node .gitnexus/run.cjs <cmd>`）。舊 skill / 文件寫 `impact({…})` 或 `gitnexus://…` 時改跑等價 CLI，**不得**宣稱 GitNexus 不可用，也不得為查詢而背景啟動 `gitnexus mcp` / `gitnexus setup`。完整 CLI 對照表、三端設定現況與 re-enable 條件見 `docs/agents/gitnexus-usage.md`。
+本 workspace **不啟動** `gitnexus mcp`，也 **禁止** 依賴 `mcp__gitnexus__*` / MCP resources（`gitnexus://…`）。三端 agent 仍 **必須** 使用 GitNexus 圖譜能力，但一律經 **shell CLI**；全域 `gitnexus` 須先確認為 repo-reviewed `1.6.9`，安裝／一次性執行路徑也須 pin `gitnexus@1.6.9`。舊 skill / 文件寫 `impact({…})` 或 `gitnexus://…` 時改跑等價 CLI，**不得**宣稱 GitNexus 不可用，也不得為查詢而背景啟動 `gitnexus mcp` / `gitnexus setup`。完整 CLI 對照表、三端設定現況與 re-enable 條件見 `docs/agents/gitnexus-usage.md`。
 
 ### 驗證與回報
 
@@ -164,9 +164,9 @@ Runtime/product 行為真相優先順序：
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence (CLI-only)
 
-This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 28581 relationships, 300 execution flows). **Do not use GitNexus MCP tools or `gitnexus://` resources.** Query the graph via shell CLI (`gitnexus` or `node .gitnexus/run.cjs`).
+This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 28581 relationships, 300 execution flows). **Do not use GitNexus MCP tools or `gitnexus://` resources.** Query the graph via the reviewed `gitnexus` 1.6.9 shell CLI.
 
-> Index stale? Run `node .gitnexus/run.cjs analyze --index-only` from the project root — it auto-selects an available runner without rewriting tracked agent context. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze --index-only` (npm 11 crash → `npm i -g gitnexus`; #1939).
+> Index stale? After current-turn re-index authorization, run `npx gitnexus@1.6.9 analyze --index-only` from the project root. On the npm 11 installer crash, use `npm i -g gitnexus@1.6.9` or `pnpm --allow-build=@ladybugdb/core --allow-build=gitnexus --allow-build=tree-sitter dlx gitnexus@1.6.9 analyze --index-only` (#1939).
 
 ## Always Do
 

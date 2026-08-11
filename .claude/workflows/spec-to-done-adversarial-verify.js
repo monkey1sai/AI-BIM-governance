@@ -144,7 +144,7 @@ const verdicts = await parallel([
 1. 三支 .js 的 JS 邏輯 bug:迴圈邊界(startTaskIndex/continue/MAX_FIX 輪數)、null 處理(agent 回 null 的每條路徑)、schema 與 prompt 要求的欄位是否一致、return shape 是否完整。
 2. 跨檔簽名一致性:SKILL.md 編排引用的欄位(P1.planPath、P1.impact.overallRisk、P3.finalReview.findings、P3.resumeHint.startTaskIndex、P4.evidence.gaps、P5.targetSha/baseSha/subjectSha/fix_now/external_blockers/known_gaps/follow_ups/unverified/critic.overall_safe、P6.merged/prNumber/heldReason)是否與各 .js 實際 return 及既有 workflow 真實簽名吻合——既有簽名請親讀 C:/Repos/active/iot/AI-BIM-governance/.claude/workflows/fu-adversarial-verify-generic.js 與 ship-item.js 確認。
 3. Workflow runtime 限制:meta 是否純 literal;有無時鐘/亂數 API 呼叫(連 prompt 字串裡的字面也會被靜態檢查擋);governedAgent() 的 model 值只能是 sonnet/opus/haiku/fable;schema additionalProperties:false。
-4. prompt 內指令可執行性:bash 片段(probe 偵測鏈、git 指令、npx gitnexus)在 Windows + git-bash 環境是否可跑;MCP 工具名(mcp__gitnexus__impact / mcp__gitnexus__detect_changes)是否真實存在。`,
+4. prompt 內指令可執行性:bash 片段(probe 偵測鏈、git 指令、pinned npx gitnexus@1.6.9)在 Windows + git-bash 環境是否可跑;GitNexus impact / detect-changes 是否只透過 shell CLI 執行。`,
     { label: 'verify:technical', phase: 'Verify', ...ROUTING.judge, schema: ISSUES_SCHEMA }),
 
   () => governedAgent(`${PRE}
