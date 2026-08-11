@@ -23,7 +23,7 @@
 - [x] 2.5 `OpsPage.tsx`：inline hex → `var(--ab-*)`（#357 落地；raw-hex=0、ab-var 23）
 - [x] 2.6 `ConceptPage.tsx`：inline hex → `var(--ab-*)`（#357 落地；raw-hex=0、ab-var 9）
 - [x] 2.7 `unified.css`：body 層級樣式改用 `--ab-*`（#357 落地；raw-hex=0、ab-var 8）
-- [x] 2.8 每頁遷移後跑該頁既有 browser E2E 案例，確認功能行為不變（僅允許樣式相關的截圖差異）。證據＝`artifacts/2026-07-16-migrate-console-to-hifi-design-pr-body.md` §5（隨 #357 merge）：`hifi-token-authority.spec.ts` 3 tests 全綠（#conv loading/failure/retry/success 四態、`--ab-accent` 生效、`--ec-grn` 絕跡）、`unified-console-routes.spec.ts` 路由可達、`npx vitest run src/console/` 全綠；2026-08-11 確認上述 spec/test 檔均仍在 tree（`web-viewer-sample/e2e/hifi-token-authority.spec.ts`、`e2e/unified-console-routes.spec.ts`、`src/console/unified/unified.test.tsx`）。checkbox 此前漏勾，本次依既有證據補記。
+- [ ] 2.8 每頁遷移後跑該頁既有 browser E2E 案例，確認功能行為不變（僅允許樣式相關的截圖差異）。2026-08-12 corrective review：#357 artifact 與現行 spec 僅覆蓋 unified home／部分 workspace-runtime routes；`PipelinePage`／`ConceptPage` 只有 Vitest／DOM 證據，尚無逐頁 browser run，因此維持未勾。
 
 ## 3. Legacy 頁面遷移（仍掛 edge-console.css 的部分）
 
@@ -33,7 +33,7 @@
 - [x] 3.4 `governance/overlay.css`：`--ec-*` → `--ab-*`（#357 落地；ec=0、ab 11；專屬守門 `e2e/overlay-ec-token-resolution.spec.ts`）
 - [x] 3.5 `viewer/*.css`（含 `MockViewport.tsx`）：`--ec-*` → `--ab-*`（#357 落地；ec=0、ab 60）
 - [x] 3.6 `legacy-console.css` 內 `IntentDialog` selectors 及 `IntentDialog.css.test.ts`：`--ec-*` → `--ab-*`（repo 不存在獨立 `IntentDialog.css`，原文前提有誤；#357 已改測試，現行斷言讀 `legacy-console.css`）
-- [x] 3.7 每頁遷移後跑該頁既有 browser E2E / provenance 誠實性案例，確認功能行為不變。證據＝同一 artifact §5（隨 #357 merge）：`unified-console-routes.spec.ts`（#/kit、#/demo-control 可達）、`conv-history.spec.ts`、`ConversionPage.test.tsx`、`GovernanceOverlay.test.tsx`、`governance/*.test.ts`（highlightBridge/mappingCache/govPanelState/windowOverlayGlue）、`A1CrossLinks`/`A2OverlayViewer`/`A3FederationSession` 測試全綠，provenance 誠實性與 API 呼叫零變更；2026-08-11 確認 `web-viewer-sample/e2e/conv-history.spec.ts`、`src/console/GovernanceOverlay.test.tsx` 仍在 tree。checkbox 此前漏勾，本次依既有證據補記。
+- [ ] 3.7 每頁遷移後跑該頁既有 browser E2E / provenance 誠實性案例，確認功能行為不變。2026-08-12 corrective review：本 PR 引用的既有 evidence 覆蓋 `#conv`、`#/kit`、`#/demo-control`、`#/review` 與 component tests，但未記錄 `#/admin`、`#/gpu`、`#/sessions` 等所有 migrated legacy pages 的逐頁 browser／provenance run，因此維持未勾。
 
 ## 4. 主題切換移除
 
