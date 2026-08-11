@@ -1172,6 +1172,105 @@ def test_cad_hardener_import_failure_emits_structured_status(tmp_path: Path):
     }
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX atomic replacement contract")
+def test_cad_hardener_cli_success_path_hardens_real_entrypoint(tmp_path: Path):
+    """gate #484 TG-01: exercise the real CLI subprocess composition end to end.
+
+    Unlike ``test_cad_hardener_argument_failure_emits_structured_status`` /
+    ``test_cad_hardener_import_failure_emits_structured_status`` (failure paths
+    only) and ``scripts/tests/test-deploy-governance-static.ps1`` (a stub
+    ``valid.py`` that only prints fixed JSON), this walks the real
+    ``_messaging_root`` -> import -> ``Ifc2UsdcPowershellConverterAdapter``
+    construction -> ``harden_default_hoops_main_permissions`` ->
+    ``_emit_status(status="passed")`` chain across an actual process boundary.
+    """
+
+    fixture_root = tmp_path / "repo"
+    fixture_home = tmp_path / "home"
+    fixture_root.mkdir()
+    fixture_home.mkdir()
+
+    # 1. Build a fixture repo with a pinned+trusted CAD entrypoint, matching the
+    # sibling in-process hardening tests (:1054, :1079, :1106).
+    _write_cad_converter_lock(fixture_root)
+    package_name = _cad_package_name("cli-success")
+    release_root = fixture_root / "_build" / "linux-x86_64" / "release"
+    # 2. This is the real (unmocked) resolution target of
+    # ``Ifc2UsdcPowershellConverterAdapter._trusted_extension_cache_roots`` on
+    # POSIX (adapter :200-204): ``Path.home() / ".local/share/ov/data/exts"``.
+    # Monkeypatching it is impossible across a subprocess boundary, so instead
+    # the subprocess is launched with HOME pointed at ``fixture_home`` below.
+    package_cache = fixture_home / ".local" / "share" / "ov" / "data" / "exts"
+    _, hoops_main = _write_symlinked_cad_package(
+        release_root=release_root,
+        package_cache=package_cache,
+        package_name=package_name,
+    )
+    _write_trusted_cad_manifest(fixture_root, package_name=package_name, hoops_main=hoops_main)
+    hoops_main.chmod(0o777)
+
+    # 3. The CLI's real ``_messaging_root(repo_root)`` (harden-cad-extension-cache.py
+    # :23-32) must resolve the adapter module through the fixture repo layout, not
+    # through an inherited PYTHONPATH shortcut -- that would bypass exactly the
+    # composition this test exists to cover.
+    real_messaging_dir = (
+        Path(__file__).resolve().parents[1]
+        / "source"
+        / "extensions"
+        / "ezplus.bim_review_stream.messaging"
+        / "ezplus"
+        / "bim_review_stream"
+        / "messaging"
+    )
+    messaging_target = (
+        fixture_root
+        / "source"
+        / "extensions"
+        / "ezplus.bim_review_stream.messaging"
+        / "ezplus"
+        / "bim_review_stream"
+        / "messaging"
+    )
+    messaging_target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        messaging_target.symlink_to(real_messaging_dir, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlinks are unavailable on this test host: {exc}")
+
+    original_identity = (hoops_main.stat().st_dev, hoops_main.stat().st_ino)
+
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "harden-cad-extension-cache.py"
+    clean_env = dict(os.environ)
+    clean_env["HOME"] = str(fixture_home)
+    clean_env["PYTHONPATH"] = ""
+    clean_env["PYTHONNOUSERSITE"] = "1"
+
+    completed = subprocess.run(
+        [sys.executable, str(script_path), "--repo-root", str(fixture_root)],
+        env=clean_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    # 4. Exactly the contract ``Invoke-CadExtensionCacheHardener`` enforces at
+    # scripts/deploy.ps1:592-601 -- exit 0, empty stderr, one stdout JSON line.
+    assert completed.returncode == 0
+    assert completed.stderr == ""
+    stdout_lines = completed.stdout.splitlines()
+    assert len(stdout_lines) == 1
+    assert json.loads(stdout_lines[0]) == {
+        "schema_version": "cad-extension-cache-hardening/v1",
+        "status": "passed",
+    }
+
+    # 5. Prove work happened, not just that a status was printed: the entrypoint
+    # inode changed (atomic replace) and group/other write bits are cleared.
+    hardened_stat = hoops_main.stat()
+    assert (hardened_stat.st_dev, hardened_stat.st_ino) != original_identity
+    assert stat.S_IMODE(hardened_stat.st_mode) & (stat.S_IWGRP | stat.S_IWOTH) == 0
+
+
 def test_adapter_from_env_prefers_pwsh_when_available(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         "shutil.which",
