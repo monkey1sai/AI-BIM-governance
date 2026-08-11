@@ -431,6 +431,8 @@ Write-TestPass 'host-native detachment check is bounded and retried'
 $sb = New-TestSandbox -Prefix 'kit-manager-child-env'
 $kitManagerEnvironmentNames = @('RUNTIME_MODE', 'HOST_LOCAL_RUNTIME_ALLOWED', 'KIT_INSTANCE_ID', 'KIT_CONTROL_URL')
 $originalKitManagerEnvironment = @{}
+$originalDefaultProbePythonPath = $env:PYTHONPATH
+$originalDefaultProbePidFileEnv = $env:HOST_NATIVE_LAUNCHER_TEST_PID_FILE
 try {
     foreach ($name in $kitManagerEnvironmentNames) {
         $originalKitManagerEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
@@ -519,11 +521,91 @@ try {
     }
     Assert-True ($nonLocalError -match 'loopback or an address assigned to this host') 'Kit Manager rejects a non-local conversion authority URL'
     Write-TestPass 'host-native Kit Manager rejects non-local Kit control URL'
+
+    # Test 21b (issue #493 / TG-02): every dynamic case above injects a
+    # SUCCEEDING fake -ImportProbeFn, so the DEFAULT probe defined inline in
+    # Start-HostNativeKitManager (host-native-launcher.ps1:556-600) — its
+    # WaitForExit($TimeoutSec * 1000), the Stop-HostNativeProcessTreeAndWait
+    # call, and the -1 -> throw propagation at host-native-launcher.ps1:616-618
+    # — was only proven by source-regex assertions, never actually driven.
+    # The probe's argv is hardcoded to `-c 'import fastapi, uvicorn'`, so make
+    # the import itself hang: put a `fastapi.py` shim earlier on PYTHONPATH
+    # that spawns a child and sleeps 30s, modeled on the proven hung-child
+    # fixture at test-deploy-governance-static.ps1:174-215.
+    $defaultProbePython = Resolve-PlatformSystemPython
+    if ([string]::IsNullOrWhiteSpace($defaultProbePython)) {
+        throw 'default import-probe regression fixture requires a working Python 3.11+ interpreter'
+    }
+    $defaultProbeShimDir = Join-Path $sb 'default-probe-shim'
+    New-Item -ItemType Directory -Path $defaultProbeShimDir -Force | Out-Null
+    $defaultProbePidFile = Join-Path $sb 'default-probe-pids.json'
+    # The shim reads its output path from an env var rather than an embedded
+    # literal so nothing here depends on how PowerShell would need to escape a
+    # Windows path inside a Python string.
+    $defaultProbeShimSource = @'
+import json
+import os
+import subprocess
+import sys
+import time
+
+pid_file = os.environ['HOST_NATIVE_LAUNCHER_TEST_PID_FILE']
+child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+with open(pid_file, 'w', encoding='utf-8') as fh:
+    json.dump([os.getpid(), child.pid], fh)
+time.sleep(30)
+'@
+    [System.IO.File]::WriteAllText((Join-Path $defaultProbeShimDir 'fastapi.py'), $defaultProbeShimSource)
+    $env:PYTHONPATH = $defaultProbeShimDir
+    $env:HOST_NATIVE_LAUNCHER_TEST_PID_FILE = $defaultProbePidFile
+
+    function Resolve-HostNativePython { param($RepoRoot, $ServiceName) return $defaultProbePython }
+    $script:defaultProbeServiceStarted = $false
+    function Start-HostNativeService {
+        param($Name, $WorkingDirectory, $FilePath, $ArgumentList, $RunDir)
+        $script:defaultProbeServiceStarted = $true
+        return [pscustomobject]@{ Pid = 4251; LogPath = 'fixture.log' }
+    }
+
+    $defaultProbeStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $defaultProbeError = ''
+    try {
+        Start-HostNativeKitManager -RepoRoot $sb -Port 8010 -KitControlUrl '' `
+            -ImportProbeTimeoutSec 1 | Out-Null
+    }
+    catch {
+        $defaultProbeError = $_.Exception.Message
+    }
+    $defaultProbeStopwatch.Stop()
+
+    Assert-True ($defaultProbeError -match [regex]::Escape('kit-manager-api Python cannot import fastapi and uvicorn')) `
+        'default import probe timeout propagates the documented -1 failure (host-native-launcher.ps1:616-618)'
+    Assert-True ($defaultProbeStopwatch.Elapsed.TotalSeconds -lt 10) `
+        'default import probe timeout returns within a bounded window, proving the timeout wiring rather than a hang'
+    Assert-True (-not $script:defaultProbeServiceStarted) `
+        'a failed default import probe must never reach Start-HostNativeService'
+    Assert-True (Test-Path -LiteralPath $defaultProbePidFile -PathType Leaf) `
+        'hung-import shim must record its own PID and its child PID before the timeout kills it'
+    $defaultProbePids = @(Get-Content -Raw -LiteralPath $defaultProbePidFile | ConvertFrom-Json)
+    Assert-Equal 2 $defaultProbePids.Count 'hung-import shim records exactly parent + child PIDs'
+    foreach ($defaultProbeProcessId in $defaultProbePids) {
+        $defaultProbeRemaining = Get-Process -Id ([int]$defaultProbeProcessId) -ErrorAction SilentlyContinue
+        for ($defaultProbeAttempt = 0; $null -ne $defaultProbeRemaining -and $defaultProbeAttempt -lt 20; $defaultProbeAttempt++) {
+            Start-Sleep -Milliseconds 100
+            $defaultProbeRemaining = Get-Process -Id ([int]$defaultProbeProcessId) -ErrorAction SilentlyContinue
+        }
+        if ($null -ne $defaultProbeRemaining) {
+            throw "default import probe left PID $defaultProbeProcessId running after termination"
+        }
+    }
+    Write-TestPass 'host-native Kit Manager default import probe bounds a hung fastapi import, never starts the service, and leaves no surviving PIDs'
 }
 finally {
     foreach ($name in $kitManagerEnvironmentNames) {
         [Environment]::SetEnvironmentVariable($name, $originalKitManagerEnvironment[$name], 'Process')
     }
+    $env:PYTHONPATH = $originalDefaultProbePythonPath
+    $env:HOST_NATIVE_LAUNCHER_TEST_PID_FILE = $originalDefaultProbePidFileEnv
     Remove-TestSandbox -Path $sb
 }
 
