@@ -117,6 +117,21 @@ $resolvedKitControlUrl = $null
 if ($resolvedKitControlUrl -cne '') {
     throw 'SkipKitManager must bypass manager-only URL resolution and use an empty runtime identity'
 }
+$launcherParserTokens = $null
+$launcherParserErrors = $null
+$launcherAst = [System.Management.Automation.Language.Parser]::ParseInput($launcher, [ref]$launcherParserTokens, [ref]$launcherParserErrors)
+if (@($launcherParserErrors).Count -ne 0) {
+    throw 'host-native-launcher.ps1 must parse before governance static inspection'
+}
+$terminatorFunction = @($launcherAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Stop-HostNativeProcessTreeAndWait'
+}, $true))
+if ($terminatorFunction.Count -ne 1) {
+    throw 'host-native-launcher.ps1 must define exactly one Stop-HostNativeProcessTreeAndWait helper'
+}
+. ([scriptblock]::Create($terminatorFunction[0].Extent.Text))
 $hardenerFunction = @($deployAst.FindAll({
     param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
