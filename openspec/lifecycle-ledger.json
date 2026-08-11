@@ -1435,11 +1435,11 @@
       "id": "isolated-branch-stack-browser-e2e",
       "status": "active",
       "owner": "repository-maintainer",
-      "current_slice": "PR #431 code 0170c8d；source 72fcf5f；main 8f2ff8b merged cdd1f2f。Env allowlist、manifest-derived A3 fixture containment、identity-proven abandoned claim recovery 已補。Reviewer ACCEPT（P1/P2=0；P3=1 different-canonical-ID test gap）。Contract/static/boundary、viewer 965、targeted 69、ESLint、verification 22+2+7、diff-check 通過；real browser/runtime smoke 未跑。GitNexus unavailable/UNKNOWN，reviewer 接受 residual risk，非 pass。30/33；4.3/5.2/5.3、無 A4 manifest/PNG/runtime ID 維持 gap；fixture seed 由 #434 持有。",
+      "current_slice": "PR #431 主體已 merge（cdd1f2f）；reviewer ACCEPT（P1/P2=0）。2026-08-11：4.3 以 gate 重跑補勾（test-agent-governance-check 45 pass／0 fail @7929d74）。31/33；5.2/5.3 與 A4 manifest/PNG/runtime ID 維持 gap（a4-console-convergence 缺口），fixture seed 由 #434 持有。GitNexus unavailable/UNKNOWN 紀錄維持，非 pass。",
       "blocked_by": [],
-      "last_verified": "2026-07-30T17:16:40Z",
+      "last_verified": "2026-08-11T11:40:00Z",
       "task_ledger": {
-        "completed": 30,
+        "completed": 31,
         "total": 33
       },
       "evidence_refs": [
@@ -1448,7 +1448,7 @@
         "docs/plans/NOW.md",
         "scripts/tests/test-isolated-branch-stack.ps1"
       ],
-      "subject_commit": "5e8d677ef6c8a5cfe836d17cf019e5530c36e86e",
+      "subject_commit": "444eb4c650e34d747445697885396ab4870a0c74",
       "archive_debt": null
     },
     {
