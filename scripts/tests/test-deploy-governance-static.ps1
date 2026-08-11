@@ -251,9 +251,13 @@ function Print-FinalSummary {
 Write-Output 'PHASE_CONTINUED'
 '@
         [System.IO.File]::WriteAllText($fixtureRunnerPath, $fixtureRunnerSource)
-        $fixturePython = Resolve-PlatformSystemPython
-        if ([string]::IsNullOrWhiteSpace($fixturePython)) {
+        $fixturePythonCommand = Resolve-PlatformSystemPython
+        if ([string]::IsNullOrWhiteSpace($fixturePythonCommand)) {
             throw 'Linux CAD phase regression fixtures require a working Python 3.11+ interpreter'
+        }
+        $fixturePython = [string](Get-Command -Name $fixturePythonCommand -CommandType Application -ErrorAction Stop | Select-Object -First 1).Path
+        if ([string]::IsNullOrWhiteSpace($fixturePython) -or -not (Test-Path -LiteralPath $fixturePython -PathType Leaf)) {
+            throw 'Linux CAD phase regression fixtures require an absolute Python interpreter path'
         }
         $phaseCases = @(
             @{
