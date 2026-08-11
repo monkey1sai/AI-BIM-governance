@@ -84,23 +84,176 @@ function Get-FileMap {
     return $map
 }
 
+function Convert-CrlfToLfBytes {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][byte[]] $Bytes)
+
+    $stream = [IO.MemoryStream]::new()
+    try {
+        for ($index = 0; $index -lt $Bytes.Length; $index++) {
+            if ($Bytes[$index] -eq 13 -and ($index + 1) -lt $Bytes.Length -and $Bytes[$index + 1] -eq 10) {
+                $stream.WriteByte(10)
+                $index++
+                continue
+            }
+            $stream.WriteByte($Bytes[$index])
+        }
+        return ,$stream.ToArray()
+    } finally {
+        $stream.Dispose()
+    }
+}
+
+function Get-SkillFileClassifications {
+    param([Parameter(Mandatory = $true)][string] $Root)
+
+    if (-not (Test-StrictChildPath $Root $RepoRoot)) {
+        throw "Skill tree is not contained by the repository: $Root"
+    }
+    $treeRepoRelative = [IO.Path]::GetRelativePath($RepoRoot, $Root).Replace('\', '/')
+    $pathspec = ":(top,literal)$treeRepoRelative"
+    $nativeOutput = @(& git -C $RepoRoot ls-files --eol -z -- $pathspec 2>$null)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Git could not classify tracked skill assets: $treeRepoRelative"
+    }
+
+    $classifications = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+    $serialized = $nativeOutput -join [string]::Empty
+    foreach ($record in $serialized.Split([char] 0, [StringSplitOptions]::RemoveEmptyEntries)) {
+        if ($record -notmatch '^i/(?<indexEol>\S+)\s+w/(?<worktreeEol>\S*)\s+attr/(?<attributes>.*?)\t(?<path>.*)$') {
+            throw "Git returned an unrecognized EOL record for skill tree: $treeRepoRelative"
+        }
+        $indexEol = $Matches.indexEol
+        $attributes = $Matches.attributes
+        $repoRelative = $Matches.path
+        $fullPath = [IO.Path]::GetFullPath((Join-Path $RepoRoot $repoRelative))
+        if (-not (Test-StrictChildPath $fullPath $Root)) {
+            throw "Git classified an asset outside the declared skill tree: $repoRelative"
+        }
+        if ($classifications.ContainsKey($repoRelative)) {
+            throw "Git returned duplicate EOL records for skill asset: $repoRelative"
+        }
+
+        $textAttribute = ''
+        foreach ($attribute in @($attributes.Trim() -split '\s+')) {
+            if ($attribute -eq '-text' -or $attribute -eq 'text' -or $attribute -like 'text=*') {
+                $textAttribute = $attribute
+                break
+            }
+        }
+        $classifications[$repoRelative] = [pscustomobject]@{
+            IndexEol = $indexEol
+            TextAttribute = $textAttribute
+        }
+    }
+    return $classifications
+}
+
+function Get-MirrorTargetTrackingIssues {
+    param(
+        [Parameter(Mandatory = $true)][string] $Source,
+        [Parameter(Mandatory = $true)][string] $Target
+    )
+
+    $targetClassifications = Get-SkillFileClassifications $Target
+    $requiredTargetPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($targetFile in (Get-FileMap $Target).Values) {
+        $repoRelative = [IO.Path]::GetRelativePath($RepoRoot, $targetFile).Replace('\', '/')
+        $null = $requiredTargetPaths.Add($repoRelative)
+    }
+    foreach ($relative in (Get-FileMap $Source).Keys) {
+        $targetFile = [IO.Path]::GetFullPath((Join-Path $Target $relative))
+        if (-not (Test-StrictChildPath $targetFile $Target)) {
+            throw "Mirror target path escapes its declared skill tree: $relative"
+        }
+        $repoRelative = [IO.Path]::GetRelativePath($RepoRoot, $targetFile).Replace('\', '/')
+        $null = $requiredTargetPaths.Add($repoRelative)
+    }
+
+    $orderedPaths = [string[]] @($requiredTargetPaths)
+    [Array]::Sort($orderedPaths, [StringComparer]::Ordinal)
+    $issues = [Collections.Generic.List[string]]::new()
+    foreach ($repoRelative in $orderedPaths) {
+        if (-not $targetClassifications.ContainsKey($repoRelative)) {
+            $issues.Add("mirror target asset is not tracked by Git: $repoRelative")
+        }
+    }
+    return @($issues)
+}
+
+function Get-SkillFileDigest {
+    param(
+        [Parameter(Mandatory = $true)][string] $Path,
+        [Parameter(Mandatory = $true)] $Classification
+    )
+
+    if (-not (Test-StrictChildPath $Path $RepoRoot)) {
+        throw "Skill asset is not contained by the repository: $Path"
+    }
+    $repoRelative = [IO.Path]::GetRelativePath($RepoRoot, $Path).Replace('\', '/')
+    if ($repoRelative.IndexOfAny([char[]] @([char] 0, [char] 10, [char] 13)) -ge 0) {
+        throw "Skill asset path contains a forbidden control character: $repoRelative"
+    }
+
+    $indexEol = [string] $Classification.IndexEol
+    $textAttribute = [string] $Classification.TextAttribute
+
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    if ($textAttribute -eq '-text') {
+        # An explicit binary attribute is hashed byte-for-byte.
+    } elseif ($textAttribute -eq 'text') {
+        # An explicit text attribute wins even when binary-looking bytes make
+        # Git report i/-text for the indexed blob.
+        $bytes = Convert-CrlfToLfBytes $bytes
+    } else {
+        # text=auto and unspecified paths follow Git's indexed classification.
+        switch ($indexEol) {
+            '-text' {
+                # Git-classified binary content is hashed byte-for-byte.
+            }
+            { $_ -in @('lf', 'crlf', 'mixed') } {
+                $bytes = Convert-CrlfToLfBytes $bytes
+            }
+            'none' {
+                # With no indexed line ending, raw and canonical bytes are identical.
+                # Fail closed if the working file introduces a CRLF pair while Git's
+                # indexed classification remains ambiguous.
+                for ($index = 0; $index -lt ($bytes.Length - 1); $index++) {
+                    if ($bytes[$index] -eq 13 -and $bytes[$index + 1] -eq 10) {
+                        throw "Git text/binary classification is ambiguous for skill asset: $repoRelative"
+                    }
+                }
+            }
+            default {
+                throw "Unsupported Git EOL classification '$indexEol' for skill asset: $repoRelative"
+            }
+        }
+    }
+
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]] $bytes)).ToLowerInvariant()
+}
+
 function Get-SkillTreeDigest {
     param([Parameter(Mandatory = $true)][string] $Root)
 
     Assert-NoReparsePath $Root
     Assert-NoReparsePoint $Root
     $fileMap = Get-FileMap $Root
+    $classifications = Get-SkillFileClassifications $Root
     $relativePaths = [string[]] @($fileMap.Keys)
     [Array]::Sort($relativePaths, [StringComparer]::Ordinal)
     $hasher = [Security.Cryptography.IncrementalHash]::CreateHash([Security.Cryptography.HashAlgorithmName]::SHA256)
     try {
         $nul = [char] 0
-        $hasher.AppendData([Text.Encoding]::UTF8.GetBytes("agent-skill-tree/v1$nul"))
+        $hasher.AppendData([Text.Encoding]::UTF8.GetBytes("agent-skill-tree/v2$nul"))
         foreach ($relative in $relativePaths) {
             if ($relative.IndexOfAny([char[]] @([char] 0, [char] 10, [char] 13)) -ge 0) {
                 throw "Skill file path contains a forbidden control character: $relative"
             }
-            $fileHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $fileMap[$relative]).Hash.ToLowerInvariant()
+            $repoRelative = [IO.Path]::GetRelativePath($RepoRoot, $fileMap[$relative]).Replace('\', '/')
+            if (-not $classifications.ContainsKey($repoRelative)) {
+                throw "Skill asset must be tracked by Git before integrity can be evaluated: $repoRelative"
+            }
+            $fileHash = Get-SkillFileDigest -Path $fileMap[$relative] -Classification $classifications[$repoRelative]
             $hasher.AppendData([Text.Encoding]::UTF8.GetBytes("$relative$nul$fileHash`n"))
         }
         return [Convert]::ToHexString($hasher.GetHashAndReset()).ToLowerInvariant()
@@ -302,7 +455,7 @@ foreach ($skill in $manifest.skills) {
     if ($locationProperties.Count -eq 0) {
         throw "Skill locations missing for $skillName"
     }
-    if ([string] $skill.integrity.format -ne 'agent-skill-tree/v1' -or [string] $skill.integrity.algorithm -ne 'sha256') {
+    if ([string] $skill.integrity.format -ne 'agent-skill-tree/v2' -or [string] $skill.integrity.algorithm -ne 'sha256') {
         throw "Unsupported skill integrity contract for $skillName"
     }
     $integrityProperties = @($skill.integrity.trees.PSObject.Properties)
@@ -420,7 +573,14 @@ foreach ($location in $locationRecords) {
     if (-not $remediablePaths.Contains($location.Path)) {
         $actualDigest = Get-SkillTreeDigest $location.Path
         if ($actualDigest -ne $location.ExpectedDigest) {
-            $preflightIssues.Add("integrity mismatch in non-remediable location: $($location.Skill) [$($location.Platform)]")
+            $preflightIssues.Add("integrity mismatch in non-remediable location: $($location.Skill) [$($location.Platform)] expected=$($location.ExpectedDigest) actual=$actualDigest")
+        }
+    }
+}
+if ($Mode -eq 'Sync') {
+    foreach ($plan in $syncPlans) {
+        foreach ($trackingIssue in @(Get-MirrorTargetTrackingIssues -Source $plan.Source -Target $plan.Target)) {
+            $preflightIssues.Add("$($plan.Skill) $($plan.SourcePlatform)->$($plan.TargetPlatform) $trackingIssue")
         }
     }
 }
@@ -473,7 +633,7 @@ foreach ($location in $locationRecords) {
     }
     $actualDigest = Get-SkillTreeDigest $location.Path
     if ($actualDigest -ne $location.ExpectedDigest) {
-        $issues.Add("skill tree integrity mismatch: $($location.Skill) [$($location.Platform)]")
+        $issues.Add("skill tree integrity mismatch: $($location.Skill) [$($location.Platform)] expected=$($location.ExpectedDigest) actual=$actualDigest")
     }
 }
 

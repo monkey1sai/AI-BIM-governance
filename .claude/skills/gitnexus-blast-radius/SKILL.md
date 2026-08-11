@@ -1,6 +1,6 @@
 ---
 name: gitnexus-blast-radius
-description: 改動前跑 GitNexus impact 與 analyze 算出 blast radius 與 risk_level；改動後跑 detect_changes 驗證 scope 是否超出預期。當要修改 function/class/method 之前、或 PR review 後 reviewer 提出 risk 需要 debug 時使用。Pre-change 與 post-change 兩種模式。
+description: 改動前跑 GitNexus impact，並在版本、狀態與本回合授權都符合時才 analyze，算出 blast radius 與 risk_level；改動後跑 detect_changes 驗證 scope 是否超出預期。當要修改 function/class/method 之前、或 PR review 後 reviewer 提出 risk 需要 debug 時使用。Pre-change 與 post-change 兩種模式。
 allowed-tools: Bash(gitnexus*) Bash(git diff*) Bash(git status*)
 ---
 
@@ -16,20 +16,33 @@ allowed-tools: Bash(gitnexus*) Bash(git diff*) Bash(git status*)
 
 ## Pre-change 流程
 
-### Step 1：刷新 index
+### Step 1：版本／狀態 preflight；必要時刷新 index
 
 ```
-gitnexus analyze --embeddings --skills --skip-agents-md
+gitnexus --version
+gitnexus status
 ```
 
-若工具警告 index stale → 重跑一次再進行下一步。`--skip-agents-md` 避免覆蓋 tracked AGENTS / CLAUDE 段落。
+只有同時符合下列三項，才可刷新 index：
+
+1. `gitnexus --version` 精確為 reviewed version `1.6.9`；
+2. `gitnexus status` 明確回報 index stale 或 missing；
+3. 使用者已在**本回合**明確授權 re-index。
+
+符合三項時只執行一次：
+
+```
+gitnexus analyze --index-only --embeddings
+```
+
+若 index healthy/current，直接進 Step 2，不得 analyze。若版本不符、狀態不明或缺少本回合授權，不得 install、upgrade 或 analyze；回報 GitNexus unavailable/stale 並依 repo fallback 契約處理。`--index-only` 避免覆蓋 tracked AGENTS / CLAUDE 段落或在 manifest-governed skill roots 注入 generated snapshots。
 
 ### Step 2：對目標 symbols 跑 impact
 
 對使用者指定 / 從 `tasks.md` 解析出的每個 symbol：
 
 ```
-gitnexus impact --target <symbol> --direction upstream
+gitnexus impact <symbol> -d upstream -r AI-BIM-governance
 ```
 
 蒐集：
@@ -89,14 +102,21 @@ gitnexus detect-changes --scope staged
 
 ### Step 3：Fallback 機制（含停損條件）
 
-若 `gitnexus detect-changes` 失敗（resolver 對 worktree index 沒及時刷新）：
+若 `gitnexus detect-changes` 失敗，先重新執行 version/status preflight：
 
 ```
-gitnexus analyze --embeddings --skills --skip-agents-md
+gitnexus --version
+gitnexus status
+```
+
+只有 reviewed version 為 `1.6.9`、status 明確為 stale/missing，且使用者已在**本回合**明確授權 re-index，才執行一次：
+
+```
+gitnexus analyze --index-only --embeddings
 gitnexus detect-changes --scope staged
 ```
 
-仍失敗 → 用 `git diff --name-only` 作 fallback evidence：
+若任一前置條件不成立，或重試後仍失敗 → 用 `git diff --name-only` 作 fallback evidence：
 
 ```
 git diff --name-only --cached
@@ -108,7 +128,7 @@ git diff --name-only --cached
 
 | 失敗次數 | 動作 |
 |---|---|
-| 第 1 次失敗 | 跑 `gitnexus analyze --embeddings --skills --skip-agents-md` 後重試 |
+| 第 1 次失敗 | 只有 version=`1.6.9`、status=stale/missing 且本回合已明確授權時，跑 `gitnexus analyze --index-only --embeddings` 一次後重試；否則直接 fallback |
 | 第 2 次失敗 | 改用 `git diff --name-only --cached` 作 fallback，但在 PR body 標記 ⚠️ |
 | **第 3 次失敗（同一 session）** | **停止**：升為 issue（`gh issue create`），標題格式 `gitnexus: detect-changes repeatedly failing on <branch>`，body 附最近 3 次失敗指令與 stderr，並暫停該 change 的 commit / merge 流程，等修復或 reviewer 明確 sign-off「accept git-diff-only fallback for this PR」後再繼續 |
 
@@ -135,7 +155,7 @@ verdict: <pass|drift|critical>
 當 PR reviewer 提出風險評論：
 
 1. 把 comment 文字摘要成 `debug_target`（例如：「callback retry 靜默丟棄」→ `bim-review-coordinator/src/services/callbackOutbox.ts` 的 `deliverPending`）
-2. 對該 symbol 跑 `gitnexus impact --target <symbol>` 找實際 blast radius
+2. 對該 symbol 跑 `gitnexus impact <symbol> -d upstream -r AI-BIM-governance` 找實際 blast radius
 3. 補 focused tests，再回 Phase D 重跑 verify
 
 ## 邊界與限制
@@ -143,7 +163,7 @@ verdict: <pass|drift|critical>
 - 此 skill **不**修改程式碼（只診斷）
 - 不能跳過 CRITICAL 風險直接 commit
 - Fallback 用 `git diff` 時必須在 PR body 揭露
-- 不重複跑 analyze，除非工具明確報 stale
+- 不重複跑 analyze；只有 reviewed version=`1.6.9`、status=stale/missing 且使用者已在本回合明確授權時，才可執行一次
 
 ## 參考
 

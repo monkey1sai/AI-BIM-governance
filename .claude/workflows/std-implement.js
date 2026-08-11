@@ -263,8 +263,8 @@ const disciplineFor = (commitPrefix) => `紀律(逐條遵守):
 - TDD:先寫失敗測試→親眼看它以預期原因失敗→最小實作→看它通過→其他測試也綠。禁止無失敗測試先寫 production code。例外:若目標行為前次 run 已實作且測試已綠(resume 情境),先盤點現狀、跑現有測試,只對「新增或缺漏的行為」走 TDD,不要對已通過的行為重寫失敗測試。
 - 誠實鐵律:前端要真能操作、不可只接 mock;無 backend 處 UI 明標 DEMO DATA / NOT BUILT / not observed;mock 嚴禁覆蓋真 element_mapping.json。
 - 跑測試前讀 docs/agents/sub-repo-verify-commands.md 選對指令;root contracts pytest 必走主工作區 .venv/Scripts/python.exe(worktree 不帶 .venv;主工作區路徑 = git rev-parse --git-common-dir 的上一層)。
-- 若需修改 task/finding 清單外的既有 function/class/method:先 ToolSearch 載入 mcp__gitnexus__impact 跑 impact({target, direction:"upstream"});CRITICAL → 不要動,回報 BLOCKED 並在 concerns 說明;HIGH → 記入 concerns(指揮官會轉述+寫 PR 補強)。改名一律 gitnexus_rename,禁 find-and-replace。可並列 mcp__codebase-memory-mcp__search_code 查該 symbol 引用作交叉驗證;若發現 GitNexus 未涵蓋的 caller(test / 動態 import)記入 concerns(**advisory:不改 detectVerdict、不改 impact 判定**)。
-- commit 前 scope 驗證(不可省):(1) ToolSearch 載入 mcp__gitnexus__detect_changes 跑 detect_changes({scope:"staged"}),scope 只含預期 symbols → detectVerdict=pass;(2) 工具看不到 staged(linked worktree 已知坑)或回錯 → MUST 改跑 git diff --name-only --cached 自查 scope,乾淨 → detectVerdict=fallback;(3) 連 git diff 自查都做不到才記 fail(此值會被計數,3 次 held)。skipped 僅限本次 commit 純 docs/plan 無 code 改動。(4) git diff --cached --check,trailing whitespace 先修。
+- 若需修改 task/finding 清單外的既有 function/class/method:先在 repo root 用 shell 跑「gitnexus impact \"<symbol>\" -d upstream -r AI-BIM-governance」;CRITICAL → 不要動,回報 BLOCKED 並在 concerns 說明;HIGH → 記入 concerns(指揮官會轉述+寫 PR 補強)。改名須先用 impact/context 列出 callers,再用 language-aware rename 或逐檔精確修改,禁 blind find-and-replace。可並列 mcp__codebase-memory-mcp__search_code 查該 symbol 引用作交叉驗證;若發現 GitNexus 未涵蓋的 caller(test / 動態 import)記入 concerns(**advisory:不改 detectVerdict、不改 impact 判定**)。
+- commit 前 scope 驗證(不可省):(1) 在 repo root 用 shell 跑「gitnexus detect-changes --scope staged -r AI-BIM-governance」,scope 只含預期 symbols → detectVerdict=pass;(2) CLI 看不到 staged(linked worktree 已知坑)或回錯 → MUST 改跑 git diff --name-only --cached 自查 scope,乾淨 → detectVerdict=fallback;(3) 連 git diff 自查都做不到才記 fail(此值會被計數,3 次 held)。skipped 僅限本次 commit 純 docs/plan 無 code 改動。(4) git diff --cached --check,trailing whitespace 先修。
 - commit message 繁中、第一行前綴「${commitPrefix}」,結尾附「Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>」。
 - YAGNI:只做要求的;不順手重構、不動無關檔案。`
 
@@ -340,12 +340,12 @@ for (const task of tasks) {
   if (symbolsToCheck.length) {
     const imp = await budgetedAgent(`你是 GitNexus 影響分析員。工作目錄:${ROOT}。
 
-ToolSearch 載入 mcp__gitnexus__impact;對下列 symbols 各跑 impact({target, direction:"upstream"}),回報最大風險:
+在 repo root 用 shell 對下列 symbols 各跑「gitnexus impact \"<symbol>\" -d upstream -r AI-BIM-governance」,回報最大風險:
 ${symbolsToCheck.map((s) => `- ${s}`).join('\n')}
 1.5 (best-effort,失敗略過):並列 ToolSearch 載入 mcp__codebase-memory-mcp__trace_path 跑 trace_path({function_name, direction:"inbound", depth:3}) 取第二圖譜 callers,超出 GitNexus 數量則在 note 補「[xref] codebase-memory 額外 callers:N(指揮官覆核)」。**硬約束:overallRisk 最終只以 GitNexus 為準;codebase-memory 不得把 overallRisk 升至 CRITICAL/UNKNOWN、不得觸發早停。GitNexus UNKNOWN/crash 時可當 fallback 寫 note,但 overallRisk 仍維持 UNKNOWN(held 照常)。**
 分級:<5 affected=LOW;5-15=MEDIUM;>15 或多 processes=HIGH;critical path(auth/conversion authority/session 核心)=CRITICAL。
 「圖中找不到」分兩種,不可一律 UNKNOWN:(a) symbol 是**尚未實作的新 symbol**(本 task 或 plan 中任一 task 要新建;plan 標題編號與 index 可能差一,以「codebase 現在不存在且 plan 有規劃」為準)→ greenfield,回 LOW 並在 note 註明 new-symbol(blast radius=0,不存在是預期,**絕不回 UNKNOWN**);(b) 既有 symbol(曾在 codebase 出現過)找不到 → 先 analyze 重試,仍找不到才 UNKNOWN。
-若 tool 報 index stale → bash 跑「npx gitnexus analyze --skip-agents-md」+「npx gitnexus status」確認(banner 不算成功)後重試;工具整體故障(crash/連不上)→ overallRisk=UNKNOWN 並在 note 寫明故障。UNKNOWN 只保留給真正的工具故障/既有 symbol 消失。
+若 CLI 報 index stale 且 coordinator 已提供 current-turn re-index 授權 → 跑「npx gitnexus@1.6.9 analyze --index-only」+「gitnexus status」確認(banner 不算成功)後重試;未獲授權、CLI crash/連不上或重建後仍失敗 → overallRisk=UNKNOWN 並在 note 寫明故障。UNKNOWN 只保留給真正的工具故障/既有 symbol 消失。
 回傳 StructuredOutput:overallRisk、note(直接 callers / 關鍵 processes / 故障說明)。`,
       { label: `impact:${T}`, phase: 'Implement', ...ROUTING.standard, schema: TASK_IMPACT_SCHEMA })
     if (!imp && budgetExhausted) {

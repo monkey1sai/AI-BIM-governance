@@ -45,9 +45,9 @@ Lane G/S 不得弱化 secrets、repo boundaries、GitNexus HIGH/CRITICAL、front
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence (CLI-only)
 
-This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 28581 relationships, 300 execution flows). **Do not use GitNexus MCP tools or `gitnexus://` resources.** Query the graph via shell CLI (`gitnexus` or `node .gitnexus/run.cjs`).
+This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 28581 relationships, 300 execution flows). **Do not use GitNexus MCP tools or `gitnexus://` resources.** Query the graph via the reviewed `gitnexus` 1.6.9 shell CLI.
 
-> Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
+> Index stale? After current-turn re-index authorization, run `npx gitnexus@1.6.9 analyze --index-only` from the project root. On the npm 11 installer crash, use `npm i -g gitnexus@1.6.9` or `pnpm --allow-build=@ladybugdb/core --allow-build=gitnexus --allow-build=tree-sitter dlx gitnexus@1.6.9 analyze --index-only` (#1939).
 
 ## Always Do
 

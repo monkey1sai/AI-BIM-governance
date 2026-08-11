@@ -193,7 +193,7 @@ const LENSES = [
       '4. 型別逃生門密度：as any / @ts-ignore / # type: ignore 統計與集中處\n' +
       '5. TODO/FIXME/HACK 盤點（集中在哪些檔）\n' +
       '已知痛點假設：ifc-ready 轉檔併發搶 port 8011 已由 PR #298 序列化修復（驗證修法落在哪、有無殘餘風險）；conversion ledger Phase2 callback 回填（usdc/coverage/ready）是否已做（PR #299 可能相關）。\n' +
-      '工具：優先用 ToolSearch 載入 mcp__gitnexus__query / mcp__gitnexus__context 探索，GitNexus 不可用再 fallback Grep/Read。',
+      '工具：優先在 repo root 用 shell 跑 gitnexus query / gitnexus context 探索；GitNexus CLI unavailable 時揭露原因，再 fallback Grep/Read。',
   },
   {
     key: 'test',

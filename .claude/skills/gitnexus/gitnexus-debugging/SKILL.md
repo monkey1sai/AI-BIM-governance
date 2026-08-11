@@ -1,101 +1,52 @@
 ---
 name: gitnexus-debugging
-description: "Use when the user is debugging a bug, tracing an error, or asking why something fails. Examples: \"Why is X failing?\", \"Where does this error come from?\", \"Trace this bug\""
+description: "Use when debugging a failure, tracing an error, or locating how one symbol reaches another"
 ---
 
-# Debugging with GitNexus
-
-## When to Use
-
-- "Why is this function failing?"
-- "Trace where this error comes from"
-- "Who calls this method?"
-- "This endpoint returns 500"
-- Investigating bugs, errors, or unexpected behavior
+# Debugging with GitNexus CLI
 
 ## Workflow
 
-```
-1. query({search_query: "<error or symptom>"})            → Find related execution flows
-2. context({name: "<suspect>"})                    → See callers/callees/processes
-3. READ gitnexus://repo/{name}/process/{name}                → Trace execution flow
-4. cypher({statement: "MATCH path..."})                 → Custom traces if needed
+```bash
+gitnexus status
+gitnexus query "<error or symptom>" -r AI-BIM-governance
+gitnexus context "<suspect>" -r AI-BIM-governance
+gitnexus trace "<entry>" "<suspect>" -r AI-BIM-governance
 ```
 
-> If "Index is stale" → run `node .gitnexus/run.cjs analyze` in terminal.
+If status is stale, use the unavailable gate unless the current turn authorizes the pinned refresh:
+
+```bash
+npx gitnexus@1.6.9 analyze --index-only
+gitnexus status
+```
 
 ## Checklist
 
-```
-- [ ] Understand the symptom (error message, unexpected behavior)
-- [ ] query for error text or related code
-- [ ] Identify the suspect function from returned processes
-- [ ] context to see callers and callees
-- [ ] Trace execution flow via process resource if applicable
-- [ ] cypher for custom call chain traces if needed
-- [ ] Read source files to confirm root cause
-```
+- [ ] Capture the exact symptom and failing boundary.
+- [ ] Query the error text or domain concept.
+- [ ] Inspect the suspect's callers, callees, and processes.
+- [ ] Trace between known endpoints.
+- [ ] Read source and reproduce with the smallest executable test.
+- [ ] Distinguish graph evidence from the verified root cause.
 
-## Debugging Patterns
+## Patterns
 
-| Symptom              | GitNexus Approach                                          |
-| -------------------- | ---------------------------------------------------------- |
-| Error message        | `query` for error text → `context` on throw sites |
-| Wrong return value   | `context` on the function → trace callees for data flow    |
-| Intermittent failure | `context` → look for external calls, async deps            |
-| Performance issue    | `context` → find symbols with many callers (hot paths)     |
-| Recent regression    | `detect_changes` to see what your changes affect           |
-| "How does A reach B?" | `trace` between the two symbols — shortest call chain in one call |
+| Symptom | CLI approach |
+| --- | --- |
+| Error message | `query` the text, then `context` the throw site |
+| Wrong return value | `context` the function and inspect callees |
+| Intermittent failure | inspect async/external callees and reproduce timing |
+| Performance issue | inspect high-fan-in symbols and hot processes |
+| Recent regression | `detect-changes --scope compare --base-ref main` |
+| How A reaches B | `trace "A" "B"` |
 
-## Tools
+## Advanced query
 
-**query** — find code related to error:
+When typed commands are insufficient:
 
-```
-query({search_query: "payment validation error"})
-→ Processes: CheckoutFlow, ErrorHandling
-→ Symbols: validatePayment, handlePaymentError, PaymentException
+```bash
+gitnexus cypher 'MATCH path = (a)-[:CodeRelation {type: "CALLS"}*1..2]->(b:Function {name: "validatePayment"}) RETURN [n IN nodes(path) | n.name] AS chain' -r AI-BIM-governance
 ```
 
-**context** — full context for a suspect:
-
-```
-context({name: "validatePayment"})
-→ Incoming calls: processCheckout, webhookHandler
-→ Outgoing calls: verifyCard, fetchRates (external API!)
-→ Processes: CheckoutFlow (step 3/7)
-```
-
-**cypher** — custom call chain traces:
-
-```cypher
-MATCH path = (a)-[:CodeRelation {type: 'CALLS'}*1..2]->(b:Function {name: "validatePayment"})
-RETURN [n IN nodes(path) | n.name] AS chain
-```
-
-**trace** — shortest call chain between two symbols ("how does A reach B?"), one call instead of chaining `context` hops:
-
-```
-trace({ from: "processCheckout", to: "fetchRates" })
-→ status: ok, hopCount: 3
-→ hops: processCheckout → validatePayment → verifyCard → fetchRates
-→ edges: CALLS (1.0), CALLS (0.95), CALLS (1.0)
-```
-
-When no path exists, `trace` reports the furthest reachable node — exactly where the chain breaks (dynamic dispatch, reflection, or an external boundary).
-
-## Example: "Payment endpoint returns 500 intermittently"
-
-```
-1. query({search_query: "payment error handling"})
-   → Processes: CheckoutFlow, ErrorHandling
-   → Symbols: validatePayment, handlePaymentError
-
-2. context({name: "validatePayment"})
-   → Outgoing calls: verifyCard, fetchRates (external API!)
-
-3. READ gitnexus://repo/my-app/process/CheckoutFlow
-   → Step 3: validatePayment → calls fetchRates (external)
-
-4. Root cause: fetchRates calls external API without proper timeout
-```
+A missing path may indicate dynamic dispatch, reflection, an external boundary, stale indexing, or a real disconnect. Confirm with source and tests before naming the root cause.

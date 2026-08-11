@@ -1,121 +1,62 @@
 ---
 name: gitnexus-refactoring
-description: "Use when the user wants to rename, extract, split, move, or restructure code safely. Examples: \"Rename this function\", \"Extract this into a module\", \"Refactor this class\", \"Move this to a separate file\""
+description: "Use when the user wants to rename, extract, split, move, or restructure code safely"
 ---
 
-# Refactoring with GitNexus
-
-## When to Use
-
-- "Rename this function safely"
-- "Extract this into a module"
-- "Split this service"
-- "Move this to a new file"
-- Any task involving renaming, extracting, splitting, or restructuring code
+# Refactoring with GitNexus CLI
 
 ## Workflow
 
-```
-1. impact({target: "X", direction: "upstream"})  → Map all dependents
-2. query({search_query: "X"})                            → Find execution flows involving X
-3. context({name: "X"})                           → See all incoming/outgoing refs
-4. Plan update order: interfaces → implementations → callers → tests
-```
-
-> If "Index is stale" → run `node .gitnexus/run.cjs analyze` in terminal.
-
-## Checklists
-
-### Rename Symbol
-
-```
-- [ ] rename({symbol_name: "oldName", new_name: "newName", dry_run: true}) — preview all edits
-- [ ] Review graph edits (high confidence) and text_search edits (review carefully)
-- [ ] If satisfied: rename({..., dry_run: false}) — apply edits
-- [ ] detect_changes() — verify only expected files changed
-- [ ] Run tests for affected processes
+```bash
+gitnexus status
+gitnexus impact "SymbolName" -d upstream -r AI-BIM-governance
+gitnexus query "SymbolName" -r AI-BIM-governance
+gitnexus context "SymbolName" -r AI-BIM-governance
 ```
 
-### Extract Module
+Then plan the update order: interfaces → implementations → callers → tests.
 
-```
-- [ ] context({name: target}) — see all incoming/outgoing refs
-- [ ] impact({target, direction: "upstream"}) — find all external callers
-- [ ] Define new module interface
-- [ ] Extract code, update imports
-- [ ] detect_changes() — verify affected scope
-- [ ] Run tests for affected processes
+If the index is stale, use the unavailable gate unless the current turn authorizes the pinned refresh:
+
+```bash
+npx gitnexus@1.6.9 analyze --index-only
+gitnexus status
 ```
 
-### Split Function/Service
+## Rename checklist
 
-```
-- [ ] context({name: target}) — understand all callees
-- [ ] Group callees by responsibility
-- [ ] impact({target, direction: "upstream"}) — map callers to update
-- [ ] Create new functions/services
-- [ ] Update callers
-- [ ] detect_changes() — verify affected scope
-- [ ] Run tests for affected processes
-```
+- [ ] Run `impact` and `context` for the old symbol.
+- [ ] Search strings and dynamic references directly in source.
+- [ ] Use a language-aware rename or explicit per-file edits; the GitNexus CLI has no rename command.
+- [ ] Review every changed path.
+- [ ] Run `gitnexus detect-changes --scope compare --base-ref main -r AI-BIM-governance`.
+- [ ] Run affected tests.
 
-## Tools
+## Extract or split checklist
 
-**rename** — automated multi-file rename:
+- [ ] Use `context` to map callers, callees, and processes.
+- [ ] Use upstream `impact` to identify external dependants.
+- [ ] Define the new boundary before moving code.
+- [ ] Update imports and callers in dependency order.
+- [ ] Run detect-changes and affected tests.
 
-```
-rename({symbol_name: "validateUser", new_name: "authenticateUser", dry_run: true})
-→ 12 edits across 8 files
-→ 10 graph edits (high confidence), 2 text_search edits (review)
-→ Changes: [{file_path, edits: [{line, old_text, new_text, confidence}]}]
-```
+## Useful commands
 
-**impact** — map all dependents first:
-
-```
-impact({target: "validateUser", direction: "upstream"})
-→ d=1: loginHandler, apiMiddleware, testUtils
-→ Affected Processes: LoginFlow, TokenRefresh
+```bash
+gitnexus impact "validateUser" -d upstream -r AI-BIM-governance
+gitnexus context "validateUser" -r AI-BIM-governance
+gitnexus detect-changes --scope compare --base-ref main -r AI-BIM-governance
+gitnexus cypher 'MATCH (caller)-[:CodeRelation {type: "CALLS"}]->(f:Function {name: "validateUser"}) RETURN caller.name, caller.filePath' -r AI-BIM-governance
 ```
 
-**detect_changes** — verify your changes after refactoring:
+## Risk rules
 
-```
-detect_changes({scope: "all"})
-→ Changed: 8 files, 12 symbols
-→ Affected processes: LoginFlow, TokenRefresh
-→ Risk: MEDIUM
-```
+| Risk factor | Mitigation |
+| --- | --- |
+| Many callers | Update direct callers first and widen tests |
+| Cross-area references | Preserve interfaces or coordinate the boundary change |
+| String/dynamic references | Use direct source search in addition to the graph |
+| Public API | Version or deprecate explicitly |
+| Graph unavailable | Report UNKNOWN and use the documented unavailable gate |
 
-**cypher** — custom reference queries:
-
-```cypher
-MATCH (caller)-[:CodeRelation {type: 'CALLS'}]->(f:Function {name: "validateUser"})
-RETURN caller.name, caller.filePath ORDER BY caller.filePath
-```
-
-## Risk Rules
-
-| Risk Factor         | Mitigation                                |
-| ------------------- | ----------------------------------------- |
-| Many callers (>5)   | Use rename for automated updates |
-| Cross-area refs     | Use detect_changes after to verify scope  |
-| String/dynamic refs | query to find them               |
-| External/public API | Version and deprecate properly            |
-
-## Example: Rename `validateUser` to `authenticateUser`
-
-```
-1. rename({symbol_name: "validateUser", new_name: "authenticateUser", dry_run: true})
-   → 12 edits: 10 graph (safe), 2 text_search (review)
-   → Files: validator.ts, login.ts, middleware.ts, config.json...
-
-2. Review text_search edits (config.json: dynamic reference!)
-
-3. rename({symbol_name: "validateUser", new_name: "authenticateUser", dry_run: false})
-   → Applied 12 edits across 8 files
-
-4. detect_changes({scope: "all"})
-   → Affected: LoginFlow, TokenRefresh
-   → Risk: MEDIUM — run tests for these flows
-```
+Never use blind find-and-replace for a symbol rename.

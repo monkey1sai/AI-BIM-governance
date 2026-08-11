@@ -1,3 +1,5 @@
+> 文件性質：**agent boundary**。本檔是 GitNexus CLI-only 的 lazy-loaded 操作細節，不是 runtime 行為或完成證據。
+>
 > Loaded lazily by AGENTS.md / CLAUDE.md。Source-of-truth: AGENTS.md。
 >
 > 何時讀本檔：查 CLI 對照表或三端 MCP 設定現況、開工前檢查 GitNexus/worktree health、index stale 需重建、LadybugDB crash 復原、查 re-index 授權邊界時。
@@ -8,14 +10,14 @@
 
 GitNexus 規則本文（Always Do / Never Do / CLI 對照 / skill 表）以根目錄 `AGENTS.md` / `CLAUDE.md` 內 `<!-- gitnexus:start -->` … `<!-- gitnexus:end -->` 區塊與 **AGENTS.md §4 CLI-only 政策** 為準。該區塊可能被 `analyze` 覆寫；若覆寫回 MCP 用語，**仍以 AGENTS.md §4 CLI-only 為準**（本 workspace 不啟動 `gitnexus mcp`）。
 
-Lane-aware 核心規則：F 不強制 impact；B 對 task/主要 entry symbol 跑一次 batch impact，且只在實際改到 code symbol/flow 時跑 detect_changes；G/S 對 shared/exported symbol 改前跑 impact、commit 前跑 detect_changes。HIGH 明確回報補強策略後可繼續；CRITICAL 需 reviewer/user sign-off。查詢一律用 shell：`gitnexus impact|context|query|detect-changes|…`（或 `node .gitnexus/run.cjs …`）。
+Lane-aware 核心規則：F 不強制 impact；B 對 task/主要 entry symbol 跑一次 batch impact，且只在實際改到 code symbol/flow 時跑 detect_changes；G/S 對 shared/exported symbol 改前跑 impact、commit 前跑 detect_changes。HIGH 明確回報補強策略後可繼續；CRITICAL 需 reviewer/user sign-off。查詢一律用 shell：先確認 `gitnexus --version` 為 repo-reviewed `1.6.9`，再跑 `gitnexus impact|context|query|detect-changes|…`。
 
 ## CLI 對照表（AGENTS.md §4 CLI-only 政策的細節）
 
 | 目的 | CLI |
 |------|-----|
-| 索引狀態 / 是否 stale | `gitnexus status` 或 `node .gitnexus/run.cjs status` |
-| 重索引 | `gitnexus analyze` 或 `node .gitnexus/run.cjs analyze` |
+| 索引狀態 / 是否 stale | `gitnexus status` |
+| 重索引（禁止注入 agent context） | `npx gitnexus@1.6.9 analyze --index-only`（須先有 current-turn 授權） |
 | 已索引 repo 列表 | `gitnexus list` |
 | 概念 / 流程搜尋 | `gitnexus query "concept" -r AI-BIM-governance` |
 | 符號 360° | `gitnexus context SymbolName -r AI-BIM-governance` |
@@ -67,8 +69,8 @@ Unavailable gate 的決策：
 若 GitNexus index stale，但 re-index 需要匯出或重新分析私有 repo，需遵守當前工具權限與使用者授權；不可自動 export sensitive code。下列命令屬於**另案 maintenance**，只有 current-turn 明確授權 exact target、backup/rollback 與驗證方法後才可執行：
 
 ```powershell
-node .gitnexus/run.cjs analyze   # 自動選 runner；無 run.cjs 時 npx gitnexus analyze（npm 11 crash → npm i -g gitnexus）
-node .gitnexus/run.cjs status    # 確認結束 + meta.json 對齊；analyze banner 不算成功
+npx gitnexus@1.6.9 analyze --index-only   # npm 11 crash 時改用 npm i -g gitnexus@1.6.9，或 pinned pnpm dlx
+gitnexus status                            # 確認結束 + meta.json 對齊；analyze banner 不算成功
 ```
 
 已知坑：`detect_changes` 在 linked worktree 看不到 staged（fallback `git diff --name-only --cached` 並揭露）；LadybugDB crash 後的復原順序見 `~/.claude/projects/.../memory/gitnexus-ladybugdb-crash-recovery.md`（agent memory）。

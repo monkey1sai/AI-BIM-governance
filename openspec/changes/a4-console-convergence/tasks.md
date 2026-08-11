@@ -6,7 +6,7 @@
 
 - [ ] 1.1 在本 change worktree 對 `origin/main` 建立當前行為 baseline：跑 `governance-service` pytest（A4 相關）、`bim-review-coordinator` `npm run verify`、`web-viewer-sample` `npm run typecheck && npm run test`，記錄通過數與既有失敗，作為調和後的對照基準。
 - [ ] 1.2 產出 126 個衝突 hunk 的逐檔清單與分類（後端契約／前端結構／test／文件），標記每處的調和方向（取 main／取 convergence／兩者聯集），清單存 `artifacts/a4-console-convergence/conflict-plan.md`。
-- [ ] 1.3 對 `A4SemanticSearchPage`、`governanceClient`、`engine.search`、`proofs` 執行 `gitnexus impact -d upstream -r AI-BIM-governance`，HIGH／CRITICAL 須在 PR body 揭露補強策略；index stale 時先 `node .gitnexus/run.cjs analyze` 或依 `docs/agents/gitnexus-usage.md` 走 unavailable gate。
+- [ ] 1.3 對 `A4SemanticSearchPage`、`governanceClient`、`engine.search`、`proofs` 執行 `gitnexus impact -d upstream -r AI-BIM-governance`，HIGH／CRITICAL 須在 PR body 揭露補強策略；index stale 且已取得 current-turn re-index 授權時跑 `npx gitnexus@1.6.9 analyze --index-only`，否則依 `docs/agents/gitnexus-usage.md` 走 unavailable gate。
 
 ## 2. 後端契約調和（以 main 為基準）
 

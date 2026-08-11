@@ -4,7 +4,7 @@
     "canonical": "This file is the tracked inventory and provenance source of truth for repo-local Claude and Codex skills.",
     "materialization": "Tracked copies only. Symlinks and junctions are forbidden.",
     "sync": "Mirror entries copy files from their declared source platform to declared target platforms. Sync may remove stale files only inside a declared target skill directory and never deletes a whole skill tree.",
-    "integrity": "Every declared tree is pinned by agent-skill-tree/v1 SHA-256 over ordinal relative paths and file-content SHA-256 values. Sync validates every canonical source before writing and never updates these reviewed digests."
+    "integrity": "Every declared tree is pinned by agent-skill-tree/v2 SHA-256 over ordinal relative paths and per-file SHA-256 values. Git-tracked text normalizes CRLF to LF; Git-classified binary content and lone CR bytes remain raw. Sync validates every canonical source before writing and never updates these reviewed digests."
   },
   "roots": {
     "claude": ".claude/skills",
@@ -29,10 +29,10 @@
         "import_commit": "34fc67f254a7034555e434b2a1d418832d80215d"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "codex": "d65666fe21df0fb6af4b98e7d46521d6f3009927f907312643717f6bf6aaf195"
+          "codex": "3c32b4b62051df4494b81a57e7c81995787abde9fd4b254fdd0dc98372ce1a74"
         }
       }
     },
@@ -50,10 +50,10 @@
         "import_commit": "34fc67f254a7034555e434b2a1d418832d80215d"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "codex": "021e426b1592700dc4b04ba0aefd154c2cb347d11464552eb4dc1262e912544b"
+          "codex": "a8acc7e6cfa553b2cddc4ff794378d79dadca22caf0982364043069d2aa0e985"
         }
       }
     },
@@ -76,11 +76,11 @@
         "notes": "Introduced by the commit containing this manifest entry. Claude is the canonical repo-authored source and Codex is a byte-identical mirror; deployment behavior remains owned by scripts/dev/rebuild-test-deploy.ps1."
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "0adccabdc0b3963cda8e03abbd0a1e3b7dc0d263b0d9decb570dc77433318fbe",
-          "codex": "0adccabdc0b3963cda8e03abbd0a1e3b7dc0d263b0d9decb570dc77433318fbe"
+          "claude": "af53834988362a857a941bca5cdbd8c60deec4a0695c23e655935cb8a70a2d09",
+          "codex": "af53834988362a857a941bca5cdbd8c60deec4a0695c23e655935cb8a70a2d09"
         }
       }
     },
@@ -103,11 +103,11 @@
         "notes": "Thin focused entry point over deploy-linux-test-environment (the single source of truth for the canonical Linux deployment); adds the 2026-08-11 live-verified shortest path and pitfall table. Claude is canonical, Codex is a byte-identical mirror."
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "7e11ab5c4582ca233fa085c5ef62a9139a8d30481b468934e2c9cffeb8eddb8c",
-          "codex": "7e11ab5c4582ca233fa085c5ef62a9139a8d30481b468934e2c9cffeb8eddb8c"
+          "claude": "2941b99e341c41dfaad5371f28bb105dff47c9193103d840fca8270356625fe0",
+          "codex": "2941b99e341c41dfaad5371f28bb105dff47c9193103d840fca8270356625fe0"
         }
       }
     },
@@ -130,11 +130,11 @@
         "import_commit": "feea64212e6917d107d2b6a9db83743224f43aa8"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "a1df1ee9e538b78b9d23535cbe71445fd63d906d68146fbc19731a730d6780ac",
-          "codex": "a1df1ee9e538b78b9d23535cbe71445fd63d906d68146fbc19731a730d6780ac"
+          "claude": "3860682fb99c513438e500e65c544775943268b6512c06e4ba45bd1e19bf5b97",
+          "codex": "3860682fb99c513438e500e65c544775943268b6512c06e4ba45bd1e19bf5b97"
         }
       }
     },
@@ -157,11 +157,11 @@
         "import_commit": "feea64212e6917d107d2b6a9db83743224f43aa8"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "cdddf471a0b2b266ed46c60640b820c1e4a1c30a399b9d1c1047d76881c5aead",
-          "codex": "cdddf471a0b2b266ed46c60640b820c1e4a1c30a399b9d1c1047d76881c5aead"
+          "claude": "3b91d5829a45eb16c7414957fa8da69bed721586f7a65d478440b50df4cd227e",
+          "codex": "3b91d5829a45eb16c7414957fa8da69bed721586f7a65d478440b50df4cd227e"
         }
       }
     },
@@ -184,11 +184,11 @@
         "import_commit": "feea64212e6917d107d2b6a9db83743224f43aa8"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "119f13aa922b07b453db13a9afa147f11eb38fd99a67746fe8d6201b70aa59e5",
-          "codex": "119f13aa922b07b453db13a9afa147f11eb38fd99a67746fe8d6201b70aa59e5"
+          "claude": "ec259bedf1c6c8bb5739e910646d52c98c66902aef2f4720bb15aaa82ce87d45",
+          "codex": "ec259bedf1c6c8bb5739e910646d52c98c66902aef2f4720bb15aaa82ce87d45"
         }
       }
     },
@@ -211,11 +211,11 @@
         "import_commit": "feea64212e6917d107d2b6a9db83743224f43aa8"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "758a646b71ca96e39ac8b3b3dcb279fdff599157f4227d0161d9679030f57c26",
-          "codex": "758a646b71ca96e39ac8b3b3dcb279fdff599157f4227d0161d9679030f57c26"
+          "claude": "0171dfd5b24d68d802541a46cdd7a74dbb6b85ffc08943012e253e16d7d52a98",
+          "codex": "0171dfd5b24d68d802541a46cdd7a74dbb6b85ffc08943012e253e16d7d52a98"
         }
       }
     },
@@ -228,15 +228,15 @@
         "mode": "single"
       },
       "provenance": {
-        "kind": "generated",
-        "source": "GitNexus CLI analyze",
+        "kind": "generated-adapted",
+        "source": "GitNexus CLI analyze plus repo injection-free refresh policy",
         "import_commit": "6f07f969fd17ae568b4c39876ce743a5cd06e82a"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "38770742b839f82a5dcd2e9b2dc8266f62a7e33179d09fb06bd7ca7b92c0874b"
+          "claude": "d3ecd212314869b10a593444ffaa9846f8c8e38381847069a35c15d53762d54d"
         }
       }
     },
@@ -259,11 +259,11 @@
         "import_commit": "fa96c55becde19acd96e456b7957302a05f9b93a"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "c1d793f381e1fd2bf5860d07846089347a330be2ecdba860b659803a80ba7a70",
-          "codex": "c1d793f381e1fd2bf5860d07846089347a330be2ecdba860b659803a80ba7a70"
+          "claude": "ee58c522dd0c53e742c3838a10cfa36c73179ac684fa4c8957f5d9cc29c98aa8",
+          "codex": "ee58c522dd0c53e742c3838a10cfa36c73179ac684fa4c8957f5d9cc29c98aa8"
         }
       }
     },
@@ -286,11 +286,11 @@
         "import_commit": "c414e1cd4ca46ae3443db76a1a43a5334695db01"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "bfd1a1ea36fa10b7225fe1a84966fade58e9e6c05234ff8b69c831ae51d95220",
-          "codex": "bfd1a1ea36fa10b7225fe1a84966fade58e9e6c05234ff8b69c831ae51d95220"
+          "claude": "7150c8ca7fefffbc7fd60ebcdc9b6b2aeaf02408d6feff46e6ce32282ba2f1e7",
+          "codex": "7150c8ca7fefffbc7fd60ebcdc9b6b2aeaf02408d6feff46e6ce32282ba2f1e7"
         }
       }
     },
@@ -313,11 +313,11 @@
         "import_commit": "c414e1cd4ca46ae3443db76a1a43a5334695db01"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "7f2f147d4570f3f1103fc9866b719f39ba3ddb1d5f420d49260b42b0352b5680",
-          "codex": "7f2f147d4570f3f1103fc9866b719f39ba3ddb1d5f420d49260b42b0352b5680"
+          "claude": "d910d90693fb22cc7370c35ed43245eebe8d9975e7a37f40e58aa4da3c172bbe",
+          "codex": "d910d90693fb22cc7370c35ed43245eebe8d9975e7a37f40e58aa4da3c172bbe"
         }
       }
     },
@@ -340,11 +340,11 @@
         "import_commit": "c414e1cd4ca46ae3443db76a1a43a5334695db01"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "78aef96a7cf3ef1271bc89efe3824aa03e2ee46e7838fade2357d80c1a072ac1",
-          "codex": "78aef96a7cf3ef1271bc89efe3824aa03e2ee46e7838fade2357d80c1a072ac1"
+          "claude": "25b7f62f2db61aebc94a10fb55bd447ea9d22eb86ab9ae165592b930a471cfcc",
+          "codex": "25b7f62f2db61aebc94a10fb55bd447ea9d22eb86ab9ae165592b930a471cfcc"
         }
       }
     },
@@ -364,11 +364,11 @@
         "notes": "Claude uses the repo-health-scan workflow; Codex performs the same dimensions directly with local read-only discovery and reporting."
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "888bdee7cdb69a37c0a38d7dd482f9aec98d63a801a21634a95ce8b3a67738d0",
-          "codex": "ce72092aaacb1a21ee1d35b1abe58e0e6e4094cc7db1fa4e1a390c4403a6b7b2"
+          "claude": "dccdc76d9d57d9133e7453963a3120dc2b59a924e4a7cd5f39b2053a8bd209ce",
+          "codex": "0eceb7a786417521b894f3818bc73327a40c75e5d7fb81c5b87c81474d65fb24"
         }
       }
     },
@@ -388,11 +388,11 @@
         "notes": "Claude and Codex adapter prose intentionally differs; agent-contracts/spec-to-done.contract.json owns the shared phases, canonical state path, durable HELD reasons, and terminal evidence constraints, with agent-governance tests enforcing adapter parity."
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "85fd5bc7d28c21b258b84b0d737069b814f1e76b4b143649de2ba74ddfea25a5",
-          "codex": "8467a18a91416c19b0047642965afe83b81601e6a043e59bc62f69ed960c6962"
+          "claude": "0b296005f36f189796788d603698fc082ada702e23e4b88107de943fb866e60d",
+          "codex": "5a7bfd58ae9dc6180ad89e23f52f2780aab954adf2a4bea422ac3f88f31760e4"
         }
       }
     },
@@ -412,11 +412,11 @@
         "notes": "bim-workflows-pack (#454): Claude commander handbook and Codex per-phase SOP intentionally differ; gate/held semantics kept in sync per SKILL.md sync rule."
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "21ba513ad4c419f07778259d05901c4366478d6a3842901c81ac0d59f89c5cb2",
-          "codex": "eacd24b68870070152cd74f0aa42ee4cc13954835bec4c60193bb11f88d5f3d1"
+          "claude": "86734baf4a45027fae57c2cf86f05ef34fe6542225fc5dd42fe33cd3fb3c4266",
+          "codex": "7d6d3f889404a945da6de8054f4f62476b404b47254bbcad773506954111bad3"
         }
       }
     },
@@ -436,11 +436,11 @@
         "notes": "bim-workflows-pack (#454): Claude commander handbook and Codex per-phase SOP intentionally differ; gate/held semantics kept in sync per SKILL.md sync rule."
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "7858d4e767505539e370ee7c13fb92a92101afd32d61276015e25129d0785756",
-          "codex": "e42d82bc4b22e1780c02ac0fa01519a8a67a1f141ae2b896bf8c4bb063f5f8af"
+          "claude": "e96146dfa8425d03e68ff80a64d28174622c3ee075e4db1165888ce2314ba479",
+          "codex": "951ba37a23f996b22266329e5def36d5bed1603c7efae6030ce14c59444f4937"
         }
       }
     },
@@ -464,11 +464,11 @@
         "license": "MIT"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "42147d498c19fcedaf8249834d06a900fefaa390848fd61baa56c089b104b46d",
-          "codex": "42147d498c19fcedaf8249834d06a900fefaa390848fd61baa56c089b104b46d"
+          "claude": "d981f24448d4f1ee696cfb4e2f923c32aa800558861450b3d39898b74e981a67",
+          "codex": "d981f24448d4f1ee696cfb4e2f923c32aa800558861450b3d39898b74e981a67"
         }
       }
     },
@@ -492,11 +492,11 @@
         "license": "MIT"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "9ada7c75f84fff1de327a0fee0725bd45f017cf50792b95f03ae06a1c8adbfaf",
-          "codex": "9ada7c75f84fff1de327a0fee0725bd45f017cf50792b95f03ae06a1c8adbfaf"
+          "claude": "82340e3f871574c3570122a9bd90cd46e10b54b22f2845c6ff9b72e10eb211df",
+          "codex": "82340e3f871574c3570122a9bd90cd46e10b54b22f2845c6ff9b72e10eb211df"
         }
       }
     },
@@ -520,11 +520,11 @@
         "license": "MIT"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "b116599eed5eb125fda55b487212a3df7ba5136b70ca732661b2f46a3bf52d95",
-          "codex": "b116599eed5eb125fda55b487212a3df7ba5136b70ca732661b2f46a3bf52d95"
+          "claude": "fc5f85e168205e81344de99a8762b0b807206679d8cb58725627d191f3523f60",
+          "codex": "fc5f85e168205e81344de99a8762b0b807206679d8cb58725627d191f3523f60"
         }
       }
     },
@@ -548,11 +548,11 @@
         "license": "MIT"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "c2772f7e35dc7dc9880720fce1d21a44a47b63c0f1464f5ee550633136f8b270",
-          "codex": "c2772f7e35dc7dc9880720fce1d21a44a47b63c0f1464f5ee550633136f8b270"
+          "claude": "506c76b64b1ba5bba683528fc1e64893c8fb31957564844b3ffcab2fbd8ddcc6",
+          "codex": "506c76b64b1ba5bba683528fc1e64893c8fb31957564844b3ffcab2fbd8ddcc6"
         }
       }
     },
@@ -576,11 +576,11 @@
         "license": "MIT"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "66ccaa052f3cf9afe1a2120402bfbaf342fd98313f94c2c1c190ec535b4c5b1d",
-          "codex": "66ccaa052f3cf9afe1a2120402bfbaf342fd98313f94c2c1c190ec535b4c5b1d"
+          "claude": "41c5d2908ac1e66e33322cfbd75c6e8dc6ffd8cf4a39739e958db644737b5b47",
+          "codex": "41c5d2908ac1e66e33322cfbd75c6e8dc6ffd8cf4a39739e958db644737b5b47"
         }
       }
     },
@@ -604,11 +604,11 @@
         "license": "MIT"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "c3de7f5af1a064282e7a141a1ee5c424f6249acea70f032e27453d995817aa04",
-          "codex": "c3de7f5af1a064282e7a141a1ee5c424f6249acea70f032e27453d995817aa04"
+          "claude": "b216b91dedc75de9a7a4c57bfe0a51876044b325de7f0b5a165c39c65cfaac5a",
+          "codex": "b216b91dedc75de9a7a4c57bfe0a51876044b325de7f0b5a165c39c65cfaac5a"
         }
       }
     },
@@ -632,11 +632,11 @@
         "license": "MIT"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "606a8829e5e5041d04ba47e27c207bd33e2dc8176994768a05c1dc5b17b77387",
-          "codex": "606a8829e5e5041d04ba47e27c207bd33e2dc8176994768a05c1dc5b17b77387"
+          "claude": "31608bd4d30ddfd8f1cce0f05594c5a03517d1705f629e73daba43410c96fa53",
+          "codex": "31608bd4d30ddfd8f1cce0f05594c5a03517d1705f629e73daba43410c96fa53"
         }
       }
     },
@@ -660,11 +660,11 @@
         "license": "MIT"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "a8ad6a6929e7d4af014a6d9adab2ceba67aed92458ed7995295484c12262320b",
-          "codex": "a8ad6a6929e7d4af014a6d9adab2ceba67aed92458ed7995295484c12262320b"
+          "claude": "9536f4003963e958ef5508f5147319e2be6e726871475dabccc2c93fd6c51ce4",
+          "codex": "9536f4003963e958ef5508f5147319e2be6e726871475dabccc2c93fd6c51ce4"
         }
       }
     },
@@ -688,11 +688,11 @@
         "license": "MIT"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "0a0c5b5d55c2c346e817ca9cd84223dd648902141c4c38f2e01dc16af9bcf600",
-          "codex": "0a0c5b5d55c2c346e817ca9cd84223dd648902141c4c38f2e01dc16af9bcf600"
+          "claude": "87f546c0ede1770fabf14a2941b9102a78ce2e7cd370139d19fddac71fd03b55",
+          "codex": "87f546c0ede1770fabf14a2941b9102a78ce2e7cd370139d19fddac71fd03b55"
         }
       }
     },
@@ -716,11 +716,11 @@
         "license": "MIT"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "f4b34e90c1b02cefe58bb1e781604328bd6f7c58a999a8d496370904c3ac0677",
-          "codex": "f4b34e90c1b02cefe58bb1e781604328bd6f7c58a999a8d496370904c3ac0677"
+          "claude": "09425eedb980d8ea5297940774f7251bab4eaece1b9e1a1f06df54cd2b9a7b69",
+          "codex": "09425eedb980d8ea5297940774f7251bab4eaece1b9e1a1f06df54cd2b9a7b69"
         }
       }
     },
@@ -744,11 +744,11 @@
         "license": "MIT"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "e8964dc4698cd6ffbf05bd20e03e781f1ddac8e983f1816ac87ead838089c521",
-          "codex": "e8964dc4698cd6ffbf05bd20e03e781f1ddac8e983f1816ac87ead838089c521"
+          "claude": "68f87f847f1dc25ee761a29eab5624d8213c3ade3de91678ee6e1725c7a9b028",
+          "codex": "68f87f847f1dc25ee761a29eab5624d8213c3ade3de91678ee6e1725c7a9b028"
         }
       }
     },
@@ -772,11 +772,11 @@
         "license": "MIT"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "4c8cecf3a88286502d383f85572759d093a0efc983ee5285b369894e3d0806d8",
-          "codex": "4c8cecf3a88286502d383f85572759d093a0efc983ee5285b369894e3d0806d8"
+          "claude": "e98143913b016fca3d383992a7e38f8e7f78d54cf635bfd0a4ee110095970daf",
+          "codex": "e98143913b016fca3d383992a7e38f8e7f78d54cf635bfd0a4ee110095970daf"
         }
       }
     },
@@ -800,11 +800,11 @@
         "license": "MIT"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "4a71fbd87b08f7a18b68fc0e8a0c250d11ccd9fdd13d3d7a83c051879085f520",
-          "codex": "4a71fbd87b08f7a18b68fc0e8a0c250d11ccd9fdd13d3d7a83c051879085f520"
+          "claude": "fdb72c7f59bcbd206f42ff035af5e4b4ce3169863cc6446aac17b82dce1f0ddd",
+          "codex": "fdb72c7f59bcbd206f42ff035af5e4b4ce3169863cc6446aac17b82dce1f0ddd"
         }
       }
     },
@@ -828,11 +828,11 @@
         "license": "MIT"
       },
       "integrity": {
-        "format": "agent-skill-tree/v1",
+        "format": "agent-skill-tree/v2",
         "algorithm": "sha256",
         "trees": {
-          "claude": "cebbba98088af384fa52899903be355ae0c722901fce520b264f3072b3759ff5",
-          "codex": "cebbba98088af384fa52899903be355ae0c722901fce520b264f3072b3759ff5"
+          "claude": "dc1426b8f714181a01ada8138f2ea86323f76c6abe6f18e7ec1718ef2bb92be0",
+          "codex": "dc1426b8f714181a01ada8138f2ea86323f76c6abe6f18e7ec1718ef2bb92be0"
         }
       }
     }
