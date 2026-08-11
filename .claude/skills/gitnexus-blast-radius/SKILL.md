@@ -163,7 +163,7 @@ verdict: <pass|drift|critical>
 - 此 skill **不**修改程式碼（只診斷）
 - 不能跳過 CRITICAL 風險直接 commit
 - Fallback 用 `git diff` 時必須在 PR body 揭露
-- 不重複跑 analyze，除非工具明確報 stale
+- 不重複跑 analyze；只有 reviewed version=`1.6.9`、status=stale/missing 且使用者已在本回合明確授權時，才可執行一次
 
 ## 參考
 

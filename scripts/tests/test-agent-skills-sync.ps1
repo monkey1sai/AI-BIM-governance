@@ -487,6 +487,7 @@ Assert-True ([regex]::Matches($claudeBlastRadius, '(?m)^gitnexus --version\r?$')
 Assert-True ([regex]::Matches($claudeBlastRadius, '(?m)^gitnexus status\r?$').Count -eq 2) 'every GitNexus blast-radius phase checks index status before re-indexing'
 Assert-True ([regex]::Matches($claudeBlastRadius, '本回合.{0,12}明確授權').Count -ge 3) 'every GitNexus blast-radius re-index path requires current-turn authorization'
 Assert-True ($claudeBlastRadius -notmatch 'index stale → 重跑一次') 'GitNexus blast-radius never retries re-indexing automatically'
+Assert-True ($claudeBlastRadius -notmatch '除非工具明確報 stale') 'GitNexus blast-radius has no stale-only exception to the version, status, and authorization gate'
 $activeIndexRefreshFiles = @(
     'AGENTS.md',
     'CLAUDE.md',
