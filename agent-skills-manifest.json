@@ -85,6 +85,33 @@
       }
     },
     {
+      "name": "deploy-main-to-linux-test",
+      "locations": {
+        "claude": ".claude/skills/deploy-main-to-linux-test",
+        "codex": ".codex/skills/deploy-main-to-linux-test"
+      },
+      "sync": {
+        "mode": "mirror",
+        "source": "claude",
+        "targets": [
+          "codex"
+        ]
+      },
+      "provenance": {
+        "kind": "repo-authored",
+        "source": "AI-BIM-governance",
+        "notes": "Thin focused entry point over deploy-linux-test-environment (the single source of truth for the canonical Linux deployment); adds the 2026-08-11 live-verified shortest path and pitfall table. Claude is canonical, Codex is a byte-identical mirror."
+      },
+      "integrity": {
+        "format": "agent-skill-tree/v1",
+        "algorithm": "sha256",
+        "trees": {
+          "claude": "7e11ab5c4582ca233fa085c5ef62a9139a8d30481b468934e2c9cffeb8eddb8c",
+          "codex": "7e11ab5c4582ca233fa085c5ef62a9139a8d30481b468934e2c9cffeb8eddb8c"
+        }
+      }
+    },
+    {
       "name": "figma",
       "locations": {
         "claude": ".claude/skills/figma",
