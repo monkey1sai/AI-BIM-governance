@@ -483,6 +483,10 @@ $codexBlastRadius = Get-Content -Raw -LiteralPath (Join-Path (Join-Path $repoRoo
 Assert-True ([regex]::Matches($claudeBlastRadius, 'gitnexus analyze --index-only --embeddings').Count -eq 3) 'every GitNexus blast-radius index refresh is injection-free'
 Assert-True ($codexBlastRadius -ceq $claudeBlastRadius) 'Codex mirrors the injection-free GitNexus blast-radius workflow byte-for-byte'
 Assert-True ($claudeBlastRadius -notmatch 'gitnexus impact\s+--target|--direction\b') 'GitNexus blast-radius uses the executable 1.6.9 positional impact syntax'
+Assert-True ([regex]::Matches($claudeBlastRadius, '(?m)^gitnexus --version\r?$').Count -eq 2) 'every GitNexus blast-radius phase checks the reviewed CLI version before re-indexing'
+Assert-True ([regex]::Matches($claudeBlastRadius, '(?m)^gitnexus status\r?$').Count -eq 2) 'every GitNexus blast-radius phase checks index status before re-indexing'
+Assert-True ([regex]::Matches($claudeBlastRadius, '本回合.{0,12}明確授權').Count -ge 3) 'every GitNexus blast-radius re-index path requires current-turn authorization'
+Assert-True ($claudeBlastRadius -notmatch 'index stale → 重跑一次') 'GitNexus blast-radius never retries re-indexing automatically'
 $activeIndexRefreshFiles = @(
     'AGENTS.md',
     'CLAUDE.md',
