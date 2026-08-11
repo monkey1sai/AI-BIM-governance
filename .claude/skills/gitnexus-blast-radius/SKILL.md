@@ -19,10 +19,10 @@ allowed-tools: Bash(gitnexus*) Bash(git diff*) Bash(git status*)
 ### Step 1：刷新 index
 
 ```
-gitnexus analyze --embeddings --skills --skip-agents-md
+gitnexus analyze --index-only --embeddings
 ```
 
-若工具警告 index stale → 重跑一次再進行下一步。`--skip-agents-md` 避免覆蓋 tracked AGENTS / CLAUDE 段落。
+若工具警告 index stale → 重跑一次再進行下一步。`--index-only` 避免覆蓋 tracked AGENTS / CLAUDE 段落或在 manifest-governed skill roots 注入 generated snapshots。
 
 ### Step 2：對目標 symbols 跑 impact
 
@@ -92,7 +92,7 @@ gitnexus detect-changes --scope staged
 若 `gitnexus detect-changes` 失敗（resolver 對 worktree index 沒及時刷新）：
 
 ```
-gitnexus analyze --embeddings --skills --skip-agents-md
+gitnexus analyze --index-only --embeddings
 gitnexus detect-changes --scope staged
 ```
 
@@ -108,7 +108,7 @@ git diff --name-only --cached
 
 | 失敗次數 | 動作 |
 |---|---|
-| 第 1 次失敗 | 跑 `gitnexus analyze --embeddings --skills --skip-agents-md` 後重試 |
+| 第 1 次失敗 | 跑 `gitnexus analyze --index-only --embeddings` 後重試 |
 | 第 2 次失敗 | 改用 `git diff --name-only --cached` 作 fallback，但在 PR body 標記 ⚠️ |
 | **第 3 次失敗（同一 session）** | **停止**：升為 issue（`gh issue create`），標題格式 `gitnexus: detect-changes repeatedly failing on <branch>`，body 附最近 3 次失敗指令與 stderr，並暫停該 change 的 commit / merge 流程，等修復或 reviewer 明確 sign-off「accept git-diff-only fallback for this PR」後再繼續 |
 

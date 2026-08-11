@@ -159,14 +159,14 @@ Runtime/product 行為真相優先順序：
 
 本 repo 由 GitNexus 索引。Lane F 不強制 impact；Lane B 對 task/主要 entry symbol 跑一次 batch impact，只有實際改 code symbol/flow 時才在完成前跑 detect_changes；Lane G/S 對 shared/exported symbol 改前跑 impact、commit 前跑 detect_changes。HIGH 必須明確回報補強策略；CRITICAL 必須取得 sign-off。若 stale/unavailable/linked-worktree diff 失真，依 `docs/agents/gitnexus-usage.md` 揭露，不得自行發明 pass。
 
-下方 `<!-- gitnexus:start -->` 區塊若被 `gitnexus analyze` 覆寫回 MCP 用語，**仍以本節 CLI-only 政策為準**。stale 重建、crash retry 與 unavailable gate 見 `docs/agents/gitnexus-usage.md`。
+下方 `<!-- gitnexus:start -->` 區塊若被外部工具覆寫回 MCP 用語，**仍以本節 CLI-only 政策為準**。stale 重建、crash retry 與 unavailable gate 見 `docs/agents/gitnexus-usage.md`。
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence (CLI-only)
 
 This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 28581 relationships, 300 execution flows). **Do not use GitNexus MCP tools or `gitnexus://` resources.** Query the graph via shell CLI (`gitnexus` or `node .gitnexus/run.cjs`).
 
-> Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
+> Index stale? Run `node .gitnexus/run.cjs analyze --index-only` from the project root — it auto-selects an available runner without rewriting tracked agent context. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze --index-only` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
 ## Always Do
 

@@ -15,7 +15,7 @@ Lane-aware 核心規則：F 不強制 impact；B 對 task/主要 entry symbol �
 | 目的 | CLI |
 |------|-----|
 | 索引狀態 / 是否 stale | `gitnexus status` 或 `node .gitnexus/run.cjs status` |
-| 重索引 | `gitnexus analyze` 或 `node .gitnexus/run.cjs analyze` |
+| 重索引（禁止注入 agent context） | `gitnexus analyze --index-only` 或 `node .gitnexus/run.cjs analyze --index-only` |
 | 已索引 repo 列表 | `gitnexus list` |
 | 概念 / 流程搜尋 | `gitnexus query "concept" -r AI-BIM-governance` |
 | 符號 360° | `gitnexus context SymbolName -r AI-BIM-governance` |
@@ -67,7 +67,7 @@ Unavailable gate 的決策：
 若 GitNexus index stale，但 re-index 需要匯出或重新分析私有 repo，需遵守當前工具權限與使用者授權；不可自動 export sensitive code。下列命令屬於**另案 maintenance**，只有 current-turn 明確授權 exact target、backup/rollback 與驗證方法後才可執行：
 
 ```powershell
-node .gitnexus/run.cjs analyze   # 自動選 runner；無 run.cjs 時 npx gitnexus analyze（npm 11 crash → npm i -g gitnexus）
+node .gitnexus/run.cjs analyze --index-only   # 自動選 runner；無 run.cjs 時 npx gitnexus analyze --index-only（npm 11 crash → npm i -g gitnexus）
 node .gitnexus/run.cjs status    # 確認結束 + meta.json 對齊；analyze banner 不算成功
 ```
 

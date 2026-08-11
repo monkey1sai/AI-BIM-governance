@@ -1,10 +1,12 @@
 # GitNexus Validation
 
-Updated: 2026-05-06
+> Document nature: **historical validation record** captured on 2026-05-06. This is not an active runbook; do not rerun the commands below. Current repository policy is `AGENTS.md` §4 plus `docs/agents/gitnexus-usage.md`, and every index refresh must use `--index-only`.
 
-## Goal
+Recorded: 2026-05-06
 
-Use GitNexus official CLI flow for this workspace:
+## Historical Goal
+
+The 2026-05-06 validation attempt used the then-current GitNexus CLI flow:
 
 - `gitnexus analyze` to create the repository knowledge graph.
 - `--embeddings` with an OpenAI-compatible `/v1/embeddings` endpoint.
@@ -153,7 +155,7 @@ Error: No GitNexus index found.
 Run `gitnexus analyze` first to index this repository.
 ```
 
-## Current Blocker
+## Historical Blocker
 
 OpenAI embeddings and chat API calls both work. The blocker is local GitNexus analyzer execution on this Windows machine. GitNexus exits before completing analysis and before writing `meta.json`, even when embeddings and skills are disabled and even when indexing a small subfolder with `--skip-git`.
 
@@ -166,13 +168,6 @@ Test-Path .gitnexus\meta.json
 
 Both must pass before running `gitnexus wiki`.
 
-## Re-run Commands
+## Current Procedure
 
-Open a new PowerShell so the profile loads the permanent GitNexus settings, then run:
-
-```powershell
-cd C:\Repos\active\iot\AI-BIM-governance
-gitnexus analyze . --force --embeddings
-gitnexus status
-gitnexus wiki . --force --provider openai --model gpt-4o-mini --base-url https://api.openai.com/v1
-```
+The former re-run recipe is retired. Do not copy commands from this historical record. Follow `AGENTS.md` §4 and `docs/agents/gitnexus-usage.md`; refreshes must be injection-free and use `gitnexus analyze --index-only` (or the equivalent project-local runner form).

@@ -345,7 +345,7 @@ ${symbolsToCheck.map((s) => `- ${s}`).join('\n')}
 1.5 (best-effort,失敗略過):並列 ToolSearch 載入 mcp__codebase-memory-mcp__trace_path 跑 trace_path({function_name, direction:"inbound", depth:3}) 取第二圖譜 callers,超出 GitNexus 數量則在 note 補「[xref] codebase-memory 額外 callers:N(指揮官覆核)」。**硬約束:overallRisk 最終只以 GitNexus 為準;codebase-memory 不得把 overallRisk 升至 CRITICAL/UNKNOWN、不得觸發早停。GitNexus UNKNOWN/crash 時可當 fallback 寫 note,但 overallRisk 仍維持 UNKNOWN(held 照常)。**
 分級:<5 affected=LOW;5-15=MEDIUM;>15 或多 processes=HIGH;critical path(auth/conversion authority/session 核心)=CRITICAL。
 「圖中找不到」分兩種,不可一律 UNKNOWN:(a) symbol 是**尚未實作的新 symbol**(本 task 或 plan 中任一 task 要新建;plan 標題編號與 index 可能差一,以「codebase 現在不存在且 plan 有規劃」為準)→ greenfield,回 LOW 並在 note 註明 new-symbol(blast radius=0,不存在是預期,**絕不回 UNKNOWN**);(b) 既有 symbol(曾在 codebase 出現過)找不到 → 先 analyze 重試,仍找不到才 UNKNOWN。
-若 tool 報 index stale → bash 跑「npx gitnexus analyze --skip-agents-md」+「npx gitnexus status」確認(banner 不算成功)後重試;工具整體故障(crash/連不上)→ overallRisk=UNKNOWN 並在 note 寫明故障。UNKNOWN 只保留給真正的工具故障/既有 symbol 消失。
+若 tool 報 index stale → bash 跑「npx gitnexus analyze --index-only」+「npx gitnexus status」確認(banner 不算成功)後重試;工具整體故障(crash/連不上)→ overallRisk=UNKNOWN 並在 note 寫明故障。UNKNOWN 只保留給真正的工具故障/既有 symbol 消失。
 回傳 StructuredOutput:overallRisk、note(直接 callers / 關鍵 processes / 故障說明)。`,
       { label: `impact:${T}`, phase: 'Implement', ...ROUTING.standard, schema: TASK_IMPACT_SCHEMA })
     if (!imp && budgetExhausted) {

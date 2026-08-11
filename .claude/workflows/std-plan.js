@@ -317,7 +317,7 @@ if (allSymbols.length) {
 
 步驟:
 1. 用 ToolSearch 載入 mcp__gitnexus__impact 與 ReadMcpResourceTool。
-2. 先讀 resource gitnexus://repo/AI-BIM-governance/context 看 staleness;若 stale → bash 跑「npx gitnexus analyze --skip-agents-md」後「npx gitnexus status」確認(banner 不算成功,以 status 與 .gitnexus/meta.json 為準),staleHandled=true。
+2. 先讀 resource gitnexus://repo/AI-BIM-governance/context 看 staleness;若 stale → bash 跑「npx gitnexus analyze --index-only」後「npx gitnexus status」確認(banner 不算成功,以 status 與 .gitnexus/meta.json 為準),staleHandled=true。
 3. 對下列每個 symbol 跑 gitnexus impact({target:"<symbol>", direction:"upstream"}):
 ${allSymbols.map((s) => `   - ${s}`).join('\n')}
 3.5 (best-effort,失敗略過,不阻擋):ToolSearch 載入 mcp__codebase-memory-mcp__trace_path,對同批 symbol 各跑 trace_path({function_name:"<symbol>", direction:"inbound", depth:3, risk_labels:true}) 取第二圖譜 callers,與 GitNexus upstream 以「symbol 名 + 檔路徑」比對(codebase-memory 回 qualified_name 非行號,勿用 file:line)。差異寫對應 perSymbol.note 前綴「[xref]」。**硬約束:overallRisk 與每個 perSymbol.risk 一律只由 GitNexus 結果決定;codebase-memory 差異即使更大,不得升降 risk、不得寫入 blockers。建模差異(節點數 / inbound≡upstream 術語 / process 概念)一律不報;兩套 caller 數結構性相等時 note 標「可能同源枚舉、非獨立佐證」。特例:GitNexus 回 0/LOW 但 codebase-memory 找到 caller(實測 deriveIntakeFromKey 即此型)→ note 醒目標「GitNexus 疑漏 caller、指揮官手動覆核」,但仍不自動翻 gate。**
