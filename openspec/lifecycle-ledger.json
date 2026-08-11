@@ -1491,18 +1491,18 @@
       "id": "migrate-console-to-hifi-design",
       "status": "active",
       "owner": "web-viewer-sample",
-      "current_slice": "console route migration",
+      "current_slice": "2026-08-11 依既有證據補勾 2.8/3.7（#357 落地的 E2E 證據，artifacts/2026-07-16-…pr-body.md §5）與 7.2（-VerifyOrigin 實跑 passed，13 screens/26 golden @7929d74）。34/40；殘項＝0.5/1.2/6.4（人類裁決／human owner only）與 7.1/7.3/7.4。",
       "blocked_by": [],
-      "last_verified": "2026-07-28T06:30:00Z",
+      "last_verified": "2026-08-11T11:50:00Z",
       "task_ledger": {
-        "completed": 31,
+        "completed": 34,
         "total": 40
       },
       "evidence_refs": [
         "openspec/changes/migrate-console-to-hifi-design/proposal.md",
         "openspec/changes/migrate-console-to-hifi-design/tasks.md"
       ],
-      "subject_commit": "257e8f1fa54f780c16d7c9a0620d2bf716922636",
+      "subject_commit": "e0cc05a57447b1bbdba9c367695216e2b934b06d",
       "archive_debt": null
     },
     {
