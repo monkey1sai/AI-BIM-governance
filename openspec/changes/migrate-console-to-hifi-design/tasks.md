@@ -23,7 +23,7 @@
 - [x] 2.5 `OpsPage.tsx`：inline hex → `var(--ab-*)`（#357 落地；raw-hex=0、ab-var 23）
 - [x] 2.6 `ConceptPage.tsx`：inline hex → `var(--ab-*)`（#357 落地；raw-hex=0、ab-var 9）
 - [x] 2.7 `unified.css`：body 層級樣式改用 `--ab-*`（#357 落地；raw-hex=0、ab-var 8）
-- [ ] 2.8 每頁遷移後跑該頁既有 browser E2E 案例，確認功能行為不變（僅允許樣式相關的截圖差異）
+- [x] 2.8 每頁遷移後跑該頁既有 browser E2E 案例，確認功能行為不變（僅允許樣式相關的截圖差異）。證據＝`artifacts/2026-07-16-migrate-console-to-hifi-design-pr-body.md` §5（隨 #357 merge）：`hifi-token-authority.spec.ts` 3 tests 全綠（#conv loading/failure/retry/success 四態、`--ab-accent` 生效、`--ec-grn` 絕跡）、`unified-console-routes.spec.ts` 路由可達、`npx vitest run src/console/` 全綠；2026-08-11 確認上述 spec/test 檔均仍在 tree（`web-viewer-sample/e2e/hifi-token-authority.spec.ts`、`e2e/unified-console-routes.spec.ts`、`src/console/unified/unified.test.tsx`）。checkbox 此前漏勾，本次依既有證據補記。
 
 ## 3. Legacy 頁面遷移（仍掛 edge-console.css 的部分）
 
@@ -33,7 +33,7 @@
 - [x] 3.4 `governance/overlay.css`：`--ec-*` → `--ab-*`（#357 落地；ec=0、ab 11；專屬守門 `e2e/overlay-ec-token-resolution.spec.ts`）
 - [x] 3.5 `viewer/*.css`（含 `MockViewport.tsx`）：`--ec-*` → `--ab-*`（#357 落地；ec=0、ab 60）
 - [x] 3.6 `legacy-console.css` 內 `IntentDialog` selectors 及 `IntentDialog.css.test.ts`：`--ec-*` → `--ab-*`（repo 不存在獨立 `IntentDialog.css`，原文前提有誤；#357 已改測試，現行斷言讀 `legacy-console.css`）
-- [ ] 3.7 每頁遷移後跑該頁既有 browser E2E / provenance 誠實性案例，確認功能行為不變
+- [x] 3.7 每頁遷移後跑該頁既有 browser E2E / provenance 誠實性案例，確認功能行為不變。證據＝同一 artifact §5（隨 #357 merge）：`unified-console-routes.spec.ts`（#/kit、#/demo-control 可達）、`conv-history.spec.ts`、`ConversionPage.test.tsx`、`GovernanceOverlay.test.tsx`、`governance/*.test.ts`（highlightBridge/mappingCache/govPanelState/windowOverlayGlue）、`A1CrossLinks`/`A2OverlayViewer`/`A3FederationSession` 測試全綠，provenance 誠實性與 API 呼叫零變更；2026-08-11 確認 `web-viewer-sample/e2e/conv-history.spec.ts`、`src/console/GovernanceOverlay.test.tsx` 仍在 tree。checkbox 此前漏勾，本次依既有證據補記。
 
 ## 4. 主題切換移除
 
@@ -57,7 +57,7 @@
 ## 7. Rebaseline 與驗證
 
 - [ ] 7.1 執行 `node web-viewer-sample/scripts/capture-design-system-reference.mjs --rebaseline --confirm-rebaseline`，重新擷取 13 screens × 2 viewports golden baseline
-- [ ] 7.2 執行 `pwsh scripts/tests/verify-design-system-reference.ps1 -VerifyOrigin`，確認通過
+- [x] 7.2 執行 `pwsh scripts/tests/verify-design-system-reference.ps1 -VerifyOrigin`，確認通過。2026-08-11 於 HEAD `7929d74`（== origin/main）實跑：`[design-reference-gate] passed — 13 screens, 26 golden files, source=2f414d9d4bd96adbd3102e417f2465eb4aa609b0c3a12d118f41c1ccff30c9c8`。
 - [ ] 7.3 跑 `web-viewer-sample` 既有測試套件（`npm run verify`），確認無 regression
 - [ ] 7.4 逐條核對 `edge-console-operator-frontend` 與 `unified-governance-console` 兩份既有 spec 的相關 Scenario 仍成立（依 design.md Risk 項，行為層面的不確定 SHALL 停下澄清，不視為理所當然通過）
 
