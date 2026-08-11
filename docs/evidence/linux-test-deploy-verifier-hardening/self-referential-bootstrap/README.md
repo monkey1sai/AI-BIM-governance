@@ -13,8 +13,8 @@ The canonical Linux deployment transport consumes only freshly fetched `origin/m
 
 ## Observations
 
-- `git fetch origin --prune` captured the recorded `origin/main` commit. A fresh sibling worktree was created from that exact SHA; `git rev-parse HEAD` matched it and `git status --porcelain` was empty before the baseline rebuild.
-- The baseline-only canonical rebuild used `pwsh -NoProfile -NonInteractive -File scripts/dev/rebuild-test-deploy.ps1 -Build -TargetId canonical-linux -InventoryPath '<owner-private-inventory>'` with the owner-controlled private inventory and created deployment tag `deploy-20260810-639219377529672976-002`. This is bootstrap evidence pending the post-merge fixpoint, not canonical post-change proof.
+- The initial baseline run used a fresh sibling worktree pinned to the recorded `origin/main` commit. The recorded baseline below is a later regular-form rerun executed with the branch wrapper at head `1b764e24f04e07c63257c977aa924b02fc58d28e`; the deployment transport itself consumes only freshly fetched `origin/main`, so the deployed source is independent of the caller checkout.
+- The recorded baseline canonical rebuild used the regular form `pwsh -NoProfile -NonInteractive -File scripts/dev/rebuild-test-deploy.ps1 -Build -InventoryPath '<owner-private-inventory>'` — no explicit `-TargetId`; the wrapper resolves the registry `canonical_target` — with the owner-controlled private inventory, deployed source commit `a93c5a34cfef7bb6f3fdd5d20c287d9c83c89ea1`, and created deployment tag `deploy-20260811-639220225263578177-002`. This is bootstrap evidence pending the post-merge fixpoint, not canonical post-change proof.
 - The owner-provided temporary environment staging was removed after use.
 - The canonical remote checkout had 2,205 pre-reset changes; the explicitly authorized reset/clean completed as part of the rebuild. That remote cleanup is an operational observation, not evidence that the local source baseline was isolated.
 - The branch hardener and strict adapter preflight completed in the isolated bootstrap run.

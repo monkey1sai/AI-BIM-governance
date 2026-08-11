@@ -404,7 +404,7 @@ try {
         }
         'canonical-linux-rebuild' = @{
             Path = 'scripts/dev/rebuild-test-deploy.ps1'
-            Invocation = @($pwshPrefix + @('scripts/dev/rebuild-test-deploy.ps1', '-Build', '-TargetId', 'canonical-linux', '-InventoryPath', '<owner-private-inventory>'))
+            Invocation = @($pwshPrefix + @('scripts/dev/rebuild-test-deploy.ps1', '-Build', '-InventoryPath', '<owner-private-inventory>'))
         }
         'detect-base-gate-capability-bash-syntax' = @{ Path = 'scripts/lib/detect-base-gate-capability.sh'; Invocation = @('bash', '-n', 'scripts/lib/detect-base-gate-capability.sh') }
         'harden-cad-extension-cache' = @{ Path = 'bim-streaming-server/scripts/harden-cad-extension-cache.py'; Invocation = @('python', 'bim-streaming-server/scripts/harden-cad-extension-cache.py', '--repo-root', 'bim-streaming-server') }
@@ -445,11 +445,12 @@ try {
     foreach ($requiredCanonicalCommandId in @('canonical-linux-rebuild', 'canonical-linux-deployment-verify')) {
         Assert-True ($linuxHardeningCommandIds -ccontains $requiredCanonicalCommandId) "linux-test-deploy-verifier-hardening retains required command id '$requiredCanonicalCommandId'"
     }
-    $expectedCanonicalRebuild = @($pwshPrefix + @('scripts/dev/rebuild-test-deploy.ps1', '-Build', '-TargetId', 'canonical-linux', '-InventoryPath', '<owner-private-inventory>'))
+    $expectedCanonicalRebuild = @($pwshPrefix + @('scripts/dev/rebuild-test-deploy.ps1', '-Build', '-InventoryPath', '<owner-private-inventory>'))
     $expectedCanonicalVerify = @($pwshPrefix + @('scripts/verify-all.ps1', '-Profile', 'Deployment', '-InventoryPath', '<owner-private-inventory>'))
     Assert-True ((@($commandSpecById['canonical-linux-rebuild'].Invocation) -join "`n") -ceq ($expectedCanonicalRebuild -join "`n")) 'canonical rebuild invocation preserves -Build, target, and owner-private inventory metadata'
     Assert-True ((@($commandSpecById['canonical-linux-deployment-verify'].Invocation) -join "`n") -ceq ($expectedCanonicalVerify -join "`n")) 'canonical deployment verification preserves the executable Deployment profile and owner-private inventory metadata'
     Assert-True (-not (@($commandSpecById['canonical-linux-deployment-verify'].Invocation) -ccontains '-TargetId')) 'executing Deployment verification must resolve the Linux target from the platform instead of using the PlanOnly-only TargetId parameter'
+    Assert-True (-not (@($commandSpecById['canonical-linux-rebuild'].Invocation) -ccontains '-TargetId')) 'the canonical rebuild regular form takes no explicit selector: the wrapper defaults to the registry canonical target, and -TargetId exists for on-demand targets only'
 
     # --- timestamp: real parse, not prefix match (review P2) ------------------------
     Assert-True (Test-SelfReferentialIsoTimestamp -Value '2026-07-31T08:00:00Z') 'valid ISO timestamp accepted'
