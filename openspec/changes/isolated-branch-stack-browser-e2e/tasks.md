@@ -33,7 +33,7 @@
 
 - [x] 4.1 在 `.github/workflows/agent-governance.yml` 新增一步執行 `scripts/tests/test-isolated-branch-stack.ps1`。
 - [x] 4.2 確認 `scripts/verification-manifest.json` / `scripts/verify-all.ps1` 是否需要納入；若不納入，於 PR body 說明理由（避免把 branch-only harness 塞進 operator golden path）。
-- [ ] 4.3 對 `scripts/tests/test-agent-governance-check.ps1` 既有 dead-link／行數 gate 重跑，確認 1.1–1.3 的文件改動未破壞既有檢查。
+- [x] 4.3 對 `scripts/tests/test-agent-governance-check.ps1` 既有 dead-link／行數 gate 重跑，確認 1.1–1.3 的文件改動未破壞既有檢查。2026-08-11 於 HEAD `7929d74`（== origin/main，含 1.1–1.3 文件改動與 #488 skill-digest 系列）實跑 `pwsh -NoProfile -File scripts/tests/test-agent-governance-check.ps1`：45 pass／0 fail（含 AGENTS.md／CLAUDE.md 行數與 dead-link 斷言），前置 `test-agent-skills-sync` 11 pass／0 fail，最終輸出 `[test-agent-governance-check] all assertions passed`。註：此前同指令在本機出現的 agent-skill content drift 紅燈經診斷為 stale checkout 的 EOL 殘留（`.gitattributes` eol=lf 規則落地前 checkout 的工作樹檔案未被 re-smudge；index 兩側 blob 一致、main CI 同 HEAD 綠），以 `git cat-file blob` 重寫受影響工作樹檔案後即綠，非 repo 內容 drift、與 1.1–1.3 無關。
 
 ## 5. 首個 consumer 實跑（owner：本 change，唯讀對待 A4 實作）
 
