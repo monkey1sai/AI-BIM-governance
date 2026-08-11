@@ -139,7 +139,7 @@
         "docs/evidence/linux-test-deploy-verifier-hardening/self-referential-bootstrap/verification.txt"
       ],
       "fixpoint": {
-        "reverified_at": "2026-08-11T12:31:00Z",
+        "reverified_at": "2026-08-11T12:52:12Z",
         "mechanism_commit": "5a7fea9991f04a7e8204df2a02c5b4c4dedb1831",
         "evidence_refs": [
           "docs/evidence/linux-test-deploy-verifier-hardening/fixpoint/attestation.json",
