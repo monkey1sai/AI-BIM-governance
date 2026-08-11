@@ -1,6 +1,6 @@
 # linux-test-deploy-verifier-hardening — fixpoint summary
 
-> 文件性質：**evidence**（fixpoint 完成證據）。本檔記錄已執行之驗證與其結果，不是 contract、不是 working note；ledger entry 閉合後受閘門的證據不可變規則保護。
+> 文件性質：**working note**（fixpoint 完成證據）。本檔記錄已執行之驗證與其結果，不是 contract、不是 runtime 行為權威；ledger entry 閉合後受閘門的證據不可變規則保護。
 
 Closes the `linux-test-deploy-verifier-hardening` ledger entry per
 `docs/agents/self-referential-bootstrap.md` §2 obligation 3.
@@ -16,7 +16,16 @@ Closes the `linux-test-deploy-verifier-hardening` ledger entry per
 
 attestation.json 所記錄的執行：14 條命令**依 opening contract 的精確順序**
 1→14 單趟完成、無重跑、無順序偏移，逐條 process-level exit code 記錄
-（jsonl），全數 exit 0。
+（jsonl），全數 exit 0。本節依時間順序書寫（執行順序＝契約順序），時間錨點
+（UTC，2026-08-11）：
+
+| 錨點 | 時刻 |
+|---|---|
+| 命令 1（本地套件序列起跑） | 12:43:38Z |
+| 命令 11 完成、命令 12 執行 | ≈12:45Z |
+| 命令 13 rebuild 啟動→完成 | ≈12:46Z → 12:51:17Z（wrapper 結構化 log 時戳） |
+| 命令 14 verify 完成 | ≈12:52Z |
+| `reverified_at` | 12:52:12Z |
 
 1. **本地契約套件（命令 1–11）**：於主 checkout（clean，
    `c88dca63e3187b9616e8801bad70898a2fd03eb0`＝當時 `origin/main` tip，亦即
