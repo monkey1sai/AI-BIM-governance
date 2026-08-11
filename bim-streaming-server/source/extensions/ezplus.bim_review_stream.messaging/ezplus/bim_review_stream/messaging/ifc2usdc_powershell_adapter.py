@@ -463,6 +463,42 @@ class Ifc2UsdcPowershellConverterAdapter:
             return False
         return self._windows_acl_has_only_trusted_writers(owner_sid, current_user_sid, allow_aces)
 
+    def _posix_root_ancestry_is_trusted(self, root: Path) -> bool:
+        """Walk from the validation root's parent up to the filesystem root.
+
+        An ancestor owned by another non-root account, or writable by other
+        accounts without the sticky bit, would let that account rename the
+        otherwise owner-private tree after validation and substitute its own
+        content before the converter child reopens the entrypoint by pathname.
+        Sticky directories are exempt because other accounts cannot rename or
+        remove entries they do not own there.
+        """
+        current_uid = os.geteuid()
+        current = root
+        while True:
+            parent = current.parent
+            if parent == current:
+                return True
+            try:
+                parent_stat = parent.stat()
+            except OSError:
+                return False
+            if not stat.S_ISDIR(parent_stat.st_mode):
+                return False
+            if parent_stat.st_uid not in (0, current_uid):
+                return False
+            mode = parent_stat.st_mode
+            sticky = bool(mode & stat.S_ISVTX)
+            if mode & stat.S_IWOTH and not sticky:
+                return False
+            if (
+                mode & stat.S_IWGRP
+                and not sticky
+                and not self._group_is_private_to_process(parent_stat.st_gid)
+            ):
+                return False
+            current = parent
+
     def _path_components_are_owner_private(
         self,
         root: Path,
@@ -485,6 +521,8 @@ class Ifc2UsdcPowershellConverterAdapter:
                 for component in components
             )
 
+        if not self._posix_root_ancestry_is_trusted(root):
+            return False
         current_uid = os.geteuid()
         for component in components:
             try:

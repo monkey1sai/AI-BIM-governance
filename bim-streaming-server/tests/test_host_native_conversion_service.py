@@ -521,6 +521,94 @@ def test_group_privacy_rejects_partial_nss_enumeration(tmp_path: Path, monkeypat
     assert adapter._group_is_private_to_process(os.getegid()) is False
 
 
+def _patch_posix_ancestry_stat_table(monkeypatch, table: dict, euid: int = 1000) -> None:
+    monkeypatch.setattr(os, "geteuid", lambda: euid, raising=False)
+
+    def _table_stat(self, *, follow_symlinks: bool = True):
+        key = self.as_posix()
+        if key not in table:
+            raise FileNotFoundError(key)
+        mode, uid, gid = table[key]
+        return os.stat_result((mode, 1, 1, 1, uid, gid, 0, 0, 0, 0))
+
+    monkeypatch.setattr(Path, "stat", _table_stat)
+
+
+def test_posix_root_ancestry_accepts_root_owned_unwritable_ancestors(tmp_path: Path, monkeypatch):
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    _patch_posix_ancestry_stat_table(
+        monkeypatch,
+        {
+            "/": (stat.S_IFDIR | 0o755, 0, 0),
+            "/home": (stat.S_IFDIR | 0o755, 0, 0),
+            "/home/svc": (stat.S_IFDIR | 0o700, 1000, 1000),
+        },
+    )
+
+    assert adapter._posix_root_ancestry_is_trusted(Path("/home/svc/anchor")) is True
+
+
+def test_posix_root_ancestry_rejects_other_writable_ancestor_without_sticky(
+    tmp_path: Path, monkeypatch
+):
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    _patch_posix_ancestry_stat_table(
+        monkeypatch,
+        {
+            "/": (stat.S_IFDIR | 0o755, 0, 0),
+            "/home": (stat.S_IFDIR | 0o777, 0, 0),
+            "/home/svc": (stat.S_IFDIR | 0o700, 1000, 1000),
+        },
+    )
+
+    assert adapter._posix_root_ancestry_is_trusted(Path("/home/svc/anchor")) is False
+
+
+def test_posix_root_ancestry_accepts_sticky_world_writable_ancestor(tmp_path: Path, monkeypatch):
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    _patch_posix_ancestry_stat_table(
+        monkeypatch,
+        {
+            "/": (stat.S_IFDIR | 0o755, 0, 0),
+            "/tmp": (stat.S_IFDIR | stat.S_ISVTX | 0o777, 0, 0),
+            "/tmp/svc-priv": (stat.S_IFDIR | 0o700, 1000, 1000),
+        },
+    )
+
+    assert adapter._posix_root_ancestry_is_trusted(Path("/tmp/svc-priv/anchor")) is True
+
+
+def test_posix_root_ancestry_rejects_ancestor_owned_by_other_account(tmp_path: Path, monkeypatch):
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    _patch_posix_ancestry_stat_table(
+        monkeypatch,
+        {
+            "/": (stat.S_IFDIR | 0o755, 0, 0),
+            "/home": (stat.S_IFDIR | 0o700, 2000, 2000),
+            "/home/svc": (stat.S_IFDIR | 0o700, 1000, 1000),
+        },
+    )
+
+    assert adapter._posix_root_ancestry_is_trusted(Path("/home/svc/anchor")) is False
+
+
+def test_posix_root_ancestry_rejects_group_writable_ancestor_without_private_group(
+    tmp_path: Path, monkeypatch
+):
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    monkeypatch.setattr(adapter, "_group_is_private_to_process", lambda gid: False)
+    _patch_posix_ancestry_stat_table(
+        monkeypatch,
+        {
+            "/": (stat.S_IFDIR | 0o755, 0, 0),
+            "/home": (stat.S_IFDIR | 0o775, 0, 0),
+            "/home/svc": (stat.S_IFDIR | 0o700, 1000, 1000),
+        },
+    )
+
+    assert adapter._posix_root_ancestry_is_trusted(Path("/home/svc/anchor")) is False
+
+
 def _write_symlinked_cad_package(
     *,
     release_root: Path,
