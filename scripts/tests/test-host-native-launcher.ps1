@@ -346,7 +346,11 @@ $canonicalControlUrl = Resolve-HostNativeKitControlUrl `
 Assert-Equal 'http://localhost:49101' $canonicalControlUrl 'resolver canonicalizes an explicit localhost authority'
 
 Assert-True ($moduleContent -match '\$importProcess\.WaitForExit\(\$TimeoutSec \* 1000\)') 'Kit Manager import probe wait is bounded'
-Assert-True ($moduleContent -match '\$importProcess\.Kill\(\$true\)') 'Kit Manager import probe kills a timed-out child process tree'
+Assert-True ($moduleContent -match 'Stop-HostNativeProcessTreeAndWait -Process \$importProcess -TimeoutMs 5000') 'Kit Manager import probe terminates and waits for a timed-out child process tree'
+Assert-True ($moduleContent -match 'function Stop-HostNativeProcessTreeAndWait') 'launcher defines a shared bounded process-tree terminator'
+Assert-True ($moduleContent -match '\$Process\.Kill\(\$true\)') 'bounded process-tree terminator includes descendants'
+Assert-True ($moduleContent -match '\$Process\.WaitForExit\(\$TimeoutMs\)') 'bounded process-tree terminator waits for exit'
+Assert-True ($moduleContent -match '-not \$Process\.HasExited') 'bounded process-tree terminator verifies exit'
 
 $ipv6ControlUrl = Resolve-HostNativeKitControlUrl `
     -KitControlUrl 'HTTP://[::1]:49101/' `

@@ -489,6 +489,27 @@ function Start-HostNativeGovernance {
         -RunDir $runDir)
 }
 
+function Stop-HostNativeProcessTreeAndWait {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][System.Diagnostics.Process] $Process,
+        [ValidateRange(1, 60000)][int] $TimeoutMs = 5000
+    )
+
+    if ($Process.HasExited) { return }
+    try {
+        $Process.Kill($true)
+    }
+    catch {
+        if (-not $Process.HasExited) {
+            throw "Process tree termination failed for PID $($Process.Id): $($_.Exception.Message)"
+        }
+    }
+    if (-not $Process.WaitForExit($TimeoutMs) -or -not $Process.HasExited) {
+        throw "Process tree for PID $($Process.Id) did not terminate within $TimeoutMs ms."
+    }
+}
+
 # R5（2026-07-10 衛生輪 C3）：kit-manager-api 納入 golden path——hybrid 模式下 coordinator
 # 容器經 host.docker.internal:8010 依賴 host-native kit-manager-api（RK1 Kit 控制權威），
 # 先前 Mode A/C 完全未編排（只有 Mode B compose 有）。樣式克隆 Start-HostNativeGovernance。
@@ -502,6 +523,8 @@ function Start-HostNativeKitManager {
         [scriptblock] $ImportProbeFn = {
             param($PythonExe, $TimeoutSec)
             $importProcess = $null
+            $terminationFailure = $null
+            $importExitCode = -1
             try {
                 $importStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
                 $importStartInfo.FileName = $PythonExe
@@ -512,24 +535,35 @@ function Start-HostNativeKitManager {
                 [void]$importStartInfo.ArgumentList.Add('import fastapi, uvicorn')
                 $importProcess = [System.Diagnostics.Process]::new()
                 $importProcess.StartInfo = $importStartInfo
-                if (-not $importProcess.Start()) { return -1 }
+                if (-not $importProcess.Start()) {
+                    throw 'Kit Manager import probe process did not start.'
+                }
                 $stdoutTask = $importProcess.StandardOutput.ReadToEndAsync()
                 $stderrTask = $importProcess.StandardError.ReadToEndAsync()
                 if (-not $importProcess.WaitForExit($TimeoutSec * 1000)) {
-                    try { $importProcess.Kill($true) } catch {}
-                    [void]$importProcess.WaitForExit(5000)
-                    return -1
+                    try {
+                        Stop-HostNativeProcessTreeAndWait -Process $importProcess -TimeoutMs 5000
+                    }
+                    catch {
+                        $terminationFailure = $_
+                    }
                 }
-                $null = $stdoutTask.GetAwaiter().GetResult()
-                $null = $stderrTask.GetAwaiter().GetResult()
-                return $importProcess.ExitCode
+                else {
+                    $null = $stdoutTask.GetAwaiter().GetResult()
+                    $null = $stderrTask.GetAwaiter().GetResult()
+                    $importExitCode = $importProcess.ExitCode
+                }
             }
             catch {
-                return -1
+                $importExitCode = -1
             }
             finally {
                 if ($null -ne $importProcess) { $importProcess.Dispose() }
             }
+            if ($null -ne $terminationFailure) {
+                throw "Kit Manager import probe timed out and its process tree exit could not be proven: $($terminationFailure.Exception.Message)"
+            }
+            return $importExitCode
         },
         [scriptblock] $LocalAddressProbeFn = {
             param($HostName)

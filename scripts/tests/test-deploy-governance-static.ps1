@@ -45,7 +45,11 @@ if ($deploy -match 'GetUnixFileMode') {
 }
 Assert-Contains $deploy '[System.Diagnostics.ProcessStartInfo]::new()' 'Linux deploy must launch the hardener through a process with a reliable ExitCode'
 Assert-Contains $deploy '$process.WaitForExit($TimeoutSec * 1000)' 'Linux deploy must bound the CAD hardener process wait'
-Assert-Contains $deploy '$process.Kill($true)' 'Linux deploy must terminate a timed-out CAD hardener process tree'
+Assert-Contains $deploy 'Stop-HostNativeProcessTreeAndWait -Process $process -TimeoutMs 5000' 'Linux deploy must terminate and wait for a timed-out CAD hardener process tree'
+Assert-Contains $launcher 'function Stop-HostNativeProcessTreeAndWait' 'host-native launcher must expose the shared bounded process-tree terminator'
+Assert-Contains $launcher '$Process.Kill($true)' 'bounded process-tree terminator must request descendant termination'
+Assert-Contains $launcher '$Process.WaitForExit($TimeoutMs)' 'bounded process-tree terminator must wait for the parent exit'
+Assert-Contains $launcher '-not $Process.HasExited' 'bounded process-tree terminator must prove the parent exited'
 Assert-Contains $deploy '$process.ExitCode' 'Linux deploy must read the hardener process ExitCode directly'
 Assert-Contains $deploy "[string]`$status.status -ceq 'passed'" 'Linux deploy must require the hardener passed JSON contract'
 Assert-Contains $cadHardener 'harden_default_hoops_main_permissions' 'CAD cache hardener must reuse the adapter trust-boundary implementation'
@@ -59,7 +63,7 @@ Assert-Contains $launcher "KIT_INSTANCE_ID = 'kit_local_001'" 'host-native Kit M
 Assert-Contains $launcher 'KIT_CONTROL_URL = $normalizedKitControlUrl' 'host-native Kit Manager must use only a validated explicit control authority or the empty blocked state'
 Assert-Contains $launcher 'function Test-HostNativeLocalAddress' 'host-native Kit Manager must verify that its conversion authority is local'
 Assert-Contains $launcher 'KitControlUrl host must be loopback or an address assigned to this host.' 'host-native Kit Manager must reject remote Kit control targets'
-Assert-Contains $launcher 'return $importProcess.ExitCode' 'host-native Kit Manager import probe must read a real process ExitCode'
+Assert-Contains $launcher '$importExitCode = $importProcess.ExitCode' 'host-native Kit Manager import probe must read a real process ExitCode'
 Assert-Contains $deploy "Get-DeployEnvValue -Name 'KIT_CONTROL_URL'" 'deploy.ps1 must preserve an explicit Kit control authority instead of inventing conversion runtime routes'
 Assert-Contains $deploy 'Resolve-HostNativeKitControlUrl' 'deploy.ps1 must canonicalize and validate Kit control identity before writing its runtime signature'
 Assert-Contains $deploy '-KitControlUrl $resolvedKitControlUrl' 'deploy.ps1 must pass the explicit or empty Kit control authority to the child'
@@ -153,7 +157,23 @@ try {
     }
 
     $hungFixture = Join-Path $hardenerSandbox 'hung.py'
-    [System.IO.File]::WriteAllText($hungFixture, "import time`ntime.sleep(30)`n")
+    $hungPidFile = Join-Path $hardenerSandbox 'hung-pids.json'
+    $hungSource = @'
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+
+repo_root = pathlib.Path(sys.argv[sys.argv.index("--repo-root") + 1])
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+(repo_root / "hung-pids.json").write_text(
+    json.dumps([os.getpid(), child.pid]), encoding="utf-8"
+)
+time.sleep(30)
+'@
+    [System.IO.File]::WriteAllText($hungFixture, $hungSource)
     $hungStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $hungResult = Invoke-CadExtensionCacheHardener `
         -PythonPath $fixturePython `
@@ -166,6 +186,20 @@ try {
     }
     if ($hungStopwatch.Elapsed.TotalSeconds -ge 10) {
         throw 'timed-out hardener process must return within the bounded cleanup window'
+    }
+    if (-not (Test-Path -LiteralPath $hungPidFile -PathType Leaf)) {
+        throw 'timed-out hardener fixture must record its parent and child PIDs'
+    }
+    $hungPids = @(Get-Content -Raw -LiteralPath $hungPidFile | ConvertFrom-Json)
+    foreach ($processId in $hungPids) {
+        $remainingProcess = Get-Process -Id ([int]$processId) -ErrorAction SilentlyContinue
+        for ($attempt = 0; $null -ne $remainingProcess -and $attempt -lt 20; $attempt++) {
+            Start-Sleep -Milliseconds 100
+            $remainingProcess = Get-Process -Id ([int]$processId) -ErrorAction SilentlyContinue
+        }
+        if ($null -ne $remainingProcess) {
+            throw "timed-out hardener process tree left PID $processId running"
+        }
     }
 
     $wrongSchemaStatus = '{"schema_version":"wrong","status":"passed"}'

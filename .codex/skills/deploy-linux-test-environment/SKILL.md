@@ -40,6 +40,7 @@ Record the exact cwd, branch, worktree status, and freshly fetched `origin/main`
 
 ```powershell
 $callerCwd = (Get-Location).Path
+$isolatedWorktreeCreated = $false
 $sourceRepoRoot = (& git rev-parse --show-toplevel).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sourceRepoRoot)) {
     throw 'caller repository root cannot be proven; deployment is HELD'
@@ -58,7 +59,6 @@ if ($LASTEXITCODE -ne 0 -or $originMainSha -notmatch '^[0-9a-f]{40,64}$') {
 $sessionId = Get-Date -Format 'yyyyMMddHHmmss'
 $isolatedWorktree = Join-Path (Split-Path $sourceRepoRoot -Parent) "AI-BIM-governance.deploy-canonical-$sessionId"
 $isolatedBranch = "chore/canonical-linux-deploy-$sessionId"
-$isolatedWorktreeCreated = $false
 git -C $sourceRepoRoot worktree add -b $isolatedBranch $isolatedWorktree $originMainSha
 if ($LASTEXITCODE -ne 0) { throw 'isolated origin/main worktree creation failed; deployment is HELD' }
 $isolatedWorktreeCreated = $true
@@ -215,8 +215,8 @@ finally {
             if ($LASTEXITCODE -ne 0) { throw 'isolated worktree removal failed; retain the branch for owner inspection' }
             git -C $sourceRepoRoot worktree prune
             if ($LASTEXITCODE -ne 0) { throw 'worktree metadata pruning failed; deployment closeout is HELD' }
-            git -C $sourceRepoRoot branch -d -- $isolatedBranch
-            if ($LASTEXITCODE -ne 0) { throw 'verified generated deployment branch cleanup failed; deployment closeout is HELD' }
+            git -C $sourceRepoRoot update-ref -d "refs/heads/$isolatedBranch" $originMainSha
+            if ($LASTEXITCODE -ne 0) { throw 'atomic generated deployment branch cleanup failed; deployment closeout is HELD' }
             $cleanupStatus = 'isolated worktree and generated branch removed'
         }
     }

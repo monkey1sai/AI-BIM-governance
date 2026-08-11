@@ -111,7 +111,8 @@
         "scripts/lib/host-native-launcher.ps1",
         "scripts/self-referential-bootstrap-ledger.json",
         "scripts/tests/test-self-referential-bootstrap.ps1",
-        "scripts/verify-all.ps1"
+        "scripts/verify-all.ps1",
+        "scripts/verify-all.sh"
       ],
       "verification_contract": {
         "id": "linux-test-deploy-verifier-hardening/v1",

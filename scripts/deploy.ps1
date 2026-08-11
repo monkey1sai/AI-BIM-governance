@@ -543,6 +543,7 @@ function Invoke-CadExtensionCacheHardener {
     $stdout = ''
     $stderr = ''
     $process = $null
+    $terminationFailure = $null
     try {
         $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
         $startInfo.FileName = $PythonPath
@@ -560,8 +561,12 @@ function Invoke-CadExtensionCacheHardener {
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
         if (-not $process.WaitForExit($TimeoutSec * 1000)) {
-            try { $process.Kill($true) } catch {}
-            [void]$process.WaitForExit(5000)
+            try {
+                Stop-HostNativeProcessTreeAndWait -Process $process -TimeoutMs 5000
+            }
+            catch {
+                $terminationFailure = $_
+            }
         }
         else {
             $stdout = $stdoutTask.GetAwaiter().GetResult()
@@ -576,6 +581,9 @@ function Invoke-CadExtensionCacheHardener {
     }
     finally {
         if ($null -ne $process) { $process.Dispose() }
+    }
+    if ($null -ne $terminationFailure) {
+        throw "CAD extension cache hardener timed out and its process tree exit could not be proven: $($terminationFailure.Exception.Message)"
     }
 
     $status = $null

@@ -616,6 +616,20 @@ def test_directory_link_probe_uses_reparse_attributes_without_path_is_junction()
     assert Ifc2UsdcPowershellConverterAdapter._path_is_directory_link(LegacyJunctionPath())
 
 
+def test_directory_link_probe_fails_closed_when_link_state_cannot_be_read():
+    class UninspectableLegacyPath:
+        def is_symlink(self):
+            return False
+
+        def lstat(self):
+            raise OSError("fixture access denied")
+
+    with pytest.raises(ConversionAuthorityError, match="could not be inspected safely"):
+        Ifc2UsdcPowershellConverterAdapter._path_is_directory_link(
+            UninspectableLegacyPath()
+        )
+
+
 def test_windows_acl_policy_rejects_untrusted_owner_or_writer():
     current_user = "S-1-5-21-1000"
     trusted_admin = "S-1-5-32-544"
@@ -838,6 +852,110 @@ def test_powershell_conversion_rejects_hoops_path_swap_after_preflight(
             validated_hoops_main=validated_hoops_main,
             validated_hoops_identity=validated_hoops_identity,
         )
+    assert subprocess_called is False
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows pinned-handle execution contract")
+def test_windows_execution_guard_blocks_hoops_write_until_converter_exits(
+    tmp_path: Path, monkeypatch
+):
+    private_root = tmp_path / "private-cad-cache"
+    private_root.mkdir()
+    hoops_main = private_root / "hoops_main.py"
+    original = b"# pinned fixture"
+    hoops_main.write_bytes(original)
+    adapter = Ifc2UsdcPowershellConverterAdapter(
+        repo_root=tmp_path,
+        hoops_main_path=hoops_main,
+        storage_root=tmp_path / "storage",
+    )
+    validated = hoops_main.resolve(strict=True)
+    identity = adapter._hoops_file_identity(validated)
+    blocked_write = None
+
+    def _attempt_write_while_converter_runs(args, **kwargs):
+        nonlocal blocked_write
+        try:
+            hoops_main.write_bytes(b"# attacker replacement")
+        except OSError as exc:
+            blocked_write = exc
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", _attempt_write_while_converter_runs)
+
+    adapter._run_powershell_conversion(
+        ifc_path=tmp_path / "input.ifc",
+        output_dir=tmp_path / "out",
+        validated_hoops_main=validated,
+        validated_hoops_identity=identity,
+    )
+
+    assert blocked_write is not None
+    assert hoops_main.read_bytes() == original
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows pinned-handle execution contract")
+def test_windows_execution_guard_rejects_preopened_writer(
+    tmp_path: Path, monkeypatch
+):
+    import ctypes
+    from ctypes import wintypes
+
+    private_root = tmp_path / "private-cad-cache"
+    private_root.mkdir()
+    hoops_main = private_root / "hoops_main.py"
+    hoops_main.write_bytes(b"# pinned fixture")
+    adapter = Ifc2UsdcPowershellConverterAdapter(
+        repo_root=tmp_path,
+        hoops_main_path=hoops_main,
+        storage_root=tmp_path / "storage",
+    )
+    validated = hoops_main.resolve(strict=True)
+    identity = adapter._hoops_file_identity(validated)
+    subprocess_called = False
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    )
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    writer = kernel32.CreateFileW(
+        str(hoops_main),
+        0x40000000,  # GENERIC_WRITE
+        0x00000001 | 0x00000002 | 0x00000004,  # share read/write/delete
+        None,
+        3,  # OPEN_EXISTING
+        0x00000080,  # FILE_ATTRIBUTE_NORMAL
+        None,
+    )
+    writer_value = int(writer) if writer is not None else 0
+    assert writer_value not in (0, ctypes.c_void_p(-1).value)
+
+    def _unexpected_subprocess(*args, **kwargs):
+        nonlocal subprocess_called
+        subprocess_called = True
+        raise AssertionError("subprocess must not run with a pre-opened HOOPS writer")
+
+    monkeypatch.setattr("subprocess.run", _unexpected_subprocess)
+    try:
+        with pytest.raises(ConversionAuthorityError, match="could not be pinned safely"):
+            adapter._run_powershell_conversion(
+                ifc_path=tmp_path / "input.ifc",
+                output_dir=tmp_path / "out",
+                validated_hoops_main=validated,
+                validated_hoops_identity=identity,
+            )
+    finally:
+        kernel32.CloseHandle(wintypes.HANDLE(writer_value))
+
     assert subprocess_called is False
 
 
