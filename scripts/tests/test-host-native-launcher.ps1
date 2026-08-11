@@ -194,9 +194,11 @@ finally { Remove-TestSandbox -Path $sb }
 
 # Test 15c: the real bash launch path keeps the build argument and the log redirect
 # (dynamic regression guard for the same 2026-08-11 incident: Start-Process 對含
-# 內嵌引號的 -c 字串重組後,bash 丟失 build 參數與重導向;修正改用 bash 位置參數)
-$sb = (New-TestSandbox -Prefix 'kit-repo-build-bash') -replace '\\', '/'
+# 內嵌引號的 -c 字串重組後,bash 丟失 build 參數與重導向;修正把命令寫進 wrapper
+# 並由 stdin 餵給 bash。sandbox 刻意帶空白目錄,證明含空白的 deploy_root 也安全)
+$sbRoot = New-TestSandbox -Prefix 'kit-repo-build-bash'
 try {
+    $sb = (Join-Path $sbRoot 'deploy root with spaces') -replace '\\', '/'
     $runDir = Join-Path $sb 'scripts/.run'
     New-Item -ItemType Directory -Path $runDir -Force | Out-Null
     $logPath = (Join-Path $runDir 'kit-repo-build.log') -replace '\\', '/'
@@ -206,6 +208,9 @@ try {
     if ($null -eq (Get-Command bash -ErrorAction SilentlyContinue)) {
         Write-TestPass 'Invoke-KitRepoBuild real bash launch (skipped: no bash on this host)'
     } else {
+        # POSIX 上 WriteAllText 不帶 exec bit,exec "$0" 會 Permission denied;
+        # MSYS bash 忽略 exec bit 所以 Windows 不需要,但兩邊都補上才是同一條路。
+        & bash -c "chmod +x '$($fakeRepoSh -replace '\\', '/')'"
         $result = Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir `
             -BuildCommand './repo.sh build' -TimeoutSec 60
         Assert-True ($result.TimedOut -eq $false) 'real bash launch is not TimedOut'
@@ -215,6 +220,25 @@ try {
         Assert-True (Test-Path -LiteralPath $logPath -PathType Leaf) 'stdout redirect created the log file'
         Assert-True ((Get-Content -LiteralPath $logPath -Raw) -match 'build-ran') 'repo.sh stdout reached the log file'
     }
+}
+finally { Remove-TestSandbox -Path $sbRoot }
+
+# Test 15d: a stale log from a previous build is removed before the launch
+# (otherwise the exit-0-must-have-a-log guard would accept the previous run's
+# log as evidence and the shredded-launch signature would slip through again)
+$sb = New-TestSandbox -Prefix 'kit-repo-build-stale'
+try {
+    $runDir = Join-Path $sb 'scripts\.run'
+    New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    $logPath = Join-Path $runDir 'kit-repo-build.log'
+    Set-Content -LiteralPath $logPath -Value 'stale log from an earlier build'
+    $result = Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir `
+        -StartProcessFn { param($workingDirectory, $logPath) [pscustomobject]@{ Id = 4246; ExitCode = 0 } } `
+        -WaitForExitFn { param($proc, $timeoutMs) $true } `
+        -StopTreeFn { param($name, $runDir) throw 'StopTreeFn must not run' }
+    Assert-Equal 1 $result.ExitCode 'stale log does not satisfy the log-existence guard'
+    Assert-True (-not (Test-Path -LiteralPath $logPath)) 'stale log was removed before the launch'
+    Write-TestPass 'Invoke-KitRepoBuild removes stale logs before launching'
 }
 finally { Remove-TestSandbox -Path $sb }
 

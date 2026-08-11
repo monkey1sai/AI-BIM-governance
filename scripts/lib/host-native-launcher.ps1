@@ -373,10 +373,11 @@ function Invoke-KitRepoBuild {
                 # 實際收到的命令只剩 repo.sh 路徑本身 — repo.sh 以無參數印
                 # usage 後 exit 0,build 參數與 log 重導向全數丟失(2026-08-11
                 # 對 canonical Linux 部署機實測)。把整條命令寫進 wrapper 腳本,
-                # 命令列上只剩一個單純路徑參數,任何平台的引號重組都碰不到它。
+                # 由 stdin 餵給 bash:命令列上一個參數都不剩,任何平台的引號
+                # 重組(含 deploy_root 帶空白的情況)都碰不到它。
                 $wrapperPath = Join-Path (Split-Path -Parent $logPath) 'kit-repo-build-launch.sh'
                 [IO.File]::WriteAllText($wrapperPath, "#!/bin/sh`nexec `"$repoShPath`" build > `"$logPath`" 2>&1`n")
-                return Start-Process -FilePath 'bash' -ArgumentList @($wrapperPath) `
+                return Start-Process -FilePath 'bash' -RedirectStandardInput $wrapperPath `
                     -WorkingDirectory $workingDirectory -NoNewWindow -PassThru
             }
             throw "Unsupported Kit build command '$effectiveCommand'; expected the validated registry command for this platform."
@@ -392,6 +393,9 @@ function Invoke-KitRepoBuild {
     )
 
     $pidFile = Join-Path $RunDir 'kit-repo-build.pid'
+    # 舊 build 留下的 log 會讓「exit 0 必須有 log」的 fail-closed 檢查誤把
+    # stale log 當成本次啟動的證據;先刪掉,log 的存在就專屬於這一次 build。
+    Remove-Item -LiteralPath $LogPath -Force -ErrorAction SilentlyContinue
     $proc = & $StartProcessFn $WorkingDirectory $LogPath $BuildCommand
     $proc.Id | Set-Content -LiteralPath $pidFile -Encoding ascii
 
