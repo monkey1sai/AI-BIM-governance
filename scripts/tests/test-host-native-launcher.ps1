@@ -227,9 +227,12 @@ try {
     if ($null -eq $bashCommand) {
         Write-TestPass 'Invoke-KitRepoBuild real bash launch (skipped: no bash on this host)'
     } else {
-        # POSIX 上 WriteAllText 不帶 exec bit,exec "$0" 會 Permission denied;
-        # MSYS bash 忽略 exec bit 所以 Windows 不需要,但兩邊都補上才是同一條路。
-        & $bashCommand.Source -c "chmod +x '$($fakeRepoSh -replace '\\', '/')'"
+        # POSIX 上 WriteAllText 不帶 exec bit,exec "$0" 會 Permission denied；
+        # MSYS bash 忽略 exec bit，所以只在 native POSIX host 執行並驗證 chmod。
+        if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+            & $bashCommand.Source -c "chmod +x '$($fakeRepoSh -replace '\\', '/')'"
+            Assert-Equal 0 $LASTEXITCODE 'fake repo.sh chmod succeeds before the launch'
+        }
         $result = Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir `
             -BuildCommand './repo.sh build' -TimeoutSec 60
         Assert-True ($result.TimedOut -eq $false) 'real bash launch is not TimedOut'
@@ -261,6 +264,97 @@ try {
     Assert-Equal 1 $result.ExitCode 'stale log does not satisfy the log-existence guard'
     Assert-True (-not (Test-Path -LiteralPath $logPath)) 'stale log was removed before the launch'
     Write-TestPass 'Invoke-KitRepoBuild removes stale logs before launching'
+}
+finally { Remove-TestSandbox -Path $sb }
+
+# Test 15e: failure to remove locked stale log evidence aborts before launch
+Assert-True ($moduleContent -match 'Remove-Item -LiteralPath \$LogPath -Force -ErrorAction Stop') 'stale-log cleanup errors are terminating'
+if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+    $sb = New-TestSandbox -Prefix 'kit-repo-build-stale-cleanup'
+    $lockedLog = $null
+    try {
+        $runDir = Join-Path $sb 'scripts\.run'
+        New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+        $logPath = Join-Path $runDir 'kit-repo-build.log'
+        Set-Content -LiteralPath $logPath -Value 'locked stale evidence'
+        $lockedLog = [IO.File]::Open($logPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+        $started = $false
+        $cleanupError = $null
+        try {
+            Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir `
+                -StartProcessFn { param($workingDirectory, $logPath) $script:started = $true; [pscustomobject]@{ Id = 4247; ExitCode = 0 } } `
+                -WaitForExitFn { param($proc, $timeoutMs) $true } `
+                -StopTreeFn { param($name, $runDir) throw 'StopTreeFn must not run' } | Out-Null
+        }
+        catch { $cleanupError = $_ }
+        Assert-True ($null -ne $cleanupError) 'locked stale-log cleanup failure aborts the build'
+        Assert-True (-not $started) 'build process is not launched after locked stale-log cleanup failure'
+        Write-TestPass 'Invoke-KitRepoBuild fails closed when stale log cleanup fails'
+    }
+    finally {
+        if ($null -ne $lockedLog) { $lockedLog.Dispose() }
+        Remove-TestSandbox -Path $sb
+    }
+}
+else {
+    Write-TestPass 'Invoke-KitRepoBuild locked stale-log cleanup (skipped: POSIX permits unlinking open files)'
+}
+
+# Test 15f: a container at the log-file path is rejected and preserved
+$sb = New-TestSandbox -Prefix 'kit-repo-build-log-container'
+try {
+    $runDir = Join-Path $sb 'scripts\.run'
+    New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    $logPath = Join-Path $runDir 'kit-repo-build.log'
+    New-Item -ItemType Directory -Path $logPath -Force | Out-Null
+    $started = $false
+    $cleanupError = $null
+    try {
+        Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir `
+            -StartProcessFn { param($workingDirectory, $logPath) $script:started = $true; [pscustomobject]@{ Id = 4248; ExitCode = 0 } } `
+            -WaitForExitFn { param($proc, $timeoutMs) $true } `
+            -StopTreeFn { param($name, $runDir) throw 'StopTreeFn must not run' } | Out-Null
+    }
+    catch { $cleanupError = $_ }
+    Assert-True ($null -ne $cleanupError) 'container at the log path aborts the build'
+    Assert-True (-not $started) 'build process is not launched for a container log path'
+    Assert-True (Test-Path -LiteralPath $logPath -PathType Container) 'container at the log path is preserved'
+    Write-TestPass 'Invoke-KitRepoBuild rejects a container log path'
+}
+finally { Remove-TestSandbox -Path $sb }
+
+# Test 15g: metadata lookup errors abort before stale evidence can be trusted
+$sb = New-TestSandbox -Prefix 'kit-repo-build-log-metadata'
+try {
+    $runDir = Join-Path $sb 'scripts\.run'
+    New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    $logPath = Join-Path $runDir 'kit-repo-build.log'
+    $started = $false
+    $cleanupError = $null
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        function Test-Path {
+            [CmdletBinding()]
+            param([string] $LiteralPath, [object] $PathType)
+            Write-Error 'simulated log metadata access failure'
+            return $false
+        }
+        $ErrorActionPreference = 'Continue'
+        try {
+            Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir `
+                -StartProcessFn { param($workingDirectory, $logPath) $script:started = $true; [pscustomobject]@{ Id = 4249; ExitCode = 0 } } `
+                -WaitForExitFn { param($proc, $timeoutMs) $true } `
+                -StopTreeFn { param($name, $runDir) throw 'StopTreeFn must not run' } | Out-Null
+        }
+        catch { $cleanupError = $_ }
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+        Remove-Item -LiteralPath Function:\Test-Path -Force -ErrorAction SilentlyContinue
+    }
+    Assert-True ($null -ne $cleanupError) 'log metadata access failure aborts the build'
+    Assert-True (-not $started) 'build process is not launched after log metadata access failure'
+    Write-TestPass 'Invoke-KitRepoBuild fails closed on log metadata errors'
 }
 finally { Remove-TestSandbox -Path $sb }
 

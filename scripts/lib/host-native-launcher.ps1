@@ -402,7 +402,15 @@ function Invoke-KitRepoBuild {
     $pidFile = Join-Path $RunDir 'kit-repo-build.pid'
     # 舊 build 留下的 log 會讓「exit 0 必須有 log」的 fail-closed 檢查誤把
     # stale log 當成本次啟動的證據;先刪掉,log 的存在就專屬於這一次 build。
-    Remove-Item -LiteralPath $LogPath -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $LogPath -ErrorAction Stop) {
+        if (-not (Test-Path -LiteralPath $LogPath -PathType Leaf -ErrorAction Stop)) {
+            throw "Kit build log path '$LogPath' exists but is not a file."
+        }
+        Remove-Item -LiteralPath $LogPath -Force -ErrorAction Stop
+        if (Test-Path -LiteralPath $LogPath -ErrorAction Stop) {
+            throw "Failed to remove stale Kit build log '$LogPath'."
+        }
+    }
     $proc = & $StartProcessFn $WorkingDirectory $LogPath $BuildCommand
     $proc.Id | Set-Content -LiteralPath $pidFile -Encoding ascii
 
@@ -410,7 +418,7 @@ function Invoke-KitRepoBuild {
     if ($exited) {
         Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
         $exitCode = [int]$proc.ExitCode
-        if ($exitCode -eq 0 -and -not (Test-Path -LiteralPath $LogPath -PathType Leaf)) {
+        if ($exitCode -eq 0 -and -not (Test-Path -LiteralPath $LogPath -PathType Leaf -ErrorAction Stop)) {
             # exit 0 卻連 log 檔都沒建,代表啟動列被引號重組弄壞、重導向沒有
             # 生效(build 根本沒跑);此時相信 exit code 會讓 deploy 把假 build
             # 當成功,直到 artifacts 檢查才以更難診斷的方式失敗。
