@@ -82,7 +82,7 @@ LOCAL_ONLY_FLAG=1
     Assert-True ($roundtrip -match '(?m)^KIT_STREAM_SERVER=198\.51\.100\.9$') 'serialized content carries merged values'
 
     # --- effective-env snapshot masking ---------------------------------------------
-    $snapshot = New-DeployTargetEnvSnapshot -Values $merge.Values -TargetId 'canonical-linux' -OverriddenKeys $merge.OverriddenKeys
+    $snapshot = New-DeployTargetEnvSnapshot -Values $merge.Values -TargetId 'transport-unit-target' -OverriddenKeys $merge.OverriddenKeys
     Assert-True ([string]$snapshot.schema_version -eq 'deploy-target-env-snapshot/v1') 'snapshot schema version'
     $tokenEntry = @($snapshot.entries | Where-Object { $_.key -eq 'A4_INTERNAL_CONTEXT_TOKEN' })[0]
     Assert-True ([bool]$tokenEntry.secret) 'token key must be classified secret'
@@ -110,7 +110,7 @@ LOCAL_ONLY_FLAG=1
         DOMAIN = 'synthetic-domain.invalid'
         REDIS = 'redis://synthetic-cache.invalid:6379'
     }
-    $aliasSnapshot = New-DeployTargetEnvSnapshot -Values $aliasValues -TargetId 'canonical-linux'
+    $aliasSnapshot = New-DeployTargetEnvSnapshot -Values $aliasValues -TargetId 'transport-unit-target'
     foreach ($entry in $aliasSnapshot.entries) {
         Assert-True ($null -eq $entry.PSObject.Properties['value']) "snapshot entry '$($entry.key)' must never carry a raw value"
         Assert-True ($entry.fingerprint -match '^[0-9a-f]{8}$') "snapshot entry '$($entry.key)' carries an 8-hex fingerprint"
@@ -119,7 +119,7 @@ LOCAL_ONLY_FLAG=1
     foreach ($rawValue in $aliasValues.Values) {
         Assert-True (-not $aliasSnapshotJson.Contains([string]$rawValue)) 'serialized snapshot must exclude every synthetic raw value'
     }
-    $snapshot2 = New-DeployTargetEnvSnapshot -Values $merge.Values -TargetId 'canonical-linux'
+    $snapshot2 = New-DeployTargetEnvSnapshot -Values $merge.Values -TargetId 'transport-unit-target'
     $fp1 = @($snapshot.entries | Where-Object { $_.key -eq 'A4_INTERNAL_CONTEXT_TOKEN' })[0].fingerprint
     $fp2 = @($snapshot2.entries | Where-Object { $_.key -eq 'A4_INTERNAL_CONTEXT_TOKEN' })[0].fingerprint
     Assert-True ($fp1 -eq $fp2) 'fingerprint must be deterministic'
@@ -319,7 +319,7 @@ LOCAL_ONLY_FLAG=1
         return [pscustomobject]@{ ExitCode = 0; Output = '' }
     }
     $sha = 'a' * 40
-    $name = New-RemoteDeployTag -OperatorRepoRoot 'X:/nowhere' -TargetId 'canonical-linux' -DeployedSha $sha -SnapshotName 'snap.json' -TimestampUtc $ts -GitRunner $runner
+    $name = New-RemoteDeployTag -OperatorRepoRoot 'X:/nowhere' -TargetId 'transport-unit-target' -DeployedSha $sha -SnapshotName 'snap.json' -TimestampUtc $ts -GitRunner $runner
     if ($name -notmatch '-004$') { throw "ASSERT FAILED: collision on -003 must retry to -004 (got $name)" }
     if (-not ($script:tagCalls | Where-Object { $_ -eq "push origin refs/tags/$name" })) { throw 'ASSERT FAILED: the tag must be pushed to origin' }
 

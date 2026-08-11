@@ -35,6 +35,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 
 from conversion_authority import ConversionAuthorityError, _PLACEHOLDER_MARKERS
 from ifc_openusd_identity_author import IDENTITY_PROFILE, IfcOpenUsdIdentityAuthor
@@ -1499,19 +1500,46 @@ class Ifc2UsdcPowershellConverterAdapter:
                 validated_hoops_main,
                 validated_hoops_identity,
             ):
-                completed = subprocess.run(
-                    cmd,
-                    cwd=str(self.repo_root),
-                    capture_output=True,
-                    text=True,
-                    timeout=self.timeout_seconds,
-                    shell=False,
-                    check=False,
+                # capture_output=True 會讓 PowerShell 與它啟動的 Kit 子行程都繼承
+                # stdout/stderr pipe。timeout 到期時 subprocess.run 只 kill 直接子行程
+                # (PowerShell);Kit 若仍握著 pipe 寫端,run() 事後的清理 communicate()
+                # 會無限等 EOF——parent 已退、child 持 pipe 的掛死(CPython 已知行為,
+                # 與 host-native-launcher 對 repo.bat 的同型病)。改用暫存檔重導向:
+                # kill 之後沒有 pipe 可等,輸出仍完整讀得回來。外層 timeout 加 30 秒
+                # buffer,讓 ps1 自己的 -TimeoutSeconds 先行清理 Kit 子樹,外層只當
+                # 最後保險而不是與內層搶同一個瞬間。
+                with tempfile.TemporaryFile() as stdout_handle, tempfile.TemporaryFile() as stderr_handle:
+                    raw_completed = subprocess.run(
+                        cmd,
+                        cwd=str(self.repo_root),
+                        stdout=stdout_handle,
+                        stderr=stderr_handle,
+                        timeout=self.timeout_seconds + 30,
+                        shell=False,
+                        check=False,
+                    )
+                    stdout_handle.seek(0)
+                    stderr_handle.seek(0)
+                    stdout_text = stdout_handle.read().decode("utf-8", errors="replace")
+                    stderr_text = stderr_handle.read().decode("utf-8", errors="replace")
+                completed = subprocess.CompletedProcess(
+                    args=raw_completed.args,
+                    returncode=raw_completed.returncode,
+                    stdout=(
+                        raw_completed.stdout
+                        if isinstance(raw_completed.stdout, str) and raw_completed.stdout
+                        else stdout_text
+                    ),
+                    stderr=(
+                        raw_completed.stderr
+                        if isinstance(raw_completed.stderr, str) and raw_completed.stderr
+                        else stderr_text
+                    ),
                 )
         except subprocess.TimeoutExpired as exc:
             raise ConversionAuthorityError(
                 "converter_timeout",
-                f"convert-ifc-to-usdc.ps1 exceeded {self.timeout_seconds}s and was killed.",
+                f"convert-ifc-to-usdc.ps1 exceeded {self.timeout_seconds + 30}s and was killed.",
             ) from exc
         except OSError as exc:
             raise ConversionAuthorityError(

@@ -320,7 +320,10 @@ def test_adapter_builds_powershell_command_and_confirms_usdc(tmp_path: Path, mon
     captured = {}
 
     class _Completed:
+        args: list = []
         returncode = 0
+        stdout = None
+        stderr = None
         stdout = ""
         stderr = ""
 
@@ -1339,13 +1342,11 @@ def test_run_powershell_conversion_regex_extracts_log_paths_from_ps1_throw(tmp_p
         "<fake stdout lines>\n"
     )
 
-    class _FakeCompleted:
-        returncode = 1
-        stderr = ps1_throw
-        stdout = ""
-
-    def _fake_run(*args, **kwargs):
-        return _FakeCompleted()
+    def _fake_run(cmd, **kwargs):
+        err_handle = kwargs.get("stderr")
+        if hasattr(err_handle, "write"):
+            err_handle.write(ps1_throw.encode("utf-8"))
+        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout=None, stderr=None)
 
     monkeypatch.setattr("subprocess.run", _fake_run)
 
@@ -3441,15 +3442,78 @@ def _adapter_for_sentinel(tmp_path: Path) -> Ifc2UsdcPowershellConverterAdapter:
     return Ifc2UsdcPowershellConverterAdapter(repo_root=repo_root, storage_root=repo_root)
 
 
-def _patch_subprocess_returning(monkeypatch, *, returncode: int, stderr: str, stdout: str = "") -> None:
-    class _FakeCompleted:
+def test_converter_subprocess_uses_file_redirection_not_pipes(tmp_path: Path, monkeypatch):
+    """Pipe-hang regression: with capture_output the timeout kill leaves the Kit
+    grandchild holding the pipe write end and run()'s cleanup communicate()
+    waits for EOF forever. The adapter must hand real file handles to the
+    child, never pipes, and must add the safety buffer on top of the ps1's own
+    -TimeoutSeconds."""
+
+    adapter = _adapter_for_sentinel(tmp_path)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
+    captured: dict = {}
+
+    def _fake_run(cmd, **kwargs):
+        captured["kwargs"] = kwargs
+        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout=None, stderr=None)
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    try:
+        adapter._run_powershell_conversion(
+            ifc_path=tmp_path / "fake.ifc",
+            output_dir=tmp_path / "out",
+            validated_hoops_main=validated_hoops_main,
+            validated_hoops_identity=validated_hoops_identity,
+        )
+    except ConversionAuthorityError:
         pass
 
-    _FakeCompleted.returncode = returncode
-    _FakeCompleted.stderr = stderr
-    _FakeCompleted.stdout = stdout
+    kwargs = captured["kwargs"]
+    assert "capture_output" not in kwargs
+    assert kwargs.get("stdout") is not subprocess.PIPE
+    assert kwargs.get("stderr") is not subprocess.PIPE
+    assert hasattr(kwargs.get("stdout"), "fileno")
+    assert hasattr(kwargs.get("stderr"), "fileno")
+    assert kwargs.get("timeout") == adapter.timeout_seconds + 30
 
-    monkeypatch.setattr("subprocess.run", lambda *a, **k: _FakeCompleted())
+
+def test_converter_timeout_maps_to_converter_timeout_error(tmp_path: Path, monkeypatch):
+    adapter = _adapter_for_sentinel(tmp_path)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
+
+    def _fake_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs.get("timeout"))
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    raised: ConversionAuthorityError | None = None
+    try:
+        adapter._run_powershell_conversion(
+            ifc_path=tmp_path / "fake.ifc",
+            output_dir=tmp_path / "out",
+            validated_hoops_main=validated_hoops_main,
+            validated_hoops_identity=validated_hoops_identity,
+        )
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.code == "converter_timeout"
+
+
+def _patch_subprocess_returning(monkeypatch, *, returncode: int, stderr: str, stdout: str = "") -> None:
+    # The adapter redirects the converter's stdout/stderr into temp files (the
+    # pipe-hang fix), so a faithful fake writes into those handles instead of
+    # returning captured strings.
+    def _fake_run(cmd, **kwargs):
+        out_handle = kwargs.get("stdout")
+        err_handle = kwargs.get("stderr")
+        if hasattr(out_handle, "write"):
+            out_handle.write(stdout.encode("utf-8"))
+        if hasattr(err_handle, "write"):
+            err_handle.write(stderr.encode("utf-8"))
+        return subprocess.CompletedProcess(args=cmd, returncode=returncode, stdout=None, stderr=None)
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
 
 
 def test_sentinel_yields_log_paths_with_windows_drive_path(tmp_path: Path, monkeypatch):
