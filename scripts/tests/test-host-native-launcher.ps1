@@ -195,10 +195,12 @@ finally { Remove-TestSandbox -Path $sb }
 # Test 15c: the real bash launch path keeps the build argument and the log redirect
 # (dynamic regression guard for the same 2026-08-11 incident: Start-Process 對含
 # 內嵌引號的 -c 字串重組後,bash 丟失 build 參數與重導向;修正把命令寫進 wrapper
-# 並由 stdin 餵給 bash。sandbox 刻意帶空白目錄,證明含空白的 deploy_root 也安全)
+# 並由 stdin 餵給 bash。sandbox 刻意帶空白+$+backtick 目錄:registry 允許這些
+# 字元,空白證明引號重組碰不到 stdin wrapper,$ 與 backtick 證明 wrapper 內插
+# 的路徑有跳脫、不會被 sh 做參數/命令替換)
 $sbRoot = New-TestSandbox -Prefix 'kit-repo-build-bash'
 try {
-    $sb = (Join-Path $sbRoot 'deploy root with spaces') -replace '\\', '/'
+    $sb = (Join-Path $sbRoot 'deploy root with $paces and `tick') -replace '\\', '/'
     $runDir = Join-Path $sb 'scripts/.run'
     New-Item -ItemType Directory -Path $runDir -Force | Out-Null
     $logPath = (Join-Path $runDir 'kit-repo-build.log') -replace '\\', '/'

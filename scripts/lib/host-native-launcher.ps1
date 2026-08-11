@@ -376,7 +376,14 @@ function Invoke-KitRepoBuild {
                 # 由 stdin 餵給 bash:命令列上一個參數都不剩,任何平台的引號
                 # 重組(含 deploy_root 帶空白的情況)都碰不到它。
                 $wrapperPath = Join-Path (Split-Path -Parent $logPath) 'kit-repo-build-launch.sh'
-                [IO.File]::WriteAllText($wrapperPath, "#!/bin/sh`nexec `"$repoShPath`" build > `"$logPath`" 2>&1`n")
+                # registry 允許 deploy_root 含 $、backtick 等字元;路徑內插進
+                # wrapper 的 shell 雙引號前,先跳脫雙引號語境內僅有的四個特殊
+                # 字元(\ $ ` "),否則 sh 會對路徑做參數/命令替換,執行或重導向
+                # 到錯誤的位置。
+                $shQuote = { param($s) $s -replace '([\\$`"])', '\$1' }
+                $repoShQuoted = & $shQuote $repoShPath
+                $logQuoted = & $shQuote $logPath
+                [IO.File]::WriteAllText($wrapperPath, "#!/bin/sh`nexec `"$repoShQuoted`" build > `"$logQuoted`" 2>&1`n")
                 return Start-Process -FilePath 'bash' -RedirectStandardInput $wrapperPath `
                     -WorkingDirectory $workingDirectory -NoNewWindow -PassThru
             }
