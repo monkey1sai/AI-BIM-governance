@@ -1,0 +1,15 @@
+{
+  "schema_version": "trusted-cad-entrypoints/v1",
+  "packages": {
+    "linux-x86_64": {
+      "extension_package": "omni.services.convert.cad-508.0.1+110.0.0.lx64.r.cp312.u7f4",
+      "hoops_main_sha256": "0e195946941c73821fbcdc018bb417658b735853dd7476484395b53c5dc18bbf",
+      "hoops_main_size": 2184
+    },
+    "windows-x86_64": {
+      "extension_package": "omni.services.convert.cad-508.0.1+110.0.0.wx64.r.cp312.u7f4",
+      "hoops_main_sha256": "5fc72e0c8d4b8fec12ae0b2e729a7d4684f979ca82f6566bdf14c7f9c8fee412",
+      "hoops_main_size": 2240
+    }
+  }
+}

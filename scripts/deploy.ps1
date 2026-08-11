@@ -519,13 +519,96 @@ function New-KitManagerRuntimeSignature {
     param(
         [Parameter(Mandatory = $true)][string] $BindHost,
         [Parameter(Mandatory = $true)][int] $Port,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string] $KitControlUrl,
         [Parameter(Mandatory = $true)][string] $Revision
     )
     return ([pscustomobject]@{
-        host     = $BindHost
-        port     = $Port
-        revision = $Revision
+        host          = $BindHost
+        port          = $Port
+        kitControlUrl = $KitControlUrl
+        revision      = $Revision
     } | ConvertTo-Json -Compress)
+}
+
+function Invoke-CadExtensionCacheHardener {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $PythonPath,
+        [Parameter(Mandatory = $true)][string] $ScriptPath,
+        [Parameter(Mandatory = $true)][string] $StreamingRepoRoot,
+        [ValidateRange(1, 3600)][int] $TimeoutSec = 60
+    )
+
+    $exitCode = -1
+    $stdout = ''
+    $stderr = ''
+    $process = $null
+    $terminationFailure = $null
+    try {
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = $PythonPath
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        foreach ($argument in @($ScriptPath, '--repo-root', $StreamingRepoRoot)) {
+            [void]$startInfo.ArgumentList.Add([string]$argument)
+        }
+        $process = [System.Diagnostics.Process]::new()
+        $process.StartInfo = $startInfo
+        if (-not $process.Start()) {
+            throw 'CAD extension cache hardener process did not start.'
+        }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($TimeoutSec * 1000)) {
+            try {
+                Stop-HostNativeProcessTreeAndWait -Process $process -TimeoutMs 5000
+            }
+            catch {
+                $terminationFailure = $_
+            }
+        }
+        else {
+            $stdout = $stdoutTask.GetAwaiter().GetResult()
+            $stderr = $stderrTask.GetAwaiter().GetResult()
+            $exitCode = $process.ExitCode
+        }
+    }
+    catch {
+        $exitCode = -1
+        $stdout = ''
+        $stderr = ''
+    }
+    finally {
+        if ($null -ne $process) { $process.Dispose() }
+    }
+    if ($null -ne $terminationFailure) {
+        throw "CAD extension cache hardener timed out and its process tree exit could not be proven: $($terminationFailure.Exception.Message)"
+    }
+
+    $status = $null
+    $statusValid = $false
+    $lines = @($stdout -split '\r?\n' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($exitCode -eq 0 -and [string]::IsNullOrWhiteSpace($stderr) -and $lines.Count -eq 1) {
+        try {
+            $status = $lines[0] | ConvertFrom-Json -ErrorAction Stop
+            $statusValid = (
+                $status.PSObject.Properties['schema_version'] -and
+                $status.PSObject.Properties['status'] -and
+                [string]$status.schema_version -ceq 'cad-extension-cache-hardening/v1' -and
+                [string]$status.status -ceq 'passed'
+            )
+        }
+        catch {
+            $statusValid = $false
+        }
+    }
+
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        StatusValid = $statusValid
+        StatusJson = if ($statusValid) { $status | ConvertTo-Json -Compress } else { '' }
+    }
 }
 
 function Resolve-DeployRevision {
@@ -805,6 +888,12 @@ if (-not (Test-KitRuntimeSignatureMatches -Path $script:webPlaneRuntimeSignature
     $shouldRefreshWebPlane = $true
 }
 $resolvedConversionHealthHost = Resolve-HealthProbeHost -BindHost $resolvedConversionBindHost
+$resolvedKitControlUrl = if ($SkipKitManager) {
+    ''
+} else {
+    Resolve-HostNativeKitControlUrl `
+        -KitControlUrl (Get-DeployEnvValue -Name 'KIT_CONTROL_URL' -EnvFile $resolvedEnvFile -Default '').Trim()
+}
 $resolvedAllowedStageHosts = Resolve-AllowedStageHosts -EnvFile $resolvedEnvFile -PublicHost $resolvedPublicHost -ConversionPort 49101
 $kitRuntimeSignature = New-KitRuntimeSignature `
     -PublicHost $resolvedPublicHost `
@@ -881,6 +970,7 @@ $governanceRuntimeSignature = New-GovernanceRuntimeSignature `
 $kitManagerRuntimeSignature = New-KitManagerRuntimeSignature `
     -BindHost $resolvedHostNativeBindHost `
     -Port 8010 `
+    -KitControlUrl $resolvedKitControlUrl `
     -Revision $resolvedDeployRevision
 $resolvedGovernanceApiBaseForDocker = if ($SkipGovernance) { '' } else { "http://host.docker.internal:$resolvedGovernancePort" }
 if (-not $SkipGovernance) {
@@ -1210,6 +1300,43 @@ if (-not $SkipKit -and $hostNative.kitBuildRequired) {
     }
     Write-DeployTag -Tag 'ok' -Message 'Kit runtime build artifacts ready' -LogPath $LogPath | Out-Null
     $fixActions++
+}
+
+# NVIDIA's Linux CAD extension package can mark hoops_main.py world-writable.
+# Harden the exact pinned, unique, owner-cache candidate before conversion starts;
+# the runtime adapter independently revalidates the same trust boundary.
+if (-not $SkipConversion -and (Get-PlatformName) -eq 'linux') {
+    $cadHardener = Join-Path $RepoRoot 'bim-streaming-server\scripts\harden-cad-extension-cache.py'
+    if (-not (Test-Path -LiteralPath $cadHardener -PathType Leaf)) {
+        Write-DeployTag -Tag 'fail' -Message 'CAD extension cache hardener is missing' -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (CAD extension cache hardening)'
+        exit 2
+    }
+    $configuredHoopsMain = Get-DeployEnvValue -Name 'STREAMING_CONVERSION_HOOPS_MAIN' -EnvFile $resolvedEnvFile -Default ''
+    if (-not [string]::IsNullOrWhiteSpace($configuredHoopsMain)) {
+        Write-DeployTag -Tag 'fail' -Message 'Explicit STREAMING_CONVERSION_HOOPS_MAIN is not supported by the pinned Linux deployment path' -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (CAD extension cache hardening)'
+        exit 2
+    }
+    $hardenerPython = Resolve-PlatformVenvPython -VenvRoot (Join-Path $RepoRoot '.venv')
+    if (-not (Test-Path -LiteralPath $hardenerPython -PathType Leaf)) {
+        Write-DeployTag -Tag 'fail' -Message 'CAD extension cache hardener interpreter is missing' -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (CAD extension cache hardening)'
+        exit 2
+    }
+    $hardenerResult = Invoke-CadExtensionCacheHardener `
+        -PythonPath $hardenerPython `
+        -ScriptPath $cadHardener `
+        -StreamingRepoRoot (Join-Path $RepoRoot 'bim-streaming-server')
+    if ($hardenerResult.StatusValid) {
+        Add-Content -LiteralPath $LogPath -Value $hardenerResult.StatusJson
+    }
+    if ($hardenerResult.ExitCode -ne 0 -or -not $hardenerResult.StatusValid) {
+        Write-DeployTag -Tag 'fail' -Message 'CAD extension cache permission hardening failed' -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (CAD extension cache hardening)'
+        exit 2
+    }
+    Write-DeployTag -Tag 'ok' -Message 'CAD extension cache entrypoint permissions hardened' -LogPath $LogPath | Out-Null
 }
 
 # fix: .env / .env.example missing-key merge
@@ -1627,7 +1754,7 @@ if ($SkipKitManager) {
     }
     if (-not $kitManagerAlreadyRunning) {
         Write-DeployTag -Tag 'ok' -Message 'Phase 4c-2 starting host-native kit-manager-api' -LogPath $LogPath | Out-Null
-        $kmStartInfo = Start-HostNativeKitManager -RepoRoot $RepoRoot -Port 8010
+        $kmStartInfo = Start-HostNativeKitManager -RepoRoot $RepoRoot -Port 8010 -KitControlUrl $resolvedKitControlUrl
         Write-DeployTag -Tag 'ok' -Message "kit-manager-api PID=$($kmStartInfo.Pid) log=$($kmStartInfo.LogPath)" -LogPath $LogPath | Out-Null
         $ok = Wait-HostNativeHealth -Name 'kit-manager-api' -Url $kitManagerHealthUrl -TimeoutSec 30
         if (-not $ok) {
@@ -1772,7 +1899,7 @@ if (-not $SkipKitManager) {
     if (-not (Probe-Url -Name 'kit-manager-api' -Url "http://${resolvedHostNativeHealthHost}:8010/health")) { $verifyFails += 'kit-manager-api' }
 }
 if (-not $SkipConversion) {
-    if (-not (Probe-Url -Name 'conversion'  -Url 'http://127.0.0.1:49101/health')) { $verifyFails += 'conversion' }
+    if (-not (Probe-Url -Name 'conversion'  -Url "http://${resolvedConversionHealthHost}:49101/health")) { $verifyFails += 'conversion' }
     if (-not (Test-LoopbackHost -HostName $resolvedPublicHost)) {
         if (-not (Probe-Url -Name 'conversion-public' -Url "http://${resolvedPublicHost}:49101/health")) { $verifyFails += 'conversion-public' }
     }

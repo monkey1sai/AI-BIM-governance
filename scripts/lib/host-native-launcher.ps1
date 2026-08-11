@@ -83,6 +83,55 @@ function Get-HostNativeBindHost {
     return $bind
 }
 
+function Test-HostNativeLocalAddress {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string] $HostName)
+
+    $normalized = $HostName.Trim().Trim([char[]]'[]').ToLowerInvariant()
+    if ($normalized -eq 'localhost') { return $true }
+    $address = $null
+    if (-not [System.Net.IPAddress]::TryParse($normalized, [ref]$address)) {
+        # Do not resolve arbitrary DNS here: a DNS answer is not proof that the
+        # conversion authority is bound to this host and can introduce rebinding.
+        return $false
+    }
+    if ([System.Net.IPAddress]::IsLoopback($address)) { return $true }
+    foreach ($networkInterface in [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
+        foreach ($unicast in $networkInterface.GetIPProperties().UnicastAddresses) {
+            if ($unicast.Address.Equals($address)) { return $true }
+        }
+    }
+    return $false
+}
+
+function Resolve-HostNativeKitControlUrl {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string] $KitControlUrl,
+        [scriptblock] $LocalAddressProbeFn = {
+            param($HostName)
+            return (Test-HostNativeLocalAddress -HostName $HostName)
+        }
+    )
+
+    if ([string]::IsNullOrWhiteSpace($KitControlUrl)) { return '' }
+
+    $kitControlUri = $null
+    if (-not [uri]::TryCreate($KitControlUrl, [System.UriKind]::Absolute, [ref]$kitControlUri) -or
+        $kitControlUri.Scheme -ne 'http' -or
+        [string]::IsNullOrWhiteSpace($kitControlUri.Host) -or
+        -not [string]::IsNullOrWhiteSpace($kitControlUri.UserInfo) -or
+        -not [string]::IsNullOrWhiteSpace($kitControlUri.Query) -or
+        -not [string]::IsNullOrWhiteSpace($kitControlUri.Fragment) -or
+        -not ($kitControlUri.AbsolutePath -eq '' -or $kitControlUri.AbsolutePath -eq '/')) {
+        throw 'KitControlUrl must be an origin-only absolute HTTP URL without credentials, path, query, or fragment.'
+    }
+    if (-not (& $LocalAddressProbeFn $kitControlUri.Host)) {
+        throw 'KitControlUrl host must be loopback or an address assigned to this host.'
+    }
+    return $kitControlUri.GetLeftPart([System.UriPartial]::Authority).TrimEnd('/')
+}
+
 function Test-AlreadyRunning {
     [CmdletBinding()]
     param(
@@ -440,6 +489,27 @@ function Start-HostNativeGovernance {
         -RunDir $runDir)
 }
 
+function Stop-HostNativeProcessTreeAndWait {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][System.Diagnostics.Process] $Process,
+        [ValidateRange(1, 60000)][int] $TimeoutMs = 5000
+    )
+
+    if ($Process.HasExited) { return }
+    try {
+        $Process.Kill($true)
+    }
+    catch {
+        if (-not $Process.HasExited) {
+            throw "Process tree termination failed for PID $($Process.Id): $($_.Exception.Message)"
+        }
+    }
+    if (-not $Process.WaitForExit($TimeoutMs) -or -not $Process.HasExited) {
+        throw "Process tree for PID $($Process.Id) did not terminate within $TimeoutMs ms."
+    }
+}
+
 # R5（2026-07-10 衛生輪 C3）：kit-manager-api 納入 golden path——hybrid 模式下 coordinator
 # 容器經 host.docker.internal:8010 依賴 host-native kit-manager-api（RK1 Kit 控制權威），
 # 先前 Mode A/C 完全未編排（只有 Mode B compose 有）。樣式克隆 Start-HostNativeGovernance。
@@ -447,7 +517,58 @@ function Start-HostNativeKitManager {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string] $RepoRoot,
-        [int] $Port = 8010
+        [int] $Port = 8010,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string] $KitControlUrl,
+        [ValidateRange(1, 300)][int] $ImportProbeTimeoutSec = 30,
+        [scriptblock] $ImportProbeFn = {
+            param($PythonExe, $TimeoutSec)
+            $importProcess = $null
+            $terminationFailure = $null
+            $importExitCode = -1
+            try {
+                $importStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+                $importStartInfo.FileName = $PythonExe
+                $importStartInfo.UseShellExecute = $false
+                $importStartInfo.RedirectStandardOutput = $true
+                $importStartInfo.RedirectStandardError = $true
+                [void]$importStartInfo.ArgumentList.Add('-c')
+                [void]$importStartInfo.ArgumentList.Add('import fastapi, uvicorn')
+                $importProcess = [System.Diagnostics.Process]::new()
+                $importProcess.StartInfo = $importStartInfo
+                if (-not $importProcess.Start()) {
+                    throw 'Kit Manager import probe process did not start.'
+                }
+                $stdoutTask = $importProcess.StandardOutput.ReadToEndAsync()
+                $stderrTask = $importProcess.StandardError.ReadToEndAsync()
+                if (-not $importProcess.WaitForExit($TimeoutSec * 1000)) {
+                    try {
+                        Stop-HostNativeProcessTreeAndWait -Process $importProcess -TimeoutMs 5000
+                    }
+                    catch {
+                        $terminationFailure = $_
+                    }
+                }
+                else {
+                    $null = $stdoutTask.GetAwaiter().GetResult()
+                    $null = $stderrTask.GetAwaiter().GetResult()
+                    $importExitCode = $importProcess.ExitCode
+                }
+            }
+            catch {
+                $importExitCode = -1
+            }
+            finally {
+                if ($null -ne $importProcess) { $importProcess.Dispose() }
+            }
+            if ($null -ne $terminationFailure) {
+                throw "Kit Manager import probe timed out and its process tree exit could not be proven: $($terminationFailure.Exception.Message)"
+            }
+            return $importExitCode
+        },
+        [scriptblock] $LocalAddressProbeFn = {
+            param($HostName)
+            return (Test-HostNativeLocalAddress -HostName $HostName)
+        }
     )
     $runDir = Join-Path $RepoRoot 'scripts\.run'
     if (-not (Test-Path -LiteralPath $runDir)) {
@@ -458,17 +579,42 @@ function Start-HostNativeKitManager {
     $pythonExe = Resolve-HostNativePython -RepoRoot $RepoRoot -ServiceName 'kit-manager-api'
 
     Remove-Item Env:PYTHONNOUSERSITE -ErrorAction SilentlyContinue
-    & $pythonExe -c "import fastapi, uvicorn" *> $null
-    if ($LASTEXITCODE -ne 0) {
+    $pythonImportExit = & $ImportProbeFn $pythonExe $ImportProbeTimeoutSec
+    if ([int]$pythonImportExit -ne 0) {
         throw "kit-manager-api Python cannot import fastapi and uvicorn: $pythonExe"
     }
 
-    return (Start-HostNativeService `
-        -Name 'kit-manager-api' `
-        -WorkingDirectory $serviceRoot `
-        -FilePath $pythonExe `
-        -ArgumentList @('-m','uvicorn','app.main:app','--host',(Get-HostNativeBindHost -RepoRoot $RepoRoot),'--port',"$Port") `
-        -RunDir $runDir)
+    $normalizedKitControlUrl = Resolve-HostNativeKitControlUrl `
+        -KitControlUrl $KitControlUrl `
+        -LocalAddressProbeFn $LocalAddressProbeFn
+
+    # This service runs on the host even though the web plane is containerized.
+    # Set its child-only authority identity explicitly; container defaults would
+    # otherwise return status=ok while routing Kit control to an invalid DNS name.
+    $kitManagerEnvironment = [ordered]@{
+        RUNTIME_MODE = 'hybrid-web-plane-host-native-kit'
+        HOST_LOCAL_RUNTIME_ALLOWED = 'true'
+        KIT_INSTANCE_ID = 'kit_local_001'
+        KIT_CONTROL_URL = $normalizedKitControlUrl
+    }
+    $previousEnvironment = @{}
+    foreach ($name in $kitManagerEnvironment.Keys) {
+        $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        [Environment]::SetEnvironmentVariable($name, [string]$kitManagerEnvironment[$name], 'Process')
+    }
+    try {
+        return (Start-HostNativeService `
+            -Name 'kit-manager-api' `
+            -WorkingDirectory $serviceRoot `
+            -FilePath $pythonExe `
+            -ArgumentList @('-m','uvicorn','app.main:app','--host',(Get-HostNativeBindHost -RepoRoot $RepoRoot),'--port',"$Port") `
+            -RunDir $runDir)
+    }
+    finally {
+        foreach ($name in $kitManagerEnvironment.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], 'Process')
+        }
+    }
 }
 
 function Start-HostNativeKit {

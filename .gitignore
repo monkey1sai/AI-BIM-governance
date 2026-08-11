@@ -43,6 +43,8 @@ Thumbs.db
 !.claude/skills/omniverse-cad-to-simready/
 !.claude/skills/omniverse-realtime-viewer/
 !.claude/skills/omniverse-usd-performance-tuning/
+!.claude/skills/deploy-linux-test-environment/
+!.claude/skills/deploy-main-to-linux-test/
 # Tracked GitNexus CLI skills + repo-health（2026-07-02 治理審計：CLAUDE.md MUST 規則引用的檔案必須入版控）
 !.claude/skills/gitnexus/
 !.claude/skills/repo-health/
@@ -88,6 +90,8 @@ Thumbs.db
 !/.codex/skills/spec-to-done/
 !/.codex/skills/ai-bim-fast-fix/
 !/.codex/skills/ai-bim-bounded-change/
+!/.codex/skills/deploy-linux-test-environment/
+!/.codex/skills/deploy-main-to-linux-test/
 !/.codex/skills/repo-health/
 !/.codex/skills/omniverse-cad-to-simready/
 !/.codex/skills/omniverse-realtime-viewer/

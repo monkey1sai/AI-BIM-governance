@@ -20,8 +20,12 @@ PROFILE_ARG_PENDING=0
 CHANGED_PATH_PENDING=0
 SUBJECT_ARG_PENDING=0
 OUTCOME_ARG_PENDING=0
+TARGET_ID_ARG_PENDING=0
+INVENTORY_PATH_ARG_PENDING=0
 SUBJECT=""
 OUTCOME_OUT=""
+TARGET_ID=""
+INVENTORY_PATH=""
 declare -a CHANGED_PATHS=()
 
 for arg in "$@"; do
@@ -37,6 +41,14 @@ for arg in "$@"; do
     fi
     if [ "$SUBJECT_ARG_PENDING" -eq 1 ]; then SUBJECT="$arg"; SUBJECT_ARG_PENDING=0; continue; fi
     if [ "$OUTCOME_ARG_PENDING" -eq 1 ]; then OUTCOME_OUT="$arg"; OUTCOME_ARG_PENDING=0; continue; fi
+    if [ "$TARGET_ID_ARG_PENDING" -eq 1 ]; then
+        if [ -z "$arg" ]; then echo "--target-id requires a non-empty value" >&2; exit 2; fi
+        TARGET_ID="$arg"; TARGET_ID_ARG_PENDING=0; continue
+    fi
+    if [ "$INVENTORY_PATH_ARG_PENDING" -eq 1 ]; then
+        if [ -z "$arg" ]; then echo "--inventory-path requires a non-empty value" >&2; exit 2; fi
+        INVENTORY_PATH="$arg"; INVENTORY_PATH_ARG_PENDING=0; continue
+    fi
     case "$arg" in
         --continue-on-error) CONTINUE=1 ;;
         --ts-only) TS_ONLY=1 ;;
@@ -53,6 +65,16 @@ for arg in "$@"; do
         --subject=*) SUBJECT="${arg#*=}" ;;
         --outcome-out) OUTCOME_ARG_PENDING=1 ;;
         --outcome-out=*) OUTCOME_OUT="${arg#*=}" ;;
+        --target-id) TARGET_ID_ARG_PENDING=1 ;;
+        --target-id=*)
+            TARGET_ID="${arg#*=}"
+            if [ -z "$TARGET_ID" ]; then echo "--target-id requires a non-empty value" >&2; exit 2; fi
+            ;;
+        --inventory-path) INVENTORY_PATH_ARG_PENDING=1 ;;
+        --inventory-path=*)
+            INVENTORY_PATH="${arg#*=}"
+            if [ -z "$INVENTORY_PATH" ]; then echo "--inventory-path requires a non-empty value" >&2; exit 2; fi
+            ;;
         *) echo "unknown arg: $arg" >&2; exit 2 ;;
     esac
 done
@@ -66,6 +88,10 @@ if [ "$CHANGED_PATH_PENDING" -eq 1 ]; then
 fi
 if [ "$SUBJECT_ARG_PENDING" -eq 1 ] || [ "$OUTCOME_ARG_PENDING" -eq 1 ]; then
     echo "--subject and --outcome-out require values" >&2
+    exit 2
+fi
+if [ "$TARGET_ID_ARG_PENDING" -eq 1 ] || [ "$INVENTORY_PATH_ARG_PENDING" -eq 1 ]; then
+    echo "--target-id and --inventory-path require values" >&2
     exit 2
 fi
 if [ -n "$OUTCOME_OUT" ] && { [ "$PLAN_ONLY" -eq 1 ] || [ "$JSON" -eq 1 ] || ! printf '%s' "$SUBJECT" | grep -Eq '^[0-9a-f]{40}$'; }; then
@@ -87,7 +113,12 @@ elif [ -x "/mnt/c/Program Files/PowerShell/7/pwsh.exe" ]; then
 fi
 
 case "$PROFILE" in
-    Developer) ;;
+    Developer)
+        if [ -n "$TARGET_ID" ] || [ -n "$INVENTORY_PATH" ]; then
+            echo "TargetId and InventoryPath are supported only by the Deployment profile." >&2
+            exit 2
+        fi
+        ;;
     Deployment)
         if [ "$TS_ONLY" -eq 1 ] || [ "$PY_ONLY" -eq 1 ] || [ "$STREAMING_ONLY" -eq 1 ] ||
            [ "$JSON" -eq 1 ] || [ "$FULL" -eq 1 ] || [ "${#CHANGED_PATHS[@]}" -gt 0 ] ||
@@ -101,6 +132,8 @@ case "$PROFILE" in
         fi
         declare -a DEPLOYMENT_ARGS=(-NoProfile -NonInteractive -File scripts/verify-all.ps1 -Profile Deployment)
         if [ "$PLAN_ONLY" -eq 1 ]; then DEPLOYMENT_ARGS+=(-PlanOnly); fi
+        if [ -n "$TARGET_ID" ]; then DEPLOYMENT_ARGS+=(-TargetId "$TARGET_ID"); fi
+        if [ -n "$INVENTORY_PATH" ]; then DEPLOYMENT_ARGS+=(-InventoryPath "$INVENTORY_PATH"); fi
         (cd "$REPO_ROOT" && "$PS" "${DEPLOYMENT_ARGS[@]}")
         exit $?
         ;;

@@ -76,6 +76,19 @@ Assert-True ($moduleContent -match "'-PythonExe'") 'conversion launcher passes -
 Assert-True ($moduleContent -match 'PYTHONNOUSERSITE') 'conversion launcher disables user-site packages'
 Write-TestPass 'conversion launcher uses isolated repo Python'
 
+# Host-native Kit Manager must never inherit its container defaults. The parent
+# deployment process environment is restored after Start-Process snapshots it.
+foreach ($expectedKitManagerSetting in @(
+    "RUNTIME_MODE = 'hybrid-web-plane-host-native-kit'",
+    "HOST_LOCAL_RUNTIME_ALLOWED = 'true'",
+    "KIT_INSTANCE_ID = 'kit_local_001'"
+)) {
+    Assert-True ($moduleContent.Contains($expectedKitManagerSetting)) "Kit Manager child env includes $expectedKitManagerSetting"
+}
+Assert-True ($moduleContent -match 'KIT_CONTROL_URL\s*=\s*\$normalizedKitControlUrl') 'Kit Manager child env uses the validated caller-supplied control URL'
+Assert-True ($moduleContent -match 'finally\s*\{\s*foreach \(\$name in \$kitManagerEnvironment\.Keys\)') 'Kit Manager child env is restored in finally'
+Write-TestPass 'host-native Kit Manager receives exact child authority identity'
+
 # Test 11: Stop-HostNativeService stops child processes before wrapper PID
 $sb = New-TestSandbox -Prefix 'hn-launcher-stop'
 try {
@@ -228,5 +241,145 @@ Write-TestPass 'Invoke-KitRepoBuild supports validated Linux repo.sh command'
 Assert-True ($moduleContent -match 'detachDeadline') 'detachment check has a bounded deadline'
 Assert-True ($moduleContent -match '& \$SleepFn 100') 'detachment check retries between probes'
 Write-TestPass 'host-native detachment check is bounded and retried'
+
+# Test 21: Kit Manager receives its exact host-native child environment while
+# the deployment process recovers its previous values after Start-Process.
+$sb = New-TestSandbox -Prefix 'kit-manager-child-env'
+$kitManagerEnvironmentNames = @('RUNTIME_MODE', 'HOST_LOCAL_RUNTIME_ALLOWED', 'KIT_INSTANCE_ID', 'KIT_CONTROL_URL')
+$originalKitManagerEnvironment = @{}
+try {
+    foreach ($name in $kitManagerEnvironmentNames) {
+        $originalKitManagerEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        [Environment]::SetEnvironmentVariable($name, "parent-$name", 'Process')
+    }
+    function Resolve-HostNativePython { param($RepoRoot, $ServiceName) return 'fixture-python' }
+    function Get-HostNativeBindHost { param($RepoRoot) return '127.0.0.1' }
+    function Start-HostNativeService {
+        param($Name, $WorkingDirectory, $FilePath, $ArgumentList, $RunDir)
+        $script:capturedKitManagerEnvironment = [ordered]@{
+            RUNTIME_MODE = [Environment]::GetEnvironmentVariable('RUNTIME_MODE', 'Process')
+            HOST_LOCAL_RUNTIME_ALLOWED = [Environment]::GetEnvironmentVariable('HOST_LOCAL_RUNTIME_ALLOWED', 'Process')
+            KIT_INSTANCE_ID = [Environment]::GetEnvironmentVariable('KIT_INSTANCE_ID', 'Process')
+            KIT_CONTROL_URL = [Environment]::GetEnvironmentVariable('KIT_CONTROL_URL', 'Process')
+        }
+        return [pscustomobject]@{ Pid = 4246; LogPath = 'fixture.log' }
+    }
+
+    $script:capturedImportProbeTimeoutSec = $null
+    Start-HostNativeKitManager -RepoRoot $sb -Port 8010 `
+        -KitControlUrl 'HTTP://LOCALHOST:49101/' `
+        -ImportProbeTimeoutSec 17 `
+        -ImportProbeFn { param($PythonExe, $TimeoutSec) $script:capturedImportProbeTimeoutSec = $TimeoutSec; return 0 } `
+        -LocalAddressProbeFn { param($HostName) return ($HostName -eq 'localhost') } | Out-Null
+
+    Assert-Equal 17 $script:capturedImportProbeTimeoutSec 'Kit Manager import probe receives the configured bounded timeout'
+    Assert-Equal 'hybrid-web-plane-host-native-kit' $capturedKitManagerEnvironment.RUNTIME_MODE 'child receives hybrid runtime mode'
+    Assert-Equal 'true' $capturedKitManagerEnvironment.HOST_LOCAL_RUNTIME_ALLOWED 'child receives host-local authority flag'
+    Assert-Equal 'kit_local_001' $capturedKitManagerEnvironment.KIT_INSTANCE_ID 'child receives launched Kit instance id'
+    Assert-Equal 'http://localhost:49101' $capturedKitManagerEnvironment.KIT_CONTROL_URL 'child receives the canonical explicit operator-configured control authority URL'
+    foreach ($name in $kitManagerEnvironmentNames) {
+        Assert-Equal "parent-$name" ([Environment]::GetEnvironmentVariable($name, 'Process')) "parent env restores $name"
+    }
+    Write-TestPass 'host-native Kit Manager child env is exact and parent env is restored'
+
+    Start-HostNativeKitManager -RepoRoot $sb -Port 8010 `
+        -KitControlUrl '' `
+        -ImportProbeFn { param($PythonExe) return 0 } `
+        -LocalAddressProbeFn { param($HostName) throw 'empty control URL must not probe an address' } | Out-Null
+    Assert-Equal '' $capturedKitManagerEnvironment.KIT_CONTROL_URL 'unconfigured Kit control remains an honest empty child value'
+    foreach ($name in $kitManagerEnvironmentNames) {
+        Assert-Equal "parent-$name" ([Environment]::GetEnvironmentVariable($name, 'Process')) "parent env restores $name after empty control authority"
+    }
+    Write-TestPass 'host-native Kit Manager preserves unconfigured control as blocked state'
+
+    function Start-HostNativeService {
+        param($Name, $WorkingDirectory, $FilePath, $ArgumentList, $RunDir)
+        $script:capturedKitManagerEnvironment = [ordered]@{
+            RUNTIME_MODE = [Environment]::GetEnvironmentVariable('RUNTIME_MODE', 'Process')
+            HOST_LOCAL_RUNTIME_ALLOWED = [Environment]::GetEnvironmentVariable('HOST_LOCAL_RUNTIME_ALLOWED', 'Process')
+            KIT_INSTANCE_ID = [Environment]::GetEnvironmentVariable('KIT_INSTANCE_ID', 'Process')
+            KIT_CONTROL_URL = [Environment]::GetEnvironmentVariable('KIT_CONTROL_URL', 'Process')
+        }
+        throw 'fixture launch failure'
+    }
+    $launchFailure = ''
+    try {
+        Start-HostNativeKitManager -RepoRoot $sb -Port 8010 `
+            -KitControlUrl 'http://localhost:49101' `
+            -ImportProbeFn { param($PythonExe) return 0 } `
+            -LocalAddressProbeFn { param($HostName) return ($HostName -eq 'localhost') } | Out-Null
+    }
+    catch {
+        $launchFailure = $_.Exception.Message
+    }
+    Assert-True ($launchFailure -match 'fixture launch failure') 'Kit Manager surfaces a child launch failure'
+    Assert-Equal 'hybrid-web-plane-host-native-kit' $capturedKitManagerEnvironment.RUNTIME_MODE 'throwing child observes exact runtime mode before launch'
+    Assert-Equal 'http://localhost:49101' $capturedKitManagerEnvironment.KIT_CONTROL_URL 'throwing child observes canonical control URL before launch'
+    foreach ($name in $kitManagerEnvironmentNames) {
+        Assert-Equal "parent-$name" ([Environment]::GetEnvironmentVariable($name, 'Process')) "parent env restores $name after child launch failure"
+    }
+    Write-TestPass 'host-native Kit Manager restores parent env after launch failure'
+
+    $nonLocalError = ''
+    try {
+        Start-HostNativeKitManager -RepoRoot $sb -Port 8010 `
+            -KitControlUrl 'http://192.0.2.51:49101' `
+            -ImportProbeFn { param($PythonExe) return 0 } `
+            -LocalAddressProbeFn { param($HostName) return $false } | Out-Null
+    }
+    catch {
+        $nonLocalError = $_.Exception.Message
+    }
+    Assert-True ($nonLocalError -match 'loopback or an address assigned to this host') 'Kit Manager rejects a non-local conversion authority URL'
+    Write-TestPass 'host-native Kit Manager rejects non-local Kit control URL'
+}
+finally {
+    foreach ($name in $kitManagerEnvironmentNames) {
+        [Environment]::SetEnvironmentVariable($name, $originalKitManagerEnvironment[$name], 'Process')
+    }
+    Remove-TestSandbox -Path $sb
+}
+
+$canonicalControlUrl = Resolve-HostNativeKitControlUrl `
+    -KitControlUrl 'HTTP://LOCALHOST:49101/' `
+    -LocalAddressProbeFn { param($HostName) return ($HostName -eq 'localhost') }
+Assert-Equal 'http://localhost:49101' $canonicalControlUrl 'resolver canonicalizes an explicit localhost authority'
+
+Assert-True ($moduleContent -match '\$importProcess\.WaitForExit\(\$TimeoutSec \* 1000\)') 'Kit Manager import probe wait is bounded'
+Assert-True ($moduleContent -match 'Stop-HostNativeProcessTreeAndWait -Process \$importProcess -TimeoutMs 5000') 'Kit Manager import probe terminates and waits for a timed-out child process tree'
+Assert-True ($moduleContent -match 'function Stop-HostNativeProcessTreeAndWait') 'launcher defines a shared bounded process-tree terminator'
+Assert-True ($moduleContent -match '\$Process\.Kill\(\$true\)') 'bounded process-tree terminator includes descendants'
+Assert-True ($moduleContent -match '\$Process\.WaitForExit\(\$TimeoutMs\)') 'bounded process-tree terminator waits for exit'
+Assert-True ($moduleContent -match '-not \$Process\.HasExited') 'bounded process-tree terminator verifies exit'
+
+$ipv6ControlUrl = Resolve-HostNativeKitControlUrl `
+    -KitControlUrl 'HTTP://[::1]:49101/' `
+    -LocalAddressProbeFn {
+        param($HostName)
+        return ($HostName.Trim([char[]]'[]') -eq '::1')
+    }
+Assert-Equal 'http://[::1]:49101' $ipv6ControlUrl 'resolver canonicalizes a bracketed IPv6 loopback authority'
+
+$rejectedControlUrls = @(
+    @{ Name = 'HTTPS'; Url = 'https://localhost:49101' },
+    @{ Name = 'credentials'; Url = 'http://user:pass@localhost:49101' },
+    @{ Name = 'path'; Url = 'http://localhost:49101/control' },
+    @{ Name = 'query'; Url = 'http://localhost:49101/?mode=control' },
+    @{ Name = 'fragment'; Url = 'http://localhost:49101/#control' },
+    @{ Name = 'empty authority'; Url = 'http:///' }
+)
+foreach ($controlCase in $rejectedControlUrls) {
+    $rejectionMessage = ''
+    try {
+        Resolve-HostNativeKitControlUrl `
+            -KitControlUrl $controlCase.Url `
+            -LocalAddressProbeFn { param($HostName) return $true } | Out-Null
+    }
+    catch {
+        $rejectionMessage = $_.Exception.Message
+    }
+    Assert-True ($rejectionMessage -match 'origin-only absolute HTTP URL') "resolver rejects $($controlCase.Name) control URL shape"
+}
+Write-TestPass 'Kit control URL authority shape matrix'
 
 Write-Host "`n=== test-host-native-launcher.ps1: ALL PASSED ===" -ForegroundColor Green

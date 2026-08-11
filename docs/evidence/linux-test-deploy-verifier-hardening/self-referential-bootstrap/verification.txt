@@ -1,0 +1,29 @@
+document_nature=working_note_bootstrap_evidence_not_runtime_spec
+stack_kind=self_referential_bootstrap
+pull_request=484
+base_commit=89ff9c8b773da9a3c0c44990e2267f70f4e8007d
+gitnexus=UNKNOWN (accepted by owner; direct source, executable tests, and independent review used)
+PASS test-host-native-conversion-service (101 passed, 6 skipped; all six are POSIX-only cases skipped on Windows; the 0777 atomic-replacement and 0400 private-inode idempotency cases separately passed in Linux Docker, with the remaining POSIX trust cases covered by the recorded WSL smoke; count includes the file-redirection and converter-timeout cases added for the pipe-hang fix and the five POSIX trust-root ancestry cases)
+PASS test-host-native-launcher
+PASS test-kit-manager-api
+PASS test-verify-all
+PASS test-deploy-target-registry
+PASS test-remote-deploy-transport
+PASS test-deploy-governance-static
+PASS test-rebuild-test-deploy
+PASS test-self-referential-bootstrap
+PASS test-agent-governance-check
+PASS invoke-powershell-static
+PASS python-syntax-check (affected hardener, adapter, and conversion test compiled)
+NOT_RUN python-static-type-check (the loaded repository verification sources define no Python type-check command for these files)
+NOT_RUN python-lint (the loaded repository verification sources define no Python lint command for these files)
+PASS powershell-parse-and-static-analysis (invoke-powershell-static plus deploy AST assertions)
+PASS sync-agent-skills-check
+PASS skill-quick-validate
+PASS scan-secret-patterns
+PASS wsl-posix-cad-trust-smoke (group-write fail-closed, gid cache, and bounded inode read)
+BOOTSTRAP_BASELINE canonical-linux-rebuild command="pwsh -NoProfile -NonInteractive -File scripts/dev/rebuild-test-deploy.ps1 -Build -InventoryPath '<owner-private-inventory>'" target=canonical-linux(resolved from registry canonical_target; the regular canonical form takes no -TargetId) inventory_source=owner-controlled-private branch_head=1b764e24f04e07c63257c977aa924b02fc58d28e source_commit=a93c5a34cfef7bb6f3fdd5d20c287d9c83c89ea1 tag=deploy-20260811-639220225263578177-002 post_change=pending-fixpoint
+PASS isolated-bootstrap-hardening-and-strict-adapter-preflight
+PASS owner-private-acl-restoration-verified
+LIMIT canonical-post-change-verification=pending merge and mainline fixpoint rebuild
+LIMIT full-system-e2e=not claimed

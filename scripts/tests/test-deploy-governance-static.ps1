@@ -3,12 +3,15 @@ $ErrorActionPreference = 'Stop'
 
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $deployPath = Join-Path $RepoRoot 'scripts\deploy.ps1'
+. (Join-Path $RepoRoot 'scripts\lib\platform\platform-adapter.ps1')
 $deployBytes = [System.IO.File]::ReadAllBytes($deployPath)
 if ($deployBytes.Count -lt 3 -or $deployBytes[0] -ne 0xEF -or $deployBytes[1] -ne 0xBB -or $deployBytes[2] -ne 0xBF) {
     throw 'deploy.ps1 must use a UTF-8 BOM so Windows PowerShell 5.1 does not decode non-ASCII strings through the active ANSI code page'
 }
 $deploy = Get-Content -Raw $deployPath
 $launcher = Get-Content -Raw (Join-Path $RepoRoot 'scripts\lib\host-native-launcher.ps1')
+$cadHardener = Get-Content -Raw (Join-Path $RepoRoot 'bim-streaming-server\scripts\harden-cad-extension-cache.py')
+$kitGateway = Get-Content -Raw (Join-Path $RepoRoot 'services\kit-manager-api\app\kit_gateway.py')
 $stopAll = Get-Content -Raw (Join-Path $RepoRoot 'scripts\stop-all.ps1')
 $hostKitCompose = Get-Content -Raw (Join-Path $RepoRoot 'compose.host-kit.yml')
 $hostKitExample = Get-Content -Raw (Join-Path $RepoRoot '.env.web-plane.host-kit.example')
@@ -34,9 +37,38 @@ Assert-Contains $deploy 'Test-KitRuntimeSignatureMatches -Path $script:webPlaneR
 Assert-Contains $deploy 'Set-KitRuntimeSignature -Path $script:webPlaneRuntimeSignaturePath' 'deploy.ps1 must persist the web-plane signature after reconcile'
 Assert-Contains $deploy '-ArtifactsRoot $resolvedConversionArtifactsRoot' 'conversion runtime signature must track its effective output root'
 Assert-Contains $deploy '$shouldRefreshWebPlane = $true' 'deploy.ps1 must force web-plane refresh for custom governance port'
+Assert-Contains $deploy "if (-not `$SkipConversion -and (Get-PlatformName) -eq 'linux')" 'deploy.ps1 must harden the CAD entrypoint only on the Linux conversion path'
+Assert-Contains $deploy 'harden-cad-extension-cache.py' 'deploy.ps1 must invoke the checked-in CAD cache hardener'
+Assert-Contains $deploy "Get-DeployEnvValue -Name 'STREAMING_CONVERSION_HOOPS_MAIN'" 'Linux deploy must reject an unpinned explicit HOOPS override'
+if ($deploy -match 'GetUnixFileMode') {
+    throw 'Linux deploy must remain compatible with the repository PowerShell 7 baseline'
+}
+Assert-Contains $deploy '[System.Diagnostics.ProcessStartInfo]::new()' 'Linux deploy must launch the hardener through a process with a reliable ExitCode'
+Assert-Contains $deploy '$process.WaitForExit($TimeoutSec * 1000)' 'Linux deploy must bound the CAD hardener process wait'
+Assert-Contains $deploy 'Stop-HostNativeProcessTreeAndWait -Process $process -TimeoutMs 5000' 'Linux deploy must terminate and wait for a timed-out CAD hardener process tree'
+Assert-Contains $launcher 'function Stop-HostNativeProcessTreeAndWait' 'host-native launcher must expose the shared bounded process-tree terminator'
+Assert-Contains $launcher '$Process.Kill($true)' 'bounded process-tree terminator must request descendant termination'
+Assert-Contains $launcher '$Process.WaitForExit($TimeoutMs)' 'bounded process-tree terminator must wait for the parent exit'
+Assert-Contains $launcher '-not $Process.HasExited' 'bounded process-tree terminator must prove the parent exited'
+Assert-Contains $deploy '$process.ExitCode' 'Linux deploy must read the hardener process ExitCode directly'
+Assert-Contains $deploy "[string]`$status.status -ceq 'passed'" 'Linux deploy must require the hardener passed JSON contract'
+Assert-Contains $cadHardener 'harden_default_hoops_main_permissions' 'CAD cache hardener must reuse the adapter trust-boundary implementation'
+Assert-Contains $cadHardener 'cad-extension-cache-hardening/v1' 'CAD cache hardener must emit the stable redacted result schema'
 Assert-Contains $deploy 'coordinator-governance-files-tree' 'deploy.ps1 must verify coordinator to governance proxy'
 Assert-Contains $launcher 'function Start-HostNativeGovernance' 'launcher must define Start-HostNativeGovernance'
 Assert-Contains $launcher "-Name 'governance-service'" 'launcher must use governance-service PID/log name'
+Assert-Contains $launcher "RUNTIME_MODE = 'hybrid-web-plane-host-native-kit'" 'host-native Kit Manager must publish the hybrid runtime identity'
+Assert-Contains $launcher "HOST_LOCAL_RUNTIME_ALLOWED = 'true'" 'host-native Kit Manager must allow the host-local runtime authority'
+Assert-Contains $launcher "KIT_INSTANCE_ID = 'kit_local_001'" 'host-native Kit Manager must target the launched Kit instance'
+Assert-Contains $launcher 'KIT_CONTROL_URL = $normalizedKitControlUrl' 'host-native Kit Manager must use only a validated explicit control authority or the empty blocked state'
+Assert-Contains $launcher 'function Test-HostNativeLocalAddress' 'host-native Kit Manager must verify that its conversion authority is local'
+Assert-Contains $launcher 'KitControlUrl host must be loopback or an address assigned to this host.' 'host-native Kit Manager must reject remote Kit control targets'
+Assert-Contains $launcher '$importExitCode = $importProcess.ExitCode' 'host-native Kit Manager import probe must read a real process ExitCode'
+Assert-Contains $deploy "Get-DeployEnvValue -Name 'KIT_CONTROL_URL'" 'deploy.ps1 must preserve an explicit Kit control authority instead of inventing conversion runtime routes'
+Assert-Contains $deploy 'Resolve-HostNativeKitControlUrl' 'deploy.ps1 must canonicalize and validate Kit control identity before writing its runtime signature'
+Assert-Contains $deploy '-KitControlUrl $resolvedKitControlUrl' 'deploy.ps1 must pass the explicit or empty Kit control authority to the child'
+Assert-Contains $kitGateway 'blocked_runtime_control_unconfigured' 'an empty Kit control authority must produce an honest blocked state without network access'
+Assert-Contains $deploy 'http://${resolvedConversionHealthHost}:49101/health' 'strict post-verify must probe the effective conversion health host'
 Assert-Contains $stopAll 'governance-service' 'stop-all.ps1 must know governance-service'
 Assert-Contains $stopAll 'if ($remaining.Count -gt 0)' 'stop-all.ps1 must fail closed when any expected listener remains'
 Assert-Contains $stopAll 'owner-not-visible' 'stop-all.ps1 must report a listener whose PID is hidden'
@@ -62,6 +94,327 @@ $deployAst = [System.Management.Automation.Language.Parser]::ParseInput($deploy,
 if (@($parserErrors).Count -ne 0) {
     throw 'deploy.ps1 must parse before governance static inspection'
 }
+$kitControlAssignments = @($deployAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+        $node.Left.Extent.Text -eq '$resolvedKitControlUrl'
+}, $true))
+if ($kitControlAssignments.Count -ne 1) {
+    throw 'deploy.ps1 must assign resolvedKitControlUrl exactly once'
+}
+function Get-DeployEnvValue {
+    param($Name, $EnvFile, $Default)
+    return 'malformed-manager-only-url'
+}
+function Resolve-HostNativeKitControlUrl {
+    param($KitControlUrl)
+    throw 'Kit control resolver must not run when Kit Manager is skipped.'
+}
+$SkipKitManager = $true
+$resolvedEnvFile = ''
+$resolvedKitControlUrl = $null
+. ([scriptblock]::Create($kitControlAssignments[0].Extent.Text))
+if ($resolvedKitControlUrl -cne '') {
+    throw 'SkipKitManager must bypass manager-only URL resolution and use an empty runtime identity'
+}
+$launcherParserTokens = $null
+$launcherParserErrors = $null
+$launcherAst = [System.Management.Automation.Language.Parser]::ParseInput($launcher, [ref]$launcherParserTokens, [ref]$launcherParserErrors)
+if (@($launcherParserErrors).Count -ne 0) {
+    throw 'host-native-launcher.ps1 must parse before governance static inspection'
+}
+$terminatorFunction = @($launcherAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Stop-HostNativeProcessTreeAndWait'
+}, $true))
+if ($terminatorFunction.Count -ne 1) {
+    throw 'host-native-launcher.ps1 must define exactly one Stop-HostNativeProcessTreeAndWait helper'
+}
+. ([scriptblock]::Create($terminatorFunction[0].Extent.Text))
+$hardenerFunction = @($deployAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Invoke-CadExtensionCacheHardener'
+}, $true))
+if ($hardenerFunction.Count -ne 1) {
+    throw 'deploy.ps1 must define exactly one Invoke-CadExtensionCacheHardener helper'
+}
+. ([scriptblock]::Create($hardenerFunction[0].Extent.Text))
+$hardenerSandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("ai-bim-invalid-hardener-{0}" -f [guid]::NewGuid().ToString('N'))
+try {
+    New-Item -ItemType Directory -Path $hardenerSandbox -Force | Out-Null
+    $invalidInterpreter = Join-Path $hardenerSandbox ($(if ($IsWindows) { 'invalid.exe' } else { 'invalid-python' }))
+    $fixtureScript = Join-Path $hardenerSandbox 'fixture.py'
+    [System.IO.File]::WriteAllText($invalidInterpreter, 'not an executable image')
+    [System.IO.File]::WriteAllText($fixtureScript, 'print("unexpected")')
+    $invalidResult = Invoke-CadExtensionCacheHardener `
+        -PythonPath $invalidInterpreter `
+        -ScriptPath $fixtureScript `
+        -StreamingRepoRoot $hardenerSandbox
+    if ($invalidResult.ExitCode -ne -1 -or $invalidResult.StatusValid) {
+        throw 'invalid or non-executable hardener interpreter must fail closed'
+    }
+
+    $fixturePython = Resolve-PlatformSystemPython
+    if ([string]::IsNullOrWhiteSpace($fixturePython)) {
+        throw 'hardener wrapper regression fixtures require a working Python 3.11+ interpreter'
+    }
+    $validStatus = '{"schema_version":"cad-extension-cache-hardening/v1","status":"passed"}'
+    $validFixture = Join-Path $hardenerSandbox 'valid.py'
+    [System.IO.File]::WriteAllText($validFixture, "print('$validStatus')`n")
+    $validResult = Invoke-CadExtensionCacheHardener `
+        -PythonPath $fixturePython `
+        -ScriptPath $validFixture `
+        -StreamingRepoRoot $hardenerSandbox
+    if ($validResult.ExitCode -ne 0 -or -not $validResult.StatusValid) {
+        throw 'exact hardener success contract must be accepted'
+    }
+
+    $hungFixture = Join-Path $hardenerSandbox 'hung.py'
+    $hungPidFile = Join-Path $hardenerSandbox 'hung-pids.json'
+    $hungSource = @'
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+
+repo_root = pathlib.Path(sys.argv[sys.argv.index("--repo-root") + 1])
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+(repo_root / "hung-pids.json").write_text(
+    json.dumps([os.getpid(), child.pid]), encoding="utf-8"
+)
+time.sleep(30)
+'@
+    [System.IO.File]::WriteAllText($hungFixture, $hungSource)
+    $hungStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $hungResult = Invoke-CadExtensionCacheHardener `
+        -PythonPath $fixturePython `
+        -ScriptPath $hungFixture `
+        -StreamingRepoRoot $hardenerSandbox `
+        -TimeoutSec 1
+    $hungStopwatch.Stop()
+    if ($hungResult.ExitCode -ne -1 -or $hungResult.StatusValid) {
+        throw 'timed-out hardener process must fail closed'
+    }
+    if ($hungStopwatch.Elapsed.TotalSeconds -ge 10) {
+        throw 'timed-out hardener process must return within the bounded cleanup window'
+    }
+    if (-not (Test-Path -LiteralPath $hungPidFile -PathType Leaf)) {
+        throw 'timed-out hardener fixture must record its parent and child PIDs'
+    }
+    $hungPids = @(Get-Content -Raw -LiteralPath $hungPidFile | ConvertFrom-Json)
+    foreach ($processId in $hungPids) {
+        $remainingProcess = Get-Process -Id ([int]$processId) -ErrorAction SilentlyContinue
+        for ($attempt = 0; $null -ne $remainingProcess -and $attempt -lt 20; $attempt++) {
+            Start-Sleep -Milliseconds 100
+            $remainingProcess = Get-Process -Id ([int]$processId) -ErrorAction SilentlyContinue
+        }
+        if ($null -ne $remainingProcess) {
+            throw "timed-out hardener process tree left PID $processId running"
+        }
+    }
+
+    $wrongSchemaStatus = '{"schema_version":"wrong","status":"passed"}'
+    $failedStatus = '{"schema_version":"cad-extension-cache-hardening/v1","status":"failed"}'
+    $malformedSuccessCases = @(
+        @{
+            Name = 'stderr'
+            Source = "import sys`nprint('$validStatus')`nprint('unexpected stderr', file=sys.stderr)`n"
+        },
+        @{
+            Name = 'multiple stdout lines'
+            Source = "print('$validStatus')`nprint('unexpected second line')`n"
+        },
+        @{ Name = 'invalid JSON'; Source = "print('not-json')`n" },
+        @{ Name = 'wrong schema'; Source = "print('$wrongSchemaStatus')`n" },
+        @{ Name = 'failed status'; Source = "print('$failedStatus')`n" }
+    )
+    foreach ($fixtureCase in $malformedSuccessCases) {
+        $caseScript = Join-Path $hardenerSandbox (([string]$fixtureCase.Name -replace '[^A-Za-z0-9]+', '-') + '.py')
+        [System.IO.File]::WriteAllText($caseScript, [string]$fixtureCase.Source)
+        $caseResult = Invoke-CadExtensionCacheHardener `
+            -PythonPath $fixturePython `
+            -ScriptPath $caseScript `
+            -StreamingRepoRoot $hardenerSandbox
+        if ($caseResult.ExitCode -ne 0 -or $caseResult.StatusValid) {
+            throw "hardener wrapper must reject exit-zero $($fixtureCase.Name) output"
+        }
+    }
+}
+finally {
+    if (Test-Path -LiteralPath $hardenerSandbox) {
+        Remove-Item -LiteralPath $hardenerSandbox -Recurse -Force
+    }
+}
+
+$cadHardeningPhases = @($deployAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.IfStatementAst] -and
+        $node.Extent.Text.TrimStart().StartsWith("if (-not `$SkipConversion -and (Get-PlatformName) -eq 'linux')", [System.StringComparison]::Ordinal)
+}, $true))
+if ($cadHardeningPhases.Count -ne 1) {
+    throw 'deploy.ps1 must expose exactly one Linux CAD hardening phase block'
+}
+if (-not $IsWindows) {
+    $cadPhaseSandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("ai-bim-cad-phase-{0}" -f [guid]::NewGuid().ToString('N'))
+    try {
+        $streamingScripts = Join-Path $cadPhaseSandbox 'bim-streaming-server/scripts'
+        New-Item -ItemType Directory -Path $streamingScripts -Force | Out-Null
+        $fixtureHardener = Join-Path $streamingScripts 'harden-cad-extension-cache.py'
+        [System.IO.File]::WriteAllText($fixtureHardener, '# fixture hardener')
+        $phaseSourcePath = Join-Path $cadPhaseSandbox 'cad-hardening-phase.ps1'
+        [System.IO.File]::WriteAllText($phaseSourcePath, $cadHardeningPhases[0].Extent.Text)
+        $fixtureRunnerPath = Join-Path $cadPhaseSandbox 'invoke-cad-hardening-phase.ps1'
+        $fixtureRunnerSource = @'
+param(
+    [Parameter(Mandatory = $true)][string] $RepoRoot,
+    [Parameter(Mandatory = $true)][string] $PhaseSourcePath,
+    [Parameter(Mandatory = $true)][string] $PythonPath,
+    [AllowEmptyString()][string] $ConfiguredHoopsMain = '',
+    [int] $HardenerExitCode = 0,
+    [ValidateSet('true', 'false')][string] $HardenerStatusValid = 'true'
+)
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$SkipConversion = $false
+$resolvedEnvFile = ''
+$LogPath = Join-Path $RepoRoot 'phase.log'
+$script:fixturePythonPath = $PythonPath
+$script:fixtureConfiguredHoopsMain = $ConfiguredHoopsMain
+$script:fixtureHardenerExitCode = $HardenerExitCode
+$script:fixtureHardenerStatusValid = $HardenerStatusValid -ceq 'true'
+function Get-PlatformName { return 'linux' }
+function Get-DeployEnvValue {
+    param($Name, $EnvFile, $Default)
+    return $script:fixtureConfiguredHoopsMain
+}
+function Resolve-PlatformVenvPython {
+    param($VenvRoot)
+    return $script:fixturePythonPath
+}
+function Invoke-CadExtensionCacheHardener {
+    param($PythonPath, $ScriptPath, $StreamingRepoRoot)
+    [pscustomobject]@{
+        PythonPath = $PythonPath
+        ScriptPath = $ScriptPath
+        StreamingRepoRoot = $StreamingRepoRoot
+    } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $RepoRoot 'hardener-call.json') -Encoding utf8
+    return [pscustomobject]@{
+        ExitCode = $script:fixtureHardenerExitCode
+        StatusValid = $script:fixtureHardenerStatusValid
+        StatusJson = '{"schema_version":"cad-extension-cache-hardening/v1","status":"passed"}'
+    }
+}
+function Write-DeployTag {
+    param($Tag, $Message, $LogPath)
+    "$Tag|$Message" | Add-Content -LiteralPath (Join-Path $RepoRoot 'phase-trace.txt')
+}
+function Print-FinalSummary {
+    param($ExitCode, $FailedPhase)
+    Write-Output "SUMMARY_EXIT=$ExitCode PHASE=$FailedPhase"
+}
+. ([scriptblock]::Create([System.IO.File]::ReadAllText($PhaseSourcePath)))
+Write-Output 'PHASE_CONTINUED'
+'@
+        [System.IO.File]::WriteAllText($fixtureRunnerPath, $fixtureRunnerSource)
+        $fixturePythonCommand = Resolve-PlatformSystemPython
+        if ([string]::IsNullOrWhiteSpace($fixturePythonCommand)) {
+            throw 'Linux CAD phase regression fixtures require a working Python 3.11+ interpreter'
+        }
+        $fixturePython = [string](Get-Command -Name $fixturePythonCommand -CommandType Application -ErrorAction Stop | Select-Object -First 1).Path
+        if ([string]::IsNullOrWhiteSpace($fixturePython) -or -not (Test-Path -LiteralPath $fixturePython -PathType Leaf)) {
+            throw 'Linux CAD phase regression fixtures require an absolute Python interpreter path'
+        }
+        $phaseCases = @(
+            @{
+                Name = 'explicit HOOPS override'
+                ConfiguredHoopsMain = '/tmp/unpinned-hoops-main.py'
+                HardenerExitCode = 0
+                HardenerStatusValid = 'true'
+                ExpectedExitCode = 2
+                ExpectedTrace = 'Explicit STREAMING_CONVERSION_HOOPS_MAIN is not supported'
+                ExpectHardenerCall = $false
+                ExpectContinuation = $false
+            },
+            @{
+                Name = 'malformed hardener result'
+                ConfiguredHoopsMain = ''
+                HardenerExitCode = 0
+                HardenerStatusValid = 'false'
+                ExpectedExitCode = 2
+                ExpectedTrace = 'CAD extension cache permission hardening failed'
+                ExpectHardenerCall = $true
+                ExpectContinuation = $false
+            },
+            @{
+                Name = 'exact hardener success'
+                ConfiguredHoopsMain = ''
+                HardenerExitCode = 0
+                HardenerStatusValid = 'true'
+                ExpectedExitCode = 0
+                ExpectedTrace = 'CAD extension cache entrypoint permissions hardened'
+                ExpectHardenerCall = $true
+                ExpectContinuation = $true
+            }
+        )
+        foreach ($phaseCase in $phaseCases) {
+            foreach ($artifactName in @('hardener-call.json', 'phase-trace.txt', 'phase.log')) {
+                Remove-Item -LiteralPath (Join-Path $cadPhaseSandbox $artifactName) -Force -ErrorAction SilentlyContinue
+            }
+            $phaseOutput = @(& (Get-Process -Id $PID).Path -NoProfile -NonInteractive -File $fixtureRunnerPath `
+                -RepoRoot $cadPhaseSandbox `
+                -PhaseSourcePath $phaseSourcePath `
+                -PythonPath $fixturePython `
+                -ConfiguredHoopsMain ([string]$phaseCase.ConfiguredHoopsMain) `
+                -HardenerExitCode ([int]$phaseCase.HardenerExitCode) `
+                -HardenerStatusValid ([string]$phaseCase.HardenerStatusValid) 2>&1)
+            $phaseExitCode = $LASTEXITCODE
+            $phaseOutputText = $phaseOutput -join "`n"
+            if ($phaseExitCode -ne [int]$phaseCase.ExpectedExitCode) {
+                throw "Linux CAD phase '$($phaseCase.Name)' exit code mismatch: expected=$($phaseCase.ExpectedExitCode) actual=$phaseExitCode output=$phaseOutputText"
+            }
+            $tracePath = Join-Path $cadPhaseSandbox 'phase-trace.txt'
+            $traceText = if (Test-Path -LiteralPath $tracePath) { Get-Content -LiteralPath $tracePath -Raw } else { '' }
+            if ($traceText -notmatch [regex]::Escape([string]$phaseCase.ExpectedTrace)) {
+                throw "Linux CAD phase '$($phaseCase.Name)' did not report its expected phase result"
+            }
+            $continued = $phaseOutputText -match 'PHASE_CONTINUED'
+            if ($continued -ne [bool]$phaseCase.ExpectContinuation) {
+                throw "Linux CAD phase '$($phaseCase.Name)' continuation mismatch"
+            }
+            $hardenerCallPath = Join-Path $cadPhaseSandbox 'hardener-call.json'
+            if ((Test-Path -LiteralPath $hardenerCallPath -PathType Leaf) -ne [bool]$phaseCase.ExpectHardenerCall) {
+                throw "Linux CAD phase '$($phaseCase.Name)' hardener call mismatch"
+            }
+            if ($phaseCase.ExpectHardenerCall) {
+                $hardenerCall = Get-Content -LiteralPath $hardenerCallPath -Raw | ConvertFrom-Json -ErrorAction Stop
+                if ([string]$hardenerCall.PythonPath -cne $fixturePython -or
+                    [string]$hardenerCall.ScriptPath -cne $fixtureHardener -or
+                    [string]$hardenerCall.StreamingRepoRoot -cne (Join-Path $cadPhaseSandbox 'bim-streaming-server')) {
+                    throw "Linux CAD phase '$($phaseCase.Name)' did not preserve exact helper arguments"
+                }
+            }
+            if ($phaseCase.ExpectContinuation) {
+                $phaseLog = Get-Content -LiteralPath (Join-Path $cadPhaseSandbox 'phase.log') -Raw
+                if ($phaseLog -notmatch 'cad-extension-cache-hardening/v1') {
+                    throw 'Linux CAD phase success did not retain the structured hardener status'
+                }
+            }
+            elseif ($phaseOutputText -notmatch 'SUMMARY_EXIT=2 PHASE=Phase 2 \(CAD extension cache hardening\)') {
+                throw "Linux CAD phase '$($phaseCase.Name)' did not preserve exit-2 phase reporting"
+            }
+        }
+        Write-Host 'PASS Linux CAD hardening deploy-phase execution matrix'
+    }
+    finally {
+        if (Test-Path -LiteralPath $cadPhaseSandbox) {
+            Remove-Item -LiteralPath $cadPhaseSandbox -Recurse -Force
+        }
+    }
+}
 $refreshFunction = @($deployAst.FindAll({
     param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -79,6 +432,13 @@ $dockerFailureIndex = $deploy.IndexOf('if ($dockerExit -ne 0)')
 $webPlaneSignatureSaveIndex = $deploy.IndexOf('Set-KitRuntimeSignature -Path $script:webPlaneRuntimeSignaturePath')
 if ($dockerFailureIndex -lt 0 -or $webPlaneSignatureSaveIndex -le $dockerFailureIndex) {
     throw 'web-plane signature must be persisted only after docker compose succeeds'
+}
+
+$kitBuildIndex = $deploy.IndexOf('Invoke-KitRepoBuild')
+$cadHardeningIndex = $deploy.IndexOf('harden-cad-extension-cache.py')
+$envMergeIndex = $deploy.IndexOf('# fix: .env / .env.example missing-key merge')
+if ($kitBuildIndex -lt 0 -or $cadHardeningIndex -le $kitBuildIndex -or $envMergeIndex -le $cadHardeningIndex) {
+    throw 'CAD cache hardening must run after the Kit build gate and before later deployment phases'
 }
 
 # Hybrid mode must not start a CONTAINERISED kit-manager-api. `compose up

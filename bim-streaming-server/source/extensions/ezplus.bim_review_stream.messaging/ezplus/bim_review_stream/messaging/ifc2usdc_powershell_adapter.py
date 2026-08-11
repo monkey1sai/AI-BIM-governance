@@ -22,15 +22,20 @@ Honesty contract (design.md D7 / OQ2, host-native-conversion-authority-service s
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 from urllib.parse import unquote, urlparse
+import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 
 from conversion_authority import ConversionAuthorityError, _PLACEHOLDER_MARKERS
 from ifc_openusd_identity_author import IDENTITY_PROFILE, IfcOpenUsdIdentityAuthor
@@ -65,6 +70,7 @@ class Ifc2UsdcPowershellConverterAdapter:
         self.timeout_seconds = int(timeout_seconds)
         self.work_dir = Path(work_dir) if work_dir else self.repo_root
         self.ps1_path = self.repo_root / "scripts" / "convert-ifc-to-usdc.ps1"
+        self._group_privacy_cache: dict[int, bool] = {}
         # streaming-server-prefer-local-ifc-path: shared volume sandbox base for
         # dispatch payload host_local_path / local_path. Source = 顯式 storage_root
         # 參數,否則 env STORAGE_ROOT(compose 對齊)。兩者皆缺時不得 fallback
@@ -95,21 +101,1111 @@ class Ifc2UsdcPowershellConverterAdapter:
         executable = "kit.exe" if sys.platform == "win32" else "kit"
         return self._default_release_root() / "kit" / executable
 
-    def _default_hoops_main(self) -> Path | None:
+    def _locked_cad_extension_version(self) -> str:
+        app_path = self.repo_root / "source" / "apps" / "ezplus.bim_ifc_usd_converter.kit"
+        try:
+            app_source = app_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD converter version lock is unavailable.",
+            ) from exc
+        versions = set(
+            re.findall(
+                r'^\s*"omni\.services\.convert\.cad-(\d+\.\d+\.\d+)"\s*,?\s*$',
+                app_source,
+                re.MULTILINE,
+            )
+        )
+        if len(versions) != 1:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD converter version lock must contain exactly one pinned version.",
+            )
+        return next(iter(versions))
+
+    def _trusted_cad_entrypoint(self) -> tuple[str, str, int]:
+        platform_key = "windows-x86_64" if sys.platform == "win32" else "linux-x86_64"
+        expected_platform_marker = "wx64" if sys.platform == "win32" else "lx64"
+        manifest_path = self.repo_root / "config" / "trusted-cad-entrypoints.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            entry = manifest["packages"][platform_key]
+            package_name = str(entry["extension_package"])
+            expected_sha256 = str(entry["hoops_main_sha256"]).lower()
+            expected_size = int(entry["hoops_main_size"])
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Trusted CAD entrypoint manifest is missing or invalid for this platform.",
+            ) from exc
+        if manifest.get("schema_version") != "trusted-cad-entrypoints/v1":
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Trusted CAD entrypoint manifest schema is unsupported.",
+            )
+        locked_version = self._locked_cad_extension_version()
+        package_pattern = re.compile(
+            rf"^omni\.services\.convert\.cad-{re.escape(locked_version)}"
+            r"\+[A-Za-z0-9._-]+$"
+        )
+        if not package_pattern.fullmatch(package_name):
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Trusted CAD package build does not match the tracked version lock.",
+            )
+        build_metadata = package_name.split("+", 1)[1]
+        platform_markers = {"lx64", "wx64"}.intersection(build_metadata.split("."))
+        if platform_markers != {expected_platform_marker}:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Trusted CAD package build does not match the selected platform.",
+            )
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256) or expected_size <= 0:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Trusted CAD entrypoint digest metadata is invalid.",
+            )
+        return package_name, expected_sha256, expected_size
+
+    @staticmethod
+    def _sha256_file(path: Path) -> str:
+        hasher = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+
+    def _verify_cad_entrypoint_digest(
+        self,
+        path: Path,
+        *,
+        expected_sha256: str,
+        expected_size: int,
+    ) -> None:
+        try:
+            actual_size = path.stat().st_size
+            actual_sha256 = self._sha256_file(path)
+        except OSError as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Trusted CAD entrypoint could not be read for digest verification.",
+            ) from exc
+        if actual_size != expected_size or actual_sha256 != expected_sha256:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Trusted CAD entrypoint content digest does not match the tracked manifest.",
+            )
+
+    def _trusted_extension_cache_roots(self) -> tuple[Path, ...]:
+        if sys.platform == "win32":
+            local_app_data = (os.environ.get("LOCALAPPDATA") or "").strip()
+            return (Path(local_app_data) / "ov" / "data" / "exts",) if local_app_data else ()
+        return (Path.home() / ".local" / "share" / "ov" / "data" / "exts",)
+
+    def _group_is_private_to_process(self, group_id: int) -> bool:
+        if group_id in self._group_privacy_cache:
+            return self._group_privacy_cache[group_id]
+        # POSIX NSS/SSSD enumeration is not guaranteed to be complete.  A
+        # non-empty passwd result therefore cannot prove that a group has no
+        # other primary members.  Treat every group-writable directory as
+        # shared on POSIX; only the Windows path (which is governed by its DACL
+        # checks) can regard the synthetic group bit as private.
+        result = os.name == "nt"
+        self._group_privacy_cache[group_id] = result
+        return result
+
+    @staticmethod
+    def _windows_acl_has_only_trusted_writers(
+        owner_sid: str,
+        current_user_sid: str,
+        allow_aces: tuple[tuple[str, int, bool], ...],
+    ) -> bool:
+        trusted_writers = {
+            current_user_sid.upper(),
+            "S-1-3-4",  # OWNER RIGHTS resolves to the already-validated object owner
+            "S-1-5-18",  # LocalSystem
+            "S-1-5-32-544",  # Builtin Administrators
+        }
+        if owner_sid.upper() not in trusted_writers:
+            return False
+        write_mask = (
+            0x00000002  # FILE_WRITE_DATA / FILE_ADD_FILE
+            | 0x00000004  # FILE_APPEND_DATA / FILE_ADD_SUBDIRECTORY
+            | 0x00000010  # FILE_WRITE_EA
+            | 0x00000040  # FILE_DELETE_CHILD
+            | 0x00000100  # FILE_WRITE_ATTRIBUTES
+            | 0x00010000  # DELETE
+            | 0x00040000  # WRITE_DAC
+            | 0x00080000  # WRITE_OWNER
+            | 0x02000000  # MAXIMUM_ALLOWED (fail closed in an allow ACE)
+            | 0x10000000  # GENERIC_ALL
+            | 0x40000000  # GENERIC_WRITE
+        )
+        return all(
+            inherit_only or not (access_mask & write_mask) or sid.upper() in trusted_writers
+            for sid, access_mask, inherit_only in allow_aces
+        )
+
+    @staticmethod
+    def _windows_path_security_snapshot(
+        path: Path,
+        *,
+        handle: int | None = None,
+    ) -> tuple[str, str, tuple[tuple[str, int, bool], ...]]:
+        """Read owner and effective allow ACEs through a path or pinned handle."""
+
+        if os.name != "nt":
+            raise OSError("Windows ACL inspection is unavailable on this platform.")
+
+        import ctypes
+        from ctypes import wintypes
+
+        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        advapi32.GetNamedSecurityInfoW.argtypes = (
+            wintypes.LPWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+        )
+        advapi32.GetNamedSecurityInfoW.restype = wintypes.DWORD
+        advapi32.GetSecurityInfo.argtypes = (
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+        )
+        advapi32.GetSecurityInfo.restype = wintypes.DWORD
+        advapi32.ConvertSidToStringSidW.argtypes = (
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+        )
+        advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+        advapi32.OpenProcessToken.argtypes = (
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.HANDLE),
+        )
+        advapi32.OpenProcessToken.restype = wintypes.BOOL
+        advapi32.GetTokenInformation.argtypes = (
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        )
+        advapi32.GetTokenInformation.restype = wintypes.BOOL
+        advapi32.GetAclInformation.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.c_int,
+        )
+        advapi32.GetAclInformation.restype = wintypes.BOOL
+        advapi32.GetAce.argtypes = (
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.POINTER(ctypes.c_void_p),
+        )
+        advapi32.GetAce.restype = wintypes.BOOL
+        advapi32.IsValidSid.argtypes = (ctypes.c_void_p,)
+        advapi32.IsValidSid.restype = wintypes.BOOL
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        kernel32.LocalFree.argtypes = (ctypes.c_void_p,)
+        kernel32.LocalFree.restype = ctypes.c_void_p
+
+        def sid_to_string(sid_pointer: int) -> str:
+            if not sid_pointer or not advapi32.IsValidSid(ctypes.c_void_p(sid_pointer)):
+                raise OSError("Windows security descriptor contains an invalid SID.")
+            sid_text_pointer = ctypes.c_void_p()
+            if not advapi32.ConvertSidToStringSidW(
+                ctypes.c_void_p(sid_pointer), ctypes.byref(sid_text_pointer)
+            ):
+                raise ctypes.WinError(ctypes.get_last_error())
+            try:
+                return ctypes.wstring_at(sid_text_pointer.value)
+            finally:
+                kernel32.LocalFree(sid_text_pointer)
+
+        token_handle = wintypes.HANDLE()
+        if not advapi32.OpenProcessToken(
+            kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token_handle)
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            token_size = wintypes.DWORD()
+            advapi32.GetTokenInformation(token_handle, 1, None, 0, ctypes.byref(token_size))
+            if token_size.value == 0:
+                raise ctypes.WinError(ctypes.get_last_error())
+            token_buffer = ctypes.create_string_buffer(token_size.value)
+            if not advapi32.GetTokenInformation(
+                token_handle,
+                1,
+                token_buffer,
+                token_size,
+                ctypes.byref(token_size),
+            ):
+                raise ctypes.WinError(ctypes.get_last_error())
+            current_sid_pointer = ctypes.cast(
+                token_buffer, ctypes.POINTER(ctypes.c_void_p)
+            ).contents.value
+            current_user_sid = sid_to_string(current_sid_pointer)
+        finally:
+            kernel32.CloseHandle(token_handle)
+
+        owner_pointer = ctypes.c_void_p()
+        dacl_pointer = ctypes.c_void_p()
+        descriptor_pointer = ctypes.c_void_p()
+        security_information = 0x00000001 | 0x00000004
+        if handle is None:
+            result = advapi32.GetNamedSecurityInfoW(
+                str(path),
+                1,  # SE_FILE_OBJECT
+                security_information,
+                ctypes.byref(owner_pointer),
+                None,
+                ctypes.byref(dacl_pointer),
+                None,
+                ctypes.byref(descriptor_pointer),
+            )
+        else:
+            result = advapi32.GetSecurityInfo(
+                wintypes.HANDLE(handle),
+                1,  # SE_FILE_OBJECT
+                security_information,
+                ctypes.byref(owner_pointer),
+                None,
+                ctypes.byref(dacl_pointer),
+                None,
+                ctypes.byref(descriptor_pointer),
+            )
+        if result != 0:
+            raise ctypes.WinError(result)
+        try:
+            if not owner_pointer.value or not dacl_pointer.value:
+                raise OSError("Windows path has no enforceable owner/DACL.")
+            owner_sid = sid_to_string(owner_pointer.value)
+
+            class AclSizeInformation(ctypes.Structure):
+                _fields_ = (
+                    ("AceCount", wintypes.DWORD),
+                    ("AclBytesInUse", wintypes.DWORD),
+                    ("AclBytesFree", wintypes.DWORD),
+                )
+
+            class AceHeader(ctypes.Structure):
+                _fields_ = (
+                    ("AceType", ctypes.c_ubyte),
+                    ("AceFlags", ctypes.c_ubyte),
+                    ("AceSize", ctypes.c_ushort),
+                )
+
+            acl_info = AclSizeInformation()
+            if not advapi32.GetAclInformation(
+                dacl_pointer,
+                ctypes.byref(acl_info),
+                ctypes.sizeof(acl_info),
+                2,  # AclSizeInformation
+            ):
+                raise ctypes.WinError(ctypes.get_last_error())
+
+            allow_aces: list[tuple[str, int, bool]] = []
+            for index in range(acl_info.AceCount):
+                ace_pointer = ctypes.c_void_p()
+                if not advapi32.GetAce(dacl_pointer, index, ctypes.byref(ace_pointer)):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                header = ctypes.cast(ace_pointer, ctypes.POINTER(AceHeader)).contents
+                if header.AceType not in (0, 4, 5, 9, 11):
+                    continue
+                if header.AceSize < 12:
+                    raise OSError("Windows DACL contains a malformed allow ACE.")
+                access_mask = ctypes.c_uint32.from_address(ace_pointer.value + 4).value
+                if header.AceType in (0, 9):
+                    sid_offset = 8
+                elif header.AceType == 4:
+                    sid_offset = 12
+                else:
+                    object_flags = ctypes.c_uint32.from_address(ace_pointer.value + 8).value
+                    sid_offset = 12
+                    if object_flags & 0x1:
+                        sid_offset += 16
+                    if object_flags & 0x2:
+                        sid_offset += 16
+                if sid_offset >= header.AceSize:
+                    raise OSError("Windows DACL allow ACE has no SID payload.")
+                allow_aces.append(
+                    (
+                        sid_to_string(ace_pointer.value + sid_offset),
+                        access_mask,
+                        bool(header.AceFlags & 0x08),  # INHERIT_ONLY_ACE
+                    )
+                )
+            return owner_sid, current_user_sid, tuple(allow_aces)
+        finally:
+            kernel32.LocalFree(descriptor_pointer)
+
+    def _windows_path_component_is_owner_private(self, path: Path) -> bool:
+        try:
+            owner_sid, current_user_sid, allow_aces = self._windows_path_security_snapshot(path)
+        except (OSError, ValueError):
+            return False
+        return self._windows_acl_has_only_trusted_writers(owner_sid, current_user_sid, allow_aces)
+
+    def _posix_root_ancestry_is_trusted(self, root: Path) -> bool:
+        """Walk from the validation root's parent up to the filesystem root.
+
+        An ancestor owned by another non-root account, or writable by other
+        accounts without the sticky bit, would let that account rename the
+        otherwise owner-private tree after validation and substitute its own
+        content before the converter child reopens the entrypoint by pathname.
+        Sticky directories are exempt because other accounts cannot rename or
+        remove entries they do not own there.
+        """
+        current_uid = os.geteuid()
+        current = root
+        while True:
+            parent = current.parent
+            if parent == current:
+                return True
+            try:
+                parent_stat = parent.stat()
+            except OSError:
+                return False
+            if not stat.S_ISDIR(parent_stat.st_mode):
+                return False
+            if parent_stat.st_uid not in (0, current_uid):
+                return False
+            mode = parent_stat.st_mode
+            sticky = bool(mode & stat.S_ISVTX)
+            if mode & stat.S_IWOTH and not sticky:
+                return False
+            if (
+                mode & stat.S_IWGRP
+                and not sticky
+                and not self._group_is_private_to_process(parent_stat.st_gid)
+            ):
+                return False
+            current = parent
+
+    def _path_components_are_owner_private(
+        self,
+        root: Path,
+        leaf: Path,
+        *,
+        allow_leaf_world_write: bool = False,
+    ) -> bool:
+        try:
+            relative = leaf.relative_to(root)
+        except ValueError:
+            return False
+        components = [root]
+        current = root
+        for part in relative.parts:
+            current = current / part
+            components.append(current)
+        if os.name == "nt":
+            return all(
+                self._windows_path_component_is_owner_private(component)
+                for component in components
+            )
+
+        if not self._posix_root_ancestry_is_trusted(root):
+            return False
+        current_uid = os.geteuid()
+        for component in components:
+            try:
+                component_stat = component.stat()
+            except OSError:
+                return False
+            if component_stat.st_uid != current_uid:
+                return False
+            permitted_writable_leaf = allow_leaf_world_write and component == leaf
+            if component_stat.st_mode & stat.S_IWOTH and not permitted_writable_leaf:
+                return False
+            if (
+                component_stat.st_mode & stat.S_IWGRP
+                and not permitted_writable_leaf
+                and not self._group_is_private_to_process(component_stat.st_gid)
+            ):
+                return False
+        return True
+
+    def _resolve_symlinked_cad_entrypoint(
+        self,
+        *,
+        release_root: Path,
+        extension_root: Path,
+        candidate: Path,
+        expected_package_name: str,
+        allow_leaf_world_write: bool = False,
+    ) -> Path:
+        if extension_root.name != expected_package_name:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension cache candidate does not match the trusted package build.",
+            )
+        try:
+            resolved_release_root = release_root.resolve(strict=True)
+            resolved_link_parent = extension_root.parent.resolve(strict=True)
+            resolved_extension_root = extension_root.resolve(strict=True)
+            resolved_candidate = candidate.resolve(strict=True)
+        except OSError as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension cache candidate could not be resolved.",
+            ) from exc
+        if resolved_extension_root.name != extension_root.name:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension cache link target does not match its pinned package name.",
+            )
+        try:
+            resolved_candidate.relative_to(resolved_extension_root)
+        except ValueError as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension entrypoint escapes its package root.",
+            ) from exc
+        if not self._path_components_are_owner_private(resolved_release_root, resolved_link_parent):
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension cache link parent is not owner-private.",
+            )
+        if os.name != "nt" and extension_root.lstat().st_uid != os.geteuid():
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension cache link is not owned by the service account.",
+            )
+
+        contained_by_trusted_root = False
+        for trusted_root in self._trusted_extension_cache_roots():
+            try:
+                resolved_trusted_root = trusted_root.resolve(strict=True)
+            except OSError:
+                continue
+            try:
+                resolved_candidate.relative_to(resolved_trusted_root)
+            except ValueError:
+                continue
+            contained_by_trusted_root = True
+            if self._path_components_are_owner_private(
+                resolved_trusted_root,
+                resolved_candidate,
+                allow_leaf_world_write=allow_leaf_world_write,
+            ):
+                return resolved_candidate
+        if contained_by_trusted_root:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension cache path failed owner-private permission validation.",
+            )
+        raise ConversionAuthorityError(
+            "converter_unavailable",
+            "CAD extension cache link resolves outside an owner-approved cache root.",
+        )
+
+    @staticmethod
+    def _path_is_directory_link(path: Path) -> bool:
+        try:
+            if path.is_symlink():
+                return True
+            is_junction = getattr(path, "is_junction", None)
+            if is_junction and is_junction():
+                return True
+            file_attributes = getattr(path.lstat(), "st_file_attributes", 0)
+        except OSError as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension path link state could not be inspected safely.",
+            ) from exc
+        return bool(file_attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+
+    def _discover_default_hoops_main(self, *, allow_leaf_world_write: bool = False) -> Path | None:
         release_root = self._default_release_root()
         suffix = ("omni", "services", "convert", "cad", "services", "process", "hoops_main.py")
+        expected_package_name, expected_sha256, expected_size = self._trusted_cad_entrypoint()
+        try:
+            resolved_release_root = release_root.resolve(strict=True)
+        except OSError:
+            return None
+        matches: list[Path] = []
         for root_name in ("extscache", "exts", "extsbuild"):
             root = release_root / root_name
-            if not root.is_dir():
+            try:
+                root_stat = root.lstat()
+            except FileNotFoundError:
                 continue
-            for candidate in sorted(root.rglob("hoops_main.py")):
-                if candidate.parts[-len(suffix) :] == suffix:
-                    return candidate
-        return None
+            except OSError as exc:
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "CAD extension search root could not be inspected safely.",
+                ) from exc
+            if self._path_is_directory_link(root):
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "CAD extension search root must not be a link or junction.",
+                )
+            if not stat.S_ISDIR(root_stat.st_mode):
+                continue
+            try:
+                resolved_root = root.resolve(strict=True)
+                resolved_root.relative_to(resolved_release_root)
+            except (OSError, ValueError) as exc:
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "CAD extension search root escapes the Kit release root.",
+                ) from exc
+            for extension_root in sorted(root.glob("omni.services.convert.cad*")):
+                candidate = extension_root.joinpath(*suffix)
+                if not candidate.is_file():
+                    continue
+                if extension_root.name != expected_package_name:
+                    raise ConversionAuthorityError(
+                        "converter_unavailable",
+                        "CAD extension candidate does not match the trusted package build.",
+                    )
+                if self._path_is_directory_link(extension_root):
+                    resolved_candidate = self._resolve_symlinked_cad_entrypoint(
+                        release_root=release_root,
+                        extension_root=extension_root,
+                        candidate=candidate,
+                        expected_package_name=expected_package_name,
+                        allow_leaf_world_write=allow_leaf_world_write,
+                    )
+                else:
+                    try:
+                        resolved_extension_root = extension_root.resolve(strict=True)
+                        resolved_candidate = candidate.resolve(strict=True)
+                        resolved_extension_root.relative_to(resolved_root)
+                        resolved_candidate.relative_to(resolved_extension_root)
+                    except (OSError, ValueError) as exc:
+                        raise ConversionAuthorityError(
+                            "converter_unavailable",
+                            "CAD extension entrypoint escapes the Kit release root.",
+                        ) from exc
+                    if not self._path_components_are_owner_private(
+                        resolved_release_root,
+                        resolved_candidate,
+                        allow_leaf_world_write=allow_leaf_world_write,
+                    ):
+                        raise ConversionAuthorityError(
+                            "converter_unavailable",
+                            "CAD extension directory failed owner-private permission validation.",
+                        )
+                self._verify_cad_entrypoint_digest(
+                    resolved_candidate,
+                    expected_sha256=expected_sha256,
+                    expected_size=expected_size,
+                )
+                matches.append(resolved_candidate)
+        if len(matches) > 1:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Multiple CAD extension entrypoints were found; refusing an ambiguous selection.",
+            )
+        return matches[0] if matches else None
 
-    def preflight(self) -> None:
+    def _default_hoops_main(self) -> Path | None:
+        return self._discover_default_hoops_main()
+
+    def _trusted_directory_anchor(self, candidate: Path) -> Path:
+        anchors: list[Path] = []
+        for anchor in (self._default_release_root(), *self._trusted_extension_cache_roots()):
+            try:
+                resolved_anchor = anchor.resolve(strict=True)
+                candidate.parent.relative_to(resolved_anchor)
+            except (OSError, ValueError):
+                continue
+            if self._path_components_are_owner_private(resolved_anchor, candidate.parent):
+                anchors.append(resolved_anchor)
+        if not anchors:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Pinned CAD entrypoint parent has no owner-private trusted directory anchor.",
+            )
+        return max(anchors, key=lambda path: len(path.parts))
+
+    def _open_owner_private_parent_descriptor(self, candidate: Path) -> int:
+        anchor = self._trusted_directory_anchor(candidate)
+        try:
+            relative_parent = candidate.parent.relative_to(anchor)
+        except ValueError as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Pinned CAD entrypoint parent escapes its trusted directory anchor.",
+            ) from exc
+
+        directory_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+        opened: list[int] = []
+        current_path = anchor
+
+        def validate_opened_directory(descriptor: int, expected: os.stat_result) -> None:
+            actual = os.fstat(descriptor)
+            if (
+                (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino)
+                or not stat.S_ISDIR(actual.st_mode)
+            ):
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Trusted CAD directory identity changed while it was opened.",
+                )
+            if (
+                actual.st_uid != os.geteuid()
+                or actual.st_mode & stat.S_IWOTH
+                or (
+                    actual.st_mode & stat.S_IWGRP
+                    and not self._group_is_private_to_process(actual.st_gid)
+                )
+            ):
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Trusted CAD directory path is not owner-private.",
+                )
+
+        try:
+            expected = anchor.lstat()
+            if stat.S_ISLNK(expected.st_mode) or not stat.S_ISDIR(expected.st_mode):
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Trusted CAD directory anchor changed before it could be opened.",
+                )
+            opened.append(os.open(anchor, directory_flags))
+            validate_opened_directory(opened[-1], expected)
+            for part in relative_parent.parts:
+                current_path = current_path / part
+                expected = current_path.lstat()
+                if stat.S_ISLNK(expected.st_mode) or not stat.S_ISDIR(expected.st_mode):
+                    raise ConversionAuthorityError(
+                        "converter_unavailable",
+                        "Trusted CAD directory path contains a link or non-directory component.",
+                    )
+                opened.append(os.open(part, directory_flags, dir_fd=opened[-1]))
+                validate_opened_directory(opened[-1], expected)
+
+            parent_descriptor = opened.pop()
+            return parent_descriptor
+        finally:
+            for descriptor in reversed(opened):
+                os.close(descriptor)
+
+    def harden_default_hoops_main_permissions(self) -> Path:
+        """Atomically replace the pinned Linux entrypoint with a private inode.
+
+        NVIDIA's extension package can arrive with a world-writable Python leaf.
+        Deployment verifies tracked package/build/size/SHA-256, copies those exact
+        bytes to a new 0400 inode through a validated directory descriptor, fsyncs,
+        and atomically replaces the old directory entry. Existing writers remain
+        attached to the retired inode. Runtime discovery never accepts the unsafe
+        mode or an unpinned digest.
+        """
+        candidate = self._discover_default_hoops_main(allow_leaf_world_write=True)
+        if candidate is None:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Pinned CAD extension entrypoint is unavailable for permission hardening.",
+            )
+        if os.name == "nt":
+            return candidate
+
+        _, expected_sha256, expected_size = self._trusted_cad_entrypoint()
+        read_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+        parent_descriptor = -1
+        source_descriptor = -1
+        replacement_descriptor = -1
+        replacement_name = ""
+        try:
+            parent_descriptor = self._open_owner_private_parent_descriptor(candidate)
+            source_descriptor = os.open(candidate.name, read_flags, dir_fd=parent_descriptor)
+            source_stat = os.fstat(source_descriptor)
+            if source_stat.st_uid != os.geteuid() or not stat.S_ISREG(source_stat.st_mode):
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Pinned CAD extension entrypoint is not a service-owned regular file.",
+                )
+            if source_stat.st_size != expected_size:
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Pinned CAD extension entrypoint size changed before atomic hardening.",
+                )
+            trusted_bytes = bytearray()
+            while len(trusted_bytes) < expected_size:
+                chunk = os.read(source_descriptor, min(1024 * 1024, expected_size - len(trusted_bytes)))
+                if not chunk:
+                    break
+                trusted_bytes.extend(chunk)
+            if len(trusted_bytes) != expected_size or hashlib.sha256(trusted_bytes).hexdigest() != expected_sha256:
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Pinned CAD extension entrypoint content changed before atomic hardening.",
+                )
+
+            current_stat = os.stat(candidate.name, dir_fd=parent_descriptor, follow_symlinks=False)
+            if (source_stat.st_dev, source_stat.st_ino) != (current_stat.st_dev, current_stat.st_ino):
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Pinned CAD extension entrypoint path changed before atomic replacement.",
+                )
+            if stat.S_IMODE(source_stat.st_mode) == 0o400:
+                return candidate
+
+            create_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
+            for _ in range(16):
+                replacement_name = f".hoops_main.{secrets.token_hex(12)}.tmp"
+                try:
+                    replacement_descriptor = os.open(
+                        replacement_name,
+                        create_flags,
+                        0o400,
+                        dir_fd=parent_descriptor,
+                    )
+                    break
+                except FileExistsError:
+                    replacement_name = ""
+            if replacement_descriptor < 0:
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Could not create a private replacement for the CAD entrypoint.",
+                )
+            view = memoryview(trusted_bytes)
+            written = 0
+            while written < len(view):
+                write_count = os.write(replacement_descriptor, view[written:])
+                if write_count <= 0:
+                    raise ConversionAuthorityError(
+                        "converter_unavailable",
+                        "Private CAD entrypoint replacement could not be written completely.",
+                    )
+                written += write_count
+            os.fchmod(replacement_descriptor, 0o400)
+            os.fsync(replacement_descriptor)
+            replacement_stat = os.fstat(replacement_descriptor)
+            if (
+                replacement_stat.st_uid != os.geteuid()
+                or stat.S_IMODE(replacement_stat.st_mode) != 0o400
+            ):
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Private CAD entrypoint replacement did not retain owner-only read access.",
+                )
+
+            os.replace(
+                replacement_name,
+                candidate.name,
+                src_dir_fd=parent_descriptor,
+                dst_dir_fd=parent_descriptor,
+            )
+            replacement_name = ""
+            os.fsync(parent_descriptor)
+        except OSError as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Pinned CAD extension entrypoint atomic hardening failed.",
+            ) from exc
+        finally:
+            if replacement_descriptor >= 0:
+                os.close(replacement_descriptor)
+            if source_descriptor >= 0:
+                os.close(source_descriptor)
+            if replacement_name and parent_descriptor >= 0:
+                try:
+                    os.unlink(replacement_name, dir_fd=parent_descriptor)
+                except FileNotFoundError:
+                    pass
+            if parent_descriptor >= 0:
+                os.close(parent_descriptor)
+
+        hardened = self._default_hoops_main()
+        if hardened is None or hardened != candidate:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Pinned CAD extension entrypoint changed after permission hardening.",
+            )
+        return hardened
+
+    @staticmethod
+    def _hoops_file_identity(path: Path) -> tuple[int, int, int, int, str]:
+        file_stat = path.stat()
+        return (
+            file_stat.st_dev,
+            file_stat.st_ino,
+            file_stat.st_size,
+            file_stat.st_mtime_ns,
+            Ifc2UsdcPowershellConverterAdapter._sha256_file(path),
+        )
+
+    def _validated_hoops_main_for_execution(
+        self,
+        validated: Path,
+        identity: tuple[int, int, int, int, str],
+    ) -> Path:
+        if self.hoops_main_path is None:
+            current = self._default_hoops_main()
+            if current is None or current != validated:
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "CAD extension entrypoint changed after preflight.",
+                )
+        else:
+            try:
+                current = self.hoops_main_path.resolve(strict=True)
+            except OSError as exc:
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Configured HOOPS entrypoint is unavailable.",
+                ) from exc
+            if current != validated:
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Configured HOOPS entrypoint changed after preflight.",
+                )
+        try:
+            current_identity = self._hoops_file_identity(validated)
+        except OSError as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension entrypoint disappeared after preflight.",
+            ) from exc
+        if current_identity != identity:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension entrypoint identity changed after preflight.",
+            )
+        return validated
+
+    @contextmanager
+    def _hold_windows_hoops_entrypoint_for_execution(
+        self,
+        candidate: Path,
+        identity: tuple[int, int, int, int, str],
+    ) -> Iterator[None]:
+        """Pin every trusted Windows path component until the converter exits."""
+
+        if os.name != "nt":
+            yield
+            return
+
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateFileW.argtypes = (
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        )
+        kernel32.CreateFileW.restype = wintypes.HANDLE
+        kernel32.GetFileInformationByHandle.argtypes = (
+            wintypes.HANDLE,
+            ctypes.c_void_p,
+        )
+        kernel32.GetFileInformationByHandle.restype = wintypes.BOOL
+        kernel32.GetFinalPathNameByHandleW.argtypes = (
+            wintypes.HANDLE,
+            wintypes.LPWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+        )
+        kernel32.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.DuplicateHandle.argtypes = (
+            wintypes.HANDLE,
+            wintypes.HANDLE,
+            wintypes.HANDLE,
+            ctypes.POINTER(wintypes.HANDLE),
+            wintypes.DWORD,
+            wintypes.BOOL,
+            wintypes.DWORD,
+        )
+        kernel32.DuplicateHandle.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        class ByHandleFileInformation(ctypes.Structure):
+            _fields_ = (
+                ("dwFileAttributes", wintypes.DWORD),
+                ("ftCreationTime", wintypes.FILETIME),
+                ("ftLastAccessTime", wintypes.FILETIME),
+                ("ftLastWriteTime", wintypes.FILETIME),
+                ("dwVolumeSerialNumber", wintypes.DWORD),
+                ("nFileSizeHigh", wintypes.DWORD),
+                ("nFileSizeLow", wintypes.DWORD),
+                ("nNumberOfLinks", wintypes.DWORD),
+                ("nFileIndexHigh", wintypes.DWORD),
+                ("nFileIndexLow", wintypes.DWORD),
+            )
+
+        def normalized_handle_path(raw_path: str) -> str:
+            if raw_path.startswith("\\\\?\\UNC\\"):
+                raw_path = "\\\\" + raw_path[8:]
+            elif raw_path.startswith("\\\\?\\"):
+                raw_path = raw_path[4:]
+            return os.path.normcase(os.path.abspath(os.path.normpath(raw_path)))
+
+        try:
+            anchor = self._trusted_directory_anchor(candidate)
+        except ConversionAuthorityError:
+            if self.hoops_main_path is None:
+                raise
+            try:
+                anchor = candidate.parent.resolve(strict=True)
+            except OSError as exc:
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Configured HOOPS entrypoint parent could not be resolved safely.",
+                ) from exc
+            if not self._path_components_are_owner_private(anchor, anchor):
+                raise ConversionAuthorityError(
+                    "converter_unavailable",
+                    "Configured HOOPS entrypoint parent is not owner-private.",
+                )
+
+        try:
+            relative = candidate.relative_to(anchor)
+        except ValueError as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension entrypoint escapes its trusted execution anchor.",
+            ) from exc
+
+        components = [anchor]
+        current = anchor
+        for part in relative.parts:
+            current = current / part
+            components.append(current)
+
+        handles: list[int] = []
+        duplicate_handle_value = 0
+        duplicate_fd = -1
+        invalid_handle_value = ctypes.c_void_p(-1).value
+        try:
+            for index, component in enumerate(components):
+                is_leaf = index == len(components) - 1
+                desired_access = 0x00020000 | (0x80000000 if is_leaf else 0x00000080)
+                raw_handle = kernel32.CreateFileW(
+                    str(component),
+                    desired_access,
+                    0x00000001,  # FILE_SHARE_READ only: deny pre-existing/new write or delete handles
+                    None,
+                    3,  # OPEN_EXISTING
+                    0x02000000 | 0x00200000,  # BACKUP_SEMANTICS | OPEN_REPARSE_POINT
+                    None,
+                )
+                handle_value = int(raw_handle) if raw_handle is not None else 0
+                if not handle_value or handle_value == invalid_handle_value:
+                    raise ctypes.WinError(ctypes.get_last_error())
+                handles.append(handle_value)
+
+                file_information = ByHandleFileInformation()
+                if not kernel32.GetFileInformationByHandle(
+                    wintypes.HANDLE(handle_value), ctypes.byref(file_information)
+                ):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                if file_information.dwFileAttributes & 0x00000400:
+                    raise OSError("Pinned CAD execution path contains a reparse point.")
+                is_directory = bool(file_information.dwFileAttributes & 0x00000010)
+                if is_directory == is_leaf:
+                    raise OSError("Pinned CAD execution path component has the wrong type.")
+
+                final_path_buffer = ctypes.create_unicode_buffer(32768)
+                final_path_size = kernel32.GetFinalPathNameByHandleW(
+                    wintypes.HANDLE(handle_value),
+                    final_path_buffer,
+                    len(final_path_buffer),
+                    0,
+                )
+                if final_path_size == 0 or final_path_size >= len(final_path_buffer):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                if normalized_handle_path(final_path_buffer.value) != normalized_handle_path(
+                    str(component)
+                ):
+                    raise OSError("Pinned CAD execution path identity changed during traversal.")
+
+                owner_sid, current_user_sid, allow_aces = self._windows_path_security_snapshot(
+                    component,
+                    handle=handle_value,
+                )
+                if not self._windows_acl_has_only_trusted_writers(
+                    owner_sid,
+                    current_user_sid,
+                    allow_aces,
+                ):
+                    raise OSError("Pinned CAD execution path has an untrusted Windows writer.")
+
+            current_process = kernel32.GetCurrentProcess()
+            duplicate_handle = wintypes.HANDLE()
+            if not kernel32.DuplicateHandle(
+                current_process,
+                wintypes.HANDLE(handles[-1]),
+                current_process,
+                ctypes.byref(duplicate_handle),
+                0,
+                False,
+                0x00000002,  # DUPLICATE_SAME_ACCESS
+            ):
+                raise ctypes.WinError(ctypes.get_last_error())
+            duplicate_handle_value = int(duplicate_handle.value or 0)
+            duplicate_fd = msvcrt.open_osfhandle(
+                duplicate_handle_value,
+                os.O_RDONLY | getattr(os, "O_BINARY", 0),
+            )
+            duplicate_handle_value = 0  # the CRT descriptor now owns the duplicate
+            file_stat = os.fstat(duplicate_fd)
+            digest = hashlib.sha256()
+            while True:
+                chunk = os.read(duplicate_fd, 1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+            handle_identity = (
+                file_stat.st_dev,
+                file_stat.st_ino,
+                file_stat.st_size,
+                file_stat.st_mtime_ns,
+                digest.hexdigest(),
+            )
+            if handle_identity != identity:
+                raise OSError("Pinned CAD entrypoint handle identity changed after preflight.")
+
+            yield
+        except ConversionAuthorityError:
+            raise
+        except (OSError, ValueError) as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "CAD extension entrypoint could not be pinned safely for execution.",
+            ) from exc
+        finally:
+            if duplicate_fd >= 0:
+                os.close(duplicate_fd)
+            elif duplicate_handle_value:
+                kernel32.CloseHandle(wintypes.HANDLE(duplicate_handle_value))
+            for handle_value in reversed(handles):
+                kernel32.CloseHandle(wintypes.HANDLE(handle_value))
+
+    def _preflight_with_hoops_validation(
+        self,
+    ) -> tuple[Path, tuple[int, int, int, int, str]]:
         """Fail fast (and honestly) when any real converter prerequisite is missing."""
         missing: list[str] = []
+        validated_hoops_main: Path | None = None
+        validated_hoops_identity: tuple[int, int, int, int, str] | None = None
         # storage sandbox base 已由 __init__ 強制(顯式 storage_root 或 env
         # STORAGE_ROOT,空白/缺失即 raise converter_unavailable),self.storage_root
         # 因此恆為非空 Path;不在此重複檢查一個永遠 truthy 的屬性(死碼會給假安全感)。
@@ -127,13 +1223,32 @@ class Ifc2UsdcPowershellConverterAdapter:
         effective_kit = self.kit_exe_path or self._default_kit_exe()
         if not effective_kit.is_file():
             missing.append(f"Kit executable not found: {effective_kit}")
-        effective_hoops = self.hoops_main_path or self._default_hoops_main()
-        if effective_hoops is None or not effective_hoops.is_file():
-            missing.append(
-                f"HOOPS entrypoint not found under: {self._default_release_root()}"
-                if self.hoops_main_path is None
-                else f"configured HOOPS entrypoint not found: {self.hoops_main_path}"
-            )
+        hoops_validation_failed = False
+        if self.hoops_main_path is None:
+            try:
+                effective_hoops = self._default_hoops_main()
+            except ConversionAuthorityError as exc:
+                missing.append(f"HOOPS entrypoint not found or validation failed: {exc.message}")
+                effective_hoops = None
+                hoops_validation_failed = True
+        else:
+            effective_hoops = self.hoops_main_path
+        if not hoops_validation_failed:
+            if effective_hoops is None or not effective_hoops.is_file():
+                missing.append(
+                    f"HOOPS entrypoint not found under: {self._default_release_root()}"
+                    if self.hoops_main_path is None
+                    else f"configured HOOPS entrypoint not found: {self.hoops_main_path}"
+                )
+            else:
+                try:
+                    resolved_hoops = effective_hoops.resolve(strict=True)
+                    hoops_identity = self._hoops_file_identity(resolved_hoops)
+                except OSError:
+                    missing.append("HOOPS entrypoint changed while preflight was validating it")
+                else:
+                    validated_hoops_main = resolved_hoops
+                    validated_hoops_identity = hoops_identity
         if self.config_path is not None and not self.config_path.exists():
             missing.append(f"converter config not found: {self.config_path}")
         # USD runtime is only needed on the enumeration fallback (no converter
@@ -145,6 +1260,15 @@ class Ifc2UsdcPowershellConverterAdapter:
                 "Host-native IFC->USDC converter prerequisites missing: "
                 + "; ".join(missing),
             )
+        if validated_hoops_main is None or validated_hoops_identity is None:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "HOOPS entrypoint validation did not produce an execution identity.",
+            )
+        return validated_hoops_main, validated_hoops_identity
+
+    def preflight(self) -> None:
+        self._preflight_with_hoops_validation()
 
     # -- convert -------------------------------------------------------------
 
@@ -161,11 +1285,13 @@ class Ifc2UsdcPowershellConverterAdapter:
                 "invalid_conversion_profile",
                 f"Unsupported conversion_profile: {conversion_profile}",
             )
+        validated_hoops_main: Path | None = None
+        validated_hoops_identity: tuple[int, int, int, int, str] | None = None
         if conversion_profile != IDENTITY_PROFILE:
             # Preserve the default converter's fail-fast prerequisite contract.
             # The identity profile is IFC-first and intentionally does not use
             # PowerShell, Kit, or HOOPS.
-            self.preflight()
+            validated_hoops_main, validated_hoops_identity = self._preflight_with_hoops_validation()
 
         ifc_path = self._resolve_local_ifc(ifc_ready_event)
         output_dir = Path(output_dir)
@@ -196,11 +1322,18 @@ class Ifc2UsdcPowershellConverterAdapter:
                 "quality_metrics": authored["quality_metrics"],
             }
         trace_id = str(job.get("trace_id") or job["conversion_job_id"])
+        if validated_hoops_main is None or validated_hoops_identity is None:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Conversion execution is missing a validated HOOPS entrypoint identity.",
+            )
         try:
             self._run_powershell_conversion(
                 ifc_path=ifc_path,
                 output_dir=output_dir,
                 trace_id=trace_id,
+                validated_hoops_main=validated_hoops_main,
+                validated_hoops_identity=validated_hoops_identity,
             )
         except ConversionAuthorityError as exc:
             if not self._is_primary_ifc_import_failure(exc):
@@ -369,7 +1502,13 @@ class Ifc2UsdcPowershellConverterAdapter:
         ifc_path: Path,
         output_dir: Path,
         trace_id: str | None = None,
+        validated_hoops_main: Path,
+        validated_hoops_identity: tuple[int, int, int, int, str],
     ) -> None:
+        validated_hoops_main = self._validated_hoops_main_for_execution(
+            validated_hoops_main,
+            validated_hoops_identity,
+        )
         cmd: list[str] = [
             self.powershell_exe,
             "-NoProfile",
@@ -393,22 +1532,52 @@ class Ifc2UsdcPowershellConverterAdapter:
             cmd += ["-ConfigPath", str(self.config_path.resolve())]
         if self.kit_exe_path is not None:
             cmd += ["-KitExePath", str(self.kit_exe_path.resolve())]
-        if self.hoops_main_path is not None:
-            cmd += ["-HoopsMainPath", str(self.hoops_main_path.resolve())]
+        cmd += ["-HoopsMainPath", str(validated_hoops_main)]
         try:
-            completed = subprocess.run(
-                cmd,
-                cwd=str(self.repo_root),
-                capture_output=True,
-                text=True,
-                timeout=self.timeout_seconds,
-                shell=False,
-                check=False,
-            )
+            with self._hold_windows_hoops_entrypoint_for_execution(
+                validated_hoops_main,
+                validated_hoops_identity,
+            ):
+                # capture_output=True 會讓 PowerShell 與它啟動的 Kit 子行程都繼承
+                # stdout/stderr pipe。timeout 到期時 subprocess.run 只 kill 直接子行程
+                # (PowerShell);Kit 若仍握著 pipe 寫端,run() 事後的清理 communicate()
+                # 會無限等 EOF——parent 已退、child 持 pipe 的掛死(CPython 已知行為,
+                # 與 host-native-launcher 對 repo.bat 的同型病)。改用暫存檔重導向:
+                # kill 之後沒有 pipe 可等,輸出仍完整讀得回來。外層 timeout 加 30 秒
+                # buffer,讓 ps1 自己的 -TimeoutSeconds 先行清理 Kit 子樹,外層只當
+                # 最後保險而不是與內層搶同一個瞬間。
+                with tempfile.TemporaryFile() as stdout_handle, tempfile.TemporaryFile() as stderr_handle:
+                    raw_completed = subprocess.run(
+                        cmd,
+                        cwd=str(self.repo_root),
+                        stdout=stdout_handle,
+                        stderr=stderr_handle,
+                        timeout=self.timeout_seconds + 30,
+                        shell=False,
+                        check=False,
+                    )
+                    stdout_handle.seek(0)
+                    stderr_handle.seek(0)
+                    stdout_text = stdout_handle.read().decode("utf-8", errors="replace")
+                    stderr_text = stderr_handle.read().decode("utf-8", errors="replace")
+                completed = subprocess.CompletedProcess(
+                    args=raw_completed.args,
+                    returncode=raw_completed.returncode,
+                    stdout=(
+                        raw_completed.stdout
+                        if isinstance(raw_completed.stdout, str) and raw_completed.stdout
+                        else stdout_text
+                    ),
+                    stderr=(
+                        raw_completed.stderr
+                        if isinstance(raw_completed.stderr, str) and raw_completed.stderr
+                        else stderr_text
+                    ),
+                )
         except subprocess.TimeoutExpired as exc:
             raise ConversionAuthorityError(
                 "converter_timeout",
-                f"convert-ifc-to-usdc.ps1 exceeded {self.timeout_seconds}s and was killed.",
+                f"convert-ifc-to-usdc.ps1 exceeded {self.timeout_seconds + 30}s and was killed.",
             ) from exc
         except OSError as exc:
             raise ConversionAuthorityError(

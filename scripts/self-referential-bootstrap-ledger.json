@@ -99,6 +99,46 @@
           "docs/evidence/remote-linux-deploy-target/fixpoint/summary.md"
         ]
       }
+    },
+    {
+      "id": "linux-test-deploy-verifier-hardening",
+      "status": "open",
+      "pr": 484,
+      "opened_at": "2026-08-10T06:53:57Z",
+      "reason": "the canonical deployment transport consumes only freshly fetched origin/main, so this branch cannot exercise its changed deploy launcher and strict verifier as canonical post-change evidence before merge; the bootstrap run is isolated and requires a mainline fixpoint rebuild",
+      "verification_mechanism_paths": [
+        "scripts/deploy.ps1",
+        "scripts/lib/host-native-launcher.ps1",
+        "scripts/self-referential-bootstrap-ledger.json",
+        "scripts/tests/test-self-referential-bootstrap.ps1",
+        "scripts/verify-all.ps1",
+        "scripts/verify-all.sh"
+      ],
+      "verification_contract": {
+        "id": "linux-test-deploy-verifier-hardening/v1",
+        "command_ids": [
+          "test-host-native-conversion-service",
+          "test-host-native-launcher",
+          "test-kit-manager-api",
+          "test-verify-all",
+          "test-deploy-target-registry",
+          "test-rebuild-test-deploy",
+          "test-remote-deploy-transport",
+          "test-deploy-governance-static",
+          "test-self-referential-bootstrap",
+          "test-agent-governance-check",
+          "invoke-powershell-static",
+          "harden-cad-extension-cache",
+          "canonical-linux-rebuild",
+          "canonical-linux-deployment-verify"
+        ],
+        "contract_sha256": "5caa635738c142274b5dbd0f045ceb8436f5401565306a5464f2086d6b472a64"
+      },
+      "bootstrap_evidence_refs": [
+        "docs/evidence/linux-test-deploy-verifier-hardening/self-referential-bootstrap/README.md",
+        "docs/evidence/linux-test-deploy-verifier-hardening/self-referential-bootstrap/verification.txt"
+      ],
+      "fixpoint": null
     }
   ]
 }

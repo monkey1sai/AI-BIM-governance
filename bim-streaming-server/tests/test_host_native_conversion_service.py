@@ -1,5 +1,8 @@
+import hashlib
 import json
 import os
+import stat
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -317,7 +320,10 @@ def test_adapter_builds_powershell_command_and_confirms_usdc(tmp_path: Path, mon
     captured = {}
 
     class _Completed:
+        args: list = []
         returncode = 0
+        stdout = None
+        stderr = None
         stdout = ""
         stderr = ""
 
@@ -389,6 +395,781 @@ def test_adapter_from_env_keeps_unset_paths_none(tmp_path: Path):
     assert adapter.kit_exe_path is None
     assert adapter.hoops_main_path is None
     assert adapter.timeout_seconds == 600
+
+
+def _write_cad_converter_lock(repo_root: Path, version: str = "508.0.3") -> None:
+    app_path = repo_root / "source" / "apps" / "ezplus.bim_ifc_usd_converter.kit"
+    app_path.parent.mkdir(parents=True, exist_ok=True)
+    app_path.write_text(
+        '[settings.app.exts]\nenabled = [\n'
+        f'    "omni.services.convert.cad-{version}",\n'
+        ']\n',
+        encoding="utf-8",
+    )
+
+
+def _cad_package_name(
+    label: str,
+    *,
+    version: str = "508.0.3",
+    platform_marker: str | None = None,
+) -> str:
+    marker = platform_marker or ("wx64" if sys.platform == "win32" else "lx64")
+    return f"omni.services.convert.cad-{version}+110.0.0.{marker}.r.cp312.{label}"
+
+
+def _write_trusted_cad_manifest(
+    repo_root: Path,
+    *,
+    package_name: str,
+    hoops_main: Path,
+) -> None:
+    platform_key = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
+    manifest_path = repo_root / "config" / "trusted-cad-entrypoints.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    body = hoops_main.read_bytes()
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "trusted-cad-entrypoints/v1",
+                "packages": {
+                    platform_key: {
+                        "extension_package": package_name,
+                        "hoops_main_sha256": hashlib.sha256(body).hexdigest(),
+                        "hoops_main_size": len(body),
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_trusted_cad_entrypoint_rejects_opposite_platform_package(tmp_path: Path):
+    _write_cad_converter_lock(tmp_path)
+    hoops_main = tmp_path / "hoops_main.py"
+    hoops_main.write_text("# fixture", encoding="utf-8")
+    opposite_marker = "lx64" if sys.platform == "win32" else "wx64"
+    _write_trusted_cad_manifest(
+        tmp_path,
+        package_name=_cad_package_name("wrong-platform", platform_marker=opposite_marker),
+        hoops_main=hoops_main,
+    )
+    adapter = Ifc2UsdcPowershellConverterAdapter(
+        repo_root=tmp_path,
+        storage_root=tmp_path / "storage",
+    )
+
+    with pytest.raises(ConversionAuthorityError, match="selected platform"):
+        adapter._trusted_cad_entrypoint()
+
+
+def _validated_explicit_hoops(
+    adapter: Ifc2UsdcPowershellConverterAdapter,
+) -> tuple[Path, tuple[int, int, int, int, str]]:
+    hoops_main = adapter.repo_root / "fixture-hoops_main.py"
+    hoops_main.write_text("# explicit fixture", encoding="utf-8")
+    adapter.hoops_main_path = hoops_main
+    resolved = hoops_main.resolve(strict=True)
+    return resolved, adapter._hoops_file_identity(resolved)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX group ownership contract")
+def test_group_privacy_fails_closed_when_user_database_is_not_enumerable(
+    tmp_path: Path, monkeypatch
+):
+    import pwd
+
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    monkeypatch.setattr(pwd, "getpwall", lambda: [])
+
+    assert adapter._group_is_private_to_process(os.getegid()) is False
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX group ownership contract")
+def test_group_privacy_result_is_cached_per_gid(tmp_path: Path, monkeypatch):
+    import pwd
+
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    group_id = os.getegid()
+    enumerations = 0
+
+    def _users():
+        nonlocal enumerations
+        enumerations += 1
+        return [types.SimpleNamespace(pw_gid=group_id, pw_uid=os.geteuid())]
+
+    monkeypatch.setattr(pwd, "getpwall", _users)
+
+    assert adapter._group_is_private_to_process(group_id) is False
+    assert adapter._group_is_private_to_process(group_id) is False
+    assert enumerations == 0
+    assert adapter._group_privacy_cache[group_id] is False
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX group ownership contract")
+def test_group_privacy_rejects_partial_nss_enumeration(tmp_path: Path, monkeypatch):
+    import pwd
+
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    monkeypatch.setattr(
+        pwd,
+        "getpwall",
+        lambda: [types.SimpleNamespace(pw_gid=os.getegid(), pw_uid=os.geteuid())],
+    )
+
+    assert adapter._group_is_private_to_process(os.getegid()) is False
+
+
+def _patch_posix_ancestry_stat_table(monkeypatch, table: dict, euid: int = 1000) -> None:
+    monkeypatch.setattr(os, "geteuid", lambda: euid, raising=False)
+
+    def _table_stat(self, *, follow_symlinks: bool = True):
+        key = self.as_posix()
+        if key not in table:
+            raise FileNotFoundError(key)
+        mode, uid, gid = table[key]
+        return os.stat_result((mode, 1, 1, 1, uid, gid, 0, 0, 0, 0))
+
+    monkeypatch.setattr(Path, "stat", _table_stat)
+
+
+def test_posix_root_ancestry_accepts_root_owned_unwritable_ancestors(tmp_path: Path, monkeypatch):
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    _patch_posix_ancestry_stat_table(
+        monkeypatch,
+        {
+            "/": (stat.S_IFDIR | 0o755, 0, 0),
+            "/home": (stat.S_IFDIR | 0o755, 0, 0),
+            "/home/svc": (stat.S_IFDIR | 0o700, 1000, 1000),
+        },
+    )
+
+    assert adapter._posix_root_ancestry_is_trusted(Path("/home/svc/anchor")) is True
+
+
+def test_posix_root_ancestry_rejects_other_writable_ancestor_without_sticky(
+    tmp_path: Path, monkeypatch
+):
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    _patch_posix_ancestry_stat_table(
+        monkeypatch,
+        {
+            "/": (stat.S_IFDIR | 0o755, 0, 0),
+            "/home": (stat.S_IFDIR | 0o777, 0, 0),
+            "/home/svc": (stat.S_IFDIR | 0o700, 1000, 1000),
+        },
+    )
+
+    assert adapter._posix_root_ancestry_is_trusted(Path("/home/svc/anchor")) is False
+
+
+def test_posix_root_ancestry_accepts_sticky_world_writable_ancestor(tmp_path: Path, monkeypatch):
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    _patch_posix_ancestry_stat_table(
+        monkeypatch,
+        {
+            "/": (stat.S_IFDIR | 0o755, 0, 0),
+            "/tmp": (stat.S_IFDIR | stat.S_ISVTX | 0o777, 0, 0),
+            "/tmp/svc-priv": (stat.S_IFDIR | 0o700, 1000, 1000),
+        },
+    )
+
+    assert adapter._posix_root_ancestry_is_trusted(Path("/tmp/svc-priv/anchor")) is True
+
+
+def test_posix_root_ancestry_rejects_ancestor_owned_by_other_account(tmp_path: Path, monkeypatch):
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    _patch_posix_ancestry_stat_table(
+        monkeypatch,
+        {
+            "/": (stat.S_IFDIR | 0o755, 0, 0),
+            "/home": (stat.S_IFDIR | 0o700, 2000, 2000),
+            "/home/svc": (stat.S_IFDIR | 0o700, 1000, 1000),
+        },
+    )
+
+    assert adapter._posix_root_ancestry_is_trusted(Path("/home/svc/anchor")) is False
+
+
+def test_posix_root_ancestry_rejects_group_writable_ancestor_without_private_group(
+    tmp_path: Path, monkeypatch
+):
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    monkeypatch.setattr(adapter, "_group_is_private_to_process", lambda gid: False)
+    _patch_posix_ancestry_stat_table(
+        monkeypatch,
+        {
+            "/": (stat.S_IFDIR | 0o755, 0, 0),
+            "/home": (stat.S_IFDIR | 0o775, 0, 0),
+            "/home/svc": (stat.S_IFDIR | 0o700, 1000, 1000),
+        },
+    )
+
+    assert adapter._posix_root_ancestry_is_trusted(Path("/home/svc/anchor")) is False
+
+
+def _write_symlinked_cad_package(
+    *,
+    release_root: Path,
+    package_cache: Path,
+    package_name: str,
+    root_name: str = "extscache",
+) -> tuple[Path, Path]:
+    package_root = package_cache / package_name
+    hoops_main = (
+        package_root
+        / "omni"
+        / "services"
+        / "convert"
+        / "cad"
+        / "services"
+        / "process"
+        / "hoops_main.py"
+    )
+    hoops_main.parent.mkdir(parents=True, exist_ok=True)
+    hoops_main.write_text("# fixture", encoding="utf-8")
+    extension_cache = release_root / root_name
+    extension_cache.mkdir(parents=True, exist_ok=True)
+    extension_link = extension_cache / package_name
+    try:
+        extension_link.symlink_to(package_root, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlinks are unavailable on this test host: {exc}")
+    return extension_link, hoops_main
+
+
+def test_default_hoops_entrypoint_resolves_pinned_owner_cache_symlink(
+    tmp_path: Path, monkeypatch
+):
+    platform_dir = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
+    release_root = tmp_path / "_build" / platform_dir / "release"
+    package_cache = tmp_path / "official-cache"
+    _write_cad_converter_lock(tmp_path)
+    package_name = _cad_package_name("fixture")
+    _, hoops_main = _write_symlinked_cad_package(
+        release_root=release_root,
+        package_cache=package_cache,
+        package_name=package_name,
+    )
+    _write_trusted_cad_manifest(tmp_path, package_name=package_name, hoops_main=hoops_main)
+
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    monkeypatch.setattr(adapter, "_trusted_extension_cache_roots", lambda: (package_cache,))
+
+    resolved_hoops_main = adapter._default_hoops_main()
+
+    assert resolved_hoops_main is not None
+    assert resolved_hoops_main.resolve() == hoops_main.resolve()
+
+
+def test_default_hoops_entrypoint_treats_junction_like_a_link(tmp_path: Path, monkeypatch):
+    platform_dir = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
+    release_root = tmp_path / "_build" / platform_dir / "release"
+    package_cache = tmp_path / "official-cache"
+    _write_cad_converter_lock(tmp_path)
+    package_name = _cad_package_name("junction")
+    extension_link, hoops_main = _write_symlinked_cad_package(
+        release_root=release_root,
+        package_cache=package_cache,
+        package_name=package_name,
+    )
+    _write_trusted_cad_manifest(tmp_path, package_name=package_name, hoops_main=hoops_main)
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    monkeypatch.setattr(adapter, "_trusted_extension_cache_roots", lambda: (package_cache,))
+    original_is_symlink = Path.is_symlink
+    original_link_probe = adapter._path_is_directory_link
+    monkeypatch.setattr(
+        Path,
+        "is_symlink",
+        lambda path: False if path == extension_link else original_is_symlink(path),
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_path_is_directory_link",
+        lambda path: True if path == extension_link else original_link_probe(path),
+    )
+
+    resolved_hoops_main = adapter._default_hoops_main()
+
+    assert resolved_hoops_main is not None
+    assert resolved_hoops_main.resolve() == hoops_main.resolve()
+
+
+def test_directory_link_probe_uses_reparse_attributes_without_path_is_junction():
+    class LegacyJunctionPath:
+        def is_symlink(self):
+            return False
+
+        def lstat(self):
+            return type("LegacyWindowsStat", (), {"st_file_attributes": 0x400})()
+
+    assert Ifc2UsdcPowershellConverterAdapter._path_is_directory_link(LegacyJunctionPath())
+
+
+def test_directory_link_probe_fails_closed_when_link_state_cannot_be_read():
+    class UninspectableLegacyPath:
+        def is_symlink(self):
+            return False
+
+        def lstat(self):
+            raise OSError("fixture access denied")
+
+    with pytest.raises(ConversionAuthorityError, match="could not be inspected safely"):
+        Ifc2UsdcPowershellConverterAdapter._path_is_directory_link(
+            UninspectableLegacyPath()
+        )
+
+
+def test_windows_acl_policy_rejects_untrusted_owner_or_writer():
+    current_user = "S-1-5-21-1000"
+    trusted_admin = "S-1-5-32-544"
+    everyone = "S-1-1-0"
+
+    assert Ifc2UsdcPowershellConverterAdapter._windows_acl_has_only_trusted_writers(
+        current_user,
+        current_user,
+        ((current_user, 0x40000000, False), (trusted_admin, 0x10000000, False)),
+    )
+    assert Ifc2UsdcPowershellConverterAdapter._windows_acl_has_only_trusted_writers(
+        current_user,
+        current_user,
+        (("S-1-3-4", 0x10000000, False),),
+    )
+    assert not Ifc2UsdcPowershellConverterAdapter._windows_acl_has_only_trusted_writers(
+        everyone,
+        current_user,
+        ((current_user, 0x40000000, False),),
+    )
+    assert not Ifc2UsdcPowershellConverterAdapter._windows_acl_has_only_trusted_writers(
+        current_user,
+        current_user,
+        ((everyone, 0x40000000, False),),
+    )
+    assert Ifc2UsdcPowershellConverterAdapter._windows_acl_has_only_trusted_writers(
+        current_user,
+        current_user,
+        ((everyone, 0x40000000, True),),
+    )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows security descriptor contract")
+def test_windows_acl_snapshot_reads_current_temp_path(tmp_path: Path):
+    owner_sid, current_user_sid, allow_aces = (
+        Ifc2UsdcPowershellConverterAdapter._windows_path_security_snapshot(tmp_path)
+    )
+
+    assert owner_sid.startswith("S-1-")
+    assert current_user_sid.startswith("S-1-")
+    assert isinstance(allow_aces, tuple)
+
+
+def test_default_hoops_entrypoint_rejects_symlink_outside_trusted_cache(
+    tmp_path: Path, monkeypatch
+):
+    platform_dir = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
+    release_root = tmp_path / "_build" / platform_dir / "release"
+    trusted_cache = tmp_path / "official-cache"
+    trusted_cache.mkdir()
+    _write_cad_converter_lock(tmp_path)
+    package_name = _cad_package_name("escape")
+    _, hoops_main = _write_symlinked_cad_package(
+        release_root=release_root,
+        package_cache=tmp_path / "untrusted-cache",
+        package_name=package_name,
+    )
+    _write_trusted_cad_manifest(tmp_path, package_name=package_name, hoops_main=hoops_main)
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    monkeypatch.setattr(adapter, "_trusted_extension_cache_roots", lambda: (trusted_cache,))
+
+    with pytest.raises(ConversionAuthorityError, match="outside an owner-approved cache root"):
+        adapter._default_hoops_main()
+
+
+def test_default_hoops_entrypoint_rejects_unpinned_package_version(
+    tmp_path: Path, monkeypatch
+):
+    platform_dir = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
+    release_root = tmp_path / "_build" / platform_dir / "release"
+    package_cache = tmp_path / "official-cache"
+    _write_cad_converter_lock(tmp_path, version="508.0.3")
+    _, hoops_main = _write_symlinked_cad_package(
+        release_root=release_root,
+        package_cache=package_cache,
+        package_name=_cad_package_name("unpinned", version="508.0.4"),
+    )
+    _write_trusted_cad_manifest(
+        tmp_path,
+        package_name=_cad_package_name("trusted"),
+        hoops_main=hoops_main,
+    )
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    monkeypatch.setattr(adapter, "_trusted_extension_cache_roots", lambda: (package_cache,))
+
+    with pytest.raises(ConversionAuthorityError, match="does not match the trusted package build"):
+        adapter._default_hoops_main()
+
+
+def test_default_hoops_entrypoint_rejects_unpinned_real_directory(tmp_path: Path):
+    platform_dir = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
+    release_root = tmp_path / "_build" / platform_dir / "release"
+    package_name = _cad_package_name("unpinned", version="508.0.4")
+    hoops_main = (
+        release_root
+        / "exts"
+        / package_name
+        / "omni"
+        / "services"
+        / "convert"
+        / "cad"
+        / "services"
+        / "process"
+        / "hoops_main.py"
+    )
+    hoops_main.parent.mkdir(parents=True)
+    hoops_main.write_text("# fixture", encoding="utf-8")
+    _write_cad_converter_lock(tmp_path, version="508.0.3")
+    _write_trusted_cad_manifest(
+        tmp_path,
+        package_name=_cad_package_name("trusted"),
+        hoops_main=hoops_main,
+    )
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+
+    with pytest.raises(ConversionAuthorityError, match="does not match the trusted package build"):
+        adapter._default_hoops_main()
+
+
+def test_default_hoops_entrypoint_rejects_linked_search_root(tmp_path: Path):
+    platform_dir = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
+    release_root = tmp_path / "_build" / platform_dir / "release"
+    external_root = tmp_path / "external-exts"
+    package_name = _cad_package_name("linked-root")
+    hoops_main = (
+        external_root
+        / package_name
+        / "omni"
+        / "services"
+        / "convert"
+        / "cad"
+        / "services"
+        / "process"
+        / "hoops_main.py"
+    )
+    hoops_main.parent.mkdir(parents=True)
+    hoops_main.write_text("# fixture", encoding="utf-8")
+    release_root.mkdir(parents=True)
+    try:
+        (release_root / "exts").symlink_to(external_root, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlinks are unavailable on this test host: {exc}")
+    _write_cad_converter_lock(tmp_path)
+    _write_trusted_cad_manifest(tmp_path, package_name=package_name, hoops_main=hoops_main)
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+
+    with pytest.raises(ConversionAuthorityError, match="search root must not be a link or junction"):
+        adapter._default_hoops_main()
+
+
+def test_default_hoops_entrypoint_rejects_ambiguous_pinned_candidates(
+    tmp_path: Path, monkeypatch
+):
+    platform_dir = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
+    release_root = tmp_path / "_build" / platform_dir / "release"
+    package_cache = tmp_path / "official-cache"
+    _write_cad_converter_lock(tmp_path)
+    package_name = _cad_package_name("ambiguous")
+    _, hoops_main = _write_symlinked_cad_package(
+        release_root=release_root,
+        package_cache=package_cache,
+        package_name=package_name,
+        root_name="extscache",
+    )
+    _write_symlinked_cad_package(
+        release_root=release_root,
+        package_cache=package_cache,
+        package_name=package_name,
+        root_name="extsbuild",
+    )
+    _write_trusted_cad_manifest(tmp_path, package_name=package_name, hoops_main=hoops_main)
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    monkeypatch.setattr(adapter, "_trusted_extension_cache_roots", lambda: (package_cache,))
+
+    with pytest.raises(ConversionAuthorityError, match="Multiple CAD extension entrypoints"):
+        adapter._default_hoops_main()
+
+
+def test_powershell_conversion_rejects_hoops_path_swap_after_preflight(
+    tmp_path: Path, monkeypatch
+):
+    platform_dir = "windows-x86_64" if os.name == "nt" else "linux-x86_64"
+    release_root = tmp_path / "_build" / platform_dir / "release"
+    package_cache = tmp_path / "official-cache"
+    _write_cad_converter_lock(tmp_path)
+    package_name = _cad_package_name("swap")
+    _, hoops_main = _write_symlinked_cad_package(
+        release_root=release_root,
+        package_cache=package_cache,
+        package_name=package_name,
+    )
+    _write_trusted_cad_manifest(tmp_path, package_name=package_name, hoops_main=hoops_main)
+    kit_name = "kit.exe" if os.name == "nt" else "kit"
+    kit_path = release_root / "kit" / kit_name
+    kit_path.parent.mkdir(parents=True)
+    kit_path.write_bytes(b"kit")
+    ps1_path = tmp_path / "scripts" / "convert-ifc-to-usdc.ps1"
+    ps1_path.parent.mkdir(parents=True)
+    ps1_path.write_text("# fixture", encoding="utf-8")
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    monkeypatch.setattr(adapter, "_trusted_extension_cache_roots", lambda: (package_cache,))
+    monkeypatch.setattr(adapter, "_powershell_resolvable", lambda: True)
+    validated_hoops_main, validated_hoops_identity = adapter._preflight_with_hoops_validation()
+    assert not hasattr(adapter, "_validated_hoops_main_path")
+    assert not hasattr(adapter, "_validated_hoops_main_identity")
+
+    hoops_main.write_text("# swapped fixture with a different identity", encoding="utf-8")
+    subprocess_called = False
+
+    def _unexpected_subprocess(*args, **kwargs):
+        nonlocal subprocess_called
+        subprocess_called = True
+        raise AssertionError("subprocess must not run after a HOOPS path identity change")
+
+    monkeypatch.setattr("subprocess.run", _unexpected_subprocess)
+    with pytest.raises(ConversionAuthorityError, match="content digest does not match"):
+        adapter._run_powershell_conversion(
+            ifc_path=tmp_path / "input.ifc",
+            output_dir=tmp_path / "out",
+            validated_hoops_main=validated_hoops_main,
+            validated_hoops_identity=validated_hoops_identity,
+        )
+    assert subprocess_called is False
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows pinned-handle execution contract")
+def test_windows_execution_guard_blocks_hoops_write_until_converter_exits(
+    tmp_path: Path, monkeypatch
+):
+    private_root = tmp_path / "private-cad-cache"
+    private_root.mkdir()
+    hoops_main = private_root / "hoops_main.py"
+    original = b"# pinned fixture"
+    hoops_main.write_bytes(original)
+    adapter = Ifc2UsdcPowershellConverterAdapter(
+        repo_root=tmp_path,
+        hoops_main_path=hoops_main,
+        storage_root=tmp_path / "storage",
+    )
+    validated = hoops_main.resolve(strict=True)
+    identity = adapter._hoops_file_identity(validated)
+    blocked_write = None
+
+    def _attempt_write_while_converter_runs(args, **kwargs):
+        nonlocal blocked_write
+        try:
+            hoops_main.write_bytes(b"# attacker replacement")
+        except OSError as exc:
+            blocked_write = exc
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", _attempt_write_while_converter_runs)
+
+    adapter._run_powershell_conversion(
+        ifc_path=tmp_path / "input.ifc",
+        output_dir=tmp_path / "out",
+        validated_hoops_main=validated,
+        validated_hoops_identity=identity,
+    )
+
+    assert blocked_write is not None
+    assert hoops_main.read_bytes() == original
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows pinned-handle execution contract")
+def test_windows_execution_guard_rejects_preopened_writer(
+    tmp_path: Path, monkeypatch
+):
+    import ctypes
+    from ctypes import wintypes
+
+    private_root = tmp_path / "private-cad-cache"
+    private_root.mkdir()
+    hoops_main = private_root / "hoops_main.py"
+    hoops_main.write_bytes(b"# pinned fixture")
+    adapter = Ifc2UsdcPowershellConverterAdapter(
+        repo_root=tmp_path,
+        hoops_main_path=hoops_main,
+        storage_root=tmp_path / "storage",
+    )
+    validated = hoops_main.resolve(strict=True)
+    identity = adapter._hoops_file_identity(validated)
+    subprocess_called = False
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    )
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    writer = kernel32.CreateFileW(
+        str(hoops_main),
+        0x40000000,  # GENERIC_WRITE
+        0x00000001 | 0x00000002 | 0x00000004,  # share read/write/delete
+        None,
+        3,  # OPEN_EXISTING
+        0x00000080,  # FILE_ATTRIBUTE_NORMAL
+        None,
+    )
+    writer_value = int(writer) if writer is not None else 0
+    assert writer_value not in (0, ctypes.c_void_p(-1).value)
+
+    def _unexpected_subprocess(*args, **kwargs):
+        nonlocal subprocess_called
+        subprocess_called = True
+        raise AssertionError("subprocess must not run with a pre-opened HOOPS writer")
+
+    monkeypatch.setattr("subprocess.run", _unexpected_subprocess)
+    try:
+        with pytest.raises(ConversionAuthorityError, match="could not be pinned safely"):
+            adapter._run_powershell_conversion(
+                ifc_path=tmp_path / "input.ifc",
+                output_dir=tmp_path / "out",
+                validated_hoops_main=validated,
+                validated_hoops_identity=identity,
+            )
+    finally:
+        kernel32.CloseHandle(wintypes.HANDLE(writer_value))
+
+    assert subprocess_called is False
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX atomic replacement contract")
+def test_hardener_atomically_replaces_pinned_entrypoint_with_private_inode(
+    tmp_path: Path, monkeypatch
+):
+    release_root = tmp_path / "_build" / "linux-x86_64" / "release"
+    package_cache = tmp_path / "official-cache"
+    _write_cad_converter_lock(tmp_path)
+    package_name = _cad_package_name("permissions")
+    _, hoops_main = _write_symlinked_cad_package(
+        release_root=release_root,
+        package_cache=package_cache,
+        package_name=package_name,
+    )
+    _write_trusted_cad_manifest(tmp_path, package_name=package_name, hoops_main=hoops_main)
+    hoops_main.chmod(0o777)
+    original_identity = (hoops_main.stat().st_dev, hoops_main.stat().st_ino)
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    monkeypatch.setattr(adapter, "_trusted_extension_cache_roots", lambda: (package_cache,))
+
+    hardened = adapter.harden_default_hoops_main_permissions()
+
+    assert hardened.resolve() == hoops_main.resolve()
+    assert (hardened.stat().st_dev, hardened.stat().st_ino) != original_identity
+    assert stat.S_IMODE(hardened.stat().st_mode) & (stat.S_IWGRP | stat.S_IWOTH) == 0
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX private-inode idempotency contract")
+def test_hardener_preserves_already_private_pinned_entrypoint_inode(
+    tmp_path: Path, monkeypatch
+):
+    release_root = tmp_path / "_build" / "linux-x86_64" / "release"
+    package_cache = tmp_path / "official-cache"
+    _write_cad_converter_lock(tmp_path)
+    package_name = _cad_package_name("already-private")
+    _, hoops_main = _write_symlinked_cad_package(
+        release_root=release_root,
+        package_cache=package_cache,
+        package_name=package_name,
+    )
+    _write_trusted_cad_manifest(tmp_path, package_name=package_name, hoops_main=hoops_main)
+    hoops_main.chmod(0o400)
+    original_identity = (hoops_main.stat().st_dev, hoops_main.stat().st_ino)
+    adapter = Ifc2UsdcPowershellConverterAdapter(
+        repo_root=tmp_path, storage_root=tmp_path / "storage"
+    )
+    monkeypatch.setattr(adapter, "_trusted_extension_cache_roots", lambda: (package_cache,))
+
+    hardened = adapter.harden_default_hoops_main_permissions()
+
+    assert (hardened.stat().st_dev, hardened.stat().st_ino) == original_identity
+    assert stat.S_IMODE(hardened.stat().st_mode) == 0o400
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX descriptor hardening contract")
+def test_hardener_rejects_oversized_inode_before_reading(tmp_path: Path, monkeypatch):
+    hoops_main = tmp_path / "hoops_main.py"
+    hoops_main.write_bytes(b"oversized")
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=tmp_path / "storage")
+    monkeypatch.setattr(adapter, "_discover_default_hoops_main", lambda **kwargs: hoops_main)
+    monkeypatch.setattr(adapter, "_trusted_cad_entrypoint", lambda: ("fixture-package", "0" * 64, 1))
+    monkeypatch.setattr(
+        adapter,
+        "_open_owner_private_parent_descriptor",
+        lambda candidate: os.open(candidate.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)),
+    )
+    read_called = False
+    real_read = os.read
+
+    def _read(*args, **kwargs):
+        nonlocal read_called
+        read_called = True
+        return real_read(*args, **kwargs)
+
+    monkeypatch.setattr(os, "read", _read)
+
+    with pytest.raises(ConversionAuthorityError, match="size changed before atomic hardening"):
+        adapter.harden_default_hoops_main_permissions()
+    assert read_called is False
+
+
+def test_cad_hardener_argument_failure_emits_structured_status(tmp_path: Path):
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "harden-cad-extension-cache.py"
+    completed = subprocess.run(
+        [sys.executable, str(script_path)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    payload = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert payload == {
+        "reason_kind": "invalid_arguments",
+        "schema_version": "cad-extension-cache-hardening/v1",
+        "status": "failed",
+    }
+
+
+def test_cad_hardener_import_failure_emits_structured_status(tmp_path: Path):
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "harden-cad-extension-cache.py"
+    clean_env = dict(os.environ)
+    clean_env["PYTHONPATH"] = ""
+    clean_env["PYTHONNOUSERSITE"] = "1"
+    completed = subprocess.run(
+        [sys.executable, str(script_path), "--repo-root", str(tmp_path)],
+        cwd=tmp_path,
+        env=clean_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    payload = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert payload == {
+        "reason_kind": "unexpected_error",
+        "schema_version": "cad-extension-cache-hardening/v1",
+        "status": "failed",
+    }
 
 
 def test_adapter_from_env_prefers_pwsh_when_available(tmp_path: Path, monkeypatch):
@@ -627,6 +1408,7 @@ def test_run_powershell_conversion_regex_extracts_log_paths_from_ps1_throw(tmp_p
     (repo_root / "scripts").mkdir(parents=True)
     (repo_root / "scripts" / "convert-ifc-to-usdc.ps1").write_text("# fake", encoding="utf-8")
     adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=repo_root)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
 
     # 真實 ps1 throw shape(對齊 convert-ifc-to-usdc.ps1::Invoke-KitConversion）。
     # harden-host-native-conversion-service #11:log path 改由結構化 sentinel
@@ -648,19 +1430,22 @@ def test_run_powershell_conversion_regex_extracts_log_paths_from_ps1_throw(tmp_p
         "<fake stdout lines>\n"
     )
 
-    class _FakeCompleted:
-        returncode = 1
-        stderr = ps1_throw
-        stdout = ""
-
-    def _fake_run(*args, **kwargs):
-        return _FakeCompleted()
+    def _fake_run(cmd, **kwargs):
+        err_handle = kwargs.get("stderr")
+        if hasattr(err_handle, "write"):
+            err_handle.write(ps1_throw.encode("utf-8"))
+        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout=None, stderr=None)
 
     monkeypatch.setattr("subprocess.run", _fake_run)
 
     raised: ConversionAuthorityError | None = None
     try:
-        adapter._run_powershell_conversion(ifc_path=tmp_path / "fake.ifc", output_dir=tmp_path / "out")
+        adapter._run_powershell_conversion(
+            ifc_path=tmp_path / "fake.ifc",
+            output_dir=tmp_path / "out",
+            validated_hoops_main=validated_hoops_main,
+            validated_hoops_identity=validated_hoops_identity,
+        )
     except ConversionAuthorityError as exc:
         raised = exc
 
@@ -736,10 +1521,11 @@ def _write_default_converter_prereqs(repo_root: Path) -> None:
     kit_path = release_root / "kit" / kit_name
     kit_path.parent.mkdir(parents=True, exist_ok=True)
     kit_path.write_bytes(b"fixture")
+    package_name = _cad_package_name("u7f4", version="508.0.1")
     hoops_path = (
         release_root
         / "exts"
-        / "omni.services.convert.cad"
+        / package_name
         / "omni"
         / "services"
         / "convert"
@@ -750,6 +1536,8 @@ def _write_default_converter_prereqs(repo_root: Path) -> None:
     )
     hoops_path.parent.mkdir(parents=True, exist_ok=True)
     hoops_path.write_text("# fixture", encoding="utf-8")
+    _write_cad_converter_lock(repo_root, version="508.0.1")
+    _write_trusted_cad_manifest(repo_root, package_name=package_name, hoops_main=hoops_path)
 
 
 def _clear_pxr_test_stubs(monkeypatch) -> None:
@@ -1117,7 +1905,14 @@ def test_adapter_falls_back_when_hoops_cannot_load_parseable_ifc(tmp_path: Path,
         work_dir=repo_root,
     )
 
-    def fake_primary_failure(*, ifc_path: Path, output_dir: Path, trace_id: str) -> None:
+    def fake_primary_failure(
+        *,
+        ifc_path: Path,
+        output_dir: Path,
+        trace_id: str,
+        validated_hoops_main: Path,
+        validated_hoops_identity: tuple[int, int, int, int, str],
+    ) -> None:
         raise ConversionAuthorityError(
             "converter_failed",
             "Failed to import model C:/source.ifc. Error Code -10007 (A3D_LOAD_CANNOT_LOAD_MODEL)",
@@ -1167,7 +1962,14 @@ def test_adapter_does_not_fallback_for_non_import_converter_failure(tmp_path: Pa
         work_dir=repo_root,
     )
 
-    def fake_primary_failure(*, ifc_path: Path, output_dir: Path, trace_id: str) -> None:
+    def fake_primary_failure(
+        *,
+        ifc_path: Path,
+        output_dir: Path,
+        trace_id: str,
+        validated_hoops_main: Path,
+        validated_hoops_identity: tuple[int, int, int, int, str],
+    ) -> None:
         raise ConversionAuthorityError("converter_failed", "license checkout failed")
 
     def fallback_must_not_run(**_kwargs) -> None:
@@ -1212,7 +2014,14 @@ def test_adapter_rejects_placeholder_written_by_fallback(tmp_path: Path, monkeyp
         work_dir=repo_root,
     )
 
-    def fake_primary_failure(*, ifc_path: Path, output_dir: Path, trace_id: str) -> None:
+    def fake_primary_failure(
+        *,
+        ifc_path: Path,
+        output_dir: Path,
+        trace_id: str,
+        validated_hoops_main: Path,
+        validated_hoops_identity: tuple[int, int, int, int, str],
+    ) -> None:
         raise ConversionAuthorityError(
             "converter_failed",
             "Failed to import model C:/source.ifc. Error Code -10007 (A3D_LOAD_CANNOT_LOAD_MODEL)",
@@ -2645,7 +3454,14 @@ def test_adapter_convert_rejects_placeholder_marker_beyond_prefix(tmp_path: Path
     合法 bytes)→ 仍 raise placeholder_usdc(證明 adapter 掃全檔非僅前綴)。"""
     adapter = _adapter_with_ps1(tmp_path)
 
-    def fake_run_ps1(*, ifc_path: Path, output_dir: Path, trace_id: str) -> None:
+    def fake_run_ps1(
+        *,
+        ifc_path: Path,
+        output_dir: Path,
+        trace_id: str,
+        validated_hoops_main: Path,
+        validated_hoops_identity: tuple[int, int, int, int, str],
+    ) -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
         # 前 5KB 合法,placeholder 標記落在 4096 之後
         (output_dir / "model.usdc").write_bytes(
@@ -2714,21 +3530,85 @@ def _adapter_for_sentinel(tmp_path: Path) -> Ifc2UsdcPowershellConverterAdapter:
     return Ifc2UsdcPowershellConverterAdapter(repo_root=repo_root, storage_root=repo_root)
 
 
-def _patch_subprocess_returning(monkeypatch, *, returncode: int, stderr: str, stdout: str = "") -> None:
-    class _FakeCompleted:
+def test_converter_subprocess_uses_file_redirection_not_pipes(tmp_path: Path, monkeypatch):
+    """Pipe-hang regression: with capture_output the timeout kill leaves the Kit
+    grandchild holding the pipe write end and run()'s cleanup communicate()
+    waits for EOF forever. The adapter must hand real file handles to the
+    child, never pipes, and must add the safety buffer on top of the ps1's own
+    -TimeoutSeconds."""
+
+    adapter = _adapter_for_sentinel(tmp_path)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
+    captured: dict = {}
+
+    def _fake_run(cmd, **kwargs):
+        captured["kwargs"] = kwargs
+        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout=None, stderr=None)
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    try:
+        adapter._run_powershell_conversion(
+            ifc_path=tmp_path / "fake.ifc",
+            output_dir=tmp_path / "out",
+            validated_hoops_main=validated_hoops_main,
+            validated_hoops_identity=validated_hoops_identity,
+        )
+    except ConversionAuthorityError:
         pass
 
-    _FakeCompleted.returncode = returncode
-    _FakeCompleted.stderr = stderr
-    _FakeCompleted.stdout = stdout
+    kwargs = captured["kwargs"]
+    assert "capture_output" not in kwargs
+    assert kwargs.get("stdout") is not subprocess.PIPE
+    assert kwargs.get("stderr") is not subprocess.PIPE
+    assert hasattr(kwargs.get("stdout"), "fileno")
+    assert hasattr(kwargs.get("stderr"), "fileno")
+    assert kwargs.get("timeout") == adapter.timeout_seconds + 30
 
-    monkeypatch.setattr("subprocess.run", lambda *a, **k: _FakeCompleted())
+
+def test_converter_timeout_maps_to_converter_timeout_error(tmp_path: Path, monkeypatch):
+    adapter = _adapter_for_sentinel(tmp_path)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
+
+    def _fake_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs.get("timeout"))
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    raised: ConversionAuthorityError | None = None
+    try:
+        adapter._run_powershell_conversion(
+            ifc_path=tmp_path / "fake.ifc",
+            output_dir=tmp_path / "out",
+            validated_hoops_main=validated_hoops_main,
+            validated_hoops_identity=validated_hoops_identity,
+        )
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.code == "converter_timeout"
+
+
+def _patch_subprocess_returning(monkeypatch, *, returncode: int, stderr: str, stdout: str = "") -> None:
+    # The adapter redirects the converter's stdout/stderr into temp files (the
+    # pipe-hang fix), so a faithful fake writes into those handles instead of
+    # returning captured strings.
+    def _fake_run(cmd, **kwargs):
+        out_handle = kwargs.get("stdout")
+        err_handle = kwargs.get("stderr")
+        if hasattr(out_handle, "write"):
+            out_handle.write(stdout.encode("utf-8"))
+        if hasattr(err_handle, "write"):
+            err_handle.write(stderr.encode("utf-8"))
+        return subprocess.CompletedProcess(args=cmd, returncode=returncode, stdout=None, stderr=None)
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
 
 
 def test_sentinel_yields_log_paths_with_windows_drive_path(tmp_path: Path, monkeypatch):
     """spec scenario「Structured sentinel yields log paths」:##CONV_META## 單行 JSON
     含 Windows C:\\ 絕對路徑 → 抽進 metadata 的 kit_stdout_log / kit_stderr_log。"""
     adapter = _adapter_for_sentinel(tmp_path)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
     stdout_log = r"C:\Repos\active\iot\AI-BIM-governance\bim-streaming-server\_cache\artifacts\stream_conv_demo\kit-stdout.log"
     stderr_log = r"C:\Repos\active\iot\AI-BIM-governance\bim-streaming-server\_cache\artifacts\stream_conv_demo\kit-stderr.log"
     combined = (
@@ -2741,7 +3621,12 @@ def test_sentinel_yields_log_paths_with_windows_drive_path(tmp_path: Path, monke
 
     raised: ConversionAuthorityError | None = None
     try:
-        adapter._run_powershell_conversion(ifc_path=tmp_path / "fake.ifc", output_dir=tmp_path / "out")
+        adapter._run_powershell_conversion(
+            ifc_path=tmp_path / "fake.ifc",
+            output_dir=tmp_path / "out",
+            validated_hoops_main=validated_hoops_main,
+            validated_hoops_identity=validated_hoops_identity,
+        )
     except ConversionAuthorityError as exc:
         raised = exc
 
@@ -2758,6 +3643,7 @@ def test_missing_sentinel_degrades_to_empty_metadata_without_unexpected_raise(
     僅有人類可讀 prose、無 ##CONV_META## → metadata 空,仍正常 raise converter_failed
     (不拋非預期例外),其餘失敗診斷欄位不變。"""
     adapter = _adapter_for_sentinel(tmp_path)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
     combined = (
         "convert-ifc-to-usdc.ps1 failed\n"
         "  kit_stdout_log: C:\\some\\human\\readable\\prose\\stdout.log\n"
@@ -2767,7 +3653,12 @@ def test_missing_sentinel_degrades_to_empty_metadata_without_unexpected_raise(
 
     raised: ConversionAuthorityError | None = None
     try:
-        adapter._run_powershell_conversion(ifc_path=tmp_path / "fake.ifc", output_dir=tmp_path / "out")
+        adapter._run_powershell_conversion(
+            ifc_path=tmp_path / "fake.ifc",
+            output_dir=tmp_path / "out",
+            validated_hoops_main=validated_hoops_main,
+            validated_hoops_identity=validated_hoops_identity,
+        )
     except ConversionAuthorityError as exc:
         raised = exc
 
@@ -2782,6 +3673,7 @@ def test_corrupt_sentinel_json_degrades_to_empty_metadata(tmp_path: Path, monkey
     """spec scenario「Missing or corrupt sentinel degrades safely」(損壞 JSON 變體):
     ##CONV_META## 後接損壞 JSON → fallback 空 metadata,不因解析失敗拋非預期例外。"""
     adapter = _adapter_for_sentinel(tmp_path)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
     combined = (
         "convert failed\n"
         '##CONV_META## {"kit_stdout_log": "C:\\broken\\path, "kit_stderr_log" :::}\n'
@@ -2791,7 +3683,12 @@ def test_corrupt_sentinel_json_degrades_to_empty_metadata(tmp_path: Path, monkey
 
     raised: ConversionAuthorityError | None = None
     try:
-        adapter._run_powershell_conversion(ifc_path=tmp_path / "fake.ifc", output_dir=tmp_path / "out")
+        adapter._run_powershell_conversion(
+            ifc_path=tmp_path / "fake.ifc",
+            output_dir=tmp_path / "out",
+            validated_hoops_main=validated_hoops_main,
+            validated_hoops_identity=validated_hoops_identity,
+        )
     except ConversionAuthorityError as exc:
         raised = exc
 

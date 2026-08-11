@@ -11,6 +11,8 @@ param(
     [switch] $Full,
     [ValidatePattern('^[0-9a-f]{40}$')][string] $Subject,
     [string] $OutcomeOut,
+    [string] $TargetId = '',
+    [string] $InventoryPath = '',
     [string] $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 )
 
@@ -57,43 +59,183 @@ function Test-DeploymentHttpEndpoint {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string] $Name,
-        [Parameter(Mandatory = $true)][string] $Uri
+        [Parameter(Mandatory = $true)][string] $Uri,
+        [Parameter(Mandatory = $true)][string] $DisplayUri,
+        [string] $ExpectedService = '',
+        [string[]] $RequiredJsonProperties = @(),
+        [hashtable] $ExpectedJsonProperties = @{},
+        [switch] $ExpectJson
     )
 
     try {
-        $requestParameters = @{ Uri = $Uri; TimeoutSec = 10; ErrorAction = 'Stop' }
-        if ((Get-Command Invoke-WebRequest).Parameters.ContainsKey('UseBasicParsing')) {
+        $webRequest = Get-Command Invoke-WebRequest -ErrorAction Stop
+        if (-not $webRequest.Parameters.ContainsKey('NoProxy')) {
+            throw 'PowerShell 7 Invoke-WebRequest with NoProxy support is required.'
+        }
+        $requestParameters = @{
+            Uri = $Uri
+            TimeoutSec = 10
+            MaximumRedirection = 0
+            NoProxy = $true
+            ErrorAction = 'Stop'
+        }
+        if ($webRequest.Parameters.ContainsKey('UseBasicParsing')) {
             $requestParameters.UseBasicParsing = $true
         }
         $response = Invoke-WebRequest @requestParameters
         if ($response.StatusCode -ne 200) {
             throw "unexpected HTTP status $($response.StatusCode)"
         }
+        if ($ExpectJson) {
+            try { $body = $response.Content | ConvertFrom-Json -ErrorAction Stop }
+            catch { throw 'response was not valid JSON' }
+            if ([string]$body.status -cne 'ok') {
+                throw 'response status was not ok'
+            }
+            if (-not [string]::IsNullOrWhiteSpace($ExpectedService) -and [string]$body.service -cne $ExpectedService) {
+                throw 'response service identity did not match the expected role'
+            }
+            foreach ($propertyName in $RequiredJsonProperties) {
+                if ($null -eq $body.PSObject.Properties[$propertyName]) {
+                    throw "response was missing required identity property '$propertyName'"
+                }
+            }
+            foreach ($propertyName in $ExpectedJsonProperties.Keys) {
+                if ($null -eq $body.PSObject.Properties[$propertyName]) {
+                    throw "response was missing expected identity property '$propertyName'"
+                }
+                $actualValue = $body.PSObject.Properties[$propertyName].Value
+                $expectedValue = $ExpectedJsonProperties[$propertyName]
+                $propertyMatches = if ($expectedValue -is [bool]) {
+                    $actualValue -is [bool] -and $actualValue -eq $expectedValue
+                }
+                else {
+                    [string]$actualValue -ceq [string]$expectedValue
+                }
+                if (-not $propertyMatches) {
+                    throw "response identity property '$propertyName' did not match the expected value"
+                }
+            }
+        }
     } catch {
-        throw "deployment $Name check failed: $($_.Exception.Message)"
+        $safeMessage = [string]$_.Exception.Message
+        if ($DisplayUri -cne $Uri) {
+            $actualHost = ([uri]$Uri).Host
+            $safeMessage = $safeMessage -replace [regex]::Escape($actualHost), '<host-native-bind>'
+        }
+        throw "deployment $Name check failed at ${DisplayUri}: $safeMessage"
     }
+}
+
+function Get-DeploymentRuntimeSignature {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $Root,
+        [Parameter(Mandatory = $true)][string] $FileName,
+        [Parameter(Mandatory = $true)][string[]] $RequiredProperties,
+        [switch] $AllowMissing
+    )
+
+    $path = Join-Path $Root ("scripts\.run\{0}" -f $FileName)
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        if ($AllowMissing) { return $null }
+        throw "deployment runtime signature is missing: $FileName"
+    }
+    try {
+        $signature = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        throw "deployment runtime signature is invalid: $FileName"
+    }
+    foreach ($propertyName in $RequiredProperties) {
+        if ($null -eq $signature.PSObject.Properties[$propertyName]) {
+            throw "deployment runtime signature '$FileName' is missing property '$propertyName'"
+        }
+    }
+    return $signature
+}
+
+function Get-DeploymentCheckoutRevision {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string] $Root)
+
+    $revisionOutput = @(& git -C $Root rev-parse --verify HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $revisionOutput.Count -ne 1) {
+        throw 'deployment checkout revision is unavailable.'
+    }
+    $revision = ([string]$revisionOutput[0]).Trim().ToLowerInvariant()
+    if ($revision -notmatch '^[0-9a-f]{40,64}$') {
+        throw 'deployment checkout revision is invalid.'
+    }
+    return $revision
 }
 
 function New-DeploymentHealthTarget {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string] $Name,
-        [Parameter(Mandatory = $true)][string] $Uri
+        [Parameter(Mandatory = $true)][string] $Uri,
+        [string] $DisplayUri = $Uri,
+        [string] $ExpectedService = '',
+        [string[]] $RequiredJsonProperties = @(),
+        [hashtable] $ExpectedJsonProperties = @{},
+        [switch] $ExpectJson
     )
 
     return @{
         Name = $Name
         Cwd = '.'
         Required = $true
-        Detail = "GET $Uri"
+        Detail = "GET $DisplayUri"
         Action = {
-            Test-DeploymentHttpEndpoint -Name $Name -Uri $Uri
+            Test-DeploymentHttpEndpoint -Name $Name -Uri $Uri -DisplayUri $DisplayUri `
+                -ExpectedService $ExpectedService -RequiredJsonProperties $RequiredJsonProperties `
+                -ExpectedJsonProperties $ExpectedJsonProperties -ExpectJson:$ExpectJson
         }.GetNewClosure()
+    }
+}
+
+function ConvertTo-DeploymentUriHost {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string] $HostName)
+
+    $address = $null
+    if ([Net.IPAddress]::TryParse($HostName, [ref]$address) -and
+        $address.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetworkV6) {
+        return "[$HostName]"
+    }
+    return $HostName
+}
+
+function Assert-DeploymentHostNativeBindIsLocal {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string] $HostName)
+
+    $expectedAddress = $null
+    if (-not [Net.IPAddress]::TryParse($HostName, [ref]$expectedAddress)) {
+        throw 'Deployment host_native_bind_host must resolve to an IP address.'
+    }
+    if ([Net.IPAddress]::IsLoopback($expectedAddress)) { return }
+
+    $localAddresses = @(
+        [Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces() |
+            ForEach-Object { $_.GetIPProperties().UnicastAddresses } |
+            ForEach-Object { $_.Address }
+    )
+    if (@($localAddresses | Where-Object { $_.Equals($expectedAddress) }).Count -eq 0) {
+        throw 'Deployment host_native_bind_host is not assigned to a local network interface.'
     }
 }
 
 if ($VerifyProfile -eq 'Deployment' -and ($StreamingOnly -or $TsOnly -or $PyOnly)) {
     throw 'Deployment profile does not accept StreamingOnly, TsOnly, or PyOnly filters.'
+}
+if ($VerifyProfile -eq 'Developer' -and
+    (-not [string]::IsNullOrWhiteSpace($TargetId) -or -not [string]::IsNullOrWhiteSpace($InventoryPath))) {
+    throw 'TargetId and InventoryPath are supported only by the Deployment profile.'
+}
+if ($VerifyProfile -eq 'Deployment' -and -not $PlanOnly -and -not [string]::IsNullOrWhiteSpace($TargetId)) {
+    throw 'TargetId is supported only with PlanOnly; executing Deployment verification resolves the current platform and RepoRoot.'
 }
 
 function Invoke-VerificationPlannerProcess {
@@ -155,9 +297,61 @@ if ($VerifyProfile -eq 'Deployment') {
     # The deployment checkout intentionally prunes authoring/tooling scripts;
     # load the verifier's contract from this canonical script directory.
     . (Join-Path $PSScriptRoot 'lib\rebuild-test-deploy.ps1')
+    . (Join-Path $PSScriptRoot 'lib\deploy-target-registry.ps1')
     $pruningContract = Get-TestDeployPruningContract
     $requiredArtifacts = @('scripts\deploy.ps1') + @($pruningContract.PreservedProductionFiles)
     Test-DeploymentRequiredArtifacts -Root $RepoRoot -RequiredRelativePaths $requiredArtifacts
+    $deploymentCheckoutRevision = Get-DeploymentCheckoutRevision -Root $RepoRoot
+
+    $deploymentTarget = if (-not [string]::IsNullOrWhiteSpace($TargetId)) {
+        Get-DeployTarget -Id $TargetId -InventoryPath $InventoryPath
+    }
+    else {
+        Get-DeployTargetForCurrentPlatform -RepoRoot $RepoRoot -InventoryPath $InventoryPath
+    }
+    $hostNativeUriHost = ConvertTo-DeploymentUriHost -HostName ([string]$deploymentTarget.host_native_bind_host)
+    $privateTarget = Test-DeployTargetPrivateInventoryRequired -Target $deploymentTarget
+    $hostNativeDisplayHost = if ($privateTarget) { '<host-native-bind>' } else { $hostNativeUriHost }
+    $conversionRuntimeSignature = Get-DeploymentRuntimeSignature `
+        -Root $RepoRoot `
+        -FileName 'bim-streaming-conversion-service.params.json' `
+        -RequiredProperties @('healthHost', 'port', 'revision') `
+        -AllowMissing:$PlanOnly
+    $conversionHealthHost = if ($null -ne $conversionRuntimeSignature) {
+        [string]$conversionRuntimeSignature.healthHost
+    }
+    else {
+        '127.0.0.1'
+    }
+    if ($null -ne $conversionRuntimeSignature -and [int]$conversionRuntimeSignature.port -ne 49101) {
+        throw 'deployment conversion runtime signature has an unexpected port.'
+    }
+    if ($null -ne $conversionRuntimeSignature -and [string]$conversionRuntimeSignature.revision -cne $deploymentCheckoutRevision) {
+        throw 'deployment conversion runtime signature revision does not match the deployment checkout.'
+    }
+    $conversionUriHost = ConvertTo-DeploymentUriHost -HostName $conversionHealthHost
+    $conversionDisplayHost = if ($privateTarget) { '<conversion-health>' } else { $conversionUriHost }
+    $kitManagerRuntimeSignature = Get-DeploymentRuntimeSignature `
+        -Root $RepoRoot `
+        -FileName 'kit-manager-api.params.json' `
+        -RequiredProperties @('kitControlUrl', 'port', 'revision') `
+        -AllowMissing:$PlanOnly
+    if ($null -ne $kitManagerRuntimeSignature -and [int]$kitManagerRuntimeSignature.port -ne 8010) {
+        throw 'deployment Kit Manager runtime signature has an unexpected port.'
+    }
+    if ($null -ne $kitManagerRuntimeSignature -and [string]$kitManagerRuntimeSignature.revision -cne $deploymentCheckoutRevision) {
+        throw 'deployment Kit Manager runtime signature revision does not match the deployment checkout.'
+    }
+    $expectedKitControlUrl = if ($null -ne $kitManagerRuntimeSignature) {
+        ([string]$kitManagerRuntimeSignature.kitControlUrl).TrimEnd('/')
+    }
+    else {
+        ''
+    }
+    if (-not $PlanOnly) {
+        Assert-DeploymentHostNativeBindIsLocal -HostName ([string]$deploymentTarget.host_native_bind_host)
+        Assert-DeploymentHostNativeBindIsLocal -HostName $conversionHealthHost
+    }
 
     $Targets += @{
         Name = 'deployment required artifacts'
@@ -168,10 +362,19 @@ if ($VerifyProfile -eq 'Deployment') {
             Test-DeploymentRequiredArtifacts -Root $RepoRoot -RequiredRelativePaths $requiredArtifacts
         }.GetNewClosure()
     }
-    $Targets += New-DeploymentHealthTarget -Name 'coordinator health' -Uri 'http://127.0.0.1:8004/health'
-    $Targets += New-DeploymentHealthTarget -Name 'governance health' -Uri 'http://127.0.0.1:49102/health'
-    $Targets += New-DeploymentHealthTarget -Name 'conversion health' -Uri 'http://127.0.0.1:49101/health'
-    $Targets += New-DeploymentHealthTarget -Name 'kit manager health' -Uri 'http://127.0.0.1:8010/health'
+    $Targets += New-DeploymentHealthTarget -Name 'coordinator health' -Uri 'http://127.0.0.1:8004/health' `
+        -ExpectJson -ExpectedService 'bim-review-coordinator'
+    $Targets += New-DeploymentHealthTarget -Name 'governance health' -Uri "http://${hostNativeUriHost}:49102/health" `
+        -DisplayUri "http://${hostNativeDisplayHost}:49102/health" -ExpectJson -ExpectedService 'governance-service'
+    $Targets += New-DeploymentHealthTarget -Name 'conversion health' -Uri "http://${conversionUriHost}:49101/health" `
+        -DisplayUri "http://${conversionDisplayHost}:49101/health" -ExpectJson -ExpectedService 'host-native-conversion-authority'
+    $Targets += New-DeploymentHealthTarget -Name 'kit manager health' -Uri "http://${hostNativeUriHost}:8010/health" `
+        -DisplayUri "http://${hostNativeDisplayHost}:8010/health" -ExpectJson -ExpectedJsonProperties @{
+            runtime_mode = 'hybrid-web-plane-host-native-kit'
+            host_local_runtime_allowed = $true
+            kit_instance_id = 'kit_local_001'
+            kit_control_url = $expectedKitControlUrl
+        }
     $Targets += New-DeploymentHealthTarget -Name 'viewer endpoint' -Uri 'http://127.0.0.1:5173/'
     $OmittedTargets += @(
         @{ Name = 'tests (contracts+fakes)'; Reason = 'authoring contracts are intentionally pruned from deployment checkout' },
