@@ -368,8 +368,23 @@ function Invoke-KitRepoBuild {
             }
             if ($effectiveCommand -eq './repo.sh build') {
                 $repoShPath = Join-Path $workingDirectory 'repo.sh'
-                $bashCommand = "`"$repoShPath`" build > `"$logPath`" 2>&1"
-                return Start-Process -FilePath 'bash' -ArgumentList @('-c', $bashCommand) `
+                # Start-Process 會把 ArgumentList join 成單一 Arguments 字串再
+                # 重新斷詞;含空白與引號的 -c 命令字串經這層重組後被切碎,bash
+                # 實際收到的命令只剩 repo.sh 路徑本身 — repo.sh 以無參數印
+                # usage 後 exit 0,build 參數與 log 重導向全數丟失(2026-08-11
+                # 對 canonical Linux 部署機實測)。把整條命令寫進 wrapper 腳本,
+                # 由 stdin 餵給 bash:命令列上一個參數都不剩,任何平台的引號
+                # 重組(含 deploy_root 帶空白的情況)都碰不到它。
+                $wrapperPath = Join-Path (Split-Path -Parent $logPath) 'kit-repo-build-launch.sh'
+                # registry 允許 deploy_root 含 $、backtick 等字元;路徑內插進
+                # wrapper 的 shell 雙引號前,先跳脫雙引號語境內僅有的四個特殊
+                # 字元(\ $ ` "),否則 sh 會對路徑做參數/命令替換,執行或重導向
+                # 到錯誤的位置。
+                $shQuote = { param($s) $s -replace '([\\$`"])', '\$1' }
+                $repoShQuoted = & $shQuote $repoShPath
+                $logQuoted = & $shQuote $logPath
+                [IO.File]::WriteAllText($wrapperPath, "#!/bin/sh`nexec `"$repoShQuoted`" build > `"$logQuoted`" 2>&1`n")
+                return Start-Process -FilePath 'bash' -RedirectStandardInput $wrapperPath `
                     -WorkingDirectory $workingDirectory -NoNewWindow -PassThru
             }
             throw "Unsupported Kit build command '$effectiveCommand'; expected the validated registry command for this platform."
@@ -385,13 +400,31 @@ function Invoke-KitRepoBuild {
     )
 
     $pidFile = Join-Path $RunDir 'kit-repo-build.pid'
+    # 舊 build 留下的 log 會讓「exit 0 必須有 log」的 fail-closed 檢查誤把
+    # stale log 當成本次啟動的證據;先刪掉,log 的存在就專屬於這一次 build。
+    if (Test-Path -LiteralPath $LogPath -ErrorAction Stop) {
+        if (-not (Test-Path -LiteralPath $LogPath -PathType Leaf -ErrorAction Stop)) {
+            throw "Kit build log path '$LogPath' exists but is not a file."
+        }
+        Remove-Item -LiteralPath $LogPath -Force -ErrorAction Stop
+        if (Test-Path -LiteralPath $LogPath -ErrorAction Stop) {
+            throw "Failed to remove stale Kit build log '$LogPath'."
+        }
+    }
     $proc = & $StartProcessFn $WorkingDirectory $LogPath $BuildCommand
     $proc.Id | Set-Content -LiteralPath $pidFile -Encoding ascii
 
     $exited = & $WaitForExitFn $proc ($TimeoutSec * 1000)
     if ($exited) {
         Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
-        return [pscustomobject]@{ TimedOut = $false; ExitCode = [int]$proc.ExitCode; ProcessId = [int]$proc.Id }
+        $exitCode = [int]$proc.ExitCode
+        if ($exitCode -eq 0 -and -not (Test-Path -LiteralPath $LogPath -PathType Leaf -ErrorAction Stop)) {
+            # exit 0 卻連 log 檔都沒建,代表啟動列被引號重組弄壞、重導向沒有
+            # 生效(build 根本沒跑);此時相信 exit code 會讓 deploy 把假 build
+            # 當成功,直到 artifacts 檢查才以更難診斷的方式失敗。
+            $exitCode = 1
+        }
+        return [pscustomobject]@{ TimedOut = $false; ExitCode = $exitCode; ProcessId = [int]$proc.Id }
     }
 
     & $StopTreeFn 'kit-repo-build' $RunDir

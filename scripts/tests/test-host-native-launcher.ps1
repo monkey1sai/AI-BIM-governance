@@ -127,7 +127,7 @@ try {
     New-Item -ItemType Directory -Path $runDir -Force | Out-Null
     $logPath = Join-Path $runDir 'kit-repo-build.log'
     $result = Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir `
-        -StartProcessFn { param($workingDirectory, $logPath) [pscustomobject]@{ Id = 4242; ExitCode = 0 } } `
+        -StartProcessFn { param($workingDirectory, $logPath) Set-Content -LiteralPath $logPath -Value 'build ok'; [pscustomobject]@{ Id = 4242; ExitCode = 0 } } `
         -WaitForExitFn { param($proc, $timeoutMs) $true } `
         -StopTreeFn { param($name, $runDir) throw 'StopTreeFn must not run on success' }
     Assert-True ($result.TimedOut -eq $false) 'success path is not TimedOut'
@@ -171,6 +171,190 @@ try {
     Assert-Equal 'kit-repo-build' $stoppedArgs[0] 'StopTreeFn invoked with kit-repo-build service name'
     Assert-Equal $runDir $stoppedArgs[1] 'StopTreeFn invoked with the same RunDir'
     Write-TestPass 'Invoke-KitRepoBuild timeout kills process tree'
+}
+finally { Remove-TestSandbox -Path $sb }
+
+# Test 15b: exit 0 without a log file is treated as a failed build
+# (2026-08-11 canonical rebuild regression: bash 收到被重組壞掉的命令列,repo.sh
+# 無參數印 usage 後 exit 0、重導向沒生效 — exit code 因此不可單獨採信)
+$sb = New-TestSandbox -Prefix 'kit-repo-build-nolog'
+try {
+    $runDir = Join-Path $sb 'scripts\.run'
+    New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    $logPath = Join-Path $runDir 'kit-repo-build.log'
+    $result = Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir `
+        -StartProcessFn { param($workingDirectory, $logPath) [pscustomobject]@{ Id = 4245; ExitCode = 0 } } `
+        -WaitForExitFn { param($proc, $timeoutMs) $true } `
+        -StopTreeFn { param($name, $runDir) throw 'StopTreeFn must not run' }
+    Assert-True ($result.TimedOut -eq $false) 'no-log path is not TimedOut'
+    Assert-Equal 1 $result.ExitCode 'exit 0 without a log file fails closed'
+    Write-TestPass 'Invoke-KitRepoBuild refuses silent no-log success'
+}
+finally { Remove-TestSandbox -Path $sb }
+
+# Test 15c: the real bash launch path keeps the build argument and the log redirect
+# (dynamic regression guard for the same 2026-08-11 incident: Start-Process 對含
+# 內嵌引號的 -c 字串重組後,bash 丟失 build 參數與重導向;修正把命令寫進 wrapper
+# 並由 stdin 餵給 bash。sandbox 刻意帶空白+$+backtick 目錄:registry 允許這些
+# 字元,空白證明引號重組碰不到 stdin wrapper,$ 與 backtick 證明 wrapper 內插
+# 的路徑有跳脫、不會被 sh 做參數/命令替換)
+$sbRoot = New-TestSandbox -Prefix 'kit-repo-build-bash'
+$originalPath = $env:PATH
+try {
+    # Windows 的裸 `bash` 可能先解析到 System32\bash.exe (WSL)。WSL 需要
+    # /mnt/c/... 路徑，無法直接執行這個 Win32 sandbox 裡的 C:/... wrapper；
+    # production 的 Linux 路徑則由 native bash 執行。Windows regression 優先
+    # 使用隨 Git 安裝的 MSYS bash，讓測試真的覆蓋 production 的 argv/stdin
+    # 行為，而不是因 host path dialect 不相容而誤判 launcher。
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        $gitCommand = Get-Command git -ErrorAction SilentlyContinue
+        if ($null -ne $gitCommand) {
+            $gitRoot = Split-Path -Parent (Split-Path -Parent $gitCommand.Source)
+            $gitBash = Join-Path $gitRoot 'bin\bash.exe'
+            if (Test-Path -LiteralPath $gitBash -PathType Leaf) {
+                $env:PATH = "$(Split-Path -Parent $gitBash)$([IO.Path]::PathSeparator)$originalPath"
+            }
+        }
+    }
+    $bashCommand = Get-Command bash -ErrorAction SilentlyContinue
+    $sb = (Join-Path $sbRoot 'deploy root with $paces and `tick') -replace '\\', '/'
+    $runDir = Join-Path $sb 'scripts/.run'
+    New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    $logPath = (Join-Path $runDir 'kit-repo-build.log') -replace '\\', '/'
+    $argsPath = (Join-Path $sb 'seen-args.txt') -replace '\\', '/'
+    $fakeRepoSh = Join-Path $sb 'repo.sh'
+    [IO.File]::WriteAllText($fakeRepoSh, "#!/bin/sh`nprintf '%s\n' `"`$@`" > '$argsPath'`necho build-ran`nexit 0`n")
+    if ($null -eq $bashCommand) {
+        Write-TestPass 'Invoke-KitRepoBuild real bash launch (skipped: no bash on this host)'
+    } else {
+        # POSIX 上 WriteAllText 不帶 exec bit,exec "$0" 會 Permission denied；
+        # MSYS bash 忽略 exec bit，所以只在 native POSIX host 執行並驗證 chmod。
+        if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+            & $bashCommand.Source -c "chmod +x '$($fakeRepoSh -replace '\\', '/')'"
+            Assert-Equal 0 $LASTEXITCODE 'fake repo.sh chmod succeeds before the launch'
+        }
+        $result = Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir `
+            -BuildCommand './repo.sh build' -TimeoutSec 60
+        Assert-True ($result.TimedOut -eq $false) 'real bash launch is not TimedOut'
+        Assert-Equal 0 $result.ExitCode 'real bash launch exits 0'
+        Assert-True (Test-Path -LiteralPath $argsPath -PathType Leaf) 'fake repo.sh actually ran'
+        Assert-Equal 'build' ((Get-Content -LiteralPath $argsPath -Raw).Trim()) 'repo.sh received exactly the build argument'
+        Assert-True (Test-Path -LiteralPath $logPath -PathType Leaf) 'stdout redirect created the log file'
+        Assert-True ((Get-Content -LiteralPath $logPath -Raw) -match 'build-ran') 'repo.sh stdout reached the log file'
+    }
+}
+finally {
+    $env:PATH = $originalPath
+    Remove-TestSandbox -Path $sbRoot
+}
+
+# Test 15d: a stale log from a previous build is removed before the launch
+# (otherwise the exit-0-must-have-a-log guard would accept the previous run's
+# log as evidence and the shredded-launch signature would slip through again)
+$sb = New-TestSandbox -Prefix 'kit-repo-build-stale'
+try {
+    $runDir = Join-Path $sb 'scripts\.run'
+    New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    $logPath = Join-Path $runDir 'kit-repo-build.log'
+    Set-Content -LiteralPath $logPath -Value 'stale log from an earlier build'
+    $result = Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir `
+        -StartProcessFn { param($workingDirectory, $logPath) [pscustomobject]@{ Id = 4246; ExitCode = 0 } } `
+        -WaitForExitFn { param($proc, $timeoutMs) $true } `
+        -StopTreeFn { param($name, $runDir) throw 'StopTreeFn must not run' }
+    Assert-Equal 1 $result.ExitCode 'stale log does not satisfy the log-existence guard'
+    Assert-True (-not (Test-Path -LiteralPath $logPath)) 'stale log was removed before the launch'
+    Write-TestPass 'Invoke-KitRepoBuild removes stale logs before launching'
+}
+finally { Remove-TestSandbox -Path $sb }
+
+# Test 15e: failure to remove locked stale log evidence aborts before launch
+Assert-True ($moduleContent -match 'Remove-Item -LiteralPath \$LogPath -Force -ErrorAction Stop') 'stale-log cleanup errors are terminating'
+if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+    $sb = New-TestSandbox -Prefix 'kit-repo-build-stale-cleanup'
+    $lockedLog = $null
+    try {
+        $runDir = Join-Path $sb 'scripts\.run'
+        New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+        $logPath = Join-Path $runDir 'kit-repo-build.log'
+        Set-Content -LiteralPath $logPath -Value 'locked stale evidence'
+        $lockedLog = [IO.File]::Open($logPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+        $started = $false
+        $cleanupError = $null
+        try {
+            Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir `
+                -StartProcessFn { param($workingDirectory, $logPath) $script:started = $true; [pscustomobject]@{ Id = 4247; ExitCode = 0 } } `
+                -WaitForExitFn { param($proc, $timeoutMs) $true } `
+                -StopTreeFn { param($name, $runDir) throw 'StopTreeFn must not run' } | Out-Null
+        }
+        catch { $cleanupError = $_ }
+        Assert-True ($null -ne $cleanupError) 'locked stale-log cleanup failure aborts the build'
+        Assert-True (-not $started) 'build process is not launched after locked stale-log cleanup failure'
+        Write-TestPass 'Invoke-KitRepoBuild fails closed when stale log cleanup fails'
+    }
+    finally {
+        if ($null -ne $lockedLog) { $lockedLog.Dispose() }
+        Remove-TestSandbox -Path $sb
+    }
+}
+else {
+    Write-TestPass 'Invoke-KitRepoBuild locked stale-log cleanup (skipped: POSIX permits unlinking open files)'
+}
+
+# Test 15f: a container at the log-file path is rejected and preserved
+$sb = New-TestSandbox -Prefix 'kit-repo-build-log-container'
+try {
+    $runDir = Join-Path $sb 'scripts\.run'
+    New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    $logPath = Join-Path $runDir 'kit-repo-build.log'
+    New-Item -ItemType Directory -Path $logPath -Force | Out-Null
+    $started = $false
+    $cleanupError = $null
+    try {
+        Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir `
+            -StartProcessFn { param($workingDirectory, $logPath) $script:started = $true; [pscustomobject]@{ Id = 4248; ExitCode = 0 } } `
+            -WaitForExitFn { param($proc, $timeoutMs) $true } `
+            -StopTreeFn { param($name, $runDir) throw 'StopTreeFn must not run' } | Out-Null
+    }
+    catch { $cleanupError = $_ }
+    Assert-True ($null -ne $cleanupError) 'container at the log path aborts the build'
+    Assert-True (-not $started) 'build process is not launched for a container log path'
+    Assert-True (Test-Path -LiteralPath $logPath -PathType Container) 'container at the log path is preserved'
+    Write-TestPass 'Invoke-KitRepoBuild rejects a container log path'
+}
+finally { Remove-TestSandbox -Path $sb }
+
+# Test 15g: metadata lookup errors abort before stale evidence can be trusted
+$sb = New-TestSandbox -Prefix 'kit-repo-build-log-metadata'
+try {
+    $runDir = Join-Path $sb 'scripts\.run'
+    New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    $logPath = Join-Path $runDir 'kit-repo-build.log'
+    $started = $false
+    $cleanupError = $null
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        function Test-Path {
+            [CmdletBinding()]
+            param([string] $LiteralPath, [object] $PathType)
+            Write-Error 'simulated log metadata access failure'
+            return $false
+        }
+        $ErrorActionPreference = 'Continue'
+        try {
+            Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir `
+                -StartProcessFn { param($workingDirectory, $logPath) $script:started = $true; [pscustomobject]@{ Id = 4249; ExitCode = 0 } } `
+                -WaitForExitFn { param($proc, $timeoutMs) $true } `
+                -StopTreeFn { param($name, $runDir) throw 'StopTreeFn must not run' } | Out-Null
+        }
+        catch { $cleanupError = $_ }
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+        Remove-Item -LiteralPath Function:\Test-Path -Force -ErrorAction SilentlyContinue
+    }
+    Assert-True ($null -ne $cleanupError) 'log metadata access failure aborts the build'
+    Assert-True (-not $started) 'build process is not launched after log metadata access failure'
+    Write-TestPass 'Invoke-KitRepoBuild fails closed on log metadata errors'
 }
 finally { Remove-TestSandbox -Path $sb }
 
@@ -286,7 +470,10 @@ try {
         -KitControlUrl '' `
         -ImportProbeFn { param($PythonExe) return 0 } `
         -LocalAddressProbeFn { param($HostName) throw 'empty control URL must not probe an address' } | Out-Null
-    Assert-Equal '' $capturedKitManagerEnvironment.KIT_CONTROL_URL 'unconfigured Kit control remains an honest empty child value'
+    # .NET Framework removes a process env var when it is set to '', while modern
+    # .NET preserves the empty string. Both represent the same unconfigured child
+    # authority, so normalize the host-specific null/empty representation.
+    Assert-Equal '' ([string]$capturedKitManagerEnvironment.KIT_CONTROL_URL) 'unconfigured Kit control remains an honest empty child value'
     foreach ($name in $kitManagerEnvironmentNames) {
         Assert-Equal "parent-$name" ([Environment]::GetEnvironmentVariable($name, 'Process')) "parent env restores $name after empty control authority"
     }
@@ -356,9 +543,18 @@ $ipv6ControlUrl = Resolve-HostNativeKitControlUrl `
     -KitControlUrl 'HTTP://[::1]:49101/' `
     -LocalAddressProbeFn {
         param($HostName)
-        return ($HostName.Trim([char[]]'[]') -eq '::1')
+        # .NET Framework expands ::1 to 0000:...:0001 while modern .NET keeps
+        # the compressed form. Check the address semantics, not its rendering.
+        return [System.Net.IPAddress]::IsLoopback(
+            [System.Net.IPAddress]::Parse($HostName.Trim([char[]]'[]'))
+        )
     }
-Assert-Equal 'http://[::1]:49101' $ipv6ControlUrl 'resolver canonicalizes a bracketed IPv6 loopback authority'
+$ipv6ControlUri = [Uri]$ipv6ControlUrl
+Assert-Equal 'http' $ipv6ControlUri.Scheme 'resolver preserves the HTTP scheme for IPv6 loopback authority'
+Assert-Equal 49101 $ipv6ControlUri.Port 'resolver preserves the IPv6 loopback authority port'
+Assert-True ([System.Net.IPAddress]::IsLoopback(
+    [System.Net.IPAddress]::Parse($ipv6ControlUri.Host.Trim([char[]]'[]'))
+)) 'resolver preserves the IPv6 loopback authority address semantics'
 
 $rejectedControlUrls = @(
     @{ Name = 'HTTPS'; Url = 'https://localhost:49101' },
