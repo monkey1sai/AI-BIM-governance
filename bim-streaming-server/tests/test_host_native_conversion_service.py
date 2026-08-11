@@ -4,6 +4,7 @@ import os
 import stat
 import subprocess
 import sys
+import time
 import types
 from pathlib import Path
 
@@ -319,14 +320,6 @@ def test_adapter_builds_powershell_command_and_confirms_usdc(tmp_path: Path, mon
 
     captured = {}
 
-    class _Completed:
-        args: list = []
-        returncode = 0
-        stdout = None
-        stderr = None
-        stdout = ""
-        stderr = ""
-
     def fake_run(cmd, **kwargs):
         captured["cmd"] = cmd
         captured["kwargs"] = kwargs
@@ -361,9 +354,9 @@ def test_adapter_builds_powershell_command_and_confirms_usdc(tmp_path: Path, mon
             '{"usdc_openable": true, "has_renderable_prims": true}}',
             encoding="utf-8",
         )
-        return _Completed()
+        return _FakeContainedPopen(cmd, returncode=0)
 
-    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("subprocess.Popen", fake_run)
 
     result = adapter.convert(
         job={
@@ -472,6 +465,75 @@ def _validated_explicit_hoops(
     adapter.hoops_main_path = hoops_main
     resolved = hoops_main.resolve(strict=True)
     return resolved, adapter._hoops_file_identity(resolved)
+
+
+class _FakeContainedPopen:
+    """``subprocess.Popen`` stand-in for adapter unit tests.
+
+    #489: the adapter now launches the converter through ``_ContainedProcess``
+    (Windows Job Object / POSIX session), so the fake sits at the ``Popen`` seam.
+    No real OS process exists behind it, so ``pid`` stays None and the
+    containment wrapper correctly degrades to "there is no tree to contain"
+    instead of interrogating kernel32 about a process that never existed.
+    """
+
+    def __init__(self, args, *, returncode: int = 0, timeout: bool = False) -> None:
+        self.args = args
+        self.pid = None
+        self.returncode = None
+        self.wait_timeouts: list = []
+        self._final_returncode = returncode
+        self._timeout = timeout
+
+    def wait(self, timeout=None):
+        self.wait_timeouts.append(timeout)
+        if self._timeout:
+            raise subprocess.TimeoutExpired(cmd=self.args, timeout=timeout)
+        self.returncode = self._final_returncode
+        return self._final_returncode
+
+    def poll(self):
+        return self.returncode
+
+    def kill(self) -> None:
+        self.returncode = -9
+
+
+def _patch_popen(
+    monkeypatch,
+    *,
+    returncode: int = 0,
+    stdout: str = "",
+    stderr: str = "",
+    timeout: bool = False,
+    on_start=None,
+) -> dict:
+    """Patch ``subprocess.Popen`` with a converter double; returns a capture dict.
+
+    The adapter redirects the converter's stdout/stderr into temp files (the
+    pipe-hang fix), so a faithful double writes into those handles instead of
+    returning captured strings.
+    """
+
+    captured: dict = {}
+
+    def _fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        out_handle = kwargs.get("stdout")
+        err_handle = kwargs.get("stderr")
+        if stdout and hasattr(out_handle, "write"):
+            out_handle.write(stdout.encode("utf-8"))
+        if stderr and hasattr(err_handle, "write"):
+            err_handle.write(stderr.encode("utf-8"))
+        if on_start is not None:
+            on_start()
+        proc = _FakeContainedPopen(cmd, returncode=returncode, timeout=timeout)
+        captured["proc"] = proc
+        return proc
+
+    monkeypatch.setattr("subprocess.Popen", _fake_popen)
+    return captured
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX group ownership contract")
@@ -935,7 +997,7 @@ def test_powershell_conversion_rejects_hoops_path_swap_after_preflight(
         subprocess_called = True
         raise AssertionError("subprocess must not run after a HOOPS path identity change")
 
-    monkeypatch.setattr("subprocess.run", _unexpected_subprocess)
+    monkeypatch.setattr("subprocess.Popen", _unexpected_subprocess)
     with pytest.raises(ConversionAuthorityError, match="content digest does not match"):
         adapter._run_powershell_conversion(
             ifc_path=tmp_path / "input.ifc",
@@ -970,9 +1032,9 @@ def test_windows_execution_guard_blocks_hoops_write_until_converter_exits(
             hoops_main.write_bytes(b"# attacker replacement")
         except OSError as exc:
             blocked_write = exc
-        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+        return _FakeContainedPopen(args, returncode=0)
 
-    monkeypatch.setattr("subprocess.run", _attempt_write_while_converter_runs)
+    monkeypatch.setattr("subprocess.Popen", _attempt_write_while_converter_runs)
 
     adapter._run_powershell_conversion(
         ifc_path=tmp_path / "input.ifc",
@@ -1035,7 +1097,7 @@ def test_windows_execution_guard_rejects_preopened_writer(
         subprocess_called = True
         raise AssertionError("subprocess must not run with a pre-opened HOOPS writer")
 
-    monkeypatch.setattr("subprocess.run", _unexpected_subprocess)
+    monkeypatch.setattr("subprocess.Popen", _unexpected_subprocess)
     try:
         with pytest.raises(ConversionAuthorityError, match="could not be pinned safely"):
             adapter._run_powershell_conversion(
@@ -1400,7 +1462,7 @@ def test_failed_conversion_without_metadata_still_works(tmp_path: Path):
 
 def test_run_powershell_conversion_regex_extracts_log_paths_from_ps1_throw(tmp_path: Path, monkeypatch):
     """Review Important #2:lock in ps1 throw shape ↔ Python regex 契約。
-    monkeypatch subprocess.run 返回 ps1 真實 throw heredoc 形狀,assert
+    monkeypatch subprocess.Popen 返回 ps1 真實 throw heredoc 形狀,assert
     `_run_powershell_conversion` 拋出 ConversionAuthorityError 且 metadata 含兩個 path。
     包含 Windows path 內的冒號(`C:\\...`)與空格,測 regex 不會被 drive-letter colon 截斷。
     """
@@ -1430,13 +1492,7 @@ def test_run_powershell_conversion_regex_extracts_log_paths_from_ps1_throw(tmp_p
         "<fake stdout lines>\n"
     )
 
-    def _fake_run(cmd, **kwargs):
-        err_handle = kwargs.get("stderr")
-        if hasattr(err_handle, "write"):
-            err_handle.write(ps1_throw.encode("utf-8"))
-        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout=None, stderr=None)
-
-    monkeypatch.setattr("subprocess.run", _fake_run)
+    _patch_popen(monkeypatch, returncode=1, stderr=ps1_throw)
 
     raised: ConversionAuthorityError | None = None
     try:
@@ -3539,13 +3595,8 @@ def test_converter_subprocess_uses_file_redirection_not_pipes(tmp_path: Path, mo
 
     adapter = _adapter_for_sentinel(tmp_path)
     validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
-    captured: dict = {}
+    captured = _patch_popen(monkeypatch, returncode=1)
 
-    def _fake_run(cmd, **kwargs):
-        captured["kwargs"] = kwargs
-        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout=None, stderr=None)
-
-    monkeypatch.setattr("subprocess.run", _fake_run)
     try:
         adapter._run_powershell_conversion(
             ifc_path=tmp_path / "fake.ifc",
@@ -3562,17 +3613,16 @@ def test_converter_subprocess_uses_file_redirection_not_pipes(tmp_path: Path, mo
     assert kwargs.get("stderr") is not subprocess.PIPE
     assert hasattr(kwargs.get("stdout"), "fileno")
     assert hasattr(kwargs.get("stderr"), "fileno")
-    assert kwargs.get("timeout") == adapter.timeout_seconds + 30
+    # #489 moved the wait off `subprocess.run(timeout=...)` onto the contained
+    # process, but the ps1-timeout + safety-buffer contract is unchanged.
+    assert captured["proc"].wait_timeouts == [adapter.timeout_seconds + 30]
 
 
 def test_converter_timeout_maps_to_converter_timeout_error(tmp_path: Path, monkeypatch):
     adapter = _adapter_for_sentinel(tmp_path)
     validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
 
-    def _fake_run(cmd, **kwargs):
-        raise subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs.get("timeout"))
-
-    monkeypatch.setattr("subprocess.run", _fake_run)
+    _patch_popen(monkeypatch, timeout=True)
     raised: ConversionAuthorityError | None = None
     try:
         adapter._run_powershell_conversion(
@@ -3588,20 +3638,207 @@ def test_converter_timeout_maps_to_converter_timeout_error(tmp_path: Path, monke
     assert raised.code == "converter_timeout"
 
 
-def _patch_subprocess_returning(monkeypatch, *, returncode: int, stderr: str, stdout: str = "") -> None:
-    # The adapter redirects the converter's stdout/stderr into temp files (the
-    # pipe-hang fix), so a faithful fake writes into those handles instead of
-    # returning captured strings.
-    def _fake_run(cmd, **kwargs):
-        out_handle = kwargs.get("stdout")
-        err_handle = kwargs.get("stderr")
-        if hasattr(out_handle, "write"):
-            out_handle.write(stdout.encode("utf-8"))
-        if hasattr(err_handle, "write"):
-            err_handle.write(stderr.encode("utf-8"))
-        return subprocess.CompletedProcess(args=cmd, returncode=returncode, stdout=None, stderr=None)
+# --- #489 SEC-001: the outer timeout must contain the whole Kit process tree ---
 
-    monkeypatch.setattr("subprocess.run", _fake_run)
+_PROCESS_TREE_FIXTURE = '''\
+import os
+import subprocess
+import sys
+import time
+
+pid_file = sys.argv[1]
+grandchild = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+with open(pid_file, "w", encoding="utf-8") as handle:
+    handle.write("%d\\n%d\\n" % (os.getpid(), grandchild.pid))
+    handle.flush()
+    os.fsync(handle.fileno())
+time.sleep(600)
+'''
+
+
+def _pid_is_alive(pid: int) -> bool:
+    """Liveness probe that does not reuse the adapter's own containment code."""
+
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+        kernel32.WaitForSingleObject.restype = wintypes.DWORD
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        # SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION
+        handle = kernel32.OpenProcess(0x00100000 | 0x00001000, False, int(pid))
+        if not handle:
+            return False
+        try:
+            return kernel32.WaitForSingleObject(handle, 0) != 0  # != WAIT_OBJECT_0
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _force_kill(pid: int) -> None:
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/F", "/T"],
+            capture_output=True,
+            check=False,
+        )
+        return
+    try:
+        os.kill(int(pid), 9)
+    except OSError:
+        pass
+
+
+def test_converter_timeout_kills_the_whole_process_tree_before_raising(
+    tmp_path: Path, monkeypatch
+):
+    """#489 SEC-001:外層 timeout 必須連 Kit 孫代一起清掉,而不是只殺直接 child。
+
+    converter 指令換成一個會 spawn 孫代、把兩個 PID 寫檔、然後睡過
+    ``timeout_seconds + buffer`` 的 Python fixture。例外浮上來時,兩個 PID 都必須
+    已經消失,且整趟必須在有界的 wall-clock 內結束。
+    """
+
+    adapter = _adapter_for_sentinel(tmp_path)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
+    fixture = tmp_path / "spawn_process_tree.py"
+    fixture.write_text(_PROCESS_TREE_FIXTURE, encoding="utf-8")
+    pid_file = tmp_path / "process-tree-pids.txt"
+
+    adapter.timeout_seconds = 3
+    monkeypatch.setattr(adapter, "_OUTER_TIMEOUT_BUFFER_SECONDS", 1)
+    monkeypatch.setattr(
+        adapter,
+        "_build_converter_command",
+        lambda **kwargs: [sys.executable, str(fixture), str(pid_file)],
+    )
+
+    started = time.monotonic()
+    raised: ConversionAuthorityError | None = None
+    recorded: list[int] = []
+    try:
+        try:
+            adapter._run_powershell_conversion(
+                ifc_path=tmp_path / "fake.ifc",
+                output_dir=tmp_path / "out",
+                validated_hoops_main=validated_hoops_main,
+                validated_hoops_identity=validated_hoops_identity,
+            )
+        except ConversionAuthorityError as exc:
+            raised = exc
+        elapsed = time.monotonic() - started
+
+        assert raised is not None
+        assert raised.code == "converter_timeout"
+        recorded = [int(token) for token in pid_file.read_text(encoding="utf-8").split()]
+        assert len(recorded) == 2, f"fixture did not record child + grandchild: {recorded}"
+        survivors = [pid for pid in recorded if _pid_is_alive(pid)]
+        assert survivors == [], f"converter process tree survived the timeout: {survivors}"
+        # ps1 timeout(3s)+ buffer(1s)+ containment deadline;有界,不是掛死。
+        assert elapsed < 60
+    finally:
+        for pid in recorded:
+            if _pid_is_alive(pid):
+                _force_kill(pid)
+
+
+def test_containment_poll_completes_before_the_hoops_pin_is_released(
+    tmp_path: Path, monkeypatch
+):
+    """#489 SEC-001:等待 descendants 消失的 poll 必須在 HOOPS pin 區塊「之內」跑完,
+    pin 才會比 process tree 活得久。"""
+
+    from contextlib import contextmanager
+
+    import ifc2usdc_powershell_adapter
+
+    adapter = _adapter_for_sentinel(tmp_path)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
+    events: list[str] = []
+
+    @contextmanager
+    def _recording_pin(candidate, identity):
+        events.append("pin_acquired")
+        try:
+            yield
+        finally:
+            events.append("pin_released")
+
+    def _recording_terminate(self, *, deadline_seconds, grace_seconds):
+        events.append("tree_contained")
+        self._survivors = ()
+        return True
+
+    monkeypatch.setattr(
+        adapter, "_hold_windows_hoops_entrypoint_for_execution", _recording_pin
+    )
+    monkeypatch.setattr(
+        ifc2usdc_powershell_adapter._ContainedProcess, "terminate_tree", _recording_terminate
+    )
+    _patch_popen(monkeypatch, timeout=True)
+
+    with pytest.raises(ConversionAuthorityError) as excinfo:
+        adapter._run_powershell_conversion(
+            ifc_path=tmp_path / "fake.ifc",
+            output_dir=tmp_path / "out",
+            validated_hoops_main=validated_hoops_main,
+            validated_hoops_identity=validated_hoops_identity,
+        )
+
+    assert excinfo.value.code == "converter_timeout"
+    assert events == ["pin_acquired", "tree_contained", "pin_released"]
+
+
+def test_unprovable_containment_fails_closed_with_a_distinct_reason(
+    tmp_path: Path, monkeypatch
+):
+    """#489 SEC-001:期限內證明不了整棵樹已清空時,不得偽裝成單純 converter_timeout。"""
+
+    import ifc2usdc_powershell_adapter
+
+    adapter = _adapter_for_sentinel(tmp_path)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
+
+    def _unprovable(self, *, deadline_seconds, grace_seconds):
+        self._survivors = (424242, 424243)
+        return False
+
+    monkeypatch.setattr(
+        ifc2usdc_powershell_adapter._ContainedProcess, "terminate_tree", _unprovable
+    )
+    _patch_popen(monkeypatch, timeout=True)
+
+    raised: ConversionAuthorityError | None = None
+    try:
+        adapter._run_powershell_conversion(
+            ifc_path=tmp_path / "fake.ifc",
+            output_dir=tmp_path / "out",
+            validated_hoops_main=validated_hoops_main,
+            validated_hoops_identity=validated_hoops_identity,
+        )
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.code == "converter_containment_failed"
+    assert "424242" in raised.message
+    assert "424243" in raised.message
+
+
+def _patch_subprocess_returning(monkeypatch, *, returncode: int, stderr: str, stdout: str = "") -> None:
+    _patch_popen(monkeypatch, returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 def test_sentinel_yields_log_paths_with_windows_drive_path(tmp_path: Path, monkeypatch):

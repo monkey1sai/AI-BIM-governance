@@ -36,9 +36,566 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 
 from conversion_authority import ConversionAuthorityError, _PLACEHOLDER_MARKERS
 from ifc_openusd_identity_author import IDENTITY_PROFILE, IfcOpenUsdIdentityAuthor
+
+
+# --- #489 SEC-001 / L1-COR-004:converter process-tree containment ------------
+#
+# CPython 的 ``subprocess`` timeout 只 ``kill()`` 直接 child。PowerShell 死了,但
+# 它啟動的 Kit 孫代還活著繼續處理不可信輸入,而 ``with`` 區塊 unwind 會在樹還沒
+# 清乾淨前就放掉 HOOPS pin——containment 缺口。
+#
+# 修法:把 child 放進一個 OS 級 containment boundary(Windows = Job Object 且帶
+# ``JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE``;POSIX = 獨立 session/process group),
+# timeout 時終止整棵樹,並且「觀察到」每一個 descendant 都消失之後,才准離開
+# HOOPS pin 區塊。無法在期限內證明樹已清空時,必須用獨立的 fail-closed 代碼
+# (``converter_containment_failed``)回報,不得偽裝成單純 timeout。
+_CONTAINMENT_POLL_INTERVAL_SECONDS = 0.05
+
+
+class _Win32ContainmentApi:
+    """Lazily-bound kernel32 surface used for Job Object process containment."""
+
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+    JOB_OBJECT_BASIC_PROCESS_ID_LIST = 3
+    JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+    CREATE_SUSPENDED = 0x00000004
+    CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+    TH32CS_SNAPPROCESS = 0x00000002
+    TH32CS_SNAPTHREAD = 0x00000004
+    THREAD_SUSPEND_RESUME = 0x0002
+    PROCESS_TERMINATE = 0x0001
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x00001000
+    SYNCHRONIZE = 0x00100000
+    WAIT_OBJECT_0 = 0x00000000
+    ERROR_ACCESS_DENIED = 5
+    ERROR_INVALID_PARAMETER = 87
+    ERROR_MORE_DATA = 234
+    RESUME_THREAD_FAILED = 0xFFFFFFFF
+    _JOB_PID_LIST_CAPACITY = 512
+
+    def __init__(self) -> None:
+        import ctypes
+        from ctypes import wintypes
+
+        self._ctypes = ctypes
+        self._wintypes = wintypes
+        self._invalid_handle = ctypes.c_void_p(-1).value
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.kernel32 = kernel32
+        ulong_ptr = ctypes.c_size_t
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = (
+                ("ReadOperationCount", ctypes.c_ulonglong),
+                ("WriteOperationCount", ctypes.c_ulonglong),
+                ("OtherOperationCount", ctypes.c_ulonglong),
+                ("ReadTransferCount", ctypes.c_ulonglong),
+                ("WriteTransferCount", ctypes.c_ulonglong),
+                ("OtherTransferCount", ctypes.c_ulonglong),
+            )
+
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = (
+                ("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER),
+                ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ulong_ptr),
+                ("MaximumWorkingSetSize", ulong_ptr),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ulong_ptr),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            )
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = (
+                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", IO_COUNTERS),
+                ("ProcessMemoryLimit", ulong_ptr),
+                ("JobMemoryLimit", ulong_ptr),
+                ("PeakProcessMemoryUsed", ulong_ptr),
+                ("PeakJobMemoryUsed", ulong_ptr),
+            )
+
+        class JOBOBJECT_BASIC_PROCESS_ID_LIST(ctypes.Structure):
+            _fields_ = (
+                ("NumberOfAssignedProcesses", wintypes.DWORD),
+                ("NumberOfProcessIdsInList", wintypes.DWORD),
+                ("ProcessIdList", ulong_ptr * _Win32ContainmentApi._JOB_PID_LIST_CAPACITY),
+            )
+
+        class THREADENTRY32(ctypes.Structure):
+            _fields_ = (
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ThreadID", wintypes.DWORD),
+                ("th32OwnerProcessID", wintypes.DWORD),
+                ("tpBasePri", wintypes.LONG),
+                ("tpDeltaPri", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+            )
+
+        class PROCESSENTRY32W(ctypes.Structure):
+            _fields_ = (
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ulong_ptr),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", wintypes.WCHAR * 260),
+            )
+
+        self._extended_limit_type = JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+        self._pid_list_type = JOBOBJECT_BASIC_PROCESS_ID_LIST
+        self._thread_entry_type = THREADENTRY32
+        self._process_entry_type = PROCESSENTRY32W
+
+        kernel32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.SetInformationJobObject.argtypes = (
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+        )
+        kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        kernel32.QueryInformationJobObject.argtypes = (
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        )
+        kernel32.QueryInformationJobObject.restype = wintypes.BOOL
+        kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+        kernel32.TerminateJobObject.restype = wintypes.BOOL
+        kernel32.CreateToolhelp32Snapshot.argtypes = (wintypes.DWORD, wintypes.DWORD)
+        kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        kernel32.Thread32First.argtypes = (wintypes.HANDLE, ctypes.c_void_p)
+        kernel32.Thread32First.restype = wintypes.BOOL
+        kernel32.Thread32Next.argtypes = (wintypes.HANDLE, ctypes.c_void_p)
+        kernel32.Thread32Next.restype = wintypes.BOOL
+        kernel32.Process32FirstW.argtypes = (wintypes.HANDLE, ctypes.c_void_p)
+        kernel32.Process32FirstW.restype = wintypes.BOOL
+        kernel32.Process32NextW.argtypes = (wintypes.HANDLE, ctypes.c_void_p)
+        kernel32.Process32NextW.restype = wintypes.BOOL
+        kernel32.OpenThread.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.OpenThread.restype = wintypes.HANDLE
+        kernel32.ResumeThread.argtypes = (wintypes.HANDLE,)
+        kernel32.ResumeThread.restype = wintypes.DWORD
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT)
+        kernel32.TerminateProcess.restype = wintypes.BOOL
+        kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+        kernel32.WaitForSingleObject.restype = wintypes.DWORD
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+    # -- job object ---------------------------------------------------------
+
+    def create_kill_on_close_job(self) -> int | None:
+        ctypes = self._ctypes
+        job = self.kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        info = self._extended_limit_type()
+        info.BasicLimitInformation.LimitFlags = self.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        ok = self.kernel32.SetInformationJobObject(
+            job,
+            self.JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        )
+        if not ok:
+            self.close_handle(job)
+            return None
+        return int(job)
+
+    def assign_process(self, job: int, process_handle: int) -> bool:
+        return bool(self.kernel32.AssignProcessToJobObject(job, process_handle))
+
+    def terminate_job(self, job: int) -> bool:
+        return bool(self.kernel32.TerminateJobObject(job, 1))
+
+    def job_process_ids(self, job: int) -> list[int] | None:
+        """PIDs still associated with the job, or None when it cannot be read."""
+
+        ctypes = self._ctypes
+        wintypes = self._wintypes
+        buffer = self._pid_list_type()
+        returned = wintypes.DWORD(0)
+        ctypes.set_last_error(0)
+        ok = self.kernel32.QueryInformationJobObject(
+            job,
+            self.JOB_OBJECT_BASIC_PROCESS_ID_LIST,
+            ctypes.byref(buffer),
+            ctypes.sizeof(buffer),
+            ctypes.byref(returned),
+        )
+        if not ok and ctypes.get_last_error() != self.ERROR_MORE_DATA:
+            return None
+        count = min(int(buffer.NumberOfProcessIdsInList), self._JOB_PID_LIST_CAPACITY)
+        return [int(buffer.ProcessIdList[index]) for index in range(count)]
+
+    # -- process / thread ---------------------------------------------------
+
+    def resume_process_threads(self, pid: int) -> int:
+        """Resume every thread of ``pid``; returns how many resumed."""
+
+        ctypes = self._ctypes
+        snapshot = self.kernel32.CreateToolhelp32Snapshot(self.TH32CS_SNAPTHREAD, 0)
+        if not snapshot or int(snapshot) == self._invalid_handle:
+            return 0
+        resumed = 0
+        try:
+            entry = self._thread_entry_type()
+            entry.dwSize = ctypes.sizeof(entry)
+            more = self.kernel32.Thread32First(snapshot, ctypes.byref(entry))
+            while more:
+                if int(entry.th32OwnerProcessID) == int(pid):
+                    thread = self.kernel32.OpenThread(
+                        self.THREAD_SUSPEND_RESUME, False, entry.th32ThreadID
+                    )
+                    if thread:
+                        if self.kernel32.ResumeThread(thread) != self.RESUME_THREAD_FAILED:
+                            resumed += 1
+                        self.close_handle(thread)
+                more = self.kernel32.Thread32Next(snapshot, ctypes.byref(entry))
+        finally:
+            self.close_handle(snapshot)
+        return resumed
+
+    def child_pids(self, parent_pid: int) -> list[int]:
+        ctypes = self._ctypes
+        snapshot = self.kernel32.CreateToolhelp32Snapshot(self.TH32CS_SNAPPROCESS, 0)
+        if not snapshot or int(snapshot) == self._invalid_handle:
+            return []
+        children: list[int] = []
+        try:
+            entry = self._process_entry_type()
+            entry.dwSize = ctypes.sizeof(entry)
+            more = self.kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+            while more:
+                if int(entry.th32ParentProcessID) == int(parent_pid):
+                    children.append(int(entry.th32ProcessID))
+                more = self.kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+        finally:
+            self.close_handle(snapshot)
+        return children
+
+    def pid_is_alive(self, pid: int) -> bool:
+        ctypes = self._ctypes
+        ctypes.set_last_error(0)
+        handle = self.kernel32.OpenProcess(
+            self.SYNCHRONIZE | self.PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid)
+        )
+        if not handle:
+            # ERROR_INVALID_PARAMETER is Windows' "no such pid". Anything else
+            # (notably ERROR_ACCESS_DENIED) means the process still exists but is
+            # not interrogable, so containment MUST NOT be reported as proven.
+            return ctypes.get_last_error() != self.ERROR_INVALID_PARAMETER
+        try:
+            return self.kernel32.WaitForSingleObject(handle, 0) != self.WAIT_OBJECT_0
+        finally:
+            self.close_handle(handle)
+
+    def terminate_pid(self, pid: int) -> None:
+        handle = self.kernel32.OpenProcess(self.PROCESS_TERMINATE, False, int(pid))
+        if not handle:
+            return
+        try:
+            self.kernel32.TerminateProcess(handle, 1)
+        finally:
+            self.close_handle(handle)
+
+    def close_handle(self, handle: int) -> None:
+        try:
+            self.kernel32.CloseHandle(handle)
+        except OSError:
+            pass
+
+
+_WIN32_CONTAINMENT_API: _Win32ContainmentApi | None = None
+_WIN32_CONTAINMENT_UNAVAILABLE = False
+
+
+def _win32_containment_api() -> _Win32ContainmentApi | None:
+    """Cached kernel32 containment bindings; None when unavailable."""
+
+    global _WIN32_CONTAINMENT_API, _WIN32_CONTAINMENT_UNAVAILABLE
+    if _WIN32_CONTAINMENT_API is not None:
+        return _WIN32_CONTAINMENT_API
+    if _WIN32_CONTAINMENT_UNAVAILABLE or os.name != "nt":
+        return None
+    try:
+        _WIN32_CONTAINMENT_API = _Win32ContainmentApi()
+    except Exception:  # noqa: BLE001 - binding failure degrades, never crashes convert()
+        _WIN32_CONTAINMENT_UNAVAILABLE = True
+        return None
+    return _WIN32_CONTAINMENT_API
+
+
+class _ContainedProcess:
+    """A converter child launched inside an OS-level process-tree boundary.
+
+    ``terminate_tree`` is the containment proof: it terminates the whole tree and
+    then POLLS until every descendant is observed gone, returning False when the
+    deadline expires with survivors still alive. Callers must run it while the
+    HOOPS pin is still held, and must map a False result to a distinct
+    fail-closed error instead of a plain timeout.
+    """
+
+    def __init__(
+        self,
+        proc,
+        *,
+        job: int | None = None,
+        pgid: int | None = None,
+        api: _Win32ContainmentApi | None = None,
+    ) -> None:
+        self._proc = proc
+        self._job = job
+        self._pgid = pgid
+        self._api = api
+        self._survivors: tuple[int, ...] = ()
+        self._closed = False
+
+    # -- construction -------------------------------------------------------
+
+    @staticmethod
+    def _popen(cmd, **kwargs):
+        return subprocess.Popen(cmd, **kwargs)
+
+    @classmethod
+    def spawn(cls, cmd, *, cwd, stdout, stderr) -> _ContainedProcess:
+        if os.name == "nt":
+            return cls._spawn_windows(cmd, cwd=cwd, stdout=stdout, stderr=stderr)
+        return cls._spawn_posix(cmd, cwd=cwd, stdout=stdout, stderr=stderr)
+
+    @classmethod
+    def _spawn_windows(cls, cmd, *, cwd, stdout, stderr) -> _ContainedProcess:
+        api = _win32_containment_api()
+        job = api.create_kill_on_close_job() if api is not None else None
+        # CREATE_SUSPENDED closes the race where the child spawns Kit before it is
+        # assigned to the job; CREATE_BREAKAWAY_FROM_JOB keeps a pre-Win8 style
+        # parent job from swallowing the assignment.
+        flags = (api.CREATE_SUSPENDED | api.CREATE_BREAKAWAY_FROM_JOB) if job is not None else 0
+        try:
+            proc = cls._popen(
+                cmd, cwd=cwd, stdout=stdout, stderr=stderr, shell=False, creationflags=flags
+            )
+        except OSError as exc:
+            if job is None or api is None or getattr(exc, "winerror", None) != api.ERROR_ACCESS_DENIED:
+                if job is not None and api is not None:
+                    api.close_handle(job)
+                raise
+            # Already inside a job that forbids breakaway: nested jobs are fine.
+            try:
+                proc = cls._popen(
+                    cmd,
+                    cwd=cwd,
+                    stdout=stdout,
+                    stderr=stderr,
+                    shell=False,
+                    creationflags=api.CREATE_SUSPENDED,
+                )
+            except OSError:
+                api.close_handle(job)
+                raise
+        handle = getattr(proc, "_handle", None)
+        pid = getattr(proc, "pid", None)
+        assigned = False
+        if job is not None and api is not None and handle is not None:
+            assigned = api.assign_process(job, int(handle))
+        if job is not None and api is not None and pid:
+            # The child was created suspended, so it MUST be resumed or the whole
+            # conversion hangs. Failing to resume is a fail-closed launch error.
+            if api.resume_process_threads(int(pid)) == 0:
+                api.terminate_pid(int(pid))
+                api.close_handle(job)
+                try:
+                    proc.wait(timeout=5)
+                except Exception:  # noqa: BLE001 - best-effort reap of a dead child
+                    pass
+                raise OSError("failed to resume the contained converter process")
+        if job is not None and api is not None and not assigned:
+            api.close_handle(job)
+            job = None
+        return cls(proc, job=job, api=api)
+
+    @classmethod
+    def _spawn_posix(cls, cmd, *, cwd, stdout, stderr) -> _ContainedProcess:
+        proc = cls._popen(
+            cmd, cwd=cwd, stdout=stdout, stderr=stderr, shell=False, start_new_session=True
+        )
+        pid = getattr(proc, "pid", None)
+        pgid = None
+        if pid:
+            try:
+                pgid = os.getpgid(int(pid))
+            except OSError:
+                pgid = None
+        return cls(proc, pgid=pgid)
+
+    # -- lifecycle ----------------------------------------------------------
+
+    @property
+    def pid(self) -> int | None:
+        raw = getattr(self._proc, "pid", None)
+        return int(raw) if raw else None
+
+    @property
+    def survivors(self) -> tuple[int, ...]:
+        return self._survivors
+
+    def wait(self, timeout):
+        return self._proc.wait(timeout=timeout)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._job is not None and self._api is not None:
+            # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: dropping the last job handle
+            # terminates anything that outlived the converter.
+            self._api.close_handle(self._job)
+            self._job = None
+
+    def terminate_tree(self, *, deadline_seconds: float, grace_seconds: float) -> bool:
+        """Kill the tree and return True only once every descendant is gone."""
+
+        deadline = time.monotonic() + max(float(deadline_seconds), 0.0)
+        if os.name == "nt":
+            return self._terminate_tree_windows(deadline)
+        return self._terminate_tree_posix(deadline, max(float(grace_seconds), 0.0))
+
+    # -- windows ------------------------------------------------------------
+
+    def _terminate_tree_windows(self, deadline: float) -> bool:
+        pid = self.pid
+        if pid is None:
+            # A spawn that produced no OS pid (unit-test double) has no tree.
+            self._survivors = ()
+            return True
+        api = self._api or _win32_containment_api()
+        if api is None:
+            self._kill_direct_child()
+            self._survivors = (pid,)
+            return False
+        if self._job is not None:
+            api.terminate_job(self._job)
+        else:
+            for victim in reversed(self._windows_tree_pids(api, pid)):
+                api.terminate_pid(victim)
+        self._reap_bounded(max(deadline - time.monotonic(), 0.5))
+        while True:
+            live = self._windows_live_pids(api, pid)
+            if not live:
+                self._survivors = ()
+                return True
+            if time.monotonic() >= deadline:
+                self._survivors = tuple(sorted(live))
+                return False
+            time.sleep(_CONTAINMENT_POLL_INTERVAL_SECONDS)
+
+    @staticmethod
+    def _windows_tree_pids(api: _Win32ContainmentApi, root_pid: int) -> list[int]:
+        # Same breadth-first child walk as scripts/lib/host-native-launcher.ps1's
+        # Stop-HostNativeService, so the two terminators agree on "the tree".
+        ordered: list[int] = []
+        seen: set[int] = set()
+        stack = [int(root_pid)]
+        while stack:
+            current = stack.pop(0)
+            if current in seen:
+                continue
+            seen.add(current)
+            ordered.append(current)
+            stack.extend(api.child_pids(current))
+        return ordered
+
+    def _windows_live_pids(self, api: _Win32ContainmentApi, root_pid: int) -> set[int]:
+        if self._job is not None:
+            candidates = api.job_process_ids(self._job)
+            if candidates is None:
+                candidates = self._windows_tree_pids(api, root_pid)
+        else:
+            candidates = self._windows_tree_pids(api, root_pid)
+        return {int(pid) for pid in candidates if pid and api.pid_is_alive(int(pid))}
+
+    # -- posix --------------------------------------------------------------
+
+    def _terminate_tree_posix(self, deadline: float, grace_seconds: float) -> bool:
+        import signal
+
+        pid = self.pid
+        if pid is None:
+            self._survivors = ()
+            return True
+        pgid = self._pgid
+        if pgid is None:
+            self._kill_direct_child()
+            self._survivors = (pid,)
+            return False
+        self._killpg(pgid, signal.SIGTERM)
+        self._reap_bounded(grace_seconds)
+        if not self._posix_group_alive(pgid):
+            self._survivors = ()
+            return True
+        self._killpg(pgid, signal.SIGKILL)
+        self._reap_bounded(max(deadline - time.monotonic(), 0.5))
+        while True:
+            if not self._posix_group_alive(pgid):
+                self._survivors = ()
+                return True
+            if time.monotonic() >= deadline:
+                self._survivors = (pid,)
+                return False
+            time.sleep(_CONTAINMENT_POLL_INTERVAL_SECONDS)
+
+    @staticmethod
+    def _killpg(pgid: int, sig: int) -> None:
+        try:
+            os.killpg(pgid, sig)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _posix_group_alive(pgid: int) -> bool:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return False
+        except OSError:
+            # Permission or any other error: the group may still exist, so the
+            # honest answer is "not proven gone".
+            return True
+        return True
+
+    # -- shared -------------------------------------------------------------
+
+    def _kill_direct_child(self) -> None:
+        try:
+            self._proc.kill()
+        except Exception:  # noqa: BLE001 - best-effort kill of an unknown child
+            pass
+
+    def _reap_bounded(self, seconds: float) -> None:
+        try:
+            self._proc.wait(timeout=max(float(seconds), 0.0))
+        except Exception:  # noqa: BLE001 - a stubborn child is handled by the poll
+            pass
 
 
 class Ifc2UsdcPowershellConverterAdapter:
@@ -49,6 +606,13 @@ class Ifc2UsdcPowershellConverterAdapter:
     ``quality_metrics``. Missing prerequisites raise ``converter_unavailable``;
     conversion failures raise a specific ``ConversionAuthorityError`` code.
     """
+
+    # 外層 timeout 在 ps1 自己的 -TimeoutSeconds 之上再加的保險 buffer,讓內層先
+    # 有機會清理自己的 Kit 子樹,外層只當最後一道防線。
+    _OUTER_TIMEOUT_BUFFER_SECONDS = 30
+    # #489:外層 timeout 之後,證明整棵 converter process tree 消失的期限 / 寬限期。
+    _CONTAINMENT_DEADLINE_SECONDS = 30.0
+    _CONTAINMENT_GRACE_SECONDS = 5.0
 
     def __init__(
         self,
@@ -1496,19 +2060,14 @@ class Ifc2UsdcPowershellConverterAdapter:
             ) from exc
         return resolved
 
-    def _run_powershell_conversion(
+    def _build_converter_command(
         self,
         *,
         ifc_path: Path,
         output_dir: Path,
-        trace_id: str | None = None,
+        trace_id: str | None,
         validated_hoops_main: Path,
-        validated_hoops_identity: tuple[int, int, int, int, str],
-    ) -> None:
-        validated_hoops_main = self._validated_hoops_main_for_execution(
-            validated_hoops_main,
-            validated_hoops_identity,
-        )
+    ) -> list[str]:
         cmd: list[str] = [
             self.powershell_exe,
             "-NoProfile",
@@ -1533,57 +2092,103 @@ class Ifc2UsdcPowershellConverterAdapter:
         if self.kit_exe_path is not None:
             cmd += ["-KitExePath", str(self.kit_exe_path.resolve())]
         cmd += ["-HoopsMainPath", str(validated_hoops_main)]
+        return cmd
+
+    def _spawn_contained_converter(self, cmd: list[str], *, stdout, stderr) -> _ContainedProcess:
+        return _ContainedProcess.spawn(
+            cmd,
+            cwd=str(self.repo_root),
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+    def _run_powershell_conversion(
+        self,
+        *,
+        ifc_path: Path,
+        output_dir: Path,
+        trace_id: str | None = None,
+        validated_hoops_main: Path,
+        validated_hoops_identity: tuple[int, int, int, int, str],
+    ) -> None:
+        validated_hoops_main = self._validated_hoops_main_for_execution(
+            validated_hoops_main,
+            validated_hoops_identity,
+        )
+        cmd = self._build_converter_command(
+            ifc_path=ifc_path,
+            output_dir=output_dir,
+            trace_id=trace_id,
+            validated_hoops_main=validated_hoops_main,
+        )
+        outer_timeout = self.timeout_seconds + self._OUTER_TIMEOUT_BUFFER_SECONDS
+        timed_out = False
+        containment_proven = True
+        survivors: tuple[int, ...] = ()
         try:
             with self._hold_windows_hoops_entrypoint_for_execution(
                 validated_hoops_main,
                 validated_hoops_identity,
             ):
                 # capture_output=True 會讓 PowerShell 與它啟動的 Kit 子行程都繼承
-                # stdout/stderr pipe。timeout 到期時 subprocess.run 只 kill 直接子行程
-                # (PowerShell);Kit 若仍握著 pipe 寫端,run() 事後的清理 communicate()
-                # 會無限等 EOF——parent 已退、child 持 pipe 的掛死(CPython 已知行為,
-                # 與 host-native-launcher 對 repo.bat 的同型病)。改用暫存檔重導向:
+                # stdout/stderr pipe。timeout 到期時只 kill 直接子行程(PowerShell);
+                # Kit 若仍握著 pipe 寫端,事後清理的 communicate() 會無限等 EOF——
+                # parent 已退、child 持 pipe 的掛死(CPython 已知行為,與
+                # host-native-launcher 對 repo.bat 的同型病)。改用暫存檔重導向:
                 # kill 之後沒有 pipe 可等,輸出仍完整讀得回來。外層 timeout 加 30 秒
                 # buffer,讓 ps1 自己的 -TimeoutSeconds 先行清理 Kit 子樹,外層只當
                 # 最後保險而不是與內層搶同一個瞬間。
                 with tempfile.TemporaryFile() as stdout_handle, tempfile.TemporaryFile() as stderr_handle:
-                    raw_completed = subprocess.run(
-                        cmd,
-                        cwd=str(self.repo_root),
-                        stdout=stdout_handle,
-                        stderr=stderr_handle,
-                        timeout=self.timeout_seconds + 30,
-                        shell=False,
-                        check=False,
+                    contained = self._spawn_contained_converter(
+                        cmd, stdout=stdout_handle, stderr=stderr_handle
                     )
+                    try:
+                        try:
+                            returncode = contained.wait(timeout=outer_timeout)
+                        except subprocess.TimeoutExpired:
+                            timed_out = True
+                            returncode = None
+                            # #489 SEC-001:等待整棵樹消失的 poll 一定要在 HOOPS pin
+                            # 仍持有的這個 with 區塊「之內」完成——pin 必須比 process
+                            # tree 活得久,否則 Kit 孫代會在 pin 已放掉之後,還握著
+                            # 已被判定不可信的 entrypoint 繼續處理輸入。
+                            containment_proven = contained.terminate_tree(
+                                deadline_seconds=self._CONTAINMENT_DEADLINE_SECONDS,
+                                grace_seconds=self._CONTAINMENT_GRACE_SECONDS,
+                            )
+                            survivors = contained.survivors
+                    finally:
+                        contained.close()
                     stdout_handle.seek(0)
                     stderr_handle.seek(0)
                     stdout_text = stdout_handle.read().decode("utf-8", errors="replace")
                     stderr_text = stderr_handle.read().decode("utf-8", errors="replace")
                 completed = subprocess.CompletedProcess(
-                    args=raw_completed.args,
-                    returncode=raw_completed.returncode,
-                    stdout=(
-                        raw_completed.stdout
-                        if isinstance(raw_completed.stdout, str) and raw_completed.stdout
-                        else stdout_text
-                    ),
-                    stderr=(
-                        raw_completed.stderr
-                        if isinstance(raw_completed.stderr, str) and raw_completed.stderr
-                        else stderr_text
-                    ),
+                    args=cmd,
+                    returncode=returncode,
+                    stdout=stdout_text,
+                    stderr=stderr_text,
                 )
-        except subprocess.TimeoutExpired as exc:
-            raise ConversionAuthorityError(
-                "converter_timeout",
-                f"convert-ifc-to-usdc.ps1 exceeded {self.timeout_seconds + 30}s and was killed.",
-            ) from exc
         except OSError as exc:
             raise ConversionAuthorityError(
                 "converter_unavailable",
                 f"Failed to launch PowerShell converter: {exc}",
             ) from exc
+        if timed_out:
+            # 只有在「每個 descendant 都被觀察到消失」之後才允許回報單純 timeout。
+            if not containment_proven:
+                surviving = ", ".join(str(pid) for pid in survivors) or "unknown"
+                raise ConversionAuthorityError(
+                    "converter_containment_failed",
+                    f"convert-ifc-to-usdc.ps1 exceeded {outer_timeout}s and its process "
+                    f"tree could not be proven terminated within "
+                    f"{self._CONTAINMENT_DEADLINE_SECONDS}s (surviving pids: {surviving}).",
+                )
+            raise ConversionAuthorityError(
+                "converter_timeout",
+                f"convert-ifc-to-usdc.ps1 exceeded {outer_timeout}s and its whole "
+                "process tree was killed.",
+            )
         if completed.returncode != 0:
             # streaming-server-capture-kit-conversion-logs §3:ps1 wrapper emit 一行
             # `##CONV_META## {"kit_stdout_log":"<path>","kit_stderr_log":"<path>"}`

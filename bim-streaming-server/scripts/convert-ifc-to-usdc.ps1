@@ -305,6 +305,69 @@ function New-ConversionPlan {
     return $rows.ToArray()
 }
 
+function Get-ConverterChildProcessId {
+    # Win32_Process is Windows-only; on Linux read /proc/<pid>/stat. Same shape as
+    # scripts/lib/platform/platform-adapter.ps1::Get-PlatformChildProcessIds, kept
+    # local so this converter stays free of the deploy-lib dependency.
+    param([Parameter(Mandatory = $true)][int] $ParentProcessId)
+
+    if ($env:OS -eq 'Windows_NT') {
+        return @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$ParentProcessId" -ErrorAction SilentlyContinue |
+            ForEach-Object { [int]$_.ProcessId })
+    }
+
+    $children = [System.Collections.Generic.List[int]]::new()
+    foreach ($dir in Get-ChildItem -LiteralPath '/proc' -Directory -ErrorAction SilentlyContinue) {
+        if ($dir.Name -notmatch '^\d+$') { continue }
+        $statPath = "/proc/$($dir.Name)/stat"
+        if (-not (Test-Path -LiteralPath $statPath)) { continue }
+        try { $raw = Get-Content -LiteralPath $statPath -Raw -ErrorAction Stop } catch { continue }
+        # comm (field 2) may contain spaces/parens, so split on the LAST ')'.
+        $closeIndex = $raw.LastIndexOf(')')
+        if ($closeIndex -lt 0) { continue }
+        $rest = $raw.Substring($closeIndex + 1).Trim() -split '\s+'
+        if ($rest.Count -lt 2) { continue }
+        if ([int]$rest[1] -eq $ParentProcessId) { $children.Add([int]$dir.Name) }
+    }
+    return @($children)
+}
+
+function Stop-ConverterProcessTree {
+    # #489 L1-COR-004: `Stop-Process -Id $process.Id -Force` only reaches Kit
+    # itself. Its HOOPS/CAD grandchildren keep processing untrusted input after
+    # the wrapper reports a timeout. Walk the tree breadth-first (same idiom as
+    # scripts/lib/host-native-launcher.ps1::Stop-HostNativeService), kill leaves
+    # first, then WAIT until every collected PID is observed gone. Returns the
+    # PIDs that survived the wait: an empty array means containment is proven.
+    param(
+        [Parameter(Mandatory = $true)][int] $ProcessId,
+        [ValidateRange(0, 600000)][int] $TimeoutMs = 15000
+    )
+
+    $ids = @()
+    $stack = @($ProcessId)
+    while ($stack.Count -gt 0) {
+        $current = [int]$stack[0]
+        $stack = @($stack | Select-Object -Skip 1)
+        if ($ids -notcontains $current) {
+            $ids += $current
+            $stack += @(Get-ConverterChildProcessId -ParentProcessId $current)
+        }
+    }
+
+    for ($i = $ids.Count - 1; $i -ge 0; $i--) {
+        Stop-Process -Id ([int]$ids[$i]) -Force -ErrorAction SilentlyContinue
+    }
+
+    $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
+    while ($true) {
+        $alive = @($ids | Where-Object { $null -ne (Get-Process -Id $_ -ErrorAction SilentlyContinue) })
+        if ($alive.Count -eq 0) { return @() }
+        if ([DateTime]::UtcNow -ge $deadline) { return @($alive) }
+        Start-Sleep -Milliseconds 100
+    }
+}
+
 function Invoke-KitConversion {
     param(
         [Parameter(Mandatory = $true)]
@@ -404,9 +467,13 @@ function Invoke-KitConversion {
     $process.BeginOutputReadLine()
     $process.BeginErrorReadLine()
 
+    $survivingPids = @()
     try {
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            # #489 L1-COR-004:只殺 Kit 本身會留下 HOOPS/CAD 孫代繼續處理不可信
+            # 輸入。改成 tree-scoped 終止,並且「觀察到」整棵樹消失才往下走;沒能
+            # 證明清空時把殘存 PID 帶進 timeout 訊息,不假裝已清理乾淨。
+            $survivingPids = @(Stop-ConverterProcessTree -ProcessId $process.Id)
             # fall through 到 finally drain 後,再 throw timeout
             $timedOut = $true
         } else {
@@ -434,7 +501,12 @@ function Invoke-KitConversion {
             (Get-Content -LiteralPath $stdoutLog -Tail 50 -ErrorAction SilentlyContinue) -join "`n"
         } else { "(no stdout log)" }
         $reason = if ($timedOut) {
-            "Kit CAD conversion timed out after $TimeoutSeconds seconds for $($Item.IfcPath)"
+            $timeoutReason = "Kit CAD conversion timed out after $TimeoutSeconds seconds for $($Item.IfcPath)"
+            if ($survivingPids.Count -gt 0) {
+                "$timeoutReason; process tree containment FAILED, surviving PIDs: $($survivingPids -join ', ')"
+            } else {
+                "$timeoutReason; process tree terminated and confirmed gone"
+            }
         } elseif ($exitCode -ne 0) {
             "Kit CAD conversion failed with exit code $exitCode for $($Item.IfcPath)"
         } else {
