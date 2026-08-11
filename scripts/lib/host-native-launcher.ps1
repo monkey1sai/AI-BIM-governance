@@ -368,8 +368,15 @@ function Invoke-KitRepoBuild {
             }
             if ($effectiveCommand -eq './repo.sh build') {
                 $repoShPath = Join-Path $workingDirectory 'repo.sh'
-                $bashCommand = "`"$repoShPath`" build > `"$logPath`" 2>&1"
-                return Start-Process -FilePath 'bash' -ArgumentList @('-c', $bashCommand) `
+                # Start-Process 會把 ArgumentList join 成單一 Arguments 字串再
+                # 重新斷詞;含空白與引號的 -c 命令字串經這層重組後被切碎,bash
+                # 實際收到的命令只剩 repo.sh 路徑本身 — repo.sh 以無參數印
+                # usage 後 exit 0,build 參數與 log 重導向全數丟失(2026-08-11
+                # 對 canonical Linux 部署機實測)。把整條命令寫進 wrapper 腳本,
+                # 命令列上只剩一個單純路徑參數,任何平台的引號重組都碰不到它。
+                $wrapperPath = Join-Path (Split-Path -Parent $logPath) 'kit-repo-build-launch.sh'
+                [IO.File]::WriteAllText($wrapperPath, "#!/bin/sh`nexec `"$repoShPath`" build > `"$logPath`" 2>&1`n")
+                return Start-Process -FilePath 'bash' -ArgumentList @($wrapperPath) `
                     -WorkingDirectory $workingDirectory -NoNewWindow -PassThru
             }
             throw "Unsupported Kit build command '$effectiveCommand'; expected the validated registry command for this platform."
@@ -391,7 +398,14 @@ function Invoke-KitRepoBuild {
     $exited = & $WaitForExitFn $proc ($TimeoutSec * 1000)
     if ($exited) {
         Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
-        return [pscustomobject]@{ TimedOut = $false; ExitCode = [int]$proc.ExitCode; ProcessId = [int]$proc.Id }
+        $exitCode = [int]$proc.ExitCode
+        if ($exitCode -eq 0 -and -not (Test-Path -LiteralPath $LogPath -PathType Leaf)) {
+            # exit 0 卻連 log 檔都沒建,代表啟動列被引號重組弄壞、重導向沒有
+            # 生效(build 根本沒跑);此時相信 exit code 會讓 deploy 把假 build
+            # 當成功,直到 artifacts 檢查才以更難診斷的方式失敗。
+            $exitCode = 1
+        }
+        return [pscustomobject]@{ TimedOut = $false; ExitCode = $exitCode; ProcessId = [int]$proc.Id }
     }
 
     & $StopTreeFn 'kit-repo-build' $RunDir

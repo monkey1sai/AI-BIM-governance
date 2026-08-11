@@ -127,7 +127,7 @@ try {
     New-Item -ItemType Directory -Path $runDir -Force | Out-Null
     $logPath = Join-Path $runDir 'kit-repo-build.log'
     $result = Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir `
-        -StartProcessFn { param($workingDirectory, $logPath) [pscustomobject]@{ Id = 4242; ExitCode = 0 } } `
+        -StartProcessFn { param($workingDirectory, $logPath) Set-Content -LiteralPath $logPath -Value 'build ok'; [pscustomobject]@{ Id = 4242; ExitCode = 0 } } `
         -WaitForExitFn { param($proc, $timeoutMs) $true } `
         -StopTreeFn { param($name, $runDir) throw 'StopTreeFn must not run on success' }
     Assert-True ($result.TimedOut -eq $false) 'success path is not TimedOut'
@@ -171,6 +171,50 @@ try {
     Assert-Equal 'kit-repo-build' $stoppedArgs[0] 'StopTreeFn invoked with kit-repo-build service name'
     Assert-Equal $runDir $stoppedArgs[1] 'StopTreeFn invoked with the same RunDir'
     Write-TestPass 'Invoke-KitRepoBuild timeout kills process tree'
+}
+finally { Remove-TestSandbox -Path $sb }
+
+# Test 15b: exit 0 without a log file is treated as a failed build
+# (2026-08-11 canonical rebuild regression: bash 收到被重組壞掉的命令列,repo.sh
+# 無參數印 usage 後 exit 0、重導向沒生效 — exit code 因此不可單獨採信)
+$sb = New-TestSandbox -Prefix 'kit-repo-build-nolog'
+try {
+    $runDir = Join-Path $sb 'scripts\.run'
+    New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    $logPath = Join-Path $runDir 'kit-repo-build.log'
+    $result = Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir `
+        -StartProcessFn { param($workingDirectory, $logPath) [pscustomobject]@{ Id = 4245; ExitCode = 0 } } `
+        -WaitForExitFn { param($proc, $timeoutMs) $true } `
+        -StopTreeFn { param($name, $runDir) throw 'StopTreeFn must not run' }
+    Assert-True ($result.TimedOut -eq $false) 'no-log path is not TimedOut'
+    Assert-Equal 1 $result.ExitCode 'exit 0 without a log file fails closed'
+    Write-TestPass 'Invoke-KitRepoBuild refuses silent no-log success'
+}
+finally { Remove-TestSandbox -Path $sb }
+
+# Test 15c: the real bash launch path keeps the build argument and the log redirect
+# (dynamic regression guard for the same 2026-08-11 incident: Start-Process 對含
+# 內嵌引號的 -c 字串重組後,bash 丟失 build 參數與重導向;修正改用 bash 位置參數)
+$sb = (New-TestSandbox -Prefix 'kit-repo-build-bash') -replace '\\', '/'
+try {
+    $runDir = Join-Path $sb 'scripts/.run'
+    New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    $logPath = (Join-Path $runDir 'kit-repo-build.log') -replace '\\', '/'
+    $argsPath = (Join-Path $sb 'seen-args.txt') -replace '\\', '/'
+    $fakeRepoSh = Join-Path $sb 'repo.sh'
+    [IO.File]::WriteAllText($fakeRepoSh, "#!/bin/sh`nprintf '%s\n' `"`$@`" > '$argsPath'`necho build-ran`nexit 0`n")
+    if ($null -eq (Get-Command bash -ErrorAction SilentlyContinue)) {
+        Write-TestPass 'Invoke-KitRepoBuild real bash launch (skipped: no bash on this host)'
+    } else {
+        $result = Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir `
+            -BuildCommand './repo.sh build' -TimeoutSec 60
+        Assert-True ($result.TimedOut -eq $false) 'real bash launch is not TimedOut'
+        Assert-Equal 0 $result.ExitCode 'real bash launch exits 0'
+        Assert-True (Test-Path -LiteralPath $argsPath -PathType Leaf) 'fake repo.sh actually ran'
+        Assert-Equal 'build' ((Get-Content -LiteralPath $argsPath -Raw).Trim()) 'repo.sh received exactly the build argument'
+        Assert-True (Test-Path -LiteralPath $logPath -PathType Leaf) 'stdout redirect created the log file'
+        Assert-True ((Get-Content -LiteralPath $logPath -Raw) -match 'build-ran') 'repo.sh stdout reached the log file'
+    }
 }
 finally { Remove-TestSandbox -Path $sb }
 
