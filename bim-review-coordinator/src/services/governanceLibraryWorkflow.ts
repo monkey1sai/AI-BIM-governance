@@ -20,6 +20,14 @@ export interface GovernanceLibraryRuleRunBody {
   model_version_id?: string;
 }
 
+export interface GovernanceLibraryDiffBody {
+  base_ifc_path: string;
+  target_ifc_path: string;
+  include_geometry?: boolean;
+  base_model_version_id?: string;
+  target_model_version_id?: string;
+}
+
 export interface OpaqueGovernanceReply {
   status: number;
   contentType: string;
@@ -29,12 +37,21 @@ export interface OpaqueGovernanceReply {
 export interface GovernanceLibraryPort {
   loadTree(): Promise<GovernanceLibraryTree>;
   postRuleRun(body: GovernanceLibraryRuleRunBody): Promise<OpaqueGovernanceReply>;
+  postDiff(body: GovernanceLibraryDiffBody): Promise<OpaqueGovernanceReply>;
 }
 
 export interface GovernanceLibraryRuleRunCommand {
   version: GovernanceLibraryVersionReference;
   idsPath?: unknown;
   modelVersionId?: string;
+}
+
+export interface GovernanceLibraryDiffCommand {
+  base: GovernanceLibraryVersionReference;
+  target: GovernanceLibraryVersionReference;
+  includeGeometry?: boolean;
+  baseModelVersionId?: string;
+  targetModelVersionId?: string;
 }
 
 export interface ForwardedGovernanceLibraryOutcome extends OpaqueGovernanceReply {
@@ -135,6 +152,50 @@ export class GovernanceLibraryWorkflow {
     let reply: OpaqueGovernanceReply;
     try {
       reply = await this.port.postRuleRun(body);
+    } catch {
+      return { kind: "unavailable" };
+    }
+    return {
+      kind: "forwarded",
+      status: reply.status,
+      contentType: reply.contentType,
+      bodyText: redactServerPaths(reply.bodyText),
+    };
+  }
+
+  async runLibraryDiff(
+    command: GovernanceLibraryDiffCommand,
+  ): Promise<GovernanceLibraryOutcome> {
+    let baseIfcPath: string | null;
+    let targetIfcPath: string | null;
+    try {
+      const tree = await this.port.loadTree();
+      baseIfcPath = findVersionPath(tree, command.base);
+      targetIfcPath = findVersionPath(tree, command.target);
+    } catch {
+      return { kind: "unavailable" };
+    }
+    if (!baseIfcPath || !targetIfcPath) {
+      return { kind: "version_not_found" };
+    }
+
+    const body: GovernanceLibraryDiffBody = {
+      base_ifc_path: baseIfcPath,
+      target_ifc_path: targetIfcPath,
+    };
+    if (typeof command.includeGeometry === "boolean") {
+      body.include_geometry = command.includeGeometry;
+    }
+    if (command.baseModelVersionId) {
+      body.base_model_version_id = command.baseModelVersionId;
+    }
+    if (command.targetModelVersionId) {
+      body.target_model_version_id = command.targetModelVersionId;
+    }
+
+    let reply: OpaqueGovernanceReply;
+    try {
+      reply = await this.port.postDiff(body);
     } catch {
       return { kind: "unavailable" };
     }
