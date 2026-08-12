@@ -31,9 +31,22 @@ This change deliberately does NOT touch the machine pattern list: the
 clarification narrows the documented scope to match what
 `Get-SelfReferentialMechanismPaths` already implements, records the PR #511
 scope ruling (issue #520), and adds the promotion rule for future gate-wiring
-PRs. The post-merge fixpoint therefore has one thing to prove: the gate suites
-still pass on `main` with the new prose in place — i.e. contract text and
-classifier behavior remain consistent.
+PRs.
+
+**Scope extension (2026-08-12, owner direction).** Issue #494's
+regression-repair lane was folded into this PR rather than opened as a second
+bootstrap entry, so that both changes share one debt entry and one fixpoint
+cycle instead of two. The PR therefore now also changes the gate library
+(`scripts/lib/self-referential-bootstrap.ps1`) and its suite
+(`scripts/tests/test-self-referential-bootstrap.ps1`), and the entry's declared
+`verification_mechanism_paths` grew from two to those four paths accordingly.
+The pattern list itself is still untouched.
+
+The post-merge fixpoint therefore has two things to prove, not one: that the
+gate suites still pass on `main` with the new prose in place (contract text and
+classifier behavior remain consistent), and that they still pass with the new
+repair lane live in the library — including the lane's own admission and
+refusal cases, which `test-self-referential-bootstrap.ps1` now carries.
 
 ## What was run
 

@@ -1,7 +1,7 @@
 # gate-suites — stack_kind=self_referential_bootstrap
-tested_head=82c6aa4097af8d937a51b54f205ad3bb92ac6f8d
-run_at=2026-08-12T12:16:58Z
-note=rerun at the post-#511/#528/#529 merge head (review threads: recorded suites must bind the reviewed tree); exact canonical invocation form recorded per suite; earlier stale-checkout EOL false-red note retained in README
+tested_head=52488e8189887a7852ed97bb2c7c56bda69a9037
+run_at=2026-08-12T13:19:55Z
+note=rerun after the repair-lane commit expanded this PR beyond contract prose into the gate library and its suite (issue #494 folded in per owner direction). The entry's declared surface grew to four mechanism paths accordingly, so these suites now bind a tree containing the new lane, not only the §2.1/§2.2 prose. Exact canonical invocation form recorded per suite; earlier stale-checkout EOL false-red note retained in README. Previous recorded head 82c6aa4 is superseded.
 
 ## test-self-referential-bootstrap — pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
 [test-self-referential-bootstrap] all assertions passed
@@ -9,17 +9,17 @@ exit_code=0 duration_s=28
 
 ## test-pr-body-evidence — pwsh -NoProfile -NonInteractive -File scripts/tests/test-pr-body-evidence.ps1
 [test-pr-body-evidence] all assertions passed
-exit_code=0 duration_s=14
+exit_code=0 duration_s=12
 
 ## test-agent-governance-check — pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
 # fail 0
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 2468.1009
+# duration_ms 2531.8315
 [test-agent-governance-check] all assertions passed
-exit_code=0 duration_s=173
+exit_code=0 duration_s=135
 
 ## invoke-powershell-static — pwsh -NoProfile -NonInteractive -File scripts/tests/invoke-powershell-static.ps1
 [invoke-powershell-static] passed
-exit_code=0 duration_s=6
+exit_code=0 duration_s=3
