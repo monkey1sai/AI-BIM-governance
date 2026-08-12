@@ -62,6 +62,27 @@ try {
         # earlier report; run_id carries a per-run random suffix as well.
         $OutputPath = Join-Path $RepoRoot "artifacts\gpu-baseline\$($report.run_id).json"
     }
+    # -FixturePath is read-only input; -OutputPath is TRUNCATED by Set-Content
+    # below. When an operator points both at the same file (easy to do with a
+    # shell-completed path), the report overwrites the very fixture it claims to
+    # fingerprint: the measured artifact is destroyed and the report's
+    # fixture_hash no longer matches anything on disk. Refuse before any write
+    # happens (PR #511 review r5).
+    if (-not [string]::IsNullOrWhiteSpace($FixturePath)) {
+        $canonicalFixture = $null
+        $canonicalOutput = $null
+        try { $canonicalFixture = [System.IO.Path]::GetFullPath($FixturePath) } catch { $canonicalFixture = $null }
+        try { $canonicalOutput = [System.IO.Path]::GetFullPath($OutputPath) } catch { $canonicalOutput = $null }
+        if ($canonicalFixture -and $canonicalOutput) {
+            # Windows paths compare case-insensitively; POSIX filesystems do not,
+            # so do not launder a genuinely distinct path into a false collision.
+            $pathComparison = if ($env:OS -eq 'Windows_NT') { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+            if ([string]::Equals($canonicalFixture, $canonicalOutput, $pathComparison)) {
+                throw "[measure-session-baseline] -OutputPath resolves to the same file as -FixturePath ('$canonicalOutput'); writing the report there would truncate the fixture being measured. Choose a different -OutputPath."
+            }
+        }
+    }
+
     $outDir = Split-Path -Parent $OutputPath
     if ($outDir -and -not (Test-Path -LiteralPath $outDir)) {
         New-Item -ItemType Directory -Path $outDir -Force | Out-Null

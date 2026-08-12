@@ -404,6 +404,33 @@ function Get-SessionVramWatermark {
     $attribution = 'process_name_match_only'
     $attributionNote = 'total_kit_vram_mb sums every process whose name matches Kit; co-resident Kit processes not serving this review session (e.g. IFC conversion) are included, and no PID is attributed to a kit_instance_binding. Full PID-to-binding attribution is deferred to task 1.2/1.3.'
 
+    # PR #511 review r5: the per-role lease counts above are summed across
+    # EVERY sessions.items[] entry, while total_kit_vram_mb is a single
+    # host-wide sample. On a host serving two or more concurrent sessions the
+    # two cannot be read together -- the "1 primary + k spectator" watermark
+    # interpretation would silently mix several sessions' viewers against one
+    # VRAM number. Keep the aggregate counts (they are real observations) and
+    # refuse the interpretation instead.
+    $sessionScope = 'unknown_no_runtime_observation'
+    $interpretationMeasured = $false
+    $interpretationReason = 'runtime session count unavailable (GET /api/runtime/status was not observed); this slice cannot establish whether the VRAM sample covers a single isolated session'
+    if ($null -ne $ObservedActiveSessionCount) {
+        $observedSessions = 0
+        try { $observedSessions = [int]$ObservedActiveSessionCount } catch { $observedSessions = 0 }
+        if ($observedSessions -gt 1) {
+            $sessionScope = 'multi_session_aggregate'
+            $interpretationReason = 'non-isolated multi-session snapshot; per-session VRAM attribution unavailable in this slice'
+        } elseif ($observedSessions -eq 1) {
+            $sessionScope = 'single_session'
+            $interpretationMeasured = $true
+            $interpretationReason = $null
+        } else {
+            $sessionScope = 'no_active_session_observed'
+            $interpretationReason = 'no active review session was observed at capture time, so there is no 1 primary + k spectator shape to interpret'
+        }
+    }
+    $sessionScopeNote = 'observed_primary_lease_count and observed_spectator_lease_count are summed across every sessions.items[] entry the coordinator reported, while total_kit_vram_mb is one host-wide sample; the 1 primary + k spectator watermark interpretation is only valid under session_scope=single_session'
+
     if (-not $GpuComputeSnapshot.measured) {
         return [ordered]@{
             measured                    = $false
@@ -415,6 +442,9 @@ function Get-SessionVramWatermark {
             observed_active_session_count = $ObservedActiveSessionCount
             observed_primary_lease_count   = $ObservedPrimaryLeaseCount
             observed_spectator_lease_count = $ObservedSpectatorLeaseCount
+            session_scope               = $sessionScope
+            session_scope_note          = $sessionScopeNote
+            watermark_interpretation    = [ordered]@{ measured = $interpretationMeasured; reason = $interpretationReason }
             note                        = $note
         }
     }
@@ -431,6 +461,9 @@ function Get-SessionVramWatermark {
             observed_active_session_count = $ObservedActiveSessionCount
             observed_primary_lease_count   = $ObservedPrimaryLeaseCount
             observed_spectator_lease_count = $ObservedSpectatorLeaseCount
+            session_scope               = $sessionScope
+            session_scope_note          = $sessionScopeNote
+            watermark_interpretation    = [ordered]@{ measured = $interpretationMeasured; reason = $interpretationReason }
             note                        = $note
         }
     }
@@ -468,6 +501,9 @@ function Get-SessionVramWatermark {
         observed_active_session_count = $ObservedActiveSessionCount
         observed_primary_lease_count   = $ObservedPrimaryLeaseCount
         observed_spectator_lease_count = $ObservedSpectatorLeaseCount
+        session_scope               = $sessionScope
+        session_scope_note          = $sessionScopeNote
+        watermark_interpretation    = [ordered]@{ measured = $interpretationMeasured; reason = $interpretationReason }
         note                        = $note
     }
 }
@@ -618,13 +654,34 @@ function Get-EnvironmentFingerprint {
     #                               the completeness claim is withdrawn: a reader
     #                               (and the wrapper's SHALL-NOT-set-SLOs warning)
     #                               must not treat the pairing as established.
+    #   'runtime_state_unknown'   - a fixture was declared but the runtime probe
+    #                               yielded no observable session / kit-binding
+    #                               counts at all (GET /api/runtime/status failed,
+    #                               returned a malformed body, or was skipped).
+    #                               Coercing those nulls to 0 relabelled an
+    #                               UNKNOWN runtime state as an OBSERVED idle host
+    #                               and let the fingerprint stay complete=true
+    #                               beside a declared fixture (PR #511 review r5).
+    $runtimeStateUnknown = (($null -eq $ObservedActiveSessionCount) -or ($null -eq $ObservedKitInstanceBindingCount))
     $fixtureBindingScope = 'not_supplied'
     if ($fixturePathSupplied) {
-        $fixtureBindingScope = if ($liveSessionObserved) { 'live_session_unverified' } else { 'no_live_session_observed' }
+        if ($liveSessionObserved) {
+            # A positive observation is definite even when the other count is
+            # missing: something live is running, so the binding is unverifiable.
+            $fixtureBindingScope = 'live_session_unverified'
+        } elseif ($runtimeStateUnknown) {
+            $fixtureBindingScope = 'runtime_state_unknown'
+        } else {
+            $fixtureBindingScope = 'no_live_session_observed'
+        }
     }
     $fixtureBindingNote = 'the declared fixture is hashed off disk and never checked against the artifact the running session loaded; runtime artifact-identity verification is deferred to task 1.2/1.3'
     if ($fixtureBindingScope -eq 'live_session_unverified') {
         $fixtureBindingNote = ('environment_fingerprint.complete is false because {0} active session(s) and {1} kit_instance_binding(s) were observed at capture time while the fixture identity is operator-declared only: this slice cannot verify the declared fixture against the live session''s artifact identity, so the session VRAM and viewer counts in this report must not be treated as bound to this fixture fingerprint. Runtime artifact-identity verification is deferred to task 1.2/1.3.' -f $activeSessionCount, $kitBindingCount)
+        $allMeasured = $false
+    }
+    if ($fixtureBindingScope -eq 'runtime_state_unknown') {
+        $fixtureBindingNote = 'environment_fingerprint.complete is false because the coordinator runtime probe (GET /api/runtime/status) did not yield observable active-session and kit_instance_binding counts -- the probe failed, returned a malformed body, or was skipped with -SkipWebRtcProbe. This report therefore cannot say whether a live session was running while the declared fixture was hashed, and an unknown runtime state must not be published as an observed idle baseline.'
         $allMeasured = $false
     }
     $fields['fixture_binding_scope'] = $fixtureBindingScope

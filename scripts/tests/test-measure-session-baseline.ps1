@@ -55,8 +55,8 @@ function Assert-ReportSchemaShape {
     Assert-True ($ef.Contains('fixture_binding_scope')) "$Message :: environment_fingerprint declares its fixture-to-session binding scope"
     Assert-True (-not $ef.fixture_provenance.runtime_verified) "$Message :: fixture identity is never claimed as runtime-verified"
     Assert-True ($ef.fixture_provenance.caveat -match 'task 1.2/1.3') "$Message :: fixture provenance caveat defers runtime artifact-identity verification to task 1.2/1.3"
-    $expectComplete = (-not [bool]($REQUIRED_ENV_FINGERPRINT_FIELDS | Where-Object { -not $ef[$_].measured })) -and ($ef.gpu_fingerprint_scope -ne 'first_gpu_only') -and ($ef.fixture_binding_scope -ne 'live_session_unverified')
-    Assert-Equal $expectComplete $ef.complete "$Message :: environment_fingerprint.complete matches per-field measured flags AND full GPU-topology attribution AND a verifiable fixture binding"
+    $expectComplete = (-not [bool]($REQUIRED_ENV_FINGERPRINT_FIELDS | Where-Object { -not $ef[$_].measured })) -and ($ef.gpu_fingerprint_scope -ne 'first_gpu_only') -and ($ef.fixture_binding_scope -ne 'live_session_unverified') -and ($ef.fixture_binding_scope -ne 'runtime_state_unknown')
+    Assert-Equal $expectComplete $ef.complete "$Message :: environment_fingerprint.complete matches per-field measured flags AND full GPU-topology attribution AND a verifiable fixture binding AND a KNOWN runtime state"
 
     Assert-MeasuredShape -Obj $Report.ttff_ms -Message "$Message :: ttff_ms"
     Assert-MeasuredShape -Obj $Report.session_creation_success_rate -Message "$Message :: session_creation_success_rate"
@@ -70,6 +70,9 @@ function Assert-ReportSchemaShape {
     Assert-Equal 'process_name_match_only' $Report.session_vram_watermark.attribution "$Message :: session_vram_watermark declares its attribution basis"
     Assert-True ($Report.session_vram_watermark.Contains('observed_primary_lease_count')) "$Message :: session_vram_watermark has 'observed_primary_lease_count'"
     Assert-True ($Report.session_vram_watermark.Contains('observed_spectator_lease_count')) "$Message :: session_vram_watermark has 'observed_spectator_lease_count'"
+    Assert-True ($Report.session_vram_watermark.Contains('session_scope')) "$Message :: session_vram_watermark declares the session scope its lease counts were aggregated over"
+    Assert-True ($Report.session_vram_watermark.Contains('watermark_interpretation')) "$Message :: session_vram_watermark carries an explicit verdict on the 1 primary + k spectator interpretation"
+    Assert-True ($Report.session_vram_watermark.watermark_interpretation.Contains('measured')) "$Message :: watermark_interpretation has 'measured'"
     Assert-True ($Report.webrtc_health_probe.Contains('measured')) "$Message :: webrtc_health_probe has 'measured'"
     Assert-Equal $false $Report.webrtc_health_probe.webrtc_signaling_probed "$Message :: webrtc_health_probe admits no signaling endpoint was probed"
     Assert-Equal 'coordinator_only' $Report.webrtc_health_probe.probe_scope "$Message :: webrtc_health_probe declares probe_scope=coordinator_only"
@@ -393,6 +396,32 @@ Assert-Equal 2 $vramMeasured.observed_primary_lease_count 'vram watermark carrie
 Assert-Equal 7 $vramMeasured.observed_spectator_lease_count 'vram watermark carries through observed spectator lease count (the k in 1 primary + k spectator)'
 Assert-Equal 0 $vramMeasured.kit_process_vram_unreadable_count 'fully readable Kit VRAM -> zero unreadable processes'
 
+# PR #511 review r5: the lease counts are summed over every sessions.items[]
+# entry while total_kit_vram_mb is one host-wide sample, so a host serving 2+
+# sessions cannot be read as "1 primary + k spectator". The aggregate counts
+# survive (they are real observations); the INTERPRETATION is refused.
+Assert-Equal 'multi_session_aggregate' $vramMeasured.session_scope '6 observed active sessions -> multi_session_aggregate scope, never a silent single-session reading'
+Assert-True (-not $vramMeasured.watermark_interpretation.measured) 'multi-session snapshot: the 1 primary + k spectator interpretation is not measured'
+Assert-Equal 'non-isolated multi-session snapshot; per-session VRAM attribution unavailable in this slice' $vramMeasured.watermark_interpretation.reason 'multi-session refusal names the non-isolated snapshot and the missing per-session attribution'
+Assert-Equal 2000 $vramMeasured.total_kit_vram_mb 'multi-session scope does not discard the aggregate VRAM measurement'
+Assert-True ($vramMeasured.session_scope_note -match 'only valid under session_scope=single_session') 'session scope note states when the 1 primary + k spectator reading holds'
+
+$vramSingleSession = Get-SessionVramWatermark -GpuComputeSnapshot (Get-GpuComputeProcessSnapshot -NvidiaSmiComputeAppsQuery { @('40232, kit.exe, 2000') }) -ObservedActiveSessionCount 1 -ObservedPrimaryLeaseCount 1 -ObservedSpectatorLeaseCount 3
+Assert-Equal 'single_session' $vramSingleSession.session_scope 'exactly one observed active session -> single_session scope'
+Assert-True $vramSingleSession.watermark_interpretation.measured 'single session: the 1 primary + k spectator interpretation keeps its current semantics'
+Assert-True ($null -eq $vramSingleSession.watermark_interpretation.reason) 'single session: no refusal reason is invented'
+Assert-Equal 2000 $vramSingleSession.total_kit_vram_mb 'single session: the VRAM total is unchanged by the scope work'
+Assert-Equal 3 $vramSingleSession.observed_spectator_lease_count 'single session: the k in 1 primary + k spectator is carried through'
+
+$vramNoSession = Get-SessionVramWatermark -GpuComputeSnapshot (Get-GpuComputeProcessSnapshot -NvidiaSmiComputeAppsQuery { @('40232, kit.exe, 2000') }) -ObservedActiveSessionCount 0
+Assert-Equal 'no_active_session_observed' $vramNoSession.session_scope 'an observed zero sessions is its own scope, distinct from an unobserved host'
+Assert-True (-not $vramNoSession.watermark_interpretation.measured) 'no active session: there is no 1 primary + k spectator shape to interpret'
+
+$vramUnknownScope = Get-SessionVramWatermark -GpuComputeSnapshot (Get-GpuComputeProcessSnapshot -NvidiaSmiComputeAppsQuery { @('40232, kit.exe, 2000') })
+Assert-Equal 'unknown_no_runtime_observation' $vramUnknownScope.session_scope 'no runtime observation -> session scope reported unknown, never assumed single'
+Assert-True (-not $vramUnknownScope.watermark_interpretation.measured) 'unknown runtime state: the interpretation is refused rather than assumed'
+Assert-True ($vramUnknownScope.watermark_interpretation.reason -match 'GET /api/runtime/status') 'unknown-scope reason names the observation that is missing'
+
 # Partial visibility must be refused, not silently under-counted: summing only
 # the readable subset would publish a watermark lower than the real one.
 $vramPartial = Get-SessionVramWatermark -GpuComputeSnapshot (Get-GpuComputeProcessSnapshot -NvidiaSmiComputeAppsQuery {
@@ -406,12 +435,14 @@ Assert-Equal 2 $vramPartial.kit_process_count 'partial VRAM case reports both ma
 Assert-Equal 1 $vramPartial.kit_process_vram_unreadable_count 'partial VRAM case counts the unreadable process'
 
 # Attribution honesty: name-matched only, co-resident Kit processes included.
-foreach ($watermark in @($vramMeasured, $vramPartial, $vramNoKit, $vramUnreadable, $vramNoQuery)) {
+foreach ($watermark in @($vramMeasured, $vramPartial, $vramNoKit, $vramUnreadable, $vramNoQuery, $vramSingleSession, $vramNoSession, $vramUnknownScope)) {
     Assert-Equal 'process_name_match_only' $watermark.attribution 'vram watermark declares process-name-only attribution on every path'
+    Assert-True ($watermark.Contains('session_scope')) 'vram watermark declares its session scope on every path'
+    Assert-True ($watermark.Contains('watermark_interpretation')) 'vram watermark carries its 1 primary + k spectator verdict on every path'
     Assert-True ($watermark.attribution_note -match 'IFC conversion') 'attribution note names co-resident Kit processes as included'
     Assert-True ($watermark.attribution_note -match 'deferred to task 1.2/1.3') 'attribution note states full PID-to-binding attribution is deferred'
 }
-Write-TestPass 'Get-SessionVramWatermark (partial-visibility refusal + attribution honesty)'
+Write-TestPass 'Get-SessionVramWatermark (partial-visibility refusal + attribution honesty + session scope)'
 
 # ============================================================================
 # 8. Get-EnvironmentFingerprint + New-OptionalMeasurement
@@ -419,7 +450,10 @@ Write-TestPass 'Get-SessionVramWatermark (partial-visibility refusal + attributi
 $fullInv = Get-GpuInventorySnapshot -NvidiaSmiQuery { @('0, NVIDIA GeForce RTX 4060 Ti, 580.97, 8188, 1827, 6123, 2, 0, [N/A]') }
 $fullKit = [ordered]@{ value = '110.1.0'; measured = $true; reason = $null; source = 'checkout_packman_declared'; caveat = 'test caveat' }
 $fullFixture = [ordered]@{ path_supplied = $true; hash = 'deadbeef'; hash_measured = $true; hash_reason = $null; size_bytes = 12345; size_measured = $true; size_reason = $null }
-$fullFingerprint = Get-EnvironmentFingerprint -GpuInventory $fullInv -KitVersion $fullKit -FixtureFingerprint $fullFixture
+# 0 active sessions and 0 kit bindings is an OBSERVED idle host (the coordinator
+# answered and reported nothing running) -- distinct from the null/null case
+# below, where nothing was observed at all (PR #511 review r5).
+$fullFingerprint = Get-EnvironmentFingerprint -GpuInventory $fullInv -KitVersion $fullKit -FixtureFingerprint $fullFixture -ObservedActiveSessionCount 0 -ObservedKitInstanceBindingCount 0
 Assert-True $fullFingerprint.complete 'environment fingerprint complete=true when all five fields measured'
 Assert-Equal 'checkout_packman_declared' $fullFingerprint.kit_version.source 'environment fingerprint propagates kit_version source through to the report'
 Assert-True ($fullFingerprint.kit_version.caveat -match 'test caveat') 'environment fingerprint propagates kit_version caveat through to the report'
@@ -488,13 +522,29 @@ $boundFingerprint = Get-EnvironmentFingerprint -GpuInventory $fullInv -KitVersio
 Assert-Equal 'live_session_unverified' $boundFingerprint.fixture_binding_scope 'an observed kit_instance_binding alone also makes the fixture binding unverifiable'
 Assert-True (-not $boundFingerprint.complete) 'observed kit binding: complete=false'
 
-# An unreachable coordinator reports null, which is "no data" - it must not be
-# read as an observed live session, and must not be read as an observed idle host
-# either; the fixture fields stay honest and completeness follows the fixture
-# fields alone.
+# An unreachable (or skipped, or malformed) runtime probe reports null, which is
+# "no data". PR #511 review r5: the old defaults coerced those nulls to 0, so an
+# UNKNOWN runtime state was published under the OBSERVED-idle label and the
+# fingerprint could still claim complete=true beside a declared fixture. Unknown
+# must stay unknown, and must cost the completeness claim.
 $nullProbeFingerprint = Get-EnvironmentFingerprint -GpuInventory $fullInv -KitVersion $fullKit -FixtureFingerprint $fullFixture -ObservedActiveSessionCount $null -ObservedKitInstanceBindingCount $null
-Assert-Equal 'no_live_session_observed' $nullProbeFingerprint.fixture_binding_scope 'no observation at all -> no live session was OBSERVED, so completeness is not withdrawn on speculation'
+Assert-Equal 'runtime_state_unknown' $nullProbeFingerprint.fixture_binding_scope 'failed/absent runtime probe -> runtime_state_unknown, never the observed-idle label'
+Assert-True (-not $nullProbeFingerprint.complete) 'unknown runtime state + declared fixture -> complete=false, so the SHALL-NOT-set-SLOs warning fires'
+Assert-True ($nullProbeFingerprint.fixture_binding_scope_note -match 'GET /api/runtime/status') 'incompleteness reason names the probe that failed to observe the runtime'
+Assert-True ($nullProbeFingerprint.fixture_binding_scope_note -match 'must not be published as an observed idle baseline') 'incompleteness reason states the exact confusion being refused'
 Assert-True ($null -eq $nullProbeFingerprint.observed_active_session_count) 'unreachable probe records null, not a fabricated 0'
+
+# Half-observed is still unknown: one readable count does not license a verdict
+# about the other.
+$halfProbeFingerprint = Get-EnvironmentFingerprint -GpuInventory $fullInv -KitVersion $fullKit -FixtureFingerprint $fullFixture -ObservedActiveSessionCount 0 -ObservedKitInstanceBindingCount $null
+Assert-Equal 'runtime_state_unknown' $halfProbeFingerprint.fixture_binding_scope 'a partially observed runtime is unknown, not idle'
+Assert-True (-not $halfProbeFingerprint.complete) 'partially observed runtime -> complete=false'
+
+# A POSITIVE observation is definite even when the sibling count is missing:
+# something live is running, so live_session_unverified outranks the unknown.
+$partialLiveFingerprint = Get-EnvironmentFingerprint -GpuInventory $fullInv -KitVersion $fullKit -FixtureFingerprint $fullFixture -ObservedActiveSessionCount 2
+Assert-Equal 'live_session_unverified' $partialLiveFingerprint.fixture_binding_scope 'an observed live session outranks a missing kit-binding count'
+Assert-True (-not $partialLiveFingerprint.complete) 'observed live session with a partial probe -> complete=false'
 
 # (c) no fixture declared at all: provenance says so instead of implying a file.
 $noFixtureFingerprint = Get-EnvironmentFingerprint -GpuInventory $fullInv -KitVersion $fullKit -FixtureFingerprint $noFixture -ObservedActiveSessionCount 3
@@ -602,6 +652,76 @@ try {
     Assert-Equal 2 $liveSessionReport.environment_fingerprint.observed_active_session_count 'live-session report records the observed session count that withdrew completeness'
     Assert-True $liveSessionReport.environment_fingerprint.fixture_hash.measured 'live-session report still publishes the declared fixture hash (withheld completeness, not withheld data)'
     Write-TestPass 'Get-SessionBaselineReport withdraws completeness when a live session cannot be tied to the declared fixture'
+
+    # PR #511 review r5: the coordinator is down, so every observed count arrives
+    # null. The old fixture-binding defaults coerced them to 0 and shipped
+    # 'no_live_session_observed' + complete=true -- an UNKNOWN host published as an
+    # observed idle baseline, which is exactly the report a capacity decision would
+    # trust.
+    $probeFailureReport = Get-SessionBaselineReport `
+        -CoordinatorUrl 'http://127.0.0.1:8004' `
+        -RepoRoot $repoRoot `
+        -Now $fixedNow `
+        -FixturePath $fixtureFile `
+        -NvidiaSmiQuery { @('0, NVIDIA GeForce RTX 4060 Ti, 580.97, 8188, 1827, 6123, 2, 0, [N/A]') } `
+        -NvidiaSmiComputeAppsQuery { @('40232, kit.exe, 2000') } `
+        -WebRtcHealthInvoker {
+            param($Uri, $Timeout)
+            return [ordered]@{ ok = $false; body = $null; status_code = $null; error = 'connection refused' }
+        }
+    Assert-ReportSchemaShape -Report $probeFailureReport -Message 'probe-failure report (fixture declared, runtime state unknown)'
+    Assert-Equal 'runtime_state_unknown' $probeFailureReport.environment_fingerprint.fixture_binding_scope 'failed runtime probe + declared fixture -> runtime_state_unknown, not no_live_session_observed'
+    Assert-True (-not $probeFailureReport.environment_fingerprint.complete) 'failed runtime probe -> complete=false instead of a complete fingerprint built on coerced zeros'
+    Assert-True ($probeFailureReport.environment_fingerprint.fixture_binding_scope_note -match 'GET /api/runtime/status') 'probe-failure incompleteness reason names the failed probe'
+    Assert-True ($null -eq $probeFailureReport.environment_fingerprint.observed_active_session_count) 'probe-failure report keeps the observed session count null'
+    Assert-Equal 'unknown_no_runtime_observation' $probeFailureReport.session_vram_watermark.session_scope 'probe-failure report cannot claim a session scope for its VRAM sample'
+    Assert-True $probeFailureReport.environment_fingerprint.fixture_hash.measured 'probe-failure report still publishes the declared fixture hash (withheld completeness, not withheld data)'
+
+    # A malformed 200 body is the same class of ignorance as an unreachable host.
+    $malformedRuntimeReport = Get-SessionBaselineReport `
+        -CoordinatorUrl 'http://127.0.0.1:8004' `
+        -RepoRoot $repoRoot `
+        -Now $fixedNow `
+        -FixturePath $fixtureFile `
+        -NvidiaSmiQuery { @('0, NVIDIA GeForce RTX 4060 Ti, 580.97, 8188, 1827, 6123, 2, 0, [N/A]') } `
+        -NvidiaSmiComputeAppsQuery { @('40232, kit.exe, 2000') } `
+        -WebRtcHealthInvoker {
+            param($Uri, $Timeout)
+            if ($Uri -match '/health$') {
+                return [ordered]@{ ok = $true; body = [pscustomobject]@{ status = 'ok' }; status_code = 200; error = $null }
+            }
+            return [ordered]@{ ok = $true; body = [pscustomobject]@{ unexpected = 'shape' }; status_code = 200; error = $null }
+        }
+    Assert-Equal 'runtime_state_unknown' $malformedRuntimeReport.environment_fingerprint.fixture_binding_scope 'malformed runtime body -> runtime_state_unknown'
+    Assert-True (-not $malformedRuntimeReport.environment_fingerprint.complete) 'malformed runtime body -> complete=false'
+    Write-TestPass 'Get-SessionBaselineReport refuses to relabel an unknown runtime state as an observed idle baseline'
+
+    # Session scope end-to-end. One active session keeps the current
+    # 1-primary+k-spectator semantics; the two-session report above must not.
+    $singleSessionReport = Get-SessionBaselineReport `
+        -CoordinatorUrl 'http://127.0.0.1:8004' `
+        -RepoRoot $repoRoot `
+        -Now $fixedNow `
+        -NvidiaSmiQuery { @('0, NVIDIA GeForce RTX 4060 Ti, 580.97, 8188, 1827, 6123, 2, 0, [N/A]') } `
+        -NvidiaSmiComputeAppsQuery { @('40232, kit.exe, 2000') } `
+        -WebRtcHealthInvoker {
+            param($Uri, $Timeout)
+            if ($Uri -match '/health$') {
+                return [ordered]@{ ok = $true; body = [pscustomobject]@{ status = 'ok' }; status_code = 200; error = $null }
+            }
+            return [ordered]@{ ok = $true; body = [pscustomobject]@{ sessions = [pscustomobject]@{ active_count = 1; items = @([pscustomobject]@{ session_id = 'rs_only'; status = 'active'; viewer_leases = @([pscustomobject]@{ role = 'primary'; status = 'active' }, [pscustomobject]@{ role = 'spectator'; status = 'active' }) }) }; kit_instance_bindings = @() }; status_code = 200; error = $null }
+        }
+    Assert-Equal 'single_session' $singleSessionReport.session_vram_watermark.session_scope 'one active session -> single_session scope'
+    Assert-True $singleSessionReport.session_vram_watermark.watermark_interpretation.measured 'one active session -> the 1 primary + k spectator interpretation stands'
+    Assert-Equal 1 $singleSessionReport.session_vram_watermark.observed_primary_lease_count 'single-session report counts its one primary lease'
+    Assert-Equal 1 $singleSessionReport.session_vram_watermark.observed_spectator_lease_count 'single-session report counts its one spectator lease'
+
+    Assert-Equal 'multi_session_aggregate' $liveSessionReport.session_vram_watermark.session_scope 'two active sessions against one host-wide VRAM sample -> multi_session_aggregate scope'
+    Assert-True (-not $liveSessionReport.session_vram_watermark.watermark_interpretation.measured) 'two active sessions -> the watermark interpretation is not measured'
+    Assert-True ($liveSessionReport.session_vram_watermark.watermark_interpretation.reason -match 'non-isolated multi-session snapshot') 'multi-session refusal names the non-isolated snapshot'
+    Assert-True ($liveSessionReport.session_vram_watermark.watermark_interpretation.reason -match 'per-session VRAM attribution unavailable in this slice') 'multi-session refusal names the missing per-session attribution'
+    Assert-Equal 2000 $liveSessionReport.session_vram_watermark.total_kit_vram_mb 'multi-session report keeps its aggregate VRAM measurement'
+    Write-TestPass 'session_vram_watermark reports its session scope end-to-end (single vs multi session)'
 } finally { Remove-TestSandbox -Path $sandbox }
 
 # Caller-supplied TTFF / success rate are validated, not trusted blindly.
@@ -722,6 +842,40 @@ try {
     Assert-Equal 'gpu-session-baseline-report/v1' $cliReport.schema_version 'root wrapper report has pinned schema_version'
     Assert-True ($null -ne $cliReport.PSObject.Properties['environment_fingerprint']) 'root wrapper report has environment_fingerprint'
     Write-TestPass 'root wrapper CLI smoke test (-OutputPath, -SkipWebRtcProbe)'
+} finally { Remove-TestSandbox -Path $sandbox }
+
+# PR #511 review r5: -FixturePath and -OutputPath resolving to the same file made
+# Set-Content truncate the fixture with the report -- destroying the very artifact
+# the report claims to fingerprint. The wrapper must refuse before any write.
+$sandbox = New-TestSandbox -Prefix 'measure-baseline-overwrite-guard'
+try {
+    $guardFixture = Join-Path $sandbox 'fixture.ifc'
+    Set-Content -LiteralPath $guardFixture -Value 'precious fixture bytes' -Encoding utf8 -NoNewline
+    $guardError = $null
+    try {
+        & $rootScriptPath -OutputPath $guardFixture -FixturePath $guardFixture -SkipWebRtcProbe -ProbeTimeoutSec 1 | Out-Null
+    } catch { $guardError = $_ }
+    Assert-True ($null -ne $guardError) 'wrapper refuses when -OutputPath and -FixturePath name the same file'
+    Assert-True ("$guardError" -match 'would truncate the fixture being measured') 'overwrite refusal explains that the fixture would be destroyed'
+    Assert-Equal 'precious fixture bytes' (Get-Content -LiteralPath $guardFixture -Raw) 'refused run leaves the fixture byte-identical'
+
+    # The same file reached through a non-canonical spelling must be caught too:
+    # a naive string compare would happily truncate it.
+    $awkwardOutput = Join-Path $sandbox (Join-Path '.' 'fixture.ifc')
+    $guardError2 = $null
+    try {
+        & $rootScriptPath -OutputPath $awkwardOutput -FixturePath $guardFixture -SkipWebRtcProbe -ProbeTimeoutSec 1 | Out-Null
+    } catch { $guardError2 = $_ }
+    Assert-True ($null -ne $guardError2) 'non-canonical -OutputPath spelling of the fixture is still refused'
+    Assert-Equal 'precious fixture bytes' (Get-Content -LiteralPath $guardFixture -Raw) 'non-canonical refusal also leaves the fixture intact'
+
+    # A genuinely different -OutputPath beside the fixture must still work: the
+    # guard refuses a collision, not the directory.
+    $distinctOutput = Join-Path $sandbox 'report.json'
+    & $rootScriptPath -OutputPath $distinctOutput -FixturePath $guardFixture -SkipWebRtcProbe -ProbeTimeoutSec 1 | Out-Null
+    Assert-True (Test-Path -LiteralPath $distinctOutput -PathType Leaf) 'a distinct -OutputPath beside the fixture is not blocked by the guard'
+    Assert-Equal 'precious fixture bytes' (Get-Content -LiteralPath $guardFixture -Raw) 'a legitimate run never touches the fixture'
+    Write-TestPass 'root wrapper refuses to overwrite -FixturePath with the report (-OutputPath collision guard)'
 } finally { Remove-TestSandbox -Path $sandbox }
 
 # Default -OutputPath falls under artifacts/gpu-baseline/<run_id>.json under RepoRoot.
