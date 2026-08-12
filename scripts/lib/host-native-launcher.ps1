@@ -523,11 +523,29 @@ function Start-HostNativeGovernance {
 }
 
 function Stop-HostNativeProcessTreeAndWait {
-    # Bounded, fail-closed process-tree terminator. The CAD hardener and the Kit
-    # Manager import probe rely on it to PROVE that a timed-out tree is gone
-    # before releasing the trust boundary they hold.
+    # Bounded best-effort process-tree SWEEP with a fail-closed provability
+    # report. The contract is deliberately narrower than "containment", and
+    # callers must read it as written:
     #
-    # Two defects made that proof false (#489 L1-COR-004):
+    #   It DOES: enumerate the descendants it can reach, terminate them
+    #     deepest-first (parent last) with identity revalidation before every
+    #     stop, re-enumerate to a fixed point, and THROW whenever it cannot prove
+    #     that the set it knows about is gone inside one bounded budget.
+    #
+    #   It is NOT an escape-proof boundary. Discovery rides the OS parent/child
+    #     link, and that link is advisory: a live process can spawn a child in the
+    #     window between an enumeration and the stop that follows it, and on a
+    #     platform that re-parents orphans the link vanishes outright once the
+    #     parent dies. Only an OS boundary established at LAUNCH - a Windows Job
+    #     Object, or a POSIX process group / cgroup - makes containment
+    #     inescapable (#517, and the follow-up that moves Start-HostNativeService
+    #     onto one).
+    #
+    # So a caller gets "this sweep proved what it could see, or it threw" - never
+    # "nothing survived". Releasing a trust boundary on the strength of a silent
+    # return is a misuse of this helper.
+    #
+    # Two defects made even that narrower proof false (#489 L1-COR-004):
     #   1. Kill($true), WaitForExit and HasExited all describe the SAME Process
     #      object. Microsoft documents that they can report completion while
     #      descendants are still running, and the old catch additionally swallowed
@@ -551,9 +569,9 @@ function Stop-HostNativeProcessTreeAndWait {
     #   6. Sweeping an already-exited parent is only possible where the OS keeps
     #      the creator PID on an orphan (#513 gate r2 L1-COR-001). Linux
     #      re-parents orphans to init/subreaper, so BOTH discovery passes come
-    #      back empty and an empty pass would read as containment. There, a
-    #      pre-exit descendant record is the only proof, and without one this
-    #      fails closed instead of succeeding.
+    #      back empty and an empty pass would read as containment. There this
+    #      fails closed and names the caller's launch-time boundary instead of
+    #      pretending a sweep can recover the link.
     #   7. Reaching the deadline is not a clean pass (#513 gate r2 L1-SEC-001).
     #      Success requires a pass that observed NEITHER a survivor NOR a newly
     #      discovered descendant; an empty survivor set at the deadline is not
@@ -577,12 +595,6 @@ function Stop-HostNativeProcessTreeAndWait {
     param(
         [Parameter(Mandatory = $true)][System.Diagnostics.Process] $Process,
         [ValidateRange(1, 60000)][int] $TimeoutMs = 5000,
-        # A descendant record captured BEFORE the parent could exit. On a platform
-        # that re-parents orphans this is the only thing that can prove containment
-        # for a parent that was already gone on entry, because the PPID link that
-        # discovery walks no longer names the creator. Callers that hold an OS
-        # boundary (process group / job) do not need it.
-        [AllowEmptyCollection()][int[]] $KnownDescendantProcessIds = @(),
         # Injectable so the containment postcondition is testable without an
         # actually unkillable process.
         [scriptblock] $ChildPidLookup = {
@@ -697,34 +709,23 @@ function Stop-HostNativeProcessTreeAndWait {
 
     $parentProcessId = [int]$Process.Id
     $parentAlreadyExited = $Process.HasExited
-    $seededDescendantIds = @(@($KnownDescendantProcessIds) |
-        ForEach-Object { [int]$_ } |
-        Where-Object { $_ -ne $parentProcessId } |
-        Select-Object -Unique)
 
     # An already-exited parent is only sweepable where the OS keeps the creator
     # PID on an orphan. Where it does not, discovery has nothing left to walk, so
-    # an empty result is ignorance rather than containment - fail closed and say
-    # where the authoritative boundary actually is.
-    if ($parentAlreadyExited -and
-        $seededDescendantIds.Count -eq 0 -and
-        -not [bool](& $OrphanRediscoveryProbeFn)) {
+    # an empty result is ignorance rather than proof - fail closed and name the
+    # boundary that could actually have prevented the escape.
+    if ($parentAlreadyExited -and -not [bool](& $OrphanRediscoveryProbeFn)) {
         throw ("Process tree for PID $parentProcessId cannot be proven contained: the parent had " +
             'already exited on entry and this platform re-parents orphans, so containment is not ' +
-            'provable via PPID here. The authoritative containment boundary is the caller - hold an ' +
-            'OS process group or job established at launch, or capture the descendant set before the ' +
-            'parent can exit and pass it as -KnownDescendantProcessIds.')
+            'provable via PPID here. This helper is a bounded best-effort sweep, not an escape-proof ' +
+            'boundary: the authoritative containment boundary is the caller, which must hold an OS ' +
+            'process group, cgroup or Job Object established at launch (#517).')
     }
 
     $descendantIdentities = @{}
-    foreach ($seededId in $seededDescendantIds) {
-        $descendantIdentities[$seededId] = (& $IdentityProbeFn $seededId)
-    }
-    # Seeded ids first, discovered ones after: reverse iteration then stops the
-    # deepest-discovered members before the caller's recorded direct children.
-    $descendantIds = @($seededDescendantIds) + @(Update-DescendantSnapshot `
-            -RootProcessIds (@($parentProcessId) + $seededDescendantIds) `
-            -KnownProcessIds $seededDescendantIds `
+    $descendantIds = @(Update-DescendantSnapshot `
+            -RootProcessIds @($parentProcessId) `
+            -KnownProcessIds @() `
             -Identities $descendantIdentities `
             -LookupFn $ChildPidLookup `
             -ProbeFn $IdentityProbeFn)
@@ -769,6 +770,22 @@ function Stop-HostNativeProcessTreeAndWait {
     # cannot be recycled underneath us, and on Windows a just-orphaned child is
     # still reachable through the dead parent's ppid link. Every other root has
     # to still be the incarnation we recorded.
+    #
+    # $survivors starts as the WHOLE snapshot, alive or not, so the first pass
+    # re-walks every member the stop above just killed. That is what catches a
+    # descendant spawned between enumeration and the stop: measured on Windows
+    # with a real three-level fixture whose grandchild was hidden from the
+    # snapshot, pass 1 rediscovered it through its dead parent's link, stopped
+    # it, and pass 2 came back clean.
+    #
+    # KNOWN RESIDUAL (analysis, not measured; the reason the contract above stops
+    # short of "containment"): a descendant discovered AND stopped inside the same
+    # pass drops out of $survivors, so the next pass no longer expands from it. A
+    # child it spawned in that sub-window is not rediscovered. Expanding from dead
+    # PIDs on every pass instead would trade this fail-open gap for a
+    # fail-dangerous one - a recycled PID would contribute an unrelated process's
+    # children to the kill set - so the gap is documented and left to the
+    # launch-time OS boundary in #517 rather than papered over here.
     $survivors = @($descendantIds)
     $cleanPassObserved = $false
     while ($true) {

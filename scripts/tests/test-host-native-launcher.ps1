@@ -810,12 +810,32 @@ time.sleep(120)
     [System.IO.File]::WriteAllText($orphanFixture, $treeSource)
     $orphanProcess = Start-TreeFixtureProcess -PythonExe $fixturePython -ScriptPath $orphanFixture -PidPath $orphanPidFile
     $orphanPids = @(Get-Content -Raw -LiteralPath $orphanPidFile | ConvertFrom-Json)
+    $orphanParentId = [int]$orphanPids[0]
     $orphanChildId = [int]$orphanPids[1]
     $orphanProcess.Kill()
     [void]$orphanProcess.WaitForExit(5000)
     Assert-True $orphanProcess.HasExited 'orphan fixture parent has already exited before the helper is entered'
     Assert-True ($null -ne (Get-PlatformProcessIdentity -ProcessId $orphanChildId)) 'orphaned descendant outlives the parent that spawned it'
-    $orphanRediscoverable = Test-OrphanRediscoverySupported
+    # INDEPENDENT oracle. Asking Test-OrphanRediscoverySupported which branch to
+    # expect would make the implementation grade its own homework, so this reads
+    # the raw OS record instead: Win32_Process.ParentProcessId on Windows, and
+    # /proc/<pid>/stat field 4 on Linux, neither routed through the launcher or
+    # the platform adapter.
+    $orphanRediscoverable = $false
+    if ($IsWindows) {
+        $orphanCimRow = Get-CimInstance Win32_Process -Filter "ProcessId=$orphanChildId" -ErrorAction SilentlyContinue
+        $orphanRediscoverable = ($null -ne $orphanCimRow -and [int]$orphanCimRow.ParentProcessId -eq $orphanParentId)
+    }
+    else {
+        $orphanStatPath = "/proc/$orphanChildId/stat"
+        if (Test-Path -LiteralPath $orphanStatPath) {
+            $orphanStatRaw = Get-Content -LiteralPath $orphanStatPath -Raw -ErrorAction SilentlyContinue
+            if (-not [string]::IsNullOrWhiteSpace($orphanStatRaw)) {
+                $orphanStatFields = $orphanStatRaw.Substring($orphanStatRaw.LastIndexOf(')') + 1).Trim() -split '\s+'
+                $orphanRediscoverable = ([int]$orphanStatFields[1] -eq $orphanParentId)
+            }
+        }
+    }
     $orphanStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     # Sampled INSIDE the try, before the sandbox cleanup below: killing the child
     # here and asserting afterwards would let the test's own cleanup satisfy the
@@ -834,10 +854,10 @@ time.sleep(120)
         Stop-Process -Id $orphanChildId -Force -ErrorAction SilentlyContinue
     }
     if ($orphanRediscoverable) {
-        Assert-True ($null -eq $orphanChildIdentityAfterStop) 'production defaults contain the descendant of an already-exited parent where orphans stay rediscoverable'
+        Assert-True ($null -eq $orphanChildIdentityAfterStop) 'production defaults sweep the descendant of an already-exited parent where the raw OS record still links it'
     }
     else {
-        Assert-True ($orphanFailure -match 'not provable via PPID') 'production defaults fail closed for an already-exited parent where the platform re-parents orphans'
+        Assert-True ($orphanFailure -match 'not provable via PPID') 'production defaults fail closed for an already-exited parent where the raw OS record no longer links it'
     }
     Assert-True ($orphanStopwatch.Elapsed.TotalSeconds -lt 15) 'already-exited-parent containment stays inside the bounded window'
     Write-TestPass 'production-default containment of an already-exited parent matches this platform''s orphan rediscovery'
@@ -861,31 +881,10 @@ time.sleep(120)
         $noRecordFailure = $_.Exception.Message
     }
     Assert-True ($noRecordFailure -match 'not provable via PPID') 'an already-exited parent on a re-parenting platform fails closed instead of reporting an empty pass as containment'
-    Assert-True ($noRecordFailure -match 'KnownDescendantProcessIds') 'the fail-closed message names the caller-side boundary that can prove containment'
-    Write-TestPass 'already-exited parent without a pre-exit record fails closed on a re-parenting platform'
-
-    # ... and WITH that record the same platform contains and proves the real
-    # descendant, because the record replaces the PPID link discovery lost.
-    $recordFixture = Join-Path $treeSandbox 'record-fixture.py'
-    $recordPidFile = Join-Path $treeSandbox 'record-pids.json'
-    [System.IO.File]::WriteAllText($recordFixture, $treeSource)
-    $recordProcess = Start-TreeFixtureProcess -PythonExe $fixturePython -ScriptPath $recordFixture -PidPath $recordPidFile
-    $recordPids = @(Get-Content -Raw -LiteralPath $recordPidFile | ConvertFrom-Json)
-    $recordChildId = [int]$recordPids[1]
-    $recordProcess.Kill()
-    [void]$recordProcess.WaitForExit(5000)
-    $recordChildIdentityAfterStop = 'never-sampled'
-    try {
-        Stop-HostNativeProcessTreeAndWait -Process $recordProcess -TimeoutMs 5000 `
-            -KnownDescendantProcessIds @($recordChildId) `
-            -OrphanRediscoveryProbeFn { $false }
-        $recordChildIdentityAfterStop = Get-PlatformProcessIdentity -ProcessId $recordChildId
-    }
-    finally {
-        Stop-Process -Id $recordChildId -Force -ErrorAction SilentlyContinue
-    }
-    Assert-True ($null -eq $recordChildIdentityAfterStop) 'a pre-exit descendant record contains an already-exited parent tree on a re-parenting platform'
-    Write-TestPass 'pre-exit descendant record proves containment where PPID rediscovery cannot'
+    Assert-True ($noRecordFailure -match 'bounded best-effort sweep, not an escape-proof boundary') 'the fail-closed message states the narrowed contract rather than implying the sweep could have contained it'
+    Assert-True ($noRecordFailure -match 'established at launch') 'the fail-closed message names the launch-time OS boundary as the authoritative one'
+    Assert-True ($noRecordFailure -match '#517') 'the fail-closed message cites the tracked launch-time containment work'
+    Write-TestPass 'already-exited parent on a re-parenting platform fails closed and points at the launch-time boundary'
 
     # Case 4 (#489 L1-COR-001): the same entry state, but the descendant cannot be
     # killed. Silent success is exactly the defect; it must fail closed instead.
@@ -898,7 +897,7 @@ time.sleep(120)
     $orphanFailFailure = ''
     try {
         Stop-HostNativeProcessTreeAndWait -Process $orphanFailProcess -TimeoutMs 1000 `
-            -KnownDescendantProcessIds @($unkillableDescendantId) `
+            -OrphanRediscoveryProbeFn { $true } `
             -ChildPidLookup {
                 param($parentId)
                 if ([int]$parentId -eq $unkillableDescendantId) { return @() }
@@ -1228,6 +1227,57 @@ time.sleep(120)
     Assert-True ($budgetFailure -match "left descendant PID\(s\) $budgetSurvivorId running") 'a slow-discovery run still fails closed on its surviving descendant'
     Assert-True ($budgetStopwatch.Elapsed.TotalMilliseconds -lt ($budgetTimeoutMs + 500)) 'discovery time counts against TimeoutMs instead of being added to it'
     Write-TestPass 'TimeoutMs is a single end-to-end containment budget'
+
+    # Case 11 (#513 gate r3 HIGH-2, REFUTED by this fixture): a descendant that
+    # appears between the enumeration and the stop that follows it is claimed to
+    # escape. It does not, because $survivors starts as the WHOLE snapshot, so the
+    # first containment pass re-walks every member the stop just killed and finds
+    # what hung off them.
+    #
+    # A REAL three-level chain, with the grandchild hidden from the snapshot only
+    # - it is running the whole time, exactly like one spawned a moment after
+    # enumeration. The tree-kill capability is forced off so .NET's own recursive
+    # kill cannot do the containment for us and mask the helper's logic.
+    $escapeeFixture = Join-Path $treeSandbox 'escapee-fixture.py'
+    $escapeePidFile = Join-Path $treeSandbox 'escapee-pids.json'
+    [System.IO.File]::WriteAllText($escapeeFixture, $chainSource)
+    $escapeeProcess = Start-TreeFixtureProcess -PythonExe $fixturePython -ScriptPath $escapeeFixture -PidPath $escapeePidFile
+    $escapeePids = @(Get-Content -Raw -LiteralPath $escapeePidFile | ConvertFrom-Json)
+    Assert-Equal 3 $escapeePids.Count 'escapee fixture records a three-level parent/child/grandchild chain'
+    $escapeeParentId = [int]$escapeePids[0]
+    $escapeeChildId = [int]$escapeePids[1]
+    $escapeeGrandchildId = [int]$escapeePids[2]
+    $escapeeLookups = [System.Collections.Generic.List[int]]::new()
+    $escapeeGrandchildAfterStop = 'never-sampled'
+    $escapeeFailure = ''
+    try {
+        Stop-HostNativeProcessTreeAndWait -Process $escapeeProcess -TimeoutMs 5000 `
+            -TreeKillCapabilityProbeFn { $false } `
+            -ChildPidLookup {
+                param($parentId)
+                $escapeeLookups.Add([int]$parentId)
+                # Calls 1-2 are the initial snapshot: report the child only, so the
+                # grandchild is outside the set the stop below operates on.
+                if ($escapeeLookups.Count -le 2) {
+                    if ([int]$parentId -eq $escapeeParentId) { return @($escapeeChildId) }
+                    return @()
+                }
+                return @(Get-PlatformChildProcessIds -ParentProcessId ([int]$parentId))
+            }.GetNewClosure()
+        $escapeeGrandchildAfterStop = Get-PlatformProcessIdentity -ProcessId $escapeeGrandchildId
+    }
+    catch {
+        $escapeeFailure = $_.Exception.Message
+    }
+    finally {
+        foreach ($escapeePid in $escapeePids) {
+            Stop-Process -Id ([int]$escapeePid) -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Assert-Equal '' $escapeeFailure 'the re-enumerating fixed point contains the post-enumeration descendant instead of failing closed on it'
+    Assert-True ($null -eq $escapeeGrandchildAfterStop) 'a descendant missed by the snapshot is still discovered, stopped and proven gone'
+    Assert-True ($escapeeLookups.Count -gt 2) 'containment re-enumerated past the snapshot that missed it'
+    Write-TestPass 'a descendant appearing after enumeration is caught by the clean-pass fixed point'
 }
 finally {
     Remove-TestSandbox -Path $treeSandbox
