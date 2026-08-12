@@ -794,45 +794,98 @@ time.sleep(120)
     Assert-True ($survivorStopwatch.Elapsed.TotalSeconds -lt 15) 'process-tree terminator bounds the descendant wait before failing closed'
     Write-TestPass 'process-tree terminator fails closed on a surviving descendant'
 
-    # Case 3 (#489 L1-COR-001): the parent exits BEFORE the helper is entered.
-    # Neither Windows nor Linux cascades termination, so the descendants are still
-    # running - the old `if ($Process.HasExited) { return }` reported containment
-    # without ever looking at them. An exited parent excuses the parent kill/wait
-    # only; the sweep, the termination and the proof still have to happen.
+    # Case 3 (#489 L1-COR-001, #513 gate r2 L1-COR-001): the parent exits BEFORE
+    # the helper is entered. Neither OS cascades termination, so the descendants
+    # are still running - the old `if ($Process.HasExited) { return }` reported
+    # containment without ever looking at them.
+    #
+    # Whether that is RECOVERABLE is a platform fact, so this drives the
+    # PRODUCTION DEFAULTS with no injected lookup and pins whichever branch this
+    # host is on: where the OS keeps the creator PID on an orphan the sweep must
+    # find and contain it; where the OS re-parents orphans there is nothing left
+    # to walk, and an empty discovery pass must fail closed instead of reading as
+    # containment.
     $orphanFixture = Join-Path $treeSandbox 'orphan-fixture.py'
     $orphanPidFile = Join-Path $treeSandbox 'orphan-pids.json'
     [System.IO.File]::WriteAllText($orphanFixture, $treeSource)
     $orphanProcess = Start-TreeFixtureProcess -PythonExe $fixturePython -ScriptPath $orphanFixture -PidPath $orphanPidFile
     $orphanPids = @(Get-Content -Raw -LiteralPath $orphanPidFile | ConvertFrom-Json)
-    $orphanParentId = [int]$orphanPids[0]
     $orphanChildId = [int]$orphanPids[1]
     $orphanProcess.Kill()
     [void]$orphanProcess.WaitForExit(5000)
     Assert-True $orphanProcess.HasExited 'orphan fixture parent has already exited before the helper is entered'
     Assert-True ($null -ne (Get-PlatformProcessIdentity -ProcessId $orphanChildId)) 'orphaned descendant outlives the parent that spawned it'
+    $orphanRediscoverable = Test-OrphanRediscoverySupported
     $orphanStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     # Sampled INSIDE the try, before the sandbox cleanup below: killing the child
     # here and asserting afterwards would let the test's own cleanup satisfy the
     # containment claim the helper is supposed to prove.
     $orphanChildIdentityAfterStop = 'never-sampled'
+    $orphanFailure = ''
     try {
-        Stop-HostNativeProcessTreeAndWait -Process $orphanProcess -TimeoutMs 5000 `
-            -ChildPidLookup {
-                param($parentId)
-                # A re-parented descendant is no longer reachable through the dead
-                # parent's ppid link, so the caller's own record stands in for it.
-                if ([int]$parentId -eq $orphanParentId) { return @($orphanChildId) }
-                return @()
-            }.GetNewClosure()
+        Stop-HostNativeProcessTreeAndWait -Process $orphanProcess -TimeoutMs 5000
         $orphanChildIdentityAfterStop = Get-PlatformProcessIdentity -ProcessId $orphanChildId
+    }
+    catch {
+        $orphanFailure = $_.Exception.Message
     }
     finally {
         $orphanStopwatch.Stop()
         Stop-Process -Id $orphanChildId -Force -ErrorAction SilentlyContinue
     }
-    Assert-True ($null -eq $orphanChildIdentityAfterStop) 'process-tree terminator contains the descendants of an already-exited parent'
+    if ($orphanRediscoverable) {
+        Assert-True ($null -eq $orphanChildIdentityAfterStop) 'production defaults contain the descendant of an already-exited parent where orphans stay rediscoverable'
+    }
+    else {
+        Assert-True ($orphanFailure -match 'not provable via PPID') 'production defaults fail closed for an already-exited parent where the platform re-parents orphans'
+    }
     Assert-True ($orphanStopwatch.Elapsed.TotalSeconds -lt 15) 'already-exited-parent containment stays inside the bounded window'
-    Write-TestPass 'process-tree terminator sweeps descendants when the parent exited before entry'
+    Write-TestPass 'production-default containment of an already-exited parent matches this platform''s orphan rediscovery'
+
+    # Case 3b (#513 gate r2 L1-COR-001): drive BOTH sides of that platform gate
+    # from this one run by injecting the capability decision, so the POSIX
+    # fail-closed path is proven on Windows and the recorded-snapshot escape is
+    # proven on POSIX. Without a pre-exit record there is nothing to prove with.
+    $noRecordFixture = Join-Path $treeSandbox 'no-record-fixture.py'
+    $noRecordPidFile = Join-Path $treeSandbox 'no-record-pids.json'
+    [System.IO.File]::WriteAllText($noRecordFixture, $survivorSource)
+    $noRecordProcess = Start-TreeFixtureProcess -PythonExe $fixturePython -ScriptPath $noRecordFixture -PidPath $noRecordPidFile
+    $noRecordProcess.Kill()
+    [void]$noRecordProcess.WaitForExit(5000)
+    $noRecordFailure = ''
+    try {
+        Stop-HostNativeProcessTreeAndWait -Process $noRecordProcess -TimeoutMs 2000 `
+            -OrphanRediscoveryProbeFn { $false }
+    }
+    catch {
+        $noRecordFailure = $_.Exception.Message
+    }
+    Assert-True ($noRecordFailure -match 'not provable via PPID') 'an already-exited parent on a re-parenting platform fails closed instead of reporting an empty pass as containment'
+    Assert-True ($noRecordFailure -match 'KnownDescendantProcessIds') 'the fail-closed message names the caller-side boundary that can prove containment'
+    Write-TestPass 'already-exited parent without a pre-exit record fails closed on a re-parenting platform'
+
+    # ... and WITH that record the same platform contains and proves the real
+    # descendant, because the record replaces the PPID link discovery lost.
+    $recordFixture = Join-Path $treeSandbox 'record-fixture.py'
+    $recordPidFile = Join-Path $treeSandbox 'record-pids.json'
+    [System.IO.File]::WriteAllText($recordFixture, $treeSource)
+    $recordProcess = Start-TreeFixtureProcess -PythonExe $fixturePython -ScriptPath $recordFixture -PidPath $recordPidFile
+    $recordPids = @(Get-Content -Raw -LiteralPath $recordPidFile | ConvertFrom-Json)
+    $recordChildId = [int]$recordPids[1]
+    $recordProcess.Kill()
+    [void]$recordProcess.WaitForExit(5000)
+    $recordChildIdentityAfterStop = 'never-sampled'
+    try {
+        Stop-HostNativeProcessTreeAndWait -Process $recordProcess -TimeoutMs 5000 `
+            -KnownDescendantProcessIds @($recordChildId) `
+            -OrphanRediscoveryProbeFn { $false }
+        $recordChildIdentityAfterStop = Get-PlatformProcessIdentity -ProcessId $recordChildId
+    }
+    finally {
+        Stop-Process -Id $recordChildId -Force -ErrorAction SilentlyContinue
+    }
+    Assert-True ($null -eq $recordChildIdentityAfterStop) 'a pre-exit descendant record contains an already-exited parent tree on a re-parenting platform'
+    Write-TestPass 'pre-exit descendant record proves containment where PPID rediscovery cannot'
 
     # Case 4 (#489 L1-COR-001): the same entry state, but the descendant cannot be
     # killed. Silent success is exactly the defect; it must fail closed instead.
@@ -845,6 +898,7 @@ time.sleep(120)
     $orphanFailFailure = ''
     try {
         Stop-HostNativeProcessTreeAndWait -Process $orphanFailProcess -TimeoutMs 1000 `
+            -KnownDescendantProcessIds @($unkillableDescendantId) `
             -ChildPidLookup {
                 param($parentId)
                 if ([int]$parentId -eq $unkillableDescendantId) { return @() }
@@ -1062,6 +1116,118 @@ time.sleep(120)
     }
     Assert-True ($fallbackFailFailure -match "left descendant PID\(s\) $unkillableDescendantId running") 'forced fallback fails closed when a snapshotted descendant survives'
     Write-TestPass 'forced no-Kill(bool) fallback fails closed on a surviving descendant'
+
+    # Case 9 (#513 gate r2 L1-SEC-001): reaching the deadline is NOT a clean pass.
+    # A pass that discovers a descendant and stops it leaves zero survivors, but
+    # whatever spawned it can spawn again, so the fixed point was never reached.
+    # Checking only `survivors > 0` after the loop reported success on exactly
+    # that state. Here every pass discovers one more descendant and successfully
+    # stops it, so the survivor set is always empty and a clean pass never
+    # happens - the helper must fail closed at the deadline.
+    $churnFixture = Join-Path $treeSandbox 'churn-fixture.py'
+    $churnPidFile = Join-Path $treeSandbox 'churn-pids.json'
+    [System.IO.File]::WriteAllText($churnFixture, $survivorSource)
+    $churnProcess = Start-TreeFixtureProcess -PythonExe $fixturePython -ScriptPath $churnFixture -PidPath $churnPidFile
+    $churnParentId = [int]$churnProcess.Id
+    $churnDiscovered = [System.Collections.Generic.List[int]]::new()
+    $churnStopped = [System.Collections.Generic.List[int]]::new()
+    $churnFailure = ''
+    $churnStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        Stop-HostNativeProcessTreeAndWait -Process $churnProcess -TimeoutMs 700 `
+            -ChildPidLookup {
+                param($parentId)
+                if ([int]$parentId -ne $churnParentId) { return @() }
+                $churnNextId = 500000 + $churnDiscovered.Count
+                $churnDiscovered.Add($churnNextId)
+                return @($churnNextId)
+            }.GetNewClosure() `
+            -IdentityProbeFn {
+                param($procId)
+                if (-not $churnDiscovered.Contains([int]$procId)) { return $null }
+                if ($churnStopped.Contains([int]$procId)) { return $null }
+                return [pscustomobject]@{
+                    ProcessId      = [int]$procId
+                    BirthToken     = 'churn-birth-token'
+                    ExecutablePath = ''
+                    CommandLine    = ''
+                }
+            }.GetNewClosure() `
+            -StopProcessFn {
+                param($procId)
+                $churnStopped.Add([int]$procId)
+            }.GetNewClosure()
+    }
+    catch {
+        $churnFailure = $_.Exception.Message
+    }
+    finally {
+        $churnStopwatch.Stop()
+        if (-not $churnProcess.HasExited) {
+            $churnProcess.Kill()
+            [void]$churnProcess.WaitForExit(5000)
+        }
+    }
+    Assert-True ($churnFailure -match 'could not be proven contained') 'reaching the deadline without a clean containment pass fails closed even with an empty survivor set'
+    Assert-True ($churnDiscovered.Count -ge 2) 'the containment loop kept re-enumerating until the deadline'
+    Assert-True ($churnStopped.Count -ge 1) 'every descendant discovered before the deadline was still terminated'
+    Assert-True ($churnStopwatch.Elapsed.TotalSeconds -lt 15) 'the no-clean-pass failure is still bounded'
+    Write-TestPass 'deadline without a clean containment pass fails closed'
+
+    # Case 10 (#513 gate r2 L1-COR-002): TimeoutMs is ONE end-to-end budget.
+    # Discovery used to run before the stopwatch started and the parent wait still
+    # received the FULL TimeoutMs, so slow platform enumeration pushed the helper
+    # far past its advertised bound. Burn most of the budget inside discovery and
+    # assert the whole call still lands inside TimeoutMs rather than inside
+    # discovery + TimeoutMs (~1.5s under one budget, ~2.7s under two).
+    $budgetFixture = Join-Path $treeSandbox 'budget-fixture.py'
+    $budgetPidFile = Join-Path $treeSandbox 'budget-pids.json'
+    [System.IO.File]::WriteAllText($budgetFixture, $survivorSource)
+    $budgetProcess = Start-TreeFixtureProcess -PythonExe $fixturePython -ScriptPath $budgetFixture -PidPath $budgetPidFile
+    $budgetParentId = [int]$budgetProcess.Id
+    $budgetTimeoutMs = 1500
+    $budgetDiscoveryDelayMs = 1200
+    $budgetSurvivorId = 424245
+    $budgetIdentity = [pscustomobject]@{
+        ProcessId      = $budgetSurvivorId
+        BirthToken     = 'budget-birth-token'
+        ExecutablePath = ''
+        CommandLine    = ''
+    }
+    $budgetLookups = [System.Collections.Generic.List[int]]::new()
+    $budgetFailure = ''
+    $budgetStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        Stop-HostNativeProcessTreeAndWait -Process $budgetProcess -TimeoutMs $budgetTimeoutMs `
+            -ChildPidLookup {
+                param($parentId)
+                if ([int]$parentId -ne $budgetParentId) { return @() }
+                $budgetLookups.Add([int]$parentId)
+                # Only the first (snapshot) enumeration is slow, so the cost lands
+                # squarely in the window the old code left unmetered.
+                if ($budgetLookups.Count -eq 1) { Start-Sleep -Milliseconds $budgetDiscoveryDelayMs }
+                return @($budgetSurvivorId)
+            }.GetNewClosure() `
+            -IdentityProbeFn {
+                param($procId)
+                if ([int]$procId -eq $budgetSurvivorId) { return $budgetIdentity }
+                return $null
+            }.GetNewClosure() `
+            -StopProcessFn { param($procId) } | Out-Null
+    }
+    catch {
+        $budgetFailure = $_.Exception.Message
+    }
+    finally {
+        $budgetStopwatch.Stop()
+        if (-not $budgetProcess.HasExited) {
+            $budgetProcess.Kill()
+            [void]$budgetProcess.WaitForExit(5000)
+        }
+    }
+    Assert-True ($budgetFailure -match "left descendant PID\(s\) $budgetSurvivorId running") 'a slow-discovery run still fails closed on its surviving descendant'
+    Assert-True ($budgetStopwatch.Elapsed.TotalMilliseconds -lt ($budgetTimeoutMs + 500)) 'discovery time counts against TimeoutMs instead of being added to it'
+    Write-TestPass 'TimeoutMs is a single end-to-end containment budget'
 }
 finally {
     Remove-TestSandbox -Path $treeSandbox

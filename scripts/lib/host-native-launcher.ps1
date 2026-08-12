@@ -548,6 +548,19 @@ function Stop-HostNativeProcessTreeAndWait {
     #   5. One fixed snapshot is not containment (#513 gate L1-SEC-002): a
     #      snapshotted process can spawn another child before it dies, and that
     #      child appears in neither the stop list nor the success check.
+    #   6. Sweeping an already-exited parent is only possible where the OS keeps
+    #      the creator PID on an orphan (#513 gate r2 L1-COR-001). Linux
+    #      re-parents orphans to init/subreaper, so BOTH discovery passes come
+    #      back empty and an empty pass would read as containment. There, a
+    #      pre-exit descendant record is the only proof, and without one this
+    #      fails closed instead of succeeding.
+    #   7. Reaching the deadline is not a clean pass (#513 gate r2 L1-SEC-001).
+    #      Success requires a pass that observed NEITHER a survivor NOR a newly
+    #      discovered descendant; an empty survivor set at the deadline is not
+    #      the same thing and must fail closed.
+    #   8. TimeoutMs is ONE end-to-end budget (#513 gate r2 L1-COR-002). The
+    #      stopwatch starts before discovery and every bounded operation after it
+    #      - including the parent wait - receives only the remaining allowance.
     #
     # Fix: snapshot the descendant PID set BEFORE terminating (afterwards the
     # parent/child links are gone and orphans are re-parented), guard the tree
@@ -564,6 +577,12 @@ function Stop-HostNativeProcessTreeAndWait {
     param(
         [Parameter(Mandatory = $true)][System.Diagnostics.Process] $Process,
         [ValidateRange(1, 60000)][int] $TimeoutMs = 5000,
+        # A descendant record captured BEFORE the parent could exit. On a platform
+        # that re-parents orphans this is the only thing that can prove containment
+        # for a parent that was already gone on entry, because the PPID link that
+        # discovery walks no longer names the creator. Callers that hold an OS
+        # boundary (process group / job) do not need it.
+        [AllowEmptyCollection()][int[]] $KnownDescendantProcessIds = @(),
         # Injectable so the containment postcondition is testable without an
         # actually unkillable process.
         [scriptblock] $ChildPidLookup = {
@@ -589,6 +608,12 @@ function Stop-HostNativeProcessTreeAndWait {
         # carries the two races above.
         [scriptblock] $TreeKillCapabilityProbeFn = {
             $null -ne [System.Diagnostics.Process].GetMethod('Kill', [type[]]@([bool]))
+        },
+        # Injectable so the POSIX fail-closed path is provable from a Windows run
+        # and vice versa. See Test-OrphanRediscoverySupported for the platform
+        # facts this gate encodes.
+        [scriptblock] $OrphanRediscoveryProbeFn = {
+            Test-OrphanRediscoverySupported
         }
     )
 
@@ -654,18 +679,56 @@ function Stop-HostNativeProcessTreeAndWait {
         }
     }
 
+    function Wait-ParentExitWithinBudget {
+        # $TimeoutMs here is the REMAINING allowance out of the caller's single
+        # end-to-end budget, never the caller's total: discovery and termination
+        # already spent part of it before this runs.
+        param(
+            [Parameter(Mandatory = $true)][System.Diagnostics.Process] $Process,
+            [Parameter(Mandatory = $true)][int] $TimeoutMs
+        )
+        if (-not $Process.WaitForExit($TimeoutMs) -or -not $Process.HasExited) { return $false }
+        return $true
+    }
+
+    # ONE end-to-end budget: started before discovery, so every later bounded
+    # operation spends what is left of it rather than a fresh full allowance.
+    $budget = [System.Diagnostics.Stopwatch]::StartNew()
+
     $parentProcessId = [int]$Process.Id
     $parentAlreadyExited = $Process.HasExited
+    $seededDescendantIds = @(@($KnownDescendantProcessIds) |
+        ForEach-Object { [int]$_ } |
+        Where-Object { $_ -ne $parentProcessId } |
+        Select-Object -Unique)
+
+    # An already-exited parent is only sweepable where the OS keeps the creator
+    # PID on an orphan. Where it does not, discovery has nothing left to walk, so
+    # an empty result is ignorance rather than containment - fail closed and say
+    # where the authoritative boundary actually is.
+    if ($parentAlreadyExited -and
+        $seededDescendantIds.Count -eq 0 -and
+        -not [bool](& $OrphanRediscoveryProbeFn)) {
+        throw ("Process tree for PID $parentProcessId cannot be proven contained: the parent had " +
+            'already exited on entry and this platform re-parents orphans, so containment is not ' +
+            'provable via PPID here. The authoritative containment boundary is the caller - hold an ' +
+            'OS process group or job established at launch, or capture the descendant set before the ' +
+            'parent can exit and pass it as -KnownDescendantProcessIds.')
+    }
 
     $descendantIdentities = @{}
-    $descendantIds = @(Update-DescendantSnapshot `
-            -RootProcessIds @($parentProcessId) `
-            -KnownProcessIds @() `
+    foreach ($seededId in $seededDescendantIds) {
+        $descendantIdentities[$seededId] = (& $IdentityProbeFn $seededId)
+    }
+    # Seeded ids first, discovered ones after: reverse iteration then stops the
+    # deepest-discovered members before the caller's recorded direct children.
+    $descendantIds = @($seededDescendantIds) + @(Update-DescendantSnapshot `
+            -RootProcessIds (@($parentProcessId) + $seededDescendantIds) `
+            -KnownProcessIds $seededDescendantIds `
             -Identities $descendantIdentities `
             -LookupFn $ChildPidLookup `
             -ProbeFn $IdentityProbeFn)
 
-    $budget = [System.Diagnostics.Stopwatch]::StartNew()
     $supportsTreeKill = [bool](& $TreeKillCapabilityProbeFn)
     if (-not $parentAlreadyExited) {
         try {
@@ -693,7 +756,8 @@ function Stop-HostNativeProcessTreeAndWait {
                 throw "Process tree termination failed for PID $($Process.Id): $($_.Exception.Message)"
             }
         }
-        if (-not $Process.WaitForExit($TimeoutMs) -or -not $Process.HasExited) {
+        $parentWaitMs = [int]($TimeoutMs - $budget.ElapsedMilliseconds)
+        if ($parentWaitMs -le 0 -or -not (Wait-ParentExitWithinBudget -Process $Process -TimeoutMs $parentWaitMs)) {
             throw "Process tree for PID $($Process.Id) did not terminate within $TimeoutMs ms."
         }
     }
@@ -706,7 +770,11 @@ function Stop-HostNativeProcessTreeAndWait {
     # still reachable through the dead parent's ppid link. Every other root has
     # to still be the incarnation we recorded.
     $survivors = @($descendantIds)
+    $cleanPassObserved = $false
     while ($true) {
+        # Never start another pass on an exhausted budget: the work below is
+        # itself unbounded platform I/O.
+        if ($budget.ElapsedMilliseconds -ge $TimeoutMs) { break }
         $newDescendantIds = @(Update-DescendantSnapshot `
                 -RootProcessIds (@($parentProcessId) + $survivors) `
                 -KnownProcessIds $descendantIds `
@@ -725,12 +793,21 @@ function Stop-HostNativeProcessTreeAndWait {
                     -Reference $descendantIdentities[$descendantProcessId] `
                     -Current (& $IdentityProbeFn $descendantProcessId)
             })
-        if ($survivors.Count -eq 0 -and $newDescendantIds.Count -eq 0) { break }
+        # The fixed point is a pass that found NOTHING new and NOTHING alive.
+        # An empty survivor set on a pass that still discovered a descendant is
+        # not a fixed point: whatever spawned it can spawn again.
+        if ($survivors.Count -eq 0 -and $newDescendantIds.Count -eq 0) {
+            $cleanPassObserved = $true
+            break
+        }
         if ($budget.ElapsedMilliseconds -ge $TimeoutMs) { break }
         & $SleepFn 50
     }
     if ($survivors.Count -gt 0) {
         throw "Process tree for PID $($Process.Id) left descendant PID(s) $($survivors -join ', ') running after $TimeoutMs ms."
+    }
+    if (-not $cleanPassObserved) {
+        throw "Process tree for PID $($Process.Id) could not be proven contained within $TimeoutMs ms: no containment pass completed with neither a surviving nor a newly discovered descendant."
     }
 }
 

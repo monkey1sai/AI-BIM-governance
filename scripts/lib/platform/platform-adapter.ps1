@@ -44,6 +44,26 @@ function Get-PlatformChildProcessIds {
     return @($children)
 }
 
+function Test-OrphanRediscoverySupported {
+    # Can a dead parent's descendants still be found through the parent/child
+    # link AFTER the parent has exited?
+    #
+    #   windows: YES. Win32_Process.ParentProcessId keeps the CREATOR's PID once
+    #            the creator exits, so an orphan stays reachable from the parent
+    #            PID we recorded - and while a handle to the exited process is
+    #            held that PID cannot be recycled underneath the query.
+    #   linux:   NO. The kernel re-parents an orphan to init or to the nearest
+    #            subreaper, so /proc/<pid>/stat field 4 stops naming the creator
+    #            and the link is gone for good.
+    #
+    # Anything that must PROVE containment across a parent exit on Linux has to
+    # own a boundary established at LAUNCH (process group / job object) or a
+    # descendant record captured before the exit - the same conclusion the
+    # converter containment work reached and measured (#489 / #509).
+    param([string] $Platform = (Get-PlatformName))
+    return ($Platform -eq 'windows')
+}
+
 function Get-PlatformProcStatFields {
     # Parses /proc/<pid>/stat. comm (field 2) may contain spaces/parens, so split
     # on the LAST ')' before reading positional fields.
