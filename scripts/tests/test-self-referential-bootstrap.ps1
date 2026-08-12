@@ -402,10 +402,6 @@ try {
             Path = 'scripts/verify-all.ps1'
             Invocation = @($pwshPrefix + @('scripts/verify-all.ps1', '-Profile', 'Deployment', '-InventoryPath', '<owner-private-inventory>'))
         }
-        'canonical-host-baseline-run' = @{
-            Path = 'scripts/measure-session-baseline.ps1'
-            Invocation = @($pwshPrefix + @('scripts/measure-session-baseline.ps1'))
-        }
         'canonical-linux-rebuild' = @{
             Path = 'scripts/dev/rebuild-test-deploy.ps1'
             Invocation = @($pwshPrefix + @('scripts/dev/rebuild-test-deploy.ps1', '-Build', '-InventoryPath', '<owner-private-inventory>'))
@@ -422,7 +418,6 @@ try {
         'test-host-native-launcher' = @{ Path = 'scripts/tests/test-host-native-launcher.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-host-native-launcher.ps1') }
         'test-kit-manager-api' = @{ Path = 'services/kit-manager-api/tests/test_kit_service_runtime_status.py'; Invocation = @('python', '-m', 'pytest', 'services/kit-manager-api/tests', '-q') }
         'test-kit-log-probe' = @{ Path = 'scripts/tests/test-kit-log-probe.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-kit-log-probe.ps1') }
-        'test-measure-session-baseline' = @{ Path = 'scripts/tests/test-measure-session-baseline.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-measure-session-baseline.ps1') }
         'test-platform-adapter' = @{ Path = 'scripts/tests/test-platform-adapter.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-platform-adapter.ps1') }
         'test-pr-body-evidence' = @{ Path = 'scripts/tests/test-pr-body-evidence.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-pr-body-evidence.ps1') }
         'test-pr-review-agent' = @{ Path = 'scripts/tests/test-pr-review-agent.ps1'; Invocation = @($pwshPrefix + 'scripts/tests/test-pr-review-agent.ps1') }

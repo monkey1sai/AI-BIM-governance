@@ -1523,7 +1523,7 @@
         "openspec/changes/migrate-console-to-hifi-design/tasks.md",
         "artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md"
       ],
-      "subject_commit": "af60c29abaafb28266e996cf21b98953b127c2ee",
+      "subject_commit": "4187102b23c2746eacd6c829cf79ee934722bc00",
       "archive_debt": null
     },
     {

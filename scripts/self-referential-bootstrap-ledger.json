@@ -146,37 +146,6 @@
           "docs/evidence/linux-test-deploy-verifier-hardening/fixpoint/summary.md"
         ]
       }
-    },
-    {
-      "id": "gpu-session-baseline-harness",
-      "status": "open",
-      "pr": 511,
-      "opened_at": "2026-08-12T05:10:00Z",
-      "reason": "this PR ADDS the GPU session-baseline evidence harness itself, so the pre-change tree has no such harness and cannot emit a canonical baseline report for it; the report can only be produced by observing a live Kit/GPU deployment host, and that host is rebuilt solely from freshly fetched origin/main, so an unmerged revision of the harness never runs there. The first canonical run on the deployment host, validated against the pinned gpu-session-baseline-report/v1 schema and the harness suite, is the only proof the merged harness reports honestly.",
-      "verification_mechanism_paths": [
-        "scripts/lib/measure-session-baseline.ps1",
-        "scripts/lib/self-referential-bootstrap.ps1",
-        "scripts/measure-session-baseline.ps1",
-        "scripts/self-referential-bootstrap-ledger.json",
-        "scripts/tests/test-measure-session-baseline.ps1",
-        "scripts/tests/test-self-referential-bootstrap.ps1"
-      ],
-      "verification_contract": {
-        "id": "gpu-session-baseline-harness/v1",
-        "command_ids": [
-          "test-measure-session-baseline",
-          "test-self-referential-bootstrap",
-          "test-agent-governance-check",
-          "invoke-powershell-static",
-          "canonical-host-baseline-run"
-        ],
-        "contract_sha256": "dd0ff12cdd716cdd08d4bfa2e478fe02098db9caacef8a462886f1c2b63d043f"
-      },
-      "bootstrap_evidence_refs": [
-        "docs/evidence/gpu-session-baseline-harness/self-referential-bootstrap/README.md",
-        "docs/evidence/gpu-session-baseline-harness/self-referential-bootstrap/harness-suite.txt"
-      ],
-      "fixpoint": null
     }
   ]
 }
