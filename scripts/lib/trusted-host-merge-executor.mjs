@@ -3,15 +3,22 @@ import { spawnSync } from 'node:child_process'
 import {
   buildBoundedEvidence,
   bindRawBranchProtection,
+  bindVerifiedPullRequestIdentity,
   canonicalJson,
   classifyElevatedPaths,
   fail,
+  mergeOutcomeUnverifiedResult,
   mergedResult,
   parseNameStatusZ,
+  parseNumstatZ,
+  parseRawDiffZ,
+  rejectBinaryDiff,
+  rejectOpaqueGitModes,
   reviewSurfaceSnapshot,
   selectCanonicalApproval,
   sha256,
   verifyApexVerdict,
+  verifyActivationGate,
   verifyBranchProtection,
   verifyBrokerApproval,
   verifyEnvironmentConfiguration,
@@ -52,9 +59,13 @@ const pullRequestQuery = `query TrustedMergePullRequest($owner: String!, $name: 
   }
 }`
 
-async function readPullRequest(api, invocation) {
+async function readPullRequest(api, invocation, signal) {
   const { owner, name } = splitRepository(invocation.repo)
-  const data = await api.graphql(pullRequestQuery, { owner, name, number: invocation.prNumber })
+  const data = await api.graphql(
+    pullRequestQuery,
+    { owner, name, number: invocation.prNumber },
+    { signal },
+  )
   const pr = data?.repository?.pullRequest
   if (!pr) fail('pr_resolution_failed', 'pull_request_missing')
   return {
@@ -75,12 +86,12 @@ async function readPullRequest(api, invocation) {
   }
 }
 
-async function readCheckRuns(api, invocation, maxBytes) {
+async function readCheckRuns(api, invocation, maxBytes, signal) {
   const all = []
   let bytes = 0
   for (let page = 1; page <= 20; page += 1) {
     const path = `/repos/${invocation.repo}/commits/${invocation.headOid}/check-runs?per_page=100&page=${page}`
-    const { value } = await api.request(path)
+    const { value } = await api.request(path, { signal })
     if (!Array.isArray(value?.check_runs)) fail('final_gate_read_failed', 'check_runs_payload_invalid')
     bytes += Buffer.byteLength(JSON.stringify(value.check_runs), 'utf8')
     if (bytes > maxBytes) fail('evidence_too_large_for_arbiter', 'check_runs_exceed_limit')
@@ -90,12 +101,18 @@ async function readCheckRuns(api, invocation, maxBytes) {
   fail('evidence_too_large_for_arbiter', 'check_runs_pagination_limit_exceeded')
 }
 
-async function readRulesets(api, invocation) {
-  const summaries = await api.paginate(`/repos/${invocation.repo}/rulesets?includes_parents=true&per_page=100`)
+async function readRulesets(api, invocation, signal) {
+  const summaries = await api.paginate(
+    `/repos/${invocation.repo}/rulesets?includes_parents=true&per_page=100`,
+    { signal },
+  )
   const details = []
   for (const summary of summaries) {
     if (summary?.enforcement !== 'active') continue
-    const { value } = await api.request(`/repos/${invocation.repo}/rulesets/${summary.id}?includes_parents=true`)
+    const { value } = await api.request(
+      `/repos/${invocation.repo}/rulesets/${summary.id}?includes_parents=true`,
+      { signal },
+    )
     details.push(value)
   }
   return details
@@ -103,6 +120,7 @@ async function readRulesets(api, invocation) {
 
 export async function collectVerifiedSnapshot({ api, invocation, assertion, contract, now = new Date() }) {
   const maxBytes = contract.executor.evidence_max_bytes
+  const signal = AbortSignal.timeout(contract.executor.pre_sink_timeouts.snapshot_milliseconds)
   const environmentName = encodeURIComponent(contract.broker.environment)
   const [
     environmentResponse,
@@ -117,17 +135,29 @@ export async function collectVerifiedSnapshot({ api, invocation, assertion, cont
     permissionResponse,
     checkRuns,
   ] = await Promise.all([
-    api.request(`/repos/${invocation.repo}/environments/${environmentName}`),
-    api.request(`/repos/${invocation.repo}/environments/${environmentName}/deployment-branch-policies?per_page=100`),
-    api.request(`/repos/${invocation.repo}/actions/runs/${invocation.runId}/approvals`),
-    api.request(`/repos/${invocation.repo}/branches/main/protection`),
-    readRulesets(api, invocation),
-    readPullRequest(api, invocation),
-    api.paginate(`/repos/${invocation.repo}/pulls/${invocation.prNumber}/comments?per_page=100`, { maxBytes }),
-    api.paginate(`/repos/${invocation.repo}/pulls/${invocation.prNumber}/reviews?per_page=100`, { maxBytes }),
-    api.paginate(`/repos/${invocation.repo}/issues/${invocation.prNumber}/comments?per_page=100`, { maxBytes }),
-    api.request(`/repos/${invocation.repo}/collaborators/${contract.broker.required_reviewer.login}/permission`),
-    readCheckRuns(api, invocation, maxBytes),
+    api.request(`/repos/${invocation.repo}/environments/${environmentName}`, { signal }),
+    api.request(
+      `/repos/${invocation.repo}/environments/${environmentName}/deployment-branch-policies?per_page=100`,
+      { signal },
+    ),
+    api.request(`/repos/${invocation.repo}/actions/runs/${invocation.runId}/approvals`, { signal }),
+    api.request(`/repos/${invocation.repo}/branches/main/protection`, { signal }),
+    readRulesets(api, invocation, signal),
+    readPullRequest(api, invocation, signal),
+    api.paginate(`/repos/${invocation.repo}/pulls/${invocation.prNumber}/comments?per_page=100`, {
+      maxBytes, signal,
+    }),
+    api.paginate(`/repos/${invocation.repo}/pulls/${invocation.prNumber}/reviews?per_page=100`, {
+      maxBytes, signal,
+    }),
+    api.paginate(`/repos/${invocation.repo}/issues/${invocation.prNumber}/comments?per_page=100`, {
+      maxBytes, signal,
+    }),
+    api.request(
+      `/repos/${invocation.repo}/collaborators/${contract.broker.required_reviewer.login}/permission`,
+      { signal },
+    ),
+    readCheckRuns(api, invocation, maxBytes, signal),
   ])
 
   const branchPolicies = policyResponse.value?.branch_policies
@@ -150,7 +180,7 @@ export async function collectVerifiedSnapshot({ api, invocation, assertion, cont
       branchPolicies,
     },
     brokerApproval: approvalsResponse.value,
-    pullRequest: pr,
+    pullRequest: bindVerifiedPullRequestIdentity(pr),
     rawBranchProtection: bindRawBranchProtection(protectionResponse.value),
     protection,
     rulesets: normalizedRulesets,
@@ -202,13 +232,21 @@ function runGit(repoRoot, args, {
   encoding = 'utf8',
   maxBuffer = 700000,
   allowedStatuses = [0],
+  timeoutMilliseconds,
 } = {}) {
+  if (
+    timeoutMilliseconds !== undefined &&
+    (!Number.isSafeInteger(timeoutMilliseconds) || timeoutMilliseconds < 1 || timeoutMilliseconds > 30000)
+  ) {
+    fail('host_env_blocked', 'git_timeout_invalid')
+  }
   const result = spawnSync('/usr/bin/git', args, {
     cwd: repoRoot,
     env: safeGitEnvironment(token),
     shell: false,
     encoding,
     maxBuffer,
+    ...(timeoutMilliseconds === undefined ? {} : { timeout: timeoutMilliseconds }),
     windowsHide: true,
   })
   if (result.error?.code === 'ENOBUFS') {
@@ -220,7 +258,7 @@ function runGit(repoRoot, args, {
   return result.stdout
 }
 
-export function collectGitEvidence({ repoRoot, invocation, token }) {
+export function collectGitEvidence({ repoRoot, invocation, token, contract }) {
   verifyTrustedOriginUrl(runGit(repoRoot, ['remote', 'get-url', 'origin']).trim(), invocation)
   if (runGit(repoRoot, ['rev-parse', 'HEAD']).trim() !== invocation.baseOid) {
     fail('wrong_checkout', 'trusted_checkout_not_base')
@@ -235,7 +273,7 @@ export function collectGitEvidence({ repoRoot, invocation, token }) {
   runGit(repoRoot, [
     'fetch', '--no-tags', '--force', 'origin',
     `refs/pull/${invocation.prNumber}/head:${trustedRef}`,
-  ], { token })
+  ], { token, timeoutMilliseconds: contract.executor.pre_sink_timeouts.candidate_fetch_milliseconds })
   if (runGit(repoRoot, ['rev-parse', trustedRef]).trim() !== invocation.headOid) {
     fail('pr_identity_not_ready', 'fetched_head_mismatch')
   }
@@ -251,6 +289,14 @@ export function collectGitEvidence({ repoRoot, invocation, token }) {
   if (!classification.elevated) {
     fail('unexpected_elevated_authorization', 'elevated_workflow_requires_elevated_scope')
   }
+  const rawEntries = parseRawDiffZ(runGit(repoRoot, [
+    'diff', '--raw', '--no-abbrev', '--no-renames', '-z', range,
+  ], { encoding: 'buffer' }))
+  rejectOpaqueGitModes(rawEntries)
+  const numstat = parseNumstatZ(runGit(repoRoot, [
+    'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--numstat', '-z', range,
+  ], { encoding: 'buffer' }))
+  rejectBinaryDiff(numstat)
   const diff = runGit(repoRoot, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', range])
   const stat = runGit(repoRoot, ['diff', '--no-ext-diff', '--no-textconv', '--stat', range])
   const log = runGit(repoRoot, ['log', '--format=%H %s', `${invocation.baseOid}..${invocation.headOid}`])
@@ -265,8 +311,8 @@ export function verifyTrustedOriginUrl(actual, invocation) {
   if (!allowed.has(actual)) fail('wrong_checkout', 'origin_url_mismatch')
 }
 
-export function fetchCloseout({ repoRoot, token }) {
-  runGit(repoRoot, ['fetch', '--no-tags', '--prune', 'origin'], { token })
+export function fetchCloseout({ repoRoot, token, timeoutMilliseconds }) {
+  runGit(repoRoot, ['fetch', '--no-tags', '--prune', 'origin'], { token, timeoutMilliseconds })
 }
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -295,26 +341,137 @@ const assertSnapshotEqual = (prepared, current, fallbackReason, fieldReasons = {
   fail(fallbackReason, 'trusted_snapshot_changed')
 }
 
-async function readMergedState(api, invocation) {
-  const { value } = await api.request(`/repos/${invocation.repo}/pulls/${invocation.prNumber}`)
+async function readMergedState(api, invocation, timeoutMilliseconds) {
+  const { value } = await api.request(`/repos/${invocation.repo}/pulls/${invocation.prNumber}`, { timeoutMilliseconds })
   return {
+    number: value?.number ?? null,
+    state: value?.state || null,
     merged: value?.merged === true,
     mergeCommit: value?.merge_commit_sha || null,
     headOid: value?.head?.sha || null,
+    headRepo: value?.head?.repo?.full_name || null,
     baseRef: value?.base?.ref || null,
+    baseRepo: value?.base?.repo?.full_name || null,
   }
 }
 
-async function mergeOnce(api, invocation, method) {
+async function mergeOnce(api, invocation, method, timeoutMilliseconds) {
   try {
     const { value } = await api.request(`/repos/${invocation.repo}/pulls/${invocation.prNumber}/merge`, {
       method: 'PUT',
       body: { sha: invocation.headOid, merge_method: method },
+      timeoutMilliseconds,
     })
     return { response: value, error: null }
   } catch (error) {
     return { response: null, error }
   }
+}
+
+export function verifyExecutionTimingBudget(contract) {
+  const executor = contract?.executor
+  const observation = executor?.post_merge_observation
+  const values = [
+    executor?.merge_request_timeout_milliseconds,
+    executor?.closeout_fetch_timeout_milliseconds,
+    executor?.irreversible_sink_min_ttl_seconds,
+    observation?.attempts,
+    observation?.interval_milliseconds,
+    observation?.request_timeout_milliseconds,
+    executor?.pre_sink_timeouts?.snapshot_milliseconds,
+    executor?.pre_sink_timeouts?.snapshot_read_count,
+    executor?.pre_sink_timeouts?.candidate_fetch_milliseconds,
+    executor?.pre_sink_timeouts?.app_token_mint_milliseconds,
+    executor?.pre_sink_timeouts?.apex_request_milliseconds,
+    executor?.pre_sink_timeouts?.workflow_job_milliseconds,
+    executor?.pre_sink_timeouts?.result_persistence_reserve_milliseconds,
+  ]
+  if (values.some((value) => !Number.isSafeInteger(value) || value < 1)) {
+    fail('host_env_blocked', 'executor_timing_contract_invalid')
+  }
+  if (
+    executor.merge_request_timeout_milliseconds > 30000 ||
+    executor.closeout_fetch_timeout_milliseconds > 30000 ||
+    observation.request_timeout_milliseconds > 30000
+  ) {
+    fail('host_env_blocked', 'executor_timeout_exceeds_runtime_limit')
+  }
+  if (
+    executor.pre_sink_timeouts.snapshot_milliseconds > 120000 ||
+    executor.pre_sink_timeouts.candidate_fetch_milliseconds > 30000 ||
+    executor.pre_sink_timeouts.app_token_mint_milliseconds > 30000 ||
+    executor.pre_sink_timeouts.apex_request_milliseconds > 900000
+  ) {
+    fail('host_env_blocked', 'pre_sink_timeout_exceeds_runtime_limit')
+  }
+  if (executor.pre_sink_timeouts.snapshot_read_count !== 5) {
+    fail('host_env_blocked', 'snapshot_read_count_invalid')
+  }
+  const sinkWorstCaseMilliseconds = (
+    executor.merge_request_timeout_milliseconds +
+    observation.attempts * observation.request_timeout_milliseconds +
+    (observation.attempts - 1) * observation.interval_milliseconds
+  )
+  if (sinkWorstCaseMilliseconds >= executor.irreversible_sink_min_ttl_seconds * 1000) {
+    fail('host_env_blocked', 'irreversible_sink_timing_budget_invalid')
+  }
+  const totalEnvelopeMilliseconds = (
+    executor.pre_sink_timeouts.app_token_mint_milliseconds +
+    executor.pre_sink_timeouts.snapshot_read_count * executor.pre_sink_timeouts.snapshot_milliseconds +
+    executor.pre_sink_timeouts.candidate_fetch_milliseconds +
+    executor.reviewer_buffer_seconds * 1000 +
+    executor.pre_sink_timeouts.apex_request_milliseconds +
+    sinkWorstCaseMilliseconds +
+    executor.closeout_fetch_timeout_milliseconds +
+    executor.pre_sink_timeouts.result_persistence_reserve_milliseconds
+  )
+  if (totalEnvelopeMilliseconds >= executor.pre_sink_timeouts.workflow_job_milliseconds) {
+    fail('host_env_blocked', 'workflow_job_timing_budget_invalid')
+  }
+  return { sinkWorstCaseMilliseconds, totalEnvelopeMilliseconds }
+}
+
+const isExactObservedMerge = (observed, invocation) => (
+  observed?.number === invocation.prNumber && observed.state === 'closed' &&
+  observed.merged === true && /^[0-9a-f]{40}$/u.test(observed.mergeCommit || '') &&
+  observed.headOid === invocation.headOid && observed.headRepo === invocation.repo &&
+  observed.baseRef === 'main' && observed.baseRepo === invocation.repo
+)
+
+const hasExactObservationIdentity = (observed, invocation) => (
+  observed?.number === invocation.prNumber && observed.headOid === invocation.headOid &&
+  observed.headRepo === invocation.repo && observed.baseRef === 'main' &&
+  observed.baseRepo === invocation.repo && ['open', 'closed'].includes(observed.state)
+)
+
+async function observeMergeState(api, invocation, contract, sleep) {
+  const {
+    attempts,
+    interval_milliseconds: intervalMilliseconds,
+    request_timeout_milliseconds: requestTimeoutMilliseconds,
+  } = contract.executor.post_merge_observation
+  let last = null
+  let readable = false
+  let inconsistentMergedState = false
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (attempt > 0) await sleep(intervalMilliseconds)
+    try {
+      const current = await readMergedState(api, invocation, requestTimeoutMilliseconds)
+      readable = true
+      last = current
+      if (isExactObservedMerge(current, invocation)) return { matched: current, last, readable, inconsistentMergedState }
+      if (
+        !hasExactObservationIdentity(current, invocation) || current.merged === true ||
+        current.mergeCommit !== null || current.state === 'closed'
+      ) {
+        inconsistentMergedState = true
+        break
+      }
+    } catch {
+      // A later bounded read may observe a merge that completed after an ambiguous response.
+    }
+  }
+  return { matched: null, last, readable, inconsistentMergedState }
 }
 
 export async function executeTrustedMerge({
@@ -333,11 +490,14 @@ export async function executeTrustedMerge({
   snapshotCollector = collectVerifiedSnapshot,
   gitEvidenceCollector = collectGitEvidence,
   closeoutFetcher = fetchCloseout,
+  activation,
 }) {
+  verifyExecutionTimingBudget(contract)
+  const activationMode = verifyActivationGate({ ...activation, invocation, contract })
   const prepared = await snapshotCollector({
     api, invocation, assertion, contract, now: now(),
   })
-  const gitEvidence = gitEvidenceCollector({ repoRoot, invocation, token: installationToken })
+  const gitEvidence = gitEvidenceCollector({ repoRoot, invocation, token: installationToken, contract })
 
   for (let index = 0; index < 3; index += 1) {
     await sleep(30000)
@@ -362,6 +522,7 @@ export async function executeTrustedMerge({
     apiKey: apexApiKey,
     model: apexModel,
     evidence: apexEvidence.serialized,
+    timeoutMilliseconds: contract.executor.pre_sink_timeouts.apex_request_milliseconds,
   })
   verifyApexVerdict(verdict, invocation, prepared.approval)
 
@@ -369,35 +530,63 @@ export async function executeTrustedMerge({
     api, invocation, assertion, contract, now: now(),
   })
   assertSnapshotEqual(prepared, finalSnapshot, 'branch_protection_changed_after_verdict', AFTER_VERDICT_FIELD_REASONS)
-  if (Date.parse(installationTokenExpiresAt) <= now().getTime() + 60000) {
+  const finalActivationMode = verifyActivationGate({ ...activation, invocation, contract })
+  if (finalActivationMode !== activationMode) {
+    fail('trusted_elevated_authorization_unavailable', 'activation_mode_changed')
+  }
+  const sinkThreshold = now().getTime() + contract.executor.irreversible_sink_min_ttl_seconds * 1000
+  const brokerExpiresAt = Date.parse(invocation.expiresAt)
+  const tokenExpiresAt = Date.parse(installationTokenExpiresAt)
+  if (!Number.isFinite(brokerExpiresAt) || brokerExpiresAt <= sinkThreshold) {
+    fail('trusted_elevated_authorization_unavailable', 'authorization_near_expiry')
+  }
+  if (!Number.isFinite(tokenExpiresAt) || tokenExpiresAt <= sinkThreshold) {
     fail('host_env_blocked', 'github_app_token_near_expiry')
   }
-
-  const mergeAttempt = await mergeOnce(api, invocation, contract.executor.merge_method)
-  let observed
-  try {
-    observed = await readMergedState(api, invocation)
-  } catch {
-    if (mergeAttempt.response?.merged === true && /^[0-9a-f]{40}$/u.test(mergeAttempt.response.sha || '')) {
-      return mergedResult(invocation, mergeAttempt.response.sha, 'post_merge_state_read_failed')
-    }
-    fail('merge_command_failed_unverified', 'merge_state_unreadable')
+  if (activationMode === contract.activation.pending_modes[0]) {
+    fail('trusted_elevated_authorization_unavailable', 'negative_attestation_merge_forbidden')
   }
+
+  const mergeAttempt = await mergeOnce(
+    api,
+    invocation,
+    contract.executor.merge_method,
+    contract.executor.merge_request_timeout_milliseconds,
+  )
+  const observation = await observeMergeState(api, invocation, contract, sleep)
+  if (!observation.matched) {
+    if (mergeAttempt.response?.merged === true && /^[0-9a-f]{40}$/u.test(mergeAttempt.response.sha || '')) {
+      const detail = observation.inconsistentMergedState
+        ? 'authoritative_merge_identity_mismatch'
+        : (observation.readable ? 'post_merge_state_not_yet_consistent' : 'post_merge_state_read_failed')
+      return mergeOutcomeUnverifiedResult(invocation, detail)
+    }
+    const detail = observation.inconsistentMergedState
+      ? 'authoritative_merge_identity_mismatch'
+      : (observation.readable ? 'authoritative_merge_state_not_observed' : 'merge_state_unreadable')
+    return mergeOutcomeUnverifiedResult(invocation, detail)
+  }
+
   if (
-    observed.merged !== true || !/^[0-9a-f]{40}$/u.test(observed.mergeCommit || '') ||
-    observed.headOid !== invocation.headOid || observed.baseRef !== 'main'
+    mergeAttempt.response?.merged === true &&
+    /^[0-9a-f]{40}$/u.test(mergeAttempt.response.sha || '') &&
+    mergeAttempt.response.sha !== observation.matched.mergeCommit
   ) {
-    if (mergeAttempt.response?.merged === true && /^[0-9a-f]{40}$/u.test(mergeAttempt.response.sha || '')) {
-      return mergedResult(invocation, mergeAttempt.response.sha, 'post_merge_state_not_yet_consistent')
-    }
-    if (mergeAttempt.error) fail('merge_command_failed', 'merge_request_failed_not_merged')
-    fail('merge_not_observed', 'authoritative_merge_state_not_merged')
+    return mergedResult(invocation, observation.matched.mergeCommit, 'merge_response_sha_mismatch')
   }
-
+  if (mergeAttempt.response && (
+    mergeAttempt.response.merged !== true || !/^[0-9a-f]{40}$/u.test(mergeAttempt.response.sha || '')
+  )) {
+    return mergedResult(invocation, observation.matched.mergeCommit, 'merge_response_state_mismatch')
+  }
   try {
-    closeoutFetcher({ repoRoot, token: installationToken })
-    return mergedResult(invocation, observed.mergeCommit)
+    closeoutFetcher({
+      repoRoot,
+      token: installationToken,
+      timeoutMilliseconds: contract.executor.closeout_fetch_timeout_milliseconds,
+    })
+    return mergedResult(invocation, observation.matched.mergeCommit)
   } catch {
-    return mergedResult(invocation, observed.mergeCommit, 'closeout_fetch_failed')
+    return mergedResult(invocation, observation.matched.mergeCommit, 'closeout_fetch_failed')
   }
 }

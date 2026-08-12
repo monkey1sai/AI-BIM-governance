@@ -17,7 +17,7 @@
 
 repo 已提供 **base-pinned trusted host executor**：`.github/workflows/trusted-elevated-merge.yml` 只可從 default branch 的 `workflow_dispatch` 載入，固定 `ubuntu-24.04`、Node `20.20.2` 與 `/usr/bin/git`，執行 `scripts/dev/trusted-host-merge.mjs`，並以 `agent-contracts/trusted-host-merge.contract.json` 作 machine contract。executor 在 Workflow 外執行固定 preparation、verdict 後 final reads 與 exact-head REST merge；只 checkout `github.sha` 的 trusted base，PR head 僅 fetch 成 inert Git object，不 checkout、不執行 candidate script、action、hook 或 dependency。apex 直接呼叫 Claude/OpenAI API，`tools=[]`，只讀 host 供給且綁定 repo/PR/base/head 的 immutable evidence。
 
-這個 implementation 只有在本變更先由既有流程合併到 `main`，且 owner 完成下述 protected environment／GitHub App provision 與 live attestation 後才可啟用。`ship-item.js` 本身仍無 shell／GitHub capability，因此未取得 hosted activation evidence 或沒有外層 host adapter 時，一律停在上述 durable HELD，不得 retry 成成功、人工補寫 `merged=true` 或進入 P7。machine truth 的 activation state 是 `requires_protected_environment_provisioning`。
+這個 implementation 只有在本變更先由既有流程合併到 `main`，且 owner 完成下述 protected environment／GitHub App provision 與 live attestation 後才可啟用。`ship-item.js` 本身仍無 shell／GitHub capability，因此未取得 hosted activation evidence 或沒有外層 host adapter 時，一律停在上述 durable HELD，不得 retry 成成功、人工補寫 `merged=true` 或進入 P7。provisioning 已完成但 live attestation 尚未關閉時，machine truth 的 activation state 固定是 `requires_live_attestation`。
 
 以下 §2–§5 是 external trusted host 已實作的安全程序；仍不是 `ship-item.js` Workflow runtime 自行擁有的能力。
 
@@ -72,6 +72,8 @@ base-pinned trusted host executor 必須依序執行固定命令並 fail closed�
    git diff --no-ext-diff --no-textconv --stat <preparedBase>...<preparedHead>
    git log --oneline <preparedBase>..<preparedHead>
    ```
+
+   同一 range 必須先以 NUL-safe `--raw --no-renames` 與 `--numstat` 驗證；binary blob、symlink、gitlink/submodule 或其他非一般檔案 mode 一律 `scope_drift`，不得交給 apex 當成可完整檢閱的文字 evidence。
 
 10. 三處 reviewer 來源必須全部 `--paginate` 蒐集：
 
@@ -128,13 +130,13 @@ base-pinned trusted host executor 在 verdict 後重新讀取 PR state/draft/num
 
 這與 `gh pr merge <n> --repo monkey1sai/AI-BIM-governance --merge --match-head-commit <preparedHead>` 的 exact-head 安全語義相同。短效 App token 不進 command line、candidate process 或 apex；只有固定 `/usr/bin/git` fetch child 會透過單次環境 extraheader 取得 token。CLI 等價式只供稽核，不是第二個 sink；任何角色仍 **MUST NOT run any merge command, including `gh pr merge --admin`**。
 
-命令回非零也不能直接宣稱未 merge；trusted host executor 必須再讀 GitHub authoritative state。只有重新讀到 `state=MERGED` 與有效 `mergeCommit.oid` 才回 `merged=true`。之後的 `git fetch origin --prune` 失敗只記警告，不得把已發生的 server merge 誤報為 `merged=false`。
+所有 pre-sink outbound operation 都有 contract-pinned shared deadline：每次完整 snapshot 共用一個 60 秒 signal，candidate fetch 30 秒、App mint 10 秒、apex 10 分鐘；5 次 snapshot、90 秒 reviewer buffer、sink observation、closeout 與 result persistence 的合成 envelope 必須嚴格小於 workflow 30 分鐘 job timeout。唯一 PUT 與後續 authoritative reads 另受 machine invariant 約束，整體最壞時間必須小於 sink 前保留的 60 秒 broker/App token TTL margin。PUT response 無論成功或失敗都不能單獨宣稱已 merge 或未 merge；只有 bounded reread 精確確認同一 repo/PR/head/base 的 merged state 與有效 `mergeCommit.oid` 才回 `merged=true`。bounded reads 仍無法確認時回 `status=merge_outcome_unverified`、`merged=null`，不得誤報為 false；PUT SHA 與 reread SHA 衝突時保留 reread commit 並回 `merged_but_closeout_held`。之後的 bounded `git fetch origin --prune` 失敗只記 closeout hold，不得把已發生的 server merge 誤報為 `merged=false`。
 
 ## 5. Approval 與 closeout
 
 single-owner 模式沒有 routine auto-merge；每個 PR 都必須由固定 reviewer `monkey1sai-blip` 在 GitHub UI 手動提交 exact canonical human approval。以下高風險動作除了 review 外，仍須使用者本輪明確同意：
 
-caller-controlled `elevatedAuthorization` 無法證明目前對話 turn 的人類授權，即使內容與 canonical tuple/body 完全相同也不得解鎖。broker 使用 agent-inaccessible GitHub protected environment `trusted-elevated-merge`：challenge 綁定 repo/PR/base/head/action/runId/provider/nonce/expiry；environment 必須只有 reviewer `monkey1sai-blip`（ID `311287868`）、`prevent_self_review=true`、`can_admins_bypass=false`，且只允許 `main` branch。reviewer 必須在 approval comment 貼上逐字 assertion。executor 只接受 run attempt 1、唯一一筆 approved history、唯一 environment、尚未過期的 exact comment；新 run ID 或重跑都必須使用新 assertion。
+caller-controlled `elevatedAuthorization` 無法證明目前對話 turn 的人類授權，即使內容與 canonical tuple/body 完全相同也不得解鎖。broker 使用 agent-inaccessible GitHub protected environment `trusted-elevated-merge`：challenge 綁定 repo/PR/base/head/action/runId/activationMode/provider/nonce/expiry；environment 必須只有 reviewer `monkey1sai-blip`（ID `311287868`）、`prevent_self_review=true`、`can_admins_bypass=false`，且只允許 `main` branch。reviewer 必須在 approval comment 貼上逐字 assertion。executor 只接受 run attempt 1、唯一一筆 approved history、唯一 environment、尚未過期的 exact comment；新 run ID、mode 或重跑都必須使用新 assertion。
 
 environment 放行後才釋出 GitHub App private key與所選 apex key。executor 即時 mint 最長一小時、只限 `AI-BIM-governance` 單 repo的 installation token，capability 固定為 Actions read、Administration read、Contents write、Pull requests read；App 不可提交 review。Claude/Codex apex 只收到已 redacted、500,000-byte 上限的 untrusted evidence，不收到 App token/private key。固定 GitHub review 仍提供 code-owner identity gate，environment approval 提供 current-run provenance；兩者缺一不可。
 
@@ -142,9 +144,9 @@ Hosted activation 前 owner 必須完成並實證：
 
 1. 本 workflow／executor 已可由 freshly fetched `origin/main` 取得，不能用 feature branch 自我啟動。
 2. environment reviewer、self-review、admin bypass 與 selected `main` branch policy 完全符合上述值。
-3. environment secrets 已建立：`TRUSTED_MERGE_APP_ID`、`TRUSTED_MERGE_APP_INSTALLATION_ID`、`TRUSTED_MERGE_APP_PRIVATE_KEY`、`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`；variables 已建立：`TRUSTED_MERGE_CLAUDE_MODEL`、`TRUSTED_MERGE_CODEX_MODEL`。不得在 log／PR／artifact 回顯值。
+3. environment secrets 已建立：`TRUSTED_MERGE_APP_ID`、`TRUSTED_MERGE_APP_INSTALLATION_ID`、`TRUSTED_MERGE_APP_PRIVATE_KEY`、`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`；variables 已建立：`TRUSTED_MERGE_CLAUDE_MODEL`、`TRUSTED_MERGE_CODEX_MODEL`、`TRUSTED_MERGE_ACTIVATION_MODE`。attestation 期間另以 `TRUSTED_MERGE_ATTESTATION_TUPLE_SHA256` 綁定 exact repo/PR/head/base/action/activationMode/provider；不得在 log／PR／artifact 回顯任何 secret 值。
 4. GitHub App installation 僅涵蓋本 repo，capability 與 contract 完全相符；branch required checks 的每個 context 都綁定非空 App ID，並以獨立 provisioning PR 寫入 trusted-base contract 的 `executor.required_check_sources`。runtime 要求 live protection 與這份 allowlist 完全相等；空 allowlist、context/App ID 漂移或 ruleset bypass actor 都 HELD。
-5. 在 disposable PR 完成 negative matrix（wrong tuple/reviewer/nonce/expiry/rerun/head/base/App ID/protection/review drift 全部 HELD），再完成一次 exact-head merge；只有 live attestation 通過後才可把 machine activation state 改為 active。
+5. 在 disposable PR 先把 protected environment mode 與 workflow input 都設為 `attesting_negative`，並完成 negative matrix（wrong tuple/mode/reviewer/nonce/expiry/rerun/head/base/App ID/protection/review drift 全部 HELD）；此 mode 即使所有 reversible gates 通過也會在 sink 前回 `negative_attestation_merge_forbidden`。之後才可把 protected mode 與新 dispatch input 都改成 `attesting_positive`，以同一 disposable PR identity 但 mode-bound 的新 digest/assertion 完成一次 exact-head merge；negative assertion 不得重用為 positive。只有正向 merge attestation通過後，才可用受審 closure PR 把 repo machine activation state 改為 `active`、將 external mode 改為 `active` 並清除 tuple digest。
 
 activation state=active 後，Claude/Codex 外層 host adapter 只可用固定 `gh workflow run` handoff；不得執行 PR branch 的 requester script。adapter 從 server 取得 exact `headRefOid/baseRefOid`、用 CSPRNG 產生 32-byte base64url nonce、expiry 設在 10 分鐘內，然後以 `--ref main` dispatch `trusted-elevated-merge.yml`。workflow source SHA 若不等於 expected base，challenge 會 fail closed。environment reviewer 核准 exact assertion 後，其餘 evidence、apex、final reread、merge 與 closeout 全自動；沒有 approval 時不會取得 merge credential。
 
@@ -157,6 +159,7 @@ $trustedNonce = [Convert]::ToBase64String($trustedNonceBytes).TrimEnd('=').Repla
 $trustedExpiry = [DateTimeOffset]::UtcNow.AddMinutes(10).ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
 gh workflow run trusted-elevated-merge.yml --repo monkey1sai/AI-BIM-governance --ref main `
   -f pr_number=$trustedPr -f expected_head=$trustedIdentity.headRefOid -f expected_base=$trustedIdentity.baseRefOid `
+  -f expected_activation_mode=active `
   -f apex_provider=codex -f nonce=$trustedNonce -f expires_at=$trustedExpiry
 ```
 

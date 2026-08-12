@@ -235,9 +235,12 @@ P6 = Workflow({name:'ship-item', args:{branch, prNumber:<前置 c 的號碼>, us
      **external executor**：repo 已實作 default-branch-only `.github/workflows/trusted-elevated-merge.yml`，
        由 freshly fetched trusted base 執行固定 preparation、tool-free Claude/Codex apex、final reads 與
        exact-head REST merge；不得 checkout 或執行 PR branch 可修改的 script/action/hook/dependency。
-     **activation**：protected environment、單 repo GitHub App、secrets/model vars 與 live negative/positive
-       attestation 尚未由 repo code provision；外層 host adapter 只有在 machine activation state=active 後才可
-       dispatch。之前 `host_env_blocked` 仍是 durable HELD，不得 retry 成成功、手填 `merged=true` 或進 P7。
+     **activation**：repo state=`requires_live_attestation` 時，credential step 前的 trusted-base preflight 只接受
+       workflow input/assertion 與 protected variables 所綁 exact mode/tuple 的 `attesting_negative`／`attesting_positive`。negative mode 可完成
+       reversible gates 但永不到達 merge sink；positive live merge 通過後仍須受審 closure 把 repo/external state
+       一起改為 `active` 並清除 tuple digest。之前一律 `trusted_elevated_authorization_unavailable`，不得 retry 成
+       成功、手填 `merged=true` 或進 P7；sink 已嘗試但 bounded authoritative reads 無法確認時必須保留
+       `status=merge_outcome_unverified`、`merged=null`，不得降成未 merge。
      external executor consume：所有 `heldReason` 必須先通過 machine contract closed enum；raw 細節寫
        `heldDetail`／`診斷=`。review／approval／protection／elevated／consent carve-out 依下方處置表停下；
        常用 protection/branch checkpoint 是 `branch_requires_separate_authorization`、

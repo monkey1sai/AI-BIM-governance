@@ -12,6 +12,24 @@
     "base_branch": "main",
     "workflow_path": ".github/workflows/trusted-elevated-merge.yml"
   },
+  "activation": {
+    "state_contract": "./spec-to-done.contract.json",
+    "pending_state": "requires_live_attestation",
+    "active_state": "active",
+    "external_mode_variable": "TRUSTED_MERGE_ACTIVATION_MODE",
+    "attestation_tuple_sha256_variable": "TRUSTED_MERGE_ATTESTATION_TUPLE_SHA256",
+    "pending_modes": ["attesting_negative", "attesting_positive"],
+    "active_mode": "active",
+    "attestation_tuple_fields": [
+      "repo",
+      "prNumber",
+      "headOid",
+      "baseOid",
+      "action",
+      "activationMode",
+      "provider"
+    ]
+  },
   "broker": {
     "kind": "github-protected-environment",
     "environment": "trusted-elevated-merge",
@@ -44,6 +62,7 @@
         "baseOid",
         "action",
         "runId",
+        "activationMode",
         "provider",
         "nonce",
         "expiresAt"
@@ -60,6 +79,23 @@
     "toolchain": {
       "platform": "linux",
       "node_version": "v20.20.2"
+    },
+    "irreversible_sink_min_ttl_seconds": 60,
+    "merge_request_timeout_milliseconds": 10000,
+    "closeout_fetch_timeout_milliseconds": 10000,
+    "pre_sink_timeouts": {
+      "snapshot_milliseconds": 60000,
+      "snapshot_read_count": 5,
+      "candidate_fetch_milliseconds": 30000,
+      "app_token_mint_milliseconds": 10000,
+      "apex_request_milliseconds": 600000,
+      "workflow_job_milliseconds": 1800000,
+      "result_persistence_reserve_milliseconds": 60000
+    },
+    "post_merge_observation": {
+      "attempts": 4,
+      "interval_milliseconds": 1000,
+      "request_timeout_milliseconds": 3000
     },
     "required_check_sources": [
       { "context": "agent-governance", "app_id": 15368 },
@@ -87,7 +123,8 @@
     "terminal_states": [
       "held",
       "merged",
-      "merged_but_closeout_held"
+      "merged_but_closeout_held",
+      "merge_outcome_unverified"
     ]
   },
   "apex": {

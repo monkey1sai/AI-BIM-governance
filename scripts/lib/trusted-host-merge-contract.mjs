@@ -63,7 +63,10 @@ const parseSha = (value, detail) => {
 }
 
 export function prepareInvocation(raw, context, contract, now = new Date()) {
-  const inputKeys = ['prNumber', 'expectedHead', 'expectedBase', 'provider', 'nonce', 'expiresAt']
+  const inputKeys = [
+    'prNumber', 'expectedHead', 'expectedBase', 'expectedActivationMode',
+    'provider', 'nonce', 'expiresAt',
+  ]
   if (!exactKeys(raw, inputKeys)) fail('invalid_args_format', 'dispatch_input_shape_invalid')
   if (!isPlainObject(context)) fail('host_env_blocked', 'workflow_context_missing')
 
@@ -84,6 +87,7 @@ export function prepareInvocation(raw, context, contract, now = new Date()) {
     baseOid: parseSha(raw.expectedBase, 'expected_base_invalid'),
     action: contract.broker.assertion.action,
     runId: parsePositiveInteger(context.runId, 'host_env_blocked'),
+    activationMode: raw.expectedActivationMode,
     provider: raw.provider,
     nonce: raw.nonce,
     expiresAt: raw.expiresAt,
@@ -91,6 +95,10 @@ export function prepareInvocation(raw, context, contract, now = new Date()) {
   if (!equalText(context.sha, invocation.baseOid)) fail('stale_base', 'workflow_sha_not_expected_base')
   if (!contract.apex.providers.includes(invocation.provider)) {
     fail('invalid_args_format', 'unsupported_apex_provider')
+  }
+  const activationModes = [...contract.activation.pending_modes, contract.activation.active_mode]
+  if (!activationModes.includes(invocation.activationMode)) {
+    fail('invalid_args_format', 'unsupported_activation_mode')
   }
   const noncePattern = new RegExp(contract.broker.assertion.nonce_pattern, 'u')
   if (typeof invocation.nonce !== 'string' || !noncePattern.test(invocation.nonce)) {
@@ -118,6 +126,7 @@ export function buildBrokerAssertion(invocation, contract) {
     baseOid: invocation.baseOid,
     action: invocation.action,
     runId: invocation.runId,
+    activationMode: invocation.activationMode,
     provider: invocation.provider,
     nonce: invocation.nonce,
     expiresAt: invocation.expiresAt,
@@ -126,6 +135,50 @@ export function buildBrokerAssertion(invocation, contract) {
     fail('host_env_blocked', 'broker_assertion_contract_drift')
   }
   return JSON.stringify(assertion)
+}
+
+export function activationTupleSha256(invocation, contract) {
+  const fields = contract?.activation?.attestation_tuple_fields
+  if (!Array.isArray(fields) || fields.length === 0 || new Set(fields).size !== fields.length) {
+    fail('host_env_blocked', 'activation_tuple_contract_invalid')
+  }
+  const tuple = {}
+  for (const field of fields) {
+    if (!Object.hasOwn(invocation, field)) fail('host_env_blocked', 'activation_tuple_field_missing')
+    tuple[field] = invocation[field]
+  }
+  return sha256(canonicalJson(tuple))
+}
+
+export function verifyActivationGate({
+  activationState,
+  externalMode,
+  attestationTupleSha256,
+  invocation,
+  contract,
+}) {
+  const activation = contract?.activation
+  const tupleDigest = typeof attestationTupleSha256 === 'string' ? attestationTupleSha256 : ''
+  if (!equalText(externalMode, invocation?.activationMode)) {
+    fail('trusted_elevated_authorization_unavailable', 'activation_mode_mismatch')
+  }
+  if (activationState === activation?.active_state) {
+    if (externalMode !== activation.active_mode || tupleDigest !== '') {
+      fail('trusted_elevated_authorization_unavailable', 'active_activation_state_mismatch')
+    }
+    return activation.active_mode
+  }
+  if (activationState === activation?.pending_state) {
+    if (!activation.pending_modes.includes(externalMode)) {
+      fail('trusted_elevated_authorization_unavailable', 'attestation_mode_not_enabled')
+    }
+    const expected = activationTupleSha256(invocation, contract)
+    if (!/^[0-9a-f]{64}$/u.test(tupleDigest) || !equalText(tupleDigest, expected)) {
+      fail('trusted_elevated_authorization_unavailable', 'attestation_tuple_mismatch')
+    }
+    return externalMode
+  }
+  fail('trusted_elevated_authorization_unavailable', 'activation_state_unknown')
 }
 
 export function verifyEnvironmentConfiguration(environment, branchPolicies, contract) {

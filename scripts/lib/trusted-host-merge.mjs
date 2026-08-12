@@ -102,6 +102,20 @@ export function heldResult(invocation, reason, detail) {
   }
 }
 
+export function mergeOutcomeUnverifiedResult(invocation, detail) {
+  return {
+    schemaVersion: 'trusted-host-merge-result/v1',
+    status: 'merge_outcome_unverified',
+    merged: null,
+    prNumber: invocation.prNumber,
+    headOid: invocation.headOid,
+    baseOid: invocation.baseOid,
+    mergeCommit: null,
+    heldReason: 'merge_command_failed_unverified',
+    heldDetail: detail,
+  }
+}
+
 export function mergedResult(invocation, mergeCommit, closeoutHeld = null) {
   const held = closeoutHeld === null || closeoutHeld === undefined ? null : String(closeoutHeld)
   if (held !== null && held.length === 0) {

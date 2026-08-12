@@ -3,7 +3,7 @@
   "$id": "trusted-host-merge.contract.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "schemas", "repository", "broker", "executor", "apex"],
+  "required": ["schema_version", "schemas", "repository", "activation", "broker", "executor", "apex"],
   "properties": {
     "$schema": { "type": "string" },
     "schema_version": { "const": "trusted-host-merge/v1" },
@@ -23,6 +23,26 @@
         "full_name": { "const": "monkey1sai/AI-BIM-governance" },
         "base_branch": { "const": "main" },
         "workflow_path": { "const": ".github/workflows/trusted-elevated-merge.yml" }
+      }
+    },
+    "activation": {
+      "const": {
+        "state_contract": "./spec-to-done.contract.json",
+        "pending_state": "requires_live_attestation",
+        "active_state": "active",
+        "external_mode_variable": "TRUSTED_MERGE_ACTIVATION_MODE",
+        "attestation_tuple_sha256_variable": "TRUSTED_MERGE_ATTESTATION_TUPLE_SHA256",
+        "pending_modes": ["attesting_negative", "attesting_positive"],
+        "active_mode": "active",
+        "attestation_tuple_fields": [
+          "repo",
+          "prNumber",
+          "headOid",
+          "baseOid",
+          "action",
+          "activationMode",
+          "provider"
+        ]
       }
     },
     "broker": {
@@ -84,6 +104,7 @@
                 "baseOid",
                 "action",
                 "runId",
+                "activationMode",
                 "provider",
                 "nonce",
                 "expiresAt"
@@ -104,6 +125,11 @@
         "evidence_max_bytes",
         "merge_method",
         "toolchain",
+        "irreversible_sink_min_ttl_seconds",
+        "merge_request_timeout_milliseconds",
+        "closeout_fetch_timeout_milliseconds",
+        "pre_sink_timeouts",
+        "post_merge_observation",
         "required_check_sources",
         "github_app_token",
         "terminal_states"
@@ -122,6 +148,27 @@
           "properties": {
             "platform": { "const": "linux" },
             "node_version": { "const": "v20.20.2" }
+          }
+        },
+        "irreversible_sink_min_ttl_seconds": { "const": 60 },
+        "merge_request_timeout_milliseconds": { "const": 10000 },
+        "closeout_fetch_timeout_milliseconds": { "const": 10000 },
+        "pre_sink_timeouts": {
+          "const": {
+            "snapshot_milliseconds": 60000,
+            "snapshot_read_count": 5,
+            "candidate_fetch_milliseconds": 30000,
+            "app_token_mint_milliseconds": 10000,
+            "apex_request_milliseconds": 600000,
+            "workflow_job_milliseconds": 1800000,
+            "result_persistence_reserve_milliseconds": 60000
+          }
+        },
+        "post_merge_observation": {
+          "const": {
+            "attempts": 4,
+            "interval_milliseconds": 1000,
+            "request_timeout_milliseconds": 3000
           }
         },
         "required_check_sources": {
@@ -156,7 +203,7 @@
           }
         },
         "terminal_states": {
-          "const": ["held", "merged", "merged_but_closeout_held"]
+          "const": ["held", "merged", "merged_but_closeout_held", "merge_outcome_unverified"]
         }
       }
     },

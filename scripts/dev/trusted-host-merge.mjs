@@ -10,6 +10,7 @@ import {
   heldResult,
   prepareInvocation,
   sha256,
+  verifyActivationGate,
 } from '../lib/trusted-host-merge.mjs'
 import { executeTrustedMerge } from '../lib/trusted-host-merge-executor.mjs'
 import { GitHubApi, mintInstallationToken } from '../lib/trusted-host-merge-runtime.mjs'
@@ -18,11 +19,18 @@ import { GitHubApi, mintInstallationToken } from '../lib/trusted-host-merge-runt
 const scriptRepoRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const contractPath = resolve(scriptRepoRoot, 'agent-contracts/trusted-host-merge.contract.json')
 const contract = JSON.parse(await readFile(contractPath, 'utf8'))
+const activationStatePath = resolve(
+  scriptRepoRoot,
+  'agent-contracts',
+  contract.activation.state_contract.replace(/^\.\//u, ''),
+)
+const activationStateContract = JSON.parse(await readFile(activationStatePath, 'utf8'))
 
 const rawInput = {
   prNumber: process.env.INPUT_PR_NUMBER,
   expectedHead: process.env.INPUT_EXPECTED_HEAD,
   expectedBase: process.env.INPUT_EXPECTED_BASE,
+  expectedActivationMode: process.env.INPUT_EXPECTED_ACTIVATION_MODE,
   provider: process.env.INPUT_APEX_PROVIDER,
   nonce: process.env.INPUT_NONCE,
   expiresAt: process.env.INPUT_EXPIRES_AT,
@@ -35,6 +43,23 @@ const context = {
   sha: process.env.GITHUB_SHA,
   runId: process.env.GITHUB_RUN_ID,
   runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+}
+
+const activationFor = (invocation) => ({
+  activationState: activationStateContract.ship.activation_state,
+  externalMode: process.env.TRUSTED_MERGE_ACTIVATION_MODE,
+  attestationTupleSha256: process.env.TRUSTED_MERGE_ATTESTATION_TUPLE_SHA256 || '',
+  invocation,
+  contract,
+})
+
+const verifyTrustedToolchain = () => {
+  if (
+    process.platform !== contract.executor.toolchain.platform ||
+    process.version !== contract.executor.toolchain.node_version
+  ) {
+    throw new TrustedMergeHold('host_env_blocked', 'trusted_toolchain_identity_mismatch')
+  }
 }
 
 const appendPlatformFile = async (path, content) => {
@@ -73,6 +98,7 @@ const outputChallenge = async (invocation, assertion) => {
     baseOid: invocation.baseOid,
     provider: invocation.provider,
     runId: invocation.runId,
+    activationMode: invocation.activationMode,
     expiresAt: invocation.expiresAt,
   })}\n`)
 }
@@ -113,13 +139,21 @@ try {
   const mode = process.argv[2]
   if (mode === 'challenge') {
     await outputChallenge(invocation, assertion)
+  } else if (mode === 'activate') {
+    verifyTrustedToolchain()
+    const activationMode = verifyActivationGate(activationFor(invocation))
+    process.stdout.write(`${JSON.stringify({
+      schemaVersion: 'trusted-host-merge-activation/v1',
+      status: 'allowed',
+      mode: activationMode,
+      prNumber: invocation.prNumber,
+      headOid: invocation.headOid,
+      baseOid: invocation.baseOid,
+    })}\n`)
   } else if (mode === 'execute') {
-    if (
-      process.platform !== contract.executor.toolchain.platform ||
-      process.version !== contract.executor.toolchain.node_version
-    ) {
-      throw new TrustedMergeHold('host_env_blocked', 'trusted_toolchain_identity_mismatch')
-    }
+    verifyTrustedToolchain()
+    const activation = activationFor(invocation)
+    verifyActivationGate(activation)
     const minted = await mintInstallationToken({
       apiBaseUrl: process.env.GITHUB_API_URL || 'https://api.github.com',
       appId: process.env.TRUSTED_MERGE_APP_ID,
@@ -127,6 +161,7 @@ try {
       privateKey: process.env.TRUSTED_MERGE_APP_PRIVATE_KEY,
       repository: invocation.repo,
       permissions: contract.executor.github_app_token.permissions,
+      timeoutMilliseconds: contract.executor.pre_sink_timeouts.app_token_mint_milliseconds,
     })
     process.stdout.write(`::add-mask::${minted.token}\n`)
     const api = new GitHubApi({
@@ -143,10 +178,12 @@ try {
       installationTokenExpiresAt: minted.expiresAt,
       apexApiKey: process.env.TRUSTED_MERGE_APEX_API_KEY,
       apexModel: process.env.TRUSTED_MERGE_APEX_MODEL,
+      activation,
     })
     await writeResult(terminalResult)
+    if (terminalResult.status === 'merge_outcome_unverified') process.exitCode = 2
   } else {
-    throw new TrustedMergeHold('invalid_args_format', 'mode_must_be_challenge_or_execute')
+    throw new TrustedMergeHold('invalid_args_format', 'mode_must_be_challenge_activate_or_execute')
   }
 } catch (error) {
   if (terminalResult?.merged === true) {
@@ -157,6 +194,9 @@ try {
       heldDetail: 'result_persistence_failed',
     }
     process.stdout.write(`${JSON.stringify(fallback)}\n`)
+    process.exitCode = 2
+  } else if (terminalResult?.status === 'merge_outcome_unverified') {
+    process.stdout.write(`${JSON.stringify(terminalResult)}\n`)
     process.exitCode = 2
   } else {
     const reason = error instanceof TrustedMergeHold ? error.reason : 'host_env_blocked'

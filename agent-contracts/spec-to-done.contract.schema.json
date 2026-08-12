@@ -71,8 +71,10 @@
         "trusted_host_contract": { "const": "./trusted-host-merge.contract.json" },
         "trusted_host_workflow": { "const": ".github/workflows/trusted-elevated-merge.yml" },
         "dispatch_protocol": { "const": "github-workflow-dispatch" },
-        "activation_state": { "const": "requires_protected_environment_provisioning" },
-        "unavailable_reason": { "const": "host_env_blocked" },
+        "activation_state": { "enum": ["requires_live_attestation", "active"] },
+        "unavailable_reason": {
+          "enum": ["trusted_elevated_authorization_unavailable", "host_env_blocked"]
+        },
         "arbiter_held_reasons": {
           "type": "array",
           "minItems": 1,

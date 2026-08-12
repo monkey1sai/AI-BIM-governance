@@ -1,6 +1,7 @@
 import {
   canonicalJson,
   equalText,
+  exactKeys,
   fail,
   isPlainObject,
   safeInteger,
@@ -44,6 +45,78 @@ export function parseNameStatusZ(value) {
   return entries
 }
 
+export function parseNumstatZ(value) {
+  const text = Buffer.isBuffer(value) ? value.toString('utf8') : value
+  if (typeof text !== 'string' || !text.endsWith('\0')) {
+    fail('scope_drift', 'numstat_not_nul_terminated')
+  }
+  const records = text.split('\0')
+  records.pop()
+  if (records.length === 0) fail('scope_drift', 'numstat_empty')
+  return records.map((record) => {
+    const firstTab = record.indexOf('\t')
+    const secondTab = record.indexOf('\t', firstTab + 1)
+    if (firstTab < 1 || secondTab <= firstTab + 1) {
+      fail('scope_drift', 'numstat_record_invalid')
+    }
+    const added = record.slice(0, firstTab)
+    const deleted = record.slice(firstTab + 1, secondTab)
+    if (!((/^\d+$/u.test(added) && /^\d+$/u.test(deleted)) || (added === '-' && deleted === '-'))) {
+      fail('scope_drift', 'numstat_counts_invalid')
+    }
+    return {
+      added,
+      deleted,
+      path: cleanGitPath(record.slice(secondTab + 1)),
+      binary: added === '-',
+    }
+  })
+}
+
+export function rejectBinaryDiff(numstatEntries) {
+  if (!Array.isArray(numstatEntries) || numstatEntries.length === 0) {
+    fail('scope_drift', 'numstat_entries_missing')
+  }
+  if (numstatEntries.some((entry) => entry?.binary === true)) {
+    fail('scope_drift', 'binary_diff_forbidden')
+  }
+}
+
+export function parseRawDiffZ(value) {
+  const text = Buffer.isBuffer(value) ? value.toString('utf8') : value
+  if (typeof text !== 'string' || !text.endsWith('\0')) {
+    fail('scope_drift', 'raw_diff_not_nul_terminated')
+  }
+  const fields = text.split('\0')
+  fields.pop()
+  if (fields.length === 0 || fields.length % 2 !== 0) fail('scope_drift', 'raw_diff_record_invalid')
+  const entries = []
+  for (let index = 0; index < fields.length; index += 2) {
+    const metadata = fields[index]
+    const match = /^:([0-7]{6}) ([0-7]{6}) ([0-9a-f]{40}) ([0-9a-f]{40}) ([ADMTUXB])$/u.exec(metadata)
+    if (!match) fail('scope_drift', 'raw_diff_metadata_invalid')
+    entries.push({
+      oldMode: match[1],
+      newMode: match[2],
+      status: match[5],
+      path: cleanGitPath(fields[index + 1]),
+    })
+  }
+  return entries
+}
+
+export function rejectOpaqueGitModes(rawEntries) {
+  if (!Array.isArray(rawEntries) || rawEntries.length === 0) {
+    fail('scope_drift', 'raw_diff_entries_missing')
+  }
+  const inspectableModes = new Set(['000000', '100644', '100755'])
+  if (rawEntries.some((entry) => (
+    !inspectableModes.has(entry?.oldMode) || !inspectableModes.has(entry?.newMode)
+  ))) {
+    fail('scope_drift', 'opaque_git_mode_forbidden')
+  }
+}
+
 const elevatedPathPatterns = [
   /^(?:\.agents|\.claude|\.codex|\.github|agent-contracts|architecture|openspec|scripts|docs\/agents|infra)(?:\/|$)/u,
   /^(?:AGENTS\.md|CLAUDE\.md|agent-skills-manifest\.json)$/u,
@@ -59,9 +132,8 @@ export function classifyElevatedPaths(entries) {
 }
 
 const emptyBypass = (value) => {
-  if (value === undefined || value === null) return true
-  if (!isPlainObject(value)) return false
-  return ['users', 'teams', 'apps'].every((key) => !Array.isArray(value[key]) || value[key].length === 0)
+  if (!exactKeys(value, ['users', 'teams', 'apps'])) return false
+  return ['users', 'teams', 'apps'].every((key) => Array.isArray(value[key]) && value[key].length === 0)
 }
 
 export function verifyBranchProtection(protection, requiredCheckSources) {
@@ -150,6 +222,30 @@ export function verifyPullRequestIdentity(pr, invocation, { final = false } = {}
   }
   if (pr.reviewDecision !== 'APPROVED') fail('review_required', 'review_decision_not_approved')
   if (final && pr.mergeStateStatus !== 'CLEAN') fail('final_gate_not_clean', 'merge_state_not_clean')
+}
+
+export function bindVerifiedPullRequestIdentity(pr) {
+  return {
+    number: pr.number,
+    state: pr.state,
+    draft: pr.draft,
+    merged: pr.merged,
+    head: {
+      sha: pr.head.sha,
+      ref: pr.head.ref,
+      repo: { full_name: pr.head.repo.full_name },
+    },
+    base: {
+      sha: pr.base.sha,
+      ref: pr.base.ref,
+      repo: { full_name: pr.base.repo.full_name },
+    },
+    body: typeof pr.body === 'string' ? pr.body : '',
+    gates: {
+      reviewDecisionApproved: true,
+      mergeStateClean: true,
+    },
+  }
 }
 
 export function bindRawBranchProtection(protection) {

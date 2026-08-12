@@ -142,7 +142,7 @@
     "invocation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["repo", "prNumber", "headOid", "baseOid", "action", "runId", "provider", "nonce", "expiresAt"],
+      "required": ["repo", "prNumber", "headOid", "baseOid", "action", "runId", "activationMode", "provider", "nonce", "expiresAt"],
       "properties": {
         "repo": { "const": "monkey1sai/AI-BIM-governance" },
         "prNumber": { "type": "integer", "minimum": 1 },
@@ -150,6 +150,7 @@
         "baseOid": { "$ref": "#/definitions/sha" },
         "action": { "const": "merge-elevated" },
         "runId": { "type": "integer", "minimum": 1 },
+        "activationMode": { "enum": ["attesting_negative", "attesting_positive", "active"] },
         "provider": { "enum": ["claude", "codex"] },
         "nonce": { "type": "string", "pattern": "^[A-Za-z0-9_-]{32,128}$" },
         "expiresAt": { "type": "string", "format": "date-time" }

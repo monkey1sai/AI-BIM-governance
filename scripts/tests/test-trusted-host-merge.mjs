@@ -1,23 +1,34 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 
 import {
   TrustedMergeHold,
+  activationTupleSha256,
   bindRawBranchProtection,
+  bindVerifiedPullRequestIdentity,
   buildBoundedEvidence,
   buildBrokerAssertion,
   canonicalHumanApprovalBody,
   classifyElevatedPaths,
   heldResult,
+  mergeOutcomeUnverifiedResult,
   mergedResult,
   parseNameStatusZ,
+  parseNumstatZ,
+  parseRawDiffZ,
   prepareInvocation,
+  rejectBinaryDiff,
+  rejectOpaqueGitModes,
   reviewSurfaceSnapshot,
   sha256,
   canonicalJson,
   selectCanonicalApproval,
   verifyApexVerdict,
+  verifyActivationGate,
   verifyBranchProtection,
   verifyBrokerApproval,
   verifyEnvironmentConfiguration,
@@ -38,10 +49,11 @@ const NOW = new Date('2026-08-12T02:00:00.000Z')
 const EXPIRES = '2026-08-12T02:10:00.000Z'
 const NONCE = 'n'.repeat(32)
 
-const rawInput = () => ({
+const rawInput = (expectedActivationMode = contract.activation.active_mode) => ({
   prNumber: '42',
   expectedHead: HEAD,
   expectedBase: BASE,
+  expectedActivationMode,
   provider: 'codex',
   nonce: NONCE,
   expiresAt: EXPIRES,
@@ -103,6 +115,7 @@ const pr = (invocation) => ({
   merged: false,
   head: { sha: invocation.headOid, ref: 'feat/safe-change', repo: { full_name: invocation.repo } },
   base: { sha: invocation.baseOid, ref: 'main', repo: { full_name: invocation.repo } },
+  body: 'Original pull request body',
   reviewDecision: 'APPROVED',
   mergeStateStatus: 'CLEAN',
 })
@@ -131,6 +144,7 @@ test('dispatch identity produces an exact, short-lived broker assertion', () => 
     baseOid: BASE,
     action: 'merge-elevated',
     runId: 987654,
+    activationMode: 'active',
     provider: 'codex',
     nonce: NONCE,
     expiresAt: EXPIRES,
@@ -144,9 +158,63 @@ test('dispatch identity produces an exact, short-lived broker assertion', () => 
     baseOid: invocation.baseOid,
     action: invocation.action,
     runId: invocation.runId,
+    activationMode: invocation.activationMode,
     provider: invocation.provider,
     nonce: invocation.nonce,
     expiresAt: invocation.expiresAt,
+  }))
+})
+
+test('activation gate permits only exact attestation tuples or fully active state', () => {
+  const pendingInvocations = contract.activation.pending_modes.map((mode) => (
+    prepareInvocation(rawInput(mode), context(), contract, NOW)
+  ))
+  const pendingDigests = pendingInvocations.map((invocation) => activationTupleSha256(invocation, contract))
+  assert.notEqual(pendingDigests[0], pendingDigests[1])
+  assert.notEqual(
+    buildBrokerAssertion(pendingInvocations[0], contract),
+    buildBrokerAssertion(pendingInvocations[1], contract),
+  )
+  for (let index = 0; index < pendingInvocations.length; index += 1) {
+    const invocation = pendingInvocations[index]
+    const externalMode = contract.activation.pending_modes[index]
+    assert.equal(verifyActivationGate({
+      activationState: contract.activation.pending_state,
+      externalMode,
+      attestationTupleSha256: pendingDigests[index],
+      invocation,
+      contract,
+    }), externalMode)
+  }
+  const invocation = prepareInvocation(rawInput(), context(), contract, NOW)
+  assert.equal(verifyActivationGate({
+    activationState: contract.activation.active_state,
+    externalMode: contract.activation.active_mode,
+    attestationTupleSha256: '',
+    invocation,
+    contract,
+  }), contract.activation.active_mode)
+
+  expectHold('trusted_elevated_authorization_unavailable', () => verifyActivationGate({
+    activationState: contract.activation.pending_state,
+    externalMode: contract.activation.pending_modes[1],
+    attestationTupleSha256: pendingDigests[0],
+    invocation: pendingInvocations[0],
+    contract,
+  }))
+  expectHold('trusted_elevated_authorization_unavailable', () => verifyActivationGate({
+    activationState: contract.activation.active_state,
+    externalMode: contract.activation.active_mode,
+    attestationTupleSha256: activationTupleSha256(invocation, contract),
+    invocation,
+    contract,
+  }))
+  expectHold('trusted_elevated_authorization_unavailable', () => verifyActivationGate({
+    activationState: 'unknown',
+    externalMode: 'active',
+    attestationTupleSha256: '',
+    invocation,
+    contract,
   }))
 })
 
@@ -155,6 +223,9 @@ test('dispatch rejects extra fields, mutable base, reruns, weak nonce, and stale
   expectHold('stale_base', () => prepareInvocation(rawInput(), { ...context(), sha: HEAD }, contract, NOW))
   expectHold('wrong_checkout', () => prepareInvocation(rawInput(), { ...context(), runAttempt: '2' }, contract, NOW))
   expectHold('invalid_args_format', () => prepareInvocation({ ...rawInput(), nonce: 'short' }, context(), contract, NOW))
+  expectHold('invalid_args_format', () => prepareInvocation({
+    ...rawInput(), expectedActivationMode: 'attesting_unknown',
+  }, context(), contract, NOW))
   expectHold('trusted_elevated_authorization_unavailable', () => (
     prepareInvocation({ ...rawInput(), expiresAt: '2026-08-12T02:30:00.000Z' }, context(), contract, NOW)
   ))
@@ -210,6 +281,59 @@ test('NUL parser preserves both rename paths for elevated classification', () =>
   }
 })
 
+test('NUL numstat rejects binary candidates before arbiter evidence is built', () => {
+  const text = parseNumstatZ(`12\t3\tscripts/text.mjs\0`)
+  assert.deepEqual(text, [{ added: '12', deleted: '3', path: 'scripts/text.mjs', binary: false }])
+  rejectBinaryDiff(text)
+
+  const binary = parseNumstatZ(`-\t-\tscripts/payload.bin\0`)
+  assert.deepEqual(binary, [{ added: '-', deleted: '-', path: 'scripts/payload.bin', binary: true }])
+  expectHold('scope_drift', () => rejectBinaryDiff(binary))
+  expectHold('scope_drift', () => parseNumstatZ(`-\t0\tscripts/malformed.bin\0`))
+  expectHold('scope_drift', () => parseNumstatZ(`1\t0\t../escape\0`))
+})
+
+test('raw git modes reject gitlinks and other opaque candidate objects', () => {
+  const zero = '0'.repeat(40)
+  const oid = 'a'.repeat(40)
+  const regular = parseRawDiffZ(`:000000 100644 ${zero} ${oid} A\0scripts/text.mjs\0`)
+  assert.deepEqual(regular, [{
+    oldMode: '000000', newMode: '100644', status: 'A', path: 'scripts/text.mjs',
+  }])
+  rejectOpaqueGitModes(regular)
+  for (const mode of ['120000', '160000']) {
+    const opaque = parseRawDiffZ(`:000000 ${mode} ${zero} ${oid} A\0scripts/opaque\0`)
+    expectHold('scope_drift', () => rejectOpaqueGitModes(opaque))
+  }
+  expectHold('scope_drift', () => parseRawDiffZ(`:000000 100644 ${zero} ${oid} A\0../escape\0`))
+})
+
+test('Linux git raw output exposes a real gitlink to the opaque-mode guard', {
+  skip: process.platform !== 'linux',
+}, async () => {
+  const fixture = await mkdtemp(join(tmpdir(), 'trusted-merge-gitlink-'))
+  const git = (...args) => {
+    const result = spawnSync('/usr/bin/git', args, { cwd: fixture, encoding: 'buffer' })
+    assert.equal(result.status, 0, result.stderr?.toString('utf8'))
+    return result.stdout
+  }
+  try {
+    git('init', '--quiet')
+    git('config', 'user.email', 'trusted-host@example.invalid')
+    git('config', 'user.name', 'Trusted Host Test')
+    await mkdir(join(fixture, 'scripts'))
+    await writeFile(join(fixture, 'scripts', 'base.txt'), 'base\n')
+    git('add', 'scripts/base.txt')
+    git('commit', '--quiet', '-m', 'base')
+    const commit = git('rev-parse', 'HEAD').toString('utf8').trim()
+    git('update-index', '--add', '--cacheinfo', `160000,${commit},scripts/opaque-dependency`)
+    const raw = git('diff', '--cached', '--raw', '--no-abbrev', '--no-renames', '-z', 'HEAD')
+    expectHold('scope_drift', () => rejectOpaqueGitModes(parseRawDiffZ(raw)))
+  } finally {
+    await rm(fixture, { recursive: true, force: true })
+  }
+})
+
 test('branch policy requires source-pinned checks and forbids every bypass', () => {
   const snapshot = verifyBranchProtection(protection(), checkSources)
   assert.deepEqual(snapshot.requiredChecks, [
@@ -232,6 +356,35 @@ test('branch policy requires source-pinned checks and forbids every bypass', () 
   expectHold('branch_protection_single_owner_gate_not_strict', () => {
     const unsafe = protection()
     unsafe.required_pull_request_reviews.bypass_pull_request_allowances.apps.push({ id: 1 })
+    verifyBranchProtection(unsafe, checkSources)
+  })
+  for (const actors of [{}, 'none', 0, false]) {
+    expectHold('branch_protection_single_owner_gate_not_strict', () => {
+      const unsafe = protection()
+      unsafe.required_pull_request_reviews.bypass_pull_request_allowances.apps = actors
+      verifyBranchProtection(unsafe, checkSources)
+    })
+  }
+  for (const missing of ['users', 'teams', 'apps']) {
+    expectHold('branch_protection_single_owner_gate_not_strict', () => {
+      const unsafe = protection()
+      delete unsafe.required_pull_request_reviews.bypass_pull_request_allowances[missing]
+      verifyBranchProtection(unsafe, checkSources)
+    })
+    expectHold('branch_protection_single_owner_gate_not_strict', () => {
+      const unsafe = protection()
+      unsafe.required_pull_request_reviews.bypass_pull_request_allowances[missing] = null
+      verifyBranchProtection(unsafe, checkSources)
+    })
+  }
+  expectHold('branch_protection_single_owner_gate_not_strict', () => {
+    const unsafe = protection()
+    unsafe.required_pull_request_reviews.bypass_pull_request_allowances = null
+    verifyBranchProtection(unsafe, checkSources)
+  })
+  expectHold('branch_protection_single_owner_gate_not_strict', () => {
+    const unsafe = protection()
+    unsafe.required_pull_request_reviews.bypass_pull_request_allowances.future_actors = [{ id: 1 }]
     verifyBranchProtection(unsafe, checkSources)
   })
   expectHold('branch_protection_single_owner_gate_not_strict', () => verifyBranchProtection(protection(), []))
@@ -274,6 +427,16 @@ test('PR, code-owner approval, reviewer permission, and App-pinned checks are ex
   expectHold('final_gate_not_clean', () => verifyRequiredChecks([
     { id: 10, name: 'ci/root', app: { id: 999 }, head_sha: HEAD, status: 'completed', conclusion: 'success' },
   ], snapshot, HEAD))
+
+  const stablePr = bindVerifiedPullRequestIdentity(pr(invocation))
+  const volatile = pr(invocation)
+  volatile.mergeCommit = 'c'.repeat(40)
+  assert.deepEqual(bindVerifiedPullRequestIdentity(volatile), stablePr)
+  const bodyChanged = pr(invocation)
+  bodyChanged.body = 'Changed pull request body'
+  assert.notDeepEqual(bindVerifiedPullRequestIdentity(bodyChanged), stablePr)
+  expectHold('review_required', () => verifyPullRequestIdentity({ ...pr(invocation), reviewDecision: 'REVIEW_REQUIRED' }, invocation, { final: true }))
+  expectHold('final_gate_not_clean', () => verifyPullRequestIdentity({ ...pr(invocation), mergeStateStatus: 'BLOCKED' }, invocation, { final: true }))
 })
 
 test('immutable raw branch protection detects drift outside normalized gate fields', () => {
@@ -323,6 +486,7 @@ test('apex verdict must echo every immutable approval field before merge', () =>
   expectHold('arbiter_denied', () => verifyApexVerdict({ ...verdict, headOid: BASE }, invocation, approval))
 
   assert.equal(heldResult(invocation, 'final_gate_not_clean', 'check_failed').status, 'held')
+  assert.equal(mergeOutcomeUnverifiedResult(invocation, 'unreadable').merged, null)
   assert.equal(mergedResult(invocation, 'c'.repeat(40)).status, 'merged')
   assert.equal(mergedResult(invocation, 'c'.repeat(40), 'fetch_failed').status, 'merged_but_closeout_held')
 })

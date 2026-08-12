@@ -478,6 +478,9 @@ try {
     Assert-True ($trustedMergeWorkflow -match 'if:\s*\$\{\{ inputs\.apex_provider == ''claude'' \}\}[\s\S]*?secrets\.ANTHROPIC_API_KEY') 'Claude executor step receives only the Anthropic key'
     Assert-True ($trustedMergeWorkflow -match 'if:\s*\$\{\{ inputs\.apex_provider == ''codex'' \}\}[\s\S]*?secrets\.OPENAI_API_KEY') 'Codex executor step receives only the OpenAI key'
     Assert-True (-not ($trustedMergeWorkflow -match '&&\s*secrets\.|\|\|\s*secrets\.')) 'provider secret routing cannot fall through to another provider key'
+    Assert-True (([regex]::Matches($trustedMergeWorkflow, 'TRUSTED_MERGE_ACTIVATION_MODE:\s*\$\{\{ vars\.TRUSTED_MERGE_ACTIVATION_MODE \}\}')).Count -eq 3) 'activation preflight and both executor providers receive the protected activation mode'
+    Assert-True (([regex]::Matches($trustedMergeWorkflow, 'TRUSTED_MERGE_ATTESTATION_TUPLE_SHA256:\s*\$\{\{ vars\.TRUSTED_MERGE_ATTESTATION_TUPLE_SHA256 \}\}')).Count -eq 3) 'activation preflight and both executor providers receive the exact attestation tuple digest'
+    Assert-True ($trustedMergeWorkflow.IndexOf('node scripts/dev/trusted-host-merge.mjs activate') -ge 0 -and $trustedMergeWorkflow.IndexOf('node scripts/dev/trusted-host-merge.mjs activate') -lt $trustedMergeWorkflow.IndexOf('TRUSTED_MERGE_APP_PRIVATE_KEY:')) 'secret-free activation preflight runs before any provider credential step'
     Assert-True ($trustedMergeRuntime -match 'createSign\(' -and $trustedMergeRuntime -match 'repositories:\s*\[repository\.split') 'executor mints a single-repository GitHub App installation token'
     $trustedMergeAppPermissions = (Get-Content -LiteralPath 'agent-contracts/trusted-host-merge.contract.json' -Raw | ConvertFrom-Json -Depth 100).executor.github_app_token.permissions
     $trustedMergeExpectedCapabilities = [ordered]@{
@@ -497,6 +500,7 @@ try {
     Assert-True (([regex]::Matches($trustedMergeExecutor, "method:\s*'PUT'")).Count -eq 1) 'executor has exactly one irreversible PUT call site'
     Assert-True ($trustedMergeRuntime -match "tools:\s*\[\]") 'both direct apex APIs receive no tools'
     Assert-True ($trustedMergeCli -match '::add-mask::\$\{minted\.token\}') 'installation token is masked before any downstream operation'
+    Assert-True ($trustedMergeCli.IndexOf('verifyActivationGate(activation)') -ge 0 -and $trustedMergeCli.IndexOf('verifyActivationGate(activation)') -lt $trustedMergeCli.IndexOf('mintInstallationToken({')) 'activation gate runs before the credential mint'
     $trustedMergeUses = @([regex]::Matches($trustedMergeWorkflow, '(?m)^\s+uses:\s*(\S+)\s*$') | ForEach-Object { $_.Groups[1].Value })
     $trustedMergeAllowedUses = @(
         'actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5',
@@ -528,6 +532,21 @@ try {
         $fixtureJson = $trustedMergeFixtures.$fixtureName | ConvertTo-Json -Depth 100
         Assert-True ($fixtureJson | Test-Json -SchemaFile $trustedMergeFixtureSchemas[$fixtureName] -ErrorAction SilentlyContinue) "trusted merge $fixtureName fixture satisfies its closed schema"
     }
+    $unknownMergeResult = [ordered]@{
+        schemaVersion = 'trusted-host-merge-result/v1'
+        status = 'merge_outcome_unverified'
+        merged = $null
+        prNumber = 42
+        headOid = ('a' * 40 -join '')
+        baseOid = ('b' * 40 -join '')
+        mergeCommit = $null
+        heldReason = 'merge_command_failed_unverified'
+        heldDetail = 'merge_state_unreadable'
+    } | ConvertTo-Json -Depth 10
+    Assert-True ($unknownMergeResult | Test-Json -SchemaFile 'agent-contracts/trusted-host-merge-result.schema.json' -ErrorAction SilentlyContinue) 'trusted merge result schema represents attempted but unverified merge outcome without false bivalence'
+    $falseUnknownMergeResult = $unknownMergeResult | ConvertFrom-Json -Depth 10
+    $falseUnknownMergeResult.merged = $false
+    Assert-True (-not (($falseUnknownMergeResult | ConvertTo-Json -Depth 10) | Test-Json -SchemaFile 'agent-contracts/trusted-host-merge-result.schema.json' -ErrorAction SilentlyContinue)) 'unverified merge outcome cannot be downgraded to merged=false'
     $mutatedAssertion = $trustedMergeFixtures.assertion | ConvertTo-Json -Depth 100 | ConvertFrom-Json -Depth 100
     $mutatedAssertion | Add-Member -NotePropertyName callerAuthorization -NotePropertyValue 'untrusted'
     Assert-True (-not (($mutatedAssertion | ConvertTo-Json -Depth 100) | Test-Json -SchemaFile 'agent-contracts/trusted-host-merge-assertion.schema.json' -ErrorAction SilentlyContinue)) 'broker assertion schema rejects caller-controlled extension fields'
@@ -791,12 +810,12 @@ try {
     Assert-True ($specToDoneContract.ship.trusted_host_contract -ceq './trusted-host-merge.contract.json') 'spec-to-done machine contract links the trusted merge protocol'
     Assert-True ($specToDoneContract.ship.trusted_host_workflow -ceq '.github/workflows/trusted-elevated-merge.yml') 'spec-to-done machine contract links the default-branch executor workflow'
     Assert-True ($specToDoneContract.ship.dispatch_protocol -ceq 'github-workflow-dispatch') 'spec-to-done machine contract declares the host handoff protocol'
-    Assert-True ($specToDoneContract.ship.activation_state -ceq 'requires_protected_environment_provisioning') 'machine truth does not claim hosted broker provisioning before verification'
+    Assert-True ($specToDoneContract.ship.activation_state -ceq 'requires_live_attestation') 'machine truth remains held until the ordered live attestation closes'
     $trustedMergeCheckSourceSignature = (@($trustedMergeContract.executor.required_check_sources) | ForEach-Object {
         "$($_.context):$($_.app_id)"
     }) -join '|'
     Assert-True ($trustedMergeCheckSourceSignature -ceq 'agent-governance:15368|root contracts and fakes:15368|coordinator build and tests:15368|governance-service tests:15368|viewer build and tests:15368|kit-manager-api tests:15368|kit-manager-web build:15368|docker compose config:15368|powershell static analysis:15368|secret pattern scan:15368') 'trusted merge contract pins the exact live main required-check contexts to GitHub Actions App 15368'
-    Assert-True ($specToDoneContract.ship.unavailable_reason -ceq 'host_env_blocked') 'spec-to-done machine contract maps unavailable P6 to a durable host hold'
+    Assert-True ($specToDoneContract.ship.unavailable_reason -ceq 'trusted_elevated_authorization_unavailable') 'spec-to-done machine contract maps pending attestation to a durable authorization hold'
     Assert-True ($specToDoneContract.terminal_evidence.owner_phase -ceq 'P7') 'spec-to-done machine contract owns terminal evidence at P7'
     Assert-True ($specToDoneContract.terminal_evidence.trusted_remote_url -ceq 'https://github.com/monkey1sai/AI-BIM-governance.git') 'P7 pins the trusted HTTPS remote'
     Assert-True ($specToDoneContract.terminal_evidence.remote_main_ref -ceq 'refs/heads/main') 'P7 pins the remote main ref instead of a local tracking ref'

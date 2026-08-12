@@ -8,6 +8,7 @@
     "baseOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "action": "merge-elevated",
     "runId": 987654,
+    "activationMode": "active",
     "provider": "codex",
     "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
     "expiresAt": "2026-08-12T02:10:00.000Z"
@@ -22,6 +23,7 @@
       "baseOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "action": "merge-elevated",
       "runId": 987654,
+      "activationMode": "active",
       "provider": "codex",
       "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
       "expiresAt": "2026-08-12T02:10:00.000Z"
