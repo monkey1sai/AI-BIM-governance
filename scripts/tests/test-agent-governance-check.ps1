@@ -777,7 +777,10 @@ try {
     Assert-True ($specToDoneContract.ship.trusted_host_workflow -ceq '.github/workflows/trusted-elevated-merge.yml') 'spec-to-done machine contract links the default-branch executor workflow'
     Assert-True ($specToDoneContract.ship.dispatch_protocol -ceq 'github-workflow-dispatch') 'spec-to-done machine contract declares the host handoff protocol'
     Assert-True ($specToDoneContract.ship.activation_state -ceq 'requires_protected_environment_provisioning') 'machine truth does not claim hosted broker provisioning before verification'
-    Assert-True (@($trustedMergeContract.executor.required_check_sources).Count -eq 0) 'pre-activation contract keeps required check source allowlist empty and therefore fail closed'
+    $trustedMergeCheckSourceSignature = (@($trustedMergeContract.executor.required_check_sources) | ForEach-Object {
+        "$($_.context):$($_.app_id)"
+    }) -join '|'
+    Assert-True ($trustedMergeCheckSourceSignature -ceq 'agent-governance:15368|root contracts and fakes:15368|coordinator build and tests:15368|governance-service tests:15368|viewer build and tests:15368|kit-manager-api tests:15368|kit-manager-web build:15368|docker compose config:15368|powershell static analysis:15368|secret pattern scan:15368') 'trusted merge contract pins the exact live main required-check contexts to GitHub Actions App 15368'
     Assert-True ($specToDoneContract.ship.unavailable_reason -ceq 'host_env_blocked') 'spec-to-done machine contract maps unavailable P6 to a durable host hold'
     Assert-True ($specToDoneContract.terminal_evidence.owner_phase -ceq 'P7') 'spec-to-done machine contract owns terminal evidence at P7'
     Assert-True ($specToDoneContract.terminal_evidence.trusted_remote_url -ceq 'https://github.com/monkey1sai/AI-BIM-governance.git') 'P7 pins the trusted HTTPS remote'

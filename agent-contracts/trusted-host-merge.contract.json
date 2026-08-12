@@ -57,7 +57,18 @@
     "reviewer_buffer_seconds": 90,
     "evidence_max_bytes": 500000,
     "merge_method": "merge",
-    "required_check_sources": [],
+    "required_check_sources": [
+      { "context": "agent-governance", "app_id": 15368 },
+      { "context": "root contracts and fakes", "app_id": 15368 },
+      { "context": "coordinator build and tests", "app_id": 15368 },
+      { "context": "governance-service tests", "app_id": 15368 },
+      { "context": "viewer build and tests", "app_id": 15368 },
+      { "context": "kit-manager-api tests", "app_id": 15368 },
+      { "context": "kit-manager-web build", "app_id": 15368 },
+      { "context": "docker compose config", "app_id": 15368 },
+      { "context": "powershell static analysis", "app_id": 15368 },
+      { "context": "secret pattern scan", "app_id": 15368 }
+    ],
     "github_app_token": {
       "repository_scope": "single",
       "max_ttl_seconds": 3600,
