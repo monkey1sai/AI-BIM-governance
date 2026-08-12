@@ -162,7 +162,8 @@
       "path_globs": [
         "scripts/deploy.ps1", "scripts/dev/rebuild-test-deploy.ps1", "scripts/lib/rebuild-test-deploy.ps1",
         "scripts/lib/design-assets.ps1", "scripts/lib/host-native-launcher.ps1", "scripts/lib/StructLog.psm1",
-        "scripts/tests/test-rebuild-test-deploy.ps1", "scripts/tests/test-verify-all.ps1", "scripts/tests/test-helpers.ps1"
+        "scripts/tests/test-rebuild-test-deploy.ps1", "scripts/tests/test-verify-all.ps1", "scripts/tests/test-helpers.ps1",
+        "scripts/tests/test-host-native-launcher.ps1"
       ]
     },
     {
@@ -398,7 +399,7 @@
       "ci_job": "powershell static analysis", "result_artifact": null
     },
     {
-      "id": "rebuild-test-deploy", "display_name": "rebuild/test-deploy contracts", "path_globs": ["scripts/deploy.ps1", "scripts/dev/rebuild-test-deploy.ps1", "scripts/lib/rebuild-test-deploy.ps1", "scripts/lib/design-assets.ps1", "scripts/lib/host-native-launcher.ps1", "scripts/lib/StructLog.psm1", "scripts/tests/test-rebuild-test-deploy.ps1", "scripts/tests/test-verify-all.ps1", "scripts/tests/test-helpers.ps1"],
+      "id": "rebuild-test-deploy", "display_name": "rebuild/test-deploy contracts", "path_globs": ["scripts/deploy.ps1", "scripts/dev/rebuild-test-deploy.ps1", "scripts/lib/rebuild-test-deploy.ps1", "scripts/lib/design-assets.ps1", "scripts/lib/host-native-launcher.ps1", "scripts/lib/StructLog.psm1", "scripts/tests/test-rebuild-test-deploy.ps1", "scripts/tests/test-verify-all.ps1", "scripts/tests/test-helpers.ps1", "scripts/tests/test-host-native-launcher.ps1"],
       "owner": "deployment", "fast_gates": [], "contract_gates": ["rebuild-test-deploy"], "slow_evidence_gates": [],
       "required_when": { "predicate": "changed_path_class", "any_of": ["rebuild-test-deploy"] }, "skip_reason": "path_not_affected",
       "default_profiles": [], "ci_output": "rebuild_test_deploy",

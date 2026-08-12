@@ -740,6 +740,15 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-verify-all.ps1
 
+      # scripts/lib/host-native-launcher.ps1 is classified into this job, but no
+      # workflow ever ran its suite: the process-tree containment regressions
+      # were green only in manually recorded evidence, so a broken terminator
+      # could merge. PowerShell 7 only - the dynamic fixtures use
+      # ProcessStartInfo.ArgumentList, which .NET Framework does not have.
+      - name: Run host-native launcher contract tests (PowerShell 7)
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-host-native-launcher.ps1
+
   secret-pattern-scan:
     name: secret pattern scan
     needs: changes
