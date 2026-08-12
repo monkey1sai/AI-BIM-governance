@@ -422,6 +422,21 @@ Assert-Equal 'unknown_no_runtime_observation' $vramUnknownScope.session_scope 'n
 Assert-True (-not $vramUnknownScope.watermark_interpretation.measured) 'unknown runtime state: the interpretation is refused rather than assumed'
 Assert-True ($vramUnknownScope.watermark_interpretation.reason -match 'GET /api/runtime/status') 'unknown-scope reason names the observation that is missing'
 
+# PR #511 review r6: a non-null-but-unparseable active_count (coordinator
+# version skew) must not be coerced into 0 and read as an observed idle host.
+$vramMalformedScope = Get-SessionVramWatermark -GpuComputeSnapshot (Get-GpuComputeProcessSnapshot -NvidiaSmiComputeAppsQuery { @('40232, kit.exe, 2000') }) -ObservedActiveSessionCount 'unknown'
+Assert-Equal 'malformed_runtime_observation' $vramMalformedScope.session_scope 'non-numeric active_count -> malformed scope, never coerced into 0'
+Assert-True (-not $vramMalformedScope.watermark_interpretation.measured) 'malformed active_count: the interpretation is refused rather than assumed'
+Assert-True ($vramMalformedScope.watermark_interpretation.reason -match 'not a valid non-negative integer') 'malformed-scope reason names the invalid observation'
+
+# PR #511 review r6: a session existing is not the same as a primary viewer
+# having joined it -- an idle-but-created or spectator-only session must not
+# pass as a valid "1 primary + k spectator" watermark.
+$vramSingleSessionNoPrimary = Get-SessionVramWatermark -GpuComputeSnapshot (Get-GpuComputeProcessSnapshot -NvidiaSmiComputeAppsQuery { @('40232, kit.exe, 2000') }) -ObservedActiveSessionCount 1 -ObservedPrimaryLeaseCount 0 -ObservedSpectatorLeaseCount 0
+Assert-Equal 'single_session' $vramSingleSessionNoPrimary.session_scope 'one active session with zero primary leases is still single_session scope'
+Assert-True (-not $vramSingleSessionNoPrimary.watermark_interpretation.measured) 'single session with zero observed primary leases: the interpretation is refused'
+Assert-True ($vramSingleSessionNoPrimary.watermark_interpretation.reason -match 'primary') 'no-primary refusal reason names the missing primary lease'
+
 # Partial visibility must be refused, not silently under-counted: summing only
 # the readable subset would publish a watermark lower than the real one.
 $vramPartial = Get-SessionVramWatermark -GpuComputeSnapshot (Get-GpuComputeProcessSnapshot -NvidiaSmiComputeAppsQuery {
@@ -435,7 +450,7 @@ Assert-Equal 2 $vramPartial.kit_process_count 'partial VRAM case reports both ma
 Assert-Equal 1 $vramPartial.kit_process_vram_unreadable_count 'partial VRAM case counts the unreadable process'
 
 # Attribution honesty: name-matched only, co-resident Kit processes included.
-foreach ($watermark in @($vramMeasured, $vramPartial, $vramNoKit, $vramUnreadable, $vramNoQuery, $vramSingleSession, $vramNoSession, $vramUnknownScope)) {
+foreach ($watermark in @($vramMeasured, $vramPartial, $vramNoKit, $vramUnreadable, $vramNoQuery, $vramSingleSession, $vramNoSession, $vramUnknownScope, $vramMalformedScope, $vramSingleSessionNoPrimary)) {
     Assert-Equal 'process_name_match_only' $watermark.attribution 'vram watermark declares process-name-only attribution on every path'
     Assert-True ($watermark.Contains('session_scope')) 'vram watermark declares its session scope on every path'
     Assert-True ($watermark.Contains('watermark_interpretation')) 'vram watermark carries its 1 primary + k spectator verdict on every path'
@@ -694,6 +709,28 @@ try {
         }
     Assert-Equal 'runtime_state_unknown' $malformedRuntimeReport.environment_fingerprint.fixture_binding_scope 'malformed runtime body -> runtime_state_unknown'
     Assert-True (-not $malformedRuntimeReport.environment_fingerprint.complete) 'malformed runtime body -> complete=false'
+
+    # PR #511 review r6: version skew can also return a non-null active_count
+    # that is not a valid integer (e.g. "unknown") -- this must land in the
+    # same runtime_state_unknown bucket as a missing/unreachable probe, not be
+    # coerced into 0 and read as an observed idle host.
+    $malformedActiveCountReport = Get-SessionBaselineReport `
+        -CoordinatorUrl 'http://127.0.0.1:8004' `
+        -RepoRoot $repoRoot `
+        -Now $fixedNow `
+        -FixturePath $fixtureFile `
+        -NvidiaSmiQuery { @('0, NVIDIA GeForce RTX 4060 Ti, 580.97, 8188, 1827, 6123, 2, 0, [N/A]') } `
+        -NvidiaSmiComputeAppsQuery { @('40232, kit.exe, 2000') } `
+        -WebRtcHealthInvoker {
+            param($Uri, $Timeout)
+            if ($Uri -match '/health$') {
+                return [ordered]@{ ok = $true; body = [pscustomobject]@{ status = 'ok' }; status_code = 200; error = $null }
+            }
+            return [ordered]@{ ok = $true; body = [pscustomobject]@{ sessions = [pscustomobject]@{ active_count = 'unknown'; items = @() }; kit_instance_bindings = @() }; status_code = 200; error = $null }
+        }
+    Assert-Equal 'runtime_state_unknown' $malformedActiveCountReport.environment_fingerprint.fixture_binding_scope 'non-numeric active_count -> runtime_state_unknown, never coerced into an observed zero'
+    Assert-True (-not $malformedActiveCountReport.environment_fingerprint.complete) 'non-numeric active_count -> complete=false'
+    Assert-Equal 'malformed_runtime_observation' $malformedActiveCountReport.session_vram_watermark.session_scope 'non-numeric active_count -> VRAM watermark reports malformed scope, never single_session'
     Write-TestPass 'Get-SessionBaselineReport refuses to relabel an unknown runtime state as an observed idle baseline'
 
     # Session scope end-to-end. One active session keeps the current
@@ -763,6 +800,20 @@ $boundaryReport = Get-SessionBaselineReport `
     -NvidiaSmiComputeAppsQuery { return $null }
 Assert-True $boundaryReport.ttff_ms.measured 'TTFF of exactly 0 ms is accepted (boundary, not rejected)'
 Assert-True $boundaryReport.session_creation_success_rate.measured 'success rate of exactly 1 is accepted (boundary, not rejected)'
+
+# PR #511 review r6: positive infinity satisfies "-ge 0" and must not be
+# laundered into the report as a measured elapsed time.
+$infiniteTtffReport = Get-SessionBaselineReport `
+    -CoordinatorUrl 'http://127.0.0.1:8004' `
+    -RepoRoot $repoRoot `
+    -Now $fixedNow `
+    -SkipWebRtcProbe `
+    -TtffMs ([double]::PositiveInfinity) `
+    -NvidiaSmiQuery { return $null } `
+    -NvidiaSmiComputeAppsQuery { return $null }
+Assert-True (-not $infiniteTtffReport.ttff_ms.measured) 'infinite caller-supplied TTFF is rejected, not accepted as measured'
+Assert-True ($null -eq $infiniteTtffReport.ttff_ms.value) 'rejected infinite TTFF leaves value null'
+Assert-True ($infiniteTtffReport.ttff_ms.reason -match 'finite') 'rejected infinite TTFF reason names the finiteness constraint'
 Write-TestPass 'Get-SessionBaselineReport validates caller-supplied TTFF / success rate'
 
 # -SkipWebRtcProbe path

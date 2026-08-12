@@ -1248,6 +1248,7 @@
         "openspec/changes/gpu-session-baseline-and-idle-reclaim/proposal.md",
         "openspec/changes/gpu-session-baseline-and-idle-reclaim/tasks.md",
         "scripts/measure-session-baseline.ps1",
+        "scripts/lib/measure-session-baseline.ps1",
         "scripts/tests/test-measure-session-baseline.ps1"
       ],
       "subject_commit": "405e2b651bf661e123a2f0561e7167bebbf705ca",

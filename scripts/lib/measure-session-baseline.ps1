@@ -60,6 +60,26 @@ function ConvertTo-NullableInt {
     return $null
 }
 
+function ConvertTo-NonNegativeIntOrNull {
+    # Coordinator-reported counts arrive as loosely-typed JSON values. A
+    # non-integer, negative, non-finite, or non-numeric value (e.g. a
+    # malformed runtime-status body under version skew) must not be silently
+    # coerced into 0 -- that would relabel an UNKNOWN/malformed runtime
+    # observation as an OBSERVED zero (PR #511 review r6). Returns $null for
+    # anything that is not a valid non-negative integer, including $null
+    # itself; callers distinguish "not supplied" from "supplied but
+    # malformed" by checking the raw input separately when needed.
+    [CmdletBinding()]
+    param($Value)
+    if ($null -eq $Value) { return $null }
+    $asDouble = $null
+    try { $asDouble = [double]$Value } catch { return $null }
+    if ([double]::IsNaN($asDouble) -or [double]::IsInfinity($asDouble)) { return $null }
+    if ($asDouble -lt 0) { return $null }
+    if ($asDouble -ne [math]::Floor($asDouble)) { return $null }
+    return [int]$asDouble
+}
+
 function ConvertFrom-NvidiaSmiGpuLine {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string] $Line)
@@ -414,16 +434,32 @@ function Get-SessionVramWatermark {
     $sessionScope = 'unknown_no_runtime_observation'
     $interpretationMeasured = $false
     $interpretationReason = 'runtime session count unavailable (GET /api/runtime/status was not observed); this slice cannot establish whether the VRAM sample covers a single isolated session'
-    if ($null -ne $ObservedActiveSessionCount) {
-        $observedSessions = 0
-        try { $observedSessions = [int]$ObservedActiveSessionCount } catch { $observedSessions = 0 }
-        if ($observedSessions -gt 1) {
+    $parsedActiveSessionCount = ConvertTo-NonNegativeIntOrNull -Value $ObservedActiveSessionCount
+    if ($null -ne $ObservedActiveSessionCount -and $null -eq $parsedActiveSessionCount) {
+        # A non-null value that fails to parse as a non-negative integer is a
+        # malformed observation, not an observed idle host -- coercing it to 0
+        # would relabel "we don't actually know" as "we know it's zero"
+        # (PR #511 review r6).
+        $sessionScope = 'malformed_runtime_observation'
+        $interpretationReason = 'GET /api/runtime/status returned a session count that is not a valid non-negative integer; runtime session state cannot be established from this observation'
+    } elseif ($null -ne $parsedActiveSessionCount) {
+        if ($parsedActiveSessionCount -gt 1) {
             $sessionScope = 'multi_session_aggregate'
             $interpretationReason = 'non-isolated multi-session snapshot; per-session VRAM attribution unavailable in this slice'
-        } elseif ($observedSessions -eq 1) {
+        } elseif ($parsedActiveSessionCount -eq 1) {
             $sessionScope = 'single_session'
-            $interpretationMeasured = $true
-            $interpretationReason = $null
+            # A session existing is not the same as a primary viewer having
+            # joined it: an idle-but-created or spectator-only session would
+            # otherwise pass as a valid "1 primary + k spectator" watermark
+            # even though observed_primary_lease_count is 0 (PR #511 review
+            # r6). Require exactly one observed active primary lease.
+            $parsedPrimaryLeaseCount = ConvertTo-NonNegativeIntOrNull -Value $ObservedPrimaryLeaseCount
+            if ($parsedPrimaryLeaseCount -eq 1) {
+                $interpretationMeasured = $true
+                $interpretationReason = $null
+            } else {
+                $interpretationReason = 'exactly one review session was observed, but observed_primary_lease_count was not exactly 1 (no primary viewer has joined, or the count could not be established); the 1 primary + k spectator watermark interpretation requires an observed primary'
+            }
         } else {
             $sessionScope = 'no_active_session_observed'
             $interpretationReason = 'no active review session was observed at capture time, so there is no 1 primary + k spectator shape to interpret'
@@ -562,15 +598,13 @@ function Get-EnvironmentFingerprint {
     # observation shows a session that this harness cannot tie to the declared
     # artifact. An idle baseline (the primary 1.1 use case) has nothing to
     # misattribute and keeps its completeness semantics unchanged.
-    $activeSessionCount = 0
-    if ($null -ne $ObservedActiveSessionCount) {
-        try { $activeSessionCount = [int]$ObservedActiveSessionCount } catch { $activeSessionCount = 0 }
-    }
-    $kitBindingCount = 0
-    if ($null -ne $ObservedKitInstanceBindingCount) {
-        try { $kitBindingCount = [int]$ObservedKitInstanceBindingCount } catch { $kitBindingCount = 0 }
-    }
-    $liveSessionObserved = (($activeSessionCount -gt 0) -or ($kitBindingCount -gt 0))
+    # A non-null-but-unparseable value (e.g. "unknown" under coordinator
+    # version skew) must land in the same "we don't know" bucket as a missing
+    # value, not be coerced into 0 -- otherwise a malformed runtime-status
+    # body would be published as an observed idle host (PR #511 review r6).
+    $activeSessionCount = ConvertTo-NonNegativeIntOrNull -Value $ObservedActiveSessionCount
+    $kitBindingCount = ConvertTo-NonNegativeIntOrNull -Value $ObservedKitInstanceBindingCount
+    $liveSessionObserved = ((($null -ne $activeSessionCount) -and ($activeSessionCount -gt 0)) -or (($null -ne $kitBindingCount) -and ($kitBindingCount -gt 0)))
 
     $fixturePathSupplied = [bool](Get-SafeProperty -Object $FixtureFingerprint -Name 'path_supplied')
     $fixtureProvenance = if ($fixturePathSupplied) { 'operator_supplied_unverified' } else { 'not_supplied' }
@@ -657,12 +691,16 @@ function Get-EnvironmentFingerprint {
     #   'runtime_state_unknown'   - a fixture was declared but the runtime probe
     #                               yielded no observable session / kit-binding
     #                               counts at all (GET /api/runtime/status failed,
-    #                               returned a malformed body, or was skipped).
-    #                               Coercing those nulls to 0 relabelled an
+    #                               returned a malformed body, was skipped, or
+    #                               returned a non-null value that is not a
+    #                               valid non-negative integer under version
+    #                               skew). Coercing those into 0 relabelled an
     #                               UNKNOWN runtime state as an OBSERVED idle host
     #                               and let the fingerprint stay complete=true
-    #                               beside a declared fixture (PR #511 review r5).
-    $runtimeStateUnknown = (($null -eq $ObservedActiveSessionCount) -or ($null -eq $ObservedKitInstanceBindingCount))
+    #                               beside a declared fixture (PR #511 review
+    #                               r5, hardened against malformed non-null
+    #                               values in r6).
+    $runtimeStateUnknown = (($null -eq $activeSessionCount) -or ($null -eq $kitBindingCount))
     $fixtureBindingScope = 'not_supplied'
     if ($fixturePathSupplied) {
         if ($liveSessionObserved) {
@@ -677,7 +715,12 @@ function Get-EnvironmentFingerprint {
     }
     $fixtureBindingNote = 'the declared fixture is hashed off disk and never checked against the artifact the running session loaded; runtime artifact-identity verification is deferred to task 1.2/1.3'
     if ($fixtureBindingScope -eq 'live_session_unverified') {
-        $fixtureBindingNote = ('environment_fingerprint.complete is false because {0} active session(s) and {1} kit_instance_binding(s) were observed at capture time while the fixture identity is operator-declared only: this slice cannot verify the declared fixture against the live session''s artifact identity, so the session VRAM and viewer counts in this report must not be treated as bound to this fixture fingerprint. Runtime artifact-identity verification is deferred to task 1.2/1.3.' -f $activeSessionCount, $kitBindingCount)
+        # One of the two counts can legitimately be $null here (e.g. binding
+        # count malformed while active_count genuinely observed the live
+        # session): display "unknown" rather than an empty interpolation.
+        $activeSessionCountDisplay = if ($null -ne $activeSessionCount) { $activeSessionCount } else { 'an unknown number of' }
+        $kitBindingCountDisplay = if ($null -ne $kitBindingCount) { $kitBindingCount } else { 'an unknown number of' }
+        $fixtureBindingNote = ('environment_fingerprint.complete is false because {0} active session(s) and {1} kit_instance_binding(s) were observed at capture time while the fixture identity is operator-declared only: this slice cannot verify the declared fixture against the live session''s artifact identity, so the session VRAM and viewer counts in this report must not be treated as bound to this fixture fingerprint. Runtime artifact-identity verification is deferred to task 1.2/1.3.' -f $activeSessionCountDisplay, $kitBindingCountDisplay)
         $allMeasured = $false
     }
     if ($fixtureBindingScope -eq 'runtime_state_unknown') {
@@ -786,8 +829,8 @@ function Get-SessionBaselineReport {
         -Value $TtffMs `
         -MissingReason 'read-only harness does not open a WebRTC session; TTFF requires a live session capture (task 1.3 soak, or a manual measurement) supplied via -TtffMs' `
         -Source 'caller_supplied' `
-        -Validator { param($v) ([double]$v -ge 0) } `
-        -InvalidReasonFormat 'rejected caller-supplied TTFF value {0}: time-to-first-frame cannot be negative'
+        -Validator { param($v) (-not [double]::IsInfinity([double]$v)) -and ([double]$v -ge 0) } `
+        -InvalidReasonFormat 'rejected caller-supplied TTFF value {0}: time-to-first-frame must be finite and cannot be negative'
     $successRate = New-OptionalMeasurement `
         -Value $SessionCreationSuccessRate `
         -MissingReason 'read-only harness does not create sessions; success rate requires repeated live session-creation trials supplied via -SessionCreationSuccessRate' `
