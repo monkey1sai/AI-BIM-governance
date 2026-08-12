@@ -1,0 +1,81 @@
+document_nature=working_note_bootstrap_evidence_not_runtime_spec
+stack_kind=self_referential_bootstrap
+ledger_entry=mechanism-hardening-2
+base_commit=472192386f8402cf19a29005daf25556d26f222c
+host=windows pwsh=7.5.4
+gitnexus=NOT_APPLICABLE (the GitNexus index carries no PowerShell symbols; `impact Stop-HostNativeProcessTreeAndWait` and `impact Resolve-HostNativeKitControlUrl` both returned target-not-found, so callers were established by repository-wide grep instead)
+command_resolution=every `PASS <id>` below without an inline invocation resolves through the immutable command map `$commandSpecById` in scripts/tests/test-self-referential-bootstrap.ps1 at the recorded head; the ids that map does not carry are written with their resolved invocation inline
+--- round 1: initial bundle, recorded at base_commit ---
+PASS test-deploy-governance-static
+PASS test-verify-all
+PASS test-host-native-launcher
+PASS test-host-native-child-launch
+PASS test-deploy-dryrun (pwsh -NoProfile -NonInteractive -File scripts/tests/test-deploy-dryrun.ps1)
+PASS test-deploy-env-fallback (pwsh -NoProfile -NonInteractive -File scripts/tests/test-deploy-env-fallback.ps1)
+PASS test-rebuild-test-deploy
+PASS test-platform-adapter
+PASS test-preflight-ports
+PASS test-stop-all-single-pid (pwsh -NoProfile -NonInteractive -File scripts/tests/test-stop-all-single-pid.ps1)
+PASS test-kit-log-probe
+PASS test-deploy-target-registry
+PASS test-remote-deploy-transport
+PASS test-self-referential-bootstrap
+PASS test-agent-governance-check
+PASS invoke-powershell-static
+NOTE test-deploy-dryrun, test-deploy-env-fallback and test-stop-all-single-pid each have an executable source under scripts/tests/ and pass on this branch, but none of the three is in the immutable command map, so none of them is a verification-contract command id; all three are supporting evidence only. Adding them to the map and to the entry's ordered command_ids would enlarge this entry's fixpoint obligation, so that scope decision is left to the ledger owner rather than taken inside a review-fix round.
+PASS deploy-dry-run-operator-path (scripts/deploy.ps1 -DryRun exits 0 and leaves the working tree clean)
+PASS verify-all-deployment-plan-only-windows (scripts/verify-all.ps1 -Profile Deployment -PlanOnly exits 0)
+NOT_RUN verify-all-deployment-plan-only-linux (no canonical Linux session was opened for this bundle)
+NOT_RUN canonical-linux-rebuild (owed at fixpoint; no baseline rebuild was executed for this bundle)
+NOT_RUN canonical-linux-deployment-verify (owed at fixpoint)
+--- round 2: PR #513 ship-gate NO-SHIP findings and review threads ---
+reviewed_head_commit=110c657fd620e3bdbac4379ac716da99d37848b9
+reviewed_head_worktree=clean (`git status --porcelain` produced no output at the recorded commit)
+reviewed_host=windows pwsh=7.5.4
+reviewed_scope=scripts/lib/host-native-launcher.ps1, scripts/deploy.ps1, scripts/tests/test-host-native-launcher.ps1, scripts/tests/test-deploy-dryrun.ps1, .github/workflows/ci.yml, scripts/verification-manifest.json, scripts/self-referential-bootstrap-ledger.json
+PASS test-host-native-launcher
+PASS test-deploy-governance-static
+PASS test-verify-all
+PASS test-self-referential-bootstrap
+PASS invoke-powershell-static
+PASS test-rebuild-test-deploy
+PASS test-agent-governance-check
+PASS test-deploy-dryrun (pwsh -NoProfile -NonInteractive -File scripts/tests/test-deploy-dryrun.ps1)
+NOT_RUN the remaining round-1 command ids were not re-executed in round 2; nothing in the round-2 scope reaches them
+--- round 3: PR #513 ship-gate second pass (L1-COR-001 platform gate, L1-SEC-001 clean pass, L1-COR-002 single budget) ---
+reviewed_head_commit=d63453024f59b13714ed222ea14bdc34a2890253
+reviewed_head_worktree=clean (`git status --porcelain` produced no output at the recorded commit)
+reviewed_host=windows pwsh=7.5.4
+reviewed_scope=scripts/lib/host-native-launcher.ps1, scripts/lib/platform/platform-adapter.ps1, scripts/tests/test-host-native-launcher.ps1
+PASS test-host-native-launcher
+PASS test-deploy-governance-static
+PASS test-verify-all
+PASS test-self-referential-bootstrap
+PASS invoke-powershell-static
+PASS test-platform-adapter
+PASS test-host-native-child-launch
+PASS test-rebuild-test-deploy
+MEASURED windows-orphan-rediscovery=SUPPORTED (a killed fixture parent's PID still resolved its orphaned python child and its conhost through Win32_Process.ParentProcessId, and the production-default sweep contained and proved both; this is the platform fact Test-OrphanRediscoverySupported encodes)
+MEASURED regression-is-real (previous implementation at 26f056d, same two scenarios): the clean-pass scenario returned SUCCESS after discovering 12 descendants with an empty survivor set, and the slow-discovery scenario spent 2786 ms against an advertised 1500 ms bound
+NOT_RUN linux-leg-of-the-platform-gate (no canonical Linux session was opened; the POSIX fail-closed branch is proven on this host through the injected capability gate, not on a real re-parenting kernel)
+NOT_RUN the remaining round-1 command ids were not re-executed in round 3; nothing in the round-3 scope reaches them
+--- round 4: PR #513 ship-gate third pass, resolved by NARROWING the helper's claim ---
+reviewed_head_commit=3044e788ae2a741ea1f877f3353874cc31d606ad
+reviewed_head_worktree=clean (`git status --porcelain` produced no output at the recorded commit)
+reviewed_host=windows pwsh=7.5.4
+reviewed_scope=scripts/lib/host-native-launcher.ps1, scripts/tests/test-host-native-launcher.ps1
+PASS test-host-native-launcher
+PASS test-deploy-governance-static
+PASS test-verify-all
+PASS test-self-referential-bootstrap
+PASS invoke-powershell-static
+PASS test-platform-adapter
+PASS test-host-native-child-launch
+PASS test-rebuild-test-deploy
+MEASURED post-enumeration-descendant=CONTAINED (gate HIGH-2 refuted). Real three-level chain, grandchild hidden from the snapshot only and running throughout, tree-kill capability forced off so .NET's recursive kill could not mask the helper's own logic. Containment pass 1 re-walked every snapshot member the stop had just killed, rediscovered the grandchild through its dead parent's link and stopped it; pass 2 returned clean. Parent, child and grandchild all gone, helper returned success, lookup sequence [P, D, P, D, conhost, G, P]. Now pinned as a regression case.
+ANALYSIS-NOT-MEASURED residual-sub-window: a descendant discovered AND stopped inside one pass drops out of the expansion roots, so a child it spawned between that pass's enumeration and its stop is not rediscovered. Not closed on purpose - expanding from dead PIDs on every pass would trade this fail-open gap for a fail-dangerous one (a recycled PID would contribute an unrelated process's children to the kill set). Owned by the launch-time OS boundary follow-up, #517.
+CONTRACT the helper is now documented and tested as a bounded best-effort sweep with a fail-closed provability report, NOT an escape-proof boundary; -KnownDescendantProcessIds was removed because it let the helper keep claiming provable containment on a re-parenting platform and neither production caller used it
+NOT_RUN linux-leg-of-the-platform-gate (still no canonical Linux session; the POSIX fail-closed branch remains proven only through the injected capability gate on this host)
+NOT_RUN the remaining round-1 command ids were not re-executed in round 4; nothing in the round-4 scope reaches them
+LIMIT canonical-post-change-verification=pending merge and mainline fixpoint rebuild
+LIMIT full-system-e2e=not claimed
