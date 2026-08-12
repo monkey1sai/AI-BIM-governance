@@ -27,8 +27,8 @@ PASS test-self-referential-bootstrap (exit=0, 29.8s, completed 11:09:58Z, tail="
 PASS test-agent-governance-check (exit=0, 180.9s, completed 11:12:59Z, tail="[test-agent-governance-check] all assertions passed", TAP "# fail 0")
 PASS invoke-powershell-static (exit=0, 5.2s, completed 11:13:04Z, tail="[invoke-powershell-static] passed")
 NOTE all 13 raw logs scanned for FAIL|Exception|Unhandled|Terminating error; only benign substring hits inside passing assertion names and TAP counters, no real failure
---- canonical half: commands 14-15, owned by coordinator (owner-inventory SSH path, out of this worktree's scope) ---
+--- canonical half: commands 14-15, executed by coordinator through the owner-inventory SSH path ---
 PASS canonical-linux-rebuild (exit=0, completed 2026-08-12T11:38:36Z, pinned form from a fresh origin/main isolated worktree at daf551e, no -IdentityFile/-TargetId; deployment tag deploy-20260812-639221315101291265-002 -> daf551e pushed and verified; effective-env snapshot artifacts/deploy-reports/canonical-linux/20260812T113830Z-effective-env.json)
 PASS canonical-linux-deployment-verify (exit=0, completed ~2026-08-12T11:40Z, pinned form on the remote deploy_root against the new deployment; six checks Passed: deployment required artifacts, coordinator health, governance health, conversion health, kit manager health, viewer endpoint; Failed list empty)
-LIMIT ledger fixpoint.reverified_at not yet set; owed once commands 14-15 complete and this file + summary.md are updated in place by the coordinator
+RESOLVED ledger fixpoint.reverified_at was unset while commands 14-15 were outstanding; both completed 2026-08-12 (see the canonical half above) and the ledger entry now carries reverified_at=2026-08-12T11:40:00Z with status=closed
 LIMIT full-system browser, Kit/WebRTC first-frame, USD stage, DataChannel E2E not claimed
