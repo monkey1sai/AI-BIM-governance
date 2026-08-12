@@ -129,4 +129,4 @@
 
 - 測試部署區遷移（`docs/plans/remote-linux-test-deploy-target.plan.md` §5）：PR 改 deploy path 本身，部署區依契約只驗 `origin/main`。
 - PR #458 single-owner merge consent：修改 merge 治理的 PR 無法用新治理 merge 自己，需一次性手動 bootstrap — 同模式第二實例。
-- **Scope 反例**（PR #511 review thread → issue #520）：GPU session baseline 量測 harness（`scripts/measure-session-baseline.ps1`）被主張應入機制清單；依 §2.1 判準裁決為**不屬 mechanism surface** — 其報告無任何 gate 機器消費者，僅餵人工撰寫的 SLO 文件。若日後被接進 gate，依升級規則於接線 PR 補登。
+- **Scope 反例**（PR #511 review thread → issue #520 裁決紀錄）：GPU session baseline 量測 harness（`scripts/measure-session-baseline.ps1`，由 PR #511 引入）被主張應入機制清單；依 §2.1 判準裁決為**不屬 mechanism surface** — 其報告無任何 gate 機器消費者，僅餵人工撰寫的 SLO 文件。若日後被接進 gate，依升級規則於接線 PR 補登。升級規則本身維持 review 強制（非機器強制）：把它機器化等於再改一次 adjudicator，須依本規則另開 debt，收益不成比例。

@@ -1,5 +1,7 @@
 # evidence-harness-scope-clarification — bootstrap evidence
 
+文件性質：working note（bootstrap 審計工件；merge 後受 base-evidence 不可變規則保護）
+
 `stack_kind=self_referential_bootstrap`
 
 This evidence was produced **on the PR branch** (PR #521), not through the
