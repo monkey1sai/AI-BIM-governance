@@ -1509,7 +1509,7 @@
       "id": "migrate-console-to-hifi-design",
       "status": "active",
       "owner": "web-viewer-sample",
-      "current_slice": "2026-08-12 7.3 補勾（npm run verify 全綠：typecheck+build+78 files/1069 tests+struct-log 23/23，exit 0）；7.4 逐 scenario 稽核 artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md 66/66 走過，經 PR #507 九條 P2 review 逐條查證後重算為 51 HOLDS/3 HOLDS-WITH-NOTE/7 STALE/5 UNVERIFIABLE（STALE 皆為早於本遷移的 spec 落後，UNVERIFIABLE 需部署 stack/GPU/browser E2E），未勾；7.1 rebaseline 非 no-op——會復原 #429 修正過的 A4 canonical baseline，已 STOP 還原未 commit，capture script 缺 baseline_provenance 特判待另立修復。32/40；殘項＝0.5/1.2/6.4（human owner）＋7.1/7.4。",
+      "current_slice": "2026-08-12 7.3 補勾（npm run verify 全綠：typecheck+build+1069 tests+struct-log 23/23，exit 0）；7.4 稽核 artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md 66/66 走過，經 PR #507 兩輪 P2 review（13 條：12 改判、1 查證不成立已反駁）重算為 48 HOLDS/3 HOLDS-WITH-NOTE/9 STALE/6 UNVERIFIABLE（STALE 皆早於本遷移，僅 highlight 標紅為真缺口；UNVER 需部署 stack/GPU/E2E），未勾；7.1 rebaseline 非 no-op——會復原 #429 修正過的 A4 canonical baseline，已 STOP 還原未 commit，capture script 缺 baseline_provenance 特判待另立修復。32/40；殘項＝0.5/1.2/6.4（human owner）＋7.1/7.4。",
       "blocked_by": [],
       "last_verified": "2026-08-12T02:34:00Z",
       "task_ledger": {

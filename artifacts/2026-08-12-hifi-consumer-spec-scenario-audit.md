@@ -25,17 +25,18 @@
 
 | Spec | Scenario 數 | HOLDS | HOLDS-WITH-NOTE | STALE | UNVERIFIABLE |
 |---|---|---|---|---|---|
-| `edge-console-operator-frontend` | 30 | 25 | 1 | 4 | 0 |
-| `unified-governance-console` | 36 | 26 | 2 | 3 | 5 |
-| **合計** | **66** | **51** | **3** | **7** | **5** |
+| `edge-console-operator-frontend` | 30 | 24 | 1 | 5 | 0 |
+| `unified-governance-console` | 36 | 24 | 2 | 4 | 6 |
+| **合計** | **66** | **48** | **3** | **9** | **6** |
 
-（2026-08-12 review reclassify：PR #507 的 9 條 P2 review threads 經逐條獨立查證後全部成立，本表已按
-逐條 Scenario 標題機械重算——`grep -c '— \*\*HOLDS\*\*'` 等逐一核對 66 個標題。原表 57/5/0/4 與原結論
-58/5/0/3 彼此不符、亦與標題不符，一併修正。）
+（2026-08-12 review reclassify：PR #507 第一輪 9 條 P2 review threads 經逐條獨立查證後全部成立並改判；
+第二輪 4 條中 3 條成立改判、1 條（「A1–A10 overlay 能力清單不全」）查證後不成立、已附反駁並維持 HOLDS。
+本表按逐條 Scenario 標題機械重算——`grep -c '— \*\*HOLDS\*\*'` 等逐一核對 66 個標題。原表 57/5/0/4 與
+原結論 58/5/0/3 彼此不符、亦與標題不符，已一併修正。）
 
-有 7 項 STALE（spec 措辭與現行程式碼不符，需澄清或另立變更；清單見下方「STALE 項清單」）與 5 項
+有 9 項 STALE（spec 措辭與現行程式碼不符，需澄清或另立變更；清單見下方「STALE 項清單」）與 6 項
 UNVERIFIABLE（需要真實部署 stack／GPU／browser E2E 才能逐字驗證，非「懷疑有問題」而是誠實揭露本 session
-純程式碼稽核的方法論邊界；清單見下方「UNVERIFIABLE 項清單」）。依 design.md Risk 條款，這 12 項在此
+純程式碼稽核的方法論邊界；清單見下方「UNVERIFIABLE 項清單」）。依 design.md Risk 條款，這 15 項在此
 正式升級請 coordinator/使用者決定處置；不視為本 task 阻斷但按規定不可 silently pass。
 
 ---
@@ -77,9 +78,20 @@ provenance 側仍成立：`web-viewer-sample/src/console/data.ts:6` `Prov` 型�
 **Scenario: A1 顯示真實實測 artifact** — **HOLDS**
 `pages.tsx:1030` Deliverables panel 標 `prov="asbuilt"`；BCF/Excel/IDS 相關項見 R9。
 
-**Scenario: A2/A3 為 as-built 操作頁並誠實標邊界** — **HOLDS**
-`VersionDiffPage.tsx`、A3 Federation 區塊（`pages.tsx:1012-1230`）皆走 coordinator proxy，member USD
-immutable／3D overlay 走 client highlight 之邊界說明見 R11。
+**Scenario: A2/A3 為 as-built 操作頁並誠實標邊界** — **STALE**
+（2026-08-12 review reclassify R2：原判 HOLDS 引用的 `VersionDiffPage`／A3 Federation 區塊確實存在且走
+coordinator proxy，但它們掛在 `#version-diff`／`#federation`（`EdgeConsole.tsx:236-237`），不是操作員點
+nav 上「A2 版本差異與責任」／「A3 跨專業疊合」（`data.ts:54-55`，route key `a2`／`a3`）會到的地方。）
+`a2`／`a3` 與 `a1` 一同被 `EdgeConsole.tsx:175` 的 `UNIFIED_WS_KEYS = ["a1", "a2", "a3"]` 攔下，
+`186-192` 掛的是 fixture `WorkspacePage`；`unified/WorkspacePage.tsx:4-6` 檔頭自承「互動為 fixture 語意
+（local state + toast 假 API 字串），不打任何 `/api`」。`unified/docks.tsx` 的 `A2Dock` 標
+`data-prov="fixture"`，逐字渲染捏造的版本差異數字（`L.added` 12／`L.removed` 4）與假 API toast
+（`POST /api/diffs → 202 · diff v12→v15 完成`），且 `apply-overlay` 顯示為
+`POST /api/diffs/d_031/apply-overlay → ✓` 成功——與真實後端誠實回 501（見本 Part R9）相反。這與 spec 的
+「**THEN** 前端 SHALL 顯示經 coordinator proxy 操作後端的 as-built 操作頁（Diff Builder / Federation
+Builder）……**AND** SHALL NOT 顯示任何捏造的版本差異或 federation 數字」不符。與 Part 2 R18「Operator
+opens A1」同源（IA v2 把 `a1`/`a2`/`a3` 三個 route 一起讓給 UnifiedConsole workspace），非本次遷移造成，
+spec 措辭需另立變更對齊（或把 A2/A3 route 導回 as-built 操作頁）。
 
 ### R4 provenance 型別 SHALL 接受後端權威值（含 artifact）
 
@@ -234,8 +246,33 @@ placeholder 提示格式一致。`ReviewSessionViewerPane.test.tsx`（10 tests�
 ### R1 A1–A10 治理操作 SHALL 疊在 primary viewer overlay，spectator SHALL 唯讀
 
 **Scenario: A1–A10 治理以 overlay 疊在 primary viewer 而非獨立殼** — **HOLDS**
-`GovernanceOverlay.tsx:2` 註解「治理 overlay：疊在 primary viewer live 3D 之上」；`GovernanceOverlay.test.tsx`
-（33 tests 綠）。
+（2026-08-12 review R2：本條被質疑應改 STALE，經查證**不成立**，維持 HOLDS；但原證據「檔頭註解 +
+測試數」確實過弱，以下換成結構證據。）本 Scenario 的兩條斷言都是**位置**斷言：治理面板要疊在同一個
+primary viewer 的 live 3D 上、不得是與 viewer 互斥掛載的獨立 console 殼。兩條皆成立：
+`Window.tsx:65` import `GovernanceOverlay`，`5775` 在 Window（即持有 WebRTC `<video>` 的 viewer 元件）
+自己的 render tree 內掛載 `<GovernanceOverlay variant={this.state.viewerTab === "issues" ? "panel" :
+"overlay"} …>`，並直接接上真實操作 handler：`onHighlight` → `_overlayHighlight`、`onClearHighlight` →
+`this._sendStreamMessage(buildClearHighlightRequest())`、`onRunRuleCheck` → `_runGovernanceRuleCheck`、
+`onCreateIssues` → `_createGovIssues`、`onApplyBinding` → `_applyBinding`（同一 viewer、同一
+DataChannel，非另開畫面）。overlay 內的可操作治理面板為 `GovernanceOverlay.tsx:175`（A1 規則/IDS 檢核
+從本 session 起跑）、`207`（治理失敗構件 · 在 live 3D 標示）、`272`（A1 Issue / BCF）、`378`
+（Stage / Artifact Binding）。`GovernanceOverlay.test.tsx`（33 tests 綠）。
+
+review R2 主張「`MVP_ENGINES` 只有 M4/A1/A4、`ROADMAP_ENGINES` 只有 A3 與兩個 code 為 `—` 的項，
+故 A2 與 A5–A10 缺席」——`78-97` 的 code 標籤讀法無誤，但該推論**混用了兩套刻意不同的編號**：本 spec
+line 76 的編號說明明文「此處 A1–A10 採 2026-06-04 使用者拍板的**新治理工作流編號**（A1 進件 / A2 轉檔語意 /
+A3 規則 IDS / A4 治理分 / A5 碰撞 / A6 圖模 / A7 版本差異 / A8 Issue·BCF / A9 AI / A10 報表稽核），與舊
+`roadmap-data.jsx` RM_APPS 編號**刻意不同**……以本 capability spec 為新編號的權威對映」；而
+`GovernanceOverlay.tsx:163` 的 Panel sub 自述其 code 取自「權威：`data.ts` A1A10／README §4」，即舊那套。
+以本 spec 自訂的詞彙回推，被指為缺席者多數其實在列：spec A2 轉檔語意＝`mapping`（`79`，asbuilt）、
+spec A5 碰撞＝`clash`（`94`，`p1` 誠實 disabled）、spec A6 圖模＝`dwg`（`95`，`p4`）、
+spec A8 Issue·BCF＝`issues`（`82`，asbuilt，且 `272` 有可操作面板）、spec A10 報表稽核＝`audit`
+（`96`，`p4`）。真正未進 overlay 的是 spec A1 進件（在 `#/intake`，由本 spec R2 的 Scenario 涵蓋）與
+spec A7 版本差異（在 `#version-diff`）。此外 `MVP_ENGINES`/`ROADMAP_ENGINES` 是「已接能力」（`163`）與
+「願景 / 待建」（`312`）兩塊**清單面板**的內容，不是治理操作面本身；而本 Scenario 的兩條 THEN/AND 都沒有
+「十個模組全數渲染」的要求——該完整性義務落在本 spec R2 的 Scenario（「A1–A10 既為 console 頁亦為
+viewer overlay 操作面……待建能力 SHALL 標 roadmap / `disabled`」），而 `p1`/`p4` 標示與 disabled 呈現
+正是它要求的形式。故維持 HOLDS。
 
 **Scenario: spectator 看同串流但治理面板唯讀（disabled，非隱藏）** — **HOLDS**
 `governance/govPanelState.ts:21-31`：`streamRole === "spectator"` → `{ canOperate: false, disabledReason:
@@ -257,9 +294,22 @@ Edge-console 側 `p1 disabled` 入口（Part 1 R8）＋ overlay 側真實 `highl
 
 ### R3 點 3D 構件 ↔ IFC GUID 雙向 + 治理失敗構件經 client highlightPrimsRequest 標示
 
-**Scenario: 治理失敗構件經 client highlightPrimsRequest 在 3D 標紅** — **HOLDS**
-`governance/highlightBridge.ts:2-3` 註解「usd_prim_path → highlightPrimsRequest → 經注入的 sendMessage
-（既有 `_sendStreamMessage`）走 viewer WebRTC DataChannel」；`highlightBridge.test.ts`（11 tests 綠）。
+**Scenario: 治理失敗構件經 client highlightPrimsRequest 在 3D 標紅** — **STALE**
+（2026-08-12 review reclassify R2：原判 HOLDS 的證據只涵蓋「訊息組建與傳輸」，未涵蓋 Scenario 標題逐字
+要求的「標**紅**」。）client 側仍成立：`governance/highlightBridge.ts:2-3` 註解「usd_prim_path →
+highlightPrimsRequest → 經注入的 sendMessage（既有 `_sendStreamMessage`）走 viewer WebRTC DataChannel」，
+`59`／`90` 確實依 severity 寫入 `color: severityToColor(...)`，`highlightBridge.test.ts`（11 tests 綠）。
+但 production Kit handler 不吃這個顏色：`bim-streaming-server/source/extensions/
+ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/stage_management.py:396-458`
+`_on_highlight_prims` 的 docstring 自承「First MVP uses USD selection as the visual fallback」，
+`426-442` 的逐項迴圈只讀 `prim_path`／`usd_prim_path`，`444-450` 只呼叫 `sel.clear_selected_prim_paths()`
+＋`sel.set_selected_prim_paths(selected_paths, True)`，回傳 payload `410`／`454` 皆寫死
+`"applied_mode": "selection"`——`grep -n "color" stage_management.py` **全檔零命中**。
+`highlightBridge.ts:70-71` 的本地註解也已自承「per-item color 仍照 severity 對映寫入協定 payload
+（error=紅 / warning=橘 / 其他=藍），但 Kit 現行 handler（`applied_mode="selection"`）不讀 color」。
+故 3D 端呈現的是 USD 選取高亮而非紅色著色。Scenario 的三條 THEN/AND（組 request／走既有 DataChannel／
+不復活退役 server-push）仍成立，不成立的是標題所述的「標紅」。需另立變更：或在 Kit 端實作顏色，
+或把 spec 收斂為 selection highlighting。
 
 **Scenario: 點 3D 構件反查 IFC GUID 帶進治理** — **HOLDS**
 `governance/mappingCache.ts:2,27-29`：`guidToPrim`/`primToGuid` 雙向 index 建置於 `ifc_guid`/
@@ -355,8 +405,12 @@ DataChannel E2E 未跑）。在補上現行 runtime 證據前，依本 audit 方
 
 ### R11 primary 治理 viewer SHALL 採範本式全幅語意驗證版面
 
-**Scenario: 全幅 6 分區版面 + 治理操作分頁，既有能力保留** — **HOLDS**
-六分區元件確認存在：`viewer/ModelInfoCard.tsx`（模型資訊）、`viewer/IfcSemanticPanel.tsx`（IFC 語意）、
+**Scenario: 全幅 6 分區版面 + 治理操作分頁，既有能力保留** — **UNVERIFIABLE**
+（2026-08-12 review reclassify R2：原判 HOLDS 的證據是「元件檔案存在 + 單元測試數」，證不到「整合後
+確實呈現全幅 6 分區、治理控制可操作、spectator 唯讀」，也未取得 Scenario 逐字要求的
+`gov-viewer-layout` browser E2E 截圖——`e2e/gov-viewer-layout.spec.ts` 確實存在且有 4 個 `?harness=1`
+測試，但本 session 未執行：`web-viewer-sample/package.json:25` 的 `verify` 不含 `test:e2e`。）
+以下為已核對到的間接證據：六分區元件確認存在：`viewer/ModelInfoCard.tsx`（模型資訊）、`viewer/IfcSemanticPanel.tsx`（IFC 語意）、
 `viewer/StructureStats.tsx`（結構樹）、`viewer/MappingTable.tsx`（GUID⇔Prim 對構表）、
 `viewer/MockViewport.tsx`（中央視區/幾何定位）、`modelData/ObjectDetailPane.tsx`（Pset/空間關係）；對應
 測試 `ModelInfoCard.test.tsx`(4)/`IfcSemanticPanel.test.tsx`(4)/`StructureStats.test.tsx`(4)/
@@ -486,25 +540,32 @@ panel/first-frame evidence/DataChannel limitations 為既有 Requirement R11/R13
 
 1. **edge-console-operator-frontend** R1「兩段式導覽與 provenance 誠實標記」——`/console` 預設落地畫面
    已是 UnifiedConsole，NAV_GROUPS 兩段導覽只在 legacy 深連結才渲染。
-2. **edge-console-operator-frontend** R5「缺 mediaPort 時不傳 null 給串流 library」——standalone `App`
+2. **edge-console-operator-frontend** R3「A2/A3 為 as-built 操作頁並誠實標邊界」——`#a2`／`#a3` 同樣被
+   `UNIFIED_WS_KEYS` 攔去 fixture `WorkspacePage`，`A2Dock` 畫捏造的 diff 數字與假成功 apply-overlay；
+   真正的 `VersionDiffPage`／`FederationPage` 只在 `#version-diff`／`#federation`。
+3. **edge-console-operator-frontend** R5「缺 mediaPort 時不傳 null 給串流 library」——standalone `App`
    路徑以 `0` 而非 `undefined` 表示「未指定」，spec 只描述 `undefined` 一種哨兵。
-3. **edge-console-operator-frontend** R7「未設定時預設與 viewer 一致」——`/ui` 部署下 console 預設為
+4. **edge-console-operator-frontend** R7「未設定時預設與 viewer 一致」——`/ui` 部署下 console 預設為
    same-origin，viewer 預設仍是 `http://127.0.0.1:8004`，兩者不再一致。
-4. **edge-console-operator-frontend** R13「GPU / 首幀無遙測標未取得（非 fail，非捏造）」——`#runtime`
+5. **edge-console-operator-frontend** R13「GPU / 首幀無遙測標未取得（非 fail，非捏造）」——`#runtime`
    現為 fixture-only `OpsPage`，畫出具體 GPU%／VRAM／`first-frame 1840ms` 而非「未取得」。
-5. **unified-governance-console** R12「harness/無 GPU 時中央視區顯示資訊而非空白」——mock viewport 缺
+6. **unified-governance-console** R3「治理失敗構件經 client highlightPrimsRequest 在 3D 標紅」——client
+   有送 `color`，但 production Kit `_on_highlight_prims` 全檔不讀 color、只做
+   `set_selected_prim_paths` 並回 `applied_mode: "selection"`，3D 端不是紅色著色。
+7. **unified-governance-console** R12「harness/無 GPU 時中央視區顯示資訊而非空白」——mock viewport 缺
    highlight echo／camera 狀態欄位，點結構樹無 echo（callback 未接上）。
-6. **unified-governance-console** R17「Operator opens the product console」——UnifiedShell 無 Chat USD
+8. **unified-governance-console** R17「Operator opens the product console」——UnifiedShell 無 Chat USD
    Agent side panel，左導航分組名稱亦與 requirement 敘述不同。
-7. **unified-governance-console** R18「Operator opens A1」——`#a1` 掛 fixture `WorkspacePage`/`A1Dock`，
+9. **unified-governance-console** R18「Operator opens A1」——`#a1` 掛 fixture `WorkspacePage`/`A1Dock`，
    無 upload/select model 與 Excel delivery。
 
-**這 7 項的共同特徵**：(a) 皆源自 IA v2／UnifiedConsole 路由分流、`defaultCoordinatorBase` same-origin 化
-等**早於本次 `migrate-console-to-hifi-design` 遷移**的既有落差，非本次遷移造成（#357/#358/#429 只動
-CSS/inline style token、主題移除與 golden baseline，見文件開頭「總覽」的 file-scope 證據）；(b) 皆屬
-「spec 措辭落後於程式碼」而非「程式碼壞掉」——多數是刻意的產品演進（例如 `OpsPage` 誠實標
-`data-prov="fixture"`、`coordinatorBase` same-origin 是為了 LAN 部署），但既有 spec 文字未同步；
-(c) 依 design.md Risk 條款不得 silently pass，升級請 coordinator/使用者裁決各項是否另立 spec 變更。
+**這 9 項的共同特徵**：(a) 皆**早於本次 `migrate-console-to-hifi-design` 遷移**，非本次遷移造成
+（#357/#358/#429 只動 CSS/inline style token、主題移除與 golden baseline，見文件開頭「總覽」的 file-scope
+證據）；(b) 其中 8 項屬「spec 措辭落後於程式碼」而非「程式碼壞掉」——多數是刻意的產品演進（IA v2 把
+`a1`/`a2`/`a3` 讓給 UnifiedConsole workspace、`OpsPage` 誠實標 `data-prov="fixture"`、
+`coordinatorBase` same-origin 是為了 LAN 部署），但既有 spec 文字未同步；**例外是第 6 項**——那是真正的
+能力缺口（Kit 端從未實作顏色高亮），需在「補實作」與「把 spec 收斂為 selection highlighting」之間擇一，
+不能只改文字；(c) 依 design.md Risk 條款不得 silently pass，升級請 coordinator/使用者裁決各項處置。
 
 ## UNVERIFIABLE 項清單（升級請 coordinator/使用者決定）
 
@@ -515,12 +576,14 @@ CSS/inline style token、主題移除與 golden baseline，見文件開頭「總
 3. **unified-governance-console** R10「spectator 唯讀且不送 mutating；primary binding 交易式套用」——
    第三層（production Kit `openedStageResult`／`loadArtifactGroupResult` + coordinator
    `stageBindingApplied`）在 repo 自有證據中明言未被觀察。
-4. **unified-governance-console** R14「模型↔問題 分頁切換，問題分頁全幅治理且無 GPU 可操作」——需一次
+4. **unified-governance-console** R11「全幅 6 分區版面 + 治理操作分頁，既有能力保留」——需 `gov-viewer-layout`
+   browser E2E 截圖；`e2e/gov-viewer-layout.spec.ts` 存在（4 個 `?harness=1` 測試）但本 session 未執行。
+5. **unified-governance-console** R14「模型↔問題 分頁切換，問題分頁全幅治理且無 GPU 可操作」——需一次
    非 skip 的 `issues-tab` browser run；`npm run verify` 不含 `test:e2e`。
-5. **unified-governance-console** R15「真實 session 出 live 3D 後，點對構表構件仍可見 ②IFC語意 + ⑥空間」——
+6. **unified-governance-console** R15「真實 session 出 live 3D 後，點對構表構件仍可見 ②IFC語意 + ⑥空間」——
    需真實 Kit GPU 視訊幀，本 session 無 GPU/Kit runtime。
 
-**這 5 項的共同特徵**：(a) 均需要真實部署 stack／GPU／Kit runtime 才能執行對應的 browser E2E；(b) 均
+**這 6 項的共同特徵**：(a) 均需要真實部署 stack／GPU／Kit runtime 才能執行對應的 browser E2E；(b) 均
 **不在**本次 `migrate-console-to-hifi-design` 遷移實際改動的檔案範圍內（見文件開頭「總覽」的 file-scope
 證據：#357/#358/#429 只動 CSS/inline style/主題移除/golden baseline，零觸碰 `Window.tsx`／
 `MockViewport.tsx`／`deploy.ps1`／governance-service／streaming-server）；(c) 因此結構上「本次遷移造成
@@ -536,9 +599,10 @@ HOLDS，如實標 UNVERIFIABLE 並列出。
 
 ## 結論
 
-66 個 scenarios 中 **51 HOLDS、3 HOLDS-WITH-NOTE、7 STALE、5 UNVERIFIABLE**（2026-08-12 review
+66 個 scenarios 中 **48 HOLDS、3 HOLDS-WITH-NOTE、9 STALE、6 UNVERIFIABLE**（2026-08-12 兩輪 review
 reclassify 後的機械計數，與 66 個逐條 Scenario 標題一致）。因存在 STALE 與 UNVERIFIABLE 項（非
-HOLDS/HOLDS-WITH-NOTE），依規範**不勾選** tasks.md 7.4；7 項 STALE 與 5 項 UNVERIFIABLE 已分列清單與
+HOLDS/HOLDS-WITH-NOTE），依規範**不勾選** tasks.md 7.4；9 項 STALE 與 6 項 UNVERIFIABLE 已分列清單與
 根因，交 coordinator／使用者決定是否另開 spec 對齊變更與部署驗證任務，或接受「結構上不可能受本次遷移
-影響」的間接證據作為充分理由後續補勾。7 項 STALE 皆為既有落差（早於 #357/#358/#429），本次遷移
-（僅 CSS token／主題移除／golden baseline）結構上不可能造成之。
+影響」的間接證據作為充分理由後續補勾。9 項 STALE 皆為既有落差（早於 #357/#358/#429），本次遷移
+（僅 CSS token／主題移除／golden baseline）結構上不可能造成之；其中僅 unified-governance-console R3
+（highlight 標紅）為真正的能力缺口，其餘 8 項為 spec 措辭落後於程式碼。
