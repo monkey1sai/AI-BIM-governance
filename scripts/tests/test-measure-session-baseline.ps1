@@ -13,7 +13,7 @@ $rootScriptPath = Join-Path $repoRoot 'scripts\measure-session-baseline.ps1'
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$REQUIRED_ENV_FINGERPRINT_FIELDS = @('gpu_model', 'gpu_driver_version', 'kit_version', 'fixture_hash', 'fixture_size_bytes')
+$REQUIRED_ENV_FINGERPRINT_FIELDS = @('gpu_model', 'gpu_driver_version', 'kit_version', 'fixture_hash', 'fixture_size_bytes', 'fixture_provenance')
 $REQUIRED_REPORT_TOP_LEVEL_KEYS = @(
     'schema_version', 'run_id', 'captured_at', 'host', 'environment_fingerprint',
     'gpu_inventory', 'session_vram_watermark', 'webrtc_health_probe', 'ttff_ms', 'session_creation_success_rate'
@@ -52,8 +52,11 @@ function Assert-ReportSchemaShape {
     Assert-True ($ef.gpu_fingerprint_scope_note -match 'deferred to task 1.2') "$Message :: GPU scope note defers per-GPU fingerprinting to task 1.2"
     Assert-Equal 'checkout_packman_declared' $ef.kit_version.source "$Message :: kit_version declares checkout provenance"
     Assert-True (-not $ef.kit_version.runtime_verified) "$Message :: kit_version is never claimed as runtime-verified"
-    $expectComplete = (-not [bool]($REQUIRED_ENV_FINGERPRINT_FIELDS | Where-Object { -not $ef[$_].measured })) -and ($ef.gpu_fingerprint_scope -ne 'first_gpu_only')
-    Assert-Equal $expectComplete $ef.complete "$Message :: environment_fingerprint.complete matches per-field measured flags AND full GPU-topology attribution"
+    Assert-True ($ef.Contains('fixture_binding_scope')) "$Message :: environment_fingerprint declares its fixture-to-session binding scope"
+    Assert-True (-not $ef.fixture_provenance.runtime_verified) "$Message :: fixture identity is never claimed as runtime-verified"
+    Assert-True ($ef.fixture_provenance.caveat -match 'task 1.2/1.3') "$Message :: fixture provenance caveat defers runtime artifact-identity verification to task 1.2/1.3"
+    $expectComplete = (-not [bool]($REQUIRED_ENV_FINGERPRINT_FIELDS | Where-Object { -not $ef[$_].measured })) -and ($ef.gpu_fingerprint_scope -ne 'first_gpu_only') -and ($ef.fixture_binding_scope -ne 'live_session_unverified')
+    Assert-Equal $expectComplete $ef.complete "$Message :: environment_fingerprint.complete matches per-field measured flags AND full GPU-topology attribution AND a verifiable fixture binding"
 
     Assert-MeasuredShape -Obj $Report.ttff_ms -Message "$Message :: ttff_ms"
     Assert-MeasuredShape -Obj $Report.session_creation_success_rate -Message "$Message :: session_creation_success_rate"
@@ -210,6 +213,7 @@ if ($realKitVersion.measured) {
 # 5. Get-FixtureFingerprint
 # ============================================================================
 $noFixture = Get-FixtureFingerprint -FixturePath ''
+Assert-True (-not $noFixture.path_supplied) 'no fixture path -> path_supplied=false (declaration absent, not merely unhashable)'
 Assert-True (-not $noFixture.hash_measured) 'no fixture path -> hash unmeasured'
 Assert-True (-not $noFixture.size_measured) 'no fixture path -> size unmeasured'
 Assert-True ($null -eq $noFixture.hash) 'no fixture path -> hash null, not fabricated'
@@ -222,12 +226,14 @@ try {
     $expectedSize = (Get-Item -LiteralPath $fixtureFile).Length
 
     $fixtureResult = Get-FixtureFingerprint -FixturePath $fixtureFile
+    Assert-True $fixtureResult.path_supplied 'existing fixture -> path_supplied=true'
     Assert-True $fixtureResult.hash_measured 'existing fixture -> hash measured=true'
     Assert-Equal $expectedHash $fixtureResult.hash 'fixture hash matches independent Get-FileHash computation'
     Assert-True $fixtureResult.size_measured 'existing fixture -> size measured=true'
     Assert-Equal $expectedSize $fixtureResult.size_bytes 'fixture size matches independent Get-Item length'
 
     $missingFixture = Get-FixtureFingerprint -FixturePath (Join-Path $sandbox 'nope.ifc')
+    Assert-True $missingFixture.path_supplied 'nonexistent fixture path -> still a declaration (path_supplied=true), just an unhashable one'
     Assert-True (-not $missingFixture.hash_measured) 'nonexistent fixture path -> hash unmeasured'
     Assert-True (-not [string]::IsNullOrWhiteSpace($missingFixture.hash_reason)) 'nonexistent fixture path -> reason present'
     Write-TestPass 'Get-FixtureFingerprint'
@@ -412,7 +418,7 @@ Write-TestPass 'Get-SessionVramWatermark (partial-visibility refusal + attributi
 # ============================================================================
 $fullInv = Get-GpuInventorySnapshot -NvidiaSmiQuery { @('0, NVIDIA GeForce RTX 4060 Ti, 580.97, 8188, 1827, 6123, 2, 0, [N/A]') }
 $fullKit = [ordered]@{ value = '110.1.0'; measured = $true; reason = $null; source = 'checkout_packman_declared'; caveat = 'test caveat' }
-$fullFixture = [ordered]@{ hash = 'deadbeef'; hash_measured = $true; hash_reason = $null; size_bytes = 12345; size_measured = $true; size_reason = $null }
+$fullFixture = [ordered]@{ path_supplied = $true; hash = 'deadbeef'; hash_measured = $true; hash_reason = $null; size_bytes = 12345; size_measured = $true; size_reason = $null }
 $fullFingerprint = Get-EnvironmentFingerprint -GpuInventory $fullInv -KitVersion $fullKit -FixtureFingerprint $fullFixture
 Assert-True $fullFingerprint.complete 'environment fingerprint complete=true when all five fields measured'
 Assert-Equal 'checkout_packman_declared' $fullFingerprint.kit_version.source 'environment fingerprint propagates kit_version source through to the report'
@@ -450,7 +456,52 @@ Assert-True (-not $partialFingerprint.gpu_model.measured) 'partial fingerprint: 
 Assert-True (-not [string]::IsNullOrWhiteSpace($partialFingerprint.gpu_model.reason)) 'partial fingerprint: gpu_model carries reason'
 Assert-True ($null -eq $partialFingerprint.gpu_count) 'no GPU inventory -> gpu_count null, not fabricated 0'
 Assert-Equal 'unknown_no_gpu_inventory' $partialFingerprint.gpu_fingerprint_scope 'no GPU inventory -> scope reported as unknown, not single_gpu'
-Write-TestPass 'Get-EnvironmentFingerprint completeness gate'
+
+# PR #511 review r4 (owner-delegated adjudication of the reviewer's option B):
+# -FixturePath is hashed independently of what the live session actually serves,
+# so a report can bind session VRAM / viewer counts to the wrong fixture's
+# fingerprint. The fix is honest provenance, not a fabricated verification:
+#   (a) the provenance of the fixture identity is always published;
+#   (b) completeness is withdrawn exactly when a live session is observed, which
+#       is the only situation where misattribution is possible;
+#   (c) an idle baseline - the primary 1.1 use case - keeps its semantics.
+Assert-Equal 'operator_supplied_unverified' $fullFingerprint.fixture_provenance.value 'a supplied -FixturePath is published as operator-declared and unverified, never as an observation'
+Assert-True $fullFingerprint.fixture_provenance.measured 'fixture provenance is itself a known fact, so it is measured=true'
+Assert-True (-not $fullFingerprint.fixture_provenance.runtime_verified) 'fixture identity is never claimed as runtime-verified in this slice'
+Assert-True ($fullFingerprint.fixture_provenance.caveat -match 'task 1.2/1.3') 'fixture provenance caveat defers runtime artifact-identity verification to task 1.2/1.3'
+Assert-Equal 'no_live_session_observed' $fullFingerprint.fixture_binding_scope 'no observed session -> idle-baseline binding scope'
+Assert-True $fullFingerprint.complete 'idle baseline with a declared fixture keeps complete=true: there is no live measurement to misattribute'
+
+# (b) a live session IS observed: the declared fixture cannot be verified against
+#     the artifact that session actually loaded, so the completeness claim goes.
+$liveSessionFingerprint = Get-EnvironmentFingerprint -GpuInventory $fullInv -KitVersion $fullKit -FixtureFingerprint $fullFixture -ObservedActiveSessionCount 1
+Assert-Equal 'live_session_unverified' $liveSessionFingerprint.fixture_binding_scope 'observed active session + declared fixture -> live_session_unverified binding scope'
+Assert-True (-not $liveSessionFingerprint.complete) 'observed live session: complete=false despite every field measured, because the fixture binding is unverifiable in this slice'
+Assert-True ($liveSessionFingerprint.fixture_binding_scope_note -match "cannot verify the declared fixture against the live session's artifact identity") 'incompleteness reason names the unverifiable fixture-to-session binding'
+Assert-True ($liveSessionFingerprint.fixture_binding_scope_note -match 'task 1.2/1.3') 'incompleteness reason defers runtime artifact-identity verification to task 1.2/1.3'
+Assert-Equal 'operator_supplied_unverified' $liveSessionFingerprint.fixture_provenance.value 'provenance field is retained in the live-session case too'
+Assert-Equal 1 $liveSessionFingerprint.observed_active_session_count 'fingerprint records the observation that withdrew completeness'
+
+# A kit_instance_binding alone is enough: bindings exist before/after the session
+# row is counted, and either one means a live artifact is in play.
+$boundFingerprint = Get-EnvironmentFingerprint -GpuInventory $fullInv -KitVersion $fullKit -FixtureFingerprint $fullFixture -ObservedActiveSessionCount 0 -ObservedKitInstanceBindingCount 2
+Assert-Equal 'live_session_unverified' $boundFingerprint.fixture_binding_scope 'an observed kit_instance_binding alone also makes the fixture binding unverifiable'
+Assert-True (-not $boundFingerprint.complete) 'observed kit binding: complete=false'
+
+# An unreachable coordinator reports null, which is "no data" - it must not be
+# read as an observed live session, and must not be read as an observed idle host
+# either; the fixture fields stay honest and completeness follows the fixture
+# fields alone.
+$nullProbeFingerprint = Get-EnvironmentFingerprint -GpuInventory $fullInv -KitVersion $fullKit -FixtureFingerprint $fullFixture -ObservedActiveSessionCount $null -ObservedKitInstanceBindingCount $null
+Assert-Equal 'no_live_session_observed' $nullProbeFingerprint.fixture_binding_scope 'no observation at all -> no live session was OBSERVED, so completeness is not withdrawn on speculation'
+Assert-True ($null -eq $nullProbeFingerprint.observed_active_session_count) 'unreachable probe records null, not a fabricated 0'
+
+# (c) no fixture declared at all: provenance says so instead of implying a file.
+$noFixtureFingerprint = Get-EnvironmentFingerprint -GpuInventory $fullInv -KitVersion $fullKit -FixtureFingerprint $noFixture -ObservedActiveSessionCount 3
+Assert-Equal 'not_supplied' $noFixtureFingerprint.fixture_provenance.value 'no declared fixture -> provenance reports not_supplied'
+Assert-Equal 'not_supplied' $noFixtureFingerprint.fixture_binding_scope 'no declared fixture -> nothing to misbind, scope reports not_supplied'
+Assert-True (-not $noFixtureFingerprint.complete) 'no declared fixture -> complete=false via the unmeasured fixture fields'
+Write-TestPass 'Get-EnvironmentFingerprint completeness gate + fixture provenance honesty'
 
 $measurementPresent = New-OptionalMeasurement -Value 42.5 -MissingReason 'unused'
 Assert-Equal 42.5 $measurementPresent.value 'New-OptionalMeasurement passes through a supplied value'
@@ -515,14 +566,42 @@ try {
         -NvidiaSmiComputeAppsQuery { @('40232, kit.exe, 2000') } `
         -WebRtcHealthInvoker {
             param($Uri, $Timeout)
-            return [ordered]@{ ok = $true; body = [pscustomobject]@{ status = 'ok'; kit_signaling_port = 49100; sessions = [pscustomobject]@{ active_count = 1 } }; status_code = 200; error = $null }
+            # An IDLE host: no active session and no kit_instance_binding. This is
+            # the primary task 1.1 use case, and the one case where a declared
+            # fixture can still be part of a complete fingerprint (PR #511 r4).
+            return [ordered]@{ ok = $true; body = [pscustomobject]@{ status = 'ok'; kit_signaling_port = 49100; sessions = [pscustomobject]@{ active_count = 0 }; kit_instance_bindings = @() }; status_code = 200; error = $null }
         }
     Assert-ReportSchemaShape -Report $completeReport -Message 'complete report (fixture + TTFF + success rate supplied)'
     Assert-True $completeReport.environment_fingerprint.complete 'complete report: environment_fingerprint.complete=true'
+    Assert-Equal 'no_live_session_observed' $completeReport.environment_fingerprint.fixture_binding_scope 'complete report is an idle baseline: no live session to misattribute the declared fixture to'
+    Assert-Equal 'operator_supplied_unverified' $completeReport.environment_fingerprint.fixture_provenance.value 'complete report still declares the fixture as operator-supplied and unverified'
     Assert-True $completeReport.ttff_ms.measured 'complete report: TTFF measured when supplied'
     Assert-Equal 812.5 $completeReport.ttff_ms.value 'complete report: TTFF value passed through'
     Assert-True $completeReport.session_creation_success_rate.measured 'complete report: success rate measured when supplied'
     Write-TestPass 'Get-SessionBaselineReport complete end-to-end (fixture + TTFF + success rate)'
+
+    # The same inputs against a host that IS serving a session: every field is
+    # still measured, but the report must refuse to present the operator's
+    # fixture as the artifact those session numbers came from.
+    $liveSessionReport = Get-SessionBaselineReport `
+        -CoordinatorUrl 'http://127.0.0.1:8004' `
+        -RepoRoot $repoRoot `
+        -Now $fixedNow `
+        -FixturePath $fixtureFile `
+        -TtffMs 812.5 `
+        -SessionCreationSuccessRate 0.97 `
+        -NvidiaSmiQuery { @('0, NVIDIA GeForce RTX 4060 Ti, 580.97, 8188, 1827, 6123, 2, 0, [N/A]') } `
+        -NvidiaSmiComputeAppsQuery { @('40232, kit.exe, 2000') } `
+        -WebRtcHealthInvoker {
+            param($Uri, $Timeout)
+            return [ordered]@{ ok = $true; body = [pscustomobject]@{ status = 'ok'; kit_signaling_port = 49100; sessions = [pscustomobject]@{ active_count = 2 }; kit_instance_bindings = @([pscustomobject]@{ status = 'ready' }) }; status_code = 200; error = $null }
+        }
+    Assert-ReportSchemaShape -Report $liveSessionReport -Message 'live-session report (fixture declared while a session is being served)'
+    Assert-Equal 'live_session_unverified' $liveSessionReport.environment_fingerprint.fixture_binding_scope 'live session observed -> fixture binding declared unverifiable'
+    Assert-True (-not $liveSessionReport.environment_fingerprint.complete) 'live session observed: complete=false so the SHALL-NOT-set-SLOs warning fires instead of a fixture binding nobody verified'
+    Assert-Equal 2 $liveSessionReport.environment_fingerprint.observed_active_session_count 'live-session report records the observed session count that withdrew completeness'
+    Assert-True $liveSessionReport.environment_fingerprint.fixture_hash.measured 'live-session report still publishes the declared fixture hash (withheld completeness, not withheld data)'
+    Write-TestPass 'Get-SessionBaselineReport withdraws completeness when a live session cannot be tied to the declared fixture'
 } finally { Remove-TestSandbox -Path $sandbox }
 
 # Caller-supplied TTFF / success rate are validated, not trusted blindly.

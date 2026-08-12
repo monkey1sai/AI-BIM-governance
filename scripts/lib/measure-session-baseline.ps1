@@ -247,21 +247,25 @@ function Get-FixtureFingerprint {
     [CmdletBinding()]
     param([string] $FixturePath)
 
+    # `path_supplied` records whether the OPERATOR declared a fixture at all -
+    # which is a different question from whether it could be hashed. The
+    # environment fingerprint needs both to state provenance honestly
+    # (PR #511 review r4).
     if (-not $FixturePath) {
         $reason = 'no -FixturePath supplied to this harness run (no live session artifact captured)'
-        return [ordered]@{ hash = $null; hash_measured = $false; hash_reason = $reason; size_bytes = $null; size_measured = $false; size_reason = $reason }
+        return [ordered]@{ path_supplied = $false; hash = $null; hash_measured = $false; hash_reason = $reason; size_bytes = $null; size_measured = $false; size_reason = $reason }
     }
     if (-not (Test-Path -LiteralPath $FixturePath -PathType Leaf)) {
         $reason = "fixture path does not exist: $FixturePath"
-        return [ordered]@{ hash = $null; hash_measured = $false; hash_reason = $reason; size_bytes = $null; size_measured = $false; size_reason = $reason }
+        return [ordered]@{ path_supplied = $true; hash = $null; hash_measured = $false; hash_reason = $reason; size_bytes = $null; size_measured = $false; size_reason = $reason }
     }
     try {
         $hash = (Get-FileHash -LiteralPath $FixturePath -Algorithm SHA256).Hash.ToLowerInvariant()
         $size = (Get-Item -LiteralPath $FixturePath).Length
-        return [ordered]@{ hash = $hash; hash_measured = $true; hash_reason = $null; size_bytes = $size; size_measured = $true; size_reason = $null }
+        return [ordered]@{ path_supplied = $true; hash = $hash; hash_measured = $true; hash_reason = $null; size_bytes = $size; size_measured = $true; size_reason = $null }
     } catch {
         $reason = "failed to hash fixture: $($_.Exception.Message)"
-        return [ordered]@{ hash = $null; hash_measured = $false; hash_reason = $reason; size_bytes = $null; size_measured = $false; size_reason = $reason }
+        return [ordered]@{ path_supplied = $true; hash = $null; hash_measured = $false; hash_reason = $reason; size_bytes = $null; size_measured = $false; size_reason = $reason }
     }
 }
 
@@ -474,7 +478,12 @@ function Get-EnvironmentFingerprint {
         [Parameter(Mandatory = $true)] $GpuInventory,
         [Parameter(Mandatory = $true)] $KitVersion,
         [Parameter(Mandatory = $true)] $FixtureFingerprint,
-        [int] $ObservedKitProcessCount = 0
+        [int] $ObservedKitProcessCount = 0,
+        # Left untyped and defaulting to $null on purpose: an unreachable
+        # coordinator reports "no data", which must not be coerced into an
+        # observed 0.
+        $ObservedActiveSessionCount = $null,
+        $ObservedKitInstanceBindingCount = $null
     )
 
     $gpuModel = $null
@@ -510,6 +519,26 @@ function Get-EnvironmentFingerprint {
         $kitVersionCaveat += ('; {0} Kit GPU process(es) were observed running at capture time and their actual build identity was not interrogated, so this checkout-declared version may not describe the processes that produced these measurements' -f $ObservedKitProcessCount)
     }
 
+    # PR #511 review r4 (reviewer's option B, adjudicated by the owner): the
+    # fixture is a DECLARATION, and a declaration is only dangerous when there is
+    # a live observation for it to be misattributed to. So: always publish the
+    # provenance, and withdraw the completeness claim exactly when the runtime
+    # observation shows a session that this harness cannot tie to the declared
+    # artifact. An idle baseline (the primary 1.1 use case) has nothing to
+    # misattribute and keeps its completeness semantics unchanged.
+    $activeSessionCount = 0
+    if ($null -ne $ObservedActiveSessionCount) {
+        try { $activeSessionCount = [int]$ObservedActiveSessionCount } catch { $activeSessionCount = 0 }
+    }
+    $kitBindingCount = 0
+    if ($null -ne $ObservedKitInstanceBindingCount) {
+        try { $kitBindingCount = [int]$ObservedKitInstanceBindingCount } catch { $kitBindingCount = 0 }
+    }
+    $liveSessionObserved = (($activeSessionCount -gt 0) -or ($kitBindingCount -gt 0))
+
+    $fixturePathSupplied = [bool](Get-SafeProperty -Object $FixtureFingerprint -Name 'path_supplied')
+    $fixtureProvenance = if ($fixturePathSupplied) { 'operator_supplied_unverified' } else { 'not_supplied' }
+
     $fields = [ordered]@{
         gpu_model           = [ordered]@{ value = $gpuModel; measured = $gpuModelMeasured; reason = $gpuModelReason }
         gpu_driver_version  = [ordered]@{ value = $gpuDriver; measured = $gpuDriverMeasured; reason = $gpuDriverReason }
@@ -529,6 +558,20 @@ function Get-EnvironmentFingerprint {
         }
         fixture_hash        = [ordered]@{ value = $FixtureFingerprint.hash; measured = $FixtureFingerprint.hash_measured; reason = $FixtureFingerprint.hash_reason }
         fixture_size_bytes  = [ordered]@{ value = $FixtureFingerprint.size_bytes; measured = $FixtureFingerprint.size_measured; reason = $FixtureFingerprint.size_reason }
+        # PR #511 review r4: -FixturePath is an OPERATOR DECLARATION. It is
+        # hashed off disk, entirely independently of whatever artifact the live
+        # session actually loaded, so the hash proves which FILE was declared -
+        # never that the measurements sitting beside it came from that scene.
+        # The provenance of the field is itself a known fact, so it is measured;
+        # what is NOT known is the binding, and `fixture_binding_scope` below is
+        # what carries that.
+        fixture_provenance  = [ordered]@{
+            value            = $fixtureProvenance
+            measured         = $true
+            reason           = $null
+            runtime_verified = $false
+            caveat           = 'the fixture identity comes from the operator-supplied -FixturePath and is hashed off disk; nothing in this slice reads back the artifact identity the running session actually loaded, so an equal fixture_hash across two runs proves the same FILE was DECLARED, not that the same scene was served. Runtime artifact-identity verification (interrogating the live session for the asset it opened) is task 1.2/1.3 scope.'
+        }
     }
     $allMeasured = $true
     foreach ($key in @($fields.Keys)) {
@@ -561,6 +604,34 @@ function Get-EnvironmentFingerprint {
     # `complete`) from being silently bypassed on a multi-GPU host (PR #511
     # review, round 2).
     if ($gpuScope -eq 'first_gpu_only') { $allMeasured = $false }
+
+    # Fixture-to-session binding scope (PR #511 review r4).
+    #   'not_supplied'            - no fixture declared; nothing to misbind.
+    #   'no_live_session_observed'- a fixture was declared and the runtime shows
+    #                               no active session / kit binding: an idle
+    #                               baseline, where the declared fixture is not
+    #                               being bound to anyone's measurements.
+    #   'live_session_unverified' - a fixture was declared AND a live session was
+    #                               observed. THIS is where the report would
+    #                               otherwise bind session VRAM and viewer counts
+    #                               to a fixture fingerprint it never verified, so
+    #                               the completeness claim is withdrawn: a reader
+    #                               (and the wrapper's SHALL-NOT-set-SLOs warning)
+    #                               must not treat the pairing as established.
+    $fixtureBindingScope = 'not_supplied'
+    if ($fixturePathSupplied) {
+        $fixtureBindingScope = if ($liveSessionObserved) { 'live_session_unverified' } else { 'no_live_session_observed' }
+    }
+    $fixtureBindingNote = 'the declared fixture is hashed off disk and never checked against the artifact the running session loaded; runtime artifact-identity verification is deferred to task 1.2/1.3'
+    if ($fixtureBindingScope -eq 'live_session_unverified') {
+        $fixtureBindingNote = ('environment_fingerprint.complete is false because {0} active session(s) and {1} kit_instance_binding(s) were observed at capture time while the fixture identity is operator-declared only: this slice cannot verify the declared fixture against the live session''s artifact identity, so the session VRAM and viewer counts in this report must not be treated as bound to this fixture fingerprint. Runtime artifact-identity verification is deferred to task 1.2/1.3.' -f $activeSessionCount, $kitBindingCount)
+        $allMeasured = $false
+    }
+    $fields['fixture_binding_scope'] = $fixtureBindingScope
+    $fields['fixture_binding_scope_note'] = $fixtureBindingNote
+    $fields['observed_active_session_count'] = $ObservedActiveSessionCount
+    $fields['observed_kit_instance_binding_count'] = $ObservedKitInstanceBindingCount
+
     $fields['complete'] = $allMeasured
     return $fields
 }
@@ -650,7 +721,9 @@ function Get-SessionBaselineReport {
         -GpuInventory $gpuInventory `
         -KitVersion $kitVersion `
         -FixtureFingerprint $fixtureFingerprint `
-        -ObservedKitProcessCount @($vramWatermark.kit_processes).Count
+        -ObservedKitProcessCount @($vramWatermark.kit_processes).Count `
+        -ObservedActiveSessionCount (Get-SafeProperty -Object $webRtcProbe -Name 'active_session_count') `
+        -ObservedKitInstanceBindingCount (Get-SafeProperty -Object $webRtcProbe -Name 'active_kit_instance_binding_count')
 
     $ttff = New-OptionalMeasurement `
         -Value $TtffMs `
