@@ -1357,9 +1357,9 @@
       "id": "implement-runtime-command-authority-and-rejection",
       "status": "active",
       "owner": "bim-review-coordinator",
-      "current_slice": "runtime evidence closure",
+      "current_slice": "5.6 stage-load-timeout closed 2026-08-12 (data-stage-failure-reason test anchor, RED->GREEN, 1072/1072 suite, typecheck+changed-file lint clean). Checkbox stays open: 8/12 viewer-origin failure states (no-session/session-preparing/viewer-origin-missing/lease-occupied/stream-disconnected/lease-expired/gpu-unavailable/first-frame-timeout) unverified. production/full completion=no.",
       "blocked_by": [],
-      "last_verified": "2026-07-30T22:21:13Z",
+      "last_verified": "2026-08-12T02:29:23Z",
       "task_ledger": {
         "completed": 31,
         "total": 35
@@ -1368,7 +1368,7 @@
         "openspec/changes/implement-runtime-command-authority-and-rejection/proposal.md",
         "openspec/changes/implement-runtime-command-authority-and-rejection/tasks.md"
       ],
-      "subject_commit": "5a28a7dd178efaf84bec3bb4d80329f016794438",
+      "subject_commit": "cba626587c6cc50000e35050988c29208c8246ac",
       "archive_debt": null
     },
     {
