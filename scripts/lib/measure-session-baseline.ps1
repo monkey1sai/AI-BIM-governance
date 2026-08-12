@@ -21,16 +21,34 @@ function Get-SafeProperty {
     # PSCustomObject (e.g. from ConvertFrom-Json / Invoke-RestMethod) and does
     # not carry that property -- coordinator responses are external input, so
     # every read of one must go through here instead of a bare `.Prop`.
+    #
+    # The leading comma on array-typed values (below) is load-bearing, not
+    # decorative: `return $value` on an EMPTY array is unrolled by
+    # PowerShell's pipeline into zero output objects, which a caller doing
+    # `$x = Get-SafeProperty ...` then silently collapses to $null --
+    # indistinguishable from "the property was absent" and exactly the kind
+    # of false-negative this harness's honesty contract cannot tolerate (an
+    # observed empty collection, e.g. `kit_instance_bindings: []`, is a real
+    # zero, not "unmeasured"). `,$value` prevents the unroll for both empty
+    # and non-empty collections; scalars are excluded from the wrap since
+    # they were never subject to the unroll bug and PowerShell's pipeline
+    # capture boxes a -isnot-array scalar differently once wrapped.
     [CmdletBinding()]
     param($Object, [Parameter(Mandatory = $true)][string] $Name)
     if ($null -eq $Object) { return $null }
     if ($Object -is [System.Collections.IDictionary]) {
-        if ($Object.Contains($Name)) { return $Object[$Name] }
+        if ($Object.Contains($Name)) {
+            $dictValue = $Object[$Name]
+            if ($dictValue -is [System.Collections.IEnumerable] -and $dictValue -isnot [string]) { return , $dictValue }
+            return $dictValue
+        }
         return $null
     }
     $prop = $Object.PSObject.Properties[$Name]
     if ($null -eq $prop) { return $null }
-    return $prop.Value
+    $value = $prop.Value
+    if ($value -is [System.Collections.IEnumerable] -and $value -isnot [string]) { return , $value }
+    return $value
 }
 
 function Test-ConsumerRtxGpuName {
@@ -206,20 +224,29 @@ function Get-KitVersionFingerprint {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string] $RepoRoot)
 
+    # This reads the checkout's DECLARED kit-kernel dependency version, not a
+    # value read from the live Kit process. If the checkout was updated after
+    # the running Kit build was last built/restarted, this value can be stale
+    # relative to the session actually being measured -- no local mechanism
+    # exists to introspect a running Kit.exe's build identity from outside,
+    # so this caveat travels with the field instead of being silently assumed
+    # away. See PR #511 review discussion.
+    $caveat = "this is the checkout's declared kit-kernel dependency version (bim-streaming-server/tools/deps/kit-sdk.packman.xml); it is not read from the live Kit process and does not verify the running build was produced from this exact checkout revision -- if the checkout changed without a rebuild/restart, this value can be stale relative to the measured session"
+
     $packmanPath = Join-Path $RepoRoot 'bim-streaming-server\tools\deps\kit-sdk.packman.xml'
     if (-not (Test-Path -LiteralPath $packmanPath -PathType Leaf)) {
-        return [ordered]@{ value = $null; measured = $false; reason = "kit-sdk.packman.xml not found at $packmanPath"; source_path = $packmanPath }
+        return [ordered]@{ value = $null; measured = $false; reason = "kit-sdk.packman.xml not found at $packmanPath"; source_path = $packmanPath; source = 'checkout_packman_declared'; caveat = $caveat }
     }
     try {
         $content = Get-Content -LiteralPath $packmanPath -Raw
     } catch {
-        return [ordered]@{ value = $null; measured = $false; reason = "failed to read $($packmanPath): $($_.Exception.Message)"; source_path = $packmanPath }
+        return [ordered]@{ value = $null; measured = $false; reason = "failed to read $($packmanPath): $($_.Exception.Message)"; source_path = $packmanPath; source = 'checkout_packman_declared'; caveat = $caveat }
     }
     $match = [regex]::Match($content, 'name="kit-kernel"\s+version="(?<version>[0-9]+\.[0-9]+\.[0-9]+)')
     if (-not $match.Success) {
-        return [ordered]@{ value = $null; measured = $false; reason = 'kit-kernel version token not found in kit-sdk.packman.xml'; source_path = $packmanPath }
+        return [ordered]@{ value = $null; measured = $false; reason = 'kit-kernel version token not found in kit-sdk.packman.xml'; source_path = $packmanPath; source = 'checkout_packman_declared'; caveat = $caveat }
     }
-    return [ordered]@{ value = $match.Groups['version'].Value; measured = $true; reason = $null; source_path = $packmanPath }
+    return [ordered]@{ value = $match.Groups['version'].Value; measured = $true; reason = $null; source_path = $packmanPath; source = 'checkout_packman_declared'; caveat = $caveat }
 }
 
 function Get-FixtureFingerprint {
@@ -288,15 +315,50 @@ function Get-WebRtcHealthProbe {
     }
 
     $activeSessionCount = $null
+    $sessionCountAtCapture = $null
     $activeBindingCount = $null
+    $primaryViewerLeaseCount = $null
+    $spectatorViewerLeaseCount = $null
     if ($runtimeResult.ok -and $runtimeResult.body) {
         $sessionsValue = Get-SafeProperty -Object $runtimeResult.body -Name 'sessions'
-        if ($sessionsValue) {
+        if ($null -ne $sessionsValue) {
             $activeSessionCount = Get-SafeProperty -Object $sessionsValue -Name 'active_count'
+            $sessionCountAtCapture = Get-SafeProperty -Object $sessionsValue -Name 'count'
+            $sessionItems = Get-SafeProperty -Object $sessionsValue -Name 'items'
+            if ($null -ne $sessionItems) {
+                # sessions.active_count is a SESSION cardinality (one review
+                # session is "1" whether it has zero or many spectators), not
+                # the 1-primary-plus-k-spectator viewer cardinality the spec
+                # requires. Count active viewer_leases by role instead so
+                # primary/spectator concurrency is recorded explicitly. This
+                # aggregates across every session returned by
+                # /api/runtime/status; when more than one session is active
+                # at capture time (session_count_at_capture > 1) the two
+                # counts below are ambiguous across sessions -- see `note`.
+                $primaryViewerLeaseCount = 0
+                $spectatorViewerLeaseCount = 0
+                foreach ($sessionItem in @($sessionItems)) {
+                    $viewerLeases = Get-SafeProperty -Object $sessionItem -Name 'viewer_leases'
+                    foreach ($lease in @($viewerLeases)) {
+                        if ($null -eq $lease) { continue }
+                        if ((Get-SafeProperty -Object $lease -Name 'status') -ne 'active') { continue }
+                        $role = Get-SafeProperty -Object $lease -Name 'role'
+                        if ($role -eq 'primary') { $primaryViewerLeaseCount++ }
+                        elseif ($role -eq 'spectator') { $spectatorViewerLeaseCount++ }
+                    }
+                }
+            }
         }
         $bindingsValue = Get-SafeProperty -Object $runtimeResult.body -Name 'kit_instance_bindings'
-        if ($bindingsValue) {
-            $activeBindingCount = @($bindingsValue | Where-Object { (Get-SafeProperty -Object $_ -Name 'status') -eq 'active' }).Count
+        if ($null -ne $bindingsValue) {
+            # KitInstanceBinding.status (bim-review-coordinator/src/types.ts)
+            # is one of allocated|starting|ready|draining|released|failed --
+            # 'active' is never a value the real API emits, so a literal
+            # -eq 'active' predicate always counts zero even when usable
+            # bindings exist. released/failed are terminal (no longer
+            # holding GPU capacity); the rest still are.
+            $nonTerminalBindingStatuses = @('allocated', 'starting', 'ready', 'draining')
+            $activeBindingCount = @($bindingsValue | Where-Object { $nonTerminalBindingStatuses -contains (Get-SafeProperty -Object $_ -Name 'status') }).Count
         }
     }
 
@@ -316,9 +378,12 @@ function Get-WebRtcHealthProbe {
         kit_signaling_port                = $kitSignalingPort
         runtime_status_reachable          = [bool]$runtimeResult.ok
         active_session_count              = $activeSessionCount
+        session_count_at_capture          = $sessionCountAtCapture
         active_kit_instance_binding_count = $activeBindingCount
+        primary_viewer_lease_count        = $primaryViewerLeaseCount
+        spectator_viewer_lease_count      = $spectatorViewerLeaseCount
         error                             = $errorMessage
-        note                              = 'read-only GET /health and GET /api/runtime/status; does not create, join, or modify any review session'
+        note                              = 'read-only GET /health and GET /api/runtime/status; does not create, join, or modify any review session. reachable reflects only whether the coordinator process answered GET /health (200) -- it is NOT independent verification that the Kit WebRTC/signaling endpoint itself is reachable: kit_signaling_port is coordinator-reported configuration echoed from /health, never dialed by this harness. active_session_count counts ALL sessions with status=active on this coordinator (not scoped to one review session); primary_viewer_lease_count / spectator_viewer_lease_count aggregate active viewer_leases by role across those sessions and are the more reliable observed k for the 1-primary-plus-k-spectator VRAM watermark (ambiguous when session_count_at_capture > 1).'
     }
 }
 
@@ -326,56 +391,85 @@ function Get-SessionVramWatermark {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)] $GpuComputeSnapshot,
-        $ObservedActiveSessionCount
+        $ObservedPrimaryViewerLeaseCount,
+        $ObservedSpectatorViewerLeaseCount,
+        $ObservedSessionCountAtCapture
     )
 
-    $note = 'per-stream (primary vs spectator) VRAM split is not observable via nvidia-smi: Kit hosts all streams (1 primary + k spectator) inside a single GPU process, so only the combined process VRAM can be measured from outside Kit'
+    $note = 'per-stream (primary vs spectator) VRAM split is not observable via nvidia-smi: Kit hosts all streams (1 primary + k spectator) inside a single GPU process, so only the combined process VRAM can be measured from outside Kit. total_kit_vram_mb is only populated when exactly one Kit GPU process is observed AND its VRAM column is readable -- nvidia-smi compute-apps carries no PID-to-review-session binding, so if more than one Kit workload (e.g. an IFC conversion Kit, another coordinator''s Kit instance) is running concurrently, or if some matched processes have an unreadable VRAM column, the arithmetic sum is exposed only as the informational unscoped_total_kit_vram_mb, never as a fabricated clean total. observed_primary_viewer_lease_count / observed_spectator_viewer_lease_count are aggregated across ALL active sessions on the coordinator (ambiguous when observed_session_count_at_capture > 1).'
 
     if (-not $GpuComputeSnapshot.measured) {
         return [ordered]@{
-            measured                    = $false
-            reason                      = $GpuComputeSnapshot.reason
-            kit_processes               = @()
-            total_kit_vram_mb           = $null
-            observed_active_session_count = $ObservedActiveSessionCount
-            note                        = $note
+            measured                               = $false
+            reason                                  = $GpuComputeSnapshot.reason
+            kit_processes                           = @()
+            kit_process_count                       = 0
+            total_kit_vram_mb                       = $null
+            unscoped_total_kit_vram_mb              = $null
+            observed_primary_viewer_lease_count     = $ObservedPrimaryViewerLeaseCount
+            observed_spectator_viewer_lease_count   = $ObservedSpectatorViewerLeaseCount
+            observed_session_count_at_capture       = $ObservedSessionCountAtCapture
+            note                                    = $note
         }
     }
 
     $kitProcesses = @($GpuComputeSnapshot.processes | Where-Object { $_.process_name -match '(?i)(^|[\\/])kit(\.exe)?$' })
     if ($kitProcesses.Count -eq 0) {
         return [ordered]@{
-            measured                    = $false
-            reason                      = 'no active Kit GPU process observed at capture time (no live session running on this host right now)'
-            kit_processes               = @()
-            total_kit_vram_mb           = $null
-            observed_active_session_count = $ObservedActiveSessionCount
-            note                        = $note
+            measured                               = $false
+            reason                                  = 'no active Kit GPU process observed at capture time (no live session running on this host right now)'
+            kit_processes                           = @()
+            kit_process_count                       = 0
+            total_kit_vram_mb                       = $null
+            unscoped_total_kit_vram_mb              = $null
+            observed_primary_viewer_lease_count     = $ObservedPrimaryViewerLeaseCount
+            observed_spectator_viewer_lease_count   = $ObservedSpectatorViewerLeaseCount
+            observed_session_count_at_capture       = $ObservedSessionCountAtCapture
+            note                                    = $note
         }
     }
 
     $measuredProcesses = @($kitProcesses | Where-Object { $_.used_memory_measured })
-    $totalVram = $null
+    $readableSum = $null
     if ($measuredProcesses.Count -gt 0) {
         # Manual sum (not Measure-Object -Property): the process entries are
         # ordered hashtables, and Measure-Object's -Property reflection does
         # not reliably resolve hashtable keys across PowerShell editions.
         $sum = 0
         foreach ($proc in $measuredProcesses) { $sum += [int]$proc.used_memory_mb }
-        $totalVram = $sum
-    }
-    $reason = $null
-    if ($null -eq $totalVram) {
-        $reason = 'Kit process observed but VRAM readout unavailable (nvidia-smi compute-apps memory column requires elevated OS permission on this host)'
+        $readableSum = $sum
     }
 
+    $reasonParts = [System.Collections.Generic.List[string]]::new()
+    if ($kitProcesses.Count -gt 1) {
+        $reasonParts.Add("$($kitProcesses.Count) Kit GPU processes observed at capture time; nvidia-smi carries no PID-to-review-session binding, so this host cannot be confirmed exclusive to the measured session")
+    }
+    if ($measuredProcesses.Count -lt $kitProcesses.Count) {
+        $unreadableCount = $kitProcesses.Count - $measuredProcesses.Count
+        $reasonParts.Add("$unreadableCount of $($kitProcesses.Count) matched Kit process(es) had an unreadable VRAM column (nvidia-smi compute-apps memory column requires elevated OS permission on this host)")
+    }
+
+    $totalVram = $null
+    $unscopedTotalVram = $null
+    if ($kitProcesses.Count -eq 1 -and $measuredProcesses.Count -eq 1) {
+        $totalVram = $readableSum
+    } else {
+        $unscopedTotalVram = $readableSum
+    }
+    $reason = $null
+    if ($reasonParts.Count -gt 0) { $reason = $reasonParts -join '; ' }
+
     return [ordered]@{
-        measured                    = ($null -ne $totalVram)
-        reason                      = $reason
-        kit_processes               = $kitProcesses
-        total_kit_vram_mb           = $totalVram
-        observed_active_session_count = $ObservedActiveSessionCount
-        note                        = $note
+        measured                               = ($null -ne $totalVram)
+        reason                                  = $reason
+        kit_processes                           = $kitProcesses
+        kit_process_count                       = $kitProcesses.Count
+        total_kit_vram_mb                       = $totalVram
+        unscoped_total_kit_vram_mb              = $unscopedTotalVram
+        observed_primary_viewer_lease_count     = $ObservedPrimaryViewerLeaseCount
+        observed_spectator_viewer_lease_count   = $ObservedSpectatorViewerLeaseCount
+        observed_session_count_at_capture       = $ObservedSessionCountAtCapture
+        note                                    = $note
     }
 }
 
@@ -394,14 +488,26 @@ function Get-EnvironmentFingerprint {
     $gpuDriverMeasured = $false
     $gpuDriverReason = 'no GPU detected via nvidia-smi'
 
-    if ($GpuInventory.measured -and @($GpuInventory.gpus | Where-Object { $_.parse_ok }).Count -gt 0) {
-        $primaryGpu = @($GpuInventory.gpus | Where-Object { $_.parse_ok })[0]
+    $parsedGpuRows = @()
+    if ($GpuInventory.measured) { $parsedGpuRows = @($GpuInventory.gpus | Where-Object { $_.parse_ok }) }
+
+    if ($parsedGpuRows.Count -eq 1) {
+        $primaryGpu = $parsedGpuRows[0]
         $gpuModel = $primaryGpu.name
         $gpuModelMeasured = $true
         $gpuModelReason = $null
         $gpuDriver = $primaryGpu.driver_version
         $gpuDriverMeasured = $true
         $gpuDriverReason = $null
+    } elseif ($parsedGpuRows.Count -gt 1) {
+        # nvidia-smi --query-compute-apps carries no GPU index/UUID, so on a
+        # multi-GPU host this harness cannot attribute the measured Kit
+        # process's VRAM sample to a specific GPU row. Blindly taking
+        # gpus[0] would silently bind the fingerprint to the wrong device
+        # whenever Kit is not running on the first-enumerated GPU -- fail
+        # closed instead of guessing (see PR #511 review discussion).
+        $gpuModelReason = "host reports $($parsedGpuRows.Count) GPUs and this harness cannot attribute the measured Kit process to a specific one (nvidia-smi compute-apps query carries no GPU index/UUID); fingerprint left unmeasured to avoid binding to the wrong device"
+        $gpuDriverReason = $gpuModelReason
     } elseif ($GpuInventory.measured) {
         $gpuModelReason = 'nvidia-smi query succeeded but returned zero parseable GPU rows'
         $gpuDriverReason = $gpuModelReason
@@ -413,7 +519,13 @@ function Get-EnvironmentFingerprint {
     $fields = [ordered]@{
         gpu_model           = [ordered]@{ value = $gpuModel; measured = $gpuModelMeasured; reason = $gpuModelReason }
         gpu_driver_version  = [ordered]@{ value = $gpuDriver; measured = $gpuDriverMeasured; reason = $gpuDriverReason }
-        kit_version         = [ordered]@{ value = $KitVersion.value; measured = $KitVersion.measured; reason = $KitVersion.reason }
+        kit_version         = [ordered]@{
+            value    = $KitVersion.value
+            measured = $KitVersion.measured
+            reason   = $KitVersion.reason
+            source   = (Get-SafeProperty -Object $KitVersion -Name 'source')
+            caveat   = (Get-SafeProperty -Object $KitVersion -Name 'caveat')
+        }
         fixture_hash        = [ordered]@{ value = $FixtureFingerprint.hash; measured = $FixtureFingerprint.hash_measured; reason = $FixtureFingerprint.hash_reason }
         fixture_size_bytes  = [ordered]@{ value = $FixtureFingerprint.size_bytes; measured = $FixtureFingerprint.size_measured; reason = $FixtureFingerprint.size_reason }
     }
@@ -471,7 +583,10 @@ function Get-SessionBaselineReport {
             kit_signaling_port                = $null
             runtime_status_reachable          = $false
             active_session_count              = $null
+            session_count_at_capture          = $null
             active_kit_instance_binding_count = $null
+            primary_viewer_lease_count        = $null
+            spectator_viewer_lease_count      = $null
             error                             = $null
             note                              = 'probe skipped by caller (-SkipWebRtcProbe)'
         }
@@ -481,18 +596,53 @@ function Get-SessionBaselineReport {
         $webRtcProbe = Get-WebRtcHealthProbe @probeArgs
     }
 
-    $vramWatermark = Get-SessionVramWatermark -GpuComputeSnapshot $computeSnapshot -ObservedActiveSessionCount $webRtcProbe.active_session_count
+    $vramWatermark = Get-SessionVramWatermark -GpuComputeSnapshot $computeSnapshot `
+        -ObservedPrimaryViewerLeaseCount $webRtcProbe.primary_viewer_lease_count `
+        -ObservedSpectatorViewerLeaseCount $webRtcProbe.spectator_viewer_lease_count `
+        -ObservedSessionCountAtCapture $webRtcProbe.session_count_at_capture
     $environmentFingerprint = Get-EnvironmentFingerprint -GpuInventory $gpuInventory -KitVersion $kitVersion -FixtureFingerprint $fixtureFingerprint
 
-    $ttff = New-OptionalMeasurement -Value $TtffMs -MissingReason 'read-only harness does not open a WebRTC session; TTFF requires a live session capture (task 1.3 soak, or a manual measurement) supplied via -TtffMs'
-    $successRate = New-OptionalMeasurement -Value $SessionCreationSuccessRate -MissingReason 'read-only harness does not create sessions; success rate requires repeated live session-creation trials supplied via -SessionCreationSuccessRate'
+    # Caller-supplied TTFF / success-rate values are external input like any
+    # coordinator response: honor the same "never fabricate" contract by
+    # range-validating before accepting them as measured, instead of trusting
+    # them blindly (a negative TTFF or a success rate outside [0,1] is never
+    # a real measurement and must not be recorded as measured:true).
+    $ttffRejectReason = $null
+    $ttffValue = $TtffMs
+    if ($null -ne $ttffValue -and $ttffValue -lt 0) {
+        $ttffRejectReason = "supplied -TtffMs ($ttffValue) is negative; time-to-first-frame cannot be negative -- value rejected rather than fabricated as measured"
+        $ttffValue = $null
+    }
+    $ttffMissingReason = 'read-only harness does not open a WebRTC session; TTFF requires a live session capture (task 1.3 soak, or a manual measurement) supplied via -TtffMs'
+    if ($ttffRejectReason) { $ttffMissingReason = $ttffRejectReason }
+    $ttff = New-OptionalMeasurement -Value $ttffValue -MissingReason $ttffMissingReason
+
+    $successRateRejectReason = $null
+    $successRateValue = $SessionCreationSuccessRate
+    if ($null -ne $successRateValue -and ($successRateValue -lt 0 -or $successRateValue -gt 1)) {
+        $successRateRejectReason = "supplied -SessionCreationSuccessRate ($successRateValue) is outside the valid [0,1] range -- value rejected rather than fabricated as measured"
+        $successRateValue = $null
+    }
+    $successRateMissingReason = 'read-only harness does not create sessions; success rate requires repeated live session-creation trials supplied via -SessionCreationSuccessRate'
+    if ($successRateRejectReason) { $successRateMissingReason = $successRateRejectReason }
+    $successRate = New-OptionalMeasurement -Value $successRateValue -MissingReason $successRateMissingReason
 
     $capturedAt = $Now.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
     $runSuffix = ('{0:x2}{1:x2}{2:x2}' -f (Get-Random -Maximum 256), (Get-Random -Maximum 256), (Get-Random -Maximum 256))
     $runId = 'measure_{0}_{1}' -f $Now.ToString('yyyyMMdd_HHmmss'), $runSuffix
 
+    # $env:COMPUTERNAME is a Windows-only environment variable and is
+    # normally unset on the canonical Linux deployment target, which would
+    # otherwise silently null out host identity on every Linux-captured
+    # report. Resolve via the cross-platform Dns API first, falling back to
+    # $env:HOSTNAME (set on Linux/macOS shells), then COMPUTERNAME.
+    $hostname = $null
+    try { $hostname = [System.Net.Dns]::GetHostName() } catch { $hostname = $null }
+    if ([string]::IsNullOrWhiteSpace($hostname)) { $hostname = $env:HOSTNAME }
+    if ([string]::IsNullOrWhiteSpace($hostname)) { $hostname = $env:COMPUTERNAME }
+
     $hostInfo = [ordered]@{
-        hostname            = $env:COMPUTERNAME
+        hostname            = $hostname
         os                  = [string][System.Environment]::OSVersion.VersionString
         powershell_version  = $PSVersionTable.PSVersion.ToString()
     }

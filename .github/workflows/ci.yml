@@ -711,6 +711,14 @@ jobs:
         shell: pwsh
         run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-spec-to-done-port-helper.ps1
 
+      - name: Run GPU session baseline harness tests (PowerShell 7)
+        shell: pwsh
+        run: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-measure-session-baseline.ps1
+
+      - name: Run GPU session baseline harness tests (Windows PowerShell 5.1)
+        shell: pwsh
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/test-measure-session-baseline.ps1
+
   rebuild-test-deploy:
     name: rebuild/test-deploy contracts
     needs: changes
