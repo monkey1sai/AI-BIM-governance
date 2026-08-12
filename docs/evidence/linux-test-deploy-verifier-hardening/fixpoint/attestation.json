@@ -1,0 +1,65 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "linux-test-deploy-verifier-hardening",
+  "mechanism_commit": "5a7fea9991f04a7e8204df2a02c5b4c4dedb1831",
+  "verification_contract_sha256": "5caa635738c142274b5dbd0f045ceb8436f5401565306a5464f2086d6b472a64",
+  "result": "pass",
+  "commands": [
+    {
+      "id": "test-host-native-conversion-service",
+      "exit_code": 0
+    },
+    {
+      "id": "test-host-native-launcher",
+      "exit_code": 0
+    },
+    {
+      "id": "test-kit-manager-api",
+      "exit_code": 0
+    },
+    {
+      "id": "test-verify-all",
+      "exit_code": 0
+    },
+    {
+      "id": "test-deploy-target-registry",
+      "exit_code": 0
+    },
+    {
+      "id": "test-rebuild-test-deploy",
+      "exit_code": 0
+    },
+    {
+      "id": "test-remote-deploy-transport",
+      "exit_code": 0
+    },
+    {
+      "id": "test-deploy-governance-static",
+      "exit_code": 0
+    },
+    {
+      "id": "test-self-referential-bootstrap",
+      "exit_code": 0
+    },
+    {
+      "id": "test-agent-governance-check",
+      "exit_code": 0
+    },
+    {
+      "id": "invoke-powershell-static",
+      "exit_code": 0
+    },
+    {
+      "id": "harden-cad-extension-cache",
+      "exit_code": 0
+    },
+    {
+      "id": "canonical-linux-rebuild",
+      "exit_code": 0
+    },
+    {
+      "id": "canonical-linux-deployment-verify",
+      "exit_code": 0
+    }
+  ]
+}
