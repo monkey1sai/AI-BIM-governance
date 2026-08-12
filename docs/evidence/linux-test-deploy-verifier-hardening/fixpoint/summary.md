@@ -10,7 +10,8 @@ Closes the `linux-test-deploy-verifier-hardening` ledger entry per
   diff touches the entry's declared mechanism paths.
 - `verification_contract` digest preserved unchanged:
   `5caa635738c142274b5dbd0f045ceb8436f5401565306a5464f2086d6b472a64`.
-- Reverified 2026-08-12T02:00:16Z（命令 14 pinned 形完成時刻）。
+- Reverified 2026-08-12T03:07Z（remediation rerun：命令 12→13→14 全 pinned 形
+  單趟完成時刻；13 不再帶 `-IdentityFile`，deploy key 改由 ssh 預設解析供給）。
 
 ## Attested run：嚴格契約順序單趟（1→14）
 
@@ -25,8 +26,11 @@ attestation.json 所記錄的執行：14 條命令**依 opening contract 的精�
 | 命令 11 完成、命令 12 執行 | ≈12:45Z |
 | 命令 13 rebuild 啟動→完成 | ≈12:46Z → 12:51:17Z（wrapper 結構化 log 時戳） |
 | 命令 14 verify（環境變數形，首次觀察） | ≈12:52Z |
-| 命令 14 verify（pinned `-InventoryPath` 形，attested） | 2026-08-12T02:00:16Z |
-| `reverified_at` | 2026-08-12T02:00:16Z |
+| 命令 14 verify（pinned `-InventoryPath` 形，對 tag `-004`） | 2026-08-12T02:00:16Z |
+| remediation rerun：命令 12（pinned 同形，遠端） | 2026-08-12T03:00Z 前後 |
+| remediation rerun：命令 13（pinned 形 rebuild，tag `-001`） | 完成 2026-08-12T03:05:11Z（wrapper 結構化 log） |
+| remediation rerun：命令 14（pinned 形，對 tag `-001`，attested） | 2026-08-12T03:07:00Z |
+| `reverified_at` | 2026-08-12T03:07:00Z |
 
 1. **本地契約套件（命令 1–11）**：於主 checkout（clean，
    `c88dca63e3187b9616e8801bad70898a2fd03eb0`＝當時 `origin/main` tip，亦即
@@ -40,13 +44,21 @@ attestation.json 所記錄的執行：14 條命令**依 opening contract 的精�
    deploy.ps1 Phase 2 同形命令執行（`--repo-root <deploy_root>/bim-streaming-server`），
    stdout 恰為 `{"schema_version":"cad-extension-cache-hardening/v1","status":"passed"}`，
    exit 0。
-3. **`canonical-linux-rebuild`（命令 13）**：從 fresh `origin/main`
-   （`c88dca63e`）隔離 worktree 以正規形
-   `pwsh -NoProfile -NonInteractive -File scripts/dev/rebuild-test-deploy.ps1 -Build -InventoryPath '<owner-private-inventory>' -IdentityFile '<owner-private-identity>'`
-   執行（owner 於本 session 內確認 canonical target 摘要與指紋後授權）。
-   遠端部署 **exit=0**；建立並推送 deployment tag
-   `deploy-20260811-639220494716638402-004`。canonical env 以暫存複本
-   staging（protected ACL、gitignored），用畢即刪（`created` → `removed`）。
+3. **`canonical-linux-rebuild`（命令 13）**：歷史記錄——2026-08-11 sweep 從
+   fresh `origin/main`（`c88dca63e`）隔離 worktree 執行時多帶了
+   `-IdentityFile '<owner-private-identity>'`（遠端部署 exit=0、tag
+   `deploy-20260811-639220494716638402-004`）；review 指出該形不是 immutable
+   command map pin 的正規形。**Attested 記錄＝2026-08-12 remediation rerun**：
+   owner 先把 deploy key 納入 ssh 預設解析（batch-mode 預檢 `DEFAULT_IDENTITY_OK`），
+   再從 fresh `origin/main`（`970dc3416379bc36a3e606663314b632a35f5d6b`，含
+   #497–#502）隔離 worktree 以 pinned 正規形
+   `pwsh -NoProfile -NonInteractive -File scripts/dev/rebuild-test-deploy.ps1 -Build -InventoryPath '<owner-private-inventory>'`
+   （無 `-IdentityFile`、無 `-TargetId`）執行：遠端部署 **exit=0**；建立並推送
+   deployment tag `deploy-20260812-639221007059362180-001` → `970dc34`；
+   effective-env snapshot 落
+   `artifacts/deploy-reports/canonical-linux/20260812T030505Z-effective-env.json`。
+   canonical env 以暫存複本 staging（gitignored），用畢即刪。命令 12 亦於
+   rerun 前以同形重跑（遠端 deploy_root，stdout 恰為 schema line，exit 0）。
 4. **`canonical-linux-deployment-verify`（命令 14）**：於遠端 deploy_root 以
    immutable command map（`scripts/tests/test-self-referential-bootstrap.ps1`）
    pin 的正規形
@@ -54,11 +66,13 @@ attestation.json 所記錄的執行：14 條命令**依 opening contract 的精�
    執行（`<owner-private-inventory>`＝遠端 `<runtime_data_root>/target.local.json`，
    即部署機上的 owner-private inventory），六項全 Passed（deployment required
    artifacts、coordinator health、governance health、conversion health、
-   kit manager health、viewer endpoint）、Failed 清單為空，exit 0，完成於
-   2026-08-12T02:00:16Z。順序註記：sweep 當下（12:52Z）曾以
-   `AI_BIM_DEPLOY_TARGET_INVENTORY` 環境變數形先行執行並得相同六項全綠；
-   review 指出該形不是 pinned invocation，故以 pinned 形對**同一未變動部署**
-   （tag `-004`，其間無任何 rebuild／服務變更）重跑並以本次為 attested 記錄。
+   kit manager health、viewer endpoint）、Failed 清單為空，exit 0。歷程：
+   sweep 當下（12:52Z）曾以 `AI_BIM_DEPLOY_TARGET_INVENTORY` 環境變數形先行
+   執行；2026-08-12T02:00:16Z 以 pinned 形對 tag `-004` 部署重跑；**attested
+   記錄＝2026-08-12 remediation rerun**——命令 13 pinned 形 rebuild（tag
+   `deploy-20260812-639221007059362180-001`）完成後，於遠端 deploy_root 以
+   同一 pinned 形對**新部署**重跑，六項全 Passed、Failed 清單為空、exit 0，
+   完成於 2026-08-12T03:07Z（12→13→14 契約順序、全 pinned 形、單趟）。
 
 ## Prior sweep（同日稍早，非 attested run）
 
