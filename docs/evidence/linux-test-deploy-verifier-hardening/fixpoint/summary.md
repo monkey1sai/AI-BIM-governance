@@ -10,7 +10,7 @@ Closes the `linux-test-deploy-verifier-hardening` ledger entry per
   diff touches the entry's declared mechanism paths.
 - `verification_contract` digest preserved unchanged:
   `5caa635738c142274b5dbd0f045ceb8436f5401565306a5464f2086d6b472a64`.
-- Reverified 2026-08-11T12:52Z。
+- Reverified 2026-08-12T02:00:16Z（命令 14 pinned 形完成時刻）。
 
 ## Attested run：嚴格契約順序單趟（1→14）
 
@@ -24,8 +24,9 @@ attestation.json 所記錄的執行：14 條命令**依 opening contract 的精�
 | 命令 1（本地套件序列起跑） | 12:43:38Z |
 | 命令 11 完成、命令 12 執行 | ≈12:45Z |
 | 命令 13 rebuild 啟動→完成 | ≈12:46Z → 12:51:17Z（wrapper 結構化 log 時戳） |
-| 命令 14 verify 完成 | ≈12:52Z |
-| `reverified_at` | 12:52:12Z |
+| 命令 14 verify（環境變數形，首次觀察） | ≈12:52Z |
+| 命令 14 verify（pinned `-InventoryPath` 形，attested） | 2026-08-12T02:00:16Z |
+| `reverified_at` | 2026-08-12T02:00:16Z |
 
 1. **本地契約套件（命令 1–11）**：於主 checkout（clean，
    `c88dca63e3187b9616e8801bad70898a2fd03eb0`＝當時 `origin/main` tip，亦即
@@ -47,10 +48,17 @@ attestation.json 所記錄的執行：14 條命令**依 opening contract 的精�
    `deploy-20260811-639220494716638402-004`。canonical env 以暫存複本
    staging（protected ACL、gitignored），用畢即刪（`created` → `removed`）。
 4. **`canonical-linux-deployment-verify`（命令 14）**：於遠端 deploy_root 以
-   `AI_BIM_DEPLOY_TARGET_INVENTORY=<runtime_data_root>/target.local.json pwsh -NoProfile -NonInteractive -File scripts/verify-all.ps1 -Profile Deployment`
-   執行，六項全 Passed（deployment required artifacts、coordinator health、
-   governance health、conversion health、kit manager health、viewer endpoint）、
-   Failed 清單為空，exit 0。
+   immutable command map（`scripts/tests/test-self-referential-bootstrap.ps1`）
+   pin 的正規形
+   `pwsh -NoProfile -NonInteractive -File scripts/verify-all.ps1 -Profile Deployment -InventoryPath '<owner-private-inventory>'`
+   執行（`<owner-private-inventory>`＝遠端 `<runtime_data_root>/target.local.json`，
+   即部署機上的 owner-private inventory），六項全 Passed（deployment required
+   artifacts、coordinator health、governance health、conversion health、
+   kit manager health、viewer endpoint）、Failed 清單為空，exit 0，完成於
+   2026-08-12T02:00:16Z。順序註記：sweep 當下（12:52Z）曾以
+   `AI_BIM_DEPLOY_TARGET_INVENTORY` 環境變數形先行執行並得相同六項全綠；
+   review 指出該形不是 pinned invocation，故以 pinned 形對**同一未變動部署**
+   （tag `-004`，其間無任何 rebuild／服務變更）重跑並以本次為 attested 記錄。
 
 ## Prior sweep（同日稍早，非 attested run）
 
