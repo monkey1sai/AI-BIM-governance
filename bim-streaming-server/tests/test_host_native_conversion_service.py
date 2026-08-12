@@ -1239,6 +1239,25 @@ def test_cad_hardener_cli_success_path_hardens_real_entrypoint(tmp_path: Path):
 
     original_identity = (hoops_main.stat().st_dev, hoops_main.stat().st_ino)
 
+    # 3b. ``mkdir()`` (including the ``parents=True`` calls above, whose
+    # intermediate directories ignore any ``mode=`` argument per the
+    # pathlib docs) honors the process umask. A POSIX runner with a
+    # group-writable umask such as ``0002`` would otherwise leave every
+    # directory created above at mode ``0775``. The real adapter
+    # deliberately rejects group-writable trusted-cache components
+    # (``_posix_root_ancestry_is_trusted`` / ``_path_components_are_owner_private``
+    # in ifc2usdc_powershell_adapter.py), so the subprocess would return
+    # ``converter_unavailable`` and this test would fail at the return-code
+    # assertion despite correct production behavior. Pin every fixture
+    # directory to an owner-private mode here -- independent of the
+    # invoking umask -- before the subprocess under test walks this tree.
+    # Symlinks are never descended into (``followlinks=False``) and are
+    # never chmod'd directly, so neither the ``extscache`` package link nor
+    # the ``messaging_target`` link into the real source tree is touched.
+    for fixture_dir in (fixture_root, fixture_home):
+        for dirpath, _dirnames, _filenames in os.walk(fixture_dir, followlinks=False):
+            os.chmod(dirpath, 0o700)
+
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "harden-cad-extension-cache.py"
     clean_env = dict(os.environ)
     clean_env["HOME"] = str(fixture_home)
