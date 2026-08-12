@@ -1,0 +1,34 @@
+document_nature=working_note_fixpoint_evidence_not_runtime_spec
+fixpoint_status=complete_15_of_15_contract_commands_pass
+reverified_at=2026-08-12T11:40:00Z
+stack_kind=self_referential_bootstrap_fixpoint
+ledger_entry=mechanism-hardening-2
+mechanism_commit=daf551e0a794c5b895333478ea518518d76390bd (PR #513 squash, main first-parent tip at rebase time; single-parent commit, parent=7d85190a7f57e8abde8725b2d07484443aa58d04)
+verification_contract_id=mechanism-hardening-2/v1
+verification_contract_sha256=881fac8337efca52cb16e753cc016ee3219297180bfeec092406cad5ff7b2bc6 (preserved unchanged)
+host=windows pwsh=7.5.4
+worktree=C:\Repos\active\iot\AI-BIM-governance\.claude\worktrees\agent-abc04056eeef31774
+worktree_head_at_run=daf551e0a794c5b895333478ea518518d76390bd
+rebase_result=no-op ("Current branch worktree-agent-abc04056eeef31774 is up to date."), worktree branch already equalled origin/main tip before this run
+command_resolution=every `PASS <id>` below resolves through the immutable command map `$commandSpecById` in scripts/tests/test-self-referential-bootstrap.ps1 at the recorded head, invocation form `pwsh -NoProfile -NonInteractive -File scripts/tests/<id>.ps1`
+run_discipline=all 13 commands executed in exact verification_contract.command_ids order (positions 1-13 of 15), single uninterrupted pass, no reruns; completion timestamps (log mtimes, UTC 2026-08-12) are monotonically increasing across the run, corroborating strict order
+--- local half: commands 1-13, strict contract order, single pass ---
+PASS test-deploy-governance-static (exit=0, 6.4s, completed 11:02:43Z, tail="PASS deploy governance static checks")
+PASS test-verify-all (exit=0, 32.7s, completed 11:03:16Z, tail="[PASS] verify-all profiles")
+PASS test-host-native-launcher (exit=0, 33.7s, completed 11:03:50Z, tail="=== test-host-native-launcher.ps1: ALL PASSED ===")
+PASS test-host-native-child-launch (exit=0, 1.3s, completed 11:03:51Z, tail="=== test-host-native-child-launch.ps1: ALL PASSED ===")
+PASS test-platform-adapter (exit=0, 7.7s, completed 11:03:59Z, tail="[test-platform-adapter] all assertions passed on windows")
+PASS test-preflight-ports (exit=0, 3.4s, completed 11:04:02Z, tail="=== test-preflight-ports.ps1: ALL PASSED ===")
+PASS test-kit-log-probe (exit=0, 3.5s, completed 11:04:06Z, tail="=== test-kit-log-probe.ps1: ALL PASSED ===")
+PASS test-deploy-target-registry (exit=0, 2.6s, completed 11:04:08Z, tail="[test-deploy-target-registry] all assertions passed")
+PASS test-remote-deploy-transport (exit=0, 2.0s, completed 11:04:10Z, tail="[test-remote-deploy-transport] all assertions passed")
+PASS test-rebuild-test-deploy (exit=0, 317.7s, completed 11:09:28Z, tail="[PASS] rebuild-test-deploy"; local mock-transaction suite, distinct from canonical-linux-rebuild below)
+PASS test-self-referential-bootstrap (exit=0, 29.8s, completed 11:09:58Z, tail="[test-self-referential-bootstrap] all assertions passed")
+PASS test-agent-governance-check (exit=0, 180.9s, completed 11:12:59Z, tail="[test-agent-governance-check] all assertions passed", TAP "# fail 0")
+PASS invoke-powershell-static (exit=0, 5.2s, completed 11:13:04Z, tail="[invoke-powershell-static] passed")
+NOTE all 13 raw logs scanned for FAIL|Exception|Unhandled|Terminating error; only benign substring hits inside passing assertion names and TAP counters, no real failure
+--- canonical half: commands 14-15, executed by coordinator through the owner-inventory SSH path ---
+PASS canonical-linux-rebuild (exit=0, completed 2026-08-12T11:38:36Z, pinned form from a fresh origin/main isolated worktree at daf551e, no -IdentityFile/-TargetId; deployment tag deploy-20260812-639221315101291265-002 -> daf551e pushed and verified; effective-env snapshot artifacts/deploy-reports/canonical-linux/20260812T113830Z-effective-env.json)
+PASS canonical-linux-deployment-verify (exit=0, completed ~2026-08-12T11:40Z, pinned form on the remote deploy_root against the new deployment; six checks Passed: deployment required artifacts, coordinator health, governance health, conversion health, kit manager health, viewer endpoint; Failed list empty)
+RESOLVED ledger fixpoint.reverified_at stamped 2026-08-12T11:40:00Z after commands 14-15 completed; it was unset only while those two were outstanding, and this file + summary.md were updated in place at closure
+LIMIT full-system browser, Kit/WebRTC first-frame, USD stage, DataChannel E2E not claimed
