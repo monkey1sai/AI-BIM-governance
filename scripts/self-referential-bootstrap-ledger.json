@@ -157,6 +157,7 @@
         ".github/workflows/ci.yml",
         "scripts/deploy.ps1",
         "scripts/lib/host-native-launcher.ps1",
+        "scripts/lib/platform/platform-adapter.ps1",
         "scripts/self-referential-bootstrap-ledger.json",
         "scripts/verification-manifest.json",
         "scripts/verify-all.ps1"
