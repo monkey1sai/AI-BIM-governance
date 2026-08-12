@@ -1,0 +1,30 @@
+document_nature=working_note_bootstrap_evidence_not_runtime_spec
+stack_kind=self_referential_bootstrap
+ledger_entry=mechanism-hardening-2
+base_commit=472192386f8402cf19a29005daf25556d26f222c
+host=windows pwsh=7.5.4
+gitnexus=NOT_APPLICABLE (the GitNexus index carries no PowerShell symbols; `impact Stop-HostNativeProcessTreeAndWait` and `impact Resolve-HostNativeKitControlUrl` both returned target-not-found, so callers were established by repository-wide grep instead)
+PASS test-deploy-governance-static
+PASS test-verify-all
+PASS test-host-native-launcher
+PASS test-host-native-child-launch
+PASS test-deploy-dryrun
+PASS test-deploy-env-fallback
+PASS test-rebuild-test-deploy
+PASS test-platform-adapter
+PASS test-preflight-ports
+PASS test-stop-all-single-pid
+PASS test-kit-log-probe
+PASS test-deploy-target-registry
+PASS test-remote-deploy-transport
+PASS test-self-referential-bootstrap
+PASS test-agent-governance-check
+PASS invoke-powershell-static
+NOTE test-deploy-dryrun and test-deploy-env-fallback pass on this branch but are absent from the immutable command map in scripts/tests/test-self-referential-bootstrap.ps1, which is itself a gated file; they are therefore recorded here as evidence but are not verification-contract command ids
+PASS deploy-dry-run-operator-path (scripts/deploy.ps1 -DryRun exits 0 and leaves the working tree clean)
+PASS verify-all-deployment-plan-only-windows (scripts/verify-all.ps1 -Profile Deployment -PlanOnly exits 0)
+NOT_RUN verify-all-deployment-plan-only-linux (no canonical Linux session was opened for this bundle)
+NOT_RUN canonical-linux-rebuild (owed at fixpoint; no baseline rebuild was executed for this bundle)
+NOT_RUN canonical-linux-deployment-verify (owed at fixpoint)
+LIMIT canonical-post-change-verification=pending merge and mainline fixpoint rebuild
+LIMIT full-system-e2e=not claimed

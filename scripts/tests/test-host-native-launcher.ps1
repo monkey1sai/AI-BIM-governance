@@ -660,4 +660,142 @@ foreach ($controlCase in $rejectedControlUrls) {
 }
 Write-TestPass 'Kit control URL authority shape matrix'
 
+# ---------------------------------------------------------------------------
+# Process-tree containment (#489 L1-COR-004).
+# Kill($true) + WaitForExit + HasExited only ever describe the SAME Process
+# object, and the old catch swallowed the tree-kill exception whenever the
+# parent had already exited - so the helper reported success while
+# grandchildren kept running. The postcondition must cover every descendant.
+# ---------------------------------------------------------------------------
+Assert-True ($moduleContent -match "GetMethod\('Kill'") 'bounded process-tree terminator probes the Kill(bool) overload before using it'
+Assert-True ($moduleContent -match 'Get-PlatformChildProcessIds -ParentProcessId') 'bounded process-tree terminator enumerates descendants through the platform adapter'
+$overloadProbeIndex = $moduleContent.IndexOf("GetMethod('Kill'")
+$treeKillIndex = $moduleContent.IndexOf('$Process.Kill($true)')
+Assert-True ($overloadProbeIndex -ge 0 -and $treeKillIndex -gt $overloadProbeIndex) 'bounded process-tree terminator guards the tree kill behind the overload probe'
+
+$treeSandbox = New-TestSandbox -Prefix 'hn-tree-terminator'
+try {
+    $fixturePython = Resolve-PlatformSystemPython
+    if ([string]::IsNullOrWhiteSpace($fixturePython)) {
+        throw 'process-tree containment regressions require a working Python 3.11+ interpreter'
+    }
+
+    function Start-TreeFixtureProcess {
+        param(
+            [Parameter(Mandatory = $true)][string] $PythonExe,
+            [Parameter(Mandatory = $true)][string] $ScriptPath,
+            [Parameter(Mandatory = $true)][string] $PidPath
+        )
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = $PythonExe
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        [void]$startInfo.ArgumentList.Add($ScriptPath)
+        [void]$startInfo.ArgumentList.Add($PidPath)
+        $process = [System.Diagnostics.Process]::new()
+        $process.StartInfo = $startInfo
+        if (-not $process.Start()) { throw 'process-tree fixture did not start' }
+        for ($attempt = 0; $attempt -lt 200; $attempt++) {
+            if (Test-Path -LiteralPath $PidPath -PathType Leaf) { break }
+            Start-Sleep -Milliseconds 50
+        }
+        if (-not (Test-Path -LiteralPath $PidPath -PathType Leaf)) {
+            throw 'process-tree fixture never recorded its PIDs'
+        }
+        return $process
+    }
+
+    # Case 1: a real parent with a real grandchild-capable child. Both PIDs must
+    # be gone by the time the helper returns, inside the bounded window.
+    $treeFixture = Join-Path $treeSandbox 'tree-fixture.py'
+    $treePidFile = Join-Path $treeSandbox 'tree-pids.json'
+    $treeSource = @'
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+pathlib.Path(sys.argv[1]).write_text(
+    json.dumps([os.getpid(), child.pid]), encoding="utf-8"
+)
+time.sleep(120)
+'@
+    [System.IO.File]::WriteAllText($treeFixture, $treeSource)
+    $treeProcess = Start-TreeFixtureProcess -PythonExe $fixturePython -ScriptPath $treeFixture -PidPath $treePidFile
+    $treePids = @(Get-Content -Raw -LiteralPath $treePidFile | ConvertFrom-Json)
+    Assert-Equal 2 $treePids.Count 'process-tree fixture records exactly its parent and child PIDs'
+    $treeStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        Stop-HostNativeProcessTreeAndWait -Process $treeProcess -TimeoutMs 5000
+    }
+    finally {
+        $treeStopwatch.Stop()
+    }
+    Assert-True ($treeStopwatch.Elapsed.TotalSeconds -lt 15) 'process-tree terminator returns inside the bounded cleanup window'
+    foreach ($treePid in $treePids) {
+        Assert-True ($null -eq (Get-PlatformProcessIdentity -ProcessId ([int]$treePid))) "process-tree terminator proves PID $treePid exited"
+    }
+    Write-TestPass 'process-tree terminator waits for every descendant, not only the parent'
+
+    # Case 2: a descendant that cannot be killed must FAIL CLOSED. The old
+    # implementation reported success here because it never looked past the
+    # parent object.
+    $survivorFixture = Join-Path $treeSandbox 'survivor-fixture.py'
+    $survivorPidFile = Join-Path $treeSandbox 'survivor-pids.json'
+    $survivorSource = @'
+import json
+import os
+import pathlib
+import sys
+import time
+
+pathlib.Path(sys.argv[1]).write_text(json.dumps([os.getpid()]), encoding="utf-8")
+time.sleep(120)
+'@
+    [System.IO.File]::WriteAllText($survivorFixture, $survivorSource)
+    $survivorProcess = Start-TreeFixtureProcess -PythonExe $fixturePython -ScriptPath $survivorFixture -PidPath $survivorPidFile
+    $unkillableDescendantId = 424242
+    $survivorIdentity = [pscustomobject]@{
+        ProcessId      = $unkillableDescendantId
+        BirthToken     = 'fixture-birth-token'
+        ExecutablePath = ''
+        CommandLine    = ''
+    }
+    $survivorFailure = ''
+    $survivorStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        Stop-HostNativeProcessTreeAndWait -Process $survivorProcess -TimeoutMs 1000 `
+            -ChildPidLookup {
+                param($parentId)
+                if ([int]$parentId -eq $unkillableDescendantId) { return @() }
+                return @($unkillableDescendantId)
+            }.GetNewClosure() `
+            -IdentityProbeFn {
+                param($procId)
+                if ([int]$procId -eq $unkillableDescendantId) { return $survivorIdentity }
+                return $null
+            }.GetNewClosure() `
+            -StopProcessFn { param($procId) } | Out-Null
+    }
+    catch {
+        $survivorFailure = $_.Exception.Message
+    }
+    finally {
+        $survivorStopwatch.Stop()
+        if (-not $survivorProcess.HasExited) {
+            $survivorProcess.Kill()
+            [void]$survivorProcess.WaitForExit(5000)
+        }
+    }
+    Assert-True ($survivorFailure -match "left descendant PID\(s\) $unkillableDescendantId running") 'process-tree terminator fails closed when a snapshotted descendant survives'
+    Assert-True ($survivorStopwatch.Elapsed.TotalSeconds -lt 15) 'process-tree terminator bounds the descendant wait before failing closed'
+    Write-TestPass 'process-tree terminator fails closed on a surviving descendant'
+}
+finally {
+    Remove-TestSandbox -Path $treeSandbox
+}
+
 Write-Host "`n=== test-host-native-launcher.ps1: ALL PASSED ===" -ForegroundColor Green
