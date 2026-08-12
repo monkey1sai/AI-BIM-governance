@@ -298,7 +298,7 @@ test('review surface is drift-detectable and apex evidence is bounded and redact
   const after = reviewSurfaceSnapshot({ pullComments: [], reviews: [{ id: 1, body: 'changed' }], issueComments: [] })
   assert.notEqual(before.sha256, after.sha256)
 
-  const evidence = buildBoundedEvidence({ diff: 'token=ghp_abcdefghijklmnopqrstuvwxyz123456' }, 500000)
+  const evidence = buildBoundedEvidence({ diff: 'token=ghp_abcdefghijklmnopqrstuvwx' }, 500000)
   assert.ok(evidence.serialized.includes('[REDACTED]'))
   assert.ok(!evidence.serialized.includes('ghp_'))
   expectHold('evidence_too_large_for_arbiter', () => buildBoundedEvidence({ diff: 'x'.repeat(100) }, 20))
