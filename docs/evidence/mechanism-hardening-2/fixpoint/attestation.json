@@ -1,0 +1,69 @@
+{
+  "schema_version": "self-referential-fixpoint-attestation/v1",
+  "entry_id": "mechanism-hardening-2",
+  "mechanism_commit": "daf551e0a794c5b895333478ea518518d76390bd",
+  "verification_contract_sha256": "881fac8337efca52cb16e753cc016ee3219297180bfeec092406cad5ff7b2bc6",
+  "result": "pass",
+  "commands": [
+    {
+      "id": "test-deploy-governance-static",
+      "exit_code": 0
+    },
+    {
+      "id": "test-verify-all",
+      "exit_code": 0
+    },
+    {
+      "id": "test-host-native-launcher",
+      "exit_code": 0
+    },
+    {
+      "id": "test-host-native-child-launch",
+      "exit_code": 0
+    },
+    {
+      "id": "test-platform-adapter",
+      "exit_code": 0
+    },
+    {
+      "id": "test-preflight-ports",
+      "exit_code": 0
+    },
+    {
+      "id": "test-kit-log-probe",
+      "exit_code": 0
+    },
+    {
+      "id": "test-deploy-target-registry",
+      "exit_code": 0
+    },
+    {
+      "id": "test-remote-deploy-transport",
+      "exit_code": 0
+    },
+    {
+      "id": "test-rebuild-test-deploy",
+      "exit_code": 0
+    },
+    {
+      "id": "test-self-referential-bootstrap",
+      "exit_code": 0
+    },
+    {
+      "id": "test-agent-governance-check",
+      "exit_code": 0
+    },
+    {
+      "id": "invoke-powershell-static",
+      "exit_code": 0
+    },
+    {
+      "id": "canonical-linux-rebuild",
+      "exit_code": 0
+    },
+    {
+      "id": "canonical-linux-deployment-verify",
+      "exit_code": 0
+    }
+  ]
+}
