@@ -56,7 +56,7 @@ Repair lane 只開一扇門：**修復 PR 把自己的 PR number 追加到該 op
 2. 本 transition 對該 entry 的**唯一**差異是 `repair_prs` 的**尾端追加**，且追加內容**恰好等於本 PR number**（單一值）。無法取得 live PR number 時直接拒絕，不得略過驗證。
 3. 本 PR 命中機制清單的 changed paths **全部落在該 entry 已宣告的 `verification_mechanism_paths` 之內**（case-sensitive）。要改該範圍以外的機制，開新 entry。
 4. 本 PR **不得修改本 gate 自身的 adjudicator**（`$script:SelfReferentialAdjudicatorPaths`）。修改裁決者仍須依 §2／§3 另開 debt，不能藉 repair lane 讓被改過的規則裁決自己。
-5. 同一 transition **不得新增任何 entry，也不得關閉任何 entry**。
+5. 同一 transition **不得新增任何 entry，也不得關閉任何 entry**，且**只能修復 body 具名的那一個 entry** — 整個 transition 至多一筆 `repair_prs` 追加。否則未具名的 entry 稽核歷史會被改動，卻沒經過它自己的 PR number 與範圍檢查。
 
 Repair lane **不放寬**任何既有不變式：ledger 仍為 append-only（`repair_prs` 只能追加，既有元素不可改寫或刪除）；entry 除 `repair_prs` 外所有欄位仍不可變，唯一合法狀態轉移仍是一次 `open → closed`；closure 仍須提交完整且全綠的 fixpoint attestation（修復後的機制必須自己通過該 entry 凍結的 `verification_contract`）；同一 transition 仍不得一邊關債一邊開債；closed entry 仍完全不可變 — `repair_prs` 不是進入 closed entry 的後門。
 

@@ -1093,6 +1093,46 @@ try {
             -HeadJson $repairHead -BaseJson $repairBase -PrNumber 0
     }
 
+    # (2b) ONE PR repairs ONE entry (L1-COR-001). The transition records every open
+    # entry whose sole change is a repair_prs tail append, but the body names only
+    # one - so validating just the named record let a second entry's audit history
+    # ride along without ever meeting the PR-number or declared-surface checks.
+    $secondOpenEvidence = 'docs/evidence/second-open/self-referential-bootstrap/summary.md'
+    function New-SecondOpenEntry {
+        param([hashtable] $Override = @{})
+        $base = @{
+            id = 'second-open-debt'
+            verification_mechanism_paths = $repairSurface
+            bootstrap_evidence_refs = @($secondOpenEvidence)
+        }
+        foreach ($key in $Override.Keys) { $base[$key] = $Override[$key] }
+        return (New-Entry -Override $base)
+    }
+    $twoOpenRepairBase = New-LedgerJson -Entries @(
+        (New-Entry -Override @{ verification_mechanism_paths = $repairSurface }),
+        (New-SecondOpenEntry)
+    )
+    $twoOpenRepairHead = New-LedgerJson -Entries @(
+        (New-Entry -Override @{ verification_mechanism_paths = $repairSurface; repair_prs = @(601) }),
+        (New-SecondOpenEntry -Override @{ repair_prs = @(590) })
+    )
+    Assert-Throws -Context 'repair PR also appends repair_prs to an entry the body does not name' `
+        -MessagePattern 'must touch exactly one ledger entry' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson $twoOpenRepairHead -BaseJson $twoOpenRepairBase -PrNumber 601
+    }
+    # Control: appending to ONLY the entry the body does not name must still be
+    # caught by the original self-registration guard, so the single-door check is
+    # an addition to that guard rather than a replacement for it.
+    Assert-Throws -Context 'repair PR appends only to the entry the body does not name' `
+        -MessagePattern 'does not ADD it' -Action {
+        Invoke-BodyGate -Rows $repairRows -ChangedPaths $repairChangedPaths `
+            -HeadJson (New-LedgerJson -Entries @(
+                (New-Entry -Override @{ verification_mechanism_paths = $repairSurface }),
+                (New-SecondOpenEntry -Override @{ repair_prs = @(590) }))) `
+            -BaseJson $twoOpenRepairBase -PrNumber 601
+    }
+
     # (5) a repair may not open new debt in the same transition.
     $repairPlusNewJson = New-LedgerJson -Entries @(
         (New-Entry -Override @{ verification_mechanism_paths = $repairSurface; repair_prs = @(601) }),

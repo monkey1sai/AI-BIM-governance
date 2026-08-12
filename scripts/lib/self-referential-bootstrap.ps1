@@ -1111,9 +1111,23 @@ function Assert-SelfReferentialRepairLane {
     if ($PrNumber -le 0) {
         throw "self_referential_bootstrap: repair of ledger entry '$EntryId' requires a live PR number to bind repair_prs; refusing an unbound repair."
     }
-    $repairs = @($Transition.RepairEntries | Where-Object { [string]$_.Id -ceq $EntryId })
+    $allRepairs = @($Transition.RepairEntries)
+    $repairs = @($allRepairs | Where-Object { [string]$_.Id -ceq $EntryId })
     if ($repairs.Count -ne 1) {
         throw "self_referential_bootstrap: PR body names ledger entry '$EntryId' but this PR does not ADD it and does not append a repair_prs record for it; each bootstrap PR must self-register its own open entry, or register itself as a repair of the open entry it fixes."
+    }
+    # One door, one entry. The transition records EVERY open entry whose sole
+    # change is a repair_prs tail append, but the body names exactly one - so
+    # validating only the named record would let a second entry's audit history
+    # ride along without ever meeting the PR-number or declared-surface checks
+    # (L1-COR-001). Unreachable today, because a new entry may only be opened when
+    # no other debt is open and therefore at most one entry is ever open; this is
+    # defence in depth, and the insurance if that constraint is ever relaxed.
+    if ($allRepairs.Count -ne 1) {
+        $unnamedRepairIds = @($allRepairs |
+            Where-Object { [string]$_.Id -cne $EntryId } |
+            ForEach-Object { [string]$_.Id }) -join ', '
+        throw "self_referential_bootstrap: a repair PR must touch exactly one ledger entry; this transition also appends repair_prs to: $unnamedRepairIds. Each repaired entry needs its own PR, bound by its own PR number."
     }
     $appendedPrs = @($repairs[0].AppendedPrs)
     if ($appendedPrs.Count -ne 1 -or ([int]$appendedPrs[0]) -ne $PrNumber) {
