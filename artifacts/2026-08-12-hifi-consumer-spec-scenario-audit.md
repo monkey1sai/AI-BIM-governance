@@ -24,12 +24,12 @@
 | Spec | Scenario 數 | HOLDS | HOLDS-WITH-NOTE | STALE | UNVERIFIABLE |
 |---|---|---|---|---|---|
 | `edge-console-operator-frontend` | 30 | 28 | 2 | 0 | 0 |
-| `unified-governance-console` | 36 | 30 | 3 | 0 | 3 |
-| **合計** | **66** | **58** | **5** | **0** | **3** |
+| `unified-governance-console` | 36 | 29 | 3 | 0 | 4 |
+| **合計** | **66** | **57** | **5** | **0** | **4** |
 
-無 STALE 項；有 3 項 UNVERIFIABLE（均為需要真實部署 stack／GPU 才能逐字驗證的 runtime 行為，非本次遷移
+無 STALE 項；有 4 項 UNVERIFIABLE（均為需要真實部署 stack／GPU 才能逐字驗證的 runtime 行為，非本次遷移
 觸碰範圍，亦非「懷疑有問題」，而是誠實揭露本 session 純程式碼稽核的方法論邊界）。依 design.md Risk 條款，
-這 3 項在此正式升級請 coordinator/使用者決定是否需要另開部署驗證任務；不视为本 task 阻斷但按規定不可
+這 4 項在此正式升級請 coordinator/使用者決定是否需要另開部署驗證任務；不视为本 task 阻斷但按規定不可
 silently pass。
 
 ---
@@ -295,10 +295,18 @@ session 僅核對前端契約與呼叫路徑存在，未跑真轉檔。
 
 ### R10 primary / spectator 角色權威 SHALL 三層縱深
 
-**Scenario: spectator 唯讀且不送 mutating；primary binding 交易式套用** — **HOLDS**
+**Scenario: spectator 唯讀且不送 mutating；primary binding 交易式套用** — **UNVERIFIABLE**
+（2026-08-12 review reclassify：原判 HOLDS 只覆蓋前兩層。）已驗證的兩層：前端
 `govPanelState.ts` 三值 `disabledReason`（`spectator_read_only`/`waiting_viewer`/`session_not_active`）
-即為前端層 UI+command 層閘門；後端 `stage-binding` 403 gate 見 `app.ts:1929,2011`
-`"stage binding requires caller's active primary viewer lease"`。
+＋coordinator `stage-binding` 403 gate（`app.ts:1929,2011`
+`"stage binding requires caller's active primary viewer lease"`）。但本 Requirement 是**三層縱深**，
+Scenario 的「primary binding 交易式套用」要求 production Kit `openedStageResult`/`loadArtifactGroupResult`、
+coordinator `stageBindingApplied`、active revision 與 browser E2E——repo 自有證據明言第三層未被觀察：
+`docs/evidence/c-m4-runtime-command-bridge/browser-evidence-summary.json`（`binding_revision` 為
+`client-generated in GovernanceOverlay.tsx; not a backend-written revision`，embedded-primary Kit
+DataChannel mutator path 未觀察）與 `docs/frontend-redesign-implementation-notes.md` §11
+（streaming-server DataChannel `source_client_id` 強制未實作、host-native Kit 真實 primary/spectator
+DataChannel E2E 未跑）。在補上現行 runtime 證據前，依本 audit 方法論誠實標 UNVERIFIABLE。
 
 ### R11 primary 治理 viewer SHALL 採範本式全幅語意驗證版面
 
@@ -401,7 +409,7 @@ panel/first-frame evidence/DataChannel limitations 為既有 Requirement R11/R13
 在上方各自小節已展開為獨立條目；此處彙總的是「需要部署環境才能端到端驗證」的**根因類別**，並非隱藏
 第三個未列出的項目。）
 
-**這 3 項的共同特徵**：(a) 均需要真實部署 stack／GPU／Kit runtime 才能執行對應的 browser E2E；(b) 均
+**這 4 項的共同特徵**：(a) 均需要真實部署 stack／GPU／Kit runtime 才能執行對應的 browser E2E；(b) 均
 **不在**本次 `migrate-console-to-hifi-design` 遷移實際改動的檔案範圍內（見文件開頭「總覽」的 file-scope
 證據：#357/#358/#429 只動 CSS/inline style/主題移除/golden baseline，零觸碰 `Window.tsx`／
 `MockViewport.tsx`／`deploy.ps1`／governance-service／streaming-server）；(c) 因此結構上「本次遷移造成

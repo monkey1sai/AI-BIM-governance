@@ -1509,7 +1509,7 @@
       "id": "migrate-console-to-hifi-design",
       "status": "active",
       "owner": "web-viewer-sample",
-      "current_slice": "2026-08-12 7.3 補勾（npm run verify 全綠：typecheck+build+78 files/1069 tests+struct-log 23/23，exit 0）；7.4 產出逐 scenario 稽核 artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md（66/66 走過，58 HOLDS/5 HOLDS-WITH-NOTE/0 STALE/3 UNVERIFIABLE 需部署 stack 才能驗證，未勾）；7.1 rebaseline 非 no-op——會復原 #429 修正過的 A4 canonical baseline，已 STOP 還原未 commit，capture script 缺 baseline_provenance 特判待另立修復。32/40；殘項＝0.5/1.2/6.4（human owner）＋7.1/7.4。",
+      "current_slice": "2026-08-12 7.3 補勾（npm run verify 全綠：typecheck+build+78 files/1069 tests+struct-log 23/23，exit 0）；7.4 產出逐 scenario 稽核 artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md（66/66 走過，57 HOLDS/5 HOLDS-WITH-NOTE/0 STALE/4 UNVERIFIABLE（含 review reclassify 之 R10 binding 情境）需部署 stack 才能驗證，未勾）；7.1 rebaseline 非 no-op——會復原 #429 修正過的 A4 canonical baseline，已 STOP 還原未 commit，capture script 缺 baseline_provenance 特判待另立修復。32/40；殘項＝0.5/1.2/6.4（human owner）＋7.1/7.4。",
       "blocked_by": [],
       "last_verified": "2026-08-12T02:34:00Z",
       "task_ledger": {
