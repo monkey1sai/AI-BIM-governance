@@ -441,6 +441,34 @@ if ($kitBuildIndex -lt 0 -or $cadHardeningIndex -le $kitBuildIndex -or $envMerge
     throw 'CAD cache hardening must run after the Kit build gate and before later deployment phases'
 }
 
+# The Phase 2 missing-key merge can BOTH append a missing KIT_CONTROL_URL and
+# repoint $resolvedEnvFile from the .example to the real env file. Resolving the
+# Kit control authority (or sealing it into the Kit Manager runtime signature)
+# before that block leaves the current run starting the child with the stale
+# pre-merge value and persisting a signature that claims the repaired state —
+# a blocked runtime-control state that looks configured.
+$kitControlResolveIndex = $deploy.IndexOf('$resolvedKitControlUrl = if ($SkipKitManager)')
+$kitManagerSignatureIndex = $deploy.IndexOf('$kitManagerRuntimeSignature = New-KitManagerRuntimeSignature')
+if ($kitControlResolveIndex -lt 0) {
+    throw 'deploy.ps1 must resolve the Kit control authority through the SkipKitManager-aware assignment'
+}
+if ($kitManagerSignatureIndex -lt 0) {
+    throw 'deploy.ps1 must build the Kit Manager runtime signature from the resolved control authority'
+}
+if ($kitControlResolveIndex -le $envMergeIndex) {
+    throw 'deploy.ps1 must resolve the Kit control authority AFTER the .env missing-key merge so a repaired KIT_CONTROL_URL takes effect in the same run'
+}
+if ($kitManagerSignatureIndex -le $envMergeIndex) {
+    throw 'deploy.ps1 must build the Kit Manager runtime signature AFTER the .env missing-key merge so it never persists the stale pre-merge control authority'
+}
+if ($kitManagerSignatureIndex -le $kitControlResolveIndex) {
+    throw 'deploy.ps1 must resolve the Kit control authority before sealing it into the Kit Manager runtime signature'
+}
+$kitManagerStartIndex = $deploy.IndexOf('Start-HostNativeKitManager -RepoRoot $RepoRoot -Port 8010 -KitControlUrl $resolvedKitControlUrl')
+if ($kitManagerStartIndex -le $kitManagerSignatureIndex) {
+    throw 'deploy.ps1 must start the host-native Kit Manager with the post-merge control authority'
+}
+
 # Hybrid mode must not start a CONTAINERISED kit-manager-api. `compose up
 # coordinator viewer` used to pull it in through coordinator's depends_on, and
 # that service publishes 127.0.0.1:8010 - the same port deploy.ps1 Phase 4c-2
