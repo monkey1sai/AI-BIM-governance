@@ -400,8 +400,33 @@ function Stop-ConverterProcessTree {
     # (two consecutive rounds that discover no new PID), capped at $MaxRounds.
     # Hitting the cap is reported honestly instead of being papered over.
     #
+    # ORPHAN HANDLING (#509 review r2) - the answer is platform-split, and it was
+    # MEASURED on a real host rather than assumed:
+    #
+    #   Windows: an exited process keeps being named by its children's
+    #   Win32_Process.ParentProcessId, so querying children of an
+    #   ALREADY-KILLED known pid still returns the orphan. That is why this loop
+    #   re-walks from every KNOWN member instead of only from the root: the mid
+    #   process vanishes from the process table once killed, so the root can no
+    #   longer reach it, but its retained pid still answers. Regression test:
+    #   scripts/tests/test-convert-ifc-to-usdc.ps1 case 2 (root -> mid -> leaf,
+    #   leaf forked late); the same fixture driven by a root-only re-walk was
+    #   measured reporting FixedPointReached=True with the leaf still alive.
+    #
+    #   Linux: orphans are reparented to PID 1, which destroys the ppid link, so
+    #   no PPID-based rescan can rediscover them. There this wrapper is BEST
+    #   EFFORT by construction - see Test-OrphanRediscoverySupported and the
+    #   timeout wording, which says so instead of claiming proof.
+    #
+    # On BOTH platforms the authoritative containment boundary is the Python
+    # adapter (ifc2usdc_powershell_adapter._ContainedProcess), whose OS-level
+    # boundary -- a Windows Job Object, or a POSIX process group -- keeps
+    # membership across reparenting and outlives this function. The ps1
+    # direct-invocation path is not the ship path.
+    #
     # Returns [pscustomobject] @{ SurvivingPids = @(); FixedPointReached = $bool };
-    # SurvivingPids empty AND FixedPointReached true is the only proven case.
+    # SurvivingPids empty AND FixedPointReached true is the strongest result this
+    # wrapper can report.
     param(
         [Parameter(Mandatory = $true)][int] $ProcessId,
         [ValidateRange(0, 600000)][int] $TimeoutMs = 15000,
@@ -631,7 +656,12 @@ function Invoke-KitConversion {
                 # tracked PIDs, which is strictly weaker than proof.
                 "$timeoutReason; no survivors were observed among the tracked PIDs, but this platform reparents orphans away from a killed parent, so a descendant forked during termination cannot be tracked by this script; containment is NOT proven here (the caller's process-group boundary is authoritative)"
             } else {
-                "$timeoutReason; process tree terminated and confirmed gone"
+                # Windows keeps naming an exited parent in its children's
+                # ParentProcessId, so the re-walk from every known pid does
+                # rediscover a descendant forked during termination (measured;
+                # regression-tested). The adapter's Job Object remains the
+                # authoritative boundary for the wrapper-less direct path.
+                "$timeoutReason; process tree terminated and confirmed gone (descendants forked during termination are rediscovered through the killed parent's retained PID on this platform; the adapter's Job Object remains the authoritative boundary)"
             }
         } elseif ($exitCode -ne 0) {
             "Kit CAD conversion failed with exit code $exitCode for $($Item.IfcPath)"

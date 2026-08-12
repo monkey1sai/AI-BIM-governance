@@ -3678,24 +3678,29 @@ def _pid_is_alive(pid: int) -> bool:
             return kernel32.WaitForSingleObject(handle, 0) != 0  # != WAIT_OBJECT_0
         finally:
             kernel32.CloseHandle(handle)
-    # #509 review r2:一個被殺掉、父行程已消失的孫代會停在 state 'Z' 直到 PID 1
-    # 回收它,而 ``os.kill(pid, 0)`` 對這種 corpse 一樣成功。production containment
-    # 刻意把 defunct 當成已終止(它握不住 HOOPS handle,也不能再執行任何東西),所以
-    # 它會在 PID 被 reap 之前就回報成功;這個 probe 若還把 zombie 算成活著,就會在
-    # 「containment 其實成功」的主機上讓測試假失敗——正是這個修復針對的那種主機。
-    # 解析獨立於 adapter(不共用它的 containment 程式碼):state 取最後一個 ')' 之後
-    # 的第一個欄位,因為 comm 可能含空白與括號。
+    # #509 review r2: os.kill(pid, 0) still succeeds for a REAPED-PENDING zombie,
+    # so on a host whose PID 1 does not promptly reap orphans this probe reported
+    # a corpse as "alive" and could flake
+    # test_converter_timeout_kills_the_whole_process_tree_before_raising. /proc
+    # answers it properly: comm may contain spaces and parens, so take the fields
+    # after the LAST close-paren; index 0 is the state and "Z" means the process
+    # is already dead and merely un-reaped.
     try:
-        with open(f"/proc/{int(pid)}/stat", encoding="utf-8", errors="replace") as handle:
+        with open(
+            "/proc/%d/stat" % int(pid), encoding="utf-8", errors="replace"
+        ) as handle:
             raw = handle.read()
+    except FileNotFoundError:
+        return False
     except OSError:
         raw = ""
-    if raw:
-        close_index = raw.rfind(")")
-        if close_index >= 0:
-            fields = raw[close_index + 1 :].split()
-            if fields:
-                return fields[0] != "Z"
+    close_index = raw.rfind(")")
+    if close_index >= 0:
+        fields = raw[close_index + 1 :].split()
+        if fields:
+            return fields[0] != "Z"
+    # No usable /proc (macOS, BSD, a restricted mount): fall back to the signal
+    # probe and accept that it cannot tell a zombie from a live process.
     try:
         os.kill(int(pid), 0)
     except ProcessLookupError:
@@ -4000,6 +4005,123 @@ def test_windows_launch_kills_the_suspended_child_when_job_assignment_fails(
     assert api.calls.index("assign") < api.calls.index("terminate")
     assert api.terminated == [4242]
     assert 99 in api.closed
+
+
+class _FakeJobProofApi:
+    """kernel32 double for the Windows containment PROOF (not the launch path)."""
+
+    def __init__(self, *, members, alive=()) -> None:
+        self._members = members
+        self._alive = {int(pid) for pid in alive}
+        self.terminated_jobs: list = []
+        self.walked: list[int] = []
+        self.terminated_pids: list[int] = []
+
+    def terminate_job(self, job) -> None:
+        self.terminated_jobs.append(job)
+
+    def job_process_ids(self, job):
+        return self._members
+
+    def child_pids(self, pid):
+        # An ancestry walk must NEVER back the proof once a job exists; recording
+        # every call lets the test assert that it was not consulted.
+        self.walked.append(int(pid))
+        return []
+
+    def pid_is_alive(self, pid) -> bool:
+        return int(pid) in self._alive
+
+    def terminate_pid(self, pid) -> None:
+        self.terminated_pids.append(int(pid))
+
+
+class _StubTimeoutProc:
+    def __init__(self, pid: int = 4242) -> None:
+        self.pid = pid
+
+    def wait(self, timeout=None):
+        raise subprocess.TimeoutExpired(cmd="converter", timeout=timeout)
+
+    def kill(self) -> None:
+        pass
+
+
+def test_windows_unreadable_job_membership_fails_closed_without_ancestry_walk():
+    """#509 review r2:job 還在、但 QueryInformationJobObject 查不到成員時。
+
+    舊碼退回 PPID walk,而 PPID walk 看不見已被 reparent 的 Kit 孫代,於是一棵從未
+    被觀察過的樹被宣告成 containment proven。查不到成員 == 證明不成立:必須回傳
+    False(-> converter_containment_failed),survivors 標為未知(空),並帶出
+    job_membership_unreadable 診斷。殺仍然照殺(TerminateJobObject 照送),
+    fail-closed 的是「證明」不是「動作」。
+    """
+
+    import ifc2usdc_powershell_adapter
+
+    cls = ifc2usdc_powershell_adapter._ContainedProcess
+    api = _FakeJobProofApi(members=None, alive=(4242,))
+    contained = cls(_StubTimeoutProc(), job=99, api=api)
+
+    proven = contained._terminate_tree_windows(time.monotonic() - 1.0)
+
+    assert proven is False
+    assert contained.survivors == ()
+    assert contained.containment_detail == "job_membership_unreadable"
+    assert api.terminated_jobs == [99], "the kill itself must still be attempted"
+    assert api.walked == [], "an ancestry walk must not be used as containment proof"
+
+
+def test_windows_readable_empty_job_membership_proves_containment():
+    """#509 review r2:membership 讀得到且為空,才是唯一可以宣告 proven 的情況。"""
+
+    import ifc2usdc_powershell_adapter
+
+    cls = ifc2usdc_powershell_adapter._ContainedProcess
+    api = _FakeJobProofApi(members=[], alive=())
+    contained = cls(_StubTimeoutProc(), job=99, api=api)
+
+    assert contained._terminate_tree_windows(time.monotonic() + 5.0) is True
+    assert contained.survivors == ()
+    assert contained.containment_detail is None
+    assert api.walked == []
+
+
+def test_unreadable_job_membership_surfaces_in_the_containment_error(
+    tmp_path: Path, monkeypatch
+):
+    """#509 review r2:證明失敗的理由必須傳到 operator 看得到的 error message。"""
+
+    import ifc2usdc_powershell_adapter
+
+    adapter = _adapter_for_sentinel(tmp_path)
+    validated_hoops_main, validated_hoops_identity = _validated_explicit_hoops(adapter)
+
+    def _unreadable(self, *, deadline_seconds, grace_seconds):
+        self._survivors = ()
+        self._containment_detail = "job_membership_unreadable"
+        return False
+
+    monkeypatch.setattr(
+        ifc2usdc_powershell_adapter._ContainedProcess, "terminate_tree", _unreadable
+    )
+    _patch_popen(monkeypatch, timeout=True)
+
+    raised: ConversionAuthorityError | None = None
+    try:
+        adapter._run_powershell_conversion(
+            ifc_path=tmp_path / "fake.ifc",
+            output_dir=tmp_path / "out",
+            validated_hoops_main=validated_hoops_main,
+            validated_hoops_identity=validated_hoops_identity,
+        )
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.code == "converter_containment_failed"
+    assert "job_membership_unreadable" in raised.message
+    assert "unknown" in raised.message
 
 
 def _patch_fake_proc_table(monkeypatch, table: dict) -> None:
@@ -4453,100 +4575,23 @@ def test_containment_failure_carries_the_kit_log_diagnostics(tmp_path: Path, mon
     assert "kit_stderr_log: C:\\logs\\kit-stderr.log" in raised.message
 
 
-# --- #509 review round 3 ------------------------------------------------------
+def test_windows_containment_failure_names_the_live_job_members():
+    """#509 review r2 對照組:membership 讀得到且非空時,survivors 就是那些成員。
 
-
-class _FakeJobMembershipApi:
-    """kernel32 double for the Windows containment poll.
-
-    ``job_process_ids`` returning None is the "QueryInformationJobObject failed"
-    case: the authoritative membership record could not be observed at all.
+    上面兩個案例證明「讀不到」與「讀到空的」的差別;這個案例補上「讀得到、而且還
+    有人活著」——survivors 必須是 job 回報的那些 PID,不是 root,也不是空的。
     """
 
-    ERROR_ACCESS_DENIED = 5
-
-    def __init__(self, *, job_pid_snapshots, child_map=None, alive=()):
-        self._job_pid_snapshots = list(job_pid_snapshots)
-        self._child_map = child_map or {}
-        self._alive = {int(pid) for pid in alive}
-        self.terminated_jobs: list[int] = []
-
-    def terminate_job(self, job) -> bool:
-        self.terminated_jobs.append(job)
-        return True
-
-    def job_process_ids(self, job):
-        if len(self._job_pid_snapshots) > 1:
-            return self._job_pid_snapshots.pop(0)
-        return self._job_pid_snapshots[0]
-
-    def child_pids(self, parent_pid):
-        return list(self._child_map.get(int(parent_pid), ()))
-
-    def pid_is_alive(self, pid) -> bool:
-        return int(pid) in self._alive
-
-    def terminate_pid(self, pid) -> None:
-        self._alive.discard(int(pid))
-
-    def close_handle(self, handle) -> None:
-        return None
-
-
-def _contained_with_job(api, *, pid: int = 4242, job: int = 7):
     import ifc2usdc_powershell_adapter
 
-    proc = _FakeContainedPopen(["converter"])
-    proc.pid = pid
-    return ifc2usdc_powershell_adapter._ContainedProcess(proc, job=job, api=api)
+    cls = ifc2usdc_powershell_adapter._ContainedProcess
+    api = _FakeJobProofApi(members=[4242, 5150], alive=(5150,))
+    contained = cls(_StubTimeoutProc(), job=99, api=api)
 
-
-def test_windows_containment_is_unprovable_when_job_membership_cannot_be_read():
-    """#509 review r2:讀不到 Job Object membership 時不得退回 PPID walk 當證明。
-
-    job 才是權威的成員紀錄;PPID walk 回答的是「祖先關係」這個比較弱的問題。root
-    可能已經退出、還在跑的 Kit/HOOPS 孫代可能已被 reparent,於是那個 walk 只看到一
-    個死掉的 root 就回報「containment 已證明」——而 job 的成員從頭到尾沒被觀察過。
-    """
-
-    api = _FakeJobMembershipApi(job_pid_snapshots=[None], child_map={4242: []}, alive=())
-    contained = _contained_with_job(api)
-
-    assert contained._terminate_tree_windows(time.monotonic()) is False
-    assert contained.survivors == (4242,)
-    assert api.terminated_jobs == [7]
-
-
-def test_windows_containment_is_proven_when_the_job_reports_no_members():
-    """對照組:job membership 讀得到而且是空的,才算證明。"""
-
-    api = _FakeJobMembershipApi(job_pid_snapshots=[[]], child_map={4242: []}, alive=())
-    contained = _contained_with_job(api)
-
-    assert contained._terminate_tree_windows(time.monotonic() + 1.0) is True
-    assert contained.survivors == ()
-
-
-def test_windows_containment_recovers_from_a_transient_membership_query_failure():
-    """一次讀取失敗不等於永久失敗:deadline 之內讀到空成員仍然算證明。"""
-
-    api = _FakeJobMembershipApi(job_pid_snapshots=[None, []], child_map={4242: []}, alive=())
-    contained = _contained_with_job(api)
-
-    assert contained._terminate_tree_windows(time.monotonic() + 2.0) is True
-    assert contained.survivors == ()
-
-
-def test_windows_containment_failure_names_the_live_job_members(monkeypatch):
-    """job membership 讀得到且非空時,survivors 就是那些真正還活著的成員。"""
-
-    api = _FakeJobMembershipApi(
-        job_pid_snapshots=[[4242, 5150]], child_map={4242: []}, alive=(5150,)
-    )
-    contained = _contained_with_job(api)
-
-    assert contained._terminate_tree_windows(time.monotonic()) is False
+    assert contained._terminate_tree_windows(time.monotonic() - 1.0) is False
     assert contained.survivors == (5150,)
+    assert contained.containment_detail is None
+    assert api.walked == [], "an ancestry walk must not be consulted once the job answered"
 
 
 def test_liveness_probe_helper_treats_a_posix_zombie_as_dead(monkeypatch):

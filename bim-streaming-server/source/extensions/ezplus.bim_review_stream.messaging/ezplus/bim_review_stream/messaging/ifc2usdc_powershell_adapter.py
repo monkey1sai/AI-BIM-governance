@@ -376,7 +376,9 @@ class _ContainedProcess:
       的 descendant 會離開原本的 PGID,``killpg``、/proc pgrp 掃描與存活檢查都涵蓋
       不到它。真正不可逃脫的 POSIX 邊界要 cgroup(需要 cgroup 委派權限),不在本
       class 範圍內。實際的 Kit/HOOPS converter 不會 ``setsid()``,但這個殘餘風險
-      是真的,不要把 POSIX 這一側說成「不可逃脫」。
+      是真的,不要把 POSIX 這一側說成「不可逃脫」。#509 review r2:非可逃脫的
+      POSIX 邊界(cgroup v2 + ``cgroup.kill``)列為 TRACKED FOLLOW-UP,本 PR 不
+      實作;出貨路徑(Windows Job Object)不受這個限制影響。
     """
 
     def __init__(
@@ -392,6 +394,7 @@ class _ContainedProcess:
         self._pgid = pgid
         self._api = api
         self._survivors: tuple[int, ...] = ()
+        self._containment_detail: str | None = None
         self._closed = False
 
     # -- construction -------------------------------------------------------
@@ -517,6 +520,12 @@ class _ContainedProcess:
     def survivors(self) -> tuple[int, ...]:
         return self._survivors
 
+    @property
+    def containment_detail(self) -> str | None:
+        """Machine-readable reason the containment proof failed, if any."""
+
+        return self._containment_detail
+
     def wait(self, timeout):
         return self._proc.wait(timeout=timeout)
 
@@ -568,32 +577,26 @@ class _ContainedProcess:
         self._reap_bounded(max(deadline - time.monotonic(), 0.5))
         while True:
             live = self._windows_live_pids(api, pid)
-            # live is None = job membership 讀不到。那不是「空的」,是「沒觀察到」,
-            # 所以它永遠不能滿足成功條件;單次失敗仍可能是暫時性的,因此繼續 poll
-            # 到 deadline 再 fail closed,而不是第一次讀取失敗就放棄。
-            if live is not None and not live:
+            if live is None:
+                # #509 review r2: the job EXISTS but QueryInformationJobObject
+                # would not say who is still in it. TerminateJobObject was already
+                # issued above -- killing is best-effort and always attempted --
+                # but the PROOF must fail closed. Falling back to the PPID walk
+                # here let the terminator announce containment on evidence that
+                # never observed the authoritative boundary: a reparented Kit
+                # grandchild is invisible to an ancestry walk, so an empty walk is
+                # not proof of an empty job. Survivors are genuinely unknown, so
+                # report none instead of inventing an ancestry-walk answer.
+                self._survivors = ()
+                self._containment_detail = "job_membership_unreadable"
+                return False
+            if not live:
                 self._survivors = ()
                 return True
             if time.monotonic() >= deadline:
-                self._survivors = self._windows_unprovable_survivors(api, pid, live)
+                self._survivors = tuple(sorted(live))
                 return False
             time.sleep(_CONTAINMENT_POLL_INTERVAL_SECONDS)
-
-    def _windows_unprovable_survivors(
-        self, api: _Win32ContainmentApi, root_pid: int, live: set[int] | None
-    ) -> tuple[int, ...]:
-        if live is not None:
-            return tuple(sorted(live))
-        # Job membership 從頭到尾沒讀成功。這裡才用 PPID walk,而且只用來在錯誤訊息
-        # 裡列出可疑 PID(診斷提示),絕不用它的「空集合」去證明 containment ——
-        # 那正是本函式 fail closed 的原因。walk 什麼都撈不到時退回 root pid,寧可
-        # 給一個不精確的 PID 也不要給一個空的 survivor 清單假裝乾淨。
-        hint = {
-            int(candidate)
-            for candidate in self._windows_tree_pids(api, root_pid)
-            if candidate and api.pid_is_alive(int(candidate))
-        }
-        return tuple(sorted(hint)) or (int(root_pid),)
 
     @staticmethod
     def _windows_tree_pids(api: _Win32ContainmentApi, root_pid: int) -> list[int]:
@@ -614,13 +617,11 @@ class _ContainedProcess:
     def _windows_live_pids(
         self, api: _Win32ContainmentApi, root_pid: int
     ) -> set[int] | None:
-        """Live PIDs inside the boundary; None when membership is UNREADABLE.
+        """Live pids inside the boundary; None when the boundary is UNREADABLE.
 
-        #509 review r2:job 才是權威的成員紀錄。``QueryInformationJobObject`` 失敗
-        時退回 PPID walk,等於用「祖先關係」這個比較弱的問題去回答「這個 job 還有
-        沒有成員」——root 可能已經退出、還在跑的 Kit/HOOPS 孫代可能已經被 reparent,
-        於是 walk 只看到一個死掉的 root 就宣告 containment 已證明,而 job 的成員從
-        頭到尾沒被觀察過。讀不到就回 None,由呼叫端 fail closed。
+        None is not "empty": it means the job exists but its membership query
+        failed, so containment cannot be proven from here. Only the no-job case
+        (a unit-test double) may answer from the PPID walk.
         """
 
         if self._job is not None:
@@ -628,8 +629,6 @@ class _ContainedProcess:
             if candidates is None:
                 return None
         else:
-            # 沒有 job 只會出現在 unit-test double 或直接建構的 _ContainedProcess:
-            # 真實 spawn 現在建不出 job 就 fail closed(_spawn_windows)。
             candidates = self._windows_tree_pids(api, root_pid)
         return {int(pid) for pid in candidates if pid and api.pid_is_alive(int(pid))}
 
@@ -2327,6 +2326,7 @@ class Ifc2UsdcPowershellConverterAdapter:
         timed_out = False
         containment_proven = True
         survivors: tuple[int, ...] = ()
+        containment_detail: str | None = None
         try:
             with self._hold_windows_hoops_entrypoint_for_execution(
                 validated_hoops_main,
@@ -2359,6 +2359,7 @@ class Ifc2UsdcPowershellConverterAdapter:
                                 grace_seconds=self._CONTAINMENT_GRACE_SECONDS,
                             )
                             survivors = contained.survivors
+                            containment_detail = contained.containment_detail
                     finally:
                         contained.close()
                     stdout_handle.seek(0)
@@ -2385,10 +2386,14 @@ class Ifc2UsdcPowershellConverterAdapter:
             # 只有在「每個 descendant 都被觀察到消失」之後才允許回報單純 timeout。
             if not containment_proven:
                 surviving = ", ".join(str(pid) for pid in survivors) or "unknown"
+                # #509 review r2:證明失敗的「原因」要跟著出去,operator 才分得清
+                # 「有殘存 PID」與「邊界根本讀不到(job_membership_unreadable)」。
+                detail = f" [{containment_detail}]" if containment_detail else ""
                 message, metadata = self._failure_diagnostics(
                     f"convert-ifc-to-usdc.ps1 exceeded {outer_timeout}s and its process "
                     f"tree could not be proven terminated within "
-                    f"{self._CONTAINMENT_DEADLINE_SECONDS}s (surviving pids: {surviving}).",
+                    f"{self._CONTAINMENT_DEADLINE_SECONDS}s (surviving pids: "
+                    f"{surviving}){detail}.",
                     completed,
                 )
                 raise ConversionAuthorityError(
