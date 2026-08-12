@@ -2211,6 +2211,7 @@ export default class App extends React.Component<AppProps, AppState> {
         }
         this._clearPendingBindingApplyForAttempt(attemptGeneration);
         this.stageLoadFailureActive = true;
+        this.stageLoadFailureReason = null;
         this.setState((state) => ({
             loadingText: "模型組合僅部分套用",
             streamDiagnostic: [
