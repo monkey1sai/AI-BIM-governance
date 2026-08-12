@@ -174,10 +174,13 @@ try {
     $kitVersion = Get-KitVersionFingerprint -RepoRoot $sandbox
     Assert-Equal '110.1.0' $kitVersion.value 'kit-kernel version extracted from packman xml, feature suffix stripped'
     Assert-True $kitVersion.measured 'kit version measured=true when packman xml present'
+    Assert-Equal 'checkout_packman_declared' $kitVersion.source 'kit version records its source as the checkout-declared dependency, not a live Kit-process read'
+    Assert-True (-not [string]::IsNullOrWhiteSpace($kitVersion.caveat)) 'kit version carries an explicit staleness caveat since it cannot verify the running build matches this checkout'
 
     $kitVersionMissing = Get-KitVersionFingerprint -RepoRoot (Join-Path $sandbox 'does-not-exist')
     Assert-True (-not $kitVersionMissing.measured) 'kit version measured=false when packman xml absent'
     Assert-True (-not [string]::IsNullOrWhiteSpace($kitVersionMissing.reason)) 'kit version absent -> reason present'
+    Assert-True (-not [string]::IsNullOrWhiteSpace($kitVersionMissing.caveat)) 'kit version caveat present even when unmeasured'
     Write-TestPass 'Get-KitVersionFingerprint'
 } finally { Remove-TestSandbox -Path $sandbox }
 
@@ -395,10 +398,12 @@ Write-TestPass 'Get-SessionVramWatermark (partial-visibility refusal + attributi
 # 8. Get-EnvironmentFingerprint + New-OptionalMeasurement
 # ============================================================================
 $fullInv = Get-GpuInventorySnapshot -NvidiaSmiQuery { @('0, NVIDIA GeForce RTX 4060 Ti, 580.97, 8188, 1827, 6123, 2, 0, [N/A]') }
-$fullKit = [ordered]@{ value = '110.1.0'; measured = $true; reason = $null }
+$fullKit = [ordered]@{ value = '110.1.0'; measured = $true; reason = $null; source = 'checkout_packman_declared'; caveat = 'test caveat' }
 $fullFixture = [ordered]@{ hash = 'deadbeef'; hash_measured = $true; hash_reason = $null; size_bytes = 12345; size_measured = $true; size_reason = $null }
 $fullFingerprint = Get-EnvironmentFingerprint -GpuInventory $fullInv -KitVersion $fullKit -FixtureFingerprint $fullFixture
 Assert-True $fullFingerprint.complete 'environment fingerprint complete=true when all five fields measured'
+Assert-Equal 'checkout_packman_declared' $fullFingerprint.kit_version.source 'environment fingerprint propagates kit_version source through to the report'
+Assert-Equal 'test caveat' $fullFingerprint.kit_version.caveat 'environment fingerprint propagates kit_version caveat through to the report'
 
 Assert-Equal 1 $fullFingerprint.gpu_count 'single-GPU inventory reports gpu_count=1'
 Assert-Equal 'single_gpu' $fullFingerprint.gpu_fingerprint_scope 'single-GPU host is fingerprinted under a declared single_gpu scope'

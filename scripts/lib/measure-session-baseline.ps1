@@ -211,20 +211,29 @@ function Get-KitVersionFingerprint {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string] $RepoRoot)
 
+    # This reads the checkout's DECLARED kit-kernel dependency version, not a
+    # value read from the live Kit process. If the checkout was updated after
+    # the running Kit build was last built/restarted, this value can be stale
+    # relative to the session actually being measured -- no local mechanism
+    # exists to introspect a running Kit.exe's build identity from outside,
+    # so this caveat travels with the field instead of being silently assumed
+    # away (PR #511 review).
+    $caveat = "this is the checkout's declared kit-kernel dependency version (bim-streaming-server/tools/deps/kit-sdk.packman.xml); it is not read from the live Kit process and does not verify the running build was produced from this exact checkout revision -- if the checkout changed without a rebuild/restart, this value can be stale relative to the measured session"
+
     $packmanPath = Join-Path $RepoRoot 'bim-streaming-server\tools\deps\kit-sdk.packman.xml'
     if (-not (Test-Path -LiteralPath $packmanPath -PathType Leaf)) {
-        return [ordered]@{ value = $null; measured = $false; reason = "kit-sdk.packman.xml not found at $packmanPath"; source_path = $packmanPath }
+        return [ordered]@{ value = $null; measured = $false; reason = "kit-sdk.packman.xml not found at $packmanPath"; source_path = $packmanPath; source = 'checkout_packman_declared'; caveat = $caveat }
     }
     try {
         $content = Get-Content -LiteralPath $packmanPath -Raw
     } catch {
-        return [ordered]@{ value = $null; measured = $false; reason = "failed to read $($packmanPath): $($_.Exception.Message)"; source_path = $packmanPath }
+        return [ordered]@{ value = $null; measured = $false; reason = "failed to read $($packmanPath): $($_.Exception.Message)"; source_path = $packmanPath; source = 'checkout_packman_declared'; caveat = $caveat }
     }
     $match = [regex]::Match($content, 'name="kit-kernel"\s+version="(?<version>[0-9]+\.[0-9]+\.[0-9]+)')
     if (-not $match.Success) {
-        return [ordered]@{ value = $null; measured = $false; reason = 'kit-kernel version token not found in kit-sdk.packman.xml'; source_path = $packmanPath }
+        return [ordered]@{ value = $null; measured = $false; reason = 'kit-kernel version token not found in kit-sdk.packman.xml'; source_path = $packmanPath; source = 'checkout_packman_declared'; caveat = $caveat }
     }
-    return [ordered]@{ value = $match.Groups['version'].Value; measured = $true; reason = $null; source_path = $packmanPath }
+    return [ordered]@{ value = $match.Groups['version'].Value; measured = $true; reason = $null; source_path = $packmanPath; source = 'checkout_packman_declared'; caveat = $caveat }
 }
 
 function Get-FixtureFingerprint {
@@ -486,7 +495,13 @@ function Get-EnvironmentFingerprint {
     $fields = [ordered]@{
         gpu_model           = [ordered]@{ value = $gpuModel; measured = $gpuModelMeasured; reason = $gpuModelReason }
         gpu_driver_version  = [ordered]@{ value = $gpuDriver; measured = $gpuDriverMeasured; reason = $gpuDriverReason }
-        kit_version         = [ordered]@{ value = $KitVersion.value; measured = $KitVersion.measured; reason = $KitVersion.reason }
+        kit_version         = [ordered]@{
+            value    = $KitVersion.value
+            measured = $KitVersion.measured
+            reason   = $KitVersion.reason
+            source   = (Get-SafeProperty -Object $KitVersion -Name 'source')
+            caveat   = (Get-SafeProperty -Object $KitVersion -Name 'caveat')
+        }
         fixture_hash        = [ordered]@{ value = $FixtureFingerprint.hash; measured = $FixtureFingerprint.hash_measured; reason = $FixtureFingerprint.hash_reason }
         fixture_size_bytes  = [ordered]@{ value = $FixtureFingerprint.size_bytes; measured = $FixtureFingerprint.size_measured; reason = $FixtureFingerprint.size_reason }
     }
