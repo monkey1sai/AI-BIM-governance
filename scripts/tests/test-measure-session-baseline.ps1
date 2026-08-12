@@ -50,8 +50,8 @@ function Assert-ReportSchemaShape {
     Assert-True ($ef.Contains('gpu_count')) "$Message :: environment_fingerprint has 'gpu_count'"
     Assert-True ($ef.Contains('gpu_fingerprint_scope')) "$Message :: environment_fingerprint declares its GPU scope"
     Assert-True ($ef.gpu_fingerprint_scope_note -match 'deferred to task 1.2') "$Message :: GPU scope note defers per-GPU fingerprinting to task 1.2"
-    $expectComplete = -not [bool]($REQUIRED_ENV_FINGERPRINT_FIELDS | Where-Object { -not $ef[$_].measured })
-    Assert-Equal $expectComplete $ef.complete "$Message :: environment_fingerprint.complete matches per-field measured flags"
+    $expectComplete = (-not [bool]($REQUIRED_ENV_FINGERPRINT_FIELDS | Where-Object { -not $ef[$_].measured })) -and ($ef.gpu_fingerprint_scope -ne 'first_gpu_only')
+    Assert-Equal $expectComplete $ef.complete "$Message :: environment_fingerprint.complete matches per-field measured flags AND full GPU-topology attribution"
 
     Assert-MeasuredShape -Obj $Report.ttff_ms -Message "$Message :: ttff_ms"
     Assert-MeasuredShape -Obj $Report.session_creation_success_rate -Message "$Message :: session_creation_success_rate"
@@ -124,6 +124,17 @@ Assert-True (-not $invMissing.measured) 'nvidia-smi absent -> measured=false'
 Assert-Equal 0 @($invMissing.gpus).Count 'nvidia-smi absent -> empty gpu list, never fabricated'
 Assert-True (-not [string]::IsNullOrWhiteSpace($invMissing.reason)) 'nvidia-smi absent -> reason present'
 Assert-True ($null -eq $invMissing.software_queue_required) 'nvidia-smi absent -> derived fields left null, not guessed'
+
+# Non-consumer AND no MIG (e.g. a lone RTX A6000, which is excluded from
+# is_consumer_rtx but does not support MIG at all): no hardware-partition
+# route is available here either, so software queuing must still be
+# required. Gating this on consumer_grade_all as well previously reported
+# software_queue_required=false on exactly this fleet shape (PR #511 review,
+# round 2).
+$invProfessionalNoMig = Get-GpuInventorySnapshot -NvidiaSmiQuery { @('0, NVIDIA RTX A6000, 550.54, 49140, 0, 49140, 0, 0, [N/A]') }
+Assert-True (-not $invProfessionalNoMig.consumer_grade_all) 'lone RTX A6000: consumer_grade_all=false'
+Assert-True (-not $invProfessionalNoMig.mig_available_any) 'lone RTX A6000: mig_available_any=false'
+Assert-True $invProfessionalNoMig.software_queue_required 'non-consumer fleet with no MIG anywhere still requires software queuing, not falsely implying a MIG route exists'
 
 $invThrows = Get-GpuInventorySnapshot -NvidiaSmiQuery { throw 'boom' }
 Assert-True (-not $invThrows.measured) 'nvidia-smi query throwing is caught, not propagated'
@@ -413,6 +424,12 @@ $multiFingerprint = Get-EnvironmentFingerprint -GpuInventory $invMixed -KitVersi
 Assert-Equal 2 $multiFingerprint.gpu_count 'multi-GPU inventory reports gpu_count=2'
 Assert-Equal 'first_gpu_only' $multiFingerprint.gpu_fingerprint_scope 'multi-GPU host declares first_gpu_only fingerprint scope, not a silent single-GPU claim'
 Assert-Equal 'NVIDIA GeForce RTX 4060 Ti' $multiFingerprint.gpu_model.value 'multi-GPU fingerprint still pins the first row (scope field is what makes that honest)'
+# All five base fields individually measured=true does not entitle
+# complete=true here: first_gpu_only means the fingerprint has not attributed
+# every relevant GPU, and the wrapper's incomplete-fingerprint warning (SHALL
+# NOT be used to set SLOs or admission parameters) must still fire on this
+# host shape instead of being silently bypassed (PR #511 review, round 2).
+Assert-True (-not $multiFingerprint.complete) 'multi-GPU host: complete=false despite every base field individually measured, because GPU topology attribution is incomplete'
 
 $partialFingerprint = Get-EnvironmentFingerprint -GpuInventory $invMissing -KitVersion $fullKit -FixtureFingerprint $fullFixture
 Assert-True (-not $partialFingerprint.complete) 'environment fingerprint complete=false when GPU unmeasured'
@@ -630,9 +647,14 @@ try {
     Assert-True ($newFiles.Count -ge 1) 'default OutputPath produced a new report file'
     Assert-True ($defaultReport.run_id -match '^measure_\d{8}_\d{6}_[0-9a-f]{6}$') 'default run produced a run_id'
     Assert-True ($newFiles -contains "$($defaultReport.run_id).json") 'default OutputPath names the report after its run_id, not a collision-prone timestamp'
-    foreach ($newFile in $newFiles) {
-        Remove-Item -LiteralPath (Join-Path $gpuBaselineDir $newFile) -Force -ErrorAction SilentlyContinue
-    }
+    # Delete only the report THIS invocation produced. Deleting every file in
+    # $newFiles would also remove evidence written by any other harness
+    # invocation that happens to land in the same directory between the
+    # before/after snapshots (a real risk: this test shares the checkout's
+    # artifacts/gpu-baseline/ with any concurrent manual run or another test
+    # process) -- collateral deletion of unrelated measurement evidence
+    # (PR #511 review, round 2).
+    Remove-Item -LiteralPath (Join-Path $gpuBaselineDir "$($defaultReport.run_id).json") -Force -ErrorAction SilentlyContinue
     Write-TestPass 'root wrapper default -OutputPath under artifacts/gpu-baseline/<run_id>.json'
 } finally {
     if (-not $dirExistedBefore) {

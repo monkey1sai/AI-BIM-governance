@@ -150,7 +150,14 @@ function Get-GpuInventorySnapshot {
     if ($parsedGpus.Count -gt 0) {
         $consumerAll = -not [bool]($parsedGpus | Where-Object { -not $_.is_consumer_rtx })
         $migAny = [bool]($parsedGpus | Where-Object { $_.mig_available })
-        $softwareQueueRequired = ($consumerAll -and -not $migAny)
+        # Software queuing is the fallback whenever hardware partitioning
+        # (MIG) is unavailable on the fleet -- gating this on consumer_grade_all
+        # as well would wrongly imply a MIG route exists on a non-consumer,
+        # non-MIG fleet (e.g. RTX A6000, which is excluded from
+        # is_consumer_rtx but does not support MIG at all): that combination
+        # previously reported software_queue_required=false with no MIG path
+        # in fact available (PR #511 review, round 2).
+        $softwareQueueRequired = -not $migAny
     }
 
     return [ordered]@{
@@ -509,14 +516,12 @@ function Get-EnvironmentFingerprint {
     foreach ($key in @($fields.Keys)) {
         if (-not $fields[$key].measured) { $allMeasured = $false }
     }
-    $fields['complete'] = $allMeasured
 
-    # Multi-GPU scope, appended after the completeness loop so these keys are
-    # never mistaken for measurement triples. gpu_model / gpu_driver_version
-    # above describe the FIRST nvidia-smi row only, while the harness's VRAM
-    # figures span every device the driver reports. On a multi-GPU host the
-    # fingerprint therefore pins one device and an equal fingerprint does not
-    # prove an equal GPU topology. Per-GPU fingerprinting is deferred to task 1.2.
+    # Multi-GPU scope. gpu_model / gpu_driver_version above describe the
+    # FIRST nvidia-smi row only, while the harness's VRAM figures span every
+    # device the driver reports. On a multi-GPU host the fingerprint
+    # therefore pins one device and an equal fingerprint does not prove an
+    # equal GPU topology; per-GPU fingerprinting is deferred to task 1.2.
     $parsedGpuCount = $null
     if ($GpuInventory.measured) { $parsedGpuCount = @($GpuInventory.gpus | Where-Object { $_.parse_ok }).Count }
     $gpuScope = 'unknown_no_gpu_inventory'
@@ -526,6 +531,19 @@ function Get-EnvironmentFingerprint {
     $fields['gpu_count'] = $parsedGpuCount
     $fields['gpu_fingerprint_scope'] = $gpuScope
     $fields['gpu_fingerprint_scope_note'] = 'gpu_model and gpu_driver_version describe the first nvidia-smi GPU row only; a multi-GPU host is not fully fingerprinted (per-GPU fingerprint deferred to task 1.2), so an equal fingerprint does not by itself prove an equal GPU topology'
+
+    # gpu_fingerprint_scope='first_gpu_only' is a real attribution gap, not
+    # merely disclosure text: per the gpu-session-baseline spec, a report
+    # missing any required environment-fingerprint field SHALL be judged
+    # incomplete, and this harness's per-field "measured" triples cannot
+    # themselves represent "measured the wrong GPU's data" -- the scope flag
+    # is the only signal that exists for that failure mode. Folding it into
+    # `complete` here keeps the wrapper's existing incomplete-fingerprint
+    # warning (and any downstream SLO/admission-parameter gate that trusts
+    # `complete`) from being silently bypassed on a multi-GPU host (PR #511
+    # review, round 2).
+    if ($gpuScope -eq 'first_gpu_only') { $allMeasured = $false }
+    $fields['complete'] = $allMeasured
     return $fields
 }
 
