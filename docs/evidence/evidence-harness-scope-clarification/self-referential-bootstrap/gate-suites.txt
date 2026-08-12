@@ -1,27 +1,25 @@
 # gate-suites — stack_kind=self_referential_bootstrap
-tested_head=8b0efaf64031965740b55b3ccf89a82db7b0835e
-run_at=2026-08-12T05:31:13Z
-note=earlier runs hit stale-checkout EOL false reds in test-agent-governance-check (skill-mirror + spec-to-done helper working copies CRLF while index blobs identical/LF); all i-lf w-crlf files under .claude and .codex rewritten from index blobs (973 files, repo tree unchanged), then this full run recorded
+tested_head=82c6aa4097af8d937a51b54f205ad3bb92ac6f8d
+run_at=2026-08-12T12:16:58Z
+note=rerun at the post-#511/#528/#529 merge head (review threads: recorded suites must bind the reviewed tree); exact canonical invocation form recorded per suite; earlier stale-checkout EOL false-red note retained in README
 
-## test-self-referential-bootstrap — pwsh -NoProfile -File scripts/tests/test-self-referential-bootstrap.ps1
+## test-self-referential-bootstrap — pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
 [test-self-referential-bootstrap] all assertions passed
-exit_code=0 duration_s=31
+exit_code=0 duration_s=28
 
-## test-pr-body-evidence — pwsh -NoProfile -File scripts/tests/test-pr-body-evidence.ps1
+## test-pr-body-evidence — pwsh -NoProfile -NonInteractive -File scripts/tests/test-pr-body-evidence.ps1
 [test-pr-body-evidence] all assertions passed
-exit_code=0 duration_s=13
+exit_code=0 duration_s=14
 
-## test-agent-governance-check — pwsh -NoProfile -File scripts/tests/test-agent-governance-check.ps1
-# suites 0
-# pass 45
+## test-agent-governance-check — pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
 # fail 0
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 1758.6582
+# duration_ms 2468.1009
 [test-agent-governance-check] all assertions passed
-exit_code=0 duration_s=131
+exit_code=0 duration_s=173
 
-## invoke-powershell-static — pwsh -NoProfile -File scripts/tests/invoke-powershell-static.ps1
+## invoke-powershell-static — pwsh -NoProfile -NonInteractive -File scripts/tests/invoke-powershell-static.ps1
 [invoke-powershell-static] passed
-exit_code=0 duration_s=2
+exit_code=0 duration_s=6
