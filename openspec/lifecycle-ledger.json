@@ -1357,9 +1357,9 @@
       "id": "implement-runtime-command-authority-and-rejection",
       "status": "active",
       "owner": "bim-review-coordinator",
-      "current_slice": "runtime evidence closure",
+      "current_slice": "5.6 stage-load-timeout closed 2026-08-12 (data-stage-failure-reason test anchor, RED->GREEN, 1072/1072 suite, typecheck+changed-file lint clean). Checkbox stays open: 8/12 viewer-origin failure states (no-session/session-preparing/viewer-origin-missing/lease-occupied/stream-disconnected/lease-expired/gpu-unavailable/first-frame-timeout) unverified. production/full completion=no.",
       "blocked_by": [],
-      "last_verified": "2026-07-30T22:21:13Z",
+      "last_verified": "2026-08-12T02:29:23Z",
       "task_ledger": {
         "completed": 31,
         "total": 35
@@ -1368,7 +1368,7 @@
         "openspec/changes/implement-runtime-command-authority-and-rejection/proposal.md",
         "openspec/changes/implement-runtime-command-authority-and-rejection/tasks.md"
       ],
-      "subject_commit": "5a28a7dd178efaf84bec3bb4d80329f016794438",
+      "subject_commit": "cba626587c6cc50000e35050988c29208c8246ac",
       "archive_debt": null
     },
     {
@@ -1509,18 +1509,19 @@
       "id": "migrate-console-to-hifi-design",
       "status": "active",
       "owner": "web-viewer-sample",
-      "current_slice": "2026-08-12 PR #497 squash fixpoint：landed source snapshot 已重綁；task status 與證據缺口見 tasks.md。",
+      "current_slice": "2026-08-12 7.3 補勾（npm run verify 全綠：typecheck+build+1069 tests+struct-log 23/23，exit 0）；7.4 稽核 artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md 66/66 走過，經 PR #507 兩輪 P2 review（13 條：12 改判、1 查證不成立已反駁）重算為 48 HOLDS/3 HOLDS-WITH-NOTE/9 STALE/6 UNVERIFIABLE（STALE 皆早於本遷移，僅 highlight 標紅為真缺口；UNVER 需部署 stack/GPU/E2E），未勾；7.1 rebaseline 非 no-op——會復原 #429 修正過的 A4 canonical baseline，已 STOP 還原未 commit，capture script 缺 baseline_provenance 特判待另立修復。32/40；殘項＝0.5/1.2/6.4（human owner）＋7.1/7.4。",
       "blocked_by": [],
-      "last_verified": "2026-08-11T21:32:44Z",
+      "last_verified": "2026-08-12T02:34:00Z",
       "task_ledger": {
-        "completed": 31,
+        "completed": 32,
         "total": 40
       },
       "evidence_refs": [
         "openspec/changes/migrate-console-to-hifi-design/proposal.md",
-        "openspec/changes/migrate-console-to-hifi-design/tasks.md"
+        "openspec/changes/migrate-console-to-hifi-design/tasks.md",
+        "artifacts/2026-08-12-hifi-consumer-spec-scenario-audit.md"
       ],
-      "subject_commit": "de40d6181ca287788fcffc7e6b09b3f0915c907d",
+      "subject_commit": "af60c29abaafb28266e996cf21b98953b127c2ee",
       "archive_debt": null
     },
     {
