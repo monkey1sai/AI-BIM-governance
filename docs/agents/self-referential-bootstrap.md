@@ -32,6 +32,18 @@
 2. **理由** — 必須具體說明「為何既有機制取不到此證據」；泛稱（"bootstrap"、"needed"）不通過。
 3. **fixpoint 重驗** — merge 後必須以**變更後的正規機制**重跑同一驗證，並把結果 commit 回 ledger（`fixpoint` 欄位）。
 
+## 2.1 範圍界定（何謂 mechanism surface）
+
+機制清單的收錄判準是單一謂詞：**該路徑的行為改變會改變其他 PR 的裁決結果，或改變 canonical deployment 的驗證結果**。§2 觸發通則的三個類別逐類收斂如下：
+
+1. **裁決者及其直接決策依賴** — required CI / merge 治理的 gate scripts、workflows、verification manifest、CODEOWNERS、本機制自身。
+2. **canonical deploy path** — 部署契約只重建／驗證已 merge 的內容，branch 上取不到 post-change canonical evidence。
+3. **evidence harness** — 僅限其輸出被第 1 或第 2 類**以機器方式消費**的 harness（煙霧證據、視覺 gate、runtime evidence 驗證器等）。
+
+**明確排除**：產品量測／遙測腳本 — 輸出餵人工撰寫的文件或產品決策、沒有任何 gate 以機器方式消費其報告者，不屬 mechanism surface。「新腳本自行定義自己的報告格式」是所有新程式碼的常態，由一般 code review 與單元測試把關；§1 循環的定義性特徵是**契約禁止在 merge 前用正規機制對變更後行為取證**，而非「報告格式沒有前版可比」。
+
+**升級規則**：後續 PR 把此類腳本的輸出接進第 1／2 類的任何機器消費者時，該接線 PR 必然觸及 mechanism surface（manifest／workflow／gate script），**必須在同一 PR 把該腳本加入 `Get-SelfReferentialMechanismPaths`**；該腳本自此成為 mechanism surface。反向亦同：要從清單移除一個路徑，必須先移除它的所有機器消費者。
+
 ## 3. Ledger 機制
 
 - Ledger：`scripts/self-referential-bootstrap-ledger.json`（schema `self-referential-bootstrap-ledger/v1`）。
@@ -117,3 +129,4 @@
 
 - 測試部署區遷移（`docs/plans/remote-linux-test-deploy-target.plan.md` §5）：PR 改 deploy path 本身，部署區依契約只驗 `origin/main`。
 - PR #458 single-owner merge consent：修改 merge 治理的 PR 無法用新治理 merge 自己，需一次性手動 bootstrap — 同模式第二實例。
+- **Scope 反例**（PR #511 review thread → issue #520）：GPU session baseline 量測 harness（`scripts/measure-session-baseline.ps1`）被主張應入機制清單；依 §2.1 判準裁決為**不屬 mechanism surface** — 其報告無任何 gate 機器消費者，僅餵人工撰寫的 SLO 文件。若日後被接進 gate，依升級規則於接線 PR 補登。
