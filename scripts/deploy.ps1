@@ -756,7 +756,8 @@ Write-DeployHeader -Title 'Phase 1: Preflight (read-only)'
 $docker     = Test-DockerEnvironment       -RepoRoot $RepoRoot
 $hostNative = Test-HostNativeEnvironment   -RepoRoot $RepoRoot
 $envFiles   = Test-EnvFiles                -RepoRoot $RepoRoot
-$resolvedEnvFile = if ([string]::IsNullOrWhiteSpace($EnvFile)) {
+$resolvedEnvFileIsExplicit = -not [string]::IsNullOrWhiteSpace($EnvFile)
+$resolvedEnvFile = if (-not $resolvedEnvFileIsExplicit) {
     # $docker.envFile 解析順序(見 preflight-docker.ps1 Test-DockerEnvironment):
     #   real .env.web-plane.host-kit 存在 → '.env.web-plane.host-kit'
     #   只有 .example 存在             → '.env.web-plane.host-kit.example'(dev/demo fallback,發 Warning)
@@ -1363,9 +1364,10 @@ foreach ($ef in $envFiles) {
         Write-DeployTag -Tag 'fix' -Message "Copy-Item $examplePath -> $envPath" -LogPath $LogPath | Out-Null
         Copy-Item -LiteralPath $examplePath -Destination $envPath -Force
         $fixActions++
-        # 若剛 copy 的是 host-kit env,$resolvedEnvFile 要切到真檔(否則後續 volume
-        # alignment / rm / build 仍指 .example)
-        if ($ef.file -eq '.env.web-plane.host-kit') {
+        # 若 preflight 自動選到 host-kit .example，copy 後要切到真檔（否則
+        # 後續 volume alignment / rm / build 仍指 .example）。明示 -EnvFile
+        # 是 operator authority，不能被 canonical bootstrap 靜默覆蓋。
+        if ($ef.file -eq '.env.web-plane.host-kit' -and -not $resolvedEnvFileIsExplicit) {
             $resolvedEnvFile = '.env.web-plane.host-kit'
             $script:resolvedEnvFile = $resolvedEnvFile
             $volume = Resolve-DeployVolumeState -Volume (Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile) -EdgeRuntimeContract $edgeRuntimeContract

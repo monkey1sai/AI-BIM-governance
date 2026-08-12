@@ -656,7 +656,12 @@ function Stop-HostNativeProcessTreeAndWait {
         while ($pending.Count -gt 0) {
             $current = [int]$pending[0]
             $pending = @($pending | Select-Object -Skip 1)
-            foreach ($childId in @(& $LookupFn $current)) {
+            try {
+                $currentChildIds = @(& $LookupFn $current)
+            } catch {
+                throw ("Process tree child enumeration failed for PID {0}: {1}" -f $current, $_.Exception.Message)
+            }
+            foreach ($childId in $currentChildIds) {
                 $childProcessId = [int]$childId
                 if ($visited.ContainsKey($childProcessId)) { continue }
                 $visited[$childProcessId] = $true

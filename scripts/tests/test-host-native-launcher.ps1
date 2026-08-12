@@ -1371,6 +1371,28 @@ time.sleep(120)
     Assert-True ($null -eq $escapeeGrandchildAfterStop) 'a descendant missed by the snapshot is still discovered, stopped and proven gone'
     Assert-True ($escapeeLookups.Count -gt 2) 'containment re-enumerated past the snapshot that missed it'
     Write-TestPass 'a descendant appearing after enumeration is caught by the clean-pass fixed point'
+
+    # Case 12 (#513 review P2): platform enumeration failure is ignorance, not
+    # proof that the tree is empty. Preserve the failing parent PID in the error
+    # so callers can distinguish this trust-boundary failure from a clean pass.
+    $lookupFailureFixture = Join-Path $treeSandbox 'lookup-failure-fixture.py'
+    $lookupFailurePidFile = Join-Path $treeSandbox 'lookup-failure-pids.json'
+    [System.IO.File]::WriteAllText($lookupFailureFixture, $survivorSource)
+    $lookupFailureProcess = Start-TreeFixtureProcess -PythonExe $fixturePython -ScriptPath $lookupFailureFixture -PidPath $lookupFailurePidFile
+    $lookupFailure = ''
+    try {
+        Stop-HostNativeProcessTreeAndWait -Process $lookupFailureProcess -TimeoutMs 1000 `
+            -ChildPidLookup { param($parentId); throw 'simulated platform child enumeration failure' }
+    } catch {
+        $lookupFailure = $_.Exception.Message
+    } finally {
+        if (-not $lookupFailureProcess.HasExited) {
+            $lookupFailureProcess.Kill()
+            [void]$lookupFailureProcess.WaitForExit(5000)
+        }
+    }
+    Assert-True ($lookupFailure -match "Process tree child enumeration failed for PID $($lookupFailureProcess.Id)") 'process-tree cleanup fails closed with PID context when child enumeration is unavailable'
+    Write-TestPass 'process-tree cleanup fails closed on child enumeration failure'
 }
 finally {
     Remove-TestSandbox -Path $treeSandbox
