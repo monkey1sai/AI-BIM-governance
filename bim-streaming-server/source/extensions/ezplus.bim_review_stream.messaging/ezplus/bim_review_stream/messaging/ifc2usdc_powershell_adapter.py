@@ -32,13 +32,949 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 
 from conversion_authority import ConversionAuthorityError, _PLACEHOLDER_MARKERS
 from ifc_openusd_identity_author import IDENTITY_PROFILE, IfcOpenUsdIdentityAuthor
+
+
+# --- #489 SEC-001 / L1-COR-004:converter process-tree containment ------------
+#
+# CPython 的 ``subprocess`` timeout 只 ``kill()`` 直接 child。PowerShell 死了,但
+# 它啟動的 Kit 孫代還活著繼續處理不可信輸入,而 ``with`` 區塊 unwind 會在樹還沒
+# 清乾淨前就放掉 HOOPS pin——containment 缺口。
+#
+# 修法:把 child 放進一個 OS 級 containment boundary(Windows = Job Object 且帶
+# ``JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE``;POSIX = 獨立 session/process group),
+# timeout 時終止整棵樹,並且「觀察到」每一個 descendant 都消失之後,才准離開
+# HOOPS pin 區塊。無法在期限內證明樹已清空時,必須用獨立的 fail-closed 代碼
+# (``converter_containment_failed``)回報,不得偽裝成單純 timeout。
+_CONTAINMENT_POLL_INTERVAL_SECONDS = 0.05
+# POSIX 沒有 KILL_ON_JOB_CLOSE 這種「handle 一關整組就死」的原語,所以 close()
+# 必須在每一條離開路徑(成功 / 非 timeout 失敗 / timeout)自己把 process group
+# 掃乾淨。這是那個 sweep 的有界上限。
+_CONTAINMENT_CLOSE_SWEEP_SECONDS = 5.0
+
+# #509 review r3: upper bound on the poll interval used while waiting for the
+# direct child to exit WITHOUT reaping it (``_pin_child_exit``). ``os.waitid``
+# has no timeout parameter, so the bounded wait polls with ``WNOHANG``; the cap
+# keeps a multi-minute conversion from spinning at the 50 ms containment rate
+# while still bounding the added latency to a quarter second.
+_PGID_PIN_MAX_POLL_INTERVAL_SECONDS = 0.25
+# ``signal.SIGKILL`` 只存在於 POSIX。下面的 POSIX containment 分支在 Windows 上永遠
+# 不會執行,但把號碼在 import 時綁一次,這些分支才能在 Windows 開發機上被單元測試
+# 直接呼叫(而不是整組退化成「只能在 Linux 上驗」)。
+_POSIX_SIGTERM = int(getattr(signal, "SIGTERM", 15))
+_POSIX_SIGKILL = int(getattr(signal, "SIGKILL", 9))
+
+
+class _Win32ContainmentApi:
+    """Lazily-bound kernel32 surface used for Job Object process containment."""
+
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+    JOB_OBJECT_BASIC_PROCESS_ID_LIST = 3
+    JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+    CREATE_SUSPENDED = 0x00000004
+    CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+    TH32CS_SNAPPROCESS = 0x00000002
+    TH32CS_SNAPTHREAD = 0x00000004
+    THREAD_SUSPEND_RESUME = 0x0002
+    PROCESS_TERMINATE = 0x0001
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x00001000
+    SYNCHRONIZE = 0x00100000
+    WAIT_OBJECT_0 = 0x00000000
+    ERROR_ACCESS_DENIED = 5
+    ERROR_INVALID_PARAMETER = 87
+    ERROR_MORE_DATA = 234
+    RESUME_THREAD_FAILED = 0xFFFFFFFF
+    _JOB_PID_LIST_CAPACITY = 512
+
+    def __init__(self) -> None:
+        import ctypes
+        from ctypes import wintypes
+
+        self._ctypes = ctypes
+        self._wintypes = wintypes
+        self._invalid_handle = ctypes.c_void_p(-1).value
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.kernel32 = kernel32
+        ulong_ptr = ctypes.c_size_t
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = (
+                ("ReadOperationCount", ctypes.c_ulonglong),
+                ("WriteOperationCount", ctypes.c_ulonglong),
+                ("OtherOperationCount", ctypes.c_ulonglong),
+                ("ReadTransferCount", ctypes.c_ulonglong),
+                ("WriteTransferCount", ctypes.c_ulonglong),
+                ("OtherTransferCount", ctypes.c_ulonglong),
+            )
+
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = (
+                ("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER),
+                ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ulong_ptr),
+                ("MaximumWorkingSetSize", ulong_ptr),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ulong_ptr),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            )
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = (
+                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", IO_COUNTERS),
+                ("ProcessMemoryLimit", ulong_ptr),
+                ("JobMemoryLimit", ulong_ptr),
+                ("PeakProcessMemoryUsed", ulong_ptr),
+                ("PeakJobMemoryUsed", ulong_ptr),
+            )
+
+        class JOBOBJECT_BASIC_PROCESS_ID_LIST(ctypes.Structure):
+            _fields_ = (
+                ("NumberOfAssignedProcesses", wintypes.DWORD),
+                ("NumberOfProcessIdsInList", wintypes.DWORD),
+                ("ProcessIdList", ulong_ptr * _Win32ContainmentApi._JOB_PID_LIST_CAPACITY),
+            )
+
+        class THREADENTRY32(ctypes.Structure):
+            _fields_ = (
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ThreadID", wintypes.DWORD),
+                ("th32OwnerProcessID", wintypes.DWORD),
+                ("tpBasePri", wintypes.LONG),
+                ("tpDeltaPri", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+            )
+
+        class PROCESSENTRY32W(ctypes.Structure):
+            _fields_ = (
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ulong_ptr),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", wintypes.WCHAR * 260),
+            )
+
+        self._extended_limit_type = JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+        self._pid_list_type = JOBOBJECT_BASIC_PROCESS_ID_LIST
+        self._thread_entry_type = THREADENTRY32
+        self._process_entry_type = PROCESSENTRY32W
+
+        kernel32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.SetInformationJobObject.argtypes = (
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+        )
+        kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        kernel32.QueryInformationJobObject.argtypes = (
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        )
+        kernel32.QueryInformationJobObject.restype = wintypes.BOOL
+        kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+        kernel32.TerminateJobObject.restype = wintypes.BOOL
+        kernel32.CreateToolhelp32Snapshot.argtypes = (wintypes.DWORD, wintypes.DWORD)
+        kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        kernel32.Thread32First.argtypes = (wintypes.HANDLE, ctypes.c_void_p)
+        kernel32.Thread32First.restype = wintypes.BOOL
+        kernel32.Thread32Next.argtypes = (wintypes.HANDLE, ctypes.c_void_p)
+        kernel32.Thread32Next.restype = wintypes.BOOL
+        kernel32.Process32FirstW.argtypes = (wintypes.HANDLE, ctypes.c_void_p)
+        kernel32.Process32FirstW.restype = wintypes.BOOL
+        kernel32.Process32NextW.argtypes = (wintypes.HANDLE, ctypes.c_void_p)
+        kernel32.Process32NextW.restype = wintypes.BOOL
+        kernel32.OpenThread.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.OpenThread.restype = wintypes.HANDLE
+        kernel32.ResumeThread.argtypes = (wintypes.HANDLE,)
+        kernel32.ResumeThread.restype = wintypes.DWORD
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT)
+        kernel32.TerminateProcess.restype = wintypes.BOOL
+        kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+        kernel32.WaitForSingleObject.restype = wintypes.DWORD
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+    # -- job object ---------------------------------------------------------
+
+    def create_kill_on_close_job(self) -> int | None:
+        ctypes = self._ctypes
+        job = self.kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        info = self._extended_limit_type()
+        info.BasicLimitInformation.LimitFlags = self.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        ok = self.kernel32.SetInformationJobObject(
+            job,
+            self.JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        )
+        if not ok:
+            self.close_handle(job)
+            return None
+        return int(job)
+
+    def assign_process(self, job: int, process_handle: int) -> bool:
+        return bool(self.kernel32.AssignProcessToJobObject(job, process_handle))
+
+    def terminate_job(self, job: int) -> bool:
+        return bool(self.kernel32.TerminateJobObject(job, 1))
+
+    def job_process_ids(self, job: int) -> list[int] | None:
+        """PIDs still associated with the job, or None when it cannot be read."""
+
+        ctypes = self._ctypes
+        wintypes = self._wintypes
+        buffer = self._pid_list_type()
+        returned = wintypes.DWORD(0)
+        ctypes.set_last_error(0)
+        ok = self.kernel32.QueryInformationJobObject(
+            job,
+            self.JOB_OBJECT_BASIC_PROCESS_ID_LIST,
+            ctypes.byref(buffer),
+            ctypes.sizeof(buffer),
+            ctypes.byref(returned),
+        )
+        return self._decode_job_pid_list(buffer, ok=bool(ok), last_error=ctypes.get_last_error())
+
+    def _decode_job_pid_list(self, buffer, *, ok: bool, last_error: int) -> list[int] | None:
+        """Complete job membership, or None when the answer is not trustworthy.
+
+        #509 review r3:``ERROR_MORE_DATA`` 代表 job 裡的行程比這個固定大小的緩衝
+        裝得下的還多,回來的是一份「被截斷」的清單。舊碼把它當權威答案接受:被列出
+        的那些行程終止之後,``_windows_live_pids`` 會算出空集合並宣告 containment
+        已證明,而沒被列進來的 Kit/HOOPS 孫代還活著。截斷的清單不是成員清單,一律
+        當成讀不到(None),由呼叫端 fail closed —— 與 job membership 讀取失敗同一個
+        處置。單次轉檔的 job 正常只有個位數行程,踩到這個上限本身就是異常訊號。
+        """
+
+        if not ok:
+            # 包含 last_error == ERROR_MORE_DATA:那正是「清單被截斷」的訊號,以前
+            # 被當成可接受,現在與其他查詢失敗一視同仁。
+            del last_error
+            return None
+        assigned = int(buffer.NumberOfAssignedProcesses)
+        listed = int(buffer.NumberOfProcessIdsInList)
+        if listed > self._JOB_PID_LIST_CAPACITY or assigned > listed:
+            return None
+        return [int(buffer.ProcessIdList[index]) for index in range(listed)]
+
+    # -- process / thread ---------------------------------------------------
+
+    def resume_process_threads(self, pid: int) -> int:
+        """Resume every thread of ``pid``; returns how many resumed."""
+
+        ctypes = self._ctypes
+        snapshot = self.kernel32.CreateToolhelp32Snapshot(self.TH32CS_SNAPTHREAD, 0)
+        if not snapshot or int(snapshot) == self._invalid_handle:
+            return 0
+        resumed = 0
+        try:
+            entry = self._thread_entry_type()
+            entry.dwSize = ctypes.sizeof(entry)
+            more = self.kernel32.Thread32First(snapshot, ctypes.byref(entry))
+            while more:
+                if int(entry.th32OwnerProcessID) == int(pid):
+                    thread = self.kernel32.OpenThread(
+                        self.THREAD_SUSPEND_RESUME, False, entry.th32ThreadID
+                    )
+                    if thread:
+                        if self.kernel32.ResumeThread(thread) != self.RESUME_THREAD_FAILED:
+                            resumed += 1
+                        self.close_handle(thread)
+                more = self.kernel32.Thread32Next(snapshot, ctypes.byref(entry))
+        finally:
+            self.close_handle(snapshot)
+        return resumed
+
+    def child_pids(self, parent_pid: int) -> list[int]:
+        ctypes = self._ctypes
+        snapshot = self.kernel32.CreateToolhelp32Snapshot(self.TH32CS_SNAPPROCESS, 0)
+        if not snapshot or int(snapshot) == self._invalid_handle:
+            return []
+        children: list[int] = []
+        try:
+            entry = self._process_entry_type()
+            entry.dwSize = ctypes.sizeof(entry)
+            more = self.kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+            while more:
+                if int(entry.th32ParentProcessID) == int(parent_pid):
+                    children.append(int(entry.th32ProcessID))
+                more = self.kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+        finally:
+            self.close_handle(snapshot)
+        return children
+
+    def pid_is_alive(self, pid: int) -> bool:
+        ctypes = self._ctypes
+        ctypes.set_last_error(0)
+        handle = self.kernel32.OpenProcess(
+            self.SYNCHRONIZE | self.PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid)
+        )
+        if not handle:
+            # ERROR_INVALID_PARAMETER is Windows' "no such pid". Anything else
+            # (notably ERROR_ACCESS_DENIED) means the process still exists but is
+            # not interrogable, so containment MUST NOT be reported as proven.
+            return ctypes.get_last_error() != self.ERROR_INVALID_PARAMETER
+        try:
+            return self.kernel32.WaitForSingleObject(handle, 0) != self.WAIT_OBJECT_0
+        finally:
+            self.close_handle(handle)
+
+    def terminate_pid(self, pid: int) -> None:
+        handle = self.kernel32.OpenProcess(self.PROCESS_TERMINATE, False, int(pid))
+        if not handle:
+            return
+        try:
+            self.kernel32.TerminateProcess(handle, 1)
+        finally:
+            self.close_handle(handle)
+
+    def close_handle(self, handle: int) -> None:
+        try:
+            self.kernel32.CloseHandle(handle)
+        except OSError:
+            pass
+
+
+_WIN32_CONTAINMENT_API: _Win32ContainmentApi | None = None
+_WIN32_CONTAINMENT_UNAVAILABLE = False
+
+
+def _win32_containment_api() -> _Win32ContainmentApi | None:
+    """Cached kernel32 containment bindings; None when unavailable."""
+
+    global _WIN32_CONTAINMENT_API, _WIN32_CONTAINMENT_UNAVAILABLE
+    if _WIN32_CONTAINMENT_API is not None:
+        return _WIN32_CONTAINMENT_API
+    if _WIN32_CONTAINMENT_UNAVAILABLE or os.name != "nt":
+        return None
+    try:
+        _WIN32_CONTAINMENT_API = _Win32ContainmentApi()
+    except Exception:  # noqa: BLE001 - binding failure degrades, never crashes convert()
+        _WIN32_CONTAINMENT_UNAVAILABLE = True
+        return None
+    return _WIN32_CONTAINMENT_API
+
+
+class _ContainedProcess:
+    """A converter child launched inside an OS-level process-tree boundary.
+
+    ``terminate_tree`` is the containment proof: it terminates the whole tree and
+    then POLLS until every descendant is observed gone, returning False when the
+    deadline expires with survivors still alive. Callers must run it while the
+    HOOPS pin is still held, and must map a False result to a distinct
+    fail-closed error instead of a plain timeout.
+
+    Boundary strength differs per platform, and that difference is deliberate,
+    documented, and NOT to be papered over:
+
+    - Windows(production 轉檔路徑)= Job Object。job 沒有設
+      ``JOB_OBJECT_LIMIT_BREAKAWAY_OK``,所以 descendant 無法用
+      ``CREATE_BREAKAWAY_FROM_JOB`` 脫離;邊界不可逃脫。建不出這個邊界時
+      ``_spawn_windows`` 直接 fail closed,不會降級成無邊界執行。
+    - POSIX = 獨立 session / process group。這是 best-effort:自己呼叫 ``setsid()``
+      的 descendant 會離開原本的 PGID,``killpg``、/proc pgrp 掃描與存活檢查都涵蓋
+      不到它。真正不可逃脫的 POSIX 邊界要 cgroup(需要 cgroup 委派權限),不在本
+      class 範圍內。實際的 Kit/HOOPS converter 不會 ``setsid()``,但這個殘餘風險
+      是真的,不要把 POSIX 這一側說成「不可逃脫」。#509 review r2:非可逃脫的
+      POSIX 邊界(cgroup v2 + ``cgroup.kill``)列為 TRACKED FOLLOW-UP,本 PR 不
+      實作;出貨路徑(Windows Job Object)不受這個限制影響。
+    """
+
+    def __init__(
+        self,
+        proc,
+        *,
+        job: int | None = None,
+        pgid: int | None = None,
+        api: _Win32ContainmentApi | None = None,
+    ) -> None:
+        self._proc = proc
+        self._job = job
+        self._pgid = pgid
+        self._api = api
+        self._survivors: tuple[int, ...] = ()
+        self._containment_detail: str | None = None
+        self._closed = False
+        # #509 review r3: POSIX pgid reservation state. ``_leader_pinned`` means the
+        # direct child has been observed EXITED but deliberately NOT reaped, so it is
+        # a zombie whose pid - and therefore the whole group's pgid - cannot be
+        # recycled by the kernel until we reap it in ``close()``.
+        self._leader_pinned = False
+        self._pinned_returncode: int | None = None
+
+    # -- construction -------------------------------------------------------
+
+    @staticmethod
+    def _popen(cmd, **kwargs):
+        return subprocess.Popen(cmd, **kwargs)
+
+    @classmethod
+    def spawn(cls, cmd, *, cwd, stdout, stderr) -> _ContainedProcess:
+        if os.name == "nt":
+            return cls._spawn_windows(cmd, cwd=cwd, stdout=stdout, stderr=stderr)
+        return cls._spawn_posix(cmd, cwd=cwd, stdout=stdout, stderr=stderr)
+
+    @classmethod
+    def _spawn_windows(cls, cmd, *, cwd, stdout, stderr) -> _ContainedProcess:
+        api = _win32_containment_api()
+        if api is None:
+            # Fail-closed: without the kernel32 bindings there is no Job Object
+            # boundary, and a PPID walk is a racy heuristic — not containment.
+            # Refuse to launch; the caller maps OSError to converter_unavailable.
+            raise OSError(
+                "Windows process-tree containment is unavailable (kernel32 job "
+                "bindings could not be loaded); refusing to launch the converter "
+                "without a containment boundary"
+            )
+        job = api.create_kill_on_close_job()
+        if job is None:
+            # Same reasoning: launching with creationflags=0 and hoping the PPID
+            # walk finds every Kit grandchild is exactly the fail-open this fix
+            # removes.
+            raise OSError(
+                "failed to create the converter containment job object; refusing "
+                "to launch the converter uncontained"
+            )
+        # CREATE_SUSPENDED closes the race where the child spawns Kit before it is
+        # assigned to the job; CREATE_BREAKAWAY_FROM_JOB keeps a pre-Win8 style
+        # parent job from swallowing the assignment.
+        flags = api.CREATE_SUSPENDED | api.CREATE_BREAKAWAY_FROM_JOB
+        try:
+            proc = cls._popen(
+                cmd, cwd=cwd, stdout=stdout, stderr=stderr, shell=False, creationflags=flags
+            )
+        except OSError as exc:
+            if getattr(exc, "winerror", None) != api.ERROR_ACCESS_DENIED:
+                api.close_handle(job)
+                raise
+            # Already inside a job that forbids breakaway: nested jobs are fine.
+            try:
+                proc = cls._popen(
+                    cmd,
+                    cwd=cwd,
+                    stdout=stdout,
+                    stderr=stderr,
+                    shell=False,
+                    creationflags=api.CREATE_SUSPENDED,
+                )
+            except OSError:
+                api.close_handle(job)
+                raise
+        handle = getattr(proc, "_handle", None)
+        pid = getattr(proc, "pid", None)
+        if handle is None and not pid:
+            # A Popen double that produced no OS process at all (unit-test seam):
+            # there is nothing to assign and no tree to contain. Drop the job
+            # rather than claiming an imaginary child is contained. A REAL
+            # subprocess.Popen on Windows always yields both a handle and a pid,
+            # so this branch never fires in production.
+            api.close_handle(job)
+            return cls(proc, api=api)
+        # Assignment MUST be proven BEFORE the suspended child is resumed:
+        # resuming an unassigned child lets Kit fork its whole tree outside the
+        # job, which is precisely the containment the timeout path relies on.
+        assigned = bool(handle is not None and api.assign_process(job, int(handle)))
+        if not assigned:
+            if pid:
+                api.terminate_pid(int(pid))
+            api.close_handle(job)
+            cls._reap_after_failed_launch(proc)
+            raise OSError(
+                "failed to assign the converter process to its containment job "
+                "object; the suspended child was terminated instead of resumed"
+            )
+        if pid:
+            # The child was created suspended, so it MUST be resumed or the whole
+            # conversion hangs. Failing to resume is a fail-closed launch error.
+            if api.resume_process_threads(int(pid)) == 0:
+                api.terminate_pid(int(pid))
+                api.close_handle(job)
+                cls._reap_after_failed_launch(proc)
+                raise OSError("failed to resume the contained converter process")
+        return cls(proc, job=job, api=api)
+
+    @staticmethod
+    def _reap_after_failed_launch(proc) -> None:
+        try:
+            proc.wait(timeout=5)
+        except Exception:  # noqa: BLE001 - best-effort reap of a dead child
+            pass
+
+    @classmethod
+    def _spawn_posix(cls, cmd, *, cwd, stdout, stderr) -> _ContainedProcess:
+        proc = cls._popen(
+            cmd, cwd=cwd, stdout=stdout, stderr=stderr, shell=False, start_new_session=True
+        )
+        pid = getattr(proc, "pid", None)
+        # #509 review r3:``start_new_session=True`` 讓 child 呼叫 setsid(),因此它
+        # 是一個 NEW process group 的 leader,而 leader 的 PGID 依 POSIX 定義就等於
+        # 它自己的 PID。再去 ``os.getpgid(pid)`` 讀一次沒有多得到任何資訊,卻多了一
+        # 個會失敗的競態:wrapper 若在這兩行之間就結束,舊碼把任何失敗都記成
+        # ``pgid=None``,於是 containment 靜默降級成「只殺直接 child」,而且
+        # ``close()`` 的 group sweep 會整個跳過——孫代就這樣活過 HOOPS pin。
+        # 已知正確的 ID 不該被一次 racy 的重讀丟掉。
+        return cls(proc, pgid=int(pid) if pid else None)
+
+    # -- lifecycle ----------------------------------------------------------
+
+    @property
+    def pid(self) -> int | None:
+        raw = getattr(self._proc, "pid", None)
+        return int(raw) if raw else None
+
+    @property
+    def survivors(self) -> tuple[int, ...]:
+        return self._survivors
+
+    @property
+    def containment_detail(self) -> str | None:
+        """Machine-readable reason the containment proof failed, if any."""
+
+        return self._containment_detail
+
+    def wait(self, timeout):
+        """Wait for the direct child, keeping the POSIX pgid RESERVED.
+
+        #509 review r3 (recycled POSIX process-group IDs): with
+        ``start_new_session=True`` the direct child is the group LEADER, so the pgid
+        every later group operation targets IS that child's pid. ``Popen.wait()``
+        REAPS it, and the instant it is reaped the kernel may hand the number to an
+        unrelated new session - after which ``_terminate_tree_posix``'s ``killpg``
+        and ``close()``'s sweep would be aimed at innocent bystanders.
+
+        So on POSIX the exit is observed with ``os.waitid(..., WNOWAIT)`` instead:
+        the exit status is read while the child stays an unreaped zombie, which
+        keeps the pid/pgid reserved for the entire teardown. ``close()`` reaps it
+        only after the sweep has finished. The public contract is unchanged - the
+        exit code is returned here, and ``subprocess.TimeoutExpired`` is still what
+        a caller sees when the deadline passes.
+        """
+
+        if self._leader_pinned:
+            return self._pinned_returncode
+        if self._pin_child_exit(timeout, raise_on_timeout=True):
+            return self._pinned_returncode
+        return self._proc.wait(timeout=timeout)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._job is not None and self._api is not None:
+            # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: dropping the last job handle
+            # terminates anything that outlived the converter.
+            self._api.close_handle(self._job)
+            self._job = None
+            return
+        if os.name != "nt" and self._pgid is not None:
+            # POSIX has no kill-on-close job. close() runs from the caller's
+            # ``finally``, i.e. on EVERY exit path — success, non-timeout failure
+            # and timeout alike — so this sweep is the only thing standing
+            # between a Kit grandchild and outliving the HOOPS pin that
+            # authorised it. Without it containment existed only on the timeout
+            # path and the process group leaked everywhere else.
+            self._sweep_posix_group(self._pgid)
+        # #509 review r3: the retained zombie leader is the ONLY thing that kept the
+        # pgid from being recycled while every group-wide operation above ran. Reap
+        # it now, once no further group signal can be sent - this is the last
+        # statement of the object's life cycle, so the reservation is released
+        # strictly after the sweep, never before it.
+        self._release_pgid_pin()
+
+    def terminate_tree(self, *, deadline_seconds: float, grace_seconds: float) -> bool:
+        """Kill the tree and return True only once every descendant is gone."""
+
+        deadline = time.monotonic() + max(float(deadline_seconds), 0.0)
+        if os.name == "nt":
+            return self._terminate_tree_windows(deadline)
+        return self._terminate_tree_posix(deadline, max(float(grace_seconds), 0.0))
+
+    # -- windows ------------------------------------------------------------
+
+    def _terminate_tree_windows(self, deadline: float) -> bool:
+        pid = self.pid
+        if pid is None:
+            # A spawn that produced no OS pid (unit-test double) has no tree.
+            self._survivors = ()
+            return True
+        api = self._api or _win32_containment_api()
+        if api is None:
+            self._kill_direct_child()
+            self._survivors = (pid,)
+            return False
+        if self._job is not None:
+            api.terminate_job(self._job)
+        else:
+            for victim in reversed(self._windows_tree_pids(api, pid)):
+                api.terminate_pid(victim)
+        self._reap_bounded(max(deadline - time.monotonic(), 0.5))
+        while True:
+            live = self._windows_live_pids(api, pid)
+            if live is None:
+                # #509 review r2: the job EXISTS but QueryInformationJobObject
+                # would not say who is still in it. TerminateJobObject was already
+                # issued above -- killing is best-effort and always attempted --
+                # but the PROOF must fail closed. Falling back to the PPID walk
+                # here let the terminator announce containment on evidence that
+                # never observed the authoritative boundary: a reparented Kit
+                # grandchild is invisible to an ancestry walk, so an empty walk is
+                # not proof of an empty job. Survivors are genuinely unknown, so
+                # report none instead of inventing an ancestry-walk answer.
+                self._survivors = ()
+                self._containment_detail = "job_membership_unreadable"
+                return False
+            if not live:
+                self._survivors = ()
+                return True
+            if time.monotonic() >= deadline:
+                self._survivors = tuple(sorted(live))
+                return False
+            time.sleep(_CONTAINMENT_POLL_INTERVAL_SECONDS)
+
+    @staticmethod
+    def _windows_tree_pids(api: _Win32ContainmentApi, root_pid: int) -> list[int]:
+        # Same breadth-first child walk as scripts/lib/host-native-launcher.ps1's
+        # Stop-HostNativeService, so the two terminators agree on "the tree".
+        ordered: list[int] = []
+        seen: set[int] = set()
+        stack = [int(root_pid)]
+        while stack:
+            current = stack.pop(0)
+            if current in seen:
+                continue
+            seen.add(current)
+            ordered.append(current)
+            stack.extend(api.child_pids(current))
+        return ordered
+
+    def _windows_live_pids(
+        self, api: _Win32ContainmentApi, root_pid: int
+    ) -> set[int] | None:
+        """Live pids inside the boundary; None when the boundary is UNREADABLE.
+
+        None is not "empty": it means the job exists but its membership query
+        failed, so containment cannot be proven from here. Only the no-job case
+        (a unit-test double) may answer from the PPID walk.
+        """
+
+        if self._job is not None:
+            candidates = api.job_process_ids(self._job)
+            if candidates is None:
+                return None
+        else:
+            candidates = self._windows_tree_pids(api, root_pid)
+        return {int(pid) for pid in candidates if pid and api.pid_is_alive(int(pid))}
+
+    # -- posix --------------------------------------------------------------
+
+    def _terminate_tree_posix(self, deadline: float, grace_seconds: float) -> bool:
+        pid = self.pid
+        if pid is None:
+            self._survivors = ()
+            return True
+        pgid = self._pgid
+        if pgid is None:
+            self._kill_direct_child()
+            self._survivors = (pid,)
+            return False
+        self._killpg(pgid, _POSIX_SIGTERM)
+        # #509 review: the grace period belongs to the whole GROUP, not to the
+        # direct child. ``_reap_bounded`` returns the moment PowerShell is reaped
+        # — usually within milliseconds — and the old code escalated to SIGKILL
+        # right there, so a Kit/HOOPS descendant still running its SIGTERM
+        # handler was killed mid-cleanup and the configured grace was never
+        # actually granted. Reap the direct child first (an unreaped zombie keeps
+        # the group looking alive), then poll until the grace deadline.
+        grace_deadline = min(time.monotonic() + grace_seconds, deadline)
+        self._reap_bounded(grace_seconds)
+        while self._posix_group_alive(pgid) and time.monotonic() < grace_deadline:
+            time.sleep(_CONTAINMENT_POLL_INTERVAL_SECONDS)
+        if not self._posix_group_alive(pgid):
+            self._survivors = ()
+            return True
+        self._killpg(pgid, _POSIX_SIGKILL)
+        self._reap_bounded(max(deadline - time.monotonic(), 0.5))
+        while True:
+            if not self._posix_group_alive(pgid):
+                self._survivors = ()
+                return True
+            if time.monotonic() >= deadline:
+                # Report who actually survived. Naming only the root pid hid the
+                # real offenders (Kit/HOOPS grandchildren) from the operator, and
+                # the root is usually the one process that DID die.
+                self._survivors = self._posix_group_members(pgid) or (pid,)
+                return False
+            time.sleep(_CONTAINMENT_POLL_INTERVAL_SECONDS)
+
+    def _pin_supported(self) -> bool:
+        """Can this platform hold the pgid reserved across the teardown?"""
+
+        return (
+            os.name != "nt"
+            and self._pgid is not None
+            and self.pid is not None
+            and hasattr(os, "waitid")
+            and hasattr(os, "P_PID")
+            and hasattr(os, "WNOWAIT")
+            and hasattr(os, "WNOHANG")
+        )
+
+    def _pin_child_exit(self, timeout, *, raise_on_timeout: bool) -> bool:
+        """Observe the direct child's exit WITHOUT reaping it (POSIX only).
+
+        Returns True when the reservation is in force, i.e. the caller must NOT fall
+        back to a reaping wait; the exit status is cached in ``_pinned_returncode``.
+        Returns True as well when the bounded wait elapsed with the child still
+        RUNNING and ``raise_on_timeout`` is unset - a running child holds its own
+        pgid, so there is nothing to reserve and nothing to reap. Returns False only
+        when the mechanism does not apply (Windows, unknown pgid, no ``os.waitid``,
+        an already-reaped child, or a host whose ``/proc`` cannot be enumerated).
+        """
+
+        if self._leader_pinned:
+            return True
+        if not self._pin_supported():
+            return False
+        pid = self.pid
+        deadline = (
+            None if timeout is None else time.monotonic() + max(float(timeout), 0.0)
+        )
+        interval = _CONTAINMENT_POLL_INTERVAL_SECONDS
+        while True:
+            try:
+                info = os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
+            except ChildProcessError:
+                # Somebody already reaped it (a Popen double in the unit tests, or an
+                # earlier reaping wait): the number is gone and no reservation can be
+                # recreated after the fact. Say so instead of pretending.
+                return False
+            except OSError:
+                return False
+            if info is not None:
+                if not self._pgid_pin_is_useful():
+                    return False
+                self._leader_pinned = True
+                self._pinned_returncode = self._exit_status_from_siginfo(info)
+                return True
+            if deadline is not None and time.monotonic() >= deadline:
+                if raise_on_timeout:
+                    raise subprocess.TimeoutExpired(
+                        getattr(self._proc, "args", None), timeout
+                    )
+                return True
+            time.sleep(interval)
+            interval = min(interval * 2, _PGID_PIN_MAX_POLL_INTERVAL_SECONDS)
+
+    def _pgid_pin_is_useful(self) -> bool:
+        """Is holding the zombie leader worth what it costs on THIS host?
+
+        The reservation is invisible to ``_posix_group_members`` (state 'Z' is
+        excluded) but NOT to the ``killpg(pgid, 0)`` fallback that
+        ``_posix_group_alive`` uses when ``/proc`` cannot be enumerated - there a
+        retained zombie answers "alive" forever, which would burn the whole
+        containment deadline and false-report ``converter_containment_failed``. That
+        same host also cannot run the membership-verified sweep, so it gains nothing
+        from the reservation. Keep the fallback simple and honest: no pin, reap as
+        before, and accept the residual documented in ``_sweep_posix_group``. On
+        Linux - the POSIX target - ``/proc`` is readable and the pin applies.
+        """
+
+        return self._posix_group_members(self._pgid) is not None
+
+    @staticmethod
+    def _exit_status_from_siginfo(info) -> int:
+        """Map ``siginfo_t`` to the ``Popen.returncode`` convention."""
+
+        status = int(getattr(info, "si_status", 0) or 0)
+        if getattr(info, "si_code", None) == getattr(os, "CLD_EXITED", 1):
+            return status
+        # Killed (or dumped) by a signal: negative, exactly like Popen reports it.
+        return -status
+
+    def _release_pgid_pin(self) -> None:
+        """Reap the retained zombie leader; the pgid may be recycled after this."""
+
+        if not self._leader_pinned:
+            return
+        self._leader_pinned = False
+        try:
+            self._proc.wait(timeout=_CONTAINMENT_CLOSE_SWEEP_SECONDS)
+        except Exception:  # noqa: BLE001 - the child already exited; never block close
+            pass
+
+    @staticmethod
+    def _killpg(pgid: int, sig: int) -> None:
+        try:
+            os.killpg(pgid, sig)
+        except OSError:
+            pass
+
+    @classmethod
+    def _posix_group_members(cls, pgid: int) -> tuple[int, ...] | None:
+        """Live (non-zombie) pids whose process group is ``pgid``; None w/o /proc.
+
+        ``killpg(pgid, 0)`` succeeds for a group that holds nothing but zombies,
+        so it cannot answer "is anything still RUNNING" — it burned the whole
+        containment deadline and then false-reported converter_containment_failed
+        for a tree that was already dead but not yet reaped.
+
+        /proc can answer it. In /proc/<pid>/stat the comm field may contain
+        spaces and parentheses, so the fields are taken after the LAST ')':
+        index 0 is the state and index 2 is the pgrp. State 'Z' is a reaped-
+        pending corpse — it holds no HOOPS handle and cannot process input — so
+        zombies are excluded from "alive".
+        """
+
+        try:
+            entries = os.listdir("/proc")
+        except OSError:
+            return None
+        members: list[int] = []
+        for entry in entries:
+            if not entry.isdigit():
+                continue
+            try:
+                with open(
+                    "/proc/%s/stat" % entry, encoding="utf-8", errors="replace"
+                ) as handle:
+                    raw = handle.read()
+            except FileNotFoundError:
+                # 行程在 listdir 與 open 之間結束是常態競態,而且它結束了正是我們要
+                # 的答案:跳過,不影響結論。
+                continue
+            except OSError:
+                # #509 review r3:讀得到 /proc 卻讀不到「某一筆」記錄(LSM、受限
+                # procfs mount、permission)完全不同。舊碼一律 continue,於是那筆
+                # 記錄若正好屬於 converter group、而其他成員都已離開,回傳的空 tuple
+                # 會被 _posix_group_alive 當成「group 已消失」的證明。讀不到就是
+                # indeterminate,回 None 讓上層 fail closed。
+                return None
+            close_index = raw.rfind(")")
+            if close_index < 0:
+                continue
+            fields = raw[close_index + 1 :].split()
+            if len(fields) < 3 or fields[0] == "Z":
+                continue
+            try:
+                if int(fields[2]) == int(pgid):
+                    members.append(int(entry))
+            except ValueError:
+                continue
+        return tuple(sorted(members))
+
+    @classmethod
+    def _posix_group_alive(cls, pgid: int) -> bool:
+        members = cls._posix_group_members(pgid)
+        if members is not None:
+            return bool(members)
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return False
+        except OSError:
+            # Permission or any other error: the group may still exist, so the
+            # honest answer is "not proven gone".
+            return True
+        return True
+
+    @staticmethod
+    def _kill_pid(pid: int, sig: int) -> None:
+        try:
+            os.kill(int(pid), sig)
+        except OSError:
+            pass
+
+    def _sweep_posix_group(self, pgid: int) -> None:
+        """Terminate every live member of the converter's process group.
+
+        PID/PGID reuse makes a bare ``killpg`` unsafe once the group may be
+        empty: the kernel can hand the same pgid to an unrelated group and the
+        signal would land on an innocent bystander. So the sweep only signals
+        pids whose own /proc/<pid>/stat still reports THIS pgid, and falls back
+        to ``killpg`` only when /proc is unreadable AND the group was just
+        observed to be alive (a live group cannot be a recycled one).
+        """
+
+        import signal
+
+        members = self._posix_group_members(pgid)
+        if members is None:
+            if not self._posix_group_alive(pgid):
+                return
+            self._killpg(pgid, signal.SIGTERM)
+            time.sleep(_CONTAINMENT_POLL_INTERVAL_SECONDS)
+            if self._posix_group_alive(pgid):
+                self._killpg(pgid, signal.SIGKILL)
+            return
+        if not members:
+            return
+        for victim in members:
+            self._kill_pid(victim, signal.SIGTERM)
+        deadline = time.monotonic() + _CONTAINMENT_CLOSE_SWEEP_SECONDS
+        remaining: tuple[int, ...] = members
+        while True:
+            remaining = self._posix_group_members(pgid) or ()
+            if not remaining:
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(_CONTAINMENT_POLL_INTERVAL_SECONDS)
+        for victim in remaining:
+            self._kill_pid(victim, signal.SIGKILL)
+
+    # -- shared -------------------------------------------------------------
+
+    def _kill_direct_child(self) -> None:
+        try:
+            self._proc.kill()
+        except Exception:  # noqa: BLE001 - best-effort kill of an unknown child
+            pass
+
+    def _reap_bounded(self, seconds: float) -> None:
+        """Bounded wait for the direct child to EXIT - on POSIX without reaping it.
+
+        #509 review r3: the SIGKILL escalation in ``_terminate_tree_posix`` and the
+        sweep in ``close()`` both still address the group AFTER this call, so reaping
+        the group leader here is what opened the recycled-pgid window in the first
+        place. ``_pin_child_exit`` observes the same exit with ``WNOWAIT``, leaving a
+        zombie that holds the number until ``close()`` is done. Windows and any host
+        without ``os.waitid`` keep the original reaping wait.
+        """
+
+        seconds = max(float(seconds), 0.0)
+        if self._pin_child_exit(seconds, raise_on_timeout=False):
+            return
+        try:
+            self._proc.wait(timeout=seconds)
+        except Exception:  # noqa: BLE001 - a stubborn child is handled by the poll
+            pass
 
 
 class Ifc2UsdcPowershellConverterAdapter:
@@ -49,6 +985,13 @@ class Ifc2UsdcPowershellConverterAdapter:
     ``quality_metrics``. Missing prerequisites raise ``converter_unavailable``;
     conversion failures raise a specific ``ConversionAuthorityError`` code.
     """
+
+    # 外層 timeout 在 ps1 自己的 -TimeoutSeconds 之上再加的保險 buffer,讓內層先
+    # 有機會清理自己的 Kit 子樹,外層只當最後一道防線。
+    _OUTER_TIMEOUT_BUFFER_SECONDS = 30
+    # #489:外層 timeout 之後,證明整棵 converter process tree 消失的期限 / 寬限期。
+    _CONTAINMENT_DEADLINE_SECONDS = 30.0
+    _CONTAINMENT_GRACE_SECONDS = 5.0
 
     def __init__(
         self,
@@ -1496,19 +2439,14 @@ class Ifc2UsdcPowershellConverterAdapter:
             ) from exc
         return resolved
 
-    def _run_powershell_conversion(
+    def _build_converter_command(
         self,
         *,
         ifc_path: Path,
         output_dir: Path,
-        trace_id: str | None = None,
+        trace_id: str | None,
         validated_hoops_main: Path,
-        validated_hoops_identity: tuple[int, int, int, int, str],
-    ) -> None:
-        validated_hoops_main = self._validated_hoops_main_for_execution(
-            validated_hoops_main,
-            validated_hoops_identity,
-        )
+    ) -> list[str]:
         cmd: list[str] = [
             self.powershell_exe,
             "-NoProfile",
@@ -1533,98 +2471,195 @@ class Ifc2UsdcPowershellConverterAdapter:
         if self.kit_exe_path is not None:
             cmd += ["-KitExePath", str(self.kit_exe_path.resolve())]
         cmd += ["-HoopsMainPath", str(validated_hoops_main)]
+        return cmd
+
+    def _spawn_contained_converter(self, cmd: list[str], *, stdout, stderr) -> _ContainedProcess:
+        return _ContainedProcess.spawn(
+            cmd,
+            cwd=str(self.repo_root),
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+    def _run_powershell_conversion(
+        self,
+        *,
+        ifc_path: Path,
+        output_dir: Path,
+        trace_id: str | None = None,
+        validated_hoops_main: Path,
+        validated_hoops_identity: tuple[int, int, int, int, str],
+    ) -> None:
+        validated_hoops_main = self._validated_hoops_main_for_execution(
+            validated_hoops_main,
+            validated_hoops_identity,
+        )
+        cmd = self._build_converter_command(
+            ifc_path=ifc_path,
+            output_dir=output_dir,
+            trace_id=trace_id,
+            validated_hoops_main=validated_hoops_main,
+        )
+        outer_timeout = self.timeout_seconds + self._OUTER_TIMEOUT_BUFFER_SECONDS
+        timed_out = False
+        containment_proven = True
+        survivors: tuple[int, ...] = ()
+        containment_detail: str | None = None
         try:
             with self._hold_windows_hoops_entrypoint_for_execution(
                 validated_hoops_main,
                 validated_hoops_identity,
             ):
                 # capture_output=True 會讓 PowerShell 與它啟動的 Kit 子行程都繼承
-                # stdout/stderr pipe。timeout 到期時 subprocess.run 只 kill 直接子行程
-                # (PowerShell);Kit 若仍握著 pipe 寫端,run() 事後的清理 communicate()
-                # 會無限等 EOF——parent 已退、child 持 pipe 的掛死(CPython 已知行為,
-                # 與 host-native-launcher 對 repo.bat 的同型病)。改用暫存檔重導向:
+                # stdout/stderr pipe。timeout 到期時只 kill 直接子行程(PowerShell);
+                # Kit 若仍握著 pipe 寫端,事後清理的 communicate() 會無限等 EOF——
+                # parent 已退、child 持 pipe 的掛死(CPython 已知行為,與
+                # host-native-launcher 對 repo.bat 的同型病)。改用暫存檔重導向:
                 # kill 之後沒有 pipe 可等,輸出仍完整讀得回來。外層 timeout 加 30 秒
                 # buffer,讓 ps1 自己的 -TimeoutSeconds 先行清理 Kit 子樹,外層只當
                 # 最後保險而不是與內層搶同一個瞬間。
                 with tempfile.TemporaryFile() as stdout_handle, tempfile.TemporaryFile() as stderr_handle:
-                    raw_completed = subprocess.run(
-                        cmd,
-                        cwd=str(self.repo_root),
-                        stdout=stdout_handle,
-                        stderr=stderr_handle,
-                        timeout=self.timeout_seconds + 30,
-                        shell=False,
-                        check=False,
+                    contained = self._spawn_contained_converter(
+                        cmd, stdout=stdout_handle, stderr=stderr_handle
                     )
+                    try:
+                        try:
+                            returncode = contained.wait(timeout=outer_timeout)
+                        except subprocess.TimeoutExpired:
+                            timed_out = True
+                            returncode = None
+                        # #489 SEC-001:等待整棵樹消失的 poll 一定要在 HOOPS pin
+                        # 仍持有的這個 with 區塊「之內」完成——pin 必須比 process
+                        # tree 活得久,否則 Kit 孫代會在 pin 已放掉之後,還握著
+                        # 已被判定不可信的 entrypoint 繼續處理輸入。
+                        #
+                        # #509 review r3:這個證明對「每一條」離開路徑都要跑,不是只
+                        # 有 TimeoutExpired。ps1 自己的 -TimeoutSeconds 比外層早 30 秒
+                        # (_OUTER_TIMEOUT_BUFFER_SECONDS)到期,所以常態的 converter
+                        # 逾時其實是「ps1 清理完、非零 exit、wait() 正常返回」,根本
+                        # 走不到 TimeoutExpired。舊碼在那條路徑上只呼叫 close(),而
+                        # close() 只是「開始」拆除(Windows 關掉 job handle、POSIX 送完
+                        # 最後一發 SIGKILL 就返回),不是邊界已空的證明。
+                        containment_proven = contained.terminate_tree(
+                            deadline_seconds=self._CONTAINMENT_DEADLINE_SECONDS,
+                            grace_seconds=self._CONTAINMENT_GRACE_SECONDS,
+                        )
+                        survivors = contained.survivors
+                        containment_detail = contained.containment_detail
+                    finally:
+                        contained.close()
                     stdout_handle.seek(0)
                     stderr_handle.seek(0)
                     stdout_text = stdout_handle.read().decode("utf-8", errors="replace")
                     stderr_text = stderr_handle.read().decode("utf-8", errors="replace")
                 completed = subprocess.CompletedProcess(
-                    args=raw_completed.args,
-                    returncode=raw_completed.returncode,
-                    stdout=(
-                        raw_completed.stdout
-                        if isinstance(raw_completed.stdout, str) and raw_completed.stdout
-                        else stdout_text
-                    ),
-                    stderr=(
-                        raw_completed.stderr
-                        if isinstance(raw_completed.stderr, str) and raw_completed.stderr
-                        else stderr_text
-                    ),
+                    args=cmd,
+                    returncode=returncode,
+                    stdout=stdout_text,
+                    stderr=stderr_text,
                 )
-        except subprocess.TimeoutExpired as exc:
-            raise ConversionAuthorityError(
-                "converter_timeout",
-                f"convert-ifc-to-usdc.ps1 exceeded {self.timeout_seconds + 30}s and was killed.",
-            ) from exc
         except OSError as exc:
             raise ConversionAuthorityError(
                 "converter_unavailable",
                 f"Failed to launch PowerShell converter: {exc}",
             ) from exc
-        if completed.returncode != 0:
-            # streaming-server-capture-kit-conversion-logs §3:ps1 wrapper emit 一行
-            # `##CONV_META## {"kit_stdout_log":"<path>","kit_stderr_log":"<path>"}`
-            # (見 convert-ifc-to-usdc.ps1 Invoke-KitConversion)。sentinel + JSON 取代
-            # 脆弱的 prose regex:用 re.search 抓 JSON payload,json.loads 解析失敗
-            # fallback 空 dict 不 crash。kit_stdout_log/kit_stderr_log 放進
-            # ConversionAuthorityError.metadata,讓 host_native_conversion_service 寫進
-            # result.error 內,operator 可直接 tail 完整 Kit subprocess log。
-            metadata: dict = {}
-            combined = "\n".join(filter(None, (completed.stderr or "", completed.stdout or "")))
-            # 單行 compact JSON(ps1 用 ConvertTo-Json -Compress):用貪婪 (\{.*\})
-            # 吃到該行最後一個右括號 + 行錨 $,避免非貪婪在 log path 含字面右括號時
-            # 提早截斷;不用 DOTALL 讓 . 不跨行,MULTILINE 讓 $ 對應每一行尾。
-            meta_match = re.search(r"##CONV_META##[ \t]*(\{.*\})\s*$", combined, re.MULTILINE)
-            if meta_match:
-                try:
-                    parsed_meta = json.loads(meta_match.group(1))
-                except (ValueError, TypeError):
-                    parsed_meta = {}
-                if isinstance(parsed_meta, dict):
-                    for key in ("kit_stdout_log", "kit_stderr_log"):
-                        value = parsed_meta.get(key)
-                        if value:
-                            metadata[key] = str(value).strip()
-            # streaming-server-capture-kit-conversion-logs review fix(2026-05-22):
-            # 把 log path 與 spec-required "---- stderr tail (last 100 lines) ----"
-            # 標頭顯式 prepend 到 message 開頭,再放 tail,避免 truncation 把 spec
-            # 要求的 substring 從 message 後段砍掉(spec scenario 1)。tail 額度
-            # 提升到 3000 chars 以涵蓋 header + 大部分 tail 內容。
-            tail = (completed.stderr or completed.stdout or "").strip()[-3000:]
-            message_parts = [f"convert-ifc-to-usdc.ps1 exited {completed.returncode}"]
-            if "kit_stdout_log" in metadata:
-                message_parts.append(f"kit_stdout_log: {metadata['kit_stdout_log']}")
-            if "kit_stderr_log" in metadata:
-                message_parts.append(f"kit_stderr_log: {metadata['kit_stderr_log']}")
-            message_parts.append(tail)
+        # streaming-ifc-usdc-conversion-authority spec:「subprocess 起來之後的
+        # 任何失敗」——明文包含 timeout——都要在 error 上帶 kit_stdout_log /
+        # kit_stderr_log 與 tail summary,否則 conversion_authority._fail_job 只
+        # 能吐出一個沒有診斷路徑的錯誤。ps1 在啟動 Kit 之前就印了 ##CONV_META##,
+        # 所以即使整棵樹被外層 timeout 殺掉,那兩個 log 路徑仍然拿得回來。
+        #
+        # #509 review r3:containment 證明失敗蓋過其他所有結果——包含 returncode 0。
+        # 「轉檔成功但 Kit 孫代還活著」代表那個已被判定不可信的 HOOPS entrypoint 在
+        # pin 放掉之後仍被持有,那不是成功。
+        if not containment_proven:
+            surviving = ", ".join(str(pid) for pid in survivors) or "unknown"
+            # #509 review r2:證明失敗的「原因」要跟著出去,operator 才分得清
+            # 「有殘存 PID」與「邊界根本讀不到(job_membership_unreadable)」。
+            detail = f" [{containment_detail}]" if containment_detail else ""
+            trigger = (
+                f"exceeded {outer_timeout}s"
+                if timed_out
+                else f"exited {completed.returncode}"
+            )
+            message, metadata = self._failure_diagnostics(
+                f"convert-ifc-to-usdc.ps1 {trigger} and its process "
+                f"tree could not be proven terminated within "
+                f"{self._CONTAINMENT_DEADLINE_SECONDS}s (surviving pids: "
+                f"{surviving}){detail}.",
+                completed,
+            )
             raise ConversionAuthorityError(
-                "converter_failed",
-                "\n".join(message_parts),
+                "converter_containment_failed",
+                message,
                 metadata=metadata or None,
             )
+        if timed_out:
+            message, metadata = self._failure_diagnostics(
+                f"convert-ifc-to-usdc.ps1 exceeded {outer_timeout}s and its whole "
+                "process tree was killed.",
+                completed,
+            )
+            raise ConversionAuthorityError(
+                "converter_timeout",
+                message,
+                metadata=metadata or None,
+            )
+        if completed.returncode != 0:
+            message, metadata = self._failure_diagnostics(
+                f"convert-ifc-to-usdc.ps1 exited {completed.returncode}",
+                completed,
+            )
+            raise ConversionAuthorityError(
+                "converter_failed",
+                message,
+                metadata=metadata or None,
+            )
+
+    def _failure_diagnostics(self, headline: str, completed) -> tuple[str, dict]:
+        """Build the (message, metadata) pair every post-start failure must carry.
+
+        streaming-server-capture-kit-conversion-logs §3:ps1 wrapper emit 一行
+        ``##CONV_META## {"kit_stdout_log":"<path>","kit_stderr_log":"<path>"}``
+        (見 convert-ifc-to-usdc.ps1 Invoke-KitConversion)。sentinel + JSON 取代脆弱
+        的 prose regex:用 re.search 抓 JSON payload,json.loads 解析失敗 fallback
+        空 dict 不 crash。kit_stdout_log/kit_stderr_log 放進
+        ``ConversionAuthorityError.metadata``,讓 host_native_conversion_service 寫進
+        result.error 內,operator 可直接 tail 完整 Kit subprocess log。
+
+        非零 exit、timeout、containment failure 共用同一條路徑:spec 對這三種
+        「subprocess 起來之後的失敗」要求的是同一組診斷欄位。
+        """
+
+        metadata: dict = {}
+        combined = "\n".join(filter(None, (completed.stderr or "", completed.stdout or "")))
+        # 單行 compact JSON(ps1 用 ConvertTo-Json -Compress):用貪婪 (\{.*\})
+        # 吃到該行最後一個右括號 + 行錨 $,避免非貪婪在 log path 含字面右括號時
+        # 提早截斷;不用 DOTALL 讓 . 不跨行,MULTILINE 讓 $ 對應每一行尾。
+        meta_match = re.search(r"##CONV_META##[ \t]*(\{.*\})\s*$", combined, re.MULTILINE)
+        if meta_match:
+            try:
+                parsed_meta = json.loads(meta_match.group(1))
+            except (ValueError, TypeError):
+                parsed_meta = {}
+            if isinstance(parsed_meta, dict):
+                for key in ("kit_stdout_log", "kit_stderr_log"):
+                    value = parsed_meta.get(key)
+                    if value:
+                        metadata[key] = str(value).strip()
+        # streaming-server-capture-kit-conversion-logs review fix(2026-05-22):
+        # 把 log path 與 spec-required "---- stderr tail (last 100 lines) ----"
+        # 標頭顯式 prepend 到 message 開頭,再放 tail,避免 truncation 把 spec
+        # 要求的 substring 從 message 後段砍掉(spec scenario 1)。tail 額度
+        # 提升到 3000 chars 以涵蓋 header + 大部分 tail 內容。
+        tail = (completed.stderr or completed.stdout or "").strip()[-3000:]
+        message_parts = [headline]
+        if "kit_stdout_log" in metadata:
+            message_parts.append(f"kit_stdout_log: {metadata['kit_stdout_log']}")
+        if "kit_stderr_log" in metadata:
+            message_parts.append(f"kit_stderr_log: {metadata['kit_stderr_log']}")
+        message_parts.append(tail)
+        return "\n".join(message_parts), metadata
 
     def _is_primary_ifc_import_failure(self, exc: ConversionAuthorityError) -> bool:
         if exc.code != "converter_failed":
