@@ -1,25 +1,25 @@
 # gate-suites — stack_kind=self_referential_bootstrap
-tested_head=aa3259754b5987e998c15e79fac18fb4c4c48f69
-run_at=2026-08-12T14:16:28Z
-note=rerun after the repair-lane commit expanded this PR beyond contract prose into the gate library and its suite (issue #494 folded in per owner direction), then after the single-door fix (L1-COR-001), and now after the third-round fixes: case-sensitive entry immutability (every canonical entry comparison is -cne, because PowerShell -ne is case-insensitive on strings) and repair_prs provenance (a newly opened entry may not declare the field at all, empty array included). The entry's declared surface grew to four mechanism paths accordingly, so these suites bind a tree containing the new lane, not only the §2.1/§2.2 prose. Exact canonical invocation form recorded per suite; earlier stale-checkout EOL false-red note retained in README. Recorded heads 82c6aa4, 52488e8 and c2a26e5 are superseded. This file is the only change after tested_head; it carries no executable content.
+tested_head=7f590eaa11263723a6cc80fa05fc60a28fcc9612
+run_at=2026-08-12T14:51:11Z
+note=rerun after the repair-lane commit expanded this PR beyond contract prose into the gate library and its suite (issue #494 folded in per owner direction), then after the single-door fix (L1-COR-001), then after case-sensitive entry immutability (-cne everywhere, because PowerShell -ne is case-insensitive on strings) plus repair_prs provenance for newly opened entries, and now after the fourth round: repairs may reach adjudicator paths that the entry already declared (base-pinned adjudication, not a path ban, is what prevents self-clearance) and a repair must change a non-ledger mechanism path to prove it fixed something. The entry's declared surface is four mechanism paths, so these suites bind a tree containing the full lane, not only the §2.1/§2.2 prose. Exact canonical invocation form recorded per suite; earlier stale-checkout EOL false-red note retained in README. Recorded heads 82c6aa4, 52488e8, c2a26e5 and aa32597 are superseded. This file is the only change after tested_head; it carries no executable content.
 
 ## test-self-referential-bootstrap — pwsh -NoProfile -NonInteractive -File scripts/tests/test-self-referential-bootstrap.ps1
 [test-self-referential-bootstrap] all assertions passed
-exit_code=0 duration_s=36
+exit_code=0 duration_s=28
 
 ## test-pr-body-evidence — pwsh -NoProfile -NonInteractive -File scripts/tests/test-pr-body-evidence.ps1
 [test-pr-body-evidence] all assertions passed
-exit_code=0 duration_s=15
+exit_code=0 duration_s=11
 
 ## test-agent-governance-check — pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1
 # fail 0
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 2295.078
+# duration_ms 1778.089
 [test-agent-governance-check] all assertions passed
-exit_code=0 duration_s=159
+exit_code=0 duration_s=125
 
 ## invoke-powershell-static — pwsh -NoProfile -NonInteractive -File scripts/tests/invoke-powershell-static.ps1
 [invoke-powershell-static] passed
-exit_code=0 duration_s=3
+exit_code=0 duration_s=2
