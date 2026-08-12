@@ -192,6 +192,12 @@
       "role": "dev-tool",
       "owner": "scripts",
       "notes": "Branch-only: seeds one real-MinIO IFC-ready job into an isolated branch stack coordinator (loopback 8005-8009). Fail-closed against deployment ports. Not a deploy entrypoint; does not own stack lifecycle."
+    },
+    {
+      "path": "scripts/measure-session-baseline.ps1",
+      "role": "measurement-harness",
+      "owner": "scripts",
+      "notes": "openspec/changes/gpu-session-baseline-and-idle-reclaim task 1.1: read-only GPU session baseline measurement (nvidia-smi + coordinator health probe + environment fingerprint). Not deploy.ps1/verify-all.ps1 (it measures, it does not deploy or gate); not scripts/lib (it is the operator-invoked CLI entry, repeatable by design); not scripts/tests or tests/e2e (it is not a pass/fail check, it produces a JSON report). Core logic lives in scripts/lib/measure-session-baseline.ps1; unit/fail-safe/registry tests in scripts/tests/test-measure-session-baseline.ps1. Never opens a WebRTC session or starts/stops a service."
     }
   ]
 }
