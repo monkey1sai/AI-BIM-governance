@@ -1268,7 +1268,7 @@ def test_cad_hardener_cli_success_path_hardens_real_entrypoint(tmp_path: Path):
     # inode changed (atomic replace) and group/other write bits are cleared.
     hardened_stat = hoops_main.stat()
     assert (hardened_stat.st_dev, hardened_stat.st_ino) != original_identity
-    assert stat.S_IMODE(hardened_stat.st_mode) & (stat.S_IWGRP | stat.S_IWOTH) == 0
+    assert stat.S_IMODE(hardened_stat.st_mode) == 0o400
 
 
 def test_adapter_from_env_prefers_pwsh_when_available(tmp_path: Path, monkeypatch):
